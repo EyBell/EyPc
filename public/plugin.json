@@ -1,0 +1,37 @@
+{
+  "pluginName": "EyPc",
+  "description": "跨平台 PC 能力调用工具",
+  "author": "gdkmjd",
+  "main": "index.html",
+  "logo": "logo.svg",
+  "preload": "preload.js",
+  "development": {
+    "main": "http://127.0.0.1:8092/"
+  },
+  "pluginSetting": {
+    "single": true,
+    "height": 680
+  },
+  "features": [
+    {
+      "code": "eypc-main",
+      "explain": "打开 EyPc",
+      "cmds": ["EyPc", "PC工具", "电脑工具"]
+    },
+    {
+      "code": "eypc-ports",
+      "explain": "端口进程管理",
+      "cmds": ["端口进程", "端口清理", "kill port", "ports"]
+    },
+    {
+      "code": "eypc-favorites",
+      "explain": "文件夹和文件收藏",
+      "cmds": ["文件收藏", "文件夹收藏", "favorites"]
+    },
+    {
+      "code": "eypc-settings",
+      "explain": "EyPc 设置",
+      "cmds": ["EyPc设置", "eypc settings"]
+    }
+  ]
+}
