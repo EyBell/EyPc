@@ -11,6 +11,7 @@ const props = defineProps<{
   historyState: SearchHistoryState
   error?: string | null
   status?: string
+  shortcutHint?: string
 }>()
 
 const emit = defineEmits<{
@@ -51,7 +52,7 @@ function leaveBox() {
 <template>
   <div
     class="search-suggest-box"
-    :class="{ active: isOpen, filtering: isFiltering, invalid: Boolean(error) }"
+    :class="{ active: isOpen, filtering: isFiltering, invalid: Boolean(error), 'shortcut-hinting': Boolean(shortcutHint) }"
     @focusin="hasFocus = true"
     @focusout="leaveBox"
   >
@@ -64,8 +65,11 @@ function leaveBox() {
       @focus="emit('focus')"
       @input="updateValue"
     />
-    <span v-if="inlineHint" class="search-status" :class="{ error: Boolean(error), hint: Boolean(historyItems.length && !error) }">
-      {{ inlineHint }}
+    <span v-if="inlineHint || shortcutHint" class="search-meta">
+      <span v-if="inlineHint" class="search-status" :class="{ error: Boolean(error), hint: Boolean(historyItems.length && !error) }">
+        {{ inlineHint }}
+      </span>
+      <kbd v-if="shortcutHint" class="search-shortcut-hint">{{ shortcutHint }}</kbd>
     </span>
     <div v-if="historyItems.length" class="search-history-menu" role="listbox">
       <div

@@ -25,6 +25,8 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+S', { ...context, textInputFocused: true, activeInputRole: 'port-search' })?.actionId).toBe('settings.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+S', { ...context, textInputFocused: true, activeInputRole: 'port-group-search' })?.actionId).toBe('settings.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+S', { ...context, tab: 'favorites', textInputFocused: true, activeInputRole: 'favorite-search' })?.actionId).toBe('settings.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+S', { ...context, tab: 'settings', textInputFocused: true, activeInputRole: 'settings' })?.actionId).toBe('settings.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+S', { ...context, textInputFocused: true, activeInputRole: 'other' })?.actionId).toBe('settings.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', context)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', { ...context, tab: 'favorites' })?.actionId).toBe('favorites.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+1', { ...context, textInputFocused: true })).toBeNull()
@@ -99,6 +101,11 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F', context)?.actionId).toBe('ports.search.focus')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+F', context)?.actionId).toBe('ports.groupSearch.focus')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Space', context)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', context)?.actionId).toBe('ports.group.edit')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F2', context)?.actionId).toBe('ports.group.rename')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', context)?.actionId).toBe('ports.groupDetail.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', context)?.actionId).toBe('ports.drawer.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Enter', context)?.actionId).toBe('ports.group.focusMatches')
   })
 
   it('prioritizes drawer shortcuts over global tab selection while the drawer is open', () => {
@@ -295,6 +302,11 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+ArrowUp', highlighted)?.actionId).toBe('search.history.prev')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', highlighted)?.actionId).toBe('search.history.delete')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Backspace', highlighted)?.actionId).toBe('search.history.delete')
+
+    const closedWithMatches = { ...context, searchHistoryOpen: false, searchHistoryHasItems: true }
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+ArrowDown', closedWithMatches)?.actionId).toBe('search.history.next')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', closedWithMatches)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', closedWithMatches)?.actionId).toBe('ports.search.blur')
   })
 
   it('lets Shift+Escape hide the app above every layer and text input', () => {

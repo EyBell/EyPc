@@ -1,5 +1,6 @@
 export interface ShortcutEventLike {
   key: string
+  code?: string
   ctrlKey?: boolean
   metaKey?: boolean
   altKey?: boolean
@@ -113,7 +114,8 @@ export function shortcutFromEvent(event: ShortcutEventLike): string {
     Delete: 'Delete',
     Backspace: 'Backspace'
   }
-  const key = keyMap[event.key] || (event.key.length === 1 ? event.key.toUpperCase() : event.key)
+  const codeKey = event.code?.match(/^Key([A-Z])$/)?.[1] || event.code?.match(/^Digit(\d)$/)?.[1]
+  const key = keyMap[event.key] || codeKey || (event.key.length === 1 ? event.key.toUpperCase() : event.key)
   return normalizeShortcutId([...parts, key].join('+'))
 }
 

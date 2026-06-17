@@ -46,4 +46,17 @@ describe('keyboard event runtime', () => {
 
     expect(shortcutFromEvent(event)).toBe('Ctrl+Shift+F')
   })
+
+  it('uses physical key code when Alt changes the typed character', () => {
+    const event = {
+      key: 'ß',
+      code: 'KeyS',
+      ctrlKey: true,
+      metaKey: false,
+      altKey: true,
+      shiftKey: false
+    } as unknown as KeyboardEvent
+
+    expect(shortcutFromEvent(event)).toBe('Ctrl+Alt+S')
+  })
 })

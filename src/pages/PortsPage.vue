@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { nextTick, reactive, watch } from 'vue'
+import { computed, nextTick, reactive, watch } from 'vue'
 import type { AppRuntimeSnapshot } from '../runtime/appRuntime'
 import type { PortGroupTarget } from '../domain/types'
 import type { SearchHistoryTarget } from '../domain/searchHistory'
 import SelectableList from '../components/SelectableList.vue'
 import SearchSuggestBox from '../components/SearchSuggestBox.vue'
 
-const props = defineProps<{ snapshot: AppRuntimeSnapshot; shiftPreview?: boolean }>()
+const props = defineProps<{ snapshot: AppRuntimeSnapshot; shiftPreview?: boolean; showShortcutHints?: boolean }>()
 const groupForm = reactive({ name: '', entriesText: '', color: '#00A676', folderId: '' })
 let draggingGroupId = ''
 
@@ -111,19 +111,30 @@ function sameGroupTarget(left: PortGroupTarget | null | undefined, right: PortGr
   return Boolean(left && right && left.kind === right.kind && left.id === right.id)
 }
 
-function activeShiftPreviewTarget() {
+const shiftPreviewRow = computed(() => {
   if (!props.shiftPreview) return null
-  if (props.snapshot.focusedPortGroupTarget?.kind === 'group') return props.snapshot.focusedPortGroupTarget
-  return props.snapshot.selectedPortGroupTarget?.kind === 'group' ? props.snapshot.selectedPortGroupTarget : null
-}
+  const target = props.snapshot.focusedPortGroupTarget?.kind === 'group'
+    ? props.snapshot.focusedPortGroupTarget
+    : props.snapshot.selectedPortGroupTarget?.kind === 'group' ? props.snapshot.selectedPortGroupTarget : null
+  if (!target) return null
+  return props.snapshot.portGroupRows.find((row) => row.kind === 'group' && sameGroupTarget(row.target, target)) || null
+})
 
 function isShiftPreviewTarget(row: AppRuntimeSnapshot['portGroupRows'][number]) {
-  const target = activeShiftPreviewTarget()
+  const target = shiftPreviewRow.value?.target || null
   return row.kind === 'group' && sameGroupTarget(row.target, target)
 }
 
 function commandLabel(commandId: string, fallback: string) {
   return props.snapshot.commandShortcutLabels[commandId] || fallback
+}
+
+function ctrlCommandLabel(commandId: string) {
+  if (!props.showShortcutHints) return ''
+  return (props.snapshot.commandShortcutLabels[commandId] || '')
+    .split(' / ')
+    .filter((label) => label.startsWith('c-'))
+    .join(' / ')
 }
 
 function portSearchStatus() {
@@ -187,6 +198,7 @@ function deleteHistory(payload: { target: SearchHistoryTarget; value: string }) 
           placeholder="搜索端口组"
           :history-state="props.snapshot.searchHistoryState"
           :status="groupSearchStatus()"
+          :shortcut-hint="ctrlCommandLabel('ports.groupSearch.focus')"
           @focus="emit('dispatch', 'ports.groupSearch.focus')"
           @update:model-value="emit('groupSearch', $event)"
           @accept="acceptHistory"
@@ -257,6 +269,25 @@ function deleteHistory(payload: { target: SearchHistoryTarget; value: string }) 
         </template>
       </div>
       <p v-if="!props.snapshot.portGroupRows.length" class="empty-note">暂无端口组</p>
+      <section v-if="shiftPreviewRow" class="group-preview-editor" aria-label="端口组只读预览">
+        <header>
+          <span class="color-dot" :style="{ '--node-color': shiftPreviewRow.color }"></span>
+          <strong>{{ shiftPreviewRow.name }}</strong>
+          <small>只读</small>
+        </header>
+        <label>
+          名称
+          <input :value="shiftPreviewRow.name" readonly tabindex="-1" />
+        </label>
+        <label>
+          规则
+          <textarea :value="shiftPreviewRow.entries.join('\n')" rows="5" readonly tabindex="-1" />
+        </label>
+        <label>
+          颜色
+          <input :value="shiftPreviewRow.color" readonly tabindex="-1" />
+        </label>
+      </section>
     </aside>
     <section class="main-panel" :class="{ active: props.snapshot.activePortPane === 'results' }">
       <div class="toolbar">
@@ -264,10 +295,11 @@ function deleteHistory(payload: { target: SearchHistoryTarget; value: string }) 
           :model-value="props.snapshot.state.portSearch"
           role="port-search"
           target="ports.processes"
-          placeholder="输入端口、PID、进程名或 /node|java/i"
+          placeholder="输入端口、PID、进程名 或 node | java"
           :history-state="props.snapshot.searchHistoryState"
           :error="props.snapshot.portSearchError"
           :status="portSearchStatus()"
+          :shortcut-hint="ctrlCommandLabel('ports.search.focus')"
           @focus="emit('dispatch', 'ports.search.focus')"
           @update:model-value="emit('search', $event)"
           @accept="acceptHistory"

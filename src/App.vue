@@ -53,7 +53,9 @@ watch(() => snapshot.value.searchFocusRequestId, () => {
       : snapshot.value.searchFocusTarget === 'favorites'
         ? 'favorite-search'
         : 'port-search'
-    document.querySelector<HTMLInputElement>(`[data-role="${target}"]`)?.focus()
+    const input = document.querySelector<HTMLInputElement>(`[data-role="${target}"]`)
+    input?.focus()
+    if (input) input.setSelectionRange(input.value.length, input.value.length)
   })
 })
 
@@ -116,6 +118,7 @@ onUnmounted(() => {
         <PortsPage
           :snapshot="snapshot"
           :shift-preview="shiftPreview"
+          :show-shortcut-hints="shortcutHints"
           @search="runtime.setPortSearch"
           @group-search="runtime.setPortGroupSearch"
           @scan="runtime.scanPorts"

@@ -270,6 +270,10 @@ textarea {
   background: #f8fbfd;
 }
 
+.search-suggest-box.shortcut-hinting .suggest-input {
+  padding-right: 128px;
+}
+
 .search-suggest-box.filtering .suggest-input {
   border-color: #2f80ed;
   background: #eef6ff;
@@ -286,18 +290,34 @@ textarea {
   background: #fff7f7;
 }
 
-.search-status {
+.search-meta {
   position: absolute;
   right: 10px;
   top: 50%;
-  max-width: 82px;
-  overflow: hidden;
-  color: #4d6675;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  max-width: calc(100% - 20px);
+  gap: 6px;
+  align-items: center;
   transform: translateY(-50%);
   pointer-events: none;
+}
+
+.search-status,
+.search-shortcut-hint {
+  max-width: 82px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-status {
+  color: #4d6675;
+  font-size: 12px;
+}
+
+.search-shortcut-hint {
+  flex: 0 1 auto;
+  max-width: 74px;
 }
 
 .search-status.error {
@@ -467,8 +487,7 @@ textarea {
 
 .group-row:hover .group-actions,
 .group-row.focused .group-actions,
-.group-row:focus-within .group-actions,
-.group-row.shift-preview-target .group-actions {
+.group-row:focus-within .group-actions {
   display: inline-flex;
   opacity: 1;
   pointer-events: auto;
@@ -495,6 +514,52 @@ textarea {
 .group-rule-line {
   display: block;
   color: #7a8b98;
+}
+
+.group-preview-editor {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  border: 1px solid #b8e4d1;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbfffd;
+  box-shadow: 0 -8px 24px rgba(16, 24, 32, 0.12);
+}
+
+.group-preview-editor header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.group-preview-editor strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-preview-editor small {
+  color: #6d7f8d;
+}
+
+.group-preview-editor label {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  color: #4d6675;
+  font-size: 12px;
+}
+
+.group-preview-editor input,
+.group-preview-editor textarea {
+  background: #f7fafc;
+  color: #172026;
+  pointer-events: none;
 }
 
 .folder-row-line small {
