@@ -21,12 +21,12 @@ const features = visibleFeatures()
         :key="feature.id"
         type="button"
         class="tab-button"
-        :class="{ active: feature.id === activeTab }"
+        :class="{ active: feature.id === activeTab, 'shortcut-hinting': showShortcutHints }"
         :title="`${feature.title} · ${feature.description} · ${commandShortcutLabels[feature.shortcutCommandId] || formatShortcutLabel(feature.shortcutId)}`"
         @click="$emit('select', feature.id)"
       >
         <span>{{ feature.title }}</span>
-        <kbd v-if="showShortcutHints">{{ commandShortcutLabels[feature.shortcutCommandId] || formatShortcutLabel(feature.shortcutId) }}</kbd>
+        <kbd v-if="showShortcutHints" class="tab-shortcut-hint">{{ commandShortcutLabels[feature.shortcutCommandId] || formatShortcutLabel(feature.shortcutId) }}</kbd>
       </button>
     </nav>
     <section class="tab-content">

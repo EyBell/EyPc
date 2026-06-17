@@ -64,6 +64,14 @@ function drawerSubtitle() {
   return row ? `:${row.port} · PID ${row.pid}` : '当前焦点'
 }
 
+function groupEditorTitle() {
+  const draft = props.snapshot.portGroupDraft
+  if (!draft) return ''
+  if (draft.mode === 'create') return '新建端口组'
+  if (draft.target?.kind === 'folder') return '重命名分组夹'
+  return draft.mode === 'rename' ? '重命名端口组' : '编辑端口组'
+}
+
 function detailRows() {
   const row = props.snapshot.portDetailTarget
   if (!row) return []
@@ -91,6 +99,11 @@ function groupDetailRows() {
 
 function focusGroupRow(target: PortGroupTarget) {
   emit('focusGroupTarget', target)
+}
+
+function openGroupContextMenu(target: PortGroupTarget) {
+  emit('focusGroupTarget', target)
+  emit('dispatch', 'ports.drawer.open')
 }
 
 function dragGroup(target: PortGroupTarget) {
@@ -178,7 +191,7 @@ function deleteHistory(payload: { target: SearchHistoryTarget; value: string }) 
       @dragover.prevent
       @drop="dropGroup(null)"
     >
-      <div class="panel-header group-panel-header">
+      <div class="group-search-row">
         <button
           type="button"
           class="group-panel-toggle group-panel-toggle-inline"
@@ -188,9 +201,6 @@ function deleteHistory(payload: { target: SearchHistoryTarget; value: string }) 
         >
           ‹
         </button>
-        <h2>端口组</h2>
-      </div>
-      <div class="group-search-row">
         <SearchSuggestBox
           :model-value="props.snapshot.portGroupSearch"
           role="port-group-search"
@@ -228,6 +238,7 @@ function deleteHistory(payload: { target: SearchHistoryTarget; value: string }) 
         :style="{ '--group-color': row.color, '--depth': row.depth }"
         :draggable="row.kind === 'group'"
         @click="focusGroupRow(row.target)"
+        @contextmenu.prevent="openGroupContextMenu(row.target)"
         @dragstart="dragGroup(row.target)"
         @dragover.prevent="row.kind === 'folder'"
         @drop.stop="row.kind === 'folder' ? dropGroup(row.target.id) : undefined"
@@ -430,7 +441,7 @@ function deleteHistory(payload: { target: SearchHistoryTarget; value: string }) 
     </div>
     <div v-if="props.snapshot.portGroupDraft" class="modal-backdrop">
       <section class="confirm-layer group-editor" role="dialog" aria-modal="true">
-        <h2>{{ props.snapshot.portGroupDraft.mode === 'create' ? '新建端口组' : props.snapshot.portGroupDraft.mode === 'rename' ? '重命名端口组' : '编辑端口组' }}</h2>
+        <h2>{{ groupEditorTitle() }}</h2>
         <label>
           名称
           <input

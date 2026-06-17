@@ -75,12 +75,14 @@ textarea {
 }
 
 .tab-button {
-  min-width: 116px;
-  max-width: 180px;
-  flex: 0 0 auto;
+  position: relative;
+  width: 116px;
+  min-width: 0;
+  max-width: 116px;
+  flex: 0 0 116px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
   color: #dbe4ec;
   background: #172632;
@@ -93,6 +95,21 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tab-shortcut-hint {
+  position: absolute;
+  right: 8px;
+  top: calc(100% + 4px);
+  z-index: 20;
+  max-width: 54px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  border-color: #263845;
+  background: #101820;
+  color: #dbe4ec;
+  box-shadow: 0 8px 20px rgba(16, 24, 32, 0.18);
 }
 
 .tab-button small {
@@ -239,10 +256,11 @@ textarea {
 
 .group-search-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 36px;
-  gap: 6px;
+  grid-template-columns: 28px minmax(120px, 1fr) 24px;
+  gap: 4px;
   align-items: center;
   margin-bottom: 8px;
+  margin-left: -10px;
 }
 
 .add-folder-button {
@@ -265,13 +283,13 @@ textarea {
 }
 
 .search-suggest-box .suggest-input {
-  padding-right: 92px;
+  padding-right: 10px;
   border-color: #b9c8d4;
   background: #f8fbfd;
 }
 
 .search-suggest-box.shortcut-hinting .suggest-input {
-  padding-right: 128px;
+  padding-right: 64px;
 }
 
 .search-suggest-box.filtering .suggest-input {
@@ -302,8 +320,12 @@ textarea {
   pointer-events: none;
 }
 
-.search-status,
-.search-shortcut-hint {
+.search-suggest-box.shortcut-hinting .search-meta {
+  right: 62px;
+  max-width: calc(100% - 72px);
+}
+
+.search-status {
   max-width: 82px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -315,17 +337,28 @@ textarea {
   font-size: 12px;
 }
 
-.search-shortcut-hint {
-  flex: 0 1 auto;
-  max-width: 74px;
-}
-
 .search-status.error {
   color: #a92d2d;
 }
 
 .search-status.hint {
   color: #00a676;
+}
+
+.search-shortcut-hint {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  z-index: 32;
+  max-width: 48px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transform: translateY(-50%);
+  pointer-events: none;
+  border-color: #263845;
+  background: #101820;
+  color: #dbe4ec;
+  box-shadow: 0 8px 20px rgba(16, 24, 32, 0.18);
 }
 
 .search-history-menu {

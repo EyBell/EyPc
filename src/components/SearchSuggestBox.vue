@@ -65,12 +65,12 @@ function leaveBox() {
       @focus="emit('focus')"
       @input="updateValue"
     />
-    <span v-if="inlineHint || shortcutHint" class="search-meta">
+    <span v-if="inlineHint" class="search-meta">
       <span v-if="inlineHint" class="search-status" :class="{ error: Boolean(error), hint: Boolean(historyItems.length && !error) }">
         {{ inlineHint }}
       </span>
-      <kbd v-if="shortcutHint" class="search-shortcut-hint">{{ shortcutHint }}</kbd>
     </span>
+    <kbd v-if="shortcutHint" class="search-shortcut-hint">{{ shortcutHint }}</kbd>
     <div v-if="historyItems.length" class="search-history-menu" role="listbox">
       <div
         v-for="(item, index) in historyItems"

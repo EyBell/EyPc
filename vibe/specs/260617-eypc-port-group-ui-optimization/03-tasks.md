@@ -14,6 +14,9 @@ Tool: codex
 - [x] Refine search-history `esc` layering, top-tab hold-`c` shortcut hints, and fixed settings `c-a-s` shortcut.
 - [x] Move feature tab shortcuts from `c-num` to `c-s-num` while preserving inner `c-num` command surfaces.
 - [x] Fix follow-up shortcut regressions: settings `c-a-s` works from search inputs, search-history candidates move with `s-↑↓` while plain `↑↓` returns to list navigation, and group-panel toggle defaults to configurable `c-w`.
+- [x] Add follow-up F2 rename for port group folders and right-click context drawer menus for group/folder rows.
+- [x] Float Ctrl-held shortcut hints at the right edge of search boxes and feature tabs while preserving left-aligned placeholders, full tab titles, and fixed plugin width.
+- [x] Summarize bottom-bar `c-*` shortcuts as a system-aware hold-modifier hint instead of listing every Ctrl/Command binding inline.
 - [x] Run full build and uTools validation.
 - [x] Perform browser smoke without destructive process actions.
 - [x] Update verification record after final checks.

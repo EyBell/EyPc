@@ -113,6 +113,7 @@ export interface KeybindingUpdateInput {
 
 export interface PortGroupDraft {
   mode: 'create' | 'edit' | 'rename'
+  target: PortGroupTarget | null
   groupId: string | null
   name: string
   entriesText: string
@@ -459,9 +460,11 @@ export function createAppRuntime(initialState: AppState) {
       ]
       if (target?.kind === 'group') {
         items.push(
-          drawerItem('ports.group.rename', '重命名', '打开分组名称编辑。', 'rename'),
-          drawerItem('ports.group.edit', '编辑规则', '维护端口、区间、正则规则和所在分组夹。', 'edit')
+          drawerItem('ports.group.rename', '重命名', '打开分组名称编辑。', 'rename', args),
+          drawerItem('ports.group.edit', '编辑规则', '维护端口、区间、正则规则和所在分组夹。', 'edit', args)
         )
+      } else if (target?.kind === 'folder') {
+        items.push(drawerItem('ports.group.rename', '重命名', '打开分组夹名称编辑。', 'rename', args))
       }
       return items
     }
@@ -551,6 +554,15 @@ export function createAppRuntime(initialState: AppState) {
   function focusedGroup(): PortGroup | null {
     const id = focusedPortGroupTarget?.kind === 'group' ? focusedPortGroupTarget.id : focusedPortGroupId || selectedPortGroupId
     return id ? state.portGroups.find((group) => group.id === id) || null : null
+  }
+
+  function groupFromTarget(target: PortGroupTarget | null): PortGroup | null {
+    const id = target?.kind === 'group' ? target.id : focusedPortGroupId || selectedPortGroupId
+    return id ? state.portGroups.find((group) => group.id === id) || null : null
+  }
+
+  function folderFromTarget(target: PortGroupTarget | null): PortGroupFolder | null {
+    return target?.kind === 'folder' ? state.portGroupFolders.find((folder) => folder.id === target.id) || null : null
   }
 
   function filterPortGroups(): PortGroup[] {
@@ -734,8 +746,22 @@ export function createAppRuntime(initialState: AppState) {
 
   function openGroupDraft(group: PortGroup | null, mode: PortGroupDraft['mode'] = group ? 'edit' : 'create') {
     portGroupDraft = group
-      ? { mode, groupId: group.id, name: group.name, entriesText: group.entries.join('\n'), color: group.color, folderId: group.folderId, activeField: 'name' }
-      : { mode: 'create', groupId: null, name: '', entriesText: '', color: '#00A676', folderId: null, activeField: 'name' }
+      ? { mode, target: { kind: 'group', id: group.id }, groupId: group.id, name: group.name, entriesText: group.entries.join('\n'), color: group.color, folderId: group.folderId, activeField: 'name' }
+      : { mode: 'create', target: null, groupId: null, name: '', entriesText: '', color: '#00A676', folderId: null, activeField: 'name' }
+    notify()
+  }
+
+  function openFolderRenameDraft(folder: PortGroupFolder) {
+    portGroupDraft = {
+      mode: 'rename',
+      target: { kind: 'folder', id: folder.id },
+      groupId: null,
+      name: folder.name,
+      entriesText: '',
+      color: folder.color,
+      folderId: null,
+      activeField: 'name'
+    }
     notify()
   }
 
@@ -748,6 +774,7 @@ export function createAppRuntime(initialState: AppState) {
     const portsText = [...new Set(targets.map((item) => String(item.port)))].join('\n')
     portGroupDraft = {
       mode: 'create',
+      target: null,
       groupId: null,
       name: `端口分组 ${state.portGroups.length + 1}`,
       entriesText: portsText,
@@ -1094,7 +1121,22 @@ export function createAppRuntime(initialState: AppState) {
   function savePortGroupDraft(input: { name: string; entriesText: string; color: string; folderId?: string | null }) {
     const draft = portGroupDraft
     if (!draft) return false
-    const currentGroup = draft.groupId ? state.portGroups.find((group) => group.id === draft.groupId) || null : null
+    const target = draft.target || (draft.groupId ? { kind: 'group' as const, id: draft.groupId } : null)
+    if (draft.mode === 'rename' && target?.kind === 'folder') {
+      if (!input.name.trim()) {
+        setMessage('分组夹名称不能为空')
+        return false
+      }
+      if (!state.portGroupFolders.some((folder) => folder.id === target.id)) return false
+      state.portGroupFolders = state.portGroupFolders.map((folder) => folder.id === target.id ? { ...folder, name: input.name.trim() } : folder)
+      focusedPortGroupTarget = target
+      focusedPortGroupId = null
+      portGroupDraft = null
+      save()
+      notify()
+      return true
+    }
+    const currentGroup = target?.kind === 'group' ? state.portGroups.find((group) => group.id === target.id) || null : null
     const entries = draft.mode === 'rename' && currentGroup
       ? currentGroup.entries
       : [...new Set(input.entriesText.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))]
@@ -1106,14 +1148,14 @@ export function createAppRuntime(initialState: AppState) {
       setMessage('端口组名称和规则不能为空')
       return false
     }
-    if (draft.mode === 'edit' && draft.groupId) {
-      state.portGroups = state.portGroups.map((group) => group.id === draft.groupId ? { ...group, name: input.name.trim(), color, entries, folderId } : group)
-      focusedPortGroupId = draft.groupId
-      focusedPortGroupTarget = { kind: 'group', id: draft.groupId }
-    } else if (draft.mode === 'rename' && draft.groupId) {
-      state.portGroups = state.portGroups.map((group) => group.id === draft.groupId ? { ...group, name: input.name.trim() } : group)
-      focusedPortGroupId = draft.groupId
-      focusedPortGroupTarget = { kind: 'group', id: draft.groupId }
+    if (draft.mode === 'edit' && target?.kind === 'group') {
+      state.portGroups = state.portGroups.map((group) => group.id === target.id ? { ...group, name: input.name.trim(), color, entries, folderId } : group)
+      focusedPortGroupId = target.id
+      focusedPortGroupTarget = target
+    } else if (draft.mode === 'rename' && target?.kind === 'group') {
+      state.portGroups = state.portGroups.map((group) => group.id === target.id ? { ...group, name: input.name.trim() } : group)
+      focusedPortGroupId = target.id
+      focusedPortGroupTarget = target
     } else {
       const id = `group:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
       state.portGroups.push({ id, name: input.name.trim(), color, entries, folderId, sortOrder: state.portGroups.length + 1 })
@@ -1220,8 +1262,30 @@ export function createAppRuntime(initialState: AppState) {
     actions.register({ id: 'ports.group.createFromSelection', title: '选中端口收藏为组', group: '端口', risk: 'data-write', scope: 'tab', priority: 93, shortcut: 'Ctrl+G', when: (ctx) => ctx.tab === 'ports', run: () => createGroupFromSelection() })
     actions.register({ id: 'ports.group.create', title: '新建端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'ports', run: () => { openGroupDraft(null); return true } })
     actions.register({ id: 'ports.groupFolder.create', title: '新增分组夹', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'ports', run: () => createPortGroupFolder() })
-    actions.register({ id: 'ports.group.rename', title: '重命名端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'ports', run: () => { const group = focusedGroup(); if (!group) return false; openGroupDraft(group, 'rename'); return true } })
-    actions.register({ id: 'ports.group.edit', title: '编辑端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'F2', when: (ctx) => ctx.tab === 'ports', run: () => { const group = focusedGroup(); if (!group) return false; openGroupDraft(group, 'edit'); return true } })
+    actions.register({ id: 'ports.group.rename', title: '重命名端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => {
+      const target = targetFromArgs(args)
+      const folder = folderFromTarget(target)
+      if (folder) {
+        openFolderRenameDraft(folder)
+        return true
+      }
+      const group = groupFromTarget(target)
+      if (!group) return false
+      openGroupDraft(group, 'rename')
+      return true
+    } })
+    actions.register({ id: 'ports.group.edit', title: '编辑端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'F2', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => {
+      const target = targetFromArgs(args)
+      const folder = folderFromTarget(target)
+      if (folder) {
+        openFolderRenameDraft(folder)
+        return true
+      }
+      const group = groupFromTarget(target)
+      if (!group) return false
+      openGroupDraft(group, 'edit')
+      return true
+    } })
     actions.register({ id: 'ports.group.save', title: '保存端口组编辑', group: '端口', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('port-group-editor'), run: () => savePortGroupDraft(portGroupDraft || { name: '', entriesText: '', color: '#00A676', folderId: null }) })
     actions.register({ id: 'ports.group.edit.nextField', title: '编辑层下一个字段', group: '端口', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.layerIds.includes('port-group-editor'), run: () => movePortGroupDraftField(1) })
     actions.register({ id: 'ports.group.edit.prevField', title: '编辑层上一个字段', group: '端口', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.layerIds.includes('port-group-editor'), run: () => movePortGroupDraftField(-1) })

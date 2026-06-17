@@ -455,7 +455,7 @@ describe('app runtime', () => {
     expect(runtime.snapshot().focusedPortId).toBe('11:3000:tcp')
   })
 
-  it('keeps folder drawer actions scoped to apply and process actions', async () => {
+  it('renames focused port group folders through F2 and drawer actions', async () => {
     const { state } = installPlatform()
     state.portGroupFolders = [{ id: 'dev', name: 'Dev', color: '#00A676', sortOrder: 1 }]
     state.portGroups = [{ id: 'web', name: 'Web', color: '#00A676', entries: ['3000'], folderId: 'dev', sortOrder: 1 }]
@@ -463,13 +463,33 @@ describe('app runtime', () => {
     await runtime.scanPorts()
 
     runtime.focusPortGroupFolder('dev')
+    expect(runtime.handleShortcut('F2', false)).toBe('ports.group.edit')
+    expect(runtime.snapshot().portGroupDraft).toMatchObject({
+      mode: 'rename',
+      target: { kind: 'folder', id: 'dev' },
+      name: 'Dev'
+    })
+
+    runtime.updatePortGroupDraft({ name: 'Runtime' })
+    expect(runtime.handleShortcut('Ctrl+S', { textInputFocused: true, activeInputRole: 'port-group-editor' })).toBe('ports.group.save')
+    expect(runtime.snapshot().state.portGroupFolders[0]).toMatchObject({ id: 'dev', name: 'Runtime' })
+    expect(runtime.snapshot().focusedPortGroupTarget).toEqual({ kind: 'folder', id: 'dev' })
+
     expect(runtime.handleShortcut('Ctrl+ArrowRight', false)).toBe('ports.drawer.open')
     expect(runtime.snapshot().portDrawerItems.map((item) => item.commandId)).toEqual([
       'ports.group.apply',
       'ports.group.focusMatches',
       'ports.group.kill.confirm',
-      'ports.group.kill.force'
+      'ports.group.kill.force',
+      'ports.group.rename'
     ])
+
+    expect(runtime.handleShortcut('Ctrl+5', false)).toBe('ports.drawer.select.5')
+    expect(runtime.snapshot().portGroupDraft).toMatchObject({
+      mode: 'rename',
+      target: { kind: 'folder', id: 'dev' },
+      name: 'Runtime'
+    })
   })
 
   it('cycles port panes with Tab shortcuts and starts row focus on first arrow movement', async () => {
