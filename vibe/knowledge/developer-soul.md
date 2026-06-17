@@ -18,8 +18,9 @@ EyPc is a high-frequency uTools workbench. Its interaction taste follows the glo
 
 ## Port Page Taste
 
-- `Tab` / `Shift+Tab` belong to the port page pane loop; global feature switching stays on `Ctrl+1/2/3`.
+- `Tab` / `Shift+Tab` belong to the port page pane loop; global feature switching stays on `Ctrl+Shift+Num` so inner `Ctrl+Num` command surfaces stay free.
 - Search inputs are not passive fields. In the port page they allow list navigation and action shortcuts while preserving normal text entry for unrelated inputs.
+- Search-history suggestions must not steal plain list movement; use `Shift+ArrowUp/Down` for history candidates and keep `ArrowUp/Down` on the active list.
 - The right drawer is an action surface, not a decorative panel. It displays icon, title, explanation, and the effective shortcut for the current port, selection, or group.
 - Drawer visibility and drawer keyboard focus are different states. Multi-select may show the drawer while list focus remains active; `Ctrl+Right` activates the drawer layer.
 - `Escape` must recover inward before it ever exits outward: confirm/editor, active drawer, multi-select, search/filter, then initial result focus.

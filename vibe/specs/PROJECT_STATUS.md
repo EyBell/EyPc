@@ -10,8 +10,8 @@ This is the project process hub for EyPc. It tracks the current main line, activ
 
 - Date: 2026-06-17.
 - Product: uTools plugin for cross-platform PC capability calls.
-- Current main line: Port management redesign for relevance search, user-defined groups, command-soul editing semantics, layered shortcut profiles, settings-page shortcut governance, real process scan/kill fallback, EzClipboard-style explicit drawer interactions, and scan-result dedupe.
-- Current task: Command-soul edit semantics and shortcut profile persistence are implemented and locally verified. Runtime/UI scope is tracked in [260617-eypc-command-soul-shortcuts/01-spec.md](260617-eypc-command-soul-shortcuts/01-spec.md#L1), with verification in [260617-eypc-command-soul-shortcuts/04-verify.md](260617-eypc-command-soul-shortcuts/04-verify.md#L1).
+- Current main line: Port management redesign for relevance search, user-defined groups and folders, command-soul editing semantics, layered shortcut profiles, settings-page shortcut governance, real process scan/kill fallback, EzClipboard-style explicit drawer interactions, scan-result dedupe, structured local search histories, and strict `esc` recovery.
+- Current task: Port group UI optimization follow-up is implemented through runtime-backed folders, compact two-line group rows, one-line port rows, icon-only configurable `c-w` group toggle, input-safe `c-s-f` group search focus, `cr` search-history save/accept with search blur and first-result highlight, `esc` search-history close before search blur, `s-↑↓` search-history candidate movement while plain `↑↓` keeps list navigation, `del` / `backspace` confirmed process kill, `c-del` / `c-backspace` force kill, global `s-esc` app hide, hold-`c` top-tab `c-s-num` shortcut hints, fixed settings `c-a-s`, Ez short-chain shortcut display, and partitioned search history suggestions. Scope is tracked in [260617-eypc-port-group-ui-optimization/01-spec.md](260617-eypc-port-group-ui-optimization/01-spec.md#L1), with verification in [260617-eypc-port-group-ui-optimization/04-verify.md](260617-eypc-port-group-ui-optimization/04-verify.md#L1).
 - Architecture source: [../knowledge/ARCHITECTURE.md](../knowledge/ARCHITECTURE.md#L1).
 - Project interaction taste: [../knowledge/developer-soul.md](../knowledge/developer-soul.md#L1).
 
@@ -55,18 +55,24 @@ This is the project process hub for EyPc. It tracks the current main line, activ
 - Command soul shortcuts plan: [260617-eypc-command-soul-shortcuts/02-plan.md](260617-eypc-command-soul-shortcuts/02-plan.md#L1).
 - Command soul shortcuts tasks: [260617-eypc-command-soul-shortcuts/03-tasks.md](260617-eypc-command-soul-shortcuts/03-tasks.md#L1).
 - Command soul shortcuts verification: [260617-eypc-command-soul-shortcuts/04-verify.md](260617-eypc-command-soul-shortcuts/04-verify.md#L1).
+- Port group UI optimization spec: [260617-eypc-port-group-ui-optimization/01-spec.md](260617-eypc-port-group-ui-optimization/01-spec.md#L1).
+- Port group UI optimization plan: [260617-eypc-port-group-ui-optimization/02-plan.md](260617-eypc-port-group-ui-optimization/02-plan.md#L1).
+- Port group UI optimization tasks: [260617-eypc-port-group-ui-optimization/03-tasks.md](260617-eypc-port-group-ui-optimization/03-tasks.md#L1).
+- Port group UI optimization verification: [260617-eypc-port-group-ui-optimization/04-verify.md](260617-eypc-port-group-ui-optimization/04-verify.md#L1).
 
 ## Verification Gates
 
 - Automated: `pnpm run test`, `pnpm run typecheck`, `pnpm run build`, `pnpm run validate:utools`.
-- Manual: local GUI result rendering for `8081` is confirmed; port-tab UI smoke is static in [260617-eypc-port-tab-interaction/04-verify.md](260617-eypc-port-tab-interaction/04-verify.md#L1); port dual-drawer and search/dedupe browser smoke is tracked in [260617-eypc-port-ezclipboard-interaction/04-verify.md](260617-eypc-port-ezclipboard-interaction/04-verify.md#L1); shortcut settings UI smoke is tracked in [260617-eypc-layered-shortcuts-settings/04-verify.md](260617-eypc-layered-shortcuts-settings/04-verify.md#L1); dev kill bridge safe smoke is tracked in [260617-eypc-dev-kill-bridge/04-verify.md](260617-eypc-dev-kill-bridge/04-verify.md#L1); macOS real kill with a temporary process and Windows/Linux real process scan remain release gates.
+- Manual: local GUI result rendering for `8081` is confirmed; port-tab UI smoke is static in [260617-eypc-port-tab-interaction/04-verify.md](260617-eypc-port-tab-interaction/04-verify.md#L1); port dual-drawer and search/dedupe browser smoke is tracked in [260617-eypc-port-ezclipboard-interaction/04-verify.md](260617-eypc-port-ezclipboard-interaction/04-verify.md#L1); port group keyboard/layout smoke for `c-w`, `c-s-f`, compact search/history, one-line port rows, browser `s-esc` fallback, search-history `esc`, `s-↑↓` history movement, and hold-`c` top-tab hints is tracked in [260617-eypc-port-group-ui-optimization/04-verify.md](260617-eypc-port-group-ui-optimization/04-verify.md#L1); shortcut settings UI smoke is tracked in [260617-eypc-layered-shortcuts-settings/04-verify.md](260617-eypc-layered-shortcuts-settings/04-verify.md#L1); dev kill bridge safe smoke is tracked in [260617-eypc-dev-kill-bridge/04-verify.md](260617-eypc-dev-kill-bridge/04-verify.md#L1); macOS real kill with a temporary process and Windows/Linux real process scan remain release gates.
 
 ## Current Implementation Focus
 
 - Domain models: [src/domain/types.ts](../../src/domain/types.ts#L1).
 - Port parsing/search/groups: [src/domain/ports.ts](../../src/domain/ports.ts#L1).
+- Shortcut codec: [src/domain/shortcuts.ts](../../src/domain/shortcuts.ts#L1).
+- Search history domain: [src/domain/searchHistory.ts](../../src/domain/searchHistory.ts#L1).
 - Favorite tree/search/reorder: [src/domain/favorites.ts](../../src/domain/favorites.ts#L1).
 - App runtime and action dispatch: [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L1).
 - Keybinding runtime: [src/runtime/keybinding/keybindingRuntime.ts](../../src/runtime/keybinding/keybindingRuntime.ts#L1).
 - Platform adapter and preload bridge: [src/platform/eypcPlatform.ts](../../src/platform/eypcPlatform.ts#L1), [preload/index.js](../../preload/index.js#L1).
-- UI shell: [src/App.vue](../../src/App.vue#L1), [src/pages/PortsPage.vue](../../src/pages/PortsPage.vue#L1), [src/pages/FavoritesPage.vue](../../src/pages/FavoritesPage.vue#L1), [src/pages/SettingsPage.vue](../../src/pages/SettingsPage.vue#L1).
+- UI shell and search suggestions: [src/App.vue](../../src/App.vue#L1), [src/components/SearchSuggestBox.vue](../../src/components/SearchSuggestBox.vue#L1), [src/pages/PortsPage.vue](../../src/pages/PortsPage.vue#L1), [src/pages/FavoritesPage.vue](../../src/pages/FavoritesPage.vue#L1), [src/pages/SettingsPage.vue](../../src/pages/SettingsPage.vue#L1).
