@@ -7,7 +7,7 @@ Read first:
 - [vibe/rules/documentation.md](vibe/rules/documentation.md#L1)
 - [vibe/specs/PROJECT_STATUS.md](vibe/specs/PROJECT_STATUS.md#L1)
 - [vibe/knowledge/ARCHITECTURE.md](vibe/knowledge/ARCHITECTURE.md#L1)
-- [../../czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/VibeAi.md](../../czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/VibeAi.md#L1)
+- [../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/VibeAi.md](../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/VibeAi.md#L1)
 
 Hard constraints:
 - Keep project-specific rules in `vibe/rules/`; do not copy the CodeNote master into this repository.

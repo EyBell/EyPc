@@ -33,6 +33,21 @@ const memory = {
   enterPayload: null as { code?: string } | null
 }
 
+async function scanViaDevApi(): Promise<PortProcess[]> {
+  if (typeof fetch !== 'function') return []
+  try {
+    const response = await fetch('/__eypc__/ports/scan')
+    if (!response.ok) return []
+    const payload = await response.json() as { ports?: unknown }
+    return Array.isArray(payload.ports) ? payload.ports.filter((item): item is PortProcess => {
+      const source = item as Partial<PortProcess>
+      return typeof source.id === 'string' && typeof source.pid === 'number' && typeof source.port === 'number' && typeof source.command === 'string'
+    }) : []
+  } catch {
+    return []
+  }
+}
+
 export function getPlatform(): EypcPlatformApi {
   if (typeof window !== 'undefined' && window.eypcPlatform) return window.eypcPlatform
   return {
@@ -44,7 +59,7 @@ export function getPlatform(): EypcPlatformApi {
       }
     },
     ports: {
-      scan: async () => [],
+      scan: scanViaDevApi,
       kill: async (request) => ({ ok: false, ...request, error: 'uTools preload unavailable' })
     },
     files: {

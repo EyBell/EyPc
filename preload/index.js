@@ -7,9 +7,50 @@ let lastEnterPayload = null
 function run(command, args) {
   return new Promise((resolve) => {
     execFile(command, args, { windowsHide: true, timeout: 10_000 }, (error, stdout, stderr) => {
-      resolve({ ok: !error, stdout: String(stdout || ''), stderr: String(stderr || ''), error: error ? String(error.message || error) : '' })
+      resolve({ ok: !error, command, stdout: String(stdout || ''), stderr: String(stderr || ''), error: error ? String(error.message || error) : '' })
     })
   })
+}
+
+async function runFirst(plans) {
+  let last = null
+  for (const plan of plans) {
+    const result = await run(plan.command, plan.args)
+    last = result
+    if (result.ok) return result
+  }
+  return last || { ok: false, stdout: '', stderr: '', error: 'no command candidates' }
+}
+
+function scanPlans() {
+  if (process.platform === 'win32') {
+    const systemRoot = process.env.SystemRoot || 'C:\\Windows'
+    return [
+      { command: `${systemRoot}\\System32\\netstat.exe`, args: ['-ano', '-p', 'tcp'] },
+      { command: 'netstat', args: ['-ano', '-p', 'tcp'] }
+    ]
+  }
+  return [
+    { command: '/usr/sbin/lsof', args: ['-nP', '-iTCP', '-sTCP:LISTEN'] },
+    { command: '/usr/bin/lsof', args: ['-nP', '-iTCP', '-sTCP:LISTEN'] },
+    { command: 'lsof', args: ['-nP', '-iTCP', '-sTCP:LISTEN'] }
+  ]
+}
+
+function killPlans(pid, force) {
+  if (process.platform === 'win32') {
+    const systemRoot = process.env.SystemRoot || 'C:\\Windows'
+    const args = ['/PID', String(pid), '/T', ...(force ? ['/F'] : [])]
+    return [
+      { command: `${systemRoot}\\System32\\taskkill.exe`, args },
+      { command: 'taskkill', args }
+    ]
+  }
+  const args = [force ? '-KILL' : '-TERM', String(pid)]
+  return [
+    { command: '/bin/kill', args },
+    { command: 'kill', args }
+  ]
 }
 
 function portFromAddress(value) {
@@ -48,12 +89,12 @@ function parseNetstat(output) {
 }
 
 async function scanPorts() {
-  if (process.platform === 'win32') {
-    const result = await run('netstat', ['-ano', '-p', 'tcp'])
-    return result.ok ? parseNetstat(result.stdout) : []
+  const result = await runFirst(scanPlans())
+  if (!result.ok) {
+    console.warn('[EyPc] port scan failed:', result.error || result.stderr)
+    return []
   }
-  const result = await run('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN'])
-  return result.ok ? parseLsof(result.stdout) : []
+  return process.platform === 'win32' ? parseNetstat(result.stdout) : parseLsof(result.stdout)
 }
 
 async function killProcess(request) {
@@ -64,9 +105,7 @@ async function killProcess(request) {
   if (!current.some((item) => item.pid === pid && item.port === port)) {
     return { ok: false, pid, port, force, error: 'PID no longer owns target port' }
   }
-  const command = process.platform === 'win32' ? 'taskkill' : 'kill'
-  const args = process.platform === 'win32' ? ['/PID', String(pid), '/T', ...(force ? ['/F'] : [])] : [force ? '-KILL' : '-TERM', String(pid)]
-  const result = await run(command, args)
+  const result = await runFirst(killPlans(pid, force))
   return { ok: result.ok, pid, port, force, error: result.ok ? undefined : result.error || result.stderr || 'kill failed' }
 }
 

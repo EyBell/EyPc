@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildPortGroupTargets,
   filterPortProcesses,
+  matchPortGroupProcesses,
   parseLsofListeningTcp,
   parseNetstatListeningTcp,
   recordSearchHistory,
@@ -48,6 +49,29 @@ python  2345 gdkmjd 11u IPv6 0xbcde      0t0  TCP [::1]:5173 (LISTEN)
     expect(invalid.error).toContain('Invalid regular expression')
   })
 
+  it('sorts port search results by match strength and supports auto regex', () => {
+    const rows = [
+      { id: '3', pid: 3, port: 13000, command: 'worker-3000', address: '127.0.0.1:13000', protocol: 'tcp' as const, state: 'LISTEN' as const },
+      { id: '2', pid: 2, port: 3001, command: 'vite', address: '127.0.0.1:3001', protocol: 'tcp' as const, state: 'LISTEN' as const },
+      { id: '1', pid: 1, port: 3000, command: 'node', address: '127.0.0.1:3000', protocol: 'tcp' as const, state: 'LISTEN' as const },
+      { id: '4', pid: 4, port: 8080, command: 'java', address: '127.0.0.1:8080', protocol: 'tcp' as const, state: 'LISTEN' as const }
+    ]
+
+    expect(filterPortProcesses(rows, '3000').items.map((row) => row.id)).toEqual(['1', '3'])
+    expect(filterPortProcesses(rows, '300').items.map((row) => row.id)).toEqual(['1', '2', '3'])
+    expect(filterPortProcesses(rows, 'node|java').items.map((row) => row.id)).toEqual(['1', '4'])
+  })
+
+  it('filters a macOS lsof IPv6 listener by port number', () => {
+    const rows = parseLsofListeningTcp(`COMMAND   PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME
+node    87822 gdkmjd 18u IPv6 0xabcd      0t0  TCP [::1]:8081 (LISTEN)
+`)
+
+    expect(filterPortProcesses(rows, '8081').items).toEqual([
+      expect.objectContaining({ pid: 87822, port: 8081, command: 'node' })
+    ])
+  })
+
   it('keeps recent search history deduped and capped', () => {
     let history: string[] = []
     for (let i = 0; i < 35; i += 1) {
@@ -71,5 +95,19 @@ python  2345 gdkmjd 11u IPv6 0xbcde      0t0  TCP [::1]:5173 (LISTEN)
 
     expect(shouldProcessMatchVerifiedPort({ pid: 9, port: 5173 }, [{ pid: 9, port: 5173 }, { pid: 9, port: 5174 }])).toBe(true)
     expect(shouldProcessMatchVerifiedPort({ pid: 9, port: 3000 }, [{ pid: 9, port: 5173 }])).toBe(false)
+  })
+
+  it('matches port groups by port, range, and regex over full process text', () => {
+    const rows = [
+      { id: 'node', pid: 11, port: 3000, command: 'node', address: '*:3000', user: 'dev', protocol: 'tcp' as const, state: 'LISTEN' as const },
+      { id: 'vite', pid: 12, port: 5174, command: 'vite', address: '*:5174', user: 'dev', protocol: 'tcp' as const, state: 'LISTEN' as const },
+      { id: 'java', pid: 13, port: 9000, command: 'java', address: '*:9000', user: 'svc', protocol: 'tcp' as const, state: 'LISTEN' as const }
+    ]
+
+    expect(matchPortGroupProcesses(rows, { id: 'dev', name: 'Dev', color: '#00A676', entries: ['3000', '5173-5175', '/java|svc/i'] }).map((row) => row.id)).toEqual([
+      'node',
+      'vite',
+      'java'
+    ])
   })
 })

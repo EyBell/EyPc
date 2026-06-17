@@ -4,6 +4,7 @@ export interface KeybindingContext {
   tab?: AppTabId
   confirmOpen?: boolean
   textInputFocused?: boolean
+  portPane?: 'groups' | 'results'
 }
 
 export interface KeybindingDefinition {
@@ -31,9 +32,18 @@ export const DEFAULT_KEYBINDINGS: KeybindingDefinition[] = [
   { actionId: 'list.pageUp', shortcutId: 'Alt+U', defaultShortcutId: 'Alt+U', when: '!textInputFocused', source: 'system', weight: 100 },
   { actionId: 'list.pageDown', shortcutId: 'Alt+E', defaultShortcutId: 'Alt+E', when: '!textInputFocused', source: 'system', weight: 100 },
   { actionId: 'list.toggleSelection', shortcutId: 'Space', defaultShortcutId: 'Space', when: '!textInputFocused', source: 'system', weight: 100 },
-  { actionId: 'ports.kill.confirm', shortcutId: 'Enter', defaultShortcutId: 'Enter', when: "tab == 'ports' && !textInputFocused", source: 'system', weight: 120 },
-  { actionId: 'ports.kill.force', shortcutId: 'Ctrl+Enter', defaultShortcutId: 'Ctrl+Enter', when: "tab == 'ports' && !textInputFocused", source: 'system', weight: 120 },
+  { actionId: 'ports.kill.confirm', shortcutId: 'Enter', defaultShortcutId: 'Enter', when: "tab == 'ports' && portPane != 'groups' && !textInputFocused", source: 'system', weight: 120 },
+  { actionId: 'ports.kill.force', shortcutId: 'Ctrl+Enter', defaultShortcutId: 'Ctrl+Enter', when: "tab == 'ports' && portPane != 'groups' && !textInputFocused", source: 'system', weight: 120 },
   { actionId: 'ports.scan', shortcutId: 'Ctrl+R', defaultShortcutId: 'Ctrl+R', when: "tab == 'ports'", source: 'system', weight: 100 },
+  { actionId: 'ports.pane.groups', shortcutId: 'Alt+ArrowLeft', defaultShortcutId: 'Alt+ArrowLeft', when: "tab == 'ports' && !textInputFocused", source: 'system', weight: 110 },
+  { actionId: 'ports.pane.results', shortcutId: 'Alt+ArrowRight', defaultShortcutId: 'Alt+ArrowRight', when: "tab == 'ports' && !textInputFocused", source: 'system', weight: 110 },
+  { actionId: 'ports.group.apply', shortcutId: 'Enter', defaultShortcutId: 'Enter', when: "tab == 'ports' && portPane == 'groups' && !textInputFocused", source: 'system', weight: 130 },
+  { actionId: 'ports.group.kill.confirm', shortcutId: 'Shift+Enter', defaultShortcutId: 'Shift+Enter', when: "tab == 'ports' && portPane == 'groups' && !textInputFocused", source: 'system', weight: 130 },
+  { actionId: 'ports.group.kill.force', shortcutId: 'Ctrl+Shift+Enter', defaultShortcutId: 'Ctrl+Shift+Enter', when: "tab == 'ports' && portPane == 'groups' && !textInputFocused", source: 'system', weight: 130 },
+  { actionId: 'ports.group.rename', shortcutId: 'F2', defaultShortcutId: 'F2', when: "tab == 'ports' && portPane == 'groups' && !textInputFocused", source: 'system', weight: 130 },
+  { actionId: 'ports.group.edit', shortcutId: 'Ctrl+E', defaultShortcutId: 'Ctrl+E', when: "tab == 'ports' && portPane == 'groups' && !textInputFocused", source: 'system', weight: 130 },
+  { actionId: 'ports.group.delete', shortcutId: 'Delete', defaultShortcutId: 'Delete', when: "tab == 'ports' && portPane == 'groups' && !textInputFocused", source: 'system', weight: 130 },
+  { actionId: 'ports.group.createFromSelection', shortcutId: 'Ctrl+G', defaultShortcutId: 'Ctrl+G', when: "tab == 'ports' && !textInputFocused", source: 'system', weight: 120 },
   { actionId: 'favorites.open', shortcutId: 'Enter', defaultShortcutId: 'Enter', when: "tab == 'favorites' && !textInputFocused", source: 'system', weight: 120 },
   { actionId: 'favorites.reveal', shortcutId: 'Ctrl+Enter', defaultShortcutId: 'Ctrl+Enter', when: "tab == 'favorites' && !textInputFocused", source: 'system', weight: 120 }
 ]

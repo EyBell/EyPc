@@ -36,17 +36,21 @@ describe('app runtime', () => {
     const state = createInitialState(100)
     const killed: Array<{ pid: number; port: number; force: boolean }> = []
     const copied: string[] = []
+    let scanCount = 0
     const platform = {
       storage: {
         getState: () => state,
         setState: () => true
       },
       ports: {
-        scan: async () => [
-          { id: '11:3000:tcp', pid: 11, port: 3000, command: 'node', address: '*:3000', protocol: 'tcp' as const, state: 'LISTEN' as const },
-          { id: '12:5174:tcp', pid: 12, port: 5174, command: 'vite', address: '*:5174', protocol: 'tcp' as const, state: 'LISTEN' as const },
-          { id: '13:9000:tcp', pid: 13, port: 9000, command: 'other', address: '*:9000', protocol: 'tcp' as const, state: 'LISTEN' as const }
-        ],
+        scan: async () => {
+          scanCount += 1
+          return [
+            { id: '11:3000:tcp', pid: 11, port: 3000, command: 'node', address: '*:3000', protocol: 'tcp' as const, state: 'LISTEN' as const },
+            { id: '12:5174:tcp', pid: 12, port: 5174, command: 'vite', address: '*:5174', protocol: 'tcp' as const, state: 'LISTEN' as const },
+            { id: '13:9000:tcp', pid: 13, port: 9000, command: 'other', address: '*:9000', protocol: 'tcp' as const, state: 'LISTEN' as const }
+          ]
+        },
         kill: async (request: { pid: number; port: number; force: boolean }) => {
           killed.push(request)
           return { ok: true, ...request }
@@ -66,7 +70,7 @@ describe('app runtime', () => {
       ...overrides
     }
     globalThis.window = { eypcPlatform: platform } as unknown as Window & typeof globalThis
-    return { state, killed, copied, platform }
+    return { state, killed, copied, platform, getScanCount: () => scanCount }
   }
 
   it('records favorite search history and reorders favorites through runtime', () => {
@@ -123,6 +127,87 @@ describe('app runtime', () => {
       { pid: 11, port: 3000, force: true },
       { pid: 12, port: 5174, force: true }
     ])
+  })
+
+  it('moves result focus, toggles selection, and force-cleans selected rows through shortcuts', async () => {
+    const { killed } = installPlatform()
+    const runtime = createAppRuntime(createInitialState(100))
+    await runtime.scanPorts()
+
+    expect(runtime.handleShortcut('ArrowDown', false)).toBe('list.down')
+    expect(runtime.snapshot().focusedPortId).toBe('12:5174:tcp')
+    expect(runtime.handleShortcut('Space', false)).toBe('list.toggleSelection')
+    expect(runtime.snapshot().selectedPortIds).toEqual(['12:5174:tcp'])
+    expect(runtime.handleShortcut('Ctrl+Enter', false)).toBe('ports.kill.force')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(killed).toEqual([{ pid: 12, port: 5174, force: true }])
+  })
+
+  it('filters result rows from the focused group and cleans that group through shortcuts', async () => {
+    const { state, killed } = installPlatform()
+    state.portGroups = [
+      { id: 'web', name: 'Web', color: '#00A676', entries: ['3000'] },
+      { id: 'vite', name: 'Vite', color: '#2F80ED', entries: ['5173-5175'] }
+    ]
+    const runtime = createAppRuntime(state)
+    await runtime.scanPorts()
+
+    expect(runtime.dispatch('ports.pane.groups').handled).toBe(true)
+    expect(runtime.snapshot().activePortPane).toBe('groups')
+    expect(runtime.handleShortcut('ArrowDown', false)).toBe('list.down')
+    expect(runtime.snapshot().focusedPortGroupId).toBe('vite')
+    expect(runtime.handleShortcut('Enter', false)).toBe('ports.group.apply')
+    expect(runtime.snapshot().filteredPorts.map((row) => row.id)).toEqual(['12:5174:tcp'])
+
+    expect(runtime.handleShortcut('Ctrl+Shift+Enter', false)).toBe('ports.group.kill.force')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(killed).toEqual([{ pid: 12, port: 5174, force: true }])
+  })
+
+  it('creates, renames, edits, searches, and deletes user port groups through runtime actions', async () => {
+    installPlatform()
+    const runtime = createAppRuntime(createInitialState(100))
+    await runtime.scanPorts()
+    runtime.togglePortSelection('11:3000:tcp')
+    runtime.togglePortSelection('12:5174:tcp')
+
+    expect(runtime.dispatch('ports.group.createFromSelection').handled).toBe(true)
+    expect(runtime.snapshot().portGroupDraft).toMatchObject({ mode: 'create', entriesText: '3000\n5174' })
+
+    runtime.savePortGroupDraft({ name: 'Selected', entriesText: '3000\n5174', color: '#00A676' })
+    expect(runtime.snapshot().state.portGroups[0]).toMatchObject({ name: 'Selected', entries: ['3000', '5174'] })
+    const groupId = runtime.snapshot().state.portGroups[0].id
+
+    runtime.focusPortGroup(groupId)
+    runtime.dispatch('ports.group.rename')
+    runtime.savePortGroupDraft({ name: 'Renamed', entriesText: '3000\n5174', color: '#00A676' })
+    expect(runtime.snapshot().state.portGroups[0].name).toBe('Renamed')
+
+    runtime.setPortGroupSearch('renamed')
+    expect(runtime.snapshot().filteredPortGroups.map((group) => group.id)).toEqual([groupId])
+
+    runtime.dispatch('ports.group.delete')
+    expect(runtime.snapshot().state.portGroups).toEqual([])
+  })
+
+  it('auto-scans and requests inline focus when search is opened or typed before ports are loaded', async () => {
+    const { getScanCount } = installPlatform()
+    const runtime = createAppRuntime(createInitialState(100))
+
+    expect(runtime.dispatch('search.focus').handled).toBe(true)
+    expect(runtime.snapshot().searchOverlayOpen).toBe(false)
+    expect(runtime.snapshot().searchFocusRequestId).toBe(1)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(getScanCount()).toBe(1)
+    expect(runtime.snapshot().filteredPorts.map((row) => row.id)).toEqual(['11:3000:tcp', '12:5174:tcp', '13:9000:tcp'])
+
+    const { getScanCount: getSecondScanCount } = installPlatform()
+    const secondRuntime = createAppRuntime(createInitialState(100))
+    secondRuntime.setPortSearch('3000')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(getSecondScanCount()).toBe(1)
+    expect(secondRuntime.snapshot().filteredPorts.map((row) => row.id)).toEqual(['11:3000:tcp'])
   })
 
   it('switches tabs through Ctrl+1/2/3 and ignores text input focus', () => {

@@ -7,6 +7,7 @@ export interface RuntimeActionContext {
   tab: AppTabId
   selectedIds: string[]
   layerIds: string[]
+  portPane?: 'groups' | 'results'
 }
 
 export interface RuntimeActionDefinition {

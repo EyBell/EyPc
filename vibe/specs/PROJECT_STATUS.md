@@ -10,8 +10,8 @@ This is the project process hub for EyPc. It tracks the current main line, activ
 
 - Date: 2026-06-17.
 - Product: uTools plugin for cross-platform PC capability calls.
-- Current main line: MVP usability closure for port groups, Tab shortcuts, and favorite path workflows.
-- Current task: Usability closure implemented; verification is recorded in [260616-eypc-usability-closure/04-verify.md](260616-eypc-usability-closure/04-verify.md#L1).
+- Current main line: Port management redesign for relevance search, user-defined groups, keyboard cleanup, command mapping, and real process scan fallback.
+- Current task: Port management redesign is implemented and locally verified; task docs start at [260617-eypc-port-management-redesign/01-spec.md](260617-eypc-port-management-redesign/01-spec.md#L1), with latest verification in [260617-eypc-port-management-redesign/04-verify.md](260617-eypc-port-management-redesign/04-verify.md#L1).
 - Architecture source: [../knowledge/ARCHITECTURE.md](../knowledge/ARCHITECTURE.md#L1).
 
 ## Active Process Index
@@ -26,11 +26,16 @@ This is the project process hub for EyPc. It tracks the current main line, activ
 - Usability closure tasks: [260616-eypc-usability-closure/03-tasks.md](260616-eypc-usability-closure/03-tasks.md#L1).
 - Usability closure verification: [260616-eypc-usability-closure/04-verify.md](260616-eypc-usability-closure/04-verify.md#L1).
 - Usability closure review: [260616-eypc-usability-closure/05-review.md](260616-eypc-usability-closure/05-review.md#L1).
+- Port management redesign spec: [260617-eypc-port-management-redesign/01-spec.md](260617-eypc-port-management-redesign/01-spec.md#L1).
+- Port management redesign plan: [260617-eypc-port-management-redesign/02-plan.md](260617-eypc-port-management-redesign/02-plan.md#L1).
+- Port management redesign tasks: [260617-eypc-port-management-redesign/03-tasks.md](260617-eypc-port-management-redesign/03-tasks.md#L1).
+- Port management redesign verification: [260617-eypc-port-management-redesign/04-verify.md](260617-eypc-port-management-redesign/04-verify.md#L1).
+- Port management redesign review: [260617-eypc-port-management-redesign/05-review.md](260617-eypc-port-management-redesign/05-review.md#L1).
 
 ## Verification Gates
 
 - Automated: `pnpm run test`, `pnpm run typecheck`, `pnpm run build`, `pnpm run validate:utools`.
-- Manual: real uTools Developer Tools loading, macOS real port scan and normal kill, Windows/Linux real process scan before release.
+- Manual: local GUI result rendering for `8081` is confirmed; macOS real kill with a temporary process and Windows/Linux real process scan remain release gates.
 
 ## Current Implementation Focus
 

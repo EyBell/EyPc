@@ -3,11 +3,6 @@ import type { AppState, AppTabId, FavoriteKind, FavoriteNode, KeybindingOverride
 const VALID_TABS = new Set<AppTabId>(['ports', 'favorites', 'settings'])
 const VALID_FAVORITE_KINDS = new Set<FavoriteKind>(['file', 'folder', 'group'])
 
-const DEFAULT_PORT_GROUPS: PortGroup[] = [
-  { id: 'default:web-dev', name: 'Web 开发', color: '#00A676', entries: ['3000', '5173-5175', '8000-8099'] },
-  { id: 'default:backend', name: '后端服务', color: '#2F80ED', entries: ['5000-5010', '7000-7010'] }
-]
-
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
 }
@@ -63,16 +58,16 @@ function normalizeFavorite(value: unknown, now: number): FavoriteNode | null {
 }
 
 function normalizePortGroups(value: unknown): PortGroup[] {
-  const groups = Array.isArray(value) ? value : DEFAULT_PORT_GROUPS
-  const normalized = groups.flatMap((item) => {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item) => {
     const source = record(item)
     const id = stringValue(source.id).trim()
     const name = stringValue(source.name).trim()
     const entries = strings(source.entries)
+    if (id.startsWith('default:')) return []
     if (!id || !name || !entries.length) return []
     return [{ id, name, color: stringValue(source.color).trim() || '#00A676', entries }]
   })
-  return normalized.length ? normalized : DEFAULT_PORT_GROUPS.map((group) => ({ ...group, entries: [...group.entries] }))
 }
 
 export function createInitialState(now = Date.now()): AppState {
@@ -83,7 +78,7 @@ export function createInitialState(now = Date.now()): AppState {
     favoriteSearch: '',
     portSearchHistory: [],
     favoriteSearchHistory: [],
-    portGroups: DEFAULT_PORT_GROUPS.map((group) => ({ ...group, entries: [...group.entries] })),
+    portGroups: [],
     favorites: [],
     settings: {
       keybindingOverrides: [],

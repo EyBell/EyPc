@@ -28,6 +28,11 @@ uTools feature entry / keyboard input
 - Favorites removal never deletes disk files.
 - Force-kill actions must be scoped to selected PID and verified port match.
 - Port group cleanup expands configured group entries through the domain layer, then filters against the current scan before any kill request.
+- Port search ranks exact, prefix, contains, and regex matches in [src/domain/ports.ts](../../src/domain/ports.ts#L98); regex group rules match full process text in [src/domain/ports.ts](../../src/domain/ports.ts#L150).
+- Port groups are user-defined only; state normalization removes legacy `default:*` groups in [src/domain/state.ts](../../src/domain/state.ts#L60).
+- Ports UI uses a two-pane group/results model with inline group/result search and group editing in [src/pages/PortsPage.vue](../../src/pages/PortsPage.vue#L29).
+- Port search opening and first typed query auto-trigger scan through [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L183), and uTools port entry dispatches search focus in [src/App.vue](../../src/App.vue#L64).
+- Cross-platform scan commands are centralized as macOS/Linux `lsof -nP -iTCP -sTCP:LISTEN` and Windows `netstat -ano -p tcp` in [src/platform/processBridge.ts](../../src/platform/processBridge.ts#L8), with absolute-path GUI host candidates in [src/platform/processBridge.ts](../../src/platform/processBridge.ts#L13) and [preload/index.js](../../preload/index.js#L25).
 - Favorite path picking is an optional platform capability; unavailable hosts must return `null` and preserve manual path entry.
 
 ## Current Modules

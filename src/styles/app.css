@@ -16,6 +16,7 @@ body {
 
 button,
 input,
+textarea,
 select {
   font: inherit;
 }
@@ -40,12 +41,17 @@ button.danger,
 }
 
 input,
+textarea,
 select {
   width: 100%;
   border: 1px solid #c7d0d9;
   border-radius: 6px;
   padding: 8px 10px;
   background: #fff;
+}
+
+textarea {
+  resize: vertical;
 }
 
 .app-shell {
@@ -121,6 +127,12 @@ select {
   overflow: auto;
 }
 
+.side-panel.active,
+.main-panel.active {
+  border-color: #00a676;
+  box-shadow: inset 0 0 0 1px rgba(0, 166, 118, 0.25);
+}
+
 .side-panel label {
   display: grid;
   gap: 5px;
@@ -132,7 +144,8 @@ select {
 .toolbar-actions,
 .confirm-actions,
 .row-actions,
-.group-actions {
+.group-actions,
+.header-actions {
   display: flex;
   gap: 8px;
   align-items: center;
@@ -174,6 +187,15 @@ select {
   text-align: left;
 }
 
+.group-row.focused {
+  outline: 2px solid #00a676;
+  outline-offset: -2px;
+}
+
+.group-row.selected {
+  background: #e8f7f0;
+}
+
 .group-actions {
   flex-wrap: wrap;
 }
@@ -185,6 +207,26 @@ select {
 .group-row small {
   color: #6d7f8d;
   overflow-wrap: anywhere;
+}
+
+.pane-meta,
+.empty-note {
+  margin: 0 0 10px;
+  color: #6d7f8d;
+}
+
+.query-summary {
+  display: grid;
+  gap: 6px;
+  flex: 1;
+}
+
+.query-summary small {
+  color: #6d7f8d;
+}
+
+.pane-search {
+  margin-bottom: 10px;
 }
 
 .list-surface,
@@ -263,6 +305,12 @@ select {
 
 .confirm-actions {
   justify-content: flex-end;
+}
+
+.search-layer,
+.group-editor {
+  display: grid;
+  gap: 10px;
 }
 
 .command-hints {

@@ -1,7 +1,7 @@
 import { buildFavoriteTree, filterFavoriteTree, flattenFavoriteTree, reorderFavoriteNode } from '../domain/favorites'
-import { buildPortGroupTargets, filterPortProcesses, recordSearchHistory, shouldProcessMatchVerifiedPort } from '../domain/ports'
+import { filterPortProcesses, matchPortGroupProcesses, recordSearchHistory, shouldProcessMatchVerifiedPort } from '../domain/ports'
 import { normalizeAppState } from '../domain/state'
-import type { AppState, AppTabId, FavoriteNode, KillRequest, PortProcess } from '../domain/types'
+import type { AppState, AppTabId, FavoriteNode, KillRequest, PortGroup, PortProcess } from '../domain/types'
 import { getPlatform } from '../platform/eypcPlatform'
 import { createActionRuntime } from './action/actionRuntime'
 import type { RuntimeActionContext } from './action/types'
@@ -11,15 +11,33 @@ export interface AppRuntimeSnapshot {
   state: AppState
   ports: PortProcess[]
   filteredPorts: PortProcess[]
+  filteredPortGroups: PortGroup[]
   portSearchError: string | null
   selectedPortIds: string[]
   selectedFavoriteIds: string[]
   collapsedFavoriteIds: string[]
   focusedPortId: string | null
+  focusedPortGroupId: string | null
+  selectedPortGroupId: string | null
+  activePortPane: PortPaneId
+  portGroupSearch: string
+  searchOverlayOpen: boolean
+  searchFocusRequestId: number
+  portGroupDraft: PortGroupDraft | null
   focusedFavoriteId: string | null
   favoriteRows: ReturnType<typeof flattenFavoriteTree>
   message: string
   confirm: { title: string; detail: string; onConfirm: () => void } | null
+}
+
+export type PortPaneId = 'groups' | 'results'
+
+export interface PortGroupDraft {
+  mode: 'create' | 'edit'
+  groupId: string | null
+  name: string
+  entriesText: string
+  color: string
 }
 
 export function createAppRuntime(initialState: AppState) {
@@ -30,9 +48,17 @@ export function createAppRuntime(initialState: AppState) {
   let selectedFavoriteIds: string[] = []
   let collapsedFavoriteIds: string[] = []
   let focusedPortId: string | null = null
+  let focusedPortGroupId: string | null = null
+  let selectedPortGroupId: string | null = null
+  let activePortPane: PortPaneId = 'results'
+  let portGroupSearch = ''
+  let searchOverlayOpen = false
+  let searchFocusRequestId = 0
+  let portGroupDraft: PortGroupDraft | null = null
   let focusedFavoriteId: string | null = null
   let message = ''
   let confirm: AppRuntimeSnapshot['confirm'] = null
+  let scanInFlight: Promise<void> | null = null
   const listeners = new Set<() => void>()
   const undoStack: AppState[] = []
   const actions = createActionRuntime({
@@ -55,7 +81,8 @@ export function createAppRuntime(initialState: AppState) {
     return {
       tab: state.activeTab,
       selectedIds: state.activeTab === 'ports' ? selectedPortIds : selectedFavoriteIds,
-      layerIds: confirm ? ['confirm'] : []
+      layerIds: confirm ? ['confirm'] : [],
+      portPane: activePortPane
     }
   }
 
@@ -79,8 +106,72 @@ export function createAppRuntime(initialState: AppState) {
     if (typeof groupId !== 'string') return []
     const group = state.portGroups.find((item) => item.id === groupId)
     if (!group) return []
-    const targets = new Set(buildPortGroupTargets(group))
-    return ports.filter((item) => targets.has(item.port))
+    return matchPortGroupProcesses(ports, group)
+  }
+
+  function focusedGroup(): PortGroup | null {
+    const id = focusedPortGroupId || selectedPortGroupId
+    return id ? state.portGroups.find((group) => group.id === id) || null : null
+  }
+
+  function filterPortGroups(): PortGroup[] {
+    const query = portGroupSearch.trim()
+    if (!query) return [...state.portGroups]
+    try {
+      const regexMatch = query.match(/^\/(.+)\/([gimsuy]*)$/)
+      const regex = regexMatch ? new RegExp(regexMatch[1], regexMatch[2].replace('g', '')) : null
+      return state.portGroups.filter((group) => {
+        const text = [group.name, group.id, group.entries.join(' ')].join(' ')
+        if (regex) {
+          regex.lastIndex = 0
+          return regex.test(text)
+        }
+        return text.toLowerCase().includes(query.toLowerCase())
+      })
+    } catch {
+      return [...state.portGroups]
+    }
+  }
+
+  function currentPortFilter() {
+    const group = selectedPortGroupId ? state.portGroups.find((item) => item.id === selectedPortGroupId) : null
+    const scopedPorts = group ? matchPortGroupProcesses(ports, group) : ports
+    return filterPortProcesses(scopedPorts, state.portSearch)
+  }
+
+  function moveInList(direction: 1 | -1, page = false) {
+    if (state.activeTab === 'ports' && activePortPane === 'groups') {
+      const groups = filterPortGroups()
+      if (!groups.length) {
+        focusedPortGroupId = null
+        notify()
+        return
+      }
+      const current = Math.max(0, groups.findIndex((group) => group.id === focusedPortGroupId))
+      const next = Math.min(groups.length - 1, Math.max(0, current + direction * (page ? 5 : 1)))
+      focusedPortGroupId = groups[next].id
+      notify()
+      return
+    }
+    if (state.activeTab === 'ports') {
+      const rows = currentPortFilter().items
+      if (!rows.length) {
+        focusedPortId = null
+        notify()
+        return
+      }
+      const current = Math.max(0, rows.findIndex((item) => item.id === focusedPortId))
+      const next = Math.min(rows.length - 1, Math.max(0, current + direction * (page ? 5 : 1)))
+      focusedPortId = rows[next].id
+      notify()
+    }
+  }
+
+  function toggleFocusedSelection() {
+    if (state.activeTab === 'ports' && activePortPane === 'results' && focusedPortId) {
+      selectedPortIds = selectedPortIds.includes(focusedPortId) ? selectedPortIds.filter((item) => item !== focusedPortId) : [...selectedPortIds, focusedPortId]
+      notify()
+    }
   }
 
   async function scanPorts() {
@@ -89,6 +180,13 @@ export function createAppRuntime(initialState: AppState) {
     selectedPortIds = selectedPortIds.filter((id) => visibleIds.has(id))
     focusedPortId = focusedPortId && visibleIds.has(focusedPortId) ? focusedPortId : ports[0]?.id || null
     notify()
+  }
+
+  function ensurePortsScanned() {
+    if (ports.length || scanInFlight) return
+    scanInFlight = scanPorts().finally(() => {
+      scanInFlight = null
+    })
   }
 
   async function killPortTargets(targets: PortProcess[], force: boolean, emptyMessage = '没有选中的端口进程') {
@@ -145,6 +243,59 @@ export function createAppRuntime(initialState: AppState) {
       }
     }
     notify()
+  }
+
+  function applyFocusedGroup() {
+    const group = focusedGroup()
+    if (!group) {
+      setMessage('没有选中的端口组')
+      return false
+    }
+    selectedPortGroupId = group.id
+    const rows = currentPortFilter().items
+    focusedPortId = rows[0]?.id || null
+    selectedPortIds = selectedPortIds.filter((id) => rows.some((item) => item.id === id))
+    notify()
+    return true
+  }
+
+  function openGroupDraft(group: PortGroup | null) {
+    portGroupDraft = group
+      ? { mode: 'edit', groupId: group.id, name: group.name, entriesText: group.entries.join('\n'), color: group.color }
+      : { mode: 'create', groupId: null, name: '', entriesText: '', color: '#00A676' }
+    notify()
+  }
+
+  function createGroupFromSelection() {
+    const targets = currentPortSelection()
+    if (!targets.length) {
+      setMessage('没有选中的端口进程')
+      return false
+    }
+    const portsText = [...new Set(targets.map((item) => String(item.port)))].join('\n')
+    portGroupDraft = {
+      mode: 'create',
+      groupId: null,
+      name: `端口分组 ${state.portGroups.length + 1}`,
+      entriesText: portsText,
+      color: '#00A676'
+    }
+    notify()
+    return true
+  }
+
+  function deleteFocusedGroup() {
+    const group = focusedGroup()
+    if (!group) {
+      setMessage('没有选中的端口组')
+      return false
+    }
+    state.portGroups = state.portGroups.filter((item) => item.id !== group.id)
+    if (selectedPortGroupId === group.id) selectedPortGroupId = null
+    focusedPortGroupId = state.portGroups[0]?.id || null
+    save()
+    notify()
+    return true
   }
 
   function selectedFavorite(): FavoriteNode | null {
@@ -214,13 +365,23 @@ export function createAppRuntime(initialState: AppState) {
     actions.register({ id: 'ports.kill.force', title: '强杀选中进程', group: '端口', risk: 'destructive', scope: 'tab', priority: 100, shortcut: 'Ctrl+Enter', when: (ctx) => ctx.tab === 'ports', run: () => { void killPorts(true); return true } })
     actions.register({ id: 'ports.killGroup.confirm', title: '终止端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => { confirmKillGroup(args?.groupId); return true } })
     actions.register({ id: 'ports.killGroup.force', title: '强杀端口组', group: '端口', risk: 'destructive', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => { void killPortTargets(currentPortGroupSelection(args?.groupId), true, '组内端口当前无监听进程'); return true } })
+    actions.register({ id: 'ports.pane.groups', title: '聚焦端口组栏', group: '端口', risk: 'normal', scope: 'tab', priority: 95, shortcut: 'Alt+ArrowLeft', when: (ctx) => ctx.tab === 'ports', run: () => { activePortPane = 'groups'; focusedPortGroupId = focusedPortGroupId || filterPortGroups()[0]?.id || null; notify(); return true } })
+    actions.register({ id: 'ports.pane.results', title: '聚焦端口结果栏', group: '端口', risk: 'normal', scope: 'tab', priority: 95, shortcut: 'Alt+ArrowRight', when: (ctx) => ctx.tab === 'ports', run: () => { activePortPane = 'results'; focusedPortId = focusedPortId || currentPortFilter().items[0]?.id || null; notify(); return true } })
+    actions.register({ id: 'ports.group.apply', title: '应用端口组过滤', group: '端口', risk: 'normal', scope: 'tab', priority: 95, shortcut: 'Enter', when: (ctx) => ctx.tab === 'ports', run: () => applyFocusedGroup() })
+    actions.register({ id: 'ports.group.kill.confirm', title: '终止当前端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'Shift+Enter', when: (ctx) => ctx.tab === 'ports', run: () => { confirmKillGroup(focusedGroup()?.id); return true } })
+    actions.register({ id: 'ports.group.kill.force', title: '强杀当前端口组', group: '端口', risk: 'destructive', scope: 'tab', priority: 94, shortcut: 'Ctrl+Shift+Enter', when: (ctx) => ctx.tab === 'ports', run: () => { void killPortTargets(currentPortGroupSelection(focusedGroup()?.id), true, '组内端口当前无监听进程'); return true } })
+    actions.register({ id: 'ports.group.createFromSelection', title: '选中端口收藏为组', group: '端口', risk: 'data-write', scope: 'tab', priority: 93, shortcut: 'Ctrl+G', when: (ctx) => ctx.tab === 'ports', run: () => createGroupFromSelection() })
+    actions.register({ id: 'ports.group.create', title: '新建端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'ports', run: () => { openGroupDraft(null); return true } })
+    actions.register({ id: 'ports.group.rename', title: '重命名端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'F2', when: (ctx) => ctx.tab === 'ports', run: () => { const group = focusedGroup(); if (!group) return false; openGroupDraft(group); return true } })
+    actions.register({ id: 'ports.group.edit', title: '编辑端口组规则', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'Ctrl+E', when: (ctx) => ctx.tab === 'ports', run: () => { const group = focusedGroup(); if (!group) return false; openGroupDraft(group); return true } })
+    actions.register({ id: 'ports.group.delete', title: '删除端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 91, shortcut: 'Delete', when: (ctx) => ctx.tab === 'ports', run: () => deleteFocusedGroup() })
     actions.register({ id: 'favorites.open', title: '打开收藏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Enter', when: (ctx) => ctx.tab === 'favorites', run: () => { const item = selectedFavorite(); if (item?.path) void platform.files.open(item.path); return true } })
     actions.register({ id: 'favorites.reveal', title: '定位收藏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+Enter', when: (ctx) => ctx.tab === 'favorites', run: () => { const item = selectedFavorite(); if (item?.path) void platform.files.reveal(item.path); return true } })
     actions.register({ id: 'favorites.copyPath', title: '复制收藏路径', group: '收藏', risk: 'normal', scope: 'tab', priority: 95, when: (ctx) => ctx.tab === 'favorites', run: () => { void copyFavoritePath(); return true } })
     actions.register({ id: 'favorites.pickAndAdd', title: '选择路径并收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, when: (ctx) => ctx.tab === 'favorites', run: () => { void pickAndAddFavorite(); return true } })
     actions.register({ id: 'favorites.remove', title: '移出收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 100, when: (ctx) => ctx.tab === 'favorites', run: () => { removeFavorite(); return true } })
     actions.register({ id: 'settings.open', title: '打开设置', group: '全局', risk: 'normal', scope: 'global', priority: 10, shortcut: 'Ctrl+Alt+Shift+S', when: () => true, run: () => { setTab('settings'); return true } })
-    actions.register({ id: 'search.focus', title: '聚焦搜索', group: '全局', risk: 'normal', scope: 'global', priority: 10, shortcut: 'Ctrl+F', when: () => true, run: () => true })
+    actions.register({ id: 'search.focus', title: '聚焦搜索', group: '全局', risk: 'normal', scope: 'global', priority: 10, shortcut: 'Ctrl+F', when: () => true, run: () => { searchFocusRequestId += 1; ensurePortsScanned(); notify(); return true } })
   }
 
   registerActions()
@@ -231,17 +392,25 @@ export function createAppRuntime(initialState: AppState) {
       return () => listeners.delete(listener)
     },
     snapshot(): AppRuntimeSnapshot {
-      const portFilter = filterPortProcesses(ports, state.portSearch)
+      const portFilter = currentPortFilter()
       const favoriteTree = filterFavoriteTree(state.favorites, { keyword: state.favoriteSearch, tags: [], groupId: null })
       return {
         state,
         ports,
         filteredPorts: portFilter.items,
+        filteredPortGroups: filterPortGroups(),
         portSearchError: portFilter.error,
         selectedPortIds,
         selectedFavoriteIds,
         collapsedFavoriteIds,
         focusedPortId,
+        focusedPortGroupId,
+        selectedPortGroupId,
+        activePortPane,
+        portGroupSearch,
+        searchOverlayOpen,
+        searchFocusRequestId,
+        portGroupDraft,
         focusedFavoriteId,
         favoriteRows: flattenFavoriteTree(favoriteTree, collapsedFavoriteIds),
         message,
@@ -254,7 +423,14 @@ export function createAppRuntime(initialState: AppState) {
     setPortSearch(value: string) {
       state.portSearch = value
       state.portSearchHistory = recordSearchHistory(state.portSearchHistory, value)
+      ensurePortsScanned()
       save()
+      notify()
+    },
+    setPortGroupSearch(value: string) {
+      portGroupSearch = value
+      const groups = filterPortGroups()
+      focusedPortGroupId = focusedPortGroupId && groups.some((group) => group.id === focusedPortGroupId) ? focusedPortGroupId : groups[0]?.id || null
       notify()
     },
     setFavoriteSearch(value: string) {
@@ -269,7 +445,13 @@ export function createAppRuntime(initialState: AppState) {
       notify()
     },
     focusPort(id: string) {
+      activePortPane = 'results'
       focusedPortId = id
+      notify()
+    },
+    focusPortGroup(id: string) {
+      activePortPane = 'groups'
+      focusedPortGroupId = id
       notify()
     },
     focusFavorite(id: string) {
@@ -292,6 +474,34 @@ export function createAppRuntime(initialState: AppState) {
     },
     addFavorite,
     removeFavorite,
+    savePortGroupDraft(input: { name: string; entriesText: string; color: string }) {
+      const draft = portGroupDraft
+      if (!draft) return
+      const entries = [...new Set(input.entriesText.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))]
+      if (!input.name.trim() || !entries.length) {
+        setMessage('端口组名称和规则不能为空')
+        return
+      }
+      if (draft.mode === 'edit' && draft.groupId) {
+        state.portGroups = state.portGroups.map((group) => group.id === draft.groupId ? { ...group, name: input.name.trim(), color: input.color || '#00A676', entries } : group)
+        focusedPortGroupId = draft.groupId
+      } else {
+        const id = `group:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
+        state.portGroups.push({ id, name: input.name.trim(), color: input.color || '#00A676', entries })
+        focusedPortGroupId = id
+      }
+      portGroupDraft = null
+      save()
+      notify()
+    },
+    cancelPortGroupDraft() {
+      portGroupDraft = null
+      notify()
+    },
+    closeSearchOverlay() {
+      searchOverlayOpen = false
+      notify()
+    },
     updateKeybinding(commandId: string, shortcutId: string, disabled = false) {
       state.settings.keybindingOverrides = state.settings.keybindingOverrides.filter((item) => item.commandId !== commandId)
       state.settings.keybindingOverrides.push({ commandId, shortcutId, source: disabled ? 'removed' : 'user', disabled })
@@ -330,7 +540,8 @@ export function createAppRuntime(initialState: AppState) {
       const binding = resolveKeybinding(buildEffectiveKeybindings(state.settings.keybindingOverrides), shortcutId, {
         tab: state.activeTab,
         confirmOpen: Boolean(confirm),
-        textInputFocused
+        textInputFocused,
+        portPane: activePortPane
       })
       if (!binding) return null
       if (binding.actionId === 'tab.next' || binding.actionId === 'tab.prev') {
@@ -343,6 +554,26 @@ export function createAppRuntime(initialState: AppState) {
       if (binding.actionId.startsWith('tab.select.')) {
         const tab = binding.actionId.replace('tab.select.', '') as AppTabId
         if (['ports', 'favorites', 'settings'].includes(tab)) setTab(tab)
+        return binding.actionId
+      }
+      if (binding.actionId === 'list.up') {
+        moveInList(-1)
+        return binding.actionId
+      }
+      if (binding.actionId === 'list.down') {
+        moveInList(1)
+        return binding.actionId
+      }
+      if (binding.actionId === 'list.pageUp') {
+        moveInList(-1, true)
+        return binding.actionId
+      }
+      if (binding.actionId === 'list.pageDown') {
+        moveInList(1, true)
+        return binding.actionId
+      }
+      if (binding.actionId === 'list.toggleSelection') {
+        toggleFocusedSelection()
         return binding.actionId
       }
       actions.dispatch({ actionId: binding.actionId, context: context() })

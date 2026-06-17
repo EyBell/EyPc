@@ -61,6 +61,11 @@ function parseRegexQuery(raw: string): RegExp | null {
   return new RegExp(match[1], match[2].replace('g', ''))
 }
 
+function parseAutoRegexQuery(raw: string): RegExp | null {
+  if (!/[|()[\]{}+*?\\^$]/.test(raw)) return null
+  return new RegExp(raw, 'i')
+}
+
 function searchablePortText(item: PortProcess): string {
   return [item.pid, item.port, item.command, item.address, item.user || '', item.protocol, item.state].join(' ').toLowerCase()
 }
@@ -69,19 +74,41 @@ function searchablePortFields(item: PortProcess): string[] {
   return [String(item.pid), String(item.port), item.command, item.address, item.user || '', item.protocol, item.state]
 }
 
+function bestTextScore(item: PortProcess, query: string, regex: RegExp | null): number {
+  const needle = query.toLowerCase()
+  const fields = searchablePortFields(item)
+  const lowerFields = fields.map((field) => field.toLowerCase())
+  if (lowerFields.some((field) => field === needle)) return 1000
+  if (lowerFields.some((field) => field.startsWith(needle))) return 800
+  if (searchablePortText(item).includes(needle)) return 600
+  if (regex && fields.some((field) => {
+    regex.lastIndex = 0
+    return regex.test(field)
+  })) return 400
+  return 0
+}
+
+function regexScore(item: PortProcess, regex: RegExp): number {
+  return searchablePortFields(item).some((field) => {
+    regex.lastIndex = 0
+    return regex.test(field)
+  }) ? 400 : 0
+}
+
 export function filterPortProcesses(items: PortProcess[], keyword: string): PortFilterResult {
   const query = keyword.trim()
   if (!query) return { items: [...items], error: null }
   try {
     const regex = parseRegexQuery(query)
-    if (regex) {
-      return { items: items.filter((item) => searchablePortFields(item).some((field) => regex.test(field))), error: null }
-    }
+    const autoRegex = regex ? null : parseAutoRegexQuery(query)
+    const scored = items
+      .map((item, index) => ({ item, index, score: regex ? regexScore(item, regex) : bestTextScore(item, query, autoRegex) }))
+      .filter((row) => row.score > 0)
+      .sort((a, b) => b.score - a.score || a.item.port - b.item.port || a.item.pid - b.item.pid || a.index - b.index)
+    return { items: scored.map((row) => row.item), error: null }
   } catch (error) {
     return { items: [...items], error: error instanceof Error ? error.message : 'Invalid regular expression' }
   }
-  const needle = query.toLowerCase()
-  return { items: items.filter((item) => searchablePortText(item).includes(needle)), error: null }
 }
 
 export function recordSearchHistory(history: string[], keyword: string): string[] {
@@ -107,6 +134,30 @@ export function buildPortGroupTargets(group: PortGroup): number[] {
     if (Number.isInteger(port) && port > 0 && port <= 65535) ports.add(port)
   }
   return [...ports].sort((a, b) => a - b)
+}
+
+function portGroupRegexes(group: PortGroup): RegExp[] {
+  return group.entries.flatMap((entry) => {
+    try {
+      const regex = parseRegexQuery(String(entry).trim())
+      return regex ? [regex] : []
+    } catch {
+      return []
+    }
+  })
+}
+
+export function matchPortGroupProcesses(items: PortProcess[], group: PortGroup): PortProcess[] {
+  const targetPorts = new Set(buildPortGroupTargets(group))
+  const regexes = portGroupRegexes(group)
+  return items.filter((item) => {
+    if (targetPorts.has(item.port)) return true
+    const fields = searchablePortFields(item)
+    return regexes.some((regex) => fields.some((field) => {
+      regex.lastIndex = 0
+      return regex.test(field)
+    }))
+  })
 }
 
 export function shouldProcessMatchVerifiedPort(target: { pid: number; port: number }, current: Array<{ pid: number; port: number }>): boolean {

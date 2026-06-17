@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { normalizeAppState } from './domain/state'
 import { getPlatform } from './platform/eypcPlatform'
 import ConfirmLayer from './components/ConfirmLayer.vue'
@@ -52,6 +52,10 @@ function onKeydown(event: KeyboardEvent) {
   if (handled) event.preventDefault()
 }
 
+watch(() => snapshot.value.searchFocusRequestId, () => {
+  requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-role="primary-search"]')?.focus())
+})
+
 onMounted(() => {
   disposeRuntime = runtime.subscribe(() => {
     version.value += 1
@@ -60,7 +64,7 @@ onMounted(() => {
   const route = routePluginFeature(platform.getEnterPayload())
   runtime.setTab(route.tab)
   if (route.focusSearch) {
-    requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-role="primary-search"]')?.focus())
+    runtime.dispatch('search.focus')
   }
   platform.clearEnterPayload()
   void runtime.scanPorts()
@@ -79,9 +83,13 @@ onUnmounted(() => {
         <PortsPage
           :snapshot="snapshot"
           @search="runtime.setPortSearch"
+          @group-search="runtime.setPortGroupSearch"
           @scan="runtime.scanPorts"
           @focus="runtime.focusPort"
           @toggle="runtime.togglePortSelection"
+          @focus-group="runtime.focusPortGroup"
+          @save-group-draft="runtime.savePortGroupDraft"
+          @cancel-group-draft="runtime.cancelPortGroupDraft"
           @dispatch="runtime.dispatch"
         />
       </template>
