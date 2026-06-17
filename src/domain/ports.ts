@@ -14,6 +14,27 @@ function createPortProcess(input: Omit<PortProcess, 'id'>): PortProcess {
   }
 }
 
+export function dedupePortProcesses(items: PortProcess[]): PortProcess[] {
+  const byKey = new Map<string, PortProcess>()
+  for (const item of items) {
+    const key = `${item.pid}:${item.port}:${item.protocol}`
+    const existing = byKey.get(key)
+    if (!existing) {
+      byKey.set(key, { ...item, id: key })
+      continue
+    }
+    const addresses = [...new Set([...existing.address.split(' · '), item.address].map((value) => value.trim()).filter(Boolean))]
+    byKey.set(key, {
+      ...existing,
+      command: existing.command || item.command,
+      user: existing.user || item.user,
+      state: existing.state || item.state,
+      address: addresses.join(' · ')
+    })
+  }
+  return [...byKey.values()]
+}
+
 function parsePortFromAddress(value: string): number | null {
   const match = value.match(/:(\d+)(?:\s|\)|$)/)
   if (!match) return null
@@ -22,7 +43,7 @@ function parsePortFromAddress(value: string): number | null {
 }
 
 export function parseLsofListeningTcp(output: string): PortProcess[] {
-  return String(output || '')
+  const rows = String(output || '')
     .split(/\r?\n/)
     .slice(1)
     .map((line) => line.trim())
@@ -38,10 +59,11 @@ export function parseLsofListeningTcp(output: string): PortProcess[] {
       if (!Number.isInteger(pid) || !port) return []
       return [createPortProcess({ pid, port, command, user, address: name.replace(/\s*\(LISTEN\)\s*$/, ''), protocol: 'tcp', state: 'LISTEN' })]
     })
+  return dedupePortProcesses(rows)
 }
 
 export function parseNetstatListeningTcp(output: string, processNames: Record<number, string> = {}): PortProcess[] {
-  return String(output || '')
+  const rows = String(output || '')
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => /^TCP\s+/i.test(line) && /\bLISTENING\b/i.test(line))
@@ -53,6 +75,7 @@ export function parseNetstatListeningTcp(output: string, processNames: Record<nu
       if (!Number.isInteger(pid) || !port) return []
       return [createPortProcess({ pid, port, command: processNames[pid] || `pid-${pid}`, address: localAddress, protocol: 'tcp', state: 'LISTEN' })]
     })
+  return dedupePortProcesses(rows)
 }
 
 function parseRegexQuery(raw: string): RegExp | null {

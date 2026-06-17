@@ -9,6 +9,7 @@ import PortsPage from './pages/PortsPage.vue'
 import FavoritesPage from './pages/FavoritesPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
 import { createAppRuntime } from './runtime/appRuntime'
+import type { ActiveInputRole } from './runtime/appRuntime'
 import { routePluginFeature } from './runtime/feature/featureRouting'
 
 const platform = getPlatform()
@@ -46,14 +47,34 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return ['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName) || element.isContentEditable
 }
 
+function activeInputRole(target: EventTarget | null): ActiveInputRole | undefined {
+  const element = target as HTMLElement | null
+  if (!element || !isEditableTarget(element)) return undefined
+  const role = element.closest<HTMLElement>('[data-role]')?.dataset.role
+  if (role === 'port-group-search') return 'port-group-search'
+  if (role === 'port-group-editor') return 'port-group-editor'
+  if (role === 'primary-search') return snapshot.value.state.activeTab === 'ports' ? 'port-search' : 'favorite-search'
+  if (snapshot.value.state.activeTab === 'settings') return 'settings'
+  return 'other'
+}
+
 function onKeydown(event: KeyboardEvent) {
   const shortcutId = shortcutFromEvent(event)
-  const handled = runtime.handleShortcut(shortcutId, isEditableTarget(event.target))
+  const textInputFocused = isEditableTarget(event.target)
+  const handled = runtime.handleShortcut(shortcutId, {
+    textInputFocused,
+    activeInputRole: activeInputRole(event.target)
+  })
   if (handled) event.preventDefault()
 }
 
 watch(() => snapshot.value.searchFocusRequestId, () => {
-  requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-role="primary-search"]')?.focus())
+  requestAnimationFrame(() => {
+    const target = snapshot.value.searchFocusTarget === 'port-groups'
+      ? 'port-group-search'
+      : 'primary-search'
+    document.querySelector<HTMLInputElement>(`[data-role="${target}"]`)?.focus()
+  })
 })
 
 onMounted(() => {
@@ -116,7 +137,7 @@ onUnmounted(() => {
         />
       </template>
     </TabShell>
-    <CommandHints :tab="snapshot.state.activeTab" :message="snapshot.message" />
+    <CommandHints :snapshot="snapshot" />
     <ConfirmLayer
       v-if="snapshot.confirm"
       :title="snapshot.confirm.title"

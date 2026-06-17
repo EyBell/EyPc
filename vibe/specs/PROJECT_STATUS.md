@@ -10,9 +10,10 @@ This is the project process hub for EyPc. It tracks the current main line, activ
 
 - Date: 2026-06-17.
 - Product: uTools plugin for cross-platform PC capability calls.
-- Current main line: Port management redesign for relevance search, user-defined groups, keyboard cleanup, command mapping, and real process scan fallback.
-- Current task: Port management redesign is implemented and locally verified; task docs start at [260617-eypc-port-management-redesign/01-spec.md](260617-eypc-port-management-redesign/01-spec.md#L1), with latest verification in [260617-eypc-port-management-redesign/04-verify.md](260617-eypc-port-management-redesign/04-verify.md#L1).
+- Current main line: Port management redesign for relevance search, user-defined groups, keyboard cleanup, command mapping, real process scan/kill fallback, port-tab keyboard focus, EzClipboard-style explicit drawer interactions, and scan-result dedupe.
+- Current task: Port EzClipboard interaction refresh is implemented and locally verified: scan dedupe, default hidden selection boxes, explicit left detail drawer, explicit right action drawer, search-input `Ctrl+←/→`, and Esc layering are recorded in [260617-eypc-port-ezclipboard-interaction/04-verify.md](260617-eypc-port-ezclipboard-interaction/04-verify.md#L1).
 - Architecture source: [../knowledge/ARCHITECTURE.md](../knowledge/ARCHITECTURE.md#L1).
+- Project interaction taste: [../knowledge/developer-soul.md](../knowledge/developer-soul.md#L1).
 
 ## Active Process Index
 
@@ -31,11 +32,26 @@ This is the project process hub for EyPc. It tracks the current main line, activ
 - Port management redesign tasks: [260617-eypc-port-management-redesign/03-tasks.md](260617-eypc-port-management-redesign/03-tasks.md#L1).
 - Port management redesign verification: [260617-eypc-port-management-redesign/04-verify.md](260617-eypc-port-management-redesign/04-verify.md#L1).
 - Port management redesign review: [260617-eypc-port-management-redesign/05-review.md](260617-eypc-port-management-redesign/05-review.md#L1).
+- Port tab interaction spec: [260617-eypc-port-tab-interaction/01-spec.md](260617-eypc-port-tab-interaction/01-spec.md#L1).
+- Port tab interaction plan: [260617-eypc-port-tab-interaction/02-plan.md](260617-eypc-port-tab-interaction/02-plan.md#L1).
+- Port tab interaction tasks: [260617-eypc-port-tab-interaction/03-tasks.md](260617-eypc-port-tab-interaction/03-tasks.md#L1).
+- Port tab interaction verification: [260617-eypc-port-tab-interaction/04-verify.md](260617-eypc-port-tab-interaction/04-verify.md#L1).
+- Port tab interaction review: [260617-eypc-port-tab-interaction/05-review.md](260617-eypc-port-tab-interaction/05-review.md#L1).
+- Port EzClipboard interaction spec: [260617-eypc-port-ezclipboard-interaction/01-spec.md](260617-eypc-port-ezclipboard-interaction/01-spec.md#L1).
+- Port EzClipboard interaction plan: [260617-eypc-port-ezclipboard-interaction/02-plan.md](260617-eypc-port-ezclipboard-interaction/02-plan.md#L1).
+- Port EzClipboard interaction tasks: [260617-eypc-port-ezclipboard-interaction/03-tasks.md](260617-eypc-port-ezclipboard-interaction/03-tasks.md#L1).
+- Port EzClipboard interaction verification: [260617-eypc-port-ezclipboard-interaction/04-verify.md](260617-eypc-port-ezclipboard-interaction/04-verify.md#L1).
+- Port EzClipboard interaction review: [260617-eypc-port-ezclipboard-interaction/05-review.md](260617-eypc-port-ezclipboard-interaction/05-review.md#L1).
+- Dev kill bridge spec: [260617-eypc-dev-kill-bridge/01-spec.md](260617-eypc-dev-kill-bridge/01-spec.md#L1).
+- Dev kill bridge plan: [260617-eypc-dev-kill-bridge/02-plan.md](260617-eypc-dev-kill-bridge/02-plan.md#L1).
+- Dev kill bridge tasks: [260617-eypc-dev-kill-bridge/03-tasks.md](260617-eypc-dev-kill-bridge/03-tasks.md#L1).
+- Dev kill bridge verification: [260617-eypc-dev-kill-bridge/04-verify.md](260617-eypc-dev-kill-bridge/04-verify.md#L1).
+- Dev kill bridge review: [260617-eypc-dev-kill-bridge/05-review.md](260617-eypc-dev-kill-bridge/05-review.md#L1).
 
 ## Verification Gates
 
 - Automated: `pnpm run test`, `pnpm run typecheck`, `pnpm run build`, `pnpm run validate:utools`.
-- Manual: local GUI result rendering for `8081` is confirmed; macOS real kill with a temporary process and Windows/Linux real process scan remain release gates.
+- Manual: local GUI result rendering for `8081` is confirmed; port-tab UI smoke is static in [260617-eypc-port-tab-interaction/04-verify.md](260617-eypc-port-tab-interaction/04-verify.md#L1); port dual-drawer and search/dedupe browser smoke is tracked in [260617-eypc-port-ezclipboard-interaction/04-verify.md](260617-eypc-port-ezclipboard-interaction/04-verify.md#L1); dev kill bridge safe smoke is tracked in [260617-eypc-dev-kill-bridge/04-verify.md](260617-eypc-dev-kill-bridge/04-verify.md#L1); macOS real kill with a temporary process and Windows/Linux real process scan remain release gates.
 
 ## Current Implementation Focus
 

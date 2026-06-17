@@ -48,6 +48,27 @@ async function scanViaDevApi(): Promise<PortProcess[]> {
   }
 }
 
+async function killViaDevApi(request: KillRequest): Promise<KillResult> {
+  if (typeof fetch !== 'function') return { ok: false, ...request, error: 'dev kill api unavailable' }
+  try {
+    const response = await fetch('/__eypc__/ports/kill', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request)
+    })
+    const payload = await response.json() as Partial<KillResult>
+    return {
+      ok: Boolean(response.ok && payload.ok),
+      pid: Number(payload.pid ?? request.pid),
+      port: Number(payload.port ?? request.port),
+      force: Boolean(payload.force ?? request.force),
+      error: typeof payload.error === 'string' ? payload.error : response.ok ? undefined : 'dev kill api failed'
+    }
+  } catch (error) {
+    return { ok: false, ...request, error: error instanceof Error ? error.message : 'dev kill api failed' }
+  }
+}
+
 export function getPlatform(): EypcPlatformApi {
   if (typeof window !== 'undefined' && window.eypcPlatform) return window.eypcPlatform
   return {
@@ -60,7 +81,7 @@ export function getPlatform(): EypcPlatformApi {
     },
     ports: {
       scan: scanViaDevApi,
-      kill: async (request) => ({ ok: false, ...request, error: 'uTools preload unavailable' })
+      kill: killViaDevApi
     },
     files: {
       open: async () => false,

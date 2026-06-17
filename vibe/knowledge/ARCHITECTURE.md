@@ -25,14 +25,22 @@ uTools feature entry / keyboard input
 - Domain functions are pure and covered by tests.
 - Platform functions isolate shell, process, file, and uTools APIs.
 - UI renders projections and dispatches intents; it does not call shell commands directly.
+- Project interaction taste is recorded in [developer-soul.md](developer-soul.md#L1); it guides medium or larger UI, shortcut, drawer, and AI-rule work before implementation details.
 - Favorites removal never deletes disk files.
 - Force-kill actions must be scoped to selected PID and verified port match.
 - Port group cleanup expands configured group entries through the domain layer, then filters against the current scan before any kill request.
-- Port search ranks exact, prefix, contains, and regex matches in [src/domain/ports.ts](../../src/domain/ports.ts#L98); regex group rules match full process text in [src/domain/ports.ts](../../src/domain/ports.ts#L150).
+- Port scan results are deduped by `pid:port:protocol` in [src/domain/ports.ts](../../src/domain/ports.ts#L1), and duplicate listener addresses are merged before UI projection.
+- Port search ranks exact, prefix, contains, and regex matches in [src/domain/ports.ts](../../src/domain/ports.ts#L1); regex group rules match full process text in [src/domain/ports.ts](../../src/domain/ports.ts#L1).
 - Port groups are user-defined only; state normalization removes legacy `default:*` groups in [src/domain/state.ts](../../src/domain/state.ts#L60).
 - Ports UI uses a two-pane group/results model with inline group/result search and group editing in [src/pages/PortsPage.vue](../../src/pages/PortsPage.vue#L29).
+- Port-tab keyboard focus reserves `Tab` and `Shift+Tab` for group/results pane cycling in [src/runtime/keybinding/keybindingRuntime.ts](../../src/runtime/keybinding/keybindingRuntime.ts#L38), while global tab switching uses `Ctrl+1/2/3`.
+- Port search focus is pane-aware: `Ctrl+F` targets group search or result search through [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L122) and [src/App.vue](../../src/App.vue#L55).
+- Port search inputs are action-aware: `↑↓` / `Ctrl+K/J`, `Space`, `Enter`, and `Ctrl+Enter` can operate on visible results while unrelated text inputs remain protected by [src/runtime/keybinding/keybindingRuntime.ts](../../src/runtime/keybinding/keybindingRuntime.ts#L1).
+- Port drawers are explicit runtime projections in [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L1): `Ctrl+Left` opens the left single-process detail drawer, `Ctrl+Right` opens the right action menu, and multi-select does not auto-open a drawer.
+- Port page `Escape` recovers inward before exiting outward: confirmation/editor, open drawer, multi-select, search/filter, and result focus are handled in [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L1).
 - Port search opening and first typed query auto-trigger scan through [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L183), and uTools port entry dispatches search focus in [src/App.vue](../../src/App.vue#L64).
 - Cross-platform scan commands are centralized as macOS/Linux `lsof -nP -iTCP -sTCP:LISTEN` and Windows `netstat -ano -p tcp` in [src/platform/processBridge.ts](../../src/platform/processBridge.ts#L8), with absolute-path GUI host candidates in [src/platform/processBridge.ts](../../src/platform/processBridge.ts#L13) and [preload/index.js](../../preload/index.js#L25).
+- Local browser dev mode mirrors uTools process termination through POST `/__eypc__/ports/kill` in [src/platform/devPortServer.ts](../../src/platform/devPortServer.ts#L1); it re-scans before kill and refuses requests when PID no longer owns the requested port.
 - Favorite path picking is an optional platform capability; unavailable hosts must return `null` and preserve manual path entry.
 
 ## Current Modules

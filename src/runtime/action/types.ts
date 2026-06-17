@@ -13,6 +13,8 @@ export interface RuntimeActionContext {
 export interface RuntimeActionDefinition {
   id: string
   title: string
+  description?: string
+  icon?: string
   group: string
   risk: RuntimeActionRisk
   scope: RuntimeActionScope

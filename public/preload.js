@@ -58,8 +58,29 @@ function portFromAddress(value) {
   return match ? Number(match[1]) : null
 }
 
+function dedupePorts(items) {
+  const byKey = new Map()
+  for (const item of items) {
+    const key = `${item.pid}:${item.port}:${item.protocol}`
+    const existing = byKey.get(key)
+    if (!existing) {
+      byKey.set(key, { ...item, id: key })
+      continue
+    }
+    const addresses = Array.from(new Set([...String(existing.address || '').split(' · '), item.address].map((value) => String(value || '').trim()).filter(Boolean)))
+    byKey.set(key, {
+      ...existing,
+      command: existing.command || item.command,
+      user: existing.user || item.user,
+      state: existing.state || item.state,
+      address: addresses.join(' · ')
+    })
+  }
+  return Array.from(byKey.values())
+}
+
 function parseLsof(output) {
-  return String(output || '')
+  const rows = String(output || '')
     .split(/\r?\n/)
     .slice(1)
     .map((line) => line.trim())
@@ -72,10 +93,11 @@ function parseLsof(output) {
       if (!Number.isInteger(pid) || !port) return []
       return [{ id: `${pid}:${port}:tcp`, pid, port, command: parts[0], user: parts[2], address: parts.slice(8).join(' ').replace(/\s*\(LISTEN\)\s*$/, ''), protocol: 'tcp', state: 'LISTEN' }]
     })
+  return dedupePorts(rows)
 }
 
 function parseNetstat(output) {
-  return String(output || '')
+  const rows = String(output || '')
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => /^TCP\s+/i.test(line) && /\bLISTENING\b/i.test(line))
@@ -86,6 +108,7 @@ function parseNetstat(output) {
       if (!Number.isInteger(pid) || !port) return []
       return [{ id: `${pid}:${port}:tcp`, pid, port, command: `pid-${pid}`, address: parts[1], protocol: 'tcp', state: 'LISTEN' }]
     })
+  return dedupePorts(rows)
 }
 
 async function scanPorts() {
