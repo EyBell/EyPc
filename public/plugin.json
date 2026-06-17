@@ -3,7 +3,7 @@
   "description": "跨平台 PC 能力调用工具",
   "author": "gdkmjd",
   "main": "index.html",
-  "logo": "logo.svg",
+  "logo": "logo.png",
   "preload": "preload.js",
   "development": {
     "main": "http://127.0.0.1:8092/"
