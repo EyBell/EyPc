@@ -247,6 +247,16 @@ window.eypcPlatform = {
     },
     pickFavorite: pickFavoritePath
   },
+  app: {
+    hide: async () => {
+      try {
+        if (globalThis.utools && typeof globalThis.utools.hideMainWindow === 'function') {
+          return Boolean(globalThis.utools.hideMainWindow(true))
+        }
+      } catch {}
+      return false
+    }
+  },
   getEnterPayload() {
     return lastEnterPayload
   },

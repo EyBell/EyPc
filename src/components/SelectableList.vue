@@ -15,7 +15,7 @@ defineEmits<{
 </script>
 
 <template>
-  <div class="list-surface" role="listbox">
+  <div class="list-surface" role="listbox" data-role="port-results-list" tabindex="-1">
     <div
       v-for="item in items"
       :key="item.id"
@@ -23,13 +23,14 @@ defineEmits<{
       role="option"
       :aria-selected="selectedIds.includes(item.id)"
       :class="{ selected: selectedIds.includes(item.id), focused: focusedId === item.id, 'selection-hidden': !showSelection }"
+      :title="`:${item.port} · ${item.command} · PID ${item.pid} · ${item.address}`"
       @click="$emit('focus', item.id)"
       @dblclick="$emit('toggle', item.id)"
     >
       <input v-if="showSelection" type="checkbox" :checked="selectedIds.includes(item.id)" @click.stop="$emit('toggle', item.id)" />
       <span class="port-number">:{{ item.port }}</span>
       <span class="port-command">{{ item.command }}</span>
-      <span class="port-meta">PID {{ item.pid }} · {{ item.address }}</span>
+      <span class="port-meta">PID {{ item.pid }}</span>
       <span class="port-inline-actions" @click.stop>
         <button type="button" title="进程详情" aria-label="进程详情" @click="$emit('action', item.id, 'ports.detail.open')">详</button>
         <button type="button" title="终止确认" aria-label="终止确认" @click="$emit('action', item.id, 'ports.kill.confirm')">终</button>

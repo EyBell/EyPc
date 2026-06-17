@@ -1,11 +1,24 @@
-import type { PortGroup, PortProcess } from './types'
+import type { PortGroup, PortGroupFolder, PortGroupTarget, PortProcess } from './types'
+export { recordSearchHistory } from './searchHistory'
 
 export interface PortFilterResult {
   items: PortProcess[]
   error: string | null
 }
 
-const HISTORY_LIMIT = 30
+export interface PortGroupTreeRow {
+  rowId: string
+  target: PortGroupTarget
+  kind: PortGroupTarget['kind']
+  name: string
+  color: string
+  entries: string[]
+  depth: number
+  collapsed: boolean
+  childCount: number
+  group: PortGroup | null
+  folder: PortGroupFolder | null
+}
 
 function createPortProcess(input: Omit<PortProcess, 'id'>): PortProcess {
   return {
@@ -134,12 +147,6 @@ export function filterPortProcesses(items: PortProcess[], keyword: string): Port
   }
 }
 
-export function recordSearchHistory(history: string[], keyword: string): string[] {
-  const value = keyword.trim()
-  if (!value) return history.slice(0, HISTORY_LIMIT)
-  return [value, ...history.filter((item) => item !== value)].slice(0, HISTORY_LIMIT)
-}
-
 export function buildPortGroupTargets(group: PortGroup): number[] {
   const ports = new Set<number>()
   for (const entry of group.entries) {
@@ -181,6 +188,125 @@ export function matchPortGroupProcesses(items: PortProcess[], group: PortGroup):
       return regex.test(field)
     }))
   })
+}
+
+function sortedFolders(folders: PortGroupFolder[]): PortGroupFolder[] {
+  return [...folders].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+}
+
+function sortedGroups(groups: PortGroup[]): PortGroup[] {
+  return [...groups].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+}
+
+function groupMatchesKeyword(group: PortGroup, query: string): boolean {
+  if (!query) return true
+  return [group.name, group.id, group.entries.join(' ')].join(' ').toLowerCase().includes(query)
+}
+
+function folderMatchesKeyword(folder: PortGroupFolder, children: PortGroup[], query: string): boolean {
+  if (!query) return true
+  const folderText = [folder.name, folder.id].join(' ').toLowerCase()
+  return folderText.includes(query) || children.some((group) => groupMatchesKeyword(group, query))
+}
+
+function rowForFolder(folder: PortGroupFolder, childCount: number, collapsed: boolean): PortGroupTreeRow {
+  return {
+    rowId: `folder:${folder.id}`,
+    target: { kind: 'folder', id: folder.id },
+    kind: 'folder',
+    name: folder.name,
+    color: folder.color,
+    entries: [],
+    depth: 0,
+    collapsed,
+    childCount,
+    group: null,
+    folder
+  }
+}
+
+function rowForGroup(group: PortGroup, depth: number): PortGroupTreeRow {
+  return {
+    rowId: `group:${group.id}`,
+    target: { kind: 'group', id: group.id },
+    kind: 'group',
+    name: group.name,
+    color: group.color,
+    entries: group.entries,
+    depth,
+    collapsed: false,
+    childCount: 0,
+    group,
+    folder: null
+  }
+}
+
+export function flattenPortGroupTargets(
+  groups: PortGroup[],
+  folders: PortGroupFolder[],
+  collapsedFolderIds: string[] = [],
+  keyword = ''
+): PortGroupTreeRow[] {
+  const query = keyword.trim().toLowerCase()
+  const collapsed = new Set(collapsedFolderIds)
+  const rows: PortGroupTreeRow[] = []
+  const groupsByFolder = new Map<string | null, PortGroup[]>()
+  for (const group of sortedGroups(groups)) {
+    const folderId = group.folderId || null
+    if (!groupsByFolder.has(folderId)) groupsByFolder.set(folderId, [])
+    groupsByFolder.get(folderId)!.push(group)
+  }
+
+  for (const folder of sortedFolders(folders)) {
+    const children = groupsByFolder.get(folder.id) || []
+    if (!folderMatchesKeyword(folder, children, query)) continue
+    const matchingChildren = children.filter((group) => groupMatchesKeyword(group, query))
+    const folderCollapsed = collapsed.has(folder.id) && !query
+    rows.push(rowForFolder(folder, children.length, folderCollapsed))
+    if (!folderCollapsed) {
+      for (const group of query ? matchingChildren : children) rows.push(rowForGroup(group, 1))
+    } else if (query) {
+      for (const group of matchingChildren) rows.push(rowForGroup(group, 1))
+    }
+  }
+
+  const rootGroups = groupsByFolder.get(null) || []
+  for (const group of rootGroups) {
+    if (groupMatchesKeyword(group, query)) rows.push(rowForGroup(group, 0))
+  }
+  return rows
+}
+
+export function portGroupTargetEntries(target: PortGroupTarget, groups: PortGroup[], folders: PortGroupFolder[]): string[] {
+  if (target.kind === 'group') {
+    return groups.find((group) => group.id === target.id)?.entries || []
+  }
+  if (!folders.some((folder) => folder.id === target.id)) return []
+  return groups
+    .filter((group) => group.folderId === target.id)
+    .flatMap((group) => group.entries)
+}
+
+export function matchPortGroupTargetProcesses(
+  items: PortProcess[],
+  target: PortGroupTarget,
+  groups: PortGroup[],
+  folders: PortGroupFolder[]
+): PortProcess[] {
+  const entries = portGroupTargetEntries(target, groups, folders)
+  if (!entries.length) return []
+  return matchPortGroupProcesses(items, {
+    id: `${target.kind}:${target.id}`,
+    name: target.id,
+    color: '#00A676',
+    entries,
+    folderId: null,
+    sortOrder: 0
+  })
+}
+
+export function movePortGroupToFolder(groups: PortGroup[], groupId: string, folderId: string | null): PortGroup[] {
+  return groups.map((group) => group.id === groupId ? { ...group, folderId } : group)
 }
 
 export function shouldProcessMatchVerifiedPort(target: { pid: number; port: number }, current: Array<{ pid: number; port: number }>): boolean {

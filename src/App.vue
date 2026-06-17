@@ -9,71 +9,74 @@ import PortsPage from './pages/PortsPage.vue'
 import FavoritesPage from './pages/FavoritesPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
 import { createAppRuntime } from './runtime/appRuntime'
-import type { ActiveInputRole } from './runtime/appRuntime'
 import { routePluginFeature } from './runtime/feature/featureRouting'
+import { activeInputRoleFromTarget, blockHandledShortcutEvent, isEditableTarget, shortcutFromEvent } from './runtime/keyboardEvent'
 
 const platform = getPlatform()
 const runtime = createAppRuntime(normalizeAppState(platform.storage.getState()))
 const version = ref(0)
+const shiftPreview = ref(false)
+const shortcutHints = ref(false)
 let disposeRuntime: (() => void) | null = null
 const snapshot = computed(() => {
   version.value
   return runtime.snapshot()
 })
 
-function shortcutFromEvent(event: KeyboardEvent): string {
-  const parts: string[] = []
-  if (event.ctrlKey || event.metaKey) parts.push('Ctrl')
-  if (event.altKey) parts.push('Alt')
-  if (event.shiftKey && !['Tab'].includes(event.key)) parts.push('Shift')
-  const keyMap: Record<string, string> = {
-    ' ': 'Space',
-    Enter: 'Enter',
-    Escape: 'Escape',
-    ArrowUp: 'ArrowUp',
-    ArrowDown: 'ArrowDown',
-    ArrowLeft: 'ArrowLeft',
-    ArrowRight: 'ArrowRight',
-    Tab: event.shiftKey ? 'Shift+Tab' : 'Tab'
-  }
-  const key = keyMap[event.key] || event.key.toUpperCase()
-  if (key === 'Shift+Tab') return key
-  return [...parts, key].join('+')
-}
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  const element = target as HTMLElement | null
-  if (!element) return false
-  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName) || element.isContentEditable
-}
-
-function activeInputRole(target: EventTarget | null): ActiveInputRole | undefined {
-  const element = target as HTMLElement | null
-  if (!element || !isEditableTarget(element)) return undefined
-  const role = element.closest<HTMLElement>('[data-role]')?.dataset.role
-  if (role === 'port-group-search') return 'port-group-search'
-  if (role === 'port-group-editor') return 'port-group-editor'
-  if (role === 'primary-search') return snapshot.value.state.activeTab === 'ports' ? 'port-search' : 'favorite-search'
-  if (snapshot.value.state.activeTab === 'settings') return 'settings'
-  return 'other'
-}
-
 function onKeydown(event: KeyboardEvent) {
+  if (event.defaultPrevented) return
+  if (event.key === 'Shift') shiftPreview.value = true
+  if (event.key === 'Control' || event.key === 'Meta' || event.ctrlKey || event.metaKey) shortcutHints.value = true
   const shortcutId = shortcutFromEvent(event)
   const textInputFocused = isEditableTarget(event.target)
   const handled = runtime.handleShortcut(shortcutId, {
     textInputFocused,
-    activeInputRole: activeInputRole(event.target)
+    activeInputRole: activeInputRoleFromTarget(event.target, snapshot.value.state.activeTab)
   })
-  if (handled) event.preventDefault()
+  if (handled) blockHandledShortcutEvent(event)
+}
+
+function onKeyup(event: KeyboardEvent) {
+  if (event.key === 'Shift') shiftPreview.value = false
+  if (event.key === 'Control' || event.key === 'Meta' || (!event.ctrlKey && !event.metaKey)) shortcutHints.value = false
+}
+
+function clearShiftPreview() {
+  shiftPreview.value = false
+  shortcutHints.value = false
 }
 
 watch(() => snapshot.value.searchFocusRequestId, () => {
   requestAnimationFrame(() => {
     const target = snapshot.value.searchFocusTarget === 'port-groups'
       ? 'port-group-search'
-      : 'primary-search'
+      : snapshot.value.searchFocusTarget === 'favorites'
+        ? 'favorite-search'
+        : 'port-search'
     document.querySelector<HTMLInputElement>(`[data-role="${target}"]`)?.focus()
+  })
+})
+
+watch(() => snapshot.value.searchBlurRequestId, () => {
+  requestAnimationFrame(() => {
+    const active = document.activeElement as HTMLElement | null
+    const role = active?.closest<HTMLElement>('[data-role]')?.dataset.role
+    if (role === 'port-search' || role === 'favorite-search' || role === 'port-group-search' || role === 'primary-search') active?.blur()
+  })
+})
+
+watch(() => snapshot.value.groupPanelFocusRequestId, () => {
+  requestAnimationFrame(() => {
+    if (snapshot.value.state.activeTab !== 'ports' || !snapshot.value.groupSidePanelOpen || snapshot.value.activePortPane !== 'groups') return
+    document.querySelector<HTMLElement>('[data-role="port-groups-panel"]')?.focus()
+  })
+})
+
+watch(() => snapshot.value.listFocusRequestId, () => {
+  requestAnimationFrame(() => {
+    if (snapshot.value.state.activeTab !== 'ports') return
+    const role = snapshot.value.listFocusTarget === 'groups' ? 'port-groups-panel' : 'port-results-list'
+    document.querySelector<HTMLElement>(`[data-role="${role}"]`)?.focus()
   })
 })
 
@@ -82,6 +85,8 @@ onMounted(() => {
     version.value += 1
   })
   window.addEventListener('keydown', onKeydown)
+  window.addEventListener('keyup', onKeyup)
+  window.addEventListener('blur', clearShiftPreview)
   const route = routePluginFeature(platform.getEnterPayload())
   runtime.setTab(route.tab)
   if (route.focusSearch) {
@@ -94,21 +99,31 @@ onMounted(() => {
 onUnmounted(() => {
   disposeRuntime?.()
   window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('keyup', onKeyup)
+  window.removeEventListener('blur', clearShiftPreview)
 })
 </script>
 
 <template>
-  <main class="app-shell">
-    <TabShell :active-tab="snapshot.state.activeTab" @select="runtime.setTab">
+  <main class="app-shell" :class="{ 'shift-preview': shiftPreview }">
+    <TabShell
+      :active-tab="snapshot.state.activeTab"
+      :command-shortcut-labels="snapshot.commandShortcutLabels"
+      :show-shortcut-hints="shortcutHints"
+      @select="(tab) => runtime.dispatch(`tab.select.${tab}`)"
+    >
       <template #ports>
         <PortsPage
           :snapshot="snapshot"
+          :shift-preview="shiftPreview"
           @search="runtime.setPortSearch"
           @group-search="runtime.setPortGroupSearch"
           @scan="runtime.scanPorts"
           @focus="runtime.focusPort"
           @toggle="runtime.togglePortSelection"
           @focus-group="runtime.focusPortGroup"
+          @focus-group-target="runtime.focusPortGroupTarget"
+          @move-group-to-folder="runtime.movePortGroupToFolder"
           @update-group-draft="runtime.updatePortGroupDraft"
           @save-group-draft="runtime.savePortGroupDraft"
           @cancel-group-draft="runtime.cancelPortGroupDraft"

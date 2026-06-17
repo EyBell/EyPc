@@ -1,4 +1,6 @@
-import type { AppState, AppTabId, FavoriteKind, FavoriteNode, KeybindingOverride, PortGroup, ShortcutProfileId, ShortcutProfileMap } from './types'
+import type { AppState, AppTabId, FavoriteKind, FavoriteNode, KeybindingOverride, PortGroup, PortGroupFolder, ShortcutProfileId, ShortcutProfileMap } from './types'
+import { emptySearchHistories, normalizeSearchHistoryList } from './searchHistory'
+import { normalizeShortcutId } from './shortcuts'
 
 const VALID_TABS = new Set<AppTabId>(['ports', 'favorites', 'settings'])
 const VALID_FAVORITE_KINDS = new Set<FavoriteKind>(['file', 'folder', 'group'])
@@ -18,50 +20,6 @@ function numberValue(value: unknown, fallback: number): number {
 
 function strings(value: unknown): string[] {
   return Array.isArray(value) ? [...new Set(value.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean))] : []
-}
-
-function normalizeShortcutId(value: string): string {
-  const aliases: Record<string, string> = {
-    ctrl: 'Ctrl',
-    control: 'Ctrl',
-    cmd: 'Ctrl',
-    command: 'Ctrl',
-    meta: 'Ctrl',
-    alt: 'Alt',
-    option: 'Alt',
-    shift: 'Shift',
-    enter: 'Enter',
-    return: 'Enter',
-    escape: 'Escape',
-    esc: 'Escape',
-    space: 'Space',
-    spacebar: 'Space',
-    tab: 'Tab',
-    arrowup: 'ArrowUp',
-    up: 'ArrowUp',
-    arrowdown: 'ArrowDown',
-    down: 'ArrowDown',
-    arrowleft: 'ArrowLeft',
-    left: 'ArrowLeft',
-    arrowright: 'ArrowRight',
-    right: 'ArrowRight',
-    delete: 'Delete',
-    del: 'Delete',
-    backspace: 'Backspace'
-  }
-  const raw = String(value || '').trim()
-  if (!raw) return ''
-  const separator = raw.includes('+') ? '+' : '-'
-  const parts = raw.split(separator).map((part) => part.trim()).filter(Boolean)
-  const modifiers = new Set<string>()
-  let key = ''
-  for (const part of parts) {
-    const lower = part.toLowerCase()
-    const normalized = aliases[lower] || (part.length === 1 ? part.toUpperCase() : part)
-    if (['Ctrl', 'Alt', 'Shift'].includes(normalized)) modifiers.add(normalized)
-    else key = normalized
-  }
-  return [...['Ctrl', 'Alt', 'Shift'].filter((modifier) => modifiers.has(modifier)), key].filter(Boolean).join('+')
 }
 
 function normalizeKeybindingOverrides(value: unknown): KeybindingOverride[] {
@@ -131,6 +89,33 @@ function normalizeShortcutProfiles(value: unknown, legacyOverrides: KeybindingOv
   return profiles
 }
 
+function normalizeSearchHistories(value: unknown, legacyPortHistory: string[], legacyFavoriteHistory: string[]): AppState['searchHistories'] {
+  const source = record(value)
+  const ports = record(source.ports)
+  const favorites = record(source.favorites)
+  const hasStructured = Array.isArray(ports.processes) || Array.isArray(ports.groups) || Array.isArray(favorites.files)
+  if (!hasStructured) {
+    return {
+      ports: {
+        processes: legacyPortHistory,
+        groups: []
+      },
+      favorites: {
+        files: legacyFavoriteHistory
+      }
+    }
+  }
+  return {
+    ports: {
+      processes: normalizeSearchHistoryList(ports.processes),
+      groups: normalizeSearchHistoryList(ports.groups)
+    },
+    favorites: {
+      files: normalizeSearchHistoryList(favorites.files)
+    }
+  }
+}
+
 function normalizeFavorite(value: unknown, now: number): FavoriteNode | null {
   const item = record(value)
   const id = stringValue(item.id).trim()
@@ -151,17 +136,46 @@ function normalizeFavorite(value: unknown, now: number): FavoriteNode | null {
   }
 }
 
-function normalizePortGroups(value: unknown): PortGroup[] {
+function normalizePortGroupFolders(value: unknown): PortGroupFolder[] {
   if (!Array.isArray(value)) return []
-  return value.flatMap((item) => {
+  const folders: PortGroupFolder[] = []
+  for (const item of value) {
+    const source = record(item)
+    const id = stringValue(source.id).trim()
+    const name = stringValue(source.name).trim()
+    if (!id || !name) continue
+    folders.push({
+      id,
+      name,
+      color: stringValue(source.color).trim() || '#00A676',
+      sortOrder: numberValue(source.sortOrder, folders.length + 1)
+    })
+  }
+  return folders
+}
+
+function normalizePortGroups(value: unknown, folders: PortGroupFolder[]): PortGroup[] {
+  if (!Array.isArray(value)) return []
+  const folderIds = new Set(folders.map((folder) => folder.id))
+  const groups: PortGroup[] = []
+  for (const item of value) {
     const source = record(item)
     const id = stringValue(source.id).trim()
     const name = stringValue(source.name).trim()
     const entries = strings(source.entries)
-    if (id.startsWith('default:')) return []
-    if (!id || !name || !entries.length) return []
-    return [{ id, name, color: stringValue(source.color).trim() || '#00A676', entries }]
-  })
+    if (id.startsWith('default:')) continue
+    if (!id || !name || !entries.length) continue
+    const folderId = stringValue(source.folderId).trim()
+    groups.push({
+      id,
+      name,
+      color: stringValue(source.color).trim() || '#00A676',
+      entries,
+      folderId: folderId && folderIds.has(folderId) ? folderId : null,
+      sortOrder: numberValue(source.sortOrder, groups.length + 1)
+    })
+  }
+  return groups
 }
 
 export function createInitialState(now = Date.now()): AppState {
@@ -170,9 +184,12 @@ export function createInitialState(now = Date.now()): AppState {
     activeTab: 'ports',
     portSearch: '',
     favoriteSearch: '',
+    searchHistories: emptySearchHistories(),
     portSearchHistory: [],
     favoriteSearchHistory: [],
     portGroups: [],
+    portGroupFolders: [],
+    collapsedPortGroupFolderIds: [],
     favorites: [],
     settings: {
       keybindingOverrides: [],
@@ -190,14 +207,22 @@ export function normalizeAppState(value: unknown, now = Date.now()): AppState {
   const legacyKeybindingOverrides = normalizeKeybindingOverrides(settings.keybindingOverrides)
   const shortcutProfiles = normalizeShortcutProfiles(settings.shortcutProfiles, legacyKeybindingOverrides, now)
   const activeTab = VALID_TABS.has(source.activeTab as AppTabId) ? (source.activeTab as AppTabId) : fallback.activeTab
+  const portGroupFolders = normalizePortGroupFolders(source.portGroupFolders)
+  const validFolderIds = new Set(portGroupFolders.map((folder) => folder.id))
+  const legacyPortSearchHistory = normalizeSearchHistoryList(source.portSearchHistory)
+  const legacyFavoriteSearchHistory = normalizeSearchHistoryList(source.favoriteSearchHistory)
+  const searchHistories = normalizeSearchHistories(source.searchHistories, legacyPortSearchHistory, legacyFavoriteSearchHistory)
   return {
     version: 1,
     activeTab,
     portSearch: stringValue(source.portSearch),
     favoriteSearch: stringValue(source.favoriteSearch),
-    portSearchHistory: strings(source.portSearchHistory).slice(0, 30),
-    favoriteSearchHistory: strings(source.favoriteSearchHistory).slice(0, 30),
-    portGroups: normalizePortGroups(source.portGroups),
+    searchHistories,
+    portSearchHistory: searchHistories.ports.processes,
+    favoriteSearchHistory: searchHistories.favorites.files,
+    portGroups: normalizePortGroups(source.portGroups, portGroupFolders),
+    portGroupFolders,
+    collapsedPortGroupFolderIds: strings(source.collapsedPortGroupFolderIds).filter((id) => validFolderIds.has(id)),
     favorites: (Array.isArray(source.favorites) ? source.favorites : []).map((item) => normalizeFavorite(item, now)).filter((item): item is FavoriteNode => Boolean(item)),
     settings: {
       keybindingOverrides: aggregateShortcutProfiles(shortcutProfiles),

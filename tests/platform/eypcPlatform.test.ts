@@ -28,14 +28,14 @@ describe('browser fallback platform', () => {
     const firstPlatform = first.getPlatform()
     firstPlatform.storage.setState({
       ...firstPlatform.storage.getState(),
-      portGroups: [{ id: 'group:local', name: 'Local Group', color: '#00A676', entries: ['3000'] }]
+      portGroups: [{ id: 'group:local', name: 'Local Group', color: '#00A676', entries: ['3000'], folderId: null, sortOrder: 1 }]
     })
 
     vi.resetModules()
     const second = await import('../../src/platform/eypcPlatform')
 
     expect(second.getPlatform().storage.getState().portGroups).toEqual([
-      { id: 'group:local', name: 'Local Group', color: '#00A676', entries: ['3000'] }
+      { id: 'group:local', name: 'Local Group', color: '#00A676', entries: ['3000'], folderId: null, sortOrder: 1 }
     ])
   })
 
@@ -78,5 +78,12 @@ describe('browser fallback platform', () => {
       port: 8081,
       force: true
     })
+  })
+
+  it('exposes a safe browser fallback for hiding the host window', async () => {
+    globalThis.window = {} as Window & typeof globalThis
+
+    const { getPlatform } = await import('../../src/platform/eypcPlatform')
+    await expect(getPlatform().app.hide()).resolves.toBe(false)
   })
 })

@@ -8,6 +8,8 @@ describe('state domain', () => {
     expect(state.version).toBe(1)
     expect(state.activeTab).toBe('ports')
     expect(state.portGroups).toEqual([])
+    expect(state.portGroupFolders).toEqual([])
+    expect(state.collapsedPortGroupFolderIds).toEqual([])
     expect(state.settings.keybindingOverrides).toEqual([])
     expect(state.settings.shortcutProfiles.ports.keybindingOverrides).toEqual([])
   })
@@ -21,7 +23,32 @@ describe('state domain', () => {
     })
 
     expect(state.portGroups).toEqual([
-      { id: 'user:web', name: 'My Web', color: '#2F80ED', entries: ['3000', '/node/i'] }
+      { id: 'user:web', name: 'My Web', color: '#2F80ED', entries: ['3000', '/node/i'], folderId: null, sortOrder: 1 }
+    ])
+  })
+
+  it('normalizes port group folders and clears invalid group folder references', () => {
+    const state = normalizeAppState({
+      portGroupFolders: [
+        { id: 'dev', name: 'Dev', color: '#00A676', sortOrder: 2 },
+        { id: '', name: 'Bad', color: '#D64545', sortOrder: 1 }
+      ],
+      collapsedPortGroupFolderIds: ['dev', 'missing', 'dev'],
+      portGroups: [
+        { id: 'web', name: 'Web', color: '#00A676', entries: ['3000'], folderId: 'dev', sortOrder: 9 },
+        { id: 'api', name: 'Api', color: '#2F80ED', entries: ['9000'], folderId: 'missing' },
+        { id: 'root', name: 'Root', color: '#D64545', entries: ['7000'] }
+      ]
+    }, 100)
+
+    expect(state.portGroupFolders).toEqual([
+      { id: 'dev', name: 'Dev', color: '#00A676', sortOrder: 2 }
+    ])
+    expect(state.collapsedPortGroupFolderIds).toEqual(['dev'])
+    expect(state.portGroups).toEqual([
+      { id: 'web', name: 'Web', color: '#00A676', entries: ['3000'], folderId: 'dev', sortOrder: 9 },
+      { id: 'api', name: 'Api', color: '#2F80ED', entries: ['9000'], folderId: null, sortOrder: 2 },
+      { id: 'root', name: 'Root', color: '#D64545', entries: ['7000'], folderId: null, sortOrder: 3 }
     ])
   })
 
@@ -35,9 +62,38 @@ describe('state domain', () => {
 
     expect(state.activeTab).toBe('ports')
     expect(state.portSearchHistory).toEqual(['node'])
+    expect(state.searchHistories.ports.processes).toEqual(['node'])
+    expect(state.searchHistories.ports.groups).toEqual([])
+    expect(state.searchHistories.favorites.files).toEqual([])
     expect(state.favorites[0]).toMatchObject({ id: 'x', kind: 'file', name: 'a', parentId: null, tags: ['a'] })
     expect(state.settings.keybindingOverrides[0]).toMatchObject({ commandId: 'ports.scan', shortcutId: 'Ctrl+R' })
     expect(state.settings.shortcutProfiles.ports.keybindingOverrides[0]).toMatchObject({ commandId: 'ports.scan', shortcutId: 'Ctrl+R' })
+  })
+
+  it('normalizes structured search histories by partition and preserves legacy compatibility fields', () => {
+    const state = normalizeAppState({
+      searchHistories: {
+        ports: {
+          processes: ['  node ', 'vite', 'node'],
+          groups: ['  dev ', '', 'ops']
+        },
+        favorites: {
+          files: [' docs ', 'docs', 'repo']
+        }
+      }
+    }, 100)
+
+    expect(state.searchHistories).toEqual({
+      ports: {
+        processes: ['node', 'vite'],
+        groups: ['dev', 'ops']
+      },
+      favorites: {
+        files: ['docs', 'repo']
+      }
+    })
+    expect(state.portSearchHistory).toEqual(['node', 'vite'])
+    expect(state.favoriteSearchHistory).toEqual(['docs', 'repo'])
   })
 
   it('normalizes command-level shortcut override shape while preserving legacy shortcutId', () => {

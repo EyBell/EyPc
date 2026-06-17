@@ -19,6 +19,9 @@ export interface EypcPlatformApi {
     copyPath(path: string): Promise<boolean>
     pickFavorite?(): Promise<PickedFavorite | null>
   }
+  app: {
+    hide(): Promise<boolean> | boolean
+  }
   getEnterPayload(): { code?: string } | null
   clearEnterPayload(): void
 }
@@ -93,7 +96,12 @@ async function killViaDevApi(request: KillRequest): Promise<KillResult> {
 }
 
 export function getPlatform(): EypcPlatformApi {
-  if (typeof window !== 'undefined' && window.eypcPlatform) return window.eypcPlatform
+  if (typeof window !== 'undefined' && window.eypcPlatform) {
+    return {
+      ...window.eypcPlatform,
+      app: window.eypcPlatform.app || { hide: async () => false }
+    }
+  }
   return {
     storage: {
       getState: readFallbackState,
@@ -113,6 +121,9 @@ export function getPlatform(): EypcPlatformApi {
         }
         return false
       }
+    },
+    app: {
+      hide: async () => false
     },
     getEnterPayload: () => memory.enterPayload,
     clearEnterPayload: () => {

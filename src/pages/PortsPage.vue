@@ -1,15 +1,20 @@
 <script setup lang="ts">
 import { nextTick, reactive, watch } from 'vue'
 import type { AppRuntimeSnapshot } from '../runtime/appRuntime'
+import type { PortGroupTarget } from '../domain/types'
+import type { SearchHistoryTarget } from '../domain/searchHistory'
 import SelectableList from '../components/SelectableList.vue'
+import SearchSuggestBox from '../components/SearchSuggestBox.vue'
 
-const props = defineProps<{ snapshot: AppRuntimeSnapshot }>()
-const groupForm = reactive({ name: '', entriesText: '', color: '#00A676' })
+const props = defineProps<{ snapshot: AppRuntimeSnapshot; shiftPreview?: boolean }>()
+const groupForm = reactive({ name: '', entriesText: '', color: '#00A676', folderId: '' })
+let draggingGroupId = ''
 
 watch(() => props.snapshot.portGroupDraft, (draft) => {
   groupForm.name = draft?.name || ''
   groupForm.entriesText = draft?.entriesText || ''
   groupForm.color = draft?.color || '#00A676'
+  groupForm.folderId = draft?.folderId || ''
 }, { immediate: true })
 
 const emit = defineEmits<{
@@ -19,8 +24,10 @@ const emit = defineEmits<{
   focus: [id: string]
   toggle: [id: string]
   focusGroup: [id: string]
-  saveGroupDraft: [input: { name: string; entriesText: string; color: string }]
-  updateGroupDraft: [input: { name?: string; entriesText?: string; color?: string }]
+  focusGroupTarget: [target: PortGroupTarget]
+  moveGroupToFolder: [groupId: string, folderId: string | null]
+  saveGroupDraft: [input: { name: string; entriesText: string; color: string; folderId: string | null }]
+  updateGroupDraft: [input: { name?: string; entriesText?: string; color?: string; folderId?: string | null }]
   cancelGroupDraft: []
   dispatch: [actionId: string, args?: Record<string, unknown>]
 }>()
@@ -32,7 +39,7 @@ watch(() => props.snapshot.portGroupDraft?.activeField, (field) => {
   })
 })
 
-function updateDraft(input: { name?: string; entriesText?: string; color?: string }) {
+function updateDraft(input: { name?: string; entriesText?: string; color?: string; folderId?: string | null }) {
   emit('updateGroupDraft', input)
 }
 
@@ -42,13 +49,16 @@ function dispatchPortRowAction(id: string, actionId: string) {
 }
 
 function drawerTitle() {
-  if (props.snapshot.portDrawer.mode === 'group') return '分组动作'
+  if (props.snapshot.portDrawer.mode === 'group') return props.snapshot.portDrawer.groupTarget?.kind === 'folder' ? '分组夹动作' : '分组动作'
   if (props.snapshot.portDrawer.mode === 'multi') return `已选 ${props.snapshot.portDrawer.targetIds.length} 个端口`
   return '端口动作'
 }
 
 function drawerSubtitle() {
-  if (props.snapshot.portDrawer.mode === 'group') return '当前端口组'
+  if (props.snapshot.portDrawer.mode === 'group') {
+    const row = props.snapshot.portGroupRows.find((item) => item.target.kind === props.snapshot.portDrawer.groupTarget?.kind && item.target.id === props.snapshot.portDrawer.groupTarget?.id)
+    return row ? `${row.name} · ${row.kind === 'folder' ? `${row.childCount} 个分组` : row.entries.join(', ')}` : '当前端口组'
+  }
   if (props.snapshot.portDrawer.mode === 'multi') return '批量目标'
   const row = props.snapshot.ports.find((item) => item.id === props.snapshot.portDrawer.targetIds[0])
   return row ? `:${row.port} · PID ${row.pid}` : '当前焦点'
@@ -67,71 +77,202 @@ function detailRows() {
     ['状态', row.state]
   ]
 }
+
+function groupDetailRows() {
+  const row = props.snapshot.portGroupDetailTarget
+  if (!row) return []
+  return [
+    ['类型', row.kind === 'folder' ? '分组夹' : '端口组'],
+    ['名称', row.name],
+    ['内容', row.kind === 'folder' ? `${row.childCount} 个子分组` : row.entries.join(', ')],
+    ['颜色', row.color]
+  ]
+}
+
+function focusGroupRow(target: PortGroupTarget) {
+  emit('focusGroupTarget', target)
+}
+
+function dragGroup(target: PortGroupTarget) {
+  draggingGroupId = target.kind === 'group' ? target.id : ''
+}
+
+function dropGroup(folderId: string | null) {
+  if (!draggingGroupId) return
+  emit('moveGroupToFolder', draggingGroupId, folderId)
+  draggingGroupId = ''
+}
+
+function targetArgs(target: PortGroupTarget) {
+  return { targetKind: target.kind, targetId: target.id, groupId: target.kind === 'group' ? target.id : undefined }
+}
+
+function sameGroupTarget(left: PortGroupTarget | null | undefined, right: PortGroupTarget | null | undefined) {
+  return Boolean(left && right && left.kind === right.kind && left.id === right.id)
+}
+
+function activeShiftPreviewTarget() {
+  if (!props.shiftPreview) return null
+  if (props.snapshot.focusedPortGroupTarget?.kind === 'group') return props.snapshot.focusedPortGroupTarget
+  return props.snapshot.selectedPortGroupTarget?.kind === 'group' ? props.snapshot.selectedPortGroupTarget : null
+}
+
+function isShiftPreviewTarget(row: AppRuntimeSnapshot['portGroupRows'][number]) {
+  const target = activeShiftPreviewTarget()
+  return row.kind === 'group' && sameGroupTarget(row.target, target)
+}
+
+function commandLabel(commandId: string, fallback: string) {
+  return props.snapshot.commandShortcutLabels[commandId] || fallback
+}
+
+function portSearchStatus() {
+  const parts: string[] = []
+  if (props.snapshot.selectedPortGroupTarget) parts.push('分组过滤')
+  if (props.snapshot.state.portSearch.trim()) parts.push(`${props.snapshot.filteredPorts.length}/${props.snapshot.ports.length}`)
+  return parts.join(' · ')
+}
+
+function groupSearchStatus() {
+  return props.snapshot.portGroupSearch.trim() ? `${props.snapshot.portGroupRows.length} 项` : ''
+}
+
+function acceptHistory(payload: { target: SearchHistoryTarget; value: string }) {
+  emit('dispatch', 'search.history.accept', payload)
+}
+
+function deleteHistory(payload: { target: SearchHistoryTarget; value: string }) {
+  emit('dispatch', 'search.history.delete', payload)
+}
 </script>
 
 <template>
-  <section class="page-grid">
-    <aside class="side-panel" :class="{ active: props.snapshot.activePortPane === 'groups' }">
-      <div class="panel-header">
+  <section class="page-grid" :class="{ 'groups-collapsed': !props.snapshot.groupSidePanelOpen }">
+    <button
+      v-if="!props.snapshot.groupSidePanelOpen"
+      type="button"
+      class="group-panel-toggle group-panel-toggle-collapsed"
+      :title="`展开端口组栏 ${commandLabel('ports.groups.togglePanel', 'c-w')}`"
+      :aria-label="`展开端口组栏 ${commandLabel('ports.groups.togglePanel', 'c-w')}`"
+      @click="emit('dispatch', 'ports.groups.togglePanel')"
+    >
+      ›
+    </button>
+    <aside
+      v-if="props.snapshot.groupSidePanelOpen"
+      class="side-panel"
+      :class="{ active: props.snapshot.activePortPane === 'groups' }"
+      data-role="port-groups-panel"
+      tabindex="-1"
+      @dragover.prevent
+      @drop="dropGroup(null)"
+    >
+      <div class="panel-header group-panel-header">
+        <button
+          type="button"
+          class="group-panel-toggle group-panel-toggle-inline"
+          :title="`收起端口组栏 ${commandLabel('ports.groups.togglePanel', 'c-w')}`"
+          :aria-label="`收起端口组栏 ${commandLabel('ports.groups.togglePanel', 'c-w')}`"
+          @click="emit('dispatch', 'ports.groups.togglePanel')"
+        >
+          ‹
+        </button>
         <h2>端口组</h2>
-        <span class="header-actions">
-          <button type="button" @click="emit('dispatch', 'ports.group.create')">新建</button>
-          <button type="button" @click="emit('dispatch', 'ports.group.createFromSelection')">收藏选中</button>
-        </span>
       </div>
-      <p class="pane-meta">
-        <span>示例：3000 · 5173-5175 · /node|java/i</span>
-      </p>
-      <input
-        data-role="port-group-search"
-        class="pane-search"
-        :value="props.snapshot.portGroupSearch"
-        placeholder="搜索端口组"
-        @focus="emit('dispatch', 'ports.pane.groups')"
-        @input="emit('groupSearch', ($event.target as HTMLInputElement).value)"
-      />
+      <div class="group-search-row">
+        <SearchSuggestBox
+          :model-value="props.snapshot.portGroupSearch"
+          role="port-group-search"
+          target="ports.groups"
+          placeholder="搜索端口组"
+          :history-state="props.snapshot.searchHistoryState"
+          :status="groupSearchStatus()"
+          @focus="emit('dispatch', 'ports.groupSearch.focus')"
+          @update:model-value="emit('groupSearch', $event)"
+          @accept="acceptHistory"
+          @delete="deleteHistory"
+        />
+        <button
+          type="button"
+          class="add-folder-button"
+          title="新增分组夹"
+          aria-label="新增分组夹"
+          @click="emit('dispatch', 'ports.groupFolder.create')"
+        >
+          +
+        </button>
+      </div>
       <div
-        v-for="group in props.snapshot.filteredPortGroups"
-        :key="group.id"
+        v-for="row in props.snapshot.portGroupRows"
+        :key="row.rowId"
         class="group-row"
-        :class="{ focused: props.snapshot.focusedPortGroupId === group.id, selected: props.snapshot.selectedPortGroupId === group.id }"
-        :style="{ '--group-color': group.color }"
-        @click="emit('focusGroup', group.id)"
+        :class="{
+          focused: props.snapshot.focusedPortGroupTarget?.kind === row.target.kind && props.snapshot.focusedPortGroupTarget?.id === row.target.id,
+          selected: props.snapshot.selectedPortGroupTarget?.kind === row.target.kind && props.snapshot.selectedPortGroupTarget?.id === row.target.id,
+          folder: row.kind === 'folder',
+          child: row.depth > 0,
+          'shift-preview-target': isShiftPreviewTarget(row)
+        }"
+        :style="{ '--group-color': row.color, '--depth': row.depth }"
+        :draggable="row.kind === 'group'"
+        @click="focusGroupRow(row.target)"
+        @dragstart="dragGroup(row.target)"
+        @dragover.prevent="row.kind === 'folder'"
+        @drop.stop="row.kind === 'folder' ? dropGroup(row.target.id) : undefined"
       >
-        <span>{{ group.name }}</span>
-        <small>{{ group.entries.join(', ') }}</small>
-        <span class="group-actions">
-          <button type="button" @click.stop="emit('focusGroup', group.id); emit('dispatch', 'ports.group.apply')">应用</button>
-          <button type="button" @click.stop="emit('focusGroup', group.id); emit('dispatch', 'ports.group.rename')">重命名</button>
-          <button type="button" @click.stop="emit('focusGroup', group.id); emit('dispatch', 'ports.group.edit')">规则</button>
-          <button type="button" @click.stop="emit('focusGroup', group.id); emit('dispatch', 'ports.group.kill.confirm')">终止</button>
-          <button type="button" class="danger" @click.stop="emit('focusGroup', group.id); emit('dispatch', 'ports.group.kill.force')">强杀</button>
-          <button type="button" @click.stop="emit('focusGroup', group.id); emit('dispatch', 'ports.drawer.open')">...</button>
-        </span>
+        <div v-if="row.kind === 'folder'" class="group-row-line folder-row-line">
+          <span class="group-main">
+            <button
+              type="button"
+              class="folder-toggle"
+              @click.stop="focusGroupRow(row.target); emit('dispatch', row.collapsed ? 'ports.groupTarget.expand' : 'ports.groupTarget.collapse')"
+            >
+              {{ row.collapsed ? '>' : 'v' }}
+            </button>
+            <span>{{ row.name }}</span>
+          </span>
+          <small>{{ row.childCount }} 个组</small>
+        </div>
+        <template v-else>
+          <div class="group-row-line group-item-line">
+            <span class="group-main">
+              <span>{{ row.name }}</span>
+            </span>
+            <span class="group-actions">
+              <button type="button" @click.stop="focusGroupRow(row.target); emit('dispatch', 'ports.group.apply', targetArgs(row.target))">
+                <span>搜索</span>
+                <kbd>{{ commandLabel('ports.group.apply', 'cr') }}</kbd>
+              </button>
+              <button type="button" class="danger" @click.stop="focusGroupRow(row.target); emit('dispatch', 'ports.group.kill.force', targetArgs(row.target))">
+                <span>强杀</span>
+                <kbd>{{ commandLabel('ports.group.kill.force', 'c-s-cr') }}</kbd>
+              </button>
+              <button type="button" @click.stop="focusGroupRow(row.target); emit('dispatch', 'ports.drawer.open')">
+                <span>更多</span>
+                <kbd>{{ commandLabel('ports.drawer.open', 'c-→') }}</kbd>
+              </button>
+            </span>
+          </div>
+          <small class="group-rule-line">{{ row.entries.join(', ') }}</small>
+        </template>
       </div>
-      <p v-if="!props.snapshot.filteredPortGroups.length" class="empty-note">暂无端口组</p>
+      <p v-if="!props.snapshot.portGroupRows.length" class="empty-note">暂无端口组</p>
     </aside>
     <section class="main-panel" :class="{ active: props.snapshot.activePortPane === 'results' }">
       <div class="toolbar">
-        <div class="query-summary">
-          <strong>端口查询</strong>
-          <input
-            data-role="primary-search"
-            :value="props.snapshot.state.portSearch"
-            placeholder="输入端口、PID、进程名或 /node|java/i"
-            @focus="emit('dispatch', 'ports.pane.results')"
-            @input="emit('search', ($event.target as HTMLInputElement).value)"
-          />
-          <small v-if="props.snapshot.selectedPortGroupId">已应用分组过滤</small>
-          <small v-if="props.snapshot.portSearchError" class="field-error">{{ props.snapshot.portSearchError }}</small>
-        </div>
-        <div class="toolbar-actions">
-          <button type="button" @click="emit('dispatch', 'search.focus')">聚焦</button>
-          <button type="button" @click="emit('scan')">扫描</button>
-          <button type="button" @click="emit('dispatch', 'ports.detail.open')">详情</button>
-          <button type="button" @click="emit('dispatch', 'ports.kill.confirm')">终止</button>
-          <button type="button" class="danger" @click="emit('dispatch', 'ports.kill.force')">强杀</button>
-        </div>
+        <SearchSuggestBox
+          :model-value="props.snapshot.state.portSearch"
+          role="port-search"
+          target="ports.processes"
+          placeholder="输入端口、PID、进程名或 /node|java/i"
+          :history-state="props.snapshot.searchHistoryState"
+          :error="props.snapshot.portSearchError"
+          :status="portSearchStatus()"
+          @focus="emit('dispatch', 'ports.search.focus')"
+          @update:model-value="emit('search', $event)"
+          @accept="acceptHistory"
+          @delete="deleteHistory"
+        />
       </div>
       <SelectableList
         :items="props.snapshot.filteredPorts"
@@ -175,6 +316,40 @@ function detailRows() {
           <button type="button" class="danger" @click="emit('dispatch', 'ports.kill.force')">强杀</button>
           <button type="button" @click="emit('dispatch', 'ports.group.createFromSelection')">收藏为组</button>
           <button type="button" @click="emit('dispatch', 'ports.drawer.open')">菜单</button>
+        </div>
+      </aside>
+    </div>
+    <div
+      v-if="props.snapshot.portGroupDetail.open"
+      class="drawer-overlay drawer-overlay-left"
+      role="presentation"
+      @click="emit('dispatch', 'ports.groupDetail.close')"
+    >
+      <aside
+        class="port-detail-drawer"
+        :class="{ active: props.snapshot.portGroupDetail.active }"
+        aria-label="端口组详情抽屉"
+        @click.stop
+      >
+        <header class="drawer-header">
+          <span>
+            <strong>{{ props.snapshot.portGroupDetailTarget?.kind === 'folder' ? '分组夹详情' : '分组详情' }}</strong>
+            <small>{{ props.snapshot.portGroupDetailTarget?.name || '当前高亮分组' }}</small>
+          </span>
+          <button type="button" title="关闭详情" @click="emit('dispatch', 'ports.groupDetail.close')">x</button>
+        </header>
+        <div v-if="props.snapshot.portGroupDetailTarget" class="detail-list">
+          <div v-for="row in groupDetailRows()" :key="row[0]" class="detail-row">
+            <span>{{ row[0] }}</span>
+            <strong>{{ row[1] }}</strong>
+          </div>
+        </div>
+        <p v-else class="empty-note">没有可展示的端口组</p>
+        <div class="detail-actions">
+          <button type="button" @click="emit('dispatch', 'ports.group.apply', props.snapshot.portGroupDetail.target ? targetArgs(props.snapshot.portGroupDetail.target) : undefined)">搜索</button>
+          <button type="button" class="danger" @click="emit('dispatch', 'ports.group.kill.force', props.snapshot.portGroupDetail.target ? targetArgs(props.snapshot.portGroupDetail.target) : undefined)">强杀</button>
+          <button type="button" @click="emit('dispatch', 'ports.drawer.open')">更多</button>
+          <button type="button" @click="emit('dispatch', 'ports.groupDetail.close')">关闭</button>
         </div>
       </aside>
     </div>
@@ -253,10 +428,21 @@ function detailRows() {
             @input="updateDraft({ color: groupForm.color })"
           />
         </label>
-        <p class="pane-meta">每行一条规则：端口、端口区间或 JavaScript 正则表达式。</p>
+        <label v-if="props.snapshot.portGroupDraft.mode !== 'rename'">
+          所在分组夹
+          <select
+            v-model="groupForm.folderId"
+            data-role="port-group-editor"
+            data-group-field="folder"
+            @change="updateDraft({ folderId: groupForm.folderId || null })"
+          >
+            <option value="">不放入分组夹</option>
+            <option v-for="folder in props.snapshot.state.portGroupFolders" :key="folder.id" :value="folder.id">{{ folder.name }}</option>
+          </select>
+        </label>
         <div class="confirm-actions">
           <button type="button" @click="emit('cancelGroupDraft')">取消</button>
-          <button type="button" @click="emit('saveGroupDraft', { name: groupForm.name, entriesText: groupForm.entriesText, color: groupForm.color })">保存</button>
+          <button type="button" @click="emit('saveGroupDraft', { name: groupForm.name, entriesText: groupForm.entriesText, color: groupForm.color, folderId: groupForm.folderId || null })">保存</button>
         </div>
       </section>
     </div>

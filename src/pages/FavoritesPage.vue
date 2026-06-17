@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { reactive } from 'vue'
-import SearchBox from '../components/SearchBox.vue'
+import SearchSuggestBox from '../components/SearchSuggestBox.vue'
 import FavoriteTree from '../components/FavoriteTree.vue'
 import type { FavoriteKind, FavoriteNode } from '../domain/types'
+import type { SearchHistoryTarget } from '../domain/searchHistory'
 import type { AppRuntimeSnapshot } from '../runtime/appRuntime'
 
 const props = defineProps<{ snapshot: AppRuntimeSnapshot }>()
@@ -14,7 +15,7 @@ const emit = defineEmits<{
   add: [value: Pick<FavoriteNode, 'kind' | 'path' | 'name' | 'parentId' | 'tags' | 'color'>]
   remove: []
   reorder: [nodeId: string, parentId: string | null, beforeNodeId: string | null]
-  dispatch: [actionId: string]
+  dispatch: [actionId: string, args?: Record<string, unknown>]
 }>()
 
 const draft = reactive({
@@ -38,6 +39,14 @@ function addFavorite() {
   draft.path = ''
   draft.name = ''
   draft.tags = ''
+}
+
+function acceptHistory(payload: { target: SearchHistoryTarget; value: string }) {
+  emit('dispatch', 'search.history.accept', payload)
+}
+
+function deleteHistory(payload: { target: SearchHistoryTarget; value: string }) {
+  emit('dispatch', 'search.history.delete', payload)
 }
 </script>
 
@@ -74,11 +83,17 @@ function addFavorite() {
     </aside>
     <section class="main-panel">
       <div class="toolbar">
-        <SearchBox
+        <SearchSuggestBox
           :model-value="props.snapshot.state.favoriteSearch"
+          role="favorite-search"
+          target="favorites.files"
           placeholder="搜索文件名、路径、标签"
-          :history="props.snapshot.state.favoriteSearchHistory"
+          :history-state="props.snapshot.searchHistoryState"
+          :status="props.snapshot.state.favoriteSearch.trim() ? `${props.snapshot.favoriteRows.length} 项` : ''"
+          @focus="emit('dispatch', 'search.focus')"
           @update:model-value="emit('search', $event)"
+          @accept="acceptHistory"
+          @delete="deleteHistory"
         />
         <div class="toolbar-actions">
           <button type="button" @click="emit('dispatch', 'favorites.open')">打开</button>

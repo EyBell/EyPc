@@ -11,11 +11,12 @@ import {
   canWhenClausesOverlap,
   detectShortcutConflicts,
   getShortcutReservationConflicts,
-  normalizeShortcutId,
   parseWhenExpression,
   previewKeybindingResolution
 } from '../runtime/keybinding/keybindingRuntime'
 import type { KeybindingContext, KeybindingDefinition, KeybindingLayerId, ShortcutCommandRow } from '../runtime/keybinding/keybindingRuntime'
+import { blockHandledShortcutEvent } from '../runtime/keyboardEvent'
+import { formatShortcutLabel, formatShortcutList, normalizeShortcutId, shortcutFromEvent as shortcutFromKeyboardEvent } from '../domain/shortcuts'
 
 type SettingsSectionId = 'global' | 'ports' | 'favorites' | 'settings' | 'layers'
 
@@ -61,7 +62,7 @@ const sectionId = ref<SettingsSectionId>('global')
 const keyword = ref('')
 const stateFilter = ref<'all' | 'conflict' | 'user' | 'disabled'>('all')
 const selectedCommandId = ref<string | null>(null)
-const previewShortcut = ref('Ctrl+1')
+const previewShortcut = ref('c-s-1')
 const previewContextId = ref(previewContexts[0].id)
 const recordingCommandId = ref<string | null>(null)
 const recordDraft = ref('')
@@ -145,34 +146,10 @@ function parseShortcutList(value: string): string[] {
   return [...new Set(String(value || '').split(/[\n,，]/).map(normalizeShortcutId).filter(Boolean))]
 }
 
-function shortcutFromEvent(event: KeyboardEvent): string {
-  const keyMap: Record<string, string> = {
-    ' ': 'Space',
-    Enter: 'Enter',
-    Escape: 'Escape',
-    ArrowUp: 'ArrowUp',
-    ArrowDown: 'ArrowDown',
-    ArrowLeft: 'ArrowLeft',
-    ArrowRight: 'ArrowRight',
-    Tab: 'Tab',
-    PageUp: 'PageUp',
-    PageDown: 'PageDown',
-    Delete: 'Delete',
-    Backspace: 'Backspace'
-  }
-  const parts: string[] = []
-  if (event.ctrlKey || event.metaKey) parts.push('Ctrl')
-  if (event.altKey) parts.push('Alt')
-  if (event.shiftKey) parts.push('Shift')
-  const key = keyMap[event.key] || (event.key.length === 1 ? event.key.toUpperCase() : event.key)
-  return normalizeShortcutId([...parts, key].join('+'))
-}
-
 function captureShortcut(event: KeyboardEvent) {
-  event.preventDefault()
-  event.stopPropagation()
+  blockHandledShortcutEvent(event)
   if (['Control', 'Meta', 'Alt', 'Shift'].includes(event.key)) return
-  const shortcut = shortcutFromEvent(event)
+  const shortcut = shortcutFromKeyboardEvent(event)
   if (shortcut === 'Escape') {
     closeRecord()
     return
@@ -183,15 +160,13 @@ function captureShortcut(event: KeyboardEvent) {
 function handleModalEscape(event: KeyboardEvent) {
   if (!recordingRow.value && !whenRow.value) return
   if (event.key === 'Escape') {
-    event.preventDefault()
-    event.stopPropagation()
+    blockHandledShortcutEvent(event)
     if (recordingRow.value) closeRecord()
     else closeWhenEditor()
     return
   }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
-    event.preventDefault()
-    event.stopPropagation()
+    blockHandledShortcutEvent(event)
     if (recordingRow.value && recordValidation.value.errors.length === 0) saveRecord()
     else if (whenRow.value && whenValidation.value.errors.length === 0) saveWhen()
   }
@@ -233,7 +208,7 @@ function validateWhenDraft(row: ShortcutCommandRow | null, when: string) {
 
 function openRecord(row: ShortcutCommandRow) {
   recordingCommandId.value = row.commandId
-  recordDraft.value = (row.shortcutIds.length ? row.shortcutIds : row.defaultShortcutIds).join(', ')
+  recordDraft.value = (row.shortcutIds.length ? row.shortcutIds : row.defaultShortcutIds).map(formatShortcutLabel).join(', ')
 }
 
 function closeRecord() {
@@ -342,7 +317,7 @@ function isWhenOverlapping(row: ShortcutCommandRow, target: ShortcutCommandRow) 
         <div class="settings-subpanel">
           <h3>保留键与接管层</h3>
           <div v-for="rule in SHORTCUT_RESERVATION_RULES" :key="`${rule.commandId}-${rule.shortcutId}-${rule.when}`" class="reservation-row">
-            <kbd>{{ normalizeShortcutId(rule.shortcutId) }}</kbd>
+            <kbd>{{ formatShortcutLabel(rule.shortcutId) }}</kbd>
             <span>
               <strong>{{ rule.commandId }}</strong>
               <small>{{ rule.layer }} · {{ rule.when || 'always' }}</small>
@@ -387,10 +362,10 @@ function isWhenOverlapping(row: ShortcutCommandRow, target: ShortcutCommandRow) 
           </span>
           <span class="shortcut-cell">
             <span class="kbd-list">
-              <kbd v-for="shortcut in row.shortcutIds" :key="shortcut">{{ shortcut }}</kbd>
+              <kbd v-for="shortcut in row.shortcutIds" :key="shortcut">{{ formatShortcutLabel(shortcut) }}</kbd>
               <em v-if="!row.shortcutIds.length">未绑定</em>
             </span>
-            <small>默认 {{ row.defaultShortcutIds.join(' / ') || '无' }}</small>
+            <small>默认 {{ formatShortcutList(row.defaultShortcutIds) || '无' }}</small>
           </span>
           <span class="state-cell">
             <em class="status-badge" :class="`source-${row.source}`">{{ row.sourceLabel }}</em>
@@ -422,7 +397,7 @@ function isWhenOverlapping(row: ShortcutCommandRow, target: ShortcutCommandRow) 
           <div class="settings-subpanel">
             <h3>解析预览</h3>
             <div class="preview-controls">
-              <input v-model="previewShortcut" placeholder="例如 Ctrl+1" />
+              <input v-model="previewShortcut" placeholder="例如 c-s-1" />
               <select v-model="previewContextId">
                 <option v-for="item in previewContexts" :key="item.id" :value="item.id">{{ item.label }}</option>
               </select>
@@ -445,11 +420,11 @@ function isWhenOverlapping(row: ShortcutCommandRow, target: ShortcutCommandRow) 
           <div v-if="selectedRow.conflicts.length || selectedRow.reservationConflicts.length" class="settings-subpanel">
             <h3>冲突与阻断</h3>
             <div v-for="conflict in selectedRow.conflicts" :key="`${conflict.commandId}-${conflict.shortcutId}`" class="issue-row">
-              <strong>{{ conflict.shortcutId }} · {{ conflict.commandId }}</strong>
+              <strong>{{ formatShortcutLabel(conflict.shortcutId) }} · {{ conflict.commandId }}</strong>
               <small>{{ conflict.layer }} · when 可重叠</small>
             </div>
             <div v-for="rule in selectedRow.reservationConflicts" :key="`${rule.commandId}-${rule.shortcutId}-${rule.when}`" class="issue-row blocked">
-              <strong>{{ rule.shortcutId }} · {{ rule.commandId }}</strong>
+              <strong>{{ formatShortcutLabel(rule.shortcutId) }} · {{ rule.commandId }}</strong>
               <small>{{ rule.description }} · {{ rule.layer }}</small>
             </div>
           </div>
@@ -483,8 +458,8 @@ function isWhenOverlapping(row: ShortcutCommandRow, target: ShortcutCommandRow) 
           <input :value="recordDraft" placeholder="点击后按键" @input="updateRecordDraft" @keydown="captureShortcut" />
         </label>
         <div class="shortcut-modal-grid">
-          <p>当前：{{ recordingRow.shortcutIds.join(' / ') || '未绑定' }}</p>
-          <p>默认：{{ recordingRow.defaultShortcutIds.join(' / ') || '无' }}</p>
+          <p>当前：{{ formatShortcutList(recordingRow.shortcutIds) || '未绑定' }}</p>
+          <p>默认：{{ formatShortcutList(recordingRow.defaultShortcutIds) || '无' }}</p>
           <p>when：{{ recordingRow.when || 'always' }}</p>
         </div>
         <div v-if="recordValidation.errors.length" class="validation-box danger">
@@ -493,11 +468,11 @@ function isWhenOverlapping(row: ShortcutCommandRow, target: ShortcutCommandRow) 
         </div>
         <div v-if="recordValidation.conflicts.length" class="validation-box">
           <strong>冲突命令</strong>
-          <small v-for="item in recordValidation.conflicts" :key="`${item.commandId}-${item.shortcutId}`">{{ item.shortcutId }} · {{ item.commandId }} · {{ item.when }}</small>
+          <small v-for="item in recordValidation.conflicts" :key="`${item.commandId}-${item.shortcutId}`">{{ formatShortcutLabel(item.shortcutId) }} · {{ item.commandId }} · {{ item.when }}</small>
         </div>
         <div v-if="recordValidation.reservations.length" class="validation-box">
           <strong>保留键</strong>
-          <small v-for="item in recordValidation.reservations" :key="`${item.commandId}-${item.shortcutId}-${item.when}`">{{ item.shortcutId }} · {{ item.description }} · {{ item.layer }}</small>
+          <small v-for="item in recordValidation.reservations" :key="`${item.commandId}-${item.shortcutId}-${item.when}`">{{ formatShortcutLabel(item.shortcutId) }} · {{ item.description }} · {{ item.layer }}</small>
         </div>
         <footer class="confirm-actions">
           <button type="button" @click="closeRecord">取消</button>
@@ -528,7 +503,7 @@ function isWhenOverlapping(row: ShortcutCommandRow, target: ShortcutCommandRow) 
         </div>
         <div v-if="whenValidation.conflicts.length" class="validation-box">
           <strong>修改后冲突</strong>
-          <small v-for="item in whenValidation.conflicts" :key="`${item.commandId}-${item.shortcutId}`">{{ item.shortcutId }} · {{ item.commandId }} · {{ item.when }}</small>
+          <small v-for="item in whenValidation.conflicts" :key="`${item.commandId}-${item.shortcutId}`">{{ formatShortcutLabel(item.shortcutId) }} · {{ item.commandId }} · {{ item.when }}</small>
         </div>
         <footer class="confirm-actions">
           <button type="button" @click="closeWhenEditor">取消</button>

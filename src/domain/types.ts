@@ -16,7 +16,20 @@ export interface PortGroup {
   name: string
   color: string
   entries: string[]
+  folderId: string | null
+  sortOrder: number
 }
+
+export interface PortGroupFolder {
+  id: string
+  name: string
+  color: string
+  sortOrder: number
+}
+
+export type PortGroupTarget =
+  | { kind: 'group'; id: string }
+  | { kind: 'folder'; id: string }
 
 export type FavoriteKind = 'file' | 'folder' | 'group'
 
@@ -70,9 +83,20 @@ export interface AppState {
   activeTab: AppTabId
   portSearch: string
   favoriteSearch: string
+  searchHistories: {
+    ports: {
+      processes: string[]
+      groups: string[]
+    }
+    favorites: {
+      files: string[]
+    }
+  }
   portSearchHistory: string[]
   favoriteSearchHistory: string[]
   portGroups: PortGroup[]
+  portGroupFolders: PortGroupFolder[]
+  collapsedPortGroupFolderIds: string[]
   favorites: FavoriteNode[]
   settings: AppSettings
   updatedAt: number

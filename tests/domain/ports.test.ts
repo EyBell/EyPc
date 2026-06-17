@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildPortGroupTargets,
+  flattenPortGroupTargets,
   dedupePortProcesses,
   filterPortProcesses,
+  matchPortGroupTargetProcesses,
   matchPortGroupProcesses,
+  movePortGroupToFolder,
   parseLsofListeningTcp,
   parseNetstatListeningTcp,
   recordSearchHistory,
@@ -116,7 +119,7 @@ node      13511 gdkmjd   16u  IPv6 0xd301      0t0  TCP [::1]:18789 (LISTEN)
   })
 
   it('expands port groups and verifies selected pid still owns target port', () => {
-    expect(buildPortGroupTargets({ id: 'dev', name: 'Dev', color: '#00a676', entries: ['3000', '5173-5175', 'bad'] })).toEqual([
+    expect(buildPortGroupTargets({ id: 'dev', name: 'Dev', color: '#00a676', entries: ['3000', '5173-5175', 'bad'], folderId: null, sortOrder: 1 })).toEqual([
       3000,
       5173,
       5174,
@@ -134,10 +137,57 @@ node      13511 gdkmjd   16u  IPv6 0xd301      0t0  TCP [::1]:18789 (LISTEN)
       { id: 'java', pid: 13, port: 9000, command: 'java', address: '*:9000', user: 'svc', protocol: 'tcp' as const, state: 'LISTEN' as const }
     ]
 
-    expect(matchPortGroupProcesses(rows, { id: 'dev', name: 'Dev', color: '#00A676', entries: ['3000', '5173-5175', '/java|svc/i'] }).map((row) => row.id)).toEqual([
+    expect(matchPortGroupProcesses(rows, { id: 'dev', name: 'Dev', color: '#00A676', entries: ['3000', '5173-5175', '/java|svc/i'], folderId: null, sortOrder: 1 }).map((row) => row.id)).toEqual([
       'node',
       'vite',
       'java'
     ])
+  })
+
+  it('flattens searchable group folders and hides collapsed child groups', () => {
+    const folders = [
+      { id: 'dev', name: 'Dev Folder', color: '#00A676', sortOrder: 1 },
+      { id: 'ops', name: 'Ops Folder', color: '#2F80ED', sortOrder: 2 }
+    ]
+    const groups = [
+      { id: 'web', name: 'Web', color: '#00A676', entries: ['3000'], folderId: 'dev', sortOrder: 1 },
+      { id: 'api', name: 'Api', color: '#2F80ED', entries: ['9000'], folderId: 'dev', sortOrder: 2 },
+      { id: 'root', name: 'Root', color: '#D64545', entries: ['7000'], folderId: null, sortOrder: 3 }
+    ]
+
+    expect(flattenPortGroupTargets(groups, folders, ['dev'], '').map((row) => row.rowId)).toEqual([
+      'folder:dev',
+      'folder:ops',
+      'group:root'
+    ])
+
+    expect(flattenPortGroupTargets(groups, folders, ['dev'], 'api').map((row) => row.rowId)).toEqual([
+      'folder:dev',
+      'group:api'
+    ])
+  })
+
+  it('matches a folder target by the union of child group rules and moves groups into folders', () => {
+    const folders = [{ id: 'dev', name: 'Dev Folder', color: '#00A676', sortOrder: 1 }]
+    const groups = [
+      { id: 'web', name: 'Web', color: '#00A676', entries: ['3000'], folderId: 'dev', sortOrder: 1 },
+      { id: 'api', name: 'Api', color: '#2F80ED', entries: ['9000'], folderId: 'dev', sortOrder: 2 },
+      { id: 'root', name: 'Root', color: '#D64545', entries: ['7000'], folderId: null, sortOrder: 3 }
+    ]
+    const rows = [
+      { id: 'node', pid: 11, port: 3000, command: 'node', address: '*:3000', protocol: 'tcp' as const, state: 'LISTEN' as const },
+      { id: 'api', pid: 12, port: 9000, command: 'api', address: '*:9000', protocol: 'tcp' as const, state: 'LISTEN' as const },
+      { id: 'root', pid: 13, port: 7000, command: 'root', address: '*:7000', protocol: 'tcp' as const, state: 'LISTEN' as const }
+    ]
+
+    expect(matchPortGroupTargetProcesses(rows, { kind: 'folder', id: 'dev' }, groups, folders).map((row) => row.id)).toEqual([
+      'node',
+      'api'
+    ])
+
+    expect(movePortGroupToFolder(groups, 'root', 'dev').find((group) => group.id === 'root')).toMatchObject({
+      folderId: 'dev',
+      sortOrder: 3
+    })
   })
 })
