@@ -19,6 +19,9 @@ export interface KeybindingDefinition {
 export const DEFAULT_KEYBINDINGS: KeybindingDefinition[] = [
   { actionId: 'tab.next', shortcutId: 'Tab', defaultShortcutId: 'Tab', when: '!textInputFocused', source: 'system', weight: 100 },
   { actionId: 'tab.prev', shortcutId: 'Shift+Tab', defaultShortcutId: 'Shift+Tab', when: '!textInputFocused', source: 'system', weight: 100 },
+  { actionId: 'tab.select.ports', shortcutId: 'Ctrl+1', defaultShortcutId: 'Ctrl+1', when: '!textInputFocused', source: 'system', weight: 100 },
+  { actionId: 'tab.select.favorites', shortcutId: 'Ctrl+2', defaultShortcutId: 'Ctrl+2', when: '!textInputFocused', source: 'system', weight: 100 },
+  { actionId: 'tab.select.settings', shortcutId: 'Ctrl+3', defaultShortcutId: 'Ctrl+3', when: '!textInputFocused', source: 'system', weight: 100 },
   { actionId: 'search.focus', shortcutId: 'Ctrl+F', defaultShortcutId: 'Ctrl+F', when: '!confirmOpen', source: 'system', weight: 100 },
   { actionId: 'settings.open', shortcutId: 'Ctrl+Alt+Shift+S', defaultShortcutId: 'Ctrl+Alt+Shift+S', when: '!confirmOpen', source: 'system', weight: 100 },
   { actionId: 'list.up', shortcutId: 'ArrowUp', defaultShortcutId: 'ArrowUp', when: '!textInputFocused', source: 'system', weight: 100 },

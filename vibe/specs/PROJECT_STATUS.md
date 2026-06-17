@@ -8,10 +8,10 @@ This is the project process hub for EyPc. It tracks the current main line, activ
 
 ## Current Snapshot
 
-- Date: 2026-06-16.
+- Date: 2026-06-17.
 - Product: uTools plugin for cross-platform PC capability calls.
-- Current main line: Initial MVP implementation for port process management and file/folder favorites.
-- Current task: Initial MVP implemented; verification is recorded in [260616-eypc-initial-mvp/04-verify.md](260616-eypc-initial-mvp/04-verify.md#L1).
+- Current main line: MVP usability closure for port groups, Tab shortcuts, and favorite path workflows.
+- Current task: Usability closure implemented; verification is recorded in [260616-eypc-usability-closure/04-verify.md](260616-eypc-usability-closure/04-verify.md#L1).
 - Architecture source: [../knowledge/ARCHITECTURE.md](../knowledge/ARCHITECTURE.md#L1).
 
 ## Active Process Index
@@ -21,6 +21,11 @@ This is the project process hub for EyPc. It tracks the current main line, activ
 - Initial MVP tasks: [260616-eypc-initial-mvp/03-tasks.md](260616-eypc-initial-mvp/03-tasks.md#L1).
 - Initial MVP verification: [260616-eypc-initial-mvp/04-verify.md](260616-eypc-initial-mvp/04-verify.md#L1).
 - Initial MVP review: [260616-eypc-initial-mvp/05-review.md](260616-eypc-initial-mvp/05-review.md#L1).
+- Usability closure spec: [260616-eypc-usability-closure/01-spec.md](260616-eypc-usability-closure/01-spec.md#L1).
+- Usability closure plan: [260616-eypc-usability-closure/02-plan.md](260616-eypc-usability-closure/02-plan.md#L1).
+- Usability closure tasks: [260616-eypc-usability-closure/03-tasks.md](260616-eypc-usability-closure/03-tasks.md#L1).
+- Usability closure verification: [260616-eypc-usability-closure/04-verify.md](260616-eypc-usability-closure/04-verify.md#L1).
+- Usability closure review: [260616-eypc-usability-closure/05-review.md](260616-eypc-usability-closure/05-review.md#L1).
 
 ## Verification Gates
 

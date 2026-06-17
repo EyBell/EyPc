@@ -27,6 +27,8 @@ uTools feature entry / keyboard input
 - UI renders projections and dispatches intents; it does not call shell commands directly.
 - Favorites removal never deletes disk files.
 - Force-kill actions must be scoped to selected PID and verified port match.
+- Port group cleanup expands configured group entries through the domain layer, then filters against the current scan before any kill request.
+- Favorite path picking is an optional platform capability; unavailable hosts must return `null` and preserve manual path entry.
 
 ## Current Modules
 

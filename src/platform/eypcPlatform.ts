@@ -1,6 +1,8 @@
 import { normalizeAppState } from '../domain/state'
 import type { AppState, FavoriteNode, KillRequest, KillResult, PortProcess } from '../domain/types'
 
+export type PickedFavorite = Pick<FavoriteNode, 'kind' | 'path' | 'name' | 'parentId' | 'tags' | 'color'>
+
 export interface EypcPlatformApi {
   storage: {
     getState(): AppState
@@ -14,7 +16,7 @@ export interface EypcPlatformApi {
     open(path: string): Promise<boolean>
     reveal(path: string): Promise<boolean>
     copyPath(path: string): Promise<boolean>
-    pickFavorite?(): Promise<FavoriteNode | null>
+    pickFavorite?(): Promise<PickedFavorite | null>
   }
   getEnterPayload(): { code?: string } | null
   clearEnterPayload(): void

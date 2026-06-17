@@ -10,7 +10,7 @@ const emit = defineEmits<{
   scan: []
   focus: [id: string]
   toggle: [id: string]
-  dispatch: [actionId: string]
+  dispatch: [actionId: string, args?: Record<string, unknown>]
 }>()
 </script>
 
@@ -21,16 +21,19 @@ const emit = defineEmits<{
         <h2>端口组</h2>
         <button type="button" @click="emit('scan')">刷新</button>
       </div>
-      <button
+      <div
         v-for="group in props.snapshot.state.portGroups"
         :key="group.id"
-        type="button"
         class="group-row"
         :style="{ '--group-color': group.color }"
       >
         <span>{{ group.name }}</span>
         <small>{{ buildPortGroupTargets(group).join(', ') }}</small>
-      </button>
+        <span class="group-actions">
+          <button type="button" @click="emit('dispatch', 'ports.killGroup.confirm', { groupId: group.id })">终止组</button>
+          <button type="button" class="danger" @click="emit('dispatch', 'ports.killGroup.force', { groupId: group.id })">强杀组</button>
+        </span>
+      </div>
     </aside>
     <section class="main-panel">
       <div class="toolbar">

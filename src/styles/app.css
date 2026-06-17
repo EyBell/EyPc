@@ -131,7 +131,8 @@ select {
 .toolbar,
 .toolbar-actions,
 .confirm-actions,
-.row-actions {
+.row-actions,
+.group-actions {
   display: flex;
   gap: 8px;
   align-items: center;
@@ -171,6 +172,14 @@ select {
   margin-bottom: 8px;
   border-left: 5px solid var(--group-color);
   text-align: left;
+}
+
+.group-actions {
+  flex-wrap: wrap;
+}
+
+.group-actions button {
+  padding: 5px 8px;
 }
 
 .group-row small {

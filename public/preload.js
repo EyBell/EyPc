@@ -103,6 +103,59 @@ function shellCall(method, target) {
   }
 }
 
+function normalizePickedFavorite(result) {
+  const filePaths = Array.isArray(result)
+    ? result
+    : Array.isArray(result && result.filePaths)
+      ? result.filePaths
+      : typeof result === 'string'
+        ? [result]
+        : []
+  const target = String(filePaths[0] || '').trim()
+  if (!target) return null
+  const explicitKind = result && typeof result === 'object' && result.kind
+  return {
+    kind: explicitKind === 'file' || explicitKind === 'folder' ? explicitKind : 'folder',
+    path: target,
+    name: path.basename(target) || target,
+    parentId: null,
+    tags: [],
+    color: '#2F80ED'
+  }
+}
+
+async function pickFavoritePath() {
+  try {
+    if (globalThis.utools && typeof globalThis.utools.showOpenDialog === 'function') {
+      const result = await globalThis.utools.showOpenDialog({
+        title: '选择要收藏的文件或文件夹',
+        properties: ['openFile', 'openDirectory']
+      })
+      return normalizePickedFavorite(result)
+    }
+  } catch {}
+
+  try {
+    const electron = require('electron')
+    const dialog = electron.dialog || (electron.remote && electron.remote.dialog)
+    if (dialog && typeof dialog.showOpenDialogSync === 'function') {
+      return normalizePickedFavorite(dialog.showOpenDialogSync({
+        title: '选择要收藏的文件或文件夹',
+        properties: ['openFile', 'openDirectory']
+      }))
+    }
+    if (dialog && typeof dialog.showOpenDialog === 'function') {
+      const result = await dialog.showOpenDialog({
+        title: '选择要收藏的文件或文件夹',
+        properties: ['openFile', 'openDirectory']
+      })
+      return normalizePickedFavorite(result)
+    }
+  } catch {}
+
+  return null
+}
+
 if (globalThis.utools && typeof globalThis.utools.onPluginEnter === 'function') {
   globalThis.utools.onPluginEnter((action) => {
     lastEnterPayload = action || null
@@ -130,7 +183,7 @@ window.eypcPlatform = {
       } catch {}
       return false
     },
-    pickFavorite: async () => null
+    pickFavorite: pickFavoritePath
   },
   getEnterPayload() {
     return lastEnterPayload

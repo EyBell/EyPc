@@ -69,6 +69,7 @@ function addFavorite() {
         颜色
         <input v-model="draft.color" type="color" />
       </label>
+      <button type="button" @click="emit('dispatch', 'favorites.pickAndAdd')">选择路径</button>
       <button type="button" @click="addFavorite">添加</button>
     </aside>
     <section class="main-panel">
@@ -82,6 +83,7 @@ function addFavorite() {
         <div class="toolbar-actions">
           <button type="button" @click="emit('dispatch', 'favorites.open')">打开</button>
           <button type="button" @click="emit('dispatch', 'favorites.reveal')">定位</button>
+          <button type="button" @click="emit('dispatch', 'favorites.copyPath')">复制路径</button>
           <button type="button" class="danger" @click="emit('remove')">移除</button>
         </div>
       </div>

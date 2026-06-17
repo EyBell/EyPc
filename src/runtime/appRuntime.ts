@@ -1,5 +1,5 @@
 import { buildFavoriteTree, filterFavoriteTree, flattenFavoriteTree, reorderFavoriteNode } from '../domain/favorites'
-import { filterPortProcesses, recordSearchHistory, shouldProcessMatchVerifiedPort } from '../domain/ports'
+import { buildPortGroupTargets, filterPortProcesses, recordSearchHistory, shouldProcessMatchVerifiedPort } from '../domain/ports'
 import { normalizeAppState } from '../domain/state'
 import type { AppState, AppTabId, FavoriteNode, KillRequest, PortProcess } from '../domain/types'
 import { getPlatform } from '../platform/eypcPlatform'
@@ -75,6 +75,14 @@ export function createAppRuntime(initialState: AppState) {
     return ids.flatMap((id) => ports.find((item) => item.id === id) || [])
   }
 
+  function currentPortGroupSelection(groupId: unknown): PortProcess[] {
+    if (typeof groupId !== 'string') return []
+    const group = state.portGroups.find((item) => item.id === groupId)
+    if (!group) return []
+    const targets = new Set(buildPortGroupTargets(group))
+    return ports.filter((item) => targets.has(item.port))
+  }
+
   async function scanPorts() {
     ports = await platform.ports.scan()
     const visibleIds = new Set(ports.map((item) => item.id))
@@ -83,10 +91,9 @@ export function createAppRuntime(initialState: AppState) {
     notify()
   }
 
-  async function killPorts(force: boolean) {
-    const targets = currentPortSelection()
+  async function killPortTargets(targets: PortProcess[], force: boolean, emptyMessage = '没有选中的端口进程') {
     if (!targets.length) {
-      setMessage('没有选中的端口进程')
+      setMessage(emptyMessage)
       return
     }
     const current = await platform.ports.scan()
@@ -102,6 +109,10 @@ export function createAppRuntime(initialState: AppState) {
     await scanPorts()
   }
 
+  async function killPorts(force: boolean) {
+    await killPortTargets(currentPortSelection(), force)
+  }
+
   function confirmKill() {
     const targets = currentPortSelection()
     if (!targets.length) {
@@ -114,6 +125,23 @@ export function createAppRuntime(initialState: AppState) {
       onConfirm: () => {
         confirm = null
         void killPorts(false)
+      }
+    }
+    notify()
+  }
+
+  function confirmKillGroup(groupId: unknown) {
+    const targets = currentPortGroupSelection(groupId)
+    if (!targets.length) {
+      setMessage('组内端口当前无监听进程')
+      return
+    }
+    confirm = {
+      title: '终止端口组进程',
+      detail: `确认终止组内 ${targets.length} 个进程？失败后可使用强杀组。`,
+      onConfirm: () => {
+        confirm = null
+        void killPortTargets(targets, false, '组内端口当前无监听进程')
       }
     }
     notify()
@@ -153,12 +181,43 @@ export function createAppRuntime(initialState: AppState) {
     notify()
   }
 
+  async function copyFavoritePath() {
+    const item = selectedFavorite()
+    if (!item) {
+      setMessage('没有选中的收藏')
+      return
+    }
+    if (!item.path) {
+      setMessage('分组节点没有可复制路径')
+      return
+    }
+    const ok = await platform.files.copyPath(item.path)
+    setMessage(ok ? '路径已复制' : '复制路径失败')
+  }
+
+  async function pickAndAddFavorite() {
+    const picked = await platform.files.pickFavorite?.()
+    if (!picked) {
+      setMessage('当前宿主不可选择路径，请手填路径')
+      return
+    }
+    addFavorite(picked)
+    setMessage('已添加收藏')
+  }
+
   function registerActions() {
+    actions.register({ id: 'tab.select.ports', title: '切到端口进程', group: '全局', risk: 'normal', scope: 'global', priority: 10, shortcut: 'Ctrl+1', when: () => true, run: () => { setTab('ports'); return true } })
+    actions.register({ id: 'tab.select.favorites', title: '切到文件收藏', group: '全局', risk: 'normal', scope: 'global', priority: 10, shortcut: 'Ctrl+2', when: () => true, run: () => { setTab('favorites'); return true } })
+    actions.register({ id: 'tab.select.settings', title: '切到设置', group: '全局', risk: 'normal', scope: 'global', priority: 10, shortcut: 'Ctrl+3', when: () => true, run: () => { setTab('settings'); return true } })
     actions.register({ id: 'ports.scan', title: '刷新端口', group: '端口', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+R', when: (ctx) => ctx.tab === 'ports', run: () => { void scanPorts(); return true } })
     actions.register({ id: 'ports.kill.confirm', title: '终止选中进程', group: '端口', risk: 'data-write', scope: 'tab', priority: 100, shortcut: 'Enter', when: (ctx) => ctx.tab === 'ports', run: () => { confirmKill(); return true } })
     actions.register({ id: 'ports.kill.force', title: '强杀选中进程', group: '端口', risk: 'destructive', scope: 'tab', priority: 100, shortcut: 'Ctrl+Enter', when: (ctx) => ctx.tab === 'ports', run: () => { void killPorts(true); return true } })
+    actions.register({ id: 'ports.killGroup.confirm', title: '终止端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => { confirmKillGroup(args?.groupId); return true } })
+    actions.register({ id: 'ports.killGroup.force', title: '强杀端口组', group: '端口', risk: 'destructive', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => { void killPortTargets(currentPortGroupSelection(args?.groupId), true, '组内端口当前无监听进程'); return true } })
     actions.register({ id: 'favorites.open', title: '打开收藏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Enter', when: (ctx) => ctx.tab === 'favorites', run: () => { const item = selectedFavorite(); if (item?.path) void platform.files.open(item.path); return true } })
     actions.register({ id: 'favorites.reveal', title: '定位收藏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+Enter', when: (ctx) => ctx.tab === 'favorites', run: () => { const item = selectedFavorite(); if (item?.path) void platform.files.reveal(item.path); return true } })
+    actions.register({ id: 'favorites.copyPath', title: '复制收藏路径', group: '收藏', risk: 'normal', scope: 'tab', priority: 95, when: (ctx) => ctx.tab === 'favorites', run: () => { void copyFavoritePath(); return true } })
+    actions.register({ id: 'favorites.pickAndAdd', title: '选择路径并收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, when: (ctx) => ctx.tab === 'favorites', run: () => { void pickAndAddFavorite(); return true } })
     actions.register({ id: 'favorites.remove', title: '移出收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 100, when: (ctx) => ctx.tab === 'favorites', run: () => { removeFavorite(); return true } })
     actions.register({ id: 'settings.open', title: '打开设置', group: '全局', risk: 'normal', scope: 'global', priority: 10, shortcut: 'Ctrl+Alt+Shift+S', when: () => true, run: () => { setTab('settings'); return true } })
     actions.register({ id: 'search.focus', title: '聚焦搜索', group: '全局', risk: 'normal', scope: 'global', priority: 10, shortcut: 'Ctrl+F', when: () => true, run: () => true })
@@ -279,6 +338,11 @@ export function createAppRuntime(initialState: AppState) {
         const current = order.indexOf(state.activeTab)
         const offset = binding.actionId === 'tab.next' ? 1 : -1
         setTab(order[(current + offset + order.length) % order.length])
+        return binding.actionId
+      }
+      if (binding.actionId.startsWith('tab.select.')) {
+        const tab = binding.actionId.replace('tab.select.', '') as AppTabId
+        if (['ports', 'favorites', 'settings'].includes(tab)) setTab(tab)
         return binding.actionId
       }
       actions.dispatch({ actionId: binding.actionId, context: context() })

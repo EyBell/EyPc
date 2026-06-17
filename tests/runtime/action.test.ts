@@ -32,6 +32,43 @@ describe('action runtime', () => {
 })
 
 describe('app runtime', () => {
+  function installPlatform(overrides: Partial<Window['eypcPlatform']> = {}) {
+    const state = createInitialState(100)
+    const killed: Array<{ pid: number; port: number; force: boolean }> = []
+    const copied: string[] = []
+    const platform = {
+      storage: {
+        getState: () => state,
+        setState: () => true
+      },
+      ports: {
+        scan: async () => [
+          { id: '11:3000:tcp', pid: 11, port: 3000, command: 'node', address: '*:3000', protocol: 'tcp' as const, state: 'LISTEN' as const },
+          { id: '12:5174:tcp', pid: 12, port: 5174, command: 'vite', address: '*:5174', protocol: 'tcp' as const, state: 'LISTEN' as const },
+          { id: '13:9000:tcp', pid: 13, port: 9000, command: 'other', address: '*:9000', protocol: 'tcp' as const, state: 'LISTEN' as const }
+        ],
+        kill: async (request: { pid: number; port: number; force: boolean }) => {
+          killed.push(request)
+          return { ok: true, ...request }
+        }
+      },
+      files: {
+        open: async () => true,
+        reveal: async () => true,
+        copyPath: async (path: string) => {
+          copied.push(path)
+          return true
+        },
+        pickFavorite: async () => null
+      },
+      getEnterPayload: () => null,
+      clearEnterPayload: () => undefined,
+      ...overrides
+    }
+    globalThis.window = { eypcPlatform: platform } as unknown as Window & typeof globalThis
+    return { state, killed, copied, platform }
+  }
+
   it('records favorite search history and reorders favorites through runtime', () => {
     const state = createInitialState(100)
     state.favorites = [
@@ -50,5 +87,95 @@ describe('app runtime', () => {
     expect(snapshot.state.favoriteSearchHistory).toEqual(['docs', 'code'])
     expect(snapshot.state.favorites.find((item) => item.id === 'f2')?.parentId).toBe('g1')
     expect(snapshot.favoriteRows.map((item) => item.node.id)).toEqual(['g1', 'f1'])
+  })
+
+  it('creates confirmation for port group cleanup and only targets current listeners', async () => {
+    const { state, killed } = installPlatform()
+    state.portGroups = [{ id: 'web', name: 'Web', color: '#00A676', entries: ['3000', '5173-5175'] }]
+    const runtime = createAppRuntime(state)
+    await runtime.scanPorts()
+
+    const result = runtime.dispatch('ports.killGroup.confirm', { groupId: 'web' })
+    expect(result.handled).toBe(true)
+    expect(runtime.snapshot().confirm?.detail).toContain('2 个进程')
+    expect(killed).toEqual([])
+
+    runtime.confirmNow()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(killed).toEqual([
+      { pid: 11, port: 3000, force: false },
+      { pid: 12, port: 5174, force: false }
+    ])
+  })
+
+  it('force-cleans a port group without confirmation and ignores unmatched ports', async () => {
+    const { state, killed } = installPlatform()
+    state.portGroups = [{ id: 'web', name: 'Web', color: '#00A676', entries: ['3000', '5173-5175'] }]
+    const runtime = createAppRuntime(state)
+    await runtime.scanPorts()
+
+    const result = runtime.dispatch('ports.killGroup.force', { groupId: 'web' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(result.handled).toBe(true)
+    expect(runtime.snapshot().confirm).toBeNull()
+    expect(killed).toEqual([
+      { pid: 11, port: 3000, force: true },
+      { pid: 12, port: 5174, force: true }
+    ])
+  })
+
+  it('switches tabs through Ctrl+1/2/3 and ignores text input focus', () => {
+    installPlatform()
+    const runtime = createAppRuntime(createInitialState(100))
+
+    expect(runtime.handleShortcut('Ctrl+2', false)).toBe('tab.select.favorites')
+    expect(runtime.snapshot().state.activeTab).toBe('favorites')
+    expect(runtime.handleShortcut('Ctrl+3', false)).toBe('tab.select.settings')
+    expect(runtime.snapshot().state.activeTab).toBe('settings')
+    expect(runtime.handleShortcut('Ctrl+1', true)).toBeNull()
+    expect(runtime.snapshot().state.activeTab).toBe('settings')
+  })
+
+  it('copies selected favorite path and rejects group nodes without a path', async () => {
+    const { copied } = installPlatform()
+    const state = createInitialState(100)
+    state.activeTab = 'favorites'
+    state.favorites = [
+      { id: 'g1', kind: 'group', path: '', name: 'Group', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'f1', kind: 'folder', path: '/tmp/demo', name: 'Demo', parentId: null, tags: [], color: '#2F80ED', sortOrder: 2, createdAt: 2, updatedAt: 2 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.focusFavorite('f1')
+    expect(runtime.dispatch('favorites.copyPath').handled).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(copied).toEqual(['/tmp/demo'])
+
+    runtime.focusFavorite('g1')
+    runtime.dispatch('favorites.copyPath')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(copied).toEqual(['/tmp/demo'])
+    expect(runtime.snapshot().message).toBe('分组节点没有可复制路径')
+  })
+
+  it('adds picked favorite when platform picker returns a path', async () => {
+    installPlatform({
+      files: {
+        open: async () => true,
+        reveal: async () => true,
+        copyPath: async () => true,
+        pickFavorite: async () => ({ kind: 'folder', path: '/tmp/picked', name: 'picked', parentId: null, tags: ['picked'], color: '#2F80ED' })
+      }
+    })
+    const state = createInitialState(100)
+    state.activeTab = 'favorites'
+    const runtime = createAppRuntime(state)
+
+    runtime.dispatch('favorites.pickAndAdd')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(runtime.snapshot().state.favorites).toHaveLength(1)
+    expect(runtime.snapshot().state.favorites[0]).toMatchObject({ kind: 'folder', path: '/tmp/picked', name: 'picked' })
   })
 })
