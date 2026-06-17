@@ -109,6 +109,7 @@ onUnmounted(() => {
           @focus="runtime.focusPort"
           @toggle="runtime.togglePortSelection"
           @focus-group="runtime.focusPortGroup"
+          @update-group-draft="runtime.updatePortGroupDraft"
           @save-group-draft="runtime.savePortGroupDraft"
           @cancel-group-draft="runtime.cancelPortGroupDraft"
           @dispatch="runtime.dispatch"
@@ -132,6 +133,7 @@ onUnmounted(() => {
           :actions="runtime.actions()"
           :default-keybindings="runtime.defaultKeybindings"
           :overrides="snapshot.state.settings.keybindingOverrides"
+          :shortcut-profiles="snapshot.state.settings.shortcutProfiles"
           @update-keybinding="runtime.updateKeybinding"
           @reset-keybinding="runtime.resetKeybinding"
         />

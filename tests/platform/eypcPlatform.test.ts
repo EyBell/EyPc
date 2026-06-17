@@ -3,11 +3,40 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 describe('browser fallback platform', () => {
   const originalWindow = globalThis.window
   const originalFetch = globalThis.fetch
+  const originalLocalStorage = globalThis.localStorage
 
   afterEach(() => {
     vi.resetModules()
     globalThis.window = originalWindow
     globalThis.fetch = originalFetch
+    Object.defineProperty(globalThis, 'localStorage', { value: originalLocalStorage, configurable: true })
+  })
+
+  it('persists fallback state through localStorage across module reloads', async () => {
+    const store = new Map<string, string>()
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => { store.set(key, value) },
+        removeItem: (key: string) => { store.delete(key) }
+      },
+      configurable: true
+    })
+    globalThis.window = {} as Window & typeof globalThis
+
+    const first = await import('../../src/platform/eypcPlatform')
+    const firstPlatform = first.getPlatform()
+    firstPlatform.storage.setState({
+      ...firstPlatform.storage.getState(),
+      portGroups: [{ id: 'group:local', name: 'Local Group', color: '#00A676', entries: ['3000'] }]
+    })
+
+    vi.resetModules()
+    const second = await import('../../src/platform/eypcPlatform')
+
+    expect(second.getPlatform().storage.getState().portGroups).toEqual([
+      { id: 'group:local', name: 'Local Group', color: '#00A676', entries: ['3000'] }
+    ])
   })
 
   it('scans ports through the Vite dev API when uTools preload is unavailable', async () => {

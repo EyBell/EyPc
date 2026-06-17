@@ -576,24 +576,376 @@ kbd {
 .settings-page {
   margin: 12px;
   height: calc(100vh - 94px);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 10px;
+  overflow: hidden;
 }
 
-.settings-row {
+.settings-shell-header {
   display: grid;
-  grid-template-columns: 1.5fr 120px 180px 90px 150px;
+  grid-template-columns: auto minmax(280px, 1fr);
   gap: 10px;
   align-items: center;
-  padding: 8px;
-  border-bottom: 1px solid #edf1f4;
 }
 
-.settings-row.header {
+.segmented-control,
+.settings-toolbar,
+.badge-row,
+.kbd-list,
+.preview-controls,
+.when-presets {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.segmented-control {
+  flex-wrap: wrap;
+}
+
+.segmented-control button {
+  padding: 6px 10px;
+  color: #4d6675;
+}
+
+.segmented-control button.active {
+  border-color: #00a676;
+  background: #e8f7f0;
+  color: #006d4f;
+}
+
+.settings-toolbar {
+  justify-content: flex-end;
+}
+
+.settings-toolbar input {
+  min-width: 220px;
+}
+
+.settings-toolbar select,
+.preview-controls select {
+  width: 130px;
+}
+
+.shortcut-settings-layout,
+.layer-rules-grid {
+  min-height: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.shortcut-settings-layout {
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
+
+.shortcut-table,
+.shortcut-inspector,
+.settings-subpanel,
+.layer-rules-panel {
+  min-height: 0;
+}
+
+.shortcut-table {
+  overflow: auto;
+  border: 1px solid #edf1f4;
+  border-radius: 8px;
+}
+
+.shortcut-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(190px, 1.2fr) minmax(170px, 1fr) minmax(160px, 0.9fr) 118px 180px;
+  gap: 10px;
+  align-items: center;
+  border: 0;
+  border-bottom: 1px solid #edf1f4;
+  border-radius: 0;
+  padding: 8px;
+  background: #fff;
+  text-align: left;
+}
+
+.shortcut-row:hover,
+.shortcut-row.selected {
+  background: #f4fbf8;
+}
+
+.shortcut-row.selected {
+  outline: 2px solid #00a676;
+  outline-offset: -2px;
+}
+
+.shortcut-row.disabled {
+  color: #6d7f8d;
+}
+
+.shortcut-row-head {
   position: sticky;
   top: 0;
+  z-index: 2;
   background: #f7fafc;
+  color: #172026;
   font-weight: 700;
 }
 
-.settings-row span:first-child {
+.shortcut-row-head:hover {
+  background: #f7fafc;
+}
+
+.command-cell,
+.when-cell,
+.shortcut-cell,
+.state-cell,
+.shortcut-inspector,
+.settings-subpanel,
+.shortcut-modal header > span,
+.reservation-row span {
   display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.command-cell strong,
+.when-cell small,
+.shortcut-cell small,
+.candidate-row strong,
+.reservation-row strong,
+.issue-row strong,
+.inspector-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer-chip,
+.status-badge {
+  width: fit-content;
+  border: 1px solid #d8e0e7;
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: #f7fafc;
+  color: #4d6675;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.4;
+}
+
+.layer-chip {
+  border-color: #b8e4d1;
+  background: #e8f7f0;
+  color: #006d4f;
+}
+
+.risk-data-write {
+  border-color: #f0cf88;
+  background: #fff9eb;
+  color: #8a5a00;
+}
+
+.risk-destructive,
+.status-badge.conflict,
+.status-badge.blocked,
+.validation-box.danger {
+  border-color: #efb0b0;
+  background: #fff4f4;
+  color: #a92d2d;
+}
+
+.source-user {
+  border-color: #b8e4d1;
+  background: #e8f7f0;
+  color: #006d4f;
+}
+
+.source-removed {
+  border-color: #c7d0d9;
+  background: #eef2f5;
+  color: #6d7f8d;
+}
+
+.kbd-list {
+  flex-wrap: wrap;
+}
+
+.kbd-list em,
+.shortcut-cell small,
+.when-cell small,
+.candidate-row small,
+.compact-meta dd,
+.compact-meta dt,
+.reservation-row small,
+.issue-row small,
+.shortcut-modal small,
+.shortcut-modal-grid p,
+.validation-box small,
+.inspector-id {
+  color: #6d7f8d;
+  font-style: normal;
+}
+
+.shortcut-inspector {
+  overflow: auto;
+  align-content: start;
+}
+
+.settings-subpanel {
+  border: 1px solid #edf1f4;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fff;
+}
+
+.settings-subpanel h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.compact-meta {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.compact-meta div {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.compact-meta dd,
+.compact-meta dt {
+  margin: 0;
+}
+
+.preview-controls input {
+  min-width: 0;
+}
+
+.preview-result {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 6px 8px;
+  margin-top: 8px;
+}
+
+.preview-result span {
+  color: #6d7f8d;
+}
+
+.preview-result p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.candidate-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.candidate-row,
+.issue-row,
+.layer-rule-row,
+.reservation-row {
+  display: grid;
+  gap: 4px;
+  padding: 7px;
+  border: 1px solid #edf1f4;
+  border-radius: 6px;
+  background: #fbfcfd;
+}
+
+.candidate-row,
+.issue-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.issue-row.blocked {
+  border-color: #f0cf88;
+  background: #fff9eb;
+}
+
+.layer-rules-panel {
+  overflow: auto;
+}
+
+.layer-rules-grid {
+  grid-template-columns: 280px minmax(0, 1fr);
+}
+
+.layer-rule-row {
+  grid-template-columns: minmax(0, 1fr) 64px;
+  align-items: center;
+}
+
+.reservation-row {
+  grid-template-columns: 94px minmax(0, 1fr);
+  align-items: start;
+  margin-bottom: 6px;
+}
+
+.shortcut-modal {
+  width: min(560px, calc(100vw - 32px));
+  display: grid;
+  gap: 10px;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fff;
+  box-shadow: 0 16px 48px rgba(16, 24, 32, 0.24);
+}
+
+.shortcut-modal header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.shortcut-recorder {
+  display: grid;
+  gap: 6px;
+}
+
+.shortcut-recorder span {
+  color: #4d6675;
+}
+
+.shortcut-modal-grid,
+.validation-box {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid #edf1f4;
+  border-radius: 6px;
+  background: #fbfcfd;
+}
+
+.shortcut-modal-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.shortcut-modal-grid p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.when-presets {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+  .settings-shell-header,
+  .shortcut-settings-layout,
+  .layer-rules-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .shortcut-inspector {
+    max-height: 280px;
+  }
+
+  .shortcut-row {
+    grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.9fr) minmax(150px, 0.9fr) 100px 154px;
+  }
 }

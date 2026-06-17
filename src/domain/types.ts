@@ -41,15 +41,27 @@ export interface FavoriteTreeNode {
 
 export interface KeybindingOverride {
   commandId: string
-  shortcutId: string
+  shortcutId?: string
+  shortcutIds?: string[]
+  enabled?: boolean
   when?: string
   source?: 'user' | 'removed'
   weight?: number
   disabled?: boolean
 }
 
+export type ShortcutProfileId = 'global' | 'ports' | 'favorites' | 'settings'
+
+export interface ShortcutProfileState {
+  keybindingOverrides: KeybindingOverride[]
+  updatedAt: number
+}
+
+export type ShortcutProfileMap = Record<ShortcutProfileId, ShortcutProfileState>
+
 export interface AppSettings {
   keybindingOverrides: KeybindingOverride[]
+  shortcutProfiles: ShortcutProfileMap
   preferSqlite: boolean
 }
 

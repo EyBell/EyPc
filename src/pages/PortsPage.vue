@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
+import { nextTick, reactive, watch } from 'vue'
 import type { AppRuntimeSnapshot } from '../runtime/appRuntime'
 import SelectableList from '../components/SelectableList.vue'
 
@@ -20,9 +20,21 @@ const emit = defineEmits<{
   toggle: [id: string]
   focusGroup: [id: string]
   saveGroupDraft: [input: { name: string; entriesText: string; color: string }]
+  updateGroupDraft: [input: { name?: string; entriesText?: string; color?: string }]
   cancelGroupDraft: []
   dispatch: [actionId: string, args?: Record<string, unknown>]
 }>()
+
+watch(() => props.snapshot.portGroupDraft?.activeField, (field) => {
+  if (!field) return
+  void nextTick(() => {
+    document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-group-field="${field}"]`)?.focus()
+  })
+})
+
+function updateDraft(input: { name?: string; entriesText?: string; color?: string }) {
+  emit('updateGroupDraft', input)
+}
 
 function dispatchPortRowAction(id: string, actionId: string) {
   emit('focus', id)
@@ -211,18 +223,35 @@ function detailRows() {
     </div>
     <div v-if="props.snapshot.portGroupDraft" class="modal-backdrop">
       <section class="confirm-layer group-editor" role="dialog" aria-modal="true">
-        <h2>{{ props.snapshot.portGroupDraft.mode === 'create' ? '新建端口组' : '编辑端口组' }}</h2>
+        <h2>{{ props.snapshot.portGroupDraft.mode === 'create' ? '新建端口组' : props.snapshot.portGroupDraft.mode === 'rename' ? '重命名端口组' : '编辑端口组' }}</h2>
         <label>
           名称
-          <input v-model="groupForm.name" data-role="port-group-editor" />
+          <input
+            v-model="groupForm.name"
+            data-role="port-group-editor"
+            data-group-field="name"
+            @input="updateDraft({ name: groupForm.name })"
+          />
         </label>
-        <label>
+        <label v-if="props.snapshot.portGroupDraft.mode !== 'rename'">
           规则
-          <textarea v-model="groupForm.entriesText" rows="6" data-role="port-group-editor" placeholder="3000&#10;5173-5175&#10;/node|java/i" />
+          <textarea
+            v-model="groupForm.entriesText"
+            rows="6"
+            data-role="port-group-editor"
+            data-group-field="entries"
+            placeholder="3000&#10;5173-5175&#10;/node|java/i"
+            @input="updateDraft({ entriesText: groupForm.entriesText })"
+          />
         </label>
-        <label>
+        <label v-if="props.snapshot.portGroupDraft.mode !== 'rename'">
           颜色
-          <input v-model="groupForm.color" data-role="port-group-editor" />
+          <input
+            v-model="groupForm.color"
+            data-role="port-group-editor"
+            data-group-field="color"
+            @input="updateDraft({ color: groupForm.color })"
+          />
         </label>
         <p class="pane-meta">每行一条规则：端口、端口区间或 JavaScript 正则表达式。</p>
         <div class="confirm-actions">

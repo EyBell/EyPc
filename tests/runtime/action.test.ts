@@ -194,6 +194,9 @@ describe('app runtime', () => {
     expect(runtime.snapshot().selectedPortIds).toEqual([])
     expect(runtime.snapshot().portDrawer.open).toBe(false)
     expect(runtime.snapshot().state.activeTab).toBe('ports')
+
+    expect(runtime.handleShortcut('Escape', false)).toBe('app.escape.idle')
+    expect(runtime.snapshot().state.activeTab).toBe('ports')
   })
 
   it('opens a left detail drawer for the focused process and closes it before clearing search', async () => {
@@ -210,8 +213,11 @@ describe('app runtime', () => {
     expect(runtime.snapshot().portDetail.open).toBe(false)
     expect(runtime.snapshot().state.portSearch).toBe('3000')
 
-    expect(runtime.handleShortcut('Escape', false)).toBe('escape')
+    expect(runtime.handleShortcut('Escape', false)).toBe('ports.workspace.reset')
     expect(runtime.snapshot().state.portSearch).toBe('')
+
+    expect(runtime.handleShortcut('Escape', false)).toBe('app.escape.idle')
+    expect(runtime.snapshot().state.activeTab).toBe('ports')
   })
 
   it('opens and navigates the port action drawer using command shortcuts', async () => {
@@ -252,7 +258,7 @@ describe('app runtime', () => {
     expect(runtime.snapshot().focusedPortGroupId).toBe('vite')
     expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'port-group-search' })).toBe('ports.group.apply')
     expect(runtime.snapshot().selectedPortGroupId).toBe('vite')
-    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-group-search' })).toBe('escape')
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-group-search' })).toBe('ports.workspace.reset')
     expect(runtime.snapshot().portGroupSearch).toBe('')
     expect(runtime.snapshot().activePortPane).toBe('results')
   })
@@ -319,8 +325,84 @@ describe('app runtime', () => {
     expect(runtime.snapshot().portGroupDraft).toBeNull()
 
     runtime.setPortGroupSearch('web')
-    expect(runtime.handleShortcut('Escape', false)).toBe('escape')
+    expect(runtime.handleShortcut('Escape', false)).toBe('ports.workspace.reset')
     expect(runtime.snapshot().portGroupSearch).toBe('')
+  })
+
+  it('uses F2 for full group editing, Shift+F2 for rename, and isolates editor shortcuts', async () => {
+    const { state } = installPlatform()
+    state.portGroups = [{ id: 'web', name: 'Web', color: '#00A676', entries: ['3000'] }]
+    const runtime = createAppRuntime(state)
+    await runtime.scanPorts()
+
+    runtime.focusPortGroup('web')
+    expect(runtime.handleShortcut('F2', false)).toBe('ports.group.edit')
+    expect(runtime.snapshot().portGroupDraft).toMatchObject({ mode: 'edit', groupId: 'web', activeField: 'name' })
+
+    expect(runtime.handleShortcut('Tab', { textInputFocused: true, activeInputRole: 'port-group-editor' })).toBe('ports.group.edit.nextField')
+    expect(runtime.snapshot().portGroupDraft?.activeField).toBe('entries')
+    expect(runtime.handleShortcut('Tab', { textInputFocused: true, activeInputRole: 'port-group-editor' })).toBe('ports.group.edit.nextField')
+    expect(runtime.snapshot().portGroupDraft?.activeField).toBe('color')
+    expect(runtime.handleShortcut('Shift+Tab', { textInputFocused: true, activeInputRole: 'port-group-editor' })).toBe('ports.group.edit.prevField')
+    expect(runtime.snapshot().portGroupDraft?.activeField).toBe('entries')
+
+    runtime.updatePortGroupDraft({ name: 'Web Full', entriesText: '3000\n5174', color: '#2F80ED' })
+    expect(runtime.handleShortcut('Ctrl+S', { textInputFocused: true, activeInputRole: 'port-group-editor' })).toBe('ports.group.save')
+    expect(runtime.snapshot().state.portGroups[0]).toMatchObject({ name: 'Web Full', entries: ['3000', '5174'], color: '#2F80ED' })
+
+    runtime.focusPortGroup('web')
+    expect(runtime.handleShortcut('Shift+F2', false)).toBe('ports.group.rename')
+    expect(runtime.snapshot().portGroupDraft).toMatchObject({ mode: 'rename', activeField: 'name' })
+    expect(runtime.handleShortcut('Tab', { textInputFocused: true, activeInputRole: 'port-group-editor' })).toBe('ports.group.edit.nextField')
+    expect(runtime.snapshot().portGroupDraft?.activeField).toBe('name')
+    runtime.updatePortGroupDraft({ name: 'Name Only', entriesText: '9999', color: '#D64545' })
+    expect(runtime.handleShortcut('Ctrl+S', { textInputFocused: true, activeInputRole: 'port-group-editor' })).toBe('ports.group.save')
+    expect(runtime.snapshot().state.portGroups[0]).toMatchObject({ name: 'Name Only', entries: ['3000', '5174'], color: '#2F80ED' })
+  })
+
+  it('keeps editor Escape above search and drawer layers', async () => {
+    const { state } = installPlatform()
+    state.portGroups = [{ id: 'web', name: 'Web', color: '#00A676', entries: ['3000'] }]
+    const runtime = createAppRuntime(state)
+    await runtime.scanPorts()
+    runtime.setPortSearch('3000')
+    runtime.togglePortSelection('11:3000:tcp')
+    runtime.dispatch('ports.drawer.open')
+    runtime.focusPortGroup('web')
+    runtime.dispatch('ports.group.edit')
+
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-group-editor' })).toBe('ports.group.edit.cancel')
+    expect(runtime.snapshot().portGroupDraft).toBeNull()
+    expect(runtime.snapshot().portDrawer.open).toBe(true)
+    expect(runtime.snapshot().state.portSearch).toBe('3000')
+
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('ports.drawer.close')
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('ports.selection.clear')
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('ports.workspace.reset')
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('app.escape.idle')
+  })
+
+  it('uses Escape as a command stack for confirm, editor, drawers, selection, workspace, and idle', async () => {
+    installPlatform()
+    const runtime = createAppRuntime(createInitialState(100))
+    await runtime.scanPorts()
+
+    runtime.dispatch('ports.kill.confirm')
+    expect(runtime.snapshot().confirm).not.toBeNull()
+    expect(runtime.handleShortcut('Escape', false)).toBe('confirm.cancel')
+    expect(runtime.snapshot().confirm).toBeNull()
+
+    runtime.togglePortSelection('11:3000:tcp')
+    runtime.dispatch('ports.drawer.open')
+    runtime.dispatch('ports.group.createFromSelection')
+    expect(runtime.snapshot().portGroupDraft).not.toBeNull()
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-group-editor' })).toBe('ports.group.edit.cancel')
+    expect(runtime.snapshot().portGroupDraft).toBeNull()
+    expect(runtime.snapshot().portDrawer.open).toBe(true)
+
+    expect(runtime.handleShortcut('Escape', false)).toBe('ports.drawer.close')
+    expect(runtime.handleShortcut('Escape', false)).toBe('ports.selection.clear')
+    expect(runtime.handleShortcut('Escape', false)).toBe('app.escape.idle')
   })
 
   it('creates, renames, edits, searches, and deletes user port groups through runtime actions', async () => {

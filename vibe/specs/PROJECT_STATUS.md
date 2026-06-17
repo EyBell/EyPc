@@ -10,8 +10,8 @@ This is the project process hub for EyPc. It tracks the current main line, activ
 
 - Date: 2026-06-17.
 - Product: uTools plugin for cross-platform PC capability calls.
-- Current main line: Port management redesign for relevance search, user-defined groups, keyboard cleanup, command mapping, real process scan/kill fallback, port-tab keyboard focus, EzClipboard-style explicit drawer interactions, and scan-result dedupe.
-- Current task: Port EzClipboard interaction refresh is implemented and locally verified: scan dedupe, default hidden selection boxes, explicit left detail drawer, explicit right action drawer, search-input `Ctrl+←/→`, and Esc layering are recorded in [260617-eypc-port-ezclipboard-interaction/04-verify.md](260617-eypc-port-ezclipboard-interaction/04-verify.md#L1).
+- Current main line: Port management redesign for relevance search, user-defined groups, command-soul editing semantics, layered shortcut profiles, settings-page shortcut governance, real process scan/kill fallback, EzClipboard-style explicit drawer interactions, and scan-result dedupe.
+- Current task: Command-soul edit semantics and shortcut profile persistence are implemented and locally verified. Runtime/UI scope is tracked in [260617-eypc-command-soul-shortcuts/01-spec.md](260617-eypc-command-soul-shortcuts/01-spec.md#L1), with verification in [260617-eypc-command-soul-shortcuts/04-verify.md](260617-eypc-command-soul-shortcuts/04-verify.md#L1).
 - Architecture source: [../knowledge/ARCHITECTURE.md](../knowledge/ARCHITECTURE.md#L1).
 - Project interaction taste: [../knowledge/developer-soul.md](../knowledge/developer-soul.md#L1).
 
@@ -47,11 +47,19 @@ This is the project process hub for EyPc. It tracks the current main line, activ
 - Dev kill bridge tasks: [260617-eypc-dev-kill-bridge/03-tasks.md](260617-eypc-dev-kill-bridge/03-tasks.md#L1).
 - Dev kill bridge verification: [260617-eypc-dev-kill-bridge/04-verify.md](260617-eypc-dev-kill-bridge/04-verify.md#L1).
 - Dev kill bridge review: [260617-eypc-dev-kill-bridge/05-review.md](260617-eypc-dev-kill-bridge/05-review.md#L1).
+- Layered shortcuts settings spec: [260617-eypc-layered-shortcuts-settings/01-spec.md](260617-eypc-layered-shortcuts-settings/01-spec.md#L1).
+- Layered shortcuts settings plan: [260617-eypc-layered-shortcuts-settings/02-plan.md](260617-eypc-layered-shortcuts-settings/02-plan.md#L1).
+- Layered shortcuts settings tasks: [260617-eypc-layered-shortcuts-settings/03-tasks.md](260617-eypc-layered-shortcuts-settings/03-tasks.md#L1).
+- Layered shortcuts settings verification: [260617-eypc-layered-shortcuts-settings/04-verify.md](260617-eypc-layered-shortcuts-settings/04-verify.md#L1).
+- Command soul shortcuts spec: [260617-eypc-command-soul-shortcuts/01-spec.md](260617-eypc-command-soul-shortcuts/01-spec.md#L1).
+- Command soul shortcuts plan: [260617-eypc-command-soul-shortcuts/02-plan.md](260617-eypc-command-soul-shortcuts/02-plan.md#L1).
+- Command soul shortcuts tasks: [260617-eypc-command-soul-shortcuts/03-tasks.md](260617-eypc-command-soul-shortcuts/03-tasks.md#L1).
+- Command soul shortcuts verification: [260617-eypc-command-soul-shortcuts/04-verify.md](260617-eypc-command-soul-shortcuts/04-verify.md#L1).
 
 ## Verification Gates
 
 - Automated: `pnpm run test`, `pnpm run typecheck`, `pnpm run build`, `pnpm run validate:utools`.
-- Manual: local GUI result rendering for `8081` is confirmed; port-tab UI smoke is static in [260617-eypc-port-tab-interaction/04-verify.md](260617-eypc-port-tab-interaction/04-verify.md#L1); port dual-drawer and search/dedupe browser smoke is tracked in [260617-eypc-port-ezclipboard-interaction/04-verify.md](260617-eypc-port-ezclipboard-interaction/04-verify.md#L1); dev kill bridge safe smoke is tracked in [260617-eypc-dev-kill-bridge/04-verify.md](260617-eypc-dev-kill-bridge/04-verify.md#L1); macOS real kill with a temporary process and Windows/Linux real process scan remain release gates.
+- Manual: local GUI result rendering for `8081` is confirmed; port-tab UI smoke is static in [260617-eypc-port-tab-interaction/04-verify.md](260617-eypc-port-tab-interaction/04-verify.md#L1); port dual-drawer and search/dedupe browser smoke is tracked in [260617-eypc-port-ezclipboard-interaction/04-verify.md](260617-eypc-port-ezclipboard-interaction/04-verify.md#L1); shortcut settings UI smoke is tracked in [260617-eypc-layered-shortcuts-settings/04-verify.md](260617-eypc-layered-shortcuts-settings/04-verify.md#L1); dev kill bridge safe smoke is tracked in [260617-eypc-dev-kill-bridge/04-verify.md](260617-eypc-dev-kill-bridge/04-verify.md#L1); macOS real kill with a temporary process and Windows/Linux real process scan remain release gates.
 
 ## Current Implementation Focus
 

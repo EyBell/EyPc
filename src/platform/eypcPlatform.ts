@@ -2,6 +2,7 @@ import { normalizeAppState } from '../domain/state'
 import type { AppState, FavoriteNode, KillRequest, KillResult, PortProcess } from '../domain/types'
 
 export type PickedFavorite = Pick<FavoriteNode, 'kind' | 'path' | 'name' | 'parentId' | 'tags' | 'color'>
+const STORAGE_KEY = 'eypc/state/v1'
 
 export interface EypcPlatformApi {
   storage: {
@@ -31,6 +32,28 @@ declare global {
 const memory = {
   state: normalizeAppState(null),
   enterPayload: null as { code?: string } | null
+}
+
+function readFallbackState(): AppState {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (raw) return normalizeAppState(JSON.parse(raw))
+    } catch {}
+  }
+  return memory.state
+}
+
+function writeFallbackState(state: AppState): boolean {
+  const normalized = normalizeAppState(state)
+  memory.state = normalized
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized))
+      return true
+    } catch {}
+  }
+  return true
 }
 
 async function scanViaDevApi(): Promise<PortProcess[]> {
@@ -73,11 +96,8 @@ export function getPlatform(): EypcPlatformApi {
   if (typeof window !== 'undefined' && window.eypcPlatform) return window.eypcPlatform
   return {
     storage: {
-      getState: () => memory.state,
-      setState: (state) => {
-        memory.state = normalizeAppState(state)
-        return true
-      }
+      getState: readFallbackState,
+      setState: writeFallbackState
     },
     ports: {
       scan: scanViaDevApi,

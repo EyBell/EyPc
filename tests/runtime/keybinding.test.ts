@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_KEYBINDINGS,
   buildEffectiveKeybindings,
+  buildShortcutCommandRows,
+  canWhenClausesOverlap,
+  detectShortcutConflicts,
   explainKeybinding,
+  getShortcutReservationConflicts,
+  normalizeShortcutId,
+  previewKeybindingResolution,
   resolveKeybinding
 } from '../../src/runtime/keybinding/keybindingRuntime'
 
@@ -24,6 +30,29 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', { ...context, portPane: 'groups' })?.actionId).toBe('ports.pane.togglePrev')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', { ...context, textInputFocused: true })).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', { ...context, tab: 'favorites' })?.actionId).toBe('tab.next')
+  })
+
+  it('uses command-soul edit shortcuts and blocks lower layers inside editors', () => {
+    const groupsContext = {
+      tab: 'ports' as const,
+      confirmOpen: false,
+      textInputFocused: false,
+      portPane: 'groups' as const
+    }
+    const editorContext = {
+      ...groupsContext,
+      textInputFocused: true,
+      activeInputRole: 'port-group-editor' as const
+    }
+
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', groupsContext)?.actionId).toBe('ports.group.edit')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F2', groupsContext)?.actionId).toBe('ports.group.rename')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+S', editorContext)?.actionId).toBe('ports.group.save')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', editorContext)?.actionId).toBe('ports.group.edit.cancel')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', editorContext)?.actionId).toBe('ports.group.edit.nextField')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', editorContext)?.actionId).toBe('ports.group.edit.prevField')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', editorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+2', editorContext)).toBeNull()
   })
 
   it('keeps result-list shortcuts active while the port search input is focused', () => {
@@ -79,6 +108,64 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+1', { ...context, portDrawerOpen: false, portDrawerActive: false })?.actionId).toBe('ports.drawer.action.1')
   })
 
+  it('normalizes legacy shortcuts and applies command-level multi-shortcut overrides', () => {
+    expect(normalizeShortcutId('ctrl+arrowright')).toBe('Ctrl+ArrowRight')
+    expect(normalizeShortcutId('cmd+shift+enter')).toBe('Ctrl+Shift+Enter')
+
+    const effective = buildEffectiveKeybindings([
+      { commandId: 'ports.scan', shortcutIds: ['ctrl+r', 'alt+r'], enabled: true }
+    ])
+
+    expect(resolveKeybinding(effective, 'Ctrl+R', { tab: 'ports' })?.actionId).toBe('ports.scan')
+    expect(resolveKeybinding(effective, 'Alt+R', { tab: 'ports' })?.actionId).toBe('ports.scan')
+  })
+
+  it('merges profile shortcut overrides while preserving global defaults', () => {
+    const effective = buildEffectiveKeybindings({
+      global: { keybindingOverrides: [{ commandId: 'search.focus', shortcutIds: ['Ctrl+P'], enabled: true }], updatedAt: 1 },
+      ports: { keybindingOverrides: [{ commandId: 'ports.scan', shortcutIds: ['Alt+R'], enabled: true }], updatedAt: 1 },
+      favorites: { keybindingOverrides: [{ commandId: 'favorites.open', shortcutIds: ['Ctrl+O'], enabled: true }], updatedAt: 1 },
+      settings: { keybindingOverrides: [], updatedAt: 1 }
+    })
+
+    expect(resolveKeybinding(effective, 'Ctrl+P', { tab: 'ports' })?.actionId).toBe('search.focus')
+    expect(resolveKeybinding(effective, 'Alt+R', { tab: 'ports' })?.actionId).toBe('ports.scan')
+    expect(resolveKeybinding(effective, 'Ctrl+O', { tab: 'favorites' })?.actionId).toBe('favorites.open')
+    expect(buildShortcutCommandRows(effective).find((row) => row.commandId === 'ports.scan')?.profileId).toBe('ports')
+  })
+
+  it('detects conflicts only when shortcut and when clauses can overlap', () => {
+    expect(canWhenClausesOverlap("tab == 'ports' && portDrawerActive", "tab == 'ports' && !portDrawerActive")).toBe(false)
+    expect(canWhenClausesOverlap("tab == 'ports' && portDrawerActive", "tab == 'ports' && portDrawerOpen")).toBe(true)
+
+    const rows = buildShortcutCommandRows(buildEffectiveKeybindings([
+      { commandId: 'ports.scan', shortcutIds: ['Ctrl+1'], when: "tab == 'ports' && !portDrawerActive", enabled: true }
+    ]))
+    const scan = rows.find((row) => row.commandId === 'ports.scan')
+    expect(scan?.conflicts).toEqual([])
+
+    const conflictingRows = buildShortcutCommandRows(buildEffectiveKeybindings([
+      { commandId: 'ports.scan', shortcutIds: ['Ctrl+Enter'], when: "tab == 'ports'", enabled: true }
+    ]))
+    const conflict = detectShortcutConflicts(conflictingRows.find((row) => row.commandId === 'ports.scan')!, conflictingRows)
+    expect(conflict.some((item) => item.commandId === 'ports.kill.force')).toBe(true)
+  })
+
+  it('reports reserved shortcuts and previews layer resolution candidates', () => {
+    const reserved = getShortcutReservationConflicts('Escape', { commandId: 'ports.scan', when: "tab == 'ports' && portDrawerActive" })
+    expect(reserved[0]).toMatchObject({ commandId: 'ports.drawer.close' })
+
+    const preview = previewKeybindingResolution(DEFAULT_KEYBINDINGS, 'Ctrl+1', {
+      tab: 'ports',
+      textInputFocused: false,
+      portDrawerOpen: true,
+      portDrawerActive: true
+    })
+    expect(preview.winner?.actionId).toBe('ports.drawer.select.1')
+    expect(preview.candidates.map((item) => item.actionId)).toContain('tab.select.ports')
+    expect(preview.candidates[0].layer).toBe('port-drawer')
+  })
+
   it('uses Ctrl+Left for port detail and lets active drawers close before navigation', () => {
     const context = {
       tab: 'ports' as const,
@@ -99,8 +186,8 @@ describe('keybinding runtime', () => {
 
   it('applies user override, disabled state, and explains conflicts', () => {
     const effective = buildEffectiveKeybindings([
-      { commandId: 'ports.scan', shortcutId: 'Ctrl+R', source: 'user' },
-      { commandId: 'search.focus', shortcutId: 'Ctrl+F', source: 'removed', disabled: true }
+      { commandId: 'ports.scan', shortcutIds: ['Ctrl+R'], source: 'user' },
+      { commandId: 'search.focus', shortcutIds: ['Ctrl+F'], source: 'removed', disabled: true }
     ])
 
     expect(resolveKeybinding(effective, 'Ctrl+R', { tab: 'ports' })?.actionId).toBe('ports.scan')

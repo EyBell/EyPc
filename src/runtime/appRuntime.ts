@@ -1,11 +1,11 @@
 import { buildFavoriteTree, filterFavoriteTree, flattenFavoriteTree, reorderFavoriteNode } from '../domain/favorites'
 import { dedupePortProcesses, filterPortProcesses, matchPortGroupProcesses, recordSearchHistory, shouldProcessMatchVerifiedPort } from '../domain/ports'
 import { normalizeAppState } from '../domain/state'
-import type { AppState, AppTabId, FavoriteNode, KillRequest, PortGroup, PortProcess } from '../domain/types'
+import type { AppState, AppTabId, FavoriteNode, KillRequest, PortGroup, PortProcess, ShortcutProfileId } from '../domain/types'
 import { getPlatform } from '../platform/eypcPlatform'
 import { createActionRuntime } from './action/actionRuntime'
 import type { RuntimeActionContext, RuntimeActionRisk } from './action/types'
-import { buildEffectiveKeybindings, DEFAULT_KEYBINDINGS, resolveKeybinding } from './keybinding/keybindingRuntime'
+import { buildEffectiveKeybindings, DEFAULT_KEYBINDINGS, normalizeShortcutId, resolveKeybinding } from './keybinding/keybindingRuntime'
 import type { KeybindingContext } from './keybinding/keybindingRuntime'
 
 export interface AppRuntimeSnapshot {
@@ -71,13 +71,26 @@ export interface ShortcutInputContext {
   activeInputRole?: ActiveInputRole
 }
 
+export interface KeybindingUpdateInput {
+  commandId: string
+  shortcutId?: string
+  shortcutIds?: string[]
+  enabled?: boolean
+  when?: string
+  disabled?: boolean
+  profileId?: ShortcutProfileId
+}
+
 export interface PortGroupDraft {
-  mode: 'create' | 'edit'
+  mode: 'create' | 'edit' | 'rename'
   groupId: string | null
   name: string
   entriesText: string
   color: string
+  activeField: PortGroupDraftField
 }
+
+export type PortGroupDraftField = 'name' | 'entries' | 'color'
 
 export function createAppRuntime(initialState: AppState) {
   const platform = getPlatform()
@@ -234,7 +247,7 @@ export function createAppRuntime(initialState: AppState) {
   }
 
   function shortcutLabelsFor(commandId: string) {
-    const labels = buildEffectiveKeybindings(state.settings.keybindingOverrides)
+    const labels = buildEffectiveKeybindings(state.settings.shortcutProfiles)
       .filter((binding) => binding.actionId === commandId && !binding.disabled && binding.source !== 'removed')
       .map((binding) => binding.shortcutId)
     return [...new Set(labels)].join(' / ')
@@ -521,10 +534,10 @@ export function createAppRuntime(initialState: AppState) {
     return true
   }
 
-  function openGroupDraft(group: PortGroup | null) {
+  function openGroupDraft(group: PortGroup | null, mode: PortGroupDraft['mode'] = group ? 'edit' : 'create') {
     portGroupDraft = group
-      ? { mode: 'edit', groupId: group.id, name: group.name, entriesText: group.entries.join('\n'), color: group.color }
-      : { mode: 'create', groupId: null, name: '', entriesText: '', color: '#00A676' }
+      ? { mode, groupId: group.id, name: group.name, entriesText: group.entries.join('\n'), color: group.color, activeField: 'name' }
+      : { mode: 'create', groupId: null, name: '', entriesText: '', color: '#00A676', activeField: 'name' }
     notify()
   }
 
@@ -540,8 +553,25 @@ export function createAppRuntime(initialState: AppState) {
       groupId: null,
       name: `端口分组 ${state.portGroups.length + 1}`,
       entriesText: portsText,
-      color: '#00A676'
+      color: '#00A676',
+      activeField: 'name'
     }
+    notify()
+    return true
+  }
+
+  function updatePortGroupDraft(input: Partial<Pick<PortGroupDraft, 'name' | 'entriesText' | 'color'>>) {
+    if (!portGroupDraft) return
+    portGroupDraft = { ...portGroupDraft, ...input }
+    notify()
+  }
+
+  function movePortGroupDraftField(direction: 1 | -1) {
+    if (!portGroupDraft) return false
+    const fields: PortGroupDraftField[] = portGroupDraft.mode === 'rename' ? ['name'] : ['name', 'entries', 'color']
+    const current = fields.indexOf(portGroupDraft.activeField)
+    const next = fields[(Math.max(0, current) + direction + fields.length) % fields.length]
+    portGroupDraft = { ...portGroupDraft, activeField: next }
     notify()
     return true
   }
@@ -555,6 +585,47 @@ export function createAppRuntime(initialState: AppState) {
     state.portGroups = state.portGroups.filter((item) => item.id !== group.id)
     if (selectedPortGroupId === group.id) selectedPortGroupId = null
     focusedPortGroupId = state.portGroups[0]?.id || null
+    save()
+    notify()
+    return true
+  }
+
+  function inferShortcutProfileId(commandId: string): ShortcutProfileId {
+    if (commandId.startsWith('ports.')) return 'ports'
+    if (commandId.startsWith('favorites.')) return 'favorites'
+    if (commandId.startsWith('settings.')) return 'settings'
+    return 'global'
+  }
+
+  function aggregateShortcutProfiles() {
+    return (['global', 'ports', 'favorites', 'settings'] as ShortcutProfileId[])
+      .flatMap((profileId) => state.settings.shortcutProfiles[profileId].keybindingOverrides)
+  }
+
+  function savePortGroupDraft(input: { name: string; entriesText: string; color: string }) {
+    const draft = portGroupDraft
+    if (!draft) return false
+    const currentGroup = draft.groupId ? state.portGroups.find((group) => group.id === draft.groupId) || null : null
+    const entries = draft.mode === 'rename' && currentGroup
+      ? currentGroup.entries
+      : [...new Set(input.entriesText.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))]
+    const color = draft.mode === 'rename' && currentGroup ? currentGroup.color : input.color || '#00A676'
+    if (!input.name.trim() || !entries.length) {
+      setMessage('端口组名称和规则不能为空')
+      return false
+    }
+    if (draft.mode === 'edit' && draft.groupId) {
+      state.portGroups = state.portGroups.map((group) => group.id === draft.groupId ? { ...group, name: input.name.trim(), color, entries } : group)
+      focusedPortGroupId = draft.groupId
+    } else if (draft.mode === 'rename' && draft.groupId) {
+      state.portGroups = state.portGroups.map((group) => group.id === draft.groupId ? { ...group, name: input.name.trim() } : group)
+      focusedPortGroupId = draft.groupId
+    } else {
+      const id = `group:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
+      state.portGroups.push({ id, name: input.name.trim(), color, entries })
+      focusedPortGroupId = id
+    }
+    portGroupDraft = null
     save()
     notify()
     return true
@@ -636,8 +707,11 @@ export function createAppRuntime(initialState: AppState) {
     actions.register({ id: 'ports.group.kill.force', title: '强杀当前端口组', group: '端口', risk: 'destructive', scope: 'tab', priority: 94, shortcut: 'Ctrl+Shift+Enter', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => { void killPortTargets(currentPortGroupSelection(args?.groupId || focusedGroup()?.id), true, '组内端口当前无监听进程'); return true } })
     actions.register({ id: 'ports.group.createFromSelection', title: '选中端口收藏为组', group: '端口', risk: 'data-write', scope: 'tab', priority: 93, shortcut: 'Ctrl+G', when: (ctx) => ctx.tab === 'ports', run: () => createGroupFromSelection() })
     actions.register({ id: 'ports.group.create', title: '新建端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'ports', run: () => { openGroupDraft(null); return true } })
-    actions.register({ id: 'ports.group.rename', title: '重命名端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'F2', when: (ctx) => ctx.tab === 'ports', run: () => { const group = focusedGroup(); if (!group) return false; openGroupDraft(group); return true } })
-    actions.register({ id: 'ports.group.edit', title: '编辑端口组规则', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'Ctrl+E', when: (ctx) => ctx.tab === 'ports', run: () => { const group = focusedGroup(); if (!group) return false; openGroupDraft(group); return true } })
+    actions.register({ id: 'ports.group.rename', title: '重命名端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'ports', run: () => { const group = focusedGroup(); if (!group) return false; openGroupDraft(group, 'rename'); return true } })
+    actions.register({ id: 'ports.group.edit', title: '编辑端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'F2', when: (ctx) => ctx.tab === 'ports', run: () => { const group = focusedGroup(); if (!group) return false; openGroupDraft(group, 'edit'); return true } })
+    actions.register({ id: 'ports.group.save', title: '保存端口组编辑', group: '端口', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('port-group-editor'), run: () => savePortGroupDraft(portGroupDraft || { name: '', entriesText: '', color: '#00A676' }) })
+    actions.register({ id: 'ports.group.edit.nextField', title: '编辑层下一个字段', group: '端口', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.layerIds.includes('port-group-editor'), run: () => movePortGroupDraftField(1) })
+    actions.register({ id: 'ports.group.edit.prevField', title: '编辑层上一个字段', group: '端口', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.layerIds.includes('port-group-editor'), run: () => movePortGroupDraftField(-1) })
     actions.register({ id: 'ports.group.delete', title: '删除端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 91, shortcut: 'Delete', when: (ctx) => ctx.tab === 'ports', run: () => deleteFocusedGroup() })
     actions.register({ id: 'ports.drawer.open', title: '打开端口动作抽屉', description: '展示当前端口、选中端口或端口组的可执行动作。', icon: 'drawer', group: '端口', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+ArrowRight', when: (ctx) => ctx.tab === 'ports', run: () => openPortDrawer() })
     actions.register({ id: 'ports.drawer.close', title: '关闭端口动作抽屉', description: '关闭右侧动作抽屉。', icon: 'close', group: '端口', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'ports', run: () => closePortDrawer() })
@@ -682,6 +756,9 @@ export function createAppRuntime(initialState: AppState) {
     actions.register({ id: 'favorites.remove', title: '移出收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 100, when: (ctx) => ctx.tab === 'favorites', run: () => { removeFavorite(); return true } })
     actions.register({ id: 'settings.open', title: '打开设置', group: '全局', risk: 'normal', scope: 'global', priority: 10, shortcut: 'Ctrl+Alt+Shift+S', when: () => true, run: () => { setTab('settings'); return true } })
     actions.register({ id: 'search.focus', title: '聚焦搜索', group: '全局', risk: 'normal', scope: 'global', priority: 10, shortcut: 'Ctrl+F', when: () => true, run: () => focusSearch() })
+    actions.register({ id: 'app.escape.idle', title: 'Esc 空闲消费', group: '全局', risk: 'normal', scope: 'global', priority: 1, shortcut: 'Escape', when: () => true, run: () => true })
+    actions.register({ id: 'confirm.cancel', title: '关闭确认弹窗', group: '全局', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('confirm'), run: () => { confirm = null; notify(); return true } })
+    actions.register({ id: 'ports.workspace.reset', title: '重置端口工作区', group: '端口', risk: 'normal', scope: 'tab', priority: 90, shortcut: 'Escape', when: (ctx) => ctx.tab === 'ports', run: () => { resetPortWorkspace(); return true } })
   }
 
   registerActions()
@@ -800,26 +877,8 @@ export function createAppRuntime(initialState: AppState) {
     },
     addFavorite,
     removeFavorite,
-    savePortGroupDraft(input: { name: string; entriesText: string; color: string }) {
-      const draft = portGroupDraft
-      if (!draft) return
-      const entries = [...new Set(input.entriesText.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))]
-      if (!input.name.trim() || !entries.length) {
-        setMessage('端口组名称和规则不能为空')
-        return
-      }
-      if (draft.mode === 'edit' && draft.groupId) {
-        state.portGroups = state.portGroups.map((group) => group.id === draft.groupId ? { ...group, name: input.name.trim(), color: input.color || '#00A676', entries } : group)
-        focusedPortGroupId = draft.groupId
-      } else {
-        const id = `group:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`
-        state.portGroups.push({ id, name: input.name.trim(), color: input.color || '#00A676', entries })
-        focusedPortGroupId = id
-      }
-      portGroupDraft = null
-      save()
-      notify()
-    },
+    updatePortGroupDraft,
+    savePortGroupDraft,
     cancelPortGroupDraft() {
       portGroupDraft = null
       notify()
@@ -828,14 +887,36 @@ export function createAppRuntime(initialState: AppState) {
       searchOverlayOpen = false
       notify()
     },
-    updateKeybinding(commandId: string, shortcutId: string, disabled = false) {
-      state.settings.keybindingOverrides = state.settings.keybindingOverrides.filter((item) => item.commandId !== commandId)
-      state.settings.keybindingOverrides.push({ commandId, shortcutId, source: disabled ? 'removed' : 'user', disabled })
+    updateKeybinding(input: string | KeybindingUpdateInput, shortcutId?: string, disabled = false) {
+      const payload: KeybindingUpdateInput = typeof input === 'string'
+        ? { commandId: input, shortcutId, disabled }
+        : input
+      const shortcutIds = (payload.shortcutIds?.length ? payload.shortcutIds : payload.shortcutId ? [payload.shortcutId] : [])
+        .map(normalizeShortcutId)
+        .filter(Boolean)
+      const isDisabled = payload.disabled === true || payload.enabled === false
+      const profileId = payload.profileId || inferShortcutProfileId(payload.commandId)
+      const override = {
+        commandId: payload.commandId,
+        shortcutId: shortcutIds[0],
+        shortcutIds,
+        when: payload.when,
+        enabled: !isDisabled,
+        source: isDisabled ? 'removed' : 'user',
+        disabled: isDisabled
+      } as const
+      state.settings.shortcutProfiles[profileId].keybindingOverrides = state.settings.shortcutProfiles[profileId].keybindingOverrides.filter((item) => item.commandId !== payload.commandId)
+      state.settings.shortcutProfiles[profileId].keybindingOverrides.push(override)
+      state.settings.shortcutProfiles[profileId].updatedAt = Date.now()
+      state.settings.keybindingOverrides = aggregateShortcutProfiles()
       save()
       notify()
     },
     resetKeybinding(commandId: string) {
-      state.settings.keybindingOverrides = state.settings.keybindingOverrides.filter((item) => item.commandId !== commandId)
+      for (const profile of Object.values(state.settings.shortcutProfiles)) {
+        profile.keybindingOverrides = profile.keybindingOverrides.filter((item) => item.commandId !== commandId)
+      }
+      state.settings.keybindingOverrides = aggregateShortcutProfiles()
       save()
       notify()
     },
@@ -880,16 +961,19 @@ export function createAppRuntime(initialState: AppState) {
           }
           if (state.portSearch || portGroupSearch || selectedPortGroupId || activePortPane !== 'results') {
             resetPortWorkspace()
-            return 'escape'
+            return 'ports.workspace.reset'
           }
           normalizeFocusedPort()
           notify()
-          return 'escape'
+          return 'app.escape.idle'
         }
-        if (state.activeTab === 'favorites' && state.favoriteSearch) this.setFavoriteSearch('')
-        return 'escape'
+        if (state.activeTab === 'favorites' && state.favoriteSearch) {
+          this.setFavoriteSearch('')
+          return 'favorites.search.clear'
+        }
+        return 'app.escape.idle'
       }
-      const binding = resolveKeybinding(buildEffectiveKeybindings(state.settings.keybindingOverrides), shortcutId, keybindingContext(input))
+      const binding = resolveKeybinding(buildEffectiveKeybindings(state.settings.shortcutProfiles), shortcutId, keybindingContext(input))
       if (!binding) return null
       if (binding.actionId === 'tab.next' || binding.actionId === 'tab.prev') {
         const order: AppTabId[] = ['ports', 'favorites', 'settings']

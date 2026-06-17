@@ -18,5 +18,6 @@ Tool: codex
 - Put uTools, Node.js, shell, process, and file-system calls behind `src/platform/` or `preload/`.
 - All user-visible mutations go through Runtime Action dispatch.
 - Medium or larger interaction/UI/configuration work must apply the project [developer-soul.md](../knowledge/developer-soul.md#L1) before changing behavior.
+- Edit-like interactions must follow the command soul in [developer-soul.md](../knowledge/developer-soul.md#L1): `F2` full edit, `Shift+F2` rename, `Ctrl+S` save, `Escape` cancel, and editor-local `Tab` cycling.
 - Do not delete real files from disk in the favorites feature; removing a favorite only removes plugin metadata.
 - Process termination is high risk: normal kill requires confirmation; force kill is allowed only for explicit selected PID + verified port match.
