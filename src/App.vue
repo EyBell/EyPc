@@ -16,6 +16,7 @@ const runtime = createAppRuntime(normalizeAppState(platform.storage.getState()))
 const version = ref(0)
 const shiftPreview = ref(false)
 const shortcutHints = ref(false)
+const initialMaintenanceSection = ref<'features' | null>(null)
 let disposeRuntime: (() => void) | null = null
 const snapshot = computed(() => {
   version.value
@@ -88,7 +89,8 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('keyup', onKeyup)
   window.addEventListener('blur', clearShiftPreview)
-  const route = routePluginFeature(platform.getEnterPayload())
+  const route = routePluginFeature(platform.getEnterPayload(), snapshot.value.state.settings.featureConfigs)
+  initialMaintenanceSection.value = route.settingsMaintenanceSection || null
   runtime.setTab(route.tab)
   if (route.focusSearch) {
     runtime.dispatch('search.focus')
@@ -152,10 +154,13 @@ onUnmounted(() => {
           :default-keybindings="runtime.defaultKeybindings"
           :overrides="snapshot.state.settings.keybindingOverrides"
           :shortcut-profiles="snapshot.state.settings.shortcutProfiles"
+          :feature-configs="snapshot.state.settings.featureConfigs"
+          :initial-maintenance-section="initialMaintenanceSection"
           :settings="snapshot.state.settings"
           @update-keybinding="runtime.updateKeybinding"
           @reset-keybinding="runtime.resetKeybinding"
           @save-shortcut-profiles="runtime.saveShortcutProfiles"
+          @save-feature-configs="runtime.saveFeatureConfigs"
         />
       </template>
     </TabShell>

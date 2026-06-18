@@ -1,5 +1,11 @@
 export type AppTabId = 'ports' | 'favorites' | 'settings'
 
+export interface FeatureConfig {
+  id: AppTabId
+  enabled: boolean
+  sortOrder: number
+}
+
 export interface PortProcess {
   id: string
   pid: number
@@ -75,6 +81,7 @@ export type ShortcutProfileMap = Record<ShortcutProfileId, ShortcutProfileState>
 export interface AppSettings {
   keybindingOverrides: KeybindingOverride[]
   shortcutProfiles: ShortcutProfileMap
+  featureConfigs: FeatureConfig[]
   preferSqlite: boolean
 }
 

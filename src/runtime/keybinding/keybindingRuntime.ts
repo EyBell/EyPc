@@ -1,4 +1,4 @@
-import type { AppTabId, KeybindingOverride, ShortcutProfileId, ShortcutProfileMap } from '../../domain/types'
+import type { AppTabId, FeatureConfig, KeybindingOverride, ShortcutProfileId, ShortcutProfileMap } from '../../domain/types'
 import { normalizeShortcutId } from '../../domain/shortcuts'
 import { visibleFeatures } from '../feature/featureRegistry'
 
@@ -217,9 +217,10 @@ const DEFAULT_COMMAND_PROFILES: ShortcutCommandProfile[] = [
   { actionId: 'favorites.cancel', title: '取消收藏编辑', group: '收藏', layer: 'favorites', shortcutIds: ['Escape'], when: "tab == 'favorites' && activeInputRole == 'other'", weight: 120 }
 ]
 
-for (const feature of visibleFeatures()) {
-  if (feature.shortcutCommandId !== `tab.select.${feature.id}`) continue
-  DEFAULT_COMMAND_PROFILES.push({
+function featureTabProfiles(featureConfigs?: FeatureConfig[]): ShortcutCommandProfile[] {
+  return visibleFeatures(featureConfigs).flatMap((feature) => {
+    if (feature.shortcutCommandId !== `tab.select.${feature.id}`) return []
+    return [{
     actionId: feature.shortcutCommandId,
     title: `切到${feature.title}`,
     group: '全局',
@@ -227,6 +228,7 @@ for (const feature of visibleFeatures()) {
     shortcutIds: [feature.shortcutId],
     when: '!textInputFocused',
     weight: 100
+    }]
   })
 }
 
@@ -509,10 +511,14 @@ function makeBindings(profiles: ShortcutCommandProfile[]): KeybindingDefinition[
   })))
 }
 
-export const DEFAULT_KEYBINDINGS: KeybindingDefinition[] = makeBindings(DEFAULT_COMMAND_PROFILES)
+export function buildDefaultKeybindings(featureConfigs?: FeatureConfig[]): KeybindingDefinition[] {
+  return makeBindings([...DEFAULT_COMMAND_PROFILES, ...featureTabProfiles(featureConfigs)])
+}
 
-function defaultBindingsFor(commandId: string): KeybindingDefinition[] {
-  return DEFAULT_KEYBINDINGS.filter((item) => item.actionId === commandId)
+export const DEFAULT_KEYBINDINGS: KeybindingDefinition[] = buildDefaultKeybindings()
+
+function defaultBindingsFor(commandId: string, defaultBindings = DEFAULT_KEYBINDINGS): KeybindingDefinition[] {
+  return defaultBindings.filter((item) => item.actionId === commandId)
 }
 
 function flattenOverrides(input: KeybindingOverride[] | ShortcutProfileMap = []): Array<KeybindingOverride & { profileId?: ShortcutProfileId }> {
@@ -522,11 +528,12 @@ function flattenOverrides(input: KeybindingOverride[] | ShortcutProfileMap = [])
   )
 }
 
-export function buildEffectiveKeybindings(overrides: KeybindingOverride[] | ShortcutProfileMap = []): KeybindingDefinition[] {
+export function buildEffectiveKeybindings(overrides: KeybindingOverride[] | ShortcutProfileMap = [], featureConfigs?: FeatureConfig[]): KeybindingDefinition[] {
+  const defaultBindings = featureConfigs ? buildDefaultKeybindings(featureConfigs) : DEFAULT_KEYBINDINGS
   const disabledCommands = new Set<string>()
   const userBindings: KeybindingDefinition[] = []
   for (const override of flattenOverrides(overrides)) {
-    const defaults = defaultBindingsFor(override.commandId)
+    const defaults = defaultBindingsFor(override.commandId, defaultBindings)
     if (!defaults.length) continue
     disabledCommands.add(override.commandId)
     const overrideShortcutValues = override.shortcutIds?.length ? override.shortcutIds : override.shortcutId ? [override.shortcutId] : []
@@ -558,7 +565,7 @@ export function buildEffectiveKeybindings(overrides: KeybindingOverride[] | Shor
       })
     }
   }
-  return [...DEFAULT_KEYBINDINGS.map((item) => ({ ...item, disabled: disabledCommands.has(item.actionId) ? true : item.disabled })), ...userBindings]
+  return [...defaultBindings.map((item) => ({ ...item, disabled: disabledCommands.has(item.actionId) ? true : item.disabled })), ...userBindings]
 }
 
 function whenSpecificity(when: string): number {

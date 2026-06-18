@@ -938,6 +938,11 @@ describe('app runtime', () => {
     expect(runtime.snapshot().searchBlurRequestId).toBe(groupBlurRequestId + 1)
     expect(runtime.snapshot().focusedPortGroupId).toBe('api')
 
+    runtime.saveFeatureConfigs([
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ])
     runtime.setTab('favorites')
     expect(runtime.dispatch('search.focus').handled).toBe(true)
     expect(runtime.snapshot().searchHistoryState).toMatchObject({ target: 'favorites.files', open: false, activeIndex: -1, items: [] })
@@ -952,10 +957,10 @@ describe('app runtime', () => {
 
     expect(runtime.handleShortcut('Ctrl+2', false)).toBeNull()
     expect(runtime.snapshot().state.activeTab).toBe('ports')
-    expect(runtime.handleShortcut('Ctrl+Shift+2', false)).toBe('tab.select.favorites')
-    expect(runtime.snapshot().state.activeTab).toBe('favorites')
+    expect(runtime.handleShortcut('Ctrl+Shift+2', false)).toBeNull()
+    expect(runtime.snapshot().state.activeTab).toBe('ports')
     expect(runtime.handleShortcut('Ctrl+3', false)).toBeNull()
-    expect(runtime.snapshot().state.activeTab).toBe('favorites')
+    expect(runtime.snapshot().state.activeTab).toBe('ports')
     expect(runtime.handleShortcut('Ctrl+Alt+S', false)).toBe('settings.open')
     expect(runtime.snapshot().state.activeTab).toBe('settings')
     runtime.setTab('ports')
@@ -964,6 +969,11 @@ describe('app runtime', () => {
     runtime.setTab('ports')
     expect(runtime.handleShortcut('Ctrl+Alt+S', { textInputFocused: true, activeInputRole: 'port-group-search' })).toBe('settings.open')
     expect(runtime.snapshot().state.activeTab).toBe('settings')
+    runtime.saveFeatureConfigs([
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ])
     runtime.setTab('favorites')
     expect(runtime.handleShortcut('Ctrl+Alt+S', { textInputFocused: true, activeInputRole: 'favorite-search' })).toBe('settings.open')
     expect(runtime.snapshot().state.activeTab).toBe('settings')
@@ -980,9 +990,81 @@ describe('app runtime', () => {
     expect(runtime.snapshot().state.activeTab).toBe('settings')
   })
 
+  it('persists feature configs, updates visible tab order, and keeps settings enabled', () => {
+    const { state, platform } = installPlatform()
+    let savedState: unknown = null
+    platform.storage.setState = (nextState: unknown) => {
+      savedState = nextState
+      return true
+    }
+    const runtime = createAppRuntime(state)
+
+    expect(runtime.snapshot().visibleFeatures.map((feature) => feature.id)).toEqual(['ports', 'settings'])
+    expect(runtime.handleShortcut('Ctrl+Shift+2', false)).toBeNull()
+
+    runtime.saveFeatureConfigs([
+      { id: 'settings', enabled: false, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'ports', enabled: true, sortOrder: 3 }
+    ])
+
+    expect(runtime.snapshot().state.settings.featureConfigs).toEqual([
+      { id: 'settings', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'ports', enabled: true, sortOrder: 3 }
+    ])
+    expect(runtime.snapshot().visibleFeatures.map((feature) => ({
+      id: feature.id,
+      shortcutId: feature.shortcutId,
+      commandId: feature.shortcutCommandId
+    }))).toEqual([
+      { id: 'settings', shortcutId: 'Ctrl+Alt+S', commandId: 'settings.open' },
+      { id: 'favorites', shortcutId: 'Ctrl+Shift+1', commandId: 'tab.select.favorites' },
+      { id: 'ports', shortcutId: 'Ctrl+Shift+2', commandId: 'tab.select.ports' }
+    ])
+    expect(runtime.handleShortcut('Ctrl+Shift+1', false)).toBe('tab.select.favorites')
+    expect(runtime.snapshot().state.activeTab).toBe('favorites')
+    expect(runtime.handleShortcut('Ctrl+Shift+2', false)).toBe('tab.select.ports')
+    expect(runtime.snapshot().state.activeTab).toBe('ports')
+    expect(savedState).toMatchObject({
+      settings: {
+        featureConfigs: [
+          { id: 'settings', enabled: true, sortOrder: 1 },
+          { id: 'favorites', enabled: true, sortOrder: 2 },
+          { id: 'ports', enabled: true, sortOrder: 3 }
+        ]
+      }
+    })
+  })
+
+  it('moves active tab to settings when the current feature is disabled', () => {
+    installPlatform()
+    const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    const runtime = createAppRuntime(state)
+
+    runtime.saveFeatureConfigs([
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: false, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ])
+
+    expect(runtime.snapshot().state.activeTab).toBe('settings')
+  })
+
   it('copies selected favorite path and rejects group nodes without a path', async () => {
     const { copied } = installPlatform()
     const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
     state.activeTab = 'favorites'
     state.favorites = [
       { id: 'g1', kind: 'group', path: '', name: 'Group', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 },
@@ -1012,6 +1094,11 @@ describe('app runtime', () => {
       }
     })
     const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
     state.activeTab = 'favorites'
     const runtime = createAppRuntime(state)
 

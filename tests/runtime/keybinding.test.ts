@@ -19,7 +19,7 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+1', context)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+2', context)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+1', context)?.actionId).toBe('tab.select.ports')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+2', context)?.actionId).toBe('tab.select.favorites')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+2', context)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+3', context)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+S', context)?.actionId).toBe('settings.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+S', { ...context, textInputFocused: true, activeInputRole: 'port-search' })?.actionId).toBe('settings.open')

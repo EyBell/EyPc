@@ -1,8 +1,9 @@
-import type { AppState, AppTabId, FavoriteKind, FavoriteNode, KeybindingOverride, PortGroup, PortGroupFolder, ShortcutProfileId, ShortcutProfileMap } from './types'
+import type { AppState, AppTabId, FavoriteKind, FavoriteNode, FeatureConfig, KeybindingOverride, PortGroup, PortGroupFolder, ShortcutProfileId, ShortcutProfileMap } from './types'
 import { emptySearchHistories, normalizeSearchHistoryList } from './searchHistory'
 import { normalizeShortcutId } from './shortcuts'
 
 const VALID_TABS = new Set<AppTabId>(['ports', 'favorites', 'settings'])
+const TAB_IDS: AppTabId[] = ['ports', 'favorites', 'settings']
 const VALID_FAVORITE_KINDS = new Set<FavoriteKind>(['file', 'folder', 'group'])
 const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'favorites', 'settings']
 
@@ -116,6 +117,45 @@ function normalizeSearchHistories(value: unknown, legacyPortHistory: string[], l
   }
 }
 
+function defaultFeatureConfig(id: AppTabId, index: number): FeatureConfig {
+  return {
+    id,
+    enabled: id === 'favorites' ? false : true,
+    sortOrder: index + 1
+  }
+}
+
+function normalizeFeatureConfigs(value: unknown): FeatureConfig[] {
+  const byId = new Map<AppTabId, FeatureConfig>()
+  const usedOrders = new Set<number>()
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const source = record(item)
+      const id = source.id as AppTabId
+      if (!VALID_TABS.has(id) || byId.has(id)) continue
+      const requestedOrder = numberValue(source.sortOrder, byId.size + 1)
+      const sortOrder = requestedOrder > 0 && !usedOrders.has(requestedOrder) ? requestedOrder : byId.size + 1
+      usedOrders.add(sortOrder)
+      byId.set(id, {
+        id,
+        enabled: id === 'settings' ? true : source.enabled !== false,
+        sortOrder
+      })
+    }
+  }
+  for (const [index, id] of TAB_IDS.entries()) {
+    if (byId.has(id)) continue
+    let sortOrder = index + 1
+    while (usedOrders.has(sortOrder)) sortOrder += 1
+    usedOrders.add(sortOrder)
+    byId.set(id, defaultFeatureConfig(id, sortOrder - 1))
+  }
+  return [...byId.values()]
+    .map((config) => ({ ...config, enabled: config.id === 'settings' ? true : config.enabled }))
+    .sort((a, b) => a.sortOrder - b.sortOrder || TAB_IDS.indexOf(a.id) - TAB_IDS.indexOf(b.id))
+    .map((config, index) => ({ ...config, sortOrder: index + 1 }))
+}
+
 function normalizeFavorite(value: unknown, now: number): FavoriteNode | null {
   const item = record(value)
   const id = stringValue(item.id).trim()
@@ -194,6 +234,7 @@ export function createInitialState(now = Date.now()): AppState {
     settings: {
       keybindingOverrides: [],
       shortcutProfiles: emptyShortcutProfiles(now),
+      featureConfigs: normalizeFeatureConfigs(null),
       preferSqlite: false
     },
     updatedAt: now
@@ -206,15 +247,17 @@ export function normalizeAppState(value: unknown, now = Date.now()): AppState {
   const settings = record(source.settings)
   const legacyKeybindingOverrides = normalizeKeybindingOverrides(settings.keybindingOverrides)
   const shortcutProfiles = normalizeShortcutProfiles(settings.shortcutProfiles, legacyKeybindingOverrides, now)
-  const activeTab = VALID_TABS.has(source.activeTab as AppTabId) ? (source.activeTab as AppTabId) : fallback.activeTab
   const portGroupFolders = normalizePortGroupFolders(source.portGroupFolders)
   const validFolderIds = new Set(portGroupFolders.map((folder) => folder.id))
   const legacyPortSearchHistory = normalizeSearchHistoryList(source.portSearchHistory)
   const legacyFavoriteSearchHistory = normalizeSearchHistoryList(source.favoriteSearchHistory)
   const searchHistories = normalizeSearchHistories(source.searchHistories, legacyPortSearchHistory, legacyFavoriteSearchHistory)
+  const featureConfigs = normalizeFeatureConfigs(settings.featureConfigs)
+  const visibleTabIds = new Set(featureConfigs.filter((config) => config.enabled).map((config) => config.id))
+  const activeTab = VALID_TABS.has(source.activeTab as AppTabId) && visibleTabIds.has(source.activeTab as AppTabId) ? (source.activeTab as AppTabId) : fallback.activeTab
   return {
     version: 1,
-    activeTab,
+    activeTab: visibleTabIds.has(activeTab) ? activeTab : 'settings',
     portSearch: stringValue(source.portSearch),
     favoriteSearch: stringValue(source.favoriteSearch),
     searchHistories,
@@ -227,6 +270,7 @@ export function normalizeAppState(value: unknown, now = Date.now()): AppState {
     settings: {
       keybindingOverrides: aggregateShortcutProfiles(shortcutProfiles),
       shortcutProfiles,
+      featureConfigs,
       preferSqlite: settings.preferSqlite === true
     },
     updatedAt: numberValue(source.updatedAt, now)

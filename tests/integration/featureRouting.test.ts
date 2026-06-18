@@ -21,4 +21,18 @@ describe('uTools feature routing', () => {
       { id: 'settings', shortcutId: 'Ctrl+Alt+S', commandId: 'settings.open' }
     ])
   })
+
+  it('routes disabled feature entries to settings feature maintenance', () => {
+    const featureConfigs = [
+      { id: 'ports' as const, enabled: true, sortOrder: 1 },
+      { id: 'favorites' as const, enabled: false, sortOrder: 2 },
+      { id: 'settings' as const, enabled: true, sortOrder: 3 }
+    ]
+
+    expect(routePluginFeature({ code: 'eypc-favorites' }, featureConfigs)).toEqual({
+      tab: 'settings',
+      focusSearch: false,
+      settingsMaintenanceSection: 'features'
+    })
+  })
 })

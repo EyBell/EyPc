@@ -12,6 +12,31 @@ describe('state domain', () => {
     expect(state.collapsedPortGroupFolderIds).toEqual([])
     expect(state.settings.keybindingOverrides).toEqual([])
     expect(state.settings.shortcutProfiles.ports.keybindingOverrides).toEqual([])
+    expect(state.settings.featureConfigs).toEqual([
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: false, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ])
+  })
+
+  it('normalizes feature visibility configs and keeps settings enabled', () => {
+    const state = normalizeAppState({
+      activeTab: 'favorites',
+      settings: {
+        featureConfigs: [
+          { id: 'settings', enabled: false, sortOrder: 1 },
+          { id: 'unknown', enabled: true, sortOrder: 2 },
+          { id: 'ports', enabled: false, sortOrder: 1 }
+        ]
+      }
+    })
+
+    expect(state.activeTab).toBe('settings')
+    expect(state.settings.featureConfigs).toEqual([
+      { id: 'settings', enabled: true, sortOrder: 1 },
+      { id: 'ports', enabled: false, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 }
+    ])
   })
 
   it('drops legacy built-in port groups while preserving user groups', () => {

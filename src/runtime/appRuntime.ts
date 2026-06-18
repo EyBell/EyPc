@@ -3,13 +3,13 @@ import { dedupePortProcesses, filterPortProcesses, flattenPortGroupTargets, matc
 import { filterSearchHistoryItems, historyForTarget, recordSearchHistory, updateHistoryForTarget, type SearchHistoryTarget } from '../domain/searchHistory'
 import { normalizeAppState } from '../domain/state'
 import { formatShortcutList } from '../domain/shortcuts'
-import type { AppState, AppTabId, FavoriteNode, KillRequest, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
+import type { AppState, AppTabId, FavoriteNode, FeatureConfig, KillRequest, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
 import type { PortGroupTreeRow } from '../domain/ports'
 import { getPlatform } from '../platform/eypcPlatform'
 import { createActionRuntime } from './action/actionRuntime'
 import type { RuntimeActionContext, RuntimeActionRisk } from './action/types'
-import { visibleFeatures } from './feature/featureRegistry'
-import { buildEffectiveKeybindings, DEFAULT_KEYBINDINGS, normalizeShortcutId, resolveKeybinding } from './keybinding/keybindingRuntime'
+import { FEATURES, visibleFeatures, type VisibleFeatureDefinition } from './feature/featureRegistry'
+import { buildDefaultKeybindings, buildEffectiveKeybindings, normalizeShortcutId, resolveKeybinding } from './keybinding/keybindingRuntime'
 import type { KeybindingContext } from './keybinding/keybindingRuntime'
 
 export interface AppRuntimeSnapshot {
@@ -49,6 +49,7 @@ export interface AppRuntimeSnapshot {
   message: string
   confirm: { title: string; detail: string; onConfirm: () => void } | null
   commandShortcutLabels: Record<string, string>
+  visibleFeatures: VisibleFeatureDefinition[]
   searchHistoryState: SearchHistoryState
 }
 
@@ -224,9 +225,21 @@ export function createAppRuntime(initialState: AppState) {
   }
 
   function setTab(tab: AppTabId) {
-    state.activeTab = tab
+    state.activeTab = isTabEnabled(tab) ? tab : 'settings'
     save()
     notify()
+  }
+
+  function currentVisibleFeatures(): VisibleFeatureDefinition[] {
+    return visibleFeatures(state.settings.featureConfigs)
+  }
+
+  function isTabEnabled(tab: AppTabId): boolean {
+    return state.settings.featureConfigs.find((config) => config.id === tab)?.enabled !== false
+  }
+
+  function normalizeActiveTab() {
+    if (!isTabEnabled(state.activeTab)) state.activeTab = 'settings'
   }
 
   function focusPortPane(pane: PortPaneId) {
@@ -400,7 +413,7 @@ export function createAppRuntime(initialState: AppState) {
   }
 
   function shortcutLabelsFor(commandId: string) {
-    const labels = buildEffectiveKeybindings(state.settings.shortcutProfiles)
+    const labels = buildEffectiveKeybindings(state.settings.shortcutProfiles, state.settings.featureConfigs)
       .filter((binding) => binding.actionId === commandId && !binding.disabled && binding.source !== 'removed')
       .map((binding) => binding.shortcutId)
     return formatShortcutList(labels)
@@ -408,7 +421,7 @@ export function createAppRuntime(initialState: AppState) {
 
   function buildCommandShortcutLabels(): Record<string, string> {
     const output: Record<string, string> = {}
-    for (const binding of buildEffectiveKeybindings(state.settings.shortcutProfiles)) {
+    for (const binding of buildEffectiveKeybindings(state.settings.shortcutProfiles, state.settings.featureConfigs)) {
       if (binding.disabled || binding.source === 'removed') continue
       if (!output[binding.actionId]) output[binding.actionId] = shortcutLabelsFor(binding.actionId)
     }
@@ -1328,7 +1341,7 @@ export function createAppRuntime(initialState: AppState) {
 
   function registerActions() {
     actions.register({ id: 'app.hide', title: '隐藏插件窗口', group: '全局', risk: 'normal', scope: 'global', priority: 100, shortcut: 'Shift+Escape', when: () => true, run: () => { void hideAppWindow(); return true } })
-    for (const feature of visibleFeatures()) {
+    for (const feature of FEATURES) {
       const tabActionId = `tab.select.${feature.id}`
       actions.register({
         id: tabActionId,
@@ -1337,8 +1350,8 @@ export function createAppRuntime(initialState: AppState) {
         risk: 'normal',
         scope: 'global',
         priority: 10,
-        shortcut: feature.shortcutCommandId === tabActionId ? feature.shortcutId : undefined,
-        when: () => true,
+        shortcut: undefined,
+        when: () => isTabEnabled(feature.id),
         run: () => { setTab(feature.id); return true }
       })
     }
@@ -1533,6 +1546,7 @@ export function createAppRuntime(initialState: AppState) {
         message,
         confirm,
         commandShortcutLabels: buildCommandShortcutLabels(),
+        visibleFeatures: currentVisibleFeatures(),
         searchHistoryState: currentSearchHistoryState()
       }
     },
@@ -1649,6 +1663,12 @@ export function createAppRuntime(initialState: AppState) {
       save()
       notify()
     },
+    saveFeatureConfigs(nextConfigs: FeatureConfig[]) {
+      state.settings.featureConfigs = normalizeAppState({ settings: { featureConfigs: nextConfigs } }).settings.featureConfigs
+      normalizeActiveTab()
+      save()
+      notify()
+    },
     updateKeybinding(input: string | KeybindingUpdateInput, shortcutId?: string, disabled = false) {
       const payload: KeybindingUpdateInput = typeof input === 'string'
         ? { commandId: input, shortcutId, disabled }
@@ -1726,10 +1746,10 @@ export function createAppRuntime(initialState: AppState) {
         }
         return null
       }
-      const binding = resolveKeybinding(buildEffectiveKeybindings(state.settings.shortcutProfiles), shortcutId, keybindingContext(input))
+      const binding = resolveKeybinding(buildEffectiveKeybindings(state.settings.shortcutProfiles, state.settings.featureConfigs), shortcutId, keybindingContext(input))
       if (!binding) return null
       if (binding.actionId === 'tab.next' || binding.actionId === 'tab.prev') {
-        const order: AppTabId[] = ['ports', 'favorites', 'settings']
+        const order: AppTabId[] = currentVisibleFeatures().map((feature) => feature.id)
         const current = order.indexOf(state.activeTab)
         const offset = binding.actionId === 'tab.next' ? 1 : -1
         setTab(order[(current + offset + order.length) % order.length])
@@ -1737,7 +1757,7 @@ export function createAppRuntime(initialState: AppState) {
       }
       if (binding.actionId.startsWith('tab.select.')) {
         const tab = binding.actionId.replace('tab.select.', '') as AppTabId
-        if (['ports', 'favorites', 'settings'].includes(tab)) setTab(tab)
+        if (['ports', 'favorites', 'settings'].includes(tab) && isTabEnabled(tab)) setTab(tab)
         return binding.actionId
       }
       if (binding.actionId === 'list.up') {
@@ -1763,6 +1783,8 @@ export function createAppRuntime(initialState: AppState) {
       const result = actions.dispatch({ actionId: binding.actionId, context: context() })
       return result.handled ? binding.actionId : null
     },
-    defaultKeybindings: DEFAULT_KEYBINDINGS
+    get defaultKeybindings() {
+      return buildDefaultKeybindings(state.settings.featureConfigs)
+    }
   }
 }

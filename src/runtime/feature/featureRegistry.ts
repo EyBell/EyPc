@@ -1,4 +1,4 @@
-import type { AppTabId } from '../../domain/types'
+import type { AppTabId, FeatureConfig } from '../../domain/types'
 
 export interface FeatureDefinition {
   id: AppTabId
@@ -18,9 +18,38 @@ export const FEATURES: FeatureDefinition[] = [
   { id: 'settings', title: '设置', description: '管理快捷键和运行时配置' }
 ]
 
-export function visibleFeatures(features: FeatureDefinition[] = FEATURES): VisibleFeatureDefinition[] {
+export const DEFAULT_FEATURE_CONFIGS: FeatureConfig[] = [
+  { id: 'ports', enabled: true, sortOrder: 1 },
+  { id: 'favorites', enabled: false, sortOrder: 2 },
+  { id: 'settings', enabled: true, sortOrder: 3 }
+]
+
+const featureMeta = new Map(FEATURES.map((feature) => [feature.id, feature]))
+
+function isFeatureConfig(value: FeatureDefinition | FeatureConfig): value is FeatureConfig {
+  return typeof (value as FeatureConfig).sortOrder === 'number'
+}
+
+export function featureDefinitionFor(id: AppTabId): FeatureDefinition {
+  return featureMeta.get(id) || { id, title: id, description: '' }
+}
+
+export function allFeatures(configs: FeatureConfig[] = DEFAULT_FEATURE_CONFIGS): FeatureDefinition[] {
+  return configs
+    .map((config) => ({ ...featureDefinitionFor(config.id), enabled: config.enabled, sortOrder: config.sortOrder }))
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map(({ sortOrder: _sortOrder, ...feature }) => feature)
+}
+
+export function visibleFeatures(features: Array<FeatureDefinition | FeatureConfig> = DEFAULT_FEATURE_CONFIGS): VisibleFeatureDefinition[] {
   let visibleShortcutIndex = 0
-  return features
+  const normalized = features
+    .map((feature, index) => {
+      if (!isFeatureConfig(feature)) return { ...feature, sortOrder: index + 1 }
+      return { ...featureDefinitionFor(feature.id), enabled: feature.enabled, sortOrder: feature.sortOrder }
+    })
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+  return normalized
     .filter((feature) => feature.enabled !== false)
     .map((feature) => {
       if (feature.id === 'settings') {

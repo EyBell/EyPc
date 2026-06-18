@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import type { AppSettings, KeybindingOverride, ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
+import type { AppSettings, AppTabId, FeatureConfig, KeybindingOverride, ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
 import type { RuntimeActionDefinition } from '../runtime/action/types'
+import { featureDefinitionFor } from '../runtime/feature/featureRegistry'
 import {
   LAYER_PRIORITY,
   SHORTCUT_RESERVATION_RULES,
@@ -18,7 +19,7 @@ import { formatShortcutLabel, formatShortcutList, normalizeShortcutId, shortcutF
 
 type SettingsTabId = 'shortcuts' | 'maintenance'
 type ShortcutScopeId = 'all' | 'global' | 'ports' | 'favorites' | 'settings'
-type MaintenanceSectionId = 'layers' | 'storage' | 'commands' | 'resolution' | 'reservations'
+type MaintenanceSectionId = 'features' | 'layers' | 'storage' | 'commands' | 'resolution' | 'reservations'
 
 interface KeybindingUpdatePayload {
   commandId: string
@@ -35,12 +36,15 @@ const props = defineProps<{
   defaultKeybindings: KeybindingDefinition[]
   overrides: KeybindingOverride[]
   shortcutProfiles?: ShortcutProfileMap
+  featureConfigs: FeatureConfig[]
+  initialMaintenanceSection?: MaintenanceSectionId | null
   settings: AppSettings
 }>()
 const emit = defineEmits<{
   updateKeybinding: [payload: KeybindingUpdatePayload]
   resetKeybinding: [commandId: string]
   saveShortcutProfiles: [profiles: ShortcutProfileMap]
+  saveFeatureConfigs: [configs: FeatureConfig[]]
 }>()
 
 const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'favorites', 'settings']
@@ -68,7 +72,7 @@ const previewContexts: Array<{ id: string; label: string; context: KeybindingCon
 ]
 
 const settingsTabId = ref<SettingsTabId>('shortcuts')
-const maintenanceSectionId = ref<MaintenanceSectionId>('layers')
+const maintenanceSectionId = ref<MaintenanceSectionId>('features')
 const shortcutScopeId = ref<ShortcutScopeId>('all')
 const keyword = ref('')
 const stateFilter = ref<'all' | 'conflict' | 'user' | 'disabled'>('all')
@@ -92,10 +96,12 @@ const shortcutModifierHinting = ref(false)
 const commandTooltipX = ref(0)
 const commandTooltipY = ref(0)
 const draftShortcutProfiles = ref<ShortcutProfileMap>(cloneShortcutProfiles(props.shortcutProfiles || props.settings.shortcutProfiles))
+const draftFeatureConfigs = ref<FeatureConfig[]>(cloneFeatureConfigs(props.featureConfigs))
+const draggingFeatureId = ref<AppTabId | null>(null)
 
 const actionMeta = computed(() => new Map(props.actions.map((action) => [action.id, action])))
 const shortcutDraftDirty = computed(() => JSON.stringify(draftShortcutProfiles.value) !== JSON.stringify(props.shortcutProfiles || props.settings.shortcutProfiles))
-const effectiveBindings = computed(() => buildEffectiveKeybindings(draftShortcutProfiles.value))
+const effectiveBindings = computed(() => buildEffectiveKeybindings(draftShortcutProfiles.value, draftFeatureConfigs.value))
 const commandRows = computed(() => buildShortcutCommandRows(effectiveBindings.value).map((row) => {
   const action = actionMeta.value.get(row.commandId)
   return {
@@ -116,6 +122,15 @@ const recordingRow = computed(() => recordingCommandId.value ? commandRows.value
 const whenRow = computed(() => whenCommandId.value ? commandRows.value.find((row) => row.commandId === whenCommandId.value) || null : null)
 const storageModeLabel = computed(() => props.settings.preferSqlite ? 'SQLite 预留模式' : 'uTools dbStorage')
 const sqliteStateLabel = computed(() => props.settings.preferSqlite ? '预留请求已记录' : '未启用')
+const featureDraftDirty = computed(() => JSON.stringify(draftFeatureConfigs.value) !== JSON.stringify(props.featureConfigs))
+const featureRows = computed(() => draftFeatureConfigs.value
+  .slice()
+  .sort((a, b) => a.sortOrder - b.sortOrder)
+  .map((config) => ({
+    ...featureDefinitionFor(config.id),
+    ...config,
+    locked: config.id === 'settings'
+  })))
 
 const filteredCommandRows = computed(() => {
   const query = keyword.value.trim().toLowerCase()
@@ -143,6 +158,7 @@ const filteredRows = computed(() => primaryShortcutRows.value)
 
 const previewResult = computed(() => previewKeybindingResolution(effectiveBindings.value, previewShortcut.value, activePreviewContext.value.context))
 const maintenanceSections = computed<Array<{ id: MaintenanceSectionId; label: string; meta: string }>>(() => [
+  { id: 'features', label: '功能开关', meta: `${featureRows.value.filter((row) => row.enabled).length}/${featureRows.value.length} 启用` },
   { id: 'layers', label: '层级优先级', meta: `${layerRows.value.length} 层` },
   { id: 'storage', label: '存储状态', meta: storageModeLabel.value },
   { id: 'commands', label: 'Layer Commands', meta: `${maintenanceShortcutRows.value.length} 命令` },
@@ -173,6 +189,17 @@ watch(() => props.shortcutProfiles, (profiles) => {
   if (shortcutDraftDirty.value) return
   draftShortcutProfiles.value = cloneShortcutProfiles(profiles || props.settings.shortcutProfiles)
 }, { deep: true })
+
+watch(() => props.featureConfigs, (configs) => {
+  if (featureDraftDirty.value) return
+  draftFeatureConfigs.value = cloneFeatureConfigs(configs)
+}, { deep: true })
+
+watch(() => props.initialMaintenanceSection, (section) => {
+  if (!section) return
+  settingsTabId.value = 'maintenance'
+  maintenanceSectionId.value = section
+}, { immediate: true })
 
 onMounted(() => {
   window.addEventListener('keydown', handleModalEscape, true)
@@ -229,6 +256,72 @@ function cloneShortcutProfiles(input: ShortcutProfileMap): ShortcutProfileMap {
       updatedAt: profile?.updatedAt || now
     }]
   })) as ShortcutProfileMap
+}
+
+function cloneFeatureConfigs(input: FeatureConfig[]): FeatureConfig[] {
+  return input.map((config) => ({
+    id: config.id,
+    enabled: config.id === 'settings' ? true : config.enabled,
+    sortOrder: config.sortOrder
+  }))
+}
+
+function orderedFeatureConfigs() {
+  return featureRows.value.map((row, index) => ({
+    id: row.id,
+    enabled: row.id === 'settings' ? true : row.enabled,
+    sortOrder: index + 1
+  }))
+}
+
+function setDraftFeatureConfigs(next: FeatureConfig[]) {
+  draftFeatureConfigs.value = next.map((config, index) => ({
+    ...config,
+    enabled: config.id === 'settings' ? true : config.enabled,
+    sortOrder: index + 1
+  }))
+}
+
+function toggleFeature(row: FeatureConfig, enabled: boolean) {
+  if (row.id === 'settings') return
+  setDraftFeatureConfigs(orderedFeatureConfigs().map((config) => config.id === row.id ? { ...config, enabled } : config))
+}
+
+function moveFeature(row: FeatureConfig, direction: 1 | -1) {
+  const rows = orderedFeatureConfigs()
+  const currentIndex = rows.findIndex((item) => item.id === row.id)
+  const nextIndex = Math.min(rows.length - 1, Math.max(0, currentIndex + direction))
+  if (currentIndex < 0 || currentIndex === nextIndex) return
+  const next = [...rows]
+  const [item] = next.splice(currentIndex, 1)
+  next.splice(nextIndex, 0, item)
+  setDraftFeatureConfigs(next)
+}
+
+function onFeatureDragStart(row: FeatureConfig) {
+  draggingFeatureId.value = row.id
+}
+
+function onFeatureDrop(row: FeatureConfig) {
+  const draggingId = draggingFeatureId.value
+  draggingFeatureId.value = null
+  if (!draggingId || draggingId === row.id) return
+  const rows = orderedFeatureConfigs()
+  const fromIndex = rows.findIndex((item) => item.id === draggingId)
+  const toIndex = rows.findIndex((item) => item.id === row.id)
+  if (fromIndex < 0 || toIndex < 0) return
+  const next = [...rows]
+  const [item] = next.splice(fromIndex, 1)
+  next.splice(toIndex, 0, item)
+  setDraftFeatureConfigs(next)
+}
+
+function saveFeatureDraft() {
+  emit('saveFeatureConfigs', orderedFeatureConfigs())
+}
+
+function discardFeatureDraft() {
+  draftFeatureConfigs.value = cloneFeatureConfigs(props.featureConfigs)
 }
 
 function shortcutIdsEqual(left: string[], right: string[]) {
@@ -730,7 +823,11 @@ function isRecordableShortcutId(shortcutId: string) {
 
       <section class="maintenance-center">
         <header class="maintenance-center-header">
-          <span v-if="maintenanceSectionId === 'layers'">
+          <span v-if="maintenanceSectionId === 'features'">
+            <strong>功能开关</strong>
+            <small>控制顶层功能是否启用，并决定主 Tab 与 Ctrl+Shift 数字顺序</small>
+          </span>
+          <span v-else-if="maintenanceSectionId === 'layers'">
             <strong>层级优先级</strong>
             <small>{{ layerRows.length }} 个快捷键接管层，数值越大优先级越高</small>
           </span>
@@ -752,7 +849,59 @@ function isRecordableShortcutId(shortcutId: string) {
           </span>
         </header>
 
-        <div v-if="maintenanceSectionId === 'layers'" class="maintenance-panel-body maintenance-layer-body">
+        <div v-if="maintenanceSectionId === 'features'" class="maintenance-panel-body maintenance-feature-body">
+          <div class="feature-maintenance-toolbar">
+            <span>{{ featureRows.filter((row) => row.enabled).length }} 个功能启用</span>
+            <span class="shortcut-draft-actions">
+              <button type="button" :disabled="!featureDraftDirty" @click="discardFeatureDraft">放弃</button>
+              <button type="button" :disabled="!featureDraftDirty" @click="saveFeatureDraft">保存</button>
+            </span>
+          </div>
+          <div class="feature-maintenance-list" role="table">
+            <div class="feature-config-row feature-config-head" role="row">
+              <span>功能</span>
+              <span>启用</span>
+              <span>排序</span>
+              <span>状态</span>
+            </div>
+            <div
+              v-for="row in featureRows"
+              :key="row.id"
+              class="feature-config-row"
+              role="row"
+              draggable="true"
+              :class="{ disabled: !row.enabled, dragging: draggingFeatureId === row.id }"
+              @dragstart="onFeatureDragStart(row)"
+              @dragend="draggingFeatureId = null"
+              @dragover.prevent
+              @drop.prevent="onFeatureDrop(row)"
+            >
+              <span class="feature-config-main">
+                <strong>{{ row.title }}</strong>
+                <small>{{ row.description }}</small>
+              </span>
+              <span class="feature-config-toggle">
+                <input
+                  type="checkbox"
+                  :checked="row.enabled"
+                  :disabled="row.locked"
+                  :aria-label="`${row.title}启用状态`"
+                  @change="toggleFeature(row, ($event.target as HTMLInputElement).checked)"
+                />
+              </span>
+              <span class="feature-config-order">
+                <button type="button" title="上移" :disabled="row.sortOrder === 1" @click="moveFeature(row, -1)">↑</button>
+                <button type="button" title="下移" :disabled="row.sortOrder === featureRows.length" @click="moveFeature(row, 1)">↓</button>
+              </span>
+              <span class="feature-config-state">
+                <em class="status-badge" :class="row.enabled ? 'source-user' : 'source-removed'">{{ row.enabled ? 'On' : 'Off' }}</em>
+                <em v-if="row.locked" class="status-badge">Locked</em>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div v-else-if="maintenanceSectionId === 'layers'" class="maintenance-panel-body maintenance-layer-body">
           <div class="settings-subpanel">
             <h3>层级优先级</h3>
             <div v-for="layer in layerRows" :key="layer.id" class="layer-rule-row">

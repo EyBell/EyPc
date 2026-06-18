@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import type { AppTabId } from '../domain/types'
 import { formatShortcutLabel } from '../domain/shortcuts'
-import { visibleFeatures } from '../runtime/feature/featureRegistry'
 import type { AppRuntimeSnapshot } from '../runtime/appRuntime'
 import CommandHints from './CommandHints.vue'
 
@@ -12,15 +11,13 @@ defineProps<{
   snapshot: AppRuntimeSnapshot
 }>()
 defineEmits<{ select: [tab: AppTabId] }>()
-
-const features = visibleFeatures()
 </script>
 
 <template>
   <section class="tab-shell">
     <nav class="top-tabs" aria-label="EyPc 功能">
       <button
-        v-for="feature in features"
+        v-for="feature in snapshot.visibleFeatures"
         :key="feature.id"
         type="button"
         class="tab-button"
