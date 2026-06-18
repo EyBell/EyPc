@@ -111,6 +111,39 @@ describe('app runtime', () => {
     expect(snapshot.favoriteRows.map((item) => item.node.id)).toEqual(['g1', 'f1'])
   })
 
+  it('saves shortcut profile drafts as one runtime settings update', () => {
+    const { state, platform } = installPlatform()
+    let saveCount = 0
+    platform.storage.setState = () => {
+      saveCount += 1
+      return true
+    }
+    const runtime = createAppRuntime(state)
+    const draftProfiles = {
+      ...state.settings.shortcutProfiles,
+      ports: {
+        keybindingOverrides: [
+          { commandId: 'ports.scan', shortcutIds: ['Alt+R'], shortcutId: 'Alt+R', enabled: true, source: 'user' as const }
+        ],
+        updatedAt: 500
+      },
+      global: {
+        keybindingOverrides: [
+          { commandId: 'search.focus', shortcutIds: ['Ctrl+P'], shortcutId: 'Ctrl+P', enabled: true, source: 'user' as const }
+        ],
+        updatedAt: 501
+      }
+    }
+
+    runtime.saveShortcutProfiles(draftProfiles)
+
+    const settings = runtime.snapshot().state.settings
+    expect(settings.shortcutProfiles.ports.keybindingOverrides[0]).toMatchObject({ commandId: 'ports.scan', shortcutIds: ['Alt+R'] })
+    expect(settings.shortcutProfiles.global.keybindingOverrides[0]).toMatchObject({ commandId: 'search.focus', shortcutIds: ['Ctrl+P'] })
+    expect(settings.keybindingOverrides.map((item) => item.commandId)).toEqual(['search.focus', 'ports.scan'])
+    expect(saveCount).toBe(1)
+  })
+
   it('hides the app with Shift+Escape above active layers', async () => {
     const { state, getHideCount } = installPlatform()
     state.portGroups = [group('web', 'Web', ['3000'])]

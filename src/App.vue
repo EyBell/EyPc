@@ -155,6 +155,7 @@ onUnmounted(() => {
           :settings="snapshot.state.settings"
           @update-keybinding="runtime.updateKeybinding"
           @reset-keybinding="runtime.resetKeybinding"
+          @save-shortcut-profiles="runtime.saveShortcutProfiles"
         />
       </template>
     </TabShell>

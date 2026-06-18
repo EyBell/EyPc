@@ -3,7 +3,7 @@ import { dedupePortProcesses, filterPortProcesses, flattenPortGroupTargets, matc
 import { filterSearchHistoryItems, historyForTarget, recordSearchHistory, updateHistoryForTarget, type SearchHistoryTarget } from '../domain/searchHistory'
 import { normalizeAppState } from '../domain/state'
 import { formatShortcutList } from '../domain/shortcuts'
-import type { AppState, AppTabId, FavoriteNode, KillRequest, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId } from '../domain/types'
+import type { AppState, AppTabId, FavoriteNode, KillRequest, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
 import type { PortGroupTreeRow } from '../domain/ports'
 import { getPlatform } from '../platform/eypcPlatform'
 import { createActionRuntime } from './action/actionRuntime'
@@ -1205,6 +1205,19 @@ export function createAppRuntime(initialState: AppState) {
       .flatMap((profileId) => state.settings.shortcutProfiles[profileId].keybindingOverrides)
   }
 
+  function cloneShortcutProfiles(input: ShortcutProfileMap): ShortcutProfileMap {
+    return Object.fromEntries((['global', 'ports', 'favorites', 'settings'] as ShortcutProfileId[]).map((profileId) => {
+      const profile = input[profileId]
+      return [profileId, {
+        keybindingOverrides: (profile?.keybindingOverrides || []).map((item) => ({
+          ...item,
+          shortcutIds: item.shortcutIds ? [...item.shortcutIds] : item.shortcutId ? [item.shortcutId] : []
+        })),
+        updatedAt: profile?.updatedAt || Date.now()
+      }]
+    })) as ShortcutProfileMap
+  }
+
   function savePortGroupDraft(input: { name: string; entriesText: string; color: string; folderId?: string | null }) {
     const draft = portGroupDraft
     if (!draft) return false
@@ -1628,6 +1641,12 @@ export function createAppRuntime(initialState: AppState) {
     },
     closeSearchOverlay() {
       searchOverlayOpen = false
+      notify()
+    },
+    saveShortcutProfiles(nextProfiles: ShortcutProfileMap) {
+      state.settings.shortcutProfiles = cloneShortcutProfiles(nextProfiles)
+      state.settings.keybindingOverrides = aggregateShortcutProfiles()
+      save()
       notify()
     },
     updateKeybinding(input: string | KeybindingUpdateInput, shortcutId?: string, disabled = false) {

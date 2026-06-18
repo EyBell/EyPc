@@ -11,7 +11,7 @@ This is the project process hub for EyPc. It tracks the current main line, activ
 - Date: 2026-06-18.
 - Product: uTools plugin for cross-platform PC capability calls.
 - Current main line: Port management redesign for relevance search, user-defined groups and folders, command-soul editing semantics, layered shortcut profiles, settings-page shortcut governance, uTools/EzClipboard-style compact settings layout, real process scan/kill fallback, structured local search histories, compact top-right help hints, group/folder metadata deletion, and streamlined port search history/focus behavior.
-- Current task: Settings shortcut maintenance EzClipboard-style refinement makes command ids primary, hides inline default shortcut hints, uses English scope chips with hover detail, compacts state chips, moves layer recovery commands into the maintenance tab, and captures Settings `Ctrl/Cmd+F` for shortcut search focus. Scope is tracked in [2606181043-eypc-settings-shortcut-ez-style/01-spec.md](2606181043-eypc-settings-shortcut-ez-style/01-spec.md#L1), with verification in [2606181043-eypc-settings-shortcut-ez-style/04-verify.md](2606181043-eypc-settings-shortcut-ez-style/04-verify.md#L1).
+- Current task: Settings shortcut maintenance EzClipboard-style refinement makes command ids primary, hides inline default shortcut hints, uses English scope chips with hover detail, compacts state chips, moves layer recovery commands and shortcut resolution preview into a left-nav maintenance tab with one stable center domain, captures Settings `Ctrl/Cmd+F` for shortcut search focus, shows the search `c-f` hint only while Ctrl/Command is held, and changes shortcut recording to EzClipboard-style current/pending/capture/direct-input management with page-level draft save. Scope is tracked in [2606181043-eypc-settings-shortcut-ez-style/01-spec.md](2606181043-eypc-settings-shortcut-ez-style/01-spec.md#L1), plan in [2606181043-eypc-settings-shortcut-ez-style/02-plan.md](2606181043-eypc-settings-shortcut-ez-style/02-plan.md#L1), with verification in [2606181043-eypc-settings-shortcut-ez-style/04-verify.md](2606181043-eypc-settings-shortcut-ez-style/04-verify.md#L1).
 - Architecture source: [../knowledge/ARCHITECTURE.md](../knowledge/ARCHITECTURE.md#L1).
 - Project interaction taste: [../knowledge/developer-soul.md](../knowledge/developer-soul.md#L1).
 
@@ -68,6 +68,7 @@ This is the project process hub for EyPc. It tracks the current main line, activ
 - Port compact help and group delete spec: [2606181025-eypc-port-compact-help-delete/01-spec.md](2606181025-eypc-port-compact-help-delete/01-spec.md#L1).
 - Port compact help and group delete verification: [2606181025-eypc-port-compact-help-delete/04-verify.md](2606181025-eypc-port-compact-help-delete/04-verify.md#L1).
 - Settings shortcut Ez style spec: [2606181043-eypc-settings-shortcut-ez-style/01-spec.md](2606181043-eypc-settings-shortcut-ez-style/01-spec.md#L1).
+- Settings shortcut Ez style plan: [2606181043-eypc-settings-shortcut-ez-style/02-plan.md](2606181043-eypc-settings-shortcut-ez-style/02-plan.md#L1).
 - Settings shortcut Ez style verification: [2606181043-eypc-settings-shortcut-ez-style/04-verify.md](2606181043-eypc-settings-shortcut-ez-style/04-verify.md#L1).
 
 ## Verification Gates

@@ -47,8 +47,8 @@ describe('port search shortcut hints', () => {
     expect(css).toMatch(/\.page-grid \{[^}]*gap:\s*1px;[^}]*padding:\s*1px;/s)
     expect(css).not.toMatch(/\.tab-button \{[^}]*justify-content:\s*space-between;/s)
     expect(css).not.toContain('.tab-button.shortcut-hinting span')
-    expect(css).toMatch(/\.tab-shortcut-hint \{[^}]*position: absolute;[^}]*right:\s*6px;[^}]*top:\s*50%;[^}]*max-width: 58px;/s)
-    expect(css).toMatch(/\.tab-shortcut-hint \{[^}]*transform:\s*translate\(calc\(100% \+ 2px\), -50%\);/s)
+    expect(css).toMatch(/\.tab-shortcut-hint \{[^}]*position: absolute;[^}]*right:\s*38px;[^}]*top:\s*50%;[^}]*max-width: 58px;/s)
+    expect(css).toMatch(/\.tab-shortcut-hint \{[^}]*transform:\s*translate\(calc\(80% \+ 2px\), -50%\);/s)
     expect(css).not.toMatch(/\.tab-shortcut-hint \{[^}]*left:\s*50%;/s)
   })
 
