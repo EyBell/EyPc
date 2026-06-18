@@ -19,15 +19,18 @@ const emit = defineEmits<{
   focus: []
   accept: [payload: { target: SearchHistoryTarget; value: string }]
   delete: [payload: { target: SearchHistoryTarget; value: string }]
+  open: [payload: { target: SearchHistoryTarget }]
 }>()
 
 const hasFocus = ref(false)
 const isActiveTarget = computed(() => props.historyState.target === props.target)
 const isOpen = computed(() => isActiveTarget.value && props.historyState.open)
-const historyItems = computed(() => hasFocus.value && isOpen.value && props.modelValue.trim() ? props.historyState.items : [])
+const matchingItems = computed(() => hasFocus.value && isActiveTarget.value && props.modelValue.trim() ? props.historyState.items : [])
+const historyItems = computed(() => isOpen.value ? matchingItems.value : [])
+const inlineHistory = computed(() => matchingItems.value[0] || '')
 const activeIndex = computed(() => isActiveTarget.value ? props.historyState.activeIndex : -1)
 const isFiltering = computed(() => props.modelValue.trim().length > 0)
-const inlineHint = computed(() => props.error || (historyItems.value.length ? 's-↑↓ · cr' : props.status))
+const inlineHint = computed(() => props.error || props.status)
 
 function updateValue(event: Event) {
   emit('update:modelValue', (event.target as HTMLInputElement | null)?.value || '')
@@ -40,6 +43,11 @@ function acceptHistory(value: string) {
 
 function deleteHistory(value: string) {
   emit('delete', { target: props.target, value })
+}
+
+function openHistory() {
+  if (!inlineHistory.value) return
+  emit('open', { target: props.target })
 }
 
 function leaveBox() {
@@ -66,9 +74,20 @@ function leaveBox() {
       @input="updateValue"
     />
     <span v-if="inlineHint" class="search-meta">
-      <span v-if="inlineHint" class="search-status" :class="{ error: Boolean(error), hint: Boolean(historyItems.length && !error) }">
+      <span v-if="inlineHint" class="search-status" :class="{ error: Boolean(error) }">
         {{ inlineHint }}
       </span>
+    </span>
+    <span v-if="inlineHistory && !error" class="search-inline-anchor">
+      <span class="search-inline-query">{{ modelValue }}</span>
+      <button
+        type="button"
+        class="search-inline-history"
+        :title="`历史匹配：${inlineHistory}`"
+        @mousedown.prevent="openHistory"
+      >
+        {{ inlineHistory }}
+      </button>
     </span>
     <kbd v-if="shortcutHint" class="search-shortcut-hint">{{ shortcutHint }}</kbd>
     <div v-if="historyItems.length" class="search-history-menu" role="listbox">

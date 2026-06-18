@@ -168,6 +168,10 @@ function acceptHistory(payload: { target: SearchHistoryTarget; value: string }) 
 function deleteHistory(payload: { target: SearchHistoryTarget; value: string }) {
   emit('dispatch', 'search.history.delete', payload)
 }
+
+function openHistory(payload: { target: SearchHistoryTarget }) {
+  emit('dispatch', 'search.history.open', payload)
+}
 </script>
 
 <template>
@@ -213,6 +217,7 @@ function deleteHistory(payload: { target: SearchHistoryTarget; value: string }) 
           @update:model-value="emit('groupSearch', $event)"
           @accept="acceptHistory"
           @delete="deleteHistory"
+          @open="openHistory"
         />
         <button
           type="button"
@@ -315,6 +320,7 @@ function deleteHistory(payload: { target: SearchHistoryTarget; value: string }) 
           @update:model-value="emit('search', $event)"
           @accept="acceptHistory"
           @delete="deleteHistory"
+          @open="openHistory"
         />
       </div>
       <SelectableList

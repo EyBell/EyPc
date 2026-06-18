@@ -96,13 +96,13 @@ describe('app runtime', () => {
     runtime.setTab('favorites')
     expect(runtime.dispatch('search.focus').handled).toBe(true)
     runtime.setFavoriteSearch('docs')
-    expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'favorite-search' })).toBe('search.history.accept')
+    expect(runtime.dispatch('search.history.accept').handled).toBe(true)
     expect(runtime.dispatch('search.focus').handled).toBe(true)
     runtime.setFavoriteSearch('code')
-    expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'favorite-search' })).toBe('search.history.accept')
+    expect(runtime.dispatch('search.history.accept').handled).toBe(true)
     expect(runtime.dispatch('search.focus').handled).toBe(true)
     runtime.setFavoriteSearch('docs')
-    expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'favorite-search' })).toBe('search.history.accept')
+    expect(runtime.dispatch('search.history.accept').handled).toBe(true)
     runtime.reorderFavorite('f2', 'g1', 'f1')
 
     const snapshot = runtime.snapshot()
@@ -189,6 +189,19 @@ describe('app runtime', () => {
     expect(killed).toEqual([{ pid: 11, port: 3000, force: true }])
   })
 
+  it('uses the default highlighted port for force kill while port search is focused', async () => {
+    const { killed } = installPlatform()
+    const runtime = createAppRuntime(createInitialState(100))
+    await runtime.scanPorts()
+
+    runtime.setPortSearch('vite')
+    expect(runtime.snapshot().focusedPortId).toBe('12:5174:tcp')
+    expect(runtime.handleShortcut('Ctrl+Backspace', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('ports.kill.force')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(killed).toEqual([{ pid: 12, port: 5174, force: true }])
+  })
+
   it('starts without port focus, creates focus on first movement, and lets idle Escape fall through', async () => {
     installPlatform()
     const runtime = createAppRuntime(createInitialState(100))
@@ -203,7 +216,7 @@ describe('app runtime', () => {
     expect(runtime.handleShortcut('Escape', false)).toBeNull()
   })
 
-  it('blurs focused search before clearing selection, search text, and focus through Escape layers', async () => {
+  it('clears selection before search and clears focused search in one Escape step', async () => {
     installPlatform()
     const runtime = createAppRuntime(createInitialState(100))
     await runtime.scanPorts()
@@ -214,19 +227,60 @@ describe('app runtime', () => {
     expect(runtime.snapshot().selectedPortIds).toEqual(['11:3000:tcp'])
 
     const blurRequestId = runtime.snapshot().searchBlurRequestId
-    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('ports.search.blur')
-    expect(runtime.snapshot().searchBlurRequestId).toBe(blurRequestId + 1)
-    expect(runtime.snapshot().selectedPortIds).toEqual(['11:3000:tcp'])
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('ports.selection.clear')
+    expect(runtime.snapshot().searchBlurRequestId).toBe(blurRequestId)
+    expect(runtime.snapshot().selectedPortIds).toEqual([])
     expect(runtime.snapshot().state.portSearch).toBe('3000')
 
-    expect(runtime.handleShortcut('Escape', false)).toBe('ports.selection.clear')
-    expect(runtime.snapshot().selectedPortIds).toEqual([])
-
-    expect(runtime.handleShortcut('Escape', false)).toBe('ports.search.clear')
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('ports.search.clear')
+    expect(runtime.snapshot().searchBlurRequestId).toBe(blurRequestId + 1)
     expect(runtime.snapshot().state.portSearch).toBe('')
 
     expect(runtime.handleShortcut('Escape', false)).toBe('ports.focus.clear')
     expect(runtime.snapshot().focusedPortId).toBeNull()
+  })
+
+  it('keeps focused search Enter for history acceptance instead of confirming highlighted rows', async () => {
+    const { state } = installPlatform()
+    state.portGroups = [
+      group('web', 'Web', ['3000'], 1),
+      { ...group('vite', 'Vite', ['5173-5175'], 2), color: '#2F80ED' }
+    ]
+    state.searchHistories = {
+      ports: {
+        processes: ['vite'],
+        groups: ['vite']
+      },
+      favorites: {
+        files: []
+      }
+    }
+    const runtime = createAppRuntime(state)
+    await runtime.scanPorts()
+
+    runtime.setPortSearch('vite')
+    const portBlurRequestId = runtime.snapshot().searchBlurRequestId
+    expect(runtime.snapshot().focusedPortId).toBe('12:5174:tcp')
+    expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'port-search' })).toBeNull()
+    expect(runtime.snapshot().state.portSearch).toBe('vite')
+    expect(runtime.snapshot().focusedPortId).toBe('12:5174:tcp')
+    expect(runtime.snapshot().searchBlurRequestId).toBe(portBlurRequestId)
+    runtime.setPortSearch('vi')
+    expect(runtime.handleShortcut('Shift+ArrowDown', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('search.history.next')
+    expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('search.history.accept')
+    expect(runtime.snapshot().state.portSearch).toBe('vite')
+
+    runtime.dispatch('ports.groupSearch.focus')
+    runtime.setPortGroupSearch('vi')
+    const groupBlurRequestId = runtime.snapshot().searchBlurRequestId
+    expect(runtime.snapshot().focusedPortGroupTarget).toEqual({ kind: 'group', id: 'vite' })
+    expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'port-group-search' })).toBeNull()
+    expect(runtime.snapshot().portGroupSearch).toBe('vi')
+    expect(runtime.snapshot().selectedPortGroupTarget).toBeNull()
+    expect(runtime.snapshot().searchBlurRequestId).toBe(groupBlurRequestId)
+    expect(runtime.handleShortcut('Shift+ArrowDown', { textInputFocused: true, activeInputRole: 'port-group-search' })).toBe('search.history.next')
+    expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'port-group-search' })).toBe('search.history.accept')
+    expect(runtime.snapshot().portGroupSearch).toBe('vite')
   })
 
   it('normalizes result focus after search and keeps search-input navigation on visible rows', async () => {
@@ -331,7 +385,7 @@ describe('app runtime', () => {
     expect(killed).toEqual([{ pid: 11, port: 3000, force: true }])
   })
 
-  it('keeps group search unhighlighted until explicit movement and applies groups only outside the input', async () => {
+  it('highlights the first matching group during search and runs group commands from the input', async () => {
     const { state } = installPlatform()
     state.portGroups = [
       group('web', 'Web', ['3000'], 1),
@@ -342,21 +396,19 @@ describe('app runtime', () => {
     runtime.dispatch('ports.pane.groups')
     runtime.setPortGroupSearch('vi')
 
-    expect(runtime.snapshot().focusedPortGroupId).toBeNull()
-    expect(runtime.snapshot().focusedPortGroupTarget).toBeNull()
-    expect(runtime.handleShortcut('F2', { textInputFocused: true, activeInputRole: 'port-group-search' })).toBeNull()
+    expect(runtime.snapshot().focusedPortGroupId).toBe('vite')
+    expect(runtime.snapshot().focusedPortGroupTarget).toEqual({ kind: 'group', id: 'vite' })
+    expect(runtime.handleShortcut('F2', { textInputFocused: true, activeInputRole: 'port-group-search' })).toBe('ports.group.edit')
+    expect(runtime.snapshot().portGroupDraft).toMatchObject({ mode: 'edit', groupId: 'vite' })
+    expect(runtime.handleShortcut('Escape', false)).toBe('ports.group.edit.cancel')
     expect(runtime.handleShortcut('ArrowDown', { textInputFocused: true, activeInputRole: 'port-group-search' })).toBe('list.down')
     expect(runtime.snapshot().focusedPortGroupId).toBe('vite')
-    expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'port-group-search' })).toBe('search.history.accept')
-    expect(runtime.snapshot().state.searchHistories.ports.groups).toEqual(['vi'])
     expect(runtime.snapshot().selectedPortGroupId).toBeNull()
 
     expect(runtime.handleShortcut('Enter', false)).toBe('ports.group.apply')
     expect(runtime.snapshot().selectedPortGroupId).toBe('vite')
     expect(runtime.snapshot().selectedPortIds).toEqual([])
-    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-group-search' })).toBe('ports.search.blur')
-    expect(runtime.snapshot().portGroupSearch).toBe('vi')
-    expect(runtime.handleShortcut('Escape', false)).toBe('ports.search.clear')
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-group-search' })).toBe('ports.search.clear')
     expect(runtime.snapshot().portGroupSearch).toBe('')
   })
 
@@ -406,7 +458,6 @@ describe('app runtime', () => {
 
     expect(runtime.dispatch('ports.pane.groups').handled).toBe(true)
     expect(runtime.snapshot().activePortPane).toBe('groups')
-    expect(runtime.handleShortcut('ArrowDown', false)).toBe('list.down')
     expect(runtime.snapshot().focusedPortGroupId).toBe('web')
     expect(runtime.handleShortcut('ArrowDown', false)).toBe('list.down')
     expect(runtime.snapshot().focusedPortGroupId).toBe('vite')
@@ -492,6 +543,40 @@ describe('app runtime', () => {
     })
   })
 
+  it('deletes focused groups with confirmation and force-deletes folders with child groups', async () => {
+    const { state } = installPlatform()
+    state.portGroupFolders = [
+      { id: 'dev', name: 'Dev', color: '#00A676', sortOrder: 1 },
+      { id: 'ops', name: 'Ops', color: '#2F80ED', sortOrder: 2 }
+    ]
+    state.portGroups = [
+      { id: 'web', name: 'Web', color: '#00A676', entries: ['3000'], folderId: 'dev', sortOrder: 1 },
+      { id: 'vite', name: 'Vite', color: '#2F80ED', entries: ['5173-5175'], folderId: 'dev', sortOrder: 2 },
+      { id: 'api', name: 'API', color: '#D64545', entries: ['9000'], folderId: 'ops', sortOrder: 3 }
+    ]
+    state.collapsedPortGroupFolderIds = ['dev']
+    const runtime = createAppRuntime(state)
+    await runtime.scanPorts()
+
+    runtime.focusPortGroup('api')
+    expect(runtime.handleShortcut('Backspace', false)).toBe('ports.group.delete')
+    expect(runtime.snapshot().confirm?.detail).toContain('API')
+    expect(runtime.handleShortcut('Escape', false)).toBe('confirm.cancel')
+    expect(runtime.snapshot().state.portGroups.map((item) => item.id)).toEqual(['web', 'vite', 'api'])
+
+    expect(runtime.handleShortcut('Delete', false)).toBe('ports.group.delete')
+    expect(runtime.handleShortcut('Enter', false)).toBe('confirm.accept')
+    expect(runtime.snapshot().state.portGroups.map((item) => item.id)).toEqual(['web', 'vite'])
+
+    runtime.focusPortGroupFolder('dev')
+    expect(runtime.handleShortcut('Ctrl+Backspace', false)).toBe('ports.group.delete.force')
+    expect(runtime.snapshot().state.portGroupFolders.map((item) => item.id)).toEqual(['ops'])
+    expect(runtime.snapshot().state.portGroups).toEqual([])
+    expect(runtime.snapshot().state.collapsedPortGroupFolderIds).toEqual([])
+    expect(runtime.snapshot().selectedPortGroupTarget).toBeNull()
+    expect(runtime.snapshot().focusedPortGroupTarget).toEqual({ kind: 'folder', id: 'ops' })
+  })
+
   it('cycles port panes with Tab shortcuts and starts row focus on first arrow movement', async () => {
     const { state } = installPlatform()
     state.portGroups = [group('web', 'Web', ['3000'])]
@@ -499,18 +584,20 @@ describe('app runtime', () => {
     await runtime.scanPorts()
 
     expect(runtime.snapshot().activePortPane).toBe('results')
-    expect(runtime.handleShortcut('Tab', false)).toBe('ports.pane.toggleNext')
+    expect(runtime.handleShortcut('Tab', false)).toBeNull()
+    expect(runtime.snapshot().activePortPane).toBe('results')
+    expect(runtime.handleShortcut('Shift+Tab', false)).toBe('ports.pane.togglePrev')
     expect(runtime.snapshot().activePortPane).toBe('groups')
-    expect(runtime.snapshot().focusedPortGroupId).toBeNull()
+    expect(runtime.snapshot().focusedPortGroupId).toBe('web')
 
     expect(runtime.handleShortcut('ArrowDown', false)).toBe('list.down')
     expect(runtime.snapshot().focusedPortGroupId).toBe('web')
 
     expect(runtime.handleShortcut('Shift+Tab', false)).toBe('ports.pane.togglePrev')
     expect(runtime.snapshot().activePortPane).toBe('results')
-    expect(runtime.snapshot().focusedPortId).toBeNull()
-    expect(runtime.handleShortcut('ArrowDown', false)).toBe('list.down')
     expect(runtime.snapshot().focusedPortId).toBe('11:3000:tcp')
+    expect(runtime.handleShortcut('ArrowDown', false)).toBe('list.down')
+    expect(runtime.snapshot().focusedPortId).toBe('12:5174:tcp')
   })
 
   it('toggles group panel with Ctrl+W using expand-pane and collapse-blur semantics', async () => {
@@ -534,8 +621,8 @@ describe('app runtime', () => {
     expect(runtime.snapshot()).toMatchObject({
       groupSidePanelOpen: true,
       activePortPane: 'groups',
-      focusedPortGroupId: null,
-      focusedPortGroupTarget: null,
+      focusedPortGroupId: 'web',
+      focusedPortGroupTarget: { kind: 'group', id: 'web' },
       groupPanelFocusRequestId: initialFocusRequestId + 1
     })
 
@@ -640,10 +727,9 @@ describe('app runtime', () => {
     expect(runtime.snapshot().portDrawer.open).toBe(true)
     expect(runtime.snapshot().state.portSearch).toBe('3000')
 
-    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('ports.search.blur')
     expect(runtime.handleShortcut('Escape', false)).toBe('ports.drawer.close')
     expect(runtime.handleShortcut('Escape', false)).toBe('ports.selection.clear')
-    expect(runtime.handleShortcut('Escape', false)).toBe('ports.search.clear')
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('ports.search.clear')
     expect(runtime.handleShortcut('Escape', false)).toBe('ports.focus.clear')
   })
 
@@ -695,6 +781,8 @@ describe('app runtime', () => {
     expect(runtime.snapshot().filteredPortGroups.map((group) => group.id)).toEqual([groupId])
 
     runtime.dispatch('ports.group.delete')
+    expect(runtime.snapshot().confirm?.title).toContain('删除端口组')
+    expect(runtime.handleShortcut('Enter', false)).toBe('confirm.accept')
     expect(runtime.snapshot().state.portGroups).toEqual([])
   })
 
@@ -740,23 +828,33 @@ describe('app runtime', () => {
     expect(runtime.handleShortcut('ArrowDown', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('list.down')
 
     runtime.setPortSearch('n')
-    expect(runtime.snapshot().searchHistoryState).toMatchObject({ target: 'ports.processes', open: true, activeIndex: -1, items: ['node'] })
+    expect(runtime.snapshot().searchHistoryState).toMatchObject({ target: 'ports.processes', open: false, activeIndex: -1, items: ['node'] })
+    expect(runtime.handleShortcut('Tab', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('search.history.acceptInline')
+    expect(runtime.snapshot().state.portSearch).toBe('node')
+    expect(runtime.snapshot().searchHistoryState).toMatchObject({ target: 'ports.processes', open: false, activeIndex: -1, items: ['node'] })
+
+    runtime.setPortSearch('n')
     const focusRequestId = runtime.snapshot().searchFocusRequestId
+    expect(runtime.handleShortcut('Shift+ArrowDown', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('search.history.next')
+    expect(runtime.snapshot().searchHistoryState).toMatchObject({ target: 'ports.processes', open: true, activeIndex: 0, items: ['node'] })
+    expect(runtime.handleShortcut('ArrowRight', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('search.history.close')
+    expect(runtime.snapshot().searchHistoryState).toMatchObject({ target: 'ports.processes', open: false, activeIndex: -1, items: ['node'] })
+    expect(runtime.handleShortcut('Shift+ArrowDown', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('search.history.next')
     expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('search.history.close')
-    expect(runtime.snapshot().searchHistoryState).toMatchObject({ target: 'ports.processes', open: false, activeIndex: -1, items: [] })
+    expect(runtime.snapshot().searchHistoryState).toMatchObject({ target: 'ports.processes', open: false, activeIndex: -1, items: ['node'] })
     expect(runtime.snapshot().state.portSearch).toBe('n')
-    expect(runtime.snapshot().searchFocusRequestId).toBe(focusRequestId + 1)
+    expect(runtime.snapshot().searchFocusRequestId).toBe(focusRequestId + 2)
     expect(runtime.snapshot().searchFocusTarget).toBe('ports')
     const blurAfterHistoryCloseId = runtime.snapshot().searchBlurRequestId
-    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('ports.search.blur')
-    expect(runtime.snapshot().state.portSearch).toBe('n')
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('ports.search.clear')
+    expect(runtime.snapshot().state.portSearch).toBe('')
     expect(runtime.snapshot().searchBlurRequestId).toBe(blurAfterHistoryCloseId + 1)
     expect(runtime.snapshot().searchHistoryState.open).toBe(false)
 
     expect(runtime.dispatch('ports.search.focus').handled).toBe(true)
     expect(runtime.snapshot().searchHistoryState).toMatchObject({ target: 'ports.processes', open: false, activeIndex: -1, items: [] })
     runtime.setPortSearch('n')
-    expect(runtime.snapshot().searchHistoryState).toMatchObject({ target: 'ports.processes', open: false, activeIndex: -1, items: [] })
+    expect(runtime.snapshot().searchHistoryState).toMatchObject({ target: 'ports.processes', open: false, activeIndex: -1, items: ['node'] })
     expect(runtime.handleShortcut('ArrowDown', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('list.down')
     expect(runtime.handleShortcut('Shift+ArrowDown', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('search.history.next')
     expect(runtime.snapshot().searchHistoryState.activeIndex).toBe(0)
@@ -771,18 +869,18 @@ describe('app runtime', () => {
     expect(runtime.snapshot().searchBlurRequestId).toBe(historyAcceptBlurRequestId)
 
     runtime.setPortSearch('vit')
-    expect(runtime.snapshot().searchHistoryState).toMatchObject({ target: 'ports.processes', open: true, activeIndex: -1, items: ['vite'] })
+    expect(runtime.snapshot().searchHistoryState).toMatchObject({ target: 'ports.processes', open: false, activeIndex: -1, items: ['vite'] })
     const directBlurRequestId = runtime.snapshot().searchBlurRequestId
-    expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('search.history.accept')
+    expect(runtime.dispatch('search.history.accept').handled).toBe(true)
     expect(runtime.snapshot().state.portSearch).toBe('vit')
     expect(runtime.snapshot().state.searchHistories.ports.processes[0]).toBe('vit')
     expect(runtime.snapshot().focusedPortId).toBe('12:5174:tcp')
     expect(runtime.snapshot().searchBlurRequestId).toBe(directBlurRequestId + 1)
 
     runtime.setPortSearch('redis')
-    expect(runtime.snapshot().searchHistoryState).toMatchObject({ target: 'ports.processes', open: true, activeIndex: -1, items: [] })
+    expect(runtime.snapshot().searchHistoryState).toMatchObject({ target: 'ports.processes', open: false, activeIndex: -1, items: [] })
     const blurRequestId = runtime.snapshot().searchBlurRequestId
-    expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('search.history.accept')
+    expect(runtime.dispatch('search.history.accept').handled).toBe(true)
     expect(runtime.snapshot().state.searchHistories.ports.processes[0]).toBe('redis')
     expect(runtime.snapshot().searchHistoryState.open).toBe(false)
     expect(runtime.snapshot().searchBlurRequestId).toBe(blurRequestId + 1)
@@ -801,7 +899,7 @@ describe('app runtime', () => {
     expect(runtime.snapshot().searchHistoryState).toMatchObject({ target: 'ports.groups', open: false, activeIndex: -1, items: [] })
     runtime.setPortGroupSearch('api')
     const groupBlurRequestId = runtime.snapshot().searchBlurRequestId
-    expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'port-group-search' })).toBe('search.history.accept')
+    expect(runtime.dispatch('search.history.accept').handled).toBe(true)
     expect(runtime.snapshot().state.searchHistories.ports.groups).toEqual(['api', 'dev'])
     expect(runtime.snapshot().state.searchHistories.ports.processes).not.toContain('api')
     expect(runtime.snapshot().searchBlurRequestId).toBe(groupBlurRequestId + 1)
@@ -811,7 +909,7 @@ describe('app runtime', () => {
     expect(runtime.dispatch('search.focus').handled).toBe(true)
     expect(runtime.snapshot().searchHistoryState).toMatchObject({ target: 'favorites.files', open: false, activeIndex: -1, items: [] })
     runtime.setFavoriteSearch('repo')
-    expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'favorite-search' })).toBe('search.history.accept')
+    expect(runtime.dispatch('search.history.accept').handled).toBe(true)
     expect(runtime.snapshot().state.searchHistories.favorites.files).toEqual(['repo', 'docs'])
   })
 

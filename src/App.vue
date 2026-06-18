@@ -4,7 +4,6 @@ import { normalizeAppState } from './domain/state'
 import { getPlatform } from './platform/eypcPlatform'
 import ConfirmLayer from './components/ConfirmLayer.vue'
 import TabShell from './components/TabShell.vue'
-import CommandHints from './components/CommandHints.vue'
 import PortsPage from './pages/PortsPage.vue'
 import FavoritesPage from './pages/FavoritesPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
@@ -112,6 +111,7 @@ onUnmounted(() => {
       :active-tab="snapshot.state.activeTab"
       :command-shortcut-labels="snapshot.commandShortcutLabels"
       :show-shortcut-hints="shortcutHints"
+      :snapshot="snapshot"
       @select="(tab) => runtime.dispatch(`tab.select.${tab}`)"
     >
       <template #ports>
@@ -158,7 +158,6 @@ onUnmounted(() => {
         />
       </template>
     </TabShell>
-    <CommandHints :snapshot="snapshot" />
     <ConfirmLayer
       v-if="snapshot.confirm"
       :title="snapshot.confirm.title"

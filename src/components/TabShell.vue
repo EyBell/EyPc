@@ -2,11 +2,14 @@
 import type { AppTabId } from '../domain/types'
 import { formatShortcutLabel } from '../domain/shortcuts'
 import { visibleFeatures } from '../runtime/feature/featureRegistry'
+import type { AppRuntimeSnapshot } from '../runtime/appRuntime'
+import CommandHints from './CommandHints.vue'
 
 defineProps<{
   activeTab: AppTabId
   commandShortcutLabels: Record<string, string>
   showShortcutHints: boolean
+  snapshot: AppRuntimeSnapshot
 }>()
 defineEmits<{ select: [tab: AppTabId] }>()
 
@@ -28,6 +31,12 @@ const features = visibleFeatures()
         <span>{{ feature.title }}</span>
         <kbd v-if="showShortcutHints" class="tab-shortcut-hint">{{ commandShortcutLabels[feature.shortcutCommandId] || formatShortcutLabel(feature.shortcutId) }}</kbd>
       </button>
+      <div class="tab-help">
+        <button type="button" class="tab-help-trigger" aria-label="快捷键帮助">?</button>
+        <div class="tab-help-popover" role="tooltip">
+          <CommandHints :snapshot="snapshot" />
+        </div>
+      </div>
     </nav>
     <section class="tab-content">
       <slot v-if="activeTab === 'ports'" name="ports" />

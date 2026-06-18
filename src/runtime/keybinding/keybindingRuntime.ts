@@ -156,14 +156,16 @@ const SOURCE_WEIGHT = {
 const DEFAULT_COMMAND_PROFILES: ShortcutCommandProfile[] = [
   { actionId: 'app.hide', title: '隐藏插件窗口', group: '全局', layer: 'app', shortcutIds: ['Shift+Escape'], when: 'true', weight: 1000 },
   { actionId: 'confirm.cancel', title: '关闭确认弹窗', group: '全局', layer: 'confirm', shortcutIds: ['Escape'], when: 'confirmOpen', weight: 400 },
+  { actionId: 'confirm.accept', title: '确认当前弹窗', group: '全局', layer: 'confirm', shortcutIds: ['Enter'], when: 'confirmOpen', weight: 400, risk: 'data-write' },
   { actionId: 'tab.next', title: '下一个主 Tab', group: '全局', layer: 'global', shortcutIds: ['Tab'], when: "tab != 'ports' && !textInputFocused", weight: 100 },
   { actionId: 'tab.prev', title: '上一个主 Tab', group: '全局', layer: 'global', shortcutIds: ['Shift+Tab'], when: "tab != 'ports' && !textInputFocused", weight: 100 },
   { actionId: 'search.focus', title: '聚焦搜索', group: '全局', layer: 'global', shortcutIds: ['Ctrl+F'], when: '!confirmOpen', weight: 100 },
   { actionId: 'settings.open', title: '打开设置', group: '全局', layer: 'global', shortcutIds: ['Ctrl+Alt+S'], when: '!confirmOpen', weight: 100 },
+  { actionId: 'search.history.acceptInline', title: '确认右侧历史匹配', group: '全局', layer: 'search-history', shortcutIds: ['Tab'], when: "searchHistoryHasItems && (activeInputRole == 'port-search' || activeInputRole == 'port-group-search' || activeInputRole == 'favorite-search')", weight: 500 },
   { actionId: 'search.history.prev', title: '搜索历史上移', group: '全局', layer: 'search-history', shortcutIds: ['Shift+ArrowUp'], when: 'searchHistoryHasItems', weight: 500 },
   { actionId: 'search.history.next', title: '搜索历史下移', group: '全局', layer: 'search-history', shortcutIds: ['Shift+ArrowDown'], when: 'searchHistoryHasItems', weight: 500 },
   { actionId: 'search.history.accept', title: '选择搜索历史', group: '全局', layer: 'search-history', shortcutIds: ['Enter'], when: "searchHistoryOpen && (activeInputRole == 'port-search' || activeInputRole == 'port-group-search' || activeInputRole == 'favorite-search')", weight: 500 },
-  { actionId: 'search.history.close', title: '隐藏搜索历史', group: '全局', layer: 'search-history', shortcutIds: ['Escape'], when: 'searchHistoryOpen && searchHistoryHasItems', weight: 500 },
+  { actionId: 'search.history.close', title: '隐藏搜索历史', group: '全局', layer: 'search-history', shortcutIds: ['Escape', 'ArrowLeft', 'ArrowRight'], when: 'searchHistoryOpen && searchHistoryHasItems', weight: 500 },
   { actionId: 'search.history.delete', title: '删除搜索历史', group: '全局', layer: 'search-history', shortcutIds: ['Delete', 'Backspace'], when: 'searchHistorySelectionActive', weight: 500 },
   { actionId: 'list.up', title: '列表上移', group: '全局', layer: 'global', shortcutIds: ['ArrowUp', 'Ctrl+K'], when: '!textInputFocused || activeInputRole == "port-search" || activeInputRole == "port-group-search"', weight: 100 },
   { actionId: 'list.down', title: '列表下移', group: '全局', layer: 'global', shortcutIds: ['ArrowDown', 'Ctrl+J'], when: '!textInputFocused || activeInputRole == "port-search" || activeInputRole == "port-group-search"', weight: 100 },
@@ -173,13 +175,12 @@ const DEFAULT_COMMAND_PROFILES: ShortcutCommandProfile[] = [
   { actionId: 'ports.workspace.reset', title: '重置端口工作区', group: '端口', layer: 'ports', shortcutIds: ['Escape'], when: "tab == 'ports'", weight: 90 },
   { actionId: 'ports.selection.clear', title: '清空端口多选', group: '端口', layer: 'ports-selection', shortcutIds: ['Escape'], when: "tab == 'ports' && portSelectionMode", weight: 300 },
   { actionId: 'ports.kill.confirm', title: '终止选中进程', group: '端口', layer: 'ports', shortcutIds: ['Delete', 'Backspace'], when: "tab == 'ports' && portPane != 'groups' && !textInputFocused", weight: 120, risk: 'data-write' },
-  { actionId: 'ports.kill.force', title: '强杀选中进程', group: '端口', layer: 'ports', shortcutIds: ['Ctrl+Delete', 'Ctrl+Backspace'], when: "tab == 'ports' && portPane != 'groups' && !textInputFocused", weight: 120, risk: 'destructive' },
+  { actionId: 'ports.kill.force', title: '强杀选中进程', group: '端口', layer: 'ports', shortcutIds: ['Ctrl+Delete', 'Ctrl+Backspace'], when: "tab == 'ports' && portPane != 'groups' && (!textInputFocused || activeInputRole == 'port-search')", weight: 120, risk: 'destructive' },
   { actionId: 'ports.scan', title: '刷新端口', group: '端口', layer: 'ports', shortcutIds: ['Ctrl+R'], when: "tab == 'ports'", weight: 100 },
   { actionId: 'ports.groups.togglePanel', title: '展开/收起端口组栏', group: '端口', layer: 'ports', shortcutIds: ['Ctrl+W'], when: "tab == 'ports' && !confirmOpen && (!textInputFocused || activeInputRole == 'port-search' || activeInputRole == 'port-group-search')", weight: 135 },
   { actionId: 'ports.search.focus', title: '聚焦端口搜索', group: '端口', layer: 'ports', shortcutIds: ['Ctrl+F'], when: "tab == 'ports' && !confirmOpen", weight: 140 },
   { actionId: 'ports.groupSearch.focus', title: '聚焦端口组搜索', group: '端口', layer: 'ports', shortcutIds: ['Ctrl+Shift+F'], when: "tab == 'ports' && !confirmOpen", weight: 140 },
   { actionId: 'ports.search.blur', title: '退出端口搜索焦点', group: '端口', layer: 'ports-search', shortcutIds: ['Escape'], when: "tab == 'ports' && (activeInputRole == 'port-search' || activeInputRole == 'port-group-search')", weight: 500 },
-  { actionId: 'ports.pane.toggleNext', title: '切换端口栏', group: '端口', layer: 'ports', shortcutIds: ['Tab'], when: "tab == 'ports' && !textInputFocused", weight: 130 },
   { actionId: 'ports.pane.togglePrev', title: '反向切换端口栏', group: '端口', layer: 'ports', shortcutIds: ['Shift+Tab'], when: "tab == 'ports' && !textInputFocused", weight: 130 },
   { actionId: 'ports.pane.groups', title: '聚焦端口组栏', group: '端口', layer: 'ports', shortcutIds: ['Alt+ArrowLeft'], when: "tab == 'ports' && !textInputFocused", weight: 110 },
   { actionId: 'ports.pane.results', title: '聚焦端口结果栏', group: '端口', layer: 'ports', shortcutIds: ['Alt+ArrowRight'], when: "tab == 'ports' && !textInputFocused", weight: 110 },
@@ -193,7 +194,8 @@ const DEFAULT_COMMAND_PROFILES: ShortcutCommandProfile[] = [
   { actionId: 'ports.group.kill.force', title: '强杀当前端口组', group: '端口', layer: 'ports', shortcutIds: ['Ctrl+Shift+Enter'], when: "tab == 'ports' && portPane == 'groups' && !textInputFocused", weight: 130, risk: 'destructive' },
   { actionId: 'ports.group.rename', title: '重命名端口组', group: '端口', layer: 'ports', shortcutIds: ['Shift+F2'], when: "tab == 'ports' && portPane == 'groups' && (!textInputFocused || activeInputRole == 'port-group-search')", weight: 130, risk: 'data-write' },
   { actionId: 'ports.group.edit', title: '编辑端口组', group: '端口', layer: 'ports', shortcutIds: ['F2', 'Ctrl+E'], when: "tab == 'ports' && portPane == 'groups' && (!textInputFocused || activeInputRole == 'port-group-search')", weight: 130, risk: 'data-write' },
-  { actionId: 'ports.group.delete', title: '删除端口组', group: '端口', layer: 'ports', shortcutIds: ['Delete'], when: "tab == 'ports' && portPane == 'groups' && !textInputFocused", weight: 130, risk: 'data-write' },
+  { actionId: 'ports.group.delete', title: '删除端口组/夹', group: '端口', layer: 'ports', shortcutIds: ['Delete', 'Backspace'], when: "tab == 'ports' && portPane == 'groups' && !textInputFocused", weight: 130, risk: 'data-write' },
+  { actionId: 'ports.group.delete.force', title: '强制删除端口组/夹', group: '端口', layer: 'ports', shortcutIds: ['Ctrl+Delete', 'Ctrl+Backspace'], when: "tab == 'ports' && portPane == 'groups' && !textInputFocused", weight: 130, risk: 'destructive' },
   { actionId: 'ports.group.createFromSelection', title: '选中端口收藏为组', group: '端口', layer: 'ports', shortcutIds: ['Ctrl+G'], when: "tab == 'ports' && !textInputFocused", weight: 120, risk: 'data-write' },
   { actionId: 'ports.groupTarget.collapse', title: '折叠端口组夹', group: '端口', layer: 'ports', shortcutIds: ['ArrowLeft'], when: "tab == 'ports' && portPane == 'groups' && !portDrawerActive && !portGroupDetailActive && (!textInputFocused || activeInputRole == 'port-group-search')", weight: 132 },
   { actionId: 'ports.groupTarget.expand', title: '展开端口组夹', group: '端口', layer: 'ports', shortcutIds: ['ArrowRight'], when: "tab == 'ports' && portPane == 'groups' && !portDrawerActive && !portGroupDetailActive && (!textInputFocused || activeInputRole == 'port-group-search')", weight: 132 },
@@ -240,6 +242,8 @@ export const SHORTCUT_RESERVATION_RULES: ShortcutReservationRule[] = [
   { shortcutId: 'Escape', commandId: 'confirm.cancel', when: 'confirmOpen', description: '关闭确认弹窗，不穿透到底层', layer: 'confirm' },
   { shortcutId: 'Escape', commandId: 'ports.group.edit.cancel', when: "activeInputRole == 'port-group-editor'", description: '取消端口组编辑', layer: 'port-group-editor' },
   { shortcutId: 'Escape', commandId: 'search.history.close', when: 'searchHistoryOpen && searchHistoryHasItems', description: '隐藏搜索历史候选并回到搜索输入框', layer: 'search-history' },
+  { shortcutId: 'ArrowLeft', commandId: 'search.history.close', when: 'searchHistoryOpen && searchHistoryHasItems', description: '退出搜索历史选择，保留右侧匹配提示', layer: 'search-history' },
+  { shortcutId: 'ArrowRight', commandId: 'search.history.close', when: 'searchHistoryOpen && searchHistoryHasItems', description: '退出搜索历史选择，保留右侧匹配提示', layer: 'search-history' },
   { shortcutId: 'Escape', commandId: 'ports.search.blur', when: "activeInputRole == 'port-search' || activeInputRole == 'port-group-search'", description: '退出端口搜索输入焦点', layer: 'ports-search' },
   { shortcutId: 'Ctrl+S', commandId: 'ports.group.save', when: "activeInputRole == 'port-group-editor'", description: '保存端口组编辑', layer: 'port-group-editor' },
   { shortcutId: 'Tab', commandId: 'ports.group.edit.nextField', when: "activeInputRole == 'port-group-editor'", description: '编辑层内字段循环，不切换底层 pane', layer: 'port-group-editor' },
@@ -248,7 +252,6 @@ export const SHORTCUT_RESERVATION_RULES: ShortcutReservationRule[] = [
   { shortcutId: 'Escape', commandId: 'ports.detail.close', when: 'portDetailActive', description: '关闭端口详情抽屉', layer: 'port-detail' },
   { shortcutId: 'Escape', commandId: 'ports.groupDetail.close', when: 'portGroupDetailActive', description: '关闭端口组详情抽屉', layer: 'port-group-detail' },
   { shortcutId: 'Escape', commandId: 'ports.selection.clear', when: 'portSelectionMode', description: '清空端口多选', layer: 'ports-selection' },
-  { shortcutId: 'Tab', commandId: 'ports.pane.toggleNext', when: "tab == 'ports' && !textInputFocused", description: '端口页切换左右栏', layer: 'ports' },
   { shortcutId: 'Shift+Tab', commandId: 'ports.pane.togglePrev', when: "tab == 'ports' && !textInputFocused", description: '端口页反向切换左右栏', layer: 'ports' },
   { shortcutId: 'Enter', commandId: 'ports.drawer.select', when: 'portDrawerActive', description: '执行抽屉当前动作', layer: 'port-drawer' },
   { shortcutId: 'Space', commandId: 'list.toggleSelection', when: "tab == 'ports'", description: '端口列表多选', layer: 'ports' }
@@ -472,9 +475,9 @@ function shouldBlockTextInputShortcut(shortcutId: string, context: KeybindingCon
   if (!context.textInputFocused || shortcutId === 'Escape' || shortcutId === 'Shift+Escape') return false
   if (shortcutId === 'Ctrl+Alt+S') return false
   if (context.activeInputRole === 'port-group-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Tab', 'Shift+Tab', 'Shift+Escape'].includes(shortcutId)
-  if (context.activeInputRole === 'port-search') return !['ArrowUp', 'ArrowDown', 'Shift+ArrowUp', 'Shift+ArrowDown', 'Ctrl+K', 'Ctrl+J', 'Space', 'Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Delete', 'Backspace', 'Ctrl+W', 'Shift+Escape'].includes(shortcutId)
-  if (context.activeInputRole === 'port-group-search') return !['ArrowUp', 'ArrowDown', 'Shift+ArrowUp', 'Shift+ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+K', 'Ctrl+J', 'Enter', 'Ctrl+Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Delete', 'Backspace', 'Ctrl+W', 'F2', 'Shift+F2', 'Shift+Escape'].includes(shortcutId)
-  if (context.activeInputRole === 'favorite-search') return !['ArrowUp', 'ArrowDown', 'Shift+ArrowUp', 'Shift+ArrowDown', 'Enter', 'Delete', 'Backspace', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
+  if (context.activeInputRole === 'port-search') return !['ArrowUp', 'ArrowDown', 'Shift+ArrowUp', 'Shift+ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+K', 'Ctrl+J', 'Space', 'Tab', 'Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+W', 'Shift+Escape'].includes(shortcutId)
+  if (context.activeInputRole === 'port-group-search') return !['ArrowUp', 'ArrowDown', 'Shift+ArrowUp', 'Shift+ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+K', 'Ctrl+J', 'Tab', 'Enter', 'Ctrl+Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+W', 'F2', 'Shift+F2', 'Shift+Escape'].includes(shortcutId)
+  if (context.activeInputRole === 'favorite-search') return !['ArrowUp', 'ArrowDown', 'Shift+ArrowUp', 'Shift+ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab', 'Enter', 'Delete', 'Backspace', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   return true
 }
 

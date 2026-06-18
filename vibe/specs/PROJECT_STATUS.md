@@ -8,10 +8,10 @@ This is the project process hub for EyPc. It tracks the current main line, activ
 
 ## Current Snapshot
 
-- Date: 2026-06-17.
+- Date: 2026-06-18.
 - Product: uTools plugin for cross-platform PC capability calls.
-- Current main line: Port management redesign for relevance search, user-defined groups and folders, command-soul editing semantics, layered shortcut profiles, settings-page shortcut governance, uTools/EzClipboard-style compact settings layout, real process scan/kill fallback, structured local search histories, and strict `esc` recovery.
-- Current task: Settings page uTools layout refactor moves Settings into `快捷键` / `维护` sub tabs, compresses shortcut configuration into a single-line worktable, removes the right-side shortcut inspector, and shows layer rules plus read-only storage status in maintenance. Scope is tracked in [2606171920-eypc-settings-utools-layout/01-spec.md](2606171920-eypc-settings-utools-layout/01-spec.md#L1), with verification in [2606171920-eypc-settings-utools-layout/04-verify.md](2606171920-eypc-settings-utools-layout/04-verify.md#L1).
+- Current main line: Port management redesign for relevance search, user-defined groups and folders, command-soul editing semantics, layered shortcut profiles, settings-page shortcut governance, uTools/EzClipboard-style compact settings layout, real process scan/kill fallback, structured local search histories, compact top-right help hints, group/folder metadata deletion, and streamlined port search history/focus behavior.
+- Current task: Settings shortcut maintenance EzClipboard-style refinement makes command ids primary, hides inline default shortcut hints, uses English scope chips with hover detail, compacts state chips, moves layer recovery commands into the maintenance tab, and captures Settings `Ctrl/Cmd+F` for shortcut search focus. Scope is tracked in [2606181043-eypc-settings-shortcut-ez-style/01-spec.md](2606181043-eypc-settings-shortcut-ez-style/01-spec.md#L1), with verification in [2606181043-eypc-settings-shortcut-ez-style/04-verify.md](2606181043-eypc-settings-shortcut-ez-style/04-verify.md#L1).
 - Architecture source: [../knowledge/ARCHITECTURE.md](../knowledge/ARCHITECTURE.md#L1).
 - Project interaction taste: [../knowledge/developer-soul.md](../knowledge/developer-soul.md#L1).
 
@@ -63,11 +63,17 @@ This is the project process hub for EyPc. It tracks the current main line, activ
 - Settings uTools layout plan: [2606171920-eypc-settings-utools-layout/02-plan.md](2606171920-eypc-settings-utools-layout/02-plan.md#L1).
 - Settings uTools layout tasks: [2606171920-eypc-settings-utools-layout/03-tasks.md](2606171920-eypc-settings-utools-layout/03-tasks.md#L1).
 - Settings uTools layout verification: [2606171920-eypc-settings-utools-layout/04-verify.md](2606171920-eypc-settings-utools-layout/04-verify.md#L1).
+- Port search interaction spec: [2606180916-eypc-port-search-interaction/01-spec.md](2606180916-eypc-port-search-interaction/01-spec.md#L1).
+- Port search interaction verification: [2606180916-eypc-port-search-interaction/04-verify.md](2606180916-eypc-port-search-interaction/04-verify.md#L1).
+- Port compact help and group delete spec: [2606181025-eypc-port-compact-help-delete/01-spec.md](2606181025-eypc-port-compact-help-delete/01-spec.md#L1).
+- Port compact help and group delete verification: [2606181025-eypc-port-compact-help-delete/04-verify.md](2606181025-eypc-port-compact-help-delete/04-verify.md#L1).
+- Settings shortcut Ez style spec: [2606181043-eypc-settings-shortcut-ez-style/01-spec.md](2606181043-eypc-settings-shortcut-ez-style/01-spec.md#L1).
+- Settings shortcut Ez style verification: [2606181043-eypc-settings-shortcut-ez-style/04-verify.md](2606181043-eypc-settings-shortcut-ez-style/04-verify.md#L1).
 
 ## Verification Gates
 
 - Automated: `pnpm run test`, `pnpm run typecheck`, `pnpm run build`, `pnpm run validate:utools`.
-- Manual: local GUI result rendering for `8081` is confirmed; port-tab UI smoke is static in [260617-eypc-port-tab-interaction/04-verify.md](260617-eypc-port-tab-interaction/04-verify.md#L1); port dual-drawer and search/dedupe browser smoke is tracked in [260617-eypc-port-ezclipboard-interaction/04-verify.md](260617-eypc-port-ezclipboard-interaction/04-verify.md#L1); port group keyboard/layout smoke is tracked in [260617-eypc-port-group-ui-optimization/04-verify.md](260617-eypc-port-group-ui-optimization/04-verify.md#L1); settings compact layout smoke is tracked in [2606171920-eypc-settings-utools-layout/04-verify.md](2606171920-eypc-settings-utools-layout/04-verify.md#L1); shortcut settings UI smoke is tracked in [260617-eypc-layered-shortcuts-settings/04-verify.md](260617-eypc-layered-shortcuts-settings/04-verify.md#L1); dev kill bridge safe smoke is tracked in [260617-eypc-dev-kill-bridge/04-verify.md](260617-eypc-dev-kill-bridge/04-verify.md#L1); macOS real kill with a temporary process and Windows/Linux real process scan remain release gates.
+- Manual: local GUI result rendering for `8081` is confirmed; port-tab UI smoke is static in [260617-eypc-port-tab-interaction/04-verify.md](260617-eypc-port-tab-interaction/04-verify.md#L1); port dual-drawer and search/dedupe browser smoke is tracked in [260617-eypc-port-ezclipboard-interaction/04-verify.md](260617-eypc-port-ezclipboard-interaction/04-verify.md#L1); port group keyboard/layout smoke is tracked in [260617-eypc-port-group-ui-optimization/04-verify.md](260617-eypc-port-group-ui-optimization/04-verify.md#L1); compact help/group deletion smoke is tracked in [2606181025-eypc-port-compact-help-delete/04-verify.md](2606181025-eypc-port-compact-help-delete/04-verify.md#L1); settings compact layout smoke is tracked in [2606171920-eypc-settings-utools-layout/04-verify.md](2606171920-eypc-settings-utools-layout/04-verify.md#L1); settings shortcut Ez style manual checklist is tracked in [2606181043-eypc-settings-shortcut-ez-style/04-verify.md](2606181043-eypc-settings-shortcut-ez-style/04-verify.md#L1); shortcut settings UI smoke is tracked in [260617-eypc-layered-shortcuts-settings/04-verify.md](260617-eypc-layered-shortcuts-settings/04-verify.md#L1); dev kill bridge safe smoke is tracked in [260617-eypc-dev-kill-bridge/04-verify.md](260617-eypc-dev-kill-bridge/04-verify.md#L1); macOS real kill with a temporary process and Windows/Linux real process scan remain release gates.
 
 ## Current Implementation Focus
 
