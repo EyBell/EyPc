@@ -152,6 +152,7 @@ onUnmounted(() => {
           :default-keybindings="runtime.defaultKeybindings"
           :overrides="snapshot.state.settings.keybindingOverrides"
           :shortcut-profiles="snapshot.state.settings.shortcutProfiles"
+          :settings="snapshot.state.settings"
           @update-keybinding="runtime.updateKeybinding"
           @reset-keybinding="runtime.resetKeybinding"
         />

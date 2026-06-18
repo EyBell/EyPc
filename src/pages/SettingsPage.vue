@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import type { KeybindingOverride } from '../domain/types'
-import type { ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
+import type { AppSettings, KeybindingOverride, ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
 import type { RuntimeActionDefinition } from '../runtime/action/types'
 import {
   LAYER_PRIORITY,
   SHORTCUT_RESERVATION_RULES,
   buildEffectiveKeybindings,
   buildShortcutCommandRows,
-  canWhenClausesOverlap,
   detectShortcutConflicts,
   getShortcutReservationConflicts,
   parseWhenExpression,
@@ -18,7 +16,8 @@ import type { KeybindingContext, KeybindingDefinition, KeybindingLayerId, Shortc
 import { blockHandledShortcutEvent } from '../runtime/keyboardEvent'
 import { formatShortcutLabel, formatShortcutList, normalizeShortcutId, shortcutFromEvent as shortcutFromKeyboardEvent } from '../domain/shortcuts'
 
-type SettingsSectionId = 'global' | 'ports' | 'favorites' | 'settings' | 'layers'
+type SettingsTabId = 'shortcuts' | 'maintenance'
+type ShortcutScopeId = 'all' | 'global' | 'ports' | 'favorites' | 'settings'
 
 interface KeybindingUpdatePayload {
   commandId: string
@@ -35,18 +34,24 @@ const props = defineProps<{
   defaultKeybindings: KeybindingDefinition[]
   overrides: KeybindingOverride[]
   shortcutProfiles?: ShortcutProfileMap
+  settings: AppSettings
 }>()
 const emit = defineEmits<{
   updateKeybinding: [payload: KeybindingUpdatePayload]
   resetKeybinding: [commandId: string]
 }>()
 
-const sections: Array<{ id: SettingsSectionId; label: string }> = [
+const settingTabs: Array<{ id: SettingsTabId; label: string }> = [
+  { id: 'shortcuts', label: '快捷键' },
+  { id: 'maintenance', label: '维护' }
+]
+
+const shortcutScopeOptions: Array<{ id: ShortcutScopeId; label: string }> = [
+  { id: 'all', label: '全部' },
   { id: 'global', label: '全局' },
   { id: 'ports', label: '端口' },
   { id: 'favorites', label: '收藏' },
-  { id: 'settings', label: '设置' },
-  { id: 'layers', label: '层级规则' }
+  { id: 'settings', label: '设置' }
 ]
 
 const previewContexts: Array<{ id: string; label: string; context: KeybindingContext }> = [
@@ -58,7 +63,8 @@ const previewContexts: Array<{ id: string; label: string; context: KeybindingCon
   { id: 'settings-idle', label: '设置页', context: { tab: 'settings', textInputFocused: false } }
 ]
 
-const sectionId = ref<SettingsSectionId>('global')
+const settingsTabId = ref<SettingsTabId>('shortcuts')
+const shortcutScopeId = ref<ShortcutScopeId>('all')
 const keyword = ref('')
 const stateFilter = ref<'all' | 'conflict' | 'user' | 'disabled'>('all')
 const selectedCommandId = ref<string | null>(null)
@@ -89,11 +95,13 @@ const activePreviewContext = computed(() => previewContexts.find((item) => item.
 const selectedRow = computed(() => commandRows.value.find((row) => row.commandId === selectedCommandId.value) || filteredRows.value[0] || null)
 const recordingRow = computed(() => recordingCommandId.value ? commandRows.value.find((row) => row.commandId === recordingCommandId.value) || null : null)
 const whenRow = computed(() => whenCommandId.value ? commandRows.value.find((row) => row.commandId === whenCommandId.value) || null : null)
+const storageModeLabel = computed(() => props.settings.preferSqlite ? 'SQLite 预留模式' : 'uTools dbStorage')
+const sqliteStateLabel = computed(() => props.settings.preferSqlite ? '预留请求已记录' : '未启用')
 
 const filteredRows = computed(() => {
   const query = keyword.value.trim().toLowerCase()
   return commandRows.value.filter((row) => {
-    if (!matchesSection(row, sectionId.value)) return false
+    if (!matchesShortcutScope(row, shortcutScopeId.value)) return false
     if (stateFilter.value === 'conflict' && !row.conflicts.length && !row.reservationConflicts.length) return false
     if (stateFilter.value === 'user' && row.source !== 'user') return false
     if (stateFilter.value === 'disabled' && row.enabled) return false
@@ -134,8 +142,8 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleModalEscape, true)
 })
 
-function matchesSection(row: ShortcutCommandRow, id: SettingsSectionId): boolean {
-  if (id === 'layers') return false
+function matchesShortcutScope(row: ShortcutCommandRow, id: ShortcutScopeId): boolean {
+  if (id === 'all') return true
   if (id === 'global') return row.profileId === 'global'
   if (id === 'ports') return row.profileId === 'ports'
   if (id === 'favorites') return row.profileId === 'favorites'
@@ -274,27 +282,31 @@ function profileLabel(profileId: ShortcutProfileId) {
 function riskLabel(risk: ShortcutCommandRow['risk']) {
   return risk === 'destructive' ? '危险' : risk === 'data-write' ? '写入' : '普通'
 }
-
-function isWhenOverlapping(row: ShortcutCommandRow, target: ShortcutCommandRow) {
-  return canWhenClausesOverlap(row.when, target.when)
-}
 </script>
 
 <template>
   <section class="settings-page">
     <div class="settings-shell-header">
-      <div class="segmented-control">
+      <div class="settings-sub-tabs" role="tablist" aria-label="设置分类">
         <button
-          v-for="item in sections"
+          v-for="item in settingTabs"
           :key="item.id"
           type="button"
-          :class="{ active: sectionId === item.id }"
-          @click="sectionId = item.id"
+          role="tab"
+          :aria-selected="settingsTabId === item.id"
+          :class="{ active: settingsTabId === item.id }"
+          @click="settingsTabId = item.id"
         >
           {{ item.label }}
         </button>
       </div>
-      <div class="settings-toolbar">
+    </div>
+
+    <div v-if="settingsTabId === 'shortcuts'" class="shortcut-settings-layout">
+      <div class="shortcut-strip">
+        <select v-model="shortcutScopeId" aria-label="快捷键范围">
+          <option v-for="item in shortcutScopeOptions" :key="item.id" :value="item.id">{{ item.label }}</option>
+        </select>
         <input v-model="keyword" placeholder="搜索 command、layer、when、快捷键" />
         <select v-model="stateFilter" aria-label="筛选状态">
           <option value="all">全部状态</option>
@@ -302,11 +314,79 @@ function isWhenOverlapping(row: ShortcutCommandRow, target: ShortcutCommandRow) 
           <option value="user">用户覆盖</option>
           <option value="disabled">已禁用</option>
         </select>
+        <span class="shortcut-strip-meta">{{ filteredRows.length }} / {{ commandRows.length }}</span>
+      </div>
+
+      <div class="shortcut-preview-strip">
+        <span v-if="selectedRow" class="preview-selected" :title="`${selectedRow.title} · ${selectedRow.commandId}`">
+          {{ selectedRow.title }}
+          <small>{{ selectedRow.commandId }}</small>
+        </span>
+        <input v-model="previewShortcut" aria-label="解析预览快捷键" placeholder="例如 c-s-1" />
+        <select v-model="previewContextId" aria-label="解析预览上下文">
+          <option v-for="item in previewContexts" :key="item.id" :value="item.id">{{ item.label }}</option>
+        </select>
+        <span class="preview-hit" :title="previewResult.activeLayers.join(' > ')">
+          命中 {{ previewResult.winner?.actionId || '未命中' }}
+        </span>
+        <span class="preview-layer">层 {{ previewResult.activeLayers.join(' > ') || 'none' }}</span>
+      </div>
+
+      <div class="shortcut-table" role="table">
+        <div class="shortcut-compact-row shortcut-row-head" role="row">
+          <span>命令</span>
+          <span>作用域</span>
+          <span>快捷键</span>
+          <span>When</span>
+          <span>状态</span>
+          <span>操作</span>
+        </div>
+        <div
+          v-for="row in filteredRows"
+          :key="row.commandId"
+          class="shortcut-compact-row"
+          role="row"
+          tabindex="0"
+          :class="{ selected: selectedRow?.commandId === row.commandId, disabled: !row.enabled }"
+          @click="selectedCommandId = row.commandId"
+          @keydown.enter.prevent="selectedCommandId = row.commandId"
+        >
+          <span class="command-cell" :title="`${row.title} · ${row.commandId}`">
+            <strong>{{ row.title }}</strong>
+            <small>{{ row.commandId }}</small>
+          </span>
+          <span class="scope-cell">
+            <em class="status-badge">{{ profileLabel(row.profileId) }}</em>
+            <em class="layer-chip">{{ row.layerLabel }}</em>
+          </span>
+          <span class="shortcut-cell">
+            <span class="kbd-list">
+              <kbd v-for="shortcut in row.shortcutIds" :key="shortcut">{{ formatShortcutLabel(shortcut) }}</kbd>
+              <em v-if="!row.shortcutIds.length">未绑定</em>
+            </span>
+            <small>默认 {{ formatShortcutList(row.defaultShortcutIds) || '无' }}</small>
+          </span>
+          <span class="when-cell" :title="row.when || 'always'">
+            <small>{{ row.when || 'always' }}</small>
+          </span>
+          <span class="state-cell">
+            <em class="status-badge" :class="`source-${row.source}`">{{ row.sourceLabel }}</em>
+            <em class="status-badge" :class="`risk-${row.risk}`">{{ riskLabel(row.risk) }}</em>
+            <em v-if="row.conflicts.length" class="status-badge conflict">冲突 {{ row.conflicts.length }}</em>
+            <em v-if="row.reservationConflicts.length" class="status-badge blocked">保留 {{ row.reservationConflicts.length }}</em>
+          </span>
+          <span class="row-actions">
+            <button type="button" aria-label="录制快捷键" title="录制快捷键" @click.stop="openRecord(row)">键</button>
+            <button type="button" aria-label="编辑 When" title="编辑 When" @click.stop="openWhenEditor(row)">W</button>
+            <button type="button" aria-label="恢复默认快捷键" title="恢复默认快捷键" @click.stop="emit('resetKeybinding', row.commandId)">复</button>
+            <button type="button" class="danger" aria-label="禁用快捷键" title="禁用快捷键" @click.stop="disableRow(row)">禁</button>
+          </span>
+        </div>
       </div>
     </div>
 
-    <div v-if="sectionId === 'layers'" class="layer-rules-panel">
-      <div class="layer-rules-grid">
+    <div v-else class="settings-maintenance">
+      <div class="maintenance-grid">
         <div class="settings-subpanel">
           <h3>层级优先级</h3>
           <div v-for="layer in layerRows" :key="layer.id" class="layer-rule-row">
@@ -315,6 +395,19 @@ function isWhenOverlapping(row: ShortcutCommandRow, target: ShortcutCommandRow) 
           </div>
         </div>
         <div class="settings-subpanel">
+          <h3>存储状态</h3>
+          <div class="maintenance-row">
+            <span>当前存储</span>
+            <strong>{{ storageModeLabel }}</strong>
+            <small>运行时仍通过 uTools dbStorage 持久化插件状态。</small>
+          </div>
+          <div class="maintenance-row">
+            <span>SQLite</span>
+            <strong>{{ sqliteStateLabel }}</strong>
+            <small>preferSqlite: {{ String(props.settings.preferSqlite) }} · 当前仅只读展示。</small>
+          </div>
+        </div>
+        <div class="settings-subpanel reservation-panel">
           <h3>保留键与接管层</h3>
           <div v-for="rule in SHORTCUT_RESERVATION_RULES" :key="`${rule.commandId}-${rule.shortcutId}-${rule.when}`" class="reservation-row">
             <kbd>{{ formatShortcutLabel(rule.shortcutId) }}</kbd>
@@ -325,123 +418,29 @@ function isWhenOverlapping(row: ShortcutCommandRow, target: ShortcutCommandRow) 
             </span>
           </div>
         </div>
-      </div>
-    </div>
-
-    <div v-else class="shortcut-settings-layout">
-      <div class="shortcut-table" role="table">
-        <div class="shortcut-row shortcut-row-head" role="row">
-          <span>命令</span>
-          <span>层 / when</span>
-          <span>当前 / 默认</span>
-          <span>状态</span>
-          <span>操作</span>
-        </div>
-        <div
-          v-for="row in filteredRows"
-          :key="row.commandId"
-          class="shortcut-row"
-          role="row"
-          tabindex="0"
-          :class="{ selected: selectedRow?.commandId === row.commandId, disabled: !row.enabled }"
-          @click="selectedCommandId = row.commandId"
-          @keydown.enter.prevent="selectedCommandId = row.commandId"
-        >
-          <span class="command-cell">
-            <strong>{{ row.title }}</strong>
-            <small>{{ row.commandId }}</small>
-            <span class="badge-row">
-              <em class="status-badge">{{ row.group }}</em>
-              <em class="status-badge">{{ profileLabel(row.profileId) }}</em>
-              <em class="status-badge" :class="`risk-${row.risk}`">{{ riskLabel(row.risk) }}</em>
-            </span>
-          </span>
-          <span class="when-cell">
-            <em class="layer-chip">{{ row.layerLabel }}</em>
-            <small>{{ row.when || 'always' }}</small>
-          </span>
-          <span class="shortcut-cell">
-            <span class="kbd-list">
-              <kbd v-for="shortcut in row.shortcutIds" :key="shortcut">{{ formatShortcutLabel(shortcut) }}</kbd>
-              <em v-if="!row.shortcutIds.length">未绑定</em>
-            </span>
-            <small>默认 {{ formatShortcutList(row.defaultShortcutIds) || '无' }}</small>
-          </span>
-          <span class="state-cell">
-            <em class="status-badge" :class="`source-${row.source}`">{{ row.sourceLabel }}</em>
-            <em v-if="row.conflicts.length" class="status-badge conflict">冲突 {{ row.conflicts.length }}</em>
-            <em v-if="row.reservationConflicts.length" class="status-badge blocked">保留 {{ row.reservationConflicts.length }}</em>
-          </span>
-          <span class="row-actions">
-            <button type="button" @click.stop="openRecord(row)">录制</button>
-            <button type="button" @click.stop="openWhenEditor(row)">when</button>
-            <button type="button" @click.stop="emit('resetKeybinding', row.commandId)">默认</button>
-            <button type="button" class="danger" @click.stop="disableRow(row)">禁用</button>
-          </span>
+        <div class="settings-subpanel">
+          <h3>解析候选</h3>
+          <div class="preview-controls">
+            <input v-model="previewShortcut" placeholder="例如 c-s-1" />
+            <select v-model="previewContextId">
+              <option v-for="item in previewContexts" :key="item.id" :value="item.id">{{ item.label }}</option>
+            </select>
+          </div>
+          <div class="preview-result">
+            <span>Active layers</span>
+            <p>{{ previewResult.activeLayers.join(' > ') }}</p>
+            <span>命中</span>
+            <p>{{ previewResult.winner?.actionId || '未命中或被输入层阻断' }}</p>
+          </div>
+          <div class="candidate-list">
+            <div v-for="candidate in previewResult.candidates" :key="`${candidate.actionId}-${candidate.shortcutId}-${candidate.layer}`" class="candidate-row">
+              <strong>{{ candidate.actionId }}</strong>
+              <small>{{ candidate.layer }} · {{ candidate.source }} · {{ candidate.when || 'always' }}</small>
+            </div>
+            <p v-if="!previewResult.candidates.length" class="empty-note">没有候选；可能被当前输入层阻断或没有绑定。</p>
+          </div>
         </div>
       </div>
-
-      <aside class="shortcut-inspector">
-        <template v-if="selectedRow">
-          <div class="settings-subpanel">
-            <h3>{{ selectedRow.title }}</h3>
-            <p class="inspector-id">{{ selectedRow.commandId }}</p>
-            <dl class="compact-meta">
-              <div><dt>Layer</dt><dd>{{ selectedRow.layer }} · {{ LAYER_PRIORITY[selectedRow.layer] }}</dd></div>
-              <div><dt>Profile</dt><dd>{{ profileLabel(selectedRow.profileId) }}</dd></div>
-              <div><dt>When</dt><dd>{{ selectedRow.when || 'always' }}</dd></div>
-              <div><dt>Source</dt><dd>{{ selectedRow.sourceLabel }}</dd></div>
-            </dl>
-          </div>
-
-          <div class="settings-subpanel">
-            <h3>解析预览</h3>
-            <div class="preview-controls">
-              <input v-model="previewShortcut" placeholder="例如 c-s-1" />
-              <select v-model="previewContextId">
-                <option v-for="item in previewContexts" :key="item.id" :value="item.id">{{ item.label }}</option>
-              </select>
-            </div>
-            <div class="preview-result">
-              <span>Active layers</span>
-              <p>{{ previewResult.activeLayers.join(' > ') }}</p>
-              <span>命中</span>
-              <p>{{ previewResult.winner?.actionId || '未命中或被输入层阻断' }}</p>
-            </div>
-            <div class="candidate-list">
-              <div v-for="candidate in previewResult.candidates" :key="`${candidate.actionId}-${candidate.shortcutId}-${candidate.layer}`" class="candidate-row">
-                <strong>{{ candidate.actionId }}</strong>
-                <small>{{ candidate.layer }} · {{ candidate.source }} · {{ candidate.when || 'always' }}</small>
-              </div>
-              <p v-if="!previewResult.candidates.length" class="empty-note">没有候选；可能被当前输入层阻断或没有绑定。</p>
-            </div>
-          </div>
-
-          <div v-if="selectedRow.conflicts.length || selectedRow.reservationConflicts.length" class="settings-subpanel">
-            <h3>冲突与阻断</h3>
-            <div v-for="conflict in selectedRow.conflicts" :key="`${conflict.commandId}-${conflict.shortcutId}`" class="issue-row">
-              <strong>{{ formatShortcutLabel(conflict.shortcutId) }} · {{ conflict.commandId }}</strong>
-              <small>{{ conflict.layer }} · when 可重叠</small>
-            </div>
-            <div v-for="rule in selectedRow.reservationConflicts" :key="`${rule.commandId}-${rule.shortcutId}-${rule.when}`" class="issue-row blocked">
-              <strong>{{ formatShortcutLabel(rule.shortcutId) }} · {{ rule.commandId }}</strong>
-              <small>{{ rule.description }} · {{ rule.layer }}</small>
-            </div>
-          </div>
-
-          <div class="settings-subpanel">
-            <h3>候选关系</h3>
-            <div
-              v-for="row in commandRows.filter((item) => item.commandId !== selectedRow?.commandId && item.shortcutIds.some((shortcut) => selectedRow?.shortcutIds.includes(shortcut))).slice(0, 8)"
-              :key="row.commandId"
-              class="candidate-row"
-            >
-              <strong>{{ row.commandId }}</strong>
-              <small>{{ row.layer }} · {{ isWhenOverlapping(selectedRow, row) ? 'when 可重叠' : 'when 互斥' }}</small>
-            </div>
-          </div>
-        </template>
-      </aside>
     </div>
 
     <div v-if="recordingRow" class="modal-backdrop" @keydown.esc.stop.prevent="closeRecord">

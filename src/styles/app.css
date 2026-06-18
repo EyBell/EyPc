@@ -978,21 +978,23 @@ kbd {
   height: calc(100vh - 78px);
   display: grid;
   grid-template-rows: auto 1fr;
-  gap: 10px;
+  gap: 8px;
   overflow: hidden;
 }
 
 .settings-shell-header {
-  display: grid;
-  grid-template-columns: auto minmax(280px, 1fr);
-  gap: 10px;
+  display: flex;
+  gap: 8px;
   align-items: center;
 }
 
+.settings-sub-tabs,
 .segmented-control,
 .settings-toolbar,
 .badge-row,
 .kbd-list,
+.shortcut-strip,
+.shortcut-preview-strip,
 .preview-controls,
 .when-presets {
   display: flex;
@@ -1000,15 +1002,18 @@ kbd {
   align-items: center;
 }
 
+.settings-sub-tabs,
 .segmented-control {
   flex-wrap: wrap;
 }
 
+.settings-sub-tabs button,
 .segmented-control button {
   padding: 6px 10px;
   color: #4d6675;
 }
 
+.settings-sub-tabs button.active,
 .segmented-control button.active {
   border-color: #00a676;
   background: #e8f7f0;
@@ -1029,20 +1034,21 @@ kbd {
 }
 
 .shortcut-settings-layout,
-.layer-rules-grid {
+.settings-maintenance,
+.maintenance-grid {
   min-height: 0;
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .shortcut-settings-layout {
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .shortcut-table,
-.shortcut-inspector,
 .settings-subpanel,
-.layer-rules-panel {
+.settings-maintenance {
   min-height: 0;
 }
 
@@ -1052,32 +1058,121 @@ kbd {
   border-radius: 8px;
 }
 
-.shortcut-row {
-  width: 100%;
+.shortcut-strip {
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 1px solid #edf1f4;
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.shortcut-strip input {
+  min-width: 180px;
+  flex: 1 1 auto;
+}
+
+.shortcut-strip select {
+  flex: 0 0 auto;
+  width: 112px;
+}
+
+.shortcut-strip-meta {
+  flex: 0 0 auto;
+  border: 1px solid #d8e0e7;
+  border-radius: 8px;
+  padding: 4px 8px;
+  background: #fff;
+  color: #4d6675;
+  font-size: 12px;
+}
+
+.shortcut-preview-strip {
+  min-height: 34px;
   display: grid;
-  grid-template-columns: minmax(190px, 1.2fr) minmax(170px, 1fr) minmax(160px, 0.9fr) 118px 180px;
-  gap: 10px;
+  grid-template-columns: minmax(160px, 1fr) 108px 126px minmax(130px, 0.9fr) minmax(130px, 0.9fr);
+  gap: 6px;
+  align-items: center;
+  border: 1px solid #edf1f4;
+  border-radius: 8px;
+  padding: 5px 8px;
+  background: #fff;
+}
+
+.shortcut-preview-strip input,
+.shortcut-preview-strip select {
+  min-width: 0;
+  width: 100%;
+}
+
+.preview-selected,
+.preview-hit,
+.preview-layer {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #4d6675;
+}
+
+.preview-selected {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  color: #172026;
+}
+
+.preview-selected small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #6d7f8d;
+}
+
+.shortcut-compact-row {
+  width: 100%;
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: minmax(170px, 1.25fr) minmax(148px, 0.85fr) minmax(158px, 0.95fr) minmax(150px, 0.85fr) minmax(148px, 0.85fr) 112px;
+  gap: 6px;
   align-items: center;
   border: 0;
   border-bottom: 1px solid #edf1f4;
   border-radius: 0;
-  padding: 8px;
+  padding: 5px 8px;
   background: #fff;
   text-align: left;
 }
 
-.shortcut-row:hover,
-.shortcut-row.selected {
+.shortcut-compact-row:hover,
+.shortcut-compact-row.selected {
   background: #f4fbf8;
 }
 
-.shortcut-row.selected {
+.shortcut-compact-row.selected {
   outline: 2px solid #00a676;
   outline-offset: -2px;
 }
 
-.shortcut-row.disabled {
+.shortcut-compact-row.disabled {
   color: #6d7f8d;
+}
+
+.shortcut-compact-row .row-actions {
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+}
+
+.shortcut-compact-row .row-actions button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.shortcut-compact-row .row-actions button.danger {
+  color: #a92d2d;
 }
 
 .shortcut-row-head {
@@ -1094,12 +1189,17 @@ kbd {
 }
 
 .command-cell,
+.scope-cell,
 .when-cell,
 .shortcut-cell,
 .state-cell,
-.shortcut-inspector,
-.settings-subpanel,
-.shortcut-modal header > span,
+.shortcut-modal header > span {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
 .reservation-row span {
   display: grid;
   gap: 4px;
@@ -1107,12 +1207,15 @@ kbd {
 }
 
 .command-cell strong,
+.command-cell small,
+.scope-cell small,
 .when-cell small,
 .shortcut-cell small,
+.state-cell,
+.preview-hit,
+.preview-layer,
 .candidate-row strong,
-.reservation-row strong,
-.issue-row strong,
-.inspector-id {
+.reservation-row strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1165,31 +1268,33 @@ kbd {
 }
 
 .kbd-list {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.command-cell strong,
+.command-cell small,
+.shortcut-cell small,
+.state-cell em {
+  min-width: 0;
 }
 
 .kbd-list em,
 .shortcut-cell small,
 .when-cell small,
 .candidate-row small,
-.compact-meta dd,
-.compact-meta dt,
 .reservation-row small,
-.issue-row small,
 .shortcut-modal small,
 .shortcut-modal-grid p,
-.validation-box small,
-.inspector-id {
+.validation-box small {
   color: #6d7f8d;
   font-style: normal;
 }
 
-.shortcut-inspector {
-  overflow: auto;
-  align-content: start;
-}
-
 .settings-subpanel {
+  display: grid;
+  gap: 8px;
   border: 1px solid #edf1f4;
   border-radius: 8px;
   padding: 10px;
@@ -1199,23 +1304,6 @@ kbd {
 .settings-subpanel h3 {
   margin: 0 0 8px;
   font-size: 13px;
-}
-
-.compact-meta {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-}
-
-.compact-meta div {
-  display: grid;
-  grid-template-columns: 56px minmax(0, 1fr);
-  gap: 8px;
-}
-
-.compact-meta dd,
-.compact-meta dt {
-  margin: 0;
 }
 
 .preview-controls input {
@@ -1245,7 +1333,6 @@ kbd {
 }
 
 .candidate-row,
-.issue-row,
 .layer-rule-row,
 .reservation-row {
   display: grid;
@@ -1256,22 +1343,48 @@ kbd {
   background: #fbfcfd;
 }
 
-.candidate-row,
-.issue-row {
+.candidate-row {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.issue-row.blocked {
-  border-color: #f0cf88;
-  background: #fff9eb;
-}
-
-.layer-rules-panel {
+.settings-maintenance {
   overflow: auto;
 }
 
-.layer-rules-grid {
-  grid-template-columns: 280px minmax(0, 1fr);
+.maintenance-grid {
+  grid-template-columns: minmax(240px, 0.75fr) minmax(0, 1fr);
+  align-content: start;
+}
+
+.reservation-panel {
+  grid-row: span 2;
+}
+
+.maintenance-row {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 4px 8px;
+  align-items: center;
+  padding: 7px;
+  border: 1px solid #edf1f4;
+  border-radius: 6px;
+  background: #fbfcfd;
+}
+
+.maintenance-row span,
+.maintenance-row small {
+  color: #6d7f8d;
+}
+
+.maintenance-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.maintenance-row small {
+  grid-column: 1 / -1;
 }
 
 .layer-rule-row {
@@ -1335,17 +1448,43 @@ kbd {
 }
 
 @media (max-width: 900px) {
-  .settings-shell-header,
-  .shortcut-settings-layout,
-  .layer-rules-grid {
+  .shortcut-strip {
+    flex-wrap: wrap;
+  }
+
+  .shortcut-strip input {
+    flex-basis: min(100%, 260px);
+  }
+
+  .shortcut-preview-strip {
+    grid-template-columns: minmax(0, 1fr) 96px 118px;
+  }
+
+  .preview-hit {
+    grid-column: 1 / span 2;
+  }
+
+  .preview-layer {
+    display: none;
+  }
+
+  .shortcut-compact-row {
+    grid-template-columns: minmax(150px, 1.1fr) minmax(118px, 0.8fr) minmax(128px, 0.9fr) minmax(118px, 0.8fr) 104px;
+  }
+
+  .shortcut-compact-row > :nth-child(4) {
+    display: none;
+  }
+
+  .maintenance-grid {
     grid-template-columns: 1fr;
   }
 
-  .shortcut-inspector {
-    max-height: 280px;
+  .reservation-panel {
+    grid-row: auto;
   }
 
-  .shortcut-row {
-    grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.9fr) minmax(150px, 0.9fr) 100px 154px;
+  .shortcut-modal-grid {
+    grid-template-columns: 1fr;
   }
 }
