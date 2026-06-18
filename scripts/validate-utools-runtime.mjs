@@ -24,6 +24,9 @@ for (const file of ['index.html', 'plugin.json', 'preload.js', 'logo.svg']) {
   assert(existsSync(resolve(distDir, file)), `dist runtime file is missing: ${file}`)
 }
 
+const indexHtml = readFileSync(resolve(distDir, 'index.html'), 'utf8')
+assert(!/\b(?:src|href)="\/assets\//.test(indexHtml), 'dist index.html must use relative asset paths for uTools packages')
+
 const pluginJson = readJson('plugin.json')
 assertRelativeFile(pluginJson, 'main')
 assertRelativeFile(pluginJson, 'logo')

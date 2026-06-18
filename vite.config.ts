@@ -3,6 +3,7 @@ import { defineConfig } from 'vitest/config'
 import { handleDevPortApi } from './src/platform/devPortServer'
 
 export default defineConfig({
+  base: './',
   plugins: [
     {
       name: 'eypc-dev-port-api',
