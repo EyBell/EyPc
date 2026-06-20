@@ -2,7 +2,6 @@
 import { computed, nextTick, reactive, watch } from 'vue'
 import type { AppRuntimeSnapshot } from '../runtime/appRuntime'
 import type { PortGroupTarget } from '../domain/types'
-import type { SearchHistoryTarget } from '../domain/searchHistory'
 import SelectableList from '../components/SelectableList.vue'
 import SearchSuggestBox from '../components/SearchSuggestBox.vue'
 
@@ -32,12 +31,24 @@ const emit = defineEmits<{
   dispatch: [actionId: string, args?: Record<string, unknown>]
 }>()
 
-watch(() => props.snapshot.portGroupDraft?.activeField, (field) => {
+function focusActiveGroupDraftField(field = props.snapshot.portGroupDraft?.activeField) {
   if (!field) return
   void nextTick(() => {
-    document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-group-field="${field}"]`)?.focus()
+    const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-group-field="${field}"]`)
+    input?.focus()
+    input?.select()
   })
+}
+
+watch(() => props.snapshot.portGroupDraft?.activeField, (field) => {
+  focusActiveGroupDraftField(field)
 })
+
+watch(
+  () => props.snapshot.portGroupDraft ? `${props.snapshot.portGroupDraft.mode}:${props.snapshot.portGroupDraft.target?.kind || 'new'}:${props.snapshot.portGroupDraft.target?.id || 'new'}` : '',
+  () => focusActiveGroupDraftField(),
+  { flush: 'post' }
+)
 
 function updateDraft(input: { name?: string; entriesText?: string; color?: string; folderId?: string | null }) {
   emit('updateGroupDraft', input)
@@ -67,9 +78,13 @@ function drawerSubtitle() {
 function groupEditorTitle() {
   const draft = props.snapshot.portGroupDraft
   if (!draft) return ''
+  if (draft.target?.kind === 'folder') return draft.mode === 'create' ? '新增分组夹' : '重命名分组夹'
   if (draft.mode === 'create') return '新建端口组'
-  if (draft.target?.kind === 'folder') return '重命名分组夹'
   return draft.mode === 'rename' ? '重命名端口组' : '编辑端口组'
+}
+
+function isFolderDraft() {
+  return props.snapshot.portGroupDraft?.target?.kind === 'folder'
 }
 
 function detailRows() {
@@ -126,16 +141,28 @@ function sameGroupTarget(left: PortGroupTarget | null | undefined, right: PortGr
 
 const shiftPreviewRow = computed(() => {
   if (!props.shiftPreview) return null
-  const target = props.snapshot.focusedPortGroupTarget?.kind === 'group'
-    ? props.snapshot.focusedPortGroupTarget
-    : props.snapshot.selectedPortGroupTarget?.kind === 'group' ? props.snapshot.selectedPortGroupTarget : null
-  if (!target) return null
+  if (props.snapshot.activePortPane !== 'groups') return null
+  if (!props.snapshot.groupSidePanelOpen) return null
+  if (props.snapshot.focusedPortGroupTarget?.kind !== 'group') return null
+  if (props.snapshot.confirm || props.snapshot.portGroupDraft) return null
+  if (props.snapshot.portDrawer.active || props.snapshot.portGroupDetail.active) return null
+  const target = props.snapshot.focusedPortGroupTarget
   return props.snapshot.portGroupRows.find((row) => row.kind === 'group' && sameGroupTarget(row.target, target)) || null
 })
 
 function isShiftPreviewTarget(row: AppRuntimeSnapshot['portGroupRows'][number]) {
   const target = shiftPreviewRow.value?.target || null
   return row.kind === 'group' && sameGroupTarget(row.target, target)
+}
+
+function isGroupRowFocused(row: AppRuntimeSnapshot['portGroupRows'][number]) {
+  return props.snapshot.activePortPane === 'groups' && sameGroupTarget(props.snapshot.focusedPortGroupTarget, row.target)
+}
+
+function isGroupRowSelected(row: AppRuntimeSnapshot['portGroupRows'][number]) {
+  if (props.snapshot.activePortPane !== 'groups') return false
+  if (!sameGroupTarget(props.snapshot.selectedPortGroupTarget, row.target)) return false
+  return !props.snapshot.focusedPortGroupTarget || isGroupRowFocused(row)
 }
 
 function commandLabel(commandId: string, fallback: string) {
@@ -160,18 +187,6 @@ function portSearchStatus() {
 function groupSearchStatus() {
   return props.snapshot.portGroupSearch.trim() ? `${props.snapshot.portGroupRows.length} 项` : ''
 }
-
-function acceptHistory(payload: { target: SearchHistoryTarget; value: string }) {
-  emit('dispatch', 'search.history.accept', payload)
-}
-
-function deleteHistory(payload: { target: SearchHistoryTarget; value: string }) {
-  emit('dispatch', 'search.history.delete', payload)
-}
-
-function openHistory(payload: { target: SearchHistoryTarget }) {
-  emit('dispatch', 'search.history.open', payload)
-}
 </script>
 
 <template>
@@ -184,7 +199,7 @@ function openHistory(payload: { target: SearchHistoryTarget }) {
       :aria-label="`展开端口组栏 ${commandLabel('ports.groups.togglePanel', 'c-w')}`"
       @click="emit('dispatch', 'ports.groups.togglePanel')"
     >
-      ›
+      <span class="group-panel-toggle-icon" aria-hidden="true"></span>
     </button>
     <aside
       v-if="props.snapshot.groupSidePanelOpen"
@@ -203,27 +218,22 @@ function openHistory(payload: { target: SearchHistoryTarget }) {
           :aria-label="`收起端口组栏 ${commandLabel('ports.groups.togglePanel', 'c-w')}`"
           @click="emit('dispatch', 'ports.groups.togglePanel')"
         >
-          ‹
+          <span class="group-panel-toggle-icon" aria-hidden="true"></span>
         </button>
         <SearchSuggestBox
           :model-value="props.snapshot.portGroupSearch"
           role="port-group-search"
-          target="ports.groups"
           placeholder="搜索端口组"
-          :history-state="props.snapshot.searchHistoryState"
           :status="groupSearchStatus()"
           :shortcut-hint="ctrlCommandLabel('ports.groupSearch.focus')"
           @focus="emit('dispatch', 'ports.groupSearch.focus')"
           @update:model-value="emit('groupSearch', $event)"
-          @accept="acceptHistory"
-          @delete="deleteHistory"
-          @open="openHistory"
         />
         <button
           type="button"
           class="add-folder-button"
-          title="新增分组夹"
-          aria-label="新增分组夹"
+          :title="`新增分组夹 ${commandLabel('ports.groupFolder.create', 'c-t')}`"
+          :aria-label="`新增分组夹 ${commandLabel('ports.groupFolder.create', 'c-t')}`"
           @click="emit('dispatch', 'ports.groupFolder.create')"
         >
           +
@@ -234,8 +244,8 @@ function openHistory(payload: { target: SearchHistoryTarget }) {
         :key="row.rowId"
         class="group-row"
         :class="{
-          focused: props.snapshot.focusedPortGroupTarget?.kind === row.target.kind && props.snapshot.focusedPortGroupTarget?.id === row.target.id,
-          selected: props.snapshot.selectedPortGroupTarget?.kind === row.target.kind && props.snapshot.selectedPortGroupTarget?.id === row.target.id,
+          focused: isGroupRowFocused(row),
+          selected: isGroupRowSelected(row),
           folder: row.kind === 'folder',
           child: row.depth > 0,
           'shift-preview-target': isShiftPreviewTarget(row)
@@ -253,9 +263,12 @@ function openHistory(payload: { target: SearchHistoryTarget }) {
             <button
               type="button"
               class="folder-toggle"
+              :class="{ collapsed: row.collapsed }"
+              :title="`${row.collapsed ? '展开' : '折叠'}分组夹 ${commandLabel('ports.groupTarget.toggle', 'c-s-w')}`"
+              :aria-label="`${row.collapsed ? '展开' : '折叠'}分组夹 ${commandLabel('ports.groupTarget.toggle', 'c-s-w')}`"
               @click.stop="focusGroupRow(row.target); emit('dispatch', row.collapsed ? 'ports.groupTarget.expand' : 'ports.groupTarget.collapse')"
             >
-              {{ row.collapsed ? '>' : 'v' }}
+              <span class="folder-toggle-icon" aria-hidden="true"></span>
             </button>
             <span>{{ row.name }}</span>
           </span>
@@ -310,17 +323,12 @@ function openHistory(payload: { target: SearchHistoryTarget }) {
         <SearchSuggestBox
           :model-value="props.snapshot.state.portSearch"
           role="port-search"
-          target="ports.processes"
           placeholder="输入端口、PID、进程名 或 node | java"
-          :history-state="props.snapshot.searchHistoryState"
           :error="props.snapshot.portSearchError"
           :status="portSearchStatus()"
           :shortcut-hint="ctrlCommandLabel('ports.search.focus')"
           @focus="emit('dispatch', 'ports.search.focus')"
           @update:model-value="emit('search', $event)"
-          @accept="acceptHistory"
-          @delete="deleteHistory"
-          @open="openHistory"
         />
       </div>
       <SelectableList
@@ -457,7 +465,7 @@ function openHistory(payload: { target: SearchHistoryTarget }) {
             @input="updateDraft({ name: groupForm.name })"
           />
         </label>
-        <label v-if="props.snapshot.portGroupDraft.mode !== 'rename'">
+        <label v-if="!isFolderDraft() && props.snapshot.portGroupDraft.mode !== 'rename'">
           规则
           <textarea
             v-model="groupForm.entriesText"
@@ -468,7 +476,7 @@ function openHistory(payload: { target: SearchHistoryTarget }) {
             @input="updateDraft({ entriesText: groupForm.entriesText })"
           />
         </label>
-        <label v-if="props.snapshot.portGroupDraft.mode !== 'rename'">
+        <label v-if="!isFolderDraft() && props.snapshot.portGroupDraft.mode !== 'rename'">
           颜色
           <input
             v-model="groupForm.color"
@@ -477,7 +485,7 @@ function openHistory(payload: { target: SearchHistoryTarget }) {
             @input="updateDraft({ color: groupForm.color })"
           />
         </label>
-        <label v-if="props.snapshot.portGroupDraft.mode !== 'rename'">
+        <label v-if="!isFolderDraft() && props.snapshot.portGroupDraft.mode !== 'rename'">
           所在分组夹
           <select
             v-model="groupForm.folderId"

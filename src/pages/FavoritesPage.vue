@@ -3,7 +3,6 @@ import { reactive } from 'vue'
 import SearchSuggestBox from '../components/SearchSuggestBox.vue'
 import FavoriteTree from '../components/FavoriteTree.vue'
 import type { FavoriteKind, FavoriteNode } from '../domain/types'
-import type { SearchHistoryTarget } from '../domain/searchHistory'
 import type { AppRuntimeSnapshot } from '../runtime/appRuntime'
 
 const props = defineProps<{ snapshot: AppRuntimeSnapshot }>()
@@ -41,17 +40,6 @@ function addFavorite() {
   draft.tags = ''
 }
 
-function acceptHistory(payload: { target: SearchHistoryTarget; value: string }) {
-  emit('dispatch', 'search.history.accept', payload)
-}
-
-function deleteHistory(payload: { target: SearchHistoryTarget; value: string }) {
-  emit('dispatch', 'search.history.delete', payload)
-}
-
-function openHistory(payload: { target: SearchHistoryTarget }) {
-  emit('dispatch', 'search.history.open', payload)
-}
 </script>
 
 <template>
@@ -90,15 +78,10 @@ function openHistory(payload: { target: SearchHistoryTarget }) {
         <SearchSuggestBox
           :model-value="props.snapshot.state.favoriteSearch"
           role="favorite-search"
-          target="favorites.files"
           placeholder="搜索文件名、路径、标签"
-          :history-state="props.snapshot.searchHistoryState"
           :status="props.snapshot.state.favoriteSearch.trim() ? `${props.snapshot.favoriteRows.length} 项` : ''"
           @focus="emit('dispatch', 'search.focus')"
           @update:model-value="emit('search', $event)"
-          @accept="acceptHistory"
-          @delete="deleteHistory"
-          @open="openHistory"
         />
         <div class="toolbar-actions">
           <button type="button" @click="emit('dispatch', 'favorites.open')">打开</button>

@@ -226,7 +226,6 @@ function matchesShortcutScope(row: ShortcutCommandRow, id: ShortcutScopeId): boo
 function isMaintenanceShortcutRow(row: ShortcutCommandRow): boolean {
   if (row.commandId === 'ports.detail.close') return true
   if (row.commandId.startsWith('confirm.')) return true
-  if (row.commandId.startsWith('search.history.')) return true
   if (row.commandId.endsWith('.close') || row.commandId.endsWith('.cancel') || row.commandId.endsWith('.blur')) return true
   return [
     'port-detail',
@@ -234,7 +233,6 @@ function isMaintenanceShortcutRow(row: ShortcutCommandRow): boolean {
     'port-drawer',
     'settings-shortcut-record',
     'settings-when-edit',
-    'search-history',
     'ports-search',
     'favorites-search'
   ].includes(row.layer)
@@ -356,20 +354,24 @@ function sourceCode(source: ShortcutCommandRow['source']) {
 
 function scopeDisplay(row: ShortcutCommandRow) {
   const priority = LAYER_PRIORITY[row.layer]
+  const profileTitle = profileDescription(row.profileId)
+  const layerTitle = `${row.layerLabel} / priority ${priority}`
   return {
     profile: profileLabel(row.profileId),
     layer: row.layer,
-    title: `${profileDescription(row.profileId)} / ${row.layerLabel} / priority ${priority}`
+    profileTitle,
+    layerTitle,
+    title: `${profileTitle} / ${layerTitle}`
   }
 }
 
 function stateDisplay(row: ShortcutCommandRow) {
   const parts = [
-    { label: sourceCode(row.source), className: `source-${row.source}` },
-    { label: riskCode(row.risk), className: `risk-${row.risk}` }
+    { label: sourceCode(row.source), className: `source-${row.source}`, title: `来源：${row.sourceLabel}` },
+    { label: riskCode(row.risk), className: `risk-${row.risk}`, title: `风险：${riskLabel(row.risk)}` }
   ]
-  if (row.conflicts.length) parts.push({ label: `C${row.conflicts.length}`, className: 'conflict' })
-  if (row.reservationConflicts.length) parts.push({ label: `R${row.reservationConflicts.length}`, className: 'blocked' })
+  if (row.conflicts.length) parts.push({ label: `C${row.conflicts.length}`, className: 'conflict', title: `冲突：${row.conflicts.length}` })
+  if (row.reservationConflicts.length) parts.push({ label: `R${row.reservationConflicts.length}`, className: 'blocked', title: `保留键：${row.reservationConflicts.length}` })
   return {
     parts,
     title: [
@@ -417,12 +419,17 @@ function focusShortcutSearch() {
   })
 }
 
+function isConfirmSaveShortcut(event: KeyboardEvent) {
+  if (!(event.ctrlKey || event.metaKey)) return false
+  return event.key.toLowerCase() === 's' || event.key === 'Enter'
+}
+
 function handleSettingsKeydown(event: KeyboardEvent) {
   if (event.defaultPrevented) return
   if (settingsTabId.value !== 'shortcuts') return
   if (event.ctrlKey || event.metaKey) shortcutModifierHinting.value = true
   if (recordingRow.value || whenRow.value) return
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && shortcutDraftDirty.value) {
+  if (isConfirmSaveShortcut(event) && shortcutDraftDirty.value) {
     blockHandledShortcutEvent(event)
     saveShortcutDraft()
     return
@@ -460,7 +467,7 @@ function handleModalEscape(event: KeyboardEvent) {
     else closeWhenEditor()
     return
   }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+  if (isConfirmSaveShortcut(event)) {
     blockHandledShortcutEvent(event)
     if (recordingRow.value && recordValidation.value.errors.length === 0) saveRecord()
     else if (whenRow.value && whenValidation.value.errors.length === 0) saveWhen()
@@ -781,9 +788,15 @@ function isRecordableShortcutId(shortcutId: string) {
               <small v-for="line in commandTooltipLines(row).slice(1)" :key="line">{{ line }}</small>
             </span>
           </span>
-          <span class="scope-cell" :title="scopeDisplay(row).title">
-            <em class="status-badge">{{ scopeDisplay(row).profile }}</em>
-            <em class="layer-chip">{{ scopeDisplay(row).layer }}</em>
+          <span class="scope-cell" :title="scopeDisplay(row).title" @mousemove="updateCommandTooltipPosition">
+            <em class="status-badge shortcut-label" :title="scopeDisplay(row).profileTitle">
+              {{ scopeDisplay(row).profile }}
+              <span class="shortcut-label-tooltip" role="tooltip" aria-hidden="true">{{ scopeDisplay(row).profileTitle }}</span>
+            </em>
+            <em class="layer-chip shortcut-label" :title="scopeDisplay(row).layerTitle">
+              {{ scopeDisplay(row).layer }}
+              <span class="shortcut-label-tooltip" role="tooltip" aria-hidden="true">{{ scopeDisplay(row).layerTitle }}</span>
+            </em>
           </span>
           <span class="shortcut-cell" :title="shortcutTooltip(row)">
             <span class="kbd-list">
@@ -794,8 +807,11 @@ function isRecordableShortcutId(shortcutId: string) {
           <span class="when-cell" :title="row.when || 'always'">
             <small>{{ row.when || 'always' }}</small>
           </span>
-          <span class="state-cell" :title="stateDisplay(row).title">
-            <em v-for="item in stateDisplay(row).parts" :key="item.label" class="status-badge" :class="item.className">{{ item.label }}</em>
+          <span class="state-cell" :title="stateDisplay(row).title" @mousemove="updateCommandTooltipPosition">
+            <em v-for="item in stateDisplay(row).parts" :key="item.label" class="status-badge shortcut-label" :class="item.className" :title="item.title">
+              {{ item.label }}
+              <span class="shortcut-label-tooltip" role="tooltip" aria-hidden="true">{{ item.title }}</span>
+            </em>
           </span>
           <span class="row-actions">
             <button type="button" aria-label="录制快捷键" title="录制快捷键" @click.stop="openRecord(row)">键</button>
@@ -954,9 +970,15 @@ function isRecordableShortcutId(shortcutId: string) {
                   <small v-for="line in commandTooltipLines(row).slice(1)" :key="line">{{ line }}</small>
                 </span>
               </span>
-              <span class="scope-cell" :title="scopeDisplay(row).title">
-                <em class="status-badge">{{ scopeDisplay(row).profile }}</em>
-                <em class="layer-chip">{{ scopeDisplay(row).layer }}</em>
+              <span class="scope-cell" :title="scopeDisplay(row).title" @mousemove="updateCommandTooltipPosition">
+                <em class="status-badge shortcut-label" :title="scopeDisplay(row).profileTitle">
+                  {{ scopeDisplay(row).profile }}
+                  <span class="shortcut-label-tooltip" role="tooltip" aria-hidden="true">{{ scopeDisplay(row).profileTitle }}</span>
+                </em>
+                <em class="layer-chip shortcut-label" :title="scopeDisplay(row).layerTitle">
+                  {{ scopeDisplay(row).layer }}
+                  <span class="shortcut-label-tooltip" role="tooltip" aria-hidden="true">{{ scopeDisplay(row).layerTitle }}</span>
+                </em>
               </span>
               <span class="shortcut-cell" :title="shortcutTooltip(row)">
                 <span class="kbd-list">
@@ -967,8 +989,11 @@ function isRecordableShortcutId(shortcutId: string) {
               <span class="when-cell" :title="row.when || 'always'">
                 <small>{{ row.when || 'always' }}</small>
               </span>
-              <span class="state-cell" :title="stateDisplay(row).title">
-                <em v-for="item in stateDisplay(row).parts" :key="item.label" class="status-badge" :class="item.className">{{ item.label }}</em>
+              <span class="state-cell" :title="stateDisplay(row).title" @mousemove="updateCommandTooltipPosition">
+                <em v-for="item in stateDisplay(row).parts" :key="item.label" class="status-badge shortcut-label" :class="item.className" :title="item.title">
+                  {{ item.label }}
+                  <span class="shortcut-label-tooltip" role="tooltip" aria-hidden="true">{{ item.title }}</span>
+                </em>
               </span>
               <span class="row-actions">
                 <button type="button" aria-label="录制快捷键" title="录制快捷键" @click.stop="openRecord(row)">键</button>
@@ -1026,87 +1051,88 @@ function isRecordableShortcutId(shortcutId: string) {
     </div>
 
     <div v-if="recordingRow" class="modal-backdrop" @keydown.esc.stop.prevent="requestCloseRecord">
-      <section class="shortcut-modal" role="dialog" aria-modal="true" @keydown.stop>
+      <section class="shortcut-modal shortcut-record-modal" role="dialog" aria-modal="true" @keydown.stop>
         <header>
           <span>
             <strong>录制快捷键</strong>
             <small>{{ recordingRow.commandId }}</small>
           </span>
-          <button type="button" @click="requestCloseRecord">关闭</button>
+          <span class="confirm-actions shortcut-record-actions">
+            <button type="button" @click="requestCloseRecord">取消</button>
+            <button type="button" :disabled="recordValidation.errors.length > 0" @click="saveRecord">保存</button>
+          </span>
         </header>
-        <div class="shortcut-record-head shortcut-record-head--command">
-          <span class="shortcut-record-head-main">
-            <strong class="shortcut-record-command">{{ shortcutCommandTooltipTitle(recordingRow) }}</strong>
-            <small class="shortcut-record-command-id">{{ recordingRow.commandId }}</small>
-          </span>
-          <span class="shortcut-record-head-defaults">
-            <small class="shortcut-record-default-label">默认值</small>
-            <kbd v-for="shortcut in shortcutRecordDefaultIds" :key="shortcut" class="shortcut-record-default-value">{{ formatShortcutLabel(shortcut) }}</kbd>
-            <button v-if="showShortcutRecordDefaultRestore" type="button" class="shortcut-record-default-reset" @click="restoreShortcutRecordToDefault">恢复默认</button>
-          </span>
-        </div>
-        <div class="shortcut-record-panels">
-          <div class="shortcut-record-panel shortcut-record-panel--current">
-            <strong class="shortcut-record-panel-label">当前绑定</strong>
-            <div v-if="shortcutRecordActiveIds.length" class="shortcut-record-key-list">
-              <span v-for="(shortcut, index) in shortcutRecordActiveIds" :key="`active-${shortcut}-${index}`" class="shortcut-record-key-row">
-                <kbd>{{ formatShortcutLabel(shortcut) }}</kbd>
-                <button type="button" class="shortcut-record-key-remove" @click="removeShortcutRecordActiveId(index)">×</button>
-              </span>
-            </div>
-            <small v-else class="shortcut-record-key-empty">暂无绑定</small>
+        <div class="shortcut-record-scroll">
+          <div class="shortcut-record-head shortcut-record-head--command">
+            <span class="shortcut-record-head-main">
+              <strong class="shortcut-record-command">{{ shortcutCommandTooltipTitle(recordingRow) }}</strong>
+              <small class="shortcut-record-command-id">{{ recordingRow.commandId }}</small>
+            </span>
+            <span class="shortcut-record-head-defaults">
+              <small class="shortcut-record-default-label">默认值</small>
+              <kbd v-for="shortcut in shortcutRecordDefaultIds" :key="shortcut" class="shortcut-record-default-value">{{ formatShortcutLabel(shortcut) }}</kbd>
+              <button v-if="showShortcutRecordDefaultRestore" type="button" class="shortcut-record-default-reset" @click="restoreShortcutRecordToDefault">恢复默认</button>
+            </span>
           </div>
-          <div class="shortcut-record-panel shortcut-record-panel--pending">
-            <strong class="shortcut-record-panel-label">待绑定</strong>
-            <div v-if="shortcutRecordPendingIds.length" class="shortcut-record-key-list">
-              <span v-for="(shortcut, index) in shortcutRecordPendingIds" :key="`pending-${shortcut}-${index}`" class="shortcut-record-key-row">
-                <input
-                  v-if="shortcutRecordEditingIndex === index"
-                  v-model="shortcutRecordEditingValue"
-                  @blur="finishEditingShortcut(index)"
-                  @keydown.enter.prevent="finishEditingShortcut(index)"
-                  @keydown.esc.prevent="cancelEditingShortcut"
-                />
-                <kbd v-else @click="startEditingShortcut(index, shortcut)">{{ formatShortcutLabel(shortcut) }}</kbd>
-                <button type="button" class="shortcut-record-key-remove" @click="removeShortcutRecordPendingId(index)">×</button>
-              </span>
+          <div class="shortcut-record-panels">
+            <div class="shortcut-record-panel shortcut-record-panel--current">
+              <strong class="shortcut-record-panel-label">当前绑定</strong>
+              <div v-if="shortcutRecordActiveIds.length" class="shortcut-record-key-list">
+                <span v-for="(shortcut, index) in shortcutRecordActiveIds" :key="`active-${shortcut}-${index}`" class="shortcut-record-key-row">
+                  <kbd>{{ formatShortcutLabel(shortcut) }}</kbd>
+                  <button type="button" class="shortcut-record-key-remove" @click="removeShortcutRecordActiveId(index)">×</button>
+                </span>
+              </div>
+              <small v-else class="shortcut-record-key-empty">暂无绑定</small>
             </div>
-            <small v-else class="shortcut-record-key-empty">录制后点 ✓ 添加</small>
+            <div class="shortcut-record-panel shortcut-record-panel--pending">
+              <strong class="shortcut-record-panel-label">待绑定</strong>
+              <div v-if="shortcutRecordPendingIds.length" class="shortcut-record-key-list">
+                <span v-for="(shortcut, index) in shortcutRecordPendingIds" :key="`pending-${shortcut}-${index}`" class="shortcut-record-key-row">
+                  <input
+                    v-if="shortcutRecordEditingIndex === index"
+                    v-model="shortcutRecordEditingValue"
+                    @blur="finishEditingShortcut(index)"
+                    @keydown.enter.prevent="finishEditingShortcut(index)"
+                    @keydown.esc.prevent="cancelEditingShortcut"
+                  />
+                  <kbd v-else @click="startEditingShortcut(index, shortcut)">{{ formatShortcutLabel(shortcut) }}</kbd>
+                  <button type="button" class="shortcut-record-key-remove" @click="removeShortcutRecordPendingId(index)">×</button>
+                </span>
+              </div>
+              <small v-else class="shortcut-record-key-empty">录制后点 ✓ 添加</small>
+            </div>
+          </div>
+          <div ref="shortcutRecorderRef" class="shortcut-record-capture-row shortcut-recorder" tabindex="0" @keydown.stop.prevent="handleShortcutRecordKeydown">
+            <span class="shortcut-record-capture-hint">按下快捷键录制</span>
+            <span v-if="shortcutRecordCapturedId" class="shortcut-record-capture-staging">
+              <kbd>{{ formatShortcutLabel(shortcutRecordCapturedId) }}</kbd>
+            </span>
+            <button v-if="shortcutRecordCapturedId" type="button" class="shortcut-record-capture-confirm" @click="promoteShortcutRecordCaptured">✓</button>
+          </div>
+          <div class="shortcut-record-direct-input-row">
+            <span class="shortcut-record-capture-hint">或直接录入</span>
+            <input v-model="shortcutRecordDirectInput" placeholder="如 c-s-z 或 Ctrl+Shift+Z" @keydown.enter.prevent="addShortcutRecordDirectInput" />
+            <button type="button" @click="addShortcutRecordDirectInput">添加</button>
+          </div>
+          <div class="shortcut-modal-grid">
+            <p>合并：{{ formatShortcutList(shortcutRecordMergedIds) || '未绑定' }}</p>
+            <p>默认：{{ formatShortcutList(recordingRow.defaultShortcutIds) || '无' }}</p>
+            <p>when：{{ recordingRow.when || 'always' }}</p>
+          </div>
+          <div v-if="recordValidation.errors.length" class="validation-box danger">
+            <strong>不能保存</strong>
+            <small v-for="item in recordValidation.errors" :key="item">{{ item }}</small>
+          </div>
+          <div v-if="recordValidation.conflicts.length" class="validation-box">
+            <strong>冲突命令</strong>
+            <small v-for="item in recordValidation.conflicts" :key="`${item.commandId}-${item.shortcutId}`">{{ formatShortcutLabel(item.shortcutId) }} · {{ item.commandId }} · {{ item.when }}</small>
+          </div>
+          <div v-if="recordValidation.reservations.length" class="validation-box">
+            <strong>保留键</strong>
+            <small v-for="item in recordValidation.reservations" :key="`${item.commandId}-${item.shortcutId}-${item.when}`">{{ formatShortcutLabel(item.shortcutId) }} · {{ item.description }} · {{ item.layer }}</small>
           </div>
         </div>
-        <div ref="shortcutRecorderRef" class="shortcut-record-capture-row shortcut-recorder" tabindex="0" @keydown.stop.prevent="handleShortcutRecordKeydown">
-          <span class="shortcut-record-capture-hint">按下快捷键录制</span>
-          <span v-if="shortcutRecordCapturedId" class="shortcut-record-capture-staging">
-            <kbd>{{ formatShortcutLabel(shortcutRecordCapturedId) }}</kbd>
-          </span>
-          <button v-if="shortcutRecordCapturedId" type="button" class="shortcut-record-capture-confirm" @click="promoteShortcutRecordCaptured">✓</button>
-        </div>
-        <div class="shortcut-record-direct-input-row">
-          <span class="shortcut-record-capture-hint">或直接录入</span>
-          <input v-model="shortcutRecordDirectInput" placeholder="如 c-s-z 或 Ctrl+Shift+Z" @keydown.enter.prevent="addShortcutRecordDirectInput" />
-          <button type="button" @click="addShortcutRecordDirectInput">添加</button>
-        </div>
-        <div class="shortcut-modal-grid">
-          <p>合并：{{ formatShortcutList(shortcutRecordMergedIds) || '未绑定' }}</p>
-          <p>默认：{{ formatShortcutList(recordingRow.defaultShortcutIds) || '无' }}</p>
-          <p>when：{{ recordingRow.when || 'always' }}</p>
-        </div>
-        <div v-if="recordValidation.errors.length" class="validation-box danger">
-          <strong>不能保存</strong>
-          <small v-for="item in recordValidation.errors" :key="item">{{ item }}</small>
-        </div>
-        <div v-if="recordValidation.conflicts.length" class="validation-box">
-          <strong>冲突命令</strong>
-          <small v-for="item in recordValidation.conflicts" :key="`${item.commandId}-${item.shortcutId}`">{{ formatShortcutLabel(item.shortcutId) }} · {{ item.commandId }} · {{ item.when }}</small>
-        </div>
-        <div v-if="recordValidation.reservations.length" class="validation-box">
-          <strong>保留键</strong>
-          <small v-for="item in recordValidation.reservations" :key="`${item.commandId}-${item.shortcutId}-${item.when}`">{{ formatShortcutLabel(item.shortcutId) }} · {{ item.description }} · {{ item.layer }}</small>
-        </div>
-        <footer class="confirm-actions">
-          <button type="button" @click="requestCloseRecord">取消</button>
-          <button type="button" :disabled="recordValidation.errors.length > 0" @click="saveRecord">保存</button>
-        </footer>
       </section>
     </div>
 

@@ -21,3 +21,4 @@ yarn-error.log*
 /output/
 /.playwright-cli
 /.fastRequest
+/preload/*.upxs

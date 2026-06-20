@@ -1,6 +1,5 @@
 import { buildFavoriteTree, filterFavoriteTree, flattenFavoriteTree, reorderFavoriteNode } from '../domain/favorites'
 import { dedupePortProcesses, filterPortProcesses, flattenPortGroupTargets, matchPortGroupProcesses, matchPortGroupTargetProcesses, movePortGroupToFolder, shouldProcessMatchVerifiedPort } from '../domain/ports'
-import { filterSearchHistoryItems, historyForTarget, recordSearchHistory, updateHistoryForTarget, type SearchHistoryTarget } from '../domain/searchHistory'
 import { normalizeAppState } from '../domain/state'
 import { formatShortcutList } from '../domain/shortcuts'
 import type { AppState, AppTabId, FavoriteNode, FeatureConfig, KillRequest, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
@@ -50,20 +49,12 @@ export interface AppRuntimeSnapshot {
   confirm: { title: string; detail: string; onConfirm: () => void } | null
   commandShortcutLabels: Record<string, string>
   visibleFeatures: VisibleFeatureDefinition[]
-  searchHistoryState: SearchHistoryState
 }
 
 export type PortPaneId = 'groups' | 'results'
 export type SearchFocusTarget = 'ports' | 'port-groups' | 'favorites'
 export type ActiveInputRole = NonNullable<KeybindingContext['activeInputRole']>
 export type PortDrawerMode = 'single' | 'multi' | 'group'
-
-export interface SearchHistoryState {
-  target: SearchHistoryTarget | null
-  open: boolean
-  activeIndex: number
-  items: string[]
-}
 
 export interface PortDetailState {
   open: boolean
@@ -150,9 +141,6 @@ export function createAppRuntime(initialState: AppState) {
   let listFocusRequestId = 0
   let listFocusTarget: PortPaneId | null = null
   let searchFocusTarget: SearchFocusTarget = 'ports'
-  let searchHistoryTarget: SearchHistoryTarget | null = null
-  let searchHistoryOpen = false
-  let searchHistoryActiveIndex = -1
   let portGroupDraft: PortGroupDraft | null = null
   let focusedFavoriteId: string | null = null
   let message = ''
@@ -174,11 +162,6 @@ export function createAppRuntime(initialState: AppState) {
   function save() {
     state.updatedAt = Date.now()
     platform.storage.setState(state)
-  }
-
-  function syncLegacySearchHistories() {
-    state.portSearchHistory = state.searchHistories.ports.processes
-    state.favoriteSearchHistory = state.searchHistories.favorites.files
   }
 
   function context(): RuntimeActionContext {
@@ -244,11 +227,15 @@ export function createAppRuntime(initialState: AppState) {
 
   function focusPortPane(pane: PortPaneId) {
     activePortPane = pane
+    requestListFocus(pane)
     if (pane === 'groups') {
+      focusedPortId = null
       groupSidePanelOpen = true
       normalizeFocusedGroup()
       return
     }
+    focusedPortGroupTarget = null
+    focusedPortGroupId = null
     normalizeFocusedPort()
   }
 
@@ -284,7 +271,6 @@ export function createAppRuntime(initialState: AppState) {
       return focusPortSearch()
     } else if (state.activeTab === 'favorites') {
       searchFocusTarget = 'favorites'
-      setSearchHistoryTarget('favorites.files')
     } else {
       searchFocusTarget = 'ports'
     }
@@ -293,11 +279,17 @@ export function createAppRuntime(initialState: AppState) {
     return true
   }
 
+  function clearPortFocusHighlights() {
+    focusedPortId = null
+    focusedPortGroupTarget = null
+    focusedPortGroupId = null
+  }
+
   function focusPortSearch() {
     state.activeTab = 'ports'
     activePortPane = 'results'
     searchFocusTarget = 'ports'
-    setSearchHistoryTarget('ports.processes')
+    clearPortFocusHighlights()
     ensurePortsScanned()
     searchFocusRequestId += 1
     notify()
@@ -309,8 +301,7 @@ export function createAppRuntime(initialState: AppState) {
     groupSidePanelOpen = true
     activePortPane = 'groups'
     searchFocusTarget = 'port-groups'
-    setSearchHistoryTarget('ports.groups')
-    normalizeFocusedGroup()
+    clearPortFocusHighlights()
     searchFocusRequestId += 1
     notify()
     return true
@@ -482,11 +473,11 @@ export function createAppRuntime(initialState: AppState) {
       return items
     }
     return [
-      drawerItem('ports.kill.confirm', '终止确认', drawer.mode === 'multi' ? '确认后终止已选端口进程。' : '确认后终止当前端口进程。', 'stop'),
-      drawerItem('ports.kill.force', '强杀', '直接执行强杀，并保留 PID + 端口双重校验。', 'bolt'),
-      drawerItem('ports.group.createFromSelection', '收藏为组', '把当前目标端口写入新的端口组草稿。', 'bookmark'),
-      drawerItem('ports.scan', '刷新扫描', '重新扫描本机监听端口。', 'refresh'),
-      drawerItem('search.focus', '聚焦搜索', '回到当前栏搜索框。', 'search')
+      drawerItem('ports.kill.confirm', '终止确认', drawer.mode === 'multi' ? '确认后终止已选端口进程。' : '确认后终止当前端口进程。', ''),
+      drawerItem('ports.kill.force', '强杀', '直接执行强杀，并保留 PID + 端口双重校验。', ''),
+      drawerItem('ports.group.createFromSelection', '收藏为组', '把当前目标端口写入新的端口组草稿。', ''),
+      drawerItem('ports.scan', '刷新扫描', '重新扫描本机监听端口。', ''),
+      drawerItem('search.focus', '聚焦搜索', '回到当前栏搜索框。', '')
     ]
   }
 
@@ -594,6 +585,7 @@ export function createAppRuntime(initialState: AppState) {
   function moveInList(direction: 1 | -1, page = false) {
     if (state.activeTab === 'ports' && activePortPane === 'groups') {
       const rows = filterPortGroupRows()
+      focusedPortId = null
       if (!rows.length) {
         focusedPortGroupTarget = null
         focusedPortGroupId = null
@@ -611,6 +603,8 @@ export function createAppRuntime(initialState: AppState) {
     }
     if (state.activeTab === 'ports') {
       const rows = currentPortFilter().items
+      focusedPortGroupTarget = null
+      focusedPortGroupId = null
       if (!rows.length) {
         focusedPortId = null
         notify()
@@ -626,6 +620,8 @@ export function createAppRuntime(initialState: AppState) {
 
   function toggleFocusedSelection(advance = true) {
     if (state.activeTab === 'ports' && activePortPane === 'results' && focusedPortId) {
+      focusedPortGroupTarget = null
+      focusedPortGroupId = null
       const rows = currentPortFilter().items
       const currentIndex = rows.findIndex((item) => item.id === focusedPortId)
       selectedPortIds = selectedPortIds.includes(focusedPortId) ? selectedPortIds.filter((item) => item !== focusedPortId) : [...selectedPortIds, focusedPortId]
@@ -710,28 +706,9 @@ export function createAppRuntime(initialState: AppState) {
     notify()
   }
 
-  function recordSearchHistoryForTarget(target: SearchHistoryTarget, value: string) {
-    const keyword = value.trim()
-    if (!keyword) return false
-    state.searchHistories = updateHistoryForTarget(
-      state.searchHistories,
-      target,
-      recordSearchHistory(historyForTarget(state.searchHistories, target), keyword)
-    )
-    syncLegacySearchHistories()
-    return true
-  }
-
   function applyFocusedGroup(targetInput?: PortGroupTarget | null) {
-    const historyChanged = recordSearchHistoryForTarget('ports.groups', portGroupSearch)
     const target = targetInput || focusedPortGroupTarget
     if (!target) {
-      if (historyChanged) {
-        closeSearchHistory()
-        save()
-        notify()
-        return true
-      }
       setMessage('没有选中的端口组')
       return false
     }
@@ -739,8 +716,6 @@ export function createAppRuntime(initialState: AppState) {
     selectedPortGroupId = target.kind === 'group' ? target.id : null
     focusedPortId = null
     selectedPortIds = []
-    closeSearchHistory()
-    if (historyChanged) save()
     notify()
     return true
   }
@@ -751,6 +726,8 @@ export function createAppRuntime(initialState: AppState) {
     const rows = currentPortFilter().items
     selectedPortIds = rows.map((item) => item.id)
     focusedPortId = rows[0]?.id || null
+    focusedPortGroupTarget = null
+    focusedPortGroupId = null
     activePortPane = 'results'
     syncSelectionDrawer()
     notify()
@@ -894,6 +871,16 @@ export function createAppRuntime(initialState: AppState) {
     focusedPortGroupTarget = { kind: 'folder', id }
     focusedPortGroupId = null
     save()
+    portGroupDraft = {
+      mode: 'create',
+      target: { kind: 'folder', id: folder.id },
+      groupId: null,
+      name: folder.name,
+      entriesText: '',
+      color: folder.color,
+      folderId: null,
+      activeField: 'name'
+    }
     notify()
     return true
   }
@@ -927,209 +914,8 @@ export function createAppRuntime(initialState: AppState) {
     return true
   }
 
-  function queryForSearchHistoryTarget(target: SearchHistoryTarget): string {
-    if (target === 'ports.processes') return state.portSearch
-    if (target === 'ports.groups') return portGroupSearch
-    return state.favoriteSearch
-  }
-
-  function setSearchValueForTarget(target: SearchHistoryTarget, value: string) {
-    if (target === 'ports.processes') {
-      state.portSearch = value
-      ensurePortsScanned()
-      normalizeFocusedPort()
-      save()
-      return
-    }
-    if (target === 'ports.groups') {
-      portGroupSearch = value
-      normalizeFocusedGroup()
-      return
-    }
-    state.favoriteSearch = value
-    save()
-  }
-
-  function filteredSearchHistoryItems(target: SearchHistoryTarget): string[] {
-    const query = queryForSearchHistoryTarget(target)
-    return query.trim() ? filterSearchHistoryItems(historyForTarget(state.searchHistories, target), query) : []
-  }
-
-  function normalizeSearchHistoryIndex() {
-    if (!searchHistoryTarget || !searchHistoryOpen) {
-      searchHistoryActiveIndex = -1
-      return
-    }
-    const items = filteredSearchHistoryItems(searchHistoryTarget)
-    searchHistoryActiveIndex = items.length && searchHistoryActiveIndex >= 0
-      ? Math.min(searchHistoryActiveIndex, items.length - 1)
-      : -1
-  }
-
-  function openSearchHistory(target: SearchHistoryTarget) {
-    searchHistoryTarget = target
-    searchHistoryOpen = true
-    searchHistoryActiveIndex = -1
-  }
-
-  function setSearchHistoryTarget(target: SearchHistoryTarget) {
-    if (searchHistoryTarget !== target) {
-      searchHistoryTarget = target
-      searchHistoryActiveIndex = -1
-    }
-    searchHistoryOpen = false
-  }
-
-  function closeSearchHistory() {
-    searchHistoryOpen = false
-    searchHistoryActiveIndex = -1
-  }
-
-  function requestSearchFocusForHistoryTarget(target: SearchHistoryTarget) {
-    searchFocusTarget = target === 'ports.groups'
-      ? 'port-groups'
-      : target === 'favorites.files'
-        ? 'favorites'
-        : 'ports'
-    searchFocusRequestId += 1
-  }
-
   function blurSearchFocus() {
-    closeSearchHistory()
     searchBlurRequestId += 1
-    notify()
-    return true
-  }
-
-  function currentSearchHistoryState(): SearchHistoryState {
-    const items = searchHistoryTarget ? filteredSearchHistoryItems(searchHistoryTarget) : []
-    return {
-      target: searchHistoryTarget,
-      open: searchHistoryOpen,
-      activeIndex: searchHistoryActiveIndex,
-      items
-    }
-  }
-
-  function searchHistoryHasItems() {
-    return Boolean(searchHistoryTarget && filteredSearchHistoryItems(searchHistoryTarget).length)
-  }
-
-  function closeSearchHistoryAndRefocus() {
-    if (!searchHistoryTarget || !searchHistoryOpen || !filteredSearchHistoryItems(searchHistoryTarget).length) return false
-    const target = searchHistoryTarget
-    closeSearchHistory()
-    requestSearchFocusForHistoryTarget(target)
-    notify()
-    return true
-  }
-
-  function openSearchHistorySelection(args?: Record<string, unknown> | null) {
-    const target = searchHistoryTargetFromArgs(args)
-    if (!target) return false
-    searchHistoryTarget = target
-    const items = filteredSearchHistoryItems(target)
-    if (!items.length) {
-      closeSearchHistory()
-      notify()
-      return false
-    }
-    searchHistoryOpen = true
-    searchHistoryActiveIndex = 0
-    requestSearchFocusForHistoryTarget(target)
-    notify()
-    return true
-  }
-
-  function acceptInlineSearchHistory(args?: Record<string, unknown> | null) {
-    const target = searchHistoryTargetFromArgs(args)
-    if (!target) return false
-    searchHistoryTarget = target
-    const selected = filteredSearchHistoryItems(target)[0] || ''
-    if (!selected) return false
-    setSearchValueForTarget(target, selected)
-    recordSearchHistoryForTarget(target, selected)
-    closeSearchHistory()
-    requestSearchFocusForHistoryTarget(target)
-    save()
-    notify()
-    return true
-  }
-
-  function moveSearchHistory(direction: 1 | -1) {
-    if (!searchHistoryTarget) return false
-    searchHistoryOpen = true
-    const items = filteredSearchHistoryItems(searchHistoryTarget)
-    if (!items.length) {
-      searchHistoryActiveIndex = -1
-      notify()
-      return false
-    }
-    searchHistoryActiveIndex = searchHistoryActiveIndex < 0
-      ? direction > 0 ? 0 : items.length - 1
-      : (searchHistoryActiveIndex + direction + items.length) % items.length
-    notify()
-    return true
-  }
-
-  function searchHistoryTargetFromArgs(args?: Record<string, unknown> | null): SearchHistoryTarget | null {
-    const target = args?.target
-    return target === 'ports.processes' || target === 'ports.groups' || target === 'favorites.files'
-      ? target
-      : searchHistoryTarget
-  }
-
-  function acceptSearchHistory(args?: Record<string, unknown> | null) {
-    const target = searchHistoryTargetFromArgs(args)
-    if (!target) return false
-    searchHistoryTarget = target
-    const items = filteredSearchHistoryItems(target)
-    const selectedFromHistory = typeof args?.value === 'string' || searchHistoryActiveIndex >= 0
-    const selected = typeof args?.value === 'string'
-      ? args.value
-      : searchHistoryActiveIndex >= 0 ? items[searchHistoryActiveIndex] : ''
-    const value = (selected || queryForSearchHistoryTarget(target)).trim()
-    if (!value) return false
-    setSearchValueForTarget(target, value)
-    recordSearchHistoryForTarget(target, value)
-    closeSearchHistory()
-    if (selectedFromHistory) {
-      requestSearchFocusForHistoryTarget(target)
-    } else {
-      searchBlurRequestId += 1
-      if (target === 'ports.processes') {
-        activePortPane = 'results'
-        requestListFocus('results')
-      } else if (target === 'ports.groups') {
-        state.activeTab = 'ports'
-        groupSidePanelOpen = true
-        activePortPane = 'groups'
-        normalizeFocusedGroup()
-        requestListFocus('groups')
-      }
-    }
-    save()
-    notify()
-    return true
-  }
-
-  function deleteSearchHistory(args?: Record<string, unknown> | null) {
-    const target = searchHistoryTargetFromArgs(args)
-    if (!target) return false
-    searchHistoryTarget = target
-    const items = filteredSearchHistoryItems(target)
-    const deleting = typeof args?.value === 'string'
-      ? args.value
-      : searchHistoryActiveIndex >= 0 ? items[searchHistoryActiveIndex] : ''
-    if (!deleting) return false
-    state.searchHistories = updateHistoryForTarget(
-      state.searchHistories,
-      target,
-      historyForTarget(state.searchHistories, target).filter((item) => item !== deleting)
-    )
-    syncLegacySearchHistories()
-    normalizeSearchHistoryIndex()
-    save()
     notify()
     return true
   }
@@ -1149,7 +935,6 @@ export function createAppRuntime(initialState: AppState) {
     const hadPersistentSearch = Boolean(state.portSearch || portGroupSearch)
     state.portSearch = ''
     portGroupSearch = ''
-    closeSearchHistory()
     searchBlurRequestId += 1
     if (hadPersistentSearch) save()
     notify()
@@ -1173,7 +958,7 @@ export function createAppRuntime(initialState: AppState) {
       clearPortSelection()
       return 'ports.selection.clear'
     }
-    if (searchFocused && (state.portSearch || portGroupSearch || searchHistoryOpen)) {
+    if (searchFocused && (state.portSearch || portGroupSearch)) {
       clearPortSearchState()
       return 'ports.search.clear'
     }
@@ -1235,7 +1020,7 @@ export function createAppRuntime(initialState: AppState) {
     const draft = portGroupDraft
     if (!draft) return false
     const target = draft.target || (draft.groupId ? { kind: 'group' as const, id: draft.groupId } : null)
-    if (draft.mode === 'rename' && target?.kind === 'folder') {
+    if (target?.kind === 'folder') {
       if (!input.name.trim()) {
         setMessage('分组夹名称不能为空')
         return false
@@ -1374,7 +1159,7 @@ export function createAppRuntime(initialState: AppState) {
     actions.register({ id: 'ports.group.kill.force', title: '强杀当前端口组', group: '端口', risk: 'destructive', scope: 'tab', priority: 94, shortcut: 'Ctrl+Shift+Enter', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => { void killPortTargets(currentPortGroupSelection(targetFromArgs(args)), true, '组内端口当前无监听进程'); return true } })
     actions.register({ id: 'ports.group.createFromSelection', title: '选中端口收藏为组', group: '端口', risk: 'data-write', scope: 'tab', priority: 93, shortcut: 'Ctrl+G', when: (ctx) => ctx.tab === 'ports', run: () => createGroupFromSelection() })
     actions.register({ id: 'ports.group.create', title: '新建端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'ports', run: () => { openGroupDraft(null); return true } })
-    actions.register({ id: 'ports.groupFolder.create', title: '新增分组夹', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'ports', run: () => createPortGroupFolder() })
+    actions.register({ id: 'ports.groupFolder.create', title: '新增分组夹', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'Ctrl+T', when: (ctx) => ctx.tab === 'ports', run: () => createPortGroupFolder() })
     actions.register({ id: 'ports.group.rename', title: '重命名端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => {
       const target = targetFromArgs(args)
       const folder = folderFromTarget(target)
@@ -1404,6 +1189,7 @@ export function createAppRuntime(initialState: AppState) {
     actions.register({ id: 'ports.group.edit.prevField', title: '编辑层上一个字段', group: '端口', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.layerIds.includes('port-group-editor'), run: () => movePortGroupDraftField(-1) })
     actions.register({ id: 'ports.group.delete', title: '删除端口组/夹', group: '端口', risk: 'data-write', scope: 'tab', priority: 91, shortcut: 'Delete', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => deleteFocusedGroup(false, targetFromArgs(args)) })
     actions.register({ id: 'ports.group.delete.force', title: '强制删除端口组/夹', group: '端口', risk: 'destructive', scope: 'tab', priority: 91, shortcut: 'Ctrl+Delete', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => deleteFocusedGroup(true, targetFromArgs(args)) })
+    actions.register({ id: 'ports.groupTarget.toggle', title: '折叠/展开端口组夹', description: '折叠或展开当前高亮分组夹。', icon: 'toggle', group: '端口', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+Shift+W', when: (ctx) => ctx.tab === 'ports', run: () => toggleFocusedGroupFolder() })
     actions.register({ id: 'ports.groupTarget.collapse', title: '折叠端口组夹', description: '折叠当前高亮分组夹。', icon: 'left', group: '端口', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'ports', run: () => toggleFocusedGroupFolder(false) })
     actions.register({ id: 'ports.groupTarget.expand', title: '展开端口组夹', description: '展开当前高亮分组夹。', icon: 'right', group: '端口', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'ports', run: () => toggleFocusedGroupFolder(true) })
     actions.register({ id: 'ports.groupDetail.open', title: '打开端口组详情抽屉', description: '展示当前分组或分组夹的规则和快捷操作。', icon: 'detail', group: '端口', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => ctx.tab === 'ports', run: () => openPortGroupDetail() })
@@ -1452,13 +1238,6 @@ export function createAppRuntime(initialState: AppState) {
     actions.register({ id: 'favorites.search.blur', title: '退出收藏搜索焦点', group: '收藏', risk: 'normal', scope: 'layer', priority: 99, shortcut: 'Escape', when: (ctx) => ctx.tab === 'favorites', run: () => blurSearchFocus() })
     actions.register({ id: 'settings.open', title: '打开设置', group: '全局', risk: 'normal', scope: 'global', priority: 10, shortcut: 'Ctrl+Alt+S', when: () => true, run: () => { setTab('settings'); return true } })
     actions.register({ id: 'search.focus', title: '聚焦搜索', group: '全局', risk: 'normal', scope: 'global', priority: 10, shortcut: 'Ctrl+F', when: () => true, run: () => focusSearch() })
-    actions.register({ id: 'search.history.open', title: '打开搜索历史', group: '全局', risk: 'normal', scope: 'layer', priority: 100, when: () => true, run: (_ctx, args) => openSearchHistorySelection(args) })
-    actions.register({ id: 'search.history.acceptInline', title: '确认右侧历史匹配', group: '全局', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: () => true, run: (_ctx, args) => acceptInlineSearchHistory(args) })
-    actions.register({ id: 'search.history.prev', title: '搜索历史上移', group: '全局', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+ArrowUp', when: () => true, run: () => moveSearchHistory(-1) })
-    actions.register({ id: 'search.history.next', title: '搜索历史下移', group: '全局', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+ArrowDown', when: () => true, run: () => moveSearchHistory(1) })
-    actions.register({ id: 'search.history.accept', title: '选择搜索历史', group: '全局', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Enter', when: () => true, run: (_ctx, args) => acceptSearchHistory(args) })
-    actions.register({ id: 'search.history.close', title: '隐藏搜索历史', group: '全局', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: () => true, run: () => closeSearchHistoryAndRefocus() })
-    actions.register({ id: 'search.history.delete', title: '删除搜索历史', group: '全局', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Delete', when: () => true, run: (_ctx, args) => deleteSearchHistory(args) })
     actions.register({ id: 'confirm.cancel', title: '关闭确认弹窗', group: '全局', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('confirm'), run: () => { confirm = null; notify(); return true } })
     actions.register({ id: 'confirm.accept', title: '确认当前弹窗', group: '全局', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Enter', when: (ctx) => ctx.layerIds.includes('confirm'), run: () => confirmNowInternal() })
     actions.register({ id: 'ports.workspace.reset', title: '重置端口工作区', group: '端口', risk: 'normal', scope: 'tab', priority: 90, shortcut: 'Escape', when: (ctx) => ctx.tab === 'ports', run: () => { resetPortWorkspace(); return true } })
@@ -1491,10 +1270,7 @@ export function createAppRuntime(initialState: AppState) {
       portDetailActive: portDetail.active,
       portGroupDetailOpen: portGroupDetail.open,
       portGroupDetailActive: portGroupDetail.active,
-      portSelectionMode: selectedPortIds.length > 0,
-      searchHistoryOpen,
-      searchHistoryHasItems: searchHistoryHasItems(),
-      searchHistorySelectionActive: searchHistoryOpen && searchHistoryActiveIndex >= 0
+      portSelectionMode: selectedPortIds.length > 0
     }
   }
 
@@ -1546,22 +1322,17 @@ export function createAppRuntime(initialState: AppState) {
         message,
         confirm,
         commandShortcutLabels: buildCommandShortcutLabels(),
-        visibleFeatures: currentVisibleFeatures(),
-        searchHistoryState: currentSearchHistoryState()
+        visibleFeatures: currentVisibleFeatures()
       }
     },
     actions: actions.all,
     scanPorts,
     setTab,
     setPortSearch(value: string) {
-      const changed = state.portSearch !== value
       state.portSearch = value
-      if (changed) {
-        searchHistoryTarget = 'ports.processes'
-        searchHistoryOpen = false
-        searchHistoryActiveIndex = -1
-      } else {
-        setSearchHistoryTarget('ports.processes')
+      if (activePortPane === 'results') {
+        focusedPortGroupTarget = null
+        focusedPortGroupId = null
       }
       ensurePortsScanned()
       normalizeFocusedPort()
@@ -1569,32 +1340,22 @@ export function createAppRuntime(initialState: AppState) {
       notify()
     },
     setPortGroupSearch(value: string) {
-      const changed = portGroupSearch !== value
       portGroupSearch = value
-      if (changed) {
-        searchHistoryTarget = 'ports.groups'
-        searchHistoryOpen = false
-        searchHistoryActiveIndex = -1
-      } else {
-        setSearchHistoryTarget('ports.groups')
+      if (activePortPane === 'groups') {
+        focusedPortId = null
       }
       normalizeFocusedGroup()
       notify()
     },
     setFavoriteSearch(value: string) {
-      const changed = state.favoriteSearch !== value
       state.favoriteSearch = value
-      if (changed) {
-        searchHistoryTarget = 'favorites.files'
-        searchHistoryOpen = false
-        searchHistoryActiveIndex = -1
-      } else {
-        setSearchHistoryTarget('favorites.files')
-      }
       save()
       notify()
     },
     togglePortSelection(id: string) {
+      activePortPane = 'results'
+      focusedPortGroupTarget = null
+      focusedPortGroupId = null
       focusedPortId = id
       selectedPortIds = selectedPortIds.includes(id) ? selectedPortIds.filter((item) => item !== id) : [...selectedPortIds, id]
       syncSelectionDrawer()
@@ -1602,12 +1363,15 @@ export function createAppRuntime(initialState: AppState) {
     },
     focusPort(id: string) {
       activePortPane = 'results'
+      focusedPortGroupTarget = null
+      focusedPortGroupId = null
       focusedPortId = id
       notify()
     },
     focusPortGroup(id: string) {
       activePortPane = 'groups'
       groupSidePanelOpen = true
+      focusedPortId = null
       focusedPortGroupTarget = { kind: 'group', id }
       focusedPortGroupId = id
       notify()
@@ -1615,6 +1379,7 @@ export function createAppRuntime(initialState: AppState) {
     focusPortGroupFolder(id: string) {
       activePortPane = 'groups'
       groupSidePanelOpen = true
+      focusedPortId = null
       focusedPortGroupTarget = { kind: 'folder', id }
       focusedPortGroupId = null
       notify()
@@ -1622,6 +1387,7 @@ export function createAppRuntime(initialState: AppState) {
     focusPortGroupTarget(target: PortGroupTarget) {
       activePortPane = 'groups'
       groupSidePanelOpen = true
+      focusedPortId = null
       focusedPortGroupTarget = target
       focusedPortGroupId = target.kind === 'group' ? target.id : null
       notify()
@@ -1729,10 +1495,6 @@ export function createAppRuntime(initialState: AppState) {
         return 'ports.group.edit.cancel'
       }
       if (shortcutId === 'Escape') {
-        const searchInputFocused = input.activeInputRole === 'port-search' || input.activeInputRole === 'port-group-search' || input.activeInputRole === 'favorite-search'
-        if (searchInputFocused && closeSearchHistoryAndRefocus()) {
-          return 'search.history.close'
-        }
         if (state.activeTab === 'ports') {
           return resolvePortEscapeStep(input)
         }

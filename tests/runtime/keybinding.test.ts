@@ -32,12 +32,14 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+1', { ...context, textInputFocused: true })).toBeNull()
   })
 
-  it('reserves Tab for inline search history and keeps Shift+Tab for port pane cycling', () => {
+  it('keeps search inputs from owning Tab history behavior', () => {
     const context = { tab: 'ports' as const, confirmOpen: false, textInputFocused: false, portPane: 'results' as const }
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', context)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', context)?.actionId).toBe('ports.pane.toggleNext')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', { ...context, portPane: 'groups' })?.actionId).toBe('ports.pane.togglePrev')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', { ...context, textInputFocused: true, activeInputRole: 'port-search', searchHistoryHasItems: true })?.actionId).toBe('search.history.acceptInline')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', { ...context, textInputFocused: true, activeInputRole: 'port-search', searchHistoryHasItems: false })).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', { ...context, textInputFocused: true, activeInputRole: 'port-search' })?.actionId).toBe('ports.pane.toggleNext')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', { ...context, textInputFocused: true, activeInputRole: 'port-search' })?.actionId).toBe('ports.pane.togglePrev')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', { ...context, textInputFocused: true, activeInputRole: 'port-group-search', portPane: 'groups' })?.actionId).toBe('ports.pane.toggleNext')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', { ...context, textInputFocused: true, activeInputRole: 'port-group-search', portPane: 'groups' })?.actionId).toBe('ports.pane.togglePrev')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', { ...context, tab: 'favorites' })?.actionId).toBe('tab.next')
   })
 
@@ -57,11 +59,25 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', groupsContext)?.actionId).toBe('ports.group.edit')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F2', groupsContext)?.actionId).toBe('ports.group.rename')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+S', editorContext)?.actionId).toBe('ports.group.save')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Enter', editorContext)?.actionId).toBe('ports.group.save')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', editorContext)?.actionId).toBe('ports.group.edit.cancel')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', editorContext)?.actionId).toBe('ports.group.edit.nextField')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', editorContext)?.actionId).toBe('ports.group.edit.prevField')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', editorContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+2', editorContext)).toBeNull()
+  })
+
+  it('adds Ctrl+Enter as the save shortcut for editable command layers', () => {
+    const favoriteEditorContext = {
+      tab: 'favorites' as const,
+      confirmOpen: false,
+      textInputFocused: true,
+      activeInputRole: 'other' as const
+    }
+
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+S', favoriteEditorContext)?.actionId).toBe('favorites.save')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Enter', favoriteEditorContext)?.actionId).toBe('favorites.save')
+    expect(buildShortcutCommandRows(DEFAULT_KEYBINDINGS).find((row) => row.commandId === 'favorites.save')?.defaultShortcutIds).toEqual(['Ctrl+S', 'Ctrl+Enter'])
   })
 
   it('keeps result-list shortcuts active while the port search input is focused', () => {
@@ -83,7 +99,7 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+F', context)?.actionId).toBe('ports.groupSearch.focus')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', context)?.actionId).toBe('ports.detail.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', context)?.actionId).toBe('ports.drawer.open')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', context)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', context)?.actionId).toBe('ports.pane.toggleNext')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Delete', context)?.actionId).toBe('ports.kill.force')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Backspace', context)?.actionId).toBe('ports.kill.force')
   })
@@ -99,16 +115,20 @@ describe('keybinding runtime', () => {
 
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', context)?.actionId).toBe('list.down')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+K', context)?.actionId).toBe('list.up')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', context)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', context)?.actionId).toBe('ports.group.apply')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Enter', context)?.actionId).toBe('ports.group.kill.confirm')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F', context)?.actionId).toBe('ports.search.focus')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+F', context)?.actionId).toBe('ports.groupSearch.focus')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Space', context)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', context)?.actionId).toBe('ports.group.edit')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F2', context)?.actionId).toBe('ports.group.rename')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', context)?.actionId).toBe('ports.group.delete')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Backspace', context)?.actionId).toBe('ports.group.delete')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Delete', context)?.actionId).toBe('ports.group.delete.force')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Backspace', context)?.actionId).toBe('ports.group.delete.force')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', context)?.actionId).toBe('ports.groupDetail.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', context)?.actionId).toBe('ports.drawer.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Enter', context)?.actionId).toBe('ports.group.focusMatches')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', context)).toBeNull()
   })
 
   it('prioritizes drawer shortcuts over global tab selection while the drawer is open', () => {
@@ -218,6 +238,7 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', context)?.actionId).toBe('ports.detail.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', { ...context, portDetailOpen: true, portDetailActive: true })?.actionId).toBe('ports.detail.close')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowRight', { ...context, portDetailOpen: true, portDetailActive: true })?.actionId).toBe('ports.detail.close')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', { ...context, portDetailOpen: true, portDetailActive: true })?.actionId).toBe('ports.detail.close')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', { ...context, portDrawerOpen: true, portDrawerActive: true })?.actionId).toBe('ports.drawer.close')
   })
 
@@ -237,10 +258,34 @@ describe('keybinding runtime', () => {
 
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Alt+1', groupContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+W', groupContext)?.actionId).toBe('ports.groups.togglePanel')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+W', groupContext)?.actionId).toBe('ports.groupTarget.toggle')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', groupContext)?.actionId).toBe('ports.groupDetail.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', groupContext)?.actionId).toBe('ports.drawer.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', { ...groupContext, portGroupDetailOpen: true, portGroupDetailActive: true })?.actionId).toBe('ports.groupDetail.close')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowRight', { ...groupContext, portGroupDetailOpen: true, portGroupDetailActive: true })?.actionId).toBe('ports.groupDetail.close')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', { ...groupContext, portGroupDetailOpen: true, portGroupDetailActive: true })?.actionId).toBe('ports.groupDetail.close')
+    expect(buildShortcutCommandRows(DEFAULT_KEYBINDINGS).find((row) => row.commandId === 'ports.group.save')?.defaultShortcutIds).toEqual(['Ctrl+S', 'Ctrl+Enter'])
+  })
+
+  it('creates a port group folder through Ctrl+T from any port work area', () => {
+    const context = {
+      tab: 'ports' as const,
+      confirmOpen: false,
+      textInputFocused: false,
+      portPane: 'results' as const,
+      portDrawerOpen: false,
+      portDrawerActive: false,
+      portDetailOpen: false,
+      portDetailActive: false,
+      portGroupDetailOpen: false,
+      portGroupDetailActive: false
+    }
+
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', context)?.actionId).toBe('ports.groupFolder.create')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', { ...context, portPane: 'groups' })?.actionId).toBe('ports.groupFolder.create')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', { ...context, textInputFocused: true, activeInputRole: 'port-search' })?.actionId).toBe('ports.groupFolder.create')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', { ...context, textInputFocused: true, activeInputRole: 'port-group-search', portPane: 'groups' })?.actionId).toBe('ports.groupFolder.create')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', { ...context, tab: 'favorites' })).toBeNull()
   })
 
   it('routes port search focus, group search focus, and group focus matches through commands', () => {
@@ -292,41 +337,25 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', { ...context, confirmOpen: true })?.actionId).toBe('confirm.accept')
   })
 
-  it('uses Shift+Arrow for search history candidates and leaves Arrow navigation on lists', () => {
+  it('removes search history shortcuts and leaves arrows on lists', () => {
     const context = {
       tab: 'ports' as const,
       confirmOpen: false,
       textInputFocused: true,
       activeInputRole: 'port-search' as const,
-      portPane: 'results' as const,
-      searchHistoryOpen: true,
-      searchHistoryHasItems: true,
-      searchHistorySelectionActive: false
+      portPane: 'results' as const
     }
 
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', context)?.actionId).toBe('list.down')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowUp', context)?.actionId).toBe('list.up')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+ArrowDown', context)?.actionId).toBe('search.history.next')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+ArrowUp', context)?.actionId).toBe('search.history.prev')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', context)?.actionId).toBe('search.history.accept')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', context)?.actionId).toBe('search.history.close')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowLeft', context)?.actionId).toBe('search.history.close')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowRight', context)?.actionId).toBe('search.history.close')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+ArrowDown', context)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+ArrowUp', context)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', context)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', context)?.actionId).toBe('ports.search.blur')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowLeft', context)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowRight', context)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', context)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Backspace', context)).toBeNull()
-
-    const highlighted = { ...context, searchHistorySelectionActive: true }
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', highlighted)?.actionId).toBe('list.down')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowUp', highlighted)?.actionId).toBe('list.up')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+ArrowDown', highlighted)?.actionId).toBe('search.history.next')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+ArrowUp', highlighted)?.actionId).toBe('search.history.prev')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', highlighted)?.actionId).toBe('search.history.delete')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Backspace', highlighted)?.actionId).toBe('search.history.delete')
-
-    const closedWithMatches = { ...context, searchHistoryOpen: false, searchHistoryHasItems: true }
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+ArrowDown', closedWithMatches)?.actionId).toBe('search.history.next')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', closedWithMatches)).toBeNull()
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', closedWithMatches)?.actionId).toBe('ports.search.blur')
   })
 
   it('lets Shift+Escape hide the app above every layer and text input', () => {

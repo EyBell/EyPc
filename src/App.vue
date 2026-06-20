@@ -10,6 +10,7 @@ import SettingsPage from './pages/SettingsPage.vue'
 import { createAppRuntime } from './runtime/appRuntime'
 import { routePluginFeature } from './runtime/feature/featureRouting'
 import { activeInputRoleFromTarget, blockHandledShortcutEvent, isEditableTarget, shortcutFromEvent } from './runtime/keyboardEvent'
+import { createShortcutHintTiming } from './runtime/shortcutHintTiming'
 
 const platform = getPlatform()
 const runtime = createAppRuntime(normalizeAppState(platform.storage.getState()))
@@ -18,6 +19,10 @@ const shiftPreview = ref(false)
 const shortcutHints = ref(false)
 const initialMaintenanceSection = ref<'features' | null>(null)
 let disposeRuntime: (() => void) | null = null
+const shortcutHintTiming = createShortcutHintTiming({
+  show: () => { shortcutHints.value = true },
+  hide: () => { shortcutHints.value = false }
+})
 const snapshot = computed(() => {
   version.value
   return runtime.snapshot()
@@ -26,7 +31,7 @@ const snapshot = computed(() => {
 function onKeydown(event: KeyboardEvent) {
   if (event.defaultPrevented) return
   if (event.key === 'Shift') shiftPreview.value = true
-  if (event.key === 'Control' || event.key === 'Meta' || event.ctrlKey || event.metaKey) shortcutHints.value = true
+  shortcutHintTiming.keydown(event)
   const shortcutId = shortcutFromEvent(event)
   const textInputFocused = isEditableTarget(event.target)
   const handled = runtime.handleShortcut(shortcutId, {
@@ -38,12 +43,12 @@ function onKeydown(event: KeyboardEvent) {
 
 function onKeyup(event: KeyboardEvent) {
   if (event.key === 'Shift') shiftPreview.value = false
-  if (event.key === 'Control' || event.key === 'Meta' || (!event.ctrlKey && !event.metaKey)) shortcutHints.value = false
+  shortcutHintTiming.keyup(event)
 }
 
 function clearShiftPreview() {
   shiftPreview.value = false
-  shortcutHints.value = false
+  shortcutHintTiming.clear()
 }
 
 watch(() => snapshot.value.searchFocusRequestId, () => {
@@ -101,6 +106,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   disposeRuntime?.()
+  shortcutHintTiming.dispose()
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('keyup', onKeyup)
   window.removeEventListener('blur', clearShiftPreview)

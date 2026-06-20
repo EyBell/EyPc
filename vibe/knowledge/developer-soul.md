@@ -13,7 +13,7 @@ EyPc is a high-frequency uTools workbench. Its interaction taste follows the glo
 - Treat a command as the capability owner. Buttons, shortcuts, drawers, and settings rows must dispatch the same action id.
 - Search, focus, selection, drawer, and Esc recovery are one contract. If a user enters a transient state, they must be able to recover without leaving the plugin.
 - Show risk where the action happens. Normal termination requires confirmation; force kill can be direct only when the runtime still verifies PID and port ownership.
-- Command editing has fixed semantics: `F2` means full object edit, `Shift+F2` means narrow rename/title edit, `Ctrl+S` saves the active editing layer, and `Escape` cancels it.
+- Command editing has fixed semantics: `F2` means full object edit, `Shift+F2` means narrow rename/title edit, `Ctrl+S` and `Ctrl+Enter` save the active editing layer, and `Escape` cancels it.
 - `Tab` / `Shift+Tab` inside an editing layer are isolated field-cycle commands. They must not switch app tabs, port panes, drawers, or list focus while the editor is active.
 
 ## Port Page Taste
@@ -24,7 +24,7 @@ EyPc is a high-frequency uTools workbench. Its interaction taste follows the glo
 - The right drawer is an action surface, not a decorative panel. It displays icon, title, explanation, and the effective shortcut for the current port, selection, or group.
 - Drawer visibility and drawer keyboard focus are different states. Multi-select may show the drawer while list focus remains active; `Ctrl+Right` activates the drawer layer.
 - `Escape` must recover inward before it ever exits outward: confirm/editor, active drawer, multi-select, search/filter, then initial result focus.
-- Port group editing follows the global editing soul: `F2` edits name/rules/color, `Shift+F2` edits name only, `Ctrl+S` persists the group, and `Escape` cancels the draft.
+- Port group editing follows the global editing soul: `F2` edits name/rules/color, `Shift+F2` edits name only, `Ctrl+S` and `Ctrl+Enter` persist the group, and `Escape` cancels the draft.
 
 ## Review Gate
 

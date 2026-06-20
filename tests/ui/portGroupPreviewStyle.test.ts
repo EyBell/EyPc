@@ -12,5 +12,16 @@ describe('port group shift preview style', () => {
     expect(css).toContain('.group-preview-editor')
     expect(component).toContain('group-preview-editor')
     expect(component).toContain('readonly')
+    expect(component).toContain("props.snapshot.activePortPane !== 'groups'")
+    expect(component).toContain("props.snapshot.focusedPortGroupTarget?.kind !== 'group'")
+    expect(component).not.toContain("props.snapshot.selectedPortGroupTarget?.kind === 'group' ? props.snapshot.selectedPortGroupTarget")
+  })
+
+  it('only renders group row focus when the group pane owns logical focus', () => {
+    const component = readFileSync(resolve(process.cwd(), 'src/pages/PortsPage.vue'), 'utf8')
+
+    expect(component).toContain('function isGroupRowFocused')
+    expect(component).toContain("props.snapshot.activePortPane === 'groups'")
+    expect(component).toContain('focused: isGroupRowFocused(row)')
   })
 })
