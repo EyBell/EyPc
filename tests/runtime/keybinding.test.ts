@@ -4,6 +4,7 @@ import {
   buildEffectiveKeybindings,
   buildShortcutCommandRows,
   canWhenClausesOverlap,
+  DEFAULT_SHORTCUTS_BY_COMMAND,
   detectShortcutConflicts,
   explainKeybinding,
   getShortcutReservationConflicts,
@@ -93,6 +94,7 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+J', context)?.actionId).toBe('list.down')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowUp', context)?.actionId).toBe('list.up')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Space', context)?.actionId).toBe('list.toggleSelection')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+G', { ...context, portSelectionMode: true })?.actionId).toBe('ports.group.createFromSelection')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', context)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', context)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F', context)?.actionId).toBe('ports.search.focus')
@@ -121,6 +123,7 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+F', context)?.actionId).toBe('ports.groupSearch.focus')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Space', context)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', context)?.actionId).toBe('ports.group.edit')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F2', context)?.actionId).toBe('ports.group.moveFolder')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F2', context)?.actionId).toBe('ports.group.rename')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', context)?.actionId).toBe('ports.group.delete')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Backspace', context)?.actionId).toBe('ports.group.delete')
@@ -242,7 +245,7 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', { ...context, portDrawerOpen: true, portDrawerActive: true })?.actionId).toBe('ports.drawer.close')
   })
 
-  it('uses Ctrl+W to toggle the group panel and reuses Ctrl+Left/Right for group drawers', () => {
+  it('uses Ctrl+Shift+W to toggle the group panel and reuses Ctrl+Left/Right for group drawers', () => {
     const groupContext = {
       tab: 'ports' as const,
       confirmOpen: false,
@@ -257,14 +260,27 @@ describe('keybinding runtime', () => {
     }
 
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Alt+1', groupContext)).toBeNull()
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+W', groupContext)?.actionId).toBe('ports.groups.togglePanel')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+W', groupContext)?.actionId).toBe('ports.groupTarget.toggle')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+W', groupContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+W', groupContext)?.actionId).toBe('ports.groups.togglePanel')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F2', groupContext)?.actionId).toBe('ports.group.moveFolder')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', groupContext)?.actionId).toBe('ports.groupDetail.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', groupContext)?.actionId).toBe('ports.drawer.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', { ...groupContext, portGroupDetailOpen: true, portGroupDetailActive: true })?.actionId).toBe('ports.groupDetail.close')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowRight', { ...groupContext, portGroupDetailOpen: true, portGroupDetailActive: true })?.actionId).toBe('ports.groupDetail.close')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', { ...groupContext, portGroupDetailOpen: true, portGroupDetailActive: true })?.actionId).toBe('ports.groupDetail.close')
     expect(buildShortcutCommandRows(DEFAULT_KEYBINDINGS).find((row) => row.commandId === 'ports.group.save')?.defaultShortcutIds).toEqual(['Ctrl+S', 'Ctrl+Enter'])
+  })
+
+  it('keeps default shortcuts in a command-keyed json map', () => {
+    const rows = buildShortcutCommandRows(DEFAULT_KEYBINDINGS)
+    expect(DEFAULT_SHORTCUTS_BY_COMMAND['ports.groups.togglePanel']).toEqual(['Ctrl+Shift+W'])
+    expect(DEFAULT_SHORTCUTS_BY_COMMAND['ports.groupTarget.toggle']).toEqual([])
+    expect(DEFAULT_SHORTCUTS_BY_COMMAND['ports.drawer.select.9']).toEqual(['Ctrl+9'])
+    expect(DEFAULT_SHORTCUTS_BY_COMMAND['ports.drawer.action.9']).toEqual(['Ctrl+Alt+9'])
+    for (const row of rows) {
+      if (row.commandId.startsWith('tab.select.')) continue
+      expect(DEFAULT_SHORTCUTS_BY_COMMAND[row.commandId]).toEqual(row.defaultShortcutIds)
+    }
   })
 
   it('creates a port group folder through Ctrl+T from any port work area', () => {

@@ -104,7 +104,7 @@ export interface KeybindingUpdateInput {
 }
 
 export interface PortGroupDraft {
-  mode: 'create' | 'edit' | 'rename'
+  mode: 'create' | 'edit' | 'rename' | 'move-folder'
   target: PortGroupTarget | null
   groupId: string | null
   name: string
@@ -407,6 +407,7 @@ export function createAppRuntime(initialState: AppState) {
     const labels = buildEffectiveKeybindings(state.settings.shortcutProfiles, state.settings.featureConfigs)
       .filter((binding) => binding.actionId === commandId && !binding.disabled && binding.source !== 'removed')
       .map((binding) => binding.shortcutId)
+      .filter(Boolean)
     return formatShortcutList(labels)
   }
 
@@ -464,6 +465,7 @@ export function createAppRuntime(initialState: AppState) {
       ]
       if (target?.kind === 'group') {
         items.push(
+          drawerItem('ports.group.moveFolder', '变更分组夹', '选择当前分组所在的分组夹，或留空放在根层。', 'folder', args),
           drawerItem('ports.group.rename', '重命名', '打开分组名称编辑。', 'rename', args),
           drawerItem('ports.group.edit', '编辑规则', '维护端口、区间、正则规则和所在分组夹。', 'edit', args)
         )
@@ -736,7 +738,7 @@ export function createAppRuntime(initialState: AppState) {
 
   function openGroupDraft(group: PortGroup | null, mode: PortGroupDraft['mode'] = group ? 'edit' : 'create') {
     portGroupDraft = group
-      ? { mode, target: { kind: 'group', id: group.id }, groupId: group.id, name: group.name, entriesText: group.entries.join('\n'), color: group.color, folderId: group.folderId, activeField: 'name' }
+      ? { mode, target: { kind: 'group', id: group.id }, groupId: group.id, name: group.name, entriesText: group.entries.join('\n'), color: group.color, folderId: group.folderId, activeField: mode === 'move-folder' ? 'folder' : 'name' }
       : { mode: 'create', target: null, groupId: null, name: '', entriesText: '', color: '#00A676', folderId: null, activeField: 'name' }
     notify()
   }
@@ -784,7 +786,9 @@ export function createAppRuntime(initialState: AppState) {
 
   function movePortGroupDraftField(direction: 1 | -1) {
     if (!portGroupDraft) return false
-    const fields: PortGroupDraftField[] = portGroupDraft.mode === 'rename' ? ['name'] : ['name', 'entries', 'color', 'folder']
+    const fields: PortGroupDraftField[] = portGroupDraft.mode === 'rename'
+      ? ['name']
+      : portGroupDraft.mode === 'move-folder' ? ['folder'] : ['name', 'entries', 'color', 'folder']
     const current = fields.indexOf(portGroupDraft.activeField)
     const next = fields[(Math.max(0, current) + direction + fields.length) % fields.length]
     portGroupDraft = { ...portGroupDraft, activeField: next }
@@ -1035,6 +1039,16 @@ export function createAppRuntime(initialState: AppState) {
       return true
     }
     const currentGroup = target?.kind === 'group' ? state.portGroups.find((group) => group.id === target.id) || null : null
+    if (draft.mode === 'move-folder' && target?.kind === 'group' && currentGroup) {
+      const folderId = input.folderId && state.portGroupFolders.some((folder) => folder.id === input.folderId) ? input.folderId : null
+      state.portGroups = state.portGroups.map((group) => group.id === target.id ? { ...group, folderId } : group)
+      focusedPortGroupId = target.id
+      focusedPortGroupTarget = target
+      portGroupDraft = null
+      save()
+      notify()
+      return true
+    }
     const entries = draft.mode === 'rename' && currentGroup
       ? currentGroup.entries
       : [...new Set(input.entriesText.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))]
@@ -1141,7 +1155,7 @@ export function createAppRuntime(initialState: AppState) {
       })
     }
     actions.register({ id: 'ports.scan', title: '刷新端口', group: '端口', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+R', when: (ctx) => ctx.tab === 'ports', run: () => { void scanPorts(); return true } })
-    actions.register({ id: 'ports.groups.togglePanel', title: '展开/收起端口组栏', group: '端口', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+W', when: (ctx) => ctx.tab === 'ports', run: () => toggleGroupPanel() })
+    actions.register({ id: 'ports.groups.togglePanel', title: '展开/收起端口组栏', group: '端口', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+Shift+W', when: (ctx) => ctx.tab === 'ports', run: () => toggleGroupPanel() })
     actions.register({ id: 'ports.search.focus', title: '聚焦端口搜索', group: '端口', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+F', when: (ctx) => ctx.tab === 'ports', run: () => focusPortSearch() })
     actions.register({ id: 'ports.groupSearch.focus', title: '聚焦端口组搜索', group: '端口', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+Shift+F', when: (ctx) => ctx.tab === 'ports', run: () => focusPortGroupSearch() })
     actions.register({ id: 'ports.search.blur', title: '退出端口搜索焦点', group: '端口', risk: 'normal', scope: 'layer', priority: 99, shortcut: 'Escape', when: (ctx) => ctx.tab === 'ports', run: () => blurSearchFocus() })
@@ -1172,6 +1186,12 @@ export function createAppRuntime(initialState: AppState) {
       openGroupDraft(group, 'rename')
       return true
     } })
+    actions.register({ id: 'ports.group.moveFolder', title: '变更端口组分组夹', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'Ctrl+F2', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => {
+      const group = groupFromTarget(targetFromArgs(args))
+      if (!group) return false
+      openGroupDraft(group, 'move-folder')
+      return true
+    } })
     actions.register({ id: 'ports.group.edit', title: '编辑端口组', group: '端口', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'F2', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => {
       const target = targetFromArgs(args)
       const folder = folderFromTarget(target)
@@ -1189,7 +1209,7 @@ export function createAppRuntime(initialState: AppState) {
     actions.register({ id: 'ports.group.edit.prevField', title: '编辑层上一个字段', group: '端口', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.layerIds.includes('port-group-editor'), run: () => movePortGroupDraftField(-1) })
     actions.register({ id: 'ports.group.delete', title: '删除端口组/夹', group: '端口', risk: 'data-write', scope: 'tab', priority: 91, shortcut: 'Delete', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => deleteFocusedGroup(false, targetFromArgs(args)) })
     actions.register({ id: 'ports.group.delete.force', title: '强制删除端口组/夹', group: '端口', risk: 'destructive', scope: 'tab', priority: 91, shortcut: 'Ctrl+Delete', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => deleteFocusedGroup(true, targetFromArgs(args)) })
-    actions.register({ id: 'ports.groupTarget.toggle', title: '折叠/展开端口组夹', description: '折叠或展开当前高亮分组夹。', icon: 'toggle', group: '端口', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+Shift+W', when: (ctx) => ctx.tab === 'ports', run: () => toggleFocusedGroupFolder() })
+    actions.register({ id: 'ports.groupTarget.toggle', title: '折叠/展开端口组夹', description: '折叠或展开当前高亮分组夹。', icon: 'toggle', group: '端口', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'ports', run: () => toggleFocusedGroupFolder() })
     actions.register({ id: 'ports.groupTarget.collapse', title: '折叠端口组夹', description: '折叠当前高亮分组夹。', icon: 'left', group: '端口', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'ports', run: () => toggleFocusedGroupFolder(false) })
     actions.register({ id: 'ports.groupTarget.expand', title: '展开端口组夹', description: '展开当前高亮分组夹。', icon: 'right', group: '端口', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'ports', run: () => toggleFocusedGroupFolder(true) })
     actions.register({ id: 'ports.groupDetail.open', title: '打开端口组详情抽屉', description: '展示当前分组或分组夹的规则和快捷操作。', icon: 'detail', group: '端口', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => ctx.tab === 'ports', run: () => openPortGroupDetail() })

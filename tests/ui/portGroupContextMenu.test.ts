@@ -27,9 +27,19 @@ describe('port group context menu', () => {
 
     expect(component).toContain('function focusActiveGroupDraftField')
     expect(component).toContain("props.snapshot.portGroupDraft ? `${props.snapshot.portGroupDraft.mode}:${props.snapshot.portGroupDraft.target?.kind || 'new'}:${props.snapshot.portGroupDraft.target?.id || 'new'}` : ''")
-    expect(component).toContain('const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>')
+    expect(component).toContain('const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>')
     expect(component).toContain('input?.focus()')
-    expect(component).toContain('input?.select()')
+    expect(component).toContain('input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement')
+  })
+
+  it('renders a folder-only group move editor and clears folder selection with delete keys', () => {
+    const component = readFileSync(resolve(process.cwd(), 'src/pages/PortsPage.vue'), 'utf8')
+
+    expect(component).toContain("draft.mode === 'move-folder' ? '变更分组夹' :")
+    expect(component).toContain("props.snapshot.portGroupDraft.mode === 'move-folder'")
+    expect(component).toContain('function clearGroupDraftFolder')
+    expect(component).toContain('@keydown.delete.prevent="clearGroupDraftFolder"')
+    expect(component).toContain('@keydown.backspace.prevent="clearGroupDraftFolder"')
   })
 
   it('uses a dedicated amplified icon for the group panel toggle', () => {

@@ -34,9 +34,9 @@ const emit = defineEmits<{
 function focusActiveGroupDraftField(field = props.snapshot.portGroupDraft?.activeField) {
   if (!field) return
   void nextTick(() => {
-    const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-group-field="${field}"]`)
+    const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(`[data-group-field="${field}"]`)
     input?.focus()
-    input?.select()
+    if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) input.select()
   })
 }
 
@@ -52,6 +52,11 @@ watch(
 
 function updateDraft(input: { name?: string; entriesText?: string; color?: string; folderId?: string | null }) {
   emit('updateGroupDraft', input)
+}
+
+function clearGroupDraftFolder() {
+  groupForm.folderId = ''
+  updateDraft({ folderId: null })
 }
 
 function dispatchPortRowAction(id: string, actionId: string) {
@@ -80,11 +85,19 @@ function groupEditorTitle() {
   if (!draft) return ''
   if (draft.target?.kind === 'folder') return draft.mode === 'create' ? '新增分组夹' : '重命名分组夹'
   if (draft.mode === 'create') return '新建端口组'
-  return draft.mode === 'rename' ? '重命名端口组' : '编辑端口组'
+  return draft.mode === 'move-folder' ? '变更分组夹' : draft.mode === 'rename' ? '重命名端口组' : '编辑端口组'
 }
 
 function isFolderDraft() {
   return props.snapshot.portGroupDraft?.target?.kind === 'folder'
+}
+
+function isMoveFolderDraft() {
+  return Boolean(props.snapshot.portGroupDraft && props.snapshot.portGroupDraft.mode === 'move-folder')
+}
+
+function isFullGroupDraft() {
+  return !isFolderDraft() && props.snapshot.portGroupDraft?.mode !== 'rename' && props.snapshot.portGroupDraft?.mode !== 'move-folder'
 }
 
 function detailRows() {
@@ -195,8 +208,8 @@ function groupSearchStatus() {
       v-if="!props.snapshot.groupSidePanelOpen"
       type="button"
       class="group-panel-toggle group-panel-toggle-collapsed"
-      :title="`展开端口组栏 ${commandLabel('ports.groups.togglePanel', 'c-w')}`"
-      :aria-label="`展开端口组栏 ${commandLabel('ports.groups.togglePanel', 'c-w')}`"
+      :title="`展开端口组栏 ${commandLabel('ports.groups.togglePanel', 'c-s-w')}`"
+      :aria-label="`展开端口组栏 ${commandLabel('ports.groups.togglePanel', 'c-s-w')}`"
       @click="emit('dispatch', 'ports.groups.togglePanel')"
     >
       <span class="group-panel-toggle-icon" aria-hidden="true"></span>
@@ -214,8 +227,8 @@ function groupSearchStatus() {
         <button
           type="button"
           class="group-panel-toggle group-panel-toggle-inline"
-          :title="`收起端口组栏 ${commandLabel('ports.groups.togglePanel', 'c-w')}`"
-          :aria-label="`收起端口组栏 ${commandLabel('ports.groups.togglePanel', 'c-w')}`"
+          :title="`收起端口组栏 ${commandLabel('ports.groups.togglePanel', 'c-s-w')}`"
+          :aria-label="`收起端口组栏 ${commandLabel('ports.groups.togglePanel', 'c-s-w')}`"
           @click="emit('dispatch', 'ports.groups.togglePanel')"
         >
           <span class="group-panel-toggle-icon" aria-hidden="true"></span>
@@ -264,8 +277,8 @@ function groupSearchStatus() {
               type="button"
               class="folder-toggle"
               :class="{ collapsed: row.collapsed }"
-              :title="`${row.collapsed ? '展开' : '折叠'}分组夹 ${commandLabel('ports.groupTarget.toggle', 'c-s-w')}`"
-              :aria-label="`${row.collapsed ? '展开' : '折叠'}分组夹 ${commandLabel('ports.groupTarget.toggle', 'c-s-w')}`"
+              :title="`${row.collapsed ? '展开' : '折叠'}分组夹 ${commandLabel(row.collapsed ? 'ports.groupTarget.expand' : 'ports.groupTarget.collapse', row.collapsed ? '→' : '←')}`"
+              :aria-label="`${row.collapsed ? '展开' : '折叠'}分组夹 ${commandLabel(row.collapsed ? 'ports.groupTarget.expand' : 'ports.groupTarget.collapse', row.collapsed ? '→' : '←')}`"
               @click.stop="focusGroupRow(row.target); emit('dispatch', row.collapsed ? 'ports.groupTarget.expand' : 'ports.groupTarget.collapse')"
             >
               <span class="folder-toggle-icon" aria-hidden="true"></span>
@@ -456,7 +469,7 @@ function groupSearchStatus() {
     <div v-if="props.snapshot.portGroupDraft" class="modal-backdrop">
       <section class="confirm-layer group-editor" role="dialog" aria-modal="true">
         <h2>{{ groupEditorTitle() }}</h2>
-        <label>
+        <label v-if="!isMoveFolderDraft()">
           名称
           <input
             v-model="groupForm.name"
@@ -465,7 +478,7 @@ function groupSearchStatus() {
             @input="updateDraft({ name: groupForm.name })"
           />
         </label>
-        <label v-if="!isFolderDraft() && props.snapshot.portGroupDraft.mode !== 'rename'">
+        <label v-if="isFullGroupDraft()">
           规则
           <textarea
             v-model="groupForm.entriesText"
@@ -476,7 +489,7 @@ function groupSearchStatus() {
             @input="updateDraft({ entriesText: groupForm.entriesText })"
           />
         </label>
-        <label v-if="!isFolderDraft() && props.snapshot.portGroupDraft.mode !== 'rename'">
+        <label v-if="isFullGroupDraft()">
           颜色
           <input
             v-model="groupForm.color"
@@ -492,6 +505,8 @@ function groupSearchStatus() {
             data-role="port-group-editor"
             data-group-field="folder"
             @change="updateDraft({ folderId: groupForm.folderId || null })"
+            @keydown.delete.prevent="clearGroupDraftFolder"
+            @keydown.backspace.prevent="clearGroupDraftFolder"
           >
             <option value="">不放入分组夹</option>
             <option v-for="folder in props.snapshot.state.portGroupFolders" :key="folder.id" :value="folder.id">{{ folder.name }}</option>

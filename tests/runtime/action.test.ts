@@ -228,6 +228,18 @@ describe('app runtime', () => {
     expect(killed).toEqual([{ pid: 12, port: 5174, force: true }])
   })
 
+  it('creates a port group from selected rows while port search is focused', async () => {
+    installPlatform()
+    const runtime = createAppRuntime(createInitialState(100))
+    await runtime.scanPorts()
+
+    runtime.togglePortSelection('11:3000:tcp')
+    runtime.togglePortSelection('12:5174:tcp')
+
+    expect(runtime.handleShortcut('Ctrl+G', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('ports.group.createFromSelection')
+    expect(runtime.snapshot().portGroupDraft).toMatchObject({ mode: 'create', entriesText: '3000\n5174' })
+  })
+
   it('starts without port focus, creates focus on first movement, and lets idle Escape fall through', async () => {
     installPlatform()
     const runtime = createAppRuntime(createInitialState(100))
@@ -581,6 +593,33 @@ describe('app runtime', () => {
     })
   })
 
+  it('moves a focused port group between folders through Ctrl+F2', async () => {
+    const { state } = installPlatform()
+    state.portGroupFolders = [
+      { id: 'dev', name: 'Dev', color: '#00A676', sortOrder: 1 },
+      { id: 'ops', name: 'Ops', color: '#2F80ED', sortOrder: 2 }
+    ]
+    state.portGroups = [{ id: 'web', name: 'Web', color: '#00A676', entries: ['3000'], folderId: 'dev', sortOrder: 1 }]
+    const runtime = createAppRuntime(state)
+    await runtime.scanPorts()
+
+    runtime.focusPortGroup('web')
+    expect(runtime.handleShortcut('Ctrl+F2', false)).toBe('ports.group.moveFolder')
+    expect(runtime.snapshot().portGroupDraft).toMatchObject({ mode: 'move-folder', groupId: 'web', activeField: 'folder', folderId: 'dev' })
+
+    runtime.updatePortGroupDraft({ name: 'Ignored', entriesText: '9999', color: '#D64545', folderId: 'ops' })
+    expect(runtime.handleShortcut('Ctrl+S', { textInputFocused: true, activeInputRole: 'port-group-editor' })).toBe('ports.group.save')
+    expect(runtime.snapshot().state.portGroups[0]).toMatchObject({ id: 'web', name: 'Web', entries: ['3000'], color: '#00A676', folderId: 'ops' })
+
+    expect(runtime.handleShortcut('Ctrl+F2', false)).toBe('ports.group.moveFolder')
+    runtime.updatePortGroupDraft({ folderId: null })
+    expect(runtime.handleShortcut('Ctrl+Enter', { textInputFocused: true, activeInputRole: 'port-group-editor' })).toBe('ports.group.save')
+    expect(runtime.snapshot().state.portGroups[0]).toMatchObject({ id: 'web', folderId: null })
+
+    runtime.focusPortGroupFolder('dev')
+    expect(runtime.handleShortcut('Ctrl+F2', false)).toBeNull()
+  })
+
   it('deletes focused groups with confirmation and force-deletes folders with child groups', async () => {
     const { state } = installPlatform()
     state.portGroupFolders = [
@@ -656,7 +695,7 @@ describe('app runtime', () => {
     expect(runtime.snapshot().listFocusRequestId).toBe(initialListFocusRequestId)
   })
 
-  it('toggles focused port group folders through Ctrl+Shift+W', async () => {
+  it('toggles focused port group folders through arrow commands', async () => {
     const { state } = installPlatform()
     state.portGroupFolders = [{ id: 'dev', name: 'Dev', color: '#00A676', sortOrder: 1 }]
     state.portGroups = [{ id: 'web', name: 'Web', color: '#00A676', entries: ['3000'], folderId: 'dev', sortOrder: 1 }]
@@ -664,10 +703,10 @@ describe('app runtime', () => {
     await runtime.scanPorts()
 
     runtime.focusPortGroupFolder('dev')
-    expect(runtime.handleShortcut('Ctrl+Shift+W', false)).toBe('ports.groupTarget.toggle')
+    expect(runtime.handleShortcut('ArrowLeft', false)).toBe('ports.groupTarget.collapse')
     expect(runtime.snapshot().state.collapsedPortGroupFolderIds).toEqual(['dev'])
 
-    expect(runtime.handleShortcut('Ctrl+Shift+W', false)).toBe('ports.groupTarget.toggle')
+    expect(runtime.handleShortcut('ArrowRight', false)).toBe('ports.groupTarget.expand')
     expect(runtime.snapshot().state.collapsedPortGroupFolderIds).toEqual([])
   })
 
@@ -710,7 +749,7 @@ describe('app runtime', () => {
     expect(runtime.snapshot().focusedPortId).toBe('12:5174:tcp')
   })
 
-  it('toggles group panel with Ctrl+W using expand-pane and collapse-blur semantics', async () => {
+  it('toggles group panel with Ctrl+Shift+W using expand-pane and collapse-blur semantics', async () => {
     const { state } = installPlatform()
     state.portGroups = [group('web', 'Web', ['3000'])]
     const runtime = createAppRuntime(state)
@@ -718,7 +757,8 @@ describe('app runtime', () => {
     const initialFocusRequestId = runtime.snapshot().groupPanelFocusRequestId
 
     expect(runtime.handleShortcut('Alt+1', false)).toBeNull()
-    expect(runtime.handleShortcut('Ctrl+W', false)).toBe('ports.groups.togglePanel')
+    expect(runtime.handleShortcut('Ctrl+W', false)).toBeNull()
+    expect(runtime.handleShortcut('Ctrl+Shift+W', false)).toBe('ports.groups.togglePanel')
     expect(runtime.snapshot()).toMatchObject({
       groupSidePanelOpen: false,
       activePortPane: 'results',
@@ -727,7 +767,7 @@ describe('app runtime', () => {
       groupPanelFocusRequestId: initialFocusRequestId
     })
 
-    expect(runtime.handleShortcut('Ctrl+W', false)).toBe('ports.groups.togglePanel')
+    expect(runtime.handleShortcut('Ctrl+Shift+W', false)).toBe('ports.groups.togglePanel')
     expect(runtime.snapshot()).toMatchObject({
       groupSidePanelOpen: true,
       activePortPane: 'groups',
@@ -790,7 +830,7 @@ describe('app runtime', () => {
     const runtime = createAppRuntime(state)
     await runtime.scanPorts()
 
-    expect(runtime.handleShortcut('Ctrl+W', false)).toBe('ports.groups.togglePanel')
+    expect(runtime.handleShortcut('Ctrl+Shift+W', false)).toBe('ports.groups.togglePanel')
     expect(runtime.snapshot().groupSidePanelOpen).toBe(false)
 
     expect(runtime.handleShortcut('Ctrl+Shift+F', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('ports.groupSearch.focus')
