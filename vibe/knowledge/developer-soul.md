@@ -11,6 +11,7 @@ EyPc is a high-frequency uTools workbench. Its interaction taste follows the glo
 - Build the usable workbench first. The first screen should be the actual operational surface, not a landing page.
 - Keep repeated workflows compact, quiet, and keyboard-first. Prefer scannable rows, stable focus, and direct command surfaces over large cards or explanatory prose.
 - Treat a command as the capability owner. Buttons, shortcuts, drawers, and settings rows must dispatch the same action id.
+- Put target-specific menus on the target element first. Row/object actions should appear on the row through hover, focus, or context entry; global drawers stay as keyboard/deep-action surfaces instead of always-visible primary menus.
 - Search, focus, selection, drawer, and Esc recovery are one contract. If a user enters a transient state, they must be able to recover without leaving the plugin.
 - Show risk where the action happens. Normal termination requires confirmation; force kill can be direct only when the runtime still verifies PID and port ownership.
 - Command editing has fixed semantics: `F2` means full object edit, `Shift+F2` means narrow rename/title edit, `Ctrl+S` and `Ctrl+Enter` save the active editing layer, and `Escape` cancels it.

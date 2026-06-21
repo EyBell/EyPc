@@ -6,6 +6,7 @@ import ConfirmLayer from './components/ConfirmLayer.vue'
 import TabShell from './components/TabShell.vue'
 import PortsPage from './pages/PortsPage.vue'
 import FavoritesPage from './pages/FavoritesPage.vue'
+import QuickFavoritesPage from './pages/QuickFavoritesPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
 import { createAppRuntime } from './runtime/appRuntime'
 import { routePluginFeature } from './runtime/feature/featureRouting'
@@ -19,6 +20,7 @@ const shiftPreview = ref(false)
 const shortcutHints = ref(false)
 const initialMaintenanceSection = ref<'features' | null>(null)
 let disposeRuntime: (() => void) | null = null
+let disposeEnterPayload: (() => void) | null = null
 const shortcutHintTiming = createShortcutHintTiming({
   show: () => { shortcutHints.value = true },
   hide: () => { shortcutHints.value = false }
@@ -51,13 +53,25 @@ function clearShiftPreview() {
   shortcutHintTiming.clear()
 }
 
+function applyPluginRoute(payload: { code?: string } | null) {
+  const route = routePluginFeature(payload, snapshot.value.state.settings.featureConfigs)
+  initialMaintenanceSection.value = route.settingsMaintenanceSection || null
+  runtime.setFavoriteQuickMode(route.favoriteQuick === true)
+  runtime.setTab(route.tab)
+  if (route.focusSearch) {
+    runtime.dispatch(route.tab === 'favorites' ? 'favorites.search.focus' : 'search.focus')
+  }
+}
+
 watch(() => snapshot.value.searchFocusRequestId, () => {
   requestAnimationFrame(() => {
     const target = snapshot.value.searchFocusTarget === 'port-groups'
       ? 'port-group-search'
-      : snapshot.value.searchFocusTarget === 'favorites'
-        ? 'favorite-search'
-        : 'port-search'
+      : snapshot.value.searchFocusTarget === 'favorite-groups'
+        ? 'favorite-group-search'
+        : snapshot.value.searchFocusTarget === 'favorites'
+          ? 'favorite-search'
+          : 'port-search'
     const input = document.querySelector<HTMLInputElement>(`[data-role="${target}"]`)
     input?.focus()
     if (input) input.setSelectionRange(input.value.length, input.value.length)
@@ -68,7 +82,7 @@ watch(() => snapshot.value.searchBlurRequestId, () => {
   requestAnimationFrame(() => {
     const active = document.activeElement as HTMLElement | null
     const role = active?.closest<HTMLElement>('[data-role]')?.dataset.role
-    if (role === 'port-search' || role === 'favorite-search' || role === 'port-group-search' || role === 'primary-search') active?.blur()
+    if (role === 'port-search' || role === 'favorite-search' || role === 'favorite-group-search' || role === 'port-group-search' || role === 'primary-search') active?.blur()
   })
 })
 
@@ -94,18 +108,17 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('keyup', onKeyup)
   window.addEventListener('blur', clearShiftPreview)
-  const route = routePluginFeature(platform.getEnterPayload(), snapshot.value.state.settings.featureConfigs)
-  initialMaintenanceSection.value = route.settingsMaintenanceSection || null
-  runtime.setTab(route.tab)
-  if (route.focusSearch) {
-    runtime.dispatch('search.focus')
-  }
+  applyPluginRoute(platform.getEnterPayload())
+  disposeEnterPayload = platform.onEnterPayload?.((payload) => {
+    applyPluginRoute(payload)
+  }) || null
   platform.clearEnterPayload()
   void runtime.scanPorts()
 })
 
 onUnmounted(() => {
   disposeRuntime?.()
+  disposeEnterPayload?.()
   shortcutHintTiming.dispose()
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('keyup', onKeyup)
@@ -142,15 +155,31 @@ onUnmounted(() => {
         />
       </template>
       <template #favorites>
-        <FavoritesPage
+        <QuickFavoritesPage
+          v-if="snapshot.favoriteQuickMode"
           :snapshot="snapshot"
           @search="runtime.setFavoriteSearch"
           @focus="runtime.focusFavorite"
+          @dispatch="runtime.dispatch"
+        />
+        <FavoritesPage
+          v-else
+          :snapshot="snapshot"
+          @search="runtime.setFavoriteSearch"
+          @group-search="runtime.setFavoriteGroupSearch"
+          @focus="runtime.focusFavorite"
+          @focus-group="runtime.focusFavoriteGroup"
+          @focus-directory="runtime.focusFavoriteDirectory"
           @toggle="runtime.toggleFavoriteSelection"
+          @toggle-directory="runtime.toggleFavoriteDirectorySelection"
           @collapse="runtime.toggleFavoriteCollapse"
           @add="runtime.addFavorite"
           @remove="runtime.removeFavorite"
           @reorder="runtime.reorderFavorite"
+          @update-pick-review-item="runtime.updateFavoritePickReviewItem"
+          @update-favorite-draft="runtime.updateFavoriteDraft"
+          @save-favorite-draft="runtime.saveFavoriteDraft"
+          @cancel-favorite-draft="runtime.cancelFavoriteDraft"
           @dispatch="runtime.dispatch"
         />
       </template>

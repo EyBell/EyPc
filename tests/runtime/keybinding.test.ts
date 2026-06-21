@@ -41,7 +41,10 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', { ...context, textInputFocused: true, activeInputRole: 'port-search' })?.actionId).toBe('ports.pane.togglePrev')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', { ...context, textInputFocused: true, activeInputRole: 'port-group-search', portPane: 'groups' })?.actionId).toBe('ports.pane.toggleNext')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', { ...context, textInputFocused: true, activeInputRole: 'port-group-search', portPane: 'groups' })?.actionId).toBe('ports.pane.togglePrev')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', { ...context, tab: 'favorites' })?.actionId).toBe('tab.next')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', { ...context, tab: 'favorites' })?.actionId).toBe('favorites.pane.toggleNext')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', { ...context, tab: 'favorites' })?.actionId).toBe('favorites.pane.togglePrev')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', { ...context, tab: 'favorites', textInputFocused: true, activeInputRole: 'favorite-search' })?.actionId).toBe('favorites.pane.toggleNext')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', { ...context, tab: 'favorites', textInputFocused: true, activeInputRole: 'favorite-group-search' })?.actionId).toBe('favorites.pane.toggleNext')
   })
 
   it('uses command-soul edit shortcuts and blocks lower layers inside editors', () => {
@@ -73,12 +76,97 @@ describe('keybinding runtime', () => {
       tab: 'favorites' as const,
       confirmOpen: false,
       textInputFocused: true,
-      activeInputRole: 'other' as const
+      activeInputRole: 'favorite-editor' as const
     }
 
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+S', favoriteEditorContext)?.actionId).toBe('favorites.save')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Enter', favoriteEditorContext)?.actionId).toBe('favorites.save')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', favoriteEditorContext)?.actionId).toBe('favorites.cancel')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', favoriteEditorContext)?.actionId).toBe('favorites.edit.nextField')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', favoriteEditorContext)?.actionId).toBe('favorites.edit.prevField')
     expect(buildShortcutCommandRows(DEFAULT_KEYBINDINGS).find((row) => row.commandId === 'favorites.save')?.defaultShortcutIds).toEqual(['Ctrl+S', 'Ctrl+Enter'])
+  })
+
+  it('prioritizes favorite pick-review shortcuts over the base favorites workbench', () => {
+    const reviewContext = {
+      tab: 'favorites' as const,
+      confirmOpen: false,
+      textInputFocused: true,
+      activeInputRole: 'favorite-pick-review' as const,
+      favoritePickReviewOpen: true
+    }
+
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+S', reviewContext)?.actionId).toBe('favorites.pickReview.commit')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Enter', reviewContext)?.actionId).toBe('favorites.pickReview.commit')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', reviewContext)?.actionId).toBe('favorites.pickReview.cancel')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', reviewContext)?.actionId).toBe('favorites.pickReview.next')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', reviewContext)?.actionId).toBe('favorites.pickReview.prev')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', reviewContext)?.actionId).toBe('favorites.pickReview.next')
+    expect(buildShortcutCommandRows(DEFAULT_KEYBINDINGS).find((row) => row.commandId === 'favorites.pickReview.commit')?.defaultShortcutIds).toEqual(['Ctrl+S', 'Ctrl+Enter'])
+  })
+
+  it('maps favorites file-management workbench shortcuts', () => {
+    const itemContext = {
+      tab: 'favorites' as const,
+      confirmOpen: false,
+      textInputFocused: false,
+      favoritePane: 'items' as const
+    }
+    const groupContext = {
+      ...itemContext,
+      favoritePane: 'groups' as const
+    }
+    const searchContext = {
+      ...itemContext,
+      textInputFocused: true,
+      activeInputRole: 'favorite-search' as const
+    }
+
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F', itemContext)?.actionId).toBe('favorites.search.focus')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+F', itemContext)?.actionId).toBe('favorites.groupSearch.focus')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+N', itemContext)?.actionId).toBe('favorites.target.create')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+O', itemContext)?.actionId).toBe('favorites.pick.files')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+O', itemContext)?.actionId).toBe('favorites.pick.folders')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', searchContext)?.actionId).toBe('list.down')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', searchContext)?.actionId).toBe('favorites.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+C', searchContext)?.actionId).toBe('favorites.copyPath')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+N', searchContext)?.actionId).toBe('favorites.target.create')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Enter', itemContext)?.actionId).toBe('favorites.reveal')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', itemContext)?.actionId).toBe('favorites.remove')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Delete', itemContext)?.actionId).toBe('favorites.remove.force')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', groupContext)?.actionId).toBe('favorites.group.create')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', groupContext)?.actionId).toBe('favorites.edit')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F2', groupContext)?.actionId).toBe('favorites.rename')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F2', groupContext)?.actionId).toBe('favorites.group.moveParent')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowLeft', groupContext)?.actionId).toBe('favorites.group.collapse')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowRight', groupContext)?.actionId).toBe('favorites.group.expand')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+N', { ...itemContext, favoriteQuickMode: true })).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+O', { ...itemContext, favoriteQuickMode: true })).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+O', { ...itemContext, favoriteQuickMode: true })).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', { ...itemContext, favoriteQuickMode: true })).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', { ...itemContext, favoriteQuickMode: true })).toBeNull()
+  })
+
+  it('prioritizes favorite drawer shortcuts over favorite workbench shortcuts', () => {
+    const itemContext = {
+      tab: 'favorites' as const,
+      confirmOpen: false,
+      textInputFocused: false,
+      favoritePane: 'items' as const
+    }
+    const drawerContext = {
+      ...itemContext,
+      favoriteDrawerOpen: true,
+      favoriteDrawerActive: true
+    }
+
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', itemContext)?.actionId).toBe('favorites.drawer.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', drawerContext)?.actionId).toBe('favorites.drawer.next')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowUp', drawerContext)?.actionId).toBe('favorites.drawer.prev')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', drawerContext)?.actionId).toBe('favorites.drawer.select')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', drawerContext)?.actionId).toBe('favorites.drawer.close')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowLeft', drawerContext)?.actionId).toBe('favorites.drawer.close')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+1', drawerContext)?.actionId).toBe('favorites.drawer.select.1')
   })
 
   it('keeps result-list shortcuts active while the port search input is focused', () => {
@@ -301,7 +389,7 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', { ...context, portPane: 'groups' })?.actionId).toBe('ports.groupFolder.create')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', { ...context, textInputFocused: true, activeInputRole: 'port-search' })?.actionId).toBe('ports.groupFolder.create')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', { ...context, textInputFocused: true, activeInputRole: 'port-group-search', portPane: 'groups' })?.actionId).toBe('ports.groupFolder.create')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', { ...context, tab: 'favorites' })).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', { ...context, tab: 'favorites' })?.actionId).toBe('favorites.group.create')
   })
 
   it('routes port search focus, group search focus, and group focus matches through commands', () => {

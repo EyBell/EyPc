@@ -95,6 +95,18 @@ describe('state domain', () => {
     expect(state.settings.shortcutProfiles.ports.keybindingOverrides[0]).toMatchObject({ commandId: 'ports.scan', shortcutId: 'Ctrl+R' })
   })
 
+  it('keeps collapsed favorite container ids only for existing favorite nodes', () => {
+    const state = normalizeAppState({
+      favorites: [
+        { id: 'g1', kind: 'group', path: '', name: 'Group', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+        { id: 'f1', kind: 'folder', path: '/tmp/demo', name: 'Demo', parentId: 'g1', tags: [], color: '#2F80ED', sortOrder: 1, createdAt: 2, updatedAt: 2 }
+      ],
+      collapsedFavoriteGroupIds: ['g1', 'f1', 'missing']
+    }, 10)
+
+    expect(state.collapsedFavoriteGroupIds).toEqual(['g1', 'f1'])
+  })
+
   it('normalizes structured search histories by partition and preserves legacy compatibility fields', () => {
     const state = normalizeAppState({
       searchHistories: {

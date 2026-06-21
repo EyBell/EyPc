@@ -29,6 +29,11 @@
       "cmds": ["文件收藏", "文件夹收藏", "favorites"]
     },
     {
+      "code": "eypc-favorites-quick",
+      "explain": "快速打开文件收藏",
+      "cmds": ["文件快开", "快速文件", "quick favorites"]
+    },
+    {
       "code": "eypc-settings",
       "explain": "EyPc 设置",
       "cmds": ["EyPc设置", "eypc settings"]

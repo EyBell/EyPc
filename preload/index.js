@@ -1,8 +1,10 @@
 const { execFile } = require('node:child_process')
+const fs = require('node:fs')
 const path = require('node:path')
 
 const STORAGE_KEY = 'eypc/state/v1'
 let lastEnterPayload = null
+const enterPayloadListeners = new Set()
 
 function run(command, args) {
   return new Promise((resolve) => {
@@ -165,7 +167,7 @@ function shellCall(method, target) {
   }
 }
 
-function normalizePickedFavorite(result) {
+function normalizePickedFavorite(result, kind) {
   const filePaths = Array.isArray(result)
     ? result
     : Array.isArray(result && result.filePaths)
@@ -176,24 +178,53 @@ function normalizePickedFavorite(result) {
   const target = String(filePaths[0] || '').trim()
   if (!target) return null
   const explicitKind = result && typeof result === 'object' && result.kind
+  let inferredKind = 'folder'
+  try {
+    inferredKind = fs.statSync(target).isFile() ? 'file' : 'folder'
+  } catch {}
+  const pickedKind = kind === 'file' || kind === 'folder'
+    ? kind
+    : explicitKind === 'file' || explicitKind === 'folder'
+      ? explicitKind
+      : inferredKind
   return {
-    kind: explicitKind === 'file' || explicitKind === 'folder' ? explicitKind : 'folder',
+    kind: pickedKind,
     path: target,
     name: path.basename(target) || target,
     parentId: null,
     tags: [],
-    color: '#2F80ED'
+    color: pickedKind === 'folder' ? '#2F80ED' : '#F2994A'
   }
 }
 
-async function pickFavoritePath() {
+function normalizePickedFavorites(result, kind) {
+  const filePaths = Array.isArray(result)
+    ? result
+    : Array.isArray(result && result.filePaths)
+      ? result.filePaths
+      : typeof result === 'string'
+        ? [result]
+        : []
+  return filePaths
+    .map((target) => normalizePickedFavorite([target], kind))
+    .filter(Boolean)
+}
+
+function favoritePickDialogOptions(kind) {
+  kind = kind === 'folder' ? 'folder' : 'file'
+  const properties = kind === 'folder' ? ['openDirectory', 'multiSelections'] : ['openFile', 'multiSelections']
+  return {
+    title: kind === 'folder' ? '选择要收藏的文件夹' : '选择要收藏的文件',
+    properties
+  }
+}
+
+async function pickFavoritePaths(kind) {
+  const options = favoritePickDialogOptions(kind)
   try {
     if (globalThis.utools && typeof globalThis.utools.showOpenDialog === 'function') {
-      const result = await globalThis.utools.showOpenDialog({
-        title: '选择要收藏的文件或文件夹',
-        properties: ['openFile', 'openDirectory']
-      })
-      return normalizePickedFavorite(result)
+      const result = await globalThis.utools.showOpenDialog(options)
+      return normalizePickedFavorites(result, kind)
     }
   } catch {}
 
@@ -201,26 +232,60 @@ async function pickFavoritePath() {
     const electron = require('electron')
     const dialog = electron.dialog || (electron.remote && electron.remote.dialog)
     if (dialog && typeof dialog.showOpenDialogSync === 'function') {
-      return normalizePickedFavorite(dialog.showOpenDialogSync({
-        title: '选择要收藏的文件或文件夹',
-        properties: ['openFile', 'openDirectory']
-      }))
+      return normalizePickedFavorites(dialog.showOpenDialogSync(options), kind)
     }
     if (dialog && typeof dialog.showOpenDialog === 'function') {
-      const result = await dialog.showOpenDialog({
-        title: '选择要收藏的文件或文件夹',
-        properties: ['openFile', 'openDirectory']
-      })
-      return normalizePickedFavorite(result)
+      const result = await dialog.showOpenDialog(options)
+      return normalizePickedFavorites(result, kind)
     }
   } catch {}
 
-  return null
+  return []
+}
+
+async function pickFavoritePath() {
+  const picked = await pickFavoritePaths('file')
+  return picked[0] || null
+}
+
+async function listFavoriteDirectory(target) {
+  const base = String(target || '').trim()
+  if (!base) return { ok: false, entries: [], error: 'empty directory path' }
+  try {
+    const entries = await fs.promises.readdir(base, { withFileTypes: true })
+    const normalized = await Promise.all(entries.flatMap((entry) => {
+      if (!entry.isDirectory() && !entry.isFile()) return []
+      const entryPath = path.join(base, entry.name)
+      return [fs.promises.stat(entryPath)
+        .catch(() => null)
+        .then((stat) => ({
+          kind: entry.isDirectory() ? 'folder' : 'file',
+          name: entry.name,
+          path: entryPath,
+          ...(stat && !entry.isDirectory() ? { size: stat.size } : {}),
+          ...(stat ? { modifiedAt: stat.mtimeMs } : {})
+        }))]
+    }))
+    return {
+      ok: true,
+      entries: normalized.sort((a, b) => {
+        if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1
+        return a.name.localeCompare(b.name)
+      })
+    }
+  } catch (error) {
+    return { ok: false, entries: [], error: error instanceof Error ? error.message : 'directory listing failed' }
+  }
 }
 
 if (globalThis.utools && typeof globalThis.utools.onPluginEnter === 'function') {
   globalThis.utools.onPluginEnter((action) => {
     lastEnterPayload = action || null
+    for (const listener of enterPayloadListeners) {
+      try {
+        listener(lastEnterPayload)
+      } catch {}
+    }
   })
 }
 
@@ -245,7 +310,9 @@ window.eypcPlatform = {
       } catch {}
       return false
     },
-    pickFavorite: pickFavoritePath
+    pickFavorite: pickFavoritePath,
+    pickFavorites: pickFavoritePaths,
+    listDirectory: listFavoriteDirectory
   },
   app: {
     hide: async () => {
@@ -262,5 +329,12 @@ window.eypcPlatform = {
   },
   clearEnterPayload() {
     lastEnterPayload = null
+  },
+  onEnterPayload(listener) {
+    if (typeof listener !== 'function') return () => {}
+    enterPayloadListeners.add(listener)
+    return () => {
+      enterPayloadListeners.delete(listener)
+    }
   }
 }

@@ -8,6 +8,8 @@ export interface RuntimeActionContext {
   selectedIds: string[]
   layerIds: string[]
   portPane?: 'groups' | 'results'
+  favoritePane?: 'groups' | 'items'
+  favoriteQuickMode?: boolean
 }
 
 export interface RuntimeActionDefinition {

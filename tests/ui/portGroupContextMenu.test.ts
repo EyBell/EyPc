@@ -10,6 +10,8 @@ describe('port group context menu', () => {
     expect(component).toContain('@contextmenu.prevent="openGroupContextMenu(row.target)"')
     expect(component).toContain("emit('focusGroupTarget', target)")
     expect(component).toContain("emit('dispatch', 'ports.drawer.open')")
+    expect(component).toContain('folder-row-line')
+    expect(component).toContain("focusGroupRow(row.target); emit('dispatch', 'ports.drawer.open')")
   })
 
   it('labels folder rename drafts as folder rename dialogs', () => {

@@ -40,6 +40,9 @@ describe('app runtime', () => {
     const state = createInitialState(100)
     const killed: Array<{ pid: number; port: number; force: boolean }> = []
     const copied: string[] = []
+    const opened: string[] = []
+    const revealed: string[] = []
+    const listed: string[] = []
     let hideCount = 0
     let scanCount = 0
     const platform = {
@@ -62,13 +65,24 @@ describe('app runtime', () => {
         }
       },
       files: {
-        open: async () => true,
-        reveal: async () => true,
+        open: async (target: string) => {
+          opened.push(target)
+          return true
+        },
+        reveal: async (target: string) => {
+          revealed.push(target)
+          return true
+        },
         copyPath: async (path: string) => {
           copied.push(path)
           return true
         },
-        pickFavorite: async () => null
+        pickFavorite: async () => null,
+        pickFavorites: async () => [],
+        listDirectory: async (target: string) => {
+          listed.push(target)
+          return { ok: false, entries: [], error: 'unavailable' }
+        }
       },
       app: {
         hide: async () => {
@@ -81,7 +95,7 @@ describe('app runtime', () => {
       ...overrides
     }
     globalThis.window = { eypcPlatform: platform } as unknown as Window & typeof globalThis
-    return { state, killed, copied, platform, getScanCount: () => scanCount, getHideCount: () => hideCount }
+    return { state, killed, copied, opened, revealed, listed, platform, getScanCount: () => scanCount, getHideCount: () => hideCount }
   }
 
   it('keeps favorite search as a filter and reorders favorites through runtime', () => {
@@ -1172,13 +1186,136 @@ describe('app runtime', () => {
     expect(runtime.snapshot().message).toBe('分组节点没有可复制路径')
   })
 
-  it('adds picked favorite when platform picker returns a path', async () => {
+  it('navigates favorites groups and item rows as separate panes', () => {
+    installPlatform()
+    const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    state.favorites = [
+      { id: 'g1', kind: 'group', path: '', name: 'Projects', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'g2', kind: 'group', path: '', name: 'Docs', parentId: 'g1', tags: [], color: '#2F80ED', sortOrder: 1, createdAt: 2, updatedAt: 2 },
+      { id: 'f1', kind: 'folder', path: '/work/app', name: 'App', parentId: 'g1', tags: ['code'], color: '#2F80ED', sortOrder: 1, createdAt: 3, updatedAt: 3 },
+      { id: 'f2', kind: 'file', path: '/work/app/README.md', name: 'README', parentId: 'g2', tags: ['docs'], color: '#F2994A', sortOrder: 1, createdAt: 4, updatedAt: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    expect(runtime.snapshot().favoriteGroupRows.map((row) => row.node.id)).toEqual(['g1', 'g2'])
+    expect(runtime.snapshot().favoriteItemRows.map((row) => row.id)).toEqual(['f1', 'f2'])
+
+    expect(runtime.handleShortcut('Tab', false)).toBe('favorites.pane.toggleNext')
+    expect(runtime.snapshot().activeFavoritePane).toBe('groups')
+    expect(runtime.handleShortcut('ArrowDown', false)).toBe('list.down')
+    expect(runtime.snapshot().focusedFavoriteGroupId).toBe('g2')
+    expect(runtime.handleShortcut('Enter', false)).toBe('favorites.group.apply')
+    expect(runtime.snapshot().selectedFavoriteGroupId).toBe('g2')
+    expect(runtime.snapshot().favoriteItemRows.map((row) => row.id)).toEqual(['f2'])
+  })
+
+  it('edits favorite group metadata and prevents invalid parent moves', () => {
+    installPlatform()
+    const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    state.favorites = [
+      { id: 'g1', kind: 'group', path: '', name: 'Projects', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'g2', kind: 'group', path: '', name: 'Docs', parentId: 'g1', tags: [], color: '#2F80ED', sortOrder: 1, createdAt: 2, updatedAt: 2 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.focusFavoriteGroup('g1')
+    expect(runtime.dispatch('favorites.rename').handled).toBe(true)
+    expect(runtime.snapshot().favoriteDraft?.mode).toBe('rename')
+    runtime.updateFavoriteDraft({ name: 'Work Projects' })
+    expect(runtime.dispatch('favorites.save').handled).toBe(true)
+    expect(runtime.snapshot().state.favorites.find((item) => item.id === 'g1')?.name).toBe('Work Projects')
+
+    runtime.focusFavoriteGroup('g1')
+    runtime.dispatch('favorites.group.moveParent')
+    runtime.updateFavoriteDraft({ parentId: 'g2' })
+    runtime.dispatch('favorites.save')
+    expect(runtime.snapshot().message).toBe('不能移动到自身或子分组下')
+    expect(runtime.snapshot().state.favorites.find((item) => item.id === 'g1')?.parentId).toBeNull()
+  })
+
+  it('confirms normal favorite metadata removal and force-removes groups directly', () => {
+    installPlatform()
+    const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    state.favorites = [
+      { id: 'g1', kind: 'group', path: '', name: 'Projects', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'f1', kind: 'folder', path: '/work/app', name: 'App', parentId: 'g1', tags: [], color: '#2F80ED', sortOrder: 1, createdAt: 2, updatedAt: 2 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.focusFavorite('f1')
+    runtime.dispatch('favorites.remove')
+    expect(runtime.snapshot().confirm?.title).toBe('移出收藏')
+    runtime.confirmNow()
+    expect(runtime.snapshot().state.favorites.map((item) => item.id)).toEqual(['g1'])
+
+    runtime.focusFavoriteGroup('g1')
+    runtime.dispatch('favorites.remove.force')
+    expect(runtime.snapshot().state.favorites).toEqual([])
+  })
+
+  it('opens quick favorite results and hides the app after quick actions', async () => {
+    const { opened, copied, getHideCount } = installPlatform()
+    const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    state.favorites = [
+      { id: 'f1', kind: 'folder', path: '/work/app', name: 'App', parentId: null, tags: ['code'], color: '#2F80ED', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'f2', kind: 'file', path: '/work/readme.md', name: 'README', parentId: null, tags: ['docs'], color: '#F2994A', sortOrder: 2, createdAt: 2, updatedAt: 2 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setFavoriteQuickMode(true)
+    runtime.setFavoriteSearch('app')
+    expect(runtime.snapshot().favoriteQuickMode).toBe(true)
+    expect(runtime.snapshot().favoriteItemRows.map((row) => row.id)).toEqual(['f1'])
+    expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'favorite-search' })).toBe('favorites.open')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(opened).toEqual(['/work/app'])
+    expect(getHideCount()).toBe(1)
+    expect(runtime.snapshot().state.favorites.find((item) => item.id === 'f1')?.usageCount).toBe(1)
+
+    runtime.focusFavorite('f1')
+    runtime.dispatch('favorites.copyPath')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(copied).toEqual(['/work/app'])
+    expect(getHideCount()).toBe(2)
+  })
+
+  it('enters pick review before saving a selected file favorite', async () => {
+    let pickedKind: 'file' | 'folder' | null = null
     installPlatform({
       files: {
         open: async () => true,
         reveal: async () => true,
         copyPath: async () => true,
-        pickFavorite: async () => ({ kind: 'folder', path: '/tmp/picked', name: 'picked', parentId: null, tags: ['picked'], color: '#2F80ED' })
+        pickFavorite: async () => null,
+        pickFavorites: async (kind) => {
+          pickedKind = kind
+          return [{ kind: 'file', path: '/tmp/readme.md', name: '', parentId: null, tags: ['picked'], color: '#F2994A' }]
+        },
+        listDirectory: async () => ({ ok: false, entries: [] })
       }
     })
     const state = createInitialState(100)
@@ -1190,10 +1327,390 @@ describe('app runtime', () => {
     state.activeTab = 'favorites'
     const runtime = createAppRuntime(state)
 
-    runtime.dispatch('favorites.pickAndAdd')
+    runtime.dispatch('favorites.pick.files')
     await new Promise((resolve) => setTimeout(resolve, 0))
 
+    expect(pickedKind).toBe('file')
+    expect(runtime.snapshot().state.favorites).toHaveLength(0)
+    expect(runtime.snapshot().favoritePickReview).toMatchObject({
+      kind: 'file',
+      activeIndex: 0,
+      items: [{ kind: 'file', path: '/tmp/readme.md', name: 'readme.md' }]
+    })
+    runtime.updateFavoritePickReviewItem(0, { name: 'Readme' })
+    expect(runtime.dispatch('favorites.pickReview.commit').handled).toBe(true)
+
     expect(runtime.snapshot().state.favorites).toHaveLength(1)
-    expect(runtime.snapshot().state.favorites[0]).toMatchObject({ kind: 'folder', path: '/tmp/picked', name: 'picked' })
+    expect(runtime.snapshot().state.favorites[0]).toMatchObject({ kind: 'file', path: '/tmp/readme.md', name: 'Readme' })
+    expect(runtime.snapshot().favoritePickReview).toBeNull()
+  })
+
+  it('cancels pick review without writing favorite metadata', async () => {
+    installPlatform({
+      files: {
+        open: async () => true,
+        reveal: async () => true,
+        copyPath: async () => true,
+        pickFavorite: async () => null,
+        pickFavorites: async () => [
+          { kind: 'folder', path: '/tmp/picked-folder', name: 'Picked Folder', parentId: null, tags: [], color: '#2F80ED' }
+        ],
+        listDirectory: async () => ({ ok: false, entries: [] })
+      }
+    })
+    const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    const runtime = createAppRuntime(state)
+
+    runtime.dispatch('favorites.pick.folders')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(runtime.snapshot().favoritePickReview?.kind).toBe('folder')
+    expect(runtime.dispatch('favorites.pickReview.cancel').handled).toBe(true)
+
+    expect(runtime.snapshot().favoritePickReview).toBeNull()
+    expect(runtime.snapshot().state.favorites).toEqual([])
+  })
+
+  it('creates a manual favorite target with Ctrl+N under the selected group', () => {
+    installPlatform()
+    const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    state.favorites = [
+      { id: 'g1', kind: 'group', path: '', name: 'Projects', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.focusFavoriteGroup('g1')
+    runtime.dispatch('favorites.group.apply')
+    expect(runtime.handleShortcut('Ctrl+N', false)).toBe('favorites.target.create')
+    expect(runtime.snapshot().favoriteDraft).toMatchObject({ mode: 'create-target', kind: 'folder', activeField: 'path', parentId: 'g1' })
+
+    runtime.updateFavoriteDraft({ path: '/work/new-app/', tagsText: 'code, docs' })
+    expect(runtime.dispatch('favorites.save').handled).toBe(true)
+
+    const created = runtime.snapshot().state.favorites.find((item) => item.kind === 'folder')
+    expect(created).toMatchObject({ path: '/work/new-app', name: 'new-app', parentId: 'g1', tags: ['code', 'docs'] })
+    expect(runtime.snapshot().focusedFavoriteId).toBe(created?.id)
+  })
+
+  it('picks an OS path into the favorite draft without adding metadata immediately', async () => {
+    installPlatform({
+      files: {
+        open: async () => true,
+        reveal: async () => true,
+        copyPath: async () => true,
+        pickFavorite: async () => null,
+        pickFavorites: async (kind) => {
+          expect(kind).toBe('file')
+          return [
+          { kind: 'file', path: '/tmp/readme.md', name: '', parentId: null, tags: [], color: '#F2994A' }
+          ]
+        },
+        listDirectory: async () => ({ ok: false, entries: [] })
+      }
+    })
+    const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    const runtime = createAppRuntime(state)
+
+    expect(runtime.dispatch('favorites.target.create').handled).toBe(true)
+    runtime.updateFavoriteDraft({ kind: 'file' })
+    expect(runtime.dispatch('favorites.draft.pickPath').handled).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(runtime.snapshot().state.favorites).toEqual([])
+    expect(runtime.snapshot().favoriteDraft).toMatchObject({
+      kind: 'file',
+      path: '/tmp/readme.md',
+      name: 'readme.md',
+      activeField: 'path'
+    })
+  })
+
+  it('lets the favorite draft picker choose a folder without pre-switching the draft kind', async () => {
+    let pickedKind: 'file' | 'folder' | null = null
+    installPlatform({
+      files: {
+        open: async () => true,
+        reveal: async () => true,
+        copyPath: async () => true,
+        pickFavorite: async () => null,
+        pickFavorites: async (kind) => {
+          pickedKind = kind
+          return [
+            { kind: 'folder', path: '/tmp/project', name: '', parentId: null, tags: [], color: '#2F80ED' }
+          ]
+        },
+        listDirectory: async () => ({ ok: false, entries: [] })
+      }
+    })
+    const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    const runtime = createAppRuntime(state)
+
+    expect(runtime.dispatch('favorites.target.create').handled).toBe(true)
+    runtime.updateFavoriteDraft({ kind: 'file' })
+    expect(runtime.dispatch('favorites.draft.pickPath', { kind: 'folder' }).handled).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(pickedKind).toBe('folder')
+    expect(runtime.snapshot().state.favorites).toEqual([])
+    expect(runtime.snapshot().favoriteDraft).toMatchObject({
+      kind: 'folder',
+      path: '/tmp/project',
+      name: 'project',
+      activeField: 'path'
+    })
+  })
+
+  it('adds picked favorites to the current group and focuses duplicates instead of writing them', async () => {
+    installPlatform({
+      files: {
+        open: async () => true,
+        reveal: async () => true,
+        copyPath: async () => true,
+        pickFavorite: async () => ({ kind: 'folder', path: '/tmp/picked/', name: '', parentId: null, tags: ['picked'], color: '#2F80ED' }),
+        listDirectory: async () => ({ ok: false, entries: [] })
+      }
+    })
+    const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    state.favorites = [
+      { id: 'g1', kind: 'group', path: '', name: 'Projects', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.focusFavoriteGroup('g1')
+    runtime.dispatch('favorites.group.apply')
+    expect(runtime.handleShortcut('Ctrl+Shift+O', false)).toBe('favorites.pick.folders')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(runtime.snapshot().favoritePickReview).toMatchObject({ kind: 'folder', parentId: 'g1' })
+    expect(runtime.dispatch('favorites.pickReview.commit').handled).toBe(true)
+
+    const created = runtime.snapshot().state.favorites.find((item) => item.kind === 'folder')
+    expect(created).toMatchObject({ path: '/tmp/picked', name: 'picked', parentId: 'g1' })
+    expect(runtime.snapshot().focusedFavoriteId).toBe(created?.id)
+
+    runtime.dispatch('favorites.pick.folders')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(runtime.dispatch('favorites.pickReview.commit').handled).toBe(true)
+    expect(runtime.snapshot().state.favorites.filter((item) => item.kind === 'folder')).toHaveLength(1)
+    expect(runtime.snapshot().focusedFavoriteId).toBe(created?.id)
+    expect(runtime.snapshot().message).toBe('收藏已存在，已定位到现有项')
+  })
+
+  it('does not expose add commands from quick favorite mode', () => {
+    installPlatform()
+    const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    const runtime = createAppRuntime(state)
+
+    runtime.setFavoriteQuickMode(true)
+
+    expect(runtime.handleShortcut('Ctrl+N', { textInputFocused: true, activeInputRole: 'favorite-search' })).toBeNull()
+    expect(runtime.handleShortcut('Ctrl+O', { textInputFocused: true, activeInputRole: 'favorite-search' })).toBeNull()
+    expect(runtime.handleShortcut('Ctrl+Shift+O', { textInputFocused: true, activeInputRole: 'favorite-search' })).toBeNull()
+    expect(runtime.handleShortcut('Delete', { textInputFocused: true, activeInputRole: 'favorite-search' })).toBeNull()
+    expect(runtime.handleShortcut('F2', { textInputFocused: true, activeInputRole: 'favorite-search' })).toBeNull()
+    expect(runtime.dispatch('favorites.target.create').handled).toBe(false)
+    expect(runtime.dispatch('favorites.pick.files').handled).toBe(false)
+    expect(runtime.dispatch('favorites.pick.folders').handled).toBe(false)
+    expect(runtime.dispatch('favorites.remove').handled).toBe(false)
+    expect(runtime.dispatch('favorites.edit').handled).toBe(false)
+  })
+
+  it('uses any favorite node as a virtual container and only lists real directories for folders', async () => {
+    const { state, listed } = installPlatform({
+      files: {
+        open: async () => true,
+        reveal: async () => true,
+        copyPath: async () => true,
+        pickFavorite: async () => null,
+        pickFavorites: async () => [],
+        listDirectory: async (target: string) => {
+          listed.push(target)
+          return {
+            ok: true,
+            entries: [
+              { kind: 'file' as const, name: 'index.ts', path: `${target}/index.ts`, size: 120, modifiedAt: 500 },
+              { kind: 'folder' as const, name: 'src', path: `${target}/src`, modifiedAt: 501 }
+            ]
+          }
+        }
+      }
+    })
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    state.favorites = [
+      { id: 'file-parent', kind: 'file', path: '/notes/root.md', name: 'Root Note', parentId: null, tags: [], color: '#F2994A', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'virtual-child', kind: 'folder', path: '/elsewhere/project', name: 'Virtual Project', parentId: 'file-parent', tags: [], color: '#2F80ED', sortOrder: 1, createdAt: 2, updatedAt: 2 },
+      { id: 'real-folder', kind: 'folder', path: '/work/app', name: 'App', parentId: null, tags: [], color: '#2F80ED', sortOrder: 2, createdAt: 3, updatedAt: 3 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.focusFavoriteGroup('file-parent')
+    runtime.dispatch('favorites.group.apply')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(runtime.snapshot().favoriteContainerRows.map((row) => row.node.id)).toEqual(['file-parent', 'virtual-child', 'real-folder'])
+    expect(runtime.snapshot().favoriteVirtualChildRows.map((row) => row.id)).toEqual(['virtual-child'])
+    expect(runtime.snapshot().favoriteDirectoryEntries).toEqual([])
+    expect(listed).toEqual([])
+
+    runtime.focusFavoriteGroup('real-folder')
+    runtime.dispatch('favorites.group.apply')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(listed).toEqual(['/work/app'])
+    expect(runtime.snapshot().favoriteDirectoryEntries.map((row) => [row.kind, row.name, row.favorited])).toEqual([
+      ['file', 'index.ts', false],
+      ['folder', 'src', false]
+    ])
+  })
+
+  it('saves reviewed picked paths under the current virtual parent and skips duplicates', async () => {
+    installPlatform({
+      files: {
+        open: async () => true,
+        reveal: async () => true,
+        copyPath: async () => true,
+        pickFavorite: async () => null,
+        pickFavorites: async (kind) => {
+          expect(kind).toBe('file')
+          return [
+          { kind: 'file', path: '/work/app.md', name: '', parentId: null, tags: [], color: '#F2994A' },
+          { kind: 'file', path: '/work/new.md', name: '', parentId: null, tags: [], color: '#F2994A' }
+          ]
+        },
+        listDirectory: async () => ({ ok: false, entries: [] })
+      }
+    })
+    const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    state.favorites = [
+      { id: 'file-parent', kind: 'file', path: '/notes/root.md', name: 'Root Note', parentId: null, tags: [], color: '#F2994A', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'existing', kind: 'file', path: '/work/app.md', name: 'App', parentId: null, tags: [], color: '#F2994A', sortOrder: 2, createdAt: 2, updatedAt: 2 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.focusFavoriteGroup('file-parent')
+    runtime.dispatch('favorites.group.apply')
+    runtime.dispatch('favorites.pick.files')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(runtime.snapshot().favoritePickReview?.items.map((item) => item.path)).toEqual(['/work/app.md', '/work/new.md'])
+    expect(runtime.handleShortcut('Tab', { textInputFocused: true, activeInputRole: 'favorite-pick-review' })).toBe('favorites.pickReview.next')
+    expect(runtime.snapshot().favoritePickReview?.activeIndex).toBe(1)
+    expect(runtime.handleShortcut('Ctrl+Enter', { textInputFocused: true, activeInputRole: 'favorite-pick-review' })).toBe('favorites.pickReview.commit')
+
+    expect(runtime.snapshot().state.favorites.filter((item) => item.path === '/work/app.md')).toHaveLength(1)
+    expect(runtime.snapshot().state.favorites.find((item) => item.path === '/work/new.md')).toMatchObject({
+      name: 'new.md',
+      parentId: 'file-parent'
+    })
+    expect(runtime.snapshot().focusedFavoriteId).toBe(runtime.snapshot().state.favorites.find((item) => item.path === '/work/new.md')?.id)
+  })
+
+  it('opens a favorite action drawer and executes drawer shortcuts', async () => {
+    const { opened } = installPlatform()
+    const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    state.favorites = [
+      { id: 'f1', kind: 'file', path: '/work/readme.md', name: 'Readme', parentId: null, tags: [], color: '#F2994A', sortOrder: 1, createdAt: 1, updatedAt: 1 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.focusFavorite('f1')
+    expect(runtime.handleShortcut('Ctrl+ArrowRight', false)).toBe('favorites.drawer.open')
+    expect(runtime.snapshot().favoriteDrawer).toMatchObject({ open: true, active: true, targetKind: 'favorite' })
+    expect(runtime.snapshot().favoriteDrawerItems.map((item) => item.commandId)).toContain('favorites.open')
+    expect(runtime.handleShortcut('Ctrl+1', false)).toBe('favorites.drawer.select.1')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(opened).toEqual(['/work/readme.md'])
+    expect(runtime.snapshot().favoriteDrawer.open).toBe(false)
+  })
+
+  it('multi-selects real directory rows and adds them as virtual children', async () => {
+    const { state } = installPlatform({
+      files: {
+        open: async () => true,
+        reveal: async () => true,
+        copyPath: async () => true,
+        pickFavorite: async () => null,
+        pickFavorites: async () => [],
+        listDirectory: async (target: string) => ({
+          ok: true,
+          entries: [
+            { kind: 'file' as const, name: 'index.ts', path: `${target}/index.ts`, size: 120, modifiedAt: 500 },
+            { kind: 'folder' as const, name: 'src', path: `${target}/src`, modifiedAt: 501 }
+          ]
+        })
+      }
+    })
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    state.favorites = [
+      { id: 'folder', kind: 'folder', path: '/work/app', name: 'App', parentId: null, tags: [], color: '#2F80ED', sortOrder: 1, createdAt: 1, updatedAt: 1 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.focusFavoriteGroup('folder')
+    runtime.dispatch('favorites.group.apply')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    runtime.toggleFavoriteDirectorySelection('/work/app/index.ts')
+    runtime.toggleFavoriteDirectorySelection('/work/app/src')
+    expect(runtime.snapshot().selectedFavoriteDirectoryPaths).toEqual(['/work/app/index.ts', '/work/app/src'])
+
+    runtime.dispatch('favorites.directory.addSelected')
+
+    expect(runtime.snapshot().state.favorites.filter((item) => item.parentId === 'folder').map((item) => [item.kind, item.path])).toEqual([
+      ['file', '/work/app/index.ts'],
+      ['folder', '/work/app/src']
+    ])
   })
 })

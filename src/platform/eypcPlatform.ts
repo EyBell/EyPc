@@ -1,8 +1,23 @@
 import { normalizeAppState } from '../domain/state'
 import type { AppState, FavoriteNode, KillRequest, KillResult, PortProcess } from '../domain/types'
 
-export type PickedFavorite = Pick<FavoriteNode, 'kind' | 'path' | 'name' | 'parentId' | 'tags' | 'color'>
+export type PickedFavoriteKind = Exclude<FavoriteNode['kind'], 'group'>
+export type PickedFavorite = Pick<FavoriteNode, 'path' | 'name' | 'parentId' | 'tags' | 'color'> & { kind: PickedFavoriteKind }
 const STORAGE_KEY = 'eypc/state/v1'
+
+export interface FavoriteDirectoryEntry {
+  kind: Exclude<FavoriteNode['kind'], 'group'>
+  name: string
+  path: string
+  size?: number
+  modifiedAt?: number
+}
+
+export interface FavoriteDirectoryListResult {
+  ok: boolean
+  entries: FavoriteDirectoryEntry[]
+  error?: string
+}
 
 export interface EypcPlatformApi {
   storage: {
@@ -18,12 +33,15 @@ export interface EypcPlatformApi {
     reveal(path: string): Promise<boolean>
     copyPath(path: string): Promise<boolean>
     pickFavorite?(): Promise<PickedFavorite | null>
+    pickFavorites?(kind: PickedFavoriteKind): Promise<PickedFavorite[]>
+    listDirectory(path: string): Promise<FavoriteDirectoryListResult>
   }
   app: {
     hide(): Promise<boolean> | boolean
   }
   getEnterPayload(): { code?: string } | null
   clearEnterPayload(): void
+  onEnterPayload?(listener: (payload: { code?: string } | null) => void): () => void
 }
 
 declare global {
@@ -95,10 +113,101 @@ async function killViaDevApi(request: KillRequest): Promise<KillResult> {
   }
 }
 
+type BrowserPickedFile = Pick<File, 'name'> & {
+  path?: string
+  webkitRelativePath?: string
+}
+
+function pathTail(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() || path
+}
+
+function normalizeBrowserPickedFile(file: BrowserPickedFile, kind: PickedFavoriteKind): PickedFavorite | null {
+  const relativePath = typeof file.webkitRelativePath === 'string' ? file.webkitRelativePath.trim() : ''
+  const explicitPath = typeof file.path === 'string' ? file.path.trim() : ''
+  const folderRoot = relativePath.split(/[\\/]/).filter(Boolean)[0] || ''
+  const path = kind === 'folder'
+    ? folderRoot || explicitPath.replace(/[\\/][^\\/]*$/, '') || file.name
+    : explicitPath || relativePath || file.name
+  const normalizedPath = String(path || '').trim()
+  if (!normalizedPath) return null
+  const name = kind === 'folder' ? folderRoot || pathTail(normalizedPath) : file.name || pathTail(normalizedPath)
+  return {
+    kind,
+    path: normalizedPath,
+    name,
+    parentId: null,
+    tags: [],
+    color: kind === 'folder' ? '#2F80ED' : '#F2994A'
+  }
+}
+
+function normalizeBrowserPickedFiles(files: ArrayLike<BrowserPickedFile>, kind: PickedFavoriteKind): PickedFavorite[] {
+  const seen = new Set<string>()
+  return Array.from(files)
+    .map((file) => normalizeBrowserPickedFile(file, kind))
+    .filter((item): item is PickedFavorite => {
+      if (!item) return false
+      const key = `${item.kind}:${item.path}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
+async function pickFavoritesViaBrowserInput(kind: PickedFavoriteKind): Promise<PickedFavorite[]> {
+  if (typeof document === 'undefined' || !document.body) return []
+  return new Promise((resolve) => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.multiple = true
+    input.style.display = 'none'
+    if (kind === 'folder') {
+      input.setAttribute('webkitdirectory', '')
+      input.setAttribute('directory', '')
+    }
+
+    const cleanup = () => {
+      input.remove()
+    }
+    const finish = () => {
+      const picked = input.files ? normalizeBrowserPickedFiles(input.files, kind) : []
+      cleanup()
+      resolve(picked)
+    }
+    const cancel = () => {
+      cleanup()
+      resolve([])
+    }
+
+    input.addEventListener('change', finish, { once: true })
+    input.addEventListener('cancel', cancel, { once: true })
+    document.body.appendChild(input)
+
+    try {
+      input.click()
+    } catch {
+      cancel()
+    }
+  })
+}
+
 export function getPlatform(): EypcPlatformApi {
   if (typeof window !== 'undefined' && window.eypcPlatform) {
+    const hostFiles = window.eypcPlatform.files
     return {
       ...window.eypcPlatform,
+      files: {
+        open: hostFiles.open || (async () => false),
+        reveal: hostFiles.reveal || (async () => false),
+        copyPath: hostFiles.copyPath || (async () => false),
+        pickFavorite: hostFiles.pickFavorite,
+        pickFavorites: hostFiles.pickFavorites || (async () => {
+          const picked = await hostFiles.pickFavorite?.()
+          return picked ? [picked] : []
+        }),
+        listDirectory: hostFiles.listDirectory || (async () => ({ ok: false, entries: [], error: 'directory listing unavailable' }))
+      },
       app: window.eypcPlatform.app || { hide: async () => false }
     }
   }
@@ -120,7 +229,9 @@ export function getPlatform(): EypcPlatformApi {
           return true
         }
         return false
-      }
+      },
+      pickFavorites: pickFavoritesViaBrowserInput,
+      listDirectory: async () => ({ ok: false, entries: [], error: 'directory listing unavailable' })
     },
     app: {
       hide: async () => false

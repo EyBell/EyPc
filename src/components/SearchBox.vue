@@ -2,7 +2,7 @@
 withDefaults(defineProps<{
   modelValue: string
   placeholder: string
-  role?: 'port-search' | 'port-group-search' | 'favorite-search'
+  role?: 'port-search' | 'port-group-search' | 'favorite-search' | 'favorite-group-search'
   error?: string | null
   history?: string[]
 }>(), {

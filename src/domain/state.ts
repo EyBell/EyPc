@@ -162,6 +162,8 @@ function normalizeFavorite(value: unknown, now: number): FavoriteNode | null {
   const path = stringValue(item.path).trim()
   const kind = VALID_FAVORITE_KINDS.has(item.kind as FavoriteKind) ? (item.kind as FavoriteKind) : null
   if (!id || !kind || (kind !== 'group' && !path)) return null
+  const usageCount = numberValue(item.usageCount, 0)
+  const lastUsedAt = numberValue(item.lastUsedAt, 0)
   return {
     id,
     kind,
@@ -172,7 +174,9 @@ function normalizeFavorite(value: unknown, now: number): FavoriteNode | null {
     color: stringValue(item.color).trim() || '#6B7280',
     sortOrder: numberValue(item.sortOrder, 0),
     createdAt: numberValue(item.createdAt, now),
-    updatedAt: numberValue(item.updatedAt, now)
+    updatedAt: numberValue(item.updatedAt, now),
+    ...(usageCount > 0 ? { usageCount } : {}),
+    ...(lastUsedAt > 0 ? { lastUsedAt } : {})
   }
 }
 
@@ -230,6 +234,7 @@ export function createInitialState(now = Date.now()): AppState {
     portGroups: [],
     portGroupFolders: [],
     collapsedPortGroupFolderIds: [],
+    collapsedFavoriteGroupIds: [],
     favorites: [],
     settings: {
       keybindingOverrides: [],
@@ -255,6 +260,8 @@ export function normalizeAppState(value: unknown, now = Date.now()): AppState {
   const featureConfigs = normalizeFeatureConfigs(settings.featureConfigs)
   const visibleTabIds = new Set(featureConfigs.filter((config) => config.enabled).map((config) => config.id))
   const activeTab = VALID_TABS.has(source.activeTab as AppTabId) && visibleTabIds.has(source.activeTab as AppTabId) ? (source.activeTab as AppTabId) : fallback.activeTab
+  const favorites = (Array.isArray(source.favorites) ? source.favorites : []).map((item) => normalizeFavorite(item, now)).filter((item): item is FavoriteNode => Boolean(item))
+  const favoriteIds = new Set(favorites.map((item) => item.id))
   return {
     version: 1,
     activeTab: visibleTabIds.has(activeTab) ? activeTab : 'settings',
@@ -266,7 +273,8 @@ export function normalizeAppState(value: unknown, now = Date.now()): AppState {
     portGroups: normalizePortGroups(source.portGroups, portGroupFolders),
     portGroupFolders,
     collapsedPortGroupFolderIds: strings(source.collapsedPortGroupFolderIds).filter((id) => validFolderIds.has(id)),
-    favorites: (Array.isArray(source.favorites) ? source.favorites : []).map((item) => normalizeFavorite(item, now)).filter((item): item is FavoriteNode => Boolean(item)),
+    collapsedFavoriteGroupIds: strings(source.collapsedFavoriteGroupIds).filter((id) => favoriteIds.has(id)),
+    favorites,
     settings: {
       keybindingOverrides: aggregateShortcutProfiles(shortcutProfiles),
       shortcutProfiles,

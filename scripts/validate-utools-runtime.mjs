@@ -35,7 +35,7 @@ assert(pluginJson.pluginSetting?.single === true, 'plugin.json pluginSetting.sin
 assert(Number.isInteger(pluginJson.pluginSetting?.height) && pluginJson.pluginSetting.height >= 480, 'plugin.json height must be >= 480')
 assert(Array.isArray(pluginJson.features) && pluginJson.features.length >= 4, 'plugin.json features must include MVP entries')
 
-const requiredCodes = ['eypc-main', 'eypc-ports', 'eypc-favorites', 'eypc-settings']
+const requiredCodes = ['eypc-main', 'eypc-ports', 'eypc-favorites', 'eypc-favorites-quick', 'eypc-settings']
 const codes = new Set()
 for (const feature of pluginJson.features) {
   assert(typeof feature.code === 'string' && feature.code.trim(), 'feature.code must be non-empty')
@@ -54,6 +54,14 @@ const sandbox = {
   process: { platform: 'darwin' },
   require(name) {
     if (name === 'node:child_process') return { execFile() {} }
+    if (name === 'node:fs') return {
+      statSync: () => ({ isFile: () => false }),
+      promises: {
+        readdir: async () => {
+          throw new Error('directory unavailable')
+        }
+      }
+    }
     if (name === 'node:path') return { basename: (value) => String(value).split('/').pop() }
     throw new Error(`unexpected require: ${name}`)
   }
@@ -65,7 +73,11 @@ assert(typeof sandbox.window.eypcPlatform.ports.scan === 'function', 'preload mu
 assert(typeof sandbox.window.eypcPlatform.ports.kill === 'function', 'preload must expose ports.kill')
 assert(typeof sandbox.window.eypcPlatform.files.copyPath === 'function', 'preload must expose files.copyPath')
 assert(typeof sandbox.window.eypcPlatform.files.pickFavorite === 'function', 'preload must expose files.pickFavorite')
+assert(typeof sandbox.window.eypcPlatform.files.pickFavorites === 'function', 'preload must expose files.pickFavorites')
+assert(typeof sandbox.window.eypcPlatform.files.listDirectory === 'function', 'preload must expose files.listDirectory')
 assert(await sandbox.window.eypcPlatform.files.copyPath('/tmp/demo') === false, 'copyPath fallback must return false when host API is unavailable')
 assert(await sandbox.window.eypcPlatform.files.pickFavorite() === null, 'pickFavorite fallback must return null when host API is unavailable')
+assert(Array.isArray(await sandbox.window.eypcPlatform.files.pickFavorites()), 'pickFavorites fallback must return an array')
+assert((await sandbox.window.eypcPlatform.files.listDirectory('/tmp')).ok === false, 'listDirectory fallback must report unavailable')
 
 console.log('uTools runtime validation passed')

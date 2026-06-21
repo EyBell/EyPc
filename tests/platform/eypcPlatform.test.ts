@@ -4,11 +4,13 @@ describe('browser fallback platform', () => {
   const originalWindow = globalThis.window
   const originalFetch = globalThis.fetch
   const originalLocalStorage = globalThis.localStorage
+  const originalDocument = globalThis.document
 
   afterEach(() => {
     vi.resetModules()
     globalThis.window = originalWindow
     globalThis.fetch = originalFetch
+    globalThis.document = originalDocument
     Object.defineProperty(globalThis, 'localStorage', { value: originalLocalStorage, configurable: true })
   })
 
@@ -85,5 +87,57 @@ describe('browser fallback platform', () => {
 
     const { getPlatform } = await import('../../src/platform/eypcPlatform')
     await expect(getPlatform().app.hide()).resolves.toBe(false)
+  })
+
+  it('exposes safe browser fallbacks for split multi-pick and directory listing', async () => {
+    globalThis.window = {} as Window & typeof globalThis
+
+    const { getPlatform } = await import('../../src/platform/eypcPlatform')
+    await expect(getPlatform().files.pickFavorites?.('file')).resolves.toEqual([])
+    await expect(getPlatform().files.pickFavorites?.('folder')).resolves.toEqual([])
+    await expect(getPlatform().files.listDirectory('/tmp')).resolves.toEqual({
+      ok: false,
+      entries: [],
+      error: 'directory listing unavailable'
+    })
+  })
+
+  it('uses a browser file input fallback when preload path picking is unavailable', async () => {
+    globalThis.window = {} as Window & typeof globalThis
+    const listeners = new Map<string, () => void>()
+    const input = {
+      type: '',
+      multiple: false,
+      files: [
+        { name: 'readme.md', path: '/tmp/readme.md' },
+        { name: 'guide.md', path: '/tmp/guide.md' }
+      ],
+      style: {},
+      setAttribute: vi.fn(),
+      remove: vi.fn(),
+      addEventListener: vi.fn((event: string, listener: () => void) => {
+        listeners.set(event, listener)
+      }),
+      click: vi.fn(() => {
+        listeners.get('change')?.()
+      })
+    }
+    const appendChild = vi.fn()
+    globalThis.document = {
+      createElement: vi.fn(() => input),
+      body: { appendChild }
+    } as unknown as Document
+
+    const { getPlatform } = await import('../../src/platform/eypcPlatform')
+
+    await expect(getPlatform().files.pickFavorites?.('file')).resolves.toEqual([
+      { kind: 'file', path: '/tmp/readme.md', name: 'readme.md', parentId: null, tags: [], color: '#F2994A' },
+      { kind: 'file', path: '/tmp/guide.md', name: 'guide.md', parentId: null, tags: [], color: '#F2994A' }
+    ])
+    expect(input.type).toBe('file')
+    expect(input.multiple).toBe(true)
+    expect(appendChild).toHaveBeenCalledWith(input)
+    expect(input.click).toHaveBeenCalled()
+    expect(input.remove).toHaveBeenCalled()
   })
 })

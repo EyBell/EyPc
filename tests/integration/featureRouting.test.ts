@@ -7,6 +7,7 @@ describe('uTools feature routing', () => {
     expect(routePluginFeature({ code: 'eypc-main' })).toEqual({ tab: 'ports', focusSearch: false })
     expect(routePluginFeature({ code: 'eypc-ports' })).toEqual({ tab: 'ports', focusSearch: true })
     expect(routePluginFeature({ code: 'eypc-favorites' })).toEqual({ tab: 'favorites', focusSearch: true })
+    expect(routePluginFeature({ code: 'eypc-favorites-quick' })).toEqual({ tab: 'favorites', focusSearch: true, favoriteQuick: true })
     expect(routePluginFeature({ code: 'eypc-settings' })).toEqual({ tab: 'settings', focusSearch: false })
     expect(routePluginFeature({ code: 'unknown' })).toEqual({ tab: 'ports', focusSearch: false })
   })
@@ -30,6 +31,11 @@ describe('uTools feature routing', () => {
     ]
 
     expect(routePluginFeature({ code: 'eypc-favorites' }, featureConfigs)).toEqual({
+      tab: 'settings',
+      focusSearch: false,
+      settingsMaintenanceSection: 'features'
+    })
+    expect(routePluginFeature({ code: 'eypc-favorites-quick' }, featureConfigs)).toEqual({
       tab: 'settings',
       focusSearch: false,
       settingsMaintenanceSection: 'features'

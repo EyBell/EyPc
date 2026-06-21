@@ -50,6 +50,8 @@ export interface FavoriteNode {
   sortOrder: number
   createdAt: number
   updatedAt: number
+  usageCount?: number
+  lastUsedAt?: number
 }
 
 export interface FavoriteTreeNode {
@@ -104,6 +106,7 @@ export interface AppState {
   portGroups: PortGroup[]
   portGroupFolders: PortGroupFolder[]
   collapsedPortGroupFolderIds: string[]
+  collapsedFavoriteGroupIds: string[]
   favorites: FavoriteNode[]
   settings: AppSettings
   updatedAt: number

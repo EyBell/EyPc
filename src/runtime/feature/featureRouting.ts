@@ -7,6 +7,7 @@ export interface PluginEnterPayload {
 export interface FeatureRoute {
   tab: AppTabId
   focusSearch: boolean
+  favoriteQuick?: boolean
   settingsMaintenanceSection?: 'features'
 }
 
@@ -27,6 +28,10 @@ export function routePluginFeature(payload: PluginEnterPayload | null | undefine
       return enabledRoute('ports', true, featureConfigs)
     case 'eypc-favorites':
       return enabledRoute('favorites', true, featureConfigs)
+    case 'eypc-favorites-quick':
+      return isFeatureEnabled('favorites', featureConfigs)
+        ? { tab: 'favorites', focusSearch: true, favoriteQuick: true }
+        : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features' }
     case 'eypc-settings':
       return { tab: 'settings', focusSearch: false }
     case 'eypc-main':

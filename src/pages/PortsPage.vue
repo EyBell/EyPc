@@ -286,6 +286,12 @@ function groupSearchStatus() {
             <span>{{ row.name }}</span>
           </span>
           <small>{{ row.childCount }} 个组</small>
+          <span class="group-actions">
+            <button type="button" @click.stop="focusGroupRow(row.target); emit('dispatch', 'ports.drawer.open')">
+              <span>更多</span>
+              <kbd>{{ commandLabel('ports.drawer.open', 'c-→') }}</kbd>
+            </button>
+          </span>
         </div>
         <template v-else>
           <div class="group-row-line group-item-line">
