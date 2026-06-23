@@ -6,7 +6,7 @@ import { inferFavoriteNameFromPath } from '../domain/favorites'
 import type { AppRuntimeSnapshot, FavoriteDraft, FavoritePickReviewItem } from '../runtime/appRuntime'
 import type { FavoriteKind, FavoriteNode } from '../domain/types'
 
-const props = defineProps<{ snapshot: AppRuntimeSnapshot }>()
+const props = defineProps<{ snapshot: AppRuntimeSnapshot; showShortcutHints?: boolean }>()
 const emit = defineEmits<{
   search: [value: string]
   groupSearch: [value: string]
@@ -30,6 +30,14 @@ function selectedParentId() {
 
 function commandLabel(commandId: string, fallback: string) {
   return props.snapshot.commandShortcutLabels[commandId] || fallback
+}
+
+function ctrlCommandLabel(commandId: string, fallback: string) {
+  if (!props.showShortcutHints) return ''
+  return (props.snapshot.commandShortcutLabels[commandId] || fallback)
+    .split(' / ')
+    .filter((label) => label.startsWith('c-'))
+    .join(' / ')
 }
 
 function kindLabel(kind: FavoriteKind) {
@@ -152,6 +160,7 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
           role="favorite-group-search"
           placeholder="搜索容器"
           :status="`${props.snapshot.favoriteContainerRows.length} 节点`"
+          :shortcut-hint="ctrlCommandLabel('favorites.groupSearch.focus', 'c-s-f')"
           @focus="emit('dispatch', 'favorites.groupSearch.focus')"
           @update:model-value="emit('groupSearch', $event)"
         />
@@ -197,6 +206,7 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
           role="favorite-search"
           placeholder="搜索名称、路径、标签"
           :status="`${virtualRows().length} 收藏`"
+          :shortcut-hint="ctrlCommandLabel('favorites.search.focus', 'c-f')"
           @focus="emit('dispatch', 'favorites.search.focus')"
           @update:model-value="emit('search', $event)"
         />

@@ -69,4 +69,21 @@ describe('port search shortcut hints', () => {
     expect(css).not.toMatch(/\.top-tabs \{[^}]*background:\s*#101820;/s)
     expect(css).not.toMatch(/\.port-detail-drawer,\n\.port-action-drawer \{[^}]*background:\s*#101820;/s)
   })
+
+  it('shows Ctrl-based shortcuts for favorite search boxes with defaults', () => {
+    const app = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
+    const favoritesPage = readFileSync(resolve(process.cwd(), 'src/pages/FavoritesPage.vue'), 'utf8')
+    const quickFavoritesPage = readFileSync(resolve(process.cwd(), 'src/pages/QuickFavoritesPage.vue'), 'utf8')
+
+    expect(app).toMatch(/<QuickFavoritesPage[\s\S]*:show-shortcut-hints="shortcutHints"/)
+    expect(app).toMatch(/<FavoritesPage[\s\S]*:show-shortcut-hints="shortcutHints"/)
+    expect(favoritesPage).toContain('showShortcutHints?: boolean')
+    expect(favoritesPage).toContain("ctrlCommandLabel('favorites.search.focus', 'c-f')")
+    expect(favoritesPage).toContain("ctrlCommandLabel('favorites.groupSearch.focus', 'c-s-f')")
+    expect(favoritesPage).toContain(':shortcut-hint="ctrlCommandLabel(\'favorites.search.focus\', \'c-f\')"')
+    expect(favoritesPage).toContain(':shortcut-hint="ctrlCommandLabel(\'favorites.groupSearch.focus\', \'c-s-f\')"')
+    expect(quickFavoritesPage).toContain('showShortcutHints?: boolean')
+    expect(quickFavoritesPage).toContain("ctrlCommandLabel('favorites.search.focus', 'c-f')")
+    expect(quickFavoritesPage).toContain(':shortcut-hint="ctrlCommandLabel(\'favorites.search.focus\', \'c-f\')"')
+  })
 })

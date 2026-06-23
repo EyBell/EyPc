@@ -21,12 +21,16 @@ Upgrade the existing favorites MVP into a keyboard-first quick-open favorites lo
 - Platform bridge exposes `files.pickFavorites(kind)` and `files.listDirectory(path)` with browser-safe fallback in [../../../src/platform/eypcPlatform.ts](../../../src/platform/eypcPlatform.ts#L1); preload maps split uTools/Electron multi-selection dialogs and non-recursive `fs.readdir(..., { withFileTypes: true })` directory reads in [../../../preload/index.js](../../../preload/index.js#L1).
 - uTools feature routing supports `eypc-favorites-quick` through [../../../public/plugin.json](../../../public/plugin.json#L1) and [../../../src/runtime/feature/featureRouting.ts](../../../src/runtime/feature/featureRouting.ts#L1).
 - Preload broadcasts repeated `onPluginEnter` payloads for the single-instance plugin through [../../../preload/index.js](../../../preload/index.js#L1).
+- macOS favorite open/reveal must wait for real platform results: [../../../preload/index.js](../../../preload/index.js#L210) uses `/usr/bin/open` and `/usr/bin/open -R`, falls back from unsupported default open to Finder reveal, and falls back to uTools shell APIs only after native reveal fails.
+- The uTools runtime package keeps manifest `preload.js`, but ships a local CommonJS package scope through [../../../public/package.json](../../../public/package.json#L1) because Electron requires preload scripts through CommonJS while the root project package is ESM.
+- Favorite command search hints follow the shared compact hint contract: [../../../src/App.vue](../../../src/App.vue#L177) passes shortcut hint state into full and quick favorite pages; target search shows `c-f`, container search shows `c-s-f`, and quick search shows `c-f` through [../../../src/pages/FavoritesPage.vue](../../../src/pages/FavoritesPage.vue#L35) and [../../../src/pages/QuickFavoritesPage.vue](../../../src/pages/QuickFavoritesPage.vue#L12).
 
 ## Safety
 
 - Removing a favorite never deletes disk files or folders.
 - Normal removal opens confirmation; force removal deletes only EyPc metadata.
 - Opening, locating, and copying paths remain platform-bridge calls, not direct UI shell calls.
+- uTools preload packaging must be validated after build so `dist/plugin.json`, `dist/package.json`, and `dist/preload.js` describe the same CommonJS runtime.
 - Quick favorite mode only opens, locates, copies, searches, clears, and hides; it does not expose add, edit, rename, or remove commands.
 - Pick review is transient runtime state only; canceling or closing it must not mutate `AppState` or uTools storage.
 - Real directory browsing reads only the selected folder's immediate children, never recursively scans, and never adds rows to favorites unless the user explicitly runs the add command.

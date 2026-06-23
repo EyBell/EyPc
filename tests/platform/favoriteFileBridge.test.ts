@@ -42,6 +42,28 @@ describe('favorite file bridge source', () => {
     expect(preload).toContain('listDirectory: listFavoriteDirectory')
   })
 
+  it('packages the uTools preload bridge in a CommonJS package scope', () => {
+    const packageJson = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')) as { type?: string }
+    const pluginJson = JSON.parse(readFileSync(resolve(process.cwd(), 'public/plugin.json'), 'utf8')) as { preload?: string }
+    const publicPackageJson = JSON.parse(readFileSync(resolve(process.cwd(), 'public/package.json'), 'utf8')) as { type?: string }
+    const prepareScript = readFileSync(resolve(process.cwd(), 'scripts/prepare-utools-runtime.mjs'), 'utf8')
+    const validateScript = readFileSync(resolve(process.cwd(), 'scripts/validate-utools-runtime.mjs'), 'utf8')
+
+    expect(packageJson.type).toBe('module')
+    expect(pluginJson.preload).toBe('preload.js')
+    expect(publicPackageJson.type).toBe('commonjs')
+    expect(prepareScript).toContain("const publicPackageJson = resolve(root, 'public/package.json')")
+    expect(prepareScript).toContain("const distPackageJson = resolve(distDir, 'package.json')")
+    expect(prepareScript).toContain("const pluginSource = resolve(root, 'public/plugin.json')")
+    expect(prepareScript).toContain("const distPlugin = resolve(distDir, 'plugin.json')")
+    expect(prepareScript).toContain('copyFileSync(pluginSource, distPlugin)')
+    expect(prepareScript).toContain("const publicPreload = resolve(root, 'public/preload.js')")
+    expect(prepareScript).toContain("const distPreload = resolve(distDir, 'preload.js')")
+    expect(validateScript).toContain("['index.html', 'plugin.json', 'package.json', 'preload.js', 'logo.svg']")
+    expect(validateScript).toContain("readFileSync(resolve(distDir, 'preload.js'), 'utf8')")
+    expect(validateScript).toContain("dist package.json type must be commonjs")
+  })
+
   it('opens and reveals macOS favorites through the native open command', async () => {
     const calls: Array<{ command: string; args: string[] }> = []
     const window = loadPreload('darwin', (command, args, _options, callback) => {

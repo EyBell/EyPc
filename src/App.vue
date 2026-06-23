@@ -177,6 +177,7 @@ onUnmounted(() => {
         <QuickFavoritesPage
           v-if="snapshot.favoriteQuickMode"
           :snapshot="snapshot"
+          :show-shortcut-hints="shortcutHints"
           @search="runtime.setFavoriteSearch"
           @focus="runtime.focusFavorite"
           @dispatch="runtime.dispatch"
@@ -184,6 +185,7 @@ onUnmounted(() => {
         <FavoritesPage
           v-else
           :snapshot="snapshot"
+          :show-shortcut-hints="shortcutHints"
           @search="runtime.setFavoriteSearch"
           @group-search="runtime.setFavoriteGroupSearch"
           @focus="runtime.focusFavorite"

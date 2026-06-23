@@ -20,7 +20,7 @@ function assertRelativeFile(pluginJson, field) {
   assert(existsSync(resolve(distDir, value)), `plugin.json ${field} target is missing: ${value}`)
 }
 
-for (const file of ['index.html', 'plugin.json', 'preload.js', 'logo.svg']) {
+for (const file of ['index.html', 'plugin.json', 'package.json', 'preload.js', 'logo.svg']) {
   assert(existsSync(resolve(distDir, file)), `dist runtime file is missing: ${file}`)
 }
 
@@ -28,6 +28,8 @@ const indexHtml = readFileSync(resolve(distDir, 'index.html'), 'utf8')
 assert(!/\b(?:src|href)="\/assets\//.test(indexHtml), 'dist index.html must use relative asset paths for uTools packages')
 
 const pluginJson = readJson('plugin.json')
+const distPackageJson = readJson('package.json')
+assert(distPackageJson.type === 'commonjs', 'dist package.json type must be commonjs')
 assertRelativeFile(pluginJson, 'main')
 assertRelativeFile(pluginJson, 'logo')
 assertRelativeFile(pluginJson, 'preload')

@@ -2,12 +2,20 @@
 import SearchSuggestBox from '../components/SearchSuggestBox.vue'
 import type { AppRuntimeSnapshot } from '../runtime/appRuntime'
 
-const props = defineProps<{ snapshot: AppRuntimeSnapshot }>()
+const props = defineProps<{ snapshot: AppRuntimeSnapshot; showShortcutHints?: boolean }>()
 const emit = defineEmits<{
   search: [value: string]
   focus: [id: string]
   dispatch: [actionId: string, args?: Record<string, unknown>]
 }>()
+
+function ctrlCommandLabel(commandId: string, fallback: string) {
+  if (!props.showShortcutHints) return ''
+  return (props.snapshot.commandShortcutLabels[commandId] || fallback)
+    .split(' / ')
+    .filter((label) => label.startsWith('c-'))
+    .join(' / ')
+}
 </script>
 
 <template>
@@ -17,6 +25,7 @@ const emit = defineEmits<{
       role="favorite-search"
       placeholder="搜索文件或文件夹"
       :status="`${props.snapshot.favoriteItemRows.length} 项`"
+      :shortcut-hint="ctrlCommandLabel('favorites.search.focus', 'c-f')"
       @focus="emit('dispatch', 'favorites.search.focus')"
       @update:model-value="emit('search', $event)"
     />

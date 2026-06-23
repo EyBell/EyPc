@@ -6,7 +6,7 @@ Tool: codex
 
 - `pnpm run test`
   - Result before implementation: fail as expected after adding tests; missing favorites domain/runtime/keybinding/routing capabilities.
-  - Latest result: pass, 26 test files and 195 tests.
+  - Latest result: pass, 26 test files and 197 tests.
 - `pnpm run typecheck`
   - Latest result: pass.
 - `pnpm run build`
@@ -32,9 +32,16 @@ Tool: codex
   - macOS unsupported-file fallback command: `pnpm exec vitest run tests/platform/favoriteFileBridge.test.ts -t "reveals macOS files|falls back to uTools reveal"`.
     Result: pass after RED/GREEN. The tests first failed because [preload/index.js](../../../preload/index.js#L210) stopped after a failed default open or failed native reveal; after the fix, unsupported file open falls back to Finder reveal and native reveal failure falls back to the uTools reveal API.
   - Final favorite bridge/runtime targeted command: `pnpm exec vitest run tests/platform/favoriteFileBridge.test.ts tests/runtime/action.test.ts`.
-    Result: pass, 2 test files and 71 tests.
+    Result: pass, 2 test files and 72 tests.
+  - uTools preload CommonJS packaging command: `pnpm exec vitest run tests/platform/favoriteFileBridge.test.ts -t "packages the uTools preload bridge"`.
+    Result: pass after RED/GREEN. The test first failed because [public/package.json](../../../public/package.json#L1) was missing and [scripts/prepare-utools-runtime.mjs](../../../scripts/prepare-utools-runtime.mjs#L1) did not sync [public/plugin.json](../../../public/plugin.json#L1) into `dist`; after the fix, uTools loads `preload.js` inside a local CommonJS package scope.
+  - uTools preload CommonJS smoke: `node` read `dist/plugin.json` and `dist/package.json`, then required `dist/preload.js` with a minimal `window` stub.
+    Result: pass; `dist/plugin.json` reports `preload=preload.js`, `dist/package.json` reports `type=commonjs`, and `window.eypcPlatform.files.open` is a function.
+  - Favorite search shortcut hint command: `pnpm exec vitest run tests/ui/searchShortcutHints.test.ts -t "favorite search boxes"`.
+    Result: pass after RED/GREEN. The test first failed because [../../../src/App.vue](../../../src/App.vue#L1) did not pass shortcut hint state into the favorites pages; after the fix, [../../../src/pages/FavoritesPage.vue](../../../src/pages/FavoritesPage.vue#L1) shows `c-f` for target search and `c-s-f` for container search, while [../../../src/pages/QuickFavoritesPage.vue](../../../src/pages/QuickFavoritesPage.vue#L1) shows `c-f` for quick search.
+  - syncDoc整理: updated the current file-favorites truth in [01-spec.md](01-spec.md#L1), project status in [../PROJECT_STATUS.md](../PROJECT_STATUS.md#L1), durable architecture in [../../knowledge/ARCHITECTURE.md](../../knowledge/ARCHITECTURE.md#L1), technical memory in [../../knowledge/technical-details.md](../../knowledge/technical-details.md#L1), error memory in [../../knowledge/error-memory.md](../../knowledge/error-memory.md#L1), and documentation routing in [../../rules/documentation.md](../../rules/documentation.md#L1).
 - Code link audit
-  - Latest result: pass for this task directory, [../PROJECT_STATUS.md](../PROJECT_STATUS.md#L1), and [../../knowledge/ARCHITECTURE.md](../../knowledge/ARCHITECTURE.md#L1).
+  - Latest result: pass for [01-spec.md](01-spec.md#L1), [04-verify.md](04-verify.md#L1), [../PROJECT_STATUS.md](../PROJECT_STATUS.md#L1), [../../knowledge/ARCHITECTURE.md](../../knowledge/ARCHITECTURE.md#L1), [../../knowledge/technical-details.md](../../knowledge/technical-details.md#L1), [../../knowledge/error-memory.md](../../knowledge/error-memory.md#L1), and [../../rules/documentation.md](../../rules/documentation.md#L1).
 
 ## UI Smoke
 
@@ -63,6 +70,7 @@ Tool: codex
 - Drag a left-tree node over another node's upper, middle, and lower row zones; confirm the drop indicator maps to move above, move into, and move below respectively.
 - Select multiple real directory rows in a folder container; confirm add writes only EyPc favorite metadata under the current virtual parent.
 - Use a file favorite as a virtual parent; confirm the left tree expands it and the right side shows file details plus virtual children without reading file contents.
+- Hold the shortcut modifier in the full favorites tab; confirm target search shows `c-f`, container search shows `c-s-f`, and quick favorites search shows `c-f`.
 
 ## Implementation Review
 
