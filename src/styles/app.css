@@ -802,6 +802,10 @@ textarea {
   height: 100%;
 }
 
+.quick-favorite-row {
+  grid-template-columns: 16px 44px minmax(120px, 0.8fr) minmax(180px, 1.4fr) auto;
+}
+
 .favorite-groups-panel,
 .favorite-items-panel {
   min-height: 0;

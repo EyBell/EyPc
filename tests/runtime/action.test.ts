@@ -1272,7 +1272,7 @@ describe('app runtime', () => {
   })
 
   it('opens quick favorite results and hides the app after quick actions', async () => {
-    const { opened, copied, getHideCount } = installPlatform()
+    const { opened, copied, revealed, getHideCount } = installPlatform()
     const state = createInitialState(100)
     state.settings.featureConfigs = [
       { id: 'ports', enabled: true, sortOrder: 1 },
@@ -1301,6 +1301,11 @@ describe('app runtime', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(copied).toEqual(['/work/app'])
     expect(getHideCount()).toBe(2)
+
+    runtime.dispatch('favorites.reveal', { favoriteId: 'f2' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(revealed).toEqual(['/work/readme.md'])
+    expect(getHideCount()).toBe(3)
   })
 
   it('enters pick review before saving a selected file favorite', async () => {

@@ -6,7 +6,7 @@ Tool: codex
 
 - `pnpm run test`
   - Result before implementation: fail as expected after adding tests; missing favorites domain/runtime/keybinding/routing capabilities.
-  - Latest result: pass, 22 test files and 167 tests.
+  - Latest result: pass, 24 test files and 175 tests.
 - `pnpm run typecheck`
   - Latest result: pass.
 - `pnpm run build`
@@ -25,6 +25,8 @@ Tool: codex
     Result: pass, 2 test files and 60 tests.
   - Row-local action targeted command: `pnpm vitest run tests/ui/favoritesContainerWorkbench.test.ts tests/ui/portGroupContextMenu.test.ts`.
     Result: pass, 2 test files and 6 tests.
+  - Quick favorite row-action targeted commands: `pnpm exec vitest run tests/ui/favoritesInitialization.test.ts` and `pnpm exec vitest run tests/runtime/action.test.ts -t "opens quick favorite results"`.
+    Result: pass. The UI test first failed on missing `quick-favorite-row-actions`, then passed after adding row-local open/reveal/copy actions with explicit `favoriteId`; runtime coverage verifies quick reveal hides the app after success.
 - Code link audit
   - Latest result: pass for this task directory, [../PROJECT_STATUS.md](../PROJECT_STATUS.md#L1), and [../../knowledge/ARCHITECTURE.md](../../knowledge/ARCHITECTURE.md#L1).
 
@@ -34,7 +36,7 @@ Tool: codex
   - Result before review-layer redesign: pass for full favorites tab rendering with enabled `favorites` feature, virtual group tree, target list, action toolbar, and manual add panel.
   - Result: pass for target search filtering; `README` reduced the visible item list from 2 rows to 1 row.
 - Quick entry visual smoke:
-  - Result: not completed in browser. The in-app browser MCP failed before setup with a tool metadata error, and the Playwright CLI init-script route simulation failed to parse. Automated route/runtime coverage verifies `eypc-favorites-quick`, quick mode, quick open, quick copy, and hide behavior.
+  - Result: not completed in browser. The in-app browser MCP failed before setup with a tool metadata error, and the Playwright CLI init-script route simulation failed to parse. Automated route/runtime coverage verifies `eypc-favorites-quick`, quick mode, row-local quick open/reveal/copy dispatch, quick reveal/copy/open behavior, and hide behavior.
 
 ## Manual Checklist
 
@@ -45,6 +47,7 @@ Tool: codex
 - Click the target edit-layer `文件` and `文件夹` path pickers; confirm the OS picker fills path/kind/name in the draft without adding metadata before Save.
 - Add the same `kind + path` twice; confirm the second add focuses the existing target and does not create a duplicate row.
 - Use quick entry behavior for `eypc-favorites-quick`: search, `Enter` open, `Ctrl+C` copy path, `Ctrl+Enter` reveal.
+- Hover or focus a quick-entry saved favorite row; confirm the row-local `开` / `定` / `复` controls open, locate, and copy that exact file or folder.
 - Confirm quick entry ignores add/edit/remove shortcuts such as `Ctrl+N`, `Ctrl+O`, `Ctrl+Shift+O`, `F2`, and `Delete`.
 - Confirm normal remove shows metadata-only confirmation and force remove does not touch disk files.
 - Right-click a left-tree node, virtual child row, and real directory row; confirm the favorite action drawer opens with target-specific actions.
