@@ -2429,6 +2429,592 @@ kbd {
   flex-wrap: wrap;
 }
 
+.mqtt-workbench-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(200px, 250px) minmax(170px, 220px) minmax(0, 1fr);
+  gap: 6px;
+  min-height: 0;
+  height: 100%;
+  padding: 4px;
+  background: #eff7f9;
+}
+
+.mqtt-workbench-grid.mqtt-connections-collapsed {
+  grid-template-columns: 28px minmax(170px, 220px) minmax(0, 1fr);
+}
+
+.mqtt-workbench-grid.mqtt-subscriptions-collapsed {
+  grid-template-columns: minmax(200px, 250px) 34px minmax(0, 1fr);
+}
+
+.mqtt-workbench-grid.mqtt-connections-collapsed.mqtt-subscriptions-collapsed {
+  grid-template-columns: 28px 34px minmax(0, 1fr);
+}
+
+.mqtt-connection-rail,
+.mqtt-subscription-rail,
+.mqtt-message-workspace {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid #c8d8e1;
+  border-radius: 8px;
+  background: #fbfefd;
+}
+
+.mqtt-connection-rail,
+.mqtt-subscription-rail {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  overflow: hidden;
+  padding: 8px;
+}
+
+.mqtt-message-workspace {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border-color: #00a676;
+  box-shadow: inset 0 0 0 1px rgba(0, 166, 118, 0.12);
+}
+
+.mqtt-rail-head,
+.mqtt-rail-title,
+.mqtt-workspace-toolbar,
+.mqtt-panel-title,
+.mqtt-config-editor header,
+.mqtt-publish-row,
+.mqtt-send-actions,
+.mqtt-publish-records header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mqtt-rail-head {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.mqtt-rail-title,
+.mqtt-workspace-toolbar,
+.mqtt-panel-title,
+.mqtt-config-editor header,
+.mqtt-publish-records header {
+  justify-content: space-between;
+}
+
+.mqtt-rail-title span,
+.mqtt-panel-title span,
+.mqtt-workspace-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mqtt-rail-title small,
+.mqtt-panel-title small,
+.mqtt-workspace-title small,
+.mqtt-config-card small,
+.mqtt-message-meta small,
+.mqtt-publish-record-row small {
+  overflow: hidden;
+  color: #6f8390;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mqtt-rail-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.mqtt-panel-toggle {
+  flex: 0 0 auto;
+}
+
+.mqtt-rail-trigger {
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  color: #008a70;
+  writing-mode: vertical-rl;
+}
+
+.mqtt-config-list,
+.mqtt-message-list,
+.mqtt-log-list,
+.mqtt-publish-records {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.mqtt-config-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #d6e5ea;
+  border-radius: 7px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.mqtt-config-card.active {
+  border-color: #8ce8c5;
+  background: #e4fbf2;
+}
+
+.mqtt-config-card.focused {
+  box-shadow: 0 0 0 2px rgba(47, 128, 237, 0.16) inset;
+}
+
+.mqtt-config-card header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.mqtt-config-card header span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mqtt-config-card strong,
+.mqtt-subscription-row strong,
+.mqtt-message-meta strong,
+.mqtt-publish-record-row strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mqtt-config-card em,
+.mqtt-subscription-row em {
+  color: #6f8390;
+  font-size: 12px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.mqtt-config-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.mqtt-config-actions button,
+.mqtt-filter-buttons button,
+.mqtt-send-actions button,
+.mqtt-publish-record-row button,
+.mqtt-log-actions button {
+  min-height: 28px;
+  padding: 4px 7px;
+  font-size: 12px;
+}
+
+.mqtt-subscription-rail {
+  background: #f8fcfb;
+}
+
+.mqtt-subscription-row {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #dce8ed;
+  border-left: 4px solid #b8d9b0;
+  border-radius: 7px;
+  background: #fff;
+  padding: 7px;
+}
+
+.mqtt-subscription-row.active {
+  border-color: #80d7a8;
+  border-left-color: #00a676;
+  background: #eefbf3;
+}
+
+.mqtt-subscription-main,
+.mqtt-subscription-all {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+}
+
+.mqtt-subscription-main span,
+.mqtt-subscription-all span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mqtt-subscription-row input {
+  min-height: 28px;
+  padding: 4px 7px;
+  font-size: 12px;
+}
+
+.mqtt-workspace-toolbar {
+  min-height: 48px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #d7e3e9;
+  background: #f2f8fa;
+}
+
+.mqtt-status {
+  border: 1px solid #d9e2e8;
+  border-radius: 999px;
+  padding: 3px 9px;
+  color: #4d6675;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.mqtt-status-connected {
+  border-color: #9bdfb1;
+  color: #14783d;
+  background: #edfbf2;
+}
+
+.mqtt-status-connecting,
+.mqtt-status-reconnecting {
+  border-color: #b6d6f6;
+  color: #155fb3;
+  background: #eff7ff;
+}
+
+.mqtt-status-error {
+  border-color: #f0c2c2;
+  color: #b42318;
+  background: #fff4f4;
+}
+
+.mqtt-filter-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-left: auto;
+}
+
+.mqtt-filter-buttons button.active {
+  border-color: #00a676;
+  background: #e8fbf3;
+  color: #007a61;
+}
+
+.mqtt-workspace-body {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(220px, 0.72fr);
+  gap: 8px;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px;
+}
+
+.mqtt-message-workspace.mqtt-workspace-split .mqtt-workspace-body {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.85fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.mqtt-receive-panel,
+.mqtt-send-panel,
+.mqtt-config-editor {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #dbe7ec;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.mqtt-receive-panel,
+.mqtt-send-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.mqtt-send-panel {
+  grid-template-rows: auto auto minmax(96px, 1fr) auto auto;
+}
+
+.mqtt-panel-title {
+  padding: 8px 10px;
+  border-bottom: 1px solid #edf2f4;
+}
+
+.mqtt-message-list {
+  padding: 8px;
+}
+
+.mqtt-message-row {
+  display: grid;
+  grid-template-columns: minmax(124px, 0.72fr) minmax(128px, 0.78fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #edf1f4;
+  border-left: 4px solid #9aa8b2;
+  border-radius: 7px;
+  padding: 7px 8px;
+  background: #fff;
+}
+
+.mqtt-message-row.incoming {
+  border-left-color: #2f80ed;
+}
+
+.mqtt-message-row.outgoing {
+  border-left-color: #00a676;
+}
+
+.mqtt-message-row.focused,
+.mqtt-log-row.focused,
+.mqtt-publish-record-row.focused {
+  border-color: #6aa6e8;
+  box-shadow: 0 0 0 1px #6aa6e8 inset;
+}
+
+.mqtt-message-meta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mqtt-message-row code,
+.mqtt-message-row pre,
+.mqtt-publish-record-row code,
+.mqtt-log-row code {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mqtt-message-row pre,
+.mqtt-publish-record-row code,
+.mqtt-log-row code {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.mqtt-publish-row {
+  flex-wrap: wrap;
+  padding: 8px 10px 0;
+  justify-content: start;
+}
+
+.mqtt-publish-row input {
+  flex: 1 1 220px;
+}
+
+.mqtt-publish-row select {
+  flex: 0 0 120px;
+}
+
+.mqtt-payload-input {
+  width: calc(100% - 20px);
+  min-height: 0;
+  margin: 8px 10px;
+  resize: none;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.mqtt-send-actions {
+  justify-content: flex-end;
+  padding: 0 10px 8px;
+}
+
+.mqtt-publish-records {
+  max-height: 260px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid #edf2f4;
+  background: #fbfdfd;
+}
+
+.mqtt-publish-record-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #e1ebef;
+  border-radius: 7px;
+  background: #fff;
+  padding: 7px;
+}
+
+.mqtt-publish-record-row > span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+}
+
+.mqtt-config-editor {
+  overflow: auto;
+  margin: 10px;
+  padding: 10px;
+}
+
+.mqtt-editor-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.mqtt-config-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mqtt-config-grid label,
+.mqtt-publish-row label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: #4d6675;
+  font-size: 12px;
+}
+
+.mqtt-config-wide {
+  grid-column: span 3;
+}
+
+.mqtt-endpoint-row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.mqtt-endpoint-preview {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  border: 1px solid #d8e3ea;
+  border-radius: 6px;
+  background: #f8fbfc;
+  padding: 7px 9px;
+  color: #4d6675;
+}
+
+.mqtt-endpoint-preview code {
+  min-width: 0;
+  overflow: hidden;
+  color: #254252;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkbox-line {
+  display: flex !important;
+  grid-auto-flow: column;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  justify-content: start;
+}
+
+.mqtt-log-drawer {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 8px;
+  width: min(560px, 48vw);
+  max-width: calc(100vw - 36px);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid #c8d8e1;
+  background: #f9fdfd;
+  padding: 10px;
+  box-shadow: 18px 0 40px rgba(23, 32, 38, 0.14);
+}
+
+.mqtt-log-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mqtt-log-row {
+  display: grid;
+  grid-template-columns: 56px 64px minmax(96px, 0.75fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #edf1f4;
+  border-left: 4px solid #9aa8b2;
+  border-radius: 7px;
+  background: #fff;
+  padding: 7px 8px;
+  color: #254252;
+  cursor: pointer;
+}
+
+.mqtt-log-error {
+  border-left-color: #d92d20;
+}
+
+.mqtt-log-warn {
+  border-left-color: #f79009;
+}
+
+.mqtt-log-info {
+  border-left-color: #2f80ed;
+}
+
+.mqtt-log-row span {
+  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.mqtt-log-detail {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #dbe7ec;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+  color: #254252;
+}
+
+.mqtt-log-detail header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mqtt-log-detail dl {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px;
+  margin: 0;
+}
+
+.mqtt-log-detail dt {
+  color: #6c8290;
+}
+
+.mqtt-log-detail dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 900px) {
   .shortcut-strip {
     flex-wrap: wrap;
@@ -2472,5 +3058,43 @@ kbd {
 
   .shortcut-modal-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .mqtt-workbench-grid,
+  .mqtt-workbench-grid.mqtt-connections-collapsed,
+  .mqtt-workbench-grid.mqtt-subscriptions-collapsed,
+  .mqtt-workbench-grid.mqtt-connections-collapsed.mqtt-subscriptions-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-rows: auto;
+    overflow: auto;
+  }
+
+  .mqtt-connection-rail,
+  .mqtt-subscription-rail,
+  .mqtt-message-workspace {
+    min-height: 220px;
+  }
+
+  .mqtt-rail-trigger {
+    min-height: 34px;
+    writing-mode: horizontal-tb;
+  }
+
+  .mqtt-workspace-body,
+  .mqtt-message-workspace.mqtt-workspace-split .mqtt-workspace-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(240px, 1fr) minmax(240px, 1fr);
+  }
+
+  .mqtt-message-row,
+  .mqtt-log-row,
+  .mqtt-publish-record-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mqtt-log-drawer {
+    width: min(520px, calc(100vw - 24px));
   }
 }

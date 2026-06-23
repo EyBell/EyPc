@@ -15,8 +15,11 @@ describe('state domain', () => {
     expect(state.settings.featureConfigs).toEqual([
       { id: 'ports', enabled: true, sortOrder: 1 },
       { id: 'favorites', enabled: false, sortOrder: 2 },
-      { id: 'settings', enabled: true, sortOrder: 3 }
+      { id: 'mqtt', enabled: true, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
     ])
+    expect(state.settings.shortcutProfiles.mqtt.keybindingOverrides).toEqual([])
+    expect(state.mqtt.configs).toEqual([])
   })
 
   it('normalizes feature visibility configs and keeps settings enabled', () => {
@@ -35,7 +38,8 @@ describe('state domain', () => {
     expect(state.settings.featureConfigs).toEqual([
       { id: 'settings', enabled: true, sortOrder: 1 },
       { id: 'ports', enabled: false, sortOrder: 2 },
-      { id: 'favorites', enabled: false, sortOrder: 3 }
+      { id: 'mqtt', enabled: true, sortOrder: 3 },
+      { id: 'favorites', enabled: false, sortOrder: 4 }
     ])
   })
 

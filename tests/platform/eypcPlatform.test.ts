@@ -41,6 +41,56 @@ describe('browser fallback platform', () => {
     ])
   })
 
+  it('persists MQTT archive through a separate fallback storage key', async () => {
+    const store = new Map<string, string>()
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => { store.set(key, value) },
+        removeItem: (key: string) => { store.delete(key) }
+      },
+      configurable: true
+    })
+    globalThis.window = {} as Window & typeof globalThis
+
+    const { getPlatform } = await import('../../src/platform/eypcPlatform')
+    const platform = getPlatform()
+    expect(platform.storage.getMqttArchive()).toEqual({ version: 1, sessions: [], publishTemplates: [] })
+    platform.storage.setMqttArchive({ version: 1, sessions: [{ id: 's1', connectionId: 'c1', title: 'Session', startedAt: 1, messages: [] }], publishTemplates: [] })
+
+    expect(store.has('eypc/state/v1')).toBe(false)
+    expect(JSON.parse(store.get('eypc/mqtt/archive/v1') || '{}')).toMatchObject({
+      sessions: [{ id: 's1', connectionId: 'c1', title: 'Session' }]
+    })
+  })
+
+  it('persists MQTT secrets through a local-only fallback key', async () => {
+    const store = new Map<string, string>()
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => { store.set(key, value) },
+        removeItem: (key: string) => { store.delete(key) }
+      },
+      configurable: true
+    })
+    globalThis.window = {} as Window & typeof globalThis
+
+    const { getPlatform } = await import('../../src/platform/eypcPlatform')
+    const platform = getPlatform()
+    expect(platform.storage.getMqttSecrets()).toEqual({})
+
+    platform.storage.setMqttSecrets({ 'config-a': 'local-secret' })
+
+    expect(store.has('eypc/state/v1')).toBe(false)
+    expect(store.has('eypc/mqtt/archive/v1')).toBe(false)
+    expect(JSON.parse(store.get('eypc/mqtt/secrets-local/v1') || '{}')).toEqual({
+      version: 1,
+      secrets: { 'config-a': 'local-secret' }
+    })
+    expect(platform.storage.getMqttSecrets()).toEqual({ 'config-a': 'local-secret' })
+  })
+
   it('scans ports through the Vite dev API when uTools preload is unavailable', async () => {
     globalThis.window = {} as Window & typeof globalThis
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {

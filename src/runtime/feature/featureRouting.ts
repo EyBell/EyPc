@@ -12,6 +12,7 @@ export interface FeatureRoute {
 }
 
 function isFeatureEnabled(tab: AppTabId, configs?: FeatureConfig[]): boolean {
+  if (tab === 'settings') return true
   if (!configs) return true
   return configs.find((config) => config.id === tab)?.enabled !== false
 }
@@ -22,10 +23,17 @@ function enabledRoute(tab: AppTabId, focusSearch: boolean, configs?: FeatureConf
     : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features' }
 }
 
-export function routePluginFeature(payload: PluginEnterPayload | null | undefined, featureConfigs?: FeatureConfig[]): FeatureRoute {
+function restoreCurrentRoute(currentTab: AppTabId | null | undefined, featureConfigs?: FeatureConfig[]): FeatureRoute {
+  const tab = currentTab || 'ports'
+  return enabledRoute(tab, false, featureConfigs)
+}
+
+export function routePluginFeature(payload: PluginEnterPayload | null | undefined, featureConfigs?: FeatureConfig[], currentTab?: AppTabId | null): FeatureRoute {
   switch (payload?.code) {
     case 'eypc-ports':
       return enabledRoute('ports', true, featureConfigs)
+    case 'eypc-mqtt':
+      return enabledRoute('mqtt', true, featureConfigs)
     case 'eypc-favorites':
       return enabledRoute('favorites', true, featureConfigs)
     case 'eypc-favorites-quick':
@@ -35,7 +43,8 @@ export function routePluginFeature(payload: PluginEnterPayload | null | undefine
     case 'eypc-settings':
       return { tab: 'settings', focusSearch: false }
     case 'eypc-main':
+      return restoreCurrentRoute(currentTab, featureConfigs)
     default:
-      return { tab: 'ports', focusSearch: false }
+      return restoreCurrentRoute(currentTab, featureConfigs)
   }
 }

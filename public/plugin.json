@@ -24,6 +24,11 @@
       "cmds": ["端口进程", "端口清理", "kill port", "ports"]
     },
     {
+      "code": "eypc-mqtt",
+      "explain": "MQTT WebSocket 快连",
+      "cmds": ["MQTT", "mqtt websocket", "mqtt ws", "消息调试"]
+    },
+    {
       "code": "eypc-favorites",
       "explain": "文件夹和文件收藏",
       "cmds": ["文件收藏", "文件夹收藏", "favorites"]

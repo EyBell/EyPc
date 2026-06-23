@@ -4,7 +4,7 @@ import { computed } from 'vue'
 const props = defineProps<{
   modelValue: string
   placeholder: string
-  role: 'port-search' | 'port-group-search' | 'favorite-search' | 'favorite-group-search'
+  role: 'port-search' | 'port-group-search' | 'mqtt-search' | 'favorite-search' | 'favorite-group-search'
   error?: string | null
   status?: string
   shortcutHint?: string

@@ -1,9 +1,13 @@
 import { normalizeAppState } from '../domain/state'
-import type { AppState, FavoriteNode, KillRequest, KillResult, PortProcess } from '../domain/types'
+import { normalizeMqttArchiveState } from '../domain/mqtt'
+import type { AppState, FavoriteNode, KillRequest, KillResult, MqttArchiveState, PortProcess } from '../domain/types'
 
 export type PickedFavoriteKind = Exclude<FavoriteNode['kind'], 'group'>
 export type PickedFavorite = Pick<FavoriteNode, 'path' | 'name' | 'parentId' | 'tags' | 'color'> & { kind: PickedFavoriteKind }
+export type MqttSecretMap = Record<string, string>
 const STORAGE_KEY = 'eypc/state/v1'
+const MQTT_ARCHIVE_STORAGE_KEY = 'eypc/mqtt/archive/v1'
+const MQTT_SECRETS_LOCAL_STORAGE_KEY = 'eypc/mqtt/secrets-local/v1'
 
 export interface FavoriteDirectoryEntry {
   kind: Exclude<FavoriteNode['kind'], 'group'>
@@ -23,6 +27,10 @@ export interface EypcPlatformApi {
   storage: {
     getState(): AppState
     setState(state: AppState): boolean
+    getMqttArchive(): MqttArchiveState
+    setMqttArchive(archive: MqttArchiveState): boolean
+    getMqttSecrets(): MqttSecretMap
+    setMqttSecrets(secrets: MqttSecretMap): boolean
   }
   ports: {
     scan(): Promise<PortProcess[]>
@@ -52,7 +60,20 @@ declare global {
 
 const memory = {
   state: normalizeAppState(null),
+  mqttSecrets: {} as MqttSecretMap,
   enterPayload: null as { code?: string } | null
+}
+
+function normalizeMqttSecrets(value: unknown): MqttSecretMap {
+  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  const candidate = source.version === 1 && source.secrets && typeof source.secrets === 'object'
+    ? source.secrets as Record<string, unknown>
+    : source
+  return Object.fromEntries(
+    Object.entries(candidate)
+      .map(([key, secret]) => [key.trim(), secret] as const)
+      .filter((entry): entry is readonly [string, string] => Boolean(entry[0]) && typeof entry[1] === 'string' && entry[1].length > 0)
+  )
 }
 
 function readFallbackState(): AppState {
@@ -65,12 +86,55 @@ function readFallbackState(): AppState {
   return memory.state
 }
 
+function readFallbackMqttArchive(): MqttArchiveState {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(MQTT_ARCHIVE_STORAGE_KEY)
+      if (raw) return normalizeMqttArchiveState(JSON.parse(raw))
+    } catch {}
+  }
+  return normalizeMqttArchiveState(null)
+}
+
+function readFallbackMqttSecrets(): MqttSecretMap {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(MQTT_SECRETS_LOCAL_STORAGE_KEY)
+      if (raw) return normalizeMqttSecrets(JSON.parse(raw))
+    } catch {}
+  }
+  return { ...memory.mqttSecrets }
+}
+
 function writeFallbackState(state: AppState): boolean {
   const normalized = normalizeAppState(state)
   memory.state = normalized
   if (typeof localStorage !== 'undefined') {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized))
+      return true
+    } catch {}
+  }
+  return true
+}
+
+function writeFallbackMqttArchive(archive: MqttArchiveState): boolean {
+  const normalized = normalizeMqttArchiveState(archive)
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(MQTT_ARCHIVE_STORAGE_KEY, JSON.stringify(normalized))
+      return true
+    } catch {}
+  }
+  return true
+}
+
+function writeFallbackMqttSecrets(secrets: MqttSecretMap): boolean {
+  const normalized = normalizeMqttSecrets(secrets)
+  memory.mqttSecrets = normalized
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(MQTT_SECRETS_LOCAL_STORAGE_KEY, JSON.stringify({ version: 1, secrets: normalized }))
       return true
     } catch {}
   }
@@ -195,8 +259,17 @@ async function pickFavoritesViaBrowserInput(kind: PickedFavoriteKind): Promise<P
 export function getPlatform(): EypcPlatformApi {
   if (typeof window !== 'undefined' && window.eypcPlatform) {
     const hostFiles = window.eypcPlatform.files
+    const hostStorage = window.eypcPlatform.storage
     return {
       ...window.eypcPlatform,
+      storage: {
+        getState: hostStorage.getState || readFallbackState,
+        setState: hostStorage.setState || writeFallbackState,
+        getMqttArchive: hostStorage.getMqttArchive || readFallbackMqttArchive,
+        setMqttArchive: hostStorage.setMqttArchive || writeFallbackMqttArchive,
+        getMqttSecrets: hostStorage.getMqttSecrets || readFallbackMqttSecrets,
+        setMqttSecrets: hostStorage.setMqttSecrets || writeFallbackMqttSecrets
+      },
       files: {
         open: hostFiles.open || (async () => false),
         reveal: hostFiles.reveal || (async () => false),
@@ -214,7 +287,11 @@ export function getPlatform(): EypcPlatformApi {
   return {
     storage: {
       getState: readFallbackState,
-      setState: writeFallbackState
+      setState: writeFallbackState,
+      getMqttArchive: readFallbackMqttArchive,
+      setMqttArchive: writeFallbackMqttArchive,
+      getMqttSecrets: readFallbackMqttSecrets,
+      setMqttSecrets: writeFallbackMqttSecrets
     },
     ports: {
       scan: scanViaDevApi,

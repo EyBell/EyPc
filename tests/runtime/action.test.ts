@@ -48,7 +48,9 @@ describe('app runtime', () => {
     const platform = {
       storage: {
         getState: () => state,
-        setState: () => true
+        setState: () => true,
+        getMqttArchive: () => ({ version: 1 as const, sessions: [] }),
+        setMqttArchive: () => true
       },
       ports: {
         scan: async () => {
@@ -1059,8 +1061,9 @@ describe('app runtime', () => {
 
     expect(runtime.handleShortcut('Ctrl+2', false)).toBeNull()
     expect(runtime.snapshot().state.activeTab).toBe('ports')
-    expect(runtime.handleShortcut('Ctrl+Shift+2', false)).toBeNull()
-    expect(runtime.snapshot().state.activeTab).toBe('ports')
+    expect(runtime.handleShortcut('Ctrl+Shift+2', false)).toBe('tab.select.mqtt')
+    expect(runtime.snapshot().state.activeTab).toBe('mqtt')
+    runtime.setTab('ports')
     expect(runtime.handleShortcut('Ctrl+3', false)).toBeNull()
     expect(runtime.snapshot().state.activeTab).toBe('ports')
     expect(runtime.handleShortcut('Ctrl+Alt+S', false)).toBe('settings.open')
@@ -1101,19 +1104,23 @@ describe('app runtime', () => {
     }
     const runtime = createAppRuntime(state)
 
-    expect(runtime.snapshot().visibleFeatures.map((feature) => feature.id)).toEqual(['ports', 'settings'])
-    expect(runtime.handleShortcut('Ctrl+Shift+2', false)).toBeNull()
+    expect(runtime.snapshot().visibleFeatures.map((feature) => feature.id)).toEqual(['ports', 'mqtt', 'settings'])
+    expect(runtime.handleShortcut('Ctrl+Shift+2', false)).toBe('tab.select.mqtt')
+    expect(runtime.snapshot().state.activeTab).toBe('mqtt')
+    runtime.setTab('ports')
 
     runtime.saveFeatureConfigs([
       { id: 'settings', enabled: false, sortOrder: 1 },
       { id: 'favorites', enabled: true, sortOrder: 2 },
-      { id: 'ports', enabled: true, sortOrder: 3 }
+      { id: 'mqtt', enabled: true, sortOrder: 3 },
+      { id: 'ports', enabled: true, sortOrder: 4 }
     ])
 
     expect(runtime.snapshot().state.settings.featureConfigs).toEqual([
       { id: 'settings', enabled: true, sortOrder: 1 },
       { id: 'favorites', enabled: true, sortOrder: 2 },
-      { id: 'ports', enabled: true, sortOrder: 3 }
+      { id: 'mqtt', enabled: true, sortOrder: 3 },
+      { id: 'ports', enabled: true, sortOrder: 4 }
     ])
     expect(runtime.snapshot().visibleFeatures.map((feature) => ({
       id: feature.id,
@@ -1122,21 +1129,333 @@ describe('app runtime', () => {
     }))).toEqual([
       { id: 'settings', shortcutId: 'Ctrl+Alt+S', commandId: 'settings.open' },
       { id: 'favorites', shortcutId: 'Ctrl+Shift+1', commandId: 'tab.select.favorites' },
-      { id: 'ports', shortcutId: 'Ctrl+Shift+2', commandId: 'tab.select.ports' }
+      { id: 'mqtt', shortcutId: 'Ctrl+Shift+2', commandId: 'tab.select.mqtt' },
+      { id: 'ports', shortcutId: 'Ctrl+Shift+3', commandId: 'tab.select.ports' }
     ])
     expect(runtime.handleShortcut('Ctrl+Shift+1', false)).toBe('tab.select.favorites')
     expect(runtime.snapshot().state.activeTab).toBe('favorites')
-    expect(runtime.handleShortcut('Ctrl+Shift+2', false)).toBe('tab.select.ports')
+    expect(runtime.handleShortcut('Ctrl+Shift+2', false)).toBe('tab.select.mqtt')
+    expect(runtime.snapshot().state.activeTab).toBe('mqtt')
+    expect(runtime.handleShortcut('Ctrl+Shift+3', false)).toBe('tab.select.ports')
     expect(runtime.snapshot().state.activeTab).toBe('ports')
     expect(savedState).toMatchObject({
       settings: {
         featureConfigs: [
           { id: 'settings', enabled: true, sortOrder: 1 },
           { id: 'favorites', enabled: true, sortOrder: 2 },
-          { id: 'ports', enabled: true, sortOrder: 3 }
+          { id: 'mqtt', enabled: true, sortOrder: 3 },
+          { id: 'ports', enabled: true, sortOrder: 4 }
         ]
       }
     })
+  })
+
+  it('keeps MQTT isolated until the feature is enabled and loaded', async () => {
+    const { state, platform } = installPlatform()
+    const storageCalls: string[] = []
+    platform.storage.getMqttArchive = () => {
+      storageCalls.push('read')
+      return { version: 1, sessions: [] }
+    }
+    platform.storage.setMqttArchive = () => {
+      storageCalls.push('write')
+      return true
+    }
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: false, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    expect(runtime.snapshot().state.activeTab).toBe('settings')
+    expect(runtime.snapshot().mqttArchiveLoaded).toBe(false)
+    expect(storageCalls).toEqual([])
+
+    runtime.saveFeatureConfigs([
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ])
+    runtime.setTab('mqtt')
+    expect(runtime.snapshot().state.activeTab).toBe('mqtt')
+    expect(runtime.snapshot().mqttArchiveLoaded).toBe(true)
+    expect(storageCalls).toEqual(['read'])
+  })
+
+  it('manages MQTT configs and keeps unsynced message records in memory only', () => {
+    const { state, platform } = installPlatform()
+    const archiveWrites: unknown[] = []
+    platform.storage.getMqttArchive = () => ({ version: 1, sessions: [] })
+    platform.storage.setMqttArchive = (archive: unknown) => {
+      archiveWrites.push(archive)
+      return true
+    }
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    expect(runtime.dispatch('mqtt.config.create').handled).toBe(true)
+    runtime.updateMqttConfigDraft({
+      name: 'Dev Broker',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-a',
+      username: 'user',
+      password: 'secret',
+      subscriptionsText: 'demo/#',
+      publishTopic: 'demo/out',
+      syncRecords: false
+    })
+    expect(runtime.dispatch('mqtt.config.save').handled).toBe(true)
+    expect(runtime.snapshot().state.mqtt.configs[0]).toMatchObject({
+      name: 'Dev Broker',
+      url: 'ws://broker.example:8083/',
+      subscriptions: ['demo/#'],
+      publishTopic: 'demo/out',
+      syncRecords: false
+    })
+    expect(JSON.stringify(runtime.snapshot().state.mqtt)).not.toContain('secret')
+
+    runtime.appendMqttMessageRecord({
+      direction: 'incoming',
+      topic: 'demo/in',
+      payload: 'hello',
+      qos: 0,
+      retain: false
+    })
+    expect(runtime.snapshot().mqttArchive.sessions[0].messages[0]).toMatchObject({
+      topic: 'demo/in',
+      payload: 'hello'
+    })
+    expect(archiveWrites).toEqual([])
+
+    expect(runtime.dispatch('mqtt.record.rename', { title: 'Greeting', note: 'from broker' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttArchive.sessions[0].messages[0]).toMatchObject({
+      title: 'Greeting',
+      note: 'from broker',
+      payload: 'hello'
+    })
+    expect(runtime.dispatch('mqtt.record.resendDraft').handled).toBe(true)
+    expect(runtime.snapshot().mqttPublishDraft).toMatchObject({
+      topic: 'demo/in',
+      payload: 'hello'
+    })
+  })
+
+  it('tracks MQTT subscription unread counts and filters received rows by subscription and direction', () => {
+    const { state } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'PLC',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-a',
+      subscriptionsText: 'plc/+/status\nplc/#',
+      publishTopic: 'plc/czz060301/set'
+    })
+    runtime.dispatch('mqtt.config.save')
+    const configId = runtime.snapshot().state.mqtt.activeConfigId
+    expect(configId).toBeTruthy()
+
+    runtime.appendMqttMessageRecord({ direction: 'incoming', topic: 'plc/czz060301/status', payload: 'in-status', qos: 0, retain: false })
+    runtime.appendMqttMessageRecord({ direction: 'outgoing', topic: 'plc/czz060301/set', payload: 'out-set', qos: 0, retain: false })
+    runtime.appendMqttMessageRecord({ direction: 'incoming', topic: 'other/status', payload: 'ignored', qos: 0, retain: false })
+
+    expect(runtime.snapshot().mqttSubscriptionRows).toEqual([
+      expect.objectContaining({ topic: 'plc/+/status', note: '', unreadCount: 1 }),
+      expect.objectContaining({ topic: 'plc/#', note: '', unreadCount: 1 })
+    ])
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.payload)).toEqual(['in-status', 'ignored'])
+
+    expect(runtime.dispatch('mqtt.subscription.note', { topic: 'plc/+/status', note: '状态回包' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttSubscriptionRows[0]).toMatchObject({ topic: 'plc/+/status', note: '状态回包' })
+    expect(JSON.stringify(runtime.snapshot().state.mqtt)).not.toContain('状态回包')
+    expect(JSON.stringify(runtime.snapshot().mqttArchive)).not.toContain('状态回包')
+
+    expect(runtime.dispatch('mqtt.subscription.select', { topic: 'plc/+/status' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttActiveSubscriptionTopic).toBe('plc/+/status')
+    expect(runtime.snapshot().mqttSubscriptionRows[0]).toMatchObject({ unreadCount: 0, active: true })
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.payload)).toEqual(['in-status'])
+
+    expect(runtime.dispatch('mqtt.receive.filter.out').handled).toBe(true)
+    expect(runtime.snapshot().mqttReceiveFilter).toBe('outgoing')
+    expect(runtime.snapshot().mqttMessageRows).toEqual([])
+
+    expect(runtime.dispatch('mqtt.receive.filter.all').handled).toBe(true)
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.payload)).toEqual(['in-status'])
+  })
+
+  it('manages MQTT workbench layout, log drawer, and publish templates', () => {
+    const { state, platform } = installPlatform()
+    const archiveWrites: unknown[] = []
+    platform.storage.setMqttArchive = (archive: unknown) => {
+      archiveWrites.push(archive)
+      return true
+    }
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'PLC',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-a',
+      syncRecords: true
+    })
+    runtime.dispatch('mqtt.config.save')
+
+    expect(runtime.snapshot()).toMatchObject({
+      mqttPanelOpen: true,
+      mqttSubscriptionPanelOpen: true,
+      mqttWorkspaceLayout: 'stack',
+      mqttLogDrawer: { open: false },
+      mqttPublishRecordsOpen: false
+    })
+
+    expect(runtime.handleShortcut('Ctrl+Shift+T', false)).toBe('mqtt.subscription.panel.toggle')
+    expect(runtime.snapshot().mqttSubscriptionPanelOpen).toBe(false)
+    expect(runtime.handleShortcut('Ctrl+Shift+L', false)).toBe('mqtt.layout.toggle')
+    expect(runtime.snapshot().mqttWorkspaceLayout).toBe('split')
+    expect(runtime.handleShortcut('Ctrl+L', false)).toBe('mqtt.log.drawer.open')
+    expect(runtime.snapshot().mqttLogDrawer).toEqual({ open: true })
+    expect(runtime.handleShortcut('Escape', false)).toBe('mqtt.log.drawer.close')
+    expect(runtime.snapshot().mqttLogDrawer).toEqual({ open: false })
+
+    runtime.updateMqttPublishDraft({ topic: 'plc/czz060301/set', payload: '{"code":"200"}', qos: 1, retain: true })
+    expect(runtime.snapshot().mqttPublishScratch).toMatchObject({ topic: 'plc/czz060301/set', payload: '{"code":"200"}' })
+    expect(runtime.dispatch('mqtt.publish.template.save', { title: 'Set Code', note: 'manual' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttPublishTemplateRows).toHaveLength(1)
+    const templateId = runtime.snapshot().mqttPublishTemplateRows[0].id
+    expect(archiveWrites.at(-1)).toMatchObject({
+      publishTemplates: [expect.objectContaining({ id: templateId, title: 'Set Code', note: 'manual' })]
+    })
+
+    expect(runtime.dispatch('mqtt.publish.records.toggle').handled).toBe(true)
+    expect(runtime.snapshot().mqttPublishRecordsOpen).toBe(true)
+    runtime.updateMqttPublishDraft({ topic: '', payload: '', qos: 0, retain: false })
+    expect(runtime.dispatch('mqtt.publish.template.apply', { id: templateId }).handled).toBe(true)
+    expect(runtime.snapshot().mqttPublishDraft).toMatchObject({ topic: 'plc/czz060301/set', payload: '{"code":"200"}', qos: 1, retain: true })
+
+    expect(runtime.dispatch('mqtt.publish.template.rename', { id: templateId, title: 'Set Code Renamed' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttPublishTemplateRows[0]).toMatchObject({ title: 'Set Code Renamed' })
+    expect(runtime.dispatch('mqtt.publish.template.send', { id: templateId }).handled).toBe(true)
+    expect(runtime.snapshot().mqttArchive.sessions[0].messages.at(-1)).toMatchObject({
+      direction: 'outgoing',
+      topic: 'plc/czz060301/set',
+      payload: '{"code":"200"}'
+    })
+
+    expect(runtime.dispatch('mqtt.publish.template.delete', { id: templateId }).handled).toBe(true)
+    expect(runtime.snapshot().mqttPublishTemplateRows).toEqual([])
+  })
+
+  it('keeps MQTT connection passwords in local-only storage across runtime reloads', () => {
+    const { state, platform } = installPlatform()
+    const savedStates: unknown[] = []
+    const archiveWrites: unknown[] = []
+    let localSecrets: Record<string, string> = {}
+    platform.storage.setState = (nextState: unknown) => {
+      savedStates.push(nextState)
+      return true
+    }
+    platform.storage.setMqttArchive = (archive: unknown) => {
+      archiveWrites.push(archive)
+      return true
+    }
+    ;(platform.storage as unknown as {
+      getMqttSecrets: () => Record<string, string>
+      setMqttSecrets: (secrets: Record<string, string>) => boolean
+    }).getMqttSecrets = () => localSecrets
+    ;(platform.storage as unknown as {
+      getMqttSecrets: () => Record<string, string>
+      setMqttSecrets: (secrets: Record<string, string>) => boolean
+    }).setMqttSecrets = (secrets) => {
+      localSecrets = { ...secrets }
+      return true
+    }
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'Local Secret Broker',
+      protocol: 'wss',
+      host: 'broker.example',
+      port: '8084',
+      path: '/mqtt',
+      clientId: 'client-secret',
+      username: 'user-secret',
+      password: 'local-only-secret'
+    })
+    expect(runtime.dispatch('mqtt.config.save').handled).toBe(true)
+
+    const configId = runtime.snapshot().state.mqtt.activeConfigId
+    expect(configId).toBeTruthy()
+    expect(localSecrets).toEqual({ [configId as string]: 'local-only-secret' })
+    expect(JSON.stringify(savedStates)).not.toContain('local-only-secret')
+    expect(JSON.stringify(archiveWrites)).not.toContain('local-only-secret')
+
+    const reloaded = createAppRuntime(runtime.snapshot().state)
+    reloaded.setTab('mqtt')
+    expect(reloaded.dispatch('mqtt.config.edit').handled).toBe(true)
+    expect(reloaded.snapshot().mqttConfigDraft?.password).toBe('local-only-secret')
+
+    reloaded.updateMqttConfigDraft({ password: '' })
+    expect(reloaded.dispatch('mqtt.config.save').handled).toBe(true)
+    expect(localSecrets).toEqual({})
+  })
+
+  it('closes MQTT detail and drawer layers with scoped shortcuts', () => {
+    const { state } = installPlatform()
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    expect(runtime.handleShortcut('Ctrl+ArrowLeft', false)).toBe('mqtt.detail.open')
+    expect(runtime.snapshot().mqttDrawer).toEqual({ open: true, active: false })
+    expect(runtime.handleShortcut('ArrowRight', false)).toBe('mqtt.detail.close')
+    expect(runtime.snapshot().mqttDrawer).toEqual({ open: false, active: false })
+
+    expect(runtime.handleShortcut('Ctrl+ArrowRight', false)).toBe('mqtt.drawer.open')
+    expect(runtime.snapshot().mqttDrawer).toEqual({ open: true, active: true })
+    expect(runtime.handleShortcut('ArrowLeft', false)).toBe('mqtt.drawer.close')
+    expect(runtime.snapshot().mqttDrawer).toEqual({ open: false, active: false })
   })
 
   it('moves active tab to settings when the current feature is disabled', () => {
@@ -1306,6 +1625,30 @@ describe('app runtime', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(revealed).toEqual(['/work/readme.md'])
     expect(getHideCount()).toBe(3)
+  })
+
+  it('opens the first quick favorite when entering quick mode without a search query', async () => {
+    const { opened, getHideCount } = installPlatform()
+    const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    state.favorites = [
+      { id: 'f1', kind: 'folder', path: '/work/app', name: 'App', parentId: null, tags: ['code'], color: '#2F80ED', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'f2', kind: 'file', path: '/work/readme.md', name: 'README', parentId: null, tags: ['docs'], color: '#F2994A', sortOrder: 2, createdAt: 2, updatedAt: 2 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setFavoriteQuickMode(true)
+
+    expect(runtime.snapshot().focusedFavoriteId).toBe('f1')
+    expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'favorite-search' })).toBe('favorites.open')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(opened).toEqual(['/work/app'])
+    expect(getHideCount()).toBe(1)
   })
 
   it('enters pick review before saving a selected file favorite', async () => {

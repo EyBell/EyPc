@@ -20,7 +20,7 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+1', context)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+2', context)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+1', context)?.actionId).toBe('tab.select.ports')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+2', context)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+2', context)?.actionId).toBe('tab.select.mqtt')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+3', context)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+S', context)?.actionId).toBe('settings.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+S', { ...context, textInputFocused: true, activeInputRole: 'port-search' })?.actionId).toBe('settings.open')
@@ -145,6 +145,60 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+O', { ...itemContext, favoriteQuickMode: true })).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', { ...itemContext, favoriteQuickMode: true })).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', { ...itemContext, favoriteQuickMode: true })).toBeNull()
+  })
+
+  it('maps MQTT workbench shortcuts and edit-layer ownership', () => {
+    const idleContext = {
+      tab: 'mqtt' as const,
+      confirmOpen: false,
+      textInputFocused: false
+    }
+    const searchContext = {
+      ...idleContext,
+      textInputFocused: true,
+      activeInputRole: 'mqtt-search' as const
+    }
+    const editorContext = {
+      ...idleContext,
+      textInputFocused: true,
+      activeInputRole: 'mqtt-editor' as const
+    }
+
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+R', idleContext)?.actionId).toBe('mqtt.connection.connect')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+R', idleContext)?.actionId).toBe('mqtt.connection.disconnect')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+N', idleContext)?.actionId).toBe('mqtt.config.create')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', idleContext)?.actionId).toBe('mqtt.subscription.add')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Enter', idleContext)?.actionId).toBe('mqtt.publish.send')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', idleContext)?.actionId).toBe('mqtt.record.resendDraft')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F', idleContext)?.actionId).toBe('mqtt.search.focus')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+W', idleContext)?.actionId).toBe('mqtt.panel.toggle')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+T', idleContext)?.actionId).toBe('mqtt.subscription.panel.toggle')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+L', idleContext)?.actionId).toBe('mqtt.layout.toggle')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+L', idleContext)?.actionId).toBe('mqtt.log.drawer.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+1', idleContext)?.actionId).toBe('mqtt.receive.filter.all')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+2', idleContext)?.actionId).toBe('mqtt.receive.filter.in')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+3', idleContext)?.actionId).toBe('mqtt.receive.filter.out')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+H', idleContext)?.actionId).toBe('mqtt.publish.records.toggle')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', idleContext)?.actionId).toBe('mqtt.detail.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', idleContext)?.actionId).toBe('mqtt.drawer.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowRight', { ...idleContext, mqttDetailOpen: true, mqttDetailActive: true })?.actionId).toBe('mqtt.detail.close')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowLeft', { ...idleContext, mqttDrawerOpen: true, mqttDrawerActive: true })?.actionId).toBe('mqtt.drawer.close')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', searchContext)?.actionId).toBe('list.down')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Enter', searchContext)?.actionId).toBe('mqtt.publish.send')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', idleContext)?.actionId).toBe('mqtt.config.edit')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F2', idleContext)?.actionId).toBe('mqtt.record.rename')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', idleContext)?.actionId).toBe('mqtt.record.delete')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+S', editorContext)?.actionId).toBe('mqtt.config.save')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Enter', editorContext)?.actionId).toBe('mqtt.config.save')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', editorContext)?.actionId).toBe('mqtt.config.cancel')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', editorContext)?.actionId).toBe('mqtt.config.nextField')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', editorContext)?.actionId).toBe('mqtt.config.prevField')
+
+    const rows = buildShortcutCommandRows(DEFAULT_KEYBINDINGS)
+    expect(rows.find((row) => row.commandId === 'mqtt.connection.connect')?.defaultShortcutIds).toEqual(['Ctrl+R'])
+    expect(rows.find((row) => row.commandId === 'mqtt.publish.send')?.profileId).toBe('mqtt')
+    expect(rows.find((row) => row.commandId === 'mqtt.layout.toggle')?.profileId).toBe('mqtt')
+    expect(rows.find((row) => row.commandId === 'mqtt.publish.records.toggle')?.defaultShortcutIds).toEqual(['Ctrl+H'])
   })
 
   it('prioritizes favorite drawer shortcuts over favorite workbench shortcuts', () => {
@@ -272,6 +326,7 @@ describe('keybinding runtime', () => {
     const effective = buildEffectiveKeybindings({
       global: { keybindingOverrides: [{ commandId: 'search.focus', shortcutIds: ['Ctrl+P'], enabled: true }], updatedAt: 1 },
       ports: { keybindingOverrides: [{ commandId: 'ports.scan', shortcutIds: ['Alt+R'], enabled: true }], updatedAt: 1 },
+      mqtt: { keybindingOverrides: [], updatedAt: 1 },
       favorites: { keybindingOverrides: [{ commandId: 'favorites.open', shortcutIds: ['Ctrl+O'], enabled: true }], updatedAt: 1 },
       settings: { keybindingOverrides: [], updatedAt: 1 }
     })

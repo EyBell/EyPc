@@ -7,6 +7,11 @@ export type KeybindingLayerId =
   | 'confirm'
   | 'settings-shortcut-record'
   | 'settings-when-edit'
+  | 'mqtt-editor'
+  | 'mqtt-search'
+  | 'mqtt-drawer'
+  | 'mqtt-detail'
+  | 'mqtt-log-drawer'
   | 'port-group-editor'
   | 'port-group-detail'
   | 'port-drawer'
@@ -19,6 +24,7 @@ export type KeybindingLayerId =
   | 'favorites-editor'
   | 'settings'
   | 'ports'
+  | 'mqtt'
   | 'favorites'
   | 'global'
 
@@ -26,10 +32,15 @@ export interface KeybindingContext {
   tab?: AppTabId
   confirmOpen?: boolean
   textInputFocused?: boolean
-  activeInputRole?: 'port-search' | 'port-group-search' | 'favorite-search' | 'favorite-group-search' | 'favorite-editor' | 'favorite-pick-review' | 'settings' | 'port-group-editor' | 'other'
+  activeInputRole?: 'port-search' | 'port-group-search' | 'mqtt-search' | 'mqtt-editor' | 'favorite-search' | 'favorite-group-search' | 'favorite-editor' | 'favorite-pick-review' | 'settings' | 'port-group-editor' | 'other'
   portPane?: 'groups' | 'results'
   favoritePane?: 'groups' | 'items'
   favoriteQuickMode?: boolean
+  mqttDrawerOpen?: boolean
+  mqttDrawerActive?: boolean
+  mqttDetailOpen?: boolean
+  mqttDetailActive?: boolean
+  mqttLogDrawerOpen?: boolean
   portDrawerOpen?: boolean
   portDrawerActive?: boolean
   favoriteDrawerOpen?: boolean
@@ -131,6 +142,11 @@ export const LAYER_PRIORITY: Record<KeybindingLayerId, number> = {
   confirm: 1000,
   'settings-shortcut-record': 960,
   'settings-when-edit': 950,
+  'mqtt-editor': 930,
+  'mqtt-search': 680,
+  'mqtt-drawer': 820,
+  'mqtt-detail': 800,
+  'mqtt-log-drawer': 810,
   'port-group-editor': 930,
   'port-group-detail': 830,
   'port-drawer': 820,
@@ -143,6 +159,7 @@ export const LAYER_PRIORITY: Record<KeybindingLayerId, number> = {
   'favorites-editor': 930,
   settings: 500,
   ports: 500,
+  mqtt: 500,
   favorites: 500,
   global: 100
 }
@@ -152,6 +169,11 @@ const LAYER_LABELS: Record<KeybindingLayerId, string> = {
   confirm: '确认层',
   'settings-shortcut-record': '快捷键录制',
   'settings-when-edit': 'When 编辑',
+  'mqtt-editor': 'MQTT 编辑',
+  'mqtt-search': 'MQTT 搜索',
+  'mqtt-drawer': 'MQTT 动作抽屉',
+  'mqtt-detail': 'MQTT 详情',
+  'mqtt-log-drawer': 'MQTT 日志抽屉',
   'port-group-editor': '端口组编辑',
   'port-group-detail': '端口组详情',
   'port-drawer': '端口动作抽屉',
@@ -164,6 +186,7 @@ const LAYER_LABELS: Record<KeybindingLayerId, string> = {
   'favorites-editor': '收藏编辑',
   settings: '设置',
   ports: '端口',
+  mqtt: 'MQTT',
   favorites: '收藏',
   global: '全局'
 }
@@ -182,8 +205,8 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'tab.prev': { title: '上一个主 Tab', group: '全局', layer: 'global', shortcutIds: ['Shift+Tab'], when: "tab != 'ports' && !textInputFocused", weight: 100 },
   'search.focus': { title: '聚焦搜索', group: '全局', layer: 'global', shortcutIds: ['Ctrl+F'], when: '!confirmOpen', weight: 100 },
   'settings.open': { title: '打开设置', group: '全局', layer: 'global', shortcutIds: ['Ctrl+Alt+S'], when: '!confirmOpen', weight: 100 },
-  'list.up': { title: '列表上移', group: '全局', layer: 'global', shortcutIds: ['ArrowUp', 'Ctrl+K'], when: '!textInputFocused || activeInputRole == "port-search" || activeInputRole == "port-group-search" || activeInputRole == "favorite-search" || activeInputRole == "favorite-group-search"', weight: 100 },
-  'list.down': { title: '列表下移', group: '全局', layer: 'global', shortcutIds: ['ArrowDown', 'Ctrl+J'], when: '!textInputFocused || activeInputRole == "port-search" || activeInputRole == "port-group-search" || activeInputRole == "favorite-search" || activeInputRole == "favorite-group-search"', weight: 100 },
+  'list.up': { title: '列表上移', group: '全局', layer: 'global', shortcutIds: ['ArrowUp', 'Ctrl+K'], when: '!textInputFocused || activeInputRole == "port-search" || activeInputRole == "port-group-search" || activeInputRole == "mqtt-search" || activeInputRole == "favorite-search" || activeInputRole == "favorite-group-search"', weight: 100 },
+  'list.down': { title: '列表下移', group: '全局', layer: 'global', shortcutIds: ['ArrowDown', 'Ctrl+J'], when: '!textInputFocused || activeInputRole == "port-search" || activeInputRole == "port-group-search" || activeInputRole == "mqtt-search" || activeInputRole == "favorite-search" || activeInputRole == "favorite-group-search"', weight: 100 },
   'list.pageUp': { title: '列表上翻页', group: '全局', layer: 'global', shortcutIds: ['Alt+U'], when: '!textInputFocused', weight: 100 },
   'list.pageDown': { title: '列表下翻页', group: '全局', layer: 'global', shortcutIds: ['Alt+E'], when: '!textInputFocused', weight: 100 },
   'list.toggleSelection': { title: '切换选择', group: '全局', layer: 'global', shortcutIds: ['Space'], when: '!textInputFocused || activeInputRole == "port-search"', weight: 100 },
@@ -278,6 +301,39 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'ports.drawer.action.8': { title: '直接执行第 8 个端口动作', group: '端口', layer: 'ports', shortcutIds: ['Ctrl+Alt+8'], when: "tab == 'ports' && !portDrawerActive && !textInputFocused", weight: 130 },
   'ports.drawer.select.9': { title: '执行抽屉第 9 个动作', group: '端口', layer: 'port-drawer', shortcutIds: ['Ctrl+9'], when: "tab == 'ports' && portDrawerActive", weight: 400 },
   'ports.drawer.action.9': { title: '直接执行第 9 个端口动作', group: '端口', layer: 'ports', shortcutIds: ['Ctrl+Alt+9'], when: "tab == 'ports' && !portDrawerActive && !textInputFocused", weight: 130 },
+  'mqtt.connection.connect': { title: '连接/重连 MQTT', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+R'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 150, profileId: 'mqtt' },
+  'mqtt.connection.disconnect': { title: '断开 MQTT', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+Shift+R'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 150, profileId: 'mqtt' },
+  'mqtt.config.create': { title: '新建 MQTT 连接配置', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+N'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 140, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.config.edit': { title: '编辑 MQTT 配置', group: 'MQTT', layer: 'mqtt', shortcutIds: ['F2'], when: "tab == 'mqtt' && !confirmOpen && !textInputFocused", weight: 140, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.config.save': { title: '保存 MQTT 配置编辑', group: 'MQTT', layer: 'mqtt-editor', shortcutIds: ['Ctrl+S', 'Ctrl+Enter'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-editor'", weight: 420, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.config.cancel': { title: '取消 MQTT 配置编辑', group: 'MQTT', layer: 'mqtt-editor', shortcutIds: ['Escape'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-editor'", weight: 420, profileId: 'mqtt' },
+  'mqtt.config.nextField': { title: 'MQTT 编辑下一个字段', group: 'MQTT', layer: 'mqtt-editor', shortcutIds: ['Tab'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-editor'", weight: 420, profileId: 'mqtt' },
+  'mqtt.config.prevField': { title: 'MQTT 编辑上一个字段', group: 'MQTT', layer: 'mqtt-editor', shortcutIds: ['Shift+Tab'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-editor'", weight: 420, profileId: 'mqtt' },
+  'mqtt.record.rename': { title: '重命名 MQTT 记录', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Shift+F2'], when: "tab == 'mqtt' && !confirmOpen && !textInputFocused", weight: 135, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.record.delete': { title: '删除 MQTT 记录', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Delete', 'Backspace'], when: "tab == 'mqtt' && !confirmOpen && !textInputFocused", weight: 135, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.subscription.add': { title: '新增 MQTT 订阅', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+T'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 134, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.subscription.panel.toggle': { title: '折叠/展开 MQTT 订阅栏', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+Shift+T'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 139, profileId: 'mqtt' },
+  'mqtt.layout.toggle': { title: '切换 MQTT 收发布局', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+Shift+L'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 138, profileId: 'mqtt' },
+  'mqtt.log.drawer.open': { title: '打开 MQTT 日志抽屉', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+L'], when: "tab == 'mqtt' && !confirmOpen && !mqttLogDrawerOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 137, profileId: 'mqtt' },
+  'mqtt.log.drawer.close': { title: '关闭 MQTT 日志抽屉', group: 'MQTT', layer: 'mqtt-log-drawer', shortcutIds: ['Escape'], when: "tab == 'mqtt' && mqttLogDrawerOpen", weight: 410, profileId: 'mqtt' },
+  'mqtt.receive.filter.all': { title: 'MQTT 接收筛选全部', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+1'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 136, profileId: 'mqtt' },
+  'mqtt.receive.filter.in': { title: 'MQTT 接收筛选已接收', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+2'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 136, profileId: 'mqtt' },
+  'mqtt.receive.filter.out': { title: 'MQTT 接收筛选已发送', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+3'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 136, profileId: 'mqtt' },
+  'mqtt.publish.send': { title: '发送 MQTT 消息', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+Enter'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 150, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.publish.records.toggle': { title: '展开/折叠 MQTT 发送记录', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+H'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 136, profileId: 'mqtt' },
+  'mqtt.publish.template.save': { title: '保存 MQTT 发送模板', group: 'MQTT', layer: 'mqtt', shortcutIds: [], when: "tab == 'mqtt' && !confirmOpen", weight: 120, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.publish.template.apply': { title: '应用 MQTT 发送模板', group: 'MQTT', layer: 'mqtt', shortcutIds: [], when: "tab == 'mqtt' && !confirmOpen", weight: 120, profileId: 'mqtt' },
+  'mqtt.publish.template.send': { title: '直接发送 MQTT 模板', group: 'MQTT', layer: 'mqtt', shortcutIds: [], when: "tab == 'mqtt' && !confirmOpen", weight: 120, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.publish.template.rename': { title: '重命名 MQTT 发送模板', group: 'MQTT', layer: 'mqtt', shortcutIds: [], when: "tab == 'mqtt' && !confirmOpen", weight: 120, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.publish.template.delete': { title: '删除 MQTT 发送模板', group: 'MQTT', layer: 'mqtt', shortcutIds: [], when: "tab == 'mqtt' && !confirmOpen", weight: 120, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.record.resendDraft': { title: '从 MQTT 记录填充发布草稿', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Enter'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 130, profileId: 'mqtt' },
+  'mqtt.search.focus': { title: '聚焦 MQTT 搜索', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+F'], when: "tab == 'mqtt' && !confirmOpen", weight: 151, profileId: 'mqtt' },
+  'mqtt.search.blur': { title: '退出 MQTT 搜索焦点', group: 'MQTT', layer: 'mqtt-search', shortcutIds: ['Escape'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-search'", weight: 500, profileId: 'mqtt' },
+  'mqtt.panel.toggle': { title: '折叠/展开 MQTT 侧栏', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+Shift+W'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 140, profileId: 'mqtt' },
+  'mqtt.detail.open': { title: '打开 MQTT 详情', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+ArrowLeft'], when: "tab == 'mqtt' && !confirmOpen && !mqttDetailActive && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 130, profileId: 'mqtt' },
+  'mqtt.detail.close': { title: '关闭 MQTT 详情', group: 'MQTT', layer: 'mqtt-detail', shortcutIds: ['ArrowRight', 'Ctrl+ArrowRight', 'Escape'], when: "tab == 'mqtt' && mqttDetailActive", weight: 420, profileId: 'mqtt' },
+  'mqtt.drawer.open': { title: '打开 MQTT 动作抽屉', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+ArrowRight'], when: "tab == 'mqtt' && !confirmOpen && !mqttDrawerActive && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 130, profileId: 'mqtt' },
+  'mqtt.drawer.close': { title: '关闭 MQTT 动作抽屉', group: 'MQTT', layer: 'mqtt-drawer', shortcutIds: ['ArrowLeft', 'Ctrl+ArrowLeft', 'Escape'], when: "tab == 'mqtt' && mqttDrawerActive", weight: 420, profileId: 'mqtt' },
   'favorites.drawer.select.1': { title: '执行收藏抽屉第 1 个动作', group: '收藏', layer: 'favorites-drawer', shortcutIds: ['Ctrl+1'], when: "tab == 'favorites' && favoriteDrawerActive", weight: 400 },
   'favorites.drawer.select.2': { title: '执行收藏抽屉第 2 个动作', group: '收藏', layer: 'favorites-drawer', shortcutIds: ['Ctrl+2'], when: "tab == 'favorites' && favoriteDrawerActive", weight: 400 },
   'favorites.drawer.select.3': { title: '执行收藏抽屉第 3 个动作', group: '收藏', layer: 'favorites-drawer', shortcutIds: ['Ctrl+3'], when: "tab == 'favorites' && favoriteDrawerActive", weight: 400 },
@@ -543,15 +599,20 @@ function activeLayers(context: KeybindingContext): KeybindingLayerId[] {
   const layers: KeybindingLayerId[] = ['app', 'global']
   if (context.tab) layers.push(context.tab)
   if (context.confirmOpen) layers.push('confirm')
+  if (context.activeInputRole === 'mqtt-editor') layers.push('mqtt-editor')
   if (context.activeInputRole === 'port-group-editor') layers.push('port-group-editor')
   if (context.activeInputRole === 'favorite-editor') layers.push('favorites-editor')
   if (context.activeInputRole === 'favorite-pick-review' || context.favoritePickReviewOpen) layers.push('favorites-pick-review')
+  if (context.mqttDetailOpen || context.mqttDetailActive) layers.push('mqtt-detail')
+  if (context.mqttDrawerOpen || context.mqttDrawerActive) layers.push('mqtt-drawer')
+  if (context.mqttLogDrawerOpen) layers.push('mqtt-log-drawer')
   if (context.portGroupDetailOpen || context.portGroupDetailActive) layers.push('port-group-detail')
   if (context.portDetailOpen || context.portDetailActive) layers.push('port-detail')
   if (context.portDrawerOpen || context.portDrawerActive) layers.push('port-drawer')
   if (context.favoriteDrawerOpen || context.favoriteDrawerActive) layers.push('favorites-drawer')
   if (context.portSelectionMode) layers.push('ports-selection')
   if (context.activeInputRole === 'port-search' || context.activeInputRole === 'port-group-search') layers.push('ports-search')
+  if (context.activeInputRole === 'mqtt-search') layers.push('mqtt-search')
   if (context.activeInputRole === 'favorite-search' || context.activeInputRole === 'favorite-group-search') layers.push('favorites-search')
   return [...new Set(layers)]
 }
@@ -567,11 +628,13 @@ function contextWithLayerFlags(context: KeybindingContext): KeybindingContext {
 function shouldBlockTextInputShortcut(shortcutId: string, context: KeybindingContext): boolean {
   if (!context.textInputFocused || shortcutId === 'Escape' || shortcutId === 'Shift+Escape') return false
   if (shortcutId === 'Ctrl+Alt+S') return false
+  if (context.activeInputRole === 'mqtt-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'port-group-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-pick-review') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'ArrowUp', 'ArrowDown', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'port-search') return !['ArrowUp', 'ArrowDown', 'Shift+ArrowUp', 'Shift+ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+K', 'Ctrl+J', 'Space', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+W', 'Ctrl+Shift+W', 'Ctrl+T', 'Ctrl+G', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'port-group-search') return !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+K', 'Ctrl+J', 'Tab', 'Shift+Tab', 'Enter', 'Shift+Enter', 'Ctrl+Enter', 'Ctrl+Shift+Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+W', 'Ctrl+T', 'Ctrl+G', 'Ctrl+Shift+W', 'F2', 'Ctrl+F2', 'Shift+F2', 'Shift+Escape'].includes(shortcutId)
+  if (context.activeInputRole === 'mqtt-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'ArrowLeft', 'ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+Enter', 'Ctrl+R', 'Ctrl+Shift+R', 'Ctrl+F', 'Ctrl+N', 'Ctrl+T', 'Ctrl+Shift+T', 'Ctrl+Shift+L', 'Ctrl+L', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+H', 'Ctrl+Shift+W', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Delete', 'Backspace', 'F2', 'Shift+F2', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'Shift+ArrowUp', 'Shift+ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+Enter', 'Ctrl+C', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+N', 'Ctrl+O', 'Ctrl+Shift+O', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-group-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'ArrowLeft', 'ArrowRight', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+N', 'Ctrl+O', 'Ctrl+Shift+O', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+T', 'F2', 'Shift+F2', 'Ctrl+F2', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   return !['Ctrl+S', 'Ctrl+Enter'].includes(shortcutId)
@@ -579,6 +642,7 @@ function shouldBlockTextInputShortcut(shortcutId: string, context: KeybindingCon
 
 function profileIdForCommand(commandId: string): ShortcutProfileId {
   if (commandId.startsWith('ports.')) return 'ports'
+  if (commandId.startsWith('mqtt.')) return 'mqtt'
   if (commandId.startsWith('favorites.')) return 'favorites'
   if (commandId.startsWith('settings.')) return 'settings'
   return 'global'
@@ -617,7 +681,7 @@ function defaultBindingsFor(commandId: string, defaultBindings = DEFAULT_KEYBIND
 
 function flattenOverrides(input: KeybindingOverride[] | ShortcutProfileMap = []): Array<KeybindingOverride & { profileId?: ShortcutProfileId }> {
   if (Array.isArray(input)) return input
-  return (['global', 'ports', 'favorites', 'settings'] as ShortcutProfileId[]).flatMap((profileId) =>
+  return (['global', 'ports', 'mqtt', 'favorites', 'settings'] as ShortcutProfileId[]).flatMap((profileId) =>
     (input[profileId]?.keybindingOverrides || []).map((override) => ({ ...override, profileId }))
   )
 }

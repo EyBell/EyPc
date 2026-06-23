@@ -18,7 +18,7 @@ import { blockHandledShortcutEvent } from '../runtime/keyboardEvent'
 import { formatShortcutLabel, formatShortcutList, normalizeShortcutId, shortcutFromEvent as shortcutFromKeyboardEvent } from '../domain/shortcuts'
 
 type SettingsTabId = 'shortcuts' | 'maintenance'
-type ShortcutScopeId = 'all' | 'global' | 'ports' | 'favorites' | 'settings'
+type ShortcutScopeId = 'all' | 'global' | 'ports' | 'mqtt' | 'favorites' | 'settings'
 type MaintenanceSectionId = 'features' | 'layers' | 'storage' | 'commands' | 'resolution' | 'reservations'
 
 interface KeybindingUpdatePayload {
@@ -47,7 +47,7 @@ const emit = defineEmits<{
   saveFeatureConfigs: [configs: FeatureConfig[]]
 }>()
 
-const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'favorites', 'settings']
+const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'settings']
 
 const settingTabs: Array<{ id: SettingsTabId; label: string }> = [
   { id: 'shortcuts', label: '快捷键' },
@@ -58,6 +58,7 @@ const shortcutScopeOptions: Array<{ id: ShortcutScopeId; label: string }> = [
   { id: 'all', label: '全部' },
   { id: 'global', label: '全局' },
   { id: 'ports', label: '端口' },
+  { id: 'mqtt', label: 'MQTT' },
   { id: 'favorites', label: '收藏' },
   { id: 'settings', label: '设置' }
 ]
@@ -219,6 +220,7 @@ function matchesShortcutScope(row: ShortcutCommandRow, id: ShortcutScopeId): boo
   if (id === 'all') return true
   if (id === 'global') return row.profileId === 'global'
   if (id === 'ports') return row.profileId === 'ports'
+  if (id === 'mqtt') return row.profileId === 'mqtt'
   if (id === 'favorites') return row.profileId === 'favorites'
   return row.profileId === 'settings'
 }
@@ -337,7 +339,7 @@ function profileLabel(profileId: ShortcutProfileId) {
 }
 
 function profileDescription(profileId: ShortcutProfileId) {
-  return profileId === 'global' ? '全局 Profile' : profileId === 'ports' ? '端口 Profile' : profileId === 'favorites' ? '收藏 Profile' : '设置 Profile'
+  return profileId === 'global' ? '全局 Profile' : profileId === 'ports' ? '端口 Profile' : profileId === 'mqtt' ? 'MQTT Profile' : profileId === 'favorites' ? '收藏 Profile' : '设置 Profile'
 }
 
 function riskLabel(risk: ShortcutCommandRow['risk']) {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { normalizeAppState } from './domain/state'
 import { getPlatform } from './platform/eypcPlatform'
 import ConfirmLayer from './components/ConfirmLayer.vue'
@@ -14,6 +14,7 @@ import { activeInputRoleFromTarget, blockHandledShortcutEvent, isEditableTarget,
 import { createShortcutHintTiming } from './runtime/shortcutHintTiming'
 
 const platform = getPlatform()
+const MqttPage = defineAsyncComponent(() => import('./pages/MqttPage.vue'))
 const runtime = createAppRuntime(normalizeAppState(platform.storage.getState()))
 const version = ref(0)
 const shiftPreview = ref(false)
@@ -54,12 +55,14 @@ function clearShiftPreview() {
 }
 
 function applyPluginRoute(payload: { code?: string } | null) {
-  const route = routePluginFeature(payload, snapshot.value.state.settings.featureConfigs)
+  const route = routePluginFeature(payload, snapshot.value.state.settings.featureConfigs, snapshot.value.state.activeTab)
+  const restoreEntry = !payload?.code || payload.code === 'eypc-main' || !['eypc-ports', 'eypc-mqtt', 'eypc-favorites', 'eypc-favorites-quick', 'eypc-settings'].includes(payload.code)
   initialMaintenanceSection.value = route.settingsMaintenanceSection || null
-  runtime.setFavoriteQuickMode(route.favoriteQuick === true)
+  if (typeof route.favoriteQuick === 'boolean') runtime.setFavoriteQuickMode(route.favoriteQuick)
+  else if (!restoreEntry) runtime.setFavoriteQuickMode(false)
   runtime.setTab(route.tab)
   if (route.focusSearch) {
-    runtime.dispatch(route.tab === 'favorites' ? 'favorites.search.focus' : 'search.focus')
+    runtime.dispatch(route.tab === 'favorites' ? 'favorites.search.focus' : route.tab === 'mqtt' ? 'mqtt.search.focus' : 'search.focus')
   }
 }
 
@@ -69,6 +72,8 @@ watch(() => snapshot.value.searchFocusRequestId, () => {
       ? 'port-group-search'
       : snapshot.value.searchFocusTarget === 'favorite-groups'
         ? 'favorite-group-search'
+        : snapshot.value.searchFocusTarget === 'mqtt'
+          ? 'mqtt-search'
         : snapshot.value.searchFocusTarget === 'favorites'
           ? 'favorite-search'
           : 'port-search'
@@ -82,7 +87,7 @@ watch(() => snapshot.value.searchBlurRequestId, () => {
   requestAnimationFrame(() => {
     const active = document.activeElement as HTMLElement | null
     const role = active?.closest<HTMLElement>('[data-role]')?.dataset.role
-    if (role === 'port-search' || role === 'favorite-search' || role === 'favorite-group-search' || role === 'port-group-search' || role === 'primary-search') active?.blur()
+    if (role === 'port-search' || role === 'mqtt-search' || role === 'favorite-search' || role === 'favorite-group-search' || role === 'port-group-search' || role === 'primary-search') active?.blur()
   })
 })
 
@@ -151,6 +156,20 @@ onUnmounted(() => {
           @update-group-draft="runtime.updatePortGroupDraft"
           @save-group-draft="runtime.savePortGroupDraft"
           @cancel-group-draft="runtime.cancelPortGroupDraft"
+          @dispatch="runtime.dispatch"
+        />
+      </template>
+      <template #mqtt>
+        <MqttPage
+          :snapshot="snapshot"
+          :show-shortcut-hints="shortcutHints"
+          @search="runtime.setMqttSearch"
+          @focus-config="runtime.focusMqttConfig"
+          @focus-session="runtime.focusMqttSession"
+          @focus-message="runtime.focusMqttMessage"
+          @focus-log="runtime.focusMqttLog"
+          @update-config-draft="runtime.updateMqttConfigDraft"
+          @update-publish-draft="runtime.updateMqttPublishDraft"
           @dispatch="runtime.dispatch"
         />
       </template>

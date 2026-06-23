@@ -1,4 +1,4 @@
-export type AppTabId = 'ports' | 'favorites' | 'settings'
+export type AppTabId = 'ports' | 'mqtt' | 'favorites' | 'settings'
 
 export interface FeatureConfig {
   id: AppTabId
@@ -39,6 +39,87 @@ export type PortGroupTarget =
 
 export type FavoriteKind = 'file' | 'folder' | 'group'
 
+export type MqttQos = 0 | 1 | 2
+export type MqttMessageDirection = 'incoming' | 'outgoing' | 'event'
+
+export interface MqttConnectionConfig {
+  id: string
+  name: string
+  url: string
+  clientId: string
+  username: string
+  subscriptions: string[]
+  publishTopic: string
+  qos: MqttQos
+  retain: boolean
+  autoReconnect: boolean
+  reconnectPeriodMs: number
+  connectTimeoutMs: number
+  keepaliveSec: number
+  clean: boolean
+  reconnectOnConnackError: boolean
+  resubscribeOnReconnect: boolean
+  syncRecords: boolean
+  sortOrder: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface MqttState {
+  configs: MqttConnectionConfig[]
+  activeConfigId: string | null
+}
+
+export interface MqttPublishDraft {
+  topic: string
+  payload: string
+  qos: MqttQos
+  retain: boolean
+}
+
+export interface MqttMessageRecord {
+  id: string
+  connectionId: string
+  sessionId: string
+  direction: MqttMessageDirection
+  topic: string
+  payload: string
+  qos: MqttQos
+  retain: boolean
+  timestamp: number
+  title?: string
+  note?: string
+}
+
+export interface MqttSessionRecord {
+  id: string
+  connectionId: string
+  title: string
+  note?: string
+  startedAt: number
+  endedAt?: number
+  messages: MqttMessageRecord[]
+}
+
+export interface MqttPublishTemplate {
+  id: string
+  connectionId: string
+  title: string
+  note?: string
+  topic: string
+  payload: string
+  qos: MqttQos
+  retain: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+export interface MqttArchiveState {
+  version: 1
+  sessions: MqttSessionRecord[]
+  publishTemplates: MqttPublishTemplate[]
+}
+
 export interface FavoriteNode {
   id: string
   kind: FavoriteKind
@@ -71,7 +152,7 @@ export interface KeybindingOverride {
   disabled?: boolean
 }
 
-export type ShortcutProfileId = 'global' | 'ports' | 'favorites' | 'settings'
+export type ShortcutProfileId = 'global' | 'ports' | 'mqtt' | 'favorites' | 'settings'
 
 export interface ShortcutProfileState {
   keybindingOverrides: KeybindingOverride[]
@@ -108,6 +189,7 @@ export interface AppState {
   collapsedPortGroupFolderIds: string[]
   collapsedFavoriteGroupIds: string[]
   favorites: FavoriteNode[]
+  mqtt: MqttState
   settings: AppSettings
   updatedAt: number
 }

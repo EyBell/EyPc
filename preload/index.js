@@ -3,6 +3,8 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const STORAGE_KEY = 'eypc/state/v1'
+const MQTT_ARCHIVE_STORAGE_KEY = 'eypc/mqtt/archive/v1'
+const MQTT_SECRETS_LOCAL_STORAGE_KEY = 'eypc/mqtt/secrets-local/v1'
 let lastEnterPayload = null
 const enterPayloadListeners = new Set()
 
@@ -153,9 +155,61 @@ function writeState(state) {
   }
 }
 
-function shellCall(method, target) {
+function readMqttArchive() {
   try {
-    if (!target || !globalThis.utools || !globalThis.utools.shellOpenPath) return false
+    if (!globalThis.utools || !globalThis.utools.dbStorage) return null
+    return globalThis.utools.dbStorage.getItem(MQTT_ARCHIVE_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writeMqttArchive(archive) {
+  try {
+    if (!globalThis.utools || !globalThis.utools.dbStorage) return false
+    globalThis.utools.dbStorage.setItem(MQTT_ARCHIVE_STORAGE_KEY, archive)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function normalizeMqttSecrets(value) {
+  const source = value && typeof value === 'object' ? value : {}
+  const candidate = source.version === 1 && source.secrets && typeof source.secrets === 'object'
+    ? source.secrets
+    : source
+  return Object.fromEntries(Object.entries(candidate)
+    .map(([key, secret]) => [String(key || '').trim(), secret])
+    .filter(([key, secret]) => key && typeof secret === 'string' && secret.length > 0))
+}
+
+function readMqttSecrets() {
+  try {
+    if (!globalThis.localStorage) return {}
+    const raw = globalThis.localStorage.getItem(MQTT_SECRETS_LOCAL_STORAGE_KEY)
+    return raw ? normalizeMqttSecrets(JSON.parse(raw)) : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeMqttSecrets(secrets) {
+  try {
+    if (!globalThis.localStorage) return false
+    globalThis.localStorage.setItem(MQTT_SECRETS_LOCAL_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      secrets: normalizeMqttSecrets(secrets)
+    }))
+    return true
+  } catch {
+    return false
+  }
+}
+
+function utoolsShellCall(method, target) {
+  try {
+    if (!globalThis.utools || !globalThis.utools.shellOpenPath) return false
     if (method === 'reveal' && globalThis.utools.shellShowItemInFolder) {
       globalThis.utools.shellShowItemInFolder(target)
       return true
@@ -165,6 +219,25 @@ function shellCall(method, target) {
   } catch {
     return false
   }
+}
+
+async function macOpen(target, reveal = false) {
+  const result = await runFirst([{
+    command: '/usr/bin/open',
+    args: reveal ? ['-R', target] : [target]
+  }])
+  return Boolean(result && result.ok)
+}
+
+async function shellCall(method, target) {
+  const normalizedTarget = String(target || '').trim()
+  if (!normalizedTarget) return false
+  if (process.platform === 'darwin') {
+    if (await macOpen(normalizedTarget, method === 'reveal')) return true
+    if (method === 'open' && await macOpen(normalizedTarget, true)) return true
+    return utoolsShellCall(method, normalizedTarget)
+  }
+  return utoolsShellCall(method, normalizedTarget)
 }
 
 function normalizePickedFavorite(result, kind) {
@@ -292,7 +365,11 @@ if (globalThis.utools && typeof globalThis.utools.onPluginEnter === 'function') 
 window.eypcPlatform = {
   storage: {
     getState: readState,
-    setState: writeState
+    setState: writeState,
+    getMqttArchive: readMqttArchive,
+    setMqttArchive: writeMqttArchive,
+    getMqttSecrets: readMqttSecrets,
+    setMqttSecrets: writeMqttSecrets
   },
   ports: {
     scan: scanPorts,

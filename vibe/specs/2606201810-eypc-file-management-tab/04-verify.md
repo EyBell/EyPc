@@ -6,7 +6,7 @@ Tool: codex
 
 - `pnpm run test`
   - Result before implementation: fail as expected after adding tests; missing favorites domain/runtime/keybinding/routing capabilities.
-  - Latest result: pass, 24 test files and 175 tests.
+  - Latest result: pass, 26 test files and 195 tests.
 - `pnpm run typecheck`
   - Latest result: pass.
 - `pnpm run build`
@@ -27,6 +27,12 @@ Tool: codex
     Result: pass, 2 test files and 6 tests.
   - Quick favorite row-action targeted commands: `pnpm exec vitest run tests/ui/favoritesInitialization.test.ts` and `pnpm exec vitest run tests/runtime/action.test.ts -t "opens quick favorite results"`.
     Result: pass. The UI test first failed on missing `quick-favorite-row-actions`, then passed after adding row-local open/reveal/copy actions with explicit `favoriteId`; runtime coverage verifies quick reveal hides the app after success.
+  - macOS quick-open targeted command: `pnpm exec vitest run tests/platform/favoriteFileBridge.test.ts tests/runtime/action.test.ts -t "macOS favorites|macOS favorite open failures|first quick favorite"`.
+    Result: pass after RED/GREEN. The platform test first failed because [preload/index.js](../../../preload/index.js#L210) returned `false` without `/usr/bin/open`; the runtime test first failed because [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L3025) left quick mode without a focused favorite. Final full targeted run passed, 2 test files and 69 tests.
+  - macOS unsupported-file fallback command: `pnpm exec vitest run tests/platform/favoriteFileBridge.test.ts -t "reveals macOS files|falls back to uTools reveal"`.
+    Result: pass after RED/GREEN. The tests first failed because [preload/index.js](../../../preload/index.js#L210) stopped after a failed default open or failed native reveal; after the fix, unsupported file open falls back to Finder reveal and native reveal failure falls back to the uTools reveal API.
+  - Final favorite bridge/runtime targeted command: `pnpm exec vitest run tests/platform/favoriteFileBridge.test.ts tests/runtime/action.test.ts`.
+    Result: pass, 2 test files and 71 tests.
 - Code link audit
   - Latest result: pass for this task directory, [../PROJECT_STATUS.md](../PROJECT_STATUS.md#L1), and [../../knowledge/ARCHITECTURE.md](../../knowledge/ARCHITECTURE.md#L1).
 
@@ -47,6 +53,8 @@ Tool: codex
 - Click the target edit-layer `文件` and `文件夹` path pickers; confirm the OS picker fills path/kind/name in the draft without adding metadata before Save.
 - Add the same `kind + path` twice; confirm the second add focuses the existing target and does not create a duplicate row.
 - Use quick entry behavior for `eypc-favorites-quick`: search, `Enter` open, `Ctrl+C` copy path, `Ctrl+Enter` reveal.
+- Use quick entry behavior with an empty search; `Enter` should open the first visible favorite and hide the uTools window only after open succeeds.
+- On macOS, confirm quick-entry open uses the system default app and `Ctrl+Enter` / `定` reveals the target in Finder.
 - Hover or focus a quick-entry saved favorite row; confirm the row-local `开` / `定` / `复` controls open, locate, and copy that exact file or folder.
 - Confirm quick entry ignores add/edit/remove shortcuts such as `Ctrl+N`, `Ctrl+O`, `Ctrl+Shift+O`, `F2`, and `Delete`.
 - Confirm normal remove shows metadata-only confirmation and force remove does not touch disk files.

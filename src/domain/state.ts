@@ -1,11 +1,18 @@
 import type { AppState, AppTabId, FavoriteKind, FavoriteNode, FeatureConfig, KeybindingOverride, PortGroup, PortGroupFolder, ShortcutProfileId, ShortcutProfileMap } from './types'
+import { normalizeMqttState } from './mqtt'
 import { emptySearchHistories, normalizeSearchHistoryList } from './searchHistory'
 import { normalizeShortcutId } from './shortcuts'
 
-const VALID_TABS = new Set<AppTabId>(['ports', 'favorites', 'settings'])
-const TAB_IDS: AppTabId[] = ['ports', 'favorites', 'settings']
+const VALID_TABS = new Set<AppTabId>(['ports', 'mqtt', 'favorites', 'settings'])
+const TAB_IDS: AppTabId[] = ['ports', 'mqtt', 'favorites', 'settings']
+const DEFAULT_FEATURE_SORT_ORDER: Record<AppTabId, number> = {
+  ports: 1,
+  favorites: 2,
+  mqtt: 3,
+  settings: 4
+}
 const VALID_FAVORITE_KINDS = new Set<FavoriteKind>(['file', 'folder', 'group'])
-const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'favorites', 'settings']
+const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'settings']
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
@@ -48,6 +55,7 @@ function normalizeKeybindingOverrides(value: unknown): KeybindingOverride[] {
 
 function inferShortcutProfileId(commandId: string): ShortcutProfileId {
   if (commandId.startsWith('ports.')) return 'ports'
+  if (commandId.startsWith('mqtt.')) return 'mqtt'
   if (commandId.startsWith('favorites.')) return 'favorites'
   if (commandId.startsWith('settings.')) return 'settings'
   return 'global'
@@ -57,6 +65,7 @@ function emptyShortcutProfiles(now: number): ShortcutProfileMap {
   return {
     global: { keybindingOverrides: [], updatedAt: now },
     ports: { keybindingOverrides: [], updatedAt: now },
+    mqtt: { keybindingOverrides: [], updatedAt: now },
     favorites: { keybindingOverrides: [], updatedAt: now },
     settings: { keybindingOverrides: [], updatedAt: now }
   }
@@ -117,11 +126,11 @@ function normalizeSearchHistories(value: unknown, legacyPortHistory: string[], l
   }
 }
 
-function defaultFeatureConfig(id: AppTabId, index: number): FeatureConfig {
+function defaultFeatureConfig(id: AppTabId, sortOrder: number): FeatureConfig {
   return {
     id,
     enabled: id === 'favorites' ? false : true,
-    sortOrder: index + 1
+    sortOrder
   }
 }
 
@@ -143,12 +152,12 @@ function normalizeFeatureConfigs(value: unknown): FeatureConfig[] {
       })
     }
   }
-  for (const [index, id] of TAB_IDS.entries()) {
+  for (const id of TAB_IDS) {
     if (byId.has(id)) continue
-    let sortOrder = index + 1
+    let sortOrder = DEFAULT_FEATURE_SORT_ORDER[id]
     while (usedOrders.has(sortOrder)) sortOrder += 1
     usedOrders.add(sortOrder)
-    byId.set(id, defaultFeatureConfig(id, sortOrder - 1))
+    byId.set(id, defaultFeatureConfig(id, sortOrder))
   }
   return [...byId.values()]
     .map((config) => ({ ...config, enabled: config.id === 'settings' ? true : config.enabled }))
@@ -236,6 +245,7 @@ export function createInitialState(now = Date.now()): AppState {
     collapsedPortGroupFolderIds: [],
     collapsedFavoriteGroupIds: [],
     favorites: [],
+    mqtt: normalizeMqttState(null, now),
     settings: {
       keybindingOverrides: [],
       shortcutProfiles: emptyShortcutProfiles(now),
@@ -275,6 +285,7 @@ export function normalizeAppState(value: unknown, now = Date.now()): AppState {
     collapsedPortGroupFolderIds: strings(source.collapsedPortGroupFolderIds).filter((id) => validFolderIds.has(id)),
     collapsedFavoriteGroupIds: strings(source.collapsedFavoriteGroupIds).filter((id) => favoriteIds.has(id)),
     favorites,
+    mqtt: normalizeMqttState(source.mqtt, now),
     settings: {
       keybindingOverrides: aggregateShortcutProfiles(shortcutProfiles),
       shortcutProfiles,

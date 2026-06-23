@@ -14,6 +14,7 @@ export interface VisibleFeatureDefinition extends FeatureDefinition {
 
 export const FEATURES: FeatureDefinition[] = [
   { id: 'ports', title: '端口进程', description: '扫描指定端口进程并安全终止' },
+  { id: 'mqtt', title: 'MQTT', description: '快速连接 MQTT over WebSocket 并归档收发记录' },
   { id: 'favorites', title: '文件收藏', description: '管理文件和文件夹收藏、标签、分组和颜色' },
   { id: 'settings', title: '设置', description: '管理快捷键和运行时配置' }
 ]
@@ -21,7 +22,8 @@ export const FEATURES: FeatureDefinition[] = [
 export const DEFAULT_FEATURE_CONFIGS: FeatureConfig[] = [
   { id: 'ports', enabled: true, sortOrder: 1 },
   { id: 'favorites', enabled: false, sortOrder: 2 },
-  { id: 'settings', enabled: true, sortOrder: 3 }
+  { id: 'mqtt', enabled: true, sortOrder: 3 },
+  { id: 'settings', enabled: true, sortOrder: 4 }
 ]
 
 const featureMeta = new Map(FEATURES.map((feature) => [feature.id, feature]))
