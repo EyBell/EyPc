@@ -4,6 +4,28 @@ Tool: codex
 
 ## Automated Checks
 
+- `pnpm vitest run tests/runtime/action.test.ts tests/runtime/keybinding.test.ts tests/runtime/keyboardEvent.test.ts tests/runtime/mqttConnectionLog.test.ts tests/ui/mqttPage.test.ts`
+  - Result: passed, 5 files / 106 tests. This covers the dedicated MQTT subscription editor draft in [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L660), edit-layer shortcut isolation in [src/runtime/keybinding/keybindingRuntime.ts](../../../src/runtime/keybinding/keybindingRuntime.ts#L1), `mqtt-subscription-editor` role detection in [src/runtime/keyboardEvent.ts](../../../src/runtime/keyboardEvent.ts#L18), best-effort subscribe/unsubscribe while connected, and modal UI markers in [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L755).
+- `pnpm run test`
+  - Result: passed, 26 files / 203 tests.
+- `pnpm run typecheck`
+  - Result: passed.
+- `pnpm run build`
+  - Result: passed; Vite emitted separate `MqttPage` and `mqtt.esm` chunks, prepared uTools runtime assets, and ran uTools validation.
+- `pnpm run validate:utools`
+  - Result: passed.
+- `pnpm vitest run tests/domain/mqtt.test.ts tests/runtime/action.test.ts tests/runtime/keybinding.test.ts tests/runtime/keyboardEvent.test.ts tests/runtime/mqttConnectionLog.test.ts tests/ui/mqttPage.test.ts`
+  - Result: passed, 6 files / 109 tests. This covers `subscriptionAliases` normalization in [src/domain/mqtt.ts](../../../src/domain/mqtt.ts#L49), alias/list-form config saving and multi-topic subscription filtering in [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L517), `mqtt-subscriptions` shortcut ownership in [src/runtime/keybinding/keybindingRuntime.ts](../../../src/runtime/keybinding/keybindingRuntime.ts#L12), role detection in [src/runtime/keyboardEvent.ts](../../../src/runtime/keyboardEvent.ts#L18), best-effort unsubscribe on subscription deletion, and compact subscription rail UI markers in [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L345).
+- `pnpm run test`
+  - Result: passed, 26 files / 200 tests.
+- `pnpm run typecheck`
+  - Result: passed.
+- `pnpm run build`
+  - Result: passed; Vite emitted separate `MqttPage` and `mqtt.esm` chunks, prepared uTools runtime assets, and ran uTools validation.
+- `pnpm run validate:utools`
+  - Result: passed.
+- `python3 /Users/gdkmjd/work/czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/scripts/audit_code_links.py --root /Users/gdkmjd/work/czzWork/EyBell/EyPc vibe/specs/2606231645-eypc-mqtt-websocket-tab/01-spec.md vibe/specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md vibe/specs/PROJECT_STATUS.md vibe/knowledge/ARCHITECTURE.md vibe/knowledge/technical-details.md`
+  - Result: passed.
 - `pnpm exec vitest run tests/domain/mqtt.test.ts tests/domain/state.test.ts tests/integration/featureRouting.test.ts`
   - Result: passed, 3 files / 19 tests. This covers blank MQTT WebSocket endpoint port assembly as `8083`, initial `settings.featureConfigs` defaulting MQTT to the third feature order, and runtime feature registry default order.
 - `pnpm vitest run tests/domain/mqtt.test.ts tests/runtime/action.test.ts tests/runtime/keybinding.test.ts tests/ui/mqttPage.test.ts`

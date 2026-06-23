@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, watch } from 'vue'
-import type { AppRuntimeSnapshot, MqttConfigDraft } from '../runtime/appRuntime'
+import type { AppRuntimeSnapshot, MqttConfigDraft, MqttSubscriptionEditorDraft, MqttSubscriptionEditorField, MqttSubscriptionEditorItem } from '../runtime/appRuntime'
 import type { MqttMessageRecord, MqttPublishDraft, MqttPublishTemplate, MqttQos } from '../domain/types'
 import { buildMqttWebSocketUrl } from '../domain/mqtt'
 import SearchSuggestBox from '../components/SearchSuggestBox.vue'
@@ -13,6 +13,7 @@ const emit = defineEmits<{
   focusMessage: [id: string]
   focusLog: [id: string]
   updateConfigDraft: [input: Partial<Omit<MqttConfigDraft, 'mode' | 'targetId' | 'activeField'>>]
+  updateSubscriptionDraft: [input: Partial<Omit<MqttSubscriptionEditorDraft, 'connectionId'>>]
   updatePublishDraft: [input: Partial<MqttPublishDraft>]
   dispatch: [actionId: string, args?: Record<string, unknown>]
 }>()
@@ -29,6 +30,7 @@ const configForm = reactive({
   username: '',
   password: '',
   subscriptionsText: '',
+  subscriptionItems: [] as MqttConfigDraft['subscriptionItems'],
   publishTopic: '',
   qos: 0 as MqttQos,
   retain: false,
@@ -54,6 +56,7 @@ watch(() => props.snapshot.mqttConfigDraft, (draft) => {
   configForm.username = draft?.username || ''
   configForm.password = draft?.password || ''
   configForm.subscriptionsText = draft?.subscriptionsText || ''
+  configForm.subscriptionItems = draft?.subscriptionItems?.map((item) => ({ ...item })) || []
   configForm.publishTopic = draft?.publishTopic || ''
   configForm.qos = draft?.qos || 0
   configForm.retain = draft?.retain || false
@@ -76,7 +79,17 @@ watch(() => props.snapshot.mqttConfigDraft?.activeField, (field) => {
   })
 })
 
+watch(() => props.snapshot.mqttSubscriptionDraft?.activeField, (field) => {
+  if (!field) return
+  void nextTick(() => {
+    const input = document.querySelector<HTMLInputElement>(`[data-mqtt-subscription-field="${field}"]`)
+    input?.focus()
+    input?.setSelectionRange(input.value.length, input.value.length)
+  })
+})
+
 const activeConfig = computed(() => props.snapshot.mqttActiveConfig)
+const subscriptionDraft = computed(() => props.snapshot.mqttSubscriptionDraft)
 const publishDraft = computed(() => props.snapshot.mqttPublishScratch)
 const endpointPreview = computed(() => buildMqttWebSocketUrl(configForm))
 const selectedLog = computed(() => props.snapshot.mqttSelectedLog)
@@ -91,6 +104,30 @@ const receiveFilterLabel = computed(() => {
   if (props.snapshot.mqttReceiveFilter === 'all') return '全部'
   if (props.snapshot.mqttReceiveFilter === 'outgoing') return '已发送'
   return '已接收'
+})
+const activeSubscriptionLabel = computed(() => {
+  if (!props.snapshot.mqttActiveSubscriptionTopics.length) return '全部 topic'
+  if (props.snapshot.mqttActiveSubscriptionTopics.length > 1) return `${props.snapshot.mqttActiveSubscriptionTopics.length} 个订阅`
+  const topic = props.snapshot.mqttActiveSubscriptionTopics[0]
+  return props.snapshot.mqttSubscriptionRows.find((row) => row.topic === topic)?.displayName || topic
+})
+const selectedSubscriptionCount = computed(() => props.snapshot.mqttSelectedSubscriptionTopics.length)
+const configSubscriptionSummaryRows = computed(() => {
+  const config = activeConfig.value
+  if (config) {
+    return config.subscriptions.map((topic) => ({
+      topic,
+      alias: config.subscriptionAliases[topic] || '',
+      displayName: config.subscriptionAliases[topic] || topic,
+      qos: config.qos
+    }))
+  }
+  return configForm.subscriptionItems.map((item) => ({
+    topic: item.topic,
+    alias: item.alias,
+    displayName: item.alias || item.topic,
+    qos: configForm.qos
+  }))
 })
 
 function commandLabel(commandId: string, fallback: string) {
@@ -111,6 +148,65 @@ function updateConfigDraft(input: Partial<Omit<MqttConfigDraft, 'mode' | 'target
 
 function qosFromInput(value: string): MqttQos {
   return value === '1' ? 1 : value === '2' ? 2 : 0
+}
+
+function createSubscriptionEditorItem(): MqttSubscriptionEditorItem {
+  return {
+    id: `mqtt-subscription-ui:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`,
+    topic: '#',
+    alias: ''
+  }
+}
+
+function updateSubscriptionDraft(input: Partial<Omit<MqttSubscriptionEditorDraft, 'connectionId'>>) {
+  emit('updateSubscriptionDraft', input)
+}
+
+function addSubscriptionEditorItem() {
+  if (!subscriptionDraft.value) return
+  updateSubscriptionDraft({ items: [...subscriptionDraft.value.items, createSubscriptionEditorItem()], activeField: 'topic' })
+}
+
+function updateSubscriptionEditorItem(id: string, input: Partial<Pick<MqttSubscriptionEditorItem, 'topic' | 'alias'>>) {
+  if (!subscriptionDraft.value) return
+  updateSubscriptionDraft({
+    items: subscriptionDraft.value.items.map((item) => item.id === id ? { ...item, ...input } : item)
+  })
+}
+
+function removeSubscriptionEditorItem(id: string) {
+  if (!subscriptionDraft.value) return
+  updateSubscriptionDraft({
+    items: subscriptionDraft.value.items.filter((item) => item.id !== id)
+  })
+}
+
+function focusSubscriptionEditorField(field: MqttSubscriptionEditorField) {
+  updateSubscriptionDraft({ activeField: field })
+}
+
+function handleSubscriptionEditorKeydown(event: KeyboardEvent) {
+  const key = event.key.toLowerCase()
+  const command = event.ctrlKey || event.metaKey
+  if (command && (key === 's' || key === 'enter')) {
+    event.preventDefault()
+    event.stopPropagation()
+    emit('dispatch', 'mqtt.subscription.editor.save')
+    return
+  }
+  if (key === 'escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    emit('dispatch', 'mqtt.subscription.editor.cancel')
+    return
+  }
+  if (key === 'tab') {
+    event.preventDefault()
+    event.stopPropagation()
+    emit('dispatch', event.shiftKey ? 'mqtt.subscription.editor.prevField' : 'mqtt.subscription.editor.nextField')
+    return
+  }
+  event.stopPropagation()
 }
 
 function statusLabel(state: AppRuntimeSnapshot['mqttConnectionStatus']['state']) {
@@ -203,6 +299,23 @@ function updateProtocol(value: 'ws' | 'wss') {
 
 function updateSsl(value: boolean) {
   updateConfigDraft({ ssl: value, protocol: value ? 'wss' : 'ws' })
+}
+
+function subscriptionTitle(row: AppRuntimeSnapshot['mqttSubscriptionRows'][number]) {
+  return row.alias ? `${row.alias} · ${row.topic}` : row.topic
+}
+
+function selectSubscription(topic: string) {
+  emit('dispatch', 'mqtt.subscription.select', { topic })
+}
+
+function focusSubscription(topic: string) {
+  emit('dispatch', 'mqtt.subscription.focus', { topic })
+}
+
+function deleteSubscription(topic: string) {
+  focusSubscription(topic)
+  emit('dispatch', 'mqtt.subscription.delete', { topic })
 }
 </script>
 
@@ -301,48 +414,49 @@ function updateSsl(value: boolean) {
           <small>{{ activeConfig?.name || '未选择连接' }}</small>
         </span>
         <span class="mqtt-rail-actions">
-          <button type="button" :title="`新增订阅 ${commandLabel('mqtt.subscription.add', 'c-t')}`" @click="emit('dispatch', 'mqtt.subscription.add')">+</button>
+          <button type="button" class="mqtt-subscription-add" :title="`新增订阅 ${commandLabel('mqtt.subscription.add', 'c-t')}`" @click="emit('dispatch', 'mqtt.subscription.add')">+ 添加订阅</button>
+          <button v-if="selectedSubscriptionCount" type="button" :title="`清理选中 ${commandLabel('mqtt.subscription.deleteSelected', 'c-del')}`" @click="emit('dispatch', 'mqtt.subscription.deleteSelected')">清理选中</button>
+          <button v-if="activeConfig?.subscriptions.length" type="button" title="清空全部订阅" @click="emit('dispatch', 'mqtt.subscription.clearAll')">清空全部</button>
           <button type="button" :title="`收起订阅栏 ${commandLabel('mqtt.subscription.panel.toggle', 'c-s-t')}`" @click="emit('dispatch', 'mqtt.subscription.panel.toggle')">‹</button>
         </span>
       </header>
 
-      <button
-        type="button"
-        class="mqtt-subscription-row mqtt-subscription-all"
-        :class="{ active: !props.snapshot.mqttActiveSubscriptionTopic }"
+      <div
+        class="mqtt-subscription-list"
+        data-role="mqtt-subscriptions"
+        tabindex="0"
         @click="emit('dispatch', 'mqtt.subscription.select', { topic: '' })"
+        @keydown.space.prevent.stop="emit('dispatch', 'mqtt.subscription.toggleSelect')"
+        @keydown.enter.prevent.stop="emit('dispatch', 'mqtt.subscription.applyFilter')"
+        @keydown.delete.prevent.stop="emit('dispatch', 'mqtt.subscription.delete')"
+        @keydown.backspace.prevent.stop="emit('dispatch', 'mqtt.subscription.delete')"
       >
-        <span>
-          <strong>全部 topic</strong>
-          <small>清除订阅筛选</small>
-        </span>
-        <em>{{ props.snapshot.mqttReceiveFilter === 'incoming' ? 'IN' : props.snapshot.mqttReceiveFilter === 'outgoing' ? 'OUT' : 'ALL' }}</em>
-      </button>
-
-      <article
-        v-for="row in props.snapshot.mqttSubscriptionRows"
-        :key="row.topic"
-        class="mqtt-subscription-row"
-        :class="{ active: row.active }"
-      >
-        <button type="button" class="mqtt-subscription-main" @click="emit('dispatch', 'mqtt.subscription.select', { topic: row.topic })">
-          <span>
-            <strong>{{ row.topic }}</strong>
-            <small>QoS {{ row.qos }}</small>
+        <article
+          v-for="row in props.snapshot.mqttSubscriptionRows"
+          :key="row.topic"
+          class="mqtt-subscription-row"
+          data-role="mqtt-subscriptions"
+          tabindex="0"
+          :class="{ active: row.active, selected: row.selected && !row.active, focused: row.focused }"
+          :title="subscriptionTitle(row)"
+          @click.stop="selectSubscription(row.topic)"
+          @dblclick.stop="emit('dispatch', 'mqtt.subscription.editor.open')"
+          @focus="focusSubscription(row.topic)"
+        >
+          <span class="mqtt-subscription-accent" aria-hidden="true"></span>
+          <span class="mqtt-subscription-main">
+            <strong>{{ row.displayName }}</strong>
+            <small v-if="row.alias">{{ row.topic }}</small>
           </span>
+          <button type="button" class="mqtt-subscription-edit" title="编辑订阅" @click.stop="emit('dispatch', 'mqtt.subscription.editor.open')">编辑</button>
+          <button type="button" class="mqtt-subscription-delete" title="清理订阅" @click.stop="deleteSubscription(row.topic)">×</button>
           <em v-if="row.unreadCount">未读 {{ row.unreadCount }}</em>
           <em v-else>未读 0</em>
-        </button>
-        <input
-          data-role="mqtt-search"
-          :value="row.note"
-          placeholder="备注"
-          @click.stop
-          @input="emit('dispatch', 'mqtt.subscription.note', { topic: row.topic, note: ($event.target as HTMLInputElement).value })"
-        />
-      </article>
-      <p v-if="activeConfig && !props.snapshot.mqttSubscriptionRows.length" class="empty-note">暂无订阅 topic</p>
-      <p v-if="!activeConfig" class="empty-note">先选择或创建连接</p>
+          <b>QoS {{ row.qos }}</b>
+        </article>
+        <p v-if="activeConfig && !props.snapshot.mqttSubscriptionRows.length" class="empty-note">暂无订阅 topic</p>
+        <p v-if="!activeConfig" class="empty-note">先选择或创建连接</p>
+      </div>
     </aside>
 
     <main class="mqtt-message-workspace" :class="{ 'mqtt-workspace-split': props.snapshot.mqttWorkspaceLayout === 'split' }">
@@ -435,10 +549,28 @@ function updateSsl(value: boolean) {
             默认发布 topic
             <input data-mqtt-field="publishTopic" data-role="mqtt-editor" :value="configForm.publishTopic" @input="updateConfigDraft({ publishTopic: ($event.target as HTMLInputElement).value })" />
           </label>
-          <label class="mqtt-config-wide">
-            默认订阅 topics
-            <textarea data-mqtt-field="subscriptions" data-role="mqtt-editor" rows="3" :value="configForm.subscriptionsText" @input="updateConfigDraft({ subscriptionsText: ($event.target as HTMLTextAreaElement).value })"></textarea>
-          </label>
+          <section class="mqtt-subscription-summary mqtt-config-wide">
+            <header>
+              <span>
+                <strong>订阅摘要</strong>
+                <small>{{ configSubscriptionSummaryRows.length }} 条 · QoS {{ activeConfig?.qos ?? configForm.qos }}</small>
+              </span>
+              <button type="button" :disabled="!activeConfig" @click="emit('dispatch', 'mqtt.subscription.editor.open')">管理订阅</button>
+            </header>
+            <div class="mqtt-subscription-summary-list">
+              <article
+                v-for="item in configSubscriptionSummaryRows"
+                :key="item.topic"
+                class="mqtt-subscription-summary-row"
+                :title="item.alias ? `${item.alias} · ${item.topic}` : item.topic"
+              >
+                <strong>{{ item.displayName }}</strong>
+                <small v-if="item.alias">{{ item.topic }}</small>
+                <span>QoS {{ item.qos }}</span>
+              </article>
+              <p v-if="!configSubscriptionSummaryRows.length" class="empty-note">{{ activeConfig ? '暂无订阅 topic' : '保存连接后可管理订阅' }}</p>
+            </div>
+          </section>
           <label>
             QoS
             <select data-mqtt-field="qos" data-role="mqtt-editor" :value="String(configForm.qos)" @change="updateConfigDraft({ qos: qosFromInput(($event.target as HTMLSelectElement).value) })">
@@ -491,7 +623,7 @@ function updateSsl(value: boolean) {
           <header class="mqtt-panel-title">
             <span>
               <strong>接收</strong>
-              <small>{{ receiveFilterLabel }} · {{ props.snapshot.mqttActiveSubscriptionTopic || '全部 topic' }}</small>
+              <small>{{ receiveFilterLabel }} · {{ activeSubscriptionLabel }}</small>
             </span>
             <small>{{ props.snapshot.mqttMessageRows.length }} 条</small>
           </header>
@@ -618,6 +750,59 @@ function updateSsl(value: boolean) {
         </section>
       </section>
     </main>
+
+    <div
+      v-if="props.snapshot.mqttSubscriptionDraft"
+      class="modal-backdrop mqtt-subscription-modal"
+      role="presentation"
+      data-role="mqtt-subscription-editor"
+      @click="emit('dispatch', 'mqtt.subscription.editor.cancel')"
+      @keydown="handleSubscriptionEditorKeydown"
+    >
+      <section class="mqtt-subscription-editor" role="dialog" aria-modal="true" aria-label="订阅管理" data-role="mqtt-subscription-editor" @click.stop>
+        <header>
+          <span>
+            <strong>订阅管理</strong>
+            <small>{{ activeConfig?.name || '当前连接' }} · QoS {{ activeConfig?.qos ?? configForm.qos }}</small>
+          </span>
+          <span class="mqtt-editor-actions">
+            <button type="button" @click="addSubscriptionEditorItem">+ 添加订阅</button>
+            <button type="button" @click="emit('dispatch', 'mqtt.subscription.editor.cancel')">取消</button>
+            <button type="button" @click="emit('dispatch', 'mqtt.subscription.editor.save')">
+              保存
+              <kbd>{{ commandLabel('mqtt.subscription.editor.save', 'c-s') }}</kbd>
+            </button>
+          </span>
+        </header>
+        <div class="mqtt-subscription-editor-list">
+          <article
+            v-for="item in props.snapshot.mqttSubscriptionDraft.items"
+            :key="item.id"
+            class="mqtt-subscription-editor-row"
+          >
+            <input
+              data-role="mqtt-subscription-editor"
+              data-mqtt-subscription-field="alias"
+              :value="item.alias"
+              placeholder="订阅别名"
+              @focus="focusSubscriptionEditorField('alias')"
+              @input="updateSubscriptionEditorItem(item.id, { alias: ($event.target as HTMLInputElement).value })"
+            />
+            <input
+              data-role="mqtt-subscription-editor"
+              data-mqtt-subscription-field="topic"
+              :value="item.topic"
+              placeholder="plc/+/status"
+              @focus="focusSubscriptionEditorField('topic')"
+              @input="updateSubscriptionEditorItem(item.id, { topic: ($event.target as HTMLInputElement).value })"
+            />
+            <span>QoS {{ activeConfig?.qos ?? configForm.qos }}</span>
+            <button type="button" class="danger" @click="removeSubscriptionEditorItem(item.id)">删除</button>
+          </article>
+          <p v-if="!props.snapshot.mqttSubscriptionDraft.items.length" class="empty-note">暂无订阅 topic</p>
+        </div>
+      </section>
+    </div>
 
     <div v-if="props.snapshot.mqttLogDrawer.open" class="drawer-overlay drawer-overlay-left" role="presentation" @click="emit('dispatch', 'mqtt.log.drawer.close')">
       <aside class="mqtt-log-drawer" aria-label="MQTT 错误日志" @click.stop>

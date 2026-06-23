@@ -8,7 +8,9 @@ export type KeybindingLayerId =
   | 'settings-shortcut-record'
   | 'settings-when-edit'
   | 'mqtt-editor'
+  | 'mqtt-subscription-editor'
   | 'mqtt-search'
+  | 'mqtt-subscriptions'
   | 'mqtt-drawer'
   | 'mqtt-detail'
   | 'mqtt-log-drawer'
@@ -32,7 +34,7 @@ export interface KeybindingContext {
   tab?: AppTabId
   confirmOpen?: boolean
   textInputFocused?: boolean
-  activeInputRole?: 'port-search' | 'port-group-search' | 'mqtt-search' | 'mqtt-editor' | 'favorite-search' | 'favorite-group-search' | 'favorite-editor' | 'favorite-pick-review' | 'settings' | 'port-group-editor' | 'other'
+  activeInputRole?: 'port-search' | 'port-group-search' | 'mqtt-search' | 'mqtt-editor' | 'mqtt-subscription-editor' | 'mqtt-subscriptions' | 'favorite-search' | 'favorite-group-search' | 'favorite-editor' | 'favorite-pick-review' | 'settings' | 'port-group-editor' | 'other'
   portPane?: 'groups' | 'results'
   favoritePane?: 'groups' | 'items'
   favoriteQuickMode?: boolean
@@ -143,7 +145,9 @@ export const LAYER_PRIORITY: Record<KeybindingLayerId, number> = {
   'settings-shortcut-record': 960,
   'settings-when-edit': 950,
   'mqtt-editor': 930,
+  'mqtt-subscription-editor': 940,
   'mqtt-search': 680,
+  'mqtt-subscriptions': 690,
   'mqtt-drawer': 820,
   'mqtt-detail': 800,
   'mqtt-log-drawer': 810,
@@ -170,7 +174,9 @@ const LAYER_LABELS: Record<KeybindingLayerId, string> = {
   'settings-shortcut-record': '快捷键录制',
   'settings-when-edit': 'When 编辑',
   'mqtt-editor': 'MQTT 编辑',
+  'mqtt-subscription-editor': 'MQTT 订阅编辑',
   'mqtt-search': 'MQTT 搜索',
+  'mqtt-subscriptions': 'MQTT 订阅栏',
   'mqtt-drawer': 'MQTT 动作抽屉',
   'mqtt-detail': 'MQTT 详情',
   'mqtt-log-drawer': 'MQTT 日志抽屉',
@@ -312,7 +318,17 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'mqtt.record.rename': { title: '重命名 MQTT 记录', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Shift+F2'], when: "tab == 'mqtt' && !confirmOpen && !textInputFocused", weight: 135, risk: 'data-write', profileId: 'mqtt' },
   'mqtt.record.delete': { title: '删除 MQTT 记录', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Delete', 'Backspace'], when: "tab == 'mqtt' && !confirmOpen && !textInputFocused", weight: 135, risk: 'data-write', profileId: 'mqtt' },
   'mqtt.subscription.add': { title: '新增 MQTT 订阅', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+T'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 134, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.subscription.editor.open': { title: '管理 MQTT 订阅', group: 'MQTT', layer: 'mqtt', shortcutIds: [], when: "tab == 'mqtt' && !confirmOpen", weight: 134, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.subscription.editor.save': { title: '保存 MQTT 订阅编辑', group: 'MQTT', layer: 'mqtt-subscription-editor', shortcutIds: ['Ctrl+S', 'Ctrl+Enter'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-subscription-editor'", weight: 440, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.subscription.editor.cancel': { title: '取消 MQTT 订阅编辑', group: 'MQTT', layer: 'mqtt-subscription-editor', shortcutIds: ['Escape'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-subscription-editor'", weight: 440, profileId: 'mqtt' },
+  'mqtt.subscription.editor.nextField': { title: 'MQTT 订阅编辑下一个字段', group: 'MQTT', layer: 'mqtt-subscription-editor', shortcutIds: ['Tab'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-subscription-editor'", weight: 440, profileId: 'mqtt' },
+  'mqtt.subscription.editor.prevField': { title: 'MQTT 订阅编辑上一个字段', group: 'MQTT', layer: 'mqtt-subscription-editor', shortcutIds: ['Shift+Tab'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-subscription-editor'", weight: 440, profileId: 'mqtt' },
   'mqtt.subscription.panel.toggle': { title: '折叠/展开 MQTT 订阅栏', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+Shift+T'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 139, profileId: 'mqtt' },
+  'mqtt.subscription.toggleSelect': { title: '多选 MQTT 订阅', group: 'MQTT', layer: 'mqtt-subscriptions', shortcutIds: ['Space'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-subscriptions'", weight: 430, profileId: 'mqtt' },
+  'mqtt.subscription.applyFilter': { title: '应用 MQTT 订阅筛选', group: 'MQTT', layer: 'mqtt-subscriptions', shortcutIds: ['Enter'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-subscriptions'", weight: 430, profileId: 'mqtt' },
+  'mqtt.subscription.delete': { title: '删除当前 MQTT 订阅', group: 'MQTT', layer: 'mqtt-subscriptions', shortcutIds: ['Delete', 'Backspace'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-subscriptions'", weight: 430, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.subscription.deleteSelected': { title: '删除选中 MQTT 订阅', group: 'MQTT', layer: 'mqtt-subscriptions', shortcutIds: ['Ctrl+Delete', 'Ctrl+Backspace'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-subscriptions'", weight: 430, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.subscription.clearAll': { title: '清空 MQTT 订阅', group: 'MQTT', layer: 'mqtt-subscriptions', shortcutIds: [], when: "tab == 'mqtt' && activeInputRole == 'mqtt-subscriptions'", weight: 420, risk: 'data-write', profileId: 'mqtt' },
   'mqtt.layout.toggle': { title: '切换 MQTT 收发布局', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+Shift+L'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 138, profileId: 'mqtt' },
   'mqtt.log.drawer.open': { title: '打开 MQTT 日志抽屉', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+L'], when: "tab == 'mqtt' && !confirmOpen && !mqttLogDrawerOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 137, profileId: 'mqtt' },
   'mqtt.log.drawer.close': { title: '关闭 MQTT 日志抽屉', group: 'MQTT', layer: 'mqtt-log-drawer', shortcutIds: ['Escape'], when: "tab == 'mqtt' && mqttLogDrawerOpen", weight: 410, profileId: 'mqtt' },
@@ -384,6 +400,14 @@ export const SHORTCUT_RESERVATION_RULES: ShortcutReservationRule[] = [
   { shortcutId: 'Escape', commandId: 'ports.detail.close', when: 'portDetailActive', description: '关闭端口详情抽屉', layer: 'port-detail' },
   { shortcutId: 'Escape', commandId: 'ports.groupDetail.close', when: 'portGroupDetailActive', description: '关闭端口组详情抽屉', layer: 'port-group-detail' },
   { shortcutId: 'Escape', commandId: 'ports.selection.clear', when: 'portSelectionMode', description: '清空端口多选', layer: 'ports-selection' },
+  { shortcutId: 'Space', commandId: 'mqtt.subscription.toggleSelect', when: "activeInputRole == 'mqtt-subscriptions'", description: 'MQTT 订阅栏切换多选', layer: 'mqtt-subscriptions' },
+  { shortcutId: 'Enter', commandId: 'mqtt.subscription.applyFilter', when: "activeInputRole == 'mqtt-subscriptions'", description: 'MQTT 订阅栏应用筛选，不触发记录重发', layer: 'mqtt-subscriptions' },
+  { shortcutId: 'Delete', commandId: 'mqtt.subscription.delete', when: "activeInputRole == 'mqtt-subscriptions'", description: 'MQTT 订阅栏删除当前订阅', layer: 'mqtt-subscriptions' },
+  { shortcutId: 'Escape', commandId: 'mqtt.subscription.editor.cancel', when: "activeInputRole == 'mqtt-subscription-editor'", description: '取消 MQTT 订阅编辑', layer: 'mqtt-subscription-editor' },
+  { shortcutId: 'Ctrl+S', commandId: 'mqtt.subscription.editor.save', when: "activeInputRole == 'mqtt-subscription-editor'", description: '保存 MQTT 订阅编辑', layer: 'mqtt-subscription-editor' },
+  { shortcutId: 'Ctrl+Enter', commandId: 'mqtt.subscription.editor.save', when: "activeInputRole == 'mqtt-subscription-editor'", description: '保存 MQTT 订阅编辑', layer: 'mqtt-subscription-editor' },
+  { shortcutId: 'Tab', commandId: 'mqtt.subscription.editor.nextField', when: "activeInputRole == 'mqtt-subscription-editor'", description: 'MQTT 订阅编辑字段循环', layer: 'mqtt-subscription-editor' },
+  { shortcutId: 'Shift+Tab', commandId: 'mqtt.subscription.editor.prevField', when: "activeInputRole == 'mqtt-subscription-editor'", description: 'MQTT 订阅编辑反向字段循环', layer: 'mqtt-subscription-editor' },
   { shortcutId: 'Tab', commandId: 'ports.pane.toggleNext', when: "tab == 'ports'", description: '端口页切换左右聚焦区域', layer: 'ports' },
   { shortcutId: 'Shift+Tab', commandId: 'ports.pane.togglePrev', when: "tab == 'ports'", description: '端口页反向切换左右聚焦区域', layer: 'ports' },
   { shortcutId: 'Tab', commandId: 'favorites.pane.toggleNext', when: "tab == 'favorites'", description: '收藏页切换分组和目标区域', layer: 'favorites' },
@@ -600,6 +624,7 @@ function activeLayers(context: KeybindingContext): KeybindingLayerId[] {
   if (context.tab) layers.push(context.tab)
   if (context.confirmOpen) layers.push('confirm')
   if (context.activeInputRole === 'mqtt-editor') layers.push('mqtt-editor')
+  if (context.activeInputRole === 'mqtt-subscription-editor') layers.push('mqtt-subscription-editor')
   if (context.activeInputRole === 'port-group-editor') layers.push('port-group-editor')
   if (context.activeInputRole === 'favorite-editor') layers.push('favorites-editor')
   if (context.activeInputRole === 'favorite-pick-review' || context.favoritePickReviewOpen) layers.push('favorites-pick-review')
@@ -613,6 +638,7 @@ function activeLayers(context: KeybindingContext): KeybindingLayerId[] {
   if (context.portSelectionMode) layers.push('ports-selection')
   if (context.activeInputRole === 'port-search' || context.activeInputRole === 'port-group-search') layers.push('ports-search')
   if (context.activeInputRole === 'mqtt-search') layers.push('mqtt-search')
+  if (context.activeInputRole === 'mqtt-subscriptions') layers.push('mqtt-subscriptions')
   if (context.activeInputRole === 'favorite-search' || context.activeInputRole === 'favorite-group-search') layers.push('favorites-search')
   return [...new Set(layers)]
 }
@@ -629,12 +655,14 @@ function shouldBlockTextInputShortcut(shortcutId: string, context: KeybindingCon
   if (!context.textInputFocused || shortcutId === 'Escape' || shortcutId === 'Shift+Escape') return false
   if (shortcutId === 'Ctrl+Alt+S') return false
   if (context.activeInputRole === 'mqtt-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
+  if (context.activeInputRole === 'mqtt-subscription-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'port-group-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-pick-review') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'ArrowUp', 'ArrowDown', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'port-search') return !['ArrowUp', 'ArrowDown', 'Shift+ArrowUp', 'Shift+ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+K', 'Ctrl+J', 'Space', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+W', 'Ctrl+Shift+W', 'Ctrl+T', 'Ctrl+G', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'port-group-search') return !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+K', 'Ctrl+J', 'Tab', 'Shift+Tab', 'Enter', 'Shift+Enter', 'Ctrl+Enter', 'Ctrl+Shift+Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+W', 'Ctrl+T', 'Ctrl+G', 'Ctrl+Shift+W', 'F2', 'Ctrl+F2', 'Shift+F2', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'ArrowLeft', 'ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+Enter', 'Ctrl+R', 'Ctrl+Shift+R', 'Ctrl+F', 'Ctrl+N', 'Ctrl+T', 'Ctrl+Shift+T', 'Ctrl+Shift+L', 'Ctrl+L', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+H', 'Ctrl+Shift+W', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Delete', 'Backspace', 'F2', 'Shift+F2', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
+  if (context.activeInputRole === 'mqtt-subscriptions') return !['Space', 'Enter', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+T', 'Ctrl+Shift+T', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'Shift+ArrowUp', 'Shift+ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+Enter', 'Ctrl+C', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+N', 'Ctrl+O', 'Ctrl+Shift+O', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-group-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'ArrowLeft', 'ArrowRight', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+N', 'Ctrl+O', 'Ctrl+Shift+O', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+T', 'F2', 'Shift+F2', 'Ctrl+F2', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   return !['Ctrl+S', 'Ctrl+Enter'].includes(shortcutId)

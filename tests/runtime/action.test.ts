@@ -1213,7 +1213,7 @@ describe('app runtime', () => {
       clientId: 'client-a',
       username: 'user',
       password: 'secret',
-      subscriptionsText: 'demo/#',
+      subscriptionItems: [{ topic: 'demo/#', alias: '演示订阅' }],
       publishTopic: 'demo/out',
       syncRecords: false
     })
@@ -1222,6 +1222,7 @@ describe('app runtime', () => {
       name: 'Dev Broker',
       url: 'ws://broker.example:8083/',
       subscriptions: ['demo/#'],
+      subscriptionAliases: { 'demo/#': '演示订阅' },
       publishTopic: 'demo/out',
       syncRecords: false
     })
@@ -1272,7 +1273,10 @@ describe('app runtime', () => {
       port: '8083',
       path: '/',
       clientId: 'client-a',
-      subscriptionsText: 'plc/+/status\nplc/#',
+      subscriptionItems: [
+        { topic: 'plc/+/status', alias: '状态' },
+        { topic: 'plc/#', alias: '全部 PLC' }
+      ],
       publishTopic: 'plc/czz060301/set'
     })
     runtime.dispatch('mqtt.config.save')
@@ -1284,27 +1288,172 @@ describe('app runtime', () => {
     runtime.appendMqttMessageRecord({ direction: 'incoming', topic: 'other/status', payload: 'ignored', qos: 0, retain: false })
 
     expect(runtime.snapshot().mqttSubscriptionRows).toEqual([
-      expect.objectContaining({ topic: 'plc/+/status', note: '', unreadCount: 1 }),
-      expect.objectContaining({ topic: 'plc/#', note: '', unreadCount: 1 })
+      expect.objectContaining({ topic: 'plc/+/status', alias: '状态', displayName: '状态', unreadCount: 1, selected: false, focused: false }),
+      expect.objectContaining({ topic: 'plc/#', alias: '全部 PLC', displayName: '全部 PLC', unreadCount: 1, selected: false, focused: false })
     ])
     expect(runtime.snapshot().mqttMessageRows.map((item) => item.payload)).toEqual(['in-status', 'ignored'])
 
-    expect(runtime.dispatch('mqtt.subscription.note', { topic: 'plc/+/status', note: '状态回包' }).handled).toBe(true)
-    expect(runtime.snapshot().mqttSubscriptionRows[0]).toMatchObject({ topic: 'plc/+/status', note: '状态回包' })
-    expect(JSON.stringify(runtime.snapshot().state.mqtt)).not.toContain('状态回包')
-    expect(JSON.stringify(runtime.snapshot().mqttArchive)).not.toContain('状态回包')
-
     expect(runtime.dispatch('mqtt.subscription.select', { topic: 'plc/+/status' }).handled).toBe(true)
     expect(runtime.snapshot().mqttActiveSubscriptionTopic).toBe('plc/+/status')
-    expect(runtime.snapshot().mqttSubscriptionRows[0]).toMatchObject({ unreadCount: 0, active: true })
+    expect(runtime.snapshot().mqttActiveSubscriptionTopics).toEqual(['plc/+/status'])
+    expect(runtime.snapshot().mqttSubscriptionRows[0]).toMatchObject({ unreadCount: 0, active: true, selected: true, focused: true })
     expect(runtime.snapshot().mqttMessageRows.map((item) => item.payload)).toEqual(['in-status'])
+
+    expect(runtime.dispatch('mqtt.subscription.toggleSelect', { topic: 'plc/#' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttSelectedSubscriptionTopics).toEqual(['plc/+/status', 'plc/#'])
+    expect(runtime.dispatch('mqtt.subscription.applyFilter').handled).toBe(true)
+    expect(runtime.snapshot().mqttActiveSubscriptionTopics).toEqual(['plc/+/status', 'plc/#'])
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.payload)).toEqual(['in-status'])
+
+    expect(runtime.dispatch('mqtt.subscription.select', { topic: '' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttActiveSubscriptionTopics).toEqual([])
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.payload)).toEqual(['in-status', 'ignored'])
 
     expect(runtime.dispatch('mqtt.receive.filter.out').handled).toBe(true)
     expect(runtime.snapshot().mqttReceiveFilter).toBe('outgoing')
-    expect(runtime.snapshot().mqttMessageRows).toEqual([])
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.payload)).toEqual(['out-set'])
 
     expect(runtime.dispatch('mqtt.receive.filter.all').handled).toBe(true)
-    expect(runtime.snapshot().mqttMessageRows.map((item) => item.payload)).toEqual(['in-status'])
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.payload)).toEqual(['in-status', 'out-set', 'ignored'])
+
+    expect(runtime.dispatch('mqtt.subscription.delete', { topic: 'plc/+/status' }).handled).toBe(true)
+    expect(runtime.snapshot().state.mqtt.configs[0].subscriptions).toEqual(['plc/#'])
+    expect(runtime.snapshot().state.mqtt.configs[0].subscriptionAliases).toEqual({ 'plc/#': '全部 PLC' })
+
+    expect(runtime.dispatch('mqtt.subscription.clearAll').handled).toBe(true)
+    expect(runtime.snapshot().state.mqtt.configs[0].subscriptions).toEqual([])
+    expect(runtime.snapshot().state.mqtt.configs[0].subscriptionAliases).toEqual({})
+  })
+
+  it('deletes selected MQTT subscriptions from the persisted connection config', () => {
+    const { state } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'PLC',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-a',
+      subscriptionItems: [
+        { topic: 'plc/a', alias: 'A' },
+        { topic: 'plc/b', alias: 'B' },
+        { topic: 'plc/c', alias: 'C' }
+      ]
+    })
+    runtime.dispatch('mqtt.config.save')
+
+    expect(runtime.dispatch('mqtt.subscription.toggleSelect', { topic: 'plc/a' }).handled).toBe(true)
+    expect(runtime.dispatch('mqtt.subscription.toggleSelect', { topic: 'plc/b' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttSelectedSubscriptionTopics).toEqual(['plc/a', 'plc/b'])
+    expect(runtime.dispatch('mqtt.subscription.deleteSelected').handled).toBe(true)
+    expect(runtime.snapshot().state.mqtt.configs[0]).toMatchObject({
+      subscriptions: ['plc/c'],
+      subscriptionAliases: { 'plc/c': 'C' }
+    })
+
+    expect(runtime.dispatch('mqtt.subscription.clearAll').handled).toBe(true)
+    expect(runtime.snapshot().state.mqtt.configs[0]).toMatchObject({
+      subscriptions: [],
+      subscriptionAliases: {}
+    })
+  })
+
+  it('edits MQTT subscriptions in a dedicated draft without opening the full config editor', () => {
+    const { state } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'PLC',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-a',
+      subscriptionItems: [
+        { topic: 'plc/a', alias: 'A' }
+      ]
+    })
+    runtime.dispatch('mqtt.config.save')
+
+    expect(runtime.dispatch('mqtt.subscription.add').handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toBeNull()
+    expect(runtime.snapshot().mqttSubscriptionDraft).toMatchObject({
+      connectionId: runtime.snapshot().state.mqtt.activeConfigId,
+      activeField: 'topic'
+    })
+    expect(runtime.snapshot().mqttSubscriptionDraft?.items).toHaveLength(2)
+    expect(runtime.snapshot().mqttSubscriptionDraft?.items[0]).toMatchObject({ topic: 'plc/a', alias: 'A' })
+    expect(runtime.snapshot().mqttSubscriptionDraft?.items[0].id).toBeTruthy()
+    expect(runtime.snapshot().mqttSubscriptionDraft?.items[1]).toMatchObject({ topic: '#', alias: '' })
+
+    runtime.updateMqttSubscriptionDraft({
+      items: [
+        { id: 'row-a', topic: ' plc/a ', alias: 'Alpha' },
+        { id: 'row-b', topic: 'plc/b', alias: 'Beta' },
+        { id: 'row-empty', topic: ' ', alias: 'drop-me' },
+        { id: 'row-duplicate', topic: 'plc/b', alias: 'Duplicate ignored' }
+      ]
+    })
+    expect(runtime.dispatch('mqtt.subscription.editor.save').handled).toBe(true)
+    expect(runtime.snapshot().mqttSubscriptionDraft).toBeNull()
+    expect(runtime.snapshot().state.mqtt.configs[0]).toMatchObject({
+      subscriptions: ['plc/a', 'plc/b'],
+      subscriptionAliases: { 'plc/a': 'Alpha', 'plc/b': 'Beta' }
+    })
+  })
+
+  it('cancels MQTT subscription edits without mutating the connection config', () => {
+    const { state } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'PLC',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-a',
+      subscriptionItems: [{ topic: 'plc/a', alias: 'A' }]
+    })
+    runtime.dispatch('mqtt.config.save')
+
+    expect(runtime.dispatch('mqtt.subscription.editor.open').handled).toBe(true)
+    runtime.updateMqttSubscriptionDraft({
+      items: [{ id: 'row-a', topic: 'plc/changed', alias: 'Changed' }]
+    })
+    expect(runtime.dispatch('mqtt.subscription.editor.cancel').handled).toBe(true)
+
+    expect(runtime.snapshot().mqttSubscriptionDraft).toBeNull()
+    expect(runtime.snapshot().state.mqtt.configs[0]).toMatchObject({
+      subscriptions: ['plc/a'],
+      subscriptionAliases: { 'plc/a': 'A' }
+    })
   })
 
   it('manages MQTT workbench layout, log drawer, and publish templates', () => {

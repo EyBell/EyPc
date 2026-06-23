@@ -49,6 +49,7 @@ export interface MqttConnectionConfig {
   clientId: string
   username: string
   subscriptions: string[]
+  subscriptionAliases: Record<string, string>
   publishTopic: string
   qos: MqttQos
   retain: boolean

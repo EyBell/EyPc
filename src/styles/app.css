@@ -2624,46 +2624,232 @@ kbd {
   background: #f8fcfb;
 }
 
-.mqtt-subscription-row {
+.mqtt-subscription-list {
   display: grid;
-  gap: 6px;
-  border: 1px solid #dce8ed;
-  border-left: 4px solid #b8d9b0;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px 0;
   border-radius: 7px;
-  background: #fff;
-  padding: 7px;
+}
+
+.mqtt-subscription-list:focus {
+  outline: 2px solid rgba(0, 166, 118, 0.16);
+  outline-offset: 2px;
+}
+
+.mqtt-subscription-add {
+  border-style: dashed;
+  border-color: #00c98b;
+  color: #00a676;
+  background: #fbfffd;
+}
+
+.mqtt-subscription-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 5px minmax(0, 1fr) auto 24px auto auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 44px;
+  border: 1px solid #dce8ed;
+  border-radius: 7px;
+  background: #f7fcf8;
+  padding: 8px 9px 8px 7px;
+  color: #254252;
+  cursor: pointer;
 }
 
 .mqtt-subscription-row.active {
-  border-color: #80d7a8;
-  border-left-color: #00a676;
+  border-color: #254b5b;
+  background: #244a5a;
+  color: #fff;
+}
+
+.mqtt-subscription-row.selected {
+  border-color: #99deb6;
   background: #eefbf3;
 }
 
-.mqtt-subscription-main,
-.mqtt-subscription-all {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: center;
-  width: 100%;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  text-align: left;
+.mqtt-subscription-row.focused {
+  box-shadow: 0 0 0 2px rgba(47, 128, 237, 0.18) inset;
 }
 
-.mqtt-subscription-main span,
-.mqtt-subscription-all span {
+.mqtt-subscription-accent {
+  width: 5px;
+  height: 24px;
+  border-radius: 999px;
+  background: #8bdc78;
+}
+
+.mqtt-subscription-row.active .mqtt-subscription-accent {
+  background: #00d06f;
+}
+
+.mqtt-subscription-main {
   display: grid;
   gap: 2px;
   min-width: 0;
 }
 
-.mqtt-subscription-row input {
-  min-height: 28px;
-  padding: 4px 7px;
+.mqtt-subscription-main small {
+  overflow: hidden;
+  color: #6f8390;
   font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mqtt-subscription-row.active .mqtt-subscription-main small,
+.mqtt-subscription-row.active em,
+.mqtt-subscription-row.active b {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.mqtt-subscription-row b {
+  color: #6f8390;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.mqtt-subscription-edit,
+.mqtt-subscription-delete {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 999px;
+  opacity: 0;
+  transform: translateX(4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.mqtt-subscription-edit {
+  width: auto;
+  min-width: 38px;
+  padding: 0 7px;
+  border-color: #cfe0e8;
+  color: #4d6675;
+  background: #fff;
+}
+
+.mqtt-subscription-delete {
+  border-color: #ffd0d0;
+  color: #d92d20;
+  background: #fff6f6;
+}
+
+.mqtt-subscription-row:hover .mqtt-subscription-edit,
+.mqtt-subscription-row:focus .mqtt-subscription-edit,
+.mqtt-subscription-row.focused .mqtt-subscription-edit,
+.mqtt-subscription-row:hover .mqtt-subscription-delete,
+.mqtt-subscription-row:focus .mqtt-subscription-delete,
+.mqtt-subscription-row.focused .mqtt-subscription-delete {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.mqtt-subscription-summary {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid #d8e7ed;
+  border-radius: 7px;
+  background: #fbfefd;
+}
+
+.mqtt-subscription-summary header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.mqtt-subscription-summary header span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mqtt-subscription-summary-list {
+  display: grid;
+  gap: 6px;
+}
+
+.mqtt-subscription-summary-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) 72px;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 8px;
+  border: 1px solid #dce8ed;
+  border-radius: 6px;
+  background: #f8fcfb;
+}
+
+.mqtt-subscription-summary-row strong,
+.mqtt-subscription-summary-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mqtt-subscription-summary-row small,
+.mqtt-subscription-summary-row span {
+  color: #6f8390;
+  font-size: 12px;
+}
+
+.mqtt-subscription-modal {
+  z-index: 80;
+}
+
+.mqtt-subscription-modal .mqtt-subscription-editor {
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(70vh, 640px);
+  overflow: auto;
+  box-shadow: 0 24px 60px rgba(31, 48, 60, 0.18);
+}
+
+.mqtt-subscription-editor {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid #d8e7ed;
+  border-radius: 7px;
+  background: #fbfefd;
+}
+
+.mqtt-subscription-editor header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.mqtt-subscription-editor header span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mqtt-subscription-editor-list {
+  display: grid;
+  gap: 6px;
+}
+
+.mqtt-subscription-editor-row {
+  display: grid;
+  grid-template-columns: minmax(112px, 0.42fr) minmax(160px, 1fr) 72px auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.mqtt-subscription-editor-row span {
+  color: #6f8390;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .mqtt-workspace-toolbar {

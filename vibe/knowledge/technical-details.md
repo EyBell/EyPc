@@ -19,3 +19,13 @@ Tool: codex
 - Last verified: 2026-06-23.
 - The current file favorites source of truth is [vibe/specs/2606201810-eypc-file-management-tab/01-spec.md](../specs/2606201810-eypc-file-management-tab/01-spec.md#L1) with verification in [vibe/specs/2606201810-eypc-file-management-tab/04-verify.md](../specs/2606201810-eypc-file-management-tab/04-verify.md#L1).
 - Durable architecture facts live in [ARCHITECTURE.md](ARCHITECTURE.md#L1), while repeated wrong paths are archived in [error-memory.md](error-memory.md#L1).
+
+## MQTT Subscription Rail
+
+- Last verified: 2026-06-23.
+- Source of truth: [vibe/specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
+- Persisted config keeps topic filters in `subscriptions: string[]` and alias labels in `subscriptionAliases` through [src/domain/types.ts](../../src/domain/types.ts#L45) and [src/domain/mqtt.ts](../../src/domain/mqtt.ts#L49).
+- Runtime projects alias-aware subscription rows, multi-filter state, focused/selected state, and config-deleting cleanup commands from [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L517).
+- Subscription add/edit uses `mqttSubscriptionDraft` and a modal editor with stable row ids; the full connection config editor only shows a summary and no longer remounts topic inputs while typing.
+- Keyboard ownership for subscription Space/Enter/Delete is isolated by the `mqtt-subscriptions` layer, while modal editing uses `mqtt-subscription-editor` to keep workbench commands from leaking through text inputs in [src/runtime/keybinding/keybindingRuntime.ts](../../src/runtime/keybinding/keybindingRuntime.ts#L12) and [src/runtime/keyboardEvent.ts](../../src/runtime/keyboardEvent.ts#L18).
+- UI list and config editor live in [src/pages/MqttPage.vue](../../src/pages/MqttPage.vue#L345) with styling in [src/styles/app.css](../../src/styles/app.css#L2627).

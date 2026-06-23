@@ -28,6 +28,11 @@ describe('mqtt domain', () => {
         password: 'secret',
         token: 'token',
         subscriptions: [' a/# ', '', 'a/#', 'b/+'],
+        subscriptionAliases: {
+          'a/#': '状态汇总',
+          'b/+': ' ',
+          'missing/#': '已删除'
+        },
         publishTopic: ' out ',
         qos: 9,
         retain: true,
@@ -53,6 +58,9 @@ describe('mqtt domain', () => {
       clientId: expect.stringMatching(/^eypc_/),
       username: 'demo',
       subscriptions: ['a/#', 'b/+'],
+      subscriptionAliases: {
+        'a/#': '状态汇总'
+      },
       publishTopic: 'out',
       qos: 0,
       retain: true,

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { blockHandledShortcutEvent, shortcutFromEvent } from '../../src/runtime/keyboardEvent'
+import { activeInputRoleFromTarget, blockHandledShortcutEvent, shortcutFromEvent } from '../../src/runtime/keyboardEvent'
 
 describe('keyboard event runtime', () => {
   it('normalizes Escape and blocks host propagation after runtime handles it', () => {
@@ -58,5 +58,25 @@ describe('keyboard event runtime', () => {
     } as unknown as KeyboardEvent
 
     expect(shortcutFromEvent(event)).toBe('Ctrl+Alt+S')
+  })
+
+  it('detects the MQTT subscription rail as a command-owned focus role', () => {
+    const row = {
+      tagName: 'BUTTON',
+      isContentEditable: false,
+      closest: (selector: string) => selector === '[data-role]' ? { dataset: { role: 'mqtt-subscriptions' } } : null
+    } as unknown as HTMLElement
+
+    expect(activeInputRoleFromTarget(row, 'mqtt')).toBe('mqtt-subscriptions')
+  })
+
+  it('detects MQTT subscription editor inputs as the dedicated edit role', () => {
+    const input = {
+      tagName: 'INPUT',
+      isContentEditable: false,
+      closest: (selector: string) => selector === '[data-role]' ? { dataset: { role: 'mqtt-subscription-editor' } } : null
+    } as unknown as HTMLElement
+
+    expect(activeInputRoleFromTarget(input, 'mqtt')).toBe('mqtt-subscription-editor')
   })
 })

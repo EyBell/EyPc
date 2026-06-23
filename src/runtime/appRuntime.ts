@@ -78,12 +78,16 @@ export interface AppRuntimeSnapshot {
   mqttActiveConfig: MqttConnectionConfig | null
   mqttSubscriptionRows: MqttSubscriptionRow[]
   mqttActiveSubscriptionTopic: string | null
+  mqttActiveSubscriptionTopics: string[]
+  mqttSelectedSubscriptionTopics: string[]
+  mqttFocusedSubscriptionTopic: string | null
   mqttReceiveFilter: MqttReceiveFilter
   mqttSessionRows: MqttSessionRecordView[]
   mqttMessageRows: MqttMessageRecord[]
   mqttSelectedRecord: MqttRecordSelection | null
   mqttSelectedLog: MqttLogRecord | null
   mqttConfigDraft: MqttConfigDraft | null
+  mqttSubscriptionDraft: MqttSubscriptionEditorDraft | null
   mqttPublishDraft: MqttPublishDraft
   mqttPublishScratch: MqttPublishDraft
   mqttPublishRecordsOpen: boolean
@@ -138,11 +142,33 @@ export interface MqttSessionRecordView {
 
 export interface MqttSubscriptionRow {
   topic: string
+  alias: string
+  displayName: string
   qos: MqttQos
-  note: string
   unreadCount: number
   active: boolean
+  selected: boolean
+  focused: boolean
 }
+
+export interface MqttSubscriptionDraftItem {
+  topic: string
+  alias: string
+}
+
+export interface MqttSubscriptionEditorItem {
+  id: string
+  topic: string
+  alias: string
+}
+
+export interface MqttSubscriptionEditorDraft {
+  connectionId: string
+  items: MqttSubscriptionEditorItem[]
+  activeField: MqttSubscriptionEditorField
+}
+
+export type MqttSubscriptionEditorField = 'alias' | 'topic'
 
 export interface MqttConfigDraft {
   mode: 'create' | 'edit' | 'rename'
@@ -158,6 +184,7 @@ export interface MqttConfigDraft {
   username: string
   password: string
   subscriptionsText: string
+  subscriptionItems: MqttSubscriptionDraftItem[]
   publishTopic: string
   qos: MqttQos
   retain: boolean
@@ -367,11 +394,15 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   let mqttLogs: MqttLogRecord[] = []
   let mqttSelectedRecord: MqttRecordSelection | null = null
   let mqttConfigDraft: MqttConfigDraft | null = null
+  let mqttSubscriptionDraft: MqttSubscriptionEditorDraft | null = null
   let mqttPublishDraft: MqttPublishDraft = { topic: '', payload: '', qos: 0, retain: false }
   let mqttPublishScratch: MqttPublishDraft = { ...mqttPublishDraft }
   let mqttPublishRecordsOpen = false
   let mqttReceiveFilter: MqttReceiveFilter = 'incoming'
   let mqttActiveSubscriptionTopic: string | null = null
+  let mqttActiveSubscriptionTopics: string[] = []
+  let mqttSelectedSubscriptionTopics: string[] = []
+  let mqttFocusedSubscriptionTopic: string | null = null
   const mqttSubscriptionRuntime = new Map<string, { note: string; unreadCount: number }>()
   let mqttDrawer: MqttDrawerState = { open: false, active: false }
   let mqttCurrentSessionId: string | null = null
@@ -418,6 +449,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       confirm ? 'confirm' : null,
       portGroupDraft ? 'port-group-editor' : null,
       mqttConfigDraft ? 'mqtt-editor' : null,
+      mqttSubscriptionDraft ? 'mqtt-subscription-editor' : null,
       favoriteDraft ? 'favorites-editor' : null,
       favoritePickReview ? 'favorites-pick-review' : null,
       portGroupDetail.open ? 'port-group-detail' : null,
@@ -499,17 +531,43 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return current
   }
 
+  function validMqttSubscriptionTopics(config: MqttConnectionConfig, topics: string[]): string[] {
+    const valid = new Set(config.subscriptions)
+    return [...new Set(topics.map((topic) => topic.trim()).filter((topic) => valid.has(topic)))]
+  }
+
+  function syncMqttActiveSubscriptionTopic() {
+    mqttActiveSubscriptionTopic = mqttActiveSubscriptionTopics[0] || null
+  }
+
+  function setMqttActiveSubscriptionTopics(config: MqttConnectionConfig, topics: string[]) {
+    mqttActiveSubscriptionTopics = validMqttSubscriptionTopics(config, topics)
+    syncMqttActiveSubscriptionTopic()
+  }
+
+  function pruneMqttSubscriptionState(config: MqttConnectionConfig) {
+    mqttActiveSubscriptionTopics = validMqttSubscriptionTopics(config, mqttActiveSubscriptionTopics)
+    mqttSelectedSubscriptionTopics = validMqttSubscriptionTopics(config, mqttSelectedSubscriptionTopics)
+    if (mqttFocusedSubscriptionTopic && !config.subscriptions.includes(mqttFocusedSubscriptionTopic)) mqttFocusedSubscriptionTopic = null
+    syncMqttActiveSubscriptionTopic()
+  }
+
   function mqttSubscriptionRowsForActiveConfig(): MqttSubscriptionRow[] {
     const config = currentMqttConfig()
     if (!config) return []
+    pruneMqttSubscriptionState(config)
     return config.subscriptions.map((topic) => {
       const runtimeState = mqttSubscriptionRuntimeState(config.id, topic)
+      const alias = config.subscriptionAliases[topic] || ''
       return {
         topic,
+        alias,
+        displayName: alias || topic,
         qos: config.qos,
-        note: runtimeState.note,
         unreadCount: runtimeState.unreadCount,
-        active: mqttActiveSubscriptionTopic === topic
+        active: mqttActiveSubscriptionTopics.includes(topic),
+        selected: mqttSelectedSubscriptionTopics.includes(topic),
+        focused: mqttFocusedSubscriptionTopic === topic
       }
     })
   }
@@ -528,10 +586,239 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     const config = currentMqttConfig()
     if (!config) return false
     const target = typeof topic === 'string' ? topic.trim() : ''
-    mqttActiveSubscriptionTopic = target && config.subscriptions.includes(target) ? target : null
-    if (mqttActiveSubscriptionTopic) mqttSubscriptionRuntimeState(config.id, mqttActiveSubscriptionTopic).unreadCount = 0
+    if (!target) {
+      mqttFocusedSubscriptionTopic = null
+      mqttSelectedSubscriptionTopics = []
+      setMqttActiveSubscriptionTopics(config, [])
+      notify()
+      return true
+    }
+    if (!config.subscriptions.includes(target)) return false
+    mqttFocusedSubscriptionTopic = target
+    mqttSelectedSubscriptionTopics = [target]
+    setMqttActiveSubscriptionTopics(config, [target])
+    mqttSubscriptionRuntimeState(config.id, target).unreadCount = 0
     notify()
     return true
+  }
+
+  function focusMqttSubscription(topic: string | null) {
+    const config = currentMqttConfig()
+    const target = typeof topic === 'string' ? topic.trim() : ''
+    if (!config || !target || !config.subscriptions.includes(target)) return false
+    mqttFocusedSubscriptionTopic = target
+    notify()
+    return true
+  }
+
+  function toggleMqttSubscriptionSelection(topic?: string) {
+    const config = currentMqttConfig()
+    if (!config) return false
+    const target = (typeof topic === 'string' ? topic : mqttFocusedSubscriptionTopic || '').trim()
+    if (!target || !config.subscriptions.includes(target)) return false
+    mqttFocusedSubscriptionTopic = target
+    mqttSelectedSubscriptionTopics = mqttSelectedSubscriptionTopics.includes(target)
+      ? mqttSelectedSubscriptionTopics.filter((item) => item !== target)
+      : [...mqttSelectedSubscriptionTopics, target]
+    notify()
+    return true
+  }
+
+  function applyMqttSubscriptionFilter() {
+    const config = currentMqttConfig()
+    if (!config) return false
+    const targets = mqttSelectedSubscriptionTopics.length
+      ? mqttSelectedSubscriptionTopics
+      : mqttFocusedSubscriptionTopic
+        ? [mqttFocusedSubscriptionTopic]
+        : []
+    setMqttActiveSubscriptionTopics(config, targets)
+    mqttSelectedSubscriptionTopics = [...mqttActiveSubscriptionTopics]
+    for (const topic of mqttActiveSubscriptionTopics) mqttSubscriptionRuntimeState(config.id, topic).unreadCount = 0
+    notify()
+    return true
+  }
+
+  function unsubscribeMqttTopics(config: MqttConnectionConfig, topics: string[]) {
+    if (!mqttClient?.unsubscribe || !topics.length) return
+    const target = topics.length === 1 ? topics[0] : topics
+    try {
+      mqttClient.unsubscribe(target, (error) => {
+        if (!error) return
+        pushMqttLog('warn', '取消订阅失败', error.message, config.id)
+        notify()
+      })
+    } catch (error) {
+      pushMqttLog('warn', '取消订阅失败', error instanceof Error ? error.message : String(error), config.id)
+    }
+  }
+
+  function subscribeMqttTopics(config: MqttConnectionConfig, topics: string[]) {
+    if (!mqttClient?.subscribe || !topics.length) return
+    const target = topics.length === 1 ? topics[0] : topics
+    try {
+      mqttClient.subscribe(target, { qos: config.qos }, (error) => {
+        if (!error) return
+        pushMqttLog('warn', '新增订阅失败', error.message, config.id)
+        notify()
+      })
+    } catch (error) {
+      pushMqttLog('warn', '新增订阅失败', error instanceof Error ? error.message : String(error), config.id)
+    }
+  }
+
+  function createMqttSubscriptionEditorItem(topic = '', alias = '', seed = Date.now()): MqttSubscriptionEditorItem {
+    return {
+      id: `mqtt-subscription-item:${seed}:${Math.random().toString(16).slice(2, 8)}`,
+      topic,
+      alias
+    }
+  }
+
+  function defaultMqttSubscriptionDraft(config: MqttConnectionConfig, appendBlank = false): MqttSubscriptionEditorDraft {
+    const items = config.subscriptions.map((topic, index) =>
+      createMqttSubscriptionEditorItem(topic, config.subscriptionAliases[topic] || '', config.createdAt + index)
+    )
+    if (appendBlank) items.push(createMqttSubscriptionEditorItem('#', '', Date.now()))
+    return {
+      connectionId: config.id,
+      items,
+      activeField: 'topic'
+    }
+  }
+
+  function beginMqttSubscriptionDraft(appendBlank = false) {
+    const config = currentMqttConfig()
+    if (!config) return beginMqttConfigDraft('create')
+    mqttSubscriptionDraft = defaultMqttSubscriptionDraft(config, appendBlank)
+    notify()
+    return true
+  }
+
+  function updateMqttSubscriptionDraft(input: Partial<Omit<MqttSubscriptionEditorDraft, 'connectionId'>>) {
+    if (!mqttSubscriptionDraft) return
+    mqttSubscriptionDraft = {
+      ...mqttSubscriptionDraft,
+      ...input,
+      items: input.items ? input.items.map((item) => ({ ...item })) : mqttSubscriptionDraft.items
+    }
+    notify()
+  }
+
+  function mqttSubscriptionDraftData(draft: MqttSubscriptionEditorDraft): { subscriptions: string[]; subscriptionAliases: Record<string, string> } {
+    const subscriptions: string[] = []
+    const subscriptionAliases: Record<string, string> = {}
+    for (const item of draft.items) {
+      const topic = item.topic.trim()
+      if (!topic || subscriptions.includes(topic)) continue
+      subscriptions.push(topic)
+      const alias = item.alias.trim()
+      if (alias) subscriptionAliases[topic] = alias
+    }
+    return { subscriptions, subscriptionAliases }
+  }
+
+  function saveMqttSubscriptionDraft() {
+    if (!mqttSubscriptionDraft) return false
+    const draft = mqttSubscriptionDraft
+    const config = state.mqtt.configs.find((item) => item.id === draft.connectionId)
+    if (!config) {
+      mqttSubscriptionDraft = null
+      notify()
+      return false
+    }
+    const data = mqttSubscriptionDraftData(draft)
+    const nextSet = new Set(data.subscriptions)
+    const previousSet = new Set(config.subscriptions)
+    const added = data.subscriptions.filter((topic) => !previousSet.has(topic))
+    const removed = config.subscriptions.filter((topic) => !nextSet.has(topic))
+    const now = Date.now()
+    const nextConfig = createMqttConnectionConfig({
+      ...config,
+      subscriptions: data.subscriptions,
+      subscriptionAliases: data.subscriptionAliases,
+      updatedAt: now
+    }, now)
+    state.mqtt.configs = state.mqtt.configs.map((item) => item.id === config.id ? nextConfig : item)
+    for (const topic of removed) mqttSubscriptionRuntime.delete(mqttSubscriptionKey(config.id, topic))
+    mqttActiveSubscriptionTopics = mqttActiveSubscriptionTopics.filter((topic) => nextSet.has(topic))
+    mqttSelectedSubscriptionTopics = mqttSelectedSubscriptionTopics.filter((topic) => nextSet.has(topic))
+    if (mqttFocusedSubscriptionTopic && !nextSet.has(mqttFocusedSubscriptionTopic)) mqttFocusedSubscriptionTopic = data.subscriptions[0] || null
+    syncMqttActiveSubscriptionTopic()
+    mqttSubscriptionDraft = null
+    if (state.mqtt.activeConfigId === config.id) {
+      unsubscribeMqttTopics(config, removed)
+      subscribeMqttTopics(nextConfig, added)
+    }
+    save()
+    notify()
+    return true
+  }
+
+  function cancelMqttSubscriptionDraft() {
+    if (!mqttSubscriptionDraft) return false
+    mqttSubscriptionDraft = null
+    notify()
+    return true
+  }
+
+  function moveMqttSubscriptionDraftField(offset: number) {
+    if (!mqttSubscriptionDraft) return false
+    const fields: MqttSubscriptionEditorField[] = ['alias', 'topic']
+    const index = fields.indexOf(mqttSubscriptionDraft.activeField)
+    mqttSubscriptionDraft = {
+      ...mqttSubscriptionDraft,
+      activeField: fields[(index + offset + fields.length) % fields.length]
+    }
+    notify()
+    return true
+  }
+
+  function deleteMqttSubscriptions(topics: string[]) {
+    const config = currentMqttConfig()
+    if (!config) return false
+    const removed = validMqttSubscriptionTopics(config, topics)
+    if (!removed.length) return false
+    const removedSet = new Set(removed)
+    const nextSubscriptions = config.subscriptions.filter((topic) => !removedSet.has(topic))
+    const nextAliases: Record<string, string> = {}
+    for (const topic of nextSubscriptions) {
+      const alias = config.subscriptionAliases[topic]
+      if (alias) nextAliases[topic] = alias
+    }
+    const now = Date.now()
+    state.mqtt.configs = state.mqtt.configs.map((item) => item.id === config.id
+      ? createMqttConnectionConfig({
+          ...item,
+          subscriptions: nextSubscriptions,
+          subscriptionAliases: nextAliases,
+          updatedAt: now
+        }, now)
+      : item)
+    for (const topic of removed) mqttSubscriptionRuntime.delete(mqttSubscriptionKey(config.id, topic))
+    mqttActiveSubscriptionTopics = mqttActiveSubscriptionTopics.filter((topic) => !removedSet.has(topic))
+    mqttSelectedSubscriptionTopics = mqttSelectedSubscriptionTopics.filter((topic) => !removedSet.has(topic))
+    if (mqttFocusedSubscriptionTopic && removedSet.has(mqttFocusedSubscriptionTopic)) mqttFocusedSubscriptionTopic = nextSubscriptions[0] || null
+    syncMqttActiveSubscriptionTopic()
+    unsubscribeMqttTopics(config, removed)
+    save()
+    notify()
+    return true
+  }
+
+  function deleteFocusedMqttSubscription(topic?: string) {
+    const target = typeof topic === 'string' && topic.trim() ? topic.trim() : mqttFocusedSubscriptionTopic || mqttActiveSubscriptionTopic || ''
+    return deleteMqttSubscriptions(target ? [target] : [])
+  }
+
+  function deleteSelectedMqttSubscriptions() {
+    return deleteMqttSubscriptions(mqttSelectedSubscriptionTopics)
+  }
+
+  function clearAllMqttSubscriptions() {
+    const config = currentMqttConfig()
+    if (!config) return false
+    return deleteMqttSubscriptions(config.subscriptions)
   }
 
   function updateMqttUnreadForMessage(message: MqttMessageRecord) {
@@ -541,14 +828,14 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     for (const topic of config.subscriptions) {
       if (!matchMqttTopicFilter(message.topic, topic)) continue
       const runtimeState = mqttSubscriptionRuntimeState(config.id, topic)
-      if (state.mqtt.activeConfigId === config.id && mqttActiveSubscriptionTopic === topic) continue
+      if (state.mqtt.activeConfigId === config.id && mqttActiveSubscriptionTopics.includes(topic)) continue
       runtimeState.unreadCount += 1
     }
   }
 
   function mqttMessagePassesReceiveFilters(message: MqttMessageRecord): boolean {
     if (mqttReceiveFilter !== 'all' && message.direction !== mqttReceiveFilter) return false
-    if (mqttActiveSubscriptionTopic && !matchMqttTopicFilter(message.topic, mqttActiveSubscriptionTopic)) return false
+    if (mqttActiveSubscriptionTopics.length && !mqttActiveSubscriptionTopics.some((topic) => matchMqttTopicFilter(message.topic, topic))) return false
     return true
   }
 
@@ -710,6 +997,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       username: config.username,
       password: target ? mqttSecrets.get(target.id) || '' : '',
       subscriptionsText: config.subscriptions.join('\n'),
+      subscriptionItems: config.subscriptions.map((topic) => ({ topic, alias: config.subscriptionAliases[topic] || '' })),
       publishTopic: config.publishTopic,
       qos: config.qos,
       retain: config.retain,
@@ -739,19 +1027,33 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     notify()
   }
 
-  function mqttDraftSubscriptions(draft: MqttConfigDraft): string[] {
-    return [...new Set(draft.subscriptionsText.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean))]
+  function mqttDraftSubscriptionData(draft: MqttConfigDraft): { subscriptions: string[]; subscriptionAliases: Record<string, string> } {
+    const rawItems = draft.subscriptionItems?.length
+      ? draft.subscriptionItems
+      : draft.subscriptionsText.split(/\r?\n|,/).map((topic) => ({ topic, alias: '' }))
+    const subscriptions: string[] = []
+    const subscriptionAliases: Record<string, string> = {}
+    for (const item of rawItems) {
+      const topic = item.topic.trim()
+      if (!topic) continue
+      if (!subscriptions.includes(topic)) subscriptions.push(topic)
+      const alias = item.alias.trim()
+      if (alias) subscriptionAliases[topic] = alias
+      else delete subscriptionAliases[topic]
+    }
+    return { subscriptions, subscriptionAliases }
   }
 
   function saveMqttConfigDraft() {
     if (!mqttConfigDraft) return false
     const now = Date.now()
     const draft = mqttConfigDraft
+    const subscriptionData = mqttDraftSubscriptionData(draft)
     if (draft.mode === 'create') {
       const config = createMqttConnectionConfig({
         ...draft,
         url: buildMqttWebSocketUrl(draft),
-        subscriptions: mqttDraftSubscriptions(draft),
+        ...subscriptionData,
         sortOrder: state.mqtt.configs.length + 1,
         createdAt: now,
         updatedAt: now
@@ -767,7 +1069,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
           ...config,
           ...draft,
           id: config.id,
-          subscriptions: draft.mode === 'rename' ? config.subscriptions : mqttDraftSubscriptions(draft),
+          subscriptions: draft.mode === 'create' ? subscriptionData.subscriptions : config.subscriptions,
+          subscriptionAliases: draft.mode === 'create' ? subscriptionData.subscriptionAliases : config.subscriptionAliases,
           url: draft.mode === 'rename' ? config.url : buildMqttWebSocketUrl(draft),
           clientId: draft.mode === 'rename' ? config.clientId : draft.clientId,
           username: draft.mode === 'rename' ? config.username : draft.username,
@@ -2727,10 +3030,20 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'mqtt.log.delete', title: '删除当前 MQTT 日志', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 93, when: (ctx) => ctx.tab === 'mqtt', run: () => deleteSelectedMqttLog() })
     actions.register({ id: 'mqtt.log.clearCurrentConfig', title: '清空当前连接 MQTT 日志', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'mqtt', run: () => clearMqttLogs('current') })
     actions.register({ id: 'mqtt.log.clearAll', title: '清空全部 MQTT 日志', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: () => clearMqttLogs('all') })
-    actions.register({ id: 'mqtt.subscription.add', title: '新增 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'Ctrl+T', when: (ctx) => ctx.tab === 'mqtt', run: () => { const config = currentMqttConfig(); if (!config) return beginMqttConfigDraft('create'); mqttConfigDraft = defaultMqttConfigDraft('edit', { ...config, subscriptions: [...config.subscriptions, '#'] }); notify(); return true } })
+    actions.register({ id: 'mqtt.subscription.add', title: '新增 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'Ctrl+T', when: (ctx) => ctx.tab === 'mqtt', run: () => beginMqttSubscriptionDraft(true) })
+    actions.register({ id: 'mqtt.subscription.editor.open', title: '管理 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'mqtt', run: () => beginMqttSubscriptionDraft(false) })
+    actions.register({ id: 'mqtt.subscription.editor.save', title: '保存 MQTT 订阅编辑', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('mqtt-subscription-editor'), run: () => saveMqttSubscriptionDraft() })
+    actions.register({ id: 'mqtt.subscription.editor.cancel', title: '取消 MQTT 订阅编辑', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-subscription-editor'), run: () => cancelMqttSubscriptionDraft() })
+    actions.register({ id: 'mqtt.subscription.editor.nextField', title: 'MQTT 订阅编辑下一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.layerIds.includes('mqtt-subscription-editor'), run: () => moveMqttSubscriptionDraftField(1) })
+    actions.register({ id: 'mqtt.subscription.editor.prevField', title: 'MQTT 订阅编辑上一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.layerIds.includes('mqtt-subscription-editor'), run: () => moveMqttSubscriptionDraftField(-1) })
     actions.register({ id: 'mqtt.subscription.panel.toggle', title: '折叠/展开 MQTT 订阅栏', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 92, shortcut: 'Ctrl+Shift+T', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttSubscriptionPanelOpen = !mqttSubscriptionPanelOpen; notify(); return true } })
     actions.register({ id: 'mqtt.subscription.select', title: '选择 MQTT 订阅筛选', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => selectMqttSubscription(typeof args?.topic === 'string' ? args.topic : null) })
-    actions.register({ id: 'mqtt.subscription.note', title: '备注 MQTT 订阅', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => typeof args?.topic === 'string' && typeof args?.note === 'string' ? setMqttSubscriptionNote(args.topic, args.note) : false })
+    actions.register({ id: 'mqtt.subscription.focus', title: '聚焦 MQTT 订阅', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => focusMqttSubscription(typeof args?.topic === 'string' ? args.topic : null) })
+    actions.register({ id: 'mqtt.subscription.toggleSelect', title: '多选 MQTT 订阅', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Space', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => toggleMqttSubscriptionSelection(typeof args?.topic === 'string' ? args.topic : undefined) })
+    actions.register({ id: 'mqtt.subscription.applyFilter', title: '应用 MQTT 订阅筛选', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Enter', when: (ctx) => ctx.tab === 'mqtt', run: () => applyMqttSubscriptionFilter() })
+    actions.register({ id: 'mqtt.subscription.delete', title: '删除当前 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 91, shortcut: 'Delete', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => deleteFocusedMqttSubscription(typeof args?.topic === 'string' ? args.topic : undefined) })
+    actions.register({ id: 'mqtt.subscription.deleteSelected', title: '删除选中 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 90, shortcut: 'Ctrl+Delete', when: (ctx) => ctx.tab === 'mqtt', run: () => deleteSelectedMqttSubscriptions() })
+    actions.register({ id: 'mqtt.subscription.clearAll', title: '清空 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 89, when: (ctx) => ctx.tab === 'mqtt', run: () => clearAllMqttSubscriptions() })
     actions.register({ id: 'mqtt.layout.toggle', title: '切换 MQTT 收发布局', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+Shift+L', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttWorkspaceLayout = mqttWorkspaceLayout === 'stack' ? 'split' : 'stack'; notify(); return true } })
     actions.register({ id: 'mqtt.log.drawer.open', title: '打开 MQTT 日志抽屉', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+L', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttLogDrawer = { open: true }; notify(); return true } })
     actions.register({ id: 'mqtt.log.drawer.close', title: '关闭 MQTT 日志抽屉', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 91, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-log-drawer'), run: () => { mqttLogDrawer = { open: false }; notify(); return true } })
@@ -2934,12 +3247,16 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         mqttActiveConfig: currentMqttConfig(),
         mqttSubscriptionRows: mqttSubscriptionRowsForActiveConfig(),
         mqttActiveSubscriptionTopic,
+        mqttActiveSubscriptionTopics,
+        mqttSelectedSubscriptionTopics,
+        mqttFocusedSubscriptionTopic,
         mqttReceiveFilter,
         mqttSessionRows: mqttSessionsForActiveConfig(),
         mqttMessageRows: mqttMessagesForSelection(),
         mqttSelectedRecord,
         mqttSelectedLog: selectedMqttLog(),
         mqttConfigDraft,
+        mqttSubscriptionDraft,
         mqttPublishDraft,
         mqttPublishScratch,
         mqttPublishRecordsOpen,
@@ -2991,6 +3308,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       mqttSelectedRecord = { kind: 'config', id }
       mqttCurrentSessionId = null
       mqttActiveSubscriptionTopic = null
+      mqttActiveSubscriptionTopics = []
+      mqttSelectedSubscriptionTopics = []
+      mqttFocusedSubscriptionTopic = null
       save()
       notify()
     },
@@ -3010,6 +3330,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       notify()
     },
     updateMqttConfigDraft,
+    updateMqttSubscriptionDraft,
     updateMqttPublishDraft(input: Partial<MqttPublishDraft>) {
       mqttPublishDraft = { ...mqttPublishDraft, ...input }
       mqttPublishScratch = { ...mqttPublishDraft }
@@ -3217,6 +3538,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         portGroupDraft = null
         notify()
         return 'ports.group.edit.cancel'
+      }
+      if (mqttSubscriptionDraft && shortcutId === 'Escape') {
+        mqttSubscriptionDraft = null
+        notify()
+        return 'mqtt.subscription.editor.cancel'
       }
       if (mqttConfigDraft && shortcutId === 'Escape') {
         mqttConfigDraft = null

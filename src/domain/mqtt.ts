@@ -46,6 +46,17 @@ function strings(value: unknown): string[] {
     : []
 }
 
+function subscriptionAliases(value: unknown, subscriptions: string[]): Record<string, string> {
+  const aliases = record(value)
+  const subscriptionSet = new Set(subscriptions)
+  const output: Record<string, string> = {}
+  for (const topic of subscriptions) {
+    const alias = stringValue(aliases[topic]).trim()
+    if (alias && subscriptionSet.has(topic)) output[topic] = alias
+  }
+  return output
+}
+
 function qosValue(value: unknown, fallback: MqttQos = DEFAULT_QOS): MqttQos {
   return value === 1 || value === 2 || value === 0 ? value : fallback
 }
@@ -122,13 +133,15 @@ export function createMqttConnectionConfig(input: Partial<MqttConnectionConfig> 
   const id = stringValue(source.id).trim() || nextId('mqtt-config', now)
   const url = normalizeUrl(source.url)
   const name = stringValue(source.name).trim() || url || 'MQTT 连接'
+  const subscriptions = strings(source.subscriptions)
   return {
     id,
     name,
     url,
     clientId: stringValue(source.clientId).trim() || defaultClientId(now),
     username: stringValue(source.username).trim(),
-    subscriptions: strings(source.subscriptions),
+    subscriptions,
+    subscriptionAliases: subscriptionAliases(source.subscriptionAliases, subscriptions),
     publishTopic: stringValue(source.publishTopic).trim(),
     qos: qosValue(source.qos),
     retain: boolValue(source.retain, false),

@@ -17,10 +17,12 @@ export function isEditableTarget(target: EventTarget | null): boolean {
 
 export function activeInputRoleFromTarget(target: EventTarget | null, activeTab: AppTabId): KeyboardInputRole | undefined {
   const element = target as HTMLElement | null
-  if (!element || !isEditableTarget(element)) return undefined
-  const role = typeof element.closest === 'function'
+  const role = element && typeof element.closest === 'function'
     ? element.closest<HTMLElement>('[data-role]')?.dataset.role
     : undefined
+  if (role === 'mqtt-subscriptions') return 'mqtt-subscriptions'
+  if (role === 'mqtt-subscription-editor') return 'mqtt-subscription-editor'
+  if (!element || !isEditableTarget(element)) return undefined
   if (role === 'port-group-search') return 'port-group-search'
   if (role === 'port-group-editor') return 'port-group-editor'
   if (role === 'port-search') return 'port-search'

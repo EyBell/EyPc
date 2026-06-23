@@ -169,6 +169,7 @@ onUnmounted(() => {
           @focus-message="runtime.focusMqttMessage"
           @focus-log="runtime.focusMqttLog"
           @update-config-draft="runtime.updateMqttConfigDraft"
+          @update-subscription-draft="runtime.updateMqttSubscriptionDraft"
           @update-publish-draft="runtime.updateMqttPublishDraft"
           @dispatch="runtime.dispatch"
         />

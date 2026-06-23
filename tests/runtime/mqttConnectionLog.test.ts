@@ -11,15 +11,22 @@ interface FakeMqttClient {
   emit(event: string, ...args: unknown[]): void
   end(): void
   publish(): void
-  subscribe(): void
+  subscribe(topic: string | string[], options?: unknown, callback?: (error?: Error | null) => void): void
+  unsubscribe(topic: string | string[], callback?: (error?: Error | null) => void): void
+  subscribed: Array<string | string[]>
+  unsubscribed: Array<string | string[]>
 }
 
 function createFakeMqttClient(): FakeMqttClient {
   const listeners = new Map<string, Listener[]>()
   let ended = false
+  const subscribed: Array<string | string[]> = []
+  const unsubscribed: Array<string | string[]> = []
 
   return {
     listeners,
+    subscribed,
+    unsubscribed,
     get ended() { return ended },
     set ended(value: boolean) { ended = value },
     on(event: string, listener: Listener) {
@@ -32,7 +39,14 @@ function createFakeMqttClient(): FakeMqttClient {
       ended = true
     },
     publish() {},
-    subscribe() {}
+    subscribe(topic: string | string[], _options?: unknown, callback?: (error?: Error | null) => void) {
+      subscribed.push(topic)
+      callback?.(null)
+    },
+    unsubscribe(topic: string | string[], callback?: (error?: Error | null) => void) {
+      unsubscribed.push(topic)
+      callback?.(null)
+    }
   }
 }
 
@@ -201,5 +215,63 @@ describe('mqtt connection logs', () => {
 
     expect(runtime.dispatch('mqtt.log.clearAll').handled).toBe(true)
     expect(runtime.snapshot().mqttLogs).toEqual([])
+  })
+
+  it('best-effort unsubscribes removed subscription topics while connected', async () => {
+    const state = installPlatform()
+    const clientRef: { current: FakeMqttClient | null } = { current: null }
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state, {
+      mqttModuleLoader: async () => ({
+        default: {
+          connect: () => {
+            clientRef.current = createFakeMqttClient()
+            return clientRef.current
+          }
+        }
+      })
+    })
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'Agro-A',
+      protocol: 'ws',
+      host: 'broker-a.example',
+      port: '8083',
+      path: '/',
+      clientId: 'mqttx_a',
+      subscriptionItems: [
+        { topic: 'plc/a', alias: 'A' },
+        { topic: 'plc/b', alias: 'B' }
+      ]
+    })
+    runtime.dispatch('mqtt.config.save')
+    runtime.dispatch('mqtt.connection.connect')
+    for (let index = 0; index < 10 && !clientRef.current; index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+
+    const client = clientRef.current
+    expect(client).not.toBeNull()
+    if (!client) throw new Error('fake MQTT client was not created')
+    client.emit('connect')
+    expect(runtime.dispatch('mqtt.subscription.editor.open').handled).toBe(true)
+    runtime.updateMqttSubscriptionDraft({
+      items: [
+        { id: 'row-b', topic: 'plc/b', alias: 'B' },
+        { id: 'row-c', topic: 'plc/c', alias: 'C' }
+      ]
+    })
+    expect(runtime.dispatch('mqtt.subscription.editor.save').handled).toBe(true)
+
+    expect(client.unsubscribed).toEqual(['plc/a'])
+    expect(client.subscribed.at(-1)).toBe('plc/c')
+    expect(runtime.snapshot().state.mqtt.configs[0].subscriptions).toEqual(['plc/b', 'plc/c'])
   })
 })
