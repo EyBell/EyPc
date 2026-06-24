@@ -30,7 +30,7 @@ import {
 import type { AppRuntimeSnapshot, MqttConfigDraft, MqttFavoriteDraft, MqttRecordEditDraft, MqttSubscriptionEditorDraft, MqttSubscriptionEditorField, MqttSubscriptionEditorItem } from '../runtime/appRuntime'
 import type { MqttMessageRecord, MqttPublishDraft, MqttPublishTemplate, MqttQos } from '../domain/types'
 import { buildMqttWebSocketUrl } from '../domain/mqtt'
-import { buildMqttPayloadPreviewSegments } from '../domain/mqttPayloadPreview'
+import { buildMqttInlinePayloadPreviewSegments, buildMqttPayloadPreviewSegments } from '../domain/mqttPayloadPreview'
 import { layoutShortcutHints } from '../domain/shortcutHintLayout'
 import type { ShortcutHintAnchor, ShortcutHintPlacement } from '../domain/shortcutHintLayout'
 import MqttPublishRecordList from '../components/MqttPublishRecordList.vue'
@@ -244,8 +244,8 @@ const previewDirectionIcon = computed(() => previewRecord.value ? iconComponent(
 const previewPosition = reactive({
   left: 16,
   top: 16,
-  width: 520,
-  maxHeight: 520
+  width: 420,
+  maxHeight: 360
 })
 const resizePreviewRatio = ref<{ layout: 'stack' | 'split'; ratio: number } | null>(null)
 const previewPositionStyle = computed(() => ({
@@ -770,8 +770,16 @@ function messageTitle(message: MqttMessageRecord) {
   return message.title || `${message.direction === 'incoming' ? 'IN' : message.direction === 'outgoing' ? 'OUT' : 'EVENT'} ${message.topic || '(empty topic)'}`
 }
 
+function messageAlias(message: MqttMessageRecord) {
+  return message.title?.trim() || ''
+}
+
 function payloadSnippet(payload: string) {
   return payload.replace(/\s+/g, ' ').trim() || '(empty payload)'
+}
+
+function payloadSnippetSegments(payload: string) {
+  return buildMqttInlinePayloadPreviewSegments(payload)
 }
 
 function templateTopicSummary(template: MqttPublishTemplate) {
@@ -892,8 +900,8 @@ function updatePreviewPosition(anchor?: HTMLElement | null) {
   const gap = 10
   const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1024
   const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 720
-  const width = Math.min(520, Math.max(160, viewportWidth - margin * 2))
-  const maxHeight = Math.min(520, Math.max(180, viewportHeight - margin * 2))
+  const width = Math.min(420, Math.max(160, viewportWidth - margin * 2))
+  const maxHeight = Math.min(360, Math.max(160, viewportHeight - margin * 2))
   const fallback = document.querySelector<HTMLElement>('.mqtt-message-workspace')
   const rect = (anchor || fallback)?.getBoundingClientRect()
   const maxLeft = Math.max(margin, viewportWidth - width - margin)
@@ -1290,17 +1298,17 @@ onUnmounted(() => {
             <component :is="iconComponent(item.icon)" class="mqtt-icon" aria-hidden="true" />
             <small class="mqtt-stat-count">{{ item.count }} 条</small>
           </button>
-          <span class="mqtt-record-mode-buttons" aria-label="记录视图">
-            <button type="button" class="mqtt-filter-button mqtt-icon-button" :class="{ active: props.snapshot.activeMqttRecordList === 'templates' }" :title="commandTitle('收藏', 'mqtt.focus.templates', 'c-s-m')" aria-label="显示收藏" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.focus.templates')" @click="emit('dispatch', 'mqtt.focus.templates')">
-              <MqttIcon name="star" />
-            </button>
-            <button type="button" class="mqtt-filter-button mqtt-icon-button" :class="{ active: props.snapshot.activeMqttRecordList === 'history' }" :title="commandTitle('历史', 'mqtt.publish.records.toggle', 'c-h')" aria-label="显示历史" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.publish.records.toggle')" @click="emit('dispatch', 'mqtt.publish.records.toggle')">
-              <MqttIcon name="history" />
-            </button>
-            <button type="button" class="mqtt-filter-button mqtt-icon-button" :title="commandTitle('布局', 'mqtt.layout.toggle', 'c-s-s')" aria-label="切换布局" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.layout.toggle')" @click="emit('dispatch', 'mqtt.layout.toggle')">
-              <MqttIcon name="layout" />
-            </button>
-          </span>
+        </span>
+        <span class="mqtt-record-mode-buttons" aria-label="记录视图">
+          <button type="button" class="mqtt-filter-button mqtt-icon-button" :class="{ active: props.snapshot.activeMqttRecordList === 'templates' }" :title="commandTitle('收藏', 'mqtt.focus.templates', 'c-s-m')" aria-label="显示收藏" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.focus.templates')" @click="emit('dispatch', 'mqtt.focus.templates')">
+            <MqttIcon name="star" />
+          </button>
+          <button type="button" class="mqtt-filter-button mqtt-icon-button" :class="{ active: props.snapshot.activeMqttRecordList === 'history' }" :title="commandTitle('历史', 'mqtt.publish.records.toggle', 'c-h')" aria-label="显示历史" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.publish.records.toggle')" @click="emit('dispatch', 'mqtt.publish.records.toggle')">
+            <MqttIcon name="history" />
+          </button>
+          <button type="button" class="mqtt-filter-button mqtt-icon-button" :title="commandTitle('布局', 'mqtt.layout.toggle', 'c-s-s')" aria-label="切换布局" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.layout.toggle')" @click="emit('dispatch', 'mqtt.layout.toggle')">
+            <MqttIcon name="layout" />
+          </button>
         </span>
       </header>
 
@@ -1518,14 +1526,19 @@ onUnmounted(() => {
                   <small>{{ formatTime(message.timestamp) }}</small>
                 </span>
                 <span class="mqtt-message-route">
+                  <small v-if="messageAlias(message)" class="mqtt-topic-alias-badge">{{ messageAlias(message) }}</small>
                   <strong>{{ message.topic || '(empty topic)' }}</strong>
-                  <small>{{ messageTitle(message) }}</small>
+                  <small class="mqtt-topic-meta">{{ messageTitle(message) }}</small>
                 </span>
                 <span class="mqtt-message-flags">
                   <small>QoS {{ message.qos }}</small>
                   <small v-if="message.retain">retain</small>
                 </span>
-                <span class="mqtt-item-payload-snippet">{{ payloadSnippet(message.payload) }}</span>
+                <span class="mqtt-item-payload-snippet" :title="payloadSnippet(message.payload)">
+                  <template v-for="(segment, index) in payloadSnippetSegments(message.payload)" :key="`${index}:${segment.kind}:${segment.text}`">
+                    <span class="mqtt-preview-token" :class="`mqtt-preview-token-${segment.kind}`">{{ segment.text }}</span>
+                  </template>
+                </span>
                 <span class="mqtt-message-actions" aria-label="消息操作">
                   <button type="button" class="mqtt-icon-button" :title="commandTitle('预览消息', 'mqtt.preview.open', 'c-i')" aria-label="预览消息" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.preview.open')" @click.stop="previewMessage(message, 'messages')">
                     <MqttIcon name="detail" />
@@ -1568,15 +1581,17 @@ onUnmounted(() => {
               <input type="checkbox" :checked="publishDraft.retain" @change="emit('updatePublishDraft', { retain: ($event.target as HTMLInputElement).checked })" />
               retain
             </label>
-            <button type="button" class="mqtt-icon-button" :title="commandTitle('发送 MQTT 消息', 'mqtt.publish.send', 'c-cr')" aria-label="发送 MQTT 消息" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.publish.send')" @click="emit('dispatch', 'mqtt.publish.send')">
-              <MqttIcon name="send" />
-            </button>
-            <button type="button" class="mqtt-icon-button" title="保存模板" aria-label="保存模板" @click="emit('dispatch', 'mqtt.publish.template.save', { title: publishDraft.topic || '未命名模板' })">
-              <MqttIcon name="star" />
-            </button>
-            <button type="button" class="mqtt-icon-button" :title="commandTitle('发送记录', 'mqtt.publish.records.toggle', 'c-h')" aria-label="发送记录" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.publish.records.toggle')" @click="emit('dispatch', 'mqtt.publish.records.toggle')">
-              <MqttIcon name="history" />
-            </button>
+            <span class="mqtt-publish-actions" aria-label="发送操作">
+              <button type="button" class="mqtt-icon-button" :title="commandTitle('发送 MQTT 消息', 'mqtt.publish.send', 'c-cr')" aria-label="发送 MQTT 消息" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.publish.send')" @click="emit('dispatch', 'mqtt.publish.send')">
+                <MqttIcon name="send" />
+              </button>
+              <button type="button" class="mqtt-icon-button" title="保存模板" aria-label="保存模板" @click="emit('dispatch', 'mqtt.publish.template.save', { title: publishDraft.topic || '未命名模板' })">
+                <MqttIcon name="star" />
+              </button>
+              <button type="button" class="mqtt-icon-button" :title="commandTitle('发送记录', 'mqtt.publish.records.toggle', 'c-h')" aria-label="发送记录" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.publish.records.toggle')" @click="emit('dispatch', 'mqtt.publish.records.toggle')">
+                <MqttIcon name="history" />
+              </button>
+            </span>
           </header>
           <textarea class="mqtt-payload-input" data-role="mqtt-search" :value="publishDraft.payload" rows="8" placeholder="payload" @input="emit('updatePublishDraft', { payload: ($event.target as HTMLTextAreaElement).value })"></textarea>
 

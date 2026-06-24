@@ -15,11 +15,27 @@ export interface MqttPayloadPreviewSegment {
 
 const STRING_TOKEN = /"(?:\\.|[^"\\])*"/y
 const NUMBER_TOKEN = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y
+export const MQTT_INLINE_PAYLOAD_SNIPPET_MAX_CHARS = 96
 
 export function buildMqttPayloadPreviewSegments(payload: string): MqttPayloadPreviewSegment[] {
   const formatted = formatJsonPayload(payload)
   if (formatted === null) return plainTextSegments(payload)
   return tokenizeJsonPreview(formatted)
+}
+
+export function buildMqttInlinePayloadPreviewSegments(
+  payload: string,
+  maxChars = MQTT_INLINE_PAYLOAD_SNIPPET_MAX_CHARS
+): MqttPayloadPreviewSegment[] {
+  const budget = Math.max(1, Math.trunc(maxChars))
+  const source = String(payload || '').trim()
+  if (!source) return [{ kind: 'text', text: '(empty payload)' }]
+
+  const formatted = formatJsonInlinePayload(source)
+  const segments = formatted === null
+    ? [{ kind: 'text' as const, text: source.replace(/\s+/g, ' ') }]
+    : tokenizeJsonPreview(formatted)
+  return truncatePreviewSegments(segments, budget)
 }
 
 function formatJsonPayload(payload: string): string | null {
@@ -28,6 +44,41 @@ function formatJsonPayload(payload: string): string | null {
   } catch {
     return null
   }
+}
+
+function formatJsonInlinePayload(payload: string): string | null {
+  try {
+    return JSON.stringify(JSON.parse(payload))
+  } catch {
+    return null
+  }
+}
+
+function truncatePreviewSegments(
+  segments: MqttPayloadPreviewSegment[],
+  maxChars: number
+): MqttPayloadPreviewSegment[] {
+  let remaining = maxChars
+  let truncated = false
+  const next: MqttPayloadPreviewSegment[] = []
+
+  for (const segment of segments) {
+    if (remaining <= 0) {
+      truncated = true
+      break
+    }
+    if (segment.text.length <= remaining) {
+      next.push(segment)
+      remaining -= segment.text.length
+      continue
+    }
+    next.push({ ...segment, text: segment.text.slice(0, remaining) })
+    remaining = 0
+    truncated = true
+  }
+
+  if (truncated) next.push({ kind: 'text', text: '…' })
+  return next
 }
 
 function plainTextSegments(payload: string): MqttPayloadPreviewSegment[] {

@@ -7,6 +7,7 @@ import {
   Star,
   Trash2
 } from '@lucide/vue'
+import { buildMqttInlinePayloadPreviewSegments } from '../domain/mqttPayloadPreview'
 import type { MqttMessageRecord, MqttPublishTemplate } from '../domain/types'
 import type { MqttRecordListId, MqttRecordListState } from '../runtime/appRuntime'
 
@@ -54,11 +55,25 @@ function rowTitle(row: PublishRecordRow) {
 
 function rowMeta(row: PublishRecordRow) {
   const time = new Date(isTemplate(row) ? row.updatedAt : row.timestamp).toLocaleTimeString()
-  return isTemplate(row) ? `${row.topic} · QoS ${row.qos}` : `${time} · QoS ${row.qos}`
+  return isTemplate(row) ? `QoS ${row.qos}` : `${time} · QoS ${row.qos}`
+}
+
+function rowTopic(row: PublishRecordRow) {
+  return row.topic || '(empty topic)'
+}
+
+function rowAlias(row: PublishRecordRow) {
+  const title = row.title?.trim() || ''
+  if (!title) return ''
+  return title === row.topic.trim() ? '' : title
 }
 
 function payloadSnippet(payload: string) {
   return payload.replace(/\s+/g, ' ').trim() || '(empty payload)'
+}
+
+function payloadSnippetSegments(payload: string) {
+  return buildMqttInlinePayloadPreviewSegments(payload)
 }
 
 function isFocused(row: PublishRecordRow) {
@@ -134,9 +149,10 @@ function selected(row: PublishRecordRow) {
           :aria-label="`选择${rowTitle(row)}`"
           @click.stop="emit('toggleSelect', row, $event.shiftKey)"
         />
-        <span class="mqtt-template-main">
+        <span class="mqtt-template-main mqtt-message-route">
           <input
             v-if="isTemplate(row)"
+            class="mqtt-topic-alias-input mqtt-topic-alias-badge"
             data-role="mqtt-search"
             :value="row.title"
             aria-label="模板名称"
@@ -144,10 +160,15 @@ function selected(row: PublishRecordRow) {
             @focus="emit('focusRow', row)"
             @change="emit('rename', row, ($event.target as HTMLInputElement).value)"
           />
-          <strong v-else>{{ rowTitle(row) }}</strong>
-          <small>{{ rowMeta(row) }}</small>
+          <small v-else-if="rowAlias(row)" class="mqtt-topic-alias-badge">{{ rowAlias(row) }}</small>
+          <strong>{{ rowTopic(row) }}</strong>
+          <small class="mqtt-topic-meta">{{ rowMeta(row) }}</small>
         </span>
-        <span class="mqtt-item-payload-snippet">{{ payloadSnippet(row.payload) }}</span>
+        <span class="mqtt-item-payload-snippet" :title="payloadSnippet(row.payload)">
+          <template v-for="(segment, index) in payloadSnippetSegments(row.payload)" :key="`${index}:${segment.kind}:${segment.text}`">
+            <span class="mqtt-preview-token" :class="`mqtt-preview-token-${segment.kind}`">{{ segment.text }}</span>
+          </template>
+        </span>
         <span class="mqtt-message-actions" :aria-label="`${title}操作`">
           <button type="button" class="mqtt-icon-button" title="填入发布" aria-label="填入发布" @click.stop="emit('apply', row)">
             <CornerDownLeft class="mqtt-icon" aria-hidden="true" />
