@@ -138,6 +138,75 @@ describe('mqtt domain', () => {
     })).toBe('wss://ainongyun.net:8083/mqtt')
   })
 
+  it('normalizes MQTT layout preferences separately from shared tool preview preferences', () => {
+    expect(normalizeMqttState(null, 100).layoutPrefs).toMatchObject({
+      workspaceLayout: 'stack',
+      stackReceiveRatio: 0.58,
+      splitReceiveRatio: 0.55,
+      connectionPanelOpen: true,
+      subscriptionPanelOpen: true,
+      publishRecordsOpen: false
+    })
+
+    expect(normalizeMqttState({
+      layoutPrefs: {
+        workspaceLayout: 'split',
+        stackReceiveRatio: 0.9,
+        splitReceiveRatio: 0.1,
+        connectionPanelOpen: false,
+        subscriptionPanelOpen: false,
+        publishRecordsOpen: true,
+        hoverPreviewEnabled: true
+      }
+    }, 100).layoutPrefs).toMatchObject({
+      workspaceLayout: 'split',
+      stackReceiveRatio: 0.72,
+      splitReceiveRatio: 0.28,
+      connectionPanelOpen: false,
+      subscriptionPanelOpen: false,
+      publishRecordsOpen: true
+    })
+  })
+
+  it('normalizes MQTT connection snapshots in archive without secrets', () => {
+    const archive = normalizeMqttArchiveState({
+      version: 1,
+      connectionSnapshots: [{
+        id: 'dev',
+        name: ' Dev ',
+        url: 'mqtt://localhost:1883',
+        clientId: 'client-a',
+        username: 'user-a',
+        password: 'secret',
+        token: 'token',
+        publishTopic: ' out ',
+        qos: 2,
+        retain: true,
+        syncRecords: false,
+        createdAt: -1,
+        updatedAt: -1
+      }],
+      sessions: [],
+      publishTemplates: []
+    }, 100)
+
+    expect(archive.connectionSnapshots).toEqual([{
+      id: 'dev',
+      name: 'Dev',
+      url: 'ws://localhost:1883',
+      clientId: 'client-a',
+      username: 'user-a',
+      publishTopic: 'out',
+      qos: 2,
+      retain: true,
+      syncRecords: false,
+      createdAt: 100,
+      updatedAt: 100
+    }])
+    expect(JSON.stringify(archive)).not.toContain('secret')
+    expect(JSON.stringify(archive)).not.toContain('token')
+  })
+
   it('archives messages by session, trims retention, renames metadata, and prepares resend drafts', () => {
     let archive = normalizeMqttArchiveState({ sessions: [] }, 100)
     const session = createMqttSession('dev', 100)

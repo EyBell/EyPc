@@ -22,6 +22,7 @@ describe('favorite file bridge source', () => {
           }
         }
         if (name === 'node:path') return { basename: (value: string) => value.split(/[\\/]/).filter(Boolean).pop() || value }
+        if (name === 'node:os') return { homedir: () => '/tmp' }
         throw new Error(`unexpected require: ${name}`)
       }
     }

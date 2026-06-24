@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import type { AppSettings, AppTabId, FeatureConfig, KeybindingOverride, ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
+import type { AppSettings, AppTabId, FeatureConfig, KeybindingOverride, MqttStorageStatus, ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
 import type { RuntimeActionDefinition } from '../runtime/action/types'
 import { featureDefinitionFor } from '../runtime/feature/featureRegistry'
 import {
@@ -19,7 +19,7 @@ import { formatShortcutLabel, formatShortcutList, normalizeShortcutId, shortcutF
 
 type SettingsTabId = 'shortcuts' | 'maintenance'
 type ShortcutScopeId = 'all' | 'global' | 'ports' | 'mqtt' | 'favorites' | 'settings'
-type MaintenanceSectionId = 'features' | 'layers' | 'storage' | 'commands' | 'resolution' | 'reservations'
+type MaintenanceSectionId = 'features' | 'tools' | 'layers' | 'storage' | 'commands' | 'resolution' | 'reservations'
 
 interface KeybindingUpdatePayload {
   commandId: string
@@ -39,12 +39,14 @@ const props = defineProps<{
   featureConfigs: FeatureConfig[]
   initialMaintenanceSection?: MaintenanceSectionId | null
   settings: AppSettings
+  mqttStorageStatus: MqttStorageStatus
 }>()
 const emit = defineEmits<{
   updateKeybinding: [payload: KeybindingUpdatePayload]
   resetKeybinding: [commandId: string]
   saveShortcutProfiles: [profiles: ShortcutProfileMap]
   saveFeatureConfigs: [configs: FeatureConfig[]]
+  updateToolPreviewPrefs: [input: { enabled?: boolean; delayMs?: number }]
 }>()
 
 const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'settings']
@@ -121,8 +123,8 @@ const activePreviewContext = computed(() => previewContexts.find((item) => item.
 const selectedRow = computed(() => commandRows.value.find((row) => row.commandId === selectedCommandId.value) || filteredRows.value[0] || null)
 const recordingRow = computed(() => recordingCommandId.value ? commandRows.value.find((row) => row.commandId === recordingCommandId.value) || null : null)
 const whenRow = computed(() => whenCommandId.value ? commandRows.value.find((row) => row.commandId === whenCommandId.value) || null : null)
-const storageModeLabel = computed(() => props.settings.preferSqlite ? 'SQLite 预留模式' : 'uTools dbStorage')
-const sqliteStateLabel = computed(() => props.settings.preferSqlite ? '预留请求已记录' : '未启用')
+const storageModeLabel = computed(() => props.mqttStorageStatus.mode === 'sqlite' ? 'SQLite 本机存储' : props.mqttStorageStatus.mode === 'legacy-dbStorage' ? 'uTools dbStorage 降级' : '浏览器 localStorage')
+const sqliteStateLabel = computed(() => props.mqttStorageStatus.sqliteAvailable ? '已启用' : '不可用')
 const featureDraftDirty = computed(() => JSON.stringify(draftFeatureConfigs.value) !== JSON.stringify(props.featureConfigs))
 const featureRows = computed(() => draftFeatureConfigs.value
   .slice()
@@ -160,6 +162,11 @@ const filteredRows = computed(() => primaryShortcutRows.value)
 const previewResult = computed(() => previewKeybindingResolution(effectiveBindings.value, previewShortcut.value, activePreviewContext.value.context))
 const maintenanceSections = computed<Array<{ id: MaintenanceSectionId; label: string; meta: string }>>(() => [
   { id: 'features', label: '功能开关', meta: `${featureRows.value.filter((row) => row.enabled).length}/${featureRows.value.length} 启用` },
+  {
+    id: 'tools',
+    label: '工具系统',
+    meta: props.settings.toolPreviewPrefs.hoverPreviewEnabled ? `${props.settings.toolPreviewPrefs.hoverPreviewDelayMs}ms` : '悬浮预览关闭'
+  },
   { id: 'layers', label: '层级优先级', meta: `${layerRows.value.length} 层` },
   { id: 'storage', label: '存储状态', meta: storageModeLabel.value },
   { id: 'commands', label: 'Layer Commands', meta: `${maintenanceShortcutRows.value.length} 命令` },
@@ -322,6 +329,10 @@ function saveFeatureDraft() {
 
 function discardFeatureDraft() {
   draftFeatureConfigs.value = cloneFeatureConfigs(props.featureConfigs)
+}
+
+function updateToolPreviewPrefs(input: { enabled?: boolean; delayMs?: number }) {
+  emit('updateToolPreviewPrefs', input)
 }
 
 function shortcutIdsEqual(left: string[], right: string[]) {
@@ -845,6 +856,10 @@ function isRecordableShortcutId(shortcutId: string) {
             <strong>功能开关</strong>
             <small>控制顶层功能是否启用，并决定主 Tab 与 Ctrl+Shift 数字顺序</small>
           </span>
+          <span v-else-if="maintenanceSectionId === 'tools'">
+            <strong>工具系统</strong>
+            <small>跨工具共享的交互偏好，当前用于悬浮预览</small>
+          </span>
           <span v-else-if="maintenanceSectionId === 'layers'">
             <strong>层级优先级</strong>
             <small>{{ layerRows.length }} 个快捷键接管层，数值越大优先级越高</small>
@@ -919,6 +934,40 @@ function isRecordableShortcutId(shortcutId: string) {
           </div>
         </div>
 
+        <div v-else-if="maintenanceSectionId === 'tools'" class="maintenance-panel-body maintenance-tool-body">
+          <div class="settings-subpanel">
+            <h3>预览行为</h3>
+            <div class="maintenance-row tool-preview-row">
+              <span>悬浮预览</span>
+              <label class="tool-preview-toggle">
+                <input
+                  type="checkbox"
+                  :checked="props.settings.toolPreviewPrefs.hoverPreviewEnabled"
+                  @change="updateToolPreviewPrefs({ enabled: ($event.target as HTMLInputElement).checked })"
+                />
+                <strong>{{ props.settings.toolPreviewPrefs.hoverPreviewEnabled ? '已启用' : '已关闭' }}</strong>
+              </label>
+              <small>控制工具列表项的鼠标悬浮只读预览；键盘预览不受影响。</small>
+            </div>
+            <div class="maintenance-row tool-preview-row">
+              <span>预览延迟</span>
+              <label class="tool-preview-delay">
+                <input
+                  type="number"
+                  min="0"
+                  max="5000"
+                  step="100"
+                  :disabled="!props.settings.toolPreviewPrefs.hoverPreviewEnabled"
+                  :value="props.settings.toolPreviewPrefs.hoverPreviewDelayMs"
+                  @change="updateToolPreviewPrefs({ delayMs: Number(($event.target as HTMLInputElement).value) })"
+                />
+                <small>ms</small>
+              </label>
+              <small>默认 500ms，范围 0 到 5000ms。</small>
+            </div>
+          </div>
+        </div>
+
         <div v-else-if="maintenanceSectionId === 'layers'" class="maintenance-panel-body maintenance-layer-body">
           <div class="settings-subpanel">
             <h3>层级优先级</h3>
@@ -935,12 +984,17 @@ function isRecordableShortcutId(shortcutId: string) {
             <div class="maintenance-row">
               <span>当前存储</span>
               <strong>{{ storageModeLabel }}</strong>
-              <small>运行时仍通过 uTools dbStorage 持久化插件状态。</small>
+              <small>MQTT 连接历史、收发记录和收藏模板优先写入本机 SQLite。</small>
             </div>
             <div class="maintenance-row">
               <span>SQLite</span>
               <strong>{{ sqliteStateLabel }}</strong>
-              <small>preferSqlite: {{ String(props.settings.preferSqlite) }} · 当前仅只读展示。</small>
+              <small>{{ props.mqttStorageStatus.dbPath || props.mqttStorageStatus.lastError || '当前环境使用降级存储。' }}</small>
+            </div>
+            <div class="maintenance-row">
+              <span>迁移</span>
+              <strong>{{ props.mqttStorageStatus.migratedLegacyArchive ? '已导入旧 archive' : '无需迁移或尚未触发' }}</strong>
+              <small>旧 dbStorage archive 会保留为备份，不在迁移时删除。</small>
             </div>
           </div>
         </div>

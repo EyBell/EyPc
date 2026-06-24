@@ -1,6 +1,6 @@
 import { normalizeAppState } from '../domain/state'
 import { normalizeMqttArchiveState } from '../domain/mqtt'
-import type { AppState, FavoriteNode, KillRequest, KillResult, MqttArchiveState, PortProcess } from '../domain/types'
+import type { AppState, FavoriteNode, KillRequest, KillResult, MqttArchiveState, MqttStorageStatus, PortProcess } from '../domain/types'
 
 export type PickedFavoriteKind = Exclude<FavoriteNode['kind'], 'group'>
 export type PickedFavorite = Pick<FavoriteNode, 'path' | 'name' | 'parentId' | 'tags' | 'color'> & { kind: PickedFavoriteKind }
@@ -29,6 +29,7 @@ export interface EypcPlatformApi {
     setState(state: AppState): boolean
     getMqttArchive(): MqttArchiveState
     setMqttArchive(archive: MqttArchiveState): boolean
+    getMqttStorageStatus(): MqttStorageStatus
     getMqttSecrets(): MqttSecretMap
     setMqttSecrets(secrets: MqttSecretMap): boolean
   }
@@ -43,6 +44,9 @@ export interface EypcPlatformApi {
     pickFavorite?(): Promise<PickedFavorite | null>
     pickFavorites?(kind: PickedFavoriteKind): Promise<PickedFavorite[]>
     listDirectory(path: string): Promise<FavoriteDirectoryListResult>
+  }
+  clipboard: {
+    copyText(text: string): Promise<boolean>
   }
   app: {
     hide(): Promise<boolean> | boolean
@@ -127,6 +131,14 @@ function writeFallbackMqttArchive(archive: MqttArchiveState): boolean {
     } catch {}
   }
   return true
+}
+
+function fallbackMqttStorageStatus(): MqttStorageStatus {
+  return {
+    mode: 'browser-localStorage',
+    sqliteAvailable: false,
+    migratedLegacyArchive: false
+  }
 }
 
 function writeFallbackMqttSecrets(secrets: MqttSecretMap): boolean {
@@ -259,6 +271,7 @@ async function pickFavoritesViaBrowserInput(kind: PickedFavoriteKind): Promise<P
 export function getPlatform(): EypcPlatformApi {
   if (typeof window !== 'undefined' && window.eypcPlatform) {
     const hostFiles = window.eypcPlatform.files
+    const hostClipboard = window.eypcPlatform.clipboard
     const hostStorage = window.eypcPlatform.storage
     return {
       ...window.eypcPlatform,
@@ -267,6 +280,7 @@ export function getPlatform(): EypcPlatformApi {
         setState: hostStorage.setState || writeFallbackState,
         getMqttArchive: hostStorage.getMqttArchive || readFallbackMqttArchive,
         setMqttArchive: hostStorage.setMqttArchive || writeFallbackMqttArchive,
+        getMqttStorageStatus: hostStorage.getMqttStorageStatus || fallbackMqttStorageStatus,
         getMqttSecrets: hostStorage.getMqttSecrets || readFallbackMqttSecrets,
         setMqttSecrets: hostStorage.setMqttSecrets || writeFallbackMqttSecrets
       },
@@ -281,6 +295,9 @@ export function getPlatform(): EypcPlatformApi {
         }),
         listDirectory: hostFiles.listDirectory || (async () => ({ ok: false, entries: [], error: 'directory listing unavailable' }))
       },
+      clipboard: {
+        copyText: hostClipboard?.copyText || hostFiles.copyPath || (async () => false)
+      },
       app: window.eypcPlatform.app || { hide: async () => false }
     }
   }
@@ -290,6 +307,7 @@ export function getPlatform(): EypcPlatformApi {
       setState: writeFallbackState,
       getMqttArchive: readFallbackMqttArchive,
       setMqttArchive: writeFallbackMqttArchive,
+      getMqttStorageStatus: fallbackMqttStorageStatus,
       getMqttSecrets: readFallbackMqttSecrets,
       setMqttSecrets: writeFallbackMqttSecrets
     },
@@ -309,6 +327,15 @@ export function getPlatform(): EypcPlatformApi {
       },
       pickFavorites: pickFavoritesViaBrowserInput,
       listDirectory: async () => ({ ok: false, entries: [], error: 'directory listing unavailable' })
+    },
+    clipboard: {
+      copyText: async (text) => {
+        if (typeof navigator !== 'undefined' && navigator.clipboard) {
+          await navigator.clipboard.writeText(text)
+          return true
+        }
+        return false
+      }
     },
     app: {
       hide: async () => false

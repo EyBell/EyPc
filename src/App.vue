@@ -74,6 +74,10 @@ watch(() => snapshot.value.searchFocusRequestId, () => {
         ? 'favorite-group-search'
         : snapshot.value.searchFocusTarget === 'mqtt'
           ? 'mqtt-search'
+        : snapshot.value.searchFocusTarget === 'mqtt-templates'
+          ? 'mqtt-template-search'
+        : snapshot.value.searchFocusTarget === 'mqtt-history'
+          ? 'mqtt-history-search'
         : snapshot.value.searchFocusTarget === 'favorites'
           ? 'favorite-search'
           : 'port-search'
@@ -87,7 +91,7 @@ watch(() => snapshot.value.searchBlurRequestId, () => {
   requestAnimationFrame(() => {
     const active = document.activeElement as HTMLElement | null
     const role = active?.closest<HTMLElement>('[data-role]')?.dataset.role
-    if (role === 'port-search' || role === 'mqtt-search' || role === 'favorite-search' || role === 'favorite-group-search' || role === 'port-group-search' || role === 'primary-search') active?.blur()
+    if (role === 'port-search' || role === 'mqtt-search' || role === 'mqtt-template-search' || role === 'mqtt-history-search' || role === 'favorite-search' || role === 'favorite-group-search' || role === 'port-group-search' || role === 'primary-search') active?.blur()
   })
 })
 
@@ -162,6 +166,7 @@ onUnmounted(() => {
       <template #mqtt>
         <MqttPage
           :snapshot="snapshot"
+          :shift-preview="shiftPreview"
           :show-shortcut-hints="shortcutHints"
           @search="runtime.setMqttSearch"
           @focus-config="runtime.focusMqttConfig"
@@ -170,6 +175,8 @@ onUnmounted(() => {
           @focus-log="runtime.focusMqttLog"
           @update-config-draft="runtime.updateMqttConfigDraft"
           @update-subscription-draft="runtime.updateMqttSubscriptionDraft"
+          @update-favorite-draft="runtime.updateMqttFavoriteDraft"
+          @update-record-edit-draft="runtime.updateMqttRecordEditDraft"
           @update-publish-draft="runtime.updateMqttPublishDraft"
           @dispatch="runtime.dispatch"
         />
@@ -214,10 +221,12 @@ onUnmounted(() => {
           :feature-configs="snapshot.state.settings.featureConfigs"
           :initial-maintenance-section="initialMaintenanceSection"
           :settings="snapshot.state.settings"
+          :mqtt-storage-status="snapshot.mqttStorageStatus"
           @update-keybinding="runtime.updateKeybinding"
           @reset-keybinding="runtime.resetKeybinding"
           @save-shortcut-profiles="runtime.saveShortcutProfiles"
           @save-feature-configs="runtime.saveFeatureConfigs"
+          @update-tool-preview-prefs="(input) => runtime.dispatch('tool.preview.hover.update', input)"
         />
       </template>
     </TabShell>

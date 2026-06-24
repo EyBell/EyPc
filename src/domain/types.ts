@@ -41,6 +41,16 @@ export type FavoriteKind = 'file' | 'folder' | 'group'
 
 export type MqttQos = 0 | 1 | 2
 export type MqttMessageDirection = 'incoming' | 'outgoing' | 'event'
+export type MqttWorkspaceLayout = 'stack' | 'split'
+
+export interface MqttLayoutPrefs {
+  workspaceLayout: MqttWorkspaceLayout
+  stackReceiveRatio: number
+  splitReceiveRatio: number
+  connectionPanelOpen: boolean
+  subscriptionPanelOpen: boolean
+  publishRecordsOpen: boolean
+}
 
 export interface MqttConnectionConfig {
   id: string
@@ -69,6 +79,7 @@ export interface MqttConnectionConfig {
 export interface MqttState {
   configs: MqttConnectionConfig[]
   activeConfigId: string | null
+  layoutPrefs: MqttLayoutPrefs
 }
 
 export interface MqttPublishDraft {
@@ -115,10 +126,33 @@ export interface MqttPublishTemplate {
   updatedAt: number
 }
 
+export interface MqttConnectionSnapshot {
+  id: string
+  name: string
+  url: string
+  clientId: string
+  username: string
+  publishTopic: string
+  qos: MqttQos
+  retain: boolean
+  syncRecords: boolean
+  createdAt: number
+  updatedAt: number
+}
+
 export interface MqttArchiveState {
   version: 1
+  connectionSnapshots: MqttConnectionSnapshot[]
   sessions: MqttSessionRecord[]
   publishTemplates: MqttPublishTemplate[]
+}
+
+export interface MqttStorageStatus {
+  mode: 'sqlite' | 'legacy-dbStorage' | 'browser-localStorage'
+  sqliteAvailable: boolean
+  dbPath?: string
+  migratedLegacyArchive: boolean
+  lastError?: string
 }
 
 export interface FavoriteNode {
@@ -155,6 +189,11 @@ export interface KeybindingOverride {
 
 export type ShortcutProfileId = 'global' | 'ports' | 'mqtt' | 'favorites' | 'settings'
 
+export interface ToolPreviewPrefs {
+  hoverPreviewEnabled: boolean
+  hoverPreviewDelayMs: number
+}
+
 export interface ShortcutProfileState {
   keybindingOverrides: KeybindingOverride[]
   updatedAt: number
@@ -166,6 +205,7 @@ export interface AppSettings {
   keybindingOverrides: KeybindingOverride[]
   shortcutProfiles: ShortcutProfileMap
   featureConfigs: FeatureConfig[]
+  toolPreviewPrefs: ToolPreviewPrefs
   preferSqlite: boolean
 }
 

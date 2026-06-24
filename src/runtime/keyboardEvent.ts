@@ -22,12 +22,14 @@ export function activeInputRoleFromTarget(target: EventTarget | null, activeTab:
     : undefined
   if (role === 'mqtt-subscriptions') return 'mqtt-subscriptions'
   if (role === 'mqtt-subscription-editor') return 'mqtt-subscription-editor'
+  if (role === 'mqtt-favorite-editor') return 'mqtt-favorite-editor'
   if (!element || !isEditableTarget(element)) return undefined
   if (role === 'port-group-search') return 'port-group-search'
   if (role === 'port-group-editor') return 'port-group-editor'
   if (role === 'port-search') return 'port-search'
-  if (role === 'mqtt-search') return 'mqtt-search'
+  if (role === 'mqtt-search' || role === 'mqtt-template-search' || role === 'mqtt-history-search') return 'mqtt-search'
   if (role === 'mqtt-editor') return 'mqtt-editor'
+  if (role === 'mqtt-record-editor') return 'mqtt-record-editor'
   if (role === 'favorite-search') return 'favorite-search'
   if (role === 'favorite-group-search') return 'favorite-group-search'
   if (role === 'favorite-editor') return 'favorite-editor'

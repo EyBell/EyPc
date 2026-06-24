@@ -1,5 +1,6 @@
 const { execFile } = require('node:child_process')
 const fs = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
 
 const STORAGE_KEY = 'eypc/state/v1'
@@ -7,6 +8,9 @@ const MQTT_ARCHIVE_STORAGE_KEY = 'eypc/mqtt/archive/v1'
 const MQTT_SECRETS_LOCAL_STORAGE_KEY = 'eypc/mqtt/secrets-local/v1'
 let lastEnterPayload = null
 const enterPayloadListeners = new Set()
+let mqttSqliteAdapter = null
+let mqttStorageLastError = ''
+let mqttMigratedLegacyArchive = false
 
 function run(command, args) {
   return new Promise((resolve) => {
@@ -155,7 +159,7 @@ function writeState(state) {
   }
 }
 
-function readMqttArchive() {
+function readLegacyMqttArchive() {
   try {
     if (!globalThis.utools || !globalThis.utools.dbStorage) return null
     return globalThis.utools.dbStorage.getItem(MQTT_ARCHIVE_STORAGE_KEY)
@@ -164,7 +168,7 @@ function readMqttArchive() {
   }
 }
 
-function writeMqttArchive(archive) {
+function writeLegacyMqttArchive(archive) {
   try {
     if (!globalThis.utools || !globalThis.utools.dbStorage) return false
     globalThis.utools.dbStorage.setItem(MQTT_ARCHIVE_STORAGE_KEY, archive)
@@ -172,6 +176,232 @@ function writeMqttArchive(archive) {
   } catch {
     return false
   }
+}
+
+function archiveHasData(archive) {
+  return Boolean(
+    archive &&
+    typeof archive === 'object' &&
+    (
+      (Array.isArray(archive.connectionSnapshots) && archive.connectionSnapshots.length > 0) ||
+      (Array.isArray(archive.sessions) && archive.sessions.length > 0) ||
+      (Array.isArray(archive.publishTemplates) && archive.publishTemplates.length > 0)
+    )
+  )
+}
+
+function defaultMqttArchive() {
+  return { version: 1, connectionSnapshots: [], sessions: [], publishTemplates: [] }
+}
+
+function resolveMqttSqlitePath() {
+  const explicitPath = process.env && typeof process.env.EYPC_MQTT_DB_PATH === 'string'
+    ? process.env.EYPC_MQTT_DB_PATH.trim()
+    : ''
+  if (explicitPath) return explicitPath
+  let baseDir = ''
+  try {
+    if (globalThis.utools && typeof globalThis.utools.getPath === 'function') {
+      baseDir = String(globalThis.utools.getPath('userData') || '').trim()
+    }
+  } catch {}
+  if (!baseDir) {
+    try {
+      baseDir = path.join(os.homedir(), '.eypc')
+    } catch {
+      baseDir = path.join(process.cwd(), '.eypc')
+    }
+  }
+  return path.join(baseDir, 'mqtt-archive.sqlite')
+}
+
+function normalizeSqliteArchiveInput(archive) {
+  const source = archive && typeof archive === 'object' ? archive : {}
+  return {
+    version: 1,
+    connectionSnapshots: Array.isArray(source.connectionSnapshots) ? source.connectionSnapshots : [],
+    sessions: Array.isArray(source.sessions) ? source.sessions : [],
+    publishTemplates: Array.isArray(source.publishTemplates) ? source.publishTemplates : []
+  }
+}
+
+function ensureMqttSqliteSchema(db) {
+  db.exec(`
+    PRAGMA journal_mode = WAL;
+    CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS connection_snapshots (
+      id TEXT PRIMARY KEY,
+      updated_at INTEGER NOT NULL DEFAULT 0,
+      data_json TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      connection_id TEXT NOT NULL,
+      started_at INTEGER NOT NULL DEFAULT 0,
+      data_json TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      connection_id TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      timestamp INTEGER NOT NULL DEFAULT 0,
+      data_json TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS publish_templates (
+      id TEXT PRIMARY KEY,
+      connection_id TEXT NOT NULL,
+      updated_at INTEGER NOT NULL DEFAULT 0,
+      data_json TEXT NOT NULL
+    );
+  `)
+}
+
+function createMqttSqliteAdapter() {
+  try {
+    const sqlite = require('node:sqlite')
+    const DatabaseSync = sqlite && sqlite.DatabaseSync
+    if (typeof DatabaseSync !== 'function') throw new Error('node:sqlite DatabaseSync unavailable')
+    const dbPath = resolveMqttSqlitePath()
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true })
+    const db = new DatabaseSync(dbPath)
+    ensureMqttSqliteSchema(db)
+
+    const readMeta = db.prepare('SELECT value FROM meta WHERE key = ?')
+    const writeMeta = db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)')
+    const clearConnections = db.prepare('DELETE FROM connection_snapshots')
+    const clearSessions = db.prepare('DELETE FROM sessions')
+    const clearMessages = db.prepare('DELETE FROM messages')
+    const clearTemplates = db.prepare('DELETE FROM publish_templates')
+    const insertConnection = db.prepare('INSERT OR REPLACE INTO connection_snapshots (id, updated_at, data_json) VALUES (?, ?, ?)')
+    const insertSession = db.prepare('INSERT OR REPLACE INTO sessions (id, connection_id, started_at, data_json) VALUES (?, ?, ?, ?)')
+    const insertMessage = db.prepare('INSERT OR REPLACE INTO messages (id, session_id, connection_id, direction, timestamp, data_json) VALUES (?, ?, ?, ?, ?, ?)')
+    const insertTemplate = db.prepare('INSERT OR REPLACE INTO publish_templates (id, connection_id, updated_at, data_json) VALUES (?, ?, ?, ?)')
+
+    function writeArchiveToSqlite(archive) {
+      const normalized = normalizeSqliteArchiveInput(archive)
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        clearConnections.run()
+        clearSessions.run()
+        clearMessages.run()
+        clearTemplates.run()
+        for (const snapshot of normalized.connectionSnapshots) {
+          if (!snapshot || !snapshot.id) continue
+          insertConnection.run(String(snapshot.id), Math.trunc(Number(snapshot.updatedAt) || 0), JSON.stringify(snapshot))
+        }
+        for (const session of normalized.sessions) {
+          if (!session || !session.id) continue
+          insertSession.run(String(session.id), String(session.connectionId || ''), Math.trunc(Number(session.startedAt) || 0), JSON.stringify(session))
+          const messages = Array.isArray(session.messages) ? session.messages : []
+          for (const message of messages) {
+            if (!message || !message.id) continue
+            insertMessage.run(
+              String(message.id),
+              String(message.sessionId || session.id),
+              String(message.connectionId || session.connectionId || ''),
+              String(message.direction || 'event'),
+              Math.trunc(Number(message.timestamp) || 0),
+              JSON.stringify(message)
+            )
+          }
+        }
+        for (const template of normalized.publishTemplates) {
+          if (!template || !template.id) continue
+          insertTemplate.run(String(template.id), String(template.connectionId || ''), Math.trunc(Number(template.updatedAt) || 0), JSON.stringify(template))
+        }
+        writeMeta.run('archive_json', JSON.stringify(normalized))
+        writeMeta.run('updated_at', String(Date.now()))
+        db.exec('COMMIT')
+        return true
+      } catch (error) {
+        try {
+          db.exec('ROLLBACK')
+        } catch {}
+        throw error
+      }
+    }
+
+    function readArchiveFromSqlite() {
+      const current = readMeta.get('archive_json')
+      if (current && typeof current.value === 'string') {
+        try {
+          return normalizeSqliteArchiveInput(JSON.parse(current.value))
+        } catch {}
+      }
+      const legacy = readLegacyMqttArchive()
+      if (archiveHasData(legacy)) {
+        writeArchiveToSqlite(legacy)
+        mqttMigratedLegacyArchive = true
+        writeMeta.run('migrated_legacy_archive_at', String(Date.now()))
+        return normalizeSqliteArchiveInput(legacy)
+      }
+      return defaultMqttArchive()
+    }
+
+    return {
+      dbPath,
+      readArchive: readArchiveFromSqlite,
+      writeArchive: writeArchiveToSqlite
+    }
+  } catch (error) {
+    mqttStorageLastError = error instanceof Error ? error.message : String(error)
+    return null
+  }
+}
+
+function mqttSqlite() {
+  if (mqttSqliteAdapter) return mqttSqliteAdapter
+  mqttSqliteAdapter = createMqttSqliteAdapter()
+  return mqttSqliteAdapter
+}
+
+function getMqttStorageStatus() {
+  const adapter = mqttSqlite()
+  if (adapter) {
+    return {
+      mode: 'sqlite',
+      sqliteAvailable: true,
+      dbPath: adapter.dbPath,
+      migratedLegacyArchive: mqttMigratedLegacyArchive,
+      ...(mqttStorageLastError ? { lastError: mqttStorageLastError } : {})
+    }
+  }
+  return {
+    mode: globalThis.utools && globalThis.utools.dbStorage ? 'legacy-dbStorage' : 'browser-localStorage',
+    sqliteAvailable: false,
+    migratedLegacyArchive: mqttMigratedLegacyArchive,
+    ...(mqttStorageLastError ? { lastError: mqttStorageLastError } : {})
+  }
+}
+
+function readMqttArchive() {
+  const adapter = mqttSqlite()
+  if (adapter) {
+    try {
+      return adapter.readArchive()
+    } catch (error) {
+      mqttStorageLastError = error instanceof Error ? error.message : String(error)
+    }
+  }
+  return readLegacyMqttArchive()
+}
+
+function writeMqttArchive(archive) {
+  const adapter = mqttSqlite()
+  if (adapter) {
+    try {
+      const ok = adapter.writeArchive(archive)
+      writeLegacyMqttArchive(archive)
+      return ok
+    } catch (error) {
+      mqttStorageLastError = error instanceof Error ? error.message : String(error)
+    }
+  }
+  return writeLegacyMqttArchive(archive)
 }
 
 function normalizeMqttSecrets(value) {
@@ -219,6 +449,16 @@ function utoolsShellCall(method, target) {
   } catch {
     return false
   }
+}
+
+async function copyText(target) {
+  try {
+    if (globalThis.utools && typeof globalThis.utools.copyText === 'function') {
+      globalThis.utools.copyText(String(target || ''))
+      return true
+    }
+  } catch {}
+  return false
 }
 
 async function macOpen(target, reveal = false) {
@@ -368,6 +608,7 @@ window.eypcPlatform = {
     setState: writeState,
     getMqttArchive: readMqttArchive,
     setMqttArchive: writeMqttArchive,
+    getMqttStorageStatus,
     getMqttSecrets: readMqttSecrets,
     setMqttSecrets: writeMqttSecrets
   },
@@ -378,18 +619,13 @@ window.eypcPlatform = {
   files: {
     open: async (target) => shellCall('open', target),
     reveal: async (target) => shellCall('reveal', target),
-    copyPath: async (target) => {
-      try {
-        if (globalThis.utools && typeof globalThis.utools.copyText === 'function') {
-          globalThis.utools.copyText(String(target || ''))
-          return true
-        }
-      } catch {}
-      return false
-    },
+    copyPath: copyText,
     pickFavorite: pickFavoritePath,
     pickFavorites: pickFavoritePaths,
     listDirectory: listFavoriteDirectory
+  },
+  clipboard: {
+    copyText
   },
   app: {
     hide: async () => {

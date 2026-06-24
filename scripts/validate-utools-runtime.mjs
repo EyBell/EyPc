@@ -65,6 +65,7 @@ const sandbox = {
       }
     }
     if (name === 'node:path') return { basename: (value) => String(value).split('/').pop() }
+    if (name === 'node:os') return { homedir: () => '/tmp' }
     throw new Error(`unexpected require: ${name}`)
   }
 }

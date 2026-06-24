@@ -1,9 +1,11 @@
 import { addFavoriteNode, deleteFavoriteMetadata, favoriteParentOptions, favoriteVirtualChildren, filterFavoriteContainerTree, filterFavoriteGroupTree, filterFavoriteItems, filterFavoriteTree, flattenFavoriteTree, inferFavoriteNameFromPath, isValidFavoriteParent, moveFavoriteNode, normalizeFavoritePath } from '../domain/favorites'
-import { appendMqttMessage, buildMqttWebSocketUrl, createMqttConnectionConfig, createMqttSession, deleteMqttPublishTemplate, deleteMqttRecord, matchMqttTopicFilter, mqttConnectOptionsFromConfig, normalizeMqttArchiveState, parseMqttWebSocketUrl, renameMqttPublishTemplate, renameMqttRecord, saveMqttPublishTemplate, toMqttPublishDraft } from '../domain/mqtt'
+import { DEFAULT_MQTT_LAYOUT_PREFS, MQTT_LAYOUT_RATIO_MAX, MQTT_LAYOUT_RATIO_MIN, appendMqttMessage, buildMqttWebSocketUrl, createMqttConnectionConfig, createMqttConnectionSnapshot, createMqttSession, deleteMqttPublishTemplate, deleteMqttRecord, matchMqttTopicFilter, mqttConnectOptionsFromConfig, normalizeMqttArchiveState, parseMqttWebSocketUrl, renameMqttPublishTemplate, renameMqttRecord, saveMqttPublishTemplate, toMqttPublishDraft, updateMqttRecord } from '../domain/mqtt'
 import { dedupePortProcesses, filterPortProcesses, flattenPortGroupTargets, matchPortGroupProcesses, matchPortGroupTargetProcesses, movePortGroupToFolder, shouldProcessMatchVerifiedPort } from '../domain/ports'
+import { applyRecordListDeleteRecovery, computeRecordListDeleteAnchor, toggleRecordListSelection } from '../domain/recordListSelection'
 import { normalizeAppState } from '../domain/state'
 import { formatShortcutList } from '../domain/shortcuts'
-import type { AppState, AppTabId, FavoriteNode, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttMessageRecord, MqttPublishDraft, MqttPublishTemplate, MqttQos, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
+import { normalizeToolPreviewPrefs } from '../domain/toolPreview'
+import type { AppState, AppTabId, FavoriteNode, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
 import type { PortGroupTreeRow } from '../domain/ports'
 import { getPlatform, type FavoriteDirectoryEntry, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind } from '../platform/eypcPlatform'
 import { createActionRuntime } from './action/actionRuntime'
@@ -68,11 +70,16 @@ export interface AppRuntimeSnapshot {
   favoriteRows: ReturnType<typeof flattenFavoriteTree>
   mqttArchive: MqttArchiveState
   mqttArchiveLoaded: boolean
+  mqttStorageStatus: MqttStorageStatus
   mqttPanelOpen: boolean
   mqttSubscriptionPanelOpen: boolean
   mqttWorkspaceLayout: MqttWorkspaceLayout
+  mqttLayoutPrefs: MqttLayoutPrefs
+  toolPreviewPrefs: ToolPreviewPrefs
   mqttLogDrawer: MqttLogDrawerState
   mqttSearch: string
+  mqttTemplateSearch: string
+  mqttHistorySearch: string
   mqttConnectionStatus: MqttConnectionStatus
   mqttLogs: MqttLogRecord[]
   mqttActiveConfig: MqttConnectionConfig | null
@@ -82,6 +89,9 @@ export interface AppRuntimeSnapshot {
   mqttSelectedSubscriptionTopics: string[]
   mqttFocusedSubscriptionTopic: string | null
   mqttReceiveFilter: MqttReceiveFilter
+  activeMqttPane: MqttPaneId
+  activeMqttRecordList: MqttRecordListId
+  mqttMessageStats: MqttMessageStats
   mqttSessionRows: MqttSessionRecordView[]
   mqttMessageRows: MqttMessageRecord[]
   mqttSelectedRecord: MqttRecordSelection | null
@@ -93,7 +103,12 @@ export interface AppRuntimeSnapshot {
   mqttPublishRecordsOpen: boolean
   mqttPublishTemplateRows: MqttPublishTemplate[]
   mqttPublishHistoryRows: MqttMessageRecord[]
+  mqttRecordListStates: Record<MqttRecordListId, MqttRecordListState>
   mqttDrawer: MqttDrawerState
+  mqttDrawerItems: MqttDrawerItem[]
+  mqttPreview: MqttPreviewState
+  mqttFavoriteDraft: MqttFavoriteDraft | null
+  mqttRecordEditDraft: MqttRecordEditDraft | null
   message: string
   confirm: { title: string; detail: string; onConfirm: () => void } | null
   commandShortcutLabels: Record<string, string>
@@ -102,7 +117,9 @@ export interface AppRuntimeSnapshot {
 
 export type PortPaneId = 'groups' | 'results'
 export type FavoritePaneId = 'groups' | 'items'
-export type SearchFocusTarget = 'ports' | 'port-groups' | 'mqtt' | 'favorites' | 'favorite-groups'
+export type MqttPaneId = 'connections' | 'subscriptions' | 'messages' | 'publish' | 'publish-records'
+export type MqttRecordListId = 'messages' | 'templates' | 'history'
+export type SearchFocusTarget = 'ports' | 'port-groups' | 'mqtt' | 'mqtt-templates' | 'mqtt-history' | 'favorites' | 'favorite-groups'
 export type ActiveInputRole = NonNullable<KeybindingContext['activeInputRole']>
 export type PortDrawerMode = 'single' | 'multi' | 'group'
 export type FavoriteDrawerTargetKind = 'favorite' | 'directory'
@@ -114,6 +131,22 @@ export type MqttRecordSelection =
   | { kind: 'message'; id: string }
   | { kind: 'log'; id: string }
   | { kind: 'publish-template'; id: string }
+
+export type MqttRecordEditMode = 'rename' | 'edit'
+export type MqttRecordEditField = 'title' | 'note' | 'topic' | 'payload' | 'qos' | 'retain'
+
+export interface MqttRecordEditDraft {
+  mode: MqttRecordEditMode
+  targetKind: 'message' | 'publish-template'
+  targetId: string
+  title: string
+  note: string
+  topic: string
+  payload: string
+  qos: MqttQos
+  retain: boolean
+  activeField: MqttRecordEditField
+}
 
 export interface MqttConnectionStatus {
   state: 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'error'
@@ -151,6 +184,11 @@ export interface MqttSubscriptionRow {
   focused: boolean
 }
 
+export interface MqttRecordListState {
+  activeIndex: number
+  selectedIds: string[]
+}
+
 export interface MqttSubscriptionDraftItem {
   topic: string
   alias: string
@@ -165,6 +203,7 @@ export interface MqttSubscriptionEditorItem {
 export interface MqttSubscriptionEditorDraft {
   connectionId: string
   items: MqttSubscriptionEditorItem[]
+  activeItemId: string | null
   activeField: MqttSubscriptionEditorField
 }
 
@@ -217,10 +256,45 @@ export type MqttConfigDraftField =
 export interface MqttDrawerState {
   open: boolean
   active: boolean
+  activeIndex: number
+  targetKind: MqttRecordSelection['kind'] | null
+  targetId: string | null
 }
 
 export interface MqttLogDrawerState {
   open: boolean
+}
+
+export interface MqttMessageStats {
+  all: number
+  incoming: number
+  outgoing: number
+}
+
+export interface MqttDrawerItem {
+  commandId: string
+  title: string
+  description: string
+  icon: string
+  shortcutLabel: string
+  risk: RuntimeActionRisk
+  enabled: boolean
+  args?: Record<string, unknown>
+}
+
+export interface MqttPreviewState {
+  open: boolean
+  targetKind: 'message' | 'publish-template' | null
+  targetId: string | null
+  source: 'hover' | 'keyboard' | 'shift' | null
+  scrollTop: number
+}
+
+export interface MqttFavoriteDraft {
+  targetKind: 'message' | 'publish-template'
+  targetId: string
+  title: string
+  activeField: 'title'
 }
 
 export interface PortDetailState {
@@ -385,11 +459,13 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   let favoriteDraft: FavoriteDraft | null = null
   let mqttArchive: MqttArchiveState = normalizeMqttArchiveState(null)
   let mqttArchiveLoaded = false
-  let mqttPanelOpen = true
-  let mqttSubscriptionPanelOpen = true
-  let mqttWorkspaceLayout: MqttWorkspaceLayout = 'stack'
+  let mqttPanelOpen = state.mqtt.layoutPrefs.connectionPanelOpen
+  let mqttSubscriptionPanelOpen = state.mqtt.layoutPrefs.subscriptionPanelOpen
+  let mqttWorkspaceLayout: MqttWorkspaceLayout = state.mqtt.layoutPrefs.workspaceLayout
   let mqttLogDrawer: MqttLogDrawerState = { open: false }
   let mqttSearch = ''
+  let mqttTemplateSearch = ''
+  let mqttHistorySearch = ''
   let mqttConnectionStatus: MqttConnectionStatus = { state: 'idle', detail: '未连接' }
   let mqttLogs: MqttLogRecord[] = []
   let mqttSelectedRecord: MqttRecordSelection | null = null
@@ -397,14 +473,24 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   let mqttSubscriptionDraft: MqttSubscriptionEditorDraft | null = null
   let mqttPublishDraft: MqttPublishDraft = { topic: '', payload: '', qos: 0, retain: false }
   let mqttPublishScratch: MqttPublishDraft = { ...mqttPublishDraft }
-  let mqttPublishRecordsOpen = false
+  let mqttPublishRecordsOpen = state.mqtt.layoutPrefs.publishRecordsOpen
   let mqttReceiveFilter: MqttReceiveFilter = 'incoming'
+  let activeMqttPane: MqttPaneId = 'messages'
+  let activeMqttRecordList: MqttRecordListId = 'messages'
+  let mqttRecordListStates: Record<MqttRecordListId, MqttRecordListState> = {
+    messages: { activeIndex: 0, selectedIds: [] },
+    templates: { activeIndex: 0, selectedIds: [] },
+    history: { activeIndex: 0, selectedIds: [] }
+  }
   let mqttActiveSubscriptionTopic: string | null = null
   let mqttActiveSubscriptionTopics: string[] = []
   let mqttSelectedSubscriptionTopics: string[] = []
   let mqttFocusedSubscriptionTopic: string | null = null
   const mqttSubscriptionRuntime = new Map<string, { note: string; unreadCount: number }>()
-  let mqttDrawer: MqttDrawerState = { open: false, active: false }
+  let mqttDrawer: MqttDrawerState = { open: false, active: false, activeIndex: 0, targetKind: null, targetId: null }
+  let mqttPreview: MqttPreviewState = { open: false, targetKind: null, targetId: null, source: null, scrollTop: 0 }
+  let mqttFavoriteDraft: MqttFavoriteDraft | null = null
+  let mqttRecordEditDraft: MqttRecordEditDraft | null = null
   let mqttCurrentSessionId: string | null = null
   let mqttClient: MqttRuntimeClient | null = null
   const mqttSecrets = new Map<string, string>(Object.entries(platform.storage.getMqttSecrets()))
@@ -450,6 +536,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       portGroupDraft ? 'port-group-editor' : null,
       mqttConfigDraft ? 'mqtt-editor' : null,
       mqttSubscriptionDraft ? 'mqtt-subscription-editor' : null,
+      mqttFavoriteDraft ? 'mqtt-favorite-editor' : null,
+      mqttRecordEditDraft ? 'mqtt-record-editor' : null,
+      mqttPreview.open ? 'mqtt-preview' : null,
       favoriteDraft ? 'favorites-editor' : null,
       favoritePickReview ? 'favorites-pick-review' : null,
       portGroupDetail.open ? 'port-group-detail' : null,
@@ -587,6 +676,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (!config) return false
     const target = typeof topic === 'string' ? topic.trim() : ''
     if (!target) {
+      activeMqttPane = 'subscriptions'
       mqttFocusedSubscriptionTopic = null
       mqttSelectedSubscriptionTopics = []
       setMqttActiveSubscriptionTopics(config, [])
@@ -594,6 +684,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       return true
     }
     if (!config.subscriptions.includes(target)) return false
+    activeMqttPane = 'subscriptions'
     mqttFocusedSubscriptionTopic = target
     mqttSelectedSubscriptionTopics = [target]
     setMqttActiveSubscriptionTopics(config, [target])
@@ -606,6 +697,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     const config = currentMqttConfig()
     const target = typeof topic === 'string' ? topic.trim() : ''
     if (!config || !target || !config.subscriptions.includes(target)) return false
+    activeMqttPane = 'subscriptions'
     mqttFocusedSubscriptionTopic = target
     notify()
     return true
@@ -616,6 +708,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (!config) return false
     const target = (typeof topic === 'string' ? topic : mqttFocusedSubscriptionTopic || '').trim()
     if (!target || !config.subscriptions.includes(target)) return false
+    activeMqttPane = 'subscriptions'
     mqttFocusedSubscriptionTopic = target
     mqttSelectedSubscriptionTopics = mqttSelectedSubscriptionTopics.includes(target)
       ? mqttSelectedSubscriptionTopics.filter((item) => item !== target)
@@ -627,6 +720,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   function applyMqttSubscriptionFilter() {
     const config = currentMqttConfig()
     if (!config) return false
+    activeMqttPane = 'subscriptions'
     const targets = mqttSelectedSubscriptionTopics.length
       ? mqttSelectedSubscriptionTopics
       : mqttFocusedSubscriptionTopic
@@ -679,15 +773,18 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     const items = config.subscriptions.map((topic, index) =>
       createMqttSubscriptionEditorItem(topic, config.subscriptionAliases[topic] || '', config.createdAt + index)
     )
-    if (appendBlank) items.push(createMqttSubscriptionEditorItem('#', '', Date.now()))
+    const appendedItem = appendBlank ? createMqttSubscriptionEditorItem('', '', Date.now()) : null
+    if (appendedItem) items.push(appendedItem)
     return {
       connectionId: config.id,
       items,
+      activeItemId: appendedItem?.id || items[0]?.id || null,
       activeField: 'topic'
     }
   }
 
   function beginMqttSubscriptionDraft(appendBlank = false) {
+    if (mqttConfigDraft) return false
     const config = currentMqttConfig()
     if (!config) return beginMqttConfigDraft('create')
     mqttSubscriptionDraft = defaultMqttSubscriptionDraft(config, appendBlank)
@@ -697,10 +794,24 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
 
   function updateMqttSubscriptionDraft(input: Partial<Omit<MqttSubscriptionEditorDraft, 'connectionId'>>) {
     if (!mqttSubscriptionDraft) return
+    const previousDraft = mqttSubscriptionDraft
+    const nextItems = input.items ? input.items.map((item) => ({ ...item })) : previousDraft.items
+    const requestedActiveItemId = Object.prototype.hasOwnProperty.call(input, 'activeItemId')
+      ? input.activeItemId ?? null
+      : previousDraft.activeItemId
+    let fallbackItemId: string | null = nextItems[0]?.id || null
+    if (input.items && previousDraft.activeItemId) {
+      const previousIndex = previousDraft.items.findIndex((item) => item.id === previousDraft.activeItemId)
+      if (previousIndex >= 0) fallbackItemId = nextItems[Math.min(previousIndex, nextItems.length - 1)]?.id || fallbackItemId
+    }
+    const nextActiveItemId = requestedActiveItemId && nextItems.some((item) => item.id === requestedActiveItemId)
+      ? requestedActiveItemId
+      : fallbackItemId
     mqttSubscriptionDraft = {
-      ...mqttSubscriptionDraft,
+      ...previousDraft,
       ...input,
-      items: input.items ? input.items.map((item) => ({ ...item })) : mqttSubscriptionDraft.items
+      items: nextItems,
+      activeItemId: nextActiveItemId
     }
     notify()
   }
@@ -765,10 +876,17 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   function moveMqttSubscriptionDraftField(offset: number) {
     if (!mqttSubscriptionDraft) return false
     const fields: MqttSubscriptionEditorField[] = ['alias', 'topic']
-    const index = fields.indexOf(mqttSubscriptionDraft.activeField)
+    if (!mqttSubscriptionDraft.items.length) return false
+    const activeItemId = mqttSubscriptionDraft.activeItemId && mqttSubscriptionDraft.items.some((item) => item.id === mqttSubscriptionDraft?.activeItemId)
+      ? mqttSubscriptionDraft.activeItemId
+      : mqttSubscriptionDraft.items[0].id
+    const cells = mqttSubscriptionDraft.items.flatMap((item) => fields.map((field) => ({ itemId: item.id, field })))
+    const index = Math.max(0, cells.findIndex((cell) => cell.itemId === activeItemId && cell.field === mqttSubscriptionDraft?.activeField))
+    const next = cells[(index + offset + cells.length) % cells.length]
     mqttSubscriptionDraft = {
       ...mqttSubscriptionDraft,
-      activeField: fields[(index + offset + fields.length) % fields.length]
+      activeItemId: next.itemId,
+      activeField: next.field
     }
     notify()
     return true
@@ -833,26 +951,264 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     }
   }
 
-  function mqttMessagePassesReceiveFilters(message: MqttMessageRecord): boolean {
-    if (mqttReceiveFilter !== 'all' && message.direction !== mqttReceiveFilter) return false
-    if (mqttActiveSubscriptionTopics.length && !mqttActiveSubscriptionTopics.some((topic) => matchMqttTopicFilter(message.topic, topic))) return false
-    return true
-  }
-
   function mqttPublishTemplatesForActiveConfig(): MqttPublishTemplate[] {
     const config = currentMqttConfig()
     if (!config) return []
-    return mqttArchive.publishTemplates.filter((item) => item.connectionId === config.id)
+    const query = mqttTemplateSearch.trim().toLowerCase()
+    return mqttArchive.publishTemplates
+      .filter((item) => item.connectionId === config.id)
+      .filter((item) => !query || [item.title, item.topic, item.payload, item.note || ''].join(' ').toLowerCase().includes(query))
   }
 
   function mqttPublishHistoryForActiveConfig(): MqttMessageRecord[] {
     const config = currentMqttConfig()
     if (!config) return []
+    const query = mqttHistorySearch.trim().toLowerCase()
     return mqttArchive.sessions
       .filter((session) => session.connectionId === config.id)
       .flatMap((session) => session.messages)
       .filter((message) => message.direction === 'outgoing')
+      .filter((message) => !query || [message.title || '', message.note || '', message.topic, message.payload].join(' ').toLowerCase().includes(query))
       .sort((a, b) => b.timestamp - a.timestamp)
+  }
+
+  function persistMqttLayoutPrefs() {
+    state.mqtt.layoutPrefs = {
+      ...state.mqtt.layoutPrefs,
+      workspaceLayout: mqttWorkspaceLayout,
+      connectionPanelOpen: mqttPanelOpen,
+      subscriptionPanelOpen: mqttSubscriptionPanelOpen,
+      publishRecordsOpen: mqttPublishRecordsOpen
+    }
+    save()
+  }
+
+  function clampMqttLayoutRatio(value: unknown) {
+    const raw = typeof value === 'number' && Number.isFinite(value) ? value : DEFAULT_MQTT_LAYOUT_PREFS.stackReceiveRatio
+    return Math.round(Math.min(MQTT_LAYOUT_RATIO_MAX, Math.max(MQTT_LAYOUT_RATIO_MIN, raw)) * 1000) / 1000
+  }
+
+  function setMqttWorkspaceLayout(layout: MqttWorkspaceLayout) {
+    mqttWorkspaceLayout = layout
+    persistMqttLayoutPrefs()
+  }
+
+  function resizeMqttLayout(args?: Record<string, unknown>) {
+    const layout: MqttWorkspaceLayout = args?.layout === 'split' ? 'split' : args?.layout === 'stack' ? 'stack' : mqttWorkspaceLayout
+    const receiveRatio = clampMqttLayoutRatio(args?.receiveRatio)
+    state.mqtt.layoutPrefs = {
+      ...state.mqtt.layoutPrefs,
+      ...(layout === 'split' ? { splitReceiveRatio: receiveRatio } : { stackReceiveRatio: receiveRatio })
+    }
+    persistMqttLayoutPrefs()
+    notify()
+    return true
+  }
+
+  function resetMqttLayoutRatio(args?: Record<string, unknown>) {
+    const layout: MqttWorkspaceLayout = args?.layout === 'split' ? 'split' : args?.layout === 'stack' ? 'stack' : mqttWorkspaceLayout
+    return resizeMqttLayout({
+      layout,
+      receiveRatio: layout === 'split' ? DEFAULT_MQTT_LAYOUT_PREFS.splitReceiveRatio : DEFAULT_MQTT_LAYOUT_PREFS.stackReceiveRatio
+    })
+  }
+
+  function updateToolPreviewPrefs(args?: Record<string, unknown>) {
+    state.settings.toolPreviewPrefs = normalizeToolPreviewPrefs({
+      ...state.settings.toolPreviewPrefs,
+      hoverPreviewEnabled: typeof args?.enabled === 'boolean' ? args.enabled : state.settings.toolPreviewPrefs.hoverPreviewEnabled,
+      hoverPreviewDelayMs: typeof args?.delayMs === 'number' ? args.delayMs : state.settings.toolPreviewPrefs.hoverPreviewDelayMs
+    })
+    save()
+    notify()
+    return true
+  }
+
+  function focusMqttRecordList(list: MqttRecordListId) {
+    activeMqttRecordList = list
+    activeMqttPane = 'messages'
+    mqttPublishRecordsOpen = list !== 'messages'
+    persistMqttLayoutPrefs()
+    syncMqttRecordListState(list)
+    notify()
+    return true
+  }
+
+  function focusMqttPublishEditor() {
+    activeMqttPane = 'publish'
+    notify()
+    return true
+  }
+
+  function setMqttTemplateSearch(args?: Record<string, unknown>) {
+    mqttTemplateSearch = typeof args?.query === 'string' ? args.query : ''
+    activeMqttRecordList = 'templates'
+    activeMqttPane = 'messages'
+    mqttPublishRecordsOpen = true
+    persistMqttLayoutPrefs()
+    const rows = mqttPublishTemplatesForActiveConfig()
+    if (mqttSelectedRecord?.kind === 'publish-template' && !rows.some((item) => item.id === mqttSelectedRecord?.id)) mqttSelectedRecord = null
+    syncMqttRecordListState('templates', true)
+    notify()
+    return true
+  }
+
+  function setMqttHistorySearch(args?: Record<string, unknown>) {
+    mqttHistorySearch = typeof args?.query === 'string' ? args.query : ''
+    activeMqttRecordList = 'history'
+    activeMqttPane = 'messages'
+    mqttPublishRecordsOpen = true
+    persistMqttLayoutPrefs()
+    if (mqttSelectedRecord?.kind === 'message' && !mqttPublishHistoryForActiveConfig().some((item) => item.id === mqttSelectedRecord?.id)) mqttSelectedRecord = null
+    syncMqttRecordListState('history', true)
+    notify()
+    return true
+  }
+
+  function mqttRecordRowsForList(list: MqttRecordListId): MqttRecordSelection[] {
+    if (list === 'templates') {
+      return mqttPublishTemplatesForActiveConfig().map((item) => ({ kind: 'publish-template', id: item.id }))
+    }
+    if (list === 'history') {
+      return mqttPublishHistoryForActiveConfig().map((item) => ({ kind: 'message', id: item.id }))
+    }
+    return mqttMessagesForSelection().map((item) => ({ kind: 'message', id: item.id }))
+  }
+
+  function mqttRecordRowsForActiveList(): MqttRecordSelection[] {
+    return mqttRecordRowsForList(activeMqttRecordList)
+  }
+
+  function syncMqttRecordListState(list: MqttRecordListId, selectFirst = false) {
+    const rows = mqttRecordRowsForList(list)
+    const visibleIds = new Set(rows.map((item) => item.id))
+    const current = mqttRecordListStates[list] || { activeIndex: 0, selectedIds: [] }
+    const nextIndex = rows.length ? selectFirst ? 0 : Math.min(Math.max(current.activeIndex, 0), rows.length - 1) : 0
+    mqttRecordListStates = {
+      ...mqttRecordListStates,
+      [list]: {
+        activeIndex: nextIndex,
+        selectedIds: current.selectedIds.filter((id) => visibleIds.has(id))
+      }
+    }
+    if (selectFirst && list === activeMqttRecordList) {
+      mqttSelectedRecord = rows[nextIndex] || null
+    }
+    if (list === activeMqttRecordList && mqttSelectedRecord && !rows.some((row) => row.kind === mqttSelectedRecord?.kind && row.id === mqttSelectedRecord?.id) && (list === 'templates' || list === 'history')) {
+      mqttSelectedRecord = null
+    }
+  }
+
+  function selectMqttRecord(target: MqttRecordSelection, list: MqttRecordListId = activeMqttRecordList) {
+    mqttSelectedRecord = target
+    activeMqttRecordList = list
+    activeMqttPane = 'messages'
+    if (list === 'templates' || list === 'history') {
+      mqttPublishRecordsOpen = true
+      persistMqttLayoutPrefs()
+    }
+    if (list === 'messages') {
+      mqttPublishRecordsOpen = false
+      persistMqttLayoutPrefs()
+    }
+    const rows = mqttRecordRowsForList(list)
+    const index = rows.findIndex((item) => item.kind === target.kind && item.id === target.id)
+    if (index >= 0) {
+      mqttRecordListStates = {
+        ...mqttRecordListStates,
+        [list]: {
+          ...mqttRecordListStates[list],
+          activeIndex: index
+        }
+      }
+    }
+    notify()
+    return true
+  }
+
+  function focusMqttRecordFromArgs(args?: Record<string, unknown>) {
+    const target = mqttTargetFromArgs(args)
+    if (!target || (target.kind !== 'message' && target.kind !== 'publish-template')) return false
+    const listArg = args?.list === 'templates' || args?.list === 'history' || args?.list === 'messages' ? args.list : null
+    const list: MqttRecordListId = listArg || (target.kind === 'publish-template' ? 'templates' : activeMqttRecordList === 'history' ? 'history' : 'messages')
+    return selectMqttRecord(target, list)
+  }
+
+  function moveMqttRecordInList(direction: 1 | -1, page = false) {
+    const rows = mqttRecordRowsForActiveList()
+    if (!rows.length) {
+      mqttSelectedRecord = null
+      notify()
+      return
+    }
+    const currentIndex = rows.findIndex((item) => item.kind === mqttSelectedRecord?.kind && item.id === mqttSelectedRecord?.id)
+    const current = currentIndex >= 0 ? currentIndex : direction > 0 ? -1 : rows.length
+    const next = Math.min(rows.length - 1, Math.max(0, current + direction * (page ? 5 : 1)))
+    mqttSelectedRecord = rows[next]
+    mqttRecordListStates = {
+      ...mqttRecordListStates,
+      [activeMqttRecordList]: {
+        ...mqttRecordListStates[activeMqttRecordList],
+        activeIndex: next
+      }
+    }
+    notify()
+  }
+
+  function toggleMqttRecordSelection() {
+    if (activeMqttRecordList !== 'templates' && activeMqttRecordList !== 'history') return false
+    const rows = mqttRecordRowsForActiveList()
+    if (!rows.length) return false
+    const current = mqttRecordListStates[activeMqttRecordList]
+    const next = toggleRecordListSelection({
+      rows,
+      activeIndex: current.activeIndex,
+      selectedIds: current.selectedIds
+    })
+    mqttRecordListStates = {
+      ...mqttRecordListStates,
+      [activeMqttRecordList]: next
+    }
+    mqttSelectedRecord = rows[next.activeIndex] || null
+    notify()
+    return true
+  }
+
+  function toggleMqttRecordSelectionFromArgs(args?: Record<string, unknown>) {
+    const list = args?.list === 'templates' || args?.list === 'history' ? args.list : activeMqttRecordList
+    if (list !== 'templates' && list !== 'history') return false
+    const rows = mqttRecordRowsForList(list)
+    const target = mqttTargetFromArgs(args)
+    if (!target || (target.kind !== 'message' && target.kind !== 'publish-template')) return toggleMqttRecordSelection()
+    const targetIndex = rows.findIndex((row) => row.kind === target.kind && row.id === target.id)
+    if (targetIndex < 0) return false
+    const current = mqttRecordListStates[list]
+    if (args?.range === true) {
+      const start = Math.min(current.activeIndex, targetIndex)
+      const end = Math.max(current.activeIndex, targetIndex)
+      const rangeIds = rows.slice(start, end + 1).map((row) => row.id)
+      mqttRecordListStates = {
+        ...mqttRecordListStates,
+        [list]: {
+          activeIndex: targetIndex,
+          selectedIds: [...new Set([...current.selectedIds, ...rangeIds])]
+        }
+      }
+      selectMqttRecord(target, list)
+      return true
+    }
+    const selectedIds = current.selectedIds.includes(target.id)
+      ? current.selectedIds.filter((id) => id !== target.id)
+      : [...current.selectedIds, target.id]
+    mqttRecordListStates = {
+      ...mqttRecordListStates,
+      [list]: {
+        activeIndex: targetIndex,
+        selectedIds
+      }
+    }
+    selectMqttRecord(target, list)
+    return true
   }
 
   function pushMqttLog(level: MqttLogRecord['level'], messageText: string, detail = '', connectionId: string | null = currentMqttConfig()?.id || null) {
@@ -922,10 +1278,20 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     mqttArchiveLoaded = true
   }
 
+  function archiveWithConnectionSnapshots(archive: MqttArchiveState): MqttArchiveState {
+    const byId = new Map(archive.connectionSnapshots.map((snapshot) => [snapshot.id, snapshot]))
+    for (const config of state.mqtt.configs) {
+      byId.set(config.id, createMqttConnectionSnapshot(config))
+    }
+    return normalizeMqttArchiveState({
+      ...archive,
+      connectionSnapshots: [...byId.values()]
+    })
+  }
+
   function saveMqttArchiveForConfig(configId: string | null) {
     if (!configId) return
-    const config = state.mqtt.configs.find((item) => item.id === configId)
-    if (!config?.syncRecords) return
+    mqttArchive = archiveWithConnectionSnapshots(mqttArchive)
     platform.storage.setMqttArchive(mqttArchive)
   }
 
@@ -949,7 +1315,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       }))
   }
 
-  function mqttMessagesForSelection(): MqttMessageRecord[] {
+  function mqttSelectedSessionMessages(): MqttMessageRecord[] {
     const config = currentMqttConfig()
     if (!config) return []
     const sessions = mqttSessionsForActiveConfig()
@@ -963,7 +1329,32 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       .filter((item) => item.connectionId === config.id)
       .flatMap((item) => item.messages)
       .sort((a, b) => b.timestamp - a.timestamp)
-    return messages.filter((message) => mqttMessagePassesReceiveFilters(message))
+    return messages
+  }
+
+  function mqttMessagePassesTopicFilters(message: MqttMessageRecord): boolean {
+    if (!mqttActiveSubscriptionTopics.length) return true
+    return mqttActiveSubscriptionTopics.some((topic) => matchMqttTopicFilter(message.topic, topic))
+  }
+
+  function mqttBaseMessagesForStats(): MqttMessageRecord[] {
+    return mqttSelectedSessionMessages().filter((message) => mqttMessagePassesTopicFilters(message))
+  }
+
+  function mqttMessageStatsForSelection(): MqttMessageStats {
+    const messages = mqttBaseMessagesForStats()
+    return {
+      all: messages.length,
+      incoming: messages.filter((message) => message.direction === 'incoming').length,
+      outgoing: messages.filter((message) => message.direction === 'outgoing').length
+    }
+  }
+
+  function mqttMessagesForSelection(): MqttMessageRecord[] {
+    return mqttBaseMessagesForStats().filter((message) => {
+      if (mqttReceiveFilter === 'all') return true
+      return message.direction === mqttReceiveFilter
+    })
   }
 
   function ensureCurrentMqttSession(config: MqttConnectionConfig, now = Date.now()): string {
@@ -981,6 +1372,36 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function defaultMqttConfigDraft(mode: MqttConfigDraft['mode'], target: MqttConnectionConfig | null): MqttConfigDraft {
+    if (!target) {
+      return {
+        mode,
+        targetId: null,
+        name: '',
+        url: '',
+        protocol: 'ws',
+        host: '',
+        port: '',
+        path: '',
+        ssl: false,
+        clientId: '',
+        username: '',
+        password: '',
+        subscriptionsText: '',
+        subscriptionItems: [],
+        publishTopic: '',
+        qos: 0,
+        retain: false,
+        autoReconnect: true,
+        reconnectPeriodMs: 3000,
+        connectTimeoutMs: 10000,
+        keepaliveSec: 60,
+        clean: true,
+        reconnectOnConnackError: false,
+        resubscribeOnReconnect: true,
+        syncRecords: true,
+        activeField: 'name'
+      }
+    }
     const config = target || createMqttConnectionConfig({}, Date.now())
     const endpoint = parseMqttWebSocketUrl(config.url)
     return {
@@ -1017,6 +1438,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     ensureMqttArchiveLoaded()
     const target = mode === 'create' ? null : currentMqttConfig()
     mqttConfigDraft = defaultMqttConfigDraft(mode, target)
+    mqttDrawer = { open: false, active: false, activeIndex: 0, targetKind: null, targetId: null }
+    mqttPreview = { open: false, targetKind: null, targetId: null, source: null, scrollTop: 0 }
     notify()
     return true
   }
@@ -1046,9 +1469,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
 
   function saveMqttConfigDraft() {
     if (!mqttConfigDraft) return false
+    ensureMqttArchiveLoaded()
     const now = Date.now()
     const draft = mqttConfigDraft
     const subscriptionData = mqttDraftSubscriptionData(draft)
+    let savedConfigId: string | null = null
     if (draft.mode === 'create') {
       const config = createMqttConnectionConfig({
         ...draft,
@@ -1060,17 +1485,19 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       }, now)
       state.mqtt.configs.push(config)
       state.mqtt.activeConfigId = config.id
+      savedConfigId = config.id
       setMqttSecret(config.id, draft.password)
     } else {
       const targetId = draft.targetId || currentMqttConfig()?.id || null
+      savedConfigId = targetId
       state.mqtt.configs = state.mqtt.configs.map((config) => {
         if (config.id !== targetId) return config
         const next = createMqttConnectionConfig({
           ...config,
           ...draft,
           id: config.id,
-          subscriptions: draft.mode === 'create' ? subscriptionData.subscriptions : config.subscriptions,
-          subscriptionAliases: draft.mode === 'create' ? subscriptionData.subscriptionAliases : config.subscriptionAliases,
+          subscriptions: draft.mode === 'rename' ? config.subscriptions : subscriptionData.subscriptions,
+          subscriptionAliases: draft.mode === 'rename' ? config.subscriptionAliases : subscriptionData.subscriptionAliases,
           url: draft.mode === 'rename' ? config.url : buildMqttWebSocketUrl(draft),
           clientId: draft.mode === 'rename' ? config.clientId : draft.clientId,
           username: draft.mode === 'rename' ? config.username : draft.username,
@@ -1082,6 +1509,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     }
     state.mqtt.configs = state.mqtt.configs.sort((a, b) => a.sortOrder - b.sortOrder).map((item, index) => ({ ...item, sortOrder: index + 1 }))
     mqttConfigDraft = null
+    saveMqttArchiveForConfig(savedConfigId)
     save()
     notify()
     return true
@@ -1138,9 +1566,110 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return true
   }
 
-  function deleteSelectedMqttRecord() {
+  function beginMqttRecordEdit(mode: MqttRecordEditMode, args?: Record<string, unknown>) {
+    const target = mqttTargetFromArgs(args)
+    if (target?.kind === 'config') return beginMqttConfigDraft(mode === 'rename' ? 'rename' : 'edit')
+    if (!target || (target.kind !== 'message' && target.kind !== 'publish-template')) return false
+    const record = mqttPublishableRecordFromTarget(target)
+    if (!record) return false
+    mqttRecordEditDraft = {
+      mode,
+      targetKind: target.kind,
+      targetId: target.id,
+      title: record.title || '',
+      note: record.note || '',
+      topic: record.topic,
+      payload: record.payload,
+      qos: record.qos,
+      retain: record.retain,
+      activeField: 'title'
+    }
+    closeMqttDrawer(false)
+    closeMqttPreview()
+    notify()
+    return true
+  }
+
+  function updateMqttRecordEditDraft(input: Partial<Omit<MqttRecordEditDraft, 'mode' | 'targetKind' | 'targetId'>>) {
+    if (!mqttRecordEditDraft) return
+    mqttRecordEditDraft = {
+      ...mqttRecordEditDraft,
+      ...input,
+      qos: input.qos === 0 || input.qos === 1 || input.qos === 2 ? input.qos : mqttRecordEditDraft.qos
+    }
+    notify()
+  }
+
+  function moveMqttRecordEditDraftField(offset: number) {
+    if (!mqttRecordEditDraft) return false
+    const renameFields: MqttRecordEditField[] = ['title', 'note']
+    const editFields: MqttRecordEditField[] = ['title', 'note', 'topic', 'payload', 'qos', 'retain']
+    const fields = mqttRecordEditDraft.mode === 'rename' ? renameFields : editFields
+    const index = fields.indexOf(mqttRecordEditDraft.activeField)
+    mqttRecordEditDraft = {
+      ...mqttRecordEditDraft,
+      activeField: fields[(index + offset + fields.length) % fields.length]
+    }
+    notify()
+    return true
+  }
+
+  function saveMqttRecordEditDraft(args?: Record<string, unknown>) {
+    if (!mqttRecordEditDraft) return false
+    const draft = {
+      ...mqttRecordEditDraft,
+      ...(typeof args?.title === 'string' ? { title: args.title } : {}),
+      ...(typeof args?.note === 'string' ? { note: args.note } : {})
+    }
+    const input = draft.mode === 'rename'
+      ? { title: draft.title, note: draft.note }
+      : {
+          title: draft.title,
+          note: draft.note,
+          topic: draft.topic,
+          payload: draft.payload,
+          qos: draft.qos,
+          retain: draft.retain
+        }
+    if (draft.targetKind === 'publish-template') {
+      const template = mqttTemplateById(draft.targetId)
+      if (!template) return false
+      mqttArchive = draft.mode === 'rename'
+        ? renameMqttPublishTemplate(mqttArchive, draft.targetId, input)
+        : saveMqttPublishTemplate(mqttArchive, {
+            ...template,
+            ...input,
+            id: draft.targetId,
+            connectionId: template.connectionId,
+            topic: draft.topic.trim(),
+            payload: draft.payload
+          })
+    } else {
+      mqttArchive = draft.mode === 'rename'
+        ? renameMqttRecord(mqttArchive, { kind: 'message', id: draft.targetId }, input)
+        : updateMqttRecord(mqttArchive, { kind: 'message', id: draft.targetId }, input)
+    }
+    mqttSelectedRecord = { kind: draft.targetKind, id: draft.targetId }
+    mqttRecordEditDraft = null
+    saveMqttArchiveForConfig(currentMqttConfig()?.id || null)
+    notify()
+    return true
+  }
+
+  function cancelMqttRecordEditDraft() {
+    mqttRecordEditDraft = null
+    notify()
+    return true
+  }
+
+  function deleteSelectedMqttRecord(args?: Record<string, unknown>) {
+    const listArg = args?.list === 'templates' || args?.list === 'history' ? args.list : null
+    if (listArg && mqttRecordListStates[listArg].selectedIds.length) return deleteSelectedMqttPublishRecords(listArg)
     if (!mqttSelectedRecord) return false
     if (mqttSelectedRecord.kind === 'log') return deleteSelectedMqttLog()
+    if ((activeMqttRecordList === 'templates' || activeMqttRecordList === 'history') && mqttRecordListStates[activeMqttRecordList].selectedIds.length) {
+      return deleteSelectedMqttPublishRecords(activeMqttRecordList)
+    }
     if (mqttSelectedRecord.kind === 'publish-template') return deleteMqttTemplate(mqttSelectedRecord.id)
     if (mqttSelectedRecord.kind === 'config') {
       const deletedConfigId = mqttSelectedRecord.id
@@ -1152,24 +1681,91 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       notify()
       return true
     }
+    const activeList = activeMqttRecordList === 'history' && mqttRecordRowsForList('history').some((row) => row.id === mqttSelectedRecord?.id)
+      ? 'history'
+      : 'messages'
+    const rows = mqttRecordRowsForList(activeList)
+    const current = mqttRecordListStates[activeList]
+    const targetIndex = rows.findIndex((row) => row.kind === mqttSelectedRecord?.kind && row.id === mqttSelectedRecord?.id)
+    const anchor = computeRecordListDeleteAnchor({
+      rows,
+      activeIndex: targetIndex >= 0 ? targetIndex : current.activeIndex,
+      selectedIds: current.selectedIds,
+      deleteIds: [mqttSelectedRecord.id]
+    })
     mqttArchive = deleteMqttRecord(mqttArchive, mqttSelectedRecord)
     saveMqttArchiveForConfig(currentMqttConfig()?.id || null)
-    mqttSelectedRecord = null
+    const nextRows = mqttRecordRowsForList(activeList)
+    const recovery = applyRecordListDeleteRecovery(nextRows, anchor)
+    mqttRecordListStates = {
+      ...mqttRecordListStates,
+      [activeList]: {
+        activeIndex: recovery.activeIndex,
+        selectedIds: anchor.selectedIds.filter((id) => nextRows.some((row) => row.id === id))
+      }
+    }
+    mqttSelectedRecord = recovery.activeId ? nextRows.find((row) => row.id === recovery.activeId) || null : null
     notify()
     return true
   }
 
-  function fillMqttPublishDraftFromSelection() {
-    const messageId = mqttSelectedRecord?.kind === 'message' ? mqttSelectedRecord.id : null
-    const templateId = mqttSelectedRecord?.kind === 'publish-template' ? mqttSelectedRecord.id : null
-    const record = messageId
-      ? mqttArchive.sessions.flatMap((session) => session.messages).find((item) => item.id === messageId)
-      : templateId
-        ? mqttArchive.publishTemplates.find((item) => item.id === templateId)
-        : null
+  function deleteSelectedMqttPublishRecords(list: MqttRecordListId) {
+    if (list !== 'templates' && list !== 'history') return false
+    const rows = mqttRecordRowsForList(list)
+    const stateForList = mqttRecordListStates[list]
+    const selectedSet = new Set(stateForList.selectedIds)
+    const deleteTargets = rows.filter((row) => selectedSet.has(row.id))
+    if (!deleteTargets.length) return false
+    const deleteIds = deleteTargets.map((row) => row.id)
+    const anchor = computeRecordListDeleteAnchor({
+      rows,
+      activeIndex: stateForList.activeIndex,
+      selectedIds: stateForList.selectedIds,
+      deleteIds
+    })
+    if (list === 'templates') {
+      for (const id of deleteIds) mqttArchive = deleteMqttPublishTemplate(mqttArchive, id)
+    } else {
+      for (const id of deleteIds) mqttArchive = deleteMqttRecord(mqttArchive, { kind: 'message', id })
+    }
+    saveMqttArchiveForConfig(currentMqttConfig()?.id || null)
+    const nextRows = mqttRecordRowsForList(list)
+    const recovery = applyRecordListDeleteRecovery(nextRows, anchor)
+    mqttRecordListStates = {
+      ...mqttRecordListStates,
+      [list]: {
+        activeIndex: recovery.activeIndex,
+        selectedIds: anchor.selectedIds.filter((id) => nextRows.some((row) => row.id === id))
+      }
+    }
+    mqttSelectedRecord = recovery.activeId ? nextRows.find((row) => row.id === recovery.activeId) || null : null
+    notify()
+    return true
+  }
+
+  function clearMqttRecordList(list: Extract<MqttRecordListId, 'messages' | 'history'>) {
+    const rows = mqttRecordRowsForList(list)
+    const deleteTargets = rows.filter((row) => row.kind === 'message')
+    if (!deleteTargets.length) return false
+    for (const target of deleteTargets) {
+      mqttArchive = deleteMqttRecord(mqttArchive, { kind: 'message', id: target.id })
+    }
+    saveMqttArchiveForConfig(currentMqttConfig()?.id || null)
+    mqttRecordListStates = {
+      ...mqttRecordListStates,
+      [list]: { activeIndex: 0, selectedIds: [] }
+    }
+    if (list === activeMqttRecordList) mqttSelectedRecord = null
+    notify()
+    return true
+  }
+
+  function fillMqttPublishDraftFromSelection(args?: Record<string, unknown>) {
+    const record = mqttPublishableRecordFromArgs(args)
     if (!record) return false
     mqttPublishDraft = toMqttPublishDraft(record)
     mqttPublishScratch = { ...mqttPublishDraft }
+    activeMqttPane = 'publish'
     notify()
     return true
   }
@@ -1211,6 +1807,29 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return sendMqttPublishDraft()
   }
 
+  function repeatMqttPublishRecords(args?: Record<string, unknown>) {
+    const list = args?.list === 'templates' || args?.list === 'history' ? args.list : activeMqttRecordList
+    const selectedRows = (list === 'templates' || list === 'history')
+      ? mqttRecordRowsForList(list).filter((row) => mqttRecordListStates[list].selectedIds.includes(row.id))
+      : []
+    const explicitRecord = mqttPublishableRecordFromArgs(args)
+    const targets = selectedRows.length
+      ? selectedRows.map((row) => mqttPublishableRecordFromTarget(row)).filter((record): record is MqttMessageRecord | MqttPublishTemplate => Boolean(record))
+      : explicitRecord
+        ? [explicitRecord]
+        : mqttPublishableRecordFromTarget(mqttSelectedRecord)
+          ? [mqttPublishableRecordFromTarget(mqttSelectedRecord)!]
+          : []
+    if (!targets.length) return false
+    let sent = false
+    for (const record of targets) {
+      mqttPublishDraft = toMqttPublishDraft(record)
+      mqttPublishScratch = { ...mqttPublishDraft }
+      sent = sendMqttPublishDraft() || sent
+    }
+    return sent
+  }
+
   function renameMqttTemplate(id: string, args?: Record<string, unknown>) {
     if (!id) return false
     mqttArchive = renameMqttPublishTemplate(mqttArchive, id, {
@@ -1224,11 +1843,321 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
 
   function deleteMqttTemplate(id: string) {
     if (!id) return false
+    const rows = mqttRecordRowsForList('templates')
+    const current = mqttRecordListStates.templates
+    const anchor = computeRecordListDeleteAnchor({
+      rows,
+      activeIndex: current.activeIndex,
+      selectedIds: current.selectedIds,
+      deleteIds: [id]
+    })
     mqttArchive = deleteMqttPublishTemplate(mqttArchive, id)
-    if (mqttSelectedRecord?.kind === 'publish-template' && mqttSelectedRecord.id === id) mqttSelectedRecord = null
     saveMqttArchiveForConfig(currentMqttConfig()?.id || null)
+    const nextRows = mqttRecordRowsForList('templates')
+    const recovery = applyRecordListDeleteRecovery(nextRows, anchor)
+    mqttRecordListStates = {
+      ...mqttRecordListStates,
+      templates: {
+        activeIndex: recovery.activeIndex,
+        selectedIds: anchor.selectedIds.filter((selectedId) => selectedId !== id)
+      }
+    }
+    if (mqttSelectedRecord?.kind === 'publish-template' && mqttSelectedRecord.id === id) {
+      mqttSelectedRecord = recovery.activeId ? nextRows.find((row) => row.id === recovery.activeId) || null : null
+    }
     notify()
     return true
+  }
+
+  function mqttTargetFromArgs(args?: Record<string, unknown>): MqttRecordSelection | null {
+    const rawKind = typeof args?.kind === 'string'
+      ? args.kind
+      : typeof args?.targetKind === 'string'
+        ? args.targetKind
+        : null
+    const id = typeof args?.id === 'string'
+      ? args.id.trim()
+      : typeof args?.targetId === 'string'
+        ? args.targetId.trim()
+        : ''
+    const kind = rawKind === 'config' || rawKind === 'session' || rawKind === 'message' || rawKind === 'log' || rawKind === 'publish-template'
+      ? rawKind
+      : null
+    if (kind && id) return { kind, id }
+    if (mqttDrawer.targetKind && mqttDrawer.targetId) return { kind: mqttDrawer.targetKind, id: mqttDrawer.targetId }
+    return mqttSelectedRecord
+  }
+
+  function mqttMessageById(id: string): MqttMessageRecord | null {
+    return mqttArchive.sessions.flatMap((session) => session.messages).find((message) => message.id === id) || null
+  }
+
+  function mqttTemplateById(id: string): MqttPublishTemplate | null {
+    return mqttArchive.publishTemplates.find((template) => template.id === id) || null
+  }
+
+  function mqttPublishableRecordFromTarget(target: MqttRecordSelection | null): MqttMessageRecord | MqttPublishTemplate | null {
+    if (target?.kind === 'message') return mqttMessageById(target.id)
+    if (target?.kind === 'publish-template') return mqttTemplateById(target.id)
+    return null
+  }
+
+  function mqttPublishableRecordFromArgs(args?: Record<string, unknown>): MqttMessageRecord | MqttPublishTemplate | null {
+    return mqttPublishableRecordFromTarget(mqttTargetFromArgs(args))
+  }
+
+  function mqttTargetArgs(target: MqttRecordSelection | null): Record<string, unknown> {
+    return target ? { kind: target.kind, id: target.id, targetKind: target.kind, targetId: target.id } : {}
+  }
+
+  function closeMqttDrawer(notifyChange = true) {
+    mqttDrawer = { open: false, active: false, activeIndex: 0, targetKind: null, targetId: null }
+    if (notifyChange) notify()
+    return true
+  }
+
+  function inferMqttDrawerState(active: boolean): MqttDrawerState | null {
+    const target = mqttTargetFromArgs()
+    return { open: true, active, activeIndex: 0, targetKind: target?.kind || null, targetId: target?.id || null }
+  }
+
+  function mqttDrawerItem(
+    commandId: string,
+    title: string,
+    description: string,
+    icon: string,
+    args?: Record<string, unknown>
+  ): MqttDrawerItem {
+    const action = actions.get(commandId)
+    return {
+      commandId,
+      title,
+      description,
+      icon,
+      args,
+      risk: action?.risk || 'normal',
+      shortcutLabel: shortcutLabelsFor(commandId),
+      enabled: Boolean(action?.when(context()))
+    }
+  }
+
+  function buildMqttDrawerItems(drawer = mqttDrawer): MqttDrawerItem[] {
+    if (!drawer.open) return []
+    const target = drawer.targetKind && drawer.targetId
+      ? { kind: drawer.targetKind, id: drawer.targetId } as MqttRecordSelection
+      : mqttTargetFromArgs()
+    const args = mqttTargetArgs(target)
+    if (target?.kind === 'log') {
+      return [
+        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前日志详情。', 'detail', args),
+        mqttDrawerItem('mqtt.log.delete', '删除', '删除当前日志记录。', 'trash', args),
+        mqttDrawerItem('mqtt.log.clearCurrentConfig', '清空本连接', '清空当前连接日志。', 'clear', args),
+        mqttDrawerItem('mqtt.log.clearAll', '清空全部', '清空全部 MQTT 日志。', 'clear-all', args)
+      ]
+    }
+    if (target?.kind === 'publish-template') {
+      return [
+        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前收藏模板详情。', 'detail', args),
+        mqttDrawerItem('mqtt.record.rename', '别名', '编辑当前收藏模板标题或备注。', 'rename', args),
+        mqttDrawerItem('mqtt.record.edit', '完整编辑', '编辑模板 topic、payload、QoS 与 retain。', 'edit', args),
+        mqttDrawerItem('mqtt.record.copyTopic', '复制主题', '复制模板 topic。', 'copy-topic', args),
+        mqttDrawerItem('mqtt.record.copyPayload', '复制内容', '复制模板 payload。', 'copy-payload', args),
+        mqttDrawerItem('mqtt.record.resendDraft', '填入发布', '把模板填入发布编辑区。', 'apply', args),
+        mqttDrawerItem('mqtt.publish.template.send', '再次发送', '直接发送当前模板。', 'send', args),
+        mqttDrawerItem('mqtt.publish.template.delete', '删除', '删除当前模板。', 'trash', args)
+      ]
+    }
+    if (target?.kind === 'message') {
+      const historyTarget = activeMqttRecordList === 'history' && mqttRecordRowsForList('history').some((row) => row.id === target.id)
+      return [
+        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前 MQTT 消息详情。', 'detail', args),
+        mqttDrawerItem('mqtt.record.rename', '别名', '编辑当前消息别名或备注。', 'rename', args),
+        mqttDrawerItem('mqtt.record.edit', '完整编辑', '编辑当前消息 topic、payload、QoS 与 retain。', 'edit', args),
+        mqttDrawerItem('mqtt.record.favorite', '收藏/别名', '收藏为发送模板并可编辑别名。', 'star', args),
+        mqttDrawerItem('mqtt.record.copyTopic', '复制主题', '复制当前消息 topic。', 'copy-topic', args),
+        mqttDrawerItem('mqtt.record.copyPayload', '复制内容', '复制当前消息 payload。', 'copy-payload', args),
+        mqttDrawerItem('mqtt.record.resendDraft', '填入发布', '把当前消息填入发布编辑区。', 'apply', args),
+        mqttDrawerItem('mqtt.record.repeatSend', '再次发送', '用当前消息内容再次发送。', 'send', args),
+        mqttDrawerItem('mqtt.record.delete', '删除', '删除当前消息记录。', 'trash', args),
+        historyTarget
+          ? mqttDrawerItem('mqtt.history.clearAll', '清空历史', '清理当前历史列表中的记录。', 'clear-all', args)
+          : mqttDrawerItem('mqtt.messages.clearAll', '清空消息', '清理当前消息视图中的记录。', 'clear-all', args)
+      ]
+    }
+    if (target?.kind === 'config') {
+      return [
+        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前连接配置。', 'detail', args),
+        mqttDrawerItem('mqtt.connection.connect', '连接', '连接或重连当前 MQTT。', 'plug', args),
+        mqttDrawerItem('mqtt.connection.disconnect', '断开', '断开当前 MQTT。', 'unplug', args),
+        mqttDrawerItem('mqtt.config.edit', '配置', '编辑当前连接配置。', 'edit', args),
+        mqttDrawerItem('mqtt.log.drawer.open', '日志', '打开当前连接日志。', 'log', args),
+        mqttDrawerItem('mqtt.record.delete', '删除', '删除当前连接配置。', 'trash', args)
+      ]
+    }
+    return []
+  }
+
+  function openMqttDrawer(active = true) {
+    const inferred = inferMqttDrawerState(active)
+    if (!inferred) {
+      setMessage('没有选中的 MQTT 上下文')
+      return false
+    }
+    mqttDrawer = inferred
+    notify()
+    return true
+  }
+
+  function moveMqttDrawer(direction: 1 | -1) {
+    if (!mqttDrawer.open) return false
+    const items = buildMqttDrawerItems()
+    if (!items.length) return false
+    mqttDrawer = {
+      ...mqttDrawer,
+      activeIndex: (mqttDrawer.activeIndex + direction + items.length) % items.length
+    }
+    notify()
+    return true
+  }
+
+  function executeMqttDrawerItem(index = mqttDrawer.activeIndex, useInferredWhenClosed = false) {
+    const drawer = mqttDrawer.open ? mqttDrawer : useInferredWhenClosed ? inferMqttDrawerState(true) : null
+    if (!drawer) return false
+    const items = buildMqttDrawerItems(drawer)
+    const item = items[index]
+    if (!item || !item.enabled) return false
+    const result = actions.dispatch({ actionId: item.commandId, context: context(), args: item.args })
+    if (mqttDrawer.open && item.commandId !== 'mqtt.detail.open' && item.commandId !== 'mqtt.record.favorite') closeMqttDrawer(false)
+    notify()
+    return result.handled
+  }
+
+  async function copyText(text: string, successMessage: string) {
+    const writer = platform.clipboard?.copyText || platform.files.copyPath
+    const ok = await writer(text)
+    setMessage(ok ? successMessage : '当前环境不支持复制文本')
+    return ok
+  }
+
+  function copyMqttRecordTopic(args?: Record<string, unknown>) {
+    const record = mqttPublishableRecordFromArgs(args)
+    if (!record?.topic) return false
+    void copyText(record.topic, '已复制 MQTT topic')
+    return true
+  }
+
+  function copyMqttRecordPayload(args?: Record<string, unknown>) {
+    const record = mqttPublishableRecordFromArgs(args)
+    if (!record) return false
+    void copyText(record.payload, '已复制 MQTT payload')
+    return true
+  }
+
+  function beginMqttFavoriteDraft(args?: Record<string, unknown>) {
+    const target = mqttTargetFromArgs(args)
+    const record = mqttPublishableRecordFromTarget(target)
+    if (!record || !target || (target.kind !== 'message' && target.kind !== 'publish-template')) return false
+    mqttFavoriteDraft = {
+      targetKind: target.kind,
+      targetId: target.id,
+      title: record.title || record.topic || '未命名收藏',
+      activeField: 'title'
+    }
+    notify()
+    return true
+  }
+
+  function updateMqttFavoriteDraft(input: Partial<Pick<MqttFavoriteDraft, 'title' | 'activeField'>>) {
+    if (!mqttFavoriteDraft) return
+    mqttFavoriteDraft = { ...mqttFavoriteDraft, ...input }
+    notify()
+  }
+
+  function saveMqttFavoriteDraft(args?: Record<string, unknown>) {
+    if (!mqttFavoriteDraft) return false
+    const config = currentMqttConfig()
+    const record = mqttPublishableRecordFromTarget({ kind: mqttFavoriteDraft.targetKind, id: mqttFavoriteDraft.targetId })
+    if (!config || !record?.topic) return false
+    const title = typeof args?.title === 'string' && args.title.trim()
+      ? args.title.trim()
+      : mqttFavoriteDraft.title.trim() || record.title || record.topic
+    mqttArchive = saveMqttPublishTemplate(mqttArchive, {
+      connectionId: config.id,
+      title,
+      note: record.note,
+      topic: record.topic,
+      payload: record.payload,
+      qos: record.qos,
+      retain: record.retain
+    })
+    mqttFavoriteDraft = null
+    mqttPublishRecordsOpen = true
+    activeMqttPane = 'messages'
+    activeMqttRecordList = 'templates'
+    saveMqttArchiveForConfig(config.id)
+    notify()
+    return true
+  }
+
+  function cancelMqttFavoriteDraft() {
+    mqttFavoriteDraft = null
+    notify()
+    return true
+  }
+
+  function openMqttPreview(args?: Record<string, unknown>) {
+    if (mqttFavoriteDraft || mqttConfigDraft || mqttSubscriptionDraft || mqttRecordEditDraft) return false
+    const target = mqttTargetFromArgs(args)
+    if (target?.kind !== 'message' && target?.kind !== 'publish-template') return false
+    if (!mqttPublishableRecordFromTarget(target)) return false
+    const source = args?.source === 'hover' ? 'hover' : args?.source === 'shift' ? 'shift' : 'keyboard'
+    mqttPreview = {
+      open: true,
+      targetKind: target.kind,
+      targetId: target.id,
+      source,
+      scrollTop: mqttPreview.targetId === target.id ? mqttPreview.scrollTop : 0
+    }
+    notify()
+    return true
+  }
+
+  function closeMqttPreview() {
+    if (!mqttPreview.open) return false
+    mqttPreview = { open: false, targetKind: null, targetId: null, source: null, scrollTop: 0 }
+    notify()
+    return true
+  }
+
+  function scrollMqttPreview(direction: 1 | -1) {
+    if (!mqttPreview.open) return false
+    mqttPreview = { ...mqttPreview, scrollTop: Math.max(0, mqttPreview.scrollTop + direction * 80) }
+    notify()
+    return true
+  }
+
+  function setMqttPreviewScroll(args?: Record<string, unknown>) {
+    if (!mqttPreview.open || typeof args?.scrollTop !== 'number' || !Number.isFinite(args.scrollTop)) return false
+    const scrollTop = Math.max(0, args.scrollTop)
+    if (mqttPreview.scrollTop === scrollTop) return true
+    mqttPreview = { ...mqttPreview, scrollTop }
+    notify()
+    return true
+  }
+
+  const mqttPaneOrder: MqttPaneId[] = ['connections', 'subscriptions', 'messages', 'publish']
+
+  function focusMqttPane(pane: MqttPaneId) {
+    activeMqttPane = pane === 'publish-records' ? 'messages' : pane
+    if (pane === 'messages') activeMqttRecordList = 'messages'
+    notify()
+    return true
+  }
+
+  function moveMqttPane(direction: 1 | -1) {
+    const current = mqttPaneOrder.indexOf(activeMqttPane)
+    const next = mqttPaneOrder[(current + direction + mqttPaneOrder.length) % mqttPaneOrder.length]
+    return focusMqttPane(next)
   }
 
   async function connectMqtt() {
@@ -1287,7 +2216,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return true
   }
 
-  function sendMqttPublishDraft() {
+  function sendMqttPublishDraft(args?: Record<string, unknown>) {
+    if (args && (args.kind || args.id || args.targetKind || args.targetId)) {
+      if (!fillMqttPublishDraftFromSelection(args)) return false
+    }
     const config = currentMqttConfig()
     if (!config || !mqttPublishDraft.topic.trim()) return false
     const draft = { ...mqttPublishDraft, topic: mqttPublishDraft.topic.trim() }
@@ -1906,6 +2838,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       notify()
       return
     }
+    if (state.activeTab === 'mqtt') {
+      if (activeMqttPane === 'messages') {
+        moveMqttRecordInList(direction, page)
+        return
+      }
+    }
     if (state.activeTab === 'favorites' && activeFavoritePane === 'groups') {
       const rows = favoriteContainerRows()
       focusedFavoriteId = null
@@ -1938,6 +2876,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function toggleFocusedSelection(advance = true) {
+    if (state.activeTab === 'mqtt' && (activeMqttRecordList === 'templates' || activeMqttRecordList === 'history')) {
+      toggleMqttRecordSelection()
+      return
+    }
     if (state.activeTab === 'ports' && activePortPane === 'results' && focusedPortId) {
       focusedPortGroupTarget = null
       focusedPortGroupId = null
@@ -3021,12 +3963,20 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'mqtt.connection.disconnect', title: '断开 MQTT', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+Shift+R', when: (ctx) => ctx.tab === 'mqtt', run: () => disconnectMqtt() })
     actions.register({ id: 'mqtt.config.create', title: '新建 MQTT 配置', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+N', when: (ctx) => ctx.tab === 'mqtt', run: () => beginMqttConfigDraft('create') })
     actions.register({ id: 'mqtt.config.edit', title: '编辑 MQTT 配置', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'F2', when: (ctx) => ctx.tab === 'mqtt', run: () => beginMqttConfigDraft('edit') })
+    actions.register({ id: 'mqtt.config.rename', title: '重命名 MQTT 配置', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'mqtt', run: () => beginMqttConfigDraft('rename') })
     actions.register({ id: 'mqtt.config.save', title: '保存 MQTT 配置', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: () => saveMqttConfigDraft() })
     actions.register({ id: 'mqtt.config.cancel', title: '取消 MQTT 编辑', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: () => { mqttConfigDraft = null; notify(); return true } })
     actions.register({ id: 'mqtt.config.nextField', title: 'MQTT 编辑下一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: () => moveMqttConfigDraftField(1) })
     actions.register({ id: 'mqtt.config.prevField', title: 'MQTT 编辑上一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: () => moveMqttConfigDraftField(-1) })
-    actions.register({ id: 'mqtt.record.rename', title: '重命名 MQTT 记录', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => args?.title || args?.note ? renameSelectedMqttRecord({ title: typeof args.title === 'string' ? args.title : undefined, note: typeof args.note === 'string' ? args.note : undefined }) : beginMqttConfigDraft('rename') })
-    actions.register({ id: 'mqtt.record.delete', title: '删除 MQTT 记录', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 93, shortcut: 'Delete', when: (ctx) => ctx.tab === 'mqtt', run: () => deleteSelectedMqttRecord() })
+    actions.register({ id: 'mqtt.record.rename', title: '编辑 MQTT 记录别名', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'F2', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => args?.title || args?.note ? renameSelectedMqttRecord({ title: typeof args.title === 'string' ? args.title : undefined, note: typeof args.note === 'string' ? args.note : undefined }) : beginMqttRecordEdit('rename', args) })
+    actions.register({ id: 'mqtt.record.edit', title: '完整编辑 MQTT 记录', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => beginMqttRecordEdit('edit', args) })
+    actions.register({ id: 'mqtt.record.edit.save', title: '保存 MQTT 记录编辑', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('mqtt-record-editor'), run: (_ctx, args) => saveMqttRecordEditDraft(args) })
+    actions.register({ id: 'mqtt.record.edit.cancel', title: '取消 MQTT 记录编辑', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-record-editor'), run: () => cancelMqttRecordEditDraft() })
+    actions.register({ id: 'mqtt.record.edit.nextField', title: 'MQTT 记录编辑下一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.layerIds.includes('mqtt-record-editor'), run: () => moveMqttRecordEditDraftField(1) })
+    actions.register({ id: 'mqtt.record.edit.prevField', title: 'MQTT 记录编辑上一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.layerIds.includes('mqtt-record-editor'), run: () => moveMqttRecordEditDraftField(-1) })
+    actions.register({ id: 'mqtt.record.delete', title: '删除 MQTT 记录', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 93, shortcut: 'Delete', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => deleteSelectedMqttRecord(args) })
+    actions.register({ id: 'mqtt.messages.clearAll', title: '清空 MQTT 消息', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'mqtt', run: () => clearMqttRecordList('messages') })
+    actions.register({ id: 'mqtt.history.clearAll', title: '清空 MQTT 历史', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'mqtt', run: () => clearMqttRecordList('history') })
     actions.register({ id: 'mqtt.log.delete', title: '删除当前 MQTT 日志', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 93, when: (ctx) => ctx.tab === 'mqtt', run: () => deleteSelectedMqttLog() })
     actions.register({ id: 'mqtt.log.clearCurrentConfig', title: '清空当前连接 MQTT 日志', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'mqtt', run: () => clearMqttLogs('current') })
     actions.register({ id: 'mqtt.log.clearAll', title: '清空全部 MQTT 日志', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: () => clearMqttLogs('all') })
@@ -3036,7 +3986,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'mqtt.subscription.editor.cancel', title: '取消 MQTT 订阅编辑', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-subscription-editor'), run: () => cancelMqttSubscriptionDraft() })
     actions.register({ id: 'mqtt.subscription.editor.nextField', title: 'MQTT 订阅编辑下一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.layerIds.includes('mqtt-subscription-editor'), run: () => moveMqttSubscriptionDraftField(1) })
     actions.register({ id: 'mqtt.subscription.editor.prevField', title: 'MQTT 订阅编辑上一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.layerIds.includes('mqtt-subscription-editor'), run: () => moveMqttSubscriptionDraftField(-1) })
-    actions.register({ id: 'mqtt.subscription.panel.toggle', title: '折叠/展开 MQTT 订阅栏', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 92, shortcut: 'Ctrl+Shift+T', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttSubscriptionPanelOpen = !mqttSubscriptionPanelOpen; notify(); return true } })
+    actions.register({ id: 'mqtt.pane.next', title: '切换 MQTT 区域', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 93, shortcut: 'Tab', when: (ctx) => ctx.tab === 'mqtt', run: () => moveMqttPane(1) })
+    actions.register({ id: 'mqtt.pane.prev', title: '反向切换 MQTT 区域', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 93, shortcut: 'Shift+Tab', when: (ctx) => ctx.tab === 'mqtt', run: () => moveMqttPane(-1) })
+    actions.register({ id: 'mqtt.subscription.panel.toggle', title: '折叠/展开 MQTT 订阅栏', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 92, shortcut: 'Ctrl+Shift+T', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttSubscriptionPanelOpen = !mqttSubscriptionPanelOpen; activeMqttPane = mqttSubscriptionPanelOpen ? 'subscriptions' : 'messages'; persistMqttLayoutPrefs(); notify(); return true } })
     actions.register({ id: 'mqtt.subscription.select', title: '选择 MQTT 订阅筛选', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => selectMqttSubscription(typeof args?.topic === 'string' ? args.topic : null) })
     actions.register({ id: 'mqtt.subscription.focus', title: '聚焦 MQTT 订阅', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => focusMqttSubscription(typeof args?.topic === 'string' ? args.topic : null) })
     actions.register({ id: 'mqtt.subscription.toggleSelect', title: '多选 MQTT 订阅', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Space', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => toggleMqttSubscriptionSelection(typeof args?.topic === 'string' ? args.topic : undefined) })
@@ -3044,27 +3996,88 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'mqtt.subscription.delete', title: '删除当前 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 91, shortcut: 'Delete', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => deleteFocusedMqttSubscription(typeof args?.topic === 'string' ? args.topic : undefined) })
     actions.register({ id: 'mqtt.subscription.deleteSelected', title: '删除选中 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 90, shortcut: 'Ctrl+Delete', when: (ctx) => ctx.tab === 'mqtt', run: () => deleteSelectedMqttSubscriptions() })
     actions.register({ id: 'mqtt.subscription.clearAll', title: '清空 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 89, when: (ctx) => ctx.tab === 'mqtt', run: () => clearAllMqttSubscriptions() })
-    actions.register({ id: 'mqtt.layout.toggle', title: '切换 MQTT 收发布局', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+Shift+L', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttWorkspaceLayout = mqttWorkspaceLayout === 'stack' ? 'split' : 'stack'; notify(); return true } })
+    actions.register({ id: 'mqtt.layout.toggle', title: '切换 MQTT 收发布局', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+Shift+S', when: (ctx) => ctx.tab === 'mqtt', run: () => { setMqttWorkspaceLayout(mqttWorkspaceLayout === 'stack' ? 'split' : 'stack'); notify(); return true } })
+    actions.register({ id: 'mqtt.layout.resize', title: '调整 MQTT 收发比例', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => resizeMqttLayout(args) })
+    actions.register({ id: 'mqtt.layout.reset', title: '重置 MQTT 收发比例', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => resetMqttLayoutRatio(args) })
+    actions.register({ id: 'tool.preview.hover.update', title: '更新工具悬浮预览设置', group: '工具系统', risk: 'normal', scope: 'global', priority: 91, when: () => true, run: (_ctx, args) => updateToolPreviewPrefs(args) })
     actions.register({ id: 'mqtt.log.drawer.open', title: '打开 MQTT 日志抽屉', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+L', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttLogDrawer = { open: true }; notify(); return true } })
     actions.register({ id: 'mqtt.log.drawer.close', title: '关闭 MQTT 日志抽屉', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 91, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-log-drawer'), run: () => { mqttLogDrawer = { open: false }; notify(); return true } })
-    actions.register({ id: 'mqtt.receive.filter.all', title: 'MQTT 接收筛选全部', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+1', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttReceiveFilter = 'all'; notify(); return true } })
-    actions.register({ id: 'mqtt.receive.filter.in', title: 'MQTT 接收筛选已接收', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+2', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttReceiveFilter = 'incoming'; notify(); return true } })
-    actions.register({ id: 'mqtt.receive.filter.out', title: 'MQTT 接收筛选已发送', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+3', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttReceiveFilter = 'outgoing'; notify(); return true } })
-    actions.register({ id: 'mqtt.publish.send', title: '发送 MQTT 消息', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 100, shortcut: 'Ctrl+Enter', when: (ctx) => ctx.tab === 'mqtt', run: () => sendMqttPublishDraft() })
-    actions.register({ id: 'mqtt.publish.records.toggle', title: '展开/折叠 MQTT 发送记录', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+H', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttPublishRecordsOpen = !mqttPublishRecordsOpen; notify(); return true } })
+    actions.register({ id: 'mqtt.receive.filter.all', title: 'MQTT 接收筛选全部', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+1', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttReceiveFilter = 'all'; focusMqttRecordList('messages'); return true } })
+    actions.register({ id: 'mqtt.receive.filter.in', title: 'MQTT 接收筛选已接收', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+2', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttReceiveFilter = 'incoming'; focusMqttRecordList('messages'); return true } })
+    actions.register({ id: 'mqtt.receive.filter.out', title: 'MQTT 接收筛选已发送', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+3', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttReceiveFilter = 'outgoing'; focusMqttRecordList('messages'); return true } })
+    actions.register({ id: 'mqtt.publish.send', title: '发送 MQTT 消息', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 100, shortcut: 'Ctrl+Enter', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => sendMqttPublishDraft(args) })
+    actions.register({ id: 'mqtt.publish.records.toggle', title: '展开/折叠 MQTT 发送记录', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+H', when: (ctx) => ctx.tab === 'mqtt', run: () => {
+      return focusMqttRecordList(mqttPublishRecordsOpen && activeMqttRecordList === 'history' ? 'messages' : 'history')
+    } })
+    actions.register({ id: 'mqtt.focus.messages', title: '聚焦 MQTT 消息区', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+M', when: (ctx) => ctx.tab === 'mqtt', run: () => focusMqttRecordList('messages') })
+    actions.register({ id: 'mqtt.focus.templates', title: '聚焦 MQTT 模板区', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+Shift+M', when: (ctx) => ctx.tab === 'mqtt', run: () => focusMqttRecordList('templates') })
+    actions.register({ id: 'mqtt.focus.publish', title: '聚焦 MQTT 发送区', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, shortcut: 'Ctrl+P', when: (ctx) => ctx.tab === 'mqtt', run: () => focusMqttPublishEditor() })
+    actions.register({ id: 'mqtt.record.focus', title: '聚焦 MQTT 记录', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => focusMqttRecordFromArgs(args) })
+    actions.register({ id: 'mqtt.template.search.set', title: '筛选 MQTT 模板', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => setMqttTemplateSearch(args) })
+    actions.register({ id: 'mqtt.history.search.set', title: '筛选 MQTT 历史', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => setMqttHistorySearch(args) })
     actions.register({ id: 'mqtt.publish.template.save', title: '保存 MQTT 发送模板', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => saveCurrentMqttPublishTemplate(args) })
     actions.register({ id: 'mqtt.publish.template.apply', title: '应用 MQTT 发送模板', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => applyMqttPublishTemplate(mqttPublishTemplateIdFromArgs(args)) })
     actions.register({ id: 'mqtt.publish.template.send', title: '直接发送 MQTT 模板', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => sendMqttPublishTemplate(mqttPublishTemplateIdFromArgs(args)) })
     actions.register({ id: 'mqtt.publish.template.rename', title: '重命名 MQTT 发送模板', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => renameMqttTemplate(mqttPublishTemplateIdFromArgs(args), args) })
     actions.register({ id: 'mqtt.publish.template.delete', title: '删除 MQTT 发送模板', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => deleteMqttTemplate(mqttPublishTemplateIdFromArgs(args)) })
-    actions.register({ id: 'mqtt.record.resendDraft', title: '从记录填充 MQTT 发布草稿', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, shortcut: 'Enter', when: (ctx) => ctx.tab === 'mqtt', run: () => fillMqttPublishDraftFromSelection() })
-    actions.register({ id: 'mqtt.search.focus', title: '聚焦 MQTT 搜索', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+F', when: (ctx) => ctx.tab === 'mqtt', run: () => { searchFocusTarget = 'mqtt'; searchFocusRequestId += 1; notify(); return true } })
+    actions.register({ id: 'mqtt.record.resendDraft', title: '从记录填充 MQTT 发布草稿', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, shortcut: 'Enter', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => fillMqttPublishDraftFromSelection(args) })
+    actions.register({ id: 'mqtt.record.repeatSend', title: '重复发送 MQTT 记录', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => repeatMqttPublishRecords(args) })
+    actions.register({ id: 'mqtt.record.toggleSelect', title: '多选 MQTT 发送记录', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => toggleMqttRecordSelectionFromArgs(args) })
+    actions.register({ id: 'mqtt.record.copyTopic', title: '复制 MQTT topic', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 89, shortcut: 'Ctrl+Shift+C', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => copyMqttRecordTopic(args) })
+    actions.register({ id: 'mqtt.record.copyPayload', title: '复制 MQTT payload', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 89, shortcut: 'Ctrl+C', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => copyMqttRecordPayload(args) })
+    actions.register({ id: 'mqtt.record.favorite', title: '收藏 MQTT 消息', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 89, shortcut: 'Ctrl+D', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => beginMqttFavoriteDraft(args) })
+    actions.register({ id: 'mqtt.record.favorite.save', title: '保存 MQTT 消息收藏', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('mqtt-favorite-editor'), run: (_ctx, args) => saveMqttFavoriteDraft(args) })
+    actions.register({ id: 'mqtt.record.favorite.cancel', title: '取消 MQTT 消息收藏', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-favorite-editor'), run: () => cancelMqttFavoriteDraft() })
+    actions.register({ id: 'mqtt.record.favorite.nextField', title: 'MQTT 收藏下一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.layerIds.includes('mqtt-favorite-editor'), run: () => { if (!mqttFavoriteDraft) return false; mqttFavoriteDraft = { ...mqttFavoriteDraft, activeField: 'title' }; notify(); return true } })
+    actions.register({ id: 'mqtt.record.favorite.prevField', title: 'MQTT 收藏上一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.layerIds.includes('mqtt-favorite-editor'), run: () => { if (!mqttFavoriteDraft) return false; mqttFavoriteDraft = { ...mqttFavoriteDraft, activeField: 'title' }; notify(); return true } })
+    actions.register({ id: 'mqtt.preview.open', title: '打开 MQTT 预览', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 88, shortcut: 'Ctrl+I', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => openMqttPreview(args) })
+    actions.register({ id: 'mqtt.preview.close', title: '关闭 MQTT 预览', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-preview'), run: () => closeMqttPreview() })
+    actions.register({ id: 'mqtt.preview.scroll.up', title: 'MQTT 预览上滚', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+ArrowUp', when: (ctx) => ctx.layerIds.includes('mqtt-preview'), run: () => scrollMqttPreview(-1) })
+    actions.register({ id: 'mqtt.preview.scroll.down', title: 'MQTT 预览下滚', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+ArrowDown', when: (ctx) => ctx.layerIds.includes('mqtt-preview'), run: () => scrollMqttPreview(1) })
+    actions.register({ id: 'mqtt.preview.scroll.set', title: '同步 MQTT 预览滚动', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 99, when: (ctx) => ctx.layerIds.includes('mqtt-preview'), run: (_ctx, args) => setMqttPreviewScroll(args) })
+    actions.register({ id: 'mqtt.search.focus', title: '聚焦 MQTT 搜索', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+F', when: (ctx) => ctx.tab === 'mqtt', run: () => {
+      searchFocusTarget = activeMqttRecordList === 'templates'
+        ? 'mqtt-templates'
+        : activeMqttRecordList === 'history'
+          ? 'mqtt-history'
+          : 'mqtt'
+      searchFocusRequestId += 1
+      notify()
+      return true
+    } })
     actions.register({ id: 'mqtt.search.blur', title: '退出 MQTT 搜索', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 99, shortcut: 'Escape', when: (ctx) => ctx.tab === 'mqtt', run: () => blurSearchFocus() })
-    actions.register({ id: 'mqtt.panel.toggle', title: '折叠/展开 MQTT 侧栏', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 98, shortcut: 'Ctrl+Shift+W', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttPanelOpen = !mqttPanelOpen; notify(); return true } })
-    actions.register({ id: 'mqtt.detail.open', title: '打开 MQTT 详情', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttDrawer = { open: true, active: false }; notify(); return true } })
-    actions.register({ id: 'mqtt.detail.close', title: '关闭 MQTT 详情', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, when: (ctx) => ctx.layerIds.includes('mqtt-detail'), run: () => { mqttDrawer = { open: false, active: false }; notify(); return true } })
-    actions.register({ id: 'mqtt.drawer.open', title: '打开 MQTT 动作抽屉', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, shortcut: 'Ctrl+ArrowRight', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttDrawer = { open: true, active: true }; notify(); return true } })
-    actions.register({ id: 'mqtt.drawer.close', title: '关闭 MQTT 动作抽屉', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, when: (ctx) => ctx.layerIds.includes('mqtt-drawer') || ctx.layerIds.includes('mqtt-detail'), run: () => { mqttDrawer = { open: false, active: false }; notify(); return true } })
+    actions.register({ id: 'mqtt.panel.toggle', title: '折叠/展开 MQTT 侧栏', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 98, shortcut: 'Ctrl+Shift+W', when: (ctx) => ctx.tab === 'mqtt', run: () => { mqttPanelOpen = !mqttPanelOpen; activeMqttPane = mqttPanelOpen ? 'connections' : 'messages'; persistMqttLayoutPrefs(); notify(); return true } })
+    actions.register({ id: 'mqtt.detail.open', title: '打开 MQTT 详情', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => { if (args) mqttSelectedRecord = mqttTargetFromArgs(args); return openMqttDrawer(false) } })
+    actions.register({ id: 'mqtt.detail.close', title: '关闭 MQTT 详情', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, when: (ctx) => ctx.layerIds.includes('mqtt-detail'), run: () => closeMqttDrawer() })
+    actions.register({ id: 'mqtt.drawer.open', title: '打开 MQTT 动作抽屉', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, shortcut: 'Ctrl+ArrowRight', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => { if (args) mqttSelectedRecord = mqttTargetFromArgs(args); return openMqttDrawer(true) } })
+    actions.register({ id: 'mqtt.drawer.close', title: '关闭 MQTT 动作抽屉', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, when: (ctx) => ctx.layerIds.includes('mqtt-drawer') || ctx.layerIds.includes('mqtt-detail'), run: () => closeMqttDrawer() })
+    actions.register({ id: 'mqtt.drawer.next', title: 'MQTT 抽屉内下移', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, shortcut: 'ArrowDown', when: (ctx) => ctx.tab === 'mqtt', run: () => moveMqttDrawer(1) })
+    actions.register({ id: 'mqtt.drawer.prev', title: 'MQTT 抽屉内上移', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, shortcut: 'ArrowUp', when: (ctx) => ctx.tab === 'mqtt', run: () => moveMqttDrawer(-1) })
+    actions.register({ id: 'mqtt.drawer.select', title: '执行 MQTT 抽屉当前动作', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, shortcut: 'Enter', when: (ctx) => ctx.tab === 'mqtt', run: () => executeMqttDrawerItem() })
+    for (let index = 1; index <= 9; index += 1) {
+      actions.register({
+        id: `mqtt.drawer.select.${index}`,
+        title: `执行 MQTT 抽屉第 ${index} 个动作`,
+        group: 'MQTT',
+        risk: 'normal',
+        scope: 'layer',
+        priority: 80 - index,
+        shortcut: `Ctrl+${index}`,
+        when: (ctx) => ctx.tab === 'mqtt',
+        run: () => executeMqttDrawerItem(index - 1)
+      })
+      actions.register({
+        id: `mqtt.drawer.action.${index}`,
+        title: `直接执行第 ${index} 个 MQTT 动作`,
+        group: 'MQTT',
+        risk: 'normal',
+        scope: 'tab',
+        priority: 70 - index,
+        shortcut: `Ctrl+Alt+${index}`,
+        when: (ctx) => ctx.tab === 'mqtt',
+        run: () => executeMqttDrawerItem(index - 1, true)
+      })
+    }
     actions.register({ id: 'favorites.pane.toggleNext', title: '切换收藏栏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.tab === 'favorites', run: () => { activeFavoritePane = activeFavoritePane === 'items' ? 'groups' : 'items'; if (activeFavoritePane === 'groups') normalizeFocusedFavoriteGroup(); else normalizeFocusedFavorite(); notify(); return true } })
     actions.register({ id: 'favorites.pane.togglePrev', title: '反向切换收藏栏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.tab === 'favorites', run: () => { activeFavoritePane = activeFavoritePane === 'items' ? 'groups' : 'items'; if (activeFavoritePane === 'groups') normalizeFocusedFavoriteGroup(); else normalizeFocusedFavorite(); notify(); return true } })
     actions.register({ id: 'favorites.search.focus', title: '聚焦收藏搜索', group: '收藏', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+F', when: (ctx) => ctx.tab === 'favorites', run: () => focusFavoriteSearch() })
@@ -3149,11 +4162,13 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       portPane: activePortPane,
       favoritePane: activeFavoritePane,
       favoriteQuickMode,
+      mqttPane: activeMqttPane,
       mqttDrawerOpen: mqttDrawer.open && mqttDrawer.active,
       mqttDrawerActive: mqttDrawer.open && mqttDrawer.active,
       mqttDetailOpen: mqttDrawer.open && !mqttDrawer.active,
       mqttDetailActive: mqttDrawer.open && !mqttDrawer.active,
       mqttLogDrawerOpen: mqttLogDrawer.open,
+      mqttPreviewOpen: mqttPreview.open,
       portDrawerOpen: portDrawer.open,
       portDrawerActive: portDrawer.active,
       favoriteDrawerOpen: favoriteDrawer.open,
@@ -3237,11 +4252,16 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         favoriteRows: flattenFavoriteTree(favoriteTree, collapsedFavoriteIds),
         mqttArchive,
         mqttArchiveLoaded,
+        mqttStorageStatus: platform.storage.getMqttStorageStatus(),
         mqttPanelOpen,
         mqttSubscriptionPanelOpen,
         mqttWorkspaceLayout,
+        mqttLayoutPrefs: state.mqtt.layoutPrefs,
+        toolPreviewPrefs: state.settings.toolPreviewPrefs,
         mqttLogDrawer,
         mqttSearch,
+        mqttTemplateSearch,
+        mqttHistorySearch,
         mqttConnectionStatus,
         mqttLogs,
         mqttActiveConfig: currentMqttConfig(),
@@ -3251,6 +4271,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         mqttSelectedSubscriptionTopics,
         mqttFocusedSubscriptionTopic,
         mqttReceiveFilter,
+        activeMqttPane,
+        activeMqttRecordList,
+        mqttMessageStats: mqttMessageStatsForSelection(),
         mqttSessionRows: mqttSessionsForActiveConfig(),
         mqttMessageRows: mqttMessagesForSelection(),
         mqttSelectedRecord,
@@ -3262,7 +4285,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         mqttPublishRecordsOpen,
         mqttPublishTemplateRows: mqttPublishTemplatesForActiveConfig(),
         mqttPublishHistoryRows: mqttPublishHistoryForActiveConfig(),
+        mqttRecordListStates,
         mqttDrawer,
+        mqttDrawerItems: buildMqttDrawerItems(),
+        mqttPreview,
+        mqttFavoriteDraft,
+        mqttRecordEditDraft,
         message,
         confirm,
         commandShortcutLabels: buildCommandShortcutLabels(),
@@ -3300,12 +4328,14 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     },
     setMqttSearch(value: string) {
       mqttSearch = value
+      activeMqttPane = 'messages'
       notify()
     },
     focusMqttConfig(id: string) {
       ensureMqttArchiveLoaded()
       state.mqtt.activeConfigId = id
       mqttSelectedRecord = { kind: 'config', id }
+      activeMqttPane = 'connections'
       mqttCurrentSessionId = null
       mqttActiveSubscriptionTopic = null
       mqttActiveSubscriptionTopics = []
@@ -3318,22 +4348,34 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       ensureMqttArchiveLoaded()
       mqttSelectedRecord = { kind: 'session', id }
       mqttCurrentSessionId = id
+      activeMqttPane = 'messages'
       notify()
     },
     focusMqttMessage(id: string) {
       ensureMqttArchiveLoaded()
-      mqttSelectedRecord = { kind: 'message', id }
-      notify()
+      selectMqttRecord({ kind: 'message', id }, 'messages')
+    },
+    focusMqttPublishHistory(id: string) {
+      ensureMqttArchiveLoaded()
+      selectMqttRecord({ kind: 'message', id }, 'history')
+    },
+    focusMqttTemplate(id: string) {
+      ensureMqttArchiveLoaded()
+      selectMqttRecord({ kind: 'publish-template', id }, 'templates')
     },
     focusMqttLog(id: string) {
       mqttSelectedRecord = { kind: 'log', id }
+      activeMqttPane = 'messages'
       notify()
     },
     updateMqttConfigDraft,
     updateMqttSubscriptionDraft,
+    updateMqttFavoriteDraft,
+    updateMqttRecordEditDraft,
     updateMqttPublishDraft(input: Partial<MqttPublishDraft>) {
       mqttPublishDraft = { ...mqttPublishDraft, ...input }
       mqttPublishScratch = { ...mqttPublishDraft }
+      activeMqttPane = 'publish'
       notify()
     },
     appendMqttMessageRecord,
@@ -3544,6 +4586,16 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         notify()
         return 'mqtt.subscription.editor.cancel'
       }
+      if (mqttFavoriteDraft && shortcutId === 'Escape') {
+        mqttFavoriteDraft = null
+        notify()
+        return 'mqtt.record.favorite.cancel'
+      }
+      if (mqttRecordEditDraft && shortcutId === 'Escape') {
+        mqttRecordEditDraft = null
+        notify()
+        return 'mqtt.record.edit.cancel'
+      }
       if (mqttConfigDraft && shortcutId === 'Escape') {
         mqttConfigDraft = null
         notify()
@@ -3569,11 +4621,28 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
           notify()
           return 'mqtt.log.drawer.close'
         }
+        if (state.activeTab === 'mqtt' && mqttPreview.open) {
+          closeMqttPreview()
+          return 'mqtt.preview.close'
+        }
         if (state.activeTab === 'mqtt' && mqttDrawer.open) {
           const closeAction = mqttDrawer.active ? 'mqtt.drawer.close' : 'mqtt.detail.close'
-          mqttDrawer = { open: false, active: false }
-          notify()
+          closeMqttDrawer()
           return closeAction
+        }
+        if (state.activeTab === 'mqtt' && mqttSearchFocused && activeMqttRecordList === 'templates' && mqttTemplateSearch) {
+          mqttTemplateSearch = ''
+          searchBlurRequestId += 1
+          syncMqttRecordListState('templates', true)
+          notify()
+          return 'mqtt.search.clear'
+        }
+        if (state.activeTab === 'mqtt' && mqttSearchFocused && activeMqttRecordList === 'history' && mqttHistorySearch) {
+          mqttHistorySearch = ''
+          searchBlurRequestId += 1
+          syncMqttRecordListState('history', true)
+          notify()
+          return 'mqtt.search.clear'
         }
         if (state.activeTab === 'mqtt' && mqttSearchFocused && mqttSearch) {
           mqttSearch = ''

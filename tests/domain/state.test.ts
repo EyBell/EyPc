@@ -12,6 +12,10 @@ describe('state domain', () => {
     expect(state.collapsedPortGroupFolderIds).toEqual([])
     expect(state.settings.keybindingOverrides).toEqual([])
     expect(state.settings.shortcutProfiles.ports.keybindingOverrides).toEqual([])
+    expect(state.settings.toolPreviewPrefs).toEqual({
+      hoverPreviewEnabled: false,
+      hoverPreviewDelayMs: 500
+    })
     expect(state.settings.featureConfigs).toEqual([
       { id: 'ports', enabled: true, sortOrder: 1 },
       { id: 'favorites', enabled: false, sortOrder: 2 },
@@ -41,6 +45,44 @@ describe('state domain', () => {
       { id: 'mqtt', enabled: true, sortOrder: 3 },
       { id: 'favorites', enabled: false, sortOrder: 4 }
     ])
+  })
+
+  it('normalizes shared tool preview preferences with legacy MQTT hover migration', () => {
+    expect(normalizeAppState({
+      settings: {
+        toolPreviewPrefs: {
+          hoverPreviewEnabled: true,
+          hoverPreviewDelayMs: 1200
+        }
+      }
+    }).settings.toolPreviewPrefs).toEqual({
+      hoverPreviewEnabled: true,
+      hoverPreviewDelayMs: 1200
+    })
+
+    expect(normalizeAppState({
+      settings: {
+        toolPreviewPrefs: {
+          hoverPreviewEnabled: true,
+          hoverPreviewDelayMs: -1
+        }
+      }
+    }).settings.toolPreviewPrefs).toEqual({
+      hoverPreviewEnabled: true,
+      hoverPreviewDelayMs: 500
+    })
+
+    expect(normalizeAppState({
+      mqtt: {
+        layoutPrefs: {
+          hoverPreviewEnabled: true,
+          hoverPreviewDelayMs: 900
+        }
+      }
+    }).settings.toolPreviewPrefs).toEqual({
+      hoverPreviewEnabled: true,
+      hoverPreviewDelayMs: 900
+    })
   })
 
   it('drops legacy built-in port groups while preserving user groups', () => {

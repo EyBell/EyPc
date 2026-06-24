@@ -2,6 +2,7 @@ import type { AppState, AppTabId, FavoriteKind, FavoriteNode, FeatureConfig, Key
 import { normalizeMqttState } from './mqtt'
 import { emptySearchHistories, normalizeSearchHistoryList } from './searchHistory'
 import { normalizeShortcutId } from './shortcuts'
+import { normalizeToolPreviewPrefs } from './toolPreview'
 
 const VALID_TABS = new Set<AppTabId>(['ports', 'mqtt', 'favorites', 'settings'])
 const TAB_IDS: AppTabId[] = ['ports', 'mqtt', 'favorites', 'settings']
@@ -250,6 +251,7 @@ export function createInitialState(now = Date.now()): AppState {
       keybindingOverrides: [],
       shortcutProfiles: emptyShortcutProfiles(now),
       featureConfigs: normalizeFeatureConfigs(null),
+      toolPreviewPrefs: normalizeToolPreviewPrefs(null),
       preferSqlite: false
     },
     updatedAt: now
@@ -260,6 +262,7 @@ export function normalizeAppState(value: unknown, now = Date.now()): AppState {
   const fallback = createInitialState(now)
   const source = record(value)
   const settings = record(source.settings)
+  const legacyMqttLayoutPrefs = record(record(source.mqtt).layoutPrefs)
   const legacyKeybindingOverrides = normalizeKeybindingOverrides(settings.keybindingOverrides)
   const shortcutProfiles = normalizeShortcutProfiles(settings.shortcutProfiles, legacyKeybindingOverrides, now)
   const portGroupFolders = normalizePortGroupFolders(source.portGroupFolders)
@@ -290,6 +293,7 @@ export function normalizeAppState(value: unknown, now = Date.now()): AppState {
       keybindingOverrides: aggregateShortcutProfiles(shortcutProfiles),
       shortcutProfiles,
       featureConfigs,
+      toolPreviewPrefs: normalizeToolPreviewPrefs(settings.toolPreviewPrefs ?? legacyMqttLayoutPrefs),
       preferSqlite: settings.preferSqlite === true
     },
     updatedAt: numberValue(source.updatedAt, now)

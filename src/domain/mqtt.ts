@@ -1,4 +1,4 @@
-import type { MqttArchiveState, MqttConnectionConfig, MqttMessageRecord, MqttPublishDraft, MqttPublishTemplate, MqttQos, MqttSessionRecord, MqttState } from './types'
+import type { MqttArchiveState, MqttConnectionConfig, MqttConnectionSnapshot, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishTemplate, MqttQos, MqttSessionRecord, MqttState, MqttWorkspaceLayout } from './types'
 
 export const MQTT_ARCHIVE_SESSION_LIMIT = 50
 export const MQTT_ARCHIVE_MESSAGE_LIMIT = 500
@@ -9,6 +9,16 @@ const DEFAULT_RECONNECT_PERIOD_MS = 3000
 const DEFAULT_CONNECT_TIMEOUT_MS = 10000
 const DEFAULT_KEEPALIVE_SEC = 60
 const DEFAULT_WEBSOCKET_PORT = '8083'
+export const DEFAULT_MQTT_LAYOUT_PREFS: MqttLayoutPrefs = {
+  workspaceLayout: 'stack',
+  stackReceiveRatio: 0.58,
+  splitReceiveRatio: 0.55,
+  connectionPanelOpen: true,
+  subscriptionPanelOpen: true,
+  publishRecordsOpen: false
+}
+export const MQTT_LAYOUT_RATIO_MIN = 0.28
+export const MQTT_LAYOUT_RATIO_MAX = 0.72
 
 export type MqttWebSocketProtocol = 'ws' | 'wss'
 
@@ -38,6 +48,12 @@ function boolValue(value: unknown, fallback: boolean): boolean {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.trunc(value)))
+}
+
+function clampRatio(value: unknown, fallback: number): number {
+  const raw = numberValue(value, fallback)
+  const clamped = Math.min(MQTT_LAYOUT_RATIO_MAX, Math.max(MQTT_LAYOUT_RATIO_MIN, raw))
+  return Math.round(clamped * 1000) / 1000
 }
 
 function strings(value: unknown): string[] {
@@ -161,6 +177,7 @@ export function createMqttConnectionConfig(input: Partial<MqttConnectionConfig> 
 
 export function normalizeMqttState(value: unknown, now = Date.now()): MqttState {
   const source = record(value)
+  const layoutPrefs = normalizeMqttLayoutPrefs(source.layoutPrefs)
   const configs = Array.isArray(source.configs)
     ? source.configs
       .map((item) => createMqttConnectionConfig(item as Record<string, unknown>, now))
@@ -173,7 +190,21 @@ export function normalizeMqttState(value: unknown, now = Date.now()): MqttState 
     configs,
     activeConfigId: activeConfigId && configs.some((item) => item.id === activeConfigId)
       ? activeConfigId
-      : configs[0]?.id || null
+      : configs[0]?.id || null,
+    layoutPrefs
+  }
+}
+
+export function normalizeMqttLayoutPrefs(value: unknown): MqttLayoutPrefs {
+  const source = record(value)
+  const workspaceLayout: MqttWorkspaceLayout = source.workspaceLayout === 'split' ? 'split' : 'stack'
+  return {
+    workspaceLayout,
+    stackReceiveRatio: clampRatio(source.stackReceiveRatio, DEFAULT_MQTT_LAYOUT_PREFS.stackReceiveRatio),
+    splitReceiveRatio: clampRatio(source.splitReceiveRatio, DEFAULT_MQTT_LAYOUT_PREFS.splitReceiveRatio),
+    connectionPanelOpen: boolValue(source.connectionPanelOpen, DEFAULT_MQTT_LAYOUT_PREFS.connectionPanelOpen),
+    subscriptionPanelOpen: boolValue(source.subscriptionPanelOpen, DEFAULT_MQTT_LAYOUT_PREFS.subscriptionPanelOpen),
+    publishRecordsOpen: boolValue(source.publishRecordsOpen, DEFAULT_MQTT_LAYOUT_PREFS.publishRecordsOpen)
   }
 }
 
@@ -253,8 +284,51 @@ function normalizePublishTemplate(value: unknown, now: number): MqttPublishTempl
   }
 }
 
+function normalizeConnectionSnapshot(value: unknown, now: number): MqttConnectionSnapshot | null {
+  const source = record(value)
+  const id = stringValue(source.id).trim()
+  if (!id) return null
+  const url = normalizeUrl(source.url)
+  const name = stringValue(source.name).trim() || url || 'MQTT 连接'
+  return {
+    id,
+    name,
+    url,
+    clientId: stringValue(source.clientId).trim(),
+    username: stringValue(source.username).trim(),
+    publishTopic: stringValue(source.publishTopic).trim(),
+    qos: qosValue(source.qos),
+    retain: boolValue(source.retain, false),
+    syncRecords: boolValue(source.syncRecords, true),
+    createdAt: timestampValue(source.createdAt, now),
+    updatedAt: timestampValue(source.updatedAt, now)
+  }
+}
+
+export function createMqttConnectionSnapshot(config: MqttConnectionConfig): MqttConnectionSnapshot {
+  return {
+    id: config.id,
+    name: config.name,
+    url: config.url,
+    clientId: config.clientId,
+    username: config.username,
+    publishTopic: config.publishTopic,
+    qos: config.qos,
+    retain: config.retain,
+    syncRecords: config.syncRecords,
+    createdAt: config.createdAt,
+    updatedAt: config.updatedAt
+  }
+}
+
 export function normalizeMqttArchiveState(value: unknown, now = Date.now()): MqttArchiveState {
   const source = record(value)
+  const connectionSnapshots = Array.isArray(source.connectionSnapshots)
+    ? source.connectionSnapshots
+      .map((item) => normalizeConnectionSnapshot(item, now))
+      .filter((item): item is MqttConnectionSnapshot => Boolean(item))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+    : []
   const sessions = Array.isArray(source.sessions)
     ? source.sessions
       .map((item) => normalizeSession(item, now))
@@ -278,6 +352,7 @@ export function normalizeMqttArchiveState(value: unknown, now = Date.now()): Mqt
     : []
   return {
     version: 1,
+    connectionSnapshots,
     sessions: trimmed.sort((a, b) => b.startedAt - a.startedAt),
     publishTemplates
   }
@@ -322,6 +397,34 @@ export function renameMqttRecord(archive: MqttArchiveState, target: MqttRecordTa
     }
   }
   return next
+}
+
+export function updateMqttRecord(
+  archive: MqttArchiveState,
+  target: MqttRecordTarget,
+  input: Partial<Pick<MqttMessageRecord, 'title' | 'note' | 'topic' | 'payload' | 'qos' | 'retain'>>
+): MqttArchiveState {
+  const next = normalizeMqttArchiveState(archive)
+  if (target.kind !== 'message') return next
+  for (const session of next.sessions) {
+    const message = session.messages.find((item) => item.id === target.id)
+    if (!message) continue
+    if (typeof input.title === 'string') {
+      const title = input.title.trim()
+      if (title) message.title = title
+      else delete message.title
+    }
+    if (typeof input.note === 'string') {
+      const note = input.note.trim()
+      if (note) message.note = note
+      else delete message.note
+    }
+    if (typeof input.topic === 'string') message.topic = input.topic.trim()
+    if (typeof input.payload === 'string') message.payload = input.payload
+    if (input.qos === 0 || input.qos === 1 || input.qos === 2) message.qos = input.qos
+    if (typeof input.retain === 'boolean') message.retain = input.retain
+  }
+  return normalizeMqttArchiveState(next)
 }
 
 export function deleteMqttRecord(archive: MqttArchiveState, target: MqttRecordTarget): MqttArchiveState {
