@@ -8,6 +8,10 @@ export function shortcutFromEvent(event: KeyboardEvent): string {
   return shortcutFromKeyboardEvent(event)
 }
 
+export function shouldEnableShiftPreview(event: KeyboardEvent): boolean {
+  return event.shiftKey && !event.ctrlKey && !event.metaKey
+}
+
 export function isEditableTarget(target: EventTarget | null): boolean {
   const element = target as HTMLElement | null
   if (!element) return false
@@ -21,13 +25,20 @@ export function activeInputRoleFromTarget(target: EventTarget | null, activeTab:
     ? element.closest<HTMLElement>('[data-role]')?.dataset.role
     : undefined
   if (role === 'mqtt-subscriptions') return 'mqtt-subscriptions'
+  if (role === 'mqtt-topic-filter') return 'mqtt-topic-filter'
+  if (role === 'mqtt-publish-options') return 'mqtt-publish-options'
+  if (role === 'mqtt-publish-draft') return 'mqtt-publish-draft'
+  if (role === 'mqtt-publish-draft-editor') return 'mqtt-publish-draft-editor'
+  if (role === 'mqtt-config-subscription-editor') return 'mqtt-config-subscription-editor'
+  if (role === 'mqtt-config-publish-editor') return 'mqtt-config-publish-editor'
   if (role === 'mqtt-subscription-editor') return 'mqtt-subscription-editor'
   if (role === 'mqtt-favorite-editor') return 'mqtt-favorite-editor'
   if (!element || !isEditableTarget(element)) return undefined
   if (role === 'port-group-search') return 'port-group-search'
   if (role === 'port-group-editor') return 'port-group-editor'
   if (role === 'port-search') return 'port-search'
-  if (role === 'mqtt-search' || role === 'mqtt-template-search' || role === 'mqtt-history-search') return 'mqtt-search'
+  if (role === 'mqtt-search' || role === 'mqtt-record-search' || role === 'mqtt-template-search' || role === 'mqtt-history-search') return 'mqtt-search'
+  if (role === 'mqtt-publish-editor') return 'mqtt-publish-editor'
   if (role === 'mqtt-editor') return 'mqtt-editor'
   if (role === 'mqtt-record-editor') return 'mqtt-record-editor'
   if (role === 'favorite-search') return 'favorite-search'

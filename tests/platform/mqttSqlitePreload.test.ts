@@ -80,12 +80,17 @@ describe('MQTT preload SQLite storage', () => {
       version: 1,
       connectionSnapshots: [{ id: 'dev', name: 'Dev', url: 'ws://localhost:8083/mqtt', clientId: 'client-a', username: 'user-a', publishTopic: 'out', qos: 1, retain: false, syncRecords: true, createdAt: 1, updatedAt: 2 }],
       sessions: [{ id: 's1', connectionId: 'dev', title: 'Session', startedAt: 1, messages: [{ id: 'm1', connectionId: 'dev', sessionId: 's1', direction: 'outgoing', topic: 'out', payload: 'hello', qos: 1, retain: false, timestamp: 2 }] }],
-      publishTemplates: [{ id: 'tpl1', connectionId: 'dev', title: 'Alias', topic: 'out', payload: 'hello', qos: 1, retain: false, createdAt: 1, updatedAt: 2 }]
+      publishTemplates: [{ id: 'tpl1', connectionId: 'dev', title: 'Alias', topic: 'out', payload: 'hello', qos: 1, retain: false, createdAt: 1, updatedAt: 2 }],
+      publishDraftHistory: [{ id: 'hist1', connectionId: 'dev', title: 'Draft', topic: 'out', payload: 'draft', qos: 0, retain: false, source: 'manual', createdAt: 3, updatedAt: 4 }]
     })).toBe(true)
     expect(storage.setMqttSecrets({ dev: 'local-secret' })).toBe(true)
 
     expect(JSON.stringify(storage.getMqttArchive())).toContain('hello')
+    expect(JSON.stringify(storage.getMqttArchive())).toContain('draft')
     expect(JSON.stringify(storage.getMqttArchive())).not.toContain('local-secret')
+    expect(storage.getMqttArchive()).toMatchObject({
+      publishDraftHistory: [{ id: 'hist1', topic: 'out', payload: 'draft' }]
+    })
     expect(storage.getMqttSecrets()).toEqual({ dev: 'local-secret' })
   })
 

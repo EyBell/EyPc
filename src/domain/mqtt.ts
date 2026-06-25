@@ -1,8 +1,10 @@
-import type { MqttArchiveState, MqttConnectionConfig, MqttConnectionSnapshot, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishTemplate, MqttQos, MqttSessionRecord, MqttState, MqttWorkspaceLayout } from './types'
+import type { MqttArchiveState, MqttConnectionConfig, MqttConnectionSnapshot, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishDraftHistorySource, MqttPublishTemplate, MqttQos, MqttSessionRecord, MqttState, MqttViewPrefs, MqttWorkspaceLayout } from './types'
 
 export const MQTT_ARCHIVE_SESSION_LIMIT = 50
 export const MQTT_ARCHIVE_MESSAGE_LIMIT = 500
 export const MQTT_PUBLISH_TEMPLATE_LIMIT = 100
+export const MQTT_PUBLISH_DRAFT_HISTORY_LIMIT = 100
+export const DEFAULT_MQTT_TOPIC_COLORS = ['#00A676', '#2F80ED', '#F2994A', '#9B51E0', '#EB5757'] as const
 
 const DEFAULT_QOS: MqttQos = 0
 const DEFAULT_RECONNECT_PERIOD_MS = 3000
@@ -16,6 +18,10 @@ export const DEFAULT_MQTT_LAYOUT_PREFS: MqttLayoutPrefs = {
   connectionPanelOpen: true,
   subscriptionPanelOpen: true,
   publishRecordsOpen: false
+}
+export const DEFAULT_MQTT_VIEW_PREFS: MqttViewPrefs = {
+  infoFilter: 'incoming',
+  activeSubscriptionTopicsByConfigId: {}
 }
 export const MQTT_LAYOUT_RATIO_MIN = 0.28
 export const MQTT_LAYOUT_RATIO_MAX = 0.72
@@ -73,6 +79,22 @@ function subscriptionAliases(value: unknown, subscriptions: string[]): Record<st
   return output
 }
 
+export function normalizeMqttTopicColor(value: unknown, fallbackIndex = 0): string {
+  const raw = stringValue(value).trim()
+  if (/^#[0-9A-Fa-f]{6}$/.test(raw)) return raw
+  const index = Math.abs(Math.trunc(numberValue(fallbackIndex, 0))) % DEFAULT_MQTT_TOPIC_COLORS.length
+  return DEFAULT_MQTT_TOPIC_COLORS[index]
+}
+
+function subscriptionColors(value: unknown, subscriptions: string[]): Record<string, string> {
+  const colors = record(value)
+  const output: Record<string, string> = {}
+  subscriptions.forEach((topic, index) => {
+    output[topic] = normalizeMqttTopicColor(colors[topic], index)
+  })
+  return output
+}
+
 function qosValue(value: unknown, fallback: MqttQos = DEFAULT_QOS): MqttQos {
   return value === 1 || value === 2 || value === 0 ? value : fallback
 }
@@ -108,6 +130,18 @@ export function parseMqttWebSocketUrl(value: unknown): MqttWebSocketEndpoint {
   }
 }
 
+export function mqttEndpointHostPortLabel(value: unknown): string {
+  const raw = normalizeUrl(value).trim()
+  if (!raw) return ''
+  try {
+    const parsed = new URL(raw.includes('://') ? raw : `ws://${raw}`)
+    if (!parsed.hostname) return raw
+    return parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname
+  } catch {
+    return raw.replace(/^[a-z]+:\/\//i, '').split('/')[0] || raw
+  }
+}
+
 export function buildMqttWebSocketUrl(input: Partial<MqttWebSocketEndpoint>): string {
   const host = stringValue(input.host).trim()
   if (!host) return ''
@@ -119,13 +153,17 @@ export function buildMqttWebSocketUrl(input: Partial<MqttWebSocketEndpoint>): st
   return `${protocol}://${host}${port ? `:${port}` : ''}${path}`
 }
 
-function defaultClientId(now: number): string {
+export function createMqttClientId(now = Date.now()): string {
   return `eypc_${now.toString(36)}_${Math.random().toString(16).slice(2, 8)}`
 }
 
 function timestampValue(value: unknown, fallback: number): number {
   const next = numberValue(value, fallback)
   return next >= 0 ? Math.trunc(next) : fallback
+}
+
+export function mqttPublishTemplateOperationTime(template: Pick<MqttPublishTemplate, 'createdAt' | 'updatedAt' | 'operatedAt'>): number {
+  return timestampValue(template.operatedAt, timestampValue(template.updatedAt, timestampValue(template.createdAt, 0)))
 }
 
 export function matchMqttTopicFilter(topicValue: string, filterValue: string): boolean {
@@ -144,21 +182,74 @@ export function matchMqttTopicFilter(topicValue: string, filterValue: string): b
   return topicLevels.length === filterLevels.length
 }
 
+function mqttTopicFilterScore(topic: string, filter: string, order: number) {
+  const levels = filter.split('/')
+  const wildcardCount = levels.filter((level) => level === '+' || level === '#').length
+  const concreteCount = levels.length - wildcardCount
+  return {
+    exact: topic === filter ? 1 : 0,
+    concreteCount,
+    wildcardCount,
+    length: filter.length,
+    order
+  }
+}
+
+export interface MqttTopicVisual {
+  topic: string | null
+  alias: string
+  color: string
+}
+
+export function mqttTopicVisualForMessage(topic: string, config: Pick<MqttConnectionConfig, 'subscriptions' | 'subscriptionAliases' | 'subscriptionColors'> | null): MqttTopicVisual {
+  if (!config) return { topic: null, alias: '', color: DEFAULT_MQTT_TOPIC_COLORS[0] }
+  const matches = config.subscriptions
+    .map((filter, order) => ({ filter, score: mqttTopicFilterScore(topic, filter, order) }))
+    .filter((item) => matchMqttTopicFilter(topic, item.filter))
+    .sort((left, right) =>
+      right.score.exact - left.score.exact ||
+      right.score.concreteCount - left.score.concreteCount ||
+      left.score.wildcardCount - right.score.wildcardCount ||
+      right.score.length - left.score.length ||
+      left.score.order - right.score.order
+    )
+  const best = matches[0]?.filter || null
+  if (!best) return { topic: null, alias: '', color: DEFAULT_MQTT_TOPIC_COLORS[0] }
+  const alias = config.subscriptionAliases[best] || ''
+  return {
+    topic: best,
+    alias,
+    color: normalizeMqttTopicColor(config.subscriptionColors[best], config.subscriptions.indexOf(best))
+  }
+}
+
+function normalizePublishTopics(value: unknown, fallbackTopic = ''): string[] {
+  const fallback = stringValue(fallbackTopic).trim()
+  const topics = Array.isArray(value)
+    ? value.map((item) => stringValue(item).trim()).filter(Boolean)
+    : []
+  if (!topics.length && fallback) topics.push(fallback)
+  return [...new Set(topics)]
+}
+
 export function createMqttConnectionConfig(input: Partial<MqttConnectionConfig> & Record<string, unknown> = {}, now = Date.now()): MqttConnectionConfig {
   const source = record(input)
   const id = stringValue(source.id).trim() || nextId('mqtt-config', now)
   const url = normalizeUrl(source.url)
   const name = stringValue(source.name).trim() || url || 'MQTT 连接'
   const subscriptions = strings(source.subscriptions)
+  const publishTopics = normalizePublishTopics(source.publishTopics, stringValue(source.publishTopic))
   return {
     id,
     name,
     url,
-    clientId: stringValue(source.clientId).trim() || defaultClientId(now),
+    clientId: stringValue(source.clientId).trim() || createMqttClientId(now),
     username: stringValue(source.username).trim(),
     subscriptions,
     subscriptionAliases: subscriptionAliases(source.subscriptionAliases, subscriptions),
-    publishTopic: stringValue(source.publishTopic).trim(),
+    subscriptionColors: subscriptionColors(source.subscriptionColors, subscriptions),
+    publishTopic: publishTopics[0] || '',
+    publishTopics,
     qos: qosValue(source.qos),
     retain: boolValue(source.retain, false),
     autoReconnect: boolValue(source.autoReconnect, true),
@@ -191,7 +282,28 @@ export function normalizeMqttState(value: unknown, now = Date.now()): MqttState 
     activeConfigId: activeConfigId && configs.some((item) => item.id === activeConfigId)
       ? activeConfigId
       : configs[0]?.id || null,
-    layoutPrefs
+    layoutPrefs,
+    viewPrefs: normalizeMqttViewPrefs(source.viewPrefs, configs)
+  }
+}
+
+export function normalizeMqttViewPrefs(value: unknown, configs: MqttConnectionConfig[] = []): MqttViewPrefs {
+  const source = record(value)
+  const infoFilter: MqttInfoFilter = source.infoFilter === 'all' || source.infoFilter === 'outgoing' || source.infoFilter === 'favorites'
+    ? source.infoFilter
+    : 'incoming'
+  const topicsSource = record(source.activeSubscriptionTopicsByConfigId)
+  const activeSubscriptionTopicsByConfigId: Record<string, string[]> = {}
+  for (const config of configs) {
+    const rawTopicValue = topicsSource[config.id]
+    const rawTopics: unknown[] = Array.isArray(rawTopicValue) ? rawTopicValue : []
+    const valid = new Set(config.subscriptions)
+    const topics = [...new Set(rawTopics.map((topic) => stringValue(topic).trim()).filter((topic) => valid.has(topic)))]
+    if (topics.length) activeSubscriptionTopicsByConfigId[config.id] = topics
+  }
+  return {
+    infoFilter,
+    activeSubscriptionTopicsByConfigId
   }
 }
 
@@ -269,7 +381,10 @@ function normalizePublishTemplate(value: unknown, now: number): MqttPublishTempl
   const connectionId = stringValue(source.connectionId).trim()
   const topic = stringValue(source.topic).trim()
   if (!id || !connectionId || !topic) return null
-  const title = stringValue(source.title).trim() || topic
+  const title = stringValue(source.title).trim()
+  const createdAt = timestampValue(source.createdAt, now)
+  const updatedAt = timestampValue(source.updatedAt, now)
+  const operatedAt = timestampValue(source.operatedAt, updatedAt || createdAt || now)
   return {
     id,
     connectionId,
@@ -279,9 +394,37 @@ function normalizePublishTemplate(value: unknown, now: number): MqttPublishTempl
     payload: stringValue(source.payload),
     qos: qosValue(source.qos),
     retain: boolValue(source.retain, false),
+    createdAt,
+    updatedAt,
+    operatedAt
+  }
+}
+
+function normalizePublishDraftHistoryEntry(value: unknown, now: number): MqttPublishDraftHistoryEntry | null {
+  const source = record(value)
+  const id = stringValue(source.id).trim() || nextId('mqtt-draft-history', now)
+  const connectionId = stringValue(source.connectionId).trim()
+  const topic = stringValue(source.topic).trim()
+  if (!id || !connectionId || !topic) return null
+  const title = stringValue(source.title).trim()
+  const sourceKind: MqttPublishDraftHistorySource = source.source === 'overwrite' ? 'overwrite' : 'manual'
+  return {
+    id,
+    connectionId,
+    title,
+    ...(stringValue(source.note).trim() ? { note: stringValue(source.note).trim() } : {}),
+    topic,
+    payload: stringValue(source.payload),
+    qos: qosValue(source.qos),
+    retain: boolValue(source.retain, false),
+    source: sourceKind,
     createdAt: timestampValue(source.createdAt, now),
     updatedAt: timestampValue(source.updatedAt, now)
   }
+}
+
+function publishDraftHistoryKey(item: Pick<MqttPublishDraftHistoryEntry, 'connectionId' | 'topic' | 'payload'>) {
+  return `${item.connectionId}\n${item.topic.trim()}\n${item.payload}`
 }
 
 function normalizeConnectionSnapshot(value: unknown, now: number): MqttConnectionSnapshot | null {
@@ -290,13 +433,15 @@ function normalizeConnectionSnapshot(value: unknown, now: number): MqttConnectio
   if (!id) return null
   const url = normalizeUrl(source.url)
   const name = stringValue(source.name).trim() || url || 'MQTT 连接'
+  const publishTopics = normalizePublishTopics(source.publishTopics, stringValue(source.publishTopic))
   return {
     id,
     name,
     url,
     clientId: stringValue(source.clientId).trim(),
     username: stringValue(source.username).trim(),
-    publishTopic: stringValue(source.publishTopic).trim(),
+    publishTopic: publishTopics[0] || '',
+    publishTopics,
     qos: qosValue(source.qos),
     retain: boolValue(source.retain, false),
     syncRecords: boolValue(source.syncRecords, true),
@@ -313,6 +458,7 @@ export function createMqttConnectionSnapshot(config: MqttConnectionConfig): Mqtt
     clientId: config.clientId,
     username: config.username,
     publishTopic: config.publishTopic,
+    publishTopics: config.publishTopics,
     qos: config.qos,
     retain: config.retain,
     syncRecords: config.syncRecords,
@@ -347,14 +493,27 @@ export function normalizeMqttArchiveState(value: unknown, now = Date.now()): Mqt
     ? source.publishTemplates
       .map((item) => normalizePublishTemplate(item, now))
       .filter((item): item is MqttPublishTemplate => Boolean(item))
-      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .sort((a, b) => mqttPublishTemplateOperationTime(b) - mqttPublishTemplateOperationTime(a) || b.updatedAt - a.updatedAt)
       .slice(0, MQTT_PUBLISH_TEMPLATE_LIMIT)
     : []
+  const publishDraftHistoryCandidates = Array.isArray(source.publishDraftHistory)
+    ? source.publishDraftHistory
+      .map((item) => normalizePublishDraftHistoryEntry(item, now))
+      .filter((item): item is MqttPublishDraftHistoryEntry => Boolean(item))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+    : []
+  const publishDraftHistoryByKey = new Map<string, MqttPublishDraftHistoryEntry>()
+  for (const item of publishDraftHistoryCandidates) {
+    const key = publishDraftHistoryKey(item)
+    if (!publishDraftHistoryByKey.has(key)) publishDraftHistoryByKey.set(key, item)
+  }
+  const publishDraftHistory = [...publishDraftHistoryByKey.values()].slice(0, MQTT_PUBLISH_DRAFT_HISTORY_LIMIT)
   return {
     version: 1,
     connectionSnapshots,
     sessions: trimmed.sort((a, b) => b.startedAt - a.startedAt),
-    publishTemplates
+    publishTemplates,
+    publishDraftHistory
   }
 }
 
@@ -441,16 +600,28 @@ export function deleteMqttRecord(archive: MqttArchiveState, target: MqttRecordTa
 
 export function saveMqttPublishTemplate(archive: MqttArchiveState, input: Partial<MqttPublishTemplate> & Pick<MqttPublishTemplate, 'connectionId' | 'topic' | 'payload'>, now = Date.now()): MqttArchiveState {
   const next = normalizeMqttArchiveState(archive, now)
-  const existing = input.id ? next.publishTemplates.find((item) => item.id === input.id) : null
+  const normalizedTopic = stringValue(input.topic).trim()
+  const normalizedPayload = stringValue(input.payload)
+  const existing = input.id
+    ? next.publishTemplates.find((item) => item.id === input.id)
+    : next.publishTemplates.find((item) =>
+      item.connectionId === input.connectionId &&
+      item.topic === normalizedTopic &&
+      item.payload === normalizedPayload
+    ) || null
+  const hasTitle = Object.prototype.hasOwnProperty.call(input, 'title')
   const candidate = normalizePublishTemplate({
     ...existing,
     ...input,
     id: input.id || existing?.id || nextId('mqtt-template', now),
-    title: stringValue(input.title).trim() || existing?.title || input.topic,
+    topic: normalizedTopic,
+    payload: normalizedPayload,
+    title: hasTitle ? stringValue(input.title).trim() : existing?.title || '',
     qos: input.qos ?? existing?.qos ?? DEFAULT_QOS,
     retain: input.retain ?? existing?.retain ?? false,
     createdAt: existing?.createdAt || input.createdAt || now,
-    updatedAt: now
+    updatedAt: now,
+    operatedAt: now
   }, now)
   if (!candidate) return next
   return normalizeMqttArchiveState({
@@ -459,20 +630,122 @@ export function saveMqttPublishTemplate(archive: MqttArchiveState, input: Partia
   }, now)
 }
 
+export function saveMqttPublishDraftHistory(archive: MqttArchiveState, input: Partial<MqttPublishDraftHistoryEntry> & Pick<MqttPublishDraftHistoryEntry, 'connectionId' | 'topic' | 'payload' | 'source'>, now = Date.now()): MqttArchiveState {
+  const next = normalizeMqttArchiveState(archive, now)
+  const normalizedTopic = stringValue(input.topic).trim()
+  const normalizedPayload = stringValue(input.payload)
+  if (!input.connectionId || !normalizedTopic) return next
+  const existing = input.id
+    ? next.publishDraftHistory.find((item) => item.id === input.id)
+    : next.publishDraftHistory.find((item) =>
+      item.connectionId === input.connectionId &&
+      item.topic === normalizedTopic &&
+      item.payload === normalizedPayload
+    ) || null
+  const hasTitle = Object.prototype.hasOwnProperty.call(input, 'title')
+  const hasNote = Object.prototype.hasOwnProperty.call(input, 'note')
+  const candidate = normalizePublishDraftHistoryEntry({
+    ...existing,
+    ...input,
+    id: input.id || existing?.id || nextId('mqtt-draft-history', now),
+    topic: normalizedTopic,
+    payload: normalizedPayload,
+    title: hasTitle ? stringValue(input.title).trim() : existing?.title || '',
+    note: hasNote ? stringValue(input.note).trim() : existing?.note,
+    qos: input.qos ?? existing?.qos ?? DEFAULT_QOS,
+    retain: input.retain ?? existing?.retain ?? false,
+    source: input.source === 'overwrite' ? 'overwrite' : 'manual',
+    createdAt: existing?.createdAt || input.createdAt || now,
+    updatedAt: now
+  }, now)
+  if (!candidate) return next
+  return normalizeMqttArchiveState({
+    ...next,
+    publishDraftHistory: [candidate, ...next.publishDraftHistory.filter((item) => item.id !== candidate.id)]
+  }, now)
+}
+
+export function renameMqttPublishDraftHistory(archive: MqttArchiveState, id: string, input: { title?: string; note?: string }, now = Date.now()): MqttArchiveState {
+  const title = stringValue(input.title).trim()
+  const note = stringValue(input.note).trim()
+  const hasTitle = Object.prototype.hasOwnProperty.call(input, 'title')
+  const hasNote = Object.prototype.hasOwnProperty.call(input, 'note')
+  const next = normalizeMqttArchiveState(archive, now)
+  return normalizeMqttArchiveState({
+    ...next,
+    publishDraftHistory: next.publishDraftHistory.map((item) => item.id === id
+      ? {
+          ...item,
+          ...(hasTitle ? { title } : {}),
+          ...(hasNote ? (note ? { note } : { note: undefined }) : {}),
+          updatedAt: now
+        }
+      : item)
+  }, now)
+}
+
+export function updateMqttPublishDraftHistory(archive: MqttArchiveState, id: string, input: Partial<Pick<MqttPublishDraftHistoryEntry, 'title' | 'note' | 'topic' | 'payload' | 'qos' | 'retain'>>, now = Date.now()): MqttArchiveState {
+  const next = normalizeMqttArchiveState(archive, now)
+  const current = next.publishDraftHistory.find((item) => item.id === id)
+  if (!current) return next
+  return saveMqttPublishDraftHistory(next, {
+    ...current,
+    ...input,
+    id,
+    title: typeof input.title === 'string' ? input.title : current.title,
+    note: typeof input.note === 'string' ? input.note : current.note,
+    topic: typeof input.topic === 'string' ? input.topic : current.topic,
+    payload: typeof input.payload === 'string' ? input.payload : current.payload,
+    qos: input.qos ?? current.qos,
+    retain: input.retain ?? current.retain,
+    source: current.source
+  }, now)
+}
+
+export function deleteMqttPublishDraftHistory(archive: MqttArchiveState, id: string): MqttArchiveState {
+  const next = normalizeMqttArchiveState(archive)
+  return {
+    ...next,
+    publishDraftHistory: next.publishDraftHistory.filter((item) => item.id !== id)
+  }
+}
+
+export function clearMqttPublishDraftHistory(archive: MqttArchiveState, connectionId?: string): MqttArchiveState {
+  const next = normalizeMqttArchiveState(archive)
+  const targetConnectionId = stringValue(connectionId).trim()
+  return {
+    ...next,
+    publishDraftHistory: targetConnectionId
+      ? next.publishDraftHistory.filter((item) => item.connectionId !== targetConnectionId)
+      : []
+  }
+}
+
 export function renameMqttPublishTemplate(archive: MqttArchiveState, id: string, input: { title?: string; note?: string }, now = Date.now()): MqttArchiveState {
   const title = stringValue(input.title).trim()
   const note = stringValue(input.note).trim()
+  const hasTitle = Object.prototype.hasOwnProperty.call(input, 'title')
+  const hasNote = Object.prototype.hasOwnProperty.call(input, 'note')
   const next = normalizeMqttArchiveState(archive, now)
   return normalizeMqttArchiveState({
     ...next,
     publishTemplates: next.publishTemplates.map((item) => item.id === id
       ? {
           ...item,
-          ...(title ? { title } : {}),
-          ...(note ? { note } : {}),
-          updatedAt: now
+          ...(hasTitle ? { title } : {}),
+          ...(hasNote ? (note ? { note } : { note: undefined }) : {}),
+          updatedAt: now,
+          operatedAt: now
         }
       : item)
+  }, now)
+}
+
+export function touchMqttPublishTemplate(archive: MqttArchiveState, id: string, now = Date.now()): MqttArchiveState {
+  const next = normalizeMqttArchiveState(archive, now)
+  return normalizeMqttArchiveState({
+    ...next,
+    publishTemplates: next.publishTemplates.map((item) => item.id === id ? { ...item, operatedAt: now } : item)
   }, now)
 }
 

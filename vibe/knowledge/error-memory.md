@@ -5,11 +5,22 @@ Tool: codex
 ## File Favorites macOS Open, Preload, And Shortcut Hints
 
 - Date: 2026-06-23.
-- Evidence: code, test, user-reported screenshots/logs.
-- Symptom: macOS favorites `打开` / `定位` appeared to do nothing; Electron reported `require() of ES Module dist/preload.js not supported`; full favorites search inputs did not show command hints even though top tabs did.
-- Wrong assumption: treating uTools `shellOpenPath` / `shellShowItemInFolder` synchronous return as proof of success, assuming a copied `preload.js` works inside the root ESM package scope, and assuming App-level shortcut hint state reaches every page because top-level tab hints render.
-- Disproven path: renaming only to `preload.cjs` or preparing only `public/preload.js` is not enough when `dist/plugin.json` and `dist/package.json` can be stale. Fixing the shared `SearchSuggestBox` is also the wrong target when a page does not pass `shortcutHint`.
-- Verified root cause: [preload/index.js](../../preload/index.js#L210) needed macOS native command fallback and real async success/failure; the uTools runtime needed a local CommonJS package scope through [public/package.json](../../public/package.json#L1); [src/App.vue](../../src/App.vue#L177) did not pass `showShortcutHints` into favorites pages, and [src/pages/FavoritesPage.vue](../../src/pages/FavoritesPage.vue#L35) / [src/pages/QuickFavoritesPage.vue](../../src/pages/QuickFavoritesPage.vue#L12) did not pass favorite command labels into `SearchSuggestBox`.
-- Correct detection order: first inspect the actual runtime artifact path from the host log (`dist/preload.js`), then compare `public/plugin.json`, `dist/plugin.json`, and local package scopes; for command hints, compare a working page pattern such as [src/pages/PortsPage.vue](../../src/pages/PortsPage.vue#L186) against the broken favorites pages before editing shared components.
-- Prevention rule: after any uTools preload or manifest change, run `node scripts/prepare-utools-runtime.mjs` and `pnpm run validate:utools`; after any command hint change, add a UI regression in [tests/ui/searchShortcutHints.test.ts](../../tests/ui/searchShortcutHints.test.ts#L1) that verifies both App prop propagation and page-level `shortcutHint` binding.
+- Evidence: code, tests, user-reported screenshots/logs.
+- Symptom: macOS favorites `打开` / `定位` appeared to do nothing; Electron reported `require() of ES Module dist/preload.js not supported`; full favorites search inputs did not show command hints.
+- Wrong assumption: treating uTools shell API sync return values as proof of success, assuming copied preload code works under the root ESM package scope, and assuming App-level shortcut hint state automatically reaches every page.
+- Verified root cause: [preload/index.js](../../preload/index.js#L1) needed native macOS command fallback and async success/failure; [public/package.json](../../public/package.json#L1) needed a local CommonJS scope; favorite pages needed explicit shortcut-hint propagation.
+- Correct detection order: inspect the runtime artifact path from the host log, compare `public/plugin.json`, `dist/plugin.json`, and local package scopes, then compare working page hint propagation with the broken page.
+- Prevention rule: after preload or manifest changes, run `node scripts/prepare-utools-runtime.mjs` and `pnpm run validate:utools`; after command hint changes, add UI regression coverage.
 - Latest correct scheme: [technical-details.md](technical-details.md#L1) and [ARCHITECTURE.md](ARCHITECTURE.md#L1).
+
+## MQTT Draft History Shortcut Host Conflict
+
+- Date: 2026-06-25.
+- Evidence: user report, RED/PASS regressions, browser smoke, full tests, build.
+- Symptom: `Ctrl+L` opening MQTT draft history was unreliable in the uTools host. A stale-focus fix protected follow-up keys, but the host-level shortcut conflict still made the default unsuitable.
+- Wrong assumption: relying on browser DOM focus as the only keyboard layer source immediately after opening a command popover, then trying to keep `Ctrl+L` as the default despite host focus behavior.
+- Verified root cause: shortcut context could still see `activeInputRole='mqtt-publish-editor'` while `mqttPublishDraftHistoryOpen=true`, so draft-layer commands such as `Space` could resolve incorrectly.
+- Correct scheme: runtime shortcut context treats `mqttPublishDraftHistoryOpen` and `mqttPublishDraftHistoryEditDraft` as command-owned layers before consulting DOM focus. MQTT draft history defaults are `Ctrl+H` and `Ctrl+Shift+H`; `Ctrl+L` and `Ctrl+Shift+L` are intentionally unbound.
+- Correct detection order: reproduce in host or browser smoke, inspect runtime shortcut context before keybinding defaults, then check whether a host-reserved chord is involved.
+- Prevention rule: transient command layers must be runtime-owned, not post-render DOM-focus-owned. Do not assign MQTT draft history to `Ctrl+L` by default; add stale-focus and released-shortcut regressions when adding MQTT popovers or editor layers.
+- Latest correct scheme: [technical-details.md](technical-details.md#L1), [ARCHITECTURE.md](ARCHITECTURE.md#L1), and [../specs/260625-eypc-mqtt-focus-state-draft-history/04-verify.md](../specs/260625-eypc-mqtt-focus-state-draft-history/04-verify.md#L1).

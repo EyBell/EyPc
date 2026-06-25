@@ -42,6 +42,8 @@ export type FavoriteKind = 'file' | 'folder' | 'group'
 export type MqttQos = 0 | 1 | 2
 export type MqttMessageDirection = 'incoming' | 'outgoing' | 'event'
 export type MqttWorkspaceLayout = 'stack' | 'split'
+export type MqttInfoFilter = 'all' | 'incoming' | 'outgoing' | 'favorites'
+export type MqttPublishDraftHistorySource = 'overwrite' | 'manual'
 
 export interface MqttLayoutPrefs {
   workspaceLayout: MqttWorkspaceLayout
@@ -52,6 +54,11 @@ export interface MqttLayoutPrefs {
   publishRecordsOpen: boolean
 }
 
+export interface MqttViewPrefs {
+  infoFilter: MqttInfoFilter
+  activeSubscriptionTopicsByConfigId: Record<string, string[]>
+}
+
 export interface MqttConnectionConfig {
   id: string
   name: string
@@ -60,7 +67,9 @@ export interface MqttConnectionConfig {
   username: string
   subscriptions: string[]
   subscriptionAliases: Record<string, string>
+  subscriptionColors: Record<string, string>
   publishTopic: string
+  publishTopics: string[]
   qos: MqttQos
   retain: boolean
   autoReconnect: boolean
@@ -80,6 +89,7 @@ export interface MqttState {
   configs: MqttConnectionConfig[]
   activeConfigId: string | null
   layoutPrefs: MqttLayoutPrefs
+  viewPrefs: MqttViewPrefs
 }
 
 export interface MqttPublishDraft {
@@ -124,6 +134,21 @@ export interface MqttPublishTemplate {
   retain: boolean
   createdAt: number
   updatedAt: number
+  operatedAt?: number
+}
+
+export interface MqttPublishDraftHistoryEntry {
+  id: string
+  connectionId: string
+  title: string
+  note?: string
+  topic: string
+  payload: string
+  qos: MqttQos
+  retain: boolean
+  source: MqttPublishDraftHistorySource
+  createdAt: number
+  updatedAt: number
 }
 
 export interface MqttConnectionSnapshot {
@@ -133,6 +158,7 @@ export interface MqttConnectionSnapshot {
   clientId: string
   username: string
   publishTopic: string
+  publishTopics: string[]
   qos: MqttQos
   retain: boolean
   syncRecords: boolean
@@ -145,6 +171,7 @@ export interface MqttArchiveState {
   connectionSnapshots: MqttConnectionSnapshot[]
   sessions: MqttSessionRecord[]
   publishTemplates: MqttPublishTemplate[]
+  publishDraftHistory: MqttPublishDraftHistoryEntry[]
 }
 
 export interface MqttStorageStatus {

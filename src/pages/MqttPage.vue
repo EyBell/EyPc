@@ -2,17 +2,14 @@
 import { computed, defineComponent, h, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import type { Component, CSSProperties } from 'vue'
 import {
-  ArrowLeft,
-  ArrowLeftRight,
-  ArrowRight,
   BadgeX,
   ChevronsLeft,
   Clipboard,
+  ClipboardList,
   Copy,
   CornerDownLeft,
   Eraser,
   Hash,
-  History,
   Info,
   LayoutPanelTop,
   Logs,
@@ -20,6 +17,7 @@ import {
   Pencil,
   Plug,
   Plus,
+  RefreshCw,
   Save,
   Send,
   Star,
@@ -27,9 +25,9 @@ import {
   Unplug,
   X
 } from '@lucide/vue'
-import type { AppRuntimeSnapshot, MqttConfigDraft, MqttFavoriteDraft, MqttRecordEditDraft, MqttSubscriptionEditorDraft, MqttSubscriptionEditorField, MqttSubscriptionEditorItem } from '../runtime/appRuntime'
-import type { MqttMessageRecord, MqttPublishDraft, MqttPublishTemplate, MqttQos } from '../domain/types'
-import { buildMqttWebSocketUrl } from '../domain/mqtt'
+import type { AppRuntimeSnapshot, MqttConfigDraft, MqttFavoriteDraft, MqttPublishDraftHistoryEditDraft, MqttRecordEditDraft, MqttSubscriptionEditorDraft, MqttSubscriptionEditorField, MqttSubscriptionEditorItem } from '../runtime/appRuntime'
+import type { MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos } from '../domain/types'
+import { DEFAULT_MQTT_TOPIC_COLORS, buildMqttWebSocketUrl, mqttEndpointHostPortLabel, mqttPublishTemplateOperationTime, mqttTopicVisualForMessage, normalizeMqttTopicColor } from '../domain/mqtt'
 import { buildMqttInlinePayloadPreviewSegments, buildMqttPayloadPreviewSegments } from '../domain/mqttPayloadPreview'
 import { layoutShortcutHints } from '../domain/shortcutHintLayout'
 import type { ShortcutHintAnchor, ShortcutHintPlacement } from '../domain/shortcutHintLayout'
@@ -43,6 +41,9 @@ interface MqttShortcutHintEntry {
   style: CSSProperties
 }
 
+type MqttPreviewTarget = { kind: 'message' | 'publish-template' | 'publish-draft-history'; id: string }
+type MqttPreviewRecord = MqttMessageRecord | MqttPublishTemplate | MqttPublishDraftHistoryEntry
+
 const props = defineProps<{ snapshot: AppRuntimeSnapshot; showShortcutHints?: boolean; shiftPreview?: boolean }>()
 const emit = defineEmits<{
   search: [value: string]
@@ -54,14 +55,71 @@ const emit = defineEmits<{
   updateSubscriptionDraft: [input: Partial<Omit<MqttSubscriptionEditorDraft, 'connectionId'>>]
   updateFavoriteDraft: [input: Partial<Pick<MqttFavoriteDraft, 'title' | 'activeField'>>]
   updateRecordEditDraft: [input: Partial<Omit<MqttRecordEditDraft, 'mode' | 'targetKind' | 'targetId'>>]
+  updatePublishDraftHistoryEditDraft: [input: Partial<Pick<MqttPublishDraftHistoryEditDraft, 'title' | 'note' | 'topic' | 'payload' | 'activeField'>>]
   updatePublishDraft: [input: Partial<MqttPublishDraft>]
   dispatch: [actionId: string, args?: Record<string, unknown>]
 }>()
 
 const workbenchRef = ref<HTMLElement | null>(null)
 const previewPayloadRef = ref<HTMLElement | null>(null)
+const hoverPreviewTarget = ref<MqttPreviewTarget | null>(null)
+const hoverPreviewSuspendedByKeyboard = ref(false)
+const lastPreviewPointerPosition = ref<{ x: number | null; y: number | null }>({ x: null, y: null })
 const shortcutHintEntries = ref<MqttShortcutHintEntry[]>([])
+const mqttToolbarSearchOpen = ref(false)
 let shortcutHintFrame: number | null = null
+
+function directionGlyphChildren(variant: 'all' | 'in' | 'out') {
+  const strokeAttrs = {
+    fill: 'none',
+    stroke: 'currentColor',
+    'stroke-width': '2.2',
+    'stroke-linecap': 'round',
+    'stroke-linejoin': 'round'
+  }
+  if (variant === 'all') {
+    return [
+      h('path', { ...strokeAttrs, d: 'M4 8h10' }),
+      h('path', { ...strokeAttrs, d: 'm10 5 4 3-4 3' }),
+      h('path', { ...strokeAttrs, d: 'M20 16H10' }),
+      h('path', { ...strokeAttrs, d: 'm14 13-4 3 4 3' }),
+      h('circle', { cx: '12', cy: '12', r: '2.4', fill: 'currentColor' })
+    ]
+  }
+  if (variant === 'in') {
+    return [
+      h('path', { ...strokeAttrs, d: 'M12 4v10' }),
+      h('path', { ...strokeAttrs, d: 'm8 10 4 4 4-4' }),
+      h('path', { ...strokeAttrs, d: 'M5 15v3h14v-3' })
+    ]
+  }
+  return [
+    h('path', { ...strokeAttrs, d: 'M4 12 20 4l-4 16-4-7-8-1Z' }),
+    h('path', { ...strokeAttrs, d: 'M12 13 20 4' })
+  ]
+}
+
+function createMqttDirectionGlyph(variant: 'all' | 'in' | 'out') {
+  return defineComponent({
+    name: `MqttDirectionGlyph${variant[0].toUpperCase()}${variant.slice(1)}`,
+    setup() {
+      return () => h(
+        'svg',
+        {
+          class: ['mqtt-direction-glyph', `mqtt-direction-glyph-${variant}`],
+          viewBox: '0 0 24 24',
+          role: 'img',
+          focusable: 'false'
+        },
+        directionGlyphChildren(variant)
+      )
+    }
+  })
+}
+
+const MqttDirectionGlyphAll = createMqttDirectionGlyph('all')
+const MqttDirectionGlyphIn = createMqttDirectionGlyph('in')
+const MqttDirectionGlyphOut = createMqttDirectionGlyph('out')
 
 const configForm = reactive({
   name: '',
@@ -77,6 +135,7 @@ const configForm = reactive({
   subscriptionsText: '',
   subscriptionItems: [] as MqttConfigDraft['subscriptionItems'],
   publishTopic: '',
+  publishTopics: [] as string[],
   qos: 0 as MqttQos,
   retain: false,
   autoReconnect: true,
@@ -103,6 +162,7 @@ watch(() => props.snapshot.mqttConfigDraft, (draft) => {
   configForm.subscriptionsText = draft?.subscriptionsText || ''
   configForm.subscriptionItems = draft?.subscriptionItems?.map((item) => ({ ...item })) || []
   configForm.publishTopic = draft?.publishTopic || ''
+  configForm.publishTopics = draft?.publishTopics?.length ? [...draft.publishTopics] : (draft?.publishTopic ? [draft.publishTopic] : [])
   configForm.qos = draft?.qos || 0
   configForm.retain = draft?.retain || false
   configForm.autoReconnect = draft?.autoReconnect ?? true
@@ -115,12 +175,31 @@ watch(() => props.snapshot.mqttConfigDraft, (draft) => {
   configForm.syncRecords = draft?.syncRecords ?? true
 }, { immediate: true })
 
-watch(() => props.snapshot.mqttConfigDraft?.activeField, (field) => {
+watch([
+  () => props.snapshot.mqttConfigDraft?.activeField,
+  () => props.snapshot.mqttConfigDraft?.activeSubscriptionIndex,
+  () => props.snapshot.mqttConfigDraft?.activeSubscriptionField,
+  () => props.snapshot.mqttConfigDraft?.activePublishIndex
+], ([field, activeSubscriptionIndex, activeSubscriptionField, activePublishIndex]) => {
   if (!field) return
   void nextTick(() => {
-    const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(`[data-mqtt-field="${field}"]`)
+    let input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null = null
+    let selectAll = true
+    if (field === 'subscriptions' && typeof activeSubscriptionIndex === 'number') {
+      input = document.querySelector<HTMLInputElement>(`[data-mqtt-config-subscription-index="${activeSubscriptionIndex}"][data-mqtt-config-subscription-field="${activeSubscriptionField || 'topic'}"]`)
+      selectAll = false
+    } else if (field === 'publishTopic') {
+      const index = typeof activePublishIndex === 'number' ? activePublishIndex : 0
+      input = document.querySelector<HTMLInputElement>(`[data-mqtt-config-publish-index="${index}"][data-mqtt-config-publish-field="topic"]`)
+      selectAll = false
+    }
+    input = input || document.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(`[data-mqtt-field="${field}"]`)
+    const alreadyFocused = document.activeElement === input
     input?.focus()
-    if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) input.select()
+    if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+      if (selectAll) input.select()
+      else if (!alreadyFocused) input.setSelectionRange(input.value.length, input.value.length)
+    }
   })
 })
 
@@ -152,11 +231,33 @@ watch(() => props.snapshot.mqttRecordEditDraft?.activeField, (field) => {
   })
 })
 
+watch(() => props.snapshot.mqttPublishDraftHistoryEditDraft?.activeField, (field) => {
+  if (!field) return
+  void nextTick(() => {
+    const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-mqtt-publish-draft-field="${field}"]`)
+    input?.focus()
+    if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) input.select()
+  })
+})
+
+watch(() => props.snapshot.searchFocusRequestId, () => {
+  if (!['mqtt', 'mqtt-templates', 'mqtt-history'].includes(props.snapshot.searchFocusTarget)) return
+  mqttToolbarSearchOpen.value = true
+})
+
+watch(() => props.snapshot.searchBlurRequestId, () => {
+  mqttToolbarSearchOpen.value = false
+})
+
+watch(() => props.snapshot.mqttFocusRequestId, () => {
+  void nextTick(() => focusMqttRuntimeTarget())
+})
+
 const activeConfig = computed(() => props.snapshot.mqttActiveConfig)
 const subscriptionDraft = computed(() => props.snapshot.mqttSubscriptionDraft)
-const favoriteDraft = computed(() => props.snapshot.mqttFavoriteDraft)
 const recordEditDraft = computed(() => props.snapshot.mqttRecordEditDraft)
 const publishDraft = computed(() => props.snapshot.mqttPublishScratch)
+const subscriptionColorPalette = DEFAULT_MQTT_TOPIC_COLORS
 const endpointPreview = computed(() => buildMqttWebSocketUrl(configForm))
 const selectedLog = computed(() => props.snapshot.mqttSelectedLog)
 const visibleLogs = computed(() => {
@@ -171,9 +272,29 @@ const directionFilterButtons = computed(() => [
   { id: 'incoming', commandId: 'mqtt.receive.filter.in', label: '已接收', icon: 'in', count: props.snapshot.mqttMessageStats.incoming },
   { id: 'outgoing', commandId: 'mqtt.receive.filter.out', label: '已发送', icon: 'out', count: props.snapshot.mqttMessageStats.outgoing }
 ])
+const activeMqttToolbarFilter = computed(() => (
+  props.snapshot.activeMqttRecordList === 'templates'
+    ? 'favorites'
+    : props.snapshot.activeMqttRecordList === 'messages'
+      ? props.snapshot.mqttReceiveFilter
+      : null
+))
+const activeMqttInfoIcon = computed(() => {
+  if (activeMqttToolbarFilter.value === 'incoming') return 'in'
+  if (activeMqttToolbarFilter.value === 'outgoing') return 'out'
+  return 'all'
+})
+const activeMqttInfoTone = computed(() => {
+  if (activeMqttToolbarFilter.value === 'incoming') return 'incoming'
+  if (activeMqttToolbarFilter.value === 'outgoing') return 'outgoing'
+  return 'all'
+})
 const activePublishRecordListId = computed(() => props.snapshot.activeMqttRecordList === 'history' ? 'history' : 'templates')
 const activeRecordListTitle = computed(() => props.snapshot.activeMqttRecordList === 'history' ? '历史' : '收藏')
-const activeRecordListSearch = computed(() => props.snapshot.activeMqttRecordList === 'history' ? props.snapshot.mqttHistorySearch : props.snapshot.mqttTemplateSearch)
+const activeToolbarSearchValue = computed(() => props.snapshot.activeMqttRecordList === 'history' ? props.snapshot.mqttHistorySearch : props.snapshot.activeMqttRecordList === 'templates' ? props.snapshot.mqttTemplateSearch : props.snapshot.mqttSearch)
+const activeToolbarSearchRole = computed(() => props.snapshot.activeMqttRecordList === 'history' ? 'mqtt-history-search' : props.snapshot.activeMqttRecordList === 'templates' ? 'mqtt-template-search' : 'mqtt-record-search')
+const activeToolbarSearchPlaceholder = computed(() => props.snapshot.activeMqttRecordList === 'history' ? '搜索历史' : props.snapshot.activeMqttRecordList === 'templates' ? '搜索收藏' : '搜索消息')
+const showMqttToolbarSearch = computed(() => mqttToolbarSearchOpen.value || Boolean(activeToolbarSearchValue.value.trim()))
 const activeRecordListRows = computed(() => props.snapshot.activeMqttRecordList === 'history' ? props.snapshot.mqttPublishHistoryRows : props.snapshot.mqttPublishTemplateRows)
 const activeRecordListState = computed(() => props.snapshot.activeMqttRecordList === 'history' ? props.snapshot.mqttRecordListStates.history : props.snapshot.mqttRecordListStates.templates)
 const activeRecordSelectedKind = computed(() => props.snapshot.mqttSelectedRecord?.kind === 'publish-template' ? 'publish-template' : props.snapshot.mqttSelectedRecord?.kind === 'message' ? 'message' : null)
@@ -183,6 +304,12 @@ const activeSubscriptionLabel = computed(() => {
   const topic = props.snapshot.mqttActiveSubscriptionTopics[0]
   return props.snapshot.mqttSubscriptionRows.find((row) => row.topic === topic)?.displayName || topic
 })
+const publishOptionRows = computed(() => [
+  { id: 'qos0', label: 'QoS 0', active: publishDraft.value.qos === 0 },
+  { id: 'qos1', label: 'QoS 1', active: publishDraft.value.qos === 1 },
+  { id: 'qos2', label: 'QoS 2', active: publishDraft.value.qos === 2 },
+  { id: 'retain', label: 'retain', active: publishDraft.value.retain }
+])
 const selectedSubscriptionCount = computed(() => props.snapshot.mqttSelectedSubscriptionTopics.length)
 const subscriptionQosLabel = computed(() => `QoS ${activeConfig.value?.qos ?? configForm.qos}`)
 const previewRecord = computed(() => {
@@ -193,6 +320,9 @@ const previewRecord = computed(() => {
   }
   if (preview.targetKind === 'publish-template') {
     return props.snapshot.mqttArchive.publishTemplates.find((item) => item.id === preview.targetId) || null
+  }
+  if (preview.targetKind === 'publish-draft-history') {
+    return props.snapshot.mqttArchive.publishDraftHistory.find((item) => item.id === preview.targetId) || null
   }
   return null
 })
@@ -210,6 +340,9 @@ const detailRecord = computed(() => {
   }
   if (target.kind === 'publish-template') {
     return props.snapshot.mqttArchive.publishTemplates.find((item) => item.id === target.id) || null
+  }
+  if (target.kind === 'publish-draft-history') {
+    return props.snapshot.mqttArchive.publishDraftHistory.find((item) => item.id === target.id) || null
   }
   return null
 })
@@ -235,7 +368,7 @@ const detailTitle = computed(() => {
 const detailSubtitle = computed(() => {
   if (detailLog.value) return logConfigName(detailLog.value)
   if (detailRecord.value && 'direction' in detailRecord.value) return formatDateTime(detailRecord.value.timestamp)
-  if (detailRecord.value) return formatDateTime(detailRecord.value.updatedAt)
+  if (detailRecord.value) return formatDateTime(recordTime(detailRecord.value))
   if (detailConfig.value) return detailConfig.value.url || '未配置地址'
   return '当前上下文'
 })
@@ -265,31 +398,44 @@ const workspaceLayoutStyle = computed(() => {
 })
 function syncConfigSubscriptionItems(items: MqttConfigDraft['subscriptionItems']) {
   updateConfigDraft({
-    subscriptionItems: items.map((item) => ({ topic: item.topic, alias: item.alias })),
+    subscriptionItems: items.map((item) => ({ topic: item.topic, alias: item.alias, color: item.color })),
     subscriptionsText: items.map((item) => item.topic).join('\n')
   })
 }
 
-function focusConfigSubscriptionTopic(index: number) {
-  void nextTick(() => {
-    const input = document.querySelector<HTMLInputElement>(`[data-mqtt-config-subscription-index="${index}"][data-mqtt-config-subscription-field="topic"]`)
-    input?.focus()
-    input?.setSelectionRange(input.value.length, input.value.length)
-  })
+function focusConfigSubscriptionEditor(index: number, field: MqttSubscriptionEditorField = 'topic') {
+  emit('dispatch', 'mqtt.config.subscription.focus', { index, field })
 }
 
 function addConfigSubscriptionItem() {
   const nextIndex = configForm.subscriptionItems.length
-  syncConfigSubscriptionItems([...configForm.subscriptionItems, { topic: '', alias: '' }])
-  focusConfigSubscriptionTopic(nextIndex)
+  syncConfigSubscriptionItems([...configForm.subscriptionItems, { topic: '', alias: '', color: normalizeMqttTopicColor('', nextIndex) }])
+  focusConfigSubscriptionEditor(nextIndex, 'topic')
 }
 
 function updateConfigSubscriptionItem(index: number, input: Partial<MqttConfigDraft['subscriptionItems'][number]>) {
   syncConfigSubscriptionItems(configForm.subscriptionItems.map((item, itemIndex) => itemIndex === index ? { ...item, ...input } : item))
 }
 
-function removeConfigSubscriptionItem(index: number) {
-  syncConfigSubscriptionItems(configForm.subscriptionItems.filter((_, itemIndex) => itemIndex !== index))
+function syncConfigPublishTopics(topics: string[]) {
+  updateConfigDraft({
+    publishTopic: topics.find((topic) => topic.trim())?.trim() || '',
+    publishTopics: topics
+  })
+}
+
+function focusConfigPublishEditor(index: number) {
+  emit('dispatch', 'mqtt.config.publish.focus', { index })
+}
+
+function addConfigPublishTopic() {
+  const nextIndex = configForm.publishTopics.length
+  syncConfigPublishTopics([...configForm.publishTopics, ''])
+  focusConfigPublishEditor(nextIndex)
+}
+
+function updateConfigPublishTopic(index: number, topic: string) {
+  syncConfigPublishTopics(configForm.publishTopics.map((item, itemIndex) => itemIndex === index ? topic : item))
 }
 
 function commandLabel(commandId: string, fallback: string) {
@@ -381,9 +527,9 @@ const mqttIconComponents: Record<string, Component> = {
   delete: Trash2,
   trash: Trash2,
   close: X,
-  all: ArrowLeftRight,
-  in: ArrowLeft,
-  out: ArrowRight,
+  all: MqttDirectionGlyphAll,
+  in: MqttDirectionGlyphIn,
+  out: MqttDirectionGlyphOut,
   layout: LayoutPanelTop,
   star: Star,
   'copy-topic': Clipboard,
@@ -391,8 +537,9 @@ const mqttIconComponents: Record<string, Component> = {
   apply: CornerDownLeft,
   send: Send,
   more: MoreHorizontal,
-  history: History,
+  draft: ClipboardList,
   save: Save,
+  refresh: RefreshCw,
   detail: Info,
   plug: Plug,
   unplug: Unplug,
@@ -414,12 +561,16 @@ const MqttIcon = defineComponent({
   }
 })
 
-function commandArgs(kind: 'message' | 'publish-template', id: string, list?: 'messages' | 'templates' | 'history'): Record<string, unknown> {
+function commandArgs(kind: MqttPreviewTarget['kind'], id: string, list?: 'messages' | 'templates' | 'history'): Record<string, unknown> {
   return { kind, id, targetKind: kind, targetId: id, ...(list ? { list } : {}) }
 }
 
 function updateConfigDraft(input: Partial<Omit<MqttConfigDraft, 'mode' | 'targetId' | 'activeField'>>) {
   emit('updateConfigDraft', input)
+}
+
+function refreshConfigClientId() {
+  emit('dispatch', 'mqtt.config.clientId.refresh')
 }
 
 function qosFromInput(value: string): MqttQos {
@@ -430,7 +581,8 @@ function createSubscriptionEditorItem(): MqttSubscriptionEditorItem {
   return {
     id: `mqtt-subscription-ui:${Date.now()}:${Math.random().toString(16).slice(2, 8)}`,
     topic: '',
-    alias: ''
+    alias: '',
+    color: normalizeMqttTopicColor('', subscriptionDraft.value?.items.length || 0)
   }
 }
 
@@ -444,17 +596,10 @@ function addSubscriptionEditorItem() {
   updateSubscriptionDraft({ items: [...subscriptionDraft.value.items, item], activeItemId: item.id, activeField: 'topic' })
 }
 
-function updateSubscriptionEditorItem(id: string, input: Partial<Pick<MqttSubscriptionEditorItem, 'topic' | 'alias'>>) {
+function updateSubscriptionEditorItem(id: string, input: Partial<Pick<MqttSubscriptionEditorItem, 'topic' | 'alias' | 'color'>>) {
   if (!subscriptionDraft.value) return
   updateSubscriptionDraft({
     items: subscriptionDraft.value.items.map((item) => item.id === id ? { ...item, ...input } : item)
-  })
-}
-
-function removeSubscriptionEditorItem(id: string) {
-  if (!subscriptionDraft.value) return
-  updateSubscriptionDraft({
-    items: subscriptionDraft.value.items.filter((item) => item.id !== id)
   })
 }
 
@@ -484,28 +629,16 @@ function handleSubscriptionEditorKeydown(event: KeyboardEvent) {
     emit('dispatch', event.shiftKey ? 'mqtt.subscription.editor.prevField' : 'mqtt.subscription.editor.nextField')
     return
   }
-  event.stopPropagation()
-}
-
-function handleFavoriteEditorKeydown(event: KeyboardEvent) {
-  const key = event.key.toLowerCase()
-  const command = event.ctrlKey || event.metaKey
-  if (command && (key === 's' || key === 'enter')) {
+  if (!command && !event.altKey && !event.shiftKey && (key === 'arrowdown' || key === 'arrowup')) {
     event.preventDefault()
     event.stopPropagation()
-    emit('dispatch', 'mqtt.record.favorite.save')
+    emit('dispatch', key === 'arrowdown' ? 'mqtt.subscription.editor.nextRow' : 'mqtt.subscription.editor.prevRow')
     return
   }
-  if (key === 'escape') {
+  if (command && (key === 'delete' || key === 'backspace')) {
     event.preventDefault()
     event.stopPropagation()
-    emit('dispatch', 'mqtt.record.favorite.cancel')
-    return
-  }
-  if (key === 'tab') {
-    event.preventDefault()
-    event.stopPropagation()
-    emit('dispatch', event.shiftKey ? 'mqtt.record.favorite.prevField' : 'mqtt.record.favorite.nextField')
+    emit('dispatch', 'mqtt.subscription.editor.deleteRow')
     return
   }
   event.stopPropagation()
@@ -513,6 +646,10 @@ function handleFavoriteEditorKeydown(event: KeyboardEvent) {
 
 function updateRecordEditDraft(input: Partial<Omit<MqttRecordEditDraft, 'mode' | 'targetKind' | 'targetId'>>) {
   emit('updateRecordEditDraft', input)
+}
+
+function updatePublishDraftHistoryEditDraft(input: Partial<Pick<MqttPublishDraftHistoryEditDraft, 'title' | 'note' | 'topic' | 'payload' | 'activeField'>>) {
+  emit('updatePublishDraftHistoryEditDraft', input)
 }
 
 function handleRecordEditorKeydown(event: KeyboardEvent) {
@@ -539,6 +676,50 @@ function handleRecordEditorKeydown(event: KeyboardEvent) {
   event.stopPropagation()
 }
 
+function handlePublishDraftHistoryEditorKeydown(event: KeyboardEvent) {
+  const key = event.key.toLowerCase()
+  const command = event.ctrlKey || event.metaKey
+  if (command && (key === 's' || key === 'enter')) {
+    event.preventDefault()
+    event.stopPropagation()
+    emit('dispatch', 'mqtt.publish.draft.edit.save')
+    return
+  }
+  if (key === 'escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    emit('dispatch', 'mqtt.publish.draft.edit.cancel')
+    return
+  }
+  if (key === 'tab') {
+    event.preventDefault()
+    event.stopPropagation()
+    emit('dispatch', event.shiftKey ? 'mqtt.publish.draft.edit.prevField' : 'mqtt.publish.draft.edit.nextField')
+    return
+  }
+  event.stopPropagation()
+}
+
+function handleConfigRowKeydown(event: KeyboardEvent, key: string, command: boolean) {
+  const target = event.target as HTMLElement | null
+  const role = target?.closest<HTMLElement>('[data-role]')?.dataset.role
+  if (role !== 'mqtt-config-subscription-editor' && role !== 'mqtt-config-publish-editor') return false
+  const prefix = role === 'mqtt-config-subscription-editor' ? 'mqtt.config.subscription' : 'mqtt.config.publish'
+  if (!command && !event.altKey && !event.shiftKey && (key === 'arrowdown' || key === 'arrowup')) {
+    event.preventDefault()
+    event.stopPropagation()
+    emit('dispatch', `${prefix}.${key === 'arrowdown' ? 'nextRow' : 'prevRow'}`)
+    return true
+  }
+  if (command && (key === 'delete' || key === 'backspace')) {
+    event.preventDefault()
+    event.stopPropagation()
+    emit('dispatch', `${prefix}.deleteRow`)
+    return true
+  }
+  return false
+}
+
 function handleConfigEditorKeydown(event: KeyboardEvent) {
   const key = event.key.toLowerCase()
   const command = event.ctrlKey || event.metaKey
@@ -560,6 +741,7 @@ function handleConfigEditorKeydown(event: KeyboardEvent) {
     emit('dispatch', event.shiftKey ? 'mqtt.config.prevField' : 'mqtt.config.nextField')
     return
   }
+  if (handleConfigRowKeydown(event, key, command)) return
   event.stopPropagation()
 }
 
@@ -573,6 +755,122 @@ function statusLabel(state: AppRuntimeSnapshot['mqttConnectionStatus']['state'])
     error: 'error'
   }
   return labels[state]
+}
+
+function statusTone(state: AppRuntimeSnapshot['mqttConnectionStatus']['state']) {
+  if (state === 'connected') return 'connected'
+  if (state === 'error') return 'error'
+  return 'idle'
+}
+
+function connectionEndpointTitle(config: AppRuntimeSnapshot['mqttActiveConfig']) {
+  return config ? mqttEndpointHostPortLabel(config.url) || config.url || '未配置地址' : '未选择配置'
+}
+
+function focusMqttRuntimeTarget() {
+  const target = props.snapshot.mqttFocusTarget
+  let selector = '.mqtt-message-list'
+  if (target === 'topic-filter') selector = props.snapshot.mqttTopicFilterOpen ? '.mqtt-topic-filter-search' : '.mqtt-topic-filter-button'
+  if (target === 'publish-topic') selector = '[data-mqtt-publish-field="topic"]'
+  if (target === 'publish-payload') selector = '[data-mqtt-publish-field="payload"]'
+  if (target === 'publish-options') selector = '.mqtt-publish-options-popover'
+  if (target === 'publish-draft') selector = '[data-role="mqtt-publish-draft"]'
+  if (target === 'publish-draft-edit-title') selector = '[data-mqtt-publish-draft-field="title"]'
+  if (target === 'publish-draft-edit-note') selector = '[data-mqtt-publish-draft-field="note"]'
+  if (target === 'publish-draft-edit-topic') selector = '[data-mqtt-publish-draft-field="topic"]'
+  if (target === 'publish-draft-edit-payload') selector = '[data-mqtt-publish-draft-field="payload"]'
+  if (target === 'connections') selector = '.mqtt-connection-rail'
+  if (target === 'subscriptions') selector = '.mqtt-subscription-list'
+  const element = document.querySelector<HTMLElement>(selector)
+  element?.focus()
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+    element.setSelectionRange(element.value.length, element.value.length)
+  }
+}
+
+function openTopicFilter() {
+  emit('dispatch', 'mqtt.topicFilter.focus')
+}
+
+function updateTopicFilterSearch(value: string) {
+  emit('dispatch', 'mqtt.topicFilter.search.set', { query: value })
+}
+
+function selectTopicFilter(topic: string) {
+  emit('dispatch', 'mqtt.topicFilter.select', { topic })
+}
+
+function selectPublishOption(option: string) {
+  emit('dispatch', 'mqtt.publish.options.select', { option })
+}
+
+function publishDraftHistoryRowArgs(row: MqttPublishDraftHistoryEntry): Record<string, unknown> {
+  return { kind: 'publish-draft-history', id: row.id, targetKind: 'publish-draft-history', targetId: row.id }
+}
+
+function publishDraftHistoryTitle(row: MqttPublishDraftHistoryEntry) {
+  return row.title.trim() || row.topic || '(empty topic)'
+}
+
+function publishDraftHistorySourceLabel(row: MqttPublishDraftHistoryEntry) {
+  return row.source === 'manual' ? '手动' : '覆盖前'
+}
+
+function applyPublishDraftHistory(row: MqttPublishDraftHistoryEntry) {
+  emit('dispatch', 'mqtt.publish.draft.apply', publishDraftHistoryRowArgs(row))
+}
+
+function sendPublishDraftHistory(row: MqttPublishDraftHistoryEntry) {
+  emit('dispatch', 'mqtt.publish.draft.send', publishDraftHistoryRowArgs(row))
+}
+
+function favoritePublishDraftHistory(row: MqttPublishDraftHistoryEntry) {
+  emit('dispatch', 'mqtt.publish.draft.favorite', publishDraftHistoryRowArgs(row))
+}
+
+function focusPublishDraftHistory(row: MqttPublishDraftHistoryEntry) {
+  emit('dispatch', 'mqtt.publish.draft.focus', publishDraftHistoryRowArgs(row))
+}
+
+function previewPublishDraftHistory(row: MqttPublishDraftHistoryEntry, event?: MouseEvent) {
+  focusPublishDraftHistory(row)
+  schedulePreview('publish-draft-history', row.id, event)
+}
+
+function togglePublishDraftHistory(row: MqttPublishDraftHistoryEntry) {
+  emit('dispatch', 'mqtt.publish.draft.toggleSelect', publishDraftHistoryRowArgs(row))
+}
+
+function openPublishDraftHistoryDetail(row: MqttPublishDraftHistoryEntry) {
+  emit('dispatch', 'mqtt.detail.open', publishDraftHistoryRowArgs(row))
+}
+
+function openPublishDraftHistoryMenu(row: MqttPublishDraftHistoryEntry) {
+  emit('dispatch', 'mqtt.drawer.open', publishDraftHistoryRowArgs(row))
+}
+
+function renamePublishDraftHistory(row: MqttPublishDraftHistoryEntry) {
+  emit('dispatch', 'mqtt.publish.draft.rename', publishDraftHistoryRowArgs(row))
+}
+
+function editPublishDraftHistory(row: MqttPublishDraftHistoryEntry) {
+  emit('dispatch', 'mqtt.publish.draft.edit', publishDraftHistoryRowArgs(row))
+}
+
+function deletePublishDraftHistory(row: MqttPublishDraftHistoryEntry) {
+  emit('dispatch', 'mqtt.publish.draft.delete', publishDraftHistoryRowArgs(row))
+}
+
+function publishDraftHistorySelected(row: MqttPublishDraftHistoryEntry) {
+  return props.snapshot.mqttPublishDraftHistorySelectedIds.includes(row.id)
+}
+
+function detailRecordCommandArgs(): Record<string, unknown> {
+  const target = detailTarget.value
+  const record = detailRecord.value
+  if (!target || !record) return {}
+  if (target.kind === 'publish-draft-history') return { kind: 'publish-draft-history', id: record.id, targetKind: 'publish-draft-history', targetId: record.id }
+  return commandArgs(target.kind === 'publish-template' ? 'publish-template' : 'message', record.id)
 }
 
 function selectRecord(kind: 'config' | 'session' | 'message' | 'log', id: string, list: 'messages' | 'history' = 'messages') {
@@ -714,6 +1012,22 @@ function searchPublishRecords(list: 'templates' | 'history', query: string) {
   emit('dispatch', list === 'templates' ? 'mqtt.template.search.set' : 'mqtt.history.search.set', { query })
 }
 
+function searchActiveRecordList(query: string) {
+  if (props.snapshot.activeMqttRecordList === 'templates') {
+    searchPublishRecords('templates', query)
+    return
+  }
+  if (props.snapshot.activeMqttRecordList === 'history') {
+    searchPublishRecords('history', query)
+    return
+  }
+  emit('search', query)
+}
+
+function closeToolbarSearchIfEmpty() {
+  if (!activeToolbarSearchValue.value.trim()) mqttToolbarSearchOpen.value = false
+}
+
 function applyPublishRecord(row: PublishRecordRow, list: 'templates' | 'history') {
   if (isPublishTemplate(row)) applyTemplate(row)
   else applyMessage(row, 'history')
@@ -766,12 +1080,20 @@ function renamePublishTemplate(row: MqttPublishTemplate, title: string) {
   renameTemplate(row, title)
 }
 
-function messageTitle(message: MqttMessageRecord) {
-  return message.title || `${message.direction === 'incoming' ? 'IN' : message.direction === 'outgoing' ? 'OUT' : 'EVENT'} ${message.topic || '(empty topic)'}`
-}
-
 function messageAlias(message: MqttMessageRecord) {
   return message.title?.trim() || ''
+}
+
+function messageRouteLabel(message: MqttMessageRecord) {
+  return messageAlias(message) || mqttTopicVisual(message.topic).alias || message.topic || '(empty topic)'
+}
+
+function mqttTopicVisual(topic: string) {
+  return mqttTopicVisualForMessage(topic, activeConfig.value)
+}
+
+function topicVisualStyle(topic: string) {
+  return { '--mqtt-topic-color': mqttTopicVisual(topic).color } as CSSProperties
 }
 
 function payloadSnippet(payload: string) {
@@ -786,7 +1108,8 @@ function templateTopicSummary(template: MqttPublishTemplate) {
   return template.title.trim() === template.topic.trim() ? '' : template.topic
 }
 
-function directionLabel(message: MqttMessageRecord | MqttPublishTemplate) {
+function directionLabel(message: MqttPreviewRecord) {
+  if ('source' in message) return 'DRAFT'
   if ('direction' in message) {
     if (message.direction === 'incoming') return 'IN'
     if (message.direction === 'outgoing') return 'OUT'
@@ -795,7 +1118,18 @@ function directionLabel(message: MqttMessageRecord | MqttPublishTemplate) {
   return 'TPL'
 }
 
-function directionIconName(message: MqttMessageRecord | MqttPublishTemplate) {
+function directionAccessibleLabel(message: MqttPreviewRecord) {
+  if ('source' in message) return '草稿'
+  if ('direction' in message) {
+    if (message.direction === 'incoming') return '接收消息'
+    if (message.direction === 'outgoing') return '发送消息'
+    return '事件消息'
+  }
+  return '收藏消息'
+}
+
+function directionIconName(message: MqttPreviewRecord) {
+  if ('source' in message) return 'draft'
   if ('direction' in message) {
     if (message.direction === 'incoming') return 'in'
     if (message.direction === 'outgoing') return 'out'
@@ -803,12 +1137,18 @@ function directionIconName(message: MqttMessageRecord | MqttPublishTemplate) {
   return 'all'
 }
 
-function recordTime(record: MqttMessageRecord | MqttPublishTemplate) {
-  return 'timestamp' in record ? record.timestamp : record.updatedAt
+function recordTime(record: MqttPreviewRecord) {
+  if ('timestamp' in record) return record.timestamp
+  if ('source' in record) return record.updatedAt
+  return mqttPublishTemplateOperationTime(record)
 }
 
 function logConfigName(log: AppRuntimeSnapshot['mqttLogs'][number]) {
   return props.snapshot.state.mqtt.configs.find((config) => config.id === log.connectionId)?.name || '未关联连接'
+}
+
+function padDateTimePart(value: number) {
+  return String(value).padStart(2, '0')
 }
 
 function formatTime(value: number) {
@@ -817,6 +1157,28 @@ function formatTime(value: number) {
 
 function formatDateTime(value: number) {
   return value ? new Date(value).toLocaleString() : ''
+}
+
+function formatCompactDateTime(value: number) {
+  if (!value) return { date: '', time: '' }
+  const date = new Date(value)
+  const monthDay = [date.getMonth() + 1, date.getDate()].map(padDateTimePart).join('')
+  const time = [date.getHours(), date.getMinutes(), date.getSeconds()].map(padDateTimePart).join('')
+  return { date: monthDay, time }
+}
+
+function formatPublishDraftHistoryTime(value: number) {
+  return formatDateTime(value)
+}
+
+function messageHoverTitle(message: MqttMessageRecord) {
+  const flags = [`QoS ${message.qos}`]
+  if (message.retain) flags.push('retain')
+  return [
+    message.topic || '(empty topic)',
+    flags.join(' · '),
+    formatDateTime(message.timestamp)
+  ].filter(Boolean).join('\n')
 }
 
 function updateProtocol(value: 'ws' | 'wss') {
@@ -883,15 +1245,52 @@ function syncPreviewScroll() {
   }
 }
 
-function previewTargetValue(kind: 'message' | 'publish-template', id: string) {
+function handlePreviewWheel(event: WheelEvent) {
+  const element = previewPayloadRef.value
+  if (!element || !props.snapshot.mqttPreview.open) return
+  clearPreviewCloseTimer()
+  const rawDelta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX
+  const wheelDelta = event.deltaMode === 1
+    ? rawDelta * 16
+    : event.deltaMode === 2
+      ? rawDelta * element.clientHeight
+      : rawDelta
+  const scrollTop = clampPreviewPayloadScroll(element.scrollTop + wheelDelta)
+  if (Math.abs(element.scrollTop - scrollTop) > 0.5) element.scrollTop = scrollTop
+  if (Math.abs(props.snapshot.mqttPreview.scrollTop - scrollTop) > 0.5) {
+    emit('dispatch', 'mqtt.preview.scroll.set', { scrollTop })
+  }
+}
+
+function previewTargetValue(kind: MqttPreviewTarget['kind'], id: string) {
   return `${kind}:${id}`
 }
 
-function findPreviewTarget(kind: 'message' | 'publish-template' | null, id: string | null): HTMLElement | null {
+function findPreviewTarget(kind: MqttPreviewTarget['kind'] | null, id: string | null): HTMLElement | null {
   if (!kind || !id) return null
   const target = previewTargetValue(kind, id)
   return Array.from(document.querySelectorAll<HTMLElement>('[data-mqtt-preview-target]'))
     .find((element) => element.dataset.mqttPreviewTarget === target) || null
+}
+
+function previewTargetFromElement(element: EventTarget | null): MqttPreviewTarget | null {
+  const target = element instanceof HTMLElement
+    ? element.closest<HTMLElement>('[data-mqtt-preview-target]')?.dataset.mqttPreviewTarget || ''
+    : ''
+  const separatorIndex = target.indexOf(':')
+  if (separatorIndex <= 0) return null
+  const kind = target.slice(0, separatorIndex)
+  const id = target.slice(separatorIndex + 1)
+  if ((kind === 'message' || kind === 'publish-template' || kind === 'publish-draft-history') && id) return { kind, id }
+  return null
+}
+
+function samePreviewTarget(left: MqttPreviewTarget | null, right: MqttPreviewTarget | null) {
+  return Boolean(left && right && left.kind === right.kind && left.id === right.id)
+}
+
+function targetInsidePublishDraftHistoryPopover(element: EventTarget | null) {
+  return element instanceof HTMLElement && Boolean(element.closest('.mqtt-publish-draft-popover'))
 }
 
 function updatePreviewPosition(anchor?: HTMLElement | null) {
@@ -925,15 +1324,33 @@ function clearPreviewCloseTimer() {
   previewCloseTimer = null
 }
 
-function schedulePreview(kind: 'message' | 'publish-template', id: string, event?: MouseEvent) {
+function openPreviewForTarget(target: MqttPreviewTarget, source: 'hover' | 'shift', anchor?: HTMLElement | null) {
+  if (source === 'shift') {
+    clearPreviewTimer()
+    clearPreviewCloseTimer()
+  }
+  updatePreviewPosition(anchor || findPreviewTarget(target.kind, target.id))
+  const args = source === 'shift'
+    ? { ...commandArgs(target.kind, target.id), source: 'shift' }
+    : { ...commandArgs(target.kind, target.id), source: 'hover' }
+  emit('dispatch', 'mqtt.preview.open', args)
+}
+
+function schedulePreview(kind: MqttPreviewTarget['kind'], id: string, event?: MouseEvent) {
   clearPreviewTimer()
   clearPreviewCloseTimer()
+  const target = { kind, id }
+  hoverPreviewTarget.value = target
+  const anchor = event?.currentTarget instanceof HTMLElement ? event.currentTarget : findPreviewTarget(kind, id)
+  if (props.shiftPreview) {
+    if (!hoverPreviewSuspendedByKeyboard.value) openShiftPreviewForTarget(target, anchor)
+    return
+  }
+  if (kind === 'publish-draft-history') return
   if (props.snapshot.mqttConfigDraft || props.snapshot.mqttSubscriptionDraft || props.snapshot.mqttFavoriteDraft) return
   if (!props.snapshot.toolPreviewPrefs.hoverPreviewEnabled) return
-  const anchor = event?.currentTarget instanceof HTMLElement ? event.currentTarget : findPreviewTarget(kind, id)
   previewTimer = window.setTimeout(() => {
-    updatePreviewPosition(anchor)
-    emit('dispatch', 'mqtt.preview.open', { ...commandArgs(kind, id), source: 'hover' })
+    openPreviewForTarget(target, 'hover', anchor)
   }, props.snapshot.toolPreviewPrefs.hoverPreviewDelayMs)
 }
 
@@ -952,32 +1369,129 @@ function closeHoverPreview() {
 function selectedPreviewTarget() {
   const selected = props.snapshot.mqttSelectedRecord
   if (!selected || (selected.kind !== 'message' && selected.kind !== 'publish-template')) return null
-  return selected
+  return { kind: selected.kind, id: selected.id }
 }
 
-watch(() => [
-  props.shiftPreview ? '1' : '0',
-  props.snapshot.mqttSelectedRecord?.kind || '',
-  props.snapshot.mqttSelectedRecord?.id || ''
-].join(':'), () => {
-  const target = selectedPreviewTarget()
+function activePublishDraftHistoryPreviewTarget(): MqttPreviewTarget | null {
+  if (!props.snapshot.mqttPublishDraftHistoryOpen) return null
+  const row = props.snapshot.mqttPublishDraftHistoryRows[props.snapshot.mqttPublishDraftHistoryActiveIndex]
+  return row ? { kind: 'publish-draft-history', id: row.id } : null
+}
+
+function activeShiftPreviewTarget() {
+  const draftTarget = activePublishDraftHistoryPreviewTarget()
+  if (draftTarget) return draftTarget
+  return !hoverPreviewSuspendedByKeyboard.value && hoverPreviewTarget.value
+    ? hoverPreviewTarget.value
+    : selectedPreviewTarget()
+}
+
+function openShiftPreviewForTarget(target: MqttPreviewTarget | null = activeShiftPreviewTarget(), anchor?: HTMLElement | null) {
   if (!props.shiftPreview || !target) {
     if (props.snapshot.mqttPreview.source === 'shift') emit('dispatch', 'mqtt.preview.close')
-    return
+    return false
   }
-  if (props.snapshot.mqttConfigDraft || props.snapshot.mqttSubscriptionDraft || props.snapshot.mqttFavoriteDraft) return
+  const previewNeedsShiftSource = props.snapshot.mqttPreview.source !== 'shift'
   if (
     props.snapshot.mqttPreview.open &&
-    props.snapshot.mqttPreview.source !== 'shift' &&
+    !previewNeedsShiftSource &&
     props.snapshot.mqttPreview.targetKind === target.kind &&
     props.snapshot.mqttPreview.targetId === target.id
   ) {
     updatePreviewPosition(findPreviewTarget(target.kind, target.id))
+    return true
+  }
+  openPreviewForTarget(target, 'shift', anchor)
+  return true
+}
+
+function handlePreviewPointerMove(event: MouseEvent) {
+  const position = { x: event.clientX, y: event.clientY }
+  const moved = lastPreviewPointerPosition.value.x !== position.x || lastPreviewPointerPosition.value.y !== position.y
+  lastPreviewPointerPosition.value = position
+  if (!moved) return
+  hoverPreviewSuspendedByKeyboard.value = false
+  const target = previewTargetFromElement(event.target)
+  if (targetInsidePublishDraftHistoryPopover(event.target)) {
+    clearPreviewTimer()
+    if (target) {
+      hoverPreviewTarget.value = target
+      if (props.shiftPreview) openShiftPreviewForTarget(target)
+      return
+    }
+    hoverPreviewTarget.value = null
+    if (props.snapshot.mqttPreview.source === 'hover') emit('dispatch', 'mqtt.preview.close')
+    if (props.shiftPreview) openShiftPreviewForTarget(activePublishDraftHistoryPreviewTarget())
+    return
+  }
+  if (target) {
+    hoverPreviewTarget.value = target
+    if (props.shiftPreview) openShiftPreviewForTarget(target)
+  }
+}
+
+function enterPublishDraftHistoryPopover() {
+  clearPreviewTimer()
+  clearPreviewCloseTimer()
+  if (props.snapshot.mqttPreview.source === 'hover') emit('dispatch', 'mqtt.preview.close')
+}
+
+function handlePublishDraftHistoryPointerMove(event: MouseEvent) {
+  clearPreviewTimer()
+  clearPreviewCloseTimer()
+  hoverPreviewSuspendedByKeyboard.value = false
+  const target = previewTargetFromElement(event.target)
+  if (target?.kind === 'publish-draft-history') {
+    hoverPreviewTarget.value = target
+    if (props.shiftPreview) openShiftPreviewForTarget(target)
+    return
+  }
+  hoverPreviewTarget.value = null
+  if (props.snapshot.mqttPreview.source === 'hover') emit('dispatch', 'mqtt.preview.close')
+  if (props.shiftPreview) openShiftPreviewForTarget(activePublishDraftHistoryPreviewTarget())
+}
+
+function handlePublishDraftHistoryOutsidePointerdown(event: PointerEvent) {
+  if (!props.snapshot.mqttPublishDraftHistoryOpen || props.snapshot.mqttPublishDraftHistoryEditDraft) return
+  const target = event.target instanceof HTMLElement ? event.target : null
+  if (target && target.closest('.mqtt-publish-draft-anchor')) return
+  emit('dispatch', 'mqtt.publish.draft.close')
+}
+
+watch(() => props.shiftPreview ? '1' : '0', () => {
+  if (!props.shiftPreview) {
+    hoverPreviewSuspendedByKeyboard.value = false
+    if (props.snapshot.mqttPreview.source === 'shift') emit('dispatch', 'mqtt.preview.close')
     return
   }
   void nextTick(() => {
-    updatePreviewPosition(findPreviewTarget(target.kind, target.id))
-    emit('dispatch', 'mqtt.preview.open', { ...commandArgs(target.kind, target.id), source: 'shift' })
+    openShiftPreviewForTarget()
+  })
+})
+
+watch(() => [
+  props.snapshot.mqttSelectedRecord?.kind || '',
+  props.snapshot.mqttSelectedRecord?.id || ''
+].join(':'), () => {
+  if (!props.shiftPreview) return
+  const target = selectedPreviewTarget()
+  if (target && hoverPreviewTarget.value && !samePreviewTarget(target, hoverPreviewTarget.value)) {
+    hoverPreviewSuspendedByKeyboard.value = true
+  }
+  void nextTick(() => {
+    openShiftPreviewForTarget(target || activeShiftPreviewTarget())
+  })
+})
+
+watch(() => [
+  props.snapshot.mqttPublishDraftHistoryOpen ? '1' : '0',
+  props.snapshot.mqttPublishDraftHistoryActiveIndex,
+  props.snapshot.mqttPublishDraftHistoryRows.map((row) => row.id).join(',')
+].join(':'), () => {
+  if (!props.shiftPreview || !props.snapshot.mqttPublishDraftHistoryOpen) return
+  hoverPreviewSuspendedByKeyboard.value = true
+  void nextTick(() => {
+    openShiftPreviewForTarget(activePublishDraftHistoryPreviewTarget())
   })
 })
 
@@ -1054,6 +1568,7 @@ watch(() => [
   props.snapshot.mqttPanelOpen,
   props.snapshot.mqttSubscriptionPanelOpen,
   props.snapshot.mqttPublishRecordsOpen,
+  props.snapshot.mqttPublishDraftHistoryOpen,
   props.snapshot.mqttWorkspaceLayout,
   props.snapshot.mqttLayoutPrefs.stackReceiveRatio,
   props.snapshot.mqttLayoutPrefs.splitReceiveRatio,
@@ -1063,6 +1578,7 @@ watch(() => [
   props.snapshot.mqttMessageRows.length,
   props.snapshot.mqttPublishTemplateRows.length,
   props.snapshot.mqttPublishHistoryRows.length,
+  props.snapshot.mqttPublishDraftHistoryRows.length,
   props.snapshot.mqttSelectedSubscriptionTopics.length,
   Boolean(props.snapshot.mqttConfigDraft),
   Boolean(props.snapshot.mqttSubscriptionDraft),
@@ -1097,6 +1613,7 @@ onMounted(() => {
   window.addEventListener('scroll', handlePreviewViewportChange, true)
   window.addEventListener('resize', handleShortcutHintViewportChange)
   window.addEventListener('scroll', handleShortcutHintViewportChange, true)
+  document.addEventListener('pointerdown', handlePublishDraftHistoryOutsidePointerdown, true)
 })
 
 onUnmounted(() => {
@@ -1107,6 +1624,7 @@ onUnmounted(() => {
   window.removeEventListener('scroll', handlePreviewViewportChange, true)
   window.removeEventListener('resize', handleShortcutHintViewportChange)
   window.removeEventListener('scroll', handleShortcutHintViewportChange, true)
+  document.removeEventListener('pointerdown', handlePublishDraftHistoryOutsidePointerdown, true)
 })
 </script>
 
@@ -1127,12 +1645,13 @@ onUnmounted(() => {
       type="button"
       class="mqtt-panel-toggle mqtt-rail-trigger mqtt-rail-trigger-left"
       :title="`展开连接栏 ${commandLabel('mqtt.panel.toggle', 'c-s-w')}`"
+      aria-label="展开连接栏"
       @click="emit('dispatch', 'mqtt.panel.toggle')"
     >
       <span class="group-panel-toggle-icon" aria-hidden="true"></span>
     </button>
 
-    <aside v-if="props.snapshot.mqttPanelOpen" class="mqtt-connection-rail">
+    <aside v-if="props.snapshot.mqttPanelOpen" class="mqtt-connection-rail" tabindex="-1">
       <div class="mqtt-rail-head">
         <button
           type="button"
@@ -1147,7 +1666,6 @@ onUnmounted(() => {
           role="mqtt-search"
           placeholder="搜索连接、日志、消息"
           :shortcut-hint="ctrlCommandLabel('mqtt.search.focus')"
-          @focus="emit('dispatch', 'mqtt.search.focus')"
           @update:model-value="emit('search', $event)"
         />
         <button type="button" class="mqtt-icon-button add-folder-button" :title="commandTitle('新建连接', 'mqtt.config.create', 'c-n')" aria-label="新建连接" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.config.create')" @click="emit('dispatch', 'mqtt.config.create')">
@@ -1165,7 +1683,7 @@ onUnmounted(() => {
         >
           <header>
             <span>
-              <strong>{{ config.name }}</strong>
+              <strong class="mqtt-connection-address-title" :title="connectionEndpointTitle(config)">{{ config.name }}</strong>
               <small>{{ config.url || '未配置服务器地址' }}</small>
             </span>
             <em>{{ config.autoReconnect ? `重连 ${config.reconnectPeriodMs}ms` : '手动重连' }}</em>
@@ -1180,7 +1698,7 @@ onUnmounted(() => {
             <button type="button" class="mqtt-icon-button" :title="commandTitle('配置', 'mqtt.config.edit', 'f2')" aria-label="配置" @click.stop="focusConfigAndDispatch(config.id, 'mqtt.config.edit')">
               <MqttIcon name="edit" />
             </button>
-            <button type="button" class="mqtt-icon-button" :title="commandTitle('日志', 'mqtt.log.drawer.open', 'c-l')" aria-label="日志" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.log.drawer.open')" @click.stop="emit('focusConfig', config.id); openLog()">
+            <button type="button" class="mqtt-icon-button" :title="commandTitle('日志', 'mqtt.log.drawer.open')" aria-label="日志" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.log.drawer.open')" @click.stop="emit('focusConfig', config.id); openLog()">
               <MqttIcon name="log" />
             </button>
           </div>
@@ -1271,40 +1789,124 @@ onUnmounted(() => {
       </div>
     </aside>
 
-    <main class="mqtt-message-workspace" :class="{ 'mqtt-workspace-split': props.snapshot.mqttWorkspaceLayout === 'split' }">
+    <main class="mqtt-message-workspace" :class="{ 'mqtt-workspace-split': props.snapshot.mqttWorkspaceLayout === 'split' }" @mousemove.passive="handlePreviewPointerMove">
       <header class="mqtt-workspace-toolbar mqtt-command-bar">
         <span class="mqtt-connection-summary">
-          <span class="mqtt-status" :class="`mqtt-status-${props.snapshot.mqttConnectionStatus.state}`">
-            {{ statusLabel(props.snapshot.mqttConnectionStatus.state) }}
+          <span
+            class="mqtt-status-indicator"
+            :title="`${statusLabel(props.snapshot.mqttConnectionStatus.state)} · ${props.snapshot.mqttConnectionStatus.detail}`"
+            :aria-label="`连接状态 ${statusLabel(props.snapshot.mqttConnectionStatus.state)}`"
+          >
+            <span class="mqtt-status-rect" :class="`mqtt-status-${statusTone(props.snapshot.mqttConnectionStatus.state)}`"></span>
           </span>
           <span class="mqtt-workspace-title">
-            <strong>{{ activeConfig?.name || '未选择配置' }}</strong>
+            <span
+              v-if="activeMqttToolbarFilter && activeMqttToolbarFilter !== 'favorites'"
+              class="mqtt-workspace-filter-mark"
+              :class="`mqtt-workspace-filter-mark-${activeMqttInfoTone}`"
+              :title="directionFilterButtons.find((item) => item.id === activeMqttToolbarFilter)?.label || '全部'"
+              aria-hidden="true"
+            >
+              <MqttIcon :name="activeMqttInfoIcon" />
+            </span>
+            <strong class="mqtt-connection-address-title" :title="connectionEndpointTitle(activeConfig)">{{ activeConfig?.name || '未选择配置' }}</strong>
             <small>{{ props.snapshot.mqttConnectionStatus.detail }}</small>
-            <small class="mqtt-topic-filter-chip">topic: {{ activeSubscriptionLabel }}</small>
+            <span class="mqtt-topic-filter">
+              <button
+                type="button"
+                class="mqtt-topic-filter-button"
+                data-role="mqtt-topic-filter"
+                :class="{ active: props.snapshot.mqttTopicFilterOpen || props.snapshot.mqttActiveSubscriptionTopics.length }"
+                :title="commandTitle('topic 筛选', 'mqtt.topicFilter.focus', 'c-s-f')"
+                :aria-expanded="props.snapshot.mqttTopicFilterOpen"
+                :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.topicFilter.focus')"
+                @click="openTopicFilter"
+              >
+                {{ activeSubscriptionLabel }}
+              </button>
+              <div
+                v-if="props.snapshot.mqttTopicFilterOpen"
+                class="mqtt-topic-filter-menu"
+                data-role="mqtt-topic-filter"
+                tabindex="-1"
+              >
+                <input
+                  class="mqtt-topic-filter-search"
+                  data-role="mqtt-topic-filter"
+                  :value="props.snapshot.mqttTopicFilterQuery"
+                  placeholder="搜索别名/topic"
+                  autocomplete="off"
+                  @input="updateTopicFilterSearch(($event.target as HTMLInputElement).value)"
+                />
+                <button
+                  type="button"
+                  class="mqtt-topic-filter-clear"
+                  data-role="mqtt-topic-filter"
+                  @click="emit('dispatch', 'mqtt.subscription.select', { topic: '' }); emit('dispatch', 'mqtt.topicFilter.close')"
+                >
+                  全部 topic
+                </button>
+                <button
+                  v-for="option in props.snapshot.mqttTopicFilterOptions"
+                  :key="option.topic"
+                  type="button"
+                  class="mqtt-topic-filter-option"
+                  data-role="mqtt-topic-filter"
+                  :class="{ active: option.active, highlighted: option.highlighted }"
+                  :style="{ '--mqtt-topic-color': option.color }"
+                  :title="option.topic"
+                  @click="selectTopicFilter(option.topic)"
+                >
+                  <span>{{ option.label }}</span>
+                  <small>{{ option.topic }}</small>
+                </button>
+                <p v-if="!props.snapshot.mqttTopicFilterOptions.length" class="empty-note">暂无匹配 topic</p>
+              </div>
+            </span>
           </span>
         </span>
-        <span class="mqtt-filter-buttons" aria-label="收发筛选">
-          <button
-            v-for="item in directionFilterButtons"
-            :key="item.id"
-            type="button"
-            class="mqtt-filter-button mqtt-icon-button"
-            :class="{ active: props.snapshot.mqttReceiveFilter === item.id }"
-            :title="commandTitle(item.label, item.commandId)"
-            :aria-label="item.label"
-            :data-mqtt-shortcut-hint="shortcutHintAttr(item.commandId)"
-            @click="emit('dispatch', item.commandId)"
-          >
-            <component :is="iconComponent(item.icon)" class="mqtt-icon" aria-hidden="true" />
-            <small class="mqtt-stat-count">{{ item.count }} 条</small>
-          </button>
+        <span class="mqtt-record-toolbar-slot" :class="{ searching: showMqttToolbarSearch }">
+          <input
+            v-if="showMqttToolbarSearch"
+            class="mqtt-record-toolbar-search"
+            :data-role="activeToolbarSearchRole"
+            :value="activeToolbarSearchValue"
+            :placeholder="activeToolbarSearchPlaceholder"
+            :aria-label="activeToolbarSearchPlaceholder"
+            :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.search.focus')"
+            autocomplete="off"
+            @input="searchActiveRecordList(($event.target as HTMLInputElement).value)"
+            @blur="closeToolbarSearchIfEmpty"
+          />
+          <span v-else class="mqtt-filter-buttons mqtt-compact-filter-buttons" aria-label="收发筛选">
+            <button
+              v-for="item in directionFilterButtons"
+              :key="item.id"
+              type="button"
+              class="mqtt-filter-button mqtt-icon-button"
+              :class="[{ active: activeMqttToolbarFilter === item.id }, `mqtt-filter-button-${item.id}`]"
+              :title="commandTitle(item.label, item.commandId)"
+              :aria-label="`${item.label} ${item.count} 条`"
+              :aria-pressed="activeMqttToolbarFilter === item.id"
+              :data-mqtt-shortcut-hint="shortcutHintAttr(item.commandId)"
+              @click="emit('dispatch', item.commandId)"
+            >
+              <component :is="iconComponent(item.icon)" class="mqtt-icon" aria-hidden="true" />
+            </button>
+          </span>
         </span>
         <span class="mqtt-record-mode-buttons" aria-label="记录视图">
-          <button type="button" class="mqtt-filter-button mqtt-icon-button" :class="{ active: props.snapshot.activeMqttRecordList === 'templates' }" :title="commandTitle('收藏', 'mqtt.focus.templates', 'c-s-m')" aria-label="显示收藏" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.focus.templates')" @click="emit('dispatch', 'mqtt.focus.templates')">
+          <button
+            type="button"
+            class="mqtt-filter-button mqtt-icon-button"
+            :class="{ active: activeMqttToolbarFilter === 'favorites' }"
+            :title="commandTitle('收藏', 'mqtt.focus.templates', 'c-m')"
+            aria-label="显示收藏"
+            :aria-pressed="activeMqttToolbarFilter === 'favorites'"
+            :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.focus.templates')"
+            @click="emit('dispatch', 'mqtt.focus.templates')"
+          >
             <MqttIcon name="star" />
-          </button>
-          <button type="button" class="mqtt-filter-button mqtt-icon-button" :class="{ active: props.snapshot.activeMqttRecordList === 'history' }" :title="commandTitle('历史', 'mqtt.publish.records.toggle', 'c-h')" aria-label="显示历史" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.publish.records.toggle')" @click="emit('dispatch', 'mqtt.publish.records.toggle')">
-            <MqttIcon name="history" />
           </button>
           <button type="button" class="mqtt-filter-button mqtt-icon-button" :title="commandTitle('布局', 'mqtt.layout.toggle', 'c-s-s')" aria-label="切换布局" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.layout.toggle')" @click="emit('dispatch', 'mqtt.layout.toggle')">
             <MqttIcon name="layout" />
@@ -1342,141 +1944,203 @@ onUnmounted(() => {
             </button>
           </span>
         </header>
-        <div class="mqtt-config-grid">
-          <label>
-            名称
-            <input data-mqtt-field="name" data-role="mqtt-editor" :value="configForm.name" @input="updateConfigDraft({ name: ($event.target as HTMLInputElement).value })" />
-          </label>
-          <label>
-            Client ID
-            <input data-mqtt-field="clientId" data-role="mqtt-editor" :value="configForm.clientId" @input="updateConfigDraft({ clientId: ($event.target as HTMLInputElement).value })" />
-          </label>
-          <label class="mqtt-config-wide">
-            服务器地址
-            <span class="mqtt-endpoint-row">
-              <select data-mqtt-field="protocol" data-role="mqtt-editor" :value="configForm.protocol" @change="updateProtocol(($event.target as HTMLSelectElement).value === 'wss' ? 'wss' : 'ws')">
-                <option value="ws">ws://</option>
-                <option value="wss">wss://</option>
-              </select>
-              <input data-mqtt-field="host" data-role="mqtt-editor" :value="configForm.host" placeholder="ainongyun.net" @input="updateConfigDraft({ host: ($event.target as HTMLInputElement).value })" />
-            </span>
-          </label>
-          <label>
-            端口
-            <input data-mqtt-field="port" data-role="mqtt-editor" type="number" :value="configForm.port" placeholder="8083" @input="updateConfigDraft({ port: ($event.target as HTMLInputElement).value })" />
-          </label>
-          <label>
-            Path
-            <input data-mqtt-field="path" data-role="mqtt-editor" :value="configForm.path" placeholder="/" @input="updateConfigDraft({ path: ($event.target as HTMLInputElement).value })" />
-          </label>
-          <p class="mqtt-endpoint-preview mqtt-config-wide">
-            <span>当前连接地址</span>
-            <code>{{ endpointPreview || '未配置服务器地址' }}</code>
-          </p>
-          <label>
-            username
-            <input data-mqtt-field="username" data-role="mqtt-editor" :value="configForm.username" @input="updateConfigDraft({ username: ($event.target as HTMLInputElement).value })" />
-          </label>
-          <label>
-            本机暂存 password/token
-            <input data-mqtt-field="password" data-role="mqtt-editor" type="password" :value="configForm.password" @input="updateConfigDraft({ password: ($event.target as HTMLInputElement).value })" />
-          </label>
-          <label class="checkbox-line">
-            <input type="checkbox" :checked="configForm.ssl" @change="updateSsl(($event.target as HTMLInputElement).checked)" />
-            SSL/TLS
-          </label>
-          <label>
-            默认发布 topic
-            <input data-mqtt-field="publishTopic" data-role="mqtt-editor" :value="configForm.publishTopic" @input="updateConfigDraft({ publishTopic: ($event.target as HTMLInputElement).value })" />
-          </label>
-          <section class="mqtt-subscription-summary mqtt-config-wide">
-            <header>
-              <span>
-                <strong>订阅</strong>
-                <small>{{ configForm.subscriptionItems.length }} 条 · QoS {{ configForm.qos }}</small>
-              </span>
-              <button type="button" class="mqtt-icon-button" title="+ 添加订阅" aria-label="+ 添加订阅" @click="addConfigSubscriptionItem">
-                <MqttIcon name="add" />
-              </button>
-            </header>
-            <div class="mqtt-config-subscription-list">
-              <article
-                v-for="(item, index) in configForm.subscriptionItems"
-                :key="`${index}:${item.topic}:${item.alias}`"
-                class="mqtt-config-subscription-row"
-              >
-                <input
-                  data-role="mqtt-editor"
-                  :data-mqtt-config-subscription-index="index"
-                  data-mqtt-config-subscription-field="alias"
-                  :value="item.alias"
-                  placeholder="订阅别名"
-                  aria-label="订阅别名"
-                  @input="updateConfigSubscriptionItem(index, { alias: ($event.target as HTMLInputElement).value })"
-                />
-                <input
-                  data-role="mqtt-editor"
-                  data-mqtt-field="subscriptions"
-                  :data-mqtt-config-subscription-index="index"
-                  data-mqtt-config-subscription-field="topic"
-                  :value="item.topic"
-                  placeholder="plc/+/status"
-                  aria-label="订阅 topic"
-                  @input="updateConfigSubscriptionItem(index, { topic: ($event.target as HTMLInputElement).value })"
-                />
-                <span>QoS {{ configForm.qos }}</span>
-                <button type="button" class="mqtt-icon-button danger" title="删除订阅" aria-label="删除订阅" @click="removeConfigSubscriptionItem(index)">
-                  <MqttIcon name="delete" />
-                </button>
-              </article>
-              <p v-if="!configForm.subscriptionItems.length" class="empty-note">暂无订阅 topic，可在这里添加</p>
-            </div>
-          </section>
-          <label>
-            QoS
-            <select data-mqtt-field="qos" data-role="mqtt-editor" :value="String(configForm.qos)" @change="updateConfigDraft({ qos: qosFromInput(($event.target as HTMLSelectElement).value) })">
-              <option value="0">QoS 0</option>
-              <option value="1">QoS 1</option>
-              <option value="2">QoS 2</option>
-            </select>
-          </label>
-          <label class="checkbox-line">
-            <input type="checkbox" :checked="configForm.retain" @change="updateConfigDraft({ retain: ($event.target as HTMLInputElement).checked })" />
-            retain
-          </label>
-          <label class="checkbox-line">
-            <input type="checkbox" :checked="configForm.autoReconnect" @change="updateConfigDraft({ autoReconnect: ($event.target as HTMLInputElement).checked })" />
-            autoReconnect
-          </label>
-          <label>
-            reconnectPeriodMs
-            <input data-mqtt-field="connection" data-role="mqtt-editor" type="number" min="500" max="60000" :value="configForm.reconnectPeriodMs" @input="updateConfigDraft({ reconnectPeriodMs: Number(($event.target as HTMLInputElement).value) })" />
-          </label>
-          <label>
-            connectTimeoutMs
-            <input data-role="mqtt-editor" type="number" min="3000" max="60000" :value="configForm.connectTimeoutMs" @input="updateConfigDraft({ connectTimeoutMs: Number(($event.target as HTMLInputElement).value) })" />
-          </label>
-          <label>
-            keepaliveSec
-            <input data-role="mqtt-editor" type="number" min="0" max="300" :value="configForm.keepaliveSec" @input="updateConfigDraft({ keepaliveSec: Number(($event.target as HTMLInputElement).value) })" />
-          </label>
-          <label class="checkbox-line">
-            <input type="checkbox" :checked="configForm.clean" @change="updateConfigDraft({ clean: ($event.target as HTMLInputElement).checked })" />
-            clean
-          </label>
-          <label class="checkbox-line">
-            <input type="checkbox" :checked="configForm.reconnectOnConnackError" @change="updateConfigDraft({ reconnectOnConnackError: ($event.target as HTMLInputElement).checked })" />
-            reconnectOnConnackError
-          </label>
-          <label class="checkbox-line">
-            <input type="checkbox" :checked="configForm.resubscribeOnReconnect" @change="updateConfigDraft({ resubscribeOnReconnect: ($event.target as HTMLInputElement).checked })" />
-            resubscribeOnReconnect
-          </label>
-          <label class="checkbox-line" data-mqtt-field="storage">
-            <input type="checkbox" :checked="configForm.syncRecords" @change="updateConfigDraft({ syncRecords: ($event.target as HTMLInputElement).checked })" />
-            syncRecords
-          </label>
-        </div>
+                <div class="mqtt-config-grid">
+                  <label>
+                    名称
+                    <input data-mqtt-field="name" data-role="mqtt-editor" :value="configForm.name" @input="updateConfigDraft({ name: ($event.target as HTMLInputElement).value })" />
+                  </label>
+                  <label>
+                    Client ID
+                    <span class="mqtt-client-id-row">
+                      <input data-mqtt-field="clientId" data-role="mqtt-editor" :value="configForm.clientId" @input="updateConfigDraft({ clientId: ($event.target as HTMLInputElement).value })" />
+                      <button type="button" class="mqtt-icon-button" title="随机刷新 Client ID" aria-label="随机刷新 Client ID" @click="refreshConfigClientId">
+                        <MqttIcon name="refresh" />
+                      </button>
+                    </span>
+                  </label>
+                  <section class="mqtt-endpoint-compact-row mqtt-config-wide" aria-label="服务器连接地址">
+                    <label class="mqtt-protocol-field">
+                      协议
+                      <select data-mqtt-field="protocol" data-role="mqtt-editor" :value="configForm.protocol" @change="updateProtocol(($event.target as HTMLSelectElement).value === 'wss' ? 'wss' : 'ws')">
+                        <option value="ws">ws://</option>
+                        <option value="wss">wss://</option>
+                      </select>
+                    </label>
+                    <label class="mqtt-host-field">
+                      服务器地址
+                      <input data-mqtt-field="host" data-role="mqtt-editor" :value="configForm.host" placeholder="ainongyun.net" @input="updateConfigDraft({ host: ($event.target as HTMLInputElement).value })" />
+                    </label>
+                    <label class="mqtt-port-field">
+                      端口
+                      <input data-mqtt-field="port" data-role="mqtt-editor" type="number" :value="configForm.port" placeholder="8083" @input="updateConfigDraft({ port: ($event.target as HTMLInputElement).value })" />
+                    </label>
+                    <label class="mqtt-path-field">
+                      Path
+                      <input data-mqtt-field="path" data-role="mqtt-editor" :value="configForm.path" placeholder="/" @input="updateConfigDraft({ path: ($event.target as HTMLInputElement).value })" />
+                    </label>
+                  </section>
+                  <label>
+                    username
+                    <input data-mqtt-field="username" data-role="mqtt-editor" :value="configForm.username" @input="updateConfigDraft({ username: ($event.target as HTMLInputElement).value })" />
+                  </label>
+                  <label>
+                    本机暂存 password/token
+                    <input data-mqtt-field="password" data-role="mqtt-editor" type="password" :value="configForm.password" @input="updateConfigDraft({ password: ($event.target as HTMLInputElement).value })" />
+                  </label>
+                  <label class="checkbox-line">
+                    <input type="checkbox" :checked="configForm.ssl" @change="updateSsl(($event.target as HTMLInputElement).checked)" />
+                    SSL/TLS
+                  </label>
+                  <section class="mqtt-subscription-summary mqtt-config-wide">
+                    <header>
+                      <span>
+                        <strong>订阅</strong>
+                        <small>{{ configForm.subscriptionItems.length }} 条</small>
+                      </span>
+                      <button type="button" class="mqtt-icon-button" title="+ 添加订阅" aria-label="+ 添加订阅" @click="addConfigSubscriptionItem">
+                        <MqttIcon name="add" />
+                      </button>
+                    </header>
+                    <div class="mqtt-config-subscription-list">
+                      <article
+                        v-for="(item, index) in configForm.subscriptionItems"
+                        :key="`${index}:${item.topic}:${item.alias}:${item.color}`"
+                        class="mqtt-config-subscription-row"
+                      >
+                        <input
+                          data-role="mqtt-config-subscription-editor"
+                          :data-mqtt-config-subscription-index="index"
+                          data-mqtt-config-subscription-field="alias"
+                          :value="item.alias"
+                          placeholder="订阅别名"
+                          aria-label="订阅别名"
+                          @focus="emit('dispatch', 'mqtt.config.subscription.focus', { index, field: 'alias' })"
+                          @input="updateConfigSubscriptionItem(index, { alias: ($event.target as HTMLInputElement).value })"
+                        />
+                        <input
+                          data-role="mqtt-config-subscription-editor"
+                          data-mqtt-field="subscriptions"
+                          :data-mqtt-config-subscription-index="index"
+                          data-mqtt-config-subscription-field="topic"
+                          :value="item.topic"
+                          placeholder="plc/+/status"
+                          aria-label="订阅 topic"
+                          @focus="emit('dispatch', 'mqtt.config.subscription.focus', { index, field: 'topic' })"
+                          @input="updateConfigSubscriptionItem(index, { topic: ($event.target as HTMLInputElement).value })"
+                        />
+                        <span class="mqtt-topic-color-control" aria-label="订阅 topic 颜色">
+                          <button
+                            v-for="color in subscriptionColorPalette"
+                            :key="color"
+                            type="button"
+                            class="mqtt-topic-color-swatch"
+                            :class="{ active: normalizeMqttTopicColor(item.color, index).toLowerCase() === color.toLowerCase() }"
+                            :style="{ '--mqtt-topic-color': color }"
+                            :title="`使用 ${color}`"
+                            :aria-label="`使用 topic 颜色 ${color}`"
+                            @click="updateConfigSubscriptionItem(index, { color })"
+                          ></button>
+                          <input
+                            class="mqtt-topic-color-input"
+                            data-role="mqtt-config-subscription-editor"
+                            :data-mqtt-config-subscription-index="index"
+                            data-mqtt-config-subscription-field="color"
+                            :value="normalizeMqttTopicColor(item.color, index)"
+                            placeholder="#111111"
+                            aria-label="自定义 topic 颜色"
+                            @focus="emit('dispatch', 'mqtt.config.subscription.focus', { index, field: 'color' })"
+                            @input="updateConfigSubscriptionItem(index, { color: ($event.target as HTMLInputElement).value })"
+                          />
+                        </span>
+                        <button type="button" class="mqtt-icon-button danger" title="删除订阅" aria-label="删除订阅" @click="emit('dispatch', 'mqtt.config.subscription.deleteRow', { index, field: 'topic' })">
+                          <MqttIcon name="delete" />
+                        </button>
+                      </article>
+                      <p v-if="!configForm.subscriptionItems.length" class="empty-note">暂无订阅 topic，可在这里添加</p>
+                    </div>
+                  </section>
+                  <section class="mqtt-config-publish-summary mqtt-config-wide">
+                    <header>
+                      <span>
+                        <strong>默认发布</strong>
+                        <small>{{ configForm.publishTopics.filter((topic) => topic.trim()).length }} 个候选</small>
+                      </span>
+                      <button type="button" class="mqtt-icon-button" title="+ 添加发布 topic" aria-label="+ 添加发布 topic" @click="addConfigPublishTopic">
+                        <MqttIcon name="add" />
+                      </button>
+                    </header>
+                    <div class="mqtt-config-publish-list">
+                      <article
+                        v-for="(topic, index) in configForm.publishTopics"
+                        :key="`${index}:${topic}`"
+                        class="mqtt-config-publish-row"
+                      >
+                        <span class="mqtt-config-publish-default">{{ index === 0 ? '默认' : index + 1 }}</span>
+                        <input
+                          data-role="mqtt-config-publish-editor"
+                          :data-mqtt-field="index === 0 ? 'publishTopic' : undefined"
+                          :data-mqtt-config-publish-index="index"
+                          data-mqtt-config-publish-field="topic"
+                          :value="topic"
+                          placeholder="plc/czz060301/set"
+                          aria-label="发布 topic"
+                          @focus="emit('dispatch', 'mqtt.config.publish.focus', { index })"
+                          @input="updateConfigPublishTopic(index, ($event.target as HTMLInputElement).value)"
+                        />
+                        <button type="button" class="mqtt-icon-button danger" title="删除发布 topic" aria-label="删除发布 topic" @click="emit('dispatch', 'mqtt.config.publish.deleteRow', { index })">
+                          <MqttIcon name="delete" />
+                        </button>
+                      </article>
+                      <p v-if="!configForm.publishTopics.length" class="empty-note">暂无默认发布 topic，可在这里添加</p>
+                    </div>
+                  </section>
+                  <section class="mqtt-config-options-panel mqtt-config-wide" aria-label="连接选项">
+                    <label class="mqtt-config-qos-field">
+                      QoS
+                      <select data-mqtt-field="qos" data-role="mqtt-editor" :value="String(configForm.qos)" @change="updateConfigDraft({ qos: qosFromInput(($event.target as HTMLSelectElement).value) })">
+                        <option value="0">QoS 0</option>
+                        <option value="1">QoS 1</option>
+                        <option value="2">QoS 2</option>
+                      </select>
+                    </label>
+                    <label>
+                      reconnectPeriodMs
+                      <input data-mqtt-field="connection" data-role="mqtt-editor" type="number" min="500" max="60000" :value="configForm.reconnectPeriodMs" @input="updateConfigDraft({ reconnectPeriodMs: Number(($event.target as HTMLInputElement).value) })" />
+                    </label>
+                    <label>
+                      connectTimeoutMs
+                      <input data-role="mqtt-editor" type="number" min="3000" max="60000" :value="configForm.connectTimeoutMs" @input="updateConfigDraft({ connectTimeoutMs: Number(($event.target as HTMLInputElement).value) })" />
+                    </label>
+                    <label>
+                      keepaliveSec
+                      <input data-role="mqtt-editor" type="number" min="0" max="300" :value="configForm.keepaliveSec" @input="updateConfigDraft({ keepaliveSec: Number(($event.target as HTMLInputElement).value) })" />
+                    </label>
+                    <label class="checkbox-line">
+                      <input type="checkbox" :checked="configForm.retain" @change="updateConfigDraft({ retain: ($event.target as HTMLInputElement).checked })" />
+                      retain
+                    </label>
+                    <label class="checkbox-line">
+                      <input type="checkbox" :checked="configForm.autoReconnect" @change="updateConfigDraft({ autoReconnect: ($event.target as HTMLInputElement).checked })" />
+                      自动重连
+                    </label>
+                    <label class="checkbox-line">
+                      <input type="checkbox" :checked="configForm.clean" @change="updateConfigDraft({ clean: ($event.target as HTMLInputElement).checked })" />
+                      clean
+                    </label>
+                    <label class="checkbox-line">
+                      <input type="checkbox" :checked="configForm.reconnectOnConnackError" @change="updateConfigDraft({ reconnectOnConnackError: ($event.target as HTMLInputElement).checked })" />
+                      Connack 错误重连
+                    </label>
+                    <label class="checkbox-line">
+                      <input type="checkbox" :checked="configForm.resubscribeOnReconnect" @change="updateConfigDraft({ resubscribeOnReconnect: ($event.target as HTMLInputElement).checked })" />
+                      重连后重订阅
+                    </label>
+                    <label class="checkbox-line" data-mqtt-field="storage">
+                      <input type="checkbox" :checked="configForm.syncRecords" @change="updateConfigDraft({ syncRecords: ($event.target as HTMLInputElement).checked })" />
+                      本地归档
+                    </label>
+                  </section>
+                </div>
         </aside>
       </div>
 
@@ -1487,14 +2151,11 @@ onUnmounted(() => {
             class="mqtt-record-mode-panel"
             :list-id="activePublishRecordListId"
             :title="activeRecordListTitle"
-            :search="activeRecordListSearch"
             :rows="activeRecordListRows"
             :state="activeRecordListState"
             :selected-kind="activeRecordSelectedKind"
             :selected-id="props.snapshot.mqttSelectedRecord?.id || null"
-            :command-title="commandTitle"
-            :shortcut-hint-attr="shortcutHintAttr"
-            @search="(query) => searchPublishRecords(activePublishRecordListId, query)"
+            :topic-visual="mqttTopicVisual"
             @focus-row="(row) => focusPublishRecord(row, activePublishRecordListId)"
             @toggle-select="(row, range) => togglePublishRecord(row, activePublishRecordListId, range)"
             @apply="(row) => applyPublishRecord(row, activePublishRecordListId)"
@@ -1507,31 +2168,43 @@ onUnmounted(() => {
             @rename="(row, title) => renamePublishTemplate(row, title)"
             @delete-selected="deletePublishRecords(activePublishRecordListId)"
           />
-          <div v-else class="mqtt-message-list mqtt-message-stream" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.focus.messages')">
+          <div
+            v-else
+            class="mqtt-message-list mqtt-message-stream"
+            tabindex="-1"
+            :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.focus.messages')"
+            @click.self="emit('dispatch', 'mqtt.focus.messages')"
+          >
             <article
               v-for="message in props.snapshot.mqttMessageRows"
               :key="message.id"
               class="mqtt-message-row"
-              :class="{ focused: recordSelected('message', message.id), incoming: message.direction === 'incoming', outgoing: message.direction === 'outgoing' }"
+              :class="{ focused: recordSelected('message', message.id), selected: props.snapshot.mqttRecordListStates.messages.selectedIds.includes(message.id), incoming: message.direction === 'incoming', outgoing: message.direction === 'outgoing' }"
               :data-mqtt-preview-target="previewTargetValue('message', message.id)"
+              :style="topicVisualStyle(message.topic)"
               @click="selectRecord('message', message.id, 'messages')"
+              @dblclick.stop="emit('dispatch', 'mqtt.record.toggleSelect', { ...commandArgs('message', message.id, 'messages'), list: 'messages', range: ($event as MouseEvent).shiftKey })"
               @contextmenu.prevent="openMessageMenu(message, 'messages')"
               @mouseenter="schedulePreview('message', message.id, $event)"
               @mouseleave="closeHoverPreview"
             >
               <div class="mqtt-message-bubble" :class="message.direction === 'outgoing' ? 'mqtt-message-bubble-out' : 'mqtt-message-bubble-in'">
-                <span class="mqtt-message-direction" :class="`mqtt-message-direction-${directionLabel(message).toLowerCase()}`">
+                <span class="mqtt-message-direction" :class="`mqtt-message-direction-${directionLabel(message).toLowerCase()}`" :title="directionAccessibleLabel(message)" :aria-label="directionAccessibleLabel(message)">
                   <MqttIcon :name="directionIconName(message)" />
-                  <b>{{ directionLabel(message) }}</b>
-                  <small>{{ formatTime(message.timestamp) }}</small>
                 </span>
                 <span class="mqtt-message-route">
-                  <small v-if="messageAlias(message)" class="mqtt-topic-alias-badge">{{ messageAlias(message) }}</small>
-                  <strong>{{ message.topic || '(empty topic)' }}</strong>
-                  <small class="mqtt-topic-meta">{{ messageTitle(message) }}</small>
+                  <strong :title="messageHoverTitle(message)">{{ messageRouteLabel(message) }}</strong>
                 </span>
-                <span class="mqtt-message-flags">
-                  <small>QoS {{ message.qos }}</small>
+                <span class="mqtt-message-flags" :title="messageHoverTitle(message)" aria-label="消息元信息">
+                  <small
+                    v-for="timeParts in [formatCompactDateTime(message.timestamp)]"
+                    :key="`time:${message.id}`"
+                    class="mqtt-message-time-badge"
+                    :aria-label="formatDateTime(message.timestamp)"
+                  >
+                    <span class="mqtt-message-time-part mqtt-message-time-date">{{ timeParts.date }}</span>
+                    <span class="mqtt-message-time-part mqtt-message-time-clock">{{ timeParts.time }}</span>
+                  </small>
                   <small v-if="message.retain">retain</small>
                 </span>
                 <span class="mqtt-item-payload-snippet" :title="payloadSnippet(message.payload)">
@@ -1571,29 +2244,163 @@ onUnmounted(() => {
               <strong>发送</strong>
               <small>本机历史</small>
             </span>
-            <input data-role="mqtt-search" :value="publishDraft.topic || activeConfig?.publishTopic || ''" placeholder="发布 topic" @input="emit('updatePublishDraft', { topic: ($event.target as HTMLInputElement).value })" />
-            <select :value="String(publishDraft.qos)" @change="emit('updatePublishDraft', { qos: qosFromInput(($event.target as HTMLSelectElement).value) })">
-              <option value="0">QoS 0</option>
-              <option value="1">QoS 1</option>
-              <option value="2">QoS 2</option>
-            </select>
-            <label class="checkbox-line">
-              <input type="checkbox" :checked="publishDraft.retain" @change="emit('updatePublishDraft', { retain: ($event.target as HTMLInputElement).checked })" />
-              retain
-            </label>
+            <input
+              data-role="mqtt-publish-editor"
+              data-mqtt-publish-field="topic"
+              :value="publishDraft.topic || activeConfig?.publishTopic || ''"
+              placeholder="发布 topic"
+              @input="emit('updatePublishDraft', { topic: ($event.target as HTMLInputElement).value })"
+            />
+            <span class="mqtt-publish-options-anchor">
+              <button
+                type="button"
+                class="mqtt-icon-button mqtt-publish-options-button"
+                data-role="mqtt-publish-editor"
+                :title="commandTitle('发送选项', 'mqtt.publish.options.open', 'c-→')"
+                aria-label="发送选项"
+                :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.publish.options.open')"
+                @click="emit('dispatch', 'mqtt.publish.options.open')"
+              >
+                <MqttIcon name="more" />
+              </button>
+              <div
+                v-if="props.snapshot.mqttPublishOptionsOpen"
+                class="mqtt-publish-options-popover"
+                data-role="mqtt-publish-options"
+                tabindex="-1"
+              >
+                <button
+                  v-for="(option, index) in publishOptionRows"
+                  :key="option.id"
+                  type="button"
+                  class="mqtt-publish-option-row"
+                  data-role="mqtt-publish-options"
+                  :class="{ active: option.active, highlighted: props.snapshot.mqttPublishOptionsActiveIndex === index }"
+                  @click="selectPublishOption(option.id)"
+                >
+                  <span>{{ option.label }}</span>
+                  <b v-if="option.active">✓</b>
+                </button>
+              </div>
+            </span>
             <span class="mqtt-publish-actions" aria-label="发送操作">
               <button type="button" class="mqtt-icon-button" :title="commandTitle('发送 MQTT 消息', 'mqtt.publish.send', 'c-cr')" aria-label="发送 MQTT 消息" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.publish.send')" @click="emit('dispatch', 'mqtt.publish.send')">
                 <MqttIcon name="send" />
               </button>
-              <button type="button" class="mqtt-icon-button" title="保存模板" aria-label="保存模板" @click="emit('dispatch', 'mqtt.publish.template.save', { title: publishDraft.topic || '未命名模板' })">
-                <MqttIcon name="star" />
-              </button>
-              <button type="button" class="mqtt-icon-button" :title="commandTitle('发送记录', 'mqtt.publish.records.toggle', 'c-h')" aria-label="发送记录" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.publish.records.toggle')" @click="emit('dispatch', 'mqtt.publish.records.toggle')">
-                <MqttIcon name="history" />
-              </button>
+              <span class="mqtt-publish-draft-anchor">
+                <button
+                  type="button"
+                  class="mqtt-icon-button mqtt-publish-draft-button"
+                  data-role="mqtt-publish-editor"
+                  :title="commandTitle('发送草稿', 'mqtt.publish.draft.toggle', 'c-h')"
+                  aria-label="发送草稿"
+                  :aria-expanded="props.snapshot.mqttPublishDraftHistoryOpen"
+                  :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.publish.draft.toggle')"
+                  @click="emit('dispatch', 'mqtt.publish.draft.toggle')"
+                >
+                  <MqttIcon name="draft" />
+                </button>
+                <div
+                  v-if="props.snapshot.mqttPublishDraftHistoryOpen"
+                  class="mqtt-publish-draft-popover"
+                  data-role="mqtt-publish-draft"
+                  tabindex="-1"
+                  aria-label="发送草稿"
+                  @mouseenter="enterPublishDraftHistoryPopover"
+                  @mousemove.passive="handlePublishDraftHistoryPointerMove"
+                >
+                  <header class="mqtt-publish-draft-head">
+                    <span>
+                      <strong>草稿</strong>
+                      <small>{{ props.snapshot.mqttPublishDraftHistoryRows.length }} 条</small>
+                    </span>
+                    <span class="mqtt-publish-draft-actions">
+                      <button type="button" class="mqtt-icon-button" :title="commandTitle('保存当前草稿', 'mqtt.publish.draft.saveDraft', 'c-s-h')" aria-label="保存当前草稿" @click="emit('dispatch', 'mqtt.publish.draft.saveDraft')">
+                        <MqttIcon name="save" />
+                      </button>
+                      <button type="button" class="mqtt-icon-button danger" title="清空草稿" aria-label="清空草稿" @click="emit('dispatch', 'mqtt.publish.draft.clear')">
+                        <MqttIcon name="clear-all" />
+                      </button>
+                      <button type="button" class="mqtt-icon-button" title="关闭草稿" aria-label="关闭草稿" @click="emit('dispatch', 'mqtt.publish.draft.close')">
+                        <MqttIcon name="close" />
+                      </button>
+                    </span>
+                  </header>
+                  <div class="mqtt-publish-draft-list">
+                    <article
+                      v-for="(row, index) in props.snapshot.mqttPublishDraftHistoryRows"
+                      :key="row.id"
+                      class="mqtt-publish-draft-row"
+                      data-role="mqtt-publish-draft"
+                      :data-mqtt-preview-target="previewTargetValue('publish-draft-history', row.id)"
+                      :class="{ active: index === props.snapshot.mqttPublishDraftHistoryActiveIndex, selected: publishDraftHistorySelected(row) }"
+                      :title="`${row.topic}\n${row.payload}`"
+                      @mouseenter="previewPublishDraftHistory(row, $event)"
+                      @click="focusPublishDraftHistory(row)"
+                    >
+                      <button
+                        type="button"
+                        class="mqtt-publish-draft-check"
+                        :class="{ checked: publishDraftHistorySelected(row) }"
+                        :aria-pressed="publishDraftHistorySelected(row)"
+                        :title="commandTitle('多选草稿', 'mqtt.publish.draft.toggleSelect', 'space')"
+                        aria-label="多选草稿"
+                        @click.stop="togglePublishDraftHistory(row)"
+                      >
+                        <span aria-hidden="true">{{ publishDraftHistorySelected(row) ? '✓' : '' }}</span>
+                      </button>
+                      <span class="mqtt-publish-draft-main">
+                        <strong>{{ publishDraftHistoryTitle(row) }}</strong>
+                        <small>{{ row.topic }}</small>
+                        <code>{{ payloadSnippet(row.payload) }}</code>
+                      </span>
+                      <span class="mqtt-publish-draft-meta">
+                        <small>{{ publishDraftHistorySourceLabel(row) }}</small>
+                        <small>QoS {{ row.qos }}{{ row.retain ? ' · retain' : '' }}</small>
+                        <time :datetime="String(row.updatedAt)">{{ formatPublishDraftHistoryTime(row.updatedAt) }}</time>
+                      </span>
+                      <span class="mqtt-publish-draft-row-actions" aria-label="草稿操作">
+                        <button type="button" class="mqtt-icon-button" :title="commandTitle('详情草稿', 'mqtt.detail.open', 'c-←')" aria-label="详情草稿" @click.stop="openPublishDraftHistoryDetail(row)">
+                          <MqttIcon name="detail" />
+                        </button>
+                        <button type="button" class="mqtt-icon-button" :title="commandTitle('草稿操作', 'mqtt.drawer.open', 'c-→')" aria-label="草稿操作" @click.stop="openPublishDraftHistoryMenu(row)">
+                          <MqttIcon name="more" />
+                        </button>
+                        <button type="button" class="mqtt-icon-button" title="应用草稿" aria-label="应用草稿" @click.stop="applyPublishDraftHistory(row)">
+                          <MqttIcon name="apply" />
+                        </button>
+                        <button type="button" class="mqtt-icon-button" :title="commandTitle('发送草稿', 'mqtt.publish.draft.send', 'c-cr')" aria-label="发送草稿" @click.stop="sendPublishDraftHistory(row)">
+                          <MqttIcon name="send" />
+                        </button>
+                        <button type="button" class="mqtt-icon-button" title="收藏草稿" aria-label="收藏草稿" @click.stop="favoritePublishDraftHistory(row)">
+                          <MqttIcon name="star" />
+                        </button>
+                        <button type="button" class="mqtt-icon-button" :title="commandTitle('草稿别名', 'mqtt.publish.draft.rename', 'f2')" aria-label="草稿别名" @click.stop="renamePublishDraftHistory(row)">
+                          <MqttIcon name="edit" />
+                        </button>
+                        <button type="button" class="mqtt-icon-button" :title="commandTitle('完整编辑草稿', 'mqtt.publish.draft.edit', 's-f2')" aria-label="完整编辑草稿" @click.stop="editPublishDraftHistory(row)">
+                          <MqttIcon name="edit" />
+                        </button>
+                        <button type="button" class="mqtt-icon-button danger" title="删除草稿" aria-label="删除草稿" @click.stop="deletePublishDraftHistory(row)">
+                          <MqttIcon name="delete" />
+                        </button>
+                      </span>
+                    </article>
+                    <p v-if="!props.snapshot.mqttPublishDraftHistoryRows.length" class="empty-note">暂无发送草稿</p>
+                  </div>
+                </div>
+              </span>
             </span>
           </header>
-          <textarea class="mqtt-payload-input" data-role="mqtt-search" :value="publishDraft.payload" rows="8" placeholder="payload" @input="emit('updatePublishDraft', { payload: ($event.target as HTMLTextAreaElement).value })"></textarea>
+          <textarea
+            class="mqtt-payload-input"
+            data-role="mqtt-publish-editor"
+            data-mqtt-publish-field="payload"
+            :value="publishDraft.payload"
+            rows="8"
+            placeholder="payload"
+            @input="emit('updatePublishDraft', { payload: ($event.target as HTMLTextAreaElement).value })"
+          ></textarea>
 
         </section>
       </section>
@@ -1627,7 +2434,7 @@ onUnmounted(() => {
         </header>
         <div class="mqtt-subscription-editor-list">
           <article
-            v-for="item in props.snapshot.mqttSubscriptionDraft.items"
+            v-for="(item, index) in props.snapshot.mqttSubscriptionDraft.items"
             :key="item.id"
             class="mqtt-subscription-editor-row"
           >
@@ -1649,10 +2456,34 @@ onUnmounted(() => {
               @focus="focusSubscriptionEditorField(item.id, 'topic')"
               @input="updateSubscriptionEditorItem(item.id, { topic: ($event.target as HTMLInputElement).value })"
             />
+            <span class="mqtt-topic-color-control" aria-label="订阅 topic 颜色">
+              <button
+                v-for="color in subscriptionColorPalette"
+                :key="color"
+                type="button"
+                class="mqtt-topic-color-swatch"
+                :class="{ active: normalizeMqttTopicColor(item.color, index).toLowerCase() === color.toLowerCase() }"
+                :style="{ '--mqtt-topic-color': color }"
+                :title="`使用 ${color}`"
+                :aria-label="`使用 topic 颜色 ${color}`"
+                @click="updateSubscriptionEditorItem(item.id, { color })"
+              ></button>
+              <input
+                class="mqtt-topic-color-input"
+                data-role="mqtt-subscription-editor"
+                :data-mqtt-subscription-item-id="item.id"
+                data-mqtt-subscription-field="color"
+                :value="normalizeMqttTopicColor(item.color, index)"
+                placeholder="#111111"
+                aria-label="自定义 topic 颜色"
+                @focus="focusSubscriptionEditorField(item.id, 'color')"
+                @input="updateSubscriptionEditorItem(item.id, { color: ($event.target as HTMLInputElement).value })"
+              />
+            </span>
             <span>QoS {{ activeConfig?.qos ?? configForm.qos }}</span>
-            <button type="button" class="mqtt-icon-button danger" title="删除" aria-label="删除" @click="removeSubscriptionEditorItem(item.id)">
-              <MqttIcon name="delete" />
-            </button>
+	            <button type="button" class="mqtt-icon-button danger" title="删除" aria-label="删除" @click="emit('dispatch', 'mqtt.subscription.editor.deleteRow', { itemId: item.id })">
+	              <MqttIcon name="delete" />
+	            </button>
           </article>
           <p v-if="!props.snapshot.mqttSubscriptionDraft.items.length" class="empty-note">暂无订阅 topic</p>
         </div>
@@ -1660,38 +2491,78 @@ onUnmounted(() => {
     </div>
 
     <div
-      v-if="favoriteDraft"
-      class="modal-backdrop mqtt-favorite-modal"
+      v-if="props.snapshot.mqttPublishDraftHistoryEditDraft"
+      class="modal-backdrop mqtt-publish-draft-edit-modal"
       role="presentation"
-      data-role="mqtt-favorite-editor"
-      @click="emit('dispatch', 'mqtt.record.favorite.cancel')"
-      @keydown="handleFavoriteEditorKeydown"
+      data-role="mqtt-publish-draft-editor"
+      @click="emit('dispatch', 'mqtt.publish.draft.edit.cancel')"
+      @keydown="handlePublishDraftHistoryEditorKeydown"
     >
-      <section class="mqtt-favorite-editor" role="dialog" aria-modal="true" aria-label="收藏消息" data-role="mqtt-favorite-editor" @click.stop>
+      <section class="mqtt-record-editor mqtt-publish-draft-edit-card" role="dialog" aria-modal="true" aria-label="编辑发送草稿" data-role="mqtt-publish-draft-editor" @click.stop>
         <header>
           <span>
-            <strong>收藏消息</strong>
-            <small>保存为发送模板，可快速浏览和重发</small>
+            <strong>{{ props.snapshot.mqttPublishDraftHistoryEditDraft.mode === 'rename' ? '草稿别名' : '编辑草稿' }}</strong>
+            <small>{{ props.snapshot.mqttPublishDraftHistoryEditDraft.mode === 'rename' ? '别名 / 备注' : 'topic / payload' }}</small>
           </span>
           <span class="mqtt-editor-actions">
-            <button type="button" class="mqtt-icon-button" :title="commandTitle('取消', 'mqtt.record.favorite.cancel', 'esc')" aria-label="取消收藏" @click="emit('dispatch', 'mqtt.record.favorite.cancel')">
+            <button type="button" class="mqtt-icon-button" :title="commandTitle('取消', 'mqtt.publish.draft.edit.cancel', 'esc')" aria-label="取消草稿编辑" @click="emit('dispatch', 'mqtt.publish.draft.edit.cancel')">
               <MqttIcon name="close" />
             </button>
-            <button type="button" class="mqtt-icon-button" :title="commandTitle('保存收藏', 'mqtt.record.favorite.save', 'c-s')" aria-label="保存收藏" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.record.favorite.save')" @click="emit('dispatch', 'mqtt.record.favorite.save')">
+            <button type="button" class="mqtt-icon-button" :title="commandTitle('保存草稿', 'mqtt.publish.draft.edit.save', 'c-s')" aria-label="保存草稿编辑" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.publish.draft.edit.save')" @click="emit('dispatch', 'mqtt.publish.draft.edit.save')">
               <MqttIcon name="save" />
             </button>
           </span>
         </header>
-        <label>
-          别名
-          <input
-            data-role="mqtt-favorite-editor"
-            :value="favoriteDraft.title"
-            placeholder="用于快速重发的名称"
-            @focus="emit('updateFavoriteDraft', { activeField: 'title' })"
-            @input="emit('updateFavoriteDraft', { title: ($event.target as HTMLInputElement).value })"
-          />
-        </label>
+        <template v-if="props.snapshot.mqttPublishDraftHistoryEditDraft.mode === 'rename'">
+          <label>
+            别名
+            <input
+              data-role="mqtt-publish-draft-editor"
+              data-mqtt-publish-draft-field="title"
+              :value="props.snapshot.mqttPublishDraftHistoryEditDraft.title"
+              placeholder="草稿别名"
+              @focus="updatePublishDraftHistoryEditDraft({ activeField: 'title' })"
+              @input="updatePublishDraftHistoryEditDraft({ title: ($event.target as HTMLInputElement).value })"
+            />
+          </label>
+          <label>
+            备注
+            <textarea
+              data-role="mqtt-publish-draft-editor"
+              data-mqtt-publish-draft-field="note"
+              :value="props.snapshot.mqttPublishDraftHistoryEditDraft.note"
+              rows="4"
+              placeholder="草稿备注"
+              @focus="updatePublishDraftHistoryEditDraft({ activeField: 'note' })"
+              @input="updatePublishDraftHistoryEditDraft({ note: ($event.target as HTMLTextAreaElement).value })"
+            ></textarea>
+          </label>
+        </template>
+        <template v-else>
+          <label>
+            topic
+            <input
+              data-role="mqtt-publish-draft-editor"
+              data-mqtt-publish-draft-field="topic"
+              :value="props.snapshot.mqttPublishDraftHistoryEditDraft.topic"
+              placeholder="topic"
+              @focus="updatePublishDraftHistoryEditDraft({ activeField: 'topic' })"
+              @input="updatePublishDraftHistoryEditDraft({ topic: ($event.target as HTMLInputElement).value })"
+            />
+          </label>
+          <label>
+            payload
+            <textarea
+              data-role="mqtt-publish-draft-editor"
+              data-mqtt-publish-draft-field="payload"
+              :value="props.snapshot.mqttPublishDraftHistoryEditDraft.payload"
+              rows="9"
+              placeholder="payload"
+              @focus="updatePublishDraftHistoryEditDraft({ activeField: 'payload' })"
+              @input="updatePublishDraftHistoryEditDraft({ payload: ($event.target as HTMLTextAreaElement).value })"
+            ></textarea>
+          </label>
+        </template>
       </section>
     </div>
 
@@ -1875,16 +2746,16 @@ onUnmounted(() => {
             <dt>retain</dt>
             <dd>{{ detailRecord.retain ? 'true' : 'false' }}</dd>
             <dt>time</dt>
-            <dd>{{ 'timestamp' in detailRecord ? formatDateTime(detailRecord.timestamp) : formatDateTime(detailRecord.updatedAt) }}</dd>
+            <dd>{{ formatDateTime(recordTime(detailRecord)) }}</dd>
           </dl>
           <div class="mqtt-detail-actions">
-            <button type="button" class="mqtt-icon-button" :title="commandTitle('预览', 'mqtt.preview.open', 'c-i')" aria-label="预览详情记录" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.preview.open')" @click="emit('dispatch', 'mqtt.preview.open', { ...commandArgs(detailTarget?.kind === 'publish-template' ? 'publish-template' : 'message', detailRecord.id), source: 'keyboard' })">
+            <button v-if="detailTarget?.kind !== 'publish-draft-history'" type="button" class="mqtt-icon-button" :title="commandTitle('预览', 'mqtt.preview.open', 'c-i')" aria-label="预览详情记录" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.preview.open')" @click="emit('dispatch', 'mqtt.preview.open', { ...detailRecordCommandArgs(), source: 'keyboard' })">
               <MqttIcon name="detail" />
             </button>
-            <button type="button" class="mqtt-icon-button" title="复制 topic" aria-label="复制 topic" @click="emit('dispatch', 'mqtt.record.copyTopic', commandArgs(detailTarget?.kind === 'publish-template' ? 'publish-template' : 'message', detailRecord.id))">
+            <button type="button" class="mqtt-icon-button" title="复制 topic" aria-label="复制 topic" @click="emit('dispatch', 'mqtt.record.copyTopic', detailRecordCommandArgs())">
               <MqttIcon name="copy-topic" />
             </button>
-            <button type="button" class="mqtt-icon-button" title="复制 payload" aria-label="复制 payload" @click="emit('dispatch', 'mqtt.record.copyPayload', commandArgs(detailTarget?.kind === 'publish-template' ? 'publish-template' : 'message', detailRecord.id))">
+            <button type="button" class="mqtt-icon-button" title="复制 payload" aria-label="复制 payload" @click="emit('dispatch', 'mqtt.record.copyPayload', detailRecordCommandArgs())">
               <MqttIcon name="copy-payload" />
             </button>
           </div>
@@ -1965,11 +2836,11 @@ onUnmounted(() => {
       :aria-label="commandTitle('MQTT 消息预览', 'mqtt.preview.open', 'c-i')"
       @mouseenter="keepHoverPreview"
       @mouseleave="closeHoverPreview"
+      @wheel.prevent.stop="handlePreviewWheel"
     >
       <header>
-        <span class="mqtt-preview-direction" :class="`mqtt-preview-direction-${directionLabel(previewRecord).toLowerCase()}`">
+        <span class="mqtt-preview-direction" :class="`mqtt-preview-direction-${directionLabel(previewRecord).toLowerCase()}`" :title="directionAccessibleLabel(previewRecord)" :aria-label="directionAccessibleLabel(previewRecord)">
           <component :is="previewDirectionIcon" class="mqtt-icon" aria-hidden="true" />
-          <b>{{ directionLabel(previewRecord) }}</b>
         </span>
         <strong class="mqtt-preview-topic">{{ previewRecord.topic || '(empty topic)' }}</strong>
         <time class="mqtt-preview-time" :datetime="String(recordTime(previewRecord))">{{ formatDateTime(recordTime(previewRecord)) }}</time>

@@ -1,88 +1,77 @@
-# MQTT End-to-End SyncDoc
+# MQTT WebSocket Implementation Sync
 
 Tool: codex
 
-## Current Truth
+## Purpose
 
-- This document maps the current MQTT implementation from feature entry to UI, runtime, storage, and tests. Durable architecture memory remains in [vibe/knowledge/ARCHITECTURE.md](../../knowledge/ARCHITECTURE.md#L44).
-- MQTT is a first-class feature: it is registered and enabled by default in [src/runtime/feature/featureRegistry.ts](../../../src/runtime/feature/featureRegistry.ts#L17) and [src/runtime/feature/featureRegistry.ts](../../../src/runtime/feature/featureRegistry.ts#L25).
-- The uTools entry code `eypc-mqtt` routes to the MQTT tab when enabled in [src/runtime/feature/featureRouting.ts](../../../src/runtime/feature/featureRouting.ts#L35).
-- The shell lazy-loads the MQTT page in [src/App.vue](../../../src/App.vue#L17), mounts it through the MQTT slot in [src/App.vue](../../../src/App.vue#L166), and passes storage status to Settings in [src/App.vue](../../../src/App.vue#L224).
-- Initial app state owns normalized MQTT state in [src/domain/state.ts](../../../src/domain/state.ts#L249), and reload normalization keeps MQTT data valid in [src/domain/state.ts](../../../src/domain/state.ts#L291).
+This document maps the current MQTT workbench behavior from product requirement to module boundary and verification evidence. Current product contracts are indexed in [PRODUCT_REQUIREMENTS.md](../PRODUCT_REQUIREMENTS.md#L1); active task history is routed from [PROJECT_STATUS.md](../PROJECT_STATUS.md#L1).
 
-## Top-Down Module Map
+## Layer Map
 
 | Layer | Responsibility | Code mapping |
 | --- | --- | --- |
-| Feature shell | Feature registration, default enablement, entry routing, lazy page mount. | [featureRegistry.ts](../../../src/runtime/feature/featureRegistry.ts#L17), [featureRouting.ts](../../../src/runtime/feature/featureRouting.ts#L35), [App.vue](../../../src/App.vue#L17) |
-| State contracts | Main MQTT config state, archive shape, storage status, layout prefs. | [types.ts](../../../src/domain/types.ts#L46), [types.ts](../../../src/domain/types.ts#L55), [types.ts](../../../src/domain/types.ts#L143), [types.ts](../../../src/domain/types.ts#L150) |
-| Domain normalize | WebSocket URL parsing, config cleanup, subscription aliases, archive trimming, templates, connect options. | [mqtt.ts](../../../src/domain/mqtt.ts#L92), [mqtt.ts](../../../src/domain/mqtt.ts#L147), [mqtt.ts](../../../src/domain/mqtt.ts#L324), [mqtt.ts](../../../src/domain/mqtt.ts#L496) |
-| Runtime | Archive loading, drafts, connection lifecycle, actions, panes, drawers, preview, record selection. | [appRuntime.ts](../../../src/runtime/appRuntime.ts#L120), [appRuntime.ts](../../../src/runtime/appRuntime.ts#L591), [appRuntime.ts](../../../src/runtime/appRuntime.ts#L1275), [appRuntime.ts](../../../src/runtime/appRuntime.ts#L3962) |
-| Platform | Host bridge, SQLite-first archive, legacy fallback, local-only secrets, storage status. | [eypcPlatform.ts](../../../src/platform/eypcPlatform.ts#L32), [preload/index.js](../../../preload/index.js#L235), [preload/index.js](../../../preload/index.js#L362), [preload/index.js](../../../preload/index.js#L609) |
-| UI | Workbench grid, rails, config drawer, publish workspace, record lists, modals, drawers, preview, shortcut hints. | [MqttPage.vue](../../../src/pages/MqttPage.vue#L1105), [MqttPublishRecordList.vue](../../../src/components/MqttPublishRecordList.vue#L78), [app.css](../../../src/styles/app.css#L2482) |
-| Verification | Domain, runtime, keybinding, platform, and static UI behavior tests. | [mqtt.test.ts](../../../tests/domain/mqtt.test.ts#L28), [action.test.ts](../../../tests/runtime/action.test.ts#L1192), [mqttPage.test.ts](../../../tests/ui/mqttPage.test.ts#L5) |
+| Feature shell | Feature registration, entry routing, lazy MQTT page mount, and tab restore. | [featureRegistry.ts](../../../src/runtime/feature/featureRegistry.ts#L1), [featureRouting.ts](../../../src/runtime/feature/featureRouting.ts#L1), [App.vue](../../../src/App.vue#L1) |
+| State contracts | MQTT config state, view prefs, archive shape, storage status, layout prefs, and publish records. | [types.ts](../../../src/domain/types.ts#L1) |
+| Domain normalization | WebSocket endpoint parsing, config cleanup, topic colors, publish topics, archive trimming, draft history, and template operation time. | [mqtt.ts](../../../src/domain/mqtt.ts#L1) |
+| Runtime | Archive loading, focus state, connection lifecycle, record projections, publish/draft actions, drawers, previews, and shortcut context. | [appRuntime.ts](../../../src/runtime/appRuntime.ts#L1) |
+| Keybindings | Layered MQTT shortcuts, text-input allowlists, popover/editor ownership, and input role extraction. | [keybindingRuntime.ts](../../../src/runtime/keybinding/keybindingRuntime.ts#L1), [keyboardEvent.ts](../../../src/runtime/keyboardEvent.ts#L1) |
+| Platform | Host bridge, SQLite-first archive, legacy fallback, local-only secrets, storage status, and clipboard. | [eypcPlatform.ts](../../../src/platform/eypcPlatform.ts#L1), [preload/index.js](../../../preload/index.js#L1) |
+| UI | Compact MQTT workbench, record rows, config drawer, send-area draft popover, preview layer, and shortcut hints. | [MqttPage.vue](../../../src/pages/MqttPage.vue#L1), [MqttPublishRecordList.vue](../../../src/components/MqttPublishRecordList.vue#L1), [app.css](../../../src/styles/app.css#L1) |
 
-## State And Storage Contracts
+## State Contracts
 
-- `MqttConnectionConfig` is the persisted connection contract; it stores endpoint, auth username, subscriptions, aliases, publish defaults, MQTT options, `syncRecords`, and timestamps in [src/domain/types.ts](../../../src/domain/types.ts#L55). Passwords and tokens are intentionally absent.
-- `createMqttConnectionConfig` trims strings, removes duplicate subscriptions, prunes orphan aliases, and preserves `syncRecords` as a user privacy/sync preference in [src/domain/mqtt.ts](../../../src/domain/mqtt.ts#L147).
-- `MqttState` stores connection configs, active config id, and MQTT layout preferences in [src/domain/types.ts](../../../src/domain/types.ts#L79). The app-level normalizer calls `normalizeMqttState` in [src/domain/mqtt.ts](../../../src/domain/mqtt.ts#L178).
-- `MqttArchiveState` stores connection snapshots, sessions, messages, and publish templates in [src/domain/types.ts](../../../src/domain/types.ts#L143); archive normalization and retention are centralized in [src/domain/mqtt.ts](../../../src/domain/mqtt.ts#L324).
-- `MqttStorageStatus` reports SQLite availability, db path, fallback mode, legacy migration, and last error in [src/domain/types.ts](../../../src/domain/types.ts#L150). Runtime exposes the current status in snapshots through [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L4255).
-- Host storage prefers SQLite. The preload layer creates MQTT archive tables in [preload/index.js](../../../preload/index.js#L235), reads archive through [preload/index.js](../../../preload/index.js#L381), writes archive through [preload/index.js](../../../preload/index.js#L393), and exposes bridge methods through [preload/index.js](../../../preload/index.js#L609).
-- Legacy archive migration is additive: when SQLite is available, legacy `dbStorage` archive data is imported into SQLite without deleting the old value, matching the preload verification in [tests/platform/mqttSqlitePreload.test.ts](../../../tests/platform/mqttSqlitePreload.test.ts#L92).
-- Secrets are local-only. The platform bridge exposes `getMqttSecrets` and `setMqttSecrets` in [src/platform/eypcPlatform.ts](../../../src/platform/eypcPlatform.ts#L33), and preload exposes the same local secret bridge in [preload/index.js](../../../preload/index.js#L612).
-- `syncRecords=false` does not disable local durability: runtime still appends incoming/outgoing records through [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L1527) and publish appends outgoing records through [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L2235).
+- `MqttConnectionConfig` stores endpoint, client id, username, subscriptions, aliases, colors, publish defaults, MQTT flags, reconnect settings, and `syncRecords` in [types.ts](../../../src/domain/types.ts#L1). Passwords and tokens are intentionally absent.
+- `publishTopics: string[]` stores multiple default publish candidates. Normalization trims/dedupes values and mirrors the first valid value to `publishTopic` in [mqtt.ts](../../../src/domain/mqtt.ts#L1).
+- `MqttState.viewPrefs` persists the last information filter and per-config topic filters. Invalid remembered topics are pruned during MQTT state normalization.
+- `MqttArchiveState` stores connection snapshots, sessions/messages, publish templates, and publish draft history. Draft history is editor recovery/reuse data, not a send log.
+- `MqttPublishTemplate.operatedAt` is the operation-order timestamp for template rows; older archives fall back to `updatedAt` then `createdAt`.
+- Local secret storage remains separate under the platform/preload local-only bridge and is never written into archive JSON or SQLite mirrors.
 
-## Runtime Flow
+## Runtime Behavior
 
-- MQTT archive loads lazily when the MQTT tab becomes active in [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L591), then `ensureMqttArchiveLoaded` reads and normalizes platform archive state in [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L1275).
-- The runtime snapshot is the UI contract: it includes archive state, storage status, panes, searches, drafts, drawers, preview, subscription rows, record-list states, and logs from [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L71) through [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L106).
-- Config editing starts with parsed URL and local secret hydration in [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L1374). Saving config normalizes endpoint fields, persists local secrets separately, updates archive snapshots, and writes app state in [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L1470).
-- Connection lifecycle is isolated to MQTT runtime: connect dynamically loads MQTT client logic in [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L2163), subscribes configured topics, and appends incoming messages in [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L2198).
-- Subscription rows are projected from active config with alias, display name, unread, active, selected, and focused state in [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L644). Dedicated subscription editing updates only subscriptions and aliases through [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L764).
-- Publish templates and history are independent record lists: runtime derives template rows in [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L958), history rows in [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L967), and shared record-list focus/selection state in [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L1068).
-- Record mutations stay inside archive helpers: messages append through [src/domain/mqtt.ts](../../../src/domain/mqtt.ts#L361), message/session metadata changes through [src/domain/mqtt.ts](../../../src/domain/mqtt.ts#L382), and publish templates save through [src/domain/mqtt.ts](../../../src/domain/mqtt.ts#L442).
-- Preview and drawer layers are runtime-owned: drawer items are built from current selected record/context in [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L1961), preview commands are registered in [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L4033), and Escape unwinds MQTT top layers in [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L4584).
+- MQTT remains lazy: the page is lazy-loaded by [App.vue](../../../src/App.vue#L1), the archive is loaded after entering the enabled MQTT tab, and MQTT client code is dynamically imported only when connecting.
+- Runtime derives ordinary message rows, publish template rows, outgoing history rows, draft-history rows, current record list state, active focus target, drawer targets, preview state, storage status, and layout/view preferences from [appRuntime.ts](../../../src/runtime/appRuntime.ts#L1).
+- Ordinary message rows and outgoing history rows sort newest first by `timestamp`; draft history sorts by `updatedAt`; templates sort by `operatedAt`.
+- Applying a message/template/history/draft can archive the previous publish editor content when it is meaningful and different from the replacement. Manual `Ctrl+Shift+H` saves a draft without creating an outgoing message.
+- Draft-history row click only focuses. Applying requires the row apply button or `Enter`; `Ctrl+Enter` applies and sends the focused draft while keeping the popover open.
+- Runtime shortcut context treats an open draft-history popover or editor as the effective MQTT command layer before trusting DOM focus, preventing stale publish-editor focus from stealing draft-history commands.
+- `Escape` recovers top MQTT layers inward first: preview, draft-history editor/popover, publish options, topic dropdown, record editor/drawers, search/filter state, then page-level focus.
 
-## Keybinding And Input Ownership
+## Shortcut And Input Ownership
 
-- DOM `data-role` is normalized into runtime input roles before keybinding resolution; MQTT subscription editor and config editor roles are detected in [src/runtime/keyboardEvent.ts](../../../src/runtime/keyboardEvent.ts#L24) and [src/runtime/keyboardEvent.ts](../../../src/runtime/keyboardEvent.ts#L31).
-- MQTT layer priority gives editors, drawers, preview, search, and subscription list distinct ownership in [src/runtime/keybinding/keybindingRuntime.ts](../../../src/runtime/keybinding/keybindingRuntime.ts#L152).
-- Default MQTT shortcuts cover config save/cancel, subscription editor, record editor, publish, template/history focus, preview, drawer, and search in [src/runtime/keybinding/keybindingRuntime.ts](../../../src/runtime/keybinding/keybindingRuntime.ts#L326).
-- Text-editing reservations block lower-layer workbench shortcuts while allowing save/cancel/field-cycle commands in [src/runtime/keybinding/keybindingRuntime.ts](../../../src/runtime/keybinding/keybindingRuntime.ts#L722). Subscription-list ownership allows Space, Enter, Delete, and related list operations in [src/runtime/keybinding/keybindingRuntime.ts](../../../src/runtime/keybinding/keybindingRuntime.ts#L732).
-- Runtime action registration is the mutation boundary. Config, subscription, layout, record, publish, preview, drawer, search, and detail commands are registered from [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L3962) through [src/runtime/appRuntime.ts](../../../src/runtime/appRuntime.ts#L4053).
+- Current MQTT defaults: `Ctrl+1/2/3` for `全/收/发`, `Ctrl+M` for `藏`, `Ctrl+H` for draft history, `Ctrl+Shift+H` for manual draft save, `Ctrl+F` for current record search, `Ctrl+P` for publish topic, `Ctrl+Shift+F` for topic dropdown, `Ctrl+Shift+S` for layout, `Ctrl+ArrowLeft` for detail, and `Ctrl+ArrowRight` for actions/options.
+- Released defaults: `Ctrl+L`, `Ctrl+Shift+L`, and `Ctrl+Shift+M` do not map to MQTT draft/history commands.
+- `mqtt-publish-editor` keeps native arrows/Delete/Backspace while allowing command-owned save/send/draft/options/focus shortcuts.
+- `mqtt-publish-draft` owns draft-history list navigation, `Space`, `Enter`, `Ctrl+Enter`, `Ctrl+S`, `Ctrl+Left`, `Ctrl+Right`, `F2`, `Shift+F2`, `Ctrl+Delete`, `Ctrl+Backspace`, and `Escape`.
+- `mqtt-publish-draft-editor` owns `Ctrl+S`, `Ctrl+Enter`, `Tab`, `Shift+Tab`, and `Escape` for the alias/detail modal.
+- `mqtt-topic-filter` and `mqtt-publish-options` are transient layers with their own navigation and close behavior.
+- `mqtt-config-subscription-editor` and `mqtt-config-publish-editor` own same-field row movement and row deletion while plain text deletion remains native.
 
-## UI Surface Map
+## UI Surface
 
-- The MQTT page receives snapshot props and emits runtime events; it imports domain preview helpers, shortcut hint layout, and the publish record list in [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L1).
-- The main workbench is a compact grid with connection rail, subscription rail, and message workspace in [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L1105), styled from [src/styles/app.css](../../../src/styles/app.css#L2482).
-- Connection rail and config actions live in [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L1127). The right-side config drawer owns endpoint, password, subscriptions, QoS, reconnect, and `syncRecords` inputs in [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L1307).
-- Subscription rail keyboard/click ownership lives in [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L1197), while the dedicated subscription modal uses stable item ids and `data-role="mqtt-subscription-editor"` from [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L1588).
-- Workspace toolbar, receive filters, record modes, layout controls, and publish-history access live in [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L1266). Receive/send split layout and resizer are rendered in [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L1475).
-- Message stream rows expose preview, detail, and action drawer entry points in [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L1502). The shared template/history list is implemented by [src/components/MqttPublishRecordList.vue](../../../src/components/MqttPublishRecordList.vue#L78).
-- Favorite editor, record editor, log drawer, detail drawer, action drawer, and floating payload preview are rendered in [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L1649), [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L1685), [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L1783), [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L1843), [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L1913), and [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L1946).
-- Payload preview is tokenized as JSON or plain text without HTML injection in [src/domain/mqttPayloadPreview.ts](../../../src/domain/mqttPayloadPreview.ts#L19). Top-layer shortcut hints are positioned by [src/domain/shortcutHintLayout.ts](../../../src/domain/shortcutHintLayout.ts#L88) and rendered in [src/pages/MqttPage.vue](../../../src/pages/MqttPage.vue#L1977).
-- Settings shows storage mode, SQLite state, db path or error, and migration state through the storage maintenance panel in [src/pages/SettingsPage.vue](../../../src/pages/SettingsPage.vue#L981).
+- The MQTT page renders a compact workbench with connection rail, subscription rail, and message/publish workspace in [MqttPage.vue](../../../src/pages/MqttPage.vue#L1).
+- The top command bar owns connection status, topic filter dropdown, current-list search, `全/收/发/藏`, and layout controls. Template/history lists no longer carry their own header search.
+- Message/template/history rows share fixed-height row behavior and payload snippets. Topic visuals use subscription alias/color when available.
+- The config drawer header owns the assembled endpoint preview. Endpoint fields are compact, subscriptions include alias/topic/color, publish topic candidates are editable rows, and bottom MQTT flags live in a compact options panel.
+- The send toolbar owns the draft-history button/popover. The visible star/template-save button is removed; publish editor `Ctrl+S` remains the save-template command.
+- Pure Shift preview is an immediate readonly overlay for valid rows, independent of ordinary hover settings. `Ctrl/Command+Shift` suppresses Shift preview so `c-s-*` shortcuts remain clean.
 
-## Verification Matrix
+## Verification Evidence
 
-| Behavior | Tests |
+| Area | Evidence |
 | --- | --- |
-| Config normalization removes secrets, dedupes subscriptions, preserves aliases and `syncRecords`. | [tests/domain/mqtt.test.ts](../../../tests/domain/mqtt.test.ts#L28) |
-| Archive snapshots exclude secrets, message retention works, templates normalize/rename/delete/apply, topic filters match MQTT wildcards. | [tests/domain/mqtt.test.ts](../../../tests/domain/mqtt.test.ts#L171), [tests/domain/mqtt.test.ts](../../../tests/domain/mqtt.test.ts#L210), [tests/domain/mqtt.test.ts](../../../tests/domain/mqtt.test.ts#L250), [tests/domain/mqtt.test.ts](../../../tests/domain/mqtt.test.ts#L259) |
-| Runtime keeps message records durable even when `syncRecords` is disabled and keeps secrets out of archive writes. | [tests/runtime/action.test.ts](../../../tests/runtime/action.test.ts#L1192) |
-| Subscription filtering, deletion, dedicated editor draft, and inline config subscription editing match current runtime/UI behavior. | [tests/runtime/action.test.ts](../../../tests/runtime/action.test.ts#L1382), [tests/runtime/action.test.ts](../../../tests/runtime/action.test.ts#L1425), [tests/runtime/action.test.ts](../../../tests/runtime/action.test.ts#L1509), [tests/runtime/mqttConnectionLog.test.ts](../../../tests/runtime/mqttConnectionLog.test.ts#L275) |
-| Layout, log drawer, publish templates, record-list focus, preview, detail, drawer, search targets, delete recovery, and local-only secret reload behavior stay covered. | [tests/runtime/action.test.ts](../../../tests/runtime/action.test.ts#L1586), [tests/runtime/action.test.ts](../../../tests/runtime/action.test.ts#L1880), [tests/runtime/action.test.ts](../../../tests/runtime/action.test.ts#L1967), [tests/runtime/action.test.ts](../../../tests/runtime/action.test.ts#L2109) |
-| MQTT shortcut ownership and DOM role mapping cover subscription lists, editors, workbench panes, preview, and drawer layers. | [tests/runtime/keybinding.test.ts](../../../tests/runtime/keybinding.test.ts#L174), [tests/runtime/keybinding.test.ts](../../../tests/runtime/keybinding.test.ts#L201), [tests/runtime/keyboardEvent.test.ts](../../../tests/runtime/keyboardEvent.test.ts#L67) |
-| Platform fallback archive, local-only secrets, SQLite archive round-trip, and legacy migration are verified. | [tests/platform/eypcPlatform.test.ts](../../../tests/platform/eypcPlatform.test.ts#L44), [tests/platform/eypcPlatform.test.ts](../../../tests/platform/eypcPlatform.test.ts#L71), [tests/platform/mqttSqlitePreload.test.ts](../../../tests/platform/mqttSqlitePreload.test.ts#L67), [tests/platform/mqttSqlitePreload.test.ts](../../../tests/platform/mqttSqlitePreload.test.ts#L92) |
-| Static UI tests cover the MQTT page, CSS ownership, publish record list, preview layer, shortcut hints, and Settings storage panel. | [tests/ui/mqttPage.test.ts](../../../tests/ui/mqttPage.test.ts#L5), [tests/ui/settingsLayout.test.ts](../../../tests/ui/settingsLayout.test.ts#L114) |
-| Helper tests cover payload preview tokenization and shared record-list selection/delete recovery. | [tests/domain/mqttPayloadPreview.test.ts](../../../tests/domain/mqttPayloadPreview.test.ts#L4), [tests/domain/recordListSelection.test.ts](../../../tests/domain/recordListSelection.test.ts#L10) |
+| Base MQTT storage, connection, archive, and lazy-load behavior | [04-verify.md](04-verify.md#L1) |
+| Record interaction, top search, colors, and template save/favorite semantics | [record interaction verify](../260624-eypc-mqtt-record-interaction-polish/04-verify.md#L1) |
+| Focus commands, topic dropdown, and publish options | [focus command verify](../260625-eypc-mqtt-focus-command-refinement/04-verify.md#L1) |
+| View prefs and publish draft history | [focus state verify](../260625-eypc-mqtt-focus-state-draft-history/04-verify.md#L1) |
+| Draft popover preview/direct send | [draft popover verify](../260625-eypc-mqtt-draft-popover-preview-send/04-verify.md#L1) |
+| Shift preview ownership and wheel/keyboard scroll | [Shift preview verify](../260625-eypc-mqtt-shift-hover-preview/04-verify.md#L1) |
+| Record time ordering and `operatedAt` | [record time verify](../260625-eypc-mqtt-record-time-order/04-verify.md#L1) |
+| Compact config drawer and `publishTopics` | [config editor verify](../260625-eypc-mqtt-config-editor-ui/04-verify.md#L1) |
+| Managed editor row shortcuts | [editor row shortcuts verify](../260625-eypc-mqtt-editor-row-shortcuts/04-verify.md#L1) |
 
-## Invariants
+## Boundaries
 
-- Passwords and tokens never enter main app state, archive snapshots, SQLite archive JSON, or publish templates; they stay behind the local secret bridge.
-- `syncRecords` is not a local persistence kill switch. It is a user preference carried on connection config while local archive durability remains active.
-- Runtime action dispatch is the only intended mutation boundary for MQTT UI interactions; Vue components emit events and do not mutate persisted state directly.
-- Platform/preload owns storage mode and migration behavior. UI and runtime consume `MqttStorageStatus` instead of inferring host capabilities.
-- [preload/index.js](../../../preload/index.js#L1) is the source-of-truth preload implementation. Generated public preload artifacts should not be cited as authoritative logic unless the build process is the subject.
+- No current MQTT documentation task changes broker protocol behavior, external MQTT traffic, uTools manifest window size, or local-only secret rules.
+- `syncRecords=false` remains a user-facing sync/privacy preference; it is not a local durability kill switch.
+- `preload/index.js` is the source-of-truth preload implementation. Generated public preload artifacts should not be cited as authoritative logic unless packaging output is the subject.

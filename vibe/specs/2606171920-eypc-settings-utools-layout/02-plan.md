@@ -2,16 +2,16 @@
 
 ## Implementation
 
-- Add `SettingsTabId = 'shortcuts' | 'maintenance'` and shortcut scope filtering inside [SettingsPage.vue](../../src/pages/SettingsPage.vue#L1).
-- Pass `snapshot.state.settings` from [App.vue](../../src/App.vue#L1) into Settings for read-only maintenance display.
+- Add `SettingsTabId = 'shortcuts' | 'maintenance'` and shortcut scope filtering inside [SettingsPage.vue](../../../src/pages/SettingsPage.vue#L1).
+- Pass `snapshot.state.settings` from [App.vue](../../../src/App.vue#L1) into Settings for read-only maintenance display.
 - Replace the old Settings body with:
   - compact Settings sub tabs,
   - shortcut filter strip,
   - shortcut resolution preview strip,
   - single-line shortcut worktable,
   - maintenance grid for layer rules, reservations, and storage status.
-- Update [app.css](../../src/styles/app.css#L1) with compact row, strip, maintenance, and responsive styles.
-- Add static UI regression coverage in [settingsLayout.test.ts](../../tests/ui/settingsLayout.test.ts#L1).
+- Update [app.css](../../../src/styles/app.css#L1) with compact row, strip, maintenance, and responsive styles.
+- Add static UI regression coverage in [settingsLayout.test.ts](../../../tests/ui/settingsLayout.test.ts#L1).
 
 ## Verification
 

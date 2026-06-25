@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createActionRuntime } from '../../src/runtime/action/actionRuntime'
 import { createInitialState, normalizeAppState } from '../../src/domain/state'
 import { createAppRuntime } from '../../src/runtime/appRuntime'
+import { createMqttConnectionConfig } from '../../src/domain/mqtt'
 
 describe('action runtime', () => {
   it('dispatches runnable action and captures write snapshots', () => {
@@ -103,6 +104,22 @@ describe('app runtime', () => {
     return { state, killed, copied, opened, revealed, listed, platform, getScanCount: () => scanCount, getHideCount: () => hideCount }
   }
 
+  function createFakeMqttClient() {
+    const listeners = new Map<string, Array<(...args: unknown[]) => void>>()
+    return {
+      listeners,
+      end: () => undefined,
+      publish: (_topic: string, _payload: string, _options: unknown, callback?: (error?: Error | null) => void) => callback?.(null),
+      subscribe: (_topic: string | string[], _options: unknown, callback?: (error?: Error | null) => void) => callback?.(null),
+      on(event: string, listener: (...args: unknown[]) => void) {
+        listeners.set(event, [...(listeners.get(event) || []), listener])
+      },
+      emit(event: string, ...args: unknown[]) {
+        for (const listener of listeners.get(event) || []) listener(...args)
+      }
+    }
+  }
+
   it('keeps favorite search as a filter and reorders favorites through runtime', () => {
     const state = createInitialState(100)
     state.favorites = [
@@ -144,6 +161,12 @@ describe('app runtime', () => {
           { commandId: 'search.focus', shortcutIds: ['Ctrl+P'], shortcutId: 'Ctrl+P', enabled: true, source: 'user' as const }
         ],
         updatedAt: 501
+      },
+      mqtt: {
+        keybindingOverrides: [
+          { commandId: 'mqtt.publish.draft.toggle', shortcutIds: ['Alt+L'], shortcutId: 'Alt+L', enabled: true, source: 'user' as const }
+        ],
+        updatedAt: 502
       }
     }
 
@@ -152,8 +175,24 @@ describe('app runtime', () => {
     const settings = runtime.snapshot().state.settings
     expect(settings.shortcutProfiles.ports.keybindingOverrides[0]).toMatchObject({ commandId: 'ports.scan', shortcutIds: ['Alt+R'] })
     expect(settings.shortcutProfiles.global.keybindingOverrides[0]).toMatchObject({ commandId: 'search.focus', shortcutIds: ['Ctrl+P'] })
-    expect(settings.keybindingOverrides.map((item) => item.commandId)).toEqual(['search.focus', 'ports.scan'])
+    expect(settings.shortcutProfiles.mqtt.keybindingOverrides[0]).toMatchObject({ commandId: 'mqtt.publish.draft.toggle', shortcutIds: ['Alt+L'] })
+    expect(settings.keybindingOverrides.map((item) => item.commandId)).toEqual(['search.focus', 'ports.scan', 'mqtt.publish.draft.toggle'])
     expect(saveCount).toBe(1)
+  })
+
+  it('stores MQTT shortcut updates in the MQTT profile', () => {
+    const { state } = installPlatform()
+    const runtime = createAppRuntime(state)
+
+    runtime.updateKeybinding({ commandId: 'mqtt.publish.draft.saveDraft', shortcutIds: ['Alt+Shift+L'] })
+
+    const settings = runtime.snapshot().state.settings
+    expect(settings.shortcutProfiles.mqtt.keybindingOverrides[0]).toMatchObject({
+      commandId: 'mqtt.publish.draft.saveDraft',
+      shortcutIds: ['Alt+Shift+L']
+    })
+    expect(settings.shortcutProfiles.global.keybindingOverrides.find((item) => item.commandId === 'mqtt.publish.draft.saveDraft')).toBeUndefined()
+    expect(settings.keybindingOverrides.map((item) => item.commandId)).toContain('mqtt.publish.draft.saveDraft')
   })
 
   it('hides the app with Shift+Escape above active layers', async () => {
@@ -1252,8 +1291,13 @@ describe('app runtime', () => {
 
     expect(runtime.dispatch('mqtt.record.rename', { title: 'Greeting', note: 'from broker' }).handled).toBe(true)
     expect(runtime.snapshot().mqttArchive.sessions[0].messages[0]).toMatchObject({
+      payload: 'hello'
+    })
+    expect(runtime.snapshot().mqttArchive.sessions[0].messages[0].title).toBeUndefined()
+    expect(runtime.snapshot().mqttPublishTemplateRows[0]).toMatchObject({
       title: 'Greeting',
       note: 'from broker',
+      topic: 'demo/in',
       payload: 'hello'
     })
     expect(runtime.dispatch('mqtt.record.resendDraft').handled).toBe(true)
@@ -1261,6 +1305,56 @@ describe('app runtime', () => {
       topic: 'demo/in',
       payload: 'hello'
     })
+  })
+
+  it('keeps MQTT message rows visible when reconnect creates a new session', async () => {
+    const { state } = installPlatform()
+    const clientRef: { current: ReturnType<typeof createFakeMqttClient> | null } = { current: null }
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state, {
+      mqttModuleLoader: async () => ({
+        default: {
+          connect: () => {
+            clientRef.current = createFakeMqttClient()
+            return clientRef.current
+          }
+        }
+      })
+    })
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'PLC',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-a',
+      syncRecords: true
+    })
+    runtime.dispatch('mqtt.config.save')
+    const configId = runtime.snapshot().state.mqtt.configs[0].id
+    runtime.appendMqttMessageRecord({ id: 'before-reconnect', direction: 'incoming', topic: 'plc/status', payload: 'online', qos: 0, retain: false, timestamp: 1000 })
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.id)).toEqual(['before-reconnect'])
+
+    runtime.focusMqttConfig(configId)
+    runtime.dispatch('mqtt.connection.connect')
+    for (let index = 0; index < 10 && !clientRef.current; index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    clientRef.current?.emit('connect')
+
+    expect(runtime.snapshot().mqttArchive.sessions).toHaveLength(2)
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.id)).toEqual(['before-reconnect'])
+
+    runtime.dispatch('mqtt.connection.disconnect')
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.id)).toEqual(['before-reconnect'])
   })
 
   it('starts new MQTT config drafts without active-config cache data', () => {
@@ -1328,8 +1422,8 @@ describe('app runtime', () => {
       path: '/',
       clientId: 'client-a',
       subscriptionItems: [
-        { topic: 'plc/+/status', alias: '状态' },
-        { topic: 'plc/#', alias: '全部 PLC' }
+        { topic: 'plc/+/status', alias: '状态', color: '#111111' },
+        { topic: 'plc/#', alias: '全部 PLC', color: '#222222' }
       ],
       publishTopic: 'plc/czz060301/set'
     })
@@ -1337,9 +1431,9 @@ describe('app runtime', () => {
     const configId = runtime.snapshot().state.mqtt.activeConfigId
     expect(configId).toBeTruthy()
 
-    runtime.appendMqttMessageRecord({ direction: 'incoming', topic: 'plc/czz060301/status', payload: 'in-status', qos: 0, retain: false })
-    runtime.appendMqttMessageRecord({ direction: 'outgoing', topic: 'plc/czz060301/set', payload: 'out-set', qos: 0, retain: false })
-    runtime.appendMqttMessageRecord({ direction: 'incoming', topic: 'other/status', payload: 'ignored', qos: 0, retain: false })
+    runtime.appendMqttMessageRecord({ direction: 'incoming', topic: 'plc/czz060301/status', payload: 'in-status', qos: 0, retain: false, timestamp: 1300 })
+    runtime.appendMqttMessageRecord({ direction: 'outgoing', topic: 'plc/czz060301/set', payload: 'out-set', qos: 0, retain: false, timestamp: 1200 })
+    runtime.appendMqttMessageRecord({ direction: 'incoming', topic: 'other/status', payload: 'ignored', qos: 0, retain: false, timestamp: 1100 })
 
     expect(runtime.snapshot().mqttSubscriptionRows).toEqual([
       expect.objectContaining({ topic: 'plc/+/status', alias: '状态', displayName: '状态', unreadCount: 1, selected: false, focused: false }),
@@ -1373,10 +1467,588 @@ describe('app runtime', () => {
     expect(runtime.dispatch('mqtt.subscription.delete', { topic: 'plc/+/status' }).handled).toBe(true)
     expect(runtime.snapshot().state.mqtt.configs[0].subscriptions).toEqual(['plc/#'])
     expect(runtime.snapshot().state.mqtt.configs[0].subscriptionAliases).toEqual({ 'plc/#': '全部 PLC' })
+    expect(runtime.snapshot().state.mqtt.configs[0].subscriptionColors).toEqual({ 'plc/#': '#222222' })
 
     expect(runtime.dispatch('mqtt.subscription.clearAll').handled).toBe(true)
     expect(runtime.snapshot().state.mqtt.configs[0].subscriptions).toEqual([])
     expect(runtime.snapshot().state.mqtt.configs[0].subscriptionAliases).toEqual({})
+  })
+
+  it('orders MQTT message and publish record lists by latest time first', () => {
+    const { state, platform } = installPlatform()
+    let archive: unknown = {
+      version: 1,
+      connectionSnapshots: [],
+      sessions: [{
+        id: 'session-1',
+        connectionId: 'dev',
+        title: 'Session',
+        startedAt: 100,
+        messages: [
+          { id: 'old-in', connectionId: 'dev', sessionId: 'session-1', direction: 'incoming', topic: 'plc/status', payload: 'old', qos: 0, retain: false, timestamp: 100 },
+          { id: 'new-in', connectionId: 'dev', sessionId: 'session-1', direction: 'incoming', topic: 'plc/status', payload: 'new', qos: 0, retain: false, timestamp: 300 },
+          { id: 'mid-out', connectionId: 'dev', sessionId: 'session-1', direction: 'outgoing', topic: 'plc/set', payload: 'mid', qos: 0, retain: false, timestamp: 200 }
+        ]
+      }],
+      publishTemplates: [
+        { id: 'old', connectionId: 'dev', title: 'Old', topic: 'plc/old', payload: 'old', qos: 0, retain: false, createdAt: 1, updatedAt: 30 },
+        { id: 'used', connectionId: 'dev', title: 'Used', topic: 'plc/used', payload: 'used', qos: 0, retain: false, createdAt: 2, updatedAt: 10, operatedAt: 500 },
+        { id: 'edited', connectionId: 'dev', title: 'Edited', topic: 'plc/edited', payload: 'edited', qos: 0, retain: false, createdAt: 3, updatedAt: 400 }
+      ],
+      publishDraftHistory: []
+    }
+    platform.storage.getMqttArchive = () => archive as never
+    platform.storage.setMqttArchive = (next: unknown) => {
+      archive = next
+      return true
+    }
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    state.mqtt.configs = [createMqttConnectionConfig({ id: 'dev', name: 'PLC', url: 'ws://broker.example:8083/', subscriptions: [] }, 100)]
+    state.mqtt.activeConfigId = 'dev'
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.id)).toEqual(['new-in', 'old-in'])
+
+    expect(runtime.dispatch('mqtt.receive.filter.all').handled).toBe(true)
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.id)).toEqual(['new-in', 'mid-out', 'old-in'])
+    expect(runtime.snapshot().mqttPublishHistoryRows.map((item) => item.id)).toEqual(['mid-out'])
+    expect(runtime.snapshot().mqttPublishTemplateRows.map((item) => item.id)).toEqual(['used', 'edited', 'old'])
+
+    expect(runtime.dispatch('mqtt.publish.template.apply', { id: 'old' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttPublishTemplateRows[0]).toMatchObject({ id: 'old', operatedAt: expect.any(Number) })
+  })
+
+  it('routes MQTT focus, topic filtering, publish favorites, and publish options by command layer', () => {
+    const { state } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'Other',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-other',
+      subscriptionItems: [{ topic: 'other/#', alias: '其他' }]
+    })
+    runtime.dispatch('mqtt.config.save')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'PLC',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-plc',
+      subscriptionItems: [
+        { topic: 'plc/+/status', alias: '状态', color: '#111111' },
+        { topic: 'plc/+/cmd', alias: '命令', color: '#222222' }
+      ],
+      publishTopic: 'plc/czz060301/set'
+    })
+    runtime.dispatch('mqtt.config.save')
+
+    runtime.appendMqttMessageRecord({ id: 'in-status', direction: 'incoming', topic: 'plc/czz060301/status', payload: 'status', qos: 0, retain: false, timestamp: 1000 })
+    runtime.appendMqttMessageRecord({ id: 'in-cmd', direction: 'incoming', topic: 'plc/czz060301/cmd', payload: 'cmd', qos: 0, retain: false, timestamp: 1100 })
+    runtime.updateMqttPublishDraft({ topic: 'other/template', payload: '{"saved":true}', qos: 0, retain: false })
+
+    expect(runtime.handleShortcut('Ctrl+S', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBe('mqtt.publish.template.save')
+    const templateId = runtime.snapshot().mqttPublishTemplateRows[0].id
+    expect(runtime.snapshot().mqttPublishTemplateRows[0]).toMatchObject({
+      topic: 'other/template',
+      payload: '{"saved":true}'
+    })
+
+    expect(runtime.handleShortcut('Ctrl+Shift+F', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBe('mqtt.topicFilter.focus')
+    expect(runtime.snapshot()).toMatchObject({
+      mqttFocusTarget: 'topic-filter',
+      mqttTopicFilterOpen: true,
+      mqttTopicFilterQuery: ''
+    })
+    expect(runtime.snapshot().mqttTopicFilterOptions.map((item) => ({ topic: item.topic, alias: item.alias }))).toEqual([
+      { topic: 'plc/+/status', alias: '状态' },
+      { topic: 'plc/+/cmd', alias: '命令' }
+    ])
+
+    expect(runtime.dispatch('mqtt.topicFilter.search.set', { query: '状态' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttTopicFilterOptions.map((item) => item.topic)).toEqual(['plc/+/status'])
+    expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'mqtt-topic-filter' })).toBe('mqtt.topicFilter.select')
+    expect(runtime.snapshot()).toMatchObject({
+      mqttFocusTarget: 'records',
+      mqttTopicFilterOpen: false,
+      mqttActiveSubscriptionTopics: ['plc/+/status']
+    })
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.id)).toEqual(['in-status'])
+
+    expect(runtime.handleShortcut('Ctrl+M', false)).toBe('mqtt.focus.templates')
+    expect(runtime.snapshot().mqttPublishTemplateRows.map((item) => item.id)).toEqual([templateId])
+
+    expect(runtime.handleShortcut('Ctrl+P', false)).toBe('mqtt.focus.publish')
+    expect(runtime.snapshot().mqttFocusTarget).toBe('publish-topic')
+    expect(runtime.snapshot().mqttSelectedRecord).toBeNull()
+    expect(runtime.handleShortcut('Tab', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBe('mqtt.publish.nextField')
+    expect(runtime.snapshot().mqttFocusTarget).toBe('publish-payload')
+    expect(runtime.handleShortcut('Shift+Tab', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBe('mqtt.publish.prevField')
+    expect(runtime.snapshot().mqttFocusTarget).toBe('publish-topic')
+
+    expect(runtime.handleShortcut('Ctrl+ArrowRight', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBe('mqtt.publish.options.open')
+    expect(runtime.snapshot()).toMatchObject({
+      mqttFocusTarget: 'publish-options',
+      mqttPublishOptionsOpen: true,
+      mqttPublishOptionsActiveIndex: 0
+    })
+    expect(runtime.handleShortcut('ArrowDown', { textInputFocused: false, activeInputRole: 'mqtt-publish-options' })).toBe('mqtt.publish.options.next')
+    expect(runtime.handleShortcut('Enter', { textInputFocused: false, activeInputRole: 'mqtt-publish-options' })).toBe('mqtt.publish.options.select')
+    expect(runtime.snapshot().mqttPublishScratch.qos).toBe(1)
+    runtime.dispatch('mqtt.publish.options.next')
+    runtime.dispatch('mqtt.publish.options.next')
+    expect(runtime.handleShortcut('Enter', { textInputFocused: false, activeInputRole: 'mqtt-publish-options' })).toBe('mqtt.publish.options.select')
+    expect(runtime.snapshot().mqttPublishScratch.retain).toBe(true)
+    expect(runtime.handleShortcut('Escape', { textInputFocused: false, activeInputRole: 'mqtt-publish-options' })).toBe('mqtt.publish.options.close')
+    expect(runtime.snapshot()).toMatchObject({
+      mqttFocusTarget: 'publish-topic',
+      mqttPublishOptionsOpen: false
+    })
+
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBe('mqtt.publish.blur')
+    expect(runtime.snapshot().mqttFocusTarget).toBe('records')
+    expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'publish-template', id: templateId })
+  })
+
+  it('persists MQTT info and topic filters and preserves them when publish focus blurs', () => {
+    const { state } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'PLC',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-plc',
+      subscriptionItems: [
+        { topic: 'plc/+/status', alias: '状态' },
+        { topic: 'plc/+/cmd', alias: '命令' }
+      ],
+      publishTopic: 'plc/czz060301/set'
+    })
+    runtime.dispatch('mqtt.config.save')
+    const configId = runtime.snapshot().state.mqtt.activeConfigId!
+
+    expect(runtime.handleShortcut('Ctrl+3', false)).toBe('mqtt.receive.filter.out')
+    expect(runtime.snapshot()).toMatchObject({ mqttReceiveFilter: 'outgoing', activeMqttRecordList: 'messages' })
+    expect(runtime.snapshot().state.mqtt.viewPrefs.infoFilter).toBe('outgoing')
+
+    runtime.dispatch('mqtt.topicFilter.focus')
+    expect(runtime.dispatch('mqtt.topicFilter.select', { topic: 'plc/+/status' }).handled).toBe(true)
+    expect(runtime.snapshot().state.mqtt.viewPrefs.activeSubscriptionTopicsByConfigId[configId]).toEqual(['plc/+/status'])
+
+    expect(runtime.handleShortcut('Ctrl+M', false)).toBe('mqtt.focus.templates')
+    expect(runtime.snapshot()).toMatchObject({ activeMqttRecordList: 'templates', mqttFocusTarget: 'records' })
+    expect(runtime.snapshot().state.mqtt.viewPrefs.infoFilter).toBe('favorites')
+
+    expect(runtime.handleShortcut('Ctrl+P', false)).toBe('mqtt.focus.publish')
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBe('mqtt.publish.blur')
+    expect(runtime.snapshot()).toMatchObject({
+      activeMqttRecordList: 'templates',
+      mqttFocusTarget: 'records',
+      mqttActiveSubscriptionTopics: ['plc/+/status']
+    })
+    expect(runtime.snapshot().state.mqtt.viewPrefs.infoFilter).toBe('favorites')
+
+    const restored = createAppRuntime(runtime.snapshot().state)
+    restored.setTab('mqtt')
+    expect(restored.snapshot()).toMatchObject({
+      activeMqttRecordList: 'templates',
+      mqttActiveSubscriptionTopics: ['plc/+/status']
+    })
+  })
+
+  it('archives overwritten MQTT publish drafts and manages the publish history popover', () => {
+    const { state, platform } = installPlatform()
+    let archive: unknown = { version: 1, connectionSnapshots: [], sessions: [], publishTemplates: [], publishDraftHistory: [] }
+    platform.storage.getMqttArchive = () => archive as never
+    platform.storage.setMqttArchive = (next: unknown) => {
+      archive = next
+      return true
+    }
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'PLC',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-plc',
+      publishTopic: 'plc/default'
+    })
+    runtime.dispatch('mqtt.config.save')
+    runtime.appendMqttMessageRecord({ id: 'in-1', direction: 'incoming', topic: 'plc/in/1', payload: '{"in":1}', qos: 0, retain: false, timestamp: 1000 })
+
+    runtime.updateMqttPublishDraft({ topic: 'plc/default', payload: '', qos: 0, retain: false })
+    expect(runtime.dispatch('mqtt.record.resendDraft', { kind: 'message', id: 'in-1' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttPublishDraftHistoryRows).toEqual([])
+
+    runtime.updateMqttPublishDraft({ topic: 'draft/topic', payload: 'draft-payload', qos: 1, retain: true })
+    expect(runtime.dispatch('mqtt.record.resendDraft', { kind: 'message', id: 'in-1' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttPublishDraftHistoryRows).toHaveLength(1)
+    expect(runtime.snapshot().mqttPublishDraftHistoryRows[0]).toMatchObject({
+      topic: 'draft/topic',
+      payload: 'draft-payload',
+      qos: 1,
+      retain: true,
+      source: 'overwrite'
+    })
+
+    runtime.updateMqttPublishDraft({ topic: 'draft/topic', payload: 'draft-payload', qos: 2, retain: false })
+    expect(runtime.handleShortcut('Ctrl+Shift+H', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBe('mqtt.publish.draft.saveDraft')
+    expect(runtime.handleShortcut('Ctrl+Shift+L', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBeNull()
+    expect(runtime.snapshot().mqttPublishDraftHistoryRows).toHaveLength(1)
+    expect(runtime.snapshot().mqttPublishDraftHistoryRows[0]).toMatchObject({ source: 'manual', qos: 2, retain: false })
+
+    expect(runtime.handleShortcut('Ctrl+H', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBe('mqtt.publish.draft.toggle')
+    expect(runtime.handleShortcut('Ctrl+L', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBeNull()
+    expect(runtime.snapshot()).toMatchObject({
+      mqttPublishDraftHistoryOpen: true,
+      mqttFocusTarget: 'publish-draft',
+      mqttPublishDraftHistoryActiveIndex: 0
+    })
+    expect(runtime.handleShortcut('Space', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBe('mqtt.publish.draft.toggleSelect')
+    expect(runtime.snapshot().mqttPublishDraftHistorySelectedIds).toEqual([runtime.snapshot().mqttPublishDraftHistoryRows[0].id])
+    expect(runtime.handleShortcut('Space', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBe('mqtt.publish.draft.toggleSelect')
+    expect(runtime.snapshot().mqttPublishDraftHistorySelectedIds).toEqual([])
+    expect(runtime.handleShortcut('Space', { textInputFocused: false, activeInputRole: 'mqtt-publish-draft' })).toBe('mqtt.publish.draft.toggleSelect')
+    expect(runtime.snapshot().mqttPublishDraftHistorySelectedIds).toEqual([runtime.snapshot().mqttPublishDraftHistoryRows[0].id])
+    expect(runtime.handleShortcut('Ctrl+S', { textInputFocused: false, activeInputRole: 'mqtt-publish-draft' })).toBe('mqtt.publish.draft.favorite')
+    expect(runtime.snapshot().mqttPublishTemplateRows).toHaveLength(1)
+    expect(runtime.snapshot().mqttPublishTemplateRows[0]).toMatchObject({ topic: 'draft/topic', payload: 'draft-payload' })
+
+    expect(runtime.handleShortcut('Enter', { textInputFocused: false, activeInputRole: 'mqtt-publish-draft' })).toBe('mqtt.publish.draft.apply')
+    expect(runtime.snapshot().mqttPublishScratch).toMatchObject({ topic: 'draft/topic', payload: 'draft-payload', qos: 2, retain: false })
+    expect(runtime.snapshot()).toMatchObject({ mqttPublishDraftHistoryOpen: false, mqttFocusTarget: 'publish-payload' })
+  })
+
+  it('keeps publish draft history highlight stable for apply and direct send', () => {
+    const { state, platform } = installPlatform()
+    let archive: unknown = { version: 1, connectionSnapshots: [], sessions: [], publishTemplates: [], publishDraftHistory: [] }
+    platform.storage.getMqttArchive = () => archive as never
+    platform.storage.setMqttArchive = (next: unknown) => {
+      archive = next
+      return true
+    }
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'PLC',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-plc',
+      publishTopic: 'plc/default'
+    })
+    runtime.dispatch('mqtt.config.save')
+
+    runtime.updateMqttPublishDraft({ topic: 'draft/one', payload: 'one', qos: 0, retain: false })
+    expect(runtime.dispatch('mqtt.publish.draft.saveDraft').handled).toBe(true)
+    runtime.updateMqttPublishDraft({ topic: 'draft/two', payload: 'two', qos: 1, retain: false })
+    expect(runtime.dispatch('mqtt.publish.draft.saveDraft').handled).toBe(true)
+    runtime.updateMqttPublishDraft({ topic: 'draft/three', payload: 'three', qos: 2, retain: true })
+    expect(runtime.dispatch('mqtt.publish.draft.saveDraft').handled).toBe(true)
+
+    expect(runtime.handleShortcut('Ctrl+H', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBe('mqtt.publish.draft.toggle')
+    expect(runtime.handleShortcut('ArrowDown', { textInputFocused: false, activeInputRole: 'mqtt-publish-draft' })).toBe('mqtt.publish.draft.next')
+    const applyTarget = runtime.snapshot().mqttPublishDraftHistoryRows[runtime.snapshot().mqttPublishDraftHistoryActiveIndex]
+    expect(applyTarget).toMatchObject({ topic: 'draft/two', payload: 'two' })
+
+    runtime.updateMqttPublishDraft({ topic: 'draft/current-before-apply', payload: 'current', qos: 0, retain: false })
+    expect(runtime.handleShortcut('Enter', { textInputFocused: false, activeInputRole: 'mqtt-publish-draft' })).toBe('mqtt.publish.draft.apply')
+    expect(runtime.snapshot()).toMatchObject({
+      mqttPublishDraftHistoryOpen: false,
+      mqttFocusTarget: 'publish-payload',
+      mqttPublishScratch: { topic: 'draft/two', payload: 'two', qos: 1, retain: false }
+    })
+
+    expect(runtime.handleShortcut('Ctrl+H', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBe('mqtt.publish.draft.toggle')
+    const rowsAfterApply = runtime.snapshot().mqttPublishDraftHistoryRows
+    const draftThree = rowsAfterApply.find((row) => row.topic === 'draft/three')
+    expect(draftThree).toBeTruthy()
+    expect(runtime.dispatch('mqtt.publish.draft.focus', { id: draftThree?.id }).handled).toBe(true)
+    const sendTarget = runtime.snapshot().mqttPublishDraftHistoryRows[runtime.snapshot().mqttPublishDraftHistoryActiveIndex]
+    expect(sendTarget).toMatchObject({ topic: 'draft/three', payload: 'three' })
+
+    runtime.updateMqttPublishDraft({ topic: 'draft/current-before-send', payload: 'send-current', qos: 0, retain: false })
+    expect(runtime.handleShortcut('Ctrl+Enter', { textInputFocused: false, activeInputRole: 'mqtt-publish-draft' })).toBe('mqtt.publish.draft.send')
+    const snapshot = runtime.snapshot()
+    expect(snapshot).toMatchObject({
+      mqttPublishDraftHistoryOpen: true,
+      mqttFocusTarget: 'publish-draft',
+      mqttPublishScratch: { topic: 'draft/three', payload: 'three', qos: 2, retain: true }
+    })
+    expect(snapshot.mqttPublishDraftHistoryRows[snapshot.mqttPublishDraftHistoryActiveIndex]).toMatchObject({
+      id: sendTarget.id,
+      topic: 'draft/three'
+    })
+    expect(snapshot.mqttPublishHistoryRows[0]).toMatchObject({ topic: 'draft/three', payload: 'three', qos: 2, retain: true })
+    expect(runtime.handleShortcut('Ctrl+Backspace', { textInputFocused: false, activeInputRole: 'mqtt-publish-draft' })).toBe('mqtt.publish.draft.delete')
+    expect(runtime.snapshot().mqttPublishDraftHistoryRows.find((row) => row.id === sendTarget.id)).toBeUndefined()
+  })
+
+  it('allows only shift preview for publish draft history rows', () => {
+    const { state, platform } = installPlatform()
+    let archive: unknown = { version: 1, connectionSnapshots: [], sessions: [], publishTemplates: [], publishDraftHistory: [] }
+    platform.storage.getMqttArchive = () => archive as never
+    platform.storage.setMqttArchive = (next: unknown) => {
+      archive = next
+      return true
+    }
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'PLC',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-plc',
+      publishTopic: 'plc/default'
+    })
+    runtime.dispatch('mqtt.config.save')
+    runtime.updateMqttPublishDraft({ topic: 'draft/preview', payload: '{"ok":true}', qos: 1, retain: false })
+    expect(runtime.dispatch('mqtt.publish.draft.saveDraft').handled).toBe(true)
+    const row = runtime.snapshot().mqttPublishDraftHistoryRows[0]
+
+    expect(runtime.dispatch('mqtt.preview.open', { kind: 'publish-draft-history', id: row.id, source: 'keyboard' }).handled).toBe(false)
+    expect(runtime.dispatch('mqtt.preview.open', { kind: 'publish-draft-history', id: row.id, source: 'shift' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttPreview).toMatchObject({
+      open: true,
+      targetKind: 'publish-draft-history',
+      targetId: row.id,
+      source: 'shift'
+    })
+  })
+
+  it('isolates MQTT publish editor focus from message-list selection shortcuts', () => {
+    const { state } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'PLC',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-plc',
+      publishTopic: 'plc/default'
+    })
+    runtime.dispatch('mqtt.config.save')
+    runtime.appendMqttMessageRecord({ id: 'in-1', direction: 'incoming', topic: 'plc/in/1', payload: '{"in":1}', qos: 0, retain: false, timestamp: 1000 })
+
+    expect(runtime.dispatch('mqtt.record.focus', { kind: 'message', id: 'in-1' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'message', id: 'in-1' })
+    expect(runtime.handleShortcut('Space', false)).toBe('list.toggleSelection')
+    expect(runtime.snapshot().mqttRecordListStates.messages.selectedIds).toEqual(['in-1'])
+
+    expect(runtime.handleShortcut('Ctrl+P', false)).toBe('mqtt.focus.publish')
+    expect(runtime.snapshot()).toMatchObject({
+      activeMqttPane: 'publish',
+      mqttFocusTarget: 'publish-topic',
+      mqttSelectedRecord: null
+    })
+    expect(runtime.handleShortcut('Space', { textInputFocused: false, activeInputRole: 'mqtt-publish-editor' })).toBeNull()
+    expect(runtime.snapshot().mqttRecordListStates.messages.selectedIds).toEqual(['in-1'])
+  })
+
+  it('edits MQTT publish draft history through an editor layer and keeps row click separate from apply', () => {
+    const { state, platform } = installPlatform()
+    let archive: unknown = { version: 1, connectionSnapshots: [], sessions: [], publishTemplates: [], publishDraftHistory: [] }
+    platform.storage.getMqttArchive = () => archive as never
+    platform.storage.setMqttArchive = (next: unknown) => {
+      archive = next
+      return true
+    }
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'PLC',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-plc',
+      publishTopic: 'plc/default'
+    })
+    runtime.dispatch('mqtt.config.save')
+    runtime.updateMqttPublishDraft({ topic: 'draft/topic', payload: 'draft-payload', qos: 1, retain: true })
+    expect(runtime.handleShortcut('Ctrl+Shift+H', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBe('mqtt.publish.draft.saveDraft')
+    const row = runtime.snapshot().mqttPublishDraftHistoryRows[0]
+    expect(runtime.handleShortcut('Ctrl+H', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBe('mqtt.publish.draft.toggle')
+
+    expect(runtime.handleShortcut('Ctrl+ArrowLeft', { textInputFocused: false, activeInputRole: 'mqtt-publish-draft' })).toBe('mqtt.detail.open')
+    expect(runtime.snapshot().mqttDrawer).toMatchObject({
+      open: true,
+      active: false,
+      targetKind: 'publish-draft-history',
+      targetId: row.id
+    })
+    expect(runtime.dispatch('mqtt.drawer.close').handled).toBe(true)
+    expect(runtime.handleShortcut('Ctrl+ArrowRight', { textInputFocused: false, activeInputRole: 'mqtt-publish-draft' })).toBe('mqtt.drawer.open')
+    expect(runtime.snapshot().mqttDrawer).toMatchObject({
+      open: true,
+      active: true,
+      targetKind: 'publish-draft-history',
+      targetId: row.id
+    })
+    expect(runtime.dispatch('mqtt.drawer.close').handled).toBe(true)
+
+    expect(runtime.handleShortcut('F2', { textInputFocused: false, activeInputRole: 'mqtt-publish-draft' })).toBe('mqtt.publish.draft.rename')
+    expect(runtime.snapshot()).toMatchObject({
+      mqttPublishDraftHistoryOpen: true,
+      mqttFocusTarget: 'publish-draft-edit-title',
+      mqttPublishDraftHistoryEditDraft: {
+        mode: 'rename',
+        id: row.id,
+        title: 'draft/topic',
+        note: '',
+        topic: 'draft/topic',
+        payload: 'draft-payload',
+        activeField: 'title'
+      }
+    })
+    expect(typeof (runtime as unknown as { updateMqttPublishDraftHistoryEditDraft?: unknown }).updateMqttPublishDraftHistoryEditDraft).toBe('function')
+
+    const updateDraft = (runtime as unknown as { updateMqttPublishDraftHistoryEditDraft: (input: Record<string, unknown>) => void }).updateMqttPublishDraftHistoryEditDraft
+    updateDraft({ title: '命令草稿', note: '常用下发' })
+    expect(runtime.handleShortcut('Tab', { textInputFocused: true, activeInputRole: 'mqtt-publish-draft-editor' })).toBe('mqtt.publish.draft.edit.nextField')
+    expect(runtime.snapshot()).toMatchObject({
+      mqttFocusTarget: 'publish-draft-edit-note',
+      mqttPublishDraftHistoryEditDraft: { activeField: 'note' }
+    })
+    expect(runtime.handleShortcut('Shift+Tab', { textInputFocused: true, activeInputRole: 'mqtt-publish-draft-editor' })).toBe('mqtt.publish.draft.edit.prevField')
+    expect(runtime.snapshot()).toMatchObject({
+      mqttFocusTarget: 'publish-draft-edit-title',
+      mqttPublishDraftHistoryEditDraft: { activeField: 'title' }
+    })
+    expect(runtime.handleShortcut('Ctrl+S', { textInputFocused: true, activeInputRole: 'mqtt-publish-draft-editor' })).toBe('mqtt.publish.draft.edit.save')
+    expect(runtime.snapshot().mqttPublishDraftHistoryEditDraft).toBeNull()
+    expect(runtime.snapshot().mqttPublishDraftHistoryRows[0]).toMatchObject({
+      id: row.id,
+      title: '命令草稿',
+      note: '常用下发',
+      topic: 'draft/topic',
+      payload: 'draft-payload',
+      qos: 1,
+      retain: true
+    })
+
+    expect(runtime.handleShortcut('Shift+F2', { textInputFocused: false, activeInputRole: 'mqtt-publish-draft' })).toBe('mqtt.publish.draft.edit')
+    expect(runtime.snapshot()).toMatchObject({
+      mqttFocusTarget: 'publish-draft-edit-topic',
+      mqttPublishDraftHistoryEditDraft: {
+        mode: 'edit',
+        id: row.id,
+        title: '命令草稿',
+        note: '常用下发',
+        topic: 'draft/topic',
+        payload: 'draft-payload',
+        activeField: 'topic'
+      }
+    })
+
+    updateDraft({ topic: 'edited/topic', payload: 'edited-payload' })
+    expect(runtime.handleShortcut('Tab', { textInputFocused: true, activeInputRole: 'mqtt-publish-draft-editor' })).toBe('mqtt.publish.draft.edit.nextField')
+    expect(runtime.snapshot()).toMatchObject({
+      mqttFocusTarget: 'publish-draft-edit-payload',
+      mqttPublishDraftHistoryEditDraft: { activeField: 'payload' }
+    })
+    expect(runtime.handleShortcut('Shift+Tab', { textInputFocused: true, activeInputRole: 'mqtt-publish-draft-editor' })).toBe('mqtt.publish.draft.edit.prevField')
+    expect(runtime.snapshot()).toMatchObject({
+      mqttFocusTarget: 'publish-draft-edit-topic',
+      mqttPublishDraftHistoryEditDraft: { activeField: 'topic' }
+    })
+    expect(runtime.handleShortcut('Ctrl+S', { textInputFocused: true, activeInputRole: 'mqtt-publish-draft-editor' })).toBe('mqtt.publish.draft.edit.save')
+    expect(runtime.snapshot().mqttPublishDraftHistoryEditDraft).toBeNull()
+    expect(runtime.snapshot().mqttPublishDraftHistoryRows[0]).toMatchObject({
+      id: row.id,
+      title: '命令草稿',
+      note: '常用下发',
+      topic: 'edited/topic',
+      payload: 'edited-payload',
+      qos: 1,
+      retain: true
+    })
+
+    expect(runtime.dispatch('mqtt.publish.draft.edit', { id: row.id }).handled).toBe(true)
+    updateDraft({ payload: 'cancelled-payload' })
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'mqtt-publish-draft-editor' })).toBe('mqtt.publish.draft.edit.cancel')
+    expect(runtime.snapshot().mqttPublishDraftHistoryEditDraft).toBeNull()
+    expect(runtime.snapshot().mqttPublishDraftHistoryRows[0]).toMatchObject({
+      topic: 'edited/topic',
+      payload: 'edited-payload'
+    })
   })
 
   it('deletes selected MQTT subscriptions from the persisted connection config', () => {
@@ -1462,8 +2134,8 @@ describe('app runtime', () => {
 
     expect(runtime.dispatch('mqtt.subscription.editor.nextField').handled).toBe(true)
     expect(runtime.snapshot().mqttSubscriptionDraft).toMatchObject({
-      activeItemId: runtime.snapshot().mqttSubscriptionDraft?.items[0].id,
-      activeField: 'alias'
+      activeItemId: appendedSubscriptionItem?.id,
+      activeField: 'color'
     })
     expect(runtime.dispatch('mqtt.subscription.editor.prevField').handled).toBe(true)
     expect(runtime.snapshot().mqttSubscriptionDraft).toMatchObject({
@@ -1479,15 +2151,22 @@ describe('app runtime', () => {
         { id: 'row-b', topic: 'plc/b', alias: 'Beta' }
       ]
     })
-    runtime.updateMqttSubscriptionDraft({
-      items: [
-        { id: 'row-a', topic: 'plc/a', alias: 'Alpha' }
-      ]
-    })
+    expect(runtime.dispatch('mqtt.subscription.editor.prevRow').handled).toBe(true)
     expect(runtime.snapshot().mqttSubscriptionDraft).toMatchObject({
       activeItemId: 'row-a',
       activeField: 'topic'
     })
+    expect(runtime.dispatch('mqtt.subscription.editor.nextRow').handled).toBe(true)
+    expect(runtime.snapshot().mqttSubscriptionDraft).toMatchObject({
+      activeItemId: 'row-b',
+      activeField: 'topic'
+    })
+    expect(runtime.dispatch('mqtt.subscription.editor.deleteRow').handled).toBe(true)
+    expect(runtime.snapshot().mqttSubscriptionDraft).toMatchObject({
+      activeItemId: 'row-a',
+      activeField: 'topic'
+    })
+    expect(runtime.snapshot().mqttSubscriptionDraft?.items.map((item) => item.id)).toEqual(['row-a'])
 
     runtime.updateMqttSubscriptionDraft({
       items: [
@@ -1540,10 +2219,95 @@ describe('app runtime', () => {
         { topic: ' ', alias: 'ignored' }
       ]
     })
+    expect(runtime.dispatch('mqtt.config.subscription.focus', { index: 1, field: 'topic' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({
+      activeField: 'subscriptions',
+      activeSubscriptionIndex: 1,
+      activeSubscriptionField: 'topic'
+    })
+    expect(runtime.dispatch('mqtt.config.subscription.prevRow').handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({
+      activeSubscriptionIndex: 0,
+      activeSubscriptionField: 'topic'
+    })
+    expect(runtime.dispatch('mqtt.config.subscription.nextRow').handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({
+      activeSubscriptionIndex: 1,
+      activeSubscriptionField: 'topic'
+    })
+    expect(runtime.dispatch('mqtt.config.subscription.deleteRow').handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({
+      activeField: 'subscriptions',
+      activeSubscriptionIndex: 1,
+      activeSubscriptionField: 'topic'
+    })
+    expect(runtime.snapshot().mqttConfigDraft?.subscriptionItems).toEqual([
+      { topic: 'plc/b', alias: 'Beta' },
+      { topic: ' ', alias: 'ignored' }
+    ])
     expect(runtime.dispatch('mqtt.config.save').handled).toBe(true)
     expect(runtime.snapshot().state.mqtt.configs[0]).toMatchObject({
-      subscriptions: ['plc/b', 'plc/c'],
+      subscriptions: ['plc/b'],
       subscriptionAliases: { 'plc/b': 'Beta' }
+    })
+  })
+
+  it('saves MQTT config publish topic candidates and refreshes client id in the draft only', () => {
+    const { state } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    expect(runtime.dispatch('mqtt.config.create').handled).toBe(true)
+    const beforeRefresh = runtime.snapshot().mqttConfigDraft?.clientId || ''
+    expect(runtime.dispatch('mqtt.config.clientId.refresh').handled).toBe(true)
+    const refreshedClientId = runtime.snapshot().mqttConfigDraft?.clientId || ''
+    expect(refreshedClientId).toMatch(/^eypc_/)
+    expect(refreshedClientId).not.toBe(beforeRefresh)
+    expect(runtime.snapshot().state.mqtt.configs).toEqual([])
+
+    runtime.updateMqttConfigDraft({
+      name: 'PLC',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      publishTopics: [' plc/cmd ', 'plc/status', 'plc/cmd', ' ']
+    })
+    expect(runtime.dispatch('mqtt.config.publish.focus', { index: 1 }).handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({
+      activeField: 'publishTopic',
+      activePublishIndex: 1,
+      activePublishField: 'topic'
+    })
+    expect(runtime.dispatch('mqtt.config.publish.prevRow').handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({
+      activePublishIndex: 0,
+      activePublishField: 'topic'
+    })
+    expect(runtime.dispatch('mqtt.config.publish.nextRow').handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({
+      activePublishIndex: 1,
+      activePublishField: 'topic'
+    })
+    expect(runtime.dispatch('mqtt.config.publish.deleteRow').handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({
+      activeField: 'publishTopic',
+      publishTopic: 'plc/cmd',
+      activePublishIndex: 1,
+      activePublishField: 'topic'
+    })
+    expect(runtime.snapshot().mqttConfigDraft?.publishTopics).toEqual([' plc/cmd ', 'plc/cmd', ' '])
+    expect(runtime.dispatch('mqtt.config.save').handled).toBe(true)
+    expect(runtime.snapshot().state.mqtt.configs[0]).toMatchObject({
+      clientId: refreshedClientId,
+      publishTopic: 'plc/cmd',
+      publishTopics: ['plc/cmd']
     })
   })
 
@@ -1655,7 +2419,7 @@ describe('app runtime', () => {
       hoverPreviewEnabled: true,
       hoverPreviewDelayMs: 750
     })
-    expect(runtime.handleShortcut('Ctrl+L', false)).toBe('mqtt.log.drawer.open')
+    expect(runtime.dispatch('mqtt.log.drawer.open').handled).toBe(true)
     expect(runtime.snapshot().mqttLogDrawer).toEqual({ open: true })
     expect(runtime.handleShortcut('Escape', false)).toBe('mqtt.log.drawer.close')
     expect(runtime.snapshot().mqttLogDrawer).toEqual({ open: false })
@@ -1669,7 +2433,7 @@ describe('app runtime', () => {
       publishTemplates: [expect.objectContaining({ id: templateId, title: 'Set Code', note: 'manual' })]
     })
 
-    expect(runtime.dispatch('mqtt.publish.records.toggle').handled).toBe(true)
+    expect(runtime.dispatch('mqtt.focus.templates').handled).toBe(true)
     expect(runtime.snapshot().mqttPublishRecordsOpen).toBe(true)
     runtime.updateMqttPublishDraft({ topic: '', payload: '', qos: 0, retain: false })
     expect(runtime.dispatch('mqtt.publish.template.apply', { id: templateId }).handled).toBe(true)
@@ -1768,29 +2532,31 @@ describe('app runtime', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(copied).toEqual(['plc/a', '{"ok":true}'])
 
-    expect(runtime.dispatch('mqtt.record.favorite').handled).toBe(true)
-    expect(runtime.snapshot().mqttFavoriteDraft).toMatchObject({ targetKind: 'message', targetId: 'in-1', activeField: 'title' })
-    runtime.updateMqttFavoriteDraft({ title: 'PLC OK' })
-    expect(runtime.dispatch('mqtt.record.favorite.save').handled).toBe(true)
+    expect(runtime.handleShortcut('Ctrl+S', false)).toBe('mqtt.record.favorite')
     expect(runtime.snapshot().mqttFavoriteDraft).toBeNull()
     expect(runtime.snapshot().mqttPublishTemplateRows[0]).toMatchObject({
-      title: 'PLC OK',
+      title: '',
       topic: 'plc/a',
       payload: '{"ok":true}'
     })
 
     expect(runtime.dispatch('mqtt.record.favorite', { kind: 'message', id: 'out-1' }).handled).toBe(true)
-    expect(runtime.dispatch('mqtt.record.favorite.cancel').handled).toBe(true)
     expect(runtime.snapshot().mqttFavoriteDraft).toBeNull()
-    expect(runtime.snapshot().mqttPublishTemplateRows).toHaveLength(1)
+    expect(runtime.snapshot().mqttPublishTemplateRows).toHaveLength(2)
 
-    expect(runtime.dispatch('mqtt.drawer.close').handled).toBe(true)
+    const firstTemplateId = runtime.snapshot().mqttPublishTemplateRows[0].id
+    runtime.dispatch('mqtt.focus.templates')
+    runtime.dispatch('mqtt.record.focus', { kind: 'publish-template', id: firstTemplateId, list: 'templates' })
+    expect(runtime.handleShortcut('Ctrl+S', false)).toBe('mqtt.record.favorite')
+    expect(runtime.snapshot().mqttPublishTemplateRows.some((item) => item.id === firstTemplateId)).toBe(false)
+
+    expect(runtime.snapshot().mqttDrawer.open).toBe(false)
     runtime.focusMqttMessage('in-1')
     const archiveWritesBeforePreview = archiveWrites.length
     expect(runtime.handleShortcut('Ctrl+I', false)).toBe('mqtt.preview.open')
     expect(runtime.snapshot().mqttPreview).toMatchObject({ open: true, targetKind: 'message', targetId: 'in-1', source: 'keyboard' })
     expect(runtime.handleShortcut('Shift+ArrowDown', false)).toBe('mqtt.preview.scroll.down')
-    expect(runtime.snapshot().mqttPreview.scrollTop).toBe(80)
+    expect(runtime.snapshot().mqttPreview.scrollTop).toBe(240)
     expect(runtime.dispatch('mqtt.preview.scroll.set', { scrollTop: 480 }).handled).toBe(true)
     expect(runtime.snapshot().mqttPreview.scrollTop).toBe(480)
     expect(runtime.dispatch('mqtt.preview.scroll.set', { scrollTop: -120 }).handled).toBe(true)
@@ -1807,6 +2573,12 @@ describe('app runtime', () => {
     expect(runtime.snapshot().mqttConfigDraft).not.toBeNull()
     expect(runtime.snapshot().mqttPreview.open).toBe(false)
     expect(runtime.snapshot().mqttDrawer.open).toBe(false)
+    expect(runtime.dispatch('mqtt.preview.open', { kind: 'message', id: 'in-1', source: 'keyboard' }).handled).toBe(false)
+    expect(runtime.dispatch('mqtt.preview.open', { kind: 'message', id: 'in-1', source: 'shift' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttPreview).toMatchObject({ open: true, targetKind: 'message', targetId: 'in-1', source: 'shift' })
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'mqtt-editor' })).toBe('mqtt.preview.close')
+    expect(runtime.snapshot().mqttPreview.open).toBe(false)
+    expect(runtime.snapshot().mqttConfigDraft).not.toBeNull()
   })
 
   it('scopes MQTT F2 editing to the highlighted record or connection pane', () => {
@@ -1846,12 +2618,18 @@ describe('app runtime', () => {
     })
     runtime.updateMqttRecordEditDraft({ title: '状态回包' })
     expect(runtime.dispatch('mqtt.record.edit.save').handled).toBe(true)
-    expect(runtime.snapshot().mqttMessageRows[0]).toMatchObject({ id: 'msg-1', title: '状态回包', topic: 'plc/original' })
+    expect(runtime.snapshot().mqttMessageRows[0]).toMatchObject({ id: 'msg-1', topic: 'plc/original', payload: '{"ok":true}' })
+    expect(runtime.snapshot().mqttMessageRows[0].title).toBeUndefined()
+    expect(runtime.snapshot().mqttPublishTemplateRows[0]).toMatchObject({
+      title: '状态回包',
+      topic: 'plc/original',
+      payload: '{"ok":true}'
+    })
 
     runtime.focusMqttMessage('msg-1')
     expect(runtime.handleShortcut('Shift+F2', false)).toBe('mqtt.record.edit')
     runtime.updateMqttRecordEditDraft({
-      title: '完整编辑',
+      title: '',
       note: 'manual',
       topic: 'plc/edited',
       payload: '{"ok":false}',
@@ -1859,15 +2637,15 @@ describe('app runtime', () => {
       retain: true
     })
     expect(runtime.dispatch('mqtt.record.edit.save').handled).toBe(true)
-    expect(runtime.snapshot().mqttMessageRows[0]).toMatchObject({
-      id: 'msg-1',
-      title: '完整编辑',
+    expect(runtime.snapshot().mqttMessageRows[0]).toMatchObject({ id: 'msg-1', topic: 'plc/original', payload: '{"ok":true}', qos: 0, retain: false })
+    expect(runtime.snapshot().mqttPublishTemplateRows[0]).toMatchObject({
       note: 'manual',
       topic: 'plc/edited',
       payload: '{"ok":false}',
       qos: 1,
       retain: true
     })
+    expect(runtime.snapshot().mqttPublishTemplateRows[0].title).toMatch(/^\d{10}$/)
 
     runtime.focusMqttConfig(configId as string)
     expect(runtime.handleShortcut('F2', false)).toBe('mqtt.config.edit')
@@ -1906,14 +2684,14 @@ describe('app runtime', () => {
     runtime.dispatch('mqtt.publish.template.save', { title: 'Set Template' })
     const templateId = runtime.snapshot().mqttPublishTemplateRows[0].id
 
-    expect(runtime.handleShortcut('Ctrl+M', false)).toBe('mqtt.focus.messages')
+    expect(runtime.handleShortcut('Ctrl+2', false)).toBe('mqtt.receive.filter.in')
     expect(runtime.snapshot().activeMqttRecordList).toBe('messages')
     expect(runtime.handleShortcut('ArrowDown', false)).toBe('list.down')
-    expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'message', id: 'in-1' })
-    expect(runtime.handleShortcut('ArrowDown', false)).toBe('list.down')
     expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'message', id: 'in-2' })
+    expect(runtime.handleShortcut('ArrowDown', false)).toBe('list.down')
+    expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'message', id: 'in-1' })
 
-    expect(runtime.handleShortcut('Ctrl+Shift+M', false)).toBe('mqtt.focus.templates')
+    expect(runtime.handleShortcut('Ctrl+M', false)).toBe('mqtt.focus.templates')
     expect(runtime.snapshot().activeMqttRecordList).toBe('templates')
     expect(runtime.dispatch('mqtt.template.search.set', { query: 'set' }).handled).toBe(true)
     expect(runtime.snapshot().mqttTemplateSearch).toBe('set')
@@ -1921,7 +2699,7 @@ describe('app runtime', () => {
     expect(runtime.handleShortcut('ArrowDown', false)).toBe('list.down')
     expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'publish-template', id: templateId })
 
-    expect(runtime.handleShortcut('Ctrl+H', false)).toBe('mqtt.publish.records.toggle')
+    expect(runtime.dispatch('mqtt.history.search.set', { query: '' }).handled).toBe(true)
     expect(runtime.snapshot()).toMatchObject({ activeMqttPane: 'messages', activeMqttRecordList: 'history', mqttPublishRecordsOpen: true })
     expect(runtime.handleShortcut('ArrowDown', false)).toBe('list.down')
     expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'message', id: 'out-1' })
@@ -1955,9 +2733,64 @@ describe('app runtime', () => {
     expect(runtime.handleShortcut('Ctrl+F', false)).toBe('mqtt.search.focus')
     expect(runtime.snapshot().searchFocusTarget).toBe('mqtt-templates')
 
-    runtime.dispatch('mqtt.publish.records.toggle')
+    runtime.dispatch('mqtt.history.search.set', { query: '' })
     expect(runtime.handleShortcut('Ctrl+F', false)).toBe('mqtt.search.focus')
     expect(runtime.snapshot().searchFocusTarget).toBe('mqtt-history')
+  })
+
+  it('filters MQTT messages through top search and force deletes from search mode', () => {
+    const { state } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'PLC',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-a',
+      syncRecords: true
+    })
+    runtime.dispatch('mqtt.config.save')
+    runtime.appendMqttMessageRecord({ id: 'in-alpha', direction: 'incoming', topic: 'plc/in/alpha', payload: 'alpha', qos: 0, retain: false, timestamp: 1000 })
+    runtime.appendMqttMessageRecord({ id: 'in-beta', direction: 'incoming', topic: 'plc/in/beta', payload: 'beta incoming', qos: 0, retain: false, timestamp: 1100 })
+    runtime.appendMqttMessageRecord({ id: 'out-beta', direction: 'outgoing', topic: 'plc/out/beta', payload: 'beta outgoing', qos: 0, retain: false, timestamp: 1200 })
+    runtime.appendMqttMessageRecord({ id: 'del-1', direction: 'incoming', topic: 'plc/delete/one', payload: 'delete one', qos: 0, retain: false, timestamp: 1300 })
+    runtime.appendMqttMessageRecord({ id: 'del-2', direction: 'incoming', topic: 'plc/delete/two', payload: 'delete two', qos: 0, retain: false, timestamp: 1400 })
+
+    runtime.setMqttSearch('beta')
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.id)).toEqual(['in-beta'])
+    expect(runtime.dispatch('mqtt.receive.filter.all').handled).toBe(true)
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.id)).toEqual(['out-beta', 'in-beta'])
+    expect(runtime.dispatch('mqtt.receive.filter.out').handled).toBe(true)
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.id)).toEqual(['out-beta'])
+
+    expect(runtime.dispatch('mqtt.receive.filter.in').handled).toBe(true)
+    runtime.setMqttSearch('delete')
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.id)).toEqual(['del-2', 'del-1'])
+    runtime.focusMqttMessage('del-2')
+    expect(runtime.handleShortcut('Space', false)).toBe('list.toggleSelection')
+    expect(runtime.snapshot().mqttRecordListStates.messages).toMatchObject({
+      activeIndex: 1,
+      selectedIds: ['del-2']
+    })
+    expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'message', id: 'del-1' })
+
+    expect(runtime.handleShortcut('Ctrl+Delete', { textInputFocused: true, activeInputRole: 'mqtt-search' })).toBe('mqtt.record.delete')
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.id)).toEqual(['del-1'])
+    expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'message', id: 'del-1' })
+
+    expect(runtime.handleShortcut('Ctrl+Backspace', { textInputFocused: true, activeInputRole: 'mqtt-search' })).toBe('mqtt.record.delete')
+    expect(runtime.snapshot().mqttMessageRows).toEqual([])
+    expect(runtime.snapshot().mqttSelectedRecord).toBeNull()
   })
 
   it('uses EzClipboard-style multi-select and delete recovery for MQTT publish records', () => {
@@ -2041,15 +2874,28 @@ describe('app runtime', () => {
     runtime.appendMqttMessageRecord({ id: 'in-2', direction: 'incoming', topic: 'plc/in/2', payload: '{"in":2}', qos: 0, retain: false, timestamp: 1100 })
     runtime.appendMqttMessageRecord({ id: 'in-3', direction: 'incoming', topic: 'plc/in/3', payload: '{"in":3}', qos: 0, retain: false, timestamp: 1200 })
 
-    runtime.focusMqttMessage('in-2')
-    expect(runtime.dispatch('mqtt.record.delete').handled).toBe(true)
-    expect(runtime.snapshot().mqttMessageRows.map((item) => item.id)).toEqual(['in-1', 'in-3'])
-    expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'message', id: 'in-3' })
-    expect(runtime.snapshot().mqttRecordListStates.messages.activeIndex).toBe(1)
-
+    runtime.focusMqttMessage('in-3')
+    expect(runtime.handleShortcut('Space', false)).toBe('list.toggleSelection')
+    expect(runtime.snapshot().mqttRecordListStates.messages).toMatchObject({
+      activeIndex: 1,
+      selectedIds: ['in-3']
+    })
+    expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'message', id: 'in-2' })
+    expect(runtime.handleShortcut('Space', false)).toBe('list.toggleSelection')
+    expect(runtime.snapshot().mqttRecordListStates.messages).toMatchObject({
+      activeIndex: 2,
+      selectedIds: ['in-3', 'in-2']
+    })
+    expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'message', id: 'in-1' })
     expect(runtime.dispatch('mqtt.record.delete').handled).toBe(true)
     expect(runtime.snapshot().mqttMessageRows.map((item) => item.id)).toEqual(['in-1'])
     expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'message', id: 'in-1' })
+    expect(runtime.snapshot().mqttRecordListStates.messages.activeIndex).toBe(0)
+    expect(runtime.snapshot().mqttRecordListStates.messages.selectedIds).toEqual([])
+
+    expect(runtime.dispatch('mqtt.record.delete').handled).toBe(true)
+    expect(runtime.snapshot().mqttMessageRows.map((item) => item.id)).toEqual([])
+    expect(runtime.snapshot().mqttSelectedRecord).toBeNull()
     expect(runtime.snapshot().mqttRecordListStates.messages.activeIndex).toBe(0)
 
     runtime.updateMqttPublishDraft({ topic: 'plc/template/alpha', payload: '{"tpl":"alpha"}', qos: 0, retain: false })
@@ -2070,7 +2916,7 @@ describe('app runtime', () => {
     expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'publish-template', id: runtime.snapshot().mqttPublishTemplateRows[0].id })
     expect(runtime.dispatch('mqtt.template.search.set', { query: '' }).handled).toBe(true)
 
-    expect(runtime.handleShortcut('Ctrl+Shift+M', false)).toBe('mqtt.focus.templates')
+    expect(runtime.handleShortcut('Ctrl+M', false)).toBe('mqtt.focus.templates')
     const templateIds = runtime.snapshot().mqttPublishTemplateRows.map((item) => item.id)
     expect(runtime.handleShortcut('ArrowDown', false)).toBe('list.down')
     expect(runtime.handleShortcut('Space', false)).toBe('list.toggleSelection')
@@ -2080,7 +2926,6 @@ describe('app runtime', () => {
       selectedIds: [templateIds[1]]
     })
 
-    expect(runtime.handleShortcut('Ctrl+H', false)).toBe('mqtt.publish.records.toggle')
     expect(runtime.dispatch('mqtt.history.search.set', { query: 'out/2' }).handled).toBe(true)
     expect(runtime.snapshot().mqttHistorySearch).toBe('out/2')
     expect(runtime.snapshot().mqttTemplateSearch).toBe('')

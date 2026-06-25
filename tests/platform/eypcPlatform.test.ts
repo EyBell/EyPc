@@ -55,12 +55,19 @@ describe('browser fallback platform', () => {
 
     const { getPlatform } = await import('../../src/platform/eypcPlatform')
     const platform = getPlatform()
-    expect(platform.storage.getMqttArchive()).toEqual({ version: 1, connectionSnapshots: [], sessions: [], publishTemplates: [] })
-    platform.storage.setMqttArchive({ version: 1, connectionSnapshots: [], sessions: [{ id: 's1', connectionId: 'c1', title: 'Session', startedAt: 1, messages: [] }], publishTemplates: [] })
+    expect(platform.storage.getMqttArchive()).toEqual({ version: 1, connectionSnapshots: [], sessions: [], publishTemplates: [], publishDraftHistory: [] })
+    platform.storage.setMqttArchive({
+      version: 1,
+      connectionSnapshots: [],
+      sessions: [{ id: 's1', connectionId: 'c1', title: 'Session', startedAt: 1, messages: [] }],
+      publishTemplates: [],
+      publishDraftHistory: [{ id: 'hist1', connectionId: 'c1', title: 'Draft', topic: 'out', payload: 'draft', qos: 0, retain: false, source: 'manual', createdAt: 1, updatedAt: 2 }]
+    })
 
     expect(store.has('eypc/state/v1')).toBe(false)
     expect(JSON.parse(store.get('eypc/mqtt/archive/v1') || '{}')).toMatchObject({
-      sessions: [{ id: 's1', connectionId: 'c1', title: 'Session' }]
+      sessions: [{ id: 's1', connectionId: 'c1', title: 'Session' }],
+      publishDraftHistory: [{ id: 'hist1', topic: 'out', payload: 'draft' }]
     })
     expect(platform.storage.getMqttStorageStatus()).toMatchObject({
       mode: 'browser-localStorage',

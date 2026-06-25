@@ -4,16 +4,25 @@ import {
   buildMqttWebSocketUrl,
   createMqttConnectionConfig,
   createMqttSession,
+  DEFAULT_MQTT_TOPIC_COLORS,
+  createMqttClientId,
   mqttConnectOptionsFromConfig,
+  mqttEndpointHostPortLabel,
+  mqttTopicVisualForMessage,
+  deleteMqttPublishDraftHistory,
   normalizeMqttArchiveState,
+  normalizeMqttTopicColor,
   normalizeMqttState,
   parseMqttWebSocketUrl,
   deleteMqttPublishTemplate,
   matchMqttTopicFilter,
+  renameMqttPublishDraftHistory,
   renameMqttRecord,
   renameMqttPublishTemplate,
+  saveMqttPublishDraftHistory,
   saveMqttPublishTemplate,
-  toMqttPublishDraft
+  toMqttPublishDraft,
+  updateMqttPublishDraftHistory
 } from '../../src/domain/mqtt'
 
 describe('mqtt domain', () => {
@@ -33,7 +42,13 @@ describe('mqtt domain', () => {
           'b/+': ' ',
           'missing/#': '已删除'
         },
+        subscriptionColors: {
+          'a/#': '#111111',
+          'b/+': 'bad-color',
+          'missing/#': '#222222'
+        },
         publishTopic: ' out ',
+        publishTopics: [' out ', 'out/alt', '', 'out'],
         qos: 9,
         retain: true,
         autoReconnect: false,
@@ -61,7 +76,12 @@ describe('mqtt domain', () => {
       subscriptionAliases: {
         'a/#': '状态汇总'
       },
+      subscriptionColors: {
+        'a/#': '#111111',
+        'b/+': DEFAULT_MQTT_TOPIC_COLORS[1]
+      },
       publishTopic: 'out',
+      publishTopics: ['out', 'out/alt'],
       qos: 0,
       retain: true,
       autoReconnect: false,
@@ -78,6 +98,40 @@ describe('mqtt domain', () => {
     }])
     expect(JSON.stringify(state)).not.toContain('secret')
     expect(JSON.stringify(state)).not.toContain('token')
+  })
+
+  it('creates MQTT client ids with the shared eypc prefix format', () => {
+    expect(createMqttClientId(100)).toMatch(/^eypc_2s_[0-9a-f]{6}$/)
+  })
+
+  it('normalizes MQTT view preferences and prunes per-connection topic filters', () => {
+    const state = normalizeMqttState({
+      activeConfigId: 'dev',
+      configs: [
+        { id: 'dev', name: 'Dev', url: 'ws://localhost:8083/mqtt', subscriptions: ['plc/+/status', 'plc/+/cmd'] },
+        { id: 'other', name: 'Other', url: 'ws://other:8083/mqtt', subscriptions: ['other/#'] }
+      ],
+      viewPrefs: {
+        infoFilter: 'favorites',
+        activeSubscriptionTopicsByConfigId: {
+          dev: ['plc/+/cmd', 'missing/#', 'plc/+/cmd'],
+          other: ['other/#'],
+          stale: ['stale/#']
+        }
+      }
+    }, 100)
+
+    expect(state.viewPrefs).toEqual({
+      infoFilter: 'favorites',
+      activeSubscriptionTopicsByConfigId: {
+        dev: ['plc/+/cmd'],
+        other: ['other/#']
+      }
+    })
+    expect(normalizeMqttState({ viewPrefs: { infoFilter: 'bad' } }, 100).viewPrefs).toEqual({
+      infoFilter: 'incoming',
+      activeSubscriptionTopicsByConfigId: {}
+    })
   })
 
   it('builds MQTT.js connect options from persisted config and session-only secret', () => {
@@ -136,6 +190,10 @@ describe('mqtt domain', () => {
       path: 'mqtt',
       ssl: true
     })).toBe('wss://ainongyun.net:8083/mqtt')
+
+    expect(mqttEndpointHostPortLabel('wss://broker.example:8083/mqtt')).toBe('broker.example:8083')
+    expect(mqttEndpointHostPortLabel('ws://localhost/mqtt')).toBe('localhost')
+    expect(mqttEndpointHostPortLabel('broker.example:1883')).toBe('broker.example:1883')
   })
 
   it('normalizes MQTT layout preferences separately from shared tool preview preferences', () => {
@@ -180,6 +238,7 @@ describe('mqtt domain', () => {
         password: 'secret',
         token: 'token',
         publishTopic: ' out ',
+        publishTopics: [' out ', 'alt/out', 'out'],
         qos: 2,
         retain: true,
         syncRecords: false,
@@ -197,6 +256,7 @@ describe('mqtt domain', () => {
       clientId: 'client-a',
       username: 'user-a',
       publishTopic: 'out',
+      publishTopics: ['out', 'alt/out'],
       qos: 2,
       retain: true,
       syncRecords: false,
@@ -205,6 +265,86 @@ describe('mqtt domain', () => {
     }])
     expect(JSON.stringify(archive)).not.toContain('secret')
     expect(JSON.stringify(archive)).not.toContain('token')
+  })
+
+  it('normalizes and manages MQTT publish draft history with dedupe and template promotion', () => {
+    let archive = normalizeMqttArchiveState({
+      publishDraftHistory: [
+        { id: 'old', connectionId: 'dev', title: 'Old', topic: ' out ', payload: 'same', qos: 9, retain: true, source: 'overwrite', createdAt: 1, updatedAt: 2 },
+        { id: 'dup', connectionId: 'dev', title: 'Dup', topic: 'out', payload: 'same', qos: 1, retain: false, source: 'manual', createdAt: 3, updatedAt: 5 },
+        { id: 'other', connectionId: 'other', topic: 'out', payload: 'same', qos: 0, retain: false, source: 'manual', createdAt: 4, updatedAt: 4 }
+      ]
+    }, 10)
+
+    expect(archive.publishDraftHistory).toEqual([
+      expect.objectContaining({ id: 'dup', connectionId: 'dev', title: 'Dup', topic: 'out', payload: 'same', qos: 1, retain: false, source: 'manual', updatedAt: 5 }),
+      expect.objectContaining({ id: 'other', connectionId: 'other', topic: 'out', payload: 'same', updatedAt: 4 })
+    ])
+
+    archive = saveMqttPublishDraftHistory(archive, {
+      connectionId: 'dev',
+      title: 'Manual',
+      topic: ' out ',
+      payload: 'same',
+      qos: 2,
+      retain: true,
+      source: 'manual'
+    }, 20)
+    expect(archive.publishDraftHistory).toHaveLength(2)
+    expect(archive.publishDraftHistory[0]).toMatchObject({
+      id: 'dup',
+      title: 'Manual',
+      topic: 'out',
+      payload: 'same',
+      qos: 2,
+      retain: true,
+      source: 'manual',
+      createdAt: 3,
+      updatedAt: 20
+    })
+
+    const historyId = archive.publishDraftHistory[0].id
+    archive = renameMqttPublishDraftHistory(archive, historyId, { title: 'Renamed', note: 'keep' }, 30)
+    expect(archive.publishDraftHistory[0]).toMatchObject({ title: 'Renamed', note: 'keep', updatedAt: 30 })
+
+    archive = updateMqttPublishDraftHistory(archive, historyId, {
+      title: 'Edited',
+      topic: ' edited/topic ',
+      payload: 'edited-payload',
+      qos: 1,
+      retain: false
+    }, 35)
+    expect(archive.publishDraftHistory[0]).toMatchObject({
+      id: historyId,
+      title: 'Edited',
+      topic: 'edited/topic',
+      payload: 'edited-payload',
+      qos: 1,
+      retain: false,
+      updatedAt: 35
+    })
+
+    archive = saveMqttPublishTemplate(archive, {
+      connectionId: 'dev',
+      title: 'Favorite',
+      topic: archive.publishDraftHistory[0].topic,
+      payload: archive.publishDraftHistory[0].payload,
+      qos: archive.publishDraftHistory[0].qos,
+      retain: archive.publishDraftHistory[0].retain
+    }, 40)
+    archive = saveMqttPublishTemplate(archive, {
+      connectionId: 'dev',
+      title: 'Favorite Updated',
+      topic: 'edited/topic',
+      payload: 'edited-payload',
+      qos: 0,
+      retain: false
+    }, 50)
+    expect(archive.publishTemplates).toHaveLength(1)
+    expect(archive.publishTemplates[0]).toMatchObject({ title: 'Favorite Updated', topic: 'edited/topic', payload: 'edited-payload', qos: 0, retain: false, updatedAt: 50 })
+
+    archive = deleteMqttPublishDraftHistory(archive, historyId)
+    expect(archive.publishDraftHistory.map((item) => item.id)).toEqual(['other'])
   })
 
   it('archives messages by session, trims retention, renames metadata, and prepares resend drafts', () => {
@@ -256,6 +396,46 @@ describe('mqtt domain', () => {
     expect(matchMqttTopicFilter('plc/czz060301/status', 'plc/+')).toBe(false)
   })
 
+  it('normalizes MQTT topic colors and resolves the best subscription visual match', () => {
+    expect(normalizeMqttTopicColor('#111111')).toBe('#111111')
+    expect(normalizeMqttTopicColor('#ABCDEF')).toBe('#ABCDEF')
+    expect(normalizeMqttTopicColor(' #abcdef ')).toBe('#abcdef')
+    expect(normalizeMqttTopicColor('red', 2)).toBe(DEFAULT_MQTT_TOPIC_COLORS[2])
+
+    const config = createMqttConnectionConfig({
+      id: 'dev',
+      name: 'Dev',
+      url: 'ws://broker.example:8083/',
+      subscriptions: ['plc/#', 'plc/+/status', 'plc/czz060301/status'],
+      subscriptionAliases: {
+        'plc/#': '全部 PLC',
+        'plc/+/status': '状态汇总',
+        'plc/czz060301/status': '手动状态'
+      },
+      subscriptionColors: {
+        'plc/#': '#111111',
+        'plc/+/status': '#222222',
+        'plc/czz060301/status': '#333333'
+      }
+    }, 100)
+
+    expect(mqttTopicVisualForMessage('plc/czz060301/status', config)).toEqual({
+      topic: 'plc/czz060301/status',
+      alias: '手动状态',
+      color: '#333333'
+    })
+    expect(mqttTopicVisualForMessage('plc/other/status', config)).toEqual({
+      topic: 'plc/+/status',
+      alias: '状态汇总',
+      color: '#222222'
+    })
+    expect(mqttTopicVisualForMessage('other/status', config)).toEqual({
+      topic: null,
+      alias: '',
+      color: DEFAULT_MQTT_TOPIC_COLORS[0]
+    })
+  })
+
   it('normalizes, renames, deletes, and applies MQTT publish templates', () => {
     let archive = normalizeMqttArchiveState({
       version: 1,
@@ -277,14 +457,15 @@ describe('mqtt domain', () => {
     expect(archive.publishTemplates).toEqual([{
       id: 'tpl-a',
       connectionId: 'dev',
-      title: 'demo/out',
+      title: '',
       note: 'latest',
       topic: 'demo/out',
       payload: 'hello',
       qos: 0,
       retain: true,
       createdAt: 100,
-      updatedAt: 100
+      updatedAt: 100,
+      operatedAt: 100
     }])
 
     archive = saveMqttPublishTemplate(archive, {
@@ -299,10 +480,32 @@ describe('mqtt domain', () => {
     expect(saved).toMatchObject({ connectionId: 'dev', topic: 'plc/status', payload: '{"ok":true}', qos: 1 })
     expect(toMqttPublishDraft(saved!)).toEqual({ topic: 'plc/status', payload: '{"ok":true}', qos: 1, retain: false })
 
+    archive = saveMqttPublishTemplate(archive, {
+      connectionId: 'dev',
+      title: '',
+      topic: 'plc/no-alias',
+      payload: 'empty-title'
+    }, 250)
+    expect(archive.publishTemplates.find((item) => item.topic === 'plc/no-alias')).toMatchObject({ title: '' })
+
     archive = renameMqttPublishTemplate(archive, saved!.id, { title: 'Status Check', note: 'manual' }, 300)
     expect(archive.publishTemplates.find((item) => item.id === saved!.id)).toMatchObject({ title: 'Status Check', note: 'manual', updatedAt: 300 })
 
     archive = deleteMqttPublishTemplate(archive, saved!.id)
     expect(archive.publishTemplates.some((item) => item.id === saved!.id)).toBe(false)
+  })
+
+  it('sorts MQTT publish templates by latest operation time with updatedAt fallback', () => {
+    const archive = normalizeMqttArchiveState({
+      publishTemplates: [
+        { id: 'old', connectionId: 'dev', title: 'Old', topic: 'plc/old', payload: 'old', qos: 0, retain: false, createdAt: 1, updatedAt: 30 },
+        { id: 'used', connectionId: 'dev', title: 'Used', topic: 'plc/used', payload: 'used', qos: 0, retain: false, createdAt: 2, updatedAt: 10, operatedAt: 50 },
+        { id: 'edited', connectionId: 'dev', title: 'Edited', topic: 'plc/edited', payload: 'edited', qos: 0, retain: false, createdAt: 3, updatedAt: 40 }
+      ]
+    }, 100)
+
+    expect(archive.publishTemplates.map((item) => item.id)).toEqual(['used', 'edited', 'old'])
+    expect(archive.publishTemplates[0]).toMatchObject({ id: 'used', operatedAt: 50 })
+    expect(archive.publishTemplates[1]).toMatchObject({ id: 'edited', operatedAt: 40 })
   })
 })

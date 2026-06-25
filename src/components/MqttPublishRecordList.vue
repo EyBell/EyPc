@@ -1,13 +1,6 @@
 <script setup lang="ts">
-import {
-  CornerDownLeft,
-  Info,
-  MoreHorizontal,
-  Send,
-  Star,
-  Trash2
-} from '@lucide/vue'
 import { buildMqttInlinePayloadPreviewSegments } from '../domain/mqttPayloadPreview'
+import { mqttPublishTemplateOperationTime, type MqttTopicVisual } from '../domain/mqtt'
 import type { MqttMessageRecord, MqttPublishTemplate } from '../domain/types'
 import type { MqttRecordListId, MqttRecordListState } from '../runtime/appRuntime'
 
@@ -16,17 +9,14 @@ type PublishRecordRow = MqttMessageRecord | MqttPublishTemplate
 const props = defineProps<{
   listId: Extract<MqttRecordListId, 'templates' | 'history'>
   title: string
-  search: string
   rows: PublishRecordRow[]
   state: MqttRecordListState
   selectedKind: 'message' | 'publish-template' | null
   selectedId: string | null
-  commandTitle: (label: string, commandId: string, fallback: string) => string
-  shortcutHintAttr: (commandId: string) => string | undefined
+  topicVisual: (topic: string) => MqttTopicVisual
 }>()
 
 const emit = defineEmits<{
-  search: [query: string]
   focusRow: [row: PublishRecordRow]
   toggleSelect: [row: PublishRecordRow, range: boolean]
   apply: [row: PublishRecordRow]
@@ -54,8 +44,8 @@ function rowTitle(row: PublishRecordRow) {
 }
 
 function rowMeta(row: PublishRecordRow) {
-  const time = new Date(isTemplate(row) ? row.updatedAt : row.timestamp).toLocaleTimeString()
-  return isTemplate(row) ? `QoS ${row.qos}` : `${time} · QoS ${row.qos}`
+  const time = new Date(isTemplate(row) ? mqttPublishTemplateOperationTime(row) : row.timestamp).toLocaleTimeString()
+  return `${time} · QoS ${row.qos}`
 }
 
 function rowTopic(row: PublishRecordRow) {
@@ -66,6 +56,14 @@ function rowAlias(row: PublishRecordRow) {
   const title = row.title?.trim() || ''
   if (!title) return ''
   return title === row.topic.trim() ? '' : title
+}
+
+function rowRouteLabel(row: PublishRecordRow) {
+  return rowAlias(row) || props.topicVisual(row.topic).alias || rowTopic(row)
+}
+
+function rowStyle(row: PublishRecordRow) {
+  return { '--mqtt-topic-color': props.topicVisual(row.topic).color }
 }
 
 function payloadSnippet(payload: string) {
@@ -91,45 +89,6 @@ function selected(row: PublishRecordRow) {
 
 <template>
   <section class="mqtt-publish-record-list" :class="`mqtt-publish-record-list-${listId}`">
-    <header class="mqtt-publish-record-list-header">
-      <span class="mqtt-publish-record-list-title">
-        <strong>{{ title }}</strong>
-        <input
-          class="mqtt-template-search"
-          :data-role="listId === 'templates' ? 'mqtt-template-search' : 'mqtt-history-search'"
-          :value="search"
-          :placeholder="`搜索${title}`"
-          :aria-label="`搜索${title}`"
-          :data-mqtt-shortcut-hint="shortcutHintAttr(listId === 'templates' ? 'mqtt.focus.templates' : 'mqtt.publish.records.toggle')"
-          @focus="emit('search', search)"
-          @input="emit('search', ($event.target as HTMLInputElement).value)"
-        />
-      </span>
-      <span class="mqtt-publish-record-list-tools">
-        <small>{{ rows.length }} 条</small>
-        <button
-          v-if="state.selectedIds.length"
-          type="button"
-          class="mqtt-icon-button"
-          :title="commandTitle(`重复发送选中${title}`, 'mqtt.record.repeatSend', 'cr')"
-          :aria-label="`重复发送选中${title}`"
-          @click="emit('repeatSend')"
-        >
-          <Send class="mqtt-icon" aria-hidden="true" />
-        </button>
-        <button
-          v-if="state.selectedIds.length"
-          type="button"
-          class="mqtt-icon-button danger"
-          :title="commandTitle(`删除选中${title}`, 'mqtt.record.delete', 'del')"
-          :aria-label="`删除选中${title}`"
-          @click="emit('deleteSelected')"
-        >
-          <Trash2 class="mqtt-icon" aria-hidden="true" />
-        </button>
-      </span>
-    </header>
-
     <div class="mqtt-publish-record-list-body">
       <article
         v-for="(row, index) in rows"
@@ -137,7 +96,9 @@ function selected(row: PublishRecordRow) {
         class="mqtt-publish-record-row mqtt-message-row outgoing"
         :class="{ focused: isFocused(row), selected: selected(row), active: index === state.activeIndex }"
         :data-mqtt-preview-target="previewTargetValue(row)"
+        :style="rowStyle(row)"
         @click="emit('focusRow', row)"
+        @dblclick="emit('toggleSelect', row, $event.shiftKey)"
         @contextmenu.prevent="emit('menu', row)"
         @mouseenter="emit('preview', row, $event)"
         @mouseleave="emit('closePreview')"
@@ -150,41 +111,13 @@ function selected(row: PublishRecordRow) {
           @click.stop="emit('toggleSelect', row, $event.shiftKey)"
         />
         <span class="mqtt-template-main mqtt-message-route">
-          <input
-            v-if="isTemplate(row)"
-            class="mqtt-topic-alias-input mqtt-topic-alias-badge"
-            data-role="mqtt-search"
-            :value="row.title"
-            aria-label="模板名称"
-            @click.stop
-            @focus="emit('focusRow', row)"
-            @change="emit('rename', row, ($event.target as HTMLInputElement).value)"
-          />
-          <small v-else-if="rowAlias(row)" class="mqtt-topic-alias-badge">{{ rowAlias(row) }}</small>
-          <strong>{{ rowTopic(row) }}</strong>
+          <strong :title="rowTopic(row)">{{ rowRouteLabel(row) }}</strong>
           <small class="mqtt-topic-meta">{{ rowMeta(row) }}</small>
         </span>
         <span class="mqtt-item-payload-snippet" :title="payloadSnippet(row.payload)">
           <template v-for="(segment, index) in payloadSnippetSegments(row.payload)" :key="`${index}:${segment.kind}:${segment.text}`">
             <span class="mqtt-preview-token" :class="`mqtt-preview-token-${segment.kind}`">{{ segment.text }}</span>
           </template>
-        </span>
-        <span class="mqtt-message-actions" :aria-label="`${title}操作`">
-          <button type="button" class="mqtt-icon-button" title="填入发布" aria-label="填入发布" @click.stop="emit('apply', row)">
-            <CornerDownLeft class="mqtt-icon" aria-hidden="true" />
-          </button>
-          <button type="button" class="mqtt-icon-button" :title="commandTitle('重复发送', 'mqtt.record.repeatSend', 'cr')" aria-label="重复发送" @click.stop="emit('repeatSend', row)">
-            <Send class="mqtt-icon" aria-hidden="true" />
-          </button>
-          <button type="button" class="mqtt-icon-button" :title="commandTitle('收藏/别名', 'mqtt.record.favorite', 'c-d')" aria-label="收藏/别名" @click.stop="emit('favorite', row)">
-            <Star class="mqtt-icon" aria-hidden="true" />
-          </button>
-          <button type="button" class="mqtt-icon-button" :title="commandTitle('预览', 'mqtt.preview.open', 'c-i')" aria-label="预览" @click.stop="emit('preview', row)">
-            <Info class="mqtt-icon" aria-hidden="true" />
-          </button>
-          <button type="button" class="mqtt-icon-button" :title="commandTitle('快捷操作', 'mqtt.drawer.open', 'c-→')" aria-label="快捷操作" @click.stop="emit('menu', row)">
-            <MoreHorizontal class="mqtt-icon" aria-hidden="true" />
-          </button>
         </span>
       </article>
       <p v-if="!rows.length" class="empty-note">暂无{{ title }}</p>

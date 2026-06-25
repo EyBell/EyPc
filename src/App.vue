@@ -10,7 +10,7 @@ import QuickFavoritesPage from './pages/QuickFavoritesPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
 import { createAppRuntime } from './runtime/appRuntime'
 import { routePluginFeature } from './runtime/feature/featureRouting'
-import { activeInputRoleFromTarget, blockHandledShortcutEvent, isEditableTarget, shortcutFromEvent } from './runtime/keyboardEvent'
+import { activeInputRoleFromTarget, blockHandledShortcutEvent, isEditableTarget, shortcutFromEvent, shouldEnableShiftPreview } from './runtime/keyboardEvent'
 import { createShortcutHintTiming } from './runtime/shortcutHintTiming'
 
 const platform = getPlatform()
@@ -32,8 +32,8 @@ const snapshot = computed(() => {
 })
 
 function onKeydown(event: KeyboardEvent) {
+  shiftPreview.value = shouldEnableShiftPreview(event)
   if (event.defaultPrevented) return
-  if (event.key === 'Shift') shiftPreview.value = true
   shortcutHintTiming.keydown(event)
   const shortcutId = shortcutFromEvent(event)
   const textInputFocused = isEditableTarget(event.target)
@@ -45,7 +45,7 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 function onKeyup(event: KeyboardEvent) {
-  if (event.key === 'Shift') shiftPreview.value = false
+  shiftPreview.value = shouldEnableShiftPreview(event)
   shortcutHintTiming.keyup(event)
 }
 
@@ -73,7 +73,7 @@ watch(() => snapshot.value.searchFocusRequestId, () => {
       : snapshot.value.searchFocusTarget === 'favorite-groups'
         ? 'favorite-group-search'
         : snapshot.value.searchFocusTarget === 'mqtt'
-          ? 'mqtt-search'
+          ? 'mqtt-record-search'
         : snapshot.value.searchFocusTarget === 'mqtt-templates'
           ? 'mqtt-template-search'
         : snapshot.value.searchFocusTarget === 'mqtt-history'
@@ -91,7 +91,7 @@ watch(() => snapshot.value.searchBlurRequestId, () => {
   requestAnimationFrame(() => {
     const active = document.activeElement as HTMLElement | null
     const role = active?.closest<HTMLElement>('[data-role]')?.dataset.role
-    if (role === 'port-search' || role === 'mqtt-search' || role === 'mqtt-template-search' || role === 'mqtt-history-search' || role === 'favorite-search' || role === 'favorite-group-search' || role === 'port-group-search' || role === 'primary-search') active?.blur()
+    if (role === 'port-search' || role === 'mqtt-search' || role === 'mqtt-record-search' || role === 'mqtt-template-search' || role === 'mqtt-history-search' || role === 'favorite-search' || role === 'favorite-group-search' || role === 'port-group-search' || role === 'primary-search') active?.blur()
   })
 })
 
@@ -177,6 +177,7 @@ onUnmounted(() => {
           @update-subscription-draft="runtime.updateMqttSubscriptionDraft"
           @update-favorite-draft="runtime.updateMqttFavoriteDraft"
           @update-record-edit-draft="runtime.updateMqttRecordEditDraft"
+          @update-publish-draft-history-edit-draft="runtime.updateMqttPublishDraftHistoryEditDraft"
           @update-publish-draft="runtime.updateMqttPublishDraft"
           @dispatch="runtime.dispatch"
         />

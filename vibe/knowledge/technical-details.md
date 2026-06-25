@@ -5,41 +5,71 @@ Tool: codex
 ## File Favorites Runtime
 
 - Last verified: 2026-06-23.
-- Evidence: code, tests, build.
-- Runtime boundary: favorites open/reveal/copy stays behind [preload/index.js](../../preload/index.js#L210), [src/platform/eypcPlatform.ts](../../src/platform/eypcPlatform.ts#L1), and [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L1); UI pages dispatch action ids instead of shelling out.
-- macOS open/reveal: [preload/index.js](../../preload/index.js#L210) runs `/usr/bin/open <path>` for open and `/usr/bin/open -R <path>` for reveal. Unsupported default open falls back to Finder reveal, and failed native reveal falls back to the uTools shell API.
-- uTools preload packaging: root [package.json](../../package.json#L1) is ESM, so [public/package.json](../../public/package.json#L1) declares `type: commonjs`. [scripts/prepare-utools-runtime.mjs](../../scripts/prepare-utools-runtime.mjs#L1) syncs `plugin.json`, `package.json`, and `preload.js` into `dist`, while [scripts/validate-utools-runtime.mjs](../../scripts/validate-utools-runtime.mjs#L1) validates the CommonJS package scope.
-- Quick favorite focus: [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L3025) focuses the first visible favorite when quick mode starts, so empty-search `Enter` has a target.
-- Favorite search command hints: [src/App.vue](../../src/App.vue#L177) passes `showShortcutHints` into [src/pages/FavoritesPage.vue](../../src/pages/FavoritesPage.vue#L35) and [src/pages/QuickFavoritesPage.vue](../../src/pages/QuickFavoritesPage.vue#L12). Full target search uses `c-f`, full container search uses `c-s-f`, and quick search uses `c-f`.
-- Regression tests: [tests/platform/favoriteFileBridge.test.ts](../../tests/platform/favoriteFileBridge.test.ts#L1), [tests/runtime/action.test.ts](../../tests/runtime/action.test.ts#L1), and [tests/ui/searchShortcutHints.test.ts](../../tests/ui/searchShortcutHints.test.ts#L73).
-- Update trigger: change this record when favorites bridge methods, uTools preload packaging, quick-mode focus initialization, or favorite search hint propagation changes.
+- Runtime boundary: favorites open/reveal/copy stays behind [preload/index.js](../../preload/index.js#L1), [src/platform/eypcPlatform.ts](../../src/platform/eypcPlatform.ts#L1), and [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L1); UI pages dispatch action ids instead of shelling out.
+- macOS open/reveal uses native `/usr/bin/open` fallback through preload, then falls back to uTools shell APIs when native reveal fails.
+- uTools preload packaging keeps the root package ESM while [public/package.json](../../public/package.json#L1) declares a local CommonJS scope copied to `dist`.
+- Quick favorite mode initializes a visible target focus so empty-search `Enter` has a target.
+- Regression coverage: [tests/platform/favoriteFileBridge.test.ts](../../tests/platform/favoriteFileBridge.test.ts#L1), [tests/runtime/action.test.ts](../../tests/runtime/action.test.ts#L1), and [tests/ui/searchShortcutHints.test.ts](../../tests/ui/searchShortcutHints.test.ts#L1).
+- Update trigger: change this record when favorites bridge methods, preload packaging, quick-mode focus initialization, or favorite search hint propagation changes.
 
 ## Documentation Sync
 
-- Last verified: 2026-06-24.
-- The current file favorites source of truth is [vibe/specs/2606201810-eypc-file-management-tab/01-spec.md](../specs/2606201810-eypc-file-management-tab/01-spec.md#L1) with verification in [vibe/specs/2606201810-eypc-file-management-tab/04-verify.md](../specs/2606201810-eypc-file-management-tab/04-verify.md#L1).
-- Durable architecture facts live in [ARCHITECTURE.md](ARCHITECTURE.md#L1), while repeated wrong paths are archived in [error-memory.md](error-memory.md#L1).
+- Last verified: 2026-06-25.
+- Current process hub: [../specs/PROJECT_STATUS.md](../specs/PROJECT_STATUS.md#L1).
+- Current product requirements: [../specs/PRODUCT_REQUIREMENTS.md](../specs/PRODUCT_REQUIREMENTS.md#L1).
+- Current MQTT implementation sync: [../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
+- Durable architecture facts live in [ARCHITECTURE.md](ARCHITECTURE.md#L1); repeated wrong paths live in [error-memory.md](error-memory.md#L1); interaction taste lives in [developer-soul.md](developer-soul.md#L1).
 
-## MQTT Subscription Rail
+## MQTT State And Storage
 
-- Last verified: 2026-06-23.
-- Source of truth: [vibe/specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
-- Persisted config keeps topic filters in `subscriptions: string[]` and alias labels in `subscriptionAliases` through [src/domain/types.ts](../../src/domain/types.ts#L45) and [src/domain/mqtt.ts](../../src/domain/mqtt.ts#L49).
-- Runtime projects alias-aware subscription rows, multi-filter state, focused/selected state, and config-deleting cleanup commands from [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L517).
-- Subscription add/edit from the subscription rail uses `mqttSubscriptionDraft` and a modal editor with stable row ids; connection config create/edit uses `mqttConfigDraft.subscriptionItems` inline in the right config drawer. A create draft is blank and never reads the active config name, Client ID, endpoint, subscriptions, or publish topic.
-- Keyboard ownership for subscription Space/Enter/Delete is isolated by the `mqtt-subscriptions` layer, while modal editing uses `mqtt-subscription-editor` to keep workbench commands from leaking through text inputs in [src/runtime/keybinding/keybindingRuntime.ts](../../src/runtime/keybinding/keybindingRuntime.ts#L12) and [src/runtime/keyboardEvent.ts](../../src/runtime/keyboardEvent.ts#L18).
-- UI list and config editor live in [src/pages/MqttPage.vue](../../src/pages/MqttPage.vue#L345) with styling in [src/styles/app.css](../../src/styles/app.css#L2627).
+- Last verified: 2026-06-25.
+- Source of truth: [../specs/PRODUCT_REQUIREMENTS.md](../specs/PRODUCT_REQUIREMENTS.md#L1) and [../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
+- Persisted config keeps subscriptions, aliases, colors, publish defaults, connection flags, layout prefs, and `syncRecords` in [src/domain/types.ts](../../src/domain/types.ts#L1). Password/token values stay outside app state and archive data.
+- `MqttConnectionConfig.publishTopics` normalizes multiple default publish topics and mirrors the first value to `publishTopic` through [src/domain/mqtt.ts](../../src/domain/mqtt.ts#L1).
+- `MqttState.viewPrefs` persists `全/收/发/藏` and valid topic filters per connection config. Invalid topics are pruned during normalization.
+- `MqttArchiveState.publishDraftHistory` stores overwritten/manual drafts only. It is local recovery/reuse data and must not duplicate outgoing send records.
+- SQLite-first archive durability is implemented through [preload/index.js](../../preload/index.js#L1) and surfaced by [src/platform/eypcPlatform.ts](../../src/platform/eypcPlatform.ts#L1). Legacy archive import remains additive and keeps old data as rollback backup.
 
-## MQTT Message Workbench Commands
+## MQTT Workbench Runtime
 
-- Last verified: 2026-06-24.
-- Source of truth: [vibe/specs/260624-eypc-mqtt-record-mode-consolidation/01-spec.md](../specs/260624-eypc-mqtt-record-mode-consolidation/01-spec.md#L1) and [vibe/specs/260624-eypc-utools-default-window-adaptation/01-spec.md](../specs/260624-eypc-utools-default-window-adaptation/01-spec.md#L1). Verification is in [vibe/specs/260624-eypc-mqtt-record-mode-consolidation/04-verify.md](../specs/260624-eypc-mqtt-record-mode-consolidation/04-verify.md#L1) and [vibe/specs/260624-eypc-utools-default-window-adaptation/04-verify.md](../specs/260624-eypc-utools-default-window-adaptation/04-verify.md#L1). Previous [vibe/specs/260624-eypc-mqtt-ui-command-polish/01-spec.md](../specs/260624-eypc-mqtt-ui-command-polish/01-spec.md#L1) is superseded for record layout and shortcut semantics.
-- Runtime state in [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L1) now projects active MQTT pane, active record list (`messages` / `templates` / `history`), template/history search text, per-list `activeIndex` and `selectedIds`, direction stats, action-drawer items, preview state, favorite-alias draft, record-edit draft, SQLite/legacy storage status, persisted `mqtt.layoutPrefs`, and shared `settings.toolPreviewPrefs`. [src/domain/toolPreview.ts](../../src/domain/toolPreview.ts#L1) normalizes hover preview defaults to disabled with a 500ms delay and migrates legacy MQTT hover fields through [src/domain/state.ts](../../src/domain/state.ts#L1). Message favorites reuse `MqttPublishTemplate.title`; record aliases may be empty and fall back to topic/payload summary.
-- MQTT archive durability is SQLite-first in [preload/index.js](../../preload/index.js#L1), surfaced by [src/platform/eypcPlatform.ts](../../src/platform/eypcPlatform.ts#L1), and displayed in Settings maintenance through [src/pages/SettingsPage.vue](../../src/pages/SettingsPage.vue#L1). First SQLite read imports legacy `eypc/mqtt/archive/v1` when available and keeps the old archive as rollback backup. Password/token secrets remain under `eypc/mqtt/secrets-local/v1` and are excluded from archive normalization, migration, and SQLite row mirrors.
-- Publish templates and publish history use the shared [src/components/MqttPublishRecordList.vue](../../src/components/MqttPublishRecordList.vue#L1) as a single active list replacing the upper message area. Selection movement and delete recovery are pure helpers in [src/domain/recordListSelection.ts](../../src/domain/recordListSelection.ts#L1): `Space` selects the active row and moves highlight down, unselect keeps position, and batch delete restores focus to the first row below the deleted block or the previous row when deleting the tail.
-- MQTT copy actions call `clipboard.copyText(text)` from [src/platform/eypcPlatform.ts](../../src/platform/eypcPlatform.ts#L1), with preload support in [preload/index.js](../../preload/index.js#L1). `files.copyPath(path)` stays compatible.
-- Keybinding ownership in [src/runtime/keybinding/keybindingRuntime.ts](../../src/runtime/keybinding/keybindingRuntime.ts#L1) covers `Tab`/`Shift+Tab` MQTT pane switching, `Ctrl+M` message focus, `Ctrl+Shift+M` template list focus, `Ctrl+H` history list focus, `Ctrl+P` publish editor focus, `Ctrl+Shift+S` layout toggle, contextual `F2` record alias/config edit, contextual `Shift+F2` record full edit/config rename, `Ctrl+D` favorite, `Ctrl+C` payload copy, `Ctrl+Shift+C` topic copy, `Ctrl+I` preview open, `Ctrl+ArrowLeft` left detail drawer, `Ctrl+ArrowRight` right action drawer, drawer movement/numbered execution, favorite editor save/cancel, record editor save/cancel, preview close, and `Shift+ArrowUp/Down` preview scroll. Text inputs do not intercept MQTT copy or preview shortcuts.
-- UI in [src/pages/MqttPage.vue](../../src/pages/MqttPage.vue#L1266) renders MQTT workbench actions as Lucide icon-only buttons with tooltip/ARIA labels, keeps `c-*` badges tied to held Ctrl/Cmd as top-layer fixed popovers, and exposes the main workspace through a compact single-line command bar: connection status, topic-filter state, direction counts, and an independent record-mode button group for 收藏/历史/布局. Messages are a full-width dense stream with direction/time/flags/topic/payload/actions in one fixed-height row; selecting 收藏 or 历史 replaces that upper message area with one searchable record list from [src/components/MqttPublishRecordList.vue](../../src/components/MqttPublishRecordList.vue#L1), while the publish area remains below. The publish toolbar uses `.mqtt-publish-actions` in [src/pages/MqttPage.vue](../../src/pages/MqttPage.vue#L1555) so send/save/history icons stay grouped in default uTools windows. The page separates the left detail drawer from the right action drawer, keeps connection config editing and subscription edits in a right drawer, exposes record alias/full editing through `mqttRecordEditDraft`, and displays readonly colored payload preview without `v-html`; mouse hover preview is gated by shared tool settings while keyboard preview stays command-owned.
-- Shortcut hint rule: MQTT command buttons only expose `data-mqtt-shortcut-hint` anchors in [src/pages/MqttPage.vue](../../src/pages/MqttPage.vue#L1); the actual hint badges render through a body Teleport `.mqtt-shortcut-top-layer`. Hidden anchors such as `opacity: 0` item action groups are ignored, and [src/domain/shortcutHintLayout.ts](../../src/domain/shortcutHintLayout.ts#L1) computes viewport-clamped, non-overlapping, auto-staggered positions before [src/styles/app.css](../../src/styles/app.css#L1) renders fixed `.mqtt-shortcut-badge`. Do not reintroduce shortcut badges inside overflow-hidden panels, rows, buttons, drawers, or masks.
-- Payload preview segmentation lives in [src/domain/mqttPayloadPreview.ts](../../src/domain/mqttPayloadPreview.ts#L1): valid JSON is formatted into escaped token segments for key/string/number/boolean/null/punctuation coloring, invalid JSON stays plain text, and `buildMqttInlinePayloadPreviewSegments` creates a single-line 96-character default snippet for MQTT rows without `v-html`.
-- Height and hover stability live in [src/styles/app.css](../../src/styles/app.css#L3119): `html/body/#app/.app-shell/.tab-shell/.tab-content` form a `100dvh` chain, subscription rows use a stable `3fr/2fr` grid with alias default/topic hover display and unread corner badges, config subscription rows use fixed grid/icon sizes, config editing overlays the workbench as a drawer, record editing uses its own modal layer, message preview is a fixed clamped overlay, and the receive/send workspace uses CSS variables from `mqtt.layoutPrefs` plus a resizer handle so stack/split ratios survive reloads. MQTT message/history/favorite item rows use `--mqtt-row-height: 34px`; topic aliases render as gray corner badges inside that fixed row, payload snippets are single-line token previews, and row actions remain hover/focus-only without changing row height. At the 1100px breakpoint, MQTT command bar remains one row with compact direction and record buttons, while publish title is hidden so topic/QoS/retain/actions stay on one line. At the 700px breakpoint, MQTT rails stack, `body` releases the desktop `760px` minimum width, and the compact command/publish bars use horizontal overflow instead of growing taller.
+- Runtime source: [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L1).
+- Runtime projects active pane, active record list, record search, template/history rows, draft-history rows, focus target, drawer targets, preview state, storage status, layout prefs, and view prefs.
+- Ordinary messages and outgoing history sort newest first by `timestamp`; publish draft history sorts by `updatedAt`; templates sort by `MqttPublishTemplate.operatedAt` with `updatedAt` / `createdAt` fallback.
+- Template operation time updates on save/edit/rename/apply/direct-send/repeat-send and does not update on focus, preview, detail, or menu open.
+- Publish editor replacement archives the previous meaningful draft before applying a message/template/history/draft when the replacement differs. Manual draft save is `Ctrl+Shift+H`.
+- Runtime shortcut context must treat open draft-history popovers/editors as command-owned layers before trusting DOM focus. This prevents stale `mqtt-publish-editor` focus from stealing `Space`, drawer, edit, or delete commands.
+
+## MQTT Shortcut And Input Layers
+
+- Keybinding source: [src/runtime/keybinding/keybindingRuntime.ts](../../src/runtime/keybinding/keybindingRuntime.ts#L1); DOM role extraction source: [src/runtime/keyboardEvent.ts](../../src/runtime/keyboardEvent.ts#L1).
+- Current defaults: `Ctrl+1/2/3` for `全/收/发`, `Ctrl+M` for `藏`, `Ctrl+H` for draft history, `Ctrl+Shift+H` for manual draft save, `Ctrl+F` for record search, `Ctrl+Shift+F` for topic dropdown, `Ctrl+P` for publish topic, and `Ctrl+Shift+S` for layout.
+- Released defaults: `Ctrl+L`, `Ctrl+Shift+L`, and `Ctrl+Shift+M` are intentionally unbound for MQTT draft/history behavior.
+- Input roles: `mqtt-publish-editor`, `mqtt-publish-draft`, `mqtt-publish-draft-editor`, `mqtt-topic-filter`, `mqtt-publish-options`, `mqtt-config-subscription-editor`, and `mqtt-config-publish-editor`.
+- Draft-history focus owns `Space`, `Enter`, `Ctrl+Enter`, `Ctrl+S`, `Ctrl+Left`, `Ctrl+Right`, `F2`, `Shift+F2`, `Ctrl+Delete`, `Ctrl+Backspace`, and `Escape`; draft editor modes own `Ctrl+S` / `Ctrl+Enter` / `Tab` / `Shift+Tab` / `Escape`.
+- Managed subscription/config/publish-topic editor rows use `ArrowUp` / `ArrowDown` for same-field row movement and `Ctrl+Delete` / `Ctrl+Backspace` for row deletion while plain text deletion remains native.
+
+## MQTT UI And Preview
+
+- UI source: [src/pages/MqttPage.vue](../../src/pages/MqttPage.vue#L1), [src/components/MqttPublishRecordList.vue](../../src/components/MqttPublishRecordList.vue#L1), and [src/styles/app.css](../../src/styles/app.css#L1).
+- The top MQTT command bar owns connection status, topic filter, current-list search, `全/收/发/藏`, and layout controls. Template/history lists do not carry separate headers.
+- The config drawer owns endpoint preview, compact endpoint fields, subscription alias/topic/color rows, publish topic candidate rows, and compact connection options.
+- The send toolbar owns draft-history access. The visible star/template-save button is removed; publish editor `Ctrl+S` is the save-template path.
+- Shift preview is pure-Shift only. `Ctrl/Command+Shift` suppresses preview for `c-s-*` shortcuts. Draft-history preview is allowed only for Shift-sourced preview.
+- Payload previews use tokenized text segments from [src/domain/mqttPayloadPreview.ts](../../src/domain/mqttPayloadPreview.ts#L1) without `v-html`.
+
+## MQTT Verification Map
+
+- Base MQTT storage and lazy-load: [../specs/2606231645-eypc-mqtt-websocket-tab/04-verify.md](../specs/2606231645-eypc-mqtt-websocket-tab/04-verify.md#L1).
+- Record interaction polish: [../specs/260624-eypc-mqtt-record-interaction-polish/04-verify.md](../specs/260624-eypc-mqtt-record-interaction-polish/04-verify.md#L1).
+- Focus commands: [../specs/260625-eypc-mqtt-focus-command-refinement/04-verify.md](../specs/260625-eypc-mqtt-focus-command-refinement/04-verify.md#L1).
+- Focus state and draft history: [../specs/260625-eypc-mqtt-focus-state-draft-history/04-verify.md](../specs/260625-eypc-mqtt-focus-state-draft-history/04-verify.md#L1).
+- Draft popover preview/send: [../specs/260625-eypc-mqtt-draft-popover-preview-send/04-verify.md](../specs/260625-eypc-mqtt-draft-popover-preview-send/04-verify.md#L1).
+- Shift preview: [../specs/260625-eypc-mqtt-shift-hover-preview/04-verify.md](../specs/260625-eypc-mqtt-shift-hover-preview/04-verify.md#L1).
+- Record time ordering: [../specs/260625-eypc-mqtt-record-time-order/04-verify.md](../specs/260625-eypc-mqtt-record-time-order/04-verify.md#L1).
+- Config editor UI: [../specs/260625-eypc-mqtt-config-editor-ui/04-verify.md](../specs/260625-eypc-mqtt-config-editor-ui/04-verify.md#L1).
+- Editor row shortcuts: [../specs/260625-eypc-mqtt-editor-row-shortcuts/04-verify.md](../specs/260625-eypc-mqtt-editor-row-shortcuts/04-verify.md#L1).
+
+## Update Triggers
+
+- Update MQTT memory when a state/archive field, shortcut default, input role, storage bridge, preview target model, config editor contract, or verification gate changes.
+- Update error memory when a host shortcut conflict, stale DOM focus problem, archive migration trap, or preload packaging trap recurs.

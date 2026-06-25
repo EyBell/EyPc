@@ -6,7 +6,7 @@ Refactor the Settings page around the local EzClipboard compact-settings pattern
 
 ## Requirements
 
-- [SettingsPage.vue](../../src/pages/SettingsPage.vue#L1) exposes two in-page tabs: `快捷键` and `维护`.
+- [SettingsPage.vue](../../../src/pages/SettingsPage.vue#L1) exposes two in-page tabs: `快捷键` and `维护`.
 - Shortcut configuration is a compact single-column worktable with a single-line filter strip, scope filter, state filter, resolution preview, and compact per-row actions.
 - The old permanent right-side shortcut inspector is removed; command detail is available through row selection, title tooltip, preview strip, and existing modals.
 - Layer priority, reservation rules, and storage status live under `维护`.

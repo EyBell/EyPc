@@ -185,13 +185,14 @@ function archiveHasData(archive) {
     (
       (Array.isArray(archive.connectionSnapshots) && archive.connectionSnapshots.length > 0) ||
       (Array.isArray(archive.sessions) && archive.sessions.length > 0) ||
-      (Array.isArray(archive.publishTemplates) && archive.publishTemplates.length > 0)
+      (Array.isArray(archive.publishTemplates) && archive.publishTemplates.length > 0) ||
+      (Array.isArray(archive.publishDraftHistory) && archive.publishDraftHistory.length > 0)
     )
   )
 }
 
 function defaultMqttArchive() {
-  return { version: 1, connectionSnapshots: [], sessions: [], publishTemplates: [] }
+  return { version: 1, connectionSnapshots: [], sessions: [], publishTemplates: [], publishDraftHistory: [] }
 }
 
 function resolveMqttSqlitePath() {
@@ -221,7 +222,8 @@ function normalizeSqliteArchiveInput(archive) {
     version: 1,
     connectionSnapshots: Array.isArray(source.connectionSnapshots) ? source.connectionSnapshots : [],
     sessions: Array.isArray(source.sessions) ? source.sessions : [],
-    publishTemplates: Array.isArray(source.publishTemplates) ? source.publishTemplates : []
+    publishTemplates: Array.isArray(source.publishTemplates) ? source.publishTemplates : [],
+    publishDraftHistory: Array.isArray(source.publishDraftHistory) ? source.publishDraftHistory : []
   }
 }
 
@@ -257,6 +259,12 @@ function ensureMqttSqliteSchema(db) {
       updated_at INTEGER NOT NULL DEFAULT 0,
       data_json TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS publish_draft_history (
+      id TEXT PRIMARY KEY,
+      connection_id TEXT NOT NULL,
+      updated_at INTEGER NOT NULL DEFAULT 0,
+      data_json TEXT NOT NULL
+    );
   `)
 }
 
@@ -276,10 +284,12 @@ function createMqttSqliteAdapter() {
     const clearSessions = db.prepare('DELETE FROM sessions')
     const clearMessages = db.prepare('DELETE FROM messages')
     const clearTemplates = db.prepare('DELETE FROM publish_templates')
+    const clearDraftHistory = db.prepare('DELETE FROM publish_draft_history')
     const insertConnection = db.prepare('INSERT OR REPLACE INTO connection_snapshots (id, updated_at, data_json) VALUES (?, ?, ?)')
     const insertSession = db.prepare('INSERT OR REPLACE INTO sessions (id, connection_id, started_at, data_json) VALUES (?, ?, ?, ?)')
     const insertMessage = db.prepare('INSERT OR REPLACE INTO messages (id, session_id, connection_id, direction, timestamp, data_json) VALUES (?, ?, ?, ?, ?, ?)')
     const insertTemplate = db.prepare('INSERT OR REPLACE INTO publish_templates (id, connection_id, updated_at, data_json) VALUES (?, ?, ?, ?)')
+    const insertDraftHistory = db.prepare('INSERT OR REPLACE INTO publish_draft_history (id, connection_id, updated_at, data_json) VALUES (?, ?, ?, ?)')
 
     function writeArchiveToSqlite(archive) {
       const normalized = normalizeSqliteArchiveInput(archive)
@@ -289,6 +299,7 @@ function createMqttSqliteAdapter() {
         clearSessions.run()
         clearMessages.run()
         clearTemplates.run()
+        clearDraftHistory.run()
         for (const snapshot of normalized.connectionSnapshots) {
           if (!snapshot || !snapshot.id) continue
           insertConnection.run(String(snapshot.id), Math.trunc(Number(snapshot.updatedAt) || 0), JSON.stringify(snapshot))
@@ -311,7 +322,11 @@ function createMqttSqliteAdapter() {
         }
         for (const template of normalized.publishTemplates) {
           if (!template || !template.id) continue
-          insertTemplate.run(String(template.id), String(template.connectionId || ''), Math.trunc(Number(template.updatedAt) || 0), JSON.stringify(template))
+          insertTemplate.run(String(template.id), String(template.connectionId || ''), Math.trunc(Number(template.operatedAt || template.updatedAt) || 0), JSON.stringify(template))
+        }
+        for (const item of normalized.publishDraftHistory) {
+          if (!item || !item.id) continue
+          insertDraftHistory.run(String(item.id), String(item.connectionId || ''), Math.trunc(Number(item.updatedAt) || 0), JSON.stringify(item))
         }
         writeMeta.run('archive_json', JSON.stringify(normalized))
         writeMeta.run('updated_at', String(Date.now()))

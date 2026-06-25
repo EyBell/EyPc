@@ -15,8 +15,9 @@ EyPc is a high-frequency uTools workbench. Its interaction taste follows the glo
 - High-frequency list previews must be command-owned, recoverable, and non-disruptive. Hover or an explicit `c-*` preview command may reveal readonly previews only through runtime state, must never mutate the target or reflow the list, and `Escape` closes the preview before lower-priority recovery steps.
 - Do not nest a second editor for fields already present in the active editor. Keep nested data inline in the current draft unless it needs a separate workbench context; otherwise cache source, save boundary, and focus recovery become ambiguous.
 - Search, focus, selection, drawer, and Esc recovery are one contract. If a user enters a transient state, they must be able to recover without leaving the plugin.
+- Host-shell transient layers must be owned by runtime state before DOM focus is trusted. Popovers, previews, and editors opened by command should keep their shortcut layer even when the browser active element is stale.
 - Show risk where the action happens. Normal termination requires confirmation; force kill can be direct only when the runtime still verifies PID and port ownership.
-- Command editing has fixed semantics: `F2` means full object edit, `Shift+F2` means narrow rename/title edit, `Ctrl+S` and `Ctrl+Enter` save the active editing layer, and `Escape` cancels it.
+- Command editing must be consistent inside each module: `Ctrl+S` and `Ctrl+Enter` save the active editing layer, `Escape` cancels it, and the module spec owns whether `F2` is alias or full edit.
 - `Tab` / `Shift+Tab` inside an editing layer are isolated field-cycle commands. They must not switch app tabs, port panes, drawers, or list focus while the editor is active.
 
 ## Port Page Taste
@@ -32,6 +33,9 @@ EyPc is a high-frequency uTools workbench. Its interaction taste follows the glo
 ## MQTT Workbench Taste
 
 - Messages, publish templates, and publish history are equal record lists. Each list must support `↑↓` focus movement, direct detail, action drawer, and readonly preview from the same runtime target model.
+- Publish draft history is different from publish history. It belongs beside the send editor as a recovery/reuse popover, records overwritten/manual drafts only, and must not duplicate real outgoing message records.
+- Publish topic/payload focus must be mutually exclusive with information-list focus; `Space` in publish editing must never keep toggling message selection. Draft-history popover focus owns its own `Space` multi-select.
+- MQTT draft-history editing uses `F2` for title/note alias editing and `Shift+F2` for topic/payload detail editing.
 - `Ctrl+ArrowLeft` is the left detail drawer. `Ctrl+ArrowRight` is the right action drawer. Do not merge detail fields and action menus into the same visual layer.
 - Item rows should carry identity and a compact payload signal only. Avoid repeating topic in multiple columns, and push secondary operations into row-local preview/detail/more entry points plus the command drawer.
 - Hover, Shift hold, and `Ctrl+I` previews must be non-mutating overlays. They should not reflow rows, steal list focus, or close just because the pointer crosses from the row into the preview.
@@ -43,7 +47,7 @@ Before accepting an EyPc interaction change, check:
 
 - Is the capability named as a runtime action and visible in settings?
 - Can the same behavior be reached by keyboard, button, and drawer without duplicate logic?
-- Does every edit-like command respect `F2` full edit, `Shift+F2` rename, `Ctrl+S` save, `Escape` cancel, and isolated `Tab` field cycling?
+- Does every edit-like command respect its module's `F2`/`Shift+F2` contract, `Ctrl+S` save, `Escape` cancel, and isolated `Tab` field cycling?
 - Does the UI reveal active pane, focused row, selected row, and destructive risk distinctly?
 - Does the implementation preserve the safety invariants in [ARCHITECTURE.md](ARCHITECTURE.md#L1)?
 - Is there automated coverage for keybinding resolution, runtime state transitions, and Esc recovery?
