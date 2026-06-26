@@ -28,8 +28,8 @@ This file is the current product requirement index for EyPc. Task-level history 
 
 ## MQTT
 
-- MQTT over WebSocket is a first-class feature with lazy page/runtime loading, dynamic MQTT client import, SQLite-first local archive, legacy archive fallback, and local-only secret storage.
-- Connection configs store endpoint, Client ID, username, subscriptions, aliases, colors, publish defaults, reconnect options, `syncRecords`, and layout preferences. Password/token values never enter app state, archive, templates, SQLite mirrors, or synced storage.
+- MQTT over WebSocket is a first-class feature with lazy page/runtime loading, dynamic MQTT client import, SQLite-first local archive, legacy archive fallback, and local-only persistent secret storage.
+- Connection configs store endpoint, Client ID, username, subscriptions, aliases, colors, publish defaults, reconnect options, `syncRecords`, and layout preferences. Password/token values persist only in the preload local userData encrypted secret envelope `mqtt-secrets-local.json`; they never enter app state, archive, templates, SQLite mirrors, or synced storage.
 - `MqttConnectionConfig.publishTopics` stores multiple default publish topic candidates. The first normalized value is mirrored to `publishTopic` for compatibility with the existing send editor.
 - Subscription topics are configured per connection. Aliases/colors are pruned with topic removal, and topic colors normalize to five defaults or valid hex colors.
 - Runtime owns message sessions, publish templates, outgoing history, publish draft history, record-list focus/selection, drawers, preview, search, layout, view preferences, and focus targets.
@@ -37,6 +37,9 @@ This file is the current product requirement index for EyPc. Task-level history 
 - MQTT ordinary message rows and outgoing history rows sort newest first by message `timestamp`. Publish draft history sorts newest first by `updatedAt`. Publish favorites/templates sort newest first by `MqttPublishTemplate.operatedAt`, with `updatedAt` / `createdAt` fallback for older archives.
 - `MqttArchiveState.publishDraftHistory` stores overwritten drafts and manual saves only. Real sends remain ordinary outgoing message records and are not duplicated into draft history.
 - MQTT focus targets include `records`, `topic-filter`, `publish-topic`, `publish-payload`, `publish-options`, `publish-history`, draft-history editor fields, `connections`, and `subscriptions`.
+- Connection rail rows support focus highlight, hover highlight, multi-select, `ArrowUp` / `ArrowDown` movement, `Space` selection, `Ctrl+C` endpoint copy, delete shortcuts, row-local edit/detail/more buttons, and right-click action menus.
+- Subscription rail rows support focus highlight, hover highlight, multi-select, `ArrowUp` / `ArrowDown` movement, `Space` selection, `Enter` topic filter, `Ctrl+C` topic copy, `Ctrl+Enter` use-as-publish-topic, delete shortcuts, row-local edit/detail/more buttons, and right-click action menus.
+- `Ctrl+ArrowLeft` opens the detail drawer and `Ctrl+ArrowRight` opens the action drawer for MQTT record, connection, subscription, and draft-history row targets.
 - `Ctrl+S` favorites/unfavorites the current record/template in record focus and saves the current publish topic/payload as a template in publish editor focus. Edit layers keep `Ctrl+S` as save.
 - `Ctrl+1/2/3` select `全/收/发`; `Ctrl+M` selects `藏`; `Ctrl+H` opens/closes the send-area draft-history popover and focuses it; `Ctrl+Shift+H` manually saves the current draft. `Ctrl+L`, `Ctrl+Shift+L`, and `Ctrl+Shift+M` have no default MQTT binding.
 - `Ctrl+Shift+S` toggles layout, `Ctrl+Shift+F` opens the topic dropdown, `Ctrl+P` enters the publish topic field, and `Ctrl+ArrowRight` from the publish editor opens QoS/retain options.
@@ -46,8 +49,10 @@ This file is the current product requirement index for EyPc. Task-level history 
 - Publish topic/payload focus clears information-list focus so `Space` cannot keep toggling message selection while the user edits publish content.
 - Topic dropdown lists only current connection subscriptions, supports alias/topic search, is single-select, and filters only ordinary message rows under `全/收/发`; template and history rows ignore topic filtering.
 - Subscription modal rows, connection config subscription rows, and connection config publish-topic rows use `ArrowUp` / `ArrowDown` for same-field row movement and `Ctrl+Delete` / `Ctrl+Backspace` for current-row deletion. Plain `Delete` / `Backspace` inside text inputs remains native text editing.
+- Connection config editor `Tab` / `Shift+Tab` cycles through connection fields, each subscription alias/topic/color row, each publish-topic row, connection option fields, and storage options inside the editor layer.
 - Pure Shift preview can open a readonly overlay for valid MQTT message/template rows and draft-history rows while the draft popover is open. `Ctrl/Command+Shift` suppresses Shift preview so `c-s-*` commands remain shortcut-owned.
 - MQTT UI uses compact rails, red/green/gray status rectangles, connection-title `host:port` hover text, a top topic dropdown without a `topic:` prefix, unified record/favorite/history rows, a send-area draft-history popover, a draft editor modal, and a publish options popover.
+- MQTT local popovers for topic filtering, publish options, and draft history must be topmost inside the workbench in both stack and split layouts, but must stay below global detail/action drawer masks, previews, modals, and shortcut top-layer hints.
 
 ## Settings
 

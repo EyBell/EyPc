@@ -43,6 +43,7 @@ interface MqttShortcutHintEntry {
 
 type MqttPreviewTarget = { kind: 'message' | 'publish-template' | 'publish-draft-history'; id: string }
 type MqttPreviewRecord = MqttMessageRecord | MqttPublishTemplate | MqttPublishDraftHistoryEntry
+type MqttCommandTargetKind = NonNullable<AppRuntimeSnapshot['mqttSelectedRecord']>['kind']
 
 const props = defineProps<{ snapshot: AppRuntimeSnapshot; showShortcutHints?: boolean; shiftPreview?: boolean }>()
 const emit = defineEmits<{
@@ -226,8 +227,9 @@ watch(() => props.snapshot.mqttRecordEditDraft?.activeField, (field) => {
   if (!field) return
   void nextTick(() => {
     const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(`[data-mqtt-record-field="${field}"]`)
+    const alreadyFocused = document.activeElement === input
     input?.focus()
-    if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) input.select()
+    if (!alreadyFocused && (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)) input.select()
   })
 })
 
@@ -235,8 +237,9 @@ watch(() => props.snapshot.mqttPublishDraftHistoryEditDraft?.activeField, (field
   if (!field) return
   void nextTick(() => {
     const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-mqtt-publish-draft-field="${field}"]`)
+    const alreadyFocused = document.activeElement === input
     input?.focus()
-    if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) input.select()
+    if (!alreadyFocused && (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)) input.select()
   })
 })
 
@@ -346,11 +349,16 @@ const detailRecord = computed(() => {
   }
   return null
 })
+const detailSubscription = computed(() => {
+  const target = detailTarget.value
+  if (target?.kind !== 'subscription') return null
+  return props.snapshot.mqttSubscriptionRows.find((row) => row.topic === target.id) || null
+})
 const detailConfig = computed(() => {
   const target = detailTarget.value
   if (!target) return null
   if (target.kind === 'config') return props.snapshot.state.mqtt.configs.find((item) => item.id === target.id) || null
-  return activeConfig.value
+  return null
 })
 const detailLog = computed(() => {
   const target = detailTarget.value
@@ -360,6 +368,7 @@ const detailLog = computed(() => {
 const detailPayloadSegments = computed(() => detailRecord.value ? buildMqttPayloadPreviewSegments(detailRecord.value.payload) : [])
 const detailTitle = computed(() => {
   if (detailLog.value) return '日志详情'
+  if (detailSubscription.value) return detailSubscription.value.displayName
   if (detailRecord.value && 'direction' in detailRecord.value) return `${directionLabel(detailRecord.value)} ${detailRecord.value.topic || '(empty topic)'}`
   if (detailRecord.value) return detailRecord.value.title || detailRecord.value.topic
   if (detailConfig.value) return detailConfig.value.name
@@ -367,6 +376,7 @@ const detailTitle = computed(() => {
 })
 const detailSubtitle = computed(() => {
   if (detailLog.value) return logConfigName(detailLog.value)
+  if (detailSubscription.value) return detailSubscription.value.topic
   if (detailRecord.value && 'direction' in detailRecord.value) return formatDateTime(detailRecord.value.timestamp)
   if (detailRecord.value) return formatDateTime(recordTime(detailRecord.value))
   if (detailConfig.value) return detailConfig.value.url || '未配置地址'
@@ -561,7 +571,7 @@ const MqttIcon = defineComponent({
   }
 })
 
-function commandArgs(kind: MqttPreviewTarget['kind'], id: string, list?: 'messages' | 'templates' | 'history'): Record<string, unknown> {
+function commandArgs(kind: MqttCommandTargetKind, id: string, list?: 'messages' | 'templates' | 'history'): Record<string, unknown> {
   return { kind, id, targetKind: kind, targetId: id, ...(list ? { list } : {}) }
 }
 
@@ -608,6 +618,10 @@ function focusSubscriptionEditorField(itemId: string, field: MqttSubscriptionEdi
   updateSubscriptionDraft({ activeItemId: itemId, activeField: field })
 }
 
+function isPlainEscape(event: KeyboardEvent, key: string) {
+  return key === 'escape' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
+}
+
 function handleSubscriptionEditorKeydown(event: KeyboardEvent) {
   const key = event.key.toLowerCase()
   const command = event.ctrlKey || event.metaKey
@@ -617,7 +631,7 @@ function handleSubscriptionEditorKeydown(event: KeyboardEvent) {
     emit('dispatch', 'mqtt.subscription.editor.save')
     return
   }
-  if (key === 'escape') {
+  if (isPlainEscape(event, key)) {
     event.preventDefault()
     event.stopPropagation()
     emit('dispatch', 'mqtt.subscription.editor.cancel')
@@ -641,7 +655,6 @@ function handleSubscriptionEditorKeydown(event: KeyboardEvent) {
     emit('dispatch', 'mqtt.subscription.editor.deleteRow')
     return
   }
-  event.stopPropagation()
 }
 
 function updateRecordEditDraft(input: Partial<Omit<MqttRecordEditDraft, 'mode' | 'targetKind' | 'targetId'>>) {
@@ -661,7 +674,7 @@ function handleRecordEditorKeydown(event: KeyboardEvent) {
     emit('dispatch', 'mqtt.record.edit.save')
     return
   }
-  if (key === 'escape') {
+  if (isPlainEscape(event, key)) {
     event.preventDefault()
     event.stopPropagation()
     emit('dispatch', 'mqtt.record.edit.cancel')
@@ -673,7 +686,6 @@ function handleRecordEditorKeydown(event: KeyboardEvent) {
     emit('dispatch', event.shiftKey ? 'mqtt.record.edit.prevField' : 'mqtt.record.edit.nextField')
     return
   }
-  event.stopPropagation()
 }
 
 function handlePublishDraftHistoryEditorKeydown(event: KeyboardEvent) {
@@ -685,7 +697,7 @@ function handlePublishDraftHistoryEditorKeydown(event: KeyboardEvent) {
     emit('dispatch', 'mqtt.publish.draft.edit.save')
     return
   }
-  if (key === 'escape') {
+  if (isPlainEscape(event, key)) {
     event.preventDefault()
     event.stopPropagation()
     emit('dispatch', 'mqtt.publish.draft.edit.cancel')
@@ -697,7 +709,6 @@ function handlePublishDraftHistoryEditorKeydown(event: KeyboardEvent) {
     emit('dispatch', event.shiftKey ? 'mqtt.publish.draft.edit.prevField' : 'mqtt.publish.draft.edit.nextField')
     return
   }
-  event.stopPropagation()
 }
 
 function handleConfigRowKeydown(event: KeyboardEvent, key: string, command: boolean) {
@@ -729,7 +740,7 @@ function handleConfigEditorKeydown(event: KeyboardEvent) {
     emit('dispatch', 'mqtt.config.save')
     return
   }
-  if (key === 'escape') {
+  if (isPlainEscape(event, key)) {
     event.preventDefault()
     event.stopPropagation()
     emit('dispatch', 'mqtt.config.cancel')
@@ -742,7 +753,6 @@ function handleConfigEditorKeydown(event: KeyboardEvent) {
     return
   }
   if (handleConfigRowKeydown(event, key, command)) return
-  event.stopPropagation()
 }
 
 function statusLabel(state: AppRuntimeSnapshot['mqttConnectionStatus']['state']) {
@@ -769,7 +779,7 @@ function connectionEndpointTitle(config: AppRuntimeSnapshot['mqttActiveConfig'])
 
 function focusMqttRuntimeTarget() {
   const target = props.snapshot.mqttFocusTarget
-  let selector = '.mqtt-message-list'
+  let selector = props.snapshot.mqttPublishRecordsOpen ? '.mqtt-publish-record-list' : '.mqtt-message-list'
   if (target === 'topic-filter') selector = props.snapshot.mqttTopicFilterOpen ? '.mqtt-topic-filter-search' : '.mqtt-topic-filter-button'
   if (target === 'publish-topic') selector = '[data-mqtt-publish-field="topic"]'
   if (target === 'publish-payload') selector = '[data-mqtt-publish-field="payload"]'
@@ -873,29 +883,38 @@ function detailRecordCommandArgs(): Record<string, unknown> {
   return commandArgs(target.kind === 'publish-template' ? 'publish-template' : 'message', record.id)
 }
 
-function selectRecord(kind: 'config' | 'session' | 'message' | 'log', id: string, list: 'messages' | 'history' = 'messages') {
+function selectRecord(kind: 'config' | 'subscription' | 'session' | 'message' | 'log', id: string, list: 'messages' | 'history' = 'messages') {
   if (kind === 'config') emit('focusConfig', id)
+  if (kind === 'subscription') emit('dispatch', 'mqtt.subscription.focus', { topic: id })
   if (kind === 'session') emit('focusSession', id)
   if (kind === 'message') emit('dispatch', 'mqtt.record.focus', commandArgs('message', id, list))
   if (kind === 'log') emit('focusLog', id)
 }
 
-function recordSelected(kind: 'config' | 'session' | 'message' | 'log' | 'publish-template', id: string) {
+function recordSelected(kind: 'config' | 'subscription' | 'session' | 'message' | 'log' | 'publish-template', id: string) {
   return props.snapshot.mqttSelectedRecord?.kind === kind && props.snapshot.mqttSelectedRecord.id === id
+}
+
+function connectionSelected(id: string) {
+  return props.snapshot.mqttSelectedConfigIds.includes(id)
 }
 
 function focusConfigAndDispatch(configId: string, actionId: string) {
   emit('focusConfig', configId)
-  emit('dispatch', actionId)
+  emit('dispatch', actionId, commandArgs('config', configId))
+}
+
+function openConnectionMenu(config: AppRuntimeSnapshot['state']['mqtt']['configs'][number]) {
+  selectRecord('config', config.id)
+  emit('dispatch', 'mqtt.drawer.open', commandArgs('config', config.id))
+}
+
+function toggleConnectionSelection(configId: string) {
+  emit('dispatch', 'mqtt.connection.toggleSelect', commandArgs('config', configId))
 }
 
 function selectLog(id: string) {
   selectRecord('log', id)
-}
-
-function openLog(id?: string) {
-  if (id) selectLog(id)
-  emit('dispatch', 'mqtt.log.drawer.open')
 }
 
 function selectMessageAndDispatch(message: MqttMessageRecord, actionId: string, list: 'messages' | 'history' = 'messages') {
@@ -1152,19 +1171,46 @@ function padDateTimePart(value: number) {
 }
 
 function formatTime(value: number) {
-  return value ? new Date(value).toLocaleTimeString() : ''
+  return formatCompactDateTime(value).time
 }
 
 function formatDateTime(value: number) {
-  return value ? new Date(value).toLocaleString() : ''
+  return formatFullDateTime(value)
+}
+
+function isSameCalendarDate(left: Date, right: Date) {
+  return left.getFullYear() === right.getFullYear()
+    && left.getMonth() === right.getMonth()
+    && left.getDate() === right.getDate()
 }
 
 function formatCompactDateTime(value: number) {
-  if (!value) return { date: '', time: '' }
+  if (!value) return { date: '', time: '', full: '', iso: '', isToday: false }
   const date = new Date(value)
-  const monthDay = [date.getMonth() + 1, date.getDate()].map(padDateTimePart).join('')
-  const time = [date.getHours(), date.getMinutes(), date.getSeconds()].map(padDateTimePart).join('')
-  return { date: monthDay, time }
+  if (Number.isNaN(date.getTime())) return { date: '', time: '', full: '', iso: '', isToday: false }
+  const now = new Date()
+  const isToday = isSameCalendarDate(date, now)
+  const monthDay = [date.getMonth() + 1, date.getDate()].map(padDateTimePart).join('-')
+  const dayLabel = isToday ? '' : date.getFullYear() === now.getFullYear() ? monthDay : `${date.getFullYear()}-${monthDay}`
+  const time = [date.getHours(), date.getMinutes(), date.getSeconds()].map(padDateTimePart).join(':')
+  return {
+    date: dayLabel,
+    time,
+    full: [dayLabel, time].filter(Boolean).join(' '),
+    iso: date.toISOString(),
+    isToday
+  }
+}
+
+function formatFullDateTime(value: number) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const day = [date.getFullYear(), date.getMonth() + 1, date.getDate()]
+    .map((part, index) => index === 0 ? String(part) : padDateTimePart(part))
+    .join('-')
+  const time = [date.getHours(), date.getMinutes(), date.getSeconds()].map(padDateTimePart).join(':')
+  return `${day} ${time}`
 }
 
 function formatPublishDraftHistoryTime(value: number) {
@@ -1201,9 +1247,29 @@ function focusSubscription(topic: string) {
   emit('dispatch', 'mqtt.subscription.focus', { topic })
 }
 
-function deleteSubscription(topic: string) {
-  focusSubscription(topic)
-  emit('dispatch', 'mqtt.subscription.delete', { topic })
+function openSubscriptionMenu(topic: string) {
+  selectRecord('subscription', topic)
+  emit('dispatch', 'mqtt.drawer.open', commandArgs('subscription', topic))
+}
+
+function copySubscriptionTopic(topic: string) {
+  selectRecord('subscription', topic)
+  emit('dispatch', 'mqtt.subscription.copyTopic', commandArgs('subscription', topic))
+}
+
+function useSubscriptionTopic(topic: string) {
+  selectRecord('subscription', topic)
+  emit('dispatch', 'mqtt.subscription.useAsPublishTopic', commandArgs('subscription', topic))
+}
+
+function configSubscriptionRowFocused(index: number) {
+  const draft = props.snapshot.mqttConfigDraft
+  return draft?.activeField === 'subscriptions' && draft.activeSubscriptionIndex === index
+}
+
+function configPublishRowFocused(index: number) {
+  const draft = props.snapshot.mqttConfigDraft
+  return draft?.activeField === 'publishTopic' && draft.activePublishIndex === index
 }
 
 let previewTimer: number | null = null
@@ -1458,6 +1524,13 @@ function handlePublishDraftHistoryOutsidePointerdown(event: PointerEvent) {
   emit('dispatch', 'mqtt.publish.draft.close')
 }
 
+function handlePublishOptionsOutsidePointerdown(event: PointerEvent) {
+  if (!props.snapshot.mqttPublishOptionsOpen) return
+  const target = event.target instanceof HTMLElement ? event.target : null
+  if (target && target.closest('.mqtt-publish-options-anchor')) return
+  emit('dispatch', 'mqtt.publish.options.close')
+}
+
 watch(() => props.shiftPreview ? '1' : '0', () => {
   if (!props.shiftPreview) {
     hoverPreviewSuspendedByKeyboard.value = false
@@ -1614,6 +1687,7 @@ onMounted(() => {
   window.addEventListener('resize', handleShortcutHintViewportChange)
   window.addEventListener('scroll', handleShortcutHintViewportChange, true)
   document.addEventListener('pointerdown', handlePublishDraftHistoryOutsidePointerdown, true)
+  document.addEventListener('pointerdown', handlePublishOptionsOutsidePointerdown, true)
 })
 
 onUnmounted(() => {
@@ -1625,6 +1699,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', handleShortcutHintViewportChange)
   window.removeEventListener('scroll', handleShortcutHintViewportChange, true)
   document.removeEventListener('pointerdown', handlePublishDraftHistoryOutsidePointerdown, true)
+  document.removeEventListener('pointerdown', handlePublishOptionsOutsidePointerdown, true)
 })
 </script>
 
@@ -1678,12 +1753,22 @@ onUnmounted(() => {
           v-for="config in props.snapshot.state.mqtt.configs"
           :key="config.id"
           class="mqtt-config-card"
-          :class="{ active: activeConfig?.id === config.id, focused: recordSelected('config', config.id) }"
+          :class="{ active: activeConfig?.id === config.id, focused: recordSelected('config', config.id), selected: connectionSelected(config.id) }"
+          data-role="mqtt-connections"
+          tabindex="0"
+          role="option"
+          :aria-selected="recordSelected('config', config.id) || activeConfig?.id === config.id"
+          :data-quick-jump-label="config.name"
           @click="selectRecord('config', config.id)"
+          @focus="emit('focusConfig', config.id)"
+          @contextmenu.prevent="openConnectionMenu(config)"
+          @keydown.space.prevent.stop="toggleConnectionSelection(config.id)"
+          @keydown.delete.prevent.stop="emit('dispatch', 'mqtt.connection.delete', commandArgs('config', config.id))"
+          @keydown.backspace.prevent.stop="emit('dispatch', 'mqtt.connection.delete', commandArgs('config', config.id))"
         >
           <header>
             <span>
-              <strong class="mqtt-connection-address-title" :title="connectionEndpointTitle(config)">{{ config.name }}</strong>
+              <strong class="mqtt-connection-address-title" data-quick-jump-anchor :title="connectionEndpointTitle(config)">{{ config.name }}</strong>
               <small>{{ config.url || '未配置服务器地址' }}</small>
             </span>
             <em>{{ config.autoReconnect ? `重连 ${config.reconnectPeriodMs}ms` : '手动重连' }}</em>
@@ -1695,11 +1780,8 @@ onUnmounted(() => {
             <button type="button" class="mqtt-icon-button" :title="commandTitle('断开', 'mqtt.connection.disconnect', 'c-s-r')" aria-label="断开" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.connection.disconnect')" @click.stop="focusConfigAndDispatch(config.id, 'mqtt.connection.disconnect')">
               <MqttIcon name="disconnect" />
             </button>
-            <button type="button" class="mqtt-icon-button" :title="commandTitle('配置', 'mqtt.config.edit', 'f2')" aria-label="配置" @click.stop="focusConfigAndDispatch(config.id, 'mqtt.config.edit')">
-              <MqttIcon name="edit" />
-            </button>
-            <button type="button" class="mqtt-icon-button" :title="commandTitle('日志', 'mqtt.log.drawer.open')" aria-label="日志" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.log.drawer.open')" @click.stop="emit('focusConfig', config.id); openLog()">
-              <MqttIcon name="log" />
+            <button type="button" class="mqtt-icon-button" :title="commandTitle('快捷操作', 'mqtt.drawer.open', 'c-→')" aria-label="连接快捷操作" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.drawer.open')" @click.stop="openConnectionMenu(config)">
+              <MqttIcon name="more" />
             </button>
           </div>
         </article>
@@ -1758,24 +1840,32 @@ onUnmounted(() => {
           :key="row.topic"
           class="mqtt-subscription-row"
           data-role="mqtt-subscriptions"
+          role="option"
           tabindex="0"
+          :aria-selected="row.selected || row.focused || row.active"
           :class="{ active: row.active, selected: row.selected && !row.active, focused: row.focused }"
           :title="subscriptionTitle(row)"
+          :data-quick-jump-label="row.displayName"
+          :data-quick-jump-search="row.topic"
           @click.stop="selectSubscription(row.topic)"
+          @contextmenu.prevent="openSubscriptionMenu(row.topic)"
           @dblclick.stop="emit('dispatch', 'mqtt.subscription.editor.open')"
           @focus="focusSubscription(row.topic)"
         >
           <span v-if="row.unreadCount" class="mqtt-subscription-unread">{{ row.unreadCount }}</span>
           <span class="mqtt-subscription-main">
-            <strong>{{ row.displayName }}</strong>
+            <strong data-quick-jump-anchor>{{ row.displayName }}</strong>
             <small class="mqtt-subscription-route">{{ row.topic }}</small>
           </span>
           <span class="mqtt-subscription-row-actions" aria-label="订阅操作">
-            <button type="button" class="mqtt-icon-button mqtt-subscription-edit" title="编辑订阅" aria-label="编辑订阅" @click.stop="emit('dispatch', 'mqtt.subscription.editor.open')">
-              <MqttIcon name="edit" />
+            <button type="button" class="mqtt-icon-button mqtt-subscription-copy" title="复制 topic" aria-label="复制订阅 topic" @click.stop="copySubscriptionTopic(row.topic)">
+              <MqttIcon name="copy-topic" />
             </button>
-            <button type="button" class="mqtt-icon-button mqtt-subscription-delete" title="清理订阅" aria-label="清理订阅" @click.stop="deleteSubscription(row.topic)">
-              <MqttIcon name="close" />
+            <button type="button" class="mqtt-icon-button mqtt-subscription-apply" title="填入发布" aria-label="填入发布 topic" @click.stop="useSubscriptionTopic(row.topic)">
+              <MqttIcon name="apply" />
+            </button>
+            <button type="button" class="mqtt-icon-button mqtt-subscription-more" :title="commandTitle('快捷操作', 'mqtt.drawer.open', 'c-→')" aria-label="订阅快捷操作" @click.stop="openSubscriptionMenu(row.topic)">
+              <MqttIcon name="more" />
             </button>
             <span v-if="props.showShortcutHints" class="mqtt-subscription-shortcut-popover" role="tooltip">
               <small>新增 {{ commandLabel('mqtt.subscription.add', 'c-t') }}</small>
@@ -1839,28 +1929,20 @@ onUnmounted(() => {
                   @input="updateTopicFilterSearch(($event.target as HTMLInputElement).value)"
                 />
                 <button
-                  type="button"
-                  class="mqtt-topic-filter-clear"
-                  data-role="mqtt-topic-filter"
-                  @click="emit('dispatch', 'mqtt.subscription.select', { topic: '' }); emit('dispatch', 'mqtt.topicFilter.close')"
-                >
-                  全部 topic
-                </button>
-                <button
                   v-for="option in props.snapshot.mqttTopicFilterOptions"
-                  :key="option.topic"
+                  :key="option.topic || '__all__'"
                   type="button"
                   class="mqtt-topic-filter-option"
                   data-role="mqtt-topic-filter"
-                  :class="{ active: option.active, highlighted: option.highlighted }"
+                  :class="{ active: option.active, highlighted: option.highlighted, 'mqtt-topic-filter-clear': !option.topic }"
                   :style="{ '--mqtt-topic-color': option.color }"
-                  :title="option.topic"
+                  :title="option.topic || option.label"
                   @click="selectTopicFilter(option.topic)"
                 >
                   <span>{{ option.label }}</span>
-                  <small>{{ option.topic }}</small>
+                  <small v-if="option.topic">{{ option.topic }}</small>
                 </button>
-                <p v-if="!props.snapshot.mqttTopicFilterOptions.length" class="empty-note">暂无匹配 topic</p>
+                <p v-if="!props.snapshot.mqttTopicFilterOptions.some((option) => option.topic)" class="empty-note">暂无匹配 topic</p>
               </div>
             </span>
           </span>
@@ -2006,6 +2088,7 @@ onUnmounted(() => {
                         v-for="(item, index) in configForm.subscriptionItems"
                         :key="`${index}:${item.topic}:${item.alias}:${item.color}`"
                         class="mqtt-config-subscription-row"
+                        :class="{ focused: configSubscriptionRowFocused(index) }"
                       >
                         <input
                           data-role="mqtt-config-subscription-editor"
@@ -2074,6 +2157,7 @@ onUnmounted(() => {
                         v-for="(topic, index) in configForm.publishTopics"
                         :key="`${index}:${topic}`"
                         class="mqtt-config-publish-row"
+                        :class="{ focused: configPublishRowFocused(index) }"
                       >
                         <span class="mqtt-config-publish-default">{{ index === 0 ? '默认' : index + 1 }}</span>
                         <input
@@ -2105,40 +2189,42 @@ onUnmounted(() => {
                     </label>
                     <label>
                       reconnectPeriodMs
-                      <input data-mqtt-field="connection" data-role="mqtt-editor" type="number" min="500" max="60000" :value="configForm.reconnectPeriodMs" @input="updateConfigDraft({ reconnectPeriodMs: Number(($event.target as HTMLInputElement).value) })" />
+                      <input data-mqtt-field="reconnectPeriodMs" data-role="mqtt-editor" type="number" min="500" max="60000" :value="configForm.reconnectPeriodMs" @input="updateConfigDraft({ reconnectPeriodMs: Number(($event.target as HTMLInputElement).value) })" />
                     </label>
                     <label>
                       connectTimeoutMs
-                      <input data-role="mqtt-editor" type="number" min="3000" max="60000" :value="configForm.connectTimeoutMs" @input="updateConfigDraft({ connectTimeoutMs: Number(($event.target as HTMLInputElement).value) })" />
+                      <input data-mqtt-field="connectTimeoutMs" data-role="mqtt-editor" type="number" min="3000" max="60000" :value="configForm.connectTimeoutMs" @input="updateConfigDraft({ connectTimeoutMs: Number(($event.target as HTMLInputElement).value) })" />
                     </label>
                     <label>
                       keepaliveSec
-                      <input data-role="mqtt-editor" type="number" min="0" max="300" :value="configForm.keepaliveSec" @input="updateConfigDraft({ keepaliveSec: Number(($event.target as HTMLInputElement).value) })" />
+                      <input data-mqtt-field="keepaliveSec" data-role="mqtt-editor" type="number" min="0" max="300" :value="configForm.keepaliveSec" @input="updateConfigDraft({ keepaliveSec: Number(($event.target as HTMLInputElement).value) })" />
                     </label>
-                    <label class="checkbox-line">
-                      <input type="checkbox" :checked="configForm.retain" @change="updateConfigDraft({ retain: ($event.target as HTMLInputElement).checked })" />
-                      retain
-                    </label>
-                    <label class="checkbox-line">
-                      <input type="checkbox" :checked="configForm.autoReconnect" @change="updateConfigDraft({ autoReconnect: ($event.target as HTMLInputElement).checked })" />
-                      自动重连
-                    </label>
-                    <label class="checkbox-line">
-                      <input type="checkbox" :checked="configForm.clean" @change="updateConfigDraft({ clean: ($event.target as HTMLInputElement).checked })" />
-                      clean
-                    </label>
-                    <label class="checkbox-line">
-                      <input type="checkbox" :checked="configForm.reconnectOnConnackError" @change="updateConfigDraft({ reconnectOnConnackError: ($event.target as HTMLInputElement).checked })" />
-                      Connack 错误重连
-                    </label>
-                    <label class="checkbox-line">
-                      <input type="checkbox" :checked="configForm.resubscribeOnReconnect" @change="updateConfigDraft({ resubscribeOnReconnect: ($event.target as HTMLInputElement).checked })" />
-                      重连后重订阅
-                    </label>
-                    <label class="checkbox-line" data-mqtt-field="storage">
-                      <input type="checkbox" :checked="configForm.syncRecords" @change="updateConfigDraft({ syncRecords: ($event.target as HTMLInputElement).checked })" />
-                      本地归档
-                    </label>
+                    <div class="mqtt-config-checkbox-grid">
+                      <label class="checkbox-line">
+                        <input data-mqtt-field="retain" data-role="mqtt-editor" type="checkbox" :checked="configForm.retain" @change="updateConfigDraft({ retain: ($event.target as HTMLInputElement).checked })" />
+                        retain
+                      </label>
+                      <label class="checkbox-line">
+                        <input data-mqtt-field="autoReconnect" data-role="mqtt-editor" type="checkbox" :checked="configForm.autoReconnect" @change="updateConfigDraft({ autoReconnect: ($event.target as HTMLInputElement).checked })" />
+                        自动重连
+                      </label>
+                      <label class="checkbox-line">
+                        <input data-mqtt-field="clean" data-role="mqtt-editor" type="checkbox" :checked="configForm.clean" @change="updateConfigDraft({ clean: ($event.target as HTMLInputElement).checked })" />
+                        clean
+                      </label>
+                      <label class="checkbox-line">
+                        <input data-mqtt-field="reconnectOnConnackError" data-role="mqtt-editor" type="checkbox" :checked="configForm.reconnectOnConnackError" @change="updateConfigDraft({ reconnectOnConnackError: ($event.target as HTMLInputElement).checked })" />
+                        Connack 错误重连
+                      </label>
+                      <label class="checkbox-line">
+                        <input data-mqtt-field="resubscribeOnReconnect" data-role="mqtt-editor" type="checkbox" :checked="configForm.resubscribeOnReconnect" @change="updateConfigDraft({ resubscribeOnReconnect: ($event.target as HTMLInputElement).checked })" />
+                        重连后重订阅
+                      </label>
+                      <label class="checkbox-line">
+                        <input data-mqtt-field="storage" data-role="mqtt-editor" type="checkbox" :checked="configForm.syncRecords" @change="updateConfigDraft({ syncRecords: ($event.target as HTMLInputElement).checked })" />
+                        本地归档
+                      </label>
+                    </div>
                   </section>
                 </div>
         </aside>
@@ -2179,8 +2265,13 @@ onUnmounted(() => {
               v-for="message in props.snapshot.mqttMessageRows"
               :key="message.id"
               class="mqtt-message-row"
+              role="option"
+              tabindex="-1"
               :class="{ focused: recordSelected('message', message.id), selected: props.snapshot.mqttRecordListStates.messages.selectedIds.includes(message.id), incoming: message.direction === 'incoming', outgoing: message.direction === 'outgoing' }"
               :data-mqtt-preview-target="previewTargetValue('message', message.id)"
+              :data-quick-jump-label="messageRouteLabel(message)"
+              :data-quick-jump-search="`${message.topic} ${payloadSnippet(message.payload)}`"
+              :aria-selected="recordSelected('message', message.id) || props.snapshot.mqttRecordListStates.messages.selectedIds.includes(message.id)"
               :style="topicVisualStyle(message.topic)"
               @click="selectRecord('message', message.id, 'messages')"
               @dblclick.stop="emit('dispatch', 'mqtt.record.toggleSelect', { ...commandArgs('message', message.id, 'messages'), list: 'messages', range: ($event as MouseEvent).shiftKey })"
@@ -2193,18 +2284,21 @@ onUnmounted(() => {
                   <MqttIcon :name="directionIconName(message)" />
                 </span>
                 <span class="mqtt-message-route">
-                  <strong :title="messageHoverTitle(message)">{{ messageRouteLabel(message) }}</strong>
+                  <strong data-quick-jump-anchor :title="messageHoverTitle(message)">{{ messageRouteLabel(message) }}</strong>
                 </span>
                 <span class="mqtt-message-flags" :title="messageHoverTitle(message)" aria-label="消息元信息">
-                  <small
+                  <time
                     v-for="timeParts in [formatCompactDateTime(message.timestamp)]"
                     :key="`time:${message.id}`"
                     class="mqtt-message-time-badge"
-                    :aria-label="formatDateTime(message.timestamp)"
+                    :class="{ 'is-today': timeParts.isToday, 'has-date': timeParts.date }"
+                    :datetime="timeParts.iso"
+                    :title="timeParts.full"
+                    :aria-label="timeParts.full"
                   >
-                    <span class="mqtt-message-time-part mqtt-message-time-date">{{ timeParts.date }}</span>
+                    <span v-if="timeParts.date" class="mqtt-message-time-part mqtt-message-time-date">{{ timeParts.date }}</span>
                     <span class="mqtt-message-time-part mqtt-message-time-clock">{{ timeParts.time }}</span>
-                  </small>
+                  </time>
                   <small v-if="message.retain">retain</small>
                 </span>
                 <span class="mqtt-item-payload-snippet" :title="payloadSnippet(message.payload)">
@@ -2256,7 +2350,7 @@ onUnmounted(() => {
                 type="button"
                 class="mqtt-icon-button mqtt-publish-options-button"
                 data-role="mqtt-publish-editor"
-                :title="commandTitle('发送选项', 'mqtt.publish.options.open', 'c-→')"
+                :title="commandTitle('发送选项', 'mqtt.publish.options.open')"
                 aria-label="发送选项"
                 :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.publish.options.open')"
                 @click="emit('dispatch', 'mqtt.publish.options.open')"
@@ -2332,7 +2426,12 @@ onUnmounted(() => {
                       :key="row.id"
                       class="mqtt-publish-draft-row"
                       data-role="mqtt-publish-draft"
+                      role="option"
+                      tabindex="-1"
                       :data-mqtt-preview-target="previewTargetValue('publish-draft-history', row.id)"
+                      :data-quick-jump-label="publishDraftHistoryTitle(row)"
+                      :data-quick-jump-search="`${row.topic} ${payloadSnippet(row.payload)}`"
+                      :aria-selected="publishDraftHistorySelected(row) || index === props.snapshot.mqttPublishDraftHistoryActiveIndex"
                       :class="{ active: index === props.snapshot.mqttPublishDraftHistoryActiveIndex, selected: publishDraftHistorySelected(row) }"
                       :title="`${row.topic}\n${row.payload}`"
                       @mouseenter="previewPublishDraftHistory(row, $event)"
@@ -2350,7 +2449,7 @@ onUnmounted(() => {
                         <span aria-hidden="true">{{ publishDraftHistorySelected(row) ? '✓' : '' }}</span>
                       </button>
                       <span class="mqtt-publish-draft-main">
-                        <strong>{{ publishDraftHistoryTitle(row) }}</strong>
+                        <strong data-quick-jump-anchor>{{ publishDraftHistoryTitle(row) }}</strong>
                         <small>{{ row.topic }}</small>
                         <code>{{ payloadSnippet(row.payload) }}</code>
                       </span>
@@ -2778,6 +2877,26 @@ onUnmounted(() => {
             <dd>{{ detailLog.detail || '无' }}</dd>
           </dl>
         </section>
+        <section v-else-if="detailSubscription" class="mqtt-log-detail">
+          <dl>
+            <dt>订阅</dt>
+            <dd>{{ detailSubscription.displayName }}</dd>
+            <dt>topic</dt>
+            <dd>{{ detailSubscription.topic }}</dd>
+            <dt>QoS</dt>
+            <dd>{{ detailSubscription.qos }}</dd>
+            <dt>未读</dt>
+            <dd>{{ detailSubscription.unreadCount }}</dd>
+          </dl>
+          <div class="mqtt-detail-actions">
+            <button type="button" class="mqtt-icon-button" title="复制 topic" aria-label="复制订阅 topic" @click="emit('dispatch', 'mqtt.subscription.copyTopic', commandArgs('subscription', detailSubscription.topic))">
+              <MqttIcon name="copy-topic" />
+            </button>
+            <button type="button" class="mqtt-icon-button" title="填入发布" aria-label="填入发布 topic" @click="emit('dispatch', 'mqtt.subscription.useAsPublishTopic', commandArgs('subscription', detailSubscription.topic))">
+              <MqttIcon name="apply" />
+            </button>
+          </div>
+        </section>
         <section v-else-if="detailConfig" class="mqtt-log-detail">
           <dl>
             <dt>连接</dt>
@@ -2812,16 +2931,22 @@ onUnmounted(() => {
             v-for="(item, index) in props.snapshot.mqttDrawerItems"
             :key="`${item.commandId}:${index}`"
             type="button"
-            class="mqtt-drawer-action"
+            class="drawer-action mqtt-drawer-action"
             :class="{ active: index === props.snapshot.mqttDrawer.activeIndex, danger: item.risk === 'destructive' || item.commandId.includes('delete') }"
             :disabled="!item.enabled"
             :title="item.description || item.title"
             :aria-label="item.title"
+            role="menuitem"
             @click="emit('dispatch', item.commandId, item.args)"
           >
-            <component :is="iconComponent(item.icon)" class="mqtt-icon" aria-hidden="true" />
-            <span>{{ item.title }}</span>
-            <kbd v-if="item.shortcutLabel">{{ item.shortcutLabel }}</kbd>
+            <span class="drawer-action-icon mqtt-drawer-action-icon">
+              <component :is="iconComponent(item.icon)" class="mqtt-icon" aria-hidden="true" />
+            </span>
+            <span class="drawer-action-copy">
+              <strong>{{ item.title }}</strong>
+              <small>{{ item.description }}</small>
+            </span>
+            <kbd>{{ item.shortcutLabel || '未绑定' }}</kbd>
           </button>
           <p v-if="!props.snapshot.mqttDrawerItems.length" class="empty-note">当前没有可执行动作</p>
         </div>

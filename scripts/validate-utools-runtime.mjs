@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer'
+import crypto from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import vm from 'node:vm'
@@ -55,7 +57,9 @@ const sandbox = {
   globalThis: {},
   process: { platform: 'darwin' },
   require(name) {
+    if (name === 'node:buffer') return { Buffer }
     if (name === 'node:child_process') return { execFile() {} }
+    if (name === 'node:crypto') return crypto
     if (name === 'node:fs') return {
       statSync: () => ({ isFile: () => false }),
       promises: {

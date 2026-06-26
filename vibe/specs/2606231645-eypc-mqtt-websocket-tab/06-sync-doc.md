@@ -6,6 +6,17 @@ Tool: codex
 
 This document maps the current MQTT workbench behavior from product requirement to module boundary and verification evidence. Current product contracts are indexed in [PRODUCT_REQUIREMENTS.md](../PRODUCT_REQUIREMENTS.md#L1); active task history is routed from [PROJECT_STATUS.md](../PROJECT_STATUS.md#L1).
 
+## Design Thought Sync
+
+- User design feedback for MQTT must update project soul at [../../knowledge/developer-soul.md](../../knowledge/developer-soul.md#L1) and this sync document in the same implementation loop when it changes selected style, avoided style, focus priority, layering priority, or command ownership.
+- Selected style: compact command-owned workbench behavior, visible focus/selection/multi-select states, row-local menus before global drawers, deterministic editor `Tab` traversal, and focused transient layers above their local workbench surface.
+- Avoided style: generic decorative or marketing-like panels, hidden active/focused/selected state, clipped right-side drawers, popovers that sit under their own controls, globally highest local popovers, and chat-only design corrections that are not written into project memory.
+- Time-display style: row timestamps prefer readable seconds over compressed digits or sub-second noise. Same-day rows omit the date and show `HH:MM:SS`; non-today rows include `MM-DD` or `YYYY-MM-DD` plus time, with date and clock rendered as visually distinct chips.
+- Detail/preview timestamp style: expanded MQTT message contexts always show full date plus seconds (`YYYY-MM-DD HH:MM:SS`) because the detail surface has room and is used for diagnosis; milliseconds stay hidden.
+- Evidence label for this entry: `user-confirmed`, from the 2026-06-26 instruction to extract design thinking into project soul and real-time docs for every design-bearing question.
+- 2026-06-26 visual-density sync: MQTT workbench spacing should stay tight across rails, record rows, toolbars, resizers, popovers, and publish inputs in [app.css](../../../src/styles/app.css#L1). Selected style is single-row subscription items, 28px-class icon controls, 31px record rows, lighter panel borders, and non-orange publish-editor focus; avoided style is oversized rail cards, large inter-panel gutters, and heavy focus shadows. Evidence label: `user-screenshot`.
+- 2026-06-26 config-editor label sync: connection option checkboxes in [MqttPage.vue](../../../src/pages/MqttPage.vue#L1) should use a dedicated compact row group, flex-wrap outer alignment, nowrap per-option labels, and fixed 16px checkbox inputs in [app.css](../../../src/styles/app.css#L1). Selected style keeps checkbox and text close together while labels such as “重连后重订阅” and “本地归档” move to the next row only as complete options; avoided style is inherited full-width checkbox inputs, grid columns that split text, or `space-between` layouts that push labels apart and overflow. Evidence label: `user-screenshot`.
+
 ## Layer Map
 
 | Layer | Responsibility | Code mapping |
@@ -25,34 +36,43 @@ This document maps the current MQTT workbench behavior from product requirement 
 - `MqttState.viewPrefs` persists the last information filter and per-config topic filters. Invalid remembered topics are pruned during MQTT state normalization.
 - `MqttArchiveState` stores connection snapshots, sessions/messages, publish templates, and publish draft history. Draft history is editor recovery/reuse data, not a send log.
 - `MqttPublishTemplate.operatedAt` is the operation-order timestamp for template rows; older archives fall back to `updatedAt` then `createdAt`.
-- Local secret storage remains separate under the platform/preload local-only bridge and is never written into archive JSON or SQLite mirrors.
+- Local secret storage remains separate under the platform/preload local-only bridge: [preload/index.js](../../../preload/index.js#L1) persists passwords/tokens to the encrypted userData envelope `mqtt-secrets-local.json`, prefers Electron safeStorage, falls back to AES-256-GCM with local-only `mqtt-secrets-local.key`, uses localStorage only as encrypted compatibility fallback, and never writes secrets into archive JSON or SQLite mirrors.
 
 ## Runtime Behavior
 
 - MQTT remains lazy: the page is lazy-loaded by [App.vue](../../../src/App.vue#L1), the archive is loaded after entering the enabled MQTT tab, and MQTT client code is dynamically imported only when connecting.
-- Runtime derives ordinary message rows, publish template rows, outgoing history rows, draft-history rows, current record list state, active focus target, drawer targets, preview state, storage status, and layout/view preferences from [appRuntime.ts](../../../src/runtime/appRuntime.ts#L1).
+- Runtime derives ordinary message rows, publish template rows, outgoing history rows, draft-history rows, current record list state, connection/subscription rail selection state, active focus target, drawer targets, preview state, storage status, and layout/view preferences from [appRuntime.ts](../../../src/runtime/appRuntime.ts#L1).
 - Ordinary message rows and outgoing history rows sort newest first by `timestamp`; draft history sorts by `updatedAt`; templates sort by `operatedAt`.
 - Applying a message/template/history/draft can archive the previous publish editor content when it is meaningful and different from the replacement. Manual `Ctrl+Shift+H` saves a draft without creating an outgoing message.
 - Draft-history row click only focuses. Applying requires the row apply button or `Enter`; `Ctrl+Enter` applies and sends the focused draft while keeping the popover open.
+- Connection and subscription rails are runtime-owned row targets. They support movement, highlight, multi-select, detail/action drawer entry, right-click menus, copy, delete, and row-local buttons through shared action ids.
+- The connection-config editor has a deterministic focus matrix covering connection fields, each subscription alias/topic/color row, each publish-topic row, MQTT option fields, and storage options.
 - Runtime shortcut context treats an open draft-history popover or editor as the effective MQTT command layer before trusting DOM focus, preventing stale publish-editor focus from stealing draft-history commands.
 - `Escape` recovers top MQTT layers inward first: preview, draft-history editor/popover, publish options, topic dropdown, record editor/drawers, search/filter state, then page-level focus.
 
 ## Shortcut And Input Ownership
 
-- Current MQTT defaults: `Ctrl+1/2/3` for `全/收/发`, `Ctrl+M` for `藏`, `Ctrl+H` for draft history, `Ctrl+Shift+H` for manual draft save, `Ctrl+F` for current record search, `Ctrl+P` for publish topic, `Ctrl+Shift+F` for topic dropdown, `Ctrl+Shift+S` for layout, `Ctrl+ArrowLeft` for detail, and `Ctrl+ArrowRight` for actions/options.
+- Current MQTT defaults: `Ctrl+1/2/3` for `全/收/发`, `Ctrl+M` for `藏`, `Ctrl+H` for draft history, `Ctrl+Shift+H` for manual draft save, `Ctrl+F` for current record search, `Ctrl+P` for publish topic, `Ctrl+Shift+F` for topic dropdown, `Ctrl+Shift+S` for layout, `Ctrl+ArrowLeft` for detail outside ordinary editors, and `Ctrl+ArrowRight` for actions outside ordinary editors.
 - Released defaults: `Ctrl+L`, `Ctrl+Shift+L`, and `Ctrl+Shift+M` do not map to MQTT draft/history commands.
-- `mqtt-publish-editor` keeps native arrows/Delete/Backspace while allowing command-owned save/send/draft/options/focus shortcuts.
+- `mqtt-publish-editor` keeps native arrows/Delete/Backspace and `Ctrl+ArrowLeft` / `Ctrl+ArrowRight` text navigation while allowing command-owned save/send/draft/focus shortcuts. Publish options open from the button and close by `Escape` or outside pointerdown.
 - `mqtt-publish-draft` owns draft-history list navigation, `Space`, `Enter`, `Ctrl+Enter`, `Ctrl+S`, `Ctrl+Left`, `Ctrl+Right`, `F2`, `Shift+F2`, `Ctrl+Delete`, `Ctrl+Backspace`, and `Escape`.
 - `mqtt-publish-draft-editor` owns `Ctrl+S`, `Ctrl+Enter`, `Tab`, `Shift+Tab`, and `Escape` for the alias/detail modal.
 - `mqtt-topic-filter` and `mqtt-publish-options` are transient layers with their own navigation and close behavior.
+- `mqtt-connections` owns connection rail movement, `Space`, `Ctrl+C`, delete shortcuts, `Ctrl+ArrowLeft`, and `Ctrl+ArrowRight`.
+- `mqtt-subscriptions` owns subscription rail movement, `Space`, `Enter`, `Ctrl+C`, `Ctrl+Enter`, delete shortcuts, `Ctrl+ArrowLeft`, and `Ctrl+ArrowRight`.
 - `mqtt-config-subscription-editor` and `mqtt-config-publish-editor` own same-field row movement and row deletion while plain text deletion remains native.
+- Editor-local keydown handlers only intercept owned commands. Unowned keys bubble to the global resolver and browser default, so ordinary editing shortcuts do not get swallowed by MQTT modal layers.
 
 ## UI Surface
 
-- The MQTT page renders a compact workbench with connection rail, subscription rail, and message/publish workspace in [MqttPage.vue](../../../src/pages/MqttPage.vue#L1).
+- The MQTT page renders a compact workbench with connection rail, subscription rail, and message/publish workspace in [MqttPage.vue](../../../src/pages/MqttPage.vue#L1); visual density is owned by [app.css](../../../src/styles/app.css#L1).
+- Connection and subscription rail rows expose visible active/selected/focused states, row-local copy/detail/edit/delete/more controls, and contextmenu action drawer entry.
 - The top command bar owns connection status, topic filter dropdown, current-list search, `全/收/发/藏`, and layout controls. Template/history lists no longer carry their own header search.
 - Message/template/history rows share fixed-height row behavior and payload snippets. Topic visuals use subscription alias/color when available.
+- Message row time uses conditional date display and distinct date/clock parts so current-day traffic stays compact while older traffic keeps enough context for diagnosis.
+- Message detail and preview headers use full date-time to seconds even when the row is from today.
 - The config drawer header owns the assembled endpoint preview. Endpoint fields are compact, subscriptions include alias/topic/color, publish topic candidates are editable rows, and bottom MQTT flags live in a compact options panel.
+- Right-side connection and action drawers must follow existing display patterns: controls remain fully inside the panel, close buttons and shortcut chips are not clipped by panel edges, and focused floating editors/popovers outrank adjacent list rows and panel contents without covering global masks or modal layers.
 - The send toolbar owns the draft-history button/popover. The visible star/template-save button is removed; publish editor `Ctrl+S` remains the save-template command.
 - Pure Shift preview is an immediate readonly overlay for valid rows, independent of ordinary hover settings. `Ctrl/Command+Shift` suppresses Shift preview so `c-s-*` shortcuts remain clean.
 
@@ -69,9 +89,12 @@ This document maps the current MQTT workbench behavior from product requirement 
 | Record time ordering and `operatedAt` | [record time verify](../260625-eypc-mqtt-record-time-order/04-verify.md#L1) |
 | Compact config drawer and `publishTopics` | [config editor verify](../260625-eypc-mqtt-config-editor-ui/04-verify.md#L1) |
 | Managed editor row shortcuts | [editor row shortcuts verify](../260625-eypc-mqtt-editor-row-shortcuts/04-verify.md#L1) |
+| Connection/subscription rail menu and config `Tab` traversal | [rail menu verify](../260626-eypc-mqtt-rail-menu-focus/04-verify.md#L1) |
+| Editing keyboard ownership and publish options outside close | [editing ownership verify](../260626-eypc-mqtt-editing-keyboard-ownership/04-verify.md#L1) |
+| Local-only encrypted password/token persistence | 2026-06-26 targeted storage regression in [mqttSqlitePreload.test.ts](../../../tests/platform/mqttSqlitePreload.test.ts#L1), plus typecheck, build, and uTools runtime validation |
 
 ## Boundaries
 
-- No current MQTT documentation task changes broker protocol behavior, external MQTT traffic, uTools manifest window size, or local-only secret rules.
+- Current local-only secret change affects only on-disk durability location; passwords/tokens still do not enter app state, archive JSON, SQLite mirrors, templates, synced storage, broker protocol behavior, external MQTT traffic, or uTools manifest window size.
 - `syncRecords=false` remains a user-facing sync/privacy preference; it is not a local durability kill switch.
 - `preload/index.js` is the source-of-truth preload implementation. Generated public preload artifacts should not be cited as authoritative logic unless packaging output is the subject.

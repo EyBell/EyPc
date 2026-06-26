@@ -16,7 +16,7 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   const element = target as HTMLElement | null
   if (!element) return false
   const tagName = typeof element.tagName === 'string' ? element.tagName.toUpperCase() : ''
-  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(tagName) || element.isContentEditable === true
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(tagName) || element.isContentEditable === true || element.getAttribute?.('role') === 'textbox'
 }
 
 export function activeInputRoleFromTarget(target: EventTarget | null, activeTab: AppTabId): KeyboardInputRole | undefined {
@@ -24,6 +24,7 @@ export function activeInputRoleFromTarget(target: EventTarget | null, activeTab:
   const role = element && typeof element.closest === 'function'
     ? element.closest<HTMLElement>('[data-role]')?.dataset.role
     : undefined
+  if (role === 'mqtt-connections') return 'mqtt-connections'
   if (role === 'mqtt-subscriptions') return 'mqtt-subscriptions'
   if (role === 'mqtt-topic-filter') return 'mqtt-topic-filter'
   if (role === 'mqtt-publish-options') return 'mqtt-publish-options'

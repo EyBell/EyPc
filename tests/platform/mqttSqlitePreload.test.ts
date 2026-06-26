@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -7,11 +7,14 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 const requireModule = createRequire(import.meta.url)
 
-function loadPreload(dbPath: string, legacyArchive: unknown = null) {
+function loadPreload(dbPath: string, legacyArchive: unknown = null, legacySecrets: unknown = null) {
   const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
   const dbStorage = new Map<string, unknown>()
   if (legacyArchive) dbStorage.set('eypc/mqtt/archive/v1', legacyArchive)
   const localStorage = new Map<string, string>()
+  if (legacySecrets) {
+    localStorage.set('eypc/mqtt/secrets-local/v1', JSON.stringify(legacySecrets))
+  }
   const sandbox = {
     window: {},
     console,
@@ -21,10 +24,12 @@ function loadPreload(dbPath: string, legacyArchive: unknown = null) {
       cwd: process.cwd
     },
     require(name: string) {
+      if (name === 'node:buffer') return requireModule('node:buffer')
       if (name === 'node:child_process') return { execFile() {} }
       if (name === 'node:fs') return requireModule('node:fs')
       if (name === 'node:path') return requireModule('node:path')
       if (name === 'node:os') return requireModule('node:os')
+      if (name === 'node:crypto') return requireModule('node:crypto')
       if (name === 'node:sqlite') return requireModule('node:sqlite')
       throw new Error(`unexpected require: ${name}`)
     },
@@ -92,6 +97,72 @@ describe('MQTT preload SQLite storage', () => {
       publishDraftHistory: [{ id: 'hist1', topic: 'out', payload: 'draft' }]
     })
     expect(storage.getMqttSecrets()).toEqual({ dev: 'local-secret' })
+  })
+
+  it('persists MQTT secrets in the local user data directory across preload reloads', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'eypc-mqtt-sqlite-'))
+    tempDirs.push(dir)
+    const dbPath = join(dir, 'mqtt.sqlite')
+
+    const firstStorage = loadPreload(dbPath).window.eypcPlatform.storage
+    expect(firstStorage.setMqttSecrets({ dev: 'local-secret' })).toBe(true)
+    const rawFile = readFileSync(join(dir, 'mqtt-secrets-local.json'), 'utf8')
+    expect(rawFile).not.toContain('local-secret')
+    expect(JSON.parse(rawFile)).toMatchObject({
+      version: 2,
+      encoding: 'base64'
+    })
+
+    const reloadedStorage = loadPreload(dbPath).window.eypcPlatform.storage
+    expect(reloadedStorage.getMqttSecrets()).toEqual({ dev: 'local-secret' })
+    expect(JSON.stringify(reloadedStorage.getMqttArchive())).not.toContain('local-secret')
+  })
+
+  it('encrypts persisted MQTT secrets on disk while keeping them readable locally', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'eypc-mqtt-sqlite-'))
+    tempDirs.push(dir)
+    const dbPath = join(dir, 'mqtt.sqlite')
+
+    const firstStorage = loadPreload(dbPath).window.eypcPlatform.storage
+    expect(firstStorage.setMqttSecrets({ dev: 'local-secret' })).toBe(true)
+    const rawFile = readFileSync(join(dir, 'mqtt-secrets-local.json'), 'utf8')
+    expect(rawFile).not.toContain('local-secret')
+    expect(JSON.parse(rawFile)).toMatchObject({
+      version: 2,
+      encoding: 'base64'
+    })
+
+    const reloadedStorage = loadPreload(dbPath).window.eypcPlatform.storage
+    expect(reloadedStorage.getMqttSecrets()).toEqual({ dev: 'local-secret' })
+  })
+
+  it('migrates legacy plaintext MQTT secret files into encrypted storage', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'eypc-mqtt-sqlite-'))
+    tempDirs.push(dir)
+    const dbPath = join(dir, 'mqtt.sqlite')
+    writeFileSync(join(dir, 'mqtt-secrets-local.json'), JSON.stringify({
+      version: 1,
+      secrets: { dev: 'legacy-secret' }
+    }))
+
+    const storage = loadPreload(dbPath).window.eypcPlatform.storage
+    expect(storage.getMqttSecrets()).toEqual({ dev: 'legacy-secret' })
+    const rawFile = readFileSync(join(dir, 'mqtt-secrets-local.json'), 'utf8')
+    expect(rawFile).not.toContain('legacy-secret')
+    expect(JSON.parse(rawFile)).toMatchObject({
+      version: 2,
+      encoding: 'base64'
+    })
+  })
+
+  it('does not resurrect legacy localStorage secrets when the local secret file exists but is invalid', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'eypc-mqtt-sqlite-'))
+    tempDirs.push(dir)
+    const dbPath = join(dir, 'mqtt.sqlite')
+    writeFileSync(join(dir, 'mqtt-secrets-local.json'), '')
+
+    const storage = loadPreload(dbPath, null, { version: 1, secrets: { dev: 'stale-secret' } }).window.eypcPlatform.storage
+    expect(storage.getMqttSecrets()).toEqual({})
   })
 
   it('migrates legacy dbStorage archive into SQLite without deleting the legacy value', () => {

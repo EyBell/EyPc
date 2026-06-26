@@ -1,4 +1,6 @@
+const { Buffer } = require('node:buffer')
 const { execFile } = require('node:child_process')
+const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -6,6 +8,10 @@ const path = require('node:path')
 const STORAGE_KEY = 'eypc/state/v1'
 const MQTT_ARCHIVE_STORAGE_KEY = 'eypc/mqtt/archive/v1'
 const MQTT_SECRETS_LOCAL_STORAGE_KEY = 'eypc/mqtt/secrets-local/v1'
+const MQTT_SECRETS_FILE_NAME = 'mqtt-secrets-local.json'
+const MQTT_SECRETS_KEY_FILE_NAME = 'mqtt-secrets-local.key'
+const MQTT_SECRETS_ENCRYPTION_VERSION = 2
+const MQTT_SECRETS_AES_ALGORITHM = 'aes-256-gcm'
 let lastEnterPayload = null
 const enterPayloadListeners = new Set()
 let mqttSqliteAdapter = null
@@ -214,6 +220,34 @@ function resolveMqttSqlitePath() {
     }
   }
   return path.join(baseDir, 'mqtt-archive.sqlite')
+}
+
+function resolveMqttUserDataDir() {
+  try {
+    if (globalThis.utools && typeof globalThis.utools.getPath === 'function') {
+      const userData = String(globalThis.utools.getPath('userData') || '').trim()
+      if (userData) return userData
+    }
+  } catch {}
+  try {
+    return path.dirname(resolveMqttSqlitePath())
+  } catch {}
+  try {
+    return path.join(os.homedir(), '.eypc')
+  } catch {
+    return path.join(process.cwd(), '.eypc')
+  }
+}
+
+function resolveMqttSecretsPath() {
+  const explicitPath = process.env && typeof process.env.EYPC_MQTT_SECRETS_PATH === 'string'
+    ? process.env.EYPC_MQTT_SECRETS_PATH.trim()
+    : ''
+  return explicitPath || path.join(resolveMqttUserDataDir(), MQTT_SECRETS_FILE_NAME)
+}
+
+function resolveMqttSecretsKeyPath() {
+  return path.join(path.dirname(resolveMqttSecretsPath()), MQTT_SECRETS_KEY_FILE_NAME)
 }
 
 function normalizeSqliteArchiveInput(archive) {
@@ -429,27 +463,150 @@ function normalizeMqttSecrets(value) {
     .filter(([key, secret]) => key && typeof secret === 'string' && secret.length > 0))
 }
 
+function isEncryptedMqttSecretsPayload(value) {
+  return Boolean(value && typeof value === 'object' && value.version === MQTT_SECRETS_ENCRYPTION_VERSION && typeof value.data === 'string')
+}
+
+function mqttSecretsPlaintext(secrets) {
+  return JSON.stringify({
+    version: 1,
+    secrets: normalizeMqttSecrets(secrets)
+  })
+}
+
+function getElectronSafeStorage() {
+  try {
+    const electron = require('electron')
+    const safeStorage = electron && electron.safeStorage
+    if (!safeStorage || typeof safeStorage.encryptString !== 'function' || typeof safeStorage.decryptString !== 'function') return null
+    if (typeof safeStorage.isEncryptionAvailable === 'function' && !safeStorage.isEncryptionAvailable()) return null
+    return safeStorage
+  } catch {
+    return null
+  }
+}
+
+function parseStoredMqttSecretsKey(raw) {
+  const text = String(raw || '').trim()
+  if (!text) return null
+  try {
+    const key = Buffer.from(text, 'base64')
+    return key.length === 32 ? key : null
+  } catch {
+    return null
+  }
+}
+
+function readOrCreateMqttSecretsKey() {
+  const keyPath = resolveMqttSecretsKeyPath()
+  try {
+    const existing = parseStoredMqttSecretsKey(fs.readFileSync(keyPath, 'utf8'))
+    if (existing) return existing
+  } catch {}
+  const key = crypto.randomBytes(32)
+  fs.mkdirSync(path.dirname(keyPath), { recursive: true })
+  fs.writeFileSync(keyPath, key.toString('base64'), { mode: 0o600 })
+  try {
+    fs.chmodSync(keyPath, 0o600)
+  } catch {}
+  return key
+}
+
+function encryptMqttSecretsPayload(secrets) {
+  const plaintext = mqttSecretsPlaintext(secrets)
+  const safeStorage = getElectronSafeStorage()
+  if (safeStorage) {
+    const encrypted = safeStorage.encryptString(plaintext)
+    return {
+      version: MQTT_SECRETS_ENCRYPTION_VERSION,
+      crypto: 'electron-safe-storage',
+      encoding: 'base64',
+      data: Buffer.from(encrypted).toString('base64')
+    }
+  }
+
+  const key = readOrCreateMqttSecretsKey()
+  const iv = crypto.randomBytes(12)
+  const cipher = crypto.createCipheriv(MQTT_SECRETS_AES_ALGORITHM, key, iv)
+  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()])
+  const tag = cipher.getAuthTag()
+  return {
+    version: MQTT_SECRETS_ENCRYPTION_VERSION,
+    crypto: MQTT_SECRETS_AES_ALGORITHM,
+    encoding: 'base64',
+    iv: iv.toString('base64'),
+    tag: tag.toString('base64'),
+    data: ciphertext.toString('base64')
+  }
+}
+
+function decryptMqttSecretsPayload(payload) {
+  if (!isEncryptedMqttSecretsPayload(payload)) return normalizeMqttSecrets(payload)
+  try {
+    if (payload.crypto === 'electron-safe-storage') {
+      const safeStorage = getElectronSafeStorage()
+      if (!safeStorage) return {}
+      return normalizeMqttSecrets(JSON.parse(safeStorage.decryptString(Buffer.from(payload.data, 'base64'))))
+    }
+    if (payload.crypto !== MQTT_SECRETS_AES_ALGORITHM || typeof payload.iv !== 'string' || typeof payload.tag !== 'string') return {}
+    const decipher = crypto.createDecipheriv(MQTT_SECRETS_AES_ALGORITHM, readOrCreateMqttSecretsKey(), Buffer.from(payload.iv, 'base64'))
+    decipher.setAuthTag(Buffer.from(payload.tag, 'base64'))
+    const plaintext = Buffer.concat([decipher.update(Buffer.from(payload.data, 'base64')), decipher.final()]).toString('utf8')
+    return normalizeMqttSecrets(JSON.parse(plaintext))
+  } catch {
+    return {}
+  }
+}
+
 function readMqttSecrets() {
+  try {
+    const raw = fs.readFileSync(resolveMqttSecretsPath(), 'utf8')
+    const payload = JSON.parse(raw)
+    const secrets = decryptMqttSecretsPayload(payload)
+    if (!isEncryptedMqttSecretsPayload(payload) && Object.keys(secrets).length) writeMqttSecrets(secrets)
+    return secrets
+  } catch (error) {
+    if (!error || error.code !== 'ENOENT') return {}
+  }
   try {
     if (!globalThis.localStorage) return {}
     const raw = globalThis.localStorage.getItem(MQTT_SECRETS_LOCAL_STORAGE_KEY)
-    return raw ? normalizeMqttSecrets(JSON.parse(raw)) : {}
+    const payload = raw ? JSON.parse(raw) : {}
+    const secrets = decryptMqttSecretsPayload(payload)
+    if (Object.keys(secrets).length) writeMqttSecrets(secrets)
+    return secrets
   } catch {
     return {}
   }
 }
 
 function writeMqttSecrets(secrets) {
+  const normalized = normalizeMqttSecrets(secrets)
+  let encryptedPayload = null
   try {
-    if (!globalThis.localStorage) return false
-    globalThis.localStorage.setItem(MQTT_SECRETS_LOCAL_STORAGE_KEY, JSON.stringify({
-      version: 1,
-      secrets: normalizeMqttSecrets(secrets)
-    }))
-    return true
+    encryptedPayload = encryptMqttSecretsPayload(normalized)
   } catch {
     return false
   }
+  let wroteFile = false
+  try {
+    const secretsPath = resolveMqttSecretsPath()
+    fs.mkdirSync(path.dirname(secretsPath), { recursive: true })
+    fs.writeFileSync(secretsPath, JSON.stringify(encryptedPayload, null, 2), { mode: 0o600 })
+    try {
+      fs.chmodSync(secretsPath, 0o600)
+    } catch {}
+    wroteFile = true
+  } catch {}
+  let wroteLocalStorage = false
+  try {
+    if (!globalThis.localStorage) return wroteFile
+    globalThis.localStorage.setItem(MQTT_SECRETS_LOCAL_STORAGE_KEY, JSON.stringify(encryptedPayload))
+    wroteLocalStorage = true
+  } catch {
+    wroteLocalStorage = false
+  }
+  return wroteFile || wroteLocalStorage
 }
 
 function utoolsShellCall(method, target) {

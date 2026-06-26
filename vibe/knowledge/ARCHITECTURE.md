@@ -57,7 +57,7 @@ uTools feature entry / keyboard input
 - MQTT is a default-visible top-level feature declared in feature routing and lazy-loaded from [src/App.vue](../../src/App.vue#L1).
 - MQTT domain contracts live in [src/domain/types.ts](../../src/domain/types.ts#L1), and normalization/projection helpers live in [src/domain/mqtt.ts](../../src/domain/mqtt.ts#L1).
 - Connection configs persist endpoint, client id, username, subscriptions, aliases, colors, publish defaults, reconnect flags, `syncRecords`, layout prefs, and view prefs.
-- Password/token values are excluded from persisted domain models, archives, SQLite mirrors, and publish templates; they may exist only in local-only secret storage.
+- Password/token values are excluded from persisted domain models, archives, SQLite mirrors, and publish templates; [preload/index.js](../../preload/index.js#L1) persists them only as an encrypted local userData envelope in `mqtt-secrets-local.json`, using Electron safeStorage when available and AES-256-GCM with the local-only key file `mqtt-secrets-local.key` as fallback.
 - MQTT archive durability is SQLite-first through [preload/index.js](../../preload/index.js#L1), with legacy archive fallback surfaced by [src/platform/eypcPlatform.ts](../../src/platform/eypcPlatform.ts#L1).
 - `syncRecords=false` is a user-facing sync/privacy preference, not a local durability kill switch.
 

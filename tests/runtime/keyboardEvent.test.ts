@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { activeInputRoleFromTarget, blockHandledShortcutEvent, shortcutFromEvent, shouldEnableShiftPreview } from '../../src/runtime/keyboardEvent'
+import { activeInputRoleFromTarget, blockHandledShortcutEvent, isEditableTarget, shortcutFromEvent, shouldEnableShiftPreview } from '../../src/runtime/keyboardEvent'
 
 describe('keyboard event runtime', () => {
   it('normalizes Escape and blocks host propagation after runtime handles it', () => {
@@ -93,6 +93,18 @@ describe('keyboard event runtime', () => {
     expect(shortcutFromEvent(event)).toBe('Ctrl+Alt+S')
   })
 
+  it('treats role=textbox nodes as editable targets for global shortcuts', () => {
+    const textBox = {
+      tagName: 'DIV',
+      isContentEditable: false,
+      getAttribute: (name: string) => name === 'role' ? 'textbox' : null,
+      closest: () => null
+    } as unknown as HTMLElement
+
+    expect(isEditableTarget(textBox)).toBe(true)
+    expect(activeInputRoleFromTarget(textBox, 'ports')).toBe('other')
+  })
+
   it('detects the MQTT subscription rail as a command-owned focus role', () => {
     const row = {
       tagName: 'BUTTON',
@@ -101,6 +113,16 @@ describe('keyboard event runtime', () => {
     } as unknown as HTMLElement
 
     expect(activeInputRoleFromTarget(row, 'mqtt')).toBe('mqtt-subscriptions')
+  })
+
+  it('detects the MQTT connection rail as a command-owned focus role', () => {
+    const row = {
+      tagName: 'ARTICLE',
+      isContentEditable: false,
+      closest: (selector: string) => selector === '[data-role]' ? { dataset: { role: 'mqtt-connections' } } : null
+    } as unknown as HTMLElement
+
+    expect(activeInputRoleFromTarget(row, 'mqtt')).toBe('mqtt-connections')
   })
 
   it('detects MQTT subscription editor inputs as the dedicated edit role', () => {

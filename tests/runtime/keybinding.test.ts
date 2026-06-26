@@ -28,9 +28,22 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+S', { ...context, tab: 'favorites', textInputFocused: true, activeInputRole: 'favorite-search' })?.actionId).toBe('settings.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+S', { ...context, tab: 'settings', textInputFocused: true, activeInputRole: 'settings' })?.actionId).toBe('settings.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+S', { ...context, textInputFocused: true, activeInputRole: 'other' })?.actionId).toBe('settings.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F', context)?.actionId).toBe('quickJump.openForward')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F', context)?.actionId).toBe('quickJump.openBackward')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F', { ...context, textInputFocused: true })).toBeNull()
+    expect(buildShortcutCommandRows(DEFAULT_KEYBINDINGS).find((row) => row.commandId === 'quickJump.openForward')?.defaultShortcutIds).toEqual(['F'])
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', context)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', { ...context, tab: 'favorites' })?.actionId).toBe('favorites.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+1', { ...context, textInputFocused: true })).toBeNull()
+  })
+
+  it('preserves native editing keys in settings edit inputs', () => {
+    const context = { tab: 'settings' as const, confirmOpen: false, textInputFocused: true, activeInputRole: 'settings' as const }
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', context)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Backspace', context)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', context)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', context)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+S', context)).toBeNull()
   })
 
   it('keeps search inputs from owning Tab history behavior', () => {
@@ -68,6 +81,10 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', editorContext)?.actionId).toBe('ports.group.edit.nextField')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', editorContext)?.actionId).toBe('ports.group.edit.prevField')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', editorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', editorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Backspace', editorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', editorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', editorContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+2', editorContext)).toBeNull()
   })
 
@@ -84,6 +101,10 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', favoriteEditorContext)?.actionId).toBe('favorites.cancel')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', favoriteEditorContext)?.actionId).toBe('favorites.edit.nextField')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', favoriteEditorContext)?.actionId).toBe('favorites.edit.prevField')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', favoriteEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Backspace', favoriteEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', favoriteEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', favoriteEditorContext)).toBeNull()
     expect(buildShortcutCommandRows(DEFAULT_KEYBINDINGS).find((row) => row.commandId === 'favorites.save')?.defaultShortcutIds).toEqual(['Ctrl+S', 'Ctrl+Enter'])
   })
 
@@ -102,6 +123,10 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', reviewContext)?.actionId).toBe('favorites.pickReview.next')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', reviewContext)?.actionId).toBe('favorites.pickReview.prev')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', reviewContext)?.actionId).toBe('favorites.pickReview.next')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', reviewContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Backspace', reviewContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', reviewContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', reviewContext)).toBeNull()
     expect(buildShortcutCommandRows(DEFAULT_KEYBINDINGS).find((row) => row.commandId === 'favorites.pickReview.commit')?.defaultShortcutIds).toEqual(['Ctrl+S', 'Ctrl+Enter'])
   })
 
@@ -157,6 +182,10 @@ describe('keybinding runtime', () => {
     const connectionContext = {
       ...idleContext,
       mqttPane: 'connections' as const
+    }
+    const connectionRoleContext = {
+      ...connectionContext,
+      activeInputRole: 'mqtt-connections' as const
     }
     const searchContext = {
       ...idleContext,
@@ -291,7 +320,8 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+R', publishEditorContext)?.actionId).toBe('mqtt.connection.disconnect')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+W', publishEditorContext)?.actionId).toBe('mqtt.panel.toggle')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+T', publishEditorContext)?.actionId).toBe('mqtt.subscription.panel.toggle')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', publishEditorContext)?.actionId).toBe('mqtt.publish.options.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', publishEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', publishEditorContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', publishEditorContext)?.actionId).toBe('mqtt.publish.nextField')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', publishEditorContext)?.actionId).toBe('mqtt.publish.prevField')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', publishEditorContext)?.actionId).toBe('mqtt.publish.blur')
@@ -332,10 +362,20 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', publishHistoryEditorContext)?.actionId).toBe('mqtt.publish.draft.edit.prevField')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', publishHistoryEditorContext)?.actionId).toBe('mqtt.publish.draft.edit.cancel')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', publishHistoryEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', publishHistoryEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Backspace', publishHistoryEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', publishHistoryEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', publishHistoryEditorContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', idleContext)?.actionId).toBe('mqtt.record.rename')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F2', idleContext)?.actionId).toBe('mqtt.record.edit')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', connectionContext)?.actionId).toBe('mqtt.config.edit')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F2', connectionContext)?.actionId).toBe('mqtt.config.rename')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Space', connectionRoleContext)?.actionId).toBe('mqtt.connection.toggleSelect')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+C', connectionRoleContext)?.actionId).toBe('mqtt.connection.copyAddress')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', connectionRoleContext)?.actionId).toBe('mqtt.connection.delete')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Delete', connectionRoleContext)?.actionId).toBe('mqtt.connection.deleteSelected')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', connectionRoleContext)?.actionId).toBe('mqtt.detail.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', connectionRoleContext)?.actionId).toBe('mqtt.drawer.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', idleContext)?.actionId).toBe('mqtt.record.delete')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+S', editorContext)?.actionId).toBe('mqtt.config.save')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Enter', editorContext)?.actionId).toBe('mqtt.config.save')
@@ -373,6 +413,8 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Backspace', configSubscriptionEditorContext)?.actionId).toBe('mqtt.config.subscription.deleteRow')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', configSubscriptionEditorContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Backspace', configSubscriptionEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', configSubscriptionEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', configSubscriptionEditorContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+S', configPublishEditorContext)?.actionId).toBe('mqtt.config.save')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Enter', configPublishEditorContext)?.actionId).toBe('mqtt.config.save')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', configPublishEditorContext)?.actionId).toBe('mqtt.config.cancel')
@@ -384,6 +426,8 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Backspace', configPublishEditorContext)?.actionId).toBe('mqtt.config.publish.deleteRow')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', configPublishEditorContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Backspace', configPublishEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', configPublishEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', configPublishEditorContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', editorContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', editorContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', editorContext)).toBeNull()
@@ -401,6 +445,8 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+C', favoriteEditorContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', favoriteEditorContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Backspace', favoriteEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', favoriteEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', favoriteEditorContext)).toBeNull()
     const recordEditorContext = {
       ...idleContext,
       textInputFocused: true,
@@ -411,6 +457,12 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', recordEditorContext)?.actionId).toBe('mqtt.record.edit.cancel')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', recordEditorContext)?.actionId).toBe('mqtt.record.edit.nextField')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', recordEditorContext)?.actionId).toBe('mqtt.record.edit.prevField')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', recordEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Backspace', recordEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', recordEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', recordEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', searchContext)?.actionId).toBe('mqtt.detail.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', searchContext)?.actionId).toBe('mqtt.drawer.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', drawerContext)?.actionId).toBe('mqtt.drawer.next')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+J', drawerContext)?.actionId).toBe('mqtt.drawer.next')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowUp', drawerContext)?.actionId).toBe('mqtt.drawer.prev')
@@ -441,7 +493,7 @@ describe('keybinding runtime', () => {
     expect(rows.find((row) => row.commandId === 'mqtt.record.favorite')?.defaultShortcutIds).toEqual(['Ctrl+S'])
     expect(rows.find((row) => row.commandId === 'mqtt.publish.template.save')?.defaultShortcutIds).toEqual(['Ctrl+S'])
     expect(rows.find((row) => row.commandId === 'mqtt.topicFilter.focus')?.defaultShortcutIds).toEqual(['Ctrl+Shift+F'])
-    expect(rows.find((row) => row.commandId === 'mqtt.publish.options.open')?.defaultShortcutIds).toEqual(['Ctrl+ArrowRight'])
+    expect(rows.find((row) => row.commandId === 'mqtt.publish.options.open')?.defaultShortcutIds).toEqual([])
     expect(rows.find((row) => row.commandId === 'mqtt.record.favorite.save')?.defaultShortcutIds).toEqual(['Ctrl+S', 'Ctrl+Enter'])
     expect(rows.find((row) => row.commandId === 'mqtt.record.copyPayload')?.defaultShortcutIds).toEqual(['Ctrl+C'])
     expect(rows.find((row) => row.commandId === 'mqtt.preview.open')?.defaultShortcutIds).toEqual(['Ctrl+I'])
@@ -456,6 +508,9 @@ describe('keybinding runtime', () => {
     expect(rows.find((row) => row.commandId === 'mqtt.preview.scroll.down')?.defaultShortcutIds).toEqual(['Shift+ArrowDown'])
     expect(rows.find((row) => row.commandId === 'mqtt.subscription.toggleSelect')?.defaultShortcutIds).toEqual(['Space'])
     expect(rows.find((row) => row.commandId === 'mqtt.subscription.applyFilter')?.defaultShortcutIds).toEqual(['Enter'])
+    expect(rows.find((row) => row.commandId === 'mqtt.connection.toggleSelect')?.defaultShortcutIds).toEqual(['Space'])
+    expect(rows.find((row) => row.commandId === 'mqtt.connection.copyAddress')?.defaultShortcutIds).toEqual(['Ctrl+C'])
+    expect(rows.find((row) => row.commandId === 'mqtt.subscription.copyTopic')?.defaultShortcutIds).toEqual(['Ctrl+C'])
     expect(rows.find((row) => row.commandId === 'mqtt.subscription.editor.save')?.defaultShortcutIds).toEqual(['Ctrl+S', 'Ctrl+Enter'])
     expect(rows.find((row) => row.commandId === 'mqtt.subscription.editor.nextRow')?.defaultShortcutIds).toEqual(['ArrowDown'])
     expect(rows.find((row) => row.commandId === 'mqtt.subscription.editor.deleteRow')?.defaultShortcutIds).toEqual(['Ctrl+Delete', 'Ctrl+Backspace'])

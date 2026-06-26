@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import vm from 'node:vm'
 import { describe, expect, it } from 'vitest'
+
+const requireModule = createRequire(import.meta.url)
 
 describe('favorite file bridge source', () => {
   function loadPreload(platform: NodeJS.Platform, execFile: (...args: unknown[]) => void, utools?: Record<string, unknown>) {
@@ -12,6 +15,8 @@ describe('favorite file bridge source', () => {
       process: { platform },
       utools,
       require(name: string) {
+        if (name === 'node:buffer') return requireModule('node:buffer')
+        if (name === 'node:crypto') return requireModule('node:crypto')
         if (name === 'node:child_process') return { execFile }
         if (name === 'node:fs') {
           return {

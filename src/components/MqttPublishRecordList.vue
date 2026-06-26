@@ -88,14 +88,19 @@ function selected(row: PublishRecordRow) {
 </script>
 
 <template>
-  <section class="mqtt-publish-record-list" :class="`mqtt-publish-record-list-${listId}`">
+  <section class="mqtt-publish-record-list" :class="`mqtt-publish-record-list-${listId}`" tabindex="-1">
     <div class="mqtt-publish-record-list-body">
       <article
         v-for="(row, index) in rows"
         :key="row.id"
         class="mqtt-publish-record-row mqtt-message-row outgoing"
+        role="option"
+        tabindex="-1"
         :class="{ focused: isFocused(row), selected: selected(row), active: index === state.activeIndex }"
         :data-mqtt-preview-target="previewTargetValue(row)"
+        :data-quick-jump-label="rowRouteLabel(row)"
+        :data-quick-jump-search="`${rowTopic(row)} ${payloadSnippet(row.payload)}`"
+        :aria-selected="selected(row) || isFocused(row)"
         :style="rowStyle(row)"
         @click="emit('focusRow', row)"
         @dblclick="emit('toggleSelect', row, $event.shiftKey)"
@@ -111,7 +116,7 @@ function selected(row: PublishRecordRow) {
           @click.stop="emit('toggleSelect', row, $event.shiftKey)"
         />
         <span class="mqtt-template-main mqtt-message-route">
-          <strong :title="rowTopic(row)">{{ rowRouteLabel(row) }}</strong>
+          <strong data-quick-jump-anchor :title="rowTopic(row)">{{ rowRouteLabel(row) }}</strong>
           <small class="mqtt-topic-meta">{{ rowMeta(row) }}</small>
         </span>
         <span class="mqtt-item-payload-snippet" :title="payloadSnippet(row.payload)">

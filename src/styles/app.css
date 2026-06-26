@@ -4,6 +4,14 @@
   font-family: "IBM Plex Sans", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 14px;
   --mouse-tooltip-delay: 100ms;
+  --z-workbench-panel-active: 1;
+  --z-workbench-control: 2;
+  --z-workbench-popover: 36;
+  --z-workbench-popover-active: 38;
+  --z-drawer-overlay: 40;
+  --z-floating-preview: 75;
+  --z-modal: 80;
+  --z-modal-raised: 84;
   --z-shortcut-top-layer: 2147483000;
 }
 
@@ -1194,7 +1202,7 @@ textarea {
 .drawer-overlay {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: var(--z-drawer-overlay);
   display: flex;
   background: rgba(80, 102, 117, 0.18);
 }
@@ -1420,7 +1428,7 @@ kbd {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: var(--z-modal);
   display: grid;
   place-items: center;
   background: rgba(16, 24, 32, 0.35);
@@ -1783,7 +1791,7 @@ kbd {
   position: fixed;
   left: var(--shortcut-tooltip-x, 0px);
   top: var(--shortcut-tooltip-y, 0px);
-  z-index: 75;
+  z-index: var(--z-floating-preview);
   display: block;
   width: max-content;
   max-width: min(420px, calc(100vw - var(--shortcut-tooltip-x, 0px) - 16px));
@@ -2482,14 +2490,14 @@ kbd {
 .mqtt-workbench-grid {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(184px, 228px) minmax(150px, 190px) minmax(0, 1fr);
-  gap: 6px;
+  grid-template-columns: minmax(176px, 216px) minmax(138px, 176px) minmax(0, 1fr);
+  gap: 4px;
   min-height: 0;
   max-height: 100%;
   height: 100%;
-  padding: 4px;
+  padding: 3px;
   overflow: hidden;
-  background: #eff7f9;
+  background: #f2f7f8;
 }
 
 .mqtt-icon-button {
@@ -2500,9 +2508,9 @@ kbd {
   place-items: center;
   justify-content: center;
   gap: 4px;
-  min-width: 30px;
-  min-height: 30px;
-  padding: 4px 7px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 3px 6px;
   line-height: 1;
   white-space: nowrap;
 }
@@ -2513,8 +2521,8 @@ kbd {
 }
 
 .mqtt-icon {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   color: currentColor;
   stroke-width: 2.2;
   flex: 0 0 auto;
@@ -2526,6 +2534,19 @@ kbd {
   z-index: var(--z-shortcut-top-layer);
   overflow: visible;
   pointer-events: none;
+}
+
+.quick-jump-top-layer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-shortcut-top-layer);
+  overflow: visible;
+  pointer-events: none;
+  --quick-jump-rose: rgba(225, 29, 72, 0.9);
+  --quick-jump-purple: rgba(126, 34, 206, 0.86);
+  --quick-jump-fuchsia: rgba(192, 38, 211, 0.86);
+  --quick-jump-active: rgba(109, 40, 217, 0.98);
+  --quick-jump-y-offset: -7px;
 }
 
 .mqtt-shortcut-badge {
@@ -2546,6 +2567,69 @@ kbd {
   line-height: 1.2;
   white-space: nowrap;
   pointer-events: none;
+}
+
+.quick-jump-badge {
+  position: fixed;
+  left: var(--quick-jump-left, 0px);
+  top: var(--quick-jump-top, 0px);
+  z-index: var(--z-shortcut-top-layer);
+  min-width: 0;
+  max-width: none;
+  overflow: visible;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--quick-jump-rose);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.15;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translate(-50%, calc(-50% + var(--quick-jump-y-offset)));
+  text-shadow:
+    0 1px 1px rgba(255, 255, 255, 0.92),
+    0 -1px 1px rgba(255, 255, 255, 0.78),
+    0 0 6px rgba(225, 29, 72, 0.18);
+}
+
+.quick-jump-badge:nth-child(2n) {
+  color: var(--quick-jump-purple);
+  text-shadow:
+    0 1px 1px rgba(255, 255, 255, 0.92),
+    0 -1px 1px rgba(255, 255, 255, 0.78),
+    0 0 6px rgba(126, 34, 206, 0.2);
+}
+
+.quick-jump-badge:nth-child(3n) {
+  color: var(--quick-jump-fuchsia);
+  text-shadow:
+    0 1px 1px rgba(255, 255, 255, 0.92),
+    0 -1px 1px rgba(255, 255, 255, 0.78),
+    0 0 6px rgba(192, 38, 211, 0.2);
+}
+
+.quick-jump-badge.active {
+  background: transparent;
+  box-shadow: none;
+  color: var(--quick-jump-active);
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  text-shadow:
+    0 1px 1px rgba(255, 255, 255, 0.95),
+    0 0 8px rgba(109, 40, 217, 0.34);
+}
+
+[data-quick-jump-active="true"] {
+  outline: 1px solid rgba(126, 34, 206, 0.28);
+  outline-offset: 2px;
 }
 
 .mqtt-collapsed-logo {
@@ -2623,7 +2707,7 @@ kbd {
   min-width: 0;
   min-height: 0;
   border: 1px solid #c8d8e1;
-  border-radius: 8px;
+  border-radius: 6px;
   background: #fbfefd;
 }
 
@@ -2631,18 +2715,18 @@ kbd {
 .mqtt-subscription-rail {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 6px;
+  gap: 4px;
   overflow: hidden;
-  padding: 6px;
+  padding: 4px;
 }
 
 .mqtt-message-workspace {
-  --mqtt-row-height: 34px;
+  --mqtt-row-height: 31px;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  overflow: hidden;
-  border-color: #00a676;
-  box-shadow: inset 0 0 0 1px rgba(0, 166, 118, 0.12);
+  overflow: visible;
+  border-color: #9fcfc5;
+  box-shadow: inset 0 0 0 1px rgba(0, 166, 118, 0.08);
 }
 
 .mqtt-rail-head,
@@ -2655,7 +2739,7 @@ kbd {
 .mqtt-panel-title-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .mqtt-rail-head {
@@ -2694,13 +2778,13 @@ kbd {
 
 .mqtt-rail-actions {
   display: flex;
-  gap: 4px;
+  gap: 3px;
 }
 
 .mqtt-subscription-rail .mqtt-rail-title {
   display: grid;
   grid-template-rows: auto auto;
-  gap: 6px;
+  gap: 4px;
 }
 
 .mqtt-subscription-rail .mqtt-rail-title > .mqtt-subscription-title-line {
@@ -2733,15 +2817,29 @@ kbd {
   justify-content: center;
   width: 100%;
   min-width: 0;
-  gap: 6px;
+  gap: 4px;
   flex-wrap: nowrap;
 }
 
 .mqtt-subscription-rail .mqtt-rail-actions .mqtt-icon-button {
-  flex: 0 0 30px;
-  width: 30px;
-  min-width: 30px;
-  padding: 4px;
+  flex: 0 0 28px;
+  width: 28px;
+  min-width: 28px;
+  padding: 3px;
+}
+
+.mqtt-rail-head .group-panel-toggle,
+.mqtt-rail-head .add-folder-button {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+}
+
+.mqtt-rail-head .search-suggest-box .suggest-input {
+  min-height: 28px;
+  padding: 4px 8px;
 }
 
 .mqtt-panel-toggle {
@@ -2766,17 +2864,17 @@ kbd {
 .mqtt-publish-records {
   display: grid;
   align-content: start;
-  gap: 8px;
+  gap: 5px;
   min-height: 0;
   overflow: auto;
 }
 
 .mqtt-config-card {
   display: grid;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid #d6e5ea;
-  border-radius: 7px;
+  gap: 5px;
+  padding: 7px;
+  border: 1px solid #dbe8ed;
+  border-radius: 6px;
   background: #fff;
   cursor: pointer;
 }
@@ -2786,20 +2884,40 @@ kbd {
   background: #e4fbf2;
 }
 
+.mqtt-config-card.selected {
+  border-color: #b7d4e4;
+  background: #f3f9fc;
+}
+
+.mqtt-config-card.active.selected {
+  border-color: #3ca987;
+  background: linear-gradient(0deg, rgba(47, 128, 237, 0.08), rgba(47, 128, 237, 0.08)), #e4fbf2;
+}
+
 .mqtt-config-card.focused {
-  box-shadow: 0 0 0 2px rgba(47, 128, 237, 0.16) inset;
+  box-shadow: 0 0 0 1px rgba(47, 128, 237, 0.24) inset;
+}
+
+.mqtt-config-card:hover {
+  border-color: #91c8d8;
+  background: #f6fbfd;
+}
+
+.mqtt-config-card:focus-visible {
+  outline: 2px solid #2f80ed;
+  outline-offset: 2px;
 }
 
 .mqtt-config-card header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: 6px;
   align-items: start;
 }
 
 .mqtt-config-card header span {
   display: grid;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -2823,8 +2941,8 @@ kbd {
 
 .mqtt-config-actions {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 5px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
 }
 
 .mqtt-config-actions button,
@@ -2843,11 +2961,11 @@ kbd {
 .mqtt-subscription-list {
   display: grid;
   align-content: start;
-  gap: 6px;
+  gap: 4px;
   min-height: 0;
   overflow: auto;
-  padding: 2px 0;
-  border-radius: 7px;
+  padding: 1px 0;
+  border-radius: 6px;
 }
 
 .mqtt-subscription-list:focus {
@@ -2865,16 +2983,30 @@ kbd {
 .mqtt-subscription-row {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(60px, 2fr);
-  gap: 6px;
-  align-items: stretch;
-  min-height: 48px;
+  grid-template-columns: minmax(0, 1fr) repeat(3, 22px);
+  gap: 3px;
+  align-items: center;
+  min-height: 36px;
   border: 1px solid #dce8ed;
-  border-radius: 7px;
-  background: #f7fcf8;
-  padding: 7px;
+  border-radius: 6px;
+  background: #fbfdfc;
+  padding: 4px 5px 4px 8px;
   color: #254252;
   cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+
+.mqtt-subscription-row::before {
+  content: "";
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: 3px;
+  width: 3px;
+  border-radius: 999px;
+  background: transparent;
+  opacity: 0;
+  transition: opacity 120ms ease, background 120ms ease;
 }
 
 .mqtt-subscription-row.active {
@@ -2883,13 +3015,44 @@ kbd {
   color: #fff;
 }
 
-.mqtt-subscription-row.selected {
-  border-color: #99deb6;
-  background: #eefbf3;
+.mqtt-subscription-row.active::before {
+  background: rgba(255, 255, 255, 0.78);
+  opacity: 1;
 }
 
-.mqtt-subscription-row.focused {
-  box-shadow: 0 0 0 2px rgba(47, 128, 237, 0.18) inset;
+.mqtt-subscription-row.selected:not(.active) {
+  border-color: #00a676;
+  background: #e9fbf3;
+  box-shadow: 0 0 0 2px rgba(0, 166, 118, 0.14) inset;
+}
+
+.mqtt-subscription-row.selected:not(.active)::before {
+  background: #00a676;
+  opacity: 1;
+}
+
+.mqtt-subscription-row.focused:not(.active) {
+  border-color: #2f80ed;
+  background: #eef6ff;
+  box-shadow:
+    0 0 0 1px rgba(47, 128, 237, 0.42) inset,
+    0 0 0 1px rgba(47, 128, 237, 0.14);
+}
+
+.mqtt-subscription-row.focused:not(.active)::before {
+  background: #2f80ed;
+  opacity: 1;
+}
+
+.mqtt-subscription-row.active.focused {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.54) inset,
+    0 0 0 1px rgba(47, 128, 237, 0.24);
+}
+
+.mqtt-subscription-row:focus-visible {
+  outline: 2px solid rgba(47, 128, 237, 0.28);
+  outline-offset: 2px;
 }
 
 .mqtt-subscription-unread {
@@ -2913,6 +3076,7 @@ kbd {
 
 .mqtt-subscription-main {
   display: grid;
+  grid-column: 1;
   grid-template-rows: 1fr;
   gap: 2px;
   align-items: center;
@@ -2930,24 +3094,26 @@ kbd {
 
 .mqtt-subscription-main strong {
   font-size: 13px;
+  line-height: 20px;
 }
 
 .mqtt-subscription-route {
   color: #6f8390;
   font-size: 12px;
+  line-height: 20px;
   opacity: 0;
   transition: opacity 120ms ease;
 }
 
-.mqtt-subscription-row:hover .mqtt-subscription-main strong,
-.mqtt-subscription-row:focus .mqtt-subscription-main strong,
-.mqtt-subscription-row.focused .mqtt-subscription-main strong {
+.mqtt-subscription-row.focused .mqtt-subscription-main strong,
+.mqtt-subscription-row.selected .mqtt-subscription-main strong,
+.mqtt-subscription-row.active .mqtt-subscription-main strong {
   opacity: 0;
 }
 
-.mqtt-subscription-row:hover .mqtt-subscription-route,
-.mqtt-subscription-row:focus .mqtt-subscription-route,
-.mqtt-subscription-row.focused .mqtt-subscription-route {
+.mqtt-subscription-row.focused .mqtt-subscription-route,
+.mqtt-subscription-row.selected .mqtt-subscription-route,
+.mqtt-subscription-row.active .mqtt-subscription-route {
   opacity: 1;
 }
 
@@ -2958,45 +3124,39 @@ kbd {
 .mqtt-subscription-row-actions {
   position: relative;
   display: grid;
-  grid-template-columns: 26px 26px;
-  gap: 4px;
-  align-items: start;
+  grid-column: 2 / -1;
+  grid-template-columns: repeat(3, 22px);
+  gap: 3px;
+  align-items: center;
   justify-content: end;
-  opacity: 0;
-  transform: translateX(3px);
-  transition: opacity 120ms ease, transform 120ms ease;
+  justify-self: end;
+  align-self: center;
 }
 
-.mqtt-subscription-edit,
-.mqtt-subscription-delete {
-  width: 26px;
-  min-width: 26px;
-  height: 26px;
+.mqtt-subscription-copy,
+.mqtt-subscription-apply,
+.mqtt-subscription-more {
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  min-height: 22px;
   padding: 0;
   border-radius: 999px;
 }
 
-.mqtt-subscription-edit {
-  border-color: #cfe0e8;
-  color: #4d6675;
+.mqtt-subscription-copy,
+.mqtt-subscription-apply,
+.mqtt-subscription-more {
+  border-color: #d7e4ea;
+  color: #456271;
   background: #fff;
-}
-
-.mqtt-subscription-delete {
-  border-color: #ffd0d0;
-  color: #d92d20;
-  background: #fff6f6;
-}
-
-.mqtt-subscription-delete {
-  justify-self: end;
 }
 
 .mqtt-subscription-shortcut-popover {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 90;
+  z-index: var(--z-workbench-popover-active);
   display: grid;
   gap: 2px;
   width: max-content;
@@ -3016,13 +3176,6 @@ kbd {
   font-size: 11px;
   line-height: 1.35;
   white-space: nowrap;
-}
-
-.mqtt-subscription-row:hover .mqtt-subscription-row-actions,
-.mqtt-subscription-row:focus .mqtt-subscription-row-actions,
-.mqtt-subscription-row.focused .mqtt-subscription-row-actions {
-  opacity: 1;
-  transform: translateX(0);
 }
 
 .mqtt-subscription-summary,
@@ -3062,6 +3215,15 @@ kbd {
   gap: 6px;
   align-items: center;
   min-width: 0;
+}
+
+.mqtt-config-subscription-row.focused,
+.mqtt-config-publish-row.focused {
+  padding: 4px;
+  margin: -4px;
+  border-radius: 6px;
+  background: rgba(47, 128, 237, 0.07);
+  box-shadow: 0 0 0 1px rgba(47, 128, 237, 0.14);
 }
 
 .mqtt-config-subscription-row span {
@@ -3126,7 +3288,7 @@ kbd {
 }
 
 .mqtt-subscription-modal {
-  z-index: 80;
+  z-index: var(--z-modal);
 }
 
 .mqtt-subscription-modal .mqtt-subscription-editor,
@@ -3168,15 +3330,15 @@ kbd {
 }
 
 .mqtt-favorite-modal {
-  z-index: 82;
+  z-index: calc(var(--z-modal) + 2);
 }
 
 .mqtt-record-edit-modal {
-  z-index: 83;
+  z-index: calc(var(--z-modal) + 3);
 }
 
 .mqtt-publish-draft-edit-modal {
-  z-index: 84;
+  z-index: var(--z-modal-raised);
 }
 
 .mqtt-favorite-editor {
@@ -3229,10 +3391,10 @@ kbd {
 }
 
 .mqtt-workspace-toolbar {
-  min-height: 32px;
-  padding: 4px 6px;
-  border-bottom: 1px solid #d7e3e9;
-  background: #f2f8fa;
+  min-height: 30px;
+  padding: 3px 5px;
+  border-bottom: 1px solid #dbe7eb;
+  background: #f6fafb;
 }
 
 .mqtt-command-bar {
@@ -3380,8 +3542,13 @@ kbd {
 
 .mqtt-topic-filter {
   position: relative;
+  z-index: var(--z-workbench-popover);
   display: inline-grid;
   min-width: 0;
+}
+
+.mqtt-topic-filter:focus-within {
+  z-index: var(--z-workbench-popover-active);
 }
 
 .mqtt-topic-filter-button {
@@ -3410,7 +3577,7 @@ kbd {
 
 .mqtt-topic-filter-menu {
   position: absolute;
-  z-index: 30;
+  z-index: var(--z-workbench-popover-active);
   top: 24px;
   left: 0;
   display: grid;
@@ -3588,28 +3755,30 @@ kbd {
 .mqtt-workspace-body {
   display: grid;
   grid-template-rows:
-    minmax(180px, calc(var(--mqtt-stack-receive-ratio, 0.58) * 100%))
-    8px
-    minmax(220px, 1fr);
-  gap: 8px;
+    minmax(150px, calc(var(--mqtt-stack-receive-ratio, 0.58) * 100%))
+    6px
+    minmax(180px, 1fr);
+  gap: 5px;
   min-height: 0;
-  overflow: hidden;
-  padding: 10px;
+  overflow: visible;
+  padding: 6px;
 }
 
 .mqtt-message-workspace.mqtt-workspace-split .mqtt-workspace-body {
   grid-template-columns:
     minmax(280px, calc(var(--mqtt-split-receive-ratio, 0.55) * 100%))
-    8px
+    6px
     minmax(300px, 1fr);
   grid-template-rows: minmax(0, 1fr);
 }
 
 .mqtt-workspace-resizer {
-  min-width: 8px;
-  min-height: 8px;
+  position: relative;
+  z-index: var(--z-workbench-control);
+  min-width: 6px;
+  min-height: 6px;
   border-radius: 999px;
-  background: #dbe7ec;
+  background: #d8e6eb;
   cursor: row-resize;
 }
 
@@ -3627,8 +3796,8 @@ kbd {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid #dbe7ec;
-  border-radius: 8px;
+  border: 1px solid #dce8ed;
+  border-radius: 6px;
   background: #fff;
 }
 
@@ -3643,21 +3812,24 @@ kbd {
 }
 
 .mqtt-send-panel {
-  grid-template-rows: auto minmax(96px, 1fr) auto;
+  position: relative;
+  z-index: var(--z-workbench-panel-active);
+  grid-template-rows: auto minmax(80px, 1fr);
+  overflow: visible;
 }
 
 .mqtt-panel-title {
-  padding: 8px 10px;
+  padding: 6px 8px;
   border-bottom: 1px solid #edf2f4;
 }
 
 .mqtt-message-list {
-  padding: 8px;
+  padding: 5px;
 }
 
 .mqtt-message-stream {
   position: relative;
-  gap: 5px;
+  gap: 4px;
 }
 
 .mqtt-message-row {
@@ -3673,18 +3845,18 @@ kbd {
 .mqtt-message-bubble,
 .mqtt-publish-record-row {
   display: grid;
-  grid-template-columns: 48px minmax(132px, 0.72fr) minmax(74px, 0.24fr) minmax(0, 1.2fr) auto;
-  gap: 5px;
+  grid-template-columns: 36px minmax(108px, 0.58fr) max-content minmax(0, 1.2fr) auto;
+  gap: 4px;
   align-items: center;
   width: 100%;
   height: var(--mqtt-row-height);
   min-height: var(--mqtt-row-height);
   max-height: var(--mqtt-row-height);
   overflow: hidden;
-  border: 1px solid #edf1f4;
-  border-left: 3px solid #9aa8b2;
-  border-radius: 6px;
-  padding: 3px 6px;
+  border: 1px solid #e8eef2;
+  border-left: 2px solid #9aa8b2;
+  border-radius: 5px;
+  padding: 2px 5px;
   background: #fff;
 }
 
@@ -3701,7 +3873,7 @@ kbd {
 
 .mqtt-message-row.outgoing .mqtt-message-bubble,
 .mqtt-message-row.outgoing.mqtt-publish-record-row {
-  border-right: 4px solid var(--mqtt-topic-color, #00a676);
+  border-right: 3px solid var(--mqtt-topic-color, #00a676);
   border-left-width: 1px;
 }
 
@@ -3709,14 +3881,14 @@ kbd {
 .mqtt-log-row.focused,
 .mqtt-publish-record-row.focused {
   border-color: #2f80ed;
-  box-shadow: 0 0 0 2px rgba(47, 128, 237, 0.42) inset, 0 0 0 2px rgba(47, 128, 237, 0.18);
+  box-shadow: 0 0 0 1px rgba(47, 128, 237, 0.5) inset, 0 0 0 2px rgba(47, 128, 237, 0.12);
 }
 
 .mqtt-message-row.selected .mqtt-message-bubble,
 .mqtt-publish-record-row.selected {
   border-color: #00a676;
-  background: #e9fff6;
-  box-shadow: inset 0 0 0 2px rgba(0, 166, 118, 0.34);
+  background: #f0fbf6;
+  box-shadow: inset 0 0 0 1px rgba(0, 166, 118, 0.28);
 }
 
 .mqtt-message-row.selected::before,
@@ -3724,13 +3896,13 @@ kbd {
   content: "";
   position: absolute;
   z-index: 2;
-  top: 2px;
-  bottom: 2px;
+  top: 3px;
+  bottom: 3px;
   left: 0;
-  width: 7px;
+  width: 4px;
   border-radius: 4px;
   background: #00a676;
-  box-shadow: 0 0 0 1px rgba(0, 166, 118, 0.24), 0 0 0 3px rgba(0, 166, 118, 0.12);
+  box-shadow: 0 0 0 1px rgba(0, 166, 118, 0.16);
 }
 
 .mqtt-publish-record-row.active:not(.focused) {
@@ -3740,14 +3912,14 @@ kbd {
 .mqtt-message-row.focused .mqtt-message-bubble {
   border-color: #2f80ed;
   background: #f3f9ff;
-  box-shadow: 0 0 0 2px rgba(47, 128, 237, 0.52) inset, 0 0 0 2px rgba(47, 128, 237, 0.18);
+  box-shadow: 0 0 0 1px rgba(47, 128, 237, 0.55) inset, 0 0 0 2px rgba(47, 128, 237, 0.12);
 }
 
 .mqtt-message-row.focused.selected .mqtt-message-bubble,
 .mqtt-publish-record-row.focused.selected {
   border-color: #00966d;
-  background: #e4fff4;
-  box-shadow: 0 0 0 2px rgba(47, 128, 237, 0.62) inset, 0 0 0 3px rgba(0, 166, 118, 0.22);
+  background: #ecfbf5;
+  box-shadow: 0 0 0 1px rgba(47, 128, 237, 0.58) inset, 0 0 0 2px rgba(0, 166, 118, 0.16);
 }
 
 .mqtt-message-direction,
@@ -3758,25 +3930,25 @@ kbd {
 
 .mqtt-message-direction {
   display: inline-grid;
-  grid-template-columns: 18px;
+  grid-template-columns: 16px;
   justify-content: center;
   justify-items: center;
   align-items: center;
   overflow: hidden;
   border: 1px solid #d3e4e4;
-  border-radius: 5px;
+  border-radius: 4px;
   background: #f5fbfa;
-  width: 31px;
-  min-width: 31px;
-  height: 24px;
+  width: 28px;
+  min-width: 28px;
+  height: 22px;
   padding: 2px;
   color: #557984;
   line-height: 1;
 }
 
 .mqtt-message-direction .mqtt-direction-glyph {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 .mqtt-message-direction-in {
@@ -3825,12 +3997,13 @@ kbd {
 .mqtt-message-flags {
   display: flex;
   flex-wrap: nowrap;
-  gap: 3px;
+  gap: 2px;
   overflow: hidden;
 }
 
-.mqtt-message-flags small {
-  padding: 1px 4px;
+.mqtt-message-flags small,
+.mqtt-message-flags time {
+  padding: 1px 3px;
   border: 1px solid #dce8ed;
   border-radius: 4px;
   background: #f8fbfa;
@@ -3845,13 +4018,16 @@ kbd {
 .mqtt-message-flags .mqtt-message-time-badge {
   display: inline-flex;
   align-items: center;
-  gap: 1px;
+  gap: 2px;
   padding: 0;
   overflow: hidden;
   border: 0;
   background: transparent;
   color: inherit;
   font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
   line-height: 1;
 }
 
@@ -3875,6 +4051,16 @@ kbd {
   border-color: #bfe7d8;
   background: #effbf6;
   color: #00896a;
+}
+
+.mqtt-message-time-badge.is-today .mqtt-message-time-clock {
+  border-color: #badfd4;
+  background: #eaf8f3;
+  color: #08745f;
+}
+
+.mqtt-message-time-badge.has-date .mqtt-message-time-date {
+  border-radius: 4px 3px 3px 4px;
 }
 
 .mqtt-message-row.incoming .mqtt-message-time-date {
@@ -3926,16 +4112,16 @@ kbd {
 
 .mqtt-item-payload-snippet {
   display: block;
-  height: 22px;
+  height: 20px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  border: 1px solid #edf2f4;
-  border-left: 2px solid #b8c7d0;
-  border-radius: 5px;
-  background: #f8fbfa;
-  padding: 3px 6px;
+  border: 1px solid #e8eef2;
+  border-left: 2px solid #c4d1d8;
+  border-radius: 4px;
+  background: #fbfdfd;
+  padding: 2px 5px;
   color: #253745;
   font-size: 11px;
   line-height: 14px;
@@ -3957,49 +4143,40 @@ kbd {
 .mqtt-message-actions {
   display: inline-grid;
   grid-auto-flow: column;
-  grid-auto-columns: 24px;
-  gap: 3px;
+  grid-auto-columns: 22px;
+  gap: 2px;
   align-items: center;
   justify-content: end;
-  min-width: 0;
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
-.mqtt-message-row:hover .mqtt-message-actions,
-.mqtt-message-row:focus-within .mqtt-message-actions,
-.mqtt-message-row.focused .mqtt-message-actions,
-.mqtt-publish-record-row:hover .mqtt-message-actions,
-.mqtt-publish-record-row:focus-within .mqtt-message-actions,
-.mqtt-publish-record-row.focused .mqtt-message-actions {
-  opacity: 1;
+  min-width: max-content;
 }
 
 .mqtt-message-actions .mqtt-icon-button {
-  width: 24px;
-  min-width: 24px;
-  min-height: 24px;
+  width: 22px;
+  min-width: 22px;
+  min-height: 22px;
   padding: 0;
 }
 
 .mqtt-publish-command-bar {
+  position: relative;
+  z-index: var(--z-workbench-popover);
   display: grid;
   grid-template-columns: auto minmax(180px, 1fr) 24px max-content;
   gap: 3px;
   align-items: center;
-  padding: 5px 8px 0;
+  padding: 4px 6px 0;
 }
 
 .mqtt-publish-command-bar > input {
-  min-height: 28px;
-  padding: 3px 8px;
+  min-height: 26px;
+  padding: 3px 7px;
   font-size: 12px;
 }
 
 .mqtt-publish-actions {
   display: grid;
   grid-template-columns: repeat(2, 24px);
-  gap: 3px;
+  gap: 2px;
   align-items: center;
   justify-content: end;
   min-width: max-content;
@@ -4014,8 +4191,14 @@ kbd {
 
 .mqtt-publish-options-anchor {
   position: relative;
+  z-index: var(--z-workbench-popover);
   display: grid;
   justify-items: center;
+}
+
+.mqtt-publish-options-anchor:focus-within,
+.mqtt-publish-draft-anchor:focus-within {
+  z-index: var(--z-workbench-popover-active);
 }
 
 .mqtt-publish-options-button {
@@ -4027,28 +4210,28 @@ kbd {
 
 .mqtt-publish-options-popover {
   position: absolute;
-  z-index: 25;
+  z-index: var(--z-workbench-popover-active);
   top: 31px;
   right: 0;
   display: grid;
-  gap: 4px;
+  gap: 3px;
   width: 126px;
   border: 1px solid #cfe2e8;
-  border-radius: 7px;
+  border-radius: 6px;
   background: #fff;
-  padding: 6px;
-  box-shadow: 0 10px 26px rgba(37, 55, 69, 0.18);
+  padding: 5px;
+  box-shadow: 0 10px 24px rgba(37, 55, 69, 0.14);
 }
 
 .mqtt-publish-option-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  min-height: 26px;
+  min-height: 24px;
   border: 1px solid #edf2f4;
-  border-radius: 5px;
+  border-radius: 4px;
   background: #fff;
-  padding: 3px 7px;
+  padding: 3px 6px;
   color: #253745;
   font-size: 12px;
   font-weight: 800;
@@ -4062,6 +4245,7 @@ kbd {
 
 .mqtt-publish-draft-anchor {
   position: relative;
+  z-index: var(--z-workbench-popover);
   display: grid;
   justify-items: center;
 }
@@ -4075,20 +4259,20 @@ kbd {
 
 .mqtt-publish-draft-popover {
   position: absolute;
-  z-index: 28;
+  z-index: var(--z-workbench-popover-active);
   top: 31px;
   right: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 6px;
+  gap: 5px;
   width: min(460px, calc(100vw - 20px));
   max-height: min(360px, calc(100vh - 120px));
   overflow: hidden;
   border: 1px solid #cfe2e8;
-  border-radius: 7px;
+  border-radius: 6px;
   background: #fff;
-  padding: 7px;
-  box-shadow: 0 12px 30px rgba(37, 55, 69, 0.2);
+  padding: 6px;
+  box-shadow: 0 12px 28px rgba(37, 55, 69, 0.16);
 }
 
 .mqtt-publish-draft-head,
@@ -4140,7 +4324,7 @@ kbd {
 .mqtt-publish-draft-list {
   display: grid;
   align-content: start;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
   min-height: 0;
   overflow: auto;
@@ -4149,15 +4333,15 @@ kbd {
 .mqtt-publish-draft-row {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) minmax(104px, 0.42fr) max-content;
-  gap: 6px;
+  gap: 5px;
   align-items: center;
   min-width: 0;
-  min-height: 56px;
+  min-height: 48px;
   border: 1px solid #edf2f4;
-  border-left: 4px solid #00a676;
-  border-radius: 6px;
+  border-left: 3px solid #00a676;
+  border-radius: 5px;
   background: #fff;
-  padding: 5px 6px;
+  padding: 4px 5px;
   cursor: default;
 }
 
@@ -4168,7 +4352,7 @@ kbd {
 }
 
 .mqtt-publish-draft-row.selected {
-  border-left-width: 7px;
+  border-left-width: 5px;
   border-color: #dbe7ed;
   background: #fff;
 }
@@ -4182,10 +4366,10 @@ kbd {
 .mqtt-publish-draft-check {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border: 1px solid #b9cbd4;
-  border-radius: 5px;
+  border-radius: 4px;
   background: #fff;
   color: #fff;
   font-size: 14px;
@@ -4273,20 +4457,30 @@ kbd {
 }
 
 .mqtt-payload-input {
-  width: calc(100% - 20px);
+  width: calc(100% - 12px);
   min-height: 0;
-  margin: 6px 10px;
+  margin: 4px 6px 6px;
   resize: none;
+  border-color: #dce8ed;
+  border-radius: 6px;
+  padding: 8px 9px;
+  background: #fff;
   font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 1.35;
 }
 
+.mqtt-payload-input:focus {
+  outline: none;
+  border-color: #00a676;
+  box-shadow: inset 0 0 0 1px rgba(0, 166, 118, 0.22);
+}
+
 .mqtt-publish-records {
   display: grid;
-  gap: 8px;
+  gap: 5px;
   max-height: 320px;
-  padding: 8px 10px 10px;
+  padding: 6px 8px 8px;
   overflow: auto;
   border-top: 1px solid #edf2f4;
   background: #fbfdfd;
@@ -4297,7 +4491,7 @@ kbd {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .mqtt-template-search,
@@ -4322,7 +4516,7 @@ kbd {
 .mqtt-publish-record-list-body {
   display: grid;
   align-content: start;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
   min-height: 0;
   overflow: auto;
@@ -4338,7 +4532,7 @@ kbd {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
 }
 
 .mqtt-template-main {
@@ -4363,12 +4557,12 @@ kbd {
 
 .mqtt-config-editor {
   overflow: auto;
-  margin: 10px;
-  padding: 10px;
+  margin: 6px;
+  padding: 8px;
 }
 
 .mqtt-config-drawer-overlay {
-  z-index: 83;
+  z-index: calc(var(--z-modal) + 3);
 }
 
 .mqtt-config-drawer {
@@ -4383,19 +4577,19 @@ kbd {
 
 .mqtt-editor-actions {
   display: flex;
-  gap: 8px;
+  gap: 5px;
 }
 
 .mqtt-config-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 7px;
+  gap: 6px;
 }
 
 .mqtt-config-grid label,
 .mqtt-publish-row label {
   display: grid;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
   color: #4d6675;
   font-size: 12px;
@@ -4429,17 +4623,54 @@ kbd {
 .mqtt-config-options-panel {
   display: grid;
   grid-template-columns: 92px repeat(3, minmax(104px, 1fr));
-  gap: 6px 8px;
+  gap: 5px 7px;
   align-items: end;
   border: 1px solid #d8e7ed;
-  border-radius: 7px;
+  border-radius: 6px;
   background: #fbfefd;
-  padding: 7px;
+  padding: 6px;
 }
 
 .mqtt-config-options-panel .checkbox-line {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
   min-height: 28px;
   align-self: end;
+  white-space: nowrap;
+}
+
+.mqtt-config-checkbox-grid {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 5px 18px;
+  align-items: center;
+}
+
+.mqtt-config-checkbox-grid .checkbox-line {
+  display: inline-flex !important;
+  flex: 0 0 auto;
+  width: auto;
+  white-space: nowrap;
+}
+
+.mqtt-config-checkbox-grid input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  margin: 0;
+  padding: 0;
+  flex: 0 0 16px;
+}
+
+.mqtt-config-subscription-row.focused,
+.mqtt-config-publish-row.focused {
+  border-color: #00a676;
+  background: #f2fbf7;
+  box-shadow: inset 0 0 0 1px rgba(0, 166, 118, 0.18);
 }
 
 .checkbox-line {
@@ -4599,13 +4830,10 @@ kbd {
 }
 
 .mqtt-drawer-action {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
+  grid-template-columns: 28px minmax(0, 1fr) minmax(0, 136px);
   gap: 8px;
-  align-items: center;
-  min-height: 34px;
+  min-height: 40px;
   padding: 5px 8px;
-  text-align: left;
 }
 
 .mqtt-drawer-action.active {
@@ -4614,17 +4842,31 @@ kbd {
   color: #007a61;
 }
 
-.mqtt-drawer-action span:nth-child(2) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.mqtt-drawer-action-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.mqtt-drawer-action .mqtt-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.mqtt-drawer-action kbd {
+  min-width: 0;
+  max-width: 136px;
+  justify-self: end;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
+  line-height: 1.15;
 }
 
 .mqtt-preview-layer {
   position: fixed;
   left: var(--mqtt-preview-left, 16px);
   top: var(--mqtt-preview-top, 16px);
-  z-index: 75;
+  z-index: var(--z-floating-preview);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 6px;
@@ -4888,7 +5130,7 @@ kbd {
     bottom: 12px;
     width: auto;
     max-height: min(340px, calc(100vh - 24px));
-    z-index: 80;
+    z-index: var(--z-workbench-popover-active);
   }
 
   .mqtt-publish-draft-row {

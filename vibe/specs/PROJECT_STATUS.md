@@ -8,15 +8,15 @@ This hub routes the current EyPc implementation line, active process documents, 
 
 ## Current Snapshot
 
-- Date: 2026-06-25.
+- Date: 2026-06-26.
 - Product: keyboard-first uTools plugin for local PC capability calls.
-- Current main line: port management redesign, quick file favorites, and MQTT over WebSocket workbench.
-- Current focus: MQTT workbench documentation consolidation for the uncommitted MQTT changes. The active behavior covers record-list search/selection, publish template operation ordering, persisted MQTT view preferences, send-area draft history, Shift preview ownership, compact config editing, and managed editor row shortcuts.
+- Current main line: port management redesign, quick file favorites, MQTT over WebSocket workbench, and global Quick Jump target hints.
+- Current focus: Global Quick Jump adds non-editing `F` / `Shift+F` Vim-style target hints while MQTT editing keyboard ownership now protects native text editing, publish-option popover ownership, draft-editor caret stability, rail menu, selection, drawer, copy/delete shortcuts, and config-editor `Tab` traversal behavior.
 - Current requirement authority: [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md#L1).
 - Current implementation sync: [2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
 - Current memory authority: [../knowledge/technical-details.md](../knowledge/technical-details.md#L1), [../knowledge/ARCHITECTURE.md](../knowledge/ARCHITECTURE.md#L1), [../knowledge/error-memory.md](../knowledge/error-memory.md#L1), and [../knowledge/developer-soul.md](../knowledge/developer-soul.md#L1).
 
-## Active MQTT Process Index
+## Active Process Index
 
 | Concern | Spec | Plan | Verification |
 | --- | --- | --- | --- |
@@ -29,8 +29,11 @@ This hub routes the current EyPc implementation line, active process documents, 
 | Record time ordering | [260625-eypc-mqtt-record-time-order/01-spec.md](260625-eypc-mqtt-record-time-order/01-spec.md#L1) | [260625-eypc-mqtt-record-time-order/02-plan.md](260625-eypc-mqtt-record-time-order/02-plan.md#L1) | [260625-eypc-mqtt-record-time-order/04-verify.md](260625-eypc-mqtt-record-time-order/04-verify.md#L1) |
 | Config editor compact UI and publish topics | [260625-eypc-mqtt-config-editor-ui/01-spec.md](260625-eypc-mqtt-config-editor-ui/01-spec.md#L1) | [260625-eypc-mqtt-config-editor-ui/02-plan.md](260625-eypc-mqtt-config-editor-ui/02-plan.md#L1) | [260625-eypc-mqtt-config-editor-ui/04-verify.md](260625-eypc-mqtt-config-editor-ui/04-verify.md#L1) |
 | Managed editor row shortcuts | [260625-eypc-mqtt-editor-row-shortcuts/01-spec.md](260625-eypc-mqtt-editor-row-shortcuts/01-spec.md#L1) | [260625-eypc-mqtt-editor-row-shortcuts/02-plan.md](260625-eypc-mqtt-editor-row-shortcuts/02-plan.md#L1) | [260625-eypc-mqtt-editor-row-shortcuts/04-verify.md](260625-eypc-mqtt-editor-row-shortcuts/04-verify.md#L1) |
+| Connection/subscription rail menu and config `Tab` traversal | [260626-eypc-mqtt-rail-menu-focus/01-spec.md](260626-eypc-mqtt-rail-menu-focus/01-spec.md#L1) | [260626-eypc-mqtt-rail-menu-focus/02-plan.md](260626-eypc-mqtt-rail-menu-focus/02-plan.md#L1) | [260626-eypc-mqtt-rail-menu-focus/04-verify.md](260626-eypc-mqtt-rail-menu-focus/04-verify.md#L1) |
+| Global Quick Jump target hints | [260626-eypc-global-quick-jump/01-spec.md](260626-eypc-global-quick-jump/01-spec.md#L1) | [260626-eypc-global-quick-jump/02-plan.md](260626-eypc-global-quick-jump/02-plan.md#L1) | [260626-eypc-global-quick-jump/04-verify.md](260626-eypc-global-quick-jump/04-verify.md#L1) |
+| Editing keyboard ownership | [260626-eypc-mqtt-editing-keyboard-ownership/01-spec.md](260626-eypc-mqtt-editing-keyboard-ownership/01-spec.md#L1) | [260626-eypc-mqtt-editing-keyboard-ownership/02-plan.md](260626-eypc-mqtt-editing-keyboard-ownership/02-plan.md#L1) | [260626-eypc-mqtt-editing-keyboard-ownership/04-verify.md](260626-eypc-mqtt-editing-keyboard-ownership/04-verify.md#L1) |
 
-Historical port, favorites, settings, and earlier MQTT process folders remain under `vibe/specs/`; this hub indexes only the current active MQTT closeout line.
+Historical port, favorites, settings, and earlier MQTT process folders remain under `vibe/specs/`; this hub indexes the current active interaction line.
 
 ## Current Contracts
 
@@ -38,13 +41,35 @@ Historical port, favorites, settings, and earlier MQTT process folders remain un
 - `MqttArchiveState.publishDraftHistory` stores overwritten/manual publish drafts only; real sends remain outgoing message records.
 - `MqttPublishTemplate.operatedAt` is the publish-template operation-order timestamp with `updatedAt` / `createdAt` fallback.
 - `MqttConnectionConfig.publishTopics` stores multiple default publish topics and mirrors the first normalized value to `publishTopic`.
+- MQTT password/token values persist only in preload local userData encrypted secret storage and stay out of app state, archive JSON, SQLite mirrors, templates, and synced storage.
 - Current MQTT defaults are `Ctrl+1/2/3` for `全/收/发`, `Ctrl+M` for `藏`, `Ctrl+H` for draft history, and `Ctrl+Shift+H` for manual draft save. `Ctrl+L`, `Ctrl+Shift+L`, and `Ctrl+Shift+M` are intentionally unbound.
-- MQTT input roles include `mqtt-publish-editor`, `mqtt-publish-draft`, `mqtt-publish-draft-editor`, `mqtt-topic-filter`, `mqtt-publish-options`, `mqtt-config-subscription-editor`, and `mqtt-config-publish-editor`.
+- Design-thinking extraction is now an active project contract: concrete user design feedback must update [../knowledge/developer-soul.md](../knowledge/developer-soul.md#L1) and the active sync/process document immediately with selected style, avoided style, affected surface, and evidence label; cross-project design rules route to the CodeNote master.
+- MQTT message row time display shows same-day records as readable `HH:MM:SS`, includes a date for older records, and keeps date/clock chips visually distinct.
+- MQTT detail/preview timestamp display always includes full date to seconds (`YYYY-MM-DD HH:MM:SS`) and hides milliseconds.
+- Global Quick Jump defaults are `F` for forward hints and `Shift+F` for reverse hints, active only when no editable target owns focus.
+- Quick Jump scans visible DOM targets from explicit `data-quick-jump-target`, MQTT shortcut hints, buttons, `role="option"`, and `role="treeitem"`; row/item targets can expose `data-quick-jump-anchor` to place markers beside titles, and exact marker input activates the target.
+- Quick Jump also scans visible focusable text controls, links, `role="button"`, `role="menuitem"`, `role="textbox"`, and `role="searchbox"` when opened from non-editing context; once those controls hold focus, normal editable ownership still blocks global `F`.
+- Quick Jump keeps full markers for matching but exposes `displayMarker` to the overlay; after a multi-letter marker prefix is typed, already-entered prefix letters disappear and only the remaining suffix is shown.
+- Quick Jump layout uses [../../src/domain/quickJumpLayout.ts](../../src/domain/quickJumpLayout.ts#L1) to place markers in large target interiors when space allows, clamp to viewport, and score candidate positions against existing badges to reduce overlap.
+- `role="textbox"` is treated as editable and blocks global non-edit shortcuts.
+- MQTT input roles include `mqtt-publish-editor`, `mqtt-publish-draft`, `mqtt-publish-draft-editor`, `mqtt-topic-filter`, `mqtt-publish-options`, `mqtt-connections`, `mqtt-subscriptions`, `mqtt-config-subscription-editor`, and `mqtt-config-publish-editor`.
+- MQTT connection rail owns row focus/movement, `Space` multi-select, `Ctrl+C` endpoint copy, `Delete` / `Backspace` focused delete, `Ctrl+Delete` / `Ctrl+Backspace` selected delete, `Ctrl+ArrowLeft` detail, `Ctrl+ArrowRight` actions, and right-click action drawer entry.
+- MQTT subscription rail owns row focus/movement, `Space` multi-select, `Enter` topic filter, `Ctrl+C` topic copy, `Ctrl+Enter` use-as-publish-topic, delete shortcuts, detail/action drawers, and right-click menu entry.
+- MQTT config-editor `Tab` traversal covers connection basics, per-subscription alias/topic/color rows, publish-topic rows, connection option fields, and storage options without switching feature tabs.
+- MQTT config-editor short option labels keep checkbox and text visually attached; checkbox options use a dedicated compact flex-wrap row group with fixed-width checkbox inputs, so each option wraps as a whole instead of inheriting the main input grid columns or `space-between` distribution.
+- EyPc ordinary editors preserve native text ownership for `Delete`, `Backspace`, arrows, clipboard, undo/redo, and OS navigation chords such as `Ctrl+ArrowLeft` / `Ctrl+ArrowRight`; `Tab` field cycling, explicit save/cancel, and managed row movement/delete are the named exceptions.
+- MQTT publish topic/payload editing no longer maps `Ctrl+ArrowRight` to publish options. Publish options open from the button and close through `Escape` or outside pointerdown; `Ctrl+ArrowRight` remains the action drawer shortcut only outside ordinary editing contexts or in documented command-enhanced contexts.
+- MQTT publish draft-history edit value/focus updates do not increment `mqttFocusRequestId`; opening the editor and field-cycle commands remain the focus-request owners.
 
 ## Verification Gates
 
 - Project gates: `pnpm run test`, `pnpm run typecheck`, `pnpm run build`, and `pnpm run validate:utools`.
+- Current Quick Jump verification on 2026-06-26: targeted local `vitest` passed with 2 files / 11 tests for multi-letter prefix suffix display, Quick Jump layout/coverage regression passed with 6 files / 54 tests, full local `vitest` passed with 33 files / 269 tests, `./node_modules/.bin/vue-tsc --noEmit` passed, `./node_modules/.bin/vite build` passed, code-link audit passed, and `node scripts/prepare-utools-runtime.mjs && node scripts/validate-utools-runtime.mjs` passed. `pnpm run` was not used as final evidence because local pnpm requested esbuild build-script approval; equivalent local binaries were used.
+- Current MQTT local encrypted secret persistence verification on 2026-06-26: targeted `vitest` passed with 4 files / 120 tests for preload encrypted secret durability, legacy plaintext migration, platform bridge, runtime actions, and MQTT domain behavior; code-link audit, `git diff --check`, `./node_modules/.bin/vue-tsc --noEmit`, `./node_modules/.bin/vite build`, and `node scripts/prepare-utools-runtime.mjs && node scripts/validate-utools-runtime.mjs` passed.
+- Current MQTT config-editor checkbox layout verification on 2026-06-26: targeted `tests/ui/mqttPage.test.ts` covers flex-wrap option grouping, non-`space-between` distribution, scoped `inline-flex !important`, and fixed-width checkbox inputs; uTools default main window visually confirmed checkbox and label text stay attached inside the bottom options panel.
 - Current documentation consolidation verification on 2026-06-25: code-link audit passed, AI-rule audit passed, `git diff --check` passed, `pnpm run test` passed with 30 files / 249 tests, `pnpm run typecheck` passed, `pnpm run build` passed, and `pnpm run validate:utools` passed.
+- Current MQTT rail verification on 2026-06-26: targeted `vitest` passed with 4 files / 132 tests, `vue-tsc --noEmit` passed, and `git diff --check` passed; evidence is recorded in [260626-eypc-mqtt-rail-menu-focus/04-verify.md](260626-eypc-mqtt-rail-menu-focus/04-verify.md#L1).
+- Current editing keyboard ownership verification on 2026-06-26: targeted red/green tests passed, full `./node_modules/.bin/vitest run` passed with 33 files / 274 tests, `./node_modules/.bin/vue-tsc --noEmit` passed, `./node_modules/.bin/vite build` passed, `node scripts/prepare-utools-runtime.mjs && node scripts/validate-utools-runtime.mjs` passed, `git diff --check` passed, CodeNote AI rule audit passed, and project Markdown code-link audit passed. Evidence is recorded in [260626-eypc-mqtt-editing-keyboard-ownership/04-verify.md](260626-eypc-mqtt-editing-keyboard-ownership/04-verify.md#L1).
 - Current targeted evidence is recorded in the active MQTT verification documents listed above.
 - Manual live-broker MQTT smoke remains tracked in [2606231645-eypc-mqtt-websocket-tab/04-verify.md](2606231645-eypc-mqtt-websocket-tab/04-verify.md#L1); no current documentation consolidation step attempts external broker traffic.
 - Existing release gates for real process scan/kill on macOS, Windows, and Linux remain unchanged from earlier port-management records.
@@ -53,6 +78,7 @@ Historical port, favorites, settings, and earlier MQTT process folders remain un
 
 - Domain contracts: [src/domain/types.ts](../../src/domain/types.ts#L1), [src/domain/mqtt.ts](../../src/domain/mqtt.ts#L1).
 - Runtime and shortcuts: [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L1), [src/runtime/keybinding/keybindingRuntime.ts](../../src/runtime/keybinding/keybindingRuntime.ts#L1), [src/runtime/keyboardEvent.ts](../../src/runtime/keyboardEvent.ts#L1).
+- Global Quick Jump: [src/domain/quickJump.ts](../../src/domain/quickJump.ts#L1), [src/components/QuickJumpLayer.vue](../../src/components/QuickJumpLayer.vue#L1), and [src/App.vue](../../src/App.vue#L1).
 - Platform storage bridge: [src/platform/eypcPlatform.ts](../../src/platform/eypcPlatform.ts#L1), [preload/index.js](../../preload/index.js#L1).
 - MQTT UI: [src/pages/MqttPage.vue](../../src/pages/MqttPage.vue#L1), [src/components/MqttPublishRecordList.vue](../../src/components/MqttPublishRecordList.vue#L1), [src/styles/app.css](../../src/styles/app.css#L1).
-- Current tests: [tests/domain/mqtt.test.ts](../../tests/domain/mqtt.test.ts#L1), [tests/runtime/action.test.ts](../../tests/runtime/action.test.ts#L1), [tests/runtime/keybinding.test.ts](../../tests/runtime/keybinding.test.ts#L1), [tests/runtime/keyboardEvent.test.ts](../../tests/runtime/keyboardEvent.test.ts#L1), [tests/ui/mqttPage.test.ts](../../tests/ui/mqttPage.test.ts#L1), [tests/platform/eypcPlatform.test.ts](../../tests/platform/eypcPlatform.test.ts#L1), and [tests/platform/mqttSqlitePreload.test.ts](../../tests/platform/mqttSqlitePreload.test.ts#L1).
+- Current tests: [tests/domain/quickJump.test.ts](../../tests/domain/quickJump.test.ts#L1), [tests/ui/quickJump.test.ts](../../tests/ui/quickJump.test.ts#L1), [tests/domain/mqtt.test.ts](../../tests/domain/mqtt.test.ts#L1), [tests/runtime/action.test.ts](../../tests/runtime/action.test.ts#L1), [tests/runtime/keybinding.test.ts](../../tests/runtime/keybinding.test.ts#L1), [tests/runtime/keyboardEvent.test.ts](../../tests/runtime/keyboardEvent.test.ts#L1), [tests/ui/mqttPage.test.ts](../../tests/ui/mqttPage.test.ts#L1), [tests/platform/eypcPlatform.test.ts](../../tests/platform/eypcPlatform.test.ts#L1), and [tests/platform/mqttSqlitePreload.test.ts](../../tests/platform/mqttSqlitePreload.test.ts#L1).

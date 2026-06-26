@@ -1474,6 +1474,149 @@ describe('app runtime', () => {
     expect(runtime.snapshot().state.mqtt.configs[0].subscriptionAliases).toEqual({})
   })
 
+  it('moves, selects, copies, and deletes MQTT connection rail rows through command actions', async () => {
+    const { state, copied } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    state.mqtt.configs = [
+      createMqttConnectionConfig({ id: 'dev-a', name: 'PLC A', url: 'ws://a.example:8083/', subscriptions: ['plc/a'] }, 100),
+      createMqttConnectionConfig({ id: 'dev-b', name: 'PLC B', url: 'wss://b.example:443/mqtt', subscriptions: ['plc/b'] }, 101)
+    ]
+    state.mqtt.activeConfigId = 'dev-a'
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.focusMqttConfig('dev-a')
+    expect(runtime.handleShortcut('ArrowDown', { textInputFocused: false, activeInputRole: 'mqtt-connections' })).toBe('list.down')
+    expect(runtime.snapshot().state.mqtt.activeConfigId).toBe('dev-b')
+    expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'config', id: 'dev-b' })
+
+    expect(runtime.dispatch('mqtt.connection.toggleSelect').handled).toBe(true)
+    expect(runtime.snapshot().mqttSelectedConfigIds).toEqual(['dev-b'])
+    expect(runtime.handleShortcut('Ctrl+C', { textInputFocused: false, activeInputRole: 'mqtt-connections' })).toBe('mqtt.connection.copyAddress')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(copied).toEqual(['wss://b.example:443/mqtt'])
+
+    expect(runtime.dispatch('mqtt.drawer.open', { kind: 'config', id: 'dev-b' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttDrawerItems.map((item) => item.commandId)).toEqual(expect.arrayContaining([
+      'mqtt.detail.open',
+      'mqtt.connection.copyAddress',
+      'mqtt.connection.connect',
+      'mqtt.connection.disconnect',
+      'mqtt.config.edit',
+      'mqtt.record.delete'
+    ]))
+
+    expect(runtime.dispatch('mqtt.connection.deleteSelected').handled).toBe(true)
+    expect(runtime.snapshot().state.mqtt.configs.map((config) => config.id)).toEqual(['dev-a'])
+    expect(runtime.snapshot().mqttSelectedConfigIds).toEqual([])
+  })
+
+  it('clears MQTT rail multi-select rendering with Escape before clearing focused record', () => {
+    const { state } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    state.mqtt.configs = [
+      createMqttConnectionConfig({ id: 'dev-a', name: 'PLC A', url: 'ws://a.example:8083/', subscriptions: ['plc/a', 'plc/b'] }, 100),
+      createMqttConnectionConfig({ id: 'dev-b', name: 'PLC B', url: 'ws://b.example:8083/', subscriptions: ['plc/c'] }, 101)
+    ]
+    state.mqtt.activeConfigId = 'dev-a'
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    expect(runtime.dispatch('mqtt.connection.toggleSelect', { configId: 'dev-a' }).handled).toBe(true)
+    expect(runtime.dispatch('mqtt.connection.toggleSelect', { configId: 'dev-b' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttSelectedConfigIds).toEqual(['dev-a', 'dev-b'])
+
+    expect(runtime.handleShortcut('Escape', { textInputFocused: false, activeInputRole: 'mqtt-connections' })).toBe('mqtt.selection.clear')
+    expect(runtime.snapshot().mqttSelectedConfigIds).toEqual([])
+    expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'config', id: 'dev-b' })
+
+    runtime.focusMqttConfig('dev-a')
+    expect(runtime.dispatch('mqtt.subscription.toggleSelect', { topic: 'plc/a' }).handled).toBe(true)
+    expect(runtime.dispatch('mqtt.subscription.toggleSelect', { topic: 'plc/b' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttSelectedSubscriptionTopics).toEqual(['plc/a', 'plc/b'])
+    expect(runtime.snapshot().mqttSubscriptionRows.map((row) => [row.topic, row.selected])).toEqual([
+      ['plc/a', true],
+      ['plc/b', true]
+    ])
+
+    expect(runtime.handleShortcut('Escape', { textInputFocused: false, activeInputRole: 'mqtt-subscriptions' })).toBe('mqtt.selection.clear')
+    expect(runtime.snapshot().mqttSelectedSubscriptionTopics).toEqual([])
+    expect(runtime.snapshot().mqttFocusedSubscriptionTopic).toBeNull()
+    expect(runtime.snapshot().mqttSelectedRecord).toBeNull()
+    expect(runtime.snapshot().mqttSubscriptionRows.map((row) => [row.topic, row.selected])).toEqual([
+      ['plc/a', false],
+      ['plc/b', false]
+    ])
+
+    expect(runtime.dispatch('mqtt.subscription.select', { topic: 'plc/a' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttActiveSubscriptionTopics).toEqual(['plc/a'])
+    expect(runtime.snapshot().mqttSelectedSubscriptionTopics).toEqual(['plc/a'])
+    expect(runtime.handleShortcut('Escape', { textInputFocused: false, activeInputRole: 'mqtt-subscriptions' })).toBe('mqtt.selection.clear')
+    expect(runtime.snapshot().mqttActiveSubscriptionTopics).toEqual([])
+    expect(runtime.snapshot().mqttSelectedSubscriptionTopics).toEqual([])
+    expect(runtime.snapshot().mqttFocusedSubscriptionTopic).toBeNull()
+    expect(runtime.snapshot().mqttSelectedRecord).toBeNull()
+  })
+
+  it('moves MQTT subscription rail focus and exposes topic row menu actions', async () => {
+    const { state, copied } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    state.mqtt.configs = [
+      createMqttConnectionConfig({ id: 'dev', name: 'PLC', url: 'ws://broker.example:8083/', subscriptions: ['plc/a', 'plc/b'] }, 100)
+    ]
+    state.mqtt.activeConfigId = 'dev'
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    expect(runtime.dispatch('mqtt.subscription.focus', { topic: 'plc/a' }).handled).toBe(true)
+    expect(runtime.handleShortcut('ArrowDown', { textInputFocused: false, activeInputRole: 'mqtt-subscriptions' })).toBe('list.down')
+    expect(runtime.snapshot().mqttFocusedSubscriptionTopic).toBe('plc/b')
+    expect(runtime.snapshot().mqttSelectedSubscriptionTopics).toEqual([])
+
+    expect(runtime.handleShortcut('Enter', { textInputFocused: false, activeInputRole: 'mqtt-subscriptions' })).toBe('mqtt.subscription.applyFilter')
+    expect(runtime.snapshot().mqttActiveSubscriptionTopics).toEqual(['plc/b'])
+    expect(runtime.snapshot().mqttSelectedSubscriptionTopics).toEqual(['plc/b'])
+    expect(runtime.handleShortcut('ArrowUp', { textInputFocused: false, activeInputRole: 'mqtt-subscriptions' })).toBe('list.up')
+    expect(runtime.snapshot().mqttFocusedSubscriptionTopic).toBe('plc/a')
+    expect(runtime.handleShortcut('Enter', { textInputFocused: false, activeInputRole: 'mqtt-subscriptions' })).toBe('mqtt.subscription.applyFilter')
+    expect(runtime.snapshot().mqttActiveSubscriptionTopics).toEqual(['plc/a'])
+    expect(runtime.snapshot().mqttSelectedSubscriptionTopics).toEqual(['plc/a'])
+
+    expect(runtime.dispatch('mqtt.drawer.open', { kind: 'subscription', id: 'plc/b' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttDrawer).toMatchObject({ targetKind: 'subscription', targetId: 'plc/b', active: true })
+    expect(runtime.snapshot().mqttDrawerItems.map((item) => item.commandId)).toEqual(expect.arrayContaining([
+      'mqtt.detail.open',
+      'mqtt.subscription.copyTopic',
+      'mqtt.subscription.useAsPublishTopic',
+      'mqtt.subscription.editor.open',
+      'mqtt.subscription.delete'
+    ]))
+
+    expect(runtime.dispatch('mqtt.subscription.copyTopic', { kind: 'subscription', id: 'plc/b' }).handled).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(copied).toEqual(['plc/b'])
+
+    expect(runtime.dispatch('mqtt.subscription.useAsPublishTopic', { kind: 'subscription', id: 'plc/b' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttPublishDraft.topic).toBe('plc/b')
+    expect(runtime.snapshot().activeMqttPane).toBe('publish')
+    expect(runtime.snapshot().mqttFocusTarget).toBe('publish-topic')
+  })
+
   it('orders MQTT message and publish record lists by latest time first', () => {
     const { state, platform } = installPlatform()
     let archive: unknown = {
@@ -1579,13 +1722,17 @@ describe('app runtime', () => {
       mqttTopicFilterOpen: true,
       mqttTopicFilterQuery: ''
     })
-    expect(runtime.snapshot().mqttTopicFilterOptions.map((item) => ({ topic: item.topic, alias: item.alias }))).toEqual([
-      { topic: 'plc/+/status', alias: '状态' },
-      { topic: 'plc/+/cmd', alias: '命令' }
+    expect(runtime.snapshot().mqttTopicFilterOptions.map((item) => ({ topic: item.topic, alias: item.alias, highlighted: item.highlighted }))).toEqual([
+      { topic: '', alias: '', highlighted: true },
+      { topic: 'plc/+/status', alias: '状态', highlighted: false },
+      { topic: 'plc/+/cmd', alias: '命令', highlighted: false }
     ])
 
     expect(runtime.dispatch('mqtt.topicFilter.search.set', { query: '状态' }).handled).toBe(true)
-    expect(runtime.snapshot().mqttTopicFilterOptions.map((item) => item.topic)).toEqual(['plc/+/status'])
+    expect(runtime.snapshot().mqttTopicFilterOptions.map((item) => ({ topic: item.topic, highlighted: item.highlighted }))).toEqual([
+      { topic: '', highlighted: false },
+      { topic: 'plc/+/status', highlighted: true }
+    ])
     expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'mqtt-topic-filter' })).toBe('mqtt.topicFilter.select')
     expect(runtime.snapshot()).toMatchObject({
       mqttFocusTarget: 'records',
@@ -1593,6 +1740,20 @@ describe('app runtime', () => {
       mqttActiveSubscriptionTopics: ['plc/+/status']
     })
     expect(runtime.snapshot().mqttMessageRows.map((item) => item.id)).toEqual(['in-status'])
+    expect(runtime.dispatch('mqtt.topicFilter.focus').handled).toBe(true)
+    expect(runtime.snapshot().mqttTopicFilterOptions.map((item) => ({ topic: item.topic, highlighted: item.highlighted }))).toEqual([
+      { topic: '', highlighted: false },
+      { topic: 'plc/+/status', highlighted: true },
+      { topic: 'plc/+/cmd', highlighted: false }
+    ])
+    expect(runtime.handleShortcut('ArrowUp', { textInputFocused: true, activeInputRole: 'mqtt-topic-filter' })).toBe('mqtt.topicFilter.prev')
+    expect(runtime.snapshot().mqttTopicFilterOptions.map((item) => ({ topic: item.topic, highlighted: item.highlighted }))).toEqual([
+      { topic: '', highlighted: true },
+      { topic: 'plc/+/status', highlighted: false },
+      { topic: 'plc/+/cmd', highlighted: false }
+    ])
+    expect(runtime.handleShortcut('Enter', { textInputFocused: true, activeInputRole: 'mqtt-topic-filter' })).toBe('mqtt.topicFilter.select')
+    expect(runtime.snapshot().mqttActiveSubscriptionTopics).toEqual([])
 
     expect(runtime.handleShortcut('Ctrl+M', false)).toBe('mqtt.focus.templates')
     expect(runtime.snapshot().mqttPublishTemplateRows.map((item) => item.id)).toEqual([templateId])
@@ -1605,7 +1766,9 @@ describe('app runtime', () => {
     expect(runtime.handleShortcut('Shift+Tab', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBe('mqtt.publish.prevField')
     expect(runtime.snapshot().mqttFocusTarget).toBe('publish-topic')
 
-    expect(runtime.handleShortcut('Ctrl+ArrowRight', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBe('mqtt.publish.options.open')
+    expect(runtime.handleShortcut('Ctrl+ArrowLeft', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBeNull()
+    expect(runtime.handleShortcut('Ctrl+ArrowRight', { textInputFocused: true, activeInputRole: 'mqtt-publish-editor' })).toBeNull()
+    expect(runtime.dispatch('mqtt.publish.options.open').handled).toBe(true)
     expect(runtime.snapshot()).toMatchObject({
       mqttFocusTarget: 'publish-options',
       mqttPublishOptionsOpen: true,
@@ -1981,7 +2144,19 @@ describe('app runtime', () => {
     expect(typeof (runtime as unknown as { updateMqttPublishDraftHistoryEditDraft?: unknown }).updateMqttPublishDraftHistoryEditDraft).toBe('function')
 
     const updateDraft = (runtime as unknown as { updateMqttPublishDraftHistoryEditDraft: (input: Record<string, unknown>) => void }).updateMqttPublishDraftHistoryEditDraft
+    const renameFocusRequestId = runtime.snapshot().mqttFocusRequestId
     updateDraft({ title: '命令草稿', note: '常用下发' })
+    expect(runtime.snapshot().mqttFocusRequestId).toBe(renameFocusRequestId)
+    updateDraft({ activeField: 'note' })
+    expect(runtime.snapshot()).toMatchObject({
+      mqttFocusRequestId: renameFocusRequestId,
+      mqttPublishDraftHistoryEditDraft: { activeField: 'note' }
+    })
+    updateDraft({ activeField: 'title' })
+    expect(runtime.snapshot()).toMatchObject({
+      mqttFocusRequestId: renameFocusRequestId,
+      mqttPublishDraftHistoryEditDraft: { activeField: 'title' }
+    })
     expect(runtime.handleShortcut('Tab', { textInputFocused: true, activeInputRole: 'mqtt-publish-draft-editor' })).toBe('mqtt.publish.draft.edit.nextField')
     expect(runtime.snapshot()).toMatchObject({
       mqttFocusTarget: 'publish-draft-edit-note',
@@ -2018,7 +2193,26 @@ describe('app runtime', () => {
       }
     })
 
+    const editFocusRequestId = runtime.snapshot().mqttFocusRequestId
     updateDraft({ topic: 'edited/topic', payload: 'edited-payload' })
+    expect(runtime.snapshot()).toMatchObject({
+      mqttFocusRequestId: editFocusRequestId,
+      mqttPublishDraftHistoryEditDraft: {
+        topic: 'edited/topic',
+        payload: 'edited-payload',
+        activeField: 'topic'
+      }
+    })
+    updateDraft({ activeField: 'payload' })
+    expect(runtime.snapshot()).toMatchObject({
+      mqttFocusRequestId: editFocusRequestId,
+      mqttPublishDraftHistoryEditDraft: { activeField: 'payload' }
+    })
+    updateDraft({ activeField: 'topic' })
+    expect(runtime.snapshot()).toMatchObject({
+      mqttFocusRequestId: editFocusRequestId,
+      mqttPublishDraftHistoryEditDraft: { activeField: 'topic' }
+    })
     expect(runtime.handleShortcut('Tab', { textInputFocused: true, activeInputRole: 'mqtt-publish-draft-editor' })).toBe('mqtt.publish.draft.edit.nextField')
     expect(runtime.snapshot()).toMatchObject({
       mqttFocusTarget: 'publish-draft-edit-payload',
@@ -2250,6 +2444,67 @@ describe('app runtime', () => {
       subscriptions: ['plc/b'],
       subscriptionAliases: { 'plc/b': 'Beta' }
     })
+  })
+
+  it('cycles MQTT config draft Tab focus through row fields and connection options', () => {
+    const { state } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      subscriptionItems: [
+        { topic: 'plc/a', alias: 'A', color: '#111111' },
+        { topic: 'plc/b', alias: 'B', color: '#222222' }
+      ],
+      publishTopics: ['plc/set', 'plc/debug']
+    })
+
+    expect(runtime.dispatch('mqtt.config.subscription.focus', { index: 0, field: 'alias' }).handled).toBe(true)
+    expect(runtime.dispatch('mqtt.config.nextField').handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({
+      activeField: 'subscriptions',
+      activeSubscriptionIndex: 0,
+      activeSubscriptionField: 'topic'
+    })
+    expect(runtime.dispatch('mqtt.config.nextField').handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({
+      activeField: 'subscriptions',
+      activeSubscriptionIndex: 0,
+      activeSubscriptionField: 'color'
+    })
+    expect(runtime.dispatch('mqtt.config.nextField').handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({
+      activeField: 'subscriptions',
+      activeSubscriptionIndex: 1,
+      activeSubscriptionField: 'alias'
+    })
+    expect(runtime.dispatch('mqtt.config.prevField').handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({
+      activeField: 'subscriptions',
+      activeSubscriptionIndex: 0,
+      activeSubscriptionField: 'color'
+    })
+
+    expect(runtime.dispatch('mqtt.config.publish.focus', { index: 0 }).handled).toBe(true)
+    expect(runtime.dispatch('mqtt.config.nextField').handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({
+      activeField: 'publishTopic',
+      activePublishIndex: 1,
+      activePublishField: 'topic'
+    })
+    expect(runtime.dispatch('mqtt.config.nextField').handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({ activeField: 'qos' })
+    expect(runtime.dispatch('mqtt.config.nextField').handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({ activeField: 'reconnectPeriodMs' })
+    expect(runtime.dispatch('mqtt.config.nextField').handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({ activeField: 'connectTimeoutMs' })
   })
 
   it('saves MQTT config publish topic candidates and refreshes client id in the draft only', () => {
