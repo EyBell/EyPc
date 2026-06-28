@@ -3,12 +3,16 @@ import { computed, defineComponent, h, nextTick, onMounted, onUnmounted, reactiv
 import type { Component, CSSProperties } from 'vue'
 import {
   BadgeX,
+  ChevronDown,
+  ChevronRight,
   ChevronsLeft,
   Clipboard,
   ClipboardList,
   Copy,
   CornerDownLeft,
   Eraser,
+  Folder,
+  FolderPlus,
   Hash,
   Info,
   LayoutPanelTop,
@@ -25,8 +29,8 @@ import {
   Unplug,
   X
 } from '@lucide/vue'
-import type { AppRuntimeSnapshot, MqttConfigDraft, MqttFavoriteDraft, MqttPublishDraftHistoryEditDraft, MqttRecordEditDraft, MqttSubscriptionEditorDraft, MqttSubscriptionEditorField, MqttSubscriptionEditorItem } from '../runtime/appRuntime'
-import type { MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos } from '../domain/types'
+import type { AppRuntimeSnapshot, MqttConfigDraft, MqttConnectionGroupDraft, MqttFavoriteDraft, MqttPublishDraftHistoryEditDraft, MqttRecordEditDraft, MqttSubscriptionEditorDraft, MqttSubscriptionEditorField, MqttSubscriptionEditorItem } from '../runtime/appRuntime'
+import type { MqttConnectionGroup, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos } from '../domain/types'
 import { DEFAULT_MQTT_TOPIC_COLORS, buildMqttWebSocketUrl, mqttEndpointHostPortLabel, mqttPublishTemplateOperationTime, mqttTopicVisualForMessage, normalizeMqttTopicColor } from '../domain/mqtt'
 import { buildMqttInlinePayloadPreviewSegments, buildMqttPayloadPreviewSegments } from '../domain/mqttPayloadPreview'
 import { layoutShortcutHints } from '../domain/shortcutHintLayout'
@@ -44,15 +48,19 @@ interface MqttShortcutHintEntry {
 type MqttPreviewTarget = { kind: 'message' | 'publish-template' | 'publish-draft-history'; id: string }
 type MqttPreviewRecord = MqttMessageRecord | MqttPublishTemplate | MqttPublishDraftHistoryEntry
 type MqttCommandTargetKind = NonNullable<AppRuntimeSnapshot['mqttSelectedRecord']>['kind']
+type MqttConnectionRow = AppRuntimeSnapshot['mqttConnectionRows'][number]
+type MqttConnectionDropPosition = 'before' | 'inside' | 'after'
 
 const props = defineProps<{ snapshot: AppRuntimeSnapshot; showShortcutHints?: boolean; shiftPreview?: boolean }>()
 const emit = defineEmits<{
   search: [value: string]
   focusConfig: [id: string]
+  focusConnectionGroup: [id: string]
   focusSession: [id: string]
   focusMessage: [id: string]
   focusLog: [id: string]
   updateConfigDraft: [input: Partial<Omit<MqttConfigDraft, 'mode' | 'targetId' | 'activeField'>>]
+  updateConnectionGroupDraft: [input: Partial<Omit<MqttConnectionGroupDraft, 'mode' | 'targetId'>>]
   updateSubscriptionDraft: [input: Partial<Omit<MqttSubscriptionEditorDraft, 'connectionId'>>]
   updateFavoriteDraft: [input: Partial<Pick<MqttFavoriteDraft, 'title' | 'activeField'>>]
   updateRecordEditDraft: [input: Partial<Omit<MqttRecordEditDraft, 'mode' | 'targetKind' | 'targetId'>>]
@@ -68,6 +76,8 @@ const hoverPreviewSuspendedByKeyboard = ref(false)
 const lastPreviewPointerPosition = ref<{ x: number | null; y: number | null }>({ x: null, y: null })
 const shortcutHintEntries = ref<MqttShortcutHintEntry[]>([])
 const mqttToolbarSearchOpen = ref(false)
+const connectionTreeDragTarget = ref<{ kind: 'group' | 'config'; id: string } | null>(null)
+const connectionTreeDropTarget = ref<{ rowId: string; position: MqttConnectionDropPosition } | null>(null)
 let shortcutHintFrame: number | null = null
 
 function directionGlyphChildren(variant: 'all' | 'in' | 'out') {
@@ -132,6 +142,7 @@ const configForm = reactive({
   ssl: false,
   clientId: '',
   username: '',
+  groupId: null as string | null,
   password: '',
   subscriptionsText: '',
   subscriptionItems: [] as MqttConfigDraft['subscriptionItems'],
@@ -159,6 +170,7 @@ watch(() => props.snapshot.mqttConfigDraft, (draft) => {
   configForm.ssl = draft?.ssl || false
   configForm.clientId = draft?.clientId || ''
   configForm.username = draft?.username || ''
+  configForm.groupId = draft?.groupId || null
   configForm.password = draft?.password || ''
   configForm.subscriptionsText = draft?.subscriptionsText || ''
   configForm.subscriptionItems = draft?.subscriptionItems?.map((item) => ({ ...item })) || []
@@ -175,6 +187,16 @@ watch(() => props.snapshot.mqttConfigDraft, (draft) => {
   configForm.resubscribeOnReconnect = draft?.resubscribeOnReconnect ?? true
   configForm.syncRecords = draft?.syncRecords ?? true
 }, { immediate: true })
+
+watch(() => props.snapshot.mqttConnectionGroupDraft?.activeField, (field) => {
+  if (!field) return
+  void nextTick(() => {
+    const input = document.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-mqtt-connection-group-field="${field}"]`)
+    const alreadyFocused = document.activeElement === input
+    input?.focus()
+    if (!alreadyFocused && input instanceof HTMLInputElement) input.select()
+  })
+})
 
 watch([
   () => props.snapshot.mqttConfigDraft?.activeField,
@@ -360,6 +382,19 @@ const detailConfig = computed(() => {
   if (target.kind === 'config') return props.snapshot.state.mqtt.configs.find((item) => item.id === target.id) || null
   return null
 })
+const detailConnectionGroup = computed(() => {
+  const target = detailTarget.value
+  if (target?.kind !== 'connection-group') return null
+  return props.snapshot.state.mqtt.connectionGroups.find((item) => item.id === target.id) || null
+})
+const detailConnectionGroupStats = computed(() => {
+  const group = detailConnectionGroup.value
+  if (!group) return { groups: 0, configs: 0 }
+  return {
+    groups: props.snapshot.state.mqtt.connectionGroups.filter((item) => item.parentId === group.id).length,
+    configs: props.snapshot.state.mqtt.configs.filter((item) => item.groupId === group.id).length
+  }
+})
 const detailLog = computed(() => {
   const target = detailTarget.value
   if (target?.kind !== 'log') return null
@@ -371,6 +406,7 @@ const detailTitle = computed(() => {
   if (detailSubscription.value) return detailSubscription.value.displayName
   if (detailRecord.value && 'direction' in detailRecord.value) return `${directionLabel(detailRecord.value)} ${detailRecord.value.topic || '(empty topic)'}`
   if (detailRecord.value) return detailRecord.value.title || detailRecord.value.topic
+  if (detailConnectionGroup.value) return detailConnectionGroup.value.name
   if (detailConfig.value) return detailConfig.value.name
   return 'MQTT 详情'
 })
@@ -379,8 +415,20 @@ const detailSubtitle = computed(() => {
   if (detailSubscription.value) return detailSubscription.value.topic
   if (detailRecord.value && 'direction' in detailRecord.value) return formatDateTime(detailRecord.value.timestamp)
   if (detailRecord.value) return formatDateTime(recordTime(detailRecord.value))
+  if (detailConnectionGroup.value) return `${detailConnectionGroupStats.value.groups} 个分组 · ${detailConnectionGroupStats.value.configs} 个连接`
   if (detailConfig.value) return detailConfig.value.url || '未配置地址'
   return '当前上下文'
+})
+const mqttConnectionGroupDepths = computed(() => {
+  const map = new Map<string, number>()
+  for (const row of props.snapshot.mqttConnectionRows) {
+    if (row.kind === 'group') map.set(row.id, row.depth)
+  }
+  return map
+})
+const mqttConnectionGroupParentOptions = computed(() => {
+  const draft = props.snapshot.mqttConnectionGroupDraft
+  return props.snapshot.state.mqtt.connectionGroups.filter((group) => group.id !== draft?.targetId)
 })
 const previewPayloadSegments = computed(() => previewRecord.value ? buildMqttPayloadPreviewSegments(previewRecord.value.payload) : [])
 const previewDirectionIcon = computed(() => previewRecord.value ? iconComponent(directionIconName(previewRecord.value)) : Hash)
@@ -530,10 +578,16 @@ const mqttIconComponents: Record<string, Component> = {
   connect: Plug,
   disconnect: Unplug,
   edit: Pencil,
+  rename: Pencil,
   log: Logs,
   'clear-selected': BadgeX,
   'clear-all': Eraser,
   collapse: ChevronsLeft,
+  expand: ChevronRight,
+  'chevron-down': ChevronDown,
+  'chevron-right': ChevronRight,
+  folder: Folder,
+  'folder-plus': FolderPlus,
   delete: Trash2,
   trash: Trash2,
   close: X,
@@ -577,6 +631,15 @@ function commandArgs(kind: MqttCommandTargetKind, id: string, list?: 'messages' 
 
 function updateConfigDraft(input: Partial<Omit<MqttConfigDraft, 'mode' | 'targetId' | 'activeField'>>) {
   emit('updateConfigDraft', input)
+}
+
+function updateConnectionGroupDraft(input: Partial<Omit<MqttConnectionGroupDraft, 'mode' | 'targetId'>>) {
+  emit('updateConnectionGroupDraft', input)
+}
+
+function connectionGroupOptionLabel(group: MqttConnectionGroup) {
+  const depth = mqttConnectionGroupDepths.value.get(group.id) || 0
+  return `${'  '.repeat(depth)}${group.name}`
 }
 
 function refreshConfigClientId() {
@@ -755,6 +818,42 @@ function handleConfigEditorKeydown(event: KeyboardEvent) {
   if (handleConfigRowKeydown(event, key, command)) return
 }
 
+function handleConnectionGroupEditorKeydown(event: KeyboardEvent) {
+  const key = event.key.toLowerCase()
+  const command = event.ctrlKey || event.metaKey
+  if (command && (key === 's' || key === 'enter')) {
+    event.preventDefault()
+    event.stopPropagation()
+    emit('dispatch', 'mqtt.connectionGroup.save')
+    return
+  }
+  if (isPlainEscape(event, key)) {
+    event.preventDefault()
+    event.stopPropagation()
+    emit('dispatch', 'mqtt.connectionGroup.cancel')
+    return
+  }
+  if (key === 'tab') {
+    event.preventDefault()
+    event.stopPropagation()
+    emit('dispatch', event.shiftKey ? 'mqtt.connectionGroup.prevField' : 'mqtt.connectionGroup.nextField')
+  }
+}
+
+function handleConnectionGroupInlineRenameKeydown(event: KeyboardEvent) {
+  const key = event.key.toLowerCase()
+  const command = event.ctrlKey || event.metaKey
+  if (event.shiftKey && !command && !event.altKey && key === 'escape') return
+  if (!command && !event.altKey && !event.shiftKey && key === 'enter') {
+    event.preventDefault()
+    event.stopPropagation()
+    emit('dispatch', 'mqtt.connectionGroup.save')
+    return
+  }
+  handleConnectionGroupEditorKeydown(event)
+  event.stopPropagation()
+}
+
 function statusLabel(state: AppRuntimeSnapshot['mqttConnectionStatus']['state']) {
   const labels: Record<AppRuntimeSnapshot['mqttConnectionStatus']['state'], string> = {
     idle: 'idle',
@@ -883,15 +982,16 @@ function detailRecordCommandArgs(): Record<string, unknown> {
   return commandArgs(target.kind === 'publish-template' ? 'publish-template' : 'message', record.id)
 }
 
-function selectRecord(kind: 'config' | 'subscription' | 'session' | 'message' | 'log', id: string, list: 'messages' | 'history' = 'messages') {
+function selectRecord(kind: 'config' | 'connection-group' | 'subscription' | 'session' | 'message' | 'log', id: string, list: 'messages' | 'history' = 'messages') {
   if (kind === 'config') emit('focusConfig', id)
+  if (kind === 'connection-group') emit('focusConnectionGroup', id)
   if (kind === 'subscription') emit('dispatch', 'mqtt.subscription.focus', { topic: id })
   if (kind === 'session') emit('focusSession', id)
   if (kind === 'message') emit('dispatch', 'mqtt.record.focus', commandArgs('message', id, list))
   if (kind === 'log') emit('focusLog', id)
 }
 
-function recordSelected(kind: 'config' | 'subscription' | 'session' | 'message' | 'log' | 'publish-template', id: string) {
+function recordSelected(kind: 'config' | 'connection-group' | 'subscription' | 'session' | 'message' | 'log' | 'publish-template', id: string) {
   return props.snapshot.mqttSelectedRecord?.kind === kind && props.snapshot.mqttSelectedRecord.id === id
 }
 
@@ -904,6 +1004,42 @@ function focusConfigAndDispatch(configId: string, actionId: string) {
   emit('dispatch', actionId, commandArgs('config', configId))
 }
 
+function connectionRowArgs(row: MqttConnectionRow): Record<string, unknown> {
+  const kind: MqttCommandTargetKind = row.kind === 'group' ? 'connection-group' : 'config'
+  return commandArgs(kind, row.id)
+}
+
+function connectionTreeTargetArgs(row: MqttConnectionRow, prefix = 'target'): Record<string, unknown> {
+  return {
+    [`${prefix}Kind`]: row.kind,
+    [`${prefix}Id`]: row.id
+  }
+}
+
+function selectConnectionRow(row: MqttConnectionRow) {
+  if (row.kind === 'group') selectRecord('connection-group', row.id)
+  else selectRecord('config', row.id)
+}
+
+function focusConnectionRow(row: MqttConnectionRow) {
+  if (row.kind === 'group') emit('focusConnectionGroup', row.id)
+  else emit('focusConfig', row.id)
+}
+
+function openConnectionRowMenu(row: MqttConnectionRow) {
+  selectConnectionRow(row)
+  emit('dispatch', 'mqtt.drawer.open', connectionRowArgs(row))
+}
+
+function openConnectionGroupMenu(row: MqttConnectionRow) {
+  openConnectionRowMenu(row)
+}
+
+function focusConnectionRowAndDispatch(row: MqttConnectionRow, actionId: string) {
+  focusConnectionRow(row)
+  emit('dispatch', actionId, connectionRowArgs(row))
+}
+
 function openConnectionMenu(config: AppRuntimeSnapshot['state']['mqtt']['configs'][number]) {
   selectRecord('config', config.id)
   emit('dispatch', 'mqtt.drawer.open', commandArgs('config', config.id))
@@ -911,6 +1047,55 @@ function openConnectionMenu(config: AppRuntimeSnapshot['state']['mqtt']['configs
 
 function toggleConnectionSelection(configId: string) {
   emit('dispatch', 'mqtt.connection.toggleSelect', commandArgs('config', configId))
+}
+
+function toggleConnectionGroup(row: MqttConnectionRow) {
+  if (row.kind !== 'group') return
+  emit('dispatch', row.collapsed ? 'mqtt.connectionGroup.expand' : 'mqtt.connectionGroup.collapse', connectionRowArgs(row))
+}
+
+function connectionTreeDropPosition(event: DragEvent, row: MqttConnectionRow): MqttConnectionDropPosition {
+  const rect = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect()
+  if (!rect) return row.kind === 'group' ? 'inside' : 'after'
+  const y = event.clientY - rect.top
+  if (y < rect.height * 0.28) return 'before'
+  if (y > rect.height * 0.72) return 'after'
+  return row.kind === 'group' ? 'inside' : 'after'
+}
+
+function startConnectionTreeDrag(event: DragEvent, row: MqttConnectionRow) {
+  connectionTreeDragTarget.value = { kind: row.kind, id: row.id }
+  connectionTreeDropTarget.value = null
+  event.dataTransfer?.setData('text/plain', `${row.kind}:${row.id}`)
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+}
+
+function handleConnectionTreeDragOver(event: DragEvent, row: MqttConnectionRow) {
+  const moving = connectionTreeDragTarget.value
+  if (!moving || (moving.kind === row.kind && moving.id === row.id)) return
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  connectionTreeDropTarget.value = { rowId: row.rowId, position: connectionTreeDropPosition(event, row) }
+}
+
+function dropConnectionTreeRow(event: DragEvent, row: MqttConnectionRow) {
+  const moving = connectionTreeDragTarget.value
+  if (!moving) return
+  event.preventDefault()
+  const position = connectionTreeDropTarget.value?.rowId === row.rowId ? connectionTreeDropTarget.value.position : connectionTreeDropPosition(event, row)
+  emit('dispatch', 'mqtt.connectionTree.move', {
+    movingKind: moving.kind,
+    movingId: moving.id,
+    ...connectionTreeTargetArgs(row),
+    position
+  })
+  connectionTreeDragTarget.value = null
+  connectionTreeDropTarget.value = null
+}
+
+function clearConnectionTreeDragState() {
+  connectionTreeDragTarget.value = null
+  connectionTreeDropTarget.value = null
 }
 
 function selectLog(id: string) {
@@ -1413,7 +1598,7 @@ function schedulePreview(kind: MqttPreviewTarget['kind'], id: string, event?: Mo
     return
   }
   if (kind === 'publish-draft-history') return
-  if (props.snapshot.mqttConfigDraft || props.snapshot.mqttSubscriptionDraft || props.snapshot.mqttFavoriteDraft) return
+  if (props.snapshot.mqttConfigDraft || props.snapshot.mqttConnectionGroupDraft || props.snapshot.mqttSubscriptionDraft || props.snapshot.mqttFavoriteDraft) return
   if (!props.snapshot.toolPreviewPrefs.hoverPreviewEnabled) return
   previewTimer = window.setTimeout(() => {
     openPreviewForTarget(target, 'hover', anchor)
@@ -1654,6 +1839,7 @@ watch(() => [
   props.snapshot.mqttPublishDraftHistoryRows.length,
   props.snapshot.mqttSelectedSubscriptionTopics.length,
   Boolean(props.snapshot.mqttConfigDraft),
+  Boolean(props.snapshot.mqttConnectionGroupDraft),
   Boolean(props.snapshot.mqttSubscriptionDraft),
   Boolean(props.snapshot.mqttFavoriteDraft),
   Object.entries(props.snapshot.commandShortcutLabels).map(([id, label]) => `${id}:${label}`).join('|')
@@ -1743,49 +1929,111 @@ onUnmounted(() => {
           :shortcut-hint="ctrlCommandLabel('mqtt.search.focus')"
           @update:model-value="emit('search', $event)"
         />
-        <button type="button" class="mqtt-icon-button add-folder-button" :title="commandTitle('新建连接', 'mqtt.config.create', 'c-n')" aria-label="新建连接" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.config.create')" @click="emit('dispatch', 'mqtt.config.create')">
+        <button type="button" class="mqtt-icon-button add-folder-button" :title="commandTitle('新建连接', 'mqtt.config.create', 'c-n')" aria-label="新建连接" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.config.create')" @click="emit('dispatch', 'mqtt.config.create', { groupId: null })">
           <MqttIcon name="add" />
+        </button>
+        <button type="button" class="mqtt-icon-button add-folder-button" :title="commandTitle('新建分组', 'mqtt.connectionGroup.create', 'c-g')" aria-label="新建分组" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.connectionGroup.create')" @click="emit('dispatch', 'mqtt.connectionGroup.create', { parentId: null })">
+          <MqttIcon name="folder-plus" />
         </button>
       </div>
 
-      <div class="mqtt-config-list">
+      <div class="mqtt-config-list mqtt-connection-tree" role="tree" data-role="mqtt-connections">
         <article
-          v-for="config in props.snapshot.state.mqtt.configs"
-          :key="config.id"
-          class="mqtt-config-card"
-          :class="{ active: activeConfig?.id === config.id, focused: recordSelected('config', config.id), selected: connectionSelected(config.id) }"
+          v-for="row in props.snapshot.mqttConnectionRows"
+          :key="row.rowId"
+          class="mqtt-connection-row"
+          :class="[
+            row.kind === 'group' ? 'mqtt-connection-group-row' : 'mqtt-config-card',
+            {
+              active: row.active,
+              focused: row.focused,
+              selected: row.kind === 'config' && connectionSelected(row.id),
+              'drop-before': connectionTreeDropTarget?.rowId === row.rowId && connectionTreeDropTarget.position === 'before',
+              'drop-inside': connectionTreeDropTarget?.rowId === row.rowId && connectionTreeDropTarget.position === 'inside',
+              'drop-after': connectionTreeDropTarget?.rowId === row.rowId && connectionTreeDropTarget.position === 'after'
+            }
+          ]"
           data-role="mqtt-connections"
           tabindex="0"
-          role="option"
-          :aria-selected="recordSelected('config', config.id) || activeConfig?.id === config.id"
-          :data-quick-jump-label="config.name"
-          @click="selectRecord('config', config.id)"
-          @focus="emit('focusConfig', config.id)"
-          @contextmenu.prevent="openConnectionMenu(config)"
-          @keydown.space.prevent.stop="toggleConnectionSelection(config.id)"
-          @keydown.delete.prevent.stop="emit('dispatch', 'mqtt.connection.delete', commandArgs('config', config.id))"
-          @keydown.backspace.prevent.stop="emit('dispatch', 'mqtt.connection.delete', commandArgs('config', config.id))"
+          role="treeitem"
+          draggable="true"
+          :style="{ '--tree-depth': row.depth, '--group-color': row.kind === 'group' ? row.color : undefined }"
+          :aria-level="row.depth + 1"
+          :aria-expanded="row.kind === 'group' ? !row.collapsed : undefined"
+          :aria-selected="row.focused || row.active"
+          :data-quick-jump-label="row.name"
+          :data-quick-jump-search="row.config?.url || row.name"
+          @click="selectConnectionRow(row)"
+          @focus="focusConnectionRow(row)"
+          @contextmenu.prevent="row.kind === 'group' ? openConnectionGroupMenu(row) : row.config && openConnectionMenu(row.config)"
+          @dragstart="startConnectionTreeDrag($event, row)"
+          @dragover="handleConnectionTreeDragOver($event, row)"
+          @dragleave="connectionTreeDropTarget = null"
+          @drop="dropConnectionTreeRow($event, row)"
+          @dragend="clearConnectionTreeDragState"
+          @keydown.space.prevent.stop="row.kind === 'config' && toggleConnectionSelection(row.id)"
+          @keydown.delete.prevent.stop="emit('dispatch', row.kind === 'group' ? 'mqtt.connectionGroup.delete' : 'mqtt.connection.delete', connectionRowArgs(row))"
+          @keydown.backspace.prevent.stop="emit('dispatch', row.kind === 'group' ? 'mqtt.connectionGroup.delete' : 'mqtt.connection.delete', connectionRowArgs(row))"
+          @keydown.left.prevent.stop="row.kind === 'group' && emit('dispatch', 'mqtt.connectionGroup.collapse', connectionRowArgs(row))"
+          @keydown.right.prevent.stop="row.kind === 'group' && emit('dispatch', 'mqtt.connectionGroup.expand', connectionRowArgs(row))"
         >
+          <template v-if="row.kind === 'group' && row.group">
+            <header class="mqtt-connection-group-header">
+              <button type="button" class="mqtt-icon-button mqtt-tree-disclosure" :title="row.collapsed ? '展开分组' : '折叠分组'" :aria-label="row.collapsed ? '展开分组' : '折叠分组'" @click.stop="toggleConnectionGroup(row)">
+                <MqttIcon :name="row.collapsed ? 'chevron-right' : 'chevron-down'" />
+              </button>
+              <span class="mqtt-connection-group-title">
+                <input
+                  v-if="props.snapshot.mqttConnectionGroupDraft?.mode === 'rename' && props.snapshot.mqttConnectionGroupDraft.targetId === row.id"
+                  class="mqtt-connection-group-inline-rename"
+                  data-role="mqtt-connection-group-editor"
+                  data-mqtt-connection-group-field="name"
+                  :value="props.snapshot.mqttConnectionGroupDraft.name"
+                  :aria-label="`重命名分组 ${row.name}`"
+                  @click.stop
+                  @dblclick.stop
+                  @focus="updateConnectionGroupDraft({ activeField: 'name' })"
+                  @input="updateConnectionGroupDraft({ name: ($event.target as HTMLInputElement).value })"
+                  @keydown="handleConnectionGroupInlineRenameKeydown"
+                />
+                <strong v-else class="mqtt-connection-address-title" data-quick-jump-anchor :title="row.name">{{ row.name }}</strong>
+              </span>
+              <small class="mqtt-connection-group-count">{{ row.childCount }} 项</small>
+            </header>
+            <div class="mqtt-config-actions mqtt-connection-group-actions">
+              <button type="button" class="mqtt-icon-button" :title="commandTitle('新建子分组', 'mqtt.connectionGroup.create', 'c-g')" aria-label="新建子分组" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.connectionGroup.create')" @click.stop="emit('dispatch', 'mqtt.connectionGroup.create', { parentId: row.id })">
+                <MqttIcon name="folder-plus" />
+              </button>
+              <button type="button" class="mqtt-icon-button" :title="commandTitle('重命名分组', 'mqtt.connectionGroup.rename', 's-f2')" aria-label="重命名分组" @click.stop="focusConnectionRowAndDispatch(row, 'mqtt.connectionGroup.rename')">
+                <MqttIcon name="rename" />
+              </button>
+              <button type="button" class="mqtt-icon-button" :title="commandTitle('分组更多操作', 'mqtt.drawer.open', 'c-→')" aria-label="分组更多操作" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.drawer.open')" @click.stop="openConnectionGroupMenu(row)">
+                <MqttIcon name="more" />
+              </button>
+            </div>
+          </template>
+          <template v-else-if="row.config">
           <header>
             <span>
-              <strong class="mqtt-connection-address-title" data-quick-jump-anchor :title="connectionEndpointTitle(config)">{{ config.name }}</strong>
-              <small>{{ config.url || '未配置服务器地址' }}</small>
+              <strong class="mqtt-connection-address-title" data-quick-jump-anchor :title="connectionEndpointTitle(row.config)">{{ row.config.name }}</strong>
+              <small>{{ row.config.url || '未配置服务器地址' }}</small>
             </span>
-            <em>{{ config.autoReconnect ? `重连 ${config.reconnectPeriodMs}ms` : '手动重连' }}</em>
+            <em>{{ row.config.autoReconnect ? `重连 ${row.config.reconnectPeriodMs}ms` : '手动重连' }}</em>
           </header>
           <div class="mqtt-config-actions">
-            <button type="button" class="mqtt-icon-button" :title="commandTitle('连接', 'mqtt.connection.connect', 'c-r')" aria-label="连接" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.connection.connect')" @click.stop="focusConfigAndDispatch(config.id, 'mqtt.connection.connect')">
+            <button type="button" class="mqtt-icon-button" :title="commandTitle('连接', 'mqtt.connection.connect', 'c-r')" aria-label="连接" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.connection.connect')" @click.stop="focusConfigAndDispatch(row.config.id, 'mqtt.connection.connect')">
               <MqttIcon name="connect" />
             </button>
-            <button type="button" class="mqtt-icon-button" :title="commandTitle('断开', 'mqtt.connection.disconnect', 'c-s-r')" aria-label="断开" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.connection.disconnect')" @click.stop="focusConfigAndDispatch(config.id, 'mqtt.connection.disconnect')">
+            <button type="button" class="mqtt-icon-button" :title="commandTitle('断开', 'mqtt.connection.disconnect', 'c-s-r')" aria-label="断开" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.connection.disconnect')" @click.stop="focusConfigAndDispatch(row.config.id, 'mqtt.connection.disconnect')">
               <MqttIcon name="disconnect" />
             </button>
-            <button type="button" class="mqtt-icon-button" :title="commandTitle('快捷操作', 'mqtt.drawer.open', 'c-→')" aria-label="连接快捷操作" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.drawer.open')" @click.stop="openConnectionMenu(config)">
+            <button type="button" class="mqtt-icon-button" :title="commandTitle('快捷操作', 'mqtt.drawer.open', 'c-→')" aria-label="连接快捷操作" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.drawer.open')" @click.stop="openConnectionMenu(row.config)">
               <MqttIcon name="more" />
             </button>
           </div>
+          </template>
         </article>
-        <p v-if="!props.snapshot.state.mqtt.configs.length" class="empty-note">暂无 MQTT 连接配置</p>
+        <p v-if="!props.snapshot.mqttConnectionRows.length" class="empty-note">暂无 MQTT 连接配置</p>
       </div>
     </aside>
 
@@ -1997,6 +2245,75 @@ onUnmounted(() => {
       </header>
 
       <div
+        v-if="props.snapshot.mqttConnectionGroupDraft && props.snapshot.mqttConnectionGroupDraft.mode !== 'rename'"
+        class="drawer-overlay drawer-overlay-right mqtt-config-drawer-overlay mqtt-connection-group-editor-modal"
+        role="presentation"
+        data-role="mqtt-connection-group-editor"
+        @click="emit('dispatch', 'mqtt.connectionGroup.cancel')"
+        @keydown="handleConnectionGroupEditorKeydown"
+      >
+        <aside
+          class="mqtt-config-editor mqtt-config-drawer mqtt-connection-group-editor"
+          role="dialog"
+          aria-modal="true"
+          :aria-label="props.snapshot.mqttConnectionGroupDraft.mode === 'create' ? '新建 MQTT 连接分组' : '编辑 MQTT 连接分组'"
+          data-role="mqtt-connection-group-editor"
+          @click.stop
+        >
+          <header>
+            <span>
+              <strong>{{ props.snapshot.mqttConnectionGroupDraft.mode === 'create' ? '新建分组' : props.snapshot.mqttConnectionGroupDraft.mode === 'move-parent' ? '移动父级' : '编辑分组' }}</strong>
+              <small>{{ props.snapshot.mqttConnectionGroupDraft.mode === 'move-parent' ? '父级分组' : '连接树层级' }}</small>
+            </span>
+            <span class="mqtt-editor-actions">
+              <button type="button" class="mqtt-icon-button" :title="commandTitle('取消', 'mqtt.connectionGroup.cancel', 'esc')" aria-label="取消分组编辑" @click="emit('dispatch', 'mqtt.connectionGroup.cancel')">
+                <MqttIcon name="close" />
+              </button>
+              <button type="button" class="mqtt-icon-button" :title="commandTitle('保存分组', 'mqtt.connectionGroup.save', 'c-s')" aria-label="保存分组" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.connectionGroup.save')" @click="emit('dispatch', 'mqtt.connectionGroup.save')">
+                <MqttIcon name="save" />
+              </button>
+            </span>
+          </header>
+          <div class="mqtt-config-drawer-grid">
+            <label v-if="props.snapshot.mqttConnectionGroupDraft.mode !== 'move-parent'">
+              分组名称
+              <input
+                data-role="mqtt-connection-group-editor"
+                data-mqtt-connection-group-field="name"
+                :value="props.snapshot.mqttConnectionGroupDraft.name"
+                @focus="updateConnectionGroupDraft({ activeField: 'name' })"
+                @input="updateConnectionGroupDraft({ name: ($event.target as HTMLInputElement).value })"
+              />
+            </label>
+            <label v-if="props.snapshot.mqttConnectionGroupDraft.mode !== 'move-parent'">
+              颜色
+              <input
+                type="color"
+                data-role="mqtt-connection-group-editor"
+                data-mqtt-connection-group-field="color"
+                :value="props.snapshot.mqttConnectionGroupDraft.color"
+                @focus="updateConnectionGroupDraft({ activeField: 'color' })"
+                @input="updateConnectionGroupDraft({ color: ($event.target as HTMLInputElement).value })"
+              />
+            </label>
+            <label>
+              父级分组
+              <select
+                data-role="mqtt-connection-group-editor"
+                data-mqtt-connection-group-field="parent"
+                :value="props.snapshot.mqttConnectionGroupDraft.parentId || ''"
+                @focus="updateConnectionGroupDraft({ activeField: 'parent' })"
+                @change="updateConnectionGroupDraft({ parentId: ($event.target as HTMLSelectElement).value || null })"
+              >
+                <option value="">根级</option>
+                <option v-for="group in mqttConnectionGroupParentOptions" :key="group.id" :value="group.id">{{ connectionGroupOptionLabel(group) }}</option>
+              </select>
+            </label>
+          </div>
+        </aside>
+      </div>
+
+      <div
         v-if="props.snapshot.mqttConfigDraft"
         class="drawer-overlay drawer-overlay-right mqtt-config-drawer-overlay"
         role="presentation"
@@ -2030,6 +2347,13 @@ onUnmounted(() => {
                   <label>
                     名称
                     <input data-mqtt-field="name" data-role="mqtt-editor" :value="configForm.name" @input="updateConfigDraft({ name: ($event.target as HTMLInputElement).value })" />
+                  </label>
+                  <label>
+                    所属分组
+                    <select data-mqtt-field="groupId" data-role="mqtt-editor" :value="configForm.groupId || ''" @change="updateConfigDraft({ groupId: ($event.target as HTMLSelectElement).value || null })">
+                      <option value="">根级</option>
+                      <option v-for="group in props.snapshot.state.mqtt.connectionGroups" :key="group.id" :value="group.id">{{ connectionGroupOptionLabel(group) }}</option>
+                    </select>
                   </label>
                   <label>
                     Client ID
@@ -2896,6 +3220,18 @@ onUnmounted(() => {
               <MqttIcon name="apply" />
             </button>
           </div>
+        </section>
+        <section v-else-if="detailConnectionGroup" class="mqtt-log-detail">
+          <dl>
+            <dt>分组</dt>
+            <dd>{{ detailConnectionGroup.name }}</dd>
+            <dt>父级</dt>
+            <dd>{{ props.snapshot.state.mqtt.connectionGroups.find((group) => group.id === detailConnectionGroup?.parentId)?.name || '根级' }}</dd>
+            <dt>子分组</dt>
+            <dd>{{ detailConnectionGroupStats.groups }} 个</dd>
+            <dt>连接</dt>
+            <dd>{{ detailConnectionGroupStats.configs }} 个</dd>
+          </dl>
         </section>
         <section v-else-if="detailConfig" class="mqtt-log-detail">
           <dl>

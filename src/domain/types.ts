@@ -52,6 +52,7 @@ export interface MqttLayoutPrefs {
   connectionPanelOpen: boolean
   subscriptionPanelOpen: boolean
   publishRecordsOpen: boolean
+  collapsedConnectionGroupIds: string[]
 }
 
 export interface MqttViewPrefs {
@@ -65,6 +66,7 @@ export interface MqttConnectionConfig {
   url: string
   clientId: string
   username: string
+  groupId: string | null
   subscriptions: string[]
   subscriptionAliases: Record<string, string>
   subscriptionColors: Record<string, string>
@@ -85,8 +87,19 @@ export interface MqttConnectionConfig {
   updatedAt: number
 }
 
+export interface MqttConnectionGroup {
+  id: string
+  name: string
+  color: string
+  parentId: string | null
+  sortOrder: number
+  createdAt: number
+  updatedAt: number
+}
+
 export interface MqttState {
   configs: MqttConnectionConfig[]
+  connectionGroups: MqttConnectionGroup[]
   activeConfigId: string | null
   layoutPrefs: MqttLayoutPrefs
   viewPrefs: MqttViewPrefs

@@ -14,7 +14,7 @@ Tool: codex
 
 ## Documentation Sync
 
-- Last verified: 2026-06-26.
+- Last verified: 2026-06-28.
 - Current process hub: [../specs/PROJECT_STATUS.md](../specs/PROJECT_STATUS.md#L1).
 - Current product requirements: [../specs/PRODUCT_REQUIREMENTS.md](../specs/PRODUCT_REQUIREMENTS.md#L1).
 - Current MQTT implementation sync: [../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
@@ -38,9 +38,12 @@ Tool: codex
 
 ## MQTT State And Storage
 
-- Last verified: 2026-06-26.
+- Last verified: 2026-06-27.
 - Source of truth: [../specs/PRODUCT_REQUIREMENTS.md](../specs/PRODUCT_REQUIREMENTS.md#L1) and [../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
-- Persisted config keeps subscriptions, aliases, colors, publish defaults, connection flags, layout prefs, and `syncRecords` in [src/domain/types.ts](../../src/domain/types.ts#L1). Password/token values stay outside app state and archive data, and [preload/index.js](../../preload/index.js#L1) stores them only in the local userData encrypted secret envelope.
+- Persisted config keeps subscriptions, aliases, colors, publish defaults, connection flags, `groupId`, layout prefs, and `syncRecords` in [src/domain/types.ts](../../src/domain/types.ts#L1). Password/token values stay outside app state and archive data, and [preload/index.js](../../preload/index.js#L1) stores them only in the local userData encrypted secret envelope.
+- `MqttState.connectionGroups` stores user-created MQTT connection groups with `parentId`, `color`, and sibling `sortOrder`. `MqttConnectionConfig.groupId` links configs to groups, and invalid references normalize to `null` through [src/domain/mqtt.ts](../../src/domain/mqtt.ts#L1).
+- `MqttLayoutPrefs.collapsedConnectionGroupIds` persists collapsed connection groups and prunes missing ids during normalization.
+- Connection tree projection, drop-target resolution, group move, delete promotion, and cycle prevention live in [src/domain/mqttConnectionTree.ts](../../src/domain/mqttConnectionTree.ts#L1).
 - `MqttConnectionConfig.publishTopics` normalizes multiple default publish topics and mirrors the first value to `publishTopic` through [src/domain/mqtt.ts](../../src/domain/mqtt.ts#L1).
 - `MqttState.viewPrefs` persists `全/收/发/藏` and valid topic filters per connection config. Invalid topics are pruned during normalization.
 - `MqttArchiveState.publishDraftHistory` stores overwritten/manual drafts only. It is local recovery/reuse data and must not duplicate outgoing send records.
@@ -48,35 +51,47 @@ Tool: codex
 
 ## MQTT Workbench Runtime
 
-- Last verified: 2026-06-26.
+- Last verified: 2026-06-27.
 - Runtime source: [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L1).
-- Runtime projects active pane, active record list, record search, template/history rows, draft-history rows, focus target, drawer targets, preview state, storage status, layout prefs, and view prefs.
+- Runtime projects active pane, active record list, record search, template/history rows, draft-history rows, MQTT connection tree rows, focus target, drawer targets, preview state, storage status, layout prefs, and view prefs.
 - Ordinary messages and outgoing history sort newest first by `timestamp`; publish draft history sorts by `updatedAt`; templates sort by `MqttPublishTemplate.operatedAt` with `updatedAt` / `createdAt` fallback.
 - Template operation time updates on save/edit/rename/apply/direct-send/repeat-send and does not update on focus, preview, detail, or menu open.
 - Publish editor replacement archives the previous meaningful draft before applying a message/template/history/draft when the replacement differs. Manual draft save is `Ctrl+Shift+H`.
 - Runtime shortcut context must treat open draft-history popovers/editors as command-owned layers before trusting DOM focus. This prevents stale `mqtt-publish-editor` focus from stealing `Space`, drawer, edit, or delete commands.
 - Connection and subscription rails are runtime-owned row targets. Connection state includes selected config ids; subscription selection uses `MqttRecordSelection.kind = "subscription"` so detail/action drawers can target topics without pretending they are message records.
+- Connection group rows use `MqttRecordSelection.kind = "connection-group"` and can focus, show detail/actions, edit, delete, collapse, expand, and drag/drop without switching the active MQTT connection config.
+- Deleting a connection group removes only group metadata. Direct child groups/configs are promoted to the deleted group's parent so existing connections are not lost.
+- Runtime adds `mqttTargetKind` to shortcut context so connection-pane `F2` and `Shift+F2` dispatch to config commands for config rows and group commands for group rows.
 - Connection rail actions include movement, multi-select, endpoint copy, focused/selected delete, detail drawer, action drawer, and right-click entry. Subscription rail actions include movement, multi-select, topic copy, use-as-publish-topic, focused/selected delete, detail drawer, action drawer, and right-click entry.
 - Connection-config editor focus is a generated matrix instead of a fixed field list, so `Tab` / `Shift+Tab` traverses per-subscription alias/topic/color rows, publish-topic rows, MQTT option fields, and storage options.
 
 ## MQTT Shortcut And Input Layers
 
+- Last verified: 2026-06-27.
+
 - Keybinding source: [src/runtime/keybinding/keybindingRuntime.ts](../../src/runtime/keybinding/keybindingRuntime.ts#L1); DOM role extraction source: [src/runtime/keyboardEvent.ts](../../src/runtime/keyboardEvent.ts#L1).
 - Current defaults: `Ctrl+1/2/3` for `全/收/发`, `Ctrl+M` for `藏`, `Ctrl+H` for draft history, `Ctrl+Shift+H` for manual draft save, `Ctrl+F` for record search, `Ctrl+Shift+F` for topic dropdown, `Ctrl+P` for publish topic, and `Ctrl+Shift+S` for layout.
 - Released defaults: `Ctrl+L`, `Ctrl+Shift+L`, and `Ctrl+Shift+M` are intentionally unbound for MQTT draft/history behavior.
-- Input roles: `mqtt-publish-editor`, `mqtt-publish-draft`, `mqtt-publish-draft-editor`, `mqtt-topic-filter`, `mqtt-publish-options`, `mqtt-connections`, `mqtt-subscriptions`, `mqtt-config-subscription-editor`, and `mqtt-config-publish-editor`.
+- Input roles: `mqtt-publish-editor`, `mqtt-publish-draft`, `mqtt-publish-draft-editor`, `mqtt-topic-filter`, `mqtt-publish-options`, `mqtt-connections`, `mqtt-connection-group-editor`, `mqtt-subscriptions`, `mqtt-config-subscription-editor`, and `mqtt-config-publish-editor`.
 - Draft-history focus owns `Space`, `Enter`, `Ctrl+Enter`, `Ctrl+S`, `Ctrl+Left`, `Ctrl+Right`, `F2`, `Shift+F2`, `Ctrl+Delete`, `Ctrl+Backspace`, and `Escape`; draft editor modes own `Ctrl+S` / `Ctrl+Enter` / `Tab` / `Shift+Tab` / `Escape`.
-- Connection rail focus owns `Space`, `Ctrl+C`, `Delete`, `Backspace`, `Ctrl+Delete`, `Ctrl+Backspace`, `Ctrl+Left`, and `Ctrl+Right`. Subscription rail focus owns those plus `Enter` topic filter and `Ctrl+Enter` use-as-publish-topic.
+- Connection tree focus owns `Space`, `Ctrl+C`, `Delete`, `Backspace`, `Ctrl+Delete`, `Ctrl+Backspace`, `Ctrl+Left`, `Ctrl+Right`, `ArrowLeft` collapse, and `ArrowRight` expand. `Ctrl+T` remains subscription add and is not reused for group creation.
+- Connection group defaults: `Ctrl+G` creates a group, `F2` edits the focused group in the group editor, `Shift+F2` renames it inline in the tree label, and `Ctrl+F2` opens move-parent mode. Config rows keep `F2` / `Shift+F2` for config edit/rename. `Ctrl+G` is also used by ports grouping and remains valid because keybindings are tab/context scoped.
+- MQTT connection create shortcuts carry pane/panel/input-role context from [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L1) into action dispatch. Parent inference for `Ctrl+G` / `Ctrl+N` uses explicit row args first, then `mqtt-connections` row focus, and otherwise creates root-level targets for connection search, blank rail, or other non-edit MQTT panes while the rail is expanded.
+- Connection group editor focus owns `Ctrl+S`, `Ctrl+Enter`, `Tab`, `Shift+Tab`, and `Escape`.
+- Subscription rail focus owns `Space`, `Ctrl+C`, `Delete`, `Backspace`, `Ctrl+Delete`, `Ctrl+Backspace`, `Ctrl+Left`, `Ctrl+Right`, `Enter` topic filter, and `Ctrl+Enter` use-as-publish-topic.
 - Managed subscription/config/publish-topic editor rows use `ArrowUp` / `ArrowDown` for same-field row movement and `Ctrl+Delete` / `Ctrl+Backspace` for row deletion while plain text deletion remains native.
 - Publish topic/payload editing intentionally does not own `Ctrl+Left` / `Ctrl+Right`; those chords remain native host text navigation. Publish options are opened by their button and close through `Escape` or outside pointerdown.
 - Ordinary draft-history edit updates in [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L1) must not request focus; focus requests belong to editor open and field-cycle commands.
 
 ## MQTT UI And Preview
 
+- Last verified: 2026-06-27.
+
 - UI source: [src/pages/MqttPage.vue](../../src/pages/MqttPage.vue#L1), [src/components/MqttPublishRecordList.vue](../../src/components/MqttPublishRecordList.vue#L1), and [src/styles/app.css](../../src/styles/app.css#L1).
 - The top MQTT command bar owns connection status, topic filter, current-list search, `全/收/发/藏`, and layout controls. Template/history lists do not carry separate headers.
-- The config drawer owns endpoint preview, compact endpoint fields, subscription alias/topic/color rows, publish topic candidate rows, and compact connection options.
-- Connection and subscription rows expose active, selected, hover, and keyboard-focus styling. Row-local buttons and right-click menus dispatch the same runtime actions as keyboard shortcuts.
+- The config drawer owns endpoint preview, compact endpoint fields, connection group assignment, subscription alias/topic/color rows, publish topic candidate rows, and compact connection options.
+- Connection tree and subscription rows expose active, selected, hover, and keyboard-focus styling. Row-local buttons and right-click menus dispatch the same runtime actions as keyboard shortcuts.
+- The connection rail renders a compact EyTodo-like hierarchy with nested groups, chevron collapse/expand controls, folder color marks, child-count metadata, `c-` shortcut hints, Quick Jump row anchors, and visible drag/drop target states.
 - MQTT z-index tiers are fixed in [src/styles/app.css](../../src/styles/app.css#L1): workbench controls, active local popovers, global drawer overlays, floating previews, modals, and shortcut top-layer hints are separate layers. Publish options, topic filter, and draft-history popovers use the active workbench popover layer so they sit above split/stack panel content and resizers without covering drawers or modals.
 - The send toolbar owns draft-history access. The visible star/template-save button is removed; publish editor `Ctrl+S` is the save-template path.
 - Publish options and draft-history popovers are editor-adjacent transient layers. They guard inside clicks through their anchor elements and close on outside pointerdown.
@@ -97,8 +112,9 @@ Tool: codex
 - Rail menu and config focus traversal: [../specs/260626-eypc-mqtt-rail-menu-focus/04-verify.md](../specs/260626-eypc-mqtt-rail-menu-focus/04-verify.md#L1).
 - Global Quick Jump: [../specs/260626-eypc-global-quick-jump/04-verify.md](../specs/260626-eypc-global-quick-jump/04-verify.md#L1).
 - Editing keyboard ownership: [../specs/260626-eypc-mqtt-editing-keyboard-ownership/04-verify.md](../specs/260626-eypc-mqtt-editing-keyboard-ownership/04-verify.md#L1).
+- MQTT connection tree grouping and drag-drop: [../specs/260627-eypc-mqtt-connection-tree/04-verify.md](../specs/260627-eypc-mqtt-connection-tree/04-verify.md#L1).
 
 ## Update Triggers
 
-- Update MQTT memory when a state/archive field, shortcut default, input role, storage bridge, preview target model, config editor contract, Quick Jump target surface, or verification gate changes.
+- Update MQTT memory when a state/archive field, shortcut default, input role, storage bridge, preview target model, connection tree contract, config editor contract, Quick Jump target surface, or verification gate changes.
 - Update error memory when a host shortcut conflict, stale DOM focus problem, archive migration trap, or preload packaging trap recurs.

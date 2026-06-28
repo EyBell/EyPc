@@ -1,4 +1,5 @@
 import type { AppTabId } from '../../domain/types'
+import type { KeybindingContext } from '../keybinding/keybindingRuntime'
 
 export type RuntimeActionRisk = 'normal' | 'data-write' | 'destructive'
 export type RuntimeActionScope = 'global' | 'tab' | 'row' | 'layer'
@@ -10,6 +11,11 @@ export interface RuntimeActionContext {
   portPane?: 'groups' | 'results'
   favoritePane?: 'groups' | 'items'
   favoriteQuickMode?: boolean
+  textInputFocused?: boolean
+  activeInputRole?: KeybindingContext['activeInputRole']
+  mqttPane?: KeybindingContext['mqttPane']
+  mqttPanelOpen?: boolean
+  mqttTargetKind?: KeybindingContext['mqttTargetKind']
 }
 
 export interface RuntimeActionDefinition {

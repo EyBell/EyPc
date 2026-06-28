@@ -177,7 +177,8 @@ describe('keybinding runtime', () => {
       tab: 'mqtt' as const,
       confirmOpen: false,
       textInputFocused: false,
-      mqttPane: 'messages' as const
+      mqttPane: 'messages' as const,
+      mqttPanelOpen: true
     }
     const connectionContext = {
       ...idleContext,
@@ -186,6 +187,19 @@ describe('keybinding runtime', () => {
     const connectionRoleContext = {
       ...connectionContext,
       activeInputRole: 'mqtt-connections' as const
+    }
+    const connectionGroupContext = {
+      ...connectionContext,
+      mqttTargetKind: 'connection-group' as const
+    }
+    const connectionGroupRoleContext = {
+      ...connectionGroupContext,
+      activeInputRole: 'mqtt-connections' as const
+    }
+    const connectionSearchContext = {
+      ...connectionGroupContext,
+      textInputFocused: true,
+      activeInputRole: 'mqtt-search' as const
     }
     const searchContext = {
       ...idleContext,
@@ -221,6 +235,11 @@ describe('keybinding runtime', () => {
       ...idleContext,
       textInputFocused: true,
       activeInputRole: 'mqtt-editor' as const
+    }
+    const groupEditorContext = {
+      ...idleContext,
+      textInputFocused: true,
+      activeInputRole: 'mqtt-connection-group-editor' as const
     }
     const subscriptionContext = {
       ...idleContext,
@@ -260,6 +279,9 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+R', idleContext)?.actionId).toBe('mqtt.connection.connect')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+R', idleContext)?.actionId).toBe('mqtt.connection.disconnect')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+N', idleContext)?.actionId).toBe('mqtt.config.create')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+G', idleContext)?.actionId).toBe('mqtt.connectionGroup.create')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+N', { ...idleContext, mqttPanelOpen: false })).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+G', { ...idleContext, mqttPanelOpen: false })).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', idleContext)?.actionId).toBe('mqtt.subscription.add')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', { ...idleContext, mqttPane: 'messages' as const })?.actionId).toBe('mqtt.pane.next')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', { ...idleContext, mqttPane: 'subscriptions' as const })?.actionId).toBe('mqtt.pane.prev')
@@ -370,12 +392,27 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F2', idleContext)?.actionId).toBe('mqtt.record.edit')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', connectionContext)?.actionId).toBe('mqtt.config.edit')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F2', connectionContext)?.actionId).toBe('mqtt.config.rename')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+G', connectionContext)?.actionId).toBe('mqtt.connectionGroup.create')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+G', connectionContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', connectionGroupContext)?.actionId).toBe('mqtt.connectionGroup.edit')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F2', connectionGroupContext)?.actionId).toBe('mqtt.connectionGroup.rename')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F2', connectionGroupContext)?.actionId).toBe('mqtt.connectionGroup.moveParent')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Space', connectionRoleContext)?.actionId).toBe('mqtt.connection.toggleSelect')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+C', connectionRoleContext)?.actionId).toBe('mqtt.connection.copyAddress')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', connectionRoleContext)?.actionId).toBe('mqtt.connection.delete')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Delete', connectionRoleContext)?.actionId).toBe('mqtt.connection.deleteSelected')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowLeft', connectionRoleContext)?.actionId).toBe('mqtt.connectionGroup.collapse')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowRight', connectionRoleContext)?.actionId).toBe('mqtt.connectionGroup.expand')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F2', connectionGroupRoleContext)?.actionId).toBe('mqtt.connectionGroup.moveParent')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+G', connectionRoleContext)?.actionId).toBe('mqtt.connectionGroup.create')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+N', connectionRoleContext)?.actionId).toBe('mqtt.config.create')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+G', connectionRoleContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', connectionRoleContext)?.actionId).toBe('mqtt.detail.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', connectionRoleContext)?.actionId).toBe('mqtt.drawer.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F2', connectionSearchContext)?.actionId).toBe('mqtt.connectionGroup.moveParent')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+G', connectionSearchContext)?.actionId).toBe('mqtt.connectionGroup.create')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+N', connectionSearchContext)?.actionId).toBe('mqtt.config.create')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+G', connectionSearchContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', idleContext)?.actionId).toBe('mqtt.record.delete')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+S', editorContext)?.actionId).toBe('mqtt.config.save')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Enter', editorContext)?.actionId).toBe('mqtt.config.save')
@@ -386,6 +423,18 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowUp', editorContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Delete', editorContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Backspace', editorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+S', groupEditorContext)?.actionId).toBe('mqtt.connectionGroup.save')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Enter', groupEditorContext)?.actionId).toBe('mqtt.connectionGroup.save')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', groupEditorContext)?.actionId).toBe('mqtt.connectionGroup.cancel')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', groupEditorContext)?.actionId).toBe('mqtt.connectionGroup.nextField')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+Tab', groupEditorContext)?.actionId).toBe('mqtt.connectionGroup.prevField')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', groupEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Backspace', groupEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', groupEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', groupEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', groupEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+G', groupEditorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+N', groupEditorContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+S', subscriptionEditorContext)?.actionId).toBe('mqtt.subscription.editor.save')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Enter', subscriptionEditorContext)?.actionId).toBe('mqtt.subscription.editor.save')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', subscriptionEditorContext)?.actionId).toBe('mqtt.subscription.editor.cancel')
@@ -634,6 +683,7 @@ describe('keybinding runtime', () => {
     const { formatShortcutLabel, formatShortcutList } = await import('../../src/domain/shortcuts')
 
     expect(formatShortcutLabel('Ctrl+Shift+F')).toBe('c-s-f')
+    expect(formatShortcutLabel('Ctrl+G')).toBe('c-g')
     expect(formatShortcutLabel('Alt+1')).toBe('a-1')
     expect(formatShortcutLabel('Ctrl+Enter')).toBe('c-cr')
     expect(formatShortcutLabel('Shift+Escape')).toBe('s-esc')

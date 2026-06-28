@@ -1,11 +1,12 @@
 import { addFavoriteNode, deleteFavoriteMetadata, favoriteParentOptions, favoriteVirtualChildren, filterFavoriteContainerTree, filterFavoriteGroupTree, filterFavoriteItems, filterFavoriteTree, flattenFavoriteTree, inferFavoriteNameFromPath, isValidFavoriteParent, moveFavoriteNode, normalizeFavoritePath } from '../domain/favorites'
 import { DEFAULT_MQTT_LAYOUT_PREFS, MQTT_LAYOUT_RATIO_MAX, MQTT_LAYOUT_RATIO_MIN, appendMqttMessage, buildMqttWebSocketUrl, clearMqttPublishDraftHistory, createMqttClientId, createMqttConnectionConfig, createMqttConnectionSnapshot, createMqttSession, deleteMqttPublishDraftHistory, deleteMqttPublishTemplate, deleteMqttRecord, matchMqttTopicFilter, mqttConnectOptionsFromConfig, mqttPublishTemplateOperationTime, normalizeMqttArchiveState, normalizeMqttTopicColor, parseMqttWebSocketUrl, renameMqttPublishTemplate, renameMqttRecord, saveMqttPublishDraftHistory, saveMqttPublishTemplate, toMqttPublishDraft, touchMqttPublishTemplate, updateMqttPublishDraftHistory } from '../domain/mqtt'
+import { buildMqttConnectionTreeRows, deleteMqttConnectionGroup, isValidMqttConnectionGroupParent, moveMqttConnectionTreeTarget, mqttConnectionTreeMoveTarget, normalizeMqttConfigGroupRefs, normalizeMqttConnectionGroups, type MqttConnectionTreeDropPosition, type MqttConnectionTreeRow, type MqttConnectionTreeTarget } from '../domain/mqttConnectionTree'
 import { dedupePortProcesses, filterPortProcesses, flattenPortGroupTargets, matchPortGroupProcesses, matchPortGroupTargetProcesses, movePortGroupToFolder, shouldProcessMatchVerifiedPort } from '../domain/ports'
 import { applyRecordListDeleteRecovery, computeRecordListDeleteAnchor, toggleRecordListSelection } from '../domain/recordListSelection'
 import { normalizeAppState } from '../domain/state'
 import { formatShortcutList } from '../domain/shortcuts'
 import { normalizeToolPreviewPrefs } from '../domain/toolPreview'
-import type { AppState, AppTabId, FavoriteNode, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
+import type { AppState, AppTabId, FavoriteNode, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttConnectionGroup, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
 import type { PortGroupTreeRow } from '../domain/ports'
 import { getPlatform, type FavoriteDirectoryEntry, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind } from '../platform/eypcPlatform'
 import { createActionRuntime } from './action/actionRuntime'
@@ -83,6 +84,7 @@ export interface AppRuntimeSnapshot {
   mqttConnectionStatus: MqttConnectionStatus
   mqttLogs: MqttLogRecord[]
   mqttActiveConfig: MqttConnectionConfig | null
+  mqttConnectionRows: MqttConnectionTreeRow[]
   mqttSubscriptionRows: MqttSubscriptionRow[]
   mqttActiveSubscriptionTopic: string | null
   mqttActiveSubscriptionTopics: string[]
@@ -104,6 +106,7 @@ export interface AppRuntimeSnapshot {
   mqttSelectedRecord: MqttRecordSelection | null
   mqttSelectedLog: MqttLogRecord | null
   mqttConfigDraft: MqttConfigDraft | null
+  mqttConnectionGroupDraft: MqttConnectionGroupDraft | null
   mqttSubscriptionDraft: MqttSubscriptionEditorDraft | null
   mqttPublishDraft: MqttPublishDraft
   mqttPublishScratch: MqttPublishDraft
@@ -146,6 +149,7 @@ export type MqttPublishDraftHistoryEditMode = 'rename' | 'edit'
 export type MqttPublishDraftHistoryEditField = 'title' | 'note' | 'topic' | 'payload'
 export type MqttRecordSelection =
   | { kind: 'config'; id: string }
+  | { kind: 'connection-group'; id: string }
   | { kind: 'subscription'; id: string }
   | { kind: 'session'; id: string }
   | { kind: 'message'; id: string }
@@ -266,6 +270,7 @@ export interface MqttConfigDraft {
   ssl: boolean
   clientId: string
   username: string
+  groupId: string | null
   password: string
   subscriptionsText: string
   subscriptionItems: MqttSubscriptionDraftItem[]
@@ -290,6 +295,7 @@ export interface MqttConfigDraft {
 
 export type MqttConfigDraftField =
   | 'name'
+  | 'groupId'
   | 'protocol'
   | 'host'
   | 'port'
@@ -317,6 +323,18 @@ interface MqttConfigDraftFocusCell {
   activeSubscriptionField?: MqttConfigSubscriptionDraftField
   activePublishIndex?: number | null
   activePublishField?: 'topic'
+}
+
+export type MqttConnectionGroupDraftMode = 'create' | 'edit' | 'rename' | 'move-parent'
+export type MqttConnectionGroupDraftField = 'name' | 'color' | 'parent'
+
+export interface MqttConnectionGroupDraft {
+  mode: MqttConnectionGroupDraftMode
+  targetId: string | null
+  name: string
+  color: string
+  parentId: string | null
+  activeField: MqttConnectionGroupDraftField
 }
 
 export interface MqttDrawerState {
@@ -538,6 +556,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   let mqttLogs: MqttLogRecord[] = []
   let mqttSelectedRecord: MqttRecordSelection | null = null
   let mqttConfigDraft: MqttConfigDraft | null = null
+  let mqttConnectionGroupDraft: MqttConnectionGroupDraft | null = null
   let mqttSubscriptionDraft: MqttSubscriptionEditorDraft | null = null
   let mqttPublishDraft: MqttPublishDraft = { topic: '', payload: '', qos: 0, retain: false }
   let mqttPublishScratch: MqttPublishDraft = { ...mqttPublishDraft }
@@ -613,11 +632,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     persistMqttSecrets()
   }
 
-  function context(): RuntimeActionContext {
+  function context(input?: ShortcutInputContext): RuntimeActionContext {
     const layerIds = [
       confirm ? 'confirm' : null,
       portGroupDraft ? 'port-group-editor' : null,
       mqttConfigDraft ? 'mqtt-editor' : null,
+      mqttConnectionGroupDraft ? 'mqtt-connection-group-editor' : null,
       mqttSubscriptionDraft ? 'mqtt-subscription-editor' : null,
       mqttFavoriteDraft ? 'mqtt-favorite-editor' : null,
       mqttRecordEditDraft ? 'mqtt-record-editor' : null,
@@ -634,14 +654,22 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       mqttPublishDraftHistoryOpen ? 'mqtt-publish-draft' : null,
       favoriteDrawer.open ? 'favorites-drawer' : null
     ].filter((item): item is string => Boolean(item))
-    return {
+    const base: RuntimeActionContext = {
       tab: state.activeTab,
       selectedIds: state.activeTab === 'ports' ? selectedPortIds : selectedFavoriteIds,
       layerIds,
       portPane: activePortPane,
       favoritePane: activeFavoritePane,
-      favoriteQuickMode
+      favoriteQuickMode,
+      mqttPane: activeMqttPane,
+      mqttPanelOpen,
+      mqttTargetKind: mqttSelectedRecord?.kind
     }
+    if (input) {
+      base.textInputFocused = input.textInputFocused
+      base.activeInputRole = input.activeInputRole
+    }
+    return base
   }
 
   function setMessage(value: string) {
@@ -734,11 +762,79 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return id ? state.mqtt.configs.find((item) => item.id === id) || null : null
   }
 
+  function mqttConnectionGroupById(id: string | null): MqttConnectionGroup | null {
+    return id ? state.mqtt.connectionGroups.find((item) => item.id === id) || null : null
+  }
+
+  function mqttConnectionSelectedTarget(): MqttConnectionTreeTarget | null {
+    if (mqttSelectedRecord?.kind === 'config') return { kind: 'config', id: mqttSelectedRecord.id }
+    if (mqttSelectedRecord?.kind === 'connection-group') return { kind: 'group', id: mqttSelectedRecord.id }
+    return state.mqtt.activeConfigId ? { kind: 'config', id: state.mqtt.activeConfigId } : null
+  }
+
+  function mqttConnectionTreeRowsForSnapshot(): MqttConnectionTreeRow[] {
+    return buildMqttConnectionTreeRows(state.mqtt.configs, state.mqtt.connectionGroups, {
+      collapsedIds: state.mqtt.layoutPrefs.collapsedConnectionGroupIds,
+      activeConfigId: state.mqtt.activeConfigId,
+      selectedConfigIds: mqttSelectedConfigIds,
+      selectedTarget: mqttConnectionSelectedTarget()
+    })
+  }
+
+  function mqttTreeKindFromRaw(value: unknown): MqttConnectionTreeTarget['kind'] | null {
+    if (value === 'group' || value === 'connection-group') return 'group'
+    if (value === 'config') return 'config'
+    return null
+  }
+
+  function mqttConnectionTreeTargetFromArgs(args?: Record<string, unknown>, prefix: 'target' | 'moving' | 'self' = 'target'): MqttConnectionTreeTarget | null {
+    const kindValue = prefix === 'moving'
+      ? args?.movingKind
+      : prefix === 'target'
+        ? (args?.targetKind ?? args?.kind)
+        : args?.kind
+    const idValue = prefix === 'moving'
+      ? args?.movingId
+      : prefix === 'target'
+        ? (args?.targetId ?? args?.id)
+        : args?.id
+    const kind = mqttTreeKindFromRaw(kindValue)
+    const id = typeof idValue === 'string' ? idValue.trim() : ''
+    return kind && id ? { kind, id } : null
+  }
+
+  function focusMqttConnectionGroupInternal(id: string, notifyChange = true): boolean {
+    const group = mqttConnectionGroupById(id)
+    if (!group) return false
+    mqttSelectedRecord = { kind: 'connection-group', id: group.id }
+    activeMqttPane = 'connections'
+    if (notifyChange) notify()
+    return true
+  }
+
+  function focusMqttConnectionTreeTarget(target: MqttConnectionTreeTarget, notifyChange = true): boolean {
+    return target.kind === 'config'
+      ? focusMqttConfigInternal(target.id, notifyChange)
+      : focusMqttConnectionGroupInternal(target.id, notifyChange)
+  }
+
+  function mqttFocusedGroupIdFromArgs(args?: Record<string, unknown>): string | null {
+    const target = mqttConnectionTreeTargetFromArgs(args)
+    if (target?.kind === 'group') return target.id
+    const explicitId = typeof args?.groupId === 'string' ? args.groupId.trim() : ''
+    if (explicitId) return explicitId
+    const id = typeof args?.id === 'string' ? args.id.trim() : ''
+    if (id && mqttConnectionGroupById(id)) return id
+    return mqttSelectedRecord?.kind === 'connection-group' ? mqttSelectedRecord.id : null
+  }
+
   function mqttConfigIdFromArgs(args?: Record<string, unknown>): string | null {
     const explicit = mqttExplicitTargetFromArgs(args)
     if (explicit?.kind === 'config') return explicit.id
+    if (explicit?.kind === 'connection-group' || mqttConnectionTreeTargetFromArgs(args)?.kind === 'group') return null
     if (typeof args?.configId === 'string' && args.configId.trim()) return args.configId.trim()
     if (mqttSelectedRecord?.kind === 'config') return mqttSelectedRecord.id
+    if (mqttSelectedRecord?.kind === 'connection-group') return null
     return state.mqtt.activeConfigId || currentMqttConfig()?.id || null
   }
 
@@ -793,18 +889,18 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function moveMqttConnectionFocus(direction: 1 | -1, page = false) {
-    const rows = state.mqtt.configs
+    const rows = mqttConnectionTreeRowsForSnapshot()
     if (!rows.length) {
       state.mqtt.activeConfigId = null
       mqttSelectedRecord = null
       notify()
       return true
     }
-    const currentId = mqttSelectedRecord?.kind === 'config' ? mqttSelectedRecord.id : state.mqtt.activeConfigId
-    const currentIndex = rows.findIndex((item) => item.id === currentId)
+    const currentTarget = mqttConnectionSelectedTarget()
+    const currentIndex = rows.findIndex((item) => currentTarget && item.kind === currentTarget.kind && item.id === currentTarget.id)
     const current = currentIndex >= 0 ? currentIndex : direction > 0 ? -1 : rows.length
     const nextIndex = Math.min(rows.length - 1, Math.max(0, current + direction * (page ? 5 : 1)))
-    return focusMqttConfigInternal(rows[nextIndex].id)
+    return focusMqttConnectionTreeTarget(rows[nextIndex].target)
   }
 
   function deleteMqttConfigs(ids: string[]) {
@@ -830,7 +926,27 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return true
   }
 
+  function deleteMqttConnectionGroupById(id: string) {
+    const group = mqttConnectionGroupById(id)
+    if (!group) return false
+    const result = deleteMqttConnectionGroup(state.mqtt.configs, state.mqtt.connectionGroups, group.id)
+    state.mqtt.configs = result.configs
+    state.mqtt.connectionGroups = result.groups
+    state.mqtt.layoutPrefs.collapsedConnectionGroupIds = state.mqtt.layoutPrefs.collapsedConnectionGroupIds.filter((groupId) => groupId !== group.id && result.groups.some((item) => item.id === groupId))
+    const nextTarget = group.parentId && mqttConnectionGroupById(group.parentId)
+      ? { kind: 'connection-group' as const, id: group.parentId }
+      : null
+    mqttSelectedRecord = nextTarget || (state.mqtt.activeConfigId ? { kind: 'config', id: state.mqtt.activeConfigId } : null)
+    activeMqttPane = 'connections'
+    closeMqttDrawer(false)
+    save()
+    notify()
+    return true
+  }
+
   function deleteFocusedMqttConnection(args?: Record<string, unknown>) {
+    const groupId = mqttFocusedGroupIdFromArgs(args)
+    if (groupId) return deleteMqttConnectionGroupById(groupId)
     const targetId = mqttConfigIdFromArgs(args)
     return targetId ? deleteMqttConfigs([targetId]) : false
   }
@@ -840,9 +956,53 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function copyMqttConnectionAddress(args?: Record<string, unknown>) {
+    if (mqttConnectionTreeTargetFromArgs(args)?.kind === 'group' || mqttSelectedRecord?.kind === 'connection-group') return false
     const config = mqttConfigById(mqttConfigIdFromArgs(args))
     if (!config?.url) return false
     void copyText(config.url, '已复制 MQTT 连接地址')
+    return true
+  }
+
+  function mqttConnectionGroupCollapseTargetId(args?: Record<string, unknown>): string | null {
+    const target = mqttConnectionTreeTargetFromArgs(args)
+    if (target?.kind === 'group') return target.id
+    return mqttFocusedGroupIdFromArgs(args)
+  }
+
+  function setMqttConnectionGroupCollapsed(args: Record<string, unknown> | undefined, collapsed: boolean) {
+    const id = mqttConnectionGroupCollapseTargetId(args)
+    if (!id || !mqttConnectionGroupById(id)) return false
+    const current = new Set(state.mqtt.layoutPrefs.collapsedConnectionGroupIds)
+    if (collapsed) current.add(id)
+    else current.delete(id)
+    state.mqtt.layoutPrefs.collapsedConnectionGroupIds = [...current].filter((groupId) => mqttConnectionGroupById(groupId))
+    persistMqttLayoutPrefs()
+    notify()
+    return true
+  }
+
+  function toggleMqttConnectionGroupCollapse(args?: Record<string, unknown>) {
+    const id = mqttConnectionGroupCollapseTargetId(args)
+    if (!id || !mqttConnectionGroupById(id)) return false
+    return setMqttConnectionGroupCollapsed(args, !state.mqtt.layoutPrefs.collapsedConnectionGroupIds.includes(id))
+  }
+
+  function moveMqttConnectionTreeFromArgs(args?: Record<string, unknown>) {
+    const movingTarget = mqttConnectionTreeTargetFromArgs(args, 'moving')
+    const dropTarget = mqttConnectionTreeTargetFromArgs(args, 'target')
+    const position: MqttConnectionTreeDropPosition = args?.position === 'before' || args?.position === 'after' || args?.position === 'inside'
+      ? args.position
+      : 'inside'
+    if (!movingTarget || !dropTarget) return false
+    const resolved = mqttConnectionTreeMoveTarget(state.mqtt.configs, state.mqtt.connectionGroups, movingTarget, dropTarget, position)
+    if (!resolved) return false
+    const result = moveMqttConnectionTreeTarget(state.mqtt.configs, state.mqtt.connectionGroups, movingTarget, resolved.parentGroupId, resolved.beforeTarget)
+    state.mqtt.configs = result.configs
+    state.mqtt.connectionGroups = result.groups
+    state.mqtt.layoutPrefs.collapsedConnectionGroupIds = state.mqtt.layoutPrefs.collapsedConnectionGroupIds.filter((id) => mqttConnectionGroupById(id))
+    focusMqttConnectionTreeTarget(movingTarget, false)
+    save()
+    notify()
     return true
   }
 
@@ -2272,8 +2432,37 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return session.id
   }
 
-  function defaultMqttConfigDraft(mode: MqttConfigDraft['mode'], target: MqttConnectionConfig | null): MqttConfigDraft {
+  function hasArg(args: Record<string, unknown> | undefined, key: string) {
+    return Boolean(args && Object.prototype.hasOwnProperty.call(args, key))
+  }
+
+  function validMqttConnectionGroupId(value: unknown): string | null {
+    const id = typeof value === 'string' ? value.trim() : ''
+    return id && mqttConnectionGroupById(id) ? id : null
+  }
+
+  function mqttConnectionCreateParentId(args?: Record<string, unknown>, actionContext?: RuntimeActionContext, explicitKey: 'groupId' | 'parentId' = 'parentId'): string | null {
+    if (hasArg(args, explicitKey)) return validMqttConnectionGroupId(args?.[explicitKey])
+    const target = mqttConnectionTreeTargetFromArgs(args)
+    if (target?.kind === 'group') return target.id
+    if (target?.kind === 'config') return mqttConfigById(target.id)?.groupId || null
+
+    const hasShortcutInput = Boolean(actionContext && (hasArg(actionContext as unknown as Record<string, unknown>, 'textInputFocused') || hasArg(actionContext as unknown as Record<string, unknown>, 'activeInputRole')))
+    if (hasShortcutInput) {
+      if (actionContext?.activeInputRole !== 'mqtt-connections') return null
+      if (mqttSelectedRecord?.kind === 'connection-group') return mqttSelectedRecord.id
+      if (mqttSelectedRecord?.kind === 'config') return mqttConfigById(mqttSelectedRecord.id)?.groupId || null
+      return null
+    }
+
+    if (mqttSelectedRecord?.kind === 'connection-group') return mqttSelectedRecord.id
+    if (mqttSelectedRecord?.kind === 'config') return mqttConfigById(mqttSelectedRecord.id)?.groupId || null
+    return currentMqttConfig()?.groupId || null
+  }
+
+  function defaultMqttConfigDraft(mode: MqttConfigDraft['mode'], target: MqttConnectionConfig | null, args?: Record<string, unknown>, actionContext?: RuntimeActionContext): MqttConfigDraft {
     if (!target) {
+      const groupId = mqttConnectionCreateParentId(args, actionContext, 'groupId')
       return {
         mode,
         targetId: null,
@@ -2286,6 +2475,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         ssl: false,
         clientId: '',
         username: '',
+        groupId: groupId && mqttConnectionGroupById(groupId) ? groupId : null,
         password: '',
         subscriptionsText: '',
         subscriptionItems: [],
@@ -2322,6 +2512,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       ssl: endpoint.ssl,
       clientId: config.clientId,
       username: config.username,
+      groupId: config.groupId,
       password: target ? mqttSecrets.get(target.id) || '' : '',
       subscriptionsText: config.subscriptions.join('\n'),
       subscriptionItems: config.subscriptions.map((topic, index) => ({ topic, alias: config.subscriptionAliases[topic] || '', color: normalizeMqttTopicColor(config.subscriptionColors[topic], index) })),
@@ -2345,10 +2536,141 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     }
   }
 
-  function beginMqttConfigDraft(mode: MqttConfigDraft['mode']) {
+  function mqttConnectionGroupDraftTargetFromArgs(args?: Record<string, unknown>): MqttConnectionGroup | null {
+    const target = mqttConnectionTreeTargetFromArgs(args)
+    if (target?.kind === 'group') return mqttConnectionGroupById(target.id)
+    const groupId = mqttFocusedGroupIdFromArgs(args)
+    return mqttConnectionGroupById(groupId)
+  }
+
+  function defaultMqttConnectionGroupParentId(args?: Record<string, unknown>, actionContext?: RuntimeActionContext): string | null {
+    return mqttConnectionCreateParentId(args, actionContext, 'parentId')
+  }
+
+  function defaultMqttConnectionGroupDraft(mode: MqttConnectionGroupDraftMode, target: MqttConnectionGroup | null, args?: Record<string, unknown>, actionContext?: RuntimeActionContext): MqttConnectionGroupDraft {
+    if (target) {
+      return {
+        mode,
+        targetId: target.id,
+        name: target.name,
+        color: target.color,
+        parentId: target.parentId,
+        activeField: mode === 'move-parent' ? 'parent' : 'name'
+      }
+    }
+    return {
+      mode,
+      targetId: null,
+      name: '',
+      color: '#00A676',
+      parentId: defaultMqttConnectionGroupParentId(args, actionContext),
+      activeField: 'name'
+    }
+  }
+
+  function beginMqttConnectionGroupDraft(mode: MqttConnectionGroupDraftMode, args?: Record<string, unknown>, actionContext?: RuntimeActionContext) {
     ensureMqttArchiveLoaded()
+    const target = mode === 'create' ? null : mqttConnectionGroupDraftTargetFromArgs(args)
+    if (mode !== 'create' && !target) return false
+    mqttConnectionGroupDraft = defaultMqttConnectionGroupDraft(mode, target, args, actionContext)
+    mqttConfigDraft = null
+    mqttDrawer = { open: false, active: false, activeIndex: 0, targetKind: null, targetId: null }
+    mqttPreview = { open: false, targetKind: null, targetId: null, source: null, scrollTop: 0 }
+    notify()
+    return true
+  }
+
+  function updateMqttConnectionGroupDraft(input: Partial<Omit<MqttConnectionGroupDraft, 'mode' | 'targetId'>>) {
+    if (!mqttConnectionGroupDraft) return
+    const targetId = mqttConnectionGroupDraft.targetId || ''
+    const parentId = input.parentId !== undefined
+      ? (input.parentId && isValidMqttConnectionGroupParent(state.mqtt.connectionGroups, targetId, input.parentId) ? input.parentId : null)
+      : mqttConnectionGroupDraft.parentId
+    const activeField = input.activeField === 'color' || input.activeField === 'parent' || input.activeField === 'name'
+      ? input.activeField
+      : mqttConnectionGroupDraft.activeField
+    mqttConnectionGroupDraft = {
+      ...mqttConnectionGroupDraft,
+      ...input,
+      parentId,
+      activeField
+    }
+    notify()
+  }
+
+  function saveMqttConnectionGroupDraft() {
+    if (!mqttConnectionGroupDraft) return false
+    const now = Date.now()
+    const draft = mqttConnectionGroupDraft
+    const name = draft.name.trim() || '新分组'
+    const parentId = draft.parentId && isValidMqttConnectionGroupParent(state.mqtt.connectionGroups, draft.targetId || '', draft.parentId) ? draft.parentId : null
+    if (draft.mode === 'create') {
+      const siblingCount = state.mqtt.connectionGroups.filter((group) => (group.parentId ?? null) === (parentId ?? null)).length
+      const group: MqttConnectionGroup = {
+        id: `mqtt-group:${now}:${Math.random().toString(16).slice(2, 8)}`,
+        name,
+        color: draft.color || '#00A676',
+        parentId,
+        sortOrder: siblingCount + 1,
+        createdAt: now,
+        updatedAt: now
+      }
+      state.mqtt.connectionGroups = normalizeMqttConnectionGroups([...state.mqtt.connectionGroups, group], now)
+      mqttSelectedRecord = { kind: 'connection-group', id: group.id }
+    } else {
+      const targetId = draft.targetId || ''
+      const target = mqttConnectionGroupById(targetId)
+      if (!target) return false
+      state.mqtt.connectionGroups = normalizeMqttConnectionGroups(state.mqtt.connectionGroups.map((group) => {
+        if (group.id !== targetId) return group
+        return {
+          ...group,
+          name: draft.mode === 'move-parent' ? target.name : name,
+          color: draft.mode === 'rename' || draft.mode === 'move-parent' ? group.color : draft.color,
+          parentId: draft.mode === 'rename' ? group.parentId : parentId,
+          updatedAt: now
+        }
+      }), now)
+      mqttSelectedRecord = { kind: 'connection-group', id: targetId }
+    }
+    state.mqtt.configs = normalizeMqttConfigGroupRefs(state.mqtt.configs, state.mqtt.connectionGroups)
+    state.mqtt.layoutPrefs.collapsedConnectionGroupIds = state.mqtt.layoutPrefs.collapsedConnectionGroupIds.filter((id) => mqttConnectionGroupById(id))
+    mqttConnectionGroupDraft = null
+    activeMqttPane = 'connections'
+    save()
+    notify()
+    return true
+  }
+
+  function moveMqttConnectionGroupDraftField(offset: number) {
+    if (!mqttConnectionGroupDraft) return false
+    const fields: MqttConnectionGroupDraftField[] = mqttConnectionGroupDraft.mode === 'rename'
+      ? ['name']
+      : mqttConnectionGroupDraft.mode === 'move-parent'
+        ? ['parent']
+        : ['name', 'color', 'parent']
+    const index = fields.indexOf(mqttConnectionGroupDraft.activeField)
+    mqttConnectionGroupDraft = {
+      ...mqttConnectionGroupDraft,
+      activeField: fields[(index + offset + fields.length) % fields.length]
+    }
+    notify()
+    return true
+  }
+
+  function cancelMqttConnectionGroupDraft() {
+    mqttConnectionGroupDraft = null
+    notify()
+    return true
+  }
+
+  function beginMqttConfigDraft(mode: MqttConfigDraft['mode'], args?: Record<string, unknown>, actionContext?: RuntimeActionContext) {
+    ensureMqttArchiveLoaded()
+    if (mode !== 'create' && mqttSelectedRecord?.kind === 'connection-group') {
+      return beginMqttConnectionGroupDraft(mode === 'rename' ? 'rename' : 'edit', args, actionContext)
+    }
     const target = mode === 'create' ? null : currentMqttConfig()
-    mqttConfigDraft = defaultMqttConfigDraft(mode, target)
+    mqttConfigDraft = defaultMqttConfigDraft(mode, target, args, actionContext)
     mqttDrawer = { open: false, active: false, activeIndex: 0, targetKind: null, targetId: null }
     mqttPreview = { open: false, targetKind: null, targetId: null, source: null, scrollTop: 0 }
     notify()
@@ -2530,6 +2852,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         ...subscriptionData,
         publishTopic,
         publishTopics,
+        groupId: draft.groupId,
         sortOrder: state.mqtt.configs.length + 1,
         createdAt: now,
         updatedAt: now
@@ -2553,6 +2876,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
           url: draft.mode === 'rename' ? config.url : buildMqttWebSocketUrl(draft),
           clientId: draft.mode === 'rename' ? config.clientId : draft.clientId,
           username: draft.mode === 'rename' ? config.username : draft.username,
+          groupId: draft.mode === 'rename' ? config.groupId : draft.groupId,
           publishTopic: draft.mode === 'rename' ? config.publishTopic : publishTopic,
           publishTopics: draft.mode === 'rename' ? config.publishTopics : publishTopics,
           updatedAt: now
@@ -2561,7 +2885,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       })
       if (state.mqtt.configs.some((config) => config.id === targetId)) setMqttSecret(targetId, draft.password)
     }
-    state.mqtt.configs = state.mqtt.configs.sort((a, b) => a.sortOrder - b.sortOrder).map((item, index) => ({ ...item, sortOrder: index + 1 }))
+    state.mqtt.configs = normalizeMqttConfigGroupRefs(state.mqtt.configs, state.mqtt.connectionGroups)
     restoreMqttActiveSubscriptionTopics()
     persistMqttViewPrefs()
     mqttConfigDraft = null
@@ -2574,6 +2898,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   function mqttConfigDraftFocusCells(draft: MqttConfigDraft): MqttConfigDraftFocusCell[] {
     const cells: MqttConfigDraftFocusCell[] = [
       { activeField: 'name' },
+      { activeField: 'groupId' },
       { activeField: 'clientId' },
       { activeField: 'protocol' },
       { activeField: 'host' },
@@ -2867,6 +3192,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     }
     if (mqttSelectedRecord.kind === 'publish-template') return deleteMqttTemplate(mqttSelectedRecord.id)
     if (mqttSelectedRecord.kind === 'config') return deleteFocusedMqttConnection({ kind: 'config', id: mqttSelectedRecord.id })
+    if (mqttSelectedRecord.kind === 'connection-group') return deleteMqttConnectionGroupById(mqttSelectedRecord.id)
     if (mqttSelectedRecord.kind !== 'session' && mqttSelectedRecord.kind !== 'message') return false
     const activeList = activeMqttRecordList === 'history' && mqttRecordRowsForList('history').some((row) => row.id === mqttSelectedRecord?.id)
       ? 'history'
@@ -3082,8 +3408,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       : typeof args?.targetId === 'string'
         ? args.targetId.trim()
         : ''
-    const kind = rawKind === 'config' || rawKind === 'subscription' || rawKind === 'session' || rawKind === 'message' || rawKind === 'log' || rawKind === 'publish-template' || rawKind === 'publish-draft-history'
-      ? rawKind
+    const kind = rawKind === 'connection-group' || rawKind === 'group'
+      ? 'connection-group'
+      : rawKind === 'config' || rawKind === 'subscription' || rawKind === 'session' || rawKind === 'message' || rawKind === 'log' || rawKind === 'publish-template' || rawKind === 'publish-draft-history'
+        ? rawKind
       : null
     if (kind && id) return { kind, id }
     return null
@@ -3216,6 +3544,19 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         historyTarget
           ? mqttDrawerItem('mqtt.history.clearAll', '清空历史', '清理当前历史列表中的记录。', 'clear-all', args)
           : mqttDrawerItem('mqtt.messages.clearAll', '清空消息', '清理当前消息视图中的记录。', 'clear-all', args)
+      ]
+    }
+    if (target?.kind === 'connection-group') {
+      return [
+        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前连接分组。', 'detail', args),
+        mqttDrawerItem('mqtt.connectionGroup.create', '子分组', '在当前分组下新增子分组。', 'folder-plus', { parentId: target.id }),
+        mqttDrawerItem('mqtt.config.create', '新建连接', '在当前分组下新增 MQTT 连接。', 'plus', args),
+        mqttDrawerItem('mqtt.connectionGroup.moveParent', '移动父级', '选择当前分组所在的父级分组，或留空放在根层。', 'folder', args),
+        mqttDrawerItem('mqtt.connectionGroup.rename', '重命名', '只编辑当前连接分组名称。', 'rename', args),
+        mqttDrawerItem('mqtt.connectionGroup.edit', '编辑分组', '编辑当前连接分组名称、颜色和父级。', 'edit', args),
+        mqttDrawerItem('mqtt.connectionGroup.collapse', '折叠', '折叠当前连接分组。', 'collapse', args),
+        mqttDrawerItem('mqtt.connectionGroup.expand', '展开', '展开当前连接分组。', 'expand', args),
+        mqttDrawerItem('mqtt.connectionGroup.delete', '删除', '删除分组并提升直接子项。', 'trash', args)
       ]
     }
     if (target?.kind === 'config') {
@@ -5300,9 +5641,22 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'mqtt.connection.delete', title: '删除当前 MQTT 连接', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Delete', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => deleteFocusedMqttConnection(args) })
     actions.register({ id: 'mqtt.connection.deleteSelected', title: '删除选中 MQTT 连接', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+Delete', when: (ctx) => ctx.tab === 'mqtt', run: () => deleteSelectedMqttConnections() })
     actions.register({ id: 'mqtt.selection.clear', title: '清空 MQTT 多选', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 95, when: (ctx) => ctx.tab === 'mqtt', run: () => clearMqttRailSelection() })
-    actions.register({ id: 'mqtt.config.create', title: '新建 MQTT 配置', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+N', when: (ctx) => ctx.tab === 'mqtt', run: () => beginMqttConfigDraft('create') })
-    actions.register({ id: 'mqtt.config.edit', title: '编辑 MQTT 配置', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'F2', when: (ctx) => ctx.tab === 'mqtt', run: () => beginMqttConfigDraft('edit') })
-    actions.register({ id: 'mqtt.config.rename', title: '重命名 MQTT 配置', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'mqtt', run: () => beginMqttConfigDraft('rename') })
+    actions.register({ id: 'mqtt.connectionTree.move', title: '移动 MQTT 连接树节点', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 95, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => moveMqttConnectionTreeFromArgs(args) })
+    actions.register({ id: 'mqtt.connectionGroup.create', title: '新建 MQTT 连接分组', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+G', when: (ctx) => ctx.tab === 'mqtt', run: (ctx, args) => beginMqttConnectionGroupDraft('create', args, ctx) })
+    actions.register({ id: 'mqtt.connectionGroup.edit', title: '编辑 MQTT 连接分组', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'F2', when: (ctx) => ctx.tab === 'mqtt', run: (ctx, args) => beginMqttConnectionGroupDraft('edit', args, ctx) })
+    actions.register({ id: 'mqtt.connectionGroup.rename', title: '重命名 MQTT 连接分组', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'mqtt', run: (ctx, args) => beginMqttConnectionGroupDraft('rename', args, ctx) })
+    actions.register({ id: 'mqtt.connectionGroup.moveParent', title: '移动 MQTT 连接分组父级', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'Ctrl+F2', when: (ctx) => ctx.tab === 'mqtt', run: (ctx, args) => beginMqttConnectionGroupDraft('move-parent', args, ctx) })
+    actions.register({ id: 'mqtt.connectionGroup.delete', title: '删除 MQTT 连接分组', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Delete', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => { const id = mqttFocusedGroupIdFromArgs(args); return id ? deleteMqttConnectionGroupById(id) : false } })
+    actions.register({ id: 'mqtt.connectionGroup.toggleCollapse', title: '折叠/展开 MQTT 连接分组', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 94, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => toggleMqttConnectionGroupCollapse(args) })
+    actions.register({ id: 'mqtt.connectionGroup.collapse', title: '折叠 MQTT 连接分组', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 94, shortcut: 'ArrowLeft', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => setMqttConnectionGroupCollapsed(args, true) })
+    actions.register({ id: 'mqtt.connectionGroup.expand', title: '展开 MQTT 连接分组', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 94, shortcut: 'ArrowRight', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => setMqttConnectionGroupCollapsed(args, false) })
+    actions.register({ id: 'mqtt.connectionGroup.save', title: '保存 MQTT 连接分组', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('mqtt-connection-group-editor'), run: () => saveMqttConnectionGroupDraft() })
+    actions.register({ id: 'mqtt.connectionGroup.cancel', title: '取消 MQTT 分组编辑', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-connection-group-editor'), run: () => cancelMqttConnectionGroupDraft() })
+    actions.register({ id: 'mqtt.connectionGroup.nextField', title: 'MQTT 分组编辑下一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.layerIds.includes('mqtt-connection-group-editor'), run: () => moveMqttConnectionGroupDraftField(1) })
+    actions.register({ id: 'mqtt.connectionGroup.prevField', title: 'MQTT 分组编辑上一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.layerIds.includes('mqtt-connection-group-editor'), run: () => moveMqttConnectionGroupDraftField(-1) })
+    actions.register({ id: 'mqtt.config.create', title: '新建 MQTT 配置', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+N', when: (ctx) => ctx.tab === 'mqtt', run: (ctx, args) => beginMqttConfigDraft('create', args, ctx) })
+    actions.register({ id: 'mqtt.config.edit', title: '编辑 MQTT 配置', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'F2', when: (ctx) => ctx.tab === 'mqtt', run: (ctx, args) => beginMqttConfigDraft('edit', args, ctx) })
+    actions.register({ id: 'mqtt.config.rename', title: '重命名 MQTT 配置', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'mqtt', run: (ctx, args) => beginMqttConfigDraft('rename', args, ctx) })
     actions.register({ id: 'mqtt.config.save', title: '保存 MQTT 配置', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: () => saveMqttConfigDraft() })
     actions.register({ id: 'mqtt.config.cancel', title: '取消 MQTT 编辑', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: () => { mqttConfigDraft = null; notify(); return true } })
     actions.register({ id: 'mqtt.config.clientId.refresh', title: '刷新 MQTT Client ID', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, when: (ctx) => ctx.layerIds.includes('mqtt-editor'), run: () => refreshMqttConfigClientId() })
@@ -5567,6 +5921,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       favoritePane: activeFavoritePane,
       favoriteQuickMode,
       mqttPane: activeMqttPane,
+      mqttPanelOpen,
+      mqttTargetKind: mqttSelectedRecord?.kind,
       mqttDrawerOpen: mqttDrawer.open && mqttDrawer.active,
       mqttDrawerActive: mqttDrawer.open && mqttDrawer.active,
       mqttDetailOpen: mqttDrawer.open && !mqttDrawer.active,
@@ -5669,6 +6025,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         mqttConnectionStatus,
         mqttLogs,
         mqttActiveConfig: currentMqttConfig(),
+        mqttConnectionRows: mqttConnectionTreeRowsForSnapshot(),
         mqttSubscriptionRows: mqttSubscriptionRowsForActiveConfig(),
         mqttActiveSubscriptionTopic,
         mqttActiveSubscriptionTopics,
@@ -5690,6 +6047,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         mqttSelectedRecord,
         mqttSelectedLog: selectedMqttLog(),
         mqttConfigDraft,
+        mqttConnectionGroupDraft,
         mqttSubscriptionDraft,
         mqttPublishDraft,
         mqttPublishScratch,
@@ -5758,6 +6116,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     focusMqttConfig(id: string) {
       focusMqttConfigInternal(id)
     },
+    focusMqttConnectionGroup(id: string) {
+      focusMqttConnectionGroupInternal(id)
+    },
     focusMqttSession(id: string) {
       ensureMqttArchiveLoaded()
       mqttSelectedRecord = { kind: 'session', id }
@@ -5783,6 +6144,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       notify()
     },
     updateMqttConfigDraft,
+    updateMqttConnectionGroupDraft,
     updateMqttSubscriptionDraft,
     updateMqttFavoriteDraft,
     updateMqttRecordEditDraft,
@@ -6002,6 +6364,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         notify()
         return 'mqtt.subscription.editor.cancel'
       }
+      if (mqttConnectionGroupDraft && shortcutId === 'Escape') {
+        mqttConnectionGroupDraft = null
+        notify()
+        return 'mqtt.connectionGroup.cancel'
+      }
       if (mqttFavoriteDraft && shortcutId === 'Escape') {
         mqttFavoriteDraft = null
         notify()
@@ -6187,7 +6554,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         toggleFocusedSelection()
         return binding.actionId
       }
-      const result = actions.dispatch({ actionId: binding.actionId, context: context() })
+      const result = actions.dispatch({ actionId: binding.actionId, context: context(input) })
       return result.handled ? binding.actionId : null
     },
     get defaultKeybindings() {

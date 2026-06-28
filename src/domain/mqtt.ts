@@ -1,4 +1,5 @@
-import type { MqttArchiveState, MqttConnectionConfig, MqttConnectionSnapshot, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishDraftHistorySource, MqttPublishTemplate, MqttQos, MqttSessionRecord, MqttState, MqttViewPrefs, MqttWorkspaceLayout } from './types'
+import { normalizeMqttConfigGroupRefs, normalizeMqttConnectionGroups } from './mqttConnectionTree'
+import type { MqttArchiveState, MqttConnectionConfig, MqttConnectionGroup, MqttConnectionSnapshot, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishDraftHistorySource, MqttPublishTemplate, MqttQos, MqttSessionRecord, MqttState, MqttViewPrefs, MqttWorkspaceLayout } from './types'
 
 export const MQTT_ARCHIVE_SESSION_LIMIT = 50
 export const MQTT_ARCHIVE_MESSAGE_LIMIT = 500
@@ -17,7 +18,8 @@ export const DEFAULT_MQTT_LAYOUT_PREFS: MqttLayoutPrefs = {
   splitReceiveRatio: 0.55,
   connectionPanelOpen: true,
   subscriptionPanelOpen: true,
-  publishRecordsOpen: false
+  publishRecordsOpen: false,
+  collapsedConnectionGroupIds: []
 }
 export const DEFAULT_MQTT_VIEW_PREFS: MqttViewPrefs = {
   infoFilter: 'incoming',
@@ -245,6 +247,7 @@ export function createMqttConnectionConfig(input: Partial<MqttConnectionConfig> 
     url,
     clientId: stringValue(source.clientId).trim() || createMqttClientId(now),
     username: stringValue(source.username).trim(),
+    groupId: stringValue(source.groupId).trim() || null,
     subscriptions,
     subscriptionAliases: subscriptionAliases(source.subscriptionAliases, subscriptions),
     subscriptionColors: subscriptionColors(source.subscriptionColors, subscriptions),
@@ -268,17 +271,19 @@ export function createMqttConnectionConfig(input: Partial<MqttConnectionConfig> 
 
 export function normalizeMqttState(value: unknown, now = Date.now()): MqttState {
   const source = record(value)
-  const layoutPrefs = normalizeMqttLayoutPrefs(source.layoutPrefs)
-  const configs = Array.isArray(source.configs)
+  const connectionGroups = normalizeMqttConnectionGroups(source.connectionGroups, now)
+  const rawConfigs = Array.isArray(source.configs)
     ? source.configs
       .map((item) => createMqttConnectionConfig(item as Record<string, unknown>, now))
       .filter((item) => item.id && (item.url || item.name))
       .sort((a, b) => a.sortOrder - b.sortOrder)
-      .map((item, index) => ({ ...item, sortOrder: index + 1 }))
     : []
+  const configs = normalizeMqttConfigGroupRefs(rawConfigs, connectionGroups)
+  const layoutPrefs = normalizeMqttLayoutPrefs(source.layoutPrefs, connectionGroups)
   const activeConfigId = stringValue(source.activeConfigId).trim()
   return {
     configs,
+    connectionGroups,
     activeConfigId: activeConfigId && configs.some((item) => item.id === activeConfigId)
       ? activeConfigId
       : configs[0]?.id || null,
@@ -307,16 +312,18 @@ export function normalizeMqttViewPrefs(value: unknown, configs: MqttConnectionCo
   }
 }
 
-export function normalizeMqttLayoutPrefs(value: unknown): MqttLayoutPrefs {
+export function normalizeMqttLayoutPrefs(value: unknown, connectionGroups: MqttConnectionGroup[] = []): MqttLayoutPrefs {
   const source = record(value)
   const workspaceLayout: MqttWorkspaceLayout = source.workspaceLayout === 'split' ? 'split' : 'stack'
+  const groupIds = new Set(connectionGroups.map((group) => group.id))
   return {
     workspaceLayout,
     stackReceiveRatio: clampRatio(source.stackReceiveRatio, DEFAULT_MQTT_LAYOUT_PREFS.stackReceiveRatio),
     splitReceiveRatio: clampRatio(source.splitReceiveRatio, DEFAULT_MQTT_LAYOUT_PREFS.splitReceiveRatio),
     connectionPanelOpen: boolValue(source.connectionPanelOpen, DEFAULT_MQTT_LAYOUT_PREFS.connectionPanelOpen),
     subscriptionPanelOpen: boolValue(source.subscriptionPanelOpen, DEFAULT_MQTT_LAYOUT_PREFS.subscriptionPanelOpen),
-    publishRecordsOpen: boolValue(source.publishRecordsOpen, DEFAULT_MQTT_LAYOUT_PREFS.publishRecordsOpen)
+    publishRecordsOpen: boolValue(source.publishRecordsOpen, DEFAULT_MQTT_LAYOUT_PREFS.publishRecordsOpen),
+    collapsedConnectionGroupIds: strings(source.collapsedConnectionGroupIds).filter((id) => groupIds.has(id))
   }
 }
 

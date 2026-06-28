@@ -32,6 +32,7 @@ export function activeInputRoleFromTarget(target: EventTarget | null, activeTab:
   if (role === 'mqtt-publish-draft-editor') return 'mqtt-publish-draft-editor'
   if (role === 'mqtt-config-subscription-editor') return 'mqtt-config-subscription-editor'
   if (role === 'mqtt-config-publish-editor') return 'mqtt-config-publish-editor'
+  if (role === 'mqtt-connection-group-editor') return 'mqtt-connection-group-editor'
   if (role === 'mqtt-subscription-editor') return 'mqtt-subscription-editor'
   if (role === 'mqtt-favorite-editor') return 'mqtt-favorite-editor'
   if (!element || !isEditableTarget(element)) return undefined

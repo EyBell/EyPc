@@ -151,6 +151,16 @@ describe('keyboard event runtime', () => {
     expect(activeInputRoleFromTarget(publishInput, 'mqtt')).toBe('mqtt-config-publish-editor')
   })
 
+  it('detects MQTT connection group editor inputs as a dedicated edit role', () => {
+    const input = {
+      tagName: 'INPUT',
+      isContentEditable: false,
+      closest: (selector: string) => selector === '[data-role]' ? { dataset: { role: 'mqtt-connection-group-editor' } } : null
+    } as unknown as HTMLElement
+
+    expect(activeInputRoleFromTarget(input, 'mqtt')).toBe('mqtt-connection-group-editor')
+  })
+
   it('detects MQTT publish editor inputs as dedicated editor role', () => {
     const textarea = {
       tagName: 'TEXTAREA',

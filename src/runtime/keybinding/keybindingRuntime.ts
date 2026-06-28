@@ -8,6 +8,7 @@ export type KeybindingLayerId =
   | 'settings-shortcut-record'
   | 'settings-when-edit'
   | 'mqtt-editor'
+  | 'mqtt-connection-group-editor'
   | 'mqtt-config-subscription-editor'
   | 'mqtt-config-publish-editor'
   | 'mqtt-publish-editor'
@@ -45,10 +46,12 @@ export interface KeybindingContext {
   tab?: AppTabId
   confirmOpen?: boolean
   textInputFocused?: boolean
-  activeInputRole?: 'port-search' | 'port-group-search' | 'mqtt-search' | 'mqtt-topic-filter' | 'mqtt-publish-editor' | 'mqtt-publish-options' | 'mqtt-publish-draft' | 'mqtt-publish-draft-editor' | 'mqtt-editor' | 'mqtt-config-subscription-editor' | 'mqtt-config-publish-editor' | 'mqtt-subscription-editor' | 'mqtt-favorite-editor' | 'mqtt-record-editor' | 'mqtt-connections' | 'mqtt-subscriptions' | 'favorite-search' | 'favorite-group-search' | 'favorite-editor' | 'favorite-pick-review' | 'settings' | 'port-group-editor' | 'other'
+  activeInputRole?: 'port-search' | 'port-group-search' | 'mqtt-search' | 'mqtt-topic-filter' | 'mqtt-publish-editor' | 'mqtt-publish-options' | 'mqtt-publish-draft' | 'mqtt-publish-draft-editor' | 'mqtt-editor' | 'mqtt-connection-group-editor' | 'mqtt-config-subscription-editor' | 'mqtt-config-publish-editor' | 'mqtt-subscription-editor' | 'mqtt-favorite-editor' | 'mqtt-record-editor' | 'mqtt-connections' | 'mqtt-subscriptions' | 'favorite-search' | 'favorite-group-search' | 'favorite-editor' | 'favorite-pick-review' | 'settings' | 'port-group-editor' | 'other'
   portPane?: 'groups' | 'results'
   favoritePane?: 'groups' | 'items'
   mqttPane?: 'connections' | 'subscriptions' | 'messages' | 'publish' | 'publish-records'
+  mqttPanelOpen?: boolean
+  mqttTargetKind?: 'config' | 'connection-group' | 'subscription' | 'session' | 'message' | 'log' | 'publish-template' | 'publish-draft-history'
   favoriteQuickMode?: boolean
   mqttDrawerOpen?: boolean
   mqttDrawerActive?: boolean
@@ -158,6 +161,7 @@ export const LAYER_PRIORITY: Record<KeybindingLayerId, number> = {
   'settings-shortcut-record': 960,
   'settings-when-edit': 950,
   'mqtt-editor': 930,
+  'mqtt-connection-group-editor': 930,
   'mqtt-config-subscription-editor': 929,
   'mqtt-config-publish-editor': 929,
   'mqtt-publish-editor': 931,
@@ -198,6 +202,7 @@ const LAYER_LABELS: Record<KeybindingLayerId, string> = {
   'settings-shortcut-record': '快捷键录制',
   'settings-when-edit': 'When 编辑',
   'mqtt-editor': 'MQTT 编辑',
+  'mqtt-connection-group-editor': 'MQTT 连接分组编辑',
   'mqtt-config-subscription-editor': 'MQTT 配置订阅行',
   'mqtt-config-publish-editor': 'MQTT 配置发布行',
   'mqtt-publish-editor': 'MQTT 发送编辑',
@@ -346,15 +351,25 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'ports.drawer.action.9': { title: '直接执行第 9 个端口动作', group: '端口', layer: 'ports', shortcutIds: ['Ctrl+Alt+9'], when: "tab == 'ports' && !portDrawerActive && !textInputFocused", weight: 130 },
   'mqtt.connection.connect': { title: '连接/重连 MQTT', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+R'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search' || activeInputRole == 'mqtt-publish-editor' || activeInputRole == 'mqtt-topic-filter' || activeInputRole == 'mqtt-publish-options' || activeInputRole == 'mqtt-publish-draft')", weight: 150, profileId: 'mqtt' },
   'mqtt.connection.disconnect': { title: '断开 MQTT', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+Shift+R'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search' || activeInputRole == 'mqtt-publish-editor' || activeInputRole == 'mqtt-topic-filter' || activeInputRole == 'mqtt-publish-options' || activeInputRole == 'mqtt-publish-draft')", weight: 150, profileId: 'mqtt' },
-  'mqtt.config.create': { title: '新建 MQTT 连接配置', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+N'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 140, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.config.create': { title: '新建 MQTT 连接配置', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+N'], when: "tab == 'mqtt' && mqttPanelOpen && !confirmOpen && (activeInputRole == 'mqtt-search' || activeInputRole == 'mqtt-connections' || (!textInputFocused && (!activeInputRole || activeInputRole == 'mqtt-subscriptions')))", weight: 140, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.connectionGroup.create': { title: '新建 MQTT 连接分组', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+G'], when: "tab == 'mqtt' && mqttPanelOpen && !confirmOpen && (activeInputRole == 'mqtt-search' || activeInputRole == 'mqtt-connections' || (!textInputFocused && (!activeInputRole || activeInputRole == 'mqtt-subscriptions')))", weight: 141, risk: 'data-write', profileId: 'mqtt' },
   'mqtt.pane.next': { title: '切换 MQTT 区域', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Tab'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 151, profileId: 'mqtt' },
   'mqtt.pane.prev': { title: '反向切换 MQTT 区域', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Shift+Tab'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 151, profileId: 'mqtt' },
-  'mqtt.config.edit': { title: '编辑 MQTT 配置', group: 'MQTT', layer: 'mqtt', shortcutIds: ['F2'], when: "tab == 'mqtt' && mqttPane == 'connections' && !confirmOpen && !textInputFocused", weight: 140, risk: 'data-write', profileId: 'mqtt' },
-  'mqtt.config.rename': { title: '重命名 MQTT 配置', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Shift+F2'], when: "tab == 'mqtt' && mqttPane == 'connections' && !confirmOpen && !textInputFocused", weight: 140, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.config.edit': { title: '编辑 MQTT 连接配置', group: 'MQTT', layer: 'mqtt', shortcutIds: ['F2'], when: "tab == 'mqtt' && mqttPane == 'connections' && mqttTargetKind != 'connection-group' && !confirmOpen && !textInputFocused", weight: 140, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.config.rename': { title: '重命名 MQTT 连接配置', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Shift+F2'], when: "tab == 'mqtt' && mqttPane == 'connections' && mqttTargetKind != 'connection-group' && !confirmOpen && !textInputFocused", weight: 140, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.connectionGroup.edit': { title: '编辑 MQTT 连接分组', group: 'MQTT', layer: 'mqtt', shortcutIds: ['F2'], when: "tab == 'mqtt' && mqttPane == 'connections' && mqttTargetKind == 'connection-group' && !confirmOpen && !textInputFocused", weight: 440, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.connectionGroup.rename': { title: '重命名 MQTT 连接分组', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Shift+F2'], when: "tab == 'mqtt' && mqttPane == 'connections' && mqttTargetKind == 'connection-group' && !confirmOpen && !textInputFocused", weight: 440, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.connectionGroup.moveParent': { title: '移动 MQTT 连接分组父级', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+F2'], when: "tab == 'mqtt' && mqttPane == 'connections' && mqttTargetKind == 'connection-group' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search' || activeInputRole == 'mqtt-connections')", weight: 440, risk: 'data-write', profileId: 'mqtt' },
   'mqtt.connection.toggleSelect': { title: '多选 MQTT 连接', group: 'MQTT', layer: 'mqtt-connections', shortcutIds: ['Space'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-connections'", weight: 430, profileId: 'mqtt' },
   'mqtt.connection.copyAddress': { title: '复制 MQTT 连接地址', group: 'MQTT', layer: 'mqtt-connections', shortcutIds: ['Ctrl+C'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-connections'", weight: 430, profileId: 'mqtt' },
   'mqtt.connection.delete': { title: '删除当前 MQTT 连接', group: 'MQTT', layer: 'mqtt-connections', shortcutIds: ['Delete', 'Backspace'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-connections'", weight: 430, risk: 'data-write', profileId: 'mqtt' },
   'mqtt.connection.deleteSelected': { title: '删除选中 MQTT 连接', group: 'MQTT', layer: 'mqtt-connections', shortcutIds: ['Ctrl+Delete', 'Ctrl+Backspace'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-connections'", weight: 430, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.connectionGroup.collapse': { title: '折叠 MQTT 连接分组', group: 'MQTT', layer: 'mqtt-connections', shortcutIds: ['ArrowLeft'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-connections'", weight: 430, profileId: 'mqtt' },
+  'mqtt.connectionGroup.expand': { title: '展开 MQTT 连接分组', group: 'MQTT', layer: 'mqtt-connections', shortcutIds: ['ArrowRight'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-connections'", weight: 430, profileId: 'mqtt' },
+  'mqtt.connectionGroup.save': { title: '保存 MQTT 连接分组', group: 'MQTT', layer: 'mqtt-connection-group-editor', shortcutIds: ['Ctrl+S', 'Ctrl+Enter'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-connection-group-editor'", weight: 420, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.connectionGroup.cancel': { title: '取消 MQTT 分组编辑', group: 'MQTT', layer: 'mqtt-connection-group-editor', shortcutIds: ['Escape'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-connection-group-editor'", weight: 420, profileId: 'mqtt' },
+  'mqtt.connectionGroup.nextField': { title: 'MQTT 分组编辑下一个字段', group: 'MQTT', layer: 'mqtt-connection-group-editor', shortcutIds: ['Tab'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-connection-group-editor'", weight: 420, profileId: 'mqtt' },
+  'mqtt.connectionGroup.prevField': { title: 'MQTT 分组编辑上一个字段', group: 'MQTT', layer: 'mqtt-connection-group-editor', shortcutIds: ['Shift+Tab'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-connection-group-editor'", weight: 420, profileId: 'mqtt' },
   'mqtt.config.save': { title: '保存 MQTT 配置编辑', group: 'MQTT', layer: 'mqtt-editor', shortcutIds: ['Ctrl+S', 'Ctrl+Enter'], when: "tab == 'mqtt' && (activeInputRole == 'mqtt-editor' || activeInputRole == 'mqtt-config-subscription-editor' || activeInputRole == 'mqtt-config-publish-editor')", weight: 420, risk: 'data-write', profileId: 'mqtt' },
   'mqtt.config.cancel': { title: '取消 MQTT 配置编辑', group: 'MQTT', layer: 'mqtt-editor', shortcutIds: ['Escape'], when: "tab == 'mqtt' && (activeInputRole == 'mqtt-editor' || activeInputRole == 'mqtt-config-subscription-editor' || activeInputRole == 'mqtt-config-publish-editor')", weight: 420, profileId: 'mqtt' },
   'mqtt.config.nextField': { title: 'MQTT 编辑下一个字段', group: 'MQTT', layer: 'mqtt-editor', shortcutIds: ['Tab'], when: "tab == 'mqtt' && (activeInputRole == 'mqtt-editor' || activeInputRole == 'mqtt-config-subscription-editor' || activeInputRole == 'mqtt-config-publish-editor')", weight: 420, profileId: 'mqtt' },
@@ -530,6 +545,13 @@ export const SHORTCUT_RESERVATION_RULES: ShortcutReservationRule[] = [
   { shortcutId: 'Space', commandId: 'mqtt.connection.toggleSelect', when: "activeInputRole == 'mqtt-connections'", description: 'MQTT 连接栏切换多选', layer: 'mqtt-connections' },
   { shortcutId: 'Ctrl+C', commandId: 'mqtt.connection.copyAddress', when: "activeInputRole == 'mqtt-connections'", description: 'MQTT 连接栏复制连接地址', layer: 'mqtt-connections' },
   { shortcutId: 'Delete', commandId: 'mqtt.connection.delete', when: "activeInputRole == 'mqtt-connections'", description: 'MQTT 连接栏删除当前连接', layer: 'mqtt-connections' },
+  { shortcutId: 'ArrowLeft', commandId: 'mqtt.connectionGroup.collapse', when: "activeInputRole == 'mqtt-connections'", description: 'MQTT 连接树折叠分组', layer: 'mqtt-connections' },
+  { shortcutId: 'ArrowRight', commandId: 'mqtt.connectionGroup.expand', when: "activeInputRole == 'mqtt-connections'", description: 'MQTT 连接树展开分组', layer: 'mqtt-connections' },
+  { shortcutId: 'Escape', commandId: 'mqtt.connectionGroup.cancel', when: "activeInputRole == 'mqtt-connection-group-editor'", description: '取消 MQTT 连接分组编辑', layer: 'mqtt-connection-group-editor' },
+  { shortcutId: 'Ctrl+S', commandId: 'mqtt.connectionGroup.save', when: "activeInputRole == 'mqtt-connection-group-editor'", description: '保存 MQTT 连接分组', layer: 'mqtt-connection-group-editor' },
+  { shortcutId: 'Ctrl+Enter', commandId: 'mqtt.connectionGroup.save', when: "activeInputRole == 'mqtt-connection-group-editor'", description: '保存 MQTT 连接分组', layer: 'mqtt-connection-group-editor' },
+  { shortcutId: 'Tab', commandId: 'mqtt.connectionGroup.nextField', when: "activeInputRole == 'mqtt-connection-group-editor'", description: 'MQTT 分组编辑字段循环', layer: 'mqtt-connection-group-editor' },
+  { shortcutId: 'Shift+Tab', commandId: 'mqtt.connectionGroup.prevField', when: "activeInputRole == 'mqtt-connection-group-editor'", description: 'MQTT 分组编辑反向字段循环', layer: 'mqtt-connection-group-editor' },
   { shortcutId: 'Space', commandId: 'mqtt.subscription.toggleSelect', when: "activeInputRole == 'mqtt-subscriptions'", description: 'MQTT 订阅栏切换多选', layer: 'mqtt-subscriptions' },
   { shortcutId: 'Enter', commandId: 'mqtt.subscription.applyFilter', when: "activeInputRole == 'mqtt-subscriptions'", description: 'MQTT 订阅栏应用筛选，不触发记录重发', layer: 'mqtt-subscriptions' },
   { shortcutId: 'Ctrl+C', commandId: 'mqtt.subscription.copyTopic', when: "activeInputRole == 'mqtt-subscriptions'", description: 'MQTT 订阅栏复制 topic', layer: 'mqtt-subscriptions' },
@@ -766,6 +788,7 @@ function activeLayers(context: KeybindingContext): KeybindingLayerId[] {
   if (context.tab) layers.push(context.tab)
   if (context.confirmOpen) layers.push('confirm')
   if (context.activeInputRole === 'mqtt-editor') layers.push('mqtt-editor')
+  if (context.activeInputRole === 'mqtt-connection-group-editor') layers.push('mqtt-connection-group-editor')
   if (context.activeInputRole === 'mqtt-config-subscription-editor') layers.push('mqtt-editor', 'mqtt-config-subscription-editor')
   if (context.activeInputRole === 'mqtt-config-publish-editor') layers.push('mqtt-editor', 'mqtt-config-publish-editor')
   if (context.activeInputRole === 'mqtt-publish-editor') layers.push('mqtt-publish-editor')
@@ -808,6 +831,7 @@ function shouldBlockTextInputShortcut(shortcutId: string, context: KeybindingCon
   if (!context.textInputFocused || shortcutId === 'Escape' || shortcutId === 'Shift+Escape') return false
   if (shortcutId === 'Ctrl+Alt+S') return false
   if (context.activeInputRole === 'mqtt-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
+  if (context.activeInputRole === 'mqtt-connection-group-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-config-subscription-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'ArrowUp', 'ArrowDown', 'Ctrl+Delete', 'Ctrl+Backspace', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-config-publish-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'ArrowUp', 'ArrowDown', 'Ctrl+Delete', 'Ctrl+Backspace', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-publish-editor') return !['Ctrl+S', 'Ctrl+Enter', 'Ctrl+Alt+S', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+M', 'Ctrl+Shift+F', 'Ctrl+P', 'Ctrl+H', 'Ctrl+Shift+H', 'Ctrl+R', 'Ctrl+Shift+R', 'Ctrl+Shift+W', 'Ctrl+Shift+T', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
@@ -820,11 +844,11 @@ function shouldBlockTextInputShortcut(shortcutId: string, context: KeybindingCon
   if (context.activeInputRole === 'favorite-pick-review') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'ArrowUp', 'ArrowDown', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'port-search') return !['ArrowUp', 'ArrowDown', 'Shift+ArrowUp', 'Shift+ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+K', 'Ctrl+J', 'Space', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+W', 'Ctrl+Shift+W', 'Ctrl+T', 'Ctrl+G', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'port-group-search') return !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+K', 'Ctrl+J', 'Tab', 'Shift+Tab', 'Enter', 'Shift+Enter', 'Ctrl+Enter', 'Ctrl+Shift+Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+W', 'Ctrl+T', 'Ctrl+G', 'Ctrl+Shift+W', 'F2', 'Ctrl+F2', 'Shift+F2', 'Shift+Escape'].includes(shortcutId)
-  if (context.activeInputRole === 'mqtt-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'ArrowLeft', 'ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+Enter', 'Ctrl+R', 'Ctrl+Shift+R', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+N', 'Ctrl+T', 'Ctrl+Shift+T', 'Ctrl+Shift+S', 'Ctrl+H', 'Ctrl+Shift+H', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+Shift+M', 'Ctrl+M', 'Ctrl+Shift+W', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Ctrl+Delete', 'Ctrl+Backspace', 'F2', 'Shift+F2', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
+  if (context.activeInputRole === 'mqtt-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'ArrowLeft', 'ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+Enter', 'Ctrl+R', 'Ctrl+Shift+R', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+N', 'Ctrl+G', 'Ctrl+T', 'Ctrl+Shift+T', 'Ctrl+Shift+S', 'Ctrl+H', 'Ctrl+Shift+H', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+Shift+M', 'Ctrl+M', 'Ctrl+Shift+W', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Ctrl+Delete', 'Ctrl+Backspace', 'F2', 'Shift+F2', 'Ctrl+F2', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-topic-filter') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'Enter', 'Escape', 'Ctrl+P', 'Ctrl+R', 'Ctrl+Shift+R', 'Ctrl+Shift+W', 'Ctrl+Shift+T', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+M', 'Ctrl+Shift+M', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-publish-options') return !['ArrowUp', 'ArrowDown', 'Tab', 'Shift+Tab', 'Enter', 'Escape', 'Ctrl+P', 'Ctrl+R', 'Ctrl+Shift+R', 'Ctrl+Shift+W', 'Ctrl+Shift+T', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+M', 'Ctrl+Shift+M', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-publish-draft') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'Enter', 'Ctrl+Enter', 'Space', 'Escape', 'Ctrl+S', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'F2', 'Shift+F2', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Ctrl+H', 'Ctrl+Shift+H', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+M', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
-  if (context.activeInputRole === 'mqtt-connections') return !['Space', 'Ctrl+C', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'F2', 'Shift+F2', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
+  if (context.activeInputRole === 'mqtt-connections') return !['Space', 'Ctrl+C', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'ArrowLeft', 'ArrowRight', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'F2', 'Shift+F2', 'Ctrl+F2', 'Ctrl+N', 'Ctrl+G', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-subscriptions') return !['Space', 'Enter', 'Ctrl+Enter', 'Ctrl+C', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Ctrl+T', 'Ctrl+Shift+T', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'Shift+ArrowUp', 'Shift+ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+Enter', 'Ctrl+C', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+N', 'Ctrl+O', 'Ctrl+Shift+O', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-group-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'ArrowLeft', 'ArrowRight', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+N', 'Ctrl+O', 'Ctrl+Shift+O', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+T', 'F2', 'Shift+F2', 'Ctrl+F2', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)

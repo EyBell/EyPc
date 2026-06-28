@@ -72,6 +72,7 @@ describe('mqtt domain', () => {
       url: 'ws://localhost:1883',
       clientId: expect.stringMatching(/^eypc_/),
       username: 'demo',
+      groupId: null,
       subscriptions: ['a/#', 'b/+'],
       subscriptionAliases: {
         'a/#': '状态汇总'
@@ -224,6 +225,43 @@ describe('mqtt domain', () => {
       subscriptionPanelOpen: false,
       publishRecordsOpen: true
     })
+  })
+
+  it('normalizes MQTT connection groups, hierarchy, and per-connection group references', () => {
+    const state = normalizeMqttState({
+      connectionGroups: [
+        { id: 'root', name: ' Root ', color: '#111111', parentId: null, sortOrder: 2, createdAt: 1, updatedAt: 1 },
+        { id: 'child', name: 'Child', color: 'bad', parentId: 'root', sortOrder: 1, createdAt: 2, updatedAt: 2 },
+        { id: 'cycle', name: 'Cycle', color: '#222222', parentId: 'cycle', sortOrder: 3, createdAt: 3, updatedAt: 3 },
+        { id: 'invalid-parent', name: 'Invalid', color: '#333333', parentId: 'missing', sortOrder: 4, createdAt: 4, updatedAt: 4 },
+        { id: '', name: 'Dropped', color: '#444444', parentId: null, sortOrder: 5 }
+      ],
+      configs: [
+        { id: 'a', name: 'A', url: 'ws://a.example:8083/', groupId: 'child', sortOrder: 1 },
+        { id: 'b', name: 'B', url: 'ws://b.example:8083/', groupId: 'missing', sortOrder: 2 }
+      ],
+      layoutPrefs: {
+        collapsedConnectionGroupIds: ['child', 'missing']
+      }
+    }, 100)
+
+    expect(state.connectionGroups.map((group) => ({
+      id: group.id,
+      name: group.name,
+      parentId: group.parentId,
+      color: group.color,
+      sortOrder: group.sortOrder
+    }))).toEqual([
+      { id: 'root', name: 'Root', parentId: null, color: '#111111', sortOrder: 1 },
+      { id: 'child', name: 'Child', parentId: 'root', color: '#2F80ED', sortOrder: 1 },
+      { id: 'cycle', name: 'Cycle', parentId: null, color: '#222222', sortOrder: 2 },
+      { id: 'invalid-parent', name: 'Invalid', parentId: null, color: '#333333', sortOrder: 3 }
+    ])
+    expect(state.configs.map((config) => [config.id, config.groupId, config.sortOrder])).toEqual([
+      ['b', null, 1],
+      ['a', 'child', 1]
+    ])
+    expect(state.layoutPrefs.collapsedConnectionGroupIds).toEqual(['child'])
   })
 
   it('normalizes MQTT connection snapshots in archive without secrets', () => {

@@ -1516,6 +1516,223 @@ describe('app runtime', () => {
     expect(runtime.snapshot().mqttSelectedConfigIds).toEqual([])
   })
 
+  it('creates nested MQTT connection groups and reorders connection tree targets', () => {
+    const { state } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    state.mqtt.configs = [
+      createMqttConnectionConfig({ id: 'root', name: 'Root Broker', url: 'ws://root.example:8083/', sortOrder: 1 }, 100)
+    ]
+    state.mqtt.activeConfigId = 'root'
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    expect(runtime.dispatch('mqtt.connectionGroup.create').handled).toBe(true)
+    expect(runtime.snapshot().mqttConnectionGroupDraft).toMatchObject({ mode: 'create', name: '', parentId: null, activeField: 'name' })
+    runtime.updateMqttConnectionGroupDraft({ name: '生产线', color: '#00A676' })
+    expect(runtime.dispatch('mqtt.connectionGroup.save').handled).toBe(true)
+    const rootGroupId = runtime.snapshot().state.mqtt.connectionGroups.find((group) => group.name === '生产线')?.id
+    expect(rootGroupId).toBeTruthy()
+    expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'connection-group', id: rootGroupId })
+
+    expect(runtime.dispatch('mqtt.connectionGroup.create').handled).toBe(true)
+    expect(runtime.snapshot().mqttConnectionGroupDraft).toMatchObject({ parentId: rootGroupId })
+    runtime.updateMqttConnectionGroupDraft({ name: 'A 线', color: '#2F80ED' })
+    expect(runtime.dispatch('mqtt.connectionGroup.save').handled).toBe(true)
+    const lineGroupId = runtime.snapshot().state.mqtt.connectionGroups.find((group) => group.name === 'A 线')?.id
+    expect(lineGroupId).toBeTruthy()
+
+    expect(runtime.dispatch('mqtt.config.create').handled).toBe(true)
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({ mode: 'create', groupId: lineGroupId })
+    runtime.updateMqttConfigDraft({
+      name: 'PLC A',
+      protocol: 'ws',
+      host: 'a.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-a'
+    })
+    expect(runtime.dispatch('mqtt.config.save').handled).toBe(true)
+    expect(runtime.snapshot().state.mqtt.configs.find((config) => config.name === 'PLC A')?.groupId).toBe(lineGroupId)
+
+    expect(runtime.dispatch('mqtt.connectionTree.move', {
+      movingKind: 'config',
+      movingId: 'root',
+      targetKind: 'group',
+      targetId: lineGroupId,
+      position: 'inside'
+    }).handled).toBe(true)
+    expect(runtime.snapshot().state.mqtt.configs.filter((config) => config.groupId === lineGroupId).map((config) => config.id)).toEqual([
+      expect.stringMatching(/^mqtt-config:/),
+      'root'
+    ])
+    expect(runtime.snapshot().mqttConnectionRows.map((row) => [row.kind, row.id, row.depth])).toEqual([
+      ['group', rootGroupId, 0],
+      ['group', lineGroupId, 1],
+      ['config', expect.stringMatching(/^mqtt-config:/), 2],
+      ['config', 'root', 2]
+    ])
+
+    expect(runtime.dispatch('mqtt.connectionGroup.collapse', { id: rootGroupId }).handled).toBe(true)
+    expect(runtime.snapshot().state.mqtt.layoutPrefs.collapsedConnectionGroupIds).toEqual([rootGroupId])
+    expect(runtime.snapshot().mqttConnectionRows.map((row) => row.id)).toEqual([rootGroupId])
+
+    expect(runtime.dispatch('mqtt.connectionGroup.expand', { id: rootGroupId }).handled).toBe(true)
+    expect(runtime.dispatch('mqtt.connectionGroup.delete', { id: lineGroupId }).handled).toBe(true)
+    expect(runtime.snapshot().state.mqtt.connectionGroups.map((group) => group.id)).toEqual([rootGroupId])
+    expect(runtime.snapshot().state.mqtt.configs.filter((config) => config.groupId === rootGroupId).map((config) => config.name)).toEqual(['PLC A', 'Root Broker'])
+  })
+
+  it('routes MQTT connection group edit and rename through the connection pane F2 commands', () => {
+    const { state } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    state.mqtt.connectionGroups = [
+      { id: 'prod', name: '生产线', color: '#00A676', parentId: null, sortOrder: 1, createdAt: 1, updatedAt: 1 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.focusMqttConnectionGroup('prod')
+    expect(runtime.handleShortcut('F2', false)).toBe('mqtt.connectionGroup.edit')
+    expect(runtime.snapshot().mqttConnectionGroupDraft).toMatchObject({ mode: 'edit', targetId: 'prod', name: '生产线' })
+
+    runtime.updateMqttConnectionGroupDraft({ name: '生产现场' })
+    expect(runtime.handleShortcut('Ctrl+S', { textInputFocused: true, activeInputRole: 'mqtt-connection-group-editor' })).toBe('mqtt.connectionGroup.save')
+    expect(runtime.snapshot().state.mqtt.connectionGroups[0].name).toBe('生产现场')
+
+    expect(runtime.handleShortcut('Shift+F2', false)).toBe('mqtt.connectionGroup.rename')
+    expect(runtime.snapshot().mqttConnectionGroupDraft).toMatchObject({ mode: 'rename', targetId: 'prod', name: '生产现场', activeField: 'name' })
+
+    runtime.updateMqttConnectionGroupDraft({ name: '生产内网' })
+    expect(runtime.handleShortcut('Ctrl+Enter', { textInputFocused: true, activeInputRole: 'mqtt-connection-group-editor' })).toBe('mqtt.connectionGroup.save')
+    expect(runtime.snapshot().mqttConnectionGroupDraft).toBeNull()
+    expect(runtime.snapshot().state.mqtt.connectionGroups[0].name).toBe('生产内网')
+
+    expect(runtime.handleShortcut('Shift+F2', false)).toBe('mqtt.connectionGroup.rename')
+    runtime.updateMqttConnectionGroupDraft({ name: '不保存' })
+    expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'mqtt-connection-group-editor' })).toBe('mqtt.connectionGroup.cancel')
+    expect(runtime.snapshot().mqttConnectionGroupDraft).toBeNull()
+    expect(runtime.snapshot().state.mqtt.connectionGroups[0].name).toBe('生产内网')
+  })
+
+  it('routes MQTT connection group create, move-parent, detail, and drawer through connection tree shortcuts', () => {
+    const { state } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    state.mqtt.connectionGroups = [
+      { id: 'prod', name: '生产线', color: '#00A676', parentId: null, sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'line-a', name: 'A 线', color: '#2F80ED', parentId: 'prod', sortOrder: 1, createdAt: 2, updatedAt: 2 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.focusMqttConnectionGroup('line-a')
+    expect(runtime.handleShortcut('Ctrl+F2', { textInputFocused: false, activeInputRole: 'mqtt-connections' })).toBe('mqtt.connectionGroup.moveParent')
+    expect(runtime.snapshot().mqttConnectionGroupDraft).toMatchObject({ mode: 'move-parent', targetId: 'line-a', activeField: 'parent' })
+
+    runtime.updateMqttConnectionGroupDraft({ parentId: null })
+    expect(runtime.handleShortcut('Ctrl+S', { textInputFocused: true, activeInputRole: 'mqtt-connection-group-editor' })).toBe('mqtt.connectionGroup.save')
+    expect(runtime.snapshot().state.mqtt.connectionGroups.find((group) => group.id === 'line-a')?.parentId).toBeNull()
+
+    expect(runtime.handleShortcut('Ctrl+G', { textInputFocused: false, activeInputRole: 'mqtt-connections' })).toBe('mqtt.connectionGroup.create')
+    expect(runtime.handleShortcut('Ctrl+Alt+G', { textInputFocused: false, activeInputRole: 'mqtt-connections' })).toBeNull()
+    expect(runtime.snapshot().mqttConnectionGroupDraft).toMatchObject({ mode: 'create', parentId: 'line-a' })
+
+    runtime.dispatch('mqtt.connectionGroup.cancel')
+    expect(runtime.handleShortcut('Ctrl+ArrowLeft', { textInputFocused: false, activeInputRole: 'mqtt-connections' })).toBe('mqtt.detail.open')
+    expect(runtime.snapshot().mqttDrawer).toMatchObject({ open: true, active: false, targetKind: 'connection-group', targetId: 'line-a' })
+
+    expect(runtime.handleShortcut('Ctrl+ArrowRight', { textInputFocused: false, activeInputRole: 'mqtt-connections' })).toBe('mqtt.drawer.open')
+    expect(runtime.snapshot().mqttDrawer).toMatchObject({ open: true, active: true, targetKind: 'connection-group', targetId: 'line-a' })
+    expect(runtime.snapshot().mqttDrawerItems.map((item) => item.commandId)).toEqual([
+      'mqtt.detail.open',
+      'mqtt.connectionGroup.create',
+      'mqtt.config.create',
+      'mqtt.connectionGroup.moveParent',
+      'mqtt.connectionGroup.rename',
+      'mqtt.connectionGroup.edit',
+      'mqtt.connectionGroup.collapse',
+      'mqtt.connectionGroup.expand',
+      'mqtt.connectionGroup.delete'
+    ])
+  })
+
+  it('uses MQTT connection focus scope to choose create parent targets', () => {
+    const { state } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    state.mqtt.connectionGroups = [
+      { id: 'prod', name: '生产线', color: '#00A676', parentId: null, sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'line-a', name: 'A 线', color: '#2F80ED', parentId: 'prod', sortOrder: 1, createdAt: 2, updatedAt: 2 }
+    ]
+    state.mqtt.configs = [
+      createMqttConnectionConfig({ id: 'plc-a', name: 'PLC A', url: 'ws://a.example:8083/', groupId: 'line-a', sortOrder: 1 }, 100)
+    ]
+    state.mqtt.activeConfigId = 'plc-a'
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    expect(runtime.snapshot().mqttPanelOpen).toBe(true)
+
+    runtime.focusMqttConnectionGroup('line-a')
+    expect(runtime.handleShortcut('Ctrl+G', { textInputFocused: false, activeInputRole: 'mqtt-connections' })).toBe('mqtt.connectionGroup.create')
+    expect(runtime.snapshot().mqttConnectionGroupDraft).toMatchObject({ mode: 'create', parentId: 'line-a' })
+    runtime.dispatch('mqtt.connectionGroup.cancel')
+
+    expect(runtime.handleShortcut('Ctrl+N', { textInputFocused: false, activeInputRole: 'mqtt-connections' })).toBe('mqtt.config.create')
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({ mode: 'create', groupId: 'line-a' })
+    runtime.dispatch('mqtt.config.cancel')
+
+    runtime.focusMqttConfig('plc-a')
+    expect(runtime.handleShortcut('Ctrl+G', { textInputFocused: false, activeInputRole: 'mqtt-connections' })).toBe('mqtt.connectionGroup.create')
+    expect(runtime.snapshot().mqttConnectionGroupDraft).toMatchObject({ mode: 'create', parentId: 'line-a' })
+    runtime.dispatch('mqtt.connectionGroup.cancel')
+
+    expect(runtime.handleShortcut('Ctrl+N', { textInputFocused: false, activeInputRole: 'mqtt-connections' })).toBe('mqtt.config.create')
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({ mode: 'create', groupId: 'line-a' })
+    runtime.dispatch('mqtt.config.cancel')
+
+    runtime.focusMqttConnectionGroup('line-a')
+    expect(runtime.handleShortcut('Ctrl+G', { textInputFocused: true, activeInputRole: 'mqtt-search' })).toBe('mqtt.connectionGroup.create')
+    expect(runtime.snapshot().mqttConnectionGroupDraft).toMatchObject({ mode: 'create', parentId: null })
+    runtime.dispatch('mqtt.connectionGroup.cancel')
+
+    expect(runtime.handleShortcut('Ctrl+N', { textInputFocused: true, activeInputRole: 'mqtt-search' })).toBe('mqtt.config.create')
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({ mode: 'create', groupId: null })
+    runtime.dispatch('mqtt.config.cancel')
+
+    runtime.dispatch('mqtt.focus.messages')
+    expect(runtime.handleShortcut('Ctrl+G', false)).toBe('mqtt.connectionGroup.create')
+    expect(runtime.snapshot().mqttConnectionGroupDraft).toMatchObject({ mode: 'create', parentId: null })
+    runtime.dispatch('mqtt.connectionGroup.cancel')
+
+    expect(runtime.handleShortcut('Ctrl+N', false)).toBe('mqtt.config.create')
+    expect(runtime.snapshot().mqttConfigDraft).toMatchObject({ mode: 'create', groupId: null })
+    runtime.dispatch('mqtt.config.cancel')
+
+    runtime.dispatch('mqtt.panel.toggle')
+    expect(runtime.snapshot().mqttPanelOpen).toBe(false)
+    expect(runtime.handleShortcut('Ctrl+G', false)).toBeNull()
+    expect(runtime.handleShortcut('Ctrl+N', false)).toBeNull()
+  })
+
   it('clears MQTT rail multi-select rendering with Escape before clearing focused record', () => {
     const { state } = installPlatform()
     state.settings.featureConfigs = [
