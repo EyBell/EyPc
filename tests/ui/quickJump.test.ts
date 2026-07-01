@@ -76,6 +76,16 @@ describe('global quick jump UI wiring', () => {
     expect(app).toContain('visibleRect.width < 6 || visibleRect.height < 6')
   })
 
+  it('skips targets covered by a higher interactive layer while keeping top-layer buttons targetable', () => {
+    const app = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
+
+    expect(app).toContain("import { quickJumpHitStackContainsTarget, quickJumpHitTestPoints } from './domain/quickJumpHitTest'")
+    expect(app).toContain('function quickJumpHitTargetVisible')
+    expect(app).toContain('document.elementsFromPoint')
+    expect(app).toContain('quickJumpHitTestPoints(visibleRect).some')
+    expect(app).toContain('quickJumpHitStackContainsTarget(element, document.elementsFromPoint(point.x, point.y))')
+  })
+
   it('anchors item badges beside row titles and keeps badges inside the viewport', () => {
     const app = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
     const layer = readFileSync(resolve(process.cwd(), 'src/components/QuickJumpLayer.vue'), 'utf8')

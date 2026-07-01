@@ -11,6 +11,7 @@ import QuickFavoritesPage from './pages/QuickFavoritesPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
 import { assignQuickJumpMarkers, moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
 import type { QuickJumpTarget } from './domain/quickJump'
+import { quickJumpHitStackContainsTarget, quickJumpHitTestPoints } from './domain/quickJumpHitTest'
 import { createAppRuntime } from './runtime/appRuntime'
 import { routePluginFeature } from './runtime/feature/featureRouting'
 import { activeInputRoleFromTarget, blockHandledShortcutEvent, isEditableTarget, shortcutFromEvent, shouldEnableShiftPreview } from './runtime/keyboardEvent'
@@ -152,6 +153,11 @@ function quickJumpVisibleRect(element: HTMLElement) {
   }
 }
 
+function quickJumpHitTargetVisible(element: HTMLElement, visibleRect: ReturnType<typeof quickJumpVisibleRect>) {
+  if (typeof document.elementsFromPoint !== 'function') return true
+  return quickJumpHitTestPoints(visibleRect).some((point) => quickJumpHitStackContainsTarget(element, document.elementsFromPoint(point.x, point.y)))
+}
+
 function isVisibleQuickJumpTarget(element: HTMLElement) {
   if (element.closest('[data-quick-jump-ignore]') && !element.hasAttribute('data-quick-jump-target')) return false
   if (element.closest(QUICK_JUMP_EDITING_SELECTOR) && !isQuickJumpEditingSurfaceTarget(element)) return false
@@ -163,7 +169,8 @@ function isVisibleQuickJumpTarget(element: HTMLElement) {
   if (quickJumpStyleHidden(style)) return false
   const visibleRect = quickJumpVisibleRect(element)
   if (visibleRect.width < 6 || visibleRect.height < 6) return false
-  return visibleRect.bottom >= 0 && visibleRect.right >= 0 && visibleRect.top <= window.innerHeight && visibleRect.left <= window.innerWidth
+  if (!(visibleRect.bottom >= 0 && visibleRect.right >= 0 && visibleRect.top <= window.innerHeight && visibleRect.left <= window.innerWidth)) return false
+  return quickJumpHitTargetVisible(element, visibleRect)
 }
 
 function quickJumpAnchorElement(element: HTMLElement) {
