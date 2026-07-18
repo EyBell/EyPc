@@ -50,7 +50,6 @@ type QuickJumpDirection = 'forward' | 'backward'
 
 interface QuickJumpDomTarget extends QuickJumpTarget {
   element: HTMLElement
-  anchorElement?: HTMLElement
 }
 
 interface QuickJumpState {
@@ -183,18 +182,6 @@ function isVisibleQuickJumpTarget(element: HTMLElement) {
   return quickJumpHitTargetVisible(element, visibleRect)
 }
 
-function quickJumpAnchorElement(element: HTMLElement) {
-  const anchor = element.querySelector<HTMLElement>('[data-quick-jump-anchor]')
-  if (!anchor) return undefined
-  const rect = anchor.getBoundingClientRect()
-  if (rect.width <= 0 || rect.height <= 0) return undefined
-  const style = window.getComputedStyle(anchor)
-  if (quickJumpStyleHidden(style)) return undefined
-  const visibleRect = quickJumpVisibleRect(anchor)
-  if (visibleRect.width < 2 || visibleRect.height < 2) return undefined
-  return anchor
-}
-
 function collectQuickJumpTargets(direction: QuickJumpDirection): QuickJumpDomTarget[] {
   const root = appRoot.value || document.body
   const elements = Array.from(root.querySelectorAll<HTMLElement>(QUICK_JUMP_TARGET_SELECTOR))
@@ -216,8 +203,7 @@ function collectQuickJumpTargets(direction: QuickJumpDirection): QuickJumpDomTar
           targetText(element, 'data-role'),
           targetText(element, 'data-mqtt-shortcut-hint')
         ].filter(Boolean).join(' '),
-        element,
-        anchorElement: quickJumpAnchorElement(element)
+        element
       }
     })
     .filter((target) => Boolean(target.label))

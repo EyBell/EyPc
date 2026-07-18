@@ -2023,7 +2023,7 @@ onUnmounted(() => {
                   @input="updateConnectionGroupDraft({ name: ($event.target as HTMLInputElement).value })"
                   @keydown="handleConnectionGroupInlineRenameKeydown"
                 />
-                <strong v-else class="mqtt-connection-address-title" data-quick-jump-anchor :title="row.name">{{ row.name }}</strong>
+                <strong v-else class="mqtt-connection-address-title" :title="row.name">{{ row.name }}</strong>
               </span>
               <small class="mqtt-connection-group-count">{{ row.childCount }} 项</small>
             </header>
@@ -2042,7 +2042,7 @@ onUnmounted(() => {
           <template v-else-if="row.config">
           <header>
             <span>
-              <strong class="mqtt-connection-address-title" data-quick-jump-anchor :title="connectionEndpointTitle(row.config)">{{ row.config.name }}</strong>
+              <strong class="mqtt-connection-address-title" :title="connectionEndpointTitle(row.config)">{{ row.config.name }}</strong>
               <small>{{ row.config.url || '未配置服务器地址' }}</small>
             </span>
             <em>{{ row.config.autoReconnect ? `重连 ${row.config.reconnectPeriodMs}ms` : '手动重连' }}</em>
@@ -2131,7 +2131,7 @@ onUnmounted(() => {
         >
           <span v-if="row.unreadCount" class="mqtt-subscription-unread">{{ row.unreadCount }}</span>
           <span class="mqtt-subscription-main">
-            <strong data-quick-jump-anchor>{{ row.displayName }}</strong>
+            <strong>{{ row.displayName }}</strong>
             <small class="mqtt-subscription-route">{{ row.topic }}</small>
           </span>
           <span class="mqtt-subscription-row-actions" aria-label="订阅操作">
@@ -2637,7 +2637,7 @@ onUnmounted(() => {
                   <MqttIcon :name="directionIconName(message)" />
                 </span>
                 <span class="mqtt-message-route">
-                  <strong data-quick-jump-anchor :title="messageHoverTitle(message)">{{ messageRouteLabel(message) }}</strong>
+                  <strong :title="messageHoverTitle(message)">{{ messageRouteLabel(message) }}</strong>
                 </span>
                 <span class="mqtt-message-flags" :title="messageHoverTitle(message)" aria-label="消息元信息">
                   <time
@@ -2805,7 +2805,7 @@ onUnmounted(() => {
                         <span aria-hidden="true">{{ publishDraftHistorySelected(row) ? '✓' : '' }}</span>
                       </button>
                       <span class="mqtt-publish-draft-main">
-                        <strong data-quick-jump-anchor>{{ publishDraftHistoryTitle(row) }}</strong>
+                        <strong>{{ publishDraftHistoryTitle(row) }}</strong>
                         <small>{{ row.topic }}</small>
                         <code>{{ payloadSnippet(row.payload) }}</code>
                       </span>

@@ -64,7 +64,7 @@ uTools feature entry / keyboard input
 - `Ctrl/Cmd+ArrowLeft/Right`, row-local buttons and context-menu entries converge on the same detail/action action ids. Text editing roles retain native arrow ownership.
 - Panel presentation is inside the active Tab: docked at wide widths, reduced-secondary-navigation from `721–1100px`, and exclusive content at `<=720px`. Only confirmation, destructive decisions and atomic editors remain modal.
 - Each panel transition captures the trigger, focuses the newly rendered side even when the panel was already open, traps its local Tab cycle where applicable, and restores a stable owner on close.
-- [quickJumpLayout.ts](../../src/domain/quickJumpLayout.ts#L1) scores rendered-size boxes against all targets, including the current target, and against earlier badges. Target interiors are fallback candidates; title and outer edges are preferred when space exists.
+- [quickJumpLayout.ts](../../src/domain/quickJumpLayout.ts#L1) is a pure target-center projection: each rendered badge keeps its target rectangle's exact center regardless of label width, nearby markers or viewport edges. The overlay owns only Z-axis presentation and never changes source layout or pointer ownership.
 
 ## MQTT State And Storage
 
@@ -92,7 +92,7 @@ uTools feature entry / keyboard input
 
 - The MQTT page is implemented in [src/pages/MqttPage.vue](../../src/pages/MqttPage.vue#L1), shared publish record rows in [src/components/MqttPublishRecordList.vue](../../src/components/MqttPublishRecordList.vue#L1), and workbench styling in [src/styles/app.css](../../src/styles/app.css#L1).
 - The workbench uses compact connection tree, subscription, and message/publish surfaces suitable for uTools default windows.
-- The connection rail is a hierarchy surface with group rows, config rows, row-local actions, visible collapse state, Quick Jump row anchors, `c-` shortcut hints, right-click/action drawers, and native drag/drop target feedback.
+- The connection rail is a hierarchy surface with group rows, config rows, row-local actions, visible collapse state, Quick Jump row targets, `c-` shortcut hints, right-click/action drawers, and native drag/drop target feedback.
 - The top command bar owns connection status, topic filter, record search, `全/收/发/藏`, and layout controls.
 - Config editing is a right-side drawer with compact endpoint, subscription, publish-topic, and options sections.
 - Send-area draft history is a recovery/reuse popover beside the publish editor, not an outgoing-history list.

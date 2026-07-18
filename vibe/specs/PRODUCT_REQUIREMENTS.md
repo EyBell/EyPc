@@ -2,7 +2,7 @@
 
 Tool: codex
 
-Requirement version: `2026-07-13.1`
+Requirement version: `2026-07-18.1`
 
 ## Purpose
 
@@ -18,7 +18,7 @@ This file is the current product requirement index for EyPc. Task-level history 
 
 ## Shared Interaction Surfaces
 
-Current increment authority: [260713/0834-cross-tab-responsive-command-panels/spec.md](260713/0834-cross-tab-responsive-command-panels/spec.md#L1).
+Current increment authorities: [260713/0834-cross-tab-responsive-command-panels/spec.md](260713/0834-cross-tab-responsive-command-panels/spec.md#L1) and [260718/0947-quick-jump-center-overlay/spec.md](260718/0947-quick-jump-center-overlay/spec.md#L1).
 
 - Operation controls use one product Tooltip owner with hover/focus activation, accessible name, current shortcut or disabled reason, viewport clamping and `aria-describedby`; native `title` is not the only help surface. Buttons, menu/tab/option/treeitem roles, draggable rows, checkbox/radio/number/range controls and selects are covered, while Quick Jump temporarily suspends the Tooltip layer.
 - `Ctrl/Cmd+ArrowLeft` opens or switches to target detail and `Ctrl/Cmd+ArrowRight` opens or switches to target actions across Ports, full/Quick Favorites, MQTT row targets and Settings command rows. Explicit action arguments outrank an already-open frozen target; invalid explicit targets fail instead of silently falling back.
@@ -26,7 +26,7 @@ Current increment authority: [260713/0834-cross-tab-responsive-command-panels/sp
 - Ordinary text editors keep native arrow/navigation ownership. Settings only claims left/right panel commands from non-editing command rows, and Quick Favorites exposes safe read-only details/actions only.
 - Opening a context panel moves focus into it; switching sides refocuses the new panel; closing restores the trigger or the stable list/grid owner. Buttons, context menus and shortcuts dispatch the same action id.
 - Tab content owns page height. Wide pages dock side panels; `721–1100px` temporarily reduce secondary rails; `<=720px` panels become exclusive inside the active Tab. Every main page supports vertical scrolling and must not require page-level horizontal scrolling at 420px.
-- Global Quick Jump uses compact solid badges whose rendered size equals its collision model. Candidate scoring includes every target, including the marker's own target, so external title/edge placement wins whenever viewport space permits.
+- Global Quick Jump renders each compact solid badge at the exact center of its target rectangle in a fixed pointer-transparent top layer. Marker width may grow for multi-character labels, but its center never shifts for title anchors, collisions or viewport edges; overlap and partial edge clipping are accepted so target correspondence remains deterministic.
 
 ## Ports
 

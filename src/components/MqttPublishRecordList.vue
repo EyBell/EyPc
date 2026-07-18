@@ -118,7 +118,7 @@ function selected(row: PublishRecordRow) {
           @click.stop="emit('toggleSelect', row, $event.shiftKey)"
         />
         <span class="mqtt-template-main mqtt-message-route">
-          <strong data-quick-jump-anchor :title="rowTopic(row)">{{ rowRouteLabel(row) }}</strong>
+          <strong :title="rowTopic(row)">{{ rowRouteLabel(row) }}</strong>
           <small class="mqtt-topic-meta">{{ rowMeta(row) }}</small>
         </span>
         <span class="mqtt-item-payload-snippet" :title="payloadSnippet(row.payload)">

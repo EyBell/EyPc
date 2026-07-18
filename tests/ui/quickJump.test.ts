@@ -13,16 +13,17 @@ describe('global quick jump UI wiring', () => {
     expect(app).toMatch(/<QuickJumpLayer[\s\S]*:targets="quickJump\.targets"/)
   })
 
-  it('positions lightweight badges slightly above their targets', () => {
+  it('centers compact framed badges directly over their targets', () => {
     const layer = readFileSync(resolve(process.cwd(), 'src/components/QuickJumpLayer.vue'), 'utf8')
     const css = readFileSync(resolve(process.cwd(), 'src/styles/app.css'), 'utf8')
 
     expect(layer).toContain("import { layoutQuickJumpMarkers } from '../domain/quickJumpLayout'")
     expect(layer).toContain('getBoundingClientRect')
     expect(layer).toContain('layoutQuickJumpMarkers')
-    expect(css).toContain('--quick-jump-y-offset: -7px')
-    expect(css).toContain('transform: translate(-50%, calc(-50% + var(--quick-jump-y-offset)))')
+    expect(css).not.toContain('--quick-jump-y-offset')
+    expect(css).toContain('transform: translate(-50%, -50%)')
     expect(css).toContain('.quick-jump-top-layer')
+    expect(css).toMatch(/\.quick-jump-top-layer \{[^}]*position:\s*fixed;[^}]*pointer-events:\s*none;/s)
     expect(css).toContain('.quick-jump-badge.active')
     expect(layer).toContain("'--quick-jump-width': `${item.width}px`")
     expect(layer).toContain("'--quick-jump-height': `${item.height}px`")
@@ -88,19 +89,18 @@ describe('global quick jump UI wiring', () => {
     expect(app).toContain('quickJumpHitStackContainsTarget(element, document.elementsFromPoint(point.x, point.y))')
   })
 
-  it('anchors item badges beside row titles and keeps badges inside the viewport', () => {
+  it('uses target rectangles directly without title-anchor positioning', () => {
     const app = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
     const layer = readFileSync(resolve(process.cwd(), 'src/components/QuickJumpLayer.vue'), 'utf8')
     const css = readFileSync(resolve(process.cwd(), 'src/styles/app.css'), 'utf8')
 
-    expect(app).toContain('anchorElement?: HTMLElement')
-    expect(app).toContain('function quickJumpAnchorElement')
-    expect(app).toContain("querySelector<HTMLElement>('[data-quick-jump-anchor]')")
-    expect(app).toContain('anchorElement: quickJumpAnchorElement(element)')
-    expect(layer).toContain('anchorElement?: HTMLElement')
-    expect(layer).toContain('anchorRect: target.anchorElement?.isConnected')
+    expect(app).not.toContain('anchorElement')
+    expect(app).not.toContain('quickJumpAnchorElement')
+    expect(layer).not.toContain('anchorElement')
+    expect(layer).not.toContain('anchorRect')
+    expect(layer).toContain('targetRect: quickJumpRect(target.element.getBoundingClientRect())')
     expect(layer).toContain('layoutQuickJumpMarkers')
-    expect(layer).toContain('window.innerWidth')
+    expect(layer).not.toContain('viewportWidth: window.innerWidth')
     expect(css).toContain('max-width: none')
     expect(css).toContain('overflow: visible')
   })

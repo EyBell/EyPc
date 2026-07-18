@@ -8,12 +8,12 @@ This hub routes the current EyPc implementation line, active process documents, 
 
 ## Current Snapshot
 
-- Date: 2026-07-13.
+- Date: 2026-07-18.
 - Product: keyboard-first uTools plugin for local PC capability calls.
 - Current main line: port management redesign, quick file favorites, MQTT over WebSocket workbench, global Quick Jump target hints, and MQTT connection tree grouping.
-- Current focus: cross-tab responsive command panels, operation help and Quick Jump readability are implemented, automatically/browser verified and Root accepted. The 2026-07-11 file-favorites workbench and MQTT connection-tree work remain accepted prior lines.
+- Current focus: Quick Jump target-center overlay alignment is implemented, automatically/browser verified and Root accepted; cross-tab responsive command panels, operation help, file favorites and MQTT connection-tree work remain accepted prior lines.
 - Current requirement authority: [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md#L1).
-- Current implementation sync: file favorites [requirements-traceability.md](260711/1452-file-favorites-workbench/requirements-traceability.md#L1) and [verify.md](260711/1452-file-favorites-workbench/verify.md#L1); MQTT [06-sync-doc.md](2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
+- Current implementation sync: Quick Jump [center-overlay Spec](260718/0947-quick-jump-center-overlay/spec.md#L1); file favorites [requirements-traceability.md](260711/1452-file-favorites-workbench/requirements-traceability.md#L1) and [verify.md](260711/1452-file-favorites-workbench/verify.md#L1); MQTT [06-sync-doc.md](2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
 - Current memory authority: [../knowledge/technical-details.md](../knowledge/technical-details.md#L1), [../knowledge/ARCHITECTURE.md](../knowledge/ARCHITECTURE.md#L1), [../knowledge/error-memory.md](../knowledge/error-memory.md#L1), and [../knowledge/developer-soul.md](../knowledge/developer-soul.md#L1).
 
 ## Latest File Favorites Acceptance
@@ -32,10 +32,19 @@ This hub routes the current EyPc implementation line, active process documents, 
 - Responsive: all four main pages pass `1180x680`, `800x736`, `760x680`, `640x680`, `420x680`, `800x480`, and `420x480` browser checks with document `scrollWidth === clientWidth`; short-height detail/action panels and four editor types scroll to their final enabled control. MQTT stacks receive/send areas vertically at narrow widths and keeps both command bars reachable.
 - Verification: `38 files / 345 tests`, typecheck, production build and uTools runtime validation passed. macOS uTools real file-action smoke and Windows/Linux real-host verification remain unclaimed.
 
+## Latest Quick Jump Center Overlay Acceptance
+
+- Standard requirement authority and verification: [260718/0947-quick-jump-center-overlay/spec.md](260718/0947-quick-jump-center-overlay/spec.md#L1); project requirement version `2026-07-18.1` is integrated.
+- Placement: every framed marker uses its target rectangle center with no title/edge candidate, collision staggering, viewport clamping or CSS Y offset. The fixed pointer-transparent top layer does not reflow or block the source target.
+- Automated verification: focused `3` files / `12` cases, full `38` files / `346` cases, typecheck, production build, uTools validation, diff check and Markdown code-link audit passed.
+- Browser verification: `1180×680`, `760×680` and `420×680` all report `0px` maximum target/marker center error, minimum `18×18px` framed badges, pointer transparency and stable layout/scroll widths. The only console error is the existing missing `favicon.ico` 404.
+- Residual: real uTools host visual smoke is not claimed. Project AI-rule audit still reports the pre-existing adapter/governance baseline gaps recorded by the prior accepted cross-tab task; none points to this delta.
+
 ## Active Process Index
 
 | Concern | Spec | Plan | Verification |
 | --- | --- | --- | --- |
+| Quick Jump target-center overlay alignment | [260718/0947-quick-jump-center-overlay/spec.md](260718/0947-quick-jump-center-overlay/spec.md#L1) | Standard requirement / Spec-owned | [260718/0947-quick-jump-center-overlay/spec.md](260718/0947-quick-jump-center-overlay/spec.md#verification) |
 | Cross-tab responsive command panels and operation help | [260713/0834-cross-tab-responsive-command-panels/spec.md](260713/0834-cross-tab-responsive-command-panels/spec.md#L1) | [260713/0834-cross-tab-responsive-command-panels/plan.md](260713/0834-cross-tab-responsive-command-panels/plan.md#L1) | [260713/0834-cross-tab-responsive-command-panels/verify.md](260713/0834-cross-tab-responsive-command-panels/verify.md#L1) |
 | File favorites workbench reliability and UI closure | [260711/1452-file-favorites-workbench/spec.md](260711/1452-file-favorites-workbench/spec.md#L1) | [260711/1452-file-favorites-workbench/plan.md](260711/1452-file-favorites-workbench/plan.md#L1) | [260711/1452-file-favorites-workbench/verify.md](260711/1452-file-favorites-workbench/verify.md#L1) |
 | MQTT base WebSocket feature and storage sync | [2606231645-eypc-mqtt-websocket-tab/01-spec.md](2606231645-eypc-mqtt-websocket-tab/01-spec.md#L1) | [2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1) | [2606231645-eypc-mqtt-websocket-tab/04-verify.md](2606231645-eypc-mqtt-websocket-tab/04-verify.md#L1) |
@@ -66,10 +75,10 @@ Historical port, favorites, settings, and earlier MQTT process folders remain un
 - MQTT message row time display shows same-day records as readable `HH:MM:SS`, includes a date for older records, and keeps date/clock chips visually distinct.
 - MQTT detail/preview timestamp display always includes full date to seconds (`YYYY-MM-DD HH:MM:SS`) and hides milliseconds.
 - Global Quick Jump defaults are `F` for forward hints and `Shift+F` for reverse hints, active only when no editable target owns focus.
-- Quick Jump scans visible DOM targets from explicit `data-quick-jump-target`, MQTT shortcut hints, buttons, `role="option"`, and `role="treeitem"`; row/item targets can expose `data-quick-jump-anchor` to place markers beside titles, and exact marker input activates the target.
+- Quick Jump scans visible DOM targets from explicit `data-quick-jump-target`, MQTT shortcut hints, buttons, `role="option"`, and `role="treeitem"`; every marker uses the center of its target rectangle, and exact marker input activates that target.
 - Quick Jump also scans visible focusable text controls, links, `role="button"`, `role="menuitem"`, `role="textbox"`, and `role="searchbox"` when opened from non-editing context; once those controls hold focus, normal editable ownership still blocks global `F`.
 - Quick Jump keeps full markers for matching but exposes `displayMarker` to the overlay; after a multi-letter marker prefix is typed, already-entered prefix letters disappear and only the remaining suffix is shown.
-- Quick Jump layout uses [../../src/domain/quickJumpLayout.ts](../../src/domain/quickJumpLayout.ts#L1) to prefer title/outer-edge candidates, clamp to viewport, and score badges against every target plus previously placed badges. Its compact solid background, border and shadow keep letters readable without making target-center coverage the default.
+- Quick Jump layout uses [../../src/domain/quickJumpLayout.ts](../../src/domain/quickJumpLayout.ts#L1) to project every marker directly onto its target center without title/edge candidates, collision staggering or viewport clamping. The fixed pointer-transparent layer avoids reflow and click blocking, while the compact solid background, border and shadow keep letters distinct from target content.
 - `role="textbox"` is treated as editable and blocks global non-edit shortcuts.
 - MQTT input roles include `mqtt-publish-editor`, `mqtt-publish-draft`, `mqtt-publish-draft-editor`, `mqtt-topic-filter`, `mqtt-publish-options`, `mqtt-connections`, `mqtt-subscriptions`, `mqtt-config-subscription-editor`, and `mqtt-config-publish-editor`.
 - `MqttState.connectionGroups` persists MQTT connection group hierarchy; `MqttConnectionConfig.groupId` links configs to groups and normalizes invalid references to `null`.
@@ -78,7 +87,7 @@ Historical port, favorites, settings, and earlier MQTT process folders remain un
 - MQTT connection tree owns group rows, native drag/drop move, group create/edit/delete, `ArrowLeft` collapse, and `ArrowRight` expand without taking `Ctrl+T` away from subscription add.
 - MQTT connection group defaults are `Ctrl+G` create, group-target `F2` edit, inline-label `Shift+F2` rename, and `Ctrl+F2` move parent; config rows keep their own `F2` / `Shift+F2` behavior through `mqttTargetKind`. `Ctrl+G` is reused with ports through tab-scoped keybinding contexts.
 - MQTT `Ctrl+G` / `Ctrl+N` creation follows connection-focus scope: focused group creates child targets, focused config creates same-level targets, connection search/blank rail creates top-level targets, other non-edit MQTT panes create top-level targets only when the connection rail is expanded, and ordinary editors do not trigger these shortcuts.
-- MQTT connection tree rows keep `Ctrl+ArrowLeft` for detail, `Ctrl+ArrowRight` for actions, right-click action drawer entry, `c-` hint badges for row-local commands, and `F` Quick Jump discoverability through `role="treeitem"` plus row anchors.
+- MQTT connection tree rows keep `Ctrl+ArrowLeft` for detail, `Ctrl+ArrowRight` for actions, right-click action drawer entry, `c-` hint badges for row-local commands, and `F` Quick Jump discoverability through their `role="treeitem"` target rectangles.
 - MQTT connection group rows keep only the left disclosure control before the label; hierarchy, count, and row styling carry group identity without a separate folder/logo glyph.
 - MQTT connection rail owns row focus/movement, `Space` multi-select, `Ctrl+C` endpoint copy, `Delete` / `Backspace` focused delete, `Ctrl+Delete` / `Ctrl+Backspace` selected delete, `Ctrl+ArrowLeft` detail, `Ctrl+ArrowRight` actions, and right-click action drawer entry.
 - MQTT subscription rail owns row focus/movement, `Space` multi-select, `Enter` topic filter, `Ctrl+C` topic copy, `Ctrl+Enter` use-as-publish-topic, delete shortcuts, detail/action drawers, and right-click menu entry.

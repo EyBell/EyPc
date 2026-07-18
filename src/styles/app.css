@@ -3141,7 +3141,6 @@ kbd {
   --quick-jump-purple: rgba(126, 34, 206, 0.86);
   --quick-jump-fuchsia: rgba(192, 38, 211, 0.86);
   --quick-jump-active: rgba(109, 40, 217, 0.98);
-  --quick-jump-y-offset: -7px;
 }
 
 .mqtt-shortcut-badge {
@@ -3192,7 +3191,7 @@ kbd {
   text-overflow: ellipsis;
   white-space: nowrap;
   pointer-events: none;
-  transform: translate(-50%, calc(-50% + var(--quick-jump-y-offset)));
+  transform: translate(-50%, -50%);
   text-shadow: none;
 }
 

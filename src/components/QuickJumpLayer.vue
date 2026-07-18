@@ -6,7 +6,6 @@ import type { QuickJumpRect } from '../domain/quickJumpLayout'
 
 interface QuickJumpLayerTarget extends QuickJumpTarget {
   element: HTMLElement
-  anchorElement?: HTMLElement
 }
 
 interface QuickJumpLayoutItem {
@@ -56,14 +55,10 @@ function updateLayout() {
       return {
         id: target.id,
         label: markerLabel,
-        targetRect: quickJumpRect(target.element.getBoundingClientRect()),
-        anchorRect: target.anchorElement?.isConnected ? quickJumpRect(target.anchorElement.getBoundingClientRect()) : undefined
+        targetRect: quickJumpRect(target.element.getBoundingClientRect())
       }
     })
-  const positioned = layoutQuickJumpMarkers(anchors, {
-    viewportWidth: window.innerWidth,
-    viewportHeight: window.innerHeight
-  })
+  const positioned = layoutQuickJumpMarkers(anchors)
   layoutItems.value = positioned.map((item) => ({
     ...item,
     active: item.id === props.activeTargetId
