@@ -278,6 +278,31 @@ watch(() => props.snapshot.mqttFocusRequestId, () => {
   void nextTick(() => focusMqttRuntimeTarget())
 })
 
+let contextPanelTrigger: HTMLElement | null = null
+
+watch(() => props.snapshot.mqttLogDrawer.open ? 'log' : props.snapshot.mqttDrawer.open ? (props.snapshot.mqttDrawer.active ? 'actions' : 'detail') : '', (panel, previous) => {
+  if (panel && !previous) contextPanelTrigger = document.activeElement as HTMLElement | null
+  if (panel) {
+    void nextTick(() => document.querySelector<HTMLElement>('.mqtt-context-panel button:not([disabled]), .mqtt-context-panel[tabindex]')?.focus())
+    return
+  }
+  if (!previous) return
+  void nextTick(() => {
+    const role = props.snapshot.activeMqttPane === 'connections'
+      ? 'mqtt-connections'
+      : props.snapshot.activeMqttPane === 'subscriptions'
+        ? 'mqtt-subscriptions'
+        : props.snapshot.activeMqttPane === 'publish'
+          ? 'mqtt-publish-editor'
+          : 'mqtt-records'
+    const target = contextPanelTrigger?.isConnected && contextPanelTrigger !== document.body
+      ? contextPanelTrigger
+      : document.querySelector<HTMLElement>(`[data-role="${role}"]`)
+    target?.focus()
+    contextPanelTrigger = null
+  })
+})
+
 const activeConfig = computed(() => props.snapshot.mqttActiveConfig)
 const subscriptionDraft = computed(() => props.snapshot.mqttSubscriptionDraft)
 const recordEditDraft = computed(() => props.snapshot.mqttRecordEditDraft)
@@ -1957,6 +1982,8 @@ onUnmounted(() => {
           tabindex="0"
           role="treeitem"
           draggable="true"
+          :data-operation-tooltip="`${row.kind === 'group' ? '连接分组' : 'MQTT 连接'} ${row.name}`"
+          data-operation-description="单击聚焦；右键显示相关操作；可拖拽调整层级"
           :style="{ '--tree-depth': row.depth, '--group-color': row.kind === 'group' ? row.color : undefined }"
           :aria-level="row.depth + 1"
           :aria-expanded="row.kind === 'group' ? !row.collapsed : undefined"
@@ -1974,8 +2001,8 @@ onUnmounted(() => {
           @keydown.space.prevent.stop="row.kind === 'config' && toggleConnectionSelection(row.id)"
           @keydown.delete.prevent.stop="emit('dispatch', row.kind === 'group' ? 'mqtt.connectionGroup.delete' : 'mqtt.connection.delete', connectionRowArgs(row))"
           @keydown.backspace.prevent.stop="emit('dispatch', row.kind === 'group' ? 'mqtt.connectionGroup.delete' : 'mqtt.connection.delete', connectionRowArgs(row))"
-          @keydown.left.prevent.stop="row.kind === 'group' && emit('dispatch', 'mqtt.connectionGroup.collapse', connectionRowArgs(row))"
-          @keydown.right.prevent.stop="row.kind === 'group' && emit('dispatch', 'mqtt.connectionGroup.expand', connectionRowArgs(row))"
+          @keydown.left.exact.prevent.stop="row.kind === 'group' && emit('dispatch', 'mqtt.connectionGroup.collapse', connectionRowArgs(row))"
+          @keydown.right.exact.prevent.stop="row.kind === 'group' && emit('dispatch', 'mqtt.connectionGroup.expand', connectionRowArgs(row))"
         >
           <template v-if="row.kind === 'group' && row.group">
             <header class="mqtt-connection-group-header">
@@ -2090,6 +2117,8 @@ onUnmounted(() => {
           data-role="mqtt-subscriptions"
           role="option"
           tabindex="0"
+          :data-operation-tooltip="`订阅 ${row.displayName}`"
+          data-operation-description="单击聚焦；双击编辑；右键显示相关操作"
           :aria-selected="row.selected || row.focused || row.active"
           :class="{ active: row.active, selected: row.selected && !row.active, focused: row.focused }"
           :title="subscriptionTitle(row)"
@@ -2754,12 +2783,15 @@ onUnmounted(() => {
                       tabindex="-1"
                       :data-mqtt-preview-target="previewTargetValue('publish-draft-history', row.id)"
                       :data-quick-jump-label="publishDraftHistoryTitle(row)"
+                      data-operation-tooltip="右键打开草稿操作"
+                      data-operation-shortcut="Ctrl+→"
                       :data-quick-jump-search="`${row.topic} ${payloadSnippet(row.payload)}`"
                       :aria-selected="publishDraftHistorySelected(row) || index === props.snapshot.mqttPublishDraftHistoryActiveIndex"
                       :class="{ active: index === props.snapshot.mqttPublishDraftHistoryActiveIndex, selected: publishDraftHistorySelected(row) }"
                       :title="`${row.topic}\n${row.payload}`"
                       @mouseenter="previewPublishDraftHistory(row, $event)"
                       @click="focusPublishDraftHistory(row)"
+                      @contextmenu.prevent="openPublishDraftHistoryMenu(row)"
                     >
                       <button
                         type="button"
@@ -3090,7 +3122,7 @@ onUnmounted(() => {
     </div>
 
     <div v-if="props.snapshot.mqttLogDrawer.open" class="drawer-overlay drawer-overlay-left" role="presentation" @click="emit('dispatch', 'mqtt.log.drawer.close')">
-      <aside class="mqtt-log-drawer" aria-label="MQTT 错误日志" @click.stop>
+      <aside class="mqtt-log-drawer mqtt-context-panel" aria-label="MQTT 错误日志" @click.stop>
         <header class="drawer-header">
           <span>
             <strong>错误日志</strong>
@@ -3114,7 +3146,10 @@ onUnmounted(() => {
             :key="log.id"
             class="mqtt-log-row"
             :class="[`mqtt-log-${log.level}`, { focused: recordSelected('log', log.id) }]"
+            data-operation-tooltip="右键打开日志操作"
+            data-operation-shortcut="Ctrl+→"
             @click="selectLog(log.id)"
+            @contextmenu.prevent="selectLog(log.id); emit('dispatch', 'mqtt.drawer.open', commandArgs('log', log.id))"
           >
             <span>{{ log.level }}</span>
             <small>{{ formatTime(log.timestamp) }}</small>
@@ -3150,7 +3185,7 @@ onUnmounted(() => {
     </div>
 
     <div v-if="props.snapshot.mqttDrawer.open && !props.snapshot.mqttDrawer.active" class="drawer-overlay drawer-overlay-left" role="presentation" @click="emit('dispatch', 'mqtt.detail.close')">
-      <aside class="port-detail-drawer mqtt-detail-drawer" aria-label="MQTT 详情抽屉" @click.stop>
+      <aside class="port-detail-drawer mqtt-detail-drawer mqtt-context-panel" aria-label="MQTT 详情抽屉" @click.stop>
         <header class="drawer-header">
           <span>
             <strong>{{ detailTitle }}</strong>
@@ -3252,11 +3287,11 @@ onUnmounted(() => {
     </div>
 
     <div v-if="props.snapshot.mqttDrawer.open && props.snapshot.mqttDrawer.active" class="drawer-overlay drawer-overlay-right" role="presentation" @click="emit('dispatch', 'mqtt.drawer.close')">
-      <aside class="port-detail-drawer mqtt-action-drawer active" aria-label="MQTT 动作抽屉" @click.stop>
+      <aside class="port-detail-drawer mqtt-action-drawer mqtt-context-panel active" aria-label="MQTT 动作抽屉" @click.stop>
         <header class="drawer-header">
           <span>
             <strong>快捷操作</strong>
-            <small>{{ props.snapshot.mqttSelectedRecord?.kind || '当前上下文' }}</small>
+            <small>{{ props.snapshot.mqttDrawer.targetKind || '当前上下文' }}</small>
           </span>
           <button type="button" class="mqtt-icon-button" title="关闭抽屉" aria-label="关闭抽屉" @click="emit('dispatch', 'mqtt.drawer.close')">
             <MqttIcon name="close" />

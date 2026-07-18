@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, watch } from 'vue'
+import { X } from '@lucide/vue'
 import type { AppRuntimeSnapshot } from '../runtime/appRuntime'
 import type { PortGroupTarget } from '../domain/types'
 import SelectableList from '../components/SelectableList.vue'
@@ -50,6 +51,25 @@ watch(
   { flush: 'post' }
 )
 
+let contextPanelTrigger: HTMLElement | null = null
+
+watch(() => props.snapshot.portDrawer.open ? 'actions' : props.snapshot.portDetail.open ? 'detail' : props.snapshot.portGroupDetail.open ? 'group-detail' : '', (panel, previous) => {
+  if (panel && !previous) contextPanelTrigger = document.activeElement as HTMLElement | null
+  if (panel) {
+    void nextTick(() => document.querySelector<HTMLElement>('.port-context-panel button:not([disabled]), .port-context-panel[tabindex]')?.focus())
+    return
+  }
+  if (!previous) return
+  void nextTick(() => {
+    const fallbackRole = props.snapshot.activePortPane === 'groups' ? 'port-groups-panel' : 'port-results-list'
+    const target = contextPanelTrigger?.isConnected && contextPanelTrigger !== document.body
+      ? contextPanelTrigger
+      : document.querySelector<HTMLElement>(`[data-role="${fallbackRole}"]`)
+    target?.focus()
+    contextPanelTrigger = null
+  })
+})
+
 function updateDraft(input: { name?: string; entriesText?: string; color?: string; folderId?: string | null }) {
   emit('updateGroupDraft', input)
 }
@@ -61,7 +81,7 @@ function clearGroupDraftFolder() {
 
 function dispatchPortRowAction(id: string, actionId: string) {
   emit('focus', id)
-  emit('dispatch', actionId)
+  emit('dispatch', actionId, { portId: id })
 }
 
 function drawerTitle() {
@@ -131,7 +151,7 @@ function focusGroupRow(target: PortGroupTarget) {
 
 function openGroupContextMenu(target: PortGroupTarget) {
   emit('focusGroupTarget', target)
-  emit('dispatch', 'ports.drawer.open')
+  emit('dispatch', 'ports.drawer.open', targetArgs(target))
 }
 
 function dragGroup(target: PortGroupTarget) {
@@ -264,6 +284,8 @@ function groupSearchStatus() {
           'shift-preview-target': isShiftPreviewTarget(row)
         }"
         :style="{ '--group-color': row.color, '--depth': row.depth }"
+        data-operation-tooltip="右键打开分组操作"
+        data-operation-shortcut="Ctrl+→"
         :draggable="row.kind === 'group'"
         @click="focusGroupRow(row.target)"
         @contextmenu.prevent="openGroupContextMenu(row.target)"
@@ -367,7 +389,7 @@ function groupSearchStatus() {
       @click="emit('dispatch', 'ports.detail.close')"
     >
       <aside
-        class="port-detail-drawer"
+        class="port-detail-drawer port-context-panel"
         :class="{ active: props.snapshot.portDetail.active }"
         aria-label="端口详情抽屉"
         @click.stop
@@ -378,7 +400,7 @@ function groupSearchStatus() {
             <small v-if="props.snapshot.portDetailTarget">:{{ props.snapshot.portDetailTarget.port }} · PID {{ props.snapshot.portDetailTarget.pid }}</small>
             <small v-else>当前高亮进程</small>
           </span>
-          <button type="button" title="关闭详情" @click="emit('dispatch', 'ports.detail.close')">x</button>
+          <button type="button" title="关闭详情" aria-label="关闭详情" @click="emit('dispatch', 'ports.detail.close')"><X :size="15" aria-hidden="true" /></button>
         </header>
         <div v-if="props.snapshot.portDetailTarget" class="detail-list">
           <div v-for="row in detailRows()" :key="row[0]" class="detail-row">
@@ -402,7 +424,7 @@ function groupSearchStatus() {
       @click="emit('dispatch', 'ports.groupDetail.close')"
     >
       <aside
-        class="port-detail-drawer"
+        class="port-detail-drawer port-context-panel"
         :class="{ active: props.snapshot.portGroupDetail.active }"
         aria-label="端口组详情抽屉"
         @click.stop
@@ -412,7 +434,7 @@ function groupSearchStatus() {
             <strong>{{ props.snapshot.portGroupDetailTarget?.kind === 'folder' ? '分组夹详情' : '分组详情' }}</strong>
             <small>{{ props.snapshot.portGroupDetailTarget?.name || '当前高亮分组' }}</small>
           </span>
-          <button type="button" title="关闭详情" @click="emit('dispatch', 'ports.groupDetail.close')">x</button>
+          <button type="button" title="关闭详情" aria-label="关闭详情" @click="emit('dispatch', 'ports.groupDetail.close')"><X :size="15" aria-hidden="true" /></button>
         </header>
         <div v-if="props.snapshot.portGroupDetailTarget" class="detail-list">
           <div v-for="row in groupDetailRows()" :key="row[0]" class="detail-row">
@@ -436,7 +458,7 @@ function groupSearchStatus() {
       @click="emit('dispatch', 'ports.drawer.close')"
     >
       <aside
-        class="port-action-drawer"
+        class="port-action-drawer port-context-panel"
         :class="{ active: props.snapshot.portDrawer.active, multi: props.snapshot.portDrawer.mode === 'multi' }"
         aria-label="端口动作抽屉"
         @click.stop
@@ -448,7 +470,7 @@ function groupSearchStatus() {
           </span>
           <span class="drawer-header-actions">
             <button v-if="!props.snapshot.portDrawer.active" type="button" title="激活抽屉键盘层" @click="emit('dispatch', 'ports.drawer.open')">键盘</button>
-            <button type="button" title="关闭抽屉" @click="emit('dispatch', 'ports.drawer.close')">x</button>
+            <button type="button" title="关闭抽屉" aria-label="关闭抽屉" @click="emit('dispatch', 'ports.drawer.close')"><X :size="15" aria-hidden="true" /></button>
           </span>
         </header>
         <div class="drawer-action-list" role="menu">

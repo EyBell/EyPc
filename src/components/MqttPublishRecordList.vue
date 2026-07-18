@@ -96,6 +96,8 @@ function selected(row: PublishRecordRow) {
         class="mqtt-publish-record-row mqtt-message-row outgoing"
         role="option"
         tabindex="-1"
+        :data-operation-tooltip="`${title} ${rowTitle(row)}`"
+        data-operation-description="单击聚焦；双击选择；右键显示相关操作"
         :class="{ focused: isFocused(row), selected: selected(row), active: index === state.activeIndex }"
         :data-mqtt-preview-target="previewTargetValue(row)"
         :data-quick-jump-label="rowRouteLabel(row)"

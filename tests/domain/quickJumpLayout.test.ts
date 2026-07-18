@@ -28,7 +28,7 @@ function overlaps(a: ReturnType<typeof visualBox>, b: ReturnType<typeof visualBo
 }
 
 describe('quick jump layout', () => {
-  it('uses open space inside large targets and avoids overlapping badges', () => {
+  it('prefers target edges and avoids overlapping badges', () => {
     const targetRect = rect(120, 80, 260, 72)
     const items = layoutQuickJumpMarkers([
       { id: 'row', label: 'aa', targetRect },
@@ -42,7 +42,11 @@ describe('quick jump layout', () => {
     expect(items).toHaveLength(3)
     expect(items.every((item) => {
       const box = visualBox(item)
-      return box.left >= targetRect.left && box.right <= targetRect.right && box.top >= targetRect.top && box.bottom <= targetRect.bottom
+      return box.left >= 8 && box.right <= 632 && box.top >= 8 && box.bottom <= 352
+    })).toBe(true)
+    expect(items.every((item) => {
+      const box = visualBox(item)
+      return box.bottom <= targetRect.top || box.top >= targetRect.bottom || box.right <= targetRect.left || box.left >= targetRect.right
     })).toBe(true)
     expect(overlaps(visualBox(items[0]), visualBox(items[1]))).toBe(false)
     expect(overlaps(visualBox(items[0]), visualBox(items[2]))).toBe(false)

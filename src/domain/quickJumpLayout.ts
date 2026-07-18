@@ -35,6 +35,7 @@ export interface QuickJumpLayoutOptions {
   yOffset?: number
   anchorGap?: number
   collisionGap?: number
+  targetCollisionWeight?: number
 }
 
 interface LayoutBox {
@@ -59,7 +60,8 @@ const DEFAULT_LAYOUT_OPTIONS = {
   targetPadding: 8,
   yOffset: -7,
   anchorGap: 6,
-  collisionGap: 4
+  collisionGap: 4,
+  targetCollisionWeight: 4
 }
 
 function layoutOptions(options: QuickJumpLayoutOptions) {
@@ -125,9 +127,28 @@ function overlapArea(a: LayoutBox, b: LayoutBox) {
   return width * height
 }
 
-function collisionScore(box: LayoutBox, placedBoxes: LayoutBox[], options: ReturnType<typeof layoutOptions>) {
+function collisionScore(box: LayoutBox, placedBoxes: LayoutBox[], targetBoxes: LayoutBox[], options: ReturnType<typeof layoutOptions>) {
   const candidate = expandBox(box, options.collisionGap)
-  return placedBoxes.reduce((score, placed) => score + overlapArea(candidate, expandBox(placed, options.collisionGap)), 0)
+  const markerOverlap = placedBoxes.reduce((score, placed) => score + overlapArea(candidate, expandBox(placed, options.collisionGap)), 0)
+  const targetOverlap = targetBoxes.reduce((score, target) => score + overlapArea(candidate, target), 0)
+  return markerOverlap + targetOverlap * options.targetCollisionWeight
+}
+
+function targetEdgePoints(rect: QuickJumpRect, width: number, options: ReturnType<typeof layoutOptions>): LayoutPoint[] {
+  const halfWidth = width / 2
+  const halfHeight = options.badgeHeight / 2
+  const gap = options.anchorGap
+  return [
+    pointFromVisualCenter(rect.right - halfWidth, rect.top - gap - halfHeight, 0, options),
+    pointFromVisualCenter(rect.left + halfWidth, rect.top - gap - halfHeight, 1, options),
+    pointFromVisualCenter(rect.right + gap + halfWidth, rect.top + halfHeight, 2, options),
+    pointFromVisualCenter(rect.left - gap - halfWidth, rect.top + halfHeight, 3, options),
+    pointFromVisualCenter(rect.right + gap + halfWidth, rect.top + rect.height / 2, 4, options),
+    pointFromVisualCenter(rect.left - gap - halfWidth, rect.top + rect.height / 2, 5, options),
+    pointFromVisualCenter(rect.right - halfWidth, rect.bottom + gap + halfHeight, 6, options),
+    pointFromVisualCenter(rect.left + halfWidth, rect.bottom + gap + halfHeight, 7, options),
+    pointFromVisualCenter(rect.left + rect.width / 2, rect.bottom + gap + halfHeight, 8, options)
+  ]
 }
 
 function targetInnerPoints(rect: QuickJumpRect, width: number, options: ReturnType<typeof layoutOptions>): LayoutPoint[] {
@@ -175,18 +196,26 @@ function markerCandidates(anchor: QuickJumpLayoutAnchor, width: number, options:
     ))
   }
 
-  candidates.push(...targetInnerPoints(anchor.targetRect, width, options))
+  candidates.push(...targetEdgePoints(anchor.targetRect, width, options))
+  candidates.push(...targetInnerPoints(anchor.targetRect, width, options).map((point) => ({ ...point, weight: point.weight + 10 })))
   candidates.push({
     left: anchor.targetRect.left + anchor.targetRect.width / 2,
     top: anchor.targetRect.top + anchor.targetRect.height / 2,
-    weight: 20
+    weight: 30
   })
-  return candidates.map((point) => clampPoint(point, width, options))
+  return candidates.map((point) => {
+    const clamped = clampPoint(point, width, options)
+    return {
+      ...clamped,
+      weight: clamped.weight + Math.abs(clamped.left - point.left) + Math.abs(clamped.top - point.top) * 2
+    }
+  })
 }
 
 export function layoutQuickJumpMarkers(anchors: readonly QuickJumpLayoutAnchor[], optionsInput: QuickJumpLayoutOptions): QuickJumpLayoutItem[] {
   const options = layoutOptions(optionsInput)
   const placedBoxes: LayoutBox[] = []
+  const targetBoxes = anchors.map((anchor) => expandBox(anchor.targetRect, options.collisionGap))
 
   return anchors.map((anchor) => {
     const width = badgeWidth(anchor.label, options)
@@ -197,7 +226,7 @@ export function layoutQuickJumpMarkers(anchors: readonly QuickJumpLayoutAnchor[]
         return {
           point,
           box,
-          score: collisionScore(box, placedBoxes, options) + point.weight
+          score: collisionScore(box, placedBoxes, targetBoxes, options) + point.weight
         }
       })
       .sort((a, b) => a.score - b.score)[0]

@@ -79,7 +79,9 @@ const positionedItems = computed(() => layoutItems.value.map((item) => ({
   ...item,
   style: {
     '--quick-jump-left': `${item.left}px`,
-    '--quick-jump-top': `${item.top}px`
+    '--quick-jump-top': `${item.top}px`,
+    '--quick-jump-width': `${item.width}px`,
+    '--quick-jump-height': `${item.height}px`
   }
 })))
 

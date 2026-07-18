@@ -3,6 +3,7 @@ import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } fr
 import { normalizeAppState } from './domain/state'
 import { getPlatform } from './platform/eypcPlatform'
 import ConfirmLayer from './components/ConfirmLayer.vue'
+import OperationTooltipLayer from './components/OperationTooltipLayer.vue'
 import QuickJumpLayer from './components/QuickJumpLayer.vue'
 import TabShell from './components/TabShell.vue'
 import PortsPage from './pages/PortsPage.vue'
@@ -34,6 +35,15 @@ const shortcutHintTiming = createShortcutHintTiming({
 const snapshot = computed(() => {
   version.value
   return runtime.snapshot()
+})
+const confirmRestoreFocusSelectors = computed(() => {
+  if (snapshot.value.state.activeTab !== 'favorites') return []
+  return [...new Set([
+    `[data-role="favorite-${snapshot.value.activeFavoritePane}"]`,
+    '[data-role="favorite-items"]',
+    '.favorite-add-button',
+    '[data-role="favorite-containers"]'
+  ])]
 })
 
 type QuickJumpDirection = 'forward' | 'backward'
@@ -360,6 +370,9 @@ function applyPluginRoute(payload: { code?: string } | null) {
   if (route.focusSearch) {
     runtime.dispatch(route.tab === 'favorites' ? 'favorites.search.focus' : route.tab === 'mqtt' ? 'mqtt.search.focus' : 'search.focus')
   }
+  if (route.favoriteQuick) {
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-role="favorite-items"]')?.focus())
+  }
 }
 
 watch(() => snapshot.value.searchFocusRequestId, () => {
@@ -503,7 +516,7 @@ onUnmounted(() => {
           @collapse="runtime.toggleFavoriteCollapse"
           @add="runtime.addFavorite"
           @remove="runtime.removeFavorite"
-          @reorder="runtime.reorderFavorite"
+          @reorder="(nodeId, parentId, beforeNodeId) => runtime.dispatch('favorites.reorder', { nodeId, parentId, beforeNodeId })"
           @update-pick-review-item="runtime.updateFavoritePickReviewItem"
           @update-favorite-draft="runtime.updateFavoriteDraft"
           @save-favorite-draft="runtime.saveFavoriteDraft"
@@ -533,9 +546,11 @@ onUnmounted(() => {
       v-if="snapshot.confirm"
       :title="snapshot.confirm.title"
       :detail="snapshot.confirm.detail"
+      :restore-focus-selectors="confirmRestoreFocusSelectors"
       @cancel="runtime.cancelConfirm"
       @confirm="runtime.confirmNow"
     />
+    <OperationTooltipLayer :suspended="quickJump.open" />
     <QuickJumpLayer
       v-if="quickJump.open"
       :targets="quickJump.targets"

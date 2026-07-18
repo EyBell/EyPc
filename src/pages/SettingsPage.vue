@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { Ban, Braces, Keyboard, MoreHorizontal, RotateCcw, X } from '@lucide/vue'
 import type { AppSettings, AppTabId, FeatureConfig, KeybindingOverride, MqttStorageStatus, ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
 import type { RuntimeActionDefinition } from '../runtime/action/types'
 import { featureDefinitionFor } from '../runtime/feature/featureRegistry'
@@ -101,6 +102,8 @@ const commandTooltipY = ref(0)
 const draftShortcutProfiles = ref<ShortcutProfileMap>(cloneShortcutProfiles(props.shortcutProfiles || props.settings.shortcutProfiles))
 const draftFeatureConfigs = ref<FeatureConfig[]>(cloneFeatureConfigs(props.featureConfigs))
 const draggingFeatureId = ref<AppTabId | null>(null)
+const contextPanel = ref<'detail' | 'actions' | null>(null)
+let contextPanelTrigger: HTMLElement | null = null
 
 const actionMeta = computed(() => new Map(props.actions.map((action) => [action.id, action])))
 const shortcutDraftDirty = computed(() => JSON.stringify(draftShortcutProfiles.value) !== JSON.stringify(props.shortcutProfiles || props.settings.shortcutProfiles))
@@ -442,6 +445,23 @@ function handleSettingsKeydown(event: KeyboardEvent) {
   if (settingsTabId.value !== 'shortcuts') return
   if (event.ctrlKey || event.metaKey) shortcutModifierHinting.value = true
   if (recordingRow.value || whenRow.value) return
+  if (event.key === 'Escape' && contextPanel.value) {
+    blockHandledShortcutEvent(event)
+    closeContextPanel()
+    return
+  }
+  if ((event.ctrlKey || event.metaKey) && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+    const target = event.target instanceof HTMLElement ? event.target : null
+    if (target?.matches('input, textarea, select, [contenteditable="true"]')) return
+    const rowElement = target?.closest<HTMLElement>('.shortcut-compact-row:not(.shortcut-row-head)')
+    const fromOpenPanel = Boolean(contextPanel.value && target?.closest('.settings-context-panel'))
+    if (!rowElement && !fromOpenPanel) return
+    const row = (rowElement ? commandRows.value.find((item) => item.commandId === rowElement.dataset.commandId) : null) || selectedRow.value
+    if (!row) return
+    blockHandledShortcutEvent(event)
+    openContextPanel(event.key === 'ArrowLeft' ? 'detail' : 'actions', row, rowElement || contextPanelTrigger)
+    return
+  }
   if (isConfirmSaveShortcut(event) && shortcutDraftDirty.value) {
     blockHandledShortcutEvent(event)
     saveShortcutDraft()
@@ -450,6 +470,35 @@ function handleSettingsKeydown(event: KeyboardEvent) {
   if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'f') return
   blockHandledShortcutEvent(event)
   focusShortcutSearch()
+}
+
+function openContextPanel(panel: 'detail' | 'actions', row: ShortcutCommandRow, trigger?: HTMLElement | null) {
+  if (!contextPanel.value) contextPanelTrigger = trigger || document.activeElement as HTMLElement | null
+  selectedCommandId.value = row.commandId
+  contextPanel.value = panel
+  requestAnimationFrame(() => document.querySelector<HTMLElement>('.settings-context-panel button:not([disabled])')?.focus())
+}
+
+function closeContextPanel(restoreFocus = true) {
+  contextPanel.value = null
+  if (!restoreFocus) return
+  requestAnimationFrame(() => {
+    const target = contextPanelTrigger?.isConnected && contextPanelTrigger !== document.body
+      ? contextPanelTrigger
+      : document.querySelector<HTMLElement>(`.shortcut-compact-row[data-command-id="${CSS.escape(selectedCommandId.value || '')}"]`)
+    target?.focus()
+    contextPanelTrigger = null
+  })
+}
+
+function runContextAction(action: 'record' | 'when' | 'reset' | 'disable') {
+  const row = selectedRow.value
+  if (!row) return
+  if (action === 'record') openRecord(row)
+  else if (action === 'when') openWhenEditor(row)
+  else if (action === 'reset') resetDraftKeybinding(row.commandId)
+  else disableRow(row)
+  closeContextPanel(action === 'reset' || action === 'disable')
 }
 
 function handleSettingsKeyup(event: KeyboardEvent) {
@@ -790,9 +839,13 @@ function isRecordableShortcutId(shortcutId: string) {
           class="shortcut-compact-row"
           role="row"
           tabindex="0"
+          :data-command-id="row.commandId"
+          data-operation-tooltip="右键打开命令操作"
+          data-operation-shortcut="Ctrl+→"
           :class="{ selected: selectedRow?.commandId === row.commandId, disabled: !row.enabled }"
           @click="selectedCommandId = row.commandId"
           @keydown.enter.prevent="selectedCommandId = row.commandId"
+          @contextmenu.prevent="openContextPanel('actions', row, $event.currentTarget as HTMLElement)"
         >
           <span class="command-cell" :aria-label="commandTooltip(row)" @mousemove="updateCommandTooltipPosition">
             <strong class="command-tooltip-trigger">{{ row.commandId }}</strong>
@@ -827,10 +880,10 @@ function isRecordableShortcutId(shortcutId: string) {
             </em>
           </span>
           <span class="row-actions">
-            <button type="button" aria-label="录制快捷键" title="录制快捷键" @click.stop="openRecord(row)">键</button>
-            <button type="button" aria-label="编辑 When" title="编辑 When" @click.stop="openWhenEditor(row)">W</button>
-            <button type="button" aria-label="恢复默认快捷键" title="恢复默认快捷键" @click.stop="resetDraftKeybinding(row.commandId)">复</button>
-            <button type="button" class="danger" aria-label="禁用快捷键" title="禁用快捷键" @click.stop="disableRow(row)">禁</button>
+            <button type="button" aria-label="录制快捷键" title="录制快捷键" @click.stop="openRecord(row)"><Keyboard :size="14" aria-hidden="true" /></button>
+            <button type="button" aria-label="编辑 When" title="编辑 When" @click.stop="openWhenEditor(row)"><Braces :size="14" aria-hidden="true" /></button>
+            <button type="button" aria-label="恢复默认快捷键" title="恢复默认快捷键" @click.stop="resetDraftKeybinding(row.commandId)"><RotateCcw :size="14" aria-hidden="true" /></button>
+            <button type="button" class="danger" aria-label="禁用快捷键" title="禁用快捷键" @click.stop="disableRow(row)"><Ban :size="14" aria-hidden="true" /></button>
           </span>
         </div>
       </div>
@@ -942,6 +995,7 @@ function isRecordableShortcutId(shortcutId: string) {
               <label class="tool-preview-toggle">
                 <input
                   type="checkbox"
+                  aria-label="悬浮预览"
                   :checked="props.settings.toolPreviewPrefs.hoverPreviewEnabled"
                   @change="updateToolPreviewPrefs({ enabled: ($event.target as HTMLInputElement).checked })"
                 />
@@ -954,6 +1008,7 @@ function isRecordableShortcutId(shortcutId: string) {
               <label class="tool-preview-delay">
                 <input
                   type="number"
+                  aria-label="悬浮预览延迟"
                   min="0"
                   max="5000"
                   step="100"
@@ -1015,9 +1070,13 @@ function isRecordableShortcutId(shortcutId: string) {
               class="shortcut-compact-row"
               role="row"
               tabindex="0"
+              :data-command-id="row.commandId"
+              data-operation-tooltip="右键打开命令操作"
+              data-operation-shortcut="Ctrl+→"
               :class="{ selected: selectedRow?.commandId === row.commandId, disabled: !row.enabled }"
               @click="selectedCommandId = row.commandId"
               @keydown.enter.prevent="selectedCommandId = row.commandId"
+              @contextmenu.prevent="openContextPanel('actions', row, $event.currentTarget as HTMLElement)"
             >
               <span class="command-cell" :aria-label="commandTooltip(row)" @mousemove="updateCommandTooltipPosition">
                 <strong class="command-tooltip-trigger">{{ row.commandId }}</strong>
@@ -1052,10 +1111,10 @@ function isRecordableShortcutId(shortcutId: string) {
                 </em>
               </span>
               <span class="row-actions">
-                <button type="button" aria-label="录制快捷键" title="录制快捷键" @click.stop="openRecord(row)">键</button>
-                <button type="button" aria-label="编辑 When" title="编辑 When" @click.stop="openWhenEditor(row)">W</button>
-                <button type="button" aria-label="恢复默认快捷键" title="恢复默认快捷键" @click.stop="resetDraftKeybinding(row.commandId)">复</button>
-                <button type="button" class="danger" aria-label="禁用快捷键" title="禁用快捷键" @click.stop="disableRow(row)">禁</button>
+                <button type="button" aria-label="录制快捷键" title="录制快捷键" @click.stop="openRecord(row)"><Keyboard :size="14" aria-hidden="true" /></button>
+                <button type="button" aria-label="编辑 When" title="编辑 When" @click.stop="openWhenEditor(row)"><Braces :size="14" aria-hidden="true" /></button>
+                <button type="button" aria-label="恢复默认快捷键" title="恢复默认快捷键" @click.stop="resetDraftKeybinding(row.commandId)"><RotateCcw :size="14" aria-hidden="true" /></button>
+                <button type="button" class="danger" aria-label="禁用快捷键" title="禁用快捷键" @click.stop="disableRow(row)"><Ban :size="14" aria-hidden="true" /></button>
               </span>
             </div>
           </div>
@@ -1074,7 +1133,7 @@ function isRecordableShortcutId(shortcutId: string) {
           </div>
           <div class="preview-controls">
             <input v-model="previewShortcut" placeholder="例如 c-s-1" />
-            <select v-model="previewContextId">
+            <select v-model="previewContextId" aria-label="预览上下文">
               <option v-for="item in previewContexts" :key="item.id" :value="item.id">{{ item.label }}</option>
             </select>
           </div>
@@ -1104,6 +1163,41 @@ function isRecordableShortcutId(shortcutId: string) {
           </div>
         </div>
       </section>
+    </div>
+
+    <div v-if="contextPanel === 'detail' && selectedRow" class="drawer-overlay drawer-overlay-left" @click="closeContextPanel()">
+      <aside class="port-detail-drawer settings-context-panel active" aria-label="快捷键命令详情" @click.stop>
+        <header class="drawer-header">
+          <span><strong>命令详情</strong><small>{{ selectedRow.title }}</small></span>
+          <button type="button" aria-label="关闭详情" title="关闭详情" @click="closeContextPanel()"><X :size="15" aria-hidden="true" /></button>
+        </header>
+        <div class="detail-list">
+          <div class="detail-row"><span>Command</span><strong>{{ selectedRow.commandId }}</strong></div>
+          <div class="detail-row"><span>Layer</span><strong>{{ selectedRow.layerLabel }}</strong></div>
+          <div class="detail-row"><span>Shortcut</span><strong>{{ formatShortcutList(selectedRow.shortcutIds) || '未绑定' }}</strong></div>
+          <div class="detail-row"><span>When</span><strong>{{ selectedRow.when || 'always' }}</strong></div>
+          <div class="detail-row"><span>状态</span><strong>{{ selectedRow.enabled ? '启用' : '禁用' }}</strong></div>
+        </div>
+        <div class="detail-actions">
+          <button type="button" @click="openContextPanel('actions', selectedRow)"><MoreHorizontal :size="14" aria-hidden="true" /> 操作菜单</button>
+          <button type="button" @click="closeContextPanel()">关闭</button>
+        </div>
+      </aside>
+    </div>
+
+    <div v-if="contextPanel === 'actions' && selectedRow" class="drawer-overlay drawer-overlay-right" @click="closeContextPanel()">
+      <aside class="port-action-drawer settings-context-panel active" aria-label="快捷键命令操作" @click.stop>
+        <header class="drawer-header">
+          <span><strong>命令操作</strong><small>{{ selectedRow.commandId }}</small></span>
+          <button type="button" aria-label="关闭菜单" title="关闭菜单" @click="closeContextPanel()"><X :size="15" aria-hidden="true" /></button>
+        </header>
+        <div class="drawer-action-list" role="menu">
+          <button type="button" class="drawer-action" role="menuitem" @click="runContextAction('record')"><Keyboard :size="16" aria-hidden="true" /><span class="drawer-action-copy"><strong>录制快捷键</strong><small>为当前命令录制一个或多个组合键。</small></span></button>
+          <button type="button" class="drawer-action" role="menuitem" @click="runContextAction('when')"><Braces :size="16" aria-hidden="true" /><span class="drawer-action-copy"><strong>编辑 When</strong><small>调整命令在何种上下文生效。</small></span></button>
+          <button type="button" class="drawer-action" role="menuitem" @click="runContextAction('reset')"><RotateCcw :size="16" aria-hidden="true" /><span class="drawer-action-copy"><strong>恢复默认</strong><small>移除当前用户覆盖。</small></span></button>
+          <button type="button" class="drawer-action danger" role="menuitem" @click="runContextAction('disable')"><Ban :size="16" aria-hidden="true" /><span class="drawer-action-copy"><strong>禁用快捷键</strong><small>保留命令但停止快捷键触发。</small></span></button>
+        </div>
+      </aside>
     </div>
 
     <div v-if="recordingRow" class="modal-backdrop" @keydown.esc.stop.prevent="requestCloseRecord">
