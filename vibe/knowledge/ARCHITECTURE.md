@@ -41,8 +41,13 @@ uTools feature entry / keyboard input
 
 - Favorites are plugin metadata for real file/folder paths and virtual groups.
 - Removing a favorite never deletes real files from disk.
-- Favorites open/reveal/copy stays behind [src/platform/eypcPlatform.ts](../../src/platform/eypcPlatform.ts#L1) and [preload/index.js](../../preload/index.js#L1).
-- Quick favorite entry is search/open/reveal/copy only; management actions stay in the full favorites page.
+- Persistent favorites pass through deterministic graph normalization before tree or ancestor traversal. Duplicate IDs are rebuilt, invalid parent chains return to root, and traversal keeps independent visited defenses in [src/domain/favorites.ts](../../src/domain/favorites.ts#L1).
+- Display paths remain user/host values. A separate identity key makes Windows drive and UNC separator/case variants equivalent while preserving POSIX case and legal backslashes.
+- Favorites open/reveal/copy stays behind [src/platform/eypcPlatform.ts](../../src/platform/eypcPlatform.ts#L1) and [preload/index.js](../../preload/index.js#L1). Outcomes distinguish confirmed success, host dispatch, reveal-as-open fallback, and failure; capability and inspection data are Runtime-only.
+- Runtime owns `containers | items | directory`, explicit/drawer/focus/visible-selection target priority, request generations, batch constraints and removal confirmation in [src/runtime/appRuntime.ts](../../src/runtime/appRuntime.ts#L1). One-step metadata undo restores original node order and removed collapse state; it restores pane/focus/selection only while the user has not navigated away from the post-removal context.
+- Quick favorite entry is search/open/reveal/copy only; it atomically clears management transients and focuses its first visible result. Management actions stay in the full favorites page.
+- One-level directory reads do not recurse or navigate. Resolvable file/folder symbolic links retain target metadata, while sockets/devices/FIFOs and unresolved links are omitted instead of being misclassified as actionable files. No bridge method creates, moves, renames, or deletes a real file.
+- Pane cycling produces an explicit DOM-focus request and keeps only the active pane's row focus. The narrow container layer becomes visible immediately on open and hides after its close animation so focus handoff never targets a hidden tree. Dialog restoration uses ordered visible fallbacks and a bounded render-frame retry when the original trigger disappears.
 
 ## Feature Shell And Shortcuts
 
@@ -51,6 +56,15 @@ uTools feature entry / keyboard input
 - Shortcut resolution is layered by context in [src/runtime/keybinding/keybindingRuntime.ts](../../src/runtime/keybinding/keybindingRuntime.ts#L1).
 - Input roles are extracted centrally in [src/runtime/keyboardEvent.ts](../../src/runtime/keyboardEvent.ts#L1), then used by keybinding/runtime ownership decisions.
 - `Escape` is modeled as layered recovery; `Shift+Escape` hides the uTools window through the platform bridge.
+
+## Shared Help And Command Panels
+
+- [OperationTooltipLayer.vue](../../src/components/OperationTooltipLayer.vue#L1) is the single delegated product-help owner. It resolves the nearest button, actionable row/tree, draggable or form operation control, suppresses duplicate native titles, attaches `aria-describedby`, captures pointer movement for disabled controls and suspends itself while Quick Jump is active.
+- Runtime panel actions resolve targets as `explicit args → open frozen target → current pane focus → visible selection`. An explicit but invalid ID fails; it never falls through to an unrelated frozen or focused target. Ports, Favorites and MQTT store panel target state in Runtime; Settings keeps command-row detail/action state locally because shortcut drafts are component-owned.
+- `Ctrl/Cmd+ArrowLeft/Right`, row-local buttons and context-menu entries converge on the same detail/action action ids. Text editing roles retain native arrow ownership.
+- Panel presentation is inside the active Tab: docked at wide widths, reduced-secondary-navigation from `721–1100px`, and exclusive content at `<=720px`. Only confirmation, destructive decisions and atomic editors remain modal.
+- Each panel transition captures the trigger, focuses the newly rendered side even when the panel was already open, traps its local Tab cycle where applicable, and restores a stable owner on close.
+- [quickJumpLayout.ts](../../src/domain/quickJumpLayout.ts#L1) scores rendered-size boxes against all targets, including the current target, and against earlier badges. Target interiors are fallback candidates; title and outer edges are preferred when space exists.
 
 ## MQTT State And Storage
 

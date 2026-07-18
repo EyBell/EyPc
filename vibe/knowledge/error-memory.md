@@ -2,6 +2,10 @@
 
 Tool: codex
 
+## Structured Records
+
+Current reusable failures are indexed in [error-memory/README.md](error-memory/README.md#L1). New records use the required structured frontmatter; the historical entries below remain as legacy evidence.
+
 ## File Favorites macOS Open, Preload, And Shortcut Hints
 
 - Date: 2026-06-23.
@@ -10,7 +14,7 @@ Tool: codex
 - Wrong assumption: treating uTools shell API sync return values as proof of success, assuming copied preload code works under the root ESM package scope, and assuming App-level shortcut hint state automatically reaches every page.
 - Verified root cause: [preload/index.js](../../preload/index.js#L1) needed native macOS command fallback and async success/failure; [public/package.json](../../public/package.json#L1) needed a local CommonJS scope; favorite pages needed explicit shortcut-hint propagation.
 - Correct detection order: inspect the runtime artifact path from the host log, compare `public/plugin.json`, `dist/plugin.json`, and local package scopes, then compare working page hint propagation with the broken page.
-- Prevention rule: after preload or manifest changes, run `node scripts/prepare-utools-runtime.mjs` and `pnpm run validate:utools`; after command hint changes, add UI regression coverage.
+- Prevention rule: preload open first performs path inspection and prefers Electron `shell.openPath`; uTools void calls are dispatch-only and macOS reveal fallback must keep its structured error/outcome. After preload or manifest changes, run `node scripts/prepare-utools-runtime.mjs` and `pnpm run validate:utools`, whose validator must reject canonical/public/dist preload drift; after command hint changes, add UI regression coverage.
 - Latest correct scheme: [technical-details.md](technical-details.md#L1) and [ARCHITECTURE.md](ARCHITECTURE.md#L1).
 
 ## MQTT Draft History Shortcut Host Conflict

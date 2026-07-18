@@ -2,6 +2,8 @@
 
 Tool: codex
 
+Requirement version: `2026-07-13.1`
+
 ## Purpose
 
 This file is the current product requirement index for EyPc. Task-level history remains in dated folders under [PROJECT_STATUS.md](PROJECT_STATUS.md#L1); MQTT implementation mapping is maintained in [2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
@@ -14,6 +16,18 @@ This file is the current product requirement index for EyPc. Task-level history 
 - Shortcut resolution is layered by command context. Editor, drawer, preview, dropdown, and popover layers take priority over page-level shortcuts.
 - Host-shell transient command layers must be represented in runtime state before DOM focus is trusted, especially when a host reserves browser-like shortcuts.
 
+## Shared Interaction Surfaces
+
+Current increment authority: [260713/0834-cross-tab-responsive-command-panels/spec.md](260713/0834-cross-tab-responsive-command-panels/spec.md#L1).
+
+- Operation controls use one product Tooltip owner with hover/focus activation, accessible name, current shortcut or disabled reason, viewport clamping and `aria-describedby`; native `title` is not the only help surface. Buttons, menu/tab/option/treeitem roles, draggable rows, checkbox/radio/number/range controls and selects are covered, while Quick Jump temporarily suspends the Tooltip layer.
+- `Ctrl/Cmd+ArrowLeft` opens or switches to target detail and `Ctrl/Cmd+ArrowRight` opens or switches to target actions across Ports, full/Quick Favorites, MQTT row targets and Settings command rows. Explicit action arguments outrank an already-open frozen target; invalid explicit targets fail instead of silently falling back.
+- A focused Port outside the current visible selection becomes the single target; a focus that remains inside the selected batch preserves the batch action target.
+- Ordinary text editors keep native arrow/navigation ownership. Settings only claims left/right panel commands from non-editing command rows, and Quick Favorites exposes safe read-only details/actions only.
+- Opening a context panel moves focus into it; switching sides refocuses the new panel; closing restores the trigger or the stable list/grid owner. Buttons, context menus and shortcuts dispatch the same action id.
+- Tab content owns page height. Wide pages dock side panels; `721–1100px` temporarily reduce secondary rails; `<=720px` panels become exclusive inside the active Tab. Every main page supports vertical scrolling and must not require page-level horizontal scrolling at 420px.
+- Global Quick Jump uses compact solid badges whose rendered size equals its collision model. Candidate scoring includes every target, including the marker's own target, so external title/edge placement wins whenever viewport space permits.
+
 ## Ports
 
 - The port page scans local TCP listeners, dedupes by `pid:port:protocol`, supports search, user-defined groups/folders, focus movement, group filtering, detail drawers, action drawers, and safe kill/force-kill commands.
@@ -22,9 +36,16 @@ This file is the current product requirement index for EyPc. Task-level history 
 
 ## File Favorites
 
+Current increment authority: [260711/1452-file-favorites-workbench/spec.md](260711/1452-file-favorites-workbench/spec.md#L1); implementation traceability: [260711/1452-file-favorites-workbench/requirements-traceability.md](260711/1452-file-favorites-workbench/requirements-traceability.md#L1).
+
 - Favorites are plugin metadata for file/folder paths and virtual groups. Removing a favorite never deletes the disk file or folder.
 - Quick favorite mode is search/open/reveal/copy only; management mode supports add, edit, move, duplicate focus, and directory listing.
 - Open/reveal/copy stays behind the platform bridge in [src/platform/eypcPlatform.ts](../../src/platform/eypcPlatform.ts#L1) and [preload/index.js](../../preload/index.js#L1).
+- Favorite metadata normalizes duplicate ids, orphan/self/cyclic parents, and equivalent paths without rewriting the displayed path. Windows drive and UNC paths compare case-insensitively with normalized separators; POSIX paths remain case-sensitive.
+- File action results distinguish confirmed success, host dispatch, reveal-as-open fallback, and failure. Missing, offline, or denied paths remain saved and surface runtime health instead of being silently removed.
+- Full favorites use command-owned `containers`, `items`, and one-level `directory` targets with deterministic focus, selection, drawer targeting, `Escape` recovery, inline rename, batch metadata actions, and one-step metadata-removal undo.
+- Full favorites keep a compact two-pane layout, collapse containers into a command-controlled side layer below 720px, and provide keyboard, focus, ARIA, loading, empty, error, unsupported, and 420px overflow-safe states. Quick favorites remain readonly and never inherit management-page selection or drawers.
+- File favorites never create, move, rename, or delete real files; directory reads are non-recursive and do not follow symbolic links.
 
 ## MQTT
 
@@ -42,7 +63,7 @@ This file is the current product requirement index for EyPc. Task-level history 
 - `Ctrl+ArrowLeft` opens the detail drawer and `Ctrl+ArrowRight` opens the action drawer for MQTT record, connection, subscription, and draft-history row targets.
 - `Ctrl+S` favorites/unfavorites the current record/template in record focus and saves the current publish topic/payload as a template in publish editor focus. Edit layers keep `Ctrl+S` as save.
 - `Ctrl+1/2/3` select `全/收/发`; `Ctrl+M` selects `藏`; `Ctrl+H` opens/closes the send-area draft-history popover and focuses it; `Ctrl+Shift+H` manually saves the current draft. `Ctrl+L`, `Ctrl+Shift+L`, and `Ctrl+Shift+M` have no default MQTT binding.
-- `Ctrl+Shift+S` toggles layout, `Ctrl+Shift+F` opens the topic dropdown, `Ctrl+P` enters the publish topic field, and `Ctrl+ArrowRight` from the publish editor opens QoS/retain options.
+- `Ctrl+Shift+S` toggles layout, `Ctrl+Shift+F` opens the topic dropdown, and `Ctrl+P` enters the publish topic field. Publish topic/payload editors keep native `Ctrl/Cmd+ArrowLeft/Right`; QoS/retain options open from their explicit button.
 - Draft-history rows apply only from the row apply button or `Enter`; plain row click focuses the row. `Ctrl+Enter` applies and sends the focused draft while keeping the popover open.
 - Draft-history focus owns `Space` multi-select, `Ctrl+Left` detail, `Ctrl+Right` actions, `F2` title/note edit, `Shift+F2` topic/payload edit, `Ctrl+Delete` / `Ctrl+Backspace` delete, and `Escape` close/cancel.
 - Draft-history editor modes use `Ctrl+S` / `Ctrl+Enter` save, `Tab` / `Shift+Tab` field cycling, and `Escape` cancel.
@@ -58,6 +79,7 @@ This file is the current product requirement index for EyPc. Task-level history 
 
 - Settings owns feature visibility/order, shortcut profiles, shortcut conflict/reservation visibility, storage status, and shared tool preview preferences.
 - Shortcut edits are Settings-local drafts until saved as runtime shortcut profile updates.
+- Non-editing shortcut command rows support left detail, right actions and right-click actions locally; input/select controls retain native editing behavior.
 
 ## Documentation
 

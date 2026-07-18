@@ -4,22 +4,40 @@ Tool: codex
 
 ## Purpose
 
-This hub routes the current EyPc implementation line, active process documents, verification gates, and memory locations. Durable behavior belongs in [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md#L1), implementation mapping belongs in [2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1), and stable project knowledge belongs under [../knowledge](../knowledge/ARCHITECTURE.md#L1).
+This hub routes the current EyPc implementation line, active process documents, verification gates, and memory locations. Durable behavior belongs in [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md#L1); current file-favorites mapping belongs in [260711/1452-file-favorites-workbench/requirements-traceability.md](260711/1452-file-favorites-workbench/requirements-traceability.md#L1), MQTT mapping remains in [2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1), and stable project knowledge belongs under [../knowledge](../knowledge/ARCHITECTURE.md#L1).
 
 ## Current Snapshot
 
-- Date: 2026-06-28.
+- Date: 2026-07-13.
 - Product: keyboard-first uTools plugin for local PC capability calls.
 - Current main line: port management redesign, quick file favorites, MQTT over WebSocket workbench, global Quick Jump target hints, and MQTT connection tree grouping.
-- Current focus: MQTT connection rail is now an EyTodo-like compact tree with connection groups, nested hierarchy, persisted collapse state, one-disclosure group labels, row-local group actions, right-click/action drawers, Quick Jump targets, target-aware edit shortcuts, `Ctrl+G` group creation, and native drag/drop move while preserving existing config, subscription, editor, and Quick Jump keyboard ownership.
+- Current focus: cross-tab responsive command panels, operation help and Quick Jump readability are implemented, automatically/browser verified and Root accepted. The 2026-07-11 file-favorites workbench and MQTT connection-tree work remain accepted prior lines.
 - Current requirement authority: [PRODUCT_REQUIREMENTS.md](PRODUCT_REQUIREMENTS.md#L1).
-- Current implementation sync: [2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
+- Current implementation sync: file favorites [requirements-traceability.md](260711/1452-file-favorites-workbench/requirements-traceability.md#L1) and [verify.md](260711/1452-file-favorites-workbench/verify.md#L1); MQTT [06-sync-doc.md](2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
 - Current memory authority: [../knowledge/technical-details.md](../knowledge/technical-details.md#L1), [../knowledge/ARCHITECTURE.md](../knowledge/ARCHITECTURE.md#L1), [../knowledge/error-memory.md](../knowledge/error-memory.md#L1), and [../knowledge/developer-soul.md](../knowledge/developer-soul.md#L1).
+
+## Latest File Favorites Acceptance
+
+- Controlled authority: [spec.md](260711/1452-file-favorites-workbench/spec.md#L1) revision 2；requirement version `2026-07-11.1` remains integrated because the authorized continuation changed implementation/cleanup evidence, not product scope.
+- Automated verification: full `36 files / 332 tests` plus typecheck/build/uTools gates pass in [verify.md](260711/1452-file-favorites-workbench/verify.md#L1).
+- Live UI: final build verifies all 1180/760/640/420 widths without overflow, pane/side-layer DOM focus, and 420px visible path errors with document/row `420/420 · 400/400`. Confirming removal after its trigger disappears restores desktop focus to the active items grid and narrow-screen focus to the stable “添加” action.
+- Durable failures: [structured error memory](../knowledge/error-memory/README.md#L1) records malformed graph, Quick stale-target and disappearing-trigger render timing prevention; pnpm environment policy remains a candidate record, while its accidental placeholder file was removed after explicit authorization.
+- Residual gates: macOS uTools open/reveal/copy smoke and Windows/Linux real-host verification are not claimed. These environment-owned gaps do not block source acceptance.
+
+## Latest Cross-Tab Interaction Acceptance
+
+- Controlled authority and evidence: [spec.md](260713/0834-cross-tab-responsive-command-panels/spec.md#L1) and [verify.md](260713/0834-cross-tab-responsive-command-panels/verify.md#L1).
+- Shared help: one delegated [OperationTooltipLayer.vue](../../src/components/OperationTooltipLayer.vue#L1) covers button/menu/tab, actionable option/tree/draggable rows and operation-form controls, including captured hover for disabled controls and control-local semantics inside actionable rows.
+- Shared panels: Ports, Favorites, Quick Favorites, MQTT row targets and Settings command rows support left detail/right actions with explicit-target precedence, side switching, right-click parity and focus restoration. MQTT subscription `F2` and page-specific command hints are aligned with effective bindings.
+- Responsive: all four main pages pass `1180x680`, `800x736`, `760x680`, `640x680`, `420x680`, `800x480`, and `420x480` browser checks with document `scrollWidth === clientWidth`; short-height detail/action panels and four editor types scroll to their final enabled control. MQTT stacks receive/send areas vertically at narrow widths and keeps both command bars reachable.
+- Verification: `38 files / 345 tests`, typecheck, production build and uTools runtime validation passed. macOS uTools real file-action smoke and Windows/Linux real-host verification remain unclaimed.
 
 ## Active Process Index
 
 | Concern | Spec | Plan | Verification |
 | --- | --- | --- | --- |
+| Cross-tab responsive command panels and operation help | [260713/0834-cross-tab-responsive-command-panels/spec.md](260713/0834-cross-tab-responsive-command-panels/spec.md#L1) | [260713/0834-cross-tab-responsive-command-panels/plan.md](260713/0834-cross-tab-responsive-command-panels/plan.md#L1) | [260713/0834-cross-tab-responsive-command-panels/verify.md](260713/0834-cross-tab-responsive-command-panels/verify.md#L1) |
+| File favorites workbench reliability and UI closure | [260711/1452-file-favorites-workbench/spec.md](260711/1452-file-favorites-workbench/spec.md#L1) | [260711/1452-file-favorites-workbench/plan.md](260711/1452-file-favorites-workbench/plan.md#L1) | [260711/1452-file-favorites-workbench/verify.md](260711/1452-file-favorites-workbench/verify.md#L1) |
 | MQTT base WebSocket feature and storage sync | [2606231645-eypc-mqtt-websocket-tab/01-spec.md](2606231645-eypc-mqtt-websocket-tab/01-spec.md#L1) | [2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1) | [2606231645-eypc-mqtt-websocket-tab/04-verify.md](2606231645-eypc-mqtt-websocket-tab/04-verify.md#L1) |
 | Record interaction polish | [260624-eypc-mqtt-record-interaction-polish/01-spec.md](260624-eypc-mqtt-record-interaction-polish/01-spec.md#L1) | [260624-eypc-mqtt-record-interaction-polish/02-plan.md](260624-eypc-mqtt-record-interaction-polish/02-plan.md#L1) | [260624-eypc-mqtt-record-interaction-polish/04-verify.md](260624-eypc-mqtt-record-interaction-polish/04-verify.md#L1) |
 | Focus commands and topic/options popovers | [260625-eypc-mqtt-focus-command-refinement/01-spec.md](260625-eypc-mqtt-focus-command-refinement/01-spec.md#L1) | [260625-eypc-mqtt-focus-command-refinement/02-plan.md](260625-eypc-mqtt-focus-command-refinement/02-plan.md#L1) | [260625-eypc-mqtt-focus-command-refinement/04-verify.md](260625-eypc-mqtt-focus-command-refinement/04-verify.md#L1) |
@@ -51,7 +69,7 @@ Historical port, favorites, settings, and earlier MQTT process folders remain un
 - Quick Jump scans visible DOM targets from explicit `data-quick-jump-target`, MQTT shortcut hints, buttons, `role="option"`, and `role="treeitem"`; row/item targets can expose `data-quick-jump-anchor` to place markers beside titles, and exact marker input activates the target.
 - Quick Jump also scans visible focusable text controls, links, `role="button"`, `role="menuitem"`, `role="textbox"`, and `role="searchbox"` when opened from non-editing context; once those controls hold focus, normal editable ownership still blocks global `F`.
 - Quick Jump keeps full markers for matching but exposes `displayMarker` to the overlay; after a multi-letter marker prefix is typed, already-entered prefix letters disappear and only the remaining suffix is shown.
-- Quick Jump layout uses [../../src/domain/quickJumpLayout.ts](../../src/domain/quickJumpLayout.ts#L1) to place markers in large target interiors when space allows, clamp to viewport, and score candidate positions against existing badges to reduce overlap.
+- Quick Jump layout uses [../../src/domain/quickJumpLayout.ts](../../src/domain/quickJumpLayout.ts#L1) to prefer title/outer-edge candidates, clamp to viewport, and score badges against every target plus previously placed badges. Its compact solid background, border and shadow keep letters readable without making target-center coverage the default.
 - `role="textbox"` is treated as editable and blocks global non-edit shortcuts.
 - MQTT input roles include `mqtt-publish-editor`, `mqtt-publish-draft`, `mqtt-publish-draft-editor`, `mqtt-topic-filter`, `mqtt-publish-options`, `mqtt-connections`, `mqtt-subscriptions`, `mqtt-config-subscription-editor`, and `mqtt-config-publish-editor`.
 - `MqttState.connectionGroups` persists MQTT connection group hierarchy; `MqttConnectionConfig.groupId` links configs to groups and normalizes invalid references to `null`.
@@ -73,6 +91,7 @@ Historical port, favorites, settings, and earlier MQTT process folders remain un
 ## Verification Gates
 
 - Project gates: `pnpm run test`, `pnpm run typecheck`, `pnpm run build`, and `pnpm run validate:utools`.
+- Current cross-tab interaction verification on 2026-07-13: full `pnpm run test` passed with 38 files / 345 tests; `pnpm run typecheck`, `pnpm run build`, `pnpm run validate:utools`, seven-size browser overflow/focus/scroll checks, code-link audit and `git diff --check` passed. Evidence is recorded in [260713/0834-cross-tab-responsive-command-panels/verify.md](260713/0834-cross-tab-responsive-command-panels/verify.md#L1).
 - Current Quick Jump verification on 2026-06-26: targeted local `vitest` passed with 2 files / 11 tests for multi-letter prefix suffix display, Quick Jump layout/coverage regression passed with 6 files / 54 tests, full local `vitest` passed with 33 files / 269 tests, `./node_modules/.bin/vue-tsc --noEmit` passed, `./node_modules/.bin/vite build` passed, code-link audit passed, and `node scripts/prepare-utools-runtime.mjs && node scripts/validate-utools-runtime.mjs` passed. `pnpm run` was not used as final evidence because local pnpm requested esbuild build-script approval; equivalent local binaries were used.
 - Current MQTT local encrypted secret persistence verification on 2026-06-26: targeted `vitest` passed with 4 files / 120 tests for preload encrypted secret durability, legacy plaintext migration, platform bridge, runtime actions, and MQTT domain behavior; code-link audit, `git diff --check`, `./node_modules/.bin/vue-tsc --noEmit`, `./node_modules/.bin/vite build`, and `node scripts/prepare-utools-runtime.mjs && node scripts/validate-utools-runtime.mjs` passed.
 - Current MQTT config-editor checkbox layout verification on 2026-06-26: targeted `tests/ui/mqttPage.test.ts` covers flex-wrap option grouping, non-`space-between` distribution, scoped `inline-flex !important`, and fixed-width checkbox inputs; uTools default main window visually confirmed checkbox and label text stay attached inside the bottom options panel.

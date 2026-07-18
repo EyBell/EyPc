@@ -33,6 +33,18 @@ EyPc is a high-frequency uTools workbench. Its interaction taste follows the glo
 - `Escape` must recover inward before it ever exits outward: confirm/editor, active drawer, multi-select, search/filter, then initial result focus.
 - Port group editing follows the global editing soul: `F2` edits name/rules/color, `Shift+F2` edits name only, `Ctrl+S` and `Ctrl+Enter` persist the group, and `Escape` cancels the draft.
 
+## File Favorites Taste
+
+- File favorites are a compact, keyboard-first metadata workbench, not a decorative card gallery or a full filesystem manager. Selected style is a quiet two-pane hierarchy/list surface with name-path rhythm, restrained Lucide actions, visible focus/selection/path health, and command-owned responsive side layers; avoided style is repeated toolbars/counts, text abbreviations such as `DIR/FILE/开/定/复`, mouse-only actions, hidden failures, and horizontal overflow at 420px. Evidence label: `user-request`, from the 2026-07-11 file favorites workbench implementation request.
+- Favorite search, row focus, multi-select, directory selection, drawer targets, editor/review layers, and `Escape` are one deterministic recovery contract. Quick entry must begin from clean transient state and must never inherit a management-page target.
+- `Shift+F2` means inline name editing on a favorite tree/list label; `F2` remains the full correction editor for name/path/type metadata. Dialogs trap focus, restore their trigger, and announce operation results without relying on color or toast-only feedback.
+
+## Cross-Page Interaction Taste
+
+- 2026-07-13 shared-surface feedback: selected style is one quiet product Tooltip for every operation, solid but compact Quick Jump hints, and a consistent left-detail/right-action command architecture across tabs. Avoided style is transparent shortcut letters merged into content, hidden or mouse-only operations, and page-specific shortcut behavior that contradicts global muscle memory. Evidence label: `user-request + user-screenshot`.
+- Side panels belong to the active Tab, not to the whole window. Selected style docks without covering reachable content on wide windows, becomes exclusive inside the Tab on narrow windows, restores focus on close, and always permits vertical access; avoided style is full-window masks for ordinary details/actions, clipped bottoms, fixed viewport-height guesses, or page-level horizontal scrolling.
+- Help must follow the actual control. A checkbox inside an actionable row describes the checkbox, not the row context menu; disabled operations explain why they are unavailable; Quick Jump temporarily owns the visual hint layer so normal Tooltip bubbles do not compete with markers.
+
 ## MQTT Workbench Taste
 
 - Messages, publish templates, and publish history are equal record lists. Each list must support `↑↓` focus movement, direct detail, action drawer, and readonly preview from the same runtime target model.
