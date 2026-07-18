@@ -38,7 +38,7 @@ export function routePluginFeature(payload: PluginEnterPayload | null | undefine
       return enabledRoute('favorites', true, featureConfigs)
     case 'eypc-favorites-quick':
       return isFeatureEnabled('favorites', featureConfigs)
-        ? { tab: 'favorites', focusSearch: true, favoriteQuick: true }
+        ? { tab: 'favorites', focusSearch: false, favoriteQuick: true }
         : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features' }
     case 'eypc-settings':
       return { tab: 'settings', focusSearch: false }

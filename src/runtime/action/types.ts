@@ -9,7 +9,8 @@ export interface RuntimeActionContext {
   selectedIds: string[]
   layerIds: string[]
   portPane?: 'groups' | 'results'
-  favoritePane?: 'groups' | 'items'
+  favoritePane?: 'containers' | 'items' | 'directory'
+  favoriteUndoAvailable?: boolean
   favoriteQuickMode?: boolean
   textInputFocused?: boolean
   activeInputRole?: KeybindingContext['activeInputRole']

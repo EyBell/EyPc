@@ -37,10 +37,20 @@ describe('app runtime', () => {
     return { id, name, color: '#00A676', entries, folderId, sortOrder }
   }
 
+  function enableFavorites(state: ReturnType<typeof createInitialState>) {
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+  }
+
   function installPlatform(overrides: Partial<Window['eypcPlatform']> = {}) {
     const state = createInitialState(100)
     const killed: Array<{ pid: number; port: number; force: boolean }> = []
     const copied: string[] = []
+    const copiedItems: string[][] = []
     const opened: string[] = []
     const revealed: string[] = []
     const listed: string[] = []
@@ -71,23 +81,35 @@ describe('app runtime', () => {
         }
       },
       files: {
+        capabilities: { open: true, reveal: true, copyPath: true, copyItems: true, pickFiles: true, pickFolders: true, listDirectory: true, inspectPaths: true },
         open: async (target: string) => {
           opened.push(target)
-          return true
+          return { outcome: 'success' as const }
         },
         reveal: async (target: string) => {
           revealed.push(target)
-          return true
+          return { outcome: 'success' as const }
         },
         copyPath: async (path: string) => {
           copied.push(path)
-          return true
+          return { outcome: 'success' as const }
         },
+        copyItems: async (paths: string[]) => {
+          copiedItems.push(paths)
+          return { outcome: 'success' as const }
+        },
+        inspectPaths: async (paths: string[]) => paths.map((path) => ({ path, status: 'available' as const, kind: 'file' as const, exists: true, isSymbolicLink: false })),
         pickFavorite: async () => null,
         pickFavorites: async () => [],
         listDirectory: async (target: string) => {
           listed.push(target)
           return { ok: false, entries: [], error: 'unavailable' }
+        }
+      },
+      clipboard: {
+        copyText: async (text: string) => {
+          copied.push(text)
+          return true
         }
       },
       app: {
@@ -101,7 +123,7 @@ describe('app runtime', () => {
       ...overrides
     }
     globalThis.window = { eypcPlatform: platform } as unknown as Window & typeof globalThis
-    return { state, killed, copied, opened, revealed, listed, platform, getScanCount: () => scanCount, getHideCount: () => hideCount }
+    return { state, killed, copied, copiedItems, opened, revealed, listed, platform, getScanCount: () => scanCount, getHideCount: () => hideCount }
   }
 
   function createFakeMqttClient() {
@@ -122,6 +144,7 @@ describe('app runtime', () => {
 
   it('keeps favorite search as a filter and reorders favorites through runtime', () => {
     const state = createInitialState(100)
+    enableFavorites(state)
     state.favorites = [
       { id: 'g1', kind: 'group', path: '', name: 'Group', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 },
       { id: 'f1', kind: 'folder', path: '/a', name: 'A', parentId: 'g1', tags: ['docs'], color: '#2F80ED', sortOrder: 1, createdAt: 2, updatedAt: 2 },
@@ -132,7 +155,7 @@ describe('app runtime', () => {
     runtime.setTab('favorites')
     expect(runtime.dispatch('search.focus').handled).toBe(true)
     runtime.setFavoriteSearch('docs')
-    runtime.reorderFavorite('f2', 'g1', 'f1')
+    expect(runtime.dispatch('favorites.reorder', { nodeId: 'f2', parentId: 'g1', beforeNodeId: 'f1' }).handled).toBe(true)
 
     const snapshot = runtime.snapshot()
     expect(snapshot.state.favoriteSearchHistory).toEqual([])
@@ -420,6 +443,22 @@ describe('app runtime', () => {
     expect(runtime.snapshot().state.activeTab).toBe('ports')
   })
 
+  it('prefers a newly focused port over stale selection while preserving focused multi-select batches', async () => {
+    installPlatform()
+    const runtime = createAppRuntime(createInitialState(100))
+    await runtime.scanPorts()
+
+    runtime.togglePortSelection('11:3000:tcp')
+    runtime.focusPort('12:5174:tcp')
+    expect(runtime.handleShortcut('Ctrl+ArrowRight', false)).toBe('ports.drawer.open')
+    expect(runtime.snapshot().portDrawer).toMatchObject({ mode: 'single', targetIds: ['12:5174:tcp'] })
+
+    expect(runtime.handleShortcut('Escape', false)).toBe('ports.drawer.close')
+    runtime.togglePortSelection('12:5174:tcp')
+    expect(runtime.handleShortcut('Ctrl+ArrowRight', false)).toBe('ports.drawer.open')
+    expect(runtime.snapshot().portDrawer).toMatchObject({ mode: 'multi', targetIds: ['11:3000:tcp', '12:5174:tcp'] })
+  })
+
   it('opens a left detail drawer for the focused process and closes it before clearing search', async () => {
     installPlatform()
     const runtime = createAppRuntime(createInitialState(100))
@@ -454,6 +493,11 @@ describe('app runtime', () => {
       commandId: 'ports.kill.confirm',
       shortcutLabel: 'del / backspace'
     })
+    expect(runtime.dispatch('ports.drawer.open', { portId: '12:5174:tcp' }).handled).toBe(true)
+    expect(runtime.snapshot().portDrawer.targetIds).toEqual(['12:5174:tcp'])
+    expect(runtime.dispatch('ports.drawer.open', { portId: 'missing' }).handled).toBe(false)
+    expect(runtime.snapshot().portDrawer.targetIds).toEqual(['12:5174:tcp'])
+    expect(runtime.dispatch('ports.drawer.open', { portId: '11:3000:tcp' }).handled).toBe(true)
 
     expect(runtime.handleShortcut('ArrowDown', false)).toBe('ports.drawer.next')
     expect(runtime.snapshot().portDrawer.activeIndex).toBe(1)
@@ -1501,6 +1545,12 @@ describe('app runtime', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(copied).toEqual(['wss://b.example:443/mqtt'])
 
+    expect(runtime.dispatch('mqtt.drawer.open', { kind: 'config', id: 'dev-a' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttDrawer).toMatchObject({ active: true, targetKind: 'config', targetId: 'dev-a' })
+    expect(runtime.dispatch('mqtt.detail.open', { kind: 'config', id: 'dev-b' }).handled).toBe(true)
+    expect(runtime.snapshot().mqttDrawer).toMatchObject({ active: false, targetKind: 'config', targetId: 'dev-b' })
+    expect(runtime.dispatch('mqtt.drawer.open', { kind: 'config', id: 'missing' }).handled).toBe(false)
+    expect(runtime.snapshot().mqttDrawer).toMatchObject({ targetKind: 'config', targetId: 'dev-b' })
     expect(runtime.dispatch('mqtt.drawer.open', { kind: 'config', id: 'dev-b' }).handled).toBe(true)
     expect(runtime.snapshot().mqttDrawerItems.map((item) => item.commandId)).toEqual(expect.arrayContaining([
       'mqtt.detail.open',
@@ -3529,7 +3579,7 @@ describe('app runtime', () => {
       { id: 'favorites', enabled: true, sortOrder: 2 },
       { id: 'settings', enabled: true, sortOrder: 3 }
     ]
-    state.activeTab = 'favorites'
+    enableFavorites(state)
     state.favorites = [
       { id: 'g1', kind: 'group', path: '', name: 'Group', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 },
       { id: 'f1', kind: 'folder', path: '/tmp/demo', name: 'Demo', parentId: null, tags: [], color: '#2F80ED', sortOrder: 2, createdAt: 2, updatedAt: 2 }
@@ -3556,7 +3606,7 @@ describe('app runtime', () => {
       { id: 'favorites', enabled: true, sortOrder: 2 },
       { id: 'settings', enabled: true, sortOrder: 3 }
     ]
-    state.activeTab = 'favorites'
+    enableFavorites(state)
     state.favorites = [
       { id: 'g1', kind: 'group', path: '', name: 'Projects', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 },
       { id: 'g2', kind: 'group', path: '', name: 'Docs', parentId: 'g1', tags: [], color: '#2F80ED', sortOrder: 1, createdAt: 2, updatedAt: 2 },
@@ -3569,7 +3619,7 @@ describe('app runtime', () => {
     expect(runtime.snapshot().favoriteItemRows.map((row) => row.id)).toEqual(['f1', 'f2'])
 
     expect(runtime.handleShortcut('Tab', false)).toBe('favorites.pane.toggleNext')
-    expect(runtime.snapshot().activeFavoritePane).toBe('groups')
+    expect(runtime.snapshot().activeFavoritePane).toBe('containers')
     expect(runtime.handleShortcut('ArrowDown', false)).toBe('list.down')
     expect(runtime.snapshot().focusedFavoriteGroupId).toBe('g2')
     expect(runtime.handleShortcut('Enter', false)).toBe('favorites.group.apply')
@@ -3585,7 +3635,7 @@ describe('app runtime', () => {
       { id: 'favorites', enabled: true, sortOrder: 2 },
       { id: 'settings', enabled: true, sortOrder: 3 }
     ]
-    state.activeTab = 'favorites'
+    enableFavorites(state)
     state.favorites = [
       { id: 'g1', kind: 'group', path: '', name: 'Projects', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 },
       { id: 'g2', kind: 'group', path: '', name: 'Docs', parentId: 'g1', tags: [], color: '#2F80ED', sortOrder: 1, createdAt: 2, updatedAt: 2 }
@@ -3698,9 +3748,9 @@ describe('app runtime', () => {
     let pickedKind: 'file' | 'folder' | null = null
     installPlatform({
       files: {
-        open: async () => true,
-        reveal: async () => true,
-        copyPath: async () => true,
+        open: async () => ({ outcome: 'success' as const }),
+        reveal: async () => ({ outcome: 'success' as const }),
+        copyPath: async () => ({ outcome: 'success' as const }),
         pickFavorite: async () => null,
         pickFavorites: async (kind) => {
           pickedKind = kind
@@ -3739,9 +3789,9 @@ describe('app runtime', () => {
   it('cancels pick review without writing favorite metadata', async () => {
     installPlatform({
       files: {
-        open: async () => true,
-        reveal: async () => true,
-        copyPath: async () => true,
+        open: async () => ({ outcome: 'success' as const }),
+        reveal: async () => ({ outcome: 'success' as const }),
+        copyPath: async () => ({ outcome: 'success' as const }),
         pickFavorite: async () => null,
         pickFavorites: async () => [
           { kind: 'folder', path: '/tmp/picked-folder', name: 'Picked Folder', parentId: null, tags: [], color: '#2F80ED' }
@@ -3790,16 +3840,16 @@ describe('app runtime', () => {
     expect(runtime.dispatch('favorites.save').handled).toBe(true)
 
     const created = runtime.snapshot().state.favorites.find((item) => item.kind === 'folder')
-    expect(created).toMatchObject({ path: '/work/new-app', name: 'new-app', parentId: 'g1', tags: ['code', 'docs'] })
+    expect(created).toMatchObject({ path: '/work/new-app/', name: 'new-app', parentId: 'g1', tags: ['code', 'docs'] })
     expect(runtime.snapshot().focusedFavoriteId).toBe(created?.id)
   })
 
   it('picks an OS path into the favorite draft without adding metadata immediately', async () => {
     installPlatform({
       files: {
-        open: async () => true,
-        reveal: async () => true,
-        copyPath: async () => true,
+        open: async () => ({ outcome: 'success' as const }),
+        reveal: async () => ({ outcome: 'success' as const }),
+        copyPath: async () => ({ outcome: 'success' as const }),
         pickFavorite: async () => null,
         pickFavorites: async (kind) => {
           expect(kind).toBe('file')
@@ -3837,9 +3887,9 @@ describe('app runtime', () => {
     let pickedKind: 'file' | 'folder' | null = null
     installPlatform({
       files: {
-        open: async () => true,
-        reveal: async () => true,
-        copyPath: async () => true,
+        open: async () => ({ outcome: 'success' as const }),
+        reveal: async () => ({ outcome: 'success' as const }),
+        copyPath: async () => ({ outcome: 'success' as const }),
         pickFavorite: async () => null,
         pickFavorites: async (kind) => {
           pickedKind = kind
@@ -3877,10 +3927,11 @@ describe('app runtime', () => {
   it('adds picked favorites to the current group and focuses duplicates instead of writing them', async () => {
     installPlatform({
       files: {
-        open: async () => true,
-        reveal: async () => true,
-        copyPath: async () => true,
+        open: async () => ({ outcome: 'success' as const }),
+        reveal: async () => ({ outcome: 'success' as const }),
+        copyPath: async () => ({ outcome: 'success' as const }),
         pickFavorite: async () => ({ kind: 'folder', path: '/tmp/picked/', name: '', parentId: null, tags: ['picked'], color: '#2F80ED' }),
+        pickFavorites: async () => [{ kind: 'folder', path: '/tmp/picked/', name: '', parentId: null, tags: ['picked'], color: '#2F80ED' }],
         listDirectory: async () => ({ ok: false, entries: [] })
       }
     })
@@ -3904,7 +3955,7 @@ describe('app runtime', () => {
     expect(runtime.dispatch('favorites.pickReview.commit').handled).toBe(true)
 
     const created = runtime.snapshot().state.favorites.find((item) => item.kind === 'folder')
-    expect(created).toMatchObject({ path: '/tmp/picked', name: 'picked', parentId: 'g1' })
+    expect(created).toMatchObject({ path: '/tmp/picked/', name: 'picked', parentId: 'g1' })
     expect(runtime.snapshot().focusedFavoriteId).toBe(created?.id)
 
     runtime.dispatch('favorites.pick.folders')
@@ -3943,9 +3994,9 @@ describe('app runtime', () => {
   it('uses any favorite node as a virtual container and only lists real directories for folders', async () => {
     const { state, listed } = installPlatform({
       files: {
-        open: async () => true,
-        reveal: async () => true,
-        copyPath: async () => true,
+        open: async () => ({ outcome: 'success' as const }),
+        reveal: async () => ({ outcome: 'success' as const }),
+        copyPath: async () => ({ outcome: 'success' as const }),
         pickFavorite: async () => null,
         pickFavorites: async () => [],
         listDirectory: async (target: string) => {
@@ -3994,9 +4045,9 @@ describe('app runtime', () => {
   it('saves reviewed picked paths under the current virtual parent and skips duplicates', async () => {
     installPlatform({
       files: {
-        open: async () => true,
-        reveal: async () => true,
-        copyPath: async () => true,
+        open: async () => ({ outcome: 'success' as const }),
+        reveal: async () => ({ outcome: 'success' as const }),
+        copyPath: async () => ({ outcome: 'success' as const }),
         pickFavorite: async () => null,
         pickFavorites: async (kind) => {
           expect(kind).toBe('file')
@@ -4053,6 +4104,8 @@ describe('app runtime', () => {
     const runtime = createAppRuntime(state)
 
     runtime.focusFavorite('f1')
+    expect(runtime.handleShortcut('Ctrl+ArrowLeft', false)).toBe('favorites.detail.open')
+    expect(runtime.snapshot().favoriteDrawer).toMatchObject({ open: true, active: false, targetIds: ['f1'] })
     expect(runtime.handleShortcut('Ctrl+ArrowRight', false)).toBe('favorites.drawer.open')
     expect(runtime.snapshot().favoriteDrawer).toMatchObject({ open: true, active: true, targetKind: 'favorite' })
     expect(runtime.snapshot().favoriteDrawerItems.map((item) => item.commandId)).toContain('favorites.open')
@@ -4062,12 +4115,62 @@ describe('app runtime', () => {
     expect(runtime.snapshot().favoriteDrawer.open).toBe(false)
   })
 
+  it('keeps quick favorites read-only while exposing detail and safe action panels', () => {
+    const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    state.favorites = [
+      { id: 'quick-1', kind: 'file', path: '/work/quick.md', name: 'Quick', parentId: null, tags: [], color: '#F2994A', sortOrder: 1, createdAt: 1, updatedAt: 1 }
+    ]
+    const runtime = createAppRuntime(state)
+    runtime.setFavoriteQuickMode(true)
+    runtime.focusFavorite('quick-1')
+
+    expect(runtime.handleShortcut('Ctrl+ArrowLeft', false)).toBe('favorites.detail.open')
+    expect(runtime.snapshot().favoriteDrawer.active).toBe(false)
+    expect(runtime.handleShortcut('Ctrl+ArrowRight', false)).toBe('favorites.drawer.open')
+    expect(runtime.snapshot().favoriteDrawerItems.map((item) => item.commandId)).toEqual([
+      'favorites.open',
+      'favorites.reveal',
+      'favorites.copyPath',
+      'favorites.copyItems'
+    ])
+    expect(runtime.snapshot().favoriteDrawerItems.some((item) => item.commandId.includes('remove') || item.commandId.includes('edit'))).toBe(false)
+  })
+
+  it('lets an explicit favorite panel target replace an older frozen target', () => {
+    const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    state.favorites = [
+      { id: 'one', kind: 'file', path: '/one.txt', name: 'One', parentId: null, tags: [], color: '#F2994A', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'two', kind: 'file', path: '/two.txt', name: 'Two', parentId: null, tags: [], color: '#F2994A', sortOrder: 2, createdAt: 2, updatedAt: 2 }
+    ]
+    const runtime = createAppRuntime(state)
+    runtime.focusFavorite('one')
+    expect(runtime.dispatch('favorites.drawer.open').handled).toBe(true)
+    expect(runtime.snapshot().favoriteDrawer.targetIds).toEqual(['one'])
+
+    expect(runtime.dispatch('favorites.drawer.open', { favoriteId: 'two' }).handled).toBe(true)
+    expect(runtime.snapshot().favoriteDrawer.targetIds).toEqual(['two'])
+    expect(runtime.dispatch('favorites.drawer.open', { favoriteId: 'missing' }).handled).toBe(false)
+    expect(runtime.snapshot().favoriteDrawer.targetIds).toEqual(['two'])
+  })
+
   it('multi-selects real directory rows and adds them as virtual children', async () => {
     const { state } = installPlatform({
       files: {
-        open: async () => true,
-        reveal: async () => true,
-        copyPath: async () => true,
+        open: async () => ({ outcome: 'success' as const }),
+        reveal: async () => ({ outcome: 'success' as const }),
+        copyPath: async () => ({ outcome: 'success' as const }),
         pickFavorite: async () => null,
         pickFavorites: async () => [],
         listDirectory: async (target: string) => ({
@@ -4103,5 +4206,453 @@ describe('app runtime', () => {
       ['file', '/work/app/index.ts'],
       ['folder', '/work/app/src']
     ])
+  })
+
+  it('clears stale management targets when entering quick favorite mode', async () => {
+    const { state } = installPlatform({
+      files: {
+        open: async () => ({ outcome: 'success' as const }),
+        reveal: async () => ({ outcome: 'success' as const }),
+        copyPath: async () => ({ outcome: 'success' as const }),
+        pickFavorite: async () => null,
+        pickFavorites: async () => [],
+        listDirectory: async () => ({ ok: true, entries: [{ kind: 'file' as const, name: 'child.txt', path: '/work/child.txt' }] })
+      }
+    })
+    enableFavorites(state)
+    state.favorites = [
+      { id: 'folder', kind: 'folder', path: '/work', name: 'Work', parentId: null, tags: [], color: '#2F80ED', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'file', kind: 'file', path: '/work/file.txt', name: 'File', parentId: null, tags: [], color: '#F2994A', sortOrder: 2, createdAt: 2, updatedAt: 2 }
+    ]
+    const runtime = createAppRuntime(state)
+    runtime.focusFavoriteGroup('folder')
+    runtime.dispatch('favorites.group.apply')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    runtime.toggleFavoriteDirectorySelection('/work/child.txt')
+    runtime.toggleFavoriteSelection('file')
+    runtime.handleShortcut('Ctrl+ArrowRight', false)
+
+    runtime.setFavoriteQuickMode(true)
+
+    expect(runtime.snapshot()).toMatchObject({
+      activeFavoritePane: 'items',
+      selectedFavoriteIds: [],
+      selectedFavoriteDirectoryPaths: [],
+      favoriteDirectoryEntries: [],
+      favoriteDrawer: { open: false, targetIds: [] }
+    })
+    expect(runtime.snapshot().focusedFavoriteId).toBe('folder')
+  })
+
+  it('prefers current focus over stale selection and preserves visible selection for batch copies', async () => {
+    const { copied, copiedItems, state } = installPlatform()
+    enableFavorites(state)
+    state.favorites = [
+      { id: 'one', kind: 'file', path: '/one.txt', name: 'One', parentId: null, tags: [], color: '#F2994A', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'two', kind: 'file', path: '/two.txt', name: 'Two', parentId: null, tags: [], color: '#F2994A', sortOrder: 2, createdAt: 2, updatedAt: 2 }
+    ]
+    const runtime = createAppRuntime(state)
+    runtime.toggleFavoriteSelection('one')
+    runtime.focusFavorite('two')
+    runtime.dispatch('favorites.copyPath')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(copied).toEqual(['/two.txt'])
+
+    runtime.toggleFavoriteSelection('two')
+    runtime.dispatch('favorites.copyPath')
+    runtime.dispatch('favorites.copyItems')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(copied.at(-1)).toBe('/one.txt\n/two.txt')
+    expect(copiedItems).toEqual([['/one.txt', '/two.txt']])
+  })
+
+  it('shows removal counts and restores the latest metadata removal once', () => {
+    const { state } = installPlatform()
+    enableFavorites(state)
+    state.favorites = [
+      { id: 'group', kind: 'group', path: '', name: 'Group', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'child', kind: 'file', path: '/child.txt', name: 'Child', parentId: 'group', tags: [], color: '#F2994A', sortOrder: 1, createdAt: 2, updatedAt: 2 }
+    ]
+    const runtime = createAppRuntime(state)
+    runtime.focusFavoriteGroup('group')
+    runtime.dispatch('favorites.remove')
+    expect(runtime.snapshot().confirm?.detail).toContain('1 个根节点、1 个后代')
+    runtime.confirmNow()
+    expect(runtime.snapshot().state.favorites).toEqual([])
+    expect(runtime.handleShortcut('Ctrl+Z', false)).toBe('favorites.remove.undo')
+    expect(runtime.snapshot().state.favorites.map((item) => item.id)).toEqual(['group', 'child'])
+    expect(runtime.handleShortcut('Ctrl+Z', false)).toBeNull()
+  })
+
+  it('restores removal order, collapsed state, focus and selection without stealing later navigation', () => {
+    const { state } = installPlatform()
+    enableFavorites(state)
+    state.favorites = [
+      { id: 'group', kind: 'group', path: '', name: 'Group', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'child', kind: 'file', path: '/child.txt', name: 'Child', parentId: 'group', tags: [], color: '#F2994A', sortOrder: 1, createdAt: 2, updatedAt: 2 },
+      { id: 'other', kind: 'file', path: '/other.txt', name: 'Other', parentId: null, tags: [], color: '#F2994A', sortOrder: 2, createdAt: 3, updatedAt: 3 }
+    ]
+    const runtime = createAppRuntime(state)
+    runtime.toggleFavoriteCollapse('group')
+    runtime.focusFavoriteGroup('group')
+    runtime.dispatch('favorites.remove')
+    runtime.confirmNow()
+
+    expect(runtime.handleShortcut('Ctrl+Z', false)).toBe('favorites.remove.undo')
+    expect(runtime.snapshot()).toMatchObject({
+      activeFavoritePane: 'containers',
+      focusedFavoriteGroupId: 'group',
+      selectedFavoriteIds: []
+    })
+    expect(runtime.snapshot().state.favorites.map((item) => item.id)).toEqual(['group', 'child', 'other'])
+    expect(runtime.snapshot().state.collapsedFavoriteGroupIds).toContain('group')
+
+    runtime.focusFavorite('child')
+    runtime.toggleFavoriteSelection('child')
+    runtime.dispatch('favorites.remove')
+    runtime.confirmNow()
+    runtime.focusFavorite('other')
+
+    expect(runtime.handleShortcut('Ctrl+Z', false)).toBe('favorites.remove.undo')
+    expect(runtime.snapshot().focusedFavoriteId).toBe('other')
+    expect(runtime.snapshot().selectedFavoriteIds).toEqual([])
+    expect(runtime.snapshot().state.favorites.map((item) => item.id)).toEqual(['group', 'child', 'other'])
+  })
+
+  it('restores a removed visible multi-selection on immediate undo', () => {
+    const { state } = installPlatform()
+    enableFavorites(state)
+    state.favorites = [
+      { id: 'one', kind: 'file', path: '/one.txt', name: 'One', parentId: null, tags: [], color: '#F2994A', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'two', kind: 'file', path: '/two.txt', name: 'Two', parentId: null, tags: [], color: '#F2994A', sortOrder: 2, createdAt: 2, updatedAt: 2 },
+      { id: 'three', kind: 'file', path: '/three.txt', name: 'Three', parentId: null, tags: [], color: '#F2994A', sortOrder: 3, createdAt: 3, updatedAt: 3 }
+    ]
+    const runtime = createAppRuntime(state)
+    runtime.toggleFavoriteSelection('one')
+    runtime.toggleFavoriteSelection('two')
+    runtime.dispatch('favorites.remove')
+    runtime.confirmNow()
+
+    expect(runtime.handleShortcut('Ctrl+Z', false)).toBe('favorites.remove.undo')
+    expect(runtime.snapshot().selectedFavoriteIds).toEqual(['one', 'two'])
+    expect(runtime.snapshot().focusedFavoriteId).toBe('two')
+  })
+
+  it('follows directory selection then favorite selection in the Escape recovery chain', () => {
+    const { state } = installPlatform()
+    enableFavorites(state)
+    state.favorites = [{ id: 'file', kind: 'file', path: '/file.txt', name: 'File', parentId: null, tags: [], color: '#F2994A', sortOrder: 1, createdAt: 1, updatedAt: 1 }]
+    const runtime = createAppRuntime(state)
+    runtime.toggleFavoriteSelection('file')
+    runtime.toggleFavoriteDirectorySelection('/directory.txt')
+
+    expect(runtime.handleShortcut('Escape', false)).toBe('favorites.directory.selection.clear')
+    expect(runtime.snapshot().selectedFavoriteDirectoryPaths).toEqual([])
+    expect(runtime.snapshot().selectedFavoriteIds).toEqual(['file'])
+    expect(runtime.handleShortcut('Escape', false)).toBe('favorites.selection.clear')
+    expect(runtime.snapshot().selectedFavoriteIds).toEqual([])
+  })
+
+  it('does not apply favorite metadata actions to hidden selections from the directory pane', () => {
+    const { state } = installPlatform()
+    enableFavorites(state)
+    state.favorites = [{ id: 'file', kind: 'file', path: '/file.txt', name: 'File', parentId: null, tags: [], color: '#F2994A', sortOrder: 1, createdAt: 1, updatedAt: 1 }]
+    const runtime = createAppRuntime(state)
+    runtime.toggleFavoriteSelection('file')
+    runtime.focusFavoriteDirectory('/directory.txt')
+
+    const directoryContext = { textInputFocused: false, activeInputRole: 'favorite-directory' as const }
+    expect(runtime.handleShortcut('Ctrl+Delete', directoryContext)).toBeNull()
+    expect(runtime.handleShortcut('F2', directoryContext)).toBeNull()
+    expect(runtime.handleShortcut('Shift+F2', directoryContext)).toBeNull()
+    expect(runtime.dispatch('favorites.remove.force').handled).toBe(false)
+    expect(runtime.snapshot().state.favorites.map((item) => item.id)).toEqual(['file'])
+    expect(runtime.snapshot().favoriteDraft).toBeNull()
+  })
+
+  it('moves the current visible favorite selection as one Ctrl+F2 batch', () => {
+    const { state } = installPlatform()
+    enableFavorites(state)
+    state.favorites = [
+      { id: 'group', kind: 'group', path: '', name: 'Group', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'one', kind: 'file', path: '/one.txt', name: 'One', parentId: null, tags: [], color: '#F2994A', sortOrder: 2, createdAt: 2, updatedAt: 2 },
+      { id: 'two', kind: 'file', path: '/two.txt', name: 'Two', parentId: null, tags: [], color: '#F2994A', sortOrder: 3, createdAt: 3, updatedAt: 3 }
+    ]
+    const runtime = createAppRuntime(state)
+    runtime.toggleFavoriteSelection('one')
+    runtime.toggleFavoriteSelection('two')
+
+    expect(runtime.handleShortcut('Ctrl+F2', { textInputFocused: false, activeInputRole: 'favorite-items' })).toBe('favorites.group.moveParent')
+    expect(runtime.snapshot().favoriteDraft?.targetIds).toEqual(['one', 'two'])
+    runtime.updateFavoriteDraft({ parentId: 'group' })
+    expect(runtime.dispatch('favorites.save').handled).toBe(true)
+    expect(runtime.snapshot().state.favorites.filter((item) => item.id === 'one' || item.id === 'two').map((item) => item.parentId)).toEqual(['group', 'group'])
+  })
+
+  it('ignores an in-flight directory response after entering quick mode', async () => {
+    let resolveDirectory!: (value: { ok: true; entries: Array<{ kind: 'file'; name: string; path: string }> }) => void
+    const { state } = installPlatform({
+      files: {
+        open: async () => ({ outcome: 'success' as const }),
+        reveal: async () => ({ outcome: 'success' as const }),
+        copyPath: async () => ({ outcome: 'success' as const }),
+        pickFavorite: async () => null,
+        pickFavorites: async () => [],
+        listDirectory: async () => new Promise((resolve) => { resolveDirectory = resolve })
+      }
+    })
+    enableFavorites(state)
+    state.favorites = [{ id: 'folder', kind: 'folder', path: '/work', name: 'Work', parentId: null, tags: [], color: '#2F80ED', sortOrder: 1, createdAt: 1, updatedAt: 1 }]
+    const runtime = createAppRuntime(state)
+    runtime.focusFavoriteGroup('folder')
+    runtime.dispatch('favorites.group.apply')
+    expect(runtime.snapshot().favoriteDirectoryLoading).toBe(true)
+
+    runtime.setFavoriteQuickMode(true)
+    resolveDirectory({ ok: true, entries: [{ kind: 'file', name: 'late.txt', path: '/work/late.txt' }] })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(runtime.snapshot().favoriteDirectoryEntries).toEqual([])
+    expect(runtime.snapshot().favoriteDirectoryLoading).toBe(false)
+  })
+
+  it('rejects editing a favorite into an equivalent existing path', () => {
+    const { state } = installPlatform()
+    enableFavorites(state)
+    state.favorites = [
+      { id: 'one', kind: 'folder', path: 'C:\\Work\\Demo', name: 'One', parentId: null, tags: [], color: '#2F80ED', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'two', kind: 'folder', path: 'C:\\Other', name: 'Two', parentId: null, tags: [], color: '#2F80ED', sortOrder: 2, createdAt: 2, updatedAt: 2 }
+    ]
+    const runtime = createAppRuntime(state)
+    runtime.focusFavorite('two')
+    runtime.dispatch('favorites.edit')
+    runtime.updateFavoriteDraft({ path: 'c:/work/demo/' })
+
+    expect(runtime.dispatch('favorites.save').handled).toBe(false)
+    expect(runtime.snapshot().message).toBe('已有等价路径的同类型收藏')
+    expect(runtime.snapshot().state.favorites.find((item) => item.id === 'two')?.path).toBe('C:\\Other')
+  })
+
+  it('keeps a frozen drawer target and never falls back from invalid explicit targets', async () => {
+    const opened: string[] = []
+    const { state } = installPlatform({
+      files: {
+        capabilities: { open: true, reveal: true, copyPath: true, copyItems: false, pickFiles: false, pickFolders: false, listDirectory: true, inspectPaths: false },
+        open: async (path: string) => { opened.push(path); return { outcome: 'success' as const } },
+        reveal: async () => ({ outcome: 'success' as const }),
+        copyPath: async () => ({ outcome: 'success' as const }),
+        pickFavorite: async () => null,
+        pickFavorites: async () => [],
+        listDirectory: async () => ({ ok: true, entries: [{ kind: 'file' as const, name: 'child.txt', path: '/folder/child.txt' }] })
+      }
+    })
+    enableFavorites(state)
+    state.favorites = [
+      { id: 'one', kind: 'file', path: '/one.txt', name: 'One', parentId: null, tags: [], color: '#F2994A', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'two', kind: 'file', path: '/two.txt', name: 'Two', parentId: null, tags: [], color: '#F2994A', sortOrder: 2, createdAt: 2, updatedAt: 2 },
+      { id: 'folder', kind: 'folder', path: '/folder', name: 'Folder', parentId: null, tags: [], color: '#2F80ED', sortOrder: 3, createdAt: 3, updatedAt: 3 }
+    ]
+    const runtime = createAppRuntime(state)
+    runtime.focusFavorite('one')
+    runtime.dispatch('favorites.drawer.open')
+    runtime.focusFavorite('two')
+    runtime.dispatch('favorites.open')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(opened).toEqual(['/one.txt'])
+
+    runtime.dispatch('favorites.open', { favoriteId: 'missing' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(opened).toEqual(['/one.txt'])
+    expect(runtime.snapshot().message).toBe('没有选中的文件或文件夹')
+
+    runtime.dispatch('favorites.drawer.close')
+    runtime.focusFavoriteGroup('folder')
+    runtime.dispatch('favorites.group.apply')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    runtime.focusFavoriteDirectory('/folder/child.txt')
+    runtime.dispatch('favorites.drawer.open')
+    runtime.focusFavorite('two')
+    runtime.dispatch('favorites.open')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(opened).toEqual(['/one.txt', '/folder/child.txt'])
+    expect(runtime.snapshot().favoriteDrawerItems.map((item) => item.commandId)).toContain('favorites.copyItems')
+
+    runtime.dispatch('favorites.directory.open', { directoryPaths: ['/folder/missing.txt'] })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(opened).toEqual(['/one.txt', '/folder/child.txt'])
+    expect(runtime.snapshot().message).toBe('没有选中的实际目录项')
+  })
+
+  it('preserves host directory display paths while comparing equivalent identities', async () => {
+    const { state } = installPlatform({
+      files: {
+        open: async () => ({ outcome: 'success' as const }),
+        reveal: async () => ({ outcome: 'success' as const }),
+        copyPath: async () => ({ outcome: 'success' as const }),
+        pickFavorite: async () => null,
+        pickFavorites: async () => [],
+        listDirectory: async () => ({ ok: true, entries: [{ kind: 'folder' as const, name: 'Child', path: '/folder/Child/' }] })
+      }
+    })
+    enableFavorites(state)
+    state.favorites = [{ id: 'folder', kind: 'folder', path: '/folder', name: 'Folder', parentId: null, tags: [], color: '#2F80ED', sortOrder: 1, createdAt: 1, updatedAt: 1 }]
+    const runtime = createAppRuntime(state)
+    runtime.focusFavoriteGroup('folder')
+    runtime.dispatch('favorites.group.apply')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(runtime.snapshot().favoriteDirectoryEntries[0].path).toBe('/folder/Child/')
+    runtime.focusFavoriteDirectory('/folder/Child')
+    runtime.toggleFavoriteDirectorySelection('/folder/Child')
+    expect(runtime.snapshot().focusedFavoriteDirectoryPath).toBe('/folder/Child/')
+    expect(runtime.snapshot().selectedFavoriteDirectoryPaths).toEqual(['/folder/Child/'])
+    expect(runtime.snapshot().focusedFavoriteGroupId).toBeNull()
+  })
+
+  it('turns inspection rejection into an explicit unknown state instead of perpetual loading', async () => {
+    const { state } = installPlatform({
+      files: {
+        capabilities: { open: true, reveal: true, copyPath: true, copyItems: false, pickFiles: false, pickFolders: false, listDirectory: false, inspectPaths: true },
+        open: async () => ({ outcome: 'success' as const }),
+        reveal: async () => ({ outcome: 'success' as const }),
+        copyPath: async () => ({ outcome: 'success' as const }),
+        inspectPaths: async () => { throw new Error('inspection unavailable') },
+        pickFavorite: async () => null,
+        pickFavorites: async () => [],
+        listDirectory: async () => ({ ok: false, entries: [] })
+      }
+    })
+    enableFavorites(state)
+    state.favorites = [{ id: 'file', kind: 'file', path: '/file.txt', name: 'File', parentId: null, tags: [], color: '#F2994A', sortOrder: 1, createdAt: 1, updatedAt: 1 }]
+    const runtime = createAppRuntime(state)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(Object.values(runtime.snapshot().favoritePathInspections)).toEqual([
+      expect.objectContaining({ path: '/file.txt', status: 'unknown', errorCode: 'io-error', error: 'inspection unavailable' })
+    ])
+  })
+
+  it('clears the main and container searches as separate Escape steps', () => {
+    const { state } = installPlatform()
+    enableFavorites(state)
+    state.favorites = [{ id: 'group', kind: 'group', path: '', name: 'Group', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 }]
+    const runtime = createAppRuntime(state)
+    runtime.setFavoriteSearch('File')
+    runtime.setFavoriteGroupSearch('Group')
+
+    expect(runtime.handleShortcut('Escape', false)).toBe('favorites.search.clear')
+    expect(runtime.snapshot().state.favoriteSearch).toBe('')
+    expect(runtime.snapshot().favoriteGroupSearch).toBe('Group')
+    expect(runtime.handleShortcut('Escape', false)).toBe('favorites.groupSearch.clear')
+    expect(runtime.snapshot().favoriteGroupSearch).toBe('')
+  })
+
+  it('ignores folder A responses after switching to B and clears a filtered-out container', async () => {
+    const pending = new Map<string, (value: { ok: true; entries: Array<{ kind: 'file'; name: string; path: string }> }) => void>()
+    const { state } = installPlatform({
+      files: {
+        open: async () => ({ outcome: 'success' as const }),
+        reveal: async () => ({ outcome: 'success' as const }),
+        copyPath: async () => ({ outcome: 'success' as const }),
+        pickFavorite: async () => null,
+        pickFavorites: async () => [],
+        listDirectory: async (target: string) => new Promise((resolve) => pending.set(target, resolve))
+      }
+    })
+    enableFavorites(state)
+    state.favorites = [
+      { id: 'a', kind: 'folder', path: '/alpha', name: 'Alpha', parentId: null, tags: [], color: '#2F80ED', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'b', kind: 'folder', path: '/beta', name: 'Beta', parentId: null, tags: [], color: '#2F80ED', sortOrder: 2, createdAt: 2, updatedAt: 2 }
+    ]
+    const runtime = createAppRuntime(state)
+    runtime.focusFavoriteGroup('a')
+    runtime.dispatch('favorites.group.apply')
+    runtime.focusFavoriteGroup('b')
+    runtime.dispatch('favorites.group.apply')
+
+    pending.get('/alpha')?.({ ok: true, entries: [{ kind: 'file', name: 'old.txt', path: '/alpha/old.txt' }] })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(runtime.snapshot().selectedFavoriteGroupId).toBe('b')
+    expect(runtime.snapshot().favoriteDirectoryEntries).toEqual([])
+    expect(runtime.snapshot().favoriteDirectoryLoading).toBe(true)
+
+    pending.get('/beta')?.({ ok: true, entries: [{ kind: 'file', name: 'new.txt', path: '/beta/new.txt' }] })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(runtime.snapshot().favoriteDirectoryEntries.map((item) => item.path)).toEqual(['/beta/new.txt'])
+
+    runtime.setFavoriteGroupSearch('Alpha')
+    expect(runtime.snapshot().selectedFavoriteGroupId).toBeNull()
+    expect(runtime.snapshot().favoriteDirectoryEntries).toEqual([])
+    expect(runtime.snapshot().selectedFavoriteDirectoryPaths).toEqual([])
+  })
+
+  it('applies the complete favorites Escape recovery order through quick hide', async () => {
+    const { state, getHideCount } = installPlatform({
+      files: {
+        open: async () => ({ outcome: 'success' as const }),
+        reveal: async () => ({ outcome: 'success' as const }),
+        copyPath: async () => ({ outcome: 'success' as const }),
+        pickFavorite: async () => null,
+        pickFavorites: async () => [{ kind: 'file' as const, path: '/picked.txt', name: 'Picked', parentId: null, tags: [], color: '#F2994A' }],
+        listDirectory: async () => ({ ok: false, entries: [] })
+      }
+    })
+    enableFavorites(state)
+    state.favorites = [
+      { id: 'group', kind: 'group', path: '', name: 'Group', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'file', kind: 'file', path: '/file.txt', name: 'File', parentId: 'group', tags: [], color: '#F2994A', sortOrder: 1, createdAt: 2, updatedAt: 2 }
+    ]
+    const runtime = createAppRuntime(state)
+    runtime.focusFavorite('file')
+    runtime.dispatch('favorites.edit')
+    expect(runtime.handleShortcut('Escape', false)).toBe('favorites.cancel')
+
+    runtime.dispatch('favorites.pick.files')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(runtime.handleShortcut('Escape', false)).toBe('favorites.pickReview.cancel')
+
+    runtime.focusFavorite('file')
+    runtime.dispatch('favorites.drawer.open')
+    runtime.toggleFavoriteDirectorySelection('/directory.txt')
+    runtime.toggleFavoriteSelection('file')
+    expect(runtime.handleShortcut('Escape', false)).toBe('favorites.drawer.close')
+    expect(runtime.handleShortcut('Escape', false)).toBe('favorites.directory.selection.clear')
+    expect(runtime.handleShortcut('Escape', false)).toBe('favorites.selection.clear')
+
+    runtime.focusFavoriteGroup('group')
+    runtime.dispatch('favorites.group.apply')
+    runtime.setFavoriteSearch('File')
+    expect(runtime.handleShortcut('Escape', false)).toBe('favorites.search.clear')
+    expect(runtime.handleShortcut('Escape', false)).toBe('favorites.group.clear')
+    expect(runtime.handleShortcut('Escape', false)).toBe('favorites.focus.clear')
+
+    runtime.setFavoriteQuickMode(true)
+    expect(runtime.handleShortcut('Escape', false)).toBe('favorites.focus.clear')
+    expect(runtime.handleShortcut('Escape', false)).toBe('app.hide')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(getHideCount()).toBe(1)
+  })
+
+  it('does not hide quick mode or mark usage when a structured open result fails', async () => {
+    const { state, getHideCount } = installPlatform({
+      files: {
+        open: async () => ({ outcome: 'failed' as const, errorCode: 'not-found' as const }),
+        reveal: async () => ({ outcome: 'failed' as const, errorCode: 'not-found' as const }),
+        copyPath: async () => ({ outcome: 'failed' as const, errorCode: 'unsupported' as const }),
+        pickFavorite: async () => null,
+        pickFavorites: async () => [],
+        listDirectory: async () => ({ ok: false, entries: [] })
+      }
+    })
+    enableFavorites(state)
+    state.favorites = [{ id: 'file', kind: 'file', path: '/missing.txt', name: 'Missing', parentId: null, tags: [], color: '#F2994A', sortOrder: 1, createdAt: 1, updatedAt: 1 }]
+    const runtime = createAppRuntime(state)
+    runtime.setFavoriteQuickMode(true)
+    runtime.dispatch('favorites.open')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getHideCount()).toBe(0)
+    expect(runtime.snapshot().state.favorites[0].usageCount).toBeUndefined()
+    expect(runtime.snapshot().message).toContain('路径不存在')
   })
 })

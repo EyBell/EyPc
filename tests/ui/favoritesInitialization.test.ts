@@ -6,6 +6,7 @@ describe('favorites initialization UI', () => {
   it('offers explicit reviewed pick paths without exposing add commands in quick mode', () => {
     const page = readFileSync(resolve(process.cwd(), 'src/pages/FavoritesPage.vue'), 'utf8')
     const quickPage = readFileSync(resolve(process.cwd(), 'src/pages/QuickFavoritesPage.vue'), 'utf8')
+    const app = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
 
     expect(page).toContain('favorite-empty-state')
     expect(page).toContain('选择文件')
@@ -27,5 +28,7 @@ describe('favorites initialization UI', () => {
     expect(quickPage).toContain("emit('dispatch', 'favorites.open', { favoriteId: item.id })")
     expect(quickPage).toContain("emit('dispatch', 'favorites.reveal', { favoriteId: item.id })")
     expect(quickPage).toContain("emit('dispatch', 'favorites.copyPath', { favoriteId: item.id })")
+    expect(app).toContain("if (route.favoriteQuick)")
+    expect(app).toContain("document.querySelector<HTMLElement>('[data-role=\"favorite-items\"]')?.focus()")
   })
 })

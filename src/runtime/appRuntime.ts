@@ -1,4 +1,4 @@
-import { addFavoriteNode, deleteFavoriteMetadata, favoriteParentOptions, favoriteVirtualChildren, filterFavoriteContainerTree, filterFavoriteGroupTree, filterFavoriteItems, filterFavoriteTree, flattenFavoriteTree, inferFavoriteNameFromPath, isValidFavoriteParent, moveFavoriteNode, normalizeFavoritePath } from '../domain/favorites'
+import { addFavoriteNode, deleteFavoriteMetadata, favoriteParentOptions, favoritePathIdentityKey, favoriteVirtualChildren, filterFavoriteContainerTree, filterFavoriteGroupTree, filterFavoriteItems, filterFavoriteTree, flattenFavoriteTree, inferFavoriteNameFromPath, isValidFavoriteParent, moveFavoriteNode, normalizeFavoritePath } from '../domain/favorites'
 import { DEFAULT_MQTT_LAYOUT_PREFS, MQTT_LAYOUT_RATIO_MAX, MQTT_LAYOUT_RATIO_MIN, appendMqttMessage, buildMqttWebSocketUrl, clearMqttPublishDraftHistory, createMqttClientId, createMqttConnectionConfig, createMqttConnectionSnapshot, createMqttSession, deleteMqttPublishDraftHistory, deleteMqttPublishTemplate, deleteMqttRecord, matchMqttTopicFilter, mqttConnectOptionsFromConfig, mqttPublishTemplateOperationTime, normalizeMqttArchiveState, normalizeMqttTopicColor, parseMqttWebSocketUrl, renameMqttPublishTemplate, renameMqttRecord, saveMqttPublishDraftHistory, saveMqttPublishTemplate, toMqttPublishDraft, touchMqttPublishTemplate, updateMqttPublishDraftHistory } from '../domain/mqtt'
 import { buildMqttConnectionTreeRows, deleteMqttConnectionGroup, isValidMqttConnectionGroupParent, moveMqttConnectionTreeTarget, mqttConnectionTreeMoveTarget, normalizeMqttConfigGroupRefs, normalizeMqttConnectionGroups, type MqttConnectionTreeDropPosition, type MqttConnectionTreeRow, type MqttConnectionTreeTarget } from '../domain/mqttConnectionTree'
 import { dedupePortProcesses, filterPortProcesses, flattenPortGroupTargets, matchPortGroupProcesses, matchPortGroupTargetProcesses, movePortGroupToFolder, shouldProcessMatchVerifiedPort } from '../domain/ports'
@@ -8,7 +8,7 @@ import { formatShortcutList } from '../domain/shortcuts'
 import { normalizeToolPreviewPrefs } from '../domain/toolPreview'
 import type { AppState, AppTabId, FavoriteNode, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttConnectionGroup, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
 import type { PortGroupTreeRow } from '../domain/ports'
-import { getPlatform, type FavoriteDirectoryEntry, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind } from '../platform/eypcPlatform'
+import { getPlatform, normalizeFileActionResult, type FavoriteDirectoryEntry, type FavoritePathInspection, type FileActionResult, type FileCapabilities, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind } from '../platform/eypcPlatform'
 import { createActionRuntime } from './action/actionRuntime'
 import type { RuntimeActionContext, RuntimeActionRisk } from './action/types'
 import { FEATURES, visibleFeatures, type VisibleFeatureDefinition } from './feature/featureRegistry'
@@ -52,6 +52,7 @@ export interface AppRuntimeSnapshot {
   focusedFavoriteGroupId: string | null
   selectedFavoriteGroupId: string | null
   activeFavoritePane: FavoritePaneId
+  favoritePaneFocusRequestId: number
   favoriteGroupSearch: string
   favoriteGroupRows: ReturnType<typeof flattenFavoriteTree>
   favoriteContainerRows: ReturnType<typeof flattenFavoriteTree>
@@ -59,6 +60,12 @@ export interface AppRuntimeSnapshot {
   favoriteVirtualChildRows: FavoriteNode[]
   favoriteDirectoryEntries: FavoriteDirectoryRow[]
   favoriteDirectoryError: string | null
+  favoriteDirectoryLoading: boolean
+  favoritePathInspections: Record<string, FavoritePathInspection>
+  favoriteCapabilities: FileCapabilities
+  favoriteContainerPanelOpen: boolean
+  favoriteAddMenuOpen: boolean
+  favoriteCanUndoRemoval: boolean
   focusedFavoriteDirectoryPath: string | null
   selectedFavoriteDirectoryPaths: string[]
   selectedFavoriteContainer: FavoriteNode | null
@@ -134,7 +141,7 @@ export interface AppRuntimeSnapshot {
 }
 
 export type PortPaneId = 'groups' | 'results'
-export type FavoritePaneId = 'groups' | 'items'
+export type FavoritePaneId = 'containers' | 'items' | 'directory'
 export type MqttPaneId = 'connections' | 'subscriptions' | 'messages' | 'publish' | 'publish-records'
 export type MqttRecordListId = 'messages' | 'templates' | 'history'
 export type SearchFocusTarget = 'ports' | 'port-groups' | 'mqtt' | 'mqtt-templates' | 'mqtt-history' | 'favorites' | 'favorite-groups'
@@ -469,6 +476,7 @@ export type PortGroupDraftField = 'name' | 'entries' | 'color' | 'folder'
 export interface FavoriteDraft {
   mode: 'create-group' | 'create-target' | 'edit' | 'rename' | 'move-parent'
   targetId: string | null
+  targetIds: string[]
   kind: FavoriteNode['kind']
   name: string
   path: string
@@ -497,6 +505,21 @@ export interface FavoritePickReview {
   activeIndex: number
 }
 
+interface FavoriteRemovalContext {
+  activePane: FavoritePaneId
+  selectedIds: string[]
+  focusedId: string | null
+  focusedGroupId: string | null
+  selectedGroupId: string | null
+}
+
+interface FavoriteRemovalUndo {
+  removed: Array<{ node: FavoriteNode; index: number }>
+  collapsedGroupIds: string[]
+  before: FavoriteRemovalContext
+  after: FavoriteRemovalContext
+}
+
 export interface AppRuntimeOptions {
   mqttModuleLoader?: () => Promise<unknown>
 }
@@ -505,6 +528,16 @@ const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'f
 
 export function createAppRuntime(initialState: AppState, options: AppRuntimeOptions = {}) {
   const platform = getPlatform()
+  const favoriteCapabilities: FileCapabilities = platform.files.capabilities || {
+    open: true,
+    reveal: true,
+    copyPath: true,
+    copyItems: Boolean(platform.files.copyItems),
+    pickFiles: Boolean(platform.files.pickFavorites || platform.files.pickFavorite),
+    pickFolders: Boolean(platform.files.pickFavorites),
+    listDirectory: true,
+    inspectPaths: Boolean(platform.files.inspectPaths)
+  }
   let state = normalizeAppState(initialState)
   let ports: PortProcess[] = []
   let selectedPortIds: string[] = []
@@ -533,12 +566,19 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   let focusedFavoriteGroupId: string | null = null
   let selectedFavoriteGroupId: string | null = null
   let activeFavoritePane: FavoritePaneId = 'items'
+  let favoritePaneFocusRequestId = 0
   let favoriteGroupSearch = ''
   let favoriteDirectoryEntries: FavoriteDirectoryEntry[] = []
   let favoriteDirectoryError: string | null = null
+  let favoriteDirectoryLoading = false
   let favoriteDirectoryRequestId = 0
+  let favoritePathInspectionRequestId = 0
+  let favoritePathInspections: Record<string, FavoritePathInspection> = {}
   let focusedFavoriteDirectoryPath: string | null = null
   let selectedFavoriteDirectoryPaths: string[] = []
+  let favoriteContainerPanelOpen = true
+  let favoriteAddMenuOpen = false
+  let favoriteRemovalUndo: FavoriteRemovalUndo | null = null
   let favoriteDrawer: FavoriteDrawerState = { open: false, active: false, activeIndex: 0, targetKind: 'favorite', targetIds: [] }
   let favoriteQuickMode = false
   let favoritePickReview: FavoritePickReview | null = null
@@ -652,7 +692,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       mqttLogDrawer.open ? 'mqtt-log-drawer' : null,
       mqttPublishDraftHistoryEditDraft ? 'mqtt-publish-draft-editor' : null,
       mqttPublishDraftHistoryOpen ? 'mqtt-publish-draft' : null,
-      favoriteDrawer.open ? 'favorites-drawer' : null
+      favoriteDrawer.open && favoriteDrawer.active ? 'favorites-drawer' : null,
+      favoriteDrawer.open && !favoriteDrawer.active ? 'favorite-detail' : null
     ].filter((item): item is string => Boolean(item))
     const base: RuntimeActionContext = {
       tab: state.activeTab,
@@ -661,6 +702,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       portPane: activePortPane,
       favoritePane: activeFavoritePane,
       favoriteQuickMode,
+      favoriteUndoAvailable: Boolean(favoriteRemovalUndo?.removed.length),
       mqttPane: activeMqttPane,
       mqttPanelOpen,
       mqttTargetKind: mqttSelectedRecord?.kind
@@ -3465,8 +3507,27 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return true
   }
 
-  function inferMqttDrawerState(active: boolean): MqttDrawerState | null {
-    const target = mqttTargetFromArgs()
+  function hasExplicitMqttTargetArgs(args?: Record<string, unknown>) {
+    return Boolean(args && (typeof args.kind === 'string' || typeof args.targetKind === 'string' || typeof args.id === 'string' || typeof args.targetId === 'string'))
+  }
+
+  function mqttTargetExists(target: MqttRecordSelection) {
+    if (target.kind === 'config') return Boolean(mqttConfigById(target.id))
+    if (target.kind === 'connection-group') return Boolean(mqttConnectionGroupById(target.id))
+    if (target.kind === 'subscription') return mqttSubscriptionRowsForActiveConfig().some((item) => item.topic === target.id)
+    if (target.kind === 'session') return mqttArchive.sessions.some((item) => item.id === target.id)
+    if (target.kind === 'message') return Boolean(mqttMessageById(target.id))
+    if (target.kind === 'log') return mqttLogs.some((item) => item.id === target.id)
+    if (target.kind === 'publish-template') return Boolean(mqttTemplateById(target.id))
+    return Boolean(mqttPublishDraftHistoryById(target.id))
+  }
+
+  function inferMqttDrawerState(active: boolean, args?: Record<string, unknown>): MqttDrawerState | null {
+    const explicitTarget = mqttExplicitTargetFromArgs(args)
+    if (hasExplicitMqttTargetArgs(args) && (!explicitTarget || !mqttTargetExists(explicitTarget))) return null
+    const target = explicitTarget
+      || (mqttDrawer.targetKind && mqttDrawer.targetId ? { kind: mqttDrawer.targetKind, id: mqttDrawer.targetId } as MqttRecordSelection : null)
+      || mqttTargetFromArgs()
     return { open: true, active, activeIndex: 0, targetKind: target?.kind || null, targetId: target?.id || null }
   }
 
@@ -3582,8 +3643,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return []
   }
 
-  function openMqttDrawer(active = true) {
-    const inferred = inferMqttDrawerState(active)
+  function openMqttDrawer(active = true, args?: Record<string, unknown>) {
+    const inferred = inferMqttDrawerState(active, args)
     if (!inferred) {
       setMessage('没有选中的 MQTT 上下文')
       return false
@@ -3990,7 +4051,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   function focusFavoriteGroupSearch() {
     state.activeTab = 'favorites'
     favoriteQuickMode = false
-    activeFavoritePane = 'groups'
+    activeFavoritePane = 'containers'
     searchFocusTarget = 'favorite-groups'
     searchFocusRequestId += 1
     notify()
@@ -4050,33 +4111,65 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return true
   }
 
-  function openPortDetail() {
+  function explicitPortIdFromArgs(args?: Record<string, unknown>) {
+    const value = typeof args?.portId === 'string' ? args.portId : typeof args?.id === 'string' ? args.id : ''
+    return value && ports.some((item) => item.id === value) ? value : null
+  }
+
+  function hasExplicitPortArgs(args?: Record<string, unknown>) {
+    return Boolean(args && (typeof args.portId === 'string' || typeof args.id === 'string' || Array.isArray(args.portIds) || typeof args.targetId === 'string' || typeof args.groupId === 'string'))
+  }
+
+  function explicitPortGroupTargetFromArgs(args?: Record<string, unknown>): PortGroupTarget | null {
+    const target = args?.targetKind === 'folder' && typeof args.targetId === 'string'
+      ? { kind: 'folder' as const, id: args.targetId }
+      : args?.targetKind === 'group' && typeof args.targetId === 'string'
+        ? { kind: 'group' as const, id: args.targetId }
+        : typeof args?.groupId === 'string'
+          ? { kind: 'group' as const, id: args.groupId }
+          : null
+    if (!target) return null
+    if (target.kind === 'group' && state.portGroups.some((item) => item.id === target.id)) return target
+    if (target.kind === 'folder' && state.portGroupFolders.some((item) => item.id === target.id)) return target
+    return null
+  }
+
+  function openPortDetail(args?: Record<string, unknown>) {
     if (activePortPane === 'groups') {
       setMessage('端口组没有进程详情')
       return false
     }
+    const explicitId = explicitPortIdFromArgs(args)
+    if (hasExplicitPortArgs(args) && !explicitId) return false
     normalizeFocusedPort(false)
-    if (!focusedPortId) {
+    const targetId = explicitId
+      || (portDrawer.open && portDrawer.mode === 'single' ? portDrawer.targetIds[0] || null : null)
+      || portDetail.targetId
+      || focusedPortId
+    if (!targetId) {
       setMessage('没有选中的端口进程')
       return false
     }
     if (portDrawer.open) closePortDrawer(false)
     if (portGroupDetail.open) closePortGroupDetail(false)
-    portDetail = { open: true, active: true, targetId: focusedPortId }
+    portDetail = { open: true, active: true, targetId }
     notify()
     return true
   }
 
-  function openPortGroupDetail() {
+  function openPortGroupDetail(args?: Record<string, unknown>) {
     if (activePortPane !== 'groups') return false
+    const explicitTarget = explicitPortGroupTargetFromArgs(args)
+    if (hasExplicitPortArgs(args) && !explicitTarget) return false
     clearHiddenFocusedGroup()
-    if (!focusedPortGroupTarget) {
+    const target = explicitTarget || portDrawer.groupTarget || portGroupDetail.target || focusedPortGroupTarget
+    if (!target) {
       setMessage('没有选中的端口组')
       return false
     }
     if (portDrawer.open) closePortDrawer(false)
     if (portDetail.open) closePortDetail(false)
-    portGroupDetail = { open: true, active: true, target: focusedPortGroupTarget }
+    portGroupDetail = { open: true, active: true, target }
     notify()
     return true
   }
@@ -4130,10 +4223,25 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     }
   }
 
-  function inferPortDrawerState(): PortDrawerState | null {
+  function inferPortDrawerState(args?: Record<string, unknown>): PortDrawerState | null {
+    if (hasExplicitPortArgs(args)) {
+      const groupTarget = explicitPortGroupTargetFromArgs(args)
+      if (groupTarget) return { open: true, active: true, mode: 'group', activeIndex: 0, targetIds: [groupTarget.id], groupTarget }
+      const portIds = Array.isArray(args?.portIds)
+        ? [...new Set(args.portIds.map(String))].filter((id) => ports.some((item) => item.id === id))
+        : [explicitPortIdFromArgs(args)].filter((id): id is string => Boolean(id))
+      if (!portIds.length) return null
+      return { open: true, active: true, mode: portIds.length > 1 ? 'multi' : 'single', activeIndex: 0, targetIds: portIds, groupTarget: null }
+    }
+    if (portDrawer.open && (portDrawer.targetIds.length || portDrawer.groupTarget)) return { ...portDrawer, active: true }
+    if (portGroupDetail.open && portGroupDetail.target) return { open: true, active: true, mode: 'group', activeIndex: 0, targetIds: [portGroupDetail.target.id], groupTarget: portGroupDetail.target }
+    if (portDetail.open && portDetail.targetId) return { open: true, active: true, mode: 'single', activeIndex: 0, targetIds: [portDetail.targetId], groupTarget: null }
     if (activePortPane === 'groups') {
       clearHiddenFocusedGroup()
       return focusedPortGroupTarget ? { open: true, active: true, mode: 'group', activeIndex: 0, targetIds: [focusedPortGroupTarget.id], groupTarget: focusedPortGroupTarget } : null
+    }
+    if (focusedPortId && !selectedPortIds.includes(focusedPortId)) {
+      return { open: true, active: true, mode: 'single', activeIndex: 0, targetIds: [focusedPortId], groupTarget: null }
     }
     if (selectedPortIds.length) {
       return { open: true, active: true, mode: 'multi', activeIndex: 0, targetIds: [...selectedPortIds], groupTarget: null }
@@ -4173,8 +4281,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     ]
   }
 
-  function openPortDrawer() {
-    const inferred = inferPortDrawerState()
+  function openPortDrawer(args?: Record<string, unknown>) {
+    const inferred = inferPortDrawerState(args)
     if (!inferred) {
       setMessage(activePortPane === 'groups' ? '没有选中的端口组' : '没有选中的端口进程')
       return false
@@ -4253,53 +4361,71 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     }
   }
 
-  function inferFavoriteDrawerState(): FavoriteDrawerState | null {
-    if (favoriteQuickMode) return null
-    const directoryTargets = selectedFavoriteDirectoryPaths.length
-      ? selectedFavoriteDirectoryPaths
-      : focusedFavoriteDirectoryPath ? [focusedFavoriteDirectoryPath] : []
-    if (directoryTargets.length && activeFavoritePane === 'items') {
-      return { open: true, active: true, activeIndex: 0, targetKind: 'directory', targetIds: [...directoryTargets] }
+  function hasExplicitFavoriteDrawerArgs(args?: Record<string, unknown>) {
+    return Boolean(args && (Array.isArray(args.favoriteIds) || typeof args.favoriteId === 'string' || Array.isArray(args.directoryPaths)))
+  }
+
+  function inferFavoriteDrawerState(active = true, args?: Record<string, unknown>): FavoriteDrawerState | null {
+    if (hasExplicitFavoriteDrawerArgs(args)) {
+      const directoryTargets = directoryPathsFromArgs(args) || []
+      if (directoryTargets.length && !favoriteQuickMode) return { open: true, active, activeIndex: 0, targetKind: 'directory', targetIds: directoryTargets }
+      const ids = favoriteIdsFromArgs(args).filter((id) => state.favorites.some((item) => item.id === id))
+      if (!ids.length) return null
+      return { open: true, active, activeIndex: 0, targetKind: 'favorite', targetIds: ids }
     }
-    if (activeFavoritePane === 'groups' && focusedFavoriteGroupId) {
-      return { open: true, active: true, activeIndex: 0, targetKind: 'favorite', targetIds: [focusedFavoriteGroupId] }
+    if (favoriteDrawer.open && favoriteDrawer.targetIds.length) return { ...favoriteDrawer, active }
+    const directoryTargets = resolveFavoriteDirectoryPaths(undefined, true)
+    if (directoryTargets.length && activeFavoritePane === 'directory' && !favoriteQuickMode) {
+      return { open: true, active, activeIndex: 0, targetKind: 'directory', targetIds: [...directoryTargets] }
     }
-    const ids = selectedFavoriteIds.length ? selectedFavoriteIds : focusedFavoriteId ? [focusedFavoriteId] : []
-    return ids.length ? { open: true, active: true, activeIndex: 0, targetKind: 'favorite', targetIds: [...ids] } : null
+    if (activeFavoritePane === 'containers' && focusedFavoriteGroupId) {
+      return { open: true, active, activeIndex: 0, targetKind: 'favorite', targetIds: [focusedFavoriteGroupId] }
+    }
+    const ids = resolveFavoriteIds(undefined, true)
+    return ids.length ? { open: true, active, activeIndex: 0, targetKind: 'favorite', targetIds: [...ids] } : null
   }
 
   function buildFavoriteDrawerItems(drawer = favoriteDrawer): FavoriteDrawerItem[] {
     if (!drawer.open) return []
     if (drawer.targetKind === 'directory') {
-      return [
+      const items = [
         favoriteDrawerItem('favorites.directory.open', '打开', '打开选中的实际目录项。', 'open', { directoryPaths: drawer.targetIds }),
         favoriteDrawerItem('favorites.directory.reveal', '定位', '在系统文件管理器中定位实际目录项。', 'reveal', { directoryPaths: drawer.targetIds }),
         favoriteDrawerItem('favorites.directory.copyPath', '复制路径', '复制选中实际目录项的绝对路径。', 'copy', { directoryPaths: drawer.targetIds }),
+        favoriteDrawerItem('favorites.copyItems', '复制真实项', '复制选中的实际文件或文件夹。', 'copy', { directoryPaths: drawer.targetIds }),
         favoriteDrawerItem('favorites.directory.addSelected', '添加到收藏', '把选中实际目录项加入当前虚拟容器。', 'add', { directoryPaths: drawer.targetIds })
       ]
+      return drawer.targetIds.length === 1
+        ? items
+        : items.map((item) => item.commandId === 'favorites.directory.open' || item.commandId === 'favorites.directory.reveal' ? { ...item, enabled: false } : item)
     }
     const targetId = drawer.targetIds[0] || null
     const target = favoriteById(targetId)
     const args = target ? { favoriteId: target.id } : {}
+    const batchArgs = drawer.targetIds.length ? { favoriteIds: drawer.targetIds } : args
     const pathItems = target?.kind === 'group' ? [] : [
-      favoriteDrawerItem('favorites.open', '打开', '打开当前收藏目标。', 'open', args),
-      favoriteDrawerItem('favorites.reveal', '定位', '在系统文件管理器中定位当前收藏。', 'reveal', args),
-      favoriteDrawerItem('favorites.copyPath', '复制路径', '复制当前收藏的绝对路径。', 'copy', args)
-    ]
-    return [
+      favoriteDrawerItem('favorites.open', '打开', '打开当前收藏目标。', 'open', batchArgs),
+      favoriteDrawerItem('favorites.reveal', '定位', '在系统文件管理器中定位当前收藏。', 'reveal', batchArgs),
+      favoriteDrawerItem('favorites.copyPath', '复制路径', '复制当前收藏的绝对路径。', 'copy', batchArgs),
+      favoriteDrawerItem('favorites.copyItems', '复制真实项', '复制真实文件或文件夹到系统剪贴板。', 'copy', batchArgs)
+    ].map((item) => drawer.targetIds.length !== 1 && (item.commandId === 'favorites.open' || item.commandId === 'favorites.reveal') ? { ...item, enabled: false } : item)
+    const items = [
       ...pathItems,
       favoriteDrawerItem('favorites.group.create', '新建子分组', '在当前节点下创建虚拟子分组。', 'group', args),
       favoriteDrawerItem('favorites.target.create', '添加子目标', '在当前节点下添加文件或文件夹目标。', 'add', args),
       favoriteDrawerItem('favorites.edit', '编辑', '编辑当前收藏元数据。', 'edit', args),
       favoriteDrawerItem('favorites.rename', '重命名', '只重命名插件收藏元数据。', 'rename', args),
-      favoriteDrawerItem('favorites.group.moveParent', '移动父级', '调整当前节点所在虚拟父级。', 'move', args),
-      favoriteDrawerItem('favorites.remove', '移出收藏', '确认后移除插件收藏元数据。', 'remove', args),
-      favoriteDrawerItem('favorites.remove.force', '直接移除', '跳过确认，只删除插件收藏元数据。', 'delete', args)
+      favoriteDrawerItem('favorites.group.moveParent', '移动父级', '调整当前节点所在虚拟父级。', 'move', batchArgs),
+      favoriteDrawerItem('favorites.remove', '移出收藏', '确认后移除插件收藏元数据。', 'remove', batchArgs),
+      favoriteDrawerItem('favorites.remove.force', '直接移除', '跳过确认，只删除插件收藏元数据。', 'delete', batchArgs)
     ]
+    return favoriteQuickMode
+      ? items.filter((item) => ['favorites.open', 'favorites.reveal', 'favorites.copyPath', 'favorites.copyItems'].includes(item.commandId))
+      : items
   }
 
-  function openFavoriteDrawer() {
-    const inferred = inferFavoriteDrawerState()
+  function openFavoriteDrawer(active = true, args?: Record<string, unknown>) {
+    const inferred = inferFavoriteDrawerState(active, args)
     if (!inferred) {
       setMessage('没有选中的收藏目标')
       return false
@@ -4421,15 +4547,78 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function favoriteDirectoryRows(): FavoriteDirectoryRow[] {
-    const favoritePaths = new Set(state.favorites.map((item) => `${item.kind}:${normalizeFavoritePath(item.path)}`))
-    const selected = new Set(selectedFavoriteDirectoryPaths)
+    const favoritePaths = new Set(state.favorites.map((item) => `${item.kind}:${favoritePathIdentityKey(item.path)}`))
+    const selected = new Set(selectedFavoriteDirectoryPaths.map(favoritePathIdentityKey))
     return favoriteDirectoryEntries.map((entry) => ({
       ...entry,
-      path: normalizeFavoritePath(entry.path),
-      favorited: favoritePaths.has(`${entry.kind}:${normalizeFavoritePath(entry.path)}`),
-      selected: selected.has(normalizeFavoritePath(entry.path)),
-      focused: focusedFavoriteDirectoryPath === normalizeFavoritePath(entry.path)
+      favorited: favoritePaths.has(`${entry.kind}:${favoritePathIdentityKey(entry.path)}`),
+      selected: selected.has(favoritePathIdentityKey(entry.path)),
+      focused: focusedFavoriteDirectoryPath ? favoritePathIdentityKey(focusedFavoriteDirectoryPath) === favoritePathIdentityKey(entry.path) : false
     }))
+  }
+
+  function availableFavoritePanes(): FavoritePaneId[] {
+    if (favoriteQuickMode) return ['items']
+    const panes: FavoritePaneId[] = []
+    if (favoriteContainerPanelOpen) panes.push('containers')
+    panes.push('items')
+    if (selectedFavoriteContainer()?.kind === 'folder') panes.push('directory')
+    return panes
+  }
+
+  function cycleFavoritePane(direction: 1 | -1) {
+    const panes = availableFavoritePanes()
+    if (!panes.length) return false
+    const current = panes.indexOf(activeFavoritePane)
+    activeFavoritePane = panes[(Math.max(0, current) + direction + panes.length) % panes.length]
+    if (activeFavoritePane === 'containers') {
+      focusedFavoriteId = null
+      focusedFavoriteDirectoryPath = null
+      normalizeFocusedFavoriteGroup()
+    }
+    if (activeFavoritePane === 'items') {
+      focusedFavoriteGroupId = null
+      focusedFavoriteDirectoryPath = null
+      normalizeFocusedFavorite()
+    }
+    if (activeFavoritePane === 'directory') {
+      const rows = favoriteDirectoryRows()
+      const focusedKey = focusedFavoriteDirectoryPath ? favoritePathIdentityKey(focusedFavoriteDirectoryPath) : ''
+      focusedFavoriteDirectoryPath = rows.find((row) => favoritePathIdentityKey(row.path) === focusedKey)?.path || rows[0]?.path || null
+      focusedFavoriteId = null
+      focusedFavoriteGroupId = null
+    }
+    favoritePaneFocusRequestId += 1
+    notify()
+    return true
+  }
+
+  async function refreshFavoritePathInspections() {
+    const requestId = favoritePathInspectionRequestId + 1
+    favoritePathInspectionRequestId = requestId
+    const items = state.favorites.filter((item) => item.kind !== 'group' && Boolean(item.path))
+    if (!platform.files.inspectPaths) {
+      favoritePathInspections = {}
+      notify()
+      return
+    }
+    try {
+      const inspections = await platform.files.inspectPaths(items.map((item) => item.path))
+      if (requestId !== favoritePathInspectionRequestId) return
+      favoritePathInspections = Object.fromEntries(inspections.map((inspection) => [favoritePathIdentityKey(inspection.path), inspection]))
+    } catch (error) {
+      if (requestId !== favoritePathInspectionRequestId) return
+      favoritePathInspections = Object.fromEntries(items.map((item) => [favoritePathIdentityKey(item.path), {
+        path: item.path,
+        status: 'unknown' as const,
+        kind: 'unknown' as const,
+        exists: false,
+        isSymbolicLink: false,
+        errorCode: 'io-error' as const,
+        error: error instanceof Error ? error.message : '路径检查失败'
+      }]))
+    }
+    notify()
   }
 
   async function loadSelectedFavoriteDirectory() {
@@ -4439,23 +4628,38 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     selectedFavoriteDirectoryPaths = []
     focusedFavoriteDirectoryPath = null
     favoriteDirectoryError = null
+    favoriteDirectoryLoading = false
     if (favoriteQuickMode || container?.kind !== 'folder' || !container.path) {
       favoriteDirectoryEntries = []
       notify()
       return
     }
-    const result = await platform.files.listDirectory(container.path)
-    if (requestId !== favoriteDirectoryRequestId) return
-    favoriteDirectoryEntries = result.ok ? result.entries.map((entry) => ({ ...entry, path: normalizeFavoritePath(entry.path) })) : []
-    favoriteDirectoryError = result.ok ? null : result.error || '当前宿主不可读取目录'
+    favoriteDirectoryLoading = true
     notify()
+    try {
+      const result = await platform.files.listDirectory(container.path)
+      if (requestId !== favoriteDirectoryRequestId) return
+      favoriteDirectoryEntries = result.ok ? result.entries.map((entry) => ({ ...entry })) : []
+      favoriteDirectoryError = result.ok ? null : result.error || '当前宿主不可读取目录'
+    } catch (error) {
+      if (requestId !== favoriteDirectoryRequestId) return
+      favoriteDirectoryEntries = []
+      favoriteDirectoryError = error instanceof Error ? error.message : '当前宿主不可读取目录'
+    } finally {
+      if (requestId === favoriteDirectoryRequestId) {
+        favoriteDirectoryLoading = false
+        notify()
+      }
+    }
   }
 
   function selectedDirectoryEntries(): FavoriteDirectoryRow[] {
     const rows = favoriteDirectoryRows()
-    const selected = rows.filter((row) => selectedFavoriteDirectoryPaths.includes(row.path))
+    const selectedKeys = new Set(selectedFavoriteDirectoryPaths.map(favoritePathIdentityKey))
+    const selected = rows.filter((row) => selectedKeys.has(favoritePathIdentityKey(row.path)))
     if (selected.length) return selected
-    return focusedFavoriteDirectoryPath ? rows.filter((row) => row.path === focusedFavoriteDirectoryPath) : []
+    const focusedKey = focusedFavoriteDirectoryPath ? favoritePathIdentityKey(focusedFavoriteDirectoryPath) : ''
+    return focusedKey ? rows.filter((row) => favoritePathIdentityKey(row.path) === focusedKey) : []
   }
 
   function moveInList(direction: 1 | -1, page = false) {
@@ -4507,7 +4711,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         return
       }
     }
-    if (state.activeTab === 'favorites' && activeFavoritePane === 'groups') {
+    if (state.activeTab === 'favorites' && activeFavoritePane === 'containers') {
       const rows = favoriteContainerRows()
       focusedFavoriteId = null
       if (!rows.length) {
@@ -4519,6 +4723,23 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const current = currentIndex >= 0 ? currentIndex : direction > 0 ? -1 : rows.length
       const next = Math.min(rows.length - 1, Math.max(0, current + direction * (page ? 5 : 1)))
       focusedFavoriteGroupId = rows[next].node.id
+      notify()
+      return
+    }
+    if (state.activeTab === 'favorites' && activeFavoritePane === 'directory') {
+      const rows = favoriteDirectoryRows()
+      focusedFavoriteId = null
+      focusedFavoriteGroupId = null
+      if (!rows.length) {
+        focusedFavoriteDirectoryPath = null
+        notify()
+        return
+      }
+      const currentKey = focusedFavoriteDirectoryPath ? favoritePathIdentityKey(focusedFavoriteDirectoryPath) : ''
+      const currentIndex = rows.findIndex((row) => favoritePathIdentityKey(row.path) === currentKey)
+      const current = currentIndex >= 0 ? currentIndex : direction > 0 ? -1 : rows.length
+      const next = Math.min(rows.length - 1, Math.max(0, current + direction * (page ? 5 : 1)))
+      focusedFavoriteDirectoryPath = rows[next].path
       notify()
       return
     }
@@ -4571,6 +4792,16 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       if (advance && currentIndex >= 0 && currentIndex < rows.length - 1) {
         focusedFavoriteId = rows[currentIndex + 1].id
       }
+      notify()
+    }
+    if (state.activeTab === 'favorites' && activeFavoritePane === 'directory' && focusedFavoriteDirectoryPath) {
+      const rows = favoriteDirectoryRows()
+      const focusedKey = favoritePathIdentityKey(focusedFavoriteDirectoryPath)
+      const currentIndex = rows.findIndex((row) => favoritePathIdentityKey(row.path) === focusedKey)
+      selectedFavoriteDirectoryPaths = selectedFavoriteDirectoryPaths.some((item) => favoritePathIdentityKey(item) === focusedKey)
+        ? selectedFavoriteDirectoryPaths.filter((item) => favoritePathIdentityKey(item) !== focusedKey)
+        : [...selectedFavoriteDirectoryPaths, focusedFavoriteDirectoryPath]
+      if (advance && currentIndex >= 0 && currentIndex < rows.length - 1) focusedFavoriteDirectoryPath = rows[currentIndex + 1].path
       notify()
     }
   }
@@ -5025,14 +5256,61 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return typeof args?.favoriteId === 'string' ? args.favoriteId : null
   }
 
+  function favoriteIdsFromArgs(args?: Record<string, unknown> | null): string[] {
+    if (Array.isArray(args?.favoriteIds)) return [...new Set(args.favoriteIds.map((item) => String(item || '')).filter(Boolean))]
+    const id = favoriteIdFromArgs(args)
+    return id ? [id] : []
+  }
+
+  function hasExplicitFavoriteIds(args?: Record<string, unknown> | null): boolean {
+    return Array.isArray(args?.favoriteIds) || typeof args?.favoriteId === 'string'
+  }
+
   function favoritePickKindFromArgs(args?: Record<string, unknown> | null): PickedFavoriteKind | null {
     return args?.kind === 'file' || args?.kind === 'folder' ? args.kind : null
   }
 
-  function directoryPathsFromArgs(args?: Record<string, unknown> | null): string[] {
+  function directoryPathsFromArgs(args?: Record<string, unknown> | null): string[] | undefined {
     return Array.isArray(args?.directoryPaths)
       ? args.directoryPaths.map((item) => normalizeFavoritePath(String(item || ''))).filter(Boolean)
-      : []
+      : undefined
+  }
+
+  function favoriteActionTargetKind(args?: Record<string, unknown> | null): FavoriteDrawerTargetKind {
+    if (hasExplicitFavoriteIds(args)) return 'favorite'
+    if (directoryPathsFromArgs(args) !== undefined) return 'directory'
+    if (favoriteDrawer.open) return favoriteDrawer.targetKind
+    return activeFavoritePane === 'directory' ? 'directory' : 'favorite'
+  }
+
+  function visibleSelectedFavoriteIds(): string[] {
+    const visible = new Set(currentFavoriteItems().map((item) => item.id))
+    return selectedFavoriteIds.filter((id) => visible.has(id))
+  }
+
+  function resolveFavoriteIds(args?: Record<string, unknown> | null, batch = false): string[] {
+    const explicit = favoriteIdsFromArgs(args).filter((id) => Boolean(favoriteById(id)))
+    if (hasExplicitFavoriteIds(args)) return explicit
+    if (favoriteDrawer.open && favoriteDrawer.targetKind === 'favorite') return favoriteDrawer.targetIds.filter((id) => Boolean(favoriteById(id)))
+    if (activeFavoritePane === 'directory') return []
+    const focusedId = activeFavoritePane === 'containers' ? focusedFavoriteGroupId : focusedFavoriteId
+    const visibleSelection = visibleSelectedFavoriteIds()
+    if (focusedId && favoriteById(focusedId)) {
+      return batch && visibleSelection.includes(focusedId) ? visibleSelection : [focusedId]
+    }
+    return visibleSelection
+  }
+
+  function resolveFavoriteDirectoryPaths(explicitPaths: string[] | undefined, batch = false): string[] {
+    const rows = favoriteDirectoryRows()
+    const byKey = new Map(rows.map((row) => [favoritePathIdentityKey(row.path), row.path]))
+    const normalizeVisible = (paths: string[]) => [...new Set(paths.flatMap((item) => byKey.get(favoritePathIdentityKey(item)) || []))]
+    if (explicitPaths !== undefined) return normalizeVisible(explicitPaths)
+    if (favoriteDrawer.open && favoriteDrawer.targetKind === 'directory') return normalizeVisible(favoriteDrawer.targetIds)
+    const visibleSelection = normalizeVisible(selectedFavoriteDirectoryPaths)
+    const focused = focusedFavoriteDirectoryPath ? byKey.get(favoritePathIdentityKey(focusedFavoriteDirectoryPath)) || null : null
+    if (focused) return batch && visibleSelection.includes(focused) ? visibleSelection : [focused]
+    return visibleSelection
   }
 
   function focusFavoriteActionTarget(args?: Record<string, unknown> | null, useAsContainer = false): FavoriteNode | null {
@@ -5043,13 +5321,13 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       focusedFavoriteGroupId = target.id
       selectedFavoriteGroupId = target.id
       focusedFavoriteId = null
-      activeFavoritePane = 'groups'
+      activeFavoritePane = 'containers'
       return target
     }
     if (target.kind === 'group') {
       focusedFavoriteGroupId = target.id
       focusedFavoriteId = null
-      activeFavoritePane = 'groups'
+      activeFavoritePane = 'containers'
     } else {
       focusedFavoriteId = target.id
       focusedFavoriteGroupId = null
@@ -5059,12 +5337,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function selectedFavorite(targetId?: string | null): FavoriteNode | null {
-    const id = targetId
-      || (favoriteDrawer.open && favoriteDrawer.targetKind === 'favorite' ? favoriteDrawer.targetIds[0] : null)
-      || selectedFavoriteIds[0]
-      || focusedFavoriteId
-      || (activeFavoritePane === 'groups' ? focusedFavoriteGroupId : null)
-    const item = favoriteById(id)
+    const item = favoriteById(resolveFavoriteIds(targetId ? { favoriteId: targetId } : undefined)[0] || null)
     return item && item.kind !== 'group' ? item : null
   }
 
@@ -5082,7 +5355,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     selectedFavoriteGroupId = targetId || null
     activeFavoritePane = 'items'
     selectedFavoriteIds = []
-    normalizeFocusedFavorite(false)
+    focusedFavoriteGroupId = null
+    normalizeFocusedFavorite()
     void loadSelectedFavoriteDirectory()
     notify()
     return true
@@ -5130,8 +5404,17 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       message = '已添加收藏'
     }
     if (!result.duplicate) save()
+    if (!result.duplicate) void refreshFavoritePathInspections()
     notify()
     return result
+  }
+
+  function reorderFavoriteMetadata(nodeId: string, parentId: string | null, beforeNodeId: string | null) {
+    if (!favoriteById(nodeId)) return false
+    state.favorites = moveFavoriteNode(state.favorites, nodeId, parentId, beforeNodeId)
+    save()
+    notify()
+    return true
   }
 
   function addFavoriteTargets(inputs: Array<Pick<FavoriteNode, 'kind' | 'path' | 'name' | 'parentId' | 'tags' | 'color'>>, parentId = selectedFavoriteParentId()) {
@@ -5165,36 +5448,128 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return { added, duplicates }
   }
 
-  function selectedFavoriteMetadataIds(): string[] {
-    if (activeFavoritePane === 'groups' && focusedFavoriteGroupId) return [focusedFavoriteGroupId]
-    return selectedFavoriteIds.length ? selectedFavoriteIds : focusedFavoriteId ? [focusedFavoriteId] : []
+  function selectedFavoriteMetadataIds(args?: Record<string, unknown> | null): string[] {
+    return resolveFavoriteIds(args, true)
+  }
+
+  function favoriteRemovalPlan(ids: string[]) {
+    const requested = [...new Set(ids)].filter((id) => Boolean(favoriteById(id)))
+    const byId = new Map(state.favorites.map((item) => [item.id, item]))
+    const isDescendantOf = (id: string, ancestorId: string) => {
+      const visited = new Set<string>()
+      let cursor = byId.get(id)
+      while (cursor?.parentId && !visited.has(cursor.id)) {
+        visited.add(cursor.id)
+        if (cursor.parentId === ancestorId) return true
+        cursor = byId.get(cursor.parentId)
+      }
+      return false
+    }
+    const roots = requested.filter((id) => !requested.some((candidate) => candidate !== id && isDescendantOf(id, candidate)))
+    const remaining = deleteFavoriteMetadata(state.favorites, roots)
+    const remainingIds = new Set(remaining.map((item) => item.id))
+    const removed = state.favorites.filter((item) => !remainingIds.has(item.id)).map((item) => ({ ...item, tags: [...item.tags] }))
+    return { roots, removed, remaining }
+  }
+
+  function favoriteRemovalContext(): FavoriteRemovalContext {
+    return {
+      activePane: activeFavoritePane,
+      selectedIds: [...selectedFavoriteIds],
+      focusedId: focusedFavoriteId,
+      focusedGroupId: focusedFavoriteGroupId,
+      selectedGroupId: selectedFavoriteGroupId
+    }
+  }
+
+  function sameFavoriteRemovalContext(left: FavoriteRemovalContext, right: FavoriteRemovalContext) {
+    return left.activePane === right.activePane
+      && left.focusedId === right.focusedId
+      && left.focusedGroupId === right.focusedGroupId
+      && left.selectedGroupId === right.selectedGroupId
+      && left.selectedIds.length === right.selectedIds.length
+      && left.selectedIds.every((id, index) => id === right.selectedIds[index])
   }
 
   function removeFavoriteNow(ids = selectedFavoriteMetadataIds()) {
-    if (!ids.length) return
-    state.favorites = deleteFavoriteMetadata(state.favorites, ids)
+    const plan = favoriteRemovalPlan(ids)
+    if (!plan.removed.length) return false
+    const before = favoriteRemovalContext()
+    const removedIds = new Set(plan.removed.map((item) => item.id))
+    const removed = plan.removed.map((node) => ({
+      node,
+      index: state.favorites.findIndex((item) => item.id === node.id)
+    }))
+    const collapsedGroupIds = state.collapsedFavoriteGroupIds.filter((id) => removedIds.has(id))
+    const selectedContainerRemoved = Boolean(selectedFavoriteGroupId && removedIds.has(selectedFavoriteGroupId))
+    state.favorites = plan.remaining
     state.collapsedFavoriteGroupIds = state.collapsedFavoriteGroupIds.filter((id) => state.favorites.some((item) => item.id === id))
     selectedFavoriteIds = []
     if (favoriteDrawer.open && favoriteDrawer.targetKind === 'favorite' && favoriteDrawer.targetIds.some((id) => !state.favorites.some((item) => item.id === id))) closeFavoriteDrawer(false)
     if (focusedFavoriteId && !state.favorites.some((item) => item.id === focusedFavoriteId)) focusedFavoriteId = null
     if (focusedFavoriteGroupId && !state.favorites.some((item) => item.id === focusedFavoriteGroupId)) focusedFavoriteGroupId = null
     if (selectedFavoriteGroupId && !state.favorites.some((item) => item.id === selectedFavoriteGroupId)) selectedFavoriteGroupId = null
-    void loadSelectedFavoriteDirectory()
-    normalizeFocusedFavorite(false)
-    normalizeFocusedFavoriteGroup()
+    if (activeFavoritePane === 'containers') {
+      focusedFavoriteId = null
+      focusedFavoriteDirectoryPath = null
+      normalizeFocusedFavoriteGroup()
+    } else if (activeFavoritePane === 'items') {
+      focusedFavoriteGroupId = null
+      focusedFavoriteDirectoryPath = null
+      normalizeFocusedFavorite(false)
+    } else {
+      focusedFavoriteId = null
+      focusedFavoriteGroupId = null
+    }
+    favoriteRemovalUndo = { removed, collapsedGroupIds, before, after: favoriteRemovalContext() }
+    if (selectedContainerRemoved) void loadSelectedFavoriteDirectory()
     save()
+    void refreshFavoritePathInspections()
     notify()
+    return true
   }
 
-  function removeFavorite() {
-    const ids = selectedFavoriteMetadataIds()
-    if (!ids.length) return
+  function undoFavoriteRemoval() {
+    if (!favoriteRemovalUndo?.removed.length) return false
+    const undo = favoriteRemovalUndo
+    const restoreContext = sameFavoriteRemovalContext(favoriteRemovalContext(), undo.after)
+    const restored = [...state.favorites]
+    const existing = new Set(restored.map((item) => item.id))
+    for (const entry of [...undo.removed].sort((left, right) => left.index - right.index)) {
+      if (existing.has(entry.node.id)) continue
+      restored.splice(Math.min(Math.max(0, entry.index), restored.length), 0, { ...entry.node, tags: [...entry.node.tags] })
+      existing.add(entry.node.id)
+    }
+    state.favorites = restored
+    state.collapsedFavoriteGroupIds = [...new Set([...state.collapsedFavoriteGroupIds, ...undo.collapsedGroupIds])]
+    favoriteRemovalUndo = null
+    if (restoreContext) {
+      selectedFavoriteGroupId = undo.before.selectedGroupId && favoriteById(undo.before.selectedGroupId) ? undo.before.selectedGroupId : null
+      const panes = availableFavoritePanes()
+      activeFavoritePane = panes.includes(undo.before.activePane) ? undo.before.activePane : 'items'
+      const visibleItems = new Set(currentFavoriteItems().map((item) => item.id))
+      const visibleGroups = new Set(favoriteContainerRows().map((row) => row.node.id))
+      selectedFavoriteIds = undo.before.selectedIds.filter((id) => visibleItems.has(id))
+      focusedFavoriteId = activeFavoritePane === 'items' && undo.before.focusedId && visibleItems.has(undo.before.focusedId) ? undo.before.focusedId : null
+      focusedFavoriteGroupId = activeFavoritePane === 'containers' && undo.before.focusedGroupId && visibleGroups.has(undo.before.focusedGroupId) ? undo.before.focusedGroupId : null
+      if (undo.before.selectedGroupId !== undo.after.selectedGroupId) void loadSelectedFavoriteDirectory()
+    }
+    save()
+    void refreshFavoritePathInspections()
+    setMessage('已撤销移出收藏')
+    return true
+  }
+
+  function removeFavorite(ids = selectedFavoriteMetadataIds()) {
+    const plan = favoriteRemovalPlan(ids)
+    if (!plan.removed.length) return false
     confirm = {
       title: '移出收藏',
-      detail: '只会删除 EyPc 收藏元数据，不会删除磁盘上的真实文件或文件夹。',
-      onConfirm: () => removeFavoriteNow(ids)
+      detail: `将移出 ${plan.roots.length} 个根节点、${Math.max(0, plan.removed.length - plan.roots.length)} 个后代。只会删除 EyPc 收藏元数据，不会删除磁盘上的真实文件或文件夹。`,
+      onConfirm: () => removeFavoriteNow(plan.roots)
     }
     notify()
+    return true
   }
 
   function markFavoriteUsed(id: string) {
@@ -5204,86 +5579,144 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     notify()
   }
 
-  async function openFavorite(targetId?: string | null) {
-    const item = selectedFavorite(targetId)
-    if (!item?.path) {
+  function acceptedFileAction(result: FileActionResult) {
+    return result.outcome !== 'failed'
+  }
+
+  function fileActionFailureText(result: FileActionResult) {
+    const labels: Partial<Record<NonNullable<FileActionResult['errorCode']>, string>> = {
+      'invalid-path': '路径无效',
+      'not-found': '路径不存在',
+      'permission-denied': '没有访问权限',
+      'no-handler': '没有可用的打开程序',
+      timeout: '操作超时',
+      unsupported: '当前宿主不支持此操作',
+      'io-error': '系统 I/O 错误'
+    }
+    return result.errorCode ? labels[result.errorCode] || result.message || '未知错误' : result.message || '未知错误'
+  }
+
+  function fileActionNotice(action: 'open' | 'reveal' | 'copy-path' | 'copy-items', result: FileActionResult, count = 1) {
+    if (result.outcome === 'failed') {
+      const verb = action === 'open' ? '打开' : action === 'reveal' ? '定位' : '复制'
+      return `${verb}失败：${fileActionFailureText(result)}`
+    }
+    if (result.outcome === 'dispatched') {
+      if (action === 'open') return '已请求系统打开收藏'
+      if (action === 'reveal') return '已请求系统定位收藏'
+      return '已请求系统复制'
+    }
+    if (result.outcome === 'revealed-instead') return '打开失败，已在文件管理器中定位该项'
+    if (action === 'open') return '已打开收藏'
+    if (action === 'reveal') return '已定位收藏'
+    if (action === 'copy-items') return `已复制 ${count} 个真实项`
+    return count > 1 ? `已复制 ${count} 条路径` : '路径已复制'
+  }
+
+  async function openFavorite(args?: Record<string, unknown> | null) {
+    const ids = resolveFavoriteIds(args)
+    if (ids.length !== 1) {
+      setMessage(ids.length > 1 ? '打开只支持单个收藏目标' : '没有选中的文件或文件夹')
+      return
+    }
+    const item = favoriteById(ids[0])
+    if (!item?.path || item.kind === 'group') {
       setMessage('没有选中的文件或文件夹')
       return
     }
-    const ok = await platform.files.open(item.path)
-    if (ok) {
+    const result = normalizeFileActionResult(await platform.files.open(item.path))
+    if (acceptedFileAction(result)) {
       markFavoriteUsed(item.id)
       if (favoriteQuickMode) void hideAppWindow()
     }
-    setMessage(ok ? '已打开收藏' : '打开收藏失败')
+    setMessage(fileActionNotice('open', result))
   }
 
-  async function revealFavorite(targetId?: string | null) {
-    const item = selectedFavorite(targetId)
-    if (!item?.path) {
+  async function revealFavorite(args?: Record<string, unknown> | null) {
+    const ids = resolveFavoriteIds(args)
+    if (ids.length !== 1) {
+      setMessage(ids.length > 1 ? '定位只支持单个收藏目标' : '没有选中的文件或文件夹')
+      return
+    }
+    const item = favoriteById(ids[0])
+    if (!item?.path || item.kind === 'group') {
       setMessage('没有选中的文件或文件夹')
       return
     }
-    const ok = await platform.files.reveal(item.path)
-    if (ok && favoriteQuickMode) void hideAppWindow()
-    setMessage(ok ? '已定位收藏' : '定位收藏失败')
+    const result = normalizeFileActionResult(await platform.files.reveal(item.path))
+    if (acceptedFileAction(result) && favoriteQuickMode) void hideAppWindow()
+    setMessage(fileActionNotice('reveal', result))
   }
 
-  async function copyFavoritePath(targetId?: string | null) {
-    const raw = favoriteById(targetId || selectedFavoriteIds[0] || focusedFavoriteId || focusedFavoriteGroupId)
-    const item = selectedFavorite(targetId)
-    if (!item) {
-      if (raw?.kind === 'group') {
-        setMessage('分组节点没有可复制路径')
-        return
-      }
+  async function copyFavoritePath(args?: Record<string, unknown> | null) {
+    const ids = resolveFavoriteIds(args, true)
+    const items = ids.flatMap((id) => favoriteById(id) || []).filter((item) => item.kind !== 'group' && Boolean(item.path))
+    if (!items.length) {
+      if (ids.some((id) => favoriteById(id)?.kind === 'group')) setMessage('分组节点没有可复制路径')
+      else setMessage('没有选中的收藏')
+      return
+    }
+    const result = normalizeFileActionResult(await platform.files.copyPath(items.map((item) => item.path).join('\n')))
+    if (acceptedFileAction(result) && favoriteQuickMode) void hideAppWindow()
+    setMessage(fileActionNotice('copy-path', result, items.length))
+  }
+
+  async function copyFavoriteItems(args?: Record<string, unknown> | null) {
+    const explicitDirectoryPaths = directoryPathsFromArgs(args)
+    const useFavoriteTargets = favoriteActionTargetKind(args) === 'favorite'
+    const paths = useFavoriteTargets
+      ? resolveFavoriteIds(args, true).flatMap((id) => {
+          const item = favoriteById(id)
+          return item && item.kind !== 'group' && item.path ? [item.path] : []
+        })
+      : resolveFavoriteDirectoryPaths(explicitDirectoryPaths, true)
+    if (!paths.length) {
       setMessage('没有选中的收藏')
       return
     }
-    if (!item.path) {
-      setMessage('分组节点没有可复制路径')
-      return
-    }
-    const ok = await platform.files.copyPath(item.path)
-    if (ok && favoriteQuickMode) void hideAppWindow()
-    setMessage(ok ? '路径已复制' : '复制路径失败')
+    const result = normalizeFileActionResult(await platform.files.copyItems?.(paths), 'unsupported')
+    if (acceptedFileAction(result) && favoriteQuickMode) void hideAppWindow()
+    setMessage(fileActionNotice('copy-items', result, paths.length))
   }
 
-  function directoryTargets(paths: string[] = []): FavoriteDirectoryRow[] {
-    const requested = paths.length ? new Set(paths.map(normalizeFavoritePath)) : null
+  function directoryTargets(paths?: string[]): FavoriteDirectoryRow[] {
+    const resolved = resolveFavoriteDirectoryPaths(paths, true)
+    const requested = resolved.length ? new Set(resolved.map(favoritePathIdentityKey)) : null
     const rows = favoriteDirectoryRows()
-    if (requested) return rows.filter((row) => requested.has(row.path))
-    return selectedDirectoryEntries()
+    if (requested) return rows.filter((row) => requested.has(favoritePathIdentityKey(row.path)))
+    return []
   }
 
-  async function openDirectoryTargets(paths: string[] = []) {
+  async function openDirectoryTargets(paths?: string[]) {
+    const rows = directoryTargets(paths)
+    if (rows.length !== 1) {
+      if (rows.length > 1) setMessage('打开只支持单个实际目录项')
+      else setMessage('没有选中的实际目录项')
+      return
+    }
+    const result = normalizeFileActionResult(await platform.files.open(rows[0].path))
+    setMessage(fileActionNotice('open', result))
+  }
+
+  async function revealDirectoryTargets(paths?: string[]) {
+    const rows = directoryTargets(paths)
+    if (rows.length !== 1) {
+      if (rows.length > 1) setMessage('定位只支持单个实际目录项')
+      else setMessage('没有选中的实际目录项')
+      return
+    }
+    const result = normalizeFileActionResult(await platform.files.reveal(rows[0].path))
+    setMessage(fileActionNotice('reveal', result))
+  }
+
+  async function copyDirectoryTargetPaths(paths?: string[]) {
     const rows = directoryTargets(paths)
     if (!rows.length) {
       setMessage('没有选中的实际目录项')
       return
     }
-    const results = await Promise.all(rows.map((row) => platform.files.open(row.path)))
-    setMessage(`已打开 ${results.filter(Boolean).length}/${rows.length} 项`)
-  }
-
-  async function revealDirectoryTargets(paths: string[] = []) {
-    const rows = directoryTargets(paths)
-    if (!rows.length) {
-      setMessage('没有选中的实际目录项')
-      return
-    }
-    const results = await Promise.all(rows.map((row) => platform.files.reveal(row.path)))
-    setMessage(`已定位 ${results.filter(Boolean).length}/${rows.length} 项`)
-  }
-
-  async function copyDirectoryTargetPaths(paths: string[] = []) {
-    const rows = directoryTargets(paths)
-    if (!rows.length) {
-      setMessage('没有选中的实际目录项')
-      return
-    }
-    const ok = await platform.files.copyPath(rows.map((row) => row.path).join('\n'))
-    setMessage(ok ? '路径已复制' : '复制路径失败')
+    const result = normalizeFileActionResult(await platform.files.copyPath(rows.map((row) => row.path).join('\n')))
+    setMessage(fileActionNotice('copy-path', result, rows.length))
   }
 
   function tagsTextToList(value: string) {
@@ -5293,7 +5726,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   function pickReviewItems(picked: PickedFavorite[], kind: PickedFavoriteKind, parentId: string | null): FavoritePickReviewItem[] {
     const now = Date.now()
     return picked.flatMap((item, index) => {
-      const path = normalizeFavoritePath(item.path)
+      const path = item.path.trim()
       if (!path) return []
       const pickedKind = item.kind === 'file' || item.kind === 'folder' ? item.kind : kind
       return [{
@@ -5356,7 +5789,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (!review) return false
     const inputs = review.items.map((item) => ({
       kind: item.kind,
-      path: normalizeFavoritePath(item.path),
+      path: item.path.trim(),
       name: item.name.trim() || inferFavoriteNameFromPath(item.path),
       parentId: item.parentId ?? review.parentId,
       tags: tagsTextToList(item.tagsText),
@@ -5380,7 +5813,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       setMessage('当前宿主不可选择路径，请手填路径')
       return
     }
-    const path = normalizeFavoritePath(item.path)
+    const path = item.path.trim()
     const kind = item.kind === 'file' ? 'file' : 'folder'
     favoriteDraft = {
       ...favoriteDraft,
@@ -5394,7 +5827,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     notify()
   }
 
-  function addSelectedDirectoryEntries(paths: string[] = []) {
+  function addSelectedDirectoryEntries(paths?: string[]) {
     const rows = directoryTargets(paths)
     if (!rows.length) {
       setMessage('没有选中的实际目录项')
@@ -5414,19 +5847,16 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return result.added > 0 || result.duplicates > 0
   }
 
-  function targetFavoriteForDraft(): FavoriteNode | null {
-    if (activeFavoritePane === 'groups') return favoriteById(focusedFavoriteGroupId)
-    return favoriteById(focusedFavoriteId)
-  }
-
-  function beginFavoriteDraft(mode: FavoriteDraft['mode']) {
+  function beginFavoriteDraft(mode: FavoriteDraft['mode'], args?: Record<string, unknown> | null) {
     const now = Date.now()
-    const target = mode === 'create-group' || mode === 'create-target' ? null : targetFavoriteForDraft()
+    const targetIds = mode === 'create-group' || mode === 'create-target' ? [] : resolveFavoriteIds(args, mode === 'move-parent')
+    const target = favoriteById(targetIds[0] || null)
     if (mode !== 'create-group' && mode !== 'create-target' && !target) return false
     const kind = mode === 'create-group' ? 'group' : mode === 'create-target' ? 'folder' : target?.kind || 'folder'
     favoriteDraft = {
       mode,
       targetId: target?.id || null,
+      targetIds,
       kind,
       name: mode === 'create-group' ? '新分组' : target?.name || '',
       path: kind === 'group' ? '' : target?.path || '',
@@ -5437,6 +5867,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     }
     if (mode === 'create-group' || mode === 'create-target') {
       favoriteDraft.targetId = `draft:${now}`
+      favoriteDraft.targetIds = []
     }
     notify()
     return true
@@ -5476,20 +5907,34 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       setMessage('文件或文件夹路径不能为空')
       return false
     }
-    if (!isValidFavoriteParent(state.favorites, draft.mode === 'create-group' ? '' : draft.targetId || '', parentId)) {
+    const movingIds = draft.mode === 'move-parent' ? draft.targetIds : [draft.mode === 'create-group' ? '' : draft.targetId || '']
+    if (movingIds.some((id) => !isValidFavoriteParent(state.favorites, id, parentId))) {
       setMessage('不能移动到自身或子分组下')
       return false
+    }
+    if (draft.mode === 'rename' && !name) {
+      setMessage('收藏名称不能为空')
+      return false
+    }
+    const displayPath = kind === 'group' ? '' : draft.path.trim()
+    if (kind !== 'group' && draft.mode === 'edit') {
+      const pathKey = favoritePathIdentityKey(displayPath)
+      const duplicate = state.favorites.find((item) => item.id !== draft.targetId && item.kind === kind && favoritePathIdentityKey(item.path) === pathKey)
+      if (duplicate) {
+        setMessage('已有等价路径的同类型收藏')
+        return false
+      }
     }
     const now = Date.now()
     if (draft.mode === 'create-group') {
       const id = `fav-group:${now}:${Math.random().toString(36).slice(2, 8)}`
       state.favorites.push({ id, kind: 'group', path: '', name, parentId, tags: [], color: draft.color || '#00A676', sortOrder: state.favorites.length + 1, createdAt: now, updatedAt: now })
       focusedFavoriteGroupId = id
-      activeFavoritePane = 'groups'
+      activeFavoritePane = 'containers'
     } else if (draft.mode === 'create-target' && (kind === 'file' || kind === 'folder')) {
       addFavorite({
         kind,
-        path: normalizeFavoritePath(draft.path),
+        path: displayPath,
         name: name || inferFavoriteNameFromPath(draft.path),
         parentId,
         tags: tagsTextToList(draft.tagsText),
@@ -5497,14 +5942,14 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       })
     } else if (target) {
       state.favorites = state.favorites.map((item) => {
+        if (draft.mode === 'move-parent') return draft.targetIds.includes(item.id) ? { ...item, parentId, updatedAt: now } : item
         if (item.id !== target.id) return item
         if (draft.mode === 'rename') return { ...item, name, updatedAt: now }
-        if (draft.mode === 'move-parent') return { ...item, parentId, updatedAt: now }
         return {
           ...item,
           kind,
           name: name || inferFavoriteNameFromPath(draft.path),
-          path: kind === 'group' ? '' : normalizeFavoritePath(draft.path),
+          path: displayPath,
           tags: tagsTextToList(draft.tagsText),
           color: draft.color || item.color,
           parentId,
@@ -5516,6 +5961,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     }
     favoriteDraft = null
     save()
+    void refreshFavoritePathInspections()
     notify()
     return true
   }
@@ -5596,11 +6042,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'ports.groupTarget.toggle', title: '折叠/展开端口组夹', description: '折叠或展开当前高亮分组夹。', icon: 'toggle', group: '端口', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'ports', run: () => toggleFocusedGroupFolder() })
     actions.register({ id: 'ports.groupTarget.collapse', title: '折叠端口组夹', description: '折叠当前高亮分组夹。', icon: 'left', group: '端口', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'ports', run: () => toggleFocusedGroupFolder(false) })
     actions.register({ id: 'ports.groupTarget.expand', title: '展开端口组夹', description: '展开当前高亮分组夹。', icon: 'right', group: '端口', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'ports', run: () => toggleFocusedGroupFolder(true) })
-    actions.register({ id: 'ports.groupDetail.open', title: '打开端口组详情抽屉', description: '展示当前分组或分组夹的规则和快捷操作。', icon: 'detail', group: '端口', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => ctx.tab === 'ports', run: () => openPortGroupDetail() })
+    actions.register({ id: 'ports.groupDetail.open', title: '打开端口组详情抽屉', description: '展示当前分组或分组夹的规则和快捷操作。', icon: 'detail', group: '端口', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => openPortGroupDetail(args) })
     actions.register({ id: 'ports.groupDetail.close', title: '关闭端口组详情抽屉', description: '关闭左侧端口组详情抽屉。', icon: 'close', group: '端口', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'ports', run: () => closePortGroupDetail() })
-    actions.register({ id: 'ports.drawer.open', title: '打开端口动作抽屉', description: '展示当前端口、选中端口或端口组的可执行动作。', icon: 'drawer', group: '端口', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+ArrowRight', when: (ctx) => ctx.tab === 'ports', run: () => openPortDrawer() })
+    actions.register({ id: 'ports.drawer.open', title: '打开端口动作抽屉', description: '展示当前端口、选中端口或端口组的可执行动作。', icon: 'drawer', group: '端口', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+ArrowRight', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => openPortDrawer(args) })
     actions.register({ id: 'ports.drawer.close', title: '关闭端口动作抽屉', description: '关闭右侧动作抽屉。', icon: 'close', group: '端口', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'ports', run: () => closePortDrawer() })
-    actions.register({ id: 'ports.detail.open', title: '打开端口详情抽屉', description: '展示当前高亮进程的端口、PID、命令和快捷操作。', icon: 'detail', group: '端口', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => ctx.tab === 'ports', run: () => openPortDetail() })
+    actions.register({ id: 'ports.detail.open', title: '打开端口详情抽屉', description: '展示当前高亮进程的端口、PID、命令和快捷操作。', icon: 'detail', group: '端口', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => ctx.tab === 'ports', run: (_ctx, args) => openPortDetail(args) })
     actions.register({ id: 'ports.detail.close', title: '关闭端口详情抽屉', description: '关闭左侧进程详情抽屉。', icon: 'close', group: '端口', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'ports', run: () => closePortDetail() })
     actions.register({ id: 'ports.drawer.next', title: '抽屉内下移', description: '移动到下一个抽屉动作。', icon: 'down', group: '端口', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'ports', run: () => movePortDrawer(1) })
     actions.register({ id: 'ports.drawer.prev', title: '抽屉内上移', description: '移动到上一个抽屉动作。', icon: 'up', group: '端口', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'ports', run: () => movePortDrawer(-1) })
@@ -5683,7 +6129,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'mqtt.log.clearCurrentConfig', title: '清空当前连接 MQTT 日志', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'mqtt', run: () => clearMqttLogs('current') })
     actions.register({ id: 'mqtt.log.clearAll', title: '清空全部 MQTT 日志', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'mqtt', run: () => clearMqttLogs('all') })
     actions.register({ id: 'mqtt.subscription.add', title: '新增 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'Ctrl+T', when: (ctx) => ctx.tab === 'mqtt', run: () => beginMqttSubscriptionDraft(true) })
-    actions.register({ id: 'mqtt.subscription.editor.open', title: '管理 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 92, when: (ctx) => ctx.tab === 'mqtt', run: () => beginMqttSubscriptionDraft(false) })
+    actions.register({ id: 'mqtt.subscription.editor.open', title: '管理 MQTT 订阅', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 92, shortcut: 'F2', when: (ctx) => ctx.tab === 'mqtt', run: () => beginMqttSubscriptionDraft(false) })
     actions.register({ id: 'mqtt.subscription.editor.save', title: '保存 MQTT 订阅编辑', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('mqtt-subscription-editor'), run: () => saveMqttSubscriptionDraft() })
     actions.register({ id: 'mqtt.subscription.editor.cancel', title: '取消 MQTT 订阅编辑', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-subscription-editor'), run: () => cancelMqttSubscriptionDraft() })
     actions.register({ id: 'mqtt.subscription.editor.nextField', title: 'MQTT 订阅编辑下一个字段', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.layerIds.includes('mqtt-subscription-editor'), run: () => moveMqttSubscriptionDraftField(1) })
@@ -5800,9 +6246,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       notify()
       return true
     } })
-    actions.register({ id: 'mqtt.detail.open', title: '打开 MQTT 详情', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => { if (args) mqttSelectedRecord = mqttTargetFromArgs(args); return openMqttDrawer(false) } })
+    actions.register({ id: 'mqtt.detail.open', title: '打开 MQTT 详情', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => openMqttDrawer(false, args) })
     actions.register({ id: 'mqtt.detail.close', title: '关闭 MQTT 详情', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, when: (ctx) => ctx.layerIds.includes('mqtt-detail'), run: () => closeMqttDrawer() })
-    actions.register({ id: 'mqtt.drawer.open', title: '打开 MQTT 动作抽屉', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, shortcut: 'Ctrl+ArrowRight', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => { if (args) mqttSelectedRecord = mqttTargetFromArgs(args); return openMqttDrawer(true) } })
+    actions.register({ id: 'mqtt.drawer.open', title: '打开 MQTT 动作抽屉', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, shortcut: 'Ctrl+ArrowRight', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => openMqttDrawer(true, args) })
     actions.register({ id: 'mqtt.drawer.close', title: '关闭 MQTT 动作抽屉', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, when: (ctx) => ctx.layerIds.includes('mqtt-drawer') || ctx.layerIds.includes('mqtt-detail'), run: () => closeMqttDrawer() })
     actions.register({ id: 'mqtt.drawer.next', title: 'MQTT 抽屉内下移', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, shortcut: 'ArrowDown', when: (ctx) => ctx.tab === 'mqtt', run: () => moveMqttDrawer(1) })
     actions.register({ id: 'mqtt.drawer.prev', title: 'MQTT 抽屉内上移', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 90, shortcut: 'ArrowUp', when: (ctx) => ctx.tab === 'mqtt', run: () => moveMqttDrawer(-1) })
@@ -5831,27 +6277,34 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         run: () => executeMqttDrawerItem(index - 1, true)
       })
     }
-    actions.register({ id: 'favorites.pane.toggleNext', title: '切换收藏栏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.tab === 'favorites', run: () => { activeFavoritePane = activeFavoritePane === 'items' ? 'groups' : 'items'; if (activeFavoritePane === 'groups') normalizeFocusedFavoriteGroup(); else normalizeFocusedFavorite(); notify(); return true } })
-    actions.register({ id: 'favorites.pane.togglePrev', title: '反向切换收藏栏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.tab === 'favorites', run: () => { activeFavoritePane = activeFavoritePane === 'items' ? 'groups' : 'items'; if (activeFavoritePane === 'groups') normalizeFocusedFavoriteGroup(); else normalizeFocusedFavorite(); notify(); return true } })
+    actions.register({ id: 'favorites.pane.toggleNext', title: '切换收藏栏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: () => cycleFavoritePane(1) })
+    actions.register({ id: 'favorites.pane.togglePrev', title: '反向切换收藏栏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: () => cycleFavoritePane(-1) })
     actions.register({ id: 'favorites.search.focus', title: '聚焦收藏搜索', group: '收藏', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+F', when: (ctx) => ctx.tab === 'favorites', run: () => focusFavoriteSearch() })
     actions.register({ id: 'favorites.groupSearch.focus', title: '聚焦收藏分组搜索', group: '收藏', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+Shift+F', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: () => focusFavoriteGroupSearch() })
     actions.register({ id: 'favorites.group.apply', title: '应用收藏容器', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Enter', when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => applyFocusedFavoriteContainer(favoriteIdFromArgs(args) || focusedFavoriteGroupId) })
-    actions.register({ id: 'favorites.target.create', title: '新增收藏目标', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+N', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => { if (favoriteIdFromArgs(args)) focusFavoriteActionTarget(args, true); return beginFavoriteDraft('create-target') } })
-    actions.register({ id: 'favorites.group.create', title: '新增收藏分组', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+T', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => { if (favoriteIdFromArgs(args)) focusFavoriteActionTarget(args, true); return beginFavoriteDraft('create-group') } })
-    actions.register({ id: 'favorites.group.moveParent', title: '移动收藏父级', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+F2', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => { if (favoriteIdFromArgs(args)) focusFavoriteActionTarget(args); return beginFavoriteDraft('move-parent') } })
+    actions.register({ id: 'favorites.target.create', title: '新增收藏目标', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+N', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => { if (favoriteIdFromArgs(args)) focusFavoriteActionTarget(args, true); favoriteAddMenuOpen = false; return beginFavoriteDraft('create-target') } })
+    actions.register({ id: 'favorites.group.create', title: '新增收藏分组', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+G', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => { if (favoriteIdFromArgs(args)) focusFavoriteActionTarget(args, true); favoriteAddMenuOpen = false; return beginFavoriteDraft('create-group') } })
+    actions.register({ id: 'favorites.group.moveParent', title: '移动收藏父级', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+F2', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => beginFavoriteDraft('move-parent', args) })
     actions.register({ id: 'favorites.group.collapse', title: '折叠收藏分组', group: '收藏', risk: 'normal', scope: 'tab', priority: 95, shortcut: 'ArrowLeft', when: (ctx) => ctx.tab === 'favorites', run: () => { if (!focusedFavoriteGroupId) return false; state.collapsedFavoriteGroupIds = [...new Set([...state.collapsedFavoriteGroupIds, focusedFavoriteGroupId])]; save(); notify(); return true } })
     actions.register({ id: 'favorites.group.expand', title: '展开收藏分组', group: '收藏', risk: 'normal', scope: 'tab', priority: 95, shortcut: 'ArrowRight', when: (ctx) => ctx.tab === 'favorites', run: () => { if (!focusedFavoriteGroupId) return false; state.collapsedFavoriteGroupIds = state.collapsedFavoriteGroupIds.filter((id) => id !== focusedFavoriteGroupId); save(); notify(); return true } })
-    actions.register({ id: 'favorites.open', title: '打开收藏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Enter', when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => { void openFavorite(favoriteIdFromArgs(args)); return true } })
-    actions.register({ id: 'favorites.reveal', title: '定位收藏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+Enter', when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => { void revealFavorite(favoriteIdFromArgs(args)); return true } })
-    actions.register({ id: 'favorites.copyPath', title: '复制收藏路径', group: '收藏', risk: 'normal', scope: 'tab', priority: 95, when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => { void copyFavoritePath(favoriteIdFromArgs(args)); return true } })
-    actions.register({ id: 'favorites.pick.files', title: '选择文件并审核收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+O', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: () => { void pickFavoritesForReview('file'); return true } })
-    actions.register({ id: 'favorites.pick.folders', title: '选择文件夹并审核收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'Ctrl+Shift+O', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: () => { void pickFavoritesForReview('folder'); return true } })
+    actions.register({ id: 'favorites.open', title: '打开收藏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Enter', when: (ctx) => ctx.tab === 'favorites' && favoriteCapabilities.open, run: (_ctx, args) => { if (favoriteActionTargetKind(args) === 'directory') void openDirectoryTargets(directoryPathsFromArgs(args)); else void openFavorite(args); return true } })
+    actions.register({ id: 'favorites.reveal', title: '定位收藏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+Enter', when: (ctx) => ctx.tab === 'favorites' && favoriteCapabilities.reveal, run: (_ctx, args) => { if (favoriteActionTargetKind(args) === 'directory') void revealDirectoryTargets(directoryPathsFromArgs(args)); else void revealFavorite(args); return true } })
+    actions.register({ id: 'favorites.copyPath', title: '复制收藏路径', group: '收藏', risk: 'normal', scope: 'tab', priority: 95, when: (ctx) => ctx.tab === 'favorites' && favoriteCapabilities.copyPath, run: (_ctx, args) => { if (favoriteActionTargetKind(args) === 'directory') void copyDirectoryTargetPaths(directoryPathsFromArgs(args)); else void copyFavoritePath(args); return true } })
+    actions.register({ id: 'favorites.copyItems', title: '复制真实文件或文件夹', group: '收藏', risk: 'normal', scope: 'tab', priority: 95, shortcut: 'Ctrl+Shift+C', when: (ctx) => ctx.tab === 'favorites' && Boolean(platform.files.capabilities?.copyItems), run: (_ctx, args) => { void copyFavoriteItems(args); return true } })
+    actions.register({ id: 'favorites.pick.files', title: '选择文件并审核收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+O', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode && favoriteCapabilities.pickFiles, run: () => { favoriteAddMenuOpen = false; void pickFavoritesForReview('file'); return true } })
+    actions.register({ id: 'favorites.pick.folders', title: '选择文件夹并审核收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'Ctrl+Shift+O', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode && favoriteCapabilities.pickFolders, run: () => { favoriteAddMenuOpen = false; void pickFavoritesForReview('folder'); return true } })
     actions.register({ id: 'favorites.draft.pickPath', title: '为收藏草稿选择路径', group: '收藏', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-editor'), run: (_ctx, args) => { void pickFavoriteDraftPath(favoritePickKindFromArgs(args)); return true } })
     actions.register({ id: 'favorites.add.duplicateFocus', title: '定位重复收藏', group: '收藏', risk: 'normal', scope: 'tab', priority: 80, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => focusDuplicateFavorite(typeof args?.id === 'string' ? args.id : null) })
-    actions.register({ id: 'favorites.remove', title: '移出收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 100, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => { if (favoriteIdFromArgs(args)) focusFavoriteActionTarget(args); removeFavorite(); return true } })
-    actions.register({ id: 'favorites.remove.force', title: '直接移出收藏元数据', group: '收藏', risk: 'destructive', scope: 'tab', priority: 100, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => { if (favoriteIdFromArgs(args)) focusFavoriteActionTarget(args); removeFavoriteNow(); return true } })
-    actions.register({ id: 'favorites.edit', title: '编辑收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'F2', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => { if (favoriteIdFromArgs(args)) focusFavoriteActionTarget(args); return beginFavoriteDraft('edit') } })
-    actions.register({ id: 'favorites.rename', title: '重命名收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => { if (favoriteIdFromArgs(args)) focusFavoriteActionTarget(args); return beginFavoriteDraft('rename') } })
+    actions.register({ id: 'favorites.remove', title: '移出收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 100, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => removeFavorite(selectedFavoriteMetadataIds(args)) })
+    actions.register({ id: 'favorites.remove.force', title: '直接移出收藏元数据', group: '收藏', risk: 'destructive', scope: 'tab', priority: 100, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => removeFavoriteNow(selectedFavoriteMetadataIds(args)) })
+    actions.register({ id: 'favorites.reorder', title: '调整收藏顺序', group: '收藏', risk: 'data-write', scope: 'row', priority: 100, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => reorderFavoriteMetadata(String(args?.nodeId || ''), typeof args?.parentId === 'string' ? args.parentId : null, typeof args?.beforeNodeId === 'string' ? args.beforeNodeId : null) })
+    actions.register({ id: 'favorites.remove.undo', title: '撤销移出收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 101, shortcut: 'Ctrl+Z', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode && Boolean(favoriteRemovalUndo?.removed.length), run: () => undoFavoriteRemoval() })
+    actions.register({ id: 'favorites.edit', title: '编辑收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'F2', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => beginFavoriteDraft('edit', args) })
+    actions.register({ id: 'favorites.rename', title: '重命名收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => beginFavoriteDraft('rename', args) })
+    actions.register({ id: 'favorites.refresh', title: '刷新目录和路径状态', group: '收藏', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+R', when: (ctx) => ctx.tab === 'favorites', run: () => { void loadSelectedFavoriteDirectory(); void refreshFavoritePathInspections(); return true } })
+    actions.register({ id: 'favorites.containers.togglePanel', title: '展开或收起收藏容器栏', group: '收藏', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+Shift+W', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: () => { favoriteContainerPanelOpen = !favoriteContainerPanelOpen; activeFavoritePane = favoriteContainerPanelOpen ? 'containers' : 'items'; notify(); return true } })
+    actions.register({ id: 'favorites.addMenu.toggle', title: '打开或关闭添加菜单', group: '收藏', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: () => { favoriteAddMenuOpen = !favoriteAddMenuOpen; notify(); return true } })
+    actions.register({ id: 'favorites.addMenu.close', title: '关闭添加菜单', group: '收藏', risk: 'normal', scope: 'layer', priority: 97, when: (ctx) => ctx.tab === 'favorites', run: () => { favoriteAddMenuOpen = false; notify(); return true } })
     actions.register({ id: 'favorites.save', title: '保存收藏编辑', group: '收藏', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-editor'), run: () => saveFavoriteDraft() })
     actions.register({ id: 'favorites.edit.nextField', title: '收藏编辑下一个字段', group: '收藏', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-editor'), run: () => cycleFavoriteDraftField(1) })
     actions.register({ id: 'favorites.edit.prevField', title: '收藏编辑上一个字段', group: '收藏', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-editor'), run: () => cycleFavoriteDraftField(-1) })
@@ -5861,14 +6314,16 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'favorites.pickReview.next', title: '点选审核下一个项目', group: '收藏', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-pick-review'), run: () => cycleFavoritePickReview(1) })
     actions.register({ id: 'favorites.pickReview.prev', title: '点选审核上一个项目', group: '收藏', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-pick-review'), run: () => cycleFavoritePickReview(-1) })
     actions.register({ id: 'favorites.search.blur', title: '退出收藏搜索焦点', group: '收藏', risk: 'normal', scope: 'layer', priority: 99, shortcut: 'Escape', when: (ctx) => ctx.tab === 'favorites', run: () => blurSearchFocus() })
-    actions.register({ id: 'favorites.drawer.open', title: '打开收藏动作抽屉', description: '展示当前收藏节点或实际目录行可执行动作。', icon: 'drawer', group: '收藏', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+ArrowRight', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: () => openFavoriteDrawer() })
+    actions.register({ id: 'favorites.detail.open', title: '打开收藏详情', description: '展示当前收藏节点或实际目录项详情。', icon: 'detail', group: '收藏', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => openFavoriteDrawer(false, args) })
+    actions.register({ id: 'favorites.detail.close', title: '关闭收藏详情', description: '关闭左侧收藏详情面板。', icon: 'close', group: '收藏', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'favorites', run: () => closeFavoriteDrawer() })
+    actions.register({ id: 'favorites.drawer.open', title: '打开收藏动作抽屉', description: '展示当前收藏节点或实际目录行可执行动作。', icon: 'drawer', group: '收藏', risk: 'normal', scope: 'tab', priority: 96, shortcut: 'Ctrl+ArrowRight', when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => openFavoriteDrawer(true, args) })
     actions.register({ id: 'favorites.drawer.close', title: '关闭收藏动作抽屉', description: '关闭右侧收藏动作抽屉。', icon: 'close', group: '收藏', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'favorites', run: () => closeFavoriteDrawer() })
     actions.register({ id: 'favorites.drawer.next', title: '收藏抽屉下移', description: '移动到下一个收藏抽屉动作。', icon: 'down', group: '收藏', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'favorites', run: () => moveFavoriteDrawer(1) })
     actions.register({ id: 'favorites.drawer.prev', title: '收藏抽屉上移', description: '移动到上一个收藏抽屉动作。', icon: 'up', group: '收藏', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'favorites', run: () => moveFavoriteDrawer(-1) })
     actions.register({ id: 'favorites.drawer.select', title: '执行收藏抽屉动作', description: '执行当前高亮的收藏抽屉动作。', icon: 'enter', group: '收藏', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'favorites', run: () => executeFavoriteDrawerItem() })
-    actions.register({ id: 'favorites.directory.open', title: '打开实际目录项', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => { void openDirectoryTargets(directoryPathsFromArgs(args)); return true } })
-    actions.register({ id: 'favorites.directory.reveal', title: '定位实际目录项', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => { void revealDirectoryTargets(directoryPathsFromArgs(args)); return true } })
-    actions.register({ id: 'favorites.directory.copyPath', title: '复制实际目录项路径', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => { void copyDirectoryTargetPaths(directoryPathsFromArgs(args)); return true } })
+    actions.register({ id: 'favorites.directory.open', title: '打开实际目录项', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode && favoriteCapabilities.open, run: (_ctx, args) => { void openDirectoryTargets(directoryPathsFromArgs(args)); return true } })
+    actions.register({ id: 'favorites.directory.reveal', title: '定位实际目录项', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode && favoriteCapabilities.reveal, run: (_ctx, args) => { void revealDirectoryTargets(directoryPathsFromArgs(args)); return true } })
+    actions.register({ id: 'favorites.directory.copyPath', title: '复制实际目录项路径', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode && favoriteCapabilities.copyPath, run: (_ctx, args) => { void copyDirectoryTargetPaths(directoryPathsFromArgs(args)); return true } })
     actions.register({ id: 'favorites.directory.addSelected', title: '添加实际目录项到收藏', group: '收藏', risk: 'data-write', scope: 'row', priority: 91, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => addSelectedDirectoryEntries(directoryPathsFromArgs(args)) })
     for (let index = 1; index <= 9; index += 1) {
       actions.register({
@@ -5893,6 +6348,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   registerActions()
+  void refreshFavoritePathInspections()
 
   function confirmNowInternal() {
     const next = confirm
@@ -5920,6 +6376,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       portPane: activePortPane,
       favoritePane: activeFavoritePane,
       favoriteQuickMode,
+      favoriteUndoAvailable: Boolean(favoriteRemovalUndo?.removed.length),
       mqttPane: activeMqttPane,
       mqttPanelOpen,
       mqttTargetKind: mqttSelectedRecord?.kind,
@@ -5931,8 +6388,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       mqttPreviewOpen: mqttPreview.open,
       portDrawerOpen: portDrawer.open,
       portDrawerActive: portDrawer.active,
-      favoriteDrawerOpen: favoriteDrawer.open,
-      favoriteDrawerActive: favoriteDrawer.active,
+      favoriteDrawerOpen: favoriteDrawer.open && favoriteDrawer.active,
+      favoriteDrawerActive: favoriteDrawer.open && favoriteDrawer.active,
+      favoriteDetailOpen: favoriteDrawer.open && !favoriteDrawer.active,
+      favoriteDetailActive: favoriteDrawer.open && !favoriteDrawer.active,
       favoritePickReviewOpen: Boolean(favoritePickReview),
       portDetailOpen: portDetail.open,
       portDetailActive: portDetail.active,
@@ -5993,6 +6452,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         focusedFavoriteGroupId,
         selectedFavoriteGroupId,
         activeFavoritePane,
+        favoritePaneFocusRequestId,
         favoriteGroupSearch,
         favoriteGroupRows: groupFavoriteRows,
         favoriteContainerRows: containerFavoriteRows,
@@ -6000,6 +6460,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         favoriteVirtualChildRows: currentFavoriteVirtualChildren(),
         favoriteDirectoryEntries: directoryRows,
         favoriteDirectoryError,
+        favoriteDirectoryLoading,
+        favoritePathInspections,
+        favoriteCapabilities,
+        favoriteContainerPanelOpen,
+        favoriteAddMenuOpen,
+        favoriteCanUndoRemoval: Boolean(favoriteRemovalUndo?.removed.length),
         focusedFavoriteDirectoryPath,
         selectedFavoriteDirectoryPaths,
         selectedFavoriteContainer: selectedFavoriteContainer(),
@@ -6099,7 +6565,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     setFavoriteSearch(value: string) {
       state.favoriteSearch = value
       activeFavoritePane = 'items'
+      focusedFavoriteGroupId = null
+      focusedFavoriteDirectoryPath = null
       normalizeFocusedFavorite()
+      const visible = new Set(currentFavoriteItems().map((item) => item.id))
+      selectedFavoriteIds = selectedFavoriteIds.filter((id) => visible.has(id))
       save()
       notify()
     },
@@ -6155,8 +6625,22 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     appendMqttMessageRecord,
     setFavoriteGroupSearch(value: string) {
       favoriteGroupSearch = value
-      activeFavoritePane = 'groups'
+      activeFavoritePane = 'containers'
+      focusedFavoriteId = null
+      focusedFavoriteDirectoryPath = null
       normalizeFocusedFavoriteGroup()
+      const visibleIds = new Set(favoriteContainerRows().map((row) => row.node.id))
+      if (selectedFavoriteGroupId && !visibleIds.has(selectedFavoriteGroupId)) {
+        selectedFavoriteGroupId = null
+        focusedFavoriteId = null
+        selectedFavoriteIds = []
+        favoriteDirectoryRequestId += 1
+        favoriteDirectoryEntries = []
+        favoriteDirectoryError = null
+        favoriteDirectoryLoading = false
+        focusedFavoriteDirectoryPath = null
+        selectedFavoriteDirectoryPaths = []
+      }
       notify()
     },
     setFavoriteQuickMode(value: boolean) {
@@ -6164,12 +6648,18 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       activeFavoritePane = 'items'
       if (value) {
         state.activeTab = 'favorites'
+        selectedFavoriteIds = []
         selectedFavoriteGroupId = null
         focusedFavoriteGroupId = null
+        focusedFavoriteId = null
+        closeFavoriteDrawer(false)
+        favoriteAddMenuOpen = false
         favoritePickReview = null
         favoriteDraft = null
+        favoriteDirectoryRequestId += 1
         favoriteDirectoryEntries = []
         favoriteDirectoryError = null
+        favoriteDirectoryLoading = false
         focusedFavoriteDirectoryPath = null
         selectedFavoriteDirectoryPaths = []
       }
@@ -6225,7 +6715,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       notify()
     },
     focusFavoriteGroup(id: string) {
-      activeFavoritePane = 'groups'
+      activeFavoritePane = 'containers'
       focusedFavoriteId = null
       focusedFavoriteGroupId = id
       focusedFavoriteDirectoryPath = null
@@ -6239,19 +6729,23 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       notify()
     },
     focusFavoriteDirectory(path: string) {
-      activeFavoritePane = 'items'
+      activeFavoritePane = 'directory'
       focusedFavoriteId = null
-      focusedFavoriteDirectoryPath = normalizeFavoritePath(path)
+      focusedFavoriteGroupId = null
+      const key = favoritePathIdentityKey(path)
+      focusedFavoriteDirectoryPath = favoriteDirectoryRows().find((row) => favoritePathIdentityKey(row.path) === key)?.path || path
       notify()
     },
     toggleFavoriteDirectorySelection(path: string) {
-      activeFavoritePane = 'items'
+      activeFavoritePane = 'directory'
       focusedFavoriteId = null
-      const normalized = normalizeFavoritePath(path)
-      focusedFavoriteDirectoryPath = normalized
-      selectedFavoriteDirectoryPaths = selectedFavoriteDirectoryPaths.includes(normalized)
-        ? selectedFavoriteDirectoryPaths.filter((item) => item !== normalized)
-        : [...selectedFavoriteDirectoryPaths, normalized]
+      focusedFavoriteGroupId = null
+      const key = favoritePathIdentityKey(path)
+      const displayPath = favoriteDirectoryRows().find((row) => favoritePathIdentityKey(row.path) === key)?.path || path
+      focusedFavoriteDirectoryPath = displayPath
+      selectedFavoriteDirectoryPaths = selectedFavoriteDirectoryPaths.some((item) => favoritePathIdentityKey(item) === key)
+        ? selectedFavoriteDirectoryPaths.filter((item) => favoritePathIdentityKey(item) !== key)
+        : [...selectedFavoriteDirectoryPaths, displayPath]
       notify()
     },
     toggleFavoriteCollapse(id: string) {
@@ -6260,11 +6754,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       save()
       notify()
     },
-    reorderFavorite(nodeId: string, parentId: string | null, beforeNodeId: string | null) {
-      state.favorites = moveFavoriteNode(state.favorites, nodeId, parentId, beforeNodeId)
-      save()
-      notify()
-    },
+    reorderFavorite: reorderFavoriteMetadata,
     addFavorite,
     removeFavorite,
     updateFavoritePickReviewItem,
@@ -6470,37 +6960,58 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
           notify()
           return 'mqtt.record.clear'
         }
-        const favoriteSearchFocused = input.activeInputRole === 'favorite-search' || input.activeInputRole === 'favorite-group-search'
-        if (state.activeTab === 'favorites' && favoriteDrawer.open && favoriteDrawer.active) {
+        const favoriteItemSearchFocused = input.activeInputRole === 'favorite-search'
+        const favoriteGroupSearchFocused = input.activeInputRole === 'favorite-group-search'
+        const favoriteSearchFocused = favoriteItemSearchFocused || favoriteGroupSearchFocused
+        if (state.activeTab === 'favorites' && favoriteAddMenuOpen) {
+          favoriteAddMenuOpen = false
+          notify()
+          return 'favorites.addMenu.close'
+        }
+        if (state.activeTab === 'favorites' && favoriteDrawer.open) {
+          const closeAction = favoriteDrawer.active ? 'favorites.drawer.close' : 'favorites.detail.close'
           closeFavoriteDrawer()
-          return 'favorites.drawer.close'
+          return closeAction
         }
-        if (state.activeTab === 'favorites' && favoriteQuickMode && state.favoriteSearch) {
-          this.setFavoriteSearch('')
-          return 'favorites.search.clear'
+        if (state.activeTab === 'favorites' && selectedFavoriteDirectoryPaths.length) {
+          selectedFavoriteDirectoryPaths = []
+          notify()
+          return 'favorites.directory.selection.clear'
         }
-        if (state.activeTab === 'favorites' && favoriteQuickMode) {
-          void hideAppWindow()
-          return 'app.hide'
+        if (state.activeTab === 'favorites' && selectedFavoriteIds.length) {
+          selectedFavoriteIds = []
+          notify()
+          return 'favorites.selection.clear'
         }
-        if (state.activeTab === 'favorites' && favoriteSearchFocused && (state.favoriteSearch || favoriteGroupSearch)) {
+        if (state.activeTab === 'favorites' && favoriteItemSearchFocused && state.favoriteSearch) {
           state.favoriteSearch = ''
-          favoriteGroupSearch = ''
           searchBlurRequestId += 1
           save()
           notify()
           return 'favorites.search.clear'
         }
+        if (state.activeTab === 'favorites' && favoriteGroupSearchFocused && favoriteGroupSearch) {
+          favoriteGroupSearch = ''
+          searchBlurRequestId += 1
+          normalizeFocusedFavoriteGroup()
+          notify()
+          return 'favorites.groupSearch.clear'
+        }
         if (state.activeTab === 'favorites' && favoriteSearchFocused) {
           blurSearchFocus()
           return 'favorites.search.blur'
         }
-        if (state.activeTab === 'favorites' && (state.favoriteSearch || favoriteGroupSearch)) {
+        if (state.activeTab === 'favorites' && state.favoriteSearch) {
           state.favoriteSearch = ''
-          favoriteGroupSearch = ''
           save()
           notify()
           return 'favorites.search.clear'
+        }
+        if (state.activeTab === 'favorites' && favoriteGroupSearch) {
+          favoriteGroupSearch = ''
+          normalizeFocusedFavoriteGroup()
+          notify()
+          return 'favorites.groupSearch.clear'
         }
         if (state.activeTab === 'favorites' && selectedFavoriteGroupId) {
           selectedFavoriteGroupId = null
@@ -6513,6 +7024,15 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
           focusedFavoriteGroupId = null
           notify()
           return 'favorites.focus.clear'
+        }
+        if (state.activeTab === 'favorites' && focusedFavoriteDirectoryPath) {
+          focusedFavoriteDirectoryPath = null
+          notify()
+          return 'favorites.focus.clear'
+        }
+        if (state.activeTab === 'favorites' && favoriteQuickMode) {
+          void hideAppWindow()
+          return 'app.hide'
         }
         return null
       }

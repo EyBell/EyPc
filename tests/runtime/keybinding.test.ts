@@ -33,7 +33,7 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F', { ...context, textInputFocused: true })).toBeNull()
     expect(buildShortcutCommandRows(DEFAULT_KEYBINDINGS).find((row) => row.commandId === 'quickJump.openForward')?.defaultShortcutIds).toEqual(['F'])
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', context)).toBeNull()
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', { ...context, tab: 'favorites' })?.actionId).toBe('favorites.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', { ...context, tab: 'favorites', favoritePane: 'items' })?.actionId).toBe('favorites.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+1', { ...context, textInputFocused: true })).toBeNull()
   })
 
@@ -139,7 +139,12 @@ describe('keybinding runtime', () => {
     }
     const groupContext = {
       ...itemContext,
-      favoritePane: 'groups' as const
+      favoritePane: 'containers' as const
+    }
+    const directoryContext = {
+      ...itemContext,
+      favoritePane: 'directory' as const,
+      activeInputRole: 'favorite-directory' as const
     }
     const searchContext = {
       ...itemContext,
@@ -159,10 +164,21 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Enter', itemContext)?.actionId).toBe('favorites.reveal')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', itemContext)?.actionId).toBe('favorites.remove')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Delete', itemContext)?.actionId).toBe('favorites.remove.force')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+G', groupContext)?.actionId).toBe('favorites.group.create')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', groupContext)?.actionId).toBe('favorites.group.create')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+C', itemContext)?.actionId).toBe('favorites.copyItems')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+R', itemContext)?.actionId).toBe('favorites.refresh')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+W', itemContext)?.actionId).toBe('favorites.containers.togglePanel')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Z', { ...itemContext, favoriteUndoAvailable: true })?.actionId).toBe('favorites.remove.undo')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Z', itemContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', groupContext)?.actionId).toBe('favorites.edit')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F2', groupContext)?.actionId).toBe('favorites.rename')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F2', groupContext)?.actionId).toBe('favorites.group.moveParent')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F2', itemContext)?.actionId).toBe('favorites.group.moveParent')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', directoryContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Delete', directoryContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', directoryContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F2', directoryContext)).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowLeft', groupContext)?.actionId).toBe('favorites.group.collapse')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowRight', groupContext)?.actionId).toBe('favorites.group.expand')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+N', { ...itemContext, favoriteQuickMode: true })).toBeNull()
@@ -170,6 +186,7 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+O', { ...itemContext, favoriteQuickMode: true })).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', { ...itemContext, favoriteQuickMode: true })).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', { ...itemContext, favoriteQuickMode: true })).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', { ...searchContext, favoriteQuickMode: true })).toBeNull()
   })
 
   it('maps MQTT workbench shortcuts and edit-layer ownership', () => {
@@ -288,6 +305,7 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Space', subscriptionContext)?.actionId).toBe('mqtt.subscription.toggleSelect')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', subscriptionContext)?.actionId).toBe('mqtt.subscription.applyFilter')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', subscriptionContext)?.actionId).toBe('mqtt.subscription.delete')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', { ...subscriptionContext, mqttPane: 'subscriptions' as const })?.actionId).toBe('mqtt.subscription.editor.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Backspace', subscriptionContext)?.actionId).toBe('mqtt.subscription.delete')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Delete', subscriptionContext)?.actionId).toBe('mqtt.subscription.deleteSelected')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Enter', idleContext)?.actionId).toBe('mqtt.publish.send')
@@ -583,12 +601,23 @@ describe('keybinding runtime', () => {
     }
 
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', itemContext)?.actionId).toBe('favorites.drawer.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', itemContext)?.actionId).toBe('favorites.detail.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', drawerContext)?.actionId).toBe('favorites.drawer.next')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowUp', drawerContext)?.actionId).toBe('favorites.drawer.prev')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', drawerContext)?.actionId).toBe('favorites.drawer.select')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', drawerContext)?.actionId).toBe('favorites.drawer.close')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowLeft', drawerContext)?.actionId).toBe('favorites.drawer.close')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', drawerContext)?.actionId).toBe('favorites.detail.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+1', drawerContext)?.actionId).toBe('favorites.drawer.select.1')
+
+    const detailContext = {
+      ...itemContext,
+      favoriteDetailOpen: true,
+      favoriteDetailActive: true
+    }
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowRight', detailContext)?.actionId).toBe('favorites.detail.close')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', detailContext)?.actionId).toBe('favorites.drawer.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', { ...itemContext, favoriteQuickMode: true })?.actionId).toBe('favorites.drawer.open')
   })
 
   it('keeps result-list shortcuts active while the port search input is focused', () => {
@@ -702,7 +731,7 @@ describe('keybinding runtime', () => {
 
     expect(resolveKeybinding(effective, 'Ctrl+P', { tab: 'ports' })?.actionId).toBe('search.focus')
     expect(resolveKeybinding(effective, 'Alt+R', { tab: 'ports' })?.actionId).toBe('ports.scan')
-    expect(resolveKeybinding(effective, 'Ctrl+O', { tab: 'favorites' })?.actionId).toBe('favorites.open')
+    expect(resolveKeybinding(effective, 'Ctrl+O', { tab: 'favorites', favoritePane: 'items' })?.actionId).toBe('favorites.open')
     expect(buildShortcutCommandRows(effective).find((row) => row.commandId === 'ports.scan')?.profileId).toBe('ports')
   })
 
@@ -738,7 +767,7 @@ describe('keybinding runtime', () => {
     expect(preview.candidates[0].layer).toBe('port-drawer')
   })
 
-  it('uses Ctrl+Left for port detail and lets active drawers close before navigation', () => {
+  it('uses Ctrl+Left for port detail and switches panel sides atomically', () => {
     const context = {
       tab: 'ports' as const,
       confirmOpen: false,
@@ -753,8 +782,8 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', context)?.actionId).toBe('ports.detail.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', { ...context, portDetailOpen: true, portDetailActive: true })?.actionId).toBe('ports.detail.close')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowRight', { ...context, portDetailOpen: true, portDetailActive: true })?.actionId).toBe('ports.detail.close')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', { ...context, portDetailOpen: true, portDetailActive: true })?.actionId).toBe('ports.detail.close')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', { ...context, portDrawerOpen: true, portDrawerActive: true })?.actionId).toBe('ports.drawer.close')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', { ...context, portDetailOpen: true, portDetailActive: true })?.actionId).toBe('ports.drawer.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', { ...context, portDrawerOpen: true, portDrawerActive: true })?.actionId).toBe('ports.detail.open')
   })
 
   it('uses Ctrl+Shift+W to toggle the group panel and reuses Ctrl+Left/Right for group drawers', () => {
@@ -779,7 +808,7 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', groupContext)?.actionId).toBe('ports.drawer.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Escape', { ...groupContext, portGroupDetailOpen: true, portGroupDetailActive: true })?.actionId).toBe('ports.groupDetail.close')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowRight', { ...groupContext, portGroupDetailOpen: true, portGroupDetailActive: true })?.actionId).toBe('ports.groupDetail.close')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', { ...groupContext, portGroupDetailOpen: true, portGroupDetailActive: true })?.actionId).toBe('ports.groupDetail.close')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', { ...groupContext, portGroupDetailOpen: true, portGroupDetailActive: true })?.actionId).toBe('ports.drawer.open')
     expect(buildShortcutCommandRows(DEFAULT_KEYBINDINGS).find((row) => row.commandId === 'ports.group.save')?.defaultShortcutIds).toEqual(['Ctrl+S', 'Ctrl+Enter'])
   })
 

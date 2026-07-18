@@ -31,6 +31,7 @@ export type KeybindingLayerId =
   | 'port-drawer'
   | 'port-detail'
   | 'favorites-drawer'
+  | 'favorite-detail'
   | 'favorites-pick-review'
   | 'ports-selection'
   | 'ports-search'
@@ -46,9 +47,10 @@ export interface KeybindingContext {
   tab?: AppTabId
   confirmOpen?: boolean
   textInputFocused?: boolean
-  activeInputRole?: 'port-search' | 'port-group-search' | 'mqtt-search' | 'mqtt-topic-filter' | 'mqtt-publish-editor' | 'mqtt-publish-options' | 'mqtt-publish-draft' | 'mqtt-publish-draft-editor' | 'mqtt-editor' | 'mqtt-connection-group-editor' | 'mqtt-config-subscription-editor' | 'mqtt-config-publish-editor' | 'mqtt-subscription-editor' | 'mqtt-favorite-editor' | 'mqtt-record-editor' | 'mqtt-connections' | 'mqtt-subscriptions' | 'favorite-search' | 'favorite-group-search' | 'favorite-editor' | 'favorite-pick-review' | 'settings' | 'port-group-editor' | 'other'
+  activeInputRole?: 'port-search' | 'port-group-search' | 'mqtt-search' | 'mqtt-topic-filter' | 'mqtt-publish-editor' | 'mqtt-publish-options' | 'mqtt-publish-draft' | 'mqtt-publish-draft-editor' | 'mqtt-editor' | 'mqtt-connection-group-editor' | 'mqtt-config-subscription-editor' | 'mqtt-config-publish-editor' | 'mqtt-subscription-editor' | 'mqtt-favorite-editor' | 'mqtt-record-editor' | 'mqtt-connections' | 'mqtt-subscriptions' | 'favorite-search' | 'favorite-group-search' | 'favorite-containers' | 'favorite-items' | 'favorite-directory' | 'favorite-editor' | 'favorite-pick-review' | 'settings' | 'port-group-editor' | 'other'
   portPane?: 'groups' | 'results'
-  favoritePane?: 'groups' | 'items'
+  favoritePane?: 'containers' | 'items' | 'directory'
+  favoriteUndoAvailable?: boolean
   mqttPane?: 'connections' | 'subscriptions' | 'messages' | 'publish' | 'publish-records'
   mqttPanelOpen?: boolean
   mqttTargetKind?: 'config' | 'connection-group' | 'subscription' | 'session' | 'message' | 'log' | 'publish-template' | 'publish-draft-history'
@@ -63,6 +65,8 @@ export interface KeybindingContext {
   portDrawerActive?: boolean
   favoriteDrawerOpen?: boolean
   favoriteDrawerActive?: boolean
+  favoriteDetailOpen?: boolean
+  favoriteDetailActive?: boolean
   favoritePickReviewOpen?: boolean
   portDetailOpen?: boolean
   portDetailActive?: boolean
@@ -184,6 +188,7 @@ export const LAYER_PRIORITY: Record<KeybindingLayerId, number> = {
   'port-drawer': 820,
   'port-detail': 800,
   'favorites-drawer': 820,
+  'favorite-detail': 800,
   'favorites-pick-review': 930,
   'ports-selection': 700,
   'ports-search': 680,
@@ -225,6 +230,7 @@ const LAYER_LABELS: Record<KeybindingLayerId, string> = {
   'port-drawer': '端口动作抽屉',
   'port-detail': '端口详情',
   'favorites-drawer': '收藏动作抽屉',
+  'favorite-detail': '收藏详情',
   'favorites-pick-review': '收藏点选审核',
   'ports-selection': '端口多选',
   'ports-search': '端口搜索',
@@ -289,34 +295,38 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'ports.groupTarget.toggle': { title: '折叠/展开端口组夹', group: '端口', layer: 'ports', shortcutIds: [], when: "tab == 'ports' && portPane == 'groups' && !portDrawerActive && !portGroupDetailActive && (!textInputFocused || activeInputRole == 'port-group-search')", weight: 132 },
   'ports.groupTarget.collapse': { title: '折叠端口组夹', group: '端口', layer: 'ports', shortcutIds: ['ArrowLeft'], when: "tab == 'ports' && portPane == 'groups' && !portDrawerActive && !portGroupDetailActive && (!textInputFocused || activeInputRole == 'port-group-search')", weight: 132 },
   'ports.groupTarget.expand': { title: '展开端口组夹', group: '端口', layer: 'ports', shortcutIds: ['ArrowRight'], when: "tab == 'ports' && portPane == 'groups' && !portDrawerActive && !portGroupDetailActive && (!textInputFocused || activeInputRole == 'port-group-search')", weight: 132 },
-  'ports.groupDetail.open': { title: '打开端口组详情抽屉', group: '端口', layer: 'ports', shortcutIds: ['Ctrl+ArrowLeft'], when: "tab == 'ports' && portPane == 'groups' && !confirmOpen && !portDrawerActive && !portGroupDetailActive && (!textInputFocused || activeInputRole == 'port-group-search')", weight: 131 },
-  'ports.groupDetail.close': { title: '关闭端口组详情抽屉', group: '端口', layer: 'port-group-detail', shortcutIds: ['ArrowRight', 'Ctrl+ArrowRight', 'Escape'], when: "tab == 'ports' && portGroupDetailActive", weight: 400 },
+  'ports.groupDetail.open': { title: '打开端口组详情抽屉', group: '端口', layer: 'ports', shortcutIds: ['Ctrl+ArrowLeft'], when: "tab == 'ports' && portPane == 'groups' && !confirmOpen && !portGroupDetailActive && (!textInputFocused || activeInputRole == 'port-group-search')", weight: 131 },
+  'ports.groupDetail.close': { title: '关闭端口组详情抽屉', group: '端口', layer: 'port-group-detail', shortcutIds: ['ArrowRight', 'Escape'], when: "tab == 'ports' && portGroupDetailActive", weight: 400 },
   'ports.drawer.open': { title: '打开端口动作抽屉', group: '端口', layer: 'ports', shortcutIds: ['Ctrl+ArrowRight'], when: "tab == 'ports' && !confirmOpen && !portDrawerActive && (!textInputFocused || activeInputRole == 'port-search' || activeInputRole == 'port-group-search')", weight: 130 },
-  'ports.drawer.close': { title: '关闭端口动作抽屉', group: '端口', layer: 'port-drawer', shortcutIds: ['ArrowLeft', 'Ctrl+ArrowLeft', 'Escape'], when: "tab == 'ports' && portDrawerActive", weight: 400 },
-  'ports.detail.open': { title: '打开端口详情抽屉', group: '端口', layer: 'ports', shortcutIds: ['Ctrl+ArrowLeft'], when: "tab == 'ports' && portPane != 'groups' && !confirmOpen && !portDrawerActive && !portDetailActive && (!textInputFocused || activeInputRole == 'port-search')", weight: 130 },
-  'ports.detail.close': { title: '关闭端口详情抽屉', group: '端口', layer: 'port-detail', shortcutIds: ['ArrowRight', 'Ctrl+ArrowRight', 'Escape'], when: "tab == 'ports' && portDetailActive", weight: 400 },
+  'ports.drawer.close': { title: '关闭端口动作抽屉', group: '端口', layer: 'port-drawer', shortcutIds: ['ArrowLeft', 'Escape'], when: "tab == 'ports' && portDrawerActive", weight: 400 },
+  'ports.detail.open': { title: '打开端口详情抽屉', group: '端口', layer: 'ports', shortcutIds: ['Ctrl+ArrowLeft'], when: "tab == 'ports' && portPane != 'groups' && !confirmOpen && !portDetailActive && (!textInputFocused || activeInputRole == 'port-search')", weight: 130 },
+  'ports.detail.close': { title: '关闭端口详情抽屉', group: '端口', layer: 'port-detail', shortcutIds: ['ArrowRight', 'Escape'], when: "tab == 'ports' && portDetailActive", weight: 400 },
   'ports.drawer.next': { title: '抽屉内下移', group: '端口', layer: 'port-drawer', shortcutIds: ['ArrowDown', 'Ctrl+J'], when: "tab == 'ports' && portDrawerActive", weight: 400 },
   'ports.drawer.prev': { title: '抽屉内上移', group: '端口', layer: 'port-drawer', shortcutIds: ['ArrowUp', 'Ctrl+K'], when: "tab == 'ports' && portDrawerActive", weight: 400 },
   'ports.drawer.select': { title: '执行抽屉当前动作', group: '端口', layer: 'port-drawer', shortcutIds: ['Enter'], when: "tab == 'ports' && portDrawerActive", weight: 400 },
-  'favorites.pane.toggleNext': { title: '切换收藏栏', group: '收藏', layer: 'favorites', shortcutIds: ['Tab'], when: "tab == 'favorites' && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search')", weight: 130 },
-  'favorites.pane.togglePrev': { title: '反向切换收藏栏', group: '收藏', layer: 'favorites', shortcutIds: ['Shift+Tab'], when: "tab == 'favorites' && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search')", weight: 130 },
+  'favorites.pane.toggleNext': { title: '切换收藏栏', group: '收藏', layer: 'favorites', shortcutIds: ['Tab'], when: "tab == 'favorites' && !favoriteQuickMode && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search' || activeInputRole == 'favorite-containers' || activeInputRole == 'favorite-items' || activeInputRole == 'favorite-directory')", weight: 130 },
+  'favorites.pane.togglePrev': { title: '反向切换收藏栏', group: '收藏', layer: 'favorites', shortcutIds: ['Shift+Tab'], when: "tab == 'favorites' && !favoriteQuickMode && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search' || activeInputRole == 'favorite-containers' || activeInputRole == 'favorite-items' || activeInputRole == 'favorite-directory')", weight: 130 },
   'favorites.search.focus': { title: '聚焦收藏搜索', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+F'], when: "tab == 'favorites' && !confirmOpen", weight: 140 },
   'favorites.groupSearch.focus': { title: '聚焦收藏分组搜索', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+Shift+F'], when: "tab == 'favorites' && !favoriteQuickMode && !confirmOpen", weight: 140 },
-  'favorites.group.apply': { title: '应用收藏分组', group: '收藏', layer: 'favorites', shortcutIds: ['Enter'], when: "tab == 'favorites' && favoritePane == 'groups' && (!textInputFocused || activeInputRole == 'favorite-group-search')", weight: 130 },
+  'favorites.group.apply': { title: '应用收藏分组', group: '收藏', layer: 'favorites', shortcutIds: ['Enter'], when: "tab == 'favorites' && favoritePane == 'containers' && (!textInputFocused || activeInputRole == 'favorite-group-search' || activeInputRole == 'favorite-containers')", weight: 130 },
   'favorites.target.create': { title: '新增收藏目标', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+N'], when: "tab == 'favorites' && !favoriteQuickMode && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search')", weight: 129, risk: 'data-write' },
   'favorites.pick.files': { title: '选择文件并进入收藏审核', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+O'], when: "tab == 'favorites' && !favoriteQuickMode && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search')", weight: 129, risk: 'data-write' },
   'favorites.pick.folders': { title: '选择文件夹并进入收藏审核', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+Shift+O'], when: "tab == 'favorites' && !favoriteQuickMode && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search')", weight: 128, risk: 'data-write' },
-  'favorites.group.create': { title: '新增收藏分组', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+T'], when: "tab == 'favorites' && !favoriteQuickMode && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search')", weight: 129, risk: 'data-write' },
-  'favorites.group.moveParent': { title: '移动收藏分组父级', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+F2'], when: "tab == 'favorites' && favoritePane == 'groups' && (!textInputFocused || activeInputRole == 'favorite-group-search')", weight: 130, risk: 'data-write' },
-  'favorites.group.collapse': { title: '折叠收藏分组', group: '收藏', layer: 'favorites', shortcutIds: ['ArrowLeft'], when: "tab == 'favorites' && favoritePane == 'groups' && (!textInputFocused || activeInputRole == 'favorite-group-search')", weight: 132 },
-  'favorites.group.expand': { title: '展开收藏分组', group: '收藏', layer: 'favorites', shortcutIds: ['ArrowRight'], when: "tab == 'favorites' && favoritePane == 'groups' && (!textInputFocused || activeInputRole == 'favorite-group-search')", weight: 132 },
-  'favorites.open': { title: '打开收藏', group: '收藏', layer: 'favorites', shortcutIds: ['Enter'], when: "tab == 'favorites' && favoritePane != 'groups' && (!textInputFocused || activeInputRole == 'favorite-search')", weight: 120 },
-  'favorites.reveal': { title: '定位收藏', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+Enter'], when: "tab == 'favorites' && favoritePane != 'groups' && (!textInputFocused || activeInputRole == 'favorite-search')", weight: 120 },
-  'favorites.copyPath': { title: '复制收藏路径', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+C'], when: "tab == 'favorites' && favoritePane != 'groups' && (!textInputFocused || activeInputRole == 'favorite-search')", weight: 121 },
-  'favorites.remove': { title: '移出收藏', group: '收藏', layer: 'favorites', shortcutIds: ['Delete', 'Backspace'], when: "tab == 'favorites' && !favoriteQuickMode && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search')", weight: 120, risk: 'data-write' },
-  'favorites.remove.force': { title: '直接移出收藏元数据', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+Delete', 'Ctrl+Backspace'], when: "tab == 'favorites' && !favoriteQuickMode && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search')", weight: 120, risk: 'destructive' },
-  'favorites.edit': { title: '编辑收藏', group: '收藏', layer: 'favorites', shortcutIds: ['F2'], when: "tab == 'favorites' && !favoriteQuickMode && (!textInputFocused || activeInputRole == 'favorite-group-search')", weight: 120, risk: 'data-write' },
-  'favorites.rename': { title: '重命名收藏', group: '收藏', layer: 'favorites', shortcutIds: ['Shift+F2'], when: "tab == 'favorites' && !favoriteQuickMode && (!textInputFocused || activeInputRole == 'favorite-group-search')", weight: 120, risk: 'data-write' },
+  'favorites.group.create': { title: '新增收藏分组', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+G', 'Ctrl+T'], when: "tab == 'favorites' && !favoriteQuickMode && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search' || activeInputRole == 'favorite-containers' || activeInputRole == 'favorite-items')", weight: 129, risk: 'data-write' },
+  'favorites.group.moveParent': { title: '移动收藏父级', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+F2'], when: "tab == 'favorites' && (favoritePane == 'containers' || favoritePane == 'items') && (!textInputFocused || activeInputRole == 'favorite-group-search' || activeInputRole == 'favorite-containers' || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-items')", weight: 130, risk: 'data-write' },
+  'favorites.group.collapse': { title: '折叠收藏分组', group: '收藏', layer: 'favorites', shortcutIds: ['ArrowLeft'], when: "tab == 'favorites' && favoritePane == 'containers' && (!textInputFocused || activeInputRole == 'favorite-group-search' || activeInputRole == 'favorite-containers')", weight: 132 },
+  'favorites.group.expand': { title: '展开收藏分组', group: '收藏', layer: 'favorites', shortcutIds: ['ArrowRight'], when: "tab == 'favorites' && favoritePane == 'containers' && (!textInputFocused || activeInputRole == 'favorite-group-search' || activeInputRole == 'favorite-containers')", weight: 132 },
+  'favorites.open': { title: '打开收藏', group: '收藏', layer: 'favorites', shortcutIds: ['Enter'], when: "tab == 'favorites' && (favoritePane == 'items' || favoritePane == 'directory') && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-items' || activeInputRole == 'favorite-directory')", weight: 120 },
+  'favorites.reveal': { title: '定位收藏', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+Enter'], when: "tab == 'favorites' && (favoritePane == 'items' || favoritePane == 'directory') && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-items' || activeInputRole == 'favorite-directory')", weight: 120 },
+  'favorites.copyPath': { title: '复制收藏路径', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+C'], when: "tab == 'favorites' && (favoritePane == 'items' || favoritePane == 'directory') && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-items' || activeInputRole == 'favorite-directory')", weight: 121 },
+  'favorites.copyItems': { title: '复制真实文件或文件夹', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+Shift+C'], when: "tab == 'favorites' && (favoritePane == 'items' || favoritePane == 'directory') && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-items' || activeInputRole == 'favorite-directory')", weight: 122 },
+  'favorites.refresh': { title: '刷新目录和路径状态', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+R'], when: "tab == 'favorites' && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search' || activeInputRole == 'favorite-containers' || activeInputRole == 'favorite-items' || activeInputRole == 'favorite-directory')", weight: 125 },
+  'favorites.containers.togglePanel': { title: '展开或收起收藏容器栏', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+Shift+W'], when: "tab == 'favorites' && !favoriteQuickMode && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search' || activeInputRole == 'favorite-containers' || activeInputRole == 'favorite-items')", weight: 125 },
+  'favorites.remove.undo': { title: '撤销移出收藏', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+Z'], when: "tab == 'favorites' && !favoriteQuickMode && favoriteUndoAvailable && !textInputFocused", weight: 126, risk: 'data-write' },
+  'favorites.remove': { title: '移出收藏', group: '收藏', layer: 'favorites', shortcutIds: ['Delete', 'Backspace'], when: "tab == 'favorites' && !favoriteQuickMode && (favoritePane == 'containers' || favoritePane == 'items') && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search' || activeInputRole == 'favorite-containers' || activeInputRole == 'favorite-items')", weight: 120, risk: 'data-write' },
+  'favorites.remove.force': { title: '直接移出收藏元数据', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+Delete', 'Ctrl+Backspace'], when: "tab == 'favorites' && !favoriteQuickMode && (favoritePane == 'containers' || favoritePane == 'items') && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search' || activeInputRole == 'favorite-containers' || activeInputRole == 'favorite-items')", weight: 120, risk: 'destructive' },
+  'favorites.edit': { title: '编辑收藏', group: '收藏', layer: 'favorites', shortcutIds: ['F2'], when: "tab == 'favorites' && !favoriteQuickMode && (favoritePane == 'containers' || favoritePane == 'items') && (!textInputFocused || activeInputRole == 'favorite-group-search' || activeInputRole == 'favorite-containers' || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-items')", weight: 120, risk: 'data-write' },
+  'favorites.rename': { title: '重命名收藏', group: '收藏', layer: 'favorites', shortcutIds: ['Shift+F2'], when: "tab == 'favorites' && !favoriteQuickMode && (favoritePane == 'containers' || favoritePane == 'items') && (!textInputFocused || activeInputRole == 'favorite-group-search' || activeInputRole == 'favorite-containers' || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-items')", weight: 120, risk: 'data-write' },
   'favorites.save': { title: '保存收藏编辑', group: '收藏', layer: 'favorites-editor', shortcutIds: ['Ctrl+S', 'Ctrl+Enter'], when: "tab == 'favorites' && activeInputRole == 'favorite-editor'", weight: 400, risk: 'data-write' },
   'favorites.edit.nextField': { title: '收藏编辑下一个字段', group: '收藏', layer: 'favorites-editor', shortcutIds: ['Tab'], when: "tab == 'favorites' && activeInputRole == 'favorite-editor'", weight: 400 },
   'favorites.edit.prevField': { title: '收藏编辑上一个字段', group: '收藏', layer: 'favorites-editor', shortcutIds: ['Shift+Tab'], when: "tab == 'favorites' && activeInputRole == 'favorite-editor'", weight: 400 },
@@ -326,8 +336,10 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'favorites.pickReview.prev': { title: '点选审核上一个项目', group: '收藏', layer: 'favorites-pick-review', shortcutIds: ['Shift+Tab', 'ArrowUp'], when: "tab == 'favorites' && (favoritePickReviewOpen || activeInputRole == 'favorite-pick-review')", weight: 410 },
   'favorites.search.blur': { title: '退出收藏搜索焦点', group: '收藏', layer: 'favorites-search', shortcutIds: ['Escape'], when: "tab == 'favorites' && (activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search')", weight: 500 },
   'favorites.cancel': { title: '取消收藏编辑', group: '收藏', layer: 'favorites-editor', shortcutIds: ['Escape'], when: "tab == 'favorites' && activeInputRole == 'favorite-editor'", weight: 400 },
-  'favorites.drawer.open': { title: '打开收藏动作抽屉', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+ArrowRight'], when: "tab == 'favorites' && !favoriteQuickMode && !confirmOpen && !favoriteDrawerActive && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search')", weight: 130 },
-  'favorites.drawer.close': { title: '关闭收藏动作抽屉', group: '收藏', layer: 'favorites-drawer', shortcutIds: ['ArrowLeft', 'Ctrl+ArrowLeft', 'Escape'], when: "tab == 'favorites' && favoriteDrawerActive", weight: 400 },
+  'favorites.detail.open': { title: '打开收藏详情', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+ArrowLeft'], when: "tab == 'favorites' && !confirmOpen && !favoriteDetailActive && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search' || activeInputRole == 'favorite-items' || activeInputRole == 'favorite-directory' || activeInputRole == 'favorite-containers')", weight: 130 },
+  'favorites.detail.close': { title: '关闭收藏详情', group: '收藏', layer: 'favorite-detail', shortcutIds: ['ArrowRight', 'Escape'], when: "tab == 'favorites' && favoriteDetailActive", weight: 400 },
+  'favorites.drawer.open': { title: '打开收藏动作抽屉', group: '收藏', layer: 'favorites', shortcutIds: ['Ctrl+ArrowRight'], when: "tab == 'favorites' && !confirmOpen && !favoriteDrawerActive && (!textInputFocused || activeInputRole == 'favorite-search' || activeInputRole == 'favorite-group-search' || activeInputRole == 'favorite-items' || activeInputRole == 'favorite-directory' || activeInputRole == 'favorite-containers')", weight: 130 },
+  'favorites.drawer.close': { title: '关闭收藏动作抽屉', group: '收藏', layer: 'favorites-drawer', shortcutIds: ['ArrowLeft', 'Escape'], when: "tab == 'favorites' && favoriteDrawerActive", weight: 400 },
   'favorites.drawer.next': { title: '收藏抽屉内下移', group: '收藏', layer: 'favorites-drawer', shortcutIds: ['ArrowDown', 'Ctrl+J'], when: "tab == 'favorites' && favoriteDrawerActive", weight: 400 },
   'favorites.drawer.prev': { title: '收藏抽屉内上移', group: '收藏', layer: 'favorites-drawer', shortcutIds: ['ArrowUp', 'Ctrl+K'], when: "tab == 'favorites' && favoriteDrawerActive", weight: 400 },
   'favorites.drawer.select': { title: '执行收藏抽屉当前动作', group: '收藏', layer: 'favorites-drawer', shortcutIds: ['Enter'], when: "tab == 'favorites' && favoriteDrawerActive", weight: 400 },
@@ -388,7 +400,7 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'mqtt.record.edit.prevField': { title: 'MQTT 记录编辑上一个字段', group: 'MQTT', layer: 'mqtt-record-editor', shortcutIds: ['Shift+Tab'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-record-editor'", weight: 450, profileId: 'mqtt' },
   'mqtt.record.delete': { title: '删除 MQTT 记录', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 135, risk: 'data-write', profileId: 'mqtt' },
   'mqtt.subscription.add': { title: '新增 MQTT 订阅', group: 'MQTT', layer: 'mqtt', shortcutIds: ['Ctrl+T'], when: "tab == 'mqtt' && !confirmOpen && (!textInputFocused || activeInputRole == 'mqtt-search')", weight: 134, risk: 'data-write', profileId: 'mqtt' },
-  'mqtt.subscription.editor.open': { title: '管理 MQTT 订阅', group: 'MQTT', layer: 'mqtt', shortcutIds: [], when: "tab == 'mqtt' && !confirmOpen", weight: 134, risk: 'data-write', profileId: 'mqtt' },
+  'mqtt.subscription.editor.open': { title: '管理 MQTT 订阅', group: 'MQTT', layer: 'mqtt-subscriptions', shortcutIds: ['F2'], when: "tab == 'mqtt' && mqttPane == 'subscriptions' && activeInputRole == 'mqtt-subscriptions' && !confirmOpen", weight: 440, risk: 'data-write', profileId: 'mqtt' },
   'mqtt.subscription.editor.save': { title: '保存 MQTT 订阅编辑', group: 'MQTT', layer: 'mqtt-subscription-editor', shortcutIds: ['Ctrl+S', 'Ctrl+Enter'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-subscription-editor'", weight: 440, risk: 'data-write', profileId: 'mqtt' },
   'mqtt.subscription.editor.cancel': { title: '取消 MQTT 订阅编辑', group: 'MQTT', layer: 'mqtt-subscription-editor', shortcutIds: ['Escape'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-subscription-editor'", weight: 440, profileId: 'mqtt' },
   'mqtt.subscription.editor.nextField': { title: 'MQTT 订阅编辑下一个字段', group: 'MQTT', layer: 'mqtt-subscription-editor', shortcutIds: ['Tab'], when: "tab == 'mqtt' && activeInputRole == 'mqtt-subscription-editor'", weight: 440, profileId: 'mqtt' },
@@ -809,6 +821,7 @@ function activeLayers(context: KeybindingContext): KeybindingLayerId[] {
   if (context.portDetailOpen || context.portDetailActive) layers.push('port-detail')
   if (context.portDrawerOpen || context.portDrawerActive) layers.push('port-drawer')
   if (context.favoriteDrawerOpen || context.favoriteDrawerActive) layers.push('favorites-drawer')
+  if (context.favoriteDetailOpen || context.favoriteDetailActive) layers.push('favorite-detail')
   if (context.portSelectionMode) layers.push('ports-selection')
   if (context.activeInputRole === 'port-search' || context.activeInputRole === 'port-group-search') layers.push('ports-search')
   if (context.activeInputRole === 'mqtt-search') layers.push('mqtt-search')
@@ -849,9 +862,9 @@ function shouldBlockTextInputShortcut(shortcutId: string, context: KeybindingCon
   if (context.activeInputRole === 'mqtt-publish-options') return !['ArrowUp', 'ArrowDown', 'Tab', 'Shift+Tab', 'Enter', 'Escape', 'Ctrl+P', 'Ctrl+R', 'Ctrl+Shift+R', 'Ctrl+Shift+W', 'Ctrl+Shift+T', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+M', 'Ctrl+Shift+M', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-publish-draft') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'Enter', 'Ctrl+Enter', 'Space', 'Escape', 'Ctrl+S', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'F2', 'Shift+F2', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Ctrl+H', 'Ctrl+Shift+H', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+M', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-connections') return !['Space', 'Ctrl+C', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'ArrowLeft', 'ArrowRight', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'F2', 'Shift+F2', 'Ctrl+F2', 'Ctrl+N', 'Ctrl+G', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
-  if (context.activeInputRole === 'mqtt-subscriptions') return !['Space', 'Enter', 'Ctrl+Enter', 'Ctrl+C', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Ctrl+T', 'Ctrl+Shift+T', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
-  if (context.activeInputRole === 'favorite-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'Shift+ArrowUp', 'Shift+ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+Enter', 'Ctrl+C', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+N', 'Ctrl+O', 'Ctrl+Shift+O', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
-  if (context.activeInputRole === 'favorite-group-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'ArrowLeft', 'ArrowRight', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+N', 'Ctrl+O', 'Ctrl+Shift+O', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+T', 'F2', 'Shift+F2', 'Ctrl+F2', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
+  if (context.activeInputRole === 'mqtt-subscriptions') return !['Space', 'Enter', 'Ctrl+Enter', 'Ctrl+C', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Ctrl+T', 'Ctrl+Shift+T', 'F2', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
+  if (context.activeInputRole === 'favorite-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'Shift+ArrowUp', 'Shift+ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+Enter', 'Ctrl+C', 'Ctrl+Shift+C', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+R', 'Ctrl+Shift+W', 'Ctrl+N', 'Ctrl+O', 'Ctrl+Shift+O', 'Ctrl+G', 'Ctrl+T', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+Z', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
+  if (context.activeInputRole === 'favorite-group-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'ArrowLeft', 'ArrowRight', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+R', 'Ctrl+Shift+W', 'Ctrl+N', 'Ctrl+O', 'Ctrl+Shift+O', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+G', 'Ctrl+T', 'Ctrl+Z', 'F2', 'Shift+F2', 'Ctrl+F2', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   return !['Ctrl+S', 'Ctrl+Enter'].includes(shortcutId)
 }
 
