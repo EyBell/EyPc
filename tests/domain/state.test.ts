@@ -141,6 +141,21 @@ describe('state domain', () => {
     expect(state.settings.shortcutProfiles.ports.keybindingOverrides[0]).toMatchObject({ commandId: 'ports.scan', shortcutId: 'Ctrl+R' })
   })
 
+  it('recovers malformed favorite graphs without changing the app state version', () => {
+    const state = normalizeAppState({
+      favorites: [
+        { id: 'same', kind: 'group', name: 'First', parentId: 'same' },
+        { id: 'same', kind: 'file', path: '/tmp/second', name: 'Second', parentId: 'missing' },
+        { id: 'a', kind: 'group', name: 'A', parentId: 'b' },
+        { id: 'b', kind: 'folder', path: '/tmp/b', name: 'B', parentId: 'a' }
+      ]
+    }, 10)
+
+    expect(state.version).toBe(1)
+    expect(state.favorites.map((item) => item.id)).toEqual(['same', 'same~2', 'a', 'b'])
+    expect(state.favorites.every((item) => item.parentId === null)).toBe(true)
+  })
+
   it('keeps collapsed favorite container ids only for existing favorite nodes', () => {
     const state = normalizeAppState({
       favorites: [

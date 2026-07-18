@@ -1,11 +1,14 @@
 import { Buffer } from 'node:buffer'
 import crypto from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
+import * as pathModule from 'node:path'
 import { resolve } from 'node:path'
 import vm from 'node:vm'
 
 const root = resolve(import.meta.dirname, '..')
 const distDir = resolve(root, 'dist')
+const canonicalPreload = readFileSync(resolve(root, 'preload/index.js'), 'utf8')
+const publicPreload = readFileSync(resolve(root, 'public/preload.js'), 'utf8')
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -25,6 +28,8 @@ function assertRelativeFile(pluginJson, field) {
 for (const file of ['index.html', 'plugin.json', 'package.json', 'preload.js', 'logo.svg']) {
   assert(existsSync(resolve(distDir, file)), `dist runtime file is missing: ${file}`)
 }
+
+assert(publicPreload === canonicalPreload, 'public preload.js must match preload/index.js')
 
 const indexHtml = readFileSync(resolve(distDir, 'index.html'), 'utf8')
 assert(!/\b(?:src|href)="\/assets\//.test(indexHtml), 'dist index.html must use relative asset paths for uTools packages')
@@ -52,6 +57,7 @@ for (const code of requiredCodes) {
 }
 
 const preloadSource = readFileSync(resolve(distDir, 'preload.js'), 'utf8')
+assert(preloadSource === canonicalPreload, 'dist preload.js must match preload/index.js')
 const sandbox = {
   window: {},
   globalThis: {},
@@ -68,7 +74,7 @@ const sandbox = {
         }
       }
     }
-    if (name === 'node:path') return { basename: (value) => String(value).split('/').pop() }
+    if (name === 'node:path') return pathModule
     if (name === 'node:os') return { homedir: () => '/tmp' }
     throw new Error(`unexpected require: ${name}`)
   }
@@ -79,10 +85,14 @@ assert(sandbox.window.eypcPlatform, 'preload must expose window.eypcPlatform')
 assert(typeof sandbox.window.eypcPlatform.ports.scan === 'function', 'preload must expose ports.scan')
 assert(typeof sandbox.window.eypcPlatform.ports.kill === 'function', 'preload must expose ports.kill')
 assert(typeof sandbox.window.eypcPlatform.files.copyPath === 'function', 'preload must expose files.copyPath')
+assert(typeof sandbox.window.eypcPlatform.files.copyItems === 'function', 'preload must expose files.copyItems')
+assert(typeof sandbox.window.eypcPlatform.files.inspectPaths === 'function', 'preload must expose files.inspectPaths')
+assert(typeof sandbox.window.eypcPlatform.files.capabilities === 'object', 'preload must expose files.capabilities')
 assert(typeof sandbox.window.eypcPlatform.files.pickFavorite === 'function', 'preload must expose files.pickFavorite')
 assert(typeof sandbox.window.eypcPlatform.files.pickFavorites === 'function', 'preload must expose files.pickFavorites')
 assert(typeof sandbox.window.eypcPlatform.files.listDirectory === 'function', 'preload must expose files.listDirectory')
-assert(await sandbox.window.eypcPlatform.files.copyPath('/tmp/demo') === false, 'copyPath fallback must return false when host API is unavailable')
+assert((await sandbox.window.eypcPlatform.files.copyPath('/tmp/demo')).outcome === 'failed', 'copyPath fallback must report a structured failure when host API is unavailable')
+assert((await sandbox.window.eypcPlatform.files.copyPath('/tmp/demo')).errorCode === 'unsupported', 'copyPath fallback must identify unsupported hosts')
 assert(await sandbox.window.eypcPlatform.files.pickFavorite() === null, 'pickFavorite fallback must return null when host API is unavailable')
 assert(Array.isArray(await sandbox.window.eypcPlatform.files.pickFavorites()), 'pickFavorites fallback must return an array')
 assert((await sandbox.window.eypcPlatform.files.listDirectory('/tmp')).ok === false, 'listDirectory fallback must report unavailable')

@@ -11,7 +11,9 @@ import {
   flattenFavoriteTree,
   isValidFavoriteParent,
   addFavoriteNode,
+  favoritePathIdentityKey,
   inferFavoriteNameFromPath,
+  normalizeFavoriteGraph,
   normalizeFavoritePath,
   moveFavoriteNode,
   reorderFavoriteNode
@@ -162,7 +164,7 @@ describe('favorites domain', () => {
     expect(result.node).toMatchObject({
       id: 'new',
       kind: 'folder',
-      path: '/work/new-app',
+      path: '/work/new-app/',
       name: 'new-app',
       parentId: 'g1',
       tags: ['code'],
@@ -214,5 +216,57 @@ describe('favorites domain', () => {
     expect(normalizeFavoritePath('C:\\work\\app\\')).toBe('C:\\work\\app')
     expect(inferFavoriteNameFromPath('/work/app/README.md')).toBe('README.md')
     expect(inferFavoriteNameFromPath('/')).toBe('未命名')
+  })
+
+  it('normalizes duplicate ids, orphan parents, self references, and cycles deterministically', () => {
+    const malformed: FavoriteNode[] = [
+      { id: 'dup', kind: 'group', path: '', name: 'First', parentId: 'dup', tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'dup', kind: 'file', path: '/tmp/second', name: 'Second', parentId: 'missing', tags: [], color: '#F2994A', sortOrder: 2, createdAt: 2, updatedAt: 2 },
+      { id: 'cycle-a', kind: 'group', path: '', name: 'A', parentId: 'cycle-b', tags: [], color: '#00A676', sortOrder: 3, createdAt: 3, updatedAt: 3 },
+      { id: 'cycle-b', kind: 'folder', path: '/tmp/b', name: 'B', parentId: 'cycle-a', tags: [], color: '#2F80ED', sortOrder: 4, createdAt: 4, updatedAt: 4 }
+    ]
+
+    const normalized = normalizeFavoriteGraph(malformed)
+    expect(normalized.map((node) => node.id)).toEqual(['dup', 'dup~2', 'cycle-a', 'cycle-b'])
+    expect(normalized.map((node) => node.parentId)).toEqual([null, null, null, null])
+    expect(flattenFavoriteTree(buildFavoriteTree(malformed)).map((row) => row.node.id)).toEqual(['dup', 'dup~2', 'cycle-a', 'cycle-b'])
+  })
+
+  it('uses platform-aware path identity without rewriting display paths', () => {
+    expect(favoritePathIdentityKey('C:\\Work\\Demo\\')).toBe(favoritePathIdentityKey('c:/work/demo'))
+    expect(favoritePathIdentityKey('\\\\Server\\Share\\Folder\\')).toBe(favoritePathIdentityKey('//server/share/folder'))
+    expect(favoritePathIdentityKey('/Work/Demo')).not.toBe(favoritePathIdentityKey('/work/demo'))
+    expect(normalizeFavoritePath(' C:\\Work\\Demo\\ ')).toBe('C:\\Work\\Demo')
+    expect(normalizeFavoritePath('/tmp/name\\')).toBe('/tmp/name\\')
+    expect(inferFavoriteNameFromPath('/tmp/name\\')).toBe('name\\')
+    expect(addFavoriteNode([], { id: 'display', kind: 'folder', path: 'C:/Work/Demo/', now: 1 }).node.path).toBe('C:/Work/Demo/')
+  })
+
+  it('roots a duplicate node that self-referenced its original id', () => {
+    const duplicateSelf: FavoriteNode[] = [
+      { id: 'x', kind: 'group', path: '', name: 'First', parentId: null, tags: [], color: '#00A676', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'x', kind: 'file', path: '/tmp/x', name: 'Second', parentId: 'x', tags: [], color: '#F2994A', sortOrder: 2, createdAt: 2, updatedAt: 2 }
+    ]
+
+    expect(normalizeFavoriteGraph(duplicateSelf).map((node) => [node.id, node.parentId])).toEqual([
+      ['x', null],
+      ['x~2', null]
+    ])
+  })
+
+  it('focuses an existing Windows-equivalent target instead of adding it twice', () => {
+    const existing: FavoriteNode[] = [
+      { id: 'win', kind: 'folder', path: 'C:\\Work\\Demo', name: 'Demo', parentId: null, tags: [], color: '#2F80ED', sortOrder: 1, createdAt: 1, updatedAt: 1 }
+    ]
+    const result = addFavoriteNode(existing, {
+      id: 'new',
+      kind: 'folder',
+      path: 'c:/work/demo/',
+      now: 2
+    })
+
+    expect(result.duplicate).toBe(true)
+    expect(result.node.id).toBe('win')
+    expect(result.node.path).toBe('C:\\Work\\Demo')
   })
 })

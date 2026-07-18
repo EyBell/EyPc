@@ -609,28 +609,221 @@ function writeMqttSecrets(secrets) {
   return wroteFile || wroteLocalStorage
 }
 
-function utoolsShellCall(method, target) {
-  try {
-    if (!globalThis.utools || !globalThis.utools.shellOpenPath) return false
-    if (method === 'reveal' && globalThis.utools.shellShowItemInFolder) {
-      globalThis.utools.shellShowItemInFolder(target)
-      return true
+function fileActionResult(outcome, options = {}) {
+  return { outcome, ...options }
+}
+
+function fileErrorCode(error, fallback = 'io-error') {
+  const code = error && typeof error === 'object' ? String(error.code || '') : ''
+  if (code === 'ENOENT') return 'not-found'
+  if (code === 'EACCES' || code === 'EPERM') return 'permission-denied'
+  if (code === 'ETIMEDOUT') return 'timeout'
+  if (code === 'ENOTSUP' || code === 'ENOSYS') return 'unsupported'
+  const message = String(error && (error.message || error) || '').toLowerCase()
+  if (message.includes('no application') || message.includes('no handler') || message.includes('default app')) return 'no-handler'
+  if (message.includes('timed out') || message.includes('timeout')) return 'timeout'
+  if (message.includes('permission') || message.includes('access denied')) return 'permission-denied'
+  if (message.includes('not found') || message.includes('no such file')) return 'not-found'
+  return fallback
+}
+
+function fileErrorMessage(error, fallback) {
+  return String(error && (error.message || error) || fallback)
+}
+
+function isAbsoluteFavoritePath(target) {
+  if (!target) return false
+  return process.platform === 'win32' ? path.win32.isAbsolute(target) : path.posix.isAbsolute(target)
+}
+
+function favoriteStatKind(stat) {
+  if (stat && typeof stat.isFile === 'function' && stat.isFile()) return 'file'
+  if (stat && typeof stat.isDirectory === 'function' && stat.isDirectory()) return 'folder'
+  return 'other'
+}
+
+async function inspectFavoritePath(target) {
+  const normalizedTarget = String(target || '').trim()
+  if (!isAbsoluteFavoritePath(normalizedTarget)) {
+    return {
+      path: normalizedTarget,
+      status: 'invalid',
+      kind: 'unknown',
+      exists: false,
+      isSymbolicLink: false,
+      errorCode: 'invalid-path',
+      error: 'path must be absolute'
     }
-    globalThis.utools.shellOpenPath(target)
-    return true
-  } catch {
-    return false
+  }
+
+  try {
+    const lstat = await withFileActionTimeout(fs.promises.lstat ? fs.promises.lstat(normalizedTarget) : fs.promises.stat(normalizedTarget))
+    const isSymbolicLink = Boolean(lstat && typeof lstat.isSymbolicLink === 'function' && lstat.isSymbolicLink())
+    let resolvedStat = lstat
+    let linkTargetKind
+    if (isSymbolicLink) {
+      try {
+        resolvedStat = await withFileActionTimeout(fs.promises.stat(normalizedTarget))
+        linkTargetKind = favoriteStatKind(resolvedStat)
+      } catch (error) {
+        const errorCode = fileErrorCode(error)
+        return {
+          path: normalizedTarget,
+          status: errorCode === 'not-found' ? 'missing' : errorCode === 'permission-denied' ? 'permission-denied' : 'offline',
+          kind: 'other',
+          exists: errorCode !== 'not-found',
+          isSymbolicLink: true,
+          linkTargetKind: errorCode === 'not-found' ? 'missing' : 'unknown',
+          ...(Number.isFinite(lstat && lstat.size) ? { size: lstat.size } : {}),
+          ...(Number.isFinite(lstat && lstat.mtimeMs) ? { modifiedAt: lstat.mtimeMs } : {}),
+          errorCode,
+          error: fileErrorMessage(error, 'symbolic link target unavailable')
+        }
+      }
+    }
+    const inspection = {
+      path: normalizedTarget,
+      status: 'available',
+      kind: favoriteStatKind(resolvedStat),
+      exists: true,
+      isSymbolicLink,
+      ...(linkTargetKind ? { linkTargetKind } : {}),
+      ...(Number.isFinite(resolvedStat && resolvedStat.size) ? { size: resolvedStat.size } : {}),
+      ...(Number.isFinite(resolvedStat && resolvedStat.mtimeMs) ? { modifiedAt: resolvedStat.mtimeMs } : {})
+    }
+    if (fs.promises.access) {
+      try {
+        await withFileActionTimeout(fs.promises.access(normalizedTarget, fs.constants && fs.constants.R_OK))
+      } catch (error) {
+        const errorCode = fileErrorCode(error)
+        return {
+          ...inspection,
+          status: errorCode === 'not-found' ? 'missing' : errorCode === 'permission-denied' ? 'permission-denied' : 'offline',
+          exists: errorCode !== 'not-found',
+          errorCode,
+          error: fileErrorMessage(error, 'path access check failed')
+        }
+      }
+    }
+    return inspection
+  } catch (error) {
+    const errorCode = fileErrorCode(error)
+    return {
+      path: normalizedTarget,
+      status: errorCode === 'not-found' ? 'missing' : errorCode === 'permission-denied' ? 'permission-denied' : 'offline',
+      kind: 'unknown',
+      exists: false,
+      isSymbolicLink: false,
+      errorCode,
+      error: fileErrorMessage(error, 'path inspection failed')
+    }
   }
 }
 
-async function copyText(target) {
+async function inspectFavoritePaths(targets) {
+  const paths = Array.isArray(targets) ? targets : []
+  return Promise.all(paths.map((target) => inspectFavoritePath(target)))
+}
+
+async function preflightFavoritePath(target) {
+  const inspection = await inspectFavoritePath(target)
+  if (inspection.status === 'available') return { target: inspection.path, inspection }
+  return {
+    result: fileActionResult('failed', {
+      errorCode: inspection.errorCode || 'io-error',
+      message: inspection.error || 'path unavailable',
+      paths: [inspection.path]
+    })
+  }
+}
+
+function electronShell() {
+  try {
+    const electron = require('electron')
+    return electron.shell || (electron.remote && electron.remote.shell) || null
+  } catch {
+    return null
+  }
+}
+
+async function withFileActionTimeout(value) {
+  let timeoutId
+  try {
+    return await Promise.race([
+      Promise.resolve(value),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(Object.assign(new Error('file action timed out'), { code: 'ETIMEDOUT' })), 10_000)
+      })
+    ])
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+  }
+}
+
+function utoolsShellDispatch(method, target) {
+  try {
+    if (!globalThis.utools) return fileActionResult('failed', { errorCode: 'unsupported', message: `${method} unavailable`, paths: [target] })
+    if (method === 'reveal') {
+      if (typeof globalThis.utools.shellShowItemInFolder !== 'function') return fileActionResult('failed', { errorCode: 'unsupported', message: 'reveal unavailable', paths: [target] })
+      globalThis.utools.shellShowItemInFolder(target)
+      return fileActionResult('dispatched', { paths: [target] })
+    }
+    if (typeof globalThis.utools.shellOpenPath !== 'function') return fileActionResult('failed', { errorCode: 'unsupported', message: 'open unavailable', paths: [target] })
+    globalThis.utools.shellOpenPath(target)
+    return fileActionResult('dispatched', { paths: [target] })
+  } catch (error) {
+    return fileActionResult('failed', { errorCode: fileErrorCode(error), message: fileErrorMessage(error, `${method} failed`), paths: [target] })
+  }
+}
+
+async function copyTextAction(target) {
+  const normalizedTarget = String(target || '')
   try {
     if (globalThis.utools && typeof globalThis.utools.copyText === 'function') {
-      globalThis.utools.copyText(String(target || ''))
-      return true
+      const copied = await globalThis.utools.copyText(normalizedTarget)
+      if (copied === false) return fileActionResult('failed', { errorCode: 'io-error', message: 'copy text failed', paths: [normalizedTarget] })
+      return fileActionResult(copied === true ? 'success' : 'dispatched', { paths: [normalizedTarget] })
     }
-  } catch {}
-  return false
+  } catch (error) {
+    return fileActionResult('failed', { errorCode: fileErrorCode(error), message: fileErrorMessage(error, 'copy text failed'), paths: [normalizedTarget] })
+  }
+  return fileActionResult('failed', { errorCode: 'unsupported', message: 'copy text unavailable', paths: [normalizedTarget] })
+}
+
+async function copyText(target) {
+  const result = await copyTextAction(target)
+  return result.outcome === 'success' || result.outcome === 'dispatched'
+}
+
+async function copyFavoritePath(target) {
+  const normalizedTarget = String(target || '').trim()
+  if (!normalizedTarget) return fileActionResult('failed', { errorCode: 'invalid-path', message: 'empty path' })
+  return copyTextAction(normalizedTarget)
+}
+
+async function copyFavoriteItems(targets) {
+  const paths = Array.isArray(targets) ? [...new Set(targets.map((target) => String(target || '').trim()).filter(Boolean))] : []
+  if (!paths.length) return fileActionResult('failed', { errorCode: 'invalid-path', message: 'no files to copy' })
+  const inspections = await inspectFavoritePaths(paths)
+  const unavailable = inspections.find((inspection) => inspection.status !== 'available')
+  if (unavailable) {
+    return fileActionResult('failed', {
+      errorCode: unavailable.errorCode || 'io-error',
+      message: unavailable.error || 'file unavailable',
+      paths
+    })
+  }
+  try {
+    if (!globalThis.utools || typeof globalThis.utools.copyFile !== 'function') {
+      return fileActionResult('failed', { errorCode: 'unsupported', message: 'copy items unavailable', paths })
+    }
+    const copied = await globalThis.utools.copyFile(paths)
+    return copied
+      ? fileActionResult('success', { paths })
+      : fileActionResult('failed', { errorCode: 'io-error', message: 'copy items failed', paths })
+  } catch (error) {
+    return fileActionResult('failed', { errorCode: fileErrorCode(error), message: fileErrorMessage(error, 'copy items failed'), paths })
+  }
 }
 
 async function macOpen(target, reveal = false) {
@@ -638,18 +831,86 @@ async function macOpen(target, reveal = false) {
     command: '/usr/bin/open',
     args: reveal ? ['-R', target] : [target]
   }])
-  return Boolean(result && result.ok)
+  if (result && result.ok) return fileActionResult('success', { paths: [target] })
+  const error = result && (result.error || result.stderr)
+  return fileActionResult('failed', {
+    errorCode: fileErrorCode(error, 'no-handler'),
+    message: fileErrorMessage(error, reveal ? 'reveal failed' : 'default open failed'),
+    paths: [target]
+  })
 }
 
-async function shellCall(method, target) {
-  const normalizedTarget = String(target || '').trim()
-  if (!normalizedTarget) return false
-  if (process.platform === 'darwin') {
-    if (await macOpen(normalizedTarget, method === 'reveal')) return true
-    if (method === 'open' && await macOpen(normalizedTarget, true)) return true
-    return utoolsShellCall(method, normalizedTarget)
+async function openFavoritePath(target) {
+  const preflight = await preflightFavoritePath(target)
+  if (preflight.result) return preflight.result
+  const normalizedTarget = preflight.target
+  let failure = fileActionResult('failed', { errorCode: 'unsupported', message: 'open unavailable', paths: [normalizedTarget] })
+  const shell = electronShell()
+  if (shell && typeof shell.openPath === 'function') {
+    try {
+      const errorText = String(await withFileActionTimeout(shell.openPath(normalizedTarget)) || '').trim()
+      if (!errorText) return fileActionResult('success', { paths: [normalizedTarget] })
+      failure = fileActionResult('failed', { errorCode: fileErrorCode(errorText, 'no-handler'), message: errorText, paths: [normalizedTarget] })
+    } catch (error) {
+      failure = fileActionResult('failed', { errorCode: fileErrorCode(error), message: fileErrorMessage(error, 'open failed'), paths: [normalizedTarget] })
+    }
+  } else if (process.platform === 'darwin') {
+    const macResult = await macOpen(normalizedTarget, false)
+    if (macResult.outcome === 'success') return macResult
+    failure = macResult
   }
-  return utoolsShellCall(method, normalizedTarget)
+
+  if (process.platform === 'darwin') {
+    const revealResult = await macOpen(normalizedTarget, true)
+    if (revealResult.outcome === 'success') {
+      return fileActionResult('revealed-instead', { message: 'open failed; item revealed instead', paths: [normalizedTarget] })
+    }
+  }
+  const dispatched = utoolsShellDispatch('open', normalizedTarget)
+  return dispatched.outcome === 'dispatched' ? dispatched : failure
+}
+
+async function revealFavoritePath(target) {
+  const preflight = await preflightFavoritePath(target)
+  if (preflight.result) return preflight.result
+  const normalizedTarget = preflight.target
+  if (process.platform === 'darwin') {
+    const macResult = await macOpen(normalizedTarget, true)
+    if (macResult.outcome === 'success') return macResult
+  }
+  const shell = electronShell()
+  if (shell && typeof shell.showItemInFolder === 'function') {
+    try {
+      shell.showItemInFolder(normalizedTarget)
+      return fileActionResult('dispatched', { paths: [normalizedTarget] })
+    } catch (error) {
+      const failure = fileActionResult('failed', { errorCode: fileErrorCode(error), message: fileErrorMessage(error, 'reveal failed'), paths: [normalizedTarget] })
+      const dispatched = utoolsShellDispatch('reveal', normalizedTarget)
+      return dispatched.outcome === 'dispatched' ? dispatched : failure
+    }
+  }
+  return utoolsShellDispatch('reveal', normalizedTarget)
+}
+
+function favoriteFileCapabilities() {
+  const shell = electronShell()
+  const utools = globalThis.utools || {}
+  let dialog = null
+  try {
+    const electron = require('electron')
+    dialog = electron.dialog || (electron.remote && electron.remote.dialog)
+  } catch {}
+  const canPick = typeof utools.showOpenDialog === 'function' || Boolean(dialog && (dialog.showOpenDialog || dialog.showOpenDialogSync))
+  return {
+    open: Boolean((shell && typeof shell.openPath === 'function') || process.platform === 'darwin' || typeof utools.shellOpenPath === 'function'),
+    reveal: Boolean(process.platform === 'darwin' || (shell && typeof shell.showItemInFolder === 'function') || typeof utools.shellShowItemInFolder === 'function'),
+    copyPath: typeof utools.copyText === 'function',
+    copyItems: typeof utools.copyFile === 'function',
+    pickFiles: canPick,
+    pickFolders: canPick,
+    listDirectory: true,
+    inspectPaths: true
+  }
 }
 
 function normalizePickedFavorite(result, kind) {
@@ -735,31 +996,49 @@ async function pickFavoritePath() {
 
 async function listFavoriteDirectory(target) {
   const base = String(target || '').trim()
-  if (!base) return { ok: false, entries: [], error: 'empty directory path' }
+  if (!isAbsoluteFavoritePath(base)) return { ok: false, entries: [], error: 'directory path must be absolute', errorCode: 'invalid-path' }
   try {
-    const entries = await fs.promises.readdir(base, { withFileTypes: true })
-    const normalized = await Promise.all(entries.flatMap((entry) => {
-      if (!entry.isDirectory() && !entry.isFile()) return []
+    const entries = await withFileActionTimeout(fs.promises.readdir(base, { withFileTypes: true }))
+    const normalized = await Promise.all(entries.map(async (entry) => {
       const entryPath = path.join(base, entry.name)
-      return [fs.promises.stat(entryPath)
-        .catch(() => null)
-        .then((stat) => ({
-          kind: entry.isDirectory() ? 'folder' : 'file',
-          name: entry.name,
-          path: entryPath,
-          ...(stat && !entry.isDirectory() ? { size: stat.size } : {}),
-          ...(stat ? { modifiedAt: stat.mtimeMs } : {})
-        }))]
+      let lstat = null
+      try {
+        lstat = await withFileActionTimeout(fs.promises.lstat ? fs.promises.lstat(entryPath) : fs.promises.stat(entryPath))
+      } catch {}
+      const isSymbolicLink = Boolean((typeof entry.isSymbolicLink === 'function' && entry.isSymbolicLink()) || (lstat && typeof lstat.isSymbolicLink === 'function' && lstat.isSymbolicLink()))
+      let resolvedStat = lstat
+      let linkTargetKind
+      if (isSymbolicLink) {
+        try {
+          resolvedStat = await withFileActionTimeout(fs.promises.stat(entryPath))
+          linkTargetKind = favoriteStatKind(resolvedStat)
+        } catch (error) {
+          linkTargetKind = fileErrorCode(error) === 'not-found' ? 'missing' : 'unknown'
+        }
+      }
+      const direntKind = typeof entry.isDirectory === 'function' && entry.isDirectory() ? 'folder' : typeof entry.isFile === 'function' && entry.isFile() ? 'file' : null
+      const resolvedKind = favoriteStatKind(resolvedStat)
+      const kind = direntKind || (resolvedKind === 'folder' || resolvedKind === 'file' ? resolvedKind : null)
+      if (!kind) return null
+      return {
+        kind,
+        name: entry.name,
+        path: entryPath,
+        ...(Number.isFinite(resolvedStat && resolvedStat.size) && kind === 'file' ? { size: resolvedStat.size } : {}),
+        ...(Number.isFinite(resolvedStat && resolvedStat.mtimeMs) ? { modifiedAt: resolvedStat.mtimeMs } : {}),
+        ...(isSymbolicLink ? { isSymbolicLink: true, linkTargetKind: linkTargetKind || resolvedKind } : {})
+      }
     }))
+    const supportedEntries = normalized.filter(Boolean)
     return {
       ok: true,
-      entries: normalized.sort((a, b) => {
+      entries: supportedEntries.sort((a, b) => {
         if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1
         return a.name.localeCompare(b.name)
       })
     }
   } catch (error) {
-    return { ok: false, entries: [], error: error instanceof Error ? error.message : 'directory listing failed' }
+    return { ok: false, entries: [], error: error instanceof Error ? error.message : 'directory listing failed', errorCode: fileErrorCode(error) }
   }
 }
 
@@ -789,9 +1068,12 @@ window.eypcPlatform = {
     kill: killProcess
   },
   files: {
-    open: async (target) => shellCall('open', target),
-    reveal: async (target) => shellCall('reveal', target),
-    copyPath: copyText,
+    capabilities: favoriteFileCapabilities(),
+    open: openFavoritePath,
+    reveal: revealFavoritePath,
+    copyPath: copyFavoritePath,
+    copyItems: copyFavoriteItems,
+    inspectPaths: inspectFavoritePaths,
     pickFavorite: pickFavoritePath,
     pickFavorites: pickFavoritePaths,
     listDirectory: listFavoriteDirectory

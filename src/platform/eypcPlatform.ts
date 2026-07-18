@@ -5,6 +5,40 @@ import type { AppState, FavoriteNode, KillRequest, KillResult, MqttArchiveState,
 export type PickedFavoriteKind = Exclude<FavoriteNode['kind'], 'group'>
 export type PickedFavorite = Pick<FavoriteNode, 'path' | 'name' | 'parentId' | 'tags' | 'color'> & { kind: PickedFavoriteKind }
 export type MqttSecretMap = Record<string, string>
+export type FileActionOutcome = 'success' | 'dispatched' | 'revealed-instead' | 'failed'
+export type FileErrorCode = 'invalid-path' | 'not-found' | 'permission-denied' | 'no-handler' | 'timeout' | 'unsupported' | 'io-error'
+export type FavoritePathStatus = 'available' | 'missing' | 'permission-denied' | 'offline' | 'invalid' | 'unknown'
+
+export interface FileActionResult {
+  outcome: FileActionOutcome
+  errorCode?: FileErrorCode
+  message?: string
+  paths?: string[]
+}
+
+export interface FileCapabilities {
+  open: boolean
+  reveal: boolean
+  copyPath: boolean
+  copyItems: boolean
+  pickFiles: boolean
+  pickFolders: boolean
+  listDirectory: boolean
+  inspectPaths: boolean
+}
+
+export interface FavoritePathInspection {
+  path: string
+  status: FavoritePathStatus
+  kind: 'file' | 'folder' | 'other' | 'unknown'
+  exists: boolean
+  isSymbolicLink: boolean
+  linkTargetKind?: 'file' | 'folder' | 'other' | 'missing' | 'unknown'
+  size?: number
+  modifiedAt?: number
+  errorCode?: FileErrorCode
+  error?: string
+}
 const STORAGE_KEY = 'eypc/state/v1'
 const MQTT_ARCHIVE_STORAGE_KEY = 'eypc/mqtt/archive/v1'
 const MQTT_SECRETS_LOCAL_STORAGE_KEY = 'eypc/mqtt/secrets-local/v1'
@@ -15,12 +49,15 @@ export interface FavoriteDirectoryEntry {
   path: string
   size?: number
   modifiedAt?: number
+  isSymbolicLink?: boolean
+  linkTargetKind?: 'file' | 'folder' | 'other' | 'missing' | 'unknown'
 }
 
 export interface FavoriteDirectoryListResult {
   ok: boolean
   entries: FavoriteDirectoryEntry[]
   error?: string
+  errorCode?: FileErrorCode
 }
 
 export interface EypcPlatformApi {
@@ -38,9 +75,12 @@ export interface EypcPlatformApi {
     kill(request: KillRequest): Promise<KillResult>
   }
   files: {
-    open(path: string): Promise<boolean>
-    reveal(path: string): Promise<boolean>
-    copyPath(path: string): Promise<boolean>
+    capabilities?: FileCapabilities
+    open(path: string): Promise<FileActionResult>
+    reveal(path: string): Promise<FileActionResult>
+    copyPath(path: string): Promise<FileActionResult>
+    copyItems?(paths: string[]): Promise<FileActionResult>
+    inspectPaths?(paths: string[]): Promise<FavoritePathInspection[]>
     pickFavorite?(): Promise<PickedFavorite | null>
     pickFavorites?(kind: PickedFavoriteKind): Promise<PickedFavorite[]>
     listDirectory(path: string): Promise<FavoriteDirectoryListResult>
@@ -54,6 +94,40 @@ export interface EypcPlatformApi {
   getEnterPayload(): { code?: string } | null
   clearEnterPayload(): void
   onEnterPayload?(listener: (payload: { code?: string } | null) => void): () => void
+}
+
+export function normalizeFileActionResult(value: unknown, failedErrorCode: FileErrorCode = 'io-error'): FileActionResult {
+  if (value && typeof value === 'object' && 'outcome' in value && ['success', 'dispatched', 'revealed-instead', 'failed'].includes(String((value as { outcome?: unknown }).outcome))) {
+    return value as FileActionResult
+  }
+  if (value === true) return { outcome: 'dispatched', message: 'legacy host reported dispatch only' }
+  return { outcome: 'failed', errorCode: failedErrorCode }
+}
+
+function errorCodeFromUnknown(error: unknown): FileErrorCode {
+  const code = error && typeof error === 'object' && 'code' in error ? String((error as { code?: unknown }).code || '') : ''
+  if (code === 'ENOENT') return 'not-found'
+  if (code === 'EACCES' || code === 'EPERM') return 'permission-denied'
+  if (code === 'ETIMEDOUT') return 'timeout'
+  if (code === 'ENOTSUP' || code === 'ENOSYS') return 'unsupported'
+  return 'io-error'
+}
+
+async function callFileAction(call: (() => Promise<unknown>) | undefined, unsupportedMessage: string): Promise<FileActionResult> {
+  if (!call) return { outcome: 'failed', errorCode: 'unsupported', message: unsupportedMessage }
+  try {
+    return normalizeFileActionResult(await call())
+  } catch (error) {
+    return {
+      outcome: 'failed',
+      errorCode: errorCodeFromUnknown(error),
+      message: error instanceof Error ? error.message : unsupportedMessage
+    }
+  }
+}
+
+function unknownInspection(path: string, errorCode: FileErrorCode = 'unsupported', error = 'path inspection unavailable'): FavoritePathInspection {
+  return { path, status: 'unknown', kind: 'unknown', exists: false, isSymbolicLink: false, errorCode, error }
 }
 
 declare global {
@@ -273,6 +347,16 @@ export function getPlatform(): EypcPlatformApi {
     const hostFiles = window.eypcPlatform.files
     const hostClipboard = window.eypcPlatform.clipboard
     const hostStorage = window.eypcPlatform.storage
+    const hostCapabilities: FileCapabilities = hostFiles.capabilities || {
+      open: typeof hostFiles.open === 'function',
+      reveal: typeof hostFiles.reveal === 'function',
+      copyPath: typeof hostFiles.copyPath === 'function',
+      copyItems: typeof hostFiles.copyItems === 'function',
+      pickFiles: typeof hostFiles.pickFavorites === 'function' || typeof hostFiles.pickFavorite === 'function',
+      pickFolders: typeof hostFiles.pickFavorites === 'function',
+      listDirectory: typeof hostFiles.listDirectory === 'function',
+      inspectPaths: typeof hostFiles.inspectPaths === 'function'
+    }
     return {
       ...window.eypcPlatform,
       storage: {
@@ -285,18 +369,21 @@ export function getPlatform(): EypcPlatformApi {
         setMqttSecrets: hostStorage.setMqttSecrets || writeFallbackMqttSecrets
       },
       files: {
-        open: hostFiles.open || (async () => false),
-        reveal: hostFiles.reveal || (async () => false),
-        copyPath: hostFiles.copyPath || (async () => false),
+        capabilities: hostCapabilities,
+        open: (path) => callFileAction(hostFiles.open ? () => hostFiles.open(path) : undefined, 'open unavailable'),
+        reveal: (path) => callFileAction(hostFiles.reveal ? () => hostFiles.reveal(path) : undefined, 'reveal unavailable'),
+        copyPath: (path) => callFileAction(hostFiles.copyPath ? () => hostFiles.copyPath(path) : undefined, 'copy path unavailable'),
+        copyItems: (paths) => callFileAction(hostFiles.copyItems ? () => hostFiles.copyItems!(paths) : undefined, 'copy items unavailable'),
+        inspectPaths: hostFiles.inspectPaths || (async (paths) => paths.map((path) => unknownInspection(path))),
         pickFavorite: hostFiles.pickFavorite,
         pickFavorites: hostFiles.pickFavorites || (async () => {
           const picked = await hostFiles.pickFavorite?.()
           return picked ? [picked] : []
         }),
-        listDirectory: hostFiles.listDirectory || (async () => ({ ok: false, entries: [], error: 'directory listing unavailable' }))
+        listDirectory: hostFiles.listDirectory || (async () => ({ ok: false, entries: [], error: 'directory listing unavailable', errorCode: 'unsupported' }))
       },
       clipboard: {
-        copyText: hostClipboard?.copyText || hostFiles.copyPath || (async () => false)
+        copyText: hostClipboard?.copyText || (async () => false)
       },
       app: window.eypcPlatform.app || { hide: async () => false }
     }
@@ -316,17 +403,33 @@ export function getPlatform(): EypcPlatformApi {
       kill: killViaDevApi
     },
     files: {
-      open: async () => false,
-      reveal: async () => false,
+      capabilities: {
+        open: false,
+        reveal: false,
+        copyPath: typeof navigator !== 'undefined' && Boolean(navigator.clipboard),
+        copyItems: false,
+        pickFiles: typeof document !== 'undefined',
+        pickFolders: typeof document !== 'undefined',
+        listDirectory: false,
+        inspectPaths: false
+      },
+      open: async () => ({ outcome: 'failed', errorCode: 'unsupported', message: 'open unavailable in browser' }),
+      reveal: async () => ({ outcome: 'failed', errorCode: 'unsupported', message: 'reveal unavailable in browser' }),
       copyPath: async (path) => {
         if (typeof navigator !== 'undefined' && navigator.clipboard) {
-          await navigator.clipboard.writeText(path)
-          return true
+          try {
+            await navigator.clipboard.writeText(path)
+            return { outcome: 'success' }
+          } catch (error) {
+            return { outcome: 'failed', errorCode: errorCodeFromUnknown(error), message: error instanceof Error ? error.message : 'copy path failed' }
+          }
         }
-        return false
+        return { outcome: 'failed', errorCode: 'unsupported', message: 'copy path unavailable in browser' }
       },
+      copyItems: async () => ({ outcome: 'failed', errorCode: 'unsupported', message: 'copy items unavailable in browser' }),
+      inspectPaths: async (paths) => paths.map((path) => unknownInspection(path)),
       pickFavorites: pickFavoritesViaBrowserInput,
-      listDirectory: async () => ({ ok: false, entries: [], error: 'directory listing unavailable' })
+      listDirectory: async () => ({ ok: false, entries: [], error: 'directory listing unavailable', errorCode: 'unsupported' })
     },
     clipboard: {
       copyText: async (text) => {

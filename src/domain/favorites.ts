@@ -50,11 +50,75 @@ export function normalizeFavoritePath(path: string): string {
   if (!trimmed) return ''
   if (/^[\\/]+$/.test(trimmed)) return trimmed.startsWith('\\') ? '\\' : '/'
   if (/^[A-Za-z]:[\\/]$/.test(trimmed)) return trimmed
-  return trimmed.replace(/[\\/]+$/, '')
+  const windowsLike = /^[A-Za-z]:[\\/]/.test(trimmed) || /^(?:\\\\|\/\/)/.test(trimmed)
+  return windowsLike ? trimmed.replace(/[\\/]+$/, '') : trimmed.replace(/\/+$/, '')
+}
+
+export function favoritePathIdentityKey(path: string): string {
+  const normalized = normalizeFavoritePath(path)
+  if (!normalized) return ''
+  const windowsLike = /^[A-Za-z]:[\\/]/.test(normalized) || /^(?:\\\\|\/\/)/.test(normalized)
+  if (!windowsLike) return `posix:${normalized}`
+
+  const slashes = normalized.replace(/\//g, '\\')
+  const unc = /^\\\\/.test(slashes)
+  const body = slashes.replace(/^\\+/, '').replace(/\\+/g, '\\')
+  const canonical = unc ? `\\\\${body}` : slashes.replace(/\\+/g, '\\')
+  return `windows:${canonical.toLowerCase()}`
+}
+
+export function normalizeFavoriteGraph(nodes: FavoriteNode[]): FavoriteNode[] {
+  const reservedIds = new Set(nodes.map((node) => node.id))
+  const usedIds = new Set<string>()
+  const firstIdBySource = new Map<string, string>()
+  const normalized = nodes.map((node) => {
+    let id = node.id
+    if (usedIds.has(id)) {
+      let suffix = 2
+      do {
+        id = `${node.id}~${suffix}`
+        suffix += 1
+      } while (usedIds.has(id) || reservedIds.has(id))
+    }
+    usedIds.add(id)
+    if (!firstIdBySource.has(node.id)) firstIdBySource.set(node.id, id)
+    return { ...node, id, parentId: node.parentId === node.id ? null : node.parentId }
+  })
+
+  const validIds = new Set(normalized.map((node) => node.id))
+  for (const node of normalized) {
+    const parentId = node.parentId ? firstIdBySource.get(node.parentId) || node.parentId : null
+    node.parentId = parentId && validIds.has(parentId) && parentId !== node.id ? parentId : null
+  }
+
+  const byId = new Map(normalized.map((node) => [node.id, node]))
+  const finished = new Set<string>()
+  const visit = (node: FavoriteNode, path: string[], indexes: Map<string, number>) => {
+    if (finished.has(node.id)) return
+    const cycleStart = indexes.get(node.id)
+    if (cycleStart !== undefined) {
+      for (const id of path.slice(cycleStart)) {
+        const cycleNode = byId.get(id)
+        if (cycleNode) cycleNode.parentId = null
+      }
+      return
+    }
+    indexes.set(node.id, path.length)
+    path.push(node.id)
+    const parent = node.parentId ? byId.get(node.parentId) : undefined
+    if (parent) visit(parent, path, indexes)
+    path.pop()
+    indexes.delete(node.id)
+    finished.add(node.id)
+  }
+  for (const node of normalized) visit(node, [], new Map())
+  return normalized
 }
 
 export function inferFavoriteNameFromPath(path: string): string {
-  return normalizeFavoritePath(path).split(/[\\/]/).filter(Boolean).pop() || '未命名'
+  const normalized = normalizeFavoritePath(path)
+  const windowsLike = /^[A-Za-z]:[\\/]/.test(normalized) || /^(?:\\\\|\/\/)/.test(normalized)
+  return normalized.split(windowsLike ? /[\\/]/ : /\//).filter(Boolean).pop() || '未命名'
 }
 
 function collectAllDescendantIds(nodes: FavoriteNode[], rootId: string): Set<string> {
@@ -73,21 +137,30 @@ function collectAllDescendantIds(nodes: FavoriteNode[], rootId: string): Set<str
 }
 
 export function buildFavoriteTree(nodes: FavoriteNode[]): FavoriteTreeNode[] {
-  const byId = new Map(nodes.map((node) => [node.id, node]))
+  const safeNodes = normalizeFavoriteGraph(nodes)
+  const byId = new Map(safeNodes.map((node) => [node.id, node]))
   const byParent = new Map<string | null, FavoriteNode[]>()
-  for (const node of nodes) {
+  for (const node of safeNodes) {
     const parentId = node.parentId && byId.has(node.parentId) ? node.parentId : null
     byParent.set(parentId, [...(byParent.get(parentId) || []), node])
   }
 
-  const walk = (parentId: string | null, depth: number): FavoriteTreeNode[] =>
-    sortNodes(byParent.get(parentId) || []).map((node) => ({
-      node,
-      depth,
-      children: walk(node.id, depth + 1)
-    }))
+  const visited = new Set<string>()
+  const walk = (parentId: string | null, depth: number, ancestors: Set<string>): FavoriteTreeNode[] =>
+    sortNodes(byParent.get(parentId) || []).flatMap((node) => {
+      if (visited.has(node.id) || ancestors.has(node.id)) return []
+      visited.add(node.id)
+      const nextAncestors = new Set(ancestors).add(node.id)
+      return [{ node, depth, children: walk(node.id, depth + 1, nextAncestors) }]
+    })
 
-  return walk(null, 0)
+  const tree = walk(null, 0, new Set())
+  for (const node of sortNodes(safeNodes)) {
+    if (visited.has(node.id)) continue
+    visited.add(node.id)
+    tree.push({ node: { ...node, parentId: null }, depth: 0, children: walk(node.id, 1, new Set([node.id])) })
+  }
+  return tree
 }
 
 export function filterFavoriteGroupTree(nodes: FavoriteNode[], keyword: string): FavoriteTreeNode[] {
@@ -100,7 +173,9 @@ export function filterFavoriteGroupTree(nodes: FavoriteNode[], keyword: string):
     const text = [node.name, node.tags.join(' ')].join(' ').toLowerCase()
     if (!text.includes(query)) continue
     let cursor: FavoriteNode | undefined = node
-    while (cursor) {
+    const visited = new Set<string>()
+    while (cursor && !visited.has(cursor.id)) {
+      visited.add(cursor.id)
       included.add(cursor.id)
       cursor = cursor.parentId ? byId.get(cursor.parentId) : undefined
     }
@@ -117,7 +192,9 @@ export function filterFavoriteContainerTree(nodes: FavoriteNode[], keyword: stri
     const text = [node.name, node.path, node.tags.join(' '), node.kind].join(' ').toLowerCase()
     if (!text.includes(query)) continue
     let cursor: FavoriteNode | undefined = node
-    while (cursor) {
+    const visited = new Set<string>()
+    while (cursor && !visited.has(cursor.id)) {
+      visited.add(cursor.id)
       included.add(cursor.id)
       cursor = cursor.parentId ? byId.get(cursor.parentId) : undefined
     }
@@ -202,7 +279,9 @@ export function filterFavoriteTree(nodes: FavoriteNode[], filter: FavoriteFilter
     const isRootGroup = filter.groupId && node.id === filter.groupId && !filter.keyword && filter.tags.length === 0
     if (!isRootGroup && !nodeMatches(node, filter)) continue
     let cursor: FavoriteNode | undefined = node
-    while (cursor) {
+    const visited = new Set<string>()
+    while (cursor && !visited.has(cursor.id)) {
+      visited.add(cursor.id)
       included.add(cursor.id)
       cursor = cursor.parentId ? byId.get(cursor.parentId) : undefined
     }
@@ -275,8 +354,9 @@ export function favoriteTreeMoveTarget(nodes: FavoriteNode[], nodeId: string, ta
 }
 
 export function addFavoriteNode(nodes: FavoriteNode[], input: FavoriteAddInput): FavoriteAddResult {
-  const path = normalizeFavoritePath(input.path)
-  const duplicate = nodes.find((node) => isFavoriteItem(node) && node.kind === input.kind && normalizeFavoritePath(node.path) === path)
+  const path = input.path.trim()
+  const pathKey = favoritePathIdentityKey(path)
+  const duplicate = nodes.find((node) => isFavoriteItem(node) && node.kind === input.kind && favoritePathIdentityKey(node.path) === pathKey)
   if (duplicate) {
     return {
       nodes: nodes.map((node) => ({ ...node })),

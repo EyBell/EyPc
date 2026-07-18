@@ -3,6 +3,7 @@ import { normalizeMqttState } from './mqtt'
 import { emptySearchHistories, normalizeSearchHistoryList } from './searchHistory'
 import { normalizeShortcutId } from './shortcuts'
 import { normalizeToolPreviewPrefs } from './toolPreview'
+import { normalizeFavoriteGraph } from './favorites'
 
 const VALID_TABS = new Set<AppTabId>(['ports', 'mqtt', 'favorites', 'settings'])
 const TAB_IDS: AppTabId[] = ['ports', 'mqtt', 'favorites', 'settings']
@@ -273,7 +274,7 @@ export function normalizeAppState(value: unknown, now = Date.now()): AppState {
   const featureConfigs = normalizeFeatureConfigs(settings.featureConfigs)
   const visibleTabIds = new Set(featureConfigs.filter((config) => config.enabled).map((config) => config.id))
   const activeTab = VALID_TABS.has(source.activeTab as AppTabId) && visibleTabIds.has(source.activeTab as AppTabId) ? (source.activeTab as AppTabId) : fallback.activeTab
-  const favorites = (Array.isArray(source.favorites) ? source.favorites : []).map((item) => normalizeFavorite(item, now)).filter((item): item is FavoriteNode => Boolean(item))
+  const favorites = normalizeFavoriteGraph((Array.isArray(source.favorites) ? source.favorites : []).map((item) => normalizeFavorite(item, now)).filter((item): item is FavoriteNode => Boolean(item)))
   const favoriteIds = new Set(favorites.map((item) => item.id))
   return {
     version: 1,

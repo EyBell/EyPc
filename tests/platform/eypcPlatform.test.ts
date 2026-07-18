@@ -154,12 +154,19 @@ describe('browser fallback platform', () => {
     globalThis.window = {} as Window & typeof globalThis
 
     const { getPlatform } = await import('../../src/platform/eypcPlatform')
+    expect(getPlatform().files.capabilities).toMatchObject({ open: false, reveal: false, copyItems: false, listDirectory: false, inspectPaths: false })
+    await expect(getPlatform().files.open('/tmp/demo')).resolves.toMatchObject({ outcome: 'failed', errorCode: 'unsupported' })
+    await expect(getPlatform().files.copyItems?.(['/tmp/demo'])).resolves.toMatchObject({ outcome: 'failed', errorCode: 'unsupported' })
+    await expect(getPlatform().files.inspectPaths?.(['/tmp/demo'])).resolves.toEqual([
+      expect.objectContaining({ path: '/tmp/demo', status: 'unknown', errorCode: 'unsupported' })
+    ])
     await expect(getPlatform().files.pickFavorites?.('file')).resolves.toEqual([])
     await expect(getPlatform().files.pickFavorites?.('folder')).resolves.toEqual([])
     await expect(getPlatform().files.listDirectory('/tmp')).resolves.toEqual({
       ok: false,
       entries: [],
-      error: 'directory listing unavailable'
+      error: 'directory listing unavailable',
+      errorCode: 'unsupported'
     })
   })
 
