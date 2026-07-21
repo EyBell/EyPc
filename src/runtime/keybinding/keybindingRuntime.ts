@@ -261,6 +261,7 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'search.focus': { title: '聚焦搜索', group: '全局', layer: 'global', shortcutIds: ['Ctrl+F'], when: '!confirmOpen', weight: 100 },
   'settings.open': { title: '打开设置', group: '全局', layer: 'global', shortcutIds: ['Ctrl+Alt+S'], when: '!confirmOpen', weight: 100 },
   'codex.float.toggle': { title: '显示/隐藏 Codex 悬浮球', group: 'Codex', layer: 'app', shortcutIds: ['Ctrl+Alt+Q'], when: 'true', weight: 1000, description: '插件窗口激活时立即切换；系统级快捷键请在 uTools 全局功能中绑定。', profileId: 'codex' },
+  'codex.float.activate': { title: '进入 Codex 卡片', group: 'Codex', layer: 'app', shortcutIds: ['Ctrl+Alt+Enter'], when: 'true', weight: 1001, description: '显示并展开悬浮卡片，直接进入会话选择和完整操作。', profileId: 'codex' },
   'codex.refresh': { title: '刷新 Codex 状态', group: 'Codex', layer: 'codex', shortcutIds: ['Ctrl+R'], when: "tab == 'codex'", weight: 100, profileId: 'codex' },
   'codex.list.up': { title: '会话焦点上移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['ArrowUp'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
   'codex.list.down': { title: '会话焦点下移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['ArrowDown'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
@@ -561,6 +562,7 @@ function featureTabProfiles(featureConfigs?: FeatureConfig[]): ShortcutCommandPr
 
 export const SHORTCUT_RESERVATION_RULES: ShortcutReservationRule[] = [
   { shortcutId: 'Shift+Escape', commandId: 'app.hide', when: 'true', description: '全局立即隐藏插件窗口', layer: 'app' },
+  { shortcutId: 'Ctrl+Alt+Enter', commandId: 'codex.float.activate', when: 'true', description: '显示、展开并进入 Codex 卡片', layer: 'app' },
   { shortcutId: 'Ctrl+Alt+Q', commandId: 'codex.float.toggle', when: 'true', description: '立即显示或隐藏 Codex 悬浮球', layer: 'app' },
   { shortcutId: 'Escape', commandId: 'confirm.cancel', when: 'confirmOpen', description: '关闭确认弹窗，不穿透到底层', layer: 'confirm' },
   { shortcutId: 'Escape', commandId: 'ports.group.edit.cancel', when: "activeInputRole == 'port-group-editor'", description: '取消端口组编辑', layer: 'port-group-editor' },
@@ -862,7 +864,7 @@ function contextWithLayerFlags(context: KeybindingContext): KeybindingContext {
 
 function shouldBlockTextInputShortcut(shortcutId: string, context: KeybindingContext): boolean {
   if (!context.textInputFocused || shortcutId === 'Escape' || shortcutId === 'Shift+Escape') return false
-  if (shortcutId === 'Ctrl+Alt+S' || shortcutId === 'Ctrl+Alt+Q') return false
+  if (shortcutId === 'Ctrl+Alt+S' || shortcutId === 'Ctrl+Alt+Q' || shortcutId === 'Ctrl+Alt+Enter') return false
   if (context.activeInputRole === 'mqtt-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-connection-group-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-config-subscription-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'ArrowUp', 'ArrowDown', 'Ctrl+Delete', 'Ctrl+Backspace', 'Escape', 'Shift+Escape'].includes(shortcutId)

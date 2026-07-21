@@ -34,6 +34,7 @@ const CODEX_FLOAT_MARGIN = 12
 const CODEX_FLOAT_CHANNELS = {
   snapshot: 'eypc-float:snapshot',
   state: 'eypc-float:state',
+  activate: 'eypc-float:activate',
   expansion: 'eypc-float:expansion',
   action: 'eypc-float:action',
   dragStart: 'eypc-float:drag-start',
@@ -58,6 +59,11 @@ let codexRpcBuffer = ''
 const codexRpcPending = new Map()
 const codexThreadActions = new Map()
 const codexProjectActions = new Map()
+const codexActivityListeners = new Set()
+let codexActivityInventory = new Map()
+let codexActivityRawIds = new Set()
+let codexActivitySourceFingerprint = ''
+let codexActivityGeneration = 0
 const codexThreadTurnStatusCache = new Map()
 const codexThreadFirstPromptCache = new Map()
 let codexThreadTurnStatusRpcAvailable = null
@@ -1501,11 +1507,70 @@ function codexProcessEndError(reason) {
 function resetCodexThreadSessionState() {
   codexThreadActions.clear()
   codexProjectActions.clear()
+  codexActivityInventory = new Map()
+  codexActivityRawIds = new Set()
+  codexActivitySourceFingerprint = ''
+  codexActivityGeneration += 1
   codexThreadTurnStatusCache.clear()
   codexThreadFirstPromptCache.clear()
   codexThreadTurnStatusRpcAvailable = null
   codexThreadFirstPromptScanRunning = false
   codexThreadFirstPromptScanGeneration += 1
+}
+
+function sanitizeCodexActivityStatus(value) {
+  const source = codexRecord(value)
+  const status = ['active', 'idle', 'notLoaded', 'systemError'].includes(source.type) ? source.type : ''
+  if (!status) return null
+  const activeFlags = status === 'active' && Array.isArray(source.activeFlags)
+    ? [...new Set(source.activeFlags.filter((flag) => flag === 'waitingOnApproval' || flag === 'waitingOnUserInput'))]
+    : []
+  return { status, activeFlags }
+}
+
+function codexActivityDelta(entries, inventoryChanged, receivedAt = Date.now()) {
+  return {
+    version: 1,
+    sourceFingerprint: codexActivitySourceFingerprint,
+    generation: codexActivityGeneration,
+    entries,
+    inventoryChanged: inventoryChanged === true,
+    receivedAt
+  }
+}
+
+function emitCodexActivityDelta(entries, inventoryChanged) {
+  if (!codexActivitySourceFingerprint) return
+  const delta = codexActivityDelta(entries, inventoryChanged)
+  for (const listener of codexActivityListeners) {
+    try { listener(delta) } catch {}
+  }
+}
+
+function handleCodexServerMessage(message) {
+  if (!message || typeof message !== 'object' || typeof message.method !== 'string') return false
+  const method = message.method
+  const params = codexRecord(message.params)
+  if (method === 'thread/status/changed') {
+    const threadId = typeof params.threadId === 'string' ? params.threadId : ''
+    const known = codexActivityInventory.get(threadId)
+    const activity = sanitizeCodexActivityStatus(params.status)
+    if (known && activity) {
+      known.status = activity.status
+      known.activeFlags = activity.activeFlags
+      emitCodexActivityDelta([{ key: known.key, ...activity }], false)
+    } else {
+      emitCodexActivityDelta([], true)
+    }
+    return true
+  }
+  if (['turn/started', 'turn/completed', 'thread/archived', 'thread/unarchived', 'thread/deleted', 'thread/started'].includes(method)) {
+    emitCodexActivityDelta([], true)
+    return true
+  }
+  // Server-initiated approval/input requests are deliberately not answered by
+  // this read-only companion. They belong to the client that owns the turn.
+  return true
 }
 
 function onCodexProcessEnd(processRef = codexProcess, reason = null) {
@@ -1538,7 +1603,12 @@ function handleCodexStdout(chunk) {
     } catch {
       continue
     }
-    if (!message || typeof message !== 'object' || !Number.isInteger(message.id)) continue
+    if (!message || typeof message !== 'object') continue
+    if (typeof message.method === 'string') {
+      handleCodexServerMessage(message)
+      continue
+    }
+    if (!Number.isInteger(message.id)) continue
     const pending = codexRpcPending.get(message.id)
     if (!pending) continue
     codexRpcPending.delete(message.id)
@@ -2105,6 +2175,20 @@ async function scanVerifiedCodexInventory() {
       throw codexError('protocol-error', 'Codex native project state changed during the scan')
     }
     const threads = sanitizeCodexThreads(eligibleRows, registry, assignments, turns.latest)
+    const validKeys = new Set(threads.map((thread) => thread.key))
+    const activityInventory = new Map()
+    for (const row of eligibleRows) {
+      const thread = codexRecord(row)
+      const key = validCodexThreadId(thread.id) ? codexThreadKey(thread.id) : ''
+      if (!key || !validKeys.has(key)) continue
+      const activity = sanitizeCodexActivityStatus(thread.status)
+      if (!activity) throw codexError('protocol-error', 'Codex thread activity status is invalid')
+      activityInventory.set(thread.id, { key, ...activity })
+    }
+    codexActivityInventory = activityInventory
+    codexActivityRawIds = new Set(rows.map((thread) => codexRecord(thread).id).filter(validCodexThreadId))
+    codexActivitySourceFingerprint = registry.fingerprint
+    codexActivityGeneration += 1
     return {
       threads,
       projects: sanitizeCodexProjects(registry),
@@ -2116,6 +2200,34 @@ async function scanVerifiedCodexInventory() {
     }
   }
   throw codexError('protocol-error', 'Codex native project state changed during the scan')
+}
+
+async function readCodexActivitySnapshot() {
+  try {
+    if (!codexActivitySourceFingerprint) throw codexError('protocol-error', 'Codex activity baseline is unavailable')
+    const rows = await listAllCodexThreads(false)
+    const currentRawIds = new Set(rows.map((thread) => codexRecord(thread).id).filter(validCodexThreadId))
+    let inventoryChanged = currentRawIds.size !== codexActivityRawIds.size
+      || [...currentRawIds].some((threadId) => !codexActivityRawIds.has(threadId))
+    const byId = new Map(rows.map((thread) => [codexRecord(thread).id, codexRecord(thread)]))
+    const entries = []
+    for (const [threadId, known] of codexActivityInventory) {
+      const thread = byId.get(threadId)
+      if (!thread) {
+        inventoryChanged = true
+        continue
+      }
+      const activity = sanitizeCodexActivityStatus(thread.status)
+      if (!activity) throw codexError('protocol-error', 'Codex thread activity status is invalid')
+      known.status = activity.status
+      known.activeFlags = activity.activeFlags
+      entries.push({ key: known.key, ...activity })
+    }
+    const receivedAt = Date.now()
+    return { ok: true, value: codexActivityDelta(entries, inventoryChanged, receivedAt), receivedAt }
+  } catch (error) {
+    return codexErrorResult(error)
+  }
 }
 
 async function readCodexSnapshot(options) {
@@ -2697,6 +2809,20 @@ function closeCodexFloat() {
   codexFloatResize = null
 }
 
+function activateCodexFloat() {
+  if (!codexFloatAlive()) return false
+  resizeCodexFloat(true, true)
+  try {
+    if (typeof codexFloatWindow.show === 'function') codexFloatWindow.show()
+    else if (typeof codexFloatWindow.showInactive === 'function') codexFloatWindow.showInactive()
+    if (typeof codexFloatWindow.focus === 'function') codexFloatWindow.focus()
+    codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.activate, { requestedAt: Date.now() })
+    return true
+  } catch {
+    return false
+  }
+}
+
 function syncCodexFloat(payload) {
   const source = codexRecord(payload)
   codexFloatPersistent = source.visible === true
@@ -2932,6 +3058,12 @@ window.eypcPlatform = {
   codex: {
     inspectEnvironment: inspectCodexEnvironment,
     readSnapshot: readCodexSnapshot,
+    readActivitySnapshot: readCodexActivitySnapshot,
+    onActivityChanged(listener) {
+      if (typeof listener !== 'function') return () => {}
+      codexActivityListeners.add(listener)
+      return () => codexActivityListeners.delete(listener)
+    },
     openThread: openCodexThread,
     archiveThread: archiveCodexThread,
     archiveProject: archiveCodexProject,
@@ -2939,6 +3071,7 @@ window.eypcPlatform = {
   },
   float: {
     sync: syncCodexFloat,
+    activate: activateCodexFloat,
     diagnostics: getCodexFloatWorkspaceDiagnostics,
     resetGeometry: resetCodexFloatGeometry,
     close() {

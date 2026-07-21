@@ -18,6 +18,7 @@ declare global {
       getState(): CodexFloatWindowState
       onSnapshot(listener: (snapshot: CodexFloatSnapshotV1) => void): () => void
       onState(listener: (state: CodexFloatWindowState) => void): () => void
+      onActivate?(listener: (payload: { requestedAt?: number }) => void): () => void
       setExpansion(expanded: boolean, pinned?: boolean): boolean
       action(actionId: string, args?: Record<string, unknown>): boolean
       dragStart(screenX: number, screenY: number): boolean

@@ -50,6 +50,12 @@
       "cmds": ["切换 Codex 悬浮球"]
     },
     {
+      "code": "eypc-codex-activate",
+      "explain": "进入 Codex 卡片",
+      "mainHide": true,
+      "cmds": ["进入 Codex 卡片", "Codex 多选", "Codex 会话操作"]
+    },
+    {
       "code": "eypc-settings",
       "explain": "EyPc 设置",
       "cmds": ["EyPc设置", "eypc settings"]

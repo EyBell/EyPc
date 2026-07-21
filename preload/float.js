@@ -3,6 +3,7 @@ const { ipcRenderer } = require('electron')
 const CHANNELS = {
   snapshot: 'eypc-float:snapshot',
   state: 'eypc-float:state',
+  activate: 'eypc-float:activate',
   expansion: 'eypc-float:expansion',
   action: 'eypc-float:action',
   dragStart: 'eypc-float:drag-start',
@@ -18,6 +19,7 @@ let lastSnapshot = null
 let lastState = { expanded: false, pinned: false, resizing: false, resizeCorner: null, expandedSize: null }
 const snapshotListeners = new Set()
 const stateListeners = new Set()
+const activationListeners = new Set()
 
 function sendToParent(channel, payload) {
   try {
@@ -52,6 +54,12 @@ ipcRenderer.on(CHANNELS.state, (_event, state) => {
   }
 })
 
+ipcRenderer.on(CHANNELS.activate, (_event, payload) => {
+  for (const listener of activationListeners) {
+    try { listener(payload || {}) } catch {}
+  }
+})
+
 window.eypcFloat = {
   getSnapshot: () => lastSnapshot,
   getState: () => lastState,
@@ -66,6 +74,11 @@ window.eypcFloat = {
     stateListeners.add(listener)
     listener(lastState)
     return () => stateListeners.delete(listener)
+  },
+  onActivate(listener) {
+    if (typeof listener !== 'function') return () => {}
+    activationListeners.add(listener)
+    return () => activationListeners.delete(listener)
   },
   setExpansion: (expanded, pinned = false) => sendToParent(CHANNELS.expansion, { expanded: expanded === true, pinned: expanded === true && pinned === true }),
   action: (actionId, args = {}) => sendToParent(CHANNELS.action, { actionId, args }),

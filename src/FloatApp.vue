@@ -17,8 +17,11 @@ import {
   X
 } from '@lucide/vue'
 import CodexWaterBall from './components/CodexWaterBall.vue'
+import QuickJumpLayer from './components/QuickJumpLayer.vue'
 import { CODEX_THEME_PRESETS, codexThemeCssVars, codexWaterAppearanceCssVars, resolveCodexSurfaceTheme } from './domain/codexAppearance'
 import { buildCodexCompactPresentation } from './domain/codexPresentation'
+import { assignQuickJumpMarkers, moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
+import type { QuickJumpTarget } from './domain/quickJump'
 import { shortcutFromEvent } from './domain/shortcuts'
 import type {
   CodexProjectCard,
@@ -33,6 +36,7 @@ import type { CodexFloatSnapshotV1 } from './runtime/codexController'
 
 type RenderRow =
   | { kind: 'section'; key: string; section: CodexProjectSection }
+  | { kind: 'status-section'; key: string; title: string; count: number; tone: 'input' | 'active' | 'unread' }
   | { kind: 'project'; key: string; project: CodexProjectCard; sectionId: string }
   | { kind: 'task'; key: string; task: CodexTaskCard; sectionId?: string; parentProjectKey?: string; nested?: boolean }
   | { kind: 'empty-project'; key: string; projectKey: string }
@@ -40,8 +44,12 @@ type RenderRow =
 type FocusItem = Extract<RenderRow, { kind: 'project' | 'task' }>
 type PanelState = { mode: 'detail' | 'drawer'; item: FocusItem } | null
 type AliasEditor = { kind: 'task' | 'project'; key: string; value: string; originalName: string } | null
+type DrawerAction = { id: string; label: string; danger?: boolean; disabled?: boolean; disabledReason?: string; run: () => void }
+type HoverCard = { id: string; title: string; lines: string[]; left: number; top: number; kind: 'task' | 'hint' | 'status' }
+type QuickJumpDomTarget = QuickJumpTarget & { element: HTMLElement }
 
 const snapshot = ref<CodexFloatSnapshotV1 | null>(null)
+const rootElement = ref<HTMLElement | null>(null)
 const expanded = ref(false)
 const floatState = ref<CodexFloatWindowState>({ expanded: false, pinned: false, resizing: false, resizeCorner: null, expandedSize: null })
 const activeTab = ref<CodexTaskTab>('ongoing')
@@ -57,20 +65,36 @@ const aliasEditor = ref<AliasEditor>(null)
 const aliasInput = ref<HTMLInputElement | null>(null)
 const pendingConfirm = ref<{ id: string; label: string; until: number } | null>(null)
 const liveMessage = ref('')
+const drawerActiveIndex = ref(0)
+const highlightOwner = ref<'mouse' | 'keyboard'>('mouse')
+const hoverCard = ref<HoverCard | null>(null)
+const optimisticProjectCollapsed = ref<Record<string, boolean>>({})
+const quickJump = ref<{ open: boolean; query: string; sourceTargets: QuickJumpDomTarget[]; targets: QuickJumpDomTarget[]; activeTargetId: string | null }>({
+  open: false,
+  query: '',
+  sourceTargets: [],
+  targets: [],
+  activeTargetId: null
+})
 
 let stopSnapshot: (() => void) | null = null
 let stopState: (() => void) | null = null
+let stopActivate: (() => void) | null = null
 let drag: { x: number; y: number; moved: boolean; pointerId: number } | null = null
 let resize: { pointerId: number; corner: CodexFloatResizeCorner } | null = null
 let collapseTimer: ReturnType<typeof setTimeout> | null = null
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 let pendingRun: (() => void) | null = null
 let taskScrollResizeObserver: ResizeObserver | null = null
+let hoverTimer: ReturnType<typeof setTimeout> | null = null
+let compactInputTimer: ReturnType<typeof setTimeout> | null = null
 let desiredExpanded = false
 let hoverInside = false
 let focusWithin = false
 let ignoreCompactClick = false
 let restoreCompactFocus = false
+let lastMousePoint = { x: Number.NaN, y: Number.NaN }
+let keyboardMouseOrigin = { x: Number.NaN, y: Number.NaN }
 
 const fallbackColors = CODEX_THEME_PRESETS[0].colors
 const fallbackWaterAppearance = CODEX_THEME_PRESETS[0].waterAppearance
@@ -118,18 +142,26 @@ const compactAriaLabel = computed(() => {
 })
 const tabCounts = computed<Record<CodexTaskTab, number>>(() => ({
   all: conversations.value?.all.length || 0,
-  ongoing: conversations.value?.ongoing.length || 0,
+  input: conversations.value?.inputRequired.length || 0,
+  ongoing: (conversations.value?.ongoing.length || 0) + (conversations.value?.completedUnread.length || 0),
   hidden: conversations.value?.hidden.length || 0,
   completed: conversations.value?.completedTab.length || 0,
   projects: conversations.value?.projects.length || 0
 }))
 const tabs: Array<{ id: CodexTaskTab; label: string }> = [
   { id: 'all', label: '全部' },
-  { id: 'ongoing', label: '进行中' },
-  { id: 'hidden', label: '已隐藏' },
+  { id: 'input', label: '待输入' },
+  { id: 'ongoing', label: '动态' },
   { id: 'completed', label: '已完成' },
+  { id: 'hidden', label: '已隐藏' },
   { id: 'projects', label: '项目' }
 ]
+
+const compactCounts = computed(() => ({
+  input: conversations.value?.inputRequiredCount || 0,
+  active: (conversations.value?.ongoing || []).filter((task) => task.activityState !== 'waiting-input').length,
+  unread: conversations.value?.completedUnreadCount || 0
+}))
 
 function normalizedSearch() {
   return searchText.value.trim().toLocaleLowerCase()
@@ -150,6 +182,7 @@ function sourceTasks() {
   const value = conversations.value
   if (!value) return []
   if (activeTab.value === 'all') return value.all
+  if (activeTab.value === 'input') return value.inputRequired
   if (activeTab.value === 'ongoing') return value.ongoing
   if (activeTab.value === 'hidden') return value.hidden
   if (activeTab.value === 'completed') return value.completedTab
@@ -172,6 +205,23 @@ function filteredProjectSections(): CodexProjectSection[] {
 
 const renderRows = computed<RenderRow[]>(() => {
   if (activeTab.value !== 'projects') {
+    if (activeTab.value === 'ongoing') {
+      const value = conversations.value
+      if (!value) return []
+      const groups = [
+        { key: 'input', title: '待输入', tone: 'input' as const, tasks: value.ongoing.filter((task) => task.activityState === 'waiting-input') },
+        { key: 'active', title: '当前动态', tone: 'active' as const, tasks: value.ongoing.filter((task) => task.activityState !== 'waiting-input') },
+        { key: 'unread', title: '已完成未查看', tone: 'unread' as const, tasks: value.completedUnread }
+      ]
+      return groups.flatMap((group): RenderRow[] => {
+        const tasks = group.tasks.filter((task) => taskMatches(task))
+        if (!tasks.length) return []
+        return [
+          { kind: 'status-section', key: `status:${group.key}`, title: group.title, count: tasks.length, tone: group.tone },
+          ...tasks.map((task) => ({ kind: 'task' as const, key: `task:${task.key}`, task }))
+        ]
+      })
+    }
     return sourceTasks().filter((task) => taskMatches(task)).map((task) => ({ kind: 'task', key: `task:${task.key}`, task }))
   }
   const rows: RenderRow[] = []
@@ -183,7 +233,7 @@ const renderRows = computed<RenderRow[]>(() => {
         continue
       }
       rows.push({ kind: 'project', key: `project:${entry.project.key}`, project: entry.project, sectionId: section.id })
-      if (!entry.project.collapsed) {
+      if (!isProjectCollapsed(entry.project)) {
         if (entry.project.tasks.length) {
           rows.push(...entry.project.tasks.map((task) => ({ kind: 'task' as const, key: `task:${task.key}`, task, sectionId: section.id, parentProjectKey: entry.project.key, nested: true })))
         } else {
@@ -200,26 +250,51 @@ const visibleTaskKeys = computed(() => new Set(renderRows.value.filter((row): ro
 const selectedTasks = computed(() => (conversations.value?.all || []).filter((task) => selectedKeys.value.has(task.key) && visibleTaskKeys.value.has(task.key)))
 const showBatchToolbar = computed(() => selectedTasks.value.length >= 2)
 const removedProjects = computed(() => (conversations.value?.removedProjects || []).filter((project) => projectMatches(project)))
+const drawerIsBatch = computed(() => selectedTasks.value.length >= 2)
+const drawerItem = computed<FocusItem | null>(() => {
+  if (drawerIsBatch.value) return panel.value?.item || focusedItem.value
+  const selected = selectedTasks.value[0]
+  if (selected) return { kind: 'task', key: `task:${selected.key}`, task: selected }
+  return panel.value?.item || focusedItem.value
+})
 
-const drawerActions = computed(() => {
-  const item = panel.value?.item || focusedItem.value
-  if (!item) return []
-  const actions: Array<{ label: string; danger?: boolean; run: () => void }> = []
-  if (selectedTasks.value.length > 1) actions.push({ label: `归档已选 ${selectedTasks.value.length} 项`, danger: true, run: requestTaskArchive })
-  if (item.kind === 'task') {
-    actions.push({ label: '打开任务', run: () => openTask(item.task) })
-    actions.push({ label: item.task.pinSource === 'local' ? '取消本地置顶' : '本地置顶', run: () => togglePin(item) })
-    actions.push({ label: '编辑别名', run: () => editAlias(item) })
-    actions.push({ label: item.task.isHidden ? '恢复显示' : '移到已隐藏', run: () => item.task.isHidden ? restoreTask(item.task) : hideTask(item.task) })
-    if (item.task.canArchive) actions.push({ label: '真实归档', danger: true, run: requestTaskArchive })
-  } else {
-    actions.push({ label: item.project.collapsed ? '展开项目' : '折叠项目', run: () => toggleProject(item.project) })
-    if (item.project.kind !== 'chats') actions.push({ label: item.project.pinSource === 'local' ? '取消本地置顶' : '本地置顶', run: () => togglePin(item) })
-    actions.push({ label: '编辑别名', run: () => editAlias(item) })
-    if (item.project.actionAlias) actions.push({ label: '全部归档', danger: true, run: () => requestProjectArchive(item.project) })
-    if (item.project.kind !== 'chats') actions.push({ label: '从 EyPc 移除', danger: true, run: () => requestProjectRemove(item.project) })
+const drawerActions = computed<DrawerAction[]>(() => {
+  if (drawerIsBatch.value) {
+    const tasks = selectedTasks.value
+    const archivable = tasks.filter((task) => task.canArchive)
+    const hidden = tasks.filter((task) => task.isHidden && task.hiddenKind)
+    const visible = tasks.filter((task) => !task.isHidden)
+    const unpinned = tasks.filter((task) => task.pinSource !== 'local')
+    const pinned = tasks.filter((task) => task.pinSource === 'local')
+    return [
+      { id: 'batch-archive', label: `归档可用项（${archivable.length}/${tasks.length}）`, danger: true, disabled: !archivable.length, disabledReason: '选中项均处于活动状态', run: requestTaskArchive },
+      { id: 'batch-hide', label: `移到已隐藏（${visible.length}）`, disabled: !visible.length, disabledReason: '选中项均已隐藏', run: () => visible.forEach(hideTask) },
+      { id: 'batch-restore', label: `恢复显示（${hidden.length}）`, disabled: !hidden.length, disabledReason: '选中项没有可恢复的隐藏任务', run: () => hidden.forEach(restoreTask) },
+      { id: 'batch-pin', label: `本地置顶（${unpinned.length}）`, disabled: !unpinned.length, disabledReason: '选中项均已置顶', run: () => unpinned.forEach((task) => togglePin({ kind: 'task', key: `task:${task.key}`, task })) },
+      { id: 'batch-unpin', label: `取消本地置顶（${pinned.length}）`, disabled: !pinned.length, disabledReason: '选中项没有本地置顶', run: () => pinned.forEach((task) => togglePin({ kind: 'task', key: `task:${task.key}`, task })) },
+      { id: 'batch-clear', label: '清空选择', run: clearSelection }
+    ]
   }
-  return actions.slice(0, 9)
+  const item = drawerItem.value
+  if (!item) return []
+  if (item.kind === 'task') {
+    return [
+      { id: 'task-open', label: '打开任务', disabled: !item.task.actionAlias, disabledReason: '任务动作已失效', run: () => openTask(item.task) },
+      { id: 'task-detail', label: '查看详情', run: () => { panel.value = { mode: 'detail', item } } },
+      { id: 'task-alias', label: '编辑别名', run: () => editAlias(item) },
+      { id: 'task-pin', label: item.task.pinSource === 'local' ? '取消本地置顶' : '本地置顶', run: () => togglePin(item) },
+      { id: 'task-hide', label: item.task.isHidden ? '恢复显示' : '移到已隐藏', disabled: item.task.isHidden && !item.task.hiddenKind, run: () => item.task.isHidden ? restoreTask(item.task) : hideTask(item.task) },
+      { id: 'task-archive', label: '真实归档', danger: true, disabled: !item.task.canArchive, disabledReason: '真实活动任务不可归档', run: requestTaskArchive }
+    ]
+  }
+  return [
+    { id: 'project-toggle', label: isProjectCollapsed(item.project) ? '展开项目' : '折叠项目', run: () => toggleProject(item.project) },
+    { id: 'project-detail', label: '查看项目详情', run: () => { panel.value = { mode: 'detail', item } } },
+    { id: 'project-alias', label: '编辑项目别名', run: () => editAlias(item) },
+    { id: 'project-pin', label: item.project.pinSource === 'local' ? '取消本地置顶' : '本地置顶', disabled: item.project.kind === 'chats', disabledReason: 'Chats 分组不可置顶', run: () => togglePin(item) },
+    { id: 'project-archive', label: '全部归档', danger: true, disabled: !item.project.actionAlias, disabledReason: '项目没有可归档任务', run: () => requestProjectArchive(item.project) },
+    { id: 'project-remove', label: '从 EyPc 移除', danger: true, disabled: item.project.kind === 'chats', disabledReason: 'Chats 分组不可移除', run: () => requestProjectRemove(item.project) }
+  ]
 })
 
 function action(actionId: string, args: Record<string, unknown> = {}) {
@@ -240,6 +315,34 @@ function onCompactClick() {
     return
   }
   requestExpansion(true)
+}
+
+function compactCount(value: number) {
+  return value > 99 ? '99+' : String(value)
+}
+
+function openCompactStatus(kind: 'input' | 'active' | 'unread') {
+  if (kind === 'input' && compactCounts.value.input === 1) {
+    const task = conversations.value?.inputRequired[0]
+    if (task) openTask(task)
+    return
+  }
+  switchTab(kind === 'input' ? 'input' : 'ongoing')
+  requestExpansion(true)
+}
+
+function onCompactInputEnter() {
+  if (!compactCounts.value.input) return
+  if (compactInputTimer) clearTimeout(compactInputTimer)
+  compactInputTimer = setTimeout(() => {
+    switchTab('input')
+    requestExpansion(true)
+  }, 200)
+}
+
+function onCompactInputLeave() {
+  if (compactInputTimer) clearTimeout(compactInputTimer)
+  compactInputTimer = null
 }
 
 function switchTab(tab: CodexTaskTab) {
@@ -265,7 +368,15 @@ function restoreTask(task: CodexTaskCard) {
 }
 
 function toggleProject(project: CodexProjectCard) {
-  action('codex.project.collapse', { key: project.key, collapsed: !project.collapsed })
+  const collapsed = !isProjectCollapsed(project)
+  optimisticProjectCollapsed.value = { ...optimisticProjectCollapsed.value, [project.key]: collapsed }
+  action('codex.project.collapse', { key: project.key, collapsed })
+}
+
+function isProjectCollapsed(project: CodexProjectCard) {
+  return Object.prototype.hasOwnProperty.call(optimisticProjectCollapsed.value, project.key)
+    ? optimisticProjectCollapsed.value[project.key]
+    : project.collapsed
 }
 
 function togglePin(item: FocusItem) {
@@ -381,14 +492,17 @@ function selectTask(task: CodexTaskCard, event?: MouseEvent) {
     setSelection(current, task.key)
     return
   }
-  setSelection(new Set([task.key]), task.key)
+  if (current.size === 1 && current.has(task.key)) setSelection(new Set(), task.key)
+  else setSelection(new Set([task.key]), task.key)
 }
 
 function toggleTaskSelection(task: CodexTaskCard) {
   const next = new Set(selectedKeys.value)
-  if (next.has(task.key)) next.delete(task.key)
+  const added = !next.has(task.key)
+  if (!added) next.delete(task.key)
   else next.add(task.key)
   setSelection(next, task.key)
+  return added
 }
 
 function selectProjectChildren(project: CodexProjectCard) {
@@ -400,6 +514,7 @@ function selectProjectChildren(project: CodexProjectCard) {
     else next.add(task.key)
   }
   setSelection(next)
+  return !allSelected && visible.length > 0
 }
 
 function updateBatchPlacement() {
@@ -438,26 +553,208 @@ function focusCurrent() {
   const item = focusedItem.value
   if (!item) return
   focusedKey.value = item.key
-  void nextTick(() => document.querySelector<HTMLElement>(`[data-focus-key="${item.key}"]`)?.focus())
+  void nextTick(() => {
+    const element = document.querySelector<HTMLElement>(`[data-focus-key="${item.key}"]`)
+    element?.focus({ preventScroll: true })
+    element?.scrollIntoView({ block: 'nearest' })
+  })
 }
 
 function moveFocus(direction: -1 | 1) {
   if (!focusItems.value.length) return
   const currentIndex = Math.max(0, focusItems.value.findIndex((item) => item.key === focusedKey.value))
   const target = focusItems.value[Math.max(0, Math.min(focusItems.value.length - 1, currentIndex + direction))]
+  highlightOwner.value = 'keyboard'
+  keyboardMouseOrigin = { ...lastMousePoint }
   focusedKey.value = target.key
   focusCurrent()
 }
 
+function moveAfterCurrent() {
+  const currentIndex = focusItems.value.findIndex((item) => item.key === focusedKey.value)
+  if (currentIndex < 0 || currentIndex >= focusItems.value.length - 1) return
+  moveFocus(1)
+}
+
+function onRowPointerMove(event: PointerEvent, key: string) {
+  const point = { x: event.clientX, y: event.clientY }
+  lastMousePoint = point
+  if (highlightOwner.value === 'keyboard') {
+    const moved = !Number.isFinite(keyboardMouseOrigin.x)
+      || Math.hypot(point.x - keyboardMouseOrigin.x, point.y - keyboardMouseOrigin.y) >= 3
+    if (!moved) return
+  }
+  highlightOwner.value = 'mouse'
+  focusedKey.value = key
+}
+
+function openContextDrawer(item: FocusItem) {
+  focusedKey.value = item.key
+  if (item.kind === 'project' || (item.kind === 'task' && selectedKeys.value.size && !selectedKeys.value.has(item.task.key))) clearSelection()
+  panel.value = { mode: 'drawer', item }
+  drawerActiveIndex.value = 0
+  clearConfirm()
+}
+
 function openPanel(mode: 'detail' | 'drawer') {
-  const item = focusedItem.value
+  const item = mode === 'drawer' ? drawerItem.value : focusedItem.value
   if (!item) return
   panel.value = { mode, item }
+  drawerActiveIndex.value = 0
   clearConfirm()
 }
 
 function executeDrawerAction(index: number) {
-  drawerActions.value[index]?.run()
+  const item = drawerActions.value[index]
+  if (!item || item.disabled) {
+    if (item?.disabledReason) liveMessage.value = item.disabledReason
+    return
+  }
+  item.run()
+}
+
+function moveDrawer(direction: -1 | 1) {
+  const actions = drawerActions.value
+  if (!actions.length) return
+  let index = drawerActiveIndex.value
+  for (let step = 0; step < actions.length; step += 1) {
+    index = (index + direction + actions.length) % actions.length
+    if (!actions[index].disabled) break
+  }
+  drawerActiveIndex.value = index
+  void nextTick(() => document.querySelector<HTMLElement>(`[data-drawer-index="${index}"]`)?.focus({ preventScroll: true }))
+}
+
+function clearHoverCard() {
+  if (hoverTimer) clearTimeout(hoverTimer)
+  hoverTimer = null
+  hoverCard.value = null
+}
+
+function scheduleHoverCard(event: Event, card: Omit<HoverCard, 'left' | 'top'>, delay: 200 | 500) {
+  clearHoverCard()
+  const target = event.currentTarget as HTMLElement | null
+  if (!target) return
+  const rect = target.getBoundingClientRect()
+  hoverTimer = setTimeout(() => {
+    const width = Math.min(268, Math.max(210, window.innerWidth - 20))
+    const left = Math.max(8, Math.min(window.innerWidth - width - 8, rect.left))
+    const estimatedHeight = card.kind === 'task' ? 126 : 70
+    const top = rect.bottom + estimatedHeight + 8 <= window.innerHeight
+      ? rect.bottom + 6
+      : Math.max(8, rect.top - estimatedHeight - 6)
+    hoverCard.value = { ...card, left, top }
+  }, delay)
+}
+
+function showTaskHover(event: Event, task: CodexTaskCard) {
+  scheduleHoverCard(event, {
+    id: `task:${task.key}`,
+    kind: 'task',
+    title: task.name,
+    lines: [
+      task.alias ? `原名：${task.originalName}` : `项目：${task.projectName}`,
+      ...(task.alias ? [`项目：${task.projectName}`] : []),
+      `状态：${taskStateLabel(task)}`,
+      `最后提问：${formatTaskDateTime(task.lastQuestionAt)}`,
+      `归档：${task.canArchive ? task.archiveCapability === 'allowed-with-warning' ? '可归档，状态需再次核验' : '可归档' : '活动中，不可归档'}`
+    ]
+  }, 500)
+}
+
+function showHintHover(event: Event, id: string, title: string, lines: string[] = []) {
+  scheduleHoverCard(event, { id, kind: 'hint', title, lines }, 200)
+}
+
+function showStatusHover(event: Event, task: CodexTaskCard) {
+  scheduleHoverCard(event, {
+    id: `status:${task.key}`,
+    kind: 'status',
+    title: taskStateLabel(task),
+    lines: [
+      task.activityState === 'waiting-input' ? 'Codex 正在等待你输入内容后继续。' : task.activityState === 'waiting-approval' ? 'Codex 正在等待你的审批。' : task.bucket === 'completed-unread' ? '任务已完成，但你还没有查看这一轮结果。' : '这是 App Server 返回的真实任务状态。',
+      ...(task.activeFlags?.length ? [`活动标记：${task.activeFlags.join('、')}`] : [])
+    ]
+  }, 200)
+}
+
+function quickJumpLabel(element: HTMLElement) {
+  return element.getAttribute('data-quick-jump-label')
+    || element.getAttribute('aria-label')
+    || (element.textContent || '').replace(/\s+/g, ' ').trim()
+    || '操作'
+}
+
+function collectQuickJumpTargets(backward = false): QuickJumpDomTarget[] {
+  const elements = Array.from((rootElement.value || document.body).querySelectorAll<HTMLElement>('[data-quick-jump-target]'))
+    .filter((element) => {
+      if (element.matches(':disabled') || element.getAttribute('aria-disabled') === 'true') return false
+      const rect = element.getBoundingClientRect()
+      const style = window.getComputedStyle(element)
+      return rect.width >= 6 && rect.height >= 6 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'
+    })
+  const targets = elements.map((element, index) => ({
+    id: element.dataset.quickJumpId || `float:${index}:${quickJumpLabel(element)}`,
+    label: quickJumpLabel(element),
+    searchText: element.dataset.quickJumpSearch || '',
+    element
+  }))
+  return assignQuickJumpMarkers(backward ? targets.reverse() : targets)
+}
+
+function syncQuickJumpActive(scroll = false) {
+  rootElement.value?.querySelectorAll<HTMLElement>('[data-quick-jump-active="true"]').forEach((element) => delete element.dataset.quickJumpActive)
+  const target = quickJump.value.targets.find((item) => item.id === quickJump.value.activeTargetId)
+  if (!target) return
+  target.element.dataset.quickJumpActive = 'true'
+  if (scroll) target.element.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+}
+
+function closeQuickJump() {
+  rootElement.value?.querySelectorAll<HTMLElement>('[data-quick-jump-active="true"]').forEach((element) => delete element.dataset.quickJumpActive)
+  quickJump.value = { open: false, query: '', sourceTargets: [], targets: [], activeTargetId: null }
+}
+
+function openQuickJump(backward = false) {
+  const targets = collectQuickJumpTargets(backward)
+  if (!targets.length) return false
+  quickJump.value = { open: true, query: '', sourceTargets: targets, targets, activeTargetId: targets[0]?.id || null }
+  syncQuickJumpActive(true)
+  clearHoverCard()
+  return true
+}
+
+function activateQuickJumpTarget() {
+  const target = quickJump.value.sourceTargets.find((item) => item.id === quickJump.value.activeTargetId)
+  if (!target) return
+  closeQuickJump()
+  target.element.focus({ preventScroll: true })
+  target.element.click()
+}
+
+function handleQuickJumpKey(event: KeyboardEvent) {
+  if (!quickJump.value.open) return false
+  const shortcut = shortcutFromEvent(event)
+  if (shortcut === 'Escape') closeQuickJump()
+  else if (shortcut === 'Enter') activateQuickJumpTarget()
+  else if (shortcut === 'ArrowDown' || shortcut === 'Ctrl+J') {
+    quickJump.value.activeTargetId = moveQuickJumpActive(quickJump.value.targets, quickJump.value.activeTargetId, 1)
+    syncQuickJumpActive(true)
+  } else if (shortcut === 'ArrowUp' || shortcut === 'Ctrl+K') {
+    quickJump.value.activeTargetId = moveQuickJumpActive(quickJump.value.targets, quickJump.value.activeTargetId, -1)
+    syncQuickJumpActive(true)
+  } else {
+    const nextQuery = shortcut === 'Backspace'
+      ? quickJump.value.query.slice(0, -1)
+      : /^[A-Z]$/.test(shortcut) ? `${quickJump.value.query}${shortcut.toLocaleLowerCase()}` : null
+    if (nextQuery !== null) {
+      const result = resolveQuickJumpQuery(quickJump.value.sourceTargets, nextQuery)
+      quickJump.value = { ...quickJump.value, query: result.query, targets: result.targets, activeTargetId: result.activeTargetId }
+      syncQuickJumpActive(true)
+      if (result.exactTargetId) activateQuickJumpTarget()
+    }
+  }
+  return true
 }
 
 const fallbackCommands: Record<string, string> = {
@@ -474,17 +771,25 @@ const fallbackCommands: Record<string, string> = {
   'Alt+ArrowDown': 'codex.pin.moveDown',
   'Ctrl+F': 'codex.search.focus',
   'Ctrl+R': 'codex.refresh',
+  F: 'quickJump.openForward',
+  'Shift+F': 'quickJump.openBackward',
   Escape: 'codex.layer.cancel'
 }
 
 function commandFor(event: KeyboardEvent) {
   const shortcut = shortcutFromEvent(event)
-  const custom = snapshot.value?.keybindings?.find((binding) => binding.shortcutId === shortcut)
-  return custom?.actionId || fallbackCommands[shortcut] || (/^Ctrl\+[1-9]$/.test(shortcut) ? `codex.drawer.select.${shortcut.slice(-1)}` : '')
+  const resolved = snapshot.value?.keybindings
+  if (Array.isArray(resolved)) return resolved.find((binding) => binding.shortcutId === shortcut)?.actionId || ''
+  return fallbackCommands[shortcut] || (/^Ctrl\+[1-9]$/.test(shortcut) ? `codex.drawer.select.${shortcut.slice(-1)}` : '')
 }
 
 function onRootKeydown(event: KeyboardEvent) {
   if (event.isComposing) return
+  if (handleQuickJumpKey(event)) {
+    event.preventDefault()
+    event.stopPropagation()
+    return
+  }
   const target = event.target as HTMLElement
   const editing = Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
   const command = commandFor(event)
@@ -504,10 +809,24 @@ function onRootKeydown(event: KeyboardEvent) {
   event.preventDefault()
   event.stopPropagation()
   const item = focusedItem.value
-  if (command === 'codex.list.up') moveFocus(-1)
+  if (command === 'codex.float.activate') {
+    requestExpansion(true)
+    focusCurrent()
+  }
+  else if (command === 'codex.float.toggle') action('codex.float.toggle', { source: 'in-app-shortcut' })
+  else if (command === 'quickJump.openForward') openQuickJump(false)
+  else if (command === 'quickJump.openBackward') openQuickJump(true)
+  else if (command === 'codex.list.up' && panel.value?.mode === 'drawer') moveDrawer(-1)
+  else if (command === 'codex.list.down' && panel.value?.mode === 'drawer') moveDrawer(1)
+  else if (command === 'codex.task.openFocused' && panel.value?.mode === 'drawer') executeDrawerAction(drawerActiveIndex.value)
+  else if (command === 'codex.list.up') moveFocus(-1)
   else if (command === 'codex.list.down') moveFocus(1)
-  else if (command === 'codex.selection.toggle' && item?.kind === 'task') toggleTaskSelection(item.task)
-  else if (command === 'codex.selection.toggle' && item?.kind === 'project') selectProjectChildren(item.project)
+  else if (command === 'codex.selection.toggle' && item?.kind === 'task') {
+    if (toggleTaskSelection(item.task)) moveAfterCurrent()
+  }
+  else if (command === 'codex.selection.toggle' && item?.kind === 'project') {
+    if (selectProjectChildren(item.project)) moveAfterCurrent()
+  }
   else if (command === 'codex.task.openFocused' && item?.kind === 'task') openTask(item.task)
   else if (command === 'codex.task.openFocused' && item?.kind === 'project') toggleProject(item.project)
   else if (command === 'codex.detail.open') openPanel('detail')
@@ -519,7 +838,7 @@ function onRootKeydown(event: KeyboardEvent) {
   else if (command === 'codex.pin.moveDown' && item) movePin(item, 1)
   else if (command === 'codex.search.focus') searchInput.value?.focus()
   else if (command === 'codex.refresh') action('codex.refresh')
-  else if (command.startsWith('codex.drawer.select.') && panel.value?.mode === 'drawer') executeDrawerAction(Number(command.split('.').at(-1)) - 1)
+  else if (command.startsWith('codex.drawer.select.')) executeDrawerAction(Number(command.split('.').at(-1)) - 1)
   else if (command === 'codex.layer.cancel') {
     if (pendingConfirm.value) clearConfirm()
     else if (aliasEditor.value) aliasEditor.value = null
@@ -564,9 +883,10 @@ function onPointerCancel(event: PointerEvent) {
   window.eypcFloat?.dragEnd()
 }
 
-function onMouseEnter() {
+function onMouseEnter(event: PointerEvent) {
   hoverInside = true
   if (collapseTimer) clearTimeout(collapseTimer)
+  if ((event.target as HTMLElement | null)?.closest('.float-counter')) return
   if (!desiredExpanded && !expanded.value && !drag && !resize) requestExpansion(true)
 }
 
@@ -575,11 +895,13 @@ function scheduleCollapse() {
   if (focusWithin || resize || pendingConfirm.value || panel.value || aliasEditor.value) return
   collapseTimer = setTimeout(() => {
     if (!hoverInside && !focusWithin && !resize) requestExpansion(false)
-  }, 220)
+  }, 100)
 }
 
 function onMouseLeave() {
   hoverInside = false
+  onCompactInputLeave()
+  clearHoverCard()
   scheduleCollapse()
 }
 
@@ -648,6 +970,19 @@ function formatTaskTime(value: number | undefined) {
   return `${Math.floor(minutes / 1440)} 天前`
 }
 
+function formatTaskDateTime(value: number | undefined) {
+  if (!value) return '时间缺失'
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).format(new Date(value))
+}
+
 function taskStateLabel(task: CodexTaskCard) {
   if (task.bucket === 'completed-unread') return '已完成 · 未查看'
   if (task.bucket === 'completed') return '已完成'
@@ -674,11 +1009,25 @@ watch(() => conversations.value?.activeTab, (tab) => {
   if (tab && tabs.some((item) => item.id === tab)) activeTab.value = tab
 }, { immediate: true })
 
+watch(() => conversations.value?.projects.map((project) => `${project.key}:${project.collapsed}`).join('|'), () => {
+  const next = { ...optimisticProjectCollapsed.value }
+  let changed = false
+  for (const project of conversations.value?.projects || []) {
+    if (Object.prototype.hasOwnProperty.call(next, project.key) && next[project.key] === project.collapsed) {
+      delete next[project.key]
+      changed = true
+    }
+  }
+  if (changed) optimisticProjectCollapsed.value = next
+})
+
 watch([searchText, activeTab, renderRows], () => {
   const visible = visibleTaskKeys.value
   selectedKeys.value = new Set([...selectedKeys.value].filter((key) => visible.has(key)))
   if (!focusItems.value.some((item) => item.key === focusedKey.value)) focusedKey.value = focusItems.value[0]?.key || ''
   clearConfirm()
+  closeQuickJump()
+  clearHoverCard()
 }, { flush: 'post' })
 
 watch(() => `${selectedTasks.value.map((task) => task.key).join('|')}::${focusedKey.value}`, scheduleBatchPlacement, { flush: 'post' })
@@ -709,21 +1058,30 @@ onMounted(() => {
       void nextTick(() => document.querySelector<HTMLElement>('.float-compact')?.focus())
     }
   }) || null
+  stopActivate = window.eypcFloat?.onActivate?.(() => {
+    requestExpansion(true)
+    void nextTick(() => focusCurrent())
+  }) || null
   window.addEventListener('resize', scheduleBatchPlacement)
 })
 
 onUnmounted(() => {
   if (collapseTimer) clearTimeout(collapseTimer)
+  if (compactInputTimer) clearTimeout(compactInputTimer)
+  clearHoverCard()
+  closeQuickJump()
   clearConfirm()
   taskScrollResizeObserver?.disconnect()
   window.removeEventListener('resize', scheduleBatchPlacement)
   stopSnapshot?.()
   stopState?.()
+  stopActivate?.()
 })
 </script>
 
 <template>
   <main
+    ref="rootElement"
     class="codex-float-root"
     :class="[{ expanded, resizing: floatState.resizing, card: settings?.style === 'card', water: settings?.style !== 'card' }, floatState.resizeCorner ? `resize-${floatState.resizeCorner}` : '']"
     :style="rootStyle"
@@ -737,30 +1095,43 @@ onUnmounted(() => {
     @focusout="onFocusOut"
     @keydown="onRootKeydown"
   >
-    <button v-if="!expanded" type="button" class="float-compact" :class="settings?.style === 'card' ? 'card-surface' : 'water-surface'" aria-expanded="false" :aria-label="compactAriaLabel" @click="onCompactClick">
-      <CodexWaterBall
-        v-if="settings?.style !== 'card'"
-        :primary="compact.primary"
-        :secondary="compact.secondary"
-        :state-label="compact.stateLabel"
-        :label="compact.ariaLabel"
-        :appearance="settings?.waterAppearance || fallbackWaterAppearance"
-        :colors="settings?.colors || fallbackColors"
-        decorative
-      />
-      <template v-else>
-        <div class="float-card-primary" :class="{ empty: !compact.primary }">
-          <span>{{ compact.primary?.longLabel || 'Codex' }}</span>
-          <strong>{{ compact.primary ? `${compact.primary.bucket.remainingPercent}%` : compact.stateLabel }}</strong>
-          <small v-if="compact.primary?.kind === 'short'">5h</small>
-        </div>
-        <div v-if="quota?.weekly" class="float-card-detail">
-          <div class="card-weekly-head"><span>周限额</span><strong>{{ quota.weekly.remainingPercent }}%</strong></div>
-          <div class="card-weekly-track"><i :style="{ width: `${quota.weekly.remainingPercent}%` }" /></div>
-        </div>
-      </template>
-      <span v-if="quota?.status === 'stale' || quota?.status === 'error'" class="float-status-dot" :class="quota.status" aria-hidden="true" />
-    </button>
+    <div v-if="!expanded" class="float-compact-shell" :class="settings?.style === 'card' ? 'card-shell' : 'water-shell'">
+      <button type="button" class="float-compact" :class="settings?.style === 'card' ? 'card-surface' : 'water-surface'" aria-expanded="false" :aria-label="compactAriaLabel" @click="onCompactClick">
+        <CodexWaterBall
+          v-if="settings?.style !== 'card'"
+          :primary="compact.primary"
+          :secondary="compact.secondary"
+          :state-label="compact.stateLabel"
+          :label="compact.ariaLabel"
+          :appearance="settings?.waterAppearance || fallbackWaterAppearance"
+          :colors="settings?.colors || fallbackColors"
+          decorative
+        />
+        <template v-else>
+          <div class="float-card-primary" :class="{ empty: !compact.primary }">
+            <span>{{ compact.primary?.longLabel || 'Codex' }}</span>
+            <strong>{{ compact.primary ? `${compact.primary.bucket.remainingPercent}%` : compact.stateLabel }}</strong>
+            <small v-if="compact.primary?.kind === 'short'">5h</small>
+          </div>
+          <div v-if="quota?.weekly" class="float-card-detail">
+            <div class="card-weekly-head"><span>周限额</span><strong>{{ quota.weekly.remainingPercent }}%</strong></div>
+            <div class="card-weekly-track"><i :style="{ width: `${quota.weekly.remainingPercent}%` }" /></div>
+          </div>
+        </template>
+        <span v-if="quota?.status === 'stale' || quota?.status === 'error'" class="float-status-dot" :class="quota.status" aria-hidden="true" />
+      </button>
+      <button
+        v-if="compactCounts.input"
+        type="button"
+        class="float-counter input"
+        :aria-label="`${compactCounts.input} 个待输入任务`"
+        @pointerenter.stop="onCompactInputEnter"
+        @pointerleave.stop="onCompactInputLeave"
+        @click.stop="openCompactStatus('input')"
+      >{{ compactCount(compactCounts.input) }}</button>
+      <button v-if="compactCounts.active" type="button" class="float-counter active" :aria-label="`${compactCounts.active} 个当前动态任务`" @click.stop="openCompactStatus('active')">{{ compactCount(compactCounts.active) }}</button>
+      <button v-if="compactCounts.unread" type="button" class="float-counter unread" :aria-label="`${compactCounts.unread} 个已完成未查看任务`" @click.stop="openCompactStatus('unread')">{{ compactCount(compactCounts.unread) }}</button>
+    </div>
 
     <section v-else class="float-expanded-card" aria-label="Codex Companion">
       <nav class="float-task-tabs" role="tablist" aria-label="Codex 会话分类">
@@ -772,6 +1143,8 @@ onUnmounted(() => {
           :aria-selected="activeTab === tab.id"
           :tabindex="activeTab === tab.id ? 0 : -1"
           :class="{ active: activeTab === tab.id }"
+          data-quick-jump-target
+          :data-quick-jump-label="`切换到${tab.label}`"
           @click.stop="switchTab(tab.id)"
         >{{ tab.label }} <span>{{ tabCounts[tab.id] }}</span></button>
       </nav>
@@ -779,8 +1152,8 @@ onUnmounted(() => {
 
       <label class="float-search">
         <Search :size="14" aria-hidden="true" />
-        <input ref="searchInput" v-model="searchText" type="search" placeholder="搜索本页会话、别名或项目" aria-label="搜索当前 Codex 页签" />
-        <button v-if="searchText" type="button" aria-label="清空搜索" @click.stop="searchText = ''"><X :size="13" /></button>
+        <input ref="searchInput" v-model="searchText" type="search" placeholder="搜索本页会话、别名或项目" aria-label="搜索当前 Codex 页签" data-quick-jump-target data-quick-jump-label="搜索当前页签" />
+        <button v-if="searchText" type="button" aria-label="清空搜索" data-quick-jump-target @click.stop="searchText = ''"><X :size="13" /></button>
       </label>
 
       <section class="float-quota-text" aria-label="Codex 实际额度窗口">
@@ -816,48 +1189,59 @@ onUnmounted(() => {
           >
           <template v-for="row in renderRows" :key="row.key">
             <h2 v-if="row.kind === 'section'" class="float-project-section">{{ row.section.title }}</h2>
+            <h2 v-else-if="row.kind === 'status-section'" class="float-status-section" :class="row.tone"><span>{{ row.title }}</span><em>{{ row.count }}</em></h2>
 
             <div
               v-else-if="row.kind === 'project'"
               class="float-project-row"
+              :class="{ highlighted: focusedKey === row.key }"
               role="treeitem"
-              :aria-expanded="!row.project.collapsed"
+              :aria-expanded="!isProjectCollapsed(row.project)"
               :aria-label="`${row.project.name}，${row.project.tasks.length} 个窗口内任务`"
               :tabindex="focusedKey === row.key ? 0 : -1"
               :data-focus-key="row.key"
+              data-quick-jump-target
+              :data-quick-jump-label="`${isProjectCollapsed(row.project) ? '展开' : '折叠'}项目 ${row.project.name}`"
               @focus="focusedKey = row.key"
-              @click.stop="focusedKey = row.key"
-              @dblclick.stop="toggleProject(row.project)"
+              @pointermove="onRowPointerMove($event, row.key)"
+              @contextmenu.prevent.stop="openContextDrawer(row)"
             >
-              <button type="button" class="project-main" @click.stop="toggleProject(row.project)">
-                <ChevronRight v-if="row.project.collapsed" :size="14" /><ChevronDown v-else :size="14" />
-                <Folder v-if="row.project.collapsed" :size="15" /><FolderOpen v-else :size="15" />
+              <button type="button" class="project-main" data-quick-jump-target :data-quick-jump-label="`${isProjectCollapsed(row.project) ? '展开' : '折叠'}项目 ${row.project.name}`" @click.stop="focusedKey = row.key; toggleProject(row.project)">
+                <ChevronRight v-if="isProjectCollapsed(row.project)" :size="14" /><ChevronDown v-else :size="14" />
+                <Folder v-if="isProjectCollapsed(row.project)" :size="15" /><FolderOpen v-else :size="15" />
                 <span><strong>{{ row.project.name }}</strong><small v-if="row.project.alias">原名：{{ row.project.originalName }}</small><small v-else>{{ row.project.tasks.length ? `${row.project.tasks.length} 个最近任务` : `最近 ${settings?.timeWindowDays || 30} 天无会话` }}</small></span>
                 <em v-if="row.project.pinSource === 'local'">本地</em>
               </button>
               <div class="task-action-rail project-actions">
-                <button type="button" aria-label="编辑项目别名" @click.stop="editAlias(row)"><span aria-hidden="true">名</span></button>
-                <button type="button" class="pin-action" :class="{ active: row.project.pinSource === 'local' }" :disabled="row.project.kind === 'chats'" :aria-label="row.project.kind === 'chats' ? 'Chats 分组不可置顶' : row.project.pinSource === 'local' ? '取消项目本地置顶' : '将项目本地置顶'" :aria-pressed="row.project.kind === 'chats' ? undefined : row.project.pinSource === 'local'" @click.stop="togglePin(row)"><span aria-hidden="true">顶</span></button>
-                <button type="button" class="danger" :class="{ confirming: pendingConfirm?.id === `archive-project:${row.project.key}` }" :disabled="!row.project.actionAlias" :aria-label="row.project.actionAlias ? '全部归档项目任务' : '当前项目没有可归档任务'" data-confirm-slot @click.stop="requestProjectArchive(row.project)"><span aria-hidden="true">{{ pendingConfirm?.id === `archive-project:${row.project.key}` ? '确' : '归' }}</span></button>
-                <button type="button" class="remove" :class="{ confirming: pendingConfirm?.id === `remove-project:${row.project.key}` }" :disabled="row.project.kind === 'chats'" :aria-label="row.project.kind === 'chats' ? 'Chats 分组不能从 EyPc 移除' : '从 EyPc 移除项目'" data-confirm-slot @click.stop="requestProjectRemove(row.project)"><span aria-hidden="true">{{ pendingConfirm?.id === `remove-project:${row.project.key}` ? '确' : '移' }}</span></button>
+                <button type="button" aria-label="编辑项目别名" data-quick-jump-target @pointerenter="showHintHover($event, `project-alias:${row.project.key}`, '编辑项目别名', ['快捷键：F2'])" @pointerleave="clearHoverCard" @click.stop="editAlias(row)"><span aria-hidden="true">名</span></button>
+                <button type="button" class="pin-action" :class="{ active: row.project.pinSource === 'local' }" :disabled="row.project.kind === 'chats'" :aria-label="row.project.kind === 'chats' ? 'Chats 分组不可置顶' : row.project.pinSource === 'local' ? '取消项目本地置顶' : '将项目本地置顶'" :aria-pressed="row.project.kind === 'chats' ? undefined : row.project.pinSource === 'local'" data-quick-jump-target @pointerenter="showHintHover($event, `project-pin:${row.project.key}`, row.project.pinSource === 'local' ? '取消本地置顶' : '本地置顶', ['快捷键：Ctrl+P'])" @pointerleave="clearHoverCard" @click.stop="togglePin(row)"><span aria-hidden="true">顶</span></button>
+                <button type="button" class="danger" :class="{ confirming: pendingConfirm?.id === `archive-project:${row.project.key}` }" :disabled="!row.project.actionAlias" :aria-label="row.project.actionAlias ? '全部归档项目任务' : '当前项目没有可归档任务'" data-confirm-slot data-quick-jump-target @pointerenter="showHintHover($event, `project-archive:${row.project.key}`, '全部归档项目', ['排除活动任务；同位二次确认'])" @pointerleave="clearHoverCard" @click.stop="requestProjectArchive(row.project)"><span aria-hidden="true">{{ pendingConfirm?.id === `archive-project:${row.project.key}` ? '确' : '归' }}</span></button>
+                <button type="button" class="remove" :class="{ confirming: pendingConfirm?.id === `remove-project:${row.project.key}` }" :disabled="row.project.kind === 'chats'" :aria-label="row.project.kind === 'chats' ? 'Chats 分组不能从 EyPc 移除' : '从 EyPc 移除项目'" data-confirm-slot data-quick-jump-target @pointerenter="showHintHover($event, `project-remove:${row.project.key}`, '从 EyPc 移除', ['只影响 EyPc 展示，不修改 Codex 原生项目'])" @pointerleave="clearHoverCard" @click.stop="requestProjectRemove(row.project)"><span aria-hidden="true">{{ pendingConfirm?.id === `remove-project:${row.project.key}` ? '确' : '移' }}</span></button>
               </div>
             </div>
 
             <div
               v-else-if="row.kind === 'task'"
               class="float-task-row"
-              :class="[`task-${row.task.activityState}`, `bucket-${row.task.bucket}`, { nested: row.nested, selected: selectedKeys.has(row.task.key), hidden: row.task.isHidden }]"
+              :class="[`task-${row.task.activityState}`, `bucket-${row.task.bucket}`, { nested: row.nested, selected: selectedKeys.has(row.task.key), hidden: row.task.isHidden, highlighted: focusedKey === row.key }]"
               :role="activeTab === 'projects' ? 'treeitem' : 'option'"
               :aria-selected="selectedKeys.has(row.task.key)"
               :aria-label="`${row.task.name}，${row.task.projectName}，${taskStateLabel(row.task)}`"
               :tabindex="focusedKey === row.key ? 0 : -1"
               :data-focus-key="row.key"
+              data-quick-jump-target
+              :data-quick-jump-label="`打开任务 ${row.task.name}`"
               @focus="focusedKey = row.key"
-              @click.stop="selectTask(row.task, $event)"
-              @dblclick.stop="openTask(row.task)"
+              @pointermove="onRowPointerMove($event, row.key)"
+              @pointerenter="showTaskHover($event, row.task)"
+              @pointerleave="clearHoverCard"
+              @click.stop="focusedKey = row.key; openTask(row.task)"
+              @contextmenu.prevent.stop="openContextDrawer(row)"
             >
-              <button type="button" class="task-select-point" :aria-label="selectedKeys.has(row.task.key) ? `取消选择 ${row.task.name}` : `选择 ${row.task.name}`" @click.stop="selectTask(row.task, $event)"><i /></button>
-              <component :is="taskIcon(row.task)" :size="14" class="task-state-icon" aria-hidden="true" />
+              <button type="button" class="task-select-point" :aria-label="selectedKeys.has(row.task.key) ? `取消选择 ${row.task.name}` : `选择 ${row.task.name}`" data-quick-jump-target @click.stop="selectTask(row.task, $event)"><i /></button>
+              <button type="button" class="task-state-button" :aria-label="`状态：${taskStateLabel(row.task)}`" @pointerenter.stop="showStatusHover($event, row.task)" @pointerleave.stop="clearHoverCard" @click.stop>
+                <component :is="taskIcon(row.task)" :size="14" class="task-state-icon" aria-hidden="true" />
+              </button>
               <span class="task-copy">
                 <strong>{{ row.task.name }}</strong>
                 <small v-if="row.task.alias">原名：{{ row.task.originalName }}</small>
@@ -865,11 +1249,11 @@ onUnmounted(() => {
               </span>
               <em v-if="row.task.isHidden">隐藏</em><em v-if="row.task.pinSource === 'local'">本地</em>
               <div class="task-action-rail">
-                <button type="button" aria-label="打开 Codex 任务" @click.stop="openTask(row.task)"><span aria-hidden="true">开</span></button>
-                <button type="button" aria-label="编辑任务别名" @click.stop="editAlias(row)"><span aria-hidden="true">名</span></button>
-                <button type="button" class="pin-action" :class="{ active: row.task.pinSource === 'local' }" :aria-label="row.task.pinSource === 'local' ? '取消任务本地置顶' : '将任务本地置顶'" :aria-pressed="row.task.pinSource === 'local'" @click.stop="togglePin(row)"><span aria-hidden="true">顶</span></button>
-                <button type="button" :aria-label="row.task.isHidden ? '恢复任务显示' : '隐藏任务'" @click.stop="row.task.isHidden ? restoreTask(row.task) : hideTask(row.task)"><span aria-hidden="true">{{ row.task.isHidden ? '显' : '隐' }}</span></button>
-                <button type="button" class="danger" :class="{ confirming: taskArchiveConfirming(row.task) }" :disabled="!row.task.canArchive" :aria-label="row.task.canArchive ? '真实归档 Codex 任务' : '当前任务不可归档'" data-confirm-slot @click.stop="focusedKey = row.key; requestTaskArchive()"><span aria-hidden="true">{{ taskArchiveConfirming(row.task) ? '确' : '归' }}</span></button>
+                <button type="button" aria-label="打开 Codex 任务" data-quick-jump-target @pointerenter.stop="showHintHover($event, `open:${row.task.key}`, '打开任务', ['单击整行或按 Enter'])" @pointerleave.stop="clearHoverCard" @click.stop="openTask(row.task)"><span aria-hidden="true">开</span></button>
+                <button type="button" aria-label="编辑任务别名" data-quick-jump-target @pointerenter.stop="showHintHover($event, `alias:${row.task.key}`, '编辑任务别名', ['快捷键：F2'])" @pointerleave.stop="clearHoverCard" @click.stop="editAlias(row)"><span aria-hidden="true">名</span></button>
+                <button type="button" class="pin-action" :class="{ active: row.task.pinSource === 'local' }" :aria-label="row.task.pinSource === 'local' ? '取消任务本地置顶' : '将任务本地置顶'" :aria-pressed="row.task.pinSource === 'local'" data-quick-jump-target @pointerenter.stop="showHintHover($event, `pin:${row.task.key}`, row.task.pinSource === 'local' ? '取消本地置顶' : '本地置顶', ['快捷键：Ctrl+P'])" @pointerleave.stop="clearHoverCard" @click.stop="togglePin(row)"><span aria-hidden="true">顶</span></button>
+                <button type="button" :aria-label="row.task.isHidden ? '恢复任务显示' : '隐藏任务'" data-quick-jump-target @pointerenter.stop="showHintHover($event, `hide:${row.task.key}`, row.task.isHidden ? '恢复任务显示' : '移到已隐藏', ['只影响 EyPc 展示'])" @pointerleave.stop="clearHoverCard" @click.stop="row.task.isHidden ? restoreTask(row.task) : hideTask(row.task)"><span aria-hidden="true">{{ row.task.isHidden ? '显' : '隐' }}</span></button>
+                <button type="button" class="danger" :class="{ confirming: taskArchiveConfirming(row.task) }" :disabled="!row.task.canArchive" :aria-label="row.task.canArchive ? '真实归档 Codex 任务' : '当前任务不可归档'" data-confirm-slot data-quick-jump-target @pointerenter.stop="showHintHover($event, `archive:${row.task.key}`, row.task.canArchive ? '真实归档 Codex 任务' : '活动任务不可归档', ['快捷键：Delete；同位二次确认'])" @pointerleave.stop="clearHoverCard" @click.stop="focusedKey = row.key; requestTaskArchive()"><span aria-hidden="true">{{ taskArchiveConfirming(row.task) ? '确' : '归' }}</span></button>
               </div>
             </div>
 
@@ -886,9 +1270,9 @@ onUnmounted(() => {
 
           <div v-if="showBatchToolbar" class="float-batch-toolbar" :class="batchPlacement" role="toolbar" :aria-label="`已选择 ${selectedTasks.length} 个任务的批量操作`">
             <strong>已选 {{ selectedTasks.length }}</strong>
-            <button type="button" class="danger" :class="{ confirming: pendingConfirm?.id?.startsWith('archive:') }" aria-label="归档当前多选任务" data-confirm-slot @click.stop="requestTaskArchive"><span aria-hidden="true">{{ pendingConfirm?.id?.startsWith('archive:') ? '确' : '归' }}</span></button>
-            <button type="button" aria-label="打开当前多选的完整操作" @click.stop="openBatchDrawer"><span aria-hidden="true">操</span></button>
-            <button type="button" aria-label="清空当前多选" @click.stop="clearSelection"><span aria-hidden="true">清</span></button>
+            <button type="button" class="danger" :class="{ confirming: pendingConfirm?.id?.startsWith('archive:') }" aria-label="归档当前多选任务" data-confirm-slot data-quick-jump-target @pointerenter="showHintHover($event, 'batch-archive', '归档当前多选', ['仅归档通过真实状态核验的任务'])" @pointerleave="clearHoverCard" @click.stop="requestTaskArchive"><span aria-hidden="true">{{ pendingConfirm?.id?.startsWith('archive:') ? '确' : '归' }}</span></button>
+            <button type="button" aria-label="打开当前多选的完整操作" data-quick-jump-target @pointerenter="showHintHover($event, 'batch-actions', '多选完整操作', ['快捷键：Ctrl+→'])" @pointerleave="clearHoverCard" @click.stop="openBatchDrawer"><span aria-hidden="true">操</span></button>
+            <button type="button" aria-label="清空当前多选" data-quick-jump-target @pointerenter="showHintHover($event, 'batch-clear', '清空多选')" @pointerleave="clearHoverCard" @click.stop="clearSelection"><span aria-hidden="true">清</span></button>
           </div>
         </div>
 
@@ -899,17 +1283,37 @@ onUnmounted(() => {
       </section>
 
       <aside v-if="panel" class="float-side-panel" :class="panel.mode" :aria-label="panel.mode === 'detail' ? '当前项详情' : '批量与完整操作'">
-        <header><strong>{{ panel.mode === 'detail' ? '详情' : '完整操作' }}</strong><button type="button" aria-label="关闭" @click="panel = null"><X :size="14" /></button></header>
+        <header><strong>{{ panel.mode === 'detail' ? '详情' : drawerIsBatch ? `多选操作 · ${selectedTasks.length} 项` : '单项完整操作' }}</strong><button type="button" aria-label="关闭" data-quick-jump-target @click="panel = null"><X :size="14" /></button></header>
         <template v-if="panel.mode === 'detail'">
           <dl v-if="panel.item.kind === 'task'">
             <div><dt>标题</dt><dd>{{ panel.item.task.name }}</dd></div><div v-if="panel.item.task.alias"><dt>原名</dt><dd>{{ panel.item.task.originalName }}</dd></div>
             <div><dt>项目</dt><dd>{{ panel.item.task.projectName }}</dd></div><div><dt>状态</dt><dd>{{ taskStateLabel(panel.item.task) }}</dd></div>
-            <div><dt>最后提问</dt><dd>{{ formatTaskTime(panel.item.task.lastQuestionAt) }}</dd></div>
+            <div><dt>最后提问</dt><dd>{{ formatTaskDateTime(panel.item.task.lastQuestionAt) }}（{{ formatTaskTime(panel.item.task.lastQuestionAt) }}）</dd></div>
           </dl>
           <dl v-else><div><dt>项目</dt><dd>{{ panel.item.project.name }}</dd></div><div><dt>窗口内任务</dt><dd>{{ panel.item.project.tasks.length }}</dd></div><div><dt>顺序</dt><dd>{{ panel.item.project.nativePinned ? 'Codex 原生置顶' : 'Codex 原生项目顺序' }}</dd></div></dl>
         </template>
-        <div v-else class="float-drawer-actions"><button v-for="(item, index) in drawerActions" :key="item.label" type="button" :class="{ danger: item.danger }" @click="item.run"><kbd>c-{{ index + 1 }}</kbd>{{ item.label }}</button></div>
+        <div v-else class="float-drawer-actions">
+          <button
+            v-for="(item, index) in drawerActions"
+            :key="item.id"
+            type="button"
+            :class="{ danger: item.danger, active: drawerActiveIndex === index }"
+            :disabled="item.disabled"
+            :aria-label="item.disabled && item.disabledReason ? `${item.label}，${item.disabledReason}` : item.label"
+            :data-drawer-index="index"
+            data-quick-jump-target
+            @focus="drawerActiveIndex = index"
+            @click="executeDrawerAction(index)"
+          ><kbd>c-{{ index + 1 }}</kbd><span>{{ item.label }}</span><small v-if="item.disabledReason && item.disabled">{{ item.disabledReason }}</small></button>
+        </div>
       </aside>
+
+      <aside v-if="hoverCard" class="float-hover-card" :class="hoverCard.kind" :style="{ left: `${hoverCard.left}px`, top: `${hoverCard.top}px` }" role="status" aria-live="polite">
+        <strong>{{ hoverCard.title }}</strong>
+        <span v-for="line in hoverCard.lines" :key="line">{{ line }}</span>
+      </aside>
+
+      <QuickJumpLayer v-if="quickJump.open" :targets="quickJump.targets" :active-target-id="quickJump.activeTargetId" />
 
       <span class="sr-only" role="status" aria-live="polite">{{ liveMessage }}</span>
       <button

@@ -2,6 +2,7 @@ import { normalizeAppState } from '../domain/state'
 import { normalizeMqttArchiveState } from '../domain/mqtt'
 import type { AppState, FavoriteNode, KillRequest, KillResult, MqttArchiveState, MqttStorageStatus, PortProcess } from '../domain/types'
 import type {
+  CodexActivityDeltaV1,
   CodexBridgeResult,
   CodexEnvironmentPlatform,
   CodexEnvironmentSnapshotV1,
@@ -122,6 +123,8 @@ export interface EypcPlatformApi {
   codex: {
     inspectEnvironment(): Promise<CodexEnvironmentSnapshotV1>
     readSnapshot(options?: CodexReadOptions): Promise<CodexBridgeResult<CodexHostSnapshot>>
+    readActivitySnapshot?(): Promise<CodexBridgeResult<CodexActivityDeltaV1>>
+    onActivityChanged?(listener: (delta: CodexActivityDeltaV1) => void): () => void
     openThread(actionAlias: string): Promise<CodexThreadOpenResult>
     archiveThread?(actionAlias: string, request: CodexThreadArchiveRequest): Promise<CodexThreadArchiveResult>
     archiveProject?(actionAlias: string, request: CodexProjectArchiveRequest): Promise<CodexProjectArchiveResult>
@@ -129,6 +132,7 @@ export interface EypcPlatformApi {
   }
   float: {
     sync(payload: { visible: boolean; snapshot?: unknown; position?: unknown; expandedSizes?: unknown }): boolean
+    activate?(): boolean
     diagnostics?(): CodexFloatWorkspaceDiagnostics
     resetGeometry?(payload?: { position?: unknown; expandedSizes?: unknown }): boolean
     close(): void
@@ -486,6 +490,8 @@ export function getPlatform(): EypcPlatformApi {
           ? legacyHostCodexEnvironment()
           : unsupportedCodexEnvironment()),
         readSnapshot: hostCodex?.readSnapshot || (async () => ({ ok: false, error: { code: 'unsupported', message: 'Codex App Server unavailable in this host' }, receivedAt: Date.now() })),
+        readActivitySnapshot: hostCodex?.readActivitySnapshot,
+        onActivityChanged: hostCodex?.onActivityChanged,
         openThread: hostCodex?.openThread || (async () => ({ outcome: 'failed', errorCode: 'unsupported', message: 'Codex thread open unavailable' })),
         archiveThread: hostCodex?.archiveThread,
         archiveProject: hostCodex?.archiveProject,
@@ -493,6 +499,7 @@ export function getPlatform(): EypcPlatformApi {
       },
       float: {
         sync: hostFloat?.sync || (() => false),
+        activate: hostFloat?.activate,
         diagnostics: hostFloat?.diagnostics,
         resetGeometry: hostFloat?.resetGeometry,
         close: hostFloat?.close || (() => undefined),
@@ -556,6 +563,8 @@ export function getPlatform(): EypcPlatformApi {
     codex: {
       inspectEnvironment: async () => unsupportedCodexEnvironment(),
       readSnapshot: async () => ({ ok: false, error: { code: 'unsupported', message: 'Codex App Server unavailable in browser' }, receivedAt: Date.now() }),
+      readActivitySnapshot: undefined,
+      onActivityChanged: undefined,
       openThread: async () => ({ outcome: 'failed', errorCode: 'unsupported', message: 'Codex thread open unavailable in browser' }),
       archiveThread: undefined,
       archiveProject: undefined,
@@ -563,6 +572,7 @@ export function getPlatform(): EypcPlatformApi {
     },
     float: {
       sync: () => false,
+      activate: () => false,
       diagnostics: () => ({ supported: false, alwaysOnTop: false, allWorkspaces: false, visibleOnFullScreen: false, checkedAt: 0, errorCode: 'unsupported' }),
       resetGeometry: () => false,
       close: () => undefined,

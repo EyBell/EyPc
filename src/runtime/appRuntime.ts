@@ -6413,7 +6413,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     } })
     actions.register({ id: 'codex.tab.set', title: '切换 Codex 会话页签', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
       const tab = typeof args?.tab === 'string' ? args.tab : ''
-      return codexController.setTaskTab(tab as 'all' | 'ongoing' | 'hidden' | 'completed' | 'projects')
+      return codexController.setTaskTab(tab as 'all' | 'input' | 'ongoing' | 'completed' | 'hidden' | 'projects')
     } })
     actions.register({ id: 'codex.project.collapse', title: '折叠或展开 Codex 项目', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
       return typeof args?.key === 'string' && typeof args?.collapsed === 'boolean'
@@ -6472,6 +6472,16 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       lastCodexFloatToggleAt = now
       lastCodexFloatToggleSource = source
       return codexController.updateSettings({ floatEnabled: !state.codex.settings.floatEnabled })
+    } })
+    actions.register({ id: 'codex.float.activate', title: '进入 Codex 卡片', description: '显示并展开 Codex 卡片，将键盘焦点交给会话列表。', group: 'Codex', risk: 'normal', scope: 'global', priority: 1001, shortcut: 'Ctrl+Alt+Enter', when: () => true, run: () => {
+      if (!isTabEnabled('codex')) {
+        setMessage('请先在总设置中启用 Codex Companion')
+        return false
+      }
+      const enabled = state.codex.settings.floatEnabled || codexController.updateSettings({ floatEnabled: true })
+      if (!enabled) return false
+      queueMicrotask(() => platform.float.activate?.())
+      return true
     } })
     actions.register({ id: 'codex.float.hide', title: '隐藏 Codex 悬浮球', group: 'Codex', risk: 'data-write', scope: 'global', priority: 90, when: () => true, run: () => codexController.updateSettings({ floatEnabled: false }) })
     actions.register({ id: 'codex.hotkey.configure', title: '配置 Codex 系统级快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
@@ -6557,7 +6567,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const groupDetailTarget = portGroupDetail.target ? groupRows.find((row) => sameTarget(row.target, portGroupDetail.target)) || rowForGroupTarget(portGroupDetail.target) : null
       const codexFloat = codexController.floatSnapshot()
       codexFloat.keybindings = buildEffectiveKeybindings(state.settings.shortcutProfiles, state.settings.featureConfigs)
-        .filter((binding) => binding.actionId.startsWith('codex.') && !binding.disabled && Boolean(binding.shortcutId))
+        .filter((binding) => (binding.actionId.startsWith('codex.') || binding.actionId.startsWith('quickJump.')) && !binding.disabled && Boolean(binding.shortcutId))
         .map((binding) => ({ actionId: binding.actionId, shortcutId: binding.shortcutId, layer: binding.layer }))
       return {
         state,

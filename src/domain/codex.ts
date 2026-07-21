@@ -11,7 +11,7 @@ export type CodexProcessState = 'running' | 'not-running' | 'unknown'
 export type CodexConfigFileState = 'loaded' | 'detected' | 'missing' | 'unreadable' | 'unknown'
 export type CodexConnectionState = 'not-checked' | 'connected' | 'failed'
 export type CodexTaskAuthority = 'live' | 'mixed' | 'inventory-only'
-export type CodexTaskTab = 'all' | 'ongoing' | 'hidden' | 'completed' | 'projects'
+export type CodexTaskTab = 'all' | 'input' | 'ongoing' | 'completed' | 'hidden' | 'projects'
 export type CodexProjectSectionId = 'pinned' | 'projects' | 'chats'
 export type CodexWaterPalette = 'solid' | 'gradient' | 'aurora'
 export type CodexWaterMotion = 'static' | 'slow' | 'normal' | 'fast'
@@ -159,6 +159,26 @@ export interface CodexHostSnapshotV2 {
 }
 
 export type CodexHostSnapshot = CodexHostSnapshotV1 | CodexHostSnapshotV2
+
+export interface CodexActivityDeltaEntryV1 {
+  /** Anonymous task key already present in the last verified host snapshot. */
+  key: string
+  status: CodexThreadStatus
+  activeFlags: CodexThreadActiveFlag[]
+}
+
+/**
+ * Privacy-safe high-frequency activity projection. Raw thread identities remain
+ * inside the preload bridge and are never exposed to either renderer.
+ */
+export interface CodexActivityDeltaV1 {
+  version: 1
+  sourceFingerprint: string
+  generation: number
+  entries: CodexActivityDeltaEntryV1[]
+  inventoryChanged: boolean
+  receivedAt: number
+}
 
 export interface CodexBridgeError {
   code: 'unsupported' | 'unavailable' | 'runtime-unavailable' | 'not-authenticated' | 'timeout' | 'protocol-error' | 'process-exited' | 'open-failed'
@@ -387,6 +407,7 @@ export interface ConversationSnapshotV2 {
   hidden: CodexTaskCard[]
   /** V3 tab projections. V2 readers can continue using the legacy arrays above. */
   all: CodexTaskCard[]
+  inputRequired: CodexTaskCard[]
   completedTab: CodexTaskCard[]
   projectSections: CodexProjectSection[]
   projects: CodexProjectCard[]
@@ -399,6 +420,7 @@ export interface ConversationSnapshotV2 {
   /** Cross-process activity whose live status is not observable by this App Server. */
   unknownCount: number
   attentionCount: number
+  inputRequiredCount: number
   completedUnreadCount: number
   completedCount: number
   /** Deprecated V1 alias of completedUnreadCount. */
@@ -666,6 +688,7 @@ export function emptyConversationSnapshot(status: ConversationSnapshotV1['status
     pending: [],
     hidden: [],
     all: [],
+    inputRequired: [],
     completedTab: [],
     projectSections: [],
     projects: [],
@@ -676,6 +699,7 @@ export function emptyConversationSnapshot(status: ConversationSnapshotV1['status
     runningCount: 0,
     unknownCount: 0,
     attentionCount: 0,
+    inputRequiredCount: 0,
     completedUnreadCount: 0,
     completedCount: 0,
     pendingCount: 0,
@@ -854,7 +878,7 @@ export function normalizeCodexState(value: unknown): CodexState {
     lastTaskScanAt: numberValue(source.lastTaskScanAt, 0),
     cachedQuota: normalizeCodexQuota(source.cachedQuota),
     cachedConfig: normalizeCodexConfig(source.cachedConfig),
-    lastTaskTab: enumValue(source.lastTaskTab, ['all', 'ongoing', 'hidden', 'completed', 'projects'] as const, 'ongoing'),
+    lastTaskTab: enumValue(source.lastTaskTab, ['all', 'input', 'ongoing', 'completed', 'hidden', 'projects'] as const, 'ongoing'),
     collapsedProjectKeys: normalizeAnonymousKeys(source.collapsedProjectKeys, 500, true),
     taskAliases: normalizeCodexAliases(source.taskAliases),
     projectAliases: normalizeCodexAliases(source.projectAliases, true),
@@ -929,6 +953,7 @@ export function countConversationTasks(
     runningCount,
     unknownCount,
     attentionCount,
+    inputRequiredCount: [...ongoing, ...hidden].filter((task) => task.activityState === 'waiting-input').length,
     completedUnreadCount: completedUnread.length,
     completedCount: completed.length,
     pendingCount: completedUnread.length,
@@ -1100,6 +1125,7 @@ export function projectConversations(input: {
   completed.sort(compareConversationTasks)
   hidden.sort(compareConversationTasks)
   const all = [...ongoing, ...completedUnread, ...completed, ...hidden].sort(compareConversationTasks)
+  const inputRequired = all.filter((task) => task.activityState === 'waiting-input')
   const completedTab = [...completedUnread, ...completed].sort(compareConversationTasks)
 
   const sourceProjects = [...new Map((input.projects || [])
@@ -1200,11 +1226,12 @@ export function projectConversations(input: {
       pending: completedUnread,
       hidden,
       all,
+      inputRequired,
       completedTab,
       projectSections,
       projects: visibleProjects,
       removedProjects: removedProjectCards,
-      activeTab: enumValue(input.activeTab, ['all', 'ongoing', 'hidden', 'completed', 'projects'] as const, 'ongoing'),
+      activeTab: enumValue(input.activeTab, ['all', 'input', 'ongoing', 'completed', 'hidden', 'projects'] as const, 'ongoing'),
       ...counts,
       pendingRecoveredCount: 0,
       pendingUnresolvedCount: 0,
