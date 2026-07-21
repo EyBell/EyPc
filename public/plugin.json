@@ -39,6 +39,17 @@
       "cmds": ["文件快开", "快速文件", "quick favorites"]
     },
     {
+      "code": "eypc-codex",
+      "explain": "Codex 额度悬浮球设置",
+      "cmds": ["Codex额度", "Codex悬浮球", "Codex quota"]
+    },
+    {
+      "code": "eypc-codex-toggle",
+      "explain": "显示/隐藏 Codex 悬浮球",
+      "mainHide": true,
+      "cmds": ["切换 Codex 悬浮球"]
+    },
+    {
       "code": "eypc-settings",
       "explain": "EyPc 设置",
       "cmds": ["EyPc设置", "eypc settings"]

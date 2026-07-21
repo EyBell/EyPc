@@ -39,6 +39,7 @@ defineEmits<{ select: [tab: AppTabId] }>()
       <slot v-if="activeTab === 'ports'" name="ports" />
       <slot v-else-if="activeTab === 'mqtt'" name="mqtt" />
       <slot v-else-if="activeTab === 'favorites'" name="favorites" />
+      <slot v-else-if="activeTab === 'codex'" name="codex" />
       <slot v-else name="settings" />
     </section>
   </section>

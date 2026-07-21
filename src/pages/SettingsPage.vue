@@ -19,7 +19,7 @@ import { blockHandledShortcutEvent } from '../runtime/keyboardEvent'
 import { formatShortcutLabel, formatShortcutList, normalizeShortcutId, shortcutFromEvent as shortcutFromKeyboardEvent } from '../domain/shortcuts'
 
 type SettingsTabId = 'shortcuts' | 'maintenance'
-type ShortcutScopeId = 'all' | 'global' | 'ports' | 'mqtt' | 'favorites' | 'settings'
+type ShortcutScopeId = 'all' | 'global' | 'ports' | 'mqtt' | 'favorites' | 'codex' | 'settings'
 type MaintenanceSectionId = 'features' | 'tools' | 'layers' | 'storage' | 'commands' | 'resolution' | 'reservations'
 
 interface KeybindingUpdatePayload {
@@ -50,7 +50,7 @@ const emit = defineEmits<{
   updateToolPreviewPrefs: [input: { enabled?: boolean; delayMs?: number }]
 }>()
 
-const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'settings']
+const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'codex', 'settings']
 
 const settingTabs: Array<{ id: SettingsTabId; label: string }> = [
   { id: 'shortcuts', label: '快捷键' },
@@ -63,6 +63,7 @@ const shortcutScopeOptions: Array<{ id: ShortcutScopeId; label: string }> = [
   { id: 'ports', label: '端口' },
   { id: 'mqtt', label: 'MQTT' },
   { id: 'favorites', label: '收藏' },
+  { id: 'codex', label: 'Codex' },
   { id: 'settings', label: '设置' }
 ]
 
@@ -232,6 +233,7 @@ function matchesShortcutScope(row: ShortcutCommandRow, id: ShortcutScopeId): boo
   if (id === 'ports') return row.profileId === 'ports'
   if (id === 'mqtt') return row.profileId === 'mqtt'
   if (id === 'favorites') return row.profileId === 'favorites'
+  if (id === 'codex') return row.profileId === 'codex'
   return row.profileId === 'settings'
 }
 
@@ -759,7 +761,9 @@ function applyDraftKeybinding(payload: KeybindingUpdatePayload) {
 
 function inferShortcutProfileId(commandId: string): ShortcutProfileId {
   if (commandId.startsWith('ports.')) return 'ports'
+  if (commandId.startsWith('mqtt.')) return 'mqtt'
   if (commandId.startsWith('favorites.')) return 'favorites'
+  if (commandId.startsWith('codex.')) return 'codex'
   if (commandId.startsWith('settings.')) return 'settings'
   return 'global'
 }

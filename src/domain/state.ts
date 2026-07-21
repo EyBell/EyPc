@@ -4,17 +4,19 @@ import { emptySearchHistories, normalizeSearchHistoryList } from './searchHistor
 import { normalizeShortcutId } from './shortcuts'
 import { normalizeToolPreviewPrefs } from './toolPreview'
 import { normalizeFavoriteGraph } from './favorites'
+import { createDefaultCodexState, normalizeCodexState } from './codex'
 
-const VALID_TABS = new Set<AppTabId>(['ports', 'mqtt', 'favorites', 'settings'])
-const TAB_IDS: AppTabId[] = ['ports', 'mqtt', 'favorites', 'settings']
+const VALID_TABS = new Set<AppTabId>(['ports', 'mqtt', 'favorites', 'codex', 'settings'])
+const TAB_IDS: AppTabId[] = ['ports', 'mqtt', 'favorites', 'codex', 'settings']
 const DEFAULT_FEATURE_SORT_ORDER: Record<AppTabId, number> = {
   ports: 1,
   favorites: 2,
   mqtt: 3,
-  settings: 4
+  codex: 4,
+  settings: 5
 }
 const VALID_FAVORITE_KINDS = new Set<FavoriteKind>(['file', 'folder', 'group'])
-const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'settings']
+const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'codex', 'settings']
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
@@ -59,6 +61,7 @@ function inferShortcutProfileId(commandId: string): ShortcutProfileId {
   if (commandId.startsWith('ports.')) return 'ports'
   if (commandId.startsWith('mqtt.')) return 'mqtt'
   if (commandId.startsWith('favorites.')) return 'favorites'
+  if (commandId.startsWith('codex.')) return 'codex'
   if (commandId.startsWith('settings.')) return 'settings'
   return 'global'
 }
@@ -69,6 +72,7 @@ function emptyShortcutProfiles(now: number): ShortcutProfileMap {
     ports: { keybindingOverrides: [], updatedAt: now },
     mqtt: { keybindingOverrides: [], updatedAt: now },
     favorites: { keybindingOverrides: [], updatedAt: now },
+    codex: { keybindingOverrides: [], updatedAt: now },
     settings: { keybindingOverrides: [], updatedAt: now }
   }
 }
@@ -248,6 +252,7 @@ export function createInitialState(now = Date.now()): AppState {
     collapsedFavoriteGroupIds: [],
     favorites: [],
     mqtt: normalizeMqttState(null, now),
+    codex: createDefaultCodexState(),
     settings: {
       keybindingOverrides: [],
       shortcutProfiles: emptyShortcutProfiles(now),
@@ -290,6 +295,7 @@ export function normalizeAppState(value: unknown, now = Date.now()): AppState {
     collapsedFavoriteGroupIds: strings(source.collapsedFavoriteGroupIds).filter((id) => favoriteIds.has(id)),
     favorites,
     mqtt: normalizeMqttState(source.mqtt, now),
+    codex: normalizeCodexState(source.codex),
     settings: {
       keybindingOverrides: aggregateShortcutProfiles(shortcutProfiles),
       shortcutProfiles,

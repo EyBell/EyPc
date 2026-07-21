@@ -6,6 +6,7 @@ import { applyRecordListDeleteRecovery, computeRecordListDeleteAnchor, toggleRec
 import { normalizeAppState } from '../domain/state'
 import { formatShortcutList } from '../domain/shortcuts'
 import { normalizeToolPreviewPrefs } from '../domain/toolPreview'
+import type { CodexFloatPosition, CodexSettings } from '../domain/codex'
 import type { AppState, AppTabId, FavoriteNode, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttConnectionGroup, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
 import type { PortGroupTreeRow } from '../domain/ports'
 import { getPlatform, normalizeFileActionResult, type FavoriteDirectoryEntry, type FavoritePathInspection, type FileActionResult, type FileCapabilities, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind } from '../platform/eypcPlatform'
@@ -15,9 +16,12 @@ import { FEATURES, visibleFeatures, type VisibleFeatureDefinition } from './feat
 import { buildDefaultKeybindings, buildEffectiveKeybindings, normalizeShortcutId, resolveKeybinding } from './keybinding/keybindingRuntime'
 import type { KeybindingContext } from './keybinding/keybindingRuntime'
 import { resolveMqttConnect, type MqttRuntimeClient } from './mqttClientModule'
+import { createCodexController, type CodexFloatSnapshotV1, type CodexRuntimeView } from './codexController'
 
 export interface AppRuntimeSnapshot {
   state: AppState
+  codex: CodexRuntimeView
+  codexFloat: CodexFloatSnapshotV1
   ports: PortProcess[]
   filteredPorts: PortProcess[]
   filteredPortGroups: PortGroup[]
@@ -524,7 +528,7 @@ export interface AppRuntimeOptions {
   mqttModuleLoader?: () => Promise<unknown>
 }
 
-const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'settings']
+const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'codex', 'settings']
 
 export function createAppRuntime(initialState: AppState, options: AppRuntimeOptions = {}) {
   const platform = getPlatform()
@@ -637,6 +641,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   let mqttClient: MqttRuntimeClient | null = null
   const mqttSecrets = new Map<string, string>(Object.entries(platform.storage.getMqttSecrets()))
   let message = ''
+  let lastCodexFloatToggleAt = 0
+  let lastCodexFloatToggleSource = ''
   let confirm: AppRuntimeSnapshot['confirm'] = null
   let scanInFlight: Promise<void> | null = null
   const listeners = new Set<() => void>()
@@ -719,6 +725,14 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     notify()
   }
 
+  const codexController = createCodexController({
+    platform,
+    getAppState: () => state,
+    save,
+    notify,
+    setMessage
+  })
+
   function requestListFocus(target: PortPaneId) {
     listFocusTarget = target
     listFocusRequestId += 1
@@ -782,6 +796,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (state.activeTab === 'mqtt') ensureMqttArchiveLoaded()
     save()
     notify()
+    codexController.syncActivation(state.activeTab === 'codex')
   }
 
   function currentVisibleFeatures(): VisibleFeatureDefinition[] {
@@ -5170,6 +5185,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (commandId.startsWith('ports.')) return 'ports'
     if (commandId.startsWith('mqtt.')) return 'mqtt'
     if (commandId.startsWith('favorites.')) return 'favorites'
+    if (commandId.startsWith('codex.')) return 'codex'
     if (commandId.startsWith('settings.')) return 'settings'
     return 'global'
   }
@@ -6340,6 +6356,129 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         run: () => executeFavoriteDrawerItem(index - 1)
       })
     }
+    actions.register({ id: 'codex.refresh', title: '刷新 Codex 状态', group: 'Codex', risk: 'normal', scope: 'global', priority: 100, shortcut: 'Ctrl+R', when: () => true, run: () => { void codexController.refresh(); return true } })
+    actions.register({ id: 'codex.settings.open', title: '打开 Codex 配置', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => { setTab('codex'); return true } })
+    actions.register({ id: 'codex.settings.update', title: '更新 Codex 悬浮球配置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
+      const source = args?.settings && typeof args.settings === 'object' ? args.settings : args
+      return codexController.updateSettings((source || {}) as Partial<CodexSettings>)
+    } })
+    actions.register({ id: 'codex.task.open', title: '打开 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
+      const key = typeof args?.key === 'string' ? args.key : ''
+      const actionAlias = typeof args?.actionAlias === 'string' ? args.actionAlias : ''
+      void codexController.openThread(key, actionAlias)
+      return Boolean(key && actionAlias)
+    } })
+    actions.register({ id: 'codex.task.hide', title: '隐藏 Codex 任务到 Companion 已隐藏区', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
+      const key = typeof args?.key === 'string' ? args.key : ''
+      const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt)
+        ? args.revisionAt
+        : typeof args?.updatedAt === 'number' && Number.isFinite(args.updatedAt) ? args.updatedAt : undefined
+      return key && revisionAt !== undefined ? codexController.hide(key, revisionAt) : false
+    } })
+    actions.register({ id: 'codex.task.dismiss', title: '隐藏 Codex 任务到 Companion 已隐藏区', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
+      const key = typeof args?.key === 'string' ? args.key : ''
+      const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt)
+        ? args.revisionAt
+        : typeof args?.updatedAt === 'number' && Number.isFinite(args.updatedAt) ? args.updatedAt : undefined
+      return key && revisionAt !== undefined ? codexController.hide(key, revisionAt) : false
+    } })
+    actions.register({ id: 'codex.task.restore', title: '从 Companion 已隐藏区释放 Codex 任务', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
+      const key = typeof args?.key === 'string' ? args.key : ''
+      const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt)
+        ? args.revisionAt
+        : typeof args?.updatedAt === 'number' && Number.isFinite(args.updatedAt) ? args.updatedAt : undefined
+      const kind = args?.kind === 'task' || args?.kind === 'activity' || args?.kind === 'pending' ? args.kind : undefined
+      return key && revisionAt !== undefined && kind ? codexController.restore(key, revisionAt, kind) : false
+    } })
+    actions.register({ id: 'codex.task.archive', title: '归档 Codex 任务', group: 'Codex', risk: 'destructive', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
+      const key = typeof args?.key === 'string' ? args.key : ''
+      const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt)
+        ? args.revisionAt
+        : typeof args?.updatedAt === 'number' && Number.isFinite(args.updatedAt) ? args.updatedAt : undefined
+      if (!key || revisionAt === undefined) return false
+      void codexController.archive(key, revisionAt)
+      return true
+    } })
+    actions.register({ id: 'codex.tasks.archive', title: '批量归档 Codex 任务', group: 'Codex', risk: 'destructive', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
+      const items = Array.isArray(args?.items) ? args.items.flatMap((value) => {
+        if (!value || typeof value !== 'object') return []
+        const item = value as Record<string, unknown>
+        return typeof item.key === 'string' && typeof item.revisionAt === 'number' && Number.isFinite(item.revisionAt)
+          ? [{ key: item.key, revisionAt: item.revisionAt }]
+          : []
+      }) : []
+      if (!items.length) return false
+      void codexController.archiveMany(items)
+      return true
+    } })
+    actions.register({ id: 'codex.tab.set', title: '切换 Codex 会话页签', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
+      const tab = typeof args?.tab === 'string' ? args.tab : ''
+      return codexController.setTaskTab(tab as 'all' | 'ongoing' | 'hidden' | 'completed' | 'projects')
+    } })
+    actions.register({ id: 'codex.project.collapse', title: '折叠或展开 Codex 项目', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
+      return typeof args?.key === 'string' && typeof args?.collapsed === 'boolean'
+        ? codexController.setProjectCollapsed(args.key, args.collapsed)
+        : false
+    } })
+    actions.register({ id: 'codex.alias.set', title: '设置 Codex 本地别名', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
+      const kind = args?.kind === 'task' || args?.kind === 'project' ? args.kind : ''
+      return kind && typeof args?.key === 'string' && typeof args?.alias === 'string'
+        ? codexController.setAlias(kind, args.key, args.alias)
+        : false
+    } })
+    actions.register({ id: 'codex.pin.toggle', title: '切换 Codex 本地置顶', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
+      const kind = args?.kind === 'task' || args?.kind === 'project' ? args.kind : ''
+      return kind && typeof args?.key === 'string' ? codexController.toggleLocalPin(kind, args.key) : false
+    } })
+    actions.register({ id: 'codex.pin.move', title: '调整 Codex 本地置顶顺序', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
+      const kind = args?.kind === 'task' || args?.kind === 'project' ? args.kind : ''
+      const direction = args?.direction === -1 || args?.direction === 1 ? args.direction : 0
+      return kind && direction && typeof args?.key === 'string' ? codexController.moveLocalPin(kind, args.key, direction) : false
+    } })
+    actions.register({ id: 'codex.project.remove', title: '从 EyPc 移除 Codex 项目', group: 'Codex', risk: 'data-write', scope: 'global', priority: 95, when: () => true, run: (_ctx, args) => typeof args?.key === 'string' ? codexController.removeProject(args.key) : false })
+    actions.register({ id: 'codex.project.restore', title: '恢复 EyPc Codex 项目', group: 'Codex', risk: 'data-write', scope: 'global', priority: 95, when: () => true, run: (_ctx, args) => typeof args?.key === 'string' ? codexController.restoreProject(args.key) : false })
+    actions.register({ id: 'codex.project.archive', title: '归档 Codex 项目全部非活动任务', group: 'Codex', risk: 'destructive', scope: 'global', priority: 95, when: () => true, run: (_ctx, args) => {
+      const key = typeof args?.key === 'string' ? args.key : ''
+      const actionAlias = typeof args?.actionAlias === 'string' ? args.actionAlias : ''
+      if (!key || !actionAlias) return false
+      void codexController.archiveProject(key, actionAlias)
+      return true
+    } })
+    actions.register({ id: 'codex.float.position.save', title: '保存 Codex 悬浮球位置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 92, when: () => true, run: (_ctx, args) => {
+      const position = args?.position
+      return position && typeof position === 'object' ? codexController.updateSettings({ position: position as CodexFloatPosition }) : false
+    } })
+    actions.register({ id: 'codex.float.geometry.save', title: '保存 Codex 展开尺寸与位置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 92, when: () => true, run: (_ctx, args) => {
+      const position = args?.position
+      const expandedSize = args?.expandedSize
+      return position && typeof position === 'object' && expandedSize && typeof expandedSize === 'object'
+        ? codexController.saveGeometry(position as CodexFloatPosition, expandedSize as { displayId?: string; width: number; height: number; updatedAt?: number })
+        : false
+    } })
+    actions.register({ id: 'codex.float.position.reset', title: '重置 Codex 悬浮球位置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 91, when: () => true, run: () => codexController.resetPosition() })
+    actions.register({ id: 'codex.float.size.reset', title: '恢复 Codex 自适应展开尺寸', group: 'Codex', risk: 'data-write', scope: 'global', priority: 91, when: () => true, run: (_ctx, args) => codexController.resetExpandedSize(typeof args?.displayId === 'string' ? args.displayId : undefined) })
+    actions.register({ id: 'codex.float.toggle', title: '显示或隐藏 Codex 悬浮球', group: 'Codex', risk: 'data-write', scope: 'global', priority: 1000, shortcut: 'Ctrl+Alt+Q', when: () => true, run: (_ctx, args) => {
+      if (!isTabEnabled('codex')) {
+        setMessage('请先在总设置中启用 Codex Companion')
+        return false
+      }
+      const now = Date.now()
+      const source = args?.source === 'utools-feature' ? 'utools-feature' : args?.source === 'in-app-shortcut' ? 'in-app-shortcut' : 'runtime'
+      if (lastCodexFloatToggleSource && source !== lastCodexFloatToggleSource && now - lastCodexFloatToggleAt < 300) {
+        lastCodexFloatToggleAt = 0
+        lastCodexFloatToggleSource = ''
+        return true
+      }
+      lastCodexFloatToggleAt = now
+      lastCodexFloatToggleSource = source
+      return codexController.updateSettings({ floatEnabled: !state.codex.settings.floatEnabled })
+    } })
+    actions.register({ id: 'codex.float.hide', title: '隐藏 Codex 悬浮球', group: 'Codex', risk: 'data-write', scope: 'global', priority: 90, when: () => true, run: () => codexController.updateSettings({ floatEnabled: false }) })
+    actions.register({ id: 'codex.hotkey.configure', title: '配置 Codex 系统级快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
+      const opened = platform.app.configureHotkey?.('切换 Codex 悬浮球') === true
+      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“切换 Codex 悬浮球”绑定快捷键')
+      return opened
+    } })
     actions.register({ id: 'settings.open', title: '打开设置', group: '全局', risk: 'normal', scope: 'global', priority: 10, shortcut: 'Ctrl+Alt+S', when: () => true, run: () => { setTab('settings'); return true } })
     actions.register({ id: 'search.focus', title: '聚焦搜索', group: '全局', risk: 'normal', scope: 'global', priority: 10, shortcut: 'Ctrl+F', when: () => true, run: () => focusSearch() })
     actions.register({ id: 'confirm.cancel', title: '关闭确认弹窗', group: '全局', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('confirm'), run: () => { confirm = null; notify(); return true } })
@@ -6416,8 +6555,14 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const detailTarget = portDetail.targetId ? ports.find((item) => item.id === portDetail.targetId) || null : null
       const groupRows = filterPortGroupRows()
       const groupDetailTarget = portGroupDetail.target ? groupRows.find((row) => sameTarget(row.target, portGroupDetail.target)) || rowForGroupTarget(portGroupDetail.target) : null
+      const codexFloat = codexController.floatSnapshot()
+      codexFloat.keybindings = buildEffectiveKeybindings(state.settings.shortcutProfiles, state.settings.featureConfigs)
+        .filter((binding) => binding.actionId.startsWith('codex.') && !binding.disabled && Boolean(binding.shortcutId))
+        .map((binding) => ({ actionId: binding.actionId, shortcutId: binding.shortcutId, layer: binding.layer }))
       return {
         state,
+        codex: codexController.view(),
+        codexFloat,
         ports,
         filteredPorts: portFilter.items,
         filteredPortGroups: filterPortGroups(),
@@ -6785,6 +6930,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       normalizeActiveTab()
       save()
       notify()
+      codexController.syncActivation()
     },
     updateKeybinding(input: string | KeybindingUpdateInput, shortcutId?: string, disabled = false) {
       const payload: KeybindingUpdateInput = typeof input === 'string'
@@ -7047,7 +7193,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       }
       if (binding.actionId.startsWith('tab.select.')) {
         const tab = binding.actionId.replace('tab.select.', '') as AppTabId
-        if (['ports', 'mqtt', 'favorites', 'settings'].includes(tab) && isTabEnabled(tab)) setTab(tab)
+        if (['ports', 'mqtt', 'favorites', 'codex', 'settings'].includes(tab) && isTabEnabled(tab)) setTab(tab)
         return binding.actionId
       }
       if (binding.actionId === 'quickJump.openForward' || binding.actionId === 'quickJump.openBackward') {
@@ -7074,11 +7220,21 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         toggleFocusedSelection()
         return binding.actionId
       }
-      const result = actions.dispatch({ actionId: binding.actionId, context: context(input) })
+      const result = actions.dispatch({
+        actionId: binding.actionId,
+        context: context(input),
+        ...(binding.actionId === 'codex.float.toggle' ? { args: { source: 'in-app-shortcut' } } : {})
+      })
       return result.handled ? binding.actionId : null
     },
     get defaultKeybindings() {
       return buildDefaultKeybindings(state.settings.featureConfigs)
+    },
+    startCodex() {
+      codexController.start()
+    },
+    dispose() {
+      codexController.dispose()
     }
   }
 }

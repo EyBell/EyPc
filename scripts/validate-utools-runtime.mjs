@@ -9,6 +9,8 @@ const root = resolve(import.meta.dirname, '..')
 const distDir = resolve(root, 'dist')
 const canonicalPreload = readFileSync(resolve(root, 'preload/index.js'), 'utf8')
 const publicPreload = readFileSync(resolve(root, 'public/preload.js'), 'utf8')
+const canonicalFloatPreload = readFileSync(resolve(root, 'preload/float.js'), 'utf8')
+const publicFloatPreload = readFileSync(resolve(root, 'public/float-preload.js'), 'utf8')
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -25,14 +27,17 @@ function assertRelativeFile(pluginJson, field) {
   assert(existsSync(resolve(distDir, value)), `plugin.json ${field} target is missing: ${value}`)
 }
 
-for (const file of ['index.html', 'plugin.json', 'package.json', 'preload.js', 'logo.svg']) {
+for (const file of ['index.html', 'float.html', 'plugin.json', 'package.json', 'preload.js', 'float-preload.js', 'logo.svg']) {
   assert(existsSync(resolve(distDir, file)), `dist runtime file is missing: ${file}`)
 }
 
 assert(publicPreload === canonicalPreload, 'public preload.js must match preload/index.js')
+assert(publicFloatPreload === canonicalFloatPreload, 'public float-preload.js must match preload/float.js')
 
 const indexHtml = readFileSync(resolve(distDir, 'index.html'), 'utf8')
 assert(!/\b(?:src|href)="\/assets\//.test(indexHtml), 'dist index.html must use relative asset paths for uTools packages')
+const floatHtml = readFileSync(resolve(distDir, 'float.html'), 'utf8')
+assert(!/\b(?:src|href)="\/assets\//.test(floatHtml), 'dist float.html must use relative asset paths for uTools packages')
 
 const pluginJson = readJson('plugin.json')
 const distPackageJson = readJson('package.json')
@@ -44,7 +49,7 @@ assert(pluginJson.pluginSetting?.single === true, 'plugin.json pluginSetting.sin
 assert(Number.isInteger(pluginJson.pluginSetting?.height) && pluginJson.pluginSetting.height >= 480, 'plugin.json height must be >= 480')
 assert(Array.isArray(pluginJson.features) && pluginJson.features.length >= 4, 'plugin.json features must include MVP entries')
 
-const requiredCodes = ['eypc-main', 'eypc-ports', 'eypc-favorites', 'eypc-favorites-quick', 'eypc-settings']
+const requiredCodes = ['eypc-main', 'eypc-ports', 'eypc-favorites', 'eypc-favorites-quick', 'eypc-codex', 'eypc-codex-toggle', 'eypc-settings']
 const codes = new Set()
 for (const feature of pluginJson.features) {
   assert(typeof feature.code === 'string' && feature.code.trim(), 'feature.code must be non-empty')
@@ -55,18 +60,26 @@ for (const feature of pluginJson.features) {
 for (const code of requiredCodes) {
   assert(codes.has(code), `missing feature code: ${code}`)
 }
+const codexToggleFeature = pluginJson.features.find((feature) => feature.code === 'eypc-codex-toggle')
+assert(codexToggleFeature?.mainHide === true, 'Codex float toggle feature must run with mainHide=true')
+assert(codexToggleFeature?.cmds?.includes('切换 Codex 悬浮球'), 'Codex float toggle feature must expose the stable hotkey command label')
 
 const preloadSource = readFileSync(resolve(distDir, 'preload.js'), 'utf8')
 assert(preloadSource === canonicalPreload, 'dist preload.js must match preload/index.js')
+const floatPreloadSource = readFileSync(resolve(distDir, 'float-preload.js'), 'utf8')
+assert(floatPreloadSource === canonicalFloatPreload, 'dist float-preload.js must match preload/float.js')
+const ipcListeners = new Map()
 const sandbox = {
   window: {},
   globalThis: {},
-  process: { platform: 'darwin' },
+  process: { platform: 'darwin', env: {}, cwd: () => '/tmp' },
   require(name) {
     if (name === 'node:buffer') return { Buffer }
-    if (name === 'node:child_process') return { execFile() {} }
+    if (name === 'node:child_process') return { execFile() {}, spawn() { throw new Error('spawn unavailable in validation') } }
     if (name === 'node:crypto') return crypto
     if (name === 'node:fs') return {
+      existsSync: () => false,
+      readdirSync: () => [],
       statSync: () => ({ isFile: () => false }),
       promises: {
         readdir: async () => {
@@ -76,6 +89,7 @@ const sandbox = {
     }
     if (name === 'node:path') return pathModule
     if (name === 'node:os') return { homedir: () => '/tmp' }
+    if (name === 'electron') return { ipcRenderer: { on(channel, listener) { ipcListeners.set(channel, listener) } } }
     throw new Error(`unexpected require: ${name}`)
   }
 }
@@ -91,10 +105,32 @@ assert(typeof sandbox.window.eypcPlatform.files.capabilities === 'object', 'prel
 assert(typeof sandbox.window.eypcPlatform.files.pickFavorite === 'function', 'preload must expose files.pickFavorite')
 assert(typeof sandbox.window.eypcPlatform.files.pickFavorites === 'function', 'preload must expose files.pickFavorites')
 assert(typeof sandbox.window.eypcPlatform.files.listDirectory === 'function', 'preload must expose files.listDirectory')
+assert(typeof sandbox.window.eypcPlatform.codex.readSnapshot === 'function', 'preload must expose codex.readSnapshot')
+assert(typeof sandbox.window.eypcPlatform.codex.inspectEnvironment === 'function', 'preload must expose codex.inspectEnvironment')
+assert(typeof sandbox.window.eypcPlatform.codex.openThread === 'function', 'preload must expose codex.openThread')
+assert(typeof sandbox.window.eypcPlatform.float.sync === 'function', 'preload must expose float.sync')
+assert(typeof sandbox.window.eypcPlatform.float.resetGeometry === 'function', 'preload must expose float.resetGeometry')
 assert((await sandbox.window.eypcPlatform.files.copyPath('/tmp/demo')).outcome === 'failed', 'copyPath fallback must report a structured failure when host API is unavailable')
 assert((await sandbox.window.eypcPlatform.files.copyPath('/tmp/demo')).errorCode === 'unsupported', 'copyPath fallback must identify unsupported hosts')
 assert(await sandbox.window.eypcPlatform.files.pickFavorite() === null, 'pickFavorite fallback must return null when host API is unavailable')
 assert(Array.isArray(await sandbox.window.eypcPlatform.files.pickFavorites()), 'pickFavorites fallback must return an array')
 assert((await sandbox.window.eypcPlatform.files.listDirectory('/tmp')).ok === false, 'listDirectory fallback must report unavailable')
+
+const floatSandbox = {
+  window: {},
+  globalThis: {},
+  require(name) {
+    if (name === 'electron') return { ipcRenderer: { on() {} } }
+    throw new Error(`unexpected float require: ${name}`)
+  }
+}
+floatSandbox.globalThis = floatSandbox
+vm.runInNewContext(floatPreloadSource, floatSandbox, { filename: 'float-preload.js' })
+assert(typeof floatSandbox.window.eypcFloat?.onSnapshot === 'function', 'float preload must expose snapshot subscription')
+assert(typeof floatSandbox.window.eypcFloat?.action === 'function', 'float preload must expose actions')
+assert(typeof floatSandbox.window.eypcFloat?.resizeStart === 'function', 'float preload must expose resizeStart')
+assert(typeof floatSandbox.window.eypcFloat?.resizeMove === 'function', 'float preload must expose resizeMove')
+assert(typeof floatSandbox.window.eypcFloat?.resizeEnd === 'function', 'float preload must expose resizeEnd')
+assert(typeof floatSandbox.window.eypcFloat?.resizeCancel === 'function', 'float preload must expose resizeCancel')
 
 console.log('uTools runtime validation passed')

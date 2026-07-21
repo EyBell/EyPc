@@ -1,6 +1,17 @@
 import { normalizeAppState } from '../domain/state'
 import { normalizeMqttArchiveState } from '../domain/mqtt'
 import type { AppState, FavoriteNode, KillRequest, KillResult, MqttArchiveState, MqttStorageStatus, PortProcess } from '../domain/types'
+import type {
+  CodexBridgeResult,
+  CodexEnvironmentPlatform,
+  CodexEnvironmentSnapshotV1,
+  CodexHostSnapshot,
+  CodexProjectArchiveRequest,
+  CodexProjectArchiveResult,
+  CodexThreadArchiveRequest,
+  CodexThreadArchiveResult,
+  CodexThreadOpenResult
+} from '../domain/codex'
 
 export type PickedFavoriteKind = Exclude<FavoriteNode['kind'], 'group'>
 export type PickedFavorite = Pick<FavoriteNode, 'path' | 'name' | 'parentId' | 'tags' | 'color'> & { kind: PickedFavoriteKind }
@@ -60,6 +71,26 @@ export interface FavoriteDirectoryListResult {
   errorCode?: FileErrorCode
 }
 
+export interface CodexReadOptions {
+  includeQuota?: boolean
+  includeConfig?: boolean
+  includeThreads?: boolean
+}
+
+export interface CodexFloatAction {
+  actionId: string
+  args: Record<string, unknown>
+}
+
+export interface CodexFloatWorkspaceDiagnostics {
+  supported: boolean
+  alwaysOnTop: boolean
+  allWorkspaces: boolean
+  visibleOnFullScreen: boolean
+  checkedAt: number
+  errorCode?: string
+}
+
 export interface EypcPlatformApi {
   storage: {
     getState(): AppState
@@ -88,8 +119,25 @@ export interface EypcPlatformApi {
   clipboard: {
     copyText(text: string): Promise<boolean>
   }
+  codex: {
+    inspectEnvironment(): Promise<CodexEnvironmentSnapshotV1>
+    readSnapshot(options?: CodexReadOptions): Promise<CodexBridgeResult<CodexHostSnapshot>>
+    openThread(actionAlias: string): Promise<CodexThreadOpenResult>
+    archiveThread?(actionAlias: string, request: CodexThreadArchiveRequest): Promise<CodexThreadArchiveResult>
+    archiveProject?(actionAlias: string, request: CodexProjectArchiveRequest): Promise<CodexProjectArchiveResult>
+    close(): void
+  }
+  float: {
+    sync(payload: { visible: boolean; snapshot?: unknown; position?: unknown; expandedSizes?: unknown }): boolean
+    diagnostics?(): CodexFloatWorkspaceDiagnostics
+    resetGeometry?(payload?: { position?: unknown; expandedSizes?: unknown }): boolean
+    close(): void
+    onAction(listener: (action: CodexFloatAction) => void): () => void
+  }
   app: {
     hide(): Promise<boolean> | boolean
+    show?(): boolean
+    configureHotkey?(commandLabel: string): boolean
   }
   getEnterPayload(): { code?: string } | null
   clearEnterPayload(): void
@@ -128,6 +176,49 @@ async function callFileAction(call: (() => Promise<unknown>) | undefined, unsupp
 
 function unknownInspection(path: string, errorCode: FileErrorCode = 'unsupported', error = 'path inspection unavailable'): FavoritePathInspection {
   return { path, status: 'unknown', kind: 'unknown', exists: false, isSymbolicLink: false, errorCode, error }
+}
+
+function inferLegacyHostPlatform(): CodexEnvironmentPlatform {
+  const candidate = typeof window !== 'undefined'
+    ? window.navigator as Navigator & { userAgentData?: { platform?: string } }
+    : undefined
+  const hint = [candidate?.userAgentData?.platform, candidate?.platform, candidate?.userAgent]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ')
+  if (/windows?|win32|win64/i.test(hint)) return 'windows'
+  if (/macintosh|mac\s?os|macintel|darwin/i.test(hint)) return 'macos'
+  return 'unsupported'
+}
+
+function legacyHostCodexEnvironment(): CodexEnvironmentSnapshotV1 {
+  const platform = inferLegacyHostPlatform()
+  return {
+    version: 1,
+    checking: false,
+    platform,
+    // The bridge capability is present, but CLI readiness stays unverified until
+    // the first App Server round-trip succeeds.
+    runtimeState: platform === 'unsupported' ? 'unsupported' : 'missing',
+    runtimeSource: 'unknown',
+    processState: 'unknown',
+    configState: 'unknown',
+    connectionState: 'not-checked',
+    checkedAt: Date.now()
+  }
+}
+
+function unsupportedCodexEnvironment(): CodexEnvironmentSnapshotV1 {
+  return {
+    version: 1,
+    checking: false,
+    platform: 'unsupported',
+    runtimeState: 'unsupported',
+    runtimeSource: 'unknown',
+    processState: 'unknown',
+    configState: 'unknown',
+    connectionState: 'not-checked',
+    checkedAt: Date.now()
+  }
 }
 
 declare global {
@@ -347,6 +438,8 @@ export function getPlatform(): EypcPlatformApi {
     const hostFiles = window.eypcPlatform.files
     const hostClipboard = window.eypcPlatform.clipboard
     const hostStorage = window.eypcPlatform.storage
+    const hostCodex = window.eypcPlatform.codex
+    const hostFloat = window.eypcPlatform.float
     const hostCapabilities: FileCapabilities = hostFiles.capabilities || {
       open: typeof hostFiles.open === 'function',
       reveal: typeof hostFiles.reveal === 'function',
@@ -384,6 +477,26 @@ export function getPlatform(): EypcPlatformApi {
       },
       clipboard: {
         copyText: hostClipboard?.copyText || (async () => false)
+      },
+      codex: {
+        // uTools can keep a previous preload alive while loading a newer renderer.
+        // Treat an existing snapshot bridge as positive capability evidence instead
+        // of misreporting the desktop host as an unsupported browser.
+        inspectEnvironment: hostCodex?.inspectEnvironment || (async () => typeof hostCodex?.readSnapshot === 'function'
+          ? legacyHostCodexEnvironment()
+          : unsupportedCodexEnvironment()),
+        readSnapshot: hostCodex?.readSnapshot || (async () => ({ ok: false, error: { code: 'unsupported', message: 'Codex App Server unavailable in this host' }, receivedAt: Date.now() })),
+        openThread: hostCodex?.openThread || (async () => ({ outcome: 'failed', errorCode: 'unsupported', message: 'Codex thread open unavailable' })),
+        archiveThread: hostCodex?.archiveThread,
+        archiveProject: hostCodex?.archiveProject,
+        close: hostCodex?.close || (() => undefined)
+      },
+      float: {
+        sync: hostFloat?.sync || (() => false),
+        diagnostics: hostFloat?.diagnostics,
+        resetGeometry: hostFloat?.resetGeometry,
+        close: hostFloat?.close || (() => undefined),
+        onAction: hostFloat?.onAction || (() => () => undefined)
       },
       app: window.eypcPlatform.app || { hide: async () => false }
     }
@@ -439,6 +552,21 @@ export function getPlatform(): EypcPlatformApi {
         }
         return false
       }
+    },
+    codex: {
+      inspectEnvironment: async () => unsupportedCodexEnvironment(),
+      readSnapshot: async () => ({ ok: false, error: { code: 'unsupported', message: 'Codex App Server unavailable in browser' }, receivedAt: Date.now() }),
+      openThread: async () => ({ outcome: 'failed', errorCode: 'unsupported', message: 'Codex thread open unavailable in browser' }),
+      archiveThread: undefined,
+      archiveProject: undefined,
+      close: () => undefined
+    },
+    float: {
+      sync: () => false,
+      diagnostics: () => ({ supported: false, alwaysOnTop: false, allWorkspaces: false, visibleOnFullScreen: false, checkedAt: 0, errorCode: 'unsupported' }),
+      resetGeometry: () => false,
+      close: () => undefined,
+      onAction: () => () => undefined
     },
     app: {
       hide: async () => false

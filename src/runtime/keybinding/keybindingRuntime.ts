@@ -37,6 +37,7 @@ export type KeybindingLayerId =
   | 'ports-search'
   | 'favorites-search'
   | 'favorites-editor'
+  | 'codex'
   | 'settings'
   | 'ports'
   | 'mqtt'
@@ -194,6 +195,7 @@ export const LAYER_PRIORITY: Record<KeybindingLayerId, number> = {
   'ports-search': 680,
   'favorites-search': 680,
   'favorites-editor': 930,
+  codex: 500,
   settings: 500,
   ports: 500,
   mqtt: 500,
@@ -236,6 +238,7 @@ const LAYER_LABELS: Record<KeybindingLayerId, string> = {
   'ports-search': '端口搜索',
   'favorites-search': '收藏搜索',
   'favorites-editor': '收藏编辑',
+  codex: 'Codex',
   settings: '设置',
   ports: '端口',
   mqtt: 'MQTT',
@@ -257,6 +260,22 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'tab.prev': { title: '上一个主 Tab', group: '全局', layer: 'global', shortcutIds: ['Shift+Tab'], when: "tab != 'ports' && !textInputFocused", weight: 100 },
   'search.focus': { title: '聚焦搜索', group: '全局', layer: 'global', shortcutIds: ['Ctrl+F'], when: '!confirmOpen', weight: 100 },
   'settings.open': { title: '打开设置', group: '全局', layer: 'global', shortcutIds: ['Ctrl+Alt+S'], when: '!confirmOpen', weight: 100 },
+  'codex.float.toggle': { title: '显示/隐藏 Codex 悬浮球', group: 'Codex', layer: 'app', shortcutIds: ['Ctrl+Alt+Q'], when: 'true', weight: 1000, description: '插件窗口激活时立即切换；系统级快捷键请在 uTools 全局功能中绑定。', profileId: 'codex' },
+  'codex.refresh': { title: '刷新 Codex 状态', group: 'Codex', layer: 'codex', shortcutIds: ['Ctrl+R'], when: "tab == 'codex'", weight: 100, profileId: 'codex' },
+  'codex.list.up': { title: '会话焦点上移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['ArrowUp'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
+  'codex.list.down': { title: '会话焦点下移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['ArrowDown'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
+  'codex.selection.toggle': { title: '切换当前项选择', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Space'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
+  'codex.task.openFocused': { title: '打开任务或展开项目', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Enter'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
+  'codex.detail.open': { title: '查看当前项详情', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+ArrowLeft'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
+  'codex.drawer.open': { title: '打开批量与完整操作', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+ArrowRight'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
+  'codex.task.archiveFocused': { title: '归档选中或当前任务', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Delete'], when: "tab == 'codex' && !textInputFocused", weight: 140, risk: 'destructive', profileId: 'codex' },
+  'codex.alias.edit': { title: '编辑当前项别名', group: 'Codex 会话', layer: 'codex', shortcutIds: ['F2'], when: "tab == 'codex' && !textInputFocused", weight: 130, risk: 'data-write', profileId: 'codex' },
+  'codex.pin.toggleFocused': { title: '切换当前项 EyPc 置顶', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+P'], when: "tab == 'codex' && !textInputFocused", weight: 130, risk: 'data-write', profileId: 'codex' },
+  'codex.pin.moveUp': { title: '本地置顶项上移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Alt+ArrowUp'], when: "tab == 'codex' && !textInputFocused", weight: 130, risk: 'data-write', profileId: 'codex' },
+  'codex.pin.moveDown': { title: '本地置顶项下移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Alt+ArrowDown'], when: "tab == 'codex' && !textInputFocused", weight: 130, risk: 'data-write', profileId: 'codex' },
+  'codex.search.focus': { title: '聚焦会话搜索', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+F'], when: "tab == 'codex'", weight: 150, profileId: 'codex' },
+  'codex.layer.cancel': { title: '取消当前交互层', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Escape'], when: "tab == 'codex'", weight: 150, profileId: 'codex' },
+  ...Object.fromEntries(Array.from({ length: 9 }, (_, index) => [`codex.drawer.select.${index + 1}`, { title: `执行操作抽屉第 ${index + 1} 项`, group: 'Codex 会话', layer: 'codex', shortcutIds: [`Ctrl+${index + 1}`], when: "tab == 'codex' && !textInputFocused", weight: 120 - index, profileId: 'codex' as const }])),
   'quickJump.openForward': { title: '快捷跳转', group: '全局', layer: 'global', shortcutIds: ['F'], when: '!confirmOpen && !textInputFocused', weight: 120 },
   'quickJump.openBackward': { title: '反向快捷跳转', group: '全局', layer: 'global', shortcutIds: ['Shift+F'], when: '!confirmOpen && !textInputFocused', weight: 120 },
   'list.up': { title: '列表上移', group: '全局', layer: 'global', shortcutIds: ['ArrowUp', 'Ctrl+K'], when: '!mqttPreviewOpen && (!textInputFocused || activeInputRole == "port-search" || activeInputRole == "port-group-search" || activeInputRole == "mqtt-search" || activeInputRole == "favorite-search" || activeInputRole == "favorite-group-search")', weight: 100 },
@@ -542,6 +561,7 @@ function featureTabProfiles(featureConfigs?: FeatureConfig[]): ShortcutCommandPr
 
 export const SHORTCUT_RESERVATION_RULES: ShortcutReservationRule[] = [
   { shortcutId: 'Shift+Escape', commandId: 'app.hide', when: 'true', description: '全局立即隐藏插件窗口', layer: 'app' },
+  { shortcutId: 'Ctrl+Alt+Q', commandId: 'codex.float.toggle', when: 'true', description: '立即显示或隐藏 Codex 悬浮球', layer: 'app' },
   { shortcutId: 'Escape', commandId: 'confirm.cancel', when: 'confirmOpen', description: '关闭确认弹窗，不穿透到底层', layer: 'confirm' },
   { shortcutId: 'Escape', commandId: 'ports.group.edit.cancel', when: "activeInputRole == 'port-group-editor'", description: '取消端口组编辑', layer: 'port-group-editor' },
   { shortcutId: 'Escape', commandId: 'ports.search.blur', when: "activeInputRole == 'port-search' || activeInputRole == 'port-group-search'", description: '退出端口搜索输入焦点', layer: 'ports-search' },
@@ -842,7 +862,7 @@ function contextWithLayerFlags(context: KeybindingContext): KeybindingContext {
 
 function shouldBlockTextInputShortcut(shortcutId: string, context: KeybindingContext): boolean {
   if (!context.textInputFocused || shortcutId === 'Escape' || shortcutId === 'Shift+Escape') return false
-  if (shortcutId === 'Ctrl+Alt+S') return false
+  if (shortcutId === 'Ctrl+Alt+S' || shortcutId === 'Ctrl+Alt+Q') return false
   if (context.activeInputRole === 'mqtt-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-connection-group-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-config-subscription-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'ArrowUp', 'ArrowDown', 'Ctrl+Delete', 'Ctrl+Backspace', 'Escape', 'Shift+Escape'].includes(shortcutId)
@@ -872,6 +892,7 @@ function profileIdForCommand(commandId: string): ShortcutProfileId {
   if (commandId.startsWith('ports.')) return 'ports'
   if (commandId.startsWith('mqtt.')) return 'mqtt'
   if (commandId.startsWith('favorites.')) return 'favorites'
+  if (commandId.startsWith('codex.')) return 'codex'
   if (commandId.startsWith('settings.')) return 'settings'
   return 'global'
 }
@@ -909,7 +930,7 @@ function defaultBindingsFor(commandId: string, defaultBindings = DEFAULT_KEYBIND
 
 function flattenOverrides(input: KeybindingOverride[] | ShortcutProfileMap = []): Array<KeybindingOverride & { profileId?: ShortcutProfileId }> {
   if (Array.isArray(input)) return input
-  return (['global', 'ports', 'mqtt', 'favorites', 'settings'] as ShortcutProfileId[]).flatMap((profileId) =>
+  return (['global', 'ports', 'mqtt', 'favorites', 'codex', 'settings'] as ShortcutProfileId[]).flatMap((profileId) =>
     (input[profileId]?.keybindingOverrides || []).map((override) => ({ ...override, profileId }))
   )
 }

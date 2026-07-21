@@ -1,4 +1,6 @@
-export type AppTabId = 'ports' | 'mqtt' | 'favorites' | 'settings'
+import type { CodexState } from './codex'
+
+export type AppTabId = 'ports' | 'mqtt' | 'favorites' | 'codex' | 'settings'
 
 export interface FeatureConfig {
   id: AppTabId
@@ -227,7 +229,7 @@ export interface KeybindingOverride {
   disabled?: boolean
 }
 
-export type ShortcutProfileId = 'global' | 'ports' | 'mqtt' | 'favorites' | 'settings'
+export type ShortcutProfileId = 'global' | 'ports' | 'mqtt' | 'favorites' | 'codex' | 'settings'
 
 export interface ToolPreviewPrefs {
   hoverPreviewEnabled: boolean
@@ -271,6 +273,7 @@ export interface AppState {
   collapsedFavoriteGroupIds: string[]
   favorites: FavoriteNode[]
   mqtt: MqttState
+  codex: CodexState
   settings: AppSettings
   updatedAt: number
 }

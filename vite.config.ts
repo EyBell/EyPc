@@ -1,5 +1,6 @@
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vitest/config'
+import { resolve } from 'node:path'
 import { handleDevPortApi } from './src/platform/devPortServer'
 
 export default defineConfig({
@@ -22,6 +23,12 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    emptyOutDir: true
+    emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        main: resolve(import.meta.dirname, 'index.html'),
+        float: resolve(import.meta.dirname, 'float.html')
+      }
+    }
   }
 })

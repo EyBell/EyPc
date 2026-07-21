@@ -8,6 +8,8 @@ export interface FeatureRoute {
   tab: AppTabId
   focusSearch: boolean
   favoriteQuick?: boolean
+  actionId?: string
+  hideAfterAction?: boolean
   settingsMaintenanceSection?: 'features'
 }
 
@@ -36,6 +38,12 @@ export function routePluginFeature(payload: PluginEnterPayload | null | undefine
       return enabledRoute('mqtt', true, featureConfigs)
     case 'eypc-favorites':
       return enabledRoute('favorites', true, featureConfigs)
+    case 'eypc-codex':
+      return enabledRoute('codex', false, featureConfigs)
+    case 'eypc-codex-toggle':
+      return isFeatureEnabled('codex', featureConfigs)
+        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.float.toggle', hideAfterAction: true }
+        : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'codex.float.toggle' }
     case 'eypc-favorites-quick':
       return isFeatureEnabled('favorites', featureConfigs)
         ? { tab: 'favorites', focusSearch: false, favoriteQuick: true }

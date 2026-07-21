@@ -20,6 +20,7 @@ import { createShortcutHintTiming } from './runtime/shortcutHintTiming'
 
 const platform = getPlatform()
 const MqttPage = defineAsyncComponent(() => import('./pages/MqttPage.vue'))
+const CodexPage = defineAsyncComponent(() => import('./pages/CodexPage.vue'))
 const runtime = createAppRuntime(normalizeAppState(platform.storage.getState()))
 const version = ref(0)
 const shiftPreview = ref(false)
@@ -28,6 +29,7 @@ const initialMaintenanceSection = ref<'features' | null>(null)
 const appRoot = ref<HTMLElement | null>(null)
 let disposeRuntime: (() => void) | null = null
 let disposeEnterPayload: (() => void) | null = null
+let disposeFloatAction: (() => void) | null = null
 const shortcutHintTiming = createShortcutHintTiming({
   show: () => { shortcutHints.value = true },
   hide: () => { shortcutHints.value = false }
@@ -348,11 +350,16 @@ function clearShiftPreview() {
 
 function applyPluginRoute(payload: { code?: string } | null) {
   const route = routePluginFeature(payload, snapshot.value.state.settings.featureConfigs, snapshot.value.state.activeTab)
-  const restoreEntry = !payload?.code || payload.code === 'eypc-main' || !['eypc-ports', 'eypc-mqtt', 'eypc-favorites', 'eypc-favorites-quick', 'eypc-settings'].includes(payload.code)
+  const restoreEntry = !payload?.code || payload.code === 'eypc-main' || payload.code === 'eypc-codex-toggle' || !['eypc-ports', 'eypc-mqtt', 'eypc-favorites', 'eypc-favorites-quick', 'eypc-codex', 'eypc-settings'].includes(payload.code)
   initialMaintenanceSection.value = route.settingsMaintenanceSection || null
   if (typeof route.favoriteQuick === 'boolean') runtime.setFavoriteQuickMode(route.favoriteQuick)
   else if (!restoreEntry) runtime.setFavoriteQuickMode(false)
   runtime.setTab(route.tab)
+  if (route.actionId) {
+    runtime.dispatch(route.actionId, { source: 'utools-feature' })
+    if (route.hideAfterAction) requestAnimationFrame(() => { void platform.app.hide() })
+    else if (payload?.code === 'eypc-codex-toggle') requestAnimationFrame(() => { platform.app.show?.() })
+  }
   if (route.focusSearch) {
     runtime.dispatch(route.tab === 'favorites' ? 'favorites.search.focus' : route.tab === 'mqtt' ? 'mqtt.search.focus' : 'search.focus')
   }
@@ -405,6 +412,15 @@ watch(() => snapshot.value.listFocusRequestId, () => {
   })
 })
 
+watch(() => ({
+  visible: snapshot.value.visibleFeatures.some((feature) => feature.id === 'codex') && snapshot.value.codex.settings.floatEnabled,
+  snapshot: snapshot.value.codexFloat,
+  position: snapshot.value.codex.settings.position,
+  expandedSizes: snapshot.value.codex.settings.expandedSizes
+}), (payload) => {
+  platform.float.sync(payload)
+}, { deep: true, immediate: true })
+
 onMounted(() => {
   disposeRuntime = runtime.subscribe(() => {
     version.value += 1
@@ -416,13 +432,20 @@ onMounted(() => {
   disposeEnterPayload = platform.onEnterPayload?.((payload) => {
     applyPluginRoute(payload)
   }) || null
+  disposeFloatAction = platform.float.onAction(({ actionId, args }) => {
+    runtime.dispatch(actionId, args)
+  })
   platform.clearEnterPayload()
+  runtime.startCodex()
   void runtime.scanPorts()
 })
 
 onUnmounted(() => {
   disposeRuntime?.()
   disposeEnterPayload?.()
+  disposeFloatAction?.()
+  runtime.dispose()
+  platform.float.close()
   shortcutHintTiming.dispose()
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('keyup', onKeyup)
@@ -507,6 +530,12 @@ onUnmounted(() => {
           @update-favorite-draft="runtime.updateFavoriteDraft"
           @save-favorite-draft="runtime.saveFavoriteDraft"
           @cancel-favorite-draft="runtime.cancelFavoriteDraft"
+          @dispatch="runtime.dispatch"
+        />
+      </template>
+      <template #codex>
+        <CodexPage
+          :snapshot="snapshot.codex"
           @dispatch="runtime.dispatch"
         />
       </template>

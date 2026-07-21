@@ -1,5 +1,5 @@
 const { Buffer } = require('node:buffer')
-const { execFile } = require('node:child_process')
+const { execFile, spawn } = require('node:child_process')
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
@@ -12,11 +12,76 @@ const MQTT_SECRETS_FILE_NAME = 'mqtt-secrets-local.json'
 const MQTT_SECRETS_KEY_FILE_NAME = 'mqtt-secrets-local.key'
 const MQTT_SECRETS_ENCRYPTION_VERSION = 2
 const MQTT_SECRETS_AES_ALGORITHM = 'aes-256-gcm'
+const CODEX_RPC_TIMEOUT_MS = 12_000
+const CODEX_PROXY_OUTPUT_LIMIT = 16 * 1024
+const CODEX_PROCESS_OUTPUT_LIMIT = 256 * 1024
+const CODEX_THREAD_ALIAS_TTL_MS = 10 * 60_000
+const CODEX_THREAD_LIMIT = 100
+const CODEX_THREAD_PAGE_LIMIT = 500
+const CODEX_NATIVE_STATE_MAX_BYTES = 4 * 1024 * 1024
+const CODEX_THREAD_TURN_STATUS_CONCURRENCY = 10
+const CODEX_THREAD_TURN_STATUS_TIMEOUT_MS = 5_000
+const CODEX_THREAD_TURN_STATUS_RETRY_MS = 30_000
+const CODEX_THREAD_FIRST_PROMPT_PAGE_LIMIT = 50
+const CODEX_THREAD_FIRST_PROMPT_PAGE_BUDGET = 4
+const CODEX_FLOAT_WATER_SIZE = { width: 104, height: 104 }
+const CODEX_FLOAT_CARD_SIZE = { width: 166, height: 92 }
+const CODEX_FLOAT_EXPANDED_WIDTH = 360
+const CODEX_FLOAT_EXPANDED_MIN_WIDTH = 340
+const CODEX_FLOAT_EXPANDED_MIN_HEIGHT = 280
+const CODEX_FLOAT_EXPANDED_MAX_HEIGHT = 460
+const CODEX_FLOAT_MARGIN = 12
+const CODEX_FLOAT_CHANNELS = {
+  snapshot: 'eypc-float:snapshot',
+  state: 'eypc-float:state',
+  expansion: 'eypc-float:expansion',
+  action: 'eypc-float:action',
+  dragStart: 'eypc-float:drag-start',
+  dragMove: 'eypc-float:drag-move',
+  dragEnd: 'eypc-float:drag-end',
+  resizeStart: 'eypc-float:resize-start',
+  resizeMove: 'eypc-float:resize-move',
+  resizeEnd: 'eypc-float:resize-end',
+  resizeCancel: 'eypc-float:resize-cancel'
+}
 let lastEnterPayload = null
 const enterPayloadListeners = new Set()
 let mqttSqliteAdapter = null
 let mqttStorageLastError = ''
 let mqttMigratedLegacyArchive = false
+let codexProcess = null
+let codexLaunchKey = ''
+let codexStartupHint = ''
+let codexReadyPromise = null
+let codexRpcId = 0
+let codexRpcBuffer = ''
+const codexRpcPending = new Map()
+const codexThreadActions = new Map()
+const codexProjectActions = new Map()
+const codexThreadTurnStatusCache = new Map()
+const codexThreadFirstPromptCache = new Map()
+let codexThreadTurnStatusRpcAvailable = null
+let codexThreadFirstPromptScanRunning = false
+let codexThreadFirstPromptScanGeneration = 0
+let codexFloatWindow = null
+let codexFloatExpanded = false
+let codexFloatPinned = false
+let codexFloatEdge = 'right'
+let codexFloatSnapshot = null
+let codexFloatDrag = null
+let codexFloatResize = null
+let codexFloatExpandedSizes = []
+let codexFloatPositionDisplayId = ''
+let codexFloatPersistent = false
+let codexFloatWorkspaceDiagnostics = {
+  supported: process.platform === 'darwin',
+  alwaysOnTop: false,
+  allWorkspaces: false,
+  visibleOnFullScreen: false,
+  checkedAt: 0,
+  errorCode: process.platform === 'darwin' ? 'not-checked' : 'unsupported'
+}
+const codexFloatActionListeners = new Set()
 
 function run(command, args) {
   return new Promise((resolve) => {
@@ -1042,6 +1107,1780 @@ async function listFavoriteDirectory(target) {
   }
 }
 
+function codexError(code, message) {
+  const error = new Error(message)
+  error.code = code
+  return error
+}
+
+function codexErrorResult(error) {
+  const sourceCode = error && typeof error === 'object' ? String(error.code || '') : ''
+  const code = sourceCode === 'ETIMEDOUT' || sourceCode === 'timeout'
+    ? 'timeout'
+    : sourceCode === 'not-authenticated'
+      ? 'not-authenticated'
+      : sourceCode === 'runtime-unavailable'
+        ? 'runtime-unavailable'
+        : sourceCode === 'process-exited'
+          ? 'process-exited'
+          : sourceCode === 'protocol-error'
+            ? 'protocol-error'
+            : 'unavailable'
+  const messages = {
+    timeout: 'Codex App Server 响应超时',
+    'not-authenticated': 'Codex 尚未登录或登录已失效',
+    'runtime-unavailable': 'Codex CLI 启动失败，请检查本机 Node/Codex 安装',
+    'process-exited': 'Codex App Server 已退出',
+    'protocol-error': 'Codex App Server 返回了不兼容的数据',
+    unavailable: '未找到可用的 Codex CLI'
+  }
+  return { ok: false, error: { code, message: messages[code] }, receivedAt: Date.now() }
+}
+
+function codexRecord(value) {
+  return value && typeof value === 'object' ? value : {}
+}
+
+function codexNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function codexTimestampMs(value) {
+  const parsed = codexNumber(value)
+  if (parsed <= 0) return 0
+  return parsed < 10_000_000_000 ? parsed * 1000 : parsed
+}
+
+function codexPercent(value) {
+  return Math.max(0, Math.min(100, Math.round(codexNumber(value))))
+}
+
+function codexPlatformPath() {
+  return process.platform === 'win32' ? path.win32 : path
+}
+
+function codexBundledBinary(jsEntry) {
+  const platformPath = codexPlatformPath()
+  const target = process.platform === 'win32'
+    ? process.arch === 'arm64' ? ['codex-win32-arm64', 'aarch64-pc-windows-msvc', 'codex.exe'] : ['codex-win32-x64', 'x86_64-pc-windows-msvc', 'codex.exe']
+    : process.platform === 'darwin'
+      ? process.arch === 'x64' ? ['codex-darwin-x64', 'x86_64-apple-darwin', 'codex'] : ['codex-darwin-arm64', 'aarch64-apple-darwin', 'codex']
+      : null
+  if (!target || !jsEntry) return ''
+  const packageRoot = platformPath.dirname(platformPath.dirname(jsEntry))
+  const packageName = target[0]
+  const vendorTail = ['vendor', target[1], 'bin', target[2]]
+  const candidates = [
+    platformPath.join(packageRoot, 'node_modules', '@openai', packageName, ...vendorTail),
+    platformPath.join(platformPath.dirname(packageRoot), packageName, ...vendorTail),
+    platformPath.join(packageRoot, ...vendorTail)
+  ]
+  return candidates.find((candidate) => {
+    try { return fs.existsSync(candidate) } catch { return false }
+  }) || ''
+}
+
+function codexJavascriptEntry(candidate, resolved) {
+  const platformPath = codexPlatformPath()
+  if (/\.[cm]?js$/i.test(resolved || '')) return resolved
+  if (!/\.(?:cmd|bat)$/i.test(candidate || '')) return ''
+  const npmEntry = platformPath.join(platformPath.dirname(candidate), 'node_modules', '@openai', 'codex', 'bin', 'codex.js')
+  try { return fs.existsSync(npmEntry) ? npmEntry : '' } catch { return '' }
+}
+
+function codexNodeRuntime(candidate) {
+  const platformPath = codexPlatformPath()
+  const env = process.env || {}
+  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path')
+  const pathValue = pathKey && typeof env[pathKey] === 'string' ? env[pathKey] : ''
+  const candidates = [platformPath.join(platformPath.dirname(candidate), process.platform === 'win32' ? 'node.exe' : 'node')]
+  if (process.platform === 'win32') {
+    if (typeof env.NVM_SYMLINK === 'string') candidates.push(platformPath.join(env.NVM_SYMLINK, 'node.exe'))
+    if (typeof env.VOLTA_HOME === 'string') candidates.push(platformPath.join(env.VOLTA_HOME, 'bin', 'node.exe'))
+    if (typeof env.ProgramFiles === 'string') candidates.push(platformPath.join(env.ProgramFiles, 'nodejs', 'node.exe'))
+  }
+  for (const directory of pathValue.split(platformPath.delimiter).filter(Boolean)) {
+    candidates.push(platformPath.join(directory, process.platform === 'win32' ? 'node.exe' : 'node'))
+  }
+  return candidates.find((nodePath) => {
+    try { return fs.existsSync(nodePath) } catch { return false }
+  }) || ''
+}
+
+function codexLaunchPlan(candidate, source = 'unknown', detected = false) {
+  const platformPath = codexPlatformPath()
+  const command = candidate || 'codex'
+  const argsPrefix = []
+  if (platformPath.isAbsolute(command)) {
+    try {
+      const resolved = fs.realpathSync(command)
+      const jsEntry = codexJavascriptEntry(command, resolved)
+      const bundledBinary = codexBundledBinary(jsEntry)
+      if (bundledBinary) {
+        return { command: bundledBinary, argsPrefix: [], key: bundledBinary, source, detected: true }
+      }
+      const nodeRuntime = codexNodeRuntime(command)
+      if (jsEntry && nodeRuntime) {
+        return { command: nodeRuntime, argsPrefix: [jsEntry], key: `${nodeRuntime}\u0000${jsEntry}`, source, detected: true }
+      }
+      if (jsEntry || /\.(?:cmd|bat)$/i.test(command)) {
+        return { command, argsPrefix: [], key: command, source, detected: false, invalid: true }
+      }
+    } catch {}
+  }
+  return { command, argsPrefix, key: command, source, detected }
+}
+
+function readCodexProbe(command, args, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(guard)
+      resolve(value)
+    }
+    const guard = setTimeout(() => finish(''), timeoutMs + 250)
+    try {
+      execFile(command, args, {
+        encoding: 'utf8',
+        maxBuffer: CODEX_PROXY_OUTPUT_LIMIT,
+        timeout: timeoutMs,
+        windowsHide: true
+      }, (error, stdout) => finish(error ? '' : String(stdout || '')))
+    } catch {
+      finish('')
+    }
+  })
+}
+
+function codexScutilValue(output, key) {
+  const prefix = `${key} :`
+  const line = String(output || '').split(/\r?\n/).find((candidate) => candidate.trim().startsWith(prefix))
+  return line ? line.trim().slice(prefix.length).trim() : ''
+}
+
+function codexLoopbackPacUrl(value) {
+  const match = String(value || '').trim().match(/^http:\/\/(127\.0\.0\.1|localhost|\[::1\]):(\d{1,5})(\/\S*)?$/i)
+  if (!match) return ''
+  const port = Number(match[2])
+  return port > 0 && port <= 65_535 ? match[0] : ''
+}
+
+function codexStaticPacProxy(value) {
+  const source = String(value || '').replace(/^\uFEFF/, '').trim()
+  if (!source || Buffer.byteLength(source, 'utf8') > CODEX_PROXY_OUTPUT_LIMIT) return ''
+  const match = source.match(/^function\s+FindProxyForURL\s*\(\s*[A-Za-z_$][\w$]*\s*,\s*[A-Za-z_$][\w$]*\s*\)\s*\{\s*return\s+(["'])([^"'\\\r\n]*)\1\s*;\s*\}\s*;?$/i)
+  if (!match) return ''
+  const firstDirective = match[2].split(';').map((item) => item.trim()).filter(Boolean)[0] || ''
+  const proxy = firstDirective.match(/^PROXY\s+(127\.0\.0\.1|localhost|\[::1\]):(\d{1,5})$/i)
+  if (!proxy) return ''
+  const port = Number(proxy[2])
+  if (port <= 0 || port > 65_535) return ''
+  return `http://${proxy[1].toLowerCase()}:${port}`
+}
+
+function codexHasExplicitProxyEnvironment(env) {
+  const proxyKeys = new Set(['http_proxy', 'https_proxy', 'all_proxy'])
+  return Object.entries(env || {}).some(([key, value]) => proxyKeys.has(key.toLowerCase()) && typeof value === 'string' && value.trim())
+}
+
+async function resolveCodexProxyEnvironment() {
+  const inherited = process.env || {}
+  if (process.platform !== 'darwin' || codexHasExplicitProxyEnvironment(inherited)) return {}
+  const systemProxy = await readCodexProbe('/usr/sbin/scutil', ['--proxy'], 1_000)
+  if (codexScutilValue(systemProxy, 'ProxyAutoConfigEnable') !== '1') return {}
+  const pacUrl = codexLoopbackPacUrl(codexScutilValue(systemProxy, 'ProxyAutoConfigURLString'))
+  if (!pacUrl) return {}
+  const pac = await readCodexProbe('/usr/bin/curl', [
+    '--fail',
+    '--silent',
+    '--show-error',
+    '--noproxy',
+    '*',
+    '--proto',
+    '=http',
+    '--connect-timeout',
+    '1',
+    '--max-time',
+    '2',
+    pacUrl
+  ], 2_500)
+  const proxy = codexStaticPacProxy(pac)
+  if (!proxy) return {}
+  return {
+    HTTP_PROXY: proxy,
+    HTTPS_PROXY: proxy,
+    http_proxy: proxy,
+    https_proxy: proxy
+  }
+}
+
+function codexSpawnEnvironment(command, additions = {}) {
+  const platformPath = codexPlatformPath()
+  const env = { ...(process.env || {}), ...additions }
+  if (!platformPath.isAbsolute(command)) return env
+  const pathKey = process.platform === 'win32'
+    ? Object.keys(env).find((key) => key.toLowerCase() === 'path') || 'Path'
+    : 'PATH'
+  const commandDir = platformPath.dirname(command)
+  const existing = typeof env[pathKey] === 'string' ? env[pathKey] : ''
+  const entries = existing.split(platformPath.delimiter).filter(Boolean)
+  env[pathKey] = [commandDir, ...entries.filter((entry) => entry !== commandDir)].join(platformPath.delimiter)
+  return env
+}
+
+function resolveCodexLaunchPlan() {
+  const platformPath = codexPlatformPath()
+  const candidates = []
+  const env = process.env || {}
+  if (typeof env.CODEX_CLI_PATH === 'string' && env.CODEX_CLI_PATH.trim()) candidates.push({ path: env.CODEX_CLI_PATH.trim(), source: 'configured' })
+  const home = os.homedir()
+  if (process.platform === 'win32') {
+    const appData = typeof env.APPDATA === 'string' ? env.APPDATA : platformPath.join(home, 'AppData', 'Roaming')
+    const localAppData = typeof env.LOCALAPPDATA === 'string' ? env.LOCALAPPDATA : platformPath.join(home, 'AppData', 'Local')
+    const voltaHomes = [...new Set([
+      typeof env.VOLTA_HOME === 'string' && env.VOLTA_HOME.trim() ? env.VOLTA_HOME.trim() : '',
+      platformPath.join(localAppData, 'Volta'),
+      platformPath.join(home, '.volta')
+    ].filter(Boolean))]
+    candidates.push(
+      { path: platformPath.join(appData, 'npm', 'codex.cmd'), source: 'npm-global' },
+      ...voltaHomes.flatMap((voltaHome) => [
+        { path: platformPath.join(voltaHome, 'bin', 'codex.exe'), source: 'volta' },
+        { path: platformPath.join(voltaHome, 'bin', 'codex.cmd'), source: 'volta' }
+      ]),
+      ...(typeof env.NVM_SYMLINK === 'string' ? [{ path: platformPath.join(env.NVM_SYMLINK, 'codex.cmd'), source: 'nvm' }] : []),
+      { path: platformPath.join(home, '.codex', 'bin', 'codex.exe'), source: 'local' },
+      { path: platformPath.join(home, '.local', 'bin', 'codex.exe'), source: 'local' },
+      { path: platformPath.join(localAppData, 'Programs', 'Codex', 'codex.exe'), source: 'local' }
+    )
+  } else {
+    candidates.push(
+      { path: platformPath.join(home, '.volta', 'bin', 'codex'), source: 'volta' },
+      { path: platformPath.join(home, '.local', 'bin', 'codex'), source: 'local' },
+      { path: '/opt/homebrew/bin/codex', source: 'homebrew' },
+      { path: '/usr/local/bin/codex', source: 'homebrew' }
+    )
+    try {
+      const nvmRoot = platformPath.join(home, '.nvm', 'versions', 'node')
+      const versions = fs.readdirSync(nvmRoot, { withFileTypes: true })
+        .filter((entry) => entry && typeof entry.isDirectory === 'function' && entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
+      for (const version of versions) candidates.push({ path: platformPath.join(nvmRoot, version, 'bin', 'codex'), source: 'nvm' })
+    } catch {}
+  }
+  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path')
+  const pathValue = pathKey && typeof env[pathKey] === 'string' ? env[pathKey] : ''
+  const executableNames = process.platform === 'win32' ? ['codex.exe', 'codex.cmd', 'codex.bat'] : ['codex']
+  for (const directory of pathValue.split(platformPath.delimiter).filter(Boolean)) {
+    for (const executable of executableNames) candidates.push({ path: platformPath.join(directory, executable), source: 'path' })
+  }
+  let invalidPlan = null
+  for (const candidate of candidates) {
+    if (!candidate.path || !platformPath.isAbsolute(candidate.path)) continue
+    try {
+      if (fs.existsSync(candidate.path)) {
+        const plan = codexLaunchPlan(candidate.path, candidate.source, true)
+        if (plan.detected) return plan
+        if (!invalidPlan) invalidPlan = plan
+      }
+    } catch {}
+  }
+  return invalidPlan || codexLaunchPlan('codex', 'unknown', false)
+}
+
+function readCodexProbeResult(command, args, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(guard)
+      resolve(value)
+    }
+    const guard = setTimeout(() => finish({ ok: false, stdout: '' }), timeoutMs + 250)
+    try {
+      execFile(command, args, {
+        encoding: 'utf8',
+        maxBuffer: CODEX_PROCESS_OUTPUT_LIMIT,
+        timeout: timeoutMs,
+        windowsHide: true
+      }, (error, stdout) => finish({ ok: !error, stdout: error ? '' : String(stdout || '') }))
+    } catch {
+      finish({ ok: false, stdout: '' })
+    }
+  })
+}
+
+function inspectCodexConfigFile() {
+  const platformPath = codexPlatformPath()
+  const env = process.env || {}
+  const codexHome = typeof env.CODEX_HOME === 'string' && env.CODEX_HOME.trim()
+    ? env.CODEX_HOME.trim()
+    : platformPath.join(os.homedir(), '.codex')
+  const configFile = platformPath.join(codexHome, 'config.toml')
+  try {
+    if (!fs.existsSync(configFile)) return 'missing'
+    if (typeof fs.accessSync === 'function') fs.accessSync(configFile, fs.constants && fs.constants.R_OK)
+    return 'detected'
+  } catch {
+    return 'unreadable'
+  }
+}
+
+async function inspectCodexRelatedProcess() {
+  if (codexProcessAlive()) return 'running'
+  if (process.platform === 'darwin') {
+    const result = await readCodexProbeResult('/bin/ps', ['-ax', '-o', 'comm='], 1_500)
+    if (!result.ok) return 'unknown'
+    const running = result.stdout.split(/\r?\n/).some((line) => {
+      const executable = line.trim().split('/').pop() || ''
+      return /^codex(?:\.exe)?$/i.test(executable)
+    })
+    return running ? 'running' : 'not-running'
+  }
+  if (process.platform === 'win32') {
+    const platformPath = codexPlatformPath()
+    const systemRoot = process.env.SystemRoot || 'C:\\Windows'
+    const tasklist = platformPath.join(systemRoot, 'System32', 'tasklist.exe')
+    const result = await readCodexProbeResult(tasklist, ['/FO', 'CSV', '/NH'], 1_500)
+    if (!result.ok) return 'unknown'
+    const running = result.stdout.split(/\r?\n/).some((line) => /^"?codex(?:\.exe)?"?,/i.test(line.trim()))
+    return running ? 'running' : 'not-running'
+  }
+  return 'unknown'
+}
+
+async function inspectCodexEnvironment() {
+  const platform = process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'unsupported'
+  const launch = resolveCodexLaunchPlan()
+  const processState = await inspectCodexRelatedProcess()
+  const runtimeState = platform === 'unsupported' ? 'unsupported' : launch.detected ? 'detected' : launch.invalid ? 'unusable' : 'missing'
+  return {
+    version: 1,
+    checking: false,
+    platform,
+    runtimeState,
+    runtimeSource: launch.detected || launch.invalid ? launch.source : 'unknown',
+    processState,
+    configState: platform === 'unsupported' ? 'unknown' : inspectCodexConfigFile(),
+    connectionState: codexProcessAlive() ? 'connected' : 'not-checked',
+    checkedAt: Date.now(),
+    ...(launch.invalid ? { errorCode: 'runtime-unavailable' } : {})
+  }
+}
+
+function rejectCodexPending(error) {
+  for (const pending of codexRpcPending.values()) {
+    clearTimeout(pending.timeoutId)
+    pending.reject(error)
+  }
+  codexRpcPending.clear()
+}
+
+function inspectCodexStderr(chunk) {
+  const sample = Buffer.isBuffer(chunk)
+    ? chunk.subarray(0, 512).toString('utf8')
+    : String(chunk || '').slice(0, 512)
+  const normalized = sample.toLowerCase()
+  if ((normalized.includes('env: node') || normalized.includes('node: not found')) && normalized.includes('no such file')) {
+    codexStartupHint = 'node-not-found'
+  }
+}
+
+function codexProcessEndError(reason) {
+  const reasonCode = reason && typeof reason === 'object' ? String(reason.code || '') : ''
+  if (reasonCode === 'ENOENT' || codexStartupHint === 'node-not-found') {
+    return codexError('runtime-unavailable', 'Codex runtime unavailable')
+  }
+  return codexError('process-exited', 'Codex App Server exited')
+}
+
+function resetCodexThreadSessionState() {
+  codexThreadActions.clear()
+  codexProjectActions.clear()
+  codexThreadTurnStatusCache.clear()
+  codexThreadFirstPromptCache.clear()
+  codexThreadTurnStatusRpcAvailable = null
+  codexThreadFirstPromptScanRunning = false
+  codexThreadFirstPromptScanGeneration += 1
+}
+
+function onCodexProcessEnd(processRef = codexProcess, reason = null) {
+  if (processRef && processRef !== codexProcess) return
+  rejectCodexPending(codexProcessEndError(reason))
+  codexProcess = null
+  codexLaunchKey = ''
+  codexStartupHint = ''
+  codexReadyPromise = null
+  codexRpcBuffer = ''
+  resetCodexThreadSessionState()
+}
+
+function handleCodexStdout(chunk) {
+  codexRpcBuffer += String(chunk || '')
+  if (codexRpcBuffer.length > 1_000_000) {
+    codexRpcBuffer = ''
+    rejectCodexPending(codexError('protocol-error', 'Codex App Server frame overflow'))
+    return
+  }
+  for (;;) {
+    const newline = codexRpcBuffer.indexOf('\n')
+    if (newline < 0) break
+    const line = codexRpcBuffer.slice(0, newline).trim()
+    codexRpcBuffer = codexRpcBuffer.slice(newline + 1)
+    if (!line) continue
+    let message
+    try {
+      message = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (!message || typeof message !== 'object' || !Number.isInteger(message.id)) continue
+    const pending = codexRpcPending.get(message.id)
+    if (!pending) continue
+    codexRpcPending.delete(message.id)
+    clearTimeout(pending.timeoutId)
+    if (message.error) {
+      const error = codexError('protocol-error', 'Codex App Server request failed')
+      const rpcCode = Number(codexRecord(message.error).code)
+      if (Number.isFinite(rpcCode)) error.rpcCode = rpcCode
+      pending.reject(error)
+    } else pending.resolve(codexRecord(message.result))
+  }
+}
+
+function sendCodexRpc(method, params, timeoutMs = CODEX_RPC_TIMEOUT_MS) {
+  if (!codexProcess || !codexProcess.stdin || typeof codexProcess.stdin.write !== 'function') {
+    return Promise.reject(codexError('process-exited', 'Codex App Server is unavailable'))
+  }
+  const id = ++codexRpcId
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      codexRpcPending.delete(id)
+      reject(codexError('timeout', 'Codex App Server request timed out'))
+    }, timeoutMs)
+    codexRpcPending.set(id, { resolve, reject, timeoutId })
+    try {
+      codexProcess.stdin.write(`${JSON.stringify({ method, id, params: params || {} })}\n`)
+    } catch {
+      clearTimeout(timeoutId)
+      codexRpcPending.delete(id)
+      reject(codexError('process-exited', 'Codex App Server write failed'))
+    }
+  })
+}
+
+function notifyCodexRpc(method, params) {
+  try {
+    codexProcess?.stdin?.write(`${JSON.stringify({ method, params: params || {} })}\n`)
+  } catch {}
+}
+
+function codexProcessAlive() {
+  return Boolean(codexProcess && codexProcess.exitCode == null && codexProcess.killed !== true)
+}
+
+async function startCodexServer() {
+  if (typeof spawn !== 'function') throw codexError('unavailable', 'Codex process bridge is unavailable')
+  const launch = resolveCodexLaunchPlan()
+  if (!launch.detected) throw codexError('runtime-unavailable', 'Codex runtime unavailable')
+  if (codexReadyPromise && codexLaunchKey === launch.key) return codexReadyPromise
+  if (codexProcessAlive()) throw codexError('unavailable', 'Previous Codex App Server session is still exiting')
+  codexLaunchKey = launch.key
+  codexStartupHint = ''
+  const readyPromise = (async () => {
+    const proxyEnvironment = await resolveCodexProxyEnvironment()
+    if (codexReadyPromise !== readyPromise) throw codexError('process-exited', 'Codex App Server session closed')
+    codexProcess = spawn(launch.command, [...launch.argsPrefix, 'app-server', '--listen', 'stdio://'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      env: codexSpawnEnvironment(launch.command, proxyEnvironment),
+      cwd: os.homedir()
+    })
+    if (!codexProcess || !codexProcess.stdin || !codexProcess.stdout) {
+      onCodexProcessEnd()
+      throw codexError('unavailable', 'Codex App Server pipes unavailable')
+    }
+    const processRef = codexProcess
+    const processEnd = (reason) => onCodexProcessEnd(processRef, reason)
+    codexProcess.stdout.on('data', handleCodexStdout)
+    codexProcess.stderr?.on('data', inspectCodexStderr)
+    codexProcess.once?.('error', processEnd)
+    codexProcess.once?.('exit', (code) => processEnd({ exitCode: code }))
+    await sendCodexRpc('initialize', {
+      clientInfo: { name: 'eypc_codex_quota', title: 'EyPc Codex Quota', version: '0.1.0' },
+      capabilities: { experimentalApi: true }
+    })
+    notifyCodexRpc('initialized', {})
+    return true
+  })()
+  codexReadyPromise = readyPromise
+  return readyPromise.catch((error) => {
+    if (codexReadyPromise === readyPromise) closeCodexServer()
+    throw error
+  })
+}
+
+async function requestCodexRpc(method, params, timeoutMs = CODEX_RPC_TIMEOUT_MS) {
+  await startCodexServer()
+  return sendCodexRpc(method, params, timeoutMs)
+}
+
+function closeCodexServer() {
+  const processRef = codexProcess
+  rejectCodexPending(codexError('process-exited', 'Codex App Server session closed'))
+  codexProcess = null
+  codexLaunchKey = ''
+  codexStartupHint = ''
+  codexReadyPromise = null
+  codexRpcBuffer = ''
+  try { processRef?.stdout?.off?.('data', handleCodexStdout) } catch {}
+  try { processRef?.stderr?.off?.('data', inspectCodexStderr) } catch {}
+  try { processRef?.stdin?.end() } catch {}
+  try { processRef?.stdout?.destroy?.() } catch {}
+  try { processRef?.stderr?.destroy?.() } catch {}
+  resetCodexThreadSessionState()
+}
+
+function sanitizeCodexQuotaWindow(value) {
+  const source = codexRecord(value)
+  if (!Object.keys(source).length || typeof source.usedPercent !== 'number') return null
+  return {
+    remainingPercent: codexPercent(100 - source.usedPercent),
+    resetAt: codexTimestampMs(source.resetsAt) || null,
+    windowMinutes: codexNumber(source.windowDurationMins) || null
+  }
+}
+
+function sanitizeCodexQuota(rateResult, accountResult) {
+  const rateSource = codexRecord(rateResult)
+  const byLimit = codexRecord(rateSource.rateLimitsByLimitId)
+  const selected = codexRecord(byLimit.codex || Object.values(byLimit).find((value) => codexRecord(value).limitId === 'codex') || rateSource.rateLimits)
+  const windows = [sanitizeCodexQuotaWindow(selected.primary), sanitizeCodexQuotaWindow(selected.secondary)].filter(Boolean)
+  windows.sort((a, b) => (a.windowMinutes || Number.MAX_SAFE_INTEGER) - (b.windowMinutes || Number.MAX_SAFE_INTEGER))
+  let short = windows.find((window) => window.windowMinutes && window.windowMinutes <= 24 * 60) || null
+  let weekly = [...windows].reverse().find((window) => window.windowMinutes && window.windowMinutes > 24 * 60) || null
+  const account = codexRecord(codexRecord(accountResult).account)
+  const plan = typeof selected.planType === 'string'
+    ? selected.planType
+    : typeof account.planType === 'string'
+      ? account.planType
+      : ''
+  return { plan: plan.slice(0, 64), short, weekly }
+}
+
+function sanitizeCodexConfig(value) {
+  const config = codexRecord(codexRecord(value).config)
+  return {
+    model: typeof config.model === 'string' ? config.model.slice(0, 120) : '',
+    reasoningEffort: typeof config.model_reasoning_effort === 'string' ? config.model_reasoning_effort.slice(0, 80) : '',
+    serviceTier: typeof config.service_tier === 'string' ? config.service_tier.slice(0, 80) : ''
+  }
+}
+
+function validCodexThreadId(value) {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+}
+
+function codexThreadKey(threadId) {
+  return crypto.createHash('sha256').update(threadId).digest('hex').slice(0, 32)
+}
+
+function codexThreadAlias(threadId, now, metadata = {}) {
+  const key = codexThreadKey(threadId)
+  for (const [alias, entry] of codexThreadActions) {
+    if (entry.expiresAt <= now) codexThreadActions.delete(alias)
+    else if (entry.key === key && entry.threadId === threadId) {
+      entry.expiresAt = now + CODEX_THREAD_ALIAS_TTL_MS
+      entry.projectKey = metadata.projectKey || entry.projectKey || ''
+      entry.sourceFingerprint = metadata.sourceFingerprint || entry.sourceFingerprint || ''
+      return { key, alias }
+    }
+  }
+  const alias = `ct_${crypto.randomBytes(18).toString('base64url')}`
+  codexThreadActions.set(alias, {
+    key,
+    threadId,
+    expiresAt: now + CODEX_THREAD_ALIAS_TTL_MS,
+    projectKey: metadata.projectKey || '',
+    sourceFingerprint: metadata.sourceFingerprint || ''
+  })
+  return { key, alias }
+}
+
+function codexNativeString(value, maximum = 240) {
+  return typeof value === 'string' && value.length > 0 && value.length <= maximum && !/[\u0000-\u001f]/.test(value) ? value : ''
+}
+
+function codexNativeStringList(value, maximum = 100_000) {
+  if (!Array.isArray(value) || value.length > maximum) throw codexError('protocol-error', 'Codex native project state is invalid')
+  const result = []
+  for (const item of value) {
+    const normalized = codexNativeString(item)
+    if (!normalized) throw codexError('protocol-error', 'Codex native project state is invalid')
+    if (!result.includes(normalized)) result.push(normalized)
+  }
+  return result
+}
+
+function codexNormalizeNativeRoot(value) {
+  if (typeof value !== 'string' || !value.trim()) return ''
+  const pathApi = process.platform === 'win32' ? path.win32 : path
+  if (!pathApi.isAbsolute(value)) return ''
+  let normalized = pathApi.normalize(value)
+  try {
+    if (fs.existsSync(normalized)) normalized = fs.realpathSync(normalized)
+  } catch {}
+  normalized = pathApi.normalize(normalized).replace(/[\\/]+$/, '') || pathApi.parse(normalized).root
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
+function codexProjectKey(roots) {
+  return crypto.createHash('sha256').update(`codex-project\0${[...roots].sort().join('\0')}`).digest('hex').slice(0, 32)
+}
+
+function codexStableNativeProjection(value) {
+  if (Array.isArray(value)) return value.map(codexStableNativeProjection)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, codexStableNativeProjection(value[key])]))
+}
+
+function parseCodexNativeRegistryText(text) {
+  let parsed
+  try { parsed = JSON.parse(text) } catch { throw codexError('protocol-error', 'Codex native project state is invalid') }
+  const source = codexRecord(parsed)
+  const localProjectsSource = source['local-projects']
+  const assignmentsSource = source['thread-project-assignments']
+  if (!localProjectsSource || typeof localProjectsSource !== 'object' || Array.isArray(localProjectsSource)) throw codexError('protocol-error', 'Codex native project state is invalid')
+  if (!assignmentsSource || typeof assignmentsSource !== 'object' || Array.isArray(assignmentsSource)) throw codexError('protocol-error', 'Codex native project state is invalid')
+  const projectOrder = codexNativeStringList(source['project-order'])
+  const pinnedProjectIds = codexNativeStringList(source['pinned-project-ids'])
+  const pinnedThreadIds = codexNativeStringList(source['pinned-thread-ids']).filter(validCodexThreadId)
+  const projectlessThreadIds = codexNativeStringList(source['projectless-thread-ids']).filter(validCodexThreadId)
+  const projects = []
+  const projectById = new Map()
+  const projectKeySet = new Set()
+  const localProjectEntries = Object.entries(localProjectsSource)
+  if (localProjectEntries.length > 10_000) throw codexError('protocol-error', 'Codex native project state is invalid')
+  for (let insertionOrder = 0; insertionOrder < localProjectEntries.length; insertionOrder += 1) {
+    const [storageId, rawValue] = localProjectEntries[insertionOrder]
+    const project = codexRecord(rawValue)
+    const id = codexNativeString(project.id)
+    const name = codexNativeString(project.name, 160)
+    if (!id || id !== storageId || !name || !Array.isArray(project.rootPaths) || project.rootPaths.length < 1 || project.rootPaths.length > 32) throw codexError('protocol-error', 'Codex native project state is invalid')
+    const roots = [...new Set(project.rootPaths.map(codexNormalizeNativeRoot))]
+    if (roots.some((root) => !root) || roots.length < 1) throw codexError('protocol-error', 'Codex native project state is invalid')
+    const key = codexProjectKey(roots)
+    if (projectKeySet.has(key)) throw codexError('protocol-error', 'Codex native project roots are ambiguous')
+    projectKeySet.add(key)
+    const normalized = { id, key, name, roots, insertionOrder }
+    projects.push(normalized)
+    projectById.set(id, normalized)
+  }
+  const assignments = new Map()
+  const assignmentEntries = Object.entries(assignmentsSource)
+  if (assignmentEntries.length > 100_000) throw codexError('protocol-error', 'Codex native project state is invalid')
+  for (const [threadId, rawValue] of assignmentEntries) {
+    if (!validCodexThreadId(threadId)) throw codexError('protocol-error', 'Codex native project state is invalid')
+    const assignment = codexRecord(rawValue)
+    const projectId = codexNativeString(assignment.projectId)
+    if (!projectId) throw codexError('protocol-error', 'Codex native project state is invalid')
+    assignments.set(threadId, projectId)
+  }
+  const nativeProjection = {
+    projects: projects.map((project) => ({ id: project.id, name: project.name, roots: [...project.roots].sort() })),
+    projectOrder,
+    pinnedProjectIds,
+    pinnedThreadIds,
+    assignments: [...assignments.entries()].sort(([left], [right]) => left.localeCompare(right)),
+    projectlessThreadIds: [...projectlessThreadIds].sort()
+  }
+  const fingerprint = crypto.createHash('sha256').update(JSON.stringify(codexStableNativeProjection(nativeProjection))).digest('hex')
+  const orderById = new Map(projectOrder.map((id, index) => [id, index]))
+  const pinnedOrderById = new Map(pinnedProjectIds.map((id, index) => [id, index]))
+  for (const project of projects) {
+    project.nativePinnedOrder = pinnedOrderById.get(project.id)
+    project.nativeOrder = orderById.has(project.id) ? orderById.get(project.id) : projectOrder.length + project.insertionOrder
+  }
+  return {
+    projects,
+    projectById,
+    assignments,
+    projectlessThreadIds: new Set(projectlessThreadIds),
+    pinnedThreadOrder: new Map(pinnedThreadIds.map((id, index) => [id, index])),
+    fingerprint
+  }
+}
+
+function readCodexNativeRegistry() {
+  const codexHome = typeof process.env.CODEX_HOME === 'string' && process.env.CODEX_HOME.trim()
+    ? path.resolve(process.env.CODEX_HOME)
+    : path.join(os.homedir(), '.codex')
+  const primary = path.join(codexHome, '.codex-global-state.json')
+  const candidates = [primary, `${primary}.bak`]
+  let lastError = null
+  for (const candidate of candidates) {
+    try {
+      const stat = fs.statSync(candidate)
+      if (!stat || typeof stat.size !== 'number' || stat.size <= 0 || stat.size > CODEX_NATIVE_STATE_MAX_BYTES) throw codexError('protocol-error', 'Codex native project state is invalid')
+      return parseCodexNativeRegistryText(fs.readFileSync(candidate, 'utf8'))
+    } catch (error) {
+      lastError = error
+    }
+  }
+  if (lastError && codexRecord(lastError).code === 'protocol-error') throw lastError
+  throw codexError('protocol-error', 'Codex native project state is unavailable')
+}
+
+function codexProjectActionAlias(project, sourceFingerprint, now) {
+  for (const [alias, entry] of codexProjectActions) {
+    if (entry.expiresAt <= now) codexProjectActions.delete(alias)
+    else if (entry.projectKey === project.key) {
+      entry.expiresAt = now + CODEX_THREAD_ALIAS_TTL_MS
+      entry.sourceFingerprint = sourceFingerprint
+      entry.projectId = project.id || ''
+      entry.kind = project.kind || 'project'
+      return alias
+    }
+  }
+  const alias = `cp_${crypto.randomBytes(18).toString('base64url')}`
+  codexProjectActions.set(alias, {
+    projectKey: project.key,
+    projectId: project.id || '',
+    kind: project.kind || 'project',
+    sourceFingerprint,
+    expiresAt: now + CODEX_THREAD_ALIAS_TTL_MS
+  })
+  return alias
+}
+
+function codexThreadNativeProject(thread, registry) {
+  const threadId = thread.id
+  if (registry.assignments.has(threadId)) {
+    const project = registry.projectById.get(registry.assignments.get(threadId))
+    return project ? { project, reason: 'assignment' } : null
+  }
+  if (registry.projectlessThreadIds.has(threadId)) {
+    return { project: { id: '', key: 'chats', name: 'Chats', roots: [], kind: 'chats' }, reason: 'projectless' }
+  }
+  const cwd = codexNormalizeNativeRoot(thread.cwd)
+  if (!cwd) return null
+  const pathApi = process.platform === 'win32' ? path.win32 : path
+  const matches = []
+  for (const project of registry.projects) {
+    for (const root of project.roots) {
+      if (cwd === root || cwd.startsWith(`${root}${pathApi.sep}`)) matches.push({ project, depth: root.length })
+    }
+  }
+  matches.sort((left, right) => right.depth - left.depth || left.project.insertionOrder - right.project.insertionOrder)
+  if (matches.length > 1 && matches[0].depth === matches[1].depth && matches[0].project.key !== matches[1].project.key) throw codexError('protocol-error', 'Codex native project roots are ambiguous')
+  return matches[0] ? { project: matches[0].project, reason: 'cwd' } : null
+}
+
+function sanitizeCodexTurnStatusPage(value) {
+  const source = codexRecord(value)
+  const turns = Array.isArray(source.data) ? source.data : []
+  const turn = codexRecord(turns[0])
+  const status = ['completed', 'interrupted', 'failed', 'inProgress'].includes(turn.status) ? turn.status : ''
+  if (!status) return null
+  const completedAt = status === 'completed' ? codexTimestampMs(turn.completedAt) : 0
+  const startedAt = codexTimestampMs(turn.startedAt)
+  return {
+    status,
+    ...(startedAt ? { startedAt } : {}),
+    ...(completedAt ? { completedAt } : {})
+  }
+}
+
+function scheduleCodexFirstPromptScan(value) {
+  if (codexThreadFirstPromptScanRunning || codexThreadTurnStatusRpcAvailable === false) return
+  const source = codexRecord(value)
+  const rows = Array.isArray(source.data) ? source.data : []
+  const currentIds = new Set(rows.map((row) => codexRecord(row).id).filter(validCodexThreadId))
+  for (const threadId of codexThreadFirstPromptCache.keys()) {
+    if (!currentIds.has(threadId)) codexThreadFirstPromptCache.delete(threadId)
+  }
+  const candidates = rows.map((row) => codexRecord(row)).filter((thread) => validCodexThreadId(thread.id))
+  if (!candidates.some((thread) => !codexThreadFirstPromptCache.get(thread.id)?.done)) return
+  codexThreadFirstPromptScanRunning = true
+  const generation = codexThreadFirstPromptScanGeneration
+  Promise.resolve().then(async () => {
+    let budget = CODEX_THREAD_FIRST_PROMPT_PAGE_BUDGET
+    for (const thread of candidates) {
+      if (budget <= 0) break
+      let entry = codexThreadFirstPromptCache.get(thread.id) || { cursor: null, oldestStartedAt: 0, firstPromptAt: 0, done: false, retryAt: 0 }
+      if (entry.done || entry.retryAt > Date.now()) continue
+      while (!entry.done && budget > 0) {
+        if (generation !== codexThreadFirstPromptScanGeneration) return
+        try {
+          const params = {
+            threadId: thread.id,
+            limit: CODEX_THREAD_FIRST_PROMPT_PAGE_LIMIT,
+            sortDirection: 'desc',
+            itemsView: 'notLoaded',
+            ...(entry.cursor ? { cursor: entry.cursor } : {})
+          }
+          const page = await requestCodexRpc('thread/turns/list', params, CODEX_THREAD_TURN_STATUS_TIMEOUT_MS)
+          if (generation !== codexThreadFirstPromptScanGeneration) return
+          const pageSource = codexRecord(page)
+          const turns = Array.isArray(pageSource.data) ? pageSource.data : []
+          for (const row of turns) {
+            const startedAt = codexTimestampMs(codexRecord(row).startedAt)
+            if (startedAt && (!entry.oldestStartedAt || startedAt < entry.oldestStartedAt)) entry.oldestStartedAt = startedAt
+          }
+          entry.cursor = typeof pageSource.nextCursor === 'string' && pageSource.nextCursor ? pageSource.nextCursor : null
+          entry.done = !entry.cursor
+          if (entry.done && entry.oldestStartedAt) entry.firstPromptAt = entry.oldestStartedAt
+          entry.retryAt = 0
+          codexThreadFirstPromptCache.set(thread.id, { ...entry })
+          budget -= 1
+        } catch {
+          if (generation !== codexThreadFirstPromptScanGeneration) return
+          entry.retryAt = Date.now() + CODEX_THREAD_TURN_STATUS_RETRY_MS
+          codexThreadFirstPromptCache.set(thread.id, { ...entry })
+          break
+        }
+      }
+    }
+  }).finally(() => {
+    if (generation === codexThreadFirstPromptScanGeneration) codexThreadFirstPromptScanRunning = false
+  })
+}
+
+async function listAllCodexThreads(archived) {
+  const rows = []
+  const seenThreadIds = new Set()
+  const seenCursors = new Set()
+  let cursor = ''
+  for (let pageIndex = 0; pageIndex < CODEX_THREAD_PAGE_LIMIT; pageIndex += 1) {
+    const page = codexRecord(await requestCodexRpc('thread/list', {
+      limit: CODEX_THREAD_LIMIT,
+      archived: archived === true,
+      sortKey: 'recency_at',
+      sortDirection: 'desc',
+      ...(cursor ? { cursor } : {})
+    }))
+    if (!Array.isArray(page.data)) throw codexError('protocol-error', 'Codex thread pagination is invalid')
+    for (const value of page.data) {
+      const thread = codexRecord(value)
+      if (!validCodexThreadId(thread.id)) throw codexError('protocol-error', 'Codex thread identity is invalid')
+      if (seenThreadIds.has(thread.id)) continue
+      seenThreadIds.add(thread.id)
+      rows.push(thread)
+    }
+    const nextCursor = page.nextCursor == null || page.nextCursor === '' ? '' : typeof page.nextCursor === 'string' ? page.nextCursor : null
+    if (nextCursor === null) throw codexError('protocol-error', 'Codex thread cursor is invalid')
+    if (!nextCursor) return rows
+    if (seenCursors.has(nextCursor)) throw codexError('protocol-error', 'Codex thread cursor loop detected')
+    seenCursors.add(nextCursor)
+    cursor = nextCursor
+  }
+  throw codexError('protocol-error', 'Codex thread pagination exceeded the safety bound')
+}
+
+async function readCodexThreadTurnStatuses(rows) {
+  const candidates = rows.map(codexRecord)
+  const latest = new Map()
+  const nonConversationIds = new Set()
+  const queue = [...candidates]
+
+  const readOne = async (thread) => {
+    const page = await requestCodexRpc(
+      'thread/turns/list',
+      {
+        threadId: thread.id,
+        limit: 1,
+        sortDirection: 'desc',
+        itemsView: 'notLoaded'
+      },
+      CODEX_THREAD_TURN_STATUS_TIMEOUT_MS
+    )
+    const pageSource = codexRecord(page)
+    if (!Array.isArray(pageSource.data)) throw codexError('protocol-error', 'Codex latest Turn response is invalid')
+    if (pageSource.data.length === 0) {
+      nonConversationIds.add(thread.id)
+      return
+    }
+    const turn = sanitizeCodexTurnStatusPage(page)
+    if (!turn || !turn.startedAt) throw codexError('protocol-error', 'Codex latest Turn is missing startedAt')
+    latest.set(thread.id, turn)
+  }
+
+  const workers = Array.from(
+    { length: Math.min(CODEX_THREAD_TURN_STATUS_CONCURRENCY, queue.length) },
+    async () => {
+      for (;;) {
+        const thread = queue.shift()
+        if (!thread) return
+        await readOne(thread)
+      }
+    }
+  )
+  await Promise.all(workers)
+  return { latest, nonConversationIds }
+}
+
+function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Map()) {
+  const now = Date.now()
+  const threads = []
+  for (const row of rows) {
+    const thread = codexRecord(row)
+    const native = assignments.get(thread.id)
+    if (!native) continue
+    const statusSource = codexRecord(thread.status)
+    const status = ['active', 'idle', 'notLoaded', 'systemError'].includes(statusSource.type) ? statusSource.type : 'notLoaded'
+    const activeFlags = status === 'active' && Array.isArray(statusSource.activeFlags)
+      ? statusSource.activeFlags.filter((flag) => flag === 'waitingOnApproval' || flag === 'waitingOnUserInput')
+      : []
+    const project = native.project
+    const action = codexThreadAlias(thread.id, now, { projectKey: project.key, sourceFingerprint: registry.fingerprint })
+    const lastTurn = turnStatuses.get(thread.id)
+    if (!lastTurn || !lastTurn.startedAt) continue
+    threads.push({
+      key: action.key,
+      actionAlias: action.alias,
+      name: typeof thread.name === 'string' && thread.name.trim() ? thread.name.trim().slice(0, 120) : '未命名任务',
+      status,
+      activeFlags,
+      updatedAt: codexTimestampMs(thread.recencyAt) || codexTimestampMs(thread.updatedAt) || lastTurn.startedAt,
+      ...(codexTimestampMs(thread.createdAt) ? { createdAt: codexTimestampMs(thread.createdAt) } : {}),
+      ...(codexThreadFirstPromptCache.get(thread.id)?.firstPromptAt ? { firstPromptAt: codexThreadFirstPromptCache.get(thread.id).firstPromptAt } : {}),
+      lastTurnStatus: lastTurn.status,
+      lastTurnStartedAt: lastTurn.startedAt,
+      ...(lastTurn.completedAt ? { lastTurnCompletedAt: lastTurn.completedAt } : {}),
+      projectKey: project.key,
+      projectName: project.name,
+      projectKind: project.kind === 'chats' ? 'chats' : 'project',
+      nativePinned: registry.pinnedThreadOrder.has(thread.id),
+      ...(registry.pinnedThreadOrder.has(thread.id) ? { nativePinnedOrder: registry.pinnedThreadOrder.get(thread.id) } : {})
+    })
+  }
+  return threads
+}
+
+function sanitizeCodexProjects(registry) {
+  const now = Date.now()
+  const projects = registry.projects
+    .slice()
+    .sort((left, right) => (left.nativeOrder ?? Number.MAX_SAFE_INTEGER) - (right.nativeOrder ?? Number.MAX_SAFE_INTEGER))
+    .map((project) => ({
+      key: project.key,
+      actionAlias: codexProjectActionAlias(project, registry.fingerprint, now),
+      name: project.name,
+      kind: 'project',
+      nativePinned: typeof project.nativePinnedOrder === 'number',
+      ...(typeof project.nativePinnedOrder === 'number' ? { nativePinnedOrder: project.nativePinnedOrder } : {}),
+      ...(typeof project.nativeOrder === 'number' ? { nativeOrder: project.nativeOrder } : {})
+    }))
+  const chats = { id: '', key: 'chats', name: 'Chats', kind: 'chats' }
+  projects.push({
+    key: 'chats',
+    actionAlias: codexProjectActionAlias(chats, registry.fingerprint, now),
+    name: 'Chats',
+    kind: 'chats',
+    nativePinned: false
+  })
+  return projects
+}
+
+async function scanVerifiedCodexInventory() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const registry = readCodexNativeRegistry()
+    const rows = await listAllCodexThreads(false)
+    const assignments = new Map()
+    let excludedSourceCount = 0
+    for (const thread of rows) {
+      const native = codexThreadNativeProject(thread, registry)
+      if (native) assignments.set(thread.id, native)
+      else excludedSourceCount += 1
+    }
+    const eligibleRows = rows.filter((thread) => assignments.has(thread.id))
+    const turns = await readCodexThreadTurnStatuses(eligibleRows)
+    const endingRegistry = readCodexNativeRegistry()
+    if (endingRegistry.fingerprint !== registry.fingerprint) {
+      if (attempt === 0) continue
+      throw codexError('protocol-error', 'Codex native project state changed during the scan')
+    }
+    const threads = sanitizeCodexThreads(eligibleRows, registry, assignments, turns.latest)
+    return {
+      threads,
+      projects: sanitizeCodexProjects(registry),
+      sourceFingerprint: registry.fingerprint,
+      rawSourceCount: rows.length,
+      eligibleSourceCount: eligibleRows.length,
+      excludedSourceCount,
+      nonConversationCount: turns.nonConversationIds.size
+    }
+  }
+  throw codexError('protocol-error', 'Codex native project state changed during the scan')
+}
+
+async function readCodexSnapshot(options) {
+  const input = codexRecord(options)
+  const includeQuota = input.includeQuota !== false
+  const includeConfig = input.includeConfig !== false
+  const includeThreads = input.includeThreads !== false
+  try {
+    const value = { version: 2, receivedAt: Date.now() }
+    if (includeQuota) {
+      const [rateResult, accountResult] = await Promise.all([
+        requestCodexRpc('account/rateLimits/read', {}),
+        requestCodexRpc('account/read', { refreshToken: false })
+      ])
+      if (codexRecord(accountResult).requiresOpenaiAuth === true && !codexRecord(accountResult).account) throw codexError('not-authenticated', 'Codex authentication required')
+      value.quota = sanitizeCodexQuota(rateResult, accountResult)
+    }
+    if (includeConfig) {
+      value.config = sanitizeCodexConfig(await requestCodexRpc('config/read', { includeLayers: false }))
+    }
+    if (includeThreads) {
+      const inventory = await scanVerifiedCodexInventory()
+      Object.assign(value, inventory, {
+        completeness: 'verified',
+        threadsPartial: false,
+        taskAuthority: inventory.threads.length > 0 && inventory.threads.every((thread) => thread.status === 'notLoaded') ? 'inventory-only' : 'mixed'
+      })
+    }
+    value.receivedAt = Date.now()
+    return { ok: true, value, receivedAt: value.receivedAt }
+  } catch (error) {
+    return codexErrorResult(error)
+  }
+}
+
+async function archiveCodexThread(actionAlias, request) {
+  const input = codexRecord(request)
+  const expectedUpdatedAt = Number.isFinite(input.expectedUpdatedAt) && input.expectedUpdatedAt > 0 ? input.expectedUpdatedAt : 0
+  const expectedRevisionAt = Number.isFinite(input.expectedRevisionAt) && input.expectedRevisionAt > 0 ? input.expectedRevisionAt : 0
+  const expectedCompletionAt = Number.isFinite(input.expectedCompletionAt) && input.expectedCompletionAt > 0 ? input.expectedCompletionAt : 0
+  const expectedLastTurnStartedAt = Number.isFinite(input.expectedLastTurnStartedAt) && input.expectedLastTurnStartedAt > 0 ? input.expectedLastTurnStartedAt : 0
+  const expectedSourceFingerprint = typeof input.expectedSourceFingerprint === 'string' && /^[a-f0-9]{64}$/.test(input.expectedSourceFingerprint) ? input.expectedSourceFingerprint : ''
+  const evidence = ['completed', 'terminal', 'unknown'].includes(input.evidence) ? input.evidence : ''
+  const requestIsValid = typeof actionAlias === 'string'
+    && /^ct_[A-Za-z0-9_-]{16,80}$/.test(actionAlias)
+    && expectedUpdatedAt > 0
+    && expectedRevisionAt > 0
+    && expectedLastTurnStartedAt > 0
+    && Boolean(expectedSourceFingerprint)
+    && Boolean(evidence)
+    && (evidence !== 'completed' || expectedRevisionAt === (expectedCompletionAt || expectedLastTurnStartedAt))
+  if (!requestIsValid) {
+    return { outcome: 'failed', errorCode: 'invalid-request', message: '归档请求已失效，请刷新后重试' }
+  }
+  const entry = codexThreadActions.get(actionAlias)
+  if (!entry || entry.expiresAt <= Date.now() || !validCodexThreadId(entry.threadId)) {
+    codexThreadActions.delete(actionAlias)
+    return { outcome: 'failed', errorCode: 'expired-alias', message: '任务动作已过期，请刷新后重试' }
+  }
+  try {
+    const registry = readCodexNativeRegistry()
+    if (registry.fingerprint !== expectedSourceFingerprint || entry.sourceFingerprint !== expectedSourceFingerprint) {
+      return { outcome: 'failed', errorCode: 'source-changed', message: 'Codex 项目状态已更新，未执行归档' }
+    }
+    const [threadResult, turnPage] = await Promise.all([
+      requestCodexRpc('thread/read', { threadId: entry.threadId, includeTurns: false }),
+      requestCodexRpc('thread/turns/list', { threadId: entry.threadId, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' }, CODEX_THREAD_TURN_STATUS_TIMEOUT_MS)
+    ])
+    const response = codexRecord(threadResult)
+    const thread = codexRecord(response.thread)
+    const status = codexRecord(thread.status).type
+    const recencyAt = codexTimestampMs(thread.recencyAt) || codexTimestampMs(thread.updatedAt) || 0
+    const turnPageSource = codexRecord(turnPage)
+    const turnRows = Array.isArray(turnPageSource.data) ? turnPageSource.data : null
+    const turn = sanitizeCodexTurnStatusPage(turnPage)
+    const native = codexThreadNativeProject(thread, registry)
+    const validStatus = ['active', 'idle', 'notLoaded', 'systemError'].includes(status)
+    const validTurnShape = turnRows !== null && (turnRows.length === 0 || Boolean(turn))
+    if (thread.id !== entry.threadId || !validStatus || recencyAt <= 0 || recencyAt !== expectedUpdatedAt || !validTurnShape || !native || native.project.key !== entry.projectKey) {
+      return { outcome: 'failed', errorCode: 'state-changed', message: '任务状态已更新，未执行归档' }
+    }
+    if (!turn || turn.startedAt !== expectedLastTurnStartedAt) {
+      return { outcome: 'failed', errorCode: 'turn-changed', message: '任务最新提问已更新，未执行归档' }
+    }
+    if (status === 'active' || turn?.status === 'inProgress') {
+      return { outcome: 'failed', errorCode: 'active-task', message: '任务已恢复进行中，未执行归档' }
+    }
+    if (evidence === 'completed' && (!turn || turn.status !== 'completed' || (turn.completedAt || turn.startedAt) !== expectedRevisionAt || (expectedCompletionAt > 0 && turn.completedAt !== expectedCompletionAt))) {
+      return { outcome: 'failed', errorCode: 'completion-changed', message: '任务完成版本已更新，未执行归档' }
+    }
+    if (evidence === 'terminal' && (!turn || (turn.status !== 'failed' && turn.status !== 'interrupted'))) {
+      return { outcome: 'failed', errorCode: 'terminal-state-changed', message: '任务终止状态已更新，未执行归档' }
+    }
+    await requestCodexRpc('thread/archive', { threadId: entry.threadId })
+    const [unarchivedRows, archivedRows] = await Promise.all([
+      listAllCodexThreads(false),
+      listAllCodexThreads(true)
+    ])
+    const remainsUnarchived = unarchivedRows.some((row) => row.id === entry.threadId)
+    const appearsArchived = archivedRows.some((row) => row.id === entry.threadId)
+    if (remainsUnarchived || !appearsArchived) {
+      return { outcome: 'failed', errorCode: 'archive-not-verified', message: 'Codex 未确认归档结果，请刷新后核验' }
+    }
+    for (const [alias, action] of codexThreadActions) {
+      if (action.threadId === entry.threadId) codexThreadActions.delete(alias)
+    }
+    codexThreadTurnStatusCache.delete(entry.threadId)
+    codexThreadFirstPromptCache.delete(entry.threadId)
+    return { outcome: 'archived' }
+  } catch (error) {
+    const source = codexRecord(error)
+    return { outcome: 'failed', errorCode: typeof source.code === 'string' ? source.code : 'archive-failed', message: 'Codex 任务归档失败，请刷新后重试' }
+  }
+}
+
+async function archiveCodexProject(actionAlias, request) {
+  const input = codexRecord(request)
+  const expectedSourceFingerprint = typeof input.expectedSourceFingerprint === 'string' && /^[a-f0-9]{64}$/.test(input.expectedSourceFingerprint) ? input.expectedSourceFingerprint : ''
+  const emptyResult = (errorCode, message) => ({ outcome: 'failed', archivedKeys: [], skippedActiveKeys: [], failed: [], errorCode, message })
+  if (typeof actionAlias !== 'string' || !/^cp_[A-Za-z0-9_-]{16,80}$/.test(actionAlias) || !expectedSourceFingerprint) {
+    return emptyResult('invalid-request', '项目归档请求已失效，请刷新后重试')
+  }
+  const action = codexProjectActions.get(actionAlias)
+  if (!action || action.expiresAt <= Date.now()) {
+    codexProjectActions.delete(actionAlias)
+    return emptyResult('expired-alias', '项目动作已过期，请刷新后重试')
+  }
+  try {
+    const registry = readCodexNativeRegistry()
+    if (registry.fingerprint !== expectedSourceFingerprint || action.sourceFingerprint !== expectedSourceFingerprint) {
+      return emptyResult('source-changed', 'Codex 项目状态已更新，未执行批量归档')
+    }
+    const unarchivedRows = await listAllCodexThreads(false)
+    const candidates = []
+    for (const thread of unarchivedRows) {
+      const native = codexThreadNativeProject(thread, registry)
+      if (native?.project.key === action.projectKey) candidates.push(thread)
+    }
+    const archivedKeys = []
+    const skippedActiveKeys = []
+    const failed = []
+    for (let batchStart = 0; batchStart < candidates.length; batchStart += 20) {
+      if (readCodexNativeRegistry().fingerprint !== expectedSourceFingerprint) {
+        for (const thread of candidates.slice(batchStart)) failed.push({ key: codexThreadKey(thread.id), errorCode: 'source-changed' })
+        break
+      }
+      const batch = candidates.slice(batchStart, batchStart + 20)
+      const queue = [...batch]
+      const staged = []
+      const workers = Array.from({ length: Math.min(2, queue.length) }, async () => {
+        for (;;) {
+          const listedThread = queue.shift()
+          if (!listedThread) return
+          const key = codexThreadKey(listedThread.id)
+          try {
+            const [threadResult, turnPage] = await Promise.all([
+              requestCodexRpc('thread/read', { threadId: listedThread.id, includeTurns: false }),
+              requestCodexRpc('thread/turns/list', { threadId: listedThread.id, limit: 1, sortDirection: 'desc', itemsView: 'notLoaded' }, CODEX_THREAD_TURN_STATUS_TIMEOUT_MS)
+            ])
+            const thread = codexRecord(codexRecord(threadResult).thread)
+            const turnSource = codexRecord(turnPage)
+            if (!Array.isArray(turnSource.data)) throw codexError('protocol-error', 'Codex latest Turn response is invalid')
+            const turn = turnSource.data.length ? sanitizeCodexTurnStatusPage(turnPage) : null
+            if (turnSource.data.length && (!turn || !turn.startedAt)) throw codexError('protocol-error', 'Codex latest Turn is missing startedAt')
+            const status = codexRecord(thread.status).type
+            const native = codexThreadNativeProject(thread, registry)
+            const listedRecency = codexTimestampMs(listedThread.recencyAt) || codexTimestampMs(listedThread.updatedAt) || 0
+            const currentRecency = codexTimestampMs(thread.recencyAt) || codexTimestampMs(thread.updatedAt) || 0
+            if (thread.id !== listedThread.id || !native || native.project.key !== action.projectKey || !listedRecency || currentRecency !== listedRecency) {
+              failed.push({ key, errorCode: 'state-changed' })
+              continue
+            }
+            if (status === 'active' || turn?.status === 'inProgress') {
+              skippedActiveKeys.push(key)
+              continue
+            }
+            await requestCodexRpc('thread/archive', { threadId: listedThread.id })
+            staged.push({ id: listedThread.id, key })
+          } catch (error) {
+            failed.push({ key, errorCode: typeof codexRecord(error).code === 'string' ? codexRecord(error).code : 'archive-failed' })
+          }
+        }
+      })
+      await Promise.all(workers)
+      if (staged.length) {
+        const [remainingRows, archivedRows] = await Promise.all([listAllCodexThreads(false), listAllCodexThreads(true)])
+        const remainingIds = new Set(remainingRows.map((thread) => thread.id))
+        const archivedIds = new Set(archivedRows.map((thread) => thread.id))
+        for (const item of staged) {
+          if (!remainingIds.has(item.id) && archivedIds.has(item.id)) archivedKeys.push(item.key)
+          else failed.push({ key: item.key, errorCode: 'archive-not-verified' })
+        }
+      }
+    }
+    const outcome = failed.length ? archivedKeys.length || skippedActiveKeys.length ? 'partial' : 'failed' : 'complete'
+    return { outcome, archivedKeys, skippedActiveKeys, failed }
+  } catch (error) {
+    return emptyResult(typeof codexRecord(error).code === 'string' ? codexRecord(error).code : 'archive-failed', '项目批量归档失败，请刷新后重试')
+  }
+}
+
+async function openCodexThread(actionAlias) {
+  if (typeof actionAlias !== 'string' || !/^ct_[A-Za-z0-9_-]{16,80}$/.test(actionAlias)) return { outcome: 'failed', errorCode: 'invalid-alias', message: '线程动作已失效' }
+  const entry = codexThreadActions.get(actionAlias)
+  if (!entry || entry.expiresAt <= Date.now() || !validCodexThreadId(entry.threadId)) {
+    codexThreadActions.delete(actionAlias)
+    return { outcome: 'failed', errorCode: 'expired-alias', message: '线程动作已过期，请刷新后重试' }
+  }
+  const target = `codex://threads/${encodeURIComponent(entry.threadId)}`
+  const shell = electronShell()
+  if (shell && typeof shell.openExternal === 'function') {
+    try {
+      await withFileActionTimeout(shell.openExternal(target))
+      return { outcome: 'opened' }
+    } catch {
+      return { outcome: 'failed', errorCode: 'open-failed', message: 'Codex 线程打开失败' }
+    }
+  }
+  try {
+    if (globalThis.utools && typeof globalThis.utools.shellOpenExternal === 'function') {
+      globalThis.utools.shellOpenExternal(target)
+      return { outcome: 'dispatched', message: '已交给系统打开，请查看后手动确认' }
+    }
+  } catch {}
+  return { outcome: 'failed', errorCode: 'unsupported', message: '当前宿主不支持打开 Codex 线程' }
+}
+
+function electronIpcRenderer() {
+  try {
+    const electron = require('electron')
+    return electron.ipcRenderer || null
+  } catch {
+    return null
+  }
+}
+
+function codexFloatAlive() {
+  if (!codexFloatWindow) return false
+  try {
+    return typeof codexFloatWindow.isDestroyed !== 'function' || !codexFloatWindow.isDestroyed()
+  } catch {
+    return false
+  }
+}
+
+function applyCodexFloatWorkspaceVisibility() {
+  const diagnostics = {
+    supported: process.platform === 'darwin',
+    alwaysOnTop: false,
+    allWorkspaces: false,
+    visibleOnFullScreen: false,
+    checkedAt: Date.now(),
+    errorCode: ''
+  }
+  if (!codexFloatAlive()) {
+    codexFloatWorkspaceDiagnostics = { ...diagnostics, errorCode: 'window-unavailable' }
+    return false
+  }
+  try {
+    codexFloatWindow.setAlwaysOnTop(true, 'floating')
+    diagnostics.alwaysOnTop = typeof codexFloatWindow.isAlwaysOnTop === 'function' ? codexFloatWindow.isAlwaysOnTop() === true : true
+  } catch {
+    diagnostics.errorCode = 'always-on-top-failed'
+  }
+  if (process.platform !== 'darwin') {
+    codexFloatWorkspaceDiagnostics = { ...diagnostics, errorCode: diagnostics.errorCode || 'unsupported' }
+    return diagnostics.alwaysOnTop
+  }
+  if (typeof codexFloatWindow.setVisibleOnAllWorkspaces !== 'function') {
+    codexFloatWorkspaceDiagnostics = { ...diagnostics, errorCode: diagnostics.errorCode || 'all-workspaces-unavailable' }
+    return false
+  }
+  try {
+    codexFloatWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+    diagnostics.allWorkspaces = true
+    diagnostics.visibleOnFullScreen = true
+  } catch {
+    diagnostics.errorCode = diagnostics.errorCode || 'all-workspaces-failed'
+  }
+  codexFloatWorkspaceDiagnostics = diagnostics
+  return diagnostics.alwaysOnTop && diagnostics.allWorkspaces && diagnostics.visibleOnFullScreen
+}
+
+function getCodexFloatWorkspaceDiagnostics() {
+  return { ...codexFloatWorkspaceDiagnostics }
+}
+
+function floatDisplayForPoint(point) {
+  const utools = globalThis.utools
+  try {
+    if (utools && typeof utools.getDisplayNearestPoint === 'function') {
+      const display = utools.getDisplayNearestPoint(point)
+      if (display) return display
+    }
+  } catch {}
+  return { id: 'primary', workArea: { x: 0, y: 0, width: 1440, height: 900 }, bounds: { x: 0, y: 0, width: 1440, height: 900 } }
+}
+
+function floatDisplayForPosition(position) {
+  const utools = globalThis.utools
+  if (position && position.displayId && utools && typeof utools.getAllDisplays === 'function') {
+    try {
+      const match = utools.getAllDisplays().find((display) => String(display.id) === String(position.displayId))
+      if (match) return match
+    } catch {}
+  }
+  let point = { x: 720, y: 450 }
+  try {
+    if (utools && typeof utools.getCursorScreenPoint === 'function') point = utools.getCursorScreenPoint()
+  } catch {}
+  return floatDisplayForPoint(point)
+}
+
+function clampFloatBounds(bounds, display) {
+  const area = display.workArea || display.bounds || { x: 0, y: 0, width: 1440, height: 900 }
+  const areaWidth = Math.max(1, Math.round(area.width))
+  const areaHeight = Math.max(1, Math.round(area.height))
+  const marginX = areaWidth >= 72 + CODEX_FLOAT_MARGIN * 2 ? CODEX_FLOAT_MARGIN : 0
+  const marginY = areaHeight >= 72 + CODEX_FLOAT_MARGIN * 2 ? CODEX_FLOAT_MARGIN : 0
+  const requestedWidth = Number.isFinite(bounds.width) ? Math.round(bounds.width) : 72
+  const requestedHeight = Number.isFinite(bounds.height) ? Math.round(bounds.height) : 72
+  const width = Math.max(1, Math.min(Math.max(72, requestedWidth), areaWidth - marginX * 2))
+  const height = Math.max(1, Math.min(Math.max(72, requestedHeight), areaHeight - marginY * 2))
+  const minX = area.x + marginX
+  const minY = area.y + marginY
+  const maxX = area.x + areaWidth - width - marginX
+  const maxY = area.y + areaHeight - height - marginY
+  const requestedX = Number.isFinite(bounds.x) ? Math.round(bounds.x) : minX
+  const requestedY = Number.isFinite(bounds.y) ? Math.round(bounds.y) : minY
+  return { x: Math.min(maxX, Math.max(minX, requestedX)), y: Math.min(maxY, Math.max(minY, requestedY)), width, height }
+}
+
+function nearestFloatEdge(bounds, display) {
+  const area = display.workArea || display.bounds
+  const distances = [
+    ['left', Math.abs(bounds.x - area.x)],
+    ['right', Math.abs(area.x + area.width - (bounds.x + bounds.width))],
+    ['top', Math.abs(bounds.y - area.y)],
+    ['bottom', Math.abs(area.y + area.height - (bounds.y + bounds.height))]
+  ]
+  distances.sort((a, b) => a[1] - b[1])
+  return distances[0][0]
+}
+
+function snapFloatBounds(bounds, display) {
+  const area = display.workArea || display.bounds
+  const next = clampFloatBounds(bounds, display)
+  const edge = nearestFloatEdge(next, display)
+  const marginX = area.width >= 72 + CODEX_FLOAT_MARGIN * 2 ? CODEX_FLOAT_MARGIN : 0
+  const marginY = area.height >= 72 + CODEX_FLOAT_MARGIN * 2 ? CODEX_FLOAT_MARGIN : 0
+  if (edge === 'left') next.x = area.x + marginX
+  if (edge === 'right') next.x = area.x + area.width - next.width - marginX
+  if (edge === 'top') next.y = area.y + marginY
+  if (edge === 'bottom') next.y = area.y + area.height - next.height - marginY
+  return { bounds: next, edge }
+}
+
+function codexFloatCollapsedSize(snapshot) {
+  return codexRecord(snapshot).style === 'card'
+    ? { ...CODEX_FLOAT_CARD_SIZE }
+    : { ...CODEX_FLOAT_WATER_SIZE }
+}
+
+function codexFloatExpandedHeight(snapshot) {
+  const source = codexRecord(snapshot)
+  const quota = codexRecord(source.quota)
+  const conversations = codexRecord(source.conversations)
+  const expandedFields = new Set(Array.isArray(source.expandedFields) ? source.expandedFields : [])
+
+  // Root padding + header + footer, with a small rendering allowance. Content
+  // blocks below mirror the renderer's actual one-row quota grid and compact
+  // empty-task treatment so an empty inbox does not create a blank panel.
+  let height = 151
+  let visibleQuotaBuckets = 0
+  const quotaFieldEnabled = expandedFields.has('short') || expandedFields.has('weekly')
+  if (expandedFields.has('short') && quota.short && typeof quota.short === 'object') visibleQuotaBuckets += 1
+  if (expandedFields.has('weekly') && quota.weekly && typeof quota.weekly === 'object') visibleQuotaBuckets += 1
+  if (visibleQuotaBuckets > 0) height += expandedFields.has('reset') ? 82 : 64
+  else if (quotaFieldEnabled) height += 64
+  if (expandedFields.has('config')) height += 38
+
+  if (source.conversationInboxEnabled === true && expandedFields.has('tasks')) {
+    const ongoingCount = Array.isArray(conversations.ongoing) ? conversations.ongoing.length : 0
+    const hiddenCount = Array.isArray(conversations.hidden) ? conversations.hidden.length : 0
+    const completedUnreadCount = Array.isArray(conversations.completedUnread)
+      ? conversations.completedUnread.length
+      : Array.isArray(conversations.pending) ? conversations.pending.length : 0
+    const completedCount = Array.isArray(conversations.completed) ? conversations.completed.length : 0
+    const taskCount = Math.max(ongoingCount, hiddenCount, completedUnreadCount + completedCount)
+    height += 69
+    if (taskCount === 0) height += 30
+    else height += taskCount * 48 + Math.max(0, taskCount - 1) * 5
+  }
+
+  return Math.max(CODEX_FLOAT_EXPANDED_MIN_HEIGHT, Math.min(CODEX_FLOAT_EXPANDED_MAX_HEIGHT, height))
+}
+
+function normalizeCodexExpandedSizes(value) {
+  if (!Array.isArray(value)) return []
+  const byDisplay = new Map()
+  for (const item of value) {
+    const source = codexRecord(item)
+    const displayId = typeof source.displayId === 'string' ? source.displayId.slice(0, 120) : ''
+    if (!displayId || !Number.isFinite(source.width) || !Number.isFinite(source.height) || !Number.isFinite(source.updatedAt)) continue
+    const entry = {
+      displayId,
+      width: Math.max(CODEX_FLOAT_EXPANDED_MIN_WIDTH, Math.round(source.width)),
+      height: Math.max(CODEX_FLOAT_EXPANDED_MIN_HEIGHT, Math.round(source.height)),
+      updatedAt: Math.max(0, Math.round(source.updatedAt))
+    }
+    const previous = byDisplay.get(displayId)
+    if (!previous || entry.updatedAt >= previous.updatedAt) byDisplay.set(displayId, entry)
+  }
+  return [...byDisplay.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 8)
+}
+
+function clampCodexExpandedSize(size, display) {
+  const area = display?.workArea || display?.bounds || { x: 0, y: 0, width: 1440, height: 900 }
+  const maxWidth = Math.max(1, Math.round(area.width) - CODEX_FLOAT_MARGIN * 2)
+  const maxHeight = Math.max(1, Math.round(area.height) - CODEX_FLOAT_MARGIN * 2)
+  return {
+    width: Math.min(maxWidth, Math.max(Math.min(CODEX_FLOAT_EXPANDED_MIN_WIDTH, maxWidth), Math.round(size.width))),
+    height: Math.min(maxHeight, Math.max(Math.min(CODEX_FLOAT_EXPANDED_MIN_HEIGHT, maxHeight), Math.round(size.height)))
+  }
+}
+
+function codexFloatExpandedPreference(display) {
+  const displayId = String(display?.id || '')
+  const exact = codexFloatExpandedSizes.find((entry) => entry.displayId === displayId)
+  if (exact) return exact
+  if (codexFloatPositionDisplayId && codexFloatPositionDisplayId === displayId) return null
+  return codexFloatExpandedSizes[0] || null
+}
+
+function codexFloatDesiredSize(snapshot, expanded, display) {
+  if (!expanded) return codexFloatCollapsedSize(snapshot)
+  const preferred = codexFloatExpandedPreference(display)
+  return clampCodexExpandedSize(preferred || { width: CODEX_FLOAT_EXPANDED_WIDTH, height: codexFloatExpandedHeight(snapshot) }, display)
+}
+
+function codexFloatResizeCorner(bounds, display, edge) {
+  const area = display.workArea || display.bounds
+  const vertical = bounds.y + bounds.height / 2 <= area.y + area.height / 2 ? 'bottom' : 'top'
+  const horizontal = bounds.x + bounds.width / 2 <= area.x + area.width / 2 ? 'right' : 'left'
+  if (edge === 'left') return `${vertical}-right`
+  if (edge === 'right') return `${vertical}-left`
+  if (edge === 'top') return `bottom-${horizontal}`
+  return `top-${horizontal}`
+}
+
+function validCodexResizeCorner(value) {
+  return value === 'top-left' || value === 'top-right' || value === 'bottom-left' || value === 'bottom-right'
+}
+
+function validCodexFloatEdge(edge) {
+  return edge === 'left' || edge === 'right' || edge === 'top' || edge === 'bottom'
+}
+
+function alignFloatBoundsToEdge(bounds, display, edge) {
+  const area = display.workArea || display.bounds
+  const next = clampFloatBounds(bounds, display)
+  const marginX = area.width >= 72 + CODEX_FLOAT_MARGIN * 2 ? CODEX_FLOAT_MARGIN : 0
+  const marginY = area.height >= 72 + CODEX_FLOAT_MARGIN * 2 ? CODEX_FLOAT_MARGIN : 0
+  if (edge === 'left') next.x = area.x + marginX
+  if (edge === 'right') next.x = area.x + area.width - next.width - marginX
+  if (edge === 'top') next.y = area.y + marginY
+  if (edge === 'bottom') next.y = area.y + area.height - next.height - marginY
+  return clampFloatBounds(next, display)
+}
+
+function resizeFloatBounds(current, size, display, preferredEdge) {
+  const edge = validCodexFloatEdge(preferredEdge) ? preferredEdge : nearestFloatEdge(current, display)
+  const next = { x: current.x, y: current.y, width: size.width, height: size.height }
+  if (edge === 'right') next.x = current.x + current.width - size.width
+  if (edge === 'bottom') next.y = current.y + current.height - size.height
+  return { bounds: alignFloatBoundsToEdge(next, display, edge), edge }
+}
+
+function pushCodexFloatSnapshot() {
+  if (!codexFloatAlive() || !codexFloatSnapshot) return false
+  try {
+    codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.snapshot, codexFloatSnapshot)
+    pushCodexFloatState()
+    return true
+  } catch {
+    return false
+  }
+}
+
+function pushCodexFloatState() {
+  if (!codexFloatAlive() || typeof codexFloatWindow.getBounds !== 'function') return false
+  try {
+    const bounds = codexFloatWindow.getBounds()
+    const display = floatDisplayForPoint({ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 })
+    const preference = codexFloatExpandedPreference(display)
+      codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.state, {
+        expanded: codexFloatExpanded,
+        pinned: codexFloatPinned,
+        resizing: Boolean(codexFloatResize),
+      resizeCorner: codexFloatExpanded ? codexFloatResizeCorner(bounds, display, codexFloatEdge) : null,
+      expandedSize: codexFloatExpanded ? {
+        displayId: String(display.id || ''),
+        width: bounds.width,
+        height: bounds.height,
+        manual: Boolean(preference)
+      } : null
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function initialCodexFloatBounds(position) {
+  const display = floatDisplayForPosition(position)
+  const area = display.workArea || display.bounds
+  const size = codexFloatDesiredSize(codexFloatSnapshot, false, display)
+  const fallback = { x: area.x + area.width - size.width - CODEX_FLOAT_MARGIN, y: area.y + Math.round((area.height - size.height) / 2), ...size }
+  const requested = position && Number.isFinite(position.x) && Number.isFinite(position.y)
+    ? { x: position.x, y: position.y, ...size }
+    : fallback
+  const requestedEdge = position && validCodexFloatEdge(position.edge) ? position.edge : 'right'
+  return { display, bounds: alignFloatBoundsToEdge(requested, display, requestedEdge), edge: requestedEdge }
+}
+
+function createCodexFloat(position) {
+  const utools = globalThis.utools
+  if (!utools || typeof utools.createBrowserWindow !== 'function') return false
+  const initial = initialCodexFloatBounds(position)
+  try {
+    codexFloatEdge = initial.edge
+    codexFloatWindow = utools.createBrowserWindow('float.html', {
+      show: false,
+      title: 'EyPc Codex',
+      x: initial.bounds.x,
+      y: initial.bounds.y,
+      width: initial.bounds.width,
+      height: initial.bounds.height,
+      backgroundColor: '#00000000',
+      frame: false,
+      transparent: true,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      movable: false,
+      closeable: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      roundedCorners: false,
+      hasShadow: false,
+      autoHideMenuBar: true,
+      webPreferences: { preload: 'float-preload.js' }
+    }, () => {
+      applyCodexFloatWorkspaceVisibility()
+      try {
+        if (typeof codexFloatWindow?.showInactive === 'function') codexFloatWindow.showInactive()
+        else codexFloatWindow?.show()
+      } catch {}
+      pushCodexFloatSnapshot()
+    })
+    applyCodexFloatWorkspaceVisibility()
+    return true
+  } catch {
+    codexFloatWindow = null
+    return false
+  }
+}
+
+function closeCodexFloat() {
+  if (codexFloatAlive()) {
+    try { codexFloatWindow.close() } catch {}
+  }
+  codexFloatWindow = null
+  codexFloatExpanded = false
+  codexFloatPinned = false
+  codexFloatEdge = 'right'
+  codexFloatDrag = null
+  codexFloatResize = null
+}
+
+function syncCodexFloat(payload) {
+  const source = codexRecord(payload)
+  codexFloatPersistent = source.visible === true
+  if (source.visible !== true) {
+    closeCodexFloat()
+    return true
+  }
+  codexFloatSnapshot = source.snapshot && typeof source.snapshot === 'object' ? source.snapshot : null
+  codexFloatExpandedSizes = normalizeCodexExpandedSizes(source.expandedSizes || codexRecord(source.snapshot).expandedSizes)
+  const position = codexRecord(source.position)
+  codexFloatPositionDisplayId = typeof position.displayId === 'string' ? position.displayId : ''
+  if (!codexFloatAlive() && !createCodexFloat(position)) return false
+  applyCodexFloatWorkspaceVisibility()
+  if (!codexFloatResize) resizeCodexFloat(codexFloatExpanded, false)
+  return pushCodexFloatSnapshot()
+}
+
+function emitCodexFloatAction(actionId, args) {
+  if (typeof actionId !== 'string' || !actionId.startsWith('codex.')) return
+  if (actionId === 'codex.settings.open') {
+    try {
+      if (globalThis.utools && typeof globalThis.utools.showMainWindow === 'function') globalThis.utools.showMainWindow()
+    } catch {}
+  }
+  for (const listener of codexFloatActionListeners) {
+    try { listener({ actionId, args: codexRecord(args) }) } catch {}
+  }
+}
+
+function resizeCodexFloat(expanded, notifyState = true) {
+  if (!codexFloatAlive() || typeof codexFloatWindow.getBounds !== 'function') return
+  const current = codexFloatWindow.getBounds()
+  const display = floatDisplayForPoint({ x: current.x + current.width / 2, y: current.y + current.height / 2 })
+  const edge = validCodexFloatEdge(codexFloatEdge) ? codexFloatEdge : nearestFloatEdge(current, display)
+  const size = codexFloatDesiredSize(codexFloatSnapshot, expanded, display)
+  const resized = resizeFloatBounds(current, size, display, edge)
+  if (current.x !== resized.bounds.x || current.y !== resized.bounds.y || current.width !== resized.bounds.width || current.height !== resized.bounds.height) {
+    try { codexFloatWindow.setBounds(resized.bounds) } catch {}
+  }
+  codexFloatEdge = resized.edge
+  codexFloatExpanded = expanded
+  codexFloatPinned = false
+  if (notifyState) pushCodexFloatState()
+}
+
+function resetCodexFloatGeometry(payload) {
+  const source = codexRecord(payload)
+  codexFloatExpandedSizes = normalizeCodexExpandedSizes(source.expandedSizes)
+  if (!codexFloatAlive() || typeof codexFloatWindow.getBounds !== 'function') return true
+  codexFloatDrag = null
+  codexFloatResize = null
+  const position = codexRecord(source.position)
+  codexFloatPositionDisplayId = typeof position.displayId === 'string' ? position.displayId : ''
+  const display = floatDisplayForPosition(position)
+  const area = display.workArea || display.bounds
+  const size = codexFloatDesiredSize(codexFloatSnapshot, codexFloatExpanded, display)
+  const edge = validCodexFloatEdge(position.edge) ? position.edge : 'right'
+  const requested = Number.isFinite(position.x) && Number.isFinite(position.y)
+    ? { x: position.x, y: position.y, ...size }
+    : { x: area.x + area.width - size.width - CODEX_FLOAT_MARGIN, y: area.y + Math.round((area.height - size.height) / 2), ...size }
+  const bounds = alignFloatBoundsToEdge(requested, display, edge)
+  try { codexFloatWindow.setBounds(bounds) } catch { return false }
+  applyCodexFloatWorkspaceVisibility()
+  codexFloatEdge = edge
+  pushCodexFloatState()
+  return true
+}
+
+function moveCodexFloatResize(screenX, screenY) {
+  if (!codexFloatResize || !codexFloatAlive()) return false
+  if (!Number.isFinite(screenX) || !Number.isFinite(screenY)) return false
+  const start = codexFloatResize
+  const dx = screenX - start.pointerX
+  const dy = screenY - start.pointerY
+  const left = start.corner.endsWith('-left')
+  const top = start.corner.startsWith('top-')
+  const requested = {
+    width: left ? start.bounds.width - dx : start.bounds.width + dx,
+    height: top ? start.bounds.height - dy : start.bounds.height + dy
+  }
+  const size = clampCodexExpandedSize(requested, start.display)
+  const candidate = {
+    x: left ? start.bounds.x + start.bounds.width - size.width : start.bounds.x,
+    y: top ? start.bounds.y + start.bounds.height - size.height : start.bounds.y,
+    ...size
+  }
+  const bounds = alignFloatBoundsToEdge(candidate, start.display, start.edge)
+  try { codexFloatWindow.setBounds(bounds) } catch { return false }
+  return true
+}
+
+function installCodexFloatIpc() {
+  const ipc = electronIpcRenderer()
+  if (!ipc || typeof ipc.on !== 'function') return
+  ipc.on(CODEX_FLOAT_CHANNELS.expansion, (_event, payload) => {
+    if (codexFloatResize) return
+    const source = codexRecord(payload)
+    const expanded = source.expanded === true
+    resizeCodexFloat(expanded, true)
+  })
+  ipc.on(CODEX_FLOAT_CHANNELS.action, (_event, payload) => emitCodexFloatAction(codexRecord(payload).actionId, codexRecord(payload).args))
+  ipc.on(CODEX_FLOAT_CHANNELS.dragStart, (_event, payload) => {
+    if (codexFloatResize || !codexFloatAlive() || typeof codexFloatWindow.getBounds !== 'function') return
+    const point = codexRecord(payload)
+    if (!Number.isFinite(point.screenX) || !Number.isFinite(point.screenY)) return
+    codexFloatDrag = { pointerX: point.screenX, pointerY: point.screenY, bounds: codexFloatWindow.getBounds() }
+  })
+  ipc.on(CODEX_FLOAT_CHANNELS.dragMove, (_event, payload) => {
+    if (!codexFloatDrag || !codexFloatAlive()) return
+    const point = codexRecord(payload)
+    if (!Number.isFinite(point.screenX) || !Number.isFinite(point.screenY)) return
+    const candidate = {
+      ...codexFloatDrag.bounds,
+      x: codexFloatDrag.bounds.x + point.screenX - codexFloatDrag.pointerX,
+      y: codexFloatDrag.bounds.y + point.screenY - codexFloatDrag.pointerY
+    }
+    const display = floatDisplayForPoint({ x: candidate.x + candidate.width / 2, y: candidate.y + candidate.height / 2 })
+    try { codexFloatWindow.setBounds(clampFloatBounds(candidate, display)) } catch {}
+  })
+  ipc.on(CODEX_FLOAT_CHANNELS.dragEnd, () => {
+    if (!codexFloatDrag || !codexFloatAlive() || typeof codexFloatWindow.getBounds !== 'function') return
+    const current = codexFloatWindow.getBounds()
+    const startBounds = codexFloatDrag.bounds
+    if (current.x === startBounds.x && current.y === startBounds.y && current.width === startBounds.width && current.height === startBounds.height) {
+      codexFloatDrag = null
+      return
+    }
+    const display = floatDisplayForPoint({ x: current.x + current.width / 2, y: current.y + current.height / 2 })
+    const snapped = snapFloatBounds(current, display)
+    try { codexFloatWindow.setBounds(snapped.bounds) } catch {}
+    applyCodexFloatWorkspaceVisibility()
+    codexFloatEdge = snapped.edge
+    codexFloatPositionDisplayId = String(display.id || '')
+    codexFloatDrag = null
+    emitCodexFloatAction('codex.float.position.save', {
+      position: { displayId: String(display.id || ''), x: snapped.bounds.x, y: snapped.bounds.y, edge: snapped.edge }
+    })
+  })
+  ipc.on(CODEX_FLOAT_CHANNELS.resizeStart, (_event, payload) => {
+    if (!codexFloatExpanded || codexFloatDrag || codexFloatResize || !codexFloatAlive() || typeof codexFloatWindow.getBounds !== 'function') return
+    const point = codexRecord(payload)
+    if (!Number.isFinite(point.screenX) || !Number.isFinite(point.screenY) || !validCodexResizeCorner(point.corner)) return
+    const bounds = codexFloatWindow.getBounds()
+    const display = floatDisplayForPoint({ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 })
+    const expectedCorner = codexFloatResizeCorner(bounds, display, codexFloatEdge)
+    if (point.corner !== expectedCorner) return
+    codexFloatResize = {
+      pointerX: point.screenX,
+      pointerY: point.screenY,
+      bounds: { ...bounds },
+      display,
+      displayId: String(display.id || ''),
+      edge: codexFloatEdge,
+      corner: point.corner
+    }
+    pushCodexFloatState()
+  })
+  ipc.on(CODEX_FLOAT_CHANNELS.resizeMove, (_event, payload) => {
+    const point = codexRecord(payload)
+    moveCodexFloatResize(point.screenX, point.screenY)
+  })
+  ipc.on(CODEX_FLOAT_CHANNELS.resizeEnd, () => {
+    if (!codexFloatResize || !codexFloatAlive() || typeof codexFloatWindow.getBounds !== 'function') return
+    const resize = codexFloatResize
+    const bounds = codexFloatWindow.getBounds()
+    codexFloatResize = null
+    pushCodexFloatState()
+    if (bounds.width === resize.bounds.width && bounds.height === resize.bounds.height) return
+    emitCodexFloatAction('codex.float.geometry.save', {
+      position: { displayId: resize.displayId, x: bounds.x, y: bounds.y, edge: resize.edge },
+      expandedSize: { displayId: resize.displayId, width: bounds.width, height: bounds.height, updatedAt: Date.now() }
+    })
+  })
+  ipc.on(CODEX_FLOAT_CHANNELS.resizeCancel, () => {
+    if (!codexFloatResize || !codexFloatAlive()) return
+    const bounds = codexFloatResize.bounds
+    codexFloatResize = null
+    try { codexFloatWindow.setBounds(bounds) } catch {}
+    pushCodexFloatState()
+  })
+}
+
+installCodexFloatIpc()
+
 if (globalThis.utools && typeof globalThis.utools.onPluginEnter === 'function') {
   globalThis.utools.onPluginEnter((action) => {
     lastEnterPayload = action || null
@@ -1049,6 +2888,15 @@ if (globalThis.utools && typeof globalThis.utools.onPluginEnter === 'function') 
       try {
         listener(lastEnterPayload)
       } catch {}
+    }
+  })
+}
+
+if (globalThis.utools && typeof globalThis.utools.onPluginOut === 'function') {
+  globalThis.utools.onPluginOut(() => {
+    if (!codexFloatPersistent) {
+      closeCodexFloat()
+      closeCodexServer()
     }
   })
 }
@@ -1081,11 +2929,51 @@ window.eypcPlatform = {
   clipboard: {
     copyText
   },
+  codex: {
+    inspectEnvironment: inspectCodexEnvironment,
+    readSnapshot: readCodexSnapshot,
+    openThread: openCodexThread,
+    archiveThread: archiveCodexThread,
+    archiveProject: archiveCodexProject,
+    close: closeCodexServer
+  },
+  float: {
+    sync: syncCodexFloat,
+    diagnostics: getCodexFloatWorkspaceDiagnostics,
+    resetGeometry: resetCodexFloatGeometry,
+    close() {
+      codexFloatPersistent = false
+      closeCodexFloat()
+    },
+    onAction(listener) {
+      if (typeof listener !== 'function') return () => {}
+      codexFloatActionListeners.add(listener)
+      return () => codexFloatActionListeners.delete(listener)
+    }
+  },
   app: {
+    show() {
+      try {
+        if (globalThis.utools && typeof globalThis.utools.showMainWindow === 'function') {
+          globalThis.utools.showMainWindow()
+          return true
+        }
+      } catch {}
+      return false
+    },
     hide: async () => {
       try {
         if (globalThis.utools && typeof globalThis.utools.hideMainWindow === 'function') {
           return Boolean(globalThis.utools.hideMainWindow(true))
+        }
+      } catch {}
+      return false
+    },
+    configureHotkey(commandLabel) {
+      try {
+        if (globalThis.utools && typeof globalThis.utools.redirectHotKeySetting === 'function') {
+          globalThis.utools.redirectHotKeySetting(String(commandLabel || '').slice(0, 80))
+          return true
         }
       } catch {}
       return false

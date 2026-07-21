@@ -3,8 +3,10 @@ import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 const props = withDefaults(defineProps<{
   suspended?: boolean
+  scopeSelector?: string
 }>(), {
-  suspended: false
+  suspended: false,
+  scopeSelector: '.app-shell'
 })
 
 const TOOLTIP_ID = 'eypc-operation-tooltip'
@@ -54,9 +56,9 @@ function operationTarget(value: Element | null) {
   const labeledControl = label?.control instanceof HTMLElement && label.control.matches(TARGET_SELECTOR)
     ? label.control
     : null
-  if (labeledControl?.closest('.app-shell') && !labeledControl.closest('[data-operation-tooltip-ignore]')) return labeledControl
+  if (labeledControl?.closest(props.scopeSelector) && !labeledControl.closest('[data-operation-tooltip-ignore]')) return labeledControl
   const target = value?.closest<HTMLElement>(TARGET_SELECTOR) || null
-  if (!target?.closest('.app-shell') || target.closest('[data-operation-tooltip-ignore]')) return null
+  if (!target?.closest(props.scopeSelector) || target.closest('[data-operation-tooltip-ignore]')) return null
   return target
 }
 
