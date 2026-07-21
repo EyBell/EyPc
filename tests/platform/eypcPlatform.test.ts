@@ -14,6 +14,60 @@ describe('browser fallback platform', () => {
     Object.defineProperty(globalThis, 'localStorage', { value: originalLocalStorage, configurable: true })
   })
 
+  it.each([
+    ['MacIntel', 'macos'],
+    ['Win32', 'windows']
+  ] as const)('infers %s for a legacy desktop preload without the readiness API', async (navigatorPlatform, expectedPlatform) => {
+    globalThis.window = {
+      navigator: { platform: navigatorPlatform },
+      eypcPlatform: {
+        storage: {},
+        files: {},
+        clipboard: {},
+        codex: {
+          readSnapshot: async () => ({ ok: false, error: { code: 'unavailable', message: 'not used' }, receivedAt: Date.now() })
+        },
+        float: {},
+        app: { hide: async () => true },
+        getEnterPayload: () => null,
+        clearEnterPayload: () => undefined
+      }
+    } as unknown as Window & typeof globalThis
+
+    const { getPlatform } = await import('../../src/platform/eypcPlatform')
+
+    await expect(getPlatform().codex.inspectEnvironment()).resolves.toMatchObject({
+      platform: expectedPlatform,
+      runtimeState: 'missing',
+      runtimeSource: 'unknown',
+      connectionState: 'not-checked'
+    })
+  })
+
+  it('does not claim a legacy compatibility state when the desktop preload has no Codex snapshot bridge', async () => {
+    globalThis.window = {
+      navigator: { platform: 'MacIntel' },
+      eypcPlatform: {
+        storage: {},
+        files: {},
+        clipboard: {},
+        codex: {},
+        float: {},
+        app: { hide: async () => true },
+        getEnterPayload: () => null,
+        clearEnterPayload: () => undefined
+      }
+    } as unknown as Window & typeof globalThis
+
+    const { getPlatform } = await import('../../src/platform/eypcPlatform')
+
+    await expect(getPlatform().codex.inspectEnvironment()).resolves.toMatchObject({
+      platform: 'unsupported',
+      runtimeState: 'unsupported',
+      connectionState: 'not-checked'
+    })
+  })
+
   it('persists fallback state through localStorage across module reloads', async () => {
     const store = new Map<string, string>()
     Object.defineProperty(globalThis, 'localStorage', {

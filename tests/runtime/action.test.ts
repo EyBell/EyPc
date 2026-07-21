@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createActionRuntime } from '../../src/runtime/action/actionRuntime'
 import { createInitialState, normalizeAppState } from '../../src/domain/state'
 import { createAppRuntime } from '../../src/runtime/appRuntime'
@@ -54,6 +54,7 @@ describe('app runtime', () => {
     const opened: string[] = []
     const revealed: string[] = []
     const listed: string[] = []
+    const configuredHotkeys: string[] = []
     let hideCount = 0
     let scanCount = 0
     const platform = {
@@ -116,6 +117,10 @@ describe('app runtime', () => {
         hide: async () => {
           hideCount += 1
           return true
+        },
+        configureHotkey: (commandLabel: string) => {
+          configuredHotkeys.push(commandLabel)
+          return true
         }
       },
       getEnterPayload: () => null,
@@ -123,7 +128,7 @@ describe('app runtime', () => {
       ...overrides
     }
     globalThis.window = { eypcPlatform: platform } as unknown as Window & typeof globalThis
-    return { state, killed, copied, copiedItems, opened, revealed, listed, platform, getScanCount: () => scanCount, getHideCount: () => hideCount }
+    return { state, killed, copied, copiedItems, opened, revealed, listed, configuredHotkeys, platform, getScanCount: () => scanCount, getHideCount: () => hideCount }
   }
 
   function createFakeMqttClient() {
@@ -1181,6 +1186,61 @@ describe('app runtime', () => {
     expect(runtime.snapshot().state.activeTab).toBe('settings')
   })
 
+  it('toggles the Codex float from every app context and refuses to bypass a disabled feature', () => {
+    const { configuredHotkeys } = installPlatform()
+    const runtime = createAppRuntime(createInitialState(100))
+
+    expect(runtime.snapshot().state.codex.settings.floatEnabled).toBe(false)
+    expect(runtime.dispatch('codex.hotkey.configure').handled).toBe(true)
+    expect(configuredHotkeys).toEqual(['切换 Codex 悬浮球'])
+    expect(runtime.handleShortcut('Ctrl+Alt+Q', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('codex.float.toggle')
+    expect(runtime.snapshot().state.codex.settings.floatEnabled).toBe(true)
+    expect(runtime.handleShortcut('Ctrl+Alt+Q', { textInputFocused: true, activeInputRole: 'other' })).toBe('codex.float.toggle')
+    expect(runtime.snapshot().state.codex.settings.floatEnabled).toBe(false)
+
+    runtime.saveFeatureConfigs([
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'codex', enabled: false, sortOrder: 4 },
+      { id: 'settings', enabled: true, sortOrder: 5 }
+    ])
+    expect(runtime.handleShortcut('Ctrl+Alt+Q', false)).toBeNull()
+    expect(runtime.snapshot().state.codex.settings.floatEnabled).toBe(false)
+    expect(runtime.snapshot().message).toBe('请先在总设置中启用 Codex Companion')
+    runtime.dispose()
+  })
+
+  it('deduplicates the in-app and uTools Codex toggle in either delivery order', () => {
+    const runtime = createAppRuntime(createInitialState(100))
+    const now = vi.spyOn(Date, 'now')
+    try {
+      now.mockReturnValue(1_000)
+      expect(runtime.dispatch('codex.float.toggle', { source: 'utools-feature' }).handled).toBe(true)
+      expect(runtime.snapshot().state.codex.settings.floatEnabled).toBe(true)
+      now.mockReturnValue(1_100)
+      expect(runtime.dispatch('codex.float.toggle', { source: 'in-app-shortcut' }).handled).toBe(true)
+      expect(runtime.snapshot().state.codex.settings.floatEnabled).toBe(true)
+
+      now.mockReturnValue(2_000)
+      expect(runtime.dispatch('codex.float.toggle', { source: 'in-app-shortcut' }).handled).toBe(true)
+      expect(runtime.snapshot().state.codex.settings.floatEnabled).toBe(false)
+      now.mockReturnValue(2_100)
+      expect(runtime.dispatch('codex.float.toggle', { source: 'utools-feature' }).handled).toBe(true)
+      expect(runtime.snapshot().state.codex.settings.floatEnabled).toBe(false)
+
+      now.mockReturnValue(3_000)
+      expect(runtime.handleShortcut('Ctrl+Alt+Q', false)).toBe('codex.float.toggle')
+      expect(runtime.snapshot().state.codex.settings.floatEnabled).toBe(true)
+      now.mockReturnValue(3_400)
+      expect(runtime.handleShortcut('Ctrl+Alt+Q', false)).toBe('codex.float.toggle')
+      expect(runtime.snapshot().state.codex.settings.floatEnabled).toBe(false)
+    } finally {
+      now.mockRestore()
+      runtime.dispose()
+    }
+  })
+
   it('persists feature configs, updates visible tab order, and keeps settings enabled', () => {
     const { state, platform } = installPlatform()
     let savedState: unknown = null
@@ -1190,7 +1250,7 @@ describe('app runtime', () => {
     }
     const runtime = createAppRuntime(state)
 
-    expect(runtime.snapshot().visibleFeatures.map((feature) => feature.id)).toEqual(['ports', 'mqtt', 'settings'])
+    expect(runtime.snapshot().visibleFeatures.map((feature) => feature.id)).toEqual(['ports', 'mqtt', 'codex', 'settings'])
     expect(runtime.handleShortcut('Ctrl+Shift+2', false)).toBe('tab.select.mqtt')
     expect(runtime.snapshot().state.activeTab).toBe('mqtt')
     runtime.setTab('ports')
@@ -1199,14 +1259,16 @@ describe('app runtime', () => {
       { id: 'settings', enabled: false, sortOrder: 1 },
       { id: 'favorites', enabled: true, sortOrder: 2 },
       { id: 'mqtt', enabled: true, sortOrder: 3 },
-      { id: 'ports', enabled: true, sortOrder: 4 }
+      { id: 'ports', enabled: true, sortOrder: 4 },
+      { id: 'codex', enabled: true, sortOrder: 5 }
     ])
 
     expect(runtime.snapshot().state.settings.featureConfigs).toEqual([
       { id: 'settings', enabled: true, sortOrder: 1 },
       { id: 'favorites', enabled: true, sortOrder: 2 },
       { id: 'mqtt', enabled: true, sortOrder: 3 },
-      { id: 'ports', enabled: true, sortOrder: 4 }
+      { id: 'ports', enabled: true, sortOrder: 4 },
+      { id: 'codex', enabled: true, sortOrder: 5 }
     ])
     expect(runtime.snapshot().visibleFeatures.map((feature) => ({
       id: feature.id,
@@ -1216,7 +1278,8 @@ describe('app runtime', () => {
       { id: 'settings', shortcutId: 'Ctrl+Alt+S', commandId: 'settings.open' },
       { id: 'favorites', shortcutId: 'Ctrl+Shift+1', commandId: 'tab.select.favorites' },
       { id: 'mqtt', shortcutId: 'Ctrl+Shift+2', commandId: 'tab.select.mqtt' },
-      { id: 'ports', shortcutId: 'Ctrl+Shift+3', commandId: 'tab.select.ports' }
+      { id: 'ports', shortcutId: 'Ctrl+Shift+3', commandId: 'tab.select.ports' },
+      { id: 'codex', shortcutId: 'Ctrl+Shift+4', commandId: 'tab.select.codex' }
     ])
     expect(runtime.handleShortcut('Ctrl+Shift+1', false)).toBe('tab.select.favorites')
     expect(runtime.snapshot().state.activeTab).toBe('favorites')
@@ -1230,7 +1293,8 @@ describe('app runtime', () => {
           { id: 'settings', enabled: true, sortOrder: 1 },
           { id: 'favorites', enabled: true, sortOrder: 2 },
           { id: 'mqtt', enabled: true, sortOrder: 3 },
-          { id: 'ports', enabled: true, sortOrder: 4 }
+          { id: 'ports', enabled: true, sortOrder: 4 },
+          { id: 'codex', enabled: true, sortOrder: 5 }
         ]
       }
     })

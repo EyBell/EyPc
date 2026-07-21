@@ -79,7 +79,7 @@ describe('favorite file bridge source', () => {
     expect(prepareScript).toContain('copyFileSync(pluginSource, distPlugin)')
     expect(prepareScript).toContain("const publicPreload = resolve(root, 'public/preload.js')")
     expect(prepareScript).toContain("const distPreload = resolve(distDir, 'preload.js')")
-    expect(validateScript).toContain("['index.html', 'plugin.json', 'package.json', 'preload.js', 'logo.svg']")
+    expect(validateScript).toContain("['index.html', 'float.html', 'plugin.json', 'package.json', 'preload.js', 'float-preload.js', 'logo.svg']")
     expect(validateScript).toContain("readFileSync(resolve(distDir, 'preload.js'), 'utf8')")
     expect(validateScript).toContain("dist package.json type must be commonjs")
     expect(validateScript).toContain('public preload.js must match preload/index.js')

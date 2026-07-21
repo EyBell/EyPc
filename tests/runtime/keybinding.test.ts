@@ -14,6 +14,29 @@ import {
 } from '../../src/runtime/keybinding/keybindingRuntime'
 
 describe('keybinding runtime', () => {
+  it('scopes the Codex shortcut domain to its own tab and interaction layer', () => {
+    const codexContext = { tab: 'codex' as const, confirmOpen: false, textInputFocused: false }
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', codexContext)?.actionId).toBe('codex.list.down')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', codexContext)?.actionId).toBe('codex.task.archiveFocused')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', codexContext)?.actionId).toBe('codex.detail.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+9', codexContext)?.actionId).toBe('codex.drawer.select.9')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', { ...codexContext, textInputFocused: true })).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F', { ...codexContext, textInputFocused: true })).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', { ...codexContext, tab: 'mqtt' })).not.toMatchObject({ actionId: 'codex.task.archiveFocused' })
+
+    const rows = buildShortcutCommandRows(DEFAULT_KEYBINDINGS)
+    const codexRefresh = rows.find((row) => row.commandId === 'codex.refresh')!
+    expect(codexRefresh.profileId).toBe('codex')
+    expect(rows.find((row) => row.commandId === 'codex.selection.toggle')?.title).toBe('切换当前项选择')
+    expect(codexRefresh.conflicts.some((conflict) => conflict.commandId === 'mqtt.connection.connect')).toBe(false)
+
+    const conflicting = buildShortcutCommandRows(buildEffectiveKeybindings([
+      { commandId: 'codex.refresh', shortcutIds: ['Ctrl+L'] },
+      { commandId: 'codex.search.focus', shortcutIds: ['Ctrl+L'] }
+    ]))
+    expect(conflicting.find((row) => row.commandId === 'codex.refresh')?.conflicts).toContainEqual(expect.objectContaining({ commandId: 'codex.search.focus', shortcutId: 'Ctrl+L' }))
+  })
+
   it('resolves default bindings with when context and layer priority', () => {
     const context = { tab: 'ports' as const, confirmOpen: false, textInputFocused: false }
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F', context)?.actionId).toBe('ports.search.focus')
@@ -28,6 +51,9 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+S', { ...context, tab: 'favorites', textInputFocused: true, activeInputRole: 'favorite-search' })?.actionId).toBe('settings.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+S', { ...context, tab: 'settings', textInputFocused: true, activeInputRole: 'settings' })?.actionId).toBe('settings.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+S', { ...context, textInputFocused: true, activeInputRole: 'other' })?.actionId).toBe('settings.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+Q', context)?.actionId).toBe('codex.float.toggle')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+Q', { ...context, textInputFocused: true, activeInputRole: 'port-search' })?.actionId).toBe('codex.float.toggle')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+Q', { ...context, tab: 'settings', confirmOpen: true, textInputFocused: true, activeInputRole: 'settings' })?.actionId).toBe('codex.float.toggle')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F', context)?.actionId).toBe('quickJump.openForward')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F', context)?.actionId).toBe('quickJump.openBackward')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F', { ...context, textInputFocused: true })).toBeNull()
@@ -726,6 +752,7 @@ describe('keybinding runtime', () => {
       ports: { keybindingOverrides: [{ commandId: 'ports.scan', shortcutIds: ['Alt+R'], enabled: true }], updatedAt: 1 },
       mqtt: { keybindingOverrides: [], updatedAt: 1 },
       favorites: { keybindingOverrides: [{ commandId: 'favorites.open', shortcutIds: ['Ctrl+O'], enabled: true }], updatedAt: 1 },
+      codex: { keybindingOverrides: [], updatedAt: 1 },
       settings: { keybindingOverrides: [], updatedAt: 1 }
     })
 

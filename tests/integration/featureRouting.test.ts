@@ -3,11 +3,12 @@ import { allFeatures, visibleFeatures } from '../../src/runtime/feature/featureR
 import { routePluginFeature } from '../../src/runtime/feature/featureRouting'
 
 describe('uTools feature routing', () => {
-  it('keeps MQTT as the third default feature tab order', () => {
+  it('keeps the default feature tab order with Codex before settings', () => {
     expect(allFeatures().map((feature) => ({ id: feature.id, enabled: feature.enabled }))).toEqual([
       { id: 'ports', enabled: true },
       { id: 'favorites', enabled: false },
       { id: 'mqtt', enabled: true },
+      { id: 'codex', enabled: true },
       { id: 'settings', enabled: true }
     ])
   })
@@ -18,6 +19,13 @@ describe('uTools feature routing', () => {
     expect(routePluginFeature({ code: 'eypc-mqtt' })).toEqual({ tab: 'mqtt', focusSearch: true })
     expect(routePluginFeature({ code: 'eypc-favorites' })).toEqual({ tab: 'favorites', focusSearch: true })
     expect(routePluginFeature({ code: 'eypc-favorites-quick' })).toEqual({ tab: 'favorites', focusSearch: false, favoriteQuick: true })
+    expect(routePluginFeature({ code: 'eypc-codex' })).toEqual({ tab: 'codex', focusSearch: false })
+    expect(routePluginFeature({ code: 'eypc-codex-toggle' }, undefined, 'mqtt')).toEqual({
+      tab: 'mqtt',
+      focusSearch: false,
+      actionId: 'codex.float.toggle',
+      hideAfterAction: true
+    })
     expect(routePluginFeature({ code: 'eypc-settings' })).toEqual({ tab: 'settings', focusSearch: false })
     expect(routePluginFeature({ code: 'unknown' })).toEqual({ tab: 'ports', focusSearch: false })
   })
@@ -58,7 +66,8 @@ describe('uTools feature routing', () => {
       { id: 'ports' as const, enabled: true, sortOrder: 1 },
       { id: 'mqtt' as const, enabled: false, sortOrder: 2 },
       { id: 'favorites' as const, enabled: false, sortOrder: 3 },
-      { id: 'settings' as const, enabled: true, sortOrder: 4 }
+      { id: 'codex' as const, enabled: false, sortOrder: 4 },
+      { id: 'settings' as const, enabled: true, sortOrder: 5 }
     ]
 
     expect(routePluginFeature({ code: 'eypc-mqtt' }, featureConfigs)).toEqual({
@@ -75,6 +84,12 @@ describe('uTools feature routing', () => {
       tab: 'settings',
       focusSearch: false,
       settingsMaintenanceSection: 'features'
+    })
+    expect(routePluginFeature({ code: 'eypc-codex-toggle' }, featureConfigs)).toEqual({
+      tab: 'settings',
+      focusSearch: false,
+      settingsMaintenanceSection: 'features',
+      actionId: 'codex.float.toggle'
     })
   })
 })
