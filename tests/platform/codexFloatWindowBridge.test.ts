@@ -52,6 +52,8 @@ function loadPreloadHarness() {
     setAlwaysOnTop: vi.fn(),
     isAlwaysOnTop: vi.fn(() => true),
     setVisibleOnAllWorkspaces: vi.fn(),
+    show: vi.fn(),
+    focus: vi.fn(),
     showInactive: vi.fn(),
     webContents: { send: vi.fn((channel: string, payload: unknown) => sent.push({ channel, payload })) }
   }
@@ -89,6 +91,7 @@ function loadPreloadHarness() {
   return {
     bridge: sandbox.window.eypcPlatform.float as {
       sync(payload: Record<string, unknown>): boolean
+      activate(): boolean
       diagnostics(): Record<string, unknown>
       resetGeometry(payload: Record<string, unknown>): boolean
       onAction(listener: (action: { actionId: string; args: Record<string, unknown> }) => void): () => void
@@ -206,6 +209,18 @@ describe('Codex float preload sizing', () => {
 
     expect(bridge.sync({ visible: true, snapshot: snapshot({ style: 'card', expandedFields: [] }), position })).toBe(true)
     expect(bounds()).toEqual({ x: 2988, y: 120, width: 360, height: 280 })
+  })
+
+  it('expands, shows, focuses and notifies the child when globally activated', () => {
+    const { bridge, bounds, floatWindow, sent } = loadPreloadHarness()
+    const position = { displayId: 'right', x: 3244, y: 120, edge: 'right' }
+    bridge.sync({ visible: true, snapshot: snapshot(), position })
+
+    expect(bridge.activate()).toBe(true)
+    expect(bounds()).toEqual({ x: 2988, y: 120, width: 360, height: 370 })
+    expect(floatWindow.show).toHaveBeenCalledTimes(1)
+    expect(floatWindow.focus).toHaveBeenCalledTimes(1)
+    expect(sent.some((item) => item.channel === 'eypc-float:activate')).toBe(true)
   })
 
   it('resizes from the inward corner, preserves the edge and saves geometry only on end', () => {

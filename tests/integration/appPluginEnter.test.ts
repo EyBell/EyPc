@@ -93,6 +93,10 @@ function toggleCalls() {
   return dispatchProbe.dispatch.mock.calls.filter(([actionId]) => actionId === 'codex.float.toggle')
 }
 
+function activateCalls() {
+  return dispatchProbe.dispatch.mock.calls.filter(([actionId]) => actionId === 'codex.float.activate')
+}
+
 let wrapper: VueWrapper | null = null
 
 afterEach(() => {
@@ -105,6 +109,18 @@ afterEach(() => {
 })
 
 describe('App uTools Codex toggle entry', () => {
+  it('handles the global Codex card activation entry and hides the main window', async () => {
+    const host = installHost({ code: 'eypc-codex-activate' })
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => { callback(0); return 1 })
+
+    wrapper = shallowMount(App)
+    await flushPromises()
+
+    expect(activateCalls()).toHaveLength(1)
+    expect(host.hide).toHaveBeenCalledTimes(1)
+    expect(host.saved.at(-1)?.codex.settings.floatEnabled).toBe(true)
+  })
+
   it('handles a cold-start enabled payload exactly once and hides the main window', async () => {
     const host = installHost({ code: 'eypc-codex-toggle' })
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => { callback(0); return 1 })

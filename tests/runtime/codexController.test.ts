@@ -416,7 +416,95 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
-  it('opens without marking viewed and uses hide as the completed-unread review action', async () => {
+  it('projects waiting-input activity notifications immediately without a full snapshot refresh', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    const sourceFingerprint = 'a'.repeat(64)
+    const taskKey = 'abcdef0123456789'
+    const activityListeners: Array<(delta: any) => void> = []
+    let snapshotReads = 0
+    const platform = {
+      codex: {
+        inspectEnvironment: async () => ({ version: 1 as const, checking: false, platform: 'macos' as const, runtimeState: 'detected' as const, runtimeSource: 'homebrew' as const, processState: 'not-running' as const, configState: 'detected' as const, connectionState: 'not-checked' as const, checkedAt: 100 }),
+        readSnapshot: async (options: Record<string, boolean>) => {
+          snapshotReads += 1
+          const receivedAt = Date.now()
+          return options.includeThreads
+            ? { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt, threads: [{ key: taskKey, actionAlias: 'activity-alias', name: '实时待输入', status: 'active' as const, activeFlags: [], updatedAt: receivedAt - 10, lastTurnStatus: 'inProgress' as const, lastTurnStartedAt: receivedAt - 20, projectKey: 'chats', projectName: 'Chats', projectKind: 'chats' as const }], projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }], sourceFingerprint, completeness: 'verified' as const } }
+            : { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt } }
+        },
+        readActivitySnapshot: async () => await new Promise<never>(() => undefined),
+        onActivityChanged: (listener: (delta: any) => void) => {
+          activityListeners.push(listener)
+          return () => { activityListeners.splice(activityListeners.indexOf(listener), 1) }
+        },
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    let notifyCount = 0
+    const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => { notifyCount += 1 }, setMessage: () => undefined })
+
+    controller.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(activityListeners[0]).toBeTypeOf('function')
+    const readsAfterBaseline = snapshotReads
+    const receivedAt = Date.now() + 10_000
+    activityListeners[0]({ version: 1, sourceFingerprint, generation: 1, receivedAt, inventoryChanged: false, entries: [{ key: taskKey, status: 'active', activeFlags: ['waitingOnUserInput'] }] })
+    expect(controller.view().conversations.inputRequired).toHaveLength(1)
+    expect(controller.view().conversations.inputRequired[0]).toMatchObject({ key: taskKey, activityState: 'waiting-input' })
+    expect(snapshotReads).toBe(readsAfterBaseline)
+
+    activityListeners[0]({ version: 1, sourceFingerprint, generation: 2, receivedAt: receivedAt + 1, inventoryChanged: false, entries: [{ key: taskKey, status: 'active', activeFlags: [] }] })
+    expect(controller.view().conversations.inputRequired).toHaveLength(0)
+    expect(notifyCount).toBeGreaterThan(0)
+    controller.dispose()
+  })
+
+  it('polls the lightweight activity lane every 200ms and backs off to 1s after three failures', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(10_000)
+    try {
+      const state = createInitialState(1)
+      state.activeTab = 'codex'
+      const sourceFingerprint = 'b'.repeat(64)
+      let activityReads = 0
+      const platform = {
+        codex: {
+          inspectEnvironment: async () => ({ version: 1 as const, checking: false, platform: 'macos' as const, runtimeState: 'detected' as const, runtimeSource: 'homebrew' as const, processState: 'not-running' as const, configState: 'detected' as const, connectionState: 'not-checked' as const, checkedAt: 10_000 }),
+          readSnapshot: async (options: Record<string, boolean>) => options.includeThreads
+            ? { ok: true as const, receivedAt: 10_000, value: { version: 2 as const, receivedAt: 10_000, threads: [], projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }], sourceFingerprint, completeness: 'verified' as const } }
+            : { ok: true as const, receivedAt: 10_000, value: { version: 2 as const, receivedAt: 10_000 } },
+          readActivitySnapshot: async () => {
+            activityReads += 1
+            return { ok: false as const, receivedAt: Date.now(), error: { code: 'timeout' as const, message: 'activity timeout' } }
+          },
+          onActivityChanged: () => () => undefined,
+          close: () => undefined
+        }
+      } as unknown as EypcPlatformApi
+      const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined })
+
+      controller.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(activityReads).toBe(1)
+      await vi.advanceTimersByTimeAsync(199)
+      expect(activityReads).toBe(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(activityReads).toBe(2)
+      await vi.advanceTimersByTimeAsync(200)
+      expect(activityReads).toBe(3)
+      await vi.advanceTimersByTimeAsync(999)
+      expect(activityReads).toBe(3)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(activityReads).toBe(4)
+      controller.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('marks a completed-unread task viewed only after a successful open', async () => {
     const state = createInitialState(1)
     state.activeTab = 'codex'
     state.codex.lastTaskScanAt = 50
@@ -451,10 +539,10 @@ describe('Codex controller', () => {
 
     await controller.refresh()
     expect(controller.view().conversations.completedUnread[0]).toMatchObject({ key, revisionAt: 200 })
-    const unreadReceipt = structuredClone(state.codex.receipts)
     expect(await controller.openThread(key, 'alias-1')).toBe(true)
-    expect(state.codex.receipts).toEqual(unreadReceipt)
-    expect(controller.view().conversations.completedUnread).toHaveLength(1)
+    expect(state.codex.receipts[0]).toMatchObject({ acknowledgedRecency: 200, pendingRecency: 0 })
+    expect(controller.view().conversations.completedUnread).toHaveLength(0)
+    expect(controller.view().conversations.completed[0]).toMatchObject({ key, bucket: 'completed' })
     expect(controller).not.toHaveProperty('acknowledge')
     expect(controller).not.toHaveProperty('acknowledgeAll')
 

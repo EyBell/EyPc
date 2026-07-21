@@ -54,6 +54,8 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+Q', context)?.actionId).toBe('codex.float.toggle')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+Q', { ...context, textInputFocused: true, activeInputRole: 'port-search' })?.actionId).toBe('codex.float.toggle')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+Q', { ...context, tab: 'settings', confirmOpen: true, textInputFocused: true, activeInputRole: 'settings' })?.actionId).toBe('codex.float.toggle')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+Enter', context)?.actionId).toBe('codex.float.activate')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Alt+Enter', { ...context, textInputFocused: true, activeInputRole: 'other' })?.actionId).toBe('codex.float.activate')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F', context)?.actionId).toBe('quickJump.openForward')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F', context)?.actionId).toBe('quickJump.openBackward')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F', { ...context, textInputFocused: true })).toBeNull()

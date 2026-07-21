@@ -26,6 +26,12 @@ describe('uTools feature routing', () => {
       actionId: 'codex.float.toggle',
       hideAfterAction: true
     })
+    expect(routePluginFeature({ code: 'eypc-codex-activate' }, undefined, 'mqtt')).toEqual({
+      tab: 'mqtt',
+      focusSearch: false,
+      actionId: 'codex.float.activate',
+      hideAfterAction: true
+    })
     expect(routePluginFeature({ code: 'eypc-settings' })).toEqual({ tab: 'settings', focusSearch: false })
     expect(routePluginFeature({ code: 'unknown' })).toEqual({ tab: 'ports', focusSearch: false })
   })
@@ -90,6 +96,12 @@ describe('uTools feature routing', () => {
       focusSearch: false,
       settingsMaintenanceSection: 'features',
       actionId: 'codex.float.toggle'
+    })
+    expect(routePluginFeature({ code: 'eypc-codex-activate' }, featureConfigs)).toEqual({
+      tab: 'settings',
+      focusSearch: false,
+      settingsMaintenanceSection: 'features',
+      actionId: 'codex.float.activate'
     })
   })
 })

@@ -262,6 +262,8 @@ function loadCodexBridge(
       eypcPlatform: {
         codex: {
           readSnapshot(options: Record<string, unknown>): Promise<Record<string, any>>
+          readActivitySnapshot(): Promise<Record<string, any>>
+          onActivityChanged(listener: (delta: Record<string, any>) => void): () => void
           archiveProject(actionAlias: string, request: Record<string, unknown>): Promise<Record<string, any>>
           close(): void
         }
@@ -280,6 +282,29 @@ function loadCodexBridge(
 }
 
 describe('Codex App Server preload bridge', () => {
+  it('uses a thread-list-only activity lane and delivers App Server notifications immediately', async () => {
+    const child = new FakeCodexProcess()
+    const { bridge } = loadCodexBridge(child)
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(baseline).toMatchObject({ ok: true, value: { completeness: 'verified' } })
+    const writesBeforeActivity = child.writes.length
+
+    const activity = await bridge.readActivitySnapshot()
+    expect(activity).toMatchObject({ ok: true, value: { version: 1, inventoryChanged: false } })
+    expect(activity.value.entries).toHaveLength(5)
+    expect(child.writes.slice(writesBeforeActivity).map((frame) => frame.method)).toEqual(['thread/list'])
+
+    const deltas: Array<Record<string, any>> = []
+    const stop = bridge.onActivityChanged((delta) => deltas.push(delta))
+    child.stdout.emit('data', `${JSON.stringify({ method: 'thread/status/changed', params: { threadId: FIXED_THREAD_IDS[0], status: { type: 'active', activeFlags: [] } } })}\n`)
+    expect(deltas.at(-1)).toMatchObject({ inventoryChanged: false, entries: [{ key: baseline.value.threads[0].key, status: 'active', activeFlags: [] }] })
+
+    child.stdout.emit('data', `${JSON.stringify({ method: 'turn/completed', params: { threadId: FIXED_THREAD_IDS[0] } })}\n`)
+    expect(deltas.at(-1)).toMatchObject({ inventoryChanged: true, entries: [] })
+    stop()
+    bridge.close()
+  })
+
   it('uses only allowlisted App Server methods and projects privacy-safe snapshots', async () => {
     const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
     const child = new FakeCodexProcess()
