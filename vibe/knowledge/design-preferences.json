@@ -1,0 +1,93 @@
+{
+  "schema_version": "1.0",
+  "entries": [
+    {
+      "id": "eypc-codex-product-context",
+      "category": "product-context",
+      "scope": "project",
+      "surfaces": ["codex-companion"],
+      "authority_ref": "developer-soul.md#codex-companion-taste",
+      "tags": ["authority:project-soul", "desktop-companion", "quota", "task-inbox"],
+      "status": "stable",
+      "priority": 200,
+      "last_verified": "2026-07-21"
+    },
+    {
+      "id": "eypc-codex-visual-taste",
+      "category": "visual-taste",
+      "scope": "project",
+      "surfaces": ["codex-companion"],
+      "authority_ref": "developer-soul.md#codex-companion-taste",
+      "tags": ["authority:project-soul", "high-contrast", "paired-skin", "colorful-refractive-water-ball"],
+      "status": "stable",
+      "priority": 200,
+      "last_verified": "2026-07-21"
+    },
+    {
+      "id": "eypc-codex-layout-responsive",
+      "category": "layout-responsive",
+      "scope": "project",
+      "surfaces": ["codex-companion"],
+      "authority_ref": "developer-soul.md#codex-companion-taste",
+      "tags": ["authority:project-soul", "adaptive-height", "per-display-size", "auto-collapse", "all-spaces", "stable-top-controls"],
+      "status": "stable",
+      "priority": 200,
+      "last_verified": "2026-07-21"
+    },
+    {
+      "id": "eypc-codex-color-theme",
+      "category": "color-theme",
+      "scope": "project",
+      "surfaces": ["codex-companion"],
+      "authority_ref": "developer-soul.md#codex-companion-taste",
+      "tags": ["authority:project-soul", "dark-water", "light-card", "contrast"],
+      "status": "stable",
+      "priority": 200,
+      "last_verified": "2026-07-18"
+    },
+    {
+      "id": "eypc-codex-interaction-input",
+      "category": "interaction-input",
+      "scope": "project",
+      "surfaces": ["codex-companion"],
+      "authority_ref": "developer-soul.md#codex-companion-taste",
+      "tags": ["authority:project-soul", "five-task-tabs", "static-short-action-buttons", "same-slot-confirm", "space-toggle-in-place", "floating-batch-toolbar"],
+      "status": "stable",
+      "priority": 200,
+      "last_verified": "2026-07-21"
+    },
+    {
+      "id": "eypc-codex-motion-feedback",
+      "category": "motion-feedback",
+      "scope": "project",
+      "surfaces": ["codex-companion"],
+      "authority_ref": "developer-soul.md#codex-companion-taste",
+      "tags": ["authority:project-soul", "non-rotating-cyclic-wave", "three-layer-water", "refraction", "weekly-ring", "reduced-motion"],
+      "status": "stable",
+      "priority": 200,
+      "last_verified": "2026-07-21"
+    },
+    {
+      "id": "eypc-codex-content-information",
+      "category": "content-information",
+      "scope": "project",
+      "surfaces": ["codex-companion"],
+      "authority_ref": "developer-soul.md#codex-companion-taste",
+      "tags": ["authority:project-soul", "no-visual-tooltip", "unified-task-sort", "archived-filtering", "privacy", "archive-state-trust"],
+      "status": "stable",
+      "priority": 200,
+      "last_verified": "2026-07-21"
+    },
+    {
+      "id": "eypc-codex-performance-media",
+      "category": "performance-media",
+      "scope": "project",
+      "surfaces": ["codex-companion"],
+      "authority_ref": "developer-soul.md#codex-companion-taste",
+      "tags": ["authority:project-soul", "css-motion", "no-background-media", "reduced-motion"],
+      "status": "stable",
+      "priority": 200,
+      "last_verified": "2026-07-20"
+    }
+  ]
+}

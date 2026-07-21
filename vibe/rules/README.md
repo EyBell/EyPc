@@ -2,6 +2,8 @@
 
 Tool: codex
 
+design-preference-gate: accepted
+
 ## Read Order
 
 1. [AGENTS.md](../../AGENTS.md#L1)
@@ -17,6 +19,7 @@ Tool: codex
 - Keep domain logic pure and testable under `src/domain/`.
 - Put uTools, Node.js, shell, process, and file-system calls behind `src/platform/` or `preload/`.
 - All user-visible mutations go through Runtime Action dispatch.
+- Reusable failures, user corrections, data incidents, and tool/runtime traps must be routed through [error-memory-capture](../../../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Skills/global/error-memory-capture/SKILL.md#L1) into project error memory before closeout.
 - Medium or larger interaction/UI/configuration work must apply the project [developer-soul.md](../knowledge/developer-soul.md#L1) before changing behavior.
 - Edit-like interactions must follow the command soul in [developer-soul.md](../knowledge/developer-soul.md#L1): `F2` full edit, `Shift+F2` rename, `Ctrl+S` save, `Escape` cancel, and editor-local `Tab` cycling.
 - Shortcut chords are scoped, not globally unique by default. Before treating a shortcut as conflicting, inspect tab, layer, input role, and `when` ownership in [keybindingRuntime.ts](../../src/runtime/keybinding/keybindingRuntime.ts#L1); the same chord may be reused across mutually exclusive feature tabs or contexts, and UI hints must show the context-local shortcut.
