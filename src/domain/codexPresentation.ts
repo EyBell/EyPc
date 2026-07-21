@@ -1,15 +1,21 @@
 import type {
   CodexCompactField,
   CodexQuotaBucket,
+  CodexQuotaFamily,
+  CodexQuotaPool,
   CodexQuotaSnapshotV1,
   ConversationSnapshotV1
 } from './codex'
+import { normalizeCodexQuota } from './codex'
+import { highestSparkQuotaPool } from './codexNewThread'
 
 export interface CodexQuotaReading {
   kind: 'short' | 'weekly'
-  label: '5h' | 'Weekly'
-  longLabel: '5 小时限额' | '周限额'
+  family: CodexQuotaFamily
+  label: '5h' | 'Weekly' | 'Spark' | 'Spark Weekly'
+  longLabel: '5 小时限额' | '周限额' | 'Spark 额度' | 'Spark 周额度'
   bucket: CodexQuotaBucket
+  limitName: string
 }
 
 export interface CodexCompactPresentation {
@@ -33,11 +39,16 @@ export interface CodexPresentationInput {
   conversations: Pick<ConversationSnapshotV1, 'ongoingCount' | 'unknownCount' | 'attentionCount' | 'pendingCount'>
 }
 
-function reading(kind: CodexQuotaReading['kind'], bucket: CodexQuotaBucket | null): CodexQuotaReading | null {
+function reading(pool: CodexQuotaPool, kind: CodexQuotaReading['kind'], bucket: CodexQuotaBucket | null): CodexQuotaReading | null {
   if (!bucket) return null
+  if (pool.family === 'spark') {
+    return kind === 'short'
+      ? { family: 'spark', kind, label: 'Spark', longLabel: 'Spark 额度', bucket, limitName: pool.limitName }
+      : { family: 'spark', kind, label: 'Spark Weekly', longLabel: 'Spark 周额度', bucket, limitName: pool.limitName }
+  }
   return kind === 'short'
-    ? { kind, label: '5h', longLabel: '5 小时限额', bucket }
-    : { kind, label: 'Weekly', longLabel: '周限额', bucket }
+    ? { family: 'normal', kind, label: '5h', longLabel: '5 小时限额', bucket, limitName: pool.limitName }
+    : { family: 'normal', kind, label: 'Weekly', longLabel: '周限额', bucket, limitName: pool.limitName }
 }
 
 function quotaState(quota: CodexQuotaSnapshotV1, hasReading: boolean): Pick<CodexCompactPresentation, 'state' | 'stateLabel'> {
@@ -49,16 +60,26 @@ function quotaState(quota: CodexQuotaSnapshotV1, hasReading: boolean): Pick<Code
 }
 
 export function buildCodexCompactPresentation(input: CodexPresentationInput): CodexCompactPresentation {
-  const readings = [reading('short', input.quota.short), reading('weekly', input.quota.weekly)]
-    .filter((item): item is CodexQuotaReading => item !== null)
-    .sort((left, right) => {
-      const leftReset = left.bucket.resetAt || Number.MAX_SAFE_INTEGER
-      const rightReset = right.bucket.resetAt || Number.MAX_SAFE_INTEGER
-      if (leftReset !== rightReset) return leftReset - rightReset
-      return (left.bucket.windowMinutes || Number.MAX_SAFE_INTEGER) - (right.bucket.windowMinutes || Number.MAX_SAFE_INTEGER)
-    })
-  const primary = readings[0] || null
-  const secondary = readings[1] || null
+  const quota = normalizeCodexQuota(input.quota)
+  let primary: CodexQuotaReading | null = null
+  let secondary: CodexQuotaReading | null = null
+  if (quota.normal.short && quota.normal.short.remainingPercent > 0) {
+    primary = reading(quota.normal, 'short', quota.normal.short)
+    secondary = reading(quota.normal, 'weekly', quota.normal.weekly)
+  } else if (quota.normal.weekly && quota.normal.weekly.remainingPercent > 0) {
+    primary = reading(quota.normal, 'weekly', quota.normal.weekly)
+  } else {
+    const spark = highestSparkQuotaPool(quota)
+    if (spark?.short && spark.short.remainingPercent > 0) {
+      primary = reading(spark, 'short', spark.short)
+      secondary = reading(spark, 'weekly', spark.weekly)
+    } else if (spark?.weekly && spark.weekly.remainingPercent > 0) {
+      primary = reading(spark, 'weekly', spark.weekly)
+    } else {
+      primary = reading(quota.normal, 'short', quota.normal.short) || reading(quota.normal, 'weekly', quota.normal.weekly)
+      secondary = primary?.kind === 'short' ? reading(quota.normal, 'weekly', quota.normal.weekly) : null
+    }
+  }
   const showTasks = input.conversationInboxEnabled && input.compactFields.includes('tasks')
   const ongoingCount = showTasks ? input.conversations.ongoingCount : 0
   const unknownCount = showTasks ? input.conversations.unknownCount : 0

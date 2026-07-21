@@ -109,11 +109,53 @@ function loadPreloadHarness() {
   }
 }
 
+function loadFloatRendererPreloadHarness() {
+  const preload = readFileSync(resolve(process.cwd(), 'preload/float.js'), 'utf8')
+  const ipcHandlers = new Map<string, (...args: unknown[]) => void>()
+  const sent: Array<{ channel: string; payload: Record<string, unknown> }> = []
+  const sandbox: Record<string, any> = {
+    window: {},
+    globalThis: null,
+    setTimeout,
+    clearTimeout,
+    utools: {
+      sendToParent: (channel: string, payload: Record<string, unknown>) => sent.push({ channel, payload })
+    },
+    require(name: string) {
+      if (name === 'electron') return { ipcRenderer: { on: (channel: string, listener: (...args: unknown[]) => void) => ipcHandlers.set(channel, listener) } }
+      throw new Error(`unexpected float require: ${name}`)
+    }
+  }
+  sandbox.globalThis = sandbox
+  vm.runInNewContext(preload, sandbox, { filename: 'float-preload.js' })
+  return {
+    bridge: sandbox.window.eypcFloat as {
+      createThread(request: Record<string, unknown>): Promise<Record<string, unknown>>
+    },
+    ipcHandlers,
+    sent
+  }
+}
+
 function setExpansion(ipcHandlers: Map<string, (...args: unknown[]) => void>, expanded: boolean, pinned = false) {
   ipcHandlers.get('eypc-float:expansion')?.({}, { expanded, pinned: expanded && pinned })
 }
 
 describe('Codex float preload sizing', () => {
+  it('correlates transient create results without expanding the float Node dependency allowlist', async () => {
+    const { bridge, ipcHandlers, sent } = loadFloatRendererPreloadHarness()
+    const pending = bridge.createThread({ modelId: 'gpt-5.6-sol', prompt: 'temporary test draft' })
+    const frame = sent.at(-1)
+
+    expect(frame).toMatchObject({ channel: 'eypc-float:thread-create', payload: { requestId: expect.stringMatching(/^ftr_[A-Za-z0-9_-]{6,80}$/) } })
+    ipcHandlers.get('eypc-float:thread-create-result')?.({}, {
+      requestId: frame?.payload.requestId,
+      result: { outcome: 'opened', modelId: 'gpt-5.6-sol', retryAllowed: false }
+    })
+
+    await expect(pending).resolves.toMatchObject({ outcome: 'opened', modelId: 'gpt-5.6-sol', retryAllowed: false })
+  })
+
   it('uses exact compact dimensions for the water and horizontal card skins', () => {
     const { geometry } = loadPreloadHarness()
 

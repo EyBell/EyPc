@@ -7,6 +7,8 @@ import type {
   CodexEnvironmentPlatform,
   CodexEnvironmentSnapshotV1,
   CodexHostSnapshot,
+  CodexNewThreadRequest,
+  CodexNewThreadResult,
   CodexProjectArchiveRequest,
   CodexProjectArchiveResult,
   CodexThreadArchiveRequest,
@@ -126,13 +128,15 @@ export interface EypcPlatformApi {
     readActivitySnapshot?(): Promise<CodexBridgeResult<CodexActivityDeltaV1>>
     onActivityChanged?(listener: (delta: CodexActivityDeltaV1) => void): () => void
     openThread(actionAlias: string): Promise<CodexThreadOpenResult>
+    createThread?(request: CodexNewThreadRequest): Promise<CodexNewThreadResult>
+    openBlank?(): Promise<CodexThreadOpenResult>
     archiveThread?(actionAlias: string, request: CodexThreadArchiveRequest): Promise<CodexThreadArchiveResult>
     archiveProject?(actionAlias: string, request: CodexProjectArchiveRequest): Promise<CodexProjectArchiveResult>
     close(): void
   }
   float: {
     sync(payload: { visible: boolean; snapshot?: unknown; position?: unknown; expandedSizes?: unknown }): boolean
-    activate?(): boolean
+    activate?(payload?: { command?: 'new-thread' }): boolean
     diagnostics?(): CodexFloatWorkspaceDiagnostics
     resetGeometry?(payload?: { position?: unknown; expandedSizes?: unknown }): boolean
     close(): void
@@ -493,6 +497,8 @@ export function getPlatform(): EypcPlatformApi {
         readActivitySnapshot: hostCodex?.readActivitySnapshot,
         onActivityChanged: hostCodex?.onActivityChanged,
         openThread: hostCodex?.openThread || (async () => ({ outcome: 'failed', errorCode: 'unsupported', message: 'Codex thread open unavailable' })),
+        createThread: hostCodex?.createThread,
+        openBlank: hostCodex?.openBlank,
         archiveThread: hostCodex?.archiveThread,
         archiveProject: hostCodex?.archiveProject,
         close: hostCodex?.close || (() => undefined)
@@ -566,6 +572,8 @@ export function getPlatform(): EypcPlatformApi {
       readActivitySnapshot: undefined,
       onActivityChanged: undefined,
       openThread: async () => ({ outcome: 'failed', errorCode: 'unsupported', message: 'Codex thread open unavailable in browser' }),
+      createThread: undefined,
+      openBlank: undefined,
       archiveThread: undefined,
       archiveProject: undefined,
       close: () => undefined

@@ -89,6 +89,19 @@ describe('global quick jump UI wiring', () => {
     expect(app).toContain('quickJumpHitStackContainsTarget(element, document.elementsFromPoint(point.x, point.y))')
   })
 
+  it('applies clipping, hit-stack and transient-layer filtering inside the independent Codex renderer', () => {
+    const float = readFileSync(resolve(process.cwd(), 'src/FloatApp.vue'), 'utf8')
+
+    expect(float).toContain('function quickJumpVisibleRect')
+    expect(float).toContain('function quickJumpClippingAncestor')
+    expect(float).toContain("style.pointerEvents === 'none'")
+    expect(float).toContain('document.elementsFromPoint')
+    expect(float).toContain('if (composer.value || shiftPreview.value) return false')
+    expect(float).toContain("if (panel.value && !element.closest('.float-side-panel')) return false")
+    expect(float).toContain('closeShiftPreview(true)')
+    expect(float).toMatch(/if \(focusKey\) \{[\s\S]*?focusedKey\.value = focusKey[\s\S]*?return[\s\S]*?\}[\s\S]*?target\.element\.click\(\)/)
+  })
+
   it('uses target rectangles directly without title-anchor positioning', () => {
     const app = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
     const layer = readFileSync(resolve(process.cwd(), 'src/components/QuickJumpLayer.vue'), 'utf8')

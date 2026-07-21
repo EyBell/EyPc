@@ -77,6 +77,8 @@ const previewStyle = computed<Record<string, string | number>>(() => ({
   '--preview-ring': preview.value.secondary?.bucket.remainingPercent ?? 0
 }))
 const activePreset = computed(() => matchCodexThemePreset(props.snapshot.settings.colors, props.snapshot.settings.waterAppearance))
+const ordinaryModels = computed(() => props.snapshot.modelCatalog.models.filter((model) => model.family === 'normal'))
+const sparkModels = computed(() => props.snapshot.modelCatalog.models.filter((model) => model.family === 'spark'))
 const statusLabel = computed(() => {
   if (props.snapshot.refreshing) return '正在读取 Codex App Server'
   if (props.snapshot.quota.status === 'ok') return 'Codex App Server 已连接'
@@ -413,7 +415,7 @@ function formatTime(value: number | null | undefined) {
                 <label><input type="color" :value="waterDraft.outer.trackColor" @input="updateWaterDraft('outer', 'trackColor', ($event.target as HTMLInputElement).value.toUpperCase())" @change="commitWaterAppearance" /><span>轨道色</span></label>
               </div>
               <label><span>光晕</span><select :value="waterDraft.outer.glow" @change="updateWaterDraft('outer', 'glow', ($event.target as HTMLSelectElement).value); commitWaterAppearance()"><option value="off">关闭</option><option value="soft">柔和</option><option value="strong">明显</option></select></label>
-              <small>只要服务端返回 Weekly，外环就以完整轨道和剩余比例圆弧表达；缺失 Weekly 时不伪造圆环。</small>
+              <small>外环跟随水球当前展示的额度家族：普通阶段使用普通 Weekly，Spark 阶段切换到 Spark Weekly；对应 Weekly 缺失时不伪造圆环。</small>
             </fieldset>
           </div>
           <p v-if="waterAppearanceError" class="codex-color-error" role="alert">{{ waterAppearanceError }}；已恢复上一次有效水球配置。</p>
@@ -429,8 +431,10 @@ function formatTime(value: number | null | undefined) {
           </div>
           <div class="codex-form-grid refresh-grid">
             <label><span>额度刷新</span><select :value="snapshot.settings.quotaRefreshMinutes" @change="update({ quotaRefreshMinutes: Number(($event.target as HTMLSelectElement).value) as CodexSettings['quotaRefreshMinutes'] })"><option :value="5">5 分钟</option><option :value="10">10 分钟</option><option :value="15">15 分钟</option><option :value="30">30 分钟</option><option :value="0">仅手动</option></select></label>
+            <label><span>新会话普通模型</span><select :value="snapshot.settings.newThreadPreferredModel" :disabled="!ordinaryModels.length" @change="update({ newThreadPreferredModel: ($event.target as HTMLSelectElement).value })"><option value="">目录默认非 Spark 模型</option><option v-for="model in ordinaryModels" :key="model.id" :value="model.id">{{ model.displayName }} · {{ model.id }}</option></select><small>策略固定为 quota-auto；普通窗口返回 0 时自动改用最高可用 Spark，本项不覆盖 Spark 阶段。</small></label>
             <button type="button" class="secondary" @click="$emit('dispatch', 'codex.float.position.reset')"><RotateCcw :size="14" />重置浮窗位置</button>
           </div>
+          <div class="codex-privacy-note">动态模型目录：{{ snapshot.modelCatalog.status === 'ok' ? `${snapshot.modelCatalog.models.length} 个可用（Spark ${sparkModels.length}）` : snapshot.modelCatalog.status === 'stale' ? '正在使用上次目录' : '尚未读取' }}。弹窗内临时改选只影响本次会话。</div>
           <div class="codex-size-summary">
             <span>
               <strong>{{ snapshot.floatHost.expandedManual ? `展开面板：${snapshot.floatHost.expandedWidth} × ${snapshot.floatHost.expandedHeight}` : '展开面板：内容自适应' }}</strong>

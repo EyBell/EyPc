@@ -6358,6 +6358,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     }
     actions.register({ id: 'codex.refresh', title: '刷新 Codex 状态', group: 'Codex', risk: 'normal', scope: 'global', priority: 100, shortcut: 'Ctrl+R', when: () => true, run: () => { void codexController.refresh(); return true } })
     actions.register({ id: 'codex.settings.open', title: '打开 Codex 配置', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => { setTab('codex'); return true } })
+    actions.register({ id: 'codex.thread.createFocused', title: '在当前项目新建会话', group: 'Codex', risk: 'normal', scope: 'global', priority: 99, shortcut: 'Ctrl+T', when: () => true, run: () => {
+      const enabled = state.codex.settings.floatEnabled || codexController.updateSettings({ floatEnabled: true })
+      if (!enabled) return false
+      queueMicrotask(() => platform.float.activate?.({ command: 'new-thread' }))
+      return true
+    } })
     actions.register({ id: 'codex.settings.update', title: '更新 Codex 悬浮球配置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
       const source = args?.settings && typeof args.settings === 'object' ? args.settings : args
       return codexController.updateSettings((source || {}) as Partial<CodexSettings>)
@@ -6568,7 +6574,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const codexFloat = codexController.floatSnapshot()
       codexFloat.keybindings = buildEffectiveKeybindings(state.settings.shortcutProfiles, state.settings.featureConfigs)
         .filter((binding) => (binding.actionId.startsWith('codex.') || binding.actionId.startsWith('quickJump.')) && !binding.disabled && Boolean(binding.shortcutId))
-        .map((binding) => ({ actionId: binding.actionId, shortcutId: binding.shortcutId, layer: binding.layer }))
+        .map((binding) => ({ actionId: binding.actionId, shortcutId: binding.shortcutId, layer: binding.layer, when: binding.when, weight: binding.weight }))
       return {
         state,
         codex: codexController.view(),

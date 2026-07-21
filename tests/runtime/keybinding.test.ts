@@ -16,6 +16,10 @@ import {
 describe('keybinding runtime', () => {
   it('scopes the Codex shortcut domain to its own tab and interaction layer', () => {
     const codexContext = { tab: 'codex' as const, confirmOpen: false, textInputFocused: false }
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', codexContext)?.actionId).toBe('codex.thread.createFocused')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', { ...codexContext, confirmOpen: true })).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', { ...codexContext, textInputFocused: true, activeInputRole: 'codex-composer' })).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', { ...codexContext, tab: 'favorites' })?.actionId).not.toBe('codex.thread.createFocused')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', codexContext)?.actionId).toBe('codex.list.down')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', codexContext)?.actionId).toBe('codex.task.archiveFocused')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', codexContext)?.actionId).toBe('codex.detail.open')
@@ -26,7 +30,11 @@ describe('keybinding runtime', () => {
 
     const rows = buildShortcutCommandRows(DEFAULT_KEYBINDINGS)
     const codexRefresh = rows.find((row) => row.commandId === 'codex.refresh')!
+    const codexCreate = rows.find((row) => row.commandId === 'codex.thread.createFocused')!
     expect(codexRefresh.profileId).toBe('codex')
+    expect(codexCreate.profileId).toBe('codex')
+    expect(codexCreate.defaultShortcutIds).toEqual(['Ctrl+T'])
+    expect(codexCreate.conflicts.some((conflict) => conflict.commandId === 'favorites.group.create')).toBe(false)
     expect(rows.find((row) => row.commandId === 'codex.selection.toggle')?.title).toBe('切换当前项选择')
     expect(codexRefresh.conflicts.some((conflict) => conflict.commandId === 'mqtt.connection.connect')).toBe(false)
 
@@ -35,6 +43,25 @@ describe('keybinding runtime', () => {
       { commandId: 'codex.search.focus', shortcutIds: ['Ctrl+L'] }
     ]))
     expect(conflicting.find((row) => row.commandId === 'codex.refresh')?.conflicts).toContainEqual(expect.objectContaining({ commandId: 'codex.search.focus', shortcutId: 'Ctrl+L' }))
+
+    const overridden = buildEffectiveKeybindings({
+      global: { keybindingOverrides: [], updatedAt: 1 },
+      ports: { keybindingOverrides: [], updatedAt: 1 },
+      mqtt: { keybindingOverrides: [], updatedAt: 1 },
+      favorites: { keybindingOverrides: [], updatedAt: 1 },
+      codex: { keybindingOverrides: [{ commandId: 'codex.thread.createFocused', shortcutIds: ['Ctrl+N'], enabled: true }], updatedAt: 1 },
+      settings: { keybindingOverrides: [], updatedAt: 1 }
+    })
+    expect(resolveKeybinding(overridden, 'Ctrl+N', codexContext)?.actionId).toBe('codex.thread.createFocused')
+    expect(resolveKeybinding(overridden, 'Ctrl+T', codexContext)?.actionId).not.toBe('codex.thread.createFocused')
+
+    const composerPreview = previewKeybindingResolution(DEFAULT_KEYBINDINGS, 'Ctrl+T', {
+      ...codexContext,
+      textInputFocused: true,
+      activeInputRole: 'codex-composer'
+    })
+    expect(composerPreview.activeLayers).toContain('codex-composer')
+    expect(composerPreview.winner).toBeNull()
   })
 
   it('resolves default bindings with when context and layer priority', () => {

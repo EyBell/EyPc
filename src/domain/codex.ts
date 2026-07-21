@@ -18,6 +18,8 @@ export type CodexWaterMotion = 'static' | 'slow' | 'normal' | 'fast'
 export type CodexWaterOuterStyle = 'solid' | 'segmented'
 export type CodexWaterColorMode = 'quota' | 'custom'
 export type CodexWaterGlow = 'off' | 'soft' | 'strong'
+export type CodexQuotaFamily = 'normal' | 'spark'
+export type CodexNewThreadModelPolicy = 'quota-auto'
 
 export interface CodexQuotaBucket {
   remainingPercent: number
@@ -25,7 +27,15 @@ export interface CodexQuotaBucket {
   windowMinutes: number | null
 }
 
-export interface CodexQuotaSnapshotV1 {
+export interface CodexQuotaPool {
+  limitId: string
+  limitName: string
+  family: CodexQuotaFamily
+  short: CodexQuotaBucket | null
+  weekly: CodexQuotaBucket | null
+}
+
+export interface CodexQuotaSnapshotLegacyV1 {
   version: 1
   status: 'idle' | 'loading' | 'ok' | 'stale' | 'error'
   plan: string
@@ -34,6 +44,88 @@ export interface CodexQuotaSnapshotV1 {
   updatedAt: number
   errorCode?: string
   errorMessage?: string
+}
+
+export interface CodexQuotaSnapshotV2 {
+  version: 2
+  status: CodexQuotaSnapshotLegacyV1['status']
+  plan: string
+  /** Compatibility mirrors for the ordinary Codex pool. */
+  short: CodexQuotaBucket | null
+  weekly: CodexQuotaBucket | null
+  normal: CodexQuotaPool
+  spark: CodexQuotaPool[]
+  updatedAt: number
+  errorCode?: string
+  errorMessage?: string
+}
+
+/** Compatibility name retained for existing consumers while V2 rolls out. */
+export type CodexQuotaSnapshotV1 = CodexQuotaSnapshotLegacyV1 | CodexQuotaSnapshotV2
+
+export interface CodexModelCatalogEntry {
+  id: string
+  displayName: string
+  description: string
+  family: CodexQuotaFamily
+  isDefault: boolean
+  supportsText: boolean
+}
+
+export interface CodexModelCatalogSnapshotV1 {
+  version: 1
+  status: 'idle' | 'ok' | 'stale' | 'error'
+  models: CodexModelCatalogEntry[]
+  fingerprint: string
+  updatedAt: number
+  errorCode?: string
+}
+
+export interface CodexResolvedNewThreadModel {
+  status: 'ready' | 'manual-required'
+  modelId: string
+  modelName: string
+  family: CodexQuotaFamily
+  reason: 'preferred-normal' | 'default-normal' | 'first-normal' | 'quota-spark' | 'manual-selection' | 'spark-unavailable' | 'catalog-empty'
+  quota: CodexQuotaBucket | null
+  quotaLabel: string
+}
+
+export interface CodexNewThreadTarget {
+  projectKey: string
+  projectAlias: string
+  projectName: string
+  projectKind: 'project' | 'chats'
+  projectFingerprint: string
+}
+
+export interface CodexNewThreadSelectionContext {
+  quota: CodexQuotaSnapshotV1
+  modelCatalog: CodexModelCatalogSnapshotV1
+  contextFingerprint: string
+  projectFingerprint: string
+  receivedAt: number
+}
+
+export interface CodexNewThreadRequest {
+  target: Pick<CodexNewThreadTarget, 'projectKey' | 'projectAlias' | 'projectFingerprint'>
+  modelId: string
+  contextFingerprint: string
+  mode: 'send-and-open' | 'create-empty'
+  selectionKind: 'auto' | 'manual'
+  /** Dedicated transient field: never place this request in snapshots, actions, logs, or storage. */
+  prompt?: string
+}
+
+export interface CodexNewThreadResult {
+  outcome: 'opened' | 'created' | 'reopen-available' | 'stale-selection' | 'manual-only' | 'failed'
+  modelId?: string
+  reopenAlias?: string
+  errorCode?: string
+  message?: string
+  retryAllowed?: boolean
+  context?: CodexNewThreadSelectionContext
+  target?: CodexNewThreadTarget
 }
 
 export interface CodexConfigSnapshotV1 {
@@ -132,11 +224,17 @@ export interface CodexHostSnapshotV1 {
     plan: string
     short: CodexQuotaBucket | null
     weekly: CodexQuotaBucket | null
+    normal?: CodexQuotaPool
+    spark?: CodexQuotaPool[]
   }
   config?: Omit<CodexConfigSnapshotV1, 'version' | 'updatedAt'>
   threads?: CodexHostThread[]
   threadsPartial?: boolean
   taskAuthority?: CodexTaskAuthority
+  models?: CodexModelCatalogEntry[]
+  modelCatalogFingerprint?: string
+  modelCatalogErrorCode?: string
+  newThreadContextFingerprint?: string
 }
 
 export interface CodexHostSnapshotV2 {
@@ -156,6 +254,10 @@ export interface CodexHostSnapshotV2 {
   /** One-release V1 migration fields. V2 verified snapshots are never partial. */
   threadsPartial?: false
   taskAuthority?: CodexTaskAuthority
+  models?: CodexModelCatalogEntry[]
+  modelCatalogFingerprint?: string
+  modelCatalogErrorCode?: string
+  newThreadContextFingerprint?: string
 }
 
 export type CodexHostSnapshot = CodexHostSnapshotV1 | CodexHostSnapshotV2
@@ -291,6 +393,9 @@ export interface CodexSettings {
   conversationInboxEnabled: boolean
   quotaRefreshMinutes: CodexQuotaRefreshMinutes
   taskRefreshSeconds: CodexTaskRefreshSeconds
+  newThreadModelPolicy: CodexNewThreadModelPolicy
+  /** Applies only while ordinary Codex quota is selected by quota-auto. */
+  newThreadPreferredModel: string
   /** Rolling last-question window used by every Codex task tab. */
   timeWindowDays: number
   compactFields: CodexCompactField[]
@@ -656,8 +761,21 @@ export function clampPercent(value: unknown): number {
   return Math.max(0, Math.min(100, Math.round(numberValue(value, 0))))
 }
 
-export function emptyCodexQuota(status: CodexQuotaSnapshotV1['status'] = 'idle'): CodexQuotaSnapshotV1 {
-  return { version: 1, status, plan: '', short: null, weekly: null, updatedAt: 0 }
+export function emptyCodexQuota(status: CodexQuotaSnapshotV1['status'] = 'idle'): CodexQuotaSnapshotV2 {
+  return {
+    version: 2,
+    status,
+    plan: '',
+    short: null,
+    weekly: null,
+    normal: { limitId: 'codex', limitName: 'Codex', family: 'normal', short: null, weekly: null },
+    spark: [],
+    updatedAt: 0
+  }
+}
+
+export function emptyCodexModelCatalog(status: CodexModelCatalogSnapshotV1['status'] = 'idle'): CodexModelCatalogSnapshotV1 {
+  return { version: 1, status, models: [], fingerprint: '', updatedAt: 0 }
 }
 
 export function emptyCodexConfig(): CodexConfigSnapshotV1 {
@@ -728,6 +846,8 @@ export function defaultCodexSettings(): CodexSettings {
     conversationInboxEnabled: true,
     quotaRefreshMinutes: 5,
     taskRefreshSeconds: 15,
+    newThreadModelPolicy: 'quota-auto',
+    newThreadPreferredModel: '',
     timeWindowDays: 30,
     compactFields: [...COMPACT_FIELDS],
     expandedFields: [...EXPANDED_FIELDS],
@@ -749,6 +869,10 @@ export function normalizeCodexSettings(value: unknown): CodexSettings {
     conversationInboxEnabled: source.conversationInboxEnabled !== false,
     quotaRefreshMinutes: enumValue(source.quotaRefreshMinutes, [0, 5, 10, 15, 30] as const, fallback.quotaRefreshMinutes),
     taskRefreshSeconds: enumValue(source.taskRefreshSeconds, [0, 15, 30, 60] as const, fallback.taskRefreshSeconds),
+    newThreadModelPolicy: enumValue(source.newThreadModelPolicy, ['quota-auto'] as const, fallback.newThreadModelPolicy),
+    newThreadPreferredModel: typeof source.newThreadPreferredModel === 'string' && /^[A-Za-z0-9._:-]{1,120}$/.test(source.newThreadPreferredModel)
+      ? source.newThreadPreferredModel
+      : '',
     timeWindowDays: boundedInteger(source.timeWindowDays, 1, 365, fallback.timeWindowDays),
     compactFields: orderedFields(source.compactFields, COMPACT_FIELDS, fallback.compactFields),
     expandedFields: orderedFields(source.expandedFields, EXPANDED_FIELDS, fallback.expandedFields),
@@ -774,15 +898,39 @@ function normalizeBucket(value: unknown): CodexQuotaBucket | null {
   }
 }
 
-export function normalizeCodexQuota(value: unknown): CodexQuotaSnapshotV1 {
+export function normalizeCodexQuota(value: unknown): CodexQuotaSnapshotV2 {
   const source = record(value)
   const status = enumValue(source.status, ['idle', 'loading', 'ok', 'stale', 'error'] as const, 'idle')
+  const normalSource = record(source.normal)
+  const legacyShort = normalizeBucket(source.short)
+  const legacyWeekly = normalizeBucket(source.weekly)
+  const normal: CodexQuotaPool = {
+    limitId: typeof normalSource.limitId === 'string' ? normalSource.limitId.slice(0, 120) : 'codex',
+    limitName: typeof normalSource.limitName === 'string' ? normalSource.limitName.slice(0, 160) : 'Codex',
+    family: 'normal',
+    short: normalizeBucket(normalSource.short) || legacyShort,
+    weekly: normalizeBucket(normalSource.weekly) || legacyWeekly
+  }
+  const spark = Array.isArray(source.spark) ? source.spark.flatMap((value): CodexQuotaPool[] => {
+    const pool = record(value)
+    const limitId = typeof pool.limitId === 'string' ? pool.limitId.slice(0, 120) : ''
+    if (!limitId) return []
+    return [{
+      limitId,
+      limitName: typeof pool.limitName === 'string' ? pool.limitName.slice(0, 160) : limitId,
+      family: 'spark',
+      short: normalizeBucket(pool.short),
+      weekly: normalizeBucket(pool.weekly)
+    }]
+  }).slice(0, 12) : []
   return {
-    version: 1,
+    version: 2,
     status,
     plan: typeof source.plan === 'string' ? source.plan.slice(0, 64) : '',
-    short: normalizeBucket(source.short),
-    weekly: normalizeBucket(source.weekly),
+    short: normal.short,
+    weekly: normal.weekly,
+    normal,
+    spark,
     updatedAt: numberValue(source.updatedAt, 0),
     ...(typeof source.errorCode === 'string' ? { errorCode: source.errorCode.slice(0, 80) } : {}),
     ...(typeof source.errorMessage === 'string' ? { errorMessage: source.errorMessage.slice(0, 180) } : {})

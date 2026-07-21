@@ -6,6 +6,12 @@ const CHANNELS = {
   activate: 'eypc-float:activate',
   expansion: 'eypc-float:expansion',
   action: 'eypc-float:action',
+  threadCreate: 'eypc-float:thread-create',
+  threadCreateResult: 'eypc-float:thread-create-result',
+  threadOpen: 'eypc-float:thread-open',
+  threadOpenResult: 'eypc-float:thread-open-result',
+  blankOpen: 'eypc-float:blank-open',
+  blankOpenResult: 'eypc-float:blank-open-result',
   dragStart: 'eypc-float:drag-start',
   dragMove: 'eypc-float:drag-move',
   dragEnd: 'eypc-float:drag-end',
@@ -20,6 +26,34 @@ let lastState = { expanded: false, pinned: false, resizing: false, resizeCorner:
 const snapshotListeners = new Set()
 const stateListeners = new Set()
 const activationListeners = new Set()
+const transientRequests = new Map()
+let transientSequence = 0
+
+function transientRequest(channel, payload) {
+  transientSequence = (transientSequence + 1) % Number.MAX_SAFE_INTEGER
+  const requestId = `ftr_${Date.now().toString(36)}_${transientSequence.toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+  return new Promise((resolve) => {
+    const timeoutId = setTimeout(() => {
+      transientRequests.delete(requestId)
+      resolve({ outcome: 'failed', errorCode: 'timeout', message: '请求响应超时', retryAllowed: true })
+    }, 30_000)
+    transientRequests.set(requestId, { resolve, timeoutId })
+    if (!sendToParent(channel, { requestId, ...payload })) {
+      clearTimeout(timeoutId)
+      transientRequests.delete(requestId)
+      resolve({ outcome: 'failed', errorCode: 'unavailable', message: '浮窗桥接不可用', retryAllowed: true })
+    }
+  })
+}
+
+function resolveTransientRequest(payload) {
+  const source = payload && typeof payload === 'object' ? payload : {}
+  const pending = transientRequests.get(source.requestId)
+  if (!pending) return
+  clearTimeout(pending.timeoutId)
+  transientRequests.delete(source.requestId)
+  pending.resolve(source.result && typeof source.result === 'object' ? source.result : { outcome: 'failed', errorCode: 'protocol-error', message: '请求结果无效', retryAllowed: true })
+}
 
 function sendToParent(channel, payload) {
   try {
@@ -60,6 +94,10 @@ ipcRenderer.on(CHANNELS.activate, (_event, payload) => {
   }
 })
 
+ipcRenderer.on(CHANNELS.threadCreateResult, (_event, payload) => resolveTransientRequest(payload))
+ipcRenderer.on(CHANNELS.threadOpenResult, (_event, payload) => resolveTransientRequest(payload))
+ipcRenderer.on(CHANNELS.blankOpenResult, (_event, payload) => resolveTransientRequest(payload))
+
 window.eypcFloat = {
   getSnapshot: () => lastSnapshot,
   getState: () => lastState,
@@ -82,6 +120,9 @@ window.eypcFloat = {
   },
   setExpansion: (expanded, pinned = false) => sendToParent(CHANNELS.expansion, { expanded: expanded === true, pinned: expanded === true && pinned === true }),
   action: (actionId, args = {}) => sendToParent(CHANNELS.action, { actionId, args }),
+  createThread: (request) => transientRequest(CHANNELS.threadCreate, { request }),
+  reopenThread: (actionAlias) => transientRequest(CHANNELS.threadOpen, { actionAlias }),
+  openBlank: () => transientRequest(CHANNELS.blankOpen, {}),
   dragStart: (screenX, screenY) => sendToParent(CHANNELS.dragStart, { screenX, screenY }),
   dragMove: (screenX, screenY) => sendToParent(CHANNELS.dragMove, { screenX, screenY }),
   dragEnd: () => sendToParent(CHANNELS.dragEnd, {}),

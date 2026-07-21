@@ -34,6 +34,10 @@ class FakeCodexProcess extends EventEmitter {
   archiveNoopIds = new Set<string>()
   emptyTurnIds = new Set<string>()
   missingTurnStartedAtIds = new Set<string>()
+  createdThreadId = '92345678-1234-4234-8234-123456789abc'
+  createdModelOverride = ''
+  failTurnStart = false
+  failCreateCleanup = false
 
   constructor(
     private readonly failInitialize = false,
@@ -93,12 +97,34 @@ class FakeCodexProcess extends EventEmitter {
             planType: 'pro',
             primary: { usedPercent: 20, resetsAt: 2_000_000_000, windowDurationMins: 300 },
             secondary: { usedPercent: 65, resetsAt: 2_000_600_000, windowDurationMins: 10_080 }
+          },
+          codex_bengalfox: {
+            limitId: 'codex_bengalfox',
+            limitName: 'GPT-5.3-Codex-Spark',
+            primary: { usedPercent: 5, resetsAt: 2_000_700_000, windowDurationMins: 10_080 }
           }
         }
       }
     }
     if (method === 'account/read') return { requiresOpenaiAuth: false, account: { planType: 'pro', accountId: 'private-account' } }
     if (method === 'config/read') return { config: { model: 'gpt-5.6', model_reasoning_effort: 'high', service_tier: 'priority', secret: 'private-config' } }
+    if (method === 'model/list') return {
+      data: [
+        { id: 'gpt-5.6-sol', displayName: 'GPT-5.6 Sol', isDefault: true, inputModalities: ['text'] },
+        { id: 'gpt-5.3-codex-spark', displayName: 'GPT-5.3 Codex Spark', inputModalities: ['text'] }
+      ]
+    }
+    if (method === 'thread/start') return {
+      model: this.createdModelOverride || params?.model,
+      cwd: typeof params?.cwd === 'string' ? params.cwd : '/tmp/chats',
+      thread: {
+        id: this.createdThreadId
+      }
+    }
+    if (method === 'turn/start') {
+      if (this.failTurnStart) throw new Error('turn start failed')
+      return { turn: { id: 'turn-created' } }
+    }
     if (method === 'thread/list') {
       if (params?.archived === true) {
         return this.page([...this.archivedIds].map((id) => ({ id, name: '已归档', status: { type: 'notLoaded', activeFlags: [] }, recencyAt: 2_000_000_000 })), params)
@@ -168,6 +194,7 @@ class FakeCodexProcess extends EventEmitter {
       }
     }
     if (method === 'thread/archive') {
+      if (this.failCreateCleanup && params?.threadId === this.createdThreadId) throw new Error('cleanup failed')
       if (typeof params?.threadId === 'string' && !this.archiveNoopIds.has(params.threadId)) this.archivedIds.add(params.threadId)
       return {}
     }
@@ -218,6 +245,7 @@ function loadCodexBridge(
   const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
   const spawn = vi.fn(() => child)
   const execFile = vi.fn(noSystemProxyExecFile)
+  const openExternal = vi.fn(async () => undefined)
   const registryReads: string[] = []
   const sandbox = {
     window: {} as Record<string, unknown>,
@@ -251,7 +279,7 @@ function loadCodexBridge(
       }
       if (name === 'node:path') return pathModule
       if (name === 'node:os') return { homedir: () => '/tmp' }
-      if (name === 'electron') return { ipcRenderer: { on() {} } }
+      if (name === 'electron') return { ipcRenderer: { on() {} }, shell: { openExternal } }
       throw new Error(`unexpected require: ${name}`)
     }
   }
@@ -264,6 +292,7 @@ function loadCodexBridge(
           readSnapshot(options: Record<string, unknown>): Promise<Record<string, any>>
           readActivitySnapshot(): Promise<Record<string, any>>
           onActivityChanged(listener: (delta: Record<string, any>) => void): () => void
+          createThread(request: Record<string, unknown>): Promise<Record<string, any>>
           archiveProject(actionAlias: string, request: Record<string, unknown>): Promise<Record<string, any>>
           close(): void
         }
@@ -277,11 +306,115 @@ function loadCodexBridge(
       }
     }).__codexNativeTest,
     registryReads,
-    spawn
+    spawn,
+    openExternal
   }
 }
 
 describe('Codex App Server preload bridge', () => {
+  it('creates a model-pinned thread through the dedicated bridge and opens only a thread deep link', async () => {
+    const child = new FakeCodexProcess()
+    const { bridge, openExternal } = loadCodexBridge(child)
+    const snapshot = await bridge.readSnapshot({ includeQuota: true, includeConfig: true, includeThreads: true })
+    const chats = snapshot.value.projects.find((project: Record<string, unknown>) => project.key === 'chats')
+    const prompt = '用语音输入的临时提示词'
+    const result = await bridge.createThread({
+      target: {
+        projectKey: 'chats',
+        projectAlias: chats.actionAlias,
+        projectName: 'Chats',
+        projectKind: 'chats',
+        projectFingerprint: snapshot.value.sourceFingerprint
+      },
+      modelId: 'gpt-5.6-sol',
+      contextFingerprint: snapshot.value.newThreadContextFingerprint,
+      mode: 'send-and-open',
+      selectionKind: 'auto',
+      prompt
+    })
+
+    expect(result).toEqual({ outcome: 'opened', modelId: 'gpt-5.6-sol', retryAllowed: false })
+    expect(child.writes.find((frame) => frame.method === 'thread/start')?.params).toMatchObject({
+      model: 'gpt-5.6-sol',
+      allowProviderModelFallback: false,
+      ephemeral: false
+    })
+    expect(child.writes.find((frame) => frame.method === 'turn/start')?.params).toEqual({
+      threadId: child.createdThreadId,
+      input: [{ type: 'text', text: prompt }]
+    })
+    expect(openExternal).toHaveBeenCalledWith(`codex://threads/${child.createdThreadId}`)
+    expect(JSON.stringify(result)).not.toContain(prompt)
+    expect(openExternal.mock.calls.flat().join(' ')).not.toContain(prompt)
+    bridge.close()
+  })
+
+  it('returns a fresh safe context when the frozen quota/catalog/project fingerprint is stale', async () => {
+    const child = new FakeCodexProcess()
+    const { bridge } = loadCodexBridge(child)
+    const snapshot = await bridge.readSnapshot({ includeQuota: true, includeConfig: true, includeThreads: true })
+    const chats = snapshot.value.projects.find((project: Record<string, unknown>) => project.key === 'chats')
+    const result = await bridge.createThread({
+      target: { projectKey: 'chats', projectAlias: chats.actionAlias, projectName: 'Chats', projectKind: 'chats', projectFingerprint: snapshot.value.sourceFingerprint },
+      modelId: 'gpt-5.6-sol',
+      contextFingerprint: 'f'.repeat(64),
+      mode: 'create-empty',
+      selectionKind: 'auto'
+    })
+    expect(result).toMatchObject({
+      outcome: 'stale-selection',
+      errorCode: 'selection-stale',
+      context: {
+        modelCatalog: { status: 'ok', models: expect.arrayContaining([expect.objectContaining({ id: 'gpt-5.6-sol' })]) },
+        projectFingerprint: snapshot.value.sourceFingerprint
+      }
+    })
+    expect(JSON.stringify(result.context)).not.toContain('/tmp')
+    expect(child.writes.some((frame) => frame.method === 'thread/start')).toBe(false)
+    bridge.close()
+  })
+
+  it('cleans a zero-turn thread after first-turn failure and stops retry when cleanup cannot be confirmed', async () => {
+    const child = new FakeCodexProcess()
+    const { bridge } = loadCodexBridge(child)
+    const snapshot = await bridge.readSnapshot({ includeQuota: true, includeConfig: true, includeThreads: true })
+    const chats = snapshot.value.projects.find((project: Record<string, unknown>) => project.key === 'chats')
+    const request = {
+      target: { projectKey: 'chats', projectAlias: chats.actionAlias, projectName: 'Chats', projectKind: 'chats', projectFingerprint: snapshot.value.sourceFingerprint },
+      modelId: 'gpt-5.6-sol',
+      contextFingerprint: snapshot.value.newThreadContextFingerprint,
+      mode: 'send-and-open',
+      selectionKind: 'auto',
+      prompt: '保留在编辑器内存中的草稿'
+    }
+    child.failTurnStart = true
+    await expect(bridge.createThread(request)).resolves.toMatchObject({ outcome: 'failed', errorCode: 'turn-start-failed', retryAllowed: true })
+    expect(child.writes).toContainEqual(expect.objectContaining({ method: 'thread/archive', params: { threadId: child.createdThreadId } }))
+
+    child.failCreateCleanup = true
+    await expect(bridge.createThread(request)).resolves.toMatchObject({ outcome: 'failed', errorCode: 'cleanup-failed', retryAllowed: false })
+    bridge.close()
+  })
+
+  it('keeps a started turn alive when deep-link opening fails and returns a short-lived reopen alias', async () => {
+    const child = new FakeCodexProcess()
+    const { bridge, openExternal } = loadCodexBridge(child)
+    const snapshot = await bridge.readSnapshot({ includeQuota: true, includeConfig: true, includeThreads: true })
+    const chats = snapshot.value.projects.find((project: Record<string, unknown>) => project.key === 'chats')
+    openExternal.mockRejectedValueOnce(new Error('open failed'))
+    const result = await bridge.createThread({
+      target: { projectKey: 'chats', projectAlias: chats.actionAlias, projectName: 'Chats', projectKind: 'chats', projectFingerprint: snapshot.value.sourceFingerprint },
+      modelId: 'gpt-5.6-sol',
+      contextFingerprint: snapshot.value.newThreadContextFingerprint,
+      mode: 'send-and-open',
+      selectionKind: 'auto',
+      prompt: '首轮已经成功启动'
+    })
+    expect(result).toMatchObject({ outcome: 'reopen-available', errorCode: 'open-failed', reopenAlias: expect.stringMatching(/^ct_/) })
+    expect(child.writes.filter((frame) => frame.method === 'thread/archive' && frame.params?.threadId === child.createdThreadId)).toHaveLength(0)
+    bridge.close()
+  })
+
   it('uses a thread-list-only activity lane and delivers App Server notifications immediately', async () => {
     const child = new FakeCodexProcess()
     const { bridge } = loadCodexBridge(child)

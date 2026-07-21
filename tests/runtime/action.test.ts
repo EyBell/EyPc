@@ -1226,6 +1226,25 @@ describe('app runtime', () => {
     runtime.dispose()
   })
 
+  it('routes Codex Ctrl+T to the float composer only in the Codex profile and outside text input', async () => {
+    const activate = vi.fn(() => true)
+    const { state } = installPlatform({
+      float: { sync: () => true, activate, close: () => undefined, onAction: () => () => undefined }
+    })
+    const runtime = createAppRuntime(state)
+    runtime.setTab('codex')
+
+    expect(runtime.handleShortcut('Ctrl+T', false)).toBe('codex.thread.createFocused')
+    await Promise.resolve()
+    expect(runtime.snapshot().state.codex.settings.floatEnabled).toBe(true)
+    expect(activate).toHaveBeenCalledWith({ command: 'new-thread' })
+    expect(runtime.handleShortcut('Ctrl+T', { textInputFocused: true, activeInputRole: 'codex-composer' })).toBeNull()
+
+    runtime.setTab('favorites')
+    expect(runtime.handleShortcut('Ctrl+T', false)).not.toBe('codex.thread.createFocused')
+    runtime.dispose()
+  })
+
   it('deduplicates the in-app and uTools Codex toggle in either delivery order', () => {
     const runtime = createAppRuntime(createInitialState(100))
     const now = vi.spyOn(Date, 'now')

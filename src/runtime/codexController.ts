@@ -2,6 +2,7 @@ import {
   acknowledgeCodexThread,
   conversationSnapshotFromReceipts,
   emptyCodexEnvironment,
+  emptyCodexModelCatalog,
   emptyConversationSnapshot,
   hideCodexThread,
   normalizeCodexConfig,
@@ -18,6 +19,7 @@ import {
   type CodexHostProject,
   type CodexHostThread,
   type CodexLocalPin,
+  type CodexModelCatalogSnapshotV1,
   type CodexQuotaSnapshotV1,
   type CodexSettings,
   type CodexState,
@@ -25,6 +27,7 @@ import {
   type CodexTaskTab,
   type ConversationSnapshotV1
 } from '../domain/codex'
+import { normalizeCodexModelCatalog } from '../domain/codexNewThread'
 import type { AppState } from '../domain/types'
 import type { CodexFloatWorkspaceDiagnostics, EypcPlatformApi } from '../platform/eypcPlatform'
 import { validateCodexCustomColors, validateCodexWaterAppearance } from '../domain/codexAppearance'
@@ -34,6 +37,8 @@ export interface CodexRuntimeView {
   environment: CodexEnvironmentSnapshotV1
   quota: CodexQuotaSnapshotV1
   config: CodexConfigSnapshotV1
+  modelCatalog: CodexModelCatalogSnapshotV1
+  newThreadContextFingerprint: string
   conversations: ConversationSnapshotV1
   refreshing: boolean
   floatHost: {
@@ -56,11 +61,15 @@ export interface CodexFloatSnapshotV1 {
   expandedSizes: CodexSettings['expandedSizes']
   quota: CodexQuotaSnapshotV1
   config: CodexConfigSnapshotV1
+  modelCatalog: CodexModelCatalogSnapshotV1
+  newThreadContextFingerprint: string
+  newThreadModelPolicy: CodexSettings['newThreadModelPolicy']
+  newThreadPreferredModel: string
   conversations: ConversationSnapshotV1
   taskArchive: { key: string; status: 'idle' | 'archiving' | 'error'; message: string }
   projectArchive: { key: string; status: 'idle' | 'archiving' | 'error'; message: string }
   timeWindowDays: number
-  keybindings?: Array<{ actionId: string; shortcutId: string; layer: string }>
+  keybindings?: Array<{ actionId: string; shortcutId: string; layer: string; when: string; weight: number }>
   generatedAt: number
 }
 
@@ -84,6 +93,8 @@ export function createCodexController(options: CodexControllerOptions) {
   let quota = normalizeCodexQuota(options.getAppState().codex.cachedQuota)
   if (quota.updatedAt > 0 && quota.status === 'ok') quota = { ...quota, status: 'stale' }
   let config = normalizeCodexConfig(options.getAppState().codex.cachedConfig)
+  let modelCatalog = emptyCodexModelCatalog()
+  let newThreadContextFingerprint = ''
   let environment = emptyCodexEnvironment()
   let conversations = conversationSnapshotFromReceipts(options.getAppState().codex.receipts)
   let previousStatuses: Record<string, CodexThreadStatus> = {}
@@ -371,8 +382,23 @@ export function createCodexController(options: CodexControllerOptions) {
         if (quotaResult.ok) {
           if (quotaResult.value.quota) quota = normalizeCodexQuota({ version: 1, status: 'ok', ...quotaResult.value.quota, updatedAt: quotaReceivedAt })
           if (quotaResult.value.config) config = normalizeCodexConfig({ version: 1, ...quotaResult.value.config, updatedAt: quotaReceivedAt })
+          if (Array.isArray(quotaResult.value.models)) {
+            modelCatalog = normalizeCodexModelCatalog({
+              version: 1,
+              status: 'ok',
+              models: quotaResult.value.models,
+              fingerprint: quotaResult.value.modelCatalogFingerprint,
+              updatedAt: quotaReceivedAt
+            })
+          } else if (quotaResult.value.modelCatalogErrorCode) {
+            modelCatalog = { ...modelCatalog, status: modelCatalog.updatedAt > 0 ? 'stale' : 'error', errorCode: quotaResult.value.modelCatalogErrorCode }
+          }
+          newThreadContextFingerprint = typeof quotaResult.value.newThreadContextFingerprint === 'string' && /^[a-f0-9]{64}$/.test(quotaResult.value.newThreadContextFingerprint)
+            ? quotaResult.value.newThreadContextFingerprint
+            : ''
         } else {
           quota = { ...quota, status: quota.updatedAt > 0 ? 'stale' : 'error', errorCode: quotaResult.error.code, errorMessage: quotaResult.error.message }
+          modelCatalog = { ...modelCatalog, status: modelCatalog.updatedAt > 0 ? 'stale' : 'error', errorCode: quotaResult.error.code }
         }
         lastQuotaReadAt = quotaReceivedAt
       }
@@ -837,6 +863,8 @@ export function createCodexController(options: CodexControllerOptions) {
         environment,
         quota,
         config,
+        modelCatalog,
+        newThreadContextFingerprint,
         conversations,
         refreshing,
         floatHost: {
@@ -861,6 +889,10 @@ export function createCodexController(options: CodexControllerOptions) {
         expandedSizes: settings.expandedSizes,
         quota,
         config,
+        modelCatalog,
+        newThreadContextFingerprint,
+        newThreadModelPolicy: settings.newThreadModelPolicy,
+        newThreadPreferredModel: settings.newThreadPreferredModel,
         conversations,
         taskArchive,
         projectArchive,

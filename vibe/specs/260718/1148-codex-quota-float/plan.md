@@ -31,5 +31,12 @@ Authority: [spec.md](spec.md#L1)
 23. 增加 `codex.float.activate` 与静态 uTools 入口，直接显示、展开并聚焦卡片；成功打开完成未查看任务推进本地查看水位，项目折叠采用乐观反馈，自动收起缩短到约 100ms。
 24. 更新组件、桥接、Runtime、快捷键和集成自动化，重点覆盖 200ms 活动通道、六页签、三角标、说明延时、Space 下移、动作隔离、右键/Quick Jump 和全局激活。
 25. 在完整测试、类型、构建、uTools、380/330px 视觉、真实只读预检和文档链接均通过后，将修订 3 记录为 accepted；不重复执行已通过的真实归档生命周期，不操作用户现有任务。
+26. 在修订 3 的干净基线上复核用户列出的跨 Tab 能力，保留六页签、200ms 活动通道、批量栏和归档协议，只迁移状态机/右键/焦点/预览/Quick Jump 合同，明确拒绝 payload、草稿持久化、主窗口 Tooltip/ConfirmLayer 和主窗口焦点所有权。
+27. 将额度升级为普通/Spark V2，读取 `rateLimitsByLimitId` 与动态 `model/list`；增加普通 5 小时→普通周→最高 Spark 的水球投影、Spark `S` 和 `quota-auto` 默认模型解析。
+28. 增加专用瞬时新会话桥接与 editor：冻结/刷新确认模型，精确 `thread/start` 模型/cwd 且关闭 provider fallback，成功校验后才 `turn/start`/Deep Link；实现零轮清理、短期重试打开、提示词零持久化和 App Server 不可用的显式空白页路径。
+29. 将会话行改为单击选择、双击/Enter 打开；项目只常显 `＋`，右键/Ctrl+右统一完整抽屉。删除普通 hover 卡片并实现纯 Shift 白名单预览、目标所有权、翻转/夹紧/内部滚动、失焦/Escape 抑制；补强 Quick Jump 裁剪/遮挡/命中栈过滤和焦点恢复。
+30. 注册可改键的 Codex profile `Ctrl+T`，让浮窗使用主窗口同一 `when`/layer 解析并独立维护 `codex-composer` 输入角色与暂态 LIFO；补齐额度、模型、composer、快捷键、Shift、Quick Jump、失败清理和重试打开测试。
+31. 用本机生成的 App Server JSON schema 与只读 `model/list`/`account/rateLimits/read` 核对协议；完成 380/330/104px 浏览器视觉、全量测试/类型/构建/uTools、canonical/public preload 同步、Markdown code-link audit 和受控文档收口。真实系统听写与真实 `turn/start`/Deep Link 留作单独宿主验收，不在本轮创建真实任务。
+32. 按交互修订 5 将收起水球改为上下半区命中：删除角标 hover 展开，上半区只保留数字角标直接点击，下半区 pointer enter/move 才立即展开；补充几何命中回归并重跑全量测试、类型、构建/uTools 与文档门禁。
 
-Completion: 1–25 全部完成；精确证据与残余见 [verify.md](verify.md#L1)。
+Completion: 1–32 全部完成；真实系统听写与真实 `turn/start`/Deep Link 按计划保留为单独宿主验收，精确证据与残余见 [verify.md](verify.md#L1)。

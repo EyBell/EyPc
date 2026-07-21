@@ -1,4 +1,5 @@
 import type { CodexFloatSnapshotV1 } from './runtime/codexController'
+import type { CodexNewThreadRequest, CodexNewThreadResult, CodexThreadOpenResult } from './domain/codex'
 
 export {}
 
@@ -18,9 +19,12 @@ declare global {
       getState(): CodexFloatWindowState
       onSnapshot(listener: (snapshot: CodexFloatSnapshotV1) => void): () => void
       onState(listener: (state: CodexFloatWindowState) => void): () => void
-      onActivate?(listener: (payload: { requestedAt?: number }) => void): () => void
+      onActivate?(listener: (payload: { requestedAt?: number; command?: 'new-thread' }) => void): () => void
       setExpansion(expanded: boolean, pinned?: boolean): boolean
       action(actionId: string, args?: Record<string, unknown>): boolean
+      createThread(request: CodexNewThreadRequest): Promise<CodexNewThreadResult>
+      reopenThread(actionAlias: string): Promise<CodexThreadOpenResult>
+      openBlank(): Promise<CodexThreadOpenResult>
       dragStart(screenX: number, screenY: number): boolean
       dragMove(screenX: number, screenY: number): boolean
       dragEnd(): boolean

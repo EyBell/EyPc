@@ -74,6 +74,7 @@ const style = computed(() => ({
     </svg>
 
     <div class="codex-water-ball__value" :class="{ empty: !primary }">
+      <span v-if="primary?.family === 'spark'" class="codex-water-ball__spark" aria-hidden="true">S</span>
       <strong>{{ primary ? `${primary.bucket.remainingPercent}%` : stateLabel }}</strong>
     </div>
   </div>
@@ -223,6 +224,18 @@ const style = computed(() => ({
   transform: translate(-50%, -50%);
 }
 .codex-water-ball__value strong { font-size: 22px; line-height: 1; letter-spacing: -.04em; }
+.codex-water-ball__spark {
+  margin-bottom: 3px;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, #fff 72%, var(--signal-a));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--signal-a) 62%, rgba(3, 13, 24, .88));
+  color: #fff;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1.25;
+  letter-spacing: .08em;
+}
 .codex-water-ball__value.empty { width: 64px; padding: 0 7px; text-align: center; }
 .codex-water-ball__value.empty strong { font-size: 11px; line-height: 1.15; letter-spacing: 0; }
 

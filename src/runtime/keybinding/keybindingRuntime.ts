@@ -37,6 +37,13 @@ export type KeybindingLayerId =
   | 'ports-search'
   | 'favorites-search'
   | 'favorites-editor'
+  | 'codex-composer'
+  | 'codex-model'
+  | 'codex-quick-jump'
+  | 'codex-preview'
+  | 'codex-inline-editor'
+  | 'codex-drawer'
+  | 'codex-detail'
   | 'codex'
   | 'settings'
   | 'ports'
@@ -48,7 +55,7 @@ export interface KeybindingContext {
   tab?: AppTabId
   confirmOpen?: boolean
   textInputFocused?: boolean
-  activeInputRole?: 'port-search' | 'port-group-search' | 'mqtt-search' | 'mqtt-topic-filter' | 'mqtt-publish-editor' | 'mqtt-publish-options' | 'mqtt-publish-draft' | 'mqtt-publish-draft-editor' | 'mqtt-editor' | 'mqtt-connection-group-editor' | 'mqtt-config-subscription-editor' | 'mqtt-config-publish-editor' | 'mqtt-subscription-editor' | 'mqtt-favorite-editor' | 'mqtt-record-editor' | 'mqtt-connections' | 'mqtt-subscriptions' | 'favorite-search' | 'favorite-group-search' | 'favorite-containers' | 'favorite-items' | 'favorite-directory' | 'favorite-editor' | 'favorite-pick-review' | 'settings' | 'port-group-editor' | 'other'
+  activeInputRole?: 'port-search' | 'port-group-search' | 'mqtt-search' | 'mqtt-topic-filter' | 'mqtt-publish-editor' | 'mqtt-publish-options' | 'mqtt-publish-draft' | 'mqtt-publish-draft-editor' | 'mqtt-editor' | 'mqtt-connection-group-editor' | 'mqtt-config-subscription-editor' | 'mqtt-config-publish-editor' | 'mqtt-subscription-editor' | 'mqtt-favorite-editor' | 'mqtt-record-editor' | 'mqtt-connections' | 'mqtt-subscriptions' | 'favorite-search' | 'favorite-group-search' | 'favorite-containers' | 'favorite-items' | 'favorite-directory' | 'favorite-editor' | 'favorite-pick-review' | 'codex-composer' | 'settings' | 'port-group-editor' | 'other'
   portPane?: 'groups' | 'results'
   favoritePane?: 'containers' | 'items' | 'directory'
   favoriteUndoAvailable?: boolean
@@ -195,6 +202,13 @@ export const LAYER_PRIORITY: Record<KeybindingLayerId, number> = {
   'ports-search': 680,
   'favorites-search': 680,
   'favorites-editor': 930,
+  'codex-composer': 950,
+  'codex-model': 951,
+  'codex-quick-jump': 900,
+  'codex-preview': 840,
+  'codex-inline-editor': 930,
+  'codex-drawer': 820,
+  'codex-detail': 800,
   codex: 500,
   settings: 500,
   ports: 500,
@@ -238,6 +252,13 @@ const LAYER_LABELS: Record<KeybindingLayerId, string> = {
   'ports-search': '端口搜索',
   'favorites-search': '收藏搜索',
   'favorites-editor': '收藏编辑',
+  'codex-composer': 'Codex 新会话编辑器',
+  'codex-model': 'Codex 模型选择',
+  'codex-quick-jump': 'Codex 快捷跳转',
+  'codex-preview': 'Codex Shift 预览',
+  'codex-inline-editor': 'Codex 行内编辑',
+  'codex-drawer': 'Codex 操作抽屉',
+  'codex-detail': 'Codex 详情',
   codex: 'Codex',
   settings: '设置',
   ports: '端口',
@@ -263,6 +284,7 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'codex.float.toggle': { title: '显示/隐藏 Codex 悬浮球', group: 'Codex', layer: 'app', shortcutIds: ['Ctrl+Alt+Q'], when: 'true', weight: 1000, description: '插件窗口激活时立即切换；系统级快捷键请在 uTools 全局功能中绑定。', profileId: 'codex' },
   'codex.float.activate': { title: '进入 Codex 卡片', group: 'Codex', layer: 'app', shortcutIds: ['Ctrl+Alt+Enter'], when: 'true', weight: 1001, description: '显示并展开悬浮卡片，直接进入会话选择和完整操作。', profileId: 'codex' },
   'codex.refresh': { title: '刷新 Codex 状态', group: 'Codex', layer: 'codex', shortcutIds: ['Ctrl+R'], when: "tab == 'codex'", weight: 100, profileId: 'codex' },
+  'codex.thread.createFocused': { title: '在当前项目新建会话', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+T'], when: "tab == 'codex' && !confirmOpen && !textInputFocused", weight: 160, profileId: 'codex', description: '打开新会话编辑器；优先归属当前高亮会话或项目。' },
   'codex.list.up': { title: '会话焦点上移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['ArrowUp'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
   'codex.list.down': { title: '会话焦点下移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['ArrowDown'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
   'codex.selection.toggle': { title: '切换当前项选择', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Space'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
@@ -564,6 +586,7 @@ export const SHORTCUT_RESERVATION_RULES: ShortcutReservationRule[] = [
   { shortcutId: 'Shift+Escape', commandId: 'app.hide', when: 'true', description: '全局立即隐藏插件窗口', layer: 'app' },
   { shortcutId: 'Ctrl+Alt+Enter', commandId: 'codex.float.activate', when: 'true', description: '显示、展开并进入 Codex 卡片', layer: 'app' },
   { shortcutId: 'Ctrl+Alt+Q', commandId: 'codex.float.toggle', when: 'true', description: '立即显示或隐藏 Codex 悬浮球', layer: 'app' },
+  { shortcutId: 'Ctrl+T', commandId: 'codex.thread.createFocused', when: "tab == 'codex' && !confirmOpen && !textInputFocused", description: '在当前高亮会话或项目中新建会话', layer: 'codex' },
   { shortcutId: 'Escape', commandId: 'confirm.cancel', when: 'confirmOpen', description: '关闭确认弹窗，不穿透到底层', layer: 'confirm' },
   { shortcutId: 'Escape', commandId: 'ports.group.edit.cancel', when: "activeInputRole == 'port-group-editor'", description: '取消端口组编辑', layer: 'port-group-editor' },
   { shortcutId: 'Escape', commandId: 'ports.search.blur', when: "activeInputRole == 'port-search' || activeInputRole == 'port-group-search'", description: '退出端口搜索输入焦点', layer: 'ports-search' },
@@ -836,6 +859,7 @@ function activeLayers(context: KeybindingContext): KeybindingLayerId[] {
   if (context.activeInputRole === 'port-group-editor') layers.push('port-group-editor')
   if (context.activeInputRole === 'favorite-editor') layers.push('favorites-editor')
   if (context.activeInputRole === 'favorite-pick-review' || context.favoritePickReviewOpen) layers.push('favorites-pick-review')
+  if (context.activeInputRole === 'codex-composer') layers.push('codex-composer')
   if (context.mqttDetailOpen || context.mqttDetailActive) layers.push('mqtt-detail')
   if (context.mqttDrawerOpen || context.mqttDrawerActive) layers.push('mqtt-drawer')
   if (context.mqttLogDrawerOpen) layers.push('mqtt-log-drawer')
@@ -877,6 +901,7 @@ function shouldBlockTextInputShortcut(shortcutId: string, context: KeybindingCon
   if (context.activeInputRole === 'port-group-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-pick-review') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'ArrowUp', 'ArrowDown', 'Escape', 'Shift+Escape'].includes(shortcutId)
+  if (context.activeInputRole === 'codex-composer') return !['Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'port-search') return !['ArrowUp', 'ArrowDown', 'Shift+ArrowUp', 'Shift+ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+K', 'Ctrl+J', 'Space', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+W', 'Ctrl+Shift+W', 'Ctrl+T', 'Ctrl+G', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'port-group-search') return !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+K', 'Ctrl+J', 'Tab', 'Shift+Tab', 'Enter', 'Shift+Enter', 'Ctrl+Enter', 'Ctrl+Shift+Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+W', 'Ctrl+T', 'Ctrl+G', 'Ctrl+Shift+W', 'F2', 'Ctrl+F2', 'Shift+F2', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'ArrowLeft', 'ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+Enter', 'Ctrl+R', 'Ctrl+Shift+R', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+N', 'Ctrl+G', 'Ctrl+T', 'Ctrl+Shift+T', 'Ctrl+Shift+S', 'Ctrl+H', 'Ctrl+Shift+H', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+Shift+M', 'Ctrl+M', 'Ctrl+Shift+W', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Ctrl+Delete', 'Ctrl+Backspace', 'F2', 'Shift+F2', 'Ctrl+F2', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
