@@ -18,7 +18,7 @@
       "scope": "project",
       "surfaces": ["codex-companion"],
       "authority_ref": "developer-soul.md#codex-companion-taste",
-      "tags": ["authority:project-soul", "high-contrast", "paired-skin", "colorful-refractive-water-ball", "dark-yellow-quick-jump"],
+      "tags": ["authority:project-soul", "high-contrast", "paired-skin", "colorful-refractive-water-ball", "data-driven-weekly-ring", "no-decorative-rim", "dark-yellow-quick-jump"],
       "status": "stable",
       "priority": 200,
       "last_verified": "2026-07-22"
@@ -51,7 +51,7 @@
       "scope": "project",
       "surfaces": ["codex-companion"],
       "authority_ref": "developer-soul.md#codex-companion-taste",
-      "tags": ["authority:project-soul", "six-task-tabs", "fixed-four-character-rails", "ordinary-core-open", "selection-mode-core-toggle", "last-selection-exit", "persistent-selection-mode-bar", "unselected-row-deemphasis", "full-height-selector", "theme-gradient-selection", "status-space-selection", "native-button-key-ownership", "floating-batch-toolbar", "control-owned-pin-source", "pinned-first-within-status-section", "compact-counter-help"],
+      "tags": ["authority:project-soul", "four-task-tabs", "error-states-in-active-group", "fixed-four-character-rails", "ordinary-core-open", "selection-core-toggle-last-exit", "nonreflow-bottom-selection-cue", "unselected-row-deemphasis", "full-height-selector", "theme-gradient-selection", "status-space-selection", "native-button-key-ownership", "floating-batch-toolbar", "control-owned-pin-source", "pinned-first-within-status-section", "compact-counter-first-task-open"],
       "status": "stable",
       "priority": 200,
       "last_verified": "2026-07-22"
@@ -73,10 +73,10 @@
       "scope": "project",
       "surfaces": ["codex-companion"],
       "authority_ref": "developer-soul.md#codex-companion-taste",
-      "tags": ["authority:project-soul", "non-rotating-cyclic-wave", "three-layer-water", "refraction", "weekly-ring", "reduced-motion"],
+      "tags": ["authority:project-soul", "non-rotating-cyclic-wave", "three-layer-water", "refraction", "data-driven-weekly-ring", "interruptible-two-second-completion-hold", "reduced-motion"],
       "status": "stable",
       "priority": 200,
-      "last_verified": "2026-07-21"
+      "last_verified": "2026-07-22"
     },
     {
       "id": "eypc-codex-accessibility",
@@ -95,7 +95,7 @@
       "scope": "project",
       "surfaces": ["codex-companion"],
       "authority_ref": "developer-soul.md#codex-companion-taste",
-      "tags": ["authority:project-soul", "status-action-200ms-opaque-help", "task-detail-500ms", "quota-bubble-free", "unified-task-sort", "archived-filtering", "privacy", "archive-state-trust", "native-project-state-transaction"],
+      "tags": ["authority:project-soul", "status-action-200ms-opaque-help", "task-detail-500ms", "quota-bubble-free", "unified-task-sort", "archived-filtering", "privacy", "archive-state-trust", "native-project-state-transaction", "projected-ongoing-stable-archive-block"],
       "status": "stable",
       "priority": 200,
       "last_verified": "2026-07-22"

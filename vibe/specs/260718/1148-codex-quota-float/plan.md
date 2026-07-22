@@ -3,7 +3,7 @@
 Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-22.10`
+Requirement version: `2026-07-22.15`
 
 Authority: [spec.md](spec.md#L1)
 
@@ -60,7 +60,7 @@ Authority: [spec.md](spec.md#L1)
 49. 将任务点击改为两态状态机：普通态中部打开、左槽进入选择；选择态中部/左槽切换成员并在最后一项移出后退出。补齐渐变选中、组合 hover/focus/active、左槽 `aria-pressed` 与快捷键共用反馈，更新测试/文档但不执行用户独占开发门禁。
 50. 按 RAW-056 在 preload 增加 macOS Codex Desktop 私有 IPC 伴随桥：安全校验 socket owner/mode、固定协议版本握手、snapshot/patch/follow/request/read-state 投影、断线重连与不兼容 fail-closed；会话正文和 raw identity 只在 preload 瞬时处理。
 51. 扩展 Host/Projection/Activity Delta 合同，显式携带 `desktopBridgeState`、`statusAuthority`、`hasUnreadTurn` 与 `unreadAuthority`；删除五秒状态启发、App Server live 推断和本地 receipt 未读推断。旧 V1 delta 仅作 connector 兼容，不产生 Input/active。
-52. 调整 Controller 与浮窗：普通 watchdog 改为 5s、三次失败后 1s；动态页拆分待输入/正在进行中/需关注/宿主状态未知/已完成未读，角标只统计桌面权威状态；设置页区分 App Server 数据连接器和桌面实时桥。
+52. 调整 Controller 与浮窗：普通 watchdog 改为 5s、三次失败后 1s；当时动态页拆分待输入/正在进行中/需关注/宿主状态未知/已完成未读，角标只统计桌面权威状态；RAW-064 后以“进行中含异常状态、未知独立”取代可见 attention 段，设置页区分 App Server 数据连接器和桌面实时桥。
 53. 在 App Server 归档双向验证后发送 Codex Desktop `thread-archived` v2 通知；单条/项目结果区分通知已派发与桌面未确认即时刷新，通知失败不回滚已验证持久化归档。
 54. 更新 domain/runtime/platform/UI/preload 测试契约及 Controlled、canonical、architecture、technical details、CodeNote 产品理解；遵守用户验收规则，不运行测试、typecheck、build、uTools/runtime、截图、真实预检、真实归档或项目移除。
 55. 按 RAW-057 强化选择区分：增加常驻模式条和实时计数，未选行降权，选中行改为粗边/左轨/强底色，左控件以实底勾选替代状态图标；同步测试、设计偏好、错误记忆与交接，仍不执行用户独占开发门禁。
@@ -71,8 +71,31 @@ Authority: [spec.md](spec.md#L1)
 60. 同步 RAW-059 Controlled、canonical、项目状态、架构与技术细节；按用户独占验收规则仅做静态差异/文档链接核对，不运行测试、typecheck、build、uTools、截图、真实预检或归档。
 
 61. 按 RAW-063 将 `FloatApp` 的可见导航收敛为 `动态 / 已完成 / 已隐藏 / 项目`，移除 `all/input` 的渲染分支和点击映射；保留底层数组与单待输入直开，并把旧持久化、旧快照和外部动作的 `all/input` 规范化为 `ongoing`。
-62. 用最新 Turn 的 `max(startedAt, completedAt)` 保持常规窗口资格，并在动态页固定筛选最近 6 小时的非隐藏任务；按待输入、正在进行中、需关注、宿主状态未知、已完成未读、已完成渲染且使动态徽标复用同一结果。
+62. 用最新 Turn 的 `max(startedAt, completedAt)` 保持常规窗口资格，并在动态页固定筛选最近 6 小时的非隐藏任务；RAW-064 后的当前分段另行收敛，动态徽标仍复用同一结果。
 63. 将标题普通点击/ Ctrl-Cmd 选择与元信息行聚焦分开；把操作轨收敛为 `24px / 2px / 102px`，注册提示收敛为“最近 N 天的 M 条”，移除水球 Weekly SVG 外环和失效配置入口，同时保留历史外层持久化字段。
-64. 同步 RAW-063 的 Controlled、产品、项目、技术细节、设计偏好和交接；仅做静态 diff/文档核对，不新增或修改测试，也不运行测试、typecheck、build、uTools、截图或真实宿主操作。
+64. 同步 RAW-063 的 Controlled、产品、项目、技术细节、设计偏好和交接；仅做静态源码/文档核对，不新增或修改测试，也不运行测试、typecheck、build、uTools、截图或真实宿主操作。
 
-Completion: 1–49 保留既有历史状态。50–59 已实现；60–64 为 RAW-063 的实现、文档与静态核对。按用户独占验收规则未运行测试、类型、构建、uTools、截图或真实 Codex 操作，RAW-056–059 和 RAW-063 均为 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。
+65. 按 RAW-064 在 [FloatApp.vue](../../../../src/FloatApp.vue#L1) 将 `failed / interrupted / system-error` 合并到“正在进行中”渲染分段，删除 Renderer 的“需关注”入口；保留错误行真实文案、图标/颜色、未知分段和领域兼容计数。
+66. 在 [codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1) 移除紧凑 ARIA 的“需关注”措辞，同时合并其兼容数量到“进行中或等待操作”；不改真实 desktop-live 角标、归档门禁或状态权威。
+67. 将选择模式提示移动到 [FloatApp.vue](../../../../src/FloatApp.vue#L1) 列表舞台底部，并在 [float.css](../../../../src/styles/float.css#L1) 以绝对定位、滚动安全区和底部批量栏上移实现无重排避让；保留顶部批量栏和既有选择/ARIA/键盘合同。
+68. 同步 RAW-064 的 raw、spec、plan、tasks、verify、handoff、canonical、项目状态、架构、Soul、设计偏好和既有候选错误记忆；不新增或运行测试、typecheck、build、uTools、截图或真实 Codex 操作，交付保持用户验收权威。
+
+69. 合并项目设计偏好索引中的两组同义交互标签，使单条稳定偏好恢复为 16 项；取得 `codex-companion + visual-polish + durable-project` ready 回执，沿用现有组件语言且不引入额外 UI Skill 或依赖。
+70. 按 RAW-065 在 [CodexWaterBall.vue](../../../../src/components/CodexWaterBall.vue#L1) 恢复 Weekly 连续/20 段数据进度环，删除表面 inset、静态 border、inset outline、装饰 shell、根整圆背景与同尺寸外发光；在 [float.css](../../../../src/styles/float.css#L1) 删除水球按钮的外部圆形 focus outline，并以中央读数下划线保留键盘焦点提示；在 [codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1) 和 [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 恢复环 tokens、对比校验与可见设置，不恢复轮廓透明度入口。
+71. 按 RAW-066 在 [codex.ts](../../../../src/domain/codex.ts#L1) 将原始 interrupted 投影为可见 ongoing，调整 running/ongoing/attention 计数并继续从原始 `lastTurnStatus` 计算归档能力；同步 [codexController.ts](../../../../src/runtime/codexController.ts#L1)、[FloatApp.vue](../../../../src/FloatApp.vue#L1) 与 [float.css](../../../../src/styles/float.css#L1) 的证据、文案、图标和颜色。
+72. 同步 RAW-065/066 的 Controlled、canonical、项目状态、架构、Soul 和长期偏好；新增“视觉层误删”和“provider 原始状态泄漏 UI”两个候选错误记忆，不保存原始对话或截图。
+73. 仅执行静态 diff、`git diff --check`、用户可见字符串检查和 Markdown 代码链接审计；不修改或运行测试，不运行 typecheck、build、uTools、截图或真实 Codex 操作。
+
+74. 复用 `codex-companion + interaction-flow` ready 偏好回执及现有 Vue Composition API 模式，在 [FloatApp.vue](../../../../src/FloatApp.vue#L1) 统一紧凑角标目标解析：待输入取 `inputRequired`，完成未读从 `all` 筛选完整 `completed-unread` 集合，两者均按既有显示层置顶/稳定顺序取第一条。
+75. 将待输入和完成未读的一条/多条点击统一路由到首条 `openTask → codex.task.open`，保持进行中展开、未读/隐藏/页签/计数/样式不变，并让 200ms 说明与 ARIA 明确“打开第一条”；不新增 API、类型、持久化、依赖或测试改动。
+76. 同步 RAW-067 的 Controlled、canonical、项目状态、架构、技术细节、Soul 和设计偏好；复用既有计数/列表投影错误记忆，仅执行静态差异、字符串、`git diff --check`、Markdown 链接与偏好收口，交付保持用户验收权威。
+
+77. 按 UI 偏好门禁取得 `codex-companion + interaction-flow + durable-project` ready 回执，窄用既有 interaction-design 上下文保持固定动作槽和稳定禁用反馈，不引入新依赖或额外 UI 结构。
+78. 按 RAW-068 在 [codex.ts](../../../../src/domain/codex.ts#L1) 让投影 ongoing 与 desktop-live active 共用 `blocked-active`；[codexController.ts](../../../../src/runtime/codexController.ts#L1) 不再为该状态发送 terminal 证据；[preload/index.js](../../../../preload/index.js#L1) 的单条归档拒绝 interrupted，项目归档将其加入进行中跳过集合并限定 terminal 只接受 failed。
+79. 同步 RAW-068 的 Controlled、canonical、项目状态、架构、技术细节、Soul、设计偏好和两条相关错误记忆；仅执行静态差异、字符串、镜像一致性、`git diff --check`、测试文件零差异和 Markdown 链接审计，不修改或运行测试，不运行 typecheck、build、uTools、截图或真实 Codex 操作。
+
+80. 复用 `codex-companion + interaction-flow + durable-project` ready 偏好回执与 interaction-design 的可中断连续性原则，在 [codexController.ts](../../../../src/runtime/codexController.ts#L1) 将 provider 原始投影和 Renderer 展示投影分离，并为 visible running → completed 建立按任务固定 2 秒、重复完成不续期、恢复运行即取消的临时 hold。
+81. 在同一 Controller 投影中同步重建任务桶、项目 section、隐藏/完成页、计数和 `blocked-active` capability；2 秒后从最新原始快照一次性释放完成态。[FloatApp.vue](../../../../src/FloatApp.vue#L1) 删除独立进行中角标延迟，避免状态、角标和归档入口错位或累计 4 秒。
+82. 同步 RAW-069 的 Controlled、canonical、项目状态、架构、技术细节、Soul、设计偏好与独立候选错误记忆；仅执行静态 diff、字符串/结构检查、`git diff --check`、测试文件零差异、偏好回执和 Markdown 链接审计，不修改或运行测试，不运行 typecheck、build、uTools、截图或真实 Codex 操作。
+
+Completion: 1–49 保留既有历史状态。50–59 已实现；60–64 为 RAW-063 的实现、文档与静态核对；65–68 为 RAW-064 的实现、文档与静态源码复核；69–73 为 RAW-065/066 的偏好门禁、代码、文档/记忆与静态收口；74–76 为 RAW-067 的首条直开、权威同步与静态收口；77–79 为 RAW-068 的归档能力稳定化、Host 二次门禁与文档/记忆收口；80–82 为 RAW-069 的任务级完成稳定窗、角标去重延迟与文档/记忆收口。按用户独占验收规则未运行测试、类型、构建、uTools、截图或真实 Codex 操作，RAW-056–059、RAW-063–069 均为 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。

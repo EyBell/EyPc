@@ -3,22 +3,96 @@
 Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-22.10`
+Requirement version: `2026-07-22.15`
+
+## RAW-069 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 任务级完成稳定窗 | implemented / unverified | Controller 区分原始会话快照与展示快照；仅 visible running 首次转 completed/completed-unread 时建立固定 2 秒 hold，重复完成不续期，初次加载已完成不延迟。 |
+| 可中断与一次性释放 | implemented / unverified | 2 秒内原始任务恢复 active/ongoing 会立即取消 hold；连续完成满 2 秒后以最新原始快照一次性释放完成桶、完成时间、未读和归档能力。 |
+| 全投影一致性 | implemented / unverified | hold 内任务统一为 `ongoing/running/blocked-active`，并重建 ongoing/completed/hidden/all、完成页、项目 section 与计数；卡片、详情、Shift 预览、角标及归档入口消费同一结果。 |
+| 双重延迟移除 | implemented / unverified | Float renderer 删除独立进行中角标 2 秒合并器，角标直接读取 Controller 稳定投影，避免卡片先完成、角标后完成或累计 4 秒。 |
+| 权威与兼容边界 | unchanged / unverified | 2 秒只延迟已由 provider 权威成立的完成展示，不从时间推断完成；无新 API、Runtime action、持久化字段、迁移或依赖，停用/关闭/dispose 会清理 hold。 |
+| 限定静态校验 | pass | `git diff --check`、测试文件零差异、固定 2000ms 常量、raw/presented 快照、held ongoing/capability、取消/释放/清理路径及旧 Renderer 计时器零命中检查通过；偏好 JSON 可解析，interaction-flow 回执为 `ready-for-ui-skill`，Markdown code-link audit 为 `OK`。依用户规则不修改或运行测试，不运行 typecheck、build、uTools、截图或真实 Codex 操作。 |
+
+结论：RAW-069 已实现，当前保持 `未校验，待用户验收`。用户应让同一任务从“进行中”进入权威完成：前 2 秒所有卡片、角标和归档入口继续稳定为进行中且不可归档，满 2 秒后只切换一次到已完成/已完成未读；再让任务在窗口内恢复运行，确认不会短暂出现完成态。
+
+- Error memory: 新增候选 [codex-completion-transition-hysteresis.md](../../../knowledge/error-memory/codex-completion-transition-hysteresis.md#L1)，记录“独立角标延迟无法稳定完整产品状态，完成过渡必须在统一投影层做可中断 hysteresis”；并明确该窗口不是完成证据，不能违反 verified [codex-cross-process-notloaded-is-not-completion.md](../../../knowledge/error-memory/codex-cross-process-notloaded-is-not-completion.md#L1)。
+
+## RAW-068 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 领域归档能力稳定化 | implemented / unverified | 原始 interrupted 仍投影为 `activityState='ongoing'`，并与 desktop-live active 一样得到 `archiveCapability='blocked-active'`、`canArchive=false`；active/interrupted 来源切换不再改变卡片动作能力。 |
+| 固定动作槽与衍生入口 | implemented / unverified | 任务行固定 `归` 槽继续保位但始终禁用；操作抽屉、Shift 预览、单项确认和批量候选消费同一 `canArchive`，不再出现可用性闪烁。 |
+| Controller 与 Host 二次门禁 | implemented / unverified | Controller 在 blocked capability 处拒绝且不发送 interrupted terminal 证据；Host 单条归档重读到 interrupted 返回 active-task，项目全部归档把它加入进行中跳过集合，terminal 证据只接受 failed。 |
+| 兼容边界 | unchanged / unverified | completed/failed 的既有可验证归档不变；system-error/unknown 继续保留警告与 fail-closed 重读；无新 API、Runtime action、持久化字段或迁移。 |
+| 限定静态校验 | pass | `git diff --check`、测试文件零差异、preload/public 镜像一致、可见 interrupted 分支零命中、领域 ongoing capability、Controller 拒绝、Host 单条/项目 interrupted 门禁、版本/事件唯一性、偏好 JSON 与 Markdown 代码链接审计均通过；依用户规则不修改或运行测试，不运行 typecheck、build、uTools、截图或真实 Codex 操作。 |
+
+结论：RAW-068 已实现，当前保持 `未校验，待用户验收`。用户应让同一会话经历原始 interrupted 与 desktop-live active 更新，确认页面始终显示“进行中”，固定归档按钮持续禁用且不闪烁，抽屉/Shift 预览/批量归档也不把它列为可归档对象。
+
+- Error memory: 更新候选 [codex-provider-status-display-normalization.md](../../../knowledge/error-memory/codex-provider-status-display-normalization.md#L1)，补充“显示状态与动作 capability 必须在同一投影边界收敛”；同时在 verified [codex-archive-revalidation-fail-open.md](../../../knowledge/error-memory/codex-archive-revalidation-fail-open.md#L1) 记录当前产品对 interrupted 的更窄拒绝规则。新行为仍待用户验收，不提升候选状态，也不改写历史 verified 证据。
+
+## RAW-067 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 候选集合与首条合同 | implemented / unverified | “待输入”读取完整 `inputRequired`；“已完成未读”从 `all` 过滤 `bucket === 'completed-unread'`，因此计数中的已隐藏会话仍可成为候选；两者均使用既有展示排序后只取第一条。 |
+| 单条与多条直达 | implemented / unverified | 两类角标只要非零，单条和多条均走相同 `openTask → codex.task.open` 路径，不再因数量大于一而先展开浮窗；第一条不可打开时不跳到后续会话。 |
+| 排序与状态边界 | implemented / unverified | 首条按现有 `displayOrderedTasks`：置顶优先，其后保持上游最新 Turn 与匿名 key 的稳定顺序；打开动作不清除未读、不解除隐藏、不切换页签。 |
+| 进行中与无计数 | unchanged / unverified | “进行中”继续调用 `requestExpansion(true)`；三个原生按钮仍由各自非零计数控制渲染，零计数不显示。 |
+| 提示与可访问性 | implemented / unverified | 保留原生按钮点击、Enter、Space、200ms hover/focus 提示和既有 ARIA 路径；待输入与未读提示分别明确为“待输入 N · 打开第一条”和“未读 N · 打开第一条”。 |
+| 限定静态校验 | pass | `git diff --check`、测试目录零差异、偏好 JSON 解析、单条门禁移除、候选源/排序/首条打开/进行中展开/零计数渲染/提示与事件链字符串检查均通过；Markdown code-link audit 为 `OK`，设计偏好回执为 `ready-for-ui-skill`，closeout 只生成 eligible 的 no-write canary candidate。依用户规则未修改或运行测试，未运行 typecheck、build、uTools、截图或真实 Codex 操作。 |
+
+结论：RAW-067 已实现，当前保持 `未校验，待用户验收`。用户应分别验证待输入/未读为 1 条、多条以及未读首条已隐藏时都打开排序第一条，同时确认未读、隐藏和当前页签不改变，进行中仍只展开浮窗。
+
+- Error memory: 复用既有 verified [codex-task-count-list-projection-divergence.md](../../../knowledge/error-memory/codex-task-count-list-projection-divergence.md#L1)，确保点击候选与角标计数使用同一完整投影；本轮不新增错误记忆。
+
+## RAW-065 / RAW-066 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| Weekly 数据进度环 | implemented / unverified | primary/secondary 存在 Weekly 时渲染同池剩余进度 SVG，支持连续圆环与固定 20 段；无 Weekly 时不渲染外圈。 |
+| 普通装饰圈移除 | reworked / unverified | 用户跟进截图证明首轮修正后最外层完整圆仍存在。当前除 `2px inset`、静态 border、inset outline 与装饰 shell 外，已继续删除根容器整圆背景、表面同尺寸外发光及宿主水球按钮的圆形 focus outline；键盘焦点改由中央读数下划线提示，保留轨道仅属于数据进度环。 |
+| 环设置与校验 | implemented / unverified | 恢复样式、粗细、颜色模式、进度色、轨道色、光晕设置及 `2–6px`/`3:1` 校验；不恢复轮廓透明度入口，`shellOpacity` 只保留持久化兼容。 |
+| interrupted 领域投影 | implemented / unverified | 原始 `CodexTurnStatus='interrupted'` 保留，但卡片投影转换为 `activityState='ongoing'`；running/ongoing 计数包含转换项，attention 只包含 failed/system-error。 |
+| 全页面可见语义 | implemented / unverified | 动态、项目、已隐藏卡、角标、详情与 Shift 预览统一显示“进行中”，使用播放图标/running 色；可见状态联合类型、Renderer 分支与 CSS 不再包含 interrupted。 |
+| 归档安全 | superseded by RAW-068 | RAW-066 原先按原始 interrupted 保留归档能力的子条款已被 RAW-068 取代；当前投影 ongoing 与 desktop-live active 均稳定阻止归档，Host 单条/项目路径也拒绝或跳过原始 interrupted。 |
+| 限定静态校验 | pass | 首轮静态核对未覆盖宿主按钮 focus-visible，已因用户截图失效；本次重新执行 `git diff --check`、测试文件零差异、可见 interrupted 分支/CSS 零命中、Weekly ring/根背景/外发光/focus outline 结构检查、偏好 ready 回执与 Markdown 代码链接审计并通过。未修改或运行测试，未运行 typecheck、build、uTools、截图或真实 Codex 操作。 |
+
+结论：RAW-065 已按用户跟进截图再次修正、RAW-066 的可见状态投影保持实现，其旧归档子条款由 RAW-068 取代；当前仍为 `未校验，待用户验收`。用户应重点确认截图中的最外层完整圆已经消失、键盘聚焦只在中央读数出现下划线、Weekly 数据进度环仍存在；并确认原始 interrupted 进入“进行中”角标且所有任务表面不出现状态“中断/已中断”，其归档控件持续禁用且不闪烁，failed、system-error 与 unknown 显示语义不变。四类额度场景仍为 5 小时 + Weekly、Weekly-only、Spark + Weekly 和无 Weekly。
+
+- Error memory: 新增候选 [codex-water-ring-layer-separation.md](../../../knowledge/error-memory/codex-water-ring-layer-separation.md#L1) 与 [codex-provider-status-display-normalization.md](../../../knowledge/error-memory/codex-provider-status-display-normalization.md#L1)，分别记录视觉层误删，以及 provider 原始状态/动作能力未经完整产品投影便泄漏 UI；未保存原始对话或截图，待用户验收后再决定是否提升为 verified。
+
+## RAW-064 历史交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 异常状态分段收敛 | implemented / partly superseded | `failed`、`system-error` 不再渲染“需关注”分段且保留各自错误表达；interrupted 保留准确行内表达的子条款已由 RAW-066 取代。 |
+| 未知与紧凑语义 | implemented / refined | `unknown` 仍独立为“宿主状态未知”；RAW-066 后 `attentionCount` 只保留 failed/system-error，投影后的 ongoing 进入进行中计数。 |
+| 无重排选择提示 | implemented / unverified | `选择模式 / 已选 N 项 / Esc 退出` 移入列表舞台底部绝对覆盖层，保留 `role=status`/`aria-live=polite`；选择滚动区预留安全空间，底部批量栏上移避让，顶部批量栏逻辑未改。 |
+| 保留交互合同 | implemented / unverified | 38px 左侧选择区、核心选择状态机、Esc/最后一项退出、行/子按钮 Space/Enter 所有权与既有批量动作不变；未新增 API、持久化、runtime action、共享组件或 preload/platform 改动。 |
+| 开发与宿主验收 | not run | 依用户规则，未新增或运行测试、typecheck、build、uTools、截图或真实 Codex 操作；本记录不把静态源码复核视为用户验收。 |
+
+结论：RAW-064 的无“需关注”分段与无重排选择提示继续有效；其 interrupted 可见表达仅由 RAW-066 取代。用户仍需验收 failed/system-error 与 unknown 分组，以及进入/退出单选或多选时列表不因提示条重排、末行可滚动访问、底部批量栏不与提示重叠，Esc/最后一项取消选择正常恢复。
+
+- Error memory: 已更新既有候选 [codex-selection-state-needs-structural-contrast.md](../../../knowledge/error-memory/codex-selection-state-needs-structural-contrast.md#L1)，加入“瞬时选择提示不得以顶部普通流新增一行、导致密集列表重排”的防复发规则；仍待用户视觉验收，未提升为 verified。
 
 ## RAW-063 当前交付状态
 
 | Check | Result | Evidence / Scope |
 | --- | --- | --- |
 | 四页签与兼容回退 | implemented / unverified | Float renderer 仅显示 `动态 / 已完成 / 已隐藏 / 项目`；`all/input` 投影保留给角标与统计，旧持久化、旧快照和 `codex.tab.set` 均回退为 `ongoing`。 |
-| 6 小时动态流 | implemented / unverified | 动态页和徽标都按最近 6 小时的 `max(lastTurnStartedAt,lastTurnCompletedAt)` 非隐藏集合取数，顺序为待输入、进行中、需关注、未知、完成未读、已完成；完成任务仍在窗口内显示。 |
+| 6 小时动态流 | implemented / unverified | 动态页和徽标都按最近 6 小时的 `max(lastTurnStartedAt,lastTurnCompletedAt)` 非隐藏集合取数；当前 RAW-064 顺序为待输入、进行中（含三种异常状态）、未知、完成未读、已完成，完成任务仍在窗口内显示。 |
 | 行内交互与密度 | implemented / unverified | 标题普通点击直达、Ctrl/Cmd 只选择；元信息行聚焦并高亮以接收 `Ctrl+T`。四按钮固定为 `24px / 2px / 102px`，注册提示只显示“最近 N 天的 M 条”。 |
-| 水球收敛 | implemented / unverified | Weekly SVG 外环和设置入口已移除；内部液面、百分比、角标、展开额度和旧 outer 持久化字段保持。 |
+| 水球收敛 | superseded by RAW-065 | RAW-063 当时移除 Weekly SVG 外环；RAW-065 已恢复数据进度环及其设置，同时删除普通装饰圈。 |
 | 状态角标与图片回退 | implemented / unverified | 左上待输入保持实时；右上进行中使用不重置 2 秒展示窗口。编辑器支持 PNG/JPEG/WebP 选择、拖放、粘贴与内存预览；当前文本-only App Server 下图片动作仅复制文字并打开 Codex 空白会话，不创建 App Server 空线程。 |
 | 静态核对 | pass | `git diff --check` 通过；已复核可见 Tab 仅为四项、旧 all/input 回退路径、6 小时动态筛选、外环 CSS/SVG/设置入口移除和受控/权威文档同步。按用户要求未运行测试、typecheck、build、uTools、截图或真实宿主操作。 |
 
-结论：RAW-063 已实现，状态为 `未校验，待用户验收`。用户验收应确认旧 `all/input` 启动后直接进入动态、四页签无闪现、待输入角标/动态分段正常，以及最近 6 小时内完成任务仍可见。
+结论：RAW-063 已实现，状态为 `未校验，待用户验收`。用户验收应确认旧 `all/input` 启动后直接进入动态、四页签无闪现、待输入角标/当前动态分段正常，以及最近 6 小时内完成任务仍可见。
 
-- Error memory: 未新增。本轮复用 [codex-cross-process-notloaded-is-not-completion.md](../../../knowledge/error-memory/codex-cross-process-notloaded-is-not-completion.md#L1)：只采用 latest Turn 的已证据时间，不以 `updatedAt`、刷新频率或跨进程 `notLoaded` 推断状态。
+- Error memory: 继续复用 [codex-cross-process-notloaded-is-not-completion.md](../../../knowledge/error-memory/codex-cross-process-notloaded-is-not-completion.md#L1)：只采用 latest Turn 的已证据时间，不以 `updatedAt`、刷新频率或跨进程 `notLoaded` 推断状态；新增候选 [codex-float-bridge-mock-contract-drift.md](../../../knowledge/error-memory/codex-float-bridge-mock-contract-drift.md#L1)，记录必需 `copyText` bridge 能力与完整测试 mock 的同步规则。该 mock 已补齐，但 typecheck 仍由用户执行后才能提升记录状态。
 
 ## RAW-059 当前交付状态
 
@@ -41,7 +115,7 @@ Requirement version: `2026-07-22.10`
 | 多选命中与状态机 | implemented / unverified | 左侧选择区改为 38px 全高矩形并保留状态图标；普通态左区选择、中部打开、Ctrl/Cmd+中部选择，选择态两区切换成员并在最后一项移除时退出。 |
 | 选中视觉与键盘归属 | implemented / unverified | 选中行使用 accent/running/pending/surface 三色主题渐变，hover/focus/active 逐级增强；任务行、左按钮和右动作按钮分别拥有 Space/Enter，根行不重复执行子按钮事件。 |
 | 置顶来源与门禁 | implemented / unverified | 行尾“本地顶”已移除；本地“顶”使用 warning 色，四类来源由 200ms hover/focus 说明表达。原生/Chats 使用可聚焦 `aria-disabled=true`，点击、Quick Jump 与快捷键复用只读门禁。排序和持久化未改。 |
-| 紧凑角标说明 | implemented / unverified | 待输入单/多项、正在进行中、已完成未读角标共享移出展开分支的说明层；200ms 后显示作用，离开/失焦关闭，hover/focus 不展开或切页，点击合同保持。 |
+| 紧凑角标说明 | implemented / refined by RAW-067 | 待输入单/多项、正在进行中、已完成未读角标共享移出展开分支的说明层；200ms 后显示作用，离开/失焦关闭，hover/focus 不展开或切页；待输入与未读点击合同现由 RAW-067 统一为打开完整计数投影中的排序首条。 |
 | 自动化契约 | focused pass / full file red | 用户授权后运行多选专项：普通/Cmd 中部与左区状态机、最后一项退出、子按钮 Space/Enter 归属、38px 全高区/状态图标/三色渐变共 `3 / 3` 通过。首次整文件探测为 `21 / 40` 通过、19 失败；失败跨页签、搜索、项目、配置、角标等更广合同，不能宣称 Companion 全绿。 |
 | 静态与类型核验 | pass | `git diff --check`、Markdown code-link audit、设计偏好 `ready-for-ui-skill` 复核和用户触发后的 `pnpm run typecheck` 通过；未运行 build、uTools/runtime、截图或真实 Codex 操作。 |
 
@@ -60,9 +134,9 @@ Requirement version: `2026-07-22.10`
 
 | Check | Result | Evidence / Scope |
 | --- | --- | --- |
-| 选择模式提示 | implemented / unverified | 任一任务选中后常显“选择模式 / 已选 N 项 / Esc 退出”，数量实时变化，最后一项移出后消失。 |
+| 选择模式提示 | implemented / unverified | 任一任务选中后常显“选择模式 / 已选 N 项 / Esc 退出”，数量实时变化，最后一项移出后消失；RAW-064 将其改为列表舞台底部绝对提示，避免顶部普通流重排。 |
 | 层级区分 | implemented / unverified | 未选行降至 `.62` 不透明度并降低饱和度；选中行使用 `2px` 强调边、`5px` 左轨、强底色与双层焦点/阴影。 |
-| 左侧徽标 | implemented / unverified | `aria-pressed=true` 时状态图标隐藏，左控件改为强调色实底与 `✓`，并保留 focus/active 边界。 |
+| 左侧徽标 | superseded by RAW-058 | RAW-057 的状态图标替换为 `✓` 已由 RAW-058 取代；当前 38px 左侧控件始终保留状态图标，并保留强调 selected/focus/active 边界。 |
 | 自动化契约 | updated / not run | UI 测试增加模式条、实时数量、最后一项退出、勾选符号和未选降权断言；依用户规则未执行。 |
 
 结论：RAW-057 为 `未校验，待用户验收`。未运行测试、typecheck、build、uTools/runtime、截图或真实 Codex 操作。
@@ -77,7 +151,7 @@ Requirement version: `2026-07-22.10`
 | Input / 正在进行中 | implemented / unverified | `statusAuthority=desktop-live` 才能产生 waiting-input/waiting-approval/active；App Server/V1 delta 只标记 connector authority。失去 desktop live 后立即转“宿主状态未知”，不再使用五秒启发或本地缓存计数。 |
 | 已完成未读 | implemented / unverified | 最新 Turn completed 与 Codex `hasUnreadTurn` 共同决定；live read-state 优先，断线时可用 Codex 自身持久化 unread 集合。EyPc open/hide/restore 均不确认未读。 |
 | 归档即时同步 | implemented / unverified | App Server `thread/archive` 及 false/true 双向验证保留；成功后向已连接桌面端派发 `thread-archived` v2。单条/项目结果区分已派发与桌面端未确认即时刷新，通知失败不回滚已验证归档。 |
-| 活动与诊断 UI | implemented / unverified | 动态页新增正在进行中、需关注、宿主状态未知和已完成未读分段；角标仅统计桌面权威 Input/active/unread。设置页分别展示 App Server 数据连接器与桌面实时桥状态；普通 watchdog 改为 5s，三次失败后 1s。 |
+| 活动与诊断 UI | implemented / unverified | 动态页显示正在进行中（含错误状态）、宿主状态未知和已完成未读等分段；角标仅统计桌面权威 Input/active/unread。设置页分别展示 App Server 数据连接器与桌面实时桥状态；普通 watchdog 改为 5s，三次失败后 1s。 |
 | 自动化契约 | updated / not run | Domain、Controller、UI、platform/preload 测试契约已更新，并增加私有桌面 socket snapshot/read/archive 通知边界用例；依用户规则未执行。 |
 | 真实宿主与写入 | not run | 未运行测试、typecheck、build、uTools/runtime、截图、真实 IPC 预检、真实归档或项目移除；未修改本机 Codex 原生状态。 |
 
