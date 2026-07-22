@@ -2,10 +2,12 @@ const { Buffer } = require('node:buffer')
 const { execFile, spawn } = require('node:child_process')
 const crypto = require('node:crypto')
 const fs = require('node:fs')
+const net = require('node:net')
 const os = require('node:os')
 const path = require('node:path')
 
 const STORAGE_KEY = 'eypc/state/v1'
+const CODEX_LAUNCH_PATH_STORAGE_KEY = 'eypc/codex/launch-path/v1'
 const MQTT_ARCHIVE_STORAGE_KEY = 'eypc/mqtt/archive/v1'
 const MQTT_SECRETS_LOCAL_STORAGE_KEY = 'eypc/mqtt/secrets-local/v1'
 const MQTT_SECRETS_FILE_NAME = 'mqtt-secrets-local.json'
@@ -24,6 +26,18 @@ const CODEX_THREAD_TURN_STATUS_TIMEOUT_MS = 5_000
 const CODEX_THREAD_TURN_STATUS_RETRY_MS = 30_000
 const CODEX_THREAD_FIRST_PROMPT_PAGE_LIMIT = 50
 const CODEX_THREAD_FIRST_PROMPT_PAGE_BUDGET = 4
+const CODEX_DESKTOP_IPC_FRAME_MAX_BYTES = 256 * 1024 * 1024
+const CODEX_DESKTOP_IPC_RECONNECT_MAX_MS = 5_000
+const CODEX_DESKTOP_IPC_VERSIONS = {
+  'client-status-changed': 0,
+  'ipc-connection-reset': 1,
+  'thread-stream-state-changed': 11,
+  'thread-stream-following-changed': 1,
+  'thread-stream-following-status-requested': 1,
+  'thread-read-state-changed': 2,
+  'thread-archived': 2,
+  'thread-unarchived': 1
+}
 const CODEX_FLOAT_WATER_SIZE = { width: 104, height: 104 }
 const CODEX_FLOAT_CARD_SIZE = { width: 166, height: 92 }
 const CODEX_FLOAT_EXPANDED_WIDTH = 360
@@ -36,6 +50,7 @@ const CODEX_FLOAT_CHANNELS = {
   state: 'eypc-float:state',
   activate: 'eypc-float:activate',
   expansion: 'eypc-float:expansion',
+  returnFocus: 'eypc-float:return-focus',
   action: 'eypc-float:action',
   threadCreate: 'eypc-float:thread-create',
   threadCreateResult: 'eypc-float:thread-create-result',
@@ -67,9 +82,9 @@ const codexThreadActions = new Map()
 const codexProjectActions = new Map()
 const codexActivityListeners = new Set()
 let codexActivityInventory = new Map()
-let codexActivityRawIds = new Set()
 let codexActivitySourceFingerprint = ''
 let codexActivityGeneration = 0
+let codexDesktopBridge = null
 const codexThreadTurnStatusCache = new Map()
 const codexThreadFirstPromptCache = new Map()
 let codexThreadTurnStatusRpcAvailable = null
@@ -236,6 +251,36 @@ function writeState(state) {
   try {
     if (!globalThis.utools || !globalThis.utools.dbStorage) return false
     globalThis.utools.dbStorage.setItem(STORAGE_KEY, state)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function normalizeCodexLaunchPathPreference(value) {
+  const candidate = typeof value === 'string' ? value.trim() : ''
+  if (!candidate || candidate.length > 4096 || candidate.includes('\u0000')) return ''
+  const platformPath = codexPlatformPath()
+  if (!platformPath.isAbsolute(candidate)) return ''
+  return platformPath.normalize(candidate)
+}
+
+function readCodexLaunchPathPreference() {
+  try {
+    if (!globalThis.utools || !globalThis.utools.dbStorage) return ''
+    const saved = globalThis.utools.dbStorage.getItem(CODEX_LAUNCH_PATH_STORAGE_KEY)
+    const value = saved && typeof saved === 'object' ? saved.path : saved
+    return normalizeCodexLaunchPathPreference(value)
+  } catch {
+    return ''
+  }
+}
+
+function writeCodexLaunchPathPreference(pathValue) {
+  try {
+    if (!globalThis.utools || !globalThis.utools.dbStorage) return false
+    const path = normalizeCodexLaunchPathPreference(pathValue)
+    globalThis.utools.dbStorage.setItem(CODEX_LAUNCH_PATH_STORAGE_KEY, path ? { version: 1, path } : { version: 1 })
     return true
   } catch {
     return false
@@ -1171,6 +1216,35 @@ function codexPlatformPath() {
   return process.platform === 'win32' ? path.win32 : path
 }
 
+const CODEX_LAUNCH_SOURCE_LABELS = {
+  manual: '手动指定的位置',
+  configured: '环境变量指定位置',
+  volta: 'Volta 默认位置',
+  'npm-global': 'npm 全局目录',
+  local: '用户目录默认位置',
+  homebrew: 'Homebrew 默认位置',
+  nvm: 'NVM 版本目录',
+  path: '系统 PATH',
+  unknown: '未识别位置'
+}
+
+function codexLaunchCandidate(source, state) {
+  return {
+    source,
+    label: CODEX_LAUNCH_SOURCE_LABELS[source] || CODEX_LAUNCH_SOURCE_LABELS.unknown,
+    state
+  }
+}
+
+function codexLaunchResult(plan, launchMode, manualLaunchPathState, launchCandidates) {
+  return {
+    ...plan,
+    launchMode,
+    manualLaunchPathState,
+    launchCandidates: launchCandidates.slice(0, 8)
+  }
+}
+
 function codexBundledBinary(jsEntry) {
   const platformPath = codexPlatformPath()
   const target = process.platform === 'win32'
@@ -1346,6 +1420,20 @@ function resolveCodexLaunchPlan() {
   const platformPath = codexPlatformPath()
   const candidates = []
   const env = process.env || {}
+  const manualPath = readCodexLaunchPathPreference()
+  if (manualPath) {
+    let exists = false
+    try { exists = fs.existsSync(manualPath) } catch {}
+    const plan = exists
+      ? codexLaunchPlan(manualPath, 'manual', true)
+      : { ...codexLaunchPlan(manualPath, 'manual', false), invalid: true }
+    return codexLaunchResult(
+      plan,
+      'manual',
+      plan.detected ? 'valid' : 'invalid',
+      [codexLaunchCandidate('manual', plan.detected ? 'available' : 'unusable')]
+    )
+  }
   if (typeof env.CODEX_CLI_PATH === 'string' && env.CODEX_CLI_PATH.trim()) candidates.push({ path: env.CODEX_CLI_PATH.trim(), source: 'configured' })
   const home = os.homedir()
   if (process.platform === 'win32') {
@@ -1389,18 +1477,31 @@ function resolveCodexLaunchPlan() {
   for (const directory of pathValue.split(platformPath.delimiter).filter(Boolean)) {
     for (const executable of executableNames) candidates.push({ path: platformPath.join(directory, executable), source: 'path' })
   }
+  let detectedPlan = null
   let invalidPlan = null
+  const launchCandidates = []
+  const recordCandidate = (source, state) => {
+    if (!launchCandidates.some((candidate) => candidate.source === source && candidate.state === state)) {
+      launchCandidates.push(codexLaunchCandidate(source, state))
+    }
+  }
   for (const candidate of candidates) {
     if (!candidate.path || !platformPath.isAbsolute(candidate.path)) continue
     try {
       if (fs.existsSync(candidate.path)) {
         const plan = codexLaunchPlan(candidate.path, candidate.source, true)
-        if (plan.detected) return plan
+        recordCandidate(candidate.source, plan.detected ? 'available' : 'unusable')
+        if (plan.detected && !detectedPlan) detectedPlan = plan
         if (!invalidPlan) invalidPlan = plan
       }
     } catch {}
   }
-  return invalidPlan || codexLaunchPlan('codex', 'unknown', false)
+  return codexLaunchResult(
+    detectedPlan || invalidPlan || codexLaunchPlan('codex', 'unknown', false),
+    'automatic',
+    'not-configured',
+    launchCandidates
+  )
 }
 
 function readCodexProbeResult(command, args, timeoutMs) {
@@ -1469,6 +1570,7 @@ async function inspectCodexEnvironment() {
   const platform = process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'unsupported'
   const launch = resolveCodexLaunchPlan()
   const processState = await inspectCodexRelatedProcess()
+  const desktopBridgeState = codexEnsureDesktopBridge().state
   const runtimeState = platform === 'unsupported' ? 'unsupported' : launch.detected ? 'detected' : launch.invalid ? 'unusable' : 'missing'
   return {
     version: 1,
@@ -1479,9 +1581,32 @@ async function inspectCodexEnvironment() {
     processState,
     configState: platform === 'unsupported' ? 'unknown' : inspectCodexConfigFile(),
     connectionState: codexProcessAlive() ? 'connected' : 'not-checked',
+    desktopBridgeState,
+    launchMode: launch.launchMode,
+    manualLaunchPathState: launch.manualLaunchPathState,
+    launchCandidates: launch.launchCandidates,
+    statusFeedMode: desktopBridgeState === 'connected'
+      ? 'desktop-live'
+      : platform === 'unsupported' ? 'unavailable' : 'connector-fallback',
     checkedAt: Date.now(),
     ...(launch.invalid ? { errorCode: 'runtime-unavailable' } : {})
   }
+}
+
+async function setCodexLaunchPath(pathValue) {
+  const manualPath = normalizeCodexLaunchPathPreference(pathValue)
+  if (!manualPath) throw codexError('runtime-unavailable', '请输入 Codex CLI 可执行文件的完整绝对路径')
+  let exists = false
+  try { exists = fs.existsSync(manualPath) } catch {}
+  const plan = exists ? codexLaunchPlan(manualPath, 'manual', true) : null
+  if (!plan || !plan.detected) throw codexError('runtime-unavailable', '所选 Codex CLI 路径不可用，请选择可执行文件本身')
+  if (!writeCodexLaunchPathPreference(manualPath)) throw codexError('unavailable', '无法保存手动 Codex CLI 位置')
+  return inspectCodexEnvironment()
+}
+
+async function clearCodexLaunchPath() {
+  if (!writeCodexLaunchPathPreference('')) throw codexError('unavailable', '无法清除手动 Codex CLI 位置')
+  return inspectCodexEnvironment()
 }
 
 function rejectCodexPending(error) {
@@ -1510,13 +1635,675 @@ function codexProcessEndError(reason) {
   return codexError('process-exited', 'Codex App Server exited')
 }
 
+function codexDesktopIpcEndpoint() {
+  if (process.platform !== 'darwin') return ''
+  return path.join(codexNativeStatePaths().codexHome, 'ipc', 'ipc.sock')
+}
+
+function codexDesktopIpcEndpointIsSecure(endpoint) {
+  if (!endpoint || process.platform !== 'darwin') return false
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null
+  if (uid === null) return false
+  try {
+    const directory = fs.lstatSync(path.dirname(endpoint))
+    const socket = fs.lstatSync(endpoint)
+    return directory.isDirectory()
+      && socket.isSocket()
+      && directory.uid === uid
+      && socket.uid === uid
+      && (directory.mode & 0o077) === 0
+      && (socket.mode & 0o077) === 0
+  } catch {
+    return false
+  }
+}
+
+function codexDesktopProjectedRequest(value) {
+  const source = codexRecord(value)
+  return {
+    type: typeof source.type === 'string' ? source.type.slice(0, 80) : '',
+    method: typeof source.method === 'string' ? source.method.slice(0, 120) : ''
+  }
+}
+
+function codexDesktopRequestFlag(request) {
+  const type = String(request?.type || '').toLowerCase()
+  const method = String(request?.method || '').toLowerCase()
+  if (type.includes('userinput')
+    || type.includes('optionpicker')
+    || type.includes('setupcodex')
+    || method.includes('requestuserinput')
+    || method.includes('user-input')) return 'waitingOnUserInput'
+  if (type.includes('approval')
+    || type.includes('elicitation')
+    || type.includes('permissionrequest')
+    || method.includes('approval')
+    || method.includes('permission')
+    || method.includes('elicitation')) return 'waitingOnApproval'
+  return ''
+}
+
+function codexDesktopRuntimeProjection(value) {
+  const activity = sanitizeCodexActivityStatus(value)
+  return activity ? { type: activity.status, activeFlags: activity.activeFlags } : null
+}
+
+function codexDesktopShadowFromSnapshot(change) {
+  const state = codexRecord(change.conversationState)
+  const revision = Number.isInteger(change.revision) && change.revision >= 0 ? change.revision : -1
+  const runtime = codexDesktopRuntimeProjection(state.threadRuntimeStatus)
+  const requests = Array.isArray(state.requests) && state.requests.length <= 10_000
+    ? state.requests.map(codexDesktopProjectedRequest)
+    : null
+  if (revision < 0 || !runtime || requests === null) return null
+  return {
+    revision,
+    runtime,
+    resumeState: typeof state.resumeState === 'string' ? state.resumeState.slice(0, 40) : '',
+    hasUnreadTurn: typeof state.hasUnreadTurn === 'boolean' ? state.hasUnreadTurn : undefined,
+    requests
+  }
+}
+
+function codexDesktopShadowActivity(shadow) {
+  if (!shadow?.runtime) return null
+  const activeFlags = new Set(shadow.runtime.activeFlags || [])
+  if (shadow.runtime.type === 'active') {
+    for (const request of shadow.requests || []) {
+      const flag = codexDesktopRequestFlag(request)
+      if (flag) activeFlags.add(flag)
+    }
+  }
+  return { status: shadow.runtime.type, activeFlags: [...activeFlags] }
+}
+
+function codexDesktopPatchIndex(value, length, allowEnd = false) {
+  const index = typeof value === 'number' ? value : typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : -1
+  const maximum = allowEnd ? length : length - 1
+  return Number.isInteger(index) && index >= 0 && index <= maximum ? index : -1
+}
+
+function codexApplyDesktopShadowPatch(shadow, patch) {
+  const source = codexRecord(patch)
+  const operation = source.op
+  const patchPath = Array.isArray(source.path) ? source.path : null
+  if (!['add', 'replace', 'remove'].includes(operation) || !patchPath || patchPath.length === 0 || patchPath.length > 8) return false
+  const root = patchPath[0]
+  if (root === 'hasUnreadTurn') {
+    if (patchPath.length !== 1) return false
+    if (operation === 'remove') shadow.hasUnreadTurn = undefined
+    else if (typeof source.value === 'boolean') shadow.hasUnreadTurn = source.value
+    else return false
+    return true
+  }
+  if (root === 'resumeState') {
+    if (patchPath.length !== 1) return false
+    if (operation === 'remove') shadow.resumeState = ''
+    else if (typeof source.value === 'string') shadow.resumeState = source.value.slice(0, 40)
+    else return false
+    return true
+  }
+  if (root === 'threadRuntimeStatus') {
+    if (patchPath.length === 1) {
+      if (operation === 'remove') return false
+      const runtime = codexDesktopRuntimeProjection(source.value)
+      if (!runtime) return false
+      shadow.runtime = runtime
+      return true
+    }
+    if (patchPath[1] === 'type') {
+      if (patchPath.length !== 2 || operation === 'remove' || !['active', 'idle', 'notLoaded', 'systemError'].includes(source.value)) return false
+      shadow.runtime.type = source.value
+      if (source.value !== 'active') shadow.runtime.activeFlags = []
+      return true
+    }
+    if (patchPath[1] !== 'activeFlags') return false
+    if (patchPath.length === 2) {
+      if (operation === 'remove') shadow.runtime.activeFlags = []
+      else if (Array.isArray(source.value)) {
+        shadow.runtime.activeFlags = [...new Set(source.value.filter((flag) => flag === 'waitingOnApproval' || flag === 'waitingOnUserInput'))]
+      } else return false
+      return true
+    }
+    if (patchPath.length !== 3) return false
+    const flags = shadow.runtime.activeFlags || []
+    const index = codexDesktopPatchIndex(patchPath[2], flags.length, operation === 'add')
+    if (index < 0) return false
+    if (operation === 'remove') flags.splice(index, 1)
+    else if (source.value === 'waitingOnApproval' || source.value === 'waitingOnUserInput') {
+      if (operation === 'add') flags.splice(index, 0, source.value)
+      else flags[index] = source.value
+    } else return false
+    shadow.runtime.activeFlags = [...new Set(flags)]
+    return true
+  }
+  if (root !== 'requests') return false
+  if (patchPath.length === 1) {
+    if (operation === 'remove') shadow.requests = []
+    else if (Array.isArray(source.value) && source.value.length <= 10_000) shadow.requests = source.value.map(codexDesktopProjectedRequest)
+    else return false
+    return true
+  }
+  const requests = shadow.requests || []
+  const index = codexDesktopPatchIndex(patchPath[1], requests.length, operation === 'add')
+  if (index < 0) return false
+  if (patchPath.length === 2) {
+    if (operation === 'remove') requests.splice(index, 1)
+    else if (operation === 'add') requests.splice(index, 0, codexDesktopProjectedRequest(source.value))
+    else requests[index] = codexDesktopProjectedRequest(source.value)
+    shadow.requests = requests
+    return true
+  }
+  if (patchPath.length !== 3 || (patchPath[2] !== 'type' && patchPath[2] !== 'method')) return false
+  if (operation === 'remove') requests[index][patchPath[2]] = ''
+  else if (typeof source.value === 'string') requests[index][patchPath[2]] = source.value.slice(0, patchPath[2] === 'type' ? 80 : 120)
+  else return false
+  return true
+}
+
+class CodexDesktopCompanionBridge {
+  constructor() {
+    this.state = 'not-checked'
+    this.socket = null
+    this.buffer = Buffer.alloc(0)
+    this.clientId = 'initializing-client'
+    this.initializeRequestId = ''
+    this.initializeTimer = null
+    this.reconnectTimer = null
+    this.reconnectAttempt = 0
+    this.closed = false
+    this.inventory = new Set()
+    this.shadows = new Map()
+    this.liveUnread = new Map()
+    this.lastSocketError = ''
+  }
+
+  setState(state) {
+    if (this.state === state) return
+    this.state = state
+    emitCodexActivityDelta([...codexActivityInventory.values()].map(codexActivityPublicEntry), false)
+  }
+
+  ensure() {
+    if (this.closed || this.socket || this.reconnectTimer || this.state === 'incompatible') return
+    if (process.platform !== 'darwin') {
+      this.setState('failed')
+      return
+    }
+    const endpoint = codexDesktopIpcEndpoint()
+    if (!codexDesktopIpcEndpointIsSecure(endpoint)) {
+      this.setState(fs.existsSync(endpoint) ? 'failed' : 'not-running')
+      this.scheduleReconnect()
+      return
+    }
+    this.setState('connecting')
+    this.lastSocketError = ''
+    const socket = net.connect(endpoint)
+    this.socket = socket
+    socket.on('connect', () => this.initialize())
+    socket.on('data', (chunk) => this.handleData(chunk))
+    socket.on('error', (error) => {
+      this.lastSocketError = String(error?.code || '')
+    })
+    socket.on('close', () => this.handleClose(socket))
+  }
+
+  scheduleReconnect() {
+    if (this.closed || this.reconnectTimer || this.state === 'incompatible') return
+    const delay = Math.min(CODEX_DESKTOP_IPC_RECONNECT_MAX_MS, 250 * (2 ** Math.min(this.reconnectAttempt, 5)))
+    this.reconnectAttempt += 1
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      this.ensure()
+    }, delay)
+    this.reconnectTimer.unref?.()
+  }
+
+  initialize() {
+    this.initializeRequestId = crypto.randomUUID()
+    this.send({
+      type: 'request',
+      method: 'initialize',
+      requestId: this.initializeRequestId,
+      sourceClientId: 'initializing-client',
+      version: 0,
+      params: { clientType: 'eypc-desktop-companion' }
+    })
+    this.initializeTimer = setTimeout(() => this.failConnection('failed'), 2_000)
+    this.initializeTimer.unref?.()
+  }
+
+  send(message, callback) {
+    if (!this.socket || !this.socket.writable) return false
+    try {
+      const body = Buffer.from(JSON.stringify(message), 'utf8')
+      if (!body.length || body.length > CODEX_DESKTOP_IPC_FRAME_MAX_BYTES) return false
+      const frame = Buffer.allocUnsafe(body.length + 4)
+      frame.writeUInt32LE(body.length, 0)
+      body.copy(frame, 4)
+      this.socket.write(frame, callback)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  sendBroadcast(method, params, targetClientIds, callback) {
+    const version = CODEX_DESKTOP_IPC_VERSIONS[method]
+    if (!Number.isInteger(version) || this.clientId === 'initializing-client') return false
+    return this.send({
+      type: 'broadcast',
+      method,
+      sourceClientId: this.clientId,
+      ...(Array.isArray(targetClientIds) ? { targetClientIds } : {}),
+      params,
+      version
+    }, callback)
+  }
+
+  handleData(chunk) {
+    if (!Buffer.isBuffer(chunk) || !chunk.length) return
+    this.buffer = Buffer.concat([this.buffer, chunk])
+    for (;;) {
+      if (this.buffer.length < 4) return
+      const length = this.buffer.readUInt32LE(0)
+      if (!length || length > CODEX_DESKTOP_IPC_FRAME_MAX_BYTES) {
+        this.failConnection('incompatible')
+        return
+      }
+      if (this.buffer.length < length + 4) return
+      const payload = this.buffer.subarray(4, length + 4).toString('utf8')
+      this.buffer = this.buffer.subarray(length + 4)
+      let message
+      try { message = JSON.parse(payload) } catch {
+        this.failConnection('incompatible')
+        return
+      }
+      this.handleMessage(message)
+    }
+  }
+
+  handleMessage(value) {
+    const message = codexRecord(value)
+    if (message.type === 'client-discovery-request') {
+      if (typeof message.requestId === 'string') {
+        this.send({ type: 'client-discovery-response', requestId: message.requestId, response: { canHandle: false } })
+      }
+      return
+    }
+    if (message.type === 'response' && message.requestId === this.initializeRequestId) {
+      const result = codexRecord(message.result)
+      if (message.resultType !== 'success' || message.method !== 'initialize' || typeof result.clientId !== 'string' || !result.clientId) {
+        this.failConnection('incompatible')
+        return
+      }
+      if (this.initializeTimer) clearTimeout(this.initializeTimer)
+      this.initializeTimer = null
+      this.clientId = result.clientId
+      this.reconnectAttempt = 0
+      this.setState('connected')
+      this.refreshPersistedUnread(false)
+      this.followAll(true)
+      return
+    }
+    if (message.type !== 'broadcast' || typeof message.method !== 'string') return
+    if (Array.isArray(message.targetClientIds) && !message.targetClientIds.includes(this.clientId)) return
+    const expectedVersion = CODEX_DESKTOP_IPC_VERSIONS[message.method]
+    if (Number.isInteger(expectedVersion) && message.version !== expectedVersion) {
+      this.failConnection('incompatible')
+      return
+    }
+    const params = codexRecord(message.params)
+    if (message.method === 'client-status-changed') {
+      const clientId = typeof params.clientId === 'string' ? params.clientId : ''
+      if (clientId && clientId !== this.clientId) {
+        if (params.status === 'connected' || params.connected === true) this.followAll(true, [clientId])
+        else if (params.status === 'disconnected' || params.status === 'closed' || params.connected === false) {
+          this.dropOwner(clientId)
+          this.followAll(true)
+        }
+      }
+      return
+    }
+    if (message.method === 'thread-stream-following-status-requested') {
+      if (params.hostId === 'local' && validCodexThreadId(params.conversationId) && this.inventory.has(params.conversationId)) {
+        const targetClientIds = typeof message.sourceClientId === 'string' && message.sourceClientId
+          ? [message.sourceClientId]
+          : undefined
+        this.follow(params.conversationId, true, targetClientIds)
+      }
+      return
+    }
+    if (message.method === 'thread-stream-following-changed') {
+      const threadId = params.conversationId
+      const ownerClientId = typeof message.sourceClientId === 'string' ? message.sourceClientId : ''
+      const shadow = validCodexThreadId(threadId) ? this.shadows.get(threadId) : null
+      if (params.hostId === 'local' && params.following === false && ownerClientId && validCodexThreadId(threadId)) {
+        const ownsShadow = shadow?.ownerClientId === ownerClientId
+        const ownsUnread = this.liveUnread.get(threadId)?.ownerClientId === ownerClientId
+        if (!ownsShadow && !ownsUnread) return
+        if (ownsShadow) this.shadows.delete(threadId)
+        if (ownsUnread) this.liveUnread.delete(threadId)
+        const known = codexActivityInventory.get(threadId)
+        if (known) {
+          if (!ownsShadow && shadow) {
+            this.publishShadow(threadId, shadow)
+            return
+          }
+          if (ownsShadow) {
+            known.status = known.connectorStatus
+            known.activeFlags = [...known.connectorActiveFlags]
+            known.statusAuthority = 'connector'
+          }
+          this.refreshPersistedUnread(false)
+          emitCodexActivityDelta([known], false)
+        }
+      }
+      return
+    }
+    if (message.method === 'thread-stream-state-changed') {
+      this.handleStreamState(params, message.sourceClientId)
+      return
+    }
+    if (message.method === 'thread-read-state-changed') {
+      this.handleReadState(params, message.sourceClientId)
+      return
+    }
+    if (message.method === 'thread-archived' || message.method === 'thread-unarchived') {
+      if (params.hostId === 'local' && validCodexThreadId(params.conversationId)) {
+        this.shadows.delete(params.conversationId)
+        this.liveUnread.delete(params.conversationId)
+        emitCodexActivityDelta([], true)
+      }
+      return
+    }
+    if (message.method === 'ipc-connection-reset') {
+      this.resetLiveAuthority()
+      this.followAll(true)
+    }
+  }
+
+  handleStreamState(params, ownerClientId) {
+    if (params.hostId !== 'local' || !validCodexThreadId(params.conversationId) || !this.inventory.has(params.conversationId)) return
+    const change = codexRecord(params.change)
+    if (change.type === 'snapshot') {
+      const shadow = codexDesktopShadowFromSnapshot(change)
+      if (!shadow) {
+        this.resubscribe(params.conversationId)
+        return
+      }
+      shadow.ownerClientId = ownerClientId
+      this.shadows.set(params.conversationId, shadow)
+      this.publishShadow(params.conversationId, shadow)
+      return
+    }
+    if (change.type !== 'patches') return
+    const shadow = this.shadows.get(params.conversationId)
+    if (!shadow
+      || shadow.ownerClientId !== ownerClientId
+      || !Number.isInteger(change.baseRevision)
+      || change.baseRevision !== shadow.revision
+      || !Number.isInteger(change.revision)
+      || change.revision <= shadow.revision
+      || !Array.isArray(change.patches)
+      || change.patches.length > 50_000) {
+      this.resubscribe(params.conversationId)
+      return
+    }
+    for (const patch of change.patches) {
+      if (!codexApplyDesktopShadowPatch(shadow, patch)) {
+        this.resubscribe(params.conversationId)
+        return
+      }
+    }
+    shadow.revision = change.revision
+    this.publishShadow(params.conversationId, shadow)
+  }
+
+  publishShadow(threadId, shadow) {
+    const known = codexActivityInventory.get(threadId)
+    const activity = codexDesktopShadowActivity(shadow)
+    if (!known || !activity) return
+    known.status = activity.status
+    known.activeFlags = activity.activeFlags
+    known.statusAuthority = 'desktop-live'
+    if (typeof shadow.hasUnreadTurn === 'boolean') {
+      known.hasUnreadTurn = shadow.hasUnreadTurn
+      known.unreadAuthority = 'desktop-live'
+      this.liveUnread.set(threadId, {
+        ownerClientId: typeof shadow.ownerClientId === 'string' && shadow.ownerClientId ? shadow.ownerClientId : 'desktop-live',
+        hasUnreadTurn: shadow.hasUnreadTurn
+      })
+    } else {
+      known.hasUnreadTurn = false
+      known.unreadAuthority = 'unavailable'
+      this.liveUnread.delete(threadId)
+    }
+    emitCodexActivityDelta([codexActivityPublicEntry(known)], false)
+  }
+
+  handleReadState(params, ownerClientId) {
+    if (params.hostId !== 'local' || !validCodexThreadId(params.conversationId) || typeof params.hasUnreadTurn !== 'boolean') return
+    const known = codexActivityInventory.get(params.conversationId)
+    if (!known) return
+    known.hasUnreadTurn = params.hasUnreadTurn
+    known.unreadAuthority = 'desktop-live'
+    this.liveUnread.set(params.conversationId, {
+      ownerClientId: typeof ownerClientId === 'string' && ownerClientId ? ownerClientId : 'desktop-live',
+      hasUnreadTurn: params.hasUnreadTurn
+    })
+    const shadow = this.shadows.get(params.conversationId)
+    if (shadow) shadow.hasUnreadTurn = params.hasUnreadTurn
+    emitCodexActivityDelta([codexActivityPublicEntry(known)], false)
+  }
+
+  follow(threadId, following, targetClientIds) {
+    if (!this.inventory.has(threadId) && following) return false
+    return this.sendBroadcast('thread-stream-following-changed', {
+      hostId: 'local',
+      conversationId: threadId,
+      following: following === true
+    }, targetClientIds)
+  }
+
+  followAll(following, targetClientIds) {
+    if (this.state !== 'connected') return
+    for (const threadId of this.inventory) this.follow(threadId, following, targetClientIds)
+  }
+
+  resubscribe(threadId) {
+    this.shadows.delete(threadId)
+    this.liveUnread.delete(threadId)
+    this.refreshPersistedUnread(false)
+    this.restoreConnectorAuthority(threadId)
+    this.follow(threadId, false)
+    this.follow(threadId, true)
+  }
+
+  dropOwner(clientId) {
+    const affected = new Set()
+    for (const [threadId, shadow] of this.shadows) {
+      if (shadow.ownerClientId !== clientId) continue
+      this.shadows.delete(threadId)
+      const known = codexActivityInventory.get(threadId)
+      if (!known) continue
+      known.status = known.connectorStatus
+      known.activeFlags = [...known.connectorActiveFlags]
+      known.statusAuthority = 'connector'
+      affected.add(threadId)
+    }
+    for (const [threadId, unread] of this.liveUnread) {
+      if (unread.ownerClientId !== clientId) continue
+      this.liveUnread.delete(threadId)
+      affected.add(threadId)
+    }
+    for (const threadId of [...affected]) {
+      const shadow = this.shadows.get(threadId)
+      if (!shadow) continue
+      this.publishShadow(threadId, shadow)
+      affected.delete(threadId)
+    }
+    if (!affected.size) return
+    this.refreshPersistedUnread(false)
+    emitCodexActivityDelta([...affected].map((threadId) => codexActivityInventory.get(threadId)).filter(Boolean), false)
+  }
+
+  restoreConnectorAuthority(threadId) {
+    const known = codexActivityInventory.get(threadId)
+    if (!known) return
+    known.status = known.connectorStatus
+    known.activeFlags = [...known.connectorActiveFlags]
+    known.statusAuthority = 'connector'
+    emitCodexActivityDelta([codexActivityPublicEntry(known)], false)
+  }
+
+  refreshPersistedUnread(emit = true) {
+    let unreadIds = null
+    try { unreadIds = readCodexDesktopUnreadIds() } catch {}
+    const changed = []
+    for (const threadId of this.inventory) {
+      if (this.shadows.has(threadId)) continue
+      const known = codexActivityInventory.get(threadId)
+      if (!known) continue
+      const liveUnread = this.liveUnread.get(threadId)
+      if (this.state === 'connected' && liveUnread) {
+        if (known.hasUnreadTurn === liveUnread.hasUnreadTurn && known.unreadAuthority === 'desktop-live') continue
+        known.hasUnreadTurn = liveUnread.hasUnreadTurn
+        known.unreadAuthority = 'desktop-live'
+        changed.push(codexActivityPublicEntry(known))
+        continue
+      }
+      const hasUnreadTurn = unreadIds ? unreadIds.has(threadId) : false
+      const authority = unreadIds ? 'desktop-persisted' : 'unavailable'
+      if (known.hasUnreadTurn === hasUnreadTurn && known.unreadAuthority === authority) continue
+      known.hasUnreadTurn = hasUnreadTurn
+      known.unreadAuthority = authority
+      changed.push(codexActivityPublicEntry(known))
+    }
+    if (emit && changed.length) emitCodexActivityDelta(changed, false)
+  }
+
+  resetLiveAuthority() {
+    this.shadows.clear()
+    this.liveUnread.clear()
+    for (const threadId of this.inventory) {
+      const known = codexActivityInventory.get(threadId)
+      if (!known) continue
+      known.status = known.connectorStatus
+      known.activeFlags = [...known.connectorActiveFlags]
+      known.statusAuthority = 'connector'
+    }
+    this.refreshPersistedUnread(false)
+    emitCodexActivityDelta([...codexActivityInventory.values()].map(codexActivityPublicEntry), false)
+  }
+
+  updateInventory(threadIds) {
+    const next = new Set([...threadIds].filter(validCodexThreadId))
+    if (this.state === 'connected') {
+      for (const threadId of this.inventory) if (!next.has(threadId)) this.follow(threadId, false)
+    }
+    for (const threadId of this.shadows.keys()) if (!next.has(threadId)) this.shadows.delete(threadId)
+    for (const threadId of this.liveUnread.keys()) if (!next.has(threadId)) this.liveUnread.delete(threadId)
+    const previous = this.inventory
+    this.inventory = next
+    this.refreshPersistedUnread(false)
+    this.ensure()
+    for (const [threadId, shadow] of this.shadows) {
+      if (next.has(threadId)) this.publishShadow(threadId, shadow)
+    }
+    if (this.state === 'connected') {
+      for (const threadId of next) if (!previous.has(threadId)) this.follow(threadId, true)
+    }
+  }
+
+  activityForThread(threadId) {
+    if (this.state !== 'connected') return null
+    const shadow = this.shadows.get(threadId)
+    return shadow ? codexDesktopShadowActivity(shadow) : null
+  }
+
+  notifyThreadArchived(threadId, cwd) {
+    if (this.state === 'incompatible') return Promise.resolve('incompatible')
+    if (this.state === 'not-running') return Promise.resolve('not-running')
+    if (this.state !== 'connected' || !this.socket?.writable) return Promise.resolve('failed')
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = (value) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        if (value === 'dispatched') {
+          this.follow(threadId, false)
+          this.shadows.delete(threadId)
+          this.liveUnread.delete(threadId)
+          emitCodexActivityDelta([], true)
+        }
+        resolve(value)
+      }
+      const timeout = setTimeout(() => finish('failed'), 1_000)
+      const sent = this.sendBroadcast('thread-archived', {
+        hostId: 'local',
+        conversationId: threadId,
+        cwd: typeof cwd === 'string' ? cwd : ''
+      }, undefined, () => finish('dispatched'))
+      if (!sent) finish('failed')
+    })
+  }
+
+  failConnection(state) {
+    this.resetLiveAuthority()
+    this.setState(state)
+    try { this.socket?.destroy() } catch {}
+  }
+
+  handleClose(socket) {
+    if (this.socket !== socket) return
+    if (this.initializeTimer) clearTimeout(this.initializeTimer)
+    this.initializeTimer = null
+    this.socket = null
+    this.buffer = Buffer.alloc(0)
+    this.clientId = 'initializing-client'
+    if (this.closed) return
+    this.resetLiveAuthority()
+    if (this.state !== 'incompatible') {
+      this.setState(this.lastSocketError === 'ENOENT' || this.lastSocketError === 'ECONNREFUSED' ? 'not-running' : 'failed')
+      this.scheduleReconnect()
+    }
+  }
+
+  dispose() {
+    this.closed = true
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    if (this.initializeTimer) clearTimeout(this.initializeTimer)
+    this.reconnectTimer = null
+    this.initializeTimer = null
+    if (this.state === 'connected') this.followAll(false)
+    try { this.socket?.destroy() } catch {}
+    this.socket = null
+    this.shadows.clear()
+    this.liveUnread.clear()
+    this.state = 'not-checked'
+  }
+}
+
+function codexEnsureDesktopBridge() {
+  if (!codexDesktopBridge || codexDesktopBridge.closed) codexDesktopBridge = new CodexDesktopCompanionBridge()
+  codexDesktopBridge.ensure()
+  return codexDesktopBridge
+}
+
+function closeCodexDesktopBridge() {
+  codexDesktopBridge?.dispose()
+  codexDesktopBridge = null
+}
+
 function resetCodexThreadSessionState() {
   codexThreadActions.clear()
   codexProjectActions.clear()
   codexActivityInventory = new Map()
-  codexActivityRawIds = new Set()
   codexActivitySourceFingerprint = ''
   codexActivityGeneration += 1
+  codexDesktopBridge?.updateInventory(new Set())
   codexThreadTurnStatusCache.clear()
   codexThreadFirstPromptCache.clear()
   codexThreadTurnStatusRpcAvailable = null
@@ -1534,13 +2321,36 @@ function sanitizeCodexActivityStatus(value) {
   return { status, activeFlags }
 }
 
+function codexActivityPublicEntry(value) {
+  const source = codexRecord(value)
+  const status = ['active', 'idle', 'notLoaded', 'systemError'].includes(source.status) ? source.status : undefined
+  const activeFlags = status === 'active' && Array.isArray(source.activeFlags)
+    ? [...new Set(source.activeFlags.filter((flag) => flag === 'waitingOnApproval' || flag === 'waitingOnUserInput'))]
+    : []
+  const statusAuthority = ['desktop-live', 'connector', 'unavailable'].includes(source.statusAuthority)
+    ? source.statusAuthority
+    : 'unavailable'
+  const unreadAuthority = ['desktop-live', 'desktop-persisted', 'unavailable'].includes(source.unreadAuthority)
+    ? source.unreadAuthority
+    : 'unavailable'
+  return {
+    key: typeof source.key === 'string' ? source.key : '',
+    ...(status ? { status } : {}),
+    activeFlags,
+    statusAuthority,
+    ...(typeof source.hasUnreadTurn === 'boolean' ? { hasUnreadTurn: source.hasUnreadTurn } : {}),
+    unreadAuthority
+  }
+}
+
 function codexActivityDelta(entries, inventoryChanged, receivedAt = Date.now()) {
   return {
-    version: 1,
+    version: 2,
     sourceFingerprint: codexActivitySourceFingerprint,
     generation: codexActivityGeneration,
-    entries,
+    entries: entries.map(codexActivityPublicEntry).filter((entry) => entry.key),
     inventoryChanged: inventoryChanged === true,
+    desktopBridgeState: codexDesktopBridge?.state || 'not-checked',
     receivedAt
   }
 }
@@ -1562,9 +2372,14 @@ function handleCodexServerMessage(message) {
     const known = codexActivityInventory.get(threadId)
     const activity = sanitizeCodexActivityStatus(params.status)
     if (known && activity) {
-      known.status = activity.status
-      known.activeFlags = activity.activeFlags
-      emitCodexActivityDelta([{ key: known.key, ...activity }], false)
+      known.connectorStatus = activity.status
+      known.connectorActiveFlags = activity.activeFlags
+      if (known.statusAuthority !== 'desktop-live') {
+        known.status = activity.status
+        known.activeFlags = activity.activeFlags
+        known.statusAuthority = 'connector'
+      }
+      emitCodexActivityDelta([known], false)
     } else {
       emitCodexActivityDelta([], true)
     }
@@ -1719,6 +2534,11 @@ function closeCodexServer() {
   try { processRef?.stdout?.destroy?.() } catch {}
   try { processRef?.stderr?.destroy?.() } catch {}
   resetCodexThreadSessionState()
+}
+
+function closeCodexConnections() {
+  closeCodexServer()
+  closeCodexDesktopBridge()
 }
 
 function sanitizeCodexQuotaWindow(value) {
@@ -1964,11 +2784,16 @@ function parseCodexNativeRegistryText(text) {
   }
 }
 
-function readCodexNativeRegistry() {
+function codexNativeStatePaths() {
   const codexHome = typeof process.env.CODEX_HOME === 'string' && process.env.CODEX_HOME.trim()
     ? path.resolve(process.env.CODEX_HOME)
     : path.join(os.homedir(), '.codex')
   const primary = path.join(codexHome, '.codex-global-state.json')
+  return { codexHome, primary, backup: `${primary}.bak` }
+}
+
+function readCodexNativeRegistry() {
+  const { primary } = codexNativeStatePaths()
   const candidates = [primary, `${primary}.bak`]
   let lastError = null
   for (const candidate of candidates) {
@@ -1982,6 +2807,117 @@ function readCodexNativeRegistry() {
   }
   if (lastError && codexRecord(lastError).code === 'protocol-error') throw lastError
   throw codexError('protocol-error', 'Codex native project state is unavailable')
+}
+
+function readCodexDesktopUnreadIds() {
+  const { primary } = codexNativeStatePaths()
+  const stat = fs.statSync(primary)
+  if (!stat || typeof stat.size !== 'number' || stat.size <= 0 || stat.size > CODEX_NATIVE_STATE_MAX_BYTES) {
+    throw codexError('protocol-error', 'Codex desktop unread state is invalid')
+  }
+  let parsed
+  try { parsed = JSON.parse(fs.readFileSync(primary, 'utf8')) } catch {
+    throw codexError('protocol-error', 'Codex desktop unread state is invalid')
+  }
+  const atomsValue = codexRecord(parsed)['electron-persisted-atom-state']
+  let atoms
+  try { atoms = typeof atomsValue === 'string' ? codexRecord(JSON.parse(atomsValue)) : codexRecord(atomsValue) } catch {
+    throw codexError('protocol-error', 'Codex desktop unread state is invalid')
+  }
+  const byHostValue = atoms['unread-thread-ids-by-host-v1']
+  let byHost
+  try { byHost = typeof byHostValue === 'string' ? codexRecord(JSON.parse(byHostValue)) : codexRecord(byHostValue) } catch {
+    throw codexError('protocol-error', 'Codex desktop unread state is invalid')
+  }
+  const local = byHost.local
+  if (!Array.isArray(local) || local.length > 100_000 || local.some((threadId) => !validCodexThreadId(threadId))) {
+    throw codexError('protocol-error', 'Codex desktop unread state is invalid')
+  }
+  return new Set(local)
+}
+
+function readCodexNativePrimaryState() {
+  const paths = codexNativeStatePaths()
+  const stat = fs.statSync(paths.primary)
+  if (!stat || typeof stat.size !== 'number' || stat.size <= 0 || stat.size > CODEX_NATIVE_STATE_MAX_BYTES) {
+    throw codexError('protocol-error', 'Codex native project state is invalid')
+  }
+  const buffer = fs.readFileSync(paths.primary)
+  const text = buffer.toString('utf8')
+  let value
+  try { value = JSON.parse(text) } catch { throw codexError('protocol-error', 'Codex native project state is invalid') }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw codexError('protocol-error', 'Codex native project state is invalid')
+  return { paths, stat, buffer, value, registry: parseCodexNativeRegistryText(text) }
+}
+
+function codexProbeExactProcess(command, args, noMatchCode = 1) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { windowsHide: true, timeout: 3_000 }, (error, stdout) => {
+      if (!error) {
+        resolve(Boolean(String(stdout || '').trim()))
+        return
+      }
+      const code = codexRecord(error).code
+      if (code === noMatchCode || String(code) === String(noMatchCode)) {
+        resolve(false)
+        return
+      }
+      reject(error)
+    })
+  })
+}
+
+async function codexDesktopIsRunning() {
+  if (process.platform === 'darwin' || process.platform === 'linux') {
+    for (const executable of ['Codex', 'ChatGPT']) {
+      if (await codexProbeExactProcess('/usr/bin/pgrep', ['-x', executable])) return true
+    }
+    return false
+  }
+  if (process.platform === 'win32') {
+    const systemRoot = process.env.SystemRoot || 'C:\\Windows'
+    const result = await run(`${systemRoot}\\System32\\tasklist.exe`, ['/NH', '/FO', 'CSV'])
+    if (!result.ok && !result.stdout) throw new Error(result.error || 'Codex desktop process check failed')
+    return /"(?:ChatGPT|Codex)\.exe"/i.test(result.stdout)
+  }
+  throw new Error('Codex desktop process check is unsupported')
+}
+
+function codexWriteSyncedTemp(target, data, mode) {
+  const temporary = path.join(path.dirname(target), `.${path.basename(target)}.tmp-${Date.now()}-${crypto.randomUUID()}`)
+  const descriptor = fs.openSync(temporary, 'wx', mode)
+  try {
+    fs.writeFileSync(descriptor, data)
+    fs.fsyncSync(descriptor)
+  } finally {
+    fs.closeSync(descriptor)
+  }
+  return temporary
+}
+
+function codexSyncDirectory(directory) {
+  let descriptor = null
+  try {
+    descriptor = fs.openSync(directory, 'r')
+    fs.fsyncSync(descriptor)
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor)
+  }
+}
+
+function codexRestoreAtomicFile(target, previous, mode) {
+  if (previous === null) {
+    if (fs.existsSync(target)) fs.unlinkSync(target)
+    return
+  }
+  const temporary = codexWriteSyncedTemp(target, previous, mode)
+  fs.renameSync(temporary, target)
+}
+
+function codexRemoveTemporaryFile(target) {
+  try {
+    if (target && fs.existsSync(target)) fs.unlinkSync(target)
+  } catch {}
 }
 
 function codexProjectActionAlias(project, sourceFingerprint, now) {
@@ -2172,7 +3108,7 @@ async function readCodexThreadTurnStatuses(rows) {
   return { latest, nonConversationIds }
 }
 
-function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Map()) {
+function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Map(), unreadIds = null) {
   const now = Date.now()
   const threads = []
   for (const row of rows) {
@@ -2194,6 +3130,9 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
       name: typeof thread.name === 'string' && thread.name.trim() ? thread.name.trim().slice(0, 120) : '未命名任务',
       status,
       activeFlags,
+      statusAuthority: 'connector',
+      hasUnreadTurn: unreadIds ? unreadIds.has(thread.id) : false,
+      unreadAuthority: unreadIds ? 'desktop-persisted' : 'unavailable',
       updatedAt: codexTimestampMs(thread.recencyAt) || codexTimestampMs(thread.updatedAt) || lastTurn.startedAt,
       ...(codexTimestampMs(thread.createdAt) ? { createdAt: codexTimestampMs(thread.createdAt) } : {}),
       ...(codexThreadFirstPromptCache.get(thread.id)?.firstPromptAt ? { firstPromptAt: codexThreadFirstPromptCache.get(thread.id).firstPromptAt } : {}),
@@ -2253,8 +3192,11 @@ async function scanVerifiedCodexInventory() {
       if (attempt === 0) continue
       throw codexError('protocol-error', 'Codex native project state changed during the scan')
     }
-    const threads = sanitizeCodexThreads(eligibleRows, registry, assignments, turns.latest)
+    let unreadIds = null
+    try { unreadIds = readCodexDesktopUnreadIds() } catch {}
+    const threads = sanitizeCodexThreads(eligibleRows, registry, assignments, turns.latest, unreadIds)
     const validKeys = new Set(threads.map((thread) => thread.key))
+    const threadByKey = new Map(threads.map((thread) => [thread.key, thread]))
     const activityInventory = new Map()
     for (const row of eligibleRows) {
       const thread = codexRecord(row)
@@ -2262,12 +3204,31 @@ async function scanVerifiedCodexInventory() {
       if (!key || !validKeys.has(key)) continue
       const activity = sanitizeCodexActivityStatus(thread.status)
       if (!activity) throw codexError('protocol-error', 'Codex thread activity status is invalid')
-      activityInventory.set(thread.id, { key, ...activity })
+      const projection = threadByKey.get(key)
+      activityInventory.set(thread.id, {
+        key,
+        ...activity,
+        connectorStatus: activity.status,
+        connectorActiveFlags: activity.activeFlags,
+        statusAuthority: 'connector',
+        hasUnreadTurn: projection?.hasUnreadTurn === true,
+        unreadAuthority: projection?.unreadAuthority || 'unavailable'
+      })
     }
     codexActivityInventory = activityInventory
-    codexActivityRawIds = new Set(rows.map((thread) => codexRecord(thread).id).filter(validCodexThreadId))
     codexActivitySourceFingerprint = registry.fingerprint
     codexActivityGeneration += 1
+    codexEnsureDesktopBridge().updateInventory(activityInventory.keys())
+    const activityByKey = new Map([...activityInventory.values()].map((entry) => [entry.key, entry]))
+    for (const thread of threads) {
+      const activity = activityByKey.get(thread.key)
+      if (!activity) continue
+      thread.status = activity.status
+      thread.activeFlags = [...activity.activeFlags]
+      thread.statusAuthority = activity.statusAuthority
+      thread.hasUnreadTurn = activity.hasUnreadTurn === true
+      thread.unreadAuthority = activity.unreadAuthority
+    }
     return {
       threads,
       projects: sanitizeCodexProjects(registry),
@@ -2284,26 +3245,14 @@ async function scanVerifiedCodexInventory() {
 async function readCodexActivitySnapshot() {
   try {
     if (!codexActivitySourceFingerprint) throw codexError('protocol-error', 'Codex activity baseline is unavailable')
-    const rows = await listAllCodexThreads(false)
-    const currentRawIds = new Set(rows.map((thread) => codexRecord(thread).id).filter(validCodexThreadId))
-    let inventoryChanged = currentRawIds.size !== codexActivityRawIds.size
-      || [...currentRawIds].some((threadId) => !codexActivityRawIds.has(threadId))
-    const byId = new Map(rows.map((thread) => [codexRecord(thread).id, codexRecord(thread)]))
-    const entries = []
-    for (const [threadId, known] of codexActivityInventory) {
-      const thread = byId.get(threadId)
-      if (!thread) {
-        inventoryChanged = true
-        continue
-      }
-      const activity = sanitizeCodexActivityStatus(thread.status)
-      if (!activity) throw codexError('protocol-error', 'Codex thread activity status is invalid')
-      known.status = activity.status
-      known.activeFlags = activity.activeFlags
-      entries.push({ key: known.key, ...activity })
-    }
+    const bridge = codexEnsureDesktopBridge()
+    bridge.refreshPersistedUnread(false)
     const receivedAt = Date.now()
-    return { ok: true, value: codexActivityDelta(entries, inventoryChanged, receivedAt), receivedAt }
+    return {
+      ok: true,
+      value: codexActivityDelta([...codexActivityInventory.values()], false, receivedAt),
+      receivedAt
+    }
   } catch (error) {
     return codexErrorResult(error)
   }
@@ -2404,7 +3353,8 @@ async function archiveCodexThread(actionAlias, request) {
     if (!turn || turn.startedAt !== expectedLastTurnStartedAt) {
       return { outcome: 'failed', errorCode: 'turn-changed', message: '任务最新提问已更新，未执行归档' }
     }
-    if (status === 'active' || turn?.status === 'inProgress') {
+    const desktopActivity = codexEnsureDesktopBridge().activityForThread(entry.threadId)
+    if (desktopActivity?.status === 'active' || status === 'active' || turn?.status === 'inProgress') {
       return { outcome: 'failed', errorCode: 'active-task', message: '任务已恢复进行中，未执行归档' }
     }
     if (evidence === 'completed' && (!turn || turn.status !== 'completed' || (turn.completedAt || turn.startedAt) !== expectedRevisionAt || (expectedCompletionAt > 0 && turn.completedAt !== expectedCompletionAt))) {
@@ -2428,7 +3378,11 @@ async function archiveCodexThread(actionAlias, request) {
     }
     codexThreadTurnStatusCache.delete(entry.threadId)
     codexThreadFirstPromptCache.delete(entry.threadId)
-    return { outcome: 'archived' }
+    const desktopSync = await codexEnsureDesktopBridge().notifyThreadArchived(
+      entry.threadId,
+      typeof thread.cwd === 'string' ? thread.cwd : ''
+    )
+    return { outcome: 'archived', desktopSync }
   } catch (error) {
     const source = codexRecord(error)
     return { outcome: 'failed', errorCode: typeof source.code === 'string' ? source.code : 'archive-failed', message: 'Codex 任务归档失败，请刷新后重试' }
@@ -2438,7 +3392,16 @@ async function archiveCodexThread(actionAlias, request) {
 async function archiveCodexProject(actionAlias, request) {
   const input = codexRecord(request)
   const expectedSourceFingerprint = typeof input.expectedSourceFingerprint === 'string' && /^[a-f0-9]{64}$/.test(input.expectedSourceFingerprint) ? input.expectedSourceFingerprint : ''
-  const emptyResult = (errorCode, message) => ({ outcome: 'failed', archivedKeys: [], skippedActiveKeys: [], failed: [], errorCode, message })
+  const emptyResult = (errorCode, message) => ({
+    outcome: 'failed',
+    archivedKeys: [],
+    skippedActiveKeys: [],
+    failed: [],
+    desktopSyncedKeys: [],
+    desktopSyncFailedKeys: [],
+    errorCode,
+    message
+  })
   if (typeof actionAlias !== 'string' || !/^cp_[A-Za-z0-9_-]{16,80}$/.test(actionAlias) || !expectedSourceFingerprint) {
     return emptyResult('invalid-request', '项目归档请求已失效，请刷新后重试')
   }
@@ -2461,6 +3424,8 @@ async function archiveCodexProject(actionAlias, request) {
     const archivedKeys = []
     const skippedActiveKeys = []
     const failed = []
+    const desktopSyncedKeys = []
+    const desktopSyncFailedKeys = []
     for (let batchStart = 0; batchStart < candidates.length; batchStart += 20) {
       if (readCodexNativeRegistry().fingerprint !== expectedSourceFingerprint) {
         for (const thread of candidates.slice(batchStart)) failed.push({ key: codexThreadKey(thread.id), errorCode: 'source-changed' })
@@ -2492,12 +3457,13 @@ async function archiveCodexProject(actionAlias, request) {
               failed.push({ key, errorCode: 'state-changed' })
               continue
             }
-            if (status === 'active' || turn?.status === 'inProgress') {
+            const desktopActivity = codexEnsureDesktopBridge().activityForThread(listedThread.id)
+            if (desktopActivity?.status === 'active' || status === 'active' || turn?.status === 'inProgress') {
               skippedActiveKeys.push(key)
               continue
             }
             await requestCodexRpc('thread/archive', { threadId: listedThread.id })
-            staged.push({ id: listedThread.id, key })
+            staged.push({ id: listedThread.id, key, cwd: typeof thread.cwd === 'string' ? thread.cwd : '' })
           } catch (error) {
             failed.push({ key, errorCode: typeof codexRecord(error).code === 'string' ? codexRecord(error).code : 'archive-failed' })
           }
@@ -2508,17 +3474,157 @@ async function archiveCodexProject(actionAlias, request) {
         const [remainingRows, archivedRows] = await Promise.all([listAllCodexThreads(false), listAllCodexThreads(true)])
         const remainingIds = new Set(remainingRows.map((thread) => thread.id))
         const archivedIds = new Set(archivedRows.map((thread) => thread.id))
+        const verified = []
         for (const item of staged) {
-          if (!remainingIds.has(item.id) && archivedIds.has(item.id)) archivedKeys.push(item.key)
+          if (!remainingIds.has(item.id) && archivedIds.has(item.id)) {
+            archivedKeys.push(item.key)
+            verified.push(item)
+          }
           else failed.push({ key: item.key, errorCode: 'archive-not-verified' })
+        }
+        const syncResults = await Promise.all(verified.map(async (item) => {
+          try {
+            return { key: item.key, result: await codexEnsureDesktopBridge().notifyThreadArchived(item.id, item.cwd) }
+          } catch {
+            return { key: item.key, result: 'failed' }
+          }
+        }))
+        for (const sync of syncResults) {
+          if (sync.result === 'dispatched') desktopSyncedKeys.push(sync.key)
+          else desktopSyncFailedKeys.push(sync.key)
         }
       }
     }
     const outcome = failed.length ? archivedKeys.length || skippedActiveKeys.length ? 'partial' : 'failed' : 'complete'
-    return { outcome, archivedKeys, skippedActiveKeys, failed }
+    return { outcome, archivedKeys, skippedActiveKeys, failed, desktopSyncedKeys, desktopSyncFailedKeys }
   } catch (error) {
     return emptyResult(typeof codexRecord(error).code === 'string' ? codexRecord(error).code : 'archive-failed', '项目批量归档失败，请刷新后重试')
   }
+}
+
+async function removeCodexProject(actionAlias, request) {
+  const input = codexRecord(request)
+  const expectedSourceFingerprint = typeof input.expectedSourceFingerprint === 'string' && /^[a-f0-9]{64}$/.test(input.expectedSourceFingerprint)
+    ? input.expectedSourceFingerprint
+    : ''
+  const failed = (status, message) => ({ status, message })
+  if (typeof actionAlias !== 'string' || !/^cp_[A-Za-z0-9_-]{16,80}$/.test(actionAlias) || !expectedSourceFingerprint) {
+    return failed('stale-source', '项目移除请求已失效，请刷新后重试')
+  }
+
+  let desktopRunning
+  try {
+    desktopRunning = await codexDesktopIsRunning()
+  } catch {
+    return failed('write-failed', '无法可靠确认 Codex 桌面进程状态，未修改项目')
+  }
+  if (desktopRunning) return failed('codex-running', 'Codex 正在运行；请先完全退出 Codex，再次执行移除')
+
+  const action = codexProjectActions.get(actionAlias)
+  if (!action || action.expiresAt <= Date.now() || action.kind !== 'project') {
+    codexProjectActions.delete(actionAlias)
+    return failed('stale-source', '项目动作已过期，请刷新后重试')
+  }
+
+  let primaryState
+  try {
+    primaryState = readCodexNativePrimaryState()
+  } catch {
+    return failed('unsupported-schema', 'Codex 主项目状态缺失、无效或结构不受支持，未执行移除')
+  }
+  const { paths, stat, buffer: previousPrimary, value, registry } = primaryState
+  if (registry.fingerprint !== expectedSourceFingerprint || action.sourceFingerprint !== expectedSourceFingerprint) {
+    return failed('stale-source', 'Codex 项目状态已更新，未执行移除')
+  }
+  const project = registry.projectById.get(action.projectId)
+  if (!project || project.key !== action.projectKey || action.projectId !== project.id) {
+    return failed('stale-source', '目标项目已变化或不再存在，未执行移除')
+  }
+
+  const source = codexRecord(value)
+  const localProjects = source['local-projects']
+  const selectedProject = source['selected-project']
+  const selectedProjectSupported = selectedProject === undefined || selectedProject === null || typeof selectedProject === 'string'
+  if (!localProjects || typeof localProjects !== 'object' || Array.isArray(localProjects)
+    || !Object.prototype.hasOwnProperty.call(localProjects, project.id)
+    || !Array.isArray(source['project-order'])
+    || !Array.isArray(source['pinned-project-ids'])
+    || !selectedProjectSupported) {
+    return failed('unsupported-schema', 'Codex 项目状态结构不受支持，未执行移除')
+  }
+
+  const backupExists = fs.existsSync(paths.backup)
+  let previousBackup = null
+  let backupMode = stat.mode
+  try {
+    if (backupExists) {
+      const backupStat = fs.statSync(paths.backup)
+      if (!backupStat || backupStat.size > CODEX_NATIVE_STATE_MAX_BYTES) throw new Error('backup too large')
+      previousBackup = fs.readFileSync(paths.backup)
+      backupMode = backupStat.mode
+    }
+  } catch {
+    return failed('write-failed', '无法建立 Codex 状态回滚点，未执行移除')
+  }
+
+  delete localProjects[project.id]
+  source['project-order'] = source['project-order'].filter((id) => id !== project.id)
+  source['pinned-project-ids'] = source['pinned-project-ids'].filter((id) => id !== project.id)
+  if (selectedProject === project.id) source['selected-project'] = null
+  const serialized = Buffer.from(JSON.stringify(source), 'utf8')
+  if (!serialized.length || serialized.length > CODEX_NATIVE_STATE_MAX_BYTES) {
+    return failed('unsupported-schema', 'Codex 项目状态无法安全序列化，未执行移除')
+  }
+
+  let primaryTemporary = ''
+  let backupTemporary = ''
+  let commitStarted = false
+  try {
+    if (!fs.readFileSync(paths.primary).equals(previousPrimary)) return failed('stale-source', 'Codex 项目状态在操作期间发生变化，未执行移除')
+    primaryTemporary = codexWriteSyncedTemp(paths.primary, serialized, stat.mode)
+    backupTemporary = codexWriteSyncedTemp(paths.backup, serialized, backupMode)
+    if (await codexDesktopIsRunning()) {
+      codexRemoveTemporaryFile(primaryTemporary)
+      codexRemoveTemporaryFile(backupTemporary)
+      return failed('codex-running', 'Codex 已在操作期间启动；未修改项目，请退出后重试')
+    }
+    closeCodexServer()
+    commitStarted = true
+    fs.renameSync(backupTemporary, paths.backup)
+    backupTemporary = ''
+    fs.renameSync(primaryTemporary, paths.primary)
+    primaryTemporary = ''
+    codexSyncDirectory(paths.codexHome)
+
+    const verifiedPrimaryText = fs.readFileSync(paths.primary, 'utf8')
+    const verifiedBackupText = fs.readFileSync(paths.backup, 'utf8')
+    const verifiedPrimary = parseCodexNativeRegistryText(verifiedPrimaryText)
+    const verifiedBackup = parseCodexNativeRegistryText(verifiedBackupText)
+    if (verifiedPrimary.projectById.has(project.id)
+      || verifiedBackup.projectById.has(project.id)
+      || verifiedPrimaryText !== serialized.toString('utf8')
+      || verifiedBackupText !== serialized.toString('utf8')) {
+      throw new Error('Codex project removal verification failed')
+    }
+  } catch {
+    codexRemoveTemporaryFile(primaryTemporary)
+    codexRemoveTemporaryFile(backupTemporary)
+    if (commitStarted) {
+      try {
+        codexRestoreAtomicFile(paths.primary, previousPrimary, stat.mode)
+        codexRestoreAtomicFile(paths.backup, previousBackup, backupMode)
+        codexSyncDirectory(paths.codexHome)
+      } catch {
+        return failed('write-failed', 'Codex 项目状态写入失败，且自动回滚未能完整确认；请勿启动 Codex，先检查全局状态文件')
+      }
+    }
+    return failed('write-failed', 'Codex 项目状态写入或核验失败，已恢复原状态')
+  }
+
+  for (const [alias, entry] of codexProjectActions) {
+    if (entry.projectKey === action.projectKey) codexProjectActions.delete(alias)
+  }
+  return { status: 'verified', message: 'Codex 项目已移出侧栏；项目目录和既有会话均未删除' }
 }
 
 async function openCodexThread(actionAlias) {
@@ -3186,6 +4292,10 @@ function installCodexFloatIpc() {
     const expanded = source.expanded === true
     resizeCodexFloat(expanded, true)
   })
+  ipc.on(CODEX_FLOAT_CHANNELS.returnFocus, () => {
+    if (!codexFloatAlive()) return
+    try { codexFloatWindow.hide() } catch {}
+  })
   ipc.on(CODEX_FLOAT_CHANNELS.action, (_event, payload) => emitCodexFloatAction(codexRecord(payload).actionId, codexRecord(payload).args))
   ipc.on(CODEX_FLOAT_CHANNELS.threadCreate, async (_event, payload) => {
     const source = codexRecord(payload)
@@ -3310,7 +4420,7 @@ if (globalThis.utools && typeof globalThis.utools.onPluginOut === 'function') {
   globalThis.utools.onPluginOut(() => {
     if (!codexFloatPersistent) {
       closeCodexFloat()
-      closeCodexServer()
+      closeCodexConnections()
     }
   })
 }
@@ -3345,6 +4455,8 @@ window.eypcPlatform = {
   },
   codex: {
     inspectEnvironment: inspectCodexEnvironment,
+    setLaunchPath: setCodexLaunchPath,
+    clearLaunchPath: clearCodexLaunchPath,
     readSnapshot: readCodexSnapshot,
     readActivitySnapshot: readCodexActivitySnapshot,
     onActivityChanged(listener) {
@@ -3357,7 +4469,8 @@ window.eypcPlatform = {
     openBlank: openCodexBlank,
     archiveThread: archiveCodexThread,
     archiveProject: archiveCodexProject,
-    close: closeCodexServer
+    removeProject: removeCodexProject,
+    close: closeCodexConnections
   },
   float: {
     sync: syncCodexFloat,

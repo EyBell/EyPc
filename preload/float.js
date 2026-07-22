@@ -5,6 +5,7 @@ const CHANNELS = {
   state: 'eypc-float:state',
   activate: 'eypc-float:activate',
   expansion: 'eypc-float:expansion',
+  returnFocus: 'eypc-float:return-focus',
   action: 'eypc-float:action',
   threadCreate: 'eypc-float:thread-create',
   threadCreateResult: 'eypc-float:thread-create-result',
@@ -119,6 +120,7 @@ window.eypcFloat = {
     return () => activationListeners.delete(listener)
   },
   setExpansion: (expanded, pinned = false) => sendToParent(CHANNELS.expansion, { expanded: expanded === true, pinned: expanded === true && pinned === true }),
+  returnFocus: () => sendToParent(CHANNELS.returnFocus, {}),
   action: (actionId, args = {}) => sendToParent(CHANNELS.action, { actionId, args }),
   createThread: (request) => transientRequest(CHANNELS.threadCreate, { request }),
   reopenThread: (actionAlias) => transientRequest(CHANNELS.threadOpen, { actionAlias }),
