@@ -2,7 +2,7 @@
 
 Tool: codex
 Date: 2026-07-22
-Requirement version: `2026-07-22.8`
+Requirement version: `2026-07-22.9`
 
 | Work Unit | Work-order Version | Attempt | Surface | Runtime ID | State | Last Evidence | Blocker | Next Action |
 | --- | ---: | ---: | --- | --- | --- | --- | --- | --- |
@@ -104,7 +104,7 @@ Requirement version: `2026-07-22.8`
 | E-060 user-authorized-multiselect-test | 2026-07-22 | WU-CODEX-LABEL-DENSITY-SELECTION / 1 | App Root / main | reported -> focused-pass | user challenged whether the multi-select feedback works and explicitly authorized testing | full-file probe exposed 19 wider failures; corrected two invalid multi-select test steps and added a visual-structure regression, then passed the three focused multi-select cases | keep overall reported; real visual acceptance and broader suite remain |
 | E-061 project-pin-quickjump-config-repair | 2026-07-22 | WU-CODEX-PROJECT-PIN-QUICKJUMP / 1 | App Root / main | reported | user required EyPc-first conversation/project pin ordering, Chats children below title, concise counters, `F`/`Shift+F`/`Ctrl+F` Quick Jump from Codex content including multi-select, and recovery of the blank config page | projection, float renderer/keybinding and configuration initialization updated with regression contracts; no runtime gate run by project rule | user validation |
 | E-062 float-shift-escape-focus-return | 2026-07-22 | WU-CODEX-FLOAT-FOCUS-RETURN / 1 | App Root / main | reported | user replaced ambiguous double-Escape behavior with `Shift+Escape` returning to the focus before the transient card | added the narrow renderer→host `return-focus` bridge, temporary child-window hide and renderer/preload regression contracts without persisting settings | user validation |
-| E-063 desktop-connection-discovery-and-status-authority | 2026-07-22 | WU-CODEX-DESKTOP-LIVE-AUTHORITY / 2 | App Root / main | planned → implementation | user requires Input / completed-unread / ongoing to retain Codex-internal authority, asks for automatic CLI discovery, manual launch-path selection, explicit connector fallback and Windows guidance before Easy Agent | reuse RAW-056 dual-channel architecture; add privacy-safe launch diagnostics and a manual local-plugin preference without exposing paths or weakening desktop-live status authority | implementation and document sync; user-owned validation, no test/build/runtime execution |
+| E-063 desktop-connection-discovery-and-status-authority | 2026-07-22 | WU-CODEX-DESKTOP-LIVE-AUTHORITY / 2 | App Root / main | planned → implementation → reported | user requires Input / completed-unread / ongoing to retain Codex-internal authority, asks for automatic CLI discovery, manual launch-path selection, explicit connector fallback and Windows guidance before Easy Agent | implemented privacy-safe automatic/manual launch diagnostics, host actions, desktop-live-preserving connector evidence and platform guidance without exposing executable paths | user validation; static diff/link checks only, no test/build/runtime execution |
 | E-064 static-contract-reaudit | 2026-07-22 | WU-CODEX-CLOSEOUT / 1 | App Root / main | reported | static comparison found and corrected color-pair/water bounds, linked-board contrast feedback, six-tab/search rendering, water shell opacity override and desktop patch fail-open branches; canonical/public preload stayed byte-identical | keep the project-owned acceptance gate unchanged and record only reproducible static checks | user validation; no test/typecheck/build/uTools/runtime execution |
 
 ## Efficiency / Token Evidence

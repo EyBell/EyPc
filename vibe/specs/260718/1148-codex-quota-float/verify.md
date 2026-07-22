@@ -3,7 +3,21 @@
 Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-22.8`
+Requirement version: `2026-07-22.9`
+
+## RAW-059 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 启动位置发现 | implemented / unverified | preload/public preload 自动枚举受控 macOS/Windows CLI 候选，并只向 Renderer 传递来源标签和可用性；无候选时保留现有连接器入口。 |
+| 手动 CLI 位置 | implemented / unverified | 配置页可提交完整绝对路径；Host 使用现有 native/Node-wrapper/Windows shim 运行计划核验后，才写入独立本机插件 storage。页面、环境快照、日志和文档均不回显该路径。 |
+| 状态权威保护 | implemented / unverified | App Server 成功往返只建立连接证据，不再覆盖 preload 的 runtime/process/Desktop bridge 分类。`desktop-live` 仍是 Input/进行中/完成未读唯一权威；connector fallback 只保留数据与动作，并公开未知/延迟边界。 |
+| Windows 提示 | implemented / unverified | UI 说明 npm、Volta、NVM、本地和 PATH 自动发现；`.cmd` 入口仍需通过 Node/JS 或 bundled native 核验。当前实时 Desktop IPC 明确标注为 macOS canary。 |
+| 静态核对 | pass | canonical/public preload 字节一致，`git diff --check` 无空白错误；未运行测试、typecheck、build、uTools/runtime、截图、真实预检或真实归档。 |
+
+结论：RAW-059 已实现并保持 `未校验，待用户验收`。尤其需要用户在真实 macOS Codex Desktop 中确认 live status 与归档 UI 即时刷新；Windows 仅可确认 CLI 发现/连接器行为，不能宣称实时 Desktop IPC 已可用。
+
+- Error memory: 未新增。本轮复用现有 [codex-gui-nvm-launcher-path.md](../../../knowledge/error-memory/codex-gui-nvm-launcher-path.md#L1) 的 GUI/NVM/Windows shim 受控启动替代路线，没有发现新的、已验证的失败模式。
 
 ## RAW-058 当前交付状态
 
