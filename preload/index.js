@@ -287,6 +287,10 @@ function writeCodexLaunchPathPreference(pathValue) {
   }
 }
 
+function codexLaunchPathIsFile(pathValue) {
+  try { return fs.statSync(pathValue).isFile() } catch { return false }
+}
+
 function readLegacyMqttArchive() {
   try {
     if (!globalThis.utools || !globalThis.utools.dbStorage) return null
@@ -1422,8 +1426,7 @@ function resolveCodexLaunchPlan() {
   const env = process.env || {}
   const manualPath = readCodexLaunchPathPreference()
   if (manualPath) {
-    let exists = false
-    try { exists = fs.existsSync(manualPath) } catch {}
+    const exists = codexLaunchPathIsFile(manualPath)
     const plan = exists
       ? codexLaunchPlan(manualPath, 'manual', true)
       : { ...codexLaunchPlan(manualPath, 'manual', false), invalid: true }
@@ -1596,8 +1599,7 @@ async function inspectCodexEnvironment() {
 async function setCodexLaunchPath(pathValue) {
   const manualPath = normalizeCodexLaunchPathPreference(pathValue)
   if (!manualPath) throw codexError('runtime-unavailable', '请输入 Codex CLI 可执行文件的完整绝对路径')
-  let exists = false
-  try { exists = fs.existsSync(manualPath) } catch {}
+  const exists = codexLaunchPathIsFile(manualPath)
   const plan = exists ? codexLaunchPlan(manualPath, 'manual', true) : null
   if (!plan || !plan.detected) throw codexError('runtime-unavailable', '所选 Codex CLI 路径不可用，请选择可执行文件本身')
   if (!writeCodexLaunchPathPreference(manualPath)) throw codexError('unavailable', '无法保存手动 Codex CLI 位置')
