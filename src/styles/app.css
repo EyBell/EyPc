@@ -3137,10 +3137,6 @@ kbd {
   z-index: var(--z-shortcut-top-layer);
   overflow: visible;
   pointer-events: none;
-  --quick-jump-rose: rgba(225, 29, 72, 0.9);
-  --quick-jump-purple: rgba(126, 34, 206, 0.86);
-  --quick-jump-fuchsia: rgba(192, 38, 211, 0.86);
-  --quick-jump-active: rgba(109, 40, 217, 0.98);
 }
 
 .mqtt-shortcut-badge {
@@ -3178,13 +3174,13 @@ kbd {
   align-items: center;
   justify-content: center;
   padding: 0 3px;
-  border: 1px solid rgba(225, 29, 72, 0.42);
+  border: 2px solid #fff;
   border-radius: 4px;
-  background: rgba(255, 247, 250, 0.96);
-  box-shadow: 0 2px 7px rgba(82, 20, 48, 0.2);
-  color: var(--quick-jump-rose);
+  background: #111827;
+  box-shadow: 0 0 0 1px rgba(17, 24, 39, .9), 0 4px 10px rgba(0, 0, 0, .38);
+  color: #fff;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 900;
   letter-spacing: 0;
   line-height: 1.15;
   text-align: center;
@@ -3195,31 +3191,24 @@ kbd {
   text-shadow: none;
 }
 
-.quick-jump-badge:nth-child(2n) {
-  border-color: rgba(126, 34, 206, 0.38);
-  background: rgba(250, 247, 255, 0.96);
-  color: var(--quick-jump-purple);
-}
-
-.quick-jump-badge:nth-child(3n) {
-  border-color: rgba(192, 38, 211, 0.38);
-  background: rgba(255, 247, 255, 0.96);
-  color: var(--quick-jump-fuchsia);
-}
-
 .quick-jump-badge.active {
-  border-color: rgba(88, 28, 135, 0.88);
-  background: var(--quick-jump-active);
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.94), 0 4px 10px rgba(88, 28, 135, 0.32);
-  color: #fff;
-  font-weight: 700;
+  border-color: #111827;
+  background: #facc15;
+  box-shadow: 0 0 0 2px #fff, 0 4px 10px rgba(0, 0, 0, .42);
+  color: #111827;
+  font-weight: 900;
   text-decoration: none;
   text-shadow: none;
 }
 
 [data-quick-jump-active="true"] {
-  outline: 1px solid rgba(126, 34, 206, 0.28);
+  outline: 2px solid #facc15;
   outline-offset: 2px;
+}
+
+@media (forced-colors: active) {
+  .quick-jump-badge,
+  .quick-jump-badge.active { border-color: ButtonText; background: Canvas; color: CanvasText; forced-color-adjust: auto; }
 }
 
 .mqtt-collapsed-logo {
