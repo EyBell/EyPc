@@ -494,6 +494,7 @@
   .codex-config-page .codex-card-color-actions button { width: 100%; }
   .codex-theme-save { align-items: stretch; }
   .codex-theme-save .secondary { width: 100%; }
+  .codex-launch-actions { grid-template-columns: 1fr; }
 }
 
 @media (pointer: coarse) {

@@ -8,6 +8,7 @@ Requirement version: `2026-07-22.9`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
+Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 ## Execution Authority
 
@@ -52,7 +53,7 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
 
 ## RAW-059 Launch Discovery And Explicit Connector Fallback Contract
 
-- [preload/index.js](../../../../preload/index.js#L1) 在 macOS/Windows 上只检查受控 CLI 候选；自动命中仅返回脱敏来源标签。用户可在配置页提供可执行文件绝对路径，Host 以既有 native/Node-wrapper/shim 运行计划核验后才写入独立的本机插件 storage key。完整路径不进入 Renderer 快照、持久化应用状态、错误、日志或过程文档。
+- [preload/index.js](../../../../preload/index.js#L1) 在 macOS/Windows 上只检查受控 CLI 候选；自动命中仅返回脱敏来源标签。用户可在配置页通过本机文件选择或完整路径提供可执行文件，Host 以既有 native/Node-wrapper/shim 运行计划核验后才写入独立的本机插件 storage key。完整路径不进入 Renderer 快照、持久化应用状态、错误、日志或过程文档。
 - 手动位置无效时，Host 返回 `manualLaunchPathState=invalid` 并保持显式错误；不会静默改用其他入口。清除手动位置后恢复自动发现。未设置手动位置时，既有 App Server 连接器仍提供额度、模型、库存、创建与已验证归档，并在界面公开“兼容连接器降级/可能延迟”。
 - `statusFeedMode=desktop-live` 才允许 Input、正在进行中和已完成未读呈现实时权威。`connector-fallback` 绝不从插件缓存、App Server 活动状态或刷新频率推断三项状态；只显示已知持久化结果与“宿主状态未知”。手动/自动启动方式不改变此状态权威合同。
 - Windows 的 CLI 自动发现/手动核验遵循 npm、Volta、NVM、本地和 PATH 的受控规则；`.cmd/.bat` 仍必须解析到已验证 Node/JS 或 bundled native binary。当前 Desktop 私有 IPC 实时桥仅为 macOS canary，Windows 配置页必须明确其实时状态尚不可用。

@@ -6364,6 +6364,14 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       void codexController.setLaunchPath(value)
       return true
     } })
+    actions.register({ id: 'codex.pick-launch-path', title: '从磁盘选择 Codex CLI', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: () => {
+      void (async () => {
+        const picked = await platform.files.pickFavorite?.()
+        if (!picked) return
+        await codexController.setLaunchPath(picked.path)
+      })()
+      return true
+    } })
     actions.register({ id: 'codex.clear-launch-path', title: '恢复 Codex CLI 自动发现', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: () => { void codexController.clearLaunchPath(); return true } })
     actions.register({ id: 'codex.settings.open', title: '打开 Codex 配置', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => { setTab('codex'); return true } })
     actions.register({ id: 'codex.thread.createFocused', title: '在当前项目新建会话', group: 'Codex', risk: 'normal', scope: 'global', priority: 99, shortcut: 'Ctrl+T', when: () => true, run: () => {

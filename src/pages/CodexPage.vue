@@ -491,6 +491,7 @@ onBeforeUnmount(() => {
           />
         </label>
         <div class="codex-launch-actions">
+          <button type="button" class="secondary" :disabled="snapshot.refreshing" @click="$emit('dispatch', 'codex.pick-launch-path')">从磁盘选择</button>
           <button type="submit" class="secondary" :disabled="snapshot.refreshing">使用此位置</button>
           <button
             type="button"
