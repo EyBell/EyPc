@@ -107,4 +107,16 @@ describe('operation tooltip layer', () => {
     elementFromPoint.mockRestore()
     wrapper.unmount()
   })
+
+  it('reads tooltip metadata from explicit operation attributes', async () => {
+    document.body.innerHTML = `<main class="app-shell"><button id="codex-config" data-operation-tooltip="新会话普通模型" data-operation-description="目录默认优先，普通模型缺失时回退到可用模型。">模型策略</button></main>`
+    const wrapper = mount(OperationTooltipLayer, { attachTo: document.body })
+    const button = document.querySelector<HTMLButtonElement>('#codex-config')!
+    button.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain('新会话普通模型')
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain('目录默认优先')
+    wrapper.unmount()
+  })
 })
