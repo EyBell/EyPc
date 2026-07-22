@@ -7,10 +7,10 @@
       "scope": "project",
       "surfaces": ["codex-companion"],
       "authority_ref": "developer-soul.md#codex-companion-taste",
-      "tags": ["authority:project-soul", "desktop-companion", "quota", "task-inbox"],
+      "tags": ["authority:project-soul", "desktop-companion", "quota", "task-inbox", "user-owned-acceptance"],
       "status": "stable",
       "priority": 200,
-      "last_verified": "2026-07-21"
+      "last_verified": "2026-07-22"
     },
     {
       "id": "eypc-codex-visual-taste",
@@ -18,10 +18,10 @@
       "scope": "project",
       "surfaces": ["codex-companion"],
       "authority_ref": "developer-soul.md#codex-companion-taste",
-      "tags": ["authority:project-soul", "high-contrast", "paired-skin", "colorful-refractive-water-ball"],
+      "tags": ["authority:project-soul", "high-contrast", "paired-skin", "colorful-refractive-water-ball", "dark-yellow-quick-jump"],
       "status": "stable",
       "priority": 200,
-      "last_verified": "2026-07-21"
+      "last_verified": "2026-07-22"
     },
     {
       "id": "eypc-codex-layout-responsive",
@@ -40,10 +40,10 @@
       "scope": "project",
       "surfaces": ["codex-companion"],
       "authority_ref": "developer-soul.md#codex-companion-taste",
-      "tags": ["authority:project-soul", "dark-water", "light-card", "contrast"],
+      "tags": ["authority:project-soul", "dark-water", "explicit-card-surface-foreground-pair", "contrast-validated", "linked-color-boards", "in-place-color-cards", "transient-real-float-preview", "display-only-float"],
       "status": "stable",
       "priority": 200,
-      "last_verified": "2026-07-18"
+      "last_verified": "2026-07-22"
     },
     {
       "id": "eypc-codex-interaction-input",
@@ -51,10 +51,21 @@
       "scope": "project",
       "surfaces": ["codex-companion"],
       "authority_ref": "developer-soul.md#codex-companion-taste",
-      "tags": ["authority:project-soul", "five-task-tabs", "static-short-action-buttons", "same-slot-confirm", "space-toggle-in-place", "floating-batch-toolbar"],
+      "tags": ["authority:project-soul", "six-task-tabs", "fixed-four-character-rails", "ordinary-core-open", "selection-mode-core-toggle", "last-selection-exit", "persistent-selection-mode-bar", "unselected-row-deemphasis", "full-height-selector", "theme-gradient-selection", "status-space-selection", "native-button-key-ownership", "floating-batch-toolbar", "control-owned-pin-source", "pinned-first-within-status-section", "compact-counter-help"],
       "status": "stable",
       "priority": 200,
-      "last_verified": "2026-07-21"
+      "last_verified": "2026-07-22"
+    },
+    {
+      "id": "eypc-codex-typography",
+      "category": "typography",
+      "scope": "project",
+      "surfaces": ["codex-companion"],
+      "authority_ref": "developer-soul.md#codex-companion-taste",
+      "tags": ["authority:project-soul", "single-primary-label", "alias-or-original", "readable-dense-12-10-9", "24px-action-slots", "40px-rows"],
+      "status": "stable",
+      "priority": 200,
+      "last_verified": "2026-07-22"
     },
     {
       "id": "eypc-codex-motion-feedback",
@@ -68,15 +79,26 @@
       "last_verified": "2026-07-21"
     },
     {
+      "id": "eypc-codex-accessibility",
+      "category": "accessibility",
+      "scope": "project",
+      "surfaces": ["codex-companion"],
+      "authority_ref": "developer-soul.md#codex-companion-taste",
+      "tags": ["authority:project-soul", "keyboard-first", "aria-pressed-selection", "aria-disabled-readonly", "focus-equivalent-help", "native-button-key-ownership", "non-color-state-cues"],
+      "status": "stable",
+      "priority": 200,
+      "last_verified": "2026-07-22"
+    },
+    {
       "id": "eypc-codex-content-information",
       "category": "content-information",
       "scope": "project",
       "surfaces": ["codex-companion"],
       "authority_ref": "developer-soul.md#codex-companion-taste",
-      "tags": ["authority:project-soul", "no-visual-tooltip", "unified-task-sort", "archived-filtering", "privacy", "archive-state-trust"],
+      "tags": ["authority:project-soul", "status-action-200ms-opaque-help", "task-detail-500ms", "quota-bubble-free", "unified-task-sort", "archived-filtering", "privacy", "archive-state-trust", "native-project-state-transaction"],
       "status": "stable",
       "priority": 200,
-      "last_verified": "2026-07-21"
+      "last_verified": "2026-07-22"
     },
     {
       "id": "eypc-codex-performance-media",
