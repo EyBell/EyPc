@@ -6357,6 +6357,14 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       })
     }
     actions.register({ id: 'codex.refresh', title: '刷新 Codex 状态', group: 'Codex', risk: 'normal', scope: 'global', priority: 100, shortcut: 'Ctrl+R', when: () => true, run: () => { void codexController.refresh(); return true } })
+    actions.register({ id: 'codex.inspect-environment', title: '检测 Codex 连接环境', group: 'Codex', risk: 'normal', scope: 'global', priority: 99, when: () => true, run: () => { void codexController.inspectEnvironment(); return true } })
+    actions.register({ id: 'codex.set-launch-path', title: '设置 Codex CLI 位置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
+      const value = args?.path
+      if (typeof value !== 'string' || !value.trim()) return false
+      void codexController.setLaunchPath(value)
+      return true
+    } })
+    actions.register({ id: 'codex.clear-launch-path', title: '恢复 Codex CLI 自动发现', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: () => { void codexController.clearLaunchPath(); return true } })
     actions.register({ id: 'codex.settings.open', title: '打开 Codex 配置', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => { setTab('codex'); return true } })
     actions.register({ id: 'codex.thread.createFocused', title: '在当前项目新建会话', group: 'Codex', risk: 'normal', scope: 'global', priority: 99, shortcut: 'Ctrl+T', when: () => true, run: () => {
       const enabled = state.codex.settings.floatEnabled || codexController.updateSettings({ floatEnabled: true })
@@ -6367,6 +6375,15 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'codex.settings.update', title: '更新 Codex 悬浮球配置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
       const source = args?.settings && typeof args.settings === 'object' ? args.settings : args
       return codexController.updateSettings((source || {}) as Partial<CodexSettings>)
+    } })
+    actions.register({ id: 'codex.card-colors.preview', title: '预览 Codex 卡片配对颜色', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
+      const colors = args?.colors && typeof args.colors === 'object' ? args.colors : args
+      return codexController.previewCardColors((colors || {}) as Partial<CodexSettings['colors']>)
+    } })
+    actions.register({ id: 'codex.card-colors.cancel', title: '取消 Codex 卡片配色预览', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.clearCardColorPreview() })
+    actions.register({ id: 'codex.card-colors.commit', title: '应用 Codex 卡片配对颜色', group: 'Codex', risk: 'data-write', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
+      const colors = args?.colors && typeof args.colors === 'object' ? args.colors : args
+      return codexController.commitCardColors((colors || {}) as Partial<CodexSettings['colors']>)
     } })
     actions.register({ id: 'codex.task.open', title: '打开 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
       const key = typeof args?.key === 'string' ? args.key : ''
@@ -6441,8 +6458,16 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const direction = args?.direction === -1 || args?.direction === 1 ? args.direction : 0
       return kind && direction && typeof args?.key === 'string' ? codexController.moveLocalPin(kind, args.key, direction) : false
     } })
-    actions.register({ id: 'codex.project.remove', title: '从 EyPc 移除 Codex 项目', group: 'Codex', risk: 'data-write', scope: 'global', priority: 95, when: () => true, run: (_ctx, args) => typeof args?.key === 'string' ? codexController.removeProject(args.key) : false })
-    actions.register({ id: 'codex.project.restore', title: '恢复 EyPc Codex 项目', group: 'Codex', risk: 'data-write', scope: 'global', priority: 95, when: () => true, run: (_ctx, args) => typeof args?.key === 'string' ? codexController.restoreProject(args.key) : false })
+    actions.register({ id: 'codex.project.hide', title: '隐藏 Codex 项目分组', group: 'Codex', risk: 'data-write', scope: 'global', priority: 95, when: () => true, run: (_ctx, args) => typeof args?.key === 'string' ? codexController.hideProject(args.key) : false })
+    actions.register({ id: 'codex.project.show', title: '恢复 Codex 项目分组', group: 'Codex', risk: 'data-write', scope: 'global', priority: 95, when: () => true, run: (_ctx, args) => typeof args?.key === 'string' ? codexController.showProject(args.key) : false })
+    actions.register({ id: 'codex.project.remove', title: '从 Codex 侧栏移除项目', group: 'Codex', risk: 'destructive', scope: 'global', priority: 95, when: () => true, run: (_ctx, args) => {
+      const key = typeof args?.key === 'string' ? args.key : ''
+      const actionAlias = typeof args?.actionAlias === 'string' ? args.actionAlias : ''
+      const sourceFingerprint = typeof args?.sourceFingerprint === 'string' ? args.sourceFingerprint : ''
+      if (!key || !actionAlias || !sourceFingerprint) return false
+      void codexController.removeProject(key, actionAlias, sourceFingerprint)
+      return true
+    } })
     actions.register({ id: 'codex.project.archive', title: '归档 Codex 项目全部非活动任务', group: 'Codex', risk: 'destructive', scope: 'global', priority: 95, when: () => true, run: (_ctx, args) => {
       const key = typeof args?.key === 'string' ? args.key : ''
       const actionAlias = typeof args?.actionAlias === 'string' ? args.actionAlias : ''
@@ -7212,7 +7237,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         if (['ports', 'mqtt', 'favorites', 'codex', 'settings'].includes(tab) && isTabEnabled(tab)) setTab(tab)
         return binding.actionId
       }
-      if (binding.actionId === 'quickJump.openForward' || binding.actionId === 'quickJump.openBackward') {
+      if (binding.actionId === 'quickJump.openForward' || binding.actionId === 'codex.quickJump.openForward') {
+        return 'quickJump.openForward'
+      }
+      if (binding.actionId === 'quickJump.openBackward') {
         return binding.actionId
       }
       if (binding.actionId === 'list.up') {

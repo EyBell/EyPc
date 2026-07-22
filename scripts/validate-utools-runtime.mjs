@@ -77,6 +77,7 @@ const sandbox = {
     if (name === 'node:buffer') return { Buffer }
     if (name === 'node:child_process') return { execFile() {}, spawn() { throw new Error('spawn unavailable in validation') } }
     if (name === 'node:crypto') return crypto
+    if (name === 'node:net') return { connect() { throw new Error('desktop socket unavailable in validation') } }
     if (name === 'node:fs') return {
       existsSync: () => false,
       readdirSync: () => [],
@@ -106,6 +107,7 @@ assert(typeof sandbox.window.eypcPlatform.files.pickFavorite === 'function', 'pr
 assert(typeof sandbox.window.eypcPlatform.files.pickFavorites === 'function', 'preload must expose files.pickFavorites')
 assert(typeof sandbox.window.eypcPlatform.files.listDirectory === 'function', 'preload must expose files.listDirectory')
 assert(typeof sandbox.window.eypcPlatform.codex.readSnapshot === 'function', 'preload must expose codex.readSnapshot')
+assert(typeof sandbox.window.eypcPlatform.codex.readActivitySnapshot === 'function', 'preload must expose codex.readActivitySnapshot')
 assert(typeof sandbox.window.eypcPlatform.codex.inspectEnvironment === 'function', 'preload must expose codex.inspectEnvironment')
 assert(typeof sandbox.window.eypcPlatform.codex.openThread === 'function', 'preload must expose codex.openThread')
 assert(typeof sandbox.window.eypcPlatform.float.sync === 'function', 'preload must expose float.sync')

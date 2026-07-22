@@ -1,5 +1,4 @@
 import {
-  acknowledgeCodexThread,
   conversationSnapshotFromReceipts,
   emptyCodexEnvironment,
   emptyCodexModelCatalog,
@@ -12,8 +11,10 @@ import {
   normalizeCodexSettings,
   projectConversations,
   restoreCodexThread,
-  type CodexActivityDeltaV1,
+  type CodexActivityDelta,
+  type CodexActivityDeltaEntryV2,
   type CodexConfigSnapshotV1,
+  type CodexColorSettings,
   type CodexEnvironmentSnapshotV1,
   type CodexExpandedSizePreference,
   type CodexHostProject,
@@ -23,7 +24,6 @@ import {
   type CodexQuotaSnapshotV1,
   type CodexSettings,
   type CodexState,
-  type CodexThreadStatus,
   type CodexTaskTab,
   type ConversationSnapshotV1
 } from '../domain/codex'
@@ -97,7 +97,6 @@ export function createCodexController(options: CodexControllerOptions) {
   let newThreadContextFingerprint = ''
   let environment = emptyCodexEnvironment()
   let conversations = conversationSnapshotFromReceipts(options.getAppState().codex.receipts)
-  let previousStatuses: Record<string, CodexThreadStatus> = {}
   let lastThreads: CodexHostThread[] = []
   let lastProjects: CodexHostProject[] = []
   let lastThreadsPartial = false
@@ -127,6 +126,7 @@ export function createCodexController(options: CodexControllerOptions) {
   let refreshGeneration = 0
   let lastQuotaReadAt = quota.updatedAt
   let lastTaskReadAt = options.getAppState().codex.lastTaskScanAt
+  let cardColorPreview: CodexColorSettings | null = null
 
   function codexState(): CodexState {
     return options.getAppState().codex
@@ -165,14 +165,21 @@ export function createCodexController(options: CodexControllerOptions) {
     }, 200)
   }
 
-  function applyActivityDelta(delta: CodexActivityDeltaV1) {
-    if (disposed || !shouldRun() || delta?.version !== 1) return
+  function applyActivityDelta(delta: CodexActivityDelta) {
+    if (disposed || !shouldRun() || (delta?.version !== 1 && delta?.version !== 2)) return
+    if (!Number.isFinite(delta.receivedAt) || !Number.isFinite(delta.generation) || delta.generation <= 0) return
+    let environmentChanged = false
+    if (delta.version === 2 && delta.receivedAt >= environment.checkedAt && environment.desktopBridgeState !== delta.desktopBridgeState) {
+      environment = { ...environment, desktopBridgeState: delta.desktopBridgeState, checkedAt: delta.receivedAt }
+      environmentChanged = true
+    }
     if (!lastSourceFingerprint || lastCompleteness !== 'verified' || delta.sourceFingerprint !== lastSourceFingerprint) {
       if (delta.inventoryChanged) scheduleStructuralRefresh()
+      if (environmentChanged) options.notify()
       return
     }
-    if (!Number.isFinite(delta.generation) || delta.generation <= 0 || delta.generation < lastActivityGeneration) return
-    if (!Number.isFinite(delta.receivedAt) || delta.receivedAt < conversations.updatedAt) return
+    if (delta.generation < lastActivityGeneration) return
+    if (delta.receivedAt < conversations.updatedAt) return
     lastActivityGeneration = delta.generation
     const byKey = new Map(delta.entries.map((entry) => [entry.key, entry]))
     const knownKeys = new Set(lastThreads.map((thread) => thread.key))
@@ -184,23 +191,38 @@ export function createCodexController(options: CodexControllerOptions) {
     lastThreads = lastThreads.map((thread) => {
       const entry = byKey.get(thread.key)
       if (!entry) return thread
-      const activeFlags = [...new Set(entry.activeFlags)].sort()
+      const activeFlags = [...new Set(entry.activeFlags || thread.activeFlags)].sort()
       const previousFlags = [...thread.activeFlags].sort()
-      if (thread.status === entry.status && activeFlags.join('|') === previousFlags.join('|')) return thread
+      const liveEntry = delta.version === 2 ? entry as CodexActivityDeltaEntryV2 : null
+      const next = delta.version === 2
+        ? {
+            ...thread,
+            ...(liveEntry?.status ? { status: liveEntry.status } : {}),
+            activeFlags,
+            ...(liveEntry?.statusAuthority ? { statusAuthority: liveEntry.statusAuthority } : {}),
+            ...(typeof liveEntry?.hasUnreadTurn === 'boolean' ? { hasUnreadTurn: liveEntry.hasUnreadTurn } : {}),
+            ...(liveEntry?.unreadAuthority ? { unreadAuthority: liveEntry.unreadAuthority } : {})
+          }
+        : { ...thread, status: entry.status || thread.status, activeFlags, statusAuthority: 'connector' as const }
+      if (thread.status === next.status
+        && activeFlags.join('|') === previousFlags.join('|')
+        && thread.statusAuthority === next.statusAuthority
+        && thread.hasUnreadTurn === next.hasUnreadTurn
+        && thread.unreadAuthority === next.unreadAuthority) return thread
       changed = true
-      return { ...thread, status: entry.status, activeFlags }
+      return next
     })
     if (changed) {
       publishConversationProjection({ receivedAt: delta.receivedAt, advanceScan: false, status: conversations.status })
-      options.notify()
     }
+    if (changed || environmentChanged) options.notify()
     if (delta.inventoryChanged) scheduleStructuralRefresh()
   }
 
   function scheduleActivity(delay?: number) {
     clearActivityTimer()
     if (!started || disposed || !shouldRun() || typeof options.platform.codex.readActivitySnapshot !== 'function') return
-    const wait = delay ?? (activityFailureCount >= 3 ? 1000 : 200)
+    const wait = delay ?? (activityFailureCount >= 3 ? 1_000 : 5_000)
     activityTimer = setTimeout(() => { void pollActivity() }, Math.max(0, wait))
   }
 
@@ -243,29 +265,12 @@ export function createCodexController(options: CodexControllerOptions) {
     options.save()
   }
 
-  function reconcileRemovedProjects(projects: CodexHostProject[]) {
-    const state = codexState()
-    const present = new Set(projects.filter((project) => project.kind === 'project').map((project) => project.key))
-    const absent = new Set(state.removedProjectAbsentKeys)
-    const removed = new Set(state.removedProjectKeys)
-    for (const key of [...removed]) {
-      if (!present.has(key)) absent.add(key)
-      else if (absent.has(key)) {
-        absent.delete(key)
-        removed.delete(key)
-      }
-    }
-    state.removedProjectKeys = [...removed]
-    state.removedProjectAbsentKeys = [...absent].filter((key) => removed.has(key))
-  }
-
   function publishConversationProjection(input: { receivedAt: number; advanceScan: boolean; status?: ConversationSnapshotV1['status'] }) {
     const state = codexState()
     const projection = projectConversations({
       threads: lastThreads,
       projects: lastProjects,
       receipts: state.receipts,
-      previousStatuses,
       lastTaskScanAt: codexState().lastTaskScanAt,
       now: input.receivedAt,
       partial: lastThreadsPartial,
@@ -277,7 +282,7 @@ export function createCodexController(options: CodexControllerOptions) {
       taskAliases: state.taskAliases,
       projectAliases: state.projectAliases,
       localPins: state.localPins,
-      removedProjectKeys: state.removedProjectKeys,
+      hiddenProjectKeys: state.hiddenProjectKeys,
       sourceFingerprint: lastSourceFingerprint,
       completeness: lastCompleteness,
       rawSourceCount: lastRawSourceCount,
@@ -292,7 +297,6 @@ export function createCodexController(options: CodexControllerOptions) {
     }
     state.receipts = projection.receipts
     if (input.advanceScan) {
-      previousStatuses = projection.statuses
       codexState().lastTaskScanAt = projection.lastTaskScanAt
     }
   }
@@ -366,16 +370,17 @@ export function createCodexController(options: CodexControllerOptions) {
       const successful = [quotaResult, threadResult].filter((result) => result?.ok === true)
       const failures = [quotaResult, threadResult].filter((result) => result?.ok === false)
       if (successful.length) {
-        environment = normalizeCodexEnvironment({
+        const connectedEnvironment = {
           ...environment,
           checking: false,
-          runtimeState: 'detected',
-          processState: 'running',
           connectionState: 'connected',
           configState: quotaResult?.ok && quotaResult.value.config ? 'loaded' : environment.configState,
           checkedAt: receivedAt,
-          errorCode: null
-        })
+        }
+        delete connectedEnvironment.errorCode
+        // A successful App Server round-trip proves only the connector. Keep the
+        // preload's runtime/process/Desktop bridge classification authoritative.
+        environment = normalizeCodexEnvironment(connectedEnvironment)
       }
       if (quotaResult) {
         const quotaReceivedAt = quotaResult.receivedAt || receivedAt
@@ -428,7 +433,6 @@ export function createCodexController(options: CodexControllerOptions) {
           }))
           lastThreads = threads
           lastProjects = host.version === 2 ? host.projects || [] : []
-          if (host.version === 2) reconcileRemovedProjects(lastProjects)
           lastThreadsPartial = host.threadsPartial === true
           lastTaskAuthority = host.taskAuthority || 'mixed'
           lastSourceCount = host.version === 2 ? host.eligibleSourceCount ?? threads.length : threads.length
@@ -487,6 +491,10 @@ export function createCodexController(options: CodexControllerOptions) {
   function syncActivation(force = false) {
     if (!started || disposed) return
     if (!isFeatureEnabled()) {
+      if (cardColorPreview) {
+        cardColorPreview = null
+        options.notify()
+      }
       environmentGeneration += 1
       if (environment.checking) {
         environment = { ...environment, checking: false }
@@ -552,6 +560,94 @@ export function createCodexController(options: CodexControllerOptions) {
     return true
   }
 
+  function resolveCardColorCandidate(colors: Partial<CodexColorSettings>): CodexColorSettings | null {
+    const current = codexState().settings
+    const candidate = { ...current.colors, ...colors }
+    const colorValidation = validateCodexCustomColors(candidate)
+    if (!colorValidation.valid) {
+      options.setMessage(`${colorValidation.message}，已保留上一次有效主题`)
+      return null
+    }
+    const waterValidation = validateCodexWaterAppearance(candidate, current.waterAppearance)
+    if (!waterValidation.valid) {
+      options.setMessage(`${waterValidation.message}，已保留上一次有效水球配置`)
+      return null
+    }
+    return candidate
+  }
+
+  function previewCardColors(colors: Partial<CodexColorSettings>) {
+    const candidate = resolveCardColorCandidate(colors)
+    if (!candidate) return false
+    cardColorPreview = candidate
+    options.notify()
+    return true
+  }
+
+  function clearCardColorPreview() {
+    if (!cardColorPreview) return true
+    cardColorPreview = null
+    options.notify()
+    return true
+  }
+
+  function commitCardColors(colors: Partial<CodexColorSettings>) {
+    const candidate = resolveCardColorCandidate(colors)
+    if (!candidate) return false
+    const previousPreview = cardColorPreview
+    cardColorPreview = null
+    if (updateSettings({ colors: candidate })) return true
+    cardColorPreview = previousPreview
+    options.notify()
+    return false
+  }
+
+  async function setLaunchPath(pathValue: string) {
+    const path = pathValue.trim()
+    if (!path) {
+      options.setMessage('请输入 Codex CLI 可执行文件的完整路径')
+      options.notify()
+      return false
+    }
+    const setLaunchPath = options.platform.codex.setLaunchPath
+    if (typeof setLaunchPath !== 'function') {
+      options.setMessage('当前宿主不支持手动设置 Codex CLI 路径，请更新插件 preload 后重试')
+      options.notify()
+      return false
+    }
+    try {
+      environment = normalizeCodexEnvironment(await setLaunchPath(path))
+      options.setMessage('已保存手动 Codex CLI 位置，正在重新检测连接')
+      options.notify()
+      void refresh({ force: true })
+      return true
+    } catch (error) {
+      options.setMessage(error instanceof Error ? error.message : '手动 Codex CLI 位置不可用')
+      options.notify()
+      return false
+    }
+  }
+
+  async function clearLaunchPath() {
+    const clearLaunchPath = options.platform.codex.clearLaunchPath
+    if (typeof clearLaunchPath !== 'function') {
+      options.setMessage('当前宿主不支持恢复 Codex CLI 自动发现，请更新插件 preload 后重试')
+      options.notify()
+      return false
+    }
+    try {
+      environment = normalizeCodexEnvironment(await clearLaunchPath())
+      options.setMessage('已恢复 Codex CLI 自动发现，正在重新检测连接')
+      options.notify()
+      void refresh({ force: true })
+      return true
+    } catch (error) {
+      options.setMessage(error instanceof Error ? error.message : '无法恢复 Codex CLI 自动发现')
+      options.notify()
+      return false
+    }
+  }
+
   function republishAfterReceiptChange() {
     publishConversationProjection({ receivedAt: conversations.updatedAt || Date.now(), advanceScan: false, status: conversations.status })
     options.save()
@@ -584,7 +680,7 @@ export function createCodexController(options: CodexControllerOptions) {
   function setAlias(kind: 'task' | 'project', key: string, alias: string) {
     const exists = kind === 'task'
       ? allTasks().some((task) => task.key === key)
-      : conversations.projects.some((project) => project.key === key) || conversations.removedProjects.some((project) => project.key === key)
+      : conversations.projects.some((project) => project.key === key)
     if (!exists) return false
     const value = alias.trim().slice(0, 120)
     const field = kind === 'task' ? 'taskAliases' : 'projectAliases'
@@ -625,21 +721,52 @@ export function createCodexController(options: CodexControllerOptions) {
     return true
   }
 
-  function removeProject(key: string) {
-    if (key === 'chats' || !conversations.projects.some((project) => project.key === key)) return false
-    codexState().removedProjectKeys = [...new Set([...codexState().removedProjectKeys, key])].slice(-200)
-    codexState().removedProjectAbsentKeys = codexState().removedProjectAbsentKeys.filter((item) => item !== key)
+  function hideProject(key: string) {
+    if (!conversations.projects.some((project) => project.key === key && project.kind === 'project')) return false
+    codexState().hiddenProjectKeys = [...new Set([...codexState().hiddenProjectKeys, key])].slice(-200)
     republishAfterReceiptChange()
-    options.setMessage('已从 EyPc 移除项目；Codex 原生状态未修改')
+    options.setMessage('已隐藏项目分组；所属任务仍保留在其他会话页签')
     return true
   }
 
-  function restoreProject(key: string) {
-    if (!codexState().removedProjectKeys.includes(key)) return false
-    codexState().removedProjectKeys = codexState().removedProjectKeys.filter((item) => item !== key)
-    codexState().removedProjectAbsentKeys = codexState().removedProjectAbsentKeys.filter((item) => item !== key)
+  function showProject(key: string) {
+    if (!codexState().hiddenProjectKeys.includes(key)) return false
+    codexState().hiddenProjectKeys = codexState().hiddenProjectKeys.filter((item) => item !== key)
     republishAfterReceiptChange()
-    options.setMessage('已恢复 EyPc 项目显示')
+    options.setMessage('已恢复项目分组显示')
+    return true
+  }
+
+  async function removeProject(key: string, actionAlias: string, sourceFingerprint: string) {
+    const project = conversations.projects.find((item) => item.key === key && item.actionAlias === actionAlias && item.kind === 'project')
+    if (!project || conversations.completeness !== 'verified' || !conversations.sourceFingerprint || sourceFingerprint !== conversations.sourceFingerprint) {
+      options.setMessage('项目动作或状态指纹已失效，请刷新后重试')
+      return false
+    }
+    if (typeof options.platform.codex.removeProject !== 'function') {
+      options.setMessage('当前宿主不支持真实 Codex 项目移除')
+      return false
+    }
+    const result = await options.platform.codex.removeProject(actionAlias, { expectedSourceFingerprint: sourceFingerprint })
+    if (disposed) return false
+    options.setMessage(result.message)
+    if (result.status !== 'verified') {
+      options.notify()
+      return false
+    }
+    const state = codexState()
+    state.hiddenProjectKeys = state.hiddenProjectKeys.filter((item) => item !== key)
+    state.collapsedProjectKeys = state.collapsedProjectKeys.filter((item) => item !== key)
+    state.projectAliases = state.projectAliases.filter((item) => item.key !== key)
+    state.localPins = state.localPins.filter((item) => !(item.kind === 'project' && item.key === key))
+    options.save()
+    options.notify()
+    lastTaskReadAt = 0
+    await refresh({ forceTasks: true })
+    if (conversations.projects.some((item) => item.key === key)) {
+      lastTaskReadAt = 0
+      await refresh({ forceTasks: true })
+    }
     return true
   }
 
@@ -651,12 +778,6 @@ export function createCodexController(options: CodexControllerOptions) {
       return false
     }
     const result = await options.platform.codex.openThread(actionAlias)
-    if (result.outcome === 'opened' || result.outcome === 'dispatched') {
-      if (task.bucket === 'completed-unread' && task.completionRevision) {
-        codexState().receipts = acknowledgeCodexThread(codexState().receipts, task.key, task.completionRevision)
-        republishAfterReceiptChange()
-      }
-    }
     if (result.outcome === 'opened') {
       if (task.hiddenKind) {
         options.setMessage('已打开，任务仍在 Companion 已隐藏区')
@@ -732,10 +853,11 @@ export function createCodexController(options: CodexControllerOptions) {
     }
     codexState().receipts = codexState().receipts.filter((receipt) => receipt.key !== key)
     lastThreads = lastThreads.filter((thread) => thread.key !== key)
-    delete previousStatuses[key]
     taskArchive = { key: '', status: 'idle', message: '' }
     republishAfterReceiptChange()
-    options.setMessage('已归档 Codex 任务')
+    options.setMessage(result.desktopSync === 'dispatched'
+      ? '已归档，并已通知 Codex 桌面端刷新'
+      : '已归档；Codex 桌面端未确认即时刷新')
     return true
   }
 
@@ -768,7 +890,6 @@ export function createCodexController(options: CodexControllerOptions) {
       const archived = new Set(result.archivedKeys)
       lastThreads = lastThreads.filter((thread) => !archived.has(thread.key))
       codexState().receipts = codexState().receipts.filter((receipt) => !archived.has(receipt.key))
-      for (const archivedKey of archived) delete previousStatuses[archivedKey]
       publishConversationProjection({ receivedAt: Date.now(), advanceScan: false })
     }
     if (result.outcome === 'failed') {
@@ -777,10 +898,23 @@ export function createCodexController(options: CodexControllerOptions) {
       options.notify()
       return false
     }
-    projectArchive = { key: '', status: result.outcome === 'partial' ? 'error' : 'idle', message: result.outcome === 'partial' ? `${result.archivedKeys.length} 项已归档，${result.failed.length} 项失败，${result.skippedActiveKeys.length} 项仍在进行中` : '' }
-    options.setMessage(result.outcome === 'partial'
-      ? projectArchive.message
-      : `已归档 ${result.archivedKeys.length} 项；跳过 ${result.skippedActiveKeys.length} 项进行中任务`)
+    const desktopSyncedCount = result.desktopSyncedKeys?.length || 0
+    const desktopSyncFailedCount = Math.max(
+      result.desktopSyncFailedKeys?.length || 0,
+      result.archivedKeys.length - desktopSyncedCount
+    )
+    const desktopSyncMessage = desktopSyncFailedCount
+      ? `；${desktopSyncFailedCount} 项未确认 Codex 桌面端即时刷新`
+      : result.archivedKeys.length > 0 ? '，并已通知 Codex 桌面端刷新' : ''
+    const archiveMessage = result.outcome === 'partial'
+      ? `${result.archivedKeys.length} 项已归档，${result.failed.length} 项失败，${result.skippedActiveKeys.length} 项仍在进行中${desktopSyncMessage}`
+      : `已归档 ${result.archivedKeys.length} 项${desktopSyncMessage}；跳过 ${result.skippedActiveKeys.length} 项进行中任务`
+    projectArchive = {
+      key: '',
+      status: result.outcome === 'partial' ? 'error' : 'idle',
+      message: result.outcome === 'partial' ? archiveMessage : ''
+    }
+    options.setMessage(archiveMessage)
     options.save()
     options.notify()
     lastTaskReadAt = 0
@@ -822,6 +956,7 @@ export function createCodexController(options: CodexControllerOptions) {
     },
     dispose() {
       disposed = true
+      cardColorPreview = null
       environmentGeneration += 1
       refreshGeneration += 1
       if (environment.checking) environment = { ...environment, checking: false }
@@ -835,7 +970,12 @@ export function createCodexController(options: CodexControllerOptions) {
     syncActivation,
     refresh: () => refresh({ force: true }),
     inspectEnvironment: () => inspectEnvironment(true),
+    setLaunchPath,
+    clearLaunchPath,
     updateSettings,
+    previewCardColors,
+    clearCardColorPreview,
+    commitCardColors,
     dismiss,
     hide,
     restore,
@@ -848,8 +988,9 @@ export function createCodexController(options: CodexControllerOptions) {
     setAlias,
     toggleLocalPin,
     moveLocalPin,
+    hideProject,
+    showProject,
     removeProject,
-    restoreProject,
     saveGeometry,
     resetPosition,
     resetExpandedSize,
@@ -880,11 +1021,11 @@ export function createCodexController(options: CodexControllerOptions) {
       const settings = codexState().settings
       return {
         version: 2,
-        style: settings.displayStyle,
+        style: cardColorPreview ? 'card' : settings.displayStyle,
         conversationInboxEnabled: settings.conversationInboxEnabled,
         compactFields: settings.compactFields,
         expandedFields: settings.expandedFields,
-        colors: settings.colors,
+        colors: cardColorPreview || settings.colors,
         waterAppearance: settings.waterAppearance,
         expandedSizes: settings.expandedSizes,
         quota,

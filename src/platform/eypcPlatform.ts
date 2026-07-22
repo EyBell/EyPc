@@ -2,7 +2,7 @@ import { normalizeAppState } from '../domain/state'
 import { normalizeMqttArchiveState } from '../domain/mqtt'
 import type { AppState, FavoriteNode, KillRequest, KillResult, MqttArchiveState, MqttStorageStatus, PortProcess } from '../domain/types'
 import type {
-  CodexActivityDeltaV1,
+  CodexActivityDelta,
   CodexBridgeResult,
   CodexEnvironmentPlatform,
   CodexEnvironmentSnapshotV1,
@@ -11,6 +11,8 @@ import type {
   CodexNewThreadResult,
   CodexProjectArchiveRequest,
   CodexProjectArchiveResult,
+  CodexProjectRemoveRequest,
+  CodexProjectRemoveResult,
   CodexThreadArchiveRequest,
   CodexThreadArchiveResult,
   CodexThreadOpenResult
@@ -124,14 +126,17 @@ export interface EypcPlatformApi {
   }
   codex: {
     inspectEnvironment(): Promise<CodexEnvironmentSnapshotV1>
+    setLaunchPath?(path: string): Promise<CodexEnvironmentSnapshotV1>
+    clearLaunchPath?(): Promise<CodexEnvironmentSnapshotV1>
     readSnapshot(options?: CodexReadOptions): Promise<CodexBridgeResult<CodexHostSnapshot>>
-    readActivitySnapshot?(): Promise<CodexBridgeResult<CodexActivityDeltaV1>>
-    onActivityChanged?(listener: (delta: CodexActivityDeltaV1) => void): () => void
+    readActivitySnapshot?(): Promise<CodexBridgeResult<CodexActivityDelta>>
+    onActivityChanged?(listener: (delta: CodexActivityDelta) => void): () => void
     openThread(actionAlias: string): Promise<CodexThreadOpenResult>
     createThread?(request: CodexNewThreadRequest): Promise<CodexNewThreadResult>
     openBlank?(): Promise<CodexThreadOpenResult>
     archiveThread?(actionAlias: string, request: CodexThreadArchiveRequest): Promise<CodexThreadArchiveResult>
     archiveProject?(actionAlias: string, request: CodexProjectArchiveRequest): Promise<CodexProjectArchiveResult>
+    removeProject?(actionAlias: string, request: CodexProjectRemoveRequest): Promise<CodexProjectRemoveResult>
     close(): void
   }
   float: {
@@ -211,6 +216,11 @@ function legacyHostCodexEnvironment(): CodexEnvironmentSnapshotV1 {
     processState: 'unknown',
     configState: 'unknown',
     connectionState: 'not-checked',
+    desktopBridgeState: 'not-checked',
+    launchMode: 'legacy-fallback',
+    manualLaunchPathState: 'unavailable',
+    launchCandidates: [],
+    statusFeedMode: 'connector-fallback',
     checkedAt: Date.now()
   }
 }
@@ -225,6 +235,11 @@ function unsupportedCodexEnvironment(): CodexEnvironmentSnapshotV1 {
     processState: 'unknown',
     configState: 'unknown',
     connectionState: 'not-checked',
+    desktopBridgeState: 'not-checked',
+    launchMode: 'unknown',
+    manualLaunchPathState: 'unavailable',
+    launchCandidates: [],
+    statusFeedMode: 'unavailable',
     checkedAt: Date.now()
   }
 }
@@ -493,6 +508,8 @@ export function getPlatform(): EypcPlatformApi {
         inspectEnvironment: hostCodex?.inspectEnvironment || (async () => typeof hostCodex?.readSnapshot === 'function'
           ? legacyHostCodexEnvironment()
           : unsupportedCodexEnvironment()),
+        setLaunchPath: hostCodex?.setLaunchPath,
+        clearLaunchPath: hostCodex?.clearLaunchPath,
         readSnapshot: hostCodex?.readSnapshot || (async () => ({ ok: false, error: { code: 'unsupported', message: 'Codex App Server unavailable in this host' }, receivedAt: Date.now() })),
         readActivitySnapshot: hostCodex?.readActivitySnapshot,
         onActivityChanged: hostCodex?.onActivityChanged,
@@ -568,6 +585,8 @@ export function getPlatform(): EypcPlatformApi {
     },
     codex: {
       inspectEnvironment: async () => unsupportedCodexEnvironment(),
+      setLaunchPath: undefined,
+      clearLaunchPath: undefined,
       readSnapshot: async () => ({ ok: false, error: { code: 'unsupported', message: 'Codex App Server unavailable in browser' }, receivedAt: Date.now() }),
       readActivitySnapshot: undefined,
       onActivityChanged: undefined,
