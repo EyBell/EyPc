@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
+  ArrowLeft,
   ChevronDown,
   ChevronRight,
   CirclePlay,
@@ -10,8 +11,6 @@ import {
   FolderOpen,
   History,
   MessageSquareText,
-  Plus,
-  RotateCcw,
   Search,
   ShieldCheck,
   TriangleAlert,
@@ -19,7 +18,12 @@ import {
 } from '@lucide/vue'
 import CodexWaterBall from './components/CodexWaterBall.vue'
 import QuickJumpLayer from './components/QuickJumpLayer.vue'
-import { CODEX_THEME_PRESETS, codexThemeCssVars, codexWaterAppearanceCssVars, resolveCodexSurfaceTheme } from './domain/codexAppearance'
+import {
+  CODEX_THEME_PRESETS,
+  codexThemeCssVars,
+  codexWaterAppearanceCssVars,
+  resolveCodexSurfaceTheme
+} from './domain/codexAppearance'
 import { buildCodexCompactPresentation } from './domain/codexPresentation'
 import { assignQuickJumpMarkers, moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
 import type { QuickJumpTarget } from './domain/quickJump'
@@ -29,15 +33,14 @@ import { codexModelReasonLabel, resolveCodexNewThreadModel, resolveManualCodexMo
 import { evaluateWhenExpression, LAYER_PRIORITY, type KeybindingContext, type KeybindingLayerId } from './runtime/keybinding/keybindingRuntime'
 import type {
   CodexModelCatalogSnapshotV1,
+  CodexTaskTab,
   CodexNewThreadSelectionContext,
   CodexNewThreadTarget,
   CodexProjectCard,
-  CodexProjectEntry,
   CodexProjectSection,
   CodexQuotaBucket,
   CodexResolvedNewThreadModel,
-  CodexTaskCard,
-  CodexTaskTab
+  CodexTaskCard
 } from './domain/codex'
 import { normalizeCodexQuota } from './domain/codex'
 import type { CodexFloatResizeCorner, CodexFloatWindowState } from './float-env'
@@ -45,15 +48,24 @@ import type { CodexFloatSnapshotV1 } from './runtime/codexController'
 
 type RenderRow =
   | { kind: 'section'; key: string; section: CodexProjectSection }
-  | { kind: 'status-section'; key: string; title: string; count: number; tone: 'input' | 'active' | 'unread' }
-  | { kind: 'project'; key: string; project: CodexProjectCard; sectionId: string }
+  | { kind: 'hidden-project-section'; key: string; title: string }
+  | { kind: 'status-section'; key: string; title: string; count: number; tone: 'input' | 'active' | 'unread' | 'unknown' | 'attention' }
+  | { kind: 'project'; key: string; project: CodexProjectCard; sectionId: string; hiddenProject?: boolean }
   | { kind: 'task'; key: string; task: CodexTaskCard; sectionId?: string; parentProjectKey?: string; nested?: boolean }
   | { kind: 'empty-project'; key: string; projectKey: string }
 
 type FocusItem = Extract<RenderRow, { kind: 'project' | 'task' }>
-type PanelState = { mode: 'detail' | 'drawer'; item: FocusItem } | null
+type PanelState = { mode: 'detail' | 'drawer'; item: FocusItem; returnActionId: string } | null
 type AliasEditor = { kind: 'task' | 'project'; key: string; value: string; originalName: string } | null
 type DrawerAction = { id: string; label: string; danger?: boolean; disabled?: boolean; disabledReason?: string; run: () => void }
+type UiConversationTab = 'all' | 'input' | 'dynamic' | 'completed' | 'hidden' | 'projects'
+type ComposerProjectPickerOption = {
+  key: string
+  label: string
+  target: CodexNewThreadTarget
+  disabled: boolean
+  disabledReason?: string
+}
 type ComposerState = {
   target: CodexNewThreadTarget
   context: CodexNewThreadSelectionContext
@@ -67,15 +79,18 @@ type ComposerState = {
   staleConfirmation: boolean
   manualOnly: boolean
   reopenAlias: string
+  projectPickerOpen: boolean
+  projectPickerIndex: number
+  projectPickerOptions: ComposerProjectPickerOption[]
 }
 type ShiftPreview = { task: CodexTaskCard; left: number; top: number } | null
+type ActionHint = { label: string; left: number; top: number; placement: 'top' | 'bottom' } | null
 type QuickJumpDomTarget = QuickJumpTarget & { element: HTMLElement }
 
 const snapshot = ref<CodexFloatSnapshotV1 | null>(null)
 const rootElement = ref<HTMLElement | null>(null)
 const expanded = ref(false)
 const floatState = ref<CodexFloatWindowState>({ expanded: false, pinned: false, resizing: false, resizeCorner: null, expandedSize: null })
-const activeTab = ref<CodexTaskTab>('ongoing')
 const searchText = ref('')
 const searchInput = ref<HTMLInputElement | null>(null)
 const taskScroll = ref<HTMLElement | null>(null)
@@ -84,6 +99,7 @@ const focusedKey = ref('')
 const rangeAnchorKey = ref('')
 const batchPlacement = ref<'top' | 'bottom'>('bottom')
 const panel = ref<PanelState>(null)
+const panelLayer = ref<HTMLElement | null>(null)
 const aliasEditor = ref<AliasEditor>(null)
 const aliasInput = ref<HTMLInputElement | null>(null)
 const composer = ref<ComposerState | null>(null)
@@ -99,6 +115,7 @@ const previewKeyboardKey = ref('')
 const shiftPreview = ref<ShiftPreview>(null)
 const shiftHeld = ref(false)
 const shiftPreviewSuppressed = ref(false)
+const actionHint = ref<ActionHint>(null)
 const optimisticProjectCollapsed = ref<Record<string, boolean>>({})
 const quickJump = ref<{ open: boolean; query: string; sourceTargets: QuickJumpDomTarget[]; targets: QuickJumpDomTarget[]; activeTargetId: string | null }>({
   open: false,
@@ -115,6 +132,7 @@ let drag: { x: number; y: number; moved: boolean; pointerId: number } | null = n
 let resize: { pointerId: number; corner: CodexFloatResizeCorner } | null = null
 let collapseTimer: ReturnType<typeof setTimeout> | null = null
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
+let actionHintTimer: ReturnType<typeof setTimeout> | null = null
 let pendingRun: (() => void) | null = null
 let taskScrollResizeObserver: ResizeObserver | null = null
 let desiredExpanded = false
@@ -183,26 +201,10 @@ const compactAriaLabel = computed(() => {
   if (quota.value?.status === 'stale' || quota.value?.status === 'error') return `${compact.value.ariaLabel}，${statusText.value}`
   return compact.value.ariaLabel
 })
-const tabCounts = computed<Record<CodexTaskTab, number>>(() => ({
-  all: conversations.value?.all.length || 0,
-  input: conversations.value?.inputRequired.length || 0,
-  ongoing: (conversations.value?.ongoing.length || 0) + (conversations.value?.completedUnread.length || 0),
-  hidden: conversations.value?.hidden.length || 0,
-  completed: conversations.value?.completedTab.length || 0,
-  projects: conversations.value?.projects.length || 0
-}))
-const tabs: Array<{ id: CodexTaskTab; label: string }> = [
-  { id: 'all', label: '全部' },
-  { id: 'input', label: '待输入' },
-  { id: 'ongoing', label: '动态' },
-  { id: 'completed', label: '已完成' },
-  { id: 'hidden', label: '已隐藏' },
-  { id: 'projects', label: '项目' }
-]
-
 const compactCounts = computed(() => ({
   input: conversations.value?.inputRequiredCount || 0,
-  active: (conversations.value?.ongoing || []).filter((task) => task.activityState !== 'waiting-input').length,
+  active: [...(conversations.value?.ongoing || []), ...(conversations.value?.hidden || [])]
+    .filter((task) => task.activityState === 'active' || task.activityState === 'waiting-approval').length,
   unread: conversations.value?.completedUnreadCount || 0
 }))
 
@@ -212,79 +214,150 @@ function normalizedSearch() {
 
 function taskMatches(task: CodexTaskCard, query = normalizedSearch()) {
   if (!query) return true
-  return [task.name, task.originalName, task.alias, task.projectName, task.originalProjectName]
+  return [task.displayName, task.name, task.originalName, task.alias, task.projectName, task.originalProjectName]
     .some((value) => value?.toLocaleLowerCase().includes(query))
 }
 
-function projectMatches(project: CodexProjectCard, query = normalizedSearch()) {
-  return !query || [project.name, project.originalName, project.alias]
-    .some((value) => value?.toLocaleLowerCase().includes(query))
+function taskDisplayLabel(task: CodexTaskCard) {
+  return task.alias || task.originalName || task.displayName || task.name || '未命名任务'
 }
 
-function sourceTasks() {
-  const value = conversations.value
-  if (!value) return []
-  if (activeTab.value === 'all') return value.all
-  if (activeTab.value === 'input') return value.inputRequired
-  if (activeTab.value === 'ongoing') return value.ongoing
-  if (activeTab.value === 'hidden') return value.hidden
-  if (activeTab.value === 'completed') return value.completedTab
-  return []
+function taskTooltip(task: CodexTaskCard) {
+  return task.originalName || task.name || '未命名任务'
 }
 
-function filteredProjectSections(): CodexProjectSection[] {
-  const query = normalizedSearch()
-  return (conversations.value?.projectSections || []).map((section) => ({
-    ...section,
-    entries: section.entries.flatMap((entry): CodexProjectEntry[] => {
-      if (entry.kind === 'task') return taskMatches(entry.task, query) ? [entry] : []
-      const matchedProject = projectMatches(entry.project, query)
-      const tasks = matchedProject ? entry.project.tasks : entry.project.tasks.filter((task) => taskMatches(task, query))
-      if (query && !matchedProject && !tasks.length) return []
-      return [{ ...entry, project: { ...entry.project, tasks } }]
+function displayOrderedTasks(tasks: CodexTaskCard[]) {
+  const pinnedOrder = new Map<string, number>()
+  const pinnedSection = conversations.value?.projectSections.find((section) => section.id === 'pinned')
+  for (const entry of pinnedSection?.entries || []) {
+    if (entry.kind === 'task' && !pinnedOrder.has(entry.task.key)) pinnedOrder.set(entry.task.key, pinnedOrder.size)
+  }
+  return tasks
+    .map((task, sourceIndex) => ({ task, sourceIndex }))
+    .sort((left, right) => {
+      const leftPinned = Boolean(left.task.pinSource)
+      const rightPinned = Boolean(right.task.pinSource)
+      if (leftPinned !== rightPinned) return leftPinned ? -1 : 1
+      if (leftPinned && rightPinned) {
+        const leftOrder = pinnedOrder.get(left.task.key)
+        const rightOrder = pinnedOrder.get(right.task.key)
+        if (leftOrder !== undefined || rightOrder !== undefined) {
+          return (leftOrder ?? Number.MAX_SAFE_INTEGER) - (rightOrder ?? Number.MAX_SAFE_INTEGER) || left.sourceIndex - right.sourceIndex
+        }
+      }
+      return left.sourceIndex - right.sourceIndex
     })
-  }))
+    .map(({ task }) => task)
 }
 
 const renderRows = computed<RenderRow[]>(() => {
-  if (activeTab.value !== 'projects') {
-    if (activeTab.value === 'ongoing') {
-      const value = conversations.value
-      if (!value) return []
-      const groups = [
-        { key: 'input', title: '待输入', tone: 'input' as const, tasks: value.ongoing.filter((task) => task.activityState === 'waiting-input') },
-        { key: 'active', title: '当前动态', tone: 'active' as const, tasks: value.ongoing.filter((task) => task.activityState !== 'waiting-input') },
-        { key: 'unread', title: '已完成未查看', tone: 'unread' as const, tasks: value.completedUnread }
+  const value = conversations.value
+  if (!value) return []
+  const searchQuery = normalizedSearch()
+  const usedProjectRows = new Set<string>()
+
+  function addProject(task: CodexTaskCard, sectionId?: string, parentProjectKey?: string, nested = false): RenderRow {
+    return { kind: 'task', key: `task:${task.key}`, task, sectionId, parentProjectKey, nested }
+  }
+
+  function addProjectRow(project: CodexProjectCard, hiddenProject = false): RenderRow {
+    return {
+      kind: 'project',
+      key: hiddenProject ? `hidden-project:${project.key}` : `project:${project.key}`,
+      project,
+      sectionId: hiddenProject ? 'hidden-projects' : 'projects',
+      hiddenProject
+    }
+  }
+
+  function taskMatched(task: CodexTaskCard) {
+    return taskMatches(task, searchQuery)
+  }
+
+  function projectMatched(project: CodexProjectCard) {
+    if (!searchQuery) return true
+    return [project.name, project.originalName, project.alias]
+      .filter(Boolean)
+      .some((candidate) => candidate!.toLocaleLowerCase().includes(searchQuery))
+  }
+
+  if (selectedUiTab.value === 'all' || selectedUiTab.value === 'input') {
+    const tasks = displayOrderedTasks((selectedUiTab.value === 'all' ? value.all : value.inputRequired).filter((task) => taskMatched(task)))
+    return tasks.map((task) => addProject(task))
+  }
+
+  if (selectedUiTab.value === 'dynamic') {
+    const groups = [
+      { key: 'input', title: '待输入', tone: 'input' as const, tasks: value.ongoing.filter((task) => task.activityState === 'waiting-input') },
+      { key: 'active', title: '正在进行中', tone: 'active' as const, tasks: value.ongoing.filter((task) => task.activityState === 'active' || task.activityState === 'waiting-approval') },
+      { key: 'attention', title: '需关注', tone: 'attention' as const, tasks: value.ongoing.filter((task) => ['failed', 'interrupted', 'system-error'].includes(task.activityState)) },
+      { key: 'unknown', title: '宿主状态未知', tone: 'unknown' as const, tasks: value.ongoing.filter((task) => task.activityState === 'unknown') },
+      { key: 'unread', title: '已完成未读', tone: 'unread' as const, tasks: value.completedUnread }
+    ]
+    return groups.flatMap((group): RenderRow[] => {
+      const tasks = displayOrderedTasks(group.tasks.filter((task) => taskMatched(task)))
+      if (!tasks.length) return []
+      return [
+        { kind: 'status-section', key: `status:${group.key}`, title: group.title, count: tasks.length, tone: group.tone },
+        ...tasks.map((task) => addProject(task))
       ]
-      return groups.flatMap((group): RenderRow[] => {
-        const tasks = group.tasks.filter((task) => taskMatches(task))
-        if (!tasks.length) return []
-        return [
-          { kind: 'status-section', key: `status:${group.key}`, title: group.title, count: tasks.length, tone: group.tone },
-          ...tasks.map((task) => ({ kind: 'task' as const, key: `task:${task.key}`, task }))
-        ]
-      })
-    }
-    return sourceTasks().filter((task) => taskMatches(task)).map((task) => ({ kind: 'task', key: `task:${task.key}`, task }))
+    })
   }
+
+  if (selectedUiTab.value === 'completed') {
+    const tasks = displayOrderedTasks([...value.completedUnread, ...value.completed].filter((task) => taskMatched(task)))
+    return tasks.map((task) => addProject(task))
+  }
+
+  if (selectedUiTab.value === 'hidden') {
+    const tasks = displayOrderedTasks(value.hidden.filter((task) => taskMatched(task)))
+    return tasks.map((task) => addProject(task))
+  }
+
   const rows: RenderRow[] = []
-  for (const section of filteredProjectSections()) {
-    rows.push({ kind: 'section', key: `section:${section.id}`, section })
+  const addSectionTasks = (target: RenderRow[], tasks: CodexTaskCard[], sectionId: string, parentProjectKey?: string, forceOpen = false) => {
+    const visibleTasks = displayOrderedTasks(tasks.filter((task) => taskMatched(task)))
+    if (!visibleTasks.length) return
+    for (const task of visibleTasks) target.push(addProject(task, sectionId, parentProjectKey, forceOpen))
+  }
+
+  for (const section of value.projectSections) {
+    const sectionRows: RenderRow[] = []
     for (const entry of section.entries) {
-      if (entry.kind === 'task') {
-        rows.push({ kind: 'task', key: `task:${entry.task.key}`, task: entry.task, sectionId: section.id })
-        continue
-      }
-      rows.push({ kind: 'project', key: `project:${entry.project.key}`, project: entry.project, sectionId: section.id })
-      if (!isProjectCollapsed(entry.project)) {
-        if (entry.project.tasks.length) {
-          rows.push(...entry.project.tasks.map((task) => ({ kind: 'task' as const, key: `task:${task.key}`, task, sectionId: section.id, parentProjectKey: entry.project.key, nested: true })))
-        } else {
-          rows.push({ kind: 'empty-project', key: `empty:${entry.project.key}`, projectKey: entry.project.key })
+      if (entry.kind === 'project') {
+        const shouldShowAllTasks = projectMatched(entry.project)
+        const projectTasks = displayOrderedTasks(shouldShowAllTasks || !searchQuery ? entry.project.tasks : entry.project.tasks.filter((task) => taskMatched(task)))
+        if (projectTasks.length || shouldShowAllTasks) {
+          const row = addProjectRow(entry.project)
+          usedProjectRows.add(row.key)
+          sectionRows.push(row)
+          const openChildren = !isProjectCollapsed(entry.project) || Boolean(searchQuery)
+          if (openChildren) {
+            const children = shouldShowAllTasks || !searchQuery ? entry.project.tasks : entry.project.tasks.filter((task) => taskMatched(task))
+            addSectionTasks(sectionRows, children, section.id, entry.project.key, openChildren)
+          }
         }
+      } else {
+        if (taskMatched(entry.task)) sectionRows.push(addProject(entry.task, section.id))
       }
     }
+    if (sectionRows.length) {
+      rows.push({ kind: 'status-section', key: `section:${section.id}`, title: section.title, count: sectionRows.length, tone: 'active' })
+      rows.push(...sectionRows)
+    }
   }
+
+  if (value.hiddenProjects.length) {
+    rows.push({ kind: 'hidden-project-section', key: 'hidden-projects', title: '已隐藏项目' })
+    const hiddenProjects = value.hiddenProjects.filter((project) => !searchQuery || projectMatched(project))
+    for (const project of hiddenProjects) {
+      const row = addProjectRow(project, true)
+      if (usedProjectRows.has(row.key)) continue
+      usedProjectRows.add(row.key)
+      rows.push(row)
+    }
+  }
+
   return rows
 })
 const focusItems = computed<FocusItem[]>(() => renderRows.value.filter((row): row is FocusItem => row.kind === 'task' || row.kind === 'project'))
@@ -292,7 +365,6 @@ const focusedItem = computed(() => focusItems.value.find((item) => item.key === 
 const visibleTaskKeys = computed(() => new Set(renderRows.value.filter((row): row is Extract<RenderRow, { kind: 'task' }> => row.kind === 'task').map((row) => row.task.key)))
 const selectedTasks = computed(() => (conversations.value?.all || []).filter((task) => selectedKeys.value.has(task.key) && visibleTaskKeys.value.has(task.key)))
 const showBatchToolbar = computed(() => selectedTasks.value.length >= 2)
-const removedProjects = computed(() => (conversations.value?.removedProjects || []).filter((project) => projectMatches(project)))
 const drawerIsBatch = computed(() => selectedTasks.value.length >= 2)
 const drawerItem = computed<FocusItem | null>(() => {
   if (drawerIsBatch.value) return panel.value?.item || focusedItem.value
@@ -302,6 +374,106 @@ const drawerItem = computed<FocusItem | null>(() => {
 })
 
 const composerModels = computed(() => composer.value?.context.modelCatalog.models || [])
+const selectedUiTab = ref<UiConversationTab>('dynamic')
+const projectCount = computed(() => {
+  const value = conversations.value
+  if (!value) return 0
+  const projectKeys = new Set<string>()
+  for (const section of value.projectSections) {
+    for (const entry of section.entries) {
+      if (entry.kind === 'project') projectKeys.add(entry.project.key)
+    }
+  }
+  for (const project of value.hiddenProjects || []) projectKeys.add(project.key)
+  if (value.projects?.length && !projectKeys.size) for (const project of value.projects) projectKeys.add(project.key)
+  return projectKeys.size
+})
+const tabs = computed(() => {
+  const value = conversations.value
+  if (!value) return []
+  return [
+    { id: 'all', label: '全部', count: value.all.length },
+    { id: 'input', label: '待输入', count: value.inputRequired.length },
+    { id: 'dynamic', label: '动态', count: value.ongoing.length + value.completedUnread.length },
+    { id: 'completed', label: '已完成', count: value.completed.length + value.completedUnread.length },
+    { id: 'hidden', label: '已隐藏', count: value.hiddenCount },
+    { id: 'projects', label: '项目', count: projectCount.value }
+  ] satisfies Array<{ id: UiConversationTab; label: string; count: number }>
+})
+const tabLabelToBackend: Record<UiConversationTab, CodexTaskTab> = {
+  all: 'all',
+  input: 'input',
+  dynamic: 'ongoing',
+  completed: 'completed',
+  hidden: 'hidden',
+  projects: 'projects'
+}
+
+function switchComposerTab(tab: UiConversationTab) {
+  selectedUiTab.value = tab
+  action('codex.tab.set', { tab: tabLabelToBackend[tab] })
+}
+
+function composerPickerOptionForChats(context: CodexNewThreadSelectionContext): ComposerProjectPickerOption {
+  const project = conversations.value?.projects.find((candidate) => candidate.key === 'chats')
+  return {
+    key: 'project:chats:none',
+    label: '不选择项目（默认 Chats）',
+    target: project ? {
+      projectKey: project.key,
+      projectAlias: project.actionAlias || 'chats',
+      projectName: project.name,
+      projectKind: 'chats',
+      projectFingerprint: context.projectFingerprint
+    } : {
+      projectKey: 'chats',
+      projectAlias: 'chats',
+      projectName: 'Chats',
+      projectKind: 'chats',
+      projectFingerprint: context.projectFingerprint
+    },
+    disabled: false
+  }
+}
+
+function projectToComposerTarget(project: CodexProjectCard, projectFingerprint: string): CodexNewThreadTarget {
+  return {
+    projectKey: project.key,
+    projectAlias: project.actionAlias || project.key,
+    projectName: project.name,
+    projectKind: project.kind,
+    projectFingerprint
+  }
+}
+
+function composerProjectOptions(context: CodexNewThreadSelectionContext): ComposerProjectPickerOption[] {
+  const options: ComposerProjectPickerOption[] = [composerPickerOptionForChats(context)]
+  const knownProjects = conversations.value?.projects || []
+  for (const project of knownProjects) {
+    if (project.key === 'chats') continue
+    options.push({
+      key: `project:${project.key}`,
+      label: `${project.name}（${project.kind === 'chats' ? 'Chats' : '项目'}）`,
+      target: projectToComposerTarget(project, context.projectFingerprint),
+      disabled: !project.actionAlias,
+      disabledReason: project.actionAlias ? undefined : '项目动作已失效'
+    })
+  }
+  return options
+}
+
+function mapUiTab(input?: CodexTaskTab) {
+  if (input === 'all') return 'all'
+  if (input === 'input') return 'input'
+  if (input === 'completed') return 'completed'
+  if (input === 'hidden') return 'hidden'
+  if (input === 'projects') return 'projects'
+  return 'dynamic'
+}
+
+watch(() => conversations.value?.activeTab, (value) => {
+  selectedUiTab.value = mapUiTab(value)
+}, { immediate: true })
 
 function fallbackFocus() {
   void nextTick(() => {
@@ -372,11 +544,15 @@ function openComposer(project?: CodexProjectCard, focusModel = false) {
   aliasEditor.value = null
   panel.value = null
   const context = selectionContext()
+  const projectOptions = composerProjectOptions(context)
+  const targetAlias = targetProject.key === 'chats' ? 'chats' : (targetProject.actionAlias || '')
+  const targetIndex = projectOptions.findIndex((item) => item.target.projectKey === targetProject.key && item.target.projectAlias === targetAlias)
   const model = resolveComposerModel(context)
+  const targetAliasMissing = !targetAlias
   composer.value = {
     target: {
       projectKey: targetProject.key,
-      projectAlias: targetProject.actionAlias || '',
+      projectAlias: targetAlias,
       projectName: targetProject.name,
       projectKind: targetProject.kind,
       projectFingerprint: context.projectFingerprint
@@ -386,19 +562,105 @@ function openComposer(project?: CodexProjectCard, focusModel = false) {
     selectionKind: 'auto',
     prompt: '',
     submitting: false,
-    error: targetProject.actionAlias ? '' : '项目动作已过期，请刷新后重试',
-    errorCode: targetProject.actionAlias ? '' : 'project-alias-missing',
+    error: targetAliasMissing ? '项目动作已过期，请刷新后重试' : '',
+    errorCode: targetAliasMissing ? 'project-alias-missing' : '',
     retryAllowed: true,
     staleConfirmation: false,
     manualOnly: false,
-    reopenAlias: ''
+    reopenAlias: '',
+    projectPickerOpen: false,
+    projectPickerIndex: targetIndex >= 0 ? targetIndex : 0,
+    projectPickerOptions: projectOptions
   }
-  void nextTick(() => (focusModel ? composerModelSelect.value : composerTextarea.value)?.focus({ preventScroll: true }))
+  void nextTick(() => {
+    const state = composer.value
+    if (!state) return
+    const option = state.projectPickerOptions[state.projectPickerIndex]
+    if (option?.disabled) state.projectPickerIndex = firstEnabledProjectPickerIndex(state.projectPickerOptions)
+    if (focusModel) composerModelSelect.value?.focus({ preventScroll: true })
+    else composerTextarea.value?.focus({ preventScroll: true })
+  })
+}
+
+function firstEnabledProjectPickerIndex(options: ComposerProjectPickerOption[]) {
+  const enabled = options.findIndex((item) => !item.disabled)
+  return enabled >= 0 ? enabled : 0
+}
+
+function nextProjectPickerIndex(current: number, direction: -1 | 1, options: ComposerProjectPickerOption[]) {
+  if (!options.length) return current
+  const len = options.length
+  let next = current
+  for (let step = 0; step < len; step += 1) {
+    next = (next + direction + len) % len
+    if (!options[next].disabled) return next
+  }
+  return current
+}
+
+function closeProjectPicker(preserve = false) {
+  if (!composer.value) return
+  composer.value.projectPickerOpen = false
+  if (!preserve) composer.value.projectPickerIndex = Math.max(0, composer.value.projectPickerIndex)
+}
+
+function selectComposerProject(index: number) {
+  const state = composer.value
+  if (!state) return
+  const option = state.projectPickerOptions[index]
+  if (!option || option.disabled) {
+    if (option?.disabled) {
+      state.error = option.disabledReason || '当前项目不可用'
+      state.errorCode = 'project-unavailable'
+    } else {
+      state.error = '项目选择异常，请重试'
+      state.errorCode = 'project-selection-invalid'
+    }
+    return
+  }
+  state.target = option.target
+  state.projectPickerOpen = false
+  const missingAlias = option.target.projectAlias !== 'chats' && !option.target.projectAlias
+  state.error = missingAlias ? '项目动作已过期，请刷新后重试' : ''
+  state.errorCode = missingAlias ? 'project-alias-missing' : ''
+  state.retryAllowed = true
+  void nextTick(() => {
+    const optionIndex = state.projectPickerOptions.findIndex((candidate) => candidate.target.projectKey === option.target.projectKey && candidate.target.projectAlias === option.target.projectAlias)
+    state.projectPickerIndex = optionIndex >= 0 ? optionIndex : state.projectPickerIndex
+  })
+}
+
+function openComposerProjectPicker() {
+  if (!composer.value) return
+  if (composer.value.projectPickerOpen) return
+  composer.value.projectPickerOpen = true
+  const index = composer.value.projectPickerOptions.findIndex(
+    (option) => option.target.projectKey === composer.value!.target.projectKey && option.target.projectAlias === composer.value!.target.projectAlias
+  )
+  const nextIndex = index >= 0 ? index : firstEnabledProjectPickerIndex(composer.value.projectPickerOptions)
+  composer.value.projectPickerIndex = Math.max(0, nextIndex)
+  if (composer.value.projectPickerOptions[composer.value.projectPickerIndex]?.disabled) {
+    composer.value.projectPickerIndex = nextProjectPickerIndex(
+      composer.value.projectPickerIndex,
+      1,
+      composer.value.projectPickerOptions
+    )
+  }
+  if (composer.value.projectPickerOptions[composer.value.projectPickerIndex]?.disabled) {
+    composer.value.projectPickerIndex = firstEnabledProjectPickerIndex(composer.value.projectPickerOptions)
+  }
+  void nextTick(() => {
+    const selected = composerDialog.value?.querySelector<HTMLElement>(`[data-composer-project-index="${composer.value?.projectPickerIndex}"]`)
+    selected?.focus()
+    selected?.scrollIntoView({ block: 'nearest' })
+  })
 }
 
 function cancelComposer() {
   if (!composer.value) return
   composer.value.prompt = ''
+  composer.value.projectPickerOpen = false
+  composer.value.projectPickerIndex = Math.max(0, firstEnabledProjectPickerIndex(composer.value.projectPickerOptions))
   composer.value = null
   const trigger = composerTrigger
   composerTrigger = null
@@ -535,6 +797,43 @@ async function openBlankFromComposer() {
 
 function onComposerKeydown(event: KeyboardEvent) {
   if (event.isComposing) return
+  if (composer.value?.projectPickerOpen) {
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      event.preventDefault()
+      const options = composer.value?.projectPickerOptions || []
+      if (!options.length) return
+      const direction = event.key === 'ArrowUp' ? -1 : 1
+      const next = nextProjectPickerIndex(composer.value.projectPickerIndex, direction, options)
+      composer.value.projectPickerIndex = next
+      void nextTick(() => {
+        const nextOption = composerDialog.value?.querySelector<HTMLElement>(`[data-composer-project-index="${composer.value?.projectPickerIndex}"]`)
+        nextOption?.focus()
+        nextOption?.scrollIntoView({ block: 'nearest' })
+      })
+      return
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      selectComposerProject(composer.value.projectPickerIndex)
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeProjectPicker()
+      return
+    }
+    if (event.key.toLowerCase() === 'f') {
+      event.preventDefault()
+      closeProjectPicker()
+      return
+    }
+  }
+
+  if (event.key === 'f' || event.key === 'F') {
+    event.preventDefault()
+    openComposerProjectPicker()
+    return
+  }
   if (event.key === 'Escape') {
     event.preventDefault()
     cancelComposer()
@@ -580,9 +879,9 @@ const drawerActions = computed<DrawerAction[]>(() => {
       { id: 'task-new-thread', label: '在当前项目新建会话', disabled: !project?.actionAlias, disabledReason: '项目动作已失效', run: () => openComposer(project) },
       { id: 'task-new-thread-model', label: '选择模型新建会话', disabled: !project?.actionAlias, disabledReason: '项目动作已失效', run: () => openComposer(project, true) },
       { id: 'task-open', label: '打开任务', disabled: !item.task.actionAlias, disabledReason: '任务动作已失效', run: () => openTask(item.task) },
-      { id: 'task-detail', label: '查看详情', run: () => { panel.value = { mode: 'detail', item } } },
+      { id: 'task-detail', label: '查看详情', run: () => openDetailPanel(item) },
       { id: 'task-alias', label: '编辑别名', run: () => editAlias(item) },
-      { id: 'task-pin', label: item.task.pinSource === 'local' ? '取消本地置顶' : '本地置顶', run: () => togglePin(item) },
+      { id: 'task-pin', label: item.task.pinSource === 'native' ? 'Codex 原生置顶（只读）' : item.task.pinSource === 'local' ? '取消本地置顶' : '本地置顶', disabled: item.task.pinSource === 'native', disabledReason: '原生置顶顺序由 Codex 管理', run: () => togglePin(item) },
       { id: 'task-hide', label: item.task.isHidden ? '恢复显示' : '移到已隐藏', disabled: item.task.isHidden && !item.task.hiddenKind, run: () => item.task.isHidden ? restoreTask(item.task) : hideTask(item.task) },
       { id: 'task-archive', label: '真实归档', danger: true, disabled: !item.task.canArchive, disabledReason: '真实活动任务不可归档', run: requestTaskArchive }
     ]
@@ -591,17 +890,20 @@ const drawerActions = computed<DrawerAction[]>(() => {
     { id: 'project-new-thread', label: '新建会话', disabled: !item.project.actionAlias, disabledReason: '项目动作已失效', run: () => openComposer(item.project) },
     { id: 'project-new-thread-model', label: '选择模型新建会话', disabled: !item.project.actionAlias, disabledReason: '项目动作已失效', run: () => openComposer(item.project, true) },
     { id: 'project-toggle', label: isProjectCollapsed(item.project) ? '展开项目' : '折叠项目', run: () => toggleProject(item.project) },
-    { id: 'project-detail', label: '查看项目详情', run: () => { panel.value = { mode: 'detail', item } } },
+    { id: 'project-detail', label: '查看项目详情', run: () => openDetailPanel(item) },
     { id: 'project-alias', label: '编辑项目别名', run: () => editAlias(item) },
-    { id: 'project-pin', label: item.project.pinSource === 'local' ? '取消本地置顶' : '本地置顶', disabled: item.project.kind === 'chats', disabledReason: 'Chats 分组不可置顶', run: () => togglePin(item) },
+    { id: 'project-pin', label: item.project.pinSource === 'native' ? 'Codex 原生置顶（只读）' : item.project.pinSource === 'local' ? '取消本地置顶' : '本地置顶', disabled: item.project.kind === 'chats' || item.project.pinSource === 'native', disabledReason: item.project.kind === 'chats' ? 'Chats 分组不可置顶' : '原生置顶顺序由 Codex 管理', run: () => togglePin(item) },
+    { id: 'project-hide', label: isProjectHidden(item.project) ? '恢复项目分组' : '隐藏项目分组', disabled: item.project.kind === 'chats', disabledReason: 'Chats 分组不可隐藏', run: () => toggleProjectHidden(item.project) },
     { id: 'project-archive', label: '全部归档', danger: true, disabled: !item.project.actionAlias, disabledReason: '项目没有可归档任务', run: () => requestProjectArchive(item.project) },
-    { id: 'project-remove', label: '从 EyPc 移除', danger: true, disabled: item.project.kind === 'chats', disabledReason: 'Chats 分组不可移除', run: () => requestProjectRemove(item.project) }
+    { id: 'project-remove', label: '从 Codex 侧栏移除', danger: true, disabled: item.project.kind === 'chats' || !item.project.actionAlias || !conversations.value?.sourceFingerprint, disabledReason: item.project.kind === 'chats' ? 'Chats 分组不可移除' : '项目动作已失效', run: () => requestProjectRemove(item.project) }
   ]
 })
 
 function action(actionId: string, args: Record<string, unknown> = {}) {
-  if (floatState.value.resizing || resize) return
-  window.eypcFloat?.action(actionId, args)
+  if (floatState.value.resizing || resize) return false
+  const dispatched = window.eypcFloat?.action(actionId, args) === true
+  if (!dispatched) liveMessage.value = '浮窗操作未送达，请重新打开 EyPc 后重试'
+  return dispatched
 }
 
 function requestExpansion(nextExpanded: boolean) {
@@ -623,29 +925,33 @@ function compactCount(value: number) {
   return value > 99 ? '99+' : String(value)
 }
 
+function compactCounterHint(kind: 'input' | 'active' | 'unread') {
+  const count = compactCounts.value[kind]
+  if (kind === 'input') return `待输入 ${count}`
+  if (kind === 'active') return `进行中 ${count}`
+  return `未读 ${count}`
+}
+
+function queueCompactCounterHint(event: PointerEvent, kind: 'input' | 'active' | 'unread') {
+  if (event.pointerType === 'touch') return
+  queueActionHint(event, compactCounterHint(kind))
+}
+
 function openCompactStatus(kind: 'input' | 'active' | 'unread') {
   if (kind === 'input' && compactCounts.value.input === 1) {
     const task = conversations.value?.inputRequired[0]
     if (task) openTask(task)
     return
   }
-  switchTab(kind === 'input' ? 'input' : 'ongoing')
   requestExpansion(true)
-}
-
-function switchTab(tab: CodexTaskTab) {
-  if (activeTab.value === tab) return
-  activeTab.value = tab
-  clearConfirm()
-  closeShiftPreview(true)
-  if (panel.value) closePanel()
-  if (aliasEditor.value) cancelAlias()
-  action('codex.tab.set', { tab })
-  void nextTick(() => focusCurrent())
 }
 
 function openTask(task: CodexTaskCard) {
   if (task.actionAlias) action('codex.task.open', { key: task.key, actionAlias: task.actionAlias })
+}
+
+function taskProject(task: CodexTaskCard) {
+  return conversations.value?.projects.find((project) => project.key === task.projectKey)
 }
 
 function hideTask(task: CodexTaskCard) {
@@ -662,18 +968,54 @@ function toggleProject(project: CodexProjectCard) {
   action('codex.project.collapse', { key: project.key, collapsed })
 }
 
+function isProjectHidden(project: CodexProjectCard) {
+  return conversations.value?.hiddenProjects.some((item) => item.key === project.key) === true
+}
+
+function toggleProjectHidden(project: CodexProjectCard) {
+  if (project.kind === 'chats') return
+  action(isProjectHidden(project) ? 'codex.project.show' : 'codex.project.hide', { key: project.key })
+}
+
 function isProjectCollapsed(project: CodexProjectCard) {
   return Object.prototype.hasOwnProperty.call(optimisticProjectCollapsed.value, project.key)
     ? optimisticProjectCollapsed.value[project.key]
     : project.collapsed
 }
 
+function pinSourceHint(item: FocusItem) {
+  if (item.kind === 'project' && item.project.kind === 'chats') return 'Chats 分组不可置顶'
+  const source = item.kind === 'task' ? item.task.pinSource : item.project.pinSource
+  if (source === 'native') return '来源：Codex 原生置顶 · 顺序只读'
+  if (source === 'local') return '来源：EyPc 本地置顶 · 点击取消'
+  return '未置顶 · 点击后由 EyPc 本地置顶'
+}
+
+function pinSourceValue(item: FocusItem) {
+  if (item.kind === 'project' && item.project.kind === 'chats') return 'blocked'
+  return (item.kind === 'task' ? item.task.pinSource : item.project.pinSource) || 'none'
+}
+
+function pinIsReadOnly(item: FocusItem) {
+  return pinSourceValue(item) === 'native' || pinSourceValue(item) === 'blocked'
+}
+
 function togglePin(item: FocusItem) {
+  if (pinIsReadOnly(item)) {
+    liveMessage.value = pinSourceHint(item)
+    return false
+  }
   action('codex.pin.toggle', { kind: item.kind, key: item.kind === 'task' ? item.task.key : item.project.key })
+  return true
 }
 
 function movePin(item: FocusItem, direction: -1 | 1) {
+  if (pinIsReadOnly(item)) {
+    liveMessage.value = pinSourceHint(item)
+    return false
+  }
   action('codex.pin.move', { kind: item.kind, key: item.kind === 'task' ? item.task.key : item.project.key, direction })
+  return true
 }
 
 function editAlias(item: FocusItem) {
@@ -739,8 +1081,12 @@ function taskArchiveConfirming(task: CodexTaskCard) {
   return id.slice('archive:'.length).split('|').includes(`${task.key}:${task.revisionAt}`)
 }
 
-function requestTaskArchive() {
-  const tasks = archiveCandidates()
+function requestTaskArchive(task?: CodexTaskCard | CodexTaskCard[]) {
+  const targetTasks = task
+    ? Array.isArray(task) ? task : [task]
+    : archiveCandidates()
+  const normalized = targetTasks.filter((candidate) => candidate.canArchive)
+  const tasks = targetTasks.length ? normalized : archiveCandidates()
   if (!tasks.length) {
     liveMessage.value = '当前没有可归档的非活动任务'
     return
@@ -760,7 +1106,20 @@ function requestProjectArchive(project: CodexProjectCard) {
 }
 
 function requestProjectRemove(project: CodexProjectCard) {
-  requestConfirmation(`remove-project:${project.key}`, `从 EyPc 移除 ${project.name}`, () => action('codex.project.remove', { key: project.key }))
+  const sourceFingerprint = conversations.value?.sourceFingerprint || ''
+  if (!project.actionAlias || !sourceFingerprint || project.kind === 'chats') {
+    liveMessage.value = '项目动作或状态指纹已失效，请刷新后重试'
+    return
+  }
+  requestConfirmation(`remove-project:${project.key}`, `从 Codex 侧栏移除 ${project.name}`, () => action('codex.project.remove', {
+    key: project.key,
+    actionAlias: project.actionAlias,
+    sourceFingerprint
+  }))
+}
+
+function projectRemoveConfirming(project: CodexProjectCard) {
+  return pendingConfirm.value?.id === `remove-project:${project.key}`
 }
 
 function setSelection(next: Set<string>, anchor?: string) {
@@ -803,6 +1162,22 @@ function toggleTaskSelection(task: CodexTaskCard) {
   else next.add(task.key)
   setSelection(next, task.key)
   return added
+}
+
+function activateTaskSelection(task: CodexTaskCard, event?: MouseEvent) {
+  if (selectedKeys.value.size) {
+    toggleTaskSelection(task)
+    return
+  }
+  selectTask(task, event)
+}
+
+function activateTaskCore(task: CodexTaskCard, event?: MouseEvent) {
+  if (selectedKeys.value.size || event?.ctrlKey || event?.metaKey) {
+    toggleTaskSelection(task)
+    return
+  }
+  openTask(task)
 }
 
 function selectProjectChildren(project: CodexProjectCard) {
@@ -891,28 +1266,76 @@ function onRowPointerMove(event: PointerEvent, key: string) {
   updateShiftPreview()
 }
 
-function openContextDrawer(item: FocusItem) {
-  panelTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null
+function detailActionId(item: FocusItem) {
+  return item.kind === 'task' ? 'task-detail' : 'project-detail'
+}
+
+function capturePanelTrigger(explicit?: EventTarget | null) {
+  if (panel.value) return
+  panelTrigger = explicit instanceof HTMLElement
+    ? explicit
+    : document.activeElement instanceof HTMLElement ? document.activeElement : null
+}
+
+function openContextDrawer(item: FocusItem, event?: Event) {
+  capturePanelTrigger(event?.currentTarget)
   focusedKey.value = item.key
   if (item.kind === 'project') clearSelection()
   else if (!selectedKeys.value.has(item.task.key)) setSelection(new Set([item.task.key]), item.task.key)
-  panel.value = { mode: 'drawer', item }
+  panel.value = { mode: 'drawer', item, returnActionId: drawerIsBatch.value ? '' : detailActionId(item) }
   drawerActiveIndex.value = 0
   clearConfirm()
+  focusPanelLayer()
 }
 
-function openPanel(mode: 'detail' | 'drawer') {
-  const item = mode === 'drawer' ? drawerItem.value : focusedItem.value
+function openPanel(mode: 'detail' | 'drawer', focusReturnAction = false) {
+  if (mode === 'detail' && drawerIsBatch.value) return
+  const previous = panel.value
+  const item = previous?.item || (mode === 'drawer' ? drawerItem.value : focusedItem.value)
   if (!item) return
-  panelTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null
-  panel.value = { mode, item }
-  drawerActiveIndex.value = 0
+  capturePanelTrigger()
+  const returnActionId = previous?.returnActionId || detailActionId(item)
+  panel.value = { mode, item, returnActionId }
+  drawerActiveIndex.value = mode === 'drawer'
+    ? Math.max(0, drawerActions.value.findIndex((actionItem) => actionItem.id === returnActionId))
+    : 0
   clearConfirm()
+  if (mode === 'drawer' && focusReturnAction) focusDrawerAction(returnActionId)
+  else focusPanelLayer()
+}
+
+function openDetailPanel(item: FocusItem) {
+  if (drawerIsBatch.value) return
+  capturePanelTrigger()
+  panel.value = { mode: 'detail', item, returnActionId: detailActionId(item) }
+  clearConfirm()
+  focusPanelLayer()
+}
+
+function focusDrawerAction(actionId: string) {
+  void nextTick(() => {
+    const index = drawerActions.value.findIndex((item) => item.id === actionId)
+    drawerActiveIndex.value = index >= 0 ? index : 0
+    const actionButton = panelLayer.value?.querySelector<HTMLElement>(`[data-drawer-action-id="${actionId}"]`)
+      || panelLayer.value?.querySelector<HTMLElement>('[data-drawer-index]')
+    actionButton?.focus({ preventScroll: true })
+  })
+}
+
+function returnToDrawer() {
+  if (panel.value?.mode !== 'detail') return
+  openPanel('drawer', true)
+}
+
+function focusPanelLayer() {
+  void nextTick(() => panelLayer.value?.focus({ preventScroll: true }))
 }
 
 function closePanel() {
   if (!panel.value) return
+  panelLayer.value?.blur()
   panel.value = null
+  clearConfirm()
   const trigger = panelTrigger
   panelTrigger = null
   restoreTrigger(trigger)
@@ -1047,7 +1470,8 @@ function quickJumpHitTargetVisible(element: HTMLElement, visibleRect: ReturnType
 }
 
 function quickJumpTargetVisible(element: HTMLElement) {
-  if (element.matches(':disabled') || element.getAttribute('aria-disabled') === 'true') return false
+  if (element.matches(':disabled')) return false
+  if (element.getAttribute('aria-disabled') === 'true' && !element.matches('.action-pin')) return false
   const style = window.getComputedStyle(element)
   if (quickJumpStyleHidden(style)) return false
   const visibleRect = quickJumpVisibleRect(element)
@@ -1146,7 +1570,8 @@ const fallbackCommands: Record<string, string> = {
   'Ctrl+P': 'codex.pin.toggleFocused',
   'Alt+ArrowUp': 'codex.pin.moveUp',
   'Alt+ArrowDown': 'codex.pin.moveDown',
-  'Ctrl+F': 'codex.search.focus',
+  'Ctrl+F': 'codex.quickJump.openForward',
+  'Ctrl+Shift+F': 'codex.search.focus',
   'Ctrl+R': 'codex.refresh',
   'Ctrl+T': 'codex.thread.createFocused',
   F: 'quickJump.openForward',
@@ -1197,18 +1622,51 @@ function commandFor(event: KeyboardEvent, target: HTMLElement, editing = false) 
 }
 
 function cancelTopLayer() {
-  if (pendingConfirm.value) clearConfirm()
-  else if (composer.value) cancelComposer()
-  else if (quickJump.value.open) closeQuickJump(true)
-  else if (shiftPreview.value) closeShiftPreview(true)
-  else if (aliasEditor.value) cancelAlias()
-  else if (panel.value) closePanel()
-  else if (selectedKeys.value.size) clearSelection()
-  else if (searchText.value) searchText.value = ''
-  else if (expanded.value && !resize) {
+  if (pendingConfirm.value) {
+    clearConfirm()
+    return
+  }
+  if (composer.value) {
+    cancelComposer()
+    return
+  }
+  if (quickJump.value.open) {
+    closeQuickJump(true)
+    return
+  }
+  if (shiftPreview.value) {
+    closeShiftPreview(true)
+    return
+  }
+  if (aliasEditor.value) {
+    cancelAlias()
+    return
+  }
+  if (panel.value?.mode === 'detail') {
+    closePanel()
+    return
+  }
+  if (panel.value?.mode === 'drawer') {
+    closePanel()
+    return
+  }
+  if (selectedKeys.value.size) {
+    clearSelection()
+    return
+  }
+  if (searchText.value) {
+    searchText.value = ''
+    return
+  }
+  if (expanded.value && !resize) {
     restoreCompactFocus = true
     requestExpansion(false)
+    return
   }
+}
+
+function returnToPreviousFocus() {
+  window.eypcFloat?.returnFocus()
 }
 
 function handleShiftPreviewArrow(event: KeyboardEvent) {
@@ -1225,19 +1683,33 @@ function handleShiftPreviewArrow(event: KeyboardEvent) {
 
 function onRootKeydown(event: KeyboardEvent) {
   if (event.isComposing) return
-  if (handleShiftPreviewArrow(event)) return
-  if (shortcutFromEvent(event) === 'Escape' && pendingConfirm.value) {
+  const shortcut = shortcutFromEvent(event)
+  const target = event.target as HTMLElement
+
+  if (shortcut === 'Shift+Escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    returnToPreviousFocus()
+    return
+  }
+
+  if (
+    shortcut === 'Escape'
+    && (panel.value || aliasEditor.value || composer.value || pendingConfirm.value || quickJump.value.open || shiftPreview.value || selectedKeys.value.size || Boolean(searchText.value))
+  ) {
     event.preventDefault()
     event.stopPropagation()
     cancelTopLayer()
     return
   }
+
+  if (handleShiftPreviewArrow(event)) return
   if (handleQuickJumpKey(event)) {
     event.preventDefault()
     event.stopPropagation()
     return
   }
-  const target = event.target as HTMLElement
+  if ((shortcut === 'Space' || shortcut === 'Enter') && target.closest('button')) return
   const editing = Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
   const command = commandFor(event, target, editing)
   if (editing) {
@@ -1261,7 +1733,7 @@ function onRootKeydown(event: KeyboardEvent) {
     focusCurrent()
   }
   else if (command === 'codex.float.toggle') action('codex.float.toggle', { source: 'in-app-shortcut' })
-  else if (command === 'quickJump.openForward') openQuickJump(false)
+  else if (command === 'quickJump.openForward' || command === 'codex.quickJump.openForward') openQuickJump(false)
   else if (command === 'quickJump.openBackward') openQuickJump(true)
   else if (command === 'codex.list.up' && panel.value?.mode === 'drawer') moveDrawer(-1)
   else if (command === 'codex.list.down' && panel.value?.mode === 'drawer') moveDrawer(1)
@@ -1277,7 +1749,7 @@ function onRootKeydown(event: KeyboardEvent) {
   else if (command === 'codex.task.openFocused' && item?.kind === 'task') openTask(item.task)
   else if (command === 'codex.task.openFocused' && item?.kind === 'project') toggleProject(item.project)
   else if (command === 'codex.detail.open') openPanel('detail')
-  else if (command === 'codex.drawer.open') openPanel('drawer')
+  else if (command === 'codex.drawer.open') openPanel('drawer', panel.value?.mode === 'detail')
   else if (command === 'codex.task.archiveFocused') requestTaskArchive()
   else if (command === 'codex.alias.edit' && item) editAlias(item)
   else if (command === 'codex.pin.toggleFocused' && item) togglePin(item)
@@ -1294,6 +1766,21 @@ function onRootKeydown(event: KeyboardEvent) {
 
 function onWindowKeydown(event: KeyboardEvent) {
   if (event.isComposing) return
+  if (shortcutFromEvent(event) === 'Shift+Escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    returnToPreviousFocus()
+    return
+  }
+  if (
+    event.key === 'Escape'
+    && (panel.value || aliasEditor.value || composer.value || pendingConfirm.value || quickJump.value.open || shiftPreview.value || selectedKeys.value.size || Boolean(searchText.value))
+  ) {
+    event.preventDefault()
+    event.stopPropagation()
+    cancelTopLayer()
+    return
+  }
   if (event.key === 'Shift') {
     shiftHeld.value = true
     if (event.ctrlKey || event.metaKey || event.altKey) shiftPreviewSuppressed.value = true
@@ -1316,6 +1803,32 @@ function onWindowKeyup(event: KeyboardEvent) {
   closeShiftPreview()
 }
 
+function onPanelLayerKeydown(event: KeyboardEvent) {
+  if (event.isComposing) return
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    cancelTopLayer()
+    return
+  }
+  const target = event.target as HTMLElement
+  const command = commandFor(event, target)
+  if (!command) return
+  if (command === 'codex.detail.open') openPanel('detail')
+  else if (command === 'codex.drawer.open') openPanel('drawer', panel.value?.mode === 'detail')
+  else if (command === 'codex.list.up' && panel.value?.mode === 'drawer') moveDrawer(-1)
+  else if (command === 'codex.list.down' && panel.value?.mode === 'drawer') moveDrawer(1)
+  else if (command === 'codex.task.openFocused' && panel.value?.mode === 'drawer') executeDrawerAction(drawerActiveIndex.value)
+  else if (command.startsWith('codex.drawer.select.') && panel.value?.mode === 'drawer') executeDrawerAction(Number(command.split('.').at(-1)) - 1)
+  else return
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+function taskCanRestore(task: CodexTaskCard) {
+  return task.isHidden && Boolean(task.hiddenKind)
+}
+
 function onWindowBlur() {
   shiftHeld.value = false
   shiftPreviewSuppressed.value = false
@@ -1330,6 +1843,9 @@ function onWindowResize() {
 
 function onPointerDown(event: PointerEvent) {
   const target = event.target as HTMLElement
+  if (expanded.value && !target.closest('input, textarea, select, [contenteditable="true"]')) {
+    rootElement.value?.focus({ preventScroll: true })
+  }
   if (pendingConfirm.value && !target.closest('[data-confirm-slot]')) clearConfirm()
   if (resize || target.closest('.float-resize-handle')) return
   const compactTarget = target.closest('.float-compact')
@@ -1390,6 +1906,7 @@ function scheduleCollapse() {
 function onMouseLeave() {
   hoverInside = false
   hoveredTaskKey.value = ''
+  clearActionHint()
   updateShiftPreview()
   scheduleCollapse()
 }
@@ -1472,15 +1989,36 @@ function formatTaskDateTime(value: number | undefined) {
   }).format(new Date(value))
 }
 
+function clearActionHint() {
+  if (actionHintTimer) clearTimeout(actionHintTimer)
+  actionHintTimer = null
+  actionHint.value = null
+}
+
+function queueActionHint(event: Event, label: string) {
+  clearActionHint()
+  const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  if (!target || !label) return
+  const bounds = target.getBoundingClientRect()
+  const placement: 'top' | 'bottom' = bounds.top >= 48 ? 'top' : 'bottom'
+  const left = Math.max(68, Math.min(window.innerWidth - 68, bounds.left + bounds.width / 2))
+  const top = placement === 'top' ? bounds.top - 7 : bounds.bottom + 7
+  actionHintTimer = setTimeout(() => {
+    if (!target.isConnected) return
+    actionHint.value = { label, left, top, placement }
+  }, 200)
+}
+
 function taskStateLabel(task: CodexTaskCard) {
-  if (task.bucket === 'completed-unread') return '已完成 · 未查看'
-  if (task.bucket === 'completed') return '已完成'
-  if (task.activityState === 'waiting-approval') return '等待审批'
   if (task.activityState === 'waiting-input') return '等待输入'
+  if (task.activityState === 'waiting-approval') return '等待审批'
+  if (task.state === 'running' || task.activityState === 'active') return '进行中'
+  if (task.bucket === 'completed-unread') return '已完成 · 未读'
+  if (task.bucket === 'completed') return task.unreadState === 'unknown' ? '已完成 · 未读状态未知' : '已完成'
   if (task.activityState === 'failed') return '执行失败'
   if (task.activityState === 'interrupted') return '已中断'
   if (task.activityState === 'system-error') return '系统错误'
-  if (task.activityState === 'unknown') return '状态待核验'
+  if (task.activityState === 'unknown') return '宿主状态未知'
   return '进行中'
 }
 
@@ -1489,14 +2027,11 @@ function taskIcon(task: CodexTaskCard) {
   if (task.bucket === 'completed' || task.bucket === 'completed-unread') return Eye
   if (task.activityState === 'waiting-input') return MessageSquareText
   if (task.activityState === 'waiting-approval') return ShieldCheck
+  if (task.state === 'running') return CirclePlay
   if (['failed', 'interrupted', 'system-error'].includes(task.activityState)) return TriangleAlert
   if (task.activityState === 'active') return CirclePlay
   return History
 }
-
-watch(() => conversations.value?.activeTab, (tab) => {
-  if (tab && tabs.some((item) => item.id === tab)) activeTab.value = tab
-}, { immediate: true })
 
 watch(() => conversations.value?.projects.map((project) => `${project.key}:${project.collapsed}`).join('|'), () => {
   const next = { ...optimisticProjectCollapsed.value }
@@ -1510,10 +2045,16 @@ watch(() => conversations.value?.projects.map((project) => `${project.key}:${pro
   if (changed) optimisticProjectCollapsed.value = next
 })
 
-watch([searchText, activeTab, renderRows], () => {
+watch([searchText, renderRows], () => {
   const visible = visibleTaskKeys.value
   selectedKeys.value = new Set([...selectedKeys.value].filter((key) => visible.has(key)))
   if (!focusItems.value.some((item) => item.key === focusedKey.value)) focusedKey.value = focusItems.value[0]?.key || ''
+  if (panel.value) {
+    const currentPanel = panel.value
+    const refreshedItem = focusItems.value.find((item) => item.key === currentPanel.item.key)
+    if (refreshedItem) panel.value = { ...currentPanel, item: refreshedItem }
+    else closePanel()
+  }
   clearConfirm()
   closeQuickJump()
   closeShiftPreview(true)
@@ -1536,7 +2077,6 @@ onMounted(() => {
   floatState.value = window.eypcFloat?.getState() || floatState.value
   expanded.value = floatState.value.expanded
   desiredExpanded = expanded.value
-  if (snapshot.value?.conversations.activeTab) activeTab.value = snapshot.value.conversations.activeTab
   stopSnapshot = window.eypcFloat?.onSnapshot((value) => { snapshot.value = value }) || null
   stopState = window.eypcFloat?.onState((value) => {
     floatState.value = value
@@ -1563,6 +2103,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (collapseTimer) clearTimeout(collapseTimer)
+  clearActionHint()
   closeShiftPreview()
   if (composer.value) composer.value.prompt = ''
   composer.value = null
@@ -1585,6 +2126,7 @@ onUnmounted(() => {
     class="codex-float-root"
     :class="[{ expanded, resizing: floatState.resizing, card: settings?.style === 'card', water: settings?.style !== 'card' }, floatState.resizeCorner ? `resize-${floatState.resizeCorner}` : '']"
     :style="rootStyle"
+    tabindex="-1"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
@@ -1634,33 +2176,40 @@ onUnmounted(() => {
         v-if="compactCounts.input"
         type="button"
         class="float-counter input"
-        :aria-label="`${compactCounts.input} 个待输入任务`"
+        :aria-label="compactCounterHint('input')"
+        @pointerenter.stop="queueCompactCounterHint($event, 'input')"
+        @pointermove.stop
+        @pointerleave.stop="clearActionHint"
+        @focus="queueActionHint($event, compactCounterHint('input'))"
+        @blur="clearActionHint"
         @click.stop="openCompactStatus('input')"
       >{{ compactCount(compactCounts.input) }}</button>
-      <button v-if="compactCounts.active" type="button" class="float-counter active" :aria-label="`${compactCounts.active} 个当前动态任务`" @click.stop="openCompactStatus('active')">{{ compactCount(compactCounts.active) }}</button>
-      <button v-if="compactCounts.unread" type="button" class="float-counter unread" :aria-label="`${compactCounts.unread} 个已完成未查看任务`" @click.stop="openCompactStatus('unread')">{{ compactCount(compactCounts.unread) }}</button>
+      <button v-if="compactCounts.active" type="button" class="float-counter active" :aria-label="compactCounterHint('active')" @pointerenter.stop="queueCompactCounterHint($event, 'active')" @pointermove.stop @pointerleave.stop="clearActionHint" @focus="queueActionHint($event, compactCounterHint('active'))" @blur="clearActionHint" @click.stop="openCompactStatus('active')">{{ compactCount(compactCounts.active) }}</button>
+      <button v-if="compactCounts.unread" type="button" class="float-counter unread" :aria-label="compactCounterHint('unread')" @pointerenter.stop="queueCompactCounterHint($event, 'unread')" @pointermove.stop @pointerleave.stop="clearActionHint" @focus="queueActionHint($event, compactCounterHint('unread'))" @blur="clearActionHint" @click.stop="openCompactStatus('unread')">{{ compactCount(compactCounts.unread) }}</button>
     </div>
 
     <section v-else class="float-expanded-card" aria-label="Codex Companion">
-      <nav class="float-task-tabs" role="tablist" aria-label="Codex 会话分类">
+      <div class="float-task-tabs" role="tablist" aria-label="会话分组">
         <button
           v-for="tab in tabs"
           :key="tab.id"
           type="button"
           role="tab"
-          :aria-selected="activeTab === tab.id"
-          :tabindex="activeTab === tab.id ? 0 : -1"
-          :class="{ active: activeTab === tab.id }"
-          data-quick-jump-target
-          :data-quick-jump-label="`切换到${tab.label}`"
-          @click.stop="switchTab(tab.id)"
-        >{{ tab.label }} <span>{{ tabCounts[tab.id] }}</span></button>
-      </nav>
+          :aria-selected="selectedUiTab === tab.id"
+          :class="{ active: selectedUiTab === tab.id }"
+          :data-quick-jump-target="tab.label"
+          @click="switchComposerTab(tab.id)"
+        >
+          <span>{{ tab.count }}</span>
+          <span>{{ tab.label }}</span>
+        </button>
+      </div>
+
       <div class="float-drag-handle" aria-hidden="true" />
 
       <label class="float-search">
         <Search :size="14" aria-hidden="true" />
-        <input ref="searchInput" v-model="searchText" type="search" placeholder="搜索本页会话、别名或项目" aria-label="搜索当前 Codex 页签" data-quick-jump-target data-quick-jump-label="搜索当前页签" />
+            <input ref="searchInput" v-model="searchText" type="search" placeholder="搜索会话、别名或项目" aria-label="搜索当前 Codex 页签" data-quick-jump-target data-quick-jump-label="搜索当前 Codex 页签" />
         <button v-if="searchText" type="button" aria-label="清空搜索" data-quick-jump-target @click.stop="searchText = ''"><X :size="13" /></button>
       </label>
 
@@ -1682,75 +2231,165 @@ onUnmounted(() => {
       </form>
 
       <section v-if="settings?.conversationInboxEnabled" class="float-task-inbox">
+        <div v-if="selectedKeys.size" class="float-selection-mode-bar" role="status" aria-live="polite">
+          <strong>选择模式</strong>
+          <span>已选 {{ selectedKeys.size }} 项</span>
+          <kbd>Esc 退出</kbd>
+        </div>
         <div class="float-task-list-stage">
           <div
             ref="taskScroll"
             class="float-task-scroll"
             :class="{
               'batch-toolbar-top': showBatchToolbar && batchPlacement === 'top',
-              'batch-toolbar-bottom': showBatchToolbar && batchPlacement === 'bottom'
+              'batch-toolbar-bottom': showBatchToolbar && batchPlacement === 'bottom',
+              'selection-mode': selectedKeys.size > 0
             }"
-            :role="activeTab === 'projects' ? 'tree' : 'listbox'"
-            :aria-multiselectable="activeTab === 'projects' ? undefined : true"
-            :aria-label="`${tabs.find((tab) => tab.id === activeTab)?.label || ''}会话`"
+            role="listbox"
+            :aria-multiselectable="true"
+            aria-label="动态会话"
             @scroll.passive="updateBatchPlacement"
           >
           <template v-for="row in renderRows" :key="row.key">
             <h2 v-if="row.kind === 'section'" class="float-project-section">{{ row.section.title }}</h2>
+            <h2 v-else-if="row.kind === 'hidden-project-section'" class="float-project-section hidden-project-section">{{ row.title }}</h2>
             <h2 v-else-if="row.kind === 'status-section'" class="float-status-section" :class="row.tone"><span>{{ row.title }}</span><em>{{ row.count }}</em></h2>
 
             <div
               v-else-if="row.kind === 'project'"
               class="float-project-row"
-              :class="{ highlighted: focusedKey === row.key }"
+              :class="{ highlighted: focusedKey === row.key, 'hidden-project': row.hiddenProject }"
               role="treeitem"
-              :aria-expanded="!isProjectCollapsed(row.project)"
-              :aria-label="`${row.project.name}，${row.project.tasks.length} 个窗口内任务`"
+              :aria-expanded="row.hiddenProject ? undefined : !isProjectCollapsed(row.project)"
+              :aria-label="`${row.project.name}，${row.project.tasks.length} 个窗口内任务${row.hiddenProject ? '，项目分组已隐藏' : ''}`"
+              :data-pin-source="row.project.pinSource"
               :tabindex="focusedKey === row.key ? 0 : -1"
               :data-focus-key="row.key"
               data-quick-jump-target
-              :data-quick-jump-label="`${isProjectCollapsed(row.project) ? '展开' : '折叠'}项目 ${row.project.name}`"
+              :data-quick-jump-label="row.hiddenProject ? `聚焦已隐藏项目 ${row.project.name}` : `${isProjectCollapsed(row.project) ? '展开' : '折叠'}项目 ${row.project.name}`"
               @focus="focusedKey = row.key"
               @pointermove="onRowPointerMove($event, row.key)"
-              @contextmenu.prevent.stop="openContextDrawer(row)"
+              @contextmenu.prevent.stop="openContextDrawer(row, $event)"
             >
-              <button type="button" class="project-main" data-quick-jump-target :data-quick-jump-label="`${isProjectCollapsed(row.project) ? '展开' : '折叠'}项目 ${row.project.name}`" @click.stop="focusedKey = row.key; toggleProject(row.project)">
-                <ChevronRight v-if="isProjectCollapsed(row.project)" :size="14" /><ChevronDown v-else :size="14" />
-                <Folder v-if="isProjectCollapsed(row.project)" :size="15" /><FolderOpen v-else :size="15" />
-                <span><strong>{{ row.project.name }}</strong><small v-if="row.project.alias">原名：{{ row.project.originalName }}</small><small v-else>{{ row.project.tasks.length ? `${row.project.tasks.length} 个最近任务` : `最近 ${settings?.timeWindowDays || 30} 天无会话` }}</small></span>
-                <em v-if="row.project.pinSource === 'local'">本地</em>
+              <button type="button" class="project-main" data-quick-jump-target :data-quick-jump-label="row.hiddenProject ? `查看已隐藏项目 ${row.project.name}` : `${isProjectCollapsed(row.project) ? '展开' : '折叠'}项目 ${row.project.name}`" @click.stop="focusedKey = row.key; row.hiddenProject ? openContextDrawer(row) : toggleProject(row.project)">
+                <template v-if="row.hiddenProject"><EyeOff :size="14" /><Folder :size="15" /></template>
+                <template v-else><ChevronRight v-if="isProjectCollapsed(row.project)" :size="14" /><ChevronDown v-else :size="14" /><Folder v-if="isProjectCollapsed(row.project)" :size="15" /><FolderOpen v-else :size="15" /></template>
+                <span><strong>{{ row.project.name }}</strong><small v-if="row.hiddenProject">项目分组已隐藏 · 任务仍在其他页签</small><small v-else>{{ row.project.tasks.length ? `${row.project.tasks.length} 个最近任务` : `最近 ${settings?.timeWindowDays || 30} 天无会话` }}</small></span>
               </button>
-              <button type="button" class="project-new-thread" :disabled="!row.project.actionAlias" :aria-label="row.project.actionAlias ? `在 ${row.project.name} 新建会话` : '项目动作已失效'" data-quick-jump-target :data-quick-jump-label="`在 ${row.project.name} 新建会话`" @click.stop="focusedKey = row.key; openComposer(row.project)"><Plus :size="15" aria-hidden="true" /></button>
+              <div class="project-inline-actions" role="toolbar" :aria-label="`${row.project.name} 项目操作`">
+                <button type="button" class="inline-character-button action-pin" :data-pin-source="pinSourceValue(row)" :aria-disabled="pinIsReadOnly(row)" :aria-pressed="Boolean(row.project.pinSource)" :aria-label="`${row.project.name}，${pinSourceHint(row)}`" data-quick-jump-target :data-quick-jump-label="pinSourceHint(row)" @pointerenter="queueActionHint($event, pinSourceHint(row))" @pointerleave="clearActionHint" @focus="queueActionHint($event, pinSourceHint(row))" @blur="clearActionHint" @click.stop="focusedKey = row.key; togglePin(row)">顶</button>
+                <button type="button" class="inline-character-button action-remove" :class="{ confirming: projectRemoveConfirming(row.project) }" :disabled="row.project.kind === 'chats' || !row.project.actionAlias || !conversations?.sourceFingerprint" :aria-label="projectRemoveConfirming(row.project) ? `确认从 Codex 侧栏移除 ${row.project.name}` : `从 Codex 侧栏移除 ${row.project.name}`" data-confirm-slot data-quick-jump-target :data-quick-jump-label="`从 Codex 移除 ${row.project.name}`" @pointerenter="queueActionHint($event, projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @pointerleave="clearActionHint" @focus="queueActionHint($event, projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @blur="clearActionHint" @click.stop="focusedKey = row.key; requestProjectRemove(row.project)">{{ projectRemoveConfirming(row.project) ? '确' : '移' }}</button>
+                <button type="button" class="inline-character-button action-hide" :disabled="row.project.kind === 'chats'" :aria-pressed="isProjectHidden(row.project)" :aria-label="isProjectHidden(row.project) ? `恢复项目分组 ${row.project.name}` : `隐藏项目分组 ${row.project.name}`" data-quick-jump-target :data-quick-jump-label="isProjectHidden(row.project) ? `恢复项目 ${row.project.name}` : `隐藏项目 ${row.project.name}`" @pointerenter="queueActionHint($event, isProjectHidden(row.project) ? '恢复项目页分组' : '仅隐藏项目页分组；任务仍保留')" @pointerleave="clearActionHint" @focus="queueActionHint($event, isProjectHidden(row.project) ? '恢复项目页分组' : '仅隐藏项目页分组；任务仍保留')" @blur="clearActionHint" @click.stop="focusedKey = row.key; toggleProjectHidden(row.project)">{{ isProjectHidden(row.project) ? '显' : '隐' }}</button>
+                <button type="button" class="inline-character-button action-create" :disabled="!row.project.actionAlias" :aria-label="row.project.actionAlias ? `在 ${row.project.name} 新建会话` : '项目动作已失效'" data-quick-jump-target :data-quick-jump-label="`在 ${row.project.name} 新建会话`" @pointerenter="queueActionHint($event, '在该项目新建会话')" @pointerleave="clearActionHint" @focus="queueActionHint($event, '在该项目新建会话')" @blur="clearActionHint" @click.stop="focusedKey = row.key; openComposer(row.project)">+</button>
+              </div>
             </div>
 
             <div
               v-else-if="row.kind === 'task'"
               class="float-task-row"
               :class="[`task-${row.task.activityState}`, `bucket-${row.task.bucket}`, { nested: row.nested, selected: selectedKeys.has(row.task.key), hidden: row.task.isHidden, highlighted: focusedKey === row.key }]"
-              :role="activeTab === 'projects' ? 'treeitem' : 'option'"
+              role="option"
               :aria-selected="selectedKeys.has(row.task.key)"
-              :aria-label="`${row.task.name}，${row.task.projectName}，${taskStateLabel(row.task)}`"
+              :aria-label="`${taskDisplayLabel(row.task)}，${row.task.projectName}，${taskStateLabel(row.task)}`"
+              :data-pin-source="row.task.pinSource"
               :tabindex="focusedKey === row.key ? 0 : -1"
               :data-focus-key="row.key"
               data-quick-jump-target
-              :data-quick-jump-label="`聚焦任务 ${row.task.name}`"
+              :data-quick-jump-label="`聚焦任务 ${taskDisplayLabel(row.task)}`"
               @focus="focusedKey = row.key"
               @pointermove="onRowPointerMove($event, row.key)"
               @pointerenter="onTaskPointerEnter(row.task)"
               @pointerleave="onTaskPointerLeave(row.task)"
-              @click.stop="selectTask(row.task, $event)"
-              @dblclick.stop="openTask(row.task)"
-              @contextmenu.prevent.stop="openContextDrawer(row)"
+              @click="activateTaskCore(row.task, $event)"
+              @contextmenu.prevent.stop="openContextDrawer(row, $event)"
             >
-              <span class="task-state-button" :aria-label="`状态：${taskStateLabel(row.task)}`">
+              <button
+                type="button"
+                class="task-state-button"
+                :class="{ clickable: taskCanRestore(row.task) }"
+                :aria-pressed="selectedKeys.has(row.task.key)"
+                :aria-label="`左侧区域：${selectedKeys.has(row.task.key) ? '移出选择' : '加入选择'} ${taskDisplayLabel(row.task)}`"
+                @pointerenter="queueActionHint($event, `${taskStateLabel(row.task)}；点击切换选择`)"
+                @pointerleave="clearActionHint"
+                @focus="queueActionHint($event, `${taskStateLabel(row.task)}；点击切换选择`)"
+                @blur="clearActionHint"
+                @click.stop="focusedKey = row.key; activateTaskSelection(row.task, $event)"
+                data-quick-jump-target
+                :data-quick-jump-label="`切换选择 ${taskDisplayLabel(row.task)}`"
+              >
                 <component :is="taskIcon(row.task)" :size="14" class="task-state-icon" aria-hidden="true" />
-              </span>
-              <span class="task-copy">
-                <strong>{{ row.task.name }}</strong>
-                <small v-if="row.task.alias">原名：{{ row.task.originalName }}</small>
-                <small>{{ row.task.projectName }} · {{ taskStateLabel(row.task) }} · {{ formatTaskTime(row.task.lastQuestionAt) }}</small>
-              </span>
-              <em v-if="row.task.isHidden">隐藏</em><em v-if="row.task.pinSource === 'local'">本地</em>
+              </button>
+              <div
+                class="task-open"
+                @click.stop="activateTaskCore(row.task, $event)"
+              >
+                <span class="task-copy">
+                  <strong>{{ taskDisplayLabel(row.task) }}</strong>
+                  <small>{{ row.task.projectName }} · {{ taskStateLabel(row.task) }} · {{ formatTaskTime(row.task.lastQuestionAt) }}</small>
+                </span>
+                <div class="task-inline-actions" role="toolbar" :aria-label="`${taskDisplayLabel(row.task)} 会话操作`">
+                <button
+                  type="button"
+                  class="inline-character-button action-pin"
+                    :data-pin-source="pinSourceValue(row)"
+                    :aria-disabled="pinIsReadOnly(row)"
+                    :aria-pressed="Boolean(row.task.pinSource)"
+                    :aria-label="`${taskDisplayLabel(row.task)}，${pinSourceHint(row)}`"
+                    data-quick-jump-target
+                    :data-quick-jump-label="pinSourceHint(row)"
+                    @pointerenter="queueActionHint($event, pinSourceHint(row))"
+                  @pointerleave="clearActionHint"
+                  @focus="queueActionHint($event, pinSourceHint(row))"
+                  @blur="clearActionHint"
+                  @click.stop="focusedKey = row.key; togglePin(row)"
+                >顶</button>
+                <button
+                  type="button"
+                  class="inline-character-button action-hide"
+                    :aria-label="row.task.isHidden ? `恢复显示 ${taskDisplayLabel(row.task)}` : `隐藏 ${taskDisplayLabel(row.task)}`"
+                    data-quick-jump-target
+                    :data-quick-jump-label="row.task.isHidden ? `恢复显示 ${taskDisplayLabel(row.task)}` : `隐藏 ${taskDisplayLabel(row.task)}`"
+                    :disabled="row.task.isHidden && !row.task.hiddenKind"
+                    @pointerenter="queueActionHint($event, row.task.isHidden ? '恢复会话显示' : '移到 Companion 已隐藏区')"
+                  @pointerleave="clearActionHint"
+                  @focus="queueActionHint($event, row.task.isHidden ? '恢复会话显示' : '移到 Companion 已隐藏区')"
+                  @blur="clearActionHint"
+                  @click.stop="focusedKey = row.key; row.task.isHidden ? restoreTask(row.task) : hideTask(row.task)"
+                >
+                    {{ row.task.isHidden ? '显' : '隐' }}
+                  </button>
+                <button
+                  type="button"
+                  class="inline-character-button action-archive"
+                    :class="{ confirming: taskArchiveConfirming(row.task) }"
+                    :aria-label="taskArchiveConfirming(row.task) ? `确认归档 ${taskDisplayLabel(row.task)}` : `归档 ${taskDisplayLabel(row.task)}`"
+                    data-confirm-slot
+                    data-quick-jump-target
+                    :data-quick-jump-label="`归档 ${taskDisplayLabel(row.task)}`"
+                    :disabled="!row.task.canArchive"
+                    @pointerenter="queueActionHint($event, taskArchiveConfirming(row.task) ? '再次点击确认真实归档' : row.task.canArchive ? '真实归档 Codex 会话' : '真实活动任务不可归档')"
+                  @pointerleave="clearActionHint"
+                  @focus="queueActionHint($event, taskArchiveConfirming(row.task) ? '再次点击确认真实归档' : row.task.canArchive ? '真实归档 Codex 会话' : '真实活动任务不可归档')"
+                  @blur="clearActionHint"
+                  @click.stop="focusedKey = row.key; requestTaskArchive(row.task)"
+                >
+                    {{ taskArchiveConfirming(row.task) ? '确' : '归' }}
+                  </button>
+                <button
+                  type="button"
+                  class="inline-character-button action-create"
+                    :aria-label="`在 ${row.task.projectName} 新建会话`"
+                    data-quick-jump-target
+                    :data-quick-jump-label="`在 ${row.task.projectName} 新建会话`"
+                    :disabled="!taskProject(row.task)?.actionAlias"
+                    @pointerenter="queueActionHint($event, '在所属项目新建会话')"
+                  @pointerleave="clearActionHint"
+                  @focus="queueActionHint($event, '在所属项目新建会话')"
+                  @blur="clearActionHint"
+                  @click.stop="focusedKey = row.key; taskProject(row.task) && openComposer(taskProject(row.task)!)"
+                >+</button>
+              </div>
+            </div>
             </div>
 
             <div v-else-if="row.kind === 'empty-project'" class="float-project-empty">最近 {{ settings?.timeWindowDays || 30 }} 天无会话</div>
@@ -1766,27 +2405,49 @@ onUnmounted(() => {
 
           <div v-if="showBatchToolbar" class="float-batch-toolbar" :class="batchPlacement" role="toolbar" :aria-label="`已选择 ${selectedTasks.length} 个任务的批量操作`">
             <strong>已选 {{ selectedTasks.length }}</strong>
-            <button type="button" class="danger" :class="{ confirming: pendingConfirm?.id?.startsWith('archive:') }" aria-label="归档当前多选任务；仅归档通过真实状态核验的任务" data-confirm-slot data-quick-jump-target @click.stop="requestTaskArchive"><span aria-hidden="true">{{ pendingConfirm?.id?.startsWith('archive:') ? '确' : '归' }}</span></button>
+            <button type="button" class="danger" :class="{ confirming: pendingConfirm?.id?.startsWith('archive:') }" aria-label="归档当前多选任务；仅归档通过真实状态核验的任务" data-confirm-slot data-quick-jump-target @click.stop="requestTaskArchive()"><span aria-hidden="true">{{ pendingConfirm?.id?.startsWith('archive:') ? '确' : '归' }}</span></button>
             <button type="button" aria-label="打开当前多选的完整操作；快捷键 Ctrl+右箭头" data-quick-jump-target @click.stop="openBatchDrawer"><span aria-hidden="true">操</span></button>
             <button type="button" aria-label="清空当前多选" data-quick-jump-target @click.stop="clearSelection"><span aria-hidden="true">清</span></button>
           </div>
         </div>
 
-        <section v-if="activeTab === 'projects' && removedProjects.length" class="float-removed-projects" aria-label="已从 EyPc 移除的项目">
-          <strong>已从 EyPc 移除</strong>
-          <button v-for="project in removedProjects" :key="project.key" type="button" @click="action('codex.project.restore', { key: project.key })"><RotateCcw :size="12" />恢复 {{ project.name }}</button>
-        </section>
       </section>
 
-      <aside v-if="panel" class="float-side-panel" :class="panel.mode" :aria-label="panel.mode === 'detail' ? '当前项详情' : '批量与完整操作'">
-        <header><strong>{{ panel.mode === 'detail' ? '详情' : drawerIsBatch ? `多选操作 · ${selectedTasks.length} 项` : '单项完整操作' }}</strong><button type="button" aria-label="关闭" data-quick-jump-target @click="closePanel"><X :size="14" /></button></header>
+      <aside
+        v-if="panel"
+        ref="panelLayer"
+        tabindex="-1"
+        class="float-side-panel"
+        :class="panel.mode"
+        :aria-label="panel.mode === 'detail' ? '当前项详情' : '批量与完整操作'"
+        @keydown.stop="onPanelLayerKeydown"
+      >
+        <header>
+          <strong>{{ panel.mode === 'detail' ? '详情' : drawerIsBatch ? `多选操作 · ${selectedTasks.length} 项` : '单项完整操作' }}</strong>
+          <button v-if="panel.mode === 'detail'" type="button" aria-label="返回更多操作" data-quick-jump-target @click="returnToDrawer"><ArrowLeft :size="14" aria-hidden="true" /><span>返回更多操作</span></button>
+          <button v-else type="button" aria-label="关闭" data-quick-jump-target @click="closePanel"><X :size="14" aria-hidden="true" /></button>
+        </header>
         <template v-if="panel.mode === 'detail'">
           <dl v-if="panel.item.kind === 'task'">
-            <div><dt>标题</dt><dd>{{ panel.item.task.name }}</dd></div><div v-if="panel.item.task.alias"><dt>原名</dt><dd>{{ panel.item.task.originalName }}</dd></div>
+            <div>
+              <dt>标题</dt>
+              <dd>
+                {{ taskDisplayLabel(panel.item.task) }}
+                <span
+                  v-if="taskTooltip(panel.item.task) !== taskDisplayLabel(panel.item.task)"
+                  class="codex-tip"
+                  role="button"
+                  tabindex="0"
+                  aria-label="查看完整标题"
+                  :data-tip="taskTooltip(panel.item.task)"
+                >i</span>
+              </dd>
+            </div>
+            <div v-if="panel.item.task.alias"><dt>原名</dt><dd>{{ taskTooltip(panel.item.task) }}</dd></div>
             <div><dt>项目</dt><dd>{{ panel.item.task.projectName }}</dd></div><div><dt>状态</dt><dd>{{ taskStateLabel(panel.item.task) }}</dd></div>
             <div><dt>最后提问</dt><dd>{{ formatTaskDateTime(panel.item.task.lastQuestionAt) }}（{{ formatTaskTime(panel.item.task.lastQuestionAt) }}）</dd></div>
           </dl>
-          <dl v-else><div><dt>项目</dt><dd>{{ panel.item.project.name }}</dd></div><div><dt>窗口内任务</dt><dd>{{ panel.item.project.tasks.length }}</dd></div><div><dt>顺序</dt><dd>{{ panel.item.project.nativePinned ? 'Codex 原生置顶' : 'Codex 原生项目顺序' }}</dd></div></dl>
+          <dl v-else><div><dt>项目</dt><dd>{{ panel.item.project.name }}</dd></div><div v-if="panel.item.project.alias"><dt>原名</dt><dd>{{ panel.item.project.originalName }}</dd></div><div><dt>窗口内任务</dt><dd>{{ panel.item.project.tasks.length }}</dd></div><div><dt>顺序</dt><dd>{{ panel.item.project.nativePinned ? 'Codex 原生置顶' : 'Codex 原生项目顺序' }}</dd></div></dl>
         </template>
         <div v-else class="float-drawer-actions">
           <button
@@ -1797,6 +2458,7 @@ onUnmounted(() => {
             :disabled="item.disabled"
             :aria-label="item.disabled && item.disabledReason ? `${item.label}，${item.disabledReason}` : item.label"
             :data-drawer-index="index"
+            :data-drawer-action-id="item.id"
             data-quick-jump-target
             @focus="drawerActiveIndex = index"
             @click="executeDrawerAction(index)"
@@ -1813,7 +2475,7 @@ onUnmounted(() => {
         aria-label="会话详情预览"
         @wheel.stop
       >
-        <header><kbd>Shift</kbd><strong>{{ shiftPreview.task.name }}</strong></header>
+        <header><kbd>Shift</kbd><strong>{{ taskDisplayLabel(shiftPreview.task) }}</strong></header>
         <dl>
           <div v-if="shiftPreview.task.alias"><dt>原名</dt><dd>{{ shiftPreview.task.originalName }}</dd></div>
           <div><dt>项目</dt><dd>{{ shiftPreview.task.projectName }}</dd></div>
@@ -1841,9 +2503,33 @@ onUnmounted(() => {
           @keydown.stop="onComposerKeydown"
         >
           <header>
-            <span><small>新建会话到</small><strong id="codex-composer-title">{{ composer.target.projectName }}</strong></span>
+            <span class="composer-project-info">
+              <small>目标项目</small>
+              <strong id="codex-composer-title">{{ composer.target.projectName }}</strong>
+              <small class="composer-project-switch-hint">按 F 重新选择项目</small>
+            </span>
+            <button type="button" class="composer-project-switch" :disabled="composer.submitting" @click="openComposerProjectPicker">重选项目</button>
             <button type="button" aria-label="取消新建会话" :disabled="composer.submitting" @click="cancelComposer"><X :size="16" aria-hidden="true" /></button>
           </header>
+
+          <div v-if="composer.projectPickerOpen" class="composer-project-picker" role="listbox" aria-label="新建会话目标项目">
+            <button
+              v-for="(option, index) in composer.projectPickerOptions"
+              :key="option.key"
+              type="button"
+              role="option"
+              :aria-selected="composer.projectPickerIndex === index"
+              :aria-disabled="option.disabled"
+              :disabled="option.disabled"
+              :class="{ active: composer.projectPickerIndex === index }"
+              :data-composer-project-index="index"
+              :title="option.disabledReason || option.label"
+              @click.stop="selectComposerProject(index)"
+            >
+              <span>{{ option.label }}</span>
+              <small v-if="option.disabledReason">{{ option.disabledReason }}</small>
+            </button>
+          </div>
 
           <label class="composer-model-field">
             <span>本次模型</span>
@@ -1909,5 +2595,13 @@ onUnmounted(() => {
         @keydown.stop="onResizeHandleKeydown($event, floatState.resizeCorner)"
       />
     </section>
+
+    <div
+      v-if="actionHint"
+      class="float-action-hint"
+      :class="actionHint.placement"
+      :style="{ left: `${actionHint.left}px`, top: `${actionHint.top}px` }"
+      role="tooltip"
+    >{{ actionHint.label }}</div>
   </main>
 </template>
