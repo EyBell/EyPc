@@ -13,6 +13,8 @@ const CHANNELS = {
   threadOpenResult: 'eypc-float:thread-open-result',
   blankOpen: 'eypc-float:blank-open',
   blankOpenResult: 'eypc-float:blank-open-result',
+  copyText: 'eypc-float:copy-text',
+  copyTextResult: 'eypc-float:copy-text-result',
   dragStart: 'eypc-float:drag-start',
   dragMove: 'eypc-float:drag-move',
   dragEnd: 'eypc-float:drag-end',
@@ -53,7 +55,7 @@ function resolveTransientRequest(payload) {
   if (!pending) return
   clearTimeout(pending.timeoutId)
   transientRequests.delete(source.requestId)
-  pending.resolve(source.result && typeof source.result === 'object' ? source.result : { outcome: 'failed', errorCode: 'protocol-error', message: '请求结果无效', retryAllowed: true })
+  pending.resolve(Object.prototype.hasOwnProperty.call(source, 'result') ? source.result : { outcome: 'failed', errorCode: 'protocol-error', message: '请求结果无效', retryAllowed: true })
 }
 
 function sendToParent(channel, payload) {
@@ -98,6 +100,7 @@ ipcRenderer.on(CHANNELS.activate, (_event, payload) => {
 ipcRenderer.on(CHANNELS.threadCreateResult, (_event, payload) => resolveTransientRequest(payload))
 ipcRenderer.on(CHANNELS.threadOpenResult, (_event, payload) => resolveTransientRequest(payload))
 ipcRenderer.on(CHANNELS.blankOpenResult, (_event, payload) => resolveTransientRequest(payload))
+ipcRenderer.on(CHANNELS.copyTextResult, (_event, payload) => resolveTransientRequest(payload))
 
 window.eypcFloat = {
   getSnapshot: () => lastSnapshot,
@@ -125,6 +128,7 @@ window.eypcFloat = {
   createThread: (request) => transientRequest(CHANNELS.threadCreate, { request }),
   reopenThread: (actionAlias) => transientRequest(CHANNELS.threadOpen, { actionAlias }),
   openBlank: () => transientRequest(CHANNELS.blankOpen, {}),
+  copyText: (text) => transientRequest(CHANNELS.copyText, { text: typeof text === 'string' ? text : '' }),
   dragStart: (screenX, screenY) => sendToParent(CHANNELS.dragStart, { screenX, screenY }),
   dragMove: (screenX, screenY) => sendToParent(CHANNELS.dragMove, { screenX, screenY }),
   dragEnd: () => sendToParent(CHANNELS.dragEnd, {}),

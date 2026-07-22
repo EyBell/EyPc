@@ -15,6 +15,7 @@ export type CodexManualLaunchPathState = 'not-configured' | 'valid' | 'invalid' 
 export type CodexStatusFeedMode = 'desktop-live' | 'connector-fallback' | 'unavailable'
 export type CodexTaskAuthority = 'live' | 'mixed' | 'inventory-only'
 export type CodexTaskTab = 'all' | 'input' | 'ongoing' | 'completed' | 'hidden' | 'projects'
+export type CodexVisibleTaskTab = Exclude<CodexTaskTab, 'all' | 'input'>
 export type CodexProjectSectionId = 'pinned' | 'projects' | 'chats'
 export type CodexWaterPalette = 'solid' | 'gradient' | 'aurora'
 export type CodexWaterMotion = 'static' | 'slow' | 'normal' | 'fast'
@@ -23,6 +24,16 @@ export type CodexWaterColorMode = 'quota' | 'custom'
 export type CodexWaterGlow = 'off' | 'soft' | 'strong'
 export type CodexQuotaFamily = 'normal' | 'spark'
 export type CodexNewThreadModelPolicy = 'quota-auto'
+
+export function isCodexTaskTab(value: unknown): value is CodexTaskTab {
+  return value === 'all' || value === 'input' || value === 'ongoing' || value === 'completed' || value === 'hidden' || value === 'projects'
+}
+
+/** Legacy `all` and `input` targets are intentionally redirected to the visible dynamic tab. */
+export function normalizeCodexVisibleTaskTab(value: unknown): CodexVisibleTaskTab {
+  if (value === 'completed' || value === 'hidden' || value === 'projects') return value
+  return 'ongoing'
+}
 
 export interface CodexQuotaBucket {
   remainingPercent: number
@@ -471,7 +482,7 @@ export interface CodexSettings {
   newThreadModelPolicy: CodexNewThreadModelPolicy
   /** Applies only while ordinary Codex quota is selected by quota-auto. */
   newThreadPreferredModel: string
-  /** Rolling last-question window used by every Codex task tab. */
+  /** Rolling latest-Turn activity window for task projections; the dynamic view adds a fixed six-hour filter. */
   timeWindowDays: number
   compactFields: CodexCompactField[]
   expandedFields: CodexExpandedField[]
@@ -499,7 +510,7 @@ export interface CodexState {
   lastTaskScanAt: number
   cachedQuota: CodexQuotaSnapshotV1
   cachedConfig: CodexConfigSnapshotV1
-  lastTaskTab: CodexTaskTab
+  lastTaskTab: CodexVisibleTaskTab
   collapsedProjectKeys: string[]
   taskAliases: CodexAliasEntry[]
   projectAliases: CodexAliasEntry[]
@@ -596,7 +607,7 @@ export interface ConversationSnapshotV2 {
   hiddenProjects: CodexProjectCard[]
   /** One-release compatibility field. Native project removal never populates it. */
   removedProjects: CodexProjectCard[]
-  activeTab: CodexTaskTab
+  activeTab: CodexVisibleTaskTab
   /** Exact Codex Desktop live `active` tasks, including waiting input/approval. */
   ongoingCount: number
   waitingCount: number
@@ -1170,7 +1181,7 @@ export function normalizeCodexState(value: unknown): CodexState {
     lastTaskScanAt: numberValue(source.lastTaskScanAt, 0),
     cachedQuota: normalizeCodexQuota(source.cachedQuota),
     cachedConfig: normalizeCodexConfig(source.cachedConfig),
-    lastTaskTab: enumValue(source.lastTaskTab, ['all', 'input', 'ongoing', 'completed', 'hidden', 'projects'] as const, 'ongoing'),
+    lastTaskTab: normalizeCodexVisibleTaskTab(source.lastTaskTab),
     collapsedProjectKeys: normalizeAnonymousKeys(source.collapsedProjectKeys, 500, true),
     taskAliases: normalizeCodexAliases(source.taskAliases),
     projectAliases: normalizeCodexAliases(source.projectAliases, true),
@@ -1219,6 +1230,12 @@ function taskTiming(thread: CodexHostThread): Pick<CodexTaskCard, 'createdAt' | 
     ...(lastTurnCompletedAt ? { lastTurnCompletedAt } : {}),
     ...(lastTurnDurationMs ? { lastTurnDurationMs } : {})
   }
+}
+
+function latestTurnActivityAt(thread: CodexHostThread) {
+  const lastTurnStartedAt = numberValue(thread.lastTurnStartedAt, 0)
+  const lastTurnCompletedAt = thread.lastTurnStatus === 'completed' ? numberValue(thread.lastTurnCompletedAt, 0) : 0
+  return Math.max(lastTurnStartedAt, lastTurnCompletedAt)
 }
 
 export function compareConversationTasks(a: CodexTaskCard, b: CodexTaskCard): number {
@@ -1313,7 +1330,8 @@ export function projectConversations(input: {
       && Boolean(thread.actionAlias)
       && Number.isFinite(thread.updatedAt)
       && thread.updatedAt > 0
-      && (!windowStart || (numberValue(thread.lastTurnStartedAt, 0) >= windowStart)))
+      && numberValue(thread.lastTurnStartedAt, 0) > 0
+      && (!windowStart || latestTurnActivityAt(thread) >= windowStart))
     .map((thread) => [thread.key, thread] as const)).values()]
 
   for (const thread of validThreads) {
@@ -1527,7 +1545,7 @@ export function projectConversations(input: {
       projects: projectCards,
       hiddenProjects: hiddenProjectCards,
       removedProjects: [],
-      activeTab: enumValue(input.activeTab, ['all', 'input', 'ongoing', 'completed', 'hidden', 'projects'] as const, 'ongoing'),
+      activeTab: normalizeCodexVisibleTaskTab(input.activeTab),
       ...counts,
       pendingRecoveredCount: 0,
       pendingUnresolvedCount: 0,

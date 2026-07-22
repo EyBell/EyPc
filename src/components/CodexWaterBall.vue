@@ -21,21 +21,17 @@ const props = withDefaults(defineProps<{
 })
 
 const percent = computed(() => props.primary?.bucket.remainingPercent ?? 0)
-const weekly = computed(() => props.primary?.kind === 'weekly' ? props.primary : props.secondary?.kind === 'weekly' ? props.secondary : null)
-const weeklyPercent = computed(() => weekly.value?.bucket.remainingPercent ?? 0)
-const activeWeeklySegments = computed(() => Math.ceil(weeklyPercent.value / 5))
 const wavePath = 'M0 12 C12.5 0 37.5 0 50 12 S87.5 24 100 12 C112.5 0 137.5 0 150 12 S187.5 24 200 12 L200 24 L0 24 Z'
 const style = computed(() => ({
-  ...codexWaterAppearanceCssVars(props.appearance, props.colors, percent.value, weekly.value ? weeklyPercent.value : percent.value),
-  '--water-level': `${percent.value}%`,
-  '--weekly-ring': String(weeklyPercent.value)
+  ...codexWaterAppearanceCssVars(props.appearance, props.colors),
+  '--water-level': `${percent.value}%`
 }))
 </script>
 
 <template>
   <div
     class="codex-water-ball"
-    :class="[`palette-${appearance.inner.palette}`, `ring-${appearance.outer.style}`, `motion-${appearance.inner.motion}`, `signal-${signal}`, { 'has-weekly': weekly }]"
+    :class="[`palette-${appearance.inner.palette}`, `motion-${appearance.inner.motion}`, `signal-${signal}`]"
     :style="style"
     :role="decorative ? undefined : 'img'"
     :aria-hidden="decorative ? 'true' : undefined"
@@ -52,26 +48,6 @@ const style = computed(() => ({
       </div>
       <i class="glass-highlight" />
     </div>
-
-    <svg v-if="weekly" class="codex-water-ball__ring" viewBox="0 0 100 100" aria-hidden="true">
-      <template v-if="appearance.outer.style === 'segmented'">
-        <line
-          v-for="index in 20"
-          :key="index"
-          class="segment"
-          :class="{ active: weekly && index <= activeWeeklySegments }"
-          x1="50"
-          y1="5"
-          x2="50"
-          y2="11"
-          :transform="`rotate(${(index - 1) * 18} 50 50)`"
-        />
-      </template>
-      <template v-else>
-        <circle class="track" cx="50" cy="50" r="45" />
-        <circle v-if="weekly" class="value" cx="50" cy="50" r="45" />
-      </template>
-    </svg>
 
     <div class="codex-water-ball__value" :class="{ empty: !primary }">
       <span v-if="primary?.family === 'spark'" class="codex-water-ball__spark" aria-hidden="true">S</span>
@@ -152,33 +128,6 @@ const style = computed(() => ({
   border-radius: 50%;
   filter: blur(.5px);
 }
-
-.codex-water-ball__ring {
-  position: absolute;
-  z-index: 5;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  transform: rotate(-90deg);
-}
-.codex-water-ball.ring-segmented .codex-water-ball__ring { transform: none; }
-.codex-water-ball__ring circle { fill: none; stroke-width: var(--ring-width); }
-.codex-water-ball__ring .track { stroke: color-mix(in srgb, var(--ring-track) 78%, #fff); }
-.codex-water-ball__ring .value {
-  stroke: var(--ring-progress);
-  stroke-dasharray: 282.75;
-  stroke-dashoffset: calc(282.75 - 2.8275 * var(--weekly-ring));
-  stroke-linecap: round;
-  filter: var(--ring-glow);
-  transition: stroke-dashoffset 280ms ease-out;
-}
-.codex-water-ball__ring .segment {
-  stroke: color-mix(in srgb, var(--ring-track) 78%, #fff);
-  stroke-width: var(--ring-width);
-  stroke-linecap: round;
-  transition: stroke 280ms ease-out;
-}
-.codex-water-ball__ring .segment.active { stroke: var(--ring-progress); filter: var(--ring-glow); }
 
 .codex-water-ball__liquid {
   position: absolute;
@@ -292,8 +241,6 @@ const style = computed(() => ({
   .wave-a { transform: translate3d(-12.5%, 0, 0) !important; }
   .wave-b { transform: translate3d(-37.5%, 0, 0) !important; }
   .wave-c { transform: translate3d(-22%, 0, 0) scaleY(.62) !important; }
-  .codex-water-ball__liquid,
-  .codex-water-ball__ring .value,
-  .codex-water-ball__ring .segment { transition: none !important; }
+  .codex-water-ball__liquid { transition: none !important; }
 }
 </style>

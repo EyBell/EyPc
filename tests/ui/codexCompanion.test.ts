@@ -164,6 +164,7 @@ function mountFloat(expanded: boolean, source = floatSnapshot(), overrides: Part
     createThread,
     reopenThread,
     openBlank,
+    copyText: vi.fn(async () => true),
     dragStart: vi.fn(() => true),
     dragMove: vi.fn(() => true),
     dragEnd: vi.fn(() => true),

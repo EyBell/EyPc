@@ -26,6 +26,7 @@ declare global {
       createThread(request: CodexNewThreadRequest): Promise<CodexNewThreadResult>
       reopenThread(actionAlias: string): Promise<CodexThreadOpenResult>
       openBlank(): Promise<CodexThreadOpenResult>
+      copyText(text: string): Promise<boolean>
       dragStart(screenX: number, screenY: number): boolean
       dragMove(screenX: number, screenY: number): boolean
       dragEnd(): boolean

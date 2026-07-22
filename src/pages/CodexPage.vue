@@ -632,7 +632,7 @@ onBeforeUnmount(() => {
               :value="snapshot.settings.timeWindowDays"
               @change="update({ timeWindowDays: Number(($event.target as HTMLInputElement).value) })"
               data-operation-tooltip="时间窗口（天）"
-              data-operation-description="按最近提问时间过滤会话；边界包含，建议聚焦当前开发周期。"
+              data-operation-description="按最新 Turn 活动时间过滤常规会话；动态页固定显示最近 6 小时活动。"
             />
           </label>
           <div class="codex-readonly-field"><span>真实预检</span><strong>{{ snapshot.conversations.completeness === 'verified' ? `${snapshot.conversations.rawSourceCount} 原始 · ${snapshot.conversations.eligibleSourceCount} 已注册` : '尚未获得完整快照' }}</strong></div>
@@ -734,49 +734,9 @@ onBeforeUnmount(() => {
 
           <fieldset class="codex-fieldset water-settings-group">
             <legend>
-              外层 Weekly 环
+              水球外层质感
             </legend>
-            <label>
-              <span>环样式</span>
-              <select class="codex-select" :value="waterDraft.outer.style" @change="updateWaterDraft('outer', 'style', ($event.target as HTMLSelectElement).value); commitWaterAppearance()">
-                <option value="segmented">固定分段</option>
-                <option value="solid">圆环</option>
-              </select>
-            </label>
-            <label class="water-range"><span>外层轮廓透明度 <strong>{{ waterDraft.outer.shellOpacity }}%</strong></span><input type="range" min="25" max="95" step="1" :value="waterDraft.outer.shellOpacity" @input="updateWaterDraft('outer', 'shellOpacity', Number(($event.target as HTMLInputElement).value));" @change="commitWaterAppearance" /></label>
-            <label class="water-range"><span>粗细 <strong>{{ waterDraft.outer.thickness }}px</strong></span><input type="range" min="2" max="6" step="1" :value="waterDraft.outer.thickness" @input="updateWaterDraft('outer', 'thickness', Number(($event.target as HTMLInputElement).value));" @change="commitWaterAppearance" /></label>
-            <label>
-              <span>进度颜色</span>
-              <select class="codex-select" :value="waterDraft.outer.colorMode" @change="updateWaterDraft('outer', 'colorMode', ($event.target as HTMLSelectElement).value); commitWaterAppearance()">
-                <option value="quota">跟随额度状态</option>
-                <option value="custom">自定义</option>
-              </select>
-            </label>
-            <div class="water-color-pair">
-              <label>
-                <input
-                  type="color"
-                  :value="waterDraft.outer.progressColor"
-                  :disabled="waterDraft.outer.colorMode !== 'custom'"
-                  @input="updateWaterDraft('outer', 'progressColor', ($event.target as HTMLInputElement).value.toUpperCase())"
-                  @change="commitWaterAppearance"
-                />
-                <span>进度色</span>
-              </label>
-              <label><input type="color" :value="waterDraft.outer.trackColor" @input="updateWaterDraft('outer', 'trackColor', ($event.target as HTMLInputElement).value.toUpperCase())" @change="commitWaterAppearance" /><span>轨道色</span></label>
-            </div>
-            <label>
-              <span>光晕</span>
-              <select class="codex-select" :value="waterDraft.outer.glow" @change="updateWaterDraft('outer', 'glow', ($event.target as HTMLSelectElement).value); commitWaterAppearance()">
-                <option value="off">关闭</option>
-                <option value="soft">柔和</option>
-                <option value="strong">强</option>
-              </select>
-            </label>
-            <div class="codex-readonly-field" v-if="waterDraft.outer.colorMode === 'quota'">
-              <span>进度颜色</span>
-              <strong>跟随额度状态</strong>
-            </div>
+            <label class="water-range"><span>外层光泽透明度 <strong>{{ waterDraft.outer.shellOpacity }}%</strong></span><input type="range" min="25" max="95" step="1" :value="waterDraft.outer.shellOpacity" @input="updateWaterDraft('outer', 'shellOpacity', Number(($event.target as HTMLInputElement).value));" @change="commitWaterAppearance" /></label>
           </fieldset>
         </div>
       </article>

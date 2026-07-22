@@ -4,11 +4,13 @@ import {
   emptyCodexModelCatalog,
   emptyConversationSnapshot,
   hideCodexThread,
+  isCodexTaskTab,
   normalizeCodexConfig,
   normalizeCodexEnvironment,
   normalizeCodexFirstPromptTimes,
   normalizeCodexQuota,
   normalizeCodexSettings,
+  normalizeCodexVisibleTaskTab,
   projectConversations,
   restoreCodexThread,
   type CodexActivityDelta,
@@ -617,9 +619,9 @@ export function createCodexController(options: CodexControllerOptions) {
     }
     try {
       environment = normalizeCodexEnvironment(await setLaunchPath(path))
-      options.setMessage('已保存手动 Codex CLI 位置，正在重新检测连接')
+      options.setMessage('已保存手动 Codex CLI 位置；不会中断当前 App Server，下次启动将使用该位置')
       options.notify()
-      void refresh({ force: true })
+      void inspectEnvironment(true)
       return true
     } catch (error) {
       options.setMessage(error instanceof Error ? error.message : '手动 Codex CLI 位置不可用')
@@ -637,9 +639,9 @@ export function createCodexController(options: CodexControllerOptions) {
     }
     try {
       environment = normalizeCodexEnvironment(await clearLaunchPath())
-      options.setMessage('已恢复 Codex CLI 自动发现，正在重新检测连接')
+      options.setMessage('已恢复 Codex CLI 自动发现；不会中断当前 App Server，下次启动将使用自动发现')
       options.notify()
-      void refresh({ force: true })
+      void inspectEnvironment(true)
       return true
     } catch (error) {
       options.setMessage(error instanceof Error ? error.message : '无法恢复 Codex CLI 自动发现')
@@ -661,8 +663,8 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function setTaskTab(tab: CodexTaskTab) {
-    if (!['all', 'input', 'ongoing', 'completed', 'hidden', 'projects'].includes(tab)) return false
-    codexState().lastTaskTab = tab
+    if (!isCodexTaskTab(tab)) return false
+    codexState().lastTaskTab = normalizeCodexVisibleTaskTab(tab)
     republishAfterReceiptChange()
     return true
   }

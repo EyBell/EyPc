@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   CirclePlay,
+  Clipboard,
   Eye,
   EyeOff,
   Folder,
@@ -14,6 +15,8 @@ import {
   Search,
   ShieldCheck,
   TriangleAlert,
+  Trash2,
+  Upload,
   X
 } from '@lucide/vue'
 import CodexWaterBall from './components/CodexWaterBall.vue'
@@ -49,7 +52,7 @@ import type { CodexFloatSnapshotV1 } from './runtime/codexController'
 type RenderRow =
   | { kind: 'section'; key: string; section: CodexProjectSection }
   | { kind: 'hidden-project-section'; key: string; title: string }
-  | { kind: 'status-section'; key: string; title: string; count: number; tone: 'input' | 'active' | 'unread' | 'unknown' | 'attention' }
+  | { kind: 'status-section'; key: string; title: string; count: number; tone: 'input' | 'active' | 'unread' | 'completed' | 'unknown' | 'attention' }
   | { kind: 'project'; key: string; project: CodexProjectCard; sectionId: string; hiddenProject?: boolean }
   | { kind: 'task'; key: string; task: CodexTaskCard; sectionId?: string; parentProjectKey?: string; nested?: boolean }
   | { kind: 'empty-project'; key: string; projectKey: string }
@@ -58,7 +61,7 @@ type FocusItem = Extract<RenderRow, { kind: 'project' | 'task' }>
 type PanelState = { mode: 'detail' | 'drawer'; item: FocusItem; returnActionId: string } | null
 type AliasEditor = { kind: 'task' | 'project'; key: string; value: string; originalName: string } | null
 type DrawerAction = { id: string; label: string; danger?: boolean; disabled?: boolean; disabledReason?: string; run: () => void }
-type UiConversationTab = 'all' | 'input' | 'dynamic' | 'completed' | 'hidden' | 'projects'
+type UiConversationTab = 'dynamic' | 'completed' | 'hidden' | 'projects'
 type ComposerProjectPickerOption = {
   key: string
   label: string
@@ -66,12 +69,17 @@ type ComposerProjectPickerOption = {
   disabled: boolean
   disabledReason?: string
 }
+type ComposerImageAttachment = {
+  file: File
+  previewUrl: string
+}
 type ComposerState = {
   target: CodexNewThreadTarget
   context: CodexNewThreadSelectionContext
   model: CodexResolvedNewThreadModel
   selectionKind: 'auto' | 'manual'
   prompt: string
+  image: ComposerImageAttachment | null
   submitting: boolean
   error: string
   errorCode: string
@@ -86,6 +94,12 @@ type ComposerState = {
 type ShiftPreview = { task: CodexTaskCard; left: number; top: number } | null
 type ActionHint = { label: string; left: number; top: number; placement: 'top' | 'bottom' } | null
 type QuickJumpDomTarget = QuickJumpTarget & { element: HTMLElement }
+
+const DYNAMIC_TASK_WINDOW_MS = 6 * 60 * 60 * 1000
+const DYNAMIC_TASK_WINDOW_TICK_MS = 60 * 1000
+const ACTIVE_COUNTER_DELAY_MS = 2_000
+const COMPOSER_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
+const COMPOSER_IMAGE_MAX_BYTES = 20 * 1024 * 1024
 
 const snapshot = ref<CodexFloatSnapshotV1 | null>(null)
 const rootElement = ref<HTMLElement | null>(null)
@@ -106,6 +120,7 @@ const composer = ref<ComposerState | null>(null)
 const composerDialog = ref<HTMLElement | null>(null)
 const composerTextarea = ref<HTMLTextAreaElement | null>(null)
 const composerModelSelect = ref<HTMLSelectElement | null>(null)
+const composerImageInput = ref<HTMLInputElement | null>(null)
 const pendingConfirm = ref<{ id: string; label: string; until: number } | null>(null)
 const liveMessage = ref('')
 const drawerActiveIndex = ref(0)
@@ -117,6 +132,7 @@ const shiftHeld = ref(false)
 const shiftPreviewSuppressed = ref(false)
 const actionHint = ref<ActionHint>(null)
 const optimisticProjectCollapsed = ref<Record<string, boolean>>({})
+const dynamicNow = ref(Date.now())
 const quickJump = ref<{ open: boolean; query: string; sourceTargets: QuickJumpDomTarget[]; targets: QuickJumpDomTarget[]; activeTargetId: string | null }>({
   open: false,
   query: '',
@@ -133,6 +149,8 @@ let resize: { pointerId: number; corner: CodexFloatResizeCorner } | null = null
 let collapseTimer: ReturnType<typeof setTimeout> | null = null
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 let actionHintTimer: ReturnType<typeof setTimeout> | null = null
+let dynamicClock: ReturnType<typeof setInterval> | null = null
+let activeCounterTimer: ReturnType<typeof setTimeout> | null = null
 let pendingRun: (() => void) | null = null
 let taskScrollResizeObserver: ResizeObserver | null = null
 let desiredExpanded = false
@@ -164,13 +182,11 @@ const selectedWeekly = computed(() => {
   if (compact.value.secondary?.kind === 'weekly') return compact.value.secondary
   return null
 })
-const weeklyPercent = computed(() => selectedWeekly.value?.bucket.remainingPercent ?? 0)
 const surfaceTheme = computed(() => resolveCodexSurfaceTheme(settings.value?.style || 'water', settings.value?.colors || fallbackColors, primaryPercent.value))
 const rootStyle = computed<Record<string, string | number>>(() => ({
   ...codexThemeCssVars(surfaceTheme.value),
-  ...codexWaterAppearanceCssVars(settings.value?.waterAppearance || fallbackWaterAppearance, settings.value?.colors || fallbackColors, primaryPercent.value, weeklyPercent.value),
-  '--water-level': `${primaryPercent.value}%`,
-  '--weekly-ring': weeklyPercent.value
+  ...codexWaterAppearanceCssVars(settings.value?.waterAppearance || fallbackWaterAppearance, settings.value?.colors || fallbackColors),
+  '--water-level': `${primaryPercent.value}%`
 }))
 
 watch(rootStyle, (tokens) => {
@@ -193,7 +209,7 @@ const statusText = computed(() => {
   if (conversations.value?.status === 'stale') return '数据已过期 · 展示上一份已验证快照'
   if (conversations.value?.status === 'error') return conversations.value.errorMessage || '真实会话预检失败'
   if (conversations.value?.completeness === 'verified') {
-    return `${conversations.value.rawSourceCount} 条原始 · ${conversations.value.eligibleSourceCount} 条已注册 · 最近 ${settings.value?.timeWindowDays || 30} 天 ${conversations.value.all.length} 条`
+    return `最近 ${settings.value?.timeWindowDays || 30} 天的 ${conversations.value.all.length} 条`
   }
   return '等待真实会话预检'
 })
@@ -207,6 +223,13 @@ const compactCounts = computed(() => ({
     .filter((task) => task.activityState === 'active' || task.activityState === 'waiting-approval').length,
   unread: conversations.value?.completedUnreadCount || 0
 }))
+const displayedActiveCount = ref(0)
+const displayedCompactCounts = computed(() => ({
+  input: compactCounts.value.input,
+  active: displayedActiveCount.value,
+  unread: compactCounts.value.unread
+}))
+const composerHasContent = computed(() => Boolean(composer.value?.image || composer.value?.prompt.trim()))
 
 function normalizedSearch() {
   return searchText.value.trim().toLocaleLowerCase()
@@ -250,6 +273,18 @@ function displayOrderedTasks(tasks: CodexTaskCard[]) {
     .map(({ task }) => task)
 }
 
+function taskActivityAt(task: CodexTaskCard) {
+  return Math.max(task.lastTurnStartedAt || 0, task.lastTurnCompletedAt || 0)
+}
+
+const dynamicTasks = computed(() => {
+  const value = conversations.value
+  if (!value) return []
+  const windowStart = dynamicNow.value - DYNAMIC_TASK_WINDOW_MS
+  return [...value.ongoing, ...value.completedUnread, ...value.completed]
+    .filter((task) => taskActivityAt(task) >= windowStart)
+})
+
 const renderRows = computed<RenderRow[]>(() => {
   const value = conversations.value
   if (!value) return []
@@ -281,18 +316,16 @@ const renderRows = computed<RenderRow[]>(() => {
       .some((candidate) => candidate!.toLocaleLowerCase().includes(searchQuery))
   }
 
-  if (selectedUiTab.value === 'all' || selectedUiTab.value === 'input') {
-    const tasks = displayOrderedTasks((selectedUiTab.value === 'all' ? value.all : value.inputRequired).filter((task) => taskMatched(task)))
-    return tasks.map((task) => addProject(task))
-  }
-
   if (selectedUiTab.value === 'dynamic') {
+    const recentTasks = dynamicTasks.value
+    const recentOngoing = recentTasks.filter((task) => task.bucket === 'ongoing')
     const groups = [
-      { key: 'input', title: '待输入', tone: 'input' as const, tasks: value.ongoing.filter((task) => task.activityState === 'waiting-input') },
-      { key: 'active', title: '正在进行中', tone: 'active' as const, tasks: value.ongoing.filter((task) => task.activityState === 'active' || task.activityState === 'waiting-approval') },
-      { key: 'attention', title: '需关注', tone: 'attention' as const, tasks: value.ongoing.filter((task) => ['failed', 'interrupted', 'system-error'].includes(task.activityState)) },
-      { key: 'unknown', title: '宿主状态未知', tone: 'unknown' as const, tasks: value.ongoing.filter((task) => task.activityState === 'unknown') },
-      { key: 'unread', title: '已完成未读', tone: 'unread' as const, tasks: value.completedUnread }
+      { key: 'input', title: '待输入', tone: 'input' as const, tasks: recentOngoing.filter((task) => task.activityState === 'waiting-input') },
+      { key: 'active', title: '正在进行中', tone: 'active' as const, tasks: recentOngoing.filter((task) => task.activityState === 'active' || task.activityState === 'waiting-approval') },
+      { key: 'attention', title: '需关注', tone: 'attention' as const, tasks: recentOngoing.filter((task) => ['failed', 'interrupted', 'system-error'].includes(task.activityState)) },
+      { key: 'unknown', title: '宿主状态未知', tone: 'unknown' as const, tasks: recentOngoing.filter((task) => task.activityState === 'unknown') },
+      { key: 'unread', title: '已完成未读', tone: 'unread' as const, tasks: recentTasks.filter((task) => task.bucket === 'completed-unread') },
+      { key: 'completed', title: '已完成', tone: 'completed' as const, tasks: recentTasks.filter((task) => task.bucket === 'completed') }
     ]
     return groups.flatMap((group): RenderRow[] => {
       const tasks = displayOrderedTasks(group.tasks.filter((task) => taskMatched(task)))
@@ -392,17 +425,13 @@ const tabs = computed(() => {
   const value = conversations.value
   if (!value) return []
   return [
-    { id: 'all', label: '全部', count: value.all.length },
-    { id: 'input', label: '待输入', count: value.inputRequired.length },
-    { id: 'dynamic', label: '动态', count: value.ongoing.length + value.completedUnread.length },
+    { id: 'dynamic', label: '动态', count: dynamicTasks.value.length },
     { id: 'completed', label: '已完成', count: value.completed.length + value.completedUnread.length },
     { id: 'hidden', label: '已隐藏', count: value.hiddenCount },
     { id: 'projects', label: '项目', count: projectCount.value }
   ] satisfies Array<{ id: UiConversationTab; label: string; count: number }>
 })
 const tabLabelToBackend: Record<UiConversationTab, CodexTaskTab> = {
-  all: 'all',
-  input: 'input',
   dynamic: 'ongoing',
   completed: 'completed',
   hidden: 'hidden',
@@ -463,8 +492,6 @@ function composerProjectOptions(context: CodexNewThreadSelectionContext): Compos
 }
 
 function mapUiTab(input?: CodexTaskTab) {
-  if (input === 'all') return 'all'
-  if (input === 'input') return 'input'
   if (input === 'completed') return 'completed'
   if (input === 'hidden') return 'hidden'
   if (input === 'projects') return 'projects'
@@ -561,6 +588,7 @@ function openComposer(project?: CodexProjectCard, focusModel = false) {
     model,
     selectionKind: 'auto',
     prompt: '',
+    image: null,
     submitting: false,
     error: targetAliasMissing ? '项目动作已过期，请刷新后重试' : '',
     errorCode: targetAliasMissing ? 'project-alias-missing' : '',
@@ -580,6 +608,51 @@ function openComposer(project?: CodexProjectCard, focusModel = false) {
     if (focusModel) composerModelSelect.value?.focus({ preventScroll: true })
     else composerTextarea.value?.focus({ preventScroll: true })
   })
+}
+
+function clearComposerImage(state = composer.value) {
+  if (!state?.image) return
+  URL.revokeObjectURL(state.image.previewUrl)
+  state.image = null
+  if (composerImageInput.value) composerImageInput.value.value = ''
+}
+
+function addComposerImage(file: File | null) {
+  const state = composer.value
+  if (!state || !file) return
+  if (!COMPOSER_IMAGE_TYPES.has(file.type)) {
+    state.error = '仅支持 PNG、JPEG 或 WebP 图片'
+    state.errorCode = 'image-type-unsupported'
+    return
+  }
+  if (file.size <= 0 || file.size > COMPOSER_IMAGE_MAX_BYTES) {
+    state.error = '图片需小于 20MB'
+    state.errorCode = 'image-too-large'
+    return
+  }
+  clearComposerImage(state)
+  state.image = { file, previewUrl: URL.createObjectURL(file) }
+  state.error = ''
+  state.errorCode = ''
+}
+
+function onComposerImageChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  addComposerImage(input.files?.[0] || null)
+}
+
+function onComposerImageDrop(event: DragEvent) {
+  event.preventDefault()
+  addComposerImage([...Array.from(event.dataTransfer?.files || [])].find((file) => COMPOSER_IMAGE_TYPES.has(file.type)) || null)
+}
+
+function onComposerPaste(event: ClipboardEvent) {
+  const image = [...Array.from(event.clipboardData?.items || [])]
+    .find((item) => item.kind === 'file' && COMPOSER_IMAGE_TYPES.has(item.type))
+    ?.getAsFile() || null
+  if (!image) return
+  event.preventDefault()
+  addComposerImage(image)
 }
 
 function firstEnabledProjectPickerIndex(options: ComposerProjectPickerOption[]) {
@@ -659,6 +732,7 @@ function openComposerProjectPicker() {
 function cancelComposer() {
   if (!composer.value) return
   composer.value.prompt = ''
+  clearComposerImage(composer.value)
   composer.value.projectPickerOpen = false
   composer.value.projectPickerIndex = Math.max(0, firstEnabledProjectPickerIndex(composer.value.projectPickerOptions))
   composer.value = null
@@ -690,6 +764,15 @@ function onComposerModelChange(event: Event) {
 async function submitComposer(mode: 'send-and-open' | 'create-empty') {
   const state = composer.value
   if (!state || state.submitting) return
+  if (mode === 'create-empty' && (state.image || state.prompt.trim())) {
+    state.error = '已有首轮内容，请使用“发送并打开”'
+    state.errorCode = 'content-requires-send'
+    return
+  }
+  if (state.image) {
+    await openImageFallback(state)
+    return
+  }
   if (state.model.status !== 'ready' || !state.model.modelId) {
     state.error = '当前策略无法确定可用模型，请先手动选择'
     state.errorCode = 'model-required'
@@ -765,6 +848,37 @@ async function submitComposer(mode: 'send-and-open' | 'create-empty') {
     state.error = '新会话桥接暂不可用，提示词仍保留在当前编辑器内存中'
     state.errorCode = 'bridge-unavailable'
     state.retryAllowed = true
+  } finally {
+    if (composer.value === state) state.submitting = false
+  }
+}
+
+async function openImageFallback(state: ComposerState) {
+  const prompt = state.prompt.trim()
+  if (!prompt) {
+    state.error = '请同时填写首轮提示词；图片将由你在 Codex 中手动粘贴'
+    state.errorCode = 'prompt-required'
+    composerTextarea.value?.focus()
+    return
+  }
+  state.submitting = true
+  state.error = ''
+  state.errorCode = ''
+  try {
+    const copied = await window.eypcFloat?.copyText(prompt)
+    if (!copied) {
+      state.error = '无法复制首轮文字，未打开 Codex 空白会话'
+      state.errorCode = 'clipboard-unavailable'
+      return
+    }
+    const result = await window.eypcFloat?.openBlank()
+    if (result?.outcome === 'opened' || result?.outcome === 'dispatched') {
+      liveMessage.value = '已打开 Codex 空白会话并复制首轮文字；请粘贴图片并手动选择模型'
+      cancelComposer()
+      return
+    }
+    state.error = result?.message || 'Codex 空白页打开失败；首轮文字仍在剪贴板'
+    state.errorCode = result?.errorCode || 'blank-open-failed'
   } finally {
     if (composer.value === state) state.submitting = false
   }
@@ -926,7 +1040,7 @@ function compactCount(value: number) {
 }
 
 function compactCounterHint(kind: 'input' | 'active' | 'unread') {
-  const count = compactCounts.value[kind]
+  const count = displayedCompactCounts.value[kind]
   if (kind === 'input') return `待输入 ${count}`
   if (kind === 'active') return `进行中 ${count}`
   return `未读 ${count}`
@@ -938,7 +1052,7 @@ function queueCompactCounterHint(event: PointerEvent, kind: 'input' | 'active' |
 }
 
 function openCompactStatus(kind: 'input' | 'active' | 'unread') {
-  if (kind === 'input' && compactCounts.value.input === 1) {
+  if (kind === 'input' && displayedCompactCounts.value.input === 1) {
     const task = conversations.value?.inputRequired[0]
     if (task) openTask(task)
     return
@@ -1178,6 +1292,20 @@ function activateTaskCore(task: CodexTaskCard, event?: MouseEvent) {
     return
   }
   openTask(task)
+}
+
+function activateTaskTitle(task: CodexTaskCard, event: MouseEvent) {
+  focusedKey.value = `task:${task.key}`
+  if (event.ctrlKey || event.metaKey) {
+    toggleTaskSelection(task)
+    return
+  }
+  openTask(task)
+}
+
+function focusTaskMetadata(task: CodexTaskCard) {
+  focusedKey.value = `task:${task.key}`
+  focusCurrent()
 }
 
 function selectProjectChildren(project: CodexProjectCard) {
@@ -2045,6 +2173,14 @@ watch(() => conversations.value?.projects.map((project) => `${project.key}:${pro
   if (changed) optimisticProjectCollapsed.value = next
 })
 
+watch(() => compactCounts.value.active, () => {
+  if (activeCounterTimer) return
+  activeCounterTimer = setTimeout(() => {
+    activeCounterTimer = null
+    displayedActiveCount.value = compactCounts.value.active
+  }, ACTIVE_COUNTER_DELAY_MS)
+})
+
 watch([searchText, renderRows], () => {
   const visible = visibleTaskKeys.value
   selectedKeys.value = new Set([...selectedKeys.value].filter((key) => visible.has(key)))
@@ -2073,7 +2209,10 @@ watch(taskScroll, (element) => {
 })
 
 onMounted(() => {
+  dynamicNow.value = Date.now()
+  dynamicClock = setInterval(() => { dynamicNow.value = Date.now() }, DYNAMIC_TASK_WINDOW_TICK_MS)
   snapshot.value = window.eypcFloat?.getSnapshot() || null
+  displayedActiveCount.value = compactCounts.value.active
   floatState.value = window.eypcFloat?.getState() || floatState.value
   expanded.value = floatState.value.expanded
   desiredExpanded = expanded.value
@@ -2103,9 +2242,15 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (collapseTimer) clearTimeout(collapseTimer)
+  if (dynamicClock) clearInterval(dynamicClock)
+  if (activeCounterTimer) clearTimeout(activeCounterTimer)
+  activeCounterTimer = null
   clearActionHint()
   closeShiftPreview()
-  if (composer.value) composer.value.prompt = ''
+  if (composer.value) {
+    composer.value.prompt = ''
+    clearComposerImage(composer.value)
+  }
   composer.value = null
   closeQuickJump()
   clearConfirm()
@@ -2173,7 +2318,7 @@ onUnmounted(() => {
         <span v-if="quota?.status === 'stale' || quota?.status === 'error'" class="float-status-dot" :class="quota.status" aria-hidden="true" />
       </button>
       <button
-        v-if="compactCounts.input"
+        v-if="displayedCompactCounts.input"
         type="button"
         class="float-counter input"
         :aria-label="compactCounterHint('input')"
@@ -2183,9 +2328,9 @@ onUnmounted(() => {
         @focus="queueActionHint($event, compactCounterHint('input'))"
         @blur="clearActionHint"
         @click.stop="openCompactStatus('input')"
-      >{{ compactCount(compactCounts.input) }}</button>
-      <button v-if="compactCounts.active" type="button" class="float-counter active" :aria-label="compactCounterHint('active')" @pointerenter.stop="queueCompactCounterHint($event, 'active')" @pointermove.stop @pointerleave.stop="clearActionHint" @focus="queueActionHint($event, compactCounterHint('active'))" @blur="clearActionHint" @click.stop="openCompactStatus('active')">{{ compactCount(compactCounts.active) }}</button>
-      <button v-if="compactCounts.unread" type="button" class="float-counter unread" :aria-label="compactCounterHint('unread')" @pointerenter.stop="queueCompactCounterHint($event, 'unread')" @pointermove.stop @pointerleave.stop="clearActionHint" @focus="queueActionHint($event, compactCounterHint('unread'))" @blur="clearActionHint" @click.stop="openCompactStatus('unread')">{{ compactCount(compactCounts.unread) }}</button>
+      >{{ compactCount(displayedCompactCounts.input) }}</button>
+      <button v-if="displayedCompactCounts.active" type="button" class="float-counter active" :aria-label="compactCounterHint('active')" @pointerenter.stop="queueCompactCounterHint($event, 'active')" @pointermove.stop @pointerleave.stop="clearActionHint" @focus="queueActionHint($event, compactCounterHint('active'))" @blur="clearActionHint" @click.stop="openCompactStatus('active')">{{ compactCount(displayedCompactCounts.active) }}</button>
+      <button v-if="displayedCompactCounts.unread" type="button" class="float-counter unread" :aria-label="compactCounterHint('unread')" @pointerenter.stop="queueCompactCounterHint($event, 'unread')" @pointermove.stop @pointerleave.stop="clearActionHint" @focus="queueActionHint($event, compactCounterHint('unread'))" @blur="clearActionHint" @click.stop="openCompactStatus('unread')">{{ compactCount(displayedCompactCounts.unread) }}</button>
     </div>
 
     <section v-else class="float-expanded-card" aria-label="Codex Companion">
@@ -2323,10 +2468,20 @@ onUnmounted(() => {
                 class="task-open"
                 @click.stop="activateTaskCore(row.task, $event)"
               >
-                <span class="task-copy">
-                  <strong>{{ taskDisplayLabel(row.task) }}</strong>
-                  <small>{{ row.task.projectName }} · {{ taskStateLabel(row.task) }} · {{ formatTaskTime(row.task.lastQuestionAt) }}</small>
-                </span>
+                <div class="task-copy">
+                  <button
+                    type="button"
+                    class="task-title-button"
+                    :aria-label="`打开会话 ${taskDisplayLabel(row.task)}`"
+                    @click.stop="activateTaskTitle(row.task, $event)"
+                  >{{ taskDisplayLabel(row.task) }}</button>
+                  <button
+                    type="button"
+                    class="task-meta-button"
+                    :aria-label="`聚焦会话 ${taskDisplayLabel(row.task)}，以接收会话快捷键`"
+                    @click.stop="focusTaskMetadata(row.task)"
+                  >{{ row.task.projectName }} · {{ taskStateLabel(row.task) }} · {{ formatTaskTime(row.task.lastQuestionAt) }}</button>
+                </div>
                 <div class="task-inline-actions" role="toolbar" :aria-label="`${taskDisplayLabel(row.task)} 会话操作`">
                 <button
                   type="button"
@@ -2561,8 +2716,30 @@ onUnmounted(() => {
               spellcheck="true"
               placeholder="说出或输入你希望 Codex 开始处理的内容…"
               :disabled="composer.submitting"
+              @paste="onComposerPaste"
             />
           </label>
+
+          <section
+            class="composer-image-field"
+            :class="{ attached: composer.image }"
+            aria-label="参考图片"
+            @dragenter.prevent
+            @dragover.prevent
+            @drop="onComposerImageDrop"
+          >
+            <input ref="composerImageInput" type="file" accept="image/png,image/jpeg,image/webp" :disabled="composer.submitting" @change="onComposerImageChange" />
+            <template v-if="composer.image">
+              <img :src="composer.image.previewUrl" alt="待手动粘贴到 Codex 的参考图片预览" />
+              <span><strong>{{ composer.image.file.name || '剪贴板图片' }}</strong><small>将打开空白 Codex 会话；文字会复制到剪贴板，请手动粘贴此图并选择模型。</small></span>
+              <button type="button" :disabled="composer.submitting" aria-label="移除参考图片" @click="clearComposerImage()"><Trash2 :size="14" aria-hidden="true" /></button>
+            </template>
+            <template v-else>
+              <Upload :size="15" aria-hidden="true" />
+              <span><strong>添加参考图片</strong><small>选择、拖放或在提示词框粘贴 PNG / JPEG / WebP（最大 20MB）</small></span>
+            </template>
+          </section>
+          <p v-if="composer.image" class="composer-stale"><Clipboard :size="12" aria-hidden="true" /> 当前 App Server 未声明图片输入能力：不会创建空线程；将复制文字并打开 Codex 空白会话。</p>
 
           <div v-if="composer.error" class="composer-error" role="alert" aria-live="assertive">
             <strong>{{ composer.error }}</strong>
@@ -2573,8 +2750,8 @@ onUnmounted(() => {
             <button type="button" class="composer-secondary" :disabled="composer.submitting" @click="cancelComposer">取消</button>
             <button v-if="composer.manualOnly" type="button" class="composer-secondary" :disabled="composer.submitting" @click="openBlankFromComposer">打开 Codex 空白页</button>
             <button v-if="composer.reopenAlias" type="button" class="composer-primary" :disabled="composer.submitting" @click="retryOpenComposerThread">重试打开</button>
-            <button type="button" class="composer-secondary" :disabled="composer.submitting || !composer.retryAllowed" @click="submitComposer('create-empty')">仅创建空会话</button>
-            <button type="button" class="composer-primary" :disabled="composer.submitting || !composer.retryAllowed" @click="submitComposer('send-and-open')">{{ composer.submitting ? '正在创建…' : '发送并打开' }}</button>
+            <button v-if="!composerHasContent" type="button" class="composer-secondary" :disabled="composer.submitting || !composer.retryAllowed" @click="submitComposer('create-empty')">仅创建空会话</button>
+            <button type="button" class="composer-primary" :disabled="composer.submitting || !composer.retryAllowed || !composerHasContent" @click="submitComposer('send-and-open')">{{ composer.submitting ? '正在创建…' : composer.image ? '打开 Codex 并复制文字' : '发送并打开' }}</button>
           </footer>
         </section>
       </div>

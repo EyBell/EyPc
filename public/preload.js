@@ -58,6 +58,8 @@ const CODEX_FLOAT_CHANNELS = {
   threadOpenResult: 'eypc-float:thread-open-result',
   blankOpen: 'eypc-float:blank-open',
   blankOpenResult: 'eypc-float:blank-open-result',
+  copyText: 'eypc-float:copy-text',
+  copyTextResult: 'eypc-float:copy-text-result',
   dragStart: 'eypc-float:drag-start',
   dragMove: 'eypc-float:drag-move',
   dragEnd: 'eypc-float:drag-end',
@@ -4314,6 +4316,15 @@ function installCodexFloatIpc() {
     const result = await openCodexBlank()
     if (!codexFloatAlive()) return
     try { codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.blankOpenResult, { requestId, result }) } catch {}
+  })
+  ipc.on(CODEX_FLOAT_CHANNELS.copyText, async (_event, payload) => {
+    const source = codexRecord(payload)
+    const requestId = typeof source.requestId === 'string' && /^ftr_[A-Za-z0-9_-]{6,80}$/.test(source.requestId) ? source.requestId : ''
+    const text = typeof source.text === 'string' && source.text.length <= 50_000 ? source.text : ''
+    if (!requestId || !text.trim()) return
+    const copied = await copyText(text)
+    if (!codexFloatAlive()) return
+    try { codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.copyTextResult, { requestId, result: copied }) } catch {}
   })
   ipc.on(CODEX_FLOAT_CHANNELS.threadOpen, async (_event, payload) => {
     const source = codexRecord(payload)
