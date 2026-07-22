@@ -88,9 +88,25 @@ const style = computed(() => ({
   width: var(--water-size, 94px);
   height: var(--water-size, 94px);
   border-radius: 50%;
-  background: transparent;
+  background:
+    radial-gradient(circle at 16% 18%, color-mix(in srgb, var(--signal-a) 34%, transparent) 0%, transparent 48%),
+    radial-gradient(circle at 82% 82%, color-mix(in srgb, var(--signal-b) 34%, transparent) 0%, transparent 46%),
+    linear-gradient(145deg, color-mix(in srgb, var(--signal-a) 16%, var(--codex-surface)) 0%, color-mix(in srgb, var(--signal-b) 16%, var(--codex-surface)) 100%);
   color: #f7fbff;
   isolation: isolate;
+  overflow: hidden;
+}
+.codex-water-ball::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  border-radius: 50%;
+  opacity: var(--water-shell-opacity);
+  background:
+    radial-gradient(circle at 22% 22%, color-mix(in srgb, var(--signal-a) 70%, var(--codex-surface)), transparent 52%),
+    radial-gradient(circle at 78% 78%, color-mix(in srgb, var(--signal-b) 62%, var(--codex-surface)), transparent 48%),
+    linear-gradient(145deg, color-mix(in srgb, var(--signal-a) 38%, var(--codex-surface)) 0%, color-mix(in srgb, var(--signal-b) 38%, var(--codex-surface)) 100%);
 }
 .codex-water-ball.signal-ongoing { --signal-a: #28d7ff; --signal-b: #7357ff; }
 .codex-water-ball.signal-completed-unread { --signal-a: #ff4fd8; --signal-b: #ffb02e; }
