@@ -3358,13 +3358,13 @@ async function archiveCodexThread(actionAlias, request) {
       return { outcome: 'failed', errorCode: 'turn-changed', message: '任务最新提问已更新，未执行归档' }
     }
     const desktopActivity = codexEnsureDesktopBridge().activityForThread(entry.threadId)
-    if (desktopActivity?.status === 'active' || status === 'active' || turn?.status === 'inProgress') {
+    if (desktopActivity?.status === 'active' || status === 'active' || turn?.status === 'inProgress' || turn?.status === 'interrupted') {
       return { outcome: 'failed', errorCode: 'active-task', message: '任务已恢复进行中，未执行归档' }
     }
     if (evidence === 'completed' && (!turn || turn.status !== 'completed' || (turn.completedAt || turn.startedAt) !== expectedRevisionAt || (expectedCompletionAt > 0 && turn.completedAt !== expectedCompletionAt))) {
       return { outcome: 'failed', errorCode: 'completion-changed', message: '任务完成版本已更新，未执行归档' }
     }
-    if (evidence === 'terminal' && (!turn || (turn.status !== 'failed' && turn.status !== 'interrupted'))) {
+    if (evidence === 'terminal' && (!turn || turn.status !== 'failed')) {
       return { outcome: 'failed', errorCode: 'terminal-state-changed', message: '任务终止状态已更新，未执行归档' }
     }
     await requestCodexRpc('thread/archive', { threadId: entry.threadId })
@@ -3462,7 +3462,7 @@ async function archiveCodexProject(actionAlias, request) {
               continue
             }
             const desktopActivity = codexEnsureDesktopBridge().activityForThread(listedThread.id)
-            if (desktopActivity?.status === 'active' || status === 'active' || turn?.status === 'inProgress') {
+            if (desktopActivity?.status === 'active' || status === 'active' || turn?.status === 'inProgress' || turn?.status === 'interrupted') {
               skippedActiveKeys.push(key)
               continue
             }

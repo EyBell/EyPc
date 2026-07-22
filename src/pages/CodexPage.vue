@@ -734,9 +734,48 @@ onBeforeUnmount(() => {
 
           <fieldset class="codex-fieldset water-settings-group">
             <legend>
-              水球外层质感
+              外层 Weekly 环
             </legend>
-            <label class="water-range"><span>外层光泽透明度 <strong>{{ waterDraft.outer.shellOpacity }}%</strong></span><input type="range" min="25" max="95" step="1" :value="waterDraft.outer.shellOpacity" @input="updateWaterDraft('outer', 'shellOpacity', Number(($event.target as HTMLInputElement).value));" @change="commitWaterAppearance" /></label>
+            <label>
+              <span>环样式</span>
+              <select class="codex-select" :value="waterDraft.outer.style" @change="updateWaterDraft('outer', 'style', ($event.target as HTMLSelectElement).value); commitWaterAppearance()">
+                <option value="segmented">固定分段</option>
+                <option value="solid">圆环</option>
+              </select>
+            </label>
+            <label class="water-range"><span>粗细 <strong>{{ waterDraft.outer.thickness }}px</strong></span><input type="range" min="2" max="6" step="1" :value="waterDraft.outer.thickness" @input="updateWaterDraft('outer', 'thickness', Number(($event.target as HTMLInputElement).value));" @change="commitWaterAppearance" /></label>
+            <label>
+              <span>进度颜色</span>
+              <select class="codex-select" :value="waterDraft.outer.colorMode" @change="updateWaterDraft('outer', 'colorMode', ($event.target as HTMLSelectElement).value); commitWaterAppearance()">
+                <option value="quota">跟随额度状态</option>
+                <option value="custom">自定义</option>
+              </select>
+            </label>
+            <div class="water-color-pair">
+              <label>
+                <input
+                  type="color"
+                  :value="waterDraft.outer.progressColor"
+                  :disabled="waterDraft.outer.colorMode !== 'custom'"
+                  @input="updateWaterDraft('outer', 'progressColor', ($event.target as HTMLInputElement).value.toUpperCase())"
+                  @change="commitWaterAppearance"
+                />
+                <span>进度色</span>
+              </label>
+              <label><input type="color" :value="waterDraft.outer.trackColor" @input="updateWaterDraft('outer', 'trackColor', ($event.target as HTMLInputElement).value.toUpperCase())" @change="commitWaterAppearance" /><span>轨道色</span></label>
+            </div>
+            <label>
+              <span>光晕</span>
+              <select class="codex-select" :value="waterDraft.outer.glow" @change="updateWaterDraft('outer', 'glow', ($event.target as HTMLSelectElement).value); commitWaterAppearance()">
+                <option value="off">关闭</option>
+                <option value="soft">柔和</option>
+                <option value="strong">强</option>
+              </select>
+            </label>
+            <div class="codex-readonly-field" v-if="waterDraft.outer.colorMode === 'quota'">
+              <span>进度颜色</span>
+              <strong>跟随额度状态</strong>
+            </div>
           </fieldset>
         </div>
       </article>

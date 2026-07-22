@@ -293,15 +293,19 @@ export function validateCodexCustomColors(colors: CodexColorSettings): CodexColo
 }
 
 export function validateCodexWaterAppearance(colors: CodexColorSettings, appearance: CodexWaterAppearanceSettings): CodexColorValidation {
-  const values = [appearance.inner.colorA, appearance.inner.colorB]
+  const values = [appearance.inner.colorA, appearance.inner.colorB, appearance.outer.progressColor, appearance.outer.trackColor]
   if (values.some((value) => normalizeHex(value) === null)) return { valid: false, message: '水球颜色需使用完整的 6 位十六进制值' }
   if (appearance.inner.opacity < 40 || appearance.inner.opacity > 95) return { valid: false, message: '水纹透明度需在 40%–95% 之间' }
   if (appearance.inner.amplitude < 4 || appearance.inner.amplitude > 12) return { valid: false, message: '水纹振幅需在 4–12px 之间' }
-  if (appearance.outer.shellOpacity < 25 || appearance.outer.shellOpacity > 95) return { valid: false, message: '外层轮廓透明度需在 25%–95% 之间' }
+  if (appearance.outer.thickness < 2 || appearance.outer.thickness > 6) return { valid: false, message: 'Weekly 环粗细需在 2–6px 之间' }
   const surface = colors.water
   const foreground = readableForeground(surface)
   for (const liquid of [appearance.inner.colorA, appearance.inner.colorB]) {
     if (contrastRatio(foreground, liquid) < 4.5) return { valid: false, message: '水纹最亮颜色与必要文字的对比度不足 4.5:1' }
+  }
+  if (contrastRatio(appearance.outer.trackColor, surface) < 3) return { valid: false, message: 'Weekly 环轨道与水球表面对比度不足 3:1' }
+  if (appearance.outer.colorMode === 'custom' && contrastRatio(appearance.outer.progressColor, surface) < 3) {
+    return { valid: false, message: 'Weekly 环进度色与水球表面对比度不足 3:1' }
   }
   return { valid: true, message: '' }
 }
@@ -312,12 +316,11 @@ export function matchCodexThemePreset(colors: CodexColorSettings, appearance?: C
 }
 
 
-/** Extra quota arguments are accepted for one-release call-site compatibility; the removed outer ring no longer consumes them. */
 export function codexWaterAppearanceCssVars(
   appearance: CodexWaterAppearanceSettings,
   colors: CodexColorSettings,
-  _percent?: number,
-  _weeklyPercent?: number
+  percent = 100,
+  weeklyPercent = percent
 ): Record<string, string> {
   const durations = {
     static: ['0s', '0s'],
@@ -326,22 +329,29 @@ export function codexWaterAppearanceCssVars(
     fast: ['4.8s', '5.8s']
   } as const
   const [durationA, durationB] = durations[appearance.inner.motion]
+  const progress = appearance.outer.colorMode === 'quota' ? resolveCodexSurfaceTheme('water', colors, weeklyPercent).accent : appearance.outer.progressColor
   const fill = appearance.inner.palette === 'solid'
     ? appearance.inner.colorA
     : appearance.inner.palette === 'aurora'
       ? `linear-gradient(115deg, ${appearance.inner.colorA} 0%, ${appearance.inner.colorB} 52%, ${mixHex(appearance.inner.colorB, colors.healthy, 0.28)} 100%)`
       : `linear-gradient(135deg, ${appearance.inner.colorA}, ${appearance.inner.colorB})`
+  const glow = appearance.outer.glow === 'strong'
+    ? `drop-shadow(0 0 5px ${progress})`
+    : appearance.outer.glow === 'soft' ? `drop-shadow(0 0 2px ${progress})` : 'none'
   return {
     '--water-fill': fill,
     '--water-fill-a': appearance.inner.colorA,
     '--water-fill-b': appearance.inner.colorB,
     '--water-opacity': String(appearance.inner.opacity / 100),
-    '--water-shell-opacity': String(Math.max(0.25, Math.min(0.95, appearance.outer.shellOpacity / 100))),
     '--water-amplitude': `${appearance.inner.amplitude}px`,
     '--water-wave-a-duration': durationA,
     '--water-wave-b-duration': durationB,
     '--water-wave-a-delay': appearance.inner.motion === 'static' ? '0s' : `-${Number.parseFloat(durationA) * 0.18}s`,
-    '--water-wave-b-delay': appearance.inner.motion === 'static' ? '0s' : `-${Number.parseFloat(durationB) * 0.57}s`
+    '--water-wave-b-delay': appearance.inner.motion === 'static' ? '0s' : `-${Number.parseFloat(durationB) * 0.57}s`,
+    '--ring-width': String(appearance.outer.thickness),
+    '--ring-progress': progress,
+    '--ring-track': appearance.outer.trackColor,
+    '--ring-glow': glow
   }
 }
 

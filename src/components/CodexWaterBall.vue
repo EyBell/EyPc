@@ -21,17 +21,21 @@ const props = withDefaults(defineProps<{
 })
 
 const percent = computed(() => props.primary?.bucket.remainingPercent ?? 0)
+const weekly = computed(() => props.primary?.kind === 'weekly' ? props.primary : props.secondary?.kind === 'weekly' ? props.secondary : null)
+const weeklyPercent = computed(() => weekly.value?.bucket.remainingPercent ?? 0)
+const activeWeeklySegments = computed(() => Math.ceil(weeklyPercent.value / 5))
 const wavePath = 'M0 12 C12.5 0 37.5 0 50 12 S87.5 24 100 12 C112.5 0 137.5 0 150 12 S187.5 24 200 12 L200 24 L0 24 Z'
 const style = computed(() => ({
-  ...codexWaterAppearanceCssVars(props.appearance, props.colors),
-  '--water-level': `${percent.value}%`
+  ...codexWaterAppearanceCssVars(props.appearance, props.colors, percent.value, weekly.value ? weeklyPercent.value : percent.value),
+  '--water-level': `${percent.value}%`,
+  '--weekly-ring': String(weeklyPercent.value)
 }))
 </script>
 
 <template>
   <div
     class="codex-water-ball"
-    :class="[`palette-${appearance.inner.palette}`, `motion-${appearance.inner.motion}`, `signal-${signal}`]"
+    :class="[`palette-${appearance.inner.palette}`, `ring-${appearance.outer.style}`, `motion-${appearance.inner.motion}`, `signal-${signal}`]"
     :style="style"
     :role="decorative ? undefined : 'img'"
     :aria-hidden="decorative ? 'true' : undefined"
@@ -49,6 +53,26 @@ const style = computed(() => ({
       <i class="glass-highlight" />
     </div>
 
+    <svg v-if="weekly" class="codex-water-ball__ring" viewBox="0 0 100 100" aria-hidden="true">
+      <template v-if="appearance.outer.style === 'segmented'">
+        <line
+          v-for="index in 20"
+          :key="index"
+          class="segment"
+          :class="{ active: index <= activeWeeklySegments }"
+          x1="50"
+          y1="5"
+          x2="50"
+          y2="11"
+          :transform="`rotate(${(index - 1) * 18} 50 50)`"
+        />
+      </template>
+      <template v-else>
+        <circle class="track" cx="50" cy="50" r="45" />
+        <circle class="value" cx="50" cy="50" r="45" />
+      </template>
+    </svg>
+
     <div class="codex-water-ball__value" :class="{ empty: !primary }">
       <span v-if="primary?.family === 'spark'" class="codex-water-ball__spark" aria-hidden="true">S</span>
       <strong>{{ primary ? `${primary.bucket.remainingPercent}%` : stateLabel }}</strong>
@@ -64,25 +88,10 @@ const style = computed(() => ({
   width: var(--water-size, 94px);
   height: var(--water-size, 94px);
   border-radius: 50%;
-  background:
-    radial-gradient(circle at 16% 18%, color-mix(in srgb, var(--signal-a) 34%, transparent) 0%, transparent 48%),
-    radial-gradient(circle at 82% 82%, color-mix(in srgb, var(--signal-b) 34%, transparent) 0%, transparent 46%),
-    linear-gradient(145deg, color-mix(in srgb, var(--signal-a) 16%, var(--codex-surface)) 0%, color-mix(in srgb, var(--signal-b) 16%, var(--codex-surface)) 100%);
+  background: transparent;
   color: #f7fbff;
   isolation: isolate;
   overflow: hidden;
-}
-.codex-water-ball::before {
-  content: '';
-  position: absolute;
-  z-index: 0;
-  inset: 0;
-  border-radius: 50%;
-  opacity: var(--water-shell-opacity);
-  background:
-    radial-gradient(circle at 22% 22%, color-mix(in srgb, var(--signal-a) 70%, var(--codex-surface)), transparent 52%),
-    radial-gradient(circle at 78% 78%, color-mix(in srgb, var(--signal-b) 62%, var(--codex-surface)), transparent 48%),
-    linear-gradient(145deg, color-mix(in srgb, var(--signal-a) 38%, var(--codex-surface)) 0%, color-mix(in srgb, var(--signal-b) 38%, var(--codex-surface)) 100%);
 }
 .codex-water-ball.signal-ongoing { --signal-a: #28d7ff; --signal-b: #7357ff; }
 .codex-water-ball.signal-completed-unread { --signal-a: #ff4fd8; --signal-b: #ffb02e; }
@@ -91,19 +100,15 @@ const style = computed(() => ({
 .codex-water-ball__surface {
   position: absolute;
   z-index: 1;
-  inset: 2px;
+  inset: 0;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, #fff 58%, var(--signal-a));
+  border: 0;
   border-radius: 50%;
   background:
     radial-gradient(circle at 34% 22%, rgba(255,255,255,.34), transparent 22%),
     radial-gradient(circle at 68% 74%, color-mix(in srgb, var(--signal-b) 36%, transparent), transparent 48%),
     color-mix(in srgb, var(--codex-surface) 92%, #071927);
-  box-shadow:
-    0 10px 26px rgba(2, 12, 23, .48),
-    0 0 17px color-mix(in srgb, var(--signal-a) 38%, transparent),
-    inset 0 0 0 1px rgba(255,255,255,.16),
-    inset 0 -14px 24px rgba(2, 11, 21, .32);
+  box-shadow: inset 0 -14px 24px rgba(2, 11, 21, .32);
 }
 
 .refraction,
@@ -128,6 +133,33 @@ const style = computed(() => ({
   border-radius: 50%;
   filter: blur(.5px);
 }
+
+.codex-water-ball__ring {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+.codex-water-ball.ring-segmented .codex-water-ball__ring { transform: none; }
+.codex-water-ball__ring circle { fill: none; stroke-width: var(--ring-width); }
+.codex-water-ball__ring .track { stroke: color-mix(in srgb, var(--ring-track) 78%, #fff); }
+.codex-water-ball__ring .value {
+  stroke: var(--ring-progress);
+  stroke-dasharray: 282.75;
+  stroke-dashoffset: calc(282.75 - 2.8275 * var(--weekly-ring));
+  stroke-linecap: round;
+  filter: var(--ring-glow);
+  transition: stroke-dashoffset 280ms ease-out;
+}
+.codex-water-ball__ring .segment {
+  stroke: color-mix(in srgb, var(--ring-track) 78%, #fff);
+  stroke-width: var(--ring-width);
+  stroke-linecap: round;
+  transition: stroke 280ms ease-out;
+}
+.codex-water-ball__ring .segment.active { stroke: var(--ring-progress); filter: var(--ring-glow); }
 
 .codex-water-ball__liquid {
   position: absolute;

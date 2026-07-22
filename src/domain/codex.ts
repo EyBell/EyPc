@@ -447,6 +447,7 @@ export interface CodexWaterAppearanceSettings {
     progressColor: string
     trackColor: string
     glow: CodexWaterGlow
+    /** Legacy persistence compatibility only; the water surface no longer renders a decorative shell. */
     shellOpacity: number
   }
 }
@@ -520,7 +521,7 @@ export interface CodexState {
 }
 
 export type CodexTaskBucket = 'ongoing' | 'completed-unread' | 'completed'
-export type CodexTaskActivityState = 'active' | 'waiting-input' | 'waiting-approval' | 'failed' | 'interrupted' | 'system-error' | 'unknown'
+export type CodexTaskActivityState = 'active' | 'ongoing' | 'waiting-input' | 'waiting-approval' | 'failed' | 'system-error' | 'unknown'
 export type CodexArchiveCapability = 'blocked-active' | 'allowed' | 'allowed-with-warning'
 
 export interface CodexTaskCard {
@@ -608,7 +609,7 @@ export interface ConversationSnapshotV2 {
   /** One-release compatibility field. Native project removal never populates it. */
   removedProjects: CodexProjectCard[]
   activeTab: CodexVisibleTaskTab
-  /** Exact Codex Desktop live `active` tasks, including waiting input/approval. */
+  /** Visible ongoing tasks: exact Desktop live `active` plus provider `interrupted` projected as `ongoing`. */
   ongoingCount: number
   waitingCount: number
   runningCount: number
@@ -1202,7 +1203,7 @@ function taskActivityState(thread: CodexHostThread): CodexTaskActivityState {
   }
   if (thread.status === 'systemError') return 'system-error'
   if (thread.lastTurnStatus === 'failed') return 'failed'
-  if (thread.lastTurnStatus === 'interrupted') return 'interrupted'
+  if (thread.lastTurnStatus === 'interrupted') return 'ongoing'
   return 'unknown'
 }
 
@@ -1211,7 +1212,7 @@ function legacyTaskState(bucket: CodexTaskBucket, activityState: CodexTaskActivi
   if (bucket === 'completed') return 'recent-activity'
   if (activityState === 'waiting-input') return 'waiting-input'
   if (activityState === 'waiting-approval') return 'waiting-approval'
-  if (activityState === 'active') return 'running'
+  if (activityState === 'active' || activityState === 'ongoing') return 'running'
   if (activityState === 'unknown') return 'recent-activity'
   return 'attention'
 }
@@ -1256,9 +1257,9 @@ export function countConversationTasks(
   hidden: CodexTaskCard[] = []
 ) {
   const waitingCount = ongoing.filter((task) => task.activityState === 'waiting-input' || task.activityState === 'waiting-approval').length
-  const runningCount = ongoing.filter((task) => task.activityState === 'active').length
+  const runningCount = ongoing.filter((task) => task.activityState === 'active' || task.activityState === 'ongoing').length
   const unknownCount = ongoing.filter((task) => task.activityState === 'unknown').length
-  const attentionCount = ongoing.filter((task) => ['failed', 'interrupted', 'system-error'].includes(task.activityState)).length
+  const attentionCount = ongoing.filter((task) => task.activityState === 'failed' || task.activityState === 'system-error').length
   const hiddenUnreadCount = hidden.filter((task) => task.bucket === 'completed-unread').length
   return {
     ongoingCount: waitingCount + runningCount,
@@ -1371,9 +1372,9 @@ export function projectConversations(input: {
         ? unread ? 'completed-unread' : 'completed'
         : 'ongoing'
     const activityState = taskActivityState(thread)
-    const archiveCapability: CodexArchiveCapability = authoritativeActive
+    const archiveCapability: CodexArchiveCapability = authoritativeActive || activityState === 'ongoing'
       ? 'blocked-active'
-      : completionRevision > 0 || activityState === 'failed' || activityState === 'interrupted'
+      : completionRevision > 0 || thread.lastTurnStatus === 'failed'
         ? 'allowed'
         : 'allowed-with-warning'
     const revisionAt = completionRevision || thread.updatedAt

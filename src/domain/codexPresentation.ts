@@ -22,7 +22,7 @@ export interface CodexCompactPresentation {
   primary: CodexQuotaReading | null
   secondary: CodexQuotaReading | null
   showTasks: boolean
-  /** Exact active count reported by the connected provider. */
+  /** Visible ongoing count: Desktop live active plus raw interrupted projected as ongoing. */
   ongoingCount: number
   unknownCount: number
   attentionCount: number
@@ -85,15 +85,15 @@ export function buildCodexCompactPresentation(input: CodexPresentationInput): Co
   const unknownCount = showTasks ? input.conversations.unknownCount : 0
   const attentionCount = showTasks ? input.conversations.attentionCount : 0
   const pendingCount = showTasks ? input.conversations.pendingCount : 0
+  const inProgressCount = ongoingCount + attentionCount
   const state = quotaState(input.quota, primary !== null)
   const quotaDescription = primary
     ? `${primary.longLabel}剩余 ${primary.bucket.remainingPercent}%${secondary ? `，${secondary.longLabel}剩余 ${secondary.bucket.remainingPercent}%` : ''}`
     : state.stateLabel
   const taskParts = showTasks
     ? [
-        ongoingCount ? `${ongoingCount} 个进行中或等待操作` : '',
+        inProgressCount ? `${inProgressCount} 个进行中或等待操作` : '',
         unknownCount ? `${unknownCount} 个状态未知` : '',
-        attentionCount ? `${attentionCount} 个需关注` : '',
         pendingCount ? `${pendingCount} 个待查看` : ''
       ].filter(Boolean)
     : []

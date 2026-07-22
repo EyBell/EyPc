@@ -52,7 +52,7 @@ import type { CodexFloatSnapshotV1 } from './runtime/codexController'
 type RenderRow =
   | { kind: 'section'; key: string; section: CodexProjectSection }
   | { kind: 'hidden-project-section'; key: string; title: string }
-  | { kind: 'status-section'; key: string; title: string; count: number; tone: 'input' | 'active' | 'unread' | 'completed' | 'unknown' | 'attention' }
+  | { kind: 'status-section'; key: string; title: string; count: number; tone: 'input' | 'active' | 'unread' | 'completed' | 'unknown' }
   | { kind: 'project'; key: string; project: CodexProjectCard; sectionId: string; hiddenProject?: boolean }
   | { kind: 'task'; key: string; task: CodexTaskCard; sectionId?: string; parentProjectKey?: string; nested?: boolean }
   | { kind: 'empty-project'; key: string; projectKey: string }
@@ -97,7 +97,6 @@ type QuickJumpDomTarget = QuickJumpTarget & { element: HTMLElement }
 
 const DYNAMIC_TASK_WINDOW_MS = 6 * 60 * 60 * 1000
 const DYNAMIC_TASK_WINDOW_TICK_MS = 60 * 1000
-const ACTIVE_COUNTER_DELAY_MS = 2_000
 const COMPOSER_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 const COMPOSER_IMAGE_MAX_BYTES = 20 * 1024 * 1024
 
@@ -150,7 +149,6 @@ let collapseTimer: ReturnType<typeof setTimeout> | null = null
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 let actionHintTimer: ReturnType<typeof setTimeout> | null = null
 let dynamicClock: ReturnType<typeof setInterval> | null = null
-let activeCounterTimer: ReturnType<typeof setTimeout> | null = null
 let pendingRun: (() => void) | null = null
 let taskScrollResizeObserver: ResizeObserver | null = null
 let desiredExpanded = false
@@ -220,13 +218,12 @@ const compactAriaLabel = computed(() => {
 const compactCounts = computed(() => ({
   input: conversations.value?.inputRequiredCount || 0,
   active: [...(conversations.value?.ongoing || []), ...(conversations.value?.hidden || [])]
-    .filter((task) => task.activityState === 'active' || task.activityState === 'waiting-approval').length,
+    .filter((task) => task.activityState === 'active' || task.activityState === 'ongoing' || task.activityState === 'waiting-approval').length,
   unread: conversations.value?.completedUnreadCount || 0
 }))
-const displayedActiveCount = ref(0)
 const displayedCompactCounts = computed(() => ({
   input: compactCounts.value.input,
-  active: displayedActiveCount.value,
+  active: compactCounts.value.active,
   unread: compactCounts.value.unread
 }))
 const composerHasContent = computed(() => Boolean(composer.value?.image || composer.value?.prompt.trim()))
@@ -321,8 +318,7 @@ const renderRows = computed<RenderRow[]>(() => {
     const recentOngoing = recentTasks.filter((task) => task.bucket === 'ongoing')
     const groups = [
       { key: 'input', title: '待输入', tone: 'input' as const, tasks: recentOngoing.filter((task) => task.activityState === 'waiting-input') },
-      { key: 'active', title: '正在进行中', tone: 'active' as const, tasks: recentOngoing.filter((task) => task.activityState === 'active' || task.activityState === 'waiting-approval') },
-      { key: 'attention', title: '需关注', tone: 'attention' as const, tasks: recentOngoing.filter((task) => ['failed', 'interrupted', 'system-error'].includes(task.activityState)) },
+      { key: 'active', title: '正在进行中', tone: 'active' as const, tasks: recentOngoing.filter((task) => ['active', 'ongoing', 'waiting-approval', 'failed', 'system-error'].includes(task.activityState)) },
       { key: 'unknown', title: '宿主状态未知', tone: 'unknown' as const, tasks: recentOngoing.filter((task) => task.activityState === 'unknown') },
       { key: 'unread', title: '已完成未读', tone: 'unread' as const, tasks: recentTasks.filter((task) => task.bucket === 'completed-unread') },
       { key: 'completed', title: '已完成', tone: 'completed' as const, tasks: recentTasks.filter((task) => task.bucket === 'completed') }
@@ -1041,9 +1037,9 @@ function compactCount(value: number) {
 
 function compactCounterHint(kind: 'input' | 'active' | 'unread') {
   const count = displayedCompactCounts.value[kind]
-  if (kind === 'input') return `待输入 ${count}`
+  if (kind === 'input') return `待输入 ${count} · 打开第一条`
   if (kind === 'active') return `进行中 ${count}`
-  return `未读 ${count}`
+  return `未读 ${count} · 打开第一条`
 }
 
 function queueCompactCounterHint(event: PointerEvent, kind: 'input' | 'active' | 'unread') {
@@ -1051,13 +1047,22 @@ function queueCompactCounterHint(event: PointerEvent, kind: 'input' | 'active' |
   queueActionHint(event, compactCounterHint(kind))
 }
 
+function compactCounterTasks(kind: 'input' | 'unread') {
+  const value = conversations.value
+  if (!value) return []
+  const tasks = kind === 'input'
+    ? value.inputRequired
+    : value.all.filter((task) => task.bucket === 'completed-unread')
+  return displayOrderedTasks(tasks)
+}
+
 function openCompactStatus(kind: 'input' | 'active' | 'unread') {
-  if (kind === 'input' && displayedCompactCounts.value.input === 1) {
-    const task = conversations.value?.inputRequired[0]
-    if (task) openTask(task)
+  if (kind === 'active') {
+    requestExpansion(true)
     return
   }
-  requestExpansion(true)
+  const task = compactCounterTasks(kind)[0]
+  if (task) openTask(task)
 }
 
 function openTask(task: CodexTaskCard) {
@@ -2140,11 +2145,10 @@ function queueActionHint(event: Event, label: string) {
 function taskStateLabel(task: CodexTaskCard) {
   if (task.activityState === 'waiting-input') return '等待输入'
   if (task.activityState === 'waiting-approval') return '等待审批'
-  if (task.state === 'running' || task.activityState === 'active') return '进行中'
+  if (task.state === 'running' || task.activityState === 'active' || task.activityState === 'ongoing') return '进行中'
   if (task.bucket === 'completed-unread') return '已完成 · 未读'
   if (task.bucket === 'completed') return task.unreadState === 'unknown' ? '已完成 · 未读状态未知' : '已完成'
   if (task.activityState === 'failed') return '执行失败'
-  if (task.activityState === 'interrupted') return '已中断'
   if (task.activityState === 'system-error') return '系统错误'
   if (task.activityState === 'unknown') return '宿主状态未知'
   return '进行中'
@@ -2156,8 +2160,8 @@ function taskIcon(task: CodexTaskCard) {
   if (task.activityState === 'waiting-input') return MessageSquareText
   if (task.activityState === 'waiting-approval') return ShieldCheck
   if (task.state === 'running') return CirclePlay
-  if (['failed', 'interrupted', 'system-error'].includes(task.activityState)) return TriangleAlert
-  if (task.activityState === 'active') return CirclePlay
+  if (task.activityState === 'failed' || task.activityState === 'system-error') return TriangleAlert
+  if (task.activityState === 'active' || task.activityState === 'ongoing') return CirclePlay
   return History
 }
 
@@ -2171,14 +2175,6 @@ watch(() => conversations.value?.projects.map((project) => `${project.key}:${pro
     }
   }
   if (changed) optimisticProjectCollapsed.value = next
-})
-
-watch(() => compactCounts.value.active, () => {
-  if (activeCounterTimer) return
-  activeCounterTimer = setTimeout(() => {
-    activeCounterTimer = null
-    displayedActiveCount.value = compactCounts.value.active
-  }, ACTIVE_COUNTER_DELAY_MS)
 })
 
 watch([searchText, renderRows], () => {
@@ -2212,7 +2208,6 @@ onMounted(() => {
   dynamicNow.value = Date.now()
   dynamicClock = setInterval(() => { dynamicNow.value = Date.now() }, DYNAMIC_TASK_WINDOW_TICK_MS)
   snapshot.value = window.eypcFloat?.getSnapshot() || null
-  displayedActiveCount.value = compactCounts.value.active
   floatState.value = window.eypcFloat?.getState() || floatState.value
   expanded.value = floatState.value.expanded
   desiredExpanded = expanded.value
@@ -2243,8 +2238,6 @@ onMounted(() => {
 onUnmounted(() => {
   if (collapseTimer) clearTimeout(collapseTimer)
   if (dynamicClock) clearInterval(dynamicClock)
-  if (activeCounterTimer) clearTimeout(activeCounterTimer)
-  activeCounterTimer = null
   clearActionHint()
   closeShiftPreview()
   if (composer.value) {
@@ -2376,12 +2369,7 @@ onUnmounted(() => {
       </form>
 
       <section v-if="settings?.conversationInboxEnabled" class="float-task-inbox">
-        <div v-if="selectedKeys.size" class="float-selection-mode-bar" role="status" aria-live="polite">
-          <strong>选择模式</strong>
-          <span>已选 {{ selectedKeys.size }} 项</span>
-          <kbd>Esc 退出</kbd>
-        </div>
-        <div class="float-task-list-stage">
+        <div class="float-task-list-stage" :class="{ 'selection-mode': selectedKeys.size > 0 }">
           <div
             ref="taskScroll"
             class="float-task-scroll"
@@ -2556,6 +2544,12 @@ onUnmounted(() => {
               <template v-else-if="searchText">当前页签没有匹配结果</template>
               <template v-else>当前页签没有未归档会话</template>
             </div>
+          </div>
+
+          <div v-if="selectedKeys.size" class="float-selection-mode-bar" role="status" aria-live="polite">
+            <strong>选择模式</strong>
+            <span>已选 {{ selectedKeys.size }} 项</span>
+            <kbd>Esc 退出</kbd>
           </div>
 
           <div v-if="showBatchToolbar" class="float-batch-toolbar" :class="batchPlacement" role="toolbar" :aria-label="`已选择 ${selectedTasks.length} 个任务的批量操作`">

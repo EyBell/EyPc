@@ -1,4 +1,6 @@
 import {
+  compareConversationTasks,
+  countConversationTasks,
   conversationSnapshotFromReceipts,
   emptyCodexEnvironment,
   emptyCodexModelCatalog,
@@ -27,6 +29,7 @@ import {
   type CodexSettings,
   type CodexState,
   type CodexTaskTab,
+  type CodexTaskCard,
   type ConversationSnapshotV1
 } from '../domain/codex'
 import { normalizeCodexModelCatalog } from '../domain/codexNewThread'
@@ -91,6 +94,12 @@ function taskDelay(settings: CodexSettings): number {
   return settings.conversationInboxEnabled && settings.taskRefreshSeconds > 0 ? settings.taskRefreshSeconds * 1000 : Number.POSITIVE_INFINITY
 }
 
+const COMPLETION_PRESENTATION_DELAY_MS = 2_000
+
+type CompletionPresentationHold = {
+  expiresAt: number
+}
+
 export function createCodexController(options: CodexControllerOptions) {
   let quota = normalizeCodexQuota(options.getAppState().codex.cachedQuota)
   if (quota.updatedAt > 0 && quota.status === 'ok') quota = { ...quota, status: 'stale' }
@@ -98,7 +107,8 @@ export function createCodexController(options: CodexControllerOptions) {
   let modelCatalog = emptyCodexModelCatalog()
   let newThreadContextFingerprint = ''
   let environment = emptyCodexEnvironment()
-  let conversations = conversationSnapshotFromReceipts(options.getAppState().codex.receipts)
+  let rawConversations = conversationSnapshotFromReceipts(options.getAppState().codex.receipts)
+  let conversations = rawConversations
   let lastThreads: CodexHostThread[] = []
   let lastProjects: CodexHostProject[] = []
   let lastThreadsPartial = false
@@ -118,6 +128,8 @@ export function createCodexController(options: CodexControllerOptions) {
   let timer: ReturnType<typeof setTimeout> | null = null
   let activityTimer: ReturnType<typeof setTimeout> | null = null
   let structuralRefreshTimer: ReturnType<typeof setTimeout> | null = null
+  let completionPresentationTimer: ReturnType<typeof setTimeout> | null = null
+  const completionPresentationHolds = new Map<string, CompletionPresentationHold>()
   let inFlight: Promise<void> | null = null
   let activityInFlight: Promise<void> | null = null
   let stopActivityListener: (() => void) | null = null
@@ -158,6 +170,156 @@ export function createCodexController(options: CodexControllerOptions) {
     structuralRefreshTimer = null
   }
 
+  function clearCompletionPresentationTimer() {
+    if (completionPresentationTimer) clearTimeout(completionPresentationTimer)
+    completionPresentationTimer = null
+  }
+
+  function isPresentedRunning(task: CodexTaskCard | undefined): task is CodexTaskCard & {
+    bucket: 'ongoing'
+    state: 'running'
+    activityState: 'active' | 'ongoing'
+  } {
+    return task?.bucket === 'ongoing'
+      && task.state === 'running'
+      && (task.activityState === 'active' || task.activityState === 'ongoing')
+  }
+
+  function isCompletedTask(task: CodexTaskCard | undefined): task is CodexTaskCard {
+    return task?.bucket === 'completed' || task?.bucket === 'completed-unread'
+  }
+
+  function heldOngoingTask(task: CodexTaskCard): CodexTaskCard {
+    const held = {
+      ...task,
+      bucket: 'ongoing' as const,
+      activityState: 'ongoing' as const,
+      archiveCapability: 'blocked-active' as const,
+      state: 'running' as const,
+      canArchive: false
+    }
+    delete held.completionRevision
+    delete held.unreadState
+    delete held.pendingSince
+    delete held.lastTurnCompletedAt
+    delete held.lastTurnDurationMs
+    return held
+  }
+
+  function applyCompletionPresentationHolds(next: ConversationSnapshotV1): ConversationSnapshotV1 {
+    if (!completionPresentationHolds.size) return next
+    const heldKeys = new Set(next.all
+      .filter((task) => completionPresentationHolds.has(task.key) && isCompletedTask(task))
+      .map((task) => task.key))
+    if (!heldKeys.size) return next
+
+    const presentedByKey = new Map<string, CodexTaskCard>()
+    const presentTask = (task: CodexTaskCard) => {
+      const cached = presentedByKey.get(task.key)
+      if (cached) return cached
+      const hold = completionPresentationHolds.get(task.key)
+      const presented = hold && isCompletedTask(task) ? heldOngoingTask(task) : task
+      presentedByKey.set(task.key, presented)
+      return presented
+    }
+    const uniqueSorted = (tasks: CodexTaskCard[]) => [...new Map(tasks.map((task) => [task.key, task] as const)).values()]
+      .sort(compareConversationTasks)
+    const heldVisible = next.all.filter((task) => heldKeys.has(task.key) && !task.isHidden)
+    const ongoing = uniqueSorted([...next.ongoing.map(presentTask), ...heldVisible.map(presentTask)])
+    const completedUnread = next.completedUnread.filter((task) => !heldKeys.has(task.key)).map(presentTask)
+    const completed = next.completed.filter((task) => !heldKeys.has(task.key)).map(presentTask)
+    const hidden = next.hidden.map(presentTask).sort(compareConversationTasks)
+    const all = next.all.map(presentTask)
+    const inputRequired = next.inputRequired.map(presentTask)
+    const completedTab = [...completedUnread, ...completed].sort(compareConversationTasks)
+    const presentProject = (project: ConversationSnapshotV1['projects'][number]) => ({
+      ...project,
+      tasks: project.tasks.map(presentTask)
+    })
+    const projectSections = next.projectSections.map((section) => ({
+      ...section,
+      entries: section.entries.map((entry) => entry.kind === 'task'
+        ? { ...entry, task: presentTask(entry.task) }
+        : { ...entry, project: presentProject(entry.project) })
+    }))
+    const counts = countConversationTasks(ongoing, completedUnread, completed, hidden)
+
+    return {
+      ...next,
+      ongoing,
+      completedUnread,
+      completed,
+      pending: completedUnread,
+      hidden,
+      all,
+      inputRequired,
+      completedTab,
+      projectSections,
+      projects: next.projects.map(presentProject),
+      hiddenProjects: next.hiddenProjects.map(presentProject),
+      removedProjects: next.removedProjects.map(presentProject),
+      ...counts
+    }
+  }
+
+  function scheduleCompletionPresentationRelease() {
+    clearCompletionPresentationTimer()
+    if (disposed || !shouldRun() || !completionPresentationHolds.size) return
+    const expiresAt = Math.min(...[...completionPresentationHolds.values()].map((hold) => hold.expiresAt))
+    completionPresentationTimer = setTimeout(() => {
+      completionPresentationTimer = null
+      const now = Date.now()
+      let changed = false
+      for (const [key, hold] of completionPresentationHolds) {
+        if (hold.expiresAt <= now) {
+          completionPresentationHolds.delete(key)
+          changed = true
+        }
+      }
+      if (changed) {
+        conversations = applyCompletionPresentationHolds(rawConversations)
+        options.notify()
+      }
+      scheduleCompletionPresentationRelease()
+    }, Math.max(0, expiresAt - Date.now()))
+  }
+
+  function publishStabilizedConversations(next: ConversationSnapshotV1) {
+    const previousByKey = new Map(rawConversations.all.map((task) => [task.key, task] as const))
+    const nextByKey = new Map(next.all.map((task) => [task.key, task] as const))
+    const now = Date.now()
+
+    for (const key of completionPresentationHolds.keys()) {
+      if (!isCompletedTask(nextByKey.get(key))) completionPresentationHolds.delete(key)
+    }
+    for (const task of next.all) {
+      if (!completionPresentationHolds.has(task.key) && isCompletedTask(task)) {
+        const previous = previousByKey.get(task.key)
+        if (isPresentedRunning(previous)) {
+          completionPresentationHolds.set(task.key, {
+            expiresAt: now + COMPLETION_PRESENTATION_DELAY_MS
+          })
+        }
+      }
+    }
+
+    rawConversations = next
+    conversations = applyCompletionPresentationHolds(next)
+    scheduleCompletionPresentationRelease()
+  }
+
+  function updateConversationStatus(patch: Partial<Pick<ConversationSnapshotV1, 'status' | 'errorCode' | 'errorMessage'>>) {
+    rawConversations = { ...rawConversations, ...patch }
+    conversations = { ...conversations, ...patch }
+  }
+
+  function resetCompletionPresentation(next = rawConversations) {
+    clearCompletionPresentationTimer()
+    completionPresentationHolds.clear()
+    rawConversations = next
+    conversations = next
+  }
+
   function scheduleStructuralRefresh() {
     if (disposed || !shouldRun() || structuralRefreshTimer) return
     structuralRefreshTimer = setTimeout(() => {
@@ -181,7 +343,7 @@ export function createCodexController(options: CodexControllerOptions) {
       return
     }
     if (delta.generation < lastActivityGeneration) return
-    if (delta.receivedAt < conversations.updatedAt) return
+    if (delta.receivedAt < rawConversations.updatedAt) return
     lastActivityGeneration = delta.generation
     const byKey = new Map(delta.entries.map((entry) => [entry.key, entry]))
     const knownKeys = new Set(lastThreads.map((thread) => thread.key))
@@ -215,7 +377,7 @@ export function createCodexController(options: CodexControllerOptions) {
       return next
     })
     if (changed) {
-      publishConversationProjection({ receivedAt: delta.receivedAt, advanceScan: false, status: conversations.status })
+      publishConversationProjection({ receivedAt: delta.receivedAt, advanceScan: false, status: rawConversations.status })
     }
     if (changed || environmentChanged) options.notify()
     if (delta.inventoryChanged) scheduleStructuralRefresh()
@@ -292,11 +454,12 @@ export function createCodexController(options: CodexControllerOptions) {
       excludedSourceCount: lastExcludedSourceCount,
       nonConversationCount: lastNonConversationCount
     })
-    conversations = {
+    const nextConversations = {
       ...projection.snapshot,
       status: input.status || projection.snapshot.status,
-      ...(input.status && input.status !== 'ok' ? { errorCode: conversations.errorCode, errorMessage: conversations.errorMessage } : {})
+      ...(input.status && input.status !== 'ok' ? { errorCode: rawConversations.errorCode, errorMessage: rawConversations.errorMessage } : {})
     }
+    publishStabilizedConversations(nextConversations)
     state.receipts = projection.receipts
     if (input.advanceScan) {
       codexState().lastTaskScanAt = projection.lastTaskScanAt
@@ -345,7 +508,7 @@ export function createCodexController(options: CodexControllerOptions) {
     const now = Date.now()
     const settings = codexState().settings
     const includeQuota = input.force === true || quota.updatedAt <= 0 || (Number.isFinite(quotaDelay(settings)) && now - lastQuotaReadAt >= quotaDelay(settings))
-    const includeThreads = settings.conversationInboxEnabled && (input.force === true || input.forceTasks === true || conversations.updatedAt <= 0 || (Number.isFinite(taskDelay(settings)) && now - lastTaskReadAt >= taskDelay(settings)))
+    const includeThreads = settings.conversationInboxEnabled && (input.force === true || input.forceTasks === true || rawConversations.updatedAt <= 0 || (Number.isFinite(taskDelay(settings)) && now - lastTaskReadAt >= taskDelay(settings)))
     const includeConfig = includeQuota
     if (!includeQuota && !includeThreads) {
       schedule()
@@ -353,7 +516,7 @@ export function createCodexController(options: CodexControllerOptions) {
     }
     refreshing = true
     if (includeQuota && quota.updatedAt <= 0) quota = { ...quota, status: 'loading' }
-    if (includeThreads && conversations.updatedAt <= 0) conversations = { ...conversations, status: 'loading' }
+    if (includeThreads && rawConversations.updatedAt <= 0) updateConversationStatus({ status: 'loading' })
     options.notify()
     const generation = ++refreshGeneration
     const operation = (async () => {
@@ -419,12 +582,11 @@ export function createCodexController(options: CodexControllerOptions) {
             && /^[a-f0-9]{64}$/.test(host.sourceFingerprint)
             && Array.isArray(host.projects)
           if (host.version === 2 && !verifiedV2) {
-            conversations = {
-              ...conversations,
-              status: conversations.updatedAt > 0 ? 'stale' : 'error',
+            updateConversationStatus({
+              status: rawConversations.updatedAt > 0 ? 'stale' : 'error',
               errorCode: 'protocol-error',
               errorMessage: 'Codex 会话预检不完整，已拒绝发布快照'
-            }
+            })
             lastTaskReadAt = taskReceivedAt
             options.setMessage('Codex 会话预检不完整，已保留上一份已验证快照')
           } else {
@@ -453,12 +615,11 @@ export function createCodexController(options: CodexControllerOptions) {
           lastTaskReadAt = taskReceivedAt
           }
         } else if (!threadResult.ok) {
-          conversations = {
-            ...conversations,
-            status: conversations.updatedAt > 0 ? 'stale' : 'error',
+          updateConversationStatus({
+            status: rawConversations.updatedAt > 0 ? 'stale' : 'error',
             errorCode: threadResult.error.code,
             errorMessage: threadResult.error.message
-          }
+          })
           lastTaskReadAt = taskReceivedAt
         }
       }
@@ -509,10 +670,11 @@ export function createCodexController(options: CodexControllerOptions) {
       clearTimer()
       clearActivityTimer()
       clearStructuralRefreshTimer()
+      resetCompletionPresentation()
       options.platform.codex.close()
       return
     }
-    if (force || (quota.updatedAt <= 0 && conversations.updatedAt <= 0)) void refresh({ force: true })
+    if (force || (quota.updatedAt <= 0 && rawConversations.updatedAt <= 0)) void refresh({ force: true })
     else {
       schedule()
       scheduleActivity(0)
@@ -549,9 +711,9 @@ export function createCodexController(options: CodexControllerOptions) {
     })
     codexState().settings = next
     if (!next.conversationInboxEnabled) {
-      conversations = emptyConversationSnapshot()
+      resetCompletionPresentation(emptyConversationSnapshot())
     } else if (current.timeWindowDays !== next.timeWindowDays && lastThreads.length) {
-      publishConversationProjection({ receivedAt: Date.now(), advanceScan: false, status: conversations.status })
+      publishConversationProjection({ receivedAt: Date.now(), advanceScan: false, status: rawConversations.status })
     }
     options.save()
     options.notify()
@@ -651,7 +813,7 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function republishAfterReceiptChange() {
-    publishConversationProjection({ receivedAt: conversations.updatedAt || Date.now(), advanceScan: false, status: conversations.status })
+    publishConversationProjection({ receivedAt: rawConversations.updatedAt || Date.now(), advanceScan: false, status: rawConversations.status })
     options.save()
     options.notify()
   }
@@ -842,7 +1004,7 @@ export function createCodexController(options: CodexControllerOptions) {
       expectedSourceFingerprint: conversations.sourceFingerprint,
       evidence: task.completionRevision
         ? 'completed'
-        : task.activityState === 'failed' || task.activityState === 'interrupted'
+        : task.archiveCapability === 'allowed'
           ? 'terminal'
           : 'unknown'
     })
@@ -965,6 +1127,7 @@ export function createCodexController(options: CodexControllerOptions) {
       clearTimer()
       clearActivityTimer()
       clearStructuralRefreshTimer()
+      resetCompletionPresentation()
       stopActivityListener?.()
       stopActivityListener = null
       options.platform.codex.close()
