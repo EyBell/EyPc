@@ -64,8 +64,8 @@ export function highestSparkQuotaPool(quotaValue: CodexQuotaSnapshotV1): CodexQu
 }
 
 export function quotaBucketForPool(pool: CodexQuotaPool): { bucket: CodexQuotaBucket | null; label: string } {
-  if (positive(pool.short)) return { bucket: pool.short, label: pool.family === 'spark' ? 'Spark 5 小时额度' : '普通 5 小时额度' }
   if (positive(pool.weekly)) return { bucket: pool.weekly, label: pool.family === 'spark' ? 'Spark 周额度' : '普通周额度' }
+  if (positive(pool.short)) return { bucket: pool.short, label: pool.family === 'spark' ? 'Spark 5 小时额度' : '普通 5 小时额度' }
   if (pool.short) return { bucket: pool.short, label: pool.family === 'spark' ? 'Spark 5 小时额度' : '普通 5 小时额度' }
   if (pool.weekly) return { bucket: pool.weekly, label: pool.family === 'spark' ? 'Spark 周额度' : '普通周额度' }
   return { bucket: null, label: pool.family === 'spark' ? 'Spark 额度未返回' : '普通额度未返回' }
@@ -73,7 +73,7 @@ export function quotaBucketForPool(pool: CodexQuotaPool): { bucket: CodexQuotaBu
 
 export function ordinaryQuotaExhausted(quotaValue: CodexQuotaSnapshotV1): boolean {
   const quota = normalizeCodexQuota(quotaValue)
-  return [quota.normal.short, quota.normal.weekly].some((bucket) => bucket !== null && bucket.remainingPercent === 0)
+  return quota.normal.weekly !== null && quota.normal.weekly.remainingPercent === 0
 }
 
 function manualRequired(reason: 'spark-unavailable' | 'catalog-empty'): CodexResolvedNewThreadModel {
@@ -84,7 +84,7 @@ function manualRequired(reason: 'spark-unavailable' | 'catalog-empty'): CodexRes
     family: reason === 'spark-unavailable' ? 'spark' : 'normal',
     reason,
     quota: null,
-    quotaLabel: reason === 'spark-unavailable' ? '普通额度已用完，Spark 当前不可用' : '模型目录暂不可用'
+    quotaLabel: reason === 'spark-unavailable' ? '普通周额度已用完，Spark 当前不可用' : '模型目录暂不可用'
   }
 }
 
@@ -153,11 +153,11 @@ export function resolveManualCodexModel(input: {
 }
 
 export function codexModelReasonLabel(model: CodexResolvedNewThreadModel): string {
-  if (model.reason === 'preferred-normal') return '普通额度可用，采用配置的首选模型'
-  if (model.reason === 'default-normal') return '普通额度可用，采用目录默认模型'
-  if (model.reason === 'first-normal') return '普通额度可用，采用首个可用的非 Spark 模型'
-  if (model.reason === 'quota-spark') return '普通额度窗口已用完，自动切换到最高可用 Spark'
+  if (model.reason === 'preferred-normal') return '普通周额度可用，采用配置的首选模型'
+  if (model.reason === 'default-normal') return '普通周额度可用，采用目录默认模型'
+  if (model.reason === 'first-normal') return '普通周额度可用，采用首个可用的非 Spark 模型'
+  if (model.reason === 'quota-spark') return '普通周额度已用完，自动切换到最高可用 Spark'
   if (model.reason === 'manual-selection') return '仅对本次会话使用手动选择的模型'
-  if (model.reason === 'spark-unavailable') return '普通额度已用完，但 Spark 模型或额度不可用'
+  if (model.reason === 'spark-unavailable') return '普通周额度已用完，但 Spark 模型或额度不可用'
   return '模型目录暂不可用，请刷新或手动选择'
 }

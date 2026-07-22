@@ -5,11 +5,14 @@ export type CodexFloatEdge = 'left' | 'right' | 'top' | 'bottom'
 export type CodexCompactField = 'short' | 'weekly' | 'tasks'
 export type CodexExpandedField = 'plan' | 'short' | 'weekly' | 'reset' | 'config' | 'tasks' | 'updatedAt'
 export type CodexEnvironmentPlatform = 'macos' | 'windows' | 'unsupported'
-export type CodexRuntimeSource = 'configured' | 'volta' | 'npm-global' | 'local' | 'homebrew' | 'nvm' | 'path' | 'unknown'
+export type CodexRuntimeSource = 'manual' | 'configured' | 'volta' | 'npm-global' | 'local' | 'homebrew' | 'nvm' | 'path' | 'unknown'
 export type CodexRuntimeState = 'detected' | 'missing' | 'unusable' | 'unsupported'
 export type CodexProcessState = 'running' | 'not-running' | 'unknown'
 export type CodexConfigFileState = 'loaded' | 'detected' | 'missing' | 'unreadable' | 'unknown'
 export type CodexConnectionState = 'not-checked' | 'connected' | 'failed'
+export type CodexLaunchMode = 'manual' | 'automatic' | 'legacy-fallback' | 'unknown'
+export type CodexManualLaunchPathState = 'not-configured' | 'valid' | 'invalid' | 'unavailable'
+export type CodexStatusFeedMode = 'desktop-live' | 'connector-fallback' | 'unavailable'
 export type CodexTaskAuthority = 'live' | 'mixed' | 'inventory-only'
 export type CodexTaskTab = 'all' | 'input' | 'ongoing' | 'completed' | 'hidden' | 'projects'
 export type CodexProjectSectionId = 'pinned' | 'projects' | 'chats'
@@ -149,22 +152,45 @@ export interface CodexEnvironmentSnapshotV1 {
   processState: CodexProcessState
   configState: CodexConfigFileState
   connectionState: CodexConnectionState
+  desktopBridgeState: CodexDesktopBridgeState
   checkedAt: number
   errorCode?: CodexBridgeError['code']
+  /** Manual launch location never crosses the preload boundary; only its validation outcome does. */
+  launchMode?: CodexLaunchMode
+  manualLaunchPathState?: CodexManualLaunchPathState
+  /** Privacy-safe labels only: no executable paths, PIDs, or environment values. */
+  launchCandidates?: CodexLaunchCandidate[]
+  /** Connector fallback never grants Input/ongoing/unread authority. */
+  statusFeedMode?: CodexStatusFeedMode
+}
+
+export interface CodexLaunchCandidate {
+  source: CodexRuntimeSource
+  label: string
+  state: 'available' | 'unusable'
 }
 
 export type CodexThreadStatus = 'active' | 'idle' | 'notLoaded' | 'systemError'
 export type CodexThreadActiveFlag = 'waitingOnApproval' | 'waitingOnUserInput'
 export type CodexTurnStatus = 'completed' | 'interrupted' | 'failed' | 'inProgress'
+export type CodexDesktopBridgeState = 'not-checked' | 'connecting' | 'connected' | 'not-running' | 'incompatible' | 'failed'
+export type CodexStatusAuthority = 'desktop-live' | 'connector' | 'unavailable'
+export type CodexUnreadAuthority = 'desktop-live' | 'desktop-persisted' | 'unavailable'
 
 export interface CodexHostThread {
   /** Provider-issued stable anonymous correlation key; never a raw thread id. */
   key: string
   /** Short-lived provider action alias; never an arbitrary URL or raw thread id. */
   actionAlias: string
+  displayName?: string
   name: string
   status: CodexThreadStatus
   activeFlags: CodexThreadActiveFlag[]
+  /** Activity is authoritative only while the desktop follower is live. */
+  statusAuthority?: CodexStatusAuthority
+  /** Exact unread state owned by Codex Desktop, never an EyPc read receipt. */
+  hasUnreadTurn?: boolean
+  unreadAuthority?: CodexUnreadAuthority
   updatedAt: number
   /** Privacy-safe thread creation timestamp when provided by the host. */
   createdAt?: number
@@ -282,6 +308,28 @@ export interface CodexActivityDeltaV1 {
   receivedAt: number
 }
 
+export interface CodexActivityDeltaEntryV2 {
+  /** Anonymous task key already present in the last verified host snapshot. */
+  key: string
+  status?: CodexThreadStatus
+  activeFlags?: CodexThreadActiveFlag[]
+  statusAuthority?: CodexStatusAuthority
+  hasUnreadTurn?: boolean
+  unreadAuthority?: CodexUnreadAuthority
+}
+
+export interface CodexActivityDeltaV2 {
+  version: 2
+  sourceFingerprint: string
+  generation: number
+  entries: CodexActivityDeltaEntryV2[]
+  inventoryChanged: boolean
+  desktopBridgeState: CodexDesktopBridgeState
+  receivedAt: number
+}
+
+export type CodexActivityDelta = CodexActivityDeltaV1 | CodexActivityDeltaV2
+
 export interface CodexBridgeError {
   code: 'unsupported' | 'unavailable' | 'runtime-unavailable' | 'not-authenticated' | 'timeout' | 'protocol-error' | 'process-exited' | 'open-failed'
   message: string
@@ -299,6 +347,7 @@ export interface CodexThreadOpenResult {
 
 export interface CodexThreadArchiveResult {
   outcome: 'archived' | 'failed'
+  desktopSync?: 'dispatched' | 'not-running' | 'incompatible' | 'failed'
   errorCode?: string
   message?: string
 }
@@ -321,14 +370,29 @@ export interface CodexProjectArchiveResult {
   archivedKeys: string[]
   skippedActiveKeys: string[]
   failed: Array<{ key: string; errorCode: string }>
+  desktopSyncedKeys?: string[]
+  desktopSyncFailedKeys?: string[]
   errorCode?: string
   message?: string
 }
 
+export interface CodexProjectRemoveRequest {
+  expectedSourceFingerprint: string
+}
+
+export type CodexProjectRemoveStatus = 'codex-running' | 'stale-source' | 'unsupported-schema' | 'write-failed' | 'verified'
+
+export interface CodexProjectRemoveResult {
+  status: CodexProjectRemoveStatus
+  message: string
+}
+
 export interface CodexThreadReceipt {
   key: string
+  /** Legacy local-view watermark; never authoritative for Codex unread state. */
   acknowledgedRecency: number
   acknowledgedAt: number
+  /** Legacy completion-pending fields, cleared when a current host row is projected. */
   pendingRecency: number
   pendingSince: number
   pendingMode?: 'completion' | 'recency'
@@ -353,6 +417,7 @@ export interface CodexColorSettings {
   critical: string
   water: string
   card: string
+  cardForeground: string
 }
 
 export interface CodexWaterAppearanceSettings {
@@ -371,7 +436,17 @@ export interface CodexWaterAppearanceSettings {
     progressColor: string
     trackColor: string
     glow: CodexWaterGlow
+    shellOpacity: number
   }
+}
+
+export interface CodexSavedThemePreset {
+  id: string
+  name: string
+  colors: CodexColorSettings
+  waterAppearance: CodexWaterAppearanceSettings
+  createdAt: number
+  updatedAt: number
 }
 
 export interface CodexExpandedSizePreference {
@@ -402,6 +477,7 @@ export interface CodexSettings {
   expandedFields: CodexExpandedField[]
   colors: CodexColorSettings
   waterAppearance: CodexWaterAppearanceSettings
+  savedThemePresets: CodexSavedThemePreset[]
   position: CodexFloatPosition
   expandedSizes: CodexExpandedSizePreference[]
 }
@@ -428,9 +504,8 @@ export interface CodexState {
   taskAliases: CodexAliasEntry[]
   projectAliases: CodexAliasEntry[]
   localPins: CodexLocalPin[]
-  removedProjectKeys: string[]
-  /** Removed projects that have since been observed absent from Codex. */
-  removedProjectAbsentKeys: string[]
+  /** Local presentation state: hides only the Projects-tab group. */
+  hiddenProjectKeys: string[]
 }
 
 export type CodexTaskBucket = 'ongoing' | 'completed-unread' | 'completed'
@@ -440,6 +515,7 @@ export type CodexArchiveCapability = 'blocked-active' | 'allowed' | 'allowed-wit
 export interface CodexTaskCard {
   key: string
   actionAlias?: string
+  displayName?: string
   name: string
   /** V2 primary state. Hiding is intentionally orthogonal to this bucket. */
   bucket: CodexTaskBucket
@@ -449,6 +525,7 @@ export interface CodexTaskCard {
   revisionAt: number
   /** Privacy-safe persisted completion watermark, never turn content. */
   completionRevision?: number
+  unreadState?: 'unread' | 'read' | 'unknown'
   /** Latest Turn.startedAt; this is the only field used as “last question time”. */
   lastQuestionAt?: number
   /** Deprecated presentation state retained while old persisted renderers migrate. */
@@ -516,9 +593,11 @@ export interface ConversationSnapshotV2 {
   completedTab: CodexTaskCard[]
   projectSections: CodexProjectSection[]
   projects: CodexProjectCard[]
+  hiddenProjects: CodexProjectCard[]
+  /** One-release compatibility field. Native project removal never populates it. */
   removedProjects: CodexProjectCard[]
   activeTab: CodexTaskTab
-  /** Exact App Server `active` tasks, including waiting input/approval. */
+  /** Exact Codex Desktop live `active` tasks, including waiting input/approval. */
   ongoingCount: number
   waitingCount: number
   runningCount: number
@@ -565,6 +644,8 @@ const RECEIPT_KEY = /^[a-f0-9]{16,64}$/
 const PROJECT_KEY = /^(?:[a-f0-9]{16,64}|chats)$/
 const COMPACT_FIELDS: CodexCompactField[] = ['short', 'weekly', 'tasks']
 const EXPANDED_FIELDS: CodexExpandedField[] = ['plan', 'short', 'weekly', 'reset', 'config', 'tasks', 'updatedAt']
+const MAX_SAVED_THEME_PRESETS = 20
+const THEME_NAME_MAX_LENGTH = 40
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? value as Record<string, unknown> : {}
@@ -605,11 +686,27 @@ function colorLuminance(value: string): number {
   return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
 }
 
+function colorContrastRatio(first: string, second: string): number {
+  const light = Math.max(colorLuminance(first), colorLuminance(second))
+  const dark = Math.min(colorLuminance(first), colorLuminance(second))
+  return (light + 0.05) / (dark + 0.05)
+}
+
+function readableCardForeground(surface: string): string {
+  const ink = '#07161D'
+  const paper = '#F8FCFB'
+  return colorContrastRatio(surface, ink) >= colorContrastRatio(surface, paper) ? ink : paper
+}
+
 function normalizeColors(value: unknown, fallback: CodexColorSettings): CodexColorSettings {
   const source = record(value)
   const hasWaterSetting = Object.prototype.hasOwnProperty.call(source, 'water')
   const legacyCard = isValidColor(source.card) ? source.card.toUpperCase() : null
   const legacyCardIsDark = legacyCard !== null && colorLuminance(legacyCard) < 0.5
+
+  const card = hasWaterSetting
+    ? color(source.card, fallback.card)
+    : legacyCard && !legacyCardIsDark ? legacyCard : fallback.card
 
   return {
     healthy: color(source.healthy, fallback.healthy),
@@ -618,9 +715,8 @@ function normalizeColors(value: unknown, fallback: CodexColorSettings): CodexCol
     water: hasWaterSetting
       ? color(source.water, fallback.water)
       : legacyCardIsDark ? legacyCard : fallback.water,
-    card: hasWaterSetting
-      ? color(source.card, fallback.card)
-      : legacyCard && !legacyCardIsDark ? legacyCard : fallback.card
+    card,
+    cardForeground: color(source.cardForeground, readableCardForeground(card))
   }
 }
 
@@ -647,13 +743,14 @@ export function defaultCodexWaterAppearance(colors: CodexColorSettings = default
       colorMode: 'quota',
       progressColor: colors.healthy,
       trackColor: mixColorHex(colors.water, '#FFFFFF', 0.45),
-      glow: 'soft'
+      glow: 'soft',
+      shellOpacity: 72
     }
   }
 }
 
 function defaultCodexSettingsColors(): CodexColorSettings {
-  return { healthy: '#23B5A5', warning: '#F2A93B', critical: '#EF5B68', water: '#102C3C', card: '#F7F9F7' }
+  return { healthy: '#23B5A5', warning: '#F2A93B', critical: '#EF5B68', water: '#102C3C', card: '#F7F9F7', cardForeground: '#07161D' }
 }
 
 export function normalizeCodexWaterAppearance(value: unknown, colors: CodexColorSettings, fallback = defaultCodexWaterAppearance(colors)): CodexWaterAppearanceSettings {
@@ -675,7 +772,8 @@ export function normalizeCodexWaterAppearance(value: unknown, colors: CodexColor
       colorMode: enumValue(outer.colorMode, ['quota', 'custom'] as const, fallback.outer.colorMode),
       progressColor: color(outer.progressColor, fallback.outer.progressColor),
       trackColor: color(outer.trackColor, fallback.outer.trackColor),
-      glow: enumValue(outer.glow, ['off', 'soft', 'strong'] as const, fallback.outer.glow)
+      glow: enumValue(outer.glow, ['off', 'soft', 'strong'] as const, fallback.outer.glow),
+      shellOpacity: boundedInteger(outer.shellOpacity, 25, 95, fallback.outer.shellOpacity)
     }
   }
 }
@@ -696,6 +794,31 @@ function normalizeExpandedSizes(value: unknown): CodexExpandedSizePreference[] {
     if (!previous || entry.updatedAt >= previous.updatedAt) byDisplay.set(displayId, entry)
   }
   return [...byDisplay.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 8)
+}
+
+function normalizeThemePresetName(value: unknown): string {
+  return typeof value === 'string' ? value.trim().slice(0, THEME_NAME_MAX_LENGTH) : ''
+}
+
+function normalizeSavedThemePresets(value: unknown, fallbackColors: CodexColorSettings): CodexSavedThemePreset[] {
+  if (!Array.isArray(value)) return []
+  const presets = new Map<string, CodexSavedThemePreset>()
+  for (const item of value) {
+    const source = record(item)
+    const id = normalizeThemePresetName(source.id)
+    if (!id) continue
+    const name = normalizeThemePresetName(source.name)
+    if (!name) continue
+    const colors = normalizeColors(source.colors, fallbackColors)
+    const waterAppearance = normalizeCodexWaterAppearance(source.waterAppearance, colors)
+    const createdAt = numberValue(source.createdAt, 0)
+    const updatedAt = numberValue(source.updatedAt, createdAt || Date.now())
+    const existing = presets.get(id)
+    if (!existing || updatedAt >= existing.updatedAt) {
+      presets.set(id, { id, name, colors, waterAppearance, createdAt: createdAt || updatedAt, updatedAt })
+    }
+  }
+  return [...presets.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_SAVED_THEME_PRESETS)
 }
 
 export function normalizeCodexFirstPromptTimes(value: unknown): CodexFirstPromptTimeCacheEntry[] {
@@ -792,6 +915,11 @@ export function emptyCodexEnvironment(): CodexEnvironmentSnapshotV1 {
     processState: 'unknown',
     configState: 'unknown',
     connectionState: 'not-checked',
+    desktopBridgeState: 'not-checked',
+    launchMode: 'unknown',
+    manualLaunchPathState: 'unavailable',
+    launchCandidates: [],
+    statusFeedMode: 'unavailable',
     checkedAt: 0
   }
 }
@@ -810,6 +938,7 @@ export function emptyConversationSnapshot(status: ConversationSnapshotV1['status
     completedTab: [],
     projectSections: [],
     projects: [],
+    hiddenProjects: [],
     removedProjects: [],
     activeTab: 'ongoing',
     ongoingCount: 0,
@@ -853,6 +982,7 @@ export function defaultCodexSettings(): CodexSettings {
     expandedFields: [...EXPANDED_FIELDS],
     colors,
     waterAppearance: defaultCodexWaterAppearance(colors),
+    savedThemePresets: [],
     position: { displayId: '', x: null, y: null, edge: 'right' },
     expandedSizes: []
   }
@@ -878,6 +1008,7 @@ export function normalizeCodexSettings(value: unknown): CodexSettings {
     expandedFields: orderedFields(source.expandedFields, EXPANDED_FIELDS, fallback.expandedFields),
     colors,
     waterAppearance: normalizeCodexWaterAppearance(source.waterAppearance, colors, defaultCodexWaterAppearance(colors)),
+    savedThemePresets: normalizeSavedThemePresets(source.savedThemePresets, colors),
     position: {
       displayId: typeof position.displayId === 'string' ? position.displayId.slice(0, 120) : '',
       x: typeof position.x === 'number' && Number.isFinite(position.x) ? Math.round(position.x) : null,
@@ -950,15 +1081,29 @@ export function normalizeCodexConfig(value: unknown): CodexConfigSnapshotV1 {
 
 export function normalizeCodexEnvironment(value: unknown): CodexEnvironmentSnapshotV1 {
   const source = record(value)
+  const launchCandidates = Array.isArray(source.launchCandidates)
+    ? source.launchCandidates.flatMap((candidate) => {
+        const item = record(candidate)
+        const runtimeSource = enumValue(item.source, ['manual', 'configured', 'volta', 'npm-global', 'local', 'homebrew', 'nvm', 'path', 'unknown'] as const, 'unknown')
+        const label = typeof item.label === 'string' ? item.label.trim().slice(0, 80) : ''
+        const state = enumValue(item.state, ['available', 'unusable'] as const, 'unusable')
+        return label ? [{ source: runtimeSource, label, state }] : []
+      }).slice(0, 8)
+    : []
   return {
     version: 1,
     checking: source.checking === true,
     platform: enumValue(source.platform, ['macos', 'windows', 'unsupported'] as const, 'unsupported'),
     runtimeState: enumValue(source.runtimeState, ['detected', 'missing', 'unusable', 'unsupported'] as const, 'unsupported'),
-    runtimeSource: enumValue(source.runtimeSource, ['configured', 'volta', 'npm-global', 'local', 'homebrew', 'nvm', 'path', 'unknown'] as const, 'unknown'),
+    runtimeSource: enumValue(source.runtimeSource, ['manual', 'configured', 'volta', 'npm-global', 'local', 'homebrew', 'nvm', 'path', 'unknown'] as const, 'unknown'),
     processState: enumValue(source.processState, ['running', 'not-running', 'unknown'] as const, 'unknown'),
     configState: enumValue(source.configState, ['loaded', 'detected', 'missing', 'unreadable', 'unknown'] as const, 'unknown'),
     connectionState: enumValue(source.connectionState, ['not-checked', 'connected', 'failed'] as const, 'not-checked'),
+    desktopBridgeState: enumValue(source.desktopBridgeState, ['not-checked', 'connecting', 'connected', 'not-running', 'incompatible', 'failed'] as const, 'not-checked'),
+    launchMode: enumValue(source.launchMode, ['manual', 'automatic', 'legacy-fallback', 'unknown'] as const, 'unknown'),
+    manualLaunchPathState: enumValue(source.manualLaunchPathState, ['not-configured', 'valid', 'invalid', 'unavailable'] as const, 'unavailable'),
+    launchCandidates,
+    statusFeedMode: enumValue(source.statusFeedMode, ['desktop-live', 'connector-fallback', 'unavailable'] as const, 'unavailable'),
     checkedAt: numberValue(source.checkedAt, 0),
     ...(typeof source.errorCode === 'string' ? { errorCode: enumValue(source.errorCode, ['unsupported', 'unavailable', 'runtime-unavailable', 'not-authenticated', 'timeout', 'protocol-error', 'process-exited', 'open-failed'] as const, 'unavailable') } : {})
   }
@@ -1012,8 +1157,7 @@ export function createDefaultCodexState(): CodexState {
     taskAliases: [],
     projectAliases: [],
     localPins: [],
-    removedProjectKeys: [],
-    removedProjectAbsentKeys: []
+    hiddenProjectKeys: []
   }
 }
 
@@ -1031,20 +1175,23 @@ export function normalizeCodexState(value: unknown): CodexState {
     taskAliases: normalizeCodexAliases(source.taskAliases),
     projectAliases: normalizeCodexAliases(source.projectAliases, true),
     localPins: normalizeCodexLocalPins(source.localPins),
-    removedProjectKeys: normalizeAnonymousKeys(source.removedProjectKeys, 200, true).filter((key) => key !== 'chats'),
-    removedProjectAbsentKeys: normalizeAnonymousKeys(source.removedProjectAbsentKeys, 200, true).filter((key) => key !== 'chats')
+    hiddenProjectKeys: normalizeAnonymousKeys(source.hiddenProjectKeys, 200, true).filter((key) => key !== 'chats')
   }
 }
 
+function isLikelyActiveTask(thread: CodexHostThread) {
+  return thread.statusAuthority === 'desktop-live' && thread.status === 'active'
+}
+
 function taskActivityState(thread: CodexHostThread): CodexTaskActivityState {
-  if (thread.status === 'active' || thread.lastTurnStatus === 'inProgress') {
+  if (isLikelyActiveTask(thread)) {
     if (thread.activeFlags.includes('waitingOnUserInput')) return 'waiting-input'
     if (thread.activeFlags.includes('waitingOnApproval')) return 'waiting-approval'
     return 'active'
   }
+  if (thread.status === 'systemError') return 'system-error'
   if (thread.lastTurnStatus === 'failed') return 'failed'
   if (thread.lastTurnStatus === 'interrupted') return 'interrupted'
-  if (thread.status === 'systemError') return 'system-error'
   return 'unknown'
 }
 
@@ -1095,6 +1242,7 @@ export function countConversationTasks(
   const runningCount = ongoing.filter((task) => task.activityState === 'active').length
   const unknownCount = ongoing.filter((task) => task.activityState === 'unknown').length
   const attentionCount = ongoing.filter((task) => ['failed', 'interrupted', 'system-error'].includes(task.activityState)).length
+  const hiddenUnreadCount = hidden.filter((task) => task.bucket === 'completed-unread').length
   return {
     ongoingCount: waitingCount + runningCount,
     waitingCount,
@@ -1102,9 +1250,9 @@ export function countConversationTasks(
     unknownCount,
     attentionCount,
     inputRequiredCount: [...ongoing, ...hidden].filter((task) => task.activityState === 'waiting-input').length,
-    completedUnreadCount: completedUnread.length,
+    completedUnreadCount: completedUnread.length + hiddenUnreadCount,
     completedCount: completed.length,
-    pendingCount: completedUnread.length,
+    pendingCount: completedUnread.length + hiddenUnreadCount,
     hiddenCount: hidden.length
   }
 }
@@ -1122,6 +1270,7 @@ export function projectConversations(input: {
   recoveredPending?: CodexRecoveredPendingSource[]
   /** Ignored in V2. Kept only for persisted V1 caller compatibility. */
   pendingRecoveryStatus?: CodexPendingRecoverySnapshotV1['status']
+  /** Deprecated caller compatibility; live state is never inferred from this cache. */
   previousStatuses?: Record<string, CodexThreadStatus>
   lastTaskScanAt: number
   now?: number
@@ -1134,7 +1283,7 @@ export function projectConversations(input: {
   taskAliases?: CodexAliasEntry[]
   projectAliases?: CodexAliasEntry[]
   localPins?: CodexLocalPin[]
-  removedProjectKeys?: string[]
+  hiddenProjectKeys?: string[]
   sourceFingerprint?: string
   completeness?: 'verified'
   rawSourceCount?: number
@@ -1146,13 +1295,14 @@ export function projectConversations(input: {
   const windowStart = typeof input.timeWindowDays === 'number'
     ? now - boundedInteger(input.timeWindowDays, 1, 365, 30) * 24 * 60 * 60 * 1000
     : 0
-  const firstBaseline = input.lastTaskScanAt <= 0
   const receiptMap = new Map(normalizeCodexReceipts(input.receipts).map((receipt) => [receipt.key, { ...receipt }]))
   const taskAliases = new Map(normalizeCodexAliases(input.taskAliases).map((entry) => [entry.key, entry.alias]))
   const projectAliases = new Map(normalizeCodexAliases(input.projectAliases, true).map((entry) => [entry.key, entry.alias]))
   const collapsedProjects = new Set(normalizeAnonymousKeys(input.collapsedProjectKeys, 500, true))
-  const removedProjects = new Set(normalizeAnonymousKeys(input.removedProjectKeys, 200, true))
+  const hiddenProjects = new Set(normalizeAnonymousKeys(input.hiddenProjectKeys, 200, true))
   const localPins = normalizeCodexLocalPins(input.localPins)
+  const localTaskPins = new Set(localPins.filter((pin) => pin.kind === 'task').map((pin) => pin.key))
+  const localProjectPins = new Set(localPins.filter((pin) => pin.kind === 'project').map((pin) => pin.key))
   const statuses: Record<string, CodexThreadStatus> = {}
   const ongoing: CodexTaskCard[] = []
   const completedUnread: CodexTaskCard[] = []
@@ -1170,7 +1320,7 @@ export function projectConversations(input: {
     statuses[thread.key] = thread.status
     const timing = taskTiming(thread)
     const receipt = receiptMap.get(thread.key) || { key: thread.key, acknowledgedRecency: 0, acknowledgedAt: 0, pendingRecency: 0, pendingSince: 0 }
-    const authoritativeActive = thread.status === 'active' || thread.lastTurnStatus === 'inProgress'
+    const authoritativeActive = isLikelyActiveTask(thread)
     const completionRevision = !authoritativeActive && thread.lastTurnStatus === 'completed'
       ? numberValue(thread.lastTurnCompletedAt, 0) || numberValue(thread.lastTurnStartedAt, 0)
       : 0
@@ -1189,23 +1339,9 @@ export function projectConversations(input: {
       delete receipt.hiddenPendingAt
     }
 
-    const legacyUnread = completionRevision > 0
-      && receipt.pendingRecency > receipt.acknowledgedRecency
-    if (completionRevision > 0 && firstBaseline && !legacyUnread && receipt.acknowledgedRecency <= 0 && completionRevision > receipt.acknowledgedRecency) {
-      // Historical completions form the viewed baseline. Only a completion
-      // observed after that baseline (or a legacy unread receipt) is unread.
-      receipt.acknowledgedRecency = completionRevision
-      receipt.acknowledgedAt = now
-    }
-
-    const unread = completionRevision > 0
-      && (legacyUnread || completionRevision > receipt.acknowledgedRecency)
-    if (unread) {
-      const isNewRevision = completionRevision !== receipt.pendingRecency
-      receipt.pendingRecency = completionRevision
-      receipt.pendingMode = 'completion'
-      if (!receipt.pendingSince || isNewRevision) receipt.pendingSince = now
-    } else if (completionRevision > 0 && receipt.pendingMode === 'completion' && receipt.pendingRecency <= receipt.acknowledgedRecency) {
+    const unreadKnown = thread.unreadAuthority === 'desktop-live' || thread.unreadAuthority === 'desktop-persisted'
+    const unread = completionRevision > 0 && unreadKnown && thread.hasUnreadTurn === true
+    if (receipt.pendingMode === 'completion' || receipt.pendingRecency > 0) {
       receipt.pendingRecency = 0
       receipt.pendingSince = 0
       delete receipt.pendingMode
@@ -1228,12 +1364,16 @@ export function projectConversations(input: {
       delete receipt.dismissedAt
     }
 
+    const originalName = thread.name || thread.displayName || '未命名任务'
+    const alias = taskAliases.get(thread.key)
+    const displayLabel = alias || originalName
     const card: CodexTaskCard = {
       key: thread.key,
       actionAlias: thread.actionAlias,
-      name: taskAliases.get(thread.key) || thread.name || '未命名任务',
-      originalName: thread.name || '未命名任务',
-      ...(taskAliases.get(thread.key) ? { alias: taskAliases.get(thread.key) } : {}),
+      displayName: displayLabel,
+      name: displayLabel,
+      originalName,
+      ...(alias ? { alias } : {}),
       projectKey: PROJECT_KEY.test(thread.projectKey || '') ? thread.projectKey! : 'chats',
       projectName: '',
       originalProjectName: thread.projectName || (thread.projectKind === 'project' ? '未命名项目' : 'Chats'),
@@ -1244,10 +1384,11 @@ export function projectConversations(input: {
       archiveCapability,
       revisionAt,
       ...(completionRevision ? { completionRevision } : {}),
+      ...(completionRevision ? { unreadState: unreadKnown ? unread ? 'unread' : 'read' : 'unknown' } : {}),
       state: legacyTaskState(bucket, activityState),
       ...(authoritativeActive ? { activeFlags: [...thread.activeFlags] } : {}),
       updatedAt: thread.updatedAt,
-      ...(unread ? { pendingSince: receipt.pendingSince } : {}),
+      ...(unread ? { pendingSince: completionRevision } : {}),
       source: 'current',
       canArchive: archiveCapability !== 'blocked-active',
       ...timing
@@ -1255,11 +1396,8 @@ export function projectConversations(input: {
     card.projectName = projectAliases.get(card.projectKey) || card.originalProjectName
     const isHidden = (receipt.dismissedActivityRecency || 0) >= revisionAt
     card.isHidden = isHidden
-    if (thread.nativePinned) card.pinSource = 'native'
-    if (removedProjects.has(card.projectKey)) {
-      if (receipt.pendingRecency || receipt.acknowledgedRecency || receipt.dismissedActivityRecency || receipt.hiddenPendingRecency) receiptMap.set(thread.key, receipt)
-      continue
-    }
+    if (localTaskPins.has(thread.key)) card.pinSource = 'local'
+    else if (thread.nativePinned) card.pinSource = 'native'
     if (isHidden) hidden.push({ ...card, hiddenKind: 'task' })
     else if (bucket === 'completed-unread') completedUnread.push(card)
     else if (bucket === 'completed') completed.push(card)
@@ -1301,12 +1439,15 @@ export function projectConversations(input: {
       nativePinned: project.nativePinned,
       ...(typeof project.nativePinnedOrder === 'number' ? { nativePinnedOrder: project.nativePinnedOrder } : {}),
       ...(typeof project.nativeOrder === 'number' ? { nativeOrder: project.nativeOrder } : {}),
+      ...(localProjectPins.has(project.key)
+        ? { pinSource: 'local' as const }
+        : project.nativePinned ? { pinSource: 'native' as const } : {}),
       collapsed: collapsedProjects.has(project.key),
       tasks: all.filter((task) => task.projectKey === project.key)
     }
   })
-  const removedProjectCards = projectCards.filter((project) => removedProjects.has(project.key))
-  const visibleProjects = projectCards.filter((project) => !removedProjects.has(project.key))
+  const hiddenProjectCards = projectCards.filter((project) => project.kind === 'project' && hiddenProjects.has(project.key))
+  const visibleProjects = projectCards.filter((project) => project.kind === 'chats' || !hiddenProjects.has(project.key))
   const taskByKey = new Map(all.map((task) => [task.key, task]))
   const projectByKey = new Map(visibleProjects.map((project) => [project.key, project]))
   const pinnedEntries: CodexProjectEntry[] = []
@@ -1326,23 +1467,29 @@ export function projectConversations(input: {
     pinnedEntries.push({ kind: 'project', project, pinSource })
   }
 
+  // Project-tab pin order is intentionally type-first: conversations stay
+  // above projects, and EyPc-owned pinning takes precedence over Codex-native
+  // pinning within the same type.
+  for (const pin of localPins) {
+    if (pin.kind === 'task') {
+      const task = taskByKey.get(pin.key)
+      if (task) pushPinnedTask(task, 'local')
+    }
+  }
   input.threads
-    .filter((thread) => thread.nativePinned && taskByKey.has(thread.key))
+    .filter((thread) => thread.nativePinned && taskByKey.has(thread.key) && !hiddenProjects.has(taskByKey.get(thread.key)!.projectKey))
     .sort((a, b) => (a.nativePinnedOrder ?? Number.MAX_SAFE_INTEGER) - (b.nativePinnedOrder ?? Number.MAX_SAFE_INTEGER))
     .forEach((thread) => pushPinnedTask(taskByKey.get(thread.key)!, 'native'))
+  for (const pin of localPins) {
+    if (pin.kind === 'project') {
+      const project = projectByKey.get(pin.key)
+      if (project) pushPinnedProject(project, 'local')
+    }
+  }
   visibleProjects
     .filter((project) => project.nativePinned)
     .sort((a, b) => (a.nativePinnedOrder ?? Number.MAX_SAFE_INTEGER) - (b.nativePinnedOrder ?? Number.MAX_SAFE_INTEGER))
     .forEach((project) => pushPinnedProject(project, 'native'))
-  for (const pin of localPins) {
-    if (pin.kind === 'task') {
-      const task = taskByKey.get(pin.key)
-      if (task) pushPinnedTask(task, task.pinSource === 'native' ? 'native' : 'local')
-    } else {
-      const project = projectByKey.get(pin.key)
-      if (project) pushPinnedProject(project, project.nativePinned ? 'native' : 'local')
-    }
-  }
 
   const projectEntry = (project: CodexProjectCard, pinSource?: 'native' | 'local'): CodexProjectEntry => ({
     kind: 'project',
@@ -1377,8 +1524,9 @@ export function projectConversations(input: {
       inputRequired,
       completedTab,
       projectSections,
-      projects: visibleProjects,
-      removedProjects: removedProjectCards,
+      projects: projectCards,
+      hiddenProjects: hiddenProjectCards,
+      removedProjects: [],
       activeTab: enumValue(input.activeTab, ['all', 'input', 'ongoing', 'completed', 'hidden', 'projects'] as const, 'ongoing'),
       ...counts,
       pendingRecoveredCount: 0,
@@ -1406,42 +1554,10 @@ export function conversationSnapshotFromReceipts(
   receipts: CodexThreadReceipt[],
   status: ConversationSnapshotV1['status'] = 'idle'
 ): ConversationSnapshotV1 {
-  // Receipts are view watermarks, not inventory. Without a current unarchived
-  // App Server row there is deliberately no task to render.
+  // Receipts are local hide watermarks, not inventory or unread authority.
+  // Without a current verified host row there is deliberately no task to render.
   void receipts
   return emptyConversationSnapshot(status)
-}
-
-export function acknowledgeCodexThread(receipts: CodexThreadReceipt[], key: string, recency: number, now = Date.now()): CodexThreadReceipt[] {
-  if (!RECEIPT_KEY.test(key)) return normalizeCodexReceipts(receipts)
-  const byKey = new Map(normalizeCodexReceipts(receipts).map((receipt) => [receipt.key, { ...receipt }]))
-  const receipt = byKey.get(key) || { key, acknowledgedRecency: 0, acknowledgedAt: 0, pendingRecency: 0, pendingSince: 0 }
-  receipt.acknowledgedRecency = Math.max(receipt.acknowledgedRecency, receipt.pendingRecency, recency)
-  receipt.acknowledgedAt = now
-  receipt.pendingRecency = 0
-  receipt.pendingSince = 0
-  delete receipt.pendingMode
-  delete receipt.hiddenPendingRecency
-  delete receipt.hiddenPendingAt
-  byKey.set(key, receipt)
-  return normalizeCodexReceipts([...byKey.values()])
-}
-
-export function acknowledgeAllCodexThreads(receipts: CodexThreadReceipt[], now = Date.now(), eligibleKeys?: Iterable<string>): CodexThreadReceipt[] {
-  const eligible = eligibleKeys ? new Set(eligibleKeys) : null
-  return normalizeCodexReceipts(receipts).map((receipt) => {
-    if ((eligible && !eligible.has(receipt.key)) || receipt.pendingRecency <= receipt.acknowledgedRecency) return receipt
-    return {
-      ...receipt,
-      acknowledgedRecency: receipt.pendingRecency,
-      acknowledgedAt: now,
-      pendingRecency: 0,
-      pendingSince: 0,
-      pendingMode: undefined,
-      hiddenPendingRecency: undefined,
-      hiddenPendingAt: undefined
-    }
-  })
 }
 
 export function dismissCodexThread(receipts: CodexThreadReceipt[], key: string, activityRecency: number, now = Date.now()): CodexThreadReceipt[] {
@@ -1465,8 +1581,6 @@ export function hideCodexThread(
   const byKey = new Map(normalizeCodexReceipts(receipts).map((receipt) => [receipt.key, { ...receipt }]))
   const receipt = byKey.get(key) || { key, acknowledgedRecency: 0, acknowledgedAt: 0, pendingRecency: 0, pendingSince: 0 }
   if (kind === 'pending' || kind === 'completed-unread') {
-    receipt.acknowledgedRecency = Math.max(receipt.acknowledgedRecency, receipt.pendingRecency, recency)
-    receipt.acknowledgedAt = now
     receipt.pendingRecency = 0
     receipt.pendingSince = 0
     delete receipt.pendingMode
