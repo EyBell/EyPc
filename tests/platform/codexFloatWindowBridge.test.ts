@@ -53,6 +53,7 @@ function loadPreloadHarness() {
     isAlwaysOnTop: vi.fn(() => true),
     setVisibleOnAllWorkspaces: vi.fn(),
     show: vi.fn(),
+    hide: vi.fn(),
     focus: vi.fn(),
     showInactive: vi.fn(),
     webContents: { send: vi.fn((channel: string, payload: unknown) => sent.push({ channel, payload })) }
@@ -79,6 +80,7 @@ function loadPreloadHarness() {
       if (name === 'node:buffer') return { Buffer }
       if (name === 'node:child_process') return { execFile, spawn }
       if (name === 'node:crypto') return crypto
+      if (name === 'node:net') return { connect: vi.fn() }
       if (name === 'node:fs') return fs
       if (name === 'node:os') return os
       if (name === 'node:path') return path
@@ -131,6 +133,7 @@ function loadFloatRendererPreloadHarness() {
   return {
     bridge: sandbox.window.eypcFloat as {
       createThread(request: Record<string, unknown>): Promise<Record<string, unknown>>
+      returnFocus(): boolean
     },
     ipcHandlers,
     sent
@@ -154,6 +157,22 @@ describe('Codex float preload sizing', () => {
     })
 
     await expect(pending).resolves.toMatchObject({ outcome: 'opened', modelId: 'gpt-5.6-sol', retryAllowed: false })
+  })
+
+  it('requests a transient focus return without changing persistent float visibility', () => {
+    const { bridge, sent } = loadFloatRendererPreloadHarness()
+
+    expect(bridge.returnFocus()).toBe(true)
+    expect(sent.at(-1)).toEqual({ channel: 'eypc-float:return-focus', payload: {} })
+  })
+
+  it('hides the existing float window when the renderer returns focus', () => {
+    const { bridge, ipcHandlers, floatWindow } = loadPreloadHarness()
+    bridge.sync({ visible: true, snapshot: snapshot(), position: {} })
+
+    ipcHandlers.get('eypc-float:return-focus')?.({}, {})
+
+    expect(floatWindow.hide).toHaveBeenCalledTimes(1)
   })
 
   it('uses exact compact dimensions for the water and horizontal card skins', () => {

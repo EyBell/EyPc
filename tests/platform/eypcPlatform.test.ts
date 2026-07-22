@@ -40,7 +40,8 @@ describe('browser fallback platform', () => {
       platform: expectedPlatform,
       runtimeState: 'missing',
       runtimeSource: 'unknown',
-      connectionState: 'not-checked'
+      connectionState: 'not-checked',
+      desktopBridgeState: 'not-checked'
     })
   })
 
@@ -64,7 +65,8 @@ describe('browser fallback platform', () => {
     await expect(getPlatform().codex.inspectEnvironment()).resolves.toMatchObject({
       platform: 'unsupported',
       runtimeState: 'unsupported',
-      connectionState: 'not-checked'
+      connectionState: 'not-checked',
+      desktopBridgeState: 'not-checked'
     })
   })
 

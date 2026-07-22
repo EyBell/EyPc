@@ -21,9 +21,20 @@ function thread(
   updatedAt: number,
   activeFlags: CodexHostThread['activeFlags'] = [],
   key = KEY,
-  evidence: Pick<CodexHostThread, 'createdAt' | 'firstPromptAt' | 'lastTurnStatus' | 'lastTurnStartedAt' | 'lastTurnCompletedAt'> = {}
+  evidence: Partial<Pick<CodexHostThread, 'createdAt' | 'firstPromptAt' | 'lastTurnStatus' | 'lastTurnStartedAt' | 'lastTurnCompletedAt' | 'statusAuthority' | 'hasUnreadTurn' | 'unreadAuthority'>> = {}
 ): CodexHostThread {
-  return { key, actionAlias: `alias-${key}`, name: `任务 ${key.slice(-2)}`, status, activeFlags, updatedAt, ...evidence }
+  return {
+    key,
+    actionAlias: `alias-${key}`,
+    name: `任务 ${key.slice(-2)}`,
+    status,
+    activeFlags,
+    statusAuthority: 'desktop-live',
+    hasUnreadTurn: false,
+    unreadAuthority: 'desktop-persisted',
+    updatedAt,
+    ...evidence
+  }
 }
 
 describe('Codex domain', () => {
@@ -79,13 +90,24 @@ describe('Codex domain', () => {
       warning: '#DD9900',
       critical: '#DD3344',
       water: '#13243A',
-      card: '#F7F9F7'
+      card: '#F7F9F7',
+      cardForeground: '#07161D'
     })
     expect(settings.waterAppearance).toMatchObject({
       inner: { palette: 'aurora', colorA: '#102C3C', colorB: '#0B6570', opacity: 95, amplitude: 4, motion: 'fast' },
       outer: { style: 'segmented', thickness: 6, colorMode: 'custom', progressColor: '#23B5A5', trackColor: '#718A94', glow: 'strong' }
     })
     expect(settings.expandedSizes).toHaveLength(8)
+  })
+
+  it('migrates a missing card foreground with the existing readable-foreground choice', () => {
+    expect(normalizeCodexSettings({
+      colors: { ...defaultCodexSettings().colors, card: '#20252A', cardForeground: undefined }
+    }).colors).toMatchObject({ card: '#20252A', cardForeground: '#F8FCFB' })
+
+    expect(normalizeCodexSettings({
+      colors: { ...defaultCodexSettings().colors, card: '#F7F9F7', cardForeground: undefined }
+    }).colors).toMatchObject({ card: '#F7F9F7', cardForeground: '#07161D' })
   })
 
   it('clamps quota percentages and keeps missing windows optional', () => {
@@ -122,7 +144,7 @@ describe('Codex domain', () => {
       lastQuestionAt: 300,
       archiveCapability: 'allowed'
     })
-    expect(baseline.receipts[0]).toMatchObject({ acknowledgedRecency: 400 })
+    expect(baseline.receipts).toEqual([])
   })
 
   it('marks a newer persisted completion unread without comparing it to thread metadata recency', () => {
@@ -130,7 +152,8 @@ describe('Codex domain', () => {
       threads: [thread('notLoaded', 900, [], KEY, {
         lastTurnStatus: 'completed',
         lastTurnStartedAt: 700,
-        lastTurnCompletedAt: 800
+        lastTurnCompletedAt: 800,
+        hasUnreadTurn: true
       })],
       receipts: [{ key: KEY, acknowledgedRecency: 400, acknowledgedAt: 450, pendingRecency: 0, pendingSince: 0 }],
       lastTaskScanAt: 600,
@@ -172,6 +195,46 @@ describe('Codex domain', () => {
       'allowed-with-warning'
     ])
     expect(result.snapshot).toMatchObject({ ongoingCount: 1, waitingCount: 1, attentionCount: 3, unknownCount: 1 })
+  })
+
+  it('does not promote connector or persisted-turn heuristics without desktop live active authority', () => {
+    const result = projectConversations({
+      threads: [
+        thread('active', 900, ['waitingOnUserInput'], KEY, { statusAuthority: 'connector', lastTurnStatus: 'inProgress', lastTurnStartedAt: 800 }),
+        thread('notLoaded', 850, [], keyAt(2), { lastTurnStatus: 'inProgress', lastTurnStartedAt: 750 })
+      ],
+      receipts: [],
+      lastTaskScanAt: 700,
+      now: 1_000
+    })
+
+    expect(result.snapshot.inputRequired).toEqual([])
+    expect(result.snapshot.ongoing.map((task) => [task.key, task.activityState])).toEqual([
+      [KEY, 'unknown'],
+      [keyAt(2), 'unknown']
+    ])
+    expect(result.snapshot).toMatchObject({ ongoingCount: 0, waitingCount: 0, unknownCount: 2 })
+  })
+
+  it('uses desktop live state immediately and removes active classification as soon as that authority is lost', () => {
+    const baseline = projectConversations({
+      threads: [thread('active', 10_000, [], KEY, { lastTurnStatus: 'inProgress', lastTurnStartedAt: 9_900 })],
+      receipts: [],
+      lastTaskScanAt: 9_000,
+      now: 10_000
+    })
+
+    const result = projectConversations({
+      threads: [thread('active', 10_300, [], KEY, { statusAuthority: 'connector', lastTurnStatus: 'inProgress', lastTurnStartedAt: 10_100 })],
+      receipts: [],
+      lastTaskScanAt: 9_000,
+      now: 10_301,
+      previousStatuses: baseline.statuses
+    })
+
+    expect(result.snapshot.ongoing).toHaveLength(1)
+    expect(result.snapshot.ongoing[0]).toMatchObject({ key: KEY, activityState: 'unknown', state: 'recent-activity' })
+    expect(result.snapshot.ongoingCount).toBe(0)
   })
 
   it('uses one stable comparator: last question, activity time, key', () => {
@@ -230,9 +293,9 @@ describe('Codex domain', () => {
     ])
   })
 
-  it('treats hide on completed-unread as viewed, restores it as completed, and unhides a new completion', () => {
+  it('keeps Codex unread authoritative across hide/restore and unhides a new completion', () => {
     const unread = projectConversations({
-      threads: [thread('notLoaded', 220, [], KEY, { lastTurnStatus: 'completed', lastTurnStartedAt: 180, lastTurnCompletedAt: 200 })],
+      threads: [thread('notLoaded', 220, [], KEY, { lastTurnStatus: 'completed', lastTurnStartedAt: 180, lastTurnCompletedAt: 200, hasUnreadTurn: true })],
       receipts: [],
       lastTaskScanAt: 100,
       now: 230
@@ -241,25 +304,26 @@ describe('Codex domain', () => {
 
     const hiddenReceipts = hideCodexThread(unread.receipts, KEY, 200, 'completed-unread', 240)
     const hidden = projectConversations({
-      threads: [thread('notLoaded', 220, [], KEY, { lastTurnStatus: 'completed', lastTurnStartedAt: 180, lastTurnCompletedAt: 200 })],
+      threads: [thread('notLoaded', 220, [], KEY, { lastTurnStatus: 'completed', lastTurnStartedAt: 180, lastTurnCompletedAt: 200, hasUnreadTurn: true })],
       receipts: hiddenReceipts,
       lastTaskScanAt: unread.lastTaskScanAt,
       now: 250
     })
-    expect(hidden.snapshot.hidden[0]).toMatchObject({ bucket: 'completed', hiddenKind: 'task' })
-    expect(hidden.receipts[0]).toMatchObject({ acknowledgedRecency: 200, dismissedActivityRecency: 200, pendingRecency: 0 })
+    expect(hidden.snapshot.hidden[0]).toMatchObject({ bucket: 'completed-unread', hiddenKind: 'task', unreadState: 'unread' })
+    expect(hidden.snapshot.completedUnreadCount).toBe(1)
+    expect(hidden.receipts[0]).toMatchObject({ dismissedActivityRecency: 200, pendingRecency: 0 })
 
     const restoredReceipts = restoreCodexThread(hidden.receipts, KEY, 200, 'task')
     const restored = projectConversations({
-      threads: [thread('notLoaded', 220, [], KEY, { lastTurnStatus: 'completed', lastTurnStartedAt: 180, lastTurnCompletedAt: 200 })],
+      threads: [thread('notLoaded', 220, [], KEY, { lastTurnStatus: 'completed', lastTurnStartedAt: 180, lastTurnCompletedAt: 200, hasUnreadTurn: true })],
       receipts: restoredReceipts,
       lastTaskScanAt: hidden.lastTaskScanAt,
       now: 260
     })
-    expect(restored.snapshot.completed[0]).toMatchObject({ bucket: 'completed' })
+    expect(restored.snapshot.completedUnread[0]).toMatchObject({ bucket: 'completed-unread', unreadState: 'unread' })
 
     const newer = projectConversations({
-      threads: [thread('notLoaded', 340, [], KEY, { lastTurnStatus: 'completed', lastTurnStartedAt: 280, lastTurnCompletedAt: 320 })],
+      threads: [thread('notLoaded', 340, [], KEY, { lastTurnStatus: 'completed', lastTurnStartedAt: 280, lastTurnCompletedAt: 320, hasUnreadTurn: true })],
       receipts: hidden.receipts,
       lastTaskScanAt: hidden.lastTaskScanAt,
       now: 350
@@ -268,17 +332,18 @@ describe('Codex domain', () => {
     expect(newer.snapshot.hidden).toHaveLength(0)
   })
 
-  it('migrates legacy unread, hidden-confirmed and acknowledged completion receipts', () => {
+  it('uses desktop unread authority while migrating legacy hidden and pending receipt fields', () => {
     const unreadKey = keyAt(11)
     const hiddenKey = keyAt(12)
     const acknowledgedKey = keyAt(13)
-    const completedThread = (key: string) => thread('notLoaded', 120, [], key, {
+    const completedThread = (key: string, hasUnreadTurn = false) => thread('notLoaded', 120, [], key, {
       lastTurnStatus: 'completed',
       lastTurnStartedAt: 80,
-      lastTurnCompletedAt: 100
+      lastTurnCompletedAt: 100,
+      hasUnreadTurn
     })
     const result = projectConversations({
-      threads: [completedThread(unreadKey), completedThread(hiddenKey), completedThread(acknowledgedKey)],
+      threads: [completedThread(unreadKey, true), completedThread(hiddenKey), completedThread(acknowledgedKey)],
       receipts: [
         { key: unreadKey, acknowledgedRecency: 0, acknowledgedAt: 0, pendingRecency: 100, pendingSince: 90, pendingMode: 'completion' },
         { key: hiddenKey, acknowledgedRecency: 0, acknowledgedAt: 0, pendingRecency: 100, pendingSince: 90, pendingMode: 'completion', hiddenPendingRecency: 100, hiddenPendingAt: 95 },
@@ -291,6 +356,9 @@ describe('Codex domain', () => {
     expect(result.snapshot.completedUnread.map((task) => task.key)).toEqual([unreadKey])
     expect(result.snapshot.hidden[0]).toMatchObject({ key: hiddenKey, bucket: 'completed' })
     expect(result.snapshot.completed.map((task) => task.key)).toEqual([acknowledgedKey])
+    const migratedUnreadReceipt = result.receipts.find((receipt) => receipt.key === unreadKey)
+    expect(migratedUnreadReceipt).toMatchObject({ pendingRecency: 0, pendingSince: 0 })
+    expect(migratedUnreadReceipt).not.toHaveProperty('pendingMode')
   })
 
   it('never creates receipt-only or archived recovery placeholders', () => {
@@ -353,7 +421,7 @@ describe('Codex domain', () => {
     expect(result.snapshot.all.map((task) => task.key)).toEqual([keyAt(21)])
   })
 
-  it('builds Pinned, Projects and Chats in native order without duplicating locally pinned tasks', () => {
+  it('orders project-tab pins by conversation then project, with EyPc pins before Codex-native pins and no duplicates', () => {
     const projectA = keyAt(31)
     const projectB = keyAt(32)
     const projectC = keyAt(33)
@@ -392,10 +460,10 @@ describe('Codex domain', () => {
     const [pinned, projects, chats] = result.snapshot.projectSections
 
     expect(pinned.entries.map((entry) => entry.kind === 'task' ? `task:${entry.task.key}` : `project:${entry.project.key}`)).toEqual([
+      `task:${localTask}`,
       `task:${pinnedTask}`,
-      `project:${projectB}`,
       `project:${projectC}`,
-      `task:${localTask}`
+      `project:${projectB}`
     ])
     expect(projects.entries.map((entry) => entry.kind === 'project' ? [entry.project.key, entry.project.name, entry.project.tasks.length] : null)).toEqual([
       [projectA, '项目甲', 0]
@@ -406,7 +474,10 @@ describe('Codex domain', () => {
     ))
     expect(renderedTaskKeys).toHaveLength(4)
     expect(new Set(renderedTaskKeys).size).toBe(4)
-    expect(result.snapshot.all.find((task) => task.key === localTask)).toMatchObject({ name: '本地任务别名', originalName: `任务 ${localTask.slice(-2)}` })
+    expect(result.snapshot.all.find((task) => task.key === localTask)).toMatchObject({ alias: '本地任务别名', displayName: '本地任务别名', name: '本地任务别名', originalName: `任务 ${localTask.slice(-2)}`, pinSource: 'local' })
+    expect(result.snapshot.all.find((task) => task.key === pinnedTask)).toMatchObject({ displayName: `任务 ${pinnedTask.slice(-2)}`, name: `任务 ${pinnedTask.slice(-2)}`, originalName: `任务 ${pinnedTask.slice(-2)}` })
+    expect(result.snapshot.all.find((task) => task.key === pinnedTask)).not.toHaveProperty('alias')
+    expect(result.snapshot.projects.find((project) => project.key === projectC)).toMatchObject({ pinSource: 'local' })
   })
 
   it('migrates and bounds privacy-safe Codex UI metadata without retaining raw ids or paths', () => {
@@ -419,6 +490,7 @@ describe('Codex domain', () => {
       taskAliases: [{ key: taskKey, alias: `  ${'a'.repeat(140)}  ` }, { key: 'raw-thread-id-with-hyphens', alias: 'reject' }],
       projectAliases: [{ key: projectKey, alias: '项目别名' }, { key: '/private/project', alias: 'reject' }],
       localPins: [{ kind: 'task', key: taskKey }, { kind: 'task', key: taskKey }, { kind: 'project', key: projectKey }],
+      hiddenProjectKeys: [projectKey, 'chats', '/private/project'],
       removedProjectKeys: [projectKey, 'chats', '/private/project'],
       removedProjectAbsentKeys: [projectKey]
     })
@@ -429,9 +501,35 @@ describe('Codex domain', () => {
     expect(state.taskAliases).toEqual([{ key: taskKey, alias: 'a'.repeat(120) }])
     expect(state.projectAliases).toEqual([{ key: projectKey, alias: '项目别名' }])
     expect(state.localPins).toEqual([{ kind: 'task', key: taskKey }, { kind: 'project', key: projectKey }])
-    expect(state.removedProjectKeys).toEqual([projectKey])
+    expect(state.hiddenProjectKeys).toEqual([projectKey])
+    expect(state).not.toHaveProperty('removedProjectKeys')
+    expect(state).not.toHaveProperty('removedProjectAbsentKeys')
     expect(JSON.stringify(state)).not.toContain('/private/project')
     expect(normalizeCodexState({}).lastTaskTab).toBe('ongoing')
+  })
+
+  it('hides only a project grouping while preserving its tasks and counts in conversation tabs', () => {
+    const projectKey = keyAt(53)
+    const taskKey = keyAt(54)
+    const result = projectConversations({
+      threads: [{
+        ...thread('notLoaded', 1_010, [], taskKey, { lastTurnStatus: 'failed', lastTurnStartedAt: 1_000 }),
+        projectKey,
+        projectName: 'Hidden Project',
+        projectKind: 'project'
+      }],
+      projects: [{ key: projectKey, name: 'Hidden Project', kind: 'project', nativePinned: false, nativeOrder: 0 }],
+      receipts: [],
+      lastTaskScanAt: 1,
+      now: 2_000,
+      hiddenProjectKeys: [projectKey]
+    })
+
+    expect(result.snapshot.all.map((task) => task.key)).toContain(taskKey)
+    expect(result.snapshot.ongoing.map((task) => task.key)).toContain(taskKey)
+    expect(result.snapshot.projects.find((project) => project.key === projectKey)).toBeDefined()
+    expect(result.snapshot.hiddenProjects).toEqual([expect.objectContaining({ key: projectKey })])
+    expect(result.snapshot.projectSections.flatMap((section) => section.entries).some((entry) => entry.kind === 'project' && entry.project.key === projectKey)).toBe(false)
   })
 
   it('projects timing without treating failed/interrupted timestamps as completion', () => {

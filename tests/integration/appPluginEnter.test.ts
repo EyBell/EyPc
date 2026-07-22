@@ -64,7 +64,7 @@ function installHost(payload: { code?: string } | null, codexEnabled = true): En
     },
     clipboard: { copyText: async () => false },
     codex: {
-      inspectEnvironment: async () => ({ version: 1, checking: false, platform: 'macos', runtimeState: 'detected', runtimeSource: 'homebrew', processState: 'not-running', configState: 'detected', connectionState: 'not-checked', checkedAt: 100 }),
+      inspectEnvironment: async () => ({ version: 1, checking: false, platform: 'macos', runtimeState: 'detected', runtimeSource: 'homebrew', processState: 'not-running', configState: 'detected', connectionState: 'not-checked', desktopBridgeState: 'not-checked', checkedAt: 100 }),
       readSnapshot: async () => ({ ok: false, error: { code: 'unavailable', message: 'test host does not open App Server' }, receivedAt: 100 }),
       openThread: async () => ({ outcome: 'failed', errorCode: 'unsupported' }),
       close: () => undefined

@@ -15,7 +15,7 @@ describe('Codex controller', () => {
       codex: {
         inspectEnvironment: async () => {
           inspectionCount += 1
-          return { version: 1 as const, checking: false, platform: 'windows' as const, runtimeState: 'detected' as const, runtimeSource: 'npm-global' as const, processState: 'not-running' as const, configState: 'detected' as const, connectionState: 'not-checked' as const, checkedAt: 100 }
+          return { version: 1 as const, checking: false, platform: 'windows' as const, runtimeState: 'detected' as const, runtimeSource: 'npm-global' as const, processState: 'not-running' as const, configState: 'detected' as const, connectionState: 'not-checked' as const, desktopBridgeState: 'not-checked' as const, checkedAt: 100 }
         },
         readSnapshot: async (options: Record<string, boolean>) => {
           readOptions.push(options)
@@ -59,6 +59,7 @@ describe('Codex controller', () => {
           processState: 'unknown' as const,
           configState: 'unknown' as const,
           connectionState: 'not-checked' as const,
+          desktopBridgeState: 'not-checked' as const,
           checkedAt: 100
         }),
         readSnapshot: async () => ({
@@ -117,7 +118,7 @@ describe('Codex controller', () => {
             value: {
               version: 1 as const,
               receivedAt: 300,
-              threads: [{ key: '1111111111111111', actionAlias: 'task-alias', name: '独立任务读取', status: 'active' as const, activeFlags: [], updatedAt: 250 }]
+              threads: [{ key: '1111111111111111', actionAlias: 'task-alias', name: '独立任务读取', status: 'active' as const, activeFlags: [], statusAuthority: 'connector' as const, updatedAt: 250 }]
             }
           }
         },
@@ -128,13 +129,13 @@ describe('Codex controller', () => {
 
     await controller.refresh()
     expect(controller.view().quota.status).toBe('error')
-    expect(controller.view().conversations).toMatchObject({ status: 'ok', ongoingCount: 1 })
+    expect(controller.view().conversations).toMatchObject({ status: 'ok', ongoingCount: 0, unknownCount: 1 })
 
     failedLane = 'threads'
     await controller.refresh()
     expect(controller.view().quota).toMatchObject({ status: 'ok', plan: 'pro' })
     expect(controller.view().config.model).toBe('gpt-5.6')
-    expect(controller.view().conversations).toMatchObject({ status: 'stale', ongoingCount: 1 })
+    expect(controller.view().conversations).toMatchObject({ status: 'stale', ongoingCount: 0, unknownCount: 1 })
     controller.dispose()
   })
 
@@ -176,13 +177,20 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
-  it('persists tab, collapse, aliases, local pins and EyPc-only project removal by anonymous keys', async () => {
+  it('keeps project hiding local, then clears project metadata only after verified native removal', async () => {
     const state = createInitialState(1)
     state.activeTab = 'codex'
     const projectKey = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
     const taskKey = '1111111111111111'
     let projectsPresent = true
     let receivedAt = 200
+    const removeProject = vi.fn(async (actionAlias: string, request: { expectedSourceFingerprint: string }) => {
+      expect(actionAlias).toBe('project-alias')
+      expect(request.expectedSourceFingerprint).toBe('a'.repeat(64))
+      projectsPresent = false
+      receivedAt += 100
+      return { status: 'verified' as const, message: 'Codex 项目已移出侧栏' }
+    })
     const platform = {
       codex: {
         readSnapshot: async (options: Record<string, boolean>) => options.includeThreads
@@ -199,6 +207,7 @@ describe('Codex controller', () => {
               }
             }
           : { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt } },
+        removeProject,
         close: () => undefined
       }
     } as unknown as EypcPlatformApi
@@ -210,20 +219,50 @@ describe('Codex controller', () => {
     expect(controller.setAlias('task', taskKey, '任务别名')).toBe(true)
     expect(controller.setAlias('project', projectKey, '项目别名')).toBe(true)
     expect(controller.toggleLocalPin('project', projectKey)).toBe(true)
-    expect(controller.removeProject(projectKey)).toBe(true)
-    expect(state.codex).toMatchObject({ lastTaskTab: 'projects', collapsedProjectKeys: [projectKey], taskAliases: [{ key: taskKey, alias: '任务别名' }], projectAliases: [{ key: projectKey, alias: '项目别名' }], localPins: [{ kind: 'project', key: projectKey }], removedProjectKeys: [projectKey] })
+    expect(controller.hideProject(projectKey)).toBe(true)
+    expect(state.codex).toMatchObject({ lastTaskTab: 'projects', collapsedProjectKeys: [projectKey], taskAliases: [{ key: taskKey, alias: '任务别名' }], projectAliases: [{ key: projectKey, alias: '项目别名' }], localPins: [{ kind: 'project', key: projectKey }], hiddenProjectKeys: [projectKey] })
     expect(controller.view().conversations.activeTab).toBe('projects')
-    expect(controller.view().conversations.removedProjects[0]).toMatchObject({ key: projectKey, name: '项目别名' })
+    expect(controller.view().conversations.hiddenProjects[0]).toMatchObject({ key: projectKey, name: '项目别名' })
+    expect(controller.view().conversations.all).toEqual([expect.objectContaining({ key: taskKey })])
 
-    projectsPresent = false
-    receivedAt += 100
+    await expect(controller.removeProject(projectKey, 'project-alias', 'a'.repeat(64))).resolves.toBe(true)
+    expect(removeProject).toHaveBeenCalledTimes(1)
+    expect(state.codex).toMatchObject({
+      lastTaskTab: 'projects',
+      collapsedProjectKeys: [],
+      taskAliases: [{ key: taskKey, alias: '任务别名' }],
+      projectAliases: [],
+      localPins: [],
+      hiddenProjectKeys: []
+    })
+    expect(controller.view().conversations.projects.some((project) => project.key === projectKey)).toBe(false)
+    controller.dispose()
+  })
+
+  it('does not clear local project metadata when the host blocks removal because Codex is running', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    const projectKey = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    const fingerprint = 'c'.repeat(64)
+    state.codex.projectAliases = [{ key: projectKey, alias: '保留别名' }]
+    state.codex.hiddenProjectKeys = [projectKey]
+    const messages: string[] = []
+    const platform = {
+      codex: {
+        readSnapshot: async (options: Record<string, boolean>) => options.includeThreads
+          ? { ok: true as const, receivedAt: 200, value: { version: 2 as const, receivedAt: 200, threads: [], projects: [{ key: projectKey, actionAlias: 'project-alias', name: '原始项目', kind: 'project' as const, nativePinned: false }], sourceFingerprint: fingerprint, completeness: 'verified' as const } }
+          : { ok: true as const, receivedAt: 200, value: { version: 2 as const, receivedAt: 200 } },
+        removeProject: async () => ({ status: 'codex-running' as const, message: '请先退出 Codex' }),
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: (message) => messages.push(message) })
     await controller.refresh()
-    expect(state.codex.removedProjectAbsentKeys).toEqual([projectKey])
-    projectsPresent = true
-    receivedAt += 100
-    await controller.refresh()
-    expect(state.codex.removedProjectKeys).toEqual([])
-    expect(state.codex.removedProjectAbsentKeys).toEqual([])
+
+    await expect(controller.removeProject(projectKey, 'project-alias', fingerprint)).resolves.toBe(false)
+    expect(state.codex.projectAliases).toEqual([{ key: projectKey, alias: '保留别名' }])
+    expect(state.codex.hiddenProjectKeys).toEqual([projectKey])
+    expect(messages.at(-1)).toContain('退出 Codex')
     controller.dispose()
   })
 
@@ -236,7 +275,7 @@ describe('Codex controller', () => {
     let threadReadCount = 0
     const platform = {
       codex: {
-        inspectEnvironment: async () => ({ version: 1 as const, checking: false, platform: 'macos' as const, runtimeState: 'detected' as const, runtimeSource: 'homebrew' as const, processState: 'not-running' as const, configState: 'detected' as const, connectionState: 'not-checked' as const, checkedAt: 100 }),
+        inspectEnvironment: async () => ({ version: 1 as const, checking: false, platform: 'macos' as const, runtimeState: 'detected' as const, runtimeSource: 'homebrew' as const, processState: 'not-running' as const, configState: 'detected' as const, connectionState: 'not-checked' as const, desktopBridgeState: 'not-checked' as const, checkedAt: 100 }),
         readSnapshot: async (options: Record<string, boolean>) => {
           if (options.includeQuota) {
             quotaReadCount += 1
@@ -281,7 +320,7 @@ describe('Codex controller', () => {
     const readOptions: Array<Record<string, boolean>> = []
     const platform = {
       codex: {
-        inspectEnvironment: async () => ({ version: 1 as const, checking: false, platform: 'macos' as const, runtimeState: 'detected' as const, runtimeSource: 'homebrew' as const, processState: 'not-running' as const, configState: 'detected' as const, connectionState: 'not-checked' as const, checkedAt: 100 }),
+        inspectEnvironment: async () => ({ version: 1 as const, checking: false, platform: 'macos' as const, runtimeState: 'detected' as const, runtimeSource: 'homebrew' as const, processState: 'not-running' as const, configState: 'detected' as const, connectionState: 'not-checked' as const, desktopBridgeState: 'not-checked' as const, checkedAt: 100 }),
         readSnapshot: async (options: Record<string, boolean>) => {
           readOptions.push(options)
           return await pendingRead
@@ -316,7 +355,7 @@ describe('Codex controller', () => {
       codex: {
         inspectEnvironment: async () => {
           inspectionCount += 1
-          return { version: 1 as const, checking: false, platform: 'macos' as const, runtimeState: 'detected' as const, runtimeSource: 'homebrew' as const, processState: 'not-running' as const, configState: 'detected' as const, connectionState: 'not-checked' as const, checkedAt: 100 }
+          return { version: 1 as const, checking: false, platform: 'macos' as const, runtimeState: 'detected' as const, runtimeSource: 'homebrew' as const, processState: 'not-running' as const, configState: 'detected' as const, connectionState: 'not-checked' as const, desktopBridgeState: 'not-checked' as const, checkedAt: 100 }
         },
         close: () => undefined
       }
@@ -337,7 +376,7 @@ describe('Codex controller', () => {
   it('drops an obsolete readiness result across disable/re-enable and accepts a fresh inspection', async () => {
     const state = createInitialState(1)
     state.activeTab = 'ports'
-    const safeResult = (checkedAt: number) => ({ version: 1 as const, checking: false, platform: 'windows' as const, runtimeState: 'detected' as const, runtimeSource: 'volta' as const, processState: 'not-running' as const, configState: 'detected' as const, connectionState: 'not-checked' as const, checkedAt })
+    const safeResult = (checkedAt: number) => ({ version: 1 as const, checking: false, platform: 'windows' as const, runtimeState: 'detected' as const, runtimeSource: 'volta' as const, processState: 'not-running' as const, configState: 'detected' as const, connectionState: 'not-checked' as const, desktopBridgeState: 'not-checked' as const, checkedAt })
     let releaseFirst: (value: ReturnType<typeof safeResult>) => void = () => undefined
     let inspectionCount = 0
     const first = new Promise<ReturnType<typeof safeResult>>((resolve) => { releaseFirst = resolve })
@@ -371,7 +410,7 @@ describe('Codex controller', () => {
   it('does not publish a readiness result after disposal', async () => {
     const state = createInitialState(1)
     state.activeTab = 'ports'
-    type ReadyResult = { version: 1; checking: false; platform: 'macos'; runtimeState: 'detected'; runtimeSource: 'homebrew'; processState: 'not-running'; configState: 'detected'; connectionState: 'not-checked'; checkedAt: number }
+    type ReadyResult = { version: 1; checking: false; platform: 'macos'; runtimeState: 'detected'; runtimeSource: 'homebrew'; processState: 'not-running'; configState: 'detected'; connectionState: 'not-checked'; desktopBridgeState: 'not-checked'; checkedAt: number }
     let release: (value: ReadyResult) => void = () => undefined
     const pending = new Promise<ReadyResult>((resolve) => { release = resolve })
     let notifyCount = 0
@@ -387,7 +426,7 @@ describe('Codex controller', () => {
     await Promise.resolve()
     controller.dispose()
     const beforeRelease = notifyCount
-    release({ version: 1, checking: false, platform: 'macos', runtimeState: 'detected', runtimeSource: 'homebrew', processState: 'not-running', configState: 'detected', connectionState: 'not-checked', checkedAt: 300 })
+    release({ version: 1, checking: false, platform: 'macos', runtimeState: 'detected', runtimeSource: 'homebrew', processState: 'not-running', configState: 'detected', connectionState: 'not-checked', desktopBridgeState: 'not-checked', checkedAt: 300 })
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(controller.view().environment.checkedAt).toBe(0)
@@ -398,11 +437,12 @@ describe('Codex controller', () => {
   it('rejects low-contrast theme patches outside the configuration UI', () => {
     const state = createInitialState(1)
     const messages: string[] = []
+    const save = vi.fn()
     const original = structuredClone(state.codex.settings.colors)
     const controller = createCodexController({
       platform: { codex: { close: () => undefined } } as unknown as EypcPlatformApi,
       getAppState: () => state,
-      save: () => undefined,
+      save,
       notify: () => undefined,
       setMessage: (message) => messages.push(message)
     })
@@ -411,8 +451,51 @@ describe('Codex controller', () => {
     expect(state.codex.settings.colors).toEqual(original)
     expect(messages.at(-1)).toContain('已保留上一次有效主题')
 
-    expect(controller.updateSettings({ colors: { ...original, water: '#18212B', card: '#F2F4F3' } })).toBe(true)
-    expect(state.codex.settings.colors).toMatchObject({ water: '#18212B', card: '#F2F4F3' })
+    expect(controller.updateSettings({ colors: { card: '#20252A' } } as never)).toBe(false)
+    expect(controller.updateSettings({ colors: { ...original, card: '#20252A', cardForeground: '#30353A' } })).toBe(false)
+    expect(controller.updateSettings({ colors: { ...original, card: '#20252A', cardForeground: 'broken' } })).toBe(false)
+    expect(state.codex.settings.colors).toEqual(original)
+    expect(save).not.toHaveBeenCalled()
+
+    expect(controller.updateSettings({ colors: { ...original, water: '#18212B', card: '#20252A', cardForeground: '#F8FCFB' } })).toBe(true)
+    expect(state.codex.settings.colors).toMatchObject({ water: '#18212B', card: '#20252A', cardForeground: '#F8FCFB' })
+    expect(save).toHaveBeenCalledTimes(1)
+    controller.dispose()
+  })
+
+  it('previews a paired card theme on the real float without saving, then rolls back or commits atomically', () => {
+    const state = createInitialState(1)
+    state.codex.settings.displayStyle = 'water'
+    const original = structuredClone(state.codex.settings.colors)
+    const preview = { ...original, card: '#20252A', cardForeground: '#F8FCFB' }
+    const save = vi.fn()
+    const notify = vi.fn()
+    const controller = createCodexController({
+      platform: { codex: { close: () => undefined } } as unknown as EypcPlatformApi,
+      getAppState: () => state,
+      save,
+      notify,
+      setMessage: () => undefined
+    })
+
+    expect(controller.previewCardColors(preview)).toBe(true)
+    expect(state.codex.settings.colors).toEqual(original)
+    expect(controller.view().settings.colors).toEqual(original)
+    expect(controller.floatSnapshot()).toMatchObject({ style: 'card', colors: preview })
+    expect(save).not.toHaveBeenCalled()
+
+    expect(controller.previewCardColors({ card: '#333333' })).toBe(false)
+    expect(controller.floatSnapshot()).toMatchObject({ style: 'card', colors: preview })
+    expect(controller.clearCardColorPreview()).toBe(true)
+    expect(controller.floatSnapshot()).toMatchObject({ style: 'water', colors: original })
+    expect(save).not.toHaveBeenCalled()
+
+    expect(controller.previewCardColors(preview)).toBe(true)
+    expect(controller.commitCardColors(preview)).toBe(true)
+    expect(state.codex.settings.colors).toEqual(preview)
+    expect(controller.floatSnapshot()).toMatchObject({ style: 'water', colors: preview })
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(notify).toHaveBeenCalled()
     controller.dispose()
   })
 
@@ -425,12 +508,12 @@ describe('Codex controller', () => {
     let snapshotReads = 0
     const platform = {
       codex: {
-        inspectEnvironment: async () => ({ version: 1 as const, checking: false, platform: 'macos' as const, runtimeState: 'detected' as const, runtimeSource: 'homebrew' as const, processState: 'not-running' as const, configState: 'detected' as const, connectionState: 'not-checked' as const, checkedAt: 100 }),
+        inspectEnvironment: async () => ({ version: 1 as const, checking: false, platform: 'macos' as const, runtimeState: 'detected' as const, runtimeSource: 'homebrew' as const, processState: 'not-running' as const, configState: 'detected' as const, connectionState: 'not-checked' as const, desktopBridgeState: 'not-checked' as const, checkedAt: 100 }),
         readSnapshot: async (options: Record<string, boolean>) => {
           snapshotReads += 1
           const receivedAt = Date.now()
           return options.includeThreads
-            ? { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt, threads: [{ key: taskKey, actionAlias: 'activity-alias', name: '实时待输入', status: 'active' as const, activeFlags: [], updatedAt: receivedAt - 10, lastTurnStatus: 'inProgress' as const, lastTurnStartedAt: receivedAt - 20, projectKey: 'chats', projectName: 'Chats', projectKind: 'chats' as const }], projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }], sourceFingerprint, completeness: 'verified' as const } }
+            ? { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt, threads: [{ key: taskKey, actionAlias: 'activity-alias', name: '实时待输入', status: 'active' as const, activeFlags: [], statusAuthority: 'connector' as const, hasUnreadTurn: false, unreadAuthority: 'desktop-persisted' as const, updatedAt: receivedAt - 10, lastTurnStatus: 'inProgress' as const, lastTurnStartedAt: receivedAt - 20, projectKey: 'chats', projectName: 'Chats', projectKind: 'chats' as const }], projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }], sourceFingerprint, completeness: 'verified' as const } }
             : { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt } }
         },
         readActivitySnapshot: async () => await new Promise<never>(() => undefined),
@@ -450,18 +533,18 @@ describe('Codex controller', () => {
     expect(activityListeners[0]).toBeTypeOf('function')
     const readsAfterBaseline = snapshotReads
     const receivedAt = Date.now() + 10_000
-    activityListeners[0]({ version: 1, sourceFingerprint, generation: 1, receivedAt, inventoryChanged: false, entries: [{ key: taskKey, status: 'active', activeFlags: ['waitingOnUserInput'] }] })
+    activityListeners[0]({ version: 2, sourceFingerprint, generation: 1, receivedAt, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: ['waitingOnUserInput'], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live' }] })
     expect(controller.view().conversations.inputRequired).toHaveLength(1)
     expect(controller.view().conversations.inputRequired[0]).toMatchObject({ key: taskKey, activityState: 'waiting-input' })
     expect(snapshotReads).toBe(readsAfterBaseline)
 
-    activityListeners[0]({ version: 1, sourceFingerprint, generation: 2, receivedAt: receivedAt + 1, inventoryChanged: false, entries: [{ key: taskKey, status: 'active', activeFlags: [] }] })
+    activityListeners[0]({ version: 2, sourceFingerprint, generation: 2, receivedAt: receivedAt + 1, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live' }] })
     expect(controller.view().conversations.inputRequired).toHaveLength(0)
     expect(notifyCount).toBeGreaterThan(0)
     controller.dispose()
   })
 
-  it('polls the lightweight activity lane every 200ms and backs off to 1s after three failures', async () => {
+  it('uses a 5s watchdog for the push activity lane and backs off to 1s after three failures', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(10_000)
     try {
@@ -471,7 +554,7 @@ describe('Codex controller', () => {
       let activityReads = 0
       const platform = {
         codex: {
-          inspectEnvironment: async () => ({ version: 1 as const, checking: false, platform: 'macos' as const, runtimeState: 'detected' as const, runtimeSource: 'homebrew' as const, processState: 'not-running' as const, configState: 'detected' as const, connectionState: 'not-checked' as const, checkedAt: 10_000 }),
+          inspectEnvironment: async () => ({ version: 1 as const, checking: false, platform: 'macos' as const, runtimeState: 'detected' as const, runtimeSource: 'homebrew' as const, processState: 'not-running' as const, configState: 'detected' as const, connectionState: 'not-checked' as const, desktopBridgeState: 'not-checked' as const, checkedAt: 10_000 }),
           readSnapshot: async (options: Record<string, boolean>) => options.includeThreads
             ? { ok: true as const, receivedAt: 10_000, value: { version: 2 as const, receivedAt: 10_000, threads: [], projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }], sourceFingerprint, completeness: 'verified' as const } }
             : { ok: true as const, receivedAt: 10_000, value: { version: 2 as const, receivedAt: 10_000 } },
@@ -488,11 +571,11 @@ describe('Codex controller', () => {
       controller.start()
       await vi.advanceTimersByTimeAsync(0)
       expect(activityReads).toBe(1)
-      await vi.advanceTimersByTimeAsync(199)
+      await vi.advanceTimersByTimeAsync(4_999)
       expect(activityReads).toBe(1)
       await vi.advanceTimersByTimeAsync(1)
       expect(activityReads).toBe(2)
-      await vi.advanceTimersByTimeAsync(200)
+      await vi.advanceTimersByTimeAsync(5_000)
       expect(activityReads).toBe(3)
       await vi.advanceTimersByTimeAsync(999)
       expect(activityReads).toBe(3)
@@ -504,7 +587,7 @@ describe('Codex controller', () => {
     }
   })
 
-  it('marks a completed-unread task viewed only after a successful open', async () => {
+  it('keeps Codex Desktop unread authority unchanged after opening or locally hiding a task', async () => {
     const state = createInitialState(1)
     state.activeTab = 'codex'
     state.codex.lastTaskScanAt = 50
@@ -515,6 +598,9 @@ describe('Codex controller', () => {
       name: '实现悬浮球',
       status: 'notLoaded',
       activeFlags: [],
+      statusAuthority: 'desktop-live',
+      hasUnreadTurn: true,
+      unreadAuthority: 'desktop-live',
       updatedAt: 220,
       lastTurnStatus: 'completed',
       lastTurnStartedAt: 150,
@@ -540,19 +626,18 @@ describe('Codex controller', () => {
     await controller.refresh()
     expect(controller.view().conversations.completedUnread[0]).toMatchObject({ key, revisionAt: 200 })
     expect(await controller.openThread(key, 'alias-1')).toBe(true)
-    expect(state.codex.receipts[0]).toMatchObject({ acknowledgedRecency: 200, pendingRecency: 0 })
-    expect(controller.view().conversations.completedUnread).toHaveLength(0)
-    expect(controller.view().conversations.completed[0]).toMatchObject({ key, bucket: 'completed' })
+    expect(state.codex.receipts).toEqual([])
+    expect(controller.view().conversations.completedUnread[0]).toMatchObject({ key, bucket: 'completed-unread', unreadState: 'unread' })
     expect(controller).not.toHaveProperty('acknowledge')
     expect(controller).not.toHaveProperty('acknowledgeAll')
 
     expect(controller.hide(key, 200)).toBe(true)
     expect(controller.view().conversations.completedUnread).toHaveLength(0)
-    expect(controller.view().conversations.hidden[0]).toMatchObject({ key, bucket: 'completed', hiddenKind: 'task' })
-    expect(state.codex.receipts[0]).toMatchObject({ acknowledgedRecency: 200, dismissedActivityRecency: 200 })
+    expect(controller.view().conversations.hidden[0]).toMatchObject({ key, bucket: 'completed-unread', hiddenKind: 'task', unreadState: 'unread' })
+    expect(state.codex.receipts[0]).toMatchObject({ dismissedActivityRecency: 200, pendingRecency: 0 })
 
     expect(controller.restore(key, 200, 'task')).toBe(true)
-    expect(controller.view().conversations.completed[0]).toMatchObject({ key, bucket: 'completed' })
+    expect(controller.view().conversations.completedUnread[0]).toMatchObject({ key, bucket: 'completed-unread' })
     expect(messages.at(-1)).toBe('已从已隐藏区释放任务')
     controller.dispose()
   })
@@ -566,7 +651,7 @@ describe('Codex controller', () => {
     const failedKey = '3333333333333333'
     const unknownKey = '4444444444444444'
     const threads: CodexHostThread[] = [
-      { key: activeKey, actionAlias: 'alias-active', name: '进行中', status: 'active', activeFlags: [], updatedAt: 550, lastTurnStatus: 'inProgress', lastTurnStartedAt: 500 },
+      { key: activeKey, actionAlias: 'alias-active', name: '进行中', status: 'active', activeFlags: [], statusAuthority: 'desktop-live', updatedAt: 550, lastTurnStatus: 'inProgress', lastTurnStartedAt: 500 },
       { key: completedKey, actionAlias: 'alias-completed', name: '已完成', status: 'notLoaded', activeFlags: [], updatedAt: 450, lastTurnStatus: 'completed', lastTurnStartedAt: 300, lastTurnCompletedAt: 400 },
       { key: failedKey, actionAlias: 'alias-failed', name: '失败', status: 'notLoaded', activeFlags: [], updatedAt: 350, lastTurnStatus: 'failed', lastTurnStartedAt: 320 },
       { key: unknownKey, actionAlias: 'alias-unknown', name: '已中断', status: 'systemError', activeFlags: [], updatedAt: 250, lastTurnStatus: 'interrupted', lastTurnStartedAt: 200 }
@@ -623,7 +708,7 @@ describe('Codex controller', () => {
     })
     expect(controller.view().conversations.ongoing.map((task) => task.key)).toEqual([activeKey])
     expect(state.codex.receipts.some((receipt) => [completedKey, failedKey, unknownKey].includes(receipt.key))).toBe(false)
-    expect(messages.at(-1)).toBe('已归档 Codex 任务')
+    expect(messages.at(-1)).toBe('已归档；Codex 桌面端未确认即时刷新')
     controller.dispose()
   })
 

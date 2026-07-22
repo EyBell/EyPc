@@ -24,6 +24,8 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', codexContext)?.actionId).toBe('codex.task.archiveFocused')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', codexContext)?.actionId).toBe('codex.detail.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+9', codexContext)?.actionId).toBe('codex.drawer.select.9')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F', codexContext)?.actionId).toBe('codex.quickJump.openForward')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+F', codexContext)?.actionId).toBe('codex.search.focus')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', { ...codexContext, textInputFocused: true })).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F', { ...codexContext, textInputFocused: true })).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', { ...codexContext, tab: 'mqtt' })).not.toMatchObject({ actionId: 'codex.task.archiveFocused' })

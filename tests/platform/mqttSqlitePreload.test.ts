@@ -26,6 +26,7 @@ function loadPreload(dbPath: string, legacyArchive: unknown = null, legacySecret
     require(name: string) {
       if (name === 'node:buffer') return requireModule('node:buffer')
       if (name === 'node:child_process') return { execFile() {} }
+      if (name === 'node:net') return { connect() { throw new Error('unexpected Codex desktop connection') } }
       if (name === 'node:fs') return requireModule('node:fs')
       if (name === 'node:path') return requireModule('node:path')
       if (name === 'node:os') return requireModule('node:os')

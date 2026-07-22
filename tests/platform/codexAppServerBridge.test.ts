@@ -211,6 +211,76 @@ class FakeCodexProcess extends EventEmitter {
   }
 }
 
+class FakeCodexDesktopSocket extends EventEmitter {
+  writable = true
+  streamOwnerConnected = true
+  writes: Array<Record<string, any>> = []
+
+  open() {
+    queueMicrotask(() => this.emit('connect'))
+    return this
+  }
+
+  write(frame: Buffer, callback?: () => void) {
+    const length = frame.readUInt32LE(0)
+    const message = JSON.parse(frame.subarray(4, length + 4).toString('utf8')) as Record<string, any>
+    this.writes.push(message)
+    queueMicrotask(() => callback?.())
+    if (message.type === 'request' && message.method === 'initialize') {
+      this.push({
+        type: 'response',
+        method: 'initialize',
+        requestId: message.requestId,
+        resultType: 'success',
+        result: { clientId: 'eypc-test-client' }
+      })
+    }
+    if (this.streamOwnerConnected && message.type === 'broadcast' && message.method === 'thread-stream-following-changed' && message.params?.following === true) {
+      const threadId = message.params.conversationId as string
+      const waitingInput = threadId === FIXED_THREAD_IDS[0]
+      this.push({
+        type: 'broadcast',
+        method: 'thread-stream-state-changed',
+        sourceClientId: 'codex-desktop-owner',
+        version: 11,
+        params: {
+          hostId: 'local',
+          conversationId: threadId,
+          change: {
+            type: 'snapshot',
+            revision: 1,
+            conversationState: {
+              threadRuntimeStatus: { type: waitingInput ? 'active' : 'idle', activeFlags: [] },
+              resumeState: '',
+              hasUnreadTurn: threadId === FIXED_THREAD_IDS[3],
+              requests: waitingInput ? [{ type: 'userInput', method: 'requestUserInput' }] : [],
+              conversation: [{ role: 'user', content: 'private desktop snapshot content' }]
+            }
+          }
+        }
+      })
+    }
+    return true
+  }
+
+  push(message: Record<string, any>) {
+    queueMicrotask(() => {
+      if (!this.writable) return
+      const body = Buffer.from(JSON.stringify(message), 'utf8')
+      const frame = Buffer.allocUnsafe(body.length + 4)
+      frame.writeUInt32LE(body.length, 0)
+      body.copy(frame, 4)
+      this.emit('data', frame)
+    })
+  }
+
+  destroy() {
+    if (!this.writable) return
+    this.writable = false
+    queueMicrotask(() => this.emit('close'))
+  }
+}
+
 type ExecFileCallback = (error: Error | null, stdout: string, stderr: string) => void
 
 function noSystemProxyExecFile(
@@ -240,7 +310,8 @@ function nativeRegistryText() {
 
 function loadCodexBridge(
   child: FakeCodexProcess,
-  readRegistry: (candidate: string, readIndex: number) => string = () => nativeRegistryText()
+  readRegistry: (candidate: string, readIndex: number) => string = () => nativeRegistryText(),
+  desktopSocket: FakeCodexDesktopSocket | null = null
 ) {
   const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
   const spawn = vi.fn(() => child)
@@ -254,7 +325,8 @@ function loadCodexBridge(
       platform: 'darwin',
       arch: 'arm64',
       env: { CODEX_HOME: '/tmp/.codex', CODEX_CLI_PATH: '/tmp/codex' },
-      cwd: () => '/host/eypc'
+      cwd: () => '/host/eypc',
+      getuid: () => 501
     },
     setTimeout,
     clearTimeout,
@@ -263,8 +335,14 @@ function loadCodexBridge(
       if (name === 'node:buffer') return { Buffer }
       if (name === 'node:child_process') return { execFile, spawn }
       if (name === 'node:crypto') return crypto
+      if (name === 'node:net') return { connect: vi.fn(() => desktopSocket?.open()) }
       if (name === 'node:fs') return {
-        existsSync: (candidate: string) => candidate === '/tmp/codex',
+        existsSync: (candidate: string) => candidate === '/tmp/codex' || Boolean(desktopSocket && candidate === '/tmp/.codex/ipc/ipc.sock'),
+        lstatSync: (candidate: string) => {
+          if (desktopSocket && candidate === '/tmp/.codex/ipc') return { isDirectory: () => true, uid: 501, mode: 0o700 }
+          if (desktopSocket && candidate === '/tmp/.codex/ipc/ipc.sock') return { isSocket: () => true, uid: 501, mode: 0o600 }
+          throw new Error('not found')
+        },
         readdirSync: () => [],
         readFileSync: (candidate: string) => {
           registryReads.push(candidate)
@@ -293,6 +371,7 @@ function loadCodexBridge(
           readActivitySnapshot(): Promise<Record<string, any>>
           onActivityChanged(listener: (delta: Record<string, any>) => void): () => void
           createThread(request: Record<string, unknown>): Promise<Record<string, any>>
+          archiveThread(actionAlias: string, request: Record<string, unknown>): Promise<Record<string, any>>
           archiveProject(actionAlias: string, request: Record<string, unknown>): Promise<Record<string, any>>
           close(): void
         }
@@ -415,7 +494,7 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
-  it('uses a thread-list-only activity lane and delivers App Server notifications immediately', async () => {
+  it('uses the desktop bridge watchdog without polling App Server and keeps App Server status non-authoritative', async () => {
     const child = new FakeCodexProcess()
     const { bridge } = loadCodexBridge(child)
     const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
@@ -423,18 +502,141 @@ describe('Codex App Server preload bridge', () => {
     const writesBeforeActivity = child.writes.length
 
     const activity = await bridge.readActivitySnapshot()
-    expect(activity).toMatchObject({ ok: true, value: { version: 1, inventoryChanged: false } })
+    expect(activity).toMatchObject({ ok: true, value: { version: 2, inventoryChanged: false, desktopBridgeState: 'not-running' } })
     expect(activity.value.entries).toHaveLength(5)
-    expect(child.writes.slice(writesBeforeActivity).map((frame) => frame.method)).toEqual(['thread/list'])
+    expect(child.writes.slice(writesBeforeActivity)).toEqual([])
 
     const deltas: Array<Record<string, any>> = []
     const stop = bridge.onActivityChanged((delta) => deltas.push(delta))
     child.stdout.emit('data', `${JSON.stringify({ method: 'thread/status/changed', params: { threadId: FIXED_THREAD_IDS[0], status: { type: 'active', activeFlags: [] } } })}\n`)
-    expect(deltas.at(-1)).toMatchObject({ inventoryChanged: false, entries: [{ key: baseline.value.threads[0].key, status: 'active', activeFlags: [] }] })
+    expect(deltas.at(-1)).toMatchObject({
+      version: 2,
+      desktopBridgeState: 'not-running',
+      inventoryChanged: false,
+      entries: [{ key: baseline.value.threads[0].key, status: 'active', activeFlags: [], statusAuthority: 'connector', unreadAuthority: 'unavailable' }]
+    })
 
     child.stdout.emit('data', `${JSON.stringify({ method: 'turn/completed', params: { threadId: FIXED_THREAD_IDS[0] } })}\n`)
     expect(deltas.at(-1)).toMatchObject({ inventoryChanged: true, entries: [] })
     stop()
+    bridge.close()
+  })
+
+  it('projects private Codex Desktop snapshots into live authority and dispatches archive broadcasts after verification', async () => {
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const activity = await bridge.readActivitySnapshot()
+    expect(activity).toMatchObject({ ok: true, value: { version: 2, desktopBridgeState: 'connected' } })
+    expect(activity.value.entries.find((entry: Record<string, any>) => entry.key === baseline.value.threads[0].key)).toMatchObject({
+      status: 'active',
+      activeFlags: ['waitingOnUserInput'],
+      statusAuthority: 'desktop-live',
+      hasUnreadTurn: false,
+      unreadAuthority: 'desktop-live'
+    })
+    expect(activity.value.entries.find((entry: Record<string, any>) => entry.key === baseline.value.threads[3].key)).toMatchObject({
+      status: 'idle',
+      hasUnreadTurn: true,
+      unreadAuthority: 'desktop-live'
+    })
+    expect(JSON.stringify(activity.value)).not.toContain(FIXED_THREAD_IDS[0])
+    expect(JSON.stringify(activity.value)).not.toContain('private desktop snapshot content')
+
+    const liveTask = baseline.value.threads[0]
+    child.archiveThreadId = FIXED_THREAD_IDS[0]
+    child.archiveThreadStatus = 'notLoaded'
+    child.archiveThreadRecency = liveTask.updatedAt
+    await expect(bridge.archiveThread(liveTask.actionAlias, {
+      expectedUpdatedAt: liveTask.updatedAt,
+      expectedRevisionAt: liveTask.lastTurnCompletedAt,
+      expectedCompletionAt: liveTask.lastTurnCompletedAt,
+      expectedLastTurnStartedAt: liveTask.lastTurnStartedAt,
+      expectedSourceFingerprint: baseline.value.sourceFingerprint,
+      evidence: 'completed'
+    })).resolves.toMatchObject({ outcome: 'failed', errorCode: 'active-task' })
+    expect(child.writes).not.toContainEqual(expect.objectContaining({ method: 'thread/archive', params: { threadId: FIXED_THREAD_IDS[0] } }))
+
+    const completed = baseline.value.threads[3]
+    child.archiveThreadId = FIXED_THREAD_IDS[3]
+    child.archiveThreadStatus = 'notLoaded'
+    child.archiveThreadRecency = completed.updatedAt
+    const archiveResult = await bridge.archiveThread(completed.actionAlias, {
+      expectedUpdatedAt: completed.updatedAt,
+      expectedRevisionAt: completed.lastTurnCompletedAt,
+      expectedCompletionAt: completed.lastTurnCompletedAt,
+      expectedLastTurnStartedAt: completed.lastTurnStartedAt,
+      expectedSourceFingerprint: baseline.value.sourceFingerprint,
+      evidence: 'completed'
+    })
+    expect(archiveResult).toEqual({ outcome: 'archived', desktopSync: 'dispatched' })
+    expect(desktopSocket.writes).toContainEqual(expect.objectContaining({
+      type: 'broadcast',
+      method: 'thread-archived',
+      version: 2,
+      params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[3], cwd: '/private/archive-workspace' }
+    }))
+
+    desktopSocket.streamOwnerConnected = false
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'client-status-changed',
+      sourceClientId: 'desktop-broker',
+      version: 0,
+      params: { clientId: 'codex-desktop-owner', status: 'disconnected' }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const disconnectedActivity = await bridge.readActivitySnapshot()
+    expect(disconnectedActivity.value.entries.find((entry: Record<string, any>) => entry.key === baseline.value.threads[0].key)).toMatchObject({
+      statusAuthority: 'connector',
+      unreadAuthority: 'unavailable'
+    })
+    bridge.close()
+  })
+
+  it('keeps a live desktop unread event authoritative without a stream shadow and drops it when its owner stops following', async () => {
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    desktopSocket.streamOwnerConnected = false
+    const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-read-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 2,
+      params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[3], hasUnreadTurn: true }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const refreshed = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const liveActivity = await bridge.readActivitySnapshot()
+    expect(refreshed).toMatchObject({ ok: true, value: { completeness: 'verified' } })
+    expect(liveActivity.value.entries.find((entry: Record<string, any>) => entry.key === refreshed.value.threads[3].key)).toMatchObject({
+      statusAuthority: 'connector',
+      hasUnreadTurn: true,
+      unreadAuthority: 'desktop-live'
+    })
+
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-following-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 1,
+      params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[3], following: false }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const fallbackActivity = await bridge.readActivitySnapshot()
+    expect(fallbackActivity.value.entries.find((entry: Record<string, any>) => entry.key === baseline.value.threads[3].key)).toMatchObject({
+      hasUnreadTurn: false,
+      unreadAuthority: 'unavailable'
+    })
     bridge.close()
   })
 
@@ -465,6 +667,7 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:buffer') return { Buffer }
         if (name === 'node:child_process') return { execFile, spawn }
         if (name === 'node:crypto') return crypto
+        if (name === 'node:net') return { connect: vi.fn() }
         if (name === 'node:fs') return {
           existsSync: (candidate: string) => candidate === '/tmp/.nvm/versions/node/v24.14.0/bin/codex' || candidate === '/tmp/.nvm/versions/node/v24.14.0/bin/node',
           readdirSync: (candidate: string) => candidate === '/tmp/.nvm/versions/node' ? [{ name: 'v24.14.0', isDirectory: () => true }] : [],
@@ -498,7 +701,7 @@ describe('Codex App Server preload bridge', () => {
     expect(result.value.quota).toMatchObject({ plan: 'pro', short: { remainingPercent: 80 }, weekly: { remainingPercent: 35 } })
     expect(result.value.config).toEqual({ model: 'gpt-5.6', reasoningEffort: 'high', serviceTier: 'priority' })
     expect(result.value.threads).toHaveLength(5)
-    expect(result.value.threads[0]).toMatchObject({ name: '完善 Codex 悬浮球', status: 'active', activeFlags: ['waitingOnUserInput', 'waitingOnApproval'], createdAt: 1_800_000_000_000 })
+    expect(result.value.threads[0]).toMatchObject({ name: '完善 Codex 悬浮球', status: 'active', activeFlags: ['waitingOnUserInput', 'waitingOnApproval'], statusAuthority: 'connector', unreadAuthority: 'unavailable', createdAt: 1_800_000_000_000 })
     expect(result.value.threads[3]).toMatchObject({
       status: 'notLoaded',
       lastTurnStatus: 'completed',
@@ -582,7 +785,7 @@ describe('Codex App Server preload bridge', () => {
       expectedLastTurnStartedAt: result.value.threads[4].lastTurnStartedAt,
       expectedSourceFingerprint: result.value.sourceFingerprint,
       evidence: 'unknown'
-    })).resolves.toEqual({ outcome: 'archived' })
+    })).resolves.toEqual({ outcome: 'archived', desktopSync: 'not-running' })
 
     const pendingAlias = result.value.threads[3].actionAlias as string
     const pendingCompletedAt = result.value.threads[3].lastTurnCompletedAt as number
@@ -610,7 +813,7 @@ describe('Codex App Server preload bridge', () => {
     expect(child.writes.filter((frame) => frame.method === 'thread/archive')).toHaveLength(1)
 
     const archiveResult = await bridge.archiveThread(pendingAlias, pendingRequest)
-    expect(archiveResult).toEqual({ outcome: 'archived' })
+    expect(archiveResult).toEqual({ outcome: 'archived', desktopSync: 'not-running' })
     expect(JSON.stringify(archiveResult)).not.toContain('private archive')
     expect(child.writes.filter((frame) => frame.method === 'thread/read')).toHaveLength(6)
     expect(child.writes.filter((frame) => frame.method === 'thread/read').every((frame) =>
@@ -707,6 +910,30 @@ describe('Codex App Server preload bridge', () => {
     ])
   })
 
+  it('exposes a fail-closed native project removal transaction without an App Server removal RPC', () => {
+    const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
+    const removal = preload.slice(preload.indexOf('async function removeCodexProject'), preload.indexOf('async function openCodexThread'))
+
+    expect(preload).toContain('removeProject: removeCodexProject')
+    expect(preload).toContain("for (const executable of ['Codex', 'ChatGPT'])")
+    expect(preload).toContain('(?:ChatGPT|Codex)\\.exe')
+    expect(removal).toContain("return failed('codex-running'")
+    expect(removal).toContain("return failed('stale-source'")
+    expect(removal).toContain("return failed('unsupported-schema'")
+    expect(removal).toContain("return failed('write-failed'")
+    expect(removal).toContain("status: 'verified'")
+    expect(removal).toContain("delete localProjects[project.id]")
+    expect(removal).toContain("source['project-order'] = source['project-order'].filter")
+    expect(removal).toContain("source['pinned-project-ids'] = source['pinned-project-ids'].filter")
+    expect(removal).toContain("source['selected-project'] = null")
+    expect(removal).toContain('codexWriteSyncedTemp(paths.primary')
+    expect(removal).toContain('codexWriteSyncedTemp(paths.backup')
+    expect(removal).toContain('codexRestoreAtomicFile(paths.primary')
+    expect(removal).toContain('codexRestoreAtomicFile(paths.backup')
+    expect(removal).not.toContain("requestCodexRpc('project/")
+    expect(removal).not.toContain("delete source['thread-project-assignments']")
+  })
+
   it('reads every unarchived page, excludes zero-Turn rows, and fails closed on malformed Turns or cursor loops', async () => {
     const child = new FakeCodexProcess()
     child.bulkInventoryCount = 25
@@ -778,6 +1005,8 @@ describe('Codex App Server preload bridge', () => {
     expect(result.archivedKeys).toHaveLength(23)
     expect(result.skippedActiveKeys).toHaveLength(1)
     expect(result.failed).toEqual([expect.objectContaining({ errorCode: 'archive-not-verified' })])
+    expect(result.desktopSyncedKeys).toEqual([])
+    expect(result.desktopSyncFailedKeys).toHaveLength(23)
     expect(child.writes.filter((frame) => frame.method === 'thread/archive')).toHaveLength(24)
     expect(child.writes.filter((frame) => frame.method === 'thread/list' && frame.params?.archived === true)).toHaveLength(2)
     expect(JSON.stringify(result)).not.toContain('00000004-1234-4234-8234-123456789abc')
@@ -801,6 +1030,7 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:buffer') return { Buffer }
         if (name === 'node:child_process') return { execFile, spawn }
         if (name === 'node:crypto') return crypto
+        if (name === 'node:net') return { connect: vi.fn() }
         if (name === 'node:fs') return {
           existsSync: (candidate: string) => candidate === '/tmp/codex',
           readdirSync: () => [],
@@ -848,6 +1078,7 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:buffer') return { Buffer }
         if (name === 'node:child_process') return { execFile, spawn }
         if (name === 'node:crypto') return crypto
+        if (name === 'node:net') return { connect: vi.fn() }
         if (name === 'node:fs') return {
           existsSync: (candidate: string) => candidate === '/tmp/codex',
           readdirSync: () => [],
@@ -902,6 +1133,7 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:buffer') return { Buffer }
         if (name === 'node:child_process') return { execFile, spawn }
         if (name === 'node:crypto') return crypto
+        if (name === 'node:net') return { connect: vi.fn() }
         if (name === 'node:fs') return { existsSync: () => false, readdirSync: () => [], realpathSync: (candidate: string) => candidate, statSync: () => ({ isFile: () => false }), promises: {} }
         if (name === 'node:path') return pathModule
         if (name === 'node:os') return { homedir: () => '/tmp' }
@@ -941,6 +1173,7 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:buffer') return { Buffer }
         if (name === 'node:child_process') return { execFile, spawn }
         if (name === 'node:crypto') return crypto
+        if (name === 'node:net') return { connect: vi.fn() }
         if (name === 'node:fs') return { existsSync: (candidate: string) => candidate === '/tmp/codex', readdirSync: () => [], realpathSync: (candidate: string) => candidate, statSync: () => ({ isFile: () => false }), promises: {} }
         if (name === 'node:path') return pathModule
         if (name === 'node:os') return { homedir: () => '/tmp' }
@@ -975,6 +1208,7 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:buffer') return { Buffer }
         if (name === 'node:child_process') return { execFile: noSystemProxyExecFile, spawn() {} }
         if (name === 'node:crypto') return crypto
+        if (name === 'node:net') return { connect: vi.fn() }
         if (name === 'node:fs') return { existsSync: () => false, readdirSync: () => [], statSync: () => ({ isFile: () => false }), promises: {} }
         if (name === 'node:path') return pathModule
         if (name === 'node:os') return { homedir: () => '/tmp' }
@@ -1034,6 +1268,7 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:buffer') return { Buffer }
         if (name === 'node:child_process') return { execFile, spawn }
         if (name === 'node:crypto') return crypto
+        if (name === 'node:net') return { connect: vi.fn() }
         if (name === 'node:fs') return {
           constants: { R_OK: 4 },
           existsSync: (candidate: string) => existing.has(candidate),
@@ -1091,6 +1326,7 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:buffer') return { Buffer }
         if (name === 'node:child_process') return { execFile, spawn: vi.fn() }
         if (name === 'node:crypto') return crypto
+        if (name === 'node:net') return { connect: vi.fn() }
         if (name === 'node:fs') return { existsSync: (candidate: string) => candidate === voltaCodex, readdirSync: () => [], realpathSync: (candidate: string) => candidate, statSync: () => ({ isFile: () => false }), promises: {} }
         if (name === 'node:path') return pathModule
         if (name === 'node:os') return { homedir: () => home }
@@ -1128,6 +1364,7 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:buffer') return { Buffer }
         if (name === 'node:child_process') return { execFile, spawn }
         if (name === 'node:crypto') return crypto
+        if (name === 'node:net') return { connect: vi.fn() }
         if (name === 'node:fs') return { existsSync: (candidate: string) => candidate === shim, readdirSync: () => [], realpathSync: (candidate: string) => candidate, statSync: () => ({ isFile: () => false }), promises: {} }
         if (name === 'node:path') return pathModule
         if (name === 'node:os') return { homedir: () => home }

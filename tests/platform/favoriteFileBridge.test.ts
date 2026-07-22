@@ -26,6 +26,7 @@ describe('favorite file bridge source', () => {
         if (name === 'node:buffer') return requireModule('node:buffer')
         if (name === 'node:crypto') return requireModule('node:crypto')
         if (name === 'node:child_process') return { execFile }
+        if (name === 'node:net') return { connect: vi.fn() }
         if (name === 'node:fs') {
           return {
             constants: { R_OK: 4 },
