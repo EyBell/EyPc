@@ -2,7 +2,7 @@
 
 Tool: codex
 Date: 2026-07-22
-Requirement version: `2026-07-22.9`
+Requirement version: `2026-07-22.10`
 
 | Work Unit | Work-order Version | Attempt | Surface | Runtime ID | State | Last Evidence | Blocker | Next Action |
 | --- | ---: | ---: | --- | --- | --- | --- | --- | --- |
@@ -106,6 +106,7 @@ Requirement version: `2026-07-22.9`
 | E-062 float-shift-escape-focus-return | 2026-07-22 | WU-CODEX-FLOAT-FOCUS-RETURN / 1 | App Root / main | reported | user replaced ambiguous double-Escape behavior with `Shift+Escape` returning to the focus before the transient card | added the narrow renderer→host `return-focus` bridge, temporary child-window hide and renderer/preload regression contracts without persisting settings | user validation |
 | E-063 desktop-connection-discovery-and-status-authority | 2026-07-22 | WU-CODEX-DESKTOP-LIVE-AUTHORITY / 2 | App Root / main | planned → implementation → reported | user requires Input / completed-unread / ongoing to retain Codex-internal authority, asks for automatic CLI discovery, manual launch-path selection, explicit connector fallback and Windows guidance before Easy Agent | implemented privacy-safe automatic/manual launch diagnostics, host actions, desktop-live-preserving connector evidence and platform guidance without exposing executable paths | user validation; static diff/link checks only, no test/build/runtime execution |
 | E-064 static-contract-reaudit | 2026-07-22 | WU-CODEX-CLOSEOUT / 1 | App Root / main | reported | static comparison found and corrected color-pair/water bounds, linked-board contrast feedback, six-tab/search rendering, water shell opacity override and desktop patch fail-open branches; canonical/public preload stayed byte-identical | keep the project-owned acceptance gate unchanged and record only reproducible static checks | user validation; no test/typecheck/build/uTools/runtime execution |
+| E-065 float-convergence-recent-flow | 2026-07-22 | WU-CODEX-FLOAT-RECENT-FLOW / 1 | App Root / main | planned → implementation → reported | user requires four visible tabs, legacy all/input normalization, a 6-hour dynamic task flow including recent completed tasks, title/meta interaction split, denser four-slot rails, concise registration text and no water outer ring | implemented projection/renderer/settings convergence while retaining compatibility arrays and persisted outer water fields; controlled/canonical/technical/handoff docs synchronized | user validation; static diff/document checks only, no test/typecheck/build/uTools/runtime execution |
 
 ## Efficiency / Token Evidence
 

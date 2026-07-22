@@ -3,9 +3,13 @@
 Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-22.9`
+Requirement version: `2026-07-22.10`
 
 ## Result
+
+- RAW-063 已将展开任务导航收敛为 `动态 / 已完成 / 已隐藏 / 项目`。`all/inputRequired` 仍是底层兼容投影，但 `all/input` 的旧页签持久化、旧快照和外部设置均直接回落到 `ongoing`，不会再短暂显示“全部”或“待输入”。
+- 动态页固定显示最近 6 小时有 latest Turn 开始/完成活动的非隐藏任务，顺序为待输入、正在进行中、需关注、宿主状态未知、已完成未读、已完成；其徽标采用同一集合，紧凑进行中仍只统计真实活动。标题普通点击直达，Ctrl/Cmd 标题点击选择，元信息行只聚焦高亮以继承 `Ctrl+T` 的项目上下文。
+- 四个短字符动作保持 `24px`，间距收敛为 `2px`、轨宽 `102px`；注册提示只保留“最近 N 天的 M 条”。水球不再渲染 Weekly SVG 外环或对应设置入口，内部水球/百分比/角标/展开额度及历史 outer 持久化兼容保持。
 
 - Easy Agent 完成前采用双通道临时适配：Codex App Server 继续提供额度、模型、库存、创建和持久化动作；macOS Codex Desktop 私有 IPC 伴随桥提供 `Input / 正在进行中 / 已完成未读` 实时权威及归档后桌面侧栏刷新通知。当前不能删除插件内 App Server 连接器。
 - CLI 启动采用受控自动发现，配置页可选地保存一个经运行计划核验的本机手动 CLI 位置；完整路径不回显或跨 Renderer。未设置手动位置时保留现有 App Server 连接器并公开可能延迟。该降级不使用插件缓存猜测 Input、正在进行中或已完成未读；Windows 只提供 CLI 发现/连接器，Desktop IPC 实时桥仍为 macOS canary。
@@ -15,12 +19,14 @@ Requirement version: `2026-07-22.9`
 - 项目页按 Codex 原生 `Pinned / Projects / Chats` 结构展示，不重复任务并保留空项目；原生顺序只读，本地置顶进入 `Pinned` 并可排序。行尾不再追加“本地顶”；任务/项目的 `顶` 控件统一表达来源与按下状态，本地使用 warning 色，原生/Chats 可聚焦但由 `aria-disabled` 只读门禁阻止点击、Quick Jump 和快捷键动作。
 - 任务和项目支持本地别名；列表有别名只显示别名、无别名显示原始名称，不再用缺失展示字段制造“未命名任务”。原名仍可搜索，并在存在别名时保留于详情和 Shift 预览。最后页签和项目折叠跨重启恢复，搜索词、选择、焦点和确认态不跨重启。
 - 旧“从 EyPc 移除/恢复”本地抑制已删除。项目“隐/显”只控制项目页分组，任务仍在其他会话页签；旧 removed 集合升级时直接丢弃，不自动修改 Codex。
-- 展开卡片的第一行就是六页签，其下依次为统一搜索、服务端真实额度文字和内容；旧水球/卡片切换、隐藏、刷新、设置、关闭工具栏已从展开面板删除。
-- 水球不再先弹出迷你详情：上半区 hover 不展开，三个数字角标可直接点击，并在 hover/focus 200ms 后通过共享不透明层说明数量与点击作用；说明不会展开或切页。指针进入下半区才立即展开。球体显式点击/键盘激活仍有效，触屏不模拟 hover。额度按普通 5 小时正余额、普通周正余额、最高正余额 Spark 选择；两个普通窗口均无正余额时显示 Spark，百分比上方出现 `S`，外环跟随同池周额度。缺失窗口不伪造也不等于 0。
+- 展开卡片的第一行就是四页签，其下依次为统一搜索、服务端真实额度文字和内容；旧水球/卡片切换、隐藏、刷新、设置、关闭工具栏已从展开面板删除。
+- 水球不再先弹出迷你详情：上半区 hover 不展开，三个数字角标可直接点击，并在 hover/focus 200ms 后通过共享不透明层说明数量与点击作用；说明不会展开或切页。指针进入下半区才立即展开。球体显式点击/键盘激活仍有效，触屏不模拟 hover。额度按普通 5 小时正余额、普通周正余额、最高正余额 Spark 选择；两个普通窗口均无正余额时显示 Spark，百分比上方出现 `S`，不再绘制外环。缺失窗口不伪造也不等于 0。
 - 默认模型策略是 `quota-auto`：普通阶段使用配置的 `newThreadPreferredModel`，否则用目录默认/首个非 Spark；任一真实返回的普通窗口为 0 时切换最高可用 Spark，Spark 不可用则要求手选。本次手选不持久化。
 - 点击项目 `＋`、`Ctrl+T` 或右键新建每次打开新会话编辑器，显示目标项目、模型名称/ID、选择原因和额度。原生 textarea 支持系统听写；Enter 换行、Ctrl/Cmd+Enter 提交、Tab 圈定、Escape 清稿并恢复触发点。冻结选择在额度/目录/项目变化后会刷新并要求再次确认。
-- 专用瞬时桥接以精确项目 cwd/模型和 `allowProviderModelFallback=false` 创建线程，校验响应顶层实际模型/cwd 后才发送首轮并打开线程 Deep Link。首轮失败清理零轮线程，清理不确定时停重试；首轮成功但打开失败只保留短期重试打开。提示词不进入通用 action、快照、日志、存储、文档、错误记忆、Deep Link 或剪贴板。
-- 任务行常显 `顶/隐显/归确/+`，项目行常显 `顶/移确/隐显/+`，每个动作缩为 `24px`、四槽区 `105px` 且禁用保位；任务/项目行最小高度 `40px`，展开态信息使用 `12/10/9px` 层级。右键/Ctrl+右完整抽屉继续提供完整单项/批量动作。
+- 左上待输入角标仍实时更新；右上进行中角标从首次变化起以固定 2 秒窗口合并，后续增量不延长窗口。图片可由文件选择、拖放或提示词框粘贴进入临时编辑器预览。
+- 专用瞬时桥接以精确项目 cwd/模型和 `allowProviderModelFallback=false` 创建线程，校验响应顶层实际模型/cwd 后才发送首轮并打开线程 Deep Link。首轮失败清理零轮线程，清理不确定时停重试；首轮成功但打开失败只保留短期重试打开。除用户触发的图片回退复制外，提示词不进入通用 action、快照、日志、存储、文档、错误记忆、Deep Link 或剪贴板。
+- 当前 App Server 只声明文本输入；带图片时不建 App Server 线程，而是通过受限浮窗 IPC 复制首轮文字、打开 Codex 空白会话，由用户手动粘贴图片并选择模型。该用户触发的剪贴板回退是提示词唯一允许的复制路径。
+- 任务行常显 `顶/隐显/归确/+`，项目行常显 `顶/移确/隐显/+`，每个动作缩为 `24px`、间距 `2px`、四槽区 `102px` 且禁用保位；任务/项目行最小高度 `40px`，展开态信息使用 `12/10/9px` 层级。右键/Ctrl+右完整抽屉继续提供完整单项/批量动作。
 - Codex 悬浮子窗不挂载主应用 Tooltip，也不设置原生 `title`；水球保持无额度气泡。状态槽和短字符按钮使用子窗自有、完全不透明的 200ms 说明层；按住纯 Shift 继续显示白名单只读预览，正文、摘要、raw ID、cwd 或路径永不进入展示。
 - 未进入选择模式时，会话中部左键打开 Codex，Ctrl/Cmd+中部只选择，左侧 38px 全高矩形选择区建立选择；已有任一选中项后，中部和左区均切换当前任务加入/移出，移出最后一项即退出。选择模式常显状态条和数量，未选行降权，选中行使用 accent/running/pending/surface 三色主题渐变及强化 hover/focus/active；左区始终显示任务状态图标并同步 `aria-pressed`。任务行、左区按钮和右动作按钮分别拥有 Space/Enter，不重复触发。
 - 只有 Codex Desktop `desktop-live` snapshot/patch/request/read-state 才能产生待输入、等待审批或正在进行中。桌面桥未运行、失败、连接中或协议不兼容时立即显示“宿主状态未知”，App Server/V1 delta、本地缓存和五秒启发均不能冒充 live authority。普通 watchdog 为 5s，连续三次失败临时改为 1s；水球角标只统计桌面权威待输入、正在进行中和完成未读。
@@ -37,6 +43,7 @@ Requirement version: `2026-07-22.9`
 
 ## User Acceptance
 
+- RAW-063 为 `未校验，待用户验收`：请确认旧 `all/input` 持久化状态启动后立即进入动态、四页签无闪现、待输入角标与动态六段正常、6 小时内完成任务可见、标题/元信息行交互、2px/102px 操作轨以及无 Weekly 外环；本轮未运行测试、typecheck、build、uTools、截图或真实 Codex 操作。
 - RAW-059 为 `未校验，待用户验收`：请在真实 macOS Codex Desktop 中确认手动/自动 CLI 位置切换、Desktop live authority 与归档后的侧栏刷新；Windows 只验证受控 CLI 发现与 connector fallback，不能验收实时桥。
 - RAW-058 多选专项自动化 `3 / 3` 通过：覆盖触发状态机、最后一项退出、子按钮键盘归属及 38px/状态图标/三色渐变结构；真实视觉/Codex 跳转仍待验收。首次 Companion 整文件探测仍有 19 条更广失败，未宣称整体通过。
 - RAW-057 为 `未校验，待用户验收`：显著选择模式条、未选降权、选中粗边/左轨和勾选徽标已同步，未运行开发门禁。
@@ -52,7 +59,7 @@ Requirement version: `2026-07-22.9`
 
 - [preload/index.js](../../../../preload/index.js#L1) 是原始项目状态、Codex Desktop snapshot、thread/Turn ID、cwd 与 action alias 的唯一进程内边界；桌面 snapshot 的正文/摘要只为协议消费而瞬时存在，状态投影后立即丢弃。Renderer 和持久化层只接收匿名键、权威枚举、项目描述、顺序和短期动作别名。
 - 不读取 Codex SQLite/LevelDB，不把正文、摘要、raw ID、cwd/路径写入 Renderer、存储、日志或文档，也不自动操作 Codex 桌面 UI。除经二次确认和完整门禁的项目移除事务外，不写 `.codex-global-state.json`；unread fallback 只读 Codex 自身持久化集合。
-- Host V2 旧字段和 Activity Delta V1 保留一版兼容；V1 只能成为 connector authority。未来 Easy Agent 可替换 App Server + Desktop bridge provider/floating host，而不改变 Renderer 六页签、匿名状态、本地元数据、`quota-auto` 或瞬时新会话合同。
+- Host V2 旧字段和 Activity Delta V1 保留一版兼容；V1 只能成为 connector authority。未来 Easy Agent 可替换 App Server + Desktop bridge provider/floating host，而不改变 Renderer 四个可见页签、兼容投影、匿名状态、本地元数据、`quota-auto` 或瞬时新会话合同。
 
 ## Residual Boundary
 

@@ -3,7 +3,7 @@
 Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-22.9`
+Requirement version: `2026-07-22.10`
 
 Authority: [spec.md](spec.md#L1)
 
@@ -70,4 +70,9 @@ Authority: [spec.md](spec.md#L1)
 59. 在 Codex 配置页增加手动位置、自动发现结果、macOS/Windows 查找提示和连接器降级说明；使用原生 form/button，错误关联输入，明确 connector fallback 不推断 Input/进行中/完成未读。
 60. 同步 RAW-059 Controlled、canonical、项目状态、架构与技术细节；按用户独占验收规则仅做静态差异/文档链接核对，不运行测试、typecheck、build、uTools、截图、真实预检或归档。
 
-Completion: 1–49 保留既有历史状态。50–59 已实现；60 为本轮文档/静态核对。按用户独占验收规则未运行测试、类型、构建、uTools、截图或真实 Codex 操作，RAW-056–059 为 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。
+61. 按 RAW-063 将 `FloatApp` 的可见导航收敛为 `动态 / 已完成 / 已隐藏 / 项目`，移除 `all/input` 的渲染分支和点击映射；保留底层数组与单待输入直开，并把旧持久化、旧快照和外部动作的 `all/input` 规范化为 `ongoing`。
+62. 用最新 Turn 的 `max(startedAt, completedAt)` 保持常规窗口资格，并在动态页固定筛选最近 6 小时的非隐藏任务；按待输入、正在进行中、需关注、宿主状态未知、已完成未读、已完成渲染且使动态徽标复用同一结果。
+63. 将标题普通点击/ Ctrl-Cmd 选择与元信息行聚焦分开；把操作轨收敛为 `24px / 2px / 102px`，注册提示收敛为“最近 N 天的 M 条”，移除水球 Weekly SVG 外环和失效配置入口，同时保留历史外层持久化字段。
+64. 同步 RAW-063 的 Controlled、产品、项目、技术细节、设计偏好和交接；仅做静态 diff/文档核对，不新增或修改测试，也不运行测试、typecheck、build、uTools、截图或真实宿主操作。
+
+Completion: 1–49 保留既有历史状态。50–59 已实现；60–64 为 RAW-063 的实现、文档与静态核对。按用户独占验收规则未运行测试、类型、构建、uTools、截图或真实 Codex 操作，RAW-056–059 和 RAW-063 均为 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。

@@ -3,7 +3,22 @@
 Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-22.9`
+Requirement version: `2026-07-22.10`
+
+## RAW-063 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 四页签与兼容回退 | implemented / unverified | Float renderer 仅显示 `动态 / 已完成 / 已隐藏 / 项目`；`all/input` 投影保留给角标与统计，旧持久化、旧快照和 `codex.tab.set` 均回退为 `ongoing`。 |
+| 6 小时动态流 | implemented / unverified | 动态页和徽标都按最近 6 小时的 `max(lastTurnStartedAt,lastTurnCompletedAt)` 非隐藏集合取数，顺序为待输入、进行中、需关注、未知、完成未读、已完成；完成任务仍在窗口内显示。 |
+| 行内交互与密度 | implemented / unverified | 标题普通点击直达、Ctrl/Cmd 只选择；元信息行聚焦并高亮以接收 `Ctrl+T`。四按钮固定为 `24px / 2px / 102px`，注册提示只显示“最近 N 天的 M 条”。 |
+| 水球收敛 | implemented / unverified | Weekly SVG 外环和设置入口已移除；内部液面、百分比、角标、展开额度和旧 outer 持久化字段保持。 |
+| 状态角标与图片回退 | implemented / unverified | 左上待输入保持实时；右上进行中使用不重置 2 秒展示窗口。编辑器支持 PNG/JPEG/WebP 选择、拖放、粘贴与内存预览；当前文本-only App Server 下图片动作仅复制文字并打开 Codex 空白会话，不创建 App Server 空线程。 |
+| 静态核对 | pass | `git diff --check` 通过；已复核可见 Tab 仅为四项、旧 all/input 回退路径、6 小时动态筛选、外环 CSS/SVG/设置入口移除和受控/权威文档同步。按用户要求未运行测试、typecheck、build、uTools、截图或真实宿主操作。 |
+
+结论：RAW-063 已实现，状态为 `未校验，待用户验收`。用户验收应确认旧 `all/input` 启动后直接进入动态、四页签无闪现、待输入角标/动态分段正常，以及最近 6 小时内完成任务仍可见。
+
+- Error memory: 未新增。本轮复用 [codex-cross-process-notloaded-is-not-completion.md](../../../knowledge/error-memory/codex-cross-process-notloaded-is-not-completion.md#L1)：只采用 latest Turn 的已证据时间，不以 `updatedAt`、刷新频率或跨进程 `notLoaded` 推断状态。
 
 ## RAW-059 当前交付状态
 
@@ -37,7 +52,7 @@ Requirement version: `2026-07-22.9`
 
 ## Closeout Static Re-audit (2026-07-22)
 
-- 对当前脏树重新做了源码/规范对照，并修正配色对比度与水球边界、联动取色板与无效色域、六页签/统一搜索、水球外壳透明度，以及桌面补丁未知路径的 fail-closed 分支。
+- 对当前脏树重新做了源码/规范对照，并修正配色对比度与水球边界、联动取色板与无效色域、四页签/统一搜索、水球外壳透明度，以及桌面补丁未知路径的 fail-closed 分支；图片附件回退保持文本-only App Server 与受限浮窗复制边界。
 - 可复现静态检查通过：preload/script `node --check`、`git diff --check`、canonical/public preload 字节一致性和 Markdown code-link audit。
 - 依项目规则，本次未运行测试、typecheck、build、uTools/runtime、截图或真实 Codex 操作；整体仍为 `未校验，待用户验收`。
 
@@ -86,7 +101,7 @@ Requirement version: `2026-07-22.9`
 
 ## Review Target
 
-- Requirement: [raw-requirement.md](raw-requirement.md#L1) 的真实项目库存、六页签、Codex Desktop live/unread 权威、无权威未知降级、5s watchdog、归档后桌面通知、普通/Spark 额度 V2、任务/项目常显四槽、即时可见的置顶、项目隐藏/移除、高对比 Quick Jump、联动取色与纯 Shift 隐私预览。
+- Requirement: [raw-requirement.md](raw-requirement.md#L1) 的真实项目库存、四页签与旧 all/input 回退、6 小时动态流、Codex Desktop live/unread 权威、无权威未知降级、5s watchdog、归档后桌面通知、普通/Spark 额度 V2、任务/项目常显四槽、即时可见的置顶、项目隐藏/移除、高对比 Quick Jump、联动取色、图片回退与纯 Shift 隐私预览。
 - Plan: [plan.md](plan.md#L1) 的 Host V2/Projection V3 匿名边界、App Server 数据/动作连接器、Desktop 伴随桥、Renderer 状态机、测试契约和文档闭环；真实宿主、视觉与开发门禁留给用户验收。
 - Implementation: [preload/index.js](../../../../preload/index.js#L1)、[preload/float.js](../../../../preload/float.js#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1)、[CodexCardColorDialog.vue](../../../../src/components/CodexCardColorDialog.vue#L1)、[codexNewThread.ts](../../../../src/domain/codexNewThread.ts#L1)、[codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1)、[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1)、[keybindingRuntime.ts](../../../../src/runtime/keybinding/keybindingRuntime.ts#L1)、[FloatApp.vue](../../../../src/FloatApp.vue#L1)、[CodexWaterBall.vue](../../../../src/components/CodexWaterBall.vue#L1) 与 [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1)。
 
