@@ -1,16 +1,111 @@
 # Codex Companion 真实会话与交互验证记录
 
 Tool: codex
-Date: 2026-07-21
-Status: `accepted-with-declared-host-residuals`
+Date: 2026-07-22
+Status: `reported-unverified-awaiting-user-acceptance`
+Requirement version: `2026-07-22.8`
+
+## RAW-058 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 多选命中与状态机 | implemented / unverified | 左侧选择区改为 38px 全高矩形并保留状态图标；普通态左区选择、中部打开、Ctrl/Cmd+中部选择，选择态两区切换成员并在最后一项移除时退出。 |
+| 选中视觉与键盘归属 | implemented / unverified | 选中行使用 accent/running/pending/surface 三色主题渐变，hover/focus/active 逐级增强；任务行、左按钮和右动作按钮分别拥有 Space/Enter，根行不重复执行子按钮事件。 |
+| 置顶来源与门禁 | implemented / unverified | 行尾“本地顶”已移除；本地“顶”使用 warning 色，四类来源由 200ms hover/focus 说明表达。原生/Chats 使用可聚焦 `aria-disabled=true`，点击、Quick Jump 与快捷键复用只读门禁。排序和持久化未改。 |
+| 紧凑角标说明 | implemented / unverified | 待输入单/多项、正在进行中、已完成未读角标共享移出展开分支的说明层；200ms 后显示作用，离开/失焦关闭，hover/focus 不展开或切页，点击合同保持。 |
+| 自动化契约 | focused pass / full file red | 用户授权后运行多选专项：普通/Cmd 中部与左区状态机、最后一项退出、子按钮 Space/Enter 归属、38px 全高区/状态图标/三色渐变共 `3 / 3` 通过。首次整文件探测为 `21 / 40` 通过、19 失败；失败跨页签、搜索、项目、配置、角标等更广合同，不能宣称 Companion 全绿。 |
+| 静态与类型核验 | pass | `git diff --check`、Markdown code-link audit、设计偏好 `ready-for-ui-skill` 复核和用户触发后的 `pnpm run typecheck` 通过；未运行 build、uTools/runtime、截图或真实 Codex 操作。 |
+
+结论：RAW-058 的多选专项自动化为 `3 / 3 passed`，证明触发状态机、最后一项退出、子按钮键盘隔离和视觉结构契约有效；真实视觉与 Codex 跳转仍待用户验收，且 Companion 整文件仍有 19 条非多选专项失败，不能标记整体 accepted。
+
+- Error memory: 更新 [codex-selection-state-needs-structural-contrast.md](../../../knowledge/error-memory/codex-selection-state-needs-structural-contrast.md#L1) 的第二次发生记录，并新增候选 [codex-control-owned-source-feedback.md](../../../knowledge/error-memory/codex-control-owned-source-feedback.md#L1)。两者均待用户验收后再决定是否提升为 verified。
+- Typecheck correction: [FloatApp.vue](../../../../src/FloatApp.vue#L1) 的 composer `nextTick` 回调改为一次捕获并判空局部 state，消除两处 TS18047；已记录 verified memory [vue-nexttick-ref-null-narrowing.md](../../../knowledge/error-memory/vue-nexttick-ref-null-narrowing.md#L1)。
+
+## Closeout Static Re-audit (2026-07-22)
+
+- 对当前脏树重新做了源码/规范对照，并修正配色对比度与水球边界、联动取色板与无效色域、六页签/统一搜索、水球外壳透明度，以及桌面补丁未知路径的 fail-closed 分支。
+- 可复现静态检查通过：preload/script `node --check`、`git diff --check`、canonical/public preload 字节一致性和 Markdown code-link audit。
+- 依项目规则，本次未运行测试、typecheck、build、uTools/runtime、截图或真实 Codex 操作；整体仍为 `未校验，待用户验收`。
+
+## RAW-057 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 选择模式提示 | implemented / unverified | 任一任务选中后常显“选择模式 / 已选 N 项 / Esc 退出”，数量实时变化，最后一项移出后消失。 |
+| 层级区分 | implemented / unverified | 未选行降至 `.62` 不透明度并降低饱和度；选中行使用 `2px` 强调边、`5px` 左轨、强底色与双层焦点/阴影。 |
+| 左侧徽标 | implemented / unverified | `aria-pressed=true` 时状态图标隐藏，左控件改为强调色实底与 `✓`，并保留 focus/active 边界。 |
+| 自动化契约 | updated / not run | UI 测试增加模式条、实时数量、最后一项退出、勾选符号和未选降权断言；依用户规则未执行。 |
+
+结论：RAW-057 为 `未校验，待用户验收`。未运行测试、typecheck、build、uTools/runtime、截图或真实 Codex 操作。
+
+- Error memory: 新增候选 [codex-selection-state-needs-structural-contrast.md](../../../knowledge/error-memory/codex-selection-state-needs-structural-contrast.md#L1)，等待用户视觉验收后再决定是否提升为 verified。
+
+## RAW-056 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| Codex Desktop 伴随桥 | implemented / unverified | Preload 已实现 macOS loopback Unix socket、长度帧、固定版本 initialize/snapshot/patch/follow/request/read-state、断线重连，以及 owner/mode 与协议不兼容 fail-closed；桌面全文快照仅在 preload 内瞬时投影。 |
+| Input / 正在进行中 | implemented / unverified | `statusAuthority=desktop-live` 才能产生 waiting-input/waiting-approval/active；App Server/V1 delta 只标记 connector authority。失去 desktop live 后立即转“宿主状态未知”，不再使用五秒启发或本地缓存计数。 |
+| 已完成未读 | implemented / unverified | 最新 Turn completed 与 Codex `hasUnreadTurn` 共同决定；live read-state 优先，断线时可用 Codex 自身持久化 unread 集合。EyPc open/hide/restore 均不确认未读。 |
+| 归档即时同步 | implemented / unverified | App Server `thread/archive` 及 false/true 双向验证保留；成功后向已连接桌面端派发 `thread-archived` v2。单条/项目结果区分已派发与桌面端未确认即时刷新，通知失败不回滚已验证归档。 |
+| 活动与诊断 UI | implemented / unverified | 动态页新增正在进行中、需关注、宿主状态未知和已完成未读分段；角标仅统计桌面权威 Input/active/unread。设置页分别展示 App Server 数据连接器与桌面实时桥状态；普通 watchdog 改为 5s，三次失败后 1s。 |
+| 自动化契约 | updated / not run | Domain、Controller、UI、platform/preload 测试契约已更新，并增加私有桌面 socket snapshot/read/archive 通知边界用例；依用户规则未执行。 |
+| 真实宿主与写入 | not run | 未运行测试、typecheck、build、uTools/runtime、截图、真实 IPC 预检、真实归档或项目移除；未修改本机 Codex 原生状态。 |
+
+结论：RAW-056 为 `未校验，待用户验收`。实现和测试契约不能替代真实 Codex Desktop 消费与 UI 刷新的用户验收；RAW-054 及更早历史证据不替代本增量验收。
+
+- Error memory: 未新增；现有 [codex-cross-process-notloaded-is-not-completion.md](../../../knowledge/error-memory/codex-cross-process-notloaded-is-not-completion.md#L1) 与 [codex-archive-revalidation-fail-open.md](../../../knowledge/error-memory/codex-archive-revalidation-fail-open.md#L1) 已覆盖本轮“无 live authority 不猜状态”和“归档先双向验证”的复用规则。
+
+## RAW-055 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 名称回退 | implemented / unverified | 有别名时 `alias/displayName/name` 使用别名；无别名时回退原始名称。列表只显示一个主标题，原名仍参与搜索并保留于详情/Shift 预览。 |
+| 密度与字号 | implemented / unverified | RAW-055 建立 `12/10/9px`、`24px` 四槽、`105px` 操作区和 `40px` 行；其 `26×30px` 左控件已由 RAW-058 的 38px 全高矩形取代。 |
+| 鼠标选择 | implemented / unverified | 普通态中部打开、左槽进入选择；选择态中部与左槽均加入/移出，移出最后一项后集合清空并退出选择模式。独立操作按钮继续阻止冒泡。 |
+| 状态反馈 | implemented / unverified | 行和左控件补齐 hover/focus/active/selected 组合、强调边、渐变与光晕；左控件同步 `aria-pressed`，Space/Escape/Delete/F/Shift 继续复用既有可见反馈。 |
+| 自动化契约 | updated / not run | Domain/UI 用例已更新名称投影、原名搜索、两态点击、最后一项退出、尺寸和组合状态断言。依用户规则未运行。 |
+
+结论：RAW-055 为 `未校验，待用户验收`。未运行测试、typecheck、build、uTools/runtime、截图或真实 Codex 操作；RAW-054 历史证据不替代本增量验收。
+
+- Error memory: 新增候选 [codex-display-label-fallback-precedence.md](../../../knowledge/error-memory/codex-display-label-fallback-precedence.md#L1)，等待用户验收后再决定是否提升为 verified。
 
 ## Review Target
 
-- Requirement: [raw-requirement.md](raw-requirement.md#L1) 的真实项目库存、六页签/200ms 活动通道、普通/Spark 额度 V2、水球上半区角标安全/下半区 hover 展开、`quota-auto`、瞬时新会话编辑器/桥接、选择优先会话行、右键完整抽屉、纯 Shift 白名单预览、浮窗本地暂态层、过滤后的 Quick Jump 与原生归档。
-- Plan: [plan.md](plan.md#L1) 的 Host V2/Projection V3 保持、额度/模型/创建桥接增量、Renderer 状态机、快捷键、真实本机 schema/额度预检、视觉 QA 与文档闭环。
-- Implementation: [preload/index.js](../../../../preload/index.js#L1)、[preload/float.js](../../../../preload/float.js#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexNewThread.ts](../../../../src/domain/codexNewThread.ts#L1)、[codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1)、[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1)、[keybindingRuntime.ts](../../../../src/runtime/keybinding/keybindingRuntime.ts#L1)、[FloatApp.vue](../../../../src/FloatApp.vue#L1)、[CodexWaterBall.vue](../../../../src/components/CodexWaterBall.vue#L1) 与 [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1)。
+- Requirement: [raw-requirement.md](raw-requirement.md#L1) 的真实项目库存、六页签、Codex Desktop live/unread 权威、无权威未知降级、5s watchdog、归档后桌面通知、普通/Spark 额度 V2、任务/项目常显四槽、即时可见的置顶、项目隐藏/移除、高对比 Quick Jump、联动取色与纯 Shift 隐私预览。
+- Plan: [plan.md](plan.md#L1) 的 Host V2/Projection V3 匿名边界、App Server 数据/动作连接器、Desktop 伴随桥、Renderer 状态机、测试契约和文档闭环；真实宿主、视觉与开发门禁留给用户验收。
+- Implementation: [preload/index.js](../../../../preload/index.js#L1)、[preload/float.js](../../../../preload/float.js#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1)、[CodexCardColorDialog.vue](../../../../src/components/CodexCardColorDialog.vue#L1)、[codexNewThread.ts](../../../../src/domain/codexNewThread.ts#L1)、[codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1)、[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1)、[keybindingRuntime.ts](../../../../src/runtime/keybinding/keybindingRuntime.ts#L1)、[FloatApp.vue](../../../../src/FloatApp.vue#L1)、[CodexWaterBall.vue](../../../../src/components/CodexWaterBall.vue#L1) 与 [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1)。
 
-## Acceptance Results
+## RAW-054 增量验收
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 双取色板与色域 | pass | 表面/前景两个 canvas 同时存在；固定色相下显示饱和度/亮度，低对比区域斜纹弱化。选择任一侧会保持另一侧色相/饱和度并移动到最近满足 `4.5:1` 的亮度。 |
+| 原位色卡入口 | pass | 标题当前色块可点击并在所属色板内展开 12 个命名色卡；方向键、Esc、外部点击和焦点恢复已实现。选择“薄荷”得到 `#B5E3B5 / #07161D` 与 `12.81:1`。 |
+| 草稿与真实浮窗 | pass | 有效草稿只进入 Controller 暂态预览，真实桌面伴侣实时刷新；保存水球态在预览期间临时显示卡片。取消、Esc、遮罩和卸载清除预览并恢复保存样式/颜色；确认只持久化一次完整配对。 |
+| 浮窗职责 | pass | [FloatApp.vue](../../../../src/FloatApp.vue#L1) 不含水纹主/辅色入口、编辑状态或对话框；悬浮子窗只显示效果，水纹设置仍在 Codex 配置页。 |
+| 聚焦自动化 | pass | `npx vitest run ... -t "nearest contrast-safe|previews a paired card theme|edits card surface|keeps every color control|keeps invalid HEX"`：`3 files / 5 passed`，覆盖最近安全色、暂态预览/回滚/原子提交、双板/色卡、无原生 `type=color`、无效 HEX 与零浮窗水色控件。 |
+| 类型与构建 | pass | `npm run typecheck` passed；`npm run build` passed，包含第二次 typecheck、Vite 双入口生产构建、runtime prepare 与 `validate:utools`。 |
+| 浏览器矩阵 | pass | `1180×800`、`760×800`、`420×800` 与 `760×420` 均无页面横向溢出；窄屏单列、短高度可纵向滚动。420px 色卡层位于 `[32, 388]`，12 个选项全部在视口内。既有 8092 开发服务被复用，未停止或重启用户进程。 |
+| 全量基线 | accepted-with-baseline | `npm test` 完整运行 `48 files / 496 tests`，结果 `45 files passed / 3 failed`、`486 passed / 10 failed`。RAW-054 新增用例全部通过；失败为重叠脏树中的 1 个 alias 投影、1 个归档 evidence、8 个既有 Codex UI 合同，不归因于本增量且未 reset/改断言。 |
+
+结论：RAW-054 的实现、自动化、生产构建/uTools 与浏览器矩阵形成闭环，增量状态为 `accepted-with-baseline`。未执行真实 Codex 状态写入、归档、项目移除、发布或进程操作；RAW-052–053 的用户独占验收状态不被本节覆盖。
+
+## RAW-052–053 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 常显操作区 | implemented / unverified | 任务 `顶/隐显/归确/+`、项目 `顶/移确/隐显/+` 已接入固定 `30px` 槽；状态与短字符说明层为自有 200ms 不透明浮层，无原生 `title`。 |
+| 项目隐藏 | implemented / unverified | `hiddenProjectKeys/hiddenProjects` 只过滤项目页分组，任务数组和计数保留；旧 removed 字段在归一化时丢弃。 |
+| 真实项目移除 | implemented / unverified | Host 接受短期 alias + 指纹，包含桌面进程阻止、主文件-only 校验、限定字段、主/备同步临时写入、原子替换、双重核验、回滚和五种结果码；未对真实状态执行。 |
+| Quick Jump | implemented / unverified | 主窗口与悬浮子窗普通标记改为深色/白粗字/白描边，激活标记改为黄色/深色字/深描边，删除粉紫交替。 |
+| 置顶反馈 | implemented / unverified | 所有任务/项目卡片统一投影 `native/local` 来源；任务在当前页签/状态段内置顶优先，项目进入 `Pinned`；RAW-058 已把本地来源从行尾文字迁到 warning 色 `顶` 控件及说明，动作桥接失败仍明确提示。 |
+| 自动化契约 | updated / not run | Domain、Controller、UI、bridge 和 Quick Jump 测试契约已同步；依项目规则未运行任何测试。 |
+| 本机与真实写入 | not run | 未运行 typecheck、build、uTools/runtime、截图、真实 Codex 预检、归档生命周期或项目移除；未修改本机 Codex 全局状态。 |
+
+结论：`未校验，待用户验收`。RAW-054 的通过证据不得用于宣称 RAW-052–053 已 accepted；RAW-051 及更早的通过记录仅保留为历史基线。
+
+## Historical Acceptance Results Through RAW-051
 
 | Check | Result | Evidence / Scope |
 | --- | --- | --- |
@@ -30,9 +125,11 @@ Status: `accepted-with-declared-host-residuals`
 | 浮动批量栏 | pass | 两项起显示 `已选 N/归/操/清`；下半区锚点置顶、上半区锚点置底，选择/焦点/滚动/ResizeObserver/窗口 resize 重算。不改变任务 DOM 顺序、行坐标或列表高度；不足两项关闭。 |
 | 即时活动与角标 | pass | preload 状态通知立即发匿名 delta，200ms 单飞列表复核，连续三次失败退避 1s，结构变化转完整扫描；待输入/当前动态/完成未查看三角标、红色待输入文字、单待输入点击直开和完成任务成功打开后已查看均覆盖。 |
 | 收起水球命中 | pass | 根容器进入与上半区 pointer enter/move 均不展开，角标 hover 250ms 保持稳定且点击仍路由；真实矩形中线以下立即展开，触屏 hover 被抑制，显式点击/键盘路径保持原合同。 |
+| 卡片配对颜色 | pass | 旧配置迁移、三个预设、深/浅有效配对、低对比/畸形拒绝、水球深色门禁、HEX/HSL 往返、模态本地草稿、一次完整提交、取消零写入、ARIA 错误关联、焦点圈定/恢复均有聚焦覆盖。 |
+| 会话层回退 | pass | 右键抽屉→详情→Esc→同目标抽屉→Esc→原会话行、直接 Ctrl+左打开详情后的同栈回退、确认优先取消、Ctrl 左右保留原触发点与批量抽屉一次关闭均有组件回归。 |
 | 环境与隐私 | pass | 既有 GUI/NVM、PAC、mixed preload、macOS workspace、uTools 子窗和环境脱敏矩阵继续通过；新请求只跨散列项目键、短期 alias、指纹、模型 ID 与瞬时提示词。提示词不进入 action/快照/日志/存储/文档/错误记忆/Deep Link/剪贴板；raw ID/cwd/path 仍只在 preload。 |
 
-## Automated Gates
+## Historical Automated Gates Through RAW-051
 
 - Focused gates: [codexNewThread.test.ts](../../../../tests/domain/codexNewThread.test.ts#L1)、[codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1)、[codexFloatWindowBridge.test.ts](../../../../tests/platform/codexFloatWindowBridge.test.ts#L1)、[action.test.ts](../../../../tests/runtime/action.test.ts#L1)、[keybinding.test.ts](../../../../tests/runtime/keybinding.test.ts#L1)、[codexCompanion.test.ts](../../../../tests/ui/codexCompanion.test.ts#L1) 与 [quickJump.test.ts](../../../../tests/ui/quickJump.test.ts#L1) passed；新增浮窗请求相关测试确认子 preload 不扩大 Node require allowlist。
 - `pnpm test`: `48` files / `473` tests passed；覆盖水球上下半区命中/角标直点、额度/模型/创建/Shift/Quick Jump 增量、活动通道、会话投影、归档与全部既有功能回归。
@@ -61,14 +158,35 @@ Status: `accepted-with-declared-host-residuals`
 
 - P0/P1/P2 source finding: none after reconciliation。
 - App Server 没有 conditional archive；重读与写入之间的新活动仍是 provider TOCTOU 残余。
-- 另一 Codex 进程的 exact input/approval/running 仍受跨进程 live authority 限制；持久化 Turn 只说明最近结果。
+- RAW-056 已接入当前 macOS Codex Desktop 私有 IPC live authority，但尚未做真实宿主验收；协议版本漂移、桌面未运行/不兼容时的未知降级和 Windows 对应通道仍是显式残余。
+- 归档刷新通知只确认 frame 已派发，不能证明 Codex Desktop UI 已消费；真实“无需重启即可消失”仍待用户验收。
 - 真实 Windows uTools 运行时/系统热键、真实系统听写、真实 `turn/start`/Deep Link、多显示器/DPI 和 macOS 两个普通 Space + 一个全屏 Space 仍是宿主观察项；本轮按计划不创建真实任务。
 - Project AI-rule audit 仍返回 6 条既有 adapter/governance baseline 缺口（模板传播、v3-route、W24/W28/W30）；这些问题在本轮前已存在且不指向 Codex Companion 实现或文档增量，本轮未扩围修改项目规则。
-- Error memory: 无新记录。本轮协议核验复用了既有“不要递归搜索 `$CODEX_HOME` rollout/SQLite，改用生成协议 schema”的错误记忆，并以本机 `generate-json-schema` 收敛证据。浮窗依赖 allowlist 的构建失败已由去除非必要 `node:crypto` 与新增隔离 preload 回归直接封口，不形成跨项目重复模式。
+- Error memory: RAW-051 新增 [codex-coupled-color-editor-atomicity.md](../../../knowledge/error-memory/codex-coupled-color-editor-atomicity.md#L1)，记录“两个独立原生单色选择器不能构成耦合颜色编辑器”的可复用事务规则；此前协议核验记录继续有效。
 - 零轮次 list 行为已由预检统计、自动化和真实生命周期记录直接覆盖，不另建错误记忆；它是协议边界而非生产回归。
 
 ## Acceptance
 
-- Root decision: requirement、implementation、真实本机只读额度/schema、既有原生归档证据、自动化、视觉 fixture、项目代码链接审计和项目/个人产品文档形成闭环，source/package accepted。
-- Document impact: `requirement-canonical + project-current + controlled-task` synchronized。
+- Root decision: RAW-051 requirement、implementation、聚焦自动化、真实浏览器矩阵、生产构建/uTools 与文档/错误记忆形成闭环，增量 accepted；实施前已存在的 9 个失败维持 declared baseline，不作为本增量失败，也未通过 reset 或改写断言掩盖。
+- Document impact: `requirement-canonical + project-current + controlled-task + project-memory` synchronized。
 - Sidecar: 只读探索结果已由 Root 复核并接纳；最终写集、真实任务门禁、diff、测试和文档由 Root 独占验收。
+
+## Revision 2026-07-22.2 Pending User Validation
+
+- 已实现项目 Tab 的四段置顶顺序、置顶会话去重与 Chats 标题下展开；紧凑角标提示收敛为三个短计数文本。
+- 已将 Codex Tab 非编辑区域的 `Ctrl+F` 与 `F` 同步为 Quick Jump，并将会话搜索迁移至 `Ctrl+Shift+F`；多选状态不阻断该入口。
+- 已修复配置页即时监听器早于 `activeThemeOption` 初始化造成的 TDZ 挂载异常。
+- 未执行测试、类型检查、构建、uTools/runtime、截图或真实 Codex 操作，原因是项目规则将这些验收保留给用户；状态：`未校验，待用户验收`。
+
+## Revision 2026-07-22.3 Pending User Validation
+
+- 已增加 `Shift+Escape → return-focus` 子浮窗桥：只临时隐藏 BrowserWindow 并让宿主恢复之前的窗口焦点，不修改 Companion 开关或持久化状态。
+- 已增加渲染与 preload 桥接测试契约；未执行测试、类型检查、构建、uTools/runtime、截图或真实 Codex 操作，状态：`未校验，待用户验收`。
+
+## Revision 2026-07-22.1 Evidence
+
+- Focused increment: `pnpm exec vitest run ... -t <RAW-051 cases>` 通过 `4 files / 11 tests`，覆盖迁移、预设、深浅配对、畸形/低对比拒绝、水球门禁、HEX/HSL、Controller 原子更新、模态事务以及 Esc/focus 栈。
+- Full suite: `pnpm test` 运行 `48 files / 487 tests`，结果 `478 passed / 9 failed`。失败集合与实施前聚焦基线一致：8 个位于重叠 Codex UI（旧单击/多选/批量栏/title/quota-auto/Tooltip 文案合同），1 个为归档证据期望 `terminal` 而当前投影为 `unknown`；RAW-051 新增用例无失败。
+- `pnpm run build` passed，并在同一命令中通过 `vue-tsc --noEmit`、Vite 双入口生产构建、canonical/public runtime 准备及 `validate:utools`。
+- Browser QA: 配对颜色模态在 `1180×760`、`760×760`、`420×760`、`420×480` 均为 `scrollWidth === clientWidth`；宽屏两列、420px 单列，短高度 `clientHeight=462 / scrollHeight=980` 可纵向滚动。每个尺寸都存在两组颜色字段、零个 `type=color`，无文档横向溢出；Console 只有既有 favicon 404。
+- Scope: 未增加依赖、未写数据库/权限/外部服务、未发布、未操作 Codex 任务或进程。浏览器开发服务受 120 秒边界控制并已正常结束。
