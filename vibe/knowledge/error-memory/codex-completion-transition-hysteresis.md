@@ -51,7 +51,7 @@ Temporal normalization lived in one Renderer consumer instead of the snapshot bo
 
 ## Prevention Rule
 
-When several UI surfaces must perceive one asynchronous state transition atomically, put interruptible presentation hysteresis at their nearest shared projection owner. Keep provider truth separate, use a fixed per-entity deadline, cancel on contradictory newer truth, and publish every derived surface together. Never use the elapsed window as evidence that completion occurred; it may only delay presentation of completion that is already authoritative.
+When several UI surfaces must perceive one asynchronous state transition atomically, put interruptible presentation hysteresis at their nearest shared projection owner. Keep provider truth separate, use a fixed per-entity deadline, cancel on contradictory newer truth, and publish every derived surface together. Do not use elapsed time to complete `notLoaded`, `unknown`, or an active/connector-only record; a bounded grace marker is allowed only when an explicit non-active `interrupted` record already exists and the marker merely settles that known interruption.
 
 ## Alternative Route
 
@@ -59,7 +59,7 @@ When several UI surfaces must perceive one asynchronous state transition atomica
 - Preconditions: an authoritative provider state can briefly oscillate at a product transition and multiple consumers must stay coherent.
 - Ordered steps: retain raw snapshot; detect the exact prior/next transition; create a fixed interruptible hold; derive one presented snapshot including action capability; schedule one expiry notification; remove duplicate consumer timers; clear transient holds on disable/dispose.
 - Verification: ongoing remains visible and unarchivable for two seconds; running recovery within the window never flashes completed; stable completion changes cards, counts and archive ability once; repeated completed snapshots do not extend the window; initial completed inventory is immediate.
-- Applicability boundary: this pattern must not manufacture completion from `notLoaded`, recency, refresh count or elapsed time; those remain governed by [codex-cross-process-notloaded-is-not-completion.md](codex-cross-process-notloaded-is-not-completion.md#L1).
+- Applicability boundary: this pattern must not manufacture completion from `notLoaded`, refresh count or ordinary recency. RAW-070's 60-second marker is the narrow exception for explicit non-active `interrupted` evidence and must retain Desktop live active priority; all other unknown/recency cases remain governed by [codex-cross-process-notloaded-is-not-completion.md](codex-cross-process-notloaded-is-not-completion.md#L1).
 - Fallback: if consumers cannot share a projection owner, define an explicit versioned presentation state machine rather than unrelated local timers.
 
 ## Occurrence History
@@ -67,3 +67,4 @@ When several UI surfaces must perceive one asynchronous state transition atomica
 | Date | Task | Trigger | Failed Route | Recovery | Outcome |
 | --- | --- | --- | --- | --- | --- |
 | 2026-07-22 | RAW-069 completion-transition stability | User observed ongoing/completed and archive-control flashing and required completion to remain stable for two seconds | Kept a two-second timer only for the compact active count while every other surface switched immediately | Added one Controller-owned interruptible task hold and removed the Renderer timer | candidate; static checks only, user runtime acceptance pending |
+| 2026-07-23 | RAW-070 interrupted grace marker | User observed a manually closed temporary task oscillating between ongoing and interrupted instead of settling | Treated every interrupted record as permanently ongoing, so a non-active stale interruption could never settle | Added a bounded 60-second marker only for explicit non-active interrupted evidence, with desktop-live active priority and unknown/notLoaded exclusions | candidate; static checks only, user runtime acceptance pending |

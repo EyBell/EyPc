@@ -971,6 +971,26 @@ button { font: inherit; }
 .card-shell .float-counter.active { top: -2px; right: -2px; }
 .card-shell .float-counter.unread { top: 21px; right: -2px; }
 .float-counter:focus-visible { outline: 2px solid var(--codex-focus); outline-offset: 1px; }
+.float-compact-counter-hint {
+  position: absolute;
+  z-index: 30;
+  top: 50%;
+  left: 50%;
+  max-width: calc(100% - 10px);
+  padding: 5px 7px;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(255, 255, 255, .86);
+  border-radius: 7px;
+  background: #111827;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, .42);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+}
 
 .float-expanded-card > .float-task-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 

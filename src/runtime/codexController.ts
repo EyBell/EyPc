@@ -95,6 +95,7 @@ function taskDelay(settings: CodexSettings): number {
 }
 
 const COMPLETION_PRESENTATION_DELAY_MS = 2_000
+const NON_INPUT_ACTIVITY_DEBOUNCE_MS = 2_000
 
 type CompletionPresentationHold = {
   expiresAt: number
@@ -127,6 +128,8 @@ export function createCodexController(options: CodexControllerOptions) {
   let disposed = false
   let timer: ReturnType<typeof setTimeout> | null = null
   let activityTimer: ReturnType<typeof setTimeout> | null = null
+  let activityDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  let pendingActivityThreads: CodexHostThread[] | null = null
   let structuralRefreshTimer: ReturnType<typeof setTimeout> | null = null
   let completionPresentationTimer: ReturnType<typeof setTimeout> | null = null
   const completionPresentationHolds = new Map<string, CompletionPresentationHold>()
@@ -163,6 +166,12 @@ export function createCodexController(options: CodexControllerOptions) {
   function clearActivityTimer() {
     if (activityTimer) clearTimeout(activityTimer)
     activityTimer = null
+  }
+
+  function clearActivityDebounce() {
+    if (activityDebounceTimer) clearTimeout(activityDebounceTimer)
+    activityDebounceTimer = null
+    pendingActivityThreads = null
   }
 
   function clearStructuralRefreshTimer() {
@@ -343,7 +352,7 @@ export function createCodexController(options: CodexControllerOptions) {
       return
     }
     if (delta.generation < lastActivityGeneration) return
-    if (delta.receivedAt < rawConversations.updatedAt) return
+    if (delta.receivedAt < rawConversations.updatedAt && delta.version !== 2) return
     lastActivityGeneration = delta.generation
     const byKey = new Map(delta.entries.map((entry) => [entry.key, entry]))
     const knownKeys = new Set(lastThreads.map((thread) => thread.key))
@@ -352,7 +361,7 @@ export function createCodexController(options: CodexControllerOptions) {
       return
     }
     let changed = false
-    lastThreads = lastThreads.map((thread) => {
+    const nextThreads = lastThreads.map((thread) => {
       const entry = byKey.get(thread.key)
       if (!entry) return thread
       const activeFlags = [...new Set(entry.activeFlags || thread.activeFlags)].sort()
@@ -376,10 +385,61 @@ export function createCodexController(options: CodexControllerOptions) {
       changed = true
       return next
     })
-    if (changed) {
-      publishConversationProjection({ receivedAt: delta.receivedAt, advanceScan: false, status: rawConversations.status })
+
+    if (!changed) {
+      if (environmentChanged) options.notify()
+      if (delta.inventoryChanged) scheduleStructuralRefresh()
+      return
     }
-    if (changed || environmentChanged) options.notify()
+
+    const previousByKey = new Map(lastThreads.map((thread) => [thread.key, thread] as const))
+    const immediateKeys = new Set<string>()
+    const delayedKeys = new Set<string>()
+    const immediateThreads = nextThreads.map((thread) => {
+      const previous = previousByKey.get(thread.key)
+      const nextWaiting = thread.statusAuthority === 'desktop-live'
+        && thread.status === 'active'
+        && thread.activeFlags.includes('waitingOnUserInput')
+      const previousWaiting = previous?.statusAuthority === 'desktop-live'
+        && previous.status === 'active'
+        && previous.activeFlags.includes('waitingOnUserInput')
+      const completionTransition = Boolean(previous
+        && previous.status === 'active'
+        && thread.status !== 'active'
+        && thread.lastTurnStatus === 'completed')
+      if (!previous || nextWaiting !== previousWaiting || completionTransition) {
+        immediateKeys.add(thread.key)
+        if (previousWaiting && !nextWaiting && thread.status !== 'active') return { ...thread, status: 'active' as const }
+      } else {
+        delayedKeys.add(thread.key)
+      }
+      return thread
+    })
+
+    pendingActivityThreads = delayedKeys.size ? nextThreads : null
+    if (immediateKeys.size) {
+      lastThreads = immediateThreads.map((thread) => immediateKeys.has(thread.key)
+        ? thread
+        : previousByKey.get(thread.key) || thread)
+      publishConversationProjection({ receivedAt: delta.receivedAt, advanceScan: false, status: rawConversations.status })
+      options.notify()
+    }
+
+    if (!delayedKeys.size) {
+      if (activityDebounceTimer) clearTimeout(activityDebounceTimer)
+      activityDebounceTimer = null
+      if (delta.inventoryChanged) scheduleStructuralRefresh()
+      return
+    }
+    if (activityDebounceTimer) clearTimeout(activityDebounceTimer)
+    activityDebounceTimer = setTimeout(() => {
+      activityDebounceTimer = null
+      if (disposed || !shouldRun() || !pendingActivityThreads) return
+      lastThreads = pendingActivityThreads
+      pendingActivityThreads = null
+      publishConversationProjection({ receivedAt: Date.now(), advanceScan: false, status: rawConversations.status })
+      options.notify()
+    }, NON_INPUT_ACTIVITY_DEBOUNCE_MS)
     if (delta.inventoryChanged) scheduleStructuralRefresh()
   }
 
@@ -595,6 +655,7 @@ export function createCodexController(options: CodexControllerOptions) {
             ...thread,
             ...(thread.firstPromptAt ? {} : firstPromptByKey.has(thread.key) ? { firstPromptAt: firstPromptByKey.get(thread.key) } : {})
           }))
+          clearActivityDebounce()
           lastThreads = threads
           lastProjects = host.version === 2 ? host.projects || [] : []
           lastThreadsPartial = host.threadsPartial === true
@@ -669,6 +730,7 @@ export function createCodexController(options: CodexControllerOptions) {
       refreshGeneration += 1
       clearTimer()
       clearActivityTimer()
+      clearActivityDebounce()
       clearStructuralRefreshTimer()
       resetCompletionPresentation()
       options.platform.codex.close()
@@ -954,6 +1016,16 @@ export function createCodexController(options: CodexControllerOptions) {
     return result.outcome === 'dispatched'
   }
 
+  function openFirstInput() {
+    const task = conversations.inputRequired[0]
+    if (!task?.actionAlias) {
+      options.setMessage('当前没有待输入任务')
+      return false
+    }
+    void openThread(task.key, task.actionAlias)
+    return true
+  }
+
   function hide(key: string, recency?: number) {
     if (!Number.isFinite(recency)) return false
     const candidates = allTasks().filter((item) => !item.isHidden && item.key === key)
@@ -1126,6 +1198,7 @@ export function createCodexController(options: CodexControllerOptions) {
       if (environment.checking) environment = { ...environment, checking: false }
       clearTimer()
       clearActivityTimer()
+      clearActivityDebounce()
       clearStructuralRefreshTimer()
       resetCompletionPresentation()
       stopActivityListener?.()
@@ -1148,6 +1221,7 @@ export function createCodexController(options: CodexControllerOptions) {
     archiveMany,
     archiveProject,
     openThread,
+    openFirstInput,
     setTaskTab,
     setProjectCollapsed,
     setAlias,

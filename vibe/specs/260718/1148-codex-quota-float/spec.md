@@ -18,7 +18,7 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 ## Superseding Decision
 
-本规范取代旧版 recent-100、三页签、顶部样式工具栏和“单额度装饰环”合同。RAW-051–059 保留既有额度、操作、配色、桌面状态权威和结构性选择反馈；RAW-063/064 保留四个可见页签、最近 6 小时动态流、标题/元信息分流、无“需关注”分段和无重排选择提示。修订 `2026-07-22.12` 追加 RAW-065/066：恢复数据驱动的 Weekly 进度环并删除普通装饰圈，同时把上游 `interrupted` 在领域卡片投影层转换为可见 `ongoing`。修订 `2026-07-22.13` 追加 RAW-067：待输入与完成未读角标统一直开各自完整计数集合中展示排序第一条，进行中角标保持展开。修订 `2026-07-22.14` 追加 RAW-068：投影后的 ongoing 统一阻断归档，消除 active/interrupted 来源切换造成的归档控件闪烁，并在 Host 单条/项目归档重读中拒绝或跳过 interrupted。修订 `2026-07-22.15` 追加 RAW-069：任务从进行中转为完成时由 Controller 统一保持进行中 2 秒，窗口内恢复运行则取消，连续完成满 2 秒才同步发布完成状态、角标和归档能力；删除 Renderer 独立角标延迟，避免双重等待。Renderer 匿名合同、Host 原始状态、安全边界、计数来源、底层稳定排序和兼容持久化不变。
+本规范取代旧版 recent-100、三页签、顶部样式工具栏和“单额度装饰环”合同。RAW-051–059 保留既有额度、操作、配色、桌面状态权威和结构性选择反馈；RAW-063/064 保留四个可见页签、最近 6 小时动态流、标题/元信息分流、无“需关注”分段和无重排选择提示。修订 `2026-07-22.12` 追加 RAW-065/066：恢复数据驱动的 Weekly 进度环并删除普通装饰圈，同时把上游 `interrupted` 在领域卡片投影层转换为可见 `ongoing`。修订 `2026-07-22.13` 追加 RAW-067：待输入与完成未读角标统一直开各自完整计数集合中展示排序第一条，进行中角标保持展开。修订 `2026-07-22.14` 追加 RAW-068：投影后的 ongoing 统一阻断归档，消除 active/interrupted 来源切换造成的归档控件闪烁，并在 Host 单条/项目归档重读中拒绝或跳过 interrupted。修订 `2026-07-22.15` 追加 RAW-069：任务从进行中转为完成时由 Controller 统一保持进行中 2 秒，窗口内恢复运行则取消，连续完成满 2 秒才同步发布完成状态、角标和归档能力；删除 Renderer 独立角标延迟，避免双重等待。修订 `2026-07-23.1` 追加 RAW-070：非 Desktop-active 的 `interrupted` 持续超过 60 秒时，以线程最新活动时间生成完成 revision，转入已完成/已完成未读；60 秒内仍保持原有进行中兼容，避免短暂中断被误判完成。Renderer 匿名合同、Host 原始状态、安全边界、计数来源、底层稳定排序和兼容持久化不变。
 
 ## Current Requirement And Implementation Map
 
@@ -106,6 +106,12 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 - 展示窗内任务以最新原始卡片为底，移除 completion/unread/完成时间展示字段，并统一覆盖为 `bucket='ongoing'`、`activityState='ongoing'`、`state='running'`、`archiveCapability='blocked-active'`、`canArchive=false`。Controller 同步重建 ongoing/completed/hidden/all、完成页、项目卡、Pinned/Projects/Chats section 与全部计数，因此卡片、分组、详情、Shift 预览、三个角标和归档入口不会各自切换。
 - 窗口内原始任务回到 active/ongoing 时立即删除 hold 并保持进行中；只有原始完成连续存在到截止时间，定时器才以最新原始快照一次性发布 completed/completed-unread、完成时间、未读与归档能力。该计时器只延迟已成立的权威完成展示，不从时间、刷新次数或 recency 推断完成。
 - [FloatApp.vue](../../../../src/FloatApp.vue#L1) 删除旧的独立 `ACTIVE_COUNTER_DELAY_MS`/`displayedActiveCount` 合并器，进行中角标直接读取统一快照，避免 Controller 2 秒后又叠加 Renderer 2 秒而累计 4 秒。功能停用、收件箱关闭与 Controller dispose 都清理临时 hold/timer；不新增 API、Runtime action、持久化字段、迁移、依赖或测试改动。
+
+## RAW-070 Interrupted Grace To Completion Marker
+
+- [codex.ts](../../../../src/domain/codex.ts#L1194) 保留 Desktop live `active` 的最高优先级；仅当任务不再由 Desktop live 判定为 active、最新 Turn 为 `interrupted` 且线程 `updatedAt` 距当前至少 60 秒时，生成完成 revision。
+- 60 秒宽限期内仍按原始 interrupted 投影为 ongoing，达到阈值后进入 completed/completed-unread，统一释放完成时间、未读和归档能力；该规则不适用于 `notLoaded`、unknown、仅 connector active 或仍为 Desktop live active 的任务。
+- 该时间阈值只收敛已存在的 interrupted 证据，不从刷新次数、连接状态或未知状态推断完成；Controller 既有普通状态 2 秒稳定发布继续生效。无新增公共 API、持久化字段、迁移或测试合同。
 
 ## RAW-055 Label, Density And Selection Contract
 
@@ -244,3 +250,10 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 - Classification: `requirement-canonical + project-current + controlled-task`。
 - 同步层：raw/spec/plan/tasks/verify/handoff、[PROJECT_STATUS.md](../../PROJECT_STATUS.md#L1)、[ARCHITECTURE.md](../../../knowledge/ARCHITECTURE.md#L1)、[technical-details.md](../../../knowledge/technical-details.md#L1)、[developer-soul.md](../../../knowledge/developer-soul.md#L1)、[design-preferences.json](../../../knowledge/design-preferences.json#L1)、provider 状态投影与归档重读错误记忆，以及 [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)。
 - 保留残余：Codex Desktop 私有 IPC 版本漂移与当前仅 macOS canary、归档重读到写入之间的 provider TOCTOU、归档通知仅能确认派发不能确认 UI 消费、真实 Windows uTools/系统热键、真实系统听写、真实 `turn/start`/Deep Link、多显示器/DPI 和 macOS 多 Space 操作。RAW-056 未运行任何开发或真实宿主门禁。
+
+## RAW-069 主对话状态主体化与 Side Chat 实时输入
+
+- Renderer 只接收主对话的匿名 activity key；Side Chat 仅在 preload 内作为 live shadow 保存，并依据 `forkedFromId`、`sideConversationParentNavigationPath` 聚合到主对话，不进入普通任务库存、任务卡或持久化。
+- `waitingOnUserInput` 的进入和退出绕过状态去抖，立即更新主对话的 `inputRequired`、`inputRequiredCount`、角标和任务投影；active、approval、idle、completed、failed、普通未读及关系变化统一使用单个 2 秒 Controller 稳定窗口。
+- 完成展示窗口与普通状态窗口不得叠加；明确完成转换交由既有完成稳定器处理，最长保持一个 2 秒窗口。Desktop IPC 失联、协议不兼容、功能关闭、dispose 和归档立即清理或降级，不等待窗口。
+- 主对话打开动作在 preload 内解析隐藏导航目标，按待输入、待审批、进行中和 revision 选择 Side Chat；直跳能力必须经过本机真实 Deep Link/已验证私有 IPC 验证，失败时回退主对话，不向 Renderer 暴露原始 ID。

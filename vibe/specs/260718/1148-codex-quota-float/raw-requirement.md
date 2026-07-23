@@ -76,6 +76,7 @@ Privacy boundary: `no-verbatim-prompt-or-transcript`
 - `RAW-067` (`active`, `supersedes-RAW-058-and-RAW-063-compact-input-unread-click-only`): 收起态“待输入”和“已完成未读”数字角标只要非零，无论一条或多条，都直接触发各自实际计数集合中展示排序第一的会话，不先展开浮窗或切换页签；“进行中”角标继续保持现有展开行为。待输入与完成未读继续沿用各自既有计数来源，首条选择保留显示层置顶优先和底层稳定顺序，并覆盖仍在计数集合中的已隐藏会话。打开动作不得确认/清除未读、解除隐藏或跳到后续会话；角标样式、位置、状态权威和 200ms hover/focus 说明层不变，说明与 ARIA 明确“打开第一条”。本轮不修改或运行测试，不运行类型、构建、uTools、截图或真实 Codex 操作，交付仍由用户验收。
 - `RAW-068` (`active`, `supersedes-RAW-066-interrupted-archive-clause`): 原始 `interrupted` 只保留在 Host/Turn 协议中供诊断与计时；领域卡片一旦投影为 `activityState='ongoing'`，必须同时得到 `archiveCapability='blocked-active'` 与 `canArchive=false`。因此同一任务在 desktop-live `active` 与持久化 interrupted 之间切换时，任务行、操作抽屉、Shift 预览、单项确认和批量候选都保持同一“进行中且不可归档”合同，固定 `归` 槽只稳定禁用，不因来源更新闪烁。Controller 不为 interrupted 发送 terminal 证据；Host 单条归档重读到 interrupted 时返回 active-task，项目全部归档将 interrupted 计入进行中跳过集合。completed/failed 的既有可验证归档、system-error/unknown 的警告语义与双向验证不变；不新增 API、持久化字段或迁移。本轮不修改或运行测试，不运行 typecheck、build、uTools、截图或真实 Codex 操作，交付仍由用户验收。
 - `RAW-069` (`active`, `supersedes-RAW-063-independent-active-counter-delay`): “进行中 → 已完成/已完成未读”采用 Controller 级、按任务独立且可中断的固定 2 秒展示稳定窗。底层首次给出权威完成证据时，原始快照立即保留该证据，但所有 Renderer 投影在 2 秒内继续统一输出 `bucket='ongoing'`、`activityState='ongoing'`、`state='running'`、`archiveCapability='blocked-active'` 与 `canArchive=false`；卡片、动态/项目/已隐藏分组、详情、Shift 预览、进行中/未读/已完成角标和归档入口必须同步消费这一投影。若 2 秒内任务重新变为 active/ongoing，则立即取消完成切换；只有底层完成状态连续保持满 2 秒，才一次性发布真实 completed/completed-unread、完成时间与可归档能力。重复完成快照不得延长窗口，任务重新进行后再次完成则开始新的 2 秒窗口；新加载时已完成且没有本次进行中前态的任务不延迟。删除 Renderer 原有独立进行中角标 2 秒合并器，避免任务状态与角标错位或累计 4 秒。该窗口仅延迟展示已经权威成立的完成态，不得用经过时间推断完成，不新增 API、持久化字段或迁移。本轮不修改或运行测试，不运行 typecheck、build、uTools、截图或真实 Codex 操作，交付仍由用户验收。
+- `RAW-070` (`active`, `refines-RAW-066-and-RAW-069`): 针对手动关闭临时任务时上游状态在 `active` 与 `interrupted` 之间闪烁的问题，保留 Desktop live `active` 的最高优先级；当任务已明确为非 active 的 `interrupted` 且其最新 `updatedAt` 持续至少 60 秒未变化时，领域投影生成完成 revision，进入 `completed` 或 `completed-unread`，不再永久显示进行中。60 秒内仍保持 ongoing；`notLoaded`、`unknown`、connector-only active 和无明确 interrupted 证据不得通过时间完成。该宽限只收敛已有中断证据，不把时间、刷新或普通 `updatedAt` 变成完成证据；现有 Controller 统一 2 秒展示稳定窗继续有效，不新增 API、持久化字段或迁移。本轮不修改或运行测试，不运行 build、uTools、截图或真实 Codex 操作，静态编译与结构核验后交付用户验收。
 
 ## Latest Superseding Requirement Map
 
@@ -84,7 +85,7 @@ Privacy boundary: `no-verbatim-prompt-or-transcript`
 | 真实库存 | 原生项目注册 + 完整未归档分页 + 固定归属优先级 + 指纹一致 | `RAW-035`、`RAW-043` |
 | 时间与完整性 | 1–365 天滚动窗口；latest Turn `startedAt`；整批 fail-closed | `RAW-036` |
 | 列表与项目 | 四个可见页签；动态页最近 6 小时按待输入、正在进行中（含可见 ongoing 以及 failed/system-error）、宿主状态未知、已完成未读、已完成分段；进行中转完成统一经过可中断的 2 秒任务级展示窗；统一搜索、底层最近 Turn 开始时间倒序、显示层置顶优先、Pinned/Projects/Chats；`all/inputRequired` 仅作兼容投影 | `RAW-037`、`RAW-038`、`RAW-045`、`RAW-053`、`RAW-056`、`RAW-063`、`RAW-064`、`RAW-066`、`RAW-068`、`RAW-069` |
-| 实时状态与未读 | Codex Desktop live IPC 是 Input/active 唯一权威；原始 interrupted 只作诊断/计时，在产品投影中可见为 ongoing、计入进行中且稳定不可归档；权威完成连续保持 2 秒后才从统一展示投影发布完成/未读状态，窗口内回到进行中则取消；CLI 手动/自动发现不改变 live 权威边界 | `RAW-056`、`RAW-059`、`RAW-066`、`RAW-068`、`RAW-069` |
+| 实时状态与未读 | Codex Desktop live IPC 是 Input/active 唯一权威；原始 interrupted 只作诊断/计时，在产品投影中先可见为 ongoing、计入进行中且稳定不可归档，非 active 持续 60 秒后才允许生成完成标记；权威完成连续保持 2 秒后才从统一展示投影发布完成/未读状态，窗口内回到进行中则取消；CLI 手动/自动发现不改变 live 权威边界 | `RAW-056`、`RAW-059`、`RAW-066`、`RAW-068`、`RAW-069`、`RAW-070` |
 | 本地整理 | 页签/折叠持久化、别名优先且无别名回退原名、置顶来源由“顶”控件及说明表达、项目分组隐藏；旧本地移除迁移丢弃 | `RAW-039`、`RAW-052`、`RAW-053`、`RAW-055`、`RAW-058` |
 | 真实项目移除 | Codex 退出门禁、短期 alias/指纹、主文件限定字段、主/备原子写入与回滚核验；不删目录/会话 | `RAW-052` |
 | 选择与批量操作 | 38px 左侧选择区、核心两态选择、Esc/最后一项退出、行/子按钮键盘所有权；选择提示固定为列表舞台底部悬浮且不触发布局重排，滚动区和底部批量栏避让 | `RAW-055`、`RAW-057`、`RAW-058`、`RAW-064` |
@@ -108,7 +109,7 @@ Privacy boundary: `no-verbatim-prompt-or-transcript`
 | 分层水球 | 水纹保持单纯波浪，同时允许更高级的配色和外环变化 | 内层使用三层水平纯波浪与折射高光，开放 palette/透明度/波幅/四档速度；外层 Weekly 环开放连续/固定分段、粗细、颜色和光晕 | `RAW-021`、`RAW-032` |
 | 展开与尺寸 | 浮窗移出后自动收缩，同时保留按显示器调整宽高 | 删除 Pin 和手动收缩控件；鼠标离开或交互焦点结束约 `220ms` 自动收缩，resize 不依赖 Pin，自动/手动尺寸继续受显示器工作区约束 | `RAW-014`、`RAW-032` |
 | 最近任务 | 像 Codex Pets 一样优先看到进行中和完成未查看任务 | 最近 100 条未归档任务全部解析最新 Turn；归档任务完全过滤；三个 Tab 由同一比较器按业务桶与最近提问时间排序，partial cursor 明示仍有更多 | `RAW-028`、`RAW-029`、`RAW-031`、`RAW-034` |
-| 状态语义 | 准确区分运行、等待、失败、中断、系统错误、未知、完成未查看和完成 | 只有同一 App Server 的 `active` 是权威运行证据；最新 Turn 的 completed/failed/interrupted 分别保留真实含义，`systemError/notLoaded/超时` 诚实降级且不得凭时间猜状态 | `RAW-028`、`RAW-034` |
+| 状态语义 | 准确区分运行、等待、失败、中断、系统错误、未知、完成未查看和完成 | 只有同一 App Server 的 `active` 是权威运行证据；最新 Turn 的 completed/failed/interrupted 分别保留真实含义，明确非 active interrupted 仅在 60 秒宽限后生成完成投影，`systemError/notLoaded/超时` 诚实降级且不得凭时间猜状态 | `RAW-028`、`RAW-034`、`RAW-070` |
 | 打开、已查看、隐藏与归档 | 打开任务不应让它消失，并允许本地整理或显式上游归档 | `open` 不推进水位；隐藏完成未查看即标记 EyPc 已查看；删除独立确认动作；除权威 active 外均可二次核验后真实归档，归档成功或上游已归档后立即过滤 | `RAW-029`、`RAW-030`、`RAW-031` |
 | 时间信息 | 能看出首次提问、最新一轮及完成所花时间，同时保持列表紧凑 | 最近提问时间只取最新 Turn `startedAt` 并用于统一倒序；创建、首次、运行耗时和完成时间进入 hover/focus Tooltip，任何时间都不得反推状态 | `RAW-008`、`RAW-023`、`RAW-029`、`RAW-034` |
 | 首启诊断与兼容 | macOS/Windows 首次使用时自动发现依赖，失败时给出可执行提示 | 分项核查系统、CLI/运行时、相关进程、配置和 App Server；兼容 GUI/NVM PATH、本地静态 PAC 与 mixed-preload，成功连接证据高于旧能力缺失 | `RAW-010`、`RAW-011`、`RAW-016`、`RAW-018` |

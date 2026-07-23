@@ -6399,6 +6399,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       void codexController.openThread(key, actionAlias)
       return Boolean(key && actionAlias)
     } })
+    actions.register({ id: 'codex.input.open', title: '打开 Codex 待输入任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.openFirstInput() })
     actions.register({ id: 'codex.task.hide', title: '隐藏 Codex 任务到 Companion 已隐藏区', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
       const key = typeof args?.key === 'string' ? args.key : ''
       const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt)
@@ -6445,6 +6446,16 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'codex.tab.set', title: '切换 Codex 会话页签', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
       const tab = typeof args?.tab === 'string' ? args.tab : ''
       return codexController.setTaskTab(tab as 'all' | 'input' | 'ongoing' | 'completed' | 'hidden' | 'projects')
+    } })
+    actions.register({ id: 'codex.tab.prev', title: '上一个 Codex 页签', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: () => {
+      const tabs = ['ongoing', 'completed', 'hidden', 'projects'] as const
+      const current = tabs.includes(state.codex.lastTaskTab as typeof tabs[number]) ? state.codex.lastTaskTab as typeof tabs[number] : 'ongoing'
+      return codexController.setTaskTab(tabs[(tabs.indexOf(current) - 1 + tabs.length) % tabs.length])
+    } })
+    actions.register({ id: 'codex.tab.next', title: '下一个 Codex 页签', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: () => {
+      const tabs = ['ongoing', 'completed', 'hidden', 'projects'] as const
+      const current = tabs.includes(state.codex.lastTaskTab as typeof tabs[number]) ? state.codex.lastTaskTab as typeof tabs[number] : 'ongoing'
+      return codexController.setTaskTab(tabs[(tabs.indexOf(current) + 1) % tabs.length])
     } })
     actions.register({ id: 'codex.project.collapse', title: '折叠或展开 Codex 项目', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
       return typeof args?.key === 'string' && typeof args?.collapsed === 'boolean'
@@ -6524,8 +6535,13 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     } })
     actions.register({ id: 'codex.float.hide', title: '隐藏 Codex 悬浮球', group: 'Codex', risk: 'data-write', scope: 'global', priority: 90, when: () => true, run: () => codexController.updateSettings({ floatEnabled: false }) })
     actions.register({ id: 'codex.hotkey.configure', title: '配置 Codex 系统级快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
-      const opened = platform.app.configureHotkey?.('切换 Codex 悬浮球') === true
-      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“切换 Codex 悬浮球”绑定快捷键')
+      const opened = platform.app.configureHotkey?.('直接展开 Codex 卡片') === true
+      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“直接展开 Codex 卡片”绑定快捷键')
+      return opened
+    } })
+    actions.register({ id: 'codex.input.hotkey.configure', title: '配置 Codex 待输入快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
+      const opened = platform.app.configureHotkey?.('打开 Codex 待输入任务') === true
+      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“打开 Codex 待输入任务”绑定快捷键')
       return opened
     } })
     actions.register({ id: 'settings.open', title: '打开设置', group: '全局', risk: 'normal', scope: 'global', priority: 10, shortcut: 'Ctrl+Alt+S', when: () => true, run: () => { setTab('settings'); return true } })

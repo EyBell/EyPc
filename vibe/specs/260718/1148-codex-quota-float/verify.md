@@ -18,6 +18,14 @@ Requirement version: `2026-07-22.15`
 
 结论：RAW-069 已实现，当前保持 `未校验，待用户验收`。用户应让同一任务从“进行中”进入权威完成：前 2 秒所有卡片、角标和归档入口继续稳定为进行中且不可归档，满 2 秒后只切换一次到已完成/已完成未读；再让任务在窗口内恢复运行，确认不会短暂出现完成态。
 
+## RAW-070 当前交付状态
+
+- 已增加 60 秒中断宽限：仅当任务已明确为非 active 的 `interrupted`，且最新 `updatedAt` 连续达到阈值，领域层才生成完成 revision；Desktop live active 仍优先，`notLoaded`、`unknown` 和 connector-only active 不会因时间变成完成。
+- 该规则只收敛已存在的 interrupted 证据，用于手动关闭临时任务的状态闪烁；普通完成仍由 Controller 单一 2 秒稳定发布器负责，未新增 Renderer 定时器。
+- 当前仍为 `未校验，待用户验收`：需在本机 Codex Desktop 观察临时任务关闭后 60 秒内保持进行中，超过阈值只切换一次到完成/完成未读，并确认 active 恢复不会被错误完成标记覆盖。
+
+静态校验：本轮仅执行 `git diff --check`、`pnpm run typecheck` 和 Markdown 代码链接审计；不执行自动化测试、build、截图、uTools 宿主验收或真实 Codex 操作。
+
 - Error memory: 新增候选 [codex-completion-transition-hysteresis.md](../../../knowledge/error-memory/codex-completion-transition-hysteresis.md#L1)，记录“独立角标延迟无法稳定完整产品状态，完成过渡必须在统一投影层做可中断 hysteresis”；并明确该窗口不是完成证据，不能违反 verified [codex-cross-process-notloaded-is-not-completion.md](../../../knowledge/error-memory/codex-cross-process-notloaded-is-not-completion.md#L1)。
 
 ## RAW-068 当前交付状态
@@ -293,3 +301,10 @@ Requirement version: `2026-07-22.15`
 - `pnpm run build` passed，并在同一命令中通过 `vue-tsc --noEmit`、Vite 双入口生产构建、canonical/public runtime 准备及 `validate:utools`。
 - Browser QA: 配对颜色模态在 `1180×760`、`760×760`、`420×760`、`420×480` 均为 `scrollWidth === clientWidth`；宽屏两列、420px 单列，短高度 `clientHeight=462 / scrollHeight=980` 可纵向滚动。每个尺寸都存在两组颜色字段、零个 `type=color`，无文档横向溢出；Console 只有既有 favicon 404。
 - Scope: 未增加依赖、未写数据库/权限/外部服务、未发布、未操作 Codex 任务或进程。浏览器开发服务受 120 秒边界控制并已正常结束。
+
+## Revision 2026-07-23.1 Static Verification Pending
+
+- 已核验本机 Codex Desktop 存在真实 Side Chat live stream；Side Chat 未进入普通 inventory，但 snapshot/patch/follow/read-state 可由 preload shadow 通路接收并聚合到主对话。
+- 已实现 `waitingOnUserInput` 进入/退出即时发布；其他 activity、普通未读和 Side Chat 关系走单一 2 秒稳定窗口，并将完成转换交给既有完成稳定器，避免两个 2 秒窗口叠加。
+- 已实现主对话隐藏导航目标选择与 Deep Link 失败回退逻辑；本轮未执行真实打开动作，因此 Side Chat 直跳仍标记为“未验证”，不写入 publish log 能力承诺。
+- 按用户要求仅执行 `git diff --check`、`pnpm run typecheck` 与静态结构核验；不执行自动化测试、build、截图、uTools 宿主验收或额外自动化测试。

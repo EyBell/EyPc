@@ -53,7 +53,13 @@
       "code": "eypc-codex-activate",
       "explain": "进入 Codex 卡片",
       "mainHide": true,
-      "cmds": ["进入 Codex 卡片", "Codex 多选", "Codex 会话操作"]
+      "cmds": ["进入 Codex 卡片", "直接展开 Codex 卡片", "Codex 多选", "Codex 会话操作"]
+    },
+    {
+      "code": "eypc-codex-input",
+      "explain": "打开 Codex 待输入任务",
+      "mainHide": true,
+      "cmds": ["Codex待输入", "打开 Codex 待输入任务", "Codex 待回复"]
     },
     {
       "code": "eypc-settings",

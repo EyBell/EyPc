@@ -14,6 +14,7 @@ Requirement version: `2026-07-22.15`
 - RAW-067 将待输入与完成未读的紧凑角标统一为首条直开：待输入使用完整 `inputRequired`，完成未读使用 `all` 中完整的 `completed-unread` 集合，两者都按现有显示层置顶优先/稳定源顺序取第一条。一条与多条行为相同，不先展开、不切页、不清未读、不解除隐藏；进行中角标继续只展开。200ms 说明与 ARIA 明确“打开第一条”。
 - RAW-068 让投影 ongoing 与 desktop-live active 共用稳定的 `blocked-active` 归档能力。固定 `归` 槽保持可见但持续禁用，抽屉、Shift 预览、确认和批量候选共用同一 capability；Controller 不发送 interrupted terminal 证据，Host 单条归档拒绝 interrupted，项目归档将其按进行中跳过。active/interrupted 来源切换因此不会再让归档按钮闪烁。
 - RAW-069 将“进行中 → 已完成/已完成未读”收敛为 Controller 的按任务可中断 2 秒展示窗。完成证据首次出现后，卡片、动态/项目/已隐藏分组、详情、Shift 预览、角标和归档能力仍共同保持 `ongoing/running/blocked-active`；2 秒内恢复运行则取消，连续完成满 2 秒才从最新原始快照一次性发布完成。Renderer 原有独立进行中角标延迟已删除，避免状态与角标错位或累计 4 秒。
+- RAW-070 为手动关闭临时任务补充 60 秒 interrupted 宽限：明确非 active 的中断记录超过阈值后生成完成 marker，Desktop live active 仍最高优先级，unknown/notLoaded/connector-only active 不被时间完成；该 marker 仍进入 Controller 单一 2 秒稳定发布器。
 - 四个短字符动作保持 `24px`，间距收敛为 `2px`、轨宽 `102px`；注册提示只保留“最近 N 天的 M 条”。
 
 - Easy Agent 完成前采用双通道临时适配：Codex App Server 继续提供额度、模型、库存、创建和持久化动作；macOS Codex Desktop 私有 IPC 伴随桥提供 `Input / 正在进行中 / 已完成未读` 实时权威及归档后桌面侧栏刷新通知。当前不能删除插件内 App Server 连接器。

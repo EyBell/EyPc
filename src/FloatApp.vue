@@ -130,6 +130,7 @@ const shiftPreview = ref<ShiftPreview>(null)
 const shiftHeld = ref(false)
 const shiftPreviewSuppressed = ref(false)
 const actionHint = ref<ActionHint>(null)
+const compactCounterHintText = ref('')
 const optimisticProjectCollapsed = ref<Record<string, boolean>>({})
 const dynamicNow = ref(Date.now())
 const quickJump = ref<{ open: boolean; query: string; sourceTargets: QuickJumpDomTarget[]; targets: QuickJumpDomTarget[]; activeTargetId: string | null }>({
@@ -148,6 +149,7 @@ let resize: { pointerId: number; corner: CodexFloatResizeCorner } | null = null
 let collapseTimer: ReturnType<typeof setTimeout> | null = null
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 let actionHintTimer: ReturnType<typeof setTimeout> | null = null
+let compactCounterHintTimer: ReturnType<typeof setTimeout> | null = null
 let dynamicClock: ReturnType<typeof setInterval> | null = null
 let pendingRun: (() => void) | null = null
 let taskScrollResizeObserver: ResizeObserver | null = null
@@ -437,6 +439,12 @@ const tabLabelToBackend: Record<UiConversationTab, CodexTaskTab> = {
 function switchComposerTab(tab: UiConversationTab) {
   selectedUiTab.value = tab
   action('codex.tab.set', { tab: tabLabelToBackend[tab] })
+}
+
+function focusSelectedComposerTab() {
+  void nextTick(() => {
+    rootElement.value?.querySelector<HTMLElement>('.float-task-tabs [role="tab"][aria-selected="true"]')?.focus({ preventScroll: true })
+  })
 }
 
 function composerPickerOptionForChats(context: CodexNewThreadSelectionContext): ComposerProjectPickerOption {
@@ -986,9 +994,9 @@ const drawerActions = computed<DrawerAction[]>(() => {
   if (item.kind === 'task') {
     const project = conversations.value?.projects.find((candidate) => candidate.key === item.task.projectKey)
     return [
+      { id: 'task-open', label: '打开', disabled: !item.task.actionAlias, disabledReason: '任务动作已失效', run: () => openTask(item.task) },
       { id: 'task-new-thread', label: '在当前项目新建会话', disabled: !project?.actionAlias, disabledReason: '项目动作已失效', run: () => openComposer(project) },
       { id: 'task-new-thread-model', label: '选择模型新建会话', disabled: !project?.actionAlias, disabledReason: '项目动作已失效', run: () => openComposer(project, true) },
-      { id: 'task-open', label: '打开任务', disabled: !item.task.actionAlias, disabledReason: '任务动作已失效', run: () => openTask(item.task) },
       { id: 'task-detail', label: '查看详情', run: () => openDetailPanel(item) },
       { id: 'task-alias', label: '编辑别名', run: () => editAlias(item) },
       { id: 'task-pin', label: item.task.pinSource === 'native' ? 'Codex 原生置顶（只读）' : item.task.pinSource === 'local' ? '取消本地置顶' : '本地置顶', disabled: item.task.pinSource === 'native', disabledReason: '原生置顶顺序由 Codex 管理', run: () => togglePin(item) },
@@ -1037,14 +1045,25 @@ function compactCount(value: number) {
 
 function compactCounterHint(kind: 'input' | 'active' | 'unread') {
   const count = displayedCompactCounts.value[kind]
-  if (kind === 'input') return `待输入 ${count} · 打开第一条`
-  if (kind === 'active') return `进行中 ${count}`
-  return `未读 ${count} · 打开第一条`
+  if (kind === 'input') return `待输入：${compactCount(count)}`
+  if (kind === 'active') return '进行中'
+  return `已未读：${compactCount(count)}`
 }
 
-function queueCompactCounterHint(event: PointerEvent, kind: 'input' | 'active' | 'unread') {
-  if (event.pointerType === 'touch') return
-  queueActionHint(event, compactCounterHint(kind))
+function queueCompactCounterHint(event: Event, kind: 'input' | 'active' | 'unread') {
+  if (event instanceof PointerEvent && event.pointerType === 'touch') return
+  clearCompactCounterHint()
+  const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  if (!target) return
+  compactCounterHintTimer = setTimeout(() => {
+    if (target.isConnected) compactCounterHintText.value = compactCounterHint(kind)
+  }, 200)
+}
+
+function clearCompactCounterHint() {
+  if (compactCounterHintTimer) clearTimeout(compactCounterHintTimer)
+  compactCounterHintTimer = null
+  compactCounterHintText.value = ''
 }
 
 function compactCounterTasks(kind: 'input' | 'unread') {
@@ -1694,6 +1713,8 @@ function handleQuickJumpKey(event: KeyboardEvent) {
 const fallbackCommands: Record<string, string> = {
   ArrowUp: 'codex.list.up',
   ArrowDown: 'codex.list.down',
+  ArrowLeft: 'codex.tab.prev',
+  ArrowRight: 'codex.tab.next',
   Space: 'codex.selection.toggle',
   Enter: 'codex.task.openFocused',
   'Ctrl+ArrowLeft': 'codex.detail.open',
@@ -1865,6 +1886,10 @@ function onRootKeydown(event: KeyboardEvent) {
     requestExpansion(true)
     focusCurrent()
   }
+  else if (command === 'codex.tab.prev' || command === 'codex.tab.next') {
+    action(command)
+    focusSelectedComposerTab()
+  }
   else if (command === 'codex.float.toggle') action('codex.float.toggle', { source: 'in-app-shortcut' })
   else if (command === 'quickJump.openForward' || command === 'codex.quickJump.openForward') openQuickJump(false)
   else if (command === 'quickJump.openBackward') openQuickJump(true)
@@ -1965,6 +1990,7 @@ function taskCanRestore(task: CodexTaskCard) {
 function onWindowBlur() {
   shiftHeld.value = false
   shiftPreviewSuppressed.value = false
+  clearCompactCounterHint()
   closeShiftPreview()
 }
 
@@ -2040,6 +2066,7 @@ function onMouseLeave() {
   hoverInside = false
   hoveredTaskKey.value = ''
   clearActionHint()
+  clearCompactCounterHint()
   updateShiftPreview()
   scheduleCollapse()
 }
@@ -2239,6 +2266,7 @@ onUnmounted(() => {
   if (collapseTimer) clearTimeout(collapseTimer)
   if (dynamicClock) clearInterval(dynamicClock)
   clearActionHint()
+  clearCompactCounterHint()
   closeShiftPreview()
   if (composer.value) {
     composer.value.prompt = ''
@@ -2317,13 +2345,14 @@ onUnmounted(() => {
         :aria-label="compactCounterHint('input')"
         @pointerenter.stop="queueCompactCounterHint($event, 'input')"
         @pointermove.stop
-        @pointerleave.stop="clearActionHint"
-        @focus="queueActionHint($event, compactCounterHint('input'))"
-        @blur="clearActionHint"
+        @pointerleave.stop="clearCompactCounterHint"
+        @focus="queueCompactCounterHint($event, 'input')"
+        @blur="clearCompactCounterHint"
         @click.stop="openCompactStatus('input')"
       >{{ compactCount(displayedCompactCounts.input) }}</button>
-      <button v-if="displayedCompactCounts.active" type="button" class="float-counter active" :aria-label="compactCounterHint('active')" @pointerenter.stop="queueCompactCounterHint($event, 'active')" @pointermove.stop @pointerleave.stop="clearActionHint" @focus="queueActionHint($event, compactCounterHint('active'))" @blur="clearActionHint" @click.stop="openCompactStatus('active')">{{ compactCount(displayedCompactCounts.active) }}</button>
-      <button v-if="displayedCompactCounts.unread" type="button" class="float-counter unread" :aria-label="compactCounterHint('unread')" @pointerenter.stop="queueCompactCounterHint($event, 'unread')" @pointermove.stop @pointerleave.stop="clearActionHint" @focus="queueActionHint($event, compactCounterHint('unread'))" @blur="clearActionHint" @click.stop="openCompactStatus('unread')">{{ compactCount(displayedCompactCounts.unread) }}</button>
+      <button v-if="displayedCompactCounts.active" type="button" class="float-counter active" :aria-label="compactCounterHint('active')" @pointerenter.stop="queueCompactCounterHint($event, 'active')" @pointermove.stop @pointerleave.stop="clearCompactCounterHint" @focus="queueCompactCounterHint($event, 'active')" @blur="clearCompactCounterHint" @click.stop="openCompactStatus('active')">{{ compactCount(displayedCompactCounts.active) }}</button>
+      <button v-if="displayedCompactCounts.unread" type="button" class="float-counter unread" :aria-label="compactCounterHint('unread')" @pointerenter.stop="queueCompactCounterHint($event, 'unread')" @pointermove.stop @pointerleave.stop="clearCompactCounterHint" @focus="queueCompactCounterHint($event, 'unread')" @blur="clearCompactCounterHint" @click.stop="openCompactStatus('unread')">{{ compactCount(displayedCompactCounts.unread) }}</button>
+      <div v-if="compactCounterHintText" class="float-compact-counter-hint" role="tooltip">{{ compactCounterHintText }}</div>
     </div>
 
     <section v-else class="float-expanded-card" aria-label="Codex Companion">

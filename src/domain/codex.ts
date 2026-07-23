@@ -609,7 +609,7 @@ export interface ConversationSnapshotV2 {
   /** One-release compatibility field. Native project removal never populates it. */
   removedProjects: CodexProjectCard[]
   activeTab: CodexVisibleTaskTab
-  /** Visible ongoing tasks: exact Desktop live `active` plus provider `interrupted` projected as `ongoing`. */
+  /** Visible ongoing tasks: exact Desktop live `active` plus provider `interrupted` during its grace window. */
   ongoingCount: number
   waitingCount: number
   runningCount: number
@@ -1195,6 +1195,16 @@ function isLikelyActiveTask(thread: CodexHostThread) {
   return thread.statusAuthority === 'desktop-live' && thread.status === 'active'
 }
 
+const INTERRUPTED_COMPLETION_GRACE_MS = 60_000
+
+function interruptedCompletionRevision(thread: CodexHostThread, now: number) {
+  if (thread.lastTurnStatus !== 'interrupted' || isLikelyActiveTask(thread)) return 0
+  const latestActivityAt = numberValue(thread.updatedAt, 0)
+  return latestActivityAt > 0 && now - latestActivityAt >= INTERRUPTED_COMPLETION_GRACE_MS
+    ? latestActivityAt
+    : 0
+}
+
 function taskActivityState(thread: CodexHostThread): CodexTaskActivityState {
   if (isLikelyActiveTask(thread)) {
     if (thread.activeFlags.includes('waitingOnUserInput')) return 'waiting-input'
@@ -1340,8 +1350,10 @@ export function projectConversations(input: {
     const timing = taskTiming(thread)
     const receipt = receiptMap.get(thread.key) || { key: thread.key, acknowledgedRecency: 0, acknowledgedAt: 0, pendingRecency: 0, pendingSince: 0 }
     const authoritativeActive = isLikelyActiveTask(thread)
-    const completionRevision = !authoritativeActive && thread.lastTurnStatus === 'completed'
-      ? numberValue(thread.lastTurnCompletedAt, 0) || numberValue(thread.lastTurnStartedAt, 0)
+    const completionRevision = !authoritativeActive
+      ? thread.lastTurnStatus === 'completed'
+        ? numberValue(thread.lastTurnCompletedAt, 0) || numberValue(thread.lastTurnStartedAt, 0)
+        : interruptedCompletionRevision(thread, now)
       : 0
 
     if (completionRevision > 0 && (receipt.hiddenPendingRecency || 0) >= completionRevision) {
@@ -1372,11 +1384,11 @@ export function projectConversations(input: {
         ? unread ? 'completed-unread' : 'completed'
         : 'ongoing'
     const activityState = taskActivityState(thread)
-    const archiveCapability: CodexArchiveCapability = authoritativeActive || activityState === 'ongoing'
+    const archiveCapability: CodexArchiveCapability = authoritativeActive
       ? 'blocked-active'
       : completionRevision > 0 || thread.lastTurnStatus === 'failed'
         ? 'allowed'
-        : 'allowed-with-warning'
+        : activityState === 'ongoing' ? 'blocked-active' : 'allowed-with-warning'
     const revisionAt = completionRevision || thread.updatedAt
     if ((receipt.dismissedActivityRecency || 0) > 0 && revisionAt > (receipt.dismissedActivityRecency || 0)) {
       delete receipt.dismissedActivityRecency

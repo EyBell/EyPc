@@ -48,6 +48,10 @@ export function routePluginFeature(payload: PluginEnterPayload | null | undefine
       return isFeatureEnabled('codex', featureConfigs)
         ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.float.activate', hideAfterAction: true }
         : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'codex.float.activate' }
+    case 'eypc-codex-input':
+      return isFeatureEnabled('codex', featureConfigs)
+        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.input.open', hideAfterAction: true }
+        : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'codex.input.open' }
     case 'eypc-favorites-quick':
       return isFeatureEnabled('favorites', featureConfigs)
         ? { tab: 'favorites', focusSearch: false, favoriteQuick: true }

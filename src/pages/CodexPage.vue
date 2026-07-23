@@ -563,6 +563,18 @@ onBeforeUnmount(() => {
               @click="$emit('dispatch', 'codex.float.activate')"
             >立即展开</button>
           </div>
+          <div class="codex-hotkey-row">
+            <Keyboard :size="17" aria-hidden="true" />
+            <span><strong>待输入任务</strong></span>
+            <button
+              type="button"
+              class="secondary codex-hotkey-cta"
+              title="配置 uTools 全局快捷键，直接打开第一条待输入任务。"
+              data-operation-tooltip="配置待输入快捷键"
+              data-operation-description="打开 uTools 全局功能，为“打开 Codex 待输入任务”绑定系统级快捷键。"
+              @click="$emit('dispatch', 'codex.input.hotkey.configure')"
+            >配置快捷键</button>
+          </div>
         </div>
       </article>
 

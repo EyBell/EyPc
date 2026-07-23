@@ -49,7 +49,7 @@ assert(pluginJson.pluginSetting?.single === true, 'plugin.json pluginSetting.sin
 assert(Number.isInteger(pluginJson.pluginSetting?.height) && pluginJson.pluginSetting.height >= 480, 'plugin.json height must be >= 480')
 assert(Array.isArray(pluginJson.features) && pluginJson.features.length >= 4, 'plugin.json features must include MVP entries')
 
-const requiredCodes = ['eypc-main', 'eypc-ports', 'eypc-favorites', 'eypc-favorites-quick', 'eypc-codex', 'eypc-codex-toggle', 'eypc-settings']
+const requiredCodes = ['eypc-main', 'eypc-ports', 'eypc-favorites', 'eypc-favorites-quick', 'eypc-codex', 'eypc-codex-toggle', 'eypc-codex-activate', 'eypc-settings']
 const codes = new Set()
 for (const feature of pluginJson.features) {
   assert(typeof feature.code === 'string' && feature.code.trim(), 'feature.code must be non-empty')
@@ -63,6 +63,9 @@ for (const code of requiredCodes) {
 const codexToggleFeature = pluginJson.features.find((feature) => feature.code === 'eypc-codex-toggle')
 assert(codexToggleFeature?.mainHide === true, 'Codex float toggle feature must run with mainHide=true')
 assert(codexToggleFeature?.cmds?.includes('切换 Codex 悬浮球'), 'Codex float toggle feature must expose the stable hotkey command label')
+const codexActivateFeature = pluginJson.features.find((feature) => feature.code === 'eypc-codex-activate')
+assert(codexActivateFeature?.mainHide === true, 'Codex card activation feature must run with mainHide=true')
+assert(codexActivateFeature?.cmds?.includes('直接展开 Codex 卡片'), 'Codex card activation feature must expose the stable global-hotkey command label')
 
 const preloadSource = readFileSync(resolve(distDir, 'preload.js'), 'utf8')
 assert(preloadSource === canonicalPreload, 'dist preload.js must match preload/index.js')
