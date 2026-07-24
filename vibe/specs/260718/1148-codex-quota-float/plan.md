@@ -3,7 +3,7 @@
 Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-22.15`
+Requirement version: `2026-07-24.15`
 
 Authority: [spec.md](spec.md#L1)
 
@@ -97,5 +97,32 @@ Authority: [spec.md](spec.md#L1)
 80. 复用 `codex-companion + interaction-flow + durable-project` ready 偏好回执与 interaction-design 的可中断连续性原则，在 [codexController.ts](../../../../src/runtime/codexController.ts#L1) 将 provider 原始投影和 Renderer 展示投影分离，并为 visible running → completed 建立按任务固定 2 秒、重复完成不续期、恢复运行即取消的临时 hold。
 81. 在同一 Controller 投影中同步重建任务桶、项目 section、隐藏/完成页、计数和 `blocked-active` capability；2 秒后从最新原始快照一次性释放完成态。[FloatApp.vue](../../../../src/FloatApp.vue#L1) 删除独立进行中角标延迟，避免状态、角标和归档入口错位或累计 4 秒。
 82. 同步 RAW-069 的 Controlled、canonical、项目状态、架构、技术细节、Soul、设计偏好与独立候选错误记忆；仅执行静态 diff、字符串/结构检查、`git diff --check`、测试文件零差异、偏好回执和 Markdown 链接审计，不修改或运行测试，不运行 typecheck、build、uTools、截图或真实 Codex 操作。
+83. 复用父任务 `1148`，以 `RAW-071` 作为 requirement delta：范围仅限 Codex 配置页、颜色持久化/派生和 Controller 更新路径；不改额度、会话、归档、Host、preload、数据库、依赖或外部服务。当前目标文件已有无关脏树增量，只在其现状上追加本条逻辑，不回退任何既有修改。
+84. 完成 `codex-companion + full-ui + task-only` 偏好查询：无候选/冲突，沿用当前项目组件与运行时架构；将 design-system 和 platform-ui-architecture 的缺失项显式按项目默认处理。外部 `redesign-existing-projects` 指引地址不可用，回退现有 Vue/CSS 语言，不引入依赖。
+85. 在 [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 重构外观区域为水球、卡片、状态信号三块，加入可读部位预览与直接更新；卡片不再打开配对颜色模态。保留已有预设/保存、显示、诊断、任务、刷新、模型和快捷键 action 路径。
+86. 在 [codex.ts](../../../../src/domain/codex.ts#L1)、[codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1) 和 [codexController.ts](../../../../src/runtime/codexController.ts#L1) 移除颜色格式/对比度/联动/回滚门禁，令存储、派生 CSS vars 与 Renderer 使用同一直接颜色值；同步 [codex.css](../../../../src/styles/codex.css#L1) 的重构布局，不改浮窗的业务交互。
+87. 更新 RAW-071 的 raw/spec/tasks/verify/handoff、PROJECT_STATUS、Developer Soul 和既有配色错误记忆（标记旧联动验证路线为 superseded）；执行静态源码/字符串检查、`git diff --check`、Markdown 代码链接审计和用户可见页面检查。用户未选择测试，故不新增/修改/运行测试，也不运行 typecheck、build、uTools、截图或真实 Codex 操作。
+88. 以用户截图触发 RAW-072：撤回“预览复用旧真实水球”的方向，改为以配置页预览为视觉权威；真实浮窗与预览必须共用同一水球渲染，不保留两套会漂移的水面、环或角标 CSS。
+89. 在 [CodexWaterBall.vue](../../../../src/components/CodexWaterBall.vue#L1) 收敛球体、液体、Weekly 环和角标承载样式，并让 [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 使用该组件；保持现有颜色直通、数据环条件和角标动作。
+90. 更新 RAW-072 的 Controlled 文档、项目状态与视觉偏好；执行静态结构/直接引用检查、`git diff --check` 和 Markdown 链接审计。用户未选择测试，故不新增/修改/运行测试，也不运行 typecheck、build、uTools、截图或真实 Codex 操作。
+91. 以 RAW-073 为同一水球渲染增加持久化的 `0%–100%` 球体底色透明度，并在真实浮窗/配置页共同消费；透明底色不得带走液体、Weekly 环、读数或角标，也不得触发自动补色或回滚。同步 Controlled 文档后执行静态结构、`git diff --check` 与链接审计；不运行测试、typecheck、build、uTools、截图或真实 Codex 操作。
+92. 以 RAW-074 回退水球的静态/普通液体简化，恢复原有分层水波和 motion 动画；保持共享实时预览与底色透明度，去除简化路径产生的底部矩形层，并将配置标签逐项贴近真实渲染层。
+93. 以 RAW-075 将卡片区明确为悬浮展开卡片：使用与真实 card surface/foreground 相同 token 的页签、搜索、额度和任务预览，标签说明表面与文字/图标各自影响范围；不与收起态横卡或水球控件混淆。
+94. 以 RAW-076 将大卡片从两个笼统颜色扩展为九项独立主题令牌；使内置/保存主题、设置归一化、Controller 浮窗快照、配置预览与真实展开态消费同一持久化对象，并保持收起态水球/小卡片皮肤独立。
+95. 以 RAW-079 将任务级完成展示窗改为 `completionPresentationDelayMs` 持久化配置，默认 1500ms、仅允许离散延迟值；Controller 在创建新 hold 时读取它，普通非输入活动的 2 秒去抖不变。
+96. 以 RAW-079 在水球外观区新增独立的百分比读数配置组，持久化位置、字号、字形和颜色；预览和实际浮球继续只使用共享 `CodexWaterBall`，内置和已保存主题覆盖完整对象。
+97. 同步 RAW-079 Controlled、项目当前态、架构、技术细节、Soul、偏好与完成稳定窗错误记忆；执行静态结构、JSON、`git diff --check`、代码链接审计和设计偏好收口，不运行用户保留的测试、typecheck、build、uTools、截图或真实 Codex 操作。
+98. 按 RAW-080 将 Activity Delta 的状态分流改为逐任务排队：已完成已读回流到未读或 desktop-live 进行中立即发布；进行中→completed/completed-unread 继续走共享 completion hold，进行中→failed/system-error 使用同一配置时长，其他非输入变化维持 2 秒。
+99. 同步 RAW-080 Controlled、项目当前态、架构、技术细节、Soul 和完成转换错误记忆；只做允许的静态结构、`git diff --check`、JSON、链接审计与设计偏好收口，不运行用户保留的测试、typecheck、build、uTools、截图或真实 Codex 操作。
+100. 按 RAW-081 在 Desktop bridge 中保留 live unread 缺失时的最近可信 persisted fallback，明确 live read-state 优先；对既有 user-input / approval request type/method 做受限分隔符归一化，不改变 `desktop-live active` 的唯一待输入权威。
+101. 同步 RAW-081 Controlled、项目当前态、架构、技术细节和跨进程状态错误记忆；仅做 preload/public 镜像、字符串、`git diff --check` 和代码链接静态核对，不运行用户保留的测试、typecheck、build、uTools、截图或真实 Codex 操作。
+102. 按 RAW-082 新增完成未读的共享 Runtime action：角标和 uTools 全局功能使用同一置顶优先首条解析；立即写入 EyPc 本地的完成 revision 已读确认并重新投影所有计数/列表/项目视图，待输入保持只打开。
+103. 同步 RAW-082 Controlled、项目当前态、架构、技术细节、Soul、错误记忆与全局功能配置；只做允许的静态语法、JSON、字符串、`git diff --check` 和代码链接审计，不运行用户保留的测试、typecheck、build、uTools、截图或真实 Codex 操作。
+104. 复用父任务 `1148`，以 RAW-083 作为紧凑悬浮窗交互增量：待输入角标置于左下，进行中和已完成未读组成右下纵列；主体仅上方三分之一可展开卡片，下半区仅作为拖拽起点，中间三分之一不触发展开或拖拽。保留角标点击、键盘显式激活、触屏不模拟 hover 与既有 5px 拖拽阈值；不改任务、额度、Host、持久化、依赖或测试。
+105. 完成 `codex-companion + full-ui + task-only` 偏好查询，修复交互索引超过 16 个标签导致的门禁漂移；采用既有 `interaction-design` 的分区互不抢占原则。文档影响为 `requirement-canonical + project-current + controlled-task`，同步 spec/tasks/verify/handoff、项目状态、架构、技术细节与 Soul；用户未选择测试，故只进行静态源码、JSON、`git diff --check` 与代码链接审计。
+108. 按用户更正细化 RAW-083 右下纵列：已完成未读占据最右下角，进行中上移一格；不改变左下待输入、主体命中区、计数动作、键盘/触屏路径或窗口拖拽协议。复用已通过的同任务偏好回执，仅做 CSS 定位和受控文档净增量，不新增或运行测试。
+106. 以 RAW-084 增加前/后 Codex 任务两个 uTools 全局功能：FeatureRoute → Runtime Action → Controller 保持唯一动作链，候选按待输入→完成未读→进行中、置顶优先稳定排序并按匿名 key 去重；首次前/后分别取尾/首，之后循环回绕。只打开，不确认完成未读或改变任何任务状态；循环位置仅在 Controller 内存保存。
+107. 在 Codex 配置页为两项功能分别提供 uTools 全局快捷键配置入口；同步 Controlled、canonical、项目当前态、架构、技术细节、Soul 与偏好索引。用户未选择测试，故不新增/修改/运行测试，也不运行 typecheck、build、uTools、截图或真实 Codex 操作；仅做静态源码、JSON、`git diff --check` 与 Markdown 代码链接审计。
+109. 以 RAW-085 在相同配置区域回显前/后任务的当前 uTools 绑定：预加载桥按 `EyPc/命令` 精确过滤并只传回两个值；Controller 快照不持久化，页面在焦点/可见性恢复和显式刷新时重读。未配置和宿主不可读分别可见，绝不猜测或读取其他插件命令。保持原有跳转配置按钮和用户独占验证边界。
 
-Completion: 1–49 保留既有历史状态。50–59 已实现；60–64 为 RAW-063 的实现、文档与静态核对；65–68 为 RAW-064 的实现、文档与静态源码复核；69–73 为 RAW-065/066 的偏好门禁、代码、文档/记忆与静态收口；74–76 为 RAW-067 的首条直开、权威同步与静态收口；77–79 为 RAW-068 的归档能力稳定化、Host 二次门禁与文档/记忆收口；80–82 为 RAW-069 的任务级完成稳定窗、角标去重延迟与文档/记忆收口。按用户独占验收规则未运行测试、类型、构建、uTools、截图或真实 Codex 操作，RAW-056–059、RAW-063–069 均为 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。
+Completion: 1–49 保留既有历史状态。50–59 已实现；60–64 为 RAW-063 的实现、文档与静态核对；65–68 为 RAW-064 的实现、文档与静态源码复核；69–73 为 RAW-065/066 的偏好门禁、代码、文档/记忆与静态收口；74–76 为 RAW-067 的首条直开、权威同步与静态收口；77–79 为 RAW-068 的归档能力稳定化、Host 二次门禁与文档/记忆收口；80–82 为 RAW-069 的任务级完成稳定窗、角标去重延迟与文档/记忆与静态收口；83–87 为 RAW-071 的页面重构、直通颜色和文档收口；88–92 为 RAW-072–074 的共享实时预览、底色透明度与原有水波恢复；93 为 RAW-075 的展开卡片配置预览；94 为 RAW-076 的完整大卡片主题令牌、主题持久化和运行态直连；95–97 为 RAW-079 的完成窗与百分比读数配置；98–99 为 RAW-080 的回流优先发布、进行中离开终态稳定、文档/记忆与静态收口；100–101 为 RAW-081 的 live unread 缺字段回退、受限 request 名称归一化、错误记忆与静态收口；102–103 为 RAW-082 的完成未读本地确认、全局功能与文档/记忆静态收口；104–105 与 108 为 RAW-083 的紧凑命中区及右下角标优先级；106–107 为 RAW-084 的前/后任务循环与全局功能配置；109 为 RAW-085 的受限宿主回显及配置页刷新。按用户独占验收规则不新增/修改/运行测试，不运行类型、构建、uTools、截图或真实 Codex 操作；RAW-056–059、RAW-063–085 均为 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。

@@ -4,7 +4,7 @@ Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
 Documentation level: `controlled`
-Requirement version: `2026-07-22.15`
+Requirement version: `2026-07-24.15`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
@@ -18,7 +18,7 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 ## Superseding Decision
 
-本规范取代旧版 recent-100、三页签、顶部样式工具栏和“单额度装饰环”合同。RAW-051–059 保留既有额度、操作、配色、桌面状态权威和结构性选择反馈；RAW-063/064 保留四个可见页签、最近 6 小时动态流、标题/元信息分流、无“需关注”分段和无重排选择提示。修订 `2026-07-22.12` 追加 RAW-065/066：恢复数据驱动的 Weekly 进度环并删除普通装饰圈，同时把上游 `interrupted` 在领域卡片投影层转换为可见 `ongoing`。修订 `2026-07-22.13` 追加 RAW-067：待输入与完成未读角标统一直开各自完整计数集合中展示排序第一条，进行中角标保持展开。修订 `2026-07-22.14` 追加 RAW-068：投影后的 ongoing 统一阻断归档，消除 active/interrupted 来源切换造成的归档控件闪烁，并在 Host 单条/项目归档重读中拒绝或跳过 interrupted。修订 `2026-07-22.15` 追加 RAW-069：任务从进行中转为完成时由 Controller 统一保持进行中 2 秒，窗口内恢复运行则取消，连续完成满 2 秒才同步发布完成状态、角标和归档能力；删除 Renderer 独立角标延迟，避免双重等待。修订 `2026-07-23.1` 追加 RAW-070：非 Desktop-active 的 `interrupted` 持续超过 60 秒时，以线程最新活动时间生成完成 revision，转入已完成/已完成未读；60 秒内仍保持原有进行中兼容，避免短暂中断被误判完成。Renderer 匿名合同、Host 原始状态、安全边界、计数来源、底层稳定排序和兼容持久化不变。
+本规范取代旧版 recent-100、三页签、顶部样式工具栏和“单额度装饰环”合同。RAW-051–059 保留既有额度、操作、配色、桌面状态权威和结构性选择反馈；RAW-063/064 保留四个可见页签、最近 6 小时动态流、标题/元信息分流、无“需关注”分段和无重排选择提示。修订 `2026-07-22.12` 追加 RAW-065/066：恢复数据驱动的 Weekly 进度环并删除普通装饰圈，同时把上游 `interrupted` 在领域卡片投影层转换为可见 `ongoing`。修订 `2026-07-22.13` 追加 RAW-067：待输入与完成未读角标统一直开各自完整计数集合中展示排序第一条，进行中角标保持展开。修订 `2026-07-22.14` 追加 RAW-068：投影后的 ongoing 统一阻断归档，消除 active/interrupted 来源切换造成的归档控件闪烁，并在 Host 单条/项目归档重读中拒绝或跳过 interrupted。修订 `2026-07-22.15` 追加 RAW-069：任务从进行中转为完成时由 Controller 统一保持进行中 2 秒，窗口内恢复运行则取消，连续完成满 2 秒才同步发布完成状态、角标和归档能力；修订 `2026-07-23.1` 追加 RAW-070 interrupted 宽限；修订 `2026-07-24.1`–`.6` 追加 RAW-071–076 外观工作台与主题持久化；修订 `2026-07-24.7` 追加 RAW-077：展示窗暂为 700ms；修订 `2026-07-24.8` 追加 RAW-078：默认改为 1500ms；修订 `2026-07-24.9` 追加 RAW-079：展示稳定窗改为默认 1500ms 的持久化配置，并为水球百分比读数增加独立位置、字号、字形和颜色配置；修订 `2026-07-24.10` 追加 RAW-080：已完成已读回流到未读/进行中立即发布，进行中离开到完成或异常按同一配置稳定；修订 `2026-07-24.11` 追加 RAW-081：live snapshot 缺少未读字段时保留可信持久化 unread，且待输入的有限 request 名称归一化不放宽 desktop-live active 权威；修订 `2026-07-24.12` 追加 RAW-082：已完成未读角标与 uTools 全局功能共用“打开并仅本地确认当前完成 revision”的动作，待输入仍只打开；修订 `2026-07-24.14` 追加 RAW-084：两个 uTools 全局任务循环命令按待输入→完成未读→进行中、置顶优先稳定去重的序列前后回绕，只打开任务且不改变任何未读或任务状态；修订 `2026-07-24.15` 追加 RAW-085：配置页只回显两个循环命令当前的宿主绑定，并在进入、返回或手动刷新后重读，未绑定和不可读均不猜测。Renderer 匿名合同、Host 原始状态、安全边界、计数来源、底层稳定排序和兼容持久化不变。
 
 ## Current Requirement And Implementation Map
 
@@ -27,17 +27,18 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 | 原生项目状态 | 日常流程只读解析；RAW-052 项目移除经 Codex 退出、alias/指纹/结构和原子回滚门禁后，仅修改原生项目注册字段 | [preload/index.js](../../../../preload/index.js#L1)、[codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) |
 | 完整任务库存 | 完整分页读取 `archived=false`；归属优先 native assignment、Chats、最深有效 cwd，其他任务排除 | [preload/index.js](../../../../preload/index.js#L1)、[codex-real-preflight.mjs](../../../../scripts/codex-real-preflight.mjs#L1) |
 | 严格时间/完整性 | 最新 Turn 必须存在有效 `startedAt`；滚动窗口 1–365 天、默认 30 天、边界包含；时间窗口资格取最新 Turn 开始/完成活动但不以 `updatedAt` 回退；项目指纹变化重试一次，仍变化则不发布伪完整数据 | [codex.ts](../../../../src/domain/codex.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
-| 四页签与状态优先级 | 可见页签为 `动态 / 已完成 / 已隐藏 / 项目`；动态页只取最近 6 小时、非隐藏的待输入、正在进行中（含投影后的 ongoing 以及 failed/system-error）、宿主状态未知、已完成未读、已完成；进行中转完成由 Controller 的可中断 2 秒任务级展示窗统一稳定；`all/inputRequired` 只保留兼容投影 | [codexController.ts](../../../../src/runtime/codexController.ts#L1)、[FloatApp.vue](../../../../src/FloatApp.vue#L1) |
+| 四页签与状态优先级 | 可见页签为 `动态 / 已完成 / 已隐藏 / 项目`；动态页只取最近 6 小时、非隐藏的待输入、正在进行中（含投影后的 ongoing 以及 failed/system-error）、宿主状态未知、已完成未读、已完成；Desktop live snapshot 缺少 unread 时保留最近成功读取的 persisted unread，明确 read-state 优先；已完成已读回流到未读/desktop-live 进行中立即发布，进行中离开到完成或异常由 Controller 的可中断、按设置（默认 1500ms）任务级路径统一稳定；`all/inputRequired` 只保留兼容投影 | [preload/index.js](../../../../preload/index.js#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1)、[FloatApp.vue](../../../../src/FloatApp.vue#L1) |
 | 原生项目视图 | `Pinned / Projects / Chats` 遵循 Codex 原生置顶、项目顺序和归属，不重复任务，并保留空项目 | [codex.ts](../../../../src/domain/codex.ts#L1)、[codexCompanion.test.ts](../../../../tests/ui/codexCompanion.test.ts#L1) |
 | 本地元数据 | 恢复最后页签/项目折叠，支持别名、具备即时位置/状态反馈的本地置顶和仅影响项目页的项目隐藏；旧本地移除集合迁移清除 | [codex.ts](../../../../src/domain/codex.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
 | 额度 V2 与紧凑水球 | 普通 5 小时正余额→普通周正余额→最高正余额 Spark；Spark 显示 `S`；存在 Weekly 时显示同池剩余进度环，无 Weekly 时无外圈，且始终不显示普通装饰圆环 | [codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1)、[CodexWaterBall.vue](../../../../src/components/CodexWaterBall.vue#L1)、[codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1) |
-| 水球收起态命中区 | 上半区不因 hover 展开并保留三角标直接点击；待输入/完成未读非零时均直开实际计数集合中展示排序第一条，进行中仍展开；角标 hover/focus 200ms 显示作用说明且不展开/切页；下半区 hover 立即展开；触屏不模拟 hover | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[codexCompanion.test.ts](../../../../tests/ui/codexCompanion.test.ts#L1) |
+| 外观工作台 | 水球、展开卡片、状态信号各自独立配置并显示部位预览；卡片预览用相同 surface/foreground token 画出展开后的页签、搜索、额度和任务区；颜色更新直通持久化和 Renderer，不再由格式、对比度、自动联动或 Controller 门禁回滚 | [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
+| 水球收起态命中区与全局功能 | 上半区不因 hover 展开并保留三角标直接点击；待输入只打开第一条，完成未读角标和 uTools 全局功能均打开并本地确认第一条当前完成 revision，进行中仍展开；新增前/后任务功能以待输入→完成未读→进行中、置顶优先稳定去重的序列循环打开；新 revision 会重新未读且不写 Codex Desktop 全局状态；角标 hover/focus 200ms 显示作用说明且不展开/切页 | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1)、[featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L1) |
 | 展开布局 | 四页签直接位于顶部，其下依次是统一搜索、服务端真实额度文字和任务内容；删除旧顶部样式/隐藏/刷新/设置/关闭工具栏 | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[float.css](../../../../src/styles/float.css#L1) |
 | 实时状态与未读通道 | macOS Codex Desktop 私有 IPC 提供 live snapshot/patch/request/read-state；App Server 只保留数据/动作连接器职责。普通 watchdog 为 5s，连续三次失败临时 1s；无 live authority 立即显示宿主状态未知 | [preload/index.js](../../../../preload/index.js#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
 | 启动发现与连接诊断 | 自动枚举受控 macOS/Windows CLI 候选；可选手动位置经同一运行计划核验并只存本机插件 storage；环境快照只传来源/可用性标签，连接器降级明确不授予实时状态权威 | [preload/index.js](../../../../preload/index.js#L1)、[eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1)、[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) |
 | 默认模型与新会话 | `quota-auto`、普通首选模型、Spark 自动切换、冻结/刷新确认模型、瞬时 `thread/start → turn/start → Deep Link` 与失败清理 | [codexNewThread.ts](../../../../src/domain/codexNewThread.ts#L1)、[preload/index.js](../../../../preload/index.js#L1)、[FloatApp.vue](../../../../src/FloatApp.vue#L1) |
 | 选择、Shift 与快捷键 | 普通态中部打开、Ctrl/Cmd+中部或 38px 左区选择；选择态左区/中部切换成员并在最后一项移出时退出；模式提示固定在列表舞台底部且不重排，行与子按钮分别拥有 Space/Enter | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[float.css](../../../../src/styles/float.css#L1)、[keybindingRuntime.ts](../../../../src/runtime/keybinding/keybindingRuntime.ts#L1) |
-| 卡片配对颜色 | 表面/前景使用两个联动二维取色板和标题色卡入口；不可选对比色域可见，选择一侧时另一侧移动到最近可读亮度；有效草稿暂态预览真实悬浮伴侣，取消回滚、确认一次原子提交 | [codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1)、[CodexCardColorDialog.vue](../../../../src/components/CodexCardColorDialog.vue#L1)、[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1)、[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
+| 卡片颜色 | 卡片表面与文字/图标前景只在卡片区独立调整并即时预览；旧联动二维取色板/确认事务仅保留历史证据 | [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
 | 会话层回退 | 单项 `详情 → 更多操作 → 会话行`，确认态优先；Ctrl 左右切层不改原触发点，批量抽屉一次 Esc 关闭 | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[codexCompanion.test.ts](../../../../tests/ui/codexCompanion.test.ts#L1) |
 | 原生归档 | 短期 action alias + 预期版本 + 项目指纹；投影后的 ongoing（含原始 interrupted）稳定不可归档，单条 Host 重读拒绝 interrupted、项目归档跳过 interrupted；其余候选归档后在 false/true 两侧确认并向已连接 Codex Desktop 发送版本化通知，项目逐项保留失败 | [codex.ts](../../../../src/domain/codex.ts#L1)、[preload/index.js](../../../../preload/index.js#L1)、[codex-archive-lifecycle-check.mjs](../../../../scripts/codex-archive-lifecycle-check.mjs#L1) |
 
@@ -79,7 +80,7 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 - [CodexWaterBall.vue](../../../../src/components/CodexWaterBall.vue#L1) 只在 primary 或 secondary 存在 `kind=weekly` 时渲染 SVG 进度环；连续模式使用同池 Weekly 剩余百分比计算圆弧，分段模式固定 20 段并按每 5% 激活一段。无 Weekly 时不渲染任何外圈。
 - 水球表面删除 `2px inset`、静态 border、inset outline 与装饰 shell；保留的 track/value/segment 都属于数据进度环，不得再以无数据含义的普通圆环代替。
-- [codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1) 恢复环粗细、进度色、轨道色、光晕 CSS tokens，并校验 `2–6px` 与进度/轨道相对水球表面的 `3:1` 对比度。[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 恢复样式、粗细、颜色模式、进度色、轨道色和光晕设置，不恢复普通轮廓透明度入口；`shellOpacity` 只为旧持久化对象兼容而保留。
+- [codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1) 继续发出环粗细、进度色、轨道色和光晕 CSS tokens；RAW-071 覆盖此前 `2–6px` 与 `3:1` 色彩门禁，颜色不再被格式、对比度或自动调整拦截。[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 在水球区直接显示并更新样式、粗细、颜色模式、进度色、轨道色和光晕；`shellOpacity` 只为旧持久化对象兼容而保留。
 
 ## RAW-066 Provider Interrupted To Visible Ongoing Projection
 
@@ -89,8 +90,8 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 ## RAW-067 Compact Counter First-Task Activation
 
-- [FloatApp.vue](../../../../src/FloatApp.vue#L1) 以一个紧凑角标目标解析器统一待输入与完成未读：待输入候选使用 `ConversationSnapshotV2.inputRequired`；完成未读候选使用 `all.filter(bucket === 'completed-unread')`，因此包含计数中的已隐藏会话。两类候选均通过现有 `displayOrderedTasks` 稳定分区，置顶优先，其后保持源数组的 latest Turn/匿名 key 顺序。
-- 待输入和完成未读只要存在候选，不区分一条或多条，均将排序首条交给现有 `openTask → codex.task.open`；不先展开浮窗、不切换页签、不解除隐藏、不确认或清除未读，也不因首条不可打开而跳到后续项。“进行中”继续只调用既有展开路径。
+- [FloatApp.vue](../../../../src/FloatApp.vue#L1) 以一个紧凑角标目标解析器统一候选来源：待输入候选使用 `ConversationSnapshotV2.inputRequired`；完成未读候选使用 `all.filter(bucket === 'completed-unread')`，因此包含计数中的已隐藏会话。两类候选均通过现有 `displayOrderedTasks` 稳定分区，置顶优先，其后保持源数组的 latest Turn/匿名 key 顺序。
+- RAW-082 后待输入将排序首条交给现有 `openTask → codex.task.open`，不确认；完成未读则将同一排序首条交给 `codex.completed-unread.openFirst`，在 EyPc 本地确认当前 completion revision 后打开。不先展开浮窗、不切换页签、不解除隐藏，也不因首条不可打开而跳到后续项。“进行中”继续只调用既有展开路径。
 - 待输入与未读的 200ms hover/focus 说明及按钮 ARIA 在原数量后明确“打开第一条”；角标数字、位置、颜色、计数来源、原生点击/Enter/Space、触屏与上/下半区命中合同不变。不新增公共 API、类型、持久化字段、Runtime action、依赖或测试改动。
 
 ## RAW-068 Stable Ongoing Archive Capability
@@ -100,18 +101,58 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 - [codexController.ts](../../../../src/runtime/codexController.ts#L1) 只让 capability 明确为 allowed 的失败态发送 terminal 证据；投影 ongoing 在 Controller 门禁处直接拒绝。[preload/index.js](../../../../preload/index.js#L1) 的单条归档重读把 interrupted 与 active/inProgress 一起返回 `active-task`，项目全部归档把 interrupted 加入进行中跳过集合，terminal 证据只接受 failed。
 - completed/failed 的既有可验证归档能力不变；system-error/unknown 继续走显式警告与 fail-closed 重读。没有新增外部 API、Runtime action、持久化字段、迁移或依赖；依用户规则不修改或运行测试，也不运行 typecheck、build、uTools、截图或真实 Codex 操作。
 
-## RAW-069 Interruptible Completion Presentation Hold
+## RAW-082 Explicit Completed-Unread Acknowledgement
 
-- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 同时维护 provider-derived 原始会话快照与 Renderer 展示快照。只有同一任务在上一份原始快照中确实为 visible running、下一份原始快照首次成为 completed/completed-unread 时，才建立固定 `2000ms` 展示窗；初次加载便已完成的任务不延迟，重复完成快照不重置截止时间。
+- [FloatApp.vue](../../../../src/FloatApp.vue#L1) 的完成未读角标改为派发 `codex.completed-unread.openFirst`；[plugin.json](../../../../public/plugin.json#L1) 的 `eypc-codex-completed-unread` uTools 全局功能和 [featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L1) 同样派发该 action。配置页通过同一功能说明跳转到 uTools 系统级快捷键设置，未声称已自动注册快捷键。
+- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 与 Float 使用相同的置顶优先、稳定展示顺序解析首条完成未读任务；Controller 为该任务当前 `completionRevision` 写入本地 receipt 并立刻重新投影，因此角标、列表、项目视图、详情和 action 结果同时成为 completed/read。该写入只代表用户触发的 EyPc 本地确认，绝不写 Codex Desktop 或由时间/connector 推断原生未读；后续较新的 completion revision 自动重新未读。
+- 待输入角标与 `eypc-codex-input` 继续沿用 `openTask → codex.task.open`，不写 receipt，也不因“可能尚未输入”而改变状态。普通任务行打开同样不确认未读。依用户规则不修改或运行测试、typecheck、build、uTools、截图或真实 Codex 操作。
+
+## RAW-069 / RAW-077 / RAW-078 / RAW-079 / RAW-080 Interruptible Ongoing-Exit Presentation Hold
+
+- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 同时维护 provider-derived 原始会话快照与 Renderer 展示快照。已完成且已读回流为 completed-unread 或 desktop-live active 时立即发布，既不等待普通防抖，也会清除同任务尚未到期的终态 hold，因此不把 completed-unread 改写为 ongoing。只有同一任务在上一份原始快照中确实为 visible running、下一份原始快照首次成为 completed/completed-unread、failed 或 system-error 时，才按持久化 `completionPresentationDelayMs` 建立展示窗；允许 `0 / 500 / 1000 / 1500 / 2000 / 3000ms`，默认 `1500ms`，其中 `0` 直接发布而不建立 hold。初次加载便已处于终态的任务不延迟，重复终态快照不重置截止时间。
 - 展示窗内任务以最新原始卡片为底，移除 completion/unread/完成时间展示字段，并统一覆盖为 `bucket='ongoing'`、`activityState='ongoing'`、`state='running'`、`archiveCapability='blocked-active'`、`canArchive=false`。Controller 同步重建 ongoing/completed/hidden/all、完成页、项目卡、Pinned/Projects/Chats section 与全部计数，因此卡片、分组、详情、Shift 预览、三个角标和归档入口不会各自切换。
-- 窗口内原始任务回到 active/ongoing 时立即删除 hold 并保持进行中；只有原始完成连续存在到截止时间，定时器才以最新原始快照一次性发布 completed/completed-unread、完成时间、未读与归档能力。该计时器只延迟已成立的权威完成展示，不从时间、刷新次数或 recency 推断完成。
-- [FloatApp.vue](../../../../src/FloatApp.vue#L1) 删除旧的独立 `ACTIVE_COUNTER_DELAY_MS`/`displayedActiveCount` 合并器，进行中角标直接读取统一快照，避免 Controller 2 秒后又叠加 Renderer 2 秒而累计 4 秒。功能停用、收件箱关闭与 Controller dispose 都清理临时 hold/timer；不新增 API、Runtime action、持久化字段、迁移、依赖或测试改动。
+- 窗口内原始任务回到 active/ongoing 时立即删除 hold 并保持进行中；只有原始终态连续存在到截止时间，定时器才以最新原始快照一次性发布 completed/completed-unread、failed 或 system-error 及对应能力。该计时器只延迟已成立的 provider 权威展示，不从时间、刷新次数或 recency 推断完成。
+- [FloatApp.vue](../../../../src/FloatApp.vue#L1) 删除旧的独立 `ACTIVE_COUNTER_DELAY_MS`/`displayedActiveCount` 合并器，进行中角标直接读取统一快照，避免额外展示延迟。配置页以“进行中离开稳定窗”将该延迟直接写入持久化设置；功能停用、收件箱关闭与 Controller dispose 都清理临时 hold/timer；不新增 API、Runtime action、迁移、依赖或测试改动。
 
 ## RAW-070 Interrupted Grace To Completion Marker
 
 - [codex.ts](../../../../src/domain/codex.ts#L1194) 保留 Desktop live `active` 的最高优先级；仅当任务不再由 Desktop live 判定为 active、最新 Turn 为 `interrupted` 且线程 `updatedAt` 距当前至少 60 秒时，生成完成 revision。
 - 60 秒宽限期内仍按原始 interrupted 投影为 ongoing，达到阈值后进入 completed/completed-unread，统一释放完成时间、未读和归档能力；该规则不适用于 `notLoaded`、unknown、仅 connector active 或仍为 Desktop live active 的任务。
-- 该时间阈值只收敛已存在的 interrupted 证据，不从刷新次数、连接状态或未知状态推断完成；Controller 既有普通状态 2 秒稳定发布继续生效。无新增公共 API、持久化字段、迁移或测试合同。
+- 该时间阈值只收敛已存在的 interrupted 证据，不从刷新次数、连接状态或未知状态推断完成；Controller 既有普通非输入状态 2 秒稳定发布继续生效，已确认完成仍走用户配置、默认 1500ms 的展示窗。无新增公共 API、迁移或测试合同。
+
+## RAW-071 Appearance Workbench And Direct Color Application
+
+- [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 将外观配置重构为三个有标题、部位说明和实时预览的独立区域：水球（底色、液体层、Weekly 环和角标）、卡片（表面及文字/图标前景）和状态信号（充足、提醒、紧张）。页面保留现有连接、显示、任务、刷新和模型操作，但不再以“手动配色”把水球与卡片的控制混在同一网格。
+- 水球预览必须可见地标出底色、液体 A/B、进度环、轨道和三个角标；卡片预览只使用卡片表面/前景与状态信号。预设与主题保存继续作用于完整颜色和水球外观快照，单个颜色控件则只更新它标明的部位。
+- [codex.ts](../../../../src/domain/codex.ts#L1) 对已存在的颜色字符串只保留原值，不再因十六进制格式而替换为默认值；[codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1) 不再调整用户给定颜色以满足对比度；[codexController.ts](../../../../src/runtime/codexController.ts#L1) 不再拒绝或回滚颜色/水球外观 patch。原生 `input[type=color]` 仍提供浏览器自身可选值范围；外部无效 CSS 值不应被悄悄替换，应保持为原始配置且仅可能由浏览器 CSS 解析决定是否可视。
+- RAW-051/054 的“卡片配对、有效色域、最近可读亮度、一次确认”和它们的验证门禁仅作为历史实现证据保留；本条覆盖其当前产品合同。不得新增依赖、外部写入、数据库变更或新的运行时动作。
+
+## RAW-072 Preview-Authoritative Water Rendering
+
+- [CodexWaterBall.vue](../../../../src/components/CodexWaterBall.vue#L1) 以配置页预览的球体构图为唯一视觉实现，并被配置页与真实浮窗共同使用；球体底色、液体 A/B、Weekly 环/轨道和角标位置/颜色不得分别维护。
+- 配置页不以“示意”代替真实效果；真实浮窗也不保留旧水面、折射、光环或数字布局而覆盖用户已确认的预览。数据含义、Weekly-only 显示条件和三个角标动作保持原合同。
+
+## RAW-073 Transparent Water Base
+
+- [codex.ts](../../../../src/domain/codex.ts#L1) 在水球外观中持久化球体底色透明度，默认 `100%`，并允许 `0%`。该值不修改 `colors.water` 本身。
+- [CodexWaterBall.vue](../../../../src/components/CodexWaterBall.vue#L1) 将底色与其透明度独立作用于球体表面；液体、数据环、读数和角标不跟随底色透明度消失。[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 在水球区公开同一控件与真实渲染预览。
+
+## RAW-074 Preserve Layered Water Motion
+
+- [CodexWaterBall.vue](../../../../src/components/CodexWaterBall.vue#L1) 保留既有三层液体、折射、高光与 `static / slow / normal / fast` 运动路径；共享预览只改变承载位置，不能替换该视觉/运动实现。
+- 去除本轮简化引入的底部平铺矩形层。水球区控件按真实层一一归属：球体底色/透明度、液体 A/B、配色、透明度、波幅、速度、Weekly 环样式/进度/轨道及角标色。
+
+## RAW-075 Expanded Float Card Configuration
+
+- [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 的卡片区以展开后的悬浮卡片为预览目标：页签、搜索、额度和任务区均可见，避免把收起态横向卡片误认为配置对象。
+- 卡片预览通过 [codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1) 的 `card` surface theme token 着色；“展开卡片表面”与“展开文字 / 图标”分别说明其覆盖范围，且不会与水球或状态信号控件混合。
+
+## RAW-076 Expanded Card Theme Tokens
+
+- [codex.ts](../../../../src/domain/codex.ts#L1) 在设置与已保存主题中持久化 `expandedCardAppearance`：主面板、内层块、边框、主/次文字、选中、焦点、进行中、完成未读九项直接令牌；缺失的历史主题按其已有卡片颜色补齐，保持兼容。
+- [codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1) 为每个内置主题提供同一完整令牌集，并由唯一的 expanded-card resolver 同时服务预览与运行态；它不对用户提交的令牌做格式、对比度或色域回滚。
+- [FloatApp.vue](../../../../src/FloatApp.vue#L1) 在浮窗展开时无条件选择 expanded-card theme，不依赖水球或紧凑卡片的当前显示样式；收起态仍保持自己的紧凑皮肤。
+- [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 按面板层次、文字层级、交互强调、任务状态分组展示九项控件及真实大卡片预览，控件只改标记的令牌，不影响水球区或状态信号区。
 
 ## RAW-055 Label, Density And Selection Contract
 
@@ -132,9 +173,11 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 - 选中行由现有 `accent / running / pending / surface` 组成三色渐变；hover/focus 增强色占比和焦点外框，active 加深并使用内收阴影。选择模式条和未选降权继续有效。
 - 无选择时左区选择、中部打开、Ctrl/Cmd+中部选择且不打开；有选择时左区或中部切换成员，最后一项移除即退出。任务行 Space 切换选择；左区按钮及右侧动作按钮的 Space/Enter 由原生按钮拥有，根行不得重复处理。
 - 行尾删除“本地顶”。`顶` 固定在 `24px` 槽内：本地置顶使用 `var(--codex-warning)` 文字/边框/轻底；原生置顶只读；未置顶普通。200ms 说明分别表达 EyPc 本地、Codex 原生、未置顶和 Chats 来源。原生/Chats 保持可聚焦并使用 `aria-disabled=true`，点击、Enter、Quick Jump、`Ctrl+P` 与移动快捷键都通过同一只读门禁。
-- 紧凑水球/卡片三个角标共用移出展开分支后的不透明说明层和既有视口夹紧。待输入单项、多项、正在进行中和已完成未读均在 hover/focus 200ms 后说明数量与点击作用；离开/失焦立即关闭。角标 hover/focus 不展开、不切页、不触发延时展开，触屏不模拟 hover。RAW-067 后待输入与完成未读的说明/ARIA 均明确“打开第一条”，进行中仍保持原展开行为。
+- 紧凑水球/卡片三个角标共用移出展开分支后的不透明说明层和既有视口夹紧。待输入单项、多项、正在进行中和已完成未读均在 hover/focus 200ms 后说明数量与点击作用；离开/失焦立即关闭。角标 hover/focus 不展开、不切页、不触发延时展开，触屏不模拟 hover。RAW-082 后待输入说明/ARIA仍为“打开第一条”，完成未读明确为打开并在 EyPc 本地标记首条；进行中仍保持原展开行为。
 
 ## RAW-051 Card Pair And Session-Layer Contract
+
+> 状态：其中的配色、联动、验证、预览和确认事务已由 RAW-071 完整取代；下列配色文字只保留为历史证据。会话层回退条款仍有效。
 
 - `CodexColorSettings.cardForeground` 是显式持久化字段。旧配置缺失时在深墨 `#07161D` 与浅字 `#F8FCFB` 中按现有可读前景算法选择，避免升级后的视觉突变；三个预设都必须包含该字段并参与完整预设匹配。
 - 卡片表面不再有亮度门槛；表面/前景必须达到 `4.5:1`，派生边界与焦点态继续达到 `3:1`。水球仍须满足深色亮度约束。Runtime 更新若只带 `card` 或 `cardForeground`、值畸形或整对低对比，必须在写入前拒绝且不产生部分持久化。
@@ -144,6 +187,8 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 - 完整 Escape 优先级为：二次确认 → composer/model → Quick Jump → Shift 预览 → 行内编辑 → 详情 → 更多操作 → 多选 → 搜索 → 收起。归档确认存在时第一次 Esc 只取消确认。
 
 ## RAW-054 Linked Color Boards And Real-Float Preview
+
+> 状态：本节的色板、色域、配对校验、暂态预览和原子确认均为历史证据，不能作为当前外观实现路线；当前合同见 RAW-071。
 
 - 每组颜色提供一个固定色相的饱和度/亮度二维取色板、色相滑杆与六位 HEX。两块取色板始终同时可见；低于 `4.5:1` 的候选区域以斜纹弱化，指针或方向键选择一侧时锁定该色，并把另一侧保持色相/饱和度、仅移动到最近满足对比度的亮度。
 - 每组标题旁的当前色块是按钮，在所属色板原位展开 12 个命名候选色卡。方向键在色卡间移动并选择，Esc 只关闭色卡层并恢复色块焦点；点击外部同样关闭。选择色卡继续使用同一联动草稿、对比校验和预览事务。
@@ -180,9 +225,9 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 - 持久化只使用散列任务 key 和稳定项目指纹；不得持久化原始 thread/Turn ID、项目路径、action alias 或任务列表。
 - 原生项目/置顶顺序只读。本地置顶可通过操作与 `Alt+↑/↓` 调整；动作完成后的下一份投影必须在所有相关任务/项目卡片上带 `pinSource`，本地 `顶` 保持 `aria-pressed=true` 并使用 warning 状态。任务置顶在当前任务页签/状态段内前置，项目置顶进入 `Pinned`。别名只改显示和搜索，归属、归档仍使用真实身份。
 - 旧“从 EyPc 移除/恢复”本地抑制已由 RAW-052 取代。项目“隐/显”是可恢复的本地分组展示状态；项目“移”是经 Host 安全事务执行的真实 Codex 侧栏移除，两者不得混用。
-- 水球不再显示迷你详情或普通装饰圆环。水球根容器透明，表面只保留内部深度阴影，不绘制 inset、静态 border、inset outline、装饰 shell 或同尺寸外发光；宿主水球按钮的 focus-visible 不绘制外部整圆，改为中央读数下划线。收起态上半区是角标安全区，pointer enter/move 不展开；只有指针进入下半区才立即展开。球体显式点击和键盘激活仍可展开，触屏不模拟 hover。中心依次选择普通 5 小时正余额、普通周正余额、最高正余额 Spark；两个普通窗口均无正余额时才展示 Spark。Spark 中心在百分比上方显示 `S`，文字背景透明。存在 Weekly 读数时显示同池剩余进度环及其配置；无 Weekly 时没有任何外圈。历史 `shellOpacity` 只保留持久化兼容且不再有入口。
+- 水球不再显示迷你详情或普通装饰圆环。水球根容器透明，表面只保留内部深度阴影，不绘制 inset、静态 border、inset outline、装饰 shell 或同尺寸外发光；宿主水球按钮的 focus-visible 不绘制外部整圆，改为百分比读数下划线。收起态上半区是角标安全区，pointer enter/move 不展开；只有指针进入下半区才立即展开。球体显式点击和键盘激活仍可展开，触屏不模拟 hover。中心依次选择普通 5 小时正余额、普通周正余额、最高正余额 Spark；两个普通窗口均无正余额时才展示 Spark。Spark 百分比上方显示 `S`，文字背景透明。百分比读数的位置、字号、字形和颜色独立持久化，配置页预览与真实水球共用同一组件/对象；存在 Weekly 读数时显示同池剩余进度环及其配置；无 Weekly 时没有任何外圈。历史 `shellOpacity` 只保留持久化兼容且不再有入口。
 - 展开额度区只渲染 App Server 实际返回的普通与 Spark 窗口。只有 Weekly 时不得伪造 5 小时额度；缺失窗口不视为 0，也不得触发模型自动降级。
-- 收起态左上角仅在非零时以红色文字显示 Codex Desktop 权威待输入数；右上显示统一任务投影中的进行中数，包含 desktop-live active、由原始 interrupted 转换的 ongoing 及 2 秒完成展示窗内的 ongoing；下一行展示同一投影的完成未读数，超过 99 显示 `99+`。宿主未知、failed/system-error 和未读未知不冒充这三类计数。待输入与完成未读无论一项或多项都直开各自完整计数集合中展示排序第一条；进行中仍只展开浮窗。三个角标保持直接点击，hover 不切页也不展开。
+- 收起态左下角仅在非零时以红色文字显示 Codex Desktop 权威待输入数；右下最边角展示同一投影的完成未读数（超过 99 显示 `99+`），其上方展示统一任务投影中的进行中数，包含 desktop-live active、由原始 interrupted 转换的 ongoing 及完成展示窗内的 ongoing。宿主未知、failed/system-error 和未读未知不冒充这三类计数。待输入无论一项或多项都只打开完整计数集合中展示排序第一条；完成未读角标或全局功能打开同样的第一条并本地确认其当前 completion revision；进行中仍只展开浮窗。三个角标保持直接点击，hover 不切页也不展开。
 - 会话行悬停超过 500ms 显示不透明、隐私白名单详情；状态槽和固定短按钮悬停超过 200ms 显示不透明说明。按住纯 Shift 仍可显示不抢焦点的只读预览；悬停会话优先、键盘高亮兜底，Shift+↑/↓ 接管目标，真实鼠标移动后恢复悬停所有权。所有详情只含名称/原名、项目、状态/活动标记、允许的时间/耗时、来源、隐藏/置顶和归档能力；正文、摘要、raw ID、cwd 与路径永不读取或展示。
 
 ## Selection, Operations And Shortcuts
@@ -243,7 +288,7 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 - 主文件/备份回退、完整分页、指纹重试、归属优先级、移除项目过滤、30 天边界、四页签与旧 all/input 回退、6 小时动态流、原始 interrupted 到可见 ongoing 的投影及稳定归档阻断、failed/system-error 分组与未知独立、Desktop IPC live/unread 投影、5s watchdog、无权威降级、打开/隐藏不改未读、归档后桌面通知、普通/Spark 额度优先级、仅 Weekly 数据环且无装饰圈的水球命中/角标说明、`quota-auto`、瞬时创建、多选状态机/键盘归属、无重排底部选择提示、置顶来源门禁、隐私预览、Quick Jump、二次确认、批量部分失败与归档双向验证均有历史测试合同；本轮不修改或执行测试，RAW-065–068 仅做静态核对并等待用户验收。
 - 380px 与 330px 展开态、330px composer/Shift 预览/右键抽屉、104px Spark 水球完成浏览器视觉核验；页面无横向溢出，`S`、模型名称/ID/原因/额度、系统听写输入框、预览内部滚动、Space 选中后下移、批量栏上下避让、任务行零位移及 Pinned/Projects/Chats 顺序均可读。
 - 专用临时任务真实执行 `archive → false/true → unarchive → true/false`，最终再次归档清理；不操作用户现有任务。
-- RAW-051 及更早版本的历史验收命令与证据保持原记录；RAW-052–053、RAW-055–058 仍按用户独占验收，不能由 RAW-054 的门禁结果替代。RAW-054 已运行聚焦测试、typecheck、build/uTools、浏览器矩阵与全量基线，且未执行真实 Codex 状态写入。
+- RAW-051/054 的历史验收命令与证据保持原记录，但不能验证 RAW-071；当前外观仅由用户按三个独立区域逐项验收。RAW-052–053、RAW-055–058 仍按用户独占验收，不能由历史 RAW-054 门禁结果替代。
 
 ## Documentation Impact And Residuals
 
@@ -254,6 +299,24 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 ## RAW-069 主对话状态主体化与 Side Chat 实时输入
 
 - Renderer 只接收主对话的匿名 activity key；Side Chat 仅在 preload 内作为 live shadow 保存，并依据 `forkedFromId`、`sideConversationParentNavigationPath` 聚合到主对话，不进入普通任务库存、任务卡或持久化。
-- `waitingOnUserInput` 的进入和退出绕过状态去抖，立即更新主对话的 `inputRequired`、`inputRequiredCount`、角标和任务投影；active、approval、idle、completed、failed、普通未读及关系变化统一使用单个 2 秒 Controller 稳定窗口。
-- 完成展示窗口与普通状态窗口不得叠加；明确完成转换交由既有完成稳定器处理，最长保持一个 2 秒窗口。Desktop IPC 失联、协议不兼容、功能关闭、dispose 和归档立即清理或降级，不等待窗口。
+- `waitingOnUserInput` 的进入和退出绕过状态去抖，立即更新主对话的 `inputRequired`、`inputRequiredCount`、角标和任务投影；已完成且已读回流为 completed-unread 或 desktop-live active 同样立即发布。进行中离开到 completed/completed-unread、failed 或 system-error 由既有默认 1500ms、可配置的共享稳定器处理，其他 active、approval、idle、普通未读及关系变化继续使用单个 2 秒 Controller 稳定窗口，避免两个窗口叠加。
+- 完成展示窗口与普通状态窗口不得叠加；明确完成转换交由既有完成稳定器处理，最长保持一个用户配置的窗口。Desktop IPC 失联、协议不兼容、功能关闭、dispose 和归档立即清理或降级，不等待窗口。
 - 主对话打开动作在 preload 内解析隐藏导航目标，按待输入、待审批、进行中和 revision 选择 Side Chat；直跳能力必须经过本机真实 Deep Link/已验证私有 IPC 验证，失败时回退主对话，不向 Renderer 暴露原始 ID。
+
+## RAW-083 紧凑悬浮窗角标与命中区
+
+- 待输入角标固定到紧凑水球/卡片的左下；已完成未读固定到最右下角，进行中在其上方形成稳定右下纵列，分别保留自身颜色、计数、200ms 隐私安全说明、点击动作和键盘可达性。
+- 紧凑主体的 hover 与指针点击仅在上方三分之一触发展开；下半区绝不触发展开，并是唯一可启动窗口拖拽的区域；中间三分之一保持惰性。角标自身仍是独立交互控件，不成为拖拽起点。
+- 显式键盘激活继续展开，触屏不模拟 hover；拖动超过既有阈值仍抑制后续点击展开。该细化不修改额度读数、任务投影、Host 拖拽协议、持久化配置或外部服务。
+
+## RAW-084 全局前后任务循环
+
+- [plugin.json](../../../../public/plugin.json#L1) 注册“上一个 Codex 任务”与“下一个 Codex 任务”两个 `mainHide` uTools 全局功能；[featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L1) 只将它们路由至 `codex.task.previous` / `codex.task.next`，并复用现有 feature-disabled 回退。
+- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 以非持久化匿名 key 记住本次循环位置。候选序列依次拼接 `inputRequired`、完整 `completed-unread` 和 `ongoing`，每段使用现有置顶优先/稳定显示顺序并按 key 去重；首次 next/previous 分别选择首项/末项，之后按方向回绕。只接受当前具有 action alias 的任务，候选为空或动作失效时给出明确消息。
+- 两个命令只能调用既有打开路径：不派发 completed-unread acknowledgement、不写 EyPc receipt、不改隐藏、选中、页签或 Codex Desktop 原生 unread。设置页为两个功能各自调用现有 uTools 全局快捷键配置入口；不默认占用系统组合键。
+
+## RAW-085 循环快捷键回显
+
+- [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 只读取当前 uTools 宿主为 `EyPc/上一个 Codex 任务`、`EyPc/下一个 Codex 任务` 保存的绑定，并在预加载边界过滤后才暴露给 Renderer；不返回其他插件记录，也不写入任何全局快捷键配置。
+- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 将这份瞬时、非持久化回显加入配置页运行时快照；[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1) 提供显式刷新动作。读取失败或旧宿主不支持时保持明确的不可读状态，不用缓存或默认组合键替代。
+- [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 在两个循环命令行显示已绑定组合键或“未配置”，并在页面重新获得焦点、可见性恢复及手动刷新时重读。配置按钮仍只跳转原有 uTools 设置入口。

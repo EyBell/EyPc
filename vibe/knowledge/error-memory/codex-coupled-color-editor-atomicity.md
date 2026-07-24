@@ -1,10 +1,10 @@
 ---
 id: eypc-codex-coupled-color-editor-atomicity
-status: verified
+status: superseded
 scope: project
 fingerprint: codex-card-color-pair__independent-native-color-popups-or-wrong-float-editor__one-sided-validation-cannot-converge__shared-draft-whole-pair-validation-atomic-commit
 first_seen: 2026-07-22
-last_verified: 2026-07-22
+last_verified: 2026-07-24
 review_after: 2027-01-22
 evidence:
   - src/components/CodexCardColorDialog.vue
@@ -19,7 +19,11 @@ tags:
   - accessibility
 ---
 
-# Coupled Colors Need One Draft Transaction
+# Historical Coupled Colors Need One Draft Transaction
+
+## Supersession
+
+`RAW-071` records the user's explicit correction that the current product must apply water-ball, card and status-signal colors independently and directly. The active path must not use color format, contrast, coupled-gamut, automatic adjustment or Controller rollback validation. This record remains historical evidence for the 2026-07-22 modal behavior only; it is not eligible for recall as a prevention rule or implementation route.
 
 ## Symptom
 
@@ -69,3 +73,4 @@ Coupled appearance values must use one local draft transaction, validate the com
 | --- | --- | --- | --- | --- | --- |
 | 2026-07-22 | Codex card paired-color editor | User could still open only one color at a time and the wrong water editor appeared in the float | Independent native color inputs plus immediate one-sided updates | Replaced with one HSL/HEX modal draft, whole-pair/derived validation and atomic Controller persistence; removed the float water editor | verified |
 | 2026-07-22 | RAW-054 linked color boards | User clarified that two actual linked boards, constrained partner gamut, real-float preview/rollback and a clickable swatch palette were required | Slider-only modal with modal-only preview | Added two canvas boards, invalid-gamut mask, nearest-lightness coupling, in-place 12-card palette and Controller transient real-float preview/rollback; float remains display-only | verified |
+| 2026-07-24 | RAW-071 appearance workbench | User reported the largest water ball reverting and rejected the coupled-card model for the current page | Reusing pair validation, adjustment and transaction semantics for independently visible water/card/status targets | Superseded the active route with three direct color zones and no color validation/rollback gate | superseded |

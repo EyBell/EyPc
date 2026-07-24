@@ -3,25 +3,108 @@
 Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-22.15`
+Requirement version: `2026-07-24.15`
 
-## RAW-069 当前交付状态
+## 2026-07-24 可选完成修订的类型收窄
+
+- 实现：完成未读的显式确认动作先捕获 `completionRevision`，再以原始类型、有限数和正数守卫收窄；只有有效修订才写入本地 receipt，原有不可用提示和打开行为不变。
+- 静态核验：已完成差异空白检查和调用路径审阅；未运行 TypeScript 类型检查、测试、构建、uTools 或真实 Codex 操作，仍待用户验收。
+- Error memory：新增候选 [typescript-number-isfinite-optional-narrowing.md](../../../knowledge/error-memory/typescript-number-isfinite-optional-narrowing.md#L1)，记录运行时 `Number.isFinite` 校验不能代替可选数值的 TypeScript 类型收窄。
+
+## RAW-085 当前交付状态
 
 | Check | Result | Evidence / Scope |
 | --- | --- | --- |
-| 任务级完成稳定窗 | implemented / unverified | Controller 区分原始会话快照与展示快照；仅 visible running 首次转 completed/completed-unread 时建立固定 2 秒 hold，重复完成不续期，初次加载已完成不延迟。 |
-| 可中断与一次性释放 | implemented / unverified | 2 秒内原始任务恢复 active/ongoing 会立即取消 hold；连续完成满 2 秒后以最新原始快照一次性释放完成桶、完成时间、未读和归档能力。 |
-| 全投影一致性 | implemented / unverified | hold 内任务统一为 `ongoing/running/blocked-active`，并重建 ongoing/completed/hidden/all、完成页、项目 section 与计数；卡片、详情、Shift 预览、角标及归档入口消费同一结果。 |
-| 双重延迟移除 | implemented / unverified | Float renderer 删除独立进行中角标 2 秒合并器，角标直接读取 Controller 稳定投影，避免卡片先完成、角标后完成或累计 4 秒。 |
-| 权威与兼容边界 | unchanged / unverified | 2 秒只延迟已由 provider 权威成立的完成展示，不从时间推断完成；无新 API、Runtime action、持久化字段、迁移或依赖，停用/关闭/dispose 会清理 hold。 |
-| 限定静态校验 | pass | `git diff --check`、测试文件零差异、固定 2000ms 常量、raw/presented 快照、held ongoing/capability、取消/释放/清理路径及旧 Renderer 计时器零命中检查通过；偏好 JSON 可解析，interaction-flow 回执为 `ready-for-ui-skill`，Markdown code-link audit 为 `OK`。依用户规则不修改或运行测试，不运行 typecheck、build、uTools、截图或真实 Codex 操作。 |
+| 受限宿主读取 | implemented / unverified | [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 以 `EyPc/上一个 Codex 任务`、`EyPc/下一个 Codex 任务` 精确过滤当前宿主记录，再将两个绑定值暴露给 Renderer；不返回其他插件数据，也不写快捷键配置。 |
+| 瞬时快照 | implemented / unverified | [codexController.ts](../../../../src/runtime/codexController.ts#L1) 仅在内存中保存已读回显；[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1) 提供刷新动作。不可读、未配置和已配置分别投影，不写 EyPc 状态或任务 receipt。 |
+| 配置页反馈 | implemented / unverified | [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 在两个循环功能行显示当前组合键/“未配置”，并于焦点、页面可见性恢复及手动刷新时重读。原有配置按钮保持跳转 uTools 设置。 |
+| 限定静态核验 | pass | 目标差异空白检查、两份 preload 的 `node --check`、TypeScript/Vue script 的仅语法转译、`plugin.json` JSON/功能存在性、preload 镜像一致性与 Markdown 代码链接审计均通过。未运行测试、typecheck、build、uTools、截图或真实 Codex 操作。 |
 
-结论：RAW-069 已实现，当前保持 `未校验，待用户验收`。用户应让同一任务从“进行中”进入权威完成：前 2 秒所有卡片、角标和归档入口继续稳定为进行中且不可归档，满 2 秒后只切换一次到已完成/已完成未读；再让任务在窗口内恢复运行，确认不会短暂出现完成态。
+结论：RAW-085 已实现，当前保持 `未校验，待用户验收`。请分别为两项命令设置、清除或修改 uTools 全局快捷键，返回 Codex 配置页后确认回显与 uTools 设置一致；在旧宿主或读取失败时应明确提示不可读取，而不能显示猜测组合键。
+
+## RAW-084 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 全局功能与路由 | implemented / unverified | [plugin.json](../../../../public/plugin.json#L1) 新增两个 `mainHide` 功能；[featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L1) 分别派发 `codex.task.previous` / `codex.task.next`，feature-disabled 时保持现有设置页回退。 |
+| 循环合同 | implemented / unverified | [codexController.ts](../../../../src/runtime/codexController.ts#L1) 依次稳定排序待输入、完整完成未读与进行中任务，按匿名 key 去重并只保留可打开项；首次 next/previous 取首/末，后续按方向回绕。循环指针仅存在 Controller 内存。 |
+| 状态边界 | implemented / unverified | 两个动作仅调用既有打开路径，不写完成 revision receipt、不确认 Codex 未读、不改隐藏、页签或任务投影；完成未读显式确认仍只属于原有专用动作。 |
+| 可发现性 | implemented / unverified | [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 为前/后任务各提供 uTools 系统级快捷键配置入口；未预设或占用系统组合键。 |
+| 限定静态核验 | pass | 目标路径 `git diff --check`、`plugin.json` JSON 解析及 feature → action → Controller 字符串链均通过。未运行测试、typecheck、build、uTools、截图或真实 Codex 操作。 |
+
+结论：RAW-084 已实现，当前保持 `未校验，待用户验收`。在 uTools 全局功能中分别绑定“上一个 Codex 任务”和“下一个 Codex 任务”后，下一项首次打开待输入首项、上一项首次打开进行中尾项；后续按待输入 → 已完成未读 → 进行中循环回绕。请确认完成未读不会被自动标记为已读，且没有候选时显示无可切换任务提示。
+
+## RAW-083 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 角标位置 | implemented / unverified | [float.css](../../../../src/styles/float.css#L1) 将待输入放到左下、已完成未读放到最右下角、进行中固定在其上方 `23px`；两种紧凑皮肤共用定位。 |
+| 主体命中区 | implemented / unverified | [FloatApp.vue](../../../../src/FloatApp.vue#L1) 用同一表面相对纵向比例限定上 `1/3` 展开、下 `1/2` 拖拽；中间 `1/6` 无动作。指针点击复用展开判定，拖动仍使用既有 `5px` 阈值抑制后续点击。 |
+| 既有交互边界 | unchanged / unverified | 角标仍是独立原生按钮并保留点击、键盘、200ms 说明和触屏路径；键盘显式激活仍展开，触屏不模拟 hover，未改 Host 拖拽协议、任务投影或持久化。 |
+| 静态核对 | pass | `git diff --check`、目标源码/样式定位、偏好索引 JSON 与 `codex-companion + full-ui + task-only` 回执均通过。偏好索引曾因交互标签超过 16 项而阻塞，已收敛为既有稳定标签；未运行测试、typecheck、build、uTools、截图或真实 Codex 操作。 |
+
+结论：RAW-083 已实现，当前保持 `未校验，待用户验收`。请确认待输入位于左下、已完成未读位于最右下角、进行中紧邻其上；在主体上方三分之一悬停/点击应展开，在下半区拖动应只移动窗口而不展开，中间区域无动作。再用键盘激活主体与点击三个角标，确认既有动作保持。
+
+## RAW-071 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| Requirement and plan gate | complete | RAW-071 reuses the existing Controlled parent and is scoped to the Codex configuration page plus direct color storage/render paths; no Host, preload, database, dependency or external write is included. |
+| Preference and method | ready | Full-ui preference receipt has no candidate or authority conflict; project defaults explicitly cover the two unmatched structural categories. The selected external redesign guide is unavailable, so implementation uses the existing Vue/CSS design language. |
+| Separated workbench | implemented / unverified | The configuration page now has explicit water-ball, card and status-signal zones. The water zone names and previews base, liquid A/B, Weekly progress/track and all three counters; card surface/foreground controls do not share that zone. |
+| Direct color path | implemented / unverified | The settings normalizer retains non-empty stored color strings, the Controller no longer rejects or restores color/water patches, and the active page writes each control immediately to its labeled setting. Quota-mode Weekly progress remains status-derived by design; custom mode uses the dedicated progress color. |
+| Static source checks | pass | `git diff --check` and active-path searches confirm no active page/controller reference to the card-color dialog or color/water validation gate. The local Vue SFC parser package is unavailable, so no parser compile was run. |
+| Documentation link audit | pass | `audit_code_links.py` reports `Code link audit: OK` across the RAW-071–076 controlled documents, project status and current knowledge/error-memory updates. |
+| Verification policy | not run | The user did not select tests. No test file was modified or run, and typecheck/build/uTools/screenshots/real Codex operations remain unexecuted. |
+
+## RAW-072 / RAW-073 / RAW-074 / RAW-075 / RAW-076 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| Single water renderer | implemented / unverified | The configuration page and float both mount `CodexWaterBall`. The preview uses the same quota projection, water appearance, colors and visible-counter calculation as the float instead of a second hand-drawn ball. |
+| Preserved water motion | implemented / unverified | The shared component keeps the existing three SVG wave layers, refraction, high-light and `static / slow / normal / fast` timing tokens. The preview changes only the component container; it does not replace the ball with a static liquid illustration. |
+| Transparent ball base | implemented / unverified | `waterAppearance.inner.baseOpacity` persists `0–100`; at `0` the ball-base layer and its shadow disappear while liquid, ring, reading and counters remain. The water-zone slider changes the same value used by the float. |
+| One-to-one controls | implemented / unverified | The water zone names ball base/opacity, liquid A/B, palette, opacity, amplitude, wave speed, Weekly ring/progress/track and all counters. Card surface/foreground remains in its own zone. |
+| Expanded-card configuration target | implemented / unverified | The card zone explicitly previews the float after expansion—tabs, search, quota and task surface—not the compact horizontal card. It consumes the same derived card surface/foreground tokens as the expanded float and labels the exact covered regions. |
+| Expanded-card theme depth | implemented / unverified | `expandedCardAppearance` persists nine direct tokens for main/raised panel, border, primary/secondary text, accent, focus, running and completed-unread. Built-in and saved themes carry the full object; legacy records receive a compatible default from their existing card values. |
+| Actual expanded-card path | implemented / unverified | The Float snapshot carries the same expanded-card object used by the page preview. Once expanded, `FloatApp` selects that resolver regardless of compact water/card style; changing a token no longer depends on or changes water-ball rendering. |
+| Static checks | pass | `git diff --check` plus direct-path searches confirm all nine page controls update `expandedCardAppearance`; built-in/saved themes and settings normalization retain it; Controller forwards it; preview and expanded float use `resolveCodexExpandedCardTheme`; no old card color control is active. |
+| Verification policy | not run | The user did not select tests. No test file was modified or run, and typecheck/build/uTools/screenshots/real Codex operations remain unexecuted. |
+
+结论：RAW-071–076 已实现，当前保持 `未校验，待用户验收`。请先确认真实水球与配置预览都保留三层波纹、折射和高光，且不再出现底部扁平矩形；再改底色、液体 A/B、波幅/速度、环/轨道，确认配置页与右侧真实水球同时呈现同一效果。展开大卡片后，分别改主面板、内层块、边框、主/次文字、选中、焦点、进行中和完成未读，确认每项只改变标注区域且与水球无关；切换内置主题或保存/重应用主题后，九项令牌应完整保留。将“球体底色透明度”调到 `0%` 时，真实浮窗只去掉底色而液体、Weekly 环、读数和角标保留。
+
+## RAW-082 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 共享动作 | implemented / unverified | 完成未读角标、uTools 功能路由和系统级快捷键配置入口都使用 `codex.completed-unread.openFirst`；待输入继续走既有只打开的 action。 |
+| 本地 revision 确认 | implemented / unverified | 首条按完整计数集合、置顶优先和稳定源顺序解析；当前完成 revision 写入 EyPc receipt 后立即重投影为 completed/read，新 revision 仍可重新进入 completed-unread。 |
+| 权威边界 | implemented / unverified | 本地确认不写 Codex Desktop 原生 unread，不从 connector/时间生成状态；普通行打开、隐藏、恢复和待输入打开都不确认。 |
+| 限定静态校验 | pass | `git diff --check`、`plugin.json` JSON 解析、共享 feature/action/Controller/receipt 字符串链与 Markdown 代码链接审计均通过；不运行用户保留的测试、typecheck、build、uTools、截图或真实 Codex 操作。 |
+
+结论：RAW-082 已实现，当前保持 `未校验，待用户验收`。请准备多个完成未读任务（含一个已隐藏和一个置顶项），分别点击水球未读角标及调用“打开并标记第一个 Codex 已完成未读任务”的 uTools 全局功能/快捷键；两条路径都应打开相同首条，并立即让该 revision 在所有 EyPc 视图变为已完成/已读。随后产生更晚的完成 revision，应重新显示未读。待输入角标和待输入全局功能应只打开，不改变其状态。
+
+## RAW-069 / RAW-077 / RAW-078 / RAW-079 / RAW-080 / RAW-081 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 回流优先发布 | implemented / unverified | 已完成且已读任务回流为 completed-unread 或 desktop-live active 时绕过普通 Activity Delta 防抖立即发布，并取消同任务尚未到期的终态 hold；completed-unread 保持其语义，不被归一为 ongoing。 |
+| 任务级进行中离开稳定窗 | implemented / unverified | Controller 区分原始会话快照与展示快照；visible running 首次转 completed/completed-unread、failed 或 system-error 时按持久化 `completionPresentationDelayMs` 建立 hold，允许 `0/500/1000/1500/2000/3000ms`，默认 1500ms；`0` 不建立 hold，重复终态不续期，初次加载终态不延迟。 |
+| 可中断与一次性释放 | implemented / unverified | 展示窗内原始任务恢复 active/ongoing 会立即取消 hold；连续终态达到当前配置值后以最新原始快照一次性释放完成桶、异常状态、完成时间、未读和归档能力。 |
+| 全投影一致性 | implemented / unverified | hold 内任务统一为 `ongoing/running/blocked-active`，并重建 ongoing/completed/hidden/all、完成页、项目 section 与计数；卡片、详情、Shift 预览、角标及归档入口消费同一结果。 |
+| 双重延迟移除 | implemented / unverified | Float renderer 删除独立进行中角标合并器，角标直接读取 Controller 稳定投影，避免卡片先完成、角标后完成或额外延迟。 |
+| 权威与兼容边界 | implemented / unverified | 该设置只延迟已由 provider 权威成立的进行中离开展示，不从时间推断完成；其它非输入活动仍为 2 秒去抖。默认值与旧缺失配置归一为 1500ms，停用/关闭/dispose 会清理 hold。 |
+| 百分比读数独立配置 | implemented / unverified | 位置、字号、常规/加粗/斜体/粗斜体和颜色属于 `waterAppearance.inner`，预览与真实水球共用 `CodexWaterBall`；默认居中、22px、加粗、白色，并随内置/已保存主题持久化。 |
+| live 未读缺字段回退 | implemented / unverified | Desktop snapshot/patch 明确给出 `hasUnreadTurn` 时保持 desktop-live 优先；字段缺失时不再写入 `false/unavailable`，而是保留最近成功读取的 Codex persisted unread；持久化集合不可读才显式 unknown。 |
+| 待输入请求名归一化 | implemented / unverified | 仅对既有 user-input / option-picker / setup / approval / elicitation / permission 已知词做分隔符删除后匹配，因此 `request_user_input` 与既有等价写法同样映射到 `waitingOnUserInput`；仍要求 `desktop-live active`，未放宽 connector、`notLoaded` 或时间推断。 |
+| 限定静态校验 | pass | `git diff --check` 通过；默认值、离散延迟、Activity Delta 回流优先分流、共享终态 hold、其它非输入 2 秒防抖与配置页文案均已结构核对；设计偏好 JSON 可解析，Markdown code-link audit 为 `OK`。设计收口只生成无写入的 W29 候选；不修改或运行测试，不运行 typecheck、build、uTools、截图或真实 Codex 操作。 |
+
+结论：RAW-079–081 已实现，当前保持 `未校验，待用户验收`。用户应确认默认“进行中离开稳定窗”为 1.5 秒、修改并重开后仍保留；随后以同一任务验证所选时长内卡片、角标和归档入口稳定为进行中且不可归档，窗口结束后仅切换一次。再让已完成且已读任务回流为完成未读或 desktop-live 进行中，确认立即发布且未读不被改写；特别验证 live snapshot/patch 缺少 unread 字段时，既有完成未读不丢失，而实际 read-state 改为已读时仍立即清除。再触发 `request_user_input` 形式的活跃请求，确认待输入角标立即出现。分别修改百分比读数位置、字号、字形和颜色，确认预览与真实悬浮球同步且主题/重开后仍保留。
 
 ## RAW-070 当前交付状态
 
 - 已增加 60 秒中断宽限：仅当任务已明确为非 active 的 `interrupted`，且最新 `updatedAt` 连续达到阈值，领域层才生成完成 revision；Desktop live active 仍优先，`notLoaded`、`unknown` 和 connector-only active 不会因时间变成完成。
-- 该规则只收敛已存在的 interrupted 证据，用于手动关闭临时任务的状态闪烁；普通完成仍由 Controller 单一 2 秒稳定发布器负责，未新增 Renderer 定时器。
+- 该规则只收敛已存在的 interrupted 证据，用于手动关闭临时任务的状态闪烁；普通完成仍由 Controller 单一、默认 1500ms 的可配置展示稳定器负责，未新增 Renderer 定时器。
 - 当前仍为 `未校验，待用户验收`：需在本机 Codex Desktop 观察临时任务关闭后 60 秒内保持进行中，超过阈值只切换一次到完成/完成未读，并确认 active 恢复不会被错误完成标记覆盖。
 
 静态校验：本轮仅执行 `git diff --check`、`pnpm run typecheck` 和 Markdown 代码链接审计；不执行自动化测试、build、截图、uTools 宿主验收或真实 Codex 操作。
@@ -95,7 +178,7 @@ Requirement version: `2026-07-22.15`
 | 6 小时动态流 | implemented / unverified | 动态页和徽标都按最近 6 小时的 `max(lastTurnStartedAt,lastTurnCompletedAt)` 非隐藏集合取数；当前 RAW-064 顺序为待输入、进行中（含三种异常状态）、未知、完成未读、已完成，完成任务仍在窗口内显示。 |
 | 行内交互与密度 | implemented / unverified | 标题普通点击直达、Ctrl/Cmd 只选择；元信息行聚焦并高亮以接收 `Ctrl+T`。四按钮固定为 `24px / 2px / 102px`，注册提示只显示“最近 N 天的 M 条”。 |
 | 水球收敛 | superseded by RAW-065 | RAW-063 当时移除 Weekly SVG 外环；RAW-065 已恢复数据进度环及其设置，同时删除普通装饰圈。 |
-| 状态角标与图片回退 | implemented / unverified | 左上待输入保持实时；右上进行中使用不重置 2 秒展示窗口。编辑器支持 PNG/JPEG/WebP 选择、拖放、粘贴与内存预览；当前文本-only App Server 下图片动作仅复制文字并打开 Codex 空白会话，不创建 App Server 空线程。 |
+| 状态角标与图片回退 | implemented / unverified | 左下待输入保持实时；右下最边角为完成未读、其上为进行中，并使用不重置的、默认 1500ms 可配置完成展示窗口。编辑器支持 PNG/JPEG/WebP 选择、拖放、粘贴与内存预览；当前文本-only App Server 下图片动作仅复制文字并打开 Codex 空白会话，不创建 App Server 空线程。 |
 | 静态核对 | pass | `git diff --check` 通过；已复核可见 Tab 仅为四项、旧 all/input 回退路径、6 小时动态筛选、外环 CSS/SVG/设置入口移除和受控/权威文档同步。按用户要求未运行测试、typecheck、build、uTools、截图或真实宿主操作。 |
 
 结论：RAW-063 已实现，状态为 `未校验，待用户验收`。用户验收应确认旧 `all/input` 启动后直接进入动态、四页签无闪现、待输入角标/当前动态分段正常，以及最近 6 小时内完成任务仍可见。
@@ -157,7 +240,7 @@ Requirement version: `2026-07-22.15`
 | --- | --- | --- |
 | Codex Desktop 伴随桥 | implemented / unverified | Preload 已实现 macOS loopback Unix socket、长度帧、固定版本 initialize/snapshot/patch/follow/request/read-state、断线重连，以及 owner/mode 与协议不兼容 fail-closed；桌面全文快照仅在 preload 内瞬时投影。 |
 | Input / 正在进行中 | implemented / unverified | `statusAuthority=desktop-live` 才能产生 waiting-input/waiting-approval/active；App Server/V1 delta 只标记 connector authority。失去 desktop live 后立即转“宿主状态未知”，不再使用五秒启发或本地缓存计数。 |
-| 已完成未读 | implemented / unverified | 最新 Turn completed 与 Codex `hasUnreadTurn` 共同决定；live read-state 优先，断线时可用 Codex 自身持久化 unread 集合。EyPc open/hide/restore 均不确认未读。 |
+| 已完成未读 | implemented / unverified | 最新 Turn completed 与 Codex `hasUnreadTurn` 共同决定；live read-state 优先，断线时可用 Codex 自身持久化 unread 集合。EyPc open/hide/restore 与待输入打开均不确认；仅显式完成未读命令在 EyPc 本地确认当前 completion revision。 |
 | 归档即时同步 | implemented / unverified | App Server `thread/archive` 及 false/true 双向验证保留；成功后向已连接桌面端派发 `thread-archived` v2。单条/项目结果区分已派发与桌面端未确认即时刷新，通知失败不回滚已验证归档。 |
 | 活动与诊断 UI | implemented / unverified | 动态页显示正在进行中（含错误状态）、宿主状态未知和已完成未读等分段；角标仅统计桌面权威 Input/active/unread。设置页分别展示 App Server 数据连接器与桌面实时桥状态；普通 watchdog 改为 5s，三次失败后 1s。 |
 | 自动化契约 | updated / not run | Domain、Controller、UI、platform/preload 测试契约已更新，并增加私有桌面 socket snapshot/read/archive 通知边界用例；依用户规则未执行。 |
@@ -305,6 +388,6 @@ Requirement version: `2026-07-22.15`
 ## Revision 2026-07-23.1 Static Verification Pending
 
 - 已核验本机 Codex Desktop 存在真实 Side Chat live stream；Side Chat 未进入普通 inventory，但 snapshot/patch/follow/read-state 可由 preload shadow 通路接收并聚合到主对话。
-- 已实现 `waitingOnUserInput` 进入/退出即时发布；其他 activity、普通未读和 Side Chat 关系走单一 2 秒稳定窗口，并将完成转换交给既有完成稳定器，避免两个 2 秒窗口叠加。
+- 已实现 `waitingOnUserInput` 进入/退出即时发布；其他 activity、普通未读和 Side Chat 关系走单一 2 秒稳定窗口，并将完成转换交给既有默认 1500ms、可配置的完成稳定器，避免两个窗口叠加。
 - 已实现主对话隐藏导航目标选择与 Deep Link 失败回退逻辑；本轮未执行真实打开动作，因此 Side Chat 直跳仍标记为“未验证”，不写入 publish log 能力承诺。
 - 按用户要求仅执行 `git diff --check`、`pnpm run typecheck` 与静态结构核验；不执行自动化测试、build、截图、uTools 宿主验收或额外自动化测试。

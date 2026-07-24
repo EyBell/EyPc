@@ -40,10 +40,10 @@
       "scope": "project",
       "surfaces": ["codex-companion"],
       "authority_ref": "developer-soul.md#codex-companion-taste",
-      "tags": ["authority:project-soul", "dark-water", "explicit-card-surface-foreground-pair", "contrast-validated", "linked-color-boards", "in-place-color-cards", "transient-real-float-preview", "display-only-float"],
+      "tags": ["authority:project-soul", "dark-water", "water-card-status-separated", "visible-part-preview", "independent-percent-reading-controls", "direct-color-application", "no-color-revert", "display-only-float"],
       "status": "stable",
       "priority": 200,
-      "last_verified": "2026-07-22"
+      "last_verified": "2026-07-24"
     },
     {
       "id": "eypc-codex-interaction-input",
@@ -51,10 +51,10 @@
       "scope": "project",
       "surfaces": ["codex-companion"],
       "authority_ref": "developer-soul.md#codex-companion-taste",
-      "tags": ["authority:project-soul", "four-task-tabs", "error-states-in-active-group", "fixed-four-character-rails", "ordinary-core-open", "selection-core-toggle-last-exit", "nonreflow-bottom-selection-cue", "unselected-row-deemphasis", "full-height-selector", "theme-gradient-selection", "status-space-selection", "native-button-key-ownership", "floating-batch-toolbar", "control-owned-pin-source", "pinned-first-within-status-section", "compact-counter-first-task-open"],
+      "tags": ["authority:project-soul", "four-task-tabs", "error-states-in-active-group", "fixed-four-character-rails", "ordinary-core-open", "selection-core-toggle-last-exit", "nonreflow-bottom-selection-cue", "unselected-row-deemphasis", "full-height-selector", "theme-gradient-selection", "status-space-selection", "native-button-key-ownership", "floating-batch-toolbar", "control-owned-pin-source", "pinned-first-within-status-section", "compact-and-cyclic-task-navigation"],
       "status": "stable",
       "priority": 200,
-      "last_verified": "2026-07-22"
+      "last_verified": "2026-07-24"
     },
     {
       "id": "eypc-codex-typography",
@@ -73,7 +73,7 @@
       "scope": "project",
       "surfaces": ["codex-companion"],
       "authority_ref": "developer-soul.md#codex-companion-taste",
-      "tags": ["authority:project-soul", "non-rotating-cyclic-wave", "three-layer-water", "refraction", "data-driven-weekly-ring", "interruptible-two-second-completion-hold", "reduced-motion"],
+      "tags": ["authority:project-soul", "non-rotating-cyclic-wave", "three-layer-water", "refraction", "data-driven-weekly-ring", "configured-default-1500ms-ongoing-exit-hold", "reduced-motion"],
       "status": "stable",
       "priority": 200,
       "last_verified": "2026-07-22"
