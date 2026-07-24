@@ -96,6 +96,11 @@ export interface CodexFloatWorkspaceDiagnostics {
   errorCode?: string
 }
 
+export interface CodexTaskHotkeyReadback {
+  supported: boolean
+  bindings: Record<string, string>
+}
+
 export interface EypcPlatformApi {
   storage: {
     getState(): AppState
@@ -151,6 +156,7 @@ export interface EypcPlatformApi {
     hide(): Promise<boolean> | boolean
     show?(): boolean
     configureHotkey?(commandLabel: string): boolean
+    readConfiguredHotkeys?(commandLabels: string[]): CodexTaskHotkeyReadback
   }
   getEnterPayload(): { code?: string } | null
   clearEnterPayload(): void

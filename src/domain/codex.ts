@@ -19,9 +19,12 @@ export type CodexVisibleTaskTab = Exclude<CodexTaskTab, 'all' | 'input'>
 export type CodexProjectSectionId = 'pinned' | 'projects' | 'chats'
 export type CodexWaterPalette = 'solid' | 'gradient' | 'aurora'
 export type CodexWaterMotion = 'static' | 'slow' | 'normal' | 'fast'
+export type CodexWaterPercentPosition = 'auto' | 'bottom-left' | 'center' | 'bottom-right'
+export type CodexWaterPercentTextStyle = 'regular' | 'bold' | 'italic' | 'bold-italic'
 export type CodexWaterOuterStyle = 'solid' | 'segmented'
 export type CodexWaterColorMode = 'quota' | 'custom'
 export type CodexWaterGlow = 'off' | 'soft' | 'strong'
+export type CodexCompletionPresentationDelayMs = 0 | 500 | 1000 | 1500 | 2000 | 3000
 export type CodexQuotaFamily = 'normal' | 'spark'
 export type CodexNewThreadModelPolicy = 'quota-auto'
 
@@ -403,6 +406,9 @@ export interface CodexThreadReceipt {
   /** Legacy local-view watermark; never authoritative for Codex unread state. */
   acknowledgedRecency: number
   acknowledgedAt: number
+  /** Explicit user acknowledgement of one completed revision in EyPc only. */
+  completedUnreadAcknowledgedRevision?: number
+  completedUnreadAcknowledgedAt?: number
   /** Legacy completion-pending fields, cleared when a current host row is projected. */
   pendingRecency: number
   pendingSince: number
@@ -431,14 +437,30 @@ export interface CodexColorSettings {
   cardForeground: string
 }
 
+export interface CodexCounterColors {
+  input: string
+  active: string
+  unread: string
+}
+
 export interface CodexWaterAppearanceSettings {
   inner: {
     palette: CodexWaterPalette
-    colorA: string
-    colorB: string
+    fillColorA: string
+    fillColorB: string
+    /** Legacy persisted aliases; normalized into fillColorA/fillColorB. */
+    colorA?: string
+    colorB?: string
     opacity: number
     amplitude: number
     motion: CodexWaterMotion
+    /** Opacity of the ball background only; liquid, ring, reading and counters stay visible. */
+    baseOpacity: number
+    showPercent: boolean
+    percentPosition: CodexWaterPercentPosition
+    percentSize: number
+    percentTextStyle: CodexWaterPercentTextStyle
+    percentColor: string
   }
   outer: {
     style: CodexWaterOuterStyle
@@ -452,11 +474,28 @@ export interface CodexWaterAppearanceSettings {
   }
 }
 
+/**
+ * Direct tokens for the panel shown after the floating companion expands.
+ * These stay independent of the compact water-ball and compact-card skins.
+ */
+export interface CodexExpandedCardAppearanceSettings {
+  surface: string
+  surfaceRaised: string
+  foreground: string
+  secondary: string
+  border: string
+  focus: string
+  accent: string
+  running: string
+  pending: string
+}
+
 export interface CodexSavedThemePreset {
   id: string
   name: string
   colors: CodexColorSettings
   waterAppearance: CodexWaterAppearanceSettings
+  expandedCardAppearance: CodexExpandedCardAppearanceSettings
   createdAt: number
   updatedAt: number
 }
@@ -480,6 +519,8 @@ export interface CodexSettings {
   conversationInboxEnabled: boolean
   quotaRefreshMinutes: CodexQuotaRefreshMinutes
   taskRefreshSeconds: CodexTaskRefreshSeconds
+  /** Delay before a previously-running task is presented as completed. */
+  completionPresentationDelayMs: CodexCompletionPresentationDelayMs
   newThreadModelPolicy: CodexNewThreadModelPolicy
   /** Applies only while ordinary Codex quota is selected by quota-auto. */
   newThreadPreferredModel: string
@@ -488,7 +529,9 @@ export interface CodexSettings {
   compactFields: CodexCompactField[]
   expandedFields: CodexExpandedField[]
   colors: CodexColorSettings
+  counterColors: CodexCounterColors
   waterAppearance: CodexWaterAppearanceSettings
+  expandedCardAppearance: CodexExpandedCardAppearanceSettings
   savedThemePresets: CodexSavedThemePreset[]
   position: CodexFloatPosition
   expandedSizes: CodexExpandedSizePreference[]
@@ -651,7 +694,6 @@ export interface ConversationProjection {
   pendingKeys: string[]
 }
 
-const HEX_COLOR = /^#[0-9a-f]{6}$/i
 const RECEIPT_KEY = /^[a-f0-9]{16,64}$/
 const PROJECT_KEY = /^(?:[a-f0-9]{16,64}|chats)$/
 const COMPACT_FIELDS: CodexCompactField[] = ['short', 'weekly', 'tasks']
@@ -684,51 +726,22 @@ function orderedFields<T extends string>(value: unknown, allowed: readonly T[], 
 }
 
 function color(value: unknown, fallback: string): string {
-  return typeof value === 'string' && HEX_COLOR.test(value) ? value.toUpperCase() : fallback
-}
-
-function isValidColor(value: unknown): value is string {
-  return typeof value === 'string' && HEX_COLOR.test(value)
-}
-
-function colorLuminance(value: string): number {
-  const channels = [value.slice(1, 3), value.slice(3, 5), value.slice(5, 7)]
-    .map((channel) => Number.parseInt(channel, 16) / 255)
-    .map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
-  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
-}
-
-function colorContrastRatio(first: string, second: string): number {
-  const light = Math.max(colorLuminance(first), colorLuminance(second))
-  const dark = Math.min(colorLuminance(first), colorLuminance(second))
-  return (light + 0.05) / (dark + 0.05)
-}
-
-function readableCardForeground(surface: string): string {
-  const ink = '#07161D'
-  const paper = '#F8FCFB'
-  return colorContrastRatio(surface, ink) >= colorContrastRatio(surface, paper) ? ink : paper
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 160) : fallback
 }
 
 function normalizeColors(value: unknown, fallback: CodexColorSettings): CodexColorSettings {
   const source = record(value)
   const hasWaterSetting = Object.prototype.hasOwnProperty.call(source, 'water')
-  const legacyCard = isValidColor(source.card) ? source.card.toUpperCase() : null
-  const legacyCardIsDark = legacyCard !== null && colorLuminance(legacyCard) < 0.5
-
-  const card = hasWaterSetting
-    ? color(source.card, fallback.card)
-    : legacyCard && !legacyCardIsDark ? legacyCard : fallback.card
+  const legacyCard = color(source.card, '')
+  const card = color(source.card, fallback.card)
 
   return {
     healthy: color(source.healthy, fallback.healthy),
     warning: color(source.warning, fallback.warning),
     critical: color(source.critical, fallback.critical),
-    water: hasWaterSetting
-      ? color(source.water, fallback.water)
-      : legacyCardIsDark ? legacyCard : fallback.water,
-    card,
-    cardForeground: color(source.cardForeground, readableCardForeground(card))
+    water: hasWaterSetting ? color(source.water, fallback.water) : legacyCard || fallback.water,
+    card: hasWaterSetting ? card : legacyCard || fallback.card,
+    cardForeground: color(source.cardForeground, fallback.cardForeground)
   }
 }
 
@@ -743,11 +756,17 @@ export function defaultCodexWaterAppearance(colors: CodexColorSettings = default
   return {
     inner: {
       palette: 'gradient',
-      colorA: colors.water,
-      colorB: mixColorHex(colors.water, colors.healthy, 0.35),
+      fillColorA: colors.water,
+      fillColorB: mixColorHex(colors.water, colors.healthy, 0.35),
       opacity: 78,
       amplitude: 8,
-      motion: 'normal'
+      motion: 'normal',
+      baseOpacity: 100,
+      showPercent: true,
+      percentPosition: 'auto',
+      percentSize: 22,
+      percentTextStyle: 'bold',
+      percentColor: '#FFFFFF'
     },
     outer: {
       style: 'solid',
@@ -761,8 +780,37 @@ export function defaultCodexWaterAppearance(colors: CodexColorSettings = default
   }
 }
 
+export function defaultCodexExpandedCardAppearance(colors: CodexColorSettings = defaultCodexSettingsColors()): CodexExpandedCardAppearanceSettings {
+  const surface = colors.card
+  const foreground = colors.cardForeground
+  return {
+    surface,
+    surfaceRaised: mixColorHex(surface, foreground, 0.025),
+    foreground,
+    secondary: mixColorHex(surface, foreground, 0.52),
+    border: mixColorHex(surface, foreground, 0.28),
+    focus: colors.healthy,
+    accent: colors.healthy,
+    running: '#2F7CC0',
+    pending: '#C6631A'
+  }
+}
+
 function defaultCodexSettingsColors(): CodexColorSettings {
   return { healthy: '#23B5A5', warning: '#F2A93B', critical: '#EF5B68', water: '#102C3C', card: '#F7F9F7', cardForeground: '#07161D' }
+}
+
+function defaultCodexCounterColors(): CodexCounterColors {
+  return { input: '#E5486F', active: '#258BC7', unread: '#B84D91' }
+}
+
+function normalizeCounterColors(value: unknown, fallback: CodexCounterColors): CodexCounterColors {
+  const source = record(value)
+  return {
+    input: color(source.input, fallback.input),
+    active: color(source.active, fallback.active),
+    unread: color(source.unread, fallback.unread)
+  }
 }
 
 export function normalizeCodexWaterAppearance(value: unknown, colors: CodexColorSettings, fallback = defaultCodexWaterAppearance(colors)): CodexWaterAppearanceSettings {
@@ -772,11 +820,17 @@ export function normalizeCodexWaterAppearance(value: unknown, colors: CodexColor
   return {
     inner: {
       palette: enumValue(inner.palette, ['solid', 'gradient', 'aurora'] as const, fallback.inner.palette),
-      colorA: color(inner.colorA, fallback.inner.colorA),
-      colorB: color(inner.colorB, fallback.inner.colorB),
+      fillColorA: color(inner.fillColorA || inner.colorA, fallback.inner.fillColorA),
+      fillColorB: color(inner.fillColorB || inner.colorB, fallback.inner.fillColorB),
       opacity: boundedInteger(inner.opacity, 40, 95, fallback.inner.opacity),
       amplitude: boundedInteger(inner.amplitude, 4, 12, fallback.inner.amplitude),
-      motion: enumValue(inner.motion, ['static', 'slow', 'normal', 'fast'] as const, fallback.inner.motion)
+      motion: enumValue(inner.motion, ['static', 'slow', 'normal', 'fast'] as const, fallback.inner.motion),
+      baseOpacity: boundedInteger(inner.baseOpacity, 0, 100, fallback.inner.baseOpacity),
+      showPercent: typeof inner.showPercent === 'boolean' ? inner.showPercent : fallback.inner.showPercent,
+      percentPosition: enumValue(inner.percentPosition, ['auto', 'bottom-left', 'center', 'bottom-right'] as const, fallback.inner.percentPosition),
+      percentSize: boundedInteger(inner.percentSize, 12, 32, fallback.inner.percentSize),
+      percentTextStyle: enumValue(inner.percentTextStyle, ['regular', 'bold', 'italic', 'bold-italic'] as const, fallback.inner.percentTextStyle),
+      percentColor: color(inner.percentColor, fallback.inner.percentColor)
     },
     outer: {
       style: enumValue(outer.style, ['solid', 'segmented'] as const, fallback.outer.style),
@@ -787,6 +841,25 @@ export function normalizeCodexWaterAppearance(value: unknown, colors: CodexColor
       glow: enumValue(outer.glow, ['off', 'soft', 'strong'] as const, fallback.outer.glow),
       shellOpacity: boundedInteger(outer.shellOpacity, 25, 95, fallback.outer.shellOpacity)
     }
+  }
+}
+
+export function normalizeCodexExpandedCardAppearance(
+  value: unknown,
+  colors: CodexColorSettings,
+  fallback = defaultCodexExpandedCardAppearance(colors)
+): CodexExpandedCardAppearanceSettings {
+  const source = record(value)
+  return {
+    surface: color(source.surface, fallback.surface),
+    surfaceRaised: color(source.surfaceRaised, fallback.surfaceRaised),
+    foreground: color(source.foreground, fallback.foreground),
+    secondary: color(source.secondary, fallback.secondary),
+    border: color(source.border, fallback.border),
+    focus: color(source.focus, fallback.focus),
+    accent: color(source.accent, fallback.accent),
+    running: color(source.running, fallback.running),
+    pending: color(source.pending, fallback.pending)
   }
 }
 
@@ -823,11 +896,12 @@ function normalizeSavedThemePresets(value: unknown, fallbackColors: CodexColorSe
     if (!name) continue
     const colors = normalizeColors(source.colors, fallbackColors)
     const waterAppearance = normalizeCodexWaterAppearance(source.waterAppearance, colors)
+    const expandedCardAppearance = normalizeCodexExpandedCardAppearance(source.expandedCardAppearance, colors)
     const createdAt = numberValue(source.createdAt, 0)
     const updatedAt = numberValue(source.updatedAt, createdAt || Date.now())
     const existing = presets.get(id)
     if (!existing || updatedAt >= existing.updatedAt) {
-      presets.set(id, { id, name, colors, waterAppearance, createdAt: createdAt || updatedAt, updatedAt })
+      presets.set(id, { id, name, colors, waterAppearance, expandedCardAppearance, createdAt: createdAt || updatedAt, updatedAt })
     }
   }
   return [...presets.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_SAVED_THEME_PRESETS)
@@ -987,13 +1061,16 @@ export function defaultCodexSettings(): CodexSettings {
     conversationInboxEnabled: true,
     quotaRefreshMinutes: 5,
     taskRefreshSeconds: 15,
+    completionPresentationDelayMs: 1500,
     newThreadModelPolicy: 'quota-auto',
     newThreadPreferredModel: '',
     timeWindowDays: 30,
     compactFields: [...COMPACT_FIELDS],
     expandedFields: [...EXPANDED_FIELDS],
     colors,
+    counterColors: defaultCodexCounterColors(),
     waterAppearance: defaultCodexWaterAppearance(colors),
+    expandedCardAppearance: defaultCodexExpandedCardAppearance(colors),
     savedThemePresets: [],
     position: { displayId: '', x: null, y: null, edge: 'right' },
     expandedSizes: []
@@ -1005,12 +1082,14 @@ export function normalizeCodexSettings(value: unknown): CodexSettings {
   const source = record(value)
   const position = record(source.position)
   const colors = normalizeColors(source.colors, fallback.colors)
+  const counterColors = normalizeCounterColors(source.counterColors, fallback.counterColors)
   return {
     floatEnabled: source.floatEnabled === true,
     displayStyle: enumValue(source.displayStyle, ['water', 'card'] as const, fallback.displayStyle),
     conversationInboxEnabled: source.conversationInboxEnabled !== false,
     quotaRefreshMinutes: enumValue(source.quotaRefreshMinutes, [0, 5, 10, 15, 30] as const, fallback.quotaRefreshMinutes),
     taskRefreshSeconds: enumValue(source.taskRefreshSeconds, [0, 15, 30, 60] as const, fallback.taskRefreshSeconds),
+    completionPresentationDelayMs: enumValue(source.completionPresentationDelayMs, [0, 500, 1000, 1500, 2000, 3000] as const, fallback.completionPresentationDelayMs),
     newThreadModelPolicy: enumValue(source.newThreadModelPolicy, ['quota-auto'] as const, fallback.newThreadModelPolicy),
     newThreadPreferredModel: typeof source.newThreadPreferredModel === 'string' && /^[A-Za-z0-9._:-]{1,120}$/.test(source.newThreadPreferredModel)
       ? source.newThreadPreferredModel
@@ -1019,7 +1098,9 @@ export function normalizeCodexSettings(value: unknown): CodexSettings {
     compactFields: orderedFields(source.compactFields, COMPACT_FIELDS, fallback.compactFields),
     expandedFields: orderedFields(source.expandedFields, EXPANDED_FIELDS, fallback.expandedFields),
     colors,
+    counterColors,
     waterAppearance: normalizeCodexWaterAppearance(source.waterAppearance, colors, defaultCodexWaterAppearance(colors)),
+    expandedCardAppearance: normalizeCodexExpandedCardAppearance(source.expandedCardAppearance, colors, defaultCodexExpandedCardAppearance(colors)),
     savedThemePresets: normalizeSavedThemePresets(source.savedThemePresets, colors),
     position: {
       displayId: typeof position.displayId === 'string' ? position.displayId.slice(0, 120) : '',
@@ -1132,6 +1213,8 @@ export function normalizeCodexReceipts(value: unknown): CodexThreadReceipt[] {
       key,
       acknowledgedRecency: numberValue(source.acknowledgedRecency, 0),
       acknowledgedAt: numberValue(source.acknowledgedAt, 0),
+      ...(numberValue(source.completedUnreadAcknowledgedRevision, 0) > 0 ? { completedUnreadAcknowledgedRevision: numberValue(source.completedUnreadAcknowledgedRevision, 0) } : {}),
+      ...(numberValue(source.completedUnreadAcknowledgedAt, 0) > 0 ? { completedUnreadAcknowledgedAt: numberValue(source.completedUnreadAcknowledgedAt, 0) } : {}),
       pendingRecency: numberValue(source.pendingRecency, 0),
       pendingSince: numberValue(source.pendingSince, 0),
       ...(source.pendingMode === 'completion' || source.pendingMode === 'recency' ? { pendingMode: source.pendingMode } : {}),
@@ -1141,19 +1224,19 @@ export function normalizeCodexReceipts(value: unknown): CodexThreadReceipt[] {
       ...(numberValue(source.hiddenPendingAt, 0) > 0 ? { hiddenPendingAt: numberValue(source.hiddenPendingAt, 0) } : {})
     }
     const previous = byKey.get(key)
-    const receiptWatermark = Math.max(receipt.pendingRecency, receipt.acknowledgedRecency, receipt.dismissedActivityRecency || 0, receipt.hiddenPendingRecency || 0)
-    const previousWatermark = Math.max(previous?.pendingRecency || 0, previous?.acknowledgedRecency || 0, previous?.dismissedActivityRecency || 0, previous?.hiddenPendingRecency || 0)
+    const receiptWatermark = Math.max(receipt.pendingRecency, receipt.acknowledgedRecency, receipt.completedUnreadAcknowledgedRevision || 0, receipt.dismissedActivityRecency || 0, receipt.hiddenPendingRecency || 0)
+    const previousWatermark = Math.max(previous?.pendingRecency || 0, previous?.acknowledgedRecency || 0, previous?.completedUnreadAcknowledgedRevision || 0, previous?.dismissedActivityRecency || 0, previous?.hiddenPendingRecency || 0)
     if (!previous || receiptWatermark >= previousWatermark) byKey.set(key, receipt)
   }
   const sorted = [...byKey.values()]
-    .sort((a, b) => Math.max(b.pendingRecency, b.acknowledgedRecency, b.dismissedActivityRecency || 0, b.hiddenPendingRecency || 0) - Math.max(a.pendingRecency, a.acknowledgedRecency, a.dismissedActivityRecency || 0, a.hiddenPendingRecency || 0))
+    .sort((a, b) => Math.max(b.pendingRecency, b.acknowledgedRecency, b.completedUnreadAcknowledgedRevision || 0, b.dismissedActivityRecency || 0, b.hiddenPendingRecency || 0) - Math.max(a.pendingRecency, a.acknowledgedRecency, a.completedUnreadAcknowledgedRevision || 0, a.dismissedActivityRecency || 0, a.hiddenPendingRecency || 0))
   const durableUserManaged = sorted.filter((receipt) =>
     (receipt.pendingMode === 'completion' && receipt.pendingRecency > receipt.acknowledgedRecency)
     || (receipt.dismissedActivityRecency || 0) > 0
   )
   const boundedBookkeeping = sorted.filter((receipt) => !durableUserManaged.includes(receipt)).slice(0, 100)
   return [...durableUserManaged, ...boundedBookkeeping]
-    .sort((a, b) => Math.max(b.pendingRecency, b.acknowledgedRecency, b.dismissedActivityRecency || 0, b.hiddenPendingRecency || 0) - Math.max(a.pendingRecency, a.acknowledgedRecency, a.dismissedActivityRecency || 0, a.hiddenPendingRecency || 0))
+    .sort((a, b) => Math.max(b.pendingRecency, b.acknowledgedRecency, b.completedUnreadAcknowledgedRevision || 0, b.dismissedActivityRecency || 0, b.hiddenPendingRecency || 0) - Math.max(a.pendingRecency, a.acknowledgedRecency, a.completedUnreadAcknowledgedRevision || 0, a.dismissedActivityRecency || 0, a.hiddenPendingRecency || 0))
 }
 
 export function createDefaultCodexState(): CodexState {
@@ -1371,7 +1454,8 @@ export function projectConversations(input: {
     }
 
     const unreadKnown = thread.unreadAuthority === 'desktop-live' || thread.unreadAuthority === 'desktop-persisted'
-    const unread = completionRevision > 0 && unreadKnown && thread.hasUnreadTurn === true
+    const locallyAcknowledged = (receipt.completedUnreadAcknowledgedRevision || 0) >= completionRevision
+    const unread = completionRevision > 0 && unreadKnown && thread.hasUnreadTurn === true && !locallyAcknowledged
     if (receipt.pendingMode === 'completion' || receipt.pendingRecency > 0) {
       receipt.pendingRecency = 0
       receipt.pendingSince = 0
@@ -1434,7 +1518,7 @@ export function projectConversations(input: {
     else if (bucket === 'completed') completed.push(card)
     else ongoing.push(card)
 
-    if (receipt.pendingRecency || receipt.acknowledgedRecency || receipt.dismissedActivityRecency || receipt.hiddenPendingRecency) receiptMap.set(thread.key, receipt)
+    if (receipt.pendingRecency || receipt.acknowledgedRecency || receipt.completedUnreadAcknowledgedRevision || receipt.dismissedActivityRecency || receipt.hiddenPendingRecency) receiptMap.set(thread.key, receipt)
   }
 
   ongoing.sort(compareConversationTasks)
@@ -1597,6 +1681,16 @@ export function dismissCodexThread(receipts: CodexThreadReceipt[], key: string, 
   const receipt = byKey.get(key) || { key, acknowledgedRecency: 0, acknowledgedAt: 0, pendingRecency: 0, pendingSince: 0 }
   receipt.dismissedActivityRecency = Math.max(receipt.dismissedActivityRecency || 0, activityRecency)
   receipt.dismissedAt = now
+  byKey.set(key, receipt)
+  return normalizeCodexReceipts([...byKey.values()])
+}
+
+export function acknowledgeCodexCompletedUnread(receipts: CodexThreadReceipt[], key: string, completionRevision: number, now = Date.now()): CodexThreadReceipt[] {
+  if (!RECEIPT_KEY.test(key) || !Number.isFinite(completionRevision) || completionRevision <= 0) return normalizeCodexReceipts(receipts)
+  const byKey = new Map(normalizeCodexReceipts(receipts).map((receipt) => [receipt.key, { ...receipt }]))
+  const receipt = byKey.get(key) || { key, acknowledgedRecency: 0, acknowledgedAt: 0, pendingRecency: 0, pendingSince: 0 }
+  receipt.completedUnreadAcknowledgedRevision = Math.max(receipt.completedUnreadAcknowledgedRevision || 0, completionRevision)
+  receipt.completedUnreadAcknowledgedAt = Math.max(receipt.completedUnreadAcknowledgedAt || 0, now)
   byKey.set(key, receipt)
   return normalizeCodexReceipts([...byKey.values()])
 }

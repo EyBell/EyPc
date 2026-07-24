@@ -1,4 +1,5 @@
 import {
+  acknowledgeCodexCompletedUnread,
   compareConversationTasks,
   countConversationTasks,
   conversationSnapshotFromReceipts,
@@ -34,8 +35,7 @@ import {
 } from '../domain/codex'
 import { normalizeCodexModelCatalog } from '../domain/codexNewThread'
 import type { AppState } from '../domain/types'
-import type { CodexFloatWorkspaceDiagnostics, EypcPlatformApi } from '../platform/eypcPlatform'
-import { validateCodexCustomColors, validateCodexWaterAppearance } from '../domain/codexAppearance'
+import type { CodexFloatWorkspaceDiagnostics, CodexTaskHotkeyReadback, EypcPlatformApi } from '../platform/eypcPlatform'
 
 export interface CodexRuntimeView {
   settings: CodexSettings
@@ -45,6 +45,7 @@ export interface CodexRuntimeView {
   modelCatalog: CodexModelCatalogSnapshotV1
   newThreadContextFingerprint: string
   conversations: ConversationSnapshotV1
+  taskHotkeys: CodexTaskHotkeyReadback
   refreshing: boolean
   floatHost: {
     displayId: string
@@ -62,7 +63,10 @@ export interface CodexFloatSnapshotV1 {
   compactFields: CodexSettings['compactFields']
   expandedFields: CodexSettings['expandedFields']
   colors: CodexSettings['colors']
+  counterColors?: CodexSettings['counterColors']
   waterAppearance: CodexSettings['waterAppearance']
+  /** Optional only for compatibility with an older floating child; current snapshots always include it. */
+  expandedCardAppearance?: CodexSettings['expandedCardAppearance']
   expandedSizes: CodexSettings['expandedSizes']
   quota: CodexQuotaSnapshotV1
   config: CodexConfigSnapshotV1
@@ -94,11 +98,55 @@ function taskDelay(settings: CodexSettings): number {
   return settings.conversationInboxEnabled && settings.taskRefreshSeconds > 0 ? settings.taskRefreshSeconds * 1000 : Number.POSITIVE_INFINITY
 }
 
-const COMPLETION_PRESENTATION_DELAY_MS = 2_000
+function completionPresentationDelay(settings: CodexSettings): number {
+  return settings.completionPresentationDelayMs
+}
+
 const NON_INPUT_ACTIVITY_DEBOUNCE_MS = 2_000
+const TASK_HOTKEY_COMMANDS = ['上一个 Codex 任务', '下一个 Codex 任务'] as const
+
+function emptyTaskHotkeyReadback(): CodexTaskHotkeyReadback {
+  return {
+    supported: false,
+    bindings: Object.fromEntries(TASK_HOTKEY_COMMANDS.map((command) => [command, '']))
+  }
+}
 
 type CompletionPresentationHold = {
   expiresAt: number
+}
+
+type PendingActivityUpdate = {
+  thread: CodexHostThread
+  expiresAt: number
+}
+
+function isDesktopLiveActiveThread(thread: CodexHostThread): boolean {
+  return thread.statusAuthority === 'desktop-live' && thread.status === 'active'
+}
+
+function isPresentationOngoingThread(thread: CodexHostThread): boolean {
+  return isDesktopLiveActiveThread(thread)
+    || (thread.status !== 'systemError' && thread.lastTurnStatus === 'interrupted')
+}
+
+function isCompletedReadThread(thread: CodexHostThread): boolean {
+  return thread.status !== 'systemError'
+    && !isPresentationOngoingThread(thread)
+    && thread.lastTurnStatus === 'completed'
+    && thread.hasUnreadTurn !== true
+}
+
+function isUnreadOrOngoingThread(thread: CodexHostThread): boolean {
+  return thread.hasUnreadTurn === true || isPresentationOngoingThread(thread)
+}
+
+function hasSameActivityState(previous: CodexHostThread, next: CodexHostThread): boolean {
+  return previous.status === next.status
+    && [...previous.activeFlags].sort().join('|') === [...next.activeFlags].sort().join('|')
+    && previous.statusAuthority === next.statusAuthority
+    && previous.hasUnreadTurn === next.hasUnreadTurn
+    && previous.unreadAuthority === next.unreadAuthority
 }
 
 export function createCodexController(options: CodexControllerOptions) {
@@ -110,6 +158,8 @@ export function createCodexController(options: CodexControllerOptions) {
   let environment = emptyCodexEnvironment()
   let rawConversations = conversationSnapshotFromReceipts(options.getAppState().codex.receipts)
   let conversations = rawConversations
+  let taskCycleKey = ''
+  let taskHotkeys = emptyTaskHotkeyReadback()
   let lastThreads: CodexHostThread[] = []
   let lastProjects: CodexHostProject[] = []
   let lastThreadsPartial = false
@@ -129,7 +179,7 @@ export function createCodexController(options: CodexControllerOptions) {
   let timer: ReturnType<typeof setTimeout> | null = null
   let activityTimer: ReturnType<typeof setTimeout> | null = null
   let activityDebounceTimer: ReturnType<typeof setTimeout> | null = null
-  let pendingActivityThreads: CodexHostThread[] | null = null
+  const pendingActivityUpdates = new Map<string, PendingActivityUpdate>()
   let structuralRefreshTimer: ReturnType<typeof setTimeout> | null = null
   let completionPresentationTimer: ReturnType<typeof setTimeout> | null = null
   const completionPresentationHolds = new Map<string, CompletionPresentationHold>()
@@ -171,7 +221,7 @@ export function createCodexController(options: CodexControllerOptions) {
   function clearActivityDebounce() {
     if (activityDebounceTimer) clearTimeout(activityDebounceTimer)
     activityDebounceTimer = null
-    pendingActivityThreads = null
+    pendingActivityUpdates.clear()
   }
 
   function clearStructuralRefreshTimer() {
@@ -194,8 +244,12 @@ export function createCodexController(options: CodexControllerOptions) {
       && (task.activityState === 'active' || task.activityState === 'ongoing')
   }
 
-  function isCompletedTask(task: CodexTaskCard | undefined): task is CodexTaskCard {
+  function isCompletedTask(task: CodexTaskCard | undefined): boolean {
     return task?.bucket === 'completed' || task?.bucket === 'completed-unread'
+  }
+
+  function isTerminalPresentationTask(task: CodexTaskCard | undefined): task is CodexTaskCard {
+    return isCompletedTask(task) || task?.activityState === 'failed' || task?.activityState === 'system-error'
   }
 
   function heldOngoingTask(task: CodexTaskCard): CodexTaskCard {
@@ -218,7 +272,7 @@ export function createCodexController(options: CodexControllerOptions) {
   function applyCompletionPresentationHolds(next: ConversationSnapshotV1): ConversationSnapshotV1 {
     if (!completionPresentationHolds.size) return next
     const heldKeys = new Set(next.all
-      .filter((task) => completionPresentationHolds.has(task.key) && isCompletedTask(task))
+      .filter((task) => completionPresentationHolds.has(task.key) && isTerminalPresentationTask(task))
       .map((task) => task.key))
     if (!heldKeys.size) return next
 
@@ -227,7 +281,7 @@ export function createCodexController(options: CodexControllerOptions) {
       const cached = presentedByKey.get(task.key)
       if (cached) return cached
       const hold = completionPresentationHolds.get(task.key)
-      const presented = hold && isCompletedTask(task) ? heldOngoingTask(task) : task
+      const presented = hold && isTerminalPresentationTask(task) ? heldOngoingTask(task) : task
       presentedByKey.set(task.key, presented)
       return presented
     }
@@ -299,15 +353,18 @@ export function createCodexController(options: CodexControllerOptions) {
     const now = Date.now()
 
     for (const key of completionPresentationHolds.keys()) {
-      if (!isCompletedTask(nextByKey.get(key))) completionPresentationHolds.delete(key)
+      if (!isTerminalPresentationTask(nextByKey.get(key))) completionPresentationHolds.delete(key)
     }
     for (const task of next.all) {
-      if (!completionPresentationHolds.has(task.key) && isCompletedTask(task)) {
+      if (!completionPresentationHolds.has(task.key) && isTerminalPresentationTask(task)) {
         const previous = previousByKey.get(task.key)
         if (isPresentedRunning(previous)) {
-          completionPresentationHolds.set(task.key, {
-            expiresAt: now + COMPLETION_PRESENTATION_DELAY_MS
-          })
+          const delay = completionPresentationDelay(codexState().settings)
+          if (delay > 0) {
+            completionPresentationHolds.set(task.key, {
+              expiresAt: now + delay
+            })
+          }
         }
       }
     }
@@ -327,6 +384,31 @@ export function createCodexController(options: CodexControllerOptions) {
     completionPresentationHolds.clear()
     rawConversations = next
     conversations = next
+  }
+
+  function scheduleActivityDebounceRelease() {
+    if (activityDebounceTimer) clearTimeout(activityDebounceTimer)
+    activityDebounceTimer = null
+    if (disposed || !shouldRun() || !pendingActivityUpdates.size) return
+    const expiresAt = Math.min(...[...pendingActivityUpdates.values()].map((update) => update.expiresAt))
+    activityDebounceTimer = setTimeout(() => {
+      activityDebounceTimer = null
+      if (disposed || !shouldRun()) return
+      const now = Date.now()
+      const dueUpdates = new Map<string, CodexHostThread>()
+      for (const [key, update] of pendingActivityUpdates) {
+        if (update.expiresAt <= now) {
+          pendingActivityUpdates.delete(key)
+          dueUpdates.set(key, update.thread)
+        }
+      }
+      if (dueUpdates.size) {
+        lastThreads = lastThreads.map((thread) => dueUpdates.get(thread.key) || thread)
+        publishConversationProjection({ receivedAt: now, advanceScan: false, status: rawConversations.status })
+        options.notify()
+      }
+      scheduleActivityDebounceRelease()
+    }, Math.max(0, expiresAt - Date.now()))
   }
 
   function scheduleStructuralRefresh() {
@@ -361,11 +443,11 @@ export function createCodexController(options: CodexControllerOptions) {
       return
     }
     let changed = false
+    let cancelledPendingActivity = false
     const nextThreads = lastThreads.map((thread) => {
       const entry = byKey.get(thread.key)
       if (!entry) return thread
       const activeFlags = [...new Set(entry.activeFlags || thread.activeFlags)].sort()
-      const previousFlags = [...thread.activeFlags].sort()
       const liveEntry = delta.version === 2 ? entry as CodexActivityDeltaEntryV2 : null
       const next = delta.version === 2
         ? {
@@ -377,69 +459,57 @@ export function createCodexController(options: CodexControllerOptions) {
             ...(liveEntry?.unreadAuthority ? { unreadAuthority: liveEntry.unreadAuthority } : {})
           }
         : { ...thread, status: entry.status || thread.status, activeFlags, statusAuthority: 'connector' as const }
-      if (thread.status === next.status
-        && activeFlags.join('|') === previousFlags.join('|')
-        && thread.statusAuthority === next.statusAuthority
-        && thread.hasUnreadTurn === next.hasUnreadTurn
-        && thread.unreadAuthority === next.unreadAuthority) return thread
+      if (hasSameActivityState(thread, next)) {
+        if (pendingActivityUpdates.delete(thread.key)) cancelledPendingActivity = true
+        return thread
+      }
       changed = true
       return next
     })
 
     if (!changed) {
+      if (cancelledPendingActivity) scheduleActivityDebounceRelease()
       if (environmentChanged) options.notify()
       if (delta.inventoryChanged) scheduleStructuralRefresh()
       return
     }
 
     const previousByKey = new Map(lastThreads.map((thread) => [thread.key, thread] as const))
-    const immediateKeys = new Set<string>()
-    const delayedKeys = new Set<string>()
-    const immediateThreads = nextThreads.map((thread) => {
+    const immediateUpdates = new Map<string, CodexHostThread>()
+    const delayedUpdates = new Map<string, PendingActivityUpdate>()
+    const priorityPromotionKeys = new Set<string>()
+    const activityReceivedAt = Date.now()
+    for (const thread of nextThreads) {
       const previous = previousByKey.get(thread.key)
-      const nextWaiting = thread.statusAuthority === 'desktop-live'
-        && thread.status === 'active'
+      if (!previous || hasSameActivityState(previous, thread)) continue
+      const nextWaiting = isDesktopLiveActiveThread(thread)
         && thread.activeFlags.includes('waitingOnUserInput')
-      const previousWaiting = previous?.statusAuthority === 'desktop-live'
-        && previous.status === 'active'
+      const previousWaiting = isDesktopLiveActiveThread(previous)
         && previous.activeFlags.includes('waitingOnUserInput')
-      const completionTransition = Boolean(previous
-        && previous.status === 'active'
-        && thread.status !== 'active'
-        && thread.lastTurnStatus === 'completed')
-      if (!previous || nextWaiting !== previousWaiting || completionTransition) {
-        immediateKeys.add(thread.key)
-        if (previousWaiting && !nextWaiting && thread.status !== 'active') return { ...thread, status: 'active' as const }
+      const completionTransition = isPresentationOngoingThread(previous)
+        && !isDesktopLiveActiveThread(thread)
+        && thread.lastTurnStatus === 'completed'
+      const exceptionTransition = isPresentationOngoingThread(previous)
+        && !isDesktopLiveActiveThread(thread)
+        && (thread.status === 'systemError' || thread.lastTurnStatus === 'failed')
+      const priorityPromotion = isCompletedReadThread(previous) && isUnreadOrOngoingThread(thread)
+      if (priorityPromotion) priorityPromotionKeys.add(thread.key)
+      if (nextWaiting !== previousWaiting || completionTransition || exceptionTransition || priorityPromotion) {
+        immediateUpdates.set(thread.key, thread)
       } else {
-        delayedKeys.add(thread.key)
+        delayedUpdates.set(thread.key, { thread, expiresAt: activityReceivedAt + NON_INPUT_ACTIVITY_DEBOUNCE_MS })
       }
-      return thread
-    })
+    }
 
-    pendingActivityThreads = delayedKeys.size ? nextThreads : null
-    if (immediateKeys.size) {
-      lastThreads = immediateThreads.map((thread) => immediateKeys.has(thread.key)
-        ? thread
-        : previousByKey.get(thread.key) || thread)
+    for (const key of immediateUpdates.keys()) pendingActivityUpdates.delete(key)
+    for (const [key, update] of delayedUpdates) pendingActivityUpdates.set(key, update)
+    for (const key of priorityPromotionKeys) completionPresentationHolds.delete(key)
+    if (immediateUpdates.size) {
+      lastThreads = lastThreads.map((thread) => immediateUpdates.get(thread.key) || thread)
       publishConversationProjection({ receivedAt: delta.receivedAt, advanceScan: false, status: rawConversations.status })
       options.notify()
     }
-
-    if (!delayedKeys.size) {
-      if (activityDebounceTimer) clearTimeout(activityDebounceTimer)
-      activityDebounceTimer = null
-      if (delta.inventoryChanged) scheduleStructuralRefresh()
-      return
-    }
-    if (activityDebounceTimer) clearTimeout(activityDebounceTimer)
-    activityDebounceTimer = setTimeout(() => {
-      activityDebounceTimer = null
-      if (disposed || !shouldRun() || !pendingActivityThreads) return
-      lastThreads = pendingActivityThreads
-      pendingActivityThreads = null
-      publishConversationProjection({ receivedAt: Date.now(), advanceScan: false, status: rawConversations.status })
-      options.notify()
-    }, NON_INPUT_ACTIVITY_DEBOUNCE_MS)
+    scheduleActivityDebounceRelease()
     if (delta.inventoryChanged) scheduleStructuralRefresh()
   }
 
@@ -746,29 +816,21 @@ export function createCodexController(options: CodexControllerOptions) {
   function updateSettings(patch: Partial<CodexSettings>) {
     const current = codexState().settings
     const candidateColors = patch.colors ? { ...current.colors, ...patch.colors } : current.colors
+    const candidateCounterColors = patch.counterColors ? { ...current.counterColors, ...patch.counterColors } : current.counterColors
     const candidateWaterAppearance = patch.waterAppearance ? {
       inner: { ...current.waterAppearance.inner, ...patch.waterAppearance.inner },
       outer: { ...current.waterAppearance.outer, ...patch.waterAppearance.outer }
     } : current.waterAppearance
-    if (patch.colors) {
-      const validation = validateCodexCustomColors(candidateColors)
-      if (!validation.valid) {
-        options.setMessage(`${validation.message}，已保留上一次有效主题`)
-        return false
-      }
-    }
-    if (patch.waterAppearance || patch.colors) {
-      const validation = validateCodexWaterAppearance(candidateColors, candidateWaterAppearance)
-      if (!validation.valid) {
-        options.setMessage(`${validation.message}，已保留上一次有效水球配置`)
-        return false
-      }
-    }
+    const candidateExpandedCardAppearance = patch.expandedCardAppearance
+      ? { ...current.expandedCardAppearance, ...patch.expandedCardAppearance }
+      : current.expandedCardAppearance
     const next = normalizeCodexSettings({
       ...current,
       ...patch,
       colors: candidateColors,
+      counterColors: candidateCounterColors,
       waterAppearance: candidateWaterAppearance,
+      expandedCardAppearance: candidateExpandedCardAppearance,
       position: patch.position ? { ...current.position, ...patch.position } : current.position
     })
     codexState().settings = next
@@ -789,16 +851,6 @@ export function createCodexController(options: CodexControllerOptions) {
   function resolveCardColorCandidate(colors: Partial<CodexColorSettings>): CodexColorSettings | null {
     const current = codexState().settings
     const candidate = { ...current.colors, ...colors }
-    const colorValidation = validateCodexCustomColors(candidate)
-    if (!colorValidation.valid) {
-      options.setMessage(`${colorValidation.message}，已保留上一次有效主题`)
-      return null
-    }
-    const waterValidation = validateCodexWaterAppearance(candidate, current.waterAppearance)
-    if (!waterValidation.valid) {
-      options.setMessage(`${waterValidation.message}，已保留上一次有效水球配置`)
-      return null
-    }
     return candidate
   }
 
@@ -884,6 +936,23 @@ export function createCodexController(options: CodexControllerOptions) {
     return conversations.all.length
       ? conversations.all
       : [...conversations.ongoing, ...conversations.completedUnread, ...conversations.completed, ...conversations.hidden]
+  }
+
+  function displayOrderedTasks(tasks: CodexTaskCard[]): CodexTaskCard[] {
+    const pinnedOrder = new Map<string, number>()
+    const pinned = conversations.projectSections.find((section) => section.id === 'pinned')
+    for (const entry of pinned?.entries || []) {
+      if (entry.kind === 'task' && !pinnedOrder.has(entry.task.key)) pinnedOrder.set(entry.task.key, pinnedOrder.size)
+    }
+    return tasks
+      .map((task, index) => ({ task, index, pinned: pinnedOrder.get(task.key) }))
+      .sort((left, right) => {
+        if (left.pinned !== undefined && right.pinned !== undefined) return left.pinned - right.pinned
+        if (left.pinned !== undefined) return -1
+        if (right.pinned !== undefined) return 1
+        return left.index - right.index
+      })
+      .map(({ task }) => task)
   }
 
   function setTaskTab(tab: CodexTaskTab) {
@@ -1024,6 +1093,68 @@ export function createCodexController(options: CodexControllerOptions) {
     }
     void openThread(task.key, task.actionAlias)
     return true
+  }
+
+  function openFirstCompletedUnread() {
+    const task = displayOrderedTasks(allTasks().filter((item) => item.bucket === 'completed-unread'))[0]
+    const completionRevision = task?.completionRevision
+    if (!task?.actionAlias || typeof completionRevision !== 'number' || !Number.isFinite(completionRevision) || completionRevision <= 0) {
+      options.setMessage('当前没有已完成未读任务')
+      return false
+    }
+    codexState().receipts = acknowledgeCodexCompletedUnread(codexState().receipts, task.key, completionRevision)
+    republishAfterReceiptChange()
+    void openThread(task.key, task.actionAlias)
+    return true
+  }
+
+  function cycleTasks(): CodexTaskCard[] {
+    const tasks = allTasks()
+    const groups = [
+      displayOrderedTasks(conversations.inputRequired),
+      displayOrderedTasks(tasks.filter((task) => task.bucket === 'completed-unread')),
+      displayOrderedTasks(tasks.filter((task) => task.bucket === 'ongoing'))
+    ]
+    const seen = new Set<string>()
+    return groups.flatMap((tasks) => tasks.filter((task) => {
+      if (!task.actionAlias || seen.has(task.key)) return false
+      seen.add(task.key)
+      return true
+    }))
+  }
+
+  function cycleTask(direction: -1 | 1) {
+    const tasks = cycleTasks()
+    if (!tasks.length) {
+      options.setMessage('当前没有可切换的 Codex 任务')
+      return false
+    }
+    const currentIndex = tasks.findIndex((task) => task.key === taskCycleKey)
+    const nextIndex = currentIndex < 0
+      ? direction > 0 ? 0 : tasks.length - 1
+      : (currentIndex + direction + tasks.length) % tasks.length
+    const task = tasks[nextIndex]
+    taskCycleKey = task.key
+    void openThread(task.key, task.actionAlias)
+    return true
+  }
+
+  function refreshTaskHotkeys(notify = true): boolean {
+    const raw = options.platform.app.readConfiguredHotkeys?.([...TASK_HOTKEY_COMMANDS])
+    const next: CodexTaskHotkeyReadback = {
+      supported: raw?.supported === true,
+      bindings: Object.fromEntries(TASK_HOTKEY_COMMANDS.map((command) => [
+        command,
+        raw?.supported === true && typeof raw.bindings?.[command] === 'string'
+          ? raw.bindings[command].trim().slice(0, 80)
+          : ''
+      ]))
+    }
+    const changed = next.supported !== taskHotkeys.supported
+      || TASK_HOTKEY_COMMANDS.some((command) => next.bindings[command] !== taskHotkeys.bindings[command])
+    taskHotkeys = next
+    if (changed && notify) options.notify()
+    return changed
   }
 
   function hide(key: string, recency?: number) {
@@ -1186,6 +1317,7 @@ export function createCodexController(options: CodexControllerOptions) {
     start() {
       if (started || disposed) return
       started = true
+      refreshTaskHotkeys(false)
       stopActivityListener = options.platform.codex.onActivityChanged?.((delta) => applyActivityDelta(delta)) || null
       if (isFeatureEnabled()) void inspectEnvironment()
       syncActivation(true)
@@ -1222,6 +1354,9 @@ export function createCodexController(options: CodexControllerOptions) {
     archiveProject,
     openThread,
     openFirstInput,
+    openFirstCompletedUnread,
+    cycleTask,
+    refreshTaskHotkeys,
     setTaskTab,
     setProjectCollapsed,
     setAlias,
@@ -1246,6 +1381,7 @@ export function createCodexController(options: CodexControllerOptions) {
         modelCatalog,
         newThreadContextFingerprint,
         conversations,
+        taskHotkeys,
         refreshing,
         floatHost: {
           displayId,
@@ -1265,7 +1401,9 @@ export function createCodexController(options: CodexControllerOptions) {
         compactFields: settings.compactFields,
         expandedFields: settings.expandedFields,
         colors: cardColorPreview || settings.colors,
+        counterColors: settings.counterColors,
         waterAppearance: settings.waterAppearance,
+        expandedCardAppearance: settings.expandedCardAppearance,
         expandedSizes: settings.expandedSizes,
         quota,
         config,

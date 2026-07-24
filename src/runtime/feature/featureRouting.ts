@@ -52,6 +52,18 @@ export function routePluginFeature(payload: PluginEnterPayload | null | undefine
       return isFeatureEnabled('codex', featureConfigs)
         ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.input.open', hideAfterAction: true }
         : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'codex.input.open' }
+    case 'eypc-codex-completed-unread':
+      return isFeatureEnabled('codex', featureConfigs)
+        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.completed-unread.openFirst', hideAfterAction: true }
+        : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'codex.completed-unread.openFirst' }
+    case 'eypc-codex-task-previous':
+      return isFeatureEnabled('codex', featureConfigs)
+        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.task.previous', hideAfterAction: true }
+        : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'codex.task.previous' }
+    case 'eypc-codex-task-next':
+      return isFeatureEnabled('codex', featureConfigs)
+        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.task.next', hideAfterAction: true }
+        : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'codex.task.next' }
     case 'eypc-favorites-quick':
       return isFeatureEnabled('favorites', featureConfigs)
         ? { tab: 'favorites', focusSearch: false, favoriteQuick: true }

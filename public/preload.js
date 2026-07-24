@@ -1673,18 +1673,24 @@ function codexDesktopProjectedRequest(value) {
 function codexDesktopRequestFlag(request) {
   const type = String(request?.type || '').toLowerCase()
   const method = String(request?.method || '').toLowerCase()
-  if (type.includes('userinput')
-    || type.includes('optionpicker')
-    || type.includes('setupcodex')
-    || method.includes('requestuserinput')
-    || method.includes('user-input')) return 'waitingOnUserInput'
-  if (type.includes('approval')
-    || type.includes('elicitation')
-    || type.includes('permissionrequest')
-    || method.includes('approval')
-    || method.includes('permission')
-    || method.includes('elicitation')) return 'waitingOnApproval'
+  const identifier = `${type}:${method}`.replace(/[^a-z0-9]/g, '')
+  if (identifier.includes('userinput')
+    || identifier.includes('optionpicker')
+    || identifier.includes('setupcodex')) return 'waitingOnUserInput'
+  if (identifier.includes('approval')
+    || identifier.includes('elicitation')
+    || identifier.includes('permissionrequest')) return 'waitingOnApproval'
   return ''
+}
+
+function codexDesktopPersistedUnread(known) {
+  const unreadAuthority = known?.connectorUnreadAuthority === 'desktop-persisted'
+    ? 'desktop-persisted'
+    : 'unavailable'
+  return {
+    hasUnreadTurn: unreadAuthority === 'desktop-persisted' && known?.connectorHasUnreadTurn === true,
+    unreadAuthority
+  }
 }
 
 function codexDesktopRuntimeProjection(value) {
@@ -2107,13 +2113,14 @@ class CodexDesktopCompanionBridge {
     if (typeof shadow.hasUnreadTurn === 'boolean') {
       known.hasUnreadTurn = shadow.hasUnreadTurn
       known.unreadAuthority = 'desktop-live'
-      this.liveUnread.set(threadId, {
-        ownerClientId: typeof shadow.ownerClientId === 'string' && shadow.ownerClientId ? shadow.ownerClientId : 'desktop-live',
-        hasUnreadTurn: shadow.hasUnreadTurn
-      })
+    } else if (this.state === 'connected' && this.liveUnread.has(threadId)) {
+      const liveUnread = this.liveUnread.get(threadId)
+      known.hasUnreadTurn = liveUnread.hasUnreadTurn
+      known.unreadAuthority = 'desktop-live'
     } else {
-      known.hasUnreadTurn = false
-      known.unreadAuthority = 'unavailable'
+      const fallback = codexDesktopPersistedUnread(known)
+      known.hasUnreadTurn = fallback.hasUnreadTurn
+      known.unreadAuthority = fallback.unreadAuthority
       this.liveUnread.delete(threadId)
     }
     this.emitParentActivity(threadId)
@@ -2126,7 +2133,8 @@ class CodexDesktopCompanionBridge {
       status: known.connectorStatus,
       activeFlags: [...known.connectorActiveFlags]
     }
-    const children = [...this.sideShadows.values()].filter((shadow) => shadow.parentThreadId === parentThreadId)
+    const childEntries = [...this.sideShadows.entries()].filter(([, shadow]) => shadow.parentThreadId === parentThreadId)
+    const children = childEntries.map(([, shadow]) => shadow)
     const activities = [own, ...children.map(codexDesktopShadowActivity).filter(Boolean)]
     const activeFlags = [...new Set(activities.flatMap((activity) => activity.activeFlags || []))]
     const hasInput = activeFlags.includes('waitingOnUserInput')
@@ -2140,13 +2148,31 @@ class CodexDesktopCompanionBridge {
     known.activeFlags = status === 'active' ? activeFlags : []
     known.statusAuthority = 'desktop-live'
     const ownShadow = this.shadows.get(parentThreadId)
-    const ownUnreadKnown = typeof ownShadow?.hasUnreadTurn === 'boolean'
-    const childUnreadKnown = children.some((shadow) => typeof shadow.hasUnreadTurn === 'boolean')
-    const unread = (ownUnreadKnown ? ownShadow.hasUnreadTurn === true : known.connectorHasUnreadTurn === true)
-      || children.some((shadow) => shadow.hasUnreadTurn === true)
-    if (childUnreadKnown || ownUnreadKnown || known.unreadAuthority === 'desktop-live') {
+    const ownLiveUnread = this.state === 'connected' ? this.liveUnread.get(parentThreadId) : null
+    const ownUnreadKnown = typeof ownShadow?.hasUnreadTurn === 'boolean' || Boolean(ownLiveUnread)
+    const ownUnread = typeof ownShadow?.hasUnreadTurn === 'boolean'
+      ? ownShadow.hasUnreadTurn === true
+      : ownLiveUnread?.hasUnreadTurn === true
+    const childUnread = childEntries.map(([threadId, shadow]) => {
+      const liveUnread = this.state === 'connected' ? this.liveUnread.get(threadId) : null
+      const known = typeof shadow.hasUnreadTurn === 'boolean' || Boolean(liveUnread)
+      return {
+        known,
+        hasUnreadTurn: typeof shadow.hasUnreadTurn === 'boolean'
+          ? shadow.hasUnreadTurn === true
+          : liveUnread?.hasUnreadTurn === true
+      }
+    })
+    const childUnreadKnown = childUnread.some((child) => child.known)
+    const fallback = codexDesktopPersistedUnread(known)
+    const unread = (ownUnreadKnown ? ownUnread : fallback.hasUnreadTurn)
+      || childUnread.some((child) => child.hasUnreadTurn)
+    if (childUnreadKnown || ownUnreadKnown) {
       known.hasUnreadTurn = unread
       known.unreadAuthority = 'desktop-live'
+    } else {
+      known.hasUnreadTurn = fallback.hasUnreadTurn
+      known.unreadAuthority = fallback.unreadAuthority
     }
     emitCodexActivityDelta([codexActivityPublicEntry(known)], false)
   }
@@ -2172,7 +2198,6 @@ class CodexDesktopCompanionBridge {
     }
     known.hasUnreadTurn = params.hasUnreadTurn
     known.unreadAuthority = 'desktop-live'
-    known.connectorHasUnreadTurn = params.hasUnreadTurn
     this.liveUnread.set(params.conversationId, {
       ownerClientId: typeof ownerClientId === 'string' && ownerClientId ? ownerClientId : 'desktop-live',
       hasUnreadTurn: params.hasUnreadTurn
@@ -2262,19 +2287,24 @@ class CodexDesktopCompanionBridge {
     try { unreadIds = readCodexDesktopUnreadIds() } catch {}
     const changed = []
     for (const threadId of this.inventory) {
-      if (this.shadows.has(threadId)) continue
       const known = codexActivityInventory.get(threadId)
       if (!known) continue
-      const liveUnread = this.liveUnread.get(threadId)
-      if (this.state === 'connected' && liveUnread) {
-        if (known.hasUnreadTurn === liveUnread.hasUnreadTurn && known.unreadAuthority === 'desktop-live') continue
-        known.hasUnreadTurn = liveUnread.hasUnreadTurn
+      const shadow = this.shadows.get(threadId)
+      const liveUnread = this.state === 'connected' ? this.liveUnread.get(threadId) : null
+      if (typeof shadow?.hasUnreadTurn === 'boolean' || liveUnread) {
+        const hasUnreadTurn = typeof shadow?.hasUnreadTurn === 'boolean'
+          ? shadow.hasUnreadTurn
+          : liveUnread.hasUnreadTurn
+        if (known.hasUnreadTurn === hasUnreadTurn && known.unreadAuthority === 'desktop-live') continue
+        known.hasUnreadTurn = hasUnreadTurn
         known.unreadAuthority = 'desktop-live'
         changed.push(codexActivityPublicEntry(known))
         continue
       }
       const hasUnreadTurn = unreadIds ? unreadIds.has(threadId) : false
       const authority = unreadIds ? 'desktop-persisted' : 'unavailable'
+      known.connectorHasUnreadTurn = hasUnreadTurn
+      known.connectorUnreadAuthority = authority
       if (known.hasUnreadTurn === hasUnreadTurn && known.unreadAuthority === authority) continue
       known.hasUnreadTurn = hasUnreadTurn
       known.unreadAuthority = authority
@@ -3334,6 +3364,7 @@ async function scanVerifiedCodexInventory() {
         statusAuthority: 'connector',
         hasUnreadTurn: projection?.hasUnreadTurn === true,
         connectorHasUnreadTurn: projection?.hasUnreadTurn === true,
+        connectorUnreadAuthority: projection?.unreadAuthority || 'unavailable',
         unreadAuthority: projection?.unreadAuthority || 'unavailable'
       })
     }
@@ -4350,6 +4381,35 @@ function emitCodexFloatAction(actionId, args) {
   }
 }
 
+const CODEX_TASK_HOTKEY_PLUGIN_NAME = 'EyPc'
+const CODEX_TASK_HOTKEY_COMMANDS = ['上一个 Codex 任务', '下一个 Codex 任务']
+
+function readConfiguredCodexTaskHotkeys(commandLabels) {
+  const bindings = Object.fromEntries(CODEX_TASK_HOTKEY_COMMANDS.map((command) => [command, '']))
+  const requested = new Set(Array.isArray(commandLabels)
+    ? commandLabels.filter((command) => CODEX_TASK_HOTKEY_COMMANDS.includes(command))
+    : [])
+  if (!globalThis.utools || typeof globalThis.utools.redirectHotKeySetting !== 'function') return { supported: false, bindings }
+  try {
+    const { ipcRenderer } = require('electron')
+    const records = ipcRenderer && typeof ipcRenderer.sendSync === 'function'
+      ? ipcRenderer.sendSync('getAllFeatureHotKey')
+      : null
+    if (!Array.isArray(records)) return { supported: false, bindings }
+    for (const command of requested) {
+      const target = `${CODEX_TASK_HOTKEY_PLUGIN_NAME}/${command}`
+      const matches = records.filter((record) => record
+        && typeof record === 'object'
+        && record.cmd === target
+        && typeof record.hotkey === 'string')
+      bindings[command] = String(matches.find((record) => record.hotkey.trim())?.hotkey || '').trim().slice(0, 80)
+    }
+    return { supported: true, bindings }
+  } catch {
+    return { supported: false, bindings }
+  }
+}
+
 function resizeCodexFloat(expanded, notifyState = true) {
   if (!codexFloatAlive() || typeof codexFloatWindow.getBounds !== 'function') return
   const current = codexFloatWindow.getBounds()
@@ -4651,6 +4711,9 @@ window.eypcPlatform = {
         }
       } catch {}
       return false
+    },
+    readConfiguredHotkeys(commandLabels) {
+      return readConfiguredCodexTaskHotkeys(commandLabels)
     }
   },
   getEnterPayload() {
