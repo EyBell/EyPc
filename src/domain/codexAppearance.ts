@@ -1,4 +1,4 @@
-import type { CodexColorSettings, CodexDisplayStyle, CodexWaterAppearanceSettings } from './codex'
+import type { CodexColorSettings, CodexDisplayStyle, CodexExpandedCardAppearanceSettings, CodexWaterAppearanceSettings } from './codex'
 
 export interface CodexThemePreset {
   id: 'sea-salt' | 'graphite' | 'indigo-sand' | 'aurora-night' | 'amber-mist'
@@ -6,6 +6,7 @@ export interface CodexThemePreset {
   description: string
   colors: CodexColorSettings
   waterAppearance: CodexWaterAppearanceSettings
+  expandedCardAppearance: CodexExpandedCardAppearanceSettings
 }
 
 export interface CodexSurfaceTheme {
@@ -48,9 +49,10 @@ export const CODEX_THEME_PRESETS: readonly CodexThemePreset[] = [
     description: '深海与纸白，Teal 信号',
     colors: { healthy: '#23B5A5', warning: '#F2A93B', critical: '#EF5B68', water: '#102C3C', card: '#F7F9F7', cardForeground: '#07161D' },
     waterAppearance: {
-      inner: { palette: 'gradient', colorA: '#102C3C', colorB: '#175C61', opacity: 78, amplitude: 8, motion: 'normal' },
+      inner: { palette: 'gradient', fillColorA: '#102C3C', fillColorB: '#175C61', opacity: 78, amplitude: 8, motion: 'normal', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
       outer: { style: 'solid', thickness: 4, colorMode: 'quota', progressColor: '#23B5A5', trackColor: '#7C8B94', glow: 'soft', shellOpacity: 72 }
-    }
+    },
+    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#23B5A5', warning: '#F2A93B', critical: '#EF5B68', water: '#102C3C', card: '#F7F9F7', cardForeground: '#07161D' })
   },
   {
     id: 'graphite',
@@ -58,9 +60,10 @@ export const CODEX_THEME_PRESETS: readonly CodexThemePreset[] = [
     description: '石墨与雾白，Blue 信号',
     colors: { healthy: '#256FB5', warning: '#A66100', critical: '#BF3C50', water: '#18212B', card: '#F2F4F3', cardForeground: '#07161D' },
     waterAppearance: {
-      inner: { palette: 'solid', colorA: '#18212B', colorB: '#174D68', opacity: 82, amplitude: 6, motion: 'slow' },
+      inner: { palette: 'solid', fillColorA: '#18212B', fillColorB: '#174D68', opacity: 82, amplitude: 6, motion: 'slow', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
       outer: { style: 'segmented', thickness: 4, colorMode: 'quota', progressColor: '#4A9BE8', trackColor: '#73899D', glow: 'off', shellOpacity: 68 }
-    }
+    },
+    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#256FB5', warning: '#A66100', critical: '#BF3C50', water: '#18212B', card: '#F2F4F3', cardForeground: '#07161D' })
   },
   {
     id: 'indigo-sand',
@@ -68,9 +71,10 @@ export const CODEX_THEME_PRESETS: readonly CodexThemePreset[] = [
     description: '靛蓝与暖白，Indigo 信号',
     colors: { healthy: '#4E60C8', warning: '#9B6100', critical: '#B63D59', water: '#1D2444', card: '#FAF7F0', cardForeground: '#07161D' },
     waterAppearance: {
-      inner: { palette: 'aurora', colorA: '#1D2444', colorB: '#343C77', opacity: 76, amplitude: 9, motion: 'normal' },
+      inner: { palette: 'aurora', fillColorA: '#1D2444', fillColorB: '#343C77', opacity: 76, amplitude: 9, motion: 'normal', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
       outer: { style: 'solid', thickness: 5, colorMode: 'custom', progressColor: '#7987F2', trackColor: '#7E829E', glow: 'strong', shellOpacity: 74 }
-    }
+    },
+    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#4E60C8', warning: '#9B6100', critical: '#B63D59', water: '#1D2444', card: '#FAF7F0', cardForeground: '#07161D' })
   },
   {
     id: 'aurora-night',
@@ -78,9 +82,10 @@ export const CODEX_THEME_PRESETS: readonly CodexThemePreset[] = [
     description: '蓝绿电离层，冷峻深水',
     colors: { healthy: '#46A8E9', warning: '#D48A26', critical: '#CF4566', water: '#111B34', card: '#0D1630', cardForeground: '#EEF4FF' },
     waterAppearance: {
-      inner: { palette: 'aurora', colorA: '#111B34', colorB: '#3A4DAA', opacity: 84, amplitude: 10, motion: 'fast' },
+      inner: { palette: 'aurora', fillColorA: '#111B34', fillColorB: '#3A4DAA', opacity: 84, amplitude: 10, motion: 'fast', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
       outer: { style: 'segmented', thickness: 5, colorMode: 'quota', progressColor: '#46A8E9', trackColor: '#4A5872', glow: 'soft', shellOpacity: 70 }
-    }
+    },
+    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#46A8E9', warning: '#D48A26', critical: '#CF4566', water: '#111B34', card: '#0D1630', cardForeground: '#EEF4FF' })
   },
   {
     id: 'amber-mist',
@@ -88,9 +93,10 @@ export const CODEX_THEME_PRESETS: readonly CodexThemePreset[] = [
     description: '暖金渐变，低亮度可读',
     colors: { healthy: '#D88A26', warning: '#E1B84A', critical: '#C64A47', water: '#201A12', card: '#FAF3E8', cardForeground: '#24180E' },
     waterAppearance: {
-      inner: { palette: 'gradient', colorA: '#201A12', colorB: '#4A3114', opacity: 78, amplitude: 8, motion: 'normal' },
+      inner: { palette: 'gradient', fillColorA: '#201A12', fillColorB: '#4A3114', opacity: 78, amplitude: 8, motion: 'normal', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
       outer: { style: 'solid', thickness: 4, colorMode: 'custom', progressColor: '#F1BE58', trackColor: '#7F6754', glow: 'strong', shellOpacity: 72 }
-    }
+    },
+    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#D88A26', warning: '#E1B84A', critical: '#C64A47', water: '#201A12', card: '#FAF3E8', cardForeground: '#24180E' })
   }
 ] as const
 
@@ -221,17 +227,18 @@ function readableTone(surface: string, foreground: string, minimum: number): str
   return mixHex(surface, foreground, Math.min(1, high + 0.035))
 }
 
-function ensureContrast(candidate: string, surface: string, minimum: number, direction: string): string {
-  const normalized = normalizeHex(candidate) || direction
-  if (contrastRatio(normalized, surface) >= minimum) return normalized
-  let low = 0
-  let high = 1
-  for (let index = 0; index < 18; index += 1) {
-    const middle = (low + high) / 2
-    if (contrastRatio(mixHex(normalized, direction, middle), surface) >= minimum) high = middle
-    else low = middle
+function presetExpandedCardAppearance(colors: CodexColorSettings): CodexExpandedCardAppearanceSettings {
+  return {
+    surface: colors.card,
+    surfaceRaised: mixHex(colors.card, colors.cardForeground, 0.025),
+    foreground: colors.cardForeground,
+    secondary: mixHex(colors.card, colors.cardForeground, 0.52),
+    border: mixHex(colors.card, colors.cardForeground, 0.28),
+    focus: colors.healthy,
+    accent: colors.healthy,
+    running: '#2F7CC0',
+    pending: '#C6631A'
   }
-  return mixHex(normalized, direction, Math.min(1, high + 0.02))
 }
 
 export function quotaStatusColor(percent: number, colors: CodexColorSettings): string {
@@ -241,18 +248,17 @@ export function quotaStatusColor(percent: number, colors: CodexColorSettings): s
 }
 
 export function resolveCodexSurfaceTheme(style: CodexDisplayStyle, colors: CodexColorSettings, percent = 100): CodexSurfaceTheme {
-  const surface = normalizeHex(style === 'water' ? colors.water : colors.card) || (style === 'water' ? '#102C3C' : '#F7F9F7')
+  const surface = style === 'water' ? colors.water : colors.card
   const foreground = style === 'card'
-    ? normalizeHex(colors.cardForeground) || readableForeground(surface)
+    ? colors.cardForeground
     : readableForeground(surface)
-  const direction = foreground
-  const accent = ensureContrast(quotaStatusColor(percent, colors), surface, 3, direction)
-  const warning = ensureContrast(colors.warning, surface, 3, direction)
-  const critical = ensureContrast(colors.critical, surface, 3, direction)
-  const running = ensureContrast('#2F7CC0', surface, 3, direction)
-  const pending = ensureContrast('#C6631A', surface, 3, direction)
-  const liquid = ensureContrast(mixHex(surface, accent, 0.56), foreground, 4.5, surface)
-  const liquidCrest = ensureContrast(mixHex(surface, accent, 0.68), foreground, 4.5, surface)
+  const accent = quotaStatusColor(percent, colors)
+  const warning = colors.warning
+  const critical = colors.critical
+  const running = '#2F7CC0'
+  const pending = '#C6631A'
+  const liquid = mixHex(surface, accent, 0.56)
+  const liquidCrest = mixHex(surface, accent, 0.68)
   return {
     style,
     surface,
@@ -260,7 +266,7 @@ export function resolveCodexSurfaceTheme(style: CodexDisplayStyle, colors: Codex
     foreground,
     secondary: readableTone(surface, foreground, 4.5),
     border: readableTone(surface, foreground, 3),
-    focus: ensureContrast(accent, surface, 3, direction),
+    focus: accent,
     accent,
     liquid,
     liquidCrest,
@@ -274,45 +280,54 @@ export function resolveCodexSurfaceTheme(style: CodexDisplayStyle, colors: Codex
   }
 }
 
-export function validateCodexCustomColors(colors: CodexColorSettings): CodexColorValidation {
-  const entries = Object.entries(colors)
-  if (entries.some(([, value]) => normalizeHex(value) === null)) return { valid: false, message: '请使用完整的 6 位十六进制颜色' }
-  if (relativeLuminance(colors.water) > 0.24) return { valid: false, message: '水球表面需保持深色，以确保桌面可读性' }
-  if (contrastRatio(colors.card, colors.cardForeground) < 4.5) return { valid: false, message: '卡片表面与文字/图标前景色需达到 4.5:1' }
-
-  for (const style of ['water', 'card'] as const) {
-    const theme = resolveCodexSurfaceTheme(style, colors)
-    if (contrastRatio(theme.foreground, theme.surface) < 4.5 || contrastRatio(theme.secondary, theme.surface) < 4.5) {
-      return { valid: false, message: '文字与表面对比度不足 4.5:1' }
-    }
-    if (contrastRatio(theme.border, theme.surface) < 3 || contrastRatio(theme.focus, theme.surface) < 3) {
-      return { valid: false, message: '边界或焦点对比度不足 3:1' }
-    }
+/** The expanded float always consumes this independent panel theme, regardless of compact style. */
+export function resolveCodexExpandedCardTheme(
+  colors: CodexColorSettings,
+  appearance: CodexExpandedCardAppearanceSettings,
+  percent = 100
+): CodexSurfaceTheme {
+  const base = resolveCodexSurfaceTheme('card', colors, percent)
+  const accent = appearance.accent
+  return {
+    ...base,
+    style: 'card',
+    surface: appearance.surface,
+    surfaceRaised: appearance.surfaceRaised,
+    foreground: appearance.foreground,
+    secondary: appearance.secondary,
+    border: appearance.border,
+    focus: appearance.focus,
+    accent,
+    liquid: mixHex(appearance.surface, accent, 0.56),
+    liquidCrest: mixHex(appearance.surface, accent, 0.68),
+    running: appearance.running,
+    pending: appearance.pending,
+    onAccent: strictForeground(accent),
+    onRunning: strictForeground(appearance.running),
+    onPending: strictForeground(appearance.pending)
   }
+}
+
+export function validateCodexCustomColors(colors: CodexColorSettings): CodexColorValidation {
+  void colors
   return { valid: true, message: '' }
 }
 
 export function validateCodexWaterAppearance(colors: CodexColorSettings, appearance: CodexWaterAppearanceSettings): CodexColorValidation {
-  const values = [appearance.inner.colorA, appearance.inner.colorB, appearance.outer.progressColor, appearance.outer.trackColor]
-  if (values.some((value) => normalizeHex(value) === null)) return { valid: false, message: '水球颜色需使用完整的 6 位十六进制值' }
-  if (appearance.inner.opacity < 40 || appearance.inner.opacity > 95) return { valid: false, message: '水纹透明度需在 40%–95% 之间' }
-  if (appearance.inner.amplitude < 4 || appearance.inner.amplitude > 12) return { valid: false, message: '水纹振幅需在 4–12px 之间' }
-  if (appearance.outer.thickness < 2 || appearance.outer.thickness > 6) return { valid: false, message: 'Weekly 环粗细需在 2–6px 之间' }
-  const surface = colors.water
-  const foreground = readableForeground(surface)
-  for (const liquid of [appearance.inner.colorA, appearance.inner.colorB]) {
-    if (contrastRatio(foreground, liquid) < 4.5) return { valid: false, message: '水纹最亮颜色与必要文字的对比度不足 4.5:1' }
-  }
-  if (contrastRatio(appearance.outer.trackColor, surface) < 3) return { valid: false, message: 'Weekly 环轨道与水球表面对比度不足 3:1' }
-  if (appearance.outer.colorMode === 'custom' && contrastRatio(appearance.outer.progressColor, surface) < 3) {
-    return { valid: false, message: 'Weekly 环进度色与水球表面对比度不足 3:1' }
-  }
+  void colors
+  void appearance
   return { valid: true, message: '' }
 }
 
-export function matchCodexThemePreset(colors: CodexColorSettings, appearance?: CodexWaterAppearanceSettings): CodexThemePreset['id'] | null {
+export function matchCodexThemePreset(
+  colors: CodexColorSettings,
+  appearance?: CodexWaterAppearanceSettings,
+  expandedCardAppearance?: CodexExpandedCardAppearanceSettings
+): CodexThemePreset['id'] | null {
   const signature = JSON.stringify(Object.fromEntries(Object.entries(colors).map(([key, value]) => [key, normalizeHex(value)])))
-  return CODEX_THEME_PRESETS.find((preset) => JSON.stringify(preset.colors) === signature && (!appearance || JSON.stringify(preset.waterAppearance) === JSON.stringify(appearance)))?.id || null
+  return CODEX_THEME_PRESETS.find((preset) => JSON.stringify(preset.colors) === signature
+    && (!appearance || JSON.stringify(preset.waterAppearance) === JSON.stringify(appearance))
+    && (!expandedCardAppearance || JSON.stringify(preset.expandedCardAppearance) === JSON.stringify(expandedCardAppearance)))?.id || null
 }
 
 
@@ -330,18 +345,24 @@ export function codexWaterAppearanceCssVars(
   } as const
   const [durationA, durationB] = durations[appearance.inner.motion]
   const progress = appearance.outer.colorMode === 'quota' ? resolveCodexSurfaceTheme('water', colors, weeklyPercent).accent : appearance.outer.progressColor
+  const auroraAccent = mixHex(appearance.inner.fillColorB, colors.healthy, 0.52)
+  const auroraGlow = mixHex(appearance.inner.fillColorA, colors.warning, 0.36)
   const fill = appearance.inner.palette === 'solid'
-    ? appearance.inner.colorA
+    ? appearance.inner.fillColorA
     : appearance.inner.palette === 'aurora'
-      ? `linear-gradient(115deg, ${appearance.inner.colorA} 0%, ${appearance.inner.colorB} 52%, ${mixHex(appearance.inner.colorB, colors.healthy, 0.28)} 100%)`
-      : `linear-gradient(135deg, ${appearance.inner.colorA}, ${appearance.inner.colorB})`
+      ? `linear-gradient(115deg, ${appearance.inner.fillColorA} 0%, ${appearance.inner.fillColorB} 52%, ${mixHex(appearance.inner.fillColorB, colors.healthy, 0.28)} 100%)`
+      : `linear-gradient(135deg, ${appearance.inner.fillColorA}, ${appearance.inner.fillColorB})`
   const glow = appearance.outer.glow === 'strong'
     ? `drop-shadow(0 0 5px ${progress})`
     : appearance.outer.glow === 'soft' ? `drop-shadow(0 0 2px ${progress})` : 'none'
   return {
+    '--water-base': colors.water,
+    '--water-base-opacity': String(appearance.inner.baseOpacity / 100),
     '--water-fill': fill,
-    '--water-fill-a': appearance.inner.colorA,
-    '--water-fill-b': appearance.inner.colorB,
+    '--water-fill-color-a': appearance.inner.fillColorA,
+    '--water-fill-color-b': appearance.inner.fillColorB,
+    '--water-aurora-accent': auroraAccent,
+    '--water-aurora-glow': auroraGlow,
     '--water-opacity': String(appearance.inner.opacity / 100),
     '--water-amplitude': `${appearance.inner.amplitude}px`,
     '--water-wave-a-duration': durationA,

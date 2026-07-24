@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   AlertTriangle,
   BellRing,
@@ -18,15 +18,20 @@ import {
   SlidersHorizontal
 } from '@lucide/vue'
 import CodexStyleSwitch from '../components/CodexStyleSwitch.vue'
-import CodexCardColorDialog from '../components/CodexCardColorDialog.vue'
+import CodexWaterBall from '../components/CodexWaterBall.vue'
 import {
   CODEX_THEME_PRESETS,
-  matchCodexThemePreset
+  codexThemeCssVars,
+  matchCodexThemePreset,
+  quotaStatusColor,
+  resolveCodexExpandedCardTheme
 } from '../domain/codexAppearance'
+import { buildCodexCompactPresentation } from '../domain/codexPresentation'
 import type {
   CodexColorSettings,
   CodexCompactField,
   CodexDisplayStyle,
+  CodexExpandedCardAppearanceSettings,
   CodexSettings,
   CodexSavedThemePreset,
   CodexWaterAppearanceSettings
@@ -35,45 +40,117 @@ import type { CodexRuntimeView } from '../runtime/codexController'
 
 const props = defineProps<{ snapshot: CodexRuntimeView }>()
 const emit = defineEmits<{ dispatch: [actionId: string, args?: Record<string, unknown>] }>()
-const colorError = ref('')
-const waterAppearanceError = ref('')
 const themePresetError = ref('')
 const manualLaunchPath = ref('')
 const launchPathError = ref('')
-const cardColorDialogOpen = ref(false)
-let cardColorTrigger: HTMLElement | null = null
 const THEME_PRESET_BUILTIN_PREFIX = 'builtin:'
 const THEME_PRESET_SAVED_PREFIX = 'saved:'
 const THEME_PRESET_CUSTOM = 'custom'
 const MAX_SAVED_THEME_PRESETS = 20
 
+function taskHotkeyLabel(command: '上一个 Codex 任务' | '下一个 Codex 任务'): string {
+  if (!props.snapshot.taskHotkeys.supported) return '当前宿主无法读取'
+  return props.snapshot.taskHotkeys.bindings[command] || '未配置'
+}
+
+function refreshTaskHotkeys() {
+  emit('dispatch', 'codex.task.hotkeys.refresh')
+}
+
+function refreshTaskHotkeysWhenVisible() {
+  if (document.visibilityState === 'visible') refreshTaskHotkeys()
+}
+
+onMounted(() => {
+  window.addEventListener('focus', refreshTaskHotkeys)
+  document.addEventListener('visibilitychange', refreshTaskHotkeysWhenVisible)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('focus', refreshTaskHotkeys)
+  document.removeEventListener('visibilitychange', refreshTaskHotkeysWhenVisible)
+})
+
 function cloneWaterAppearance(value: CodexWaterAppearanceSettings): CodexWaterAppearanceSettings {
   return { inner: { ...value.inner }, outer: { ...value.outer } }
+}
+
+function cloneExpandedCardAppearance(value: CodexExpandedCardAppearanceSettings): CodexExpandedCardAppearanceSettings {
+  return { ...value }
 }
 
 const waterDraft = ref<CodexWaterAppearanceSettings>(cloneWaterAppearance(props.snapshot.settings.waterAppearance))
 const savedThemeName = ref('')
 const savedThemeOption = ref(THEME_PRESET_CUSTOM)
 
+const waterPreview = computed(() => buildCodexCompactPresentation({
+  quota: props.snapshot.quota,
+  compactFields: props.snapshot.settings.compactFields,
+  conversationInboxEnabled: props.snapshot.settings.conversationInboxEnabled,
+  conversations: props.snapshot.conversations
+}))
+
+const waterPreviewStyle = computed<Record<string, string>>(() => {
+  const { inner, outer } = waterDraft.value
+  const colors = props.snapshot.settings.colors
+  const weekly = waterPreview.value.primary?.kind === 'weekly'
+    ? waterPreview.value.primary
+    : waterPreview.value.secondary?.kind === 'weekly' ? waterPreview.value.secondary : null
+  const ringPercent = weekly?.bucket.remainingPercent ?? waterPreview.value.primary?.bucket.remainingPercent ?? 100
+  return {
+    '--appearance-water-base': colors.water,
+    '--appearance-water-fill-color-a': inner.fillColorA,
+    '--appearance-ring-progress': outer.colorMode === 'custom' ? outer.progressColor : quotaStatusColor(ringPercent, colors),
+    '--appearance-water-reading': inner.percentColor,
+    '--codex-counter-input': props.snapshot.settings.counterColors.input,
+    '--codex-counter-active': props.snapshot.settings.counterColors.active,
+    '--codex-counter-unread': props.snapshot.settings.counterColors.unread
+  }
+})
+
+const waterPreviewCounters = computed(() => ({
+  input: props.snapshot.conversations.inputRequiredCount,
+  active: [...props.snapshot.conversations.ongoing, ...props.snapshot.conversations.hidden]
+    .filter((task) => task.activityState === 'active' || task.activityState === 'ongoing' || task.activityState === 'waiting-approval').length,
+  unread: props.snapshot.conversations.completedUnreadCount
+}))
+
+function compactPreviewCount(value: number): string {
+  return value > 99 ? '99+' : String(value)
+}
+
+const cardPreviewStyle = computed<Record<string, string>>(() => {
+  const primaryPercent = waterPreview.value.primary?.bucket.remainingPercent ?? 100
+  return codexThemeCssVars(resolveCodexExpandedCardTheme(props.snapshot.settings.colors, props.snapshot.settings.expandedCardAppearance, primaryPercent))
+})
+
 const compactOptions: Array<{ id: CodexCompactField; label: string }> = [
   { id: 'tasks', label: '任务数字' }
 ]
-function matchesThemePreset(theme: Pick<CodexSavedThemePreset, 'colors' | 'waterAppearance'>, colors: CodexColorSettings, waterAppearance: CodexWaterAppearanceSettings) {
-  return JSON.stringify(theme.colors) === JSON.stringify(colors) && JSON.stringify(theme.waterAppearance) === JSON.stringify(waterAppearance)
+function matchesThemePreset(
+  theme: Pick<CodexSavedThemePreset, 'colors' | 'waterAppearance' | 'expandedCardAppearance'>,
+  colors: CodexColorSettings,
+  waterAppearance: CodexWaterAppearanceSettings,
+  expandedCardAppearance: CodexExpandedCardAppearanceSettings
+) {
+  return JSON.stringify(theme.colors) === JSON.stringify(colors)
+    && JSON.stringify(theme.waterAppearance) === JSON.stringify(waterAppearance)
+    && JSON.stringify(theme.expandedCardAppearance) === JSON.stringify(expandedCardAppearance)
 }
 
 const activeThemeOption = computed(() => {
   const colors = props.snapshot.settings.colors
   const waterAppearance = props.snapshot.settings.waterAppearance
-  const savedId = props.snapshot.settings.savedThemePresets.find((item) => matchesThemePreset(item, colors, waterAppearance))?.id
+  const expandedCardAppearance = props.snapshot.settings.expandedCardAppearance
+  const savedId = props.snapshot.settings.savedThemePresets.find((item) => matchesThemePreset(item, colors, waterAppearance, expandedCardAppearance))?.id
   if (savedId) return `${THEME_PRESET_SAVED_PREFIX}${savedId}`
-  const builtinId = matchCodexThemePreset(colors, waterAppearance)
+  const builtinId = matchCodexThemePreset(colors, waterAppearance, expandedCardAppearance)
   return builtinId ? `${THEME_PRESET_BUILTIN_PREFIX}${builtinId}` : THEME_PRESET_CUSTOM
 })
 watch(() => props.snapshot.settings.waterAppearance, (value) => {
   waterDraft.value = cloneWaterAppearance(value)
 }, { deep: true })
-watch([() => props.snapshot.settings.colors, () => props.snapshot.settings.waterAppearance, () => props.snapshot.settings.savedThemePresets], () => {
+watch([() => props.snapshot.settings.colors, () => props.snapshot.settings.waterAppearance, () => props.snapshot.settings.expandedCardAppearance, () => props.snapshot.settings.savedThemePresets], () => {
   savedThemeOption.value = activeThemeOption.value
   const activeSavedId = activeThemeOption.value.startsWith(THEME_PRESET_SAVED_PREFIX)
     ? activeThemeOption.value.slice(THEME_PRESET_SAVED_PREFIX.length)
@@ -273,18 +350,18 @@ function toggleField<T extends string>(fields: T[], field: T, checked: boolean, 
   update({ [key]: next } as Partial<CodexSettings>)
 }
 
-function applyThemePreset(preset: { colors: CodexColorSettings, waterAppearance: CodexWaterAppearanceSettings }, source: string) {
-  colorError.value = ''
-  waterAppearanceError.value = ''
+function applyThemePreset(preset: { colors: CodexColorSettings, waterAppearance: CodexWaterAppearanceSettings, expandedCardAppearance: CodexExpandedCardAppearanceSettings }, source: string) {
   waterDraft.value = cloneWaterAppearance(preset.waterAppearance)
-  update({ colors: { ...preset.colors }, waterAppearance: cloneWaterAppearance(preset.waterAppearance) })
+  update({
+    colors: { ...preset.colors },
+    waterAppearance: cloneWaterAppearance(preset.waterAppearance),
+    expandedCardAppearance: cloneExpandedCardAppearance(preset.expandedCardAppearance)
+  })
   savedThemeOption.value = source
 }
 
 function applyThemePresetBySelect(event: Event) {
   const value = (event.target as HTMLSelectElement).value
-  colorError.value = ''
-  waterAppearanceError.value = ''
   themePresetError.value = ''
   if (!value || value === THEME_PRESET_CUSTOM) return
   savedThemeOption.value = value
@@ -321,6 +398,7 @@ function saveCurrentThemePreset() {
   }
   const colors = { ...props.snapshot.settings.colors }
   const waterAppearance = cloneWaterAppearance(props.snapshot.settings.waterAppearance)
+  const expandedCardAppearance = cloneExpandedCardAppearance(props.snapshot.settings.expandedCardAppearance)
   const now = Date.now()
   const existingSavedId = savedThemeOption.value.startsWith(THEME_PRESET_SAVED_PREFIX)
     ? savedThemeOption.value.slice(THEME_PRESET_SAVED_PREFIX.length)
@@ -334,6 +412,7 @@ function saveCurrentThemePreset() {
       name,
       colors,
       waterAppearance,
+      expandedCardAppearance,
       updatedAt: now
     }
   } else {
@@ -344,6 +423,7 @@ function saveCurrentThemePreset() {
         name,
         colors,
         waterAppearance,
+        expandedCardAppearance,
         updatedAt: now
       }
     } else {
@@ -352,6 +432,7 @@ function saveCurrentThemePreset() {
         name,
         colors,
         waterAppearance,
+        expandedCardAppearance,
         createdAt: now,
         updatedAt: now
       })
@@ -362,65 +443,33 @@ function saveCurrentThemePreset() {
   const ordered = [...sanitized].sort((a, b) => b.updatedAt - a.updatedAt)
   update({ savedThemePresets: ordered })
   themePresetError.value = ''
-  const selected = ordered.find((entry) => entry.name === name && JSON.stringify(entry.colors) === JSON.stringify(colors) && JSON.stringify(entry.waterAppearance) === JSON.stringify(waterAppearance))
+  const selected = ordered.find((entry) => entry.name === name
+    && JSON.stringify(entry.colors) === JSON.stringify(colors)
+    && JSON.stringify(entry.waterAppearance) === JSON.stringify(waterAppearance)
+    && JSON.stringify(entry.expandedCardAppearance) === JSON.stringify(expandedCardAppearance))
   if (selected) {
     savedThemeOption.value = `${THEME_PRESET_SAVED_PREFIX}${selected.id}`
     savedThemeName.value = selected.name
   }
 }
 
-function openCardColorDialog(event: Event) {
-  cardColorTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : document.activeElement instanceof HTMLElement ? document.activeElement : null
-  cardColorDialogOpen.value = true
-}
-
-function closeCardColorDialog() {
-  cardColorDialogOpen.value = false
-  const trigger = cardColorTrigger
-  cardColorTrigger = null
-  void nextTick(() => {
-    if (trigger?.isConnected) trigger.focus({ preventScroll: true })
-  })
-}
-
-function applyCardColors(colors: CodexColorSettings) {
-  colorError.value = ''
-  emit('dispatch', 'codex.card-colors.commit', { colors: { ...colors } })
-  closeCardColorDialog()
-}
-
-function previewCardColors(colors: CodexColorSettings) {
-  emit('dispatch', 'codex.card-colors.preview', { colors: { ...colors } })
-}
-
-function cancelCardColorDialog() {
-  emit('dispatch', 'codex.card-colors.cancel')
-  closeCardColorDialog()
-}
-
 function updateColor(key: keyof CodexColorSettings, value: string) {
   const candidate = { ...props.snapshot.settings.colors, [key]: value.toUpperCase() }
-  colorError.value = ''
   update({ colors: candidate })
 }
 
-function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string | number) {
-  waterDraft.value = {
+function updateExpandedCardAppearance(key: keyof CodexExpandedCardAppearanceSettings, value: string) {
+  update({ expandedCardAppearance: { ...props.snapshot.settings.expandedCardAppearance, [key]: value.toUpperCase() } })
+}
+
+function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string | number | boolean) {
+  const candidate = {
     ...waterDraft.value,
     [section]: { ...waterDraft.value[section], [key]: value }
   }
-}
-
-function commitWaterAppearance() {
-  const candidate = cloneWaterAppearance(waterDraft.value)
-  waterAppearanceError.value = ''
-  update({ waterAppearance: cloneWaterAppearance(candidate) })
   waterDraft.value = candidate
+  update({ waterAppearance: cloneWaterAppearance(candidate) })
 }
-
-onBeforeUnmount(() => {
-  if (cardColorDialogOpen.value) emit('dispatch', 'codex.card-colors.cancel')
-})
 </script>
 
 <template>
@@ -575,6 +624,59 @@ onBeforeUnmount(() => {
               @click="$emit('dispatch', 'codex.input.hotkey.configure')"
             >配置快捷键</button>
           </div>
+          <div class="codex-hotkey-row">
+            <Keyboard :size="17" aria-hidden="true" />
+            <span><strong>已完成未读任务</strong></span>
+            <button
+              type="button"
+              class="secondary codex-hotkey-cta"
+              title="配置 uTools 全局快捷键，打开并在 EyPc 内标记第一条已完成未读任务。"
+              data-operation-tooltip="配置已完成未读快捷键"
+              data-operation-description="打开 uTools 全局功能，为“打开并标记第一个 Codex 已完成未读任务”绑定系统级快捷键。"
+              @click="$emit('dispatch', 'codex.completed-unread.hotkey.configure')"
+            >配置快捷键</button>
+          </div>
+          <div class="codex-hotkey-row">
+            <Keyboard :size="17" aria-hidden="true" />
+            <span>
+              <strong>上一个 Codex 任务</strong>
+              <small>当前绑定：<kbd>{{ taskHotkeyLabel('上一个 Codex 任务') }}</kbd></small>
+            </span>
+            <button
+              type="button"
+              class="secondary codex-hotkey-cta"
+              title="配置 uTools 全局快捷键，在待输入、已完成未读和进行中任务之间循环到上一项。"
+              data-operation-tooltip="配置上一个任务快捷键"
+              data-operation-description="打开 uTools 全局功能，为“上一个 Codex 任务”绑定系统级快捷键。"
+              @click="$emit('dispatch', 'codex.task.previous.hotkey.configure')"
+            >配置快捷键</button>
+          </div>
+          <div class="codex-hotkey-row">
+            <Keyboard :size="17" aria-hidden="true" />
+            <span>
+              <strong>下一个 Codex 任务</strong>
+              <small>当前绑定：<kbd>{{ taskHotkeyLabel('下一个 Codex 任务') }}</kbd></small>
+            </span>
+            <button
+              type="button"
+              class="secondary codex-hotkey-cta"
+              title="配置 uTools 全局快捷键，在待输入、已完成未读和进行中任务之间循环到下一项。"
+              data-operation-tooltip="配置下一个任务快捷键"
+              data-operation-description="打开 uTools 全局功能，为“下一个 Codex 任务”绑定系统级快捷键。"
+              @click="$emit('dispatch', 'codex.task.next.hotkey.configure')"
+            >配置快捷键</button>
+          </div>
+          <div class="codex-hotkey-readback-actions">
+            <small>返回此页后会自动刷新；也可手动重新读取这两个命令的 uTools 绑定。</small>
+            <button
+              type="button"
+              class="secondary codex-hotkey-refresh"
+              title="重新读取上一个和下一个 Codex 任务的当前 uTools 全局快捷键"
+              data-operation-tooltip="刷新任务快捷键"
+              data-operation-description="只读取上一个和下一个 Codex 任务的当前 uTools 绑定，不会修改设置。"
+              @click="refreshTaskHotkeys"
+            ><RefreshCw :size="14" aria-hidden="true" />刷新</button>
+          </div>
         </div>
       </article>
 
@@ -634,6 +736,21 @@ onBeforeUnmount(() => {
           </label>
           <label>
             <span class="codex-label-row">
+              <span>进行中离开稳定窗</span>
+            </span>
+            <select
+              class="codex-select"
+              :value="snapshot.settings.completionPresentationDelayMs"
+              @change="update({ completionPresentationDelayMs: Number(($event.target as HTMLSelectElement).value) as CodexSettings['completionPresentationDelayMs'] })"
+              title="进行中状态离开后的展示稳定时间"
+              data-operation-tooltip="进行中离开稳定窗"
+              data-operation-description="已完成且已读回流为未读或进行中会立即发布；进行中转完成或异常按该时长稳定。其它普通活动状态仍使用 2 秒防抖。"
+            >
+              <option :value="0">不等待</option><option :value="500">0.5 秒</option><option :value="1000">1 秒</option><option :value="1500">1.5 秒（默认）</option><option :value="2000">2 秒</option><option :value="3000">3 秒</option>
+            </select>
+          </label>
+          <label>
+            <span class="codex-label-row">
               <span>时间窗口（天）</span>
             </span>
             <input
@@ -659,136 +776,106 @@ onBeforeUnmount(() => {
         </div>
       </article>
 
-      <article class="codex-panel codex-settings-section">
+      <article class="codex-panel codex-settings-section codex-appearance-panel">
         <div class="codex-panel-title">
-          <div><Palette :size="17" /><strong>主题</strong></div>
-          <span
-            class="codex-tip"
-            role="button"
-            tabindex="0"
-            aria-label="主题区域说明"
-            data-tip="主题与颜色只影响悬浮展示，不影响连接与权限。"
-          >i</span>
+          <div><Palette :size="17" /><strong>外观工作台</strong></div>
+          <span class="codex-tip" role="button" tabindex="0" aria-label="外观工作台说明" data-tip="水球、卡片和状态信号分开配置；每个颜色会立刻写入自己标明的部位。">i</span>
         </div>
-        <p class="codex-color-help">颜色配置入口统一在一个区域：先选预设，再在下方按项调整；所有配色会同步到悬浮面板显示。</p>
-        <section class="codex-color-group">
-          <h3 class="codex-color-group-title">颜色预设</h3>
-          <div class="codex-theme-select">
+        <p class="codex-appearance-intro">先应用整套主题，或直接修改下方任一部位。颜色不会再因对比度、格式或联动规则被改回。</p>
+        <div class="codex-theme-toolbar">
+          <label>
+            <span>整套主题</span>
             <select class="codex-select" :value="savedThemeOption" @change="applyThemePresetBySelect">
               <option :value="THEME_PRESET_CUSTOM">当前配置（未匹配）</option>
-              <optgroup label="默认样式">
-                <option v-for="preset in CODEX_THEME_PRESETS" :key="preset.id" :value="`${THEME_PRESET_BUILTIN_PREFIX}${preset.id}`">
-                  {{ preset.label }} · {{ preset.description }}
-                </option>
-              </optgroup>
-              <optgroup v-if="snapshot.settings.savedThemePresets.length > 0" label="已保存">
-                <option
-                  v-for="preset in snapshot.settings.savedThemePresets"
-                  :key="preset.id"
-                  :value="`${THEME_PRESET_SAVED_PREFIX}${preset.id}`"
-                >
-                  {{ preset.name }}
-                </option>
-              </optgroup>
+              <optgroup label="默认样式"><option v-for="preset in CODEX_THEME_PRESETS" :key="preset.id" :value="`${THEME_PRESET_BUILTIN_PREFIX}${preset.id}`">{{ preset.label }} · {{ preset.description }}</option></optgroup>
+              <optgroup v-if="snapshot.settings.savedThemePresets.length" label="已保存"><option v-for="preset in snapshot.settings.savedThemePresets" :key="preset.id" :value="`${THEME_PRESET_SAVED_PREFIX}${preset.id}`">{{ preset.name }}</option></optgroup>
             </select>
-                <div class="codex-theme-save">
-                  <input
-                    type="text"
-                    class="codex-input"
-                    maxlength="40"
-                    v-model="savedThemeName"
-                    placeholder="为当前配置输入主题名称（保存/覆盖）"
-                  />
-                  <button type="button" class="secondary" @click="saveCurrentThemePreset">另存主题</button>
-                </div>
+          </label>
+          <label class="codex-theme-name"><span>保存当前外观</span><input v-model="savedThemeName" type="text" class="codex-input" maxlength="40" placeholder="主题名称" /></label>
+          <button type="button" class="secondary" @click="saveCurrentThemePreset">另存主题</button>
+        </div>
+        <p v-if="themePresetError" class="codex-color-error" role="alert">{{ themePresetError }}</p>
+
+        <div class="codex-appearance-zones">
+          <section class="codex-appearance-zone codex-appearance-zone--water" aria-labelledby="water-appearance-title">
+            <div class="codex-appearance-zone-head"><div><span>01 · 悬浮水球</span><h3 id="water-appearance-title">球体、液体、Weekly 环、百分比与数字角标</h3></div><p>预览和桌面水球共用同一套渲染；下方每一项只影响同名部位。</p></div>
+            <div class="codex-water-appearance-preview" :style="waterPreviewStyle" aria-label="与真实悬浮水球一致的颜色部位预览">
+              <CodexWaterBall
+                :primary="waterPreview.primary"
+                :secondary="waterPreview.secondary"
+                :state-label="waterPreview.stateLabel"
+                :label="waterPreview.ariaLabel"
+                :appearance="waterDraft"
+                :colors="snapshot.settings.colors"
+                decorative
+              />
+              <b v-if="waterPreviewCounters.input" class="water-preview-counter water-preview-counter--input">{{ compactPreviewCount(waterPreviewCounters.input) }}</b>
+              <b v-if="waterPreviewCounters.active" class="water-preview-counter water-preview-counter--active">{{ compactPreviewCount(waterPreviewCounters.active) }}</b>
+              <b v-if="waterPreviewCounters.unread" class="water-preview-counter water-preview-counter--unread">{{ compactPreviewCount(waterPreviewCounters.unread) }}</b>
+            </div>
+            <div class="codex-part-legend"><span><i class="part-dot base" />球体背景（含透明度）</span><span><i class="part-dot liquid" />液体 A / B 与波动</span><span><i class="part-dot progress" />Weekly 进度 / 轨道</span><span><i class="part-dot reading" />百分比读数</span><span><i class="part-dot counter" />三类数字角标</span></div>
+            <div class="codex-appearance-controls">
+              <label class="codex-color-control"><input type="color" :value="snapshot.settings.colors.water" @input="updateColor('water', ($event.target as HTMLInputElement).value)" /><span><strong>球体底色</strong><small>只影响球体背景，不影响液体</small></span></label>
+              <label class="water-range"><span>球体底色透明度 <strong>{{ waterDraft.inner.baseOpacity }}%</strong></span><input type="range" min="0" max="100" step="1" :value="waterDraft.inner.baseOpacity" @input="updateWaterDraft('inner', 'baseOpacity', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label class="codex-color-control"><input type="color" :value="waterDraft.inner.fillColorA" @input="updateWaterDraft('inner', 'fillColorA', ($event.target as HTMLInputElement).value.toUpperCase())" /><span><strong>液体填充 A</strong><small>渐变起始色</small></span></label>
+              <label class="codex-color-control"><input type="color" :value="waterDraft.inner.fillColorB" @input="updateWaterDraft('inner', 'fillColorB', ($event.target as HTMLInputElement).value.toUpperCase())" /><span><strong>液体填充 B</strong><small>渐变结束色</small></span></label>
+              <label><span>液体配色</span><select class="codex-select" :value="waterDraft.inner.palette" @change="updateWaterDraft('inner', 'palette', ($event.target as HTMLSelectElement).value)"><option value="solid">纯色（单一液面）</option><option value="gradient">渐变（A → B）</option><option value="aurora">高级炫彩（三段流光）</option></select></label>
+              <label><span>水波速度</span><select class="codex-select" :value="waterDraft.inner.motion" @change="updateWaterDraft('inner', 'motion', ($event.target as HTMLSelectElement).value)"><option value="static">静止</option><option value="slow">缓慢</option><option value="normal">正常</option><option value="fast">快速</option></select></label>
+              <label class="water-range"><span>透明度 <strong>{{ waterDraft.inner.opacity }}%</strong></span><input type="range" min="40" max="95" step="1" :value="waterDraft.inner.opacity" @input="updateWaterDraft('inner', 'opacity', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label class="water-range"><span>波幅 <strong>{{ waterDraft.inner.amplitude }}px</strong></span><input type="range" min="4" max="12" step="1" :value="waterDraft.inner.amplitude" @input="updateWaterDraft('inner', 'amplitude', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>环样式</span><select class="codex-select" :value="waterDraft.outer.style" @change="updateWaterDraft('outer', 'style', ($event.target as HTMLSelectElement).value)"><option value="segmented">固定分段</option><option value="solid">圆环</option></select></label>
+              <label><span>进度颜色</span><select class="codex-select" :value="waterDraft.outer.colorMode" @change="updateWaterDraft('outer', 'colorMode', ($event.target as HTMLSelectElement).value)"><option value="quota">跟随额度状态</option><option value="custom">自定义</option></select></label>
+              <label class="codex-color-control"><input type="color" :value="waterDraft.outer.progressColor" @input="updateWaterDraft('outer', 'colorMode', 'custom'); updateWaterDraft('outer', 'progressColor', ($event.target as HTMLInputElement).value.toUpperCase())" /><span><strong>Weekly 进度色</strong><small>选择即改为自定义</small></span></label>
+              <label class="codex-color-control"><input type="color" :value="waterDraft.outer.trackColor" @input="updateWaterDraft('outer', 'trackColor', ($event.target as HTMLInputElement).value.toUpperCase())" /><span><strong>Weekly 轨道色</strong><small>未完成部分</small></span></label>
+            </div>
+            <div class="codex-water-reading-controls" aria-label="百分比读数配置">
+              <header><strong>百分比读数</strong><small>独立设置水球百分比的位置、字号、字形和颜色。</small></header>
+              <label><span>显示位置</span><select class="codex-select" :value="waterDraft.inner.percentPosition" @change="updateWaterDraft('inner', 'percentPosition', ($event.target as HTMLSelectElement).value)"><option value="auto">自动（居中）</option><option value="center">居中</option><option value="bottom-left">左下</option><option value="bottom-right">右下</option></select></label>
+              <label class="water-reading-range"><span>文字大小 <strong>{{ waterDraft.inner.percentSize }}px</strong></span><input type="range" min="12" max="32" step="1" :value="waterDraft.inner.percentSize" @input="updateWaterDraft('inner', 'percentSize', Number(($event.target as HTMLInputElement).value))" /></label>
+              <label><span>文字样式</span><select class="codex-select" :value="waterDraft.inner.percentTextStyle" @change="updateWaterDraft('inner', 'percentTextStyle', ($event.target as HTMLSelectElement).value)"><option value="regular">常规</option><option value="bold">加粗</option><option value="italic">斜体</option><option value="bold-italic">粗斜体</option></select></label>
+              <label class="codex-color-control"><input type="color" :value="waterDraft.inner.percentColor" @input="updateWaterDraft('inner', 'percentColor', ($event.target as HTMLInputElement).value.toUpperCase())" /><span><strong>文字颜色</strong><small>只影响水球百分比</small></span></label>
+            </div>
+            <div class="codex-counter-colors"><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.input" @input="update({ counterColors: { ...snapshot.settings.counterColors, input: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>待输入角标</strong><small>左上数字</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.active" @input="update({ counterColors: { ...snapshot.settings.counterColors, active: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>进行中角标</strong><small>右上第一个数字</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.unread" @input="update({ counterColors: { ...snapshot.settings.counterColors, unread: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>已未读角标</strong><small>右上第二个数字</small></span></label></div>
+          </section>
+
+          <section class="codex-appearance-zone codex-appearance-zone--card" aria-labelledby="card-appearance-title">
+            <div class="codex-appearance-zone-head"><div><span>02 · 悬浮展开卡片</span><h3 id="card-appearance-title">大卡片主题：面板、文字、交互与任务状态</h3></div><p>这是悬浮球展开后的真实主题目标；展开后不会读取水球配色。</p></div>
+            <div class="codex-expanded-card-preview" :style="cardPreviewStyle" aria-label="悬浮展开卡片颜色部位预览">
+              <div class="expanded-card-preview-tabs"><b><i>3</i>动态</b><span>已完成</span><span>已隐藏</span><span>项目</span></div>
+              <div class="expanded-card-preview-search"><i /><span>搜索会话、别名或项目</span></div>
+              <div class="expanded-card-preview-quota"><span>5 小时限额</span><strong>72%</strong><i><b /></i></div>
+              <div class="expanded-card-preview-task"><i /><span>进行中的 Codex 会话</span><small>2 分钟前</small></div>
+              <div class="expanded-card-preview-map"><span><b>层次</b>主背景、内层块与边框</span><span><b>内容</b>主/次文字、选中和焦点</span><span><b>状态</b>进行中与完成未读</span></div>
+            </div>
+            <div class="codex-card-appearance-controls" aria-label="展开卡片主题配置">
+              <div class="codex-card-config-group">
+                <strong>面板层次</strong>
+                <label class="codex-color-control"><input type="color" :value="snapshot.settings.expandedCardAppearance.surface" @input="updateExpandedCardAppearance('surface', ($event.target as HTMLInputElement).value)" /><span><strong>主面板底色</strong><small>展开外框与整体背景</small></span></label>
+                <label class="codex-color-control"><input type="color" :value="snapshot.settings.expandedCardAppearance.surfaceRaised" @input="updateExpandedCardAppearance('surfaceRaised', ($event.target as HTMLInputElement).value)" /><span><strong>内层块底色</strong><small>页签、搜索、额度与任务行</small></span></label>
+                <label class="codex-color-control"><input type="color" :value="snapshot.settings.expandedCardAppearance.border" @input="updateExpandedCardAppearance('border', ($event.target as HTMLInputElement).value)" /><span><strong>面板边框</strong><small>外框、分区和控件描边</small></span></label>
               </div>
-            </section>
-            <p v-if="themePresetError" class="codex-color-error" role="alert">{{ themePresetError }}</p>
-            <section class="codex-color-group">
-          <h3 class="codex-color-group-title">手动配色</h3>
-          <div class="codex-color-grid codex-color-grid--manual">
-            <label><input type="color" :value="snapshot.settings.colors.water" @input="updateColor('water', ($event.target as HTMLInputElement).value)" /><span>水球底色</span></label>
-            <label><input type="color" :value="waterDraft.inner.colorA" @input="updateWaterDraft('inner', 'colorA', ($event.target as HTMLInputElement).value.toUpperCase())" @change="commitWaterAppearance" /><span>内层水纹色 A</span></label>
-            <label><input type="color" :value="waterDraft.inner.colorB" @input="updateWaterDraft('inner', 'colorB', ($event.target as HTMLInputElement).value.toUpperCase())" @change="commitWaterAppearance" /><span>内层水纹色 B</span></label>
-            <button type="button" class="codex-card-color-trigger" data-role="card-color-pair-trigger" @click="openCardColorDialog">
-              <span class="codex-card-color-trigger-swatches" aria-hidden="true"><i :style="{ background: snapshot.settings.colors.card }" /><i :style="{ background: snapshot.settings.colors.cardForeground }" /></span>
-              <span><strong>卡片表面 + 前景</strong><small>点击打开颜色编辑器</small></span>
-            </button>
-            <label><input type="color" :value="snapshot.settings.colors.healthy" @input="updateColor('healthy', ($event.target as HTMLInputElement).value)" /><span>状态：充足</span></label>
-            <label><input type="color" :value="snapshot.settings.colors.warning" @input="updateColor('warning', ($event.target as HTMLInputElement).value)" /><span>状态：提醒</span></label>
-            <label><input type="color" :value="snapshot.settings.colors.critical" @input="updateColor('critical', ($event.target as HTMLInputElement).value)" /><span>状态：紧张</span></label>
-          </div>
-        </section>
-        <p v-if="colorError" class="codex-color-error" role="alert">{{ colorError }}；已恢复最近一次有效配置。</p>
-
-        <div class="codex-water-settings">
-          <fieldset class="codex-fieldset water-settings-group">
-            <legend>
-              内层水纹
-            </legend>
-            <label>
-              <span>配色</span>
-              <select class="codex-select" :value="waterDraft.inner.palette" @change="updateWaterDraft('inner', 'palette', ($event.target as HTMLSelectElement).value); commitWaterAppearance()">
-                <option value="solid">纯色</option>
-                <option value="gradient">渐变</option>
-                <option value="aurora">高级炫彩</option>
-              </select>
-            </label>
-            <label class="water-range"><span>透明度 <strong>{{ waterDraft.inner.opacity }}%</strong></span><input type="range" min="40" max="95" step="1" :value="waterDraft.inner.opacity" @input="updateWaterDraft('inner', 'opacity', Number(($event.target as HTMLInputElement).value))" @change="commitWaterAppearance" /></label>
-            <label class="water-range"><span>波幅 <strong>{{ waterDraft.inner.amplitude }}px</strong></span><input type="range" min="4" max="12" step="1" :value="waterDraft.inner.amplitude" @input="updateWaterDraft('inner', 'amplitude', Number(($event.target as HTMLInputElement).value))" @change="commitWaterAppearance" /></label>
-            <label>
-              <span>水纹速度</span>
-              <select class="codex-select" :value="waterDraft.inner.motion" @change="updateWaterDraft('inner', 'motion', ($event.target as HTMLSelectElement).value); commitWaterAppearance()">
-                <option value="static">静态</option><option value="slow">慢</option><option value="normal">正常</option><option value="fast">快</option>
-              </select>
-            </label>
-          </fieldset>
-
-          <fieldset class="codex-fieldset water-settings-group">
-            <legend>
-              外层 Weekly 环
-            </legend>
-            <label>
-              <span>环样式</span>
-              <select class="codex-select" :value="waterDraft.outer.style" @change="updateWaterDraft('outer', 'style', ($event.target as HTMLSelectElement).value); commitWaterAppearance()">
-                <option value="segmented">固定分段</option>
-                <option value="solid">圆环</option>
-              </select>
-            </label>
-            <label class="water-range"><span>粗细 <strong>{{ waterDraft.outer.thickness }}px</strong></span><input type="range" min="2" max="6" step="1" :value="waterDraft.outer.thickness" @input="updateWaterDraft('outer', 'thickness', Number(($event.target as HTMLInputElement).value));" @change="commitWaterAppearance" /></label>
-            <label>
-              <span>进度颜色</span>
-              <select class="codex-select" :value="waterDraft.outer.colorMode" @change="updateWaterDraft('outer', 'colorMode', ($event.target as HTMLSelectElement).value); commitWaterAppearance()">
-                <option value="quota">跟随额度状态</option>
-                <option value="custom">自定义</option>
-              </select>
-            </label>
-            <div class="water-color-pair">
-              <label>
-                <input
-                  type="color"
-                  :value="waterDraft.outer.progressColor"
-                  :disabled="waterDraft.outer.colorMode !== 'custom'"
-                  @input="updateWaterDraft('outer', 'progressColor', ($event.target as HTMLInputElement).value.toUpperCase())"
-                  @change="commitWaterAppearance"
-                />
-                <span>进度色</span>
-              </label>
-              <label><input type="color" :value="waterDraft.outer.trackColor" @input="updateWaterDraft('outer', 'trackColor', ($event.target as HTMLInputElement).value.toUpperCase())" @change="commitWaterAppearance" /><span>轨道色</span></label>
+              <div class="codex-card-config-group">
+                <strong>文字层级</strong>
+                <label class="codex-color-control"><input type="color" :value="snapshot.settings.expandedCardAppearance.foreground" @input="updateExpandedCardAppearance('foreground', ($event.target as HTMLInputElement).value)" /><span><strong>主文字 / 图标</strong><small>标题、数字与当前页签</small></span></label>
+                <label class="codex-color-control"><input type="color" :value="snapshot.settings.expandedCardAppearance.secondary" @input="updateExpandedCardAppearance('secondary', ($event.target as HTMLInputElement).value)" /><span><strong>次文字</strong><small>搜索提示、时间和辅助标签</small></span></label>
+              </div>
+              <div class="codex-card-config-group">
+                <strong>交互强调</strong>
+                <label class="codex-color-control"><input type="color" :value="snapshot.settings.expandedCardAppearance.accent" @input="updateExpandedCardAppearance('accent', ($event.target as HTMLInputElement).value)" /><span><strong>选中 / 进度强调</strong><small>当前页签、进度与完成状态</small></span></label>
+                <label class="codex-color-control"><input type="color" :value="snapshot.settings.expandedCardAppearance.focus" @input="updateExpandedCardAppearance('focus', ($event.target as HTMLInputElement).value)" /><span><strong>键盘焦点</strong><small>页签和按钮的焦点框</small></span></label>
+              </div>
+              <div class="codex-card-config-group">
+                <strong>任务状态</strong>
+                <label class="codex-color-control"><input type="color" :value="snapshot.settings.expandedCardAppearance.running" @input="updateExpandedCardAppearance('running', ($event.target as HTMLInputElement).value)" /><span><strong>进行中</strong><small>运行状态点、边框和标签</small></span></label>
+                <label class="codex-color-control"><input type="color" :value="snapshot.settings.expandedCardAppearance.pending" @input="updateExpandedCardAppearance('pending', ($event.target as HTMLInputElement).value)" /><span><strong>完成未读</strong><small>未读徽标和待处理状态</small></span></label>
+              </div>
             </div>
-            <label>
-              <span>光晕</span>
-              <select class="codex-select" :value="waterDraft.outer.glow" @change="updateWaterDraft('outer', 'glow', ($event.target as HTMLSelectElement).value); commitWaterAppearance()">
-                <option value="off">关闭</option>
-                <option value="soft">柔和</option>
-                <option value="strong">强</option>
-              </select>
-            </label>
-            <div class="codex-readonly-field" v-if="waterDraft.outer.colorMode === 'quota'">
-              <span>进度颜色</span>
-              <strong>跟随额度状态</strong>
-            </div>
-          </fieldset>
+          </section>
+
+          <section class="codex-appearance-zone codex-appearance-zone--signals" aria-labelledby="signal-appearance-title">
+            <div class="codex-appearance-zone-head"><div><span>03 · 状态信号</span><h3 id="signal-appearance-title">额度状态的三种颜色</h3></div><p>用于“跟随额度状态”的 Weekly 进度与状态强调。</p></div>
+            <div class="codex-signal-controls"><label class="codex-color-control"><input type="color" :value="snapshot.settings.colors.healthy" @input="updateColor('healthy', ($event.target as HTMLInputElement).value)" /><span><strong>充足</strong><small>高额度状态</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.colors.warning" @input="updateColor('warning', ($event.target as HTMLInputElement).value)" /><span><strong>提醒</strong><small>中额度状态</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.colors.critical" @input="updateColor('critical', ($event.target as HTMLInputElement).value)" /><span><strong>紧张</strong><small>低额度状态</small></span></label></div>
+          </section>
         </div>
       </article>
 
@@ -878,12 +965,5 @@ onBeforeUnmount(() => {
         </div>
       </article>
     </div>
-    <CodexCardColorDialog
-      v-if="cardColorDialogOpen"
-      :colors="snapshot.settings.colors"
-      @preview="previewCardColors"
-      @confirm="applyCardColors"
-      @cancel="cancelCardColorDialog"
-    />
   </section>
 </template>

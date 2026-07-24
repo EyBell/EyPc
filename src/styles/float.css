@@ -42,10 +42,6 @@ button { font: inherit; }
   box-shadow: none;
 }
 .float-compact.water-surface:focus-visible { outline: none; }
-.float-compact.water-surface:focus-visible .codex-water-ball__value strong {
-  text-decoration: underline 2px var(--codex-focus);
-  text-underline-offset: 4px;
-}
 
 .float-compact.card-surface {
   display: grid;
@@ -959,17 +955,18 @@ button { font: inherit; }
   cursor: pointer;
 }
 .float-counter.input {
-  top: 0;
+  top: auto;
+  bottom: 0;
   left: 0;
-  border-color: color-mix(in srgb, #e5486f 76%, var(--codex-surface));
-  background: var(--codex-surface);
-  color: #ff5b7f;
+  border-color: color-mix(in srgb, var(--codex-counter-input) 76%, var(--codex-surface));
+  background: var(--codex-counter-input);
+  color: #fff;
 }
-.float-counter.active { top: 0; right: 0; background: #258bc7; }
-.float-counter.unread { top: 23px; right: 0; background: #b84d91; }
-.card-shell .float-counter.input { top: -2px; left: -2px; }
-.card-shell .float-counter.active { top: -2px; right: -2px; }
-.card-shell .float-counter.unread { top: 21px; right: -2px; }
+.float-counter.active { top: auto; right: 0; bottom: 23px; background: var(--codex-counter-active); }
+.float-counter.unread { top: auto; right: 0; bottom: 0; background: var(--codex-counter-unread); }
+.card-shell .float-counter.input { top: auto; bottom: -2px; left: -2px; }
+.card-shell .float-counter.active { top: auto; right: -2px; bottom: 21px; }
+.card-shell .float-counter.unread { top: auto; right: -2px; bottom: -2px; }
 .float-counter:focus-visible { outline: 2px solid var(--codex-focus); outline-offset: 1px; }
 .float-compact-counter-hint {
   position: absolute;

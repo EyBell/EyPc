@@ -25,6 +25,7 @@ import {
   CODEX_THEME_PRESETS,
   codexThemeCssVars,
   codexWaterAppearanceCssVars,
+  resolveCodexExpandedCardTheme,
   resolveCodexSurfaceTheme
 } from './domain/codexAppearance'
 import { buildCodexCompactPresentation } from './domain/codexPresentation'
@@ -167,6 +168,7 @@ let quickJumpTrigger: HTMLElement | null = null
 
 const fallbackColors = CODEX_THEME_PRESETS[0].colors
 const fallbackWaterAppearance = CODEX_THEME_PRESETS[0].waterAppearance
+const fallbackExpandedCardAppearance = CODEX_THEME_PRESETS[0].expandedCardAppearance
 const settings = computed(() => snapshot.value)
 const quota = computed(() => snapshot.value?.quota)
 const conversations = computed(() => snapshot.value?.conversations)
@@ -182,11 +184,20 @@ const selectedWeekly = computed(() => {
   if (compact.value.secondary?.kind === 'weekly') return compact.value.secondary
   return null
 })
-const surfaceTheme = computed(() => resolveCodexSurfaceTheme(settings.value?.style || 'water', settings.value?.colors || fallbackColors, primaryPercent.value))
+const compactSurfaceTheme = computed(() => resolveCodexSurfaceTheme(settings.value?.style || 'water', settings.value?.colors || fallbackColors, primaryPercent.value))
+const expandedSurfaceTheme = computed(() => resolveCodexExpandedCardTheme(
+  settings.value?.colors || fallbackColors,
+  settings.value?.expandedCardAppearance || fallbackExpandedCardAppearance,
+  primaryPercent.value
+))
+const surfaceTheme = computed(() => expanded.value ? expandedSurfaceTheme.value : compactSurfaceTheme.value)
 const rootStyle = computed<Record<string, string | number>>(() => ({
   ...codexThemeCssVars(surfaceTheme.value),
   ...codexWaterAppearanceCssVars(settings.value?.waterAppearance || fallbackWaterAppearance, settings.value?.colors || fallbackColors),
-  '--water-level': `${primaryPercent.value}%`
+  '--water-level': `${primaryPercent.value}%`,
+  '--codex-counter-input': settings.value?.counterColors?.input || '#E5486F',
+  '--codex-counter-active': settings.value?.counterColors?.active || '#258BC7',
+  '--codex-counter-unread': settings.value?.counterColors?.unread || '#B84D91'
 }))
 
 watch(rootStyle, (tokens) => {
@@ -1031,11 +1042,34 @@ function requestExpansion(nextExpanded: boolean) {
   window.eypcFloat?.setExpansion(nextExpanded, false)
 }
 
-function onCompactClick() {
+function compactSurfaceVerticalRatio(event: MouseEvent | PointerEvent, surface: HTMLElement) {
+  const bounds = surface.getBoundingClientRect()
+  if (bounds.width <= 0 || bounds.height <= 0) return null
+  const insideSurface = event.clientX >= bounds.left
+    && event.clientX <= bounds.right
+    && event.clientY >= bounds.top
+    && event.clientY <= bounds.bottom
+  if (!insideSurface) return null
+  return (event.clientY - bounds.top) / bounds.height
+}
+
+function isCompactExpansionZone(event: MouseEvent | PointerEvent, surface: HTMLElement) {
+  const ratio = compactSurfaceVerticalRatio(event, surface)
+  return ratio !== null && ratio <= 1 / 3
+}
+
+function isCompactDragZone(event: PointerEvent, surface: HTMLElement) {
+  const ratio = compactSurfaceVerticalRatio(event, surface)
+  return ratio !== null && ratio >= 1 / 2
+}
+
+function onCompactClick(event: MouseEvent) {
   if (ignoreCompactClick) {
     ignoreCompactClick = false
     return
   }
+  const surface = event.currentTarget as HTMLElement | null
+  if (event.detail !== 0 && (!surface || !isCompactExpansionZone(event, surface))) return
   requestExpansion(true)
 }
 
@@ -1066,13 +1100,10 @@ function clearCompactCounterHint() {
   compactCounterHintText.value = ''
 }
 
-function compactCounterTasks(kind: 'input' | 'unread') {
+function compactCounterTasks() {
   const value = conversations.value
   if (!value) return []
-  const tasks = kind === 'input'
-    ? value.inputRequired
-    : value.all.filter((task) => task.bucket === 'completed-unread')
-  return displayOrderedTasks(tasks)
+  return displayOrderedTasks(value.inputRequired)
 }
 
 function openCompactStatus(kind: 'input' | 'active' | 'unread') {
@@ -1080,7 +1111,11 @@ function openCompactStatus(kind: 'input' | 'active' | 'unread') {
     requestExpansion(true)
     return
   }
-  const task = compactCounterTasks(kind)[0]
+  if (kind === 'unread') {
+    action('codex.completed-unread.openFirst')
+    return
+  }
+  const task = compactCounterTasks()[0]
   if (task) openTask(task)
 }
 
@@ -2007,8 +2042,9 @@ function onPointerDown(event: PointerEvent) {
   }
   if (pendingConfirm.value && !target.closest('[data-confirm-slot]')) clearConfirm()
   if (resize || target.closest('.float-resize-handle')) return
-  const compactTarget = target.closest('.float-compact')
+  const compactTarget = target.closest<HTMLElement>('.float-compact')
   if (!compactTarget && !target.closest('.float-drag-handle')) return
+  if (compactTarget && !isCompactDragZone(event, compactTarget)) return
   drag = { x: event.screenX, y: event.screenY, moved: false, pointerId: event.pointerId }
   ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
   window.eypcFloat?.dragStart(event.screenX, event.screenY)
@@ -2043,15 +2079,7 @@ function onCompactSurfacePointer(event: PointerEvent) {
   if (event.pointerType === 'touch' || desiredExpanded || expanded.value || drag || resize) return
   const surface = event.currentTarget as HTMLElement | null
   if (!surface) return
-  const bounds = surface.getBoundingClientRect()
-  if (bounds.width <= 0 || bounds.height <= 0) return
-  const insideSurface = event.clientX >= bounds.left
-    && event.clientX <= bounds.right
-    && event.clientY >= bounds.top
-    && event.clientY <= bounds.bottom
-  const entersExpansionZone = settings.value?.style === 'card'
-    || event.clientY >= bounds.top + bounds.height / 2
-  if (insideSurface && entersExpansionZone) requestExpansion(true)
+  if (isCompactExpansionZone(event, surface)) requestExpansion(true)
 }
 
 function scheduleCollapse() {

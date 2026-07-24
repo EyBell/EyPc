@@ -25,10 +25,16 @@ const weekly = computed(() => props.primary?.kind === 'weekly' ? props.primary :
 const weeklyPercent = computed(() => weekly.value?.bucket.remainingPercent ?? 0)
 const activeWeeklySegments = computed(() => Math.ceil(weeklyPercent.value / 5))
 const wavePath = 'M0 12 C12.5 0 37.5 0 50 12 S87.5 24 100 12 C112.5 0 137.5 0 150 12 S187.5 24 200 12 L200 24 L0 24 Z'
+const percentTextIsBold = computed(() => props.appearance.inner.percentTextStyle === 'bold' || props.appearance.inner.percentTextStyle === 'bold-italic')
+const percentTextIsItalic = computed(() => props.appearance.inner.percentTextStyle === 'italic' || props.appearance.inner.percentTextStyle === 'bold-italic')
 const style = computed(() => ({
   ...codexWaterAppearanceCssVars(props.appearance, props.colors, percent.value, weekly.value ? weeklyPercent.value : percent.value),
   '--water-level': `${percent.value}%`,
-  '--weekly-ring': String(weeklyPercent.value)
+  '--weekly-ring': String(weeklyPercent.value),
+  '--water-percent-size': `${props.appearance.inner.percentSize}px`,
+  '--water-percent-color': props.appearance.inner.percentColor,
+  '--water-percent-font-weight': percentTextIsBold.value ? '700' : '400',
+  '--water-percent-font-style': percentTextIsItalic.value ? 'italic' : 'normal'
 }))
 </script>
 
@@ -73,7 +79,7 @@ const style = computed(() => ({
       </template>
     </svg>
 
-    <div class="codex-water-ball__value" :class="{ empty: !primary }">
+    <div v-if="!primary || appearance.inner.showPercent" class="codex-water-ball__value" :class="[`percent-${appearance.inner.percentPosition}`, { empty: !primary }]">
       <span v-if="primary?.family === 'spark'" class="codex-water-ball__spark" aria-hidden="true">S</span>
       <strong>{{ primary ? `${primary.bucket.remainingPercent}%` : stateLabel }}</strong>
     </div>
@@ -82,8 +88,8 @@ const style = computed(() => ({
 
 <style scoped>
 .codex-water-ball {
-  --signal-a: var(--water-fill-a);
-  --signal-b: var(--water-fill-b);
+  --signal-a: var(--water-fill-color-a);
+  --signal-b: var(--water-fill-color-b);
   position: relative;
   width: var(--water-size, 94px);
   height: var(--water-size, 94px);
@@ -104,11 +110,26 @@ const style = computed(() => ({
   overflow: hidden;
   border: 0;
   border-radius: 50%;
+  box-shadow: inset 0 -14px 24px rgba(2, 11, 21, calc(var(--water-base-opacity) * .32));
+}
+.codex-water-ball__surface::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  border-radius: inherit;
   background:
     radial-gradient(circle at 34% 22%, rgba(255,255,255,.34), transparent 22%),
     radial-gradient(circle at 68% 74%, color-mix(in srgb, var(--signal-b) 36%, transparent), transparent 48%),
-    color-mix(in srgb, var(--codex-surface) 92%, #071927);
-  box-shadow: inset 0 -14px 24px rgba(2, 11, 21, .32);
+    color-mix(in srgb, var(--water-base) 92%, #071927);
+  opacity: var(--water-base-opacity);
+  content: '';
+}
+.codex-water-ball.palette-aurora .codex-water-ball__surface::before {
+  background:
+    radial-gradient(circle at 30% 18%, color-mix(in srgb, #fff 40%, transparent), transparent 20%),
+    radial-gradient(circle at 82% 28%, color-mix(in srgb, var(--water-aurora-accent) 58%, transparent), transparent 37%),
+    radial-gradient(circle at 42% 84%, color-mix(in srgb, var(--water-aurora-glow) 42%, transparent), transparent 46%),
+    color-mix(in srgb, var(--water-base) 88%, #071927);
 }
 
 .refraction,
@@ -175,7 +196,16 @@ const style = computed(() => ({
   inset: var(--water-amplitude) 0 0;
   background:
     radial-gradient(circle at 24% 34%, rgba(255,255,255,.28), transparent 22%),
-    linear-gradient(135deg, var(--signal-a), var(--signal-b) 58%, var(--water-fill-b));
+    linear-gradient(135deg, var(--signal-a), var(--signal-b) 58%, var(--water-fill-color-b));
+}
+.palette-solid .liquid-base { background: var(--signal-a); }
+.palette-solid .wave-b { color: var(--signal-a); opacity: .58; }
+.palette-aurora .liquid-base {
+  background:
+    radial-gradient(circle at 18% 24%, color-mix(in srgb, #fff 36%, transparent), transparent 22%),
+    radial-gradient(circle at 77% 28%, color-mix(in srgb, var(--water-aurora-accent) 78%, transparent), transparent 38%),
+    radial-gradient(circle at 42% 92%, color-mix(in srgb, var(--water-aurora-glow) 68%, transparent), transparent 48%),
+    linear-gradient(122deg, var(--signal-a) 0%, var(--water-aurora-glow) 31%, var(--water-aurora-accent) 57%, var(--signal-b) 79%, var(--signal-a) 100%);
 }
 .liquid-wave {
   position: absolute;
@@ -202,6 +232,9 @@ const style = computed(() => ({
   transform: scaleY(.62);
   animation: codex-water-wave-left calc(var(--water-wave-a-duration) * .72) linear -1.8s infinite;
 }
+.palette-aurora .wave-a { color: var(--water-aurora-accent); opacity: .96; }
+.palette-aurora .wave-b { color: var(--signal-b); opacity: .72; }
+.palette-aurora .wave-c { color: var(--water-aurora-glow); opacity: .42; mix-blend-mode: screen; }
 
 .codex-water-ball__value {
   position: absolute;
@@ -209,18 +242,27 @@ const style = computed(() => ({
   top: 50%;
   left: 50%;
   display: grid;
-  width: 64px;
+  min-width: 64px;
+  max-width: 100%;
   min-height: 48px;
   place-content: center;
   justify-items: center;
   border: 0;
   background: transparent;
   box-shadow: none;
-  color: #fff;
+  color: var(--water-percent-color, #fff);
   text-shadow: 0 1px 3px rgba(0,0,0,.9);
   transform: translate(-50%, -50%);
 }
-.codex-water-ball__value strong { font-size: 22px; line-height: 1; letter-spacing: -.04em; }
+.codex-water-ball__value strong { font-size: var(--water-percent-size, 22px); font-style: var(--water-percent-font-style, normal); font-weight: var(--water-percent-font-weight, 700); line-height: 1; letter-spacing: -.04em; white-space: nowrap; }
+.codex-water-ball__value.percent-center,
+.codex-water-ball__value.percent-auto { top: 50%; right: auto; bottom: auto; left: 50%; transform: translate(-50%, -50%); }
+.codex-water-ball__value.percent-bottom-left { top: auto; right: auto; bottom: 20%; left: 20%; transform: none; }
+.codex-water-ball__value.percent-bottom-right {
+  top: auto; right: 16%; bottom: 20%;
+  left: auto;
+  transform: none;
+}
 .codex-water-ball__spark {
   margin-bottom: 3px;
   padding: 1px 5px;
@@ -235,25 +277,6 @@ const style = computed(() => ({
 }
 .codex-water-ball__value.empty { width: 64px; padding: 0 7px; text-align: center; }
 .codex-water-ball__value.empty strong { font-size: 11px; line-height: 1.15; letter-spacing: 0; }
-
-.codex-water-ball__badge {
-  position: absolute;
-  z-index: 9;
-  top: 1px;
-  right: 3px;
-  display: grid;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 5px;
-  place-items: center;
-  border: 2px solid color-mix(in srgb, var(--codex-surface) 90%, #fff);
-  border-radius: 12px;
-  background: linear-gradient(135deg, #ffb020, #ff6b00);
-  color: #171006;
-  font-size: 10px;
-  font-weight: 950;
-  box-shadow: 0 3px 9px rgba(0,0,0,.4);
-}
 
 @keyframes codex-water-wave-left {
   from { transform: translate3d(0, 0, 0); }
