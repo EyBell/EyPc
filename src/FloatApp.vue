@@ -1723,7 +1723,15 @@ function activateQuickJumpTarget() {
 function handleQuickJumpKey(event: KeyboardEvent) {
   if (!quickJump.value.open) return false
   const shortcut = shortcutFromEvent(event)
-  if (shortcut === 'Escape') closeQuickJump(true)
+  if (shortcut === 'Escape') {
+    if (quickJump.value.query) {
+      const result = resolveQuickJumpQuery(quickJump.value.sourceTargets, '')
+      quickJump.value = { ...quickJump.value, query: result.query, targets: result.targets, activeTargetId: result.activeTargetId }
+      syncQuickJumpActive(true)
+    } else {
+      closeQuickJump(true)
+    }
+  }
   else if (shortcut === 'Enter') activateQuickJumpTarget()
   else if (shortcut === 'ArrowDown' || shortcut === 'Ctrl+J') {
     quickJump.value.activeTargetId = moveQuickJumpActive(quickJump.value.targets, quickJump.value.activeTargetId, 1)
@@ -1820,6 +1828,12 @@ function cancelTopLayer() {
     return
   }
   if (quickJump.value.open) {
+    if (quickJump.value.query) {
+      const result = resolveQuickJumpQuery(quickJump.value.sourceTargets, '')
+      quickJump.value = { ...quickJump.value, query: result.query, targets: result.targets, activeTargetId: result.activeTargetId }
+      syncQuickJumpActive(true)
+      return
+    }
     closeQuickJump(true)
     return
   }
@@ -1962,6 +1976,7 @@ function onWindowKeydown(event: KeyboardEvent) {
   if (shortcutFromEvent(event) === 'Shift+Escape') {
     event.preventDefault()
     event.stopPropagation()
+    event.stopImmediatePropagation()
     returnToPreviousFocus()
     return
   }
@@ -1971,6 +1986,7 @@ function onWindowKeydown(event: KeyboardEvent) {
   ) {
     event.preventDefault()
     event.stopPropagation()
+    event.stopImmediatePropagation()
     cancelTopLayer()
     return
   }
@@ -2284,8 +2300,8 @@ onMounted(() => {
     requestExpansion(true)
     void nextTick(() => payload.command === 'new-thread' ? openComposer() : focusCurrent())
   }) || null
-  window.addEventListener('keydown', onWindowKeydown)
-  window.addEventListener('keyup', onWindowKeyup)
+  window.addEventListener('keydown', onWindowKeydown, true)
+  window.addEventListener('keyup', onWindowKeyup, true)
   window.addEventListener('blur', onWindowBlur)
   window.addEventListener('resize', onWindowResize)
 })
@@ -2304,8 +2320,8 @@ onUnmounted(() => {
   closeQuickJump()
   clearConfirm()
   taskScrollResizeObserver?.disconnect()
-  window.removeEventListener('keydown', onWindowKeydown)
-  window.removeEventListener('keyup', onWindowKeyup)
+  window.removeEventListener('keydown', onWindowKeydown, true)
+  window.removeEventListener('keyup', onWindowKeyup, true)
   window.removeEventListener('blur', onWindowBlur)
   window.removeEventListener('resize', onWindowResize)
   stopSnapshot?.()
