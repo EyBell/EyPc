@@ -2,6 +2,17 @@
   "schema_version": "1.0",
   "entries": [
     {
+      "id": "eypc-workbench-list-interaction",
+      "category": "interaction-input",
+      "scope": "project",
+      "surfaces": ["ports", "favorites", "mqtt", "windows"],
+      "authority_ref": "developer-soul.md#workbench-list-taste",
+      "tags": ["authority:project-soul", "space-select-advance", "arrow-list-focus", "right-action-drawer", "ctrl-delete-destructive", "structural-selection-cue", "codex-companion-exception"],
+      "status": "stable",
+      "priority": 210,
+      "last_verified": "2026-07-26"
+    },
+    {
       "id": "eypc-codex-product-context",
       "category": "product-context",
       "scope": "project",
