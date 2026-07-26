@@ -1154,15 +1154,21 @@ describe('Codex Companion V3 UI contract', () => {
       }
     })
     mounted.push(wrapper)
-    expect(wrapper.text()).toContain('Codex 数据与桌面实时状态已就绪')
-    expect(wrapper.text()).toContain('桌面实时桥')
-    expect(wrapper.text()).toContain('已连接 · 实时权威')
+    expect(wrapper.findAll('[role="tab"]')).toHaveLength(5)
+    expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toBe('快捷方式')
+    expect(wrapper.text()).not.toContain('Codex 数据与桌面实时状态已就绪')
+
+    await wrapper.get('#codex-config-tab-tasks').trigger('click')
     const input = wrapper.get('input[type="number"][min="1"][max="365"]')
     expect((input.element as HTMLInputElement).value).toBe('30')
     await input.setValue('45')
     await input.trigger('change')
     expect(wrapper.emitted('dispatch')).toContainEqual(['codex.settings.update', { settings: { timeWindowDays: 45 } }])
 
+    await wrapper.get('#codex-config-tab-runtime').trigger('click')
+    expect(wrapper.text()).toContain('Codex 数据与桌面实时状态已就绪')
+    expect(wrapper.text()).toContain('桌面实时桥')
+    expect(wrapper.text()).toContain('已连接 · 实时权威')
     const modelField = wrapper.findAll('label').find((label) => label.text().includes('新会话普通模型'))!
     expect(modelField.text()).toContain('quota-auto')
     expect(modelField.text()).toContain('GPT-5.6 Sol')
@@ -1317,25 +1323,26 @@ describe('Codex Companion V3 UI contract', () => {
     })
     mounted.push(wrapper)
 
-    const configureShortcut = wrapper.findAll('button').find((button) => button.text().trim() === '配置系统级快捷键')
-    expect(configureShortcut?.exists()).toBe(true)
-    expect(configureShortcut?.attributes('data-operation-tooltip')).toBe('配置系统级快捷键')
-    expect(configureShortcut?.attributes('data-operation-description')).toContain('统一管理')
+    const configureShortcut = wrapper.get('[data-operation-tooltip="配置系统级快捷键"]')
+    expect(configureShortcut.text()).toBe('去设置')
+    expect(configureShortcut.attributes('data-operation-description')).toContain('统一管理')
 
     const quickExpand = wrapper.findAll('button').find((button) => button.text().trim() === '立即展开')
     expect(quickExpand?.exists()).toBe(true)
     expect(quickExpand?.attributes('data-operation-tooltip')).toBe('立即展开')
     expect(quickExpand?.attributes('data-operation-description')).toContain('⌘⌥↵')
 
+    await wrapper.get('#codex-config-tab-tasks').trigger('click')
     const refreshRow = wrapper.findAll('label').find((label) => label.text().includes('刷新频率'))
     expect(refreshRow?.exists()).toBe(true)
     expect(refreshRow?.get('select').attributes('data-operation-tooltip')).toBe('刷新频率')
-    expect(refreshRow?.get('select').attributes('data-operation-description')).toContain('按该值轮询会话列表')
+    expect(refreshRow?.get('select').attributes('data-operation-description')).toContain('按该秒数轮询会话列表')
 
     const windowInput = wrapper.find('input[type="number"][min="1"][max="365"]')
     expect(windowInput.attributes('data-operation-tooltip')).toBe('时间窗口（天）')
-    expect(windowInput.attributes('data-operation-description')).toContain('按最近提问时间过滤会话')
+    expect(windowInput.attributes('data-operation-description')).toContain('按最新 Turn 活动时间过滤常规会话')
 
+    await wrapper.get('#codex-config-tab-runtime').trigger('click')
     const modelPolicy = wrapper.get('.codex-model-policy-select select')
     expect(modelPolicy.attributes('data-operation-tooltip')).toBe('新会话普通模型')
     expect(modelPolicy.attributes('data-operation-description')).toContain('目录默认')
