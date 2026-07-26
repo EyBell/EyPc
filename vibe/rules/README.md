@@ -16,6 +16,9 @@ design-preference-gate: accepted
 
 - EyPc is a uTools plugin, not a standalone Electron app.
 - Use Vue 3 + TypeScript + Vite for the UI and runtime.
+- uTools development uses `dist/plugin.json` as the complete plugin directory; run `pnpm run serve` before re-connecting development, and treat `createBrowserWindow` child pages as separate Vite entries that require their own development proxy for HMR.
+- Treat the uTools/Electron host boundary as fail-closed: never call `ipcRenderer.sendSync(...)` or an equivalent private synchronous host channel from preload or Renderer, and never attach host-configuration reads to plugin entry, startup, focus, visibility, or manual-refresh paths. Shortcut integration is configuration-redirect-only through the documented `utools.redirectHotKeySetting`; EyPc must not read or display current host bindings. A future readback requires a new explicit requirement plus a documented asynchronous uTools API, explicit user action, a bounded timeout, and proof that plugin entry remains independent.
+- Any uTools host/preload bridge change must statically search for private synchronous IPC, prove the main entry has no synchronous host dependency, and keep [preload/index.js](../../preload/index.js#L1) and [public/preload.js](../../public/preload.js#L1) behaviorally mirrored. The verified failure and recovery route are owned by [utools-private-sync-ipc-entry-freeze.md](../knowledge/error-memory/utools-private-sync-ipc-entry-freeze.md#L1).
 - Keep domain logic pure and testable under `src/domain/`.
 - Put uTools, Node.js, shell, process, and file-system calls behind `src/platform/` or `preload/`.
 - All user-visible mutations go through Runtime Action dispatch.
@@ -31,3 +34,11 @@ design-preference-gate: accepted
 - Codex native global state is read-only except for the explicitly confirmed Companion project-removal transaction: the host must reject while Codex Desktop is running, validate a short-lived project alias and source fingerprint against the primary state file, change only the native project registry fields, atomically replace primary plus `.bak`, and verify/rollback. All other Codex flows remain absolutely read-only toward that file.
 - Do not delete real files from disk in the favorites feature; removing a favorite only removes plugin metadata.
 - Process termination is high risk: normal kill requires confirmation; force kill is allowed only for explicit selected PID + verified port match.
+
+## Project Rule Trace
+
+Project-local rules stay outside the central CodeNote Rule Task Index. This table is the EyPc-local trace required for future project work.
+
+| Rule ID | Scope / Source | Durable Authorities | State |
+| --- | --- | --- | --- |
+| `EYPC-UTOOLS-HOST-001` | project-local; RAW-087 and the 2026-07-24 user-confirmed entry freeze | [RAW-087](../specs/260718/1148-codex-quota-float/raw-requirement.md#L1) · [verification](../specs/260718/1148-codex-quota-float/verify.md#L1) · [verified error consensus](../knowledge/error-memory/utools-private-sync-ipc-entry-freeze.md#L1) | active; entry recovery user-confirmed, complete no-readback contract statically verified |
