@@ -5,18 +5,20 @@ import { normalizeShortcutId } from './shortcuts'
 import { normalizeToolPreviewPrefs } from './toolPreview'
 import { normalizeFavoriteGraph } from './favorites'
 import { createDefaultCodexState, normalizeCodexState } from './codex'
+import { createWindowSlots, type WindowPlatform, type WindowSlot, type WindowTarget } from './windows'
 
-const VALID_TABS = new Set<AppTabId>(['ports', 'mqtt', 'favorites', 'codex', 'settings'])
-const TAB_IDS: AppTabId[] = ['ports', 'mqtt', 'favorites', 'codex', 'settings']
+const VALID_TABS = new Set<AppTabId>(['ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings'])
+const TAB_IDS: AppTabId[] = ['ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings']
 const DEFAULT_FEATURE_SORT_ORDER: Record<AppTabId, number> = {
   ports: 1,
   favorites: 2,
   mqtt: 3,
-  codex: 4,
-  settings: 5
+  windows: 4,
+  codex: 5,
+  settings: 6
 }
 const VALID_FAVORITE_KINDS = new Set<FavoriteKind>(['file', 'folder', 'group'])
-const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'codex', 'settings']
+const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings']
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
@@ -61,6 +63,7 @@ function inferShortcutProfileId(commandId: string): ShortcutProfileId {
   if (commandId.startsWith('ports.')) return 'ports'
   if (commandId.startsWith('mqtt.')) return 'mqtt'
   if (commandId.startsWith('favorites.')) return 'favorites'
+  if (commandId.startsWith('windows.')) return 'windows'
   if (commandId.startsWith('codex.')) return 'codex'
   if (commandId.startsWith('settings.')) return 'settings'
   return 'global'
@@ -72,9 +75,62 @@ function emptyShortcutProfiles(now: number): ShortcutProfileMap {
     ports: { keybindingOverrides: [], updatedAt: now },
     mqtt: { keybindingOverrides: [], updatedAt: now },
     favorites: { keybindingOverrides: [], updatedAt: now },
+    windows: { keybindingOverrides: [], updatedAt: now },
     codex: { keybindingOverrides: [], updatedAt: now },
     settings: { keybindingOverrides: [], updatedAt: now }
   }
+}
+
+function windowPlatform(value: unknown): WindowPlatform | null {
+  return value === 'darwin' || value === 'win32' ? value : null
+}
+
+function normalizeWindowTargets(value: unknown, now: number): WindowTarget[] {
+  if (!Array.isArray(value)) return []
+  const ids = new Set<string>()
+  const targets: WindowTarget[] = []
+  for (const item of value) {
+    const source = record(item)
+    const id = stringValue(source.id).trim()
+    const platform = windowPlatform(source.platform)
+    const appId = stringValue(source.appId).trim()
+    const appName = stringValue(source.appName).trim()
+    const titleLocator = stringValue(source.titleLocator).trim()
+    if (!id || ids.has(id) || !platform || !(appId || appName) || !titleLocator) continue
+    ids.add(id)
+    targets.push({
+      id,
+      alias: stringValue(source.alias).trim() || titleLocator,
+      platform,
+      appId: appId || appName,
+      appName: appName || appId,
+      titleLocator,
+      lastNativeRef: stringValue(source.lastNativeRef).trim() || null,
+      favorite: source.favorite !== false,
+      createdAt: numberValue(source.createdAt, now),
+      updatedAt: numberValue(source.updatedAt, now)
+    })
+  }
+  return targets
+}
+
+function normalizeWindowSlots(value: unknown, targetsById: Map<string, WindowTarget>): WindowSlot[] {
+  const bySlot = new Map<number, WindowSlot>()
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const source = record(item)
+      const slot = Math.floor(numberValue(source.slot, 0))
+      if (slot < 1 || slot > 10 || bySlot.has(slot)) continue
+      const rawTargets = record(source.targetIdByPlatform)
+      const targetIdByPlatform: WindowSlot['targetIdByPlatform'] = {}
+      for (const platform of ['darwin', 'win32'] as const) {
+        const targetId = stringValue(rawTargets[platform]).trim()
+        if (targetId && targetsById.get(targetId)?.platform === platform) targetIdByPlatform[platform] = targetId
+      }
+      bySlot.set(slot, { slot, targetIdByPlatform })
+    }
+  }
+  return createWindowSlots().map((fallback) => bySlot.get(fallback.slot) || fallback)
 }
 
 function aggregateShortcutProfiles(profiles: ShortcutProfileMap): KeybindingOverride[] {
@@ -135,7 +191,7 @@ function normalizeSearchHistories(value: unknown, legacyPortHistory: string[], l
 function defaultFeatureConfig(id: AppTabId, sortOrder: number): FeatureConfig {
   return {
     id,
-    enabled: id === 'favorites' ? false : true,
+    enabled: id === 'favorites' || id === 'windows' ? false : true,
     sortOrder
   }
 }
@@ -243,6 +299,7 @@ export function createInitialState(now = Date.now()): AppState {
     activeTab: 'ports',
     portSearch: '',
     favoriteSearch: '',
+    windowSearch: '',
     searchHistories: emptySearchHistories(),
     portSearchHistory: [],
     favoriteSearchHistory: [],
@@ -251,6 +308,8 @@ export function createInitialState(now = Date.now()): AppState {
     collapsedPortGroupFolderIds: [],
     collapsedFavoriteGroupIds: [],
     favorites: [],
+    windowTargets: [],
+    windowSlots: createWindowSlots(),
     mqtt: normalizeMqttState(null, now),
     codex: createDefaultCodexState(),
     settings: {
@@ -281,11 +340,14 @@ export function normalizeAppState(value: unknown, now = Date.now()): AppState {
   const activeTab = VALID_TABS.has(source.activeTab as AppTabId) && visibleTabIds.has(source.activeTab as AppTabId) ? (source.activeTab as AppTabId) : fallback.activeTab
   const favorites = normalizeFavoriteGraph((Array.isArray(source.favorites) ? source.favorites : []).map((item) => normalizeFavorite(item, now)).filter((item): item is FavoriteNode => Boolean(item)))
   const favoriteIds = new Set(favorites.map((item) => item.id))
+  const windowTargets = normalizeWindowTargets(source.windowTargets, now)
+  const windowTargetsById = new Map(windowTargets.map((item) => [item.id, item] as const))
   return {
     version: 1,
     activeTab: visibleTabIds.has(activeTab) ? activeTab : 'settings',
     portSearch: stringValue(source.portSearch),
     favoriteSearch: stringValue(source.favoriteSearch),
+    windowSearch: stringValue(source.windowSearch),
     searchHistories,
     portSearchHistory: searchHistories.ports.processes,
     favoriteSearchHistory: searchHistories.favorites.files,
@@ -294,6 +356,8 @@ export function normalizeAppState(value: unknown, now = Date.now()): AppState {
     collapsedPortGroupFolderIds: strings(source.collapsedPortGroupFolderIds).filter((id) => validFolderIds.has(id)),
     collapsedFavoriteGroupIds: strings(source.collapsedFavoriteGroupIds).filter((id) => favoriteIds.has(id)),
     favorites,
+    windowTargets,
+    windowSlots: normalizeWindowSlots(source.windowSlots, windowTargetsById),
     mqtt: normalizeMqttState(source.mqtt, now),
     codex: normalizeCodexState(source.codex),
     settings: {

@@ -1,6 +1,7 @@
 import { normalizeAppState } from '../domain/state'
 import { normalizeMqttArchiveState } from '../domain/mqtt'
 import type { AppState, FavoriteNode, KillRequest, KillResult, MqttArchiveState, MqttStorageStatus, PortProcess } from '../domain/types'
+import type { LiveWindow, WindowPlatform } from '../domain/windows'
 import type {
   CodexActivityDelta,
   CodexBridgeResult,
@@ -24,6 +25,8 @@ export type MqttSecretMap = Record<string, string>
 export type FileActionOutcome = 'success' | 'dispatched' | 'revealed-instead' | 'failed'
 export type FileErrorCode = 'invalid-path' | 'not-found' | 'permission-denied' | 'no-handler' | 'timeout' | 'unsupported' | 'io-error'
 export type FavoritePathStatus = 'available' | 'missing' | 'permission-denied' | 'offline' | 'invalid' | 'unknown'
+export type WindowPermissionState = 'granted' | 'required' | 'unknown' | 'unsupported'
+export type WindowActivationOutcome = 'activated' | 'not-found' | 'ambiguous' | 'permission-required' | 'focus-denied' | 'unsupported' | 'failed'
 
 export interface FileActionResult {
   outcome: FileActionOutcome
@@ -54,6 +57,35 @@ export interface FavoritePathInspection {
   modifiedAt?: number
   errorCode?: FileErrorCode
   error?: string
+}
+
+export interface WindowCapability {
+  platform: WindowPlatform | 'unsupported'
+  supported: boolean
+  permission: WindowPermissionState
+  canList: boolean
+  canActivate: boolean
+  canClose?: boolean
+  reason?: string
+}
+
+export interface WindowListResult {
+  capability: WindowCapability
+  windows: LiveWindow[]
+  message?: string
+}
+
+export type WindowCloseOutcome = 'closed' | 'terminated' | 'close-denied' | 'not-found' | 'permission-required' | 'unsupported' | 'failed'
+
+export interface WindowCloseResult {
+  outcome: WindowCloseOutcome
+  message?: string
+}
+
+export interface WindowActivationResult {
+  outcome: WindowActivationOutcome
+  message?: string
+  candidates?: LiveWindow[]
 }
 const STORAGE_KEY = 'eypc/state/v1'
 const MQTT_ARCHIVE_STORAGE_KEY = 'eypc/mqtt/archive/v1'
@@ -96,11 +128,6 @@ export interface CodexFloatWorkspaceDiagnostics {
   errorCode?: string
 }
 
-export interface CodexTaskHotkeyReadback {
-  supported: boolean
-  bindings: Record<string, string>
-}
-
 export interface EypcPlatformApi {
   storage: {
     getState(): AppState
@@ -114,6 +141,14 @@ export interface EypcPlatformApi {
   ports: {
     scan(): Promise<PortProcess[]>
     kill(request: KillRequest): Promise<KillResult>
+  }
+  windows: {
+    capabilities(): Promise<WindowCapability>
+    list(): Promise<WindowListResult>
+    activate(window: LiveWindow): Promise<WindowActivationResult>
+    close?(window: LiveWindow): Promise<WindowCloseResult>
+    terminate?(window: LiveWindow): Promise<WindowCloseResult>
+    openPermissionSettings?(): Promise<boolean>
   }
   files: {
     capabilities?: FileCapabilities
@@ -156,7 +191,6 @@ export interface EypcPlatformApi {
     hide(): Promise<boolean> | boolean
     show?(): boolean
     configureHotkey?(commandLabel: string): boolean
-    readConfiguredHotkeys?(commandLabels: string[]): CodexTaskHotkeyReadback
   }
   getEnterPayload(): { code?: string } | null
   clearEnterPayload(): void
@@ -248,6 +282,22 @@ function unsupportedCodexEnvironment(): CodexEnvironmentSnapshotV1 {
     statusFeedMode: 'unavailable',
     checkedAt: Date.now()
   }
+}
+
+function unsupportedWindowCapability(reason = '当前宿主不支持窗口跳转'): WindowCapability {
+  return {
+    platform: 'unsupported',
+    supported: false,
+    permission: 'unsupported',
+    canList: false,
+    canActivate: false,
+    canClose: false,
+    reason
+  }
+}
+
+function unsupportedWindowList(reason?: string): WindowListResult {
+  return { capability: unsupportedWindowCapability(reason), windows: [], ...(reason ? { message: reason } : {}) }
 }
 
 declare global {
@@ -469,6 +519,7 @@ export function getPlatform(): EypcPlatformApi {
     const hostStorage = window.eypcPlatform.storage
     const hostCodex = window.eypcPlatform.codex
     const hostFloat = window.eypcPlatform.float
+    const hostWindows = window.eypcPlatform.windows
     const hostCapabilities: FileCapabilities = hostFiles.capabilities || {
       open: typeof hostFiles.open === 'function',
       reveal: typeof hostFiles.reveal === 'function',
@@ -481,6 +532,14 @@ export function getPlatform(): EypcPlatformApi {
     }
     return {
       ...window.eypcPlatform,
+      windows: {
+        capabilities: hostWindows?.capabilities || (async () => unsupportedWindowCapability('当前 preload 未提供窗口能力')),
+        list: hostWindows?.list || (async () => unsupportedWindowList('当前 preload 未提供窗口能力')),
+        activate: hostWindows?.activate || (async () => ({ outcome: 'unsupported', message: '当前 preload 未提供窗口激活能力' })),
+        close: hostWindows?.close || (async () => ({ outcome: 'unsupported', message: '当前 preload 未提供窗口关闭能力' })),
+        terminate: hostWindows?.terminate || (async () => ({ outcome: 'unsupported', message: '当前 preload 未提供窗口强杀能力' })),
+        openPermissionSettings: hostWindows?.openPermissionSettings
+      },
       storage: {
         getState: hostStorage.getState || readFallbackState,
         setState: hostStorage.setState || writeFallbackState,
@@ -550,6 +609,13 @@ export function getPlatform(): EypcPlatformApi {
     ports: {
       scan: scanViaDevApi,
       kill: killViaDevApi
+    },
+    windows: {
+      capabilities: async () => unsupportedWindowCapability('浏览器预览不提供系统窗口能力'),
+      list: async () => unsupportedWindowList('浏览器预览不提供系统窗口能力'),
+      activate: async () => ({ outcome: 'unsupported', message: '浏览器预览不提供系统窗口激活能力' }),
+      close: async () => ({ outcome: 'unsupported', message: '浏览器预览不提供系统窗口关闭能力' }),
+      terminate: async () => ({ outcome: 'unsupported', message: '浏览器预览不提供系统窗口强杀能力' })
     },
     files: {
       capabilities: {

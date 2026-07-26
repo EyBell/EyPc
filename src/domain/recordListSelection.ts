@@ -53,15 +53,13 @@ export function toggleRecordListSelection(input: {
   const current = rows[activeIndex]
   if (!current) return { activeIndex: 0, selectedIds: [] }
   const selectedIds = uniqueIds(input.selectedIds)
-  if (selectedIds.includes(current.id)) {
-    return {
-      activeIndex,
-      selectedIds: selectedIds.filter((id) => id !== current.id)
-    }
-  }
+  const nextSelected = selectedIds.includes(current.id)
+    ? selectedIds.filter((id) => id !== current.id)
+    : [...selectedIds, current.id]
+  // Workbench List Taste: always advance after Space toggle (select or deselect).
   return {
     activeIndex: clampIndex(activeIndex + 1, rows.length),
-    selectedIds: [...selectedIds, current.id]
+    selectedIds: nextSelected
   }
 }
 
