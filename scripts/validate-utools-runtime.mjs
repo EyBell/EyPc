@@ -60,6 +60,13 @@ for (const feature of pluginJson.features) {
 for (const code of requiredCodes) {
   assert(codes.has(code), `missing feature code: ${code}`)
 }
+assert(codes.has('eypc-windows'), 'missing window jump feature code')
+for (let slot = 1; slot <= 10; slot += 1) {
+  const label = `EyPc 窗口槽 ${slot}`
+  const feature = pluginJson.features.find((item) => item.code === `eypc-window-slot-${slot}`)
+  assert(feature?.cmds?.includes(label), `missing stable window slot feature: ${label}`)
+  assert(feature?.mainHide === true, `window slot ${slot} must run with mainHide=true`)
+}
 const codexToggleFeature = pluginJson.features.find((feature) => feature.code === 'eypc-codex-toggle')
 assert(codexToggleFeature?.mainHide === true, 'Codex float toggle feature must run with mainHide=true')
 assert(codexToggleFeature?.cmds?.includes('切换 Codex 悬浮球'), 'Codex float toggle feature must expose the stable hotkey command label')
@@ -102,6 +109,9 @@ vm.runInNewContext(preloadSource, sandbox, { filename: 'preload.js' })
 assert(sandbox.window.eypcPlatform, 'preload must expose window.eypcPlatform')
 assert(typeof sandbox.window.eypcPlatform.ports.scan === 'function', 'preload must expose ports.scan')
 assert(typeof sandbox.window.eypcPlatform.ports.kill === 'function', 'preload must expose ports.kill')
+assert(typeof sandbox.window.eypcPlatform.windows.capabilities === 'function', 'preload must expose windows.capabilities')
+assert(typeof sandbox.window.eypcPlatform.windows.list === 'function', 'preload must expose windows.list')
+assert(typeof sandbox.window.eypcPlatform.windows.activate === 'function', 'preload must expose windows.activate')
 assert(typeof sandbox.window.eypcPlatform.files.copyPath === 'function', 'preload must expose files.copyPath')
 assert(typeof sandbox.window.eypcPlatform.files.copyItems === 'function', 'preload must expose files.copyItems')
 assert(typeof sandbox.window.eypcPlatform.files.inspectPaths === 'function', 'preload must expose files.inspectPaths')

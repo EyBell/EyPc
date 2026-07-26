@@ -46,6 +46,11 @@ describe('app runtime', () => {
     state.activeTab = 'favorites'
   }
 
+  function enableWindows(state: ReturnType<typeof createInitialState>) {
+    state.settings.featureConfigs = state.settings.featureConfigs.map((item) => item.id === 'windows' ? { ...item, enabled: true } : item)
+    state.activeTab = 'windows'
+  }
+
   function installPlatform(overrides: Partial<Window['eypcPlatform']> = {}) {
     const state = createInitialState(100)
     const killed: Array<{ pid: number; port: number; force: boolean }> = []
@@ -56,6 +61,7 @@ describe('app runtime', () => {
     const listed: string[] = []
     const configuredHotkeys: string[] = []
     let hideCount = 0
+    let showCount = 0
     let scanCount = 0
     const platform = {
       storage: {
@@ -118,6 +124,10 @@ describe('app runtime', () => {
           hideCount += 1
           return true
         },
+        show: () => {
+          showCount += 1
+          return true
+        },
         configureHotkey: (commandLabel: string) => {
           configuredHotkeys.push(commandLabel)
           return true
@@ -128,7 +138,12 @@ describe('app runtime', () => {
       ...overrides
     }
     globalThis.window = { eypcPlatform: platform } as unknown as Window & typeof globalThis
-    return { state, killed, copied, copiedItems, opened, revealed, listed, configuredHotkeys, platform, getScanCount: () => scanCount, getHideCount: () => hideCount }
+    return { state, killed, copied, copiedItems, opened, revealed, listed, configuredHotkeys, platform, getScanCount: () => scanCount, getHideCount: () => hideCount, getShowCount: () => showCount }
+  }
+
+  async function flushWindowActions() {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
   }
 
   function createFakeMqttClient() {
@@ -446,6 +461,24 @@ describe('app runtime', () => {
     expect(runtime.handleShortcut('Escape', false)).toBe('ports.focus.clear')
     expect(runtime.handleShortcut('Escape', false)).toBeNull()
     expect(runtime.snapshot().state.activeTab).toBe('ports')
+  })
+
+  it('retargets an open port drawer when another row is focused by mouse', async () => {
+    installPlatform()
+    const runtime = createAppRuntime(createInitialState(100))
+    await runtime.scanPorts()
+    const ids = runtime.snapshot().ports.map((port) => port.id)
+    expect(ids.length).toBeGreaterThan(1)
+
+    runtime.focusPort(ids[0])
+    expect(runtime.dispatch('ports.drawer.open').handled).toBe(true)
+    expect(runtime.snapshot().portDrawer.targetIds).toEqual([ids[0]])
+
+    runtime.focusPort(ids[1])
+    expect(runtime.snapshot().portDrawer.open).toBe(true)
+    expect(runtime.snapshot().portDrawer.mode).toBe('single')
+    expect(runtime.snapshot().portDrawer.targetIds).toEqual([ids[1]])
+    expect(runtime.snapshot().focusedPortId).toBe(ids[1])
   })
 
   it('prefers a newly focused port over stale selection while preserving focused multi-select batches', async () => {
@@ -4263,6 +4296,29 @@ describe('app runtime', () => {
     expect(runtime.snapshot().favoriteDrawer.targetIds).toEqual(['two'])
   })
 
+  it('retargets an open favorite drawer when another row is focused by mouse', () => {
+    const state = createInitialState(100)
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'favorites', enabled: true, sortOrder: 2 },
+      { id: 'settings', enabled: true, sortOrder: 3 }
+    ]
+    state.activeTab = 'favorites'
+    state.favorites = [
+      { id: 'one', kind: 'file', path: '/one.txt', name: 'One', parentId: null, tags: [], color: '#F2994A', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'two', kind: 'file', path: '/two.txt', name: 'Two', parentId: null, tags: [], color: '#F2994A', sortOrder: 2, createdAt: 2, updatedAt: 2 }
+    ]
+    const runtime = createAppRuntime(state)
+    runtime.focusFavorite('one')
+    expect(runtime.dispatch('favorites.drawer.open').handled).toBe(true)
+    expect(runtime.snapshot().favoriteDrawer.targetIds).toEqual(['one'])
+
+    runtime.focusFavorite('two')
+    expect(runtime.snapshot().focusedFavoriteId).toBe('two')
+    expect(runtime.snapshot().favoriteDrawer.open).toBe(true)
+    expect(runtime.snapshot().favoriteDrawer.targetIds).toEqual(['two'])
+  })
+
   it('multi-selects real directory rows and adds them as virtual children', async () => {
     const { state } = installPlatform({
       files: {
@@ -4752,5 +4808,297 @@ describe('app runtime', () => {
     expect(getHideCount()).toBe(0)
     expect(runtime.snapshot().state.favorites[0].usageCount).toBeUndefined()
     expect(runtime.snapshot().message).toContain('路径不存在')
+  })
+
+  it('requires an explicit candidate selection before activating duplicate window titles from a stable slot', async () => {
+    const activated: string[] = []
+    const { state, getHideCount, getShowCount } = installPlatform({
+      windows: {
+        capabilities: async () => ({ platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true }),
+        list: async () => ({
+          capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true },
+          windows: [
+            { id: 'darwin:91:1:11', platform: 'darwin', nativeRef: '91:1:11', appId: 'com.browser', appName: 'Browser', pid: 91, title: 'Docs', minimized: false, focused: false },
+            { id: 'darwin:91:2:12', platform: 'darwin', nativeRef: '91:2:12', appId: 'com.browser', appName: 'Browser', pid: 91, title: 'Docs', minimized: false, focused: false }
+          ]
+        }),
+        activate: async (window) => { activated.push(window.nativeRef); return { outcome: 'activated' as const } }
+      }
+    })
+    enableWindows(state)
+    state.activeTab = 'ports'
+    state.windowTargets = [{ id: 'work-browser', alias: '工作浏览器', platform: 'darwin', appId: 'com.browser', appName: 'Browser', titleLocator: 'Docs', lastNativeRef: null, favorite: true, createdAt: 1, updatedAt: 1 }]
+    state.windowSlots[0].targetIdByPlatform.darwin = 'work-browser'
+    const runtime = createAppRuntime(state)
+
+    runtime.dispatch('windows.slot.activate', { slot: 1 })
+    await flushWindowActions()
+
+    expect(runtime.snapshot().state.activeTab).toBe('windows')
+    expect(runtime.snapshot().windowCandidateTargetId).toBe('work-browser')
+    expect(getShowCount()).toBeGreaterThan(0)
+    expect(activated).toEqual([])
+    runtime.focusWindow('candidate:darwin:91:2:12')
+    runtime.dispatch('windows.activate')
+    await flushWindowActions()
+
+    expect(activated).toEqual(['91:2:12'])
+    expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastNativeRef: '91:2:12', titleLocator: 'Docs' })
+    expect(getHideCount()).toBe(1)
+
+    runtime.focusWindow('target:work-browser')
+    runtime.dispatch('windows.rename')
+    runtime.updateWindowDraft({ alias: '文档浏览器' })
+    runtime.dispatch('windows.editor.save')
+
+    expect(runtime.snapshot().state.windowTargets[0].alias).toBe('文档浏览器')
+    expect(runtime.snapshot().state.windowSlots[0].targetIdByPlatform.darwin).toBe('work-browser')
+  })
+
+  it('does not auto-load windows on tab entry and reuses the session cache for a second slot jump', async () => {
+    let listCount = 0
+    const { state, getHideCount } = installPlatform({
+      windows: {
+        capabilities: async () => ({ platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true }),
+        list: async () => {
+          listCount += 1
+          return {
+            capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true },
+            windows: [{ id: 'darwin:7:1:1', platform: 'darwin', nativeRef: '7:1:1', appId: 'com.notes', appName: 'Notes', pid: 7, title: 'Inbox', minimized: false, focused: false }]
+          }
+        },
+        activate: async () => ({ outcome: 'activated' as const })
+      }
+    })
+    enableWindows(state)
+    state.windowTargets = [{ id: 'notes', alias: '笔记', platform: 'darwin', appId: 'com.notes', appName: 'Notes', titleLocator: 'Inbox', lastNativeRef: '7:1:1', favorite: true, createdAt: 1, updatedAt: 1 }]
+    state.windowSlots[0].targetIdByPlatform.darwin = 'notes'
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('windows')
+    await flushWindowActions()
+    expect(listCount).toBe(0)
+    expect(runtime.snapshot().windowListLoaded).toBe(false)
+
+    runtime.dispatch('windows.refresh')
+    await flushWindowActions()
+    expect(listCount).toBe(1)
+    expect(runtime.snapshot().windowListLoaded).toBe(true)
+
+    runtime.dispatch('windows.slot.activate', { slot: 1 })
+    await flushWindowActions()
+    expect(listCount).toBe(1)
+    expect(getHideCount()).toBeGreaterThanOrEqual(1)
+
+    runtime.dispatch('windows.slot.activate', { slot: 1 })
+    await flushWindowActions()
+    expect(listCount).toBe(1)
+    expect(getHideCount()).toBeGreaterThanOrEqual(2)
+  })
+
+  it('activates a stable slot from the uTools-persisted nativeRef without listing windows', async () => {
+    let listCount = 0
+    const activated: string[] = []
+    const { state, getHideCount } = installPlatform({
+      windows: {
+        capabilities: async () => ({ platform: 'win32', supported: true, permission: 'granted', canList: true, canActivate: true }),
+        list: async () => {
+          listCount += 1
+          return {
+            capability: { platform: 'win32', supported: true, permission: 'granted', canList: true, canActivate: true },
+            windows: []
+          }
+        },
+        activate: async (window) => {
+          activated.push(window.nativeRef)
+          return { outcome: 'activated' as const }
+        }
+      }
+    })
+    enableWindows(state)
+    state.activeTab = 'ports'
+    state.windowTargets = [{ id: 'docs', alias: '文档', platform: 'win32', appId: 'browser.exe', appName: 'Browser', titleLocator: 'Docs', lastNativeRef: '424242', favorite: true, createdAt: 1, updatedAt: 1 }]
+    state.windowSlots[0].targetIdByPlatform.win32 = 'docs'
+    const runtime = createAppRuntime(state)
+
+    runtime.dispatch('windows.slot.activate', { slot: 1 })
+    await flushWindowActions()
+
+    expect(listCount).toBe(0)
+    expect(activated).toEqual(['424242'])
+    expect(getHideCount()).toBeGreaterThan(0)
+    expect(runtime.snapshot().state.activeTab).toBe('ports')
+  })
+
+  it('keeps slot-bound non-favorite targets visible and opens the workbench when the cached target is missing', async () => {
+    let listCount = 0
+    const { state, getShowCount } = installPlatform({
+      windows: {
+        capabilities: async () => ({ platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true }),
+        list: async () => {
+          listCount += 1
+          return {
+            capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true },
+            windows: []
+          }
+        },
+        activate: async () => ({ outcome: 'not-found' as const })
+      }
+    })
+    enableWindows(state)
+    state.activeTab = 'ports'
+    state.windowTargets = [{ id: 'pinned', alias: '固定编辑器', platform: 'darwin', appId: 'com.editor', appName: 'Editor', titleLocator: 'Main', lastNativeRef: null, favorite: false, createdAt: 1, updatedAt: 1 }]
+    state.windowSlots[2].targetIdByPlatform.darwin = 'pinned'
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('windows')
+    expect(runtime.snapshot().windowRows.some((row) => row.id === 'target:pinned')).toBe(true)
+
+    runtime.dispatch('windows.slot.activate', { slot: 3 })
+    await flushWindowActions()
+
+    expect(listCount).toBe(1)
+    expect(runtime.snapshot().state.activeTab).toBe('windows')
+    expect(runtime.snapshot().focusedWindowId).toBe('target:pinned')
+    expect(runtime.snapshot().message).toContain('固定编辑器')
+    expect(getShowCount()).toBeGreaterThan(0)
+  })
+
+  it('retargets the open window action panel when another row is focused', async () => {
+    const { state } = installPlatform({
+      windows: {
+        capabilities: async () => ({ platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true }),
+        list: async () => ({
+          capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true },
+          windows: [
+            { id: 'darwin:1:1:1', platform: 'darwin', nativeRef: '1:1:1', appId: 'com.a', appName: 'Alpha', pid: 1, title: 'One', minimized: false, focused: false },
+            { id: 'darwin:2:1:1', platform: 'darwin', nativeRef: '2:1:1', appId: 'com.b', appName: 'Beta', pid: 2, title: 'Two', minimized: false, focused: false }
+          ]
+        }),
+        activate: async () => ({ outcome: 'activated' as const })
+      }
+    })
+    enableWindows(state)
+    const runtime = createAppRuntime(state)
+    runtime.setTab('windows')
+    runtime.dispatch('windows.refresh')
+    await flushWindowActions()
+
+    runtime.focusWindow('live:darwin:1:1:1')
+    expect(runtime.dispatch('windows.actions.open').handled).toBe(true)
+    expect(runtime.snapshot().windowActionTarget?.id).toBe('live:darwin:1:1:1')
+
+    runtime.focusWindow('live:darwin:2:1:1')
+    expect(runtime.snapshot().windowActionsOpen).toBe(true)
+    expect(runtime.snapshot().focusedWindowId).toBe('live:darwin:2:1:1')
+    expect(runtime.snapshot().windowActionTarget?.id).toBe('live:darwin:2:1:1')
+
+    const beforeListFocus = runtime.snapshot().windowFocusRequestId
+    const beforeActionsFocus = runtime.snapshot().windowActionsFocusRequestId
+    expect(runtime.handleShortcut('ArrowUp', { textInputFocused: false, activeInputRole: 'window-actions' })).toBe('windows.list.up')
+    expect(runtime.snapshot().focusedWindowId).toBe('live:darwin:1:1:1')
+    expect(runtime.snapshot().windowActionTarget?.id).toBe('live:darwin:1:1:1')
+    expect(runtime.snapshot().windowFocusRequestId).toBeGreaterThan(beforeListFocus)
+    expect(runtime.snapshot().windowActionsFocusRequestId).toBe(beforeActionsFocus)
+  })
+
+  it('multi-selects windows with Space advance and closes via OS-then-confirm force path', async () => {
+    const closed: string[] = []
+    const terminated: string[] = []
+    const { state } = installPlatform({
+      windows: {
+        capabilities: async () => ({ platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true, canClose: true }),
+        list: async () => ({
+          capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true, canClose: true },
+          windows: [
+            { id: 'darwin:1:0:11', platform: 'darwin', nativeRef: '1:0:11', appId: 'com.a', appName: 'Alpha', pid: 1, title: 'One', minimized: false, focused: false },
+            { id: 'darwin:2:0:22', platform: 'darwin', nativeRef: '2:0:22', appId: 'com.b', appName: 'Beta', pid: 2, title: 'Two', minimized: false, focused: false }
+          ]
+        }),
+        activate: async () => ({ outcome: 'activated' as const }),
+        close: async (window) => {
+          closed.push(window.id)
+          return { outcome: 'close-denied' as const }
+        },
+        terminate: async (window) => {
+          terminated.push(window.id)
+          return { outcome: 'terminated' as const }
+        }
+      }
+    })
+    enableWindows(state)
+    const runtime = createAppRuntime(state)
+    runtime.setTab('windows')
+    runtime.dispatch('windows.refresh')
+    await flushWindowActions()
+
+    runtime.focusWindow('live:darwin:1:0:11')
+    expect(runtime.handleShortcut('Space', { textInputFocused: false })).toBe('list.toggleSelection')
+    expect(runtime.snapshot().selectedWindowIds).toEqual(['live:darwin:1:0:11'])
+    expect(runtime.snapshot().focusedWindowId).toBe('live:darwin:2:0:22')
+
+    expect(runtime.handleShortcut('Space', { textInputFocused: false })).toBe('list.toggleSelection')
+    expect(runtime.snapshot().selectedWindowIds.sort()).toEqual(['live:darwin:1:0:11', 'live:darwin:2:0:22'].sort())
+
+    expect(runtime.dispatch('windows.actions.open').handled).toBe(true)
+    expect(runtime.snapshot().windowActionsMode).toBe('multi')
+    expect(runtime.snapshot().windowActionTargets.length).toBe(2)
+
+    expect(runtime.handleShortcut('Ctrl+Delete', { textInputFocused: false })).toBe('windows.close')
+    await flushWindowActions()
+    expect(closed.length).toBe(2)
+    expect(runtime.snapshot().confirm?.title).toContain('强制关闭')
+    runtime.confirmNow()
+    await flushWindowActions()
+    expect(terminated.length).toBe(2)
+  })
+
+  it('does not hide the plugin when Windows foreground protection rejects activation', async () => {
+    const { state, getHideCount } = installPlatform({
+      windows: {
+        capabilities: async () => ({ platform: 'win32', supported: true, permission: 'granted', canList: true, canActivate: true }),
+        list: async () => ({
+          capability: { platform: 'win32', supported: true, permission: 'granted', canList: true, canActivate: true },
+          windows: [{ id: 'win32:123', platform: 'win32', nativeRef: '123', appId: 'browser.exe', appName: 'Browser', pid: 10, title: 'Docs', minimized: true, focused: false }]
+        }),
+        activate: async () => ({ outcome: 'focus-denied' as const, message: '系统拒绝聚焦该窗口；EyPc 未尝试绕过前台保护' })
+      }
+    })
+    enableWindows(state)
+    state.windowTargets = [{ id: 'browser', alias: '浏览器', platform: 'win32', appId: 'browser.exe', appName: 'Browser', titleLocator: 'Docs', lastNativeRef: '123', favorite: true, createdAt: 1, updatedAt: 1 }]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('windows')
+    runtime.dispatch('windows.refresh')
+    await flushWindowActions()
+    runtime.dispatch('windows.activate')
+    await flushWindowActions()
+
+    expect(getHideCount()).toBe(0)
+    expect(runtime.snapshot().message).toContain('系统拒绝聚焦')
+  })
+
+  it('shows macOS authorization as an empty guarded state rather than a fabricated window list', async () => {
+    const { state } = installPlatform({
+      windows: {
+        capabilities: async () => ({ platform: 'darwin', supported: true, permission: 'unknown', canList: true, canActivate: true }),
+        list: async () => ({
+          capability: { platform: 'darwin', supported: true, permission: 'required', canList: false, canActivate: false, reason: '需要辅助功能与自动化权限' },
+          windows: [],
+          message: '需要在系统设置中允许 EyPc 控制 System Events'
+        }),
+        activate: async () => ({ outcome: 'permission-required' as const })
+      }
+    })
+    enableWindows(state)
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('windows')
+    runtime.dispatch('windows.refresh')
+    await flushWindowActions()
+
+    expect(runtime.snapshot().windowCapability).toMatchObject({ platform: 'darwin', permission: 'required', canList: false })
+    expect(runtime.snapshot().windowRows).toEqual([])
+    expect(runtime.snapshot().message).toContain('System Events')
   })
 })

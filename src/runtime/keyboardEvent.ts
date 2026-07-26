@@ -38,6 +38,8 @@ export function activeInputRoleFromTarget(target: EventTarget | null, activeTab:
   if (role === 'favorite-containers') return 'favorite-containers'
   if (role === 'favorite-items') return 'favorite-items'
   if (role === 'favorite-directory') return 'favorite-directory'
+  if (role === 'window-actions') return 'window-actions'
+  if (role === 'window-list') return 'window-list'
   if (!element || !isEditableTarget(element)) return undefined
   if (role === 'port-group-search') return 'port-group-search'
   if (role === 'port-group-editor') return 'port-group-editor'
@@ -50,7 +52,9 @@ export function activeInputRoleFromTarget(target: EventTarget | null, activeTab:
   if (role === 'favorite-group-search') return 'favorite-group-search'
   if (role === 'favorite-editor') return 'favorite-editor'
   if (role === 'favorite-pick-review') return 'favorite-pick-review'
-  if (role === 'primary-search') return activeTab === 'ports' ? 'port-search' : activeTab === 'mqtt' ? 'mqtt-search' : 'favorite-search'
+  if (role === 'window-search') return 'window-search'
+  if (role === 'window-editor') return 'window-editor'
+  if (role === 'primary-search') return activeTab === 'ports' ? 'port-search' : activeTab === 'mqtt' ? 'mqtt-search' : activeTab === 'windows' ? 'window-search' : 'favorite-search'
   if (activeTab === 'settings') return 'settings'
   return 'other'
 }

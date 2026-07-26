@@ -37,6 +37,9 @@ export type KeybindingLayerId =
   | 'ports-search'
   | 'favorites-search'
   | 'favorites-editor'
+  | 'window-editor'
+  | 'window-actions'
+  | 'windows-search'
   | 'codex-composer'
   | 'codex-model'
   | 'codex-quick-jump'
@@ -49,13 +52,14 @@ export type KeybindingLayerId =
   | 'ports'
   | 'mqtt'
   | 'favorites'
+  | 'windows'
   | 'global'
 
 export interface KeybindingContext {
   tab?: AppTabId
   confirmOpen?: boolean
   textInputFocused?: boolean
-  activeInputRole?: 'port-search' | 'port-group-search' | 'mqtt-search' | 'mqtt-topic-filter' | 'mqtt-publish-editor' | 'mqtt-publish-options' | 'mqtt-publish-draft' | 'mqtt-publish-draft-editor' | 'mqtt-editor' | 'mqtt-connection-group-editor' | 'mqtt-config-subscription-editor' | 'mqtt-config-publish-editor' | 'mqtt-subscription-editor' | 'mqtt-favorite-editor' | 'mqtt-record-editor' | 'mqtt-connections' | 'mqtt-subscriptions' | 'favorite-search' | 'favorite-group-search' | 'favorite-containers' | 'favorite-items' | 'favorite-directory' | 'favorite-editor' | 'favorite-pick-review' | 'codex-composer' | 'settings' | 'port-group-editor' | 'other'
+  activeInputRole?: 'port-search' | 'port-group-search' | 'mqtt-search' | 'mqtt-topic-filter' | 'mqtt-publish-editor' | 'mqtt-publish-options' | 'mqtt-publish-draft' | 'mqtt-publish-draft-editor' | 'mqtt-editor' | 'mqtt-connection-group-editor' | 'mqtt-config-subscription-editor' | 'mqtt-config-publish-editor' | 'mqtt-subscription-editor' | 'mqtt-favorite-editor' | 'mqtt-record-editor' | 'mqtt-connections' | 'mqtt-subscriptions' | 'favorite-search' | 'favorite-group-search' | 'favorite-containers' | 'favorite-items' | 'favorite-directory' | 'favorite-editor' | 'favorite-pick-review' | 'window-search' | 'window-actions' | 'window-editor' | 'window-list' | 'codex-composer' | 'settings' | 'port-group-editor' | 'other'
   portPane?: 'groups' | 'results'
   favoritePane?: 'containers' | 'items' | 'directory'
   favoriteUndoAvailable?: boolean
@@ -81,6 +85,8 @@ export interface KeybindingContext {
   portGroupDetailOpen?: boolean
   portGroupDetailActive?: boolean
   portSelectionMode?: boolean
+  windowActionsOpen?: boolean
+  windowEditorOpen?: boolean
   activeLayers?: KeybindingLayerId[]
 }
 
@@ -202,6 +208,9 @@ export const LAYER_PRIORITY: Record<KeybindingLayerId, number> = {
   'ports-search': 680,
   'favorites-search': 680,
   'favorites-editor': 930,
+  'window-editor': 930,
+  'window-actions': 820,
+  'windows-search': 680,
   'codex-composer': 950,
   'codex-model': 951,
   'codex-quick-jump': 900,
@@ -214,6 +223,7 @@ export const LAYER_PRIORITY: Record<KeybindingLayerId, number> = {
   ports: 500,
   mqtt: 500,
   favorites: 500,
+  windows: 500,
   global: 100
 }
 
@@ -252,6 +262,9 @@ const LAYER_LABELS: Record<KeybindingLayerId, string> = {
   'ports-search': '端口搜索',
   'favorites-search': '收藏搜索',
   'favorites-editor': '收藏编辑',
+  'window-editor': '窗口目标编辑',
+  'window-actions': '窗口操作面板',
+  'windows-search': '窗口搜索',
   'codex-composer': 'Codex 新会话编辑器',
   'codex-model': 'Codex 模型选择',
   'codex-quick-jump': 'Codex 快捷跳转',
@@ -264,6 +277,7 @@ const LAYER_LABELS: Record<KeybindingLayerId, string> = {
   ports: '端口',
   mqtt: 'MQTT',
   favorites: '收藏',
+  windows: '窗口跳转',
   global: '全局'
 }
 
@@ -304,11 +318,32 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   ...Object.fromEntries(Array.from({ length: 9 }, (_, index) => [`codex.drawer.select.${index + 1}`, { title: `执行操作抽屉第 ${index + 1} 项`, group: 'Codex 会话', layer: 'codex', shortcutIds: [`Ctrl+${index + 1}`], when: "tab == 'codex' && !textInputFocused", weight: 120 - index, profileId: 'codex' as const }])),
   'quickJump.openForward': { title: '快捷跳转', group: '全局', layer: 'global', shortcutIds: ['F'], when: '!confirmOpen && !textInputFocused', weight: 120 },
   'quickJump.openBackward': { title: '反向快捷跳转', group: '全局', layer: 'global', shortcutIds: ['Shift+F'], when: '!confirmOpen && !textInputFocused', weight: 120 },
-  'list.up': { title: '列表上移', group: '全局', layer: 'global', shortcutIds: ['ArrowUp', 'Ctrl+K'], when: '!mqttPreviewOpen && (!textInputFocused || activeInputRole == "port-search" || activeInputRole == "port-group-search" || activeInputRole == "mqtt-search" || activeInputRole == "favorite-search" || activeInputRole == "favorite-group-search")', weight: 100 },
-  'list.down': { title: '列表下移', group: '全局', layer: 'global', shortcutIds: ['ArrowDown', 'Ctrl+J'], when: '!mqttPreviewOpen && (!textInputFocused || activeInputRole == "port-search" || activeInputRole == "port-group-search" || activeInputRole == "mqtt-search" || activeInputRole == "favorite-search" || activeInputRole == "favorite-group-search")', weight: 100 },
-  'list.pageUp': { title: '列表上翻页', group: '全局', layer: 'global', shortcutIds: ['Alt+U'], when: '!textInputFocused', weight: 100 },
-  'list.pageDown': { title: '列表下翻页', group: '全局', layer: 'global', shortcutIds: ['Alt+E'], when: '!textInputFocused', weight: 100 },
-  'list.toggleSelection': { title: '切换选择', group: '全局', layer: 'global', shortcutIds: ['Space'], when: '!textInputFocused || activeInputRole == "port-search"', weight: 100 },
+  'list.up': { title: '列表上移', group: '全局', layer: 'global', shortcutIds: ['ArrowUp', 'Ctrl+K'], when: '!mqttPreviewOpen && !windowEditorOpen && (!windowActionsOpen || tab == "windows") && (!textInputFocused || activeInputRole == "port-search" || activeInputRole == "port-group-search" || activeInputRole == "mqtt-search" || activeInputRole == "favorite-search" || activeInputRole == "favorite-group-search" || activeInputRole == "window-search")', weight: 100 },
+  'list.down': { title: '列表下移', group: '全局', layer: 'global', shortcutIds: ['ArrowDown', 'Ctrl+J'], when: '!mqttPreviewOpen && !windowEditorOpen && (!windowActionsOpen || tab == "windows") && (!textInputFocused || activeInputRole == "port-search" || activeInputRole == "port-group-search" || activeInputRole == "mqtt-search" || activeInputRole == "favorite-search" || activeInputRole == "favorite-group-search" || activeInputRole == "window-search")', weight: 100 },
+  'list.pageUp': { title: '列表上翻页', group: '全局', layer: 'global', shortcutIds: ['Alt+U'], when: '!textInputFocused && !windowEditorOpen && (!windowActionsOpen || tab == "windows")', weight: 100 },
+  'list.pageDown': { title: '列表下翻页', group: '全局', layer: 'global', shortcutIds: ['Alt+E'], when: '!textInputFocused && !windowEditorOpen && (!windowActionsOpen || tab == "windows")', weight: 100 },
+  'list.toggleSelection': { title: '切换选择', group: '全局', layer: 'global', shortcutIds: ['Space'], when: '(!textInputFocused || activeInputRole == "port-search" || activeInputRole == "window-search") && !windowEditorOpen', weight: 100 },
+  'windows.refresh': { title: '刷新窗口列表', group: '窗口跳转', layer: 'windows', shortcutIds: ['Ctrl+R'], when: "tab == 'windows' && !windowEditorOpen", weight: 150, profileId: 'windows' },
+  'windows.search.focus': { title: '聚焦窗口搜索', group: '窗口跳转', layer: 'windows', shortcutIds: ['Ctrl+F'], when: "tab == 'windows' && !confirmOpen && !windowEditorOpen", weight: 151, profileId: 'windows' },
+  'windows.list.up': { title: '窗口列表上移', group: '窗口跳转', layer: 'windows', shortcutIds: ['ArrowUp', 'Ctrl+K'], when: "tab == 'windows' && !windowEditorOpen && (!textInputFocused || activeInputRole == 'window-search')", weight: 220, profileId: 'windows' },
+  'windows.list.down': { title: '窗口列表下移', group: '窗口跳转', layer: 'windows', shortcutIds: ['ArrowDown', 'Ctrl+J'], when: "tab == 'windows' && !windowEditorOpen && (!textInputFocused || activeInputRole == 'window-search')", weight: 220, profileId: 'windows' },
+  'windows.list.pageUp': { title: '窗口列表上翻页', group: '窗口跳转', layer: 'windows', shortcutIds: ['Alt+U'], when: "tab == 'windows' && !windowEditorOpen && !textInputFocused", weight: 220, profileId: 'windows' },
+  'windows.list.pageDown': { title: '窗口列表下翻页', group: '窗口跳转', layer: 'windows', shortcutIds: ['Alt+E'], when: "tab == 'windows' && !windowEditorOpen && !textInputFocused", weight: 220, profileId: 'windows' },
+  'windows.activate': { title: '激活当前窗口', group: '窗口跳转', layer: 'windows', shortcutIds: ['Enter'], when: "tab == 'windows' && !windowEditorOpen && !windowActionsOpen && (!textInputFocused || activeInputRole == 'window-search')", weight: 150, profileId: 'windows' },
+  'windows.actions.open': { title: '打开窗口操作面板', group: '窗口跳转', layer: 'windows', shortcutIds: ['ArrowRight', 'Ctrl+ArrowRight'], when: "tab == 'windows' && !windowEditorOpen && (!textInputFocused || activeInputRole == 'window-search')", weight: 150, profileId: 'windows' },
+  'windows.actions.close': { title: '返回窗口列表', group: '窗口跳转', layer: 'window-actions', shortcutIds: ['ArrowLeft', 'Ctrl+ArrowLeft', 'Escape'], when: "tab == 'windows' && windowActionsOpen", weight: 430, profileId: 'windows' },
+  'windows.layer.toggle': { title: '切换窗口列表与操作层', group: '窗口跳转', layer: 'windows', shortcutIds: ['Tab'], when: "tab == 'windows' && !windowEditorOpen && (!textInputFocused || activeInputRole == 'window-search')", weight: 145, profileId: 'windows' },
+  'windows.layer.togglePrev': { title: '反向切换窗口列表与操作层', group: '窗口跳转', layer: 'windows', shortcutIds: ['Shift+Tab'], when: "tab == 'windows' && !windowEditorOpen && (!textInputFocused || activeInputRole == 'window-search')", weight: 145, profileId: 'windows' },
+  'windows.favorite.toggle': { title: '收藏或取消收藏窗口', group: '窗口跳转', layer: 'windows', shortcutIds: [], when: "tab == 'windows' && !windowEditorOpen && !textInputFocused", weight: 150, risk: 'data-write', profileId: 'windows' },
+  'windows.close': { title: '关闭窗口', group: '窗口跳转', layer: 'windows', shortcutIds: ['Ctrl+Delete', 'Ctrl+Backspace'], when: "tab == 'windows' && !windowEditorOpen && (!textInputFocused || activeInputRole == 'window-search')", weight: 160, risk: 'data-write', profileId: 'windows' },
+  'windows.close.force': { title: '强制关闭窗口', group: '窗口跳转', layer: 'windows', shortcutIds: [], when: "tab == 'windows' && !windowEditorOpen", weight: 159, risk: 'destructive', profileId: 'windows' },
+  'windows.rename': { title: '编辑窗口别名', group: '窗口跳转', layer: 'windows', shortcutIds: ['Shift+F2'], when: "tab == 'windows' && !windowEditorOpen && !textInputFocused", weight: 150, risk: 'data-write', profileId: 'windows' },
+  'windows.edit': { title: '编辑窗口目标', group: '窗口跳转', layer: 'windows', shortcutIds: ['F2'], when: "tab == 'windows' && !windowEditorOpen && !textInputFocused", weight: 150, risk: 'data-write', profileId: 'windows' },
+  'windows.editor.save': { title: '保存窗口目标', group: '窗口跳转', layer: 'window-editor', shortcutIds: ['Ctrl+S', 'Enter'], when: "tab == 'windows' && activeInputRole == 'window-editor'", weight: 460, risk: 'data-write', profileId: 'windows' },
+  'windows.editor.cancel': { title: '取消窗口编辑', group: '窗口跳转', layer: 'window-editor', shortcutIds: ['Escape'], when: "tab == 'windows' && activeInputRole == 'window-editor'", weight: 460, profileId: 'windows' },
+  'windows.editor.nextField': { title: '窗口编辑下一个字段', group: '窗口跳转', layer: 'window-editor', shortcutIds: ['Tab'], when: "tab == 'windows' && activeInputRole == 'window-editor'", weight: 460, profileId: 'windows' },
+  'windows.editor.prevField': { title: '窗口编辑上一个字段', group: '窗口跳转', layer: 'window-editor', shortcutIds: ['Shift+Tab'], when: "tab == 'windows' && activeInputRole == 'window-editor'", weight: 460, profileId: 'windows' },
+  'windows.candidates.clear': { title: '退出窗口候选筛选', group: '窗口跳转', layer: 'windows', shortcutIds: ['Escape'], when: "tab == 'windows' && !windowEditorOpen && !windowActionsOpen", weight: 145, profileId: 'windows' },
   'ports.workspace.reset': { title: '重置端口工作区', group: '端口', layer: 'ports', shortcutIds: ['Escape'], when: "tab == 'ports'", weight: 90 },
   'ports.selection.clear': { title: '清空端口多选', group: '端口', layer: 'ports-selection', shortcutIds: ['Escape'], when: "tab == 'ports' && portSelectionMode", weight: 300 },
   'ports.kill.confirm': { title: '终止选中进程', group: '端口', layer: 'ports', shortcutIds: ['Delete', 'Backspace'], when: "tab == 'ports' && portPane != 'groups' && !textInputFocused", weight: 120, risk: 'data-write' },
@@ -634,6 +669,22 @@ export const SHORTCUT_RESERVATION_RULES: ShortcutReservationRule[] = [
   { shortcutId: 'Shift+Tab', commandId: 'ports.pane.togglePrev', when: "tab == 'ports'", description: '端口页反向切换左右聚焦区域', layer: 'ports' },
   { shortcutId: 'Tab', commandId: 'favorites.pane.toggleNext', when: "tab == 'favorites'", description: '收藏页切换分组和目标区域', layer: 'favorites' },
   { shortcutId: 'Shift+Tab', commandId: 'favorites.pane.togglePrev', when: "tab == 'favorites'", description: '收藏页反向切换分组和目标区域', layer: 'favorites' },
+  { shortcutId: 'ArrowRight', commandId: 'windows.actions.open', when: "tab == 'windows' && !windowEditorOpen", description: '打开窗口操作面板', layer: 'windows' },
+  { shortcutId: 'Ctrl+ArrowRight', commandId: 'windows.actions.open', when: "tab == 'windows' && !windowEditorOpen", description: '打开窗口操作面板', layer: 'windows' },
+  { shortcutId: 'ArrowUp', commandId: 'windows.list.up', when: "tab == 'windows' && !windowEditorOpen", description: '窗口列表上移', layer: 'windows' },
+  { shortcutId: 'ArrowDown', commandId: 'windows.list.down', when: "tab == 'windows' && !windowEditorOpen", description: '窗口列表下移', layer: 'windows' },
+  { shortcutId: 'Ctrl+Delete', commandId: 'windows.close', when: "tab == 'windows' && !windowEditorOpen", description: '关闭窗口（先正常关闭）', layer: 'windows' },
+  { shortcutId: 'Ctrl+Backspace', commandId: 'windows.close', when: "tab == 'windows' && !windowEditorOpen", description: '关闭窗口（先正常关闭）', layer: 'windows' },
+  { shortcutId: 'ArrowLeft', commandId: 'windows.actions.close', when: "tab == 'windows' && windowActionsOpen", description: '从窗口操作面板返回列表', layer: 'window-actions' },
+  { shortcutId: 'Ctrl+ArrowLeft', commandId: 'windows.actions.close', when: "tab == 'windows' && windowActionsOpen", description: '从窗口操作面板返回列表', layer: 'window-actions' },
+  { shortcutId: 'Tab', commandId: 'windows.layer.toggle', when: "tab == 'windows' && !windowEditorOpen", description: '切换窗口列表和操作面板', layer: 'windows' },
+  { shortcutId: 'Shift+Tab', commandId: 'windows.layer.togglePrev', when: "tab == 'windows' && !windowEditorOpen", description: '反向切换窗口列表和操作面板', layer: 'windows' },
+  { shortcutId: 'Space', commandId: 'list.toggleSelection', when: "tab == 'windows' && !windowEditorOpen", description: '窗口列表多选并下移', layer: 'windows' },
+  { shortcutId: 'Escape', commandId: 'windows.editor.cancel', when: "activeInputRole == 'window-editor'", description: '取消窗口目标编辑', layer: 'window-editor' },
+  { shortcutId: 'Ctrl+S', commandId: 'windows.editor.save', when: "activeInputRole == 'window-editor'", description: '保存窗口目标编辑', layer: 'window-editor' },
+  { shortcutId: 'Enter', commandId: 'windows.editor.save', when: "activeInputRole == 'window-editor'", description: '保存窗口目标编辑', layer: 'window-editor' },
+  { shortcutId: 'Tab', commandId: 'windows.editor.nextField', when: "activeInputRole == 'window-editor'", description: '窗口目标编辑字段循环', layer: 'window-editor' },
+  { shortcutId: 'Shift+Tab', commandId: 'windows.editor.prevField', when: "activeInputRole == 'window-editor'", description: '窗口目标编辑反向字段循环', layer: 'window-editor' },
   { shortcutId: 'Tab', commandId: 'mqtt.pane.next', when: "tab == 'mqtt'", description: 'MQTT 页切换连接、订阅、消息和发布区域', layer: 'mqtt' },
   { shortcutId: 'Shift+Tab', commandId: 'mqtt.pane.prev', when: "tab == 'mqtt'", description: 'MQTT 页反向切换连接、订阅、消息和发布区域', layer: 'mqtt' },
   { shortcutId: 'Escape', commandId: 'favorites.cancel', when: "activeInputRole == 'favorite-editor'", description: '取消收藏编辑', layer: 'favorites-editor' },
@@ -861,6 +912,8 @@ function activeLayers(context: KeybindingContext): KeybindingLayerId[] {
   if (context.mqttPreviewOpen) layers.push('mqtt-preview')
   if (context.activeInputRole === 'port-group-editor') layers.push('port-group-editor')
   if (context.activeInputRole === 'favorite-editor') layers.push('favorites-editor')
+  if (context.activeInputRole === 'window-editor' || context.windowEditorOpen) layers.push('window-editor')
+  if (context.activeInputRole === 'window-actions' || context.windowActionsOpen) layers.push('window-actions')
   if (context.activeInputRole === 'favorite-pick-review' || context.favoritePickReviewOpen) layers.push('favorites-pick-review')
   if (context.activeInputRole === 'codex-composer') layers.push('codex-composer')
   if (context.mqttDetailOpen || context.mqttDetailActive) layers.push('mqtt-detail')
@@ -878,6 +931,7 @@ function activeLayers(context: KeybindingContext): KeybindingLayerId[] {
   if (context.activeInputRole === 'mqtt-connections') layers.push('mqtt-connections')
   if (context.activeInputRole === 'mqtt-subscriptions') layers.push('mqtt-subscriptions')
   if (context.activeInputRole === 'favorite-search' || context.activeInputRole === 'favorite-group-search') layers.push('favorites-search')
+  if (context.activeInputRole === 'window-search') layers.push('windows-search')
   return [...new Set(layers)]
 }
 
@@ -903,6 +957,7 @@ function shouldBlockTextInputShortcut(shortcutId: string, context: KeybindingCon
   if (context.activeInputRole === 'mqtt-publish-draft-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'port-group-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
+  if (context.activeInputRole === 'window-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-pick-review') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'ArrowUp', 'ArrowDown', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'codex-composer') return !['Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'port-search') return !['ArrowUp', 'ArrowDown', 'Shift+ArrowUp', 'Shift+ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+K', 'Ctrl+J', 'Space', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+W', 'Ctrl+Shift+W', 'Ctrl+T', 'Ctrl+G', 'Shift+Escape'].includes(shortcutId)
@@ -915,6 +970,7 @@ function shouldBlockTextInputShortcut(shortcutId: string, context: KeybindingCon
   if (context.activeInputRole === 'mqtt-subscriptions') return !['Space', 'Enter', 'Ctrl+Enter', 'Ctrl+C', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Ctrl+T', 'Ctrl+Shift+T', 'F2', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'Shift+ArrowUp', 'Shift+ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+Enter', 'Ctrl+C', 'Ctrl+Shift+C', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+R', 'Ctrl+Shift+W', 'Ctrl+N', 'Ctrl+O', 'Ctrl+Shift+O', 'Ctrl+G', 'Ctrl+T', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+Z', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-group-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'ArrowLeft', 'ArrowRight', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+R', 'Ctrl+Shift+W', 'Ctrl+N', 'Ctrl+O', 'Ctrl+Shift+O', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+G', 'Ctrl+T', 'Ctrl+Z', 'F2', 'Shift+F2', 'Ctrl+F2', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
+  if (context.activeInputRole === 'window-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'ArrowRight', 'Ctrl+ArrowRight', 'ArrowLeft', 'Ctrl+ArrowLeft', 'Tab', 'Shift+Tab', 'Enter', 'Space', 'Ctrl+F', 'Ctrl+R', 'Ctrl+Delete', 'Ctrl+Backspace', 'Escape', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   return !['Ctrl+S', 'Ctrl+Enter'].includes(shortcutId)
 }
 
@@ -922,6 +978,7 @@ function profileIdForCommand(commandId: string): ShortcutProfileId {
   if (commandId.startsWith('ports.')) return 'ports'
   if (commandId.startsWith('mqtt.')) return 'mqtt'
   if (commandId.startsWith('favorites.')) return 'favorites'
+  if (commandId.startsWith('windows.')) return 'windows'
   if (commandId.startsWith('codex.')) return 'codex'
   if (commandId.startsWith('settings.')) return 'settings'
   return 'global'
@@ -960,7 +1017,7 @@ function defaultBindingsFor(commandId: string, defaultBindings = DEFAULT_KEYBIND
 
 function flattenOverrides(input: KeybindingOverride[] | ShortcutProfileMap = []): Array<KeybindingOverride & { profileId?: ShortcutProfileId }> {
   if (Array.isArray(input)) return input
-  return (['global', 'ports', 'mqtt', 'favorites', 'codex', 'settings'] as ShortcutProfileId[]).flatMap((profileId) =>
+  return (['global', 'ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings'] as ShortcutProfileId[]).flatMap((profileId) =>
     (input[profileId]?.keybindingOverrides || []).map((override) => ({ ...override, profileId }))
   )
 }

@@ -3,13 +3,15 @@ import { DEFAULT_MQTT_LAYOUT_PREFS, MQTT_LAYOUT_RATIO_MAX, MQTT_LAYOUT_RATIO_MIN
 import { buildMqttConnectionTreeRows, deleteMqttConnectionGroup, isValidMqttConnectionGroupParent, moveMqttConnectionTreeTarget, mqttConnectionTreeMoveTarget, normalizeMqttConfigGroupRefs, normalizeMqttConnectionGroups, type MqttConnectionTreeDropPosition, type MqttConnectionTreeRow, type MqttConnectionTreeTarget } from '../domain/mqttConnectionTree'
 import { dedupePortProcesses, filterPortProcesses, flattenPortGroupTargets, matchPortGroupProcesses, matchPortGroupTargetProcesses, movePortGroupToFolder, shouldProcessMatchVerifiedPort } from '../domain/ports'
 import { applyRecordListDeleteRecovery, computeRecordListDeleteAnchor, toggleRecordListSelection } from '../domain/recordListSelection'
+import { resolveDrawerTargets, toggleIdWithAdvance } from '../domain/listSelection'
 import { normalizeAppState } from '../domain/state'
 import { formatShortcutList } from '../domain/shortcuts'
 import { normalizeToolPreviewPrefs } from '../domain/toolPreview'
+import { filterJumpableLiveWindows, normalizeWindowText, targetMatchesLiveWindow, type LiveWindow, type WindowPlatform, type WindowTarget } from '../domain/windows'
 import type { CodexFloatPosition, CodexSettings } from '../domain/codex'
 import type { AppState, AppTabId, FavoriteNode, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttConnectionGroup, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
 import type { PortGroupTreeRow } from '../domain/ports'
-import { getPlatform, normalizeFileActionResult, type FavoriteDirectoryEntry, type FavoritePathInspection, type FileActionResult, type FileCapabilities, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind } from '../platform/eypcPlatform'
+import { getPlatform, normalizeFileActionResult, type FavoriteDirectoryEntry, type FavoritePathInspection, type FileActionResult, type FileCapabilities, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind, type WindowCapability } from '../platform/eypcPlatform'
 import { createActionRuntime } from './action/actionRuntime'
 import type { RuntimeActionContext, RuntimeActionRisk } from './action/types'
 import { FEATURES, visibleFeatures, type VisibleFeatureDefinition } from './feature/featureRegistry'
@@ -80,6 +82,21 @@ export interface AppRuntimeSnapshot {
   favoriteDraft: FavoriteDraft | null
   favoriteParentOptions: FavoriteNode[]
   favoriteRows: ReturnType<typeof flattenFavoriteTree>
+  windowCapability: WindowCapability
+  windowLoading: boolean
+  windowListLoaded: boolean
+  windowCacheUpdatedAt: number | null
+  windowRows: WindowRow[]
+  focusedWindowId: string | null
+  selectedWindowIds: string[]
+  windowActionsOpen: boolean
+  windowActionTarget: WindowRow | null
+  windowActionTargets: WindowRow[]
+  windowActionsMode: 'single' | 'multi'
+  windowDraft: WindowDraft | null
+  windowCandidateTargetId: string | null
+  windowFocusRequestId: number
+  windowActionsFocusRequestId: number
   mqttArchive: MqttArchiveState
   mqttArchiveLoaded: boolean
   mqttStorageStatus: MqttStorageStatus
@@ -148,7 +165,7 @@ export type PortPaneId = 'groups' | 'results'
 export type FavoritePaneId = 'containers' | 'items' | 'directory'
 export type MqttPaneId = 'connections' | 'subscriptions' | 'messages' | 'publish' | 'publish-records'
 export type MqttRecordListId = 'messages' | 'templates' | 'history'
-export type SearchFocusTarget = 'ports' | 'port-groups' | 'mqtt' | 'mqtt-templates' | 'mqtt-history' | 'favorites' | 'favorite-groups'
+export type SearchFocusTarget = 'ports' | 'port-groups' | 'mqtt' | 'mqtt-templates' | 'mqtt-history' | 'favorites' | 'favorite-groups' | 'windows'
 export type ActiveInputRole = NonNullable<KeybindingContext['activeInputRole']>
 export type PortDrawerMode = 'single' | 'multi' | 'group'
 export type FavoriteDrawerTargetKind = 'favorite' | 'directory'
@@ -158,6 +175,8 @@ export type MqttFocusTarget = 'records' | 'topic-filter' | 'publish-topic' | 'pu
 export type MqttPublishField = 'topic' | 'payload'
 export type MqttPublishDraftHistoryEditMode = 'rename' | 'edit'
 export type MqttPublishDraftHistoryEditField = 'title' | 'note' | 'topic' | 'payload'
+export type WindowDraftMode = 'rename' | 'edit'
+export type WindowDraftField = 'alias' | 'titleLocator'
 export type MqttRecordSelection =
   | { kind: 'config'; id: string }
   | { kind: 'connection-group'; id: string }
@@ -182,6 +201,32 @@ export interface MqttRecordEditDraft {
   qos: MqttQos
   retain: boolean
   activeField: MqttRecordEditField
+}
+
+export interface WindowRow {
+  id: string
+  live: LiveWindow | null
+  target: WindowTarget | null
+  displayName: string
+  appName: string
+  title: string
+  favorite: boolean
+  slotNumbers: number[]
+  focused: boolean
+  selected: boolean
+  unavailable: boolean
+  ambiguous: boolean
+}
+
+export interface WindowDraft {
+  mode: WindowDraftMode
+  targetId: string | null
+  sourceWindowId: string | null
+  alias: string
+  appName: string
+  appId: string
+  titleLocator: string
+  activeField: WindowDraftField
 }
 
 export interface MqttPublishDraftHistoryEditDraft {
@@ -528,7 +573,7 @@ export interface AppRuntimeOptions {
   mqttModuleLoader?: () => Promise<unknown>
 }
 
-const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'codex', 'settings']
+const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings']
 
 export function createAppRuntime(initialState: AppState, options: AppRuntimeOptions = {}) {
   const platform = getPlatform()
@@ -587,6 +632,22 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   let favoriteQuickMode = false
   let favoritePickReview: FavoritePickReview | null = null
   let favoriteDraft: FavoriteDraft | null = null
+  let windowCapability: WindowCapability = { platform: 'unsupported', supported: false, permission: 'unsupported', canList: false, canActivate: false, reason: '尚未请求窗口能力' }
+  let liveWindows: LiveWindow[] = []
+  let windowLoading = false
+  let windowListLoaded = false
+  let windowCacheUpdatedAt: number | null = null
+  let windowRequestId = 0
+  let focusedWindowId: string | null = null
+  let selectedWindowIds: string[] = []
+  let windowActionsOpen = false
+  let windowActionTargetId: string | null = null
+  let windowActionsMode: 'single' | 'multi' = 'single'
+  let windowDraft: WindowDraft | null = null
+  let windowCandidateTargetId: string | null = null
+  let windowCandidateLiveIds: string[] = []
+  let windowFocusRequestId = 0
+  let windowActionsFocusRequestId = 0
   let mqttArchive: MqttArchiveState = normalizeMqttArchiveState(null)
   let mqttArchiveLoaded = false
   let mqttPanelOpen = state.mqtt.layoutPrefs.connectionPanelOpen
@@ -687,6 +748,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       mqttSubscriptionDraft ? 'mqtt-subscription-editor' : null,
       mqttFavoriteDraft ? 'mqtt-favorite-editor' : null,
       mqttRecordEditDraft ? 'mqtt-record-editor' : null,
+      windowDraft ? 'window-editor' : null,
+      windowActionsOpen ? 'window-actions' : null,
       mqttPreview.open ? 'mqtt-preview' : null,
       favoriteDraft ? 'favorites-editor' : null,
       favoritePickReview ? 'favorites-pick-review' : null,
@@ -711,7 +774,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       favoriteUndoAvailable: Boolean(favoriteRemovalUndo?.removed.length),
       mqttPane: activeMqttPane,
       mqttPanelOpen,
-      mqttTargetKind: mqttSelectedRecord?.kind
+      mqttTargetKind: mqttSelectedRecord?.kind,
+      windowActionsOpen,
+      windowEditorOpen: Boolean(windowDraft)
     }
     if (input) {
       base.textInputFocused = input.textInputFocused
@@ -791,9 +856,721 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return filterPortGroupRows().find((row) => sameTarget(row.target, target)) || null
   }
 
-  function setTab(tab: AppTabId) {
+  function currentWindowPlatform(): WindowPlatform | null {
+    if (windowCapability.platform === 'darwin' || windowCapability.platform === 'win32') return windowCapability.platform
+    return liveWindows[0]?.platform || null
+  }
+
+  function windowTargetById(id: string | null | undefined): WindowTarget | null {
+    return id ? state.windowTargets.find((target) => target.id === id) || null : null
+  }
+
+  function liveWindowsForTarget(target: WindowTarget): { live: LiveWindow | null; candidates: LiveWindow[] } {
+    const samePlatform = liveWindows.filter((live) => live.platform === target.platform)
+    const byRef = target.lastNativeRef
+      ? samePlatform.find((live) => live.nativeRef === target.lastNativeRef && targetMatchesLiveWindow(target, live)) || null
+      : null
+    if (byRef) return { live: byRef, candidates: [byRef] }
+    const candidates = samePlatform.filter((live) => targetMatchesLiveWindow(target, live))
+    return { live: candidates.length === 1 ? candidates[0] : null, candidates }
+  }
+
+  function windowSlotNumbers(targetId: string): number[] {
+    const platform = currentWindowPlatform()
+    return state.windowSlots
+      .filter((slot) => {
+        if (platform) return slot.targetIdByPlatform[platform] === targetId
+        return Object.values(slot.targetIdByPlatform).includes(targetId)
+      })
+      .map((slot) => slot.slot)
+  }
+
+  function isSlotBoundWindowTarget(targetId: string): boolean {
+    return windowSlotNumbers(targetId).length > 0
+  }
+
+  function makeWindowRow(target: WindowTarget | null, live: LiveWindow | null, ambiguous = false, rowId?: string): WindowRow {
+    const id = rowId || (target ? `target:${target.id}` : `live:${live?.id || ''}`)
+    const title = live?.title || target?.titleLocator || ''
+    const appName = live?.appName || target?.appName || ''
+    return {
+      id,
+      live,
+      target,
+      displayName: target?.alias || title || appName || '未命名窗口',
+      appName,
+      title,
+      favorite: Boolean(target?.favorite),
+      slotNumbers: target ? windowSlotNumbers(target.id) : [],
+      focused: id === focusedWindowId,
+      selected: selectedWindowIds.includes(id),
+      unavailable: Boolean(target && !live),
+      ambiguous
+    }
+  }
+
+  function windowRows(): WindowRow[] {
+    const platform = currentWindowPlatform()
+    const byApp = (left: WindowRow, right: WindowRow) => left.appName.localeCompare(right.appName, undefined, { sensitivity: 'base' })
+      || left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' })
+      || left.title.localeCompare(right.title, undefined, { sensitivity: 'base' })
+    if (windowCandidateTargetId && windowCandidateLiveIds.length) {
+      const target = windowTargetById(windowCandidateTargetId)
+      const ids = new Set(windowCandidateLiveIds)
+      return liveWindows
+        .filter((live) => ids.has(live.id))
+        .map((live) => makeWindowRow(target, live, false, `candidate:${live.id}`))
+        .sort(byApp)
+    }
+    const targets = state.windowTargets
+      .filter((target) => (!platform || target.platform === platform) && (target.favorite || isSlotBoundWindowTarget(target.id)))
+      .sort((left, right) => {
+        if (left.favorite !== right.favorite) return left.favorite ? -1 : 1
+        const leftSlots = windowSlotNumbers(left.id)
+        const rightSlots = windowSlotNumbers(right.id)
+        if (Boolean(leftSlots.length) !== Boolean(rightSlots.length)) return leftSlots.length ? -1 : 1
+        return left.appName.localeCompare(right.appName, undefined, { sensitivity: 'base' })
+          || left.alias.localeCompare(right.alias, undefined, { sensitivity: 'base' })
+          || left.createdAt - right.createdAt
+      })
+    const usedLiveIds = new Set<string>()
+    const savedRows = targets.map((target) => {
+      const resolved = liveWindowsForTarget(target)
+      if (resolved.live) usedLiveIds.add(resolved.live.id)
+      return makeWindowRow(target, resolved.live, resolved.candidates.length > 1)
+    })
+    const liveRows = liveWindows
+      .filter((live) => !usedLiveIds.has(live.id))
+      .map((live) => makeWindowRow(null, live))
+      .sort(byApp)
+    const keyword = normalizeWindowText(state.windowSearch)
+    const rows = [...savedRows, ...liveRows]
+    if (!keyword) return rows
+    return rows.filter((row) => normalizeWindowText([row.displayName, row.title, row.appName].join(' ')).includes(keyword))
+  }
+
+  function windowRowById(id: string | null | undefined): WindowRow | null {
+    return id ? windowRows().find((row) => row.id === id) || null : null
+  }
+
+  function normalizeFocusedWindow(notifyAfter = true) {
+    const rows = windowRows()
+    if (!rows.some((row) => row.id === focusedWindowId)) focusedWindowId = rows[0]?.id || null
+    const visibleIds = new Set(rows.map((row) => row.id))
+    selectedWindowIds = selectedWindowIds.filter((id) => visibleIds.has(id))
+    if (windowActionTargetId && !rows.some((row) => row.id === windowActionTargetId)) {
+      windowActionTargetId = null
+      windowActionsOpen = false
+      windowActionsMode = 'single'
+    }
+    if (notifyAfter) notify()
+  }
+
+  function rematchFocusedWindowAfterRefresh(previous: { rowId: string | null; live: LiveWindow | null; targetId: string | null }) {
+    const rows = windowRows()
+    if (previous.rowId && rows.some((row) => row.id === previous.rowId)) {
+      focusedWindowId = previous.rowId
+      if (windowActionsOpen) windowActionTargetId = previous.rowId
+      return
+    }
+    if (previous.targetId) {
+      const targetRow = rows.find((row) => row.target?.id === previous.targetId)
+      if (targetRow) {
+        focusedWindowId = targetRow.id
+        if (windowActionsOpen) windowActionTargetId = targetRow.id
+        return
+      }
+    }
+    if (previous.live) {
+      const liveMatch = liveWindows.find((live) => live.platform === previous.live!.platform
+        && live.appId === previous.live!.appId
+        && normalizeWindowText(live.title) === normalizeWindowText(previous.live!.title))
+      if (liveMatch) {
+        const liveRow = rows.find((row) => row.live?.id === liveMatch.id)
+        focusedWindowId = liveRow?.id || `live:${liveMatch.id}`
+        if (windowActionsOpen) windowActionTargetId = focusedWindowId
+        return
+      }
+    }
+    normalizeFocusedWindow(false)
+  }
+
+  function windowSlotLabel(slot: number): string {
+    return `EyPc 窗口槽 ${slot}`
+  }
+
+  function createWindowTarget(live: LiveWindow, alias = live.title): WindowTarget {
+    const now = Date.now()
+    return {
+      id: `window:${now}:${Math.random().toString(36).slice(2, 10)}`,
+      alias: alias.trim() || live.title,
+      platform: live.platform,
+      appId: live.appId,
+      appName: live.appName,
+      titleLocator: live.title,
+      lastNativeRef: live.nativeRef,
+      favorite: true,
+      createdAt: now,
+      updatedAt: now
+    }
+  }
+
+  function ensureWindowTarget(row: WindowRow): WindowTarget | null {
+    if (row.target) return row.target
+    if (!row.live) return null
+    const existing = state.windowTargets.find((target) => targetMatchesLiveWindow(target, row.live!))
+    if (existing) return existing
+    const target = createWindowTarget(row.live)
+    state.windowTargets = [...state.windowTargets, target]
+    save()
+    return target
+  }
+
+  type WindowResolveOutcome = 'activated' | 'ambiguous' | 'not-found' | 'failed'
+
+  async function refreshWindows() {
+    const requestId = windowRequestId + 1
+    windowRequestId = requestId
+    const previousRow = windowRowById(focusedWindowId)
+    const previousFocus = {
+      rowId: focusedWindowId,
+      live: previousRow?.live || null,
+      targetId: previousRow?.target?.id || null
+    }
+    windowLoading = true
+    notify()
+    try {
+      const result = await platform.windows.list()
+      if (requestId !== windowRequestId) return
+      windowCapability = result.capability
+      liveWindows = filterJumpableLiveWindows(result.windows.map((window) => ({ ...window })))
+      windowListLoaded = true
+      windowCacheUpdatedAt = Date.now()
+      const candidateIds = new Set(liveWindows.map((window) => window.id))
+      windowCandidateLiveIds = windowCandidateLiveIds.filter((id) => candidateIds.has(id))
+      if (!windowCandidateLiveIds.length) windowCandidateTargetId = null
+      if (result.message) message = result.message
+      rematchFocusedWindowAfterRefresh(previousFocus)
+    } catch {
+      if (requestId !== windowRequestId) return
+      windowCapability = { platform: 'unsupported', supported: false, permission: 'unsupported', canList: false, canActivate: false, reason: '当前 preload 无法读取窗口' }
+      // Keep the last successful session cache so refresh failure does not wipe the list.
+      if (!windowListLoaded) {
+        liveWindows = []
+        windowCacheUpdatedAt = null
+      }
+      message = windowListLoaded ? '刷新失败，已保留上次窗口列表' : '当前 preload 无法读取窗口'
+      normalizeFocusedWindow(false)
+    } finally {
+      if (requestId === windowRequestId) {
+        windowLoading = false
+        notify()
+      }
+    }
+  }
+
+  function clearWindowCandidates() {
+    if (!windowCandidateTargetId && !windowCandidateLiveIds.length) return false
+    windowCandidateTargetId = null
+    windowCandidateLiveIds = []
+    normalizeFocusedWindow(false)
+    notify()
+    return true
+  }
+
+  function showWindowWorkbench(options: { focusRowId?: string | null; messageText?: string } = {}) {
+    if (isTabEnabled('windows')) state.activeTab = 'windows'
+    else state.activeTab = 'settings'
+    if (options.focusRowId) focusedWindowId = options.focusRowId
+    if (options.messageText) message = options.messageText
+    windowActionsOpen = false
+    windowActionTargetId = null
+    windowFocusRequestId += 1
+    save()
+    notify()
+    platform.app.show?.()
+  }
+
+  async function activateLiveWindow(live: LiveWindow, target: WindowTarget | null = null) {
+    const result = await platform.windows.activate(live)
+    if (result.outcome === 'activated') {
+      if (target) {
+        target.lastNativeRef = live.nativeRef
+        target.updatedAt = Date.now()
+        save()
+      }
+      windowCandidateTargetId = null
+      windowCandidateLiveIds = []
+      setMessage(`已跳转到 ${target?.alias || live.title}`)
+      await hideAppWindow()
+      return true
+    }
+    if (result.outcome === 'focus-denied') {
+      setMessage(result.message || '系统拒绝聚焦该窗口；EyPc 未尝试绕过前台保护')
+      return false
+    }
+    if (result.outcome === 'permission-required') {
+      windowCapability = { ...windowCapability, permission: 'required', canList: false, canActivate: false }
+    }
+    setMessage(result.message || (result.outcome === 'not-found' ? '目标窗口已关闭或引用失效' : '无法激活该窗口'))
+    return false
+  }
+
+  async function resolveAndActivateWindowTarget(target: WindowTarget): Promise<WindowResolveOutcome> {
+    const resolved = liveWindowsForTarget(target)
+    if (resolved.live) {
+      const activated = await activateLiveWindow(resolved.live, target)
+      return activated ? 'activated' : 'failed'
+    }
+    if (resolved.candidates.length > 1) {
+      windowCandidateTargetId = target.id
+      windowCandidateLiveIds = resolved.candidates.map((window) => window.id)
+      focusedWindowId = `candidate:${resolved.candidates[0].id}`
+      windowActionsOpen = false
+      windowActionTargetId = null
+      setMessage(`“${target.alias}”有多个匹配窗口，请选择其中一个后再激活`)
+      return 'ambiguous'
+    }
+    setMessage(`未找到 “${target.alias}”；已按应用和标题验证`)
+    return 'not-found'
+  }
+
+  async function activateWindowRow(rowId?: string) {
+    const row = windowRowById(rowId || focusedWindowId)
+    if (!row) {
+      setMessage('没有可激活的窗口')
+      return false
+    }
+    if (row.live) {
+      const candidateTarget = windowCandidateTargetId ? windowTargetById(windowCandidateTargetId) : null
+      return activateLiveWindow(row.live, candidateTarget || row.target)
+    }
+    if (row.target) {
+      const outcome = await resolveAndActivateWindowTarget(row.target)
+      return outcome === 'activated'
+    }
+    setMessage('目标窗口不可用')
+    return false
+  }
+
+  function liveWindowFromPersistedTarget(target: WindowTarget): LiveWindow | null {
+    if (!target.lastNativeRef) return null
+    return {
+      id: `${target.platform}:${target.lastNativeRef}`,
+      platform: target.platform,
+      nativeRef: target.lastNativeRef,
+      appId: target.appId,
+      appName: target.appName,
+      pid: 0,
+      title: target.titleLocator,
+      minimized: false,
+      focused: false
+    }
+  }
+
+  async function activateWindowSlot(slotNumber: number) {
+    // Global slots are mainHide/silent: keep the plugin hidden while resolving.
+    // Only failure/ambiguity paths call showWindowWorkbench().
+    void hideAppWindow()
+    const slot = state.windowSlots.find((item) => item.slot === slotNumber)
+    if (!slot) {
+      showWindowWorkbench({ messageText: '窗口槽位不存在' })
+      return false
+    }
+    let capability: WindowCapability
+    try {
+      capability = await platform.windows.capabilities()
+    } catch {
+      showWindowWorkbench({ messageText: '当前 preload 无法读取窗口能力' })
+      return false
+    }
+    windowCapability = capability
+    const platformId = currentWindowPlatform()
+    if (!platformId || !capability.supported) {
+      showWindowWorkbench({ messageText: capability.reason || '当前系统不支持窗口跳转' })
+      return false
+    }
+    const targetId = slot.targetIdByPlatform[platformId]
+    const target = windowTargetById(targetId)
+    if (!target) {
+      showWindowWorkbench({ messageText: `窗口槽 ${slotNumber} 尚未为当前平台指定目标；请在窗口页分配后再试` })
+      return false
+    }
+
+    // uTools-persisted lastNativeRef: try direct activate without listing.
+    const cachedLive = liveWindowFromPersistedTarget(target)
+    if (cachedLive) {
+      const direct = await activateLiveWindow(cachedLive, target)
+      if (direct) return true
+      if (/拒绝聚焦|前台保护/.test(message || '')) {
+        showWindowWorkbench({ focusRowId: `target:${target.id}`, messageText: message })
+        return false
+      }
+    }
+
+    let outcome = await resolveAndActivateWindowTarget(target)
+    if (outcome === 'activated') return true
+    if (outcome === 'ambiguous') {
+      showWindowWorkbench({ focusRowId: focusedWindowId, messageText: message })
+      return false
+    }
+    if (outcome === 'failed') {
+      showWindowWorkbench({ focusRowId: `target:${target.id}`, messageText: message })
+      return false
+    }
+
+    await refreshWindows()
+    if (!windowCapability.canList || windowCapability.permission === 'required') {
+      showWindowWorkbench({
+        focusRowId: `target:${target.id}`,
+        messageText: windowCapability.reason || '需要授权后才能读取窗口列表'
+      })
+      return false
+    }
+
+    outcome = await resolveAndActivateWindowTarget(target)
+    if (outcome === 'activated') return true
+    showWindowWorkbench({
+      focusRowId: outcome === 'ambiguous' ? focusedWindowId : `target:${target.id}`,
+      messageText: message || `未找到 “${target.alias}”；请重新分配或手动加载窗口列表`
+    })
+    return false
+  }
+
+  function resolveWindowActionTargets(rowId?: string) {
+    const resolved = resolveDrawerTargets({
+      focusedId: focusedWindowId,
+      selectedIds: selectedWindowIds,
+      explicitId: rowId || null
+    })
+    const rows = windowRows()
+    const targets = resolved.targetIds
+      .map((id) => rows.find((row) => row.id === id) || null)
+      .filter((row): row is WindowRow => Boolean(row))
+    return { mode: resolved.mode, targets }
+  }
+
+  function openWindowActions(rowId?: string) {
+    const { mode, targets } = resolveWindowActionTargets(rowId)
+    if (!targets.length) {
+      setMessage('没有可操作的窗口')
+      return false
+    }
+    windowActionsMode = mode
+    focusedWindowId = targets[0].id
+    windowActionTargetId = targets[0].id
+    windowActionsOpen = true
+    windowActionsFocusRequestId += 1
+    notify()
+    return true
+  }
+
+  function closeWindowActions() {
+    if (!windowActionsOpen) return false
+    windowActionsOpen = false
+    windowActionTargetId = null
+    windowActionsMode = 'single'
+    windowFocusRequestId += 1
+    notify()
+    return true
+  }
+
+  function clearWindowSelection() {
+    if (!selectedWindowIds.length) return false
+    selectedWindowIds = []
+    notify()
+    return true
+  }
+
+  function windowRowsForClose(rowId?: string): WindowRow[] {
+    const { mode, targets } = resolveWindowActionTargets(rowId)
+    if (targets.length) return targets
+    const focused = windowRowById(focusedWindowId)
+    return focused ? [focused] : []
+  }
+
+  async function closeWindowRows(rowId?: string, force = false) {
+    const rows = windowRowsForClose(rowId).filter((row) => row.live)
+    if (!rows.length) {
+      setMessage('没有可关闭的实时窗口')
+      return false
+    }
+    if (force) {
+      const failures: string[] = []
+      for (const row of rows) {
+        if (!row.live) continue
+        const result = await platform.windows.terminate?.(row.live)
+        if (!result || result.outcome !== 'terminated') failures.push(row.displayName)
+      }
+      await refreshWindows()
+      selectedWindowIds = []
+      setMessage(failures.length ? `强制关闭完成，${failures.length} 个失败` : `已强制关闭 ${rows.length} 个窗口`)
+      return failures.length === 0
+    }
+    const failed: WindowRow[] = []
+    let closed = 0
+    for (const row of rows) {
+      if (!row.live) continue
+      const result = await platform.windows.close?.(row.live)
+      if (result?.outcome === 'closed') closed += 1
+      else failed.push(row)
+    }
+    await refreshWindows()
+    if (!failed.length) {
+      selectedWindowIds = []
+      setMessage(`已关闭 ${closed} 个窗口`)
+      return true
+    }
+    confirm = {
+      title: '强制关闭未响应窗口？',
+      detail: `${failed.length} 个窗口未能正常关闭：${failed.map((row) => row.displayName).join('、')}。确认后将终止对应进程，可能丢失未保存内容。`,
+      onConfirm: () => {
+        confirm = null
+        void closeWindowRows(undefined, true)
+      }
+    }
+    // Keep failed rows selected for force path.
+    selectedWindowIds = failed.map((row) => row.id)
+    focusedWindowId = failed[0]?.id || focusedWindowId
+    notify()
+    return false
+  }
+
+  function favoriteWindowRows(rowId?: string) {
+    const targets = resolveWindowActionTargets(rowId).targets
+    if (!targets.length) {
+      setMessage('没有可收藏的窗口')
+      return false
+    }
+    let changed = 0
+    for (const row of targets) {
+      if (!row.live && !row.target) continue
+      const ensured = ensureWindowTarget(row)
+      if (!ensured) continue
+      if (!ensured.favorite) {
+        state.windowTargets = state.windowTargets.map((item) => item.id === ensured.id ? { ...item, favorite: true, updatedAt: Date.now() } : item)
+        changed += 1
+      }
+    }
+    if (changed) {
+      save()
+      normalizeFocusedWindow(false)
+    }
+    setMessage(changed ? `已收藏 ${changed} 个窗口` : '选中窗口均已收藏')
+    notify()
+    return true
+  }
+
+  function toggleWindowFavorite(rowId?: string) {
+    const row = windowRowById(rowId || focusedWindowId)
+    if (!row) {
+      setMessage('没有可收藏的窗口')
+      return false
+    }
+    if (row.target) {
+      const target = { ...row.target, favorite: !row.target.favorite, updatedAt: Date.now() }
+      state.windowTargets = state.windowTargets.map((item) => item.id === target.id ? target : item)
+      save()
+      normalizeFocusedWindow(false)
+      setMessage(target.favorite ? '已收藏窗口；别名仅保存在 EyPc' : '已取消窗口置顶；稳定槽位仍保留')
+      return true
+    }
+    const target = ensureWindowTarget(row)
+    if (!target) {
+      setMessage('窗口当前不可收藏')
+      return false
+    }
+    if (!target.favorite) {
+      target.favorite = true
+      target.updatedAt = Date.now()
+    }
+    focusedWindowId = `target:${target.id}`
+    save()
+    setMessage('已收藏窗口；别名仅保存在 EyPc')
+    return true
+  }
+
+  function beginWindowDraft(mode: WindowDraftMode, rowId?: string) {
+    const row = windowRowById(rowId || focusedWindowId)
+    if (!row) {
+      setMessage('请先选择窗口')
+      return false
+    }
+    const source = row.live
+    const target = row.target
+    if (!source && !target) return false
+    windowDraft = {
+      mode,
+      targetId: target?.id || null,
+      sourceWindowId: source?.id || null,
+      alias: target?.alias || source?.title || '',
+      appName: target?.appName || source?.appName || '',
+      appId: target?.appId || source?.appId || '',
+      titleLocator: target?.titleLocator || source?.title || '',
+      activeField: 'alias'
+    }
+    windowActionsOpen = false
+    windowActionTargetId = null
+    windowFocusRequestId += 1
+    notify()
+    return true
+  }
+
+  function updateWindowDraft(input: Partial<Pick<WindowDraft, 'alias' | 'titleLocator' | 'activeField'>>) {
+    if (!windowDraft) return
+    windowDraft = { ...windowDraft, ...input }
+    notify()
+  }
+
+  function moveWindowDraftField(direction: 1 | -1) {
+    if (!windowDraft) return false
+    if (windowDraft.mode === 'rename') {
+      windowDraft = { ...windowDraft, activeField: 'alias' }
+      windowFocusRequestId += direction
+      notify()
+      return true
+    }
+    windowDraft = { ...windowDraft, activeField: windowDraft.activeField === 'alias' ? 'titleLocator' : 'alias' }
+    windowFocusRequestId += direction
+    notify()
+    return true
+  }
+
+  function saveWindowDraft() {
+    if (!windowDraft) return false
+    const alias = windowDraft.alias.trim()
+    const titleLocator = windowDraft.titleLocator.trim()
+    if (!alias || !titleLocator || !windowDraft.appId.trim()) {
+      setMessage('别名、应用和标题定位条件不能为空')
+      return false
+    }
+    const existing = windowTargetById(windowDraft.targetId)
+    const source = liveWindows.find((live) => live.id === windowDraft?.sourceWindowId) || null
+    const now = Date.now()
+    const target: WindowTarget = existing
+      ? { ...existing, alias, titleLocator, appId: windowDraft.appId.trim(), appName: windowDraft.appName.trim() || windowDraft.appId.trim(), lastNativeRef: source?.nativeRef || existing.lastNativeRef, updatedAt: now }
+      : source
+        ? { ...createWindowTarget(source, alias), titleLocator, appId: windowDraft.appId.trim(), appName: windowDraft.appName.trim() || windowDraft.appId.trim(), updatedAt: now }
+        : { id: `window:${now}:${Math.random().toString(36).slice(2, 10)}`, alias, platform: currentWindowPlatform() || 'darwin', appId: windowDraft.appId.trim(), appName: windowDraft.appName.trim() || windowDraft.appId.trim(), titleLocator, lastNativeRef: null, favorite: true, createdAt: now, updatedAt: now }
+    state.windowTargets = existing
+      ? state.windowTargets.map((item) => item.id === target.id ? target : item)
+      : [...state.windowTargets, target]
+    focusedWindowId = `target:${target.id}`
+    windowDraft = null
+    windowFocusRequestId += 1
+    save()
+    setMessage('已保存 EyPc 窗口别名与定位条件')
+    return true
+  }
+
+  function cancelWindowDraft() {
+    if (!windowDraft) return false
+    windowDraft = null
+    windowFocusRequestId += 1
+    notify()
+    return true
+  }
+
+  function assignWindowSlot(slotNumber: number, rowId?: string) {
+    const row = windowRowById(rowId || focusedWindowId)
+    const platform = currentWindowPlatform()
+    if (!row || !platform || slotNumber < 1 || slotNumber > 10) {
+      setMessage('当前无法分配窗口槽位')
+      return false
+    }
+    const target = ensureWindowTarget(row)
+    if (!target) return false
+    state.windowSlots = state.windowSlots.map((slot) => slot.slot === slotNumber
+      ? { ...slot, targetIdByPlatform: { ...slot.targetIdByPlatform, [platform]: target.id } }
+      : slot)
+    focusedWindowId = `target:${target.id}`
+    save()
+    setMessage(`已将 “${target.alias}” 分配到窗口槽 ${slotNumber}（${platform === 'darwin' ? 'macOS' : 'Windows'}）`)
+    return true
+  }
+
+  function pruneOrphanWindowTargets() {
+    const referenced = new Set<string>()
+    for (const slot of state.windowSlots) {
+      for (const targetId of Object.values(slot.targetIdByPlatform)) {
+        if (targetId) referenced.add(targetId)
+      }
+    }
+    const next = state.windowTargets.filter((target) => target.favorite || referenced.has(target.id))
+    if (next.length === state.windowTargets.length) return
+    state.windowTargets = next
+  }
+
+  function clearWindowSlot(slotNumber: number) {
+    const platform = currentWindowPlatform()
+    if (!platform || slotNumber < 1 || slotNumber > 10) {
+      setMessage('当前无法清除窗口槽位')
+      return false
+    }
+    const slot = state.windowSlots.find((item) => item.slot === slotNumber)
+    const previousId = slot?.targetIdByPlatform[platform]
+    if (!previousId) {
+      setMessage(`窗口槽 ${slotNumber} 当前平台尚未分配`)
+      return false
+    }
+    const alias = windowTargetById(previousId)?.alias || previousId
+    state.windowSlots = state.windowSlots.map((item) => {
+      if (item.slot !== slotNumber) return item
+      const targetIdByPlatform = { ...item.targetIdByPlatform }
+      delete targetIdByPlatform[platform]
+      return { ...item, targetIdByPlatform }
+    })
+    pruneOrphanWindowTargets()
+    normalizeFocusedWindow(false)
+    save()
+    setMessage(`已清除窗口槽 ${slotNumber} 的 ${platform === 'darwin' ? 'macOS' : 'Windows'} 关联（“${alias}”）；uTools 全局快捷键需在官方设置中自行解绑`)
+    return true
+  }
+
+  function configureWindowSlotHotkey(slotNumber: number) {
+    if (slotNumber < 1 || slotNumber > 10) return false
+    const label = windowSlotLabel(slotNumber)
+    const opened = platform.app.configureHotkey?.(label) || false
+    if (!opened) setMessage('当前宿主无法打开 uTools 快捷键设置')
+    return opened
+  }
+
+  function focusWindowSlot(slotNumber: number) {
+    if (slotNumber < 1 || slotNumber > 10) return false
+    const platformId = currentWindowPlatform()
+    const slot = state.windowSlots.find((item) => item.slot === slotNumber)
+    if (!slot) {
+      setMessage('窗口槽位不存在')
+      return false
+    }
+    const targetId = platformId
+      ? slot.targetIdByPlatform[platformId]
+      : Object.values(slot.targetIdByPlatform).find(Boolean)
+    if (!targetId) {
+      setMessage(`窗口槽 ${slotNumber} 尚未分配目标`)
+      return false
+    }
+    focusedWindowId = `target:${targetId}`
+    windowFocusRequestId += 1
+    notify()
+    return true
+  }
+
+  async function copyWindowHandle(rowId?: string) {
+    const row = windowRowById(rowId || focusedWindowId)
+    if (!row?.live || row.live.platform !== 'win32') {
+      setMessage('仅 Windows 实时窗口可复制 HWND')
+      return false
+    }
+    const copied = await platform.clipboard.copyText(row.live.nativeRef)
+    setMessage(copied ? '已复制 HWND' : '当前宿主无法复制 HWND')
+    return copied
+  }
+
+  function setTab(tab: AppTabId, options: { refreshWindows?: boolean } = {}) {
     state.activeTab = isTabEnabled(tab) ? tab : 'settings'
     if (state.activeTab === 'mqtt') ensureMqttArchiveLoaded()
+    if (state.activeTab === 'windows' && options.refreshWindows === true) void refreshWindows()
     save()
     notify()
     codexController.syncActivation(state.activeTab === 'codex')
@@ -911,13 +1688,19 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return true
   }
 
-  function toggleMqttConnectionSelection(args?: Record<string, unknown>) {
+  function toggleMqttConnectionSelection(args?: Record<string, unknown>, advance = true) {
     const targetId = mqttConfigIdFromArgs(args)
     if (!targetId || !mqttConfigById(targetId)) return false
     focusMqttConfigInternal(targetId, false)
-    mqttSelectedConfigIds = mqttSelectedConfigIds.includes(targetId)
-      ? mqttSelectedConfigIds.filter((id) => id !== targetId)
-      : [...mqttSelectedConfigIds, targetId]
+    const rows = mqttConnectionTreeRowsForSnapshot().filter((row) => row.kind === 'config').map((row) => ({ id: row.id }))
+    const next = toggleIdWithAdvance({
+      rows: rows.length ? rows : [{ id: targetId }],
+      focusedId: targetId,
+      selectedIds: mqttSelectedConfigIds,
+      advance
+    })
+    mqttSelectedConfigIds = next.selectedIds
+    if (next.focusedId && next.focusedId !== targetId) focusMqttConfigInternal(next.focusedId, false)
     save()
     notify()
     return true
@@ -1294,7 +2077,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return true
   }
 
-  function toggleMqttSubscriptionSelection(topic?: string) {
+  function toggleMqttSubscriptionSelection(topic?: string, advance = true) {
     const config = currentMqttConfig()
     if (!config) return false
     const target = (typeof topic === 'string' ? topic : mqttFocusedSubscriptionTopic || '').trim()
@@ -1302,9 +2085,13 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     activeMqttPane = 'subscriptions'
     mqttFocusedSubscriptionTopic = target
     mqttSelectedRecord = { kind: 'subscription', id: target }
-    mqttSelectedSubscriptionTopics = mqttSelectedSubscriptionTopics.includes(target)
-      ? mqttSelectedSubscriptionTopics.filter((item) => item !== target)
-      : [...mqttSelectedSubscriptionTopics, target]
+    const rows = config.subscriptions.map((id) => ({ id }))
+    const next = toggleIdWithAdvance({ rows, focusedId: target, selectedIds: mqttSelectedSubscriptionTopics, advance })
+    mqttSelectedSubscriptionTopics = next.selectedIds
+    if (next.focusedId) {
+      mqttFocusedSubscriptionTopic = next.focusedId
+      mqttSelectedRecord = { kind: 'subscription', id: next.focusedId }
+    }
     notify()
     return true
   }
@@ -1846,15 +2633,23 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return true
   }
 
-  function toggleMqttPublishDraftHistorySelection(args?: Record<string, unknown>) {
+  function toggleMqttPublishDraftHistorySelection(args?: Record<string, unknown>, advance = true) {
     const entry = activeMqttPublishDraftHistoryEntry(args)
     if (!entry) return false
     const rows = mqttPublishDraftHistoryForActiveConfig()
     const index = rows.findIndex((item) => item.id === entry.id)
     if (index >= 0) mqttPublishDraftHistoryActiveIndex = index
-    mqttPublishDraftHistorySelectedIds = mqttPublishDraftHistorySelectedIds.includes(entry.id)
-      ? mqttPublishDraftHistorySelectedIds.filter((id) => id !== entry.id)
-      : [...mqttPublishDraftHistorySelectedIds, entry.id]
+    const next = toggleIdWithAdvance({
+      rows: rows.map((item) => ({ id: item.id })),
+      focusedId: entry.id,
+      selectedIds: mqttPublishDraftHistorySelectedIds,
+      advance
+    })
+    mqttPublishDraftHistorySelectedIds = next.selectedIds
+    if (next.focusedId) {
+      const nextIndex = rows.findIndex((item) => item.id === next.focusedId)
+      if (nextIndex >= 0) mqttPublishDraftHistoryActiveIndex = nextIndex
+    }
     mqttPublishDraftHistoryOpen = true
     activeMqttPane = 'publish'
     blurMqttInformationFocus()
@@ -4712,6 +5507,22 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       notify()
       return
     }
+    if (state.activeTab === 'windows') {
+      const rows = windowRows()
+      if (!rows.length) {
+        focusedWindowId = null
+        notify()
+        return
+      }
+      const currentIndex = rows.findIndex((row) => row.id === focusedWindowId)
+      const current = currentIndex >= 0 ? currentIndex : direction > 0 ? -1 : rows.length
+      const next = Math.min(rows.length - 1, Math.max(0, current + direction * (page ? 5 : 1)))
+      focusedWindowId = rows[next].id
+      if (windowActionsOpen) windowActionTargetId = focusedWindowId
+      windowFocusRequestId += 1
+      notify()
+      return
+    }
     if (state.activeTab === 'mqtt') {
       if (activeMqttPane === 'connections') {
         moveMqttConnectionFocus(direction, page)
@@ -4777,46 +5588,54 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   function toggleFocusedSelection(advance = true) {
     if (state.activeTab === 'mqtt') {
       if (activeMqttPane === 'connections') {
-        toggleMqttConnectionSelection()
+        toggleMqttConnectionSelection(undefined, advance)
         return
       }
       if (activeMqttPane === 'subscriptions') {
-        toggleMqttSubscriptionSelection()
+        toggleMqttSubscriptionSelection(undefined, advance)
         return
       }
       if (activeMqttPane !== 'messages') return
       toggleMqttRecordSelection()
       return
     }
+    if (state.activeTab === 'windows' && focusedWindowId) {
+      const rows = windowRows()
+      const next = toggleIdWithAdvance({ rows, focusedId: focusedWindowId, selectedIds: selectedWindowIds, advance })
+      selectedWindowIds = next.selectedIds
+      focusedWindowId = next.focusedId
+      if (windowActionsOpen) windowActionTargetId = focusedWindowId
+      windowFocusRequestId += 1
+      notify()
+      return
+    }
     if (state.activeTab === 'ports' && activePortPane === 'results' && focusedPortId) {
       focusedPortGroupTarget = null
       focusedPortGroupId = null
       const rows = currentPortFilter().items
-      const currentIndex = rows.findIndex((item) => item.id === focusedPortId)
-      selectedPortIds = selectedPortIds.includes(focusedPortId) ? selectedPortIds.filter((item) => item !== focusedPortId) : [...selectedPortIds, focusedPortId]
-      if (advance && currentIndex >= 0 && currentIndex < rows.length - 1) {
-        focusedPortId = rows[currentIndex + 1].id
-      }
+      const next = toggleIdWithAdvance({ rows, focusedId: focusedPortId, selectedIds: selectedPortIds, advance })
+      selectedPortIds = next.selectedIds
+      focusedPortId = next.focusedId
       syncSelectionDrawer()
       notify()
+      return
     }
     if (state.activeTab === 'favorites' && activeFavoritePane === 'items' && focusedFavoriteId) {
       const rows = currentFavoriteItems()
-      const currentIndex = rows.findIndex((item) => item.id === focusedFavoriteId)
-      selectedFavoriteIds = selectedFavoriteIds.includes(focusedFavoriteId) ? selectedFavoriteIds.filter((item) => item !== focusedFavoriteId) : [...selectedFavoriteIds, focusedFavoriteId]
-      if (advance && currentIndex >= 0 && currentIndex < rows.length - 1) {
-        focusedFavoriteId = rows[currentIndex + 1].id
-      }
+      const next = toggleIdWithAdvance({ rows, focusedId: focusedFavoriteId, selectedIds: selectedFavoriteIds, advance })
+      selectedFavoriteIds = next.selectedIds
+      focusedFavoriteId = next.focusedId
       notify()
+      return
     }
     if (state.activeTab === 'favorites' && activeFavoritePane === 'directory' && focusedFavoriteDirectoryPath) {
-      const rows = favoriteDirectoryRows()
+      const rows = favoriteDirectoryRows().map((row) => ({ id: favoritePathIdentityKey(row.path), path: row.path }))
       const focusedKey = favoritePathIdentityKey(focusedFavoriteDirectoryPath)
-      const currentIndex = rows.findIndex((row) => favoritePathIdentityKey(row.path) === focusedKey)
-      selectedFavoriteDirectoryPaths = selectedFavoriteDirectoryPaths.some((item) => favoritePathIdentityKey(item) === focusedKey)
-        ? selectedFavoriteDirectoryPaths.filter((item) => favoritePathIdentityKey(item) !== focusedKey)
-        : [...selectedFavoriteDirectoryPaths, focusedFavoriteDirectoryPath]
-      if (advance && currentIndex >= 0 && currentIndex < rows.length - 1) focusedFavoriteDirectoryPath = rows[currentIndex + 1].path
+      const selectedKeys = selectedFavoriteDirectoryPaths.map(favoritePathIdentityKey)
+      const next = toggleIdWithAdvance({ rows, focusedId: focusedKey, selectedIds: selectedKeys, advance })
+      const pathByKey = new Map(rows.map((row) => [row.id, row.path]))
+      selectedFavoriteDirectoryPaths = next.selectedIds.map((key) => pathByKey.get(key)).filter((path): path is string => Boolean(path))
+      focusedFavoriteDirectoryPath = next.focusedId ? pathByKey.get(next.focusedId) || focusedFavoriteDirectoryPath : focusedFavoriteDirectoryPath
       notify()
     }
   }
@@ -5132,15 +5951,15 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
 
   function resolvePortEscapeStep(input: ShortcutInputContext): string | null {
     const searchFocused = input.activeInputRole === 'port-search' || input.activeInputRole === 'port-group-search'
-    if (portGroupDetail.open && portGroupDetail.active) {
+    if (portGroupDetail.open) {
       closePortGroupDetail()
       return 'ports.groupDetail.close'
     }
-    if (portDetail.open && portDetail.active) {
+    if (portDetail.open) {
       closePortDetail()
       return 'ports.detail.close'
     }
-    if (portDrawer.open && portDrawer.active) {
+    if (portDrawer.open) {
       closePortDrawer()
       return 'ports.drawer.close'
     }
@@ -5185,6 +6004,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (commandId.startsWith('ports.')) return 'ports'
     if (commandId.startsWith('mqtt.')) return 'mqtt'
     if (commandId.startsWith('favorites.')) return 'favorites'
+    if (commandId.startsWith('windows.')) return 'windows'
     if (commandId.startsWith('codex.')) return 'codex'
     if (commandId.startsWith('settings.')) return 'settings'
     return 'global'
@@ -6000,6 +6820,36 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         run: () => { setTab(feature.id); return true }
       })
     }
+    actions.register({ id: 'windows.refresh', title: '刷新窗口列表', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+R', when: (ctx) => ctx.tab === 'windows', run: () => { void refreshWindows(); return true } })
+    actions.register({ id: 'windows.search.focus', title: '聚焦窗口搜索', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+F', when: (ctx) => ctx.tab === 'windows', run: () => { searchFocusTarget = 'windows'; searchFocusRequestId += 1; notify(); return true } })
+    actions.register({ id: 'windows.activate', title: '激活当前窗口', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 98, shortcut: 'Enter', when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor') && !ctx.layerIds.includes('window-actions'), run: (_ctx, args) => { void activateWindowRow(typeof args?.rowId === 'string' ? args.rowId : undefined); return true } })
+    actions.register({ id: 'windows.actions.open', title: '打开窗口操作面板', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 98, shortcut: 'Ctrl+ArrowRight', when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: (_ctx, args) => openWindowActions(typeof args?.rowId === 'string' ? args.rowId : undefined) })
+    actions.register({ id: 'windows.actions.close', title: '返回窗口列表', group: '窗口跳转', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => ctx.tab === 'windows' && ctx.layerIds.includes('window-actions'), run: () => closeWindowActions() })
+    actions.register({ id: 'windows.layer.toggle', title: '切换窗口列表与操作层', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 97, shortcut: 'Tab', when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: () => windowActionsOpen ? closeWindowActions() : openWindowActions() })
+    actions.register({ id: 'windows.layer.togglePrev', title: '反向切换窗口列表与操作层', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 97, shortcut: 'Shift+Tab', when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: () => windowActionsOpen ? closeWindowActions() : openWindowActions() })
+    actions.register({ id: 'windows.favorite.toggle', title: '收藏或取消收藏窗口', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 96, when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: (_ctx, args) => {
+      if (typeof args?.rowId === 'string' || windowActionsMode === 'single' || selectedWindowIds.length <= 1) {
+        return toggleWindowFavorite(typeof args?.rowId === 'string' ? args.rowId : undefined)
+      }
+      return favoriteWindowRows()
+    } })
+    actions.register({ id: 'windows.close', title: '关闭窗口', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 97, shortcut: 'Ctrl+Delete', when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: (_ctx, args) => { void closeWindowRows(typeof args?.rowId === 'string' ? args.rowId : undefined, false); return true } })
+    actions.register({ id: 'windows.close.force', title: '强制关闭窗口', group: '窗口跳转', risk: 'destructive', scope: 'tab', priority: 97, when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: (_ctx, args) => { void closeWindowRows(typeof args?.rowId === 'string' ? args.rowId : undefined, true); return true } })
+    actions.register({ id: 'windows.selection.clear', title: '清空窗口多选', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 95, when: (ctx) => ctx.tab === 'windows', run: () => clearWindowSelection() })
+    actions.register({ id: 'windows.rename', title: '编辑窗口别名', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 96, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: (_ctx, args) => beginWindowDraft('rename', typeof args?.rowId === 'string' ? args.rowId : undefined) })
+    actions.register({ id: 'windows.edit', title: '编辑窗口目标', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 96, shortcut: 'F2', when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: (_ctx, args) => beginWindowDraft('edit', typeof args?.rowId === 'string' ? args.rowId : undefined) })
+    actions.register({ id: 'windows.editor.save', title: '保存窗口目标', group: '窗口跳转', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.tab === 'windows' && ctx.layerIds.includes('window-editor'), run: () => saveWindowDraft() })
+    actions.register({ id: 'windows.editor.cancel', title: '取消窗口编辑', group: '窗口跳转', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.tab === 'windows' && ctx.layerIds.includes('window-editor'), run: () => cancelWindowDraft() })
+    actions.register({ id: 'windows.editor.nextField', title: '窗口编辑下一个字段', group: '窗口跳转', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.tab === 'windows' && ctx.layerIds.includes('window-editor'), run: () => moveWindowDraftField(1) })
+    actions.register({ id: 'windows.editor.prevField', title: '窗口编辑上一个字段', group: '窗口跳转', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.tab === 'windows' && ctx.layerIds.includes('window-editor'), run: () => moveWindowDraftField(-1) })
+    actions.register({ id: 'windows.slot.activate', title: '跳转窗口槽位', group: '窗口跳转', risk: 'normal', scope: 'global', priority: 101, when: () => true, run: (_ctx, args) => { const slot = Math.trunc(Number(args?.slot)); if (slot < 1 || slot > 10) return false; void activateWindowSlot(slot); return true } })
+    actions.register({ id: 'windows.slot.assign', title: '分配窗口槽位', group: '窗口跳转', risk: 'data-write', scope: 'row', priority: 96, when: (ctx) => ctx.tab === 'windows', run: (_ctx, args) => assignWindowSlot(Math.trunc(Number(args?.slot)), typeof args?.rowId === 'string' ? args.rowId : undefined) })
+    actions.register({ id: 'windows.slot.clear', title: '清除窗口槽关联', group: '窗口跳转', risk: 'data-write', scope: 'row', priority: 96, when: (ctx) => ctx.tab === 'windows', run: (_ctx, args) => clearWindowSlot(Math.trunc(Number(args?.slot))) })
+    actions.register({ id: 'windows.slot.focus', title: '聚焦窗口槽目标', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => ctx.tab === 'windows', run: (_ctx, args) => focusWindowSlot(Math.trunc(Number(args?.slot))) })
+    actions.register({ id: 'windows.slot.configure', title: '配置窗口槽全局快捷键', group: '窗口跳转', risk: 'normal', scope: 'row', priority: 96, when: (ctx) => ctx.tab === 'windows', run: (_ctx, args) => configureWindowSlotHotkey(Math.trunc(Number(args?.slot))) })
+    actions.register({ id: 'windows.hwnd.copy', title: '复制 Windows HWND', group: '窗口跳转', risk: 'normal', scope: 'row', priority: 96, when: (ctx) => ctx.tab === 'windows', run: (_ctx, args) => { void copyWindowHandle(typeof args?.rowId === 'string' ? args.rowId : undefined); return true } })
+    actions.register({ id: 'windows.permission.settings', title: '打开 macOS 辅助功能设置', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => ctx.tab === 'windows', run: () => { void platform.windows.openPermissionSettings?.(); return true } })
+    actions.register({ id: 'windows.candidates.clear', title: '退出窗口候选筛选', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => ctx.tab === 'windows', run: () => clearWindowCandidates() })
     actions.register({ id: 'ports.scan', title: '刷新端口', group: '端口', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+R', when: (ctx) => ctx.tab === 'ports', run: () => { void scanPorts(); return true } })
     actions.register({ id: 'ports.groups.togglePanel', title: '展开/收起端口组栏', group: '端口', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+Shift+W', when: (ctx) => ctx.tab === 'ports', run: () => toggleGroupPanel() })
     actions.register({ id: 'ports.search.focus', title: '聚焦端口搜索', group: '端口', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+F', when: (ctx) => ctx.tab === 'ports', run: () => focusPortSearch() })
@@ -6403,7 +7253,6 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'codex.completed-unread.openFirst', title: '打开并标记第一个 Codex 已完成未读任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.openFirstCompletedUnread() })
     actions.register({ id: 'codex.task.previous', title: '上一个 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.cycleTask(-1) })
     actions.register({ id: 'codex.task.next', title: '下一个 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.cycleTask(1) })
-    actions.register({ id: 'codex.task.hotkeys.refresh', title: '刷新 Codex 任务快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => { codexController.refreshTaskHotkeys(); return true } })
     actions.register({ id: 'codex.task.hide', title: '隐藏 Codex 任务到 Companion 已隐藏区', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
       const key = typeof args?.key === 'string' ? args.key : ''
       const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt)
@@ -6620,7 +7469,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       portDetailActive: portDetail.active,
       portGroupDetailOpen: portGroupDetail.open,
       portGroupDetailActive: portGroupDetail.active,
-      portSelectionMode: selectedPortIds.length > 0
+      portSelectionMode: selectedPortIds.length > 0,
+      windowActionsOpen,
+      windowEditorOpen: Boolean(windowDraft)
     }
   }
 
@@ -6639,6 +7490,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const detailTarget = portDetail.targetId ? ports.find((item) => item.id === portDetail.targetId) || null : null
       const groupRows = filterPortGroupRows()
       const groupDetailTarget = portGroupDetail.target ? groupRows.find((row) => sameTarget(row.target, portGroupDetail.target)) || rowForGroupTarget(portGroupDetail.target) : null
+      const currentWindowRows = windowRows()
+      const windowActionTarget = windowActionTargetId ? currentWindowRows.find((row) => row.id === windowActionTargetId) || null : null
       const codexFloat = codexController.floatSnapshot()
       codexFloat.keybindings = buildEffectiveKeybindings(state.settings.shortcutProfiles, state.settings.featureConfigs)
         .filter((binding) => (binding.actionId.startsWith('codex.') || binding.actionId.startsWith('quickJump.')) && !binding.disabled && Boolean(binding.shortcutId))
@@ -6705,6 +7558,25 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         favoriteDraft,
         favoriteParentOptions: favoriteParentOptions(state.favorites, favoriteDraft?.targetId || null),
         favoriteRows: flattenFavoriteTree(favoriteTree, collapsedFavoriteIds),
+        windowCapability,
+        windowLoading,
+        windowListLoaded,
+        windowCacheUpdatedAt,
+        windowRows: currentWindowRows,
+        focusedWindowId,
+        selectedWindowIds: [...selectedWindowIds],
+        windowActionsOpen,
+        windowActionTarget,
+        windowActionTargets: windowActionsOpen
+          ? (windowActionsMode === 'multi'
+            ? selectedWindowIds.map((id) => currentWindowRows.find((row) => row.id === id)).filter((row): row is WindowRow => Boolean(row))
+            : (windowActionTarget ? [windowActionTarget] : []))
+          : [],
+        windowActionsMode,
+        windowDraft,
+        windowCandidateTargetId,
+        windowFocusRequestId,
+        windowActionsFocusRequestId,
         mqttArchive,
         mqttArchiveLoaded,
         mqttStorageStatus: platform.storage.getMqttStorageStatus(),
@@ -6771,7 +7643,27 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     },
     actions: actions.all,
     scanPorts,
+    refreshWindows,
     setTab,
+    setWindowSearch(value: string) {
+      state.windowSearch = value
+      if (windowCandidateTargetId) {
+        windowCandidateTargetId = null
+        windowCandidateLiveIds = []
+      }
+      normalizeFocusedWindow(false)
+      save()
+      notify()
+    },
+    focusWindow(id: string) {
+      if (!windowRowById(id)) return
+      focusedWindowId = id
+      if (windowActionsOpen) windowActionTargetId = id
+      windowFocusRequestId += 1
+      notify()
+    },
+    updateWindowDraft,
+    cancelWindowDraft,
     setPortSearch(value: string) {
       state.portSearch = value
       if (activePortPane === 'results') {
@@ -6909,6 +7801,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       focusedPortGroupTarget = null
       focusedPortGroupId = null
       focusedPortId = id
+      if (portDrawer.open) {
+        portDrawer = { open: true, active: portDrawer.active, mode: 'single', activeIndex: 0, targetIds: [id], groupTarget: null }
+      }
+      if (portDetail.open) {
+        portDetail = { open: true, active: portDetail.active, targetId: id }
+      }
       notify()
     },
     focusPortGroup(id: string) {
@@ -6917,6 +7815,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       focusedPortId = null
       focusedPortGroupTarget = { kind: 'group', id }
       focusedPortGroupId = id
+      if (portDrawer.open) {
+        portDrawer = { open: true, active: portDrawer.active, mode: 'group', activeIndex: 0, targetIds: [id], groupTarget: { kind: 'group', id } }
+      }
+      if (portGroupDetail.open) {
+        portGroupDetail = { open: true, active: portGroupDetail.active, target: { kind: 'group', id } }
+      }
       notify()
     },
     focusPortGroupFolder(id: string) {
@@ -6925,6 +7829,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       focusedPortId = null
       focusedPortGroupTarget = { kind: 'folder', id }
       focusedPortGroupId = null
+      if (portDrawer.open) {
+        portDrawer = { open: true, active: portDrawer.active, mode: 'group', activeIndex: 0, targetIds: [id], groupTarget: { kind: 'folder', id } }
+      }
+      if (portGroupDetail.open) {
+        portGroupDetail = { open: true, active: portGroupDetail.active, target: { kind: 'folder', id } }
+      }
       notify()
     },
     focusPortGroupTarget(target: PortGroupTarget) {
@@ -6933,6 +7843,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       focusedPortId = null
       focusedPortGroupTarget = target
       focusedPortGroupId = target.kind === 'group' ? target.id : null
+      if (portDrawer.open) {
+        portDrawer = { open: true, active: portDrawer.active, mode: 'group', activeIndex: 0, targetIds: [target.id], groupTarget: target }
+      }
+      if (portGroupDetail.open) {
+        portGroupDetail = { open: true, active: portGroupDetail.active, target }
+      }
       notify()
     },
     movePortGroupToFolder: moveGroupToFolder,
@@ -6941,6 +7857,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       focusedFavoriteGroupId = null
       focusedFavoriteId = id
       focusedFavoriteDirectoryPath = null
+      if (favoriteDrawer.open) {
+        favoriteDrawer = { open: true, active: favoriteDrawer.active, activeIndex: 0, targetKind: 'favorite', targetIds: [id] }
+      }
       notify()
     },
     focusFavoriteGroup(id: string) {
@@ -6963,6 +7882,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       focusedFavoriteGroupId = null
       const key = favoritePathIdentityKey(path)
       focusedFavoriteDirectoryPath = favoriteDirectoryRows().find((row) => favoritePathIdentityKey(row.path) === key)?.path || path
+      if (favoriteDrawer.open) {
+        favoriteDrawer = { open: true, active: favoriteDrawer.active, activeIndex: 0, targetKind: 'directory', targetIds: [focusedFavoriteDirectoryPath] }
+      }
       notify()
     },
     toggleFavoriteDirectorySelection(path: string) {
@@ -7099,6 +8021,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         notify()
         return 'mqtt.record.edit.cancel'
       }
+      if (windowDraft && shortcutId === 'Escape') {
+        cancelWindowDraft()
+        return 'windows.editor.cancel'
+      }
       if (mqttConfigDraft && shortcutId === 'Escape') {
         mqttConfigDraft = null
         notify()
@@ -7115,6 +8041,37 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         return 'favorites.pickReview.cancel'
       }
       if (shortcutId === 'Escape') {
+        if (state.activeTab === 'windows' && windowActionsOpen) {
+          closeWindowActions()
+          return 'windows.actions.close'
+        }
+        if (state.activeTab === 'windows' && selectedWindowIds.length) {
+          clearWindowSelection()
+          return 'windows.selection.clear'
+        }
+        if (state.activeTab === 'windows' && clearWindowCandidates()) {
+          return 'windows.candidates.clear'
+        }
+        const windowSearchFocused = input.activeInputRole === 'window-search'
+        if (state.activeTab === 'windows' && windowSearchFocused && state.windowSearch) {
+          state.windowSearch = ''
+          searchBlurRequestId += 1
+          normalizeFocusedWindow(false)
+          save()
+          notify()
+          return 'windows.search.clear'
+        }
+        if (state.activeTab === 'windows' && windowSearchFocused) {
+          blurSearchFocus()
+          return 'windows.search.blur'
+        }
+        if (state.activeTab === 'windows' && state.windowSearch) {
+          state.windowSearch = ''
+          normalizeFocusedWindow(false)
+          save()
+          notify()
+          return 'windows.search.clear'
+        }
         if (state.activeTab === 'ports') {
           return resolvePortEscapeStep(input)
         }
@@ -7277,7 +8234,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       }
       if (binding.actionId.startsWith('tab.select.')) {
         const tab = binding.actionId.replace('tab.select.', '') as AppTabId
-        if (['ports', 'mqtt', 'favorites', 'codex', 'settings'].includes(tab) && isTabEnabled(tab)) setTab(tab)
+        if (['ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings'].includes(tab) && isTabEnabled(tab)) setTab(tab)
         return binding.actionId
       }
       if (binding.actionId === 'quickJump.openForward' || binding.actionId === 'codex.quickJump.openForward') {
@@ -7286,19 +8243,19 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       if (binding.actionId === 'quickJump.openBackward') {
         return binding.actionId
       }
-      if (binding.actionId === 'list.up') {
+      if (binding.actionId === 'list.up' || binding.actionId === 'windows.list.up') {
         moveInList(-1)
         return binding.actionId
       }
-      if (binding.actionId === 'list.down') {
+      if (binding.actionId === 'list.down' || binding.actionId === 'windows.list.down') {
         moveInList(1)
         return binding.actionId
       }
-      if (binding.actionId === 'list.pageUp') {
+      if (binding.actionId === 'list.pageUp' || binding.actionId === 'windows.list.pageUp') {
         moveInList(-1, true)
         return binding.actionId
       }
-      if (binding.actionId === 'list.pageDown') {
+      if (binding.actionId === 'list.pageDown' || binding.actionId === 'windows.list.pageDown') {
         moveInList(1, true)
         return binding.actionId
       }

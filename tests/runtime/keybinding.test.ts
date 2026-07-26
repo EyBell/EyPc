@@ -14,6 +14,28 @@ import {
 } from '../../src/runtime/keybinding/keybindingRuntime'
 
 describe('keybinding runtime', () => {
+  it('keeps the window workbench layered while preserving text-editor ownership', () => {
+    const searchContext = { tab: 'windows' as const, confirmOpen: false, textInputFocused: true, activeInputRole: 'window-search' as const }
+    const editorContext = { tab: 'windows' as const, confirmOpen: false, textInputFocused: true, activeInputRole: 'window-editor' as const, windowEditorOpen: true }
+
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+R', searchContext)?.actionId).toBe('windows.refresh')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', searchContext)?.actionId).toBe('windows.list.down')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowRight', searchContext)?.actionId).toBe('windows.actions.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', searchContext)?.actionId).toBe('windows.actions.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', { ...searchContext, windowActionsOpen: true, textInputFocused: false })?.actionId).toBe('windows.actions.close')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowUp', { ...searchContext, windowActionsOpen: true, textInputFocused: false })?.actionId).toBe('windows.list.up')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', { ...searchContext, windowActionsOpen: true, textInputFocused: false })?.actionId).toBe('windows.list.down')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowUp', { ...searchContext, windowActionsOpen: true, textInputFocused: false, activeInputRole: 'window-actions' as const })?.actionId).toBe('windows.list.up')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Space', searchContext)?.actionId).toBe('list.toggleSelection')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Space', { ...searchContext, textInputFocused: false })?.actionId).toBe('list.toggleSelection')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Delete', { ...searchContext, textInputFocused: false })?.actionId).toBe('windows.close')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Backspace', searchContext)?.actionId).toBe('windows.close')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', editorContext)?.actionId).toBe('windows.editor.save')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', editorContext)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', editorContext)).toBeNull()
+    expect(previewKeybindingResolution(DEFAULT_KEYBINDINGS, 'Enter', editorContext).activeLayers).toContain('window-editor')
+  })
+
   it('scopes the Codex shortcut domain to its own tab and interaction layer', () => {
     const codexContext = { tab: 'codex' as const, confirmOpen: false, textInputFocused: false }
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+T', codexContext)?.actionId).toBe('codex.thread.createFocused')
@@ -51,6 +73,7 @@ describe('keybinding runtime', () => {
       ports: { keybindingOverrides: [], updatedAt: 1 },
       mqtt: { keybindingOverrides: [], updatedAt: 1 },
       favorites: { keybindingOverrides: [], updatedAt: 1 },
+      windows: { keybindingOverrides: [], updatedAt: 1 },
       codex: { keybindingOverrides: [{ commandId: 'codex.thread.createFocused', shortcutIds: ['Ctrl+N'], enabled: true }], updatedAt: 1 },
       settings: { keybindingOverrides: [], updatedAt: 1 }
     })
@@ -783,6 +806,7 @@ describe('keybinding runtime', () => {
       ports: { keybindingOverrides: [{ commandId: 'ports.scan', shortcutIds: ['Alt+R'], enabled: true }], updatedAt: 1 },
       mqtt: { keybindingOverrides: [], updatedAt: 1 },
       favorites: { keybindingOverrides: [{ commandId: 'favorites.open', shortcutIds: ['Ctrl+O'], enabled: true }], updatedAt: 1 },
+      windows: { keybindingOverrides: [], updatedAt: 1 },
       codex: { keybindingOverrides: [], updatedAt: 1 },
       settings: { keybindingOverrides: [], updatedAt: 1 }
     })

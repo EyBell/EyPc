@@ -9,6 +9,7 @@ export interface FeatureRoute {
   focusSearch: boolean
   favoriteQuick?: boolean
   actionId?: string
+  actionArgs?: Record<string, unknown>
   hideAfterAction?: boolean
   settingsMaintenanceSection?: 'features'
 }
@@ -31,6 +32,12 @@ function restoreCurrentRoute(currentTab: AppTabId | null | undefined, featureCon
 }
 
 export function routePluginFeature(payload: PluginEnterPayload | null | undefined, featureConfigs?: FeatureConfig[], currentTab?: AppTabId | null): FeatureRoute {
+  const slotMatch = /^eypc-window-slot-([1-9]|10)$/.exec(payload?.code || '')
+  if (slotMatch) {
+    return isFeatureEnabled('windows', featureConfigs)
+      ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'windows.slot.activate', actionArgs: { slot: Number(slotMatch[1]) }, hideAfterAction: true }
+      : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features' }
+  }
   switch (payload?.code) {
     case 'eypc-ports':
       return enabledRoute('ports', true, featureConfigs)
@@ -38,6 +45,8 @@ export function routePluginFeature(payload: PluginEnterPayload | null | undefine
       return enabledRoute('mqtt', true, featureConfigs)
     case 'eypc-favorites':
       return enabledRoute('favorites', true, featureConfigs)
+    case 'eypc-windows':
+      return enabledRoute('windows', true, featureConfigs)
     case 'eypc-codex':
       return enabledRoute('codex', false, featureConfigs)
     case 'eypc-codex-toggle':
