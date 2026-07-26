@@ -9,6 +9,7 @@ import TabShell from './components/TabShell.vue'
 import PortsPage from './pages/PortsPage.vue'
 import FavoritesPage from './pages/FavoritesPage.vue'
 import QuickFavoritesPage from './pages/QuickFavoritesPage.vue'
+import WindowsPage from './pages/WindowsPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
 import { assignQuickJumpMarkers, moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
 import type { QuickJumpTarget } from './domain/quickJump'
@@ -284,6 +285,10 @@ function quickJumpLetter(shortcutId: string) {
 function handleQuickJumpShortcut(shortcutId: string) {
   if (!quickJump.value.open) return false
   if (shortcutId === 'Escape') {
+    if (quickJump.value.query) {
+      applyQuickJumpQuery('')
+      return true
+    }
     closeQuickJump()
     return true
   }
@@ -315,12 +320,19 @@ function handleQuickJumpShortcut(shortcutId: string) {
 
 function onKeydown(event: KeyboardEvent) {
   shiftPreview.value = shouldEnableShiftPreview(event)
-  if (event.defaultPrevented) return
   const shortcutId = shortcutFromEvent(event)
+  // Own Escape/Quick Jump in capture before uTools host exit and before defaultPrevented short-circuits.
+  if (quickJump.value.open && shortcutId === 'Escape') {
+    blockHandledShortcutEvent(event)
+    if (quickJump.value.query) applyQuickJumpQuery('')
+    else closeQuickJump()
+    return
+  }
   if (handleQuickJumpShortcut(shortcutId)) {
     blockHandledShortcutEvent(event)
     return
   }
+  if (event.defaultPrevented) return
   shortcutHintTiming.keydown(event)
   const textInputFocused = isEditableTarget(event.target)
   const handled = runtime.handleShortcut(shortcutId, {
@@ -350,18 +362,19 @@ function clearShiftPreview() {
 
 function applyPluginRoute(payload: { code?: string } | null) {
   const route = routePluginFeature(payload, snapshot.value.state.settings.featureConfigs, snapshot.value.state.activeTab)
-  const restoreEntry = !payload?.code || payload.code === 'eypc-main' || payload.code === 'eypc-codex-toggle' || !['eypc-ports', 'eypc-mqtt', 'eypc-favorites', 'eypc-favorites-quick', 'eypc-codex', 'eypc-settings'].includes(payload.code)
+  const isWindowSlot = /^eypc-window-slot-(?:[1-9]|10)$/.test(payload?.code || '')
+  const restoreEntry = !payload?.code || payload.code === 'eypc-main' || payload.code === 'eypc-codex-toggle' || (!isWindowSlot && !['eypc-ports', 'eypc-mqtt', 'eypc-favorites', 'eypc-favorites-quick', 'eypc-windows', 'eypc-codex', 'eypc-settings'].includes(payload.code))
   initialMaintenanceSection.value = route.settingsMaintenanceSection || null
   if (typeof route.favoriteQuick === 'boolean') runtime.setFavoriteQuickMode(route.favoriteQuick)
   else if (!restoreEntry) runtime.setFavoriteQuickMode(false)
   runtime.setTab(route.tab)
   if (route.actionId) {
-    runtime.dispatch(route.actionId, { source: 'utools-feature' })
+    runtime.dispatch(route.actionId, { source: 'utools-feature', ...(route.actionArgs || {}) })
     if (route.hideAfterAction) requestAnimationFrame(() => { void platform.app.hide() })
     else if (payload?.code === 'eypc-codex-toggle') requestAnimationFrame(() => { platform.app.show?.() })
   }
   if (route.focusSearch) {
-    runtime.dispatch(route.tab === 'favorites' ? 'favorites.search.focus' : route.tab === 'mqtt' ? 'mqtt.search.focus' : 'search.focus')
+    runtime.dispatch(route.tab === 'favorites' ? 'favorites.search.focus' : route.tab === 'mqtt' ? 'mqtt.search.focus' : route.tab === 'windows' ? 'windows.search.focus' : 'search.focus')
   }
   if (route.favoriteQuick) {
     requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-role="favorite-items"]')?.focus())
@@ -382,6 +395,8 @@ watch(() => snapshot.value.searchFocusRequestId, () => {
           ? 'mqtt-history-search'
         : snapshot.value.searchFocusTarget === 'favorites'
           ? 'favorite-search'
+          : snapshot.value.searchFocusTarget === 'windows'
+            ? 'window-search'
           : 'port-search'
     const input = document.querySelector<HTMLInputElement>(`[data-role="${target}"]`)
     input?.focus()
@@ -393,7 +408,7 @@ watch(() => snapshot.value.searchBlurRequestId, () => {
   requestAnimationFrame(() => {
     const active = document.activeElement as HTMLElement | null
     const role = active?.closest<HTMLElement>('[data-role]')?.dataset.role
-    if (role === 'port-search' || role === 'mqtt-search' || role === 'mqtt-record-search' || role === 'mqtt-template-search' || role === 'mqtt-history-search' || role === 'favorite-search' || role === 'favorite-group-search' || role === 'port-group-search' || role === 'primary-search') active?.blur()
+    if (role === 'port-search' || role === 'mqtt-search' || role === 'mqtt-record-search' || role === 'mqtt-template-search' || role === 'mqtt-history-search' || role === 'favorite-search' || role === 'favorite-group-search' || role === 'window-search' || role === 'port-group-search' || role === 'primary-search') active?.blur()
   })
 })
 
@@ -412,6 +427,31 @@ watch(() => snapshot.value.listFocusRequestId, () => {
   })
 })
 
+watch(() => snapshot.value.windowFocusRequestId, () => {
+  requestAnimationFrame(() => {
+    if (snapshot.value.state.activeTab !== 'windows') return
+    const draft = snapshot.value.windowDraft
+    if (draft) {
+      document.querySelector<HTMLElement>(`[data-role="window-editor"] [data-field="${draft.activeField}"]`)?.focus()
+      return
+    }
+    // List navigation always owns the keyboard; action-panel focus uses windowActionsFocusRequestId.
+    const list = document.querySelector<HTMLElement>('[data-role="window-list"]')
+    list?.focus()
+    const focusedId = snapshot.value.focusedWindowId
+    if (!focusedId) return
+    const row = document.getElementById(`window-row-${encodeURIComponent(focusedId).replace(/%/g, '_')}`)
+    row?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  })
+})
+
+watch(() => snapshot.value.windowActionsFocusRequestId, () => {
+  requestAnimationFrame(() => {
+    if (snapshot.value.state.activeTab !== 'windows' || !snapshot.value.windowActionsOpen || snapshot.value.windowDraft) return
+    document.querySelector<HTMLElement>('[data-role="window-actions"] button:not([disabled])')?.focus()
+  })
+})
+
 watch(() => ({
   visible: snapshot.value.visibleFeatures.some((feature) => feature.id === 'codex') && snapshot.value.codex.settings.floatEnabled,
   snapshot: snapshot.value.codexFloat,
@@ -425,8 +465,8 @@ onMounted(() => {
   disposeRuntime = runtime.subscribe(() => {
     version.value += 1
   })
-  window.addEventListener('keydown', onKeydown)
-  window.addEventListener('keyup', onKeyup)
+  window.addEventListener('keydown', onKeydown, true)
+  window.addEventListener('keyup', onKeyup, true)
   window.addEventListener('blur', clearShiftPreview)
   applyPluginRoute(platform.getEnterPayload())
   disposeEnterPayload = platform.onEnterPayload?.((payload) => {
@@ -447,8 +487,8 @@ onUnmounted(() => {
   runtime.dispose()
   platform.float.close()
   shortcutHintTiming.dispose()
-  window.removeEventListener('keydown', onKeydown)
-  window.removeEventListener('keyup', onKeyup)
+  window.removeEventListener('keydown', onKeydown, true)
+  window.removeEventListener('keyup', onKeyup, true)
   window.removeEventListener('blur', clearShiftPreview)
 })
 </script>
@@ -530,6 +570,17 @@ onUnmounted(() => {
           @update-favorite-draft="runtime.updateFavoriteDraft"
           @save-favorite-draft="runtime.saveFavoriteDraft"
           @cancel-favorite-draft="runtime.cancelFavoriteDraft"
+          @dispatch="runtime.dispatch"
+        />
+      </template>
+      <template #windows>
+        <WindowsPage
+          :snapshot="snapshot"
+          :show-shortcut-hints="shortcutHints"
+          @search="runtime.setWindowSearch"
+          @focus="runtime.focusWindow"
+          @update-draft="runtime.updateWindowDraft"
+          @cancel-draft="runtime.cancelWindowDraft"
           @dispatch="runtime.dispatch"
         />
       </template>

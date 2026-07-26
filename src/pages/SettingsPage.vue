@@ -19,7 +19,7 @@ import { blockHandledShortcutEvent } from '../runtime/keyboardEvent'
 import { formatShortcutLabel, formatShortcutList, normalizeShortcutId, shortcutFromEvent as shortcutFromKeyboardEvent } from '../domain/shortcuts'
 
 type SettingsTabId = 'shortcuts' | 'maintenance'
-type ShortcutScopeId = 'all' | 'global' | 'ports' | 'mqtt' | 'favorites' | 'codex' | 'settings'
+type ShortcutScopeId = 'all' | 'global' | 'ports' | 'mqtt' | 'favorites' | 'windows' | 'codex' | 'settings'
 type MaintenanceSectionId = 'features' | 'tools' | 'layers' | 'storage' | 'commands' | 'resolution' | 'reservations'
 
 interface KeybindingUpdatePayload {
@@ -50,7 +50,7 @@ const emit = defineEmits<{
   updateToolPreviewPrefs: [input: { enabled?: boolean; delayMs?: number }]
 }>()
 
-const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'codex', 'settings']
+const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings']
 
 const settingTabs: Array<{ id: SettingsTabId; label: string }> = [
   { id: 'shortcuts', label: '快捷键' },
@@ -63,6 +63,7 @@ const shortcutScopeOptions: Array<{ id: ShortcutScopeId; label: string }> = [
   { id: 'ports', label: '端口' },
   { id: 'mqtt', label: 'MQTT' },
   { id: 'favorites', label: '收藏' },
+  { id: 'windows', label: '窗口跳转' },
   { id: 'codex', label: 'Codex' },
   { id: 'settings', label: '设置' }
 ]
@@ -71,6 +72,8 @@ const previewContexts: Array<{ id: string; label: string; context: KeybindingCon
   { id: 'ports-idle', label: '端口空闲', context: { tab: 'ports', textInputFocused: false, portPane: 'results' } },
   { id: 'ports-drawer', label: '端口抽屉', context: { tab: 'ports', textInputFocused: false, portPane: 'results', portDrawerOpen: true, portDrawerActive: true } },
   { id: 'ports-search', label: '端口搜索', context: { tab: 'ports', textInputFocused: true, activeInputRole: 'port-search', portPane: 'results' } },
+  { id: 'windows-idle', label: '窗口列表', context: { tab: 'windows', textInputFocused: false } },
+  { id: 'windows-editor', label: '窗口编辑', context: { tab: 'windows', textInputFocused: true, activeInputRole: 'window-editor', windowEditorOpen: true } },
   { id: 'confirm', label: '确认弹窗', context: { tab: 'ports', confirmOpen: true, textInputFocused: false, portPane: 'results' } },
   { id: 'settings-record', label: '快捷键录制', context: { tab: 'settings', textInputFocused: true, activeInputRole: 'settings', activeLayers: ['settings-shortcut-record'] } },
   { id: 'settings-idle', label: '设置页', context: { tab: 'settings', textInputFocused: false } }
@@ -233,6 +236,7 @@ function matchesShortcutScope(row: ShortcutCommandRow, id: ShortcutScopeId): boo
   if (id === 'ports') return row.profileId === 'ports'
   if (id === 'mqtt') return row.profileId === 'mqtt'
   if (id === 'favorites') return row.profileId === 'favorites'
+  if (id === 'windows') return row.profileId === 'windows'
   if (id === 'codex') return row.profileId === 'codex'
   return row.profileId === 'settings'
 }
@@ -355,7 +359,7 @@ function profileLabel(profileId: ShortcutProfileId) {
 }
 
 function profileDescription(profileId: ShortcutProfileId) {
-  return profileId === 'global' ? '全局 Profile' : profileId === 'ports' ? '端口 Profile' : profileId === 'mqtt' ? 'MQTT Profile' : profileId === 'favorites' ? '收藏 Profile' : '设置 Profile'
+  return profileId === 'global' ? '全局 Profile' : profileId === 'ports' ? '端口 Profile' : profileId === 'mqtt' ? 'MQTT Profile' : profileId === 'favorites' ? '收藏 Profile' : profileId === 'windows' ? '窗口跳转 Profile' : profileId === 'codex' ? 'Codex Profile' : '设置 Profile'
 }
 
 function riskLabel(risk: ShortcutCommandRow['risk']) {
@@ -763,6 +767,7 @@ function inferShortcutProfileId(commandId: string): ShortcutProfileId {
   if (commandId.startsWith('ports.')) return 'ports'
   if (commandId.startsWith('mqtt.')) return 'mqtt'
   if (commandId.startsWith('favorites.')) return 'favorites'
+  if (commandId.startsWith('windows.')) return 'windows'
   if (commandId.startsWith('codex.')) return 'codex'
   if (commandId.startsWith('settings.')) return 'settings'
   return 'global'

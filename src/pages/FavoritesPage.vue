@@ -168,6 +168,10 @@ function openFavoriteContextMenu(id: string) {
   const item = props.snapshot.state.favorites.find((node) => node.id === id)
   if (item?.kind === 'group') emit('focusGroup', id)
   else emit('focus', id)
+  if (props.snapshot.selectedFavoriteIds.includes(id) && props.snapshot.selectedFavoriteIds.length > 0) {
+    emit('dispatch', 'favorites.drawer.open')
+    return
+  }
   emit('dispatch', 'favorites.drawer.open', { favoriteId: id })
 }
 
@@ -179,6 +183,10 @@ function openDirectoryContextMenu(path: string) {
 function dispatchFavoriteRowAction(item: FavoriteNode, actionId: string) {
   if (item.kind === 'group') emit('focusGroup', item.id)
   else emit('focus', item.id)
+  if (actionId === 'favorites.drawer.open' && props.snapshot.selectedFavoriteIds.includes(item.id) && props.snapshot.selectedFavoriteIds.length > 0) {
+    emit('dispatch', actionId)
+    return
+  }
   emit('dispatch', actionId, { favoriteId: item.id })
 }
 

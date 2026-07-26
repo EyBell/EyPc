@@ -81,6 +81,10 @@ function clearGroupDraftFolder() {
 
 function dispatchPortRowAction(id: string, actionId: string) {
   emit('focus', id)
+  if (actionId === 'ports.drawer.open' && props.snapshot.selectedPortIds.includes(id) && props.snapshot.selectedPortIds.length > 0) {
+    emit('dispatch', actionId)
+    return
+  }
   emit('dispatch', actionId, { portId: id })
 }
 
