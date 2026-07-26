@@ -3,24 +3,35 @@
 Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-24.15`
+Requirement version: `2026-07-24.17`
 
-## 2026-07-24 可选完成修订的类型收窄
+## 2026-07-24 可选完成修订与运行时视图的类型契约
 
 - 实现：完成未读的显式确认动作先捕获 `completionRevision`，再以原始类型、有限数和正数守卫收窄；只有有效修订才写入本地 receipt，原有不可用提示和打开行为不变。
+- 测试契约：任务切换候选的类型现在显式携带有效 `actionAlias`；历史 `taskHotkeys` readback 字段及对应 fixture 已由 RAW-087 删除。
 - 静态核验：已完成差异空白检查和调用路径审阅；未运行 TypeScript 类型检查、测试、构建、uTools 或真实 Codex 操作，仍待用户验收。
-- Error memory：新增候选 [typescript-number-isfinite-optional-narrowing.md](../../../knowledge/error-memory/typescript-number-isfinite-optional-narrowing.md#L1)，记录运行时 `Number.isFinite` 校验不能代替可选数值的 TypeScript 类型收窄。
+- Error memory：保留 [typescript-number-isfinite-optional-narrowing.md](../../../knowledge/error-memory/typescript-number-isfinite-optional-narrowing.md#L1)；[codex-float-bridge-mock-contract-drift.md](../../../knowledge/error-memory/codex-float-bridge-mock-contract-drift.md#L1) 中的 task-hotkey fixture 事件已标记为被删除功能取代；新增已验证 [utools-private-sync-ipc-entry-freeze.md](../../../knowledge/error-memory/utools-private-sync-ipc-entry-freeze.md#L1)。
 
-## RAW-085 当前交付状态
+## 2026-07-24 uTools 安装路径代码复核
+
+- Review target：本轮 [plugin.json](../../../../public/plugin.json#L1) feature 增量、[featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L1) 路由、[preload/index.js](../../../../preload/index.js#L4284) 浮窗装载与 [prepare-utools-runtime.mjs](../../../../scripts/prepare-utools-runtime.mjs#L1) 产物准备。
+- Checked：production `dist` 入口为本地静态 `float.html`；manifest/preload 与 canonical 源一致；24 个 feature code 和 52 条指令均唯一；窗口槽位与新增 Codex 指令均有对应路由；preload/float-preload 的静态语法检查通过。
+- Findings：P0 无；P1 无。未发现会阻止 uTools 解析 manifest、加载入口或执行 preload 的当前源码缺陷。
+- Not checked：未执行 uTools 实际导入/安装写入；若宿主仍拒绝安装，需要其具体错误信息以区分宿主缓存、安装包元数据或版本兼容性。
+
+## RAW-087 当前交付状态
 
 | Check | Result | Evidence / Scope |
 | --- | --- | --- |
-| 受限宿主读取 | implemented / unverified | [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 以 `EyPc/上一个 Codex 任务`、`EyPc/下一个 Codex 任务` 精确过滤当前宿主记录，再将两个绑定值暴露给 Renderer；不返回其他插件数据，也不写快捷键配置。 |
-| 瞬时快照 | implemented / unverified | [codexController.ts](../../../../src/runtime/codexController.ts#L1) 仅在内存中保存已读回显；[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1) 提供刷新动作。不可读、未配置和已配置分别投影，不写 EyPc 状态或任务 receipt。 |
-| 配置页反馈 | implemented / unverified | [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 在两个循环功能行显示当前组合键/“未配置”，并于焦点、页面可见性恢复及手动刷新时重读。原有配置按钮保持跳转 uTools 设置。 |
-| 限定静态核验 | pass | 目标差异空白检查、两份 preload 的 `node --check`、TypeScript/Vue script 的仅语法转译、`plugin.json` JSON/功能存在性、preload 镜像一致性与 Markdown 代码链接审计均通过。未运行测试、typecheck、build、uTools、截图或真实 Codex 操作。 |
+| 入口恢复 | pass / user-confirmed | 用户在移除入口快捷键读取后确认 uTools 插件已恢复加载，定位到私有同步宿主 IPC 阻塞而非构建、自动结束或重启问题。 |
+| 回读完整删除 | pass / static | [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 不再包含 `getAllFeatureHotKey` 或读取桥；[eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) 与 [appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1) 不再声明快照/动作。全仓目标源码和测试的 readback 符号搜索为空。 |
+| 配置入口 | pass / static | [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 与 [WindowsPage.vue](../../../../src/pages/WindowsPage.vue#L1) 不显示绑定、不提供刷新，只保留官方 uTools 配置跳转。 |
+| 顶部分面 | implemented / visual-unverified | Codex 页默认“快捷方式”，六个入口宽屏双列；另有任务、水球、卡片、运行四页。只渲染当前面板，运行诊断不占据默认入口；Tab 支持左右方向键、Home/End，窄屏可横向滚动且快捷入口单列。 |
+| 渐进披露 | implemented / visual-unverified | 诊断详情、CLI 连接/降级、外观映射、百分比和尺寸说明进入可聚焦 `i` 提示；关键当前值、状态与动作仍常显。UI 选择遵循本轮 `PreferenceLookupReceipt v2` 与 `distill` 渐进披露规则。 |
+| 限定静态核验 | pass with fallback | `node --check` 通过两个 preload；镜像完全一致；Vue SFC parser/compiler 对 Codex/Windows 页通过；Vite middleware 内存转换通过 Codex/Windows 页、Controller、App Runtime、平台类型与 Codex CSS；`git diff --check` 与残余私有 IPC 搜索通过。既有 HTTP 开发端点未运行，改用不监听端口的等价转换；未运行测试、typecheck、build、真实 uTools、截图或 Codex 操作。 |
+| 项目规则与错误共识 | pass / documentation | [项目规则](../../../rules/README.md#L1) 固定 `EYPC-UTOOLS-HOST-001`，禁止私有同步宿主 IPC 与任何入口/焦点/可见性/刷新回读，并要求 preload 镜像及静态阻断检查；[已验证错误记忆](../../../knowledge/error-memory/utools-private-sync-ipc-entry-freeze.md#L1) 固定症状识别、排查顺序、唯一已验证恢复路线和未来异步例外门槛。该项目本地规则按中央治理边界不写入 CodeNote Rule Task Index。 |
 
-结论：RAW-085 已实现，当前保持 `未校验，待用户验收`。请分别为两项命令设置、清除或修改 uTools 全局快捷键，返回 Codex 配置页后确认回显与 uTools 设置一致；在旧宿主或读取失败时应明确提示不可读取，而不能显示猜测组合键。
+结论：入口卡死根因已经用户确认，RAW-087 的完整删除、配置分面、项目规则和错误共识已静态交付。当前状态为 `入口恢复与规则共识已确认；新布局未校验，待用户验收`。设置或修改任意 Codex/窗口槽 uTools 快捷键后，EyPc 页面都不应读取或回显当前绑定。
 
 ## RAW-084 当前交付状态
 
@@ -355,7 +366,7 @@ Requirement version: `2026-07-24.15`
 - RAW-056 已接入当前 macOS Codex Desktop 私有 IPC live authority，但尚未做真实宿主验收；协议版本漂移、桌面未运行/不兼容时的未知降级和 Windows 对应通道仍是显式残余。
 - 归档刷新通知只确认 frame 已派发，不能证明 Codex Desktop UI 已消费；真实“无需重启即可消失”仍待用户验收。
 - 真实 Windows uTools 运行时/系统热键、真实系统听写、真实 `turn/start`/Deep Link、多显示器/DPI 和 macOS 两个普通 Space + 一个全屏 Space 仍是宿主观察项；本轮按计划不创建真实任务。
-- Project AI-rule audit 仍返回 6 条既有 adapter/governance baseline 缺口（模板传播、v3-route、W24/W28/W30）；这些问题在本轮前已存在且不指向 Codex Companion 实现或文档增量，本轮未扩围修改项目规则。
+- Project AI-rule audit 在补充 `EYPC-UTOOLS-HOST-001` 后仍只返回此前已记录的 6 条 adapter/governance baseline 缺口（文档模板合同、模板传播、v3-route、W24/W28/W30），没有新增指向本次宿主边界规则或错误共识的问题。`HEAD` 视图因 `git_view_materialization_failed` 未能生成，因此“未新增”以当前命名问题集合与本文件既有基线记录对照，不宣称完成独立 HEAD 重放。
 - Error memory: RAW-051 新增 [codex-coupled-color-editor-atomicity.md](../../../knowledge/error-memory/codex-coupled-color-editor-atomicity.md#L1)，记录“两个独立原生单色选择器不能构成耦合颜色编辑器”的可复用事务规则；此前协议核验记录继续有效。
 - 零轮次 list 行为已由预检统计、自动化和真实生命周期记录直接覆盖，不另建错误记忆；它是协议边界而非生产回归。
 

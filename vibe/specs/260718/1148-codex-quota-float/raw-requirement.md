@@ -2,7 +2,7 @@
 
 Tool: codex
 Date: 2026-07-22
-Requirement version: `2026-07-24.15`
+Requirement version: `2026-07-24.17`
 Spec: [spec.md](spec.md#L1)
 Source format: `chat-requirement-summary`
 Capture fidelity: `normalized-material-requirement`
@@ -91,7 +91,9 @@ Privacy boundary: `no-verbatim-prompt-or-transcript`
 - `RAW-082` (`active`, `refines-RAW-067-completed-unread-activation`): “已完成未读”数字角标与新增的 uTools 全局功能/快捷键必须派发同一动作：从完整 `completed-unread` 计数集合（包含已隐藏任务）按既有置顶优先、稳定展示顺序定位第一条，立即在 EyPc 本地持久化该任务当前完成 revision 的用户已读确认，并打开该任务。确认后同一 revision 在角标、列表、项目视图、详情与动作投影中立即显示为“已完成/已读”；这不是向 Codex Desktop 写入全局未读状态，也不从时间或连接器猜测状态。较新的完成 revision 仍自动重新成为未读。“待输入”数字角标及既有全局功能继续只打开第一条，不写本地确认，以免尚未实际输入时提前变更状态。配置页提供跳转到该 uTools 全局快捷键设置的入口。本轮不修改或运行测试、typecheck、build、uTools、截图或真实 Codex 操作，交付仍由用户验收。
 - `RAW-083` (`active`, `supersedes-RAW-048-compact-hit-zone-geometry`): 紧凑悬浮窗的待输入数字角标置于左下；已完成未读占据最右下角，进行中在其上方构成右下纵列。主体上方三分之一才可通过 hover 或指针点击展开卡片；下半区不得展开卡片，只可作为拖拽窗口的起点；中间三分之一不触发动作。数字角标继续是独立按钮，保留既有点击、键盘、200ms 说明和触屏合同；键盘显式激活主体仍展开，拖动超过既有阈值仍抑制后续点击。本轮不修改或运行测试、typecheck、build、uTools、截图或真实 Codex 操作，交付仍由用户验收。
 - `RAW-084` (`active`, `extends-RAW-067-task-activation`): 新增“上一个 Codex 任务”与“下一个 Codex 任务”两个 uTools 全局功能/快捷键。它们共享一个只驻留运行时内存的循环序列：先是完整待输入集合，再是完整已完成未读集合，最后是进行中集合；每个分段均沿用置顶优先、稳定源顺序，按匿名任务 key 去重，待输入不会在后续进行中段重复出现。首次下一项打开序列首项、首次上一项打开末项；后续按方向循环回绕。两个命令只打开目标任务，不确认完成未读、不改变待输入、隐藏、页签或 Codex Desktop 原生状态。配置页提供各自跳转 uTools 系统级快捷键设置的入口；无可打开候选时给出明确提示。本轮不修改或运行测试、typecheck、build、uTools、截图或真实 Codex 操作，交付仍由用户验收。
-- `RAW-085` (`active`, `refines-RAW-084-configuration-feedback`): Codex 配置页必须回显“上一个 Codex 任务”和“下一个 Codex 任务当前已配置的 uTools 全局快捷键”；无绑定时明确显示“未配置”。页面初次进入、手动刷新以及从 uTools 配置返回时都重新读取当前宿主记录，绑定变化不写入 EyPc 状态、快捷键副本、任务 receipt 或 Codex Desktop。预加载桥只对这两个 EyPc 命令筛选并向 Renderer 暴露结果，绝不暴露其他插件的命令或快捷键；当前宿主无法读取时明确降级，而不猜测、缓存或伪报已绑定。本轮不修改或运行测试、typecheck、build、uTools、截图或真实 Codex 操作，交付仍由用户验收。
+- `RAW-085` (`superseded-by-RAW-087`, `refines-RAW-084-configuration-feedback`): 历史版本要求 Codex 配置页回显前/后任务当前 uTools 绑定；该回读能力因私有同步宿主 IPC 导致入口卡死，已由 RAW-087 完全删除。其“不猜测、不持久化、不写宿主设置”的边界继续有效。
+- `RAW-086` (`superseded-by-RAW-087`, `refines-RAW-085-automatic-readback-timing`): 历史修订先把回读收敛为手动刷新，并由用户确认插件恢复加载；RAW-087 进一步删除所有手动与自动回读、相关桥和页面反馈。
+- `RAW-087` (`active`, `supersedes-RAW-085-and-RAW-086`, `refines-RAW-001-and-RAW-071-configuration-navigation`): uTools 宿主快捷键回读能力整体删除：preload、平台类型、运行时快照、Codex 页、窗口槽页均不得读取或回显当前绑定，任何入口/焦点/可见性/手动动作都不得调用私有同步 `getAllFeatureHotKey`；前/后任务、待输入、完成未读、悬浮入口和窗口槽继续只通过官方 `redirectHotKeySetting` 单向打开 uTools 配置。Codex 配置页在概览下方提供置顶的 `快捷方式 / 任务 / 水球 / 卡片 / 运行` 五个 Tab，默认显示快捷方式且以双列紧凑排列配置入口；任务内容、外观目标与运行诊断分面显示，不再一次性纵向渲染全部配置。诊断详情、连接降级、外观部位和尺寸说明收进可聚焦 `i` 提示按钮，只保留当前值、状态和可执行控件常显。用户已确认移除入口回读后插件恢复加载；本轮只执行静态差异、私有 IPC 残余搜索、preload 语法/镜像和 Vue SFC 编译，不运行测试、typecheck、build、真实 uTools、截图或 Codex 操作，最终布局仍由用户验收。
 
 ## Latest Superseding Requirement Map
 
@@ -104,8 +106,8 @@ Privacy boundary: `no-verbatim-prompt-or-transcript`
 | 本地整理 | 页签/折叠持久化、别名优先且无别名回退原名、置顶来源由“顶”控件及说明表达、项目分组隐藏；旧本地移除迁移丢弃 | `RAW-039`、`RAW-052`、`RAW-053`、`RAW-055`、`RAW-058` |
 | 真实项目移除 | Codex 退出门禁、短期 alias/指纹、主文件限定字段、主/备原子写入与回滚核验；不删目录/会话 | `RAW-052` |
 | 选择与批量操作 | 38px 左侧选择区、核心两态选择、Esc/最后一项退出、行/子按钮键盘所有权；选择提示固定为列表舞台底部悬浮且不触发布局重排，滚动区和底部批量栏避让 | `RAW-055`、`RAW-057`、`RAW-058`、`RAW-064` |
-| 紧凑角标与全局快捷键 | 待输入仍只打开实际计数集合中展示排序第一条；完成未读的角标与 uTools 全局功能/快捷键通过同一动作打开第一条并立即仅在 EyPc 本地确认其当前完成 revision，其他视图同步显示已读；进行中仍只展开。新增前/后任务全局功能以待输入→完成未读→进行中、去重且置顶优先的稳定循环只打开任务，不确认、不切页、不改 Codex 原生状态；配置页只回显这两个命令当前宿主绑定，未绑定/不可读必须区分显示 | `RAW-050`、`RAW-058`、`RAW-063`、`RAW-067`、`RAW-069`、`RAW-077`、`RAW-078`、`RAW-079`、`RAW-082`、`RAW-084`、`RAW-085` |
-| 外观配置 | 水球、展开大卡片和状态信号三块独立配置与预览；水球百分比读数的位置、字号、字形和颜色独立持久化并由预览/真实水球共用；大卡片九项主题令牌随内置/保存主题持久化，展开态直接消费它们；颜色直通保存/渲染，无对比度、格式、联动色域或 Controller 回滚 | `RAW-071`、`RAW-075`、`RAW-076`、`RAW-079` |
+| 紧凑角标与全局快捷键 | 待输入仍只打开实际计数集合中展示排序第一条；完成未读的角标与 uTools 全局功能/快捷键通过同一动作打开第一条并立即仅在 EyPc 本地确认其当前完成 revision，其他视图同步显示已读；进行中仍只展开。新增前/后任务全局功能以待输入→完成未读→进行中、去重且置顶优先的稳定循环只打开任务，不确认、不切页、不改 Codex 原生状态；配置页只提供官方 uTools 设置跳转，不读取或回显任何当前宿主绑定 | `RAW-050`、`RAW-058`、`RAW-063`、`RAW-067`、`RAW-069`、`RAW-077`、`RAW-078`、`RAW-079`、`RAW-082`、`RAW-084`、`RAW-087` |
+| 配置导航与外观 | 顶部五 Tab 默认进入双列快捷方式；任务、水球、卡片、运行按面板单独渲染，运行诊断不再占据默认入口；说明进入可聚焦信息按钮。水球与状态信号共页、展开卡片独立成页；百分比读数和九项卡片主题仍由预览/真实组件共享并直通保存/渲染 | `RAW-071`、`RAW-075`、`RAW-076`、`RAW-079`、`RAW-087` |
 | 额度、水球与模型 | 普通 5 小时→普通周→Spark；Spark `S`；存在 Weekly 时显示数据进度环，无 Weekly 时无外圈，禁止普通装饰圆环；上半区角标安全且提供 200ms 作用说明、下半区 hover 展开；缺失窗口不等于 0；`quota-auto` 与本次手选 | `RAW-040`、`RAW-046`、`RAW-050`、`RAW-058`、`RAW-063`、`RAW-065` |
 | 新会话与瞬时桥接 | 每次打开编辑器；冻结/刷新确认模型；精确 `thread/start → turn/start → Deep Link`；提示词零持久化 | `RAW-047` |
 | 选择、右键与 Shift | 普通态中部打开、Ctrl/Cmd+中部或 38px 左区进入选择；选择态左区与中部均切换成员，最后一项移出即退出；子按钮拥有原生 Space/Enter | `RAW-041`、`RAW-045`、`RAW-052`、`RAW-055`、`RAW-058` |

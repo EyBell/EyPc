@@ -68,3 +68,4 @@ Resolve panel targets in `explicit args → open frozen target → current pane 
 | Date | Task | Trigger | Failed Route | Evidence | Recovery | Outcome |
 | --- | --- | --- | --- | --- | --- | --- |
 | 2026-07-13 | Cross-tab responsive command panels | Open panel for B while A is already frozen | Infer from open panel before explicit args; MQTT shape-only validation | Read-only audit and Runtime RED regressions | Explicit-first validated resolvers | verified |
+| 2026-07-26 | Window jump / shared drawers | Mouse-focus B while right-click panel for A is open | Focus updated focus id only; left frozen panel target | User request | Retarget open window/port/favorite panels on focus | candidate |

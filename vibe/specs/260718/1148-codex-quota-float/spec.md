@@ -4,7 +4,7 @@ Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
 Documentation level: `controlled`
-Requirement version: `2026-07-24.15`
+Requirement version: `2026-07-24.17`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
@@ -20,6 +20,10 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 本规范取代旧版 recent-100、三页签、顶部样式工具栏和“单额度装饰环”合同。RAW-051–059 保留既有额度、操作、配色、桌面状态权威和结构性选择反馈；RAW-063/064 保留四个可见页签、最近 6 小时动态流、标题/元信息分流、无“需关注”分段和无重排选择提示。修订 `2026-07-22.12` 追加 RAW-065/066：恢复数据驱动的 Weekly 进度环并删除普通装饰圈，同时把上游 `interrupted` 在领域卡片投影层转换为可见 `ongoing`。修订 `2026-07-22.13` 追加 RAW-067：待输入与完成未读角标统一直开各自完整计数集合中展示排序第一条，进行中角标保持展开。修订 `2026-07-22.14` 追加 RAW-068：投影后的 ongoing 统一阻断归档，消除 active/interrupted 来源切换造成的归档控件闪烁，并在 Host 单条/项目归档重读中拒绝或跳过 interrupted。修订 `2026-07-22.15` 追加 RAW-069：任务从进行中转为完成时由 Controller 统一保持进行中 2 秒，窗口内恢复运行则取消，连续完成满 2 秒才同步发布完成状态、角标和归档能力；修订 `2026-07-23.1` 追加 RAW-070 interrupted 宽限；修订 `2026-07-24.1`–`.6` 追加 RAW-071–076 外观工作台与主题持久化；修订 `2026-07-24.7` 追加 RAW-077：展示窗暂为 700ms；修订 `2026-07-24.8` 追加 RAW-078：默认改为 1500ms；修订 `2026-07-24.9` 追加 RAW-079：展示稳定窗改为默认 1500ms 的持久化配置，并为水球百分比读数增加独立位置、字号、字形和颜色配置；修订 `2026-07-24.10` 追加 RAW-080：已完成已读回流到未读/进行中立即发布，进行中离开到完成或异常按同一配置稳定；修订 `2026-07-24.11` 追加 RAW-081：live snapshot 缺少未读字段时保留可信持久化 unread，且待输入的有限 request 名称归一化不放宽 desktop-live active 权威；修订 `2026-07-24.12` 追加 RAW-082：已完成未读角标与 uTools 全局功能共用“打开并仅本地确认当前完成 revision”的动作，待输入仍只打开；修订 `2026-07-24.14` 追加 RAW-084：两个 uTools 全局任务循环命令按待输入→完成未读→进行中、置顶优先稳定去重的序列前后回绕，只打开任务且不改变任何未读或任务状态；修订 `2026-07-24.15` 追加 RAW-085：配置页只回显两个循环命令当前的宿主绑定，并在进入、返回或手动刷新后重读，未绑定和不可读均不猜测。Renderer 匿名合同、Host 原始状态、安全边界、计数来源、底层稳定排序和兼容持久化不变。
 
+修订 `2026-07-24.16` 追加 RAW-086：为消除 uTools 入口对未公开同步宿主 IPC 的依赖，快捷键回显改为仅由用户点击“刷新”触发；应用启动、Codex 页面挂载、焦点恢复和可见性恢复均不读取。RAW-085 的过滤、回显和只读边界保持不变。
+
+修订 `2026-07-24.17` 追加 RAW-087：用户确认删除入口读取后 uTools 已恢复加载，因此完全删除快捷键回读桥、类型、运行时快照及 Codex/窗口页回显；所有快捷键入口只保留官方配置跳转。同时把 Codex 配置页收敛为顶部五 Tab，默认双列快捷方式，任务、水球、卡片和运行按需单页渲染，冗长说明进入可聚焦信息按钮。RAW-085/086 的回读合同被本条取代。
+
 ## Current Requirement And Implementation Map
 
 | 领域 | 当前合同 | 实现与证据 |
@@ -31,7 +35,8 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 | 原生项目视图 | `Pinned / Projects / Chats` 遵循 Codex 原生置顶、项目顺序和归属，不重复任务，并保留空项目 | [codex.ts](../../../../src/domain/codex.ts#L1)、[codexCompanion.test.ts](../../../../tests/ui/codexCompanion.test.ts#L1) |
 | 本地元数据 | 恢复最后页签/项目折叠，支持别名、具备即时位置/状态反馈的本地置顶和仅影响项目页的项目隐藏；旧本地移除集合迁移清除 | [codex.ts](../../../../src/domain/codex.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
 | 额度 V2 与紧凑水球 | 普通 5 小时正余额→普通周正余额→最高正余额 Spark；Spark 显示 `S`；存在 Weekly 时显示同池剩余进度环，无 Weekly 时无外圈，且始终不显示普通装饰圆环 | [codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1)、[CodexWaterBall.vue](../../../../src/components/CodexWaterBall.vue#L1)、[codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1) |
-| 外观工作台 | 水球、展开卡片、状态信号各自独立配置并显示部位预览；卡片预览用相同 surface/foreground token 画出展开后的页签、搜索、额度和任务区；颜色更新直通持久化和 Renderer，不再由格式、对比度、自动联动或 Controller 门禁回滚 | [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
+| 配置导航与外观 | 顶部 `快捷方式 / 任务 / 水球 / 卡片 / 运行` 五 Tab 默认进入双列快捷方式，只渲染当前分面；诊断、降级和部位说明进入可聚焦信息按钮。水球/状态信号与展开卡片分页，但继续共享真实组件、主题对象与直通持久化 | [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1)、[codex.css](../../../../src/styles/codex.css#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1) |
+| 宿主快捷键边界 | 前/后任务、待输入、完成未读、悬浮入口和窗口槽只通过官方设置跳转；preload/Renderer/运行时均不读取或回显宿主绑定，不调用私有同步快捷键 IPC | [preload/index.js](../../../../preload/index.js#L1)、[eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1)、[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1)、[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) |
 | 水球收起态命中区与全局功能 | 上半区不因 hover 展开并保留三角标直接点击；待输入只打开第一条，完成未读角标和 uTools 全局功能均打开并本地确认第一条当前完成 revision，进行中仍展开；新增前/后任务功能以待输入→完成未读→进行中、置顶优先稳定去重的序列循环打开；新 revision 会重新未读且不写 Codex Desktop 全局状态；角标 hover/focus 200ms 显示作用说明且不展开/切页 | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1)、[featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L1) |
 | 展开布局 | 四页签直接位于顶部，其下依次是统一搜索、服务端真实额度文字和任务内容；删除旧顶部样式/隐藏/刷新/设置/关闭工具栏 | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[float.css](../../../../src/styles/float.css#L1) |
 | 实时状态与未读通道 | macOS Codex Desktop 私有 IPC 提供 live snapshot/patch/request/read-state；App Server 只保留数据/动作连接器职责。普通 watchdog 为 5s，连续三次失败临时 1s；无 live authority 立即显示宿主状态未知 | [preload/index.js](../../../../preload/index.js#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
@@ -315,8 +320,9 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 - [codexController.ts](../../../../src/runtime/codexController.ts#L1) 以非持久化匿名 key 记住本次循环位置。候选序列依次拼接 `inputRequired`、完整 `completed-unread` 和 `ongoing`，每段使用现有置顶优先/稳定显示顺序并按 key 去重；首次 next/previous 分别选择首项/末项，之后按方向回绕。只接受当前具有 action alias 的任务，候选为空或动作失效时给出明确消息。
 - 两个命令只能调用既有打开路径：不派发 completed-unread acknowledgement、不写 EyPc receipt、不改隐藏、选中、页签或 Codex Desktop 原生 unread。设置页为两个功能各自调用现有 uTools 全局快捷键配置入口；不默认占用系统组合键。
 
-## RAW-085 循环快捷键回显
+## RAW-087 宿主快捷键边界与配置分面
 
-- [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 只读取当前 uTools 宿主为 `EyPc/上一个 Codex 任务`、`EyPc/下一个 Codex 任务` 保存的绑定，并在预加载边界过滤后才暴露给 Renderer；不返回其他插件记录，也不写入任何全局快捷键配置。
-- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 将这份瞬时、非持久化回显加入配置页运行时快照；[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1) 提供显式刷新动作。读取失败或旧宿主不支持时保持明确的不可读状态，不用缓存或默认组合键替代。
-- [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 在两个循环命令行显示已绑定组合键或“未配置”，并在页面重新获得焦点、可见性恢复及手动刷新时重读。配置按钮仍只跳转原有 uTools 设置入口。
+- [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 已删除 `getAllFeatureHotKey` 私有同步 IPC、快捷键过滤器和 Renderer 读取桥；保留的 `configureHotkey` 只调用官方 `redirectHotKeySetting`。窗口能力不再声明可读取快捷键。
+- [eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) 与 [appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1) 已删除 readback 类型、任务/窗口快照、刷新动作及进入窗口页后的读取。Codex 和窗口槽页不再显示“当前绑定/未配置/无法读取”。
+- [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 默认展示顶部“快捷方式”Tab，并以双列压缩六个入口；“任务 / 水球 / 卡片 / 运行”只渲染各自配置。运行诊断从默认入口移至运行页，诊断详情、CLI 降级、外观部位、百分比与窗口尺寸说明进入键盘可聚焦的 `i` 提示。
+- 用户已确认移除入口回读后插件恢复加载。当前完整删除与分面布局通过私有 IPC 残余搜索、preload 语法/镜像和 Vue SFC 静态编译；真实布局仍等待用户在 uTools 中验收。
