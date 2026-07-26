@@ -20,8 +20,9 @@ describe('state domain', () => {
       { id: 'ports', enabled: true, sortOrder: 1 },
       { id: 'favorites', enabled: false, sortOrder: 2 },
       { id: 'mqtt', enabled: true, sortOrder: 3 },
-      { id: 'codex', enabled: true, sortOrder: 4 },
-      { id: 'settings', enabled: true, sortOrder: 5 }
+      { id: 'windows', enabled: false, sortOrder: 4 },
+      { id: 'codex', enabled: true, sortOrder: 5 },
+      { id: 'settings', enabled: true, sortOrder: 6 }
     ])
     expect(state.settings.shortcutProfiles.mqtt.keybindingOverrides).toEqual([])
     expect(state.mqtt.configs).toEqual([])
@@ -45,7 +46,8 @@ describe('state domain', () => {
       { id: 'ports', enabled: false, sortOrder: 2 },
       { id: 'mqtt', enabled: true, sortOrder: 3 },
       { id: 'favorites', enabled: false, sortOrder: 4 },
-      { id: 'codex', enabled: true, sortOrder: 5 }
+      { id: 'windows', enabled: false, sortOrder: 5 },
+      { id: 'codex', enabled: true, sortOrder: 6 }
     ])
   })
 
@@ -239,5 +241,31 @@ describe('state domain', () => {
     expect(state.settings.shortcutProfiles.ports.keybindingOverrides[0]).toMatchObject({ commandId: 'ports.scan', shortcutIds: ['Alt+R'] })
     expect(state.settings.shortcutProfiles.favorites.keybindingOverrides[0]).toMatchObject({ commandId: 'favorites.open', shortcutIds: ['Ctrl+O'] })
     expect(state.settings.keybindingOverrides.map((item) => item.commandId)).toEqual(['search.focus', 'ports.scan', 'favorites.open'])
+  })
+
+  it('persists only valid window targets and keeps slot mappings separate by platform', () => {
+    const state = normalizeAppState({
+      windowTargets: [
+        { id: 'mac-browser', alias: '工作浏览器', platform: 'darwin', appId: 'com.google.Chrome', appName: 'Google Chrome', titleLocator: '项目面板', lastNativeRef: '901:1:12', favorite: true, createdAt: 10, updatedAt: 11 },
+        { id: 'win-browser', alias: '', platform: 'win32', appId: 'chrome.exe', appName: 'Google Chrome', titleLocator: '项目面板', lastNativeRef: '123456', favorite: false, createdAt: 12, updatedAt: 13 },
+        { id: 'invalid', platform: 'win32', appId: 'chrome.exe', titleLocator: '' },
+        { id: 'mac-browser', platform: 'darwin', appId: 'duplicate', titleLocator: 'duplicate' }
+      ],
+      windowSlots: [
+        { slot: 1, targetIdByPlatform: { darwin: 'mac-browser', win32: 'win-browser' } },
+        { slot: 2, targetIdByPlatform: { darwin: 'missing' } },
+        { slot: 3, targetIdByPlatform: { darwin: 'win-browser' } },
+        { slot: 11, targetIdByPlatform: { win32: 'win-browser' } }
+      ]
+    }, 100)
+
+    expect(state.windowTargets).toEqual([
+      expect.objectContaining({ id: 'mac-browser', alias: '工作浏览器', platform: 'darwin', favorite: true }),
+      expect.objectContaining({ id: 'win-browser', alias: '项目面板', platform: 'win32', favorite: false })
+    ])
+    expect(state.windowSlots).toHaveLength(10)
+    expect(state.windowSlots[0]).toEqual({ slot: 1, targetIdByPlatform: { darwin: 'mac-browser', win32: 'win-browser' } })
+    expect(state.windowSlots[1]).toEqual({ slot: 2, targetIdByPlatform: {} })
+    expect(state.windowSlots[2]).toEqual({ slot: 3, targetIdByPlatform: {} })
   })
 })

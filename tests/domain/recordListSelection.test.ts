@@ -8,7 +8,7 @@ import {
 const rows = ['a', 'b', 'c', 'd'].map((id) => ({ id }))
 
 describe('record list selection helpers', () => {
-  it('moves highlight down after selecting the current row by keyboard', () => {
+  it('moves highlight down after selecting or unselecting the current row', () => {
     expect(toggleRecordListSelection({
       rows,
       activeIndex: 1,
@@ -17,15 +17,12 @@ describe('record list selection helpers', () => {
       activeIndex: 2,
       selectedIds: ['b']
     })
-  })
-
-  it('keeps highlight in place when unselecting the current row', () => {
     expect(toggleRecordListSelection({
       rows,
       activeIndex: 1,
       selectedIds: ['b', 'c']
     })).toEqual({
-      activeIndex: 1,
+      activeIndex: 2,
       selectedIds: ['c']
     })
   })

@@ -70,6 +70,31 @@ describe('browser fallback platform', () => {
     })
   })
 
+  it('degrades a stale preload that has not yet exposed the window bridge', async () => {
+    globalThis.window = {
+      navigator: { platform: 'MacIntel' },
+      eypcPlatform: {
+        storage: {},
+        files: {},
+        clipboard: {},
+        codex: {},
+        float: {},
+        app: { hide: async () => true },
+        getEnterPayload: () => null,
+        clearEnterPayload: () => undefined
+      }
+    } as unknown as Window & typeof globalThis
+
+    const { getPlatform } = await import('../../src/platform/eypcPlatform')
+
+    await expect(getPlatform().windows.capabilities()).resolves.toMatchObject({
+      platform: 'unsupported',
+      supported: false,
+      permission: 'unsupported'
+    })
+    await expect(getPlatform().windows.list()).resolves.toMatchObject({ windows: [] })
+  })
+
   it('persists fallback state through localStorage across module reloads', async () => {
     const store = new Map<string, string>()
     Object.defineProperty(globalThis, 'localStorage', {

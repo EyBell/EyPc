@@ -35,7 +35,7 @@ import {
 } from '../domain/codex'
 import { normalizeCodexModelCatalog } from '../domain/codexNewThread'
 import type { AppState } from '../domain/types'
-import type { CodexFloatWorkspaceDiagnostics, CodexTaskHotkeyReadback, EypcPlatformApi } from '../platform/eypcPlatform'
+import type { CodexFloatWorkspaceDiagnostics, EypcPlatformApi } from '../platform/eypcPlatform'
 
 export interface CodexRuntimeView {
   settings: CodexSettings
@@ -45,7 +45,6 @@ export interface CodexRuntimeView {
   modelCatalog: CodexModelCatalogSnapshotV1
   newThreadContextFingerprint: string
   conversations: ConversationSnapshotV1
-  taskHotkeys: CodexTaskHotkeyReadback
   refreshing: boolean
   floatHost: {
     displayId: string
@@ -103,15 +102,6 @@ function completionPresentationDelay(settings: CodexSettings): number {
 }
 
 const NON_INPUT_ACTIVITY_DEBOUNCE_MS = 2_000
-const TASK_HOTKEY_COMMANDS = ['上一个 Codex 任务', '下一个 Codex 任务'] as const
-
-function emptyTaskHotkeyReadback(): CodexTaskHotkeyReadback {
-  return {
-    supported: false,
-    bindings: Object.fromEntries(TASK_HOTKEY_COMMANDS.map((command) => [command, '']))
-  }
-}
-
 type CompletionPresentationHold = {
   expiresAt: number
 }
@@ -159,7 +149,6 @@ export function createCodexController(options: CodexControllerOptions) {
   let rawConversations = conversationSnapshotFromReceipts(options.getAppState().codex.receipts)
   let conversations = rawConversations
   let taskCycleKey = ''
-  let taskHotkeys = emptyTaskHotkeyReadback()
   let lastThreads: CodexHostThread[] = []
   let lastProjects: CodexHostProject[] = []
   let lastThreadsPartial = false
@@ -1108,7 +1097,7 @@ export function createCodexController(options: CodexControllerOptions) {
     return true
   }
 
-  function cycleTasks(): CodexTaskCard[] {
+  function cycleTasks(): Array<CodexTaskCard & { actionAlias: string }> {
     const tasks = allTasks()
     const groups = [
       displayOrderedTasks(conversations.inputRequired),
@@ -1116,7 +1105,7 @@ export function createCodexController(options: CodexControllerOptions) {
       displayOrderedTasks(tasks.filter((task) => task.bucket === 'ongoing'))
     ]
     const seen = new Set<string>()
-    return groups.flatMap((tasks) => tasks.filter((task) => {
+    return groups.flatMap((tasks) => tasks.filter((task): task is CodexTaskCard & { actionAlias: string } => {
       if (!task.actionAlias || seen.has(task.key)) return false
       seen.add(task.key)
       return true
@@ -1137,24 +1126,6 @@ export function createCodexController(options: CodexControllerOptions) {
     taskCycleKey = task.key
     void openThread(task.key, task.actionAlias)
     return true
-  }
-
-  function refreshTaskHotkeys(notify = true): boolean {
-    const raw = options.platform.app.readConfiguredHotkeys?.([...TASK_HOTKEY_COMMANDS])
-    const next: CodexTaskHotkeyReadback = {
-      supported: raw?.supported === true,
-      bindings: Object.fromEntries(TASK_HOTKEY_COMMANDS.map((command) => [
-        command,
-        raw?.supported === true && typeof raw.bindings?.[command] === 'string'
-          ? raw.bindings[command].trim().slice(0, 80)
-          : ''
-      ]))
-    }
-    const changed = next.supported !== taskHotkeys.supported
-      || TASK_HOTKEY_COMMANDS.some((command) => next.bindings[command] !== taskHotkeys.bindings[command])
-    taskHotkeys = next
-    if (changed && notify) options.notify()
-    return changed
   }
 
   function hide(key: string, recency?: number) {
@@ -1317,7 +1288,6 @@ export function createCodexController(options: CodexControllerOptions) {
     start() {
       if (started || disposed) return
       started = true
-      refreshTaskHotkeys(false)
       stopActivityListener = options.platform.codex.onActivityChanged?.((delta) => applyActivityDelta(delta)) || null
       if (isFeatureEnabled()) void inspectEnvironment()
       syncActivation(true)
@@ -1356,7 +1326,6 @@ export function createCodexController(options: CodexControllerOptions) {
     openFirstInput,
     openFirstCompletedUnread,
     cycleTask,
-    refreshTaskHotkeys,
     setTaskTab,
     setProjectCollapsed,
     setAlias,
@@ -1381,7 +1350,6 @@ export function createCodexController(options: CodexControllerOptions) {
         modelCatalog,
         newThreadContextFingerprint,
         conversations,
-        taskHotkeys,
         refreshing,
         floatHost: {
           displayId,

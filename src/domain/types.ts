@@ -1,6 +1,7 @@
 import type { CodexState } from './codex'
+import type { WindowSlot, WindowTarget } from './windows'
 
-export type AppTabId = 'ports' | 'mqtt' | 'favorites' | 'codex' | 'settings'
+export type AppTabId = 'ports' | 'mqtt' | 'favorites' | 'windows' | 'codex' | 'settings'
 
 export interface FeatureConfig {
   id: AppTabId
@@ -229,7 +230,7 @@ export interface KeybindingOverride {
   disabled?: boolean
 }
 
-export type ShortcutProfileId = 'global' | 'ports' | 'mqtt' | 'favorites' | 'codex' | 'settings'
+export type ShortcutProfileId = 'global' | 'ports' | 'mqtt' | 'favorites' | 'windows' | 'codex' | 'settings'
 
 export interface ToolPreviewPrefs {
   hoverPreviewEnabled: boolean
@@ -256,6 +257,7 @@ export interface AppState {
   activeTab: AppTabId
   portSearch: string
   favoriteSearch: string
+  windowSearch: string
   searchHistories: {
     ports: {
       processes: string[]
@@ -272,6 +274,8 @@ export interface AppState {
   collapsedPortGroupFolderIds: string[]
   collapsedFavoriteGroupIds: string[]
   favorites: FavoriteNode[]
+  windowTargets: WindowTarget[]
+  windowSlots: WindowSlot[]
   mqtt: MqttState
   codex: CodexState
   settings: AppSettings

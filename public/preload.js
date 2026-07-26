@@ -45,6 +45,8 @@ const CODEX_FLOAT_EXPANDED_MIN_WIDTH = 340
 const CODEX_FLOAT_EXPANDED_MIN_HEIGHT = 280
 const CODEX_FLOAT_EXPANDED_MAX_HEIGHT = 460
 const CODEX_FLOAT_MARGIN = 12
+const WINDOW_BRIDGE_TIMEOUT_MS = 5_000
+const WINDOW_BRIDGE_OUTPUT_LIMIT = 1024 * 1024
 const CODEX_FLOAT_CHANNELS = {
   snapshot: 'eypc-float:snapshot',
   state: 'eypc-float:state',
@@ -238,6 +240,495 @@ async function killProcess(request) {
   }
   const result = await runFirst(killPlans(pid, force))
   return { ok: result.ok, pid, port, force, error: result.ok ? undefined : result.error || result.stderr || 'kill failed' }
+}
+
+const WINDOWS_ENUM_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public sealed class EypcWindowInfo {
+  public string nativeRef { get; set; }
+  public int pid { get; set; }
+  public string appId { get; set; }
+  public string appName { get; set; }
+  public string title { get; set; }
+  public bool minimized { get; set; }
+  public bool focused { get; set; }
+}
+
+public static class EypcWindowApi {
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int maxCount);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
+
+  static bool IsNoiseTitle(string title, string appName) {
+    var normalized = (title ?? "").Trim().ToLowerInvariant();
+    if (String.IsNullOrWhiteSpace(normalized)) return true;
+    if (normalized == "program manager" || normalized == "default ime" || normalized == "msctfime ui" || normalized == "gdi+ window" || normalized == "olemainthreadwndname" || normalized == "cicerouiwndframe") return true;
+    var app = (appName ?? "").Trim().ToLowerInvariant();
+    var chromium = app.Contains("edge") || app.Contains("chrome") || app.Contains("chromium") || app.Contains("brave") || app.Contains("opera") || app.Contains("vivaldi");
+    if (chromium && normalized == "window") return true;
+    return false;
+  }
+
+  static bool IsCloaked(IntPtr hWnd) {
+    try {
+      int cloaked = 0;
+      if (DwmGetWindowAttribute(hWnd, 14, out cloaked, 4) != 0) return false;
+      return cloaked != 0;
+    } catch { return false; }
+  }
+
+  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
+
+  public static List<EypcWindowInfo> ListWindows() {
+    var rows = new List<EypcWindowInfo>();
+    var foreground = GetForegroundWindow();
+    EnumWindows(delegate(IntPtr hWnd, IntPtr ignored) {
+      if (!IsWindowVisible(hWnd)) return true;
+      if ((GetWindowLong(hWnd, -20) & 0x00000080) != 0) return true;
+      if (IsCloaked(hWnd)) return true;
+      var length = GetWindowTextLength(hWnd);
+      if (length <= 0) return true;
+      var titleBuilder = new StringBuilder(Math.Min(length + 1, 8192));
+      GetWindowText(hWnd, titleBuilder, titleBuilder.Capacity);
+      var title = titleBuilder.ToString().Trim();
+      if (String.IsNullOrWhiteSpace(title)) return true;
+      uint rawPid;
+      GetWindowThreadProcessId(hWnd, out rawPid);
+      var pid = unchecked((int)rawPid);
+      var appName = "pid-" + pid.ToString();
+      try { appName = Process.GetProcessById(pid).ProcessName; } catch { }
+      if (IsNoiseTitle(title, appName)) return true;
+      rows.Add(new EypcWindowInfo {
+        nativeRef = hWnd.ToInt64().ToString(),
+        pid = pid,
+        appId = appName,
+        appName = appName,
+        title = title,
+        minimized = IsIconic(hWnd),
+        focused = hWnd == foreground
+      });
+      return true;
+    }, IntPtr.Zero);
+    return rows;
+  }
+}
+'@
+[EypcWindowApi]::ListWindows() | ConvertTo-Json -Compress -Depth 4
+`
+
+const WINDOWS_ACTIVATE_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class EypcWindowActivator {
+  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+}
+'@
+$handle = [IntPtr]::new(__EYPC_WINDOW_HANDLE__)
+if (-not [EypcWindowActivator]::IsWindow($handle)) {
+  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
+  exit 0
+}
+if ([EypcWindowActivator]::IsIconic($handle)) {
+  [void][EypcWindowActivator]::ShowWindow($handle, 9)
+}
+if ([EypcWindowActivator]::SetForegroundWindow($handle)) {
+  @{ outcome = 'activated' } | ConvertTo-Json -Compress
+} else {
+  @{ outcome = 'focus-denied' } | ConvertTo-Json -Compress
+}
+`
+
+const WINDOWS_CLOSE_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class EypcWindowCloser {
+  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam);
+}
+'@
+$handle = [IntPtr]::new(__EYPC_WINDOW_HANDLE__)
+if (-not [EypcWindowCloser]::IsWindow($handle)) {
+  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
+  exit 0
+}
+if ([EypcWindowCloser]::PostMessage($handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
+  @{ outcome = 'closed' } | ConvertTo-Json -Compress
+} else {
+  @{ outcome = 'close-denied' } | ConvertTo-Json -Compress
+}
+`
+
+const WINDOWS_TERMINATE_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$pidValue = __EYPC_WINDOW_PID__
+try {
+  $proc = Get-Process -Id $pidValue -ErrorAction Stop
+  Stop-Process -Id $pidValue -Force -ErrorAction Stop
+  @{ outcome = 'terminated' } | ConvertTo-Json -Compress
+} catch {
+  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
+}
+`
+
+const MACOS_WINDOW_LIST_SCRIPT = String.raw`
+ObjC.import('Foundation')
+ObjC.import('CoreGraphics')
+ObjC.import('AppKit')
+function attempt(callback, fallback) {
+  try { return callback() } catch (error) { return fallback }
+}
+function asText(value) { return String(value || '').trim() }
+function normalizeTitle(value) { return asText(value).toLowerCase().replace(/\s+/g, ' ') }
+function isChromiumFamily(appName, appId) {
+  const text = normalizeTitle(appName + ' ' + appId)
+  return /microsoft edge|google chrome|chromium|brave|vivaldi|opera|\barc\b|com\.microsoft\.edgemac|com\.google\.chrome|com\.brave\.browser/.test(text)
+}
+function isNoiseTitle(title, appName, appId) {
+  const normalized = normalizeTitle(title)
+  if (!normalized) return true
+  if (['program manager', 'default ime', 'msctfime ui', 'gdi+ window', 'olemainthreadwndname', 'cicerouiwndframe', 'cicero ui wnd frame'].indexOf(normalized) >= 0) return true
+  if (normalized === 'window' && isChromiumFamily(appName, appId)) return true
+  return false
+}
+const raw = attempt(() => ObjC.deepUnwrap($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID)), [])
+const list = Array.isArray(raw) ? raw : []
+const rows = []
+const seen = {}
+let namedOwnerWindows = 0
+let unnamedOwnerWindows = 0
+for (const item of list) {
+  if (!item || typeof item !== 'object') continue
+  const layer = Math.trunc(Number(item.kCGWindowLayer || 0))
+  if (layer !== 0) continue
+  const pid = Math.trunc(Number(item.kCGWindowOwnerPID || 0))
+  const windowNumber = Math.max(0, Math.trunc(Number(item.kCGWindowNumber || 0)))
+  const title = asText(item.kCGWindowName)
+  const appName = asText(item.kCGWindowOwnerName)
+  if (!Number.isInteger(pid) || pid <= 0 || !appName) continue
+  const alpha = Number(item.kCGWindowAlpha)
+  if (Number.isFinite(alpha) && alpha <= 0) continue
+  if (pid === $.NSProcessInfo.processInfo.processIdentifier) continue
+  if (!title) {
+    unnamedOwnerWindows += 1
+    continue
+  }
+  namedOwnerWindows += 1
+  const running = attempt(() => $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid), null)
+  const appId = asText(attempt(() => running && running.bundleIdentifier && ObjC.unwrap(running.bundleIdentifier), appName)) || appName
+  if (isNoiseTitle(title, appName, appId)) continue
+  const key = String(pid) + ':' + String(windowNumber)
+  if (seen[key]) continue
+  seen[key] = true
+  const isOnscreen = item.kCGWindowIsOnscreen === true || item.kCGWindowIsOnscreen === 1
+  rows.push({
+    nativeRef: windowNumber > 0 ? String(pid) + ':0:' + String(windowNumber) : String(pid) + ':1:0',
+    pid,
+    appId,
+    appName,
+    title,
+    minimized: !isOnscreen,
+    focused: false,
+    screenRecordingHint: false
+  })
+}
+const screenRecordingLikelyMissing = namedOwnerWindows === 0 && unnamedOwnerWindows > 0
+JSON.stringify({ windows: rows, screenRecordingLikelyMissing: screenRecordingLikelyMissing })
+`
+
+function macosActivateWindowScript(pid, ordinal, windowNumber) {
+  return String.raw`
+ObjC.import('Foundation')
+const systemEvents = Application('System Events')
+const processId = ${pid}
+const ordinal = ${ordinal}
+const windowNumber = ${windowNumber}
+const processes = systemEvents.applicationProcesses.whose({ unixId: processId })()
+if (!processes.length) {
+  JSON.stringify({ outcome: 'not-found' })
+} else {
+  const targetProcess = processes[0]
+  const windows = targetProcess.windows()
+  let target = null
+  for (let index = 0; index < windows.length; index += 1) {
+    const current = windows[index]
+    let currentNumber = 0
+    try { currentNumber = Math.trunc(Number(current.attributes.byName('AXWindowNumber').value())) } catch (error) {}
+    if ((windowNumber > 0 && currentNumber === windowNumber) || (windowNumber === 0 && index + 1 === ordinal)) {
+      target = current
+      break
+    }
+  }
+  if (!target) {
+    JSON.stringify({ outcome: 'not-found' })
+  } else {
+    try { target.attributes.byName('AXMinimized').set({ value: false }) } catch (error) {}
+    try { targetProcess.frontmost = true } catch (error) {}
+    try { target.actions.byName('AXRaise').perform() } catch (error) {}
+    JSON.stringify({ outcome: 'activated' })
+  }
+}
+`
+}
+
+function macosCloseWindowScript(pid, ordinal, windowNumber) {
+  return String.raw`
+ObjC.import('Foundation')
+const systemEvents = Application('System Events')
+const processId = ${pid}
+const ordinal = ${ordinal}
+const windowNumber = ${windowNumber}
+const processes = systemEvents.applicationProcesses.whose({ unixId: processId })()
+if (!processes.length) {
+  JSON.stringify({ outcome: 'not-found' })
+} else {
+  const targetProcess = processes[0]
+  const windows = targetProcess.windows()
+  let target = null
+  for (let index = 0; index < windows.length; index += 1) {
+    const current = windows[index]
+    let currentNumber = 0
+    try { currentNumber = Math.trunc(Number(current.attributes.byName('AXWindowNumber').value())) } catch (error) {}
+    if ((windowNumber > 0 && currentNumber === windowNumber) || (windowNumber === 0 && index + 1 === ordinal)) {
+      target = current
+      break
+    }
+  }
+  if (!target) {
+    JSON.stringify({ outcome: 'not-found' })
+  } else {
+    try {
+      const closeButton = target.attributes.byName('AXCloseButton').value()
+      closeButton.actions.byName('AXPress').perform()
+      JSON.stringify({ outcome: 'closed' })
+    } catch (error) {
+      try {
+        target.actions.byName('AXPress').perform()
+        JSON.stringify({ outcome: 'closed' })
+      } catch (inner) {
+        JSON.stringify({ outcome: 'close-denied', message: String(inner) })
+      }
+    }
+  }
+}
+`
+}
+
+function runWindowCommand(command, args) {
+  return new Promise((resolve) => {
+    execFile(command, args, {
+      windowsHide: true,
+      timeout: WINDOW_BRIDGE_TIMEOUT_MS,
+      maxBuffer: WINDOW_BRIDGE_OUTPUT_LIMIT
+    }, (error, stdout, stderr) => {
+      resolve({ ok: !error, stdout: String(stdout || ''), stderr: String(stderr || ''), error: error ? String(error.message || error) : '' })
+    })
+  })
+}
+
+function windowCapability(permission = 'unknown', reason = '', extras = {}) {
+  if (process.platform === 'win32') {
+    return { platform: 'win32', supported: true, permission: 'granted', canList: true, canActivate: true, canClose: true, ...(reason ? { reason } : {}), ...extras }
+  }
+  if (process.platform === 'darwin') {
+    return { platform: 'darwin', supported: true, permission, canList: permission !== 'required', canActivate: permission !== 'required', canClose: permission !== 'required', ...(reason ? { reason } : {}), ...extras }
+  }
+  return { platform: 'unsupported', supported: false, permission: 'unsupported', canList: false, canActivate: false, canClose: false, reason: reason || '当前系统不支持窗口跳转', ...extras }
+}
+
+function isMacWindowPermissionError(value) {
+  return /not authorized|not permitted|accessibility|assistive access|automation|screen recording|-1743/i.test(String(value || ''))
+}
+
+function parseWindowJson(output, platform) {
+  let parsed
+  try { parsed = JSON.parse(String(output || '').trim() || '[]') } catch { return { windows: [], screenRecordingLikelyMissing: false } }
+  const envelope = parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.windows)
+    ? parsed
+    : { windows: Array.isArray(parsed) ? parsed : [parsed], screenRecordingLikelyMissing: false }
+  const rows = Array.isArray(envelope.windows) ? envelope.windows : []
+  const seen = new Set()
+  const windows = rows.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const nativeRef = String(item.nativeRef || '').trim()
+    const pid = Math.trunc(Number(item.pid))
+    const appId = String(item.appId || item.appName || '').trim()
+    const appName = String(item.appName || appId || '').trim()
+    const title = String(item.title || '').trim()
+    const id = `${platform}:${nativeRef}`
+    if (!nativeRef || !Number.isInteger(pid) || pid <= 0 || !appId || !title || seen.has(id)) return []
+    seen.add(id)
+    return [{ id, platform, nativeRef, appId, appName, pid, title, minimized: item.minimized === true, focused: item.focused === true }]
+  })
+  return { windows, screenRecordingLikelyMissing: envelope.screenRecordingLikelyMissing === true }
+}
+
+async function windowCapabilities() {
+  return windowCapability()
+}
+
+async function listWindows() {
+  if (process.platform === 'win32') {
+    const systemRoot = process.env.SystemRoot || 'C:\\Windows'
+    const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', WINDOWS_ENUM_SCRIPT])
+    if (!result.ok) return { capability: windowCapability('unknown', '无法读取 Windows 桌面窗口'), windows: [], message: '无法读取 Windows 桌面窗口' }
+    const parsed = parseWindowJson(result.stdout, 'win32')
+    return { capability: windowCapability('granted'), windows: parsed.windows }
+  }
+  if (process.platform === 'darwin') {
+    const result = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', MACOS_WINDOW_LIST_SCRIPT])
+    if (!result.ok) {
+      const detail = `${result.error}\n${result.stderr}`
+      if (isMacWindowPermissionError(detail)) {
+        return { capability: windowCapability('required', '需要辅助功能、自动化或屏幕录制权限'), windows: [], message: '需要在系统设置中允许 EyPc 读取全部桌面窗口' }
+      }
+      return { capability: windowCapability('unknown', '无法读取 macOS 窗口'), windows: [], message: '无法读取 macOS 窗口；请确认屏幕录制与辅助功能授权' }
+    }
+    const parsed = parseWindowJson(result.stdout, 'darwin')
+    if (parsed.screenRecordingLikelyMissing && !parsed.windows.length) {
+      return {
+        capability: windowCapability('required', '需要屏幕录制权限以枚举全部 Space / 显示器'),
+        windows: [],
+        message: '需要在系统设置中允许 EyPc 的屏幕录制权限，才能列出全部桌面与显示器上的窗口'
+      }
+    }
+    return {
+      capability: windowCapability('granted', parsed.screenRecordingLikelyMissing ? '部分窗口标题可能因屏幕录制权限受限' : ''),
+      windows: parsed.windows,
+      ...(parsed.screenRecordingLikelyMissing ? { message: '部分窗口缺少标题；请确认屏幕录制权限以覆盖全部 Space' } : {})
+    }
+  }
+  return { capability: windowCapability('unsupported'), windows: [], message: '当前系统不支持窗口跳转' }
+}
+
+function parseWindowActivationResult(output, fallback = 'failed') {
+  try {
+    const value = JSON.parse(String(output || '').trim() || '{}')
+    const outcome = String(value && value.outcome || '')
+    if (['activated', 'not-found', 'focus-denied', 'permission-required', 'unsupported', 'failed'].includes(outcome)) {
+      return { outcome, ...(typeof value.message === 'string' && value.message ? { message: value.message } : {}) }
+    }
+  } catch {}
+  return { outcome: fallback }
+}
+
+async function activateWindow(target) {
+  const source = target && typeof target === 'object' ? target : {}
+  const platform = source.platform === 'win32' || source.platform === 'darwin' ? source.platform : ''
+  const nativeRef = String(source.nativeRef || '').trim()
+  if (!platform || !nativeRef || platform !== process.platform) return { outcome: 'not-found', message: '窗口引用已失效或不属于当前系统' }
+  if (platform === 'win32') {
+    if (!/^\d{1,20}$/.test(nativeRef)) return { outcome: 'not-found', message: '窗口句柄无效' }
+    const systemRoot = process.env.SystemRoot || 'C:\\Windows'
+    const script = WINDOWS_ACTIVATE_SCRIPT.replace('__EYPC_WINDOW_HANDLE__', nativeRef)
+    const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script])
+    if (!result.ok) return { outcome: 'failed', message: 'Windows 无法执行窗口激活' }
+    const activation = parseWindowActivationResult(result.stdout)
+    return activation.outcome === 'focus-denied'
+      ? { ...activation, message: '系统拒绝聚焦该窗口；EyPc 未尝试绕过前台保护' }
+      : activation
+  }
+  const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
+  if (!parts) return { outcome: 'not-found', message: 'macOS 窗口引用已失效' }
+  const result = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', macosActivateWindowScript(Number(parts[1]), Number(parts[2]), Number(parts[3]))])
+  if (!result.ok) {
+    const detail = `${result.error}\n${result.stderr}`
+    return isMacWindowPermissionError(detail)
+      ? { outcome: 'permission-required', message: '需要在系统设置中允许 EyPc 控制 System Events' }
+      : { outcome: 'failed', message: 'macOS 无法激活该窗口' }
+  }
+  return parseWindowActivationResult(result.stdout)
+}
+
+function parseWindowLifecycleResult(output, fallback = 'failed') {
+  try {
+    const value = JSON.parse(String(output || '').trim() || '{}')
+    const outcome = String(value && value.outcome || '')
+    if (['closed', 'terminated', 'close-denied', 'not-found', 'permission-required', 'unsupported', 'failed'].includes(outcome)) {
+      return { outcome, ...(typeof value.message === 'string' && value.message ? { message: value.message } : {}) }
+    }
+  } catch {}
+  return { outcome: fallback }
+}
+
+async function closeWindow(target) {
+  const source = target && typeof target === 'object' ? target : {}
+  const platform = source.platform === 'win32' || source.platform === 'darwin' ? source.platform : ''
+  const nativeRef = String(source.nativeRef || '').trim()
+  if (!platform || !nativeRef || platform !== process.platform) return { outcome: 'not-found', message: '窗口引用已失效或不属于当前系统' }
+  if (platform === 'win32') {
+    if (!/^\d{1,20}$/.test(nativeRef)) return { outcome: 'not-found', message: '窗口句柄无效' }
+    const systemRoot = process.env.SystemRoot || 'C:\\Windows'
+    const script = WINDOWS_CLOSE_SCRIPT.replace('__EYPC_WINDOW_HANDLE__', nativeRef)
+    const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script])
+    if (!result.ok) return { outcome: 'failed', message: 'Windows 无法关闭该窗口' }
+    return parseWindowLifecycleResult(result.stdout)
+  }
+  const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
+  if (!parts) return { outcome: 'not-found', message: 'macOS 窗口引用已失效' }
+  const result = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', macosCloseWindowScript(Number(parts[1]), Number(parts[2]), Number(parts[3]))])
+  if (!result.ok) {
+    const detail = `${result.error}\n${result.stderr}`
+    return isMacWindowPermissionError(detail)
+      ? { outcome: 'permission-required', message: '需要在系统设置中允许 EyPc 控制 System Events' }
+      : { outcome: 'failed', message: 'macOS 无法关闭该窗口' }
+  }
+  return parseWindowLifecycleResult(result.stdout)
+}
+
+async function terminateWindow(target) {
+  const source = target && typeof target === 'object' ? target : {}
+  const platform = source.platform === 'win32' || source.platform === 'darwin' ? source.platform : ''
+  const pid = Math.trunc(Number(source.pid))
+  if (!platform || platform !== process.platform || !Number.isInteger(pid) || pid <= 0) {
+    return { outcome: 'not-found', message: '进程引用已失效或不属于当前系统' }
+  }
+  if (platform === 'win32') {
+    const systemRoot = process.env.SystemRoot || 'C:\\Windows'
+    const script = WINDOWS_TERMINATE_SCRIPT.replace('__EYPC_WINDOW_PID__', String(pid))
+    const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script])
+    if (!result.ok) return { outcome: 'failed', message: 'Windows 无法强制终止该进程' }
+    return parseWindowLifecycleResult(result.stdout, 'failed')
+  }
+  try {
+    process.kill(pid, 'SIGKILL')
+    return { outcome: 'terminated' }
+  } catch (error) {
+    const code = error && typeof error === 'object' ? error.code : ''
+    if (code === 'ESRCH') return { outcome: 'not-found', message: '进程已不存在' }
+    return { outcome: 'failed', message: 'macOS 无法强制终止该进程' }
+  }
+}
+
+async function openWindowPermissionSettings() {
+  if (process.platform !== 'darwin') return false
+  try {
+    if (globalThis.utools && typeof globalThis.utools.shellOpenExternal === 'function') {
+      globalThis.utools.shellOpenExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
+      globalThis.utools.shellOpenExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility')
+      return true
+    }
+  } catch {}
+  return false
 }
 
 function readState() {
@@ -4281,10 +4772,27 @@ function initialCodexFloatBounds(position) {
   return { display, bounds: alignFloatBoundsToEdge(requested, display, requestedEdge), edge: requestedEdge }
 }
 
+function codexFloatDevelopmentEntry() {
+  const href = typeof globalThis.location?.href === 'string' ? globalThis.location.href : ''
+  return /^http:\/\/127\.0\.0\.1:8092(?:\/|$)/.test(href)
+    ? 'http://127.0.0.1:8092/float.html'
+    : ''
+}
+
 function createCodexFloat(position) {
   const utools = globalThis.utools
   if (!utools || typeof utools.createBrowserWindow !== 'function') return false
   const initial = initialCodexFloatBounds(position)
+  const developmentEntry = codexFloatDevelopmentEntry()
+  let redirectedToDevelopment = false
+  const finishCreateCodexFloat = () => {
+    applyCodexFloatWorkspaceVisibility()
+    try {
+      if (typeof codexFloatWindow?.showInactive === 'function') codexFloatWindow.showInactive()
+      else codexFloatWindow?.show()
+    } catch {}
+    pushCodexFloatSnapshot()
+  }
   try {
     codexFloatEdge = initial.edge
     codexFloatWindow = utools.createBrowserWindow('float.html', {
@@ -4310,12 +4818,15 @@ function createCodexFloat(position) {
       autoHideMenuBar: true,
       webPreferences: { preload: 'float-preload.js' }
     }, () => {
-      applyCodexFloatWorkspaceVisibility()
-      try {
-        if (typeof codexFloatWindow?.showInactive === 'function') codexFloatWindow.showInactive()
-        else codexFloatWindow?.show()
-      } catch {}
-      pushCodexFloatSnapshot()
+      if (developmentEntry && !redirectedToDevelopment && typeof codexFloatWindow?.loadURL === 'function') {
+        redirectedToDevelopment = true
+        try {
+          const loading = codexFloatWindow.loadURL(developmentEntry)
+          if (loading && typeof loading.then === 'function') loading.then(finishCreateCodexFloat).catch(finishCreateCodexFloat)
+          return
+        } catch {}
+      }
+      finishCreateCodexFloat()
     })
     applyCodexFloatWorkspaceVisibility()
     return true
@@ -4378,35 +4889,6 @@ function emitCodexFloatAction(actionId, args) {
   }
   for (const listener of codexFloatActionListeners) {
     try { listener({ actionId, args: codexRecord(args) }) } catch {}
-  }
-}
-
-const CODEX_TASK_HOTKEY_PLUGIN_NAME = 'EyPc'
-const CODEX_TASK_HOTKEY_COMMANDS = ['上一个 Codex 任务', '下一个 Codex 任务']
-
-function readConfiguredCodexTaskHotkeys(commandLabels) {
-  const bindings = Object.fromEntries(CODEX_TASK_HOTKEY_COMMANDS.map((command) => [command, '']))
-  const requested = new Set(Array.isArray(commandLabels)
-    ? commandLabels.filter((command) => CODEX_TASK_HOTKEY_COMMANDS.includes(command))
-    : [])
-  if (!globalThis.utools || typeof globalThis.utools.redirectHotKeySetting !== 'function') return { supported: false, bindings }
-  try {
-    const { ipcRenderer } = require('electron')
-    const records = ipcRenderer && typeof ipcRenderer.sendSync === 'function'
-      ? ipcRenderer.sendSync('getAllFeatureHotKey')
-      : null
-    if (!Array.isArray(records)) return { supported: false, bindings }
-    for (const command of requested) {
-      const target = `${CODEX_TASK_HOTKEY_PLUGIN_NAME}/${command}`
-      const matches = records.filter((record) => record
-        && typeof record === 'object'
-        && record.cmd === target
-        && typeof record.hotkey === 'string')
-      bindings[command] = String(matches.find((record) => record.hotkey.trim())?.hotkey || '').trim().slice(0, 80)
-    }
-    return { supported: true, bindings }
-  } catch {
-    return { supported: false, bindings }
   }
 }
 
@@ -4637,6 +5119,14 @@ window.eypcPlatform = {
     scan: scanPorts,
     kill: killProcess
   },
+  windows: {
+    capabilities: windowCapabilities,
+    list: listWindows,
+    activate: activateWindow,
+    close: closeWindow,
+    terminate: terminateWindow,
+    openPermissionSettings: openWindowPermissionSettings
+  },
   files: {
     capabilities: favoriteFileCapabilities(),
     open: openFavoritePath,
@@ -4711,9 +5201,6 @@ window.eypcPlatform = {
         }
       } catch {}
       return false
-    },
-    readConfiguredHotkeys(commandLabels) {
-      return readConfiguredCodexTaskHotkeys(commandLabels)
     }
   },
   getEnterPayload() {
