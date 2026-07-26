@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   AlertTriangle,
   BellRing,
@@ -48,28 +48,40 @@ const THEME_PRESET_SAVED_PREFIX = 'saved:'
 const THEME_PRESET_CUSTOM = 'custom'
 const MAX_SAVED_THEME_PRESETS = 20
 
-function taskHotkeyLabel(command: '上一个 Codex 任务' | '下一个 Codex 任务'): string {
-  if (!props.snapshot.taskHotkeys.supported) return '当前宿主无法读取'
-  return props.snapshot.taskHotkeys.bindings[command] || '未配置'
+type CodexConfigTabId = 'shortcuts' | 'tasks' | 'water' | 'card' | 'runtime'
+
+const configTabs: Array<{ id: CodexConfigTabId; label: string }> = [
+  { id: 'shortcuts', label: '快捷方式' },
+  { id: 'tasks', label: '任务' },
+  { id: 'water', label: '水球' },
+  { id: 'card', label: '卡片' },
+  { id: 'runtime', label: '运行' }
+]
+const activeConfigTab = ref<CodexConfigTabId>('shortcuts')
+
+function configTabButtonId(id: CodexConfigTabId): string {
+  return `codex-config-tab-${id}`
 }
 
-function refreshTaskHotkeys() {
-  emit('dispatch', 'codex.task.hotkeys.refresh')
+function configPanelId(id: CodexConfigTabId): string {
+  return `codex-config-panel-${id}`
 }
 
-function refreshTaskHotkeysWhenVisible() {
-  if (document.visibilityState === 'visible') refreshTaskHotkeys()
+function onConfigTabKeydown(event: KeyboardEvent, currentIndex: number) {
+  let nextIndex = currentIndex
+  if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % configTabs.length
+  else if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + configTabs.length) % configTabs.length
+  else if (event.key === 'Home') nextIndex = 0
+  else if (event.key === 'End') nextIndex = configTabs.length - 1
+  else return
+
+  event.preventDefault()
+  activeConfigTab.value = configTabs[nextIndex].id
+  const tabButtons = (event.currentTarget as HTMLButtonElement)
+    .closest('[role="tablist"]')
+    ?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+  tabButtons?.[nextIndex]?.focus()
 }
-
-onMounted(() => {
-  window.addEventListener('focus', refreshTaskHotkeys)
-  document.addEventListener('visibilitychange', refreshTaskHotkeysWhenVisible)
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('focus', refreshTaskHotkeys)
-  document.removeEventListener('visibilitychange', refreshTaskHotkeysWhenVisible)
-})
 
 function cloneWaterAppearance(value: CodexWaterAppearanceSettings): CodexWaterAppearanceSettings {
   return { inner: { ...value.inner }, outer: { ...value.outer } }
@@ -320,6 +332,15 @@ const environmentRows = computed(() => {
 })
 
 const launchCandidates = computed(() => props.snapshot.environment.launchCandidates || [])
+const launchHelpText = computed(() => {
+  const platformGuide = props.snapshot.environment.platform === 'windows'
+    ? 'Windows 优先选择 codex.exe；自动核查会检查 Volta、npm、NVM、用户目录与系统 PATH。'
+    : 'macOS 自动核查会检查 Homebrew、Volta、NVM、用户目录与系统 PATH。'
+  const fallbackGuide = props.snapshot.environment.statusFeedMode !== 'desktop-live'
+    ? ' 当前为兼容连接器降级：额度与库存仍可用，实时任务状态保持未知，直到桌面实时桥连接。'
+    : ''
+  return `手动位置只保存在本机插件存储，页面不会回显完整路径；未设置时使用自动发现。${platformGuide}${fallbackGuide}`
+})
 
 function saveLaunchPath() {
   const candidate = manualLaunchPath.value.trim()
@@ -510,20 +531,45 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
       </div>
     </header>
 
-    <section class="codex-diagnostic" :class="diagnostic.tone" :role="diagnosticRole" aria-live="polite">
+    <nav class="codex-config-tabs" role="tablist" aria-label="Codex 配置分类">
+      <button
+        v-for="(tab, index) in configTabs"
+        :id="configTabButtonId(tab.id)"
+        :key="tab.id"
+        type="button"
+        role="tab"
+        :aria-selected="activeConfigTab === tab.id"
+        :aria-controls="configPanelId(tab.id)"
+        :tabindex="activeConfigTab === tab.id ? 0 : -1"
+        :class="{ active: activeConfigTab === tab.id }"
+        @click="activeConfigTab = tab.id"
+        @keydown="onConfigTabKeydown($event, index)"
+      >{{ tab.label }}</button>
+    </nav>
+
+    <section
+      :id="configPanelId(activeConfigTab)"
+      class="codex-config-tab-panel"
+      role="tabpanel"
+      :aria-labelledby="configTabButtonId(activeConfigTab)"
+    >
+    <section v-if="activeConfigTab === 'runtime'" class="codex-diagnostic" :class="diagnostic.tone" :role="diagnosticRole" aria-live="polite">
       <div class="codex-diagnostic-copy">
         <LoaderCircle v-if="diagnostic.tone === 'checking'" :size="19" class="spinning" aria-hidden="true" />
         <CircleCheckBig v-else-if="diagnostic.tone === 'ready'" :size="19" aria-hidden="true" />
         <AlertTriangle v-else :size="19" aria-hidden="true" />
-        <div><strong>{{ diagnostic.title }}</strong><p>{{ diagnostic.detail }}</p></div>
+        <div class="codex-diagnostic-heading">
+          <strong>{{ diagnostic.title }}</strong>
+          <span class="codex-tip" role="button" tabindex="0" aria-label="诊断详情" :data-tip="diagnostic.detail">i</span>
+        </div>
       </div>
       <dl class="codex-diagnostic-grid">
         <div v-for="row in environmentRows" :key="row.label"><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></div>
       </dl>
       <form class="codex-launch-config" @submit.prevent="saveLaunchPath">
         <div class="codex-launch-copy">
-          <strong>连接位置与降级说明</strong>
-          <p>手动位置只保存在本机插件存储，页面不会回显完整路径；未设置时将使用自动发现和现有本地连接器。</p>
+          <strong>连接位置</strong>
+          <span class="codex-tip" role="button" tabindex="0" aria-label="连接位置说明" :data-tip="launchHelpText">i</span>
         </div>
         <label class="codex-launch-field" for="codex-launch-path">
           <span>手动指定 Codex CLI 路径（可选）</span>
@@ -555,13 +601,6 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             {{ candidate.label }} · {{ candidate.state === 'available' ? '可用' : '不可用' }}
           </li>
         </ul>
-        <p class="codex-launch-guide">
-          <template v-if="snapshot.environment.platform === 'windows'">Windows：优先选择 <code>codex.exe</code>；自动核查会检查 Volta、npm、NVM、用户目录与系统 PATH。若只有 npm 的 <code>.cmd</code> 入口，宿主还会核验 Node 与 Codex 程序文件。</template>
-          <template v-else>macOS：自动核查会检查 Homebrew、Volta、NVM、用户目录与系统 PATH；常见位置包括 <code>/opt/homebrew/bin/codex</code>、<code>/usr/local/bin/codex</code> 与 <code>~/.volta/bin/codex</code>。</template>
-        </p>
-        <p v-if="snapshot.environment.statusFeedMode !== 'desktop-live'" class="codex-launch-fallback">
-          当前为兼容连接器降级：可展示额度、库存和归档结果，但会有连接延迟；Input、正在进行中和已完成未读保持“未知”，直到 Codex Desktop 实时桥连接，绝不由插件缓存补猜。
-        </p>
       </form>
         <button
           type="button"
@@ -576,15 +615,15 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
     </section>
 
     <div class="codex-workbench">
-      <article class="codex-panel codex-settings-section">
+      <article v-if="activeConfigTab === 'shortcuts'" class="codex-panel codex-settings-section codex-shortcuts-panel">
         <div class="codex-panel-title">
-          <div><LayoutDashboard :size="17" /><strong>显示</strong></div>
+          <div><LayoutDashboard :size="17" /><strong>快捷方式</strong></div>
           <span
             class="codex-tip"
             role="button"
             tabindex="0"
-            aria-label="显示区域说明"
-            data-tip="可配置悬浮球显示入口与直接展开入口；面板操作不读取对话正文。"
+            aria-label="快捷方式说明"
+            data-tip="这里只跳转到 uTools 快捷键设置或执行入口动作，不读取、回显任何宿主快捷键绑定。"
           >i</span>
         </div>
         <div class="codex-shortcut-stack">
@@ -598,7 +637,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               data-operation-tooltip="配置系统级快捷键"
               data-operation-description="打开快捷键配置入口，可把核心入口动作同步到系统级按键。"
               @click="$emit('dispatch', 'codex.hotkey.configure')"
-            >配置系统级快捷键</button>
+            >去设置</button>
           </div>
           <div class="codex-hotkey-row">
             <Keyboard :size="17" aria-hidden="true" />
@@ -622,7 +661,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               data-operation-tooltip="配置待输入快捷键"
               data-operation-description="打开 uTools 全局功能，为“打开 Codex 待输入任务”绑定系统级快捷键。"
               @click="$emit('dispatch', 'codex.input.hotkey.configure')"
-            >配置快捷键</button>
+            >去设置</button>
           </div>
           <div class="codex-hotkey-row">
             <Keyboard :size="17" aria-hidden="true" />
@@ -634,14 +673,11 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               data-operation-tooltip="配置已完成未读快捷键"
               data-operation-description="打开 uTools 全局功能，为“打开并标记第一个 Codex 已完成未读任务”绑定系统级快捷键。"
               @click="$emit('dispatch', 'codex.completed-unread.hotkey.configure')"
-            >配置快捷键</button>
+            >去设置</button>
           </div>
           <div class="codex-hotkey-row">
             <Keyboard :size="17" aria-hidden="true" />
-            <span>
-              <strong>上一个 Codex 任务</strong>
-              <small>当前绑定：<kbd>{{ taskHotkeyLabel('上一个 Codex 任务') }}</kbd></small>
-            </span>
+            <span><strong>上一个 Codex 任务</strong></span>
             <button
               type="button"
               class="secondary codex-hotkey-cta"
@@ -649,14 +685,11 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               data-operation-tooltip="配置上一个任务快捷键"
               data-operation-description="打开 uTools 全局功能，为“上一个 Codex 任务”绑定系统级快捷键。"
               @click="$emit('dispatch', 'codex.task.previous.hotkey.configure')"
-            >配置快捷键</button>
+            >去设置</button>
           </div>
           <div class="codex-hotkey-row">
             <Keyboard :size="17" aria-hidden="true" />
-            <span>
-              <strong>下一个 Codex 任务</strong>
-              <small>当前绑定：<kbd>{{ taskHotkeyLabel('下一个 Codex 任务') }}</kbd></small>
-            </span>
+            <span><strong>下一个 Codex 任务</strong></span>
             <button
               type="button"
               class="secondary codex-hotkey-cta"
@@ -664,23 +697,12 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               data-operation-tooltip="配置下一个任务快捷键"
               data-operation-description="打开 uTools 全局功能，为“下一个 Codex 任务”绑定系统级快捷键。"
               @click="$emit('dispatch', 'codex.task.next.hotkey.configure')"
-            >配置快捷键</button>
-          </div>
-          <div class="codex-hotkey-readback-actions">
-            <small>返回此页后会自动刷新；也可手动重新读取这两个命令的 uTools 绑定。</small>
-            <button
-              type="button"
-              class="secondary codex-hotkey-refresh"
-              title="重新读取上一个和下一个 Codex 任务的当前 uTools 全局快捷键"
-              data-operation-tooltip="刷新任务快捷键"
-              data-operation-description="只读取上一个和下一个 Codex 任务的当前 uTools 绑定，不会修改设置。"
-              @click="refreshTaskHotkeys"
-            ><RefreshCw :size="14" aria-hidden="true" />刷新</button>
+            >去设置</button>
           </div>
         </div>
       </article>
 
-      <article class="codex-panel codex-settings-section">
+      <article v-if="activeConfigTab === 'tasks'" class="codex-panel codex-settings-section">
         <div class="codex-panel-title">
           <div><SlidersHorizontal :size="17" /><strong>内容</strong></div>
           <span
@@ -702,7 +724,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         </fieldset>
       </article>
 
-      <article class="codex-panel codex-settings-section">
+      <article v-if="activeConfigTab === 'tasks'" class="codex-panel codex-settings-section">
         <div class="codex-panel-title">
           <div><BellRing :size="17" /><strong>任务</strong></div>
           <span
@@ -776,12 +798,11 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         </div>
       </article>
 
-      <article class="codex-panel codex-settings-section codex-appearance-panel">
+      <article v-if="activeConfigTab === 'water' || activeConfigTab === 'card'" class="codex-panel codex-settings-section codex-appearance-panel">
         <div class="codex-panel-title">
-          <div><Palette :size="17" /><strong>外观工作台</strong></div>
-          <span class="codex-tip" role="button" tabindex="0" aria-label="外观工作台说明" data-tip="水球、卡片和状态信号分开配置；每个颜色会立刻写入自己标明的部位。">i</span>
+          <div><Palette :size="17" /><strong>{{ activeConfigTab === 'water' ? '悬浮水球' : '展开卡片' }}</strong></div>
+          <span class="codex-tip" role="button" tabindex="0" aria-label="外观配置说明" data-tip="主题预设会同时保存水球与展开卡片；当前页只展示所选目标的预览与控件。">i</span>
         </div>
-        <p class="codex-appearance-intro">先应用整套主题，或直接修改下方任一部位。颜色不会再因对比度、格式或联动规则被改回。</p>
         <div class="codex-theme-toolbar">
           <label>
             <span>整套主题</span>
@@ -796,9 +817,9 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         </div>
         <p v-if="themePresetError" class="codex-color-error" role="alert">{{ themePresetError }}</p>
 
-        <div class="codex-appearance-zones">
-          <section class="codex-appearance-zone codex-appearance-zone--water" aria-labelledby="water-appearance-title">
-            <div class="codex-appearance-zone-head"><div><span>01 · 悬浮水球</span><h3 id="water-appearance-title">球体、液体、Weekly 环、百分比与数字角标</h3></div><p>预览和桌面水球共用同一套渲染；下方每一项只影响同名部位。</p></div>
+        <div class="codex-appearance-zones" :class="{ 'card-only': activeConfigTab === 'card' }">
+          <section v-if="activeConfigTab === 'water'" class="codex-appearance-zone codex-appearance-zone--water" aria-labelledby="water-appearance-title">
+            <div class="codex-appearance-zone-head"><div><span>01 · 悬浮水球</span><h3 id="water-appearance-title">水球外观</h3></div><span class="codex-tip" role="button" tabindex="0" aria-label="水球外观说明" data-tip="预览与桌面水球共用渲染；可分别控制球体背景、液体、Weekly 进度环、百分比读数和三类数字角标。">i</span></div>
             <div class="codex-water-appearance-preview" :style="waterPreviewStyle" aria-label="与真实悬浮水球一致的颜色部位预览">
               <CodexWaterBall
                 :primary="waterPreview.primary"
@@ -813,7 +834,6 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               <b v-if="waterPreviewCounters.active" class="water-preview-counter water-preview-counter--active">{{ compactPreviewCount(waterPreviewCounters.active) }}</b>
               <b v-if="waterPreviewCounters.unread" class="water-preview-counter water-preview-counter--unread">{{ compactPreviewCount(waterPreviewCounters.unread) }}</b>
             </div>
-            <div class="codex-part-legend"><span><i class="part-dot base" />球体背景（含透明度）</span><span><i class="part-dot liquid" />液体 A / B 与波动</span><span><i class="part-dot progress" />Weekly 进度 / 轨道</span><span><i class="part-dot reading" />百分比读数</span><span><i class="part-dot counter" />三类数字角标</span></div>
             <div class="codex-appearance-controls">
               <label class="codex-color-control"><input type="color" :value="snapshot.settings.colors.water" @input="updateColor('water', ($event.target as HTMLInputElement).value)" /><span><strong>球体底色</strong><small>只影响球体背景，不影响液体</small></span></label>
               <label class="water-range"><span>球体底色透明度 <strong>{{ waterDraft.inner.baseOpacity }}%</strong></span><input type="range" min="0" max="100" step="1" :value="waterDraft.inner.baseOpacity" @input="updateWaterDraft('inner', 'baseOpacity', Number(($event.target as HTMLInputElement).value))" /></label>
@@ -829,7 +849,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               <label class="codex-color-control"><input type="color" :value="waterDraft.outer.trackColor" @input="updateWaterDraft('outer', 'trackColor', ($event.target as HTMLInputElement).value.toUpperCase())" /><span><strong>Weekly 轨道色</strong><small>未完成部分</small></span></label>
             </div>
             <div class="codex-water-reading-controls" aria-label="百分比读数配置">
-              <header><strong>百分比读数</strong><small>独立设置水球百分比的位置、字号、字形和颜色。</small></header>
+              <header><strong>百分比读数</strong><span class="codex-tip" role="button" tabindex="0" aria-label="百分比读数说明" data-tip="独立设置水球百分比的位置、字号、字形和颜色。">i</span></header>
               <label><span>显示位置</span><select class="codex-select" :value="waterDraft.inner.percentPosition" @change="updateWaterDraft('inner', 'percentPosition', ($event.target as HTMLSelectElement).value)"><option value="auto">自动（居中）</option><option value="center">居中</option><option value="bottom-left">左下</option><option value="bottom-right">右下</option></select></label>
               <label class="water-reading-range"><span>文字大小 <strong>{{ waterDraft.inner.percentSize }}px</strong></span><input type="range" min="12" max="32" step="1" :value="waterDraft.inner.percentSize" @input="updateWaterDraft('inner', 'percentSize', Number(($event.target as HTMLInputElement).value))" /></label>
               <label><span>文字样式</span><select class="codex-select" :value="waterDraft.inner.percentTextStyle" @change="updateWaterDraft('inner', 'percentTextStyle', ($event.target as HTMLSelectElement).value)"><option value="regular">常规</option><option value="bold">加粗</option><option value="italic">斜体</option><option value="bold-italic">粗斜体</option></select></label>
@@ -838,8 +858,8 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             <div class="codex-counter-colors"><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.input" @input="update({ counterColors: { ...snapshot.settings.counterColors, input: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>待输入角标</strong><small>左上数字</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.active" @input="update({ counterColors: { ...snapshot.settings.counterColors, active: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>进行中角标</strong><small>右上第一个数字</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.unread" @input="update({ counterColors: { ...snapshot.settings.counterColors, unread: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>已未读角标</strong><small>右上第二个数字</small></span></label></div>
           </section>
 
-          <section class="codex-appearance-zone codex-appearance-zone--card" aria-labelledby="card-appearance-title">
-            <div class="codex-appearance-zone-head"><div><span>02 · 悬浮展开卡片</span><h3 id="card-appearance-title">大卡片主题：面板、文字、交互与任务状态</h3></div><p>这是悬浮球展开后的真实主题目标；展开后不会读取水球配色。</p></div>
+          <section v-if="activeConfigTab === 'card'" class="codex-appearance-zone codex-appearance-zone--card" aria-labelledby="card-appearance-title">
+            <div class="codex-appearance-zone-head"><div><span>02 · 悬浮展开卡片</span><h3 id="card-appearance-title">展开卡片主题</h3></div><span class="codex-tip" role="button" tabindex="0" aria-label="展开卡片主题说明" data-tip="单独控制展开面板、文字、交互与任务状态；不会读取水球配色。">i</span></div>
             <div class="codex-expanded-card-preview" :style="cardPreviewStyle" aria-label="悬浮展开卡片颜色部位预览">
               <div class="expanded-card-preview-tabs"><b><i>3</i>动态</b><span>已完成</span><span>已隐藏</span><span>项目</span></div>
               <div class="expanded-card-preview-search"><i /><span>搜索会话、别名或项目</span></div>
@@ -872,14 +892,14 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             </div>
           </section>
 
-          <section class="codex-appearance-zone codex-appearance-zone--signals" aria-labelledby="signal-appearance-title">
-            <div class="codex-appearance-zone-head"><div><span>03 · 状态信号</span><h3 id="signal-appearance-title">额度状态的三种颜色</h3></div><p>用于“跟随额度状态”的 Weekly 进度与状态强调。</p></div>
+          <section v-if="activeConfigTab === 'water'" class="codex-appearance-zone codex-appearance-zone--signals" aria-labelledby="signal-appearance-title">
+            <div class="codex-appearance-zone-head"><div><span>02 · 状态信号</span><h3 id="signal-appearance-title">额度状态色</h3></div><span class="codex-tip" role="button" tabindex="0" aria-label="额度状态颜色说明" data-tip="用于跟随额度状态的 Weekly 进度和状态强调：充足、提醒、紧张。">i</span></div>
             <div class="codex-signal-controls"><label class="codex-color-control"><input type="color" :value="snapshot.settings.colors.healthy" @input="updateColor('healthy', ($event.target as HTMLInputElement).value)" /><span><strong>充足</strong><small>高额度状态</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.colors.warning" @input="updateColor('warning', ($event.target as HTMLInputElement).value)" /><span><strong>提醒</strong><small>中额度状态</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.colors.critical" @input="updateColor('critical', ($event.target as HTMLInputElement).value)" /><span><strong>紧张</strong><small>低额度状态</small></span></label></div>
           </section>
         </div>
       </article>
 
-      <article class="codex-panel codex-settings-section">
+      <article v-if="activeConfigTab === 'runtime'" class="codex-panel codex-settings-section">
         <div class="codex-panel-title">
           <div><CircleGauge :size="17" /><strong>刷新与 Codex 配置</strong></div>
           <span
@@ -944,7 +964,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         <div class="codex-size-summary">
           <span>
             <strong>{{ snapshot.floatHost.expandedManual ? `展开面板：${snapshot.floatHost.expandedWidth} × ${snapshot.floatHost.expandedHeight}` : '展开面板：内容自适应' }}</strong>
-            <small>{{ snapshot.floatHost.expandedManual ? `按显示器保存${snapshot.floatHost.displayId ? ` · ${snapshot.floatHost.displayId}` : ''}` : '默认宽 360px，高度随内容在 280–460px 间变化' }}</small>
+            <span class="codex-tip" role="button" tabindex="0" aria-label="展开面板尺寸说明" :data-tip="snapshot.floatHost.expandedManual ? `按显示器保存${snapshot.floatHost.displayId ? ` · ${snapshot.floatHost.displayId}` : ''}` : '默认宽 360px，高度随内容在 280–460px 间变化'">i</span>
           </span>
           <button
             type="button"
@@ -960,10 +980,11 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         <div class="codex-size-summary codex-workspace-diagnostic">
           <span>
             <strong>{{ snapshot.floatHost.workspaceVisibility?.allWorkspaces && snapshot.floatHost.workspaceVisibility?.visibleOnFullScreen ? '跨桌面置顶：已启用' : snapshot.floatHost.workspaceVisibility?.supported ? '跨桌面置顶：核验失败' : '跨桌面置顶：当前平台不支持' }}</strong>
-            <small>{{ snapshot.floatHost.workspaceVisibility?.allWorkspaces && snapshot.floatHost.workspaceVisibility?.visibleOnFullScreen ? '当前显示器的所有 Space 与全屏 Space 可见' : snapshot.floatHost.workspaceVisibility?.errorCode || '等待悬浮窗宿主核验' }}</small>
+            <span class="codex-tip" role="button" tabindex="0" aria-label="跨桌面置顶说明" :data-tip="snapshot.floatHost.workspaceVisibility?.allWorkspaces && snapshot.floatHost.workspaceVisibility?.visibleOnFullScreen ? '当前显示器的所有 Space 与全屏 Space 可见' : snapshot.floatHost.workspaceVisibility?.errorCode || '等待悬浮窗宿主核验'">i</span>
           </span>
         </div>
       </article>
     </div>
+    </section>
   </section>
 </template>
