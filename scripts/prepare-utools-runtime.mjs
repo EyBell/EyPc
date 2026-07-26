@@ -14,6 +14,13 @@ const distPackageJson = resolve(distDir, 'package.json')
 const distPreload = resolve(distDir, 'preload.js')
 const distFloatPreload = resolve(distDir, 'float-preload.js')
 const commonJsPackageScope = `${JSON.stringify({ type: 'commonjs' }, null, 2)}\n`
+const developmentMode = process.argv.includes('--development')
+const developmentFloatEntry = `<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><title>EyPc Codex Float Development</title></head>
+  <body><script>location.replace('http://127.0.0.1:8092/float.html')</script></body>
+</html>
+`
 
 writeFileSync(publicPackageJson, commonJsPackageScope)
 copyFileSync(preloadSource, publicPreload)
@@ -25,6 +32,7 @@ if (existsSync(distDir)) {
   writeFileSync(distPackageJson, commonJsPackageScope)
   copyFileSync(preloadSource, distPreload)
   copyFileSync(floatPreloadSource, distFloatPreload)
+  if (developmentMode) writeFileSync(resolve(distDir, 'float.html'), developmentFloatEntry)
 }
 
 console.log('uTools runtime assets prepared')

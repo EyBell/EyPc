@@ -55,6 +55,11 @@ function installHost(payload: { code?: string } | null, codexEnabled = true): En
       setMqttSecrets: () => true
     },
     ports: { scan: async () => [], kill: async (request) => ({ ok: false, ...request }) },
+    windows: {
+      capabilities: async () => ({ platform: 'unsupported' as const, supported: false, permission: 'unsupported' as const, canList: false, canActivate: false }),
+      list: async () => ({ capability: { platform: 'unsupported' as const, supported: false, permission: 'unsupported' as const, canList: false, canActivate: false }, windows: [] }),
+      activate: async () => ({ outcome: 'unsupported' as const })
+    },
     files: {
       open: async () => ({ outcome: 'failed', errorCode: 'unsupported' }),
       reveal: async () => ({ outcome: 'failed', errorCode: 'unsupported' }),

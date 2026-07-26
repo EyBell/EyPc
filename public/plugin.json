@@ -39,6 +39,71 @@
       "cmds": ["文件快开", "快速文件", "quick favorites"]
     },
     {
+      "code": "eypc-windows",
+      "explain": "窗口跳转与收藏",
+      "cmds": ["窗口跳转", "窗口收藏", "window jump"]
+    },
+    {
+      "code": "eypc-window-slot-1",
+      "explain": "EyPc 窗口槽 1",
+      "mainHide": true,
+      "cmds": ["EyPc 窗口槽 1"]
+    },
+    {
+      "code": "eypc-window-slot-2",
+      "explain": "EyPc 窗口槽 2",
+      "mainHide": true,
+      "cmds": ["EyPc 窗口槽 2"]
+    },
+    {
+      "code": "eypc-window-slot-3",
+      "explain": "EyPc 窗口槽 3",
+      "mainHide": true,
+      "cmds": ["EyPc 窗口槽 3"]
+    },
+    {
+      "code": "eypc-window-slot-4",
+      "explain": "EyPc 窗口槽 4",
+      "mainHide": true,
+      "cmds": ["EyPc 窗口槽 4"]
+    },
+    {
+      "code": "eypc-window-slot-5",
+      "explain": "EyPc 窗口槽 5",
+      "mainHide": true,
+      "cmds": ["EyPc 窗口槽 5"]
+    },
+    {
+      "code": "eypc-window-slot-6",
+      "explain": "EyPc 窗口槽 6",
+      "mainHide": true,
+      "cmds": ["EyPc 窗口槽 6"]
+    },
+    {
+      "code": "eypc-window-slot-7",
+      "explain": "EyPc 窗口槽 7",
+      "mainHide": true,
+      "cmds": ["EyPc 窗口槽 7"]
+    },
+    {
+      "code": "eypc-window-slot-8",
+      "explain": "EyPc 窗口槽 8",
+      "mainHide": true,
+      "cmds": ["EyPc 窗口槽 8"]
+    },
+    {
+      "code": "eypc-window-slot-9",
+      "explain": "EyPc 窗口槽 9",
+      "mainHide": true,
+      "cmds": ["EyPc 窗口槽 9"]
+    },
+    {
+      "code": "eypc-window-slot-10",
+      "explain": "EyPc 窗口槽 10",
+      "mainHide": true,
+      "cmds": ["EyPc 窗口槽 10"]
+    },
+    {
       "code": "eypc-codex",
       "explain": "Codex 额度悬浮球设置",
       "cmds": ["Codex额度", "Codex悬浮球", "Codex quota"]
@@ -60,6 +125,24 @@
       "explain": "打开 Codex 待输入任务",
       "mainHide": true,
       "cmds": ["Codex待输入", "打开 Codex 待输入任务", "Codex 待回复"]
+    },
+    {
+      "code": "eypc-codex-completed-unread",
+      "explain": "打开并标记第一个 Codex 已完成未读任务",
+      "mainHide": true,
+      "cmds": ["Codex已完成未读", "打开第一个 Codex 已完成未读", "Codex 未读完成"]
+    },
+    {
+      "code": "eypc-codex-task-previous",
+      "explain": "上一个 Codex 任务",
+      "mainHide": true,
+      "cmds": ["上一个 Codex 任务", "Codex 上一个任务", "Codex previous task"]
+    },
+    {
+      "code": "eypc-codex-task-next",
+      "explain": "下一个 Codex 任务",
+      "mainHide": true,
+      "cmds": ["下一个 Codex 任务", "Codex 下一个任务", "Codex next task"]
     },
     {
       "code": "eypc-settings",

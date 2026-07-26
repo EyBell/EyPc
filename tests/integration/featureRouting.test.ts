@@ -3,11 +3,12 @@ import { allFeatures, visibleFeatures } from '../../src/runtime/feature/featureR
 import { routePluginFeature } from '../../src/runtime/feature/featureRouting'
 
 describe('uTools feature routing', () => {
-  it('keeps the default feature tab order with Codex before settings', () => {
+  it('keeps the default feature tab order with the disabled window workbench before Codex', () => {
     expect(allFeatures().map((feature) => ({ id: feature.id, enabled: feature.enabled }))).toEqual([
       { id: 'ports', enabled: true },
       { id: 'favorites', enabled: false },
       { id: 'mqtt', enabled: true },
+      { id: 'windows', enabled: false },
       { id: 'codex', enabled: true },
       { id: 'settings', enabled: true }
     ])
@@ -19,6 +20,14 @@ describe('uTools feature routing', () => {
     expect(routePluginFeature({ code: 'eypc-mqtt' })).toEqual({ tab: 'mqtt', focusSearch: true })
     expect(routePluginFeature({ code: 'eypc-favorites' })).toEqual({ tab: 'favorites', focusSearch: true })
     expect(routePluginFeature({ code: 'eypc-favorites-quick' })).toEqual({ tab: 'favorites', focusSearch: false, favoriteQuick: true })
+    expect(routePluginFeature({ code: 'eypc-windows' })).toEqual({ tab: 'windows', focusSearch: true })
+    expect(routePluginFeature({ code: 'eypc-window-slot-7' }, undefined, 'mqtt')).toEqual({
+      tab: 'mqtt',
+      focusSearch: false,
+      actionId: 'windows.slot.activate',
+      actionArgs: { slot: 7 },
+      hideAfterAction: true
+    })
     expect(routePluginFeature({ code: 'eypc-codex' })).toEqual({ tab: 'codex', focusSearch: false })
     expect(routePluginFeature({ code: 'eypc-codex-toggle' }, undefined, 'mqtt')).toEqual({
       tab: 'mqtt',
@@ -72,8 +81,9 @@ describe('uTools feature routing', () => {
       { id: 'ports' as const, enabled: true, sortOrder: 1 },
       { id: 'mqtt' as const, enabled: false, sortOrder: 2 },
       { id: 'favorites' as const, enabled: false, sortOrder: 3 },
-      { id: 'codex' as const, enabled: false, sortOrder: 4 },
-      { id: 'settings' as const, enabled: true, sortOrder: 5 }
+      { id: 'windows' as const, enabled: false, sortOrder: 4 },
+      { id: 'codex' as const, enabled: false, sortOrder: 5 },
+      { id: 'settings' as const, enabled: true, sortOrder: 6 }
     ]
 
     expect(routePluginFeature({ code: 'eypc-mqtt' }, featureConfigs)).toEqual({
@@ -87,6 +97,16 @@ describe('uTools feature routing', () => {
       settingsMaintenanceSection: 'features'
     })
     expect(routePluginFeature({ code: 'eypc-favorites-quick' }, featureConfigs)).toEqual({
+      tab: 'settings',
+      focusSearch: false,
+      settingsMaintenanceSection: 'features'
+    })
+    expect(routePluginFeature({ code: 'eypc-windows' }, featureConfigs)).toEqual({
+      tab: 'settings',
+      focusSearch: false,
+      settingsMaintenanceSection: 'features'
+    })
+    expect(routePluginFeature({ code: 'eypc-window-slot-1' }, featureConfigs)).toEqual({
       tab: 'settings',
       focusSearch: false,
       settingsMaintenanceSection: 'features'

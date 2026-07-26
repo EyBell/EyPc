@@ -17,6 +17,8 @@ export interface RuntimeActionContext {
   mqttPane?: KeybindingContext['mqttPane']
   mqttPanelOpen?: boolean
   mqttTargetKind?: KeybindingContext['mqttTargetKind']
+  windowActionsOpen?: boolean
+  windowEditorOpen?: boolean
 }
 
 export interface RuntimeActionDefinition {
