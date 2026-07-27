@@ -22,7 +22,7 @@ export interface CodexCompactPresentation {
   primary: CodexQuotaReading | null
   secondary: CodexQuotaReading | null
   showTasks: boolean
-  /** Visible ongoing count: Desktop live active plus raw interrupted projected as ongoing. */
+  /** Visible ongoing count: every non-completed task, including legacy abnormal buckets. */
   ongoingCount: number
   unknownCount: number
   attentionCount: number
@@ -81,11 +81,15 @@ export function buildCodexCompactPresentation(input: CodexPresentationInput): Co
     }
   }
   const showTasks = input.conversationInboxEnabled && input.compactFields.includes('tasks')
-  const ongoingCount = showTasks ? input.conversations.ongoingCount : 0
-  const unknownCount = showTasks ? input.conversations.unknownCount : 0
-  const attentionCount = showTasks ? input.conversations.attentionCount : 0
+  // Fold legacy snapshots into the current conservative product contract so an
+  // older cached projection cannot briefly expose “unknown” or “attention”.
+  const ongoingCount = showTasks
+    ? input.conversations.ongoingCount + input.conversations.unknownCount + input.conversations.attentionCount
+    : 0
+  const unknownCount = 0
+  const attentionCount = 0
   const pendingCount = showTasks ? input.conversations.pendingCount : 0
-  const inProgressCount = ongoingCount + attentionCount
+  const inProgressCount = ongoingCount
   const state = quotaState(input.quota, primary !== null)
   const quotaDescription = primary
     ? `${primary.longLabel}剩余 ${primary.bucket.remainingPercent}%${secondary ? `，${secondary.longLabel}剩余 ${secondary.bucket.remainingPercent}%` : ''}`
@@ -93,7 +97,6 @@ export function buildCodexCompactPresentation(input: CodexPresentationInput): Co
   const taskParts = showTasks
     ? [
         inProgressCount ? `${inProgressCount} 个进行中或等待操作` : '',
-        unknownCount ? `${unknownCount} 个状态未知` : '',
         pendingCount ? `${pendingCount} 个待查看` : ''
       ].filter(Boolean)
     : []

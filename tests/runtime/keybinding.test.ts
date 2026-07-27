@@ -898,6 +898,7 @@ describe('keybinding runtime', () => {
     const rows = buildShortcutCommandRows(DEFAULT_KEYBINDINGS)
     expect(DEFAULT_SHORTCUTS_BY_COMMAND['ports.groups.togglePanel']).toEqual(['Ctrl+Shift+W'])
     expect(DEFAULT_SHORTCUTS_BY_COMMAND['ports.groupTarget.toggle']).toEqual([])
+    expect(DEFAULT_SHORTCUTS_BY_COMMAND['windows.pin.toggle']).toEqual([])
     expect(DEFAULT_SHORTCUTS_BY_COMMAND['ports.drawer.select.9']).toEqual(['Ctrl+9'])
     expect(DEFAULT_SHORTCUTS_BY_COMMAND['ports.drawer.action.9']).toEqual(['Ctrl+Alt+9'])
     for (const row of rows) {

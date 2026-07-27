@@ -14,3 +14,8 @@ command = "pnpm run build"
 name = "Serve"
 icon = "run"
 command = "pnpm run serve"
+
+[[actions]]
+name = "Git Push"
+icon = "run"
+command = "git push"

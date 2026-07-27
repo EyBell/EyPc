@@ -4827,7 +4827,7 @@ describe('app runtime', () => {
     })
     enableWindows(state)
     state.activeTab = 'ports'
-    state.windowTargets = [{ id: 'work-browser', alias: '工作浏览器', platform: 'darwin', appId: 'com.browser', appName: 'Browser', titleLocator: 'Docs', lastNativeRef: null, favorite: true, createdAt: 1, updatedAt: 1 }]
+    state.windowTargets = [{ id: 'work-browser', alias: '工作浏览器', platform: 'darwin', appId: 'com.browser', appName: 'Browser', titleLocator: 'Docs', lastNativeRef: null, favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
     state.windowSlots[0].targetIdByPlatform.darwin = 'work-browser'
     const runtime = createAppRuntime(state)
 
@@ -4871,7 +4871,7 @@ describe('app runtime', () => {
       }
     })
     enableWindows(state)
-    state.windowTargets = [{ id: 'notes', alias: '笔记', platform: 'darwin', appId: 'com.notes', appName: 'Notes', titleLocator: 'Inbox', lastNativeRef: '7:1:1', favorite: true, createdAt: 1, updatedAt: 1 }]
+    state.windowTargets = [{ id: 'notes', alias: '笔记', platform: 'darwin', appId: 'com.notes', appName: 'Notes', titleLocator: 'Inbox', lastNativeRef: '7:1:1', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
     state.windowSlots[0].targetIdByPlatform.darwin = 'notes'
     const runtime = createAppRuntime(state)
 
@@ -4917,7 +4917,7 @@ describe('app runtime', () => {
     })
     enableWindows(state)
     state.activeTab = 'ports'
-    state.windowTargets = [{ id: 'docs', alias: '文档', platform: 'win32', appId: 'browser.exe', appName: 'Browser', titleLocator: 'Docs', lastNativeRef: '424242', favorite: true, createdAt: 1, updatedAt: 1 }]
+    state.windowTargets = [{ id: 'docs', alias: '文档', platform: 'win32', appId: 'browser.exe', appName: 'Browser', titleLocator: 'Docs', lastNativeRef: '424242', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
     state.windowSlots[0].targetIdByPlatform.win32 = 'docs'
     const runtime = createAppRuntime(state)
 
@@ -4947,7 +4947,7 @@ describe('app runtime', () => {
     })
     enableWindows(state)
     state.activeTab = 'ports'
-    state.windowTargets = [{ id: 'pinned', alias: '固定编辑器', platform: 'darwin', appId: 'com.editor', appName: 'Editor', titleLocator: 'Main', lastNativeRef: null, favorite: false, createdAt: 1, updatedAt: 1 }]
+    state.windowTargets = [{ id: 'pinned', alias: '固定编辑器', platform: 'darwin', appId: 'com.editor', appName: 'Editor', titleLocator: 'Main', lastNativeRef: null, favorite: false, pinned: false, createdAt: 1, updatedAt: 1 }]
     state.windowSlots[2].targetIdByPlatform.darwin = 'pinned'
     const runtime = createAppRuntime(state)
 
@@ -5000,6 +5000,76 @@ describe('app runtime', () => {
     expect(runtime.snapshot().windowActionTarget?.id).toBe('live:darwin:1:1:1')
     expect(runtime.snapshot().windowFocusRequestId).toBeGreaterThan(beforeListFocus)
     expect(runtime.snapshot().windowActionsFocusRequestId).toBe(beforeActionsFocus)
+  })
+
+  it('sorts by application and persists an independent pinned-first state', async () => {
+    const { state } = installPlatform({
+      windows: {
+        capabilities: async () => ({ platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true }),
+        list: async () => ({
+          capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true },
+          windows: [
+            { id: 'darwin:2:1:1', platform: 'darwin', nativeRef: '2:1:1', appId: 'com.beta', appName: 'Beta', pid: 2, title: 'Two', minimized: false, focused: false },
+            { id: 'darwin:1:1:1', platform: 'darwin', nativeRef: '1:1:1', appId: 'com.alpha', appName: 'Alpha', pid: 1, title: 'One', minimized: false, focused: false }
+          ]
+        }),
+        activate: async () => ({ outcome: 'activated' as const })
+      }
+    })
+    enableWindows(state)
+    const runtime = createAppRuntime(state)
+    runtime.setTab('windows')
+    runtime.dispatch('windows.refresh')
+    await flushWindowActions()
+
+    expect(runtime.snapshot().windowRows.map((row) => row.appName)).toEqual(['Alpha', 'Beta'])
+    runtime.focusWindow('live:darwin:2:1:1')
+    expect(runtime.dispatch('windows.actions.open').handled).toBe(true)
+    expect(runtime.dispatch('windows.pin.toggle').handled).toBe(true)
+
+    const pinned = runtime.snapshot().windowRows[0]
+    expect(pinned).toMatchObject({ appName: 'Beta', pinned: true, favorite: false })
+    expect(runtime.snapshot().windowActionsOpen).toBe(true)
+    expect(runtime.snapshot().windowActionTarget).toMatchObject({ id: pinned.id, pinned: true })
+    expect(runtime.snapshot().state.windowTargets).toHaveLength(1)
+    expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ appName: 'Beta', pinned: true, favorite: false })
+
+    expect(runtime.dispatch('windows.pin.toggle').handled).toBe(true)
+    expect(runtime.snapshot().windowRows.map((row) => row.appName)).toEqual(['Alpha', 'Beta'])
+    expect(runtime.snapshot().windowActionsOpen).toBe(true)
+    expect(runtime.snapshot().windowActionTarget).toMatchObject({ id: 'live:darwin:2:1:1', pinned: false })
+    expect(runtime.snapshot().state.windowTargets).toEqual([])
+  })
+
+  it('keeps favorite retention when a pinned window is unpinned', async () => {
+    const { state } = installPlatform({
+      windows: {
+        capabilities: async () => ({ platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true }),
+        list: async () => ({
+          capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true },
+          windows: [{ id: 'darwin:3:1:1', platform: 'darwin', nativeRef: '3:1:1', appId: 'com.notes', appName: 'Notes', pid: 3, title: 'Inbox', minimized: false, focused: false }]
+        }),
+        activate: async () => ({ outcome: 'activated' as const })
+      }
+    })
+    enableWindows(state)
+    const runtime = createAppRuntime(state)
+    runtime.setTab('windows')
+    runtime.dispatch('windows.refresh')
+    await flushWindowActions()
+
+    runtime.dispatch('windows.favorite.toggle', { rowId: 'live:darwin:3:1:1' })
+    const targetRow = runtime.snapshot().windowRows[0]
+    runtime.dispatch('windows.pin.toggle', { rowId: targetRow.id })
+    runtime.dispatch('windows.pin.toggle', { rowId: targetRow.id })
+
+    expect(runtime.snapshot().state.windowTargets).toHaveLength(1)
+    expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ favorite: true, pinned: false })
+    expect(runtime.snapshot().windowRows[0]).toMatchObject({ favorite: true, pinned: false })
+
+    runtime.dispatch('windows.favorite.toggle', { rowId: targetRow.id })
+    expect(runtime.snapshot().state.windowTargets).toEqual([])
+    expect(runtime.snapshot().windowRows[0]).toMatchObject({ id: 'live:darwin:3:1:1', favorite: false, pinned: false })
   })
 
   it('multi-selects windows with Space advance and closes via OS-then-confirm force path', async () => {
@@ -5065,7 +5135,7 @@ describe('app runtime', () => {
       }
     })
     enableWindows(state)
-    state.windowTargets = [{ id: 'browser', alias: '浏览器', platform: 'win32', appId: 'browser.exe', appName: 'Browser', titleLocator: 'Docs', lastNativeRef: '123', favorite: true, createdAt: 1, updatedAt: 1 }]
+    state.windowTargets = [{ id: 'browser', alias: '浏览器', platform: 'win32', appId: 'browser.exe', appName: 'Browser', titleLocator: 'Docs', lastNativeRef: '123', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
     const runtime = createAppRuntime(state)
 
     runtime.setTab('windows')
@@ -5099,6 +5169,427 @@ describe('app runtime', () => {
 
     expect(runtime.snapshot().windowCapability).toMatchObject({ platform: 'darwin', permission: 'required', canList: false })
     expect(runtime.snapshot().windowRows).toEqual([])
-    expect(runtime.snapshot().message).toContain('System Events')
+    expect(runtime.snapshot().message).not.toContain('System Events')
+  })
+
+  describe('window activation diagnostics', () => {
+    const darwinCapability = { platform: 'darwin' as const, supported: true, permission: 'granted' as const, canList: true, canActivate: true }
+
+    function assignSlotTarget(state: ReturnType<typeof createInitialState>, lastNativeRef: string | null = 'old-ref') {
+      state.windowTargets = [{
+        id: 'diagnostic-target',
+        alias: '诊断目标',
+        platform: 'darwin',
+        appId: 'com.example.target',
+        appName: 'Example',
+        titleLocator: 'Target',
+        lastNativeRef,
+        favorite: true,
+        pinned: false,
+        createdAt: 1,
+        updatedAt: 1
+      }]
+      state.windowSlots[0].targetIdByPlatform.darwin = 'diagnostic-target'
+    }
+
+    it('keeps successful slot activation free of blocking diagnostics', async () => {
+      const { state, getHideCount } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({ capability: darwinCapability, windows: [] }),
+          activate: async () => ({ outcome: 'activated' as const })
+        }
+      })
+      enableWindows(state)
+      assignSlotTarget(state)
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(getHideCount()).toBe(1)
+      expect(runtime.snapshot().windowActivationDiagnostics.filter((diagnostic) => diagnostic.level === 'blocking')).toEqual([])
+    })
+
+    it('records a bounded sanitized development trace without persisting it into AppState', async () => {
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({ capability: darwinCapability, windows: [] }),
+          activate: async () => ({
+            outcome: 'activated' as const,
+            trace: {
+              steps: [
+                { stage: 'target' as const, outcome: 'ok' as const },
+                { stage: 'restore' as const, outcome: 'skipped' as const },
+                { stage: 'foreground' as const, outcome: 'ok' as const },
+                { stage: 'verify' as const, outcome: 'ok' as const }
+              ]
+            }
+          })
+        }
+      })
+      enableWindows(state)
+      assignSlotTarget(state)
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      const snapshot = runtime.snapshot()
+      expect(snapshot.windowOperationTraceEnabled).toBe(true)
+      expect(snapshot.windowOperationTraces).toEqual([
+        expect.objectContaining({
+          entry: 'slot',
+          slot: 1,
+          platform: 'darwin',
+          operation: 'activate',
+          result: 'success',
+          code: 'activated',
+          steps: expect.arrayContaining([
+            expect.objectContaining({ stage: 'target', outcome: 'ok' }),
+            expect.objectContaining({ stage: 'foreground', outcome: 'ok' })
+          ])
+        })
+      ])
+      const serializedTrace = JSON.stringify(snapshot.windowOperationTraces)
+      expect(serializedTrace).not.toContain('Example')
+      expect(serializedTrace).not.toContain('Target')
+      expect(serializedTrace).not.toContain('old-ref')
+      expect(JSON.stringify(snapshot.state)).not.toContain('windowOperationTrace')
+
+      expect(runtime.dispatch('windows.operation.traces.clear').handled).toBe(true)
+      expect(runtime.snapshot().windowOperationTraces).toEqual([])
+    })
+
+    it('bounds development operation traces to fifty records and clears them independently', async () => {
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({ capability: darwinCapability, windows: [] }),
+          activate: async () => ({ outcome: 'activated' as const })
+        }
+      })
+      enableWindows(state)
+      const runtime = createAppRuntime(state)
+
+      for (let index = 0; index < 51; index += 1) runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(runtime.snapshot().windowOperationTraceEnabled).toBe(true)
+      expect(runtime.snapshot().windowOperationTraces).toHaveLength(50)
+      expect(runtime.snapshot().windowOperationTraces.every((record) => record.code === 'slot-unassigned')).toBe(true)
+      expect(runtime.dispatch('windows.operation.traces.clear').handled).toBe(true)
+      expect(runtime.snapshot().windowOperationTraces).toEqual([])
+    })
+
+    it('does not favorite a live window merely because it is assigned to a stable slot', async () => {
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({
+            capability: darwinCapability,
+            windows: [{ id: 'darwin:slot-live', platform: 'darwin', nativeRef: 'slot-live', appId: 'com.example.slot', appName: 'Example', pid: 7, title: 'Slot target', minimized: false, focused: false }]
+          }),
+          activate: async () => ({ outcome: 'activated' as const })
+        }
+      })
+      enableWindows(state)
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.refresh')
+      await flushWindowActions()
+      expect(runtime.dispatch('windows.slot.assign', { slot: 4, rowId: 'live:darwin:slot-live' }).handled).toBe(true)
+
+      expect(runtime.snapshot().state.windowTargets).toEqual([
+        expect.objectContaining({ favorite: false, pinned: false, appName: 'Example' })
+      ])
+      const assignedTargetId = runtime.snapshot().state.windowSlots[3].targetIdByPlatform.darwin
+      expect(assignedTargetId).toBe(runtime.snapshot().state.windowTargets[0].id)
+      expect(runtime.snapshot().windowRows).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: `target:${assignedTargetId}`, favorite: false, slotNumbers: [4] })
+      ]))
+    })
+
+    it('uses a separate Windows page-topmost call and treats unsupported topmost as blocking', async () => {
+      const topmostCalls: string[] = []
+      const win32Capability = { platform: 'win32' as const, supported: true, permission: 'granted' as const, canList: true, canActivate: true, canAlwaysOnTop: true }
+      const { state, getHideCount } = installPlatform({
+        windows: {
+          capabilities: async () => win32Capability,
+          list: async () => ({
+            capability: win32Capability,
+            windows: [{ id: 'win32:880', platform: 'win32', nativeRef: '880', appId: 'browser.exe', appName: 'Browser', pid: 88, title: 'Docs', minimized: true, focused: false }]
+          }),
+          activate: async () => ({ outcome: 'activated' as const }),
+          alwaysOnTop: async (window) => {
+            topmostCalls.push(window.nativeRef)
+            return { outcome: 'activated' as const, trace: { steps: [{ stage: 'topmost' as const, outcome: 'ok' as const }, { stage: 'foreground' as const, outcome: 'ok' as const }] } }
+          }
+        }
+      })
+      enableWindows(state)
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.refresh')
+      await flushWindowActions()
+      runtime.dispatch('windows.alwaysOnTop', { rowId: 'live:win32:880' })
+      await flushWindowActions()
+
+      expect(topmostCalls).toEqual(['880'])
+      expect(getHideCount()).toBe(1)
+      expect(runtime.snapshot().windowActivationDiagnostics.filter((diagnostic) => diagnostic.level === 'blocking')).toEqual([])
+      expect(runtime.snapshot().windowOperationTraces[0]).toMatchObject({ operation: 'always-on-top', result: 'success', code: 'topmost-enabled' })
+
+      const unsupported = installPlatform({
+        windows: {
+          capabilities: async () => ({ ...darwinCapability, canAlwaysOnTop: false }),
+          list: async () => ({ capability: darwinCapability, windows: [] }),
+          activate: async () => ({ outcome: 'activated' as const })
+        }
+      })
+      enableWindows(unsupported.state)
+      const unsupportedRuntime = createAppRuntime(unsupported.state)
+      unsupportedRuntime.dispatch('windows.alwaysOnTop')
+      await flushWindowActions()
+      expect(unsupportedRuntime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'topmost-unsupported', level: 'blocking' }))
+    })
+
+    it('rescans a stale native reference once and updates it after recovery', async () => {
+      const activated: string[] = []
+      let listCount = 0
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => {
+            listCount += 1
+            return {
+              capability: darwinCapability,
+              windows: [{ id: 'darwin:new-ref', platform: 'darwin', nativeRef: 'new-ref', appId: 'com.example.target', appName: 'Example', pid: 7, title: 'Target', minimized: false, focused: false }]
+            }
+          },
+          activate: async (window) => {
+            activated.push(window.nativeRef)
+            return { outcome: window.nativeRef === 'old-ref' ? 'not-found' as const : 'activated' as const }
+          }
+        }
+      })
+      enableWindows(state)
+      assignSlotTarget(state)
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(activated).toEqual(['old-ref', 'new-ref'])
+      expect(listCount).toBe(1)
+      expect(runtime.snapshot().state.windowTargets[0].lastNativeRef).toBe('new-ref')
+      expect(runtime.snapshot().windowActivationDiagnostics.filter((diagnostic) => diagnostic.level === 'blocking')).toEqual([])
+    })
+
+    it('uses the same stale-reference recovery for manual workbench activation', async () => {
+      const activated: string[] = []
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({
+            capability: darwinCapability,
+            windows: [{ id: 'darwin:manual-new', platform: 'darwin', nativeRef: 'manual-new', appId: 'com.example.target', appName: 'Example', pid: 8, title: 'Target', minimized: false, focused: false }]
+          }),
+          activate: async (window) => {
+            activated.push(window.nativeRef)
+            return { outcome: window.nativeRef === 'old-ref' ? 'not-found' as const : 'activated' as const }
+          }
+        }
+      })
+      enableWindows(state)
+      assignSlotTarget(state)
+      const runtime = createAppRuntime(state)
+
+      expect(runtime.dispatch('windows.actions.open', { rowId: 'target:diagnostic-target' }).handled).toBe(true)
+      expect(runtime.dispatch('windows.activate').handled).toBe(true)
+      await flushWindowActions()
+
+      expect(activated).toEqual(['old-ref', 'manual-new'])
+      expect(runtime.snapshot().state.windowTargets[0].lastNativeRef).toBe('manual-new')
+      expect(runtime.snapshot().windowActivationDiagnostics.filter((diagnostic) => diagnostic.level === 'blocking')).toEqual([])
+    })
+
+    it('marks a target closed only after a healthy rescan finds no match', async () => {
+      const { state, getShowCount } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({ capability: darwinCapability, windows: [] }),
+          activate: async () => ({ outcome: 'not-found' as const })
+        }
+      })
+      enableWindows(state)
+      assignSlotTarget(state)
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(runtime.snapshot().state.windowTargets[0].lastNativeRef).toBeNull()
+      expect(runtime.snapshot().windowActivationDiagnostics).toEqual([
+        expect.objectContaining({ entry: 'slot', slot: 1, stage: 'resolve', code: 'target-closed', level: 'accepted' })
+      ])
+      expect(getShowCount()).toBe(1)
+    })
+
+    it('records focus, permission, host-call, feature-disabled, unassigned-slot, workbench-show, and silent-hide failures as blocking', async () => {
+      const cases = [
+        {
+          code: 'focus-denied',
+          setup: () => installPlatform({
+            windows: {
+              capabilities: async () => darwinCapability,
+              list: async () => ({ capability: darwinCapability, windows: [] }),
+              activate: async () => ({ outcome: 'focus-denied' as const })
+            }
+          }),
+          target: true,
+          enabled: true
+        },
+        {
+          code: 'permission-required',
+          setup: () => installPlatform({
+            windows: {
+              capabilities: async () => ({ ...darwinCapability, permission: 'required' as const, canList: false, canActivate: false }),
+              list: async () => ({ capability: darwinCapability, windows: [] }),
+              activate: async () => ({ outcome: 'permission-required' as const })
+            }
+          }),
+          target: false,
+          enabled: true
+        },
+        {
+          code: 'capability-read-failed',
+          setup: () => installPlatform({
+            windows: {
+              capabilities: async () => { throw new Error('capability host failure') },
+              list: async () => ({ capability: darwinCapability, windows: [] }),
+              activate: async () => ({ outcome: 'activated' as const })
+            }
+          }),
+          target: false,
+          enabled: true
+        },
+        {
+          code: 'activation-failed',
+          setup: () => installPlatform({
+            windows: {
+              capabilities: async () => darwinCapability,
+              list: async () => ({ capability: darwinCapability, windows: [] }),
+              activate: async () => { throw new Error('host failure') }
+            }
+          }),
+          target: true,
+          enabled: true
+        },
+        {
+          code: 'feature-disabled',
+          setup: () => installPlatform({
+            windows: {
+              capabilities: async () => darwinCapability,
+              list: async () => ({ capability: darwinCapability, windows: [] }),
+              activate: async () => ({ outcome: 'activated' as const })
+            }
+          }),
+          target: false,
+          enabled: false
+        },
+        {
+          code: 'slot-unassigned',
+          setup: () => installPlatform({
+            windows: {
+              capabilities: async () => darwinCapability,
+              list: async () => ({ capability: darwinCapability, windows: [] }),
+              activate: async () => ({ outcome: 'activated' as const })
+            }
+          }),
+          target: false,
+          enabled: true
+        },
+        {
+          code: 'silent-hide-failed',
+          setup: () => installPlatform({
+            app: { hide: async () => false },
+            windows: {
+              capabilities: async () => darwinCapability,
+              list: async () => ({ capability: darwinCapability, windows: [] }),
+              activate: async () => ({ outcome: 'activated' as const })
+            }
+          }),
+          target: true,
+          enabled: true
+        },
+        {
+          code: 'workbench-show-failed',
+          setup: () => installPlatform({
+            app: { hide: async () => true, show: () => false },
+            windows: {
+              capabilities: async () => darwinCapability,
+              list: async () => ({ capability: darwinCapability, windows: [] }),
+              activate: async () => ({ outcome: 'activated' as const })
+            }
+          }),
+          target: false,
+          enabled: true
+        }
+      ] as const
+
+      for (const testCase of cases) {
+        const { state } = testCase.setup()
+        if (testCase.enabled) enableWindows(state)
+        if (testCase.target) assignSlotTarget(state)
+        const runtime = createAppRuntime(state)
+        runtime.dispatch('windows.slot.activate', { slot: 1 })
+        await flushWindowActions()
+        expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: testCase.code, level: 'blocking' }))
+      }
+    })
+
+    it('never copies a host activation message into session diagnostics', async () => {
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({ capability: darwinCapability, windows: [] }),
+          activate: async () => ({ outcome: 'failed' as const, message: 'secret-window-title 424242 0xDEADBEEF' })
+        }
+      })
+      enableWindows(state)
+      assignSlotTarget(state)
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      const diagnostic = runtime.snapshot().windowActivationDiagnostics[0]
+      expect(diagnostic).toMatchObject({ code: 'activation-failed', level: 'blocking' })
+      expect(diagnostic.message).not.toContain('secret-window-title')
+      expect(diagnostic.message).not.toContain('424242')
+      expect(diagnostic.message).not.toContain('0xDEADBEEF')
+    })
+
+    it('bounds session diagnostics to fifty records and clears them through a runtime action', async () => {
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({ capability: darwinCapability, windows: [] }),
+          activate: async () => ({ outcome: 'activated' as const })
+        }
+      })
+      enableWindows(state)
+      const runtime = createAppRuntime(state)
+
+      for (let index = 0; index < 51; index += 1) runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(runtime.snapshot().windowActivationDiagnostics).toHaveLength(50)
+      expect(runtime.snapshot().windowActivationDiagnostics.every((diagnostic) => diagnostic.code === 'slot-unassigned')).toBe(true)
+      expect(runtime.dispatch('windows.activation.diagnostics.clear').handled).toBe(true)
+      expect(runtime.snapshot().windowActivationDiagnostics).toEqual([])
+    })
   })
 })

@@ -1,7 +1,19 @@
 import type { CodexColorSettings, CodexDisplayStyle, CodexExpandedCardAppearanceSettings, CodexWaterAppearanceSettings } from './codex'
 
 export interface CodexThemePreset {
-  id: 'sea-salt' | 'graphite' | 'indigo-sand' | 'aurora-night' | 'amber-mist'
+  id:
+    | 'sea-salt'
+    | 'graphite'
+    | 'indigo-sand'
+    | 'aurora-night'
+    | 'amber-mist'
+    | 'neon-tide'
+    | 'crimson-flare'
+    | 'jade-pulse'
+    | 'violet-bolt'
+    | 'solar-crown'
+    | 'ice-prism'
+    | 'rose-crystal'
   label: string
   description: string
   colors: CodexColorSettings
@@ -50,53 +62,130 @@ export const CODEX_THEME_PRESETS: readonly CodexThemePreset[] = [
     colors: { healthy: '#23B5A5', warning: '#F2A93B', critical: '#EF5B68', water: '#102C3C', card: '#F7F9F7', cardForeground: '#07161D' },
     waterAppearance: {
       inner: { palette: 'gradient', fillColorA: '#102C3C', fillColorB: '#175C61', opacity: 78, amplitude: 8, motion: 'normal', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
-      outer: { style: 'solid', thickness: 4, colorMode: 'quota', progressColor: '#23B5A5', trackColor: '#7C8B94', glow: 'soft', shellOpacity: 72 }
+      outer: { style: 'solid', thickness: 5, colorMode: 'quota', progressColor: '#23B5A5', trackColor: '#7C8B94', glow: 'soft', shellOpacity: 72 }
     },
     expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#23B5A5', warning: '#F2A93B', critical: '#EF5B68', water: '#102C3C', card: '#F7F9F7', cardForeground: '#07161D' })
   },
   {
     id: 'graphite',
     label: '石墨',
-    description: '石墨与雾白，Blue 信号',
-    colors: { healthy: '#256FB5', warning: '#A66100', critical: '#BF3C50', water: '#18212B', card: '#F2F4F3', cardForeground: '#07161D' },
+    description: '石墨深水，Blue 信号',
+    colors: { healthy: '#3B8FD4', warning: '#C47A1A', critical: '#D14B5C', water: '#18212B', card: '#F2F4F3', cardForeground: '#07161D' },
     waterAppearance: {
-      inner: { palette: 'solid', fillColorA: '#18212B', fillColorB: '#174D68', opacity: 82, amplitude: 6, motion: 'slow', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
-      outer: { style: 'segmented', thickness: 4, colorMode: 'quota', progressColor: '#4A9BE8', trackColor: '#73899D', glow: 'off', shellOpacity: 68 }
+      inner: { palette: 'gradient', fillColorA: '#18212B', fillColorB: '#244866', opacity: 78, amplitude: 8, motion: 'normal', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
+      outer: { style: 'solid', thickness: 5, colorMode: 'quota', progressColor: '#3B8FD4', trackColor: '#80858A', glow: 'soft', shellOpacity: 72 }
     },
-    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#256FB5', warning: '#A66100', critical: '#BF3C50', water: '#18212B', card: '#F2F4F3', cardForeground: '#07161D' })
+    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#3B8FD4', warning: '#C47A1A', critical: '#D14B5C', water: '#18212B', card: '#F2F4F3', cardForeground: '#07161D' })
   },
   {
     id: 'indigo-sand',
     label: '靛砂',
-    description: '靛蓝与暖白，Indigo 信号',
-    colors: { healthy: '#4E60C8', warning: '#9B6100', critical: '#B63D59', water: '#1D2444', card: '#FAF7F0', cardForeground: '#07161D' },
+    description: '靛蓝深水，Indigo 信号',
+    colors: { healthy: '#5B6BD6', warning: '#B78B00', critical: '#C24A63', water: '#1A2248', card: '#FAF7F0', cardForeground: '#07161D' },
     waterAppearance: {
-      inner: { palette: 'aurora', fillColorA: '#1D2444', fillColorB: '#343C77', opacity: 76, amplitude: 9, motion: 'normal', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
-      outer: { style: 'solid', thickness: 5, colorMode: 'custom', progressColor: '#7987F2', trackColor: '#7E829E', glow: 'strong', shellOpacity: 74 }
+      inner: { palette: 'gradient', fillColorA: '#1A2248', fillColorB: '#313C7A', opacity: 78, amplitude: 8, motion: 'normal', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
+      outer: { style: 'solid', thickness: 5, colorMode: 'quota', progressColor: '#5B6BD6', trackColor: '#81859A', glow: 'soft', shellOpacity: 72 }
     },
-    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#4E60C8', warning: '#9B6100', critical: '#B63D59', water: '#1D2444', card: '#FAF7F0', cardForeground: '#07161D' })
+    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#5B6BD6', warning: '#B78B00', critical: '#C24A63', water: '#1A2248', card: '#FAF7F0', cardForeground: '#07161D' })
   },
   {
     id: 'aurora-night',
     label: '极光夜',
-    description: '蓝绿电离层，冷峻深水',
-    colors: { healthy: '#46A8E9', warning: '#D48A26', critical: '#CF4566', water: '#111B34', card: '#0D1630', cardForeground: '#EEF4FF' },
+    description: '夜蓝深水，冷青信号',
+    colors: { healthy: '#46A8E9', warning: '#D48A26', critical: '#CF4566', water: '#111B34', card: '#F3F7FF', cardForeground: '#0A1428' },
     waterAppearance: {
-      inner: { palette: 'aurora', fillColorA: '#111B34', fillColorB: '#3A4DAA', opacity: 84, amplitude: 10, motion: 'fast', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
-      outer: { style: 'segmented', thickness: 5, colorMode: 'quota', progressColor: '#46A8E9', trackColor: '#4A5872', glow: 'soft', shellOpacity: 70 }
+      inner: { palette: 'gradient', fillColorA: '#111B34', fillColorB: '#244C73', opacity: 78, amplitude: 8, motion: 'normal', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
+      outer: { style: 'solid', thickness: 5, colorMode: 'quota', progressColor: '#46A8E9', trackColor: '#7C828F', glow: 'soft', shellOpacity: 72 }
     },
-    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#46A8E9', warning: '#D48A26', critical: '#CF4566', water: '#111B34', card: '#0D1630', cardForeground: '#EEF4FF' })
+    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#46A8E9', warning: '#D48A26', critical: '#CF4566', water: '#111B34', card: '#F3F7FF', cardForeground: '#0A1428' })
   },
   {
     id: 'amber-mist',
     label: '琥珀雾',
-    description: '暖金渐变，低亮度可读',
+    description: '暖金深水，Amber 信号',
     colors: { healthy: '#D88A26', warning: '#E1B84A', critical: '#C64A47', water: '#201A12', card: '#FAF3E8', cardForeground: '#24180E' },
     waterAppearance: {
-      inner: { palette: 'gradient', fillColorA: '#201A12', fillColorB: '#4A3114', opacity: 78, amplitude: 8, motion: 'normal', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
-      outer: { style: 'solid', thickness: 4, colorMode: 'custom', progressColor: '#F1BE58', trackColor: '#7F6754', glow: 'strong', shellOpacity: 72 }
+      inner: { palette: 'gradient', fillColorA: '#201A12', fillColorB: '#604119', opacity: 78, amplitude: 8, motion: 'normal', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
+      outer: { style: 'solid', thickness: 5, colorMode: 'quota', progressColor: '#D88A26', trackColor: '#84817D', glow: 'soft', shellOpacity: 72 }
     },
     expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#D88A26', warning: '#E1B84A', critical: '#C64A47', water: '#201A12', card: '#FAF3E8', cardForeground: '#24180E' })
+  },
+  {
+    id: 'neon-tide',
+    label: '霓虹潮',
+    description: '潮青深水，Cyan 信号',
+    colors: { healthy: '#1DB8C4', warning: '#E0A03A', critical: '#E4567A', water: '#0A2A32', card: '#F0FBFC', cardForeground: '#062028' },
+    waterAppearance: {
+      inner: { palette: 'gradient', fillColorA: '#0A2A32', fillColorB: '#115C65', opacity: 78, amplitude: 8, motion: 'normal', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
+      outer: { style: 'solid', thickness: 5, colorMode: 'quota', progressColor: '#1DB8C4', trackColor: '#788A8E', glow: 'soft', shellOpacity: 72 }
+    },
+    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#1DB8C4', warning: '#E0A03A', critical: '#E4567A', water: '#0A2A32', card: '#F0FBFC', cardForeground: '#062028' })
+  },
+  {
+    id: 'crimson-flare',
+    label: '绯焰',
+    description: '绛红深水，Coral 信号',
+    colors: { healthy: '#E85A4F', warning: '#E0A03A', critical: '#C81E4A', water: '#2A1216', card: '#FFF5F3', cardForeground: '#2A0F14' },
+    waterAppearance: {
+      inner: { palette: 'gradient', fillColorA: '#2A1216', fillColorB: '#6D2B2A', opacity: 78, amplitude: 8, motion: 'normal', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
+      outer: { style: 'solid', thickness: 5, colorMode: 'quota', progressColor: '#E85A4F', trackColor: '#8A7D7F', glow: 'soft', shellOpacity: 72 }
+    },
+    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#E85A4F', warning: '#E0A03A', critical: '#C81E4A', water: '#2A1216', card: '#FFF5F3', cardForeground: '#2A0F14' })
+  },
+  {
+    id: 'jade-pulse',
+    label: '翠璃',
+    description: '翡翠深水，Green 信号',
+    colors: { healthy: '#2FAF7A', warning: '#D4A017', critical: '#E04B64', water: '#0F241C', card: '#F3FFF8', cardForeground: '#06241A' },
+    waterAppearance: {
+      inner: { palette: 'gradient', fillColorA: '#0F241C', fillColorB: '#1A553D', opacity: 78, amplitude: 8, motion: 'normal', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
+      outer: { style: 'solid', thickness: 5, colorMode: 'quota', progressColor: '#2FAF7A', trackColor: '#7B8782', glow: 'soft', shellOpacity: 72 }
+    },
+    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#2FAF7A', warning: '#D4A017', critical: '#E04B64', water: '#0F241C', card: '#F3FFF8', cardForeground: '#06241A' })
+  },
+  {
+    id: 'violet-bolt',
+    label: '紫电',
+    description: '紫晶深水，Violet 信号',
+    colors: { healthy: '#7B6FD4', warning: '#D4A017', critical: '#E05A78', water: '#1A1630', card: '#F7F4FF', cardForeground: '#161022' },
+    waterAppearance: {
+      inner: { palette: 'gradient', fillColorA: '#1A1630', fillColorB: '#3C3569', opacity: 78, amplitude: 8, motion: 'normal', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
+      outer: { style: 'solid', thickness: 5, colorMode: 'quota', progressColor: '#7B6FD4', trackColor: '#817F8D', glow: 'soft', shellOpacity: 72 }
+    },
+    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#7B6FD4', warning: '#D4A017', critical: '#E05A78', water: '#1A1630', card: '#F7F4FF', cardForeground: '#161022' })
+  },
+  {
+    id: 'solar-crown',
+    label: '日曜',
+    description: '日冕深水，Gold 信号',
+    colors: { healthy: '#E09A2B', warning: '#E8C24A', critical: '#D94B45', water: '#24180C', card: '#FFF8EB', cardForeground: '#2A1A08' },
+    waterAppearance: {
+      inner: { palette: 'gradient', fillColorA: '#24180C', fillColorB: '#664617', opacity: 78, amplitude: 8, motion: 'normal', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
+      outer: { style: 'solid', thickness: 5, colorMode: 'quota', progressColor: '#E09A2B', trackColor: '#878079', glow: 'soft', shellOpacity: 72 }
+    },
+    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#E09A2B', warning: '#E8C24A', critical: '#D94B45', water: '#24180C', card: '#FFF8EB', cardForeground: '#2A1A08' })
+  },
+  {
+    id: 'ice-prism',
+    label: '冰棱',
+    description: '冰蓝深水，Sky 信号',
+    colors: { healthy: '#3BA4D8', warning: '#D4A84A', critical: '#E05A78', water: '#0E1F2C', card: '#F2F9FF', cardForeground: '#0A1C2C' },
+    waterAppearance: {
+      inner: { palette: 'gradient', fillColorA: '#0E1F2C', fillColorB: '#1E4E68', opacity: 78, amplitude: 8, motion: 'normal', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
+      outer: { style: 'solid', thickness: 5, colorMode: 'quota', progressColor: '#3BA4D8', trackColor: '#7A848B', glow: 'soft', shellOpacity: 72 }
+    },
+    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#3BA4D8', warning: '#D4A84A', critical: '#E05A78', water: '#0E1F2C', card: '#F2F9FF', cardForeground: '#0A1C2C' })
+  },
+  {
+    id: 'rose-crystal',
+    label: '玫璃',
+    description: '蔷薇深水，Rose 信号',
+    colors: { healthy: '#D46A9A', warning: '#D4A017', critical: '#C81E4A', water: '#24141C', card: '#FFF1F7', cardForeground: '#2A0F1C' },
+    waterAppearance: {
+      inner: { palette: 'gradient', fillColorA: '#24141C', fillColorB: '#623248', opacity: 78, amplitude: 8, motion: 'normal', baseOpacity: 100, showPercent: true, percentPosition: 'auto', percentSize: 22, percentTextStyle: 'bold', percentColor: '#FFFFFF' },
+      outer: { style: 'solid', thickness: 5, colorMode: 'quota', progressColor: '#D46A9A', trackColor: '#877E82', glow: 'soft', shellOpacity: 72 }
+    },
+    expandedCardAppearance: presetExpandedCardAppearance({ healthy: '#D46A9A', warning: '#D4A017', critical: '#C81E4A', water: '#24141C', card: '#FFF1F7', cardForeground: '#2A0F1C' })
   }
 ] as const
 

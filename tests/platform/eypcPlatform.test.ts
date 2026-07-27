@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 describe('browser fallback platform', () => {
@@ -93,6 +95,78 @@ describe('browser fallback platform', () => {
       permission: 'unsupported'
     })
     await expect(getPlatform().windows.list()).resolves.toMatchObject({ windows: [] })
+  })
+
+  it('keeps macOS window list CG-first with AX fallback in preload source', () => {
+    const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
+    const publicPreload = readFileSync(resolve(process.cwd(), 'public/preload.js'), 'utf8')
+    expect(preload).toContain('MACOS_WINDOW_LIST_SCRIPT')
+    expect(preload).toContain('MACOS_AX_WINDOW_LIST_SCRIPT')
+    expect(preload).toContain('Application(\'System Events\')')
+    expect(preload).toContain('ObjC.castRefToObject')
+    expect(preload).toContain('applicationProcesses.whose({ backgroundOnly: false })')
+    expect(preload).toMatch(/cgParsed\.windows\.length > 0[\s\S]*preferAx = true/)
+    expect(preload).toContain("MACOS_AX_WINDOW_LIST_SCRIPT")
+    expect(preload).toContain('已回退到当前桌面窗口列表')
+    expect(publicPreload).toBe(preload)
+  })
+
+  it('matches macOS activation through AX titles instead of a nonstandard AX window number', () => {
+    const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
+    const publicPreload = readFileSync(resolve(process.cwd(), 'public/preload.js'), 'utf8')
+    const activationStart = preload.indexOf('function macosActivateWindowScript')
+    const activationEnd = preload.indexOf('function macosCloseWindowScript')
+    const activation = preload.slice(activationStart, activationEnd)
+    const closeEnd = preload.indexOf('function runWindowCommand')
+    const close = preload.slice(activationEnd, closeEnd)
+
+    expect(activation).toContain('function resolveTargetWindow')
+    expect(activation).toContain('function currentWindowTitle')
+    expect(activation).toContain("EYPC_WINDOW_TARGET_TITLE")
+    expect(activation).toContain("target.actions.byName('AXRaise').perform()")
+    expect(activation.indexOf("target.actions.byName('AXRaise').perform()")).toBeLessThan(activation.indexOf('const focusedAfterRaise'))
+    expect(activation).not.toContain('focusedAfterFrontmost')
+    expect(activation).not.toContain('AXWindowNumber')
+    expect(close).toContain('function resolveTargetWindow')
+    expect(close).toContain("EYPC_WINDOW_TARGET_TITLE")
+    expect(close).not.toContain('AXWindowNumber')
+    expect(preload).toContain('macosActivateWindowScript(Number(parts[1]), Number(parts[2]))')
+    expect(preload).toContain('macosCloseWindowScript(Number(parts[1]), Number(parts[2]))')
+    expect(preload).not.toContain('macosActivateWindowScript(Number(parts[1]), Number(parts[2]), source.title)')
+    expect(preload).toContain("'ambiguous', 'focus-denied'")
+    expect(publicPreload).toBe(preload)
+  })
+
+  it('keeps native window operation traces bounded and debug-gated while exposing real Windows topmost', () => {
+    const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
+    const publicPreload = readFileSync(resolve(process.cwd(), 'public/preload.js'), 'utf8')
+    const activationStart = preload.indexOf('const WINDOWS_ACTIVATE_SCRIPT')
+    const activationEnd = preload.indexOf('const WINDOWS_CLOSE_SCRIPT')
+    const activation = preload.slice(activationStart, activationEnd)
+
+    expect(activation).toContain("EYPC_WINDOW_DEBUG_TRACE")
+    expect(activation).toContain("$trace.Count -lt 16")
+    expect(activation).toContain("Add-EypcTrace 'restore'")
+    expect(activation).toContain("Add-EypcTrace 'foreground'")
+    expect(activation).toContain('const WINDOWS_TOPMOST_SCRIPT')
+    expect(activation).toContain('SetWindowPos')
+    expect(activation).toContain('[IntPtr]::new(-1)')
+    expect(preload).toContain('function parseWindowOperationTrace')
+    expect(preload).toContain('function alwaysOnTopWindow')
+    expect(preload).toContain('alwaysOnTop: alwaysOnTopWindow')
+    expect(preload).toContain('canAlwaysOnTop: true')
+    expect(preload).toContain('canAlwaysOnTop: false')
+    expect(preload).toContain("macOS 只能展开并前置第三方窗口，不能将其保持在最上层")
+    expect(publicPreload).toBe(preload)
+  })
+
+  it('filters Windows native handles through the root-owner Alt-Tab chain', () => {
+    const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
+    expect(preload).toContain('IsActionableWindow')
+    expect(preload).toContain('GetLastActivePopup')
+    expect(preload).toContain('WS_EX_TOOLWINDOW')
+    expect(preload).toContain('WS_EX_NOACTIVATE')
+    expect(preload).toContain('GetAncestor(hWnd, GA_ROOT)')
   })
 
   it('persists fallback state through localStorage across module reloads', async () => {

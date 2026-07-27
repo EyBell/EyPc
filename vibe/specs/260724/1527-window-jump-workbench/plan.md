@@ -5,10 +5,15 @@
 3. Add the disabled feature, fixed uTools commands, route parsing, runtime resolution, focus-safe activation, and keyboard bindings.
 4. Build the dense accessible window list and action/editor layers, reusing EyPc list conventions.
 5. Synchronize requirement, architecture, status, task evidence, and code links; record user-owned validation gaps.
+6. Repair the verified CoreGraphics bridge regression, add platform-native actionable-window filters, then project one persisted local-pin state over a pinned-first/application-sorted list.
+7. WJ-08: remove duplicate `mainHide`/Runtime pre-hiding, route disabled slots into visible Runtime diagnostics, recover stale native references through one healthy rescan, and expose bounded session-only diagnostics in the workbench.
+8. WJ-09: replace the invalid macOS CG-window-ID → `AXWindowNumber` activation assumption with title-plus-fresh-ordinal AX resolution, preserving ambiguity blocking and no-title-interpolation boundaries.
+9. WJ-10: research platform-native restore/frontmost/topmost contracts; add a development-only sanitized operation trace, make Windows `SetWindowPos(HWND_TOPMOST)` a separate page-topmost action, keep macOS permanent topmost explicitly unsupported, and prevent stable-slot assignment from implicitly favoriting a live row.
 
 ## Non-negotiable Execution Constraints
 
 - Preserve unrelated dirty files and changes.
-- Do not run test, typecheck, build, uTools-host, browser/screenshot, or live OS scan/activation checks in this task.
+- For WJ-08/WJ-10, run only the user-authorized platform-bridge suite, named `window activation diagnostics` runtime group, and diagnostics UI suite. Do not use the slow aggregate action suite as a gate, and do not run full test, typecheck, build, browser/screenshot, or real uTools-host activation in this implementation evidence.
 - Keep all platform calls initiated by an explicit user interaction or uTools feature entry, with bounded process execution and no shell interpolation of user-controlled titles.
-
+- WJ-09 may use a bounded child-environment value for a normalized local title, but never places it in a shell command or JXA source; it must remain absent from diagnostics, storage, and logs.
+- WJ-10 native traces may contain only a fixed stage/outcome vocabulary and may be requested only from a development renderer; production UI and native calls omit that path.

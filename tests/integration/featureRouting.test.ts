@@ -21,13 +21,14 @@ describe('uTools feature routing', () => {
     expect(routePluginFeature({ code: 'eypc-favorites' })).toEqual({ tab: 'favorites', focusSearch: true })
     expect(routePluginFeature({ code: 'eypc-favorites-quick' })).toEqual({ tab: 'favorites', focusSearch: false, favoriteQuick: true })
     expect(routePluginFeature({ code: 'eypc-windows' })).toEqual({ tab: 'windows', focusSearch: true })
-    expect(routePluginFeature({ code: 'eypc-window-slot-7' }, undefined, 'mqtt')).toEqual({
-      tab: 'mqtt',
-      focusSearch: false,
-      actionId: 'windows.slot.activate',
-      actionArgs: { slot: 7 },
-      hideAfterAction: true
-    })
+    for (let slot = 1; slot <= 10; slot += 1) {
+      expect(routePluginFeature({ code: `eypc-window-slot-${slot}` }, undefined, 'mqtt')).toEqual({
+        tab: 'mqtt',
+        focusSearch: false,
+        actionId: 'windows.slot.activate',
+        actionArgs: { slot }
+      })
+    }
     expect(routePluginFeature({ code: 'eypc-codex' })).toEqual({ tab: 'codex', focusSearch: false })
     expect(routePluginFeature({ code: 'eypc-codex-toggle' }, undefined, 'mqtt')).toEqual({
       tab: 'mqtt',
@@ -109,7 +110,9 @@ describe('uTools feature routing', () => {
     expect(routePluginFeature({ code: 'eypc-window-slot-1' }, featureConfigs)).toEqual({
       tab: 'settings',
       focusSearch: false,
-      settingsMaintenanceSection: 'features'
+      settingsMaintenanceSection: 'features',
+      actionId: 'windows.slot.activate',
+      actionArgs: { slot: 1 }
     })
     expect(routePluginFeature({ code: 'eypc-codex-toggle' }, featureConfigs)).toEqual({
       tab: 'settings',

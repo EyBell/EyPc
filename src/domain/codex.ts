@@ -202,6 +202,8 @@ export interface CodexHostThread {
   activeFlags: CodexThreadActiveFlag[]
   /** Activity is authoritative only while the desktop follower is live. */
   statusAuthority?: CodexStatusAuthority
+  /** Local observation time for the current Desktop-live active interval; never a raw identity. */
+  desktopActiveSince?: number
   /** Exact unread state owned by Codex Desktop, never an EyPc read receipt. */
   hasUnreadTurn?: boolean
   unreadAuthority?: CodexUnreadAuthority
@@ -325,11 +327,21 @@ export interface CodexActivityDeltaV1 {
 export interface CodexActivityDeltaEntryV2 {
   /** Anonymous task key already present in the last verified host snapshot. */
   key: string
+  /** A Desktop read-state event may update unread fields only; it is never activity authority. */
+  readStateOnly?: boolean
   status?: CodexThreadStatus
   activeFlags?: CodexThreadActiveFlag[]
   statusAuthority?: CodexStatusAuthority
+  /** Local observation time for the current Desktop-live active interval. */
+  desktopActiveSince?: number
   hasUnreadTurn?: boolean
   unreadAuthority?: CodexUnreadAuthority
+  /** Fresh privacy-safe latest-Turn evidence collected for one live status transition. */
+  lastTurnStatus?: CodexTurnStatus
+  lastTurnStartedAt?: number
+  lastTurnCompletedAt?: number
+  /** Proves that this terminal outcome was reread after the live active exit. */
+  lastTurnEvidence?: 'targeted-after-exit'
 }
 
 export interface CodexActivityDeltaV2 {
@@ -337,7 +349,11 @@ export interface CodexActivityDeltaV2 {
   sourceFingerprint: string
   generation: number
   entries: CodexActivityDeltaEntryV2[]
+  /** Already-public anonymous keys that a compatible provider explicitly reported archived. */
+  archivedKeys?: string[]
   inventoryChanged: boolean
+  /** Urgent upserts/terminal events bypass the ordinary structural coalescing window. */
+  inventoryRefreshPriority?: 'urgent' | 'normal'
   desktopBridgeState: CodexDesktopBridgeState
   receivedAt: number
 }
@@ -372,7 +388,7 @@ export interface CodexThreadArchiveRequest {
   expectedCompletionAt?: number
   expectedLastTurnStartedAt?: number
   expectedSourceFingerprint?: string
-  evidence: 'completed' | 'terminal' | 'unknown'
+  evidence: 'completed'
 }
 
 export interface CodexProjectArchiveRequest {
@@ -563,9 +579,9 @@ export interface CodexState {
   hiddenProjectKeys: string[]
 }
 
-export type CodexTaskBucket = 'ongoing' | 'completed-unread' | 'completed'
-export type CodexTaskActivityState = 'active' | 'ongoing' | 'waiting-input' | 'waiting-approval' | 'failed' | 'system-error' | 'unknown'
-export type CodexArchiveCapability = 'blocked-active' | 'allowed' | 'allowed-with-warning'
+export type CodexTaskBucket = 'ongoing' | 'stopped' | 'completed-unread' | 'completed'
+export type CodexTaskActivityState = 'active' | 'ongoing' | 'stopped' | 'waiting-input' | 'waiting-approval'
+export type CodexArchiveCapability = 'blocked-active' | 'blocked-stopped' | 'allowed'
 
 export interface CodexTaskCard {
   key: string
@@ -584,7 +600,7 @@ export interface CodexTaskCard {
   /** Latest Turn.startedAt; this is the only field used as “last question time”. */
   lastQuestionAt?: number
   /** Deprecated presentation state retained while old persisted renderers migrate. */
-  state: 'running' | 'recent-activity' | 'waiting-approval' | 'waiting-input' | 'attention' | 'pending-review'
+  state: 'running' | 'stopped' | 'recent-activity' | 'waiting-approval' | 'waiting-input' | 'attention' | 'pending-review'
   /** Preserves simultaneous live requirements instead of collapsing both flags. */
   activeFlags?: CodexThreadActiveFlag[]
   updatedAt: number
@@ -637,6 +653,8 @@ export interface ConversationSnapshotV2 {
   version: 2 | 3
   status: 'idle' | 'loading' | 'ok' | 'stale' | 'error'
   ongoing: CodexTaskCard[]
+  /** Explicit terminal Turn evidence that is not a completed result. */
+  stopped: CodexTaskCard[]
   completedUnread: CodexTaskCard[]
   completed: CodexTaskCard[]
   /** Deprecated V1 alias of completedUnread. */
@@ -652,8 +670,9 @@ export interface ConversationSnapshotV2 {
   /** One-release compatibility field. Native project removal never populates it. */
   removedProjects: CodexProjectCard[]
   activeTab: CodexVisibleTaskTab
-  /** Visible ongoing tasks: exact Desktop live `active` plus provider `interrupted` during its grace window. */
+  /** Visible ongoing tasks: live work plus cases without authoritative completion or stop evidence. */
   ongoingCount: number
+  stoppedCount: number
   waitingCount: number
   runningCount: number
   /** Cross-process activity whose live status is not observable by this App Server. */
@@ -1015,6 +1034,7 @@ export function emptyConversationSnapshot(status: ConversationSnapshotV1['status
     version: 3,
     status,
     ongoing: [],
+    stopped: [],
     completedUnread: [],
     completed: [],
     pending: [],
@@ -1028,6 +1048,7 @@ export function emptyConversationSnapshot(status: ConversationSnapshotV1['status
     removedProjects: [],
     activeTab: 'ongoing',
     ongoingCount: 0,
+    stoppedCount: 0,
     waitingCount: 0,
     runningCount: 0,
     unknownCount: 0,
@@ -1278,36 +1299,36 @@ function isLikelyActiveTask(thread: CodexHostThread) {
   return thread.statusAuthority === 'desktop-live' && thread.status === 'active'
 }
 
-const INTERRUPTED_COMPLETION_GRACE_MS = 60_000
-
-function interruptedCompletionRevision(thread: CodexHostThread, now: number) {
-  if (thread.lastTurnStatus !== 'interrupted' || isLikelyActiveTask(thread)) return 0
-  const latestActivityAt = numberValue(thread.updatedAt, 0)
-  return latestActivityAt > 0 && now - latestActivityAt >= INTERRUPTED_COMPLETION_GRACE_MS
-    ? latestActivityAt
-    : 0
+function isSupersededDesktopActiveTask(thread: CodexHostThread) {
+  return isLikelyActiveTask(thread)
+    && thread.lastTurnStatus === 'completed'
+    && numberValue(thread.desktopActiveSince, 0) > 0
+    && numberValue(thread.lastTurnCompletedAt, 0) > numberValue(thread.desktopActiveSince, 0)
 }
 
-function taskActivityState(thread: CodexHostThread): CodexTaskActivityState {
-  if (isLikelyActiveTask(thread)) {
+function isCurrentDesktopActiveTask(thread: CodexHostThread) {
+  return isLikelyActiveTask(thread) && !isSupersededDesktopActiveTask(thread)
+}
+
+function taskActivityState(thread: CodexHostThread, explicitlyStopped: boolean): CodexTaskActivityState {
+  if (isCurrentDesktopActiveTask(thread)) {
     if (thread.activeFlags.includes('waitingOnUserInput')) return 'waiting-input'
     if (thread.activeFlags.includes('waitingOnApproval')) return 'waiting-approval'
     return 'active'
   }
-  if (thread.status === 'systemError') return 'system-error'
-  if (thread.lastTurnStatus === 'failed') return 'failed'
-  if (thread.lastTurnStatus === 'interrupted') return 'ongoing'
-  return 'unknown'
+  if (explicitlyStopped) return 'stopped'
+  // The product has one conservative fallback: without exact completion
+  // or stop evidence, provider and authority gaps stay ongoing.
+  return 'ongoing'
 }
 
 function legacyTaskState(bucket: CodexTaskBucket, activityState: CodexTaskActivityState): CodexTaskCard['state'] {
   if (bucket === 'completed-unread') return 'pending-review'
   if (bucket === 'completed') return 'recent-activity'
+  if (bucket === 'stopped' || activityState === 'stopped') return 'stopped'
   if (activityState === 'waiting-input') return 'waiting-input'
   if (activityState === 'waiting-approval') return 'waiting-approval'
-  if (activityState === 'active' || activityState === 'ongoing') return 'running'
-  if (activityState === 'unknown') return 'recent-activity'
-  return 'attention'
+  return 'running'
 }
 
 function taskTiming(thread: CodexHostThread): Pick<CodexTaskCard, 'createdAt' | 'firstPromptAt' | 'lastQuestionAt' | 'lastTurnStartedAt' | 'lastTurnCompletedAt' | 'lastTurnDurationMs'> {
@@ -1345,17 +1366,20 @@ export function compareConversationTasks(a: CodexTaskCard, b: CodexTaskCard): nu
 
 export function countConversationTasks(
   ongoing: CodexTaskCard[],
+  stopped: CodexTaskCard[],
   completedUnread: CodexTaskCard[],
   completed: CodexTaskCard[],
   hidden: CodexTaskCard[] = []
 ) {
   const waitingCount = ongoing.filter((task) => task.activityState === 'waiting-input' || task.activityState === 'waiting-approval').length
-  const runningCount = ongoing.filter((task) => task.activityState === 'active' || task.activityState === 'ongoing').length
-  const unknownCount = ongoing.filter((task) => task.activityState === 'unknown').length
-  const attentionCount = ongoing.filter((task) => task.activityState === 'failed' || task.activityState === 'system-error').length
+  const runningCount = Math.max(0, ongoing.length - waitingCount)
+  const unknownCount = 0
+  const attentionCount = 0
   const hiddenUnreadCount = hidden.filter((task) => task.bucket === 'completed-unread').length
+  const hiddenStoppedCount = hidden.filter((task) => task.bucket === 'stopped').length
   return {
-    ongoingCount: waitingCount + runningCount,
+    ongoingCount: ongoing.length,
+    stoppedCount: stopped.length + hiddenStoppedCount,
     waitingCount,
     runningCount,
     unknownCount,
@@ -1401,6 +1425,7 @@ export function projectConversations(input: {
   eligibleSourceCount?: number
   excludedSourceCount?: number
   nonConversationCount?: number
+  desktopBridgeState?: CodexDesktopBridgeState
 }): ConversationProjection {
   const now = input.now ?? Date.now()
   const windowStart = typeof input.timeWindowDays === 'number'
@@ -1416,6 +1441,7 @@ export function projectConversations(input: {
   const localProjectPins = new Set(localPins.filter((pin) => pin.kind === 'project').map((pin) => pin.key))
   const statuses: Record<string, CodexThreadStatus> = {}
   const ongoing: CodexTaskCard[] = []
+  const stopped: CodexTaskCard[] = []
   const completedUnread: CodexTaskCard[] = []
   const completed: CodexTaskCard[] = []
   const hidden: CodexTaskCard[] = []
@@ -1432,12 +1458,17 @@ export function projectConversations(input: {
     statuses[thread.key] = thread.status
     const timing = taskTiming(thread)
     const receipt = receiptMap.get(thread.key) || { key: thread.key, acknowledgedRecency: 0, acknowledgedAt: 0, pendingRecency: 0, pendingSince: 0 }
-    const authoritativeActive = isLikelyActiveTask(thread)
-    const completionRevision = !authoritativeActive
-      ? thread.lastTurnStatus === 'completed'
-        ? numberValue(thread.lastTurnCompletedAt, 0) || numberValue(thread.lastTurnStartedAt, 0)
-        : interruptedCompletionRevision(thread, now)
+    const authoritativeActive = isCurrentDesktopActiveTask(thread)
+    const completionRevision = !authoritativeActive && thread.lastTurnStatus === 'completed'
+      ? numberValue(thread.lastTurnCompletedAt, 0) || numberValue(thread.lastTurnStartedAt, 0)
       : 0
+    const hasTerminalStopEvidence = thread.lastTurnStatus === 'interrupted' || thread.lastTurnStatus === 'failed'
+    const explicitlyStopped = !authoritativeActive
+      && hasTerminalStopEvidence
+      && (
+        thread.statusAuthority === 'desktop-live' && thread.status === 'idle'
+        || input.desktopBridgeState === 'not-running'
+      )
 
     if (completionRevision > 0 && (receipt.hiddenPendingRecency || 0) >= completionRevision) {
       // V1 “hidden pending” represented an explicit user review decision. V2
@@ -1466,13 +1497,11 @@ export function projectConversations(input: {
       ? 'ongoing'
       : completionRevision > 0
         ? unread ? 'completed-unread' : 'completed'
-        : 'ongoing'
-    const activityState = taskActivityState(thread)
-    const archiveCapability: CodexArchiveCapability = authoritativeActive
-      ? 'blocked-active'
-      : completionRevision > 0 || thread.lastTurnStatus === 'failed'
-        ? 'allowed'
-        : activityState === 'ongoing' ? 'blocked-active' : 'allowed-with-warning'
+        : explicitlyStopped ? 'stopped' : 'ongoing'
+    const activityState = taskActivityState(thread, explicitlyStopped)
+    const archiveCapability: CodexArchiveCapability = completionRevision > 0
+      ? 'allowed'
+      : explicitlyStopped ? 'blocked-stopped' : 'blocked-active'
     const revisionAt = completionRevision || thread.updatedAt
     if ((receipt.dismissedActivityRecency || 0) > 0 && revisionAt > (receipt.dismissedActivityRecency || 0)) {
       delete receipt.dismissedActivityRecency
@@ -1505,7 +1534,7 @@ export function projectConversations(input: {
       updatedAt: thread.updatedAt,
       ...(unread ? { pendingSince: completionRevision } : {}),
       source: 'current',
-      canArchive: archiveCapability !== 'blocked-active',
+      canArchive: archiveCapability === 'allowed',
       ...timing
     }
     card.projectName = projectAliases.get(card.projectKey) || card.originalProjectName
@@ -1514,6 +1543,7 @@ export function projectConversations(input: {
     if (localTaskPins.has(thread.key)) card.pinSource = 'local'
     else if (thread.nativePinned) card.pinSource = 'native'
     if (isHidden) hidden.push({ ...card, hiddenKind: 'task' })
+    else if (bucket === 'stopped') stopped.push(card)
     else if (bucket === 'completed-unread') completedUnread.push(card)
     else if (bucket === 'completed') completed.push(card)
     else ongoing.push(card)
@@ -1522,10 +1552,11 @@ export function projectConversations(input: {
   }
 
   ongoing.sort(compareConversationTasks)
+  stopped.sort(compareConversationTasks)
   completedUnread.sort(compareConversationTasks)
   completed.sort(compareConversationTasks)
   hidden.sort(compareConversationTasks)
-  const all = [...ongoing, ...completedUnread, ...completed, ...hidden].sort(compareConversationTasks)
+  const all = [...ongoing, ...stopped, ...completedUnread, ...completed, ...hidden].sort(compareConversationTasks)
   const inputRequired = all.filter((task) => task.activityState === 'waiting-input')
   const completedTab = [...completedUnread, ...completed].sort(compareConversationTasks)
 
@@ -1625,12 +1656,13 @@ export function projectConversations(input: {
     { id: 'chats', title: 'Chats', entries: chats ? [projectEntry(chats)] : [] }
   ]
   const normalizedReceipts = normalizeCodexReceipts([...receiptMap.values()])
-  const counts = countConversationTasks(ongoing, completedUnread, completed, hidden)
+  const counts = countConversationTasks(ongoing, stopped, completedUnread, completed, hidden)
   return {
     snapshot: {
       version: 3,
       status: 'ok',
       ongoing,
+      stopped,
       completedUnread,
       completed,
       pending: completedUnread,

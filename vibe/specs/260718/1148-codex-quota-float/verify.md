@@ -1,9 +1,167 @@
 # Codex Companion 真实会话与交互验证记录
 
 Tool: codex
-Date: 2026-07-22
+Date: 2026-07-27
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-24.17`
+Requirement version: `2026-07-27.7`
+
+## RAW-098 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 根因 | pass / source-trace | 单条归档的 `await archiveThread()` 是异步的；归档期间 Desktop 可能因 conversation state 变化（stream following-changed 或 patch）重新投影该任务，而 structural refresh 重读时该任务也可能尚未从 App Server 库存消失，导致 UI 出现"归档→复活→消失"的抖动。 |
+| 乐观隐藏 | implemented / source-verified | Controller 在 `archive()` 发起时立即将该 key 从 `lastThreads` 移除并发布投影，同时将其加入 `archivingKeys` 集合。UI 在归档启动后即不显示该任务。 |
+| structural refresh 防护 | implemented / source-verified | 完整库存重建时过滤掉 `archivingKeys` 中的任务，防止 App Server 尚未更新时该任务被加回投影。 |
+| 失败恢复 | implemented / source-verified | 归档失败时从 `archivingKeys` 移除，将保存的 optimistic thread 恢复到 `lastThreads`，重新发布投影。 |
+| 测试合同 | updated / not run | [codexController.test.ts](../../../../tests/runtime/codexController.test.ts#L1) 新增乐观隐藏合同：归档发起后任务立即从投影消失，归档完成后仍不存在。依项目规则未执行。 |
+| 限定静态验证 | pass / source-only | Controller 语法通过，`git diff --check` 通过。 |
+| 真实宿主验收 | not run / user-owned | 需重载 uTools 插件后归档一条已完成任务，确认无抖动。 |
+
+结论：归档现在采用乐观隐藏策略，发起时立即移除、失败时恢复。中间不会因 Desktop 事件或库存重读产生可见抖动。当前状态为 `未校验，待用户验收`。
+
+## RAW-097 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 根因 | pass / source-trace | `thread-read-state-changed` 与仅 `hasUnreadTurn` 的 patch 之前把完整当前 activity entry 再次发给 Controller；已读事件因此可能携带残留 status/flags，并把已完成任务重投影为进行中。 |
+| unread-only 边界 | implemented / source-verified | preload 为上述两类事件发出 `readStateOnly`：只带匿名 key、`hasUnreadTurn` 与 `unreadAuthority`。主任务和 Side Chat 聚合均适用；包含 runtime/request 的 patch 仍保留完整 activity 语义。 |
+| Controller 隔离 | implemented / source-verified | Controller 对 `readStateOnly` 只更新 unread 字段，保留任务的 status、active flags、active interval 与 latest Turn；即使 payload 被附带 active/Turn 字段，也不能重启任务。 |
+| 隐私 | pass / source-contract | 新 marker 不携带 raw ID、正文、cwd、路径、private patch 或额外活动数据；仅既有匿名 key 和有限 read-state 字段跨 preload。 |
+| 测试合同 | updated / not run | [codexController.test.ts](../../../../tests/runtime/codexController.test.ts#L1) 覆盖 malicious activity 字段被 unread-only 忽略；[codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 覆盖 direct read-state 与 active shadow 的 hasUnreadTurn-only patch。依项目规则未执行。 |
+| 限定静态验证 | pass / source-only | `preload/index.js` 与 `public/preload.js` 字节一致；preload/public/src 不含 `ipcSync`、`invokeSync`、`sendSync` 或 `getAllFeatureHotKey`；目标 `git diff --check` 与 Controlled/canonical/current/error-memory Markdown 代码链接审计通过。未运行 tests、typecheck、build、uTools 或真实阅读操作。 |
+| 真实宿主验收 | not run / user-owned | uTools preload 需要重新连接/重载。以一条可丢弃的已完成未读任务在 Codex 中手动阅读后，EyPc 应只从“已完成未读”变为“已完成”，不得进入“进行中”。 |
+
+结论：已读是独立的 read-state 事实，不再允许携带或重放 activity。当前状态为 `未校验，待用户验收`。
+
+## RAW-096 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 根因 | pass / source-trace | 完整库存每次都会把仍保存的 Desktop `active` shadow 重投影到任务上，但此前没有区分该 shadow 的实际观察区间；若 latest Turn 已在此前之后明确完成，旧 active 仍可在后续每轮扫描中长期压住完成投影。 |
+| active interval 边界 | implemented / source-verified | snapshot 建立 active 或 patch 从非 active 进入 active 时，preload 记录一次匿名本机 `desktopActiveSince`；同一 active 的库存重投影不刷新它。离开 active、失去 live authority 或会话重置会清除它；Side Chat 聚合只取仍 active 子流的最新时刻。 |
+| 状态优先级 | implemented / source-verified | 只有 latest Turn 明确为 `completed` 且 `completedAt > desktopActiveSince`，才把该旧 live active 视为被更晚完成证据取代。缺时刻、完成时刻不晚于 active、latest Turn 非 completed 或传输不确定时，仍保持 desktop-live active 优先；没有超时、recency 或 connector 推断。 |
+| 隐私 | pass / source-contract | 跨 preload 的新增字段只是当前 active interval 的匿名本机时间；raw thread ID、正文、cwd、路径与私有 patch 仍不跨越 Renderer/持久化/日志边界。 |
+| 测试合同 | updated / not run | [codex.test.ts](../../../../tests/domain/codex.test.ts#L1) 覆盖“较新 completed 压过旧 active”，[codexController.test.ts](../../../../tests/runtime/codexController.test.ts#L1) 覆盖 V2 active interval 后的较新 completed。依项目规则未执行。 |
+| 限定静态验证 | pass / source-only | `preload/index.js` 与 `public/preload.js` 字节一致；preload/public/src 不含 `ipcSync`、`invokeSync`、`sendSync` 或 `getAllFeatureHotKey`；本轮目标 `git diff --check` 与 Controlled/canonical/error-memory Markdown 代码链接审计通过。未运行 tests、typecheck、build、uTools 或真实任务操作。 |
+| 真实宿主验收 | not run / user-owned | uTools preload 尚未因本轮源码自动重载；需重新连接/重载插件后验证一个此前错误显示 active、但 latest Turn 已完成的任务会在既有普通完成展示窗后进入已完成，同时新的 active 任务不会被误判完成。 |
+
+结论：Desktop live active 仍是当前执行的最高权威，但它不再因完整库存的重复投影获得伪造的“新鲜度”。只有严格较晚的明确完成可取代该旧 interval；当前状态为 `未校验，待用户验收`。
+
+## RAW-095 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 根因 | pass / source-trace | Desktop `thread-archived` 与 App Server `thread/archived` 先前都只触发普通 `inventoryChanged`。下一份少行库存因此被 RAW-090 当作可能传输缺失，必须等待同一缺失集合跨 `max(15s, taskRefreshSeconds)` 后才移除。 |
+| 显式归档快路 | implemented / source-verified | preload 只在当前 raw-thread 映射已存在时取出既有匿名 key，随 Activity Delta V2 的 `archivedKeys` 发送；Controller 只移除当前投影中存在的 key、清理本地 receipt/瞬态展示状态，并请求 50ms urgent 完整复核。 |
+| 负向边界 | implemented / source-verified | 未映射、`thread-unarchived`、`thread/deleted`、畸形事件和普通低库存快照均不带移除 key；后者继续严格使用 RAW-090 隔离。若紧急完整复核仍包含该任务，会按已验证库存恢复。 |
+| 隐私 | pass / source-contract | raw thread ID 只用于 preload 内查找；跨边界字段仅为已发布的 32 位匿名 key。cwd、正文、路径和私有事件 payload 不进入 Renderer、持久化、日志或过程文档。 |
+| 限定静态验证 | pass / source-only | `preload/index.js` 与 `public/preload.js` 字节一致；两者及 `src/` 中不存在 `ipcSync`、`invokeSync`、`sendSync` 或 `getAllFeatureHotKey`；本轮范围 `git diff --check` 通过。 |
+| 真实宿主验收 | not run / user-owned | 未重载 uTools preload、未执行真实 Codex 归档，也未运行 tests、typecheck、build、uTools 或截图。Vite HMR 不会重载 preload，需用户重新连接/重载插件后以可丢弃测试任务验收。 |
+
+结论：外部归档不再被当作“普通缺项”而等待 RAW-090 的 15 秒以上隔离；只有已经映射的显式归档事件才会立即隐藏对应任务，并在后台紧急复核。当前状态为 `未校验，待用户验收`。
+
+## RAW-094 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 三分钟真实复现 | pass / local-readonly | 本机当前桥保持 connected；同三条候选的 active 集合在采样中多次退出、5–20 秒后又恢复，完成总数保持不变，排除普通 1500ms 完成展示窗。当前用户消息已经重新激活本任务，因此该任务在采样期 active 属于正确状态。 |
+| 根因 | pass / source+runtime | Desktop owner 同时发送 runtime 与大量私有 Turn/工具/正文 patch；旧 `codexApplyDesktopShadowPatch` 对未观察 root 返回失败，`handleStreamState` 因此退订重订。重订期间 live shadow 被清除，随后 owner 的 active snapshot 再覆盖退出证据。 |
+| 实现 | implemented / source-verified | 结构正确且路径深度受限的未观察 root 现在返回已消费，仅推进 stream revision；四个受观察 root 继续严格解析，格式损坏、owner/revision 不连续和 frame 版本错误仍触发重订/断开。正文不被读取或投影。 |
+| 修正后真实复核 | pass / local-readonly | 使用当前源码的新 bridge 连续 30 秒处理 59 个 patch；`resubscribe=0`、后续 `snapshot=0`，active 集合前后一致。该结果证明 patch churn 不再重置 shadow，不证明这些当前仍为 Desktop `inProgress` 的任务已经完成。 |
+| 测试合同 | updated / not run | [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 的 active→idle 场景先注入九层私有 Turn patch，再同批投递 idle/request-clear/read-state；要求零额外 follow、一次定向 latest-Turn 完成读取及正文不外泄。依项目规则未执行。 |
+| 运行版本 | reload required / user-owned | uTools Renderer 启动早于当前 `preload.js` 修改，Vite HMR 不重载 preload。源文件已同步，但真实视觉验收前必须在 uTools 开发模式重新连接/重载插件；本轮未杀进程、重启 uTools 或执行构建。 |
+| 限定静态验证 | pass / source-only | 两个 preload 通过 Node 语法且字节一致；项目与 CodeNote 目标 diff whitespace、RAW-094 语义锚点和两仓变更文档代码链接审计通过。同步凭据在最终文档收口后签发。 |
+
+结论：已完成任务长期显示进行中的可复现传输原因是未观察私有 patch 触发重订并让旧 active snapshot 复活；当前源码已消除该重订抖动。真实完成切换仍需重载 uTools preload 后验收。
+
+## RAW-093 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 本机协议核验 | pass / local-source | 当前 ChatGPT/Codex Desktop 在 completed Plan Turn 后创建未决 `item/plan/requestImplementation`，加入 `conversationState.requests` 并保持到用户处理；该方法此前不在 EyPc 有限请求映射中。 |
+| 待输入语义 | implemented / unverified | 该精确方法映射为 `waitingOnUserInput`。未决请求是明确用户等待证据，即使 runtime 在同一 patch 中已变 idle，也投影为 `desktop-live active + waitingOnUserInput`，优先于 completed 与普通展示窗。 |
+| 最快路径 | implemented / unverified | 已登记任务在 Desktop snapshot/patch 到达后直接发匿名 Activity Delta，不触发 App Server latest-Turn/库存读取，不等待 50ms 结构合并、15 秒完整周期或 1500ms 普通完成窗；未登记任务沿用 RAW-092 匿名注册门禁。 |
+| 收敛与防误判 | implemented / unverified | 只有有限精确 Plan request 和既有 input/option/setup/approval 请求可产生待输入/审批；请求移除后恢复 runtime/Turn 投影。未知请求、状态异常和传输缺失不猜成待输入，仍按 RAW-089–092 保守处理。 |
+| 隐私 | pass / source-contract | request 只投影截断 type/method；计划正文、request ID、raw thread ID 与其它内容不进入 Activity Delta、Renderer、持久化或日志。新增测试用私有 plan body 并断言不会出现在 delta。 |
+| 测试合同 | updated / not run | [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 增加 idle runtime + `item/plan/requestImplementation` patch 立即变待输入、零 latest-Turn RPC 与正文不外泄合同；依用户规则未执行。 |
+| 限定静态验证 | pass / source-only | 两个 preload 语法通过且镜像字节一致，目标 diff whitespace 检查通过；完整语义与链接审计在文档同步后执行。 |
+| 真实宿主验收 | not run / user-owned | 未主动创建 Plan Turn、点击实施/确认，也未运行 tests、typecheck、build、uTools 或截图；状态为 `未校验，待用户验收`。 |
+
+结论：计划已完成但等待确认现在是明确的最快待输入路径，不再先落入完成或因 runtime idle 延迟；真实 Desktop/uTools 转换仍由用户验收。
+
+## RAW-092 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| “两秒缓存”核验 | pass / source-contract | 当前没有统一两秒缓存：`taskRefreshSeconds=15` 是无事件/漏事件的完整校对周期，`completionPresentationDelayMs` 是普通完成展示窗；旧固定 2 秒 Activity 防抖已由 RAW-089 删除。RAW-092 采用 50ms 事件合并 + 会话期 dirty-task 快读，避免用缩短全量轮询换实时性。 |
+| 新任务/待输入快路 | implemented / unverified | App Server started/turn/status 事件与未登记 Desktop 主任务 snapshot 发 urgent delta。preload 暂存 live shadow，完整库存建立匿名 key/项目/action alias 后立即复用 waiting-input 状态；不创建无身份占位，不把 raw ID/正文送入 Renderer。 |
+| 事件读取范围 | implemented / unverified | 事件到达时只对 dirty 或没有缓存的任务执行 latest-Turn RPC，已验证旧任务使用会话内缓存；无 dirty 的周期校对仍重读所有 eligible Turn，进程退出/会话重置清空 cache/dirty/shadow。桥测试合同断言一次事件库存刷新只增加一个 latest-Turn 读取。 |
+| 调度可靠性 | implemented / unverified | urgent 事件用 50ms 短合并，普通结构/缺失复核保持 200ms。若事件发生在完整读取中，Controller 保留 pending/urgent 并在结束后补读；测试合同覆盖 49ms 不读、50ms 触发和 in-flight 后只补一次。 |
+| 完成时效 | implemented / unverified | `targeted-after-exit` completed 已经过本轮 active-exit 定向核验，直接清除/绕过 presentation hold 并同步完成卡片、计数和归档能力；普通快照完成仍使用用户配置窗，失败/中断继续按 RAW-091 判定 stopped 或 ongoing。 |
+| 负向抖动 | unchanged / protected | 新增 key 可立即接纳；旧 key 缺失仍须同一 missing 集合跨 `max(15s, taskRefreshSeconds)` 连续确认。旧 Turn/完成时间回退不覆盖新证据，无终态证据继续显示进行中，显式验证归档/项目移除仍立即收敛。 |
+| 本机只读回归 | pass / real-readonly | 更新后的 preload 通过 30 天匿名预检：Host V2 / completeness verified / Desktop bridge connected；`21 raw = 21 registered`，窗口内仍为 `19 = 14 completed + 2 stopped + 3 ongoing`，其中 `3 active / 0 unconfirmed ongoing`。该结果证明完整库存与分类未回退，不是新任务/完成延迟计时。 |
+| 测试合同 | updated / not run | [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 与 [codexController.test.ts](../../../../tests/runtime/codexController.test.ts#L1) 已补充事件快读、waiting-input shadow、50ms/in-flight 补读及 strong completion 直发合同；依项目规则未执行。 |
+| 限定静态验证 | pass / source-only | 两个 preload 与真实预检脚本通过 `node --check`，preload 镜像字节一致；EyPc/CodeNote `git diff --check`、设计偏好 JSON、urgent/dirty/targeted/测试合同语义搜索及两仓 Markdown 代码链接审计均通过。 |
+| 真实宿主验收 | not run / user-owned | 未主动创建/完成/停止任务来计时，也未运行 tests、typecheck、build、uTools 或截图；状态保持 `未校验，待用户验收`。 |
+
+结论：RAW-092 已把“快展示”和“防抖”拆为非对称通道。新增任务、首次待输入和定向完成强证据不等待 15 秒全量周期或 1500ms 普通展示窗；任务消失、证据回退和未知终态仍不会突兀发布。源码、文档与只读库存回归通过，真实转换延迟仍由用户验收。
+
+## RAW-091 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 旧偏差根因 | pass / real-readonly | 匿名聚合读取确认旧 `4 ongoing` 由 `2 desktop-live active + 2 desktop-live idle/latest-Turn interrupted` 组成；偏差来自 RAW-089 把明确停止也过度归一为进行中，不是实际存在四条执行。 |
+| 明确停止边界 | implemented / unverified | latest Turn `failed/interrupted` 只有与 exact live `idle` 或 bridge `not-running` 同时成立时投影为 `stopped/stopped/blocked-stopped`。desktop-live active 优先；bridge failed/incompatible/connecting、systemError/notLoaded/inProgress、Turn/live idle 缺失仍保持 ongoing。 |
+| 崩溃/主动关闭 | implemented / unverified | Desktop 仍在但会话主动停止或 GPT 执行崩溃，可由 live idle + terminal Turn 成为已停止；Desktop 整体退出/崩溃可由 bridge not-running + terminal Turn 成为已停止。单纯连接失败不冒充进程退出。 |
+| 退出防闪 | implemented / unverified | Controller 记录 active-exit 基线；第一份 ordinary idle delta 若只携带 active 前的旧 completed/failed/interrupted，先维持 inProgress/ongoing。preload 的 3 秒有界定向重读携带有限 `targeted-after-exit` 证明，可让同 Turn failed/interrupted 及时收敛为停止；bridge not-running 只可直接确认 failed/interrupted 停止，不能把旧 completed 当新完成。RAW-090 的任务缺行隔离继续独立生效。 |
+| UI/计数/动作 | implemented / unverified | 动态页增加中性“已停止”分段，不新增页签；停止任务保留在 all/项目/已隐藏投影，但不进入 ongoing/running、紧凑进行中角标、完成页或前后循环。归档能力为 `blocked-stopped`，提示“会话已停止但未完成，暂不能归档”。 |
+| 本机聚合复核 | pass / real-readonly | 纠偏检查点在 18 条窗口输出 `14 completed / 2 stopped / 2 ongoing`，与用户当时确认的 2 条进行中一致。收尾时库存自然增至 19 条，最新输出为 `14 completed / 2 stopped / 3 ongoing`，并进一步拆出 `3 active / 0 unconfirmed ongoing`；新增一条是 exact live active，不是停止项回流或传输不确定。脚本等待 terminal 候选取得 Desktop live 权威后再结算。 |
+| 测试合同 | updated / not run | 领域、Controller、UI 和浮窗桥合同覆盖 active-priority、live-idle/not-running 停止、bridge-failed 不确定、退出防闪及归档禁用；依用户验收规则未执行测试。 |
+| 限定静态验证 | pass / source-only | EyPc/CodeNote 范围 `git diff --check`、两个 preload `node --check` 与字节镜像、真实预检脚本语法、设计偏好 JSON/interaction-flow ready 回执、状态/证据语义搜索及两仓 Markdown 代码链接审计均通过。 |
+| 宿主验收 | not run / user-owned | 未在 uTools 插件内主动停止一条任务或关闭/崩溃 Codex 进程，也未运行 typecheck、build、uTools 或截图；整体仍为 `未校验，待用户验收`。 |
+
+结论：纠偏时本机数据通道把错误的 4 条进行中校正为 2 条进行中、2 条已停止；最新状态因新增一条 exact live active 已自然变为 3 条进行中、2 条已停止。实现覆盖用户补充的 GPT 崩溃、主动停止和关闭路径，同时不会把普通传输异常或任务缺行误判为停止/消失；最终可见效果仍需用户在真实插件内验收。
+
+## RAW-090 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 单次任务缺失 | implemented / unverified | Controller 对比上一份已发布 key 集合；新快照只要缺少任一旧 key，就不替换任务/项目/计数投影，而是保留上一份稳定清单、标记 stale 诊断并发起一次约 200ms 的完整复核。 |
+| 消失接纳门禁 | implemented / unverified | missing-key 签名须在至少两份完整快照中连续一致，并已经过 `max(15s, taskRefreshSeconds)` 才会发布数量下降。任务重现、缺失集合改变、中间读取失败/不完整、功能停用或 dispose 会重置候选。 |
+| 状态证据单调 | implemented / unverified | Activity Delta 与完整快照共用单调合并：更旧 Turn `startedAt`、同 Turn completed→非 completed、变小的 `completedAt` 或 `updatedAt` 不覆盖已接纳证据；更新 Turn 和 exact desktop-live active 仍立即反馈。 |
+| 显式删除快路 | implemented / unverified | Host 已双向验证的单条/项目归档立即移除 key；已验证的原生项目移除立即移除项目与所属任务。两类明确用户动作不进入异常缺失窗。 |
+| 测试合同 | updated / not run | [codexController.test.ts](../../../../tests/runtime/codexController.test.ts#L1) 新增任务数保留/跨周期接纳与 Turn 证据不回退合同；依项目规则不执行。 |
+| 限定静态验证 | pass / source-only | Scoped `git diff --check`、库存候选/复核/重置/显式删除语义搜索通过；EyPc 与 CodeNote 两个根的 Markdown 代码链接审计均为 `OK`，权威需求与当前 AI 派生理解已复读一致。 |
+| 真实传输抖动 | not run / user-owned | 未人为制造 App Server/Desktop bridge 短暂缺行、连接抖动或外部删除；整体仍为 `未校验，待用户验收`。 |
+
+结论：RAW-090 的源码与测试合同已实现。验收时应观察一次短暂任务缺失不会改变数量/分组/操作槽，任务重现时完全无可见跳变；只有连续完整快照跨过一个校对周期都缺少该 key 时，才一次性收敛为真实消失。
+
+## RAW-089 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 本机真实稳态观察 | refined-by-RAW-091 | 初次只读观察曾按 RAW-089 口径得到 4 条进行中；RAW-091 的会话级 live authority 复核证明其中只有 2 条 active，另 2 条是 idle/interrupted 的明确停止。初次 `4 = 4` 仅说明旧投影一致，不再作为正确状态数量证据。 |
+| 缓存/周期核验 | refined-by-RAW-092 | 本机持久化设置为 `taskRefreshSeconds=15`、`completionPresentationDelayMs=1500`；固定 2 秒 Activity Delta 防抖已删除。RAW-092 进一步用 50ms 事件合并和 dirty-task 快读取代统一缓存思路；15 秒仍是完整周期，1.5 秒仍只用于普通完成展示。 |
+| 定向完成核验 | implemented / unverified | 两个 preload 镜像在 Desktop active 退出后执行单飞、可取消、总计 3 秒有界的 latest-Turn 读取；只传匿名 key、Turn status/时间，失败才触发完整校对。active 前未变化的旧 completed revision 不会被当作本轮完成。测试合同覆盖目标 RPC 与隐私边界。 |
+| 实时 Controller 投影 | refined-by-RAW-092 | Controller 删除固定 2 秒 pending/debounce，Activity Delta 立即投影；active→idle 且 Turn 版本未变化时仍为 ongoing。普通 fresh completed 的展示窗从真实退出起算；带 `targeted-after-exit` 的强完成证据由 RAW-092 直接发布，不再等待剩余展示窗。 |
+| 异常统一进行中 | implemented / refined-by-RAW-091 | 领域层只有 latest Turn completed 可完成/归档；不具备明确停止组合的 failed/interrupted 及 systemError/notLoaded/inProgress/权威缺失仍统一为 `ongoing/running/blocked-active`。terminal Turn + live idle/not-running 由 RAW-091 投影为已停止；`unknownCount/attentionCount=0` 和 completed-only 归档保持。 |
+| 设置语义 | implemented / unverified | `taskRefreshSeconds` 在 UI 标为“完整校对频率”，说明实时状态来自 Desktop push + 单任务核验；`completionPresentationDelayMs` 仅是完成证据成立后的可配置展示稳定窗。 |
+| 限定静态验证 | pass / source-only | `node --check` 通过两个 preload，镜像字节一致；设计偏好 JSON 可解析；本轮范围 `git diff --check`、当前状态/归档语义搜索及 Markdown 代码链接审计通过。 |
+| 自动化与真实转换 | not run / user-owned | 领域、Controller、preload 测试合同已更新，但依项目规则未执行测试、typecheck、build、uTools、截图或新的真实状态切换。最终状态保持 `未校验，待用户验收`。 |
+
+结论：RAW-089 的实时完成和保守异常回退已实现，并由 RAW-091 修正“明确停止也算进行中”的过度归一化。完成转换仍待真实宿主验收；传输断连继续显示进行中，明确主动停止/崩溃则应在核验后只切换一次“已停止”，两者都不可归档。
+
+## RAW-088 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 主题数量 | implemented / unverified | [codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L57) 中 `CODEX_THEME_PRESETS` 现为 12 项。 |
+| 海盐材质统一 | implemented / unverified | 全部主题：`palette=gradient`、`outer.style=solid`、`baseOpacity=100`、`glow=soft`、`thickness=5`、`colorMode=quota`；无分段钟表环。 |
+| 完整令牌 | implemented / unverified | 每套仍携带 `colors`、`waterAppearance` 与九项 `expandedCardAppearance`；配置页默认样式下拉继续遍历同一数组。 |
+| 默认匹配 | implemented / unverified | 海盐预设与 `defaultCodexWaterAppearance` 同构（含环粗细 5），默认加载主题可完整匹配。 |
+| 限定静态核验 | pass / source-only | 源文件确认无 `segmented`/`aurora` 预设；未运行测试、typecheck、build、uTools、截图或真实 Codex 操作。 |
+
+结论：RAW-088 已实现，当前保持 `未校验，待用户验收`。请在 Codex 配置「水球」页确认默认进入仍是海盐观感，12 项切换均无钟表分段环且球体底色不透明，预览与桌面悬浮球同步。
 
 ## 2026-07-24 可选完成修订与运行时视图的类型契约
 
@@ -49,7 +207,7 @@ Requirement version: `2026-07-24.17`
 
 | Check | Result | Evidence / Scope |
 | --- | --- | --- |
-| 角标位置 | implemented / unverified | [float.css](../../../../src/styles/float.css#L1) 将待输入放到左下、已完成未读放到最右下角、进行中固定在其上方 `23px`；两种紧凑皮肤共用定位。 |
+| 角标位置 | implemented / unverified | [float.css](../../../../src/styles/float.css#L957) 将待输入放到左下、已完成未读放到最右下角、进行中固定在其上方 `23px`；两种紧凑皮肤共用定位。[codex.css](../../../../src/styles/codex.css#L632) 水球预览角标与控制文案已同步到同一角落几何，避免 RAW-083 后预览仍停在左上/右上。 |
 | 主体命中区 | implemented / unverified | [FloatApp.vue](../../../../src/FloatApp.vue#L1) 用同一表面相对纵向比例限定上 `1/3` 展开、下 `1/2` 拖拽；中间 `1/6` 无动作。指针点击复用展开判定，拖动仍使用既有 `5px` 阈值抑制后续点击。 |
 | 既有交互边界 | unchanged / unverified | 角标仍是独立原生按钮并保留点击、键盘、200ms 说明和触屏路径；键盘显式激活仍展开，触屏不模拟 hover，未改 Host 拖拽协议、任务投影或持久化。 |
 | 静态核对 | pass | `git diff --check`、目标源码/样式定位、偏好索引 JSON 与 `codex-companion + full-ui + task-only` 回执均通过。偏好索引曾因交互标签超过 16 项而阻塞，已收敛为既有稳定标签；未运行测试、typecheck、build、uTools、截图或真实 Codex 操作。 |
@@ -100,23 +258,22 @@ Requirement version: `2026-07-24.17`
 | Check | Result | Evidence / Scope |
 | --- | --- | --- |
 | 回流优先发布 | implemented / unverified | 已完成且已读任务回流为 completed-unread 或 desktop-live active 时绕过普通 Activity Delta 防抖立即发布，并取消同任务尚未到期的终态 hold；completed-unread 保持其语义，不被归一为 ongoing。 |
-| 任务级进行中离开稳定窗 | implemented / unverified | Controller 区分原始会话快照与展示快照；visible running 首次转 completed/completed-unread、failed 或 system-error 时按持久化 `completionPresentationDelayMs` 建立 hold，允许 `0/500/1000/1500/2000/3000ms`，默认 1500ms；`0` 不建立 hold，重复终态不续期，初次加载终态不延迟。 |
-| 可中断与一次性释放 | implemented / unverified | 展示窗内原始任务恢复 active/ongoing 会立即取消 hold；连续终态达到当前配置值后以最新原始快照一次性释放完成桶、异常状态、完成时间、未读和归档能力。 |
+| 任务级进行中离开稳定窗 | refined by RAW-089 / unverified | Controller 只在 visible running 获得 completed/completed-unread 证据时建立 hold；failed/system-error 不再成为可见终态。允许 `0/500/1000/1500/2000/3000ms`，默认 1500ms。 |
+| 可中断与一次性释放 | refined by RAW-089 / unverified | 展示窗内恢复 active/ongoing 会立即取消 hold；completed 证据达到当前配置值后一次性释放完成桶、完成时间、未读和归档能力。异常继续 ongoing。 |
 | 全投影一致性 | implemented / unverified | hold 内任务统一为 `ongoing/running/blocked-active`，并重建 ongoing/completed/hidden/all、完成页、项目 section 与计数；卡片、详情、Shift 预览、角标及归档入口消费同一结果。 |
 | 双重延迟移除 | implemented / unverified | Float renderer 删除独立进行中角标合并器，角标直接读取 Controller 稳定投影，避免卡片先完成、角标后完成或额外延迟。 |
-| 权威与兼容边界 | implemented / unverified | 该设置只延迟已由 provider 权威成立的进行中离开展示，不从时间推断完成；其它非输入活动仍为 2 秒去抖。默认值与旧缺失配置归一为 1500ms，停用/关闭/dispose 会清理 hold。 |
+| 权威与兼容边界 | refined by RAW-089 / unverified | 该设置只延迟已由 provider 权威成立的 completed 展示，不从时间推断完成；固定 2 秒 Activity Delta 防抖已删除。默认值与旧缺失配置归一为 1500ms。 |
 | 百分比读数独立配置 | implemented / unverified | 位置、字号、常规/加粗/斜体/粗斜体和颜色属于 `waterAppearance.inner`，预览与真实水球共用 `CodexWaterBall`；默认居中、22px、加粗、白色，并随内置/已保存主题持久化。 |
 | live 未读缺字段回退 | implemented / unverified | Desktop snapshot/patch 明确给出 `hasUnreadTurn` 时保持 desktop-live 优先；字段缺失时不再写入 `false/unavailable`，而是保留最近成功读取的 Codex persisted unread；持久化集合不可读才显式 unknown。 |
-| 待输入请求名归一化 | implemented / unverified | 仅对既有 user-input / option-picker / setup / approval / elicitation / permission 已知词做分隔符删除后匹配，因此 `request_user_input` 与既有等价写法同样映射到 `waitingOnUserInput`；仍要求 `desktop-live active`，未放宽 connector、`notLoaded` 或时间推断。 |
-| 限定静态校验 | pass | `git diff --check` 通过；默认值、离散延迟、Activity Delta 回流优先分流、共享终态 hold、其它非输入 2 秒防抖与配置页文案均已结构核对；设计偏好 JSON 可解析，Markdown code-link audit 为 `OK`。设计收口只生成无写入的 W29 候选；不修改或运行测试，不运行 typecheck、build、uTools、截图或真实 Codex 操作。 |
+| 待输入请求名归一化 | refined-by-RAW-093 / unverified | 仅对既有 user-input / option-picker / setup / approval / elicitation / permission 已知词做分隔符删除后匹配，因此 `request_user_input` 与既有等价写法同样映射到 `waitingOnUserInput`。RAW-093 仅新增精确 Plan implementation 方法，并允许兼容 Desktop live shadow 的有限未决请求把同批 idle 提升为 active；仍未放宽 connector、`notLoaded`、未知请求或时间推断。 |
+| 限定静态校验 | historical pass / refined | RAW-079–081 当时的静态校验保持历史证据；其中“其它非输入 2 秒防抖”和异常终态已由 RAW-089 取代。 |
 
 结论：RAW-079–081 已实现，当前保持 `未校验，待用户验收`。用户应确认默认“进行中离开稳定窗”为 1.5 秒、修改并重开后仍保留；随后以同一任务验证所选时长内卡片、角标和归档入口稳定为进行中且不可归档，窗口结束后仅切换一次。再让已完成且已读任务回流为完成未读或 desktop-live 进行中，确认立即发布且未读不被改写；特别验证 live snapshot/patch 缺少 unread 字段时，既有完成未读不丢失，而实际 read-state 改为已读时仍立即清除。再触发 `request_user_input` 形式的活跃请求，确认待输入角标立即出现。分别修改百分比读数位置、字号、字形和颜色，确认预览与真实悬浮球同步且主题/重开后仍保留。
 
-## RAW-070 当前交付状态
+## RAW-070 当前交付状态（由 RAW-089 取代）
 
-- 已增加 60 秒中断宽限：仅当任务已明确为非 active 的 `interrupted`，且最新 `updatedAt` 连续达到阈值，领域层才生成完成 revision；Desktop live active 仍优先，`notLoaded`、`unknown` 和 connector-only active 不会因时间变成完成。
-- 该规则只收敛已存在的 interrupted 证据，用于手动关闭临时任务的状态闪烁；普通完成仍由 Controller 单一、默认 1500ms 的可配置展示稳定器负责，未新增 Renderer 定时器。
-- 当前仍为 `未校验，待用户验收`：需在本机 Codex Desktop 观察临时任务关闭后 60 秒内保持进行中，超过阈值只切换一次到完成/完成未读，并确认 active 恢复不会被错误完成标记覆盖。
+- 历史 60 秒 interrupted 完成推断已删除。RAW-089 规定 interrupted 持续显示进行中，只有 latest Turn 明确 completed 才能生成完成 revision。
+- 原 RAW-070 的用户验收项不再适用；当前需验收 interrupted 不会因等待时间变为完成。
 
 静态校验：本轮仅执行 `git diff --check`、`pnpm run typecheck` 和 Markdown 代码链接审计；不执行自动化测试、build、截图、uTools 宿主验收或真实 Codex 操作。
 
@@ -128,8 +285,8 @@ Requirement version: `2026-07-24.17`
 | --- | --- | --- |
 | 领域归档能力稳定化 | implemented / unverified | 原始 interrupted 仍投影为 `activityState='ongoing'`，并与 desktop-live active 一样得到 `archiveCapability='blocked-active'`、`canArchive=false`；active/interrupted 来源切换不再改变卡片动作能力。 |
 | 固定动作槽与衍生入口 | implemented / unverified | 任务行固定 `归` 槽继续保位但始终禁用；操作抽屉、Shift 预览、单项确认和批量候选消费同一 `canArchive`，不再出现可用性闪烁。 |
-| Controller 与 Host 二次门禁 | implemented / unverified | Controller 在 blocked capability 处拒绝且不发送 interrupted terminal 证据；Host 单条归档重读到 interrupted 返回 active-task，项目全部归档把它加入进行中跳过集合，terminal 证据只接受 failed。 |
-| 兼容边界 | unchanged / unverified | completed/failed 的既有可验证归档不变；system-error/unknown 继续保留警告与 fail-closed 重读；无新 API、Runtime action、持久化字段或迁移。 |
+| Controller 与 Host 二次门禁 | refined by RAW-089 / unverified | Controller 在 blocked capability 处拒绝且只对 completed 发送完成证据；Host 重读仍是最终安全门禁。 |
+| 兼容边界 | refined by RAW-089 / unverified | 只有 completed 可验证归档；failed/interrupted/system-error/unknown 全部保持进行中并阻断归档。 |
 | 限定静态校验 | pass | `git diff --check`、测试文件零差异、preload/public 镜像一致、可见 interrupted 分支零命中、领域 ongoing capability、Controller 拒绝、Host 单条/项目 interrupted 门禁、版本/事件唯一性、偏好 JSON 与 Markdown 代码链接审计均通过；依用户规则不修改或运行测试，不运行 typecheck、build、uTools、截图或真实 Codex 操作。 |
 
 结论：RAW-068 已实现，当前保持 `未校验，待用户验收`。用户应让同一会话经历原始 interrupted 与 desktop-live active 更新，确认页面始终显示“进行中”，固定归档按钮持续禁用且不闪烁，抽屉/Shift 预览/批量归档也不把它列为可归档对象。
@@ -163,7 +320,7 @@ Requirement version: `2026-07-24.17`
 | 归档安全 | superseded by RAW-068 | RAW-066 原先按原始 interrupted 保留归档能力的子条款已被 RAW-068 取代；当前投影 ongoing 与 desktop-live active 均稳定阻止归档，Host 单条/项目路径也拒绝或跳过原始 interrupted。 |
 | 限定静态校验 | pass | 首轮静态核对未覆盖宿主按钮 focus-visible，已因用户截图失效；本次重新执行 `git diff --check`、测试文件零差异、可见 interrupted 分支/CSS 零命中、Weekly ring/根背景/外发光/focus outline 结构检查、偏好 ready 回执与 Markdown 代码链接审计并通过。未修改或运行测试，未运行 typecheck、build、uTools、截图或真实 Codex 操作。 |
 
-结论：RAW-065 已按用户跟进截图再次修正、RAW-066 的可见状态投影保持实现，其旧归档子条款由 RAW-068 取代；当前仍为 `未校验，待用户验收`。用户应重点确认截图中的最外层完整圆已经消失、键盘聚焦只在中央读数出现下划线、Weekly 数据进度环仍存在；并确认原始 interrupted 进入“进行中”角标且所有任务表面不出现状态“中断/已中断”，其归档控件持续禁用且不闪烁，failed、system-error 与 unknown 显示语义不变。四类额度场景仍为 5 小时 + Weekly、Weekly-only、Spark + Weekly 和无 Weekly。
+结论：RAW-065 已按用户跟进截图再次修正、RAW-066 的可见状态投影保持实现，其旧归档子条款由 RAW-068 取代；failed、system-error 与 unknown 的旧独立表达又已由 RAW-089 取代，当前均显示进行中并阻断归档。整体仍为 `未校验，待用户验收`。
 
 - Error memory: 新增候选 [codex-water-ring-layer-separation.md](../../../knowledge/error-memory/codex-water-ring-layer-separation.md#L1) 与 [codex-provider-status-display-normalization.md](../../../knowledge/error-memory/codex-provider-status-display-normalization.md#L1)，分别记录视觉层误删，以及 provider 原始状态/动作能力未经完整产品投影便泄漏 UI；未保存原始对话或截图，待用户验收后再决定是否提升为 verified。
 
@@ -171,13 +328,13 @@ Requirement version: `2026-07-24.17`
 
 | Check | Result | Evidence / Scope |
 | --- | --- | --- |
-| 异常状态分段收敛 | implemented / partly superseded | `failed`、`system-error` 不再渲染“需关注”分段且保留各自错误表达；interrupted 保留准确行内表达的子条款已由 RAW-066 取代。 |
-| 未知与紧凑语义 | implemented / refined | `unknown` 仍独立为“宿主状态未知”；RAW-066 后 `attentionCount` 只保留 failed/system-error，投影后的 ongoing 进入进行中计数。 |
+| 异常状态分段收敛 | historical / superseded by RAW-089 | 该阶段保留 failed/system-error 错误表达的合同已被取代；当前全部非 completed 异常/未确认状态统一为进行中。 |
+| 未知与紧凑语义 | historical / superseded by RAW-089 | 该阶段的独立“宿主状态未知”与 attention 计数已被删除；当前异常、未知及遗留 unknown/attention 计数全部折叠为进行中。 |
 | 无重排选择提示 | implemented / unverified | `选择模式 / 已选 N 项 / Esc 退出` 移入列表舞台底部绝对覆盖层，保留 `role=status`/`aria-live=polite`；选择滚动区预留安全空间，底部批量栏上移避让，顶部批量栏逻辑未改。 |
 | 保留交互合同 | implemented / unverified | 38px 左侧选择区、核心选择状态机、Esc/最后一项退出、行/子按钮 Space/Enter 所有权与既有批量动作不变；未新增 API、持久化、runtime action、共享组件或 preload/platform 改动。 |
 | 开发与宿主验收 | not run | 依用户规则，未新增或运行测试、typecheck、build、uTools、截图或真实 Codex 操作；本记录不把静态源码复核视为用户验收。 |
 
-结论：RAW-064 的无“需关注”分段与无重排选择提示继续有效；其 interrupted 可见表达仅由 RAW-066 取代。用户仍需验收 failed/system-error 与 unknown 分组，以及进入/退出单选或多选时列表不因提示条重排、末行可滚动访问、底部批量栏不与提示重叠，Esc/最后一项取消选择正常恢复。
+结论：RAW-064 的无重排选择提示继续有效；其 failed/system-error/unknown 分组验收已由 RAW-089 取消，当前只需验收这些任务都进入“正在进行中”。选择模式布局、末行滚动、批量栏避让与 Esc 恢复仍待验收。
 
 - Error memory: 已更新既有候选 [codex-selection-state-needs-structural-contrast.md](../../../knowledge/error-memory/codex-selection-state-needs-structural-contrast.md#L1)，加入“瞬时选择提示不得以顶部普通流新增一行、导致密集列表重排”的防复发规则；仍待用户视觉验收，未提升为 verified。
 
@@ -250,10 +407,10 @@ Requirement version: `2026-07-24.17`
 | Check | Result | Evidence / Scope |
 | --- | --- | --- |
 | Codex Desktop 伴随桥 | implemented / unverified | Preload 已实现 macOS loopback Unix socket、长度帧、固定版本 initialize/snapshot/patch/follow/request/read-state、断线重连，以及 owner/mode 与协议不兼容 fail-closed；桌面全文快照仅在 preload 内瞬时投影。 |
-| Input / 正在进行中 | implemented / unverified | `statusAuthority=desktop-live` 才能产生 waiting-input/waiting-approval/active；App Server/V1 delta 只标记 connector authority。失去 desktop live 后立即转“宿主状态未知”，不再使用五秒启发或本地缓存计数。 |
+| Input / 正在进行中 | historical / refined by RAW-089 | `statusAuthority=desktop-live` 仍是 waiting-input/waiting-approval/active 的唯一来源；失去 live authority 后不再显示“宿主状态未知”，而是保持进行中。 |
 | 已完成未读 | implemented / unverified | 最新 Turn completed 与 Codex `hasUnreadTurn` 共同决定；live read-state 优先，断线时可用 Codex 自身持久化 unread 集合。EyPc open/hide/restore 与待输入打开均不确认；仅显式完成未读命令在 EyPc 本地确认当前 completion revision。 |
 | 归档即时同步 | implemented / unverified | App Server `thread/archive` 及 false/true 双向验证保留；成功后向已连接桌面端派发 `thread-archived` v2。单条/项目结果区分已派发与桌面端未确认即时刷新，通知失败不回滚已验证归档。 |
-| 活动与诊断 UI | implemented / unverified | 动态页显示正在进行中（含错误状态）、宿主状态未知和已完成未读等分段；角标仅统计桌面权威 Input/active/unread。设置页分别展示 App Server 数据连接器与桌面实时桥状态；普通 watchdog 改为 5s，三次失败后 1s。 |
+| 活动与诊断 UI | historical / refined by RAW-089 | 动态页当前只保留待输入、正在进行中、已完成未读与已完成分段；失败、系统错误和宿主未知分段已删除。设置页的连接器/实时桥诊断及 5s→三次失败后 1s watchdog 保留。 |
 | 自动化契约 | updated / not run | Domain、Controller、UI、platform/preload 测试契约已更新，并增加私有桌面 socket snapshot/read/archive 通知边界用例；依用户规则未执行。 |
 | 真实宿主与写入 | not run | 未运行测试、typecheck、build、uTools/runtime、截图、真实 IPC 预检、真实归档或项目移除；未修改本机 Codex 原生状态。 |
 
@@ -399,6 +556,6 @@ Requirement version: `2026-07-24.17`
 ## Revision 2026-07-23.1 Static Verification Pending
 
 - 已核验本机 Codex Desktop 存在真实 Side Chat live stream；Side Chat 未进入普通 inventory，但 snapshot/patch/follow/read-state 可由 preload shadow 通路接收并聚合到主对话。
-- 已实现 `waitingOnUserInput` 进入/退出即时发布；其他 activity、普通未读和 Side Chat 关系走单一 2 秒稳定窗口，并将完成转换交给既有默认 1500ms、可配置的完成稳定器，避免两个窗口叠加。
+- 历史实现曾让其它 activity、普通未读和 Side Chat 关系走单一 2 秒稳定窗口；该路径已由 RAW-089 删除。当前 Activity Delta 立即投影，只有 completed 展示保留可配置稳定窗。
 - 已实现主对话隐藏导航目标选择与 Deep Link 失败回退逻辑；本轮未执行真实打开动作，因此 Side Chat 直跳仍标记为“未验证”，不写入 publish log 能力承诺。
 - 按用户要求仅执行 `git diff --check`、`pnpm run typecheck` 与静态结构核验；不执行自动化测试、build、截图、uTools 宿主验收或额外自动化测试。

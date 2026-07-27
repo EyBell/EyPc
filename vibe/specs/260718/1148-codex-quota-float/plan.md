@@ -3,7 +3,7 @@
 Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-24.17`
+Requirement version: `2026-07-27.7`
 
 Authority: [spec.md](spec.md#L1)
 
@@ -128,5 +128,37 @@ Authority: [spec.md](spec.md#L1)
 111. 以 RAW-087 删除 preload 私有同步快捷键 IPC、平台 readback 类型、Controller/Runtime 快照与刷新动作，以及 Codex/窗口槽的绑定回显；只保留官方 `redirectHotKeySetting` 单向配置入口。通过全仓残余搜索、preload 语法和镜像一致性验证删除完整性。
 112. 将 Codex 配置页改为置顶五 Tab：默认双列“快捷方式”，其余为“任务 / 水球 / 卡片 / 运行”；仅渲染当前分面，把默认入口前的诊断移到运行页。提供方向键/Home/End Tab 导航，窄屏允许横向滚动并将快捷入口回落为单列。
 113. 依 `distill` 的渐进披露原则，把诊断详情、CLI 降级、外观部位、百分比与窗口尺寸说明移入可聚焦 `i` 提示；同步 Controlled、canonical、项目当前态、架构、技术细节、Soul 和错误记忆。只做 Vue SFC 静态编译、preload 语法/镜像、差异与 Markdown 链接审计，不运行测试、typecheck、build、真实 uTools、截图或 Codex 操作。
+114. 以 RAW-088 将 `CODEX_THEME_PRESETS` 扩展为 12 套，并统一为默认海盐材质：实体圆环、不透明球体底色、gradient 液体与软光晕；十二套仅以色相区分。同步 Controlled、canonical、项目当前态、架构、技术细节、Soul 与偏好索引。按用户独占验收规则不运行测试、typecheck、build、uTools、截图或真实 Codex 操作。
+115. 以 RAW-089 复核本机实际配置与 3 分钟稳定态：确认当前 `taskRefreshSeconds=15`、`completionPresentationDelayMs=1500`，并将固定 2 秒活动防抖与完整库存轮询区分。设计为 Desktop push 驱动、active 退出后单任务 latest-Turn 核验、15 秒仅作结构校对。
+116. 在两个 preload 镜像中实现 3 秒有界、单飞、可取消的定向 `thread/turns/list(limit=1)`；只通过 Activity Delta V2 放行脱敏 Turn 状态/时间，失败才触发完整库存刷新。Controller 立即消费 delta，删除固定 2 秒队列，让完成展示窗从真实 active 退出事件起算。
+117. 在领域投影、浮窗分组/标签/图标、计数和归档门禁中，将 failed/interrupted/systemError/unknown/notLoaded/inProgress/权威缺失统一归为 `ongoing/running/blocked-active`；只有 latest Turn completed 进入完成与可归档。删除 interrupted 60 秒完成推断，并将任务设置文案改为“完整校对频率”。
+118. 更新领域、Controller 与 preload 测试合同，但依项目规则不执行；同步 RAW-089 Controlled、canonical、项目状态、架构、技术细节、Soul、设计偏好和候选错误记忆。执行 preload 静态语法/镜像、字符串、JSON、diff whitespace 与 Markdown 链接审计；真实状态切换仍由用户验收。
+119. 以 RAW-090 把“新快照缺少已展示任务”从立即删除改为内存候选：保留上一份稳定清单、立即完整复核，且只在同一 missing-key 集合跨 `max(15s, taskRefreshSeconds)` 连续成立后接纳数量下降。
+120. 为 Activity Delta 与完整快照增加单调 latest-Turn 证据合并：拒绝更旧 `startedAt`、同 Turn completed→异常回退、`completedAt` 回退和 `updatedAt` 变小，但不延迟 exact desktop-live active 和更新 Turn。
+121. 保留显式删除快路：已验证的单条/项目归档与原生项目移除立即从 Controller 清单移除目标，并清理消失候选，不进入传输抖动窗。
+122. 更新 Controller 测试合同、RAW-090 Controlled/canonical/个人 APP 派生理解与独立候选错误记忆；仅执行项目允许的静态差异、语义搜索和 Markdown 链接审计，不运行测试、typecheck、build、uTools 或真实抖动。
+123. 以 RAW-091 复核“4 个进行中但实际 2 个”的本机匿名聚合证据，区分两条 exact desktop-live active 与两条 exact live idle + latest Turn interrupted；把 GPT/进程崩溃、用户主动停止或关闭 Codex 纳入明确停止边界。
+124. 在领域投影增加 `stopped/stopped/blocked-stopped`，限定为 failed/interrupted + live idle 或 bridge not-running；保持 desktop-live active 优先，所有 bridge failed、协议/传输异常与缺失证据继续 ongoing。动态页新增“已停止”段，不新增页签，停止态不进入进行中计数/角标/循环或完成归档。
+125. 将 Controller active-exit 新鲜度门禁扩展到所有 terminal outcome，避免第一份 idle delta 携带旧 interrupted/failed 时突兀闪为停止；更新 preload 自适应高度与领域/Controller/UI/桥接测试合同。
+126. 更新 RAW-091 Controlled、canonical、项目状态、架构、技术细节、Soul、设计偏好、个人 APP 派生理解与既有 provider-status 错误记忆；执行只读真实预检、静态差异/语义/JSON/镜像/Markdown 链接核验，不执行测试、typecheck、build、uTools 或截图。
+127. 以 RAW-092 将新增任务、首次待输入、turn started/completed 和未知任务事件标记为 urgent：Controller 以 50ms 合并触发结构快读，若事件发生在读取中则在结束后补读一次，避免落入 15 秒周期。
+128. 在 preload 建立会话期 latest-Turn 缓存与 raw-thread dirty generation；事件快读只重读 dirty/无缓存任务，无事件周期读仍全量，未登记 Desktop 主任务 shadow 只在完整库存建立匿名身份后发布。
+129. 对 `targeted-after-exit` completed 强证据绕过完成展示窗；保留普通完成配置窗、RAW-090 missing-key 跨周期隔离、RAW-091 stopped 证据和所有不确定状态进行中。
+130. 更新 RAW-092 代码合同、Controlled/canonical/个人 APP/错误记忆，执行静态 diff、preload 语法/镜像、JSON/语义与 Markdown 链接审计；不执行测试、typecheck、build、uTools、截图或真实转换。
+131. 以 RAW-093 对照本机 Desktop 当前协议，确认计划 Turn 完成后以未决 `item/plan/requestImplementation` 等待用户确认，并把该有限方法归入 `waitingOnUserInput`。
+132. 让未决明确请求覆盖同批 idle runtime，直接通过 Desktop live 匿名 delta 发布待输入；请求移除后恢复 runtime/Turn 投影，未登记任务继续走 RAW-092 匿名注册门禁。
+133. 增加 idle + Plan request 零库存读取测试合同，同步 Controlled/canonical/个人 APP/错误记忆并执行静态语法、镜像、diff、语义与链接审计；不执行测试、typecheck、build、uTools 或真实计划确认。
+134. 以 RAW-094 连续三分钟读取本机 Desktop live 与 latest Turn，确认进行中集合在非 active 与旧 active snapshot 之间反复切换，并追踪到未观察私有 patch 被误当作协议失败后触发退订重订。
+135. 将 Desktop shadow patch 解析改为观察子集：结构正确的其它 root 只推进 revision，受观察状态字段格式损坏仍重订；扩展桥接合同覆盖深层私有 Turn patch + 同批 idle，确保不重订且完成定向核验仍执行。
+136. 使用修正后的本机 bridge 做 30 秒只读复核并记录 `59 patch / 0 resubscribe / 0 replacement snapshot`；同步 RAW-094 Controlled/canonical/个人 APP/错误记忆/HMR 运行提示，执行静态语法、镜像、diff、语义和链接审计，不执行测试、typecheck、build、uTools 或真实完成操作。
+137. 追踪外部 Codex 归档：确认 `thread-archived` 仅标记普通库存刷新，后续完整快照又受 RAW-090 missing-key 隔离，导致已归档任务仍可停留至少一个校对周期。
+138. 仅在 preload 已有 raw ID → 匿名 key 映射时，把明确归档事件编码为 V2 `archivedKeys`；Controller 同步清除精确 key 的任务、短暂完成状态与本地 receipt，并安排 urgent 复核。未映射、unarchive/delete 与普通缺项不走该快路。
+139. 同步 RAW-095 Controlled/canonical/current/memory 记录；仅执行镜像、入口同步依赖、diff 和文档链接等静态核验，不运行测试、typecheck、build、uTools 或真实归档。
+140. 以 RAW-096 标记每段 Desktop-live active 的匿名本机观察时刻；完整库存重投影不得刷新旧 shadow 的时刻，失去 live authority/离开 active 时清除，Side Chat 聚合仅取仍 active 的最新时刻。
+141. 在 domain/Controller 只让明确 latest Turn `completedAt` 晚于该时刻时压过 active；不以 timeout、recency、connector 或缺失 Turn 猜完成，并保留 RAW-089–095 的异常、停止、归档与库存边界。
+142. 增加匿名 observation-time 的 bridge/domain/Controller 合同，同步 RAW-096 Controlled/canonical/current/error memory；仅执行镜像、同步 IPC 残余、diff 与链接静态核验，不运行测试、typecheck、build、uTools、截图或真实任务操作。
+143. 追踪用户在 Codex 手动阅读后完成任务重回进行中的路径，确认 `thread-read-state-changed` 与仅 `hasUnreadTurn` patch 会把完整当前 shadow 重新发入 Activity Delta，而不是只更新未读。
+144. 为 V2 entry 增加 `readStateOnly`；preload 对主/Side Chat read-state 及只读 patch 只发送匿名 key、unread 值/权威，Controller 只应用这些字段，完整 runtime/request 变化继续走 activity delta。
+145. 增加 direct-read、unread-only patch 与 Controller 防重启合同，同步 RAW-097 Controlled/canonical/current/error memory；仅执行镜像、同步 IPC 残余、diff 和链接静态核验，不运行测试、typecheck、build、uTools、截图或真实阅读操作。
 
-Completion: 1–49 保留既有历史状态。50–110 保留前述实现与中间态历史；其中 RAW-085/086 的回读实现已由 RAW-087 删除，用户确认入口恢复。111–113 为 RAW-087 的完整 readback 删除、顶部五 Tab、渐进披露、文档/错误记忆和静态收口。按用户独占验收规则不运行测试、类型、构建、真实 uTools、截图或 Codex 操作；RAW-087 为 `reported / 布局未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。
+Completion: 1–114 保留既有历史与 RAW-088 状态；115–118 为 RAW-089 的实时完成确认与异常统一进行中；119–122 为 RAW-090 的库存消失稳定、证据单调与显式删除快路；123–126 为 RAW-091 的明确停止边界、退出防闪与文档/错误记忆收口；127–130 为 RAW-092 的正向事件快路、dirty-task 读取、强证据直发和完整同步；131–133 为 RAW-093 的计划待确认协议识别、即时待输入投影与权威同步；134–136 为 RAW-094 的私有 patch 忽略、重订抖动修复与真实只读复核；137–139 为 RAW-095 的明确归档匿名快路与复核；140–142 为 RAW-096 的 active observation 新鲜度边界；143–145 为 RAW-097 的 unread-only 状态隔离。按项目验收规则不运行测试、类型、构建、真实 uTools 或截图；RAW-089–097 均为 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。

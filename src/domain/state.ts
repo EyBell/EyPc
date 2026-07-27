@@ -107,6 +107,7 @@ function normalizeWindowTargets(value: unknown, now: number): WindowTarget[] {
       titleLocator,
       lastNativeRef: stringValue(source.lastNativeRef).trim() || null,
       favorite: source.favorite !== false,
+      pinned: source.pinned === true,
       createdAt: numberValue(source.createdAt, now),
       updatedAt: numberValue(source.updatedAt, now)
     })

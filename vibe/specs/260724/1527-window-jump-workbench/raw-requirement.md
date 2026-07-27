@@ -6,19 +6,26 @@ Add an opt-in, keyboard-first EyPc surface that lets a user discover interactive
 
 ## Product Decisions
 
-- Support Windows and macOS in the first release. Windows uses top-level desktop-window APIs; macOS uses the System Events accessibility interface.
+- Support Windows and macOS in the first release. Windows uses top-level desktop-window APIs; macOS uses CoreGraphics inventory with a bounded System Events accessibility fallback.
 - The feature is disabled by default. The Tab scans only after an explicit refresh; stable-slot global features use the session live-window cache first and may rescan once on miss. It does not run a background scanner or reload on every Tab enter.
 - An alias is EyPc metadata only. The implementation never changes an application window title.
 - Ten fixed slot commands, `EyPc 窗口槽 1` through `EyPc 窗口槽 10`, are `mainHide` uTools shortcut targets. Successful jumps do not show the plugin transit window; lost or ambiguous targets open the windows Tab with an exception reminder. Slot labels remain stable when an alias changes, and mappings are separated by platform.
+- `mainHide` must remain the host-entry behavior, not a second generic Renderer hide. A slot and a manual workbench activation both use the same bounded recovery: stale native-reference `not-found` triggers one healthy real-time rescan and one retry. Only after a supported/listable/activatable capability and that rescan find no matching window may the outcome be accepted as `target-closed`; every other non-success is a blocking defect.
+- Activation diagnostics are session-only Runtime records (at most 50) with an opaque id, time, slot/manual entry, slot number, platform, stage, stable code, level, and sanitized explanation. They never enter `AppState`, plugin storage, native references, raw host logs, or console output. The compact workbench exception panel must expose blocking records as alerts, confirmed closed targets as status, and a clear-this-session action.
+- A separate detailed operation trace exists only when the renderer is a development build. It records bounded, sanitized runtime/native stage+outcome pairs (never title, application name, PID, handle, native reference, raw host output, or exception text), stays in Runtime memory only, caps at 50 records, and has an independent clear action. A real installed build must neither request the native trace nor render its module.
 - Window discovery and activation are capability-gated. macOS must explain missing Accessibility/Automation permission and expose a system-settings action; Windows reports a foreground-focus refusal rather than attempting an input or focus-protection bypass.
+- “展开并前置” is the common window-open operation: Windows restores a minimized target before one foreground attempt; macOS restores `AXMinimized` where readable, requests the owning process/window foreground state, performs `AXRaise`, and verifies readable state. “页面置顶” is a separate Windows-only operation backed by `SetWindowPos(HWND_TOPMOST)` plus the same restore/foreground rules. macOS must state that it cannot force an arbitrary third-party window to remain permanently topmost and must not report a false success.
+- On macOS, a Core Graphics window ID is an inventory/session reference, not a System Events accessibility identity. Activation must locate a single normalized AX-title match inside the target process; a fresh AX enumeration ordinal may disambiguate only equal-title matches. It must never assume `CGWindowID === AXWindowNumber`, interpolate a user title into shell/JXA source, or select an ambiguous target arbitrarily.
 - A slot first validates its last native reference, then requires an application-and-title locator match. Zero matches report an unavailable target; more than one match present a candidate choice. It must never select one arbitrarily.
+- A local list pin is independent from favorite, OS page topmost, and slot assignment. Pinning a live row creates only the minimum EyPc target metadata needed to retain it; assigning a live row to a stable slot creates non-favorite retention by default; unpinning does not remove a favorite or slot mapping.
+- Native discovery admits only actionable application windows. macOS requires a valid CoreGraphics window number backed by a running regular application; Windows requires an existing visible non-cloaked top-level/Alt-Tab-eligible handle and rejects tool/helper/native browser handles that are not the active root/popup surface. Neither platform uses a size threshold.
 
 ## Interaction Contract
 
-- The page is a dense toolbar/list workbench: favorites and slot-bound targets first, then live windows after a manual load. Search covers plugin alias, native title, and application name.
+- The page is a dense toolbar/list workbench. Pinned targets come first; every remaining saved/live row sorts globally by application name, then display name/title. Favorites and slot-bound targets remain visible when unavailable but do not override application ordering unless pinned. Search covers plugin alias, native title, and application name.
 - A persistent slot strip shows aliases for slots `1–10`; clicking focuses the bound target or reports an unassigned slot.
 - `ArrowUp`/`ArrowDown` change the active row; `Enter` attempts activation; `ArrowRight` opens the right-side action layer; `ArrowLeft` returns to the list; `Tab` and `Shift+Tab` move between list and action controls.
-- `Shift+F2` edits the local alias, `F2` opens the complete target editor, `Ctrl+S`/`Enter` saves, `Escape` backs out from editor to actions to search, `Space` toggles a favorite, and `Ctrl+R` manually loads/refreshes live windows.
+- `Shift+F2` edits the local alias, `F2` opens the complete target editor, `Ctrl+S`/`Enter` saves, `Escape` backs out from editor to actions to selection/search, `Space` toggles multi-selection and advances, and `Ctrl+R` manually loads/refreshes live windows. Favorite and pin are explicit action-panel commands; a pin toggle exposes `aria-pressed` and visible state.
 - Text fields retain native editing ownership. Window-list shortcuts apply only outside an ordinary editor except for the named editor commands.
 
 ## Non-goals and Safety Boundaries
@@ -38,3 +45,10 @@ Add an opt-in, keyboard-first EyPc surface that lets a user discover interactive
 6. Editing a target does not intercept native text editing keys.
 7. Entering the windows Tab does not scan until the user manually loads or refreshes.
 8. After a manual load, a global slot hotkey with a warm cache activates the OS window without showing the EyPc transit window.
+9. A local pin moves the target ahead of unpinned rows without changing its favorite or slot state; unpinned rows remain application-sorted.
+10. macOS CoreGraphics results unwrap into real rows instead of an empty successful cache; browser/helper native surfaces that are not actionable application windows remain absent.
+11. A stale slot reference that finds a new matching live window after one rescan activates it, refreshes the retained reference, and creates no blocking diagnostic.
+12. A truly closed target is reported only after a healthy rescan finds no match; it clears the retained native reference and records `target-closed`. Permission, host invocation, focus, ambiguity, configuration, workbench-show, and post-success silent-hide failures remain blocking and visible.
+13. A macOS window that remains in the Core Graphics list but lacks `AXWindowNumber` still activates through its unique AX title; a duplicate title is resolved only by its fresh AX ordinal or stays blocking/ambiguous.
+14. A development run may clear and inspect bounded sanitized operation stages for an activation, while a real installed build renders no operation-trace module and requests no native trace.
+15. Windows “页面置顶” restores, makes the real window topmost, and attempts foreground activation; macOS clearly blocks permanent third-party topmost while retaining “展开并前置”. Assigning a live row to a stable slot alone does not make it a favorite.

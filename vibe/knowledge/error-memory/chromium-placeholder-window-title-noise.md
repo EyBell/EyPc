@@ -64,4 +64,4 @@ Filter jumpable live windows in domain (`filterJumpableLiveWindows`) after every
 
 | Date | Trigger | Recovery | Outcome |
 | --- | --- | --- | --- |
-| 2026-07-26 | Size thresholds + title==appName / global `Window` denylist caused refresh “丢失” | Removed size filter; narrowed title filter to Chromium exact `Window` + host/IME shells; prefer AXWindowNumber in macOS `nativeRef` | candidate; user validation pending |
+| 2026-07-26/27 | Size thresholds + title==appName / global `Window` denylist caused refresh “丢失”; macOS bridge later treated CG IDs as `AXWindowNumber` | Removed size filter; narrowed title filter to Chromium exact `Window` + host/IME shells; keep CG IDs inventory-only and resolve AX activation by title/ordinal | candidate; user validation pending |

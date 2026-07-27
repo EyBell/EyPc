@@ -112,6 +112,7 @@ assert(typeof sandbox.window.eypcPlatform.ports.kill === 'function', 'preload mu
 assert(typeof sandbox.window.eypcPlatform.windows.capabilities === 'function', 'preload must expose windows.capabilities')
 assert(typeof sandbox.window.eypcPlatform.windows.list === 'function', 'preload must expose windows.list')
 assert(typeof sandbox.window.eypcPlatform.windows.activate === 'function', 'preload must expose windows.activate')
+assert(typeof sandbox.window.eypcPlatform.windows.alwaysOnTop === 'function', 'preload must expose windows.alwaysOnTop')
 assert(typeof sandbox.window.eypcPlatform.files.copyPath === 'function', 'preload must expose files.copyPath')
 assert(typeof sandbox.window.eypcPlatform.files.copyItems === 'function', 'preload must expose files.copyItems')
 assert(typeof sandbox.window.eypcPlatform.files.inspectPaths === 'function', 'preload must expose files.inspectPaths')

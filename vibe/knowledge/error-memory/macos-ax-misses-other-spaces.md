@@ -34,13 +34,13 @@ AX via System Events typically exposes windows on the active Space. Cross-Space/
 
 ## Prevention Rule
 
-List through CoreGraphics window list for inventory; keep AX for activate/close matched by window number. Surface Screen Recording denial in capability/reason and open both Screen Capture and Accessibility settings. Mirror preload changes in `public/preload.js`.
+Prefer CoreGraphics (`CGWindowListCopyWindowInfo` / `kCGWindowListOptionAll`) for full-desktop inventory when it returns titled windows. When CG fails, unwraps empty, or reports screen-recording title loss with zero named windows, fall back to System Events AX for the current Space so refresh never silently yields only favorites/slots. Keep AX for activate/close, but never equate a CG window ID with `AXWindowNumber`: resolve activation by normalized AX title and use a fresh AX ordinal only for same-title disambiguation. Surface Screen Recording vs Accessibility denial distinctly. Mirror preload changes in `public/preload.js`.
 
 ## Alternative Route
 
 - Status: `candidate`
 - Preconditions: macOS host with windows on another Space.
-- Steps: grant Screen Recording; refresh Window Jump; confirm off-Space titles appear.
+- Steps: grant Screen Recording; refresh Window Jump; confirm off-Space titles appear. Without Screen Recording, confirm current-Space AX fallback still lists ordinary windows after「加载」.
 - Verification: user-owned refresh; compare Mission Control vs list.
 - Applicability boundary: live enumeration only.
-- Fallback: Accessibility-only hosts may still activate known refs but cannot guarantee full inventory.
+- Fallback: Accessibility-only hosts use AX current-Space list; they cannot guarantee full inventory across Spaces.

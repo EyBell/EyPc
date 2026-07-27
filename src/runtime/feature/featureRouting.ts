@@ -34,9 +34,10 @@ function restoreCurrentRoute(currentTab: AppTabId | null | undefined, featureCon
 export function routePluginFeature(payload: PluginEnterPayload | null | undefined, featureConfigs?: FeatureConfig[], currentTab?: AppTabId | null): FeatureRoute {
   const slotMatch = /^eypc-window-slot-([1-9]|10)$/.exec(payload?.code || '')
   if (slotMatch) {
+    const slot = Number(slotMatch[1])
     return isFeatureEnabled('windows', featureConfigs)
-      ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'windows.slot.activate', actionArgs: { slot: Number(slotMatch[1]) }, hideAfterAction: true }
-      : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features' }
+      ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'windows.slot.activate', actionArgs: { slot } }
+      : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'windows.slot.activate', actionArgs: { slot } }
   }
   switch (payload?.code) {
     case 'eypc-ports':

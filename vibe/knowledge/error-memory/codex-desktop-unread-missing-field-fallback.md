@@ -4,7 +4,7 @@ status: candidate
 scope: project
 fingerprint: codex-desktop-live-unread__optional-live-field-was-treated-as-false-and-overwrote-confirmed-persisted-fallback__preserve-persisted-unread-until-explicit-live-read-state
 first_seen: 2026-07-24
-last_verified: 2026-07-24
+last_verified: 2026-07-27
 review_after: 2026-08-24
 evidence:
   - user-observed-state-mismatch
@@ -34,19 +34,20 @@ The bridge stored one mutable unread value without retaining the authority of it
 
 ## Evidence
 
-- [preload/index.js](../../../preload/index.js#L1673) narrows known request identifiers by removing separators, while `waitingOnUserInput` remains available only from exact Desktop live `active` shadows.
+- [preload/index.js](../../../preload/index.js#L1) narrows known request identifiers by removing separators. RAW-093 further establishes that an exact unresolved request may promote an idle Desktop live shadow to `active + waitingOnUserInput`; [the dedicated request-priority memory](codex-pending-user-request-overrides-idle-runtime.md#L1) owns that boundary.
 - [preload/index.js](../../../preload/index.js#L1686) preserves `desktop-persisted` unread authority as an explicit fallback; [the bridge publish path](../../../preload/index.js#L2110) selects live read-state first and that fallback only when the live field is absent.
 - [preload/index.js](../../../preload/index.js#L2297) refreshes the persisted unread baseline without replacing an explicit live value; the initial inventory stores both authority channels.
 - [verify.md](../../specs/260718/1148-codex-quota-float/verify.md#L36) records the user acceptance matrix for RAW-081.
 
 ## Detection Order
 
-1. Confirm the activity is an exact Desktop live `active` state before examining request flags.
-2. Distinguish an explicit live `hasUnreadTurn` value, an explicit live read-state message, and an omitted live field.
-3. If the field is omitted, read only the latest successful Codex persisted unread authority; if that source is unavailable, remain unknown.
-4. Keep persisted fallback data separate from transient live read-state so an explicit read event cannot rewrite the fallback baseline.
-5. Normalize only separators in the existing known request identifiers; do not broaden the accepted semantic classes.
-6. Never use connector active, `notLoaded`, recency, elapsed time or ordinary refresh as unread, completion or input evidence.
+1. Confirm the source is an exact, compatible Desktop live shadow before examining request flags or unread fields.
+2. Resolve finite pending input/approval requests first; a recognized unresolved request may promote idle runtime to active, while unknown requests do not.
+3. Distinguish an explicit live `hasUnreadTurn` value, an explicit live read-state message, and an omitted live field.
+4. If the field is omitted, read only the latest successful Codex persisted unread authority; if that source is unavailable, remain unknown.
+5. Keep persisted fallback data separate from transient live read-state so an explicit read event cannot rewrite the fallback baseline.
+6. Normalize only separators in the existing known request identifiers; do not broaden the accepted semantic classes.
+7. Never use connector active, `notLoaded`, recency, elapsed time or ordinary refresh as unread, completion or input evidence.
 
 ## Prevention Rule
 

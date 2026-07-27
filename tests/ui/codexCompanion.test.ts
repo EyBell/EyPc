@@ -57,7 +57,7 @@ function conversation(activeTab: 'all' | 'input' | 'ongoing' | 'hidden' | 'compl
   ]
   const threads: CodexHostThread[] = [
     hostThread({ key: TASK_ACTIVE, name: '真实进行中', projectKey: PROJECT_A, projectName: 'CodeNote', status: 'active', lastTurnStatus: 'inProgress', lastTurnStartedAt: NOW - 1_000, updatedAt: NOW - 500, nativePinned: true, nativePinnedOrder: 0 }),
-    hostThread({ key: TASK_FAILED, name: '执行失败', projectKey: PROJECT_A, projectName: 'CodeNote', lastTurnStatus: 'failed', lastTurnStartedAt: NOW - 2_000, updatedAt: NOW - 1_500 }),
+    hostThread({ key: TASK_FAILED, name: '执行失败', projectKey: PROJECT_A, projectName: 'CodeNote', status: 'idle', lastTurnStatus: 'failed', lastTurnStartedAt: NOW - 2_000, updatedAt: NOW - 1_500 }),
     hostThread({ key: TASK_DONE, name: '原始完成标题', projectKey: PROJECT_A, projectName: 'CodeNote', lastTurnStatus: 'completed', lastTurnStartedAt: NOW - 3_000, lastTurnCompletedAt: NOW - 2_500, hasUnreadTurn: true, updatedAt: NOW - 2_000 }),
     hostThread({ key: TASK_HIDDEN, name: '隐藏的 Chats 会话', projectKey: 'chats', projectName: 'Chats', projectKind: 'chats', lastTurnStatus: 'completed', lastTurnStartedAt: NOW - 4_000, lastTurnCompletedAt: NOW - 3_500, updatedAt: NOW - 3_000 }),
     hostThread({ key: TASK_INPUT, name: '等待补充输入', projectKey: PROJECT_B, projectName: 'EyTodo', status: 'active', activeFlags: ['waitingOnUserInput'], lastTurnStatus: 'inProgress', lastTurnStartedAt: NOW - 500, updatedAt: NOW - 250 })
@@ -247,8 +247,12 @@ describe('Codex Companion V3 UI contract', () => {
     ])
     expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toContain('动态')
     expect(wrapper.findAll('.float-status-section').map((section) => section.text().replace(/\s+/g, ' ').trim())).toEqual([
-      '待输入1', '正在进行中1', '需关注1', '已完成未读1'
+      '待输入1', '正在进行中1', '已停止1', '已完成未读1'
     ])
+    const abnormal = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
+    expect(abnormal.get('.task-meta-button').text()).toContain('已停止')
+    expect(abnormal.classes()).toContain('bucket-stopped')
+    expect(abnormal.get('.action-archive').attributes('disabled')).toBeDefined()
     expect(wrapper.find('.float-header').exists()).toBe(false)
     expect(wrapper.find('[aria-label="打开 Codex Companion 配置"]').exists()).toBe(false)
 
@@ -325,10 +329,7 @@ describe('Codex Companion V3 UI contract', () => {
     expect(wrapper.text()).toContain('再次操作确认')
     await done.trigger('keydown', { key: 'Delete', code: 'Delete' })
     expect(action).toHaveBeenCalledWith('codex.tasks.archive', {
-      items: expect.arrayContaining([
-        expect.objectContaining({ key: TASK_FAILED }),
-        expect.objectContaining({ key: TASK_DONE })
-      ])
+      items: [expect.objectContaining({ key: TASK_DONE })]
     })
 
     ;(failed.element as HTMLElement).focus()
@@ -408,13 +409,14 @@ describe('Codex Companion V3 UI contract', () => {
     expect(failed.findAll('.task-inline-actions button').map((button) => button.text())).toEqual(['顶', '隐', '归', '+'])
     await failed.get('.task-inline-actions .action-pin').trigger('click')
     expect(action).toHaveBeenCalledWith('codex.pin.toggle', { kind: 'task', key: TASK_FAILED })
-    await failed.trigger('contextmenu')
+    const done = wrapper.get(`[data-focus-key="task:${TASK_DONE}"]`)
+    await done.trigger('contextmenu')
     const archive = wrapper.findAll('.float-drawer-actions button').find((button) => button.text().includes('真实归档'))!
     await archive.trigger('click')
     expect(wrapper.text()).toContain('再次操作确认')
     expect(action).not.toHaveBeenCalledWith('codex.tasks.archive', expect.anything())
     await archive.trigger('click')
-    expect(action).toHaveBeenCalledWith('codex.tasks.archive', { items: [expect.objectContaining({ key: TASK_FAILED })] })
+    expect(action).toHaveBeenCalledWith('codex.tasks.archive', { items: [expect.objectContaining({ key: TASK_DONE })] })
 
     await wrapper.get('.float-side-panel [aria-label="关闭"]').trigger('click')
     await wrapper.findAll('[role="tab"]').find((tab) => tab.text().startsWith('项目'))!.trigger('click')
@@ -439,7 +441,7 @@ describe('Codex Companion V3 UI contract', () => {
     expect(chatActions.map((button) => button.text())).toEqual(expect.arrayContaining([
       expect.stringContaining('新建会话'),
       expect.stringContaining('编辑项目别名'),
-      expect.stringContaining('全部归档'),
+      expect.stringContaining('归档已完成任务'),
       expect.stringContaining('从 Codex 侧栏移除')
     ]))
     expect(chatActions.find((button) => button.text().includes('本地置顶'))?.attributes('disabled')).toBeDefined()
@@ -622,7 +624,14 @@ describe('Codex Companion V3 UI contract', () => {
     await status.trigger('pointerleave')
     expect(wrapper.find('.float-action-hint').exists()).toBe(false)
 
-    const archive = failed.get('.task-inline-actions .action-archive')
+    const stoppedArchive = failed.get('.task-inline-actions .action-archive')
+    await stoppedArchive.trigger('pointerenter')
+    vi.advanceTimersByTime(200)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.float-action-hint').text()).toContain('会话已停止但未完成')
+    await stoppedArchive.trigger('pointerleave')
+
+    const archive = wrapper.get(`[data-focus-key="task:${TASK_DONE}"] .task-inline-actions .action-archive`)
     await archive.trigger('pointerenter')
     vi.advanceTimersByTime(200)
     await wrapper.vm.$nextTick()
@@ -818,7 +827,7 @@ describe('Codex Companion V3 UI contract', () => {
     vi.useFakeTimers()
     const { wrapper, action } = mountFloat(true, floatSnapshot('all'))
     await wrapper.vm.$nextTick()
-    await wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`).trigger('contextmenu')
+    await wrapper.get(`[data-focus-key="task:${TASK_DONE}"]`).trigger('contextmenu')
     const archive = wrapper.findAll('.float-drawer-actions button').find((button) => button.text().includes('真实归档'))!
     await archive.trigger('click')
     vi.advanceTimersByTime(5_000)
@@ -997,7 +1006,7 @@ describe('Codex Companion V3 UI contract', () => {
   it('cancels drawer confirmation before closing the drawer', async () => {
     const { wrapper, action } = mountFloat(true, floatSnapshot('all'))
     await wrapper.vm.$nextTick()
-    await wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`).trigger('contextmenu')
+    await wrapper.get(`[data-focus-key="task:${TASK_DONE}"]`).trigger('contextmenu')
     const archive = wrapper.findAll('.float-drawer-actions button').find((button) => button.text().includes('真实归档'))!
     await archive.trigger('click')
     expect(wrapper.text()).toContain('再次操作确认')

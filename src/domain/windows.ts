@@ -21,6 +21,7 @@ export interface WindowTarget {
   titleLocator: string
   lastNativeRef: string | null
   favorite: boolean
+  pinned: boolean
   createdAt: number
   updatedAt: number
 }
@@ -45,6 +46,14 @@ const HOST_SHELL_TITLES = new Set([
 
 export function normalizeWindowText(value: string): string {
   return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
+}
+
+export function compareWindowRowsByApplication<T extends { pinned: boolean; appName: string; displayName: string; title: string; id: string }>(left: T, right: T): number {
+  if (left.pinned !== right.pinned) return left.pinned ? -1 : 1
+  return left.appName.localeCompare(right.appName, undefined, { sensitivity: 'base' })
+    || left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' })
+    || left.title.localeCompare(right.title, undefined, { sensitivity: 'base' })
+    || left.id.localeCompare(right.id, undefined, { sensitivity: 'base' })
 }
 
 export function liveWindowIdentity(window: Pick<LiveWindow, 'platform' | 'nativeRef'>): string {
