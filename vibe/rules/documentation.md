@@ -10,6 +10,7 @@ Tool: codex
 - Technical implementation memory: [../knowledge/technical-details.md](../knowledge/technical-details.md#L1).
 - Error memory: [../knowledge/error-memory.md](../knowledge/error-memory.md#L1).
 - Data notes: [../ai-db/README.md](../ai-db/README.md#L1), with AI-DB storage and naming delegated to [CodeNote DB governance](../../../../../czz/CzzProj/CodeNote/DevelopRef/调试工具/db/governance/README.md#5-workspace-shape-and-naming).
+- Reusable uTools plugin development guides and failure usage: [CodeNote uTools module](../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/README.md#L1).
 
 ## Closeout
 
@@ -17,3 +18,4 @@ Tool: codex
 - Stable implementation decisions update architecture knowledge.
 - Verification records must list commands, results, and unverified gaps.
 - Keep project-specific facts in this repository; cross-project principles stay in CodeNote.
+- For uTools host/preload/window/HMR/packaging/Esc/`mainHide`/hotkey technical archival: write the durable guide or error record into the CodeNote uTools module. Task folders keep only raw requirement and verify evidence. Local `vibe/knowledge/error-memory/utools-*.md` files remain thin pointers, not second full copies.
