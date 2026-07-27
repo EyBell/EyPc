@@ -370,7 +370,7 @@ function applyPluginRoute(payload: { code?: string } | null) {
   runtime.setTab(route.tab)
   if (route.actionId) {
     runtime.dispatch(route.actionId, { source: 'utools-feature', ...(route.actionArgs || {}) })
-    if (route.hideAfterAction) requestAnimationFrame(() => { void platform.app.hide() })
+    if (route.hideAfterAction && !isWindowSlot) requestAnimationFrame(() => { void platform.app.hide() })
     else if (payload?.code === 'eypc-codex-toggle') requestAnimationFrame(() => { platform.app.show?.() })
   }
   if (route.focusSearch) {

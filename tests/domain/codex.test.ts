@@ -21,7 +21,7 @@ function thread(
   updatedAt: number,
   activeFlags: CodexHostThread['activeFlags'] = [],
   key = KEY,
-  evidence: Partial<Pick<CodexHostThread, 'createdAt' | 'firstPromptAt' | 'lastTurnStatus' | 'lastTurnStartedAt' | 'lastTurnCompletedAt' | 'statusAuthority' | 'hasUnreadTurn' | 'unreadAuthority'>> = {}
+  evidence: Partial<Pick<CodexHostThread, 'createdAt' | 'firstPromptAt' | 'lastTurnStatus' | 'lastTurnStartedAt' | 'lastTurnCompletedAt' | 'statusAuthority' | 'desktopActiveSince' | 'hasUnreadTurn' | 'unreadAuthority'>> = {}
 ): CodexHostThread {
   return {
     key,
@@ -147,6 +147,23 @@ describe('Codex domain', () => {
     expect(baseline.receipts).toEqual([])
   })
 
+  it('lets a newer completed Turn supersede an older Desktop active observation', () => {
+    const result = projectConversations({
+      threads: [thread('active', 600, [], KEY, {
+        desktopActiveSince: 200,
+        lastTurnStatus: 'completed',
+        lastTurnStartedAt: 400,
+        lastTurnCompletedAt: 500
+      })],
+      receipts: [],
+      lastTaskScanAt: 0,
+      now: 600
+    })
+
+    expect(result.snapshot).toMatchObject({ ongoingCount: 0, completedCount: 1 })
+    expect(result.snapshot.completed[0]).toMatchObject({ key: KEY, completionRevision: 500, archiveCapability: 'allowed' })
+  })
+
   it('marks a newer persisted completion unread without comparing it to thread metadata recency', () => {
     const result = projectConversations({
       threads: [thread('notLoaded', 900, [], KEY, {
@@ -170,31 +187,70 @@ describe('Codex domain', () => {
     expect(result.snapshot.pending).toBe(result.snapshot.completedUnread)
   })
 
-  it('keeps provider terminal and unknown states accurate while only active blocks archive', () => {
+  it('keeps unconfirmed abnormalities ongoing but separates an explicitly stopped Turn', () => {
     const rows = [
       thread('active', 900, ['waitingOnUserInput'], keyAt(1), { lastTurnStatus: 'inProgress', lastTurnStartedAt: 800 }),
       thread('notLoaded', 800, [], keyAt(2), { lastTurnStatus: 'failed', lastTurnStartedAt: 700 }),
       thread('idle', 700, [], keyAt(3), { lastTurnStatus: 'interrupted', lastTurnStartedAt: 600 }),
       thread('systemError', 600, [], keyAt(4), { lastTurnStartedAt: 500 }),
-      thread('notLoaded', 500, [], keyAt(5))
+      thread('notLoaded', 500, [], keyAt(5), { lastTurnStartedAt: 400 })
     ]
     const result = projectConversations({ threads: rows, receipts: [], lastTaskScanAt: 100, now: 1_000 })
 
     expect(result.snapshot.ongoing.map((task) => [task.key, task.activityState])).toEqual([
       [keyAt(1), 'waiting-input'],
-      [keyAt(2), 'failed'],
-      [keyAt(3), 'interrupted'],
-      [keyAt(4), 'system-error'],
-      [keyAt(5), 'unknown']
+      [keyAt(2), 'ongoing'],
+      [keyAt(4), 'ongoing'],
+      [keyAt(5), 'ongoing']
     ])
     expect(result.snapshot.ongoing.map((task) => task.archiveCapability)).toEqual([
       'blocked-active',
-      'allowed',
-      'allowed',
-      'allowed-with-warning',
-      'allowed-with-warning'
+      'blocked-active',
+      'blocked-active',
+      'blocked-active'
     ])
-    expect(result.snapshot).toMatchObject({ ongoingCount: 1, waitingCount: 1, attentionCount: 3, unknownCount: 1 })
+    expect(result.snapshot.stopped[0]).toMatchObject({
+      key: keyAt(3),
+      bucket: 'stopped',
+      activityState: 'stopped',
+      state: 'stopped',
+      archiveCapability: 'blocked-stopped',
+      canArchive: false
+    })
+    expect(result.snapshot).toMatchObject({ ongoingCount: 4, stoppedCount: 1, waitingCount: 1, runningCount: 3, attentionCount: 0, unknownCount: 0 })
+  })
+
+  it('requires exact live-idle or desktop-exit evidence before a failed/interrupted Turn is stopped', () => {
+    const live = projectConversations({
+      threads: [
+        thread('active', 1_000, [], keyAt(1), { lastTurnStatus: 'interrupted', lastTurnStartedAt: 900 }),
+        thread('idle', 900, [], keyAt(2), { lastTurnStatus: 'failed', lastTurnStartedAt: 800 })
+      ],
+      receipts: [],
+      lastTaskScanAt: 700,
+      now: 1_100,
+      desktopBridgeState: 'connected'
+    })
+    expect(live.snapshot.ongoing.map((task) => task.key)).toEqual([keyAt(1)])
+    expect(live.snapshot.stopped.map((task) => task.key)).toEqual([keyAt(2)])
+
+    const uncertain = projectConversations({
+      threads: [thread('notLoaded', 900, [], keyAt(3), { statusAuthority: 'connector', lastTurnStatus: 'interrupted', lastTurnStartedAt: 800 })],
+      receipts: [],
+      lastTaskScanAt: 700,
+      now: 1_100,
+      desktopBridgeState: 'failed'
+    })
+    expect(uncertain.snapshot).toMatchObject({ ongoingCount: 1, stoppedCount: 0 })
+
+    const exited = projectConversations({
+      threads: [thread('notLoaded', 900, [], keyAt(3), { statusAuthority: 'connector', lastTurnStatus: 'interrupted', lastTurnStartedAt: 800 })],
+      receipts: [],
+      lastTaskScanAt: 700,
+      now: 1_100,
+      desktopBridgeState: 'not-running'
+    })
+    expect(exited.snapshot).toMatchObject({ ongoingCount: 0, stoppedCount: 1 })
   })
 
   it('does not promote connector or persisted-turn heuristics without desktop live active authority', () => {
@@ -210,10 +266,10 @@ describe('Codex domain', () => {
 
     expect(result.snapshot.inputRequired).toEqual([])
     expect(result.snapshot.ongoing.map((task) => [task.key, task.activityState])).toEqual([
-      [KEY, 'unknown'],
-      [keyAt(2), 'unknown']
+      [KEY, 'ongoing'],
+      [keyAt(2), 'ongoing']
     ])
-    expect(result.snapshot).toMatchObject({ ongoingCount: 0, waitingCount: 0, unknownCount: 2 })
+    expect(result.snapshot).toMatchObject({ ongoingCount: 2, waitingCount: 0, runningCount: 2, unknownCount: 0 })
   })
 
   it('uses desktop live state immediately and removes active classification as soon as that authority is lost', () => {
@@ -233,8 +289,8 @@ describe('Codex domain', () => {
     })
 
     expect(result.snapshot.ongoing).toHaveLength(1)
-    expect(result.snapshot.ongoing[0]).toMatchObject({ key: KEY, activityState: 'unknown', state: 'recent-activity' })
-    expect(result.snapshot.ongoingCount).toBe(0)
+    expect(result.snapshot.ongoing[0]).toMatchObject({ key: KEY, activityState: 'ongoing', state: 'running' })
+    expect(result.snapshot.ongoingCount).toBe(1)
   })
 
   it('uses one stable comparator: last question, activity time, key', () => {
@@ -249,10 +305,10 @@ describe('Codex domain', () => {
       projectKind: 'chats',
       isHidden: false,
       bucket: 'ongoing',
-      activityState: 'unknown',
-      archiveCapability: 'allowed-with-warning',
+      activityState: 'ongoing',
+      archiveCapability: 'blocked-active',
       revisionAt: 1,
-      state: 'recent-activity',
+      state: 'running',
       updatedAt: 1,
       ...overrides
     })
@@ -547,7 +603,7 @@ describe('Codex domain', () => {
     })
 
     expect(result.snapshot.ongoing[0]).toMatchObject({
-      activityState: 'interrupted',
+      activityState: 'ongoing',
       createdAt: 50_000,
       firstPromptAt: 60_000,
       lastQuestionAt: 180_000

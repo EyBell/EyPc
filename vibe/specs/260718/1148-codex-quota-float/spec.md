@@ -4,7 +4,7 @@ Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
 Documentation level: `controlled`
-Requirement version: `2026-07-24.17`
+Requirement version: `2026-07-27.7`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
@@ -24,22 +24,42 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 修订 `2026-07-24.17` 追加 RAW-087：用户确认删除入口读取后 uTools 已恢复加载，因此完全删除快捷键回读桥、类型、运行时快照及 Codex/窗口页回显；所有快捷键入口只保留官方配置跳转。同时把 Codex 配置页收敛为顶部五 Tab，默认双列快捷方式，任务、水球、卡片和运行按需单页渲染，冗长说明进入可聚焦信息按钮。RAW-085/086 的回读合同被本条取代。
 
+修订 `2026-07-26.1` 追加 RAW-088：内置外观主题扩展为 12 套，并统一为默认「海盐」材质语言——实体圆环、不透明球体底色、gradient 液体与软光晕；十二套仅以色相区分。
+
+修订 `2026-07-26.2` 追加 RAW-089：只有 latest Turn 的明确 completed 证据才退出“进行中”；所有异常、权威缺失和未确认状态统一显示“进行中”并阻断归档。Desktop active 退出后触发单任务 3 秒有界核验，删除固定 2 秒 Activity 防抖；15 秒设置只承担完整库存校对。
+
+修订 `2026-07-26.3` 追加 RAW-090：单次完整快照缺少已展示任务时不立即减少数量，而是保留上一份稳定清单并复核；同一缺失集合须跨至少一个完整校对周期连续成立才接纳。latest-Turn 和更新时间证据保持单调，防止传输回退导致分组、排序与数量突变。
+
+修订 `2026-07-27.1` 追加 RAW-091：明确区分“传输不确定”和“会话已停止”。failed/interrupted 只有与 exact desktop-live idle 或 Desktop bridge `not-running` 同时成立时才进入独立已停止桶；active 优先，bridge failed/缺证据继续进行中。active 退出先防旧 terminal delta 闪变，再由定向或完整核验发布最终停止。
+
+修订 `2026-07-27.2` 追加 RAW-092：新增任务、首次待输入和强完成证据走事件驱动快路；结构事件使用 50ms 短合并与读取中补读，preload 只对事件标脏或无缓存任务读取 latest Turn，普通 15 秒周期仍完整校对。`targeted-after-exit` completed 直接发布；missing-key、无证据终态及状态回退继续稳定/保守处理。
+
+修订 `2026-07-27.3` 追加 RAW-093：本机 Desktop 的计划完成待确认以未决 `item/plan/requestImplementation` 表达；该有限请求直接作为 `waitingOnUserInput` 权威，即使 runtime 已变 idle 也立即进入待输入，不等待库存、15 秒周期或完成展示窗。
+
+修订 `2026-07-27.4` 追加 RAW-094：Desktop 全量会话 stream 中未被 Companion 观察的私有 patch 只推进 revision，不再触发退订重订；状态相关 patch 因此不会被重订窗口吞掉，也不会被旧 active snapshot 反复覆盖。
+
+修订 `2026-07-27.5` 追加 RAW-095：兼容 Codex 通道的明确 `thread-archived` 事件若能在 preload 内映射为当前库存的匿名 key，Activity Delta V2 会将该 key 标为已归档；Controller 立即从共享投影移除该 key 并排队 urgent 完整复核。未映射、unarchive、delete 或畸形事件不触发移除，普通快照缺项仍受 RAW-090 隔离。
+
+修订 `2026-07-27.6` 追加 RAW-096：每段 Desktop-live active 附带匿名本机观察时刻。只有 latest Turn 的明确 `completedAt` 晚于该时刻，才把旧 active shadow 视为被更晚完成证据取代；无时刻、较早完成或非 completed 仍保留 live active 优先。不使用超时或 recency 推断完成。
+
+修订 `2026-07-27.7` 追加 RAW-097：Desktop read-state 及仅 `hasUnreadTurn` patch 是 unread-only delta，只允许修改已读投影，不能借当前 shadow 重发 activity 并把完成任务变为进行中。
+
 ## Current Requirement And Implementation Map
 
 | 领域 | 当前合同 | 实现与证据 |
 | --- | --- | --- |
 | 原生项目状态 | 日常流程只读解析；RAW-052 项目移除经 Codex 退出、alias/指纹/结构和原子回滚门禁后，仅修改原生项目注册字段 | [preload/index.js](../../../../preload/index.js#L1)、[codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) |
-| 完整任务库存 | 完整分页读取 `archived=false`；归属优先 native assignment、Chats、最深有效 cwd，其他任务排除 | [preload/index.js](../../../../preload/index.js#L1)、[codex-real-preflight.mjs](../../../../scripts/codex-real-preflight.mjs#L1) |
-| 严格时间/完整性 | 最新 Turn 必须存在有效 `startedAt`；滚动窗口 1–365 天、默认 30 天、边界包含；时间窗口资格取最新 Turn 开始/完成活动但不以 `updatedAt` 回退；项目指纹变化重试一次，仍变化则不发布伪完整数据 | [codex.ts](../../../../src/domain/codex.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
-| 四页签与状态优先级 | 可见页签为 `动态 / 已完成 / 已隐藏 / 项目`；动态页只取最近 6 小时、非隐藏的待输入、正在进行中（含投影后的 ongoing 以及 failed/system-error）、宿主状态未知、已完成未读、已完成；Desktop live snapshot 缺少 unread 时保留最近成功读取的 persisted unread，明确 read-state 优先；已完成已读回流到未读/desktop-live 进行中立即发布，进行中离开到完成或异常由 Controller 的可中断、按设置（默认 1500ms）任务级路径统一稳定；`all/inputRequired` 只保留兼容投影 | [preload/index.js](../../../../preload/index.js#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1)、[FloatApp.vue](../../../../src/FloatApp.vue#L1) |
+| 完整任务库存 | 完整分页读取 `archived=false`；归属优先 native assignment、Chats、最深有效 cwd，其他任务排除。新快照缺少已发布 key 时先保留上一份内存稳定清单，跨一个完整校对周期的连续同集合确认后才接纳消失；仅当前已映射的明确归档事件携带匿名 key 立即移除并 urgent 复核 | [preload/index.js](../../../../preload/index.js#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1)、[codex-real-preflight.mjs](../../../../scripts/codex-real-preflight.mjs#L1) |
+| 严格时间/完整性 | 最新 Turn 必须存在有效 `startedAt`；滚动窗口 1–365 天、默认 30 天、边界包含；时间窗口资格取最新 Turn 开始/完成活动但不以 `updatedAt` 回退；项目指纹变化重试一次，仍变化则不发布伪完整数据。已接纳的 Turn `startedAt`/completed outcome/`completedAt` 和任务 `updatedAt` 不允许被更旧快照回退 | [codex.ts](../../../../src/domain/codex.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
+| 四页签与状态优先级 | 可见页签为 `动态 / 已完成 / 已隐藏 / 项目`；动态页只取最近 6 小时、非隐藏的待输入、正在进行中、已停止、已完成未读、已完成。Desktop-live active 仍优先，唯有 latest Turn completed 的 `completedAt` 晚于该 active 的匿名观察时刻才压过旧 shadow；latest Turn failed/interrupted + exact live idle/not-running 进入已停止；其它异常/权威缺失仍进入进行中；`all/inputRequired` 只保留兼容投影 | [preload/index.js](../../../../preload/index.js#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1)、[FloatApp.vue](../../../../src/FloatApp.vue#L1) |
 | 原生项目视图 | `Pinned / Projects / Chats` 遵循 Codex 原生置顶、项目顺序和归属，不重复任务，并保留空项目 | [codex.ts](../../../../src/domain/codex.ts#L1)、[codexCompanion.test.ts](../../../../tests/ui/codexCompanion.test.ts#L1) |
 | 本地元数据 | 恢复最后页签/项目折叠，支持别名、具备即时位置/状态反馈的本地置顶和仅影响项目页的项目隐藏；旧本地移除集合迁移清除 | [codex.ts](../../../../src/domain/codex.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
 | 额度 V2 与紧凑水球 | 普通 5 小时正余额→普通周正余额→最高正余额 Spark；Spark 显示 `S`；存在 Weekly 时显示同池剩余进度环，无 Weekly 时无外圈，且始终不显示普通装饰圆环 | [codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1)、[CodexWaterBall.vue](../../../../src/components/CodexWaterBall.vue#L1)、[codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1) |
-| 配置导航与外观 | 顶部 `快捷方式 / 任务 / 水球 / 卡片 / 运行` 五 Tab 默认进入双列快捷方式，只渲染当前分面；诊断、降级和部位说明进入可聚焦信息按钮。水球/状态信号与展开卡片分页，但继续共享真实组件、主题对象与直通持久化 | [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1)、[codex.css](../../../../src/styles/codex.css#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1) |
+| 配置导航与外观 | 顶部 `快捷方式 / 任务 / 水球 / 卡片 / 运行` 五 Tab 默认进入双列快捷方式，只渲染当前分面；诊断、降级和部位说明进入可聚焦信息按钮。水球/状态信号与展开卡片分页，但继续共享真实组件、主题对象与直通持久化；内置主题共 12 套 | [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1)、[codex.css](../../../../src/styles/codex.css#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L57) |
 | 宿主快捷键边界 | 前/后任务、待输入、完成未读、悬浮入口和窗口槽只通过官方设置跳转；preload/Renderer/运行时均不读取或回显宿主绑定，不调用私有同步快捷键 IPC | [preload/index.js](../../../../preload/index.js#L1)、[eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1)、[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1)、[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) |
 | 水球收起态命中区与全局功能 | 上半区不因 hover 展开并保留三角标直接点击；待输入只打开第一条，完成未读角标和 uTools 全局功能均打开并本地确认第一条当前完成 revision，进行中仍展开；新增前/后任务功能以待输入→完成未读→进行中、置顶优先稳定去重的序列循环打开；新 revision 会重新未读且不写 Codex Desktop 全局状态；角标 hover/focus 200ms 显示作用说明且不展开/切页 | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1)、[featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L1) |
 | 展开布局 | 四页签直接位于顶部，其下依次是统一搜索、服务端真实额度文字和任务内容；删除旧顶部样式/隐藏/刷新/设置/关闭工具栏 | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[float.css](../../../../src/styles/float.css#L1) |
-| 实时状态与未读通道 | macOS Codex Desktop 私有 IPC 提供 live snapshot/patch/request/read-state；App Server 只保留数据/动作连接器职责。普通 watchdog 为 5s，连续三次失败临时 1s；无 live authority 立即显示宿主状态未知 | [preload/index.js](../../../../preload/index.js#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
+| 实时状态与未读通道 | macOS Codex Desktop 私有 IPC 提供 live snapshot/patch/request/read-state；active 退出立即触发单任务 latest-Turn 核验，3 秒内成功便推送脱敏完成证据，失败才请求完整校对。固定 2 秒活动防抖已删除，无 live authority 保持“进行中” | [preload/index.js](../../../../preload/index.js#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
 | 启动发现与连接诊断 | 自动枚举受控 macOS/Windows CLI 候选；可选手动位置经同一运行计划核验并只存本机插件 storage；环境快照只传来源/可用性标签，连接器降级明确不授予实时状态权威 | [preload/index.js](../../../../preload/index.js#L1)、[eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1)、[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) |
 | 默认模型与新会话 | `quota-auto`、普通首选模型、Spark 自动切换、冻结/刷新确认模型、瞬时 `thread/start → turn/start → Deep Link` 与失败清理 | [codexNewThread.ts](../../../../src/domain/codexNewThread.ts#L1)、[preload/index.js](../../../../preload/index.js#L1)、[FloatApp.vue](../../../../src/FloatApp.vue#L1) |
 | 选择、Shift 与快捷键 | 普通态中部打开、Ctrl/Cmd+中部或 38px 左区选择；选择态左区/中部切换成员并在最后一项移出时退出；模式提示固定在列表舞台底部且不重排，行与子按钮分别拥有 Space/Enter | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[float.css](../../../../src/styles/float.css#L1)、[keybindingRuntime.ts](../../../../src/runtime/keybinding/keybindingRuntime.ts#L1) |
@@ -51,7 +71,7 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 - 当前临时架构不是“只接宿主、删除插件连接器”：App Server 连接器继续负责额度、模型、库存、创建与持久化归档；Codex Desktop 伴随桥负责跨进程实时状态、未读和桌面侧栏刷新。Easy Agent 后续可在 platform port 后替换这两条通道。
 - macOS preload 连接 `~/.codex/ipc/ipc.sock`，使用长度前缀帧与固定版本的 initialize、thread snapshot/patch/follow、request/read-state 和 archive broadcast。连接前校验目录/socket owner 与 mode；握手或消息版本不匹配标记 `incompatible` 并 fail-closed，不尝试猜协议。
-- `statusAuthority=desktop-live` 是 `waiting-input / waiting-approval / active` 的唯一来源。Desktop bridge 为 `not-running / incompatible / failed / connecting` 或仅有 connector 状态时，live 状态必须立刻降级为 `unknown`，不得由五秒启发或 App Server `active` 覆盖。最新 Turn 的 completed/failed/interrupted 仍作为持久化原始证据；其中 interrupted 按 RAW-066 投影为可见 ongoing 并进入进行中计数，但不因此获得 desktop-live active 权威。RAW-068 仅将其产品动作能力与 ongoing 对齐为稳定不可归档，原始值继续留在 Host 边界供诊断与计时。
+- `statusAuthority=desktop-live` 是 `waiting-input / waiting-approval / active` 的唯一来源。Desktop bridge 为 `not-running / incompatible / failed / connecting` 或仅有 connector 状态时，不得由五秒启发或 App Server `active` 覆盖；RAW-089 要求产品投影保持 `ongoing`，不显示 unknown。latest Turn 的 completed/failed/interrupted 仍保留为 Host 原始证据，但只有 completed 能进入完成桶；其余值只供诊断并统一阻断归档。
 - 完成未读要求最新 Turn 为 completed 且 `hasUnreadTurn=true`。live read-state 优先；桌面未连接时允许读取 `.codex-global-state.json` 内 Codex 自身持久化 unread 集合作为 `desktop-persisted`。EyPc 的 open/hide/restore/本地 receipt 不得更改该值，也不得把未读未知伪装成已读。
 - Codex Desktop 全量 snapshot 仅在 preload 内瞬时建立 raw ID → 匿名 key 的 live shadow；正文、摘要、Turn items、cwd、路径和 raw ID 必须在边界内丢弃，不进入 Renderer、持久化、日志、文档或错误消息。
 - 归档仍先由 App Server 重读与执行 `thread/archive`，再验证 `archived=false` 缺失、`archived=true` 存在。只有验证成功后才发送 `thread-archived` v2；返回值区分 dispatched 与未连接/失败。通知失败不回滚已经确认的上游归档，也不得宣称桌面 UI 已确认刷新。
@@ -61,22 +81,21 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 - [preload/index.js](../../../../preload/index.js#L1) 在 macOS/Windows 上只检查受控 CLI 候选；自动命中仅返回脱敏来源标签。用户可在配置页通过本机文件选择或完整路径提供可执行文件，Host 以既有 native/Node-wrapper/shim 运行计划核验后才写入独立的本机插件 storage key。完整路径不进入 Renderer 快照、持久化应用状态、错误、日志或过程文档。
 - 手动位置无效时，Host 返回 `manualLaunchPathState=invalid` 并保持显式错误；不会静默改用其他入口。清除手动位置后恢复自动发现。保存/清除位置不强制中断已有 App Server，新的启动计划在下一次连接启动时生效。未设置手动位置时，既有 App Server 连接器仍提供额度、模型、库存、创建与已验证归档，并在界面公开“兼容连接器降级/可能延迟”。
-- `statusFeedMode=desktop-live` 才允许 Input、正在进行中和已完成未读呈现实时权威。`connector-fallback` 绝不从插件缓存、App Server 活动状态或刷新频率推断三项状态；只显示已知持久化结果与“宿主状态未知”。手动/自动启动方式不改变此状态权威合同。
+- `statusFeedMode=desktop-live` 才允许 Input、等待审批与 active 子状态呈现实时权威。`connector-fallback` 绝不从插件缓存、App Server 活动状态或刷新频率推断完成；只显示已知 completed 结果，其余任务统一为“进行中”。手动/自动启动方式不改变此状态权威合同。
 - Windows 的 CLI 自动发现/手动核验遵循 npm、Volta、NVM、本地和 PATH 的受控规则；`.cmd/.bat` 仍必须解析到已验证 Node/JS 或 bundled native binary。当前 Desktop 私有 IPC 实时桥仅为 macOS canary，Windows 配置页必须明确其实时状态尚不可用。
 
 ## RAW-063 Float Convergence And Recent-Task Flow
 
 - [codex.ts](../../../../src/domain/codex.ts#L1) 保留完整 `CodexTaskTab` 兼容集合和 `all/inputRequired` 数据投影，但定义可见页签为 `ongoing / completed / hidden / projects`。旧持久化 `lastTaskTab=all/input`、旧投影快照及外部 `codex.tab.set` 的 `all/input` 统一归一为 `ongoing`；Float renderer 也把未知旧值回落到动态页，因此启动与异步快照不应短暂展示隐藏页。
 - 常规投影的滚动窗口活动时间为权威 latest Turn 的 `max(startedAt, completedAt)`，并继续要求 `startedAt` 存在；完成时间只有 latest Turn 明确 completed 时才参与。浮窗动态页在此基础上固定再过滤最近 6 小时、非隐藏任务，包含完成未读与已完成，且徽标使用同一集合计数。`updatedAt` 只保留排序并列/展示用途，绝不替代 Turn 时间或状态依据。
-- `FloatApp` 只渲染四个页签并按待输入、正在进行中、宿主状态未知、已完成未读、已完成顺序分段。RAW-063/064 当时要求 interrupted 保留原始行内表达的部分已由 RAW-066 取代；failed/system-error 仍保留原有错误文本、告警图标和颜色，未知仍独立。紧凑待输入角标继续从 `inputRequired` 取数；RAW-067 将其单项/多项统一为直开显示排序第一条，并让完成未读从 `all` 中筛选完整 `completed-unread` 集合同样直开首条。RAW-063 的 Renderer 独立进行中角标 2 秒合并器已由 RAW-069 取代；角标现在直接消费 Controller 的统一任务级稳定投影。
+- `FloatApp` 只渲染四个页签并按待输入、正在进行中、已完成未读、已完成顺序分段。RAW-089 取代 failed/system-error/unknown 的原有错误文本、告警图标、颜色和独立分段；它们与 interrupted 一样显示“进行中”。紧凑待输入角标继续从 `inputRequired` 取数；RAW-067 将其单项/多项统一为直开显示排序第一条，并让完成未读从 `all` 中筛选完整 `completed-unread` 集合同样直开首条。进行中角标直接消费 Controller 的统一投影。
 - 标题普通点击直接发送打开会话，Ctrl/Cmd 点击仅切换选择；元信息行点击只设置任务高亮并把焦点交给行容器，供 `Ctrl+T` 等 Codex profile 快捷键继承所属项目。行尾四按钮固定为 `24px` 槽、`2px` 间距、`102px` 轨宽。
 - 已验证快照的注册提示只显示 `最近 {N} 天的 {M} 条`，不再显示原始或已注册来源计数。RAW-063 当时移除 Weekly 环的决定已由 RAW-065 取代；内部液面、百分比、状态角标、展开额度和外层兼容对象继续保留。
 - 本轮不新增或修改测试代码，也不运行测试、类型检查、构建、uTools、截图或真实宿主操作；验收由用户执行。
 
 ## RAW-064 Status Consolidation And Non-Reflow Selection Hint
 
-- Renderer 继续取消“需关注”分段并将 `failed`、`system-error` 收敛至“正在进行中”；RAW-064 对 interrupted 保留准确行内表达的子条款由 RAW-066 单独取代。其余选择提示、动态分组、未知降级与紧凑 ARIA 不输出“需关注”的合同不变。
-- `宿主状态未知` 保持独立分段。它不因错误态合并而获得 live 含义，且继续不进入真实 active/input 紧凑计数。
+- Renderer 取消“需关注”和“宿主状态未知”分段；RAW-089 后 failed、interrupted、system-error、unknown 以及其它未确认状态都使用“正在进行中”分段、标签、图标和计数。只有等待输入、等待审批与完成保留独立产品语义。
 - `selectedKeys.size > 0` 时的 `选择模式 / 已选 N 项 / Esc 退出` 保持 `role=status` 与 `aria-live=polite`，但置于 `.float-task-list-stage` 的绝对底部覆盖层，`pointer-events:none`，不进入普通流、不增加卡片或滚动区高度、不移动任务行坐标。
 - 选择滚动区以底部 padding/scroll padding 为悬浮提示保留可访问空间；底部批量工具栏同时出现时上移到提示上方并共享安全区，顶部批量工具栏逻辑保持。既有 38px 左区、核心选择状态机、Esc/最后一项退出和行/子按钮 Space/Enter 所有权不改。
 - 不新增公共 API、持久化字段、运行时 action、共享组件或 preload/platform 改动；不新增或运行测试、类型检查、构建、uTools、截图或真实 Codex 操作，用户独占验收。
@@ -90,8 +109,8 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 ## RAW-066 Provider Interrupted To Visible Ongoing Projection
 
 - [codex.ts](../../../../src/domain/codex.ts#L1) 保留 Host/Turn 的 `CodexTurnStatus='interrupted'`，但 `taskActivityState()` 在领域卡片投影时返回 `ongoing`；Renderer 内存快照的 `CodexTaskActivityState` 不再包含 `interrupted`，且任务列表不持久化，因此无需迁移。
-- `runningCount/ongoingCount` 统计 desktop-live `active` 与转换后的 `ongoing`；`attentionCount` 只统计 `failed/system-error`。角标、动态/项目/已隐藏卡、详情与 Shift 预览因此统一显示“进行中”，使用播放图标与 running 色；页面不再保留 `interrupted/已中断` 的可见分支或 CSS 选择器。
-- 本条原先让 `archiveCapability` 继续根据原始 interrupted 单独计算、从而允许该状态归档的子条款已由 RAW-068 取代；failed、system-error 与 unknown 的显示语义不变。
+- `runningCount/ongoingCount` 统计全部 ongoing 桶；RAW-089 后 `attentionCount/unknownCount` 固定为 0。角标、动态/项目/已隐藏卡、详情与 Shift 预览统一显示“进行中”，使用播放图标与 running 色。
+- 本条原先只规范 interrupted；RAW-089 将同一投影扩大到 failed、system-error、unknown 与所有未确认状态，并把归档能力统一为 `blocked-active`。
 
 ## RAW-067 Compact Counter First-Task Activation
 
@@ -102,9 +121,9 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 ## RAW-068 Stable Ongoing Archive Capability
 
 - [codex.ts](../../../../src/domain/codex.ts#L1) 以领域投影后的 `activityState` 计算归档能力：desktop-live active 或 `activityState='ongoing'` 都得到 `archiveCapability='blocked-active'` 与 `canArchive=false`。原始 interrupted 因此与 active 共用同一产品状态和动作能力，来源在两者之间切换不会再改变固定归档槽的可用性。
-- [FloatApp.vue](../../../../src/FloatApp.vue#L1) 继续常显固定 `归` 槽，但任务行、抽屉、Shift 预览、批量候选和确认入口只消费稳定的 `canArchive`；投影 ongoing 的控件始终禁用并说明“真实活动任务不可归档”，不插拔槽位、不改变布局，也不出现可归档闪烁。
-- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 只让 capability 明确为 allowed 的失败态发送 terminal 证据；投影 ongoing 在 Controller 门禁处直接拒绝。[preload/index.js](../../../../preload/index.js#L1) 的单条归档重读把 interrupted 与 active/inProgress 一起返回 `active-task`，项目全部归档把 interrupted 加入进行中跳过集合，terminal 证据只接受 failed。
-- completed/failed 的既有可验证归档能力不变；system-error/unknown 继续走显式警告与 fail-closed 重读。没有新增外部 API、Runtime action、持久化字段、迁移或依赖；依用户规则不修改或运行测试，也不运行 typecheck、build、uTools、截图或真实 Codex 操作。
+- [FloatApp.vue](../../../../src/FloatApp.vue#L1) 继续常显固定 `归` 槽，但任务行、抽屉、Shift 预览、批量候选和确认入口只消费稳定的 `canArchive`；投影 ongoing 的控件始终禁用并说明“任务仍在进行中，暂不能归档”，不插拔槽位、不改变布局，也不出现可归档闪烁。
+- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 仅为明确 completed 任务发送 `evidence='completed'`；其余投影 ongoing 在 Controller 门禁处直接拒绝。[preload/index.js](../../../../preload/index.js#L1) 保留 Host 重读作为最终安全门禁。
+- completed 保留可验证归档能力；failed/interrupted/system-error/unknown/inProgress/notLoaded 与权威缺失全部不可归档。没有新增外部 API、Runtime action、持久化字段、迁移或依赖。
 
 ## RAW-082 Explicit Completed-Unread Acknowledgement
 
@@ -114,16 +133,14 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 ## RAW-069 / RAW-077 / RAW-078 / RAW-079 / RAW-080 Interruptible Ongoing-Exit Presentation Hold
 
-- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 同时维护 provider-derived 原始会话快照与 Renderer 展示快照。已完成且已读回流为 completed-unread 或 desktop-live active 时立即发布，既不等待普通防抖，也会清除同任务尚未到期的终态 hold，因此不把 completed-unread 改写为 ongoing。只有同一任务在上一份原始快照中确实为 visible running、下一份原始快照首次成为 completed/completed-unread、failed 或 system-error 时，才按持久化 `completionPresentationDelayMs` 建立展示窗；允许 `0 / 500 / 1000 / 1500 / 2000 / 3000ms`，默认 `1500ms`，其中 `0` 直接发布而不建立 hold。初次加载便已处于终态的任务不延迟，重复终态快照不重置截止时间。
+- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 同时维护 provider-derived 原始会话快照与 Renderer 展示快照。已完成且已读回流为 completed-unread 或 desktop-live active 时立即发布。只有同一任务从 visible running 获得明确 latest-Turn completed 证据时，才按持久化 `completionPresentationDelayMs` 建立展示窗；允许 `0 / 500 / 1000 / 1500 / 2000 / 3000ms`，默认 `1500ms`，其中 `0` 直接发布。RAW-089 后 failed/system-error 等异常不再建立终态 hold，而是继续保持 ongoing。
 - 展示窗内任务以最新原始卡片为底，移除 completion/unread/完成时间展示字段，并统一覆盖为 `bucket='ongoing'`、`activityState='ongoing'`、`state='running'`、`archiveCapability='blocked-active'`、`canArchive=false`。Controller 同步重建 ongoing/completed/hidden/all、完成页、项目卡、Pinned/Projects/Chats section 与全部计数，因此卡片、分组、详情、Shift 预览、三个角标和归档入口不会各自切换。
-- 窗口内原始任务回到 active/ongoing 时立即删除 hold 并保持进行中；只有原始终态连续存在到截止时间，定时器才以最新原始快照一次性发布 completed/completed-unread、failed 或 system-error 及对应能力。该计时器只延迟已成立的 provider 权威展示，不从时间、刷新次数或 recency 推断完成。
-- [FloatApp.vue](../../../../src/FloatApp.vue#L1) 删除旧的独立 `ACTIVE_COUNTER_DELAY_MS`/`displayedActiveCount` 合并器，进行中角标直接读取统一快照，避免额外展示延迟。配置页以“进行中离开稳定窗”将该延迟直接写入持久化设置；功能停用、收件箱关闭与 Controller dispose 都清理临时 hold/timer；不新增 API、Runtime action、迁移、依赖或测试改动。
+- 窗口内原始任务回到 active/ongoing 时立即删除 hold 并保持进行中；只有 completed 证据持续到截止时间，定时器才一次性发布 completed/completed-unread 及对应能力。截止时间从 Desktop active 退出事件起算，目标 Turn 核验耗时不会再叠加一份完整展示窗。
+- [FloatApp.vue](../../../../src/FloatApp.vue#L1) 进行中角标直接读取统一快照。配置页以“进行中离开稳定窗”将该延迟直接写入持久化设置；该值只延迟已成立的完成展示，不作为缓存、状态核验或完成推断。
 
-## RAW-070 Interrupted Grace To Completion Marker
+## RAW-070 Interrupted Grace To Completion Marker（由 RAW-089 取代）
 
-- [codex.ts](../../../../src/domain/codex.ts#L1194) 保留 Desktop live `active` 的最高优先级；仅当任务不再由 Desktop live 判定为 active、最新 Turn 为 `interrupted` 且线程 `updatedAt` 距当前至少 60 秒时，生成完成 revision。
-- 60 秒宽限期内仍按原始 interrupted 投影为 ongoing，达到阈值后进入 completed/completed-unread，统一释放完成时间、未读和归档能力；该规则不适用于 `notLoaded`、unknown、仅 connector active 或仍为 Desktop live active 的任务。
-- 该时间阈值只收敛已存在的 interrupted 证据，不从刷新次数、连接状态或未知状态推断完成；Controller 既有普通非输入状态 2 秒稳定发布继续生效，已确认完成仍走用户配置、默认 1500ms 的展示窗。无新增公共 API、迁移或测试合同。
+- RAW-089 删除 interrupted 的 60 秒完成推断。interrupted 永久保持 ongoing，直到 latest Turn 明确返回 completed；elapsed time、`updatedAt`、刷新次数和连接状态均不能生成 completion revision。
 
 ## RAW-071 Appearance Workbench And Direct Color Application
 
@@ -155,7 +172,7 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 ## RAW-076 Expanded Card Theme Tokens
 
 - [codex.ts](../../../../src/domain/codex.ts#L1) 在设置与已保存主题中持久化 `expandedCardAppearance`：主面板、内层块、边框、主/次文字、选中、焦点、进行中、完成未读九项直接令牌；缺失的历史主题按其已有卡片颜色补齐，保持兼容。
-- [codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1) 为每个内置主题提供同一完整令牌集，并由唯一的 expanded-card resolver 同时服务预览与运行态；它不对用户提交的令牌做格式、对比度或色域回滚。
+- [codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L57) 提供 12 套内置主题（含 7 套高饱和炫彩），每套同一完整令牌集，并由唯一的 expanded-card resolver 同时服务预览与运行态；它不对用户提交的令牌做格式、对比度或色域回滚。
 - [FloatApp.vue](../../../../src/FloatApp.vue#L1) 在浮窗展开时无条件选择 expanded-card theme，不依赖水球或紧凑卡片的当前显示样式；收起态仍保持自己的紧凑皮肤。
 - [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 按面板层次、文字层级、交互强调、任务状态分组展示九项控件及真实大卡片预览，控件只改标记的令牌，不影响水球区或状态信号区。
 
@@ -215,7 +232,7 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 - `timeWindowDays` 默认 30，可配置 1–365；候选仍要求有效 `lastTurnStartedAt`，滚动窗口资格取 `max(lastTurnStartedAt,lastTurnCompletedAt)` 且边界包含；`updatedAt` 不得作为时间或状态回退。
 - 可见页签固定为 `动态 / 已完成 / 已隐藏 / 项目`。`all` 和 `inputRequired` 继续作为底层兼容投影，供注册提示和紧凑角标首条直开使用，但不得单独渲染或路由。
-- `动态`：稳定持久化 ID 仍为 `ongoing`，只展示最近 6 小时有上述 Turn 活动的非隐藏任务，依次为 `待输入 / 正在进行中 / 宿主状态未知 / 已完成未读 / 已完成`；原始 interrupted 在领域投影后以 ongoing 显示“进行中”并稳定为不可归档，failed/system-error 仍保留各自行内错误表达。每段先稳定展示置顶项，再展示非置顶项，各分区内部保持最新 Turn `startedAt` 倒序。只有 `desktop-live` 能产生待输入、等待审批或 active；转换后的 ongoing 不冒充 live authority，unknown 仍不得混入正在进行中。
+- `动态`：稳定持久化 ID 仍为 `ongoing`，只展示最近 6 小时有上述 Turn 活动的非隐藏任务，依次为 `待输入 / 正在进行中 / 已完成未读 / 已完成`。只有 `desktop-live` 能产生待输入、等待审批或 active；failed/interrupted/systemError/unknown/notLoaded/inProgress/权威缺失全部投影为 ongoing，不冒充 live authority，但必须进入正在进行中。每段先稳定展示置顶项，再展示非置顶项，各分区内部保持最新 Turn `startedAt` 倒序。
 - `已隐藏`：EyPc 本地隐藏的窗口内会话，保留真实状态。
 - `已完成`：非隐藏、非 active 且最新 Turn completed。
 - `项目`：同一窗口内会话按原生结构投影。`Pinned` 固定为 EyPc 置顶会话、Codex 原生置顶会话、EyPc 置顶项目、Codex 原生置顶项目；置顶会话从所属项目行中排除，来源由 `顶` 控件和说明表达，不追加行尾文字。`Projects` 包含其余原生项目和空项目；`Chats` 只含原生 projectless 会话，展开任务必须紧随其标题行。
@@ -232,7 +249,7 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 - 旧“从 EyPc 移除/恢复”本地抑制已由 RAW-052 取代。项目“隐/显”是可恢复的本地分组展示状态；项目“移”是经 Host 安全事务执行的真实 Codex 侧栏移除，两者不得混用。
 - 水球不再显示迷你详情或普通装饰圆环。水球根容器透明，表面只保留内部深度阴影，不绘制 inset、静态 border、inset outline、装饰 shell 或同尺寸外发光；宿主水球按钮的 focus-visible 不绘制外部整圆，改为百分比读数下划线。收起态上半区是角标安全区，pointer enter/move 不展开；只有指针进入下半区才立即展开。球体显式点击和键盘激活仍可展开，触屏不模拟 hover。中心依次选择普通 5 小时正余额、普通周正余额、最高正余额 Spark；两个普通窗口均无正余额时才展示 Spark。Spark 百分比上方显示 `S`，文字背景透明。百分比读数的位置、字号、字形和颜色独立持久化，配置页预览与真实水球共用同一组件/对象；存在 Weekly 读数时显示同池剩余进度环及其配置；无 Weekly 时没有任何外圈。历史 `shellOpacity` 只保留持久化兼容且不再有入口。
 - 展开额度区只渲染 App Server 实际返回的普通与 Spark 窗口。只有 Weekly 时不得伪造 5 小时额度；缺失窗口不视为 0，也不得触发模型自动降级。
-- 收起态左下角仅在非零时以红色文字显示 Codex Desktop 权威待输入数；右下最边角展示同一投影的完成未读数（超过 99 显示 `99+`），其上方展示统一任务投影中的进行中数，包含 desktop-live active、由原始 interrupted 转换的 ongoing 及完成展示窗内的 ongoing。宿主未知、failed/system-error 和未读未知不冒充这三类计数。待输入无论一项或多项都只打开完整计数集合中展示排序第一条；完成未读角标或全局功能打开同样的第一条并本地确认其当前 completion revision；进行中仍只展开浮窗。三个角标保持直接点击，hover 不切页也不展开。
+- 收起态左下角仅在非零时以红色文字显示 Codex Desktop 权威待输入数；右下最边角展示同一投影的完成未读数（超过 99 显示 `99+`），其上方展示统一任务投影中的进行中数，包含所有 ongoing 桶任务（等待输入仍只计入输入角标）。异常、权威缺失和未确认状态都计入进行中，不再形成 unknown/attention 计数。待输入无论一项或多项都只打开完整计数集合中展示排序第一条；完成未读角标或全局功能打开同样的第一条并本地确认其当前 completion revision；进行中仍只展开浮窗。
 - 会话行悬停超过 500ms 显示不透明、隐私白名单详情；状态槽和固定短按钮悬停超过 200ms 显示不透明说明。按住纯 Shift 仍可显示不抢焦点的只读预览；悬停会话优先、键盘高亮兜底，Shift+↑/↓ 接管目标，真实鼠标移动后恢复悬停所有权。所有详情只含名称/原名、项目、状态/活动标记、允许的时间/耗时、来源、隐藏/置顶和归档能力；正文、摘要、raw ID、cwd 与路径永不读取或展示。
 
 ## Selection, Operations And Shortcuts
@@ -263,9 +280,9 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 ## Archive Safety Contract
 
 - 单条归档请求只接受短期 action alias、预期任务 recency/version、最新 Turn `startedAt`/状态和 `sourceFingerprint`。
-- Preload 重读项目指纹、thread 身份/状态/recency 和最新 Turn；任何缺失、变化、desktop-live active、inProgress、interrupted 或新版本均拒绝。通过后调用 `thread/archive`，再完整确认该 ID 从 `archived=false` 消失且出现在 `archived=true`；失败不从 UI 移除。
+- Preload 重读项目指纹、thread 身份/状态/recency 和最新 Turn；请求与重读都必须是同一明确 `completed` revision，任何缺失、变化、desktop-live active、非 completed 或新版本均拒绝。通过后调用 `thread/archive`，再完整确认该 ID 从 `archived=false` 消失且出现在 `archived=true`；失败不从 UI 移除。
 - 双向验证成功后，Preload 向已连接 Codex Desktop 发送版本化 `thread-archived` 通知，使桌面侧栏无需关闭重启即可同步；结果只承诺通知已派发，不宣称桌面 UI 已确认消费。未连接/派发失败会返回同步状态但不撤销已验证归档。
-- 项目“全部归档”重新扫描该项目全部未归档历史，不受 30 天窗口影响。active、inProgress 与 interrupted 条目作为进行中跳过；候选按每批 20、并发 2 逐项执行同样的双向验证。部分失败返回逐项匿名结果并保留失败行。
+- 项目“归档已完成任务”重新扫描该项目全部未归档历史，不受 30 天窗口影响。只有最新 Turn 明确 `completed` 的条目进入候选，其它状态、缺失 Turn 与 malformed 证据全部作为进行中跳过；候选按每批 20、并发 2 逐项执行同样的双向验证。部分失败返回逐项匿名结果并保留失败行。
 - App Server 没有 conditional archive 原语；重读通过后、写入前新活动开始仍是 provider-level TOCTOU 残余，不能被 UI 描述为原子保证。
 
 ## RAW-052 常显操作与真实项目移除
@@ -290,7 +307,7 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 ## Acceptance Criteria
 
-- 主文件/备份回退、完整分页、指纹重试、归属优先级、移除项目过滤、30 天边界、四页签与旧 all/input 回退、6 小时动态流、原始 interrupted 到可见 ongoing 的投影及稳定归档阻断、failed/system-error 分组与未知独立、Desktop IPC live/unread 投影、5s watchdog、无权威降级、打开/隐藏不改未读、归档后桌面通知、普通/Spark 额度优先级、仅 Weekly 数据环且无装饰圈的水球命中/角标说明、`quota-auto`、瞬时创建、多选状态机/键盘归属、无重排底部选择提示、置顶来源门禁、隐私预览、Quick Jump、二次确认、批量部分失败与归档双向验证均有历史测试合同；本轮不修改或执行测试，RAW-065–068 仅做静态核对并等待用户验收。
+- 主文件/备份回退、完整分页、指纹重试、归属优先级、移除项目过滤、30 天边界、四页签与旧 all/input 回退、6 小时动态流、Desktop IPC live/unread 投影、5s watchdog、打开/隐藏不改未读、归档后桌面通知、普通/Spark 额度优先级、仅 Weekly 数据环且无装饰圈的水球命中/角标说明、`quota-auto`、瞬时创建、多选状态机/键盘归属、无重排底部选择提示、置顶来源门禁、隐私预览、Quick Jump、二次确认、批量部分失败与归档双向验证均有历史测试合同。RAW-089 新增/更新领域、Controller 与 preload 定向核验测试合同，但依项目规则不执行；真实状态切换仍由用户验收。
 - 380px 与 330px 展开态、330px composer/Shift 预览/右键抽屉、104px Spark 水球完成浏览器视觉核验；页面无横向溢出，`S`、模型名称/ID/原因/额度、系统听写输入框、预览内部滚动、Space 选中后下移、批量栏上下避让、任务行零位移及 Pinned/Projects/Chats 顺序均可读。
 - 专用临时任务真实执行 `archive → false/true → unarchive → true/false`，最终再次归档清理；不操作用户现有任务。
 - RAW-051/054 的历史验收命令与证据保持原记录，但不能验证 RAW-071；当前外观仅由用户按三个独立区域逐项验收。RAW-052–053、RAW-055–058 仍按用户独占验收，不能由历史 RAW-054 门禁结果替代。
@@ -304,8 +321,8 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 ## RAW-069 主对话状态主体化与 Side Chat 实时输入
 
 - Renderer 只接收主对话的匿名 activity key；Side Chat 仅在 preload 内作为 live shadow 保存，并依据 `forkedFromId`、`sideConversationParentNavigationPath` 聚合到主对话，不进入普通任务库存、任务卡或持久化。
-- `waitingOnUserInput` 的进入和退出绕过状态去抖，立即更新主对话的 `inputRequired`、`inputRequiredCount`、角标和任务投影；已完成且已读回流为 completed-unread 或 desktop-live active 同样立即发布。进行中离开到 completed/completed-unread、failed 或 system-error 由既有默认 1500ms、可配置的共享稳定器处理，其他 active、approval、idle、普通未读及关系变化继续使用单个 2 秒 Controller 稳定窗口，避免两个窗口叠加。
-- 完成展示窗口与普通状态窗口不得叠加；明确完成转换交由既有完成稳定器处理，最长保持一个用户配置的窗口。Desktop IPC 失联、协议不兼容、功能关闭、dispose 和归档立即清理或降级，不等待窗口。
+- `waitingOnUserInput` 的进入和退出立即更新主对话的 `inputRequired`、`inputRequiredCount`、角标和任务投影；已完成且已读回流为 completed-unread 或 desktop-live active 同样立即发布。RAW-089 删除其它 Activity Delta 的固定 2 秒 Controller 防抖：每个脱敏 delta 立即进入统一投影，异常仍为进行中。
+- 明确完成转换交由既有完成稳定器处理，截止时间从真实 active 退出事件起算；Desktop IPC 失联、协议不兼容、功能关闭、dispose 和归档立即清理或降级为进行中，不等待窗口。
 - 主对话打开动作在 preload 内解析隐藏导航目标，按待输入、待审批、进行中和 revision 选择 Side Chat；直跳能力必须经过本机真实 Deep Link/已验证私有 IPC 验证，失败时回退主对话，不向 Renderer 暴露原始 ID。
 
 ## RAW-083 紧凑悬浮窗角标与命中区
@@ -326,3 +343,70 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 - [eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) 与 [appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1) 已删除 readback 类型、任务/窗口快照、刷新动作及进入窗口页后的读取。Codex 和窗口槽页不再显示“当前绑定/未配置/无法读取”。
 - [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 默认展示顶部“快捷方式”Tab，并以双列压缩六个入口；“任务 / 水球 / 卡片 / 运行”只渲染各自配置。运行诊断从默认入口移至运行页，诊断详情、CLI 降级、外观部位、百分比与窗口尺寸说明进入键盘可聚焦的 `i` 提示。
 - 用户已确认移除入口回读后插件恢复加载。当前完整删除与分面布局通过私有 IPC 残余搜索、preload 语法/镜像和 Vue SFC 静态编译；真实布局仍等待用户在 uTools 中验收。
+
+## RAW-089 实时完成核验与异常统一进行中
+
+- [preload/index.js](../../../../preload/index.js#L1) 在 Codex Desktop 主任务或聚合 Side Chat 从 active 退出时立即发送状态 delta，并对该 raw thread 启动单飞 latest-Turn 核验。核验只调用 `thread/turns/list(limit=1, sortDirection=desc, itemsView=notLoaded)`，总期限 3 秒，重试间隔为即时、300ms、1000ms；任务恢复 active、库存替换、连接重置或 dispose 时取消。若 active 前已有 completed revision，相同旧 revision 不得作为本轮完成；只有更新的 Turn，或已知 inProgress Turn 的同 revision completed，才可放行。成功只向 Activity Delta V2 发送匿名 key、Turn status 与毫秒时间，正文/raw ID/cursor 不越过 preload；失败发 `inventoryChanged=true` 进入完整校对。
+- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 立即合并每个 Activity Delta，不再维护固定 2 秒 pending/debounce 队列。active→idle 但 Turn 版本未变化时先强制维持 ongoing；fresh latest-Turn completed 到达后，`completionPresentationDelayMs` 从该退出时刻起算，若核验耗时已覆盖稳定窗则立即完成，不再叠加等待。
+- [codex.ts](../../../../src/domain/codex.ts#L1) 只允许 latest Turn completed 生成 completion revision 和归档能力。除 RAW-091 的明确停止组合外，failed/interrupted/systemError/notLoaded/inProgress/authority loss/Turn 缺失统一投影为 `ongoing/running/blocked-active`；interrupted 不再按 60 秒生成完成版本。`unknownCount/attentionCount` 固定为 0，所有 ongoing 桶都进入进行中计数。
+- [FloatApp.vue](../../../../src/FloatApp.vue#L1) 删除“宿主状态未知”分段和失败/系统错误/未知标签与图标；完成桶优先显示“已完成”，其它非等待状态统一“进行中”。遗留快照中的 unknown/attention 计数也在紧凑投影中折叠进 ongoing。[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 将 `taskRefreshSeconds` 标为“完整校对频率”，明确它用于新任务、项目变化与漏事件；实时状态不等待该周期。
+- 现有持久化值核验为 `taskRefreshSeconds=15`、`completionPresentationDelayMs=1500`：前者保留为低频结构校对，后者保留为用户可配置的完成展示稳定窗；不存在“全量任务每 2 秒缓存/扫描”合同。本轮已更新测试合同但不运行测试、typecheck、build、uTools、截图或新的真实状态切换；实现状态为 `reported / 未校验，待用户验收`。
+
+## RAW-090 异常快照隔离与任务数稳定
+
+- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 把“任务出现在上一份稳定清单、但缺少于新的完整快照”视为库存消失候选，不立即替换 `lastThreads`。首次缺失保留上一份展示、将会话诊断标记为 stale，并在约 200ms 后发起一次完整复核；数量、分组、排序和固定操作槽在候选期间保持不变。
+- 候选以排序后的匿名 missing-key 集合为签名。任务重现、缺失集合改变、中间校对失败/不完整、功能停用或 Controller dispose 都会取消/重置候选。只有同一集合在至少两份完整快照中连续缺失，且经过 `max(15s, taskRefreshSeconds)`，才一次性接纳新数量。新任务但没有旧 key 缺失的快照仍可正常接纳。
+- 同一任务的 latest Turn 使用单调证据合并：更旧 `startedAt`、同 Turn 的 completed→非 completed、回退的 `completedAt` 和变小的 `updatedAt` 不能覆盖已接纳证据。更新 `startedAt` 或明确 desktop-live active 仍立即进入新一轮进行中，不因库存稳定窗延迟实时反馈。
+- 插件自身已验证的单条/项目归档在 Controller 内立即移除已归档 key；已验证的原生项目移除立即移除该项目与所属任务，两者都不会被误当成传输缺失。候选与稳定清单只存于当前 Controller 内存，不持久化任务列表或 raw identity。
+- [codexController.test.ts](../../../../tests/runtime/codexController.test.ts#L1) 新增“首次/立即复核缺失不减计数、跨完整周期后接纳”与“latest-Turn 证据不回退”合同。依项目规则只更新合同，不执行测试、typecheck、build、uTools或真实传输抖动验收。
+
+## RAW-091 明确停止与异常进行中的边界
+
+- [codex.ts](../../../../src/domain/codex.ts#L1) 增加 `stopped/stopped/blocked-stopped` 投影。优先级固定为：exact desktop-live active → completed Turn → failed/interrupted Turn + exact desktop-live idle 或 bridge `not-running` → conservative ongoing。bridge `failed/incompatible/connecting`、`notLoaded/systemError/inProgress`、Turn 缺失或没有会话级 idle 权威均不得产生停止。
+- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 把 active 退出基线从“只防旧 completed”扩展为“防全部旧 terminal outcome”：第一份 ordinary idle delta 若仍携带 active 前的 failed/interrupted/completed，先改投影为 inProgress/ongoing；preload 的退出后定向读取以 `targeted-after-exit` 脱敏证据标记确认同 Turn terminal，因此无需等待 15 秒完整校对即可发布停止。Desktop bridge 明确 `not-running` + failed/interrupted 是进程退出强证据，可直接停止；旧 completed 仍不能借 not-running 越过新鲜度门禁。任务数缺行继续由 RAW-090 的 missing-key 隔离处理，两条机制互不替代。
+- [FloatApp.vue](../../../../src/FloatApp.vue#L1) 在动态流增加“已停止”分段及中性停止图标/颜色；停止任务保留在项目页、已隐藏页和完整 `all` 投影，但不进入 `ongoingCount/runningCount`、进行中角标、完成页或前/后任务循环。归档槽持续禁用，抽屉与 Controller 均提示“会话已停止但未完成，暂不能归档”。[preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 的自适应高度计入停止段，保持镜像一致。
+- [codex-real-preflight.mjs](../../../../scripts/codex-real-preflight.mjs#L1) 的只读匿名聚合等待每个 terminal 候选取得 Desktop live 权威后再结算。纠偏检查点为 `18 = 14 completed + 2 stopped + 2 ongoing`；旧规则的 `4 ongoing` 实际由 `2 active + 2 idle/interrupted` 组成。收尾时库存自然新增一条任务，最新复核为 `19 = 14 completed + 2 stopped + 3 ongoing`，其中 `3 active / 0 unconfirmed ongoing`，说明新增量是 exact live active 而非旧误判回归。该证据验证聚合分类和本机数据通道，不等同于 uTools 插件视觉、主动停止或进程崩溃验收。
+- [codex.test.ts](../../../../tests/domain/codex.test.ts#L1)、[codexController.test.ts](../../../../tests/runtime/codexController.test.ts#L1)、[codexCompanion.test.ts](../../../../tests/ui/codexCompanion.test.ts#L1) 与 [codexFloatWindowBridge.test.ts](../../../../tests/platform/codexFloatWindowBridge.test.ts#L1) 已更新停止/不确定/active-priority/归档禁用合同。依用户验收规则不执行测试、typecheck、build、uTools 或截图，交付仍为 `reported / 未校验，待用户验收`。
+
+## RAW-092 正向事件快路与负向抖动隔离
+
+- [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 维护进程内 latest-Turn 缓存和 raw-thread dirty generation。`thread/started`、`turn/started`、`turn/completed`、未知 status 及未登记 Desktop 主任务 snapshot 标记 dirty 并发送匿名 `inventoryRefreshPriority=urgent`；事件触发的库存读只重读 dirty/无缓存任务，普通无 dirty 的周期读仍重读全部 eligible Turn。缓存、dirty ID 与暂存 shadow 均随 App Server 会话清理，不进入 Renderer 或持久化。
+- 未登记 Desktop 主任务 snapshot 先暂存在 preload；完整库存确认该 raw thread 属于允许项目并建立匿名 key、项目投影和短期 action alias 后，`updateInventory` 立即复用暂存 live request/status 发布待输入。若完整库存不接纳该任务，shadow 被丢弃，不制造占位任务。
+- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 将 urgent 结构事件以 50ms 合并，普通结构/缺失复核仍为 200ms；事件在完整读取进行中到达时保留 pending/urgent 标记，并在当前读取结束后补读一次。新快照只有增加而无旧 key 缺失时立即接纳；减少仍由 RAW-090 的跨周期门禁处理。
+- active 退出后的 `targeted-after-exit` completed 是本轮 Turn 的强证据，Controller 清除/跳过该任务的 presentation hold 并同步发布卡片、计数与归档能力。没有该 provenance 的普通快照完成仍按 `completionPresentationDelayMs` 平滑，停止态仍遵守 RAW-091，所有未确认异常继续显示进行中。
+- [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 增加事件快读只读取一个 Turn、未登记 waiting-input shadow 匿名注册合同；[codexController.test.ts](../../../../tests/runtime/codexController.test.ts#L1) 增加 50ms 合并、读取中补读和 targeted completion 绕过展示窗合同。依用户规则仅更新合同，不执行测试、typecheck、build、uTools、截图或真实状态切换。
+
+## RAW-093 计划完成待确认即时进入待输入
+
+- 本机当前 ChatGPT/Codex Desktop 在计划 Turn 完成后创建未决 `item/plan/requestImplementation`，写入 `conversationState.requests` 并保持到用户处理。它不是 ordinary completed 的展示提示，而是明确需要用户选择是否实施计划的输入请求。
+- [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 仅对该精确方法增加 `waitingOnUserInput` 映射，并让未决请求优先于同批次的 idle runtime。已登记任务直接发送匿名 Activity Delta，Controller 既有 live-active 优先级会同步更新待输入卡片、计数与打开目标；不触发库存 RPC，也不叠加 50ms 结构窗或完成展示窗。
+- 请求移除后，投影重新服从最新 Desktop runtime 与 Turn 证据；异常、缺失或无法识别的请求不会猜成待输入。未登记任务继续使用 RAW-092 的 preload-only shadow 和完整库存匿名注册，不放宽任务身份/项目边界。
+- preload 只保留截断后的 request type/method 以判定有限枚举；计划正文、request ID、raw thread ID 和其它内容不进入 Activity Delta、Renderer、持久化、日志或文档。[codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 增加 idle runtime + Plan implementation request 立即投影待输入且零 latest-Turn RPC 的合同，依用户规则不执行测试或真实计划确认。
+
+## RAW-094 私有 patch 不得重置实时状态 shadow
+
+- Desktop owner 会把整份私有会话状态的增量送入同一 stream，除 runtime/request/read-state 外还包含 Turn、工具、reasoning、文件变更与正文路径。Companion 不读取这些内容，但必须接受其结构化 envelope 并推进 stream revision；忽略内容不等于协议失败。
+- [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 先验证 patch operation 与有限路径深度，再只处理 `threadRuntimeStatus / requests / hasUnreadTurn / resumeState`。其它 root 直接返回“已消费但无投影变化”；受观察 root 自身格式损坏、owner/revision 不连续或 frame 不兼容仍按既有规则重订/断开。
+- 这条边界避免工具/Turn 私有 patch 把 live shadow 删除成 connector fallback，再由旧 active snapshot 恢复，从而让已结束任务持续显示进行中。它不引入活跃超时、不以最后 patch 时间猜完成，也不改变任务库存；真正的 idle/completed、待输入和停止仍按 RAW-089–093 的证据优先级发布。
+- [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 将 active→idle 合同扩展为“同批先出现深层私有 Turn patch”，并断言不发生 follow 重订、仍只做一次定向 latest-Turn 读取且正文不越界。测试依项目规则不执行。
+- 本机真实只读对照先连续三分钟复现 active 集合在非 active 与旧 active snapshot 间反复切换；应用修正后的独立 30 秒 bridge 读取处理 59 个 patch、0 次重订、0 个替换 snapshot，active 集合保持稳定。该证据验证重订抖动被消除，不代替真实完成后的 uTools 视觉验收；已启动的 uTools preload 还需重载才能消费新代码。
+
+## RAW-095 外部显式归档即时收敛
+
+- 外部 Codex 归档是已知单任务变化，不等同于一份完整库存暂时少行。此前 Desktop `thread-archived` 和 App Server `thread/archived` 只触发普通 `inventoryChanged`，使下一份少行库存被 RAW-090 按 `max(15s, taskRefreshSeconds)` 隔离，造成归档任务仍长期可见。
+- [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 只在当前 preload 映射已存在时，将该 raw thread 对应的既有匿名 key 写入 Activity Delta V2 `archivedKeys`，并把结构刷新标为 urgent。`thread-unarchived`、`thread/deleted`、未映射或畸形事件不携带删除 key，仍仅请求普通复核。
+- [codex.ts](../../../../src/domain/codex.ts#L1) 允许 V2 delta 可选携带匿名 `archivedKeys`；[codexController.ts](../../../../src/runtime/codexController.ts#L1) 只删除当前 `lastThreads` 中存在的 key，同时清除对应 receipt、完成展示 hold 和 active-exit 瞬态状态，立即发布投影并以 50ms urgent 读取完整库存。普通 snapshot 的 missing-key 路径不变，紧急复核若重新含有该 key 则按已验证库存恢复。
+- raw thread ID 只用于 preload 内查找；跨 preload 边界只有已发布的匿名 key。cwd、正文、路径和私有 archive payload 不进入 Renderer、持久化、日志或文档。本轮不运行测试、typecheck、build、uTools 或真实归档；运行中的 preload 需用户重载后以可丢弃任务验收。
+
+## RAW-096 较新完成证据不得被旧 live active shadow 压住
+
+- `desktop-live active` 是强实时证据，但它必须属于当前 active interval。preload 在 snapshot 首次发现 active、或 runtime/request 从非 active 进入 active 时只记录一次匿名本机 `desktopActiveSince`；同一 interval 的后续完整库存刷新只复用该值，不能把旧 shadow 每 15 秒重新变“更晚”。离开 active、失去 Desktop authority、session 重置或 archive 时清除该时刻。
+- [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 仅把这个时间和已发布匿名 key、状态/有限 flags 一起写入 V2 delta/Host snapshot。Side Chat 聚合只有仍 active 的 own/child shadow 才贡献时刻，取其中最新的 active interval；raw thread ID、revision、请求/Turn 正文、cwd、路径和私有 patch 值不跨 preload。
+- [codex.ts](../../../../src/domain/codex.ts#L1) 与 [codexController.ts](../../../../src/runtime/codexController.ts#L1) 只在 latest Turn 明确 `completed` 且有效 `completedAt > desktopActiveSince` 时，把该 active 判为已被更晚完成证据取代。没有 active 时刻、完成时间不晚于它、没有 completed 状态、或任何异常/权限缺失时仍沿用 RAW-089–094 的 active/ongoing/stopped 边界；不引入活跃超时、recency 推断或全量轮询缩短。
+- [codex.test.ts](../../../../tests/domain/codex.test.ts#L1)、[codexController.test.ts](../../../../tests/runtime/codexController.test.ts#L1) 与 [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 补充“较新完成压过早期 active observation”、Controller V2 合并和匿名时间投影合同。本轮依项目规则不执行测试、typecheck、build、uTools、截图或真实 Codex 状态操作；preload 重载后的真实视觉验收仍归用户。
+
+## RAW-097 已读事件不得重放 activity
+
+- `thread-read-state-changed` 和仅变更 `hasUnreadTurn` 的 Desktop patch 都只能发布 `readStateOnly` V2 entry：匿名 key、`hasUnreadTurn` 和 `unreadAuthority` 是唯一允许字段。预加载仍在本地维护完整 shadow，但该事件本身不得把 status、flags、active interval 或 latest Turn 带进 Renderer。
+- [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 对主任务和聚合 Side Chat 都使用同一 unread-only 形状；包含 runtime/request 变化的 patch 仍发布完整 activity，避免把真正开始的任务压成完成。
+- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 在 V2 `readStateOnly` 时只替换 `hasUnreadTurn/unreadAuthority`，保留 status、active flags、`desktopActiveSince` 和 latest Turn；因此 native 已读只能令 `completed-unread → completed`。测试合同覆盖 malicious full-status 字段被忽略、无 stream shadow 的 read-state 以及 active shadow 的仅 unread patch。测试不执行，真实 preload-reloaded 验收归用户。

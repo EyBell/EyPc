@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { AppWindow, Copy, Keyboard, LoaderCircle, Pencil, RefreshCw, ShieldAlert, SquareArrowOutUpRight, Star, X, Power } from '@lucide/vue'
+import { AppWindow, Copy, Keyboard, LoaderCircle, Pencil, Pin, Power, RefreshCw, ShieldAlert, SquareArrowOutUpRight, Star, X } from '@lucide/vue'
 import type { AppRuntimeSnapshot, WindowDraft, WindowRow } from '../runtime/appRuntime'
 
 const props = defineProps<{ snapshot: AppRuntimeSnapshot; showShortcutHints?: boolean }>()
@@ -34,7 +34,25 @@ const showUnloadHint = computed(() => !props.snapshot.windowLoading && !props.sn
 const showCandidateHint = computed(() => Boolean(props.snapshot.windowCandidateTargetId))
 const showEmptyHint = computed(() => !props.snapshot.windowLoading && props.snapshot.windowListLoaded && !props.snapshot.windowRows.length && !showCandidateHint.value)
 const selectionCount = computed(() => props.snapshot.selectedWindowIds.length)
+const windowActivationDiagnostics = computed(() => props.snapshot.windowActivationDiagnostics)
+const latestWindowActivationDiagnostic = computed(() => windowActivationDiagnostics.value[0] || null)
+const windowOperationTraces = computed(() => props.snapshot.windowOperationTraces)
+const canAlwaysOnTop = computed(() => props.snapshot.windowCapability.canAlwaysOnTop === true)
+const pageTopmostHint = computed(() => canAlwaysOnTop.value
+  ? '页面置顶会让实际窗口保持在普通窗口之上；列表置顶只改变 EyPc 内的排序。'
+  : 'macOS 只能展开并前置第三方窗口；EyPc 不会伪造永久页面置顶。')
 const multiActions = computed(() => props.snapshot.windowActionsOpen && props.snapshot.windowActionsMode === 'multi')
+const allActionTargetsPinned = computed(() => {
+  const rows = multiActions.value
+    ? props.snapshot.windowActionTargets
+    : props.snapshot.windowActionTarget
+      ? [props.snapshot.windowActionTarget]
+      : []
+  return rows.length > 0 && rows.every((row) => row.pinned)
+})
+const pinActionLabel = computed(() => multiActions.value
+  ? (allActionTargetsPinned.value ? '批量取消列表置顶' : '批量列表置顶')
+  : (allActionTargetsPinned.value ? '取消列表置顶' : '列表置顶'))
 
 function rowDomId(id: string) {
   return `window-row-${encodeURIComponent(id).replace(/%/g, '_')}`
@@ -52,12 +70,20 @@ function activate(row?: WindowRow) {
   emit('dispatch', 'windows.activate', row ? { rowId: row.id } : undefined)
 }
 
+function alwaysOnTop(row?: WindowRow) {
+  emit('dispatch', 'windows.alwaysOnTop', row ? { rowId: row.id } : undefined)
+}
+
 function openActions(row?: WindowRow) {
   emit('dispatch', 'windows.actions.open', row ? { rowId: row.id } : undefined)
 }
 
 function toggleFavorite(row?: WindowRow) {
   emit('dispatch', 'windows.favorite.toggle', row ? { rowId: row.id } : undefined)
+}
+
+function togglePin(row?: WindowRow) {
+  emit('dispatch', 'windows.pin.toggle', row ? { rowId: row.id } : undefined)
 }
 
 function closeWindows(force = false) {
@@ -97,6 +123,87 @@ function slotTargetLabel(slot: number) {
 
 function slotAssigned(slot: number) {
   return slotTargetLabel(slot) !== '未分配'
+}
+
+function activationEntryLabel(diagnostic: AppRuntimeSnapshot['windowActivationDiagnostics'][number]) {
+  return diagnostic.entry === 'slot' ? `全局槽 ${diagnostic.slot || '—'}` : '手动激活'
+}
+
+function activationPlatformLabel(diagnostic: AppRuntimeSnapshot['windowActivationDiagnostics'][number]) {
+  return diagnostic.platform === 'darwin' ? 'macOS' : diagnostic.platform === 'win32' ? 'Windows' : '当前宿主'
+}
+
+function activationStageLabel(diagnostic: AppRuntimeSnapshot['windowActivationDiagnostics'][number]) {
+  const labels: Record<string, string> = {
+    entry: '入口',
+    capability: '能力',
+    resolve: '解析',
+    refresh: '重扫',
+    activate: '激活',
+    topmost: '页面置顶',
+    visibility: '可见性'
+  }
+  return labels[diagnostic.stage] || diagnostic.stage
+}
+
+function timestampLabel(timestamp: number) {
+  const stamp = new Date(timestamp)
+  return `${String(stamp.getHours()).padStart(2, '0')}:${String(stamp.getMinutes()).padStart(2, '0')}:${String(stamp.getSeconds()).padStart(2, '0')}`
+}
+
+function activationTimestamp(diagnostic: AppRuntimeSnapshot['windowActivationDiagnostics'][number]) {
+  return timestampLabel(diagnostic.timestamp)
+}
+
+function operationEntryLabel(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
+  return record.entry === 'slot' ? `全局槽 ${record.slot || '—'}` : '手动操作'
+}
+
+function operationPlatformLabel(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
+  return record.platform === 'darwin' ? 'macOS' : record.platform === 'win32' ? 'Windows' : '当前宿主'
+}
+
+function operationKindLabel(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
+  return record.operation === 'always-on-top' ? '页面置顶' : '展开并前置'
+}
+
+function operationResultLabel(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
+  return record.result === 'success' ? '完成' : record.result === 'target-closed' ? '已确认关闭' : '阻断'
+}
+
+function operationStageLabel(stage: AppRuntimeSnapshot['windowOperationTraces'][number]['steps'][number]['stage']) {
+  const labels: Record<string, string> = {
+    entry: '入口',
+    capability: '能力',
+    cache: '缓存',
+    resolve: '解析',
+    refresh: '重扫',
+    native: '宿主调用',
+    visibility: '可见性',
+    bridge: '桥接',
+    target: '目标引用',
+    process: '进程',
+    restore: '展开',
+    foreground: '前置',
+    raise: 'Raise',
+    verify: '核验',
+    topmost: '页面置顶'
+  }
+  return labels[stage] || stage
+}
+
+function operationOutcomeLabel(outcome: AppRuntimeSnapshot['windowOperationTraces'][number]['steps'][number]['outcome']) {
+  const labels: Record<string, string> = {
+    ok: '成功',
+    skipped: '跳过',
+    'not-found': '未找到',
+    ambiguous: '多候选',
+    failed: '失败',
+    denied: '被拒绝',
+    unsupported: '不支持',
+    unavailable: '不可读取'
+  }
+  return labels[outcome] || outcome
 }
 
 function rowStatus(row: WindowRow) {
@@ -204,8 +311,64 @@ function updateDraft(field: 'alias' | 'titleLocator', event: Event) {
       <template v-else-if="showCandidateHint">已进入多候选筛选：选择正确窗口后按 Enter；Escape 返回完整列表。</template>
       <template v-else-if="showUnloadHint">列表未加载。手动加载后写入会话缓存；全局槽位会先静默解析，缓存未命中时自动重扫一次，仅失败才展开本页。</template>
       <template v-else-if="showEmptyHint">没有匹配窗口。请调整搜索词，或重新加载列表。</template>
-      <template v-else>{{ snapshot.windowRows.length }} 个可见项目 · 收藏与稳定槽优先 · {{ snapshot.windowCapability.canList ? '按需扫描' : '等待授权' }}</template>
+      <template v-else>{{ snapshot.windowRows.length }} 个可见项目 · 列表置顶优先 · 按应用排序 · {{ snapshot.windowCapability.canList ? '按需扫描' : '等待授权' }}</template>
     </p>
+
+    <section v-if="windowActivationDiagnostics.length" class="window-activation-diagnostics" aria-label="本次窗口激活诊断">
+      <div
+        v-if="latestWindowActivationDiagnostic"
+        class="window-activation-diagnostics-summary"
+        :class="latestWindowActivationDiagnostic.level"
+        :role="latestWindowActivationDiagnostic.level === 'blocking' ? 'alert' : 'status'"
+      >
+        <strong>{{ latestWindowActivationDiagnostic.level === 'blocking' ? '窗口激活被阻断' : '已确认目标关闭' }}</strong>
+        <span>{{ latestWindowActivationDiagnostic.message }}</span>
+      </div>
+      <ol class="window-activation-diagnostics-list">
+        <li
+          v-for="diagnostic in windowActivationDiagnostics"
+          :key="diagnostic.id"
+          :class="diagnostic.level"
+          :role="diagnostic.level === 'blocking' ? 'alert' : 'status'"
+        >
+          <div>
+            <span>{{ activationTimestamp(diagnostic) }}</span>
+            <span>{{ activationEntryLabel(diagnostic) }}</span>
+            <span>{{ activationPlatformLabel(diagnostic) }} · {{ activationStageLabel(diagnostic) }}</span>
+            <code>{{ diagnostic.code }}</code>
+          </div>
+          <p>{{ diagnostic.message }}</p>
+        </li>
+      </ol>
+      <button type="button" data-role="window-activation-diagnostics-clear" @click="$emit('dispatch', 'windows.activation.diagnostics.clear')">清空本次记录</button>
+    </section>
+
+    <section v-if="snapshot.windowOperationTraceEnabled" class="window-operation-trace" role="status" aria-label="开发窗口操作追踪" data-role="window-operation-trace">
+      <header>
+        <div>
+          <strong>开发窗口操作追踪</strong>
+          <p>仅开发环境显示；记录已脱敏，不含窗口标题、应用名、PID、句柄或原生引用。</p>
+        </div>
+        <button v-if="windowOperationTraces.length" type="button" data-role="window-operation-trace-clear" @click="$emit('dispatch', 'windows.operation.traces.clear')">清空开发记录</button>
+      </header>
+      <p v-if="!windowOperationTraces.length" class="window-operation-trace-empty">尚无本次窗口操作记录。</p>
+      <ol v-else class="window-operation-trace-list">
+        <li v-for="record in windowOperationTraces" :key="record.id" :class="record.result">
+          <div class="window-operation-trace-meta">
+            <span>{{ timestampLabel(record.timestamp) }}</span>
+            <span>{{ operationEntryLabel(record) }}</span>
+            <span>{{ operationPlatformLabel(record) }}</span>
+            <span>{{ operationKindLabel(record) }} · {{ operationResultLabel(record) }}</span>
+            <code>{{ record.code }}</code>
+          </div>
+          <ul aria-label="已脱敏操作步骤">
+            <li v-for="(step, index) in record.steps" :key="`${record.id}:${index}:${step.stage}:${step.outcome}`">
+              {{ operationStageLabel(step.stage) }}：{{ operationOutcomeLabel(step.outcome) }}
+            </li>
+          </ul>
+        </li>
+      </ol>
+    </section>
 
     <div class="window-workbench" :class="{ 'has-actions': snapshot.windowActionsOpen }">
       <section class="window-list-panel" aria-label="窗口列表">
@@ -223,7 +386,7 @@ function updateDraft(field: 'alias' | 'titleLocator', event: Event) {
             :id="rowDomId(row.id)"
             :key="row.id"
             class="window-row"
-            :class="{ active: row.focused, selected: row.selected, favorite: row.favorite, unavailable: row.unavailable }"
+            :class="{ active: row.focused, selected: row.selected, favorite: row.favorite, pinned: row.pinned, unavailable: row.unavailable }"
             role="option"
             :aria-selected="row.selected || row.focused"
             :data-quick-jump-target="true"
@@ -242,6 +405,7 @@ function updateDraft(field: 'alias' | 'titleLocator', event: Event) {
               <small>{{ row.appName }}<template v-if="row.title"> · {{ row.title }}</template></small>
             </span>
             <span class="window-row-trailing">
+              <span v-if="row.pinned" class="window-pin-badge" aria-label="已在列表置顶"><Pin :size="11" aria-hidden="true" />列表置顶</span>
               <span v-if="row.slotNumbers.length" class="window-slot-badges" :aria-label="`槽位 ${row.slotNumbers.join('、')}`">
                 <kbd v-for="slot in row.slotNumbers" :key="slot">{{ slot }}</kbd>
               </span>
@@ -267,8 +431,23 @@ function updateDraft(field: 'alias' | 'titleLocator', event: Event) {
         </header>
 
         <div class="window-primary-actions">
-          <button v-if="!multiActions" type="button" :disabled="!snapshot.windowActionTarget" @click="activate(snapshot.windowActionTarget || undefined)"><SquareArrowOutUpRight :size="15" />激活</button>
+          <button v-if="!multiActions" type="button" :disabled="!snapshot.windowActionTarget" @click="activate(snapshot.windowActionTarget || undefined)"><SquareArrowOutUpRight :size="15" />展开并前置</button>
+          <button
+            v-if="!multiActions"
+            type="button"
+            class="window-page-topmost"
+            :disabled="!snapshot.windowActionTarget || !canAlwaysOnTop"
+            :title="canAlwaysOnTop ? '将实际窗口保持在其他普通窗口上方' : 'macOS 只能展开并前置，不能将第三方窗口保持在最上层'"
+            @click="alwaysOnTop(snapshot.windowActionTarget || undefined)"
+          ><Pin :size="15" />页面置顶</button>
           <button type="button" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="toggleFavorite(multiActions ? undefined : (snapshot.windowActionTarget || undefined))"><Star :size="15" />{{ multiActions ? '批量收藏' : (snapshot.windowActionTarget?.favorite ? '取消收藏' : '收藏') }}</button>
+          <button
+            type="button"
+            :class="{ pinned: allActionTargetsPinned }"
+            :aria-pressed="allActionTargetsPinned"
+            :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget"
+            @click="togglePin(multiActions ? undefined : (snapshot.windowActionTarget || undefined))"
+          ><Pin :size="15" />{{ pinActionLabel }}</button>
           <button type="button" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="closeWindows(false)"><Power :size="15" />关闭窗口</button>
           <button type="button" class="danger" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="closeWindows(true)"><Power :size="15" />强制关闭</button>
           <button v-if="!multiActions" type="button" :disabled="!snapshot.windowActionTarget" @click="snapshot.windowActionTarget && edit(snapshot.windowActionTarget, 'rename')"><Pencil :size="15" />编辑别名</button>
@@ -276,6 +455,7 @@ function updateDraft(field: 'alias' | 'titleLocator', event: Event) {
           <button v-if="!multiActions && snapshot.windowActionTarget?.live?.platform === 'win32'" type="button" @click="$emit('dispatch', 'windows.hwnd.copy', { rowId: snapshot.windowActionTarget?.id })"><Copy :size="15" />复制 HWND</button>
           <kbd v-if="commandLabel('windows.close', 'c-del')">{{ commandLabel('windows.close', 'c-del') }}</kbd>
         </div>
+        <p v-if="!multiActions" class="window-topmost-note" role="status">{{ pageTopmostHint }}</p>
 
         <section v-if="!multiActions" class="window-slot-section" aria-label="稳定快捷槽分配">
           <div class="window-slot-heading">

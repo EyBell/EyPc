@@ -27,8 +27,9 @@ describe('Codex compact presentation', () => {
     const value = presentation(80, 40, ['short', 'weekly', 'tasks'])
     expect(value.primary).toMatchObject({ kind: 'short', label: '5h' })
     expect(value.secondary).toMatchObject({ kind: 'weekly', label: 'Weekly' })
-    expect(value).toMatchObject({ showTasks: true, ongoingCount: 2, unknownCount: 3, attentionCount: 1, pendingCount: 1 })
-    expect(value.ariaLabel).toContain('2 个进行中或等待操作，3 个状态未知，1 个需关注，1 个待查看')
+    expect(value).toMatchObject({ showTasks: true, ongoingCount: 6, unknownCount: 0, attentionCount: 0, pendingCount: 1 })
+    expect(value.ariaLabel).toContain('6 个进行中或等待操作，1 个待查看')
+    expect(value.ariaLabel).not.toContain('状态未知')
   })
 
   it.each([
@@ -48,7 +49,7 @@ describe('Codex compact presentation', () => {
 
     const tasksOnly = presentation(80, 40, ['tasks'])
     expect(tasksOnly.primary?.kind).toBe('short')
-    expect(tasksOnly).toMatchObject({ showTasks: true, ongoingCount: 2, unknownCount: 3, attentionCount: 1, pendingCount: 1 })
+    expect(tasksOnly).toMatchObject({ showTasks: true, ongoingCount: 6, unknownCount: 0, attentionCount: 0, pendingCount: 1 })
   })
 
   it('describes an explicit failure state when no quota is available', () => {

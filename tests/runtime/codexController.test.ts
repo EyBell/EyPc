@@ -118,7 +118,7 @@ describe('Codex controller', () => {
             value: {
               version: 1 as const,
               receivedAt: 300,
-              threads: [{ key: '1111111111111111', actionAlias: 'task-alias', name: '独立任务读取', status: 'active' as const, activeFlags: [], statusAuthority: 'connector' as const, updatedAt: 250 }]
+              threads: [{ key: '1111111111111111', actionAlias: 'task-alias', name: '独立任务读取', status: 'active' as const, activeFlags: [], statusAuthority: 'connector' as const, updatedAt: 250, lastTurnStatus: 'inProgress' as const, lastTurnStartedAt: 240 }]
             }
           }
         },
@@ -129,13 +129,13 @@ describe('Codex controller', () => {
 
     await controller.refresh()
     expect(controller.view().quota.status).toBe('error')
-    expect(controller.view().conversations).toMatchObject({ status: 'ok', ongoingCount: 0, unknownCount: 1 })
+    expect(controller.view().conversations).toMatchObject({ status: 'ok', ongoingCount: 1, runningCount: 1, unknownCount: 0 })
 
     failedLane = 'threads'
     await controller.refresh()
     expect(controller.view().quota).toMatchObject({ status: 'ok', plan: 'pro' })
     expect(controller.view().config.model).toBe('gpt-5.6')
-    expect(controller.view().conversations).toMatchObject({ status: 'stale', ongoingCount: 0, unknownCount: 1 })
+    expect(controller.view().conversations).toMatchObject({ status: 'stale', ongoingCount: 1, runningCount: 1, unknownCount: 0 })
     controller.dispose()
   })
 
@@ -174,6 +174,122 @@ describe('Codex controller', () => {
     expect(controller.view().conversations).toMatchObject({ status: 'stale', completeness: 'verified', sourceCount: 1 })
     expect(controller.view().conversations.all[0].name).toBe('已验证任务')
     expect(messages.at(-1)).toContain('保留上一份已验证快照')
+    controller.dispose()
+  })
+
+  it('holds a lower verified inventory until the same disappearance survives one full reconciliation interval', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(10_000)
+    try {
+      const state = createInitialState(1)
+      state.activeTab = 'codex'
+      state.codex.settings.taskRefreshSeconds = 15
+      const taskKey = '1111111111111111'
+      const sourceFingerprint = 'd'.repeat(64)
+      let includeTask = true
+      const messages: string[] = []
+      const platform = {
+        codex: {
+          readSnapshot: async (options: Record<string, boolean>) => options.includeThreads
+            ? {
+                ok: true as const,
+                receivedAt: Date.now(),
+                value: {
+                  version: 2 as const,
+                  receivedAt: Date.now(),
+                  threads: includeTask
+                    ? [{ key: taskKey, actionAlias: 'stable-alias', name: '稳定任务', status: 'notLoaded' as const, activeFlags: [], updatedAt: 9_900, lastTurnStatus: 'failed' as const, lastTurnStartedAt: 9_800, projectKey: 'chats', projectName: 'Chats', projectKind: 'chats' as const }]
+                    : [],
+                  projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }],
+                  sourceFingerprint,
+                  completeness: 'verified' as const
+                }
+              }
+            : { ok: true as const, receivedAt: Date.now(), value: { version: 2 as const, receivedAt: Date.now() } },
+          close: () => undefined
+        }
+      } as unknown as EypcPlatformApi
+      const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: (message) => messages.push(message) })
+
+      await controller.refresh()
+      expect(controller.view().conversations).toMatchObject({ status: 'ok', ongoingCount: 1, sourceCount: 1 })
+
+      includeTask = false
+      vi.setSystemTime(10_100)
+      await controller.refresh()
+      expect(controller.view().conversations).toMatchObject({ status: 'stale', ongoingCount: 1, sourceCount: 1 })
+      expect(controller.view().conversations.all[0]).toMatchObject({ key: taskKey, name: '稳定任务' })
+      expect(messages.at(-1)).toContain('已保留上一份稳定清单')
+
+      vi.setSystemTime(10_500)
+      await controller.refresh()
+      expect(controller.view().conversations).toMatchObject({ status: 'stale', ongoingCount: 1, sourceCount: 1 })
+
+      vi.setSystemTime(25_100)
+      await controller.refresh()
+      expect(controller.view().conversations).toMatchObject({ status: 'ok', ongoingCount: 0, sourceCount: 0 })
+      expect(controller.view().conversations.all).toEqual([])
+      controller.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps latest-Turn evidence monotonic across transient status regressions', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    const taskKey = '2222222222222222'
+    const sourceFingerprint = 'e'.repeat(64)
+    let turn: { status: 'completed' | 'failed'; startedAt: number; completedAt: number } = { status: 'completed', startedAt: 200, completedAt: 250 }
+    let receivedAt = 300
+    const platform = {
+      codex: {
+        readSnapshot: async (options: Record<string, boolean>) => options.includeThreads
+          ? {
+              ok: true as const,
+              receivedAt,
+              value: {
+                version: 2 as const,
+                receivedAt,
+                threads: [{
+                  key: taskKey,
+                  actionAlias: 'monotonic-alias',
+                  name: '单调状态任务',
+                  status: 'notLoaded' as const,
+                  activeFlags: [],
+                  updatedAt: receivedAt - 10,
+                  lastTurnStatus: turn.status,
+                  lastTurnStartedAt: turn.startedAt,
+                  ...(turn.status === 'completed' ? { lastTurnCompletedAt: turn.completedAt } : {}),
+                  projectKey: 'chats',
+                  projectName: 'Chats',
+                  projectKind: 'chats' as const
+                }],
+                projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }],
+                sourceFingerprint,
+                completeness: 'verified' as const
+              }
+            }
+          : { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt } },
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined })
+
+    await controller.refresh()
+    expect(controller.view().conversations.completed[0]).toMatchObject({ key: taskKey, completionRevision: 250, archiveCapability: 'allowed' })
+
+    turn = { status: 'failed', startedAt: 200, completedAt: 0 }
+    receivedAt = 400
+    await controller.refresh()
+    expect(controller.view().conversations.completed[0]).toMatchObject({ key: taskKey, completionRevision: 250, archiveCapability: 'allowed' })
+    expect(controller.view().conversations.ongoing).toEqual([])
+
+    turn = { status: 'failed', startedAt: 350, completedAt: 0 }
+    receivedAt = 500
+    await controller.refresh()
+    expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'ongoing', archiveCapability: 'blocked-active' })
+    expect(controller.view().conversations.completed).toEqual([])
     controller.dispose()
   })
 
@@ -544,6 +660,314 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
+  it('applies a Desktop read-state delta without resurrecting activity', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    state.codex.settings.completionPresentationDelayMs = 0
+    const sourceFingerprint = 'e'.repeat(64)
+    const taskKey = 'fedcba9876543210'
+    const completedAt = Date.now() - 2_000
+    const activityListeners: Array<(delta: any) => void> = []
+    const platform = {
+      codex: {
+        readSnapshot: async (options: Record<string, boolean>) => {
+          const receivedAt = Date.now()
+          return options.includeThreads
+            ? { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt, threads: [{ key: taskKey, actionAlias: 'read-state-alias', name: '已读不得重启任务', status: 'idle' as const, activeFlags: [], statusAuthority: 'desktop-live' as const, hasUnreadTurn: true, unreadAuthority: 'desktop-live' as const, updatedAt: receivedAt - 10, lastTurnStatus: 'completed' as const, lastTurnStartedAt: completedAt - 100, lastTurnCompletedAt: completedAt, projectKey: 'chats', projectName: 'Chats', projectKind: 'chats' as const }], projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }], sourceFingerprint, completeness: 'verified' as const } }
+            : { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt } }
+        },
+        readActivitySnapshot: async () => await new Promise<never>(() => undefined),
+        onActivityChanged: (listener: (delta: any) => void) => {
+          activityListeners.push(listener)
+          return () => { activityListeners.splice(activityListeners.indexOf(listener), 1) }
+        },
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined })
+
+    controller.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(controller.view().conversations).toMatchObject({ ongoingCount: 0, completedUnreadCount: 1 })
+
+    activityListeners[0]({
+      version: 2,
+      sourceFingerprint,
+      generation: 1,
+      receivedAt: Date.now(),
+      inventoryChanged: false,
+      desktopBridgeState: 'connected',
+      entries: [{
+        key: taskKey,
+        readStateOnly: true,
+        status: 'active',
+        activeFlags: ['waitingOnUserInput'],
+        statusAuthority: 'desktop-live',
+        desktopActiveSince: Date.now(),
+        hasUnreadTurn: false,
+        unreadAuthority: 'desktop-live',
+        lastTurnStatus: 'inProgress',
+        lastTurnStartedAt: Date.now()
+      }]
+    })
+
+    expect(controller.view().conversations).toMatchObject({ ongoingCount: 0, completedUnreadCount: 0, completedCount: 1 })
+    expect(controller.view().conversations.completed[0]).toMatchObject({ key: taskKey, unreadState: 'read' })
+    controller.dispose()
+  })
+
+  it('lets a newer completed Turn displace an earlier Desktop active observation without a stale-shadow timeout', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    state.codex.settings.completionPresentationDelayMs = 0
+    const sourceFingerprint = 'd'.repeat(64)
+    const taskKey = '0123fedcba987654'
+    const activityListeners: Array<(delta: any) => void> = []
+    const activeSince = Date.now() - 2_000
+    const platform = {
+      codex: {
+        readSnapshot: async (options: Record<string, boolean>) => {
+          const receivedAt = Date.now()
+          return options.includeThreads
+            ? { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt, threads: [{ key: taskKey, actionAlias: 'stale-shadow-alias', name: '过期活跃 shadow', status: 'notLoaded' as const, activeFlags: [], statusAuthority: 'connector' as const, hasUnreadTurn: false, unreadAuthority: 'desktop-persisted' as const, updatedAt: receivedAt - 10, lastTurnStatus: 'inProgress' as const, lastTurnStartedAt: activeSince - 100, projectKey: 'chats', projectName: 'Chats', projectKind: 'chats' as const }], projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }], sourceFingerprint, completeness: 'verified' as const } }
+            : { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt } }
+        },
+        readActivitySnapshot: async () => await new Promise<never>(() => undefined),
+        onActivityChanged: (listener: (delta: any) => void) => {
+          activityListeners.push(listener)
+          return () => { activityListeners.splice(activityListeners.indexOf(listener), 1) }
+        },
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined })
+
+    controller.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const receivedAt = Date.now()
+    activityListeners[0]({ version: 2, sourceFingerprint, generation: 1, receivedAt, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', desktopActiveSince: activeSince, hasUnreadTurn: false, unreadAuthority: 'desktop-live' }] })
+    expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'active' })
+
+    activityListeners[0]({ version: 2, sourceFingerprint, generation: 2, receivedAt: receivedAt + 1, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', desktopActiveSince: activeSince, hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'completed', lastTurnStartedAt: activeSince + 500, lastTurnCompletedAt: activeSince + 1_000 }] })
+    expect(controller.view().conversations).toMatchObject({ ongoingCount: 0, completedCount: 1 })
+    expect(controller.view().conversations.completed[0]).toMatchObject({ key: taskKey, completionRevision: activeSince + 1_000 })
+    controller.dispose()
+  })
+
+  it('keeps interrupted work active while Desktop is live, then removes it from ongoing on exact idle evidence', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    const sourceFingerprint = 'b'.repeat(64)
+    const taskKey = '1234567890abcdef'
+    const baselineTurnStartedAt = Date.now() - 1_000
+    const activityListeners: Array<(delta: any) => void> = []
+    const platform = {
+      codex: {
+        readSnapshot: async (options: Record<string, boolean>) => {
+          const receivedAt = Date.now()
+          return options.includeThreads
+            ? { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt, threads: [{ key: taskKey, actionAlias: 'stopped-alias', name: '停止边界', status: 'notLoaded' as const, activeFlags: [], statusAuthority: 'connector' as const, hasUnreadTurn: false, unreadAuthority: 'desktop-persisted' as const, updatedAt: receivedAt - 10, lastTurnStatus: 'interrupted' as const, lastTurnStartedAt: baselineTurnStartedAt, projectKey: 'chats', projectName: 'Chats', projectKind: 'chats' as const }], projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }], sourceFingerprint, completeness: 'verified' as const } }
+            : { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt } }
+        },
+        readActivitySnapshot: async () => await new Promise<never>(() => undefined),
+        onActivityChanged: (listener: (delta: any) => void) => {
+          activityListeners.push(listener)
+          return () => { activityListeners.splice(activityListeners.indexOf(listener), 1) }
+        },
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined })
+
+    controller.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const receivedAt = Date.now() + 1_000
+    activityListeners[0]({ version: 2, sourceFingerprint, generation: 1, receivedAt, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live' }] })
+    expect(controller.view().conversations).toMatchObject({ ongoingCount: 1, stoppedCount: 0 })
+    expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'active' })
+
+    activityListeners[0]({ version: 2, sourceFingerprint, generation: 2, receivedAt: receivedAt + 1, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'interrupted', lastTurnStartedAt: baselineTurnStartedAt }] })
+    expect(controller.view().conversations).toMatchObject({ ongoingCount: 1, stoppedCount: 0 })
+
+    activityListeners[0]({ version: 2, sourceFingerprint, generation: 3, receivedAt: receivedAt + 2, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'interrupted', lastTurnStartedAt: baselineTurnStartedAt, lastTurnEvidence: 'targeted-after-exit' }] })
+    expect(controller.view().conversations).toMatchObject({ ongoingCount: 0, stoppedCount: 1 })
+    expect(controller.view().conversations.stopped[0]).toMatchObject({ key: taskKey, activityState: 'stopped', archiveCapability: 'blocked-stopped' })
+
+    activityListeners[0]({ version: 2, sourceFingerprint, generation: 4, receivedAt: receivedAt + 3, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live' }] })
+    expect(controller.view().conversations).toMatchObject({ ongoingCount: 1, stoppedCount: 0 })
+    activityListeners[0]({ version: 2, sourceFingerprint, generation: 5, receivedAt: receivedAt + 4, inventoryChanged: false, desktopBridgeState: 'not-running', entries: [{ key: taskKey, status: 'notLoaded', activeFlags: [], statusAuthority: 'connector', hasUnreadTurn: false, unreadAuthority: 'desktop-persisted', lastTurnStatus: 'interrupted', lastTurnStartedAt: baselineTurnStartedAt }] })
+    expect(controller.view().conversations).toMatchObject({ ongoingCount: 0, stoppedCount: 1 })
+    controller.dispose()
+  })
+
+  it('keeps the configured hold for ordinary completion but bypasses it for targeted post-exit evidence', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(10_000)
+    try {
+      const state = createInitialState(1)
+      state.activeTab = 'codex'
+      state.codex.settings.completionPresentationDelayMs = 1500
+      const sourceFingerprint = 'c'.repeat(64)
+      const taskKey = 'fedcba9876543210'
+      const activityListeners: Array<(delta: any) => void> = []
+      let snapshotReads = 0
+      const platform = {
+        codex: {
+          readSnapshot: async (options: Record<string, boolean>) => {
+            snapshotReads += 1
+            return options.includeThreads
+              ? {
+                  ok: true as const,
+                  receivedAt: 10_000,
+                  value: {
+                    version: 2 as const,
+                    receivedAt: 10_000,
+                    threads: [{ key: taskKey, actionAlias: 'targeted-alias', name: '实时完成核验', status: 'active' as const, activeFlags: [], statusAuthority: 'desktop-live' as const, hasUnreadTurn: false, unreadAuthority: 'desktop-live' as const, updatedAt: 9_900, lastTurnStatus: 'completed' as const, lastTurnStartedAt: 9_000, lastTurnCompletedAt: 9_500, projectKey: 'chats', projectName: 'Chats', projectKind: 'chats' as const }],
+                    projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }],
+                    sourceFingerprint,
+                    completeness: 'verified' as const
+                  }
+                }
+              : { ok: true as const, receivedAt: 10_000, value: { version: 2 as const, receivedAt: 10_000 } }
+          },
+          readActivitySnapshot: async () => await new Promise<never>(() => undefined),
+          onActivityChanged: (listener: (delta: any) => void) => {
+            activityListeners.push(listener)
+            return () => { activityListeners.splice(activityListeners.indexOf(listener), 1) }
+          },
+          close: () => undefined
+        }
+      } as unknown as EypcPlatformApi
+      const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined })
+
+      controller.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'active' })
+      const readsAfterBaseline = snapshotReads
+
+      activityListeners[0]({ version: 2, sourceFingerprint, generation: 1, receivedAt: 10_000, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live' }] })
+      expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'ongoing' })
+
+      await vi.advanceTimersByTimeAsync(100)
+      activityListeners[0]({ version: 2, sourceFingerprint, generation: 2, receivedAt: 10_100, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'completed', lastTurnStartedAt: 9_000, lastTurnCompletedAt: 9_500 }] })
+      expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'ongoing' })
+
+      await vi.advanceTimersByTimeAsync(100)
+      activityListeners[0]({ version: 2, sourceFingerprint, generation: 3, receivedAt: 10_200, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'completed', lastTurnStartedAt: 9_800, lastTurnCompletedAt: 10_100 }] })
+      expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'ongoing' })
+      expect(snapshotReads).toBe(readsAfterBaseline)
+
+      await vi.advanceTimersByTimeAsync(1_299)
+      expect(controller.view().conversations.ongoing).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(controller.view().conversations.completed[0]).toMatchObject({ key: taskKey, completionRevision: 10_100 })
+      expect(controller.view().conversations.ongoing).toHaveLength(0)
+
+      activityListeners[0]({ version: 2, sourceFingerprint, generation: 4, receivedAt: 11_500, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live' }] })
+      expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'active' })
+      activityListeners[0]({ version: 2, sourceFingerprint, generation: 5, receivedAt: 11_501, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live' }] })
+      expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'ongoing' })
+      activityListeners[0]({ version: 2, sourceFingerprint, generation: 6, receivedAt: 11_502, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'completed', lastTurnStartedAt: 11_000, lastTurnCompletedAt: 11_502, lastTurnEvidence: 'targeted-after-exit' }] })
+      expect(controller.view().conversations.completed[0]).toMatchObject({ key: taskKey, completionRevision: 11_502 })
+      expect(controller.view().conversations.ongoing).toHaveLength(0)
+      controller.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('coalesces urgent inventory events for 50ms and replays one that arrives during an in-flight scan', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(10_000)
+    try {
+      const state = createInitialState(1)
+      state.activeTab = 'codex'
+      const sourceFingerprint = 'd'.repeat(64)
+      const activityListeners: Array<(delta: any) => void> = []
+      const makeThread = (key: string, offset: number): CodexHostThread => ({
+        key,
+        actionAlias: `alias-${key}`,
+        name: `新增任务 ${offset}`,
+        status: 'notLoaded',
+        activeFlags: [],
+        statusAuthority: 'connector',
+        hasUnreadTurn: false,
+        unreadAuthority: 'desktop-persisted',
+        updatedAt: 9_900 + offset,
+        lastTurnStatus: 'inProgress',
+        lastTurnStartedAt: 9_000 + offset,
+        projectKey: 'chats',
+        projectName: 'Chats',
+        projectKind: 'chats'
+      })
+      const first = makeThread('1111111111111111', 1)
+      const second = makeThread('2222222222222222', 2)
+      const third = makeThread('3333333333333333', 3)
+      let currentThreads = [first]
+      let threadReads = 0
+      let releaseSecondRead: (value: any) => void = () => undefined
+      const secondRead = new Promise<any>((resolve) => { releaseSecondRead = resolve })
+      const snapshot = (threads: CodexHostThread[], receivedAt = Date.now()) => ({
+        ok: true as const,
+        receivedAt,
+        value: {
+          version: 2 as const,
+          receivedAt,
+          threads,
+          projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }],
+          sourceFingerprint,
+          completeness: 'verified' as const
+        }
+      })
+      const platform = {
+        codex: {
+          inspectEnvironment: async () => ({ version: 1 as const, checking: false, platform: 'macos' as const, runtimeState: 'detected' as const, runtimeSource: 'homebrew' as const, processState: 'running' as const, configState: 'detected' as const, connectionState: 'connected' as const, desktopBridgeState: 'connected' as const, checkedAt: Date.now() }),
+          readSnapshot: async (options: Record<string, boolean>) => {
+            if (!options.includeThreads) return { ok: true as const, receivedAt: Date.now(), value: { version: 2 as const, receivedAt: Date.now() } }
+            threadReads += 1
+            if (threadReads === 2) return await secondRead
+            return snapshot([...currentThreads])
+          },
+          readActivitySnapshot: async () => await new Promise<never>(() => undefined),
+          onActivityChanged: (listener: (delta: any) => void) => {
+            activityListeners.push(listener)
+            return () => { activityListeners.splice(activityListeners.indexOf(listener), 1) }
+          },
+          close: () => undefined
+        }
+      } as unknown as EypcPlatformApi
+      const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined })
+
+      controller.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(threadReads).toBe(1)
+
+      currentThreads = [first, second]
+      activityListeners[0]({ version: 2, sourceFingerprint, generation: 1, receivedAt: 10_001, inventoryChanged: true, inventoryRefreshPriority: 'urgent', desktopBridgeState: 'connected', entries: [] })
+      await vi.advanceTimersByTimeAsync(49)
+      expect(threadReads).toBe(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(threadReads).toBe(2)
+
+      currentThreads = [first, second, third]
+      activityListeners[0]({ version: 2, sourceFingerprint, generation: 2, receivedAt: 10_051, inventoryChanged: true, inventoryRefreshPriority: 'urgent', desktopBridgeState: 'connected', entries: [] })
+      releaseSecondRead(snapshot([first, second], 10_050))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(controller.view().conversations.all).toHaveLength(2)
+      await vi.advanceTimersByTimeAsync(49)
+      expect(threadReads).toBe(2)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(threadReads).toBe(3)
+      expect(controller.view().conversations.all).toHaveLength(3)
+      controller.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('uses a 5s watchdog for the push activity lane and backs off to 1s after three failures', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(10_000)
@@ -642,7 +1066,7 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
-  it('archives every non-active state with an exact preflight request and removes it immediately', async () => {
+  it('archives only authoritative completed tasks and keeps abnormal states ongoing', async () => {
     const state = createInitialState(1)
     state.activeTab = 'codex'
     state.codex.lastTaskScanAt = 10
@@ -689,30 +1113,59 @@ describe('Codex controller', () => {
     })
     expect(controller.view().conversations.completedUnread.some((task) => task.key === completedKey)).toBe(false)
 
-    expect(await controller.archive(failedKey, 350)).toBe(true)
-    expect(archiveThread).toHaveBeenLastCalledWith('alias-failed', {
-      expectedUpdatedAt: 350,
-      expectedRevisionAt: 350,
-      expectedLastTurnStartedAt: 320,
-      expectedSourceFingerprint: 'a'.repeat(64),
-      evidence: 'terminal'
-    })
-
-    expect(await controller.archive(unknownKey, 250)).toBe(true)
-    expect(archiveThread).toHaveBeenLastCalledWith('alias-unknown', {
-      expectedUpdatedAt: 250,
-      expectedRevisionAt: 250,
-      expectedLastTurnStartedAt: 200,
-      expectedSourceFingerprint: 'a'.repeat(64),
-      evidence: 'terminal'
-    })
-    expect(controller.view().conversations.ongoing.map((task) => task.key)).toEqual([activeKey])
+    expect(controller.view().conversations.ongoing.find((task) => task.key === failedKey)?.archiveCapability).toBe('blocked-active')
+    expect(await controller.archive(failedKey, 350)).toBe(false)
+    expect(controller.view().conversations.ongoing.find((task) => task.key === unknownKey)?.archiveCapability).toBe('blocked-active')
+    expect(await controller.archive(unknownKey, 250)).toBe(false)
+    expect(archiveThread).toHaveBeenCalledTimes(1)
+    expect(controller.view().conversations.ongoing.map((task) => task.key)).toEqual([activeKey, failedKey, unknownKey])
     expect(state.codex.receipts.some((receipt) => [completedKey, failedKey, unknownKey].includes(receipt.key))).toBe(false)
-    expect(messages.at(-1)).toBe('已归档；Codex 桌面端未确认即时刷新')
+    expect(messages.at(-1)).toBe('任务仍在进行中，暂不能归档')
     controller.dispose()
   })
 
-  it('keeps unknown rows aligned with counts and supports hide, restore and new-revision reappearance', async () => {
+  it('optimistically hides the task during archive and blocks structural refresh from restoring it', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    state.codex.lastTaskScanAt = 10
+    const taskKey = '5555555555555555'
+    const threads: CodexHostThread[] = [
+      { key: taskKey, actionAlias: 'alias-task', name: '已完成', status: 'notLoaded', activeFlags: [], updatedAt: 450, lastTurnStatus: 'completed', lastTurnStartedAt: 300, lastTurnCompletedAt: 400 }
+    ]
+    let archiveResolve: (() => void) | null = null
+    const archiveThread = vi.fn(() => new Promise<{ outcome: 'archived' }>(resolve => { archiveResolve = () => resolve({ outcome: 'archived' }) }))
+    const notifyCount = { value: 0 }
+    const platform = {
+      codex: {
+        readSnapshot: async () => ({ ok: true as const, receivedAt: 600, value: { version: 2 as const, receivedAt: 600, threads, projects: [], sourceFingerprint: 'a'.repeat(64), completeness: 'verified' as const } }),
+        archiveThread,
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({
+      platform,
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => { notifyCount.value++ },
+      setMessage: () => undefined
+    })
+
+    await controller.refresh()
+    expect(controller.view().conversations.completedCount).toBe(1)
+
+    const archivePromise = controller.archive(taskKey, 400)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(controller.view().conversations.completedCount).toBe(0)
+    expect(controller.view().conversations.ongoingCount).toBe(0)
+
+    archiveResolve!()
+    expect(await archivePromise).toBe(true)
+    expect(controller.view().conversations.completedCount).toBe(0)
+    controller.dispose()
+  })
+
+  it('keeps unconfirmed rows ongoing across hide, restore and new-revision reappearance', async () => {
     const state = createInitialState(1)
     state.activeTab = 'codex'
     let receivedAt = 100_000
@@ -722,7 +1175,9 @@ describe('Codex controller', () => {
       name: `未知任务 ${index + 1}`,
       status: 'notLoaded',
       activeFlags: [],
-      updatedAt: 80_000 + index
+      updatedAt: 80_000 + index,
+      lastTurnStatus: 'inProgress',
+      lastTurnStartedAt: 70_000 + index
     }))
     const platform = {
       codex: {
@@ -734,10 +1189,10 @@ describe('Codex controller', () => {
     const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined })
 
     await controller.refresh()
-    expect(controller.view().conversations).toMatchObject({ unknownCount: 10, sourceCount: 10, authority: 'inventory-only' })
+    expect(controller.view().conversations).toMatchObject({ ongoingCount: 10, runningCount: 10, unknownCount: 0, sourceCount: 10, authority: 'inventory-only' })
     const target = controller.view().conversations.ongoing[0]
     expect(controller.hide(target.key, target.revisionAt)).toBe(true)
-    expect(controller.view().conversations).toMatchObject({ unknownCount: 9, hiddenCount: 1 })
+    expect(controller.view().conversations).toMatchObject({ ongoingCount: 9, runningCount: 9, unknownCount: 0, hiddenCount: 1 })
     expect(controller.view().conversations.hidden[0]).toMatchObject({ key: target.key, hiddenKind: 'task' })
 
     expect(controller.restore(target.key, target.revisionAt, 'task')).toBe(true)

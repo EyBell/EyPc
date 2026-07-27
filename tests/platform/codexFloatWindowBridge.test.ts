@@ -21,7 +21,7 @@ interface FloatSnapshot {
   conversationInboxEnabled: boolean
   expandedFields: string[]
   quota: Record<string, unknown>
-  conversations: { ongoing: unknown[]; completedUnread: unknown[]; completed: unknown[]; hidden: unknown[]; pending: unknown[] }
+  conversations: { ongoing: unknown[]; stopped?: unknown[]; completedUnread: unknown[]; completed: unknown[]; hidden: unknown[]; pending: unknown[] }
 }
 
 function snapshot(overrides: Partial<FloatSnapshot> = {}): FloatSnapshot {
@@ -30,7 +30,7 @@ function snapshot(overrides: Partial<FloatSnapshot> = {}): FloatSnapshot {
     conversationInboxEnabled: true,
     expandedFields: ['plan', 'short', 'weekly', 'reset', 'config', 'tasks', 'updatedAt'],
     quota: { short: { remainingPercent: 80 }, weekly: { remainingPercent: 35 } },
-    conversations: { ongoing: [], completedUnread: [], completed: [], hidden: [], pending: [] },
+    conversations: { ongoing: [], stopped: [], completedUnread: [], completed: [], hidden: [], pending: [] },
     ...overrides
   }
 }

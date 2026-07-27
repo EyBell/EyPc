@@ -34,10 +34,14 @@ interface EnterHarness {
   emit(payload: { code?: string } | null): void
 }
 
-function installHost(payload: { code?: string } | null, codexEnabled = true): EnterHarness {
+function installHost(payload: { code?: string } | null, codexEnabled = true, windowsEnabled = false): EnterHarness {
   const state = createInitialState(100)
   state.activeTab = 'ports'
-  state.settings.featureConfigs = state.settings.featureConfigs.map((item) => item.id === 'codex' ? { ...item, enabled: codexEnabled } : item)
+  state.settings.featureConfigs = state.settings.featureConfigs.map((item) => {
+    if (item.id === 'codex') return { ...item, enabled: codexEnabled }
+    if (item.id === 'windows') return { ...item, enabled: windowsEnabled }
+    return item
+  })
   const saved: AppState[] = []
   const listeners = new Set<(payload: { code?: string } | null) => void>()
   const hide = vi.fn(() => true)
@@ -100,6 +104,10 @@ function toggleCalls() {
 
 function activateCalls() {
   return dispatchProbe.dispatch.mock.calls.filter(([actionId]) => actionId === 'codex.float.activate')
+}
+
+function windowSlotCalls() {
+  return dispatchProbe.dispatch.mock.calls.filter(([actionId]) => actionId === 'windows.slot.activate')
 }
 
 let wrapper: VueWrapper | null = null
@@ -174,5 +182,32 @@ describe('App uTools Codex toggle entry', () => {
     expect(host.show).toHaveBeenCalledTimes(1)
     expect(host.saved.at(-1)?.activeTab).toBe('settings')
     expect(host.saved.at(-1)?.codex.settings.floatEnabled).toBe(false)
+  })
+
+  it('does not apply a second hide after an enabled global window slot reports a blocking runtime result', async () => {
+    const host = installHost({ code: 'eypc-window-slot-1' }, true, true)
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => { callback(0); return 1 })
+
+    wrapper = shallowMount(App)
+    await flushPromises()
+
+    expect(windowSlotCalls()).toHaveLength(1)
+    expect(host.hide).not.toHaveBeenCalled()
+    expect(host.show).toHaveBeenCalledTimes(1)
+    expect(host.saved.at(-1)?.activeTab).toBe('windows')
+  })
+
+  it('dispatches a disabled global window slot for a visible blocking diagnostic instead of silently hiding it', async () => {
+    const host = installHost({ code: 'eypc-window-slot-10' }, true, false)
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => { callback(0); return 1 })
+
+    wrapper = shallowMount(App)
+    await flushPromises()
+
+    expect(windowSlotCalls()).toHaveLength(1)
+    expect(windowSlotCalls()[0]?.[1]).toMatchObject({ slot: 10, source: 'utools-feature' })
+    expect(host.hide).not.toHaveBeenCalled()
+    expect(host.show).toHaveBeenCalledTimes(1)
+    expect(host.saved.at(-1)?.activeTab).toBe('settings')
   })
 })

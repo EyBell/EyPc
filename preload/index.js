@@ -24,6 +24,8 @@ const CODEX_NATIVE_STATE_MAX_BYTES = 4 * 1024 * 1024
 const CODEX_THREAD_TURN_STATUS_CONCURRENCY = 10
 const CODEX_THREAD_TURN_STATUS_TIMEOUT_MS = 5_000
 const CODEX_THREAD_TURN_STATUS_RETRY_MS = 30_000
+const CODEX_DESKTOP_TURN_REFRESH_DEADLINE_MS = 3_000
+const CODEX_DESKTOP_TURN_REFRESH_DELAYS_MS = [0, 300, 1_000]
 const CODEX_THREAD_FIRST_PROMPT_PAGE_LIMIT = 50
 const CODEX_THREAD_FIRST_PROMPT_PAGE_BUDGET = 4
 const CODEX_DESKTOP_IPC_FRAME_MAX_BYTES = 256 * 1024 * 1024
@@ -90,6 +92,8 @@ let codexActivitySourceFingerprint = ''
 let codexActivityGeneration = 0
 let codexDesktopBridge = null
 const codexThreadTurnStatusCache = new Map()
+const codexThreadTurnStatusDirty = new Map()
+let codexThreadTurnStatusDirtyGeneration = 0
 const codexThreadFirstPromptCache = new Map()
 let codexThreadTurnStatusRpcAvailable = null
 let codexThreadFirstPromptScanRunning = false
@@ -264,6 +268,7 @@ public sealed class EypcWindowInfo {
 public static class EypcWindowApi {
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
@@ -271,6 +276,15 @@ public static class EypcWindowApi {
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
+  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+  [DllImport("user32.dll")] public static extern IntPtr GetLastActivePopup(IntPtr hWnd);
+
+  const int GWL_EXSTYLE = -20;
+  const uint GA_ROOT = 2;
+  const uint GA_ROOTOWNER = 3;
+  const uint WS_EX_TOOLWINDOW = 0x00000080;
+  const uint WS_EX_APPWINDOW = 0x00040000;
+  const uint WS_EX_NOACTIVATE = 0x08000000;
 
   static bool IsNoiseTitle(string title, string appName) {
     var normalized = (title ?? "").Trim().ToLowerInvariant();
@@ -292,13 +306,33 @@ public static class EypcWindowApi {
 
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
 
+  static bool IsActionableWindow(IntPtr hWnd) {
+    if (!IsWindow(hWnd) || !IsWindowVisible(hWnd) || IsCloaked(hWnd)) return false;
+    var exStyle = unchecked((uint)GetWindowLong(hWnd, GWL_EXSTYLE));
+    var appWindow = (exStyle & WS_EX_APPWINDOW) != 0;
+    if ((exStyle & WS_EX_TOOLWINDOW) != 0 && !appWindow) return false;
+    if ((exStyle & WS_EX_NOACTIVATE) != 0 && !appWindow) return false;
+    if (GetAncestor(hWnd, GA_ROOT) != hWnd) return false;
+    if (appWindow) return true;
+
+    var candidate = GetAncestor(hWnd, GA_ROOTOWNER);
+    if (candidate == IntPtr.Zero) candidate = hWnd;
+    for (var depth = 0; depth < 32; depth += 1) {
+      var popup = GetLastActivePopup(candidate);
+      if (popup == IntPtr.Zero || popup == candidate) break;
+      candidate = popup;
+      if (IsWindowVisible(candidate)) break;
+    }
+    return candidate == hWnd;
+  }
+
   public static List<EypcWindowInfo> ListWindows() {
     var rows = new List<EypcWindowInfo>();
     var foreground = GetForegroundWindow();
+    var excludedPid = __EYPC_HOST_PID__;
+    var excludedParentPid = __EYPC_PARENT_PID__;
     EnumWindows(delegate(IntPtr hWnd, IntPtr ignored) {
-      if (!IsWindowVisible(hWnd)) return true;
-      if ((GetWindowLong(hWnd, -20) & 0x00000080) != 0) return true;
-      if (IsCloaked(hWnd)) return true;
+      if (!IsActionableWindow(hWnd)) return true;
       var length = GetWindowTextLength(hWnd);
       if (length <= 0) return true;
       var titleBuilder = new StringBuilder(Math.Min(length + 1, 8192));
@@ -308,8 +342,14 @@ public static class EypcWindowApi {
       uint rawPid;
       GetWindowThreadProcessId(hWnd, out rawPid);
       var pid = unchecked((int)rawPid);
-      var appName = "pid-" + pid.ToString();
-      try { appName = Process.GetProcessById(pid).ProcessName; } catch { }
+      if (pid <= 0 || pid == excludedPid || pid == excludedParentPid) return true;
+      string appName;
+      try {
+        using (var appProcess = Process.GetProcessById(pid)) {
+          if (appProcess.HasExited) return true;
+          appName = appProcess.ProcessName;
+        }
+      } catch { return true; }
       if (IsNoiseTitle(title, appName)) return true;
       rows.Add(new EypcWindowInfo {
         nativeRef = hWnd.ToInt64().ToString(),
@@ -341,18 +381,101 @@ public static class EypcWindowActivator {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
 }
 '@
+$debugTrace = [string]::Equals([Environment]::GetEnvironmentVariable('EYPC_WINDOW_DEBUG_TRACE'), '1', [System.StringComparison]::Ordinal)
+$trace = New-Object System.Collections.Generic.List[object]
+function Add-EypcTrace([string] $stage, [string] $outcome) {
+  if ($debugTrace -and $trace.Count -lt 16) {
+    [void]$trace.Add([pscustomobject]@{ stage = $stage; outcome = $outcome })
+  }
+}
+function Write-EypcOutcome([string] $outcome) {
+  $payload = @{ outcome = $outcome }
+  if ($debugTrace) { $payload.trace = @($trace.ToArray()) }
+  $payload | ConvertTo-Json -Compress -Depth 4
+}
 $handle = [IntPtr]::new(__EYPC_WINDOW_HANDLE__)
 if (-not [EypcWindowActivator]::IsWindow($handle)) {
-  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
+  Add-EypcTrace 'target' 'not-found'
+  Write-EypcOutcome 'not-found'
   exit 0
 }
+Add-EypcTrace 'target' 'ok'
 if ([EypcWindowActivator]::IsIconic($handle)) {
   [void][EypcWindowActivator]::ShowWindow($handle, 9)
+  if ([EypcWindowActivator]::IsIconic($handle)) {
+    Add-EypcTrace 'restore' 'failed'
+    Write-EypcOutcome 'failed'
+    exit 0
+  }
+  Add-EypcTrace 'restore' 'ok'
+} else {
+  Add-EypcTrace 'restore' 'skipped'
 }
 if ([EypcWindowActivator]::SetForegroundWindow($handle)) {
-  @{ outcome = 'activated' } | ConvertTo-Json -Compress
+  Add-EypcTrace 'foreground' 'ok'
+  Write-EypcOutcome 'activated'
 } else {
-  @{ outcome = 'focus-denied' } | ConvertTo-Json -Compress
+  Add-EypcTrace 'foreground' 'denied'
+  Write-EypcOutcome 'focus-denied'
+}
+`
+
+const WINDOWS_TOPMOST_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class EypcWindowTopmost {
+  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+}
+'@
+$debugTrace = [string]::Equals([Environment]::GetEnvironmentVariable('EYPC_WINDOW_DEBUG_TRACE'), '1', [System.StringComparison]::Ordinal)
+$trace = New-Object System.Collections.Generic.List[object]
+function Add-EypcTrace([string] $stage, [string] $outcome) {
+  if ($debugTrace -and $trace.Count -lt 16) {
+    [void]$trace.Add([pscustomobject]@{ stage = $stage; outcome = $outcome })
+  }
+}
+function Write-EypcOutcome([string] $outcome) {
+  $payload = @{ outcome = $outcome }
+  if ($debugTrace) { $payload.trace = @($trace.ToArray()) }
+  $payload | ConvertTo-Json -Compress -Depth 4
+}
+$handle = [IntPtr]::new(__EYPC_WINDOW_HANDLE__)
+if (-not [EypcWindowTopmost]::IsWindow($handle)) {
+  Add-EypcTrace 'target' 'not-found'
+  Write-EypcOutcome 'not-found'
+  exit 0
+}
+Add-EypcTrace 'target' 'ok'
+if ([EypcWindowTopmost]::IsIconic($handle)) {
+  [void][EypcWindowTopmost]::ShowWindow($handle, 9)
+  if ([EypcWindowTopmost]::IsIconic($handle)) {
+    Add-EypcTrace 'restore' 'failed'
+    Write-EypcOutcome 'failed'
+    exit 0
+  }
+  Add-EypcTrace 'restore' 'ok'
+} else {
+  Add-EypcTrace 'restore' 'skipped'
+}
+# SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW; HWND_TOPMOST is -1.
+if (-not [EypcWindowTopmost]::SetWindowPos($handle, [IntPtr]::new(-1), 0, 0, 0, 0, 0x0043)) {
+  Add-EypcTrace 'topmost' 'failed'
+  Write-EypcOutcome 'failed'
+  exit 0
+}
+Add-EypcTrace 'topmost' 'ok'
+if ([EypcWindowTopmost]::SetForegroundWindow($handle)) {
+  Add-EypcTrace 'foreground' 'ok'
+  Write-EypcOutcome 'activated'
+} else {
+  Add-EypcTrace 'foreground' 'denied'
+  Write-EypcOutcome 'focus-denied'
 }
 `
 
@@ -410,7 +533,9 @@ function isNoiseTitle(title, appName, appId) {
   if (normalized === 'window' && isChromiumFamily(appName, appId)) return true
   return false
 }
-const raw = attempt(() => ObjC.deepUnwrap($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID)), [])
+const excludedPid = __EYPC_HOST_PID__
+const excludedParentPid = __EYPC_PARENT_PID__
+const raw = attempt(() => ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID))), [])
 const list = Array.isArray(raw) ? raw : []
 const rows = []
 const seen = {}
@@ -421,19 +546,20 @@ for (const item of list) {
   const layer = Math.trunc(Number(item.kCGWindowLayer || 0))
   if (layer !== 0) continue
   const pid = Math.trunc(Number(item.kCGWindowOwnerPID || 0))
-  const windowNumber = Math.max(0, Math.trunc(Number(item.kCGWindowNumber || 0)))
+  const windowNumber = Math.trunc(Number(item.kCGWindowNumber || 0))
   const title = asText(item.kCGWindowName)
   const appName = asText(item.kCGWindowOwnerName)
-  if (!Number.isInteger(pid) || pid <= 0 || !appName) continue
+  if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(windowNumber) || windowNumber <= 0 || !appName) continue
   const alpha = Number(item.kCGWindowAlpha)
   if (Number.isFinite(alpha) && alpha <= 0) continue
-  if (pid === $.NSProcessInfo.processInfo.processIdentifier) continue
+  if (pid === excludedPid || pid === excludedParentPid || pid === $.NSProcessInfo.processInfo.processIdentifier) continue
   if (!title) {
     unnamedOwnerWindows += 1
     continue
   }
   namedOwnerWindows += 1
   const running = attempt(() => $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid), null)
+  if (!running || attempt(() => running.terminated === true, false) || Number(attempt(() => running.activationPolicy, -1)) !== 0) continue
   const appId = asText(attempt(() => running && running.bundleIdentifier && ObjC.unwrap(running.bundleIdentifier), appName)) || appName
   if (isNoiseTitle(title, appName, appId)) continue
   const key = String(pid) + ':' + String(windowNumber)
@@ -441,7 +567,7 @@ for (const item of list) {
   seen[key] = true
   const isOnscreen = item.kCGWindowIsOnscreen === true || item.kCGWindowIsOnscreen === 1
   rows.push({
-    nativeRef: windowNumber > 0 ? String(pid) + ':0:' + String(windowNumber) : String(pid) + ':1:0',
+    nativeRef: String(pid) + ':0:' + String(windowNumber),
     pid,
     appId,
     appName,
@@ -455,67 +581,251 @@ const screenRecordingLikelyMissing = namedOwnerWindows === 0 && unnamedOwnerWind
 JSON.stringify({ windows: rows, screenRecordingLikelyMissing: screenRecordingLikelyMissing })
 `
 
-function macosActivateWindowScript(pid, ordinal, windowNumber) {
+/** Current-Space inventory via System Events AX; used when CGWindowList yields no titled windows. */
+const MACOS_AX_WINDOW_LIST_SCRIPT = String.raw`
+ObjC.import('Foundation')
+ObjC.import('AppKit')
+function attempt(callback, fallback) {
+  try { return callback() } catch (error) { return fallback }
+}
+function asText(value) { return String(value || '').trim() }
+function normalizeTitle(value) { return asText(value).toLowerCase().replace(/\s+/g, ' ') }
+function isChromiumFamily(appName, appId) {
+  const text = normalizeTitle(appName + ' ' + appId)
+  return /microsoft edge|google chrome|chromium|brave|vivaldi|opera|\barc\b|com\.microsoft\.edgemac|com\.google\.chrome|com\.brave\.browser/.test(text)
+}
+function isNoiseTitle(title, appName, appId) {
+  const normalized = normalizeTitle(title)
+  if (!normalized) return true
+  if (['program manager', 'default ime', 'msctfime ui', 'gdi+ window', 'olemainthreadwndname', 'cicerouiwndframe', 'cicero ui wnd frame'].indexOf(normalized) >= 0) return true
+  if (normalized === 'window' && isChromiumFamily(appName, appId)) return true
+  return false
+}
+const systemEvents = Application('System Events')
+const selfPid = $.NSProcessInfo.processInfo.processIdentifier
+const excludedPid = __EYPC_HOST_PID__
+const excludedParentPid = __EYPC_PARENT_PID__
+const processes = attempt(() => systemEvents.applicationProcesses.whose({ backgroundOnly: false })(), [])
+const rows = []
+const seen = {}
+for (let p = 0; p < processes.length; p += 1) {
+  const proc = processes[p]
+  const pid = Math.trunc(Number(attempt(() => proc.unixId(), 0)))
+  if (!Number.isInteger(pid) || pid <= 0 || pid === selfPid || pid === excludedPid || pid === excludedParentPid) continue
+  const appName = asText(attempt(() => proc.name(), ''))
+  if (!appName) continue
+  const running = attempt(() => $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid), null)
+  if (!running || attempt(() => running.terminated === true, false) || Number(attempt(() => running.activationPolicy, -1)) !== 0) continue
+  const appId = asText(attempt(() => running && running.bundleIdentifier && ObjC.unwrap(running.bundleIdentifier), appName)) || appName
+  const windows = attempt(() => proc.windows(), [])
+  if (!windows || !windows.length) continue
+  for (let index = 0; index < windows.length; index += 1) {
+    const win = windows[index]
+    let title = asText(attempt(() => win.name(), ''))
+    if (!title) title = asText(attempt(() => win.attributes.byName('AXTitle').value(), ''))
+    if (isNoiseTitle(title, appName, appId)) continue
+    let windowNumber = 0
+    try { windowNumber = Math.trunc(Number(win.attributes.byName('AXWindowNumber').value())) } catch (error) {}
+    const minimized = attempt(() => win.attributes.byName('AXMinimized').value() === true, false)
+    const nativeRef = windowNumber > 0
+      ? String(pid) + ':0:' + String(windowNumber)
+      : String(pid) + ':' + String(index + 1) + ':0'
+    if (seen[nativeRef]) continue
+    seen[nativeRef] = true
+    rows.push({
+      nativeRef,
+      pid,
+      appId,
+      appName,
+      title,
+      minimized: minimized === true,
+      focused: false
+    })
+  }
+}
+JSON.stringify({ windows: rows, screenRecordingLikelyMissing: false })
+`
+
+function macosActivateWindowScript(pid, ordinal) {
   return String.raw`
 ObjC.import('Foundation')
 const systemEvents = Application('System Events')
 const processId = ${pid}
 const ordinal = ${ordinal}
-const windowNumber = ${windowNumber}
-const processes = systemEvents.applicationProcesses.whose({ unixId: processId })()
-if (!processes.length) {
-  JSON.stringify({ outcome: 'not-found' })
-} else {
-  const targetProcess = processes[0]
-  const windows = targetProcess.windows()
-  let target = null
+function environmentValue(name) {
+  const value = $.NSProcessInfo.processInfo.environment.objectForKey(name)
+  return value ? String(ObjC.unwrap(value) || '') : ''
+}
+const debugTrace = environmentValue('EYPC_WINDOW_DEBUG_TRACE') === '1'
+const trace = []
+function addTrace(stage, outcome) {
+  if (debugTrace && trace.length < 16) trace.push({ stage, outcome })
+}
+function emit(outcome) {
+  const payload = { outcome }
+  if (debugTrace) payload.trace = trace
+  return JSON.stringify(payload)
+}
+function expectedTargetTitle() {
+  return environmentValue('EYPC_WINDOW_TARGET_TITLE')
+}
+const expectedTitle = expectedTargetTitle()
+function normalizeTitle(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+function currentWindowTitle(window) {
+  let title = ''
+  try { title = String(window.name() || '') } catch (error) {}
+  if (!title) {
+    try { title = String(window.attributes.byName('AXTitle').value() || '') } catch (error) {}
+  }
+  return normalizeTitle(title)
+}
+function resolveTargetWindow(windows, targetOrdinal, targetTitle) {
+  const normalizedTargetTitle = normalizeTitle(targetTitle)
+  const titleMatches = []
+  let ordinalMatch = null
   for (let index = 0; index < windows.length; index += 1) {
     const current = windows[index]
-    let currentNumber = 0
-    try { currentNumber = Math.trunc(Number(current.attributes.byName('AXWindowNumber').value())) } catch (error) {}
-    if ((windowNumber > 0 && currentNumber === windowNumber) || (windowNumber === 0 && index + 1 === ordinal)) {
-      target = current
-      break
-    }
+    const title = currentWindowTitle(current)
+    if (targetOrdinal > 0 && index + 1 === targetOrdinal) ordinalMatch = { current, title }
+    if (normalizedTargetTitle && title === normalizedTargetTitle) titleMatches.push(current)
   }
-  if (!target) {
-    JSON.stringify({ outcome: 'not-found' })
-  } else {
-    try { target.attributes.byName('AXMinimized').set({ value: false }) } catch (error) {}
-    try { targetProcess.frontmost = true } catch (error) {}
-    try { target.actions.byName('AXRaise').perform() } catch (error) {}
-    JSON.stringify({ outcome: 'activated' })
+  if (titleMatches.length === 1) return { target: titleMatches[0] }
+  if (titleMatches.length > 1) {
+    if (ordinalMatch && ordinalMatch.title === normalizedTargetTitle) return { target: ordinalMatch.current }
+    return { outcome: 'ambiguous' }
   }
+  if (!normalizedTargetTitle && ordinalMatch) return { target: ordinalMatch.current }
+  return { outcome: 'not-found' }
 }
+function booleanAttribute(target, name) {
+  try { return { known: true, value: target.attributes.byName(name).value() === true } } catch (error) { return { known: false, value: false } }
+}
+function activate() {
+  let processes = []
+  try { processes = systemEvents.applicationProcesses.whose({ unixId: processId })() } catch (error) {
+    addTrace('process', 'denied')
+    return 'permission-required'
+  }
+  if (!processes.length) {
+    addTrace('process', 'not-found')
+    return 'not-found'
+  }
+  addTrace('process', 'ok')
+  const targetProcess = processes[0]
+  let windows = []
+  try { windows = targetProcess.windows() } catch (error) {
+    addTrace('target', 'denied')
+    return 'permission-required'
+  }
+  const resolved = resolveTargetWindow(windows, ordinal, expectedTitle)
+  if (resolved.outcome === 'ambiguous') {
+    addTrace('target', 'ambiguous')
+    return 'ambiguous'
+  }
+  if (!resolved.target) {
+    addTrace('target', 'not-found')
+    return 'not-found'
+  }
+  addTrace('target', 'ok')
+  const target = resolved.target
+  const minimized = booleanAttribute(target, 'AXMinimized')
+  if (minimized.known && minimized.value) {
+    try { target.attributes.byName('AXMinimized').set({ value: false }) } catch (error) {
+      addTrace('restore', 'failed')
+      return 'failed'
+    }
+    const restored = booleanAttribute(target, 'AXMinimized')
+    if (restored.known && restored.value) {
+      addTrace('restore', 'failed')
+      return 'failed'
+    }
+    addTrace('restore', 'ok')
+  } else {
+    addTrace('restore', minimized.known ? 'skipped' : 'unavailable')
+  }
+  try { targetProcess.frontmost = true } catch (error) {
+    addTrace('foreground', 'denied')
+    return 'focus-denied'
+  }
+  try { target.attributes.byName('AXFocused').set({ value: true }) } catch (error) {}
+  addTrace('foreground', 'ok')
+  try { target.actions.byName('AXRaise').perform() } catch (error) {
+    addTrace('raise', 'failed')
+    return 'failed'
+  }
+  addTrace('raise', 'ok')
+  const minimizedAfterRaise = booleanAttribute(target, 'AXMinimized')
+  if (minimizedAfterRaise.known && minimizedAfterRaise.value) {
+    addTrace('verify', 'failed')
+    return 'failed'
+  }
+  const focusedAfterRaise = booleanAttribute(target, 'AXFocused')
+  if (focusedAfterRaise.known && !focusedAfterRaise.value) {
+    addTrace('verify', 'denied')
+    return 'focus-denied'
+  }
+  addTrace('verify', minimizedAfterRaise.known || focusedAfterRaise.known ? 'ok' : 'unavailable')
+  return 'activated'
+}
+emit(activate())
 `
 }
 
-function macosCloseWindowScript(pid, ordinal, windowNumber) {
+function macosCloseWindowScript(pid, ordinal) {
   return String.raw`
 ObjC.import('Foundation')
 const systemEvents = Application('System Events')
 const processId = ${pid}
 const ordinal = ${ordinal}
-const windowNumber = ${windowNumber}
+function expectedTargetTitle() {
+  const value = $.NSProcessInfo.processInfo.environment.objectForKey('EYPC_WINDOW_TARGET_TITLE')
+  return value ? String(ObjC.unwrap(value) || '') : ''
+}
+function normalizeTitle(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+function currentWindowTitle(window) {
+  let title = ''
+  try { title = String(window.name() || '') } catch (error) {}
+  if (!title) {
+    try { title = String(window.attributes.byName('AXTitle').value() || '') } catch (error) {}
+  }
+  return normalizeTitle(title)
+}
+function resolveTargetWindow(windows, targetOrdinal, targetTitle) {
+  const normalizedTargetTitle = normalizeTitle(targetTitle)
+  const titleMatches = []
+  let ordinalMatch = null
+  for (let index = 0; index < windows.length; index += 1) {
+    const current = windows[index]
+    const title = currentWindowTitle(current)
+    if (targetOrdinal > 0 && index + 1 === targetOrdinal) ordinalMatch = { current, title }
+    if (normalizedTargetTitle && title === normalizedTargetTitle) titleMatches.push(current)
+  }
+  if (titleMatches.length === 1) return { target: titleMatches[0] }
+  if (titleMatches.length > 1) {
+    if (ordinalMatch && ordinalMatch.title === normalizedTargetTitle) return { target: ordinalMatch.current }
+    return { outcome: 'ambiguous' }
+  }
+  if (!normalizedTargetTitle && ordinalMatch) return { target: ordinalMatch.current }
+  return { outcome: 'not-found' }
+}
+const expectedTitle = expectedTargetTitle()
 const processes = systemEvents.applicationProcesses.whose({ unixId: processId })()
 if (!processes.length) {
   JSON.stringify({ outcome: 'not-found' })
 } else {
   const targetProcess = processes[0]
   const windows = targetProcess.windows()
-  let target = null
-  for (let index = 0; index < windows.length; index += 1) {
-    const current = windows[index]
-    let currentNumber = 0
-    try { currentNumber = Math.trunc(Number(current.attributes.byName('AXWindowNumber').value())) } catch (error) {}
-    if ((windowNumber > 0 && currentNumber === windowNumber) || (windowNumber === 0 && index + 1 === ordinal)) {
-      target = current
-      break
-    }
-  }
-  if (!target) {
+  const resolved = resolveTargetWindow(windows, ordinal, expectedTitle)
+  if (resolved.outcome === 'ambiguous') {
+    JSON.stringify({ outcome: 'ambiguous' })
+  } else if (!resolved.target) {
     JSON.stringify({ outcome: 'not-found' })
   } else {
+    const target = resolved.target
     try {
       const closeButton = target.attributes.byName('AXCloseButton').value()
       closeButton.actions.byName('AXPress').perform()
@@ -533,12 +843,22 @@ if (!processes.length) {
 `
 }
 
-function runWindowCommand(command, args) {
+function runWindowCommand(command, args, targetWindowTitle = null, debugTrace = false) {
   return new Promise((resolve) => {
-    execFile(command, args, {
+    const options = {
       windowsHide: true,
       timeout: WINDOW_BRIDGE_TIMEOUT_MS,
       maxBuffer: WINDOW_BRIDGE_OUTPUT_LIMIT
+    }
+    if (targetWindowTitle !== null || debugTrace) {
+      options.env = {
+        ...process.env,
+        ...(targetWindowTitle !== null ? { EYPC_WINDOW_TARGET_TITLE: targetWindowTitle } : {}),
+        ...(debugTrace ? { EYPC_WINDOW_DEBUG_TRACE: '1' } : {})
+      }
+    }
+    execFile(command, args, {
+      ...options
     }, (error, stdout, stderr) => {
       resolve({ ok: !error, stdout: String(stdout || ''), stderr: String(stderr || ''), error: error ? String(error.message || error) : '' })
     })
@@ -547,12 +867,12 @@ function runWindowCommand(command, args) {
 
 function windowCapability(permission = 'unknown', reason = '', extras = {}) {
   if (process.platform === 'win32') {
-    return { platform: 'win32', supported: true, permission: 'granted', canList: true, canActivate: true, canClose: true, ...(reason ? { reason } : {}), ...extras }
+    return { platform: 'win32', supported: true, permission: 'granted', canList: true, canActivate: true, canClose: true, canAlwaysOnTop: true, ...(reason ? { reason } : {}), ...extras }
   }
   if (process.platform === 'darwin') {
-    return { platform: 'darwin', supported: true, permission, canList: permission !== 'required', canActivate: permission !== 'required', canClose: permission !== 'required', ...(reason ? { reason } : {}), ...extras }
+    return { platform: 'darwin', supported: true, permission, canList: permission !== 'required', canActivate: permission !== 'required', canClose: permission !== 'required', canAlwaysOnTop: false, ...(reason ? { reason } : {}), ...extras }
   }
-  return { platform: 'unsupported', supported: false, permission: 'unsupported', canList: false, canActivate: false, canClose: false, reason: reason || '当前系统不支持窗口跳转', ...extras }
+  return { platform: 'unsupported', supported: false, permission: 'unsupported', canList: false, canActivate: false, canClose: false, canAlwaysOnTop: false, reason: reason || '当前系统不支持窗口跳转', ...extras }
 }
 
 function isMacWindowPermissionError(value) {
@@ -589,81 +909,176 @@ async function windowCapabilities() {
 async function listWindows() {
   if (process.platform === 'win32') {
     const systemRoot = process.env.SystemRoot || 'C:\\Windows'
-    const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', WINDOWS_ENUM_SCRIPT])
+    const windowScript = WINDOWS_ENUM_SCRIPT
+      .replace('__EYPC_HOST_PID__', String(process.pid))
+      .replace('__EYPC_PARENT_PID__', String(process.ppid || 0))
+    const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', windowScript])
     if (!result.ok) return { capability: windowCapability('unknown', '无法读取 Windows 桌面窗口'), windows: [], message: '无法读取 Windows 桌面窗口' }
     const parsed = parseWindowJson(result.stdout, 'win32')
     return { capability: windowCapability('granted'), windows: parsed.windows }
   }
   if (process.platform === 'darwin') {
-    const result = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', MACOS_WINDOW_LIST_SCRIPT])
-    if (!result.ok) {
-      const detail = `${result.error}\n${result.stderr}`
-      if (isMacWindowPermissionError(detail)) {
-        return { capability: windowCapability('required', '需要辅助功能、自动化或屏幕录制权限'), windows: [], message: '需要在系统设置中允许 EyPc 读取全部桌面窗口' }
+    const cgScript = MACOS_WINDOW_LIST_SCRIPT
+      .replace('__EYPC_HOST_PID__', String(process.pid))
+      .replace('__EYPC_PARENT_PID__', String(process.ppid || 0))
+    const cgResult = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', cgScript])
+    let cgParsed = { windows: [], screenRecordingLikelyMissing: false }
+    let preferAx = false
+    if (!cgResult.ok) {
+      // Never treat CG failure as a final empty granted list; try AX current-Space inventory.
+      preferAx = true
+    } else {
+      cgParsed = parseWindowJson(cgResult.stdout, 'darwin')
+      if (cgParsed.windows.length > 0) {
+        return {
+          capability: windowCapability('granted', cgParsed.screenRecordingLikelyMissing ? '部分窗口标题可能因屏幕录制权限受限' : ''),
+          windows: cgParsed.windows,
+          ...(cgParsed.screenRecordingLikelyMissing ? { message: '部分窗口缺少标题；请确认屏幕录制权限以覆盖全部 Space' } : {})
+        }
       }
-      return { capability: windowCapability('unknown', '无法读取 macOS 窗口'), windows: [], message: '无法读取 macOS 窗口；请确认屏幕录制与辅助功能授权' }
+      // Empty CG result (unwrap failure, no titles, or screen-recording gap) must fall back to AX.
+      preferAx = true
     }
-    const parsed = parseWindowJson(result.stdout, 'darwin')
-    if (parsed.screenRecordingLikelyMissing && !parsed.windows.length) {
-      return {
-        capability: windowCapability('required', '需要屏幕录制权限以枚举全部 Space / 显示器'),
-        windows: [],
-        message: '需要在系统设置中允许 EyPc 的屏幕录制权限，才能列出全部桌面与显示器上的窗口'
+    if (preferAx) {
+      const axScript = MACOS_AX_WINDOW_LIST_SCRIPT
+        .replace('__EYPC_HOST_PID__', String(process.pid))
+        .replace('__EYPC_PARENT_PID__', String(process.ppid || 0))
+      const axResult = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', axScript])
+      if (!axResult.ok) {
+        const detail = `${axResult.error}\n${axResult.stderr}\n${cgResult.error}\n${cgResult.stderr}`
+        if (isMacWindowPermissionError(detail) || cgParsed.screenRecordingLikelyMissing) {
+          const needsScreen = cgParsed.screenRecordingLikelyMissing || /screen recording/i.test(detail)
+          return {
+            capability: windowCapability('required', needsScreen
+              ? '需要屏幕录制权限以枚举全部 Space / 显示器；当前桌面列表也需要辅助功能'
+              : '需要辅助功能或自动化权限'),
+            windows: [],
+            message: needsScreen
+              ? '需要在系统设置中允许 EyPc 的屏幕录制与辅助功能权限'
+              : '需要在系统设置中允许 EyPc 控制 System Events 以读取当前桌面窗口'
+          }
+        }
+        return { capability: windowCapability('unknown', '无法读取 macOS 窗口'), windows: [], message: '无法读取 macOS 窗口；请确认屏幕录制与辅助功能授权' }
       }
-    }
-    return {
-      capability: windowCapability('granted', parsed.screenRecordingLikelyMissing ? '部分窗口标题可能因屏幕录制权限受限' : ''),
-      windows: parsed.windows,
-      ...(parsed.screenRecordingLikelyMissing ? { message: '部分窗口缺少标题；请确认屏幕录制权限以覆盖全部 Space' } : {})
+      const axParsed = parseWindowJson(axResult.stdout, 'darwin')
+      if (axParsed.windows.length > 0) {
+        return {
+          capability: windowCapability('granted', '当前为辅助功能列表（当前 Space）；授权屏幕录制可覆盖全部桌面'),
+          windows: axParsed.windows,
+          message: '已回退到当前桌面窗口列表；授权屏幕录制后可列出其他 Space / 显示器'
+        }
+      }
+      if (cgParsed.screenRecordingLikelyMissing) {
+        return {
+          capability: windowCapability('required', '需要屏幕录制权限以枚举全部 Space / 显示器'),
+          windows: [],
+          message: '需要在系统设置中允许 EyPc 的屏幕录制权限，才能列出全部桌面与显示器上的窗口'
+        }
+      }
+      return { capability: windowCapability('granted'), windows: [] }
     }
   }
   return { capability: windowCapability('unsupported'), windows: [], message: '当前系统不支持窗口跳转' }
+}
+
+const WINDOW_OPERATION_TRACE_STAGES = new Set(['bridge', 'target', 'process', 'restore', 'foreground', 'raise', 'verify', 'topmost'])
+const WINDOW_OPERATION_TRACE_OUTCOMES = new Set(['ok', 'skipped', 'not-found', 'ambiguous', 'failed', 'denied', 'unsupported', 'unavailable'])
+
+function debugTraceRequested(options) {
+  return Boolean(options && typeof options === 'object' && options.debugTrace === true)
+}
+
+function optionalWindowOperationTrace(debugTrace, steps) {
+  return debugTrace ? { trace: { steps } } : {}
+}
+
+function parseWindowOperationTrace(value) {
+  if (!value || typeof value !== 'object' || !Array.isArray(value.trace)) return undefined
+  const steps = []
+  for (const step of value.trace.slice(0, 16)) {
+    const stage = step && typeof step === 'object' ? String(step.stage || '') : ''
+    const outcome = step && typeof step === 'object' ? String(step.outcome || '') : ''
+    if (!WINDOW_OPERATION_TRACE_STAGES.has(stage) || !WINDOW_OPERATION_TRACE_OUTCOMES.has(outcome)) continue
+    steps.push({ stage, outcome })
+  }
+  return steps.length ? { steps } : undefined
 }
 
 function parseWindowActivationResult(output, fallback = 'failed') {
   try {
     const value = JSON.parse(String(output || '').trim() || '{}')
     const outcome = String(value && value.outcome || '')
-    if (['activated', 'not-found', 'focus-denied', 'permission-required', 'unsupported', 'failed'].includes(outcome)) {
-      return { outcome, ...(typeof value.message === 'string' && value.message ? { message: value.message } : {}) }
+    if (['activated', 'not-found', 'ambiguous', 'focus-denied', 'permission-required', 'unsupported', 'failed'].includes(outcome)) {
+      const trace = parseWindowOperationTrace(value)
+      return { outcome, ...(trace ? { trace } : {}) }
     }
   } catch {}
   return { outcome: fallback }
 }
 
-async function activateWindow(target) {
+async function activateWindow(target, options = {}) {
+  const debugTrace = debugTraceRequested(options)
   const source = target && typeof target === 'object' ? target : {}
   const platform = source.platform === 'win32' || source.platform === 'darwin' ? source.platform : ''
   const nativeRef = String(source.nativeRef || '').trim()
-  if (!platform || !nativeRef || platform !== process.platform) return { outcome: 'not-found', message: '窗口引用已失效或不属于当前系统' }
+  if (!platform || !nativeRef || platform !== process.platform) {
+    return { outcome: 'not-found', message: '窗口引用已失效或不属于当前系统', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }]) }
+  }
   if (platform === 'win32') {
-    if (!/^\d{1,20}$/.test(nativeRef)) return { outcome: 'not-found', message: '窗口句柄无效' }
+    if (!/^\d{1,20}$/.test(nativeRef)) {
+      return { outcome: 'not-found', message: '窗口句柄无效', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }]) }
+    }
     const systemRoot = process.env.SystemRoot || 'C:\\Windows'
     const script = WINDOWS_ACTIVATE_SCRIPT.replace('__EYPC_WINDOW_HANDLE__', nativeRef)
-    const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script])
-    if (!result.ok) return { outcome: 'failed', message: 'Windows 无法执行窗口激活' }
+    const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], null, debugTrace)
+    if (!result.ok) return { outcome: 'failed', message: 'Windows 无法执行窗口激活', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }]) }
     const activation = parseWindowActivationResult(result.stdout)
     return activation.outcome === 'focus-denied'
       ? { ...activation, message: '系统拒绝聚焦该窗口；EyPc 未尝试绕过前台保护' }
       : activation
   }
   const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
-  if (!parts) return { outcome: 'not-found', message: 'macOS 窗口引用已失效' }
-  const result = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', macosActivateWindowScript(Number(parts[1]), Number(parts[2]), Number(parts[3]))])
+  if (!parts) return { outcome: 'not-found', message: 'macOS 窗口引用已失效', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }]) }
+  const title = String(source.title || '').replace(/\u0000/g, '').slice(0, 4096)
+  const result = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', macosActivateWindowScript(Number(parts[1]), Number(parts[2]))], title, debugTrace)
   if (!result.ok) {
     const detail = `${result.error}\n${result.stderr}`
     return isMacWindowPermissionError(detail)
-      ? { outcome: 'permission-required', message: '需要在系统设置中允许 EyPc 控制 System Events' }
-      : { outcome: 'failed', message: 'macOS 无法激活该窗口' }
+      ? { outcome: 'permission-required', message: '需要在系统设置中允许 EyPc 控制 System Events', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'denied' }]) }
+      : { outcome: 'failed', message: 'macOS 无法激活该窗口', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }]) }
   }
   return parseWindowActivationResult(result.stdout)
+}
+
+async function alwaysOnTopWindow(target, options = {}) {
+  const debugTrace = debugTraceRequested(options)
+  const source = target && typeof target === 'object' ? target : {}
+  const platform = source.platform === 'win32' || source.platform === 'darwin' ? source.platform : ''
+  const nativeRef = String(source.nativeRef || '').trim()
+  if (!platform || !nativeRef || platform !== process.platform) {
+    return { outcome: 'not-found', message: '窗口引用已失效或不属于当前系统', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }]) }
+  }
+  if (platform !== 'win32') {
+    return { outcome: 'unsupported', message: 'macOS 只能展开并前置第三方窗口，不能将其保持在最上层', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'topmost', outcome: 'unsupported' }]) }
+  }
+  if (!/^\d{1,20}$/.test(nativeRef)) {
+    return { outcome: 'not-found', message: '窗口句柄无效', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }]) }
+  }
+  const systemRoot = process.env.SystemRoot || 'C:\\Windows'
+  const script = WINDOWS_TOPMOST_SCRIPT.replace('__EYPC_WINDOW_HANDLE__', nativeRef)
+  const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], null, debugTrace)
+  if (!result.ok) return { outcome: 'failed', message: 'Windows 无法执行页面置顶', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }]) }
+  const activation = parseWindowActivationResult(result.stdout)
+  return activation.outcome === 'focus-denied'
+    ? { ...activation, message: '系统拒绝聚焦该窗口；EyPc 未尝试绕过前台保护' }
+    : activation
 }
 
 function parseWindowLifecycleResult(output, fallback = 'failed') {
   try {
     const value = JSON.parse(String(output || '').trim() || '{}')
     const outcome = String(value && value.outcome || '')
-    if (['closed', 'terminated', 'close-denied', 'not-found', 'permission-required', 'unsupported', 'failed'].includes(outcome)) {
+    if (['closed', 'terminated', 'close-denied', 'not-found', 'ambiguous', 'permission-required', 'unsupported', 'failed'].includes(outcome)) {
       return { outcome, ...(typeof value.message === 'string' && value.message ? { message: value.message } : {}) }
     }
   } catch {}
@@ -685,7 +1100,8 @@ async function closeWindow(target) {
   }
   const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
   if (!parts) return { outcome: 'not-found', message: 'macOS 窗口引用已失效' }
-  const result = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', macosCloseWindowScript(Number(parts[1]), Number(parts[2]), Number(parts[3]))])
+  const title = String(source.title || '').replace(/\u0000/g, '').slice(0, 4096)
+  const result = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', macosCloseWindowScript(Number(parts[1]), Number(parts[2]))], title)
   if (!result.ok) {
     const detail = `${result.error}\n${result.stderr}`
     return isMacWindowPermissionError(detail)
@@ -2165,7 +2581,8 @@ function codexDesktopRequestFlag(request) {
   const type = String(request?.type || '').toLowerCase()
   const method = String(request?.method || '').toLowerCase()
   const identifier = `${type}:${method}`.replace(/[^a-z0-9]/g, '')
-  if (identifier.includes('userinput')
+  if (method === 'item/plan/requestimplementation'
+    || identifier.includes('userinput')
     || identifier.includes('optionpicker')
     || identifier.includes('setupcodex')) return 'waitingOnUserInput'
   if (identifier.includes('approval')
@@ -2197,7 +2614,7 @@ function codexDesktopShadowFromSnapshot(change) {
     ? state.requests.map(codexDesktopProjectedRequest)
     : null
   if (revision < 0 || !runtime || requests === null) return null
-  return {
+  const shadow = {
     revision,
     runtime,
     sideConversation: state.sideConversation === true,
@@ -2210,18 +2627,28 @@ function codexDesktopShadowFromSnapshot(change) {
     hasUnreadTurn: typeof state.hasUnreadTurn === 'boolean' ? state.hasUnreadTurn : undefined,
     requests
   }
+  if (codexDesktopShadowActivity(shadow)?.status === 'active') shadow.desktopActiveSince = Date.now()
+  return shadow
 }
 
 function codexDesktopShadowActivity(shadow) {
   if (!shadow?.runtime) return null
   const activeFlags = new Set(shadow.runtime.activeFlags || [])
-  if (shadow.runtime.type === 'active') {
-    for (const request of shadow.requests || []) {
-      const flag = codexDesktopRequestFlag(request)
-      if (flag) activeFlags.add(flag)
-    }
+  for (const request of shadow.requests || []) {
+    const flag = codexDesktopRequestFlag(request)
+    if (flag) activeFlags.add(flag)
   }
-  return { status: shadow.runtime.type, activeFlags: [...activeFlags] }
+  // Desktop keeps unresolved requests in conversationState.requests. A plan
+  // implementation request is created only after the Plan turn is complete,
+  // so it is authoritative user-waiting evidence even if runtime status has
+  // already moved to idle in the same patch batch.
+  const status = activeFlags.size > 0 ? 'active' : shadow.runtime.type
+  const desktopActiveSince = status === 'active' ? codexTimestampMs(shadow.desktopActiveSince) : 0
+  return {
+    status,
+    activeFlags: status === 'active' ? [...activeFlags] : [],
+    ...(desktopActiveSince ? { desktopActiveSince } : {})
+  }
 }
 
 function codexDesktopPatchIndex(value, length, allowEnd = false) {
@@ -2234,8 +2661,14 @@ function codexApplyDesktopShadowPatch(shadow, patch) {
   const source = codexRecord(patch)
   const operation = source.op
   const patchPath = Array.isArray(source.path) ? source.path : null
-  if (!['add', 'replace', 'remove'].includes(operation) || !patchPath || patchPath.length === 0 || patchPath.length > 8) return false
+  if (!['add', 'replace', 'remove'].includes(operation) || !patchPath || patchPath.length === 0 || patchPath.length > 64) return false
   const root = patchPath[0]
+  // Desktop streams the whole private conversation state. The Companion keeps
+  // only the finite runtime/request/read subset; unrelated well-formed patches
+  // still advance the stream revision and must not tear down live authority.
+  // A malformed patch inside the observed subset remains a resubscribe signal.
+  if (!['hasUnreadTurn', 'resumeState', 'threadRuntimeStatus', 'requests'].includes(root)) return true
+  if (patchPath.length > 8) return false
   if (root === 'hasUnreadTurn') {
     if (patchPath.length !== 1) return false
     if (operation === 'remove') shadow.hasUnreadTurn = undefined
@@ -2323,7 +2756,95 @@ class CodexDesktopCompanionBridge {
     this.shadows = new Map()
     this.sideShadows = new Map()
     this.liveUnread = new Map()
+    this.turnRefreshes = new Map()
     this.lastSocketError = ''
+  }
+
+  cancelLatestTurnRefresh(threadId) {
+    const refresh = this.turnRefreshes.get(threadId)
+    if (!refresh) return
+    refresh.cancelled = true
+    if (refresh.timer) clearTimeout(refresh.timer)
+    this.turnRefreshes.delete(threadId)
+  }
+
+  clearLatestTurnRefreshes() {
+    for (const threadId of this.turnRefreshes.keys()) this.cancelLatestTurnRefresh(threadId)
+  }
+
+  scheduleLatestTurnRefresh(threadId) {
+    if (!validCodexThreadId(threadId) || this.turnRefreshes.has(threadId)) return
+    const refresh = {
+      cancelled: false,
+      timer: null,
+      attempt: 0,
+      deadlineAt: Date.now() + CODEX_DESKTOP_TURN_REFRESH_DEADLINE_MS,
+      baselineTurnStatus: codexActivityInventory.get(threadId)?.lastTurnStatus,
+      baselineTurnStartedAt: codexTimestampMs(codexActivityInventory.get(threadId)?.lastTurnStartedAt)
+    }
+    this.turnRefreshes.set(threadId, refresh)
+
+    const finish = (inventoryChanged = false) => {
+      if (refresh.timer) clearTimeout(refresh.timer)
+      refresh.timer = null
+      if (this.turnRefreshes.get(threadId) === refresh) this.turnRefreshes.delete(threadId)
+      if (inventoryChanged) {
+        const known = codexActivityInventory.get(threadId)
+        markCodexThreadTurnStatusDirty(threadId)
+        emitCodexActivityDelta(known ? [known] : [], true, 'urgent')
+      }
+    }
+    const run = async () => {
+      refresh.timer = null
+      const known = codexActivityInventory.get(threadId)
+      if (refresh.cancelled || !known || known.status === 'active') {
+        finish(false)
+        return
+      }
+      const remaining = refresh.deadlineAt - Date.now()
+      if (remaining <= 0 || refresh.attempt >= CODEX_DESKTOP_TURN_REFRESH_DELAYS_MS.length) {
+        finish(true)
+        return
+      }
+      refresh.attempt += 1
+      try {
+        const page = await requestCodexRpc('thread/turns/list', {
+          threadId,
+          limit: 1,
+          sortDirection: 'desc',
+          itemsView: 'notLoaded'
+        }, Math.max(250, Math.min(1_000, remaining)))
+        const latestKnown = codexActivityInventory.get(threadId)
+        if (refresh.cancelled || latestKnown !== known || known.status === 'active') {
+          finish(false)
+          return
+        }
+        const turn = sanitizeCodexTurnStatusPage(page)
+        const freshCompletedTurn = turn?.status !== 'completed'
+          || turn.startedAt > refresh.baselineTurnStartedAt
+          || refresh.baselineTurnStatus === 'inProgress' && turn.startedAt === refresh.baselineTurnStartedAt
+        if (turn?.startedAt && turn.status !== 'inProgress' && freshCompletedTurn) {
+          codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
+          known.lastTurnStatus = turn.status
+          known.lastTurnStartedAt = turn.startedAt
+          if (turn.status === 'completed' && turn.completedAt) known.lastTurnCompletedAt = turn.completedAt
+          else delete known.lastTurnCompletedAt
+          finish(false)
+          emitCodexActivityDelta([{ ...known, lastTurnEvidence: 'targeted-after-exit' }], false)
+          return
+        }
+      } catch {}
+
+      const nextDelay = CODEX_DESKTOP_TURN_REFRESH_DELAYS_MS[refresh.attempt]
+      if (typeof nextDelay !== 'number' || Date.now() + nextDelay >= refresh.deadlineAt) {
+        finish(true)
+        return
+      }
+      refresh.timer = setTimeout(() => { void run() }, nextDelay)
+      refresh.timer.unref?.()
+    }
+
+    void run()
   }
 
   setState(state) {
@@ -2515,6 +3036,7 @@ class CodexDesktopCompanionBridge {
               known.status = known.connectorStatus
               known.activeFlags = [...known.connectorActiveFlags]
               known.statusAuthority = 'connector'
+              delete known.desktopActiveSince
             }
           }
           this.refreshPersistedUnread(false)
@@ -2536,12 +3058,15 @@ class CodexDesktopCompanionBridge {
     }
     if (message.method === 'thread-archived' || message.method === 'thread-unarchived') {
       if (params.hostId === 'local' && validCodexThreadId(params.conversationId)) {
+        const archivedKey = message.method === 'thread-archived'
+          ? codexArchivedActivityKey(params.conversationId)
+          : ''
         const sideShadow = this.sideShadows.get(params.conversationId)
         this.shadows.delete(params.conversationId)
         this.sideShadows.delete(params.conversationId)
         this.liveUnread.delete(params.conversationId)
         if (sideShadow?.parentThreadId) this.emitParentActivity(sideShadow.parentThreadId)
-        emitCodexActivityDelta([], true)
+        emitCodexActivityDelta([], true, archivedKey ? 'urgent' : 'normal', archivedKey ? [archivedKey] : [])
       }
       return
     }
@@ -2561,12 +3086,22 @@ class CodexDesktopCompanionBridge {
         return
       }
       shadow.ownerClientId = ownerClientId
+      const previousShadow = this.shadows.get(params.conversationId) || this.sideShadows.get(params.conversationId)
+      if (shadow.desktopActiveSince && previousShadow && codexTimestampMs(previousShadow.desktopActiveSince)) {
+        shadow.desktopActiveSince = previousShadow.desktopActiveSince
+      }
       if (this.inventory.has(params.conversationId)) {
         this.shadows.set(params.conversationId, shadow)
         this.publishShadow(params.conversationId, shadow)
       } else if (shadow.sideConversation && validCodexThreadId(shadow.parentThreadId)) {
         this.sideShadows.set(params.conversationId, shadow)
         this.publishSideShadow(params.conversationId, shadow)
+      } else {
+        // Keep an unregistered main-task shadow inside preload until the
+        // verified inventory scan supplies its anonymous key and action alias.
+        this.shadows.set(params.conversationId, shadow)
+        markCodexThreadTurnStatusDirty(params.conversationId)
+        emitCodexActivityDelta([], true, 'urgent')
       }
       return
     }
@@ -2583,24 +3118,41 @@ class CodexDesktopCompanionBridge {
       this.resubscribe(params.conversationId)
       return
     }
+    const wasActive = codexDesktopShadowActivity(shadow)?.status === 'active'
+    let containsReadStatePatch = false
+    let containsActivityPatch = false
     for (const patch of change.patches) {
+      const patchSource = codexRecord(patch)
+      const patchPath = Array.isArray(patchSource.path) ? patchSource.path : []
+      if (patchPath[0] === 'hasUnreadTurn') containsReadStatePatch = true
+      if (patchPath[0] === 'threadRuntimeStatus' || patchPath[0] === 'requests') containsActivityPatch = true
       if (!codexApplyDesktopShadowPatch(shadow, patch)) {
         this.resubscribe(params.conversationId)
         return
       }
     }
     shadow.revision = change.revision
-    if (this.sideShadows.has(params.conversationId)) this.publishSideShadow(params.conversationId, shadow)
-    else this.publishShadow(params.conversationId, shadow)
+    const isActive = codexDesktopShadowActivity(shadow)?.status === 'active'
+    if (isActive) {
+      if (!wasActive || !codexTimestampMs(shadow.desktopActiveSince)) shadow.desktopActiveSince = Date.now()
+    } else {
+      delete shadow.desktopActiveSince
+    }
+    const readStateOnly = containsReadStatePatch && !containsActivityPatch
+    if (this.sideShadows.has(params.conversationId)) this.publishSideShadow(params.conversationId, shadow, readStateOnly)
+    else this.publishShadow(params.conversationId, shadow, readStateOnly)
   }
 
-  publishShadow(threadId, shadow) {
+  publishShadow(threadId, shadow, readStateOnly = false) {
     const known = codexActivityInventory.get(threadId)
     const activity = codexDesktopShadowActivity(shadow)
     if (!known || !activity) return
+    const previousStatus = known.status
     known.status = activity.status
     known.activeFlags = activity.activeFlags
     known.statusAuthority = 'desktop-live'
+    if (activity.desktopActiveSince) known.desktopActiveSince = activity.desktopActiveSince
+    else delete known.desktopActiveSince
     if (typeof shadow.hasUnreadTurn === 'boolean') {
       known.hasUnreadTurn = shadow.hasUnreadTurn
       known.unreadAuthority = 'desktop-live'
@@ -2614,12 +3166,13 @@ class CodexDesktopCompanionBridge {
       known.unreadAuthority = fallback.unreadAuthority
       this.liveUnread.delete(threadId)
     }
-    this.emitParentActivity(threadId)
+    this.emitParentActivity(threadId, previousStatus, readStateOnly)
   }
 
-  emitParentActivity(parentThreadId) {
+  emitParentActivity(parentThreadId, previousStatus, readStateOnly = false) {
     const known = codexActivityInventory.get(parentThreadId)
     if (!known) return
+    const priorStatus = previousStatus || known.status
     const own = codexDesktopShadowActivity(this.shadows.get(parentThreadId)) || {
       status: known.connectorStatus,
       activeFlags: [...known.connectorActiveFlags]
@@ -2635,9 +3188,16 @@ class CodexDesktopCompanionBridge {
     const status = hasInput || hasApproval || hasActive
       ? 'active'
       : hasSystemError ? 'systemError' : own.status
+    const desktopActiveSince = status === 'active'
+      ? Math.max(0, ...activities
+        .filter((activity) => activity.status === 'active')
+        .map((activity) => codexTimestampMs(activity.desktopActiveSince)))
+      : 0
     known.status = status
     known.activeFlags = status === 'active' ? activeFlags : []
     known.statusAuthority = 'desktop-live'
+    if (desktopActiveSince) known.desktopActiveSince = desktopActiveSince
+    else delete known.desktopActiveSince
     const ownShadow = this.shadows.get(parentThreadId)
     const ownLiveUnread = this.state === 'connected' ? this.liveUnread.get(parentThreadId) : null
     const ownUnreadKnown = typeof ownShadow?.hasUnreadTurn === 'boolean' || Boolean(ownLiveUnread)
@@ -2665,12 +3225,14 @@ class CodexDesktopCompanionBridge {
       known.hasUnreadTurn = fallback.hasUnreadTurn
       known.unreadAuthority = fallback.unreadAuthority
     }
-    emitCodexActivityDelta([codexActivityPublicEntry(known)], false)
+    emitCodexActivityDelta([readStateOnly ? { ...known, readStateOnly: true } : known], false)
+    if (status === 'active') this.cancelLatestTurnRefresh(parentThreadId)
+    else if (priorStatus === 'active') this.scheduleLatestTurnRefresh(parentThreadId)
   }
 
-  publishSideShadow(threadId, shadow) {
+  publishSideShadow(threadId, shadow, readStateOnly = false) {
     if (!shadow?.parentThreadId || !this.sideShadows.has(threadId)) return
-    this.emitParentActivity(shadow.parentThreadId)
+    this.emitParentActivity(shadow.parentThreadId, undefined, readStateOnly)
   }
 
   handleReadState(params, ownerClientId) {
@@ -2684,7 +3246,7 @@ class CodexDesktopCompanionBridge {
         ownerClientId: typeof ownerClientId === 'string' && ownerClientId ? ownerClientId : 'desktop-live',
         hasUnreadTurn: params.hasUnreadTurn
       })
-      this.emitParentActivity(sideShadow.parentThreadId)
+      this.emitParentActivity(sideShadow.parentThreadId, undefined, true)
       return
     }
     known.hasUnreadTurn = params.hasUnreadTurn
@@ -2695,7 +3257,7 @@ class CodexDesktopCompanionBridge {
     })
     const shadow = this.shadows.get(params.conversationId)
     if (shadow) shadow.hasUnreadTurn = params.hasUnreadTurn
-    emitCodexActivityDelta([codexActivityPublicEntry(known)], false)
+    emitCodexActivityDelta([{ ...known, readStateOnly: true }], false)
   }
 
   follow(threadId, following, targetClientIds) {
@@ -2740,6 +3302,7 @@ class CodexDesktopCompanionBridge {
       known.status = known.connectorStatus
       known.activeFlags = [...known.connectorActiveFlags]
       known.statusAuthority = 'connector'
+      delete known.desktopActiveSince
       affected.add(threadId)
     }
     for (const [threadId, shadow] of this.sideShadows) {
@@ -2770,6 +3333,7 @@ class CodexDesktopCompanionBridge {
     known.status = known.connectorStatus
     known.activeFlags = [...known.connectorActiveFlags]
     known.statusAuthority = 'connector'
+    delete known.desktopActiveSince
     emitCodexActivityDelta([codexActivityPublicEntry(known)], false)
   }
 
@@ -2805,6 +3369,7 @@ class CodexDesktopCompanionBridge {
   }
 
   resetLiveAuthority() {
+    this.clearLatestTurnRefreshes()
     this.shadows.clear()
     this.sideShadows.clear()
     this.liveUnread.clear()
@@ -2814,6 +3379,7 @@ class CodexDesktopCompanionBridge {
       known.status = known.connectorStatus
       known.activeFlags = [...known.connectorActiveFlags]
       known.statusAuthority = 'connector'
+      delete known.desktopActiveSince
     }
     this.refreshPersistedUnread(false)
     emitCodexActivityDelta([...codexActivityInventory.values()].map(codexActivityPublicEntry), false)
@@ -2826,6 +3392,7 @@ class CodexDesktopCompanionBridge {
     }
     for (const threadId of this.shadows.keys()) if (!next.has(threadId)) this.shadows.delete(threadId)
     for (const threadId of this.liveUnread.keys()) if (!next.has(threadId)) this.liveUnread.delete(threadId)
+    for (const threadId of this.turnRefreshes.keys()) if (!next.has(threadId)) this.cancelLatestTurnRefresh(threadId)
     for (const [threadId, shadow] of this.sideShadows) {
       if (next.has(shadow.parentThreadId)) continue
       this.sideShadows.delete(threadId)
@@ -2915,6 +3482,7 @@ class CodexDesktopCompanionBridge {
 
   dispose() {
     this.closed = true
+    this.clearLatestTurnRefreshes()
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     if (this.initializeTimer) clearTimeout(this.initializeTimer)
     this.reconnectTimer = null
@@ -2947,6 +3515,8 @@ function resetCodexThreadSessionState() {
   codexActivityGeneration += 1
   codexDesktopBridge?.updateInventory(new Set())
   codexThreadTurnStatusCache.clear()
+  codexThreadTurnStatusDirty.clear()
+  codexThreadTurnStatusDirtyGeneration += 1
   codexThreadFirstPromptCache.clear()
   codexThreadTurnStatusRpcAvailable = null
   codexThreadFirstPromptScanRunning = false
@@ -2965,6 +3535,7 @@ function sanitizeCodexActivityStatus(value) {
 
 function codexActivityPublicEntry(value) {
   const source = codexRecord(value)
+  const readStateOnly = source.readStateOnly === true
   const status = ['active', 'idle', 'notLoaded', 'systemError'].includes(source.status) ? source.status : undefined
   const activeFlags = status === 'active' && Array.isArray(source.activeFlags)
     ? [...new Set(source.activeFlags.filter((flag) => flag === 'waitingOnApproval' || flag === 'waitingOnUserInput'))]
@@ -2975,31 +3546,64 @@ function codexActivityPublicEntry(value) {
   const unreadAuthority = ['desktop-live', 'desktop-persisted', 'unavailable'].includes(source.unreadAuthority)
     ? source.unreadAuthority
     : 'unavailable'
+  const lastTurnStatus = ['completed', 'interrupted', 'failed', 'inProgress'].includes(source.lastTurnStatus)
+    ? source.lastTurnStatus
+    : undefined
+  const lastTurnStartedAt = codexTimestampMs(source.lastTurnStartedAt)
+  const lastTurnCompletedAt = lastTurnStatus === 'completed' ? codexTimestampMs(source.lastTurnCompletedAt) : 0
+  const desktopActiveSince = status === 'active' && statusAuthority === 'desktop-live'
+    ? codexTimestampMs(source.desktopActiveSince)
+    : 0
+  const lastTurnEvidence = source.lastTurnEvidence === 'targeted-after-exit' ? 'targeted-after-exit' : undefined
   return {
     key: typeof source.key === 'string' ? source.key : '',
-    ...(status ? { status } : {}),
-    activeFlags,
-    statusAuthority,
+    ...(readStateOnly
+      ? { readStateOnly: true }
+      : {
+          ...(status ? { status } : {}),
+          activeFlags,
+          statusAuthority,
+          ...(desktopActiveSince ? { desktopActiveSince } : {}),
+          ...(lastTurnStatus ? { lastTurnStatus } : {}),
+          ...(lastTurnStartedAt ? { lastTurnStartedAt } : {}),
+          ...(lastTurnCompletedAt ? { lastTurnCompletedAt } : {}),
+          ...(lastTurnEvidence ? { lastTurnEvidence } : {})
+        }),
     ...(typeof source.hasUnreadTurn === 'boolean' ? { hasUnreadTurn: source.hasUnreadTurn } : {}),
     unreadAuthority
   }
 }
 
-function codexActivityDelta(entries, inventoryChanged, receivedAt = Date.now()) {
+function codexArchivedActivityKey(threadId) {
+  const known = codexActivityInventory.get(threadId)
+  if (!known || typeof known.key !== 'string' || !/^[a-f0-9]{32}$/.test(known.key)) return ''
+  for (const [alias, action] of codexThreadActions) {
+    if (action.threadId === threadId) codexThreadActions.delete(alias)
+  }
+  codexThreadTurnStatusCache.delete(threadId)
+  codexThreadTurnStatusDirty.delete(threadId)
+  codexThreadFirstPromptCache.delete(threadId)
+  return known.key
+}
+
+function codexActivityDelta(entries, inventoryChanged, receivedAt = Date.now(), inventoryRefreshPriority = 'normal', archivedKeys = []) {
+  const normalizedArchivedKeys = [...new Set(archivedKeys.filter((key) => typeof key === 'string' && /^[a-f0-9]{32}$/.test(key)))]
   return {
     version: 2,
     sourceFingerprint: codexActivitySourceFingerprint,
     generation: codexActivityGeneration,
     entries: entries.map(codexActivityPublicEntry).filter((entry) => entry.key),
+    ...(normalizedArchivedKeys.length ? { archivedKeys: normalizedArchivedKeys } : {}),
     inventoryChanged: inventoryChanged === true,
+    ...(inventoryChanged === true ? { inventoryRefreshPriority: inventoryRefreshPriority === 'urgent' ? 'urgent' : 'normal' } : {}),
     desktopBridgeState: codexDesktopBridge?.state || 'not-checked',
     receivedAt
   }
 }
 
-function emitCodexActivityDelta(entries, inventoryChanged) {
+function emitCodexActivityDelta(entries, inventoryChanged, inventoryRefreshPriority = 'normal', archivedKeys = []) {
   if (!codexActivitySourceFingerprint) return
-  const delta = codexActivityDelta(entries, inventoryChanged)
+  const delta = codexActivityDelta(entries, inventoryChanged, Date.now(), inventoryRefreshPriority, archivedKeys)
   for (const listener of codexActivityListeners) {
     try { listener(delta) } catch {}
   }
@@ -3014,21 +3618,37 @@ function handleCodexServerMessage(message) {
     const known = codexActivityInventory.get(threadId)
     const activity = sanitizeCodexActivityStatus(params.status)
     if (known && activity) {
+      const exitedActive = known.connectorStatus === 'active' && activity.status !== 'active'
       known.connectorStatus = activity.status
       known.connectorActiveFlags = activity.activeFlags
       if (known.statusAuthority !== 'desktop-live') {
         known.status = activity.status
         known.activeFlags = activity.activeFlags
         known.statusAuthority = 'connector'
+        delete known.desktopActiveSince
       }
-      emitCodexActivityDelta([known], false)
+      if (exitedActive) markCodexThreadTurnStatusDirty(threadId)
+      emitCodexActivityDelta([known], exitedActive, exitedActive ? 'urgent' : 'normal')
     } else {
-      emitCodexActivityDelta([], true)
+      markCodexThreadTurnStatusDirty(threadId)
+      emitCodexActivityDelta([], true, 'urgent')
     }
     return true
   }
-  if (['turn/started', 'turn/completed', 'thread/archived', 'thread/unarchived', 'thread/deleted', 'thread/started'].includes(method)) {
-    emitCodexActivityDelta([], true)
+  if (['turn/started', 'turn/completed', 'thread/started'].includes(method)) {
+    const threadId = typeof params.threadId === 'string' ? params.threadId : ''
+    markCodexThreadTurnStatusDirty(threadId)
+    emitCodexActivityDelta([], true, 'urgent')
+    return true
+  }
+  if (method === 'thread/archived') {
+    const threadId = typeof params.threadId === 'string' ? params.threadId : typeof params.conversationId === 'string' ? params.conversationId : ''
+    const archivedKey = validCodexThreadId(threadId) ? codexArchivedActivityKey(threadId) : ''
+    emitCodexActivityDelta([], true, archivedKey ? 'urgent' : 'normal', archivedKey ? [archivedKey] : [])
+    return true
+  }
+  if (['thread/unarchived', 'thread/deleted'].includes(method)) {
+    emitCodexActivityDelta([], true, 'normal')
     return true
   }
   // Server-initiated approval/input requests are deliberately not answered by
@@ -3708,11 +4328,29 @@ async function listAllCodexThreads(archived) {
   throw codexError('protocol-error', 'Codex thread pagination exceeded the safety bound')
 }
 
-async function readCodexThreadTurnStatuses(rows) {
+function markCodexThreadTurnStatusDirty(threadId) {
+  if (!validCodexThreadId(threadId)) return
+  codexThreadTurnStatusDirtyGeneration += 1
+  codexThreadTurnStatusDirty.set(threadId, codexThreadTurnStatusDirtyGeneration)
+}
+
+async function readCodexThreadTurnStatuses(rows, dirtyThreadIds = new Set()) {
   const candidates = rows.map(codexRecord)
   const latest = new Map()
   const nonConversationIds = new Set()
-  const queue = [...candidates]
+  const useEventFastPath = dirtyThreadIds.size > 0
+  const queue = []
+
+  for (const thread of candidates) {
+    const cached = codexThreadTurnStatusCache.get(thread.id)
+    if (!useEventFastPath || dirtyThreadIds.has(thread.id) || !cached) {
+      queue.push(thread)
+      continue
+    }
+    if (cached.nonConversation === true) nonConversationIds.add(thread.id)
+    else if (cached.turn) latest.set(thread.id, { ...cached.turn })
+    else queue.push(thread)
+  }
 
   const readOne = async (thread) => {
     const page = await requestCodexRpc(
@@ -3729,11 +4367,13 @@ async function readCodexThreadTurnStatuses(rows) {
     if (!Array.isArray(pageSource.data)) throw codexError('protocol-error', 'Codex latest Turn response is invalid')
     if (pageSource.data.length === 0) {
       nonConversationIds.add(thread.id)
+      codexThreadTurnStatusCache.set(thread.id, { nonConversation: true })
       return
     }
     const turn = sanitizeCodexTurnStatusPage(page)
     if (!turn || !turn.startedAt) throw codexError('protocol-error', 'Codex latest Turn is missing startedAt')
     latest.set(thread.id, turn)
+    codexThreadTurnStatusCache.set(thread.id, { turn: { ...turn } })
   }
 
   const workers = Array.from(
@@ -3818,6 +4458,7 @@ function sanitizeCodexProjects(registry) {
 
 async function scanVerifiedCodexInventory() {
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    const dirtySnapshot = new Map(codexThreadTurnStatusDirty)
     const registry = readCodexNativeRegistry()
     const rows = await listAllCodexThreads(false)
     const assignments = new Map()
@@ -3828,7 +4469,7 @@ async function scanVerifiedCodexInventory() {
       else excludedSourceCount += 1
     }
     const eligibleRows = rows.filter((thread) => assignments.has(thread.id))
-    const turns = await readCodexThreadTurnStatuses(eligibleRows)
+    const turns = await readCodexThreadTurnStatuses(eligibleRows, new Set(dirtySnapshot.keys()))
     const endingRegistry = readCodexNativeRegistry()
     if (endingRegistry.fingerprint !== registry.fingerprint) {
       if (attempt === 0) continue
@@ -3837,6 +4478,10 @@ async function scanVerifiedCodexInventory() {
     let unreadIds = null
     try { unreadIds = readCodexDesktopUnreadIds() } catch {}
     const threads = sanitizeCodexThreads(eligibleRows, registry, assignments, turns.latest, unreadIds)
+    const eligibleIds = new Set(eligibleRows.map((thread) => thread.id))
+    for (const threadId of codexThreadTurnStatusCache.keys()) {
+      if (!eligibleIds.has(threadId)) codexThreadTurnStatusCache.delete(threadId)
+    }
     const validKeys = new Set(threads.map((thread) => thread.key))
     const threadByKey = new Map(threads.map((thread) => [thread.key, thread]))
     const activityInventory = new Map()
@@ -3856,7 +4501,10 @@ async function scanVerifiedCodexInventory() {
         hasUnreadTurn: projection?.hasUnreadTurn === true,
         connectorHasUnreadTurn: projection?.hasUnreadTurn === true,
         connectorUnreadAuthority: projection?.unreadAuthority || 'unavailable',
-        unreadAuthority: projection?.unreadAuthority || 'unavailable'
+        unreadAuthority: projection?.unreadAuthority || 'unavailable',
+        ...(projection?.lastTurnStatus ? { lastTurnStatus: projection.lastTurnStatus } : {}),
+        ...(projection?.lastTurnStartedAt ? { lastTurnStartedAt: projection.lastTurnStartedAt } : {}),
+        ...(projection?.lastTurnCompletedAt ? { lastTurnCompletedAt: projection.lastTurnCompletedAt } : {})
       })
     }
     codexActivityInventory = activityInventory
@@ -3870,8 +4518,16 @@ async function scanVerifiedCodexInventory() {
       thread.status = activity.status
       thread.activeFlags = [...activity.activeFlags]
       thread.statusAuthority = activity.statusAuthority
+      if (activity.desktopActiveSince) thread.desktopActiveSince = activity.desktopActiveSince
+      else delete thread.desktopActiveSince
       thread.hasUnreadTurn = activity.hasUnreadTurn === true
       thread.unreadAuthority = activity.unreadAuthority
+    }
+    for (const [threadId, generation] of dirtySnapshot) {
+      if (codexThreadTurnStatusDirty.get(threadId) === generation) codexThreadTurnStatusDirty.delete(threadId)
+    }
+    if (codexThreadTurnStatusDirty.size > 0) {
+      queueMicrotask(() => emitCodexActivityDelta([], true, 'urgent'))
     }
     return {
       threads,
@@ -3955,7 +4611,7 @@ async function archiveCodexThread(actionAlias, request) {
   const expectedCompletionAt = Number.isFinite(input.expectedCompletionAt) && input.expectedCompletionAt > 0 ? input.expectedCompletionAt : 0
   const expectedLastTurnStartedAt = Number.isFinite(input.expectedLastTurnStartedAt) && input.expectedLastTurnStartedAt > 0 ? input.expectedLastTurnStartedAt : 0
   const expectedSourceFingerprint = typeof input.expectedSourceFingerprint === 'string' && /^[a-f0-9]{64}$/.test(input.expectedSourceFingerprint) ? input.expectedSourceFingerprint : ''
-  const evidence = ['completed', 'terminal', 'unknown'].includes(input.evidence) ? input.evidence : ''
+  const evidence = input.evidence === 'completed' ? 'completed' : ''
   const requestIsValid = typeof actionAlias === 'string'
     && /^ct_[A-Za-z0-9_-]{16,80}$/.test(actionAlias)
     && expectedUpdatedAt > 0
@@ -3963,7 +4619,7 @@ async function archiveCodexThread(actionAlias, request) {
     && expectedLastTurnStartedAt > 0
     && Boolean(expectedSourceFingerprint)
     && Boolean(evidence)
-    && (evidence !== 'completed' || expectedRevisionAt === (expectedCompletionAt || expectedLastTurnStartedAt))
+    && expectedRevisionAt === (expectedCompletionAt || expectedLastTurnStartedAt)
   if (!requestIsValid) {
     return { outcome: 'failed', errorCode: 'invalid-request', message: '归档请求已失效，请刷新后重试' }
   }
@@ -4001,11 +4657,8 @@ async function archiveCodexThread(actionAlias, request) {
     if (desktopActivity?.status === 'active' || status === 'active' || turn?.status === 'inProgress' || turn?.status === 'interrupted') {
       return { outcome: 'failed', errorCode: 'active-task', message: '任务已恢复进行中，未执行归档' }
     }
-    if (evidence === 'completed' && (!turn || turn.status !== 'completed' || (turn.completedAt || turn.startedAt) !== expectedRevisionAt || (expectedCompletionAt > 0 && turn.completedAt !== expectedCompletionAt))) {
+    if (!turn || turn.status !== 'completed' || (turn.completedAt || turn.startedAt) !== expectedRevisionAt || (expectedCompletionAt > 0 && turn.completedAt !== expectedCompletionAt)) {
       return { outcome: 'failed', errorCode: 'completion-changed', message: '任务完成版本已更新，未执行归档' }
-    }
-    if (evidence === 'terminal' && (!turn || turn.status !== 'failed')) {
-      return { outcome: 'failed', errorCode: 'terminal-state-changed', message: '任务终止状态已更新，未执行归档' }
     }
     await requestCodexRpc('thread/archive', { threadId: entry.threadId })
     const [unarchivedRows, archivedRows] = await Promise.all([
@@ -4102,7 +4755,7 @@ async function archiveCodexProject(actionAlias, request) {
               continue
             }
             const desktopActivity = codexEnsureDesktopBridge().activityForThread(listedThread.id)
-            if (desktopActivity?.status === 'active' || status === 'active' || turn?.status === 'inProgress' || turn?.status === 'interrupted') {
+            if (desktopActivity?.status === 'active' || status === 'active' || turn?.status !== 'completed') {
               skippedActiveKeys.push(key)
               continue
             }
@@ -4630,12 +5283,13 @@ function codexFloatExpandedHeight(snapshot) {
 
   if (source.conversationInboxEnabled === true && expandedFields.has('tasks')) {
     const ongoingCount = Array.isArray(conversations.ongoing) ? conversations.ongoing.length : 0
+    const stoppedCount = Array.isArray(conversations.stopped) ? conversations.stopped.length : 0
     const hiddenCount = Array.isArray(conversations.hidden) ? conversations.hidden.length : 0
     const completedUnreadCount = Array.isArray(conversations.completedUnread)
       ? conversations.completedUnread.length
       : Array.isArray(conversations.pending) ? conversations.pending.length : 0
     const completedCount = Array.isArray(conversations.completed) ? conversations.completed.length : 0
-    const taskCount = Math.max(ongoingCount, hiddenCount, completedUnreadCount + completedCount)
+    const taskCount = Math.max(ongoingCount + stoppedCount, hiddenCount, completedUnreadCount + completedCount)
     height += 69
     if (taskCount === 0) height += 30
     else height += taskCount * 48 + Math.max(0, taskCount - 1) * 5
@@ -5123,6 +5777,7 @@ window.eypcPlatform = {
     capabilities: windowCapabilities,
     list: listWindows,
     activate: activateWindow,
+    alwaysOnTop: alwaysOnTopWindow,
     close: closeWindow,
     terminate: terminateWindow,
     openPermissionSettings: openWindowPermissionSettings

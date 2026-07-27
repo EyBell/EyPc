@@ -629,9 +629,9 @@
 .codex-water-appearance-preview { --water-size: 142px; position: relative; display: grid; width: 142px; height: 142px; place-items: center; margin: 10px auto 14px; isolation: isolate; }
 .codex-water-appearance-preview > .codex-water-ball { grid-area: 1 / 1; }
 .water-preview-counter { position: absolute; z-index: 6; display: grid; min-width: 20px; height: 20px; padding: 0 5px; place-items: center; border: 2px solid #fff; border-radius: 999px; color: #fff; font-size: 9px; font-weight: 900; line-height: 1; box-shadow: 0 3px 10px rgba(2, 15, 24, .32); }
-.water-preview-counter--input { top: 0; left: 0; border-color: color-mix(in srgb, var(--codex-counter-input) 76%, var(--appearance-water-base)); background: var(--codex-counter-input); }
-.water-preview-counter--active { top: 0; right: 0; background: var(--codex-counter-active); }
-.water-preview-counter--unread { top: 23px; right: 0; background: var(--codex-counter-unread); }
+.water-preview-counter--input { top: auto; right: auto; bottom: 0; left: 0; border-color: color-mix(in srgb, var(--codex-counter-input) 76%, var(--appearance-water-base)); background: var(--codex-counter-input); }
+.water-preview-counter--active { top: auto; right: 0; bottom: 23px; left: auto; background: var(--codex-counter-active); }
+.water-preview-counter--unread { top: auto; right: 0; bottom: 0; left: auto; background: var(--codex-counter-unread); }
 .codex-part-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px 10px; margin: 0 0 12px; color: #506872; font-size: 9px; font-weight: 750; }
 .codex-part-legend span { display: inline-flex; align-items: center; gap: 4px; }
 .part-dot { width: 7px; height: 7px; border: 1px solid rgba(20, 42, 52, .3); border-radius: 50%; background: #8ba2aa; }

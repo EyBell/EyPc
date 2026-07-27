@@ -5,16 +5,15 @@ import {
   ChevronDown,
   ChevronRight,
   CirclePlay,
+  CircleStop,
   Clipboard,
   Eye,
   EyeOff,
   Folder,
   FolderOpen,
-  History,
   MessageSquareText,
   Search,
   ShieldCheck,
-  TriangleAlert,
   Trash2,
   Upload,
   X
@@ -53,7 +52,7 @@ import type { CodexFloatSnapshotV1 } from './runtime/codexController'
 type RenderRow =
   | { kind: 'section'; key: string; section: CodexProjectSection }
   | { kind: 'hidden-project-section'; key: string; title: string }
-  | { kind: 'status-section'; key: string; title: string; count: number; tone: 'input' | 'active' | 'unread' | 'completed' | 'unknown' }
+  | { kind: 'status-section'; key: string; title: string; count: number; tone: 'input' | 'active' | 'stopped' | 'unread' | 'completed' }
   | { kind: 'project'; key: string; project: CodexProjectCard; sectionId: string; hiddenProject?: boolean }
   | { kind: 'task'; key: string; task: CodexTaskCard; sectionId?: string; parentProjectKey?: string; nested?: boolean }
   | { kind: 'empty-project'; key: string; projectKey: string }
@@ -231,7 +230,7 @@ const compactAriaLabel = computed(() => {
 const compactCounts = computed(() => ({
   input: conversations.value?.inputRequiredCount || 0,
   active: [...(conversations.value?.ongoing || []), ...(conversations.value?.hidden || [])]
-    .filter((task) => task.activityState === 'active' || task.activityState === 'ongoing' || task.activityState === 'waiting-approval').length,
+    .filter((task) => task.bucket === 'ongoing' && task.activityState !== 'waiting-input').length,
   unread: conversations.value?.completedUnreadCount || 0
 }))
 const displayedCompactCounts = computed(() => ({
@@ -291,7 +290,7 @@ const dynamicTasks = computed(() => {
   const value = conversations.value
   if (!value) return []
   const windowStart = dynamicNow.value - DYNAMIC_TASK_WINDOW_MS
-  return [...value.ongoing, ...value.completedUnread, ...value.completed]
+  return [...value.ongoing, ...(value.stopped || []), ...value.completedUnread, ...value.completed]
     .filter((task) => taskActivityAt(task) >= windowStart)
 })
 
@@ -331,8 +330,8 @@ const renderRows = computed<RenderRow[]>(() => {
     const recentOngoing = recentTasks.filter((task) => task.bucket === 'ongoing')
     const groups = [
       { key: 'input', title: '待输入', tone: 'input' as const, tasks: recentOngoing.filter((task) => task.activityState === 'waiting-input') },
-      { key: 'active', title: '正在进行中', tone: 'active' as const, tasks: recentOngoing.filter((task) => ['active', 'ongoing', 'waiting-approval', 'failed', 'system-error'].includes(task.activityState)) },
-      { key: 'unknown', title: '宿主状态未知', tone: 'unknown' as const, tasks: recentOngoing.filter((task) => task.activityState === 'unknown') },
+      { key: 'active', title: '正在进行中', tone: 'active' as const, tasks: recentOngoing.filter((task) => task.activityState !== 'waiting-input') },
+      { key: 'stopped', title: '已停止', tone: 'stopped' as const, tasks: recentTasks.filter((task) => task.bucket === 'stopped') },
       { key: 'unread', title: '已完成未读', tone: 'unread' as const, tasks: recentTasks.filter((task) => task.bucket === 'completed-unread') },
       { key: 'completed', title: '已完成', tone: 'completed' as const, tasks: recentTasks.filter((task) => task.bucket === 'completed') }
     ]
@@ -992,7 +991,7 @@ const drawerActions = computed<DrawerAction[]>(() => {
     const unpinned = tasks.filter((task) => task.pinSource !== 'local')
     const pinned = tasks.filter((task) => task.pinSource === 'local')
     return [
-      { id: 'batch-archive', label: `归档可用项（${archivable.length}/${tasks.length}）`, danger: true, disabled: !archivable.length, disabledReason: '选中项均处于活动状态', run: requestTaskArchive },
+      { id: 'batch-archive', label: `归档已完成项（${archivable.length}/${tasks.length}）`, danger: true, disabled: !archivable.length, disabledReason: '选中项没有可归档的已完成任务', run: requestTaskArchive },
       { id: 'batch-hide', label: `移到已隐藏（${visible.length}）`, disabled: !visible.length, disabledReason: '选中项均已隐藏', run: () => visible.forEach(hideTask) },
       { id: 'batch-restore', label: `恢复显示（${hidden.length}）`, disabled: !hidden.length, disabledReason: '选中项没有可恢复的隐藏任务', run: () => hidden.forEach(restoreTask) },
       { id: 'batch-pin', label: `本地置顶（${unpinned.length}）`, disabled: !unpinned.length, disabledReason: '选中项均已置顶', run: () => unpinned.forEach((task) => togglePin({ kind: 'task', key: `task:${task.key}`, task })) },
@@ -1012,7 +1011,7 @@ const drawerActions = computed<DrawerAction[]>(() => {
       { id: 'task-alias', label: '编辑别名', run: () => editAlias(item) },
       { id: 'task-pin', label: item.task.pinSource === 'native' ? 'Codex 原生置顶（只读）' : item.task.pinSource === 'local' ? '取消本地置顶' : '本地置顶', disabled: item.task.pinSource === 'native', disabledReason: '原生置顶顺序由 Codex 管理', run: () => togglePin(item) },
       { id: 'task-hide', label: item.task.isHidden ? '恢复显示' : '移到已隐藏', disabled: item.task.isHidden && !item.task.hiddenKind, run: () => item.task.isHidden ? restoreTask(item.task) : hideTask(item.task) },
-      { id: 'task-archive', label: '真实归档', danger: true, disabled: !item.task.canArchive, disabledReason: '真实活动任务不可归档', run: requestTaskArchive }
+      { id: 'task-archive', label: '真实归档', danger: true, disabled: !item.task.canArchive, disabledReason: taskArchiveBlockedReason(item.task), run: requestTaskArchive }
     ]
   }
   return [
@@ -1023,7 +1022,7 @@ const drawerActions = computed<DrawerAction[]>(() => {
     { id: 'project-alias', label: '编辑项目别名', run: () => editAlias(item) },
     { id: 'project-pin', label: item.project.pinSource === 'native' ? 'Codex 原生置顶（只读）' : item.project.pinSource === 'local' ? '取消本地置顶' : '本地置顶', disabled: item.project.kind === 'chats' || item.project.pinSource === 'native', disabledReason: item.project.kind === 'chats' ? 'Chats 分组不可置顶' : '原生置顶顺序由 Codex 管理', run: () => togglePin(item) },
     { id: 'project-hide', label: isProjectHidden(item.project) ? '恢复项目分组' : '隐藏项目分组', disabled: item.project.kind === 'chats', disabledReason: 'Chats 分组不可隐藏', run: () => toggleProjectHidden(item.project) },
-    { id: 'project-archive', label: '全部归档', danger: true, disabled: !item.project.actionAlias, disabledReason: '项目没有可归档任务', run: () => requestProjectArchive(item.project) },
+    { id: 'project-archive', label: '归档已完成任务', danger: true, disabled: !item.project.actionAlias, disabledReason: '项目没有可归档任务', run: () => requestProjectArchive(item.project) },
     { id: 'project-remove', label: '从 Codex 侧栏移除', danger: true, disabled: item.project.kind === 'chats' || !item.project.actionAlias || !conversations.value?.sourceFingerprint, disabledReason: item.project.kind === 'chats' ? 'Chats 分组不可移除' : '项目动作已失效', run: () => requestProjectRemove(item.project) }
   ]
 })
@@ -1254,6 +1253,12 @@ function taskArchiveConfirming(task: CodexTaskCard) {
   return id.slice('archive:'.length).split('|').includes(`${task.key}:${task.revisionAt}`)
 }
 
+function taskArchiveBlockedReason(task: CodexTaskCard) {
+  return task.archiveCapability === 'blocked-stopped'
+    ? '会话已停止但未完成，暂不能归档'
+    : '任务仍在进行中，暂不能归档'
+}
+
 function requestTaskArchive(task?: CodexTaskCard | CodexTaskCard[]) {
   const targetTasks = task
     ? Array.isArray(task) ? task : [task]
@@ -1261,7 +1266,7 @@ function requestTaskArchive(task?: CodexTaskCard | CodexTaskCard[]) {
   const normalized = targetTasks.filter((candidate) => candidate.canArchive)
   const tasks = targetTasks.length ? normalized : archiveCandidates()
   if (!tasks.length) {
-    liveMessage.value = '当前没有可归档的非活动任务'
+    liveMessage.value = '当前没有可归档的已完成任务'
     return
   }
   const identity = tasks.map((task) => `${task.key}:${task.revisionAt}`).sort().join('|')
@@ -1273,7 +1278,7 @@ function requestTaskArchive(task?: CodexTaskCard | CodexTaskCard[]) {
 
 function requestProjectArchive(project: CodexProjectCard) {
   if (!project.actionAlias) return
-  requestConfirmation(`archive-project:${project.key}`, `归档 ${project.name} 的全部非活动任务`, () => {
+  requestConfirmation(`archive-project:${project.key}`, `归档 ${project.name} 的全部已完成任务`, () => {
     action('codex.project.archive', { key: project.key, actionAlias: project.actionAlias })
   })
 }
@@ -2216,24 +2221,19 @@ function queueActionHint(event: Event, label: string) {
 function taskStateLabel(task: CodexTaskCard) {
   if (task.activityState === 'waiting-input') return '等待输入'
   if (task.activityState === 'waiting-approval') return '等待审批'
-  if (task.state === 'running' || task.activityState === 'active' || task.activityState === 'ongoing') return '进行中'
+  if (task.bucket === 'stopped') return '已停止'
   if (task.bucket === 'completed-unread') return '已完成 · 未读'
-  if (task.bucket === 'completed') return task.unreadState === 'unknown' ? '已完成 · 未读状态未知' : '已完成'
-  if (task.activityState === 'failed') return '执行失败'
-  if (task.activityState === 'system-error') return '系统错误'
-  if (task.activityState === 'unknown') return '宿主状态未知'
+  if (task.bucket === 'completed') return '已完成'
   return '进行中'
 }
 
 function taskIcon(task: CodexTaskCard) {
   if (task.isHidden) return EyeOff
+  if (task.bucket === 'stopped') return CircleStop
   if (task.bucket === 'completed' || task.bucket === 'completed-unread') return Eye
   if (task.activityState === 'waiting-input') return MessageSquareText
   if (task.activityState === 'waiting-approval') return ShieldCheck
-  if (task.state === 'running') return CirclePlay
-  if (task.activityState === 'failed' || task.activityState === 'system-error') return TriangleAlert
-  if (task.activityState === 'active' || task.activityState === 'ongoing') return CirclePlay
-  return History
+  return CirclePlay
 }
 
 watch(() => conversations.value?.projects.map((project) => `${project.key}:${project.collapsed}`).join('|'), () => {
@@ -2583,9 +2583,9 @@ onUnmounted(() => {
                     data-quick-jump-target
                     :data-quick-jump-label="`归档 ${taskDisplayLabel(row.task)}`"
                     :disabled="!row.task.canArchive"
-                    @pointerenter="queueActionHint($event, taskArchiveConfirming(row.task) ? '再次点击确认真实归档' : row.task.canArchive ? '真实归档 Codex 会话' : '真实活动任务不可归档')"
+                    @pointerenter="queueActionHint($event, taskArchiveConfirming(row.task) ? '再次点击确认真实归档' : row.task.canArchive ? '真实归档 Codex 会话' : taskArchiveBlockedReason(row.task))"
                   @pointerleave="clearActionHint"
-                  @focus="queueActionHint($event, taskArchiveConfirming(row.task) ? '再次点击确认真实归档' : row.task.canArchive ? '真实归档 Codex 会话' : '真实活动任务不可归档')"
+                  @focus="queueActionHint($event, taskArchiveConfirming(row.task) ? '再次点击确认真实归档' : row.task.canArchive ? '真实归档 Codex 会话' : taskArchiveBlockedReason(row.task))"
                   @blur="clearActionHint"
                   @click.stop="focusedKey = row.key; requestTaskArchive(row.task)"
                 >

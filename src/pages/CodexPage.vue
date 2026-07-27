@@ -123,7 +123,7 @@ const waterPreviewStyle = computed<Record<string, string>>(() => {
 const waterPreviewCounters = computed(() => ({
   input: props.snapshot.conversations.inputRequiredCount,
   active: [...props.snapshot.conversations.ongoing, ...props.snapshot.conversations.hidden]
-    .filter((task) => task.activityState === 'active' || task.activityState === 'ongoing' || task.activityState === 'waiting-approval').length,
+    .filter((task) => task.bucket === 'ongoing' && task.activityState !== 'waiting-input').length,
   unread: props.snapshot.conversations.completedUnreadCount
 }))
 
@@ -255,7 +255,7 @@ const diagnostic = computed(() => {
     return { tone: 'warning', title: 'Codex 数据已就绪，但桌面实时协议不兼容', detail: '实时桥已安全停用；Input、正在进行中和完成未读不会降级为本地缓存推断。' }
   }
   if (environment.connectionState === 'connected') {
-    return { tone: 'warning', title: 'Codex 数据已就绪，但桌面实时状态不可用', detail: '额度、模型与任务清单仍可用；Input、正在进行中和完成未读状态会明确显示为未知。' }
+    return { tone: 'warning', title: 'Codex 数据已就绪，但桌面实时状态不可用', detail: '额度、模型与任务清单仍可用；实时细分暂不可用，未确认任务保持“进行中”。' }
   }
   if (environment.platform === 'unsupported') return { tone: 'error', title: '当前系统暂不支持自动核查', detail: 'Codex Companion 的自动核查目前支持 macOS 与 Windows。' }
   if (legacyBridgePending) return { tone: 'checking', title: '等待 Codex 连接验证', detail: '当前宿主使用兼容核查；连接成功后会自动确认 CLI、配置与 App Server 状态。' }
@@ -743,15 +743,15 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         <div class="codex-form-grid">
           <label>
             <span class="codex-label-row">
-              <span>刷新频率</span>
+              <span>完整校对频率</span>
             </span>
             <select
               class="codex-select"
               :value="snapshot.settings.taskRefreshSeconds"
               @change="update({ taskRefreshSeconds: Number(($event.target as HTMLSelectElement).value) as CodexSettings['taskRefreshSeconds'] })"
-              title="会话列表刷新周期"
-              data-operation-tooltip="刷新频率"
-              data-operation-description="按该秒数轮询会话列表；高频有助于新任务识别，但会提高资源消耗。"
+              title="完整任务校对周期"
+              data-operation-tooltip="完整校对频率"
+              data-operation-description="用于兜底发现漏事件和核对完整清单；新增任务、待输入与完成事件会触发快速单任务校对，不等待该周期。"
             >
               <option :value="15">15 秒</option><option :value="30">30 秒</option><option :value="60">60 秒</option><option :value="0">仅手动</option>
             </select>
@@ -766,7 +766,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               @change="update({ completionPresentationDelayMs: Number(($event.target as HTMLSelectElement).value) as CodexSettings['completionPresentationDelayMs'] })"
               title="进行中状态离开后的展示稳定时间"
               data-operation-tooltip="进行中离开稳定窗"
-              data-operation-description="已完成且已读回流为未读或进行中会立即发布；进行中转完成或异常按该时长稳定。其它普通活动状态仍使用 2 秒防抖。"
+              data-operation-description="只平滑普通快照确认的完成展示；active 退出后的单任务强证据会立即发布。已停止仍要求 interrupted/failed 与精确 idle/退出证据，其余未确认状态继续显示进行中。"
             >
               <option :value="0">不等待</option><option :value="500">0.5 秒</option><option :value="1000">1 秒</option><option :value="1500">1.5 秒（默认）</option><option :value="2000">2 秒</option><option :value="3000">3 秒</option>
             </select>
@@ -855,7 +855,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               <label><span>文字样式</span><select class="codex-select" :value="waterDraft.inner.percentTextStyle" @change="updateWaterDraft('inner', 'percentTextStyle', ($event.target as HTMLSelectElement).value)"><option value="regular">常规</option><option value="bold">加粗</option><option value="italic">斜体</option><option value="bold-italic">粗斜体</option></select></label>
               <label class="codex-color-control"><input type="color" :value="waterDraft.inner.percentColor" @input="updateWaterDraft('inner', 'percentColor', ($event.target as HTMLInputElement).value.toUpperCase())" /><span><strong>文字颜色</strong><small>只影响水球百分比</small></span></label>
             </div>
-            <div class="codex-counter-colors"><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.input" @input="update({ counterColors: { ...snapshot.settings.counterColors, input: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>待输入角标</strong><small>左上数字</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.active" @input="update({ counterColors: { ...snapshot.settings.counterColors, active: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>进行中角标</strong><small>右上第一个数字</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.unread" @input="update({ counterColors: { ...snapshot.settings.counterColors, unread: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>已未读角标</strong><small>右上第二个数字</small></span></label></div>
+            <div class="codex-counter-colors"><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.input" @input="update({ counterColors: { ...snapshot.settings.counterColors, input: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>待输入角标</strong><small>左下数字</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.active" @input="update({ counterColors: { ...snapshot.settings.counterColors, active: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>进行中角标</strong><small>右下上方数字</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.counterColors.unread" @input="update({ counterColors: { ...snapshot.settings.counterColors, unread: ($event.target as HTMLInputElement).value.toUpperCase() } })" /><span><strong>已未读角标</strong><small>右下角数字</small></span></label></div>
           </section>
 
           <section v-if="activeConfigTab === 'card'" class="codex-appearance-zone codex-appearance-zone--card" aria-labelledby="card-appearance-title">

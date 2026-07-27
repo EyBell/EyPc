@@ -1,5 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { filterJumpableLiveWindows, isChromiumFamilyApp, isJumpableLiveWindow } from '../../src/domain/windows'
+import { compareWindowRowsByApplication, filterJumpableLiveWindows, isChromiumFamilyApp, isJumpableLiveWindow } from '../../src/domain/windows'
+
+describe('window row application order', () => {
+  it('keeps pinned rows first and sorts each section by application name', () => {
+    const rows = [
+      { id: 'beta', pinned: false, appName: 'Beta', displayName: 'Second', title: 'Second' },
+      { id: 'zeta-pin', pinned: true, appName: 'Zeta', displayName: 'Pinned Zeta', title: 'Pinned Zeta' },
+      { id: 'alpha', pinned: false, appName: 'Alpha', displayName: 'First', title: 'First' },
+      { id: 'alpha-pin', pinned: true, appName: 'Alpha', displayName: 'Pinned Alpha', title: 'Pinned Alpha' }
+    ]
+
+    expect(rows.sort(compareWindowRowsByApplication).map((row) => row.id)).toEqual([
+      'alpha-pin',
+      'zeta-pin',
+      'alpha',
+      'beta'
+    ])
+  })
+})
 
 describe('jumpable live window filter', () => {
   it('drops chromium placeholder Window titles and host chrome shells', () => {

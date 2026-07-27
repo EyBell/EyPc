@@ -4,12 +4,14 @@ status: candidate
 scope: project
 fingerprint: codex-water-preview__separate-or-simplified-renderer-diverges-from-desktop-ball__shared-component-with-preserved-layered-motion__configuration-preview-and-float-remain-identical
 first_seen: 2026-07-24
-last_verified: 2026-07-24
-review_after: 2027-01-24
+last_verified: 2026-07-26
+review_after: 2027-01-26
 evidence:
   - src/components/CodexWaterBall.vue
   - src/pages/CodexPage.vue
   - src/FloatApp.vue
+  - src/styles/float.css
+  - src/styles/codex.css
   - src/domain/codexAppearance.ts
   - vibe/specs/260718/1148-codex-quota-float/verify.md
 tags:
@@ -51,14 +53,14 @@ Two rendering paths owned overlapping water-ball semantics. The page preview had
 
 ## Prevention Rule
 
-When a configuration preview represents a live visual component, reuse the production component and its data projection. Do not substitute an illustrative preview or simplify an established wave renderer while correcting a color/configuration mismatch. A new control must name the exact layer it changes and preserve unrelated semantic data and interaction overlays.
+When a configuration preview represents a live visual component, reuse the production component and its data projection. Do not substitute an illustrative preview or simplify an established wave renderer while correcting a color/configuration mismatch. A new control must name the exact layer it changes and preserve unrelated semantic data and interaction overlays. Compact counter overlays outside the shared ball must keep the same corner geometry as the desktop float whenever that geometry changes.
 
 ## Alternative Route
 
 - Status: `candidate`; static structure is complete, visual acceptance remains user-owned.
 - Preconditions: a configurable component has both a settings preview and a desktop/runtime presentation.
-- Ordered steps: reuse the production component; pass the persisted appearance and projected data; keep the original layer order and motion tokens; add only a narrowly scoped CSS variable for the requested layer; retain separate interactive counter controls outside the decorative preview.
-- Verification: inspect normal, transparent-base and reduced-motion states with and without Weekly data; preview and desktop must show the same ball layers and no flat rectangular liquid artifact.
+- Ordered steps: reuse the production component; pass the persisted appearance and projected data; keep the original layer order and motion tokens; add only a narrowly scoped CSS variable for the requested layer; retain separate interactive counter controls outside the decorative preview and mirror their desktop corner positions.
+- Verification: inspect normal, transparent-base and reduced-motion states with and without Weekly data; preview and desktop must show the same ball layers, the same counter corners and no flat rectangular liquid artifact.
 - Applicability boundary: applies to visual components whose configuration preview claims runtime fidelity; it does not require every static form sample to mount production interaction handlers.
 - Fallback: if a preview cannot mount the production component, keep the existing production renderer unchanged and obtain a rendered comparison before editing its visual layers.
 
@@ -68,3 +70,4 @@ When a configuration preview represents a live visual component, reuse the produ
 | --- | --- | --- | --- | --- | --- |
 | 2026-07-24 | RAW-072/073 water preview parity | Screenshot showed configuration and desktop water balls differed | Separate page illustration and desktop rendering evolved independently | Mounted the shared production component in the preview and carried the same appearance/data values | candidate; visual acceptance pending |
 | 2026-07-24 | RAW-074 layered-water restoration | Screenshot feedback rejected the static replacement and identified a lower rectangular layer | Shared component was simplified instead of retaining established wave layers | Restored existing SVG waves, refraction, high-light and timing tokens; kept base opacity as an independent layer | candidate; static checks pass, visual acceptance pending |
+| 2026-07-26 | RAW-083 counter geometry follow-up | User reported configuration water preview no longer matched the real float after lower-corner counter move | Preview CSS and control captions stayed on the old upper-corner layout while float.css adopted lower-left/lower-right | Aligned `.water-preview-counter*` to float corner geometry and updated CodexPage counter captions | candidate; static source fix, visual acceptance pending |
