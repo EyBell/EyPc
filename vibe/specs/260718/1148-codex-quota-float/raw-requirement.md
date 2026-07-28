@@ -107,6 +107,7 @@ Privacy boundary: `no-verbatim-prompt-or-transcript`
 - `RAW-104` (`active`, `refines-RAW-081-092-097`): 「已完成未读」必须与 targeted 完成证据同路径尽快出现，不得依赖下一次完整库存才纠正。发布 `targeted-after-exit` completed 时，若仅存在完成前残留的 live `hasUnreadTurn=false`，必须清掉该 stale false 并立即读取 Codex 持久化未读；若仍未未读，在既有 3 秒 / `[0,300,1000]` Turn 核验时界内重试持久化未读，不得从缺字段发明未读，也不得清掉完成后的显式 live false（用户已读）。`verifyStaleActive` 在 active 且无 waiting flags 时可核验 latest Turn（含刚进入 active 与 App Server `turn/completed`），不再要求基线已是 completed。测试合同可更新但依项目规则不执行；需重载 uTools preload 后由用户验收。
 - `RAW-105` (`active`, `refines-RAW-084-task-cycle-fallback`): 当前/上一任务循环的常规候选（待输入 → 已完成未读 → 进行中）为空时，改用现有任务投影中所有 `EyPc` 本地置顶任务作为循环序列。该回退只接受仍有当前 action alias 的任务，沿用既有本地置顶优先/稳定显示顺序并按匿名 key 去重；首次“下一个”打开该序列第一项，首次“上一个”打开末项，之后按原方向循环回绕。原生置顶不作为回退候选；不持久化循环游标，不确认完成未读，不改变隐藏/页签或 Codex Desktop 状态。没有当前可打开的本地置顶任务时保留明确提示。依项目规则不新增或运行测试、typecheck、build、uTools、截图或真实 Codex 操作，由用户验收。
 - `RAW-106` (`active`, `refines-RAW-084-and-RAW-105`): 明确 `stopped` 任务永远不进入“上一个 Codex 任务”或“下一个 Codex 任务”的候选集合，包括常规序列与 EyPc 本地置顶回退。停止任务仍可在原有列表/项目/隐藏视图中打开；该限定不改变其它状态、置顶、排序、游标或打开路径。
+- `RAW-107` (`active`, `refines-RAW-084-task-cycle-global-shortcut`): 当 `hideAfterAction=true` 的全局任务循环快捷键（`eypc-codex-task-previous` / `eypc-codex-task-next`）触发时，`applyPluginRoute` 不得调用 `runtime.setTab`。因为应用窗口在动作后立即隐藏，切换页签会触发 `codexController.syncActivation(false)`，进而调用 `options.platform.codex.close()` 清除 preload 中的 `codexThreadActions`，使 `cycleTask` 持有的缓存任务列表中的 `actionAlias` 全部失效，导致打开任务时崩溃。同时，当 `syncActivation` 检测到 `shouldRun()` 返回 `false` 时，必须将 `conversations` 清空为 `emptyConversationSnapshot()`，防止 `cycleTask` 读取已被关闭连接失效的陈旧任务数据。候选为空时 `cycleTask` 显示"当前没有可切换的 Codex 任务"提示，不尝试打开。该修复不改变循环序列、优先级、回退或打开路径，仅确保非活跃状态下不消费已失效的缓存。
 
 ## Latest Superseding Requirement Map
 
@@ -119,7 +120,7 @@ Privacy boundary: `no-verbatim-prompt-or-transcript`
 | 本地整理 | 页签/折叠持久化、别名优先且无别名回退原名、置顶来源由“顶”控件及说明表达、项目分组隐藏；旧本地移除迁移丢弃 | `RAW-039`、`RAW-052`、`RAW-053`、`RAW-055`、`RAW-058` |
 | 真实项目移除 | Codex 退出门禁、短期 alias/指纹、主文件限定字段、主/备原子写入与回滚核验；不删目录/会话 | `RAW-052` |
 | 选择与批量操作 | 38px 左侧选择区、核心两态选择、Esc/最后一项退出、行/子按钮键盘所有权；选择提示固定为列表舞台底部悬浮且不触发布局重排，滚动区和底部批量栏避让 | `RAW-055`、`RAW-057`、`RAW-058`、`RAW-064` |
-| 紧凑角标与全局快捷键 | 待输入仍只打开实际计数集合中展示排序第一条；完成未读的角标与 uTools 全局功能/快捷键通过同一动作打开第一条并立即仅在 EyPc 本地确认其当前完成 revision，其他视图同步显示已读；进行中仍只展开。新增前/后任务全局功能以待输入→完成未读→进行中、去重且置顶优先的稳定循环只打开任务；常规候选为空时仅 EyPc 本地置顶任务按稳定显示顺序回退循环，原生置顶不参与；不确认、不切页、不改 Codex 原生状态；配置页只提供官方 uTools 设置跳转，不读取或回显任何当前宿主绑定 | `RAW-050`、`RAW-058`、`RAW-063`、`RAW-067`、`RAW-069`、`RAW-077`、`RAW-078`、`RAW-079`、`RAW-082`、`RAW-084`、`RAW-087`、`RAW-105`、`RAW-106` |
+| 紧凑角标与全局快捷键 | 待输入仍只打开实际计数集合中展示排序第一条；完成未读的角标与 uTools 全局功能/快捷键通过同一动作打开第一条并立即仅在 EyPc 本地确认其当前完成 revision，其他视图同步显示已读；进行中仍只展开。新增前/后任务全局功能以待输入→完成未读→进行中、去重且置顶优先的稳定循环只打开任务；常规候选为空时仅 EyPc 本地置顶任务按稳定显示顺序回退循环，原生置顶不参与；不确认、不切页、不改 Codex 原生状态；配置页只提供官方 uTools 设置跳转，不读取或回显任何当前宿主绑定；`hideAfterAction=true` 时不得调用 `setTab`，`syncActivation(false)` 时清空 `conversations` 防止缓存失效崩溃 | `RAW-050`、`RAW-058`、`RAW-063`、`RAW-067`、`RAW-069`、`RAW-077`、`RAW-078`、`RAW-079`、`RAW-082`、`RAW-084`、`RAW-087`、`RAW-105`、`RAW-106`、`RAW-107` |
 | 配置导航与外观 | 顶部五 Tab 默认进入双列快捷方式；任务、水球、卡片、运行按面板单独渲染，运行诊断不再占据默认入口；说明进入可聚焦信息按钮。水球与状态信号共页、展开卡片独立成页；百分比读数和九项卡片主题仍由预览/真实组件共享并直通保存/渲染；内置主题固定 12 套，统一海盐材质（实体环、不透明底色） | `RAW-071`、`RAW-075`、`RAW-076`、`RAW-079`、`RAW-087`、`RAW-088` |
 | 额度、水球与模型 | 普通 5 小时→普通周→Spark；Spark `S`；存在 Weekly 时显示数据进度环，无 Weekly 时无外圈，禁止普通装饰圆环；上半区角标安全且提供 200ms 作用说明、下半区 hover 展开；缺失窗口不等于 0；`quota-auto` 与本次手选 | `RAW-040`、`RAW-046`、`RAW-050`、`RAW-058`、`RAW-063`、`RAW-065` |
 | 新会话与瞬时桥接 | 每次打开编辑器；冻结/刷新确认模型；精确 `thread/start → turn/start → Deep Link`；提示词零持久化 | `RAW-047` |
@@ -150,5 +151,5 @@ Privacy boundary: `no-verbatim-prompt-or-transcript`
 
 ## Capture Boundary
 
-- Included: 早期 A1/B1/C1、D1/E1/F1 和 V2 演进事实；最新 RAW-035–068 对真实项目库存、完整分页、严格 Turn 时间、30 天窗口、四个可见页签与 6 小时动态流、Codex Desktop 实时状态/未读权威、原始 interrupted 到可见 ongoing 的领域投影与稳定归档阻断、异常状态分组与未知诚实降级、项目结构、本地元数据、控件化置顶来源、真实项目移除事务、普通/Spark 额度、仅数据 Weekly 环且无装饰圆环、角标说明与首条直开、`quota-auto`、瞬时新会话、常显四槽/两态选择、无重排的底部选择提示、纯 Shift 预览、浮窗暂态层、高对比 Quick Jump、双向归档/桌面刷新通知与隐私边界的最终纠正；同时保留环境诊断、宿主兼容、自动收缩、主题与 macOS all-Spaces 基础合同。
+- Included: 早期 A1/B1/C1、D1/E1/F1 和 V2 演进事实；最新 RAW-035–068 对真实项目库存、完整分页、严格 Turn 时间、30 天窗口、四个可见页签与 6 小时动态流、Codex Desktop 实时状态/未读权威、原始 interrupted 到可见 ongoing 的领域投影与稳定归档阻断、异常状态分组与未知诚实降级、项目结构、本地元数据、控件化置顶来源、真实项目移除事务、普通/Spark 额度、仅数据 Weekly 环且无装饰圆环、角标说明与首条直开、`quota-auto`、瞬时新会话、常显四槽/两态选择、无重排的底部选择提示、纯 Shift 预览、浮窗暂态层、高对比 Quick Jump、双向归档/桌面刷新通知与隐私边界的最终纠正；RAW-089–097 对实时完成核验、异常统一进行中、快照缺行隔离、明确停止边界、正向事件快路、计划待确认即时待输入、私有 patch 不重订、外部归档即时收敛、较新完成证据压过旧 active shadow 和已读事件不重放 activity 的修正；RAW-105–107 对本地置顶回退循环、停止任务排除和全局快捷键缓存失效崩溃防护的修正；同时保留环境诊断、宿主兼容、自动收缩、主题与 macOS all-Spaces 基础合同。
 - Excluded: 原始 Prompt、对话转录、凭据、线程正文、Agent 推理、工具输出、命令和日志。
