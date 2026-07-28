@@ -345,6 +345,20 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'windows.editor.nextField': { title: '窗口编辑下一个字段', group: '窗口跳转', layer: 'window-editor', shortcutIds: ['Tab'], when: "tab == 'windows' && activeInputRole == 'window-editor'", weight: 460, profileId: 'windows' },
   'windows.editor.prevField': { title: '窗口编辑上一个字段', group: '窗口跳转', layer: 'window-editor', shortcutIds: ['Shift+Tab'], when: "tab == 'windows' && activeInputRole == 'window-editor'", weight: 460, profileId: 'windows' },
   'windows.candidates.clear': { title: '退出窗口候选筛选', group: '窗口跳转', layer: 'windows', shortcutIds: ['Escape'], when: "tab == 'windows' && !windowEditorOpen && !windowActionsOpen", weight: 145, profileId: 'windows' },
+  ...Object.fromEntries(Array.from({ length: 10 }, (_, index) => {
+    const slot = index + 1
+    const chord = slot === 10 ? 'Ctrl+0' : `Ctrl+${slot}`
+    return [`windows.slot.assign.${slot}`, {
+      title: `分配窗口到槽 ${slot}`,
+      group: '窗口跳转',
+      layer: 'windows',
+      shortcutIds: [chord],
+      when: "tab == 'windows' && !windowEditorOpen && (!textInputFocused || activeInputRole == 'window-search')",
+      weight: 158,
+      risk: 'data-write' as const,
+      profileId: 'windows' as const
+    }]
+  })),
   'ports.workspace.reset': { title: '重置端口工作区', group: '端口', layer: 'ports', shortcutIds: ['Escape'], when: "tab == 'ports'", weight: 90 },
   'ports.selection.clear': { title: '清空端口多选', group: '端口', layer: 'ports-selection', shortcutIds: ['Escape'], when: "tab == 'ports' && portSelectionMode", weight: 300 },
   'ports.kill.confirm': { title: '终止选中进程', group: '端口', layer: 'ports', shortcutIds: ['Delete', 'Backspace'], when: "tab == 'ports' && portPane != 'groups' && !textInputFocused", weight: 120, risk: 'data-write' },
@@ -681,6 +695,16 @@ export const SHORTCUT_RESERVATION_RULES: ShortcutReservationRule[] = [
   { shortcutId: 'Tab', commandId: 'windows.layer.toggle', when: "tab == 'windows' && !windowEditorOpen", description: '切换窗口列表和操作面板', layer: 'windows' },
   { shortcutId: 'Shift+Tab', commandId: 'windows.layer.togglePrev', when: "tab == 'windows' && !windowEditorOpen", description: '反向切换窗口列表和操作面板', layer: 'windows' },
   { shortcutId: 'Space', commandId: 'list.toggleSelection', when: "tab == 'windows' && !windowEditorOpen", description: '窗口列表多选并下移', layer: 'windows' },
+  ...Array.from({ length: 10 }, (_, index) => {
+    const slot = index + 1
+    return {
+      shortcutId: slot === 10 ? 'Ctrl+0' : `Ctrl+${slot}`,
+      commandId: `windows.slot.assign.${slot}`,
+      when: "tab == 'windows' && !windowEditorOpen",
+      description: `分配当前窗口到槽 ${slot}`,
+      layer: 'windows' as const
+    }
+  }),
   { shortcutId: 'Escape', commandId: 'windows.editor.cancel', when: "activeInputRole == 'window-editor'", description: '取消窗口目标编辑', layer: 'window-editor' },
   { shortcutId: 'Ctrl+S', commandId: 'windows.editor.save', when: "activeInputRole == 'window-editor'", description: '保存窗口目标编辑', layer: 'window-editor' },
   { shortcutId: 'Enter', commandId: 'windows.editor.save', when: "activeInputRole == 'window-editor'", description: '保存窗口目标编辑', layer: 'window-editor' },
@@ -971,7 +995,7 @@ function shouldBlockTextInputShortcut(shortcutId: string, context: KeybindingCon
   if (context.activeInputRole === 'mqtt-subscriptions') return !['Space', 'Enter', 'Ctrl+Enter', 'Ctrl+C', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Ctrl+T', 'Ctrl+Shift+T', 'F2', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'Shift+ArrowUp', 'Shift+ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+Enter', 'Ctrl+C', 'Ctrl+Shift+C', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+R', 'Ctrl+Shift+W', 'Ctrl+N', 'Ctrl+O', 'Ctrl+Shift+O', 'Ctrl+G', 'Ctrl+T', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+Z', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-group-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'ArrowLeft', 'ArrowRight', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+R', 'Ctrl+Shift+W', 'Ctrl+N', 'Ctrl+O', 'Ctrl+Shift+O', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+G', 'Ctrl+T', 'Ctrl+Z', 'F2', 'Shift+F2', 'Ctrl+F2', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
-  if (context.activeInputRole === 'window-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'ArrowRight', 'Ctrl+ArrowRight', 'ArrowLeft', 'Ctrl+ArrowLeft', 'Tab', 'Shift+Tab', 'Enter', 'Space', 'Ctrl+F', 'Ctrl+R', 'Ctrl+Delete', 'Ctrl+Backspace', 'Escape', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
+  if (context.activeInputRole === 'window-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'ArrowRight', 'Ctrl+ArrowRight', 'ArrowLeft', 'Ctrl+ArrowLeft', 'Tab', 'Shift+Tab', 'Enter', 'Space', 'Ctrl+F', 'Ctrl+R', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+0', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9', 'Escape', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   return !['Ctrl+S', 'Ctrl+Enter'].includes(shortcutId)
 }
 

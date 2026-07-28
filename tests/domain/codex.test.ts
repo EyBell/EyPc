@@ -164,6 +164,34 @@ describe('Codex domain', () => {
     expect(result.snapshot.completed[0]).toMatchObject({ key: KEY, completionRevision: 500, archiveCapability: 'allowed' })
   })
 
+  it('rejects a reminted Desktop active interval that only revives after an already completed Turn', () => {
+    const revived = projectConversations({
+      threads: [thread('active', 900, [], KEY, {
+        desktopActiveSince: 850,
+        lastTurnStatus: 'completed',
+        lastTurnStartedAt: 400,
+        lastTurnCompletedAt: 500
+      })],
+      receipts: [],
+      lastTaskScanAt: 0,
+      now: 900
+    })
+    expect(revived.snapshot).toMatchObject({ ongoingCount: 0, completedCount: 1 })
+
+    const waiting = projectConversations({
+      threads: [thread('active', 900, ['waitingOnUserInput'], KEY, {
+        desktopActiveSince: 850,
+        lastTurnStatus: 'completed',
+        lastTurnStartedAt: 400,
+        lastTurnCompletedAt: 500
+      })],
+      receipts: [],
+      lastTaskScanAt: 0,
+      now: 900
+    })
+    expect(waiting.snapshot.ongoing[0]).toMatchObject({ key: KEY, activityState: 'waiting-input' })
+  })
+
   it('marks a newer persisted completion unread without comparing it to thread metadata recency', () => {
     const result = projectConversations({
       threads: [thread('notLoaded', 900, [], KEY, {
@@ -214,10 +242,11 @@ describe('Codex domain', () => {
       bucket: 'stopped',
       activityState: 'stopped',
       state: 'stopped',
-      archiveCapability: 'blocked-stopped',
-      canArchive: false
+      archiveCapability: 'allowed',
+      canArchive: true,
+      revisionAt: 600
     })
-    expect(result.snapshot).toMatchObject({ ongoingCount: 4, stoppedCount: 1, waitingCount: 1, runningCount: 3, attentionCount: 0, unknownCount: 0 })
+    expect(result.snapshot).toMatchObject({ ongoingCount: 4, stoppedCount: 1, waitingCount: 1, runningCount: 0, attentionCount: 0, unknownCount: 0 })
   })
 
   it('requires exact live-idle or desktop-exit evidence before a failed/interrupted Turn is stopped', () => {
@@ -242,6 +271,15 @@ describe('Codex domain', () => {
       desktopBridgeState: 'failed'
     })
     expect(uncertain.snapshot).toMatchObject({ ongoingCount: 1, stoppedCount: 0 })
+
+    const connectedUncertain = projectConversations({
+      threads: [thread('notLoaded', 900, [], keyAt(3), { statusAuthority: 'connector', lastTurnStatus: 'interrupted', lastTurnStartedAt: 800 })],
+      receipts: [],
+      lastTaskScanAt: 700,
+      now: 1_100,
+      desktopBridgeState: 'connected'
+    })
+    expect(connectedUncertain.snapshot).toMatchObject({ ongoingCount: 1, stoppedCount: 0, runningCount: 0 })
 
     const exited = projectConversations({
       threads: [thread('notLoaded', 900, [], keyAt(3), { statusAuthority: 'connector', lastTurnStatus: 'interrupted', lastTurnStartedAt: 800 })],
@@ -269,7 +307,7 @@ describe('Codex domain', () => {
       [KEY, 'ongoing'],
       [keyAt(2), 'ongoing']
     ])
-    expect(result.snapshot).toMatchObject({ ongoingCount: 2, waitingCount: 0, runningCount: 2, unknownCount: 0 })
+    expect(result.snapshot).toMatchObject({ ongoingCount: 2, waitingCount: 0, runningCount: 0, unknownCount: 0 })
   })
 
   it('uses desktop live state immediately and removes active classification as soon as that authority is lost', () => {

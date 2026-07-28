@@ -794,7 +794,7 @@ describe('Codex controller', () => {
 
     activityListeners[0]({ version: 2, sourceFingerprint, generation: 3, receivedAt: receivedAt + 2, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'interrupted', lastTurnStartedAt: baselineTurnStartedAt, lastTurnEvidence: 'targeted-after-exit' }] })
     expect(controller.view().conversations).toMatchObject({ ongoingCount: 0, stoppedCount: 1 })
-    expect(controller.view().conversations.stopped[0]).toMatchObject({ key: taskKey, activityState: 'stopped', archiveCapability: 'blocked-stopped' })
+    expect(controller.view().conversations.stopped[0]).toMatchObject({ key: taskKey, activityState: 'stopped', archiveCapability: 'allowed' })
 
     activityListeners[0]({ version: 2, sourceFingerprint, generation: 4, receivedAt: receivedAt + 3, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live' }] })
     expect(controller.view().conversations).toMatchObject({ ongoingCount: 1, stoppedCount: 0 })
@@ -1285,6 +1285,88 @@ describe('Codex controller', () => {
     expect(state.codex.settings.expandedSizes).toEqual([{ displayId: 'screen-b', width: 700, height: 720, updatedAt: 200 }])
     expect(controller.view().floatHost).toEqual({ displayId: 'screen-a', expandedWidth: 360, expandedHeight: 0, expandedManual: false })
     expect(resetGeometry).toHaveBeenCalledWith(expect.objectContaining({ expandedSizes: state.codex.settings.expandedSizes }))
+    controller.dispose()
+  })
+
+  it('cycleTask only cycles through ongoing tasks and skips completed-unread', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    state.codex.lastTaskScanAt = 10
+    const ongoingKey = 'aaaaaaaaaaaaaaaa'
+    const completedUnreadKey = 'bbbbbbbbbbbbbbbb'
+    const threads: CodexHostThread[] = [
+      { key: ongoingKey, actionAlias: 'alias-ongoing', name: '进行中', status: 'active', activeFlags: [], statusAuthority: 'desktop-live', updatedAt: 550, lastTurnStatus: 'inProgress', lastTurnStartedAt: 500 },
+      { key: completedUnreadKey, actionAlias: 'alias-unread', name: '已完成未读', status: 'notLoaded', activeFlags: [], updatedAt: 450, lastTurnStatus: 'completed', lastTurnStartedAt: 300, lastTurnCompletedAt: 400, hasUnreadTurn: true, unreadAuthority: 'desktop-live' }
+    ]
+    const openThread = vi.fn(async () => ({ outcome: 'opened' as const }))
+    const platform = {
+      codex: {
+        readSnapshot: async () => ({ ok: true as const, receivedAt: 600, value: { version: 2 as const, receivedAt: 600, threads, projects: [], sourceFingerprint: 'a'.repeat(64), completeness: 'verified' as const } }),
+        openThread,
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({
+      platform,
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: () => undefined
+    })
+
+    await controller.refresh()
+    expect(controller.view().conversations.ongoing).toHaveLength(1)
+    expect(controller.view().conversations.completedUnread).toHaveLength(1)
+
+    controller.cycleTask(-1)
+    expect(openThread).toHaveBeenCalledWith('alias-ongoing')
+
+    controller.cycleTask(1)
+    expect(openThread).toHaveBeenLastCalledWith('alias-ongoing')
+
+    expect(openThread).not.toHaveBeenCalledWith('alias-unread')
+    controller.dispose()
+  })
+
+  it('cycleTask shows no tasks after syncActivation clears conversations on non-codex tab', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    state.codex.lastTaskScanAt = 10
+    const threads: CodexHostThread[] = [
+      { key: 'aaaaaaaaaaaaaaaa', actionAlias: 'alias-ongoing', name: '进行中', status: 'active', activeFlags: [], statusAuthority: 'desktop-live', updatedAt: 550, lastTurnStatus: 'inProgress', lastTurnStartedAt: 500 }
+    ]
+    const openThread = vi.fn(async () => ({ outcome: 'opened' as const }))
+    let closeCount = 0
+    const platform = {
+      codex: {
+        readSnapshot: async () => ({ ok: true as const, receivedAt: 600, value: { version: 2 as const, receivedAt: 600, threads, projects: [], sourceFingerprint: 'a'.repeat(64), completeness: 'verified' as const } }),
+        openThread,
+        close: () => { closeCount += 1 }
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({
+      platform,
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: () => undefined
+    })
+
+    controller.start()
+    await controller.refresh()
+    expect(controller.view().conversations.ongoing).toHaveLength(1)
+
+    controller.cycleTask(1)
+    expect(openThread).toHaveBeenCalledTimes(1)
+
+    state.activeTab = 'ports'
+    controller.syncActivation(false)
+    expect(closeCount).toBeGreaterThan(0)
+    expect(controller.view().conversations.ongoing).toHaveLength(0)
+
+    openThread.mockClear()
+    controller.cycleTask(1)
+    expect(openThread).not.toHaveBeenCalled()
     controller.dispose()
   })
 })

@@ -229,8 +229,8 @@ const compactAriaLabel = computed(() => {
 })
 const compactCounts = computed(() => ({
   input: conversations.value?.inputRequiredCount || 0,
-  active: [...(conversations.value?.ongoing || []), ...(conversations.value?.hidden || [])]
-    .filter((task) => task.bucket === 'ongoing' && task.activityState !== 'waiting-input').length,
+  active: (conversations.value?.ongoing || []).concat(conversations.value?.hidden || [])
+    .filter((task) => task.bucket === 'ongoing' && (task.activityState === 'active' || task.activityState === 'waiting-approval' || task.activityState === 'ongoing')).length,
   unread: conversations.value?.completedUnreadCount || 0
 }))
 const displayedCompactCounts = computed(() => ({
@@ -330,7 +330,7 @@ const renderRows = computed<RenderRow[]>(() => {
     const recentOngoing = recentTasks.filter((task) => task.bucket === 'ongoing')
     const groups = [
       { key: 'input', title: '待输入', tone: 'input' as const, tasks: recentOngoing.filter((task) => task.activityState === 'waiting-input') },
-      { key: 'active', title: '正在进行中', tone: 'active' as const, tasks: recentOngoing.filter((task) => task.activityState !== 'waiting-input') },
+      { key: 'active', title: '正在进行中', tone: 'active' as const, tasks: recentOngoing.filter((task) => task.activityState === 'active' || task.activityState === 'waiting-approval' || task.activityState === 'ongoing') },
       { key: 'stopped', title: '已停止', tone: 'stopped' as const, tasks: recentTasks.filter((task) => task.bucket === 'stopped') },
       { key: 'unread', title: '已完成未读', tone: 'unread' as const, tasks: recentTasks.filter((task) => task.bucket === 'completed-unread') },
       { key: 'completed', title: '已完成', tone: 'completed' as const, tasks: recentTasks.filter((task) => task.bucket === 'completed') }
@@ -1254,9 +1254,7 @@ function taskArchiveConfirming(task: CodexTaskCard) {
 }
 
 function taskArchiveBlockedReason(task: CodexTaskCard) {
-  return task.archiveCapability === 'blocked-stopped'
-    ? '会话已停止但未完成，暂不能归档'
-    : '任务仍在进行中，暂不能归档'
+  return '任务仍在进行中，暂不能归档'
 }
 
 function requestTaskArchive(task?: CodexTaskCard | CodexTaskCard[]) {
@@ -1266,7 +1264,7 @@ function requestTaskArchive(task?: CodexTaskCard | CodexTaskCard[]) {
   const normalized = targetTasks.filter((candidate) => candidate.canArchive)
   const tasks = targetTasks.length ? normalized : archiveCandidates()
   if (!tasks.length) {
-    liveMessage.value = '当前没有可归档的已完成任务'
+    liveMessage.value = '当前没有可归档的已完成或已停止任务'
     return
   }
   const identity = tasks.map((task) => `${task.key}:${task.revisionAt}`).sort().join('|')

@@ -2,7 +2,7 @@
 
 Tool: codex
 Date: 2026-07-22
-Requirement version: `2026-07-27.7`
+Requirement version: `2026-07-27.9`
 
 | Work Unit | Work-order Version | Attempt | Surface | Runtime ID | State | Last Evidence | Blocker | Next Action |
 | --- | ---: | ---: | --- | --- | --- | --- | --- | --- |
@@ -13,6 +13,8 @@ Requirement version: `2026-07-27.7`
 | WU-CODEX-RAW-082-COMPLETED-UNREAD-ACK | 1 | 1 | main | app-root | reported | shared local completed-revision acknowledgement, uTools global feature/configuration and compact-counter dispatch implemented; waiting-input remains open-only; static diff/JSON/link audit pass | user acceptance | closed for static delivery |
 | WU-CODEX-RAW-083-COMPACT-HIT-ZONE | 1 | 1 | main | app-root | reported | waiting-input is lower-left; completed-unread owns the extreme lower-right with ongoing above; exclusive upper-third expansion/lower-half drag routing implemented; preference-index tag-limit drift repaired | user acceptance | closed for static delivery |
 | WU-CODEX-RAW-084-TASK-CYCLE | 1 | 1 | main | app-root | reported | two uTools global features, feature routes, Runtime Actions, memory-only Controller cursor and settings configuration entries implemented; static diff/JSON/source-chain checks pass | user acceptance | closed for static delivery |
+| WU-CODEX-RAW-105-LOCAL-PIN-CYCLE-FALLBACK | 1 | 1 | main | app-root | reported | ordinary task-cycle exhaustion falls back to current EyPc-local pinned tasks in stable display order; native pins remain excluded and the cursor/open-only boundary is unchanged | user acceptance | source/document delivery complete; runtime validation not authorized |
+| WU-CODEX-RAW-106-STOPPED-CYCLE-EXCLUSION | 1 | 1 | main | app-root | reported | stopped tasks are excluded from previous/next task cycling, including the EyPc-local pinned fallback | user acceptance | source/document delivery complete; runtime validation not authorized |
 | WU-CODEX-RAW-085-TASK-HOTKEY-READBACK | 1 | 1 | main | app-root | superseded | historical readback implementation removed by RAW-087 after host freeze | none | retained only as requirement history |
 | WU-CODEX-RAW-086-ENTRY-HOTKEY-ISOLATION | 1 | 1 | main | app-root | accepted / superseded | startup/focus/visibility reads removed and user confirmed the plugin loads; RAW-087 also removes manual refresh | none | root-cause evidence retained in error memory |
 | WU-CODEX-RAW-087-NO-READBACK-TABBED-CONFIG | 1 | 1 | main | app-root | reported | private hotkey readback contract deleted from Codex and Window paths; Codex settings now default to a compact shortcut tab with task/water/card/runtime panels and focusable info help; project rule `EYPC-UTOOLS-HOST-001` and its verified error consensus are fixed and linked | user visual/host acceptance | entry recovery user-confirmed; implementation and rule/memory linkage statically verified; runtime validation not authorized |

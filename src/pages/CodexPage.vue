@@ -123,7 +123,7 @@ const waterPreviewStyle = computed<Record<string, string>>(() => {
 const waterPreviewCounters = computed(() => ({
   input: props.snapshot.conversations.inputRequiredCount,
   active: [...props.snapshot.conversations.ongoing, ...props.snapshot.conversations.hidden]
-    .filter((task) => task.bucket === 'ongoing' && task.activityState !== 'waiting-input').length,
+    .filter((task) => task.bucket === 'ongoing' && (task.activityState === 'active' || task.activityState === 'waiting-approval')).length,
   unread: props.snapshot.conversations.completedUnreadCount
 }))
 

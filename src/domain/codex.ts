@@ -388,7 +388,7 @@ export interface CodexThreadArchiveRequest {
   expectedCompletionAt?: number
   expectedLastTurnStartedAt?: number
   expectedSourceFingerprint?: string
-  evidence: 'completed'
+  evidence: 'completed' | 'stopped'
 }
 
 export interface CodexProjectArchiveRequest {
@@ -1082,7 +1082,7 @@ export function defaultCodexSettings(): CodexSettings {
     conversationInboxEnabled: true,
     quotaRefreshMinutes: 5,
     taskRefreshSeconds: 15,
-    completionPresentationDelayMs: 1500,
+    completionPresentationDelayMs: 0,
     newThreadModelPolicy: 'quota-auto',
     newThreadPreferredModel: '',
     timeWindowDays: 30,
@@ -1300,14 +1300,41 @@ function isLikelyActiveTask(thread: CodexHostThread) {
 }
 
 function isSupersededDesktopActiveTask(thread: CodexHostThread) {
-  return isLikelyActiveTask(thread)
-    && thread.lastTurnStatus === 'completed'
-    && numberValue(thread.desktopActiveSince, 0) > 0
-    && numberValue(thread.lastTurnCompletedAt, 0) > numberValue(thread.desktopActiveSince, 0)
+  if (!isLikelyActiveTask(thread) || thread.lastTurnStatus !== 'completed') return false
+  // Unresolved live user decisions still outrank a completed Turn.
+  if (thread.activeFlags.includes('waitingOnUserInput') || thread.activeFlags.includes('waitingOnApproval')) return false
+  const completedAt = numberValue(thread.lastTurnCompletedAt, 0)
+  const startedAt = numberValue(thread.lastTurnStartedAt, 0)
+  const activeSince = numberValue(thread.desktopActiveSince, 0)
+  if (completedAt <= 0 && startedAt <= 0) return false
+  // Classic ordering: an explicit completion after the observed active interval.
+  if (activeSince > 0 && completedAt > activeSince) return true
+  // Stale revival: Desktop remints active after the latest Turn already
+  // completed (common after click/focus churn) without a newer Turn start.
+  if (activeSince > 0 && completedAt > 0 && activeSince >= completedAt && startedAt > 0 && activeSince >= startedAt) return true
+  // Active without an interval timestamp cannot outrank an explicit completion.
+  if (activeSince <= 0 && completedAt > 0) return true
+  return false
 }
 
 function isCurrentDesktopActiveTask(thread: CodexHostThread) {
   return isLikelyActiveTask(thread) && !isSupersededDesktopActiveTask(thread)
+}
+
+function isExplicitlyStoppedTask(thread: CodexHostThread, desktopBridgeState?: CodexDesktopBridgeState) {
+  if (isCurrentDesktopActiveTask(thread)) return false
+  // Completed work leaves through the completion revision path, not stopped.
+  if (thread.lastTurnStatus === 'completed') return false
+  // Keep a brief ongoing window for inProgress rows that may still be waiting
+  // for the first Desktop live shadow after inventory registration.
+  if (thread.lastTurnStatus === 'inProgress') return false
+  const hasTerminalStopEvidence = thread.lastTurnStatus === 'interrupted' || thread.lastTurnStatus === 'failed'
+  const hasNoTurnOutcome = !thread.lastTurnStatus
+  if (!hasTerminalStopEvidence && !hasNoTurnOutcome) return false
+  // Exact live idle or Desktop exit remain the strongest stop proofs.
+  if (thread.statusAuthority === 'desktop-live' && thread.status === 'idle') return true
+  if (desktopBridgeState === 'not-running') return true
+  return false
 }
 
 function taskActivityState(thread: CodexHostThread, explicitlyStopped: boolean): CodexTaskActivityState {
@@ -1317,8 +1344,8 @@ function taskActivityState(thread: CodexHostThread, explicitlyStopped: boolean):
     return 'active'
   }
   if (explicitlyStopped) return 'stopped'
-  // The product has one conservative fallback: without exact completion
-  // or stop evidence, provider and authority gaps stay ongoing.
+  // Without exact completion or stop evidence, authority gaps stay ongoing
+  // only while Desktop live coverage is unavailable.
   return 'ongoing'
 }
 
@@ -1372,7 +1399,7 @@ export function countConversationTasks(
   hidden: CodexTaskCard[] = []
 ) {
   const waitingCount = ongoing.filter((task) => task.activityState === 'waiting-input' || task.activityState === 'waiting-approval').length
-  const runningCount = Math.max(0, ongoing.length - waitingCount)
+  const runningCount = ongoing.filter((task) => task.activityState === 'active').length
   const unknownCount = 0
   const attentionCount = 0
   const hiddenUnreadCount = hidden.filter((task) => task.bucket === 'completed-unread').length
@@ -1462,13 +1489,7 @@ export function projectConversations(input: {
     const completionRevision = !authoritativeActive && thread.lastTurnStatus === 'completed'
       ? numberValue(thread.lastTurnCompletedAt, 0) || numberValue(thread.lastTurnStartedAt, 0)
       : 0
-    const hasTerminalStopEvidence = thread.lastTurnStatus === 'interrupted' || thread.lastTurnStatus === 'failed'
-    const explicitlyStopped = !authoritativeActive
-      && hasTerminalStopEvidence
-      && (
-        thread.statusAuthority === 'desktop-live' && thread.status === 'idle'
-        || input.desktopBridgeState === 'not-running'
-      )
+    const explicitlyStopped = isExplicitlyStoppedTask(thread, input.desktopBridgeState)
 
     if (completionRevision > 0 && (receipt.hiddenPendingRecency || 0) >= completionRevision) {
       // V1 “hidden pending” represented an explicit user review decision. V2
@@ -1499,10 +1520,12 @@ export function projectConversations(input: {
         ? unread ? 'completed-unread' : 'completed'
         : explicitlyStopped ? 'stopped' : 'ongoing'
     const activityState = taskActivityState(thread, explicitlyStopped)
-    const archiveCapability: CodexArchiveCapability = completionRevision > 0
+    const archiveCapability: CodexArchiveCapability = completionRevision > 0 || explicitlyStopped
       ? 'allowed'
-      : explicitlyStopped ? 'blocked-stopped' : 'blocked-active'
-    const revisionAt = completionRevision || thread.updatedAt
+      : 'blocked-active'
+    const revisionAt = completionRevision
+      || (explicitlyStopped ? numberValue(thread.lastTurnStartedAt, 0) : 0)
+      || thread.updatedAt
     if ((receipt.dismissedActivityRecency || 0) > 0 && revisionAt > (receipt.dismissedActivityRecency || 0)) {
       delete receipt.dismissedActivityRecency
       delete receipt.dismissedAt
