@@ -2,7 +2,7 @@
 
 Tool: codex
 Date: 2026-07-22
-Requirement version: `2026-07-27.9`
+Requirement version: `2026-07-27.10`
 Spec: [spec.md](spec.md#L1)
 Source format: `chat-requirement-summary`
 Capture fidelity: `normalized-material-requirement`
