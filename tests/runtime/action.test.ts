@@ -3,6 +3,7 @@ import { createActionRuntime } from '../../src/runtime/action/actionRuntime'
 import { createInitialState, normalizeAppState } from '../../src/domain/state'
 import { createAppRuntime } from '../../src/runtime/appRuntime'
 import { createMqttConnectionConfig } from '../../src/domain/mqtt'
+import { WINDOW_BRIDGE_REVISION } from '../../src/platform/eypcPlatform'
 
 describe('action runtime', () => {
   it('dispatches runnable action and captures write snapshots', () => {
@@ -5249,7 +5250,7 @@ describe('app runtime', () => {
   })
 
   describe('window activation diagnostics', () => {
-    const darwinCapability = { platform: 'darwin' as const, supported: true, permission: 'granted' as const, canList: true, canActivate: true }
+    const darwinCapability = { platform: 'darwin' as const, bridgeRevision: WINDOW_BRIDGE_REVISION, supported: true, permission: 'granted' as const, canList: true, canActivate: true }
 
     function assignSlotTarget(state: ReturnType<typeof createInitialState>, lastNativeRef: string | null = 'old-ref') {
       state.windowTargets = [{
@@ -5329,8 +5330,8 @@ describe('app runtime', () => {
         })
       ])
       const serializedTrace = JSON.stringify(snapshot.windowOperationTraces)
+      expect(snapshot.windowOperationTraces[0].targetTitle).toBe('Target')
       expect(serializedTrace).not.toContain('Example')
-      expect(serializedTrace).not.toContain('Target')
       expect(serializedTrace).not.toContain('old-ref')
       expect(JSON.stringify(snapshot.state)).not.toContain('windowOperationTrace')
 
@@ -5389,7 +5390,7 @@ describe('app runtime', () => {
 
     it('uses a separate Windows page-topmost call and treats unsupported topmost as blocking', async () => {
       const topmostCalls: string[] = []
-      const win32Capability = { platform: 'win32' as const, supported: true, permission: 'granted' as const, canList: true, canActivate: true, canAlwaysOnTop: true }
+      const win32Capability = { platform: 'win32' as const, bridgeRevision: WINDOW_BRIDGE_REVISION, supported: true, permission: 'granted' as const, canList: true, canActivate: true, canAlwaysOnTop: true }
       const { state, getHideCount } = installPlatform({
         windows: {
           capabilities: async () => win32Capability,

@@ -915,7 +915,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   const nativeTraceDetails = new Set<NonNullable<WindowOperationTrace['steps'][number]['detail']>>([
     'switched', 'switch-confirmed', 'switch-timeout', 'current', 'walked', 'direct-unique', 'direct-multiple', 'reverse-unique', 'ambiguous-spaces',
     'ax-fallback', 'bad-ref', 'no-api', 'empty-spaces', 'no-space-id', 'no-display', 'process-frontmost', 'single-window-frontmost',
-    'multiwindow-blocked', 'current-space-inferred', 'cg-ordinal-fallback', 'title-match', 'title-mismatch', 'focus-state-mismatch', 'error'
+    'multiwindow-blocked', 'current-space-inferred', 'cg-ordinal-fallback', 'title-match', 'title-mismatch', 'focus-state-mismatch',
+    'isolated-space-bridge', 'ax-cg-id-match', 'ax-focused-window', 'error'
   ])
 
   function appendWindowOperationTrace(

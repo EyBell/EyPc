@@ -26,7 +26,7 @@ export type FileActionOutcome = 'success' | 'dispatched' | 'revealed-instead' | 
 export type FileErrorCode = 'invalid-path' | 'not-found' | 'permission-denied' | 'no-handler' | 'timeout' | 'unsupported' | 'io-error'
 export type FavoritePathStatus = 'available' | 'missing' | 'permission-denied' | 'offline' | 'invalid' | 'unknown'
 export type WindowPermissionState = 'granted' | 'required' | 'unknown' | 'unsupported'
-export const WINDOW_BRIDGE_REVISION = 'wj13-exact-space'
+export const WINDOW_BRIDGE_REVISION = 'wj15-exact-ax'
 export type WindowActivationOutcome = 'activated' | 'not-found' | 'ambiguous' | 'permission-required' | 'focus-denied' | 'unsupported' | 'failed'
 export type WindowActivationReasonCode = 'space-unbound' | 'space-unbound-multiwindow' | 'space-ambiguous' | 'space-switch-timeout' | 'target-title-changed'
 export type WindowOperationTraceStage = 'bridge' | 'space' | 'target' | 'process' | 'restore' | 'foreground' | 'raise' | 'verify' | 'topmost'
@@ -55,6 +55,9 @@ export type WindowOperationTraceDetail =
   | 'title-match'
   | 'title-mismatch'
   | 'focus-state-mismatch'
+  | 'isolated-space-bridge'
+  | 'ax-cg-id-match'
+  | 'ax-focused-window'
   | 'error'
 
 /** A bounded, sanitized native-operation trace. It is returned only when a development renderer requests it. */
@@ -134,7 +137,11 @@ export interface WindowEnvironmentSnapshot {
   axWindowCount?: number
   spaceBinding: 'bound' | 'unbound' | 'unavailable'
   spaceBindingCount?: number
-  spaceBindingSource?: 'direct' | 'reverse' | 'direct+reverse' | 'none' | 'unavailable'
+  spaceBindingSource?: 'direct' | 'reverse' | 'direct+reverse' | 'isolated-direct' | 'isolated-reverse' | 'isolated-direct+reverse' | 'none' | 'unavailable'
+  spaceBridge?: 'in-process' | 'isolated-jxa' | 'unavailable'
+  managedSpaceCount?: number
+  directSpaceBindingCount?: number
+  reverseSpaceBindingCount?: number
   sameSpace?: boolean | null
 }
 

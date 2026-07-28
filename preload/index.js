@@ -709,14 +709,170 @@ try {
 JSON.stringify({ appMatches, cgTargetMatches, cgWindowIdMatches, ownerCgWindowCount, axTargetMatches, axWindowCount })
 `
 
+/**
+ * Runs SkyLight in a fresh osascript process. uTools' Electron renderer can expose a valid
+ * SkyLight connection while returning empty per-Space collections; the isolated process avoids
+ * that host-context coupling without walking or fronting unrelated windows.
+ */
+function macosIsolatedSpaceBridgeScript(pid, cgWindowNumber, switchRequested) {
+  return String.raw`
+ObjC.import('Foundation')
+ObjC.import('CoreGraphics')
+ObjC.import('AppKit')
+const processId = ${pid}
+const cgWindowNumber = ${cgWindowNumber}
+const shouldSwitch = ${switchRequested ? 'true' : 'false'}
+function attempt(callback, fallback) {
+  try { return callback() } catch (error) { return fallback }
+}
+function environmentValue(name) {
+  const value = $.NSProcessInfo.processInfo.environment.objectForKey(name)
+  return value ? String(ObjC.unwrap(value) || '') : ''
+}
+function normalizeTitle(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+function numberList(value) {
+  const rows = attempt(() => ObjC.deepUnwrap(value), [])
+  return Array.isArray(rows) ? rows.map((item) => Math.trunc(Number(item || 0))).filter((item) => item > 0) : []
+}
+function executeSpaceBridge() {
+  ObjC.bindFunction('calloc', ['void *', ['unsigned long', 'unsigned long']])
+  ObjC.bindFunction('free', ['void', ['void *']])
+  ObjC.bindFunction('SLSMainConnectionID', ['int', []])
+  ObjC.bindFunction('SLSCopyManagedDisplaySpaces', ['id', ['int']])
+  ObjC.bindFunction('SLSCopySpacesForWindows', ['id', ['int', 'int', 'id']])
+  ObjC.bindFunction('SLSCopyWindowsWithOptionsAndTags', ['id', ['int', 'uint32_t', 'id', 'uint32_t', 'void *', 'void *']])
+  ObjC.bindFunction('SLSManagedDisplaySetCurrentSpace', ['void', ['int', 'id', 'uint64_t']])
+  const cid = $.SLSMainConnectionID()
+  const expectedTitle = normalizeTitle(environmentValue('EYPC_WINDOW_TARGET_TITLE'))
+  const expectedApp = normalizeTitle(environmentValue('EYPC_WINDOW_TARGET_APP_ID'))
+  const running = attempt(() => $.NSRunningApplication.runningApplicationWithProcessIdentifier(processId), null)
+  const runningBundle = normalizeTitle(attempt(() => running && running.bundleIdentifier && ObjC.unwrap(running.bundleIdentifier), ''))
+  const runningName = normalizeTitle(attempt(() => running && running.localizedName && ObjC.unwrap(running.localizedName), ''))
+  const appMatches = Boolean(running && (!expectedApp || expectedApp === runningBundle || expectedApp === runningName))
+  const rawWindows = attempt(() => ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID))), [])
+  const windows = Array.isArray(rawWindows) ? rawWindows : []
+  const targets = windows.filter((item) => {
+    if (!item || typeof item !== 'object') return false
+    if (Math.trunc(Number(item.kCGWindowLayer || 0)) !== 0) return false
+    if (Math.trunc(Number(item.kCGWindowOwnerPID || 0)) !== processId) return false
+    if (Math.trunc(Number(item.kCGWindowNumber || 0)) !== cgWindowNumber) return false
+    const alpha = Number(item.kCGWindowAlpha)
+    return !Number.isFinite(alpha) || alpha > 0
+  })
+  if (targets.length !== 1 || !appMatches) {
+    return { bridge: 'isolated-jxa', detail: 'bad-ref', bindingCount: 0, bindingSource: 'none', sameSpace: false, managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
+  }
+  if (expectedTitle && normalizeTitle(targets[0].kCGWindowName) !== expectedTitle) {
+    return { bridge: 'isolated-jxa', detail: 'title-mismatch', bindingCount: 0, bindingSource: 'none', sameSpace: false, managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
+  }
+  function managedRows() {
+    const rows = attempt(() => ObjC.deepUnwrap($.SLSCopyManagedDisplaySpaces(cid)), [])
+    return Array.isArray(rows) ? rows : []
+  }
+  const managed = managedRows()
+  const entries = []
+  for (const display of managed) {
+    if (!display || typeof display !== 'object') continue
+    const displayUuid = String(display['Display Identifier'] || '').trim()
+    const currentSpaceId = Math.trunc(Number(display['Current Space'] && display['Current Space'].id64 || 0))
+    if (!displayUuid) continue
+    for (const space of Array.isArray(display.Spaces) ? display.Spaces : []) {
+      const spaceId = Math.trunc(Number(space && space.id64 || 0))
+      if (spaceId > 0) entries.push({ displayUuid, spaceId, currentSpaceId })
+    }
+  }
+  const windowIds = $.NSArray.arrayWithObject($.NSNumber.numberWithUnsignedInt(cgWindowNumber))
+  const directIds = []
+  for (const mask of [0x7, 0x7fffffff]) {
+    for (const spaceId of numberList(attempt(() => $.SLSCopySpacesForWindows(cid, mask, windowIds), null))) {
+      if (directIds.indexOf(spaceId) < 0) directIds.push(spaceId)
+    }
+  }
+  const direct = entries.filter((entry) => directIds.indexOf(entry.spaceId) >= 0)
+  const reverse = []
+  const setTags = $.calloc(1, 8)
+  const clearTags = $.calloc(1, 8)
+  try {
+    for (const entry of entries) {
+      const spaces = $.NSArray.arrayWithObject($.NSNumber.numberWithUnsignedLongLong(entry.spaceId))
+      const ids = numberList(attempt(() => $.SLSCopyWindowsWithOptionsAndTags(cid, 0, spaces, 0x7, setTags, clearTags), null))
+      if (ids.indexOf(cgWindowNumber) >= 0) reverse.push(entry)
+    }
+  } finally {
+    $.free(setTags)
+    $.free(clearTags)
+  }
+  const bindings = []
+  const seen = {}
+  for (const entry of direct.concat(reverse)) {
+    const key = entry.displayUuid + ':' + String(entry.spaceId)
+    if (seen[key]) continue
+    seen[key] = true
+    bindings.push(entry)
+  }
+  const source = direct.length && reverse.length
+    ? 'isolated-direct+reverse'
+    : direct.length
+      ? 'isolated-direct'
+      : reverse.length
+        ? 'isolated-reverse'
+        : 'none'
+  const base = {
+    bridge: 'isolated-jxa',
+    bindingCount: bindings.length,
+    bindingSource: source,
+    managedSpaceCount: entries.length,
+    directBindingCount: direct.length,
+    reverseBindingCount: reverse.length
+  }
+  if (!bindings.length) return Object.assign(base, { detail: 'empty-spaces', sameSpace: false })
+  const current = bindings.filter((binding) => binding.currentSpaceId === binding.spaceId)
+  if (current.length) return Object.assign(base, { detail: 'current', sameSpace: true, switched: false, confirmed: true })
+  if (bindings.length !== 1) return Object.assign(base, { detail: 'ambiguous-spaces', sameSpace: false, switched: false, confirmed: false })
+  if (!shouldSwitch) return Object.assign(base, { detail: 'remote', sameSpace: false, switched: false, confirmed: false })
+  const binding = bindings[0]
+  const display = $.NSString.stringWithString(binding.displayUuid)
+  $.SLSManagedDisplaySetCurrentSpace(cid, display, binding.spaceId)
+  const deadline = Date.now() + 2000
+  while (Date.now() <= deadline) {
+    const confirmed = managedRows().some((item) => String(item && item['Display Identifier'] || '') === binding.displayUuid
+      && Math.trunc(Number(item && item['Current Space'] && item['Current Space'].id64 || 0)) === binding.spaceId)
+    if (confirmed) return Object.assign(base, { detail: 'switch-confirmed', sameSpace: false, switched: true, confirmed: true })
+    $.NSThread.sleepForTimeInterval(0.05)
+  }
+  return Object.assign(base, { detail: 'switch-timeout', sameSpace: false, switched: false, confirmed: false })
+}
+let payload
+try {
+  payload = executeSpaceBridge()
+} catch (error) {
+  payload = { bridge: 'isolated-jxa', detail: 'error', bindingCount: 0, bindingSource: 'none', sameSpace: false, managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
+}
+JSON.stringify(payload)
+`
+}
+
 function macosActivateWindowScript(pid, ordinal, cgWindowNumber) {
   return String.raw`
 ObjC.import('Foundation')
 ObjC.import('CoreGraphics')
+ObjC.import('ApplicationServices')
+ObjC.import('AppKit')
 const systemEvents = Application('System Events')
 const processId = ${pid}
 const ordinal = ${ordinal}
 const cgWindowNumber = ${cgWindowNumber}
+let exactAxApiAvailable = false
+try {
+  ObjC.bindFunction('AXUIElementCreateApplication', ['id', ['int']])
+  ObjC.bindFunction('AXUIElementCopyAttributeValue', ['int', ['id', 'id', 'id *']])
+  ObjC.bindFunction('AXUIElementSetAttributeValue', ['int', ['id', 'id', 'id']])
+  ObjC.bindFunction('AXUIElementPerformAction', ['int', ['id', 'id']])
+  ObjC.bindFunction('_AXUIElementGetWindow', ['int', ['id', 'uint32_t *']])
+  exactAxApiAvailable = true
+} catch (error) {}
 function environmentValue(name) {
   const value = $.NSProcessInfo.processInfo.environment.objectForKey(name)
   return value ? String(ObjC.unwrap(value) || '') : ''
@@ -737,6 +893,108 @@ function expectedTargetTitle() {
 }
 const expectedTitle = expectedTargetTitle()
 const allowProcessSpaceFallback = environmentValue('EYPC_WINDOW_ALLOW_PROCESS_SPACE_FALLBACK') === '1'
+function axAttributeName(name) {
+  return $.NSString.stringWithString(name)
+}
+function copyAxAttribute(element, name) {
+  if (!exactAxApiAvailable || !element) return { error: -1, value: null }
+  try {
+    const output = Ref()
+    const error = Number($.AXUIElementCopyAttributeValue(element, axAttributeName(name), output))
+    return { error, value: error === 0 ? output[0] : null }
+  } catch (error) {
+    return { error: -1, value: null }
+  }
+}
+function setAxAttribute(element, name, value) {
+  if (!exactAxApiAvailable || !element) return false
+  try { return Number($.AXUIElementSetAttributeValue(element, axAttributeName(name), value)) === 0 } catch (error) { return false }
+}
+function performAxAction(element, name) {
+  if (!exactAxApiAvailable || !element) return false
+  try { return Number($.AXUIElementPerformAction(element, axAttributeName(name))) === 0 } catch (error) { return false }
+}
+function exactCgWindowNumber(element) {
+  if (!exactAxApiAvailable || !element) return 0
+  try {
+    const output = Ref()
+    if (Number($._AXUIElementGetWindow(element, output)) !== 0) return 0
+    return Math.trunc(Number(output[0] || 0))
+  } catch (error) {
+    return 0
+  }
+}
+function resolveExactAxTarget() {
+  if (!exactAxApiAvailable || cgWindowNumber <= 0) return { outcome: 'unavailable' }
+  let app = null
+  try { app = $.AXUIElementCreateApplication(processId) } catch (error) {}
+  if (!app) return { outcome: 'unavailable' }
+  const copied = copyAxAttribute(app, 'AXWindows')
+  if (copied.error !== 0 || !copied.value) return { outcome: 'unavailable' }
+  const matches = []
+  const count = Math.max(0, Math.trunc(Number(copied.value.count || 0)))
+  for (let index = 0; index < count; index += 1) {
+    let candidate = null
+    try { candidate = copied.value.objectAtIndex(index) } catch (error) {}
+    if (candidate && exactCgWindowNumber(candidate) === cgWindowNumber) matches.push(candidate)
+  }
+  if (matches.length === 1) return { outcome: 'matched', app, target: matches[0] }
+  if (matches.length > 1) return { outcome: 'ambiguous' }
+  return { outcome: 'not-found' }
+}
+function exactAxFocused(app) {
+  const focused = copyAxAttribute(app, 'AXFocusedWindow')
+  return focused.error === 0 && focused.value && exactCgWindowNumber(focused.value) === cgWindowNumber
+}
+function activateExactAxTarget(resolved) {
+  addTrace('process', 'ok')
+  addTrace('target', 'ok', 'ax-cg-id-match')
+  const target = resolved.target
+  const app = resolved.app
+  const minimized = copyAxAttribute(target, 'AXMinimized')
+  if (minimized.error === 0 && Boolean(ObjC.unwrap(minimized.value))) {
+    if (!setAxAttribute(target, 'AXMinimized', $.NSNumber.numberWithBool(false))) {
+      addTrace('restore', 'failed')
+      return 'failed'
+    }
+    addTrace('restore', 'ok')
+  } else {
+    addTrace('restore', minimized.error === 0 ? 'skipped' : 'unavailable')
+  }
+  const running = (() => {
+    try { return $.NSRunningApplication.runningApplicationWithProcessIdentifier(processId) } catch (error) { return null }
+  })()
+  if (!running || Boolean(running.terminated)) {
+    addTrace('process', 'not-found')
+    return 'not-found'
+  }
+  let raised = performAxAction(target, 'AXRaise')
+  setAxAttribute(target, 'AXMain', $.NSNumber.numberWithBool(true))
+  let foreground = false
+  try { foreground = Boolean(running.activateWithOptions($.NSApplicationActivateIgnoringOtherApps)) } catch (error) {}
+  $.NSThread.sleepForTimeInterval(0.05)
+  for (let retry = 0; retry < 4; retry += 1) {
+    // Chromium advertises AXFocusedWindow as read-only, but accepts this exact AX element and
+    // otherwise keeps the previously focused sibling window in a multi-window process.
+    setAxAttribute(app, 'AXFocusedWindow', target)
+    setAxAttribute(app, 'AXMainWindow', target)
+    setAxAttribute(target, 'AXMain', $.NSNumber.numberWithBool(true))
+    setAxAttribute(target, 'AXFocused', $.NSNumber.numberWithBool(true))
+    raised = performAxAction(target, 'AXRaise') || raised
+    try { foreground = Boolean(running.activateWithOptions($.NSApplicationActivateIgnoringOtherApps)) || foreground } catch (error) {}
+    $.NSThread.sleepForTimeInterval(0.06)
+    if (exactAxFocused(app)) {
+      addTrace('foreground', foreground ? 'ok' : 'unavailable')
+      addTrace('raise', raised ? 'ok' : 'unavailable')
+      addTrace('verify', 'ok', 'ax-focused-window')
+      return 'activated'
+    }
+  }
+  addTrace('foreground', foreground ? 'ok' : 'unavailable')
+  addTrace('raise', raised ? 'ok' : 'failed')
+  addTrace('verify', 'failed', 'focus-state-mismatch')
+  return 'failed'
+}
 function normalizeTitle(value) {
   return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
 }
@@ -792,6 +1050,12 @@ function booleanAttribute(target, name) {
   try { return { known: true, value: target.attributes.byName(name).value() === true } } catch (error) { return { known: false, value: false } }
 }
 function activate() {
+  const exact = resolveExactAxTarget()
+  if (exact.outcome === 'matched') return activateExactAxTarget(exact)
+  if (exact.outcome === 'ambiguous') {
+    addTrace('target', 'ambiguous', 'ax-cg-id-match')
+    return 'ambiguous'
+  }
   let processes = []
   try { processes = systemEvents.applicationProcesses.whose({ unixId: processId })() } catch (error) {
     addTrace('process', 'denied')
@@ -951,7 +1215,7 @@ if (!processes.length) {
 // Private SkyLight CGS: resolve a concrete CGWindowNumber against the current managed-Space map.
 // Direct per-window queries are authoritative; per-Space tag scans only corroborate/fill a direct miss.
 // Bindings stay preload-session-only because CG window IDs, PIDs, titles and Space IDs are recyclable.
-const WINDOW_BRIDGE_REVISION = 'wj13-exact-space'
+const WINDOW_BRIDGE_REVISION = 'wj15-exact-ax'
 const MACOS_CGS_WINDOW_TAG_MASK = 0x7
 const MACOS_CGS_SPACE_QUERY_MASKS = [0x7, 0x7fffffff]
 const MACOS_CGS_SPACE_SETTLE_MS = 120
@@ -1259,7 +1523,14 @@ function macosLookupOrResolveWindowSpaceBinding(api, cid, cgWindowNumber) {
   const bindings = macosDedupeSpaceBindings([...direct, ...reverse])
   macosCacheSpaceBindings(macosWindowSpaceCache, want, bindings)
   const source = direct.length && reverse.length ? 'direct+reverse' : direct.length ? 'direct' : reverse.length ? 'reverse' : 'none'
-  return { bindings, source, currentByDisplay: managed.currentByDisplay }
+  return {
+    bindings,
+    source,
+    currentByDisplay: managed.currentByDisplay,
+    managedSpaceCount: managed.entries.length,
+    directBindingCount: direct.length,
+    reverseBindingCount: reverse.length
+  }
 }
 
 function macosSwitchToCachedSpace(api, cid, binding, currentByDisplay) {
@@ -1280,31 +1551,37 @@ function macosSwitchToCachedSpace(api, cid, binding, currentByDisplay) {
   }
 }
 
-function trySwitchMacosSpaceByCGS(nativeRef) {
+function trySwitchMacosSpaceByCGSInProcess(nativeRef) {
   try {
     const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(String(nativeRef || '').trim())
-    if (!parts) return { switched: false, detail: 'bad-ref' }
+    if (!parts) return { switched: false, detail: 'bad-ref', bridge: 'in-process' }
     const ordinal = Number(parts[2])
     const cgWindowNumber = Number(parts[3])
     // CG inventory refs are pid:0:cgWindowNumber; AX-fallback refs use a non-zero ordinal and zero window number.
-    if (ordinal !== 0 || !Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) return { switched: false, detail: 'ax-fallback' }
+    if (ordinal !== 0 || !Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) return { switched: false, detail: 'ax-fallback', bridge: 'in-process' }
     const api = loadMacosCgsApi()
-    if (!api) return { switched: false, detail: 'no-api' }
+    if (!api) return { switched: false, detail: 'no-api', bridge: 'in-process', managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
     const cid = api.SLSMainConnectionID()
     const resolved = macosLookupOrResolveWindowSpaceBinding(api, cid, cgWindowNumber)
-    if (!resolved.bindings.length) return { switched: false, detail: 'empty-spaces', bindingCount: 0, bindingSource: resolved.source }
+    const probe = {
+      bridge: 'in-process',
+      managedSpaceCount: resolved.managedSpaceCount,
+      directBindingCount: resolved.directBindingCount,
+      reverseBindingCount: resolved.reverseBindingCount
+    }
+    if (!resolved.bindings.length) return { ...probe, switched: false, detail: 'empty-spaces', bindingCount: 0, bindingSource: resolved.source, sameSpace: false }
     const currentBindings = resolved.bindings.filter((binding) => resolved.currentByDisplay.get(binding.displayUuid) === binding.spaceId.toString())
     if (currentBindings.length) {
-      return { switched: false, detail: 'current', binding: currentBindings[0], bindingCount: resolved.bindings.length, bindingSource: resolved.source, sameSpace: true }
+      return { ...probe, switched: false, detail: 'current', binding: currentBindings[0], bindingCount: resolved.bindings.length, bindingSource: resolved.source, sameSpace: true }
     }
     if (resolved.bindings.length !== 1) {
-      return { switched: false, detail: 'ambiguous-spaces', bindingCount: resolved.bindings.length, bindingSource: resolved.source, sameSpace: false }
+      return { ...probe, switched: false, detail: 'ambiguous-spaces', bindingCount: resolved.bindings.length, bindingSource: resolved.source, sameSpace: false }
     }
     const binding = resolved.bindings[0]
     const switched = macosSwitchToCachedSpace(api, cid, binding, resolved.currentByDisplay)
-    return { ...switched, binding, bindingCount: 1, bindingSource: resolved.source, sameSpace: false }
+    return { ...probe, ...switched, binding, bindingCount: 1, bindingSource: resolved.source, sameSpace: false }
   } catch {
-    return { switched: false, detail: 'error' }
+    return { switched: false, detail: 'error', bridge: 'in-process', managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
   }
 }
 
@@ -1360,6 +1637,66 @@ function runWindowCommand(command, args, targetWindowTitle = null, debugTrace = 
   })
 }
 
+function parseMacosIsolatedSpaceBridge(output) {
+  try {
+    const value = JSON.parse(String(output || '').trim() || '{}')
+    const detail = String(value && value.detail || '')
+    if (!['current', 'remote', 'switch-confirmed', 'switch-timeout', 'ambiguous-spaces', 'empty-spaces', 'bad-ref', 'title-mismatch', 'error'].includes(detail)) return null
+    const source = String(value && value.bindingSource || '')
+    const bindingSource = ['isolated-direct', 'isolated-reverse', 'isolated-direct+reverse', 'none'].includes(source) ? source : 'none'
+    return {
+      bridge: 'isolated-jxa',
+      detail,
+      switched: value && value.switched === true,
+      confirmed: value && value.confirmed === true,
+      sameSpace: value && value.sameSpace === true,
+      bindingCount: Math.max(0, Math.trunc(Number(value && value.bindingCount || 0))),
+      bindingSource,
+      managedSpaceCount: Math.max(0, Math.trunc(Number(value && value.managedSpaceCount || 0))),
+      directBindingCount: Math.max(0, Math.trunc(Number(value && value.directBindingCount || 0))),
+      reverseBindingCount: Math.max(0, Math.trunc(Number(value && value.reverseBindingCount || 0)))
+    }
+  } catch {
+    return null
+  }
+}
+
+async function runMacosIsolatedSpaceBridge(target, switchRequested) {
+  const source = target && typeof target === 'object' ? target : {}
+  const nativeRef = String(source.nativeRef || '').trim()
+  const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
+  if (!parts) return { switched: false, detail: 'bad-ref', bridge: 'isolated-jxa', bindingCount: 0, bindingSource: 'none' }
+  const pid = Number(parts[1])
+  const ordinal = Number(parts[2])
+  const cgWindowNumber = Number(parts[3])
+  if (ordinal !== 0 || !Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) {
+    return { switched: false, detail: 'ax-fallback', bridge: 'isolated-jxa', bindingCount: 0, bindingSource: 'none' }
+  }
+  const title = String(source.title || '').replace(/\u0000/g, '').slice(0, 4096)
+  const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
+  const script = macosIsolatedSpaceBridgeScript(pid, cgWindowNumber, switchRequested === true)
+  const result = await runWindowCommand(
+    '/usr/bin/osascript',
+    ['-l', 'JavaScript', '-e', script],
+    title,
+    false,
+    false,
+    { EYPC_WINDOW_TARGET_APP_ID: appId }
+  )
+  if (!result.ok) {
+    return { switched: false, detail: 'error', bridge: 'isolated-jxa', bindingCount: 0, bindingSource: 'none', managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
+  }
+  return parseMacosIsolatedSpaceBridge(result.stdout)
+    || { switched: false, detail: 'error', bridge: 'isolated-jxa', bindingCount: 0, bindingSource: 'none', managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
+}
+
+async function trySwitchMacosSpace(target) {
+  const nativeRef = String(target && target.nativeRef || '').trim()
+  const inProcess = trySwitchMacosSpaceByCGSInProcess(nativeRef)
+  if (!['empty-spaces', 'no-api', 'no-space-id', 'no-display', 'error'].includes(inProcess.detail)) return inProcess
+  return runMacosIsolatedSpaceBridge(target, true)
+}
+
 function unavailableWindowEnvironment(platform = 'unsupported') {
   return {
     platform,
@@ -1374,6 +1711,10 @@ function unavailableWindowEnvironment(platform = 'unsupported') {
     spaceBinding: 'unavailable',
     spaceBindingCount: 0,
     spaceBindingSource: 'unavailable',
+    spaceBridge: 'unavailable',
+    managedSpaceCount: 0,
+    directSpaceBindingCount: 0,
+    reverseSpaceBindingCount: 0,
     sameSpace: null
   }
 }
@@ -1421,20 +1762,37 @@ async function inspectWindowEnvironment(target) {
   const nativeRef = String(source.nativeRef || '').trim()
   const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
   if (!parts) return snapshot
+  const ordinal = Number(parts[2])
   const cgWindowNumber = Number(parts[3])
+  if (ordinal !== 0 || !Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) return snapshot
+  let probe = null
   try {
     const api = loadMacosCgsApi()
     if (api) {
       const cid = api.SLSMainConnectionID()
       const resolved = macosLookupOrResolveWindowSpaceBinding(api, cid, cgWindowNumber)
-      snapshot.spaceBinding = resolved.bindings.length ? 'bound' : 'unbound'
-      snapshot.spaceBindingCount = resolved.bindings.length
-      snapshot.spaceBindingSource = resolved.source
-      snapshot.sameSpace = resolved.bindings.length
-        ? resolved.bindings.some((binding) => resolved.currentByDisplay.get(binding.displayUuid) === binding.spaceId.toString())
-        : false
+      probe = {
+        bridge: 'in-process',
+        bindingCount: resolved.bindings.length,
+        bindingSource: resolved.source,
+        sameSpace: resolved.bindings.length
+          ? resolved.bindings.some((binding) => resolved.currentByDisplay.get(binding.displayUuid) === binding.spaceId.toString())
+          : false,
+        managedSpaceCount: resolved.managedSpaceCount,
+        directBindingCount: resolved.directBindingCount,
+        reverseBindingCount: resolved.reverseBindingCount
+      }
     }
   } catch {}
+  if (!probe || !probe.bindingCount) probe = await runMacosIsolatedSpaceBridge(source, false)
+  snapshot.spaceBinding = probe.bindingCount ? 'bound' : 'unbound'
+  snapshot.spaceBindingCount = probe.bindingCount
+  snapshot.spaceBindingSource = probe.bindingSource
+  snapshot.spaceBridge = probe.bridge
+  snapshot.managedSpaceCount = probe.managedSpaceCount
+  snapshot.directSpaceBindingCount = probe.directBindingCount
+  snapshot.reverseSpaceBindingCount = probe.reverseBindingCount
+  snapshot.sameSpace = probe.bindingCount ? probe.sameSpace === true : false
   return snapshot
 }
 
@@ -1561,7 +1919,8 @@ const WINDOW_OPERATION_TRACE_OUTCOMES = new Set(['ok', 'skipped', 'not-found', '
 const WINDOW_OPERATION_TRACE_DETAILS = new Set([
   'switched', 'switch-confirmed', 'switch-timeout', 'current', 'walked', 'direct-unique', 'direct-multiple', 'reverse-unique',
   'ambiguous-spaces', 'ax-fallback', 'bad-ref', 'no-api', 'empty-spaces', 'no-space-id', 'no-display',
-  'process-frontmost', 'single-window-frontmost', 'multiwindow-blocked', 'current-space-inferred', 'cg-ordinal-fallback', 'title-match', 'title-mismatch', 'focus-state-mismatch', 'error'
+  'process-frontmost', 'single-window-frontmost', 'multiwindow-blocked', 'current-space-inferred', 'cg-ordinal-fallback', 'title-match', 'title-mismatch', 'focus-state-mismatch', 'error',
+  'isolated-space-bridge', 'ax-cg-id-match', 'ax-focused-window'
 ])
 const WINDOW_ACTIVATION_REASON_CODES = new Set([
   'space-unbound', 'space-unbound-multiwindow', 'space-ambiguous', 'space-switch-timeout', 'target-title-changed'
@@ -1593,6 +1952,12 @@ function macosBindingTraceStep(spaceAttempt) {
       ? 'direct-unique'
       : 'reverse-unique'
   return { stage: 'space', outcome: count > 1 ? 'ambiguous' : 'ok', detail }
+}
+
+function macosSpaceBridgeTraceStep(spaceAttempt) {
+  return spaceAttempt && spaceAttempt.bridge === 'isolated-jxa'
+    ? { stage: 'bridge', outcome: 'ok', detail: 'isolated-space-bridge' }
+    : null
 }
 
 function mergeDebugTraceSteps(prefixSteps, result) {
@@ -1680,26 +2045,41 @@ async function activateWindow(target, options = {}) {
     }
   }
 
-  const spaceAttempt = trySwitchMacosSpaceByCGS(nativeRef)
+  const spaceAttempt = await trySwitchMacosSpace(source)
+  const bridgeStep = debugTrace ? macosSpaceBridgeTraceStep(spaceAttempt) : null
   const bindingStep = debugTrace ? macosBindingTraceStep(spaceAttempt) : null
-  const spacePrefix = debugTrace ? [...(bindingStep ? [bindingStep] : []), macosSpaceTraceStep(spaceAttempt)] : []
+  const spacePrefix = debugTrace
+    ? [...(bridgeStep ? [bridgeStep] : []), ...(bindingStep ? [bindingStep] : []), macosSpaceTraceStep(spaceAttempt)]
+    : []
+  if (spaceAttempt.detail === 'bad-ref' || spaceAttempt.detail === 'title-mismatch') {
+    const failure = {
+      outcome: 'not-found',
+      ...(spaceAttempt.detail === 'title-mismatch' ? { reasonCode: 'target-title-changed' } : {}),
+      message: spaceAttempt.detail === 'title-mismatch' ? '目标窗口标题或所属应用已变化，需要重新确认' : 'macOS 窗口引用已失效'
+    }
+    return debugTrace ? mergeDebugTraceSteps(spacePrefix, failure) : failure
+  }
   if (spaceAttempt.detail === 'ambiguous-spaces') {
     const failure = { outcome: 'ambiguous', reasonCode: 'space-ambiguous', message: '目标窗口同时绑定到多个非当前桌面，EyPc 未任意选择' }
     return debugTrace ? mergeDebugTraceSteps(spacePrefix, failure) : failure
   }
-  if (spaceAttempt.switched) {
+  if (spaceAttempt.detail === 'switch-timeout') {
+    const failure = { outcome: 'failed', reasonCode: 'space-switch-timeout', message: '目标桌面切换未在时限内确认' }
+    return debugTrace ? mergeDebugTraceSteps(spacePrefix, failure) : failure
+  }
+  if (spaceAttempt.switched && !spaceAttempt.confirmed) {
     const confirmed = await macosConfirmManagedSpace(spaceAttempt.binding)
     if (!confirmed) {
       const failedAttempt = { ...spaceAttempt, detail: 'switch-timeout' }
       const failedPrefix = debugTrace
-        ? [...(bindingStep ? [bindingStep] : []), macosSpaceTraceStep(failedAttempt)]
+        ? [...(bridgeStep ? [bridgeStep] : []), ...(bindingStep ? [bindingStep] : []), macosSpaceTraceStep(failedAttempt)]
         : []
       const failure = { outcome: 'failed', reasonCode: 'space-switch-timeout', message: '目标桌面切换未在时限内确认' }
       return debugTrace ? mergeDebugTraceSteps(failedPrefix, failure) : failure
     }
-    await new Promise((resolve) => setTimeout(resolve, MACOS_CGS_SPACE_SETTLE_MS))
     spaceAttempt.detail = 'switch-confirmed'
   }
+  if (spaceAttempt.switched) await new Promise((resolve) => setTimeout(resolve, MACOS_CGS_SPACE_SETTLE_MS))
 
   const spaceUnavailable = ['empty-spaces', 'no-api', 'no-space-id', 'no-display', 'error'].includes(spaceAttempt.detail)
   const allowSingleWindowFallback = spaceUnavailable && identity.identityAvailable && identity.ownerCgWindowCount === 1
@@ -1710,7 +2090,7 @@ async function activateWindow(target, options = {}) {
     const reasonCode = multiple ? 'space-unbound-multiwindow' : 'space-unbound'
     const detail = multiple ? 'multiwindow-blocked' : spaceAttempt.detail
     const failurePrefix = debugTrace
-      ? [...(bindingStep ? [bindingStep] : []), { stage: 'space', outcome: 'failed', detail }]
+      ? [...(bridgeStep ? [bridgeStep] : []), ...(bindingStep ? [bindingStep] : []), { stage: 'space', outcome: 'failed', detail }]
       : []
     const failure = {
       outcome: 'not-found',
@@ -1724,7 +2104,7 @@ async function activateWindow(target, options = {}) {
   }
 
   const finalSpacePrefix = debugTrace
-    ? [...(bindingStep ? [bindingStep] : []), macosSpaceTraceStep(spaceAttempt)]
+    ? [...(bridgeStep ? [bridgeStep] : []), ...(bindingStep ? [bindingStep] : []), macosSpaceTraceStep(spaceAttempt)]
     : []
   const result = await runWindowCommand(
     '/usr/bin/osascript',

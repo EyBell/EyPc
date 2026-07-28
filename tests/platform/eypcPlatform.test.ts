@@ -111,7 +111,7 @@ describe('browser fallback platform', () => {
     expect(publicPreload).toBe(preload)
   })
 
-  it('matches macOS activation through AX titles instead of a nonstandard AX window number', () => {
+  it('maps macOS AX elements to the exact CG id before the title compatibility fallback', () => {
     const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
     const publicPreload = readFileSync(resolve(process.cwd(), 'public/preload.js'), 'utf8')
     const activationStart = preload.indexOf('function macosActivateWindowScript')
@@ -122,6 +122,12 @@ describe('browser fallback platform', () => {
 
     expect(activation).toContain('function resolveTargetWindow')
     expect(activation).toContain('function currentWindowTitle')
+    expect(activation).toContain("ObjC.bindFunction('_AXUIElementGetWindow'")
+    expect(activation).toContain('function resolveExactAxTarget')
+    expect(activation).toContain('function activateExactAxTarget')
+    expect(activation).toContain("setAxAttribute(app, 'AXFocusedWindow', target)")
+    expect(activation).toContain("addTrace('target', 'ok', 'ax-cg-id-match')")
+    expect(activation).toContain("addTrace('verify', 'ok', 'ax-focused-window')")
     expect(activation).toContain("EYPC_WINDOW_TARGET_TITLE")
     expect(activation).toContain("target.actions.byName('AXRaise').perform()")
     expect(activation.indexOf("target.actions.byName('AXRaise').perform()")).toBeLessThan(activation.indexOf('const focusedAfterRaise'))
@@ -157,7 +163,8 @@ describe('browser fallback platform', () => {
     expect(preload).not.toContain('SLSCopyManagedDisplayForSpace')
     expect(preload).not.toContain('CFPropertyListCreateData')
     expect(preload).not.toContain('macosListAllCgWindowNumbers')
-    expect(preload).toContain('trySwitchMacosSpaceByCGS(nativeRef)')
+    expect(preload).toContain('trySwitchMacosSpaceByCGSInProcess(nativeRef)')
+    expect(preload).toContain('async function trySwitchMacosSpace(target)')
     expect(preload).toContain('macosLookupOrResolveWindowSpaceBinding')
     expect(preload).toContain('macosRebuildWindowSpaceCache')
     expect(preload).toContain('macosActivateWindowScript(pid, ordinal, cgWindowNumber)')

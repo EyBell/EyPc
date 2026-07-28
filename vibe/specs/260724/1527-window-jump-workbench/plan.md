@@ -13,6 +13,9 @@
 11. WJ-13: revalidate exact CG identity; resolve dual-mask direct plus managed-Space reverse evidence afresh; switch/confirm only one remote binding; use process-frontmost only for an unbound one-window owner; block unbound multi-window, multiple binding and timeout cases; remove desktop walking and learned binding persistence.
 12. Gate the renderer on bridge revision `wj13-exact-space`, preserve native Space reason codes, capture separate initial/retry aggregate snapshots, and require explicit candidate rebind when a same-PID window title changes.
 13. Sync the Controlled/canonical/current documents, prepare all preload mirrors, and run only non-runtime static parse/mirror/revision/stale-symbol/diff checks before user-owned host acceptance.
+14. WJ-14: when in-process SkyLight returns no binding inside the uTools Electron preload, run the same identity revalidation and direct+reverse lookup in a fresh JXA process; switch only one binding and confirm it before AX activation.
+15. WJ-15: map raw AX windows to CG IDs with `_AXUIElementGetWindow`, focus the exact element through application `AXFocusedWindow` plus main/Raise/activation, and verify the focused AX element maps back to the selected CG ID.
+16. Sync the WJ-15 bridge revision, trace vocabulary, project/canonical/memory docs, preload mirrors, focused tests, build/runtime validation, and scoped real global-slot evidence.
 
 ## Non-negotiable Execution Constraints
 
@@ -23,3 +26,4 @@
 - WJ-10 native traces may contain only a fixed stage/outcome vocabulary and may be requested only from a development renderer; production UI and native calls omit that path.
 - WJ-13 never selects the first of multiple Space/window candidates, never walks all desktops, and never persists CG/PID/title/Space/display bindings. A same-PID title mismatch requires explicit user confirmation.
 - WJ-13 does not add, modify, or run automated tests, typecheck, build, browser/UI automation, or live uTools activation; only static checks and user-owned host validation may be claimed.
+- WJ-15 supersedes that increment-local restriction because the user explicitly authorized online research, probes, and real host validation. Native actions remain limited to reversible Space selection and exact focus of the already selected target; no close, terminate, permission, title, or simulated-input action is allowed.

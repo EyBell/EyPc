@@ -2,7 +2,7 @@
 
 ## Current Status
 
-`source-repaired / host-validation-pending` — WJ-08 removes the duplicate generic/early hide path and adds one-rescan stale-reference recovery/diagnostics. WJ-09 repairs the discovered macOS identity mismatch: Core Graphics IDs are no longer treated as `AXWindowNumber`; the bridge resolves one AX title match and uses a fresh ordinal only for equal-title disambiguation. WJ-10 adds development-only sanitized operation tracing, Windows page topmost, macOS topmost boundary reporting, and non-favorite stable-slot assignment. B-route follow-up: before macOS AX activate, `trySwitchMacosSpaceByCGS` switches to the Space that owns a CG `pid:0:CGWindowNumber` via SkyLight/`koffi` (mask `0x7`, session `CGWindowNumber→{spaceId,displayUuid}` cache from managed-display plist warmed on inventory); prepare copies `koffi` into the plugin tree. WJ-12 adds a read-only environment snapshot (`inspectWindowEnvironment`) that captures CG/AX target match counts and Space binding status before activation, displayed in the development trace sidebar. Existing Windows enumeration, list-pin/order, cache/manual-load/`mainHide`, Workbench List multi-select, and OS-close then confirm-force-terminate remain. Targeted source suites and a local CGS helper probe pass; real uTools off-Space slot acceptance is still required before this becomes host-verified.
+`wj15-exact-ax / AiTools-off-Space-host-verified` — WJ-14 adds an isolated JXA SkyLight route because the same exact target yielded no managed-Space binding inside the uTools Electron preload but one corroborated direct+reverse binding in an independent process. WJ-15 replaces Chromium-unsafe title/CG-ordinal selection with a unique `_AXUIElementGetWindow` mapping and exact `AXFocusedWindow` verification. A real uTools global-slot-2 run switched AiTools from a non-current Space and completed with the selected AX element focused. Production build/runtime validation and focused suites pass; negative cases, other applications, installed-production trace absence, Windows host behavior, close/terminate, and the unrelated full-suite baseline remain open.
 
 ## WJ-08 Targeted Evidence
 
@@ -76,7 +76,7 @@
 - Historical WJ-12 evidence: `tests/ui/windowsDiagnostics.test.ts` previously covered snapshot presence/absence and all 14 tests plus `vue-tsc --noEmit` passed at that revision. WJ-13 changed the phase/label contract and did not rerun or modify those tests.
 - No activation, close, terminate, title mutation, Space switch, permission change, or external write is performed by the snapshot. No titles, application names, PIDs, native references, or raw host output enter the snapshot; only aggregate match counts and binding status are returned.
 - The snapshot will reveal why Rider (CG match > 0, AX match > 0, Space bound) succeeds while AiTools (CG match > 0 but AX match = 0, or Space unbound) fails — providing replayable evidence for targeted simulation before any activation-path change.
-- Host re-acceptance pending: reconnect the WJ-13 preload, replay AiTools and Rider, and require both phase labels plus `bridge=wj13-exact-space` before interpreting the result.
+- Historical WJ-12 handoff required reconnecting WJ-13 and replaying AiTools/Rider. AiTools is now accepted through WJ-15; Rider and negative-case replay remain residual gates below.
 
 ## WJ-13 Exact Space Binding Evidence
 
@@ -88,6 +88,31 @@
 - Current source retains `verify=unavailable:focus-state-mismatch` as success after foreground and Raise. Apple documents [`kAXRaiseAction`](https://developer.apple.com/documentation/applicationservices/kaxraiseaction) as raising within the containing application's allowed ordering, so the readable focus attribute alone is not treated as authoritative failure.
 - WJ-13 static closeout passes: `node --check` for canonical/public/dist preload; canonical/public/dist byte equality; TypeScript syntax parsing for the platform and Runtime changes; Vue SFC parsing through the installed pnpm compiler path; exact `wj13-exact-space` presence in both sides; absence of the removed walk/learned-binding symbols; scoped `git diff --check`; and the repository code-link audit. A first top-level `require('@vue/compiler-sfc')` failed because the dependency is not hoisted, then the existing pnpm package path passed without installing anything. No activation, Space switch, permission change, automated test, semantic typecheck, build or browser/uTools validation ran.
 
+## WJ-14 Isolated SkyLight Evidence
+
+- In the failing host context, the selected target had one exact CG match, two owner CG windows, zero current AX-title matches, and zero in-process Space bindings. The same SkyLight functions, dependency version/bytes, architecture, PID, CG reference, and direct query masks resolved one Space outside Electron; this disproved “the OS has no binding” and isolated the failure to host-process context.
+- [preload/index.js](../../../../preload/index.js#L1) now keeps the in-process `koffi` route as the first attempt but falls back to a fresh `osascript -l JavaScript` process when it returns no binding. The child revalidates app/PID/CG/title, builds the current managed-display map, unions `SLSCopySpacesForWindows` masks `0x7` and `0x7fffffff` with `SLSCopyWindowsWithOptionsAndTags` reverse evidence, and emits only allowlisted aggregate state.
+- The isolated child switches only one remote binding through `SLSManagedDisplaySetCurrentSpace` and polls the display's `Current Space` for at most two seconds. Empty, ambiguous, title-changed, and timeout cases remain blocking. No binding, Space, display, PID, or CG identifier crosses into Runtime diagnostics.
+- Aggregate standalone and host evidence both resolved `managed=7`, direct=1, reverse=1, binding=1. The real operation's pre-initial snapshot reported `rev=wj15-exact-ax`, `bridge=isolated-jxa`, `binding=bound`, `source=isolated-direct+reverse`, and `same=false`.
+- uTools' [official debugging guide](https://www.u-tools.cn/docs/developer/basic/debug-plugin.html) documents that preload changes do not hot reload. The old bridge remained active while a child float kept the plugin session alive; after a normal plugin exit/re-entry, the actual host capability changed to WJ-14/WJ-15 without restarting or killing uTools.
+
+## WJ-15 Exact AX-to-CG Focus Evidence
+
+- After the confirmed Space switch, System Events exposed four Edge AX windows but zero target-title matches and zero `AXWindowNumber` matches. The prior CG-order fallback could therefore select a sibling Chromium window even though the correct target was now visible.
+- A read-only private-AX probe called `_AXUIElementGetWindow` for all four raw AX elements: four IDs resolved, zero calls failed, and exactly one equaled the selected CG ID. The signature is corroborated by AeroSpace's [private API declaration](https://github.com/nikitabobko/AeroSpace/blob/main/Sources/PrivateApi/include/private.h#L23-L26) and its [native focus sequence](https://github.com/nikitabobko/AeroSpace/blob/main/Sources/AppBundle/tree/MacApp.swift#L129-L149).
+- [preload/index.js](../../../../preload/index.js#L1) now resolves the exact AX element before System Events title fallback. It unminimizes where readable, sets window main, raises, activates the `NSRunningApplication`, then writes the exact element to application `AXFocusedWindow`/`AXMainWindow` and retries within a bounded 290ms envelope. Success requires reading `AXFocusedWindow` and mapping it back to the requested CG ID; an exact-match focus failure returns `failed` and cannot fall through to a sibling window.
+- Chromium reports application `AXFocusedWindow` as not settable, yet the real host accepts the exact AX element and returns it on the following read. This observed behavior is guarded by exact identity plus read-back; it is not generalized to arbitrary attributes or used to bypass Accessibility authorization.
+- Real uTools proof: global slot 2, target AiTools, initially non-current Space. The development trace completed `entry/capability/cache → isolated-space-bridge → direct-unique → switch-confirmed → process → ax-cg-id-match → restore skipped → foreground → raise → ax-focused-window → native → visibility`, all successful. Computer Use reported `Window: "AiTools", App: Microsoft Edge`; a separate read-only check confirmed the target Space current, Edge frontmost, and focused AX element equal to the selected CG ID.
+- The renderer/runtime allowlists and UI labels now retain `isolated-space-bridge`, `ax-cg-id-match`, and `ax-focused-window`; bridge revision `wj15-exact-ax` blocks stale preload sessions.
+
+## WJ-15 Automated and Build Evidence
+
+- `pnpm run build` passed semantic typecheck, Vite production build, preload/runtime preparation, and `validate:utools`.
+- `tests/platform/eypcPlatform.test.ts` plus `tests/ui/windowsDiagnostics.test.ts`: 35/35 passed. The platform suite asserts the private mapping/focus path and canonical/public preload identity.
+- Named `tests/runtime/action.test.ts` window-activation-diagnostics group: 11/11 passed, 135 skipped. WJ-13-era fixtures now use the shared bridge revision constant and retain the user-authorized target title while continuing to exclude app identity/native refs.
+- Canonical/public/dist preload syntax and byte equality, `validate:utools`, scoped `git diff --check`, and the changed-Markdown code-link audit all pass.
+- An incorrectly formed selector also ran the entire current suite once: 507 passed and 76 failed. Most failures were outside Window Jump; the one stale WJ expectation was updated before the focused suites passed. That accidental broad run is not an acceptance gate and does not establish an all-green repository baseline.
+
 ## UI Layout Compact (2026-07-27)
 
 - Source delivery (not host-verified): [WindowsPage.vue](../../../../src/pages/WindowsPage.vue#L1) and window styles in [app.css](../../../../src/styles/app.css#L1) move stable slots to a left collapsible equal-height rail, move activation diagnostics / DEV operation traces to a right collapsible log rail (default collapsed; blocking diagnostics auto-expand), and keep the window list as the primary flex surface under a compact toolbar.
@@ -96,17 +121,20 @@
 - Action panel: long displayName/path titles ellipsize in-place (`overflow-x: hidden`, `text-overflow: ellipsis`); full identity stays on hover tooltip/`title`. Open-actions grid is list-primary (`1fr` + bounded `min(320px, 42%)` rail) so a long path cannot widen the page or invent a horizontal scrollbar.
 - Diagnostics UI contracts (`data-role`, alert/status semantics, sanitization, clear/copy) are preserved inside the log rail (`v-show`). Tests/typecheck/build/uTools/screenshots were not run (`未校验，待用户验收`).
 
-## Required Host Acceptance
+## Host Acceptance State
 
-1. Reconnect uTools and first require capability/environment revision `wj13-exact-space`; otherwise `bridge-stale` is expected and no native activation may run.
-2. Put two AiTools/Chromium windows on different Spaces, invoke the saved target, and require `direct-unique` or `reverse-unique` → `switch-confirmed` → `target=ok:title-match` → foreground/Raise. `single-window-frontmost`, `walked`, and activation of the other window are failures.
-3. Invoke the off-Space Rider target. A unique binding should switch directly; only a genuinely unbound single-window owner may emit `single-window-frontmost`. `foreground=ok` + `raise=ok` + `focus-state-mismatch` must finish as activated, not `focus-denied`.
-4. Force/observe an unbound multi-window case and require `space-unbound-multiwindow` without desktop traversal or arbitrary process fronting; multiple remote bindings require `space-ambiguous`; an unconfirmed switch requires `space-switch-timeout`.
-5. Change a saved target title and require an explicit candidate/rebind surface. Only selecting a candidate may update the locator and activate it.
-6. Close the assigned target, invoke its slot, and require one accepted `target-closed` record after a real rescan; no blocking record may accompany it.
-7. In a development run, require distinct `pre-initial` and—when retried—`pre-retry` aggregate snapshots with no raw app/title/PID/native/Space identity. In an installed build, the operation trace module must be absent.
-8. On Windows, retain existing normal/minimized page-topmost acceptance. On macOS, permanent page-topmost remains unsupported.
-9. Any other outcome is a failed acceptance; preserve only stable sanitized evidence.
+Accepted on 2026-07-28:
+
+1. Actual host capability/environment revision is `wj15-exact-ax`; the pre-initial snapshot used the isolated JXA bridge and one corroborated remote binding.
+2. AiTools/Chromium on a non-current Space activated through global slot 2 with `switch-confirmed → ax-cg-id-match → ax-focused-window`; the selected window, not merely Edge or a sibling, became focused.
+3. The operation used neither process-frontmost nor desktop walking, and the temporarily disabled Codex float was restored after validation.
+
+Residual host gates:
+
+1. Repeat on another multi-window Chromium profile/application and on the single-window Rider route.
+2. Force/observe unbound multi-window, ambiguous binding, switch timeout, exact-AX-focus failure, title drift/rebind, and truly closed target; each must retain its fail-closed result.
+3. Confirm production-installed trace absence and retain Windows normal/minimized/page-topmost plus close/confirm-terminate acceptance.
+4. On macOS, permanent page-topmost remains unsupported. Any other unverified outcome must preserve only stable sanitized evidence.
 
 ## Authorized Read-only Local Evidence
 
@@ -119,7 +147,7 @@
 - Unit, production-build, and uTools manifest/runtime gates.
 - Silent slot jump / missing-target workbench / manual Tab load (no auto-scan).
 - With a nonempty window query, toolbar load/refresh and `Ctrl+R` clear the query and reveal the refreshed complete list; an automatic cache-miss rescan does not clear it.
-- macOS: Screen Recording + Accessibility; refresh prefers CG for other Spaces/displays and falls back to AX current-Space list when CG has no titled windows; verify a unique AX-title activation succeeds through restore/frontmost/Raise/verification, equal titles remain explicitly disambiguated, close uses AX, and force terminate only after confirm. “页面置顶” must not claim persistent third-party success.
+- macOS: Screen Recording + Accessibility; refresh prefers CG for other Spaces/displays and falls back to AX current-Space list when CG has no titled windows; verify exact AX→CG mapping/focus on additional applications, compatibility title/ordinal ambiguity when private mapping is unavailable, AX close, and confirm-gated force terminate. “页面置顶” must not claim persistent third-party success.
 - Windows: EnumWindows across virtual desktops/displays; cloaked shells absent; `WM_CLOSE` then confirm kill.
 - Windows: browser/helper/native child handles are absent while each real main browser window remains; pin/unpin and application ordering persist across a plugin reopen.
 - `Space` toggles multi-select and advances; Esc clears selection before closing the action panel; right-click / `c-→` opens single vs multi action surface.
@@ -128,6 +156,6 @@
 - Window list `↑↓` with action panel open keeps list ownership and scrolls the focused row.
 - Compact titles: list secondary shows application name only; HWND is absent from the row; action-panel titles ellipsize; multi-select subtitle collapses to “A、B 等 N 个”; hover Tooltip restores full displayName/title/app/HWND.
 
-## Not Run by Task Authority
+## Verification Boundary
 
-The WJ-08/WJ-12 suites and typecheck results above are historical evidence from earlier increments. WJ-13 did not run or modify automated tests, typecheck, build, browser/screenshot, uTools package validation, Windows-host enumeration, or real activation/topmost/close/terminate. Only the final static parse, preload mirror/revision inspection, stale-symbol scan and diff whitespace check may be claimed for WJ-13.
+WJ-15 did run the focused suites, typecheck/production build/uTools runtime validator, isolated privacy-safe probes, and two real AiTools off-Space global-slot activations. It did not run Windows host enumeration/activation/topmost, target close/terminate, permission changes, title changes, installed-production trace inspection, or the residual negative cases. The accidental broad test invocation is recorded above as a non-gate failure and must not be presented as a green full suite.
