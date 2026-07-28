@@ -351,6 +351,9 @@ function operationDetailLabel(detail: NonNullable<AppRuntimeSnapshot['windowOper
     'title-match': '标题精确匹配',
     'title-mismatch': '标题或应用已变化',
     'focus-state-mismatch': '窗口焦点属性未确认',
+    'isolated-space-bridge': '隔离Space桥',
+    'ax-cg-id-match': 'AX与CG窗口精确匹配',
+    'ax-focused-window': '精确焦点已确认',
     error: '调用异常'
   }
   return labels[detail] || detail
@@ -372,6 +375,10 @@ function envSnapshotLabel(snapshot: NonNullable<AppRuntimeSnapshot['windowOperat
   ]
   if (typeof snapshot.spaceBindingCount === 'number') parts.push(`绑定数=${snapshot.spaceBindingCount}`)
   if (snapshot.spaceBindingSource) parts.push(`来源=${snapshot.spaceBindingSource}`)
+  if (snapshot.spaceBridge) parts.push(`通道=${snapshot.spaceBridge}`)
+  if (typeof snapshot.managedSpaceCount === 'number') {
+    parts.push(`探针=${snapshot.managedSpaceCount}/${snapshot.directSpaceBindingCount ?? '?'}/${snapshot.reverseSpaceBindingCount ?? '?'}`)
+  }
   if (typeof snapshot.sameSpace === 'boolean') parts.push(snapshot.sameSpace ? '当前Space=是' : '当前Space=否')
   return parts.join(' · ')
 }
