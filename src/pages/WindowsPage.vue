@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { AppWindow, Copy, Keyboard, LoaderCircle, Pencil, Pin, Power, RefreshCw, ShieldAlert, SquareArrowOutUpRight, Star, X } from '@lucide/vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { AppWindow, Check, ChevronLeft, ChevronRight, Copy, Keyboard, LoaderCircle, Pencil, Pin, Power, RefreshCw, ScrollText, ShieldAlert, SquareArrowOutUpRight, Star, X } from '@lucide/vue'
 import type { AppRuntimeSnapshot, WindowDraft, WindowRow } from '../runtime/appRuntime'
 
 const props = defineProps<{ snapshot: AppRuntimeSnapshot; showShortcutHints?: boolean }>()
@@ -11,6 +11,10 @@ const emit = defineEmits<{
   cancelDraft: []
   dispatch: [actionId: string, args?: Record<string, unknown>]
 }>()
+
+const slotRailExpanded = ref(true)
+const logRailExpanded = ref(false)
+const slotPickerSlot = ref<number | null>(null)
 
 const currentPlatformLabel = computed(() => props.snapshot.windowCapability.platform === 'darwin'
   ? 'macOS'
@@ -53,6 +57,33 @@ const allActionTargetsPinned = computed(() => {
 const pinActionLabel = computed(() => multiActions.value
   ? (allActionTargetsPinned.value ? '批量取消列表置顶' : '批量列表置顶')
   : (allActionTargetsPinned.value ? '取消列表置顶' : '列表置顶'))
+
+const assignedSlotCount = computed(() => {
+  let count = 0
+  for (let slot = 1; slot <= 10; slot += 1) {
+    if (slotAssigned(slot)) count += 1
+  }
+  return count
+})
+
+const logBadgeCount = computed(() => {
+  if (props.snapshot.windowOperationTraceEnabled) return windowOperationTraces.value.length
+  return windowActivationDiagnostics.value.length
+})
+
+const logHasBlocking = computed(() => {
+  if (props.snapshot.windowOperationTraceEnabled) {
+    return windowOperationTraces.value.some((record) => record.result === 'blocking')
+  }
+  return windowActivationDiagnostics.value.some((item) => item.level === 'blocking')
+})
+
+const bindingSlotAssignedRowId = computed(() => {
+  const slot = slotPickerSlot.value
+  if (slot == null) return null
+  const row = props.snapshot.windowRows.find((r) => r.slotNumbers.includes(slot))
+  return row?.id ?? null
+})
 
 function rowDomId(id: string) {
   return `window-row-${encodeURIComponent(id).replace(/%/g, '_')}`
@@ -125,6 +156,90 @@ function slotAssigned(slot: number) {
   return slotTargetLabel(slot) !== '未分配'
 }
 
+function slotChipTitle(slot: number) {
+  if (slotAssigned(slot)) {
+    return `槽 ${slot}：${slotTargetLabel(slot)}（右键打开快捷键设置，Shift+点击清除）`
+  }
+  return `槽 ${slot}：未分配（点击选择窗口）`
+}
+
+function toggleSlotRail() {
+  slotRailExpanded.value = !slotRailExpanded.value
+  if (!slotRailExpanded.value) exitSlotBinding()
+}
+
+function onSlotChipPointerDown(slot: number, event: PointerEvent) {
+  if (event.button !== 0) return
+  if (event.shiftKey) {
+    clearSlot(slot)
+    exitSlotBinding()
+    return
+  }
+  if (event.altKey) {
+    enterSlotBinding(slot)
+    return
+  }
+  if (slotAssigned(slot)) {
+    exitSlotBinding()
+    focusSlot(slot)
+    return
+  }
+  enterSlotBinding(slot)
+}
+
+function enterSlotBinding(slot: number) {
+  if (!slotRailExpanded.value) slotRailExpanded.value = true
+  slotPickerSlot.value = slot
+}
+
+function exitSlotBinding() {
+  slotPickerSlot.value = null
+}
+
+function assignPickerRow(row: WindowRow) {
+  const slot = slotPickerSlot.value
+  if (slot == null) return
+  if (row.slotNumbers.includes(slot)) {
+    exitSlotBinding()
+    return
+  }
+  emit('dispatch', 'windows.slot.assign', { slot, rowId: row.id })
+  exitSlotBinding()
+}
+
+function onWindowRowClick(row: WindowRow) {
+  if (slotPickerSlot.value != null) {
+    assignPickerRow(row)
+    return
+  }
+  focus(row)
+}
+
+function onWindowRowKeydown(event: KeyboardEvent) {
+  if (slotPickerSlot.value == null) return
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    exitSlotBinding()
+    return
+  }
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    event.stopPropagation()
+    const focusedId = props.snapshot.focusedWindowId
+    const row = props.snapshot.windowRows.find((r) => r.id === focusedId)
+    if (row) assignPickerRow(row)
+  }
+}
+
+function onDocumentPointerDown(event: PointerEvent) {
+  if (slotPickerSlot.value == null) return
+  const target = event.target as Node | null
+  if (target && (target as HTMLElement).closest?.('#window-list')) return
+  if (target && (target as HTMLElement).closest?.(`[data-slot-chip="${slotPickerSlot.value}"]`)) return
+  exitSlotBinding()
+}
+
 function activationEntryLabel(diagnostic: AppRuntimeSnapshot['windowActivationDiagnostics'][number]) {
   return diagnostic.entry === 'slot' ? `全局槽 ${diagnostic.slot || '—'}` : '手动激活'
 }
@@ -159,6 +274,10 @@ function operationEntryLabel(record: AppRuntimeSnapshot['windowOperationTraces']
   return record.entry === 'slot' ? `全局槽 ${record.slot || '—'}` : '手动操作'
 }
 
+function operationTargetLabel(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
+  return record.targetTitle || '目标尚未解析'
+}
+
 function operationPlatformLabel(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
   return record.platform === 'darwin' ? 'macOS' : record.platform === 'win32' ? 'Windows' : '当前宿主'
 }
@@ -178,9 +297,10 @@ function operationStageLabel(stage: AppRuntimeSnapshot['windowOperationTraces'][
     cache: '缓存',
     resolve: '解析',
     refresh: '重扫',
-    native: '宿主调用',
+    native: '宿主汇总',
     visibility: '可见性',
     bridge: '桥接',
+    space: 'Space切换',
     target: '目标引用',
     process: '进程',
     restore: '展开',
@@ -206,6 +326,110 @@ function operationOutcomeLabel(outcome: AppRuntimeSnapshot['windowOperationTrace
   return labels[outcome] || outcome
 }
 
+function operationDetailLabel(detail: NonNullable<AppRuntimeSnapshot['windowOperationTraces'][number]['steps'][number]['detail']>) {
+  const labels: Record<string, string> = {
+    switched: '已切换',
+    'switch-confirmed': '切换已确认',
+    'switch-timeout': '切换确认超时',
+    current: '已在当前桌面',
+    walked: '旧版遍历桌面切换',
+    'direct-unique': '直接绑定唯一',
+    'direct-multiple': '直接绑定多个',
+    'reverse-unique': '反查绑定唯一',
+    'ambiguous-spaces': '绑定桌面不唯一',
+    'ax-fallback': 'AX回退引用',
+    'bad-ref': '引用无效',
+    'no-api': 'SkyLight不可用',
+    'empty-spaces': '未查到Space',
+    'no-space-id': '无SpaceID',
+    'no-display': '无托管显示器',
+    'process-frontmost': '旧版进程前置兜底',
+    'single-window-frontmost': '单窗口进程前置兜底',
+    'multiwindow-blocked': '多窗口进程已阻断',
+    'current-space-inferred': '推断当前桌面无需切换',
+    'cg-ordinal-fallback': 'CG序号回退匹配',
+    'title-match': '标题精确匹配',
+    'title-mismatch': '标题或应用已变化',
+    'focus-state-mismatch': '窗口焦点属性未确认',
+    error: '调用异常'
+  }
+  return labels[detail] || detail
+}
+
+function envSnapshotLabel(snapshot: NonNullable<AppRuntimeSnapshot['windowOperationTraces'][number]['envSnapshot']>) {
+  const bindingLabels: Record<string, string> = {
+    bound: '已绑定',
+    unbound: '未绑定',
+    unavailable: '不可用'
+  }
+  const parts = [
+    `桥接=${snapshot.bridgeRevision || 'unknown'}`,
+    `CG目标=${snapshot.cgTargetMatches}`,
+    `CG所属窗口=${snapshot.ownerCgWindowCount ?? '?'}`,
+    `AX目标=${snapshot.axTargetMatches}`,
+    `AX窗口=${snapshot.axWindowCount ?? '?'}`,
+    `Space绑定=${bindingLabels[snapshot.spaceBinding] || snapshot.spaceBinding}`
+  ]
+  if (typeof snapshot.spaceBindingCount === 'number') parts.push(`绑定数=${snapshot.spaceBindingCount}`)
+  if (snapshot.spaceBindingSource) parts.push(`来源=${snapshot.spaceBindingSource}`)
+  if (typeof snapshot.sameSpace === 'boolean') parts.push(snapshot.sameSpace ? '当前Space=是' : '当前Space=否')
+  return parts.join(' · ')
+}
+
+function operationEnvSnapshots(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
+  if (record.envSnapshots?.length) return record.envSnapshots
+  return record.envSnapshot ? [{ phase: 'pre-initial' as const, snapshot: record.envSnapshot }] : []
+}
+
+function envSnapshotPhaseLabel(phase: 'pre-initial' | 'pre-retry') {
+  return phase === 'pre-retry' ? '重扫后重试前' : '首次原生调用前'
+}
+
+function operationStepText(step: AppRuntimeSnapshot['windowOperationTraces'][number]['steps'][number], index: number) {
+  const detail = step.detail ? `:${step.detail}` : ''
+  return `#${index + 1} ${step.stage}=${step.outcome}${detail} · ${operationStageLabel(step.stage)}：${operationOutcomeLabel(step.outcome)}${step.detail ? `（${operationDetailLabel(step.detail)}）` : ''}`
+}
+
+function operationTracePlainText(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
+  const steps = record.steps.map((step, index) => {
+    const detail = step.detail ? `:${step.detail}` : ''
+    return `#${index + 1} ${step.stage}=${step.outcome}${detail}`
+  }).join(' > ')
+  const parts = [
+    timestampLabel(record.timestamp),
+    `目标窗口：${operationTargetLabel(record)}`,
+    operationEntryLabel(record),
+    operationPlatformLabel(record),
+    operationKindLabel(record),
+    operationResultLabel(record),
+    record.code,
+    steps
+  ]
+  for (const item of operationEnvSnapshots(record)) {
+    parts.push(`环境快照(${envSnapshotPhaseLabel(item.phase)})：${envSnapshotLabel(item.snapshot)}`)
+  }
+  return parts.join(' | ')
+}
+
+async function copyOperationTracePlainText(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
+  const text = operationTracePlainText(record)
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return
+    }
+  } catch {}
+  const area = document.createElement('textarea')
+  area.value = text
+  area.setAttribute('readonly', 'true')
+  area.style.position = 'fixed'
+  area.style.left = '-9999px'
+  document.body.appendChild(area)
+  area.select()
+  document.execCommand('copy')
+  document.body.removeChild(area)
+}
+
 function rowStatus(row: WindowRow) {
   if (row.ambiguous) return '多个匹配'
   if (row.unavailable) return props.snapshot.windowListLoaded ? '当前不可用' : '待加载'
@@ -223,19 +447,54 @@ function statusClass(row: WindowRow) {
   }
 }
 
+/** Compact list/action labels keep the full identity only for hover Tooltip. */
+function rowIdentityLabel(row: WindowRow) {
+  const parts: string[] = []
+  if (row.displayName) parts.push(row.displayName)
+  if (row.title && row.title !== row.displayName) parts.push(row.title)
+  if (row.appName && row.appName !== row.displayName && row.appName !== row.title) parts.push(row.appName)
+  if (row.live?.platform === 'win32' && row.live.nativeRef) parts.push(`HWND ${row.live.nativeRef}`)
+  return parts.join(' · ') || '窗口'
+}
+
+function actionTargetsFullLabel(rows: readonly WindowRow[]) {
+  return rows.map((row) => row.displayName).filter(Boolean).join('、') || '窗口'
+}
+
+function actionTargetsShortLabel(rows: readonly WindowRow[]) {
+  if (!rows.length) return '选择列表项后可操作'
+  if (rows.length <= 2) return actionTargetsFullLabel(rows)
+  return `${rows[0].displayName}、${rows[1].displayName} 等 ${rows.length} 个`
+}
+
 function updateDraft(field: 'alias' | 'titleLocator', event: Event) {
   const value = (event.target as HTMLInputElement).value
   emit('updateDraft', field === 'alias' ? { alias: value } : { titleLocator: value })
 }
+
+watch(logHasBlocking, (blocking) => {
+  if (blocking) logRailExpanded.value = true
+}, { immediate: true })
+
+onMounted(() => {
+  document.addEventListener('pointerdown', onDocumentPointerDown, true)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown, true)
+})
 </script>
 
 <template>
   <section class="windows-page" aria-label="窗口跳转">
     <div class="window-toolbar" aria-label="窗口工具条">
-      <div class="window-toolbar-meta">
-        <p class="eyebrow">{{ currentPlatformLabel }} · 手动加载</p>
+      <div
+        class="window-toolbar-meta"
+        :title="`${currentPlatformLabel} · ${cacheStatusLabel}`"
+        :data-operation-tooltip="`${currentPlatformLabel} · ${cacheStatusLabel}`"
+      >
         <strong>窗口跳转</strong>
-        <small>{{ cacheStatusLabel }}</small>
+        <small>{{ currentPlatformLabel }} · {{ cacheStatusLabel }}</small>
       </div>
       <div class="window-search-row">
         <AppWindow :size="16" aria-hidden="true" />
@@ -269,31 +528,6 @@ function updateDraft(field: 'alias' | 'titleLocator', event: Event) {
       </button>
     </div>
 
-    <section class="window-slot-strip" aria-label="稳定快捷槽">
-      <div class="window-slot-strip-heading">
-        <Keyboard :size="14" aria-hidden="true" />
-        <strong>稳定槽</strong>
-        <small>全局快捷键静默跳转；仅丢失/多候选时展开本页</small>
-      </div>
-      <div class="window-slot-chips">
-        <button
-          v-for="slot in 10"
-          :key="slot"
-          type="button"
-          class="window-slot-chip"
-          :class="{ assigned: slotAssigned(slot) }"
-          :title="slotAssigned(slot) ? `槽 ${slot}：${slotTargetLabel(slot)}（右键打开快捷键设置，Shift+点击清除）` : `槽 ${slot}：未分配`"
-          data-quick-jump-target
-          :data-quick-jump-label="`窗口槽 ${slot}`"
-          @click="($event.shiftKey ? clearSlot(slot) : focusSlot(slot))"
-          @contextmenu.prevent="configureSlot(slot)"
-        >
-          <kbd>{{ slot }}</kbd>
-          <span>{{ slotTargetLabel(slot) }}</span>
-        </button>
-      </div>
-    </section>
-
     <section v-if="showCapabilityNotice" class="window-capability-notice" role="status">
       <ShieldAlert :size="20" />
       <div>
@@ -314,165 +548,275 @@ function updateDraft(field: 'alias' | 'titleLocator', event: Event) {
       <template v-else>{{ snapshot.windowRows.length }} 个可见项目 · 列表置顶优先 · 按应用排序 · {{ snapshot.windowCapability.canList ? '按需扫描' : '等待授权' }}</template>
     </p>
 
-    <section v-if="windowActivationDiagnostics.length" class="window-activation-diagnostics" aria-label="本次窗口激活诊断">
-      <div
-        v-if="latestWindowActivationDiagnostic"
-        class="window-activation-diagnostics-summary"
-        :class="latestWindowActivationDiagnostic.level"
-        :role="latestWindowActivationDiagnostic.level === 'blocking' ? 'alert' : 'status'"
+    <div class="windows-body">
+      <aside
+        class="window-slot-rail"
+        :class="{ expanded: slotRailExpanded, 'picker-open': slotPickerSlot != null }"
+        aria-label="稳定快捷槽"
       >
-        <strong>{{ latestWindowActivationDiagnostic.level === 'blocking' ? '窗口激活被阻断' : '已确认目标关闭' }}</strong>
-        <span>{{ latestWindowActivationDiagnostic.message }}</span>
-      </div>
-      <ol class="window-activation-diagnostics-list">
-        <li
-          v-for="diagnostic in windowActivationDiagnostics"
-          :key="diagnostic.id"
-          :class="diagnostic.level"
-          :role="diagnostic.level === 'blocking' ? 'alert' : 'status'"
+        <button
+          type="button"
+          class="window-rail-toggle"
+          :aria-expanded="slotRailExpanded"
+          :aria-label="slotRailExpanded ? '收起稳定槽' : '展开稳定槽'"
+          :title="slotRailExpanded ? '收起稳定槽' : '展开稳定槽'"
+          data-role="window-slot-rail-toggle"
+          @click="toggleSlotRail"
         >
-          <div>
-            <span>{{ activationTimestamp(diagnostic) }}</span>
-            <span>{{ activationEntryLabel(diagnostic) }}</span>
-            <span>{{ activationPlatformLabel(diagnostic) }} · {{ activationStageLabel(diagnostic) }}</span>
-            <code>{{ diagnostic.code }}</code>
+          <Keyboard :size="14" aria-hidden="true" />
+          <span v-if="!slotRailExpanded" class="window-rail-toggle-label">槽</span>
+          <span v-if="!slotRailExpanded && assignedSlotCount" class="window-rail-badge">{{ assignedSlotCount }}</span>
+          <ChevronLeft v-if="slotRailExpanded" :size="14" aria-hidden="true" />
+          <ChevronRight v-else :size="14" aria-hidden="true" />
+        </button>
+        <div class="window-slot-rail-body" v-show="slotRailExpanded">
+          <p class="window-slot-rail-hint">全局静默跳转 · Ctrl+1…0 分配</p>
+          <div class="window-slot-rail-list" role="list">
+            <button
+              v-for="slot in 10"
+              :key="slot"
+              type="button"
+              class="window-slot-chip"
+              :class="{ assigned: slotAssigned(slot), picking: slotPickerSlot === slot }"
+              :data-slot-chip="slot"
+              role="listitem"
+              :title="slotChipTitle(slot)"
+              :data-operation-tooltip="slotChipTitle(slot)"
+              data-quick-jump-target
+              :data-quick-jump-label="`窗口槽 ${slot}`"
+              @pointerdown="onSlotChipPointerDown(slot, $event)"
+              @contextmenu.prevent="configureSlot(slot)"
+            >
+              <kbd>{{ slot }}</kbd>
+              <span>{{ slotTargetLabel(slot) }}</span>
+            </button>
           </div>
-          <p>{{ diagnostic.message }}</p>
-        </li>
-      </ol>
-      <button type="button" data-role="window-activation-diagnostics-clear" @click="$emit('dispatch', 'windows.activation.diagnostics.clear')">清空本次记录</button>
-    </section>
-
-    <section v-if="snapshot.windowOperationTraceEnabled" class="window-operation-trace" role="status" aria-label="开发窗口操作追踪" data-role="window-operation-trace">
-      <header>
-        <div>
-          <strong>开发窗口操作追踪</strong>
-          <p>仅开发环境显示；记录已脱敏，不含窗口标题、应用名、PID、句柄或原生引用。</p>
         </div>
-        <button v-if="windowOperationTraces.length" type="button" data-role="window-operation-trace-clear" @click="$emit('dispatch', 'windows.operation.traces.clear')">清空开发记录</button>
-      </header>
-      <p v-if="!windowOperationTraces.length" class="window-operation-trace-empty">尚无本次窗口操作记录。</p>
-      <ol v-else class="window-operation-trace-list">
-        <li v-for="record in windowOperationTraces" :key="record.id" :class="record.result">
-          <div class="window-operation-trace-meta">
-            <span>{{ timestampLabel(record.timestamp) }}</span>
-            <span>{{ operationEntryLabel(record) }}</span>
-            <span>{{ operationPlatformLabel(record) }}</span>
-            <span>{{ operationKindLabel(record) }} · {{ operationResultLabel(record) }}</span>
-            <code>{{ record.code }}</code>
-          </div>
-          <ul aria-label="已脱敏操作步骤">
-            <li v-for="(step, index) in record.steps" :key="`${record.id}:${index}:${step.stage}:${step.outcome}`">
-              {{ operationStageLabel(step.stage) }}：{{ operationOutcomeLabel(step.outcome) }}
-            </li>
-          </ul>
-        </li>
-      </ol>
-    </section>
+      </aside>
 
-    <div class="window-workbench" :class="{ 'has-actions': snapshot.windowActionsOpen }">
-      <section class="window-list-panel" aria-label="窗口列表">
-        <div
-          id="window-list"
-          data-role="window-list"
-          class="window-list"
-          role="listbox"
-          tabindex="0"
-          aria-multiselectable="true"
-          :aria-activedescendant="snapshot.focusedWindowId ? rowDomId(snapshot.focusedWindowId) : undefined"
-        >
+      <div class="window-workbench" :class="{ 'has-actions': snapshot.windowActionsOpen }">
+        <section class="window-list-panel" aria-label="窗口列表">
           <div
-            v-for="row in snapshot.windowRows"
-            :id="rowDomId(row.id)"
-            :key="row.id"
-            class="window-row"
-            :class="{ active: row.focused, selected: row.selected, favorite: row.favorite, pinned: row.pinned, unavailable: row.unavailable }"
-            role="option"
-            :aria-selected="row.selected || row.focused"
-            :data-quick-jump-target="true"
-            :data-quick-jump-label="`${row.displayName} ${row.appName}`"
-            :data-quick-jump-search="`${row.title} ${row.appName}`"
-            @click="focus(row)"
-            @dblclick="activate(row)"
-            @contextmenu.prevent="openActions(row)"
+            v-if="slotPickerSlot != null"
+            class="window-slot-binding-hint"
+            data-role="window-slot-binding-hint"
+            role="status"
           >
-            <span class="window-row-leading" aria-hidden="true">
-              <Star v-if="row.favorite" :size="15" fill="currentColor" />
-              <AppWindow v-else :size="15" />
-            </span>
-            <span class="window-row-copy">
-              <strong>{{ row.displayName }}</strong>
-              <small>{{ row.appName }}<template v-if="row.title"> · {{ row.title }}</template></small>
-            </span>
-            <span class="window-row-trailing">
-              <span v-if="row.pinned" class="window-pin-badge" aria-label="已在列表置顶"><Pin :size="11" aria-hidden="true" />列表置顶</span>
-              <span v-if="row.slotNumbers.length" class="window-slot-badges" :aria-label="`槽位 ${row.slotNumbers.join('、')}`">
-                <kbd v-for="slot in row.slotNumbers" :key="slot">{{ slot }}</kbd>
+            请点击选择窗口绑定到槽 {{ slotPickerSlot }} · Esc 取消
+          </div>
+          <div
+            id="window-list"
+            data-role="window-list"
+            class="window-list"
+            role="listbox"
+            tabindex="0"
+            aria-multiselectable="true"
+            :aria-activedescendant="snapshot.focusedWindowId ? rowDomId(snapshot.focusedWindowId) : undefined"
+            @keydown="onWindowRowKeydown"
+          >
+            <div
+              v-for="row in snapshot.windowRows"
+              :id="rowDomId(row.id)"
+              :key="row.id"
+              class="window-row"
+              :class="{ active: row.focused, selected: row.selected, favorite: row.favorite, pinned: row.pinned, unavailable: row.unavailable, binding: slotPickerSlot != null, 'binding-assigned': bindingSlotAssignedRowId === row.id }"
+              role="option"
+              :aria-selected="row.selected || row.focused"
+              :data-operation-tooltip="rowIdentityLabel(row)"
+              data-operation-description="单击聚焦；双击展开并前置；右键打开操作"
+              :data-quick-jump-target="true"
+              :data-quick-jump-label="`${row.displayName} ${row.appName}`"
+              :data-quick-jump-search="`${row.title} ${row.appName}`"
+              @click="onWindowRowClick(row)"
+              @dblclick="activate(row)"
+              @contextmenu.prevent="openActions(row)"
+            >
+              <span class="window-row-leading" aria-hidden="true">
+                <Check v-if="bindingSlotAssignedRowId === row.id" :size="15" class="binding-checkmark" />
+                <Star v-else-if="row.favorite" :size="15" fill="currentColor" />
+                <AppWindow v-else :size="15" />
               </span>
-              <span class="window-status" :class="statusClass(row)">{{ rowStatus(row) }}</span>
-              <span v-if="row.live?.platform === 'win32'" class="window-hwnd">HWND {{ row.live.nativeRef }}</span>
-            </span>
-          </div>
-          <p v-if="!snapshot.windowRows.length && !snapshot.windowLoading" class="empty-state">
-            {{ showUnloadHint ? '尚未加载实时窗口。可先查看已保存的收藏与稳定槽，再点击加载。' : '没有匹配窗口。请刷新、调整搜索词，或在授权后重试。' }}
-          </p>
-          <p v-if="selectionCount" class="window-selection-cue" aria-live="polite">已选 {{ selectionCount }} · Esc 清空 · Space 切换并下移</p>
-        </div>
-      </section>
-
-      <aside v-if="snapshot.windowActionsOpen" data-role="window-actions" class="window-actions-panel" aria-label="窗口操作面板">
-        <header>
-          <div>
-            <p class="eyebrow">{{ multiActions ? `已选 ${snapshot.windowActionTargets.length} 个窗口` : '当前窗口' }}</p>
-            <h3>{{ multiActions ? '批量操作' : (snapshot.windowActionTarget?.displayName || '未选择') }}</h3>
-            <p>{{ multiActions ? snapshot.windowActionTargets.map((row) => row.displayName).join('、') : (snapshot.windowActionTarget?.appName || '选择列表项后可操作') }}</p>
-          </div>
-          <button type="button" class="icon-button" aria-label="返回窗口列表" @click="$emit('dispatch', 'windows.actions.close')"><X :size="16" /></button>
-        </header>
-
-        <div class="window-primary-actions">
-          <button v-if="!multiActions" type="button" :disabled="!snapshot.windowActionTarget" @click="activate(snapshot.windowActionTarget || undefined)"><SquareArrowOutUpRight :size="15" />展开并前置</button>
-          <button
-            v-if="!multiActions"
-            type="button"
-            class="window-page-topmost"
-            :disabled="!snapshot.windowActionTarget || !canAlwaysOnTop"
-            :title="canAlwaysOnTop ? '将实际窗口保持在其他普通窗口上方' : 'macOS 只能展开并前置，不能将第三方窗口保持在最上层'"
-            @click="alwaysOnTop(snapshot.windowActionTarget || undefined)"
-          ><Pin :size="15" />页面置顶</button>
-          <button type="button" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="toggleFavorite(multiActions ? undefined : (snapshot.windowActionTarget || undefined))"><Star :size="15" />{{ multiActions ? '批量收藏' : (snapshot.windowActionTarget?.favorite ? '取消收藏' : '收藏') }}</button>
-          <button
-            type="button"
-            :class="{ pinned: allActionTargetsPinned }"
-            :aria-pressed="allActionTargetsPinned"
-            :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget"
-            @click="togglePin(multiActions ? undefined : (snapshot.windowActionTarget || undefined))"
-          ><Pin :size="15" />{{ pinActionLabel }}</button>
-          <button type="button" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="closeWindows(false)"><Power :size="15" />关闭窗口</button>
-          <button type="button" class="danger" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="closeWindows(true)"><Power :size="15" />强制关闭</button>
-          <button v-if="!multiActions" type="button" :disabled="!snapshot.windowActionTarget" @click="snapshot.windowActionTarget && edit(snapshot.windowActionTarget, 'rename')"><Pencil :size="15" />编辑别名</button>
-          <button v-if="!multiActions" type="button" :disabled="!snapshot.windowActionTarget" @click="snapshot.windowActionTarget && edit(snapshot.windowActionTarget, 'edit')"><Pencil :size="15" />完整编辑</button>
-          <button v-if="!multiActions && snapshot.windowActionTarget?.live?.platform === 'win32'" type="button" @click="$emit('dispatch', 'windows.hwnd.copy', { rowId: snapshot.windowActionTarget?.id })"><Copy :size="15" />复制 HWND</button>
-          <kbd v-if="commandLabel('windows.close', 'c-del')">{{ commandLabel('windows.close', 'c-del') }}</kbd>
-        </div>
-        <p v-if="!multiActions" class="window-topmost-note" role="status">{{ pageTopmostHint }}</p>
-
-        <section v-if="!multiActions" class="window-slot-section" aria-label="稳定快捷槽分配">
-          <div class="window-slot-heading">
-            <div><Keyboard :size="15" /><strong>分配稳定槽</strong></div>
-            <small>改别名不会改变 uTools 绑定</small>
-          </div>
-          <div class="window-slot-grid">
-            <div v-for="slot in 10" :key="slot" class="window-slot-row">
-              <div><kbd>{{ slot }}</kbd><span>{{ slotTargetLabel(slot) }}</span></div>
-              <div>
-                <button type="button" :disabled="!snapshot.windowActionTarget" :title="`将当前窗口分配到槽 ${slot}`" @click="assignSlot(slot)">分配</button>
-                <button type="button" :disabled="!slotAssigned(slot)" :title="`清除槽 ${slot} 当前平台关联`" @click="clearSlot(slot)">清除</button>
-                <button type="button" :title="`在 uTools 中设置 EyPc 窗口槽 ${slot}`" @click="configureSlot(slot)">设置</button>
-              </div>
+              <span class="window-row-copy">
+                <strong>{{ row.displayName }}</strong>
+                <small>{{ row.appName }}</small>
+              </span>
+              <span class="window-row-trailing">
+                <span v-if="row.pinned" class="window-pin-badge" aria-label="已在列表置顶"><Pin :size="11" aria-hidden="true" />列表置顶</span>
+                <span v-if="row.slotNumbers.length" class="window-slot-badges" :aria-label="`槽位 ${row.slotNumbers.join('、')}`">
+                  <kbd v-for="slot in row.slotNumbers" :key="slot">{{ slot }}</kbd>
+                </span>
+                <span class="window-status" :class="statusClass(row)">{{ rowStatus(row) }}</span>
+              </span>
             </div>
+            <p v-if="!snapshot.windowRows.length && !snapshot.windowLoading" class="empty-state">
+              {{ showUnloadHint ? '尚未加载实时窗口。可先查看已保存的收藏与稳定槽，再点击加载。' : '没有匹配窗口。请刷新、调整搜索词，或在授权后重试。' }}
+            </p>
+            <p v-if="selectionCount" class="window-selection-cue" aria-live="polite">已选 {{ selectionCount }} · Esc 清空 · Space 切换并下移</p>
           </div>
         </section>
+
+        <aside v-if="snapshot.windowActionsOpen" data-role="window-actions" class="window-actions-panel" aria-label="窗口操作面板">
+          <header>
+            <div>
+              <p class="eyebrow">{{ multiActions ? `已选 ${snapshot.windowActionTargets.length} 个窗口` : '当前窗口' }}</p>
+              <h3
+                class="window-actions-title"
+                :title="multiActions ? undefined : (snapshot.windowActionTarget ? rowIdentityLabel(snapshot.windowActionTarget) : undefined)"
+                :data-operation-tooltip="multiActions ? undefined : (snapshot.windowActionTarget ? rowIdentityLabel(snapshot.windowActionTarget) : undefined)"
+              >{{ multiActions ? '批量操作' : (snapshot.windowActionTarget?.displayName || '未选择') }}</h3>
+              <p
+                class="window-actions-subtitle"
+                :title="multiActions
+                  ? actionTargetsFullLabel(snapshot.windowActionTargets)
+                  : (snapshot.windowActionTarget ? rowIdentityLabel(snapshot.windowActionTarget) : undefined)"
+                :data-operation-tooltip="multiActions
+                  ? actionTargetsFullLabel(snapshot.windowActionTargets)
+                  : (snapshot.windowActionTarget ? rowIdentityLabel(snapshot.windowActionTarget) : undefined)"
+              >{{ multiActions
+                ? actionTargetsShortLabel(snapshot.windowActionTargets)
+                : (snapshot.windowActionTarget?.appName || '选择列表项后可操作') }}</p>
+            </div>
+            <button type="button" class="icon-button" aria-label="返回窗口列表" @click="$emit('dispatch', 'windows.actions.close')"><X :size="16" /></button>
+          </header>
+
+          <div class="window-primary-actions">
+            <button v-if="!multiActions" type="button" :disabled="!snapshot.windowActionTarget" @click="activate(snapshot.windowActionTarget || undefined)"><SquareArrowOutUpRight :size="15" />展开并前置</button>
+            <button
+              v-if="!multiActions"
+              type="button"
+              class="window-page-topmost"
+              :disabled="!snapshot.windowActionTarget || !canAlwaysOnTop"
+              :title="canAlwaysOnTop ? '将实际窗口保持在其他普通窗口上方' : 'macOS 只能展开并前置，不能将第三方窗口保持在最上层'"
+              @click="alwaysOnTop(snapshot.windowActionTarget || undefined)"
+            ><Pin :size="15" />页面置顶</button>
+            <button type="button" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="toggleFavorite(multiActions ? undefined : (snapshot.windowActionTarget || undefined))"><Star :size="15" />{{ multiActions ? '批量收藏' : (snapshot.windowActionTarget?.favorite ? '取消收藏' : '收藏') }}</button>
+            <button
+              type="button"
+              :class="{ pinned: allActionTargetsPinned }"
+              :aria-pressed="allActionTargetsPinned"
+              :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget"
+              @click="togglePin(multiActions ? undefined : (snapshot.windowActionTarget || undefined))"
+            ><Pin :size="15" />{{ pinActionLabel }}</button>
+            <button type="button" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="closeWindows(false)"><Power :size="15" />关闭窗口</button>
+            <button type="button" class="danger" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="closeWindows(true)"><Power :size="15" />强制关闭</button>
+            <button v-if="!multiActions" type="button" :disabled="!snapshot.windowActionTarget" @click="snapshot.windowActionTarget && edit(snapshot.windowActionTarget, 'rename')"><Pencil :size="15" />编辑别名</button>
+            <button v-if="!multiActions" type="button" :disabled="!snapshot.windowActionTarget" @click="snapshot.windowActionTarget && edit(snapshot.windowActionTarget, 'edit')"><Pencil :size="15" />完整编辑</button>
+            <button v-if="!multiActions && snapshot.windowActionTarget?.live?.platform === 'win32'" type="button" @click="$emit('dispatch', 'windows.hwnd.copy', { rowId: snapshot.windowActionTarget?.id })"><Copy :size="15" />复制 HWND</button>
+            <kbd v-if="commandLabel('windows.close', 'c-del')" class="window-actions-chord">{{ commandLabel('windows.close', 'c-del') }}</kbd>
+          </div>
+          <p v-if="!multiActions" class="window-topmost-note" role="status">{{ pageTopmostHint }}</p>
+
+          <section v-if="!multiActions" class="window-slot-section" aria-label="稳定快捷槽分配">
+            <div class="window-slot-heading">
+              <div><Keyboard :size="15" /><strong>分配稳定槽</strong></div>
+              <small>Ctrl+1…0 · 改别名不改 uTools 绑定</small>
+            </div>
+            <div class="window-slot-grid">
+              <div v-for="slot in 10" :key="slot" class="window-slot-row">
+                <div><kbd>{{ slot }}</kbd><span>{{ slotTargetLabel(slot) }}</span></div>
+                <div>
+                  <button type="button" :disabled="!snapshot.windowActionTarget" :title="`将当前窗口分配到槽 ${slot}`" @click="assignSlot(slot)">分配</button>
+                  <button type="button" :disabled="!slotAssigned(slot)" :title="`清除槽 ${slot} 当前平台关联`" @click="clearSlot(slot)">清除</button>
+                  <button type="button" :title="`在 uTools 中设置 EyPc 窗口槽 ${slot}`" @click="configureSlot(slot)">设置</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </aside>
+      </div>
+
+      <aside
+        class="window-log-rail"
+        :class="{ expanded: logRailExpanded, blocking: logHasBlocking }"
+        aria-label="窗口日志"
+      >
+        <button
+          type="button"
+          class="window-rail-toggle"
+          :aria-expanded="logRailExpanded"
+          :aria-label="logRailExpanded ? '收起日志' : '展开日志'"
+          :title="logRailExpanded ? '收起日志' : '展开日志'"
+          data-role="window-log-rail-toggle"
+          @click="logRailExpanded = !logRailExpanded"
+        >
+          <ScrollText :size="14" aria-hidden="true" />
+          <span v-if="!logRailExpanded" class="window-rail-toggle-label">日志</span>
+          <span v-if="!logRailExpanded && logBadgeCount" class="window-rail-badge" :class="{ blocking: logHasBlocking }">{{ logBadgeCount }}</span>
+          <ChevronRight v-if="logRailExpanded" :size="14" aria-hidden="true" />
+          <ChevronLeft v-else :size="14" aria-hidden="true" />
+        </button>
+        <div class="window-log-rail-body" v-show="logRailExpanded">
+          <section v-if="windowActivationDiagnostics.length && !snapshot.windowOperationTraceEnabled" class="window-activation-diagnostics" aria-label="本次窗口激活诊断">
+            <div
+              v-if="latestWindowActivationDiagnostic"
+              class="window-activation-diagnostics-summary"
+              :class="latestWindowActivationDiagnostic.level"
+              :role="latestWindowActivationDiagnostic.level === 'blocking' ? 'alert' : 'status'"
+            >
+              <strong>{{ latestWindowActivationDiagnostic.level === 'blocking' ? '窗口激活被阻断' : '已确认目标关闭' }}</strong>
+              <span>{{ latestWindowActivationDiagnostic.message }}</span>
+            </div>
+            <ol class="window-activation-diagnostics-list">
+              <li
+                v-for="diagnostic in windowActivationDiagnostics"
+                :key="diagnostic.id"
+                :class="diagnostic.level"
+                :role="diagnostic.level === 'blocking' ? 'alert' : 'status'"
+              >
+                <div>
+                  <span>{{ activationTimestamp(diagnostic) }}</span>
+                  <span>{{ activationEntryLabel(diagnostic) }}</span>
+                  <span>{{ activationPlatformLabel(diagnostic) }} · {{ activationStageLabel(diagnostic) }}</span>
+                  <code>{{ diagnostic.code }}</code>
+                </div>
+                <p>{{ diagnostic.message }}</p>
+              </li>
+            </ol>
+            <button type="button" data-role="window-activation-diagnostics-clear" @click="$emit('dispatch', 'windows.activation.diagnostics.clear')">清空本次记录</button>
+          </section>
+
+          <section v-if="snapshot.windowOperationTraceEnabled" class="window-operation-trace" role="status" aria-label="开发窗口操作追踪" data-role="window-operation-trace">
+            <header>
+              <div>
+                <strong>开发窗口操作追踪</strong>
+                <p>仅开发环境显示；含已授权目标标题，其余字段保持脱敏。侧栏展开查看，不占用主列表高度。</p>
+              </div>
+              <button v-if="windowOperationTraces.length" type="button" data-role="window-operation-trace-clear" @click="$emit('dispatch', 'windows.operation.traces.clear')">清空开发记录</button>
+            </header>
+            <p v-if="!windowOperationTraces.length" class="window-operation-trace-empty">尚无本次窗口操作记录。</p>
+            <ol v-else class="window-operation-trace-list">
+              <li v-for="record in windowOperationTraces" :key="record.id" :class="record.result">
+                <div class="window-operation-trace-meta">
+                  <span>{{ timestampLabel(record.timestamp) }}</span>
+                  <span>目标窗口：{{ operationTargetLabel(record) }}</span>
+                  <span>{{ operationEntryLabel(record) }}</span>
+                  <span>{{ operationPlatformLabel(record) }}</span>
+                  <span>{{ operationKindLabel(record) }} · {{ operationResultLabel(record) }}</span>
+                  <code>{{ record.code }}</code>
+                  <button type="button" data-role="window-operation-trace-copy" @click="copyOperationTracePlainText(record)">复制单行</button>
+                </div>
+                <p class="window-operation-trace-plain" data-role="window-operation-trace-plain">{{ operationTracePlainText(record) }}</p>
+                <ul aria-label="开发操作步骤">
+                  <li
+                    v-for="(step, index) in record.steps"
+                    :key="`${record.id}:${index}:${step.stage}:${step.outcome}:${step.detail || ''}`"
+                    :class="{ failed: step.outcome !== 'ok' && step.outcome !== 'skipped' }"
+                  >
+                    {{ operationStepText(step, index) }}
+                  </li>
+                </ul>
+                <p
+                  v-for="(item, index) in operationEnvSnapshots(record)"
+                  :key="`${record.id}:${item.phase}:${index}`"
+                  class="window-operation-trace-env"
+                  data-role="window-operation-trace-env"
+                >环境快照（{{ envSnapshotPhaseLabel(item.phase) }}）：{{ envSnapshotLabel(item.snapshot) }}</p>
+              </li>
+            </ol>
+          </section>
+
+          <p v-if="!snapshot.windowOperationTraceEnabled && !windowActivationDiagnostics.length" class="window-log-rail-empty">暂无诊断或操作记录。</p>
+        </div>
       </aside>
     </div>
 

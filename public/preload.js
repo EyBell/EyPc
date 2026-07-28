@@ -646,20 +646,86 @@ for (let p = 0; p < processes.length; p += 1) {
 JSON.stringify({ windows: rows, screenRecordingLikelyMissing: false })
 `
 
-function macosActivateWindowScript(pid, ordinal) {
+const MACOS_ENV_SNAPSHOT_SCRIPT = String.raw`
+ObjC.import('Foundation')
+ObjC.import('CoreGraphics')
+ObjC.import('AppKit')
+function attempt(callback, fallback) {
+  try { return callback() } catch (error) { return fallback }
+}
+function asText(value) { return String(value || '').trim() }
+function normalizeTitle(value) { return asText(value).toLowerCase().replace(/\\s+/g, ' ') }
+function environmentValue(name) {
+  const value = $.NSProcessInfo.processInfo.environment.objectForKey(name)
+  return value ? String(ObjC.unwrap(value) || '') : ''
+}
+const processId = __EYPC_TARGET_PID__
+const cgWindowNumber = __EYPC_CG_WINDOW_NUMBER__
+const targetTitle = normalizeTitle(environmentValue('EYPC_WINDOW_TARGET_TITLE'))
+const targetApp = normalizeTitle(environmentValue('EYPC_WINDOW_TARGET_APP_ID'))
+const running = attempt(() => $.NSRunningApplication.runningApplicationWithProcessIdentifier(processId), null)
+const runningBundle = normalizeTitle(attempt(() => running && running.bundleIdentifier && ObjC.unwrap(running.bundleIdentifier), ''))
+const runningName = normalizeTitle(attempt(() => running && running.localizedName && ObjC.unwrap(running.localizedName), ''))
+const appMatches = Boolean(running && (!targetApp || targetApp === runningBundle || targetApp === runningName))
+const raw = attempt(() => ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID))), [])
+const cgList = Array.isArray(raw) ? raw : []
+let cgTargetMatches = 0
+let cgWindowIdMatches = 0
+let ownerCgWindowCount = 0
+for (const item of cgList) {
+  if (!item || typeof item !== 'object') continue
+  const layer = Math.trunc(Number(item.kCGWindowLayer || 0))
+  if (layer !== 0) continue
+  const pid = Math.trunc(Number(item.kCGWindowOwnerPID || 0))
+  if (pid !== processId) continue
+  const wid = Math.trunc(Number(item.kCGWindowNumber || 0))
+  const title = normalizeTitle(item.kCGWindowName)
+  const alpha = Number(item.kCGWindowAlpha)
+  if (!title || (Number.isFinite(alpha) && alpha <= 0)) continue
+  ownerCgWindowCount += 1
+  if (cgWindowNumber > 0 && wid === cgWindowNumber) {
+    cgWindowIdMatches += 1
+    if (appMatches && (!targetTitle || title === targetTitle)) cgTargetMatches += 1
+    continue
+  }
+  if (cgWindowNumber <= 0 && appMatches && targetTitle && title === targetTitle) cgTargetMatches += 1
+}
+const systemEvents = Application('System Events')
+let axTargetMatches = 0
+let axWindowCount = 0
+try {
+  const processes = systemEvents.applicationProcesses.whose({ unixId: processId })()
+  if (processes.length) {
+    const windows = processes[0].windows()
+    axWindowCount = windows.length
+    for (let i = 0; i < windows.length; i += 1) {
+      let title = ''
+      try { title = String(windows[i].name() || '') } catch (e) {}
+      if (!title) { try { title = String(windows[i].attributes.byName('AXTitle').value() || '') } catch (e) {} }
+      if (targetTitle && normalizeTitle(title) === targetTitle) axTargetMatches += 1
+    }
+  }
+} catch (error) {}
+JSON.stringify({ appMatches, cgTargetMatches, cgWindowIdMatches, ownerCgWindowCount, axTargetMatches, axWindowCount })
+`
+
+function macosActivateWindowScript(pid, ordinal, cgWindowNumber) {
   return String.raw`
 ObjC.import('Foundation')
+ObjC.import('CoreGraphics')
 const systemEvents = Application('System Events')
 const processId = ${pid}
 const ordinal = ${ordinal}
+const cgWindowNumber = ${cgWindowNumber}
 function environmentValue(name) {
   const value = $.NSProcessInfo.processInfo.environment.objectForKey(name)
   return value ? String(ObjC.unwrap(value) || '') : ''
 }
 const debugTrace = environmentValue('EYPC_WINDOW_DEBUG_TRACE') === '1'
 const trace = []
-function addTrace(stage, outcome) {
-  if (debugTrace && trace.length < 16) trace.push({ stage, outcome })
+function addTrace(stage, outcome, detail) {
+  if (!debugTrace || trace.length >= 16) return
+  trace.push(detail ? { stage, outcome, detail } : { stage, outcome })
 }
 function emit(outcome) {
   const payload = { outcome }
@@ -670,6 +736,7 @@ function expectedTargetTitle() {
   return environmentValue('EYPC_WINDOW_TARGET_TITLE')
 }
 const expectedTitle = expectedTargetTitle()
+const allowProcessSpaceFallback = environmentValue('EYPC_WINDOW_ALLOW_PROCESS_SPACE_FALLBACK') === '1'
 function normalizeTitle(value) {
   return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
 }
@@ -699,6 +766,28 @@ function resolveTargetWindow(windows, targetOrdinal, targetTitle) {
   if (!normalizedTargetTitle && ordinalMatch) return { target: ordinalMatch.current }
   return { outcome: 'not-found' }
 }
+function resolveCgOrdinal() {
+  if (cgWindowNumber <= 0) return 0
+  try {
+    const raw = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID)))
+    const cgList = Array.isArray(raw) ? raw : []
+    let index = 0
+    for (const item of cgList) {
+      if (!item || typeof item !== 'object') continue
+      const layer = Math.trunc(Number(item.kCGWindowLayer || 0))
+      if (layer !== 0) continue
+      const itemPid = Math.trunc(Number(item.kCGWindowOwnerPID || 0))
+      if (itemPid !== processId) continue
+      const wid = Math.trunc(Number(item.kCGWindowNumber || 0))
+      const title = normalizeTitle(item.kCGWindowName)
+      const alpha = Number(item.kCGWindowAlpha)
+      if (!title || (Number.isFinite(alpha) && alpha <= 0)) continue
+      index += 1
+      if (wid === cgWindowNumber) return index
+    }
+  } catch (error) {}
+  return 0
+}
 function booleanAttribute(target, name) {
   try { return { known: true, value: target.attributes.byName(name).value() === true } } catch (error) { return { known: false, value: false } }
 }
@@ -719,7 +808,23 @@ function activate() {
     addTrace('target', 'denied')
     return 'permission-required'
   }
-  const resolved = resolveTargetWindow(windows, ordinal, expectedTitle)
+  let resolved = resolveTargetWindow(windows, ordinal, expectedTitle)
+  let resolvedByCgOrdinal = false
+  if (!resolved.target && resolved.outcome !== 'ambiguous' && allowProcessSpaceFallback) {
+    try {
+      targetProcess.frontmost = true
+      addTrace('space', 'ok', 'single-window-frontmost')
+      windows = targetProcess.windows()
+      resolved = resolveTargetWindow(windows, ordinal, expectedTitle)
+    } catch (error) {}
+  }
+  if (!resolved.target && resolved.outcome !== 'ambiguous' && cgWindowNumber > 0) {
+    const cgOrdinal = resolveCgOrdinal()
+    if (cgOrdinal > 0) {
+      resolved = resolveTargetWindow(windows, cgOrdinal, '')
+      if (resolved.target) resolvedByCgOrdinal = true
+    }
+  }
   if (resolved.outcome === 'ambiguous') {
     addTrace('target', 'ambiguous')
     return 'ambiguous'
@@ -728,7 +833,7 @@ function activate() {
     addTrace('target', 'not-found')
     return 'not-found'
   }
-  addTrace('target', 'ok')
+  addTrace('target', 'ok', resolvedByCgOrdinal ? 'cg-ordinal-fallback' : 'title-match')
   const target = resolved.target
   const minimized = booleanAttribute(target, 'AXMinimized')
   if (minimized.known && minimized.value) {
@@ -763,8 +868,8 @@ function activate() {
   }
   const focusedAfterRaise = booleanAttribute(target, 'AXFocused')
   if (focusedAfterRaise.known && !focusedAfterRaise.value) {
-    addTrace('verify', 'denied')
-    return 'focus-denied'
+    addTrace('verify', 'unavailable', 'focus-state-mismatch')
+    return 'activated'
   }
   addTrace('verify', minimizedAfterRaise.known || focusedAfterRaise.known ? 'ok' : 'unavailable')
   return 'activated'
@@ -843,18 +948,408 @@ if (!processes.length) {
 `
 }
 
-function runWindowCommand(command, args, targetWindowTitle = null, debugTrace = false) {
+// Private SkyLight CGS: resolve a concrete CGWindowNumber against the current managed-Space map.
+// Direct per-window queries are authoritative; per-Space tag scans only corroborate/fill a direct miss.
+// Bindings stay preload-session-only because CG window IDs, PIDs, titles and Space IDs are recyclable.
+const WINDOW_BRIDGE_REVISION = 'wj13-exact-space'
+const MACOS_CGS_WINDOW_TAG_MASK = 0x7
+const MACOS_CGS_SPACE_QUERY_MASKS = [0x7, 0x7fffffff]
+const MACOS_CGS_SPACE_SETTLE_MS = 120
+const MACOS_CGS_SPACE_CONFIRM_TIMEOUT_MS = 2_000
+const MACOS_CGS_SPACE_CONFIRM_INTERVAL_MS = 50
+const MACOS_CF_STRING_ENCODING_UTF8 = 0x08000100
+let macosCgsApi = null
+/** @type {Map<number, Array<{ spaceId: bigint, displayUuid: string }>>} */
+let macosWindowSpaceCache = new Map()
+/** @type {{ entries: Array<{ spaceId: bigint, displayUuid: string }>, displayBySpace: Map<string, string>, currentByDisplay: Map<string, string> } | null} */
+let macosManagedSpaceSnapshot = null
+const MACOS_WINDOW_SPACE_LEARNED_KEY = 'eypc/macos-window-spaces/v1'
+let macosLegacySpaceBindingMigrationAttempted = false
+
+function loadMacosCgsApi() {
+  if (macosCgsApi !== null) return macosCgsApi
+  macosCgsApi = false
+  if (process.platform !== 'darwin') return false
+  try {
+    let koffi = null
+    const candidates = ['koffi', path.join(__dirname, 'node_modules', 'koffi'), path.join(__dirname, '..', 'node_modules', 'koffi')]
+    for (const id of candidates) {
+      try {
+        koffi = require(id)
+        break
+      } catch {}
+    }
+    if (!koffi) return false
+    const sky = koffi.load('/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight')
+    const cf = koffi.load('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
+    macosCgsApi = {
+      koffi,
+      SLSMainConnectionID: sky.func('SLSMainConnectionID', 'int', []),
+      SLSCopySpacesForWindows: sky.func('SLSCopySpacesForWindows', 'void *', ['int', 'int', 'void *']),
+      SLSCopyManagedDisplaySpaces: sky.func('SLSCopyManagedDisplaySpaces', 'void *', ['int']),
+      SLSCopyWindowsWithOptionsAndTags: sky.func('SLSCopyWindowsWithOptionsAndTags', 'void *', ['int', 'uint32', 'void *', 'uint32', 'void *', 'void *']),
+      SLSManagedDisplaySetCurrentSpace: sky.func('SLSManagedDisplaySetCurrentSpace', 'void', ['int', 'void *', 'uint64']),
+      CFNumberCreate: cf.func('CFNumberCreate', 'void *', ['void *', 'int', 'void *']),
+      CFArrayCreate: cf.func('CFArrayCreate', 'void *', ['void *', 'void *', 'long', 'void *']),
+      CFArrayGetCount: cf.func('CFArrayGetCount', 'long', ['void *']),
+      CFArrayGetValueAtIndex: cf.func('CFArrayGetValueAtIndex', 'void *', ['void *', 'long']),
+      CFNumberGetValue: cf.func('CFNumberGetValue', 'bool', ['void *', 'int', 'void *']),
+      CFStringCreateWithCString: cf.func('CFStringCreateWithCString', 'void *', ['void *', 'str', 'uint32']),
+      CFStringGetLength: cf.func('CFStringGetLength', 'long', ['void *']),
+      CFStringGetMaximumSizeForEncoding: cf.func('CFStringGetMaximumSizeForEncoding', 'long', ['long', 'uint32']),
+      CFStringGetCString: cf.func('CFStringGetCString', 'bool', ['void *', 'void *', 'long', 'uint32']),
+      CFDictionaryGetValue: cf.func('CFDictionaryGetValue', 'void *', ['void *', 'void *']),
+      CFRelease: cf.func('CFRelease', 'void', ['void *'])
+    }
+    return macosCgsApi
+  } catch {
+    macosCgsApi = false
+    return false
+  }
+}
+
+function macosCreateCfNumber(api, value, bits) {
+  if (bits === 64) {
+    const buf = Buffer.alloc(8)
+    buf.writeBigUInt64LE(BigInt(value), 0)
+    return api.CFNumberCreate(null, 4, buf)
+  }
+  const buf = Buffer.alloc(4)
+  buf.writeUInt32LE(Number(value) >>> 0, 0)
+  return api.CFNumberCreate(null, 3, buf)
+}
+
+function macosCreateCfArrayOne(api, cfValue) {
+  const ptrArray = Buffer.alloc(8)
+  ptrArray.writeBigUInt64LE(BigInt(api.koffi.address(cfValue)), 0)
+  return api.CFArrayCreate(null, ptrArray, 1, null)
+}
+
+function macosReadCfU64(api, cfNum) {
+  if (!cfNum) return null
+  const out = Buffer.alloc(8)
+  if (!api.CFNumberGetValue(cfNum, 4, out)) return null
+  return out.readBigUInt64LE(0)
+}
+
+function macosReadCfWindowId(api, cfNum) {
+  if (!cfNum) return null
+  const as64 = macosReadCfU64(api, cfNum)
+  if (as64 != null) return Number(as64)
+  const out = Buffer.alloc(4)
+  if (!api.CFNumberGetValue(cfNum, 3, out)) return null
+  return out.readUInt32LE(0)
+}
+
+function macosReadCfString(api, cfString) {
+  if (!cfString) return ''
+  const length = Number(api.CFStringGetLength(cfString))
+  const max = Number(api.CFStringGetMaximumSizeForEncoding(length, MACOS_CF_STRING_ENCODING_UTF8)) + 1
+  if (!Number.isFinite(max) || max <= 1) return ''
+  const buf = Buffer.alloc(max)
+  if (!api.CFStringGetCString(cfString, buf, buf.length, MACOS_CF_STRING_ENCODING_UTF8)) return ''
+  const end = buf.indexOf(0)
+  return buf.toString('utf8', 0, end < 0 ? buf.length : end).trim()
+}
+
+function macosCreateCfKey(api, name) {
+  return api.CFStringCreateWithCString(null, name, MACOS_CF_STRING_ENCODING_UTF8)
+}
+
+/** Native CF walk of every managed display → Spaces id64 + current Space + Display Identifier. */
+function macosLoadDisplayBySpaceMap(api, cid) {
+  const displayBySpace = new Map()
+  const currentByDisplay = new Map()
+  const entries = []
+  const managed = api.SLSCopyManagedDisplaySpaces(cid)
+  if (!managed) return { displayBySpace, currentByDisplay, entries }
+  const keyDisplay = macosCreateCfKey(api, 'Display Identifier')
+  const keySpaces = macosCreateCfKey(api, 'Spaces')
+  const keyCurrent = macosCreateCfKey(api, 'Current Space')
+  const keyId = macosCreateCfKey(api, 'id64')
+  try {
+    if (!keyDisplay || !keySpaces || !keyCurrent || !keyId) return { displayBySpace, currentByDisplay, entries }
+    const displayCount = Number(api.CFArrayGetCount(managed))
+    for (let i = 0; i < displayCount; i++) {
+      const displayDict = api.CFArrayGetValueAtIndex(managed, i)
+      if (!displayDict) continue
+      const displayUuid = macosReadCfString(api, api.CFDictionaryGetValue(displayDict, keyDisplay))
+      if (!displayUuid) continue
+      const currentDict = api.CFDictionaryGetValue(displayDict, keyCurrent)
+      if (currentDict) {
+        const currentId = macosReadCfU64(api, api.CFDictionaryGetValue(currentDict, keyId))
+        if (currentId != null && currentId > 0n) currentByDisplay.set(displayUuid, currentId.toString())
+      }
+      const spaces = api.CFDictionaryGetValue(displayDict, keySpaces)
+      if (!spaces) continue
+      const spaceCount = Number(api.CFArrayGetCount(spaces))
+      for (let j = 0; j < spaceCount; j++) {
+        const spaceDict = api.CFArrayGetValueAtIndex(spaces, j)
+        if (!spaceDict) continue
+        const spaceId = macosReadCfU64(api, api.CFDictionaryGetValue(spaceDict, keyId))
+        if (spaceId == null || spaceId <= 0n) continue
+        const raw = spaceId.toString()
+        entries.push({ spaceId, displayUuid })
+        displayBySpace.set(raw, displayUuid)
+      }
+    }
+  } finally {
+    if (keyDisplay) api.CFRelease(keyDisplay)
+    if (keySpaces) api.CFRelease(keySpaces)
+    if (keyCurrent) api.CFRelease(keyCurrent)
+    if (keyId) api.CFRelease(keyId)
+    api.CFRelease(managed)
+  }
+  return { displayBySpace, currentByDisplay, entries }
+}
+
+function macosRemoveLegacySpaceBindingCache() {
+  if (macosLegacySpaceBindingMigrationAttempted) return
+  macosLegacySpaceBindingMigrationAttempted = true
+  try {
+    const storage = globalThis.utools && globalThis.utools.dbStorage
+    if (storage && typeof storage.removeItem === 'function') storage.removeItem(MACOS_WINDOW_SPACE_LEARNED_KEY)
+  } catch {}
+}
+
+function macosSpaceBindingKey(binding) {
+  if (!binding || !binding.spaceId || !binding.displayUuid) return ''
+  return `${binding.spaceId.toString()}:${String(binding.displayUuid)}`
+}
+
+function macosDedupeSpaceBindings(bindings) {
+  const result = []
+  const seen = new Set()
+  for (const binding of Array.isArray(bindings) ? bindings : []) {
+    const key = macosSpaceBindingKey(binding)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    result.push({ spaceId: binding.spaceId, displayUuid: String(binding.displayUuid) })
+  }
+  return result
+}
+
+function macosCacheSpaceBindings(cache, cgWindowNumber, bindings) {
+  const wid = cgWindowNumber >>> 0
+  if (!wid) return
+  const normalized = macosDedupeSpaceBindings(bindings)
+  if (normalized.length) cache.set(wid, normalized)
+  else cache.delete(wid)
+}
+
+function macosSpacesForWindow(api, cid, cgWindowNumber, mask) {
+  const cfNum = macosCreateCfNumber(api, cgWindowNumber, 32)
+  if (!cfNum) return []
+  const cfArr = macosCreateCfArrayOne(api, cfNum)
+  if (!cfArr) {
+    api.CFRelease(cfNum)
+    return []
+  }
+  const spaceIds = []
+  const spaces = api.SLSCopySpacesForWindows(cid, mask, cfArr)
+  if (spaces) {
+    const count = Number(api.CFArrayGetCount(spaces))
+    for (let i = 0; i < count; i++) {
+      const spaceId = macosReadCfU64(api, api.CFArrayGetValueAtIndex(spaces, i))
+      if (spaceId != null && spaceId > 0n) spaceIds.push(spaceId)
+    }
+    api.CFRelease(spaces)
+  }
+  api.CFRelease(cfArr)
+  api.CFRelease(cfNum)
+  return spaceIds
+}
+
+function macosWindowNumbersOnSpace(api, cid, spaceId) {
+  const spaceNum = macosCreateCfNumber(api, spaceId, 64)
+  if (!spaceNum) return []
+  const spaceArr = macosCreateCfArrayOne(api, spaceNum)
+  if (!spaceArr) {
+    api.CFRelease(spaceNum)
+    return []
+  }
+  const ids = []
+  const setTags = Buffer.alloc(8)
+  const clearTags = Buffer.alloc(8)
+  const windows = api.SLSCopyWindowsWithOptionsAndTags(cid, 0, spaceArr, MACOS_CGS_WINDOW_TAG_MASK, setTags, clearTags)
+  if (windows) {
+    const count = Number(api.CFArrayGetCount(windows))
+    const seen = new Set()
+    for (let i = 0; i < count; i++) {
+      const wid = macosReadCfWindowId(api, api.CFArrayGetValueAtIndex(windows, i))
+      if (!Number.isInteger(wid) || wid <= 0 || seen.has(wid)) continue
+      seen.add(wid)
+      ids.push(wid)
+    }
+    api.CFRelease(windows)
+  }
+  api.CFRelease(spaceArr)
+  api.CFRelease(spaceNum)
+  return ids
+}
+
+function macosBindingsFromSpaceIds(spaceIds, displayBySpace) {
+  const bindings = []
+  for (const spaceId of spaceIds) {
+    const displayUuid = displayBySpace.get(spaceId.toString())
+    if (displayUuid) bindings.push({ spaceId, displayUuid })
+  }
+  return macosDedupeSpaceBindings(bindings)
+}
+
+function macosResolveBindingsByReverseScan(api, cid, cgWindowNumber, displayBySpace, entries) {
+  const want = cgWindowNumber >>> 0
+  const bindings = []
+  for (const entry of entries) {
+    const ids = macosWindowNumbersOnSpace(api, cid, entry.spaceId)
+    if (!ids.includes(want)) continue
+    const displayUuid = displayBySpace.get(entry.spaceId.toString()) || entry.displayUuid
+    if (!displayUuid) continue
+    bindings.push({ spaceId: entry.spaceId, displayUuid })
+  }
+  return macosDedupeSpaceBindings(bindings)
+}
+
+function macosDirectBindingsForWindow(api, cid, cgWindowNumber, displayBySpace) {
+  const spaceIds = []
+  const seen = new Set()
+  for (const mask of MACOS_CGS_SPACE_QUERY_MASKS) {
+    for (const spaceId of macosSpacesForWindow(api, cid, cgWindowNumber, mask)) {
+      const raw = spaceId.toString()
+      if (seen.has(raw)) continue
+      seen.add(raw)
+      spaceIds.push(spaceId)
+    }
+  }
+  return macosBindingsFromSpaceIds(spaceIds, displayBySpace)
+}
+
+/**
+ * Full reload: cache session-only bindings from managed-Space tags, then corroborate inventory
+ * CG refs with direct per-window queries. No binding crosses a preload lifetime.
+ */
+function macosRebuildWindowSpaceCache(api, cid, inventoryWindows) {
+  const { displayBySpace, currentByDisplay, entries } = macosLoadDisplayBySpaceMap(api, cid)
+  macosManagedSpaceSnapshot = { entries, displayBySpace, currentByDisplay }
+  const next = new Map()
+  for (const entry of entries) {
+    for (const wid of macosWindowNumbersOnSpace(api, cid, entry.spaceId)) {
+      const existing = next.get(wid) || []
+      macosCacheSpaceBindings(next, wid, [...existing, { spaceId: entry.spaceId, displayUuid: entry.displayUuid }])
+    }
+  }
+  for (const item of Array.isArray(inventoryWindows) ? inventoryWindows : []) {
+    const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(String(item && item.nativeRef || '').trim())
+    if (!parts || Number(parts[2]) !== 0) continue
+    const wid = Number(parts[3])
+    if (!Number.isInteger(wid) || wid <= 0) continue
+    const direct = macosDirectBindingsForWindow(api, cid, wid, displayBySpace)
+    if (direct.length) macosCacheSpaceBindings(next, wid, [...(next.get(wid) || []), ...direct])
+  }
+  macosWindowSpaceCache = next
+  return { cache: next, displayBySpace, currentByDisplay, entries, windowNumbers: next.size }
+}
+
+function macosLookupOrResolveWindowSpaceBinding(api, cid, cgWindowNumber) {
+  const want = cgWindowNumber >>> 0
+  const managed = macosLoadDisplayBySpaceMap(api, cid)
+  macosManagedSpaceSnapshot = managed
+  const direct = macosDirectBindingsForWindow(api, cid, want, managed.displayBySpace)
+  const reverse = macosResolveBindingsByReverseScan(api, cid, want, managed.displayBySpace, managed.entries)
+  const bindings = macosDedupeSpaceBindings([...direct, ...reverse])
+  macosCacheSpaceBindings(macosWindowSpaceCache, want, bindings)
+  const source = direct.length && reverse.length ? 'direct+reverse' : direct.length ? 'direct' : reverse.length ? 'reverse' : 'none'
+  return { bindings, source, currentByDisplay: managed.currentByDisplay }
+}
+
+function macosSwitchToCachedSpace(api, cid, binding, currentByDisplay) {
+  if (!binding || !binding.spaceId || binding.spaceId <= 0n || !binding.displayUuid) {
+    return { switched: false, detail: binding && binding.spaceId ? 'no-display' : 'no-space-id' }
+  }
+  const currentId = currentByDisplay && currentByDisplay.get(String(binding.displayUuid))
+  if (currentId && currentId === binding.spaceId.toString()) {
+    return { switched: false, detail: 'current' }
+  }
+  const display = api.CFStringCreateWithCString(null, String(binding.displayUuid), MACOS_CF_STRING_ENCODING_UTF8)
+  if (!display) return { switched: false, detail: 'no-display' }
+  try {
+    api.SLSManagedDisplaySetCurrentSpace(cid, display, binding.spaceId)
+    return { switched: true, detail: 'switched' }
+  } finally {
+    api.CFRelease(display)
+  }
+}
+
+function trySwitchMacosSpaceByCGS(nativeRef) {
+  try {
+    const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(String(nativeRef || '').trim())
+    if (!parts) return { switched: false, detail: 'bad-ref' }
+    const ordinal = Number(parts[2])
+    const cgWindowNumber = Number(parts[3])
+    // CG inventory refs are pid:0:cgWindowNumber; AX-fallback refs use a non-zero ordinal and zero window number.
+    if (ordinal !== 0 || !Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) return { switched: false, detail: 'ax-fallback' }
+    const api = loadMacosCgsApi()
+    if (!api) return { switched: false, detail: 'no-api' }
+    const cid = api.SLSMainConnectionID()
+    const resolved = macosLookupOrResolveWindowSpaceBinding(api, cid, cgWindowNumber)
+    if (!resolved.bindings.length) return { switched: false, detail: 'empty-spaces', bindingCount: 0, bindingSource: resolved.source }
+    const currentBindings = resolved.bindings.filter((binding) => resolved.currentByDisplay.get(binding.displayUuid) === binding.spaceId.toString())
+    if (currentBindings.length) {
+      return { switched: false, detail: 'current', binding: currentBindings[0], bindingCount: resolved.bindings.length, bindingSource: resolved.source, sameSpace: true }
+    }
+    if (resolved.bindings.length !== 1) {
+      return { switched: false, detail: 'ambiguous-spaces', bindingCount: resolved.bindings.length, bindingSource: resolved.source, sameSpace: false }
+    }
+    const binding = resolved.bindings[0]
+    const switched = macosSwitchToCachedSpace(api, cid, binding, resolved.currentByDisplay)
+    return { ...switched, binding, bindingCount: 1, bindingSource: resolved.source, sameSpace: false }
+  } catch {
+    return { switched: false, detail: 'error' }
+  }
+}
+
+async function macosConfirmManagedSpace(binding) {
+  if (!binding || !binding.spaceId || !binding.displayUuid) return false
+  const api = loadMacosCgsApi()
+  if (!api) return false
+  const cid = api.SLSMainConnectionID()
+  const expected = binding.spaceId.toString()
+  const deadline = Date.now() + MACOS_CGS_SPACE_CONFIRM_TIMEOUT_MS
+  while (Date.now() <= deadline) {
+    try {
+      const current = macosLoadDisplayBySpaceMap(api, cid).currentByDisplay.get(String(binding.displayUuid))
+      if (current === expected) return true
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, MACOS_CGS_SPACE_CONFIRM_INTERVAL_MS))
+  }
+  return false
+}
+
+/** Refresh-owned full reload of Space bindings for every CG window (all displays / all desktops). */
+function macosWarmWindowSpaceCacheFromInventory(windows) {
+  if (process.platform !== 'darwin') return
+  try {
+    macosRemoveLegacySpaceBindingCache()
+    const api = loadMacosCgsApi()
+    if (!api) return
+    macosRebuildWindowSpaceCache(api, api.SLSMainConnectionID(), windows)
+  } catch {}
+}
+
+function runWindowCommand(command, args, targetWindowTitle = null, debugTrace = false, allowProcessSpaceFallback = false, extraEnvironment = null) {
   return new Promise((resolve) => {
     const options = {
       windowsHide: true,
       timeout: WINDOW_BRIDGE_TIMEOUT_MS,
       maxBuffer: WINDOW_BRIDGE_OUTPUT_LIMIT
     }
-    if (targetWindowTitle !== null || debugTrace) {
+    if (targetWindowTitle !== null || debugTrace || allowProcessSpaceFallback || (extraEnvironment && typeof extraEnvironment === 'object')) {
       options.env = {
         ...process.env,
         ...(targetWindowTitle !== null ? { EYPC_WINDOW_TARGET_TITLE: targetWindowTitle } : {}),
-        ...(debugTrace ? { EYPC_WINDOW_DEBUG_TRACE: '1' } : {})
+        ...(debugTrace ? { EYPC_WINDOW_DEBUG_TRACE: '1' } : {}),
+        ...(allowProcessSpaceFallback ? { EYPC_WINDOW_ALLOW_PROCESS_SPACE_FALLBACK: '1' } : {}),
+        ...(extraEnvironment && typeof extraEnvironment === 'object' ? extraEnvironment : {})
       }
     }
     execFile(command, args, {
@@ -865,14 +1360,92 @@ function runWindowCommand(command, args, targetWindowTitle = null, debugTrace = 
   })
 }
 
+function unavailableWindowEnvironment(platform = 'unsupported') {
+  return {
+    platform,
+    bridgeRevision: WINDOW_BRIDGE_REVISION,
+    identityAvailable: false,
+    appMatches: false,
+    cgTargetMatches: 0,
+    cgWindowIdMatches: 0,
+    ownerCgWindowCount: 0,
+    axTargetMatches: 0,
+    axWindowCount: 0,
+    spaceBinding: 'unavailable',
+    spaceBindingCount: 0,
+    spaceBindingSource: 'unavailable',
+    sameSpace: null
+  }
+}
+
+async function readMacosWindowIdentity(target) {
+  const source = target && typeof target === 'object' ? target : {}
+  const nativeRef = String(source.nativeRef || '').trim()
+  const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
+  if (!parts) return unavailableWindowEnvironment('darwin')
+  const pid = Number(parts[1])
+  const cgWindowNumber = Number(parts[3])
+  const title = String(source.title || '').slice(0, 4096)
+  const appId = String(source.appId || source.appName || '').slice(0, 512)
+  const script = MACOS_ENV_SNAPSHOT_SCRIPT
+    .replace('__EYPC_TARGET_PID__', String(pid))
+    .replace('__EYPC_CG_WINDOW_NUMBER__', String(cgWindowNumber))
+  const result = await runWindowCommand(
+    '/usr/bin/osascript',
+    ['-l', 'JavaScript', '-e', script],
+    title,
+    false,
+    false,
+    { EYPC_WINDOW_TARGET_APP_ID: appId }
+  )
+  const snapshot = unavailableWindowEnvironment('darwin')
+  if (result.ok) {
+    try {
+      const parsed = JSON.parse(String(result.stdout || '').trim() || '{}')
+      snapshot.identityAvailable = true
+      snapshot.appMatches = parsed.appMatches === true
+      snapshot.cgTargetMatches = Math.max(0, Math.trunc(Number(parsed.cgTargetMatches || 0)))
+      snapshot.cgWindowIdMatches = Math.max(0, Math.trunc(Number(parsed.cgWindowIdMatches || 0)))
+      snapshot.ownerCgWindowCount = Math.max(0, Math.trunc(Number(parsed.ownerCgWindowCount || 0)))
+      snapshot.axTargetMatches = Math.max(0, Math.trunc(Number(parsed.axTargetMatches || 0)))
+      snapshot.axWindowCount = Math.max(0, Math.trunc(Number(parsed.axWindowCount || 0)))
+    } catch {}
+  }
+  return snapshot
+}
+
+async function inspectWindowEnvironment(target) {
+  if (process.platform !== 'darwin') return unavailableWindowEnvironment('unsupported')
+  const source = target && typeof target === 'object' ? target : {}
+  const snapshot = await readMacosWindowIdentity(source)
+  const nativeRef = String(source.nativeRef || '').trim()
+  const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
+  if (!parts) return snapshot
+  const cgWindowNumber = Number(parts[3])
+  try {
+    const api = loadMacosCgsApi()
+    if (api) {
+      const cid = api.SLSMainConnectionID()
+      const resolved = macosLookupOrResolveWindowSpaceBinding(api, cid, cgWindowNumber)
+      snapshot.spaceBinding = resolved.bindings.length ? 'bound' : 'unbound'
+      snapshot.spaceBindingCount = resolved.bindings.length
+      snapshot.spaceBindingSource = resolved.source
+      snapshot.sameSpace = resolved.bindings.length
+        ? resolved.bindings.some((binding) => resolved.currentByDisplay.get(binding.displayUuid) === binding.spaceId.toString())
+        : false
+    }
+  } catch {}
+  return snapshot
+}
+
 function windowCapability(permission = 'unknown', reason = '', extras = {}) {
   if (process.platform === 'win32') {
-    return { platform: 'win32', supported: true, permission: 'granted', canList: true, canActivate: true, canClose: true, canAlwaysOnTop: true, ...(reason ? { reason } : {}), ...extras }
+    return { platform: 'win32', bridgeRevision: WINDOW_BRIDGE_REVISION, supported: true, permission: 'granted', canList: true, canActivate: true, canClose: true, canAlwaysOnTop: true, ...(reason ? { reason } : {}), ...extras }
   }
   if (process.platform === 'darwin') {
-    return { platform: 'darwin', supported: true, permission, canList: permission !== 'required', canActivate: permission !== 'required', canClose: permission !== 'required', canAlwaysOnTop: false, ...(reason ? { reason } : {}), ...extras }
+    return { platform: 'darwin', bridgeRevision: WINDOW_BRIDGE_REVISION, supported: true, permission, canList: permission !== 'required', canActivate: permission !== 'required', canClose: permission !== 'required', canAlwaysOnTop: false, ...(reason ? { reason } : {}), ...extras }
   }
-  return { platform: 'unsupported', supported: false, permission: 'unsupported', canList: false, canActivate: false, canClose: false, canAlwaysOnTop: false, reason: reason || '当前系统不支持窗口跳转', ...extras }
+  return { platform: 'unsupported', bridgeRevision: WINDOW_BRIDGE_REVISION, supported: false, permission: 'unsupported', canList: false, canActivate: false, canClose: false, canAlwaysOnTop: false, reason: reason || '当前系统不支持窗口跳转', ...extras }
 }
 
 function isMacWindowPermissionError(value) {
@@ -903,6 +1476,7 @@ function parseWindowJson(output, platform) {
 }
 
 async function windowCapabilities() {
+  if (process.platform === 'darwin') macosRemoveLegacySpaceBindingCache()
   return windowCapability()
 }
 
@@ -930,6 +1504,7 @@ async function listWindows() {
     } else {
       cgParsed = parseWindowJson(cgResult.stdout, 'darwin')
       if (cgParsed.windows.length > 0) {
+        macosWarmWindowSpaceCacheFromInventory(cgParsed.windows)
         return {
           capability: windowCapability('granted', cgParsed.screenRecordingLikelyMissing ? '部分窗口标题可能因屏幕录制权限受限' : ''),
           windows: cgParsed.windows,
@@ -981,8 +1556,16 @@ async function listWindows() {
   return { capability: windowCapability('unsupported'), windows: [], message: '当前系统不支持窗口跳转' }
 }
 
-const WINDOW_OPERATION_TRACE_STAGES = new Set(['bridge', 'target', 'process', 'restore', 'foreground', 'raise', 'verify', 'topmost'])
+const WINDOW_OPERATION_TRACE_STAGES = new Set(['bridge', 'space', 'target', 'process', 'restore', 'foreground', 'raise', 'verify', 'topmost'])
 const WINDOW_OPERATION_TRACE_OUTCOMES = new Set(['ok', 'skipped', 'not-found', 'ambiguous', 'failed', 'denied', 'unsupported', 'unavailable'])
+const WINDOW_OPERATION_TRACE_DETAILS = new Set([
+  'switched', 'switch-confirmed', 'switch-timeout', 'current', 'walked', 'direct-unique', 'direct-multiple', 'reverse-unique',
+  'ambiguous-spaces', 'ax-fallback', 'bad-ref', 'no-api', 'empty-spaces', 'no-space-id', 'no-display',
+  'process-frontmost', 'single-window-frontmost', 'multiwindow-blocked', 'current-space-inferred', 'cg-ordinal-fallback', 'title-match', 'title-mismatch', 'focus-state-mismatch', 'error'
+])
+const WINDOW_ACTIVATION_REASON_CODES = new Set([
+  'space-unbound', 'space-unbound-multiwindow', 'space-ambiguous', 'space-switch-timeout', 'target-title-changed'
+])
 
 function debugTraceRequested(options) {
   return Boolean(options && typeof options === 'object' && options.debugTrace === true)
@@ -992,14 +1575,41 @@ function optionalWindowOperationTrace(debugTrace, steps) {
   return debugTrace ? { trace: { steps } } : {}
 }
 
+function macosSpaceTraceStep(spaceAttempt) {
+  const detail = WINDOW_OPERATION_TRACE_DETAILS.has(spaceAttempt.detail) ? spaceAttempt.detail : 'error'
+  const outcome = detail === 'switched' || detail === 'switch-confirmed'
+    ? 'ok'
+    : (detail === 'bad-ref' || detail === 'ax-fallback' || detail === 'current' || detail === 'current-space-inferred' ? 'skipped' : detail === 'ambiguous-spaces' ? 'ambiguous' : 'failed')
+  return { stage: 'space', outcome, detail }
+}
+
+function macosBindingTraceStep(spaceAttempt) {
+  const count = Math.max(0, Math.trunc(Number(spaceAttempt && spaceAttempt.bindingCount || 0)))
+  const source = String(spaceAttempt && spaceAttempt.bindingSource || '')
+  if (!count) return null
+  const detail = count > 1
+    ? 'direct-multiple'
+    : source.includes('direct')
+      ? 'direct-unique'
+      : 'reverse-unique'
+  return { stage: 'space', outcome: count > 1 ? 'ambiguous' : 'ok', detail }
+}
+
+function mergeDebugTraceSteps(prefixSteps, result) {
+  const existing = result && result.trace && Array.isArray(result.trace.steps) ? result.trace.steps : []
+  const steps = [...prefixSteps, ...existing].slice(0, 16)
+  return { ...result, ...(steps.length ? { trace: { steps } } : {}) }
+}
+
 function parseWindowOperationTrace(value) {
   if (!value || typeof value !== 'object' || !Array.isArray(value.trace)) return undefined
   const steps = []
   for (const step of value.trace.slice(0, 16)) {
     const stage = step && typeof step === 'object' ? String(step.stage || '') : ''
     const outcome = step && typeof step === 'object' ? String(step.outcome || '') : ''
+    const detail = step && typeof step === 'object' ? String(step.detail || '') : ''
     if (!WINDOW_OPERATION_TRACE_STAGES.has(stage) || !WINDOW_OPERATION_TRACE_OUTCOMES.has(outcome)) continue
-    steps.push({ stage, outcome })
+    steps.push(WINDOW_OPERATION_TRACE_DETAILS.has(detail) ? { stage, outcome, detail } : { stage, outcome })
   }
   return steps.length ? { steps } : undefined
 }
@@ -1010,7 +1620,8 @@ function parseWindowActivationResult(output, fallback = 'failed') {
     const outcome = String(value && value.outcome || '')
     if (['activated', 'not-found', 'ambiguous', 'focus-denied', 'permission-required', 'unsupported', 'failed'].includes(outcome)) {
       const trace = parseWindowOperationTrace(value)
-      return { outcome, ...(trace ? { trace } : {}) }
+      const reasonCode = String(value && value.reasonCode || '')
+      return { outcome, ...(WINDOW_ACTIVATION_REASON_CODES.has(reasonCode) ? { reasonCode } : {}), ...(trace ? { trace } : {}) }
     }
   } catch {}
   return { outcome: fallback }
@@ -1040,14 +1651,101 @@ async function activateWindow(target, options = {}) {
   const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
   if (!parts) return { outcome: 'not-found', message: 'macOS 窗口引用已失效', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }]) }
   const title = String(source.title || '').replace(/\u0000/g, '').slice(0, 4096)
-  const result = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', macosActivateWindowScript(Number(parts[1]), Number(parts[2]))], title, debugTrace)
+  const pid = Number(parts[1])
+  const ordinal = Number(parts[2])
+  const cgWindowNumber = Number(parts[3])
+  const identity = await readMacosWindowIdentity(source)
+  if (ordinal === 0 && cgWindowNumber > 0 && !identity.identityAvailable) {
+    return {
+      outcome: 'failed',
+      message: '无法重新验证 macOS 窗口身份',
+      ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }])
+    }
+  }
+  if (ordinal === 0 && cgWindowNumber > 0) {
+    if (identity.cgWindowIdMatches !== 1) {
+      return {
+        outcome: 'not-found',
+        message: 'macOS 窗口引用已失效',
+        ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }])
+      }
+    }
+    if (!identity.appMatches || identity.cgTargetMatches !== 1) {
+      return {
+        outcome: 'not-found',
+        reasonCode: 'target-title-changed',
+        message: '目标窗口标题或所属应用已变化，需要重新确认',
+        ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found', detail: 'title-mismatch' }])
+      }
+    }
+  }
+
+  const spaceAttempt = trySwitchMacosSpaceByCGS(nativeRef)
+  const bindingStep = debugTrace ? macosBindingTraceStep(spaceAttempt) : null
+  const spacePrefix = debugTrace ? [...(bindingStep ? [bindingStep] : []), macosSpaceTraceStep(spaceAttempt)] : []
+  if (spaceAttempt.detail === 'ambiguous-spaces') {
+    const failure = { outcome: 'ambiguous', reasonCode: 'space-ambiguous', message: '目标窗口同时绑定到多个非当前桌面，EyPc 未任意选择' }
+    return debugTrace ? mergeDebugTraceSteps(spacePrefix, failure) : failure
+  }
+  if (spaceAttempt.switched) {
+    const confirmed = await macosConfirmManagedSpace(spaceAttempt.binding)
+    if (!confirmed) {
+      const failedAttempt = { ...spaceAttempt, detail: 'switch-timeout' }
+      const failedPrefix = debugTrace
+        ? [...(bindingStep ? [bindingStep] : []), macosSpaceTraceStep(failedAttempt)]
+        : []
+      const failure = { outcome: 'failed', reasonCode: 'space-switch-timeout', message: '目标桌面切换未在时限内确认' }
+      return debugTrace ? mergeDebugTraceSteps(failedPrefix, failure) : failure
+    }
+    await new Promise((resolve) => setTimeout(resolve, MACOS_CGS_SPACE_SETTLE_MS))
+    spaceAttempt.detail = 'switch-confirmed'
+  }
+
+  const spaceUnavailable = ['empty-spaces', 'no-api', 'no-space-id', 'no-display', 'error'].includes(spaceAttempt.detail)
+  const allowSingleWindowFallback = spaceUnavailable && identity.identityAvailable && identity.ownerCgWindowCount === 1
+  const allowCurrentSpaceInferred = spaceUnavailable && identity.identityAvailable && identity.ownerCgWindowCount > 1
+    && identity.axWindowCount > 0 && identity.axWindowCount === identity.ownerCgWindowCount
+  if (spaceUnavailable && !allowSingleWindowFallback && !allowCurrentSpaceInferred) {
+    const multiple = identity.identityAvailable && identity.ownerCgWindowCount > 1
+    const reasonCode = multiple ? 'space-unbound-multiwindow' : 'space-unbound'
+    const detail = multiple ? 'multiwindow-blocked' : spaceAttempt.detail
+    const failurePrefix = debugTrace
+      ? [...(bindingStep ? [bindingStep] : []), { stage: 'space', outcome: 'failed', detail }]
+      : []
+    const failure = {
+      outcome: 'not-found',
+      reasonCode,
+      message: multiple ? '无法唯一绑定目标桌面；多窗口进程未执行任意前置' : '无法绑定目标窗口所在桌面'
+    }
+    return debugTrace ? mergeDebugTraceSteps(failurePrefix, failure) : failure
+  }
+  if (allowCurrentSpaceInferred) {
+    spaceAttempt.detail = 'current-space-inferred'
+  }
+
+  const finalSpacePrefix = debugTrace
+    ? [...(bindingStep ? [bindingStep] : []), macosSpaceTraceStep(spaceAttempt)]
+    : []
+  const result = await runWindowCommand(
+    '/usr/bin/osascript',
+    ['-l', 'JavaScript', '-e', macosActivateWindowScript(pid, ordinal, cgWindowNumber)],
+    title,
+    debugTrace,
+    allowSingleWindowFallback
+  )
   if (!result.ok) {
     const detail = `${result.error}\n${result.stderr}`
-    return isMacWindowPermissionError(detail)
+    const failure = isMacWindowPermissionError(detail)
       ? { outcome: 'permission-required', message: '需要在系统设置中允许 EyPc 控制 System Events', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'denied' }]) }
       : { outcome: 'failed', message: 'macOS 无法激活该窗口', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }]) }
+    return debugTrace ? mergeDebugTraceSteps(finalSpacePrefix, failure) : failure
   }
-  return parseWindowActivationResult(result.stdout)
+  const activation = parseWindowActivationResult(result.stdout)
+  if (activation.outcome === 'not-found' && cgWindowNumber > 0) macosWindowSpaceCache.delete(cgWindowNumber >>> 0)
+  const classified = activation.outcome === 'not-found' && allowSingleWindowFallback
+    ? { ...activation, reasonCode: 'space-unbound' }
+    : activation
+  return debugTrace ? mergeDebugTraceSteps(finalSpacePrefix, classified) : classified
 }
 
 async function alwaysOnTopWindow(target, options = {}) {
@@ -2741,6 +3439,37 @@ function codexApplyDesktopShadowPatch(shadow, patch) {
   return true
 }
 
+function codexApplyCachedCompletedTurnEvidence(known, threadId) {
+  const turn = codexThreadTurnStatusCache.get(threadId)?.turn
+  if (!turn || turn.status !== 'completed' || !turn.startedAt) return false
+  const baselineStartedAt = codexTimestampMs(known.lastTurnStartedAt)
+  const activeSince = codexTimestampMs(known.desktopActiveSince)
+  const freshCompleted = turn.startedAt > baselineStartedAt
+    || known.lastTurnStatus === 'inProgress' && turn.startedAt === baselineStartedAt
+  if (!freshCompleted) return false
+  if (activeSince > 0 && turn.completedAt && turn.completedAt <= activeSince) return false
+  known.lastTurnStatus = 'completed'
+  known.lastTurnStartedAt = turn.startedAt
+  if (turn.completedAt) known.lastTurnCompletedAt = turn.completedAt
+  else delete known.lastTurnCompletedAt
+  known.lastTurnEvidence = 'targeted-after-exit'
+  return true
+}
+
+function codexClearStalePreCompletionLiveUnread(bridge, threadId) {
+  if (!bridge || !validCodexThreadId(threadId)) return
+  const shadow = bridge.shadows.get(threadId)
+  if (shadow && shadow.hasUnreadTurn === false) shadow.hasUnreadTurn = undefined
+  const liveUnread = bridge.liveUnread.get(threadId)
+  if (liveUnread && liveUnread.hasUnreadTurn === false) bridge.liveUnread.delete(threadId)
+  for (const [sideId, sideShadow] of bridge.sideShadows) {
+    if (sideShadow.parentThreadId !== threadId) continue
+    if (sideShadow.hasUnreadTurn === false) sideShadow.hasUnreadTurn = undefined
+    const sideLive = bridge.liveUnread.get(sideId)
+    if (sideLive && sideLive.hasUnreadTurn === false) bridge.liveUnread.delete(sideId)
+  }
+}
+
 class CodexDesktopCompanionBridge {
   constructor() {
     this.state = 'not-checked'
@@ -2757,6 +3486,7 @@ class CodexDesktopCompanionBridge {
     this.sideShadows = new Map()
     this.liveUnread = new Map()
     this.turnRefreshes = new Map()
+    this.unreadRefreshes = new Map()
     this.lastSocketError = ''
   }
 
@@ -2768,16 +3498,114 @@ class CodexDesktopCompanionBridge {
     this.turnRefreshes.delete(threadId)
   }
 
-  clearLatestTurnRefreshes() {
-    for (const threadId of this.turnRefreshes.keys()) this.cancelLatestTurnRefresh(threadId)
+  cancelCompletionUnreadRefresh(threadId) {
+    const refresh = this.unreadRefreshes.get(threadId)
+    if (!refresh) return
+    refresh.cancelled = true
+    if (refresh.timer) clearTimeout(refresh.timer)
+    this.unreadRefreshes.delete(threadId)
   }
 
-  scheduleLatestTurnRefresh(threadId) {
-    if (!validCodexThreadId(threadId) || this.turnRefreshes.has(threadId)) return
+  clearLatestTurnRefreshes() {
+    for (const threadId of this.turnRefreshes.keys()) this.cancelLatestTurnRefresh(threadId)
+    for (const threadId of this.unreadRefreshes.keys()) this.cancelCompletionUnreadRefresh(threadId)
+  }
+
+  applyFreshCompletionUnread(known, threadId, options = {}) {
+    if (!known || !validCodexThreadId(threadId)) return false
+    if (options.clearStaleLiveFalse === true) codexClearStalePreCompletionLiveUnread(this, threadId)
+    const shadow = this.shadows.get(threadId)
+    const liveUnread = this.state === 'connected' ? this.liveUnread.get(threadId) : null
+    if (typeof shadow?.hasUnreadTurn === 'boolean' || liveUnread) {
+      known.hasUnreadTurn = typeof shadow?.hasUnreadTurn === 'boolean'
+        ? shadow.hasUnreadTurn === true
+        : liveUnread.hasUnreadTurn === true
+      known.unreadAuthority = 'desktop-live'
+      return known.hasUnreadTurn === true
+    }
+    let unreadIds = null
+    try { unreadIds = readCodexDesktopUnreadIds() } catch {}
+    if (unreadIds) {
+      const hasUnreadTurn = unreadIds.has(threadId)
+      known.hasUnreadTurn = hasUnreadTurn
+      known.unreadAuthority = 'desktop-persisted'
+      known.connectorHasUnreadTurn = hasUnreadTurn
+      known.connectorUnreadAuthority = 'desktop-persisted'
+      return hasUnreadTurn
+    }
+    const fallback = codexDesktopPersistedUnread(known)
+    known.hasUnreadTurn = fallback.hasUnreadTurn
+    known.unreadAuthority = fallback.unreadAuthority
+    return known.hasUnreadTurn === true
+  }
+
+  publishTargetedCompletion(known, threadId) {
+    this.applyFreshCompletionUnread(known, threadId, { clearStaleLiveFalse: true })
+    emitCodexActivityDelta([{ ...known, lastTurnEvidence: 'targeted-after-exit' }], false)
+    if (known.hasUnreadTurn !== true) this.scheduleCompletionUnreadRefresh(threadId)
+  }
+
+  scheduleCompletionUnreadRefresh(threadId) {
+    if (!validCodexThreadId(threadId) || this.unreadRefreshes.has(threadId)) return
+    const known = codexActivityInventory.get(threadId)
+    if (!known) return
+    if (known.lastTurnStatus === 'completed' && known.hasUnreadTurn === true) return
     const refresh = {
       cancelled: false,
       timer: null,
       attempt: 0,
+      deadlineAt: Date.now() + CODEX_DESKTOP_TURN_REFRESH_DEADLINE_MS
+    }
+    this.unreadRefreshes.set(threadId, refresh)
+    const finish = () => {
+      if (refresh.timer) clearTimeout(refresh.timer)
+      refresh.timer = null
+      if (this.unreadRefreshes.get(threadId) === refresh) this.unreadRefreshes.delete(threadId)
+    }
+    const run = () => {
+      refresh.timer = null
+      const latest = codexActivityInventory.get(threadId)
+      if (refresh.cancelled || !latest) {
+        finish()
+        return
+      }
+      if (latest.lastTurnStatus === 'completed') {
+        if (latest.hasUnreadTurn === true) {
+          finish()
+          return
+        }
+        const becameUnread = this.applyFreshCompletionUnread(latest, threadId)
+        if (becameUnread) {
+          emitCodexActivityDelta([{ ...latest, readStateOnly: true }], false)
+          finish()
+          return
+        }
+      }
+      const remaining = refresh.deadlineAt - Date.now()
+      if (remaining <= 0 || refresh.attempt >= CODEX_DESKTOP_TURN_REFRESH_DELAYS_MS.length) {
+        finish()
+        return
+      }
+      const nextDelay = CODEX_DESKTOP_TURN_REFRESH_DELAYS_MS[refresh.attempt]
+      refresh.attempt += 1
+      if (typeof nextDelay !== 'number' || Date.now() + nextDelay >= refresh.deadlineAt) {
+        finish()
+        return
+      }
+      refresh.timer = setTimeout(() => { run() }, nextDelay)
+      refresh.timer.unref?.()
+    }
+    void run()
+  }
+
+  scheduleLatestTurnRefresh(threadId, options = {}) {
+    if (!validCodexThreadId(threadId) || this.turnRefreshes.has(threadId)) return
+    const verifyStaleActive = options.verifyStaleActive === true
+    const refresh = {
+      cancelled: false,
+      timer: null,
+      attempt: 0,
+      verifyStaleActive,
       deadlineAt: Date.now() + CODEX_DESKTOP_TURN_REFRESH_DEADLINE_MS,
       baselineTurnStatus: codexActivityInventory.get(threadId)?.lastTurnStatus,
       baselineTurnStartedAt: codexTimestampMs(codexActivityInventory.get(threadId)?.lastTurnStartedAt)
@@ -2797,8 +3625,25 @@ class CodexDesktopCompanionBridge {
     const run = async () => {
       refresh.timer = null
       const known = codexActivityInventory.get(threadId)
-      if (refresh.cancelled || !known || known.status === 'active') {
+      if (refresh.cancelled || !known) {
         finish(false)
+        return
+      }
+      const waitingLive = Array.isArray(known.activeFlags)
+        && known.activeFlags.some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
+      if (known.status === 'active' && !refresh.verifyStaleActive) {
+        finish(false)
+        return
+      }
+      if (refresh.verifyStaleActive) {
+        if (known.status !== 'active' || waitingLive) {
+          finish(false)
+          return
+        }
+      }
+      if (!refresh.verifyStaleActive && codexApplyCachedCompletedTurnEvidence(known, threadId)) {
+        finish(false)
+        this.publishTargetedCompletion(known, threadId)
         return
       }
       const remaining = refresh.deadlineAt - Date.now()
@@ -2815,11 +3660,28 @@ class CodexDesktopCompanionBridge {
           itemsView: 'notLoaded'
         }, Math.max(250, Math.min(1_000, remaining)))
         const latestKnown = codexActivityInventory.get(threadId)
-        if (refresh.cancelled || latestKnown !== known || known.status === 'active') {
+        if (refresh.cancelled || latestKnown !== known) {
+          finish(false)
+          return
+        }
+        if (!refresh.verifyStaleActive && known.status === 'active') {
+          finish(false)
+          return
+        }
+        if (refresh.verifyStaleActive && (known.status !== 'active' || waitingLive)) {
           finish(false)
           return
         }
         const turn = sanitizeCodexTurnStatusPage(page)
+        if (refresh.verifyStaleActive && turn?.status === 'inProgress' && turn.startedAt > refresh.baselineTurnStartedAt) {
+          codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
+          known.lastTurnStatus = 'inProgress'
+          known.lastTurnStartedAt = turn.startedAt
+          delete known.lastTurnCompletedAt
+          finish(false)
+          emitCodexActivityDelta([known], false)
+          return
+        }
         const freshCompletedTurn = turn?.status !== 'completed'
           || turn.startedAt > refresh.baselineTurnStartedAt
           || refresh.baselineTurnStatus === 'inProgress' && turn.startedAt === refresh.baselineTurnStartedAt
@@ -2830,7 +3692,8 @@ class CodexDesktopCompanionBridge {
           if (turn.status === 'completed' && turn.completedAt) known.lastTurnCompletedAt = turn.completedAt
           else delete known.lastTurnCompletedAt
           finish(false)
-          emitCodexActivityDelta([{ ...known, lastTurnEvidence: 'targeted-after-exit' }], false)
+          if (turn.status === 'completed') this.publishTargetedCompletion(known, threadId)
+          else emitCodexActivityDelta([{ ...known, lastTurnEvidence: 'targeted-after-exit' }], false)
           return
         }
       } catch {}
@@ -3226,8 +4089,18 @@ class CodexDesktopCompanionBridge {
       known.unreadAuthority = fallback.unreadAuthority
     }
     emitCodexActivityDelta([readStateOnly ? { ...known, readStateOnly: true } : known], false)
-    if (status === 'active') this.cancelLatestTurnRefresh(parentThreadId)
-    else if (priorStatus === 'active') this.scheduleLatestTurnRefresh(parentThreadId)
+    if (status === 'active') {
+      const waitingLive = activeFlags.includes('waitingOnUserInput') || activeFlags.includes('waitingOnApproval')
+      if (!waitingLive && (known.lastTurnStatus === 'completed' || priorStatus !== 'active')) {
+        this.scheduleLatestTurnRefresh(parentThreadId, { verifyStaleActive: true })
+      } else if (waitingLive) {
+        this.cancelLatestTurnRefresh(parentThreadId)
+      }
+    } else if (priorStatus === 'active') {
+      codexApplyCachedCompletedTurnEvidence(known, parentThreadId)
+      if (known.lastTurnStatus === 'completed') this.publishTargetedCompletion(known, parentThreadId)
+      else this.scheduleLatestTurnRefresh(parentThreadId)
+    }
   }
 
   publishSideShadow(threadId, shadow, readStateOnly = false) {
@@ -3393,6 +4266,7 @@ class CodexDesktopCompanionBridge {
     for (const threadId of this.shadows.keys()) if (!next.has(threadId)) this.shadows.delete(threadId)
     for (const threadId of this.liveUnread.keys()) if (!next.has(threadId)) this.liveUnread.delete(threadId)
     for (const threadId of this.turnRefreshes.keys()) if (!next.has(threadId)) this.cancelLatestTurnRefresh(threadId)
+    for (const threadId of this.unreadRefreshes.keys()) if (!next.has(threadId)) this.cancelCompletionUnreadRefresh(threadId)
     for (const [threadId, shadow] of this.sideShadows) {
       if (next.has(shadow.parentThreadId)) continue
       this.sideShadows.delete(threadId)
@@ -3639,6 +4513,18 @@ function handleCodexServerMessage(message) {
     const threadId = typeof params.threadId === 'string' ? params.threadId : ''
     markCodexThreadTurnStatusDirty(threadId)
     emitCodexActivityDelta([], true, 'urgent')
+    if (method === 'turn/completed' && validCodexThreadId(threadId)) {
+      const bridge = codexEnsureDesktopBridge()
+      const known = codexActivityInventory.get(threadId)
+      if (known) {
+        const waitingLive = Array.isArray(known.activeFlags)
+          && known.activeFlags.some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
+        if (known.status === 'active' && !waitingLive) {
+          bridge.scheduleLatestTurnRefresh(threadId, { verifyStaleActive: true })
+        }
+        bridge.scheduleCompletionUnreadRefresh(threadId)
+      }
+    }
     return true
   }
   if (method === 'thread/archived') {
@@ -4611,7 +5497,7 @@ async function archiveCodexThread(actionAlias, request) {
   const expectedCompletionAt = Number.isFinite(input.expectedCompletionAt) && input.expectedCompletionAt > 0 ? input.expectedCompletionAt : 0
   const expectedLastTurnStartedAt = Number.isFinite(input.expectedLastTurnStartedAt) && input.expectedLastTurnStartedAt > 0 ? input.expectedLastTurnStartedAt : 0
   const expectedSourceFingerprint = typeof input.expectedSourceFingerprint === 'string' && /^[a-f0-9]{64}$/.test(input.expectedSourceFingerprint) ? input.expectedSourceFingerprint : ''
-  const evidence = input.evidence === 'completed' ? 'completed' : ''
+  const evidence = input.evidence === 'completed' || input.evidence === 'stopped' ? input.evidence : ''
   const requestIsValid = typeof actionAlias === 'string'
     && /^ct_[A-Za-z0-9_-]{16,80}$/.test(actionAlias)
     && expectedUpdatedAt > 0
@@ -4619,7 +5505,11 @@ async function archiveCodexThread(actionAlias, request) {
     && expectedLastTurnStartedAt > 0
     && Boolean(expectedSourceFingerprint)
     && Boolean(evidence)
-    && expectedRevisionAt === (expectedCompletionAt || expectedLastTurnStartedAt)
+    && (
+      evidence === 'completed'
+        ? expectedRevisionAt === (expectedCompletionAt || expectedLastTurnStartedAt)
+        : expectedRevisionAt === expectedLastTurnStartedAt && expectedCompletionAt === 0
+    )
   if (!requestIsValid) {
     return { outcome: 'failed', errorCode: 'invalid-request', message: '归档请求已失效，请刷新后重试' }
   }
@@ -4654,11 +5544,15 @@ async function archiveCodexThread(actionAlias, request) {
       return { outcome: 'failed', errorCode: 'turn-changed', message: '任务最新提问已更新，未执行归档' }
     }
     const desktopActivity = codexEnsureDesktopBridge().activityForThread(entry.threadId)
-    if (desktopActivity?.status === 'active' || status === 'active' || turn?.status === 'inProgress' || turn?.status === 'interrupted') {
+    if (desktopActivity?.status === 'active' || status === 'active' || turn?.status === 'inProgress') {
       return { outcome: 'failed', errorCode: 'active-task', message: '任务已恢复进行中，未执行归档' }
     }
-    if (!turn || turn.status !== 'completed' || (turn.completedAt || turn.startedAt) !== expectedRevisionAt || (expectedCompletionAt > 0 && turn.completedAt !== expectedCompletionAt)) {
-      return { outcome: 'failed', errorCode: 'completion-changed', message: '任务完成版本已更新，未执行归档' }
+    if (evidence === 'completed') {
+      if (!turn || turn.status !== 'completed' || (turn.completedAt || turn.startedAt) !== expectedRevisionAt || (expectedCompletionAt > 0 && turn.completedAt !== expectedCompletionAt)) {
+        return { outcome: 'failed', errorCode: 'completion-changed', message: '任务完成版本已更新，未执行归档' }
+      }
+    } else if (!turn || (turn.status !== 'failed' && turn.status !== 'interrupted') || turn.startedAt !== expectedRevisionAt) {
+      return { outcome: 'failed', errorCode: 'completion-changed', message: '任务停止版本已更新，未执行归档' }
     }
     await requestCodexRpc('thread/archive', { threadId: entry.threadId })
     const [unarchivedRows, archivedRows] = await Promise.all([
@@ -5777,6 +6671,7 @@ window.eypcPlatform = {
     capabilities: windowCapabilities,
     list: listWindows,
     activate: activateWindow,
+    inspectEnvironment: inspectWindowEnvironment,
     alwaysOnTop: alwaysOnTopWindow,
     close: closeWindow,
     terminate: terminateWindow,

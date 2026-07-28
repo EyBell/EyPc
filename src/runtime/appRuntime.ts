@@ -11,7 +11,7 @@ import { compareWindowRowsByApplication, filterJumpableLiveWindows, normalizeWin
 import type { CodexFloatPosition, CodexSettings } from '../domain/codex'
 import type { AppState, AppTabId, FavoriteNode, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttConnectionGroup, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
 import type { PortGroupTreeRow } from '../domain/ports'
-import { getPlatform, normalizeFileActionResult, type FavoriteDirectoryEntry, type FavoritePathInspection, type FileActionResult, type FileCapabilities, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind, type WindowActivationOutcome, type WindowCapability, type WindowOperationTrace } from '../platform/eypcPlatform'
+import { WINDOW_BRIDGE_REVISION, getPlatform, normalizeFileActionResult, type FavoriteDirectoryEntry, type FavoritePathInspection, type FileActionResult, type FileCapabilities, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind, type WindowActivationOutcome, type WindowActivationReasonCode, type WindowCapability, type WindowEnvironmentPhase, type WindowEnvironmentPhaseSnapshot, type WindowEnvironmentSnapshot, type WindowOperationTrace } from '../platform/eypcPlatform'
 import { createActionRuntime } from './action/actionRuntime'
 import type { RuntimeActionContext, RuntimeActionRisk } from './action/types'
 import { FEATURES, visibleFeatures, type VisibleFeatureDefinition } from './feature/featureRegistry'
@@ -189,11 +189,17 @@ export type WindowActivationDiagnosticCode =
   | 'slot-missing'
   | 'slot-unassigned'
   | 'capability-read-failed'
+  | 'bridge-stale'
   | 'unsupported-host'
   | 'permission-required'
   | 'refresh-failed'
   | 'refresh-superseded'
   | 'ambiguous-target'
+  | 'space-unbound'
+  | 'space-unbound-multiwindow'
+  | 'space-ambiguous'
+  | 'space-switch-timeout'
+  | 'target-title-changed'
   | 'focus-denied'
   | 'activation-not-found'
   | 'activation-failed'
@@ -219,19 +225,23 @@ export type WindowOperationTraceResult = 'success' | 'blocking' | 'target-closed
 export type WindowOperationTraceRuntimeStage = 'entry' | 'capability' | 'cache' | 'resolve' | 'refresh' | 'native' | 'visibility'
 export type WindowOperationTraceRuntimeOutcome = 'ok' | 'skipped' | 'not-found' | 'ambiguous' | 'failed' | 'denied' | 'unsupported' | 'unavailable'
 
-/** Development-only session record. It intentionally contains no title, app, PID, handle, native reference, or host output. */
+/** Development-only session record. It contains the user-authorized target title but no app, PID, handle, native reference, or host output. */
 export interface WindowOperationDebugRecord {
   id: string
   timestamp: number
+  targetTitle: string
   entry: WindowActivationEntry
   slot: number | null
   platform: WindowPlatform | 'unsupported'
   operation: WindowOperationKind
   result: WindowOperationTraceResult
   code: WindowActivationDiagnosticCode | 'activated' | 'topmost-enabled'
+  envSnapshot?: WindowEnvironmentSnapshot
+  envSnapshots?: WindowEnvironmentPhaseSnapshot[]
   steps: Array<{
     stage: WindowOperationTraceRuntimeStage | WindowOperationTrace['steps'][number]['stage']
     outcome: WindowOperationTraceRuntimeOutcome | WindowOperationTrace['steps'][number]['outcome']
+    detail?: WindowOperationTrace['steps'][number]['detail']
   }>
 }
 export type MqttRecordSelection =
@@ -865,6 +875,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     operation: WindowOperationKind
     trace: WindowOperationDebugRecord | null
     traceCompleted: boolean
+    nativeAttemptCount: number
+    nativeReasonCode?: WindowActivationReasonCode
+    envSnapshots: WindowEnvironmentPhaseSnapshot[]
   }
 
   const windowActivationDiagnosticMessages: Record<WindowActivationDiagnosticCode, string> = {
@@ -873,11 +886,17 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     'slot-missing': '窗口槽位不存在，请检查当前配置。',
     'slot-unassigned': '当前窗口槽尚未分配目标，请在窗口页完成分配。',
     'capability-read-failed': '无法读取窗口能力，请检查当前 uTools 宿主。',
+    'bridge-stale': '窗口桥接版本与当前界面不一致，请重新准备并连接 uTools preload。',
     'unsupported-host': '当前宿主不支持所需的窗口跳转能力。',
     'permission-required': '需要系统窗口控制权限后才能继续。',
     'refresh-failed': '无法完成窗口实时重扫，未把目标视为已关闭。',
     'refresh-superseded': '窗口实时重扫被新的请求替代，请重试。',
     'ambiguous-target': '匹配到多个候选窗口，需要在工作台中明确选择。',
+    'space-unbound': '无法唯一绑定目标窗口所在桌面，未执行不确定的桌面切换。',
+    'space-unbound-multiwindow': '目标应用存在多个窗口且无法绑定目标桌面，未前置任意窗口。',
+    'space-ambiguous': '目标窗口同时绑定到多个非当前桌面，需要明确后才能切换。',
+    'space-switch-timeout': '目标桌面切换未在时限内确认，未继续激活窗口。',
+    'target-title-changed': '目标窗口标题或所属应用已变化，请在候选窗口中重新确认。',
     'focus-denied': '系统拒绝聚焦该窗口；EyPc 未尝试绕过前台保护。',
     'activation-not-found': '激活时窗口引用已失效，尚未满足确认关闭条件。',
     'activation-failed': '宿主未能完成窗口激活，请在工作台中核查。',
@@ -888,26 +907,33 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   const nativeTraceStages = new Set<WindowOperationTrace['steps'][number]['stage']>([
-    'bridge', 'target', 'process', 'restore', 'foreground', 'raise', 'verify', 'topmost'
+    'bridge', 'space', 'target', 'process', 'restore', 'foreground', 'raise', 'verify', 'topmost'
   ])
   const nativeTraceOutcomes = new Set<WindowOperationTrace['steps'][number]['outcome']>([
     'ok', 'skipped', 'not-found', 'ambiguous', 'failed', 'denied', 'unsupported', 'unavailable'
+  ])
+  const nativeTraceDetails = new Set<NonNullable<WindowOperationTrace['steps'][number]['detail']>>([
+    'switched', 'switch-confirmed', 'switch-timeout', 'current', 'walked', 'direct-unique', 'direct-multiple', 'reverse-unique', 'ambiguous-spaces',
+    'ax-fallback', 'bad-ref', 'no-api', 'empty-spaces', 'no-space-id', 'no-display', 'process-frontmost', 'single-window-frontmost',
+    'multiwindow-blocked', 'current-space-inferred', 'cg-ordinal-fallback', 'title-match', 'title-mismatch', 'focus-state-mismatch', 'error'
   ])
 
   function appendWindowOperationTrace(
     attempt: WindowActivationAttempt,
     stage: WindowOperationDebugRecord['steps'][number]['stage'],
-    outcome: WindowOperationDebugRecord['steps'][number]['outcome']
+    outcome: WindowOperationDebugRecord['steps'][number]['outcome'],
+    detail?: WindowOperationDebugRecord['steps'][number]['detail']
   ) {
     if (!attempt.trace || attempt.traceCompleted || attempt.trace.steps.length >= 32) return
-    attempt.trace.steps.push({ stage, outcome })
+    attempt.trace.steps.push(detail ? { stage, outcome, detail } : { stage, outcome })
   }
 
   function appendNativeWindowOperationTrace(attempt: WindowActivationAttempt, trace: WindowOperationTrace | undefined) {
     if (!trace || !Array.isArray(trace.steps)) return
     for (const step of trace.steps.slice(0, 16)) {
       if (!step || !nativeTraceStages.has(step.stage) || !nativeTraceOutcomes.has(step.outcome)) continue
-      appendWindowOperationTrace(attempt, step.stage, step.outcome)
+      const detail = step.detail && nativeTraceDetails.has(step.detail) ? step.detail : undefined
+      appendWindowOperationTrace(attempt, step.stage, step.outcome, detail)
     }
   }
 
@@ -924,6 +950,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       platform: platformId,
       result,
       code,
+      ...(attempt.envSnapshots.length ? {
+        envSnapshot: attempt.envSnapshots[attempt.envSnapshots.length - 1].snapshot,
+        envSnapshots: attempt.envSnapshots.map((item) => ({ phase: item.phase, snapshot: { ...item.snapshot } }))
+      } : {}),
       steps: attempt.trace.steps.map((step) => ({ ...step }))
     }
     windowOperationTraces = [record, ...windowOperationTraces].slice(0, 50)
@@ -1061,14 +1091,27 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return id ? state.windowTargets.find((target) => target.id === id) || null : null
   }
 
-  function liveWindowsForTarget(target: WindowTarget): { live: LiveWindow | null; candidates: LiveWindow[] } {
+  function liveWindowsForTarget(target: WindowTarget): { live: LiveWindow | null; candidates: LiveWindow[]; candidateReason: 'ambiguous' | 'title-changed' | null } {
     const samePlatform = liveWindows.filter((live) => live.platform === target.platform)
     const byRef = target.lastNativeRef
       ? samePlatform.find((live) => live.nativeRef === target.lastNativeRef && targetMatchesLiveWindow(target, live)) || null
       : null
-    if (byRef) return { live: byRef, candidates: [byRef] }
+    if (byRef) return { live: byRef, candidates: [byRef], candidateReason: null }
     const candidates = samePlatform.filter((live) => targetMatchesLiveWindow(target, live))
-    return { live: candidates.length === 1 ? candidates[0] : null, candidates }
+    if (candidates.length === 1) return { live: candidates[0], candidates, candidateReason: null }
+    if (candidates.length > 1) return { live: null, candidates, candidateReason: 'ambiguous' }
+    if (candidates.length === 0 && target.lastNativeRef) {
+      const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(String(target.lastNativeRef || '').trim())
+      if (parts) {
+        const targetPid = Number(parts[1])
+        if (Number.isInteger(targetPid) && targetPid > 0) {
+          const targetApp = normalizeWindowText(target.appId || target.appName)
+          const byPid = samePlatform.filter((live) => live.pid === targetPid && normalizeWindowText(live.appId || live.appName) === targetApp)
+          if (byPid.length) return { live: null, candidates: byPid, candidateReason: 'title-changed' }
+        }
+      }
+    }
+    return { live: null, candidates: [], candidateReason: null }
   }
 
   function windowSlotNumbers(targetId: string): number[] {
@@ -1125,7 +1168,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       return makeWindowRow(target, resolved.live, resolved.candidates.length > 1)
     })
     const liveRows = liveWindows
-      .filter((live) => !usedLiveIds.has(live.id))
+      .filter((live) => !usedLiveIds.has(live.id) && !(live.platform === 'darwin' && live.minimized))
       .map((live) => makeWindowRow(null, live))
     const keyword = normalizeWindowText(state.windowSearch)
     const rows = [...savedRows, ...liveRows].sort(compareWindowRowsByApplication)
@@ -1223,6 +1266,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     | { kind: 'activated' }
     | { kind: 'no-match' }
     | { kind: 'ambiguous' }
+    | { kind: 'rebind-required' }
     | { kind: 'activation-failed'; outcome: Exclude<WindowActivationOutcome, 'activated'> }
 
   async function refreshWindows({ clearSearch = false }: { clearSearch?: boolean } = {}): Promise<WindowRefreshOutcome> {
@@ -1299,8 +1343,14 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
 
   function diagnosticCodeForActivationOutcome(
     outcome: Exclude<WindowActivationOutcome, 'activated'>,
-    operation: WindowOperationKind = 'activate'
+    operation: WindowOperationKind = 'activate',
+    reasonCode?: WindowActivationReasonCode
   ): WindowActivationDiagnosticCode {
+    if (reasonCode === 'space-unbound') return 'space-unbound'
+    if (reasonCode === 'space-unbound-multiwindow') return 'space-unbound-multiwindow'
+    if (reasonCode === 'space-ambiguous') return 'space-ambiguous'
+    if (reasonCode === 'space-switch-timeout') return 'space-switch-timeout'
+    if (reasonCode === 'target-title-changed') return 'target-title-changed'
     if (operation === 'always-on-top' && outcome === 'unsupported') return 'topmost-unsupported'
     if (operation === 'always-on-top' && outcome === 'failed') return 'topmost-failed'
     if (outcome === 'focus-denied') return 'focus-denied'
@@ -1311,8 +1361,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return 'activation-failed'
   }
 
-  function diagnosticMessageForActivationOutcome(outcome: Exclude<WindowActivationOutcome, 'activated'>, operation: WindowOperationKind) {
-    return windowActivationDiagnosticMessages[diagnosticCodeForActivationOutcome(outcome, operation)]
+  function diagnosticMessageForActivationOutcome(outcome: Exclude<WindowActivationOutcome, 'activated'>, operation: WindowOperationKind, reasonCode?: WindowActivationReasonCode) {
+    return windowActivationDiagnosticMessages[diagnosticCodeForActivationOutcome(outcome, operation, reasonCode)]
   }
 
   function traceStageForActivationDiagnostic(stage: WindowActivationDiagnosticStage): WindowOperationDebugRecord['steps'][number]['stage'] {
@@ -1354,6 +1404,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     windowCapability = capability
     notify()
     const platformId = capability.platform === 'darwin' || capability.platform === 'win32' ? capability.platform : 'unsupported'
+    if (capability.supported && platformId !== 'unsupported' && capability.bridgeRevision !== WINDOW_BRIDGE_REVISION) {
+      appendWindowOperationTrace(attempt, 'capability', 'failed')
+      finishWindowActivation(attempt, 'capability', 'bridge-stale', 'blocking', { platformId })
+      return null
+    }
     if (capability.permission === 'required') {
       appendWindowOperationTrace(attempt, 'capability', 'denied')
       finishWindowActivation(attempt, 'capability', 'permission-required', 'blocking', { platformId })
@@ -1403,16 +1458,28 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   async function activateLiveWindow(live: LiveWindow, target: WindowTarget | null, attempt: WindowActivationAttempt): Promise<WindowActivationOutcome> {
+    if (attempt.trace && !attempt.trace.targetTitle) attempt.trace.targetTitle = target?.titleLocator || live.title
+    const phase: WindowEnvironmentPhase = attempt.nativeAttemptCount === 0 ? 'pre-initial' : 'pre-retry'
+    attempt.nativeAttemptCount += 1
+    attempt.nativeReasonCode = undefined
+    if (windowOperationTraceEnabled && platform.windows.inspectEnvironment) {
+      try {
+        const snapshot = await platform.windows.inspectEnvironment(live)
+        attempt.envSnapshots = [...attempt.envSnapshots, { phase, snapshot }].slice(-3)
+      } catch {}
+    }
     let result: Awaited<ReturnType<typeof platform.windows.activate>>
     try {
       result = attempt.operation === 'always-on-top'
         ? (await platform.windows.alwaysOnTop?.(live, { debugTrace: windowOperationTraceEnabled }) ?? { outcome: 'unsupported' as const })
         : await platform.windows.activate(live, { debugTrace: windowOperationTraceEnabled })
     } catch {
+      attempt.nativeReasonCode = undefined
       appendWindowOperationTrace(attempt, 'native', 'failed')
       setMessage(diagnosticMessageForActivationOutcome('failed', attempt.operation))
       return 'failed'
     }
+    attempt.nativeReasonCode = result.reasonCode
     appendNativeWindowOperationTrace(attempt, result.trace)
     appendWindowOperationTrace(attempt, 'native', result.outcome === 'activated'
       ? 'ok'
@@ -1448,7 +1515,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (result.outcome === 'permission-required') {
       windowCapability = { ...windowCapability, permission: 'required', canList: false, canActivate: false }
     }
-    setMessage(result.outcome === 'not-found' ? '窗口引用已失效，正在进行实时重扫。' : diagnosticMessageForActivationOutcome(result.outcome, attempt.operation))
+    setMessage(result.outcome === 'not-found' && !result.reasonCode
+      ? '窗口引用已失效，正在进行实时重扫。'
+      : diagnosticMessageForActivationOutcome(result.outcome, attempt.operation, result.reasonCode))
     return result.outcome
   }
 
@@ -1462,6 +1531,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       ? {
           id: `window-operation:${timestamp}:${++windowOperationTraceSequence}`,
           timestamp,
+          targetTitle: '',
           entry,
           slot,
           platform: 'unsupported' as const,
@@ -1471,7 +1541,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
           steps: [{ stage: 'entry' as const, outcome: 'ok' as const }]
         }
       : null
-    return { entry, slot, operation, trace, traceCompleted: false }
+    return { entry, slot, operation, trace, traceCompleted: false, nativeAttemptCount: 0, envSnapshots: [] }
   }
 
   function finishActivationOutcome(
@@ -1483,13 +1553,14 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return finishWindowActivation(
       attempt,
       attempt.operation === 'always-on-top' ? 'topmost' : 'activate',
-      diagnosticCodeForActivationOutcome(outcome, attempt.operation),
+      diagnosticCodeForActivationOutcome(outcome, attempt.operation, attempt.nativeReasonCode),
       'blocking',
       { focusRowId, platformId }
     )
   }
 
   async function activateWindowTargetWithRecovery(target: WindowTarget, attempt: WindowActivationAttempt): Promise<boolean> {
+    if (attempt.trace && !attempt.trace.targetTitle) attempt.trace.targetTitle = target.titleLocator
     const focusRowId = `target:${target.id}`
     const platformId = target.platform
     const cachedLive = liveWindowFromPersistedTarget(target)
@@ -1503,6 +1574,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const initial = await resolveAndActivateWindowTargetForAttempt(target, attempt)
       if (initial.kind === 'activated') return true
       if (initial.kind === 'ambiguous') return finishWindowActivation(attempt, 'resolve', 'ambiguous-target', 'blocking', { focusRowId: focusedWindowId, platformId })
+      if (initial.kind === 'rebind-required') return finishWindowActivation(attempt, 'resolve', 'target-title-changed', 'blocking', { focusRowId: focusedWindowId, platformId })
       if (initial.kind === 'activation-failed' && initial.outcome !== 'not-found') return finishActivationOutcome(attempt, initial.outcome, focusRowId, platformId)
     }
 
@@ -1514,6 +1586,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       return finishWindowActivation(attempt, 'resolve', 'target-closed', 'accepted', { focusRowId, platformId })
     }
     if (retried.kind === 'ambiguous') return finishWindowActivation(attempt, 'resolve', 'ambiguous-target', 'blocking', { focusRowId: focusedWindowId, platformId })
+    if (retried.kind === 'rebind-required') return finishWindowActivation(attempt, 'resolve', 'target-title-changed', 'blocking', { focusRowId: focusedWindowId, platformId })
     return finishActivationOutcome(attempt, retried.outcome, focusRowId, platformId)
   }
 
@@ -1524,14 +1597,16 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const outcome = await activateLiveWindow(resolved.live, target, attempt)
       return outcome === 'activated' ? { kind: 'activated' } : { kind: 'activation-failed', outcome }
     }
-    if (resolved.candidates.length > 1) {
-      appendWindowOperationTrace(attempt, 'resolve', 'ambiguous')
+    if (resolved.candidates.length) {
+      const rebindRequired = resolved.candidateReason === 'title-changed'
+      appendWindowOperationTrace(attempt, 'resolve', rebindRequired ? 'not-found' : 'ambiguous')
       windowCandidateTargetId = target.id
       windowCandidateLiveIds = resolved.candidates.map((window) => window.id)
       focusedWindowId = `candidate:${resolved.candidates[0].id}`
       windowActionsOpen = false
       windowActionTargetId = null
-      setMessage(windowActivationDiagnosticMessages['ambiguous-target'])
+      setMessage(windowActivationDiagnosticMessages[rebindRequired ? 'target-title-changed' : 'ambiguous-target'])
+      if (rebindRequired) return { kind: 'rebind-required' }
       return { kind: 'ambiguous' }
     }
     appendWindowOperationTrace(attempt, 'resolve', 'not-found')
@@ -1570,6 +1645,21 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return finishActivationOutcome(attempt, retried, focusRowId, live.platform)
   }
 
+  async function activateConfirmedWindowCandidate(live: LiveWindow, target: WindowTarget, attempt: WindowActivationAttempt): Promise<boolean> {
+    if (attempt.trace) attempt.trace.targetTitle = live.title
+    const activated = await activateLiveWindowWithRecovery(live, target, attempt)
+    if (!activated) return false
+    target.appId = live.appId
+    target.appName = live.appName
+    target.titleLocator = live.title
+    target.lastNativeRef = live.nativeRef
+    target.updatedAt = Date.now()
+    windowCandidateTargetId = null
+    windowCandidateLiveIds = []
+    save()
+    return true
+  }
+
   async function activateWindowRow(rowId?: string) {
     const attempt = activationAttemptFor('manual')
     if (!isTabEnabled('windows')) return finishWindowActivation(attempt, 'entry', 'feature-disabled', 'blocking')
@@ -1580,7 +1670,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     }
     if (row.live) {
       const candidateTarget = windowCandidateTargetId ? windowTargetById(windowCandidateTargetId) : null
-      if (candidateTarget) return activateLiveWindowWithRecovery(row.live, candidateTarget, attempt)
+      if (candidateTarget) return activateConfirmedWindowCandidate(row.live, candidateTarget, attempt)
       if (row.target) return activateWindowTargetWithRecovery(row.target, attempt)
       return activateLiveWindowWithRecovery(row.live, null, attempt)
     }
@@ -1596,7 +1686,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (!row) return finishWindowActivation(attempt, 'entry', 'topmost-failed', 'blocking')
     if (row.live) {
       const candidateTarget = windowCandidateTargetId ? windowTargetById(windowCandidateTargetId) : null
-      if (candidateTarget) return activateLiveWindowWithRecovery(row.live, candidateTarget, attempt)
+      if (candidateTarget) return activateConfirmedWindowCandidate(row.live, candidateTarget, attempt)
       if (row.target) return activateWindowTargetWithRecovery(row.target, attempt)
       return activateLiveWindowWithRecovery(row.live, null, attempt)
     }
@@ -7319,6 +7409,19 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'windows.activation.diagnostics.clear', title: '清空本次窗口激活诊断', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 94, when: (ctx) => ctx.tab === 'windows', run: () => clearWindowActivationDiagnostics() })
     actions.register({ id: 'windows.operation.traces.clear', title: '清空开发窗口操作追踪', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 94, when: (ctx) => ctx.tab === 'windows' && windowOperationTraceEnabled, run: () => clearWindowOperationTraces() })
     actions.register({ id: 'windows.slot.assign', title: '分配窗口槽位', group: '窗口跳转', risk: 'data-write', scope: 'row', priority: 96, when: (ctx) => ctx.tab === 'windows', run: (_ctx, args) => assignWindowSlot(Math.trunc(Number(args?.slot)), typeof args?.rowId === 'string' ? args.rowId : undefined) })
+    for (let slot = 1; slot <= 10; slot += 1) {
+      actions.register({
+        id: `windows.slot.assign.${slot}`,
+        title: `分配窗口到槽 ${slot}`,
+        group: '窗口跳转',
+        risk: 'data-write',
+        scope: 'row',
+        priority: 95,
+        shortcut: slot === 10 ? 'Ctrl+0' : `Ctrl+${slot}`,
+        when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'),
+        run: () => assignWindowSlot(slot)
+      })
+    }
     actions.register({ id: 'windows.slot.clear', title: '清除窗口槽关联', group: '窗口跳转', risk: 'data-write', scope: 'row', priority: 96, when: (ctx) => ctx.tab === 'windows', run: (_ctx, args) => clearWindowSlot(Math.trunc(Number(args?.slot))) })
     actions.register({ id: 'windows.slot.focus', title: '聚焦窗口槽目标', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => ctx.tab === 'windows', run: (_ctx, args) => focusWindowSlot(Math.trunc(Number(args?.slot))) })
     actions.register({ id: 'windows.slot.configure', title: '配置窗口槽全局快捷键', group: '窗口跳转', risk: 'normal', scope: 'row', priority: 96, when: (ctx) => ctx.tab === 'windows', run: (_ctx, args) => configureWindowSlotHotkey(Math.trunc(Number(args?.slot))) })
@@ -8056,7 +8159,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         windowOperationTraceEnabled,
         windowOperationTraces: windowOperationTraces.map((record) => ({
           ...record,
-          steps: record.steps.map((step) => ({ ...step }))
+          steps: record.steps.map((step) => (step.detail ? { stage: step.stage, outcome: step.outcome, detail: step.detail } : { stage: step.stage, outcome: step.outcome }))
         })),
         mqttArchive,
         mqttArchiveLoaded,
