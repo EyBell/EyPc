@@ -158,28 +158,26 @@ describe('development window operation trace', () => {
     expect(panel.attributes('role')).toBe('status')
     expect(panel.text()).toContain('展开并前置 · 阻断')
     expect(panel.text()).toContain('目标窗口：Selected Development Window')
-    expect(panel.text()).toContain('#1 entry=ok')
-    expect(panel.text()).toContain('#3 foreground=denied')
-    expect(panel.text()).toContain('前置：被拒绝')
-    expect(panel.text()).toContain('focus-denied')
-    expect(panel.get('[data-role="window-operation-trace-plain"]').text()).toContain('目标窗口：Selected Development Window')
-    expect(panel.get('[data-role="window-operation-trace-plain"]').text()).toContain('entry=ok > #2 restore=skipped > #3 foreground=denied')
+    expect(panel.text()).toContain('系统拒绝聚焦该窗口')
     expect(panel.text()).not.toContain('Secret Application')
     expect(panel.text()).not.toContain('424242')
     expect(panel.text()).not.toContain('0xDEADBEEF')
+    expect(wrapper.find('[data-role="window-operation-trace-copy"]').exists()).toBe(true)
 
     await wrapper.get('[data-role="window-operation-trace-clear"]').trigger('click')
     expect(wrapper.emitted('dispatch')).toContainEqual(['windows.operation.traces.clear'])
   })
 
-  it('exposes a single-line plain-text copy surface for the full sanitized trace', () => {
+  it('shows a human-readable summary and a copy button for full details', () => {
     const wrapper = mount(WindowsPage, {
       props: {
         snapshot: snapshotWithDiagnostics([], {
           traceEnabled: true,
           traces: [operationTrace({
+            code: 'space-unbound-multiwindow',
+            result: 'blocking',
             steps: [
-              { stage: 'space', outcome: 'failed', detail: 'no-api' },
+              { stage: 'space', outcome: 'failed', detail: 'multiwindow-blocked' },
               { stage: 'process', outcome: 'ok' },
               { stage: 'target', outcome: 'not-found' }
             ]
@@ -187,31 +185,11 @@ describe('development window operation trace', () => {
         })
       }
     })
-    const plain = wrapper.get('[data-role="window-operation-trace-plain"]').text()
-    expect(plain).toContain('space=failed:no-api')
-    expect(plain).toContain('process=ok')
-    expect(plain).toContain('target=not-found')
-    expect(wrapper.text()).toContain('Space切换：失败（SkyLight不可用）')
+    const summary = wrapper.get('[data-role="window-operation-trace-summary"]')
+    expect(summary.text()).toContain('展开并前置 · 阻断：目标应用有多个窗口且无法绑定目标桌面。')
     expect(wrapper.find('[data-role="window-operation-trace-copy"]').exists()).toBe(true)
+    expect(wrapper.find('[data-role="window-operation-trace-plain"]').exists()).toBe(false)
   })
-  it('renders the environment snapshot when present in the trace record', () => {
-    const wrapper = mount(WindowsPage, {
-      props: {
-        snapshot: snapshotWithDiagnostics([], {
-          traceEnabled: true,
-          traces: [operationTrace({
-            envSnapshot: { platform: 'darwin', cgTargetMatches: 1, axTargetMatches: 0, spaceBinding: 'bound' }
-          })]
-        })
-      }
-    })
-    const env = wrapper.find('[data-role="window-operation-trace-env"]')
-    expect(env.exists()).toBe(true)
-    expect(env.text()).toContain('CG目标=1')
-    expect(env.text()).toContain('AX目标=0')
-    expect(env.text()).toContain('Space绑定=已绑定')
-  })
-
   it('omits the environment snapshot line when no snapshot is attached', () => {
     const wrapper = mount(WindowsPage, {
       props: {
@@ -222,6 +200,7 @@ describe('development window operation trace', () => {
       }
     })
     expect(wrapper.find('[data-role="window-operation-trace-env"]').exists()).toBe(false)
+    expect(wrapper.find('[data-role="window-operation-trace-summary"]').exists()).toBe(true)
   })
 
   it('distinguishes real page topmost from local list pinning in the single-window actions', async () => {
