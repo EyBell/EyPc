@@ -4,7 +4,7 @@ Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
 Documentation level: `controlled`
-Requirement version: `2026-07-27.9`
+Requirement version: `2026-07-27.10`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
@@ -48,6 +48,8 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 修订 `2026-07-27.9` 追加 RAW-106：停止任务不得进入前/后任务循环，即使它是 EyPc 本地置顶的回退项。
 
+修订 `2026-07-27.10` 追加 RAW-107：`hideAfterAction=true` 的全局任务循环快捷键不得调用 `setTab`，`syncActivation(false)` 时必须清空 `conversations`，防止缓存任务列表中的 `actionAlias` 失效导致崩溃。
+
 ## Current Requirement And Implementation Map
 
 | 领域 | 当前合同 | 实现与证据 |
@@ -61,7 +63,7 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 | 额度 V2 与紧凑水球 | 普通 5 小时正余额→普通周正余额→最高正余额 Spark；Spark 显示 `S`；存在 Weekly 时显示同池剩余进度环，无 Weekly 时无外圈，且始终不显示普通装饰圆环 | [codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1)、[CodexWaterBall.vue](../../../../src/components/CodexWaterBall.vue#L1)、[codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1) |
 | 配置导航与外观 | 顶部 `快捷方式 / 任务 / 水球 / 卡片 / 运行` 五 Tab 默认进入双列快捷方式，只渲染当前分面；诊断、降级和部位说明进入可聚焦信息按钮。水球/状态信号与展开卡片分页，但继续共享真实组件、主题对象与直通持久化；内置主题共 12 套 | [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1)、[codex.css](../../../../src/styles/codex.css#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L57) |
 | 宿主快捷键边界 | 前/后任务、待输入、完成未读、悬浮入口和窗口槽只通过官方设置跳转；preload/Renderer/运行时均不读取或回显宿主绑定，不调用私有同步快捷键 IPC | [preload/index.js](../../../../preload/index.js#L1)、[eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1)、[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1)、[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) |
-| 水球收起态命中区与全局功能 | 上半区不因 hover 展开并保留三角标直接点击；待输入只打开第一条，完成未读角标和 uTools 全局功能均打开并本地确认第一条当前完成 revision，进行中仍展开；新增前/后任务功能以待输入→完成未读→进行中、置顶优先稳定去重的序列循环打开；常规候选为空时仅 EyPc 本地置顶任务按稳定显示顺序回退循环，原生置顶不参与；新 revision 会重新未读且不写 Codex Desktop 全局状态；角标 hover/focus 200ms 显示作用说明且不展开/切页 | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1)、[featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L1) |
+| 水球收起态命中区与全局功能 | 上半区不因 hover 展开并保留三角标直接点击；待输入只打开第一条，完成未读角标和 uTools 全局功能均打开并本地确认第一条当前完成 revision，进行中仍展开；新增前/后任务功能以待输入→完成未读→进行中、置顶优先稳定去重的序列循环打开；常规候选为空时仅 EyPc 本地置顶任务按稳定显示顺序回退循环，原生置顶不参与；`hideAfterAction=true` 时不调用 `setTab`，`syncActivation(false)` 时清空 `conversations` 防止缓存失效崩溃；新 revision 会重新未读且不写 Codex Desktop 全局状态；角标 hover/focus 200ms 显示作用说明且不展开/切页 | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1)、[featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L1)、[App.vue](../../../../src/App.vue#L1) |
 | 展开布局 | 四页签直接位于顶部，其下依次是统一搜索、服务端真实额度文字和任务内容；删除旧顶部样式/隐藏/刷新/设置/关闭工具栏 | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[float.css](../../../../src/styles/float.css#L1) |
 | 实时状态与未读通道 | macOS Codex Desktop 私有 IPC 提供 live snapshot/patch/request/read-state；active 退出立即触发单任务 latest-Turn 核验，3 秒内成功便推送脱敏完成证据，失败才请求完整校对。固定 2 秒活动防抖已删除，无 live authority 保持“进行中” | [preload/index.js](../../../../preload/index.js#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
 | 启动发现与连接诊断 | 自动枚举受控 macOS/Windows CLI 候选；可选手动位置经同一运行计划核验并只存本机插件 storage；环境快照只传来源/可用性标签，连接器降级明确不授予实时状态权威 | [preload/index.js](../../../../preload/index.js#L1)、[eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1)、[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) |
@@ -414,3 +416,10 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 - `thread-read-state-changed` 和仅变更 `hasUnreadTurn` 的 Desktop patch 都只能发布 `readStateOnly` V2 entry：匿名 key、`hasUnreadTurn` 和 `unreadAuthority` 是唯一允许字段。预加载仍在本地维护完整 shadow，但该事件本身不得把 status、flags、active interval 或 latest Turn 带进 Renderer。
 - [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 对主任务和聚合 Side Chat 都使用同一 unread-only 形状；包含 runtime/request 变化的 patch 仍发布完整 activity，避免把真正开始的任务压成完成。
 - [codexController.ts](../../../../src/runtime/codexController.ts#L1) 在 V2 `readStateOnly` 时只替换 `hasUnreadTurn/unreadAuthority`，保留 status、active flags、`desktopActiveSince` 和 latest Turn；因此 native 已读只能令 `completed-unread → completed`。测试合同覆盖 malicious full-status 字段被忽略、无 stream shadow 的 read-state 以及 active shadow 的仅 unread patch。测试不执行，真实 preload-reloaded 验收归用户。
+
+## RAW-107 全局任务循环快捷键与缓存失效防护
+
+- [App.vue](../../../../src/App.vue#L1) 的 `applyPluginRoute` 在 `route.hideAfterAction === true` 时不得调用 `runtime.setTab(route.tab)`。`hideAfterAction=true` 意味着应用窗口在动作派发后立即隐藏，切换页签会触发 `codexController.syncActivation(false)`，进而调用 `options.platform.codex.close()` 清除 preload 中的 `codexThreadActions` Map。如果 `cycleTask` 此时仍持有缓存任务列表，其中的 `actionAlias` 已全部失效，`openCodexThread` 会因找不到 alias 而失败甚至崩溃。
+- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 的 `syncActivation` 在 `shouldRun()` 返回 `false` 时，除了既有的清理定时器、重置状态和调用 `close()` 外，必须同时将 `conversations` 重置为 `emptyConversationSnapshot()`。这确保 `cycleTask` 在非活跃状态下读取到空任务列表，显示"当前没有可切换的 Codex 任务"提示，而不是尝试用已失效的 `actionAlias` 打开陈旧任务。
+- [featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L1) 的 `eypc-codex-task-previous` 和 `eypc-codex-task-next` 路由继续设置 `hideAfterAction: true`，因为这两个全局快捷键的设计意图是在后台快速切换任务而不显示应用窗口。该修复不改变路由配置，只确保 `applyPluginRoute` 在 `hideAfterAction` 时不执行不必要的页签切换。
+- [codexController.test.ts](../../../../tests/runtime/codexController.test.ts#L1) 新增回归测试：`syncActivation(false)` 清空 `conversations` 后，`cycleTask` 不再调用 `openThread`。该测试验证缓存失效防护的正确性，确保未来变更不会重新引入崩溃。
