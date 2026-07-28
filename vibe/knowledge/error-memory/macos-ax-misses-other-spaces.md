@@ -1,11 +1,11 @@
 ---
 id: eypc-macos-ax-misses-other-spaces
-status: candidate
+status: verified
 scope: project
 fingerprint: window-list-current-space-only__system-events-ax__miss-other-spaces-displays__cgwindowlist-required
 first_seen: 2026-07-26
 last_verified: 2026-07-28
-review_after: 2026-10-27
+review_after: 2027-01-28
 evidence:
   - preload/index.js
   - public/preload.js
@@ -37,14 +37,14 @@ AX via System Events typically exposes windows on the active Space. Cross-Space/
 
 ## Prevention Rule
 
-Prefer CoreGraphics for full-desktop inventory when it returns titled windows; fall back to System Events AX for the current Space when CG is empty/failed. Keep AX for activate/close title resolution, but before AX activate on a CG `pid:0:CGWindowNumber` ref, switch using a refresh-rebuilt session cache of `CGWindowNumber → {spaceId, displayUuid}`. Build that cache primarily by walking `SLSCopyManagedDisplaySpaces` (CFDictionary `Display Identifier` / `Spaces` / `id64`) and listing each Space with `SLSCopyWindowsWithOptionsAndTags` — this includes desktops the display is not currently showing. Do not rely on per-window `SLSCopySpacesForWindows` alone (host often returns empty for off-current targets → `empty-spaces`). Supplement inventory CG refs tags missed via `SLSCopySpacesForWindows`. Same-Space targets skip `SLSManagedDisplaySetCurrentSpace` (`space=skipped:current`). Switch with `CFStringCreateWithCString(displayUuid)` — never `SLSCopyManagedDisplayForSpace` (uTools host often returns empty → `no-display`). After source changes, always re-run `pnpm run serve` / `prepare-utools-runtime` so `dist/preload.js` matches. Never equate a CG window ID with `AXWindowNumber`. Mirror preload changes and ship `koffi` into the plugin `node_modules` from prepare. Cross-project authority: [utools-macos-ax-activation-misses-other-spaces.md](../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/error-memory/utools-macos-ax-activation-misses-other-spaces.md#L1) · [macos-window-activation.md](../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/macos-window-activation.md#L1).
+Prefer CoreGraphics for full-desktop inventory and use System Events only as a current-Space fallback. Before activating a CG `pid:0:CGWindowNumber` reference, revalidate PID/app/title and resolve the window against the current managed-display map with both `SLSCopySpacesForWindows` masks plus `SLSCopyWindowsWithOptionsAndTags` reverse corroboration. If Electron returns no binding, repeat the same bounded lookup in a fresh JXA process; switch only one remote binding and confirm it. After the switch, map raw AX elements through `_AXUIElementGetWindow`, focus/Raise the unique CG-ID match, and verify application `AXFocusedWindow` maps back to that same ID. Do not use `SLSCopyManagedDisplayForSpace`, desktop walking, learned bindings, title-only Chromium selection, or process-frontmost for a multi-window owner. Re-run prepare/build so canonical/public/dist preloads match. Cross-project authority: [utools-macos-ax-activation-misses-other-spaces.md](../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/error-memory/utools-macos-ax-activation-misses-other-spaces.md#L1) · [macos-window-activation.md](../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/macos-window-activation.md#L1). The linked CodeNote files have pre-existing dirty/untracked content and were not overwritten by WJ-15.
 
 ## Alternative Route
 
-- Status: `candidate`
+- Status: `verified`
 - Preconditions: macOS host; target on another Space/display; Accessibility (+ Screen Recording for full list).
-- Steps: load inventory via CG; activate slot/manual; expect Space switch then AXRaise. Without `koffi`/SkyLight, expect current-Space-only activation.
-- Verification: user-owned host — from a different Space than the target, invoke slot 1 /「展开并前置」with no `activation-not-found`.
+- Steps: load inventory via CG; resolve/switch one Space through in-process or isolated SkyLight; map exact AX→CG; Raise/focus and read back exact `AXFocusedWindow`.
+- Verification: from a different Space than a multi-window Chromium target, invoke its stable slot and require `switch-confirmed → ax-cg-id-match → ax-focused-window` without sibling-window activation.
 - Applicability boundary: inventory + activation; no permanent macOS topmost.
 - Fallback: Accessibility-only hosts remain current-Space for AX; blocking diagnostics stay visible.
 
@@ -63,3 +63,4 @@ Prefer CoreGraphics for full-desktop inventory when it returns titled windows; f
 | 2026-07-27 | User: still `empty-spaces` after tags cache | many CG inventory IDs absent from tags; AX not-found → walk non-current Spaces + retry AX (`walked`), restore on failure | source repaired; host re-acceptance pending |
 | 2026-07-27 | SIP-safe route continue | remember only after AX `activated`; stale binding → forget + walk (skip tried Space); settle 120ms | source repaired; host re-acceptance pending |
 | 2026-07-28 | Host: AiTools (2 CG windows) → `space=failed:multiwindow-blocked` twice; env snapshot: CG目标=1, AX目标=0, AX窗口=2, 绑定数=0, 来源=none | `SLSCopySpacesForWindows` returns 0 for all masks; reverse scan also empty. All windows on current Space (AX窗口=CG所属窗口=2) but AX title mismatch (AX目标=0). Fix: (1) `current-space-inferred` — when `ownerCgWindowCount > 1` and `axWindowCount === ownerCgWindowCount`, infer all windows on current Space, skip Space switch, proceed to activation; (2) `cg-ordinal-fallback` — activation script resolves CG ordinal from `CGWindowListCopyWindowInfo` and uses it when AX title doesn't match | source repaired; host re-acceptance pending |
+| 2026-07-28 | Same AiTools target placed on a non-current Space; Electron binding empty while isolated direct+reverse binding unique; title/ordinal focused a sibling | Isolated JXA Space bridge, then `_AXUIElementGetWindow` unique mapping plus application `AXFocusedWindow` read-back | global slot 2 host-verified; exact target focused |
