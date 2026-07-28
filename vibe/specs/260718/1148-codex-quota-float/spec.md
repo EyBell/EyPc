@@ -4,7 +4,7 @@ Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
 Documentation level: `controlled`
-Requirement version: `2026-07-27.7`
+Requirement version: `2026-07-27.9`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
@@ -44,6 +44,10 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 修订 `2026-07-27.7` 追加 RAW-097：Desktop read-state 及仅 `hasUnreadTurn` patch 是 unread-only delta，只允许修改已读投影，不能借当前 shadow 重发 activity 并把完成任务变为进行中。
 
+修订 `2026-07-27.8` 追加 RAW-105：当前循环的待输入/完成未读/进行中候选全部为空时，EyPc 本地置顶任务作为回退循环集合，按既有稳定显示顺序从第一项开始；原生置顶不参与。
+
+修订 `2026-07-27.9` 追加 RAW-106：停止任务不得进入前/后任务循环，即使它是 EyPc 本地置顶的回退项。
+
 ## Current Requirement And Implementation Map
 
 | 领域 | 当前合同 | 实现与证据 |
@@ -57,7 +61,7 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 | 额度 V2 与紧凑水球 | 普通 5 小时正余额→普通周正余额→最高正余额 Spark；Spark 显示 `S`；存在 Weekly 时显示同池剩余进度环，无 Weekly 时无外圈，且始终不显示普通装饰圆环 | [codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1)、[CodexWaterBall.vue](../../../../src/components/CodexWaterBall.vue#L1)、[codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L1) |
 | 配置导航与外观 | 顶部 `快捷方式 / 任务 / 水球 / 卡片 / 运行` 五 Tab 默认进入双列快捷方式，只渲染当前分面；诊断、降级和部位说明进入可聚焦信息按钮。水球/状态信号与展开卡片分页，但继续共享真实组件、主题对象与直通持久化；内置主题共 12 套 | [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1)、[codex.css](../../../../src/styles/codex.css#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexAppearance.ts](../../../../src/domain/codexAppearance.ts#L57) |
 | 宿主快捷键边界 | 前/后任务、待输入、完成未读、悬浮入口和窗口槽只通过官方设置跳转；preload/Renderer/运行时均不读取或回显宿主绑定，不调用私有同步快捷键 IPC | [preload/index.js](../../../../preload/index.js#L1)、[eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1)、[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1)、[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) |
-| 水球收起态命中区与全局功能 | 上半区不因 hover 展开并保留三角标直接点击；待输入只打开第一条，完成未读角标和 uTools 全局功能均打开并本地确认第一条当前完成 revision，进行中仍展开；新增前/后任务功能以待输入→完成未读→进行中、置顶优先稳定去重的序列循环打开；新 revision 会重新未读且不写 Codex Desktop 全局状态；角标 hover/focus 200ms 显示作用说明且不展开/切页 | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1)、[featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L1) |
+| 水球收起态命中区与全局功能 | 上半区不因 hover 展开并保留三角标直接点击；待输入只打开第一条，完成未读角标和 uTools 全局功能均打开并本地确认第一条当前完成 revision，进行中仍展开；新增前/后任务功能以待输入→完成未读→进行中、置顶优先稳定去重的序列循环打开；常规候选为空时仅 EyPc 本地置顶任务按稳定显示顺序回退循环，原生置顶不参与；新 revision 会重新未读且不写 Codex Desktop 全局状态；角标 hover/focus 200ms 显示作用说明且不展开/切页 | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1)、[featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L1) |
 | 展开布局 | 四页签直接位于顶部，其下依次是统一搜索、服务端真实额度文字和任务内容；删除旧顶部样式/隐藏/刷新/设置/关闭工具栏 | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[float.css](../../../../src/styles/float.css#L1) |
 | 实时状态与未读通道 | macOS Codex Desktop 私有 IPC 提供 live snapshot/patch/request/read-state；active 退出立即触发单任务 latest-Turn 核验，3 秒内成功便推送脱敏完成证据，失败才请求完整校对。固定 2 秒活动防抖已删除，无 live authority 保持“进行中” | [preload/index.js](../../../../preload/index.js#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
 | 启动发现与连接诊断 | 自动枚举受控 macOS/Windows CLI 候选；可选手动位置经同一运行计划核验并只存本机插件 storage；环境快照只传来源/可用性标签，连接器降级明确不授予实时状态权威 | [preload/index.js](../../../../preload/index.js#L1)、[eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1)、[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) |
@@ -334,7 +338,7 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 ## RAW-084 全局前后任务循环
 
 - [plugin.json](../../../../public/plugin.json#L1) 注册“上一个 Codex 任务”与“下一个 Codex 任务”两个 `mainHide` uTools 全局功能；[featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L1) 只将它们路由至 `codex.task.previous` / `codex.task.next`，并复用现有 feature-disabled 回退。
-- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 以非持久化匿名 key 记住本次循环位置。候选序列依次拼接 `inputRequired`、完整 `completed-unread` 和 `ongoing`，每段使用现有置顶优先/稳定显示顺序并按 key 去重；首次 next/previous 分别选择首项/末项，之后按方向回绕。只接受当前具有 action alias 的任务，候选为空或动作失效时给出明确消息。
+- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 以非持久化匿名 key 记住本次循环位置。候选序列优先依次拼接 `inputRequired`、完整 `completed-unread` 和 `ongoing`，每段使用现有置顶优先/稳定显示顺序并按 key 去重；`stopped` 永远不参与循环。若该常规序列为空，回退为当前投影内非 `stopped` 且 `pinSource='local'` 的 EyPc 本地置顶任务，仍按同一显示顺序和 key 去重，原生置顶不参与回退。首次 next/previous 分别选择首项/末项，之后按方向回绕。只接受当前具有 action alias 的任务，候选为空或动作失效时给出明确消息。
 - 两个命令只能调用既有打开路径：不派发 completed-unread acknowledgement、不写 EyPc receipt、不改隐藏、选中、页签或 Codex Desktop 原生 unread。设置页为两个功能各自调用现有 uTools 全局快捷键配置入口；不默认占用系统组合键。
 
 ## RAW-087 宿主快捷键边界与配置分面

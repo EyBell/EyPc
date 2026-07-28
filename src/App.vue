@@ -367,7 +367,7 @@ function applyPluginRoute(payload: { code?: string } | null) {
   initialMaintenanceSection.value = route.settingsMaintenanceSection || null
   if (typeof route.favoriteQuick === 'boolean') runtime.setFavoriteQuickMode(route.favoriteQuick)
   else if (!restoreEntry) runtime.setFavoriteQuickMode(false)
-  runtime.setTab(route.tab)
+  if (!route.hideAfterAction) runtime.setTab(route.tab)
   if (route.actionId) {
     runtime.dispatch(route.actionId, { source: 'utools-feature', ...(route.actionArgs || {}) })
     if (route.hideAfterAction && !isWindowSlot) requestAnimationFrame(() => { void platform.app.hide() })

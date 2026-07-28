@@ -3,7 +3,7 @@
 Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-27.7`
+Requirement version: `2026-07-27.9`
 
 Authority: [spec.md](spec.md#L1)
 
@@ -160,5 +160,7 @@ Authority: [spec.md](spec.md#L1)
 143. 追踪用户在 Codex 手动阅读后完成任务重回进行中的路径，确认 `thread-read-state-changed` 与仅 `hasUnreadTurn` patch 会把完整当前 shadow 重新发入 Activity Delta，而不是只更新未读。
 144. 为 V2 entry 增加 `readStateOnly`；preload 对主/Side Chat read-state 及只读 patch 只发送匿名 key、unread 值/权威，Controller 只应用这些字段，完整 runtime/request 变化继续走 activity delta。
 145. 增加 direct-read、unread-only patch 与 Controller 防重启合同，同步 RAW-097 Controlled/canonical/current/error memory；仅执行镜像、同步 IPC 残余、diff 和链接静态核验，不运行测试、typecheck、build、uTools、截图或真实阅读操作。
+146. 以 RAW-105 收敛循环空候选的回退：不新增任务持久化或 Host 调用；仅在既有常规循环没有可打开任务时，从当前投影筛选 `pinSource='local'` 的 EyPc 本地置顶任务，继续使用显示排序、action alias/key 门禁与既有内存游标。原生置顶不作为回退；用户未选择测试，不新增或运行测试、typecheck、build、uTools、截图或真实 Codex 操作。
+147. 以 RAW-106 将 `stopped` 从前/后任务循环的本地置顶回退中排除；常规候选序列已不含停止态。除该筛选外不变更显示、置顶、游标、打开路径或持久化；不新增或运行测试、typecheck、build、uTools、截图或真实 Codex 操作。
 
-Completion: 1–114 保留既有历史与 RAW-088 状态；115–118 为 RAW-089 的实时完成确认与异常统一进行中；119–122 为 RAW-090 的库存消失稳定、证据单调与显式删除快路；123–126 为 RAW-091 的明确停止边界、退出防闪与文档/错误记忆收口；127–130 为 RAW-092 的正向事件快路、dirty-task 读取、强证据直发和完整同步；131–133 为 RAW-093 的计划待确认协议识别、即时待输入投影与权威同步；134–136 为 RAW-094 的私有 patch 忽略、重订抖动修复与真实只读复核；137–139 为 RAW-095 的明确归档匿名快路与复核；140–142 为 RAW-096 的 active observation 新鲜度边界；143–145 为 RAW-097 的 unread-only 状态隔离。按项目验收规则不运行测试、类型、构建、真实 uTools 或截图；RAW-089–097 均为 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。
+Completion: 1–114 保留既有历史与 RAW-088 状态；115–118 为 RAW-089 的实时完成确认与异常统一进行中；119–122 为 RAW-090 的库存消失稳定、证据单调与显式删除快路；123–126 为 RAW-091 的明确停止边界、退出防闪与文档/错误记忆收口；127–130 为 RAW-092 的正向事件快路、dirty-task 读取、强证据直发和完整同步；131–133 为 RAW-093 的计划待确认协议识别、即时待输入投影与权威同步；134–136 为 RAW-094 的私有 patch 忽略、重订抖动修复与真实只读复核；137–139 为 RAW-095 的明确归档匿名快路与复核；140–142 为 RAW-096 的 active observation 新鲜度边界；143–145 为 RAW-097 的 unread-only 状态隔离；146 为 RAW-105 的本地置顶循环回退；147 为 RAW-106 的停止态排除。按项目验收规则不运行测试、类型、构建、真实 uTools 或截图；RAW-089–097 与 RAW-105/106 均为 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。

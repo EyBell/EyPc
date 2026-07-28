@@ -3,7 +3,100 @@
 Tool: codex
 Date: 2026-07-27
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-27.7`
+Requirement version: `2026-07-27.9`
+
+## RAW-106 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 停止态排除 | implemented / source-verified | [codexController.ts](../../../../src/runtime/codexController.ts#L1359) 仅将 `pinSource='local' && bucket !== 'stopped'` 的本地置顶任务作为常规循环为空时的回退候选；常规候选本身也不包含 `stopped`。 |
+| 自动化与宿主验收 | not run / user-owned | 项目规则禁止本轮新增或运行测试、typecheck、build、uTools、截图及真实 Codex 操作。需确认已停止且本地置顶的任务不会通过前/后任务快捷键打开。 |
+
+结论：RAW-106 已实现，当前状态为 `未校验，待用户验收`。
+
+## RAW-105 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 回退候选 | implemented / source-verified | [codexController.ts](../../../../src/runtime/codexController.ts#L1341) 在常规 `inputRequired → completed-unread → ongoing` 序列没有可打开任务时，改用当前投影中非 `stopped` 的 `pinSource='local'` 任务；原生置顶未纳入。 |
+| 顺序与起点 | implemented / source-verified | 回退继续经过既有 `displayOrderedTasks` 与 alias/key 门禁，因此遵从本地置顶稳定显示顺序、去重和可打开边界；无循环游标时，next 取第一项、previous 取末项。 |
+| 状态边界 | implemented / source-verified | 回退复用 `cycleTask` 的既有 `openThread` 路径，不确认 completed-unread、不写 receipt、不改变隐藏/页签或 Codex Desktop 状态。 |
+| 自动化与宿主验收 | not run / user-owned | 项目规则禁止本轮新增或运行测试、typecheck、build、uTools、截图及真实 Codex 操作。需在没有常规循环候选、但至少有一个 EyPc 本地置顶任务时确认 next 首次打开第一项、previous 首次打开末项，后续回绕。 |
+
+结论：RAW-105 已实现，当前状态为 `未校验，待用户验收`。
+
+## RAW-104 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 问题 | pass / user | 任务已完成但「已完成未读」很久才出现；完成证据有时也偏晚。 |
+| 根因 | pass / source-trace | 运行中残留的 live `hasUnreadTurn=false` 在 targeted 完成后仍压过 Codex 持久化未读；假 active 时 verify 又要求 `lastTurnStatus===completed`，完成核验被拖到完整库存。 |
+| 完成+未读快路径 | implemented / source-verified | `publishTargetedCompletion` 清掉完成前 live false，立即读持久化未读；3 秒内 `[0,300,1000]` 重试；不发明未读；完成后的显式 live false 不被重试清掉。 |
+| 完成核验 | implemented / source-verified | `verifyStaleActive` 允许 active+无 waiting 时核对 latest Turn（含 active 进入瞬间与 `turn/completed`）；不再要求基线已是 completed。 |
+| 镜像 | pass / static | `preload/index.js` 与 `public/preload.js` 行为镜像；`node --check` 通过。 |
+| 真实宿主验收 | not run / user-owned | 需重载 uTools preload 后，新完成任务应随完成进入「已完成未读」，而不是等下一次完整校对。 |
+
+结论：完成未读与完成证据共用 targeted 快路径。当前状态为 `未校验，待用户验收`。
+
+## RAW-103 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 需求 | pass / user | 明确停止的任务允许真实归档，不再因“未完成”阻断。 |
+| 投影 | implemented / source-verified | `explicitlyStopped` 任务 `archiveCapability=allowed`、`canArchive=true`；`revisionAt` 使用 `lastTurnStartedAt` 作为停止版本。 |
+| Host 校验 | implemented / source-verified | `evidence: 'stopped'` 接受 latest Turn `failed/interrupted`；仍拒绝 Desktop/runtime `active` 与 `inProgress`。`interrupted` 不再被误判为进行中阻断。 |
+| UI | implemented / source-verified | 停止任务「归」槽可点；提示改为可归档；无可归档时文案含已停止。 |
+| 真实宿主验收 | not run / user-owned | 需对一条已停止任务执行归档并确认 Codex 侧栏消失。 |
+
+结论：已停止任务可走与已完成相同的真实归档路径。当前状态为 `未校验，待用户验收`。
+
+## RAW-102 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 根因 | pass / source-trace | 点击/聚焦会短暂清掉 Desktop active，随后又用新的 `desktopActiveSince` 把 active 拉回；若 latest Turn 仍是已完成，新 interval 会盖过完成证据，造成“进行中消失→又出现”。 |
+| 假复活过滤 | implemented / source-verified | 领域/Controller：latest Turn 已 `completed` 且无待输入/审批时，若 active interval 不早于该完成（含 remint 到 completedAt 之后），视为被完成证据取代，不再投影为进行中。 |
+| 在途核验 | implemented / source-verified | preload 在 `active + completed` 且无 waiting flags 时启动 `verifyStaleActive` latest-Turn 核对：确认仍是 completed 则发完成证据；若发现更新的 `inProgress` 则恢复真实进行中。 |
+| 测试合同 | updated / not run | 领域增加 reminted active 被完成取代、waiting-input 仍保留的合同。 |
+| 真实宿主验收 | not run / user-owned | 需重载 preload 后点开假进行中任务，确认不再反复复活。 |
+
+结论：完成后的 Desktop active remint 不再把任务拉回进行中；真实新 Turn 仍可通过 inProgress 核验恢复。当前状态为 `未校验，待用户验收`。
+
+## RAW-101 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 问题 | pass / screenshot | 紧凑角标已只计 exact live active，但动态页「正在进行中」仍把保守 `activityState=ongoing` 一并列出，导致分段角标/列表与外层角标不一致。 |
+| 分段对齐 | implemented / source-verified | 「正在进行中」只保留 `active` / `waiting-approval`；保守 unresolved `ongoing` 不再进入该分段。 |
+| 动态口径 | implemented / source-verified | `dynamicTasks` 同步排除保守 unresolved 行，避免“动态”页签计数大于可见分段。 |
+| 角标一致 | implemented / source-verified | 浮窗与配置预览进行中角标使用同一 live-active/waiting-approval 过滤。 |
+| 真实宿主验收 | not run / user-owned | 需确认只有 1 条 exact active 时，外层角标与「正在进行中」分段均为 1。 |
+
+结论：列表分段统计与角标共用同一 live 口径。当前状态为 `未校验，待用户验收`。
+
+## RAW-100 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 完成快路径 | implemented / source-verified | active 退出时若已有权威 `completed` 证据（含 Turn 缓存/RPC 结果且 `completedAt` 晚于 active interval），Controller 不再压回 `inProgress`，并立即绕过展示 hold。默认 `completionPresentationDelayMs` 改为 `0`。 |
+| 异常过滤 | implemented / source-verified | `failed/interrupted` 仍须 exact live idle 或 bridge `not-running` 才进入已停止；撤销 RAW-099 的 connected 即停规则，避免异常态被过快投影。 |
+| 角标语义 | implemented / source-verified | `runningCount` 与紧凑角标只统计 `activityState === 'active'` 的 exact live 执行，不再把保守 ongoing 异常项计入“进行中”。 |
+| 测试合同 | updated / not run | 领域/UI 合同已同步；依项目规则未执行。 |
+| 真实宿主验收 | not run / user-owned | 需重载 preload 后验证：完成应几乎即时切换；异常不应误计为进行中。 |
+
+结论：完成走快路径并默认零展示延迟；异常继续保守过滤；进行中角标只反映真实 active。当前状态为 `未校验，待用户验收`。
+
+## RAW-099 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 根因 | pass / source-trace | Desktop live 已连接时，非 live-active 的 `failed/interrupted` 或无 Turn 结果仍被保守投影为 `ongoing`，导致真实只有 1 条 active 时角标/列表却显示 2 条进行中。 |
+| 稳定收敛 | implemented / source-verified | `isExplicitlyStoppedTask`：live-active 永远优先；`completed` 走完成路径；`inProgress` 仍可短暂 ongoing（等首个 live shadow）。其余在 `desktop-live idle`、bridge `not-running`，或 bridge `connected` 时立即落到 `stopped`。 |
+| 防抖边界 | implemented / source-verified | bridge `failed/connecting/not-checked` 时仍保持旧保守 ongoing，避免传输抖动误停。Controller active→idle 防闪仍可把未确认终态压回 `inProgress`，确认后再一次切换。 |
+| 测试合同 | updated / not run | [codex.test.ts](../../../../tests/domain/codex.test.ts#L1) 增加 connected 下非 active 终态立即 stopped、保留 inProgress 短暂 ongoing、failed bridge 仍保守的合同。依项目规则未执行。 |
+| 真实宿主验收 | not run / user-owned | 需确认 Desktop 已连接且只有 1 条真实进行中时，EyPc 进行中计数也为 1；已结束非 completed 项进入“已停止”。 |
+
+结论：进行中以 exact live-active 为准；Desktop 已连接时尽快把非 active 终态稳住为已停止，减少假进行中与来回抖动。当前状态为 `未校验，待用户验收`。
 
 ## RAW-098 当前交付状态
 

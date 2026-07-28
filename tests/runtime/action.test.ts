@@ -5072,6 +5072,82 @@ describe('app runtime', () => {
     expect(runtime.snapshot().windowRows[0]).toMatchObject({ id: 'live:darwin:3:1:1', favorite: false, pinned: false })
   })
 
+  it('deduplicates a stale window target by pid when title locator changes', async () => {
+    const { state } = installPlatform({
+      windows: {
+        capabilities: async () => ({ platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true }),
+        list: async () => ({
+          capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true },
+          windows: [{
+            id: 'darwin:7:0:222',
+            platform: 'darwin',
+            nativeRef: '7:0:222',
+            appId: 'com.example',
+            appName: 'Example',
+            pid: 7,
+            title: 'New Title',
+            minimized: false,
+            focused: false
+          }]
+        }),
+        activate: async () => ({ outcome: 'activated' as const })
+      }
+    })
+    enableWindows(state)
+    state.windowTargets = [{
+      id: 't1',
+      alias: 'Example Win',
+      platform: 'darwin',
+      appId: 'com.example',
+      appName: 'Example',
+      titleLocator: 'Old Title',
+      lastNativeRef: '7:0:111',
+      favorite: true,
+      pinned: false,
+      createdAt: 1,
+      updatedAt: 1
+    }]
+    const runtime = createAppRuntime(state)
+    runtime.setTab('windows')
+    runtime.dispatch('windows.refresh')
+    await flushWindowActions()
+
+    const rows = runtime.snapshot().windowRows
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ id: 'target:t1', unavailable: false, title: 'New Title' })
+    expect(rows[0].live?.nativeRef).toBe('7:0:222')
+  })
+
+  it('filters darwin minimized live windows from the default list', async () => {
+    const { state } = installPlatform({
+      windows: {
+        capabilities: async () => ({ platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true }),
+        list: async () => ({
+          capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true },
+          windows: [{
+            id: 'darwin:9:0:33',
+            platform: 'darwin',
+            nativeRef: '9:0:33',
+            appId: 'com.notes',
+            appName: 'Notes',
+            pid: 9,
+            title: 'Inbox',
+            minimized: true,
+            focused: false
+          }]
+        }),
+        activate: async () => ({ outcome: 'activated' as const })
+      }
+    })
+    enableWindows(state)
+    const runtime = createAppRuntime(state)
+    runtime.setTab('windows')
+    runtime.dispatch('windows.refresh')
+    await flushWindowActions()
+
+    expect(runtime.snapshot().windowRows).toEqual([])
+  })
+
   it('multi-selects windows with Space advance and closes via OS-then-confirm force path', async () => {
     const closed: string[] = []
     const terminated: string[] = []

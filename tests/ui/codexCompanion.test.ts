@@ -252,7 +252,7 @@ describe('Codex Companion V3 UI contract', () => {
     const abnormal = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
     expect(abnormal.get('.task-meta-button').text()).toContain('已停止')
     expect(abnormal.classes()).toContain('bucket-stopped')
-    expect(abnormal.get('.action-archive').attributes('disabled')).toBeDefined()
+    expect(abnormal.get('.action-archive').attributes('disabled')).toBeUndefined()
     expect(wrapper.find('.float-header').exists()).toBe(false)
     expect(wrapper.find('[aria-label="打开 Codex Companion 配置"]').exists()).toBe(false)
 
@@ -628,7 +628,7 @@ describe('Codex Companion V3 UI contract', () => {
     await stoppedArchive.trigger('pointerenter')
     vi.advanceTimersByTime(200)
     await wrapper.vm.$nextTick()
-    expect(wrapper.get('.float-action-hint').text()).toContain('会话已停止但未完成')
+    expect(wrapper.get('.float-action-hint').text()).toContain('真实归档')
     await stoppedArchive.trigger('pointerleave')
 
     const archive = wrapper.get(`[data-focus-key="task:${TASK_DONE}"] .task-inline-actions .action-archive`)
