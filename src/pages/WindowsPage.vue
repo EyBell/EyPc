@@ -385,9 +385,39 @@ function envSnapshotPhaseLabel(phase: 'pre-initial' | 'pre-retry') {
   return phase === 'pre-retry' ? '重扫后重试前' : '首次原生调用前'
 }
 
-function operationStepText(step: AppRuntimeSnapshot['windowOperationTraces'][number]['steps'][number], index: number) {
-  const detail = step.detail ? `:${step.detail}` : ''
-  return `#${index + 1} ${step.stage}=${step.outcome}${detail} · ${operationStageLabel(step.stage)}：${operationOutcomeLabel(step.outcome)}${step.detail ? `（${operationDetailLabel(step.detail)}）` : ''}`
+const operationCodeMessages: Record<string, string> = {
+  'target-closed': '已确认目标窗口已关闭，已清除陈旧引用。',
+  'feature-disabled': '窗口跳转功能已关闭。',
+  'slot-missing': '窗口槽位不存在。',
+  'slot-unassigned': '当前窗口槽尚未分配目标。',
+  'capability-read-failed': '无法读取窗口能力。',
+  'bridge-stale': '窗口桥接版本与当前界面不一致，请重新连接 preload。',
+  'unsupported-host': '当前宿主不支持所需的窗口跳转能力。',
+  'permission-required': '需要系统窗口控制权限后才能继续。',
+  'refresh-failed': '无法完成窗口实时重扫。',
+  'refresh-superseded': '窗口实时重扫被新的请求替代，请重试。',
+  'ambiguous-target': '匹配到多个候选窗口，需要明确选择。',
+  'space-unbound': '无法唯一绑定目标窗口所在桌面。',
+  'space-unbound-multiwindow': '目标应用有多个窗口且无法绑定目标桌面。',
+  'space-ambiguous': '目标窗口同时绑定到多个非当前桌面。',
+  'space-switch-timeout': '目标桌面切换未在时限内确认。',
+  'target-title-changed': '目标窗口标题或所属应用已变化，请重新确认。',
+  'focus-denied': '系统拒绝聚焦该窗口。',
+  'activation-not-found': '激活时窗口引用已失效。',
+  'activation-failed': '宿主未能完成窗口激活。',
+  'topmost-unsupported': '当前系统只能前置窗口，不能保持在最上层。',
+  'topmost-failed': '宿主未能将页面置顶。',
+  'workbench-show-failed': '无法显示窗口工作台以呈现本次阻断原因。',
+  'silent-hide-failed': '窗口已激活，但插件窗口未能静默隐藏。',
+  'activated': '已成功激活目标窗口。',
+  'topmost-enabled': '已成功置顶目标窗口。'
+}
+
+function operationTraceSummary(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
+  const kind = operationKindLabel(record)
+  const result = operationResultLabel(record)
+  const message = operationCodeMessages[record.code] || record.code
+  return `${kind} · ${result}：${message}`
 }
 
 function operationTracePlainText(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
@@ -792,25 +822,9 @@ onBeforeUnmount(() => {
                   <span>{{ operationEntryLabel(record) }}</span>
                   <span>{{ operationPlatformLabel(record) }}</span>
                   <span>{{ operationKindLabel(record) }} · {{ operationResultLabel(record) }}</span>
-                  <code>{{ record.code }}</code>
-                  <button type="button" data-role="window-operation-trace-copy" @click="copyOperationTracePlainText(record)">复制单行</button>
+                  <button type="button" data-role="window-operation-trace-copy" @click="copyOperationTracePlainText(record)">复制详情</button>
                 </div>
-                <p class="window-operation-trace-plain" data-role="window-operation-trace-plain">{{ operationTracePlainText(record) }}</p>
-                <ul aria-label="开发操作步骤">
-                  <li
-                    v-for="(step, index) in record.steps"
-                    :key="`${record.id}:${index}:${step.stage}:${step.outcome}:${step.detail || ''}`"
-                    :class="{ failed: step.outcome !== 'ok' && step.outcome !== 'skipped' }"
-                  >
-                    {{ operationStepText(step, index) }}
-                  </li>
-                </ul>
-                <p
-                  v-for="(item, index) in operationEnvSnapshots(record)"
-                  :key="`${record.id}:${item.phase}:${index}`"
-                  class="window-operation-trace-env"
-                  data-role="window-operation-trace-env"
-                >环境快照（{{ envSnapshotPhaseLabel(item.phase) }}）：{{ envSnapshotLabel(item.snapshot) }}</p>
+                <p class="window-operation-trace-summary" data-role="window-operation-trace-summary">{{ operationTraceSummary(record) }}</p>
               </li>
             </ol>
           </section>

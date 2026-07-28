@@ -7218,58 +7218,12 @@ body,
   cursor: pointer;
 }
 
-.window-operation-trace-plain {
+.window-operation-trace-summary {
   margin: 0;
-  padding: 6px 8px;
-  border-radius: 4px;
-  background: #f4f8f9;
   color: #243940;
-  font:
-    11px/1.45 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
-    monospace;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.5;
   user-select: text;
-}
-
-.window-operation-trace-env {
-  margin: 4px 0 0;
-  padding: 4px 8px;
-  border-radius: 4px;
-  background: #eef4f1;
-  color: #1a4d3a;
-  font:
-    11px/1.45 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
-    monospace;
-  user-select: text;
-}
-
-.window-operation-trace-list ul {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.window-operation-trace-list ul li {
-  padding: 2px 4px;
-  border-radius: 3px;
-  background: #edf4f6;
-  color: #506d78;
-  font-size: 10px;
-}
-
-.window-operation-trace-list ul li.failed {
-  background: #fdeceb;
-  color: #8a3b36;
 }
 
 .window-workbench {
