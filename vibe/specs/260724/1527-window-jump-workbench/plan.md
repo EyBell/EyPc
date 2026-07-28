@@ -9,6 +9,10 @@
 7. WJ-08: remove duplicate `mainHide`/Runtime pre-hiding, route disabled slots into visible Runtime diagnostics, recover stale native references through one healthy rescan, and expose bounded session-only diagnostics in the workbench.
 8. WJ-09: replace the invalid macOS CG-window-ID → `AXWindowNumber` activation assumption with title-plus-fresh-ordinal AX resolution, preserving ambiguity blocking and no-title-interpolation boundaries.
 9. WJ-10: research platform-native restore/frontmost/topmost contracts; add a development-only sanitized operation trace, make Windows `SetWindowPos(HWND_TOPMOST)` a separate page-topmost action, keep macOS permanent topmost explicitly unsupported, and prevent stable-slot assignment from implicitly favoriting a live row.
+10. WJ-11/WJ-12: introduce the CG-derived SkyLight Space switch and a read-only preload-context environment snapshot, then retain their failed host attempts as historical evidence rather than accepted behavior.
+11. WJ-13: revalidate exact CG identity; resolve dual-mask direct plus managed-Space reverse evidence afresh; switch/confirm only one remote binding; use process-frontmost only for an unbound one-window owner; block unbound multi-window, multiple binding and timeout cases; remove desktop walking and learned binding persistence.
+12. Gate the renderer on bridge revision `wj13-exact-space`, preserve native Space reason codes, capture separate initial/retry aggregate snapshots, and require explicit candidate rebind when a same-PID window title changes.
+13. Sync the Controlled/canonical/current documents, prepare all preload mirrors, and run only non-runtime static parse/mirror/revision/stale-symbol/diff checks before user-owned host acceptance.
 
 ## Non-negotiable Execution Constraints
 
@@ -17,3 +21,5 @@
 - Keep all platform calls initiated by an explicit user interaction or uTools feature entry, with bounded process execution and no shell interpolation of user-controlled titles.
 - WJ-09 may use a bounded child-environment value for a normalized local title, but never places it in a shell command or JXA source; it must remain absent from diagnostics, storage, and logs.
 - WJ-10 native traces may contain only a fixed stage/outcome vocabulary and may be requested only from a development renderer; production UI and native calls omit that path.
+- WJ-13 never selects the first of multiple Space/window candidates, never walks all desktops, and never persists CG/PID/title/Space/display bindings. A same-PID title mismatch requires explicit user confirmation.
+- WJ-13 does not add, modify, or run automated tests, typecheck, build, browser/UI automation, or live uTools activation; only static checks and user-owned host validation may be claimed.
