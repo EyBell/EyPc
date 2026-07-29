@@ -3,7 +3,7 @@
 Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-29.2`
+Requirement version: `2026-07-29.5`
 
 Authority: [spec.md](spec.md#L1)
 
@@ -176,8 +176,23 @@ Authority: [spec.md](spec.md#L1)
 159. 修正 [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 的 0ms 默认标签；在既有 [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 增加“新 thread 嵌套 ID 只读一个 latest Turn、已登记 started/completed 直发、零额外 latest-Turn RPC、raw ID/items 不越界”合同，并保留畸形通知回退合同。按授权不执行测试、typecheck、build、uTools 或真实任务。
 160. 同步 RAW-110 到 Controlled/canonical/current/architecture/技术手册/用户指南与 CodeNote 派生理解；复用 completion hysteresis / fixed debounce 错误记忆，不新建重复记录，只做范围差异、残余 timer/筛选、preload 镜像片段、私有同步 IPC、`git diff --check` 与 Markdown 代码链接静态核验。
 161. 以 RAW-111 对照真实浮窗角标/展开卡片、官方线程状态与本机匿名只读预检，确认角标和卡片内部已经同源，但运行中的旧 Preload/主 Controller 快照与当前源码存在版本偏斜；不记录 raw task identity，不把实时观察当作验收。
-162. 在 Preload capability、production platform adapter、Controller 浮窗快照加入同一无隐私任务状态 revision；Controller 对 `legacy`/不匹配版本清空任务投影并跳过 task/activity lane，同时保留 quota/config；浮窗 Renderer 对旧 Controller 快照再次 fail-closed。
-163. 在既有 platform/Controller/UI 测试文件补充旧链路归零、提示重载和当前版本透传合同；不新增测试模块，依授权不执行 tests、typecheck、build 或 uTools 验收。
+162. 在 Preload capability、production platform adapter、Controller 浮窗快照加入同一无隐私任务状态 revision；首版曾让 Controller 对 `legacy` 清空并让 Float 再次 fail-closed，后由 RAW-113 的用户反馈证明为错误路线并废止。
+163. 当时既有 platform/Controller/UI 文件补了旧链路归零合同；RAW-113 已在相同测试模块将其替换为原子包降级保留合同，均未按授权执行。
 164. 同步 RAW-111 到 Controlled/canonical/current/architecture/技术手册/用户指南、既有 preload version-skew 错误记忆和 CodeNote 派生理解；执行范围差异、revision 链/旧数字筛选、`git diff --check` 与 Markdown 代码链接静态核验，提交时只纳入本轮相关 hunk。
 
-Completion: 1–114 保留既有历史与 RAW-088 状态；115–118 为 RAW-089 的实时完成确认与异常统一进行中；119–122 为 RAW-090 的库存消失稳定、证据单调与显式删除快路；123–126 为 RAW-091 的明确停止边界、退出防闪与文档/错误记忆收口；127–130 为 RAW-092 的正向事件快路、dirty-task 读取、强证据直发和完整同步；131–133 为 RAW-093 的计划待确认协议识别、即时待输入投影与权威同步；134–136 为 RAW-094 的私有 patch 忽略、重订抖动修复与真实只读复核；137–139 为 RAW-095 的明确归档匿名快路与复核；140–142 为 RAW-096 的 active observation 新鲜度边界；143–145 为 RAW-097 的 unread-only 状态隔离；146 为 RAW-105 的本地置顶循环回退；147 为 RAW-106 的停止态排除；148 为 RAW-107 的非活跃快捷键缓存防护；149–152 为 RAW-108 的同源展示投影；153–156 为 RAW-109 的旧保守 ongoing 循环排除、测试合同与文档/错误记忆同步；157–160 为 RAW-110 的完成通知直发、保守回退、设置标签与权威文档同步；161–164 为 RAW-111 的运行实例版本偏斜定位、端到端 revision fail-closed 与权威同步。按项目验收规则不运行测试、类型、构建或真实 uTools 验收；RAW-089–111 均保持 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。
+165. 以 RAW-112 只读展开真实浮窗并对照当前源码匿名 Activity/Turn 预检，确认两条旧 ongoing 加上本次真实任务会成为三条；不记录 raw identity。三条均为 fresh follow snapshot 的 `desktop-live active`，最新 Turn 均 terminal，且 active interval 在订阅时于毫秒级一起重建，锁定 snapshot replay 根因。
+166. 在 Preload shadow 增加 session-only `activityRevision` 与未佐证 active 抑制：首次 active snapshot 与已知 terminal Turn 冲突时复用 `[0,300,1000]` 定向读取；核验期间保守 active，只有同一 shadow/revision 未变且最终成功读取仍 terminal 时发布 idle + targeted terminal。任何 activity patch、等待请求、新 inProgress 或读取失败均取消收敛。
+167. 让真实 `turn/started` 恢复被抑制 shadow 的 active interval 且不安排多余 latest-Turn RPC；同步 public preload 镜像，将端到端任务状态合同提升为 `task-state-v2`，并在既有 bridge 测试模块补 terminal snapshot 抖动/新 Turn 恢复合同但不执行。
+168. 同步 RAW-112 到 Controlled/canonical/current/architecture/技术手册/用户指南、既有 stale-live-active 错误记忆与 CodeNote 派生理解；执行镜像、revision/残留、限定范围差异、`git diff --check` 与 Markdown 代码链接静态核验，不运行 tests/typecheck/build/uTools/真实任务验收。
+
+169. 以 RAW-113 对照“浮窗只剩额度、所有任务角标消失”的只读运行观察与源码，确认 Controller mismatch 空快照和 Float revision 空快照形成双重清空；复用既有 preload version-skew 错误记忆，不把实时任务身份或原始输出写入文档。
+170. 在 `codexPresentation.ts` 定义原子任务状态包与 legacy 归一化；Controller 在所有稳定快照转换点统一发布 `conversations / groups / counts / compatibility / nextTransitionAt`，并让既有调度器负责 6 小时边界。mixed-version 继续任务读取/订阅，只标记降级。
+171. Float 与 Codex 设置预览删除各自 revision 清空、动态投影和 Renderer 状态 clock，只消费同一包；前后任务 active 候选同步读取包内 active 组。顶层会话只作一版兼容别名，既有 domain/Controller/UI 测试合同更新但不执行。
+172. 同步 RAW-113 到 Controlled/canonical/current/architecture/技术手册/帮助、既有 version-skew 错误记忆与 CodeNote 派生理解；执行包消费/旧清空残留、限定范围差异、`git diff --check`、Markdown 链接和文档 receipt 静态核验，不运行 tests/typecheck/build/uTools 验收。
+
+173. 以 RAW-114 删除 Float 专属 Environment Action 导入、状态、目标/选择/轮询/确认函数、模板与专属 CSS；保留五个命令 ID，但卡内只向 Controller 转发，不再形成第二套执行状态。
+174. 将 pointer/focus departure 与 window blur 统一到 `220ms` 收缩调度；blur 清除临时确认/提示，保留 composer、panel、alias、Quick Jump、Shift preview 与 resize 的真实交互阻断。在既有 UI 测试模块补“不渲染 Actions/Picker”和 pointer/blur 收缩合同但不执行。
+175. 以 RAW-115 在 verified inventory scan 中对 dirty 且 `thread/list` 缺行的任务执行有界 exact `thread/read`，随后继续走项目归属、latest Turn、匿名 key/action alias 与 fingerprint 门禁；`updateInventory` 只保留尚未登记且仍 live active 的 main shadow，不保留已登记后消失或已终止的 shadow。
+176. 在既有 bridge 测试模块补 `thread/list` 滞后 exact-read 登记和首次错配后 shadow 保留序列；同步 Controlled/canonical/current/architecture/技术手册/帮助、Environment Action 过程修订与 CodeNote 派生理解。仅执行范围/残留/镜像/链接/`git diff --check` 静态核验，不运行 tests/typecheck/build/uTools/真实任务验收。
+
+Completion: 1–114 保留既有历史与 RAW-088 状态；115–172 保留 RAW-089–113 的实时证据、稳定投影与原子包演进；173–174 为 RAW-114 的可见 Actions 删除与 220ms 统一收缩；175–176 为 RAW-115 的 dirty exact-read 安全登记、live shadow 保留、测试合同与权威同步。按项目验收规则不运行测试、类型、构建或真实 uTools 验收；RAW-089–115 均保持 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。

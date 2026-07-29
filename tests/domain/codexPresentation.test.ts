@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildCodexTaskStatePackage,
   buildCodexCompactPresentation,
   CODEX_DYNAMIC_TASK_WINDOW_MS,
+  normalizeCodexTaskStatePackage,
   projectCodexDynamicStatus
 } from '../../src/domain/codexPresentation'
-import type { CodexCompactField, CodexQuotaSnapshotV1, CodexTaskCard } from '../../src/domain/codex'
+import { CODEX_TASK_STATE_REVISION, emptyConversationSnapshot, type CodexCompactField, type CodexQuotaSnapshotV1, type CodexTaskCard } from '../../src/domain/codex'
 
 const NOW = 1_784_364_000_000
 
@@ -101,6 +103,39 @@ describe('Codex compact presentation', () => {
 })
 
 describe('Codex dynamic status projection', () => {
+  it('packages conversations, status groups, counters and compatibility as one atomic Controller value', () => {
+    const active = task('packaged-active')
+    const conversations = {
+      ...emptyConversationSnapshot('ok'),
+      ongoing: [active],
+      all: [active],
+      ongoingCount: 1,
+      runningCount: 1,
+      updatedAt: NOW
+    }
+    const current = buildCodexTaskStatePackage(conversations, {
+      sourceRevision: CODEX_TASK_STATE_REVISION,
+      now: NOW
+    })
+
+    expect(current).toMatchObject({
+      compatibility: 'current',
+      conversations,
+      dynamic: { compactCounts: { input: 0, active: 1, unread: 0 } }
+    })
+    expect(current.dynamic.groups.active[0]).toBe(current.conversations.ongoing[0])
+    expect(current.dynamic.nextTransitionAt).toBe(active.lastTurnStartedAt! + CODEX_DYNAMIC_TASK_WINDOW_MS + 1)
+
+    const legacy = normalizeCodexTaskStatePackage(undefined, conversations, undefined, NOW)
+    expect(legacy).toMatchObject({
+      compatibility: 'degraded',
+      sourceRevision: 'legacy',
+      conversations,
+      dynamic: { compactCounts: { input: 0, active: 1, unread: 0 } }
+    })
+    expect(legacy.compatibilityMessage).toContain('状态已保留')
+  })
+
   it('derives mutually exclusive recent groups and all three counters from one stabilized snapshot', () => {
     const input = task('input', { activityState: 'waiting-input', state: 'waiting-input' })
     const active = task('active')

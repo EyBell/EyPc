@@ -3,14 +3,18 @@
 Tool: codex
 Date: 2026-07-29
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-29.2`
+Requirement version: `2026-07-29.5`
 
 ## Result
 
-- RAW-111 解释了“当前源码应为 1、运行浮窗仍为 5”的最后一层问题：Computer Use 确认角标与展开卡片内部一致，但官方线程只读状态和 [codex-real-preflight.mjs](../../../../scripts/codex-real-preflight.mjs#L1) 都表明旧任务已经完成、当前只剩 1 条 active；运行 uTools 的 Preload/主 Controller 早于当前文件，而浮窗 Renderer 更新较新。现在 [codex.ts](../../../../src/domain/codex.ts#L1) 的无隐私 `CODEX_TASK_STATE_REVISION` 贯穿 Preload capability、production adapter、Controller 和浮窗快照：旧 Preload 时 Controller 清空任务数字但保留额度，旧主 Controller 时新浮窗也自行抑制三个角标并提示重载。该门禁不改任何抖动计时或任务状态语义，必须正常重载 uTools 插件后才会恢复真实数字。
+- RAW-115 修正“Codex 原生仍有一个 active、插件却显示 0”的安全库存登记缺口。[preload/index.js](../../../../preload/index.js#L1) 现在对本轮 dirty 且不在滞后 `thread/list` 的任务做一次有界 exact `thread/read`，仍须通过原生项目归属、latest Turn、匿名 key/action alias 与 registry fingerprint 才进入 Controller 原子包；没有占位卡或单独角标补数。未登记且仍 live active 的 Desktop shadow 不再被第一次空扫描删除，首次 exact read 错配后可等真实 list 追上；曾登记后缺失、terminal、归档或断桥仍按原门禁清理。只读联调的 `1 native active / 0 plugin dynamic` 是修复前定位证据，不是验收。
+- RAW-114 删除了用户截图中额度下方整块 `Actions / Environment`、选择层与 Setup 提示，并删除 Float 的目标/Environment/session/confirm 第二套状态；卡内五个命令只转发 Controller，系统级 Action 能力继续存在。pointer/focus departure 和点击其它位置引发的 window blur 现在共用约 220ms 自动收缩，环境选择器不再形成不可见阻断；真实 composer/panel/alias/Quick Jump/Shift preview/resize 仍可暂缓收缩。
+- RAW-113 修正了“版本保护上线后所有任务状态都没了”的回归。[codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1) 现在定义唯一原子任务状态包；[codexController.ts](../../../../src/runtime/codexController.ts#L1) 将稳定会话、五个动态分组、三个角标数量、下一次 6 小时边界和兼容诊断一起发布给主页面与浮窗，并让前后任务读取包内 active 组。[FloatApp.vue](../../../../src/FloatApp.vue#L1) 删除自己的 revision 清空、动态筛选和一分钟 clock，[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 的水球预览也只读该包。旧 Preload/Controller 不再触发双重空投影：可用任务继续显示并标为降级、建议重载；若旧 Controller 已经把任务清空，仍需正常重载让新 Controller 重新读取，Renderer 不猜造数据。
+- RAW-112 解释了“实际没有任务却仍有两条进行中，开始本次任务可能变三条”：RAW-111 重载后角标与卡片已经消费同一 v1 链路，但 Desktop follow 的首次 snapshot 仍把历史 `threadRuntimeStatus.active` 重放为新活动。授权的只读联调中，三条匿名任务均显示 `desktop-live active`，最新 Turn 却全是 interrupted，并且活动区间在同轮订阅时于毫秒级一起新建。[preload/index.js](../../../../preload/index.js#L1) 与 public 镜像现在把首次 active snapshot 视为待佐证证据：保守 active 保持到既有 `[0,300,1000]` 定向读取结束，只有 activity revision/映射未变且最终成功读取仍 terminal 才抑制这次 replay，发布 idle + targeted completed/stopped。任何等待请求、activity patch、新 inProgress 或读取失败都保留/恢复进行中；真实 `turn/started` 不再产生额外 latest-Turn RPC。任务状态合同已提升到 `task-state-v2`，因此必须正常重载插件后生效。
+- RAW-111 解释了“当前源码应为 1、运行浮窗仍为 5”的 mixed-version 根因：Computer Use 确认角标与展开卡片内部一致，但官方线程只读状态和 [codex-real-preflight.mjs](../../../../scripts/codex-real-preflight.mjs#L1) 表明旧任务已结束、运行 uTools 的 Preload/主 Controller 又早于当前文件。它引入的 `CODEX_TASK_STATE_REVISION` 继续有效；其“Controller 与 Float 各自清空任务”的首版门禁已被 RAW-113 证明会抹掉全部状态并废止，当前只在原子包中标记降级和建议重载。
 - RAW-063 已将展开任务导航收敛为 `动态 / 已完成 / 已隐藏 / 项目`。`all/inputRequired` 仍是底层兼容投影，但 `all/input` 的旧页签持久化、旧快照和外部设置均直接回落到 `ongoing`，不会再短暂显示“全部”或“待输入”。
 - RAW-089 将未知/传输异常收敛为进行中；RAW-091 再把 terminal Turn + exact live idle/not-running 的明确停止拆出为“已停止”。当前动态页顺序是待输入、正在进行中、已停止、已完成未读、已完成；bridge failed、系统错误、notLoaded、inProgress 与权威缺失仍显示“进行中”。标题普通点击直达，Ctrl/Cmd 标题点击选择，元信息行只聚焦高亮以继承 `Ctrl+T` 的项目上下文。
-- RAW-108 把上述状态段与角标收敛为一个 Renderer 展示投影：[codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1) 从 Controller 稳定快照一次生成最近 6 小时、非隐藏的互斥动态段和 active 数；`active / waiting-approval / ongoing` 都进入“正在进行中”，waiting-input 不重复，stopped 立即离开。浮窗动态 Tab、状态段、三个角标、主水球摘要及设置页预览共用这一结果；搜索只过滤展开行，隐藏/超过 6 小时任务不进入 active，待输入/完成未读仍使用含隐藏的完整集合。
+- RAW-108 首先把状态段与角标收敛为一个纯投影，RAW-113 将其所有权锁定到 Controller 原子包：[codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1) 一次生成最近 6 小时、非隐藏的互斥动态段和三个数量；`active / waiting-approval / ongoing` 都进入“正在进行中”，waiting-input 不重复，stopped 立即离开。浮窗动态 Tab、状态段、角标、主水球摘要、设置预览及前后任务 active 组共用该包；搜索只过滤展开行。
 - RAW-109 将“上一个/下一个 Codex 任务”的普通候选同步到这份展示资格：[codexController.ts](../../../../src/runtime/codexController.ts#L1) 依次使用完整待输入与最近 6 小时、非隐藏 active 组，不再读取整个 30 天 ongoing 桶。完成未读保留独立首条动作；只有普通池为空且用户明确在 EyPc 本地置顶时，非停止的旧/隐藏任务才可作为回退。所指旧任务已由用户主动归档，但修复不依赖归档。
 - RAW-110 缩短正向状态路径：[preload/index.js](../../../../preload/index.js#L1) 与 public 镜像从 `thread/started.params.thread.id` 精确标脏全新任务，安全库存登记因此只重读该任务的 latest Turn；对已登记任务则直接消费完整更新的 inProgress，并把完整、新鲜且单调的 completed Turn只按状态/开始/完成时间发布为匿名 `targeted-after-exit`，不再等待额外 RPC。未知/畸形/旧或非目标通知仍走 50ms dirty-task / 3 秒定向核验，待输入优先和全部防抖/隐私门禁不变。
 - RAW-065 已恢复仅由 Weekly 数据驱动的 SVG 进度环及连续/20 段、粗细、颜色和光晕设置。用户跟进截图暴露的最外层完整圆来自宿主水球按钮 focus outline，并被根整圆背景与同尺寸外发光强化；当前连同 inset、border、inset outline 与 shell 一并删除，键盘焦点改为中央读数下划线。无 Weekly 时不显示任何外圈；历史 `shellOpacity` 只保留持久化兼容。
@@ -61,7 +65,7 @@ Requirement version: `2026-07-29.2`
 - 未进入选择模式时，会话中部左键打开 Codex，Ctrl/Cmd+中部只选择，左侧 38px 全高矩形选择区建立选择；已有任一选中项后，中部和左区均切换当前任务加入/移出，移出最后一项即退出。`选择模式 / 已选 N 项 / Esc 退出` 现在绝对悬浮在列表舞台底部，非普通流元素；滚动区预留底部安全空间，若批量栏置底则其上移避让，故提示的出现/消失不会改变列表顶部、可视高度或任务行坐标。未选行降权，选中行使用 accent/running/pending/surface 三色主题渐变及强化 hover/focus/active；左区始终显示任务状态图标并同步 `aria-pressed`。任务行、左区按钮和右动作按钮分别拥有 Space/Enter，不重复触发。
 - 只有 Codex Desktop `desktop-live` snapshot/patch/request/read-state 才能产生待输入、等待审批或权威 active；其它来源不得伪造 live authority。桥失败、连接中或协议不兼容时任务以保守 ongoing 保持“进行中”；桥明确 `not-running` 且 latest Turn 为 failed/interrupted 时才是“已停止”。普通 watchdog 为 5s，连续三次失败临时改为 1s；进行中角标严格统计最近 6 小时、非隐藏的 `active / waiting-approval / ongoing` 展示段。
 - 同页只有一个高亮项，方向键和真实鼠标移动按所有权切换；Shift+↑/↓ 只更新高亮/预览，不改变多选。右键未选先单选、已选保留多选，项目右键清任务选择。`Ctrl+T` 是设置页可改键的 Codex profile 命令；浮窗本地解析 `when`/layer、维护 `codex-composer` 输入角色和 Escape LIFO。Quick Jump 过滤裁剪、遮挡、pointer-events、视口与命中栈，会话标记只聚焦。`codex.float.activate`/uTools 入口继续直接显示、展开并聚焦卡片。
-- 完成未读由最新 Turn completed 与 Codex 自身 `hasUnreadTurn` 共同决定；live read-state 优先，桌面断线时可读取 Codex 持久化 unread 集合。EyPc 打开、隐藏或恢复任务都不会确认/清除未读；旧 receipt 只保留本地隐藏迁移。项目折叠乐观反馈，自动收起约 100ms。
+- 完成未读由最新 Turn completed 与 Codex 自身 `hasUnreadTurn` 共同决定；live read-state 优先，桌面断线时可读取 Codex 持久化 unread 集合。EyPc 打开、隐藏或恢复任务都不会确认/清除未读；旧 receipt 只保留本地隐藏迁移。项目折叠乐观反馈；pointer/focus departure 或窗口失焦共用约 220ms 自动收起。
 - 置顶动作会立即重新投影：任务在当前页签/状态段内移动到非置顶项之前，项目进入 `Pinned`；若浮窗动作桥接未送达，会明确提示重新打开 EyPc，不再静默表现为无效。
 - 单条原生归档重读身份、状态、版本、latest Turn 和项目指纹，只允许同一明确 completed revision；任何其它或变化证据均拒绝。写入后同时核验 false 缺席与 true 存在，再向已连接 Codex Desktop 派发 `thread-archived` v2。项目“归档已完成任务”忽略 30 天窗口，20 条一批、并发 2，只处理重读仍为 completed 的条目，其余全部作为进行中跳过并逐项双向验证/通知。
 - 项目批量归档只做模拟集成测试。真实验收只使用专用临时任务完成 archive/unarchive 双向核验并最终归档清理；现有任务未被操作。
@@ -72,7 +76,9 @@ Requirement version: `2026-07-29.2`
 
 ## User Acceptance
 
-- RAW-111 为 `未校验，待用户验收`：先在 uTools 中正常重新加载 EyPc 插件，再通过既有显示入口恢复浮窗。重载完成后，当前只有一条 active 时紧凑进行中角标和展开“正在进行中”必须同时为 1，先前已完成的旧任务不得保留在该段；若只更新了 Renderer 或 Preload/主 Controller 仍旧，三个任务角标必须全部隐藏并显示“任务状态版本已过期/重新加载”提示，不能继续显示历史数字。随后按 RAW-110 新建并完成一条测试任务，确认数字与卡片一次同步切换。
+- RAW-113 为 `未校验，待用户验收`：正常重载 EyPc 后，浮窗必须同时恢复任务卡片与三个角标，不能只剩额度。当前 revision 链路下，动态“正在进行中”卡片数、进行中角标、水球摘要、ARIA、设置预览和前后任务 active 候选必须来自同一包；模拟/观察旧桥时仍显示旧快照中可用的任务并附带“状态已保留，建议重载”，不得再次全部清空。随后开始并完成一条可丢弃任务，卡片、数字和归档能力必须一次同步切换。
+- RAW-112 为 `未校验，待用户验收`：在 uTools 中正常重载 EyPc 并恢复浮窗。两条最新 Turn 已 terminal、没有 waiting request 的旧任务可在最多三次定向读取后一次离开“正在进行中”，卡片与角标必须保持同数，不能永久留 2，也不能先后闪动。随后启动一条可丢弃新任务：完整 started Turn 或真实 activity patch 必须立即恢复/新增一条进行中且无额外核验；完成或主动停止后，completed/stopped、角标和归档能力按既有强证据一次切换。临时断连、读取失败、revision 变化或 waiting request 仍必须保守进行中，不能被超时猜成完成。
+- RAW-111 的 mixed-version 验收已并入 RAW-113：当前链路下角标和卡片必须同数；旧链路只可显示降级提示并保留其可用任务，不得再以“版本过期”为由清空三个角标。正常重载后再按 RAW-110/112 验证真实数量与完成切换。
 - RAW-110 为 `未校验，待用户验收`：重载 uTools preload 后，在长时间空闲后新建一条任务，安全库存登记应只读取该新任务的 latest Turn，不再随任务池规模全量重读；对一条已进入稳定库存的任务发起新 Turn，完整 started 通知应让进行中卡片/角标同步出现且无额外 RPC。再让任务自然完成，完整完成通知应让卡片、角标、完成分段和归档能力一次同步切换，不等待普通稳定窗或额外 RPC。制造短暂 active→ongoing→active、缺字段/旧完成通知或桥断连时仍须保守进行中。若保存了 1.5 秒等普通完成平滑档，该选择应保留；“不等待”只影响普通快照完成。
 - RAW-109 为 `未校验，待用户验收`：准备一条超过 6 小时、非隐藏、未在 EyPc 本地置顶且因传输不确定仍为保守 ongoing 的任务，前后任务快捷键不得打开它；动态进行中卡片与角标也均不包含它。再明确执行 EyPc 本地置顶并确保普通候选为空，它才可进入回退循环。完成未读任务继续只由自己的首条动作处理，不应出现在通用前后循环。
 - RAW-108 为 `未校验，待用户验收`：在真实任务经历 active→短暂 ongoing→active 时，最近 6 小时“正在进行中”卡片和角标必须始终同步且数量相同；targeted completed 或明确 stopped 到达后两者及归档能力一次切换。搜索不得改变紧凑数字，隐藏/超过 6 小时任务不得进入 active；待输入/完成未读仍包含隐藏。配置水球预览、按钮提示与 ARIA 应显示相同数字，进行中点击只展开。
@@ -111,7 +117,7 @@ Requirement version: `2026-07-29.2`
 
 - [preload/index.js](../../../../preload/index.js#L1) 是原始项目状态、Codex Desktop snapshot、thread/Turn ID、cwd 与 action alias 的唯一进程内边界；桌面 snapshot 的正文/摘要只为协议消费而瞬时存在，状态投影后立即丢弃。Renderer 和持久化层只接收匿名键、权威枚举、项目描述、顺序和短期动作别名。
 - 不读取 Codex SQLite/LevelDB，不把正文、摘要、raw ID、cwd/路径写入 Renderer、存储、日志或文档，也不自动操作 Codex 桌面 UI。除经二次确认和完整门禁的项目移除事务外，不写 `.codex-global-state.json`；unread fallback 只读 Codex 自身持久化集合。
-- Host V2 旧字段和 Activity Delta V1 保留一版数据兼容；V1 只能成为 connector authority。RAW-111 后，生产 uTools 的任务展示还要求端到端 `taskStateRevision` 精确一致，旧实例只能继续读取额度/config，不能发布历史任务数字。未来 Easy Agent 可替换 App Server + Desktop bridge provider/floating host，而不改变 Renderer 四个可见页签、兼容投影、匿名状态、本地元数据、`quota-auto` 或瞬时新会话合同。
+- Host V2 旧字段和 Activity Delta V1 保留一版数据兼容；V1 只能成为 connector authority。`task-state-v2` 继续标记 RAW-112 的 evidence 语义，但 RAW-113 规定旧来源必须继续读取/订阅并由 Controller 原子状态包保留任务，只标记 `degraded`，不能清空或把状态派生拆回 Renderer。RAW-115 的 raw dirty identity、exact read 与 pending live shadow 全部只留在 preload，完整安全登记后才生成现有匿名行；`activityRevision` 与 snapshot 抑制标记同样不越界。未来 Easy Agent 可替换 App Server + Desktop bridge provider/floating host，而不改变 Renderer 四个可见页签、兼容投影、匿名状态、本地元数据、`quota-auto` 或瞬时新会话合同。
 
 ## Residual Boundary
 

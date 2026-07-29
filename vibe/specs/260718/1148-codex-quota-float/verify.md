@@ -3,21 +3,50 @@
 Tool: codex
 Date: 2026-07-29
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-29.2`
+Requirement version: `2026-07-29.5`
+
+## RAW-113 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 用户反馈与只读复现 | pass / diagnostic only | 真实浮窗只剩额度读数，三个任务角标与任务状态面全部消失；源码存在 Controller `preload-version-mismatch` 空投影和 Float revision 空投影两条独立清空路径。该观察证明回归与根因，不替代修复后验收。 |
+| 原子任务状态包 | implemented / source-reviewed | [codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1) 一次封装稳定会话、互斥动态组、三个紧凑数量、下一次 6 小时边界、revision 与兼容提示；[codexController.ts](../../../../src/runtime/codexController.ts#L1) 只保留内部原始证据快照与唯一 `taskState` 展示包，不再维护并行 `conversations` 展示变量，并让 view/float/actions/cycle 消费同一实例。顶层兼容别名指向包内同一对象且不参与计算。 |
+| mixed-version 保留 | implemented / source-reviewed | legacy/future revision 不再清 receipt/hold/baseline、阻断库存/Activity Delta 或发布错误空态；只将包标记 `degraded`。缺包的旧 Controller 快照由唯一领域归一函数一次转换，保留其中仍存在的任务。 |
+| Renderer 单向消费 | implemented / source-reviewed | [FloatApp.vue](../../../../src/FloatApp.vue#L1) 已删除 revision 二次清空、独立动态投影和一分钟 clock；[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 设置预览与任务诊断读取 `taskState`；Controller 既有调度 timer 负责包内时间边界。 |
+| 回归合同 | updated / not run | 既有 domain/Controller/UI 文件增加原子同源、legacy 保留、角标/卡片/设置预览合同。依用户保留的验收边界，本轮不运行 tests、typecheck、build、uTools 或真实任务操作。 |
+| 静态收口 | pass / targeted scope | Renderer/Controller 旧清空与重复投影残留扫描为零；Controller 并行展示变量扫描为零；`preload/index.js` 与 `public/preload.js` 字节一致；限定代码/测试/文档及 CodeNote 派生文件的 `git diff --check` 通过；项目与 CodeNote Markdown 引用审计通过。 |
+| 文档与记忆 | updated / historical receipt | RAW/spec/plan/tasks/verify/handoff、产品需求、项目当前态、架构、技术手册、帮助、既有 preload version-skew 错误记忆与 CodeNote 派生理解在 RAW-113 阶段同步为 `2026-07-29.4`；该阶段凭据仅记录当时边界，RAW-114/115 以本文件后续修订及新凭据为准。 |
+
+结论：RAW-113 源码与合同为 `reported`；正常重载后任务面是否整体恢复、当前/降级包是否保留同数以及真实新增/完成切换仍为 `未校验，待用户验收`。
+
+## RAW-112 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 用户现象复现 | pass / read-only debug | 授权的 Computer Use 展开真实浮窗后，紧凑角标与“正在进行中”段同时为 3；当前源码匿名预检也得到三条 `desktop-live active`，所以 RAW-108 同源计数未再次分叉。未记录 raw thread ID、路径或正文。 |
+| 根因证据 | pass / read-only source correlation | 三条匿名任务的最新 Turn 均为 `interrupted`、无 waiting flags，但 fresh follow snapshot 每次都把它们声明为 active，且三个 `desktopActiveSince` 在同轮订阅中于约 80ms 内一起重建。首个订阅 snapshot 被误当作新 active transition，解释了“旧两条 + 本次真实任务 = 三条”。 |
+| 有界 snapshot 佐证 | implemented / source-reviewed | [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 为 shadow 记录 session-only `activityRevision`。active/no-waiting snapshot 与已知 terminal Turn 冲突时继续先发布 active，并复用既有 3 秒 `[0,300,1000]` 定向读取；只有同一 shadow/父映射和 activity revision 未变化、最终成功读取仍 terminal 时才抑制该 snapshot active并发布 idle + targeted terminal。 |
+| 抖动与恢复边界 | preserved / source-reviewed | runtime/request patch 会推进 activity revision 并解除抑制；waiting request、新 inProgress Turn、映射/revision 变化或读取失败都会阻止 terminal 收敛。完整 `turn/started` 恢复真实 active interval，且不会重新安排一次多余 latest-Turn RPC。50ms 结构合并、missing-key 隔离、Controller hold、普通完成窗和 bridge 异常保守 ongoing 均未删除。 |
+| 版本门禁 | implemented / source-reviewed | `CODEX_TASK_STATE_REVISION` 由 `task-state-v1` 提升为 `task-state-v2`，Preload/public/domain/test literal 同步；旧 v1 运行链路继续按 RAW-111 隐藏任务投影并要求正常重载，额度/config 不受影响。 |
+| 测试合同 | updated / not run | 既有 [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 增加 terminal interrupted + active snapshot 在三次定向读取后收敛、真实新 started Turn 立即恢复且不增加 RPC 的合同；未新增测试模块。依授权未执行 tests、typecheck、build、uTools 或真实 Codex 任务。 |
+| 静态核验 | pass | preload/public 镜像一致；旧 `task-state-v1` 代码残留为空；限定范围 `git diff --check` 与 Markdown code-link audit 通过。 |
+| 当前运行态 | not accepted | 只读联调用于定位而非验收；运行中的 uTools 尚未由 Agent 自动重启或完成 v2 真实转换验收。需正常重载 EyPc 后观察旧 terminal 任务在有界核验后一次离开进行中，再用可丢弃任务确认 started/completed 快路。 |
+
+结论：RAW-112 已完成源码、测试合同和授权范围内的静态收口，状态为 `reported`；重载后的真实角标、停止/完成和新 Turn 恢复仍为 `未校验，待用户验收`。
 
 ## RAW-111 当前交付状态
 
 | Check | Result | Evidence / Scope |
 | --- | --- | --- |
 | 运行实例根因 | pass / read-only debug | 授权的 Computer Use 展开浮窗后，角标与“正在进行中”段都为 5，说明 RAW-108 同源投影本身未分叉；同一时刻官方线程只读状态中只有当前任务 active，所列多条旧任务最新 Turn 已 completed，本机当前源码匿名预检为 `ongoing=1 / active=1`。运行进程启动时间早于当前 preload 文件，且浮窗 DevTools 显示 Vite 连接已丢失，证实运行实例仍消费旧 Preload/主 Controller。 |
-| Preload/Controller 门禁 | implemented / source-reviewed | [codex.ts](../../../../src/domain/codex.ts#L1)、[preload/index.js](../../../../preload/index.js#L1)、public 镜像与 [eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1) 传递同一 `taskStateRevision`；production adapter 把缺失值归一为 `legacy`。[codexController.ts](../../../../src/runtime/codexController.ts#L1) 对不匹配版本发布零任务 `preload-version-mismatch`，不读取/订阅 task/activity lane，但 quota/config 仍独立读取。 |
-| 旧主 Controller 浮窗门禁 | implemented / source-reviewed | Controller 当前浮窗快照携带同一 revision；[FloatApp.vue](../../../../src/FloatApp.vue#L1) 在生成动态段、卡片和三个角标前再次精确核验，旧快照缺 revision 时统一为空并把重载说明加入可见状态与紧凑 ARIA。[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 的真实预检字段同步显示错误。 |
+| Preload/Controller 门禁 | superseded / corrected by RAW-113 | revision 传递与 `legacy` 归一仍保留；不匹配时发布零任务 `preload-version-mismatch`、停止 task/activity lane 的实现已被真实“所有状态消失”反馈否定并删除。当前合同见本文件 RAW-113 原子包与 mixed-version 保留表。 |
+| 旧主 Controller 浮窗门禁 | superseded / corrected by RAW-113 | Float 二次 revision 空投影导致双重清空，已删除。旧快照只通过领域 normalizer 一次构造降级包并保留其中仍存在的任务；设置页与浮窗读取同一包。 |
 | 抖动/隐私/生命周期 | preserved / source-reviewed | 未新增 timer/debounce，未改 Activity Delta、Projection V3、50ms 合并、3 秒 `[0,300,1000]` 核验、缺失隔离、完成 hold、动作、存储或迁移。revision 不含任务身份或状态。插件不会自动 kill/restart uTools；需用户正常重载。 |
-| 测试合同 | updated / not run | 既有 [eypcPlatform.test.ts](../../../../tests/platform/eypcPlatform.test.ts#L1)、[codexController.test.ts](../../../../tests/runtime/codexController.test.ts#L1) 与 [codexCompanion.test.ts](../../../../tests/ui/codexCompanion.test.ts#L1) 增加 legacy 归一、任务 lane 拒绝、旧 Controller 角标抑制、当前 revision 透传合同。依授权未执行 tests、typecheck、build 或 uTools 验收。 |
-| 静态收口 | pass | `CODEX_TASK_STATE_REVISION` 在 domain、canonical/public preload、production adapter、Controller 与浮窗链路一致；两份 preload SHA-256 相同。Renderer 动态卡片、角标和设置预览继续只引用 `projectCodexDynamicStatus`；版本号统一为 `2026-07-29.2`，两仓 `git diff --check` 与 Markdown code-link audit 通过。 |
+| 测试合同 | superseded / replaced by RAW-113 contract | legacy 归一与 revision 透传继续；任务 lane 拒绝和旧 Controller 角标抑制断言已改为原子包降级保留。依授权仍未执行 tests、typecheck、build 或 uTools 验收。 |
+| 静态收口 | historical pass / behavior superseded | RAW-111 当时的 revision/mirror/link 静态检查保留为历史证据，但不能证明空投影产品行为正确；RAW-113 已执行新的包消费与空投影残留检查。 |
 | 当前运行态 | not accepted | 当前源码预检的 1 与运行浮窗的 5 已形成根因证据，但旧运行实例未由 Agent 重启，真实浮窗尚未消费本次修复。Computer Use 调试过程中浮窗被显式 toggle 为隐藏；用户需通过原有 EyPc/uTools 显示入口恢复并重载插件后验收。 |
 
-结论：RAW-111 已完成源码、测试合同和授权范围内的静态收口，状态为 `reported`；重载后的真实角标与状态切换仍为 `未校验，待用户验收`。
+结论：RAW-111 的 mixed-version 根因和 revision 元数据继续有效，首版空投影实现已被 RAW-113 重做；真实角标与状态切换仍为 `未校验，待用户验收`。
 
 ## RAW-110 当前交付状态
 
@@ -708,3 +737,15 @@ Requirement version: `2026-07-29.2`
 - 历史实现曾让其它 activity、普通未读和 Side Chat 关系走单一 2 秒稳定窗口；该路径已由 RAW-089 删除。当前 Activity Delta 立即投影，只有 completed 展示保留可配置稳定窗。
 - 已实现主对话隐藏导航目标选择与 Deep Link 失败回退逻辑；本轮未执行真实打开动作，因此 Side Chat 直跳仍标记为“未验证”，不写入 publish log 能力承诺。
 - 按用户要求仅执行 `git diff --check`、`pnpm run typecheck` 与静态结构核验；不执行自动化测试、build、截图、uTools 宿主验收或额外自动化测试。
+
+## Revision 2026-07-29.5 RAW-114/115 Reported
+
+| Check | Status | Evidence |
+|---|---|---|
+| Actions/Environment 可见块 | implemented / source-verified | [FloatApp.vue](../../../../src/FloatApp.vue#L1) 不再包含 `float-action-slots`、picker、Environment state/轮询/确认；[float.css](../../../../src/styles/float.css#L1) 仅删除对应 UI 样式，通用 action hint 保留。五个卡内命令转发既有 Controller action。 |
+| 自动收缩 | implemented / source-contract | pointer/focus departure 与 window blur 共用 `FLOAT_COLLAPSE_DELAY_MS=220`；blur 清除临时确认/提示并调度收缩，composer/panel/alias/Quick Jump/Shift preview/resize 仍阻断。既有 UI 合同覆盖 pointer 与 blur，但未运行。 |
+| 原生状态差异诊断 | observed / non-acceptance | 同时只读观察到 Codex 任务接口为 1 个 active，而插件展开态为 0 动态/0 近期任务。该匿名聚合只用于定位库存注册缺口，不证明修复后的实时性。Codex App 本体因 Computer Use 安全边界不可直接操控。 |
+| dirty exact registration | implemented / source-contract | [preload/index.js](../../../../preload/index.js#L1) 对本轮 dirty 且 `thread/list` 缺行的合法 ID 执行一次有界 exact `thread/read`，只有同一 identity/合法状态且通过原生项目、latest Turn、匿名 alias/fingerprint 门禁才进入 inventory；没有占位卡或额外 active count。 |
+| pending live shadow | implemented / source-contract | `updateInventory` 只保留从未登记且仍 live active 的 main shadow；已登记后缺失、idle/terminal、归档、断桥/会话清理仍按既有路径清除。测试合同覆盖首次 exact read 错配后 list 追上并恢复 waiting-input，但未运行。 |
+| 自动化/构建/宿主 | not run / user-owned | 依本任务授权不运行 tests、typecheck、build、uTools 验收或真实任务状态切换。仅做限定范围差异、残余逻辑、preload 镜像、Markdown 链接与 `git diff --check` 静态核验；最终结果保持 `reported / 未校验，待用户验收`。 |
+| 限定静态核验 | pass | Float/CodexPage 不再调用动态投影、窗口计时或状态成员筛选；仅保留标签/图标映射和包内数量读取。Actions/Environment Renderer 状态与专属样式残留为零；`preload/index.js` 与 `public/preload.js` 字节一致；本轮限定代码/测试/文档及 CodeNote 派生文件的 `git diff --check` 和 Markdown 代码链接审计通过。 |

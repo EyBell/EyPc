@@ -6,9 +6,10 @@ import type { EypcPlatformApi } from '../../src/platform/eypcPlatform'
 import { createCodexController } from '../../src/runtime/codexController'
 
 describe('Codex controller', () => {
-  it('withholds cached task counts when the production adapter reports a legacy task-state bridge', async () => {
+  it('preserves one atomic degraded task package when the production adapter reports a legacy bridge', async () => {
     const state = createInitialState(1)
     state.activeTab = 'codex'
+    const now = Date.now()
     const reads: Array<Record<string, boolean>> = []
     const messages: string[] = []
     const platform = {
@@ -18,11 +19,25 @@ describe('Codex controller', () => {
           reads.push(options)
           return {
             ok: true as const,
-            receivedAt: 200,
+            receivedAt: now,
             value: {
               version: 2 as const,
-              receivedAt: 200,
-              quota: { plan: 'pro', short: { remainingPercent: 80, resetAt: 1_000, windowMinutes: 300 } }
+              receivedAt: now,
+              ...(options.includeQuota ? {
+                quota: { plan: 'pro', short: { remainingPercent: 80, resetAt: 1_000, windowMinutes: 300 } }
+              } : {
+                threads: [{
+                  key: '1111111111111111',
+                  actionAlias: 'legacy-active',
+                  name: '保留中的旧桥任务',
+                  status: 'active' as const,
+                  activeFlags: [],
+                  statusAuthority: 'connector' as const,
+                  updatedAt: now - 1_000,
+                  lastTurnStatus: 'inProgress' as const,
+                  lastTurnStartedAt: now - 1_000
+                }]
+              })
             }
           }
         },
@@ -41,15 +56,20 @@ describe('Codex controller', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(reads).toEqual([{ includeQuota: true, includeConfig: true, includeThreads: false }])
-    expect(controller.view().conversations).toMatchObject({
-      status: 'error',
-      errorCode: 'preload-version-mismatch',
-      ongoingCount: 0,
-      completedUnreadCount: 0
+    expect(reads).toEqual([
+      { includeQuota: true, includeConfig: true, includeThreads: false },
+      { includeQuota: false, includeConfig: false, includeThreads: true }
+    ])
+    expect(controller.view().taskState).toMatchObject({
+      compatibility: 'degraded',
+      sourceRevision: 'legacy',
+      conversations: { status: 'ok', ongoingCount: 1 },
+      dynamic: { compactCounts: { active: 1 } }
     })
-    expect(messages.at(-1)).toContain('重新加载 EyPc 插件')
+    expect(controller.view().conversations).toBe(controller.view().taskState.conversations)
+    expect(messages.at(-1)).toContain('状态已保留')
     expect(controller.floatSnapshot().taskStateRevision).toBe(CODEX_TASK_STATE_REVISION)
+    expect(controller.floatSnapshot().taskState).toBe(controller.view().taskState)
     controller.dispose()
   })
 

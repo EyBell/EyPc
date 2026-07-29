@@ -260,11 +260,11 @@ export interface CodexPendingRecoverySnapshotV1 {
 }
 
 /**
- * End-to-end revision for the privacy-safe task-state projection. The preload,
- * Controller and floating renderer must all agree before task counts are
- * presented; uTools may otherwise keep an older preload/renderer alive.
+ * Semantic revision for privacy-safe task evidence. A mixed-version runtime is
+ * marked degraded, but its atomic task-state package is preserved rather than
+ * being independently cleared by Controller or Renderer.
  */
-export const CODEX_TASK_STATE_REVISION = 'task-state-v1'
+export const CODEX_TASK_STATE_REVISION = 'task-state-v2'
 
 export interface CodexHostSnapshotV1 {
   version: 1
@@ -549,6 +549,11 @@ export interface CodexSettings {
   newThreadPreferredModel: string
   /** Rolling latest-Turn activity window for task projections; the dynamic view adds a fixed six-hour filter. */
   timeWindowDays: number
+  /**
+   * Optional default project for Environment Action slots.
+   * Empty means “use the float Projects tab context” instead of a fixed project.
+   */
+  actionDefaultProjectKey: string
   compactFields: CodexCompactField[]
   expandedFields: CodexExpandedField[]
   colors: CodexColorSettings
@@ -1093,6 +1098,7 @@ export function defaultCodexSettings(): CodexSettings {
     newThreadModelPolicy: 'quota-auto',
     newThreadPreferredModel: '',
     timeWindowDays: 30,
+    actionDefaultProjectKey: '',
     compactFields: [...COMPACT_FIELDS],
     expandedFields: [...EXPANDED_FIELDS],
     colors,
@@ -1123,6 +1129,10 @@ export function normalizeCodexSettings(value: unknown): CodexSettings {
       ? source.newThreadPreferredModel
       : '',
     timeWindowDays: boundedInteger(source.timeWindowDays, 1, 365, fallback.timeWindowDays),
+    actionDefaultProjectKey: typeof source.actionDefaultProjectKey === 'string'
+      && /^[a-z0-9]{8,64}$/i.test(source.actionDefaultProjectKey.trim())
+      ? source.actionDefaultProjectKey.trim().slice(0, 64)
+      : '',
     compactFields: orderedFields(source.compactFields, COMPACT_FIELDS, fallback.compactFields),
     expandedFields: orderedFields(source.expandedFields, EXPANDED_FIELDS, fallback.expandedFields),
     colors,

@@ -26,7 +26,7 @@ import {
   quotaStatusColor,
   resolveCodexExpandedCardTheme
 } from '../domain/codexAppearance'
-import { buildCodexCompactPresentation, codexBadgeText, projectCodexDynamicStatus } from '../domain/codexPresentation'
+import { buildCodexCompactPresentation, codexBadgeText } from '../domain/codexPresentation'
 import type {
   CodexColorSettings,
   CodexCompactField,
@@ -94,7 +94,7 @@ function cloneExpandedCardAppearance(value: CodexExpandedCardAppearanceSettings)
 const waterDraft = ref<CodexWaterAppearanceSettings>(cloneWaterAppearance(props.snapshot.settings.waterAppearance))
 const savedThemeName = ref('')
 const savedThemeOption = ref(THEME_PRESET_CUSTOM)
-const waterPreviewProjection = computed(() => projectCodexDynamicStatus(props.snapshot.conversations))
+const waterPreviewProjection = computed(() => props.snapshot.taskState.dynamic)
 
 const waterPreview = computed(() => buildCodexCompactPresentation({
   quota: props.snapshot.quota,
@@ -691,6 +691,22 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               @click="$emit('dispatch', 'codex.task.next.hotkey.configure')"
             >去设置</button>
           </div>
+          <div
+            v-for="slot in 5"
+            :key="`action-slot-${slot}`"
+            class="codex-hotkey-row"
+          >
+            <Keyboard :size="17" aria-hidden="true" />
+            <span><strong>Action 槽 {{ slot }}</strong></span>
+            <button
+              type="button"
+              class="secondary codex-hotkey-cta"
+              :title="`配置 uTools 全局快捷键，执行 Environment Action 槽 ${slot}（EyPc 等价执行，非 Codex 原生 Action）。`"
+              :data-operation-tooltip="`配置 Action 槽 ${slot} 快捷键`"
+              :data-operation-description="`打开 uTools 全局功能，为“Codex Action 槽 ${slot}”绑定系统级快捷键。目标优先 Action 默认项目，否则置顶/项目 Tab。`"
+              @click="$emit('dispatch', `codex.action.run.${slot}.hotkey.configure`)"
+            >去设置</button>
+          </div>
         </div>
       </article>
 
@@ -778,7 +794,27 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               data-operation-description="按最新 Turn 活动时间过滤常规会话；动态页固定显示最近 6 小时活动。"
             />
           </label>
-          <div class="codex-readonly-field"><span>真实预检</span><strong>{{ snapshot.conversations.status === 'error' ? snapshot.conversations.errorMessage || '任务状态读取失败' : snapshot.conversations.completeness === 'verified' ? `${snapshot.conversations.rawSourceCount} 原始 · ${snapshot.conversations.eligibleSourceCount} 已注册` : '尚未获得完整快照' }}</strong></div>
+          <label>
+            <span class="codex-label-row">
+              <span>Action 默认项目</span>
+            </span>
+            <select
+              class="codex-select"
+              :value="snapshot.settings.actionDefaultProjectKey || ''"
+              @change="update({ actionDefaultProjectKey: ($event.target as HTMLSelectElement).value })"
+              title="Environment Action 默认项目"
+              data-operation-tooltip="Action 默认项目"
+              data-operation-description="可选。配置后，无选中任务时优先用该项目执行 Action；不配置则回退到悬浮卡「项目」Tab 最近焦点项目。"
+            >
+              <option value="">不配置（使用项目 Tab）</option>
+              <option
+                v-for="project in snapshot.taskState.conversations.projects.filter((item) => item.kind === 'project')"
+                :key="project.key"
+                :value="project.key"
+              >{{ project.name }}</option>
+            </select>
+          </label>
+          <div class="codex-readonly-field"><span>真实预检</span><strong>{{ snapshot.taskState.conversations.status === 'error' ? snapshot.taskState.conversations.errorMessage || '任务状态读取失败' : snapshot.taskState.conversations.completeness === 'verified' ? `${snapshot.taskState.conversations.rawSourceCount} 原始 · ${snapshot.taskState.conversations.eligibleSourceCount} 已注册` : '尚未获得完整快照' }}</strong></div>
         </div>
         <div
           class="codex-retention-readonly"
