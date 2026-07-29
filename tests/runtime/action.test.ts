@@ -5119,7 +5119,7 @@ describe('app runtime', () => {
     expect(rows[0].live?.nativeRef).toBe('7:0:222')
   })
 
-  it('filters darwin minimized live windows from the default list', async () => {
+  it('keeps darwin minimized live windows because off-Space CG windows are also reported offscreen', async () => {
     const { state } = installPlatform({
       windows: {
         capabilities: async () => ({ platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true }),
@@ -5146,7 +5146,40 @@ describe('app runtime', () => {
     runtime.dispatch('windows.refresh')
     await flushWindowActions()
 
-    expect(runtime.snapshot().windowRows).toEqual([])
+    expect(runtime.snapshot().windowRows).toEqual([
+      expect.objectContaining({ id: 'live:darwin:9:0:33', cached: false, live: expect.objectContaining({ minimized: true }) })
+    ])
+  })
+
+  it('retains windows missing from a partial refresh and marks only the retained rows as cached', async () => {
+    let listCount = 0
+    const first = { id: 'darwin:1:0:11', platform: 'darwin' as const, nativeRef: '1:0:11', appId: 'com.a', appName: 'Alpha', pid: 1, title: 'One', minimized: false, focused: false }
+    const second = { id: 'darwin:2:0:22', platform: 'darwin' as const, nativeRef: '2:0:22', appId: 'com.b', appName: 'Beta', pid: 2, title: 'Two', minimized: false, focused: false }
+    const capability = { platform: 'darwin' as const, supported: true, permission: 'granted' as const, canList: true, canActivate: true }
+    const { state } = installPlatform({
+      windows: {
+        capabilities: async () => capability,
+        list: async () => {
+          listCount += 1
+          return listCount === 1
+            ? { capability, windows: [first, second], completeness: 'complete' as const }
+            : { capability, windows: [first], completeness: 'partial' as const }
+        },
+        activate: async () => ({ outcome: 'activated' as const })
+      }
+    })
+    enableWindows(state)
+    const runtime = createAppRuntime(state)
+
+    runtime.dispatch('windows.refresh')
+    await flushWindowActions()
+    runtime.dispatch('windows.refresh')
+    await flushWindowActions()
+
+    expect(runtime.snapshot().windowRows).toEqual([
+      expect.objectContaining({ id: 'live:darwin:1:0:11', cached: false }),
+      expect.objectContaining({ id: 'live:darwin:2:0:22', cached: true })
+    ])
   })
 
   it('multi-selects windows with Space advance and closes via OS-then-confirm force path', async () => {
@@ -5388,6 +5421,28 @@ describe('app runtime', () => {
       ]))
     })
 
+    it('resets learned title history when the user explicitly edits the locator', () => {
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({ capability: darwinCapability, windows: [] }),
+          activate: async () => ({ outcome: 'activated' as const })
+        }
+      })
+      enableWindows(state)
+      state.activeTab = 'windows'
+      assignSlotTarget(state, null)
+      state.windowTargets[0].titleHistory = ['Earlier Target', 'Old Target']
+      const runtime = createAppRuntime(state)
+
+      runtime.focusWindow('target:diagnostic-target')
+      expect(runtime.dispatch('windows.edit').handled).toBe(true)
+      runtime.updateWindowDraft({ titleLocator: 'User-selected locator' })
+      expect(runtime.dispatch('windows.editor.save').handled).toBe(true)
+
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ titleLocator: 'User-selected locator', titleHistory: [] })
+    })
+
     it('uses a separate Windows page-topmost call and treats unsupported topmost as blocking', async () => {
       const topmostCalls: string[] = []
       const win32Capability = { platform: 'win32' as const, bridgeRevision: WINDOW_BRIDGE_REVISION, supported: true, permission: 'granted' as const, canList: true, canActivate: true, canAlwaysOnTop: true }
@@ -5464,6 +5519,128 @@ describe('app runtime', () => {
       expect(runtime.snapshot().windowActivationDiagnostics.filter((diagnostic) => diagnostic.level === 'blocking')).toEqual([])
     })
 
+    it('automatically replaces a persisted target after restart when one complete-scan candidate is strongly similar', async () => {
+      const activated: string[] = []
+      const previousTitle = 'agro-management [~/work/czzWork/GuoJi/agro] – /Users/gdkmjd/work/czzWork/GuoJi/agro/WebCore/appsettings.Mac.json'
+      const currentTitle = 'agro-management [~/work/czzWork/GuoJi/agro] – /Users/gdkmjd/work/czzWork/GuoJi/agro/WebCore/Program.cs'
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({
+            capability: darwinCapability,
+            completeness: 'complete' as const,
+            windows: [{ id: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: currentTitle, minimized: false, focused: false }]
+          }),
+          activate: async (window) => {
+            activated.push(window.nativeRef)
+            return { outcome: window.nativeRef === '7:0:111' ? 'not-found' as const : 'activated' as const }
+          }
+        }
+      })
+      enableWindows(state)
+      state.windowTargets = [{ id: 'rider', alias: '农业项目', platform: 'darwin', appId: 'com.jetbrains.rider', appName: 'Rider', titleLocator: previousTitle, lastNativeRef: '7:0:111', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
+      state.windowSlots[0].targetIdByPlatform.darwin = 'rider'
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      const persisted = runtime.snapshot().state.windowTargets[0]
+      expect(activated).toEqual(['7:0:111', '91:0:222'])
+      expect(persisted).toMatchObject({ lastNativeRef: '91:0:222', titleLocator: currentTitle })
+      expect(persisted.titleHistory).toContain(previousTitle)
+      expect(runtime.snapshot().windowActivationDiagnostics.filter((diagnostic) => diagnostic.level === 'blocking')).toEqual([])
+    })
+
+    it('does not learn an automatic replacement when the new candidate fails native focus verification', async () => {
+      const previousTitle = 'agro-management – appsettings.Mac.json'
+      const currentTitle = 'agro-management – Program.cs'
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({
+            capability: darwinCapability,
+            completeness: 'complete' as const,
+            windows: [{ id: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: currentTitle, minimized: false, focused: false }]
+          }),
+          activate: async (window) => ({ outcome: window.nativeRef === '7:0:111' ? 'not-found' as const : 'focus-denied' as const })
+        }
+      })
+      enableWindows(state)
+      state.windowTargets = [{ id: 'rider', alias: '农业项目', platform: 'darwin', appId: 'com.jetbrains.rider', appName: 'Rider', titleLocator: previousTitle, lastNativeRef: '7:0:111', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
+      state.windowSlots[0].targetIdByPlatform.darwin = 'rider'
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastNativeRef: '7:0:111', titleLocator: previousTitle, titleHistory: [] })
+      expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'focus-denied', level: 'blocking' }))
+    })
+
+    it('keeps similar same-app replacements manual when a complete inventory cannot choose uniquely', async () => {
+      const activated: string[] = []
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({
+            capability: darwinCapability,
+            completeness: 'complete' as const,
+            windows: [
+              { id: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.google.Chrome', appName: 'Google Chrome', pid: 91, title: 'AiTools - Chat - Google Chrome', minimized: false, focused: false },
+              { id: 'darwin:92:0:333', platform: 'darwin', nativeRef: '92:0:333', appId: 'com.google.Chrome', appName: 'Google Chrome', pid: 92, title: 'AiTools - Settings - Google Chrome', minimized: false, focused: false }
+            ]
+          }),
+          activate: async (window) => {
+            activated.push(window.nativeRef)
+            return { outcome: 'not-found' as const }
+          }
+        }
+      })
+      enableWindows(state)
+      state.windowTargets = [{ id: 'aitools', alias: 'AiTools', platform: 'darwin', appId: 'com.google.Chrome', appName: 'Google Chrome', titleLocator: 'AiTools - Dashboard - Google Chrome', lastNativeRef: '7:0:111', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
+      state.windowSlots[0].targetIdByPlatform.darwin = 'aitools'
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(activated).toEqual(['7:0:111'])
+      expect(runtime.snapshot().windowCandidateTargetId).toBe('aitools')
+      expect(runtime.snapshot().windowRows).toHaveLength(2)
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastNativeRef: '7:0:111', titleLocator: 'AiTools - Dashboard - Google Chrome' })
+      expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'target-title-changed', level: 'blocking' }))
+    })
+
+    it('does not auto-replace from a partial inventory even when its only visible candidate is similar', async () => {
+      const activated: string[] = []
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({
+            capability: darwinCapability,
+            completeness: 'partial' as const,
+            windows: [{ id: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: 'agro-management – Program.cs', minimized: false, focused: false }]
+          }),
+          activate: async (window) => {
+            activated.push(window.nativeRef)
+            return { outcome: 'not-found' as const }
+          }
+        }
+      })
+      enableWindows(state)
+      state.windowTargets = [{ id: 'rider', alias: '农业项目', platform: 'darwin', appId: 'com.jetbrains.rider', appName: 'Rider', titleLocator: 'agro-management – appsettings.Mac.json', lastNativeRef: '7:0:111', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
+      state.windowSlots[0].targetIdByPlatform.darwin = 'rider'
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(activated).toEqual(['7:0:111'])
+      expect(runtime.snapshot().state.windowTargets[0].lastNativeRef).toBe('7:0:111')
+      expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'refresh-incomplete', level: 'blocking' }))
+    })
+
     it('uses the same stale-reference recovery for manual workbench activation', async () => {
       const activated: string[] = []
       const { state } = installPlatform({
@@ -5512,6 +5689,27 @@ describe('app runtime', () => {
         expect.objectContaining({ entry: 'slot', slot: 1, stage: 'resolve', code: 'target-closed', level: 'accepted' })
       ])
       expect(getShowCount()).toBe(1)
+    })
+
+    it('keeps a stale reference when a partial rescan cannot confirm that the target closed', async () => {
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({ capability: darwinCapability, windows: [], completeness: 'partial' as const }),
+          activate: async () => ({ outcome: 'not-found' as const })
+        }
+      })
+      enableWindows(state)
+      assignSlotTarget(state)
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(runtime.snapshot().state.windowTargets[0].lastNativeRef).toBe('old-ref')
+      expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(
+        expect.objectContaining({ code: 'refresh-incomplete', level: 'blocking' })
+      )
     })
 
     it('records focus, permission, host-call, feature-disabled, unassigned-slot, workbench-show, and silent-hide failures as blocking', async () => {

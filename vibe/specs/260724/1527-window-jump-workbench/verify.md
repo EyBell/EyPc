@@ -2,7 +2,7 @@
 
 ## Current Status
 
-`wj15-exact-ax / AiTools-off-Space-host-verified` — WJ-14 adds an isolated JXA SkyLight route because the same exact target yielded no managed-Space binding inside the uTools Electron preload but one corroborated direct+reverse binding in an independent process. WJ-15 replaces Chromium-unsafe title/CG-ordinal selection with a unique `_AXUIElementGetWindow` mapping and exact `AXFocusedWindow` verification. A real uTools global-slot-2 run switched AiTools from a non-current Space and completed with the selected AX element focused. Production build/runtime validation and focused suites pass; negative cases, other applications, installed-production trace absence, Windows host behavior, close/terminate, and the unrelated full-suite baseline remain open.
+`wj17-auto-rebind / source-verified; restart-host-acceptance-pending` — WJ-17 preserves WJ-15 exact macOS focus and WJ-16 session caching/list retention, then adds restart-safe logical-target recognition. Exact platform/app identity is mandatory; only a complete inventory's strongly similar, uniquely leading candidate may activate automatically, and its title/reference/history persist only after activation succeeds. Partial, weak, tied, and multiple candidates remain manual. Domain/state checks pass 21/21 and Window activation diagnostics pass 17/17; the final current-tree typecheck is blocked only by unrelated concurrent Float work. Real restart/rebind, build/dist, latency/cache-hit/list-retention, negative cases, other applications, installed-production trace absence, Windows host behavior, close/terminate, and the unrelated broad Runtime baseline remain open.
 
 ## WJ-08 Targeted Evidence
 
@@ -113,6 +113,24 @@
 - Canonical/public/dist preload syntax and byte equality, `validate:utools`, scoped `git diff --check`, and the changed-Markdown code-link audit all pass.
 - An incorrectly formed selector also ran the entire current suite once: 507 passed and 76 failed. Most failures were outside Window Jump; the one stale WJ expectation was updated before the focused suites passed. That accidental broad run is not an acceptance gate and does not establish an all-green repository baseline.
 
+## WJ-16 Session Cache and Inventory Retention Evidence
+
+- [preload/index.js](../../../../preload/index.js#L1) now checks the preload-session Space map before direct/reverse resolution. The cached binding is retained only when its Space/display pair still exists in the current managed-display map. A unique isolated-JXA result returns its binding only to the parent preload and seeds that same session map; no Space ID or display UUID enters Runtime, diagnostics, or persisted state.
+- The cache fast path skips the separate CG/System Events identity child and full Space resolver, but it does not weaken target authority. [preload/index.js](../../../../preload/index.js#L1) requires the activation child to match the expected running application and AX title, uniquely map the selected CG ID through `_AXUIElementGetWindow`, and read back the same CG ID through application `AXFocusedWindow`. `not-found` invalidates both Space and aggregate identity hints before Runtime's existing bounded recovery.
+- The aggregate development identity snapshot has a five-minute in-preload cache keyed by the selected native reference/application/title. It affects diagnostics cost only; exact activation remains authoritative and native miss invalidates the entry.
+- The list bridge now declares `complete` or `partial` inventory. Core Graphics rows no longer derive `minimized` from `kCGWindowIsOnscreen`, because off-Space windows are also offscreen. [appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1) replaces cache only for complete snapshots, merges partial/current-Space rows into the previous session inventory, marks retained rows cached, and resolves activation recovery only from rows freshly observed by that rescan. A missing row in a partial scan produces blocking `refresh-incomplete`, never accepted `target-closed`.
+- [WindowsPage.vue](../../../../src/pages/WindowsPage.vue#L1) labels retained rows “缓存保留” and renders `session-cache` / `refresh-incomplete` diagnostics. [eypcPlatform.test.ts](../../../../tests/platform/eypcPlatform.test.ts#L1) statically guards the cache/exact-identity/list-completeness bridge, while [action.test.ts](../../../../tests/runtime/action.test.ts#L1) covers minimized-row retention, partial-list merge, and partial-rescan non-closure.
+- Verification passed: canonical/public preload syntax and byte equality, scoped whitespace checks, an initial semantic type checkpoint, three focused Runtime cases, and platform plus window-diagnostics UI suites 35/35. The final current-tree typecheck rerun is blocked outside Window Jump by a concurrent `FloatApp.vue` environment-picker narrowing diagnostic; no WJ-16 source appears in that error. No build, dist preparation, uTools reload, native activation, desktop switch, or latency measurement ran in WJ-16.
+- A broader Runtime file run finished 139/148. Its nine failures did not include the three new WJ-16 cases and span existing Codex float/feature ordering/favorites plus stale window fixtures. Because no fresh pre-change run was recorded in this continuation, they remain an explicit non-green baseline rather than a claimed no-regression result.
+
+## WJ-17 Restart-safe Automatic Recognition Evidence
+
+- [windows.ts](../../../../src/domain/windows.ts#L1) now resolves persisted logical targets after native IDs/PIDs change. Platform/application identity is an unconditional gate. Exact current or verified-history titles win; fuzzy evidence removes the already-required application label, then combines stable segments, weighted tokens, character trigrams, and common leading/trailing structure. One application window needs a strong score; several windows require a higher score and a clear runner-up margin.
+- [state.ts](../../../../src/domain/state.ts#L1) migrates old targets with an empty history and persists at most four prior successfully verified titles. [appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1) enables fuzzy replacement only after a complete inventory and writes the new locator/reference/history only after the native operation returns `activated`. Manual locator edits reset learned history. A partial/current-Space inventory cannot authorize replacement or clear the stale reference.
+- `tests/domain/state.test.ts` plus `tests/domain/windows.test.ts`: 21/21 passed. They cover state persistence/deduplication, Rider-style active-file drift, history exact match, two similar Chrome candidates, unrelated sole-app confirmation, generic `Project`/`README` rejection, and the `msedge` Chromium placeholder filter.
+- Named `tests/runtime/action.test.ts` Window activation diagnostics group: 17/17 passed, 136 skipped. It covers the existing diagnostic/recovery contract plus automatic complete-scan replacement, failed-focus no-learning, manual-locator history reset, tied same-browser refusal, and partial-inventory refusal.
+- `pnpm run typecheck` remains non-green only at the unrelated concurrent [src/FloatApp.vue](../../../../src/FloatApp.vue#L1259) environment-picker comparison; no WJ-17 file appears in the diagnostic. No production build, dist preparation, uTools reload, reboot, native replacement activation, or latency measurement ran for WJ-17.
+
 ## UI Layout Compact (2026-07-27)
 
 - Source delivery (not host-verified): [WindowsPage.vue](../../../../src/pages/WindowsPage.vue#L1) and window styles in [app.css](../../../../src/styles/app.css#L1) move stable slots to a left collapsible equal-height rail, move activation diagnostics / DEV operation traces to a right collapsible log rail (default collapsed; blocking diagnostics auto-expand), and keep the window list as the primary flex surface under a compact toolbar.
@@ -132,9 +150,10 @@ Accepted on 2026-07-28:
 Residual host gates:
 
 1. Repeat on another multi-window Chromium profile/application and on the single-window Rider route.
-2. Force/observe unbound multi-window, ambiguous binding, switch timeout, exact-AX-focus failure, title drift/rebind, and truly closed target; each must retain its fail-closed result.
+2. Force/observe unbound multi-window, ambiguous binding, switch timeout, exact-AX-focus failure, weak/tied title drift, and truly closed target; each must retain its fail-closed/manual result. Separately verify one unique high-confidence restart replacement learns only after exact activation success.
 3. Confirm production-installed trace absence and retain Windows normal/minimized/page-topmost plus close/confirm-terminate acceptance.
 4. On macOS, permanent page-topmost remains unsupported. Any other unverified outcome must preserve only stable sanitized evidence.
+5. Reload the preload and confirm `bridge=wj16-session-cache`; then compare first and repeated invocation latency, require repeated traces to include `session-cache`, verify stale-cache miss recovers once, and confirm the workbench retains off-Space rows across partial refreshes.
 
 ## Authorized Read-only Local Evidence
 
@@ -144,7 +163,8 @@ Residual host gates:
 
 ## Required User-owned Validation
 
-- Unit, production-build, and uTools manifest/runtime gates.
+- WJ-16 production build, dist preparation, and uTools manifest/runtime gates; focused source/unit/type checks already pass.
+- WJ-17 restart path: reboot or recreate one fixed Rider/AiTools window so PID/native reference changes, invoke its slot without reopening the editor, and confirm the correct unique window activates and the next invocation uses the new persisted reference. Repeat with two similar browser windows and require explicit choice rather than automatic substitution.
 - Silent slot jump / missing-target workbench / manual Tab load (no auto-scan).
 - With a nonempty window query, toolbar load/refresh and `Ctrl+R` clear the query and reveal the refreshed complete list; an automatic cache-miss rescan does not clear it.
 - macOS: Screen Recording + Accessibility; refresh prefers CG for other Spaces/displays and falls back to AX current-Space list when CG has no titled windows; verify exact AX→CG mapping/focus on additional applications, compatibility title/ordinal ambiguity when private mapping is unavailable, AX close, and confirm-gated force terminate. “页面置顶” must not claim persistent third-party success.
@@ -158,4 +178,4 @@ Residual host gates:
 
 ## Verification Boundary
 
-WJ-15 did run the focused suites, typecheck/production build/uTools runtime validator, isolated privacy-safe probes, and two real AiTools off-Space global-slot activations. It did not run Windows host enumeration/activation/topmost, target close/terminate, permission changes, title changes, installed-production trace inspection, or the residual negative cases. The accidental broad test invocation is recorded above as a non-gate failure and must not be presented as a green full suite.
+WJ-15 did run the focused suites, typecheck/production build/uTools runtime validator, isolated privacy-safe probes, and two real AiTools off-Space global-slot activations. WJ-16 ran preload syntax/mirror/diff checks, an initial semantic type checkpoint, three focused Runtime cases, platform and diagnostics UI suites, plus one broader non-green Runtime file. WJ-17 ran domain/state 21/21 and Window activation diagnostics 17/17; the current-tree typecheck remains blocked only by unrelated concurrent Float work. WJ-16/17 did not run production build/dist preparation, uTools reload, reboot/restart replacement, native latency measurement, Windows host behavior, target close/terminate, permission changes, installed-production trace inspection, or residual negative cases. Neither recorded broad non-green run is a full-suite acceptance gate.

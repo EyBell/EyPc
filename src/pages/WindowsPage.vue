@@ -336,6 +336,7 @@ function operationDetailLabel(detail: NonNullable<AppRuntimeSnapshot['windowOper
     'direct-unique': '直接绑定唯一',
     'direct-multiple': '直接绑定多个',
     'reverse-unique': '反查绑定唯一',
+    'session-cache': '会话缓存命中',
     'ambiguous-spaces': '绑定桌面不唯一',
     'ax-fallback': 'AX回退引用',
     'bad-ref': '引用无效',
@@ -403,6 +404,7 @@ const operationCodeMessages: Record<string, string> = {
   'permission-required': '需要系统窗口控制权限后才能继续。',
   'refresh-failed': '无法完成窗口实时重扫。',
   'refresh-superseded': '窗口实时重扫被新的请求替代，请重试。',
+  'refresh-incomplete': '本次只读取到局部窗口，已保留缓存。',
   'ambiguous-target': '匹配到多个候选窗口，需要明确选择。',
   'space-unbound': '无法唯一绑定目标窗口所在桌面。',
   'space-unbound-multiwindow': '目标应用有多个窗口且无法绑定目标桌面。',
@@ -470,6 +472,7 @@ async function copyOperationTracePlainText(record: AppRuntimeSnapshot['windowOpe
 function rowStatus(row: WindowRow) {
   if (row.ambiguous) return '多个匹配'
   if (row.unavailable) return props.snapshot.windowListLoaded ? '当前不可用' : '待加载'
+  if (row.cached) return '缓存保留'
   if (row.live?.minimized) return '已最小化'
   if (row.live?.focused) return '前台'
   if (row.slotNumbers.length && !row.favorite) return '稳定槽'
@@ -479,6 +482,7 @@ function rowStatus(row: WindowRow) {
 function statusClass(row: WindowRow) {
   return {
     unavailable: row.unavailable,
+    cached: row.cached,
     ambiguous: row.ambiguous,
     focused: row.live?.focused
   }
@@ -656,7 +660,7 @@ onBeforeUnmount(() => {
               :id="rowDomId(row.id)"
               :key="row.id"
               class="window-row"
-              :class="{ active: row.focused, selected: row.selected, favorite: row.favorite, pinned: row.pinned, unavailable: row.unavailable, binding: slotPickerSlot != null, 'binding-assigned': bindingSlotAssignedRowId === row.id }"
+              :class="{ active: row.focused, selected: row.selected, favorite: row.favorite, pinned: row.pinned, unavailable: row.unavailable, cached: row.cached, binding: slotPickerSlot != null, 'binding-assigned': bindingSlotAssignedRowId === row.id }"
               role="option"
               :aria-selected="row.selected || row.focused"
               :data-operation-tooltip="rowIdentityLabel(row)"

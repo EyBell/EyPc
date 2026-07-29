@@ -4,7 +4,7 @@ status: verified
 scope: project-pointer
 fingerprint: cg-inventory-finds-window__system-events-ax-target-not-found__activation-not-found-after-healthy-rescan__cgs-space-switch-before-axraise
 first_seen: 2026-07-27
-last_verified: 2026-07-28
+last_verified: 2026-07-29
 review_after: 2027-01-28
 evidence:
   - vibe/specs/260724/1527-window-jump-workbench/verify.md
@@ -36,13 +36,15 @@ tags:
 - 2026-07-27 绑定仍空时：AX `not-found` 后遍历非当前 managed Space 切换并重试 AX（`walked`），失败则恢复原 Current Space
 - 2026-07-27 继续 SIP 路线优化：仅 AX 成功后写入学习缓存；切桌面后仍 not-found 则 forget 再 walk（跳过已试 Space）；settle 120ms
 - 2026-07-28 WJ-15 真实宿主：AiTools 位于非当前 Space，全局槽 2 通过 `isolated-space-bridge → switch-confirmed → ax-cg-id-match → ax-focused-window` 完成，目标 Space、Edge 前台和精确 AX 焦点均经只读回查确认；Codex 悬浮球已恢复。
+- 2026-07-29 WJ-16：已有会话 Space map 从“只写”改为“先校验再读”；隔离 JXA 的唯一绑定回填当前 preload 会话。缓存命中仍强制应用/标题、精确 CG→AX 与 `AXFocusedWindow` 回读；native miss 淘汰缓存后保留一次完整恢复，Space/display 仍不持久化。
+- 2026-07-29 列表缺失：`kCGWindowIsOnscreen=false` 同时覆盖其他 Space 的正常窗口，不能当作最小化并过滤。CG 全量快照可替换；AX/current-Space 局部快照只合并并标记“缓存保留”，不能确认 `target-closed`。
 - CodeNote 正文当前包含任务外未提交/未跟踪内容，本轮按安全门禁未覆盖；最新 EyPc 证据以 [verify.md](../../specs/260724/1527-window-jump-workbench/verify.md#L1) 为准，待该权威工作树由其 owner 合并。
 
 ## Alternative Route
 
 - Status: `verified`
 - Preconditions: macOS Screen Recording + Accessibility; selected target has an exact CG reference; private SkyLight/AX symbols are available.
-- Steps: revalidate target → in-process direct+reverse Space lookup → on empty result repeat in isolated JXA → switch/confirm one binding → map raw AX elements with `_AXUIElementGetWindow` → focus/Raise exact match → read back exact `AXFocusedWindow`.
-- Verification: a non-current-Space multi-window Chromium target completes `switch-confirmed → ax-cg-id-match → ax-focused-window`, and an independent read confirms target Space/current app/exact AX focus.
+- Steps: validate a session hint against the current display map → on miss run in-process direct+reverse lookup → on empty repeat in isolated JXA and import one binding into this preload session → switch/confirm → require app/title + exact `_AXUIElementGetWindow` match → focus/Raise → read back exact `AXFocusedWindow`; evict on native miss.
+- Verification: a non-current-Space multi-window Chromium target completes the WJ-15 exact route; WJ-16 host acceptance additionally requires a repeated call with `session-cache` plus retained off-Space rows after a partial refresh.
 - Applicability boundary: no desktop walk, learned binding, simulated input, permanent topmost, permission mutation, arbitrary sibling focus, or multi-window process-frontmost.
 - Fallback: ambiguity, no binding, switch timeout, unavailable permission, or exact-focus mismatch remains blocking and opens the visible workbench path.
