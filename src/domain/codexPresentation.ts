@@ -7,7 +7,7 @@ import type {
   CodexTaskCard,
   ConversationSnapshotV1
 } from './codex'
-import { normalizeCodexQuota } from './codex'
+import { CODEX_TASK_STATE_REVISION, emptyConversationSnapshot, normalizeCodexQuota } from './codex'
 import { highestSparkQuotaPool } from './codexNewThread'
 
 export interface CodexQuotaReading {
@@ -60,7 +60,28 @@ export interface CodexDynamicStatusProjection {
   tasks: CodexTaskCard[]
   groups: CodexDynamicStatusGroups
   compactCounts: CodexCompactTaskCounts
+  /** Earliest time-only transition of this projection; owned and scheduled by the Controller. */
+  nextTransitionAt: number | null
 }
+
+export type CodexTaskStateCompatibility = 'current' | 'degraded'
+
+/**
+ * Atomic task-state package published by the Controller. Every task surface
+ * consumes this object instead of independently filtering conversations.
+ */
+export interface CodexTaskStatePackageV1 {
+  version: 1
+  semanticRevision: string
+  sourceRevision: string
+  compatibility: CodexTaskStateCompatibility
+  compatibilityMessage: string
+  conversations: ConversationSnapshotV1
+  dynamic: CodexDynamicStatusProjection
+  generatedAt: number
+}
+
+export const CODEX_TASK_STATE_DEGRADED_MESSAGE = 'Codex 任务状态桥版本较旧，状态已保留；建议在 uTools 中重新加载 EyPc 插件'
 
 export const CODEX_DYNAMIC_TASK_WINDOW_MS = 6 * 60 * 60 * 1000
 
@@ -80,7 +101,7 @@ function isDynamicActiveTask(task: CodexTaskCard): boolean {
 
 function emptyDynamicStatusProjection(): CodexDynamicStatusProjection {
   const groups: CodexDynamicStatusGroups = { input: [], active: [], stopped: [], unread: [], completed: [] }
-  return { tasks: [], groups, compactCounts: { input: 0, active: 0, unread: 0 } }
+  return { tasks: [], groups, compactCounts: { input: 0, active: 0, unread: 0 }, nextTransitionAt: null }
 }
 
 /**
@@ -110,6 +131,9 @@ export function projectCodexDynamicStatus(
     completed: recent.filter((task) => task.bucket === 'completed')
   }
   const tasks = [groups.input, groups.active, groups.stopped, groups.unread, groups.completed].flat()
+  const nextTransitionAt = recent.length
+    ? Math.min(...recent.map((task) => taskActivityAt(task) + CODEX_DYNAMIC_TASK_WINDOW_MS + 1))
+    : null
   return {
     tasks,
     groups,
@@ -118,8 +142,66 @@ export function projectCodexDynamicStatus(
       active: groups.active.length,
       unread: conversations.completedUnread.length
         + conversations.hidden.filter((task) => task.bucket === 'completed-unread').length
+    },
+    nextTransitionAt
+  }
+}
+
+export function buildCodexTaskStatePackage(
+  conversations: ConversationSnapshotV1,
+  options: { sourceRevision?: string; now?: number } = {}
+): CodexTaskStatePackageV1 {
+  const now = Number.isFinite(options.now) ? options.now! : Date.now()
+  const sourceRevision = options.sourceRevision || 'legacy'
+  const compatibility = sourceRevision === CODEX_TASK_STATE_REVISION ? 'current' : 'degraded'
+  return {
+    version: 1,
+    semanticRevision: CODEX_TASK_STATE_REVISION,
+    sourceRevision,
+    compatibility,
+    compatibilityMessage: compatibility === 'degraded' ? CODEX_TASK_STATE_DEGRADED_MESSAGE : '',
+    conversations,
+    dynamic: projectCodexDynamicStatus(conversations, now),
+    generatedAt: now
+  }
+}
+
+function isTaskStatePackage(value: CodexTaskStatePackageV1 | null | undefined): value is CodexTaskStatePackageV1 {
+  return value?.version === 1
+    && typeof value.semanticRevision === 'string'
+    && typeof value.sourceRevision === 'string'
+    && Boolean(value.conversations)
+    && Boolean(value.dynamic)
+}
+
+/**
+ * One-release mixed-runtime adapter. A legacy Controller snapshot is converted
+ * into the same atomic package without discarding its task data. Current
+ * Controller snapshots pass through unchanged.
+ */
+export function normalizeCodexTaskStatePackage(
+  value: CodexTaskStatePackageV1 | null | undefined,
+  fallbackConversations?: ConversationSnapshotV1 | null,
+  fallbackSourceRevision?: string,
+  now = Date.now()
+): CodexTaskStatePackageV1 {
+  if (isTaskStatePackage(value)) {
+    const compatible = value.semanticRevision === CODEX_TASK_STATE_REVISION
+      && value.sourceRevision === CODEX_TASK_STATE_REVISION
+      && value.compatibility === 'current'
+    if (compatible || value.compatibility === 'degraded') return value
+    return {
+      ...value,
+      compatibility: 'degraded',
+      compatibilityMessage: CODEX_TASK_STATE_DEGRADED_MESSAGE
     }
   }
+  return buildCodexTaskStatePackage(fallbackConversations || emptyConversationSnapshot(), {
+    sourceRevision: fallbackSourceRevision === CODEX_TASK_STATE_REVISION
+      ? 'legacy-controller'
+      : fallbackSourceRevision || 'legacy',
+    now
+  })
 }
 
 function reading(pool: CodexQuotaPool, kind: CodexQuotaReading['kind'], bucket: CodexQuotaBucket | null): CodexQuotaReading | null {

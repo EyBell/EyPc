@@ -35,7 +35,16 @@ import {
   type ConversationSnapshotV1
 } from '../domain/codex'
 import { normalizeCodexModelCatalog } from '../domain/codexNewThread'
-import { projectCodexDynamicStatus } from '../domain/codexPresentation'
+import {
+  buildCodexTaskStatePackage,
+  CODEX_TASK_STATE_DEGRADED_MESSAGE,
+  type CodexTaskStatePackageV1
+} from '../domain/codexPresentation'
+import {
+  buildCodexEnvironmentActionSlots,
+  buildCodexEnvironmentProjectCandidates,
+  resolveCodexEnvironmentActionTarget
+} from '../domain/codexEnvironment'
 import type { AppState } from '../domain/types'
 import type { CodexFloatWorkspaceDiagnostics, EypcPlatformApi } from '../platform/eypcPlatform'
 
@@ -46,6 +55,8 @@ export interface CodexRuntimeView {
   config: CodexConfigSnapshotV1
   modelCatalog: CodexModelCatalogSnapshotV1
   newThreadContextFingerprint: string
+  taskState: CodexTaskStatePackageV1
+  /** @deprecated Consume taskState.conversations. */
   conversations: ConversationSnapshotV1
   refreshing: boolean
   floatHost: {
@@ -61,6 +72,8 @@ export interface CodexFloatSnapshotV1 {
   version: 1 | 2
   /** Optional for old floating renderers; current Controller snapshots always include it. */
   taskStateRevision?: string
+  /** Optional only when consuming a long-lived older Controller snapshot. */
+  taskState?: CodexTaskStatePackageV1
   style: CodexSettings['displayStyle']
   conversationInboxEnabled: boolean
   compactFields: CodexSettings['compactFields']
@@ -77,10 +90,12 @@ export interface CodexFloatSnapshotV1 {
   newThreadContextFingerprint: string
   newThreadModelPolicy: CodexSettings['newThreadModelPolicy']
   newThreadPreferredModel: string
+  /** @deprecated Consume taskState.conversations. */
   conversations: ConversationSnapshotV1
   taskArchive: { key: string; status: 'idle' | 'archiving' | 'error'; message: string }
   projectArchive: { key: string; status: 'idle' | 'archiving' | 'error'; message: string }
   timeWindowDays: number
+  actionDefaultProjectKey?: string
   keybindings?: Array<{ actionId: string; shortcutId: string; layer: string; when: string; weight: number }>
   generatedAt: number
 }
@@ -108,8 +123,6 @@ function completionPresentationDelay(settings: CodexSettings): number {
 const MIN_INVENTORY_DISAPPEARANCE_HOLD_MS = 3_000
 const URGENT_STRUCTURAL_REFRESH_DELAY_MS = 50
 const NORMAL_STRUCTURAL_REFRESH_DELAY_MS = 200
-const TASK_STATE_RELOAD_MESSAGE = 'Codex 任务状态桥版本不一致，请在 uTools 中重新加载 EyPc 插件'
-
 function inventoryDisappearanceHold(settings: CodexSettings): number {
   const refreshDelay = taskDelay(settings)
   return Number.isFinite(refreshDelay)
@@ -228,24 +241,15 @@ function hasSameActivityState(previous: CodexHostThread, next: CodexHostThread):
 export function createCodexController(options: CodexControllerOptions) {
   // Direct test/custom adapters may omit the capability. The production
   // platform adapter always supplies either the exact revision or `legacy`.
-  const taskStateCompatible = options.platform.codex.taskStateRevision === undefined
-    || options.platform.codex.taskStateRevision === CODEX_TASK_STATE_REVISION
+  const taskStateSourceRevision = options.platform.codex.taskStateRevision || CODEX_TASK_STATE_REVISION
   let quota = normalizeCodexQuota(options.getAppState().codex.cachedQuota)
   if (quota.updatedAt > 0 && quota.status === 'ok') quota = { ...quota, status: 'stale' }
   let config = normalizeCodexConfig(options.getAppState().codex.cachedConfig)
   let modelCatalog = emptyCodexModelCatalog()
   let newThreadContextFingerprint = ''
   let environment = emptyCodexEnvironment()
-  const incompatibleTaskStateSnapshot = () => ({
-    ...emptyConversationSnapshot('error'),
-    updatedAt: Date.now(),
-    errorCode: 'preload-version-mismatch',
-    errorMessage: TASK_STATE_RELOAD_MESSAGE
-  })
-  let rawConversations = taskStateCompatible
-    ? conversationSnapshotFromReceipts(options.getAppState().codex.receipts)
-    : incompatibleTaskStateSnapshot()
-  let conversations = rawConversations
+  let rawConversations = conversationSnapshotFromReceipts(options.getAppState().codex.receipts)
+  let taskState = buildCodexTaskStatePackage(rawConversations, { sourceRevision: taskStateSourceRevision })
   let taskCycleKey = ''
   let lastThreads: CodexHostThread[] = []
   let lastProjects: CodexHostProject[] = []
@@ -353,17 +357,12 @@ export function createCodexController(options: CodexControllerOptions) {
     return isFeatureEnabled() && (state.activeTab === 'codex' || state.codex.settings.floatEnabled)
   }
 
-  function publishTaskStateCompatibilityError() {
-    if (taskStateCompatible) return
-    resetInventoryDisappearanceCandidate()
-    lastThreads = []
-    lastProjects = []
-    lastSourceFingerprint = ''
-    lastCompleteness = undefined
-    lastActivityGeneration = 0
-    if (rawConversations.errorCode !== 'preload-version-mismatch' || rawConversations.all.length) {
-      resetCompletionPresentation(incompatibleTaskStateSnapshot())
-    }
+  function publishTaskStatePackage(conversations: ConversationSnapshotV1, now = Date.now()) {
+    taskState = buildCodexTaskStatePackage(conversations, {
+      sourceRevision: taskStateSourceRevision,
+      now
+    })
+    if (started && !disposed && shouldRun()) schedule()
   }
 
   function clearTimer() {
@@ -500,7 +499,7 @@ export function createCodexController(options: CodexControllerOptions) {
         }
       }
       if (changed) {
-        conversations = applyCompletionPresentationHolds(rawConversations)
+        publishTaskStatePackage(applyCompletionPresentationHolds(rawConversations), now)
         options.notify()
       }
       scheduleCompletionPresentationRelease()
@@ -534,13 +533,13 @@ export function createCodexController(options: CodexControllerOptions) {
     }
 
     rawConversations = next
-    conversations = applyCompletionPresentationHolds(next)
+    publishTaskStatePackage(applyCompletionPresentationHolds(next))
     scheduleCompletionPresentationRelease()
   }
 
   function updateConversationStatus(patch: Partial<Pick<ConversationSnapshotV1, 'status' | 'errorCode' | 'errorMessage'>>) {
     rawConversations = { ...rawConversations, ...patch }
-    conversations = { ...conversations, ...patch }
+    publishTaskStatePackage({ ...taskState.conversations, ...patch })
   }
 
   function resetCompletionPresentation(next = rawConversations) {
@@ -549,7 +548,7 @@ export function createCodexController(options: CodexControllerOptions) {
     activityExitAt.clear()
     activityExitBaselines.clear()
     rawConversations = next
-    conversations = next
+    publishTaskStatePackage(next)
   }
 
   function guardStaleExitCompletion(thread: CodexHostThread): CodexHostThread {
@@ -586,7 +585,7 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function applyActivityDelta(delta: CodexActivityDelta) {
-    if (!taskStateCompatible || disposed || !shouldRun() || (delta?.version !== 1 && delta?.version !== 2)) return
+    if (disposed || !shouldRun() || (delta?.version !== 1 && delta?.version !== 2)) return
     if (!Number.isFinite(delta.receivedAt) || !Number.isFinite(delta.generation) || delta.generation <= 0) return
     let environmentChanged = false
     const structuralPriority: StructuralRefreshPriority = delta.version === 2 && delta.inventoryRefreshPriority === 'urgent'
@@ -733,13 +732,13 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function scheduleActivity(delay?: number) {
     clearActivityTimer()
-    if (!taskStateCompatible || !started || disposed || !shouldRun() || typeof options.platform.codex.readActivitySnapshot !== 'function') return
+    if (!started || disposed || !shouldRun() || typeof options.platform.codex.readActivitySnapshot !== 'function') return
     const wait = delay ?? (activityFailureCount >= 3 ? 1_000 : 5_000)
     activityTimer = setTimeout(() => { void pollActivity() }, Math.max(0, wait))
   }
 
   async function pollActivity() {
-    if (!taskStateCompatible || disposed || !shouldRun() || typeof options.platform.codex.readActivitySnapshot !== 'function') return
+    if (disposed || !shouldRun() || typeof options.platform.codex.readActivitySnapshot !== 'function') return
     if (activityInFlight) return activityInFlight
     const operation = (async () => {
       const result = await options.platform.codex.readActivitySnapshot!()
@@ -764,10 +763,21 @@ export function createCodexController(options: CodexControllerOptions) {
     const settings = codexState().settings
     const now = Date.now()
     const quotaWait = Number.isFinite(quotaDelay(settings)) ? Math.max(1000, lastQuotaReadAt + quotaDelay(settings) - now) : Number.POSITIVE_INFINITY
-    const taskWait = taskStateCompatible && Number.isFinite(taskDelay(settings)) ? Math.max(1000, lastTaskReadAt + taskDelay(settings) - now) : Number.POSITIVE_INFINITY
-    const delay = Math.min(quotaWait, taskWait)
+    const taskWait = Number.isFinite(taskDelay(settings)) ? Math.max(1000, lastTaskReadAt + taskDelay(settings) - now) : Number.POSITIVE_INFINITY
+    const nextTaskTransitionAt = taskState.dynamic.nextTransitionAt
+    const taskTransitionWait = nextTaskTransitionAt === null
+      ? Number.POSITIVE_INFINITY
+      : Math.max(1, nextTaskTransitionAt - now)
+    const delay = Math.min(quotaWait, taskWait, taskTransitionWait)
     if (!Number.isFinite(delay)) return
-    timer = setTimeout(() => { void refresh() }, delay)
+    timer = setTimeout(() => {
+      const wokeAt = Date.now()
+      if (taskState.dynamic.nextTransitionAt !== null && taskState.dynamic.nextTransitionAt <= wokeAt) {
+        publishTaskStatePackage(taskState.conversations, wokeAt)
+        options.notify()
+      }
+      void refresh()
+    }, delay)
   }
 
   function persistSnapshots() {
@@ -857,7 +867,7 @@ export function createCodexController(options: CodexControllerOptions) {
     const now = Date.now()
     const settings = codexState().settings
     const includeQuota = input.force === true || quota.updatedAt <= 0 || (Number.isFinite(quotaDelay(settings)) && now - lastQuotaReadAt >= quotaDelay(settings))
-    const includeThreads = taskStateCompatible && settings.conversationInboxEnabled && (input.force === true || input.forceTasks === true || rawConversations.updatedAt <= 0 || (Number.isFinite(taskDelay(settings)) && now - lastTaskReadAt >= taskDelay(settings)))
+    const includeThreads = settings.conversationInboxEnabled && (input.force === true || input.forceTasks === true || rawConversations.updatedAt <= 0 || (Number.isFinite(taskDelay(settings)) && now - lastTaskReadAt >= taskDelay(settings)))
     const includeConfig = includeQuota
     if (!includeQuota && !includeThreads) {
       schedule()
@@ -1055,10 +1065,8 @@ export function createCodexController(options: CodexControllerOptions) {
       options.platform.codex.close()
       return
     }
-    if (!taskStateCompatible) {
-      publishTaskStateCompatibilityError()
-      options.setMessage(TASK_STATE_RELOAD_MESSAGE)
-      options.notify()
+    if (taskState.compatibility === 'degraded') {
+      options.setMessage(CODEX_TASK_STATE_DEGRADED_MESSAGE)
     }
     if (force || (quota.updatedAt <= 0 && rawConversations.updatedAt <= 0)) void refresh({ force: true })
     else {
@@ -1188,6 +1196,7 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function allTasks() {
+    const conversations = taskState.conversations
     return conversations.all.length
       ? conversations.all
       : [...conversations.ongoing, ...conversations.completedUnread, ...conversations.completed, ...conversations.hidden]
@@ -1195,7 +1204,7 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function displayOrderedTasks(tasks: CodexTaskCard[]): CodexTaskCard[] {
     const pinnedOrder = new Map<string, number>()
-    const pinned = conversations.projectSections.find((section) => section.id === 'pinned')
+    const pinned = taskState.conversations.projectSections.find((section) => section.id === 'pinned')
     for (const entry of pinned?.entries || []) {
       if (entry.kind === 'task' && !pinnedOrder.has(entry.task.key)) pinnedOrder.set(entry.task.key, pinnedOrder.size)
     }
@@ -1218,7 +1227,7 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function setProjectCollapsed(key: string, collapsed: boolean) {
-    if (!conversations.projects.some((project) => project.key === key)) return false
+    if (!taskState.conversations.projects.some((project) => project.key === key)) return false
     const values = new Set(codexState().collapsedProjectKeys)
     if (collapsed) values.add(key)
     else values.delete(key)
@@ -1230,7 +1239,7 @@ export function createCodexController(options: CodexControllerOptions) {
   function setAlias(kind: 'task' | 'project', key: string, alias: string) {
     const exists = kind === 'task'
       ? allTasks().some((task) => task.key === key)
-      : conversations.projects.some((project) => project.key === key)
+      : taskState.conversations.projects.some((project) => project.key === key)
     if (!exists) return false
     const value = alias.trim().slice(0, 120)
     const field = kind === 'task' ? 'taskAliases' : 'projectAliases'
@@ -1246,7 +1255,7 @@ export function createCodexController(options: CodexControllerOptions) {
   function toggleLocalPin(kind: CodexLocalPin['kind'], key: string) {
     const exists = kind === 'task'
       ? allTasks().some((task) => task.key === key)
-      : conversations.projects.some((project) => project.key === key && project.kind !== 'chats')
+      : taskState.conversations.projects.some((project) => project.key === key && project.kind !== 'chats')
     if (!exists) return false
     const identity = `${kind}:${key}`
     const pins = codexState().localPins
@@ -1272,7 +1281,7 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function hideProject(key: string) {
-    if (!conversations.projects.some((project) => project.key === key && project.kind === 'project')) return false
+    if (!taskState.conversations.projects.some((project) => project.key === key && project.kind === 'project')) return false
     codexState().hiddenProjectKeys = [...new Set([...codexState().hiddenProjectKeys, key])].slice(-200)
     republishAfterReceiptChange()
     options.setMessage('已隐藏项目分组；所属任务仍保留在其他会话页签')
@@ -1288,8 +1297,8 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   async function removeProject(key: string, actionAlias: string, sourceFingerprint: string) {
-    const project = conversations.projects.find((item) => item.key === key && item.actionAlias === actionAlias && item.kind === 'project')
-    if (!project || conversations.completeness !== 'verified' || !conversations.sourceFingerprint || sourceFingerprint !== conversations.sourceFingerprint) {
+    const project = taskState.conversations.projects.find((item) => item.key === key && item.actionAlias === actionAlias && item.kind === 'project')
+    if (!project || taskState.conversations.completeness !== 'verified' || !taskState.conversations.sourceFingerprint || sourceFingerprint !== taskState.conversations.sourceFingerprint) {
       options.setMessage('项目动作或状态指纹已失效，请刷新后重试')
       return false
     }
@@ -1323,7 +1332,7 @@ export function createCodexController(options: CodexControllerOptions) {
     options.notify()
     lastTaskReadAt = 0
     await refresh({ forceTasks: true })
-    if (conversations.projects.some((item) => item.key === key)) {
+    if (taskState.conversations.projects.some((item) => item.key === key)) {
       lastTaskReadAt = 0
       await refresh({ forceTasks: true })
     }
@@ -1351,7 +1360,7 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function openFirstInput() {
-    const task = conversations.inputRequired[0]
+    const task = taskState.conversations.inputRequired[0]
     if (!task?.actionAlias) {
       options.setMessage('当前没有待输入任务')
       return false
@@ -1375,9 +1384,9 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function cycleTasks(): Array<CodexTaskCard & { actionAlias: string }> {
     const tasks = allTasks()
-    const recentActiveTasks = projectCodexDynamicStatus(conversations).groups.active
+    const recentActiveTasks = taskState.dynamic.groups.active
     const groups = [
-      displayOrderedTasks(conversations.inputRequired),
+      displayOrderedTasks(taskState.conversations.inputRequired),
       displayOrderedTasks(recentActiveTasks)
     ]
     const usableTasks = (candidates: CodexTaskCard[]) => {
@@ -1410,6 +1419,110 @@ export function createCodexController(options: CodexControllerOptions) {
     return true
   }
 
+  const environmentRememberedByProject: Record<string, string> = {}
+  let pendingEnvironmentPush: {
+    slotIndex: number
+    confirmToken: string
+    targetAlias: string
+    environmentId: string
+    actionId: string
+    until: number
+  } | null = null
+
+  function rememberEnvironmentForProject(projectKey: string, environmentId: string) {
+    if (typeof projectKey !== 'string' || !projectKey) return false
+    if (typeof environmentId !== 'string' || !environmentId) return false
+    environmentRememberedByProject[projectKey] = environmentId
+    return true
+  }
+
+  async function runEnvironmentActionSlot(slotIndex: number) {
+    if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex > 4) return false
+    if (typeof options.platform.codex.listProjectEnvironments !== 'function' || typeof options.platform.codex.runProjectAction !== 'function') {
+      options.setMessage('当前宿主不支持 Environment Action')
+      return false
+    }
+    const settings = codexState().settings
+    // uTools 全局热键冷启动时，可能尚未完成 Codex 会话快照装载；这里先拉取一次，避免 target 解析失败导致窗口被隐藏/执行空转。
+    if (taskState.conversations.projects.length === 0 && lastCompleteness !== 'verified') {
+      await refresh({ force: true })
+    }
+    let target = resolveCodexEnvironmentActionTarget({
+      selectedTasks: [],
+      defaultProjectKey: settings.actionDefaultProjectKey || '',
+      projects: taskState.conversations.projects
+    })
+    if (!target) {
+      const pinnedProjects = (taskState.conversations.projectSections.find((section) => section.id === 'pinned')?.entries || [])
+        .filter((entry): entry is { kind: 'project'; project: (typeof taskState.conversations.projects)[number]; pinSource?: 'native' | 'local' } => entry.kind === 'project')
+        .map((entry) => entry.project)
+      const candidates = buildCodexEnvironmentProjectCandidates({
+        pinnedProjects,
+        projects: taskState.conversations.projects
+      })
+      const first = candidates.find((item) => item.actionAlias)
+      if (first?.actionAlias) {
+        target = {
+          kind: 'project',
+          projectKey: first.projectKey,
+          projectName: first.projectName,
+          targetAlias: first.actionAlias
+        }
+      }
+    }
+    if (!target) {
+      options.setMessage('请先配置 Action 默认项目，或在悬浮卡「项目」Tab 置顶项目')
+      return false
+    }
+    const listed = await options.platform.codex.listProjectEnvironments(target.targetAlias)
+    if (disposed) return false
+    if (!listed || listed.outcome !== 'ok' || !listed.environments.length) {
+      options.setMessage(listed?.message || '该项目未配置 Environment')
+      return false
+    }
+    const remembered = environmentRememberedByProject[target.projectKey]
+    const environment = listed.environments.find((item) => item.id === remembered) || listed.environments[0]
+    environmentRememberedByProject[target.projectKey] = environment.id
+    const slots = buildCodexEnvironmentActionSlots(environment)
+    const action = slots[slotIndex]?.action
+    if (!action) {
+      options.setMessage(`Action 槽 ${slotIndex + 1} 为空`)
+      return false
+    }
+    const now = Date.now()
+    const confirmToken = pendingEnvironmentPush
+      && pendingEnvironmentPush.slotIndex === slotIndex
+      && pendingEnvironmentPush.until >= now
+      && pendingEnvironmentPush.targetAlias === target.targetAlias
+      && pendingEnvironmentPush.environmentId === environment.id
+      && pendingEnvironmentPush.actionId === action.id
+      ? pendingEnvironmentPush.confirmToken
+      : undefined
+    const result = await options.platform.codex.runProjectAction({
+      targetAlias: target.targetAlias,
+      environmentId: environment.id,
+      actionId: action.id,
+      confirmToken,
+      stopIfRunning: action.risk === 'long-running'
+    })
+    if (disposed) return false
+    if (result?.outcome === 'confirm-required' && result.confirmToken) {
+      pendingEnvironmentPush = {
+        slotIndex,
+        confirmToken: result.confirmToken,
+        targetAlias: target.targetAlias,
+        environmentId: environment.id,
+        actionId: action.id,
+        until: now + 5_000
+      }
+      options.setMessage(`${action.name}：请在 5 秒内再次触发全局快捷键确认（外部写入）`)
+      return true
+    }
+    pendingEnvironmentPush = null
+    options.setMessage(result?.message || (result?.outcome === 'ok' || result?.outcome === 'started' ? `${action.name} 已执行` : `${action.name} 执行失败`))
+    return result?.outcome === 'ok' || result?.outcome === 'started' || result?.outcome === 'running' || result?.outcome === 'stopping'
+  }
+
   function hide(key: string, recency?: number) {
     if (!Number.isFinite(recency)) return false
     const candidates = allTasks().filter((item) => !item.isHidden && item.key === key)
@@ -1434,7 +1547,7 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function restore(key: string, recency?: number, kind?: 'task' | 'activity' | 'pending') {
     if (!Number.isFinite(recency) || !['task', 'activity', 'pending'].includes(kind || '')) return false
-    const task = conversations.hidden.find((item) => item.key === key && item.hiddenKind === kind)
+    const task = taskState.conversations.hidden.find((item) => item.key === key && item.hiddenKind === kind)
     if (!task || task.revisionAt !== recency) return false
     codexState().receipts = restoreCodexThread(codexState().receipts, key, task.revisionAt, kind!)
     republishAfterReceiptChange()
@@ -1446,7 +1559,7 @@ export function createCodexController(options: CodexControllerOptions) {
     if (!Number.isFinite(recency) || typeof options.platform.codex.archiveThread !== 'function') return false
     const task = allTasks()
       .find((item) => item.key === key && item.revisionAt === recency)
-    if (!task || task.archiveCapability !== 'allowed' || !task.actionAlias || !task.lastTurnStartedAt || conversations.completeness !== 'verified' || !conversations.sourceFingerprint || taskArchive.status === 'archiving') {
+    if (!task || task.archiveCapability !== 'allowed' || !task.actionAlias || !task.lastTurnStartedAt || taskState.conversations.completeness !== 'verified' || !taskState.conversations.sourceFingerprint || taskArchive.status === 'archiving') {
       options.setMessage('任务仍在进行中，暂不能归档')
       return false
     }
@@ -1462,7 +1575,7 @@ export function createCodexController(options: CodexControllerOptions) {
       expectedRevisionAt: task.revisionAt,
       ...(task.lastTurnCompletedAt ? { expectedCompletionAt: task.lastTurnCompletedAt } : {}),
       expectedLastTurnStartedAt: task.lastTurnStartedAt || 0,
-      expectedSourceFingerprint: conversations.sourceFingerprint,
+      expectedSourceFingerprint: taskState.conversations.sourceFingerprint,
       evidence: task.bucket === 'stopped' ? 'stopped' : 'completed'
     })
     archivingKeys.delete(key)
@@ -1504,14 +1617,14 @@ export function createCodexController(options: CodexControllerOptions) {
 
   async function archiveProject(key: string, actionAlias: string) {
     if (typeof options.platform.codex.archiveProject !== 'function' || projectArchive.status === 'archiving') return false
-    const project = conversations.projects.find((item) => item.key === key && item.actionAlias === actionAlias)
-    if (!project || project.kind === 'chats' && !actionAlias || !conversations.sourceFingerprint) {
+    const project = taskState.conversations.projects.find((item) => item.key === key && item.actionAlias === actionAlias)
+    if (!project || project.kind === 'chats' && !actionAlias || !taskState.conversations.sourceFingerprint) {
       options.setMessage('项目动作已失效，请刷新后重试')
       return false
     }
     projectArchive = { key, status: 'archiving', message: '正在分批归档项目任务' }
     options.notify()
-    const result = await options.platform.codex.archiveProject(actionAlias, { expectedSourceFingerprint: conversations.sourceFingerprint })
+    const result = await options.platform.codex.archiveProject(actionAlias, { expectedSourceFingerprint: taskState.conversations.sourceFingerprint })
     if (disposed) return false
     if (result.archivedKeys.length) {
       const archived = new Set(result.archivedKeys)
@@ -1578,9 +1691,7 @@ export function createCodexController(options: CodexControllerOptions) {
     start() {
       if (started || disposed) return
       started = true
-      stopActivityListener = taskStateCompatible
-        ? options.platform.codex.onActivityChanged?.((delta) => applyActivityDelta(delta)) || null
-        : null
+      stopActivityListener = options.platform.codex.onActivityChanged?.((delta) => applyActivityDelta(delta)) || null
       if (isFeatureEnabled()) void inspectEnvironment()
       syncActivation(true)
     },
@@ -1618,6 +1729,7 @@ export function createCodexController(options: CodexControllerOptions) {
     openFirstInput,
     openFirstCompletedUnread,
     cycleTask,
+    runEnvironmentActionSlot,
     setTaskTab,
     setProjectCollapsed,
     setAlias,
@@ -1629,6 +1741,7 @@ export function createCodexController(options: CodexControllerOptions) {
     saveGeometry,
     resetPosition,
     resetExpandedSize,
+    rememberEnvironmentForProject,
     view(): CodexRuntimeView {
       const settings = codexState().settings
       const displayId = settings.position.displayId || settings.expandedSizes[0]?.displayId || ''
@@ -1641,7 +1754,8 @@ export function createCodexController(options: CodexControllerOptions) {
         config,
         modelCatalog,
         newThreadContextFingerprint,
-        conversations,
+        taskState,
+        conversations: taskState.conversations,
         refreshing,
         floatHost: {
           displayId,
@@ -1657,6 +1771,7 @@ export function createCodexController(options: CodexControllerOptions) {
       return {
         version: 2,
         taskStateRevision: CODEX_TASK_STATE_REVISION,
+        taskState,
         style: cardColorPreview ? 'card' : settings.displayStyle,
         conversationInboxEnabled: settings.conversationInboxEnabled,
         compactFields: settings.compactFields,
@@ -1672,10 +1787,11 @@ export function createCodexController(options: CodexControllerOptions) {
         newThreadContextFingerprint,
         newThreadModelPolicy: settings.newThreadModelPolicy,
         newThreadPreferredModel: settings.newThreadPreferredModel,
-        conversations,
+        conversations: taskState.conversations,
         taskArchive,
         projectArchive,
         timeWindowDays: settings.timeWindowDays,
+        actionDefaultProjectKey: settings.actionDefaultProjectKey || '',
         generatedAt: Date.now()
       }
     }

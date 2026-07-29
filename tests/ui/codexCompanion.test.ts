@@ -14,7 +14,7 @@ import {
   type CodexHostThread,
   type CodexQuotaSnapshotV1
 } from '../../src/domain/codex'
-import { buildCodexCompactPresentation } from '../../src/domain/codexPresentation'
+import { buildCodexCompactPresentation, buildCodexTaskStatePackage } from '../../src/domain/codexPresentation'
 import { contrastRatio } from '../../src/domain/codexAppearance'
 import type { CodexFloatSnapshotV1 } from '../../src/runtime/codexController'
 
@@ -114,6 +114,7 @@ function sparkQuota(): CodexQuotaSnapshotV1 {
 }
 
 function floatSnapshot(activeTab: 'all' | 'input' | 'ongoing' | 'hidden' | 'completed' | 'projects' = 'ongoing', quotaValue = quota()): CodexFloatSnapshotV1 {
+  const conversations = conversation(activeTab)
   return {
     version: 2,
     taskStateRevision: CODEX_TASK_STATE_REVISION,
@@ -139,12 +140,20 @@ function floatSnapshot(activeTab: 'all' | 'input' | 'ongoing' | 'hidden' | 'comp
     newThreadModelPolicy: 'quota-auto',
     newThreadPreferredModel: 'gpt-5.6-sol',
     config: { version: 1, model: 'gpt-5.6-sol', reasoningEffort: 'high', serviceTier: 'priority', updatedAt: NOW },
-    conversations: conversation(activeTab),
+    taskState: buildCodexTaskStatePackage(conversations, { sourceRevision: CODEX_TASK_STATE_REVISION, now: NOW }),
+    conversations,
     taskArchive: { key: '', status: 'idle', message: '' },
     projectArchive: { key: '', status: 'idle', message: '' },
     timeWindowDays: 30,
     generatedAt: NOW
   }
+}
+
+function refreshTaskState(source: CodexFloatSnapshotV1): void {
+  source.taskState = buildCodexTaskStatePackage(source.conversations, {
+    sourceRevision: source.taskStateRevision,
+    now: NOW
+  })
 }
 
 function mountFloat(expanded: boolean, source = floatSnapshot(), overrides: Partial<NonNullable<Window['eypcFloat']>> = {}) {
@@ -925,21 +934,24 @@ describe('Codex Companion V3 UI contract', () => {
     expect(setExpansion).toHaveBeenCalledWith(true, false)
   })
 
-  it('withholds task counters from a long-lived Controller snapshot with no matching revision', async () => {
+  it('preserves task counters from a long-lived Controller snapshot by normalizing one degraded package', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
     const source = floatSnapshot('all')
     delete source.taskStateRevision
+    delete source.taskState
 
     const compact = mountFloat(false, source).wrapper
     await compact.vm.$nextTick()
-    expect(compact.find('.float-counter.input').exists()).toBe(false)
-    expect(compact.find('.float-counter.active').exists()).toBe(false)
-    expect(compact.find('.float-counter.unread').exists()).toBe(false)
-    expect(compact.get('.float-compact').attributes('aria-label')).toContain('重新加载 EyPc 插件')
+    expect(compact.get('.float-counter.input').text()).toBe('1')
+    expect(compact.get('.float-counter.active').text()).toBe('1')
+    expect(compact.get('.float-counter.unread').text()).toBe('1')
+    expect(compact.get('.float-compact').attributes('aria-label')).toContain('状态已保留')
 
     const expanded = mountFloat(true, source).wrapper
     await expanded.vm.$nextTick()
-    expect(expanded.text()).toContain('Codex 任务状态版本已过期')
-    expect(expanded.text()).not.toContain('真实进行中')
+    expect(expanded.text()).toContain('状态已保留')
+    expect(expanded.text()).toContain('真实进行中')
   })
 
   it('uses the plural pending-input counter hint without changing its click contract', async () => {
@@ -951,6 +963,7 @@ describe('Codex Companion V3 UI contract', () => {
       key: '6666666666666666',
       actionAlias: 'alias-6666666666666666'
     })
+    refreshTaskState(source)
     const { wrapper, setExpansion } = mountFloat(false, source)
     await wrapper.vm.$nextTick()
     const input = wrapper.get('.float-counter.input')
@@ -977,6 +990,7 @@ describe('Codex Companion V3 UI contract', () => {
     }))
     source.conversations.inputRequired = []
     source.conversations.completedUnread = []
+    refreshTaskState(source)
 
     const { wrapper } = mountFloat(false, source)
     await wrapper.vm.$nextTick()
@@ -1003,6 +1017,7 @@ describe('Codex Companion V3 UI contract', () => {
     }
     source.conversations.ongoing.push(conservative)
     source.conversations.all.push(conservative)
+    refreshTaskState(source)
 
     const float = mountFloat(false, source).wrapper
     await float.vm.$nextTick()
@@ -1017,6 +1032,7 @@ describe('Codex Companion V3 UI contract', () => {
           config: source.config,
           modelCatalog: source.modelCatalog,
           newThreadContextFingerprint: source.newThreadContextFingerprint,
+          taskState: source.taskState!,
           conversations: source.conversations,
           refreshing: false,
           floatHost: { displayId: 'screen', expandedWidth: 360, expandedHeight: 0, expandedManual: false }
@@ -1197,20 +1213,29 @@ describe('Codex Companion V3 UI contract', () => {
     expect(cardMount.setExpansion).toHaveBeenCalledWith(true, false)
   })
 
-  it('collapses 100ms after pointer departure', async () => {
+  it('collapses 220ms after pointer departure or window blur', async () => {
     vi.useFakeTimers()
     const expandedMount = mountFloat(true)
     await expandedMount.wrapper.get('.codex-float-root').trigger('pointerleave')
-    vi.advanceTimersByTime(99)
+    vi.advanceTimersByTime(219)
     expect(expandedMount.setExpansion).not.toHaveBeenCalledWith(false, false)
     vi.advanceTimersByTime(1)
     expect(expandedMount.setExpansion).toHaveBeenCalledWith(false, false)
+
+    const blurredMount = mountFloat(true)
+    window.dispatchEvent(new Event('blur'))
+    vi.advanceTimersByTime(219)
+    expect(blurredMount.setExpansion).not.toHaveBeenCalledWith(false, false)
+    vi.advanceTimersByTime(1)
+    expect(blurredMount.setExpansion).toHaveBeenCalledWith(false, false)
   })
 
   it('shows only server-returned quota windows in the expanded card', async () => {
     const { wrapper } = mountFloat(true, floatSnapshot('ongoing', quota(false, true)))
     await wrapper.vm.$nextTick()
     expect(wrapper.findAll('.float-quota-text > div')).toHaveLength(1)
+    expect(wrapper.find('.float-action-slots').exists()).toBe(false)
+    expect(wrapper.find('.float-action-picker').exists()).toBe(false)
     expect(wrapper.text()).toContain('周限额')
     expect(wrapper.text()).not.toContain('5 小时限额')
 
@@ -1246,6 +1271,7 @@ describe('Codex Companion V3 UI contract', () => {
           config: source.config,
           modelCatalog: source.modelCatalog,
           newThreadContextFingerprint: source.newThreadContextFingerprint,
+          taskState: source.taskState!,
           conversations: source.conversations,
           refreshing: false,
           floatHost: { displayId: 'screen', expandedWidth: 360, expandedHeight: 0, expandedManual: false }
@@ -1287,6 +1313,7 @@ describe('Codex Companion V3 UI contract', () => {
           config: source.config,
           modelCatalog: source.modelCatalog,
           newThreadContextFingerprint: source.newThreadContextFingerprint,
+          taskState: source.taskState!,
           conversations: source.conversations,
           refreshing: false,
           floatHost: { displayId: 'screen', expandedWidth: 360, expandedHeight: 0, expandedManual: false }
@@ -1371,6 +1398,7 @@ describe('Codex Companion V3 UI contract', () => {
           config: source.config,
           modelCatalog: source.modelCatalog,
           newThreadContextFingerprint: source.newThreadContextFingerprint,
+          taskState: source.taskState!,
           conversations: source.conversations,
           refreshing: false,
           floatHost: { displayId: 'screen', expandedWidth: 360, expandedHeight: 0, expandedManual: false }
@@ -1414,6 +1442,7 @@ describe('Codex Companion V3 UI contract', () => {
           config: source.config,
           modelCatalog: source.modelCatalog,
           newThreadContextFingerprint: source.newThreadContextFingerprint,
+          taskState: source.taskState!,
           conversations: source.conversations,
           refreshing: false,
           floatHost: { displayId: 'screen', expandedWidth: 360, expandedHeight: 0, expandedManual: false }

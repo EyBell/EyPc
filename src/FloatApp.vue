@@ -27,7 +27,7 @@ import {
   resolveCodexExpandedCardTheme,
   resolveCodexSurfaceTheme
 } from './domain/codexAppearance'
-import { buildCodexCompactPresentation, codexBadgeText, projectCodexDynamicStatus } from './domain/codexPresentation'
+import { buildCodexCompactPresentation, codexBadgeText, normalizeCodexTaskStatePackage } from './domain/codexPresentation'
 import { assignQuickJumpMarkers, moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
 import type { QuickJumpTarget } from './domain/quickJump'
 import { quickJumpHitStackContainsTarget, quickJumpHitTestPoints } from './domain/quickJumpHitTest'
@@ -43,10 +43,9 @@ import type {
   CodexProjectSection,
   CodexQuotaBucket,
   CodexResolvedNewThreadModel,
-  CodexTaskCard,
-  ConversationSnapshotV1
+  CodexTaskCard
 } from './domain/codex'
-import { CODEX_TASK_STATE_REVISION, emptyConversationSnapshot, normalizeCodexQuota } from './domain/codex'
+import { normalizeCodexQuota } from './domain/codex'
 import type { CodexFloatResizeCorner, CodexFloatWindowState } from './float-env'
 import type { CodexFloatSnapshotV1 } from './runtime/codexController'
 
@@ -96,9 +95,9 @@ type ShiftPreview = { task: CodexTaskCard; left: number; top: number } | null
 type ActionHint = { label: string; left: number; top: number; placement: 'top' | 'bottom' } | null
 type QuickJumpDomTarget = QuickJumpTarget & { element: HTMLElement }
 
-const DYNAMIC_TASK_WINDOW_TICK_MS = 60 * 1000
 const COMPOSER_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 const COMPOSER_IMAGE_MAX_BYTES = 20 * 1024 * 1024
+const FLOAT_COLLAPSE_DELAY_MS = 220
 
 const snapshot = ref<CodexFloatSnapshotV1 | null>(null)
 const rootElement = ref<HTMLElement | null>(null)
@@ -132,7 +131,6 @@ const shiftPreviewSuppressed = ref(false)
 const actionHint = ref<ActionHint>(null)
 const compactCounterHintText = ref('')
 const optimisticProjectCollapsed = ref<Record<string, boolean>>({})
-const dynamicNow = ref(Date.now())
 const quickJump = ref<{ open: boolean; query: string; sourceTargets: QuickJumpDomTarget[]; targets: QuickJumpDomTarget[]; activeTargetId: string | null }>({
   open: false,
   query: '',
@@ -150,7 +148,6 @@ let collapseTimer: ReturnType<typeof setTimeout> | null = null
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 let actionHintTimer: ReturnType<typeof setTimeout> | null = null
 let compactCounterHintTimer: ReturnType<typeof setTimeout> | null = null
-let dynamicClock: ReturnType<typeof setInterval> | null = null
 let pendingRun: (() => void) | null = null
 let taskScrollResizeObserver: ResizeObserver | null = null
 let desiredExpanded = false
@@ -170,18 +167,13 @@ const fallbackWaterAppearance = CODEX_THEME_PRESETS[0].waterAppearance
 const fallbackExpandedCardAppearance = CODEX_THEME_PRESETS[0].expandedCardAppearance
 const settings = computed(() => snapshot.value)
 const quota = computed(() => snapshot.value?.quota)
-const incompatibleTaskStateSnapshot: ConversationSnapshotV1 = {
-  ...emptyConversationSnapshot('error'),
-  errorCode: 'preload-version-mismatch',
-  errorMessage: 'Codex 任务状态版本已过期，请在 uTools 中重新加载 EyPc 插件'
-}
-const conversations = computed(() => {
-  if (!snapshot.value) return undefined
-  return snapshot.value.taskStateRevision === CODEX_TASK_STATE_REVISION
-    ? snapshot.value.conversations
-    : incompatibleTaskStateSnapshot
-})
-const dynamicStatus = computed(() => projectCodexDynamicStatus(conversations.value, dynamicNow.value))
+const taskState = computed(() => normalizeCodexTaskStatePackage(
+  snapshot.value?.taskState,
+  snapshot.value?.conversations,
+  snapshot.value?.taskStateRevision
+))
+const conversations = computed(() => taskState.value.conversations)
+const dynamicStatus = computed(() => taskState.value.dynamic)
 const compact = computed(() => buildCodexCompactPresentation({
   quota: quota.value || { version: 1, status: 'idle', plan: '', short: null, weekly: null, updatedAt: 0 },
   compactFields: snapshot.value?.compactFields || [],
@@ -228,6 +220,8 @@ const expandedQuota = computed(() => {
   return result
 })
 const statusText = computed(() => {
+  if (!snapshot.value) return '等待真实会话预检'
+  if (taskState.value.compatibility === 'degraded') return taskState.value.compatibilityMessage
   if (conversations.value?.status === 'stale') return '数据已过期 · 展示上一份已验证快照'
   if (conversations.value?.status === 'error') return conversations.value.errorMessage || '真实会话预检失败'
   if (conversations.value?.completeness === 'verified') {
@@ -236,7 +230,7 @@ const statusText = computed(() => {
   return '等待真实会话预检'
 })
 const compactAriaLabel = computed(() => {
-  if (quota.value?.status === 'stale' || quota.value?.status === 'error' || conversations.value?.status === 'stale' || conversations.value?.status === 'error') return `${compact.value.ariaLabel}，${statusText.value}`
+  if (snapshot.value && (taskState.value.compatibility === 'degraded' || quota.value?.status === 'stale' || quota.value?.status === 'error' || conversations.value?.status === 'stale' || conversations.value?.status === 'error')) return `${compact.value.ariaLabel}，${statusText.value}`
   return compact.value.ariaLabel
 })
 const composerHasContent = computed(() => Boolean(composer.value?.image || composer.value?.prompt.trim()))
@@ -391,6 +385,7 @@ const renderRows = computed<RenderRow[]>(() => {
 })
 const focusItems = computed<FocusItem[]>(() => renderRows.value.filter((row): row is FocusItem => row.kind === 'task' || row.kind === 'project'))
 const focusedItem = computed(() => focusItems.value.find((item) => item.key === focusedKey.value) || focusItems.value[0] || null)
+
 const visibleTaskKeys = computed(() => new Set(renderRows.value.filter((row): row is Extract<RenderRow, { kind: 'task' }> => row.kind === 'task').map((row) => row.task.key)))
 const selectedTasks = computed(() => (conversations.value?.all || []).filter((task) => selectedKeys.value.has(task.key) && visibleTaskKeys.value.has(task.key)))
 const showBatchToolbar = computed(() => selectedTasks.value.length >= 2)
@@ -404,6 +399,7 @@ const drawerItem = computed<FocusItem | null>(() => {
 
 const composerModels = computed(() => composer.value?.context.modelCatalog.models || [])
 const selectedUiTab = ref<UiConversationTab>('dynamic')
+
 const projectCount = computed(() => {
   const value = conversations.value
   if (!value) return 0
@@ -1758,6 +1754,11 @@ const fallbackCommands: Record<string, string> = {
   'Ctrl+Shift+F': 'codex.search.focus',
   'Ctrl+R': 'codex.refresh',
   'Ctrl+T': 'codex.thread.createFocused',
+  'Ctrl+Shift+1': 'codex.action.run.1',
+  'Ctrl+Shift+2': 'codex.action.run.2',
+  'Ctrl+Shift+3': 'codex.action.run.3',
+  'Ctrl+Shift+4': 'codex.action.run.4',
+  'Ctrl+Shift+5': 'codex.action.run.5',
   F: 'quickJump.openForward',
   'Shift+F': 'quickJump.openBackward',
   Escape: 'codex.layer.cancel'
@@ -1953,6 +1954,7 @@ function onRootKeydown(event: KeyboardEvent) {
   else if (command === 'codex.refresh') action('codex.refresh')
   else if (command === 'codex.thread.createFocused') openComposer()
   else if (command.startsWith('codex.drawer.select.')) executeDrawerAction(Number(command.split('.').at(-1)) - 1)
+  else if (command.startsWith('codex.action.run.')) action(command)
   else if (command === 'codex.layer.cancel') {
     cancelTopLayer()
   }
@@ -2026,10 +2028,15 @@ function taskCanRestore(task: CodexTaskCard) {
 }
 
 function onWindowBlur() {
+  hoverInside = false
+  focusWithin = false
   shiftHeld.value = false
   shiftPreviewSuppressed.value = false
+  clearConfirm()
+  clearActionHint()
   clearCompactCounterHint()
   closeShiftPreview()
+  scheduleCollapse()
 }
 
 function onWindowResize() {
@@ -2087,10 +2094,10 @@ function onCompactSurfacePointer(event: PointerEvent) {
 
 function scheduleCollapse() {
   if (collapseTimer) clearTimeout(collapseTimer)
-  if (focusWithin || resize || pendingConfirm.value || composer.value || panel.value || aliasEditor.value || quickJump.value.open || shiftPreview.value) return
+  if (focusWithin || resize || composer.value || panel.value || aliasEditor.value || quickJump.value.open || shiftPreview.value) return
   collapseTimer = setTimeout(() => {
-    if (!hoverInside && !focusWithin && !resize && !composer.value && !panel.value && !quickJump.value.open && !shiftPreview.value) requestExpansion(false)
-  }, 100)
+    if (!hoverInside && !focusWithin && !resize && !composer.value && !panel.value && !aliasEditor.value && !quickJump.value.open && !shiftPreview.value) requestExpansion(false)
+  }, FLOAT_COLLAPSE_DELAY_MS)
 }
 
 function onMouseLeave() {
@@ -2258,8 +2265,6 @@ watch(taskScroll, (element) => {
 })
 
 onMounted(() => {
-  dynamicNow.value = Date.now()
-  dynamicClock = setInterval(() => { dynamicNow.value = Date.now() }, DYNAMIC_TASK_WINDOW_TICK_MS)
   snapshot.value = window.eypcFloat?.getSnapshot() || null
   floatState.value = window.eypcFloat?.getState() || floatState.value
   expanded.value = floatState.value.expanded
@@ -2290,7 +2295,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (collapseTimer) clearTimeout(collapseTimer)
-  if (dynamicClock) clearInterval(dynamicClock)
   clearActionHint()
   clearCompactCounterHint()
   closeShiftPreview()
