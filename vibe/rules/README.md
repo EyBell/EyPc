@@ -34,6 +34,7 @@ design-preference-gate: accepted
 - Codex native global state is read-only except for the explicitly confirmed Companion project-removal transaction: the host must reject while Codex Desktop is running, validate a short-lived project alias and source fingerprint against the primary state file, change only the native project registry fields, atomically replace primary plus `.bak`, and verify/rollback. All other Codex flows remain absolutely read-only toward that file.
 - Do not delete real files from disk in the favorites feature; removing a favorite only removes plugin metadata.
 - Process termination is high risk: normal kill requires confirmation; force kill is allowed only for explicit selected PID + verified port match.
+- Every top-level feature in [featureRegistry.ts](../../src/runtime/feature/featureRegistry.ts#L1) must ship a matching end-user operation guide at [src/help/guides/{id}.md](../../src/help/guides/); new `AppTabId` / feature types and user-visible feature behavior changes must add or update that guide in the same change. Rule detail: [documentation.md](documentation.md#feature-help-guides-required).
 
 ## Project Rule Trace
 
@@ -42,3 +43,4 @@ Project-local rules stay outside the central CodeNote Rule Task Index. This tabl
 | Rule ID | Scope / Source | Durable Authorities | State |
 | --- | --- | --- | --- |
 | `EYPC-UTOOLS-HOST-001` | project-local backlink; RAW-087 and the 2026-07-24 user-confirmed entry freeze | [CodeNote host-hotkey-redirect](../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/host-hotkey-redirect.md#L1) · [CodeNote error memory](../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/error-memory/utools-private-sync-ipc-entry-freeze.md#L1) · [RAW-087](../specs/260718/1148-codex-quota-float/raw-requirement.md#L1) · [verification](../specs/260718/1148-codex-quota-float/verify.md#L1) · [local pointer](../knowledge/error-memory/utools-private-sync-ipc-entry-freeze.md#L1) | active; entry recovery user-confirmed, complete no-readback contract statically verified |
+| `EYPC-FEATURE-HELP-001` | settings feature「说明」guides; 2026-07-29 settings-feature-help | [documentation.md Feature Help Guides](documentation.md#feature-help-guides-required) · [src/help/guides/](../../src/help/guides/) · [guides/index.ts](../../src/help/guides/index.ts#L1) · [featureRegistry.ts](../../src/runtime/feature/featureRegistry.ts#L1) · [RAW](../specs/260729/1135-settings-feature-help/raw-requirement.md#L1) | active; coverage required for every `FEATURES` id |
