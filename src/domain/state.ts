@@ -5,7 +5,7 @@ import { normalizeShortcutId } from './shortcuts'
 import { normalizeToolPreviewPrefs } from './toolPreview'
 import { normalizeFavoriteGraph } from './favorites'
 import { createDefaultCodexState, normalizeCodexState } from './codex'
-import { createWindowSlots, type WindowPlatform, type WindowSlot, type WindowTarget } from './windows'
+import { createWindowSlots, normalizeWindowText, type WindowPlatform, type WindowSlot, type WindowTarget } from './windows'
 
 const VALID_TABS = new Set<AppTabId>(['ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings'])
 const TAB_IDS: AppTabId[] = ['ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings']
@@ -105,6 +105,10 @@ function normalizeWindowTargets(value: unknown, now: number): WindowTarget[] {
       appId: appId || appName,
       appName: appName || appId,
       titleLocator,
+      titleHistory: strings(source.titleHistory)
+        .filter((title) => normalizeWindowText(title) !== normalizeWindowText(titleLocator))
+        .filter((title, index, all) => all.findIndex((candidate) => normalizeWindowText(candidate) === normalizeWindowText(title)) === index)
+        .slice(0, 4),
       lastNativeRef: stringValue(source.lastNativeRef).trim() || null,
       favorite: source.favorite !== false,
       pinned: source.pinned === true,
@@ -320,6 +324,8 @@ export function createInitialState(now = Date.now()): AppState {
       toolPreviewPrefs: normalizeToolPreviewPrefs(null),
       preferSqlite: false
     },
+    settingsTabId: 'shortcuts',
+    settingsMaintenanceSectionId: 'features',
     updatedAt: now
   }
 }
@@ -368,6 +374,8 @@ export function normalizeAppState(value: unknown, now = Date.now()): AppState {
       toolPreviewPrefs: normalizeToolPreviewPrefs(settings.toolPreviewPrefs ?? legacyMqttLayoutPrefs),
       preferSqlite: settings.preferSqlite === true
     },
+    settingsTabId: source.settingsTabId === 'maintenance' ? 'maintenance' : 'shortcuts',
+    settingsMaintenanceSectionId: (['features', 'tools', 'layers', 'storage', 'commands', 'resolution', 'reservations'] as const).includes(source.settingsMaintenanceSectionId as any) ? (source.settingsMaintenanceSectionId as AppState['settingsMaintenanceSectionId']) : 'features',
     updatedAt: numberValue(source.updatedAt, now)
   }
 }

@@ -32,7 +32,7 @@ const CODEX_DESKTOP_IPC_FRAME_MAX_BYTES = 256 * 1024 * 1024
 const CODEX_DESKTOP_IPC_RECONNECT_MAX_MS = 5_000
 // Keep synchronized with src/domain/codex.ts. This value crosses the context
 // boundary so a newer renderer can reject task counts from a long-lived preload.
-const CODEX_TASK_STATE_REVISION = 'task-state-v1'
+const CODEX_TASK_STATE_REVISION = 'task-state-v2'
 const CODEX_DESKTOP_IPC_VERSIONS = {
   'client-status-changed': 0,
   'ipc-connection-reset': 1,
@@ -73,7 +73,13 @@ const CODEX_FLOAT_CHANNELS = {
   resizeStart: 'eypc-float:resize-start',
   resizeMove: 'eypc-float:resize-move',
   resizeEnd: 'eypc-float:resize-end',
-  resizeCancel: 'eypc-float:resize-cancel'
+  resizeCancel: 'eypc-float:resize-cancel',
+  environmentList: 'eypc-float:environment-list',
+  environmentListResult: 'eypc-float:environment-list-result',
+  environmentRun: 'eypc-float:environment-run',
+  environmentRunResult: 'eypc-float:environment-run-result',
+  environmentSession: 'eypc-float:environment-session',
+  environmentSessionResult: 'eypc-float:environment-session-result'
 }
 let lastEnterPayload = null
 const enterPayloadListeners = new Set()
@@ -568,14 +574,14 @@ for (const item of list) {
   const key = String(pid) + ':' + String(windowNumber)
   if (seen[key]) continue
   seen[key] = true
-  const isOnscreen = item.kCGWindowIsOnscreen === true || item.kCGWindowIsOnscreen === 1
   rows.push({
     nativeRef: String(pid) + ':0:' + String(windowNumber),
     pid,
     appId,
     appName,
     title,
-    minimized: !isOnscreen,
+    // kCGWindowIsOnscreen is also false for a normal window on another Space; it is not a minimize flag.
+    minimized: false,
     focused: false,
     screenRecordingHint: false
   })
@@ -826,6 +832,10 @@ function executeSpaceBridge() {
     bridge: 'isolated-jxa',
     bindingCount: bindings.length,
     bindingSource: source,
+    bindings: bindings.slice(0, 16).map((binding) => ({
+      spaceId: String(binding.spaceId),
+      displayUuid: String(binding.displayUuid || '')
+    })),
     managedSpaceCount: entries.length,
     directBindingCount: direct.length,
     reverseBindingCount: reverse.length
@@ -882,12 +892,14 @@ function environmentValue(name) {
 }
 const debugTrace = environmentValue('EYPC_WINDOW_DEBUG_TRACE') === '1'
 const trace = []
+let activationReasonCode = ''
 function addTrace(stage, outcome, detail) {
   if (!debugTrace || trace.length >= 16) return
   trace.push(detail ? { stage, outcome, detail } : { stage, outcome })
 }
 function emit(outcome) {
   const payload = { outcome }
+  if (activationReasonCode) payload.reasonCode = activationReasonCode
   if (debugTrace) payload.trace = trace
   return JSON.stringify(payload)
 }
@@ -895,6 +907,8 @@ function expectedTargetTitle() {
   return environmentValue('EYPC_WINDOW_TARGET_TITLE')
 }
 const expectedTitle = expectedTargetTitle()
+const expectedApp = normalizeTitle(environmentValue('EYPC_WINDOW_TARGET_APP_ID'))
+const requireExactAx = environmentValue('EYPC_WINDOW_REQUIRE_EXACT_AX') === '1'
 const allowProcessSpaceFallback = environmentValue('EYPC_WINDOW_ALLOW_PROCESS_SPACE_FALLBACK') === '1'
 function axAttributeName(name) {
   return $.NSString.stringWithString(name)
@@ -954,6 +968,34 @@ function activateExactAxTarget(resolved) {
   addTrace('target', 'ok', 'ax-cg-id-match')
   const target = resolved.target
   const app = resolved.app
+  const running = (() => {
+    try { return $.NSRunningApplication.runningApplicationWithProcessIdentifier(processId) } catch (error) { return null }
+  })()
+  if (!running || Boolean(running.terminated)) {
+    addTrace('process', 'not-found')
+    return 'not-found'
+  }
+  const runningBundle = normalizeTitle((() => {
+    try { return running.bundleIdentifier ? ObjC.unwrap(running.bundleIdentifier) : '' } catch (error) { return '' }
+  })())
+  const runningName = normalizeTitle((() => {
+    try { return running.localizedName ? ObjC.unwrap(running.localizedName) : '' } catch (error) { return '' }
+  })())
+  if (expectedApp && expectedApp !== runningBundle && expectedApp !== runningName) {
+    activationReasonCode = 'target-title-changed'
+    addTrace('target', 'not-found', 'title-mismatch')
+    return 'not-found'
+  }
+  if (expectedTitle) {
+    const copiedTitle = copyAxAttribute(target, 'AXTitle')
+    let actualTitle = ''
+    try { actualTitle = copiedTitle.error === 0 && copiedTitle.value ? normalizeTitle(ObjC.unwrap(copiedTitle.value)) : '' } catch (error) {}
+    if ((actualTitle && actualTitle !== normalizeTitle(expectedTitle)) || (requireExactAx && !actualTitle)) {
+      activationReasonCode = 'target-title-changed'
+      addTrace('target', 'not-found', 'title-mismatch')
+      return 'not-found'
+    }
+  }
   const minimized = copyAxAttribute(target, 'AXMinimized')
   if (minimized.error === 0 && Boolean(ObjC.unwrap(minimized.value))) {
     if (!setAxAttribute(target, 'AXMinimized', $.NSNumber.numberWithBool(false))) {
@@ -963,13 +1005,6 @@ function activateExactAxTarget(resolved) {
     addTrace('restore', 'ok')
   } else {
     addTrace('restore', minimized.error === 0 ? 'skipped' : 'unavailable')
-  }
-  const running = (() => {
-    try { return $.NSRunningApplication.runningApplicationWithProcessIdentifier(processId) } catch (error) { return null }
-  })()
-  if (!running || Boolean(running.terminated)) {
-    addTrace('process', 'not-found')
-    return 'not-found'
   }
   let raised = performAxAction(target, 'AXRaise')
   setAxAttribute(target, 'AXMain', $.NSNumber.numberWithBool(true))
@@ -1058,6 +1093,10 @@ function activate() {
   if (exact.outcome === 'ambiguous') {
     addTrace('target', 'ambiguous', 'ax-cg-id-match')
     return 'ambiguous'
+  }
+  if (requireExactAx) {
+    addTrace('target', exact.outcome === 'not-found' ? 'not-found' : 'unavailable', 'ax-cg-id-match')
+    return exact.outcome === 'not-found' ? 'not-found' : 'failed'
   }
   let processes = []
   try { processes = systemEvents.applicationProcesses.whose({ unixId: processId })() } catch (error) {
@@ -1218,18 +1257,21 @@ if (!processes.length) {
 // Private SkyLight CGS: resolve a concrete CGWindowNumber against the current managed-Space map.
 // Direct per-window queries are authoritative; per-Space tag scans only corroborate/fill a direct miss.
 // Bindings stay preload-session-only because CG window IDs, PIDs, titles and Space IDs are recyclable.
-const WINDOW_BRIDGE_REVISION = 'wj15-exact-ax'
+const WINDOW_BRIDGE_REVISION = 'wj16-session-cache'
 const MACOS_CGS_WINDOW_TAG_MASK = 0x7
 const MACOS_CGS_SPACE_QUERY_MASKS = [0x7, 0x7fffffff]
 const MACOS_CGS_SPACE_SETTLE_MS = 120
 const MACOS_CGS_SPACE_CONFIRM_TIMEOUT_MS = 2_000
 const MACOS_CGS_SPACE_CONFIRM_INTERVAL_MS = 50
+const MACOS_WINDOW_IDENTITY_CACHE_TTL_MS = 5 * 60 * 1_000
 const MACOS_CF_STRING_ENCODING_UTF8 = 0x08000100
 let macosCgsApi = null
 /** @type {Map<number, Array<{ spaceId: bigint, displayUuid: string }>>} */
 let macosWindowSpaceCache = new Map()
 /** @type {{ entries: Array<{ spaceId: bigint, displayUuid: string }>, displayBySpace: Map<string, string>, currentByDisplay: Map<string, string> } | null} */
 let macosManagedSpaceSnapshot = null
+/** @type {Map<string, { checkedAt: number, snapshot: object }>} */
+let macosWindowIdentityCache = new Map()
 const MACOS_WINDOW_SPACE_LEARNED_KEY = 'eypc/macos-window-spaces/v1'
 let macosLegacySpaceBindingMigrationAttempted = false
 
@@ -1404,6 +1446,30 @@ function macosCacheSpaceBindings(cache, cgWindowNumber, bindings) {
   else cache.delete(wid)
 }
 
+/** Reads only a previously verified/prewarmed binding and refreshes current-Space state. */
+function macosCachedWindowSpaceResolution(api, cid, cgWindowNumber) {
+  const want = cgWindowNumber >>> 0
+  const cached = macosDedupeSpaceBindings(macosWindowSpaceCache.get(want) || [])
+  if (!want || !cached.length) return null
+  const managed = macosLoadDisplayBySpaceMap(api, cid)
+  macosManagedSpaceSnapshot = managed
+  const bindings = cached.filter((binding) => managed.displayBySpace.get(binding.spaceId.toString()) === binding.displayUuid)
+  if (!bindings.length) {
+    macosWindowSpaceCache.delete(want)
+    return null
+  }
+  macosCacheSpaceBindings(macosWindowSpaceCache, want, bindings)
+  return {
+    bindings,
+    source: 'session-cache',
+    currentByDisplay: managed.currentByDisplay,
+    managedSpaceCount: managed.entries.length,
+    directBindingCount: 0,
+    reverseBindingCount: 0,
+    cacheHit: true
+  }
+}
+
 function macosSpacesForWindow(api, cid, cgWindowNumber, mask) {
   const cfNum = macosCreateCfNumber(api, cgWindowNumber, 32)
   if (!cfNum) return []
@@ -1519,6 +1585,8 @@ function macosRebuildWindowSpaceCache(api, cid, inventoryWindows) {
 
 function macosLookupOrResolveWindowSpaceBinding(api, cid, cgWindowNumber) {
   const want = cgWindowNumber >>> 0
+  const cached = macosCachedWindowSpaceResolution(api, cid, want)
+  if (cached) return cached
   const managed = macosLoadDisplayBySpaceMap(api, cid)
   macosManagedSpaceSnapshot = managed
   const direct = macosDirectBindingsForWindow(api, cid, want, managed.displayBySpace)
@@ -1533,6 +1601,44 @@ function macosLookupOrResolveWindowSpaceBinding(api, cid, cgWindowNumber) {
     managedSpaceCount: managed.entries.length,
     directBindingCount: direct.length,
     reverseBindingCount: reverse.length
+  }
+}
+
+function trySwitchMacosSpaceFromSessionCache(nativeRef) {
+  try {
+    const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(String(nativeRef || '').trim())
+    if (!parts || Number(parts[2]) !== 0) return null
+    const cgWindowNumber = Number(parts[3])
+    if (!Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) return null
+    const api = loadMacosCgsApi()
+    if (!api) return null
+    const cid = api.SLSMainConnectionID()
+    const resolved = macosCachedWindowSpaceResolution(api, cid, cgWindowNumber)
+    if (!resolved) return null
+    const probe = {
+      bridge: 'in-process',
+      managedSpaceCount: resolved.managedSpaceCount,
+      directBindingCount: 0,
+      reverseBindingCount: 0,
+      bindingCount: resolved.bindings.length,
+      bindingSource: 'session-cache'
+    }
+    const currentBindings = resolved.bindings.filter((binding) => resolved.currentByDisplay.get(binding.displayUuid) === binding.spaceId.toString())
+    if (currentBindings.length) {
+      return { ...probe, switched: false, detail: 'current', binding: currentBindings[0], sameSpace: true, cacheHit: true }
+    }
+    if (resolved.bindings.length !== 1) {
+      return { ...probe, switched: false, detail: 'ambiguous-spaces', sameSpace: false, cacheHit: true }
+    }
+    const binding = resolved.bindings[0]
+    const switched = macosSwitchToCachedSpace(api, cid, binding, resolved.currentByDisplay)
+    if (['no-display', 'no-space-id'].includes(switched.detail)) {
+      macosWindowSpaceCache.delete(cgWindowNumber >>> 0)
+      return null
+    }
+    return { ...probe, ...switched, binding, sameSpace: false, cacheHit: true }
+  } catch {
+    return null
   }
 }
 
@@ -1647,6 +1753,17 @@ function parseMacosIsolatedSpaceBridge(output) {
     if (!['current', 'remote', 'switch-confirmed', 'switch-timeout', 'ambiguous-spaces', 'empty-spaces', 'bad-ref', 'title-mismatch', 'error'].includes(detail)) return null
     const source = String(value && value.bindingSource || '')
     const bindingSource = ['isolated-direct', 'isolated-reverse', 'isolated-direct+reverse', 'none'].includes(source) ? source : 'none'
+    const bindings = Array.isArray(value && value.bindings) ? value.bindings.slice(0, 16).flatMap((item) => {
+      const spaceId = String(item && item.spaceId || '').trim()
+      const displayUuid = String(item && item.displayUuid || '').trim()
+      if (!/^\d{1,20}$/.test(spaceId) || !displayUuid) return []
+      try {
+        const parsed = BigInt(spaceId)
+        return parsed > 0n ? [{ spaceId: parsed, displayUuid }] : []
+      } catch {
+        return []
+      }
+    }) : []
     return {
       bridge: 'isolated-jxa',
       detail,
@@ -1655,6 +1772,7 @@ function parseMacosIsolatedSpaceBridge(output) {
       sameSpace: value && value.sameSpace === true,
       bindingCount: Math.max(0, Math.trunc(Number(value && value.bindingCount || 0))),
       bindingSource,
+      bindings: macosDedupeSpaceBindings(bindings),
       managedSpaceCount: Math.max(0, Math.trunc(Number(value && value.managedSpaceCount || 0))),
       directBindingCount: Math.max(0, Math.trunc(Number(value && value.directBindingCount || 0))),
       reverseBindingCount: Math.max(0, Math.trunc(Number(value && value.reverseBindingCount || 0)))
@@ -1689,7 +1807,9 @@ async function runMacosIsolatedSpaceBridge(target, switchRequested) {
   if (!result.ok) {
     return { switched: false, detail: 'error', bridge: 'isolated-jxa', bindingCount: 0, bindingSource: 'none', managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
   }
-  return parseMacosIsolatedSpaceBridge(result.stdout)
+  const parsed = parseMacosIsolatedSpaceBridge(result.stdout)
+  if (parsed && parsed.bindings.length) macosCacheSpaceBindings(macosWindowSpaceCache, cgWindowNumber, parsed.bindings)
+  return parsed
     || { switched: false, detail: 'error', bridge: 'isolated-jxa', bindingCount: 0, bindingSource: 'none', managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
 }
 
@@ -1722,8 +1842,27 @@ function unavailableWindowEnvironment(platform = 'unsupported') {
   }
 }
 
+function macosWindowIdentityCacheKey(target) {
+  const source = target && typeof target === 'object' ? target : {}
+  const nativeRef = String(source.nativeRef || '').trim()
+  const appId = String(source.appId || source.appName || '').trim().toLowerCase()
+  const title = String(source.title || '').trim().replace(/\s+/g, ' ').toLowerCase()
+  return nativeRef && appId && title ? `${nativeRef}\u0000${appId}\u0000${title}` : ''
+}
+
+function invalidateMacosWindowIdentity(target) {
+  const key = macosWindowIdentityCacheKey(target)
+  if (key) macosWindowIdentityCache.delete(key)
+}
+
 async function readMacosWindowIdentity(target) {
   const source = target && typeof target === 'object' ? target : {}
+  const cacheKey = macosWindowIdentityCacheKey(source)
+  const cached = cacheKey ? macosWindowIdentityCache.get(cacheKey) : null
+  if (cached && Date.now() - cached.checkedAt <= MACOS_WINDOW_IDENTITY_CACHE_TTL_MS) {
+    return { ...cached.snapshot }
+  }
+  if (cached) macosWindowIdentityCache.delete(cacheKey)
   const nativeRef = String(source.nativeRef || '').trim()
   const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
   if (!parts) return unavailableWindowEnvironment('darwin')
@@ -1753,6 +1892,7 @@ async function readMacosWindowIdentity(target) {
       snapshot.ownerCgWindowCount = Math.max(0, Math.trunc(Number(parsed.ownerCgWindowCount || 0)))
       snapshot.axTargetMatches = Math.max(0, Math.trunc(Number(parsed.axTargetMatches || 0)))
       snapshot.axWindowCount = Math.max(0, Math.trunc(Number(parsed.axWindowCount || 0)))
+      if (cacheKey) macosWindowIdentityCache.set(cacheKey, { checkedAt: Date.now(), snapshot: { ...snapshot } })
     } catch {}
   }
   return snapshot
@@ -1848,9 +1988,9 @@ async function listWindows() {
       .replace('__EYPC_HOST_PID__', String(process.pid))
       .replace('__EYPC_PARENT_PID__', String(process.ppid || 0))
     const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', windowScript])
-    if (!result.ok) return { capability: windowCapability('unknown', '无法读取 Windows 桌面窗口'), windows: [], message: '无法读取 Windows 桌面窗口' }
+    if (!result.ok) return { capability: windowCapability('unknown', '无法读取 Windows 桌面窗口'), windows: [], completeness: 'partial', message: '无法读取 Windows 桌面窗口' }
     const parsed = parseWindowJson(result.stdout, 'win32')
-    return { capability: windowCapability('granted'), windows: parsed.windows }
+    return { capability: windowCapability('granted'), windows: parsed.windows, completeness: 'complete' }
   }
   if (process.platform === 'darwin') {
     const cgScript = MACOS_WINDOW_LIST_SCRIPT
@@ -1869,6 +2009,7 @@ async function listWindows() {
         return {
           capability: windowCapability('granted', cgParsed.screenRecordingLikelyMissing ? '部分窗口标题可能因屏幕录制权限受限' : ''),
           windows: cgParsed.windows,
+          completeness: cgParsed.screenRecordingLikelyMissing ? 'partial' : 'complete',
           ...(cgParsed.screenRecordingLikelyMissing ? { message: '部分窗口缺少标题；请确认屏幕录制权限以覆盖全部 Space' } : {})
         }
       }
@@ -1889,18 +2030,20 @@ async function listWindows() {
               ? '需要屏幕录制权限以枚举全部 Space / 显示器；当前桌面列表也需要辅助功能'
               : '需要辅助功能或自动化权限'),
             windows: [],
+            completeness: 'partial',
             message: needsScreen
               ? '需要在系统设置中允许 EyPc 的屏幕录制与辅助功能权限'
               : '需要在系统设置中允许 EyPc 控制 System Events 以读取当前桌面窗口'
           }
         }
-        return { capability: windowCapability('unknown', '无法读取 macOS 窗口'), windows: [], message: '无法读取 macOS 窗口；请确认屏幕录制与辅助功能授权' }
+        return { capability: windowCapability('unknown', '无法读取 macOS 窗口'), windows: [], completeness: 'partial', message: '无法读取 macOS 窗口；请确认屏幕录制与辅助功能授权' }
       }
       const axParsed = parseWindowJson(axResult.stdout, 'darwin')
       if (axParsed.windows.length > 0) {
         return {
           capability: windowCapability('granted', '当前为辅助功能列表（当前 Space）；授权屏幕录制可覆盖全部桌面'),
           windows: axParsed.windows,
+          completeness: 'partial',
           message: '已回退到当前桌面窗口列表；授权屏幕录制后可列出其他 Space / 显示器'
         }
       }
@@ -1908,19 +2051,20 @@ async function listWindows() {
         return {
           capability: windowCapability('required', '需要屏幕录制权限以枚举全部 Space / 显示器'),
           windows: [],
+          completeness: 'partial',
           message: '需要在系统设置中允许 EyPc 的屏幕录制权限，才能列出全部桌面与显示器上的窗口'
         }
       }
-      return { capability: windowCapability('granted'), windows: [] }
+      return { capability: windowCapability('granted'), windows: [], completeness: cgResult.ok ? 'complete' : 'partial' }
     }
   }
-  return { capability: windowCapability('unsupported'), windows: [], message: '当前系统不支持窗口跳转' }
+  return { capability: windowCapability('unsupported'), windows: [], completeness: 'partial', message: '当前系统不支持窗口跳转' }
 }
 
 const WINDOW_OPERATION_TRACE_STAGES = new Set(['bridge', 'space', 'target', 'process', 'restore', 'foreground', 'raise', 'verify', 'topmost'])
 const WINDOW_OPERATION_TRACE_OUTCOMES = new Set(['ok', 'skipped', 'not-found', 'ambiguous', 'failed', 'denied', 'unsupported', 'unavailable'])
 const WINDOW_OPERATION_TRACE_DETAILS = new Set([
-  'switched', 'switch-confirmed', 'switch-timeout', 'current', 'walked', 'direct-unique', 'direct-multiple', 'reverse-unique',
+  'switched', 'switch-confirmed', 'switch-timeout', 'current', 'walked', 'direct-unique', 'direct-multiple', 'reverse-unique', 'session-cache',
   'ambiguous-spaces', 'ax-fallback', 'bad-ref', 'no-api', 'empty-spaces', 'no-space-id', 'no-display',
   'process-frontmost', 'single-window-frontmost', 'multiwindow-blocked', 'current-space-inferred', 'cg-ordinal-fallback', 'title-match', 'title-mismatch', 'focus-state-mismatch', 'error',
   'isolated-space-bridge', 'ax-cg-id-match', 'ax-focused-window'
@@ -1951,6 +2095,8 @@ function macosBindingTraceStep(spaceAttempt) {
   if (!count) return null
   const detail = count > 1
     ? 'direct-multiple'
+    : source === 'session-cache'
+      ? 'session-cache'
     : source.includes('direct')
       ? 'direct-unique'
       : 'reverse-unique'
@@ -2019,36 +2165,44 @@ async function activateWindow(target, options = {}) {
   const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
   if (!parts) return { outcome: 'not-found', message: 'macOS 窗口引用已失效', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }]) }
   const title = String(source.title || '').replace(/\u0000/g, '').slice(0, 4096)
+  const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
   const pid = Number(parts[1])
   const ordinal = Number(parts[2])
   const cgWindowNumber = Number(parts[3])
-  const identity = await readMacosWindowIdentity(source)
-  if (ordinal === 0 && cgWindowNumber > 0 && !identity.identityAvailable) {
-    return {
-      outcome: 'failed',
-      message: '无法重新验证 macOS 窗口身份',
-      ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }])
-    }
-  }
-  if (ordinal === 0 && cgWindowNumber > 0) {
-    if (identity.cgWindowIdMatches !== 1) {
+  let identity = unavailableWindowEnvironment('darwin')
+  let spaceAttempt = ordinal === 0 && cgWindowNumber > 0 ? trySwitchMacosSpaceFromSessionCache(nativeRef) : null
+  const sessionCacheFastPath = Boolean(spaceAttempt)
+  if (!spaceAttempt) {
+    identity = await readMacosWindowIdentity(source)
+    if (ordinal === 0 && cgWindowNumber > 0 && !identity.identityAvailable) {
       return {
-        outcome: 'not-found',
-        message: 'macOS 窗口引用已失效',
-        ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }])
+        outcome: 'failed',
+        message: '无法重新验证 macOS 窗口身份',
+        ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }])
       }
     }
-    if (!identity.appMatches || identity.cgTargetMatches !== 1) {
-      return {
-        outcome: 'not-found',
-        reasonCode: 'target-title-changed',
-        message: '目标窗口标题或所属应用已变化，需要重新确认',
-        ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found', detail: 'title-mismatch' }])
+    if (ordinal === 0 && cgWindowNumber > 0) {
+      if (identity.cgWindowIdMatches !== 1) {
+        invalidateMacosWindowIdentity(source)
+        return {
+          outcome: 'not-found',
+          message: 'macOS 窗口引用已失效',
+          ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }])
+        }
+      }
+      if (!identity.appMatches || identity.cgTargetMatches !== 1) {
+        invalidateMacosWindowIdentity(source)
+        return {
+          outcome: 'not-found',
+          reasonCode: 'target-title-changed',
+          message: '目标窗口标题或所属应用已变化，需要重新确认',
+          ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found', detail: 'title-mismatch' }])
+        }
       }
     }
+    spaceAttempt = await trySwitchMacosSpace(source)
   }
 
-  const spaceAttempt = await trySwitchMacosSpace(source)
   const bridgeStep = debugTrace ? macosSpaceBridgeTraceStep(spaceAttempt) : null
   const bindingStep = debugTrace ? macosBindingTraceStep(spaceAttempt) : null
   const spacePrefix = debugTrace
@@ -2114,7 +2268,11 @@ async function activateWindow(target, options = {}) {
     ['-l', 'JavaScript', '-e', macosActivateWindowScript(pid, ordinal, cgWindowNumber)],
     title,
     debugTrace,
-    allowSingleWindowFallback
+    allowSingleWindowFallback,
+    {
+      EYPC_WINDOW_TARGET_APP_ID: appId,
+      ...(sessionCacheFastPath ? { EYPC_WINDOW_REQUIRE_EXACT_AX: '1' } : {})
+    }
   )
   if (!result.ok) {
     const detail = `${result.error}\n${result.stderr}`
@@ -2124,8 +2282,11 @@ async function activateWindow(target, options = {}) {
     return debugTrace ? mergeDebugTraceSteps(finalSpacePrefix, failure) : failure
   }
   const activation = parseWindowActivationResult(result.stdout)
-  if (activation.outcome === 'not-found' && cgWindowNumber > 0) macosWindowSpaceCache.delete(cgWindowNumber >>> 0)
-  const classified = activation.outcome === 'not-found' && allowSingleWindowFallback
+  if (activation.outcome === 'not-found') {
+    invalidateMacosWindowIdentity(source)
+    if (cgWindowNumber > 0) macosWindowSpaceCache.delete(cgWindowNumber >>> 0)
+  }
+  const classified = activation.outcome === 'not-found' && allowSingleWindowFallback && !activation.reasonCode
     ? { ...activation, reasonCode: 'space-unbound' }
     : activation
   return debugTrace ? mergeDebugTraceSteps(finalSpacePrefix, classified) : classified
@@ -3697,6 +3858,7 @@ function codexDesktopShadowFromSnapshot(change) {
   if (revision < 0 || !runtime || requests === null) return null
   const shadow = {
     revision,
+    activityRevision: revision,
     runtime,
     sideConversation: state.sideConversation === true,
     parentThreadId: validCodexThreadId(state.forkedFromId)
@@ -3723,7 +3885,11 @@ function codexDesktopShadowActivity(shadow) {
   // implementation request is created only after the Plan turn is complete,
   // so it is authoritative user-waiting evidence even if runtime status has
   // already moved to idle in the same patch batch.
-  const status = activeFlags.size > 0 ? 'active' : shadow.runtime.type
+  const status = activeFlags.size > 0
+    ? 'active'
+    : shadow.suppressUncorroboratedActive === true && shadow.runtime.type === 'active'
+      ? 'idle'
+      : shadow.runtime.type
   const desktopActiveSince = status === 'active' ? codexTimestampMs(shadow.desktopActiveSince) : 0
   return {
     status,
@@ -3839,6 +4005,60 @@ function codexApplyCachedCompletedTurnEvidence(known, threadId) {
   return true
 }
 
+function codexApplyCompletedTurnNotification(bridge, known, threadId, value) {
+  if (!bridge || !known || !validCodexThreadId(threadId)) return false
+  const turn = sanitizeCodexTurnStatus(value)
+  if (turn?.status !== 'completed' || !turn.startedAt || !turn.completedAt) return false
+  const previousStartedAt = codexTimestampMs(known.lastTurnStartedAt)
+  const previousCompletedAt = codexTimestampMs(known.lastTurnCompletedAt)
+  const activeSince = codexTimestampMs(known.desktopActiveSince)
+  if (activeSince > 0 && turn.completedAt <= activeSince) return false
+  const freshCompleted = turn.startedAt > previousStartedAt
+    || known.lastTurnStatus === 'inProgress' && turn.startedAt === previousStartedAt
+    || known.lastTurnStatus === 'completed'
+      && turn.startedAt === previousStartedAt
+      && turn.completedAt > previousCompletedAt
+  if (!freshCompleted) return false
+
+  codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
+  known.lastTurnStatus = 'completed'
+  known.lastTurnStartedAt = turn.startedAt
+  known.lastTurnCompletedAt = turn.completedAt
+  bridge.cancelLatestTurnRefresh(threadId)
+  const waitingLive = Array.isArray(known.activeFlags)
+    && known.activeFlags.some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
+  if (waitingLive) {
+    emitCodexActivityDelta([{ ...known, lastTurnEvidence: 'targeted-after-exit' }], false)
+    bridge.scheduleCompletionUnreadRefresh(threadId)
+  } else {
+    bridge.publishTargetedCompletion(known, threadId)
+  }
+  return true
+}
+
+function codexApplyStartedTurnNotification(bridge, known, threadId, value) {
+  if (!bridge || !known || !validCodexThreadId(threadId)) return false
+  const turn = sanitizeCodexTurnStatus(value)
+  if (turn?.status !== 'inProgress' || !turn.startedAt) return false
+  const previousStartedAt = codexTimestampMs(known.lastTurnStartedAt)
+  if (known.lastTurnStatus === 'inProgress' && turn.startedAt === previousStartedAt) {
+    bridge.cancelLatestTurnRefresh(threadId)
+    bridge.cancelCompletionUnreadRefresh(threadId)
+    return true
+  }
+  if (turn.startedAt <= previousStartedAt) return false
+
+  codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
+  known.lastTurnStatus = 'inProgress'
+  known.lastTurnStartedAt = turn.startedAt
+  delete known.lastTurnCompletedAt
+  delete known.lastTurnEvidence
+  bridge.cancelLatestTurnRefresh(threadId)
+  bridge.cancelCompletionUnreadRefresh(threadId)
+  if (!bridge.restoreSuppressedActive(threadId)) emitCodexActivityDelta([known], false)
+  return true
+}
+
 function codexClearStalePreCompletionLiveUnread(bridge, threadId) {
   if (!bridge || !validCodexThreadId(threadId)) return
   const shadow = bridge.shadows.get(threadId)
@@ -3928,6 +4148,71 @@ class CodexDesktopCompanionBridge {
     if (known.hasUnreadTurn !== true) this.scheduleCompletionUnreadRefresh(threadId)
   }
 
+  restoreSuppressedActive(threadId) {
+    if (!validCodexThreadId(threadId)) return false
+    const shadows = [
+      this.shadows.get(threadId),
+      ...[...this.sideShadows.values()].filter((shadow) => shadow.parentThreadId === threadId)
+    ].filter(Boolean)
+    let restored = false
+    for (const shadow of shadows) {
+      if (shadow.suppressUncorroboratedActive !== true) continue
+      delete shadow.suppressUncorroboratedActive
+      const activity = codexDesktopShadowActivity(shadow)
+      if (activity?.status === 'active' && !codexTimestampMs(shadow.desktopActiveSince)) shadow.desktopActiveSince = Date.now()
+      restored = true
+    }
+    if (restored) this.emitParentActivity(threadId)
+    return restored
+  }
+
+  verifyTerminalActiveSnapshot(threadId, shadow) {
+    if (!validCodexThreadId(threadId) || !shadow) return
+    const parentThreadId = shadow.sideConversation ? shadow.parentThreadId : threadId
+    const known = codexActivityInventory.get(parentThreadId)
+    const activity = codexDesktopShadowActivity(shadow)
+    const terminalTurn = known?.lastTurnStatus === 'completed'
+      || known?.lastTurnStatus === 'failed'
+      || known?.lastTurnStatus === 'interrupted'
+    if (!known || !validCodexThreadId(parentThreadId) || !terminalTurn || !known.lastTurnStartedAt) return
+    if (activity?.status !== 'active' || activity.activeFlags.length > 0) return
+    this.cancelLatestTurnRefresh(parentThreadId)
+    this.scheduleLatestTurnRefresh(parentThreadId, {
+      verifyStaleActive: true,
+      settleSnapshotTerminal: true,
+      snapshotThreadId: threadId,
+      snapshotActivityRevision: shadow.activityRevision
+    })
+  }
+
+  settleTerminalActiveSnapshot(threadId, refresh, known, turn) {
+    const shadow = this.shadows.get(refresh.snapshotThreadId) || this.sideShadows.get(refresh.snapshotThreadId)
+    if (!shadow || shadow.activityRevision !== refresh.snapshotActivityRevision) return false
+    const activity = codexDesktopShadowActivity(shadow)
+    if (activity?.status !== 'active' || activity.activeFlags.length > 0) return false
+    const parentThreadId = shadow.sideConversation ? shadow.parentThreadId : refresh.snapshotThreadId
+    if (parentThreadId !== threadId || codexActivityInventory.get(threadId) !== known) return false
+
+    codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
+    known.lastTurnStatus = turn.status
+    known.lastTurnStartedAt = turn.startedAt
+    if (turn.status === 'completed' && turn.completedAt) known.lastTurnCompletedAt = turn.completedAt
+    else delete known.lastTurnCompletedAt
+    shadow.suppressUncorroboratedActive = true
+    delete shadow.desktopActiveSince
+    const wasActive = known.status === 'active'
+    this.emitParentActivity(threadId)
+    const settled = codexActivityInventory.get(threadId)
+    if (settled?.status !== 'active') {
+      if (turn.status === 'completed') {
+        if (!wasActive) this.publishTargetedCompletion(settled, threadId)
+      } else {
+        emitCodexActivityDelta([{ ...settled, lastTurnEvidence: 'targeted-after-exit' }], false)
+      }
+    }
+    return true
+  }
+
   scheduleCompletionUnreadRefresh(threadId) {
     if (!validCodexThreadId(threadId) || this.unreadRefreshes.has(threadId)) return
     const known = codexActivityInventory.get(threadId)
@@ -3984,11 +4269,15 @@ class CodexDesktopCompanionBridge {
   scheduleLatestTurnRefresh(threadId, options = {}) {
     if (!validCodexThreadId(threadId) || this.turnRefreshes.has(threadId)) return
     const verifyStaleActive = options.verifyStaleActive === true
+    const settleSnapshotTerminal = verifyStaleActive && options.settleSnapshotTerminal === true
     const refresh = {
       cancelled: false,
       timer: null,
       attempt: 0,
       verifyStaleActive,
+      settleSnapshotTerminal,
+      snapshotThreadId: settleSnapshotTerminal && validCodexThreadId(options.snapshotThreadId) ? options.snapshotThreadId : '',
+      snapshotActivityRevision: settleSnapshotTerminal && Number.isInteger(options.snapshotActivityRevision) ? options.snapshotActivityRevision : -1,
       deadlineAt: Date.now() + CODEX_DESKTOP_TURN_REFRESH_DEADLINE_MS,
       baselineTurnStatus: codexActivityInventory.get(threadId)?.lastTurnStatus,
       baselineTurnStartedAt: codexTimestampMs(codexActivityInventory.get(threadId)?.lastTurnStartedAt)
@@ -4000,60 +4289,6 @@ class CodexDesktopCompanionBridge {
       refresh.timer = null
       if (this.turnRefreshes.get(threadId) === refresh) this.turnRefreshes.delete(threadId)
       if (inventoryChanged) {
-function codexApplyCompletedTurnNotification(bridge, known, threadId, value) {
-  if (!bridge || !known || !validCodexThreadId(threadId)) return false
-  const turn = sanitizeCodexTurnStatus(value)
-  if (turn?.status !== 'completed' || !turn.startedAt || !turn.completedAt) return false
-  const previousStartedAt = codexTimestampMs(known.lastTurnStartedAt)
-  const previousCompletedAt = codexTimestampMs(known.lastTurnCompletedAt)
-  const activeSince = codexTimestampMs(known.desktopActiveSince)
-  if (activeSince > 0 && turn.completedAt <= activeSince) return false
-  const freshCompleted = turn.startedAt > previousStartedAt
-    || known.lastTurnStatus === 'inProgress' && turn.startedAt === previousStartedAt
-    || known.lastTurnStatus === 'completed'
-      && turn.startedAt === previousStartedAt
-      && turn.completedAt > previousCompletedAt
-  if (!freshCompleted) return false
-
-  codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
-  known.lastTurnStatus = 'completed'
-  known.lastTurnStartedAt = turn.startedAt
-  known.lastTurnCompletedAt = turn.completedAt
-  bridge.cancelLatestTurnRefresh(threadId)
-  const waitingLive = Array.isArray(known.activeFlags)
-    && known.activeFlags.some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
-  if (waitingLive) {
-    emitCodexActivityDelta([{ ...known, lastTurnEvidence: 'targeted-after-exit' }], false)
-    bridge.scheduleCompletionUnreadRefresh(threadId)
-  } else {
-    bridge.publishTargetedCompletion(known, threadId)
-  }
-  return true
-}
-
-function codexApplyStartedTurnNotification(bridge, known, threadId, value) {
-  if (!bridge || !known || !validCodexThreadId(threadId)) return false
-  const turn = sanitizeCodexTurnStatus(value)
-  if (turn?.status !== 'inProgress' || !turn.startedAt) return false
-  const previousStartedAt = codexTimestampMs(known.lastTurnStartedAt)
-  if (known.lastTurnStatus === 'inProgress' && turn.startedAt === previousStartedAt) {
-    bridge.cancelLatestTurnRefresh(threadId)
-    bridge.cancelCompletionUnreadRefresh(threadId)
-    return true
-  }
-  if (turn.startedAt <= previousStartedAt) return false
-
-  codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
-  known.lastTurnStatus = 'inProgress'
-  known.lastTurnStartedAt = turn.startedAt
-  delete known.lastTurnCompletedAt
-  delete known.lastTurnEvidence
-  bridge.cancelLatestTurnRefresh(threadId)
-  bridge.cancelCompletionUnreadRefresh(threadId)
-  emitCodexActivityDelta([known], false)
-  return true
-}
-
         const known = codexActivityInventory.get(threadId)
         markCodexThreadTurnStatusDirty(threadId)
         emitCodexActivityDelta(known ? [known] : [], true, 'urgent')
@@ -4110,6 +4345,19 @@ function codexApplyStartedTurnNotification(bridge, known, threadId, value) {
           return
         }
         const turn = sanitizeCodexTurnStatusPage(page)
+        const terminalTurn = turn?.status === 'completed' || turn?.status === 'failed' || turn?.status === 'interrupted'
+        const terminalShape = terminalTurn && turn.startedAt > 0 && (turn.status !== 'completed' || turn.completedAt > 0)
+        const finalAttempt = refresh.attempt >= CODEX_DESKTOP_TURN_REFRESH_DELAYS_MS.length
+        if (refresh.settleSnapshotTerminal
+          && terminalShape
+          && turn.startedAt >= refresh.baselineTurnStartedAt
+          && (turn.startedAt > refresh.baselineTurnStartedAt
+            || refresh.baselineTurnStatus === 'inProgress'
+            || finalAttempt)
+          && this.settleTerminalActiveSnapshot(threadId, refresh, known, turn)) {
+          finish(false)
+          return
+        }
         if (refresh.verifyStaleActive && turn?.status === 'inProgress' && turn.startedAt > refresh.baselineTurnStartedAt) {
           codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
           known.lastTurnStatus = 'inProgress'
@@ -4393,9 +4641,11 @@ function codexApplyStartedTurnNotification(bridge, known, threadId, value) {
       if (this.inventory.has(params.conversationId)) {
         this.shadows.set(params.conversationId, shadow)
         this.publishShadow(params.conversationId, shadow)
+        this.verifyTerminalActiveSnapshot(params.conversationId, shadow)
       } else if (shadow.sideConversation && validCodexThreadId(shadow.parentThreadId)) {
         this.sideShadows.set(params.conversationId, shadow)
         this.publishSideShadow(params.conversationId, shadow)
+        this.verifyTerminalActiveSnapshot(params.conversationId, shadow)
       } else {
         // Keep an unregistered main-task shadow inside preload until the
         // verified inventory scan supplies its anonymous key and action alias.
@@ -4432,6 +4682,10 @@ function codexApplyStartedTurnNotification(bridge, known, threadId, value) {
       }
     }
     shadow.revision = change.revision
+    if (containsActivityPatch) {
+      shadow.activityRevision = change.revision
+      delete shadow.suppressUncorroboratedActive
+    }
     const isActive = codexDesktopShadowActivity(shadow)?.status === 'active'
     if (isActive) {
       if (!wasActive || !codexTimestampMs(shadow.desktopActiveSince)) shadow.desktopActiveSince = Date.now()
@@ -4528,7 +4782,8 @@ function codexApplyStartedTurnNotification(bridge, known, threadId, value) {
     emitCodexActivityDelta([readStateOnly ? { ...known, readStateOnly: true } : known], false)
     if (status === 'active') {
       const waitingLive = activeFlags.includes('waitingOnUserInput') || activeFlags.includes('waitingOnApproval')
-      if (!waitingLive && (known.lastTurnStatus === 'completed' || priorStatus !== 'active')) {
+      if (!waitingLive && (known.lastTurnStatus === 'completed'
+        || priorStatus !== 'active' && known.lastTurnStatus !== 'inProgress')) {
         this.scheduleLatestTurnRefresh(parentThreadId, { verifyStaleActive: true })
       } else if (waitingLive) {
         this.cancelLatestTurnRefresh(parentThreadId)
@@ -4697,10 +4952,16 @@ function codexApplyStartedTurnNotification(bridge, known, threadId, value) {
 
   updateInventory(threadIds) {
     const next = new Set([...threadIds].filter(validCodexThreadId))
+    const previous = this.inventory
     if (this.state === 'connected') {
       for (const threadId of this.inventory) if (!next.has(threadId)) this.follow(threadId, false)
     }
-    for (const threadId of this.shadows.keys()) if (!next.has(threadId)) this.shadows.delete(threadId)
+    for (const [threadId, shadow] of this.shadows) {
+      if (next.has(threadId)) continue
+      const pendingLiveRegistration = !previous.has(threadId)
+        && codexDesktopShadowActivity(shadow)?.status === 'active'
+      if (!pendingLiveRegistration) this.shadows.delete(threadId)
+    }
     for (const threadId of this.liveUnread.keys()) if (!next.has(threadId)) this.liveUnread.delete(threadId)
     for (const threadId of this.turnRefreshes.keys()) if (!next.has(threadId)) this.cancelLatestTurnRefresh(threadId)
     for (const threadId of this.unreadRefreshes.keys()) if (!next.has(threadId)) this.cancelCompletionUnreadRefresh(threadId)
@@ -4709,12 +4970,14 @@ function codexApplyStartedTurnNotification(bridge, known, threadId, value) {
       this.sideShadows.delete(threadId)
       if (this.state === 'connected') this.followAny(threadId, false)
     }
-    const previous = this.inventory
     this.inventory = next
     this.refreshPersistedUnread(false)
     this.ensure()
     for (const [threadId, shadow] of this.shadows) {
-      if (next.has(threadId)) this.publishShadow(threadId, shadow)
+      if (next.has(threadId)) {
+        this.publishShadow(threadId, shadow)
+        this.verifyTerminalActiveSnapshot(threadId, shadow)
+      }
     }
     if (this.state === 'connected') {
       for (const threadId of next) if (!previous.has(threadId)) this.follow(threadId, true)
@@ -5131,6 +5394,20 @@ function closeCodexServer() {
 }
 
 function closeCodexConnections() {
+  try {
+    for (const session of codexEnvironmentActionSessions.values()) {
+      if (!session || session.state === 'idle') continue
+      try {
+        session.state = 'stopping'
+        session.message = '正在停止 Serve'
+        if (process.platform !== 'win32' && typeof session.childPid === 'number') process.kill(-session.childPid, 'SIGTERM')
+        else session.child?.kill?.('SIGTERM')
+      } catch {}
+    }
+  } catch {}
+  codexEnvironmentActionSessions.clear()
+  codexEnvironmentConfirmTokens.clear()
+  codexEnvironmentCommandVault.clear()
   closeCodexServer()
   closeCodexDesktopBridge()
 }
@@ -5260,6 +5537,7 @@ function codexThreadAlias(threadId, now, metadata = {}) {
       entry.expiresAt = now + CODEX_THREAD_ALIAS_TTL_MS
       entry.projectKey = metadata.projectKey || entry.projectKey || ''
       entry.sourceFingerprint = metadata.sourceFingerprint || entry.sourceFingerprint || ''
+      entry.cwd = metadata.cwd || entry.cwd || ''
       return { key, alias }
     }
   }
@@ -5269,7 +5547,8 @@ function codexThreadAlias(threadId, now, metadata = {}) {
     threadId,
     expiresAt: now + CODEX_THREAD_ALIAS_TTL_MS,
     projectKey: metadata.projectKey || '',
-    sourceFingerprint: metadata.sourceFingerprint || ''
+    sourceFingerprint: metadata.sourceFingerprint || '',
+    cwd: metadata.cwd || ''
   })
   return { key, alias }
 }
@@ -5559,10 +5838,8 @@ function codexThreadNativeProject(thread, registry) {
   return matches[0] ? { project: matches[0].project, reason: 'cwd' } : null
 }
 
-function sanitizeCodexTurnStatusPage(value) {
-  const source = codexRecord(value)
-  const turns = Array.isArray(source.data) ? source.data : []
-  const turn = codexRecord(turns[0])
+function sanitizeCodexTurnStatus(value) {
+  const turn = codexRecord(value)
   const status = ['completed', 'interrupted', 'failed', 'inProgress'].includes(turn.status) ? turn.status : ''
   if (!status) return null
   const completedAt = status === 'completed' ? codexTimestampMs(turn.completedAt) : 0
@@ -5572,6 +5849,12 @@ function sanitizeCodexTurnStatusPage(value) {
     ...(startedAt ? { startedAt } : {}),
     ...(completedAt ? { completedAt } : {})
   }
+}
+
+function sanitizeCodexTurnStatusPage(value) {
+  const source = codexRecord(value)
+  const turns = Array.isArray(source.data) ? source.data : []
+  return sanitizeCodexTurnStatus(turns[0])
 }
 
 function scheduleCodexFirstPromptScan(value) {
@@ -5660,6 +5943,41 @@ async function listAllCodexThreads(archived) {
   throw codexError('protocol-error', 'Codex thread pagination exceeded the safety bound')
 }
 
+async function recoverDirtyCodexThreadsMissingFromInventory(rows, dirtyThreadIds) {
+  const knownIds = new Set(rows.map((row) => codexRecord(row).id).filter(validCodexThreadId))
+  const candidateIds = [...dirtyThreadIds]
+    .filter((threadId) => validCodexThreadId(threadId) && !knownIds.has(threadId))
+    .slice(0, CODEX_THREAD_TURN_STATUS_CONCURRENCY)
+  if (!candidateIds.length) return rows
+
+  const queue = [...candidateIds]
+  const recovered = new Map()
+  const workers = Array.from(
+    { length: Math.min(CODEX_THREAD_TURN_STATUS_CONCURRENCY, queue.length) },
+    async () => {
+      for (;;) {
+        const threadId = queue.shift()
+        if (!threadId) return
+        try {
+          const response = codexRecord(await requestCodexRpc(
+            'thread/read',
+            { threadId, includeTurns: false },
+            CODEX_THREAD_TURN_STATUS_TIMEOUT_MS
+          ))
+          const thread = codexRecord(response.thread)
+          const status = codexRecord(thread.status).type
+          if (thread.id !== threadId || !['active', 'idle', 'notLoaded', 'systemError'].includes(status)) continue
+          recovered.set(threadId, thread)
+        } catch {}
+      }
+    }
+  )
+  await Promise.all(workers)
+  return recovered.size
+    ? [...rows, ...candidateIds.map((threadId) => recovered.get(threadId)).filter(Boolean)]
+    : rows
+}
+
 function markCodexThreadTurnStatusDirty(threadId) {
   if (!validCodexThreadId(threadId)) return
   codexThreadTurnStatusDirtyGeneration += 1
@@ -5735,7 +6053,7 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
       ? statusSource.activeFlags.filter((flag) => flag === 'waitingOnApproval' || flag === 'waitingOnUserInput')
       : []
     const project = native.project
-    const action = codexThreadAlias(thread.id, now, { projectKey: project.key, sourceFingerprint: registry.fingerprint })
+    const action = codexThreadAlias(thread.id, now, { projectKey: project.key, sourceFingerprint: registry.fingerprint, cwd: codexNormalizeNativeRoot(thread.cwd) })
     const lastTurn = turnStatuses.get(thread.id)
     if (!lastTurn || !lastTurn.startedAt) continue
     threads.push({
@@ -5792,7 +6110,8 @@ async function scanVerifiedCodexInventory() {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const dirtySnapshot = new Map(codexThreadTurnStatusDirty)
     const registry = readCodexNativeRegistry()
-    const rows = await listAllCodexThreads(false)
+    const listedRows = await listAllCodexThreads(false)
+    const rows = await recoverDirtyCodexThreadsMissingFromInventory(listedRows, dirtySnapshot.keys())
     const assignments = new Map()
     let excludedSourceCount = 0
     for (const thread of rows) {
@@ -6996,6 +7315,34 @@ function installCodexFloatIpc() {
     if (!codexFloatAlive()) return
     try { codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.threadOpenResult, { requestId, result }) } catch {}
   })
+  ipc.on(CODEX_FLOAT_CHANNELS.environmentList, async (_event, payload) => {
+    const source = codexRecord(payload)
+    const requestId = typeof source.requestId === 'string' && /^ftr_[A-Za-z0-9_-]{6,80}$/.test(source.requestId) ? source.requestId : ''
+    const targetAlias = typeof source.targetAlias === 'string' ? source.targetAlias : ''
+    if (!requestId) return
+    const result = listCodexProjectEnvironments(targetAlias)
+    if (!codexFloatAlive()) return
+    try { codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.environmentListResult, { requestId, result }) } catch {}
+  })
+  ipc.on(CODEX_FLOAT_CHANNELS.environmentRun, async (_event, payload) => {
+    const source = codexRecord(payload)
+    const requestId = typeof source.requestId === 'string' && /^ftr_[A-Za-z0-9_-]{6,80}$/.test(source.requestId) ? source.requestId : ''
+    if (!requestId) return
+    const result = await runCodexProjectEnvironmentAction(source.request || source)
+    if (!codexFloatAlive()) return
+    try { codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.environmentRunResult, { requestId, result }) } catch {}
+  })
+  ipc.on(CODEX_FLOAT_CHANNELS.environmentSession, async (_event, payload) => {
+    const source = codexRecord(payload)
+    const requestId = typeof source.requestId === 'string' && /^ftr_[A-Za-z0-9_-]{6,80}$/.test(source.requestId) ? source.requestId : ''
+    if (!requestId) return
+    const mode = source.mode === 'stop' ? 'stop' : 'list'
+    const result = mode === 'stop'
+      ? stopCodexEnvironmentActionSession(source.request || source)
+      : { outcome: 'ok', sessions: listCodexEnvironmentActionSessions() }
+    if (!codexFloatAlive()) return
+    try { codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.environmentSessionResult, { requestId, result }) } catch {}
+  })
   ipc.on(CODEX_FLOAT_CHANNELS.dragStart, (_event, payload) => {
     if (codexFloatResize || !codexFloatAlive() || typeof codexFloatWindow.getBounds !== 'function') return
     const point = codexRecord(payload)
@@ -7099,6 +7446,536 @@ if (globalThis.utools && typeof globalThis.utools.onPluginOut === 'function') {
   })
 }
 
+const CODEX_ENV_ACTION_CONFIRM_TTL_MS = 30_000
+const codexEnvironmentCommandVault = new Map()
+const codexEnvironmentActionSessions = new Map()
+const codexEnvironmentConfirmTokens = new Map()
+
+function codexEnvUnquoteTomlString(raw) {
+  const value = String(raw || '').trim()
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1).replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+  }
+  return value
+}
+
+function parseCodexEnvironmentTomlText(text) {
+  if (typeof text !== 'string' || !text.trim()) return null
+  if (text.includes('"""') || text.includes("'''")) return null
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/)
+  let section = 'root'
+  let version = 0
+  let versionPresent = false
+  let name = ''
+  let setupScript = ''
+  const actions = []
+  let currentAction = null
+  let parseError = false
+
+  const stripTomlComment = (rawLine) => {
+    let inSingle = false
+    let inDouble = false
+    let escaped = false
+    for (let i = 0; i < rawLine.length; i += 1) {
+      const ch = rawLine[i]
+      if (escaped) {
+        escaped = false
+        continue
+      }
+      if (inDouble && ch === '\\') {
+        escaped = true
+        continue
+      }
+      if (!inDouble && ch === '\'') {
+        inSingle = !inSingle
+        continue
+      }
+      if (!inSingle && ch === '"') {
+        inDouble = !inDouble
+        continue
+      }
+      if (ch === '#' && !inSingle && !inDouble) return rawLine.slice(0, i)
+    }
+    return rawLine
+  }
+  const flushAction = () => {
+    if (!currentAction) return
+    if (currentAction.name && currentAction.command) actions.push({ ...currentAction })
+    else parseError = true
+    currentAction = null
+  }
+  for (const rawLine of lines) {
+    const line = stripTomlComment(rawLine).trim()
+    if (!line) continue
+    if (line === '[setup]') { flushAction(); section = 'setup'; continue }
+    if (line === '[[actions]]') {
+      flushAction()
+      section = 'action'
+      currentAction = { name: '', icon: 'run', command: '' }
+      continue
+    }
+    if (line.startsWith('[')) { flushAction(); section = 'root'; continue }
+    const eq = line.indexOf('=')
+    if (eq <= 0) continue
+    const key = line.slice(0, eq).trim()
+    const value = codexEnvUnquoteTomlString(line.slice(eq + 1))
+    if (section === 'root') {
+      if (key === 'version') {
+        versionPresent = true
+        const parsed = Number(value)
+        version = Number.isFinite(parsed) ? parsed : NaN
+      }
+      else if (key === 'name') name = value.slice(0, 120)
+    } else if (section === 'setup') {
+      if (key === 'script') setupScript = value.slice(0, 4_000)
+    } else if (section === 'action' && currentAction) {
+      if (key === 'name') currentAction.name = value.slice(0, 80)
+      else if (key === 'icon') currentAction.icon = value.slice(0, 40) || 'run'
+      else if (key === 'command') currentAction.command = value.slice(0, 4_000)
+    }
+  }
+  flushAction()
+  if (!name && !actions.length && !setupScript) return null
+  if (parseError) return null
+  if (!versionPresent || version !== 1) return null
+  return { version: 1, name: name || 'Environment', setupScript, actions }
+}
+
+function codexEnvironmentActionIdFromName(name, index) {
+  const slug = String(name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48)
+  return slug || `action-${index + 1}`
+}
+
+function classifyCodexEnvironmentActionRiskHost(name, command) {
+  const normalizedName = String(name || '').trim().toLowerCase()
+  const normalizedCommand = String(command || '').trim().toLowerCase()
+  if (normalizedName === 'git push' || /\bgit\s+push\b/.test(normalizedCommand)) return 'external-write'
+  if (normalizedName === 'serve' || /\b(pnpm|npm|yarn|bun)\s+run\s+serve\b/.test(normalizedCommand) || /\bvite\b/.test(normalizedCommand) && /\bserve\b/.test(normalizedCommand)) return 'long-running'
+  if (normalizedName === 'build' || /\b(pnpm|npm|yarn|bun)\s+run\s+build\b/.test(normalizedCommand) || /\bvite\b/.test(normalizedCommand) && /\bbuild\b/.test(normalizedCommand)) return 'normal'
+  return 'rejected'
+}
+
+function codexEnvironmentIdFromFileName(fileName) {
+  const base = String(fileName || '').replace(/\.toml$/i, '').trim().toLowerCase()
+  const slug = base.replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64)
+  return slug || 'environment'
+}
+
+function resolveCodexEnvironmentTargetCwd(targetAlias) {
+  const now = Date.now()
+  if (typeof targetAlias !== 'string') return { errorCode: 'invalid-request', message: '目标别名无效' }
+  if (/^ct_[A-Za-z0-9_-]{16,80}$/.test(targetAlias)) {
+    const entry = codexThreadActions.get(targetAlias)
+    if (!entry || entry.expiresAt <= now) return { errorCode: 'stale-alias', message: '会话动作已失效，请刷新后重试' }
+    try {
+      const registry = readCodexNativeRegistry()
+      if (!entry.sourceFingerprint || entry.sourceFingerprint !== registry.fingerprint) {
+        return { errorCode: 'stale-alias', message: '会话动作已失效，请刷新后重试' }
+      }
+      const byKey = entry.projectKey && entry.projectKey !== 'chats'
+        ? registry.projects.find((item) => item.key === entry.projectKey)
+        : null
+      const byAssignment = registry.projectById.get(registry.assignments.get(entry.threadId)) || null
+      const project = byKey || byAssignment
+      const cwd = typeof entry.cwd === 'string' && entry.cwd ? entry.cwd : ''
+      const pathApi = process.platform === 'win32' ? path.win32 : path
+      if (!project?.roots?.length || !cwd) return { errorCode: 'cwd-missing', message: '无法解析会话工作目录' }
+      const configRoot = project.roots[0]
+      if (!configRoot) return { errorCode: 'cwd-missing', message: '无法解析会话工作目录' }
+      if (!pathApi.isAbsolute(cwd)) return { errorCode: 'cwd-missing', message: '无法解析会话工作目录' }
+      return { configRoot, executionCwd: cwd, projectKey: project.key, kind: 'task' }
+    } catch {}
+    return { errorCode: 'cwd-missing', message: '无法解析会话工作目录' }
+  }
+  if (/^cp_[A-Za-z0-9_-]{16,80}$/.test(targetAlias)) {
+    const entry = codexProjectActions.get(targetAlias)
+    if (!entry || entry.expiresAt <= now) return { errorCode: 'stale-alias', message: '项目动作已失效，请刷新后重试' }
+    if (entry.kind === 'chats' || entry.projectKey === 'chats') return { errorCode: 'unsupported-target', message: 'Chats 分组没有项目根目录' }
+    try {
+      const registry = readCodexNativeRegistry()
+      if (!entry.sourceFingerprint || entry.sourceFingerprint !== registry.fingerprint) {
+        return { errorCode: 'stale-alias', message: '项目动作已失效，请刷新后重试' }
+      }
+      const project = registry.projectById.get(entry.projectId) || registry.projects.find((item) => item.key === entry.projectKey)
+      if (project?.roots?.[0]) {
+        const configRoot = project.roots[0]
+        return { configRoot, executionCwd: configRoot, projectKey: project.key, kind: 'project' }
+      }
+    } catch {}
+    return { errorCode: 'cwd-missing', message: '无法解析项目根目录' }
+  }
+  return { errorCode: 'invalid-request', message: '目标别名无效' }
+}
+
+function rememberCodexEnvironmentCommands(vaultKey, environments) {
+  const key = String(vaultKey || '')
+  if (!key) return
+  const map = new Map()
+  for (const environment of environments) {
+    const actionMap = new Map()
+    for (const action of environment._hostActions || []) actionMap.set(action.id, action)
+    map.set(environment.id, actionMap)
+  }
+  codexEnvironmentCommandVault.set(key, map)
+}
+
+function listCodexProjectEnvironments(targetAlias) {
+  const resolved = resolveCodexEnvironmentTargetCwd(targetAlias)
+  if (resolved.errorCode) {
+    return { outcome: 'failed', errorCode: resolved.errorCode, message: resolved.message, environments: [] }
+  }
+  const envDir = path.join(resolved.configRoot, '.codex', 'environments')
+  let entries = []
+  try {
+    entries = fs.readdirSync(envDir, { withFileTypes: true })
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : ''
+    if (code === 'ENOENT') {
+      return { outcome: 'ok', projectKey: resolved.projectKey, environments: [], message: '未发现 Environment 配置' }
+    }
+    return { outcome: 'failed', errorCode: 'unreadable', message: '无法读取 Environment 配置', environments: [] }
+  }
+  const environments = []
+  const seenEnvironmentIds = new Set()
+  for (const entry of entries) {
+    if (!entry.isFile() || !/\.toml$/i.test(entry.name)) continue
+    let text = ''
+    try { text = fs.readFileSync(path.join(envDir, entry.name), 'utf8') } catch { continue }
+    const parsed = parseCodexEnvironmentTomlText(text)
+    if (!parsed) continue
+    const environmentFileFingerprint = crypto.createHash('sha256').update(text).digest('hex')
+    const id = codexEnvironmentIdFromFileName(entry.name)
+    if (seenEnvironmentIds.has(id)) {
+      return { outcome: 'failed', errorCode: 'environment-id-collision', message: 'Environment 标识冲突，请检查文件名', environments: [] }
+    }
+    seenEnvironmentIds.add(id)
+    const seen = new Set()
+    const hostActions = []
+    const actions = []
+    parsed.actions.forEach((action, index) => {
+      let actionId = codexEnvironmentActionIdFromName(action.name, index)
+      if (seen.has(actionId)) actionId = `${actionId}-${index + 1}`
+      seen.add(actionId)
+      const risk = classifyCodexEnvironmentActionRiskHost(action.name, action.command)
+      if (risk === 'rejected') return
+      const commandFingerprint = crypto.createHash('sha256').update(String(action.command || '')).digest('hex')
+      hostActions.push({ id: actionId, name: action.name, icon: action.icon || 'run', command: action.command, risk, environmentFileFingerprint, commandFingerprint })
+      actions.push({
+        id: actionId,
+        name: String(action.name || '').trim().slice(0, 80) || `Action ${index + 1}`,
+        icon: String(action.icon || 'run').trim().slice(0, 40) || 'run',
+        risk,
+        displayOnly: false,
+        slotEligible: true
+      })
+    })
+    environments.push({
+      id,
+      name: parsed.name || id,
+      setupScriptPresent: Boolean(String(parsed.setupScript || '').trim()),
+      actions,
+      _hostActions: hostActions
+    })
+  }
+  environments.sort((left, right) => left.id.localeCompare(right.id))
+  rememberCodexEnvironmentCommands(targetAlias, environments)
+  return {
+    outcome: 'ok',
+    projectKey: resolved.projectKey,
+    environments: environments.map((item) => ({
+      id: item.id,
+      name: item.name,
+      setupScriptPresent: item.setupScriptPresent,
+      actions: item.actions
+    }))
+  }
+}
+
+function codexEnvironmentSessionKey(targetAlias, environmentId, actionId) {
+  return `${targetAlias}\0${environmentId}\0${actionId}`
+}
+
+function sanitizeCodexEnvironmentSession(session) {
+  if (!session) return null
+  return {
+    targetAlias: typeof session.targetAlias === 'string' && session.targetAlias ? session.targetAlias : (typeof session.projectKey === 'string' ? session.projectKey : ''),
+    projectKey: session.projectKey,
+    environmentId: session.environmentId,
+    actionId: session.actionId,
+    state: session.state,
+    startedAt: session.startedAt,
+    exitCode: typeof session.exitCode === 'number' ? session.exitCode : undefined,
+    message: session.message || ''
+  }
+}
+
+function listCodexEnvironmentActionSessions() {
+  return [...codexEnvironmentActionSessions.values()].map(sanitizeCodexEnvironmentSession).filter(Boolean)
+}
+
+function stopCodexEnvironmentActionSession(input) {
+  const targetAlias = typeof input?.targetAlias === 'string'
+    ? input.targetAlias
+    : (typeof input?.projectKey === 'string' ? input.projectKey : '')
+  const environmentId = typeof input?.environmentId === 'string' ? input.environmentId : ''
+  const actionId = typeof input?.actionId === 'string' ? input.actionId : ''
+  const key = codexEnvironmentSessionKey(targetAlias, environmentId, actionId)
+  const session = codexEnvironmentActionSessions.get(key)
+  if (!session) return { outcome: 'failed', errorCode: 'not-running', message: '没有运行中的 Action 会话' }
+  if (session.state === 'stopping') return { outcome: 'stopping', session: sanitizeCodexEnvironmentSession(session) }
+  session.state = 'stopping'
+  session.message = '正在停止 Serve'
+  try {
+    if (process.platform !== 'win32' && typeof session.childPid === 'number') {
+      process.kill(-session.childPid, 'SIGTERM')
+    } else {
+      session.child?.kill?.('SIGTERM')
+    }
+  } catch {}
+  return { outcome: 'stopping', session: sanitizeCodexEnvironmentSession(session) }
+}
+
+function issueCodexEnvironmentConfirmToken(targetAlias, environmentId, actionId, environmentFileFingerprint, commandFingerprint) {
+  const token = `cet_${crypto.randomBytes(12).toString('base64url')}`
+  codexEnvironmentConfirmTokens.set(token, {
+    targetAlias,
+    environmentId,
+    actionId,
+    environmentFileFingerprint,
+    commandFingerprint,
+    expiresAt: Date.now() + CODEX_ENV_ACTION_CONFIRM_TTL_MS
+  })
+  return token
+}
+
+function consumeCodexEnvironmentConfirmToken(token, targetAlias, environmentId, actionId, environmentFileFingerprint, commandFingerprint) {
+  const entry = codexEnvironmentConfirmTokens.get(token)
+  codexEnvironmentConfirmTokens.delete(token)
+  if (!entry || entry.expiresAt <= Date.now()) return false
+  return (
+    entry.targetAlias === targetAlias &&
+    entry.environmentId === environmentId &&
+    entry.actionId === actionId &&
+    entry.environmentFileFingerprint === environmentFileFingerprint &&
+    entry.commandFingerprint === commandFingerprint
+  )
+}
+
+async function runCodexProjectEnvironmentAction(input) {
+  const targetAlias = typeof input?.targetAlias === 'string' ? input.targetAlias : ''
+  const environmentId = typeof input?.environmentId === 'string' ? input.environmentId.slice(0, 64) : ''
+  const actionId = typeof input?.actionId === 'string' ? input.actionId.slice(0, 80) : ''
+  const confirmToken = typeof input?.confirmToken === 'string' ? input.confirmToken : ''
+  const stopIfRunning = input?.stopIfRunning === true
+  if (!targetAlias || !environmentId || !actionId) {
+    return { outcome: 'failed', errorCode: 'invalid-request', message: 'Action 请求无效' }
+  }
+  if (actionId === 'setup') {
+    return { outcome: 'rejected', errorCode: 'display-only', message: 'Setup 仅展示，不会由 EyPc 执行' }
+  }
+  const resolved = resolveCodexEnvironmentTargetCwd(targetAlias)
+  if (resolved.errorCode) {
+    return { outcome: 'failed', errorCode: resolved.errorCode, message: resolved.message }
+  }
+  let vault = codexEnvironmentCommandVault.get(targetAlias)
+  if (!vault) {
+    listCodexProjectEnvironments(targetAlias)
+    vault = codexEnvironmentCommandVault.get(targetAlias)
+  }
+  const hostAction = vault?.get(environmentId)?.get(actionId)
+  if (!hostAction) {
+    return { outcome: 'failed', errorCode: 'action-missing', message: '未找到对应 Action，请刷新后重试' }
+  }
+  if (hostAction.risk === 'display-only') {
+    return { outcome: 'rejected', errorCode: 'display-only', message: '该 Action 仅展示，不会执行' }
+  }
+  if (hostAction.risk !== 'normal' && hostAction.risk !== 'external-write' && hostAction.risk !== 'long-running') {
+    return { outcome: 'rejected', errorCode: 'action-not-allowed', message: '该 Action 不在允许列表中' }
+  }
+  const environmentFileFingerprint = typeof hostAction.environmentFileFingerprint === 'string' ? hostAction.environmentFileFingerprint : ''
+  const commandFingerprint = typeof hostAction.commandFingerprint === 'string' ? hostAction.commandFingerprint : ''
+  const sessionKey = codexEnvironmentSessionKey(targetAlias, environmentId, actionId)
+  const existing = codexEnvironmentActionSessions.get(sessionKey)
+  if (hostAction.risk === 'long-running') {
+    if (existing?.state === 'running') {
+      const existingEnvironmentFileFingerprint = typeof existing.environmentFileFingerprint === 'string' ? existing.environmentFileFingerprint : ''
+      const existingCommandFingerprint = typeof existing.commandFingerprint === 'string' ? existing.commandFingerprint : ''
+      if ((existingEnvironmentFileFingerprint && existingCommandFingerprint) && (existingEnvironmentFileFingerprint !== environmentFileFingerprint || existingCommandFingerprint !== commandFingerprint)) {
+        return {
+          outcome: 'rejected',
+          errorCode: 'session-fingerprint-mismatch',
+          message: 'Serve 运行的命令/环境指纹与当前 Action 不一致，请先停止该会话后重试'
+        }
+      }
+      if (stopIfRunning) return stopCodexEnvironmentActionSession({ targetAlias, projectKey: resolved.projectKey, environmentId, actionId })
+      return { outcome: 'running', session: sanitizeCodexEnvironmentSession(existing), message: 'Serve 仍在运行；再次确认可停止' }
+    }
+    if (existing?.state === 'stopping') {
+      return {
+        outcome: 'stopping',
+        session: sanitizeCodexEnvironmentSession(existing),
+        message: 'Serve 正在停止；请稍后重试'
+      }
+    }
+  }
+  if (hostAction.risk === 'external-write') {
+    if (!confirmToken || !consumeCodexEnvironmentConfirmToken(confirmToken, targetAlias, environmentId, actionId, environmentFileFingerprint, commandFingerprint)) {
+      const token = issueCodexEnvironmentConfirmToken(targetAlias, environmentId, actionId, environmentFileFingerprint, commandFingerprint)
+      return {
+        outcome: 'confirm-required',
+        errorCode: 'confirm-required',
+        message: 'Git Push 会写入远程仓库，请再次确认',
+        confirmToken: token,
+        risk: 'external-write'
+      }
+    }
+  }
+  const normalizedCommand = String(hostAction.command || '').trim().toLowerCase()
+  const unsafeShell = /[;\n\r`]|&&|\|\||\|/.test(normalizedCommand)
+  if (hostAction.risk === 'normal') {
+    if (unsafeShell || (!/^\s*(pnpm|npm|yarn|bun)\s+run\s+build\b/.test(normalizedCommand) && !/^\s*vite\b.*\bbuild\b/.test(normalizedCommand))) {
+      return { outcome: 'rejected', errorCode: 'action-not-allowed', message: '该 Action 不在允许列表中' }
+    }
+  } else if (hostAction.risk === 'long-running') {
+    if (unsafeShell || (!/^\s*(pnpm|npm|yarn|bun)\s+run\s+serve\b/.test(normalizedCommand) && !/^\s*vite\b.*\bserve\b/.test(normalizedCommand))) {
+      return { outcome: 'rejected', errorCode: 'action-not-allowed', message: '该 Action 不在允许列表中' }
+    }
+  } else if (hostAction.risk === 'external-write') {
+    if (unsafeShell || !/^\s*git\s+push\b/.test(normalizedCommand)) {
+      return { outcome: 'rejected', errorCode: 'action-not-allowed', message: '该 Action 不在允许列表中' }
+    }
+  }
+  const tokenizeCodexEnvironmentCommandToArgv = (command) => {
+    if (typeof command !== 'string') return []
+    const result = []
+    let current = ''
+    let quote = null
+    let escaped = false
+    for (let i = 0; i < command.length; i += 1) {
+      const ch = command[i]
+      if (escaped) {
+        current += ch
+        escaped = false
+        continue
+      }
+      if (quote) {
+        if (ch === '\\' && quote === '"') { escaped = true; continue }
+        if (ch === quote) { quote = null; continue }
+        current += ch
+        continue
+      }
+      if (ch === '"' || ch === "'") { quote = ch; continue }
+      if (ch === '\\') { escaped = true; continue }
+      if (/\s/.test(ch)) {
+        if (current) { result.push(current); current = '' }
+        continue
+      }
+      current += ch
+    }
+    if (quote) return []
+    if (current) result.push(current)
+    return result
+  }
+  const argv = tokenizeCodexEnvironmentCommandToArgv(hostAction.command)
+  if (!argv.length || !argv[0]) return { outcome: 'rejected', errorCode: 'invalid-command', message: '该 Action 不可执行' }
+  if (hostAction.risk === 'long-running') {
+    let child
+    try {
+      child = spawn(argv[0], argv.slice(1), {
+        cwd: resolved.executionCwd,
+        env: process.env,
+        detached: process.platform !== 'win32',
+        windowsHide: true,
+        stdio: ['ignore', 'ignore', 'ignore']
+      })
+    } catch {
+      return { outcome: 'failed', errorCode: 'spawn-failed', message: '无法启动 Serve' }
+    }
+    const session = {
+      targetAlias,
+      projectKey: resolved.projectKey,
+      environmentId,
+      actionId,
+      environmentFileFingerprint,
+      commandFingerprint,
+      state: 'running',
+      startedAt: Date.now(),
+      message: 'Serve 已启动',
+      child,
+      childPid: typeof child?.pid === 'number' ? child.pid : undefined,
+    }
+    codexEnvironmentActionSessions.set(sessionKey, session)
+    child.on?.('exit', (code) => {
+      const current = codexEnvironmentActionSessions.get(sessionKey)
+      if (!current || current.child !== child) return
+      current.state = 'idle'
+      current.exitCode = typeof code === 'number' ? code : 0
+      current.message = code === 0 ? 'Serve 已结束' : `Serve 已退出（${code}）`
+      current.child = null
+    })
+    child.on?.('error', () => {
+      const current = codexEnvironmentActionSessions.get(sessionKey)
+      if (!current || current.child !== child) return
+      current.state = 'idle'
+      current.exitCode = undefined
+      current.message = 'Serve 启动失败'
+      current.child = null
+    })
+    return { outcome: 'started', session: sanitizeCodexEnvironmentSession(session) }
+  }
+  const nonLongTimeoutMs = 10 * 60_000
+  const result = await new Promise((resolvePromise) => {
+    let done = false
+    let graceTimeoutId = null
+    let child
+    try {
+      child = spawn(argv[0], argv.slice(1), {
+        cwd: resolved.executionCwd,
+        env: process.env,
+        detached: process.platform !== 'win32',
+        windowsHide: true,
+        stdio: ['ignore', 'ignore', 'ignore']
+      })
+    } catch {
+      resolvePromise({ outcome: 'failed', errorCode: 'spawn-failed', exitCode: undefined, message: '命令启动失败' })
+      return
+    }
+    const timeoutId = setTimeout(() => {
+      if (done) return
+      try {
+        if (process.platform !== 'win32' && typeof child?.pid === 'number') process.kill(-child.pid, 'SIGTERM')
+        else child?.kill?.('SIGTERM')
+      } catch {}
+      graceTimeoutId = setTimeout(() => {
+        if (done) return
+        done = true
+        resolvePromise({ outcome: 'failed', errorCode: 'command-timeout', exitCode: undefined, message: '命令执行超时' })
+      }, 2_500)
+    }, nonLongTimeoutMs)
+    child.on?.('exit', (code) => {
+      if (done) return
+      done = true
+      clearTimeout(timeoutId)
+      if (graceTimeoutId) clearTimeout(graceTimeoutId)
+      const exitCode = typeof code === 'number' ? code : 0
+      resolvePromise({
+        outcome: exitCode === 0 ? 'ok' : 'failed',
+        errorCode: exitCode === 0 ? undefined : 'command-exit',
+        exitCode,
+        message: exitCode === 0 ? '已完成' : `命令退出（${exitCode}）`
+      })
+    })
+    child.on?.('error', () => {
+      if (done) return
+      done = true
+      clearTimeout(timeoutId)
+      if (graceTimeoutId) clearTimeout(graceTimeoutId)
+      resolvePromise({ outcome: 'failed', errorCode: 'spawn-error', exitCode: undefined, message: '命令启动失败' })
+    })
+  })
+  return result
+}
+
 window.eypcPlatform = {
   storage: {
     getState: readState,
@@ -7155,6 +8032,10 @@ window.eypcPlatform = {
     archiveThread: archiveCodexThread,
     archiveProject: archiveCodexProject,
     removeProject: removeCodexProject,
+    listProjectEnvironments: listCodexProjectEnvironments,
+    runProjectAction: runCodexProjectEnvironmentAction,
+    listActionSessions: listCodexEnvironmentActionSessions,
+    stopActionSession: stopCodexEnvironmentActionSession,
     close: closeCodexConnections
   },
   float: {

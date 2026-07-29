@@ -41,6 +41,8 @@ const props = defineProps<{
   shortcutProfiles?: ShortcutProfileMap
   featureConfigs: FeatureConfig[]
   initialMaintenanceSection?: MaintenanceSectionId | null
+  persistedSettingsTabId?: SettingsTabId
+  persistedMaintenanceSectionId?: MaintenanceSectionId
   settings: AppSettings
   mqttStorageStatus: MqttStorageStatus
 }>()
@@ -50,6 +52,7 @@ const emit = defineEmits<{
   saveShortcutProfiles: [profiles: ShortcutProfileMap]
   saveFeatureConfigs: [configs: FeatureConfig[]]
   updateToolPreviewPrefs: [input: { enabled?: boolean; delayMs?: number }]
+  updateSettingsPath: [tabId: SettingsTabId, sectionId: MaintenanceSectionId]
 }>()
 
 const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings']
@@ -81,8 +84,8 @@ const previewContexts: Array<{ id: string; label: string; context: KeybindingCon
   { id: 'settings-idle', label: '设置页', context: { tab: 'settings', textInputFocused: false } }
 ]
 
-const settingsTabId = ref<SettingsTabId>('shortcuts')
-const maintenanceSectionId = ref<MaintenanceSectionId>('features')
+const settingsTabId = ref<SettingsTabId>(props.persistedSettingsTabId || 'shortcuts')
+const maintenanceSectionId = ref<MaintenanceSectionId>(props.persistedMaintenanceSectionId || 'features')
 const shortcutScopeId = ref<ShortcutScopeId>('all')
 const keyword = ref('')
 const stateFilter = ref<'all' | 'conflict' | 'user' | 'disabled'>('all')
@@ -218,6 +221,10 @@ watch(() => props.initialMaintenanceSection, (section) => {
   settingsTabId.value = 'maintenance'
   maintenanceSectionId.value = section
 }, { immediate: true })
+
+watch([settingsTabId, maintenanceSectionId], ([tab, section]) => {
+  emit('updateSettingsPath', tab, section)
+})
 
 onMounted(() => {
   window.addEventListener('keydown', handleModalEscape, true)

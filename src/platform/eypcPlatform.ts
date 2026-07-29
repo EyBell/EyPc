@@ -18,6 +18,11 @@ import type {
   CodexThreadArchiveResult,
   CodexThreadOpenResult
 } from '../domain/codex'
+import type {
+  CodexEnvironmentActionRunResult,
+  CodexEnvironmentActionSessionProjection,
+  CodexEnvironmentListResult
+} from '../domain/codexEnvironment'
 
 export type PickedFavoriteKind = Exclude<FavoriteNode['kind'], 'group'>
 export type PickedFavorite = Pick<FavoriteNode, 'path' | 'name' | 'parentId' | 'tags' | 'color'> & { kind: PickedFavoriteKind }
@@ -26,7 +31,7 @@ export type FileActionOutcome = 'success' | 'dispatched' | 'revealed-instead' | 
 export type FileErrorCode = 'invalid-path' | 'not-found' | 'permission-denied' | 'no-handler' | 'timeout' | 'unsupported' | 'io-error'
 export type FavoritePathStatus = 'available' | 'missing' | 'permission-denied' | 'offline' | 'invalid' | 'unknown'
 export type WindowPermissionState = 'granted' | 'required' | 'unknown' | 'unsupported'
-export const WINDOW_BRIDGE_REVISION = 'wj15-exact-ax'
+export const WINDOW_BRIDGE_REVISION = 'wj16-session-cache'
 export type WindowActivationOutcome = 'activated' | 'not-found' | 'ambiguous' | 'permission-required' | 'focus-denied' | 'unsupported' | 'failed'
 export type WindowActivationReasonCode = 'space-unbound' | 'space-unbound-multiwindow' | 'space-ambiguous' | 'space-switch-timeout' | 'target-title-changed'
 export type WindowOperationTraceStage = 'bridge' | 'space' | 'target' | 'process' | 'restore' | 'foreground' | 'raise' | 'verify' | 'topmost'
@@ -40,6 +45,7 @@ export type WindowOperationTraceDetail =
   | 'direct-unique'
   | 'direct-multiple'
   | 'reverse-unique'
+  | 'session-cache'
   | 'ambiguous-spaces'
   | 'ax-fallback'
   | 'bad-ref'
@@ -122,6 +128,8 @@ export interface WindowCapability {
 export interface WindowListResult {
   capability: WindowCapability
   windows: LiveWindow[]
+  /** Whether this snapshot can authoritatively evict windows absent from the result. */
+  completeness?: 'complete' | 'partial'
   message?: string
 }
 
@@ -137,7 +145,7 @@ export interface WindowEnvironmentSnapshot {
   axWindowCount?: number
   spaceBinding: 'bound' | 'unbound' | 'unavailable'
   spaceBindingCount?: number
-  spaceBindingSource?: 'direct' | 'reverse' | 'direct+reverse' | 'isolated-direct' | 'isolated-reverse' | 'isolated-direct+reverse' | 'none' | 'unavailable'
+  spaceBindingSource?: 'direct' | 'reverse' | 'direct+reverse' | 'isolated-direct' | 'isolated-reverse' | 'isolated-direct+reverse' | 'session-cache' | 'none' | 'unavailable'
   spaceBridge?: 'in-process' | 'isolated-jxa' | 'unavailable'
   managedSpaceCount?: number
   directSpaceBindingCount?: number
@@ -261,6 +269,20 @@ export interface EypcPlatformApi {
     archiveThread?(actionAlias: string, request: CodexThreadArchiveRequest): Promise<CodexThreadArchiveResult>
     archiveProject?(actionAlias: string, request: CodexProjectArchiveRequest): Promise<CodexProjectArchiveResult>
     removeProject?(actionAlias: string, request: CodexProjectRemoveRequest): Promise<CodexProjectRemoveResult>
+    listProjectEnvironments?(targetAlias: string): Promise<CodexEnvironmentListResult> | CodexEnvironmentListResult
+    runProjectAction?(request: {
+      targetAlias: string
+      environmentId: string
+      actionId: string
+      confirmToken?: string
+      stopIfRunning?: boolean
+    }): Promise<CodexEnvironmentActionRunResult>
+    listActionSessions?(): Promise<CodexEnvironmentActionSessionProjection[]> | CodexEnvironmentActionSessionProjection[]
+    stopActionSession?(request: {
+      projectKey: string
+      environmentId: string
+      actionId: string
+    }): Promise<CodexEnvironmentActionRunResult>
     close(): void
   }
   float: {
@@ -381,7 +403,7 @@ function unsupportedWindowCapability(reason = '当前宿主不支持窗口跳转
 }
 
 function unsupportedWindowList(reason?: string): WindowListResult {
-  return { capability: unsupportedWindowCapability(reason), windows: [], ...(reason ? { message: reason } : {}) }
+  return { capability: unsupportedWindowCapability(reason), windows: [], completeness: 'partial', ...(reason ? { message: reason } : {}) }
 }
 
 declare global {
@@ -674,6 +696,11 @@ export function getPlatform(): EypcPlatformApi {
         openBlank: hostCodex?.openBlank,
         archiveThread: hostCodex?.archiveThread,
         archiveProject: hostCodex?.archiveProject,
+        removeProject: hostCodex?.removeProject,
+        listProjectEnvironments: hostCodex?.listProjectEnvironments,
+        runProjectAction: hostCodex?.runProjectAction,
+        listActionSessions: hostCodex?.listActionSessions,
+        stopActionSession: hostCodex?.stopActionSession,
         close: hostCodex?.close || (() => undefined)
       },
       float: {
@@ -760,6 +787,11 @@ export function getPlatform(): EypcPlatformApi {
       openBlank: undefined,
       archiveThread: undefined,
       archiveProject: undefined,
+      removeProject: undefined,
+      listProjectEnvironments: undefined,
+      runProjectAction: undefined,
+      listActionSessions: undefined,
+      stopActionSession: undefined,
       close: () => undefined
     },
     float: {
