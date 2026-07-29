@@ -34,6 +34,7 @@ import {
   type ConversationSnapshotV1
 } from '../domain/codex'
 import { normalizeCodexModelCatalog } from '../domain/codexNewThread'
+import { projectCodexDynamicStatus } from '../domain/codexPresentation'
 import type { AppState } from '../domain/types'
 import type { CodexFloatWorkspaceDiagnostics, EypcPlatformApi } from '../platform/eypcPlatform'
 
@@ -1340,9 +1341,10 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function cycleTasks(): Array<CodexTaskCard & { actionAlias: string }> {
     const tasks = allTasks()
+    const recentActiveTasks = projectCodexDynamicStatus(conversations).groups.active
     const groups = [
       displayOrderedTasks(conversations.inputRequired),
-      displayOrderedTasks(tasks.filter((task) => task.bucket === 'ongoing'))
+      displayOrderedTasks(recentActiveTasks)
     ]
     const usableTasks = (candidates: CodexTaskCard[]) => {
       const seen = new Set<string>()

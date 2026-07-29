@@ -12,6 +12,7 @@ import {
   type CodexHostThread,
   type CodexTaskCard
 } from '../../src/domain/codex'
+import { projectCodexDynamicStatus } from '../../src/domain/codexPresentation'
 
 const KEY = '0123456789abcdef'
 const keyAt = (index: number) => index.toString(16).padStart(16, '0')
@@ -271,6 +272,10 @@ describe('Codex domain', () => {
       desktopBridgeState: 'failed'
     })
     expect(uncertain.snapshot).toMatchObject({ ongoingCount: 1, stoppedCount: 0 })
+    expect(projectCodexDynamicStatus(uncertain.snapshot, 1_100)).toMatchObject({
+      compactCounts: { active: 1 },
+      groups: { active: [{ key: keyAt(3) }], stopped: [] }
+    })
 
     const connectedUncertain = projectConversations({
       threads: [thread('notLoaded', 900, [], keyAt(3), { statusAuthority: 'connector', lastTurnStatus: 'interrupted', lastTurnStartedAt: 800 })],
@@ -289,6 +294,10 @@ describe('Codex domain', () => {
       desktopBridgeState: 'not-running'
     })
     expect(exited.snapshot).toMatchObject({ ongoingCount: 0, stoppedCount: 1 })
+    expect(projectCodexDynamicStatus(exited.snapshot, 1_100)).toMatchObject({
+      compactCounts: { active: 0 },
+      groups: { active: [], stopped: [{ key: keyAt(3) }] }
+    })
   })
 
   it('does not promote connector or persisted-turn heuristics without desktop live active authority', () => {

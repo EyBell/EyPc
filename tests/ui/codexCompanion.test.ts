@@ -193,7 +193,7 @@ describe('Codex Companion V3 UI contract', () => {
       quota: quotaValue,
       compactFields: [],
       conversationInboxEnabled: true,
-      conversations: { ongoingCount: 0, unknownCount: 0, attentionCount: 0, pendingCount: 0 }
+      taskCounts: { input: 0, active: 0, unread: 0 }
     })
     const wrapper = mount(CodexWaterBall, {
       props: { primary: compact.primary, secondary: compact.secondary, stateLabel: '', label: compact.ariaLabel, appearance: defaults.waterAppearance, colors: defaults.colors }
@@ -213,7 +213,7 @@ describe('Codex Companion V3 UI contract', () => {
       quota: quota(true, true),
       compactFields: [],
       conversationInboxEnabled: true,
-      conversations: { ongoingCount: 0, unknownCount: 0, attentionCount: 0, pendingCount: 0 }
+      taskCounts: { input: 0, active: 0, unread: 0 }
     })
     const dualBall = mount(CodexWaterBall, {
       props: { primary: dualCompact.primary, secondary: dualCompact.secondary, stateLabel: '', label: dualCompact.ariaLabel, appearance: defaults.waterAppearance, colors: defaults.colors }
@@ -227,7 +227,7 @@ describe('Codex Companion V3 UI contract', () => {
       quota: sparkQuota(),
       compactFields: [],
       conversationInboxEnabled: true,
-      conversations: { ongoingCount: 0, unknownCount: 0, attentionCount: 0, pendingCount: 0 }
+      taskCounts: { input: 0, active: 0, unread: 0 }
     })
     const wrapper = mount(CodexWaterBall, {
       props: { primary: presentation.primary, secondary: presentation.secondary, stateLabel: '', label: presentation.ariaLabel, appearance: defaults.waterAppearance, colors: defaults.colors }
@@ -874,14 +874,15 @@ describe('Codex Companion V3 UI contract', () => {
 
   it('keeps compact counters directly clickable without hover expansion', async () => {
     vi.useFakeTimers()
+    vi.setSystemTime(NOW)
     const { wrapper, action, setExpansion } = mountFloat(false, floatSnapshot('all'))
     await wrapper.vm.$nextTick()
     const input = wrapper.get('.float-counter.input')
     const active = wrapper.get('.float-counter.active')
     const unread = wrapper.get('.float-counter.unread')
-    expect(input.attributes('aria-label')).toBe('待输入 1')
-    expect(active.attributes('aria-label')).toBe('进行中 1')
-    expect(unread.attributes('aria-label')).toBe('未读 1')
+    expect(input.attributes('aria-label')).toBe('待输入：1')
+    expect(active.attributes('aria-label')).toBe('进行中：1')
+    expect(unread.attributes('aria-label')).toBe('已完成未读：1')
 
     await input.trigger('click')
     expect(action).toHaveBeenCalledWith('codex.task.open', expect.objectContaining({ key: TASK_INPUT }))
@@ -890,53 +891,123 @@ describe('Codex Companion V3 UI contract', () => {
     await input.trigger('pointerenter', { pointerType: 'touch' })
     vi.advanceTimersByTime(200)
     await wrapper.vm.$nextTick()
-    expect(wrapper.find('.float-action-hint').exists()).toBe(false)
+    expect(wrapper.find('.float-compact-counter-hint').exists()).toBe(false)
 
     for (const [counter, label] of [
-      [input, '待输入 1'],
-      [active, '进行中 1'],
-      [unread, '未读 1']
+      [input, '待输入：1'],
+      [active, '进行中：1'],
+      [unread, '已完成未读：1']
     ] as const) {
       await counter.trigger('pointerenter', { pointerType: 'mouse' })
       vi.advanceTimersByTime(199)
       await wrapper.vm.$nextTick()
-      expect(wrapper.find('.float-action-hint').exists()).toBe(false)
+      expect(wrapper.find('.float-compact-counter-hint').exists()).toBe(false)
       vi.advanceTimersByTime(1)
       await wrapper.vm.$nextTick()
-      expect(wrapper.get('.float-action-hint').text()).toBe(label)
+      expect(wrapper.get('.float-compact-counter-hint').text()).toBe(label)
       expect(wrapper.find('.float-expanded-card').exists()).toBe(false)
       await counter.trigger('pointerleave', { pointerType: 'mouse' })
-      expect(wrapper.find('.float-action-hint').exists()).toBe(false)
+      expect(wrapper.find('.float-compact-counter-hint').exists()).toBe(false)
     }
     await unread.trigger('focus')
     vi.advanceTimersByTime(200)
     await wrapper.vm.$nextTick()
-    expect(wrapper.get('.float-action-hint').text()).toBe('未读 1')
+    expect(wrapper.get('.float-compact-counter-hint').text()).toBe('已完成未读：1')
     await unread.trigger('blur')
-    expect(wrapper.find('.float-action-hint').exists()).toBe(false)
+    expect(wrapper.find('.float-compact-counter-hint').exists()).toBe(false)
     expect(action).not.toHaveBeenCalledWith('codex.tab.set', { tab: 'input' })
     expect(setExpansion).not.toHaveBeenCalledWith(true, false)
 
     await active.trigger('click')
-    expect(action).toHaveBeenCalledWith('codex.tab.set', { tab: 'ongoing' })
+    expect(action).not.toHaveBeenCalledWith('codex.tab.set', expect.anything())
     expect(setExpansion).toHaveBeenCalledWith(true, false)
   })
 
   it('uses the plural pending-input counter hint without changing its click contract', async () => {
     vi.useFakeTimers()
+    vi.setSystemTime(NOW)
     const source = floatSnapshot('all')
-    source.conversations.inputRequiredCount = 2
+    source.conversations.inputRequired.push({
+      ...source.conversations.inputRequired[0],
+      key: '6666666666666666',
+      actionAlias: 'alias-6666666666666666'
+    })
     const { wrapper, setExpansion } = mountFloat(false, source)
     await wrapper.vm.$nextTick()
     const input = wrapper.get('.float-counter.input')
-    expect(input.attributes('aria-label')).toBe('待输入 2')
+    expect(input.attributes('aria-label')).toBe('待输入：2')
     await input.trigger('pointerenter', { pointerType: 'mouse' })
     vi.advanceTimersByTime(200)
     await wrapper.vm.$nextTick()
-    expect(wrapper.get('.float-action-hint').text()).toBe('待输入 2')
+    expect(wrapper.get('.float-compact-counter-hint').text()).toBe('待输入：2')
     expect(setExpansion).not.toHaveBeenCalledWith(true, false)
     await input.trigger('click')
     expect(setExpansion).toHaveBeenCalledWith(true, false)
+  })
+
+  it('hides zero counters, caps the visible badge at 99+, and keeps exact accessible counts aligned', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    const source = floatSnapshot('all')
+    const active = source.conversations.ongoing.find((task) => task.key === TASK_ACTIVE)!
+    source.conversations.ongoing = Array.from({ length: 100 }, (_, index) => ({
+      ...active,
+      key: (index + 100).toString(16).padStart(16, '0'),
+      actionAlias: `alias-overflow-${index}`,
+      lastTurnStartedAt: NOW - index
+    }))
+    source.conversations.inputRequired = []
+    source.conversations.completedUnread = []
+
+    const { wrapper } = mountFloat(false, source)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.float-counter.input').exists()).toBe(false)
+    expect(wrapper.find('.float-counter.unread').exists()).toBe(false)
+    expect(wrapper.get('.float-counter.active').text()).toBe('99+')
+    expect(wrapper.get('.float-counter.active').attributes('aria-label')).toBe('进行中：100')
+    expect(wrapper.get('.float-compact').attributes('aria-label')).toContain('100 个进行中')
+  })
+
+  it('keeps conservative ongoing counts identical in the real float and water settings preview', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    const source = floatSnapshot('all')
+    const active = source.conversations.ongoing.find((task) => task.key === TASK_ACTIVE)!
+    const conservative = {
+      ...active,
+      key: '7777777777777777',
+      actionAlias: 'alias-7777777777777777',
+      name: '短暂断连仍进行中',
+      displayName: '短暂断连仍进行中',
+      originalName: '短暂断连仍进行中',
+      activityState: 'ongoing' as const
+    }
+    source.conversations.ongoing.push(conservative)
+    source.conversations.all.push(conservative)
+
+    const float = mountFloat(false, source).wrapper
+    await float.vm.$nextTick()
+    expect(float.get('.float-counter.active').text()).toBe('2')
+
+    const page = mount(CodexPage, {
+      props: {
+        snapshot: {
+          settings: defaults,
+          environment: { version: 1, checking: false, platform: 'macos', runtimeState: 'detected', runtimeSource: 'nvm', processState: 'running', configState: 'loaded', connectionState: 'connected', desktopBridgeState: 'connected', checkedAt: NOW },
+          quota: source.quota,
+          config: source.config,
+          modelCatalog: source.modelCatalog,
+          newThreadContextFingerprint: source.newThreadContextFingerprint,
+          conversations: source.conversations,
+          refreshing: false,
+          floatHost: { displayId: 'screen', expandedWidth: 360, expandedHeight: 0, expandedManual: false }
+        }
+      }
+    })
+    mounted.push(page)
+    await page.get('#codex-config-tab-water').trigger('click')
+    expect(page.get('.water-preview-counter--active').text()).toBe(float.get('.float-counter.active').text())
+    expect(page.get('.codex-water-ball').attributes('aria-label')).toContain('2 个进行中')
   })
 
   it('separates single and batch drawers, opens them by right click, and routes arrows inside the drawer', async () => {
@@ -1133,7 +1204,7 @@ describe('Codex Companion V3 UI contract', () => {
       quota: emptyQuota,
       compactFields: [],
       conversationInboxEnabled: true,
-      conversations: { ongoingCount: 0, unknownCount: 0, attentionCount: 0, pendingCount: 0 }
+      taskCounts: { input: 0, active: 0, unread: 0 }
     })
     const ball = mount(CodexWaterBall, { props: { primary: compact.primary, secondary: compact.secondary, stateLabel: compact.stateLabel, label: compact.ariaLabel, appearance: defaults.waterAppearance, colors: defaults.colors } })
     mounted.push(ball)

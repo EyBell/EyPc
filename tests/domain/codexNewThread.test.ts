@@ -79,7 +79,7 @@ describe('Codex compact quota priority', () => {
     quota: quotaValue,
     compactFields: [],
     conversationInboxEnabled: false,
-    conversations: { ongoingCount: 0, unknownCount: 0, attentionCount: 0, pendingCount: 0 }
+    taskCounts: { input: 0, active: 0, unread: 0 }
   })
 
   it('shows positive ordinary 5h, then ordinary weekly, then the highest Spark quota', () => {

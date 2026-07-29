@@ -26,7 +26,7 @@ import {
   quotaStatusColor,
   resolveCodexExpandedCardTheme
 } from '../domain/codexAppearance'
-import { buildCodexCompactPresentation } from '../domain/codexPresentation'
+import { buildCodexCompactPresentation, codexBadgeText, projectCodexDynamicStatus } from '../domain/codexPresentation'
 import type {
   CodexColorSettings,
   CodexCompactField,
@@ -94,12 +94,13 @@ function cloneExpandedCardAppearance(value: CodexExpandedCardAppearanceSettings)
 const waterDraft = ref<CodexWaterAppearanceSettings>(cloneWaterAppearance(props.snapshot.settings.waterAppearance))
 const savedThemeName = ref('')
 const savedThemeOption = ref(THEME_PRESET_CUSTOM)
+const waterPreviewProjection = computed(() => projectCodexDynamicStatus(props.snapshot.conversations))
 
 const waterPreview = computed(() => buildCodexCompactPresentation({
   quota: props.snapshot.quota,
   compactFields: props.snapshot.settings.compactFields,
   conversationInboxEnabled: props.snapshot.settings.conversationInboxEnabled,
-  conversations: props.snapshot.conversations
+  taskCounts: waterPreviewProjection.value.compactCounts
 }))
 
 const waterPreviewStyle = computed<Record<string, string>>(() => {
@@ -120,16 +121,7 @@ const waterPreviewStyle = computed<Record<string, string>>(() => {
   }
 })
 
-const waterPreviewCounters = computed(() => ({
-  input: props.snapshot.conversations.inputRequiredCount,
-  active: [...props.snapshot.conversations.ongoing, ...props.snapshot.conversations.hidden]
-    .filter((task) => task.bucket === 'ongoing' && (task.activityState === 'active' || task.activityState === 'waiting-approval')).length,
-  unread: props.snapshot.conversations.completedUnreadCount
-}))
-
-function compactPreviewCount(value: number): string {
-  return value > 99 ? '99+' : String(value)
-}
+const waterPreviewCounters = computed(() => waterPreview.value.taskCounts)
 
 const cardPreviewStyle = computed<Record<string, string>>(() => {
   const primaryPercent = waterPreview.value.primary?.bucket.remainingPercent ?? 100
@@ -830,9 +822,9 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
                 :colors="snapshot.settings.colors"
                 decorative
               />
-              <b v-if="waterPreviewCounters.input" class="water-preview-counter water-preview-counter--input">{{ compactPreviewCount(waterPreviewCounters.input) }}</b>
-              <b v-if="waterPreviewCounters.active" class="water-preview-counter water-preview-counter--active">{{ compactPreviewCount(waterPreviewCounters.active) }}</b>
-              <b v-if="waterPreviewCounters.unread" class="water-preview-counter water-preview-counter--unread">{{ compactPreviewCount(waterPreviewCounters.unread) }}</b>
+              <b v-if="waterPreviewCounters.input" class="water-preview-counter water-preview-counter--input">{{ codexBadgeText(waterPreviewCounters.input) }}</b>
+              <b v-if="waterPreviewCounters.active" class="water-preview-counter water-preview-counter--active">{{ codexBadgeText(waterPreviewCounters.active) }}</b>
+              <b v-if="waterPreviewCounters.unread" class="water-preview-counter water-preview-counter--unread">{{ codexBadgeText(waterPreviewCounters.unread) }}</b>
             </div>
             <div class="codex-appearance-controls">
               <label class="codex-color-control"><input type="color" :value="snapshot.settings.colors.water" @input="updateColor('water', ($event.target as HTMLInputElement).value)" /><span><strong>球体底色</strong><small>只影响球体背景，不影响液体</small></span></label>

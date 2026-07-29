@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createInitialState } from '../../src/domain/state'
 import type { CodexHostThread, CodexThreadOpenResult } from '../../src/domain/codex'
+import { CODEX_DYNAMIC_TASK_WINDOW_MS, projectCodexDynamicStatus } from '../../src/domain/codexPresentation'
 import type { EypcPlatformApi } from '../../src/platform/eypcPlatform'
 import { createCodexController } from '../../src/runtime/codexController'
 
@@ -791,15 +792,21 @@ describe('Codex controller', () => {
 
     activityListeners[0]({ version: 2, sourceFingerprint, generation: 2, receivedAt: receivedAt + 1, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'interrupted', lastTurnStartedAt: baselineTurnStartedAt }] })
     expect(controller.view().conversations).toMatchObject({ ongoingCount: 1, stoppedCount: 0 })
+    expect(projectCodexDynamicStatus(controller.view().conversations, receivedAt + 1).compactCounts.active).toBe(1)
 
     activityListeners[0]({ version: 2, sourceFingerprint, generation: 3, receivedAt: receivedAt + 2, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'interrupted', lastTurnStartedAt: baselineTurnStartedAt, lastTurnEvidence: 'targeted-after-exit' }] })
     expect(controller.view().conversations).toMatchObject({ ongoingCount: 0, stoppedCount: 1 })
     expect(controller.view().conversations.stopped[0]).toMatchObject({ key: taskKey, activityState: 'stopped', archiveCapability: 'allowed' })
+    expect(projectCodexDynamicStatus(controller.view().conversations, receivedAt + 2)).toMatchObject({
+      compactCounts: { active: 0 },
+      groups: { active: [], stopped: [{ key: taskKey }] }
+    })
 
     activityListeners[0]({ version: 2, sourceFingerprint, generation: 4, receivedAt: receivedAt + 3, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live' }] })
     expect(controller.view().conversations).toMatchObject({ ongoingCount: 1, stoppedCount: 0 })
     activityListeners[0]({ version: 2, sourceFingerprint, generation: 5, receivedAt: receivedAt + 4, inventoryChanged: false, desktopBridgeState: 'not-running', entries: [{ key: taskKey, status: 'notLoaded', activeFlags: [], statusAuthority: 'connector', hasUnreadTurn: false, unreadAuthority: 'desktop-persisted', lastTurnStatus: 'interrupted', lastTurnStartedAt: baselineTurnStartedAt }] })
     expect(controller.view().conversations).toMatchObject({ ongoingCount: 0, stoppedCount: 1 })
+    expect(projectCodexDynamicStatus(controller.view().conversations, receivedAt + 4).compactCounts.active).toBe(0)
     controller.dispose()
   })
 
@@ -850,6 +857,10 @@ describe('Codex controller', () => {
 
       activityListeners[0]({ version: 2, sourceFingerprint, generation: 1, receivedAt: 10_000, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live' }] })
       expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'ongoing' })
+      expect(projectCodexDynamicStatus(controller.view().conversations, 10_000)).toMatchObject({
+        compactCounts: { active: 1 },
+        groups: { active: [{ key: taskKey }] }
+      })
 
       await vi.advanceTimersByTimeAsync(100)
       activityListeners[0]({ version: 2, sourceFingerprint, generation: 2, receivedAt: 10_100, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'completed', lastTurnStartedAt: 9_000, lastTurnCompletedAt: 9_500 }] })
@@ -865,14 +876,24 @@ describe('Codex controller', () => {
       await vi.advanceTimersByTimeAsync(1)
       expect(controller.view().conversations.completed[0]).toMatchObject({ key: taskKey, completionRevision: 10_100 })
       expect(controller.view().conversations.ongoing).toHaveLength(0)
+      expect(projectCodexDynamicStatus(controller.view().conversations, 11_500)).toMatchObject({
+        compactCounts: { active: 0 },
+        groups: { active: [], completed: [{ key: taskKey, archiveCapability: 'allowed' }] }
+      })
 
       activityListeners[0]({ version: 2, sourceFingerprint, generation: 4, receivedAt: 11_500, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live' }] })
       expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'active' })
+      expect(projectCodexDynamicStatus(controller.view().conversations, 11_500).compactCounts.active).toBe(1)
       activityListeners[0]({ version: 2, sourceFingerprint, generation: 5, receivedAt: 11_501, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live' }] })
       expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'ongoing' })
+      expect(projectCodexDynamicStatus(controller.view().conversations, 11_501).compactCounts.active).toBe(1)
       activityListeners[0]({ version: 2, sourceFingerprint, generation: 6, receivedAt: 11_502, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'completed', lastTurnStartedAt: 11_000, lastTurnCompletedAt: 11_502, lastTurnEvidence: 'targeted-after-exit' }] })
       expect(controller.view().conversations.completed[0]).toMatchObject({ key: taskKey, completionRevision: 11_502 })
       expect(controller.view().conversations.ongoing).toHaveLength(0)
+      expect(projectCodexDynamicStatus(controller.view().conversations, 11_502)).toMatchObject({
+        compactCounts: { active: 0 },
+        groups: { active: [], completed: [{ key: taskKey, archiveCapability: 'allowed' }] }
+      })
       controller.dispose()
     } finally {
       vi.useRealTimers()
@@ -1288,20 +1309,23 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
-  it('cycleTask only cycles through ongoing tasks and skips completed-unread', async () => {
+  it('cycles complete input-required before recent active tasks and skips completed-unread', async () => {
+    const now = Date.now()
     const state = createInitialState(1)
     state.activeTab = 'codex'
-    state.codex.lastTaskScanAt = 10
+    state.codex.lastTaskScanAt = now - 1_000
     const ongoingKey = 'aaaaaaaaaaaaaaaa'
     const completedUnreadKey = 'bbbbbbbbbbbbbbbb'
+    const inputKey = 'dddddddddddddddd'
     const threads: CodexHostThread[] = [
-      { key: ongoingKey, actionAlias: 'alias-ongoing', name: '进行中', status: 'active', activeFlags: [], statusAuthority: 'desktop-live', updatedAt: 550, lastTurnStatus: 'inProgress', lastTurnStartedAt: 500 },
-      { key: completedUnreadKey, actionAlias: 'alias-unread', name: '已完成未读', status: 'notLoaded', activeFlags: [], updatedAt: 450, lastTurnStatus: 'completed', lastTurnStartedAt: 300, lastTurnCompletedAt: 400, hasUnreadTurn: true, unreadAuthority: 'desktop-live' }
+      { key: inputKey, actionAlias: 'alias-input', name: '待输入', status: 'active', activeFlags: ['waitingOnUserInput'], statusAuthority: 'desktop-live', updatedAt: now - CODEX_DYNAMIC_TASK_WINDOW_MS - 100, lastTurnStatus: 'inProgress', lastTurnStartedAt: now - CODEX_DYNAMIC_TASK_WINDOW_MS - 100 },
+      { key: ongoingKey, actionAlias: 'alias-ongoing', name: '进行中', status: 'active', activeFlags: [], statusAuthority: 'desktop-live', updatedAt: now - 50, lastTurnStatus: 'inProgress', lastTurnStartedAt: now - 100 },
+      { key: completedUnreadKey, actionAlias: 'alias-unread', name: '已完成未读', status: 'notLoaded', activeFlags: [], updatedAt: now - 150, lastTurnStatus: 'completed', lastTurnStartedAt: now - 300, lastTurnCompletedAt: now - 200, hasUnreadTurn: true, unreadAuthority: 'desktop-live' }
     ]
     const openThread = vi.fn(async () => ({ outcome: 'opened' as const }))
     const platform = {
       codex: {
-        readSnapshot: async () => ({ ok: true as const, receivedAt: 600, value: { version: 2 as const, receivedAt: 600, threads, projects: [], sourceFingerprint: 'a'.repeat(64), completeness: 'verified' as const } }),
+        readSnapshot: async () => ({ ok: true as const, receivedAt: now, value: { version: 2 as const, receivedAt: now, threads, projects: [], sourceFingerprint: 'a'.repeat(64), completeness: 'verified' as const } }),
         openThread,
         close: () => undefined
       }
@@ -1315,11 +1339,15 @@ describe('Codex controller', () => {
     })
 
     await controller.refresh()
-    expect(controller.view().conversations.ongoing).toHaveLength(1)
+    expect(controller.view().conversations.ongoing).toHaveLength(2)
+    expect(controller.view().conversations.inputRequired.map((task) => task.key)).toEqual([inputKey])
     expect(controller.view().conversations.completedUnread).toHaveLength(1)
 
     controller.cycleTask(-1)
     expect(openThread).toHaveBeenCalledWith('alias-ongoing')
+
+    controller.cycleTask(1)
+    expect(openThread).toHaveBeenLastCalledWith('alias-input')
 
     controller.cycleTask(1)
     expect(openThread).toHaveBeenLastCalledWith('alias-ongoing')
@@ -1328,18 +1356,68 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
-  it('cycleTask shows no tasks after syncActivation clears conversations on non-codex tab', async () => {
+  it('excludes conservative ongoing tasks older than six hours unless they are explicitly pinned in EyPc', async () => {
+    const now = Date.now()
     const state = createInitialState(1)
     state.activeTab = 'codex'
-    state.codex.lastTaskScanAt = 10
+    state.codex.lastTaskScanAt = now - 1_000
+    const taskKey = 'cccccccccccccccc'
+    const oldActivityAt = now - CODEX_DYNAMIC_TASK_WINDOW_MS - 1
+    const threads: CodexHostThread[] = [{
+      key: taskKey,
+      actionAlias: 'alias-old-conservative',
+      name: '超过六小时的保守进行中',
+      status: 'notLoaded',
+      activeFlags: [],
+      statusAuthority: 'connector',
+      updatedAt: oldActivityAt,
+      lastTurnStatus: 'interrupted',
+      lastTurnStartedAt: oldActivityAt
+    }]
+    const openThread = vi.fn(async () => ({ outcome: 'opened' as const }))
+    const messages: string[] = []
+    const platform = {
+      codex: {
+        readSnapshot: async () => ({ ok: true as const, receivedAt: now, value: { version: 2 as const, receivedAt: now, threads, projects: [], sourceFingerprint: 'b'.repeat(64), completeness: 'verified' as const } }),
+        openThread,
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({
+      platform,
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: (message) => messages.push(message)
+    })
+
+    await controller.refresh()
+    expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'ongoing' })
+    expect(controller.view().conversations.ongoing[0]?.pinSource).toBeUndefined()
+    expect(controller.cycleTask(1)).toBe(false)
+    expect(openThread).not.toHaveBeenCalled()
+    expect(messages.at(-1)).toBe('当前没有可切换的 Codex 任务')
+
+    expect(controller.toggleLocalPin('task', taskKey)).toBe(true)
+    expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, pinSource: 'local' })
+    expect(controller.cycleTask(1)).toBe(true)
+    expect(openThread).toHaveBeenCalledWith('alias-old-conservative')
+    controller.dispose()
+  })
+
+  it('cycleTask shows no tasks after syncActivation clears conversations on non-codex tab', async () => {
+    const now = Date.now()
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    state.codex.lastTaskScanAt = now - 1_000
     const threads: CodexHostThread[] = [
-      { key: 'aaaaaaaaaaaaaaaa', actionAlias: 'alias-ongoing', name: '进行中', status: 'active', activeFlags: [], statusAuthority: 'desktop-live', updatedAt: 550, lastTurnStatus: 'inProgress', lastTurnStartedAt: 500 }
+      { key: 'aaaaaaaaaaaaaaaa', actionAlias: 'alias-ongoing', name: '进行中', status: 'active', activeFlags: [], statusAuthority: 'desktop-live', updatedAt: now - 50, lastTurnStatus: 'inProgress', lastTurnStartedAt: now - 100 }
     ]
     const openThread = vi.fn(async () => ({ outcome: 'opened' as const }))
     let closeCount = 0
     const platform = {
       codex: {
-        readSnapshot: async () => ({ ok: true as const, receivedAt: 600, value: { version: 2 as const, receivedAt: 600, threads, projects: [], sourceFingerprint: 'a'.repeat(64), completeness: 'verified' as const } }),
+        readSnapshot: async () => ({ ok: true as const, receivedAt: now, value: { version: 2 as const, receivedAt: now, threads, projects: [], sourceFingerprint: 'a'.repeat(64), completeness: 'verified' as const } }),
         openThread,
         close: () => { closeCount += 1 }
       }

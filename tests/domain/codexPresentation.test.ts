@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { buildCodexCompactPresentation } from '../../src/domain/codexPresentation'
-import type { CodexCompactField, CodexQuotaSnapshotV1 } from '../../src/domain/codex'
+import {
+  buildCodexCompactPresentation,
+  CODEX_DYNAMIC_TASK_WINDOW_MS,
+  projectCodexDynamicStatus
+} from '../../src/domain/codexPresentation'
+import type { CodexCompactField, CodexQuotaSnapshotV1, CodexTaskCard } from '../../src/domain/codex'
+
+const NOW = 1_784_364_000_000
 
 function quota(short: number | null, weekly: number | null): CodexQuotaSnapshotV1 {
   return {
@@ -18,8 +24,31 @@ function presentation(short: number | null, weekly: number | null, fields: Codex
     quota: quota(short, weekly),
     compactFields: fields,
     conversationInboxEnabled: true,
-    conversations: { ongoingCount: 2, unknownCount: 3, attentionCount: 1, pendingCount: 1 }
+    taskCounts: { input: 2, active: 3, unread: 1 }
   })
+}
+
+function task(key: string, overrides: Partial<CodexTaskCard> = {}): CodexTaskCard {
+  return {
+    key,
+    actionAlias: `alias-${key}`,
+    displayName: key,
+    name: key,
+    originalName: key,
+    bucket: 'ongoing',
+    activityState: 'active',
+    archiveCapability: 'blocked-active',
+    revisionAt: NOW - 1_000,
+    state: 'running',
+    updatedAt: NOW - 1_000,
+    lastTurnStartedAt: NOW - 1_000,
+    projectKey: 'chats',
+    projectName: 'Chats',
+    originalProjectName: 'Chats',
+    projectKind: 'chats',
+    isHidden: false,
+    ...overrides
+  }
 }
 
 describe('Codex compact presentation', () => {
@@ -27,8 +56,15 @@ describe('Codex compact presentation', () => {
     const value = presentation(80, 40, ['short', 'weekly', 'tasks'])
     expect(value.primary).toMatchObject({ kind: 'short', label: '5h' })
     expect(value.secondary).toMatchObject({ kind: 'weekly', label: 'Weekly' })
-    expect(value).toMatchObject({ showTasks: true, ongoingCount: 6, unknownCount: 0, attentionCount: 0, pendingCount: 1 })
-    expect(value.ariaLabel).toContain('6 个进行中或等待操作，1 个待查看')
+    expect(value).toMatchObject({
+      showTasks: true,
+      taskCounts: { input: 2, active: 3, unread: 1 },
+      ongoingCount: 3,
+      unknownCount: 0,
+      attentionCount: 0,
+      pendingCount: 1
+    })
+    expect(value.ariaLabel).toContain('2 个待输入，3 个进行中，1 个已完成未读')
     expect(value.ariaLabel).not.toContain('状态未知')
   })
 
@@ -46,10 +82,11 @@ describe('Codex compact presentation', () => {
     expect(quotaOnly.primary?.kind).toBe('short')
     expect(quotaOnly.secondary?.kind).toBe('weekly')
     expect(quotaOnly.showTasks).toBe(false)
+    expect(quotaOnly.taskCounts).toEqual({ input: 0, active: 0, unread: 0 })
 
     const tasksOnly = presentation(80, 40, ['tasks'])
     expect(tasksOnly.primary?.kind).toBe('short')
-    expect(tasksOnly).toMatchObject({ showTasks: true, ongoingCount: 6, unknownCount: 0, attentionCount: 0, pendingCount: 1 })
+    expect(tasksOnly).toMatchObject({ showTasks: true, ongoingCount: 3, pendingCount: 1 })
   })
 
   it('describes an explicit failure state when no quota is available', () => {
@@ -57,8 +94,79 @@ describe('Codex compact presentation', () => {
       quota: { ...quota(null, null), status: 'error' },
       compactFields: ['short', 'weekly'],
       conversationInboxEnabled: false,
-      conversations: { ongoingCount: 0, unknownCount: 0, attentionCount: 0, pendingCount: 0 }
+      taskCounts: { input: 0, active: 0, unread: 0 }
     })
     expect(failed).toMatchObject({ primary: null, state: 'error', stateLabel: '读取失败' })
+  })
+})
+
+describe('Codex dynamic status projection', () => {
+  it('derives mutually exclusive recent groups and all three counters from one stabilized snapshot', () => {
+    const input = task('input', { activityState: 'waiting-input', state: 'waiting-input' })
+    const active = task('active')
+    const approval = task('approval', { activityState: 'waiting-approval', state: 'waiting-approval' })
+    const conservative = task('conservative', { activityState: 'ongoing' })
+    const stopped = task('stopped', { bucket: 'stopped', activityState: 'stopped', archiveCapability: 'allowed', state: 'stopped' })
+    const unread = task('unread', { bucket: 'completed-unread', activityState: 'ongoing', archiveCapability: 'allowed', state: 'pending-review' })
+    const completed = task('completed', { bucket: 'completed', activityState: 'ongoing', archiveCapability: 'allowed', state: 'recent-activity' })
+    const oldActive = task('old-active', { lastTurnStartedAt: NOW - CODEX_DYNAMIC_TASK_WINDOW_MS - 1 })
+    const hiddenActive = task('hidden-active', { isHidden: true })
+    const hiddenInput = task('hidden-input', { activityState: 'waiting-input', state: 'waiting-input', isHidden: true })
+    const hiddenUnread = task('hidden-unread', { bucket: 'completed-unread', activityState: 'ongoing', archiveCapability: 'allowed', state: 'pending-review', isHidden: true })
+
+    const value = projectCodexDynamicStatus({
+      ongoing: [input, active, approval, conservative, oldActive, hiddenActive],
+      stopped: [stopped],
+      completedUnread: [unread],
+      completed: [completed],
+      hidden: [hiddenActive, hiddenInput, hiddenUnread],
+      inputRequired: [input, hiddenInput]
+    }, NOW)
+
+    expect(value.groups.input.map((item) => item.key)).toEqual(['input'])
+    expect(value.groups.active.map((item) => item.key)).toEqual(['active', 'approval', 'conservative'])
+    expect(value.groups.stopped.map((item) => item.key)).toEqual(['stopped'])
+    expect(value.groups.unread.map((item) => item.key)).toEqual(['unread'])
+    expect(value.groups.completed.map((item) => item.key)).toEqual(['completed'])
+    expect(value.tasks).toHaveLength(7)
+    expect(value.compactCounts).toEqual({ input: 2, active: 3, unread: 2 })
+    expect(value.groups.active.map((item) => item.key)).not.toContain('old-active')
+    expect(value.groups.active.map((item) => item.key)).not.toContain('hidden-active')
+  })
+
+  it('keeps card and active counter aligned through active/ongoing jitter, then switches once on stabilized completion', () => {
+    for (const activityState of ['active', 'ongoing', 'active'] as const) {
+      const current = task('jitter', { activityState })
+      const value = projectCodexDynamicStatus({
+        ongoing: [current],
+        stopped: [],
+        completedUnread: [],
+        completed: [],
+        hidden: [],
+        inputRequired: []
+      }, NOW)
+      expect(value.groups.active.map((item) => item.key)).toEqual(['jitter'])
+      expect(value.compactCounts.active).toBe(1)
+    }
+
+    const completed = task('jitter', {
+      bucket: 'completed',
+      activityState: 'ongoing',
+      archiveCapability: 'allowed',
+      state: 'recent-activity',
+      completionRevision: NOW,
+      lastTurnCompletedAt: NOW
+    })
+    const value = projectCodexDynamicStatus({
+      ongoing: [],
+      stopped: [],
+      completedUnread: [],
+      completed: [completed],
+      hidden: [],
+      inputRequired: []
+    }, NOW)
+    expect(value.groups.active).toHaveLength(0)
+    expect(value.compactCounts.active).toBe(0)
+    expect(value.groups.completed[0]).toMatchObject({ key: 'jitter', archiveCapability: 'allowed' })
   })
 })

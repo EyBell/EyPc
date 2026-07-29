@@ -27,7 +27,7 @@ import {
   resolveCodexExpandedCardTheme,
   resolveCodexSurfaceTheme
 } from './domain/codexAppearance'
-import { buildCodexCompactPresentation } from './domain/codexPresentation'
+import { buildCodexCompactPresentation, codexBadgeText, projectCodexDynamicStatus } from './domain/codexPresentation'
 import { assignQuickJumpMarkers, moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
 import type { QuickJumpTarget } from './domain/quickJump'
 import { quickJumpHitStackContainsTarget, quickJumpHitTestPoints } from './domain/quickJumpHitTest'
@@ -95,7 +95,6 @@ type ShiftPreview = { task: CodexTaskCard; left: number; top: number } | null
 type ActionHint = { label: string; left: number; top: number; placement: 'top' | 'bottom' } | null
 type QuickJumpDomTarget = QuickJumpTarget & { element: HTMLElement }
 
-const DYNAMIC_TASK_WINDOW_MS = 6 * 60 * 60 * 1000
 const DYNAMIC_TASK_WINDOW_TICK_MS = 60 * 1000
 const COMPOSER_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 const COMPOSER_IMAGE_MAX_BYTES = 20 * 1024 * 1024
@@ -171,12 +170,14 @@ const fallbackExpandedCardAppearance = CODEX_THEME_PRESETS[0].expandedCardAppear
 const settings = computed(() => snapshot.value)
 const quota = computed(() => snapshot.value?.quota)
 const conversations = computed(() => snapshot.value?.conversations)
+const dynamicStatus = computed(() => projectCodexDynamicStatus(conversations.value, dynamicNow.value))
 const compact = computed(() => buildCodexCompactPresentation({
   quota: quota.value || { version: 1, status: 'idle', plan: '', short: null, weekly: null, updatedAt: 0 },
   compactFields: snapshot.value?.compactFields || [],
   conversationInboxEnabled: snapshot.value?.conversationInboxEnabled === true,
-  conversations: conversations.value || { ongoingCount: 0, unknownCount: 0, attentionCount: 0, pendingCount: 0 }
+  taskCounts: dynamicStatus.value.compactCounts
 }))
+const compactCounts = computed(() => compact.value.taskCounts)
 const primaryPercent = computed(() => compact.value.primary?.bucket.remainingPercent ?? 0)
 const selectedWeekly = computed(() => {
   if (compact.value.primary?.kind === 'weekly') return compact.value.primary
@@ -227,17 +228,6 @@ const compactAriaLabel = computed(() => {
   if (quota.value?.status === 'stale' || quota.value?.status === 'error') return `${compact.value.ariaLabel}，${statusText.value}`
   return compact.value.ariaLabel
 })
-const compactCounts = computed(() => ({
-  input: conversations.value?.inputRequiredCount || 0,
-  active: (conversations.value?.ongoing || []).concat(conversations.value?.hidden || [])
-    .filter((task) => task.bucket === 'ongoing' && (task.activityState === 'active' || task.activityState === 'waiting-approval' || task.activityState === 'ongoing')).length,
-  unread: conversations.value?.completedUnreadCount || 0
-}))
-const displayedCompactCounts = computed(() => ({
-  input: compactCounts.value.input,
-  active: compactCounts.value.active,
-  unread: compactCounts.value.unread
-}))
 const composerHasContent = computed(() => Boolean(composer.value?.image || composer.value?.prompt.trim()))
 
 function normalizedSearch() {
@@ -282,18 +272,6 @@ function displayOrderedTasks(tasks: CodexTaskCard[]) {
     .map(({ task }) => task)
 }
 
-function taskActivityAt(task: CodexTaskCard) {
-  return Math.max(task.lastTurnStartedAt || 0, task.lastTurnCompletedAt || 0)
-}
-
-const dynamicTasks = computed(() => {
-  const value = conversations.value
-  if (!value) return []
-  const windowStart = dynamicNow.value - DYNAMIC_TASK_WINDOW_MS
-  return [...value.ongoing, ...(value.stopped || []), ...value.completedUnread, ...value.completed]
-    .filter((task) => taskActivityAt(task) >= windowStart)
-})
-
 const renderRows = computed<RenderRow[]>(() => {
   const value = conversations.value
   if (!value) return []
@@ -326,14 +304,13 @@ const renderRows = computed<RenderRow[]>(() => {
   }
 
   if (selectedUiTab.value === 'dynamic') {
-    const recentTasks = dynamicTasks.value
-    const recentOngoing = recentTasks.filter((task) => task.bucket === 'ongoing')
+    const statusGroups = dynamicStatus.value.groups
     const groups = [
-      { key: 'input', title: '待输入', tone: 'input' as const, tasks: recentOngoing.filter((task) => task.activityState === 'waiting-input') },
-      { key: 'active', title: '正在进行中', tone: 'active' as const, tasks: recentOngoing.filter((task) => task.activityState === 'active' || task.activityState === 'waiting-approval' || task.activityState === 'ongoing') },
-      { key: 'stopped', title: '已停止', tone: 'stopped' as const, tasks: recentTasks.filter((task) => task.bucket === 'stopped') },
-      { key: 'unread', title: '已完成未读', tone: 'unread' as const, tasks: recentTasks.filter((task) => task.bucket === 'completed-unread') },
-      { key: 'completed', title: '已完成', tone: 'completed' as const, tasks: recentTasks.filter((task) => task.bucket === 'completed') }
+      { key: 'input', title: '待输入', tone: 'input' as const, tasks: statusGroups.input },
+      { key: 'active', title: '正在进行中', tone: 'active' as const, tasks: statusGroups.active },
+      { key: 'stopped', title: '已停止', tone: 'stopped' as const, tasks: statusGroups.stopped },
+      { key: 'unread', title: '已完成未读', tone: 'unread' as const, tasks: statusGroups.unread },
+      { key: 'completed', title: '已完成', tone: 'completed' as const, tasks: statusGroups.completed }
     ]
     return groups.flatMap((group): RenderRow[] => {
       const tasks = displayOrderedTasks(group.tasks.filter((task) => taskMatched(task)))
@@ -433,7 +410,7 @@ const tabs = computed(() => {
   const value = conversations.value
   if (!value) return []
   return [
-    { id: 'dynamic', label: '动态', count: dynamicTasks.value.length },
+    { id: 'dynamic', label: '动态', count: dynamicStatus.value.tasks.length },
     { id: 'completed', label: '已完成', count: value.completed.length + value.completedUnread.length },
     { id: 'hidden', label: '已隐藏', count: value.hiddenCount },
     { id: 'projects', label: '项目', count: projectCount.value }
@@ -1072,15 +1049,11 @@ function onCompactClick(event: MouseEvent) {
   requestExpansion(true)
 }
 
-function compactCount(value: number) {
-  return value > 99 ? '99+' : String(value)
-}
-
 function compactCounterHint(kind: 'input' | 'active' | 'unread') {
-  const count = displayedCompactCounts.value[kind]
-  if (kind === 'input') return `待输入：${compactCount(count)}`
-  if (kind === 'active') return '进行中'
-  return `已未读：${compactCount(count)}`
+  const count = compactCounts.value[kind]
+  if (kind === 'input') return `待输入：${count}`
+  if (kind === 'active') return `进行中：${count}`
+  return `已完成未读：${count}`
 }
 
 function queueCompactCounterHint(event: Event, kind: 'input' | 'active' | 'unread') {
@@ -2381,7 +2354,7 @@ onUnmounted(() => {
         <span v-if="quota?.status === 'stale' || quota?.status === 'error'" class="float-status-dot" :class="quota.status" aria-hidden="true" />
       </button>
       <button
-        v-if="displayedCompactCounts.input"
+        v-if="compactCounts.input"
         type="button"
         class="float-counter input"
         :aria-label="compactCounterHint('input')"
@@ -2391,9 +2364,9 @@ onUnmounted(() => {
         @focus="queueCompactCounterHint($event, 'input')"
         @blur="clearCompactCounterHint"
         @click.stop="openCompactStatus('input')"
-      >{{ compactCount(displayedCompactCounts.input) }}</button>
-      <button v-if="displayedCompactCounts.active" type="button" class="float-counter active" :aria-label="compactCounterHint('active')" @pointerenter.stop="queueCompactCounterHint($event, 'active')" @pointermove.stop @pointerleave.stop="clearCompactCounterHint" @focus="queueCompactCounterHint($event, 'active')" @blur="clearCompactCounterHint" @click.stop="openCompactStatus('active')">{{ compactCount(displayedCompactCounts.active) }}</button>
-      <button v-if="displayedCompactCounts.unread" type="button" class="float-counter unread" :aria-label="compactCounterHint('unread')" @pointerenter.stop="queueCompactCounterHint($event, 'unread')" @pointermove.stop @pointerleave.stop="clearCompactCounterHint" @focus="queueCompactCounterHint($event, 'unread')" @blur="clearCompactCounterHint" @click.stop="openCompactStatus('unread')">{{ compactCount(displayedCompactCounts.unread) }}</button>
+      >{{ codexBadgeText(compactCounts.input) }}</button>
+      <button v-if="compactCounts.active" type="button" class="float-counter active" :aria-label="compactCounterHint('active')" @pointerenter.stop="queueCompactCounterHint($event, 'active')" @pointermove.stop @pointerleave.stop="clearCompactCounterHint" @focus="queueCompactCounterHint($event, 'active')" @blur="clearCompactCounterHint" @click.stop="openCompactStatus('active')">{{ codexBadgeText(compactCounts.active) }}</button>
+      <button v-if="compactCounts.unread" type="button" class="float-counter unread" :aria-label="compactCounterHint('unread')" @pointerenter.stop="queueCompactCounterHint($event, 'unread')" @pointermove.stop @pointerleave.stop="clearCompactCounterHint" @focus="queueCompactCounterHint($event, 'unread')" @blur="clearCompactCounterHint" @click.stop="openCompactStatus('unread')">{{ codexBadgeText(compactCounts.unread) }}</button>
       <div v-if="compactCounterHintText" class="float-compact-counter-hint" role="tooltip">{{ compactCounterHintText }}</div>
     </div>
 
