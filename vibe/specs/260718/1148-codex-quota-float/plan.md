@@ -3,7 +3,7 @@
 Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-27.9`
+Requirement version: `2026-07-28.2`
 
 Authority: [spec.md](spec.md#L1)
 
@@ -162,5 +162,14 @@ Authority: [spec.md](spec.md#L1)
 145. 增加 direct-read、unread-only patch 与 Controller 防重启合同，同步 RAW-097 Controlled/canonical/current/error memory；仅执行镜像、同步 IPC 残余、diff 和链接静态核验，不运行测试、typecheck、build、uTools、截图或真实阅读操作。
 146. 以 RAW-105 收敛循环空候选的回退：不新增任务持久化或 Host 调用；仅在既有常规循环没有可打开任务时，从当前投影筛选 `pinSource='local'` 的 EyPc 本地置顶任务，继续使用显示排序、action alias/key 门禁与既有内存游标。原生置顶不作为回退；用户未选择测试，不新增或运行测试、typecheck、build、uTools、截图或真实 Codex 操作。
 147. 以 RAW-106 将 `stopped` 从前/后任务循环的本地置顶回退中排除；常规候选序列已不含停止态。除该筛选外不变更显示、置顶、游标、打开路径或持久化；不新增或运行测试、typecheck、build、uTools、截图或真实 Codex 操作。
+148. 记录 RAW-107 已完成的非活跃快捷键修复：`hideAfterAction=true` 不切页，`syncActivation(false)` 清空会话快照，避免使用连接关闭后失效的 action alias；不改变循环候选与打开合同。
+149. 以 RAW-108 在 [codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1) 增加纯展示投影：从 Controller 稳定快照一次生成最近 6 小时、非隐藏、互斥的 input/active/stopped/unread/completed 分段及 `{ input, active, unread }` 数量；active 包含 `active / waiting-approval / ongoing`，waiting-input 不重复，input/unread 保留完整集合。
+150. 将 [FloatApp.vue](../../../../src/FloatApp.vue#L1) 的动态 Tab 数、状态段、三个紧凑角标、数量提示和水球 ARIA 全部切到该投影；搜索继续只过滤行，进行中点击只展开。删除 Renderer 内重复的全窗口/隐藏进行中计数和独立状态筛选，不新增 timer/debounce。
+151. 将 [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 水球预览切到同一投影，补回保守 `ongoing`；保留 Preload/Controller 的字段过滤、定向 Turn 核验、50ms 合并、active-exit/旧 terminal/单调证据/缺失隔离/完成 hold 及 targeted 强证据快路，不修改协议、设置、存储或迁移。
+152. 只在既有测试文件补充 active→ongoing→active、targeted completion、6 小时/隐藏/待输入互斥、预览一致、数量化 ARIA 和进行中只展开的合同；同步 Controlled/canonical/current/architecture/CodeNote。按用户授权仅执行范围 diff、重复筛选残留、`git diff --check` 和 Markdown 链接静态核验，不运行测试、typecheck、build、uTools 或真实验收。
+153. 以 RAW-109 复核所指旧任务及前后循环调用链：只读确认它没有 Codex 原生置顶、底层因不确定证据仍为保守 ongoing；不把用户随后手动归档当作通用修复，也不把 raw task identity 写入文档、日志或错误记忆。
+154. 在 [codexController.ts](../../../../src/runtime/codexController.ts#L1) 将普通循环候选收敛为完整 `inputRequired` 加 RAW-108 同一投影的最近 6 小时、非隐藏 active 组；保留完成未读独立首条动作，以及常规池为空时非 stopped EyPc 本地置顶回退。不新增 timer、缓存或 debounce。
+155. 在既有 [codexController.test.ts](../../../../tests/runtime/codexController.test.ts#L1) 增加“旧保守 ongoing 不进入普通循环、本地置顶后可作为空池回退”合同，并把受六小时边界影响的既有 fixture 改成相对当前时间；不新增测试模块且不运行测试。
+156. 同步 RAW-109 到 Controlled/canonical/current/architecture/developer-soul/error-memory 与 CodeNote 派生理解，修正当前文档中完成未读仍属于通用前后循环的漂移描述；只执行范围差异、残余筛选、`git diff --check` 和 Markdown 代码链接审计。
 
-Completion: 1–114 保留既有历史与 RAW-088 状态；115–118 为 RAW-089 的实时完成确认与异常统一进行中；119–122 为 RAW-090 的库存消失稳定、证据单调与显式删除快路；123–126 为 RAW-091 的明确停止边界、退出防闪与文档/错误记忆收口；127–130 为 RAW-092 的正向事件快路、dirty-task 读取、强证据直发和完整同步；131–133 为 RAW-093 的计划待确认协议识别、即时待输入投影与权威同步；134–136 为 RAW-094 的私有 patch 忽略、重订抖动修复与真实只读复核；137–139 为 RAW-095 的明确归档匿名快路与复核；140–142 为 RAW-096 的 active observation 新鲜度边界；143–145 为 RAW-097 的 unread-only 状态隔离；146 为 RAW-105 的本地置顶循环回退；147 为 RAW-106 的停止态排除。按项目验收规则不运行测试、类型、构建、真实 uTools 或截图；RAW-089–097 与 RAW-105/106 均为 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。
+Completion: 1–114 保留既有历史与 RAW-088 状态；115–118 为 RAW-089 的实时完成确认与异常统一进行中；119–122 为 RAW-090 的库存消失稳定、证据单调与显式删除快路；123–126 为 RAW-091 的明确停止边界、退出防闪与文档/错误记忆收口；127–130 为 RAW-092 的正向事件快路、dirty-task 读取、强证据直发和完整同步；131–133 为 RAW-093 的计划待确认协议识别、即时待输入投影与权威同步；134–136 为 RAW-094 的私有 patch 忽略、重订抖动修复与真实只读复核；137–139 为 RAW-095 的明确归档匿名快路与复核；140–142 为 RAW-096 的 active observation 新鲜度边界；143–145 为 RAW-097 的 unread-only 状态隔离；146 为 RAW-105 的本地置顶循环回退；147 为 RAW-106 的停止态排除；148 为 RAW-107 的非活跃快捷键缓存防护；149–152 为 RAW-108 的同源展示投影；153–156 为 RAW-109 的旧保守 ongoing 循环排除、测试合同与文档/错误记忆同步。按项目验收规则不运行测试、类型、构建、真实 uTools 或截图；RAW-089–109 均保持 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。
