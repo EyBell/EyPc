@@ -2,7 +2,7 @@
 
 ## Current Status
 
-`wj17-auto-rebind / source-verified; restart-host-acceptance-pending` — WJ-17 preserves WJ-15 exact macOS focus and WJ-16 session caching/list retention, then adds restart-safe logical-target recognition. Exact platform/app identity is mandatory; only a complete inventory's strongly similar, uniquely leading candidate may activate automatically, and its title/reference/history persist only after activation succeeds. Partial, weak, tied, and multiple candidates remain manual. Domain/state checks pass 21/21 and Window activation diagnostics pass 17/17; the final current-tree typecheck is blocked only by unrelated concurrent Float work. Real restart/rebind, build/dist, latency/cache-hit/list-retention, negative cases, other applications, installed-production trace absence, Windows host behavior, close/terminate, and the unrelated broad Runtime baseline remain open.
+`wj18-cg-title-source / static-verified; host-acceptance-pending` — WJ-18 corrects the false `target-title-changed` report on an unchanged macOS target by removing CG-title-to-AXTitle equality from the exact mapping path. The saved title is now compared only with the current same-PID/same-CG-ID `kCGWindowName`; exact `_AXUIElementGetWindow` and `AXFocusedWindow` checks remain unchanged. WJ-17's 21/21 domain/state and 17/17 Runtime results remain historical evidence. WJ-18 tests/typecheck/build/uTools/native activation were deliberately not run; a normal preload reload and real stable-window retry remain required.
 
 ## WJ-08 Targeted Evidence
 
@@ -131,6 +131,15 @@
 - Named `tests/runtime/action.test.ts` Window activation diagnostics group: 17/17 passed, 136 skipped. It covers the existing diagnostic/recovery contract plus automatic complete-scan replacement, failed-focus no-learning, manual-locator history reset, tied same-browser refusal, and partial-inventory refusal.
 - `pnpm run typecheck` remains non-green only at the unrelated concurrent [src/FloatApp.vue](../../../../src/FloatApp.vue#L1259) environment-picker comparison; no WJ-17 file appears in the diagnostic. No production build, dist preparation, uTools reload, reboot, native replacement activation, or latency measurement ran for WJ-17.
 
+## WJ-18 Same-source Title Identity Evidence
+
+- Root cause is source-verified in [preload/index.js](../../../../preload/index.js#L1): WJ-15 already selected one AX element by exact PID/CG ID, but a later gate compared that element's `AXTitle` with the saved `kCGWindowName` and mapped any disagreement to `target-title-changed`. This cross-API equality was not evidence that the window changed.
+- `validateExactCgTarget` now re-reads the layer-zero, positive-alpha Core Graphics record and requires the same PID and CG window ID. Only its normalized `kCGWindowName` may emit `title-mismatch`; missing/unreadable title data returns generic verification failure. Exact AX→CG mapping, app identity, Space selection, Raise/focus and focused-window readback remain mandatory.
+- The aggregate JXA identity script's mistaken literal `\\s` matcher is corrected to a real whitespace matcher, aligning its normalization with the inventory, isolated bridge, activation bridge and Runtime normalization.
+- Bridge revision is `wj18-cg-title-source` in preload and Renderer platform contracts, so a hot Renderer cannot silently treat the older false-positive preload as current. The canonical/public preloads remain byte-identical.
+- Existing platform contract coverage was updated to require same-source CG validation and forbid `copyAxAttribute(target, 'AXTitle')` inside `activateExactAxTarget`. It was not executed under the project verification boundary.
+- Static commands pass: `node --check` for both preloads; generated `macosActivateWindowScript` parse for both mirrors; canonical/public byte comparison; exact three-location revision check; private synchronous IPC zero-match scan; scoped project/CodeNote `git diff --check`; and project/CodeNote `audit_code_links.py` over every changed Markdown authority. No test, typecheck, build, dist preparation, uTools reload, screenshot or native window action was run.
+
 ## UI Layout Compact (2026-07-27)
 
 - Source delivery (not host-verified): [WindowsPage.vue](../../../../src/pages/WindowsPage.vue#L1) and window styles in [app.css](../../../../src/styles/app.css#L1) move stable slots to a left collapsible equal-height rail, move activation diagnostics / DEV operation traces to a right collapsible log rail (default collapsed; blocking diagnostics auto-expand), and keep the window list as the primary flex surface under a compact toolbar.
@@ -153,7 +162,7 @@ Residual host gates:
 2. Force/observe unbound multi-window, ambiguous binding, switch timeout, exact-AX-focus failure, weak/tied title drift, and truly closed target; each must retain its fail-closed/manual result. Separately verify one unique high-confidence restart replacement learns only after exact activation success.
 3. Confirm production-installed trace absence and retain Windows normal/minimized/page-topmost plus close/confirm-terminate acceptance.
 4. On macOS, permanent page-topmost remains unsupported. Any other unverified outcome must preserve only stable sanitized evidence.
-5. Reload the preload and confirm `bridge=wj16-session-cache`; then compare first and repeated invocation latency, require repeated traces to include `session-cache`, verify stale-cache miss recovers once, and confirm the workbench retains off-Space rows across partial refreshes.
+5. Reload the preload and confirm `bridge=wj18-cg-title-source`; then retry the unchanged target that previously showed `target-title-changed`. It must activate through `title-match → ax-cg-id-match → ax-focused-window` without a title-change diagnostic. Also compare first/repeated invocation latency, require repeated traces to include `session-cache`, verify stale-cache miss recovers once, and confirm the workbench retains off-Space rows across partial refreshes.
 
 ## Authorized Read-only Local Evidence
 
@@ -165,6 +174,7 @@ Residual host gates:
 
 - WJ-16 production build, dist preparation, and uTools manifest/runtime gates; focused source/unit/type checks already pass.
 - WJ-17 restart path: reboot or recreate one fixed Rider/AiTools window so PID/native reference changes, invoke its slot without reopening the editor, and confirm the correct unique window activates and the next invocation uses the new persisted reference. Repeat with two similar browser windows and require explicit choice rather than automatic substitution.
+- WJ-18 stable-reference path: after a full uTools preload reload, invoke the same unchanged macOS target that previously produced “目标窗口标题或所属应用已变化”. It must activate without rebind; then deliberately change the CG-visible title and confirm only that real same-source change can produce `target-title-changed` or conservative candidate recovery.
 - Silent slot jump / missing-target workbench / manual Tab load (no auto-scan).
 - With a nonempty window query, toolbar load/refresh and `Ctrl+R` clear the query and reveal the refreshed complete list; an automatic cache-miss rescan does not clear it.
 - macOS: Screen Recording + Accessibility; refresh prefers CG for other Spaces/displays and falls back to AX current-Space list when CG has no titled windows; verify exact AX→CG mapping/focus on additional applications, compatibility title/ordinal ambiguity when private mapping is unavailable, AX close, and confirm-gated force terminate. “页面置顶” must not claim persistent third-party success.
@@ -178,4 +188,4 @@ Residual host gates:
 
 ## Verification Boundary
 
-WJ-15 did run the focused suites, typecheck/production build/uTools runtime validator, isolated privacy-safe probes, and two real AiTools off-Space global-slot activations. WJ-16 ran preload syntax/mirror/diff checks, an initial semantic type checkpoint, three focused Runtime cases, platform and diagnostics UI suites, plus one broader non-green Runtime file. WJ-17 ran domain/state 21/21 and Window activation diagnostics 17/17; the current-tree typecheck remains blocked only by unrelated concurrent Float work. WJ-16/17 did not run production build/dist preparation, uTools reload, reboot/restart replacement, native latency measurement, Windows host behavior, target close/terminate, permission changes, installed-production trace inspection, or residual negative cases. Neither recorded broad non-green run is a full-suite acceptance gate.
+WJ-15 did run the focused suites, typecheck/production build/uTools runtime validator, isolated privacy-safe probes, and two real AiTools off-Space global-slot activations. WJ-16 ran preload syntax/mirror/diff checks, an initial semantic type checkpoint, three focused Runtime cases, platform and diagnostics UI suites, plus one broader non-green Runtime file. WJ-17 ran domain/state 21/21 and Window activation diagnostics 17/17; the then-current typecheck was blocked only by unrelated concurrent Float work. WJ-18 is limited to source inspection, preload syntax/mirror/revision/static-contract checks, diff checks and documentation audits; it does not claim any test, typecheck, build, uTools reload, native activation or visual acceptance. All real-host WJ-18 behavior remains `未校验，待用户验收`.

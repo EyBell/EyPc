@@ -663,7 +663,7 @@ function attempt(callback, fallback) {
   try { return callback() } catch (error) { return fallback }
 }
 function asText(value) { return String(value || '').trim() }
-function normalizeTitle(value) { return asText(value).toLowerCase().replace(/\\s+/g, ' ') }
+function normalizeTitle(value) { return asText(value).toLowerCase().replace(/\s+/g, ' ') }
 function environmentValue(name) {
   const value = $.NSProcessInfo.processInfo.environment.objectForKey(name)
   return value ? String(ObjC.unwrap(value) || '') : ''
@@ -963,6 +963,28 @@ function exactAxFocused(app) {
   const focused = copyAxAttribute(app, 'AXFocusedWindow')
   return focused.error === 0 && focused.value && exactCgWindowNumber(focused.value) === cgWindowNumber
 }
+function validateExactCgTarget() {
+  if (cgWindowNumber <= 0) return { outcome: 'unavailable' }
+  try {
+    const raw = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID)))
+    const cgList = Array.isArray(raw) ? raw : []
+    const matches = cgList.filter((item) => {
+      if (!item || typeof item !== 'object') return false
+      if (Math.trunc(Number(item.kCGWindowLayer || 0)) !== 0) return false
+      if (Math.trunc(Number(item.kCGWindowOwnerPID || 0)) !== processId) return false
+      if (Math.trunc(Number(item.kCGWindowNumber || 0)) !== cgWindowNumber) return false
+      const alpha = Number(item.kCGWindowAlpha)
+      return !Number.isFinite(alpha) || alpha > 0
+    })
+    if (matches.length !== 1) return { outcome: matches.length > 1 ? 'ambiguous' : 'not-found' }
+    const actualTitle = normalizeTitle(matches[0].kCGWindowName)
+    if (!actualTitle) return { outcome: 'unavailable' }
+    if (expectedTitle && actualTitle !== normalizeTitle(expectedTitle)) return { outcome: 'title-mismatch' }
+    return { outcome: 'matched' }
+  } catch (error) {
+    return { outcome: 'unavailable' }
+  }
+}
 function activateExactAxTarget(resolved) {
   addTrace('process', 'ok')
   addTrace('target', 'ok', 'ax-cg-id-match')
@@ -985,16 +1007,6 @@ function activateExactAxTarget(resolved) {
     activationReasonCode = 'target-title-changed'
     addTrace('target', 'not-found', 'title-mismatch')
     return 'not-found'
-  }
-  if (expectedTitle) {
-    const copiedTitle = copyAxAttribute(target, 'AXTitle')
-    let actualTitle = ''
-    try { actualTitle = copiedTitle.error === 0 && copiedTitle.value ? normalizeTitle(ObjC.unwrap(copiedTitle.value)) : '' } catch (error) {}
-    if ((actualTitle && actualTitle !== normalizeTitle(expectedTitle)) || (requireExactAx && !actualTitle)) {
-      activationReasonCode = 'target-title-changed'
-      addTrace('target', 'not-found', 'title-mismatch')
-      return 'not-found'
-    }
   }
   const minimized = copyAxAttribute(target, 'AXMinimized')
   if (minimized.error === 0 && Boolean(ObjC.unwrap(minimized.value))) {
@@ -1088,6 +1100,27 @@ function booleanAttribute(target, name) {
   try { return { known: true, value: target.attributes.byName(name).value() === true } } catch (error) { return { known: false, value: false } }
 }
 function activate() {
+  if (cgWindowNumber > 0) {
+    const cgIdentity = validateExactCgTarget()
+    if (cgIdentity.outcome === 'title-mismatch') {
+      activationReasonCode = 'target-title-changed'
+      addTrace('target', 'not-found', 'title-mismatch')
+      return 'not-found'
+    }
+    if (cgIdentity.outcome === 'ambiguous') {
+      addTrace('target', 'ambiguous')
+      return 'ambiguous'
+    }
+    if (cgIdentity.outcome === 'not-found') {
+      addTrace('target', 'not-found')
+      return 'not-found'
+    }
+    if (cgIdentity.outcome !== 'matched') {
+      addTrace('target', 'unavailable', 'title-match')
+      return 'failed'
+    }
+    addTrace('target', 'ok', 'title-match')
+  }
   const exact = resolveExactAxTarget()
   if (exact.outcome === 'matched') return activateExactAxTarget(exact)
   if (exact.outcome === 'ambiguous') {
@@ -1257,7 +1290,7 @@ if (!processes.length) {
 // Private SkyLight CGS: resolve a concrete CGWindowNumber against the current managed-Space map.
 // Direct per-window queries are authoritative; per-Space tag scans only corroborate/fill a direct miss.
 // Bindings stay preload-session-only because CG window IDs, PIDs, titles and Space IDs are recyclable.
-const WINDOW_BRIDGE_REVISION = 'wj16-session-cache'
+const WINDOW_BRIDGE_REVISION = 'wj18-cg-title-source'
 const MACOS_CGS_WINDOW_TAG_MASK = 0x7
 const MACOS_CGS_SPACE_QUERY_MASKS = [0x7, 0x7fffffff]
 const MACOS_CGS_SPACE_SETTLE_MS = 120
