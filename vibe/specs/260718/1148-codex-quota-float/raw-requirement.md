@@ -2,7 +2,7 @@
 
 Tool: codex
 Date: 2026-07-22
-Requirement version: `2026-07-29.5`
+Requirement version: `2026-07-29.7`
 Spec: [spec.md](spec.md#L1)
 Source format: `chat-requirement-summary`
 Capture fidelity: `normalized-material-requirement`
@@ -117,10 +117,14 @@ Privacy boundary: `no-verbatim-prompt-or-transcript`
 - `RAW-114` (`active`, `supersedes-visible-float-slots-in-260729-1435-and-refines-RAW-047-113`): 用户明确要求展开 Codex 浮窗不显示额度下方的 `Actions / Environment` 卡槽、项目/Environment 选择层或 Setup 提示。Environment Action 的五个全局命令及 Controller/Host 风险门禁可以保留，但 Float 只能把 `codex.action.run.1…5` 转发给 Controller，不得再维护第二套目标、Environment、会话轮询、确认或选择状态。该局部状态也不得参与展开卡收缩门禁。指针与焦点离开或窗口因点击其它位置失焦时，清理浮窗临时确认/提示并在约 `220ms` 后自动收缩；composer、详情/抽屉、别名编辑、Quick Jump、Shift 预览与 resize 仍可在真实交互期间阻止收缩。本条不删除 Host/Controller 的全局 Action 能力，不增加新的状态 timer、协议或持久化；既有 UI 测试文件只更新合同不执行，状态保持 `reported / 未校验，待用户验收`。
 - `RAW-115` (`active`, `refines-RAW-092-110-112-113`): 用户再次指出插件状态栏与 Codex App 本身不一致。授权的只读联调在同一时刻观察到 Codex 任务接口有 `1 active`，而已展开插件为 `0 动态 / 0 近期任务`；这证明问题发生在 Controller 原子包之前的安全库存登记，不能用 Renderer 角标补数。Desktop 已收到但尚未进入 App Server `thread/list` 的主任务 snapshot 仍只保存在 Preload：若它保持 live active，一次空/滞后的库存扫描不得删除该 shadow。urgent 扫描对当前 dirty 且不在 `thread/list` 的 raw thread 允许在 Preload 内执行一次有界精确 `thread/read(includeTurns=false)`；只有返回身份完全相同、状态结构有效，并继续通过原生项目归属、最新 Turn `startedAt`、匿名 key 与短期 action alias 的完整登记后，才能作为普通任务进入同一 Controller 原子状态包，随后由已保留的 Desktop shadow 覆盖为 exact live 状态。精确读取失败或身份不符不得制造占位卡、匿名外计数或泄漏 raw ID/正文；live shadow 保留到后续真实库存追上、明确离开 active、归档、断桥或会话清理。既有 `thread/list` 完整分页、50ms 合并、读取中补读、`[0,300,1000]` Turn 核验、任务缺失隔离和 Renderer 零额外 debounce 均保持不变。既有 bridge 测试文件补充 `thread/list` 滞后与首次精确读取未命中序列但不执行；状态保持 `reported / 未校验，待用户验收`。
 
+- `RAW-116` (`active`, `refines-RAW-091-094-108-112-113`): 用户继续反馈任务角标数量与状态分段错误：主动停止的任务默认仍落在“正在进行中”，切换到该停止任务后会恢复“已停止”，再切换到另一条进行中任务时又回到“正在进行中”。源码调用链确认 Codex Desktop 切换当前任务会让上一任务的 stream owner 广播 `thread-stream-following-changed(following=false)`；preload 旧实现把这个关注切换等同于 owner/client 断开，删除上一任务已确认的 `desktop-live idle` shadow 并立即回退 connector，因此 interrupted/failed 因缺少 exact idle 只能再次保守投影为 ongoing。真正的客户端离线已有独立 `client-status-changed(disconnected/closed)` 清理路径。对于仍在 EyPc inventory 内的主任务，或父任务仍在 inventory 内的 Side Chat，owner `following=false` 只触发向同一 owner 的定向 `following=true` 续订，并保留最后一份精确 shadow 直到替换 snapshot 到达；真实 owner 断开、任务离库、归档、桥失败和显式退订仍按原路径丢弃 live authority。该修复不修改 stopped/ongoing 判定、角标/卡片原子包、读取状态、Turn 核验、timer、协议字段、持久化或隐私边界。`preload/index.js` 与 public 镜像同步，既有 bridge 测试文件只补“切换任务不产生 connector fallback、停止任务保持 idle/live”的合同且不执行；状态保持 `reported / 未校验，待用户验收`。
+- `RAW-117` (`active`, `refines-RAW-096-104-110-112-116`): 用户补充同一切换路径中“已完成”也不会同步。RAW-116 保留最后 live shadow 后，任务完成与 owner `following=false` 仍可能竞态：若完整 `turn/completed` 恰好漏收，而定向续订又回放旧 `desktop-live active` snapshot，已知 latest Turn 会继续停在 `inProgress`，既有“已知 terminal 与 active snapshot 冲突”核验也不会启动。对仍在库、成功向原 owner 定向续订、且上一精确 shadow 为无待输入/审批的 active 任务，preload 必须同时复用现有 3 秒 `[0,300,1000]` 单飞 `thread/turns/list(limit=1, sortDirection=desc, itemsView=notLoaded)` 做一次 latest-Turn 校对：同一/更新 Turn 已明确 completed 时立即发布脱敏 `targeted-after-exit` 完成证据，使 Controller 原子包中的完成分段与进行中角标同步收敛；仍为 inProgress、出现等待请求、读取失败或更新 activity 时继续保守 active/ongoing。该校对不得删除 shadow、不得从 snapshot/时间猜完成，不新增 Renderer 计数、timer、协议、持久化或 raw identity 暴露；真实 owner 断开与 RAW-116 清理边界不变。双 preload 镜像同步，既有 bridge 测试文件补“切走时漏收完成通知且替换 snapshot 仍回放 active，也只定向读取一次并发布 completed”的合同且不执行；状态保持 `reported / 未校验，待用户验收`。
+
 ## Latest Superseding Requirement Map
 
 | 主题 | 当前唯一合同 | 来源 |
 | --- | --- | --- |
+| Stream owner 连续性 | Desktop 当前选中项变化产生的 owner `following=false` 不等于 client 断开；仍在库的主任务或父任务仍在库的 Side Chat 保留最后 exact shadow，并向同一 owner 定向续订。上一 shadow 若是无等待的 active，同时用既有单任务有界读取校对可能漏收的完成；只有独立断开、bridge 失败、归档或离库才撤销 live authority | `RAW-116`、`RAW-117` |
 | 真实库存 | 原生项目注册 + 完整未归档分页 + 固定归属优先级 + 指纹一致；单次缺行不删任务，只有跨完整校对周期的连续同集合确认才接纳数量下降；已映射的明确归档事件可立即移除其匿名 key 并 urgent 复核 | `RAW-035`、`RAW-043`、`RAW-090`、`RAW-095` |
 | 时间与完整性 | 1–365 天滚动窗口；latest Turn `startedAt`；整批 fail-closed；Turn 版本、完成时间和 `updatedAt` 不得回退 | `RAW-036`、`RAW-090` |
 | 列表与项目 | 四个可见页签；动态页最近 6 小时按待输入、正在进行中、已停止、已完成未读、已完成分段；Controller 原子任务状态包一次生成互斥状态段、动态总数与紧凑数量，搜索只过滤列表；新增任务、首次待输入及计划完成待确认走事件快路，任务缺行不立即减少；已映射的显式外部归档只移除其匿名 key 后 urgent 复核；未观察的私有 Desktop patch 不得通过重订让旧 active 复活；只有 terminal Turn + live idle/not-running 的明确停止进入已停止，failed/interrupted 等在传输或权威不确定时仍以保守 ongoing 进入正在进行中；底层最近 Turn 开始时间倒序、显示层置顶优先、Pinned/Projects/Chats；`all/inputRequired` 仅作兼容投影 | `RAW-037`、`RAW-038`、`RAW-045`、`RAW-053`、`RAW-056`、`RAW-063`、`RAW-064`、`RAW-066`、`RAW-068`、`RAW-069`、`RAW-077`、`RAW-078`、`RAW-079`、`RAW-080`、`RAW-089`、`RAW-090`、`RAW-091`、`RAW-092`、`RAW-093`、`RAW-094`、`RAW-095`、`RAW-108`、`RAW-113` |

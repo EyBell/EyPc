@@ -3,7 +3,7 @@
 Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-29.5`
+Requirement version: `2026-07-29.7`
 
 Authority: [spec.md](spec.md#L1)
 
@@ -195,4 +195,13 @@ Authority: [spec.md](spec.md#L1)
 175. 以 RAW-115 在 verified inventory scan 中对 dirty 且 `thread/list` 缺行的任务执行有界 exact `thread/read`，随后继续走项目归属、latest Turn、匿名 key/action alias 与 fingerprint 门禁；`updateInventory` 只保留尚未登记且仍 live active 的 main shadow，不保留已登记后消失或已终止的 shadow。
 176. 在既有 bridge 测试模块补 `thread/list` 滞后 exact-read 登记和首次错配后 shadow 保留序列；同步 Controlled/canonical/current/architecture/技术手册/帮助、Environment Action 过程修订与 CodeNote 派生理解。仅执行范围/残留/镜像/链接/`git diff --check` 静态核验，不运行 tests/typecheck/build/uTools/真实任务验收。
 
-Completion: 1–114 保留既有历史与 RAW-088 状态；115–172 保留 RAW-089–113 的实时证据、稳定投影与原子包演进；173–174 为 RAW-114 的可见 Actions 删除与 220ms 统一收缩；175–176 为 RAW-115 的 dirty exact-read 安全登记、live shadow 保留、测试合同与权威同步。按项目验收规则不运行测试、类型、构建或真实 uTools 验收；RAW-089–115 均保持 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。
+177. 以 RAW-116 追踪“停止任务只在被选中时正确、切到进行中任务又回 ongoing”的事件链，确认 Desktop owner `following=false` 删除 exact idle shadow并发布 connector fallback；真正 client disconnect 已有独立分支，故问题不在 Renderer 分组或角标计算。
+178. 在 [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 对仍在库的主任务/Side Chat 保留最后精确 owner shadow，并向同一 owner 定向续订；真实 owner disconnect、离库、归档和 bridge 清理语义不变。
+179. 在既有 [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 补 stopped/live-idle 任务切换后续订且不发布 connector fallback 的合同，不新增测试模块且不执行测试。
+180. 同步 RAW-116 到 Controlled/canonical/current/architecture/技术手册/用户指南及项目错误记忆；只执行源码静态语法、preload 镜像、私有同步 IPC 残余、限定 diff、Markdown 链接与 `git diff --check`，不运行 tests/typecheck/build/uTools/真实任务切换。
+
+181. 以 RAW-117 追踪“已完成也不随任务切换同步”，确认 owner `following=false` 与完整 `turn/completed` 竞态时，RAW-116 虽保留 live shadow，但旧 active snapshot 与 `inProgress` 基线不会自行触发 terminal-active 核验。
+182. 在成功定向续订仍在库、无等待的 active shadow 时，复用现有 `verifyStaleActive` 单任务有界 latest-Turn 读取；completed 走既有 targeted 强证据，inProgress/失败/等待/真实 activity 保持保守语义。补旧 active 回放合同但不执行。
+183. 同步 RAW-117 到 Controlled/canonical/current/architecture/技术手册/用户指南和同一 task-switch 错误记忆；只执行 preload 静态语法/镜像、私有同步 IPC 残余、限定 diff、Markdown 链接与 `git diff --check`，不运行 tests/typecheck/build/uTools/真实任务切换。
+
+Completion: 1–114 保留既有历史与 RAW-088 状态；115–172 保留 RAW-089–113 的实时证据、稳定投影与原子包演进；173–174 为 RAW-114 的可见 Actions 删除与 220ms 统一收缩；175–176 为 RAW-115 的 dirty exact-read 安全登记、live shadow 保留、测试合同与权威同步；177–180 为 RAW-116 的 owner-follow 续订；181–183 为 RAW-117 的切换边沿完成校对、测试合同与权威同步。按项目验收规则不运行测试、类型、构建或真实 uTools 验收；RAW-089–117 均保持 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。

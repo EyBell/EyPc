@@ -4,7 +4,7 @@ Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
 Documentation level: `controlled`
-Requirement version: `2026-07-29.5`
+Requirement version: `2026-07-29.7`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
@@ -64,10 +64,13 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 修订 `2026-07-29.5` 追加 RAW-114/115：展开浮窗删除 Actions/Environment 可见块及 Renderer 第二套目标、选择与确认状态，pointer/focus departure 和 window blur 共用约 220ms 自动收缩；五个命令只转发 Controller。Preload 对本轮 dirty 且暂未进入完整 `thread/list` 的任务执行一次有界 exact read，仍经完整原生归属、latest Turn、匿名化与指纹门禁后才进入同一个原子任务状态包；从未登记且仍 live active 的 shadow 可跨首次滞后扫描等待安全登记，不增加占位卡或独立角标通道。
 
+修订 `2026-07-29.6` 追加 RAW-116：Desktop 切换当前任务时，上一任务 owner 的 `following=false` 是关注对象变化，不是 client 断开。仍在 EyPc inventory 内的主任务或父任务仍在库的 Side Chat 保留最后精确 live shadow，并向同一 owner 定向续订；只有独立 client-disconnect、离库、归档或桥失败路径才撤销 live authority。停止任务因此不会因用户查看另一条进行中任务而丢失 exact idle、回到 ongoing 或错误增加角标。
+
 ## Current Requirement And Implementation Map
 
 | 领域 | 当前合同 | 实现与证据 |
 | --- | --- | --- |
+| Desktop stream owner 连续性 | 当前选中任务切换产生的 owner `following=false` 不撤销仍在库任务的 exact live shadow；Preload 保留该 shadow并向同一 owner 定向续订。独立 client disconnect、bridge 失败、归档与离库仍撤销 live authority | [preload/index.js](../../../../preload/index.js#L1)、[codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) |
 | 原生项目状态 | 日常流程只读解析；RAW-052 项目移除经 Codex 退出、alias/指纹/结构和原子回滚门禁后，仅修改原生项目注册字段 | [preload/index.js](../../../../preload/index.js#L1)、[codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) |
 | 完整任务库存 | 完整分页读取 `archived=false`；归属优先 native assignment、Chats、最深有效 cwd，其他任务排除。新快照缺少已发布 key 时先保留上一份内存稳定清单，跨一个完整校对周期的连续同集合确认后才接纳消失；仅当前已映射的明确归档事件携带匿名 key 立即移除并 urgent 复核 | [preload/index.js](../../../../preload/index.js#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1)、[codex-real-preflight.mjs](../../../../scripts/codex-real-preflight.mjs#L1) |
 | 严格时间/完整性 | 最新 Turn 必须存在有效 `startedAt`；滚动窗口 1–365 天、默认 30 天、边界包含；时间窗口资格取最新 Turn 开始/完成活动但不以 `updatedAt` 回退；项目指纹变化重试一次，仍变化则不发布伪完整数据。已接纳的 Turn `startedAt`/completed outcome/`completedAt` 和任务 `updatedAt` 不允许被更旧快照回退 | [codex.ts](../../../../src/domain/codex.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
@@ -503,3 +506,15 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 - 未登记 main shadow 若在首次滞后扫描时仍是 live active，`updateInventory` 不再把它当成已验证删除。精确读取成功后它与普通 inventory row 合并，Desktop shadow 在同一次更新中覆盖 connector 状态并进入 Controller；若第一次读取失败/错配，则 shadow 只在 Preload 会话内保留，等待真实 `thread/list` 后续追上。曾经已登记后又消失的任务仍走原有退订/删除与 Controller missing-key 隔离，不能借此复活归档任务。
 - Controller 与 Renderer 不接收额外“未知 active 数”或占位卡。新任务完成安全登记后只通过现有 `CodexTaskStatePackageV1` 同时改变动态卡片、状态段、三个角标、ARIA、水球摘要和前后任务候选；登记前所有表面保持同一旧原子包。50ms structural coalescing、读取中补读、3 秒 Turn 定向核验、terminal 抖动保护及普通 15 秒完整校对均不变。
 - 源码合同新增在现有 [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1)：覆盖 `thread/list` 尚未出现但 exact read 已可用，以及 exact read 首次错配后 live shadow 保留、后续 list 注册仍恢复 waiting-input。依用户门禁，本轮不执行测试、typecheck、build、uTools 或真实状态切换。
+
+## RAW-116 Task-Switch Stream Ownership Continuity
+
+- [preload/index.js](../../../../preload/index.js#L1) 将 `thread-stream-following-changed(following=false)` 与 `client-status-changed(disconnected/closed)` 分离。前者若来自当前 shadow owner，且主任务仍在 inventory 或 Side Chat 的父任务仍在 inventory，则保留该 owner 的最后精确 shadow，并向同一 owner 定向发送 `following=true` 取得替换 snapshot；不会先发布 connector fallback。
+- 真正 owner 离线仍由 `dropOwner` 删除其所有 shadow/read authority，任务离库、归档、bridge reset/close 和显式非在库退订也保持原清理语义。未决请求、首次 snapshot 佐证、active interval、read-state-only、latest-Turn 核验和匿名投影不变。
+- 既有 [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 增加 stopped interrupted + live idle 在 owner 切换关注任务后定向续订、全过程不出现 connector fallback 的合同；未新增测试模块，且依项目规则不执行测试、typecheck、build、uTools 或真实任务切换。
+
+## RAW-117 Task-Switch Completion Reconciliation
+
+- RAW-116 成功保留并定向续订 owner shadow 后，若该 shadow 为无 input/approval 等待的 active，[preload/index.js](../../../../preload/index.js#L1) 同时对主任务（Side Chat 使用父任务）调度既有 `verifyStaleActive` latest-Turn 单飞读取。它覆盖任务切换与完整 `turn/completed` 漏收的竞态，不等待旧 active 替换 snapshot 自己退出。
+- 同一/更新 Turn 已 completed 时只发布现有脱敏状态/时间和 `targeted-after-exit`，由既有 Controller 原子包与 stale-active 完成排序一次更新完成分段、卡片和角标。latest Turn 仍 inProgress、live waiting、读取失败或真实 activity 更新时保持 active/ongoing；不删除 shadow、不新增 Renderer 补数或完成推断。
+- 既有 [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 增加“完成通知漏收 + 定向续订仍回放旧 active snapshot”合同，要求只增加一次该任务 latest-Turn 读取并发布 completed。双 preload 镜像同步；依项目规则不执行测试、typecheck、build、uTools 或真实任务切换。

@@ -3,10 +3,12 @@
 Tool: codex
 Date: 2026-07-29
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-29.5`
+Requirement version: `2026-07-29.7`
 
 ## Result
 
+- RAW-116/117 收敛同一任务切换边沿：上一 owner 的 `following=false` 只触发定向续订并保留仍在库的 main/Side exact shadow，不在替换 snapshot 前发布 connector fallback；停止任务因此保持 exact idle。若被切走任务是无等待 active，同一次成功续订还复用既有 3 秒单任务 latest-Turn 校对；即使完整 `turn/completed` 漏收且 owner 回放旧 active，fresh completed 仍以 `targeted-after-exit` 进入同一 Controller 原子包。真实运行、等待、读取失败和独立 owner disconnect/archive/inventory/bridge 清理保持原语义。
+- 本轮文档收口将 15 条反复出现的 Codex 状态错误压缩为 [六类证据边界](../../../knowledge/error-memory/README.md#L1)，叶子记录保留为历史事件；诊断接口版本差与任务状态语义版本差已拆为两个单一根因记录，旧 App Server 会话清理记录已补齐标准 schema。产品行为与 requirement version 不因这次纯文档归档改变。
 - RAW-115 修正“Codex 原生仍有一个 active、插件却显示 0”的安全库存登记缺口。[preload/index.js](../../../../preload/index.js#L1) 现在对本轮 dirty 且不在滞后 `thread/list` 的任务做一次有界 exact `thread/read`，仍须通过原生项目归属、latest Turn、匿名 key/action alias 与 registry fingerprint 才进入 Controller 原子包；没有占位卡或单独角标补数。未登记且仍 live active 的 Desktop shadow 不再被第一次空扫描删除，首次 exact read 错配后可等真实 list 追上；曾登记后缺失、terminal、归档或断桥仍按原门禁清理。只读联调的 `1 native active / 0 plugin dynamic` 是修复前定位证据，不是验收。
 - RAW-114 删除了用户截图中额度下方整块 `Actions / Environment`、选择层与 Setup 提示，并删除 Float 的目标/Environment/session/confirm 第二套状态；卡内五个命令只转发 Controller，系统级 Action 能力继续存在。pointer/focus departure 和点击其它位置引发的 window blur 现在共用约 220ms 自动收缩，环境选择器不再形成不可见阻断；真实 composer/panel/alias/Quick Jump/Shift preview/resize 仍可暂缓收缩。
 - RAW-113 修正了“版本保护上线后所有任务状态都没了”的回归。[codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1) 现在定义唯一原子任务状态包；[codexController.ts](../../../../src/runtime/codexController.ts#L1) 将稳定会话、五个动态分组、三个角标数量、下一次 6 小时边界和兼容诊断一起发布给主页面与浮窗，并让前后任务读取包内 active 组。[FloatApp.vue](../../../../src/FloatApp.vue#L1) 删除自己的 revision 清空、动态筛选和一分钟 clock，[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 的水球预览也只读该包。旧 Preload/Controller 不再触发双重空投影：可用任务继续显示并标为降级、建议重载；若旧 Controller 已经把任务清空，仍需正常重载让新 Controller 重新读取，Renderer 不猜造数据。
@@ -76,6 +78,7 @@ Requirement version: `2026-07-29.5`
 
 ## User Acceptance
 
+- RAW-116/117 为 `未校验，待用户验收`：正常重载后，先在一条 exact live-idle 的可丢弃停止任务与真实进行中任务之间切换两轮，停止任务不得回到进行中角标；再让一条任务自然完成并在完成边沿立即切走，即使 Desktop 回放旧 active，也应在既有 3 秒有界校对内让完成分段、卡片和角标一次同步。切走仍真实运行的任务不得误判完成，完全退出 Codex 仍须撤销 owner authority。
 - RAW-113 为 `未校验，待用户验收`：正常重载 EyPc 后，浮窗必须同时恢复任务卡片与三个角标，不能只剩额度。当前 revision 链路下，动态“正在进行中”卡片数、进行中角标、水球摘要、ARIA、设置预览和前后任务 active 候选必须来自同一包；模拟/观察旧桥时仍显示旧快照中可用的任务并附带“状态已保留，建议重载”，不得再次全部清空。随后开始并完成一条可丢弃任务，卡片、数字和归档能力必须一次同步切换。
 - RAW-112 为 `未校验，待用户验收`：在 uTools 中正常重载 EyPc 并恢复浮窗。两条最新 Turn 已 terminal、没有 waiting request 的旧任务可在最多三次定向读取后一次离开“正在进行中”，卡片与角标必须保持同数，不能永久留 2，也不能先后闪动。随后启动一条可丢弃新任务：完整 started Turn 或真实 activity patch 必须立即恢复/新增一条进行中且无额外核验；完成或主动停止后，completed/stopped、角标和归档能力按既有强证据一次切换。临时断连、读取失败、revision 变化或 waiting request 仍必须保守进行中，不能被超时猜成完成。
 - RAW-111 的 mixed-version 验收已并入 RAW-113：当前链路下角标和卡片必须同数；旧链路只可显示降级提示并保留其可用任务，不得再以“版本过期”为由清空三个角标。正常重载后再按 RAW-110/112 验证真实数量与完成切换。
