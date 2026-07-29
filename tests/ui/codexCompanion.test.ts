@@ -198,6 +198,12 @@ afterEach(() => {
 })
 
 describe('Codex Companion V3 UI contract', () => {
+  it('removes the legacy completion presentation delay control', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
+    expect(source).not.toContain('进行中离开稳定窗')
+    expect(source).not.toContain('completionPresentationDelayMs')
+  })
+
   it('shows Weekly-only 23% with a complete Weekly ring and no false 5h label', () => {
     const quotaValue = quota(false, true)
     const compact = buildCodexCompactPresentation({
@@ -1284,6 +1290,7 @@ describe('Codex Companion V3 UI contract', () => {
     expect(wrapper.text()).not.toContain('Codex 数据与桌面实时状态已就绪')
 
     await wrapper.get('#codex-config-tab-tasks').trigger('click')
+    expect(wrapper.text()).not.toContain('进行中离开稳定窗')
     const input = wrapper.get('input[type="number"][min="1"][max="365"]')
     expect((input.element as HTMLInputElement).value).toBe('30')
     await input.setValue('45')

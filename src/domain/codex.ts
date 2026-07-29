@@ -24,7 +24,6 @@ export type CodexWaterPercentTextStyle = 'regular' | 'bold' | 'italic' | 'bold-i
 export type CodexWaterOuterStyle = 'solid' | 'segmented'
 export type CodexWaterColorMode = 'quota' | 'custom'
 export type CodexWaterGlow = 'off' | 'soft' | 'strong'
-export type CodexCompletionPresentationDelayMs = 0 | 500 | 1000 | 1500 | 2000 | 3000
 export type CodexQuotaFamily = 'normal' | 'spark'
 export type CodexNewThreadModelPolicy = 'quota-auto'
 
@@ -190,6 +189,8 @@ export type CodexTurnStatus = 'completed' | 'interrupted' | 'failed' | 'inProgre
 export type CodexDesktopBridgeState = 'not-checked' | 'connecting' | 'connected' | 'not-running' | 'incompatible' | 'failed'
 export type CodexStatusAuthority = 'desktop-live' | 'connector' | 'unavailable'
 export type CodexUnreadAuthority = 'desktop-live' | 'desktop-persisted' | 'unavailable'
+export type CodexActivityEvidenceOrigin = 'connector' | 'initial-snapshot' | 'activity-event'
+export type CodexTurnEvidenceOrigin = 'inventory' | 'turn-started' | 'turn-completed' | 'targeted-after-exit' | 'snapshot-corroborated'
 
 export interface CodexHostThread {
   /** Provider-issued stable anonymous correlation key; never a raw thread id. */
@@ -202,7 +203,10 @@ export interface CodexHostThread {
   activeFlags: CodexThreadActiveFlag[]
   /** Activity is authoritative only while the desktop follower is live. */
   statusAuthority?: CodexStatusAuthority
-  /** Local observation time for the current Desktop-live active interval; never a raw identity. */
+  /** Evidence provenance used to distinguish a replayed snapshot from a real later activity patch. */
+  activityEvidence?: CodexActivityEvidenceOrigin
+  activityRevision?: number
+  /** @deprecated V2 transport compatibility only; never used for semantic ordering. */
   desktopActiveSince?: number
   /** Exact unread state owned by Codex Desktop, never an EyPc read receipt. */
   hasUnreadTurn?: boolean
@@ -218,6 +222,8 @@ export interface CodexHostThread {
   lastTurnStartedAt?: number
   /** Present only for an authoritative persisted `completed` turn. */
   lastTurnCompletedAt?: number
+  /** Provenance of the latest Turn evidence; timestamps are never compared with local clocks. */
+  lastTurnEvidence?: CodexTurnEvidenceOrigin
   /** Anonymous native project identity. Raw project ids and paths never cross the bridge. */
   projectKey?: string
   projectName?: string
@@ -264,7 +270,7 @@ export interface CodexPendingRecoverySnapshotV1 {
  * marked degraded, but its atomic task-state package is preserved rather than
  * being independently cleared by Controller or Renderer.
  */
-export const CODEX_TASK_STATE_REVISION = 'task-state-v2'
+export const CODEX_TASK_STATE_REVISION = 'task-state-v3'
 
 export interface CodexHostSnapshotV1 {
   version: 1
@@ -339,7 +345,9 @@ export interface CodexActivityDeltaEntryV2 {
   status?: CodexThreadStatus
   activeFlags?: CodexThreadActiveFlag[]
   statusAuthority?: CodexStatusAuthority
-  /** Local observation time for the current Desktop-live active interval. */
+  activityEvidence?: CodexActivityEvidenceOrigin
+  activityRevision?: number
+  /** @deprecated V2 transport compatibility only; never used for semantic ordering. */
   desktopActiveSince?: number
   hasUnreadTurn?: boolean
   unreadAuthority?: CodexUnreadAuthority
@@ -347,8 +355,8 @@ export interface CodexActivityDeltaEntryV2 {
   lastTurnStatus?: CodexTurnStatus
   lastTurnStartedAt?: number
   lastTurnCompletedAt?: number
-  /** Proves that this terminal outcome was reread after the live active exit. */
-  lastTurnEvidence?: 'targeted-after-exit'
+  /** Privacy-safe provenance for monotonic Turn evidence. */
+  lastTurnEvidence?: CodexTurnEvidenceOrigin
 }
 
 export interface CodexActivityDeltaV2 {
@@ -542,8 +550,6 @@ export interface CodexSettings {
   conversationInboxEnabled: boolean
   quotaRefreshMinutes: CodexQuotaRefreshMinutes
   taskRefreshSeconds: CodexTaskRefreshSeconds
-  /** Delay before a previously-running task is presented as completed. */
-  completionPresentationDelayMs: CodexCompletionPresentationDelayMs
   newThreadModelPolicy: CodexNewThreadModelPolicy
   /** Applies only while ordinary Codex quota is selected by quota-auto. */
   newThreadPreferredModel: string
@@ -1094,7 +1100,6 @@ export function defaultCodexSettings(): CodexSettings {
     conversationInboxEnabled: true,
     quotaRefreshMinutes: 5,
     taskRefreshSeconds: 15,
-    completionPresentationDelayMs: 0,
     newThreadModelPolicy: 'quota-auto',
     newThreadPreferredModel: '',
     timeWindowDays: 30,
@@ -1123,7 +1128,6 @@ export function normalizeCodexSettings(value: unknown): CodexSettings {
     conversationInboxEnabled: source.conversationInboxEnabled !== false,
     quotaRefreshMinutes: enumValue(source.quotaRefreshMinutes, [0, 5, 10, 15, 30] as const, fallback.quotaRefreshMinutes),
     taskRefreshSeconds: enumValue(source.taskRefreshSeconds, [0, 15, 30, 60] as const, fallback.taskRefreshSeconds),
-    completionPresentationDelayMs: enumValue(source.completionPresentationDelayMs, [0, 500, 1000, 1500, 2000, 3000] as const, fallback.completionPresentationDelayMs),
     newThreadModelPolicy: enumValue(source.newThreadModelPolicy, ['quota-auto'] as const, fallback.newThreadModelPolicy),
     newThreadPreferredModel: typeof source.newThreadPreferredModel === 'string' && /^[A-Za-z0-9._:-]{1,120}$/.test(source.newThreadPreferredModel)
       ? source.newThreadPreferredModel
@@ -1320,18 +1324,18 @@ function isSupersededDesktopActiveTask(thread: CodexHostThread) {
   if (!isLikelyActiveTask(thread) || thread.lastTurnStatus !== 'completed') return false
   // Unresolved live user decisions still outrank a completed Turn.
   if (thread.activeFlags.includes('waitingOnUserInput') || thread.activeFlags.includes('waitingOnApproval')) return false
+  // A real activity patch starts a new activity epoch. Old inventory Turn
+  // metadata must not keep that task completed while its new Turn event is
+  // still in flight. Exact/corroborated completion evidence in the same epoch
+  // remains stronger and may complete immediately.
+  if (thread.activityEvidence === 'activity-event'
+    && !['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(thread.lastTurnEvidence || '')) return false
   const completedAt = numberValue(thread.lastTurnCompletedAt, 0)
   const startedAt = numberValue(thread.lastTurnStartedAt, 0)
-  const activeSince = numberValue(thread.desktopActiveSince, 0)
-  if (completedAt <= 0 && startedAt <= 0) return false
-  // Classic ordering: an explicit completion after the observed active interval.
-  if (activeSince > 0 && completedAt > activeSince) return true
-  // Stale revival: Desktop remints active after the latest Turn already
-  // completed (common after click/focus churn) without a newer Turn start.
-  if (activeSince > 0 && completedAt > 0 && activeSince >= completedAt && startedAt > 0 && activeSince >= startedAt) return true
-  // Active without an interval timestamp cannot outrank an explicit completion.
-  if (activeSince <= 0 && completedAt > 0) return true
-  return false
+  // Provider Turn timestamps and the local live-observation clock are not
+  // comparable. A complete latest-Turn shape is the terminal authority; an
+  // actual newer run must first advance its Turn revision or waiting state.
+  return startedAt > 0 && completedAt > 0
 }
 
 function isCurrentDesktopActiveTask(thread: CodexHostThread) {

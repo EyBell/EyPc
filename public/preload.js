@@ -31,8 +31,8 @@ const CODEX_THREAD_FIRST_PROMPT_PAGE_BUDGET = 4
 const CODEX_DESKTOP_IPC_FRAME_MAX_BYTES = 256 * 1024 * 1024
 const CODEX_DESKTOP_IPC_RECONNECT_MAX_MS = 5_000
 // Keep synchronized with src/domain/codex.ts. This value crosses the context
-// boundary so a newer renderer can reject task counts from a long-lived preload.
-const CODEX_TASK_STATE_REVISION = 'task-state-v2'
+// boundary so a newer renderer can mark long-lived preload evidence degraded.
+const CODEX_TASK_STATE_REVISION = 'task-state-v3'
 const CODEX_DESKTOP_IPC_VERSIONS = {
   'client-status-changed': 0,
   'ipc-connection-reset': 1,
@@ -3892,6 +3892,7 @@ function codexDesktopShadowFromSnapshot(change) {
   const shadow = {
     revision,
     activityRevision: revision,
+    activityEvidence: 'initial-snapshot',
     runtime,
     sideConversation: state.sideConversation === true,
     parentThreadId: validCodexThreadId(state.forkedFromId)
@@ -4025,11 +4026,13 @@ function codexApplyCachedCompletedTurnEvidence(known, threadId) {
   const turn = codexThreadTurnStatusCache.get(threadId)?.turn
   if (!turn || turn.status !== 'completed' || !turn.startedAt) return false
   const baselineStartedAt = codexTimestampMs(known.lastTurnStartedAt)
-  const activeSince = codexTimestampMs(known.desktopActiveSince)
+  const baselineCompletedAt = codexTimestampMs(known.lastTurnCompletedAt)
   const freshCompleted = turn.startedAt > baselineStartedAt
-    || known.lastTurnStatus === 'inProgress' && turn.startedAt === baselineStartedAt
+    || turn.startedAt === baselineStartedAt && known.lastTurnStatus !== 'completed'
+    || turn.startedAt === baselineStartedAt
+      && known.lastTurnStatus === 'completed'
+      && turn.completedAt > baselineCompletedAt
   if (!freshCompleted) return false
-  if (activeSince > 0 && turn.completedAt && turn.completedAt <= activeSince) return false
   known.lastTurnStatus = 'completed'
   known.lastTurnStartedAt = turn.startedAt
   if (turn.completedAt) known.lastTurnCompletedAt = turn.completedAt
@@ -4049,8 +4052,13 @@ function codexApplyCompletedTurnNotification(bridge, known, threadId, value) {
   // second-granular, and a task-switch replay can also observe active after the
   // Turn has already completed. Freshness is therefore ordered by this Turn's
   // started/completed revision below, not by cross-clock millisecond ordering.
+  // A resumed interrupted/failed Turn can keep the same startedAt. If its
+  // exact latest outcome is now completed, that terminal transition is newer
+  // even when the intermediate inProgress notification was missed.
+  const recoveredTerminalRevision = turn.startedAt === previousStartedAt
+    && known.lastTurnStatus !== 'completed'
   const freshCompleted = turn.startedAt > previousStartedAt
-    || known.lastTurnStatus === 'inProgress' && turn.startedAt === previousStartedAt
+    || recoveredTerminalRevision
     || known.lastTurnStatus === 'completed'
       && turn.startedAt === previousStartedAt
       && turn.completedAt > previousCompletedAt
@@ -4060,14 +4068,15 @@ function codexApplyCompletedTurnNotification(bridge, known, threadId, value) {
   known.lastTurnStatus = 'completed'
   known.lastTurnStartedAt = turn.startedAt
   known.lastTurnCompletedAt = turn.completedAt
+  known.lastTurnEvidence = 'turn-completed'
   bridge.cancelLatestTurnRefresh(threadId)
   const waitingLive = Array.isArray(known.activeFlags)
     && known.activeFlags.some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
   if (waitingLive) {
-    emitCodexActivityDelta([{ ...known, lastTurnEvidence: 'targeted-after-exit' }], false)
+    emitCodexActivityDelta([{ ...known, lastTurnEvidence: 'turn-completed' }], false)
     bridge.scheduleCompletionUnreadRefresh(threadId)
   } else {
-    bridge.publishTargetedCompletion(known, threadId)
+    bridge.publishTargetedCompletion(known, threadId, 'turn-completed')
   }
   return true
 }
@@ -4082,13 +4091,15 @@ function codexApplyStartedTurnNotification(bridge, known, threadId, value) {
     bridge.cancelCompletionUnreadRefresh(threadId)
     return true
   }
-  if (turn.startedAt <= previousStartedAt) return false
+  const resumedTerminalRevision = turn.startedAt === previousStartedAt
+    && (known.lastTurnStatus === 'interrupted' || known.lastTurnStatus === 'failed')
+  if (turn.startedAt < previousStartedAt || turn.startedAt === previousStartedAt && !resumedTerminalRevision) return false
 
   codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
   known.lastTurnStatus = 'inProgress'
   known.lastTurnStartedAt = turn.startedAt
   delete known.lastTurnCompletedAt
-  delete known.lastTurnEvidence
+  known.lastTurnEvidence = 'turn-started'
   bridge.cancelLatestTurnRefresh(threadId)
   bridge.cancelCompletionUnreadRefresh(threadId)
   if (!bridge.restoreSuppressedActive(threadId)) emitCodexActivityDelta([known], false)
@@ -4178,9 +4189,9 @@ class CodexDesktopCompanionBridge {
     return known.hasUnreadTurn === true
   }
 
-  publishTargetedCompletion(known, threadId) {
+  publishTargetedCompletion(known, threadId, evidence = 'targeted-after-exit') {
     this.applyFreshCompletionUnread(known, threadId, { clearStaleLiveFalse: true })
-    emitCodexActivityDelta([{ ...known, lastTurnEvidence: 'targeted-after-exit' }], false)
+    emitCodexActivityDelta([{ ...known, lastTurnEvidence: evidence }], false)
     if (known.hasUnreadTurn !== true) this.scheduleCompletionUnreadRefresh(threadId)
   }
 
@@ -4236,12 +4247,15 @@ class CodexDesktopCompanionBridge {
     else delete known.lastTurnCompletedAt
     shadow.suppressUncorroboratedActive = true
     delete shadow.desktopActiveSince
-    const wasActive = known.status === 'active'
     this.emitParentActivity(threadId)
     const settled = codexActivityInventory.get(threadId)
     if (settled?.status !== 'active') {
       if (turn.status === 'completed') {
-        if (!wasActive) this.publishTargetedCompletion(settled, threadId)
+        // The first idle delta intentionally preserves the exact shadow
+        // transition. Always follow it with targeted completion evidence so
+        // Controller cannot guard a recovered same-revision completion back
+        // to inProgress.
+        this.publishTargetedCompletion(settled, threadId, 'snapshot-corroborated')
       } else {
         emitCodexActivityDelta([{ ...settled, lastTurnEvidence: 'targeted-after-exit' }], false)
       }
@@ -4394,7 +4408,10 @@ class CodexDesktopCompanionBridge {
           finish(false)
           return
         }
-        if (refresh.verifyStaleActive && turn?.status === 'inProgress' && turn.startedAt > refresh.baselineTurnStartedAt) {
+        const resumedTerminalRevision = turn?.startedAt === refresh.baselineTurnStartedAt
+          && (refresh.baselineTurnStatus === 'interrupted' || refresh.baselineTurnStatus === 'failed')
+        if (refresh.verifyStaleActive && turn?.status === 'inProgress'
+          && (turn.startedAt > refresh.baselineTurnStartedAt || resumedTerminalRevision)) {
           codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
           known.lastTurnStatus = 'inProgress'
           known.lastTurnStartedAt = turn.startedAt
@@ -4403,10 +4420,10 @@ class CodexDesktopCompanionBridge {
           emitCodexActivityDelta([known], false)
           return
         }
-        const freshCompletedTurn = turn?.status !== 'completed'
-          || turn.startedAt > refresh.baselineTurnStartedAt
-          || refresh.baselineTurnStatus === 'inProgress' && turn.startedAt === refresh.baselineTurnStartedAt
-        if (turn?.startedAt && turn.status !== 'inProgress' && freshCompletedTurn) {
+        const freshTerminalTurn = turn?.startedAt > refresh.baselineTurnStartedAt
+          || turn?.startedAt === refresh.baselineTurnStartedAt
+            && (refresh.baselineTurnStatus === 'inProgress' || turn.status !== refresh.baselineTurnStatus)
+        if (turn?.startedAt && turn.status !== 'inProgress' && freshTerminalTurn) {
           codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
           known.lastTurnStatus = turn.status
           known.lastTurnStartedAt = turn.startedAt
@@ -4741,9 +4758,15 @@ class CodexDesktopCompanionBridge {
     shadow.revision = change.revision
     if (containsActivityPatch) {
       shadow.activityRevision = change.revision
+      shadow.activityEvidence = 'activity-event'
       delete shadow.suppressUncorroboratedActive
     }
     const isActive = codexDesktopShadowActivity(shadow)?.status === 'active'
+    if (containsActivityPatch && isActive && !wasActive) {
+      const evidenceThreadId = shadow.sideConversation ? shadow.parentThreadId : params.conversationId
+      const known = codexActivityInventory.get(evidenceThreadId)
+      if (known) delete known.lastTurnEvidence
+    }
     if (isActive) {
       if (!wasActive || !codexTimestampMs(shadow.desktopActiveSince)) shadow.desktopActiveSince = Date.now()
     } else {
@@ -4762,6 +4785,8 @@ class CodexDesktopCompanionBridge {
     known.status = activity.status
     known.activeFlags = activity.activeFlags
     known.statusAuthority = 'desktop-live'
+    known.activityEvidence = shadow.activityEvidence === 'activity-event' ? 'activity-event' : 'initial-snapshot'
+    known.activityRevision = shadow.activityRevision
     if (activity.desktopActiveSince) known.desktopActiveSince = activity.desktopActiveSince
     else delete known.desktopActiveSince
     if (typeof shadow.hasUnreadTurn === 'boolean') {
@@ -4807,6 +4832,11 @@ class CodexDesktopCompanionBridge {
     known.status = status
     known.activeFlags = status === 'active' ? activeFlags : []
     known.statusAuthority = 'desktop-live'
+    const evidenceShadows = [this.shadows.get(parentThreadId), ...children].filter(Boolean)
+    known.activityEvidence = evidenceShadows.some((shadow) => shadow.activityEvidence === 'activity-event')
+      ? 'activity-event'
+      : 'initial-snapshot'
+    known.activityRevision = Math.max(0, ...evidenceShadows.map((shadow) => Number.isInteger(shadow.activityRevision) ? shadow.activityRevision : 0))
     if (desktopActiveSince) known.desktopActiveSince = desktopActiveSince
     else delete known.desktopActiveSince
     const ownShadow = this.shadows.get(parentThreadId)
@@ -5174,6 +5204,12 @@ function codexActivityPublicEntry(value) {
   const statusAuthority = ['desktop-live', 'connector', 'unavailable'].includes(source.statusAuthority)
     ? source.statusAuthority
     : 'unavailable'
+  const activityEvidence = ['connector', 'initial-snapshot', 'activity-event'].includes(source.activityEvidence)
+    ? source.activityEvidence
+    : undefined
+  const activityRevision = Number.isInteger(source.activityRevision) && source.activityRevision >= 0
+    ? source.activityRevision
+    : undefined
   const unreadAuthority = ['desktop-live', 'desktop-persisted', 'unavailable'].includes(source.unreadAuthority)
     ? source.unreadAuthority
     : 'unavailable'
@@ -5185,7 +5221,9 @@ function codexActivityPublicEntry(value) {
   const desktopActiveSince = status === 'active' && statusAuthority === 'desktop-live'
     ? codexTimestampMs(source.desktopActiveSince)
     : 0
-  const lastTurnEvidence = source.lastTurnEvidence === 'targeted-after-exit' ? 'targeted-after-exit' : undefined
+  const lastTurnEvidence = ['inventory', 'turn-started', 'turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(source.lastTurnEvidence)
+    ? source.lastTurnEvidence
+    : undefined
   return {
     key: typeof source.key === 'string' ? source.key : '',
     ...(readStateOnly
@@ -5194,6 +5232,8 @@ function codexActivityPublicEntry(value) {
           ...(status ? { status } : {}),
           activeFlags,
           statusAuthority,
+          ...(activityEvidence ? { activityEvidence } : {}),
+          ...(activityRevision !== undefined ? { activityRevision } : {}),
           ...(desktopActiveSince ? { desktopActiveSince } : {}),
           ...(lastTurnStatus ? { lastTurnStatus } : {}),
           ...(lastTurnStartedAt ? { lastTurnStartedAt } : {}),
@@ -5256,6 +5296,8 @@ function handleCodexServerMessage(message) {
         known.status = activity.status
         known.activeFlags = activity.activeFlags
         known.statusAuthority = 'connector'
+        known.activityEvidence = 'connector'
+        known.activityRevision = codexActivityGeneration
         delete known.desktopActiveSince
       }
       if (exitedActive) markCodexThreadTurnStatusDirty(threadId)
@@ -6206,11 +6248,13 @@ async function scanVerifiedCodexInventory() {
         connectorStatus: activity.status,
         connectorActiveFlags: activity.activeFlags,
         statusAuthority: 'connector',
+        activityEvidence: 'connector',
+        activityRevision: 0,
         hasUnreadTurn: projection?.hasUnreadTurn === true,
         connectorHasUnreadTurn: projection?.hasUnreadTurn === true,
         connectorUnreadAuthority: projection?.unreadAuthority || 'unavailable',
         unreadAuthority: projection?.unreadAuthority || 'unavailable',
-        ...(projection?.lastTurnStatus ? { lastTurnStatus: projection.lastTurnStatus } : {}),
+        ...(projection?.lastTurnStatus ? { lastTurnStatus: projection.lastTurnStatus, lastTurnEvidence: 'inventory' } : {}),
         ...(projection?.lastTurnStartedAt ? { lastTurnStartedAt: projection.lastTurnStartedAt } : {}),
         ...(projection?.lastTurnCompletedAt ? { lastTurnCompletedAt: projection.lastTurnCompletedAt } : {})
       })
@@ -6226,10 +6270,13 @@ async function scanVerifiedCodexInventory() {
       thread.status = activity.status
       thread.activeFlags = [...activity.activeFlags]
       thread.statusAuthority = activity.statusAuthority
+      thread.activityEvidence = activity.activityEvidence
+      thread.activityRevision = activity.activityRevision
       if (activity.desktopActiveSince) thread.desktopActiveSince = activity.desktopActiveSince
       else delete thread.desktopActiveSince
       thread.hasUnreadTurn = activity.hasUnreadTurn === true
       thread.unreadAuthority = activity.unreadAuthority
+      if (activity.lastTurnEvidence) thread.lastTurnEvidence = activity.lastTurnEvidence
     }
     for (const [threadId, generation] of dirtySnapshot) {
       if (codexThreadTurnStatusDirty.get(threadId) === generation) codexThreadTurnStatusDirty.delete(threadId)

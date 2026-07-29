@@ -56,7 +56,7 @@ describe('browser fallback platform', () => {
         files: {},
         clipboard: {},
         codex: {
-          taskStateRevision: 'task-state-v2',
+          taskStateRevision: 'task-state-v3',
           readSnapshot: async () => ({ ok: false, error: { code: 'unavailable', message: 'not used' }, receivedAt: Date.now() })
         },
         float: {},
@@ -68,7 +68,7 @@ describe('browser fallback platform', () => {
 
     const { getPlatform } = await import('../../src/platform/eypcPlatform')
 
-    expect(getPlatform().codex.taskStateRevision).toBe('task-state-v2')
+    expect(getPlatform().codex.taskStateRevision).toBe('task-state-v3')
   })
 
   it('does not claim a legacy compatibility state when the desktop preload has no Codex snapshot bridge', async () => {

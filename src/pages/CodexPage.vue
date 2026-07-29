@@ -766,21 +766,6 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
           </label>
           <label>
             <span class="codex-label-row">
-              <span>进行中离开稳定窗</span>
-            </span>
-            <select
-              class="codex-select"
-              :value="snapshot.settings.completionPresentationDelayMs"
-              @change="update({ completionPresentationDelayMs: Number(($event.target as HTMLSelectElement).value) as CodexSettings['completionPresentationDelayMs'] })"
-              title="进行中状态离开后的展示稳定时间"
-              data-operation-tooltip="进行中离开稳定窗"
-              data-operation-description="只平滑普通快照确认的完成展示；active 退出后的单任务强证据会立即发布。已停止仍要求 interrupted/failed 与精确 idle/退出证据，其余未确认状态继续显示进行中。"
-            >
-              <option :value="0">不等待（默认）</option><option :value="500">0.5 秒</option><option :value="1000">1 秒</option><option :value="1500">1.5 秒</option><option :value="2000">2 秒</option><option :value="3000">3 秒</option>
-            </select>
-          </label>
-          <label>
-            <span class="codex-label-row">
               <span>时间窗口（天）</span>
             </span>
             <input
