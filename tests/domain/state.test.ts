@@ -246,7 +246,7 @@ describe('state domain', () => {
   it('persists only valid window targets and keeps slot mappings separate by platform', () => {
     const state = normalizeAppState({
       windowTargets: [
-        { id: 'mac-browser', alias: '工作浏览器', platform: 'darwin', appId: 'com.google.Chrome', appName: 'Google Chrome', titleLocator: '项目面板', lastNativeRef: '901:1:12', favorite: true, pinned: true, createdAt: 10, updatedAt: 11 },
+        { id: 'mac-browser', alias: '工作浏览器', platform: 'darwin', appId: 'com.google.Chrome', appName: 'Google Chrome', titleLocator: '项目面板', titleHistory: ['旧项目面板', '旧项目面板', ' 项目面板 '], lastNativeRef: '901:1:12', favorite: true, pinned: true, createdAt: 10, updatedAt: 11 },
         { id: 'win-browser', alias: '', platform: 'win32', appId: 'chrome.exe', appName: 'Google Chrome', titleLocator: '项目面板', lastNativeRef: '123456', favorite: false, createdAt: 12, updatedAt: 13 },
         { id: 'invalid', platform: 'win32', appId: 'chrome.exe', titleLocator: '' },
         { id: 'mac-browser', platform: 'darwin', appId: 'duplicate', titleLocator: 'duplicate' }
@@ -260,7 +260,7 @@ describe('state domain', () => {
     }, 100)
 
     expect(state.windowTargets).toEqual([
-      expect.objectContaining({ id: 'mac-browser', alias: '工作浏览器', platform: 'darwin', favorite: true, pinned: true }),
+      expect.objectContaining({ id: 'mac-browser', alias: '工作浏览器', platform: 'darwin', titleHistory: ['旧项目面板'], favorite: true, pinned: true }),
       expect.objectContaining({ id: 'win-browser', alias: '项目面板', platform: 'win32', favorite: false, pinned: false })
     ])
     expect(state.windowSlots).toHaveLength(10)

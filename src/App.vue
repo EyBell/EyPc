@@ -468,6 +468,7 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown, true)
   window.addEventListener('keyup', onKeyup, true)
   window.addEventListener('blur', clearShiftPreview)
+  runtime.startCodex()
   applyPluginRoute(platform.getEnterPayload())
   disposeEnterPayload = platform.onEnterPayload?.((payload) => {
     applyPluginRoute(payload)
@@ -476,7 +477,6 @@ onMounted(() => {
     runtime.dispatch(actionId, args)
   })
   platform.clearEnterPayload()
-  runtime.startCodex()
   void runtime.scanPorts()
 })
 
@@ -598,6 +598,8 @@ onUnmounted(() => {
           :shortcut-profiles="snapshot.state.settings.shortcutProfiles"
           :feature-configs="snapshot.state.settings.featureConfigs"
           :initial-maintenance-section="initialMaintenanceSection"
+          :persisted-settings-tab-id="snapshot.state.settingsTabId"
+          :persisted-maintenance-section-id="snapshot.state.settingsMaintenanceSectionId"
           :settings="snapshot.state.settings"
           :mqtt-storage-status="snapshot.mqttStorageStatus"
           @update-keybinding="runtime.updateKeybinding"
@@ -605,6 +607,7 @@ onUnmounted(() => {
           @save-shortcut-profiles="runtime.saveShortcutProfiles"
           @save-feature-configs="runtime.saveFeatureConfigs"
           @update-tool-preview-prefs="(input) => runtime.dispatch('tool.preview.hover.update', input)"
+          @update-settings-path="runtime.setSettingsPath"
         />
       </template>
     </TabShell>

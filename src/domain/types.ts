@@ -279,6 +279,8 @@ export interface AppState {
   mqtt: MqttState
   codex: CodexState
   settings: AppSettings
+  settingsTabId: 'shortcuts' | 'maintenance'
+  settingsMaintenanceSectionId: 'features' | 'tools' | 'layers' | 'storage' | 'commands' | 'resolution' | 'reservations'
   updatedAt: number
 }
 

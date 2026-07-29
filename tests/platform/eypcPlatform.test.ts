@@ -56,7 +56,7 @@ describe('browser fallback platform', () => {
         files: {},
         clipboard: {},
         codex: {
-          taskStateRevision: 'task-state-v1',
+          taskStateRevision: 'task-state-v2',
           readSnapshot: async () => ({ ok: false, error: { code: 'unavailable', message: 'not used' }, receivedAt: Date.now() })
         },
         float: {},
@@ -68,7 +68,7 @@ describe('browser fallback platform', () => {
 
     const { getPlatform } = await import('../../src/platform/eypcPlatform')
 
-    expect(getPlatform().codex.taskStateRevision).toBe('task-state-v1')
+    expect(getPlatform().codex.taskStateRevision).toBe('task-state-v2')
   })
 
   it('does not claim a legacy compatibility state when the desktop preload has no Codex snapshot bridge', async () => {
@@ -133,6 +133,10 @@ describe('browser fallback platform', () => {
     expect(preload).toMatch(/cgParsed\.windows\.length > 0[\s\S]*preferAx = true/)
     expect(preload).toContain("MACOS_AX_WINDOW_LIST_SCRIPT")
     expect(preload).toContain('已回退到当前桌面窗口列表')
+    expect(preload).toContain("completeness: 'complete'")
+    expect(preload).toContain("completeness: 'partial'")
+    expect(preload).toContain('kCGWindowIsOnscreen is also false for a normal window on another Space')
+    expect(preload).not.toContain('minimized: !isOnscreen')
     expect(publicPreload).toBe(preload)
   })
 
@@ -178,6 +182,12 @@ describe('browser fallback platform', () => {
     expect(preload).toContain('macosRemoveLegacySpaceBindingCache')
     expect(preload).toContain('macosCacheSpaceBindings')
     expect(preload).toContain('macosDedupeSpaceBindings')
+    expect(preload).toContain('macosCachedWindowSpaceResolution')
+    expect(preload).toContain('trySwitchMacosSpaceFromSessionCache')
+    expect(preload).toContain("bindingSource: 'session-cache'")
+    expect(preload).toContain('EYPC_WINDOW_REQUIRE_EXACT_AX')
+    expect(activation).toContain('expectedApp')
+    expect(activation).toContain("activationReasonCode = 'target-title-changed'")
     expect(preload).toContain('eypc/macos-window-spaces/v1')
     expect(preload).toContain('macosManagedSpaceSnapshot')
     expect(preload).toContain('MACOS_CGS_SPACE_SETTLE_MS = 120')
