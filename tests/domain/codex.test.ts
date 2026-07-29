@@ -22,7 +22,7 @@ function thread(
   updatedAt: number,
   activeFlags: CodexHostThread['activeFlags'] = [],
   key = KEY,
-  evidence: Partial<Pick<CodexHostThread, 'createdAt' | 'firstPromptAt' | 'lastTurnStatus' | 'lastTurnStartedAt' | 'lastTurnCompletedAt' | 'statusAuthority' | 'desktopActiveSince' | 'hasUnreadTurn' | 'unreadAuthority'>> = {}
+  evidence: Partial<Pick<CodexHostThread, 'createdAt' | 'firstPromptAt' | 'lastTurnStatus' | 'lastTurnStartedAt' | 'lastTurnCompletedAt' | 'lastTurnEvidence' | 'statusAuthority' | 'activityEvidence' | 'activityRevision' | 'desktopActiveSince' | 'hasUnreadTurn' | 'unreadAuthority'>> = {}
 ): CodexHostThread {
   return {
     key,
@@ -67,12 +67,14 @@ describe('Codex domain', () => {
     const settings = normalizeCodexSettings({
       pendingRetention: '30m',
       maxTasksPerGroup: 1,
+      completionPresentationDelayMs: 1500,
       compactFields: [],
       expandedFields: []
     })
     expect(settings).toMatchObject({ compactFields: [], expandedFields: [] })
     expect(settings).not.toHaveProperty('pendingRetention')
     expect(settings).not.toHaveProperty('maxTasksPerGroup')
+    expect(settings).not.toHaveProperty('completionPresentationDelayMs')
     expect(normalizeCodexSettings({ compactFields: ['unknown'] }).compactFields).toEqual(defaultCodexSettings().compactFields)
   })
 
@@ -191,6 +193,37 @@ describe('Codex domain', () => {
       now: 900
     })
     expect(waiting.snapshot.ongoing[0]).toMatchObject({ key: KEY, activityState: 'waiting-input' })
+  })
+
+  it('lets a real activity patch start a new epoch while exact completion still closes it immediately', () => {
+    const active = projectConversations({
+      threads: [thread('active', 900, [], KEY, {
+        activityEvidence: 'activity-event',
+        activityRevision: 8,
+        lastTurnStatus: 'completed',
+        lastTurnStartedAt: 400,
+        lastTurnCompletedAt: 500
+      })],
+      receipts: [],
+      lastTaskScanAt: 0,
+      now: 900
+    })
+    expect(active.snapshot.ongoing[0]).toMatchObject({ key: KEY, activityState: 'active' })
+
+    const completed = projectConversations({
+      threads: [thread('active', 901, [], KEY, {
+        activityEvidence: 'activity-event',
+        activityRevision: 8,
+        lastTurnStatus: 'completed',
+        lastTurnStartedAt: 400,
+        lastTurnCompletedAt: 500,
+        lastTurnEvidence: 'turn-completed'
+      })],
+      receipts: [],
+      lastTaskScanAt: 0,
+      now: 901
+    })
+    expect(completed.snapshot.completed[0]).toMatchObject({ key: KEY, completionRevision: 500 })
   })
 
   it('marks a newer persisted completion unread without comparing it to thread metadata recency', () => {
@@ -370,7 +403,7 @@ describe('Codex domain', () => {
     expect(rows.map((item) => item.key)).toEqual([keyAt(4), keyAt(0), keyAt(1), keyAt(3), keyAt(2)])
   })
 
-  it('sorts every tab by latest Turn.startedAt and keeps missing question time last', () => {
+  it('sorts every tab by latest Turn.startedAt and excludes rows without a Turn revision', () => {
     const hiddenOngoing = keyAt(1)
     const hiddenCompleted = keyAt(2)
     const result = projectConversations({
@@ -389,7 +422,7 @@ describe('Codex domain', () => {
       now: 1_000
     })
 
-    expect(result.snapshot.ongoing.map((task) => task.key)).toEqual([keyAt(4), keyAt(3), keyAt(5)])
+    expect(result.snapshot.ongoing.map((task) => task.key)).toEqual([keyAt(4), keyAt(3)])
     expect(result.snapshot.hidden.map((task) => [task.key, task.bucket])).toEqual([
       [hiddenCompleted, 'completed'],
       [hiddenOngoing, 'ongoing']

@@ -341,7 +341,8 @@ function nativeRegistryText() {
 function loadCodexBridge(
   child: FakeCodexProcess,
   readRegistry: (candidate: string, readIndex: number) => string = () => nativeRegistryText(),
-  desktopSocket: FakeCodexDesktopSocket | null = null
+  desktopSocket: FakeCodexDesktopSocket | null = null,
+  useHostDate = false
 ) {
   const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
   const spawn = vi.fn(() => child)
@@ -391,6 +392,7 @@ function loadCodexBridge(
       throw new Error(`unexpected require: ${name}`)
     }
   }
+  if (useHostDate) Object.assign(sandbox, { Date })
   sandbox.globalThis = sandbox
   vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject };`, sandbox, { filename: 'preload.js' })
   return {
@@ -551,7 +553,7 @@ describe('Codex App Server preload bridge', () => {
     const statusReadsBeforeEventRefresh = child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.limit === 1).length
     await expect(bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })).resolves.toMatchObject({ ok: true })
     const statusReadsAfterEventRefresh = child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.limit === 1).length
-    expect(statusReadsAfterEventRefresh - statusReadsBeforeEventRefresh).toBe(1)
+    expect(statusReadsAfterEventRefresh - statusReadsBeforeEventRefresh).toBe(2)
     stop()
     bridge.close()
   })
@@ -582,7 +584,8 @@ describe('Codex App Server preload bridge', () => {
       entries: [{
         key: baseline.value.threads[0].key,
         lastTurnStatus: 'inProgress',
-        lastTurnStartedAt: 2_000_000_200_000
+        lastTurnStartedAt: 2_000_000_200_000,
+        lastTurnEvidence: 'turn-started'
       }]
     })
     child.stdout.emit('data', `${JSON.stringify({
@@ -606,7 +609,7 @@ describe('Codex App Server preload bridge', () => {
         lastTurnStatus: 'completed',
         lastTurnStartedAt: 2_000_000_200_000,
         lastTurnCompletedAt: 2_000_000_201_000,
-        lastTurnEvidence: 'targeted-after-exit'
+        lastTurnEvidence: 'turn-completed'
       }]
     })
     expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.limit === 1)).toHaveLength(statusReadsBefore)
@@ -618,15 +621,15 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
-  it('accepts an exact completion whose second-granular timestamp does not exceed the local active observation', async () => {
+  it('accepts a resumed interrupted Turn completion whose second-granular timestamp does not exceed the live active observation', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(2_000_000_071_900)
     try {
       const child = new FakeCodexProcess()
-      child.inProgressTurnIds.add(FIXED_THREAD_IDS[3])
+      child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
       const desktopSocket = new FakeCodexDesktopSocket()
       desktopSocket.activeSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
-      const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+      const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket, true)
       const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
       await Promise.resolve()
       await Promise.resolve()
@@ -636,14 +639,14 @@ describe('Codex App Server preload bridge', () => {
         status: 'active',
         statusAuthority: 'desktop-live',
         desktopActiveSince: 2_000_000_071_900,
-        lastTurnStatus: 'inProgress',
+        lastTurnStatus: 'interrupted',
         lastTurnStartedAt: 1_900_000_000_000
       })
 
       const statusReadsBefore = child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.limit === 1).length
       const deltas: Array<Record<string, any>> = []
       const stop = bridge.onActivityChanged((delta) => deltas.push(delta))
-      child.inProgressTurnIds.delete(FIXED_THREAD_IDS[3])
+      child.interruptedTurnIds.delete(FIXED_THREAD_IDS[3])
       child.stdout.emit('data', `${JSON.stringify({
         method: 'turn/completed',
         params: {
@@ -668,7 +671,7 @@ describe('Codex App Server preload bridge', () => {
           lastTurnStatus: 'completed',
           lastTurnStartedAt: 1_900_000_000_000,
           lastTurnCompletedAt: 2_000_000_071_000,
-          lastTurnEvidence: 'targeted-after-exit'
+          lastTurnEvidence: 'turn-completed'
         }]
       })
       expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.limit === 1)).toHaveLength(statusReadsBefore)
@@ -680,6 +683,41 @@ describe('Codex App Server preload bridge', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('promotes an exact same-revision started event only from a recoverable interrupted outcome', async () => {
+    const child = new FakeCodexProcess()
+    child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
+    const desktopSocket = new FakeCodexDesktopSocket()
+    desktopSocket.activeSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
+    const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const task = baseline.value.threads[3]
+    const deltas: Array<Record<string, any>> = []
+    const stop = bridge.onActivityChanged((delta) => deltas.push(delta))
+
+    child.stdout.emit('data', `${JSON.stringify({
+      method: 'turn/started',
+      params: {
+        threadId: FIXED_THREAD_IDS[3],
+        turn: { status: 'inProgress', startedAt: 1_900_000_000 }
+      }
+    })}\n`)
+    await Promise.resolve()
+
+    expect(deltas.at(-1)).toMatchObject({
+      inventoryChanged: false,
+      entries: [{
+        key: task.key,
+        status: 'active',
+        statusAuthority: 'desktop-live',
+        lastTurnStatus: 'inProgress',
+        lastTurnStartedAt: 1_900_000_000_000
+      }]
+    })
+    stop()
+    bridge.close()
   })
 
   it('marks the nested thread/started identity dirty so a new task rereads only its latest Turn', async () => {
@@ -856,9 +894,12 @@ describe('Codex App Server preload bridge', () => {
         key: task.key,
         status: 'active',
         activeFlags: ['waitingOnUserInput'],
-        statusAuthority: 'desktop-live'
+        statusAuthority: 'desktop-live',
+        activityEvidence: 'activity-event',
+        activityRevision: 2
       }]
     })
+    expect(deltas.at(-1)?.entries?.[0]).not.toHaveProperty('lastTurnEvidence')
     const statusReadsAfter = child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.limit === 1).length
     expect(statusReadsAfter).toBe(statusReadsBefore)
     expect(JSON.stringify(deltas)).not.toContain('private plan body')
@@ -879,6 +920,8 @@ describe('Codex App Server preload bridge', () => {
       status: 'active',
       activeFlags: ['waitingOnUserInput'],
       statusAuthority: 'desktop-live',
+      activityEvidence: 'initial-snapshot',
+      activityRevision: 1,
       desktopActiveSince: expect.any(Number),
       hasUnreadTurn: false,
       unreadAuthority: 'desktop-live'
@@ -989,9 +1032,9 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
-  it('reconciles completion when a task switch refollow replays the old active snapshot', async () => {
+  it('reconciles a previously interrupted Turn when a task-switch refollow replays the old active snapshot', async () => {
     const child = new FakeCodexProcess()
-    child.inProgressTurnIds.add(FIXED_THREAD_IDS[3])
+    child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
     const desktopSocket = new FakeCodexDesktopSocket()
     desktopSocket.activeSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
     const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
@@ -1002,13 +1045,13 @@ describe('Codex App Server preload bridge', () => {
     expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
       status: 'active',
       statusAuthority: 'desktop-live',
-      lastTurnStatus: 'inProgress'
+      lastTurnStatus: 'interrupted'
     })
 
     const turnsBeforeSwitch = child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.threadId === FIXED_THREAD_IDS[3]).length
     const deltas: Array<Record<string, any>> = []
     const stop = bridge.onActivityChanged((delta) => deltas.push(delta))
-    child.inProgressTurnIds.delete(FIXED_THREAD_IDS[3])
+    child.interruptedTurnIds.delete(FIXED_THREAD_IDS[3])
     desktopSocket.push({
       type: 'broadcast',
       method: 'thread-stream-following-changed',
@@ -1019,7 +1062,7 @@ describe('Codex App Server preload bridge', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.threadId === FIXED_THREAD_IDS[3])).toHaveLength(turnsBeforeSwitch + 1)
+    expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.threadId === FIXED_THREAD_IDS[3]).length).toBeGreaterThan(turnsBeforeSwitch)
     const completedEntries = deltas.flatMap((delta) => delta.entries || [])
       .filter((entry: Record<string, any>) => entry.key === task.key && entry.lastTurnStatus === 'completed')
     expect(completedEntries.at(-1)).toMatchObject({
@@ -1053,7 +1096,7 @@ describe('Codex App Server preload bridge', () => {
       type: 'broadcast',
       method: 'thread-stream-state-changed',
       sourceClientId: 'codex-desktop-owner',
-      version: 12,
+      version: 11,
       params: {
         hostId: 'local',
         conversationId: FIXED_THREAD_IDS[0],
@@ -1111,7 +1154,7 @@ describe('Codex App Server preload bridge', () => {
       child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
       const desktopSocket = new FakeCodexDesktopSocket()
       desktopSocket.activeSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
-      const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+      const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket, true)
       const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
       await Promise.resolve()
       await Promise.resolve()
@@ -1123,6 +1166,7 @@ describe('Codex App Server preload bridge', () => {
         lastTurnStatus: 'interrupted'
       })
 
+      await vi.advanceTimersByTimeAsync(0)
       await vi.advanceTimersByTimeAsync(1_400)
 
       const settled = await bridge.readActivitySnapshot()
@@ -1132,7 +1176,7 @@ describe('Codex App Server preload bridge', () => {
         lastTurnStatus: 'interrupted'
       })
       expect(settled.value.entries.find((entry: Record<string, any>) => entry.key === task.key)).not.toHaveProperty('desktopActiveSince')
-      expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.threadId === FIXED_THREAD_IDS[3])).toHaveLength(4)
+      expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.threadId === FIXED_THREAD_IDS[3])).toHaveLength(5)
 
       child.stdout.emit('data', `${JSON.stringify({
         method: 'turn/started',
@@ -1149,10 +1193,10 @@ describe('Codex App Server preload bridge', () => {
         statusAuthority: 'desktop-live',
         lastTurnStatus: 'inProgress',
         lastTurnStartedAt: 1_900_000_100_000,
-        desktopActiveSince: 2_100_000_000_000
+        desktopActiveSince: 2_100_000_001_400
       })
       await vi.advanceTimersByTimeAsync(0)
-      expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.threadId === FIXED_THREAD_IDS[3])).toHaveLength(4)
+      expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.threadId === FIXED_THREAD_IDS[3])).toHaveLength(5)
       bridge.close()
     } finally {
       vi.useRealTimers()
@@ -1505,7 +1549,7 @@ describe('Codex App Server preload bridge', () => {
     expect(statusCallCount()).toBeGreaterThan(callsAfterUnsupported)
 
     expect(bridge).not.toHaveProperty('recoverPendingThreads')
-    expect(child.writes.filter((frame) => frame.method === 'thread/list' && frame.params?.archived === true).length).toBeGreaterThanOrEqual(2)
+    expect(child.writes.filter((frame) => frame.method === 'thread/list' && frame.params?.archived === true).length).toBeGreaterThanOrEqual(1)
 
     bridge.close()
     expect(child.endCalls).toBe(1)

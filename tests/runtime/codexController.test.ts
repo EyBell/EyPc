@@ -36,7 +36,10 @@ describe('Codex controller', () => {
                   updatedAt: now - 1_000,
                   lastTurnStatus: 'inProgress' as const,
                   lastTurnStartedAt: now - 1_000
-                }]
+                }],
+                projects: [],
+                sourceFingerprint: '1'.repeat(64),
+                completeness: 'verified' as const
               })
             }
           }
@@ -197,13 +200,13 @@ describe('Codex controller', () => {
 
     await controller.refresh()
     expect(controller.view().quota.status).toBe('error')
-    expect(controller.view().conversations).toMatchObject({ status: 'ok', ongoingCount: 1, runningCount: 1, unknownCount: 0 })
+    expect(controller.view().conversations).toMatchObject({ status: 'ok', ongoingCount: 1, runningCount: 0, unknownCount: 0 })
 
     failedLane = 'threads'
     await controller.refresh()
     expect(controller.view().quota).toMatchObject({ status: 'ok', plan: 'pro' })
     expect(controller.view().config.model).toBe('gpt-5.6')
-    expect(controller.view().conversations).toMatchObject({ status: 'stale', ongoingCount: 1, runningCount: 1, unknownCount: 0 })
+    expect(controller.view().conversations).toMatchObject({ status: 'stale', ongoingCount: 1, runningCount: 0, unknownCount: 0 })
     controller.dispose()
   })
 
@@ -731,7 +734,6 @@ describe('Codex controller', () => {
   it('applies a Desktop read-state delta without resurrecting activity', async () => {
     const state = createInitialState(1)
     state.activeTab = 'codex'
-    state.codex.settings.completionPresentationDelayMs = 0
     const sourceFingerprint = 'e'.repeat(64)
     const taskKey = 'fedcba9876543210'
     const completedAt = Date.now() - 2_000
@@ -788,7 +790,6 @@ describe('Codex controller', () => {
   it('lets a newer completed Turn displace an earlier Desktop active observation without a stale-shadow timeout', async () => {
     const state = createInitialState(1)
     state.activeTab = 'codex'
-    state.codex.settings.completionPresentationDelayMs = 0
     const sourceFingerprint = 'd'.repeat(64)
     const taskKey = '0123fedcba987654'
     const activityListeners: Array<(delta: any) => void> = []
@@ -877,17 +878,17 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
-  it('keeps the configured hold for ordinary completion but bypasses it for targeted post-exit evidence', async () => {
+  it('ignores the legacy presentation delay and publishes every fresh completion revision immediately', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(10_000)
     try {
       const state = createInitialState(1)
       state.activeTab = 'codex'
-      state.codex.settings.completionPresentationDelayMs = 1500
       const sourceFingerprint = 'c'.repeat(64)
       const taskKey = 'fedcba9876543210'
       const activityListeners: Array<(delta: any) => void> = []
       let snapshotReads = 0
+      let fullThread: CodexHostThread = { key: taskKey, actionAlias: 'targeted-alias', name: '实时完成核验', status: 'active', activeFlags: [], statusAuthority: 'desktop-live', desktopActiveSince: 9_900, hasUnreadTurn: false, unreadAuthority: 'desktop-live', updatedAt: 9_900, lastTurnStatus: 'inProgress', lastTurnStartedAt: 9_000, projectKey: 'chats', projectName: 'Chats', projectKind: 'chats' }
       const platform = {
         codex: {
           readSnapshot: async (options: Record<string, boolean>) => {
@@ -899,7 +900,7 @@ describe('Codex controller', () => {
                   value: {
                     version: 2 as const,
                     receivedAt: 10_000,
-                    threads: [{ key: taskKey, actionAlias: 'targeted-alias', name: '实时完成核验', status: 'active' as const, activeFlags: [], statusAuthority: 'desktop-live' as const, hasUnreadTurn: false, unreadAuthority: 'desktop-live' as const, updatedAt: 9_900, lastTurnStatus: 'completed' as const, lastTurnStartedAt: 9_000, lastTurnCompletedAt: 9_500, projectKey: 'chats', projectName: 'Chats', projectKind: 'chats' as const }],
+                    threads: [fullThread],
                     projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }],
                     sourceFingerprint,
                     completeness: 'verified' as const
@@ -931,36 +932,49 @@ describe('Codex controller', () => {
 
       await vi.advanceTimersByTimeAsync(100)
       activityListeners[0]({ version: 2, sourceFingerprint, generation: 2, receivedAt: 10_100, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'completed', lastTurnStartedAt: 9_000, lastTurnCompletedAt: 9_500 }] })
-      expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'ongoing' })
+      expect(controller.view().conversations.completed[0]).toMatchObject({ key: taskKey, completionRevision: 9_500 })
+      expect(controller.view().conversations.ongoing).toHaveLength(0)
 
       await vi.advanceTimersByTimeAsync(100)
       activityListeners[0]({ version: 2, sourceFingerprint, generation: 3, receivedAt: 10_200, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'completed', lastTurnStartedAt: 9_800, lastTurnCompletedAt: 10_100 }] })
-      expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'ongoing' })
-      expect(snapshotReads).toBe(readsAfterBaseline)
-
-      await vi.advanceTimersByTimeAsync(1_299)
-      expect(controller.view().conversations.ongoing).toHaveLength(1)
-      await vi.advanceTimersByTimeAsync(1)
       expect(controller.view().conversations.completed[0]).toMatchObject({ key: taskKey, completionRevision: 10_100 })
       expect(controller.view().conversations.ongoing).toHaveLength(0)
+      expect(snapshotReads).toBe(readsAfterBaseline)
+
       expect(projectCodexDynamicStatus(controller.view().conversations, 11_500)).toMatchObject({
         compactCounts: { active: 0 },
         groups: { active: [], completed: [{ key: taskKey, archiveCapability: 'allowed' }] }
       })
 
-      activityListeners[0]({ version: 2, sourceFingerprint, generation: 4, receivedAt: 11_500, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live' }] })
+      activityListeners[0]({ version: 2, sourceFingerprint, generation: 4, receivedAt: 11_400, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: ['waitingOnApproval'], statusAuthority: 'desktop-live', desktopActiveSince: 11_400, hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'completed', lastTurnStartedAt: 9_800, lastTurnCompletedAt: 10_100 }] })
+      expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'waiting-approval' })
+      activityListeners[0]({ version: 2, sourceFingerprint, generation: 5, receivedAt: 11_401, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'completed', lastTurnStartedAt: 9_800, lastTurnCompletedAt: 10_100, lastTurnEvidence: 'targeted-after-exit' }] })
+      expect(controller.view().conversations.completed[0]).toMatchObject({ key: taskKey, completionRevision: 10_100 })
+
+      fullThread = {
+        ...fullThread,
+        status: 'idle',
+        activeFlags: [],
+        updatedAt: 11_401,
+        lastTurnStatus: 'completed',
+        lastTurnStartedAt: 9_800,
+        lastTurnCompletedAt: 10_100
+      }
+      await controller.refresh()
+      expect(controller.view().conversations.completed[0]).toMatchObject({ key: taskKey, completionRevision: 10_100 })
+      expect(controller.view().conversations.ongoing).toHaveLength(0)
+
+      activityListeners[0]({ version: 2, sourceFingerprint, generation: 6, receivedAt: 11_500, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', desktopActiveSince: 11_500, hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'interrupted', lastTurnStartedAt: 11_000 }] })
       expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'active' })
       expect(projectCodexDynamicStatus(controller.view().conversations, 11_500).compactCounts.active).toBe(1)
-      activityListeners[0]({ version: 2, sourceFingerprint, generation: 5, receivedAt: 11_501, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live' }] })
-      expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'ongoing' })
-      expect(projectCodexDynamicStatus(controller.view().conversations, 11_501).compactCounts.active).toBe(1)
-      activityListeners[0]({ version: 2, sourceFingerprint, generation: 6, receivedAt: 11_502, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'completed', lastTurnStartedAt: 11_000, lastTurnCompletedAt: 11_502, lastTurnEvidence: 'targeted-after-exit' }] })
-      expect(controller.view().conversations.completed[0]).toMatchObject({ key: taskKey, completionRevision: 11_502 })
+      activityListeners[0]({ version: 2, sourceFingerprint, generation: 7, receivedAt: 11_502, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', desktopActiveSince: 11_500, hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'completed', lastTurnStartedAt: 11_000, lastTurnCompletedAt: 11_000, lastTurnEvidence: 'targeted-after-exit' }] })
+      expect(controller.view().conversations.completed[0]).toMatchObject({ key: taskKey, completionRevision: 11_000 })
       expect(controller.view().conversations.ongoing).toHaveLength(0)
       expect(projectCodexDynamicStatus(controller.view().conversations, 11_502)).toMatchObject({
         compactCounts: { active: 0 },
         groups: { active: [], completed: [{ key: taskKey, archiveCapability: 'allowed' }] }
       })
+
       controller.dispose()
     } finally {
       vi.useRealTimers()
@@ -1277,10 +1291,10 @@ describe('Codex controller', () => {
     const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined })
 
     await controller.refresh()
-    expect(controller.view().conversations).toMatchObject({ ongoingCount: 10, runningCount: 10, unknownCount: 0, sourceCount: 10, authority: 'inventory-only' })
+    expect(controller.view().conversations).toMatchObject({ ongoingCount: 10, runningCount: 0, unknownCount: 0, sourceCount: 10, authority: 'inventory-only' })
     const target = controller.view().conversations.ongoing[0]
     expect(controller.hide(target.key, target.revisionAt)).toBe(true)
-    expect(controller.view().conversations).toMatchObject({ ongoingCount: 9, runningCount: 9, unknownCount: 0, hiddenCount: 1 })
+    expect(controller.view().conversations).toMatchObject({ ongoingCount: 9, runningCount: 0, unknownCount: 0, hiddenCount: 1 })
     expect(controller.view().conversations.hidden[0]).toMatchObject({ key: target.key, hiddenKind: 'task' })
 
     expect(controller.restore(target.key, target.revisionAt, 'task')).toBe(true)
