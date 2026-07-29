@@ -4,6 +4,7 @@ import type {
   CodexQuotaFamily,
   CodexQuotaPool,
   CodexQuotaSnapshotV1,
+  CodexTaskCard,
   ConversationSnapshotV1
 } from './codex'
 import { normalizeCodexQuota } from './codex'
@@ -22,10 +23,12 @@ export interface CodexCompactPresentation {
   primary: CodexQuotaReading | null
   secondary: CodexQuotaReading | null
   showTasks: boolean
-  /** Visible ongoing count: every non-completed task, including legacy abnormal buckets. */
+  taskCounts: CodexCompactTaskCounts
+  /** Compatibility alias of taskCounts.active. */
   ongoingCount: number
   unknownCount: number
   attentionCount: number
+  /** Compatibility alias of taskCounts.unread. */
   pendingCount: number
   state: 'ready' | 'loading' | 'stale' | 'error' | 'empty'
   stateLabel: string
@@ -36,7 +39,87 @@ export interface CodexPresentationInput {
   quota: CodexQuotaSnapshotV1
   compactFields: readonly CodexCompactField[]
   conversationInboxEnabled: boolean
-  conversations: Pick<ConversationSnapshotV1, 'ongoingCount' | 'unknownCount' | 'attentionCount' | 'pendingCount'>
+  taskCounts: CodexCompactTaskCounts
+}
+
+export interface CodexCompactTaskCounts {
+  input: number
+  active: number
+  unread: number
+}
+
+export interface CodexDynamicStatusGroups {
+  input: CodexTaskCard[]
+  active: CodexTaskCard[]
+  stopped: CodexTaskCard[]
+  unread: CodexTaskCard[]
+  completed: CodexTaskCard[]
+}
+
+export interface CodexDynamicStatusProjection {
+  tasks: CodexTaskCard[]
+  groups: CodexDynamicStatusGroups
+  compactCounts: CodexCompactTaskCounts
+}
+
+export const CODEX_DYNAMIC_TASK_WINDOW_MS = 6 * 60 * 60 * 1000
+
+type CodexDynamicConversationSource = Pick<
+  ConversationSnapshotV1,
+  'ongoing' | 'stopped' | 'completedUnread' | 'completed' | 'hidden' | 'inputRequired'
+>
+
+function taskActivityAt(task: CodexTaskCard): number {
+  return Math.max(task.lastTurnStartedAt || 0, task.lastTurnCompletedAt || 0)
+}
+
+function isDynamicActiveTask(task: CodexTaskCard): boolean {
+  return task.bucket === 'ongoing'
+    && (task.activityState === 'active' || task.activityState === 'waiting-approval' || task.activityState === 'ongoing')
+}
+
+function emptyDynamicStatusProjection(): CodexDynamicStatusProjection {
+  const groups: CodexDynamicStatusGroups = { input: [], active: [], stopped: [], unread: [], completed: [] }
+  return { tasks: [], groups, compactCounts: { input: 0, active: 0, unread: 0 } }
+}
+
+/**
+ * Projects the already-stabilized Controller snapshot into the visible dynamic
+ * status groups and compact counters. This layer is intentionally stateless:
+ * communication jitter and completion hysteresis stay owned by the Controller.
+ */
+export function projectCodexDynamicStatus(
+  conversations: CodexDynamicConversationSource | null | undefined,
+  now = Date.now()
+): CodexDynamicStatusProjection {
+  if (!conversations) return emptyDynamicStatusProjection()
+  const effectiveNow = Number.isFinite(now) ? now : Date.now()
+  const windowStart = effectiveNow - CODEX_DYNAMIC_TASK_WINDOW_MS
+  const recent = [
+    ...conversations.ongoing,
+    ...(conversations.stopped || []),
+    ...conversations.completedUnread,
+    ...conversations.completed
+  ].filter((task) => !task.isHidden && taskActivityAt(task) >= windowStart)
+  const recentOngoing = recent.filter((task) => task.bucket === 'ongoing')
+  const groups: CodexDynamicStatusGroups = {
+    input: recentOngoing.filter((task) => task.activityState === 'waiting-input'),
+    active: recentOngoing.filter(isDynamicActiveTask),
+    stopped: recent.filter((task) => task.bucket === 'stopped'),
+    unread: recent.filter((task) => task.bucket === 'completed-unread'),
+    completed: recent.filter((task) => task.bucket === 'completed')
+  }
+  const tasks = [groups.input, groups.active, groups.stopped, groups.unread, groups.completed].flat()
+  return {
+    tasks,
+    groups,
+    compactCounts: {
+      input: conversations.inputRequired.length,
+      active: groups.active.length,
+      unread: conversations.completedUnread.length
+        + conversations.hidden.filter((task) => task.bucket === 'completed-unread').length
+    }
+  }
 }
 
 function reading(pool: CodexQuotaPool, kind: CodexQuotaReading['kind'], bucket: CodexQuotaBucket | null): CodexQuotaReading | null {
@@ -81,23 +164,26 @@ export function buildCodexCompactPresentation(input: CodexPresentationInput): Co
     }
   }
   const showTasks = input.conversationInboxEnabled && input.compactFields.includes('tasks')
-  // Fold legacy snapshots into the current conservative product contract so an
-  // older cached projection cannot briefly expose “unknown” or “attention”.
-  const ongoingCount = showTasks
-    ? input.conversations.ongoingCount + input.conversations.unknownCount + input.conversations.attentionCount
-    : 0
+  const taskCounts = showTasks
+    ? {
+        input: Math.max(0, input.taskCounts.input),
+        active: Math.max(0, input.taskCounts.active),
+        unread: Math.max(0, input.taskCounts.unread)
+      }
+    : { input: 0, active: 0, unread: 0 }
+  const ongoingCount = taskCounts.active
   const unknownCount = 0
   const attentionCount = 0
-  const pendingCount = showTasks ? input.conversations.pendingCount : 0
-  const inProgressCount = ongoingCount
+  const pendingCount = taskCounts.unread
   const state = quotaState(input.quota, primary !== null)
   const quotaDescription = primary
     ? `${primary.longLabel}剩余 ${primary.bucket.remainingPercent}%${secondary ? `，${secondary.longLabel}剩余 ${secondary.bucket.remainingPercent}%` : ''}`
     : state.stateLabel
   const taskParts = showTasks
     ? [
-        inProgressCount ? `${inProgressCount} 个进行中或等待操作` : '',
-        pendingCount ? `${pendingCount} 个待查看` : ''
+        taskCounts.input ? `${taskCounts.input} 个待输入` : '',
+        taskCounts.active ? `${taskCounts.active} 个进行中` : '',
+        taskCounts.unread ? `${taskCounts.unread} 个已完成未读` : ''
       ].filter(Boolean)
     : []
   const taskDescription = taskParts.length ? `，${taskParts.join('，')}` : ''
@@ -105,6 +191,7 @@ export function buildCodexCompactPresentation(input: CodexPresentationInput): Co
     primary,
     secondary,
     showTasks,
+    taskCounts,
     ongoingCount,
     unknownCount,
     attentionCount,
