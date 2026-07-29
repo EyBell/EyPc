@@ -4044,8 +4044,11 @@ function codexApplyCompletedTurnNotification(bridge, known, threadId, value) {
   if (turn?.status !== 'completed' || !turn.startedAt || !turn.completedAt) return false
   const previousStartedAt = codexTimestampMs(known.lastTurnStartedAt)
   const previousCompletedAt = codexTimestampMs(known.lastTurnCompletedAt)
-  const activeSince = codexTimestampMs(known.desktopActiveSince)
-  if (activeSince > 0 && turn.completedAt <= activeSince) return false
+  // An exact turn/completed notification is stronger than the local time at
+  // which an active shadow was observed. Provider timestamps may be only
+  // second-granular, and a task-switch replay can also observe active after the
+  // Turn has already completed. Freshness is therefore ordered by this Turn's
+  // started/completed revision below, not by cross-clock millisecond ordering.
   const freshCompleted = turn.startedAt > previousStartedAt
     || known.lastTurnStatus === 'inProgress' && turn.startedAt === previousStartedAt
     || known.lastTurnStatus === 'completed'

@@ -3,10 +3,11 @@
 Tool: codex
 Date: 2026-07-29
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-29.7`
+Requirement version: `2026-07-29.8`
 
 ## Result
 
+- RAW-118 定位并移除了 2026-07-29 直接完成快速路径的跨时钟回归：完整 `turn/completed` 不再因秒级 provider `completedAt` 小于或等于毫秒级本机 `desktopActiveSince` 而被丢弃，仍以 Turn revision 单调性判新鲜并立即进入既有匿名 `targeted-after-exit` 原子包。新增合同覆盖完成时间早 900ms 且零额外 latest-Turn 读取；未执行，真实 uTools 需重载后验收。
 - RAW-116/117 收敛同一任务切换边沿：上一 owner 的 `following=false` 只触发定向续订并保留仍在库的 main/Side exact shadow，不在替换 snapshot 前发布 connector fallback；停止任务因此保持 exact idle。若被切走任务是无等待 active，同一次成功续订还复用既有 3 秒单任务 latest-Turn 校对；即使完整 `turn/completed` 漏收且 owner 回放旧 active，fresh completed 仍以 `targeted-after-exit` 进入同一 Controller 原子包。真实运行、等待、读取失败和独立 owner disconnect/archive/inventory/bridge 清理保持原语义。
 - 本轮文档收口将 15 条反复出现的 Codex 状态错误压缩为 [六类证据边界](../../../knowledge/error-memory/README.md#L1)，叶子记录保留为历史事件；诊断接口版本差与任务状态语义版本差已拆为两个单一根因记录，旧 App Server 会话清理记录已补齐标准 schema。产品行为与 requirement version 不因这次纯文档归档改变。
 - RAW-115 修正“Codex 原生仍有一个 active、插件却显示 0”的安全库存登记缺口。[preload/index.js](../../../../preload/index.js#L1) 现在对本轮 dirty 且不在滞后 `thread/list` 的任务做一次有界 exact `thread/read`，仍须通过原生项目归属、latest Turn、匿名 key/action alias 与 registry fingerprint 才进入 Controller 原子包；没有占位卡或单独角标补数。未登记且仍 live active 的 Desktop shadow 不再被第一次空扫描删除，首次 exact read 错配后可等真实 list 追上；曾登记后缺失、terminal、归档或断桥仍按原门禁清理。只读联调的 `1 native active / 0 plugin dynamic` 是修复前定位证据，不是验收。

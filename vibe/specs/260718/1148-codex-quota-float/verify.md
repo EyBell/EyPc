@@ -3,7 +3,18 @@
 Tool: codex
 Date: 2026-07-29
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-29.7`
+Requirement version: `2026-07-29.8`
+
+## RAW-118 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 昨日基线对照 | pass / source diagnosis | 2026-07-28 完成路径没有直接 `turn/completed` 快速处理；2026-07-29 新路径在 Turn revision 判断前增加 `completedAt <= desktopActiveSince` 拒绝。provider 时间经秒级归一化，本机 active 观测为毫秒级，短任务或任务切换 replay 会错误命中。 |
+| 精确完成修复 | implemented / source-reviewed | [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 删除跨时钟门槛；完整通知仍要求同一已知 inProgress Turn、更新 startedAt，或同 Turn 递增 completedAt，随后发布现有匿名 `targeted-after-exit`。 |
+| 测试合同 | updated / not run | [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 新增 `completedAt` 比 `desktopActiveSince` 早 900ms 仍即时完成、零 latest-Turn reread且 raw identity/body 不越界的合同。依项目规则未执行测试。 |
+| 当前运行态 | not accepted | 运行中的 uTools preload 不会被源码热更新替换；需用户正常重载后完成一条短任务，并观察完成分段、卡片和进行中/完成角标一次同步。 |
+
+结论：RAW-118 源码与测试合同为 `reported`；真实完成同步仍为 `未校验，待用户验收`。
 
 ## 文档与错误记忆收口
 

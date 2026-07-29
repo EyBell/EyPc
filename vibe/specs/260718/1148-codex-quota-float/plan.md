@@ -3,7 +3,7 @@
 Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-29.7`
+Requirement version: `2026-07-29.8`
 
 Authority: [spec.md](spec.md#L1)
 
@@ -204,4 +204,8 @@ Authority: [spec.md](spec.md#L1)
 182. 在成功定向续订仍在库、无等待的 active shadow 时，复用现有 `verifyStaleActive` 单任务有界 latest-Turn 读取；completed 走既有 targeted 强证据，inProgress/失败/等待/真实 activity 保持保守语义。补旧 active 回放合同但不执行。
 183. 同步 RAW-117 到 Controlled/canonical/current/architecture/技术手册/用户指南和同一 task-switch 错误记忆；只执行 preload 静态语法/镜像、私有同步 IPC 残余、限定 diff、Markdown 链接与 `git diff --check`，不运行 tests/typecheck/build/uTools/真实任务切换。
 
-Completion: 1–114 保留既有历史与 RAW-088 状态；115–172 保留 RAW-089–113 的实时证据、稳定投影与原子包演进；173–174 为 RAW-114 的可见 Actions 删除与 220ms 统一收缩；175–176 为 RAW-115 的 dirty exact-read 安全登记、live shadow 保留、测试合同与权威同步；177–180 为 RAW-116 的 owner-follow 续订；181–183 为 RAW-117 的切换边沿完成校对、测试合同与权威同步。按项目验收规则不运行测试、类型、构建或真实 uTools 验收；RAW-089–117 均保持 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。
+184. 以 RAW-118 对照 2026-07-28 可用基线与 2026-07-29 `turn/completed` 快速路径，确认新增的 `completedAt <= desktopActiveSince` 跨时钟门槛会丢弃秒级快速完成或完成后 active replay 的精确正向事件。
+185. 删除该跨时钟门槛；完整通知继续只按 Turn `startedAt` 与同 Turn 单调 `completedAt` 判新鲜并发布既有 `targeted-after-exit`。在既有 bridge 测试补 provider 完成时间比本机 active 观测早 900ms 仍即时完成且零额外 latest-Turn 读取的合同，但不执行。
+186. 将同一根因增量写入 RAW-117 task-switch 错误记忆 occurrence history 与 Controlled/canonical/current 文档；只执行允许的 preload 语法/镜像、隐私残余、限定 diff、链接与文档 schema 静态核验。
+
+Completion: 1–114 保留既有历史与 RAW-088 状态；115–172 保留 RAW-089–113 的实时证据、稳定投影与原子包演进；173–174 为 RAW-114 的可见 Actions 删除与 220ms 统一收缩；175–176 为 RAW-115 的 dirty exact-read 安全登记、live shadow 保留、测试合同与权威同步；177–180 为 RAW-116 的 owner-follow 续订；181–183 为 RAW-117 的切换边沿完成校对；184–186 为 RAW-118 的精确完成事件跨时钟回归修复、测试合同与权威同步。按项目验收规则不运行测试、类型、构建或真实 uTools 验收；RAW-089–118 均保持 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。

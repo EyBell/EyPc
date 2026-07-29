@@ -618,6 +618,70 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
+  it('accepts an exact completion whose second-granular timestamp does not exceed the local active observation', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(2_000_000_071_900)
+    try {
+      const child = new FakeCodexProcess()
+      child.inProgressTurnIds.add(FIXED_THREAD_IDS[3])
+      const desktopSocket = new FakeCodexDesktopSocket()
+      desktopSocket.activeSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
+      const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+      const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await Promise.resolve()
+      await Promise.resolve()
+
+      const task = baseline.value.threads[3]
+      expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+        status: 'active',
+        statusAuthority: 'desktop-live',
+        desktopActiveSince: 2_000_000_071_900,
+        lastTurnStatus: 'inProgress',
+        lastTurnStartedAt: 1_900_000_000_000
+      })
+
+      const statusReadsBefore = child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.limit === 1).length
+      const deltas: Array<Record<string, any>> = []
+      const stop = bridge.onActivityChanged((delta) => deltas.push(delta))
+      child.inProgressTurnIds.delete(FIXED_THREAD_IDS[3])
+      child.stdout.emit('data', `${JSON.stringify({
+        method: 'turn/completed',
+        params: {
+          threadId: FIXED_THREAD_IDS[3],
+          turn: {
+            id: 'private-fast-turn-id',
+            status: 'completed',
+            startedAt: 1_900_000_000,
+            completedAt: 2_000_000_071,
+            items: [{ text: 'private fast completion body' }]
+          }
+        }
+      })}\n`)
+      await Promise.resolve()
+
+      expect(deltas.at(-1)).toMatchObject({
+        inventoryChanged: false,
+        entries: [{
+          key: task.key,
+          status: 'active',
+          statusAuthority: 'desktop-live',
+          lastTurnStatus: 'completed',
+          lastTurnStartedAt: 1_900_000_000_000,
+          lastTurnCompletedAt: 2_000_000_071_000,
+          lastTurnEvidence: 'targeted-after-exit'
+        }]
+      })
+      expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.limit === 1)).toHaveLength(statusReadsBefore)
+      expect(JSON.stringify(deltas)).not.toContain(FIXED_THREAD_IDS[3])
+      expect(JSON.stringify(deltas)).not.toContain('private-fast-turn-id')
+      expect(JSON.stringify(deltas)).not.toContain('private fast completion body')
+      stop()
+      bridge.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('marks the nested thread/started identity dirty so a new task rereads only its latest Turn', async () => {
     const child = new FakeCodexProcess()
     const { bridge } = loadCodexBridge(child)
