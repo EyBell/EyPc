@@ -778,7 +778,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               data-operation-description="按最新 Turn 活动时间过滤常规会话；动态页固定显示最近 6 小时活动。"
             />
           </label>
-          <div class="codex-readonly-field"><span>真实预检</span><strong>{{ snapshot.conversations.completeness === 'verified' ? `${snapshot.conversations.rawSourceCount} 原始 · ${snapshot.conversations.eligibleSourceCount} 已注册` : '尚未获得完整快照' }}</strong></div>
+          <div class="codex-readonly-field"><span>真实预检</span><strong>{{ snapshot.conversations.status === 'error' ? snapshot.conversations.errorMessage || '任务状态读取失败' : snapshot.conversations.completeness === 'verified' ? `${snapshot.conversations.rawSourceCount} 原始 · ${snapshot.conversations.eligibleSourceCount} 已注册` : '尚未获得完整快照' }}</strong></div>
         </div>
         <div
           class="codex-retention-readonly"

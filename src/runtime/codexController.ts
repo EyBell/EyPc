@@ -16,6 +16,7 @@ import {
   normalizeCodexVisibleTaskTab,
   projectConversations,
   restoreCodexThread,
+  CODEX_TASK_STATE_REVISION,
   type CodexActivityDelta,
   type CodexActivityDeltaEntryV2,
   type CodexConfigSnapshotV1,
@@ -58,6 +59,8 @@ export interface CodexRuntimeView {
 
 export interface CodexFloatSnapshotV1 {
   version: 1 | 2
+  /** Optional for old floating renderers; current Controller snapshots always include it. */
+  taskStateRevision?: string
   style: CodexSettings['displayStyle']
   conversationInboxEnabled: boolean
   compactFields: CodexSettings['compactFields']
@@ -105,6 +108,7 @@ function completionPresentationDelay(settings: CodexSettings): number {
 const MIN_INVENTORY_DISAPPEARANCE_HOLD_MS = 3_000
 const URGENT_STRUCTURAL_REFRESH_DELAY_MS = 50
 const NORMAL_STRUCTURAL_REFRESH_DELAY_MS = 200
+const TASK_STATE_RELOAD_MESSAGE = 'Codex 任务状态桥版本不一致，请在 uTools 中重新加载 EyPc 插件'
 
 function inventoryDisappearanceHold(settings: CodexSettings): number {
   const refreshDelay = taskDelay(settings)
@@ -222,13 +226,25 @@ function hasSameActivityState(previous: CodexHostThread, next: CodexHostThread):
 }
 
 export function createCodexController(options: CodexControllerOptions) {
+  // Direct test/custom adapters may omit the capability. The production
+  // platform adapter always supplies either the exact revision or `legacy`.
+  const taskStateCompatible = options.platform.codex.taskStateRevision === undefined
+    || options.platform.codex.taskStateRevision === CODEX_TASK_STATE_REVISION
   let quota = normalizeCodexQuota(options.getAppState().codex.cachedQuota)
   if (quota.updatedAt > 0 && quota.status === 'ok') quota = { ...quota, status: 'stale' }
   let config = normalizeCodexConfig(options.getAppState().codex.cachedConfig)
   let modelCatalog = emptyCodexModelCatalog()
   let newThreadContextFingerprint = ''
   let environment = emptyCodexEnvironment()
-  let rawConversations = conversationSnapshotFromReceipts(options.getAppState().codex.receipts)
+  const incompatibleTaskStateSnapshot = () => ({
+    ...emptyConversationSnapshot('error'),
+    updatedAt: Date.now(),
+    errorCode: 'preload-version-mismatch',
+    errorMessage: TASK_STATE_RELOAD_MESSAGE
+  })
+  let rawConversations = taskStateCompatible
+    ? conversationSnapshotFromReceipts(options.getAppState().codex.receipts)
+    : incompatibleTaskStateSnapshot()
   let conversations = rawConversations
   let taskCycleKey = ''
   let lastThreads: CodexHostThread[] = []
@@ -335,6 +351,19 @@ export function createCodexController(options: CodexControllerOptions) {
   function shouldRun(): boolean {
     const state = options.getAppState()
     return isFeatureEnabled() && (state.activeTab === 'codex' || state.codex.settings.floatEnabled)
+  }
+
+  function publishTaskStateCompatibilityError() {
+    if (taskStateCompatible) return
+    resetInventoryDisappearanceCandidate()
+    lastThreads = []
+    lastProjects = []
+    lastSourceFingerprint = ''
+    lastCompleteness = undefined
+    lastActivityGeneration = 0
+    if (rawConversations.errorCode !== 'preload-version-mismatch' || rawConversations.all.length) {
+      resetCompletionPresentation(incompatibleTaskStateSnapshot())
+    }
   }
 
   function clearTimer() {
@@ -557,7 +586,7 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function applyActivityDelta(delta: CodexActivityDelta) {
-    if (disposed || !shouldRun() || (delta?.version !== 1 && delta?.version !== 2)) return
+    if (!taskStateCompatible || disposed || !shouldRun() || (delta?.version !== 1 && delta?.version !== 2)) return
     if (!Number.isFinite(delta.receivedAt) || !Number.isFinite(delta.generation) || delta.generation <= 0) return
     let environmentChanged = false
     const structuralPriority: StructuralRefreshPriority = delta.version === 2 && delta.inventoryRefreshPriority === 'urgent'
@@ -704,13 +733,13 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function scheduleActivity(delay?: number) {
     clearActivityTimer()
-    if (!started || disposed || !shouldRun() || typeof options.platform.codex.readActivitySnapshot !== 'function') return
+    if (!taskStateCompatible || !started || disposed || !shouldRun() || typeof options.platform.codex.readActivitySnapshot !== 'function') return
     const wait = delay ?? (activityFailureCount >= 3 ? 1_000 : 5_000)
     activityTimer = setTimeout(() => { void pollActivity() }, Math.max(0, wait))
   }
 
   async function pollActivity() {
-    if (disposed || !shouldRun() || typeof options.platform.codex.readActivitySnapshot !== 'function') return
+    if (!taskStateCompatible || disposed || !shouldRun() || typeof options.platform.codex.readActivitySnapshot !== 'function') return
     if (activityInFlight) return activityInFlight
     const operation = (async () => {
       const result = await options.platform.codex.readActivitySnapshot!()
@@ -735,7 +764,7 @@ export function createCodexController(options: CodexControllerOptions) {
     const settings = codexState().settings
     const now = Date.now()
     const quotaWait = Number.isFinite(quotaDelay(settings)) ? Math.max(1000, lastQuotaReadAt + quotaDelay(settings) - now) : Number.POSITIVE_INFINITY
-    const taskWait = Number.isFinite(taskDelay(settings)) ? Math.max(1000, lastTaskReadAt + taskDelay(settings) - now) : Number.POSITIVE_INFINITY
+    const taskWait = taskStateCompatible && Number.isFinite(taskDelay(settings)) ? Math.max(1000, lastTaskReadAt + taskDelay(settings) - now) : Number.POSITIVE_INFINITY
     const delay = Math.min(quotaWait, taskWait)
     if (!Number.isFinite(delay)) return
     timer = setTimeout(() => { void refresh() }, delay)
@@ -828,7 +857,7 @@ export function createCodexController(options: CodexControllerOptions) {
     const now = Date.now()
     const settings = codexState().settings
     const includeQuota = input.force === true || quota.updatedAt <= 0 || (Number.isFinite(quotaDelay(settings)) && now - lastQuotaReadAt >= quotaDelay(settings))
-    const includeThreads = settings.conversationInboxEnabled && (input.force === true || input.forceTasks === true || rawConversations.updatedAt <= 0 || (Number.isFinite(taskDelay(settings)) && now - lastTaskReadAt >= taskDelay(settings)))
+    const includeThreads = taskStateCompatible && settings.conversationInboxEnabled && (input.force === true || input.forceTasks === true || rawConversations.updatedAt <= 0 || (Number.isFinite(taskDelay(settings)) && now - lastTaskReadAt >= taskDelay(settings)))
     const includeConfig = includeQuota
     if (!includeQuota && !includeThreads) {
       schedule()
@@ -1025,6 +1054,11 @@ export function createCodexController(options: CodexControllerOptions) {
       resetCompletionPresentation(emptyConversationSnapshot())
       options.platform.codex.close()
       return
+    }
+    if (!taskStateCompatible) {
+      publishTaskStateCompatibilityError()
+      options.setMessage(TASK_STATE_RELOAD_MESSAGE)
+      options.notify()
     }
     if (force || (quota.updatedAt <= 0 && rawConversations.updatedAt <= 0)) void refresh({ force: true })
     else {
@@ -1544,7 +1578,9 @@ export function createCodexController(options: CodexControllerOptions) {
     start() {
       if (started || disposed) return
       started = true
-      stopActivityListener = options.platform.codex.onActivityChanged?.((delta) => applyActivityDelta(delta)) || null
+      stopActivityListener = taskStateCompatible
+        ? options.platform.codex.onActivityChanged?.((delta) => applyActivityDelta(delta)) || null
+        : null
       if (isFeatureEnabled()) void inspectEnvironment()
       syncActivation(true)
     },
@@ -1620,6 +1656,7 @@ export function createCodexController(options: CodexControllerOptions) {
       const settings = codexState().settings
       return {
         version: 2,
+        taskStateRevision: CODEX_TASK_STATE_REVISION,
         style: cardColorPreview ? 'card' : settings.displayStyle,
         conversationInboxEnabled: settings.conversationInboxEnabled,
         compactFields: settings.compactFields,

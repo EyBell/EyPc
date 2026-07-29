@@ -30,6 +30,9 @@ const CODEX_THREAD_FIRST_PROMPT_PAGE_LIMIT = 50
 const CODEX_THREAD_FIRST_PROMPT_PAGE_BUDGET = 4
 const CODEX_DESKTOP_IPC_FRAME_MAX_BYTES = 256 * 1024 * 1024
 const CODEX_DESKTOP_IPC_RECONNECT_MAX_MS = 5_000
+// Keep synchronized with src/domain/codex.ts. This value crosses the context
+// boundary so a newer renderer can reject task counts from a long-lived preload.
+const CODEX_TASK_STATE_REVISION = 'task-state-v1'
 const CODEX_DESKTOP_IPC_VERSIONS = {
   'client-status-changed': 0,
   'ipc-connection-reset': 1,
@@ -7135,6 +7138,7 @@ window.eypcPlatform = {
     copyText
   },
   codex: {
+    taskStateRevision: CODEX_TASK_STATE_REVISION,
     inspectEnvironment: inspectCodexEnvironment,
     setLaunchPath: setCodexLaunchPath,
     clearLaunchPath: clearCodexLaunchPath,

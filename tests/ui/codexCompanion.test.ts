@@ -7,6 +7,7 @@ import CodexWaterBall from '../../src/components/CodexWaterBall.vue'
 import FloatApp from '../../src/FloatApp.vue'
 import CodexPage from '../../src/pages/CodexPage.vue'
 import {
+  CODEX_TASK_STATE_REVISION,
   defaultCodexSettings,
   projectConversations,
   type CodexHostProject,
@@ -115,6 +116,7 @@ function sparkQuota(): CodexQuotaSnapshotV1 {
 function floatSnapshot(activeTab: 'all' | 'input' | 'ongoing' | 'hidden' | 'completed' | 'projects' = 'ongoing', quotaValue = quota()): CodexFloatSnapshotV1 {
   return {
     version: 2,
+    taskStateRevision: CODEX_TASK_STATE_REVISION,
     style: 'water',
     conversationInboxEnabled: true,
     compactFields: ['short', 'weekly', 'tasks'],
@@ -921,6 +923,23 @@ describe('Codex Companion V3 UI contract', () => {
     await active.trigger('click')
     expect(action).not.toHaveBeenCalledWith('codex.tab.set', expect.anything())
     expect(setExpansion).toHaveBeenCalledWith(true, false)
+  })
+
+  it('withholds task counters from a long-lived Controller snapshot with no matching revision', async () => {
+    const source = floatSnapshot('all')
+    delete source.taskStateRevision
+
+    const compact = mountFloat(false, source).wrapper
+    await compact.vm.$nextTick()
+    expect(compact.find('.float-counter.input').exists()).toBe(false)
+    expect(compact.find('.float-counter.active').exists()).toBe(false)
+    expect(compact.find('.float-counter.unread').exists()).toBe(false)
+    expect(compact.get('.float-compact').attributes('aria-label')).toContain('重新加载 EyPc 插件')
+
+    const expanded = mountFloat(true, source).wrapper
+    await expanded.vm.$nextTick()
+    expect(expanded.text()).toContain('Codex 任务状态版本已过期')
+    expect(expanded.text()).not.toContain('真实进行中')
   })
 
   it('uses the plural pending-input counter hint without changing its click contract', async () => {
