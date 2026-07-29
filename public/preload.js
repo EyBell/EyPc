@@ -4562,6 +4562,27 @@ class CodexDesktopCompanionBridge {
         const ownsShadow = shadow?.ownerClientId === ownerClientId
         const ownsUnread = this.liveUnread.get(threadId)?.ownerClientId === ownerClientId
         if (!ownsShadow && !ownsUnread) return
+        const stillInventoried = this.inventory.has(threadId)
+          || Boolean(sideParentThreadId && this.inventory.has(sideParentThreadId))
+        // Codex Desktop changes its own followed conversation when the user
+        // switches tasks. EyPc still follows every inventoried task, so keep
+        // the last exact shadow while requesting a replacement snapshot from
+        // the same live owner. A real owner disconnect is handled separately
+        // by client-status-changed and still drops all of its live authority.
+        if (ownsShadow && stillInventoried && this.followAny(threadId, true, [ownerClientId])) {
+          const parentThreadId = sideParentThreadId || threadId
+          const known = codexActivityInventory.get(parentThreadId)
+          const activity = codexDesktopShadowActivity(shadow)
+          const waitingLive = activity?.activeFlags.includes('waitingOnUserInput')
+            || activity?.activeFlags.includes('waitingOnApproval')
+          // A task switch can race with turn/completed: the refollowed owner may
+          // replay the old active snapshot after the completion notification was
+          // missed. Confirm that one ambiguous active edge from latest-Turn data.
+          if (known && activity?.status === 'active' && !waitingLive) {
+            this.scheduleLatestTurnRefresh(parentThreadId, { verifyStaleActive: true })
+          }
+          return
+        }
         if (ownsShadow) {
           this.shadows.delete(threadId)
           this.sideShadows.delete(threadId)

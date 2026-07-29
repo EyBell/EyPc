@@ -878,6 +878,99 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
+  it('keeps stopped authority while Codex Desktop switches its followed task', async () => {
+    const child = new FakeCodexProcess()
+    child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const task = baseline.value.threads[3]
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      status: 'idle',
+      statusAuthority: 'desktop-live',
+      lastTurnStatus: 'interrupted'
+    })
+
+    const deltas: Array<Record<string, any>> = []
+    const stop = bridge.onActivityChanged((delta) => deltas.push(delta))
+    const writesBeforeSwitch = desktopSocket.writes.length
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-following-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 1,
+      params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[3], following: false }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(desktopSocket.writes.slice(writesBeforeSwitch)).toContainEqual(expect.objectContaining({
+      type: 'broadcast',
+      method: 'thread-stream-following-changed',
+      targetClientIds: ['codex-desktop-owner'],
+      params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[3], following: true }
+    }))
+    const switchedEntries = deltas.flatMap((delta) => delta.entries || [])
+      .filter((entry: Record<string, any>) => entry.key === task.key)
+    expect(switchedEntries.length).toBeGreaterThan(0)
+    expect(switchedEntries.every((entry: Record<string, any>) => entry.status === 'idle' && entry.statusAuthority === 'desktop-live')).toBe(true)
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      status: 'idle',
+      statusAuthority: 'desktop-live',
+      lastTurnStatus: 'interrupted'
+    })
+    stop()
+    bridge.close()
+  })
+
+  it('reconciles completion when a task switch refollow replays the old active snapshot', async () => {
+    const child = new FakeCodexProcess()
+    child.inProgressTurnIds.add(FIXED_THREAD_IDS[3])
+    const desktopSocket = new FakeCodexDesktopSocket()
+    desktopSocket.activeSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
+    const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const task = baseline.value.threads[3]
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      status: 'active',
+      statusAuthority: 'desktop-live',
+      lastTurnStatus: 'inProgress'
+    })
+
+    const turnsBeforeSwitch = child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.threadId === FIXED_THREAD_IDS[3]).length
+    const deltas: Array<Record<string, any>> = []
+    const stop = bridge.onActivityChanged((delta) => deltas.push(delta))
+    child.inProgressTurnIds.delete(FIXED_THREAD_IDS[3])
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-following-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 1,
+      params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[3], following: false }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.threadId === FIXED_THREAD_IDS[3])).toHaveLength(turnsBeforeSwitch + 1)
+    const completedEntries = deltas.flatMap((delta) => delta.entries || [])
+      .filter((entry: Record<string, any>) => entry.key === task.key && entry.lastTurnStatus === 'completed')
+    expect(completedEntries.at(-1)).toMatchObject({
+      status: 'active',
+      statusAuthority: 'desktop-live',
+      lastTurnStatus: 'completed',
+      lastTurnStartedAt: 1_900_000_000_000,
+      lastTurnCompletedAt: 2_000_000_071_000,
+      lastTurnEvidence: 'targeted-after-exit'
+    })
+    expect(JSON.stringify(deltas)).not.toContain(FIXED_THREAD_IDS[3])
+    stop()
+    bridge.close()
+  })
+
   it('ignores private state patches and confirms an active-to-idle task with one targeted latest-Turn read', async () => {
     const child = new FakeCodexProcess()
     child.inProgressTurnIds.add(FIXED_THREAD_IDS[0])

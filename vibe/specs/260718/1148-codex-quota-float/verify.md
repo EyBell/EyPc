@@ -3,7 +3,41 @@
 Tool: codex
 Date: 2026-07-29
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-29.5`
+Requirement version: `2026-07-29.7`
+
+## 文档与错误记忆收口
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 重复问题检验 | pass / 15 records | 将反复出现的状态问题按 provider evidence、inventory membership、live ownership/ordering、positive transition timing、unread orthogonality、atomic projection/versioning 六类归并到 [error-memory index](../../../knowledge/error-memory/README.md#L1)。叶子记录保留为事件归档，不再在当前索引平铺重复结论。 |
+| 单一根因 | pass | 原 [preload capability version skew](../../../knowledge/error-memory/codex-preload-capability-version-skew.md#L1) 只保留 additive diagnostic-port mismatch；任务语义版本差与双重空投影拆到 [task-state atomic degradation](../../../knowledge/error-memory/codex-task-state-version-skew-must-degrade-atomically.md#L1)，每条记录各自只有一个 Alternative Route。 |
+| 旧记录 schema | pass | [App Server session cleanup](../../../knowledge/error-memory/codex-app-server-session-state-survives-exit.md#L1) 补齐 required frontmatter、verified root cause、Alternative Route 与 occurrence history；其既有实现和测试证据未改变。 |
+| 当前文档压缩 | updated | PROJECT_STATUS 合并 RAW-116/117 当前摘要；Architecture、technical details、handoff 和 error index 改为链接六类问题簇，RAW/spec/plan 历史证据继续留在 Controlled 包。此次纯文档治理不增加 RAW、不改变 requirement version 或产品行为。 |
+| 验证边界 | pass / static closeout | 31 条 Codex error record 均具备 required frontmatter、唯一 ID/fingerprint 和单一 Alternative Route；六类索引恰好链接 15 条状态叶子记录。双 preload `node --check` 与字节镜像通过，私有同步 IPC residual 为空，`git diff --check` 与本轮 Markdown code-link audit 通过。Documentation Sync Receipt 在最终文档内容上单独记录；依项目规则仍不运行 tests/typecheck/build/uTools/真实任务切换。 |
+
+## RAW-117 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 用户补充与竞态诊断 | pass / source diagnosis | “已完成也没有同步”发生在同一 owner-follow 切换边沿。RAW-116 已保留 shadow，但完整 `turn/completed` 若与 `following=false` 竞态漏收，定向续订回放旧 active snapshot 后，库存仍为 inProgress，既有 terminal-active snapshot 核验不会启动。 |
+| 定向完成校对 | implemented / source-reviewed | [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 在成功续订仍在库、无等待的 active shadow 时，复用既有 `verifyStaleActive` 单任务有界读取；fresh completed 走 `targeted-after-exit`，inProgress/等待/失败保持保守语义。 |
+| 测试合同 | updated / not run | 既有 [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 增加漏收 completed 通知、替换 snapshot 仍回放 active 时只增加一次 latest-Turn 读取并发布 completed 的合同。依项目规则未执行测试。 |
+| 静态验证 | pass / targeted scope | `node --check` 分别通过 canonical/public preload；两份 preload 当前字节一致；私有同步快捷键 IPC 残余搜索为空；RAW-117 限定文件 `git diff --check` 通过；本轮修改文档的 Markdown code-link audit 通过。不运行 tests/typecheck/build/uTools/真实任务切换。 |
+| 当前运行态 | not accepted | 运行中的 uTools preload 未由 Agent 重启；需用户正常重载后完成一条可丢弃任务并在完成边沿切到其它任务，确认进行中角标、完成分段和卡片一次同步。 |
+
+结论：RAW-117 源码与既有测试合同为 `reported`；真实完成切换仍为 `未校验，待用户验收`。
+
+## RAW-116 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 用户现象与调用链 | pass / source diagnosis | 停止任务只在切换到自身时显示已停止，切换到进行中任务后又回 ongoing。`thread-stream-following-changed(following=false)` 分支会删除上一任务的 exact `desktop-live idle` shadow，随后 connector fallback 因缺少 exact idle 只能保守投影 ongoing；真正 client disconnect 已由独立分支处理。 |
+| owner-follow 连续性 | implemented / source-reviewed | [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 在主任务仍在 inventory、或 Side Chat 父任务仍在 inventory 时保留原 owner shadow并定向续订。真实 owner disconnect、离库、归档、bridge reset/close 仍撤销 live authority。 |
+| 测试合同 | updated / not run | 既有 [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 增加 interrupted + live idle stopped 任务在 owner 切换关注后仍全过程保持 `desktop-live idle`、且向同一 owner 发送 `following=true` 的合同。未新增测试模块；依项目规则未执行测试。 |
+| 静态验证 | pass / targeted scope | `node --check` 分别通过 canonical/public preload；两份 preload 当前字节一致；私有同步快捷键 IPC 残余搜索为空；RAW-116 限定文件 `git diff --check` 通过；本轮修改的 Controlled/canonical/current/architecture/technical/help/error-memory Markdown code-link audit 通过。未运行 tests/typecheck/build/uTools/真实任务切换。 |
+| 当前运行态 | not accepted | 运行中的 uTools preload 未由 Agent 重启；需要用户正常重载 EyPc 后，以一条可丢弃停止任务和一条进行中任务来回切换，确认停止段、进行中角标和卡片始终稳定。 |
+
+结论：RAW-116 源码与既有测试合同为 `reported`；真实任务切换仍为 `未校验，待用户验收`。
 
 ## RAW-113 当前交付状态
 
