@@ -145,6 +145,36 @@
       "cmds": ["下一个 Codex 任务", "Codex 下一个任务", "Codex next task"]
     },
     {
+      "code": "eypc-codex-action-1",
+      "explain": "执行 Codex Environment Action 槽 1",
+      "mainHide": true,
+      "cmds": ["Codex Action 槽 1", "执行 Codex Action 1", "Codex environment action 1"]
+    },
+    {
+      "code": "eypc-codex-action-2",
+      "explain": "执行 Codex Environment Action 槽 2",
+      "mainHide": true,
+      "cmds": ["Codex Action 槽 2", "执行 Codex Action 2", "Codex environment action 2"]
+    },
+    {
+      "code": "eypc-codex-action-3",
+      "explain": "执行 Codex Environment Action 槽 3",
+      "mainHide": true,
+      "cmds": ["Codex Action 槽 3", "执行 Codex Action 3", "Codex environment action 3"]
+    },
+    {
+      "code": "eypc-codex-action-4",
+      "explain": "执行 Codex Environment Action 槽 4",
+      "mainHide": true,
+      "cmds": ["Codex Action 槽 4", "执行 Codex Action 4", "Codex environment action 4"]
+    },
+    {
+      "code": "eypc-codex-action-5",
+      "explain": "执行 Codex Environment Action 槽 5",
+      "mainHide": true,
+      "cmds": ["Codex Action 槽 5", "执行 Codex Action 5", "Codex environment action 5"]
+    },
+    {
       "code": "eypc-settings",
       "explain": "EyPc 设置",
       "cmds": ["EyPc设置", "eypc settings"]
