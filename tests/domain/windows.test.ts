@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compareWindowRowsByApplication, filterJumpableLiveWindows, isChromiumFamilyApp, isJumpableLiveWindow } from '../../src/domain/windows'
+import { compareWindowRowsByApplication, filterJumpableLiveWindows, isChromiumFamilyApp, isJumpableLiveWindow, resolveWindowTargetCandidate } from '../../src/domain/windows'
 
 describe('window row application order', () => {
   it('keeps pinned rows first and sorts each section by application name', () => {
@@ -64,5 +64,72 @@ describe('jumpable live window filter', () => {
       { id: '4', appId: 'Notes', appName: 'Notes', title: 'Inbox' }
     ])
     expect(kept.map((item) => item.id)).toEqual(['2', '4'])
+  })
+})
+
+describe('persisted window automatic recognition', () => {
+  const target = {
+    platform: 'darwin' as const,
+    appId: 'com.jetbrains.rider',
+    appName: 'Rider',
+    titleLocator: 'agro-management [~/work/czzWork/GuoJi/agro] – /Users/gdkmjd/work/czzWork/GuoJi/agro/WebCore/appsettings.Mac.json',
+    titleHistory: []
+  }
+
+  it('automatically selects one strong same-app title after the native id and active file change', () => {
+    const live = {
+      platform: 'darwin' as const,
+      appId: 'com.jetbrains.rider',
+      appName: 'Rider',
+      title: 'agro-management [~/work/czzWork/GuoJi/agro] – /Users/gdkmjd/work/czzWork/GuoJi/agro/WebCore/Program.cs'
+    }
+
+    expect(resolveWindowTargetCandidate(target, [live])).toMatchObject({ live, kind: 'similar' })
+  })
+
+  it('does not choose arbitrarily when two same-browser candidates share the same site identity', () => {
+    const browserTarget = {
+      platform: 'darwin' as const,
+      appId: 'com.google.Chrome',
+      appName: 'Google Chrome',
+      titleLocator: 'AiTools - Dashboard - Google Chrome',
+      titleHistory: []
+    }
+    const windows = [
+      { platform: 'darwin' as const, appId: 'com.google.Chrome', appName: 'Google Chrome', title: 'AiTools - Chat - Google Chrome' },
+      { platform: 'darwin' as const, appId: 'com.google.Chrome', appName: 'Google Chrome', title: 'AiTools - Settings - Google Chrome' }
+    ]
+
+    const resolved = resolveWindowTargetCandidate(browserTarget, windows)
+    expect(resolved.live).toBeNull()
+    expect(resolved.kind).toBe('ambiguous')
+    expect(resolved.candidates).toHaveLength(2)
+  })
+
+  it('keeps a sole but unrelated same-app title confirmation-only', () => {
+    const live = { platform: 'darwin' as const, appId: 'com.jetbrains.rider', appName: 'Rider', title: 'unrelated-project – README.md' }
+    const resolved = resolveWindowTargetCandidate(target, [live])
+
+    expect(resolved.live).toBeNull()
+    expect(resolved.kind).toBe('confirmation')
+    expect(resolved.candidates).toEqual([live])
+  })
+
+  it('does not treat a shared generic file name or Project token as logical-window identity', () => {
+    const projectTarget = { ...target, titleLocator: 'alpha-project – README.md' }
+    const live = { platform: 'darwin' as const, appId: 'com.jetbrains.rider', appName: 'Rider', title: 'beta-project – README.md' }
+    const resolved = resolveWindowTargetCandidate(projectTarget, [live])
+
+    expect(resolved.live).toBeNull()
+    expect(resolved.kind).toBe('confirmation')
+  })
+
+  it('recognizes a previously verified title exactly while partial inventories disable fuzzy replacement', () => {
+    const learnedTarget = { ...target, titleHistory: ['agro-management – Program.cs'] }
+    const learned = { platform: 'darwin' as const, appId: 'com.jetbrains.rider', appName: 'Rider', title: 'agro-management – Program.cs' }
+    const changed = { ...learned, title: 'agro-management – Startup.cs' }
+
+    expect(resolveWindowTargetCandidate(learnedTarget, [learned], { allowSimilar: false })).toMatchObject({ live: learned, kind: 'exact' })
+    expect(resolveWindowTargetCandidate(learnedTarget, [changed], { allowSimilar: false })).toMatchObject({ live: null, kind: 'none' })
   })
 })

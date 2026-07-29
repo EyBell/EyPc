@@ -7492,6 +7492,10 @@ body,
   background: #fbf7f1;
 }
 
+.window-row.cached {
+  background: #f5f8fa;
+}
+
 .window-row.binding {
   cursor: pointer;
 }
@@ -7597,6 +7601,11 @@ body,
 .window-status.ambiguous {
   background: #fff0e3;
   color: #9a5e21;
+}
+
+.window-status.cached {
+  background: #edf1f5;
+  color: #5e6f7c;
 }
 
 .window-status.focused {

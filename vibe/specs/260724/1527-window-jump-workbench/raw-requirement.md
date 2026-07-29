@@ -9,6 +9,11 @@ Add an opt-in, keyboard-first EyPc surface that lets a user discover interactive
 - Reproduce the reported `space-unbound-multiwindow` failure locally, research a more capable generic macOS route online, and allow bounded privacy-safe probes plus real host validation.
 - Acceptance must prove the selected Chromium window itself becomes focused after a cross-Space slot jump; bringing only the owning application or a sibling window forward is not success.
 
+## 2026-07-29 User Supplement
+
+- Fixed slot bindings must survive a computer/plugin restart without requiring the user to bind the same logical windows again. When a persisted native reference expires and the replacement window remains broadly consistent, EyPc should recognize and replace it automatically.
+- Automatic replacement needs a conservative reusable rule set. It may learn from successfully verified replacements, but it must not choose an arbitrary sibling when one application or browser owns several similar windows.
+
 ## Product Decisions
 
 - Support Windows and macOS in the first release. Windows uses top-level desktop-window APIs; macOS uses CoreGraphics inventory with a bounded System Events accessibility fallback.
@@ -23,8 +28,8 @@ Add an opt-in, keyboard-first EyPc surface that lets a user discover interactive
 - On macOS, a Core Graphics window ID is an inventory/session reference, not a System Events `AXWindowNumber`. When the private Accessibility symbol is available, activation must map each owning-process `AXUIElement` through `_AXUIElementGetWindow` and require exactly one element whose returned CG ID equals the selected reference. Normalized title/fresh ordinal remains a compatibility fallback only when exact mapping is unavailable; it must never assume numeric identity without the mapping call, interpolate a user title into shell/JXA source, or select an ambiguous target arbitrarily.
 - A CG-backed macOS target resolves its Space afresh from the exact CG window ID. Direct per-window queries and managed-Space reverse lookup are deduplicated against the current display map: a current binding skips switching, one remote binding may switch, and multiple remote bindings block. If the uTools Electron preload returns no bindings, the same revalidation and SkyLight lookup may run in a fresh bounded JXA process; only a unique isolated binding may switch and it must be confirmed. When both routes have no binding, process-frontmost is allowed only when the owning process has exactly one actionable CG window; multi-window processes block without walking or flashing through other desktops.
 - Space bindings are session-only. EyPc must not persist a CG window ID, PID/title key, Space ID, or display UUID as a learned activation binding. The Renderer and preload expose the same fixed bridge revision; a stale/missing host bridge blocks activation with a reconnect instruction.
-- A slot first validates its last native reference, then requires an application-and-title locator match. Zero matches report an unavailable target; more than one match present a candidate choice. It must never select one arbitrarily.
-- A same-PID window with a changed title is a rebind candidate, never an automatic substitute. Selecting the candidate explicitly updates the saved app/title/native reference before future slot activations.
+- A slot first validates its last native reference, then requires exact platform/application identity. Exact current or previously verified titles may recover directly. After a complete inventory, one strongly similar and clearly leading title candidate may be activated as an automatic replacement; only successful native activation commits its new title/reference and bounded title history. A partial/current-Space inventory cannot authorize fuzzy replacement.
+- The earlier WJ-13 rule that every same-PID title change is candidate-only is superseded by the 2026-07-29 automatic-recognition requirement. Low-confidence, tied, or multiple similar candidates remain explicit choices, and EyPc must never substitute a sibling merely because it belongs to the same application.
 - A local list pin is independent from favorite, OS page topmost, and slot assignment. Pinning a live row creates only the minimum EyPc target metadata needed to retain it; assigning a live row to a stable slot creates non-favorite retention by default; unpinning does not remove a favorite or slot mapping.
 - Native discovery admits only actionable application windows. macOS requires a valid CoreGraphics window number backed by a running regular application; Windows requires an existing visible non-cloaked top-level/Alt-Tab-eligible handle and rejects tool/helper/native browser handles that are not the active root/popup surface. Neither platform uses a size threshold.
 
@@ -41,7 +46,7 @@ Add an opt-in, keyboard-first EyPc surface that lets a user discover interactive
 - No public uTools API is assumed for enumerating or activating another application window.
 - macOS exposes a session window reference, not an HWND. Only Windows renders and copies an HWND.
 - No real window title modification, hidden background polling, simulated input, accessibility privilege escalation, arbitrary external write, or focus-protection workaround is allowed.
-- Saved data is limited to user-created target metadata (including a retained target required by a stable slot) and platform-slot mappings in local plugin state. Live window titles remain transient runtime data.
+- Saved data is limited to user-created target metadata (including a retained target required by a stable slot), the current locator plus a bounded local history of successfully verified titles, and platform-slot mappings in local plugin state. Unmatched live window titles remain transient runtime data.
 
 ## Acceptance Scenarios
 
@@ -64,4 +69,8 @@ Add an opt-in, keyboard-first EyPc surface that lets a user discover interactive
 17. An unbound single-window process may use one process-frontmost retry; a successful Raise followed by readable `AXFocused=false` remains successful with an unavailable verification trace.
 18. A target bound to several non-current Spaces returns `space-ambiguous`; a requested switch that is not confirmed returns `space-switch-timeout` and never continues to AX activation.
 19. A stale preload revision produces `bridge-stale` before native activation. Development traces retain separate pre-initial and pre-retry aggregate snapshots without raw identity data.
-20. A saved target whose sole same-PID window has a different title opens an explicit candidate confirmation and updates the locator only after that selection succeeds.
+20. Historical WJ-13 acceptance: a sole same-PID title change required explicit confirmation. WJ-17 supersedes this only when a complete inventory proves one high-confidence unique logical match; every weak or ambiguous case retains the explicit path.
+21. Stable global-slot targets should reuse a preload-session Space binding instead of repeating full direct/reverse lookup on every invocation. A cache hit remains a hint only: the current display map, application/title, exact CG→AX mapping, and final focused AX window must still verify; native miss evicts the hint and permits one normal recovery scan. Space/display bindings must not be persisted across preload lifetimes.
+22. A macOS Core Graphics row with `kCGWindowIsOnscreen=false` must not be classified as minimized solely from that field because ordinary windows on another Space are also offscreen. Complete list snapshots may evict absent rows; partial/current-Space snapshots must merge into the prior session list, visibly mark retained rows as cached, and must not prove `target-closed`.
+23. After restart changes the native reference/PID and a complete rescan finds exactly one same-application window with a strong project/page-title similarity, the first slot invocation activates it, replaces the stale reference, and persists the newly verified title without manual rebinding.
+24. Two similarly scored browser/IDE siblings, a weak same-application title, or a partial inventory never auto-rebinds. EyPc retains the slot and offers explicit candidates where possible instead of choosing one or deleting the binding.

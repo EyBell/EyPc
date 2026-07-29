@@ -4,13 +4,15 @@ status: verified
 scope: project
 fingerprint: window-list-current-space-only__system-events-ax__miss-other-spaces-displays__cgwindowlist-required
 first_seen: 2026-07-26
-last_verified: 2026-07-28
+last_verified: 2026-07-29
 review_after: 2027-01-28
 evidence:
   - preload/index.js
   - public/preload.js
   - src/platform/eypcPlatform.ts
   - vibe/specs/260724/1527-window-jump-workbench/verify.md
+  - tests/runtime/action.test.ts
+  - tests/platform/eypcPlatform.test.ts
 tags:
   - windows
   - macos
@@ -26,25 +28,33 @@ tags:
 
 1. Window Jump refresh only shows windows on the current Space/desktop even though other Spaces and displays have real app windows.
 2. Or the list shows the window (CG inventory) but「展开并前置」returns `activation-not-found` after a healthy rescan when the target is on another Space/display.
+3. A successful refresh intermittently removes windows on other Spaces even though Core Graphics returned them in an earlier inventory.
+4. Repeated stable-slot calls remain slow because the preload fills `macosWindowSpaceCache` but ignores it during activation and repeats direct/reverse or isolated lookup.
 
 ## Wrong Assumption
 
-`System Events` `process.windows()` enumerates and can raise every desktop the user can switch to.
+`System Events` `process.windows()` enumerates and can raise every desktop the user can switch to; `kCGWindowIsOnscreen=false` proves minimization; and a cache that is populated but never read still accelerates activation.
 
 ## Verified Root Cause
 
 AX via System Events typically exposes windows on the active Space. Cross-Space/display inventory requires `CGWindowListCopyWindowInfo` with `kCGWindowListOptionAll`. Activation that only talks to System Events therefore fails with host `target/native not-found` while Runtime resolve still succeeds on the CG row.
 
+Core Graphics “onscreen” is visibility on the current composited Space, not an `AXMinimized` equivalent. A normal window on another Space can report `kCGWindowIsOnscreen=false`; converting that to `minimized=true` and filtering minimized macOS rows deletes valid cross-Space content. Likewise, an AX fallback is a partial/current-Space snapshot, so replacing the previous full list with it turns an observation gap into fabricated deletion.
+
+The WJ-15 preload also populated a session Space map during inventory/resolution but `macosLookupOrResolveWindowSpaceBinding` rebuilt direct and reverse evidence on every call. The cache had no read path, so it could not reduce latency.
+
 ## Prevention Rule
 
-Prefer CoreGraphics for full-desktop inventory and use System Events only as a current-Space fallback. Before activating a CG `pid:0:CGWindowNumber` reference, revalidate PID/app/title and resolve the window against the current managed-display map with both `SLSCopySpacesForWindows` masks plus `SLSCopyWindowsWithOptionsAndTags` reverse corroboration. If Electron returns no binding, repeat the same bounded lookup in a fresh JXA process; switch only one remote binding and confirm it. After the switch, map raw AX elements through `_AXUIElementGetWindow`, focus/Raise the unique CG-ID match, and verify application `AXFocusedWindow` maps back to that same ID. Do not use `SLSCopyManagedDisplayForSpace`, desktop walking, learned bindings, title-only Chromium selection, or process-frontmost for a multi-window owner. Re-run prepare/build so canonical/public/dist preloads match. Cross-project authority: [utools-macos-ax-activation-misses-other-spaces.md](../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/error-memory/utools-macos-ax-activation-misses-other-spaces.md#L1) · [macos-window-activation.md](../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/macos-window-activation.md#L1). The linked CodeNote files have pre-existing dirty/untracked content and were not overwritten by WJ-15.
+Prefer CoreGraphics for full-desktop inventory and use System Events only as a current-Space fallback. Never infer minimization from `kCGWindowIsOnscreen`; keep minimized/off-Space rows visible unless Accessibility supplies a real minimize attribute. Tag each list result complete or partial: complete snapshots may evict, partial snapshots must merge into the prior session list and cannot prove closure.
+
+Before full Space resolution, validate any preload-session binding against the current managed-display map. A unique cache hit may skip direct/reverse/isolated lookup only when the activation child still verifies application/title, unique `_AXUIElementGetWindow` CG identity, and exact application `AXFocusedWindow` readback. Native miss evicts the hint and permits one normal recovery. Import an isolated unique binding only into the current preload session; never persist CG/PID/title/Space/display binding data. Do not use `SLSCopyManagedDisplayForSpace`, desktop walking, learned bindings, title-only Chromium selection, or process-frontmost for a multi-window owner. Cross-project authority: [utools-macos-ax-activation-misses-other-spaces.md](../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/error-memory/utools-macos-ax-activation-misses-other-spaces.md#L1) · [macos-window-activation.md](../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/macos-window-activation.md#L1). The linked CodeNote files have pre-existing dirty/untracked content and were not overwritten by WJ-16.
 
 ## Alternative Route
 
 - Status: `verified`
 - Preconditions: macOS host; target on another Space/display; Accessibility (+ Screen Recording for full list).
-- Steps: load inventory via CG; resolve/switch one Space through in-process or isolated SkyLight; map exact AX→CG; Raise/focus and read back exact `AXFocusedWindow`.
-- Verification: from a different Space than a multi-window Chromium target, invoke its stable slot and require `switch-confirmed → ax-cg-id-match → ax-focused-window` without sibling-window activation.
+- Steps: load complete inventory via CG; retain the prior list on partial AX fallback; read/validate a session Space hint or resolve/switch one Space through in-process/isolated SkyLight; map exact AX→CG; validate app/title; Raise/focus and read back exact `AXFocusedWindow`; evict hint on native miss.
+- Verification: from a different Space than a multi-window Chromium target, invoke its stable slot twice and require the repeated call to include `session-cache → switch-confirmed/current → ax-cg-id-match → ax-focused-window`; partial refresh must retain the other-Space row and cannot emit `target-closed`.
 - Applicability boundary: inventory + activation; no permanent macOS topmost.
 - Fallback: Accessibility-only hosts remain current-Space for AX; blocking diagnostics stay visible.
 
@@ -64,3 +74,4 @@ Prefer CoreGraphics for full-desktop inventory and use System Events only as a c
 | 2026-07-27 | SIP-safe route continue | remember only after AX `activated`; stale binding → forget + walk (skip tried Space); settle 120ms | source repaired; host re-acceptance pending |
 | 2026-07-28 | Host: AiTools (2 CG windows) → `space=failed:multiwindow-blocked` twice; env snapshot: CG目标=1, AX目标=0, AX窗口=2, 绑定数=0, 来源=none | `SLSCopySpacesForWindows` returns 0 for all masks; reverse scan also empty. All windows on current Space (AX窗口=CG所属窗口=2) but AX title mismatch (AX目标=0). Fix: (1) `current-space-inferred` — when `ownerCgWindowCount > 1` and `axWindowCount === ownerCgWindowCount`, infer all windows on current Space, skip Space switch, proceed to activation; (2) `cg-ordinal-fallback` — activation script resolves CG ordinal from `CGWindowListCopyWindowInfo` and uses it when AX title doesn't match | source repaired; host re-acceptance pending |
 | 2026-07-28 | Same AiTools target placed on a non-current Space; Electron binding empty while isolated direct+reverse binding unique; title/ordinal focused a sibling | Isolated JXA Space bridge, then `_AXUIElementGetWindow` unique mapping plus application `AXFocusedWindow` read-back | global slot 2 host-verified; exact target focused |
+| 2026-07-29 | User reported repeated global calls still slow and list rows from other Spaces disappearing | Added guarded session-cache read/import, exact cached-route verification, complete/partial list merge, real cached-row state, and removed CG offscreen→minimized inference | source/type/focused tests verified; real host latency/list acceptance pending |
