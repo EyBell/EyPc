@@ -1,11 +1,58 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createInitialState } from '../../src/domain/state'
-import type { CodexHostThread, CodexThreadOpenResult } from '../../src/domain/codex'
+import { CODEX_TASK_STATE_REVISION, type CodexHostThread, type CodexThreadOpenResult } from '../../src/domain/codex'
 import { CODEX_DYNAMIC_TASK_WINDOW_MS, projectCodexDynamicStatus } from '../../src/domain/codexPresentation'
 import type { EypcPlatformApi } from '../../src/platform/eypcPlatform'
 import { createCodexController } from '../../src/runtime/codexController'
 
 describe('Codex controller', () => {
+  it('withholds cached task counts when the production adapter reports a legacy task-state bridge', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    const reads: Array<Record<string, boolean>> = []
+    const messages: string[] = []
+    const platform = {
+      codex: {
+        taskStateRevision: 'legacy',
+        readSnapshot: async (options: Record<string, boolean>) => {
+          reads.push(options)
+          return {
+            ok: true as const,
+            receivedAt: 200,
+            value: {
+              version: 2 as const,
+              receivedAt: 200,
+              quota: { plan: 'pro', short: { remainingPercent: 80, resetAt: 1_000, windowMinutes: 300 } }
+            }
+          }
+        },
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({
+      platform,
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: (message) => messages.push(message)
+    })
+
+    controller.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(reads).toEqual([{ includeQuota: true, includeConfig: true, includeThreads: false }])
+    expect(controller.view().conversations).toMatchObject({
+      status: 'error',
+      errorCode: 'preload-version-mismatch',
+      ongoingCount: 0,
+      completedUnreadCount: 0
+    })
+    expect(messages.at(-1)).toContain('重新加载 EyPc 插件')
+    expect(controller.floatSnapshot().taskStateRevision).toBe(CODEX_TASK_STATE_REVISION)
+    controller.dispose()
+  })
+
   it('inspects macOS or Windows readiness once on first enabled launch even while the Codex page is inactive', async () => {
     const state = createInitialState(1)
     state.activeTab = 'ports'

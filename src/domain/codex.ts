@@ -259,6 +259,13 @@ export interface CodexPendingRecoverySnapshotV1 {
   receivedAt: number
 }
 
+/**
+ * End-to-end revision for the privacy-safe task-state projection. The preload,
+ * Controller and floating renderer must all agree before task counts are
+ * presented; uTools may otherwise keep an older preload/renderer alive.
+ */
+export const CODEX_TASK_STATE_REVISION = 'task-state-v1'
+
 export interface CodexHostSnapshotV1 {
   version: 1
   receivedAt: number

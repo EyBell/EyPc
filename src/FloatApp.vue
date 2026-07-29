@@ -43,9 +43,10 @@ import type {
   CodexProjectSection,
   CodexQuotaBucket,
   CodexResolvedNewThreadModel,
-  CodexTaskCard
+  CodexTaskCard,
+  ConversationSnapshotV1
 } from './domain/codex'
-import { normalizeCodexQuota } from './domain/codex'
+import { CODEX_TASK_STATE_REVISION, emptyConversationSnapshot, normalizeCodexQuota } from './domain/codex'
 import type { CodexFloatResizeCorner, CodexFloatWindowState } from './float-env'
 import type { CodexFloatSnapshotV1 } from './runtime/codexController'
 
@@ -169,7 +170,17 @@ const fallbackWaterAppearance = CODEX_THEME_PRESETS[0].waterAppearance
 const fallbackExpandedCardAppearance = CODEX_THEME_PRESETS[0].expandedCardAppearance
 const settings = computed(() => snapshot.value)
 const quota = computed(() => snapshot.value?.quota)
-const conversations = computed(() => snapshot.value?.conversations)
+const incompatibleTaskStateSnapshot: ConversationSnapshotV1 = {
+  ...emptyConversationSnapshot('error'),
+  errorCode: 'preload-version-mismatch',
+  errorMessage: 'Codex 任务状态版本已过期，请在 uTools 中重新加载 EyPc 插件'
+}
+const conversations = computed(() => {
+  if (!snapshot.value) return undefined
+  return snapshot.value.taskStateRevision === CODEX_TASK_STATE_REVISION
+    ? snapshot.value.conversations
+    : incompatibleTaskStateSnapshot
+})
 const dynamicStatus = computed(() => projectCodexDynamicStatus(conversations.value, dynamicNow.value))
 const compact = computed(() => buildCodexCompactPresentation({
   quota: quota.value || { version: 1, status: 'idle', plan: '', short: null, weekly: null, updatedAt: 0 },
@@ -225,7 +236,7 @@ const statusText = computed(() => {
   return '等待真实会话预检'
 })
 const compactAriaLabel = computed(() => {
-  if (quota.value?.status === 'stale' || quota.value?.status === 'error') return `${compact.value.ariaLabel}，${statusText.value}`
+  if (quota.value?.status === 'stale' || quota.value?.status === 'error' || conversations.value?.status === 'stale' || conversations.value?.status === 'error') return `${compact.value.ariaLabel}，${statusText.value}`
   return compact.value.ariaLabel
 })
 const composerHasContent = computed(() => Boolean(composer.value?.image || composer.value?.prompt.trim()))

@@ -247,6 +247,8 @@ export interface EypcPlatformApi {
     copyText(text: string): Promise<boolean>
   }
   codex: {
+    /** Missing on older long-lived preload instances; the adapter normalizes that case to `legacy`. */
+    taskStateRevision?: string
     inspectEnvironment(): Promise<CodexEnvironmentSnapshotV1>
     setLaunchPath?(path: string): Promise<CodexEnvironmentSnapshotV1>
     clearLaunchPath?(): Promise<CodexEnvironmentSnapshotV1>
@@ -651,6 +653,11 @@ export function getPlatform(): EypcPlatformApi {
         copyText: hostClipboard?.copyText || (async () => false)
       },
       codex: {
+        taskStateRevision: typeof hostCodex?.readSnapshot === 'function'
+          ? typeof hostCodex.taskStateRevision === 'string' && hostCodex.taskStateRevision
+            ? hostCodex.taskStateRevision
+            : 'legacy'
+          : undefined,
         // uTools can keep a previous preload alive while loading a newer renderer.
         // Treat an existing snapshot bridge as positive capability evidence instead
         // of misreporting the desktop host as an unsupported browser.

@@ -38,6 +38,7 @@ describe('browser fallback platform', () => {
 
     const { getPlatform } = await import('../../src/platform/eypcPlatform')
 
+    expect(getPlatform().codex.taskStateRevision).toBe('legacy')
     await expect(getPlatform().codex.inspectEnvironment()).resolves.toMatchObject({
       platform: expectedPlatform,
       runtimeState: 'missing',
@@ -45,6 +46,29 @@ describe('browser fallback platform', () => {
       connectionState: 'not-checked',
       desktopBridgeState: 'not-checked'
     })
+  })
+
+  it('forwards the exact task-state revision exposed by the current preload', async () => {
+    globalThis.window = {
+      navigator: { platform: 'MacIntel' },
+      eypcPlatform: {
+        storage: {},
+        files: {},
+        clipboard: {},
+        codex: {
+          taskStateRevision: 'task-state-v1',
+          readSnapshot: async () => ({ ok: false, error: { code: 'unavailable', message: 'not used' }, receivedAt: Date.now() })
+        },
+        float: {},
+        app: { hide: async () => true },
+        getEnterPayload: () => null,
+        clearEnterPayload: () => undefined
+      }
+    } as unknown as Window & typeof globalThis
+
+    const { getPlatform } = await import('../../src/platform/eypcPlatform')
+
+    expect(getPlatform().codex.taskStateRevision).toBe('task-state-v1')
   })
 
   it('does not claim a legacy compatibility state when the desktop preload has no Codex snapshot bridge', async () => {
@@ -64,6 +88,7 @@ describe('browser fallback platform', () => {
 
     const { getPlatform } = await import('../../src/platform/eypcPlatform')
 
+    expect(getPlatform().codex.taskStateRevision).toBeUndefined()
     await expect(getPlatform().codex.inspectEnvironment()).resolves.toMatchObject({
       platform: 'unsupported',
       runtimeState: 'unsupported',
