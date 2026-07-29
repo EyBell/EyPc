@@ -1,9 +1,24 @@
 # Codex Companion 真实会话与交互验证记录
 
 Tool: codex
-Date: 2026-07-28
+Date: 2026-07-29
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-28.2`
+Requirement version: `2026-07-29.1`
+
+## RAW-110 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 根因与偏好边界 | pass / read-only | 源码与生成 schema 确认 `thread/started` 的 ID 位于 `params.thread.id`，旧 handler 只读顶层 `params.threadId`，导致新任务事件没有 dirty target、事件校对重读全部 latest Turn；已登记任务的 `turn/started` / `turn/completed` 又会丢弃完整 `params.turn`。领域默认值实际为 0ms，但设置页旧标签把 1500ms 标成默认。已有持久化值来源不可区分，未做静默迁移。 |
+| 新任务单读 | implemented / source-reviewed | `thread/started` 现在仅在 preload 解析嵌套 raw ID 并标脏该任务；完整库存仍验证项目归属/匿名身份/action alias，但事件 Turn 读取复用其它会话期缓存，只为新增任务发一次 `limit=1` status-only RPC。 |
+| 强 Turn 直发 | implemented / source-reviewed | [preload/index.js](../../../../preload/index.js#L1) 与 [public/preload.js](../../../../public/preload.js#L1) 对已登记任务只接受完整且单调更新的 inProgress + startedAt，或 completed + startedAt + completedAt；前者立即更新匿名进行中，后者按当前 Turn/active interval 核验后发布脱敏 `targeted-after-exit`。两者更新 session cache 并取消同任务不再需要的 retry。 |
+| 抖动与异常回退 | preserved / source-reviewed | 缺失/畸形/旧通知、未知任务、failed/interrupted 继续标脏并走 50ms urgent 校对；已知 active 仍可执行 3 秒 `[0,300,1000]` 定向 latest-Turn；等待输入/审批优先，raw ID/items/body/error 不跨 preload。Controller hold、缺失隔离、旧 terminal、单调合并和 Renderer 同源投影未放宽。 |
+| 设置与迁移 | implemented / source-reviewed | [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 将 0ms 标为“不等待（默认）”，1500ms 保留为普通选项；领域默认、选项集合、已有持久化值、存储结构和迁移均未修改。 |
+| 测试合同 | updated / not run | 既有 [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 增加嵌套 thread/started ID 只重读新增任务，以及完整 started/completed 立即匿名发布、无额外 latest-Turn RPC、私有 ID/items/path/body 不越界合同；原畸形通知 urgent 回退合同保留。依授权未执行 tests、typecheck、build、uTools 或真实 Codex 操作。 |
+| 错误记忆 | reused / no new record | 复用 [codex-completion-transition-hysteresis](../../../../vibe/knowledge/error-memory/codex-completion-transition-hysteresis.md#L1) 与 [codex-fixed-debounce-delays-terminal-confirmation](../../../../vibe/knowledge/error-memory/codex-fixed-debounce-delays-terminal-confirmation.md#L1) 的正向证据/固定延迟边界；本轮是同类延迟的净增量修复，不创建重复错误记忆。 |
+| 限定静态验证 | pass | RAW-110 hunk review 确认 direct started/completed 与 unknown/invalid fallback 同时存在且未增加 Renderer timer；canonical/public preload 整体镜像一致，两个 helper 各仅一份，旧 1.5 秒默认标签与私有同步宿主 IPC 残留为零。EyPc 与 CodeNote `git diff --check` 通过，两仓本轮 Markdown 代码链接审计通过；并行 Environment Action、Window Jump 与其它脏写集均保留，不纳入本轮接纳结论。 |
+
+结论：RAW-110 已完成源码、既有测试合同与限定静态收口；真实冷启动新任务、已登记任务 Turn 直发、完成回退与 uTools 数量切换仍为 `reported / 未校验，待用户验收`。
 
 ## RAW-109 当前交付状态
 

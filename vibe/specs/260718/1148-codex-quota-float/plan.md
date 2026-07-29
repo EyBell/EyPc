@@ -3,7 +3,7 @@
 Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-28.2`
+Requirement version: `2026-07-29.1`
 
 Authority: [spec.md](spec.md#L1)
 
@@ -171,5 +171,9 @@ Authority: [spec.md](spec.md#L1)
 154. 在 [codexController.ts](../../../../src/runtime/codexController.ts#L1) 将普通循环候选收敛为完整 `inputRequired` 加 RAW-108 同一投影的最近 6 小时、非隐藏 active 组；保留完成未读独立首条动作，以及常规池为空时非 stopped EyPc 本地置顶回退。不新增 timer、缓存或 debounce。
 155. 在既有 [codexController.test.ts](../../../../tests/runtime/codexController.test.ts#L1) 增加“旧保守 ongoing 不进入普通循环、本地置顶后可作为空池回退”合同，并把受六小时边界影响的既有 fixture 改成相对当前时间；不新增测试模块且不运行测试。
 156. 同步 RAW-109 到 Controlled/canonical/current/architecture/developer-soul/error-memory 与 CodeNote 派生理解，修正当前文档中完成未读仍属于通用前后循环的漂移描述；只执行范围差异、残余筛选、`git diff --check` 和 Markdown 代码链接审计。
+157. 以 RAW-110 追踪“进行中 → 已完成”延迟：只读确认当前领域默认值为 0ms、配置页却把 1500ms 标成默认，并确认 App Server handler 丢弃 `turn/completed.params.turn` 后才触发额外 latest-Turn 核验；保留已有用户持久化选择，不做无法区分来源的静默迁移。
+158. 在 [preload/index.js](../../../../preload/index.js#L1) 及 [public/preload.js](../../../../public/preload.js#L1) 先从 `thread/started.params.thread.id` 精确标脏全新任务，使事件库存只重读其 latest Turn；再复用 Turn sanitizer，让已登记任务的完整新鲜 inProgress 直接更新进行中、完整单调的 completed 直接发布脱敏 `targeted-after-exit`。未知任务仍完整登记，缺失/旧/非完成通知继续使用 50ms dirty-task 与 3 秒定向核验，不放宽异常或停止门禁。
+159. 修正 [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 的 0ms 默认标签；在既有 [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 增加“新 thread 嵌套 ID 只读一个 latest Turn、已登记 started/completed 直发、零额外 latest-Turn RPC、raw ID/items 不越界”合同，并保留畸形通知回退合同。按授权不执行测试、typecheck、build、uTools 或真实任务。
+160. 同步 RAW-110 到 Controlled/canonical/current/architecture/技术手册/用户指南与 CodeNote 派生理解；复用 completion hysteresis / fixed debounce 错误记忆，不新建重复记录，只做范围差异、残余 timer/筛选、preload 镜像片段、私有同步 IPC、`git diff --check` 与 Markdown 代码链接静态核验。
 
-Completion: 1–114 保留既有历史与 RAW-088 状态；115–118 为 RAW-089 的实时完成确认与异常统一进行中；119–122 为 RAW-090 的库存消失稳定、证据单调与显式删除快路；123–126 为 RAW-091 的明确停止边界、退出防闪与文档/错误记忆收口；127–130 为 RAW-092 的正向事件快路、dirty-task 读取、强证据直发和完整同步；131–133 为 RAW-093 的计划待确认协议识别、即时待输入投影与权威同步；134–136 为 RAW-094 的私有 patch 忽略、重订抖动修复与真实只读复核；137–139 为 RAW-095 的明确归档匿名快路与复核；140–142 为 RAW-096 的 active observation 新鲜度边界；143–145 为 RAW-097 的 unread-only 状态隔离；146 为 RAW-105 的本地置顶循环回退；147 为 RAW-106 的停止态排除；148 为 RAW-107 的非活跃快捷键缓存防护；149–152 为 RAW-108 的同源展示投影；153–156 为 RAW-109 的旧保守 ongoing 循环排除、测试合同与文档/错误记忆同步。按项目验收规则不运行测试、类型、构建、真实 uTools 或截图；RAW-089–109 均保持 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。
+Completion: 1–114 保留既有历史与 RAW-088 状态；115–118 为 RAW-089 的实时完成确认与异常统一进行中；119–122 为 RAW-090 的库存消失稳定、证据单调与显式删除快路；123–126 为 RAW-091 的明确停止边界、退出防闪与文档/错误记忆收口；127–130 为 RAW-092 的正向事件快路、dirty-task 读取、强证据直发和完整同步；131–133 为 RAW-093 的计划待确认协议识别、即时待输入投影与权威同步；134–136 为 RAW-094 的私有 patch 忽略、重订抖动修复与真实只读复核；137–139 为 RAW-095 的明确归档匿名快路与复核；140–142 为 RAW-096 的 active observation 新鲜度边界；143–145 为 RAW-097 的 unread-only 状态隔离；146 为 RAW-105 的本地置顶循环回退；147 为 RAW-106 的停止态排除；148 为 RAW-107 的非活跃快捷键缓存防护；149–152 为 RAW-108 的同源展示投影；153–156 为 RAW-109 的旧保守 ongoing 循环排除、测试合同与文档/错误记忆同步；157–160 为 RAW-110 的完成通知直发、保守回退、设置标签与权威文档同步。按项目验收规则不运行测试、类型、构建、真实 uTools 或截图；RAW-089–110 均保持 `reported / 未校验，待用户验收`。精确交接见 [verify.md](verify.md#L1) 与 [handoff.md](handoff.md#L1)。

@@ -4,7 +4,7 @@ Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
 Documentation level: `controlled`
-Requirement version: `2026-07-28.2`
+Requirement version: `2026-07-29.1`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
@@ -54,6 +54,8 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 修订 `2026-07-28.2` 追加 RAW-109：前/后任务普通候选不再读取整个 30 天 ongoing 桶，而是完整待输入后复用 RAW-108 最近 6 小时、非隐藏 active 组；完成未读保留独立动作。普通池为空时既有非 stopped EyPc 本地置顶回退不变，因此旧/隐藏任务只有用户明确本地置顶后才可进入动作循环。
 
+修订 `2026-07-29.1` 追加 RAW-110：`thread/started.params.thread.id` 正确标脏新任务，使验证库存只重读其 latest Turn 并复用其它缓存；已登记任务的完整新鲜 `turn/started` 直接更新 inProgress，完整单调的 `turn/completed` 直接收敛为脱敏 `targeted-after-exit`，不再先丢弃 Turn 元数据并等待额外 RPC。未知新任务仍完成安全登记，不完整、旧或非完成通知继续走 50ms/3 秒保守核验。代码默认稳定窗保持 0ms，设置页纠正默认项标识，既有持久化选择不迁移。
+
 ## Current Requirement And Implementation Map
 
 | 领域 | 当前合同 | 实现与证据 |
@@ -69,7 +71,7 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 | 宿主快捷键边界 | 前/后任务、待输入、完成未读、悬浮入口和窗口槽只通过官方设置跳转；preload/Renderer/运行时均不读取或回显宿主绑定，不调用私有同步快捷键 IPC | [preload/index.js](../../../../preload/index.js#L1)、[eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1)、[appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1)、[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) |
 | 水球收起态命中区与全局功能 | 上半区不因 hover 展开并保留三角标直接点击；待输入/完成未读取完整集合（含隐藏），进行中严格等于同源动态投影里最近 6 小时、非隐藏的 `active / waiting-approval / ongoing` 卡片数。主水球摘要、按钮 ARIA、说明和设置预览报告相同数量；零值隐藏、超过 99 显示 `99+`。待输入只打开第一条，完成未读角标和 uTools 全局功能均打开并本地确认第一条当前完成 revision，进行中只展开；前/后任务普通循环按完整待输入→同源最近 active 稳定去重地打开，完成未读不参与；普通候选为空时仅非 stopped EyPc 本地置顶任务按稳定显示顺序回退，原生置顶不参与；`hideAfterAction=true` 时不调用 `setTab`，`syncActivation(false)` 时清空 `conversations` 防止缓存失效崩溃 | [codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1)、[FloatApp.vue](../../../../src/FloatApp.vue#L1)、[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1)、[featureRouting.ts](../../../../src/runtime/feature/featureRouting.ts#L1)、[App.vue](../../../../src/App.vue#L1) |
 | 展开布局 | 四页签直接位于顶部，其下依次是统一搜索、服务端真实额度文字和任务内容；删除旧顶部样式/隐藏/刷新/设置/关闭工具栏 | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[float.css](../../../../src/styles/float.css#L1) |
-| 实时状态与未读通道 | macOS Codex Desktop 私有 IPC 提供 live snapshot/patch/request/read-state；active 退出立即触发单任务 latest-Turn 核验，3 秒内成功便推送脱敏完成证据，失败才请求完整校对。固定 2 秒活动防抖已删除，无 live authority 保持“进行中” | [preload/index.js](../../../../preload/index.js#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1) |
+| 实时状态与未读通道 | macOS Codex Desktop 私有 IPC 提供 live snapshot/patch/request/read-state；已登记任务的完整新鲜 App Server `turn/started` 可直接更新匿名 inProgress，完整单调的 `turn/completed` 可直接推送脱敏完成强证据；未知任务及不完整/旧通知回退到库存登记与事件校对。只有 Desktop active 退出而无完整通知时触发 3 秒单任务 latest-Turn 核验。固定 2 秒活动防抖已删除，无 live authority 保持“进行中” | [preload/index.js](../../../../preload/index.js#L1)、[codex.ts](../../../../src/domain/codex.ts#L1)、[codexController.ts](../../../../src/runtime/codexController.ts#L1)、[codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) |
 | 启动发现与连接诊断 | 自动枚举受控 macOS/Windows CLI 候选；可选手动位置经同一运行计划核验并只存本机插件 storage；环境快照只传来源/可用性标签，连接器降级明确不授予实时状态权威 | [preload/index.js](../../../../preload/index.js#L1)、[eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1)、[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) |
 | 默认模型与新会话 | `quota-auto`、普通首选模型、Spark 自动切换、冻结/刷新确认模型、瞬时 `thread/start → turn/start → Deep Link` 与失败清理 | [codexNewThread.ts](../../../../src/domain/codexNewThread.ts#L1)、[preload/index.js](../../../../preload/index.js#L1)、[FloatApp.vue](../../../../src/FloatApp.vue#L1) |
 | 选择、Shift 与快捷键 | 普通态中部打开、Ctrl/Cmd+中部或 38px 左区选择；选择态左区/中部切换成员并在最后一项移出时退出；模式提示固定在列表舞台底部且不重排，行与子按钮分别拥有 Space/Enter | [FloatApp.vue](../../../../src/FloatApp.vue#L1)、[float.css](../../../../src/styles/float.css#L1)、[keybindingRuntime.ts](../../../../src/runtime/keybinding/keybindingRuntime.ts#L1) |
@@ -84,6 +86,15 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 - `input` 与 `unread` 数量分别取完整 `inputRequired` 与完整完成未读集合，包含隐藏任务；waiting-input 不重复进入 active。`buildCodexCompactPresentation` 只消费显式 `{ input, active, unread }`，所以主水球 ARIA 与三个独立按钮报告相同数字。[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 的水球预览复用同一投影，保守 `ongoing` 不再遗漏。
 - exact Desktop live 仍是 active/input/approval 的权威来源；`ongoing` 是 Controller 在退出核验、bridge failed、暂缺权威、旧 terminal 防闪或完成 hold 期间已经稳定发布的保守展示状态。Renderer 不重新判断这些证据，也不增加角标专属 timer/debounce。`stopped`、completed/completed-unread 到达同一稳定快照时，卡片、角标和归档能力一次切换。
 - 本轮不修改 `completionPresentationDelayMs` 的默认值、已保存值或选项，不修改 Preload/Controller 协议、动作 ID、存储、迁移或错误记忆。既有测试文件补充序列合同但不执行；交付保持 `reported / 未校验，待用户验收`。
+
+## RAW-110 Direct Started/Completed Turn Evidence
+
+- `thread/started` 按当前 App Server schema 从 `params.thread.id` 取得 raw identity，只在 preload 内标为 dirty。完整库存仍重新读取原生项目注册、未归档分页和归属，但 latest-Turn lane 对其它已缓存任务复用会话期结果，只为新增任务发 status-only RPC；匿名 key、项目和 action alias 建立后才发布卡片。
+- 已登记任务的 App Server `turn/started` 只在 `status=inProgress` 且 `startedAt` 晚于当前 latest Turn 时直接更新同一 session cache 和匿名 Activity Delta，取消旧完成 retry/未读 refresh，使保守进行中卡片与角标不等待 latest-Turn RPC。相同 inProgress 通知幂等；旧修订回退。全新未知任务仍必须由完整库存建立项目归属、匿名 key 与 action alias。
+- App Server `turn/completed` 通知只在已登记任务、`status=completed`、`startedAt/completedAt` 都有效且证据相对当前 latest Turn 与 Desktop active interval 单调更新时进入快路。[preload/index.js](../../../../preload/index.js#L1) 复用 latest-Turn sanitizer，只缓存和发送状态/时间；raw thread/Turn ID、items、正文与错误内容留在 preload。
+- 新鲜通知更新同一 session-only Turn cache，取消同任务尚未执行的定向 latest-Turn retry，并立即发出 `lastTurnEvidence=targeted-after-exit` 的匿名 Activity Delta。Controller 已有强证据合同因此绕过普通 `completionPresentationDelayMs`，卡片、角标、归档能力和无障碍摘要从同一稳定快照一次切换。未决 input/approval 仍优先，完成证据只在请求解除后恢复其正常投影。
+- 缺 Turn、缺时间、旧修订、未知任务、failed/interrupted 或 active interval 晚于完成时间时，通知不授予新的状态权威：继续标脏并请求 50ms urgent 完整校对；已知 active 仍可使用 3 秒 `[0,300,1000]` 定向 latest-Turn 核验。只有 Desktop active→idle 的路径也保持该有界核验，因此跨进程通知缺失不会被误判完成。
+- `completionPresentationDelayMs` 的领域默认值保持 `0ms`，设置页只纠正“不等待（默认）”标签；所有已有持久化值与 `500–3000ms` 可选平滑档保持不变，不新增迁移、Renderer timer、Controller debounce、协议字段或动作。本轮只补充既有 bridge 测试合同，不执行测试、typecheck、build、uTools 或真实 Codex 操作；状态为 `reported / 未校验，待用户验收`。
 
 ## RAW-056 Codex Desktop Live Authority Contract
 

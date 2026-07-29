@@ -3997,6 +3997,60 @@ class CodexDesktopCompanionBridge {
       refresh.timer = null
       if (this.turnRefreshes.get(threadId) === refresh) this.turnRefreshes.delete(threadId)
       if (inventoryChanged) {
+function codexApplyCompletedTurnNotification(bridge, known, threadId, value) {
+  if (!bridge || !known || !validCodexThreadId(threadId)) return false
+  const turn = sanitizeCodexTurnStatus(value)
+  if (turn?.status !== 'completed' || !turn.startedAt || !turn.completedAt) return false
+  const previousStartedAt = codexTimestampMs(known.lastTurnStartedAt)
+  const previousCompletedAt = codexTimestampMs(known.lastTurnCompletedAt)
+  const activeSince = codexTimestampMs(known.desktopActiveSince)
+  if (activeSince > 0 && turn.completedAt <= activeSince) return false
+  const freshCompleted = turn.startedAt > previousStartedAt
+    || known.lastTurnStatus === 'inProgress' && turn.startedAt === previousStartedAt
+    || known.lastTurnStatus === 'completed'
+      && turn.startedAt === previousStartedAt
+      && turn.completedAt > previousCompletedAt
+  if (!freshCompleted) return false
+
+  codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
+  known.lastTurnStatus = 'completed'
+  known.lastTurnStartedAt = turn.startedAt
+  known.lastTurnCompletedAt = turn.completedAt
+  bridge.cancelLatestTurnRefresh(threadId)
+  const waitingLive = Array.isArray(known.activeFlags)
+    && known.activeFlags.some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
+  if (waitingLive) {
+    emitCodexActivityDelta([{ ...known, lastTurnEvidence: 'targeted-after-exit' }], false)
+    bridge.scheduleCompletionUnreadRefresh(threadId)
+  } else {
+    bridge.publishTargetedCompletion(known, threadId)
+  }
+  return true
+}
+
+function codexApplyStartedTurnNotification(bridge, known, threadId, value) {
+  if (!bridge || !known || !validCodexThreadId(threadId)) return false
+  const turn = sanitizeCodexTurnStatus(value)
+  if (turn?.status !== 'inProgress' || !turn.startedAt) return false
+  const previousStartedAt = codexTimestampMs(known.lastTurnStartedAt)
+  if (known.lastTurnStatus === 'inProgress' && turn.startedAt === previousStartedAt) {
+    bridge.cancelLatestTurnRefresh(threadId)
+    bridge.cancelCompletionUnreadRefresh(threadId)
+    return true
+  }
+  if (turn.startedAt <= previousStartedAt) return false
+
+  codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
+  known.lastTurnStatus = 'inProgress'
+  known.lastTurnStartedAt = turn.startedAt
+  delete known.lastTurnCompletedAt
+  delete known.lastTurnEvidence
+  bridge.cancelLatestTurnRefresh(threadId)
+  bridge.cancelCompletionUnreadRefresh(threadId)
+  emitCodexActivityDelta([known], false)
+  return true
+}
+
         const known = codexActivityInventory.get(threadId)
         markCodexThreadTurnStatusDirty(threadId)
         emitCodexActivityDelta(known ? [known] : [], true, 'urgent')
@@ -4890,7 +4944,16 @@ function handleCodexServerMessage(message) {
     return true
   }
   if (['turn/started', 'turn/completed', 'thread/started'].includes(method)) {
-    const threadId = typeof params.threadId === 'string' ? params.threadId : ''
+    const startedThread = method === 'thread/started' ? codexRecord(params.thread) : null
+    const threadId = typeof params.threadId === 'string'
+      ? params.threadId
+      : typeof startedThread?.id === 'string' ? startedThread.id : ''
+    if ((method === 'turn/started' || method === 'turn/completed') && validCodexThreadId(threadId)) {
+      const bridge = codexEnsureDesktopBridge()
+      const known = codexActivityInventory.get(threadId)
+      if (known && method === 'turn/started' && codexApplyStartedTurnNotification(bridge, known, threadId, params.turn)) return true
+      if (known && method === 'turn/completed' && codexApplyCompletedTurnNotification(bridge, known, threadId, params.turn)) return true
+    }
     markCodexThreadTurnStatusDirty(threadId)
     emitCodexActivityDelta([], true, 'urgent')
     if (method === 'turn/completed' && validCodexThreadId(threadId)) {

@@ -535,6 +535,100 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
+  it('publishes fresh started and completed Turn notifications immediately without latest-Turn rereads', async () => {
+    const child = new FakeCodexProcess()
+    const { bridge } = loadCodexBridge(child)
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const deltas: Array<Record<string, any>> = []
+    const stop = bridge.onActivityChanged((delta) => deltas.push(delta))
+
+    child.stdout.emit('data', `${JSON.stringify({ method: 'thread/status/changed', params: { threadId: FIXED_THREAD_IDS[0], status: { type: 'active', activeFlags: [] } } })}\n`)
+    const statusReadsBefore = child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.limit === 1).length
+    child.stdout.emit('data', `${JSON.stringify({
+      method: 'turn/started',
+      params: {
+        threadId: FIXED_THREAD_IDS[0],
+        turn: {
+          id: 'private-turn-id',
+          status: 'inProgress',
+          startedAt: 2_000_000_200,
+          items: [{ text: 'private started body' }]
+        }
+      }
+    })}\n`)
+    expect(deltas.at(-1)).toMatchObject({
+      inventoryChanged: false,
+      entries: [{
+        key: baseline.value.threads[0].key,
+        lastTurnStatus: 'inProgress',
+        lastTurnStartedAt: 2_000_000_200_000
+      }]
+    })
+    child.stdout.emit('data', `${JSON.stringify({
+      method: 'turn/completed',
+      params: {
+        threadId: FIXED_THREAD_IDS[0],
+        turn: {
+          id: 'private-turn-id',
+          status: 'completed',
+          startedAt: 2_000_000_200,
+          completedAt: 2_000_000_201,
+          items: [{ text: 'private completion body' }]
+        }
+      }
+    })}\n`)
+
+    expect(deltas.at(-1)).toMatchObject({
+      inventoryChanged: false,
+      entries: [{
+        key: baseline.value.threads[0].key,
+        lastTurnStatus: 'completed',
+        lastTurnStartedAt: 2_000_000_200_000,
+        lastTurnCompletedAt: 2_000_000_201_000,
+        lastTurnEvidence: 'targeted-after-exit'
+      }]
+    })
+    expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.limit === 1)).toHaveLength(statusReadsBefore)
+    expect(JSON.stringify(deltas)).not.toContain(FIXED_THREAD_IDS[0])
+    expect(JSON.stringify(deltas)).not.toContain('private-turn-id')
+    expect(JSON.stringify(deltas)).not.toContain('private started body')
+    expect(JSON.stringify(deltas)).not.toContain('private completion body')
+    stop()
+    bridge.close()
+  })
+
+  it('marks the nested thread/started identity dirty so a new task rereads only its latest Turn', async () => {
+    const child = new FakeCodexProcess()
+    const { bridge } = loadCodexBridge(child)
+    await expect(bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })).resolves.toMatchObject({ ok: true })
+    const deltas: Array<Record<string, any>> = []
+    const stop = bridge.onActivityChanged((delta) => deltas.push(delta))
+    const statusReadsBefore = child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.limit === 1).length
+
+    child.includeCreatedThreadInInventory = true
+    child.stdout.emit('data', `${JSON.stringify({
+      method: 'thread/started',
+      params: {
+        thread: {
+          id: child.createdThreadId,
+          name: 'private new task',
+          cwd: '/private/new-task',
+          preview: 'private new-task body'
+        }
+      }
+    })}\n`)
+    expect(deltas.at(-1)).toMatchObject({ inventoryChanged: true, inventoryRefreshPriority: 'urgent', entries: [] })
+    const refreshed = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(refreshed).toMatchObject({ ok: true, value: { threads: expect.arrayContaining([expect.objectContaining({ name: '刚创建的待输入任务' })]) } })
+    expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.limit === 1)).toHaveLength(statusReadsBefore + 1)
+    expect(JSON.stringify(deltas)).not.toContain(child.createdThreadId)
+    expect(JSON.stringify(deltas)).not.toContain('private new task')
+    expect(JSON.stringify(deltas)).not.toContain('/private/new-task')
+    expect(JSON.stringify(deltas)).not.toContain('private new-task body')
+    stop()
+    bridge.close()
+  })
+
   it('retains an unknown Desktop waiting-input shadow until an urgent one-task inventory refresh registers it', async () => {
     const child = new FakeCodexProcess()
     const desktopSocket = new FakeCodexDesktopSocket()
