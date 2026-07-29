@@ -2267,7 +2267,7 @@ onUnmounted(() => {
           >
             <MqttIcon name="star" />
           </button>
-          <button type="button" class="mqtt-filter-button mqtt-icon-button" :title="commandTitle('布局', 'mqtt.layout.toggle', 'c-s-s')" aria-label="切换布局" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.layout.toggle')" @click="emit('dispatch', 'mqtt.layout.toggle')">
+          <button type="button" class="mqtt-filter-button mqtt-icon-button" :class="{ active: props.snapshot.mqttWorkspaceLayout === 'split' }" :title="commandTitle('布局', 'mqtt.layout.toggle', 'c-s-s')" aria-label="切换布局" :aria-pressed="props.snapshot.mqttWorkspaceLayout === 'split'" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.layout.toggle')" @click="emit('dispatch', 'mqtt.layout.toggle')">
             <MqttIcon name="layout" />
           </button>
         </span>
