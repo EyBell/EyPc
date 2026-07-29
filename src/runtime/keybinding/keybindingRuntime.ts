@@ -315,6 +315,19 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'codex.quickJump.openForward': { title: '快捷跳转', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+F'], when: "tab == 'codex' && !confirmOpen && !textInputFocused", weight: 160, profileId: 'codex' },
   'codex.search.focus': { title: '聚焦会话搜索', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+Shift+F'], when: "tab == 'codex' && !confirmOpen", weight: 150, profileId: 'codex' },
   'codex.layer.cancel': { title: '取消当前交互层', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Escape'], when: "tab == 'codex'", weight: 150, profileId: 'codex' },
+  ...Object.fromEntries(Array.from({ length: 5 }, (_, index) => {
+    const slot = index + 1
+    return [`codex.action.run.${slot}`, {
+      title: `执行 Environment Action 槽 ${slot}`,
+      group: 'Codex Actions',
+      layer: 'codex',
+      shortcutIds: [`Ctrl+Shift+${slot}`],
+      when: "tab == 'codex' && !textInputFocused && !confirmOpen",
+      weight: 125,
+      profileId: 'codex' as const,
+      description: 'EyPc 等价执行项目 Environment Action（非 Codex 顶栏原生 Action）。'
+    }]
+  })),
   ...Object.fromEntries(Array.from({ length: 9 }, (_, index) => [`codex.drawer.select.${index + 1}`, { title: `执行操作抽屉第 ${index + 1} 项`, group: 'Codex 会话', layer: 'codex', shortcutIds: [`Ctrl+${index + 1}`], when: "tab == 'codex' && !textInputFocused", weight: 120 - index, profileId: 'codex' as const }])),
   'quickJump.openForward': { title: '快捷跳转', group: '全局', layer: 'global', shortcutIds: ['F'], when: '!confirmOpen && !textInputFocused', weight: 120 },
   'quickJump.openBackward': { title: '反向快捷跳转', group: '全局', layer: 'global', shortcutIds: ['Shift+F'], when: '!confirmOpen && !textInputFocused', weight: 120 },
@@ -640,6 +653,11 @@ export const SHORTCUT_RESERVATION_RULES: ShortcutReservationRule[] = [
   { shortcutId: 'Ctrl+Alt+Enter', commandId: 'codex.float.activate', when: 'true', description: '显示、展开并进入 Codex 卡片', layer: 'app' },
   { shortcutId: 'Ctrl+Alt+Q', commandId: 'codex.float.toggle', when: 'true', description: '立即显示或隐藏 Codex 悬浮球', layer: 'app' },
   { shortcutId: 'Ctrl+T', commandId: 'codex.thread.createFocused', when: "tab == 'codex' && !confirmOpen && !textInputFocused", description: '在当前高亮会话或项目中新建会话', layer: 'codex' },
+  { shortcutId: 'Ctrl+Shift+1', commandId: 'codex.action.run.1', when: "tab == 'codex' && !textInputFocused && !confirmOpen", description: '执行 Environment Action 槽 1', layer: 'codex' },
+  { shortcutId: 'Ctrl+Shift+2', commandId: 'codex.action.run.2', when: "tab == 'codex' && !textInputFocused && !confirmOpen", description: '执行 Environment Action 槽 2', layer: 'codex' },
+  { shortcutId: 'Ctrl+Shift+3', commandId: 'codex.action.run.3', when: "tab == 'codex' && !textInputFocused && !confirmOpen", description: '执行 Environment Action 槽 3', layer: 'codex' },
+  { shortcutId: 'Ctrl+Shift+4', commandId: 'codex.action.run.4', when: "tab == 'codex' && !textInputFocused && !confirmOpen", description: '执行 Environment Action 槽 4', layer: 'codex' },
+  { shortcutId: 'Ctrl+Shift+5', commandId: 'codex.action.run.5', when: "tab == 'codex' && !textInputFocused && !confirmOpen", description: '执行 Environment Action 槽 5', layer: 'codex' },
   { shortcutId: 'Escape', commandId: 'confirm.cancel', when: 'confirmOpen', description: '关闭确认弹窗，不穿透到底层', layer: 'confirm' },
   { shortcutId: 'Escape', commandId: 'ports.group.edit.cancel', when: "activeInputRole == 'port-group-editor'", description: '取消端口组编辑', layer: 'port-group-editor' },
   { shortcutId: 'Escape', commandId: 'ports.search.blur', when: "activeInputRole == 'port-search' || activeInputRole == 'port-group-search'", description: '退出端口搜索输入焦点', layer: 'ports-search' },

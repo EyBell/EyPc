@@ -42,6 +42,14 @@ describe('uTools feature routing', () => {
       actionId: 'codex.float.activate',
       hideAfterAction: true
     })
+    for (let slot = 1; slot <= 5; slot += 1) {
+      expect(routePluginFeature({ code: `eypc-codex-action-${slot}` }, undefined, 'mqtt')).toEqual({
+        tab: 'mqtt',
+        focusSearch: false,
+        actionId: `codex.action.run.${slot}`,
+        hideAfterAction: false
+      })
+    }
     expect(routePluginFeature({ code: 'eypc-settings' })).toEqual({ tab: 'settings', focusSearch: false })
     expect(routePluginFeature({ code: 'unknown' })).toEqual({ tab: 'ports', focusSearch: false })
   })

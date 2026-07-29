@@ -1,5 +1,10 @@
 import type { CodexFloatSnapshotV1 } from './runtime/codexController'
 import type { CodexNewThreadRequest, CodexNewThreadResult, CodexThreadOpenResult } from './domain/codex'
+import type {
+  CodexEnvironmentActionRunResult,
+  CodexEnvironmentActionSessionProjection,
+  CodexEnvironmentListResult
+} from './domain/codexEnvironment'
 
 export {}
 
@@ -27,6 +32,20 @@ declare global {
       reopenThread(actionAlias: string): Promise<CodexThreadOpenResult>
       openBlank(): Promise<CodexThreadOpenResult>
       copyText(text: string): Promise<boolean>
+      listProjectEnvironments?(targetAlias: string): Promise<CodexEnvironmentListResult>
+      runProjectAction?(request: {
+        targetAlias: string
+        environmentId: string
+        actionId: string
+        confirmToken?: string
+        stopIfRunning?: boolean
+      }): Promise<CodexEnvironmentActionRunResult>
+      listActionSessions?(): Promise<{ outcome?: string; sessions?: CodexEnvironmentActionSessionProjection[] } | CodexEnvironmentActionSessionProjection[]>
+      stopActionSession?(request: {
+        projectKey: string
+        environmentId: string
+        actionId: string
+      }): Promise<CodexEnvironmentActionRunResult>
       dragStart(screenX: number, screenY: number): boolean
       dragMove(screenX: number, screenY: number): boolean
       dragEnd(): boolean
