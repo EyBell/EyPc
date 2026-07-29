@@ -33,7 +33,9 @@ The isolated-Space plus exact-AX route has real uTools host success for an off-S
 
 WJ-12 adds a read-only `inspectEnvironment` API that captures CG/AX target match counts and Space binding status before each activation attempt, without activating or switching anything. The snapshot is displayed in the development trace sidebar as `环境快照：CG匹配=N · AX匹配=N · Space绑定=...` and is session-only. This provides replayable evidence to explain why some targets (e.g. AiTools) fail activation while others (e.g. Rider) succeed, without guessing from live host tests. Host re-acceptance with the snapshot is pending.
 
-WJ-13's title/ordinal route is retained as historical compatibility behavior. WJ-15 supersedes it whenever `_AXUIElementGetWindow` is available: a read-only probe resolved all four Chromium AX elements, uniquely matched the selected CG ID, and the real slot run verified the same element as `AXFocusedWindow`. See [verify.md](../../specs/260724/1527-window-jump-workbench/verify.md#L1). CodeNote's cross-project record is not rewritten in this task because its owner files are already dirty/untracked.
+WJ-13's title/ordinal route is retained as historical compatibility behavior. WJ-15 supersedes it whenever `_AXUIElementGetWindow` is available: a read-only probe resolved all four Chromium AX elements, uniquely matched the selected CG ID, and the real slot run verified the same element as `AXFocusedWindow`. See [verify.md](../../specs/260724/1527-window-jump-workbench/verify.md#L1). The CodeNote cross-project record now mirrors this exact-map authority.
+
+WJ-18 further separates identity sources: the saved/current title is compared only inside Core Graphics, while AX owns exact CG mapping and focused-window readback. Cross-API title disagreement is not target-change evidence; see [utools-macos-cross-api-window-title-mismatch.md](utools-macos-cross-api-window-title-mismatch.md#L1).
 
 ## Alternative Route
 
