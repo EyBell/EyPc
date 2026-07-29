@@ -3,7 +3,21 @@
 Tool: codex
 Date: 2026-07-29
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-29.1`
+Requirement version: `2026-07-29.2`
+
+## RAW-111 当前交付状态
+
+| Check | Result | Evidence / Scope |
+| --- | --- | --- |
+| 运行实例根因 | pass / read-only debug | 授权的 Computer Use 展开浮窗后，角标与“正在进行中”段都为 5，说明 RAW-108 同源投影本身未分叉；同一时刻官方线程只读状态中只有当前任务 active，所列多条旧任务最新 Turn 已 completed，本机当前源码匿名预检为 `ongoing=1 / active=1`。运行进程启动时间早于当前 preload 文件，且浮窗 DevTools 显示 Vite 连接已丢失，证实运行实例仍消费旧 Preload/主 Controller。 |
+| Preload/Controller 门禁 | implemented / source-reviewed | [codex.ts](../../../../src/domain/codex.ts#L1)、[preload/index.js](../../../../preload/index.js#L1)、public 镜像与 [eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1) 传递同一 `taskStateRevision`；production adapter 把缺失值归一为 `legacy`。[codexController.ts](../../../../src/runtime/codexController.ts#L1) 对不匹配版本发布零任务 `preload-version-mismatch`，不读取/订阅 task/activity lane，但 quota/config 仍独立读取。 |
+| 旧主 Controller 浮窗门禁 | implemented / source-reviewed | Controller 当前浮窗快照携带同一 revision；[FloatApp.vue](../../../../src/FloatApp.vue#L1) 在生成动态段、卡片和三个角标前再次精确核验，旧快照缺 revision 时统一为空并把重载说明加入可见状态与紧凑 ARIA。[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 的真实预检字段同步显示错误。 |
+| 抖动/隐私/生命周期 | preserved / source-reviewed | 未新增 timer/debounce，未改 Activity Delta、Projection V3、50ms 合并、3 秒 `[0,300,1000]` 核验、缺失隔离、完成 hold、动作、存储或迁移。revision 不含任务身份或状态。插件不会自动 kill/restart uTools；需用户正常重载。 |
+| 测试合同 | updated / not run | 既有 [eypcPlatform.test.ts](../../../../tests/platform/eypcPlatform.test.ts#L1)、[codexController.test.ts](../../../../tests/runtime/codexController.test.ts#L1) 与 [codexCompanion.test.ts](../../../../tests/ui/codexCompanion.test.ts#L1) 增加 legacy 归一、任务 lane 拒绝、旧 Controller 角标抑制、当前 revision 透传合同。依授权未执行 tests、typecheck、build 或 uTools 验收。 |
+| 静态收口 | pass | `CODEX_TASK_STATE_REVISION` 在 domain、canonical/public preload、production adapter、Controller 与浮窗链路一致；两份 preload SHA-256 相同。Renderer 动态卡片、角标和设置预览继续只引用 `projectCodexDynamicStatus`；版本号统一为 `2026-07-29.2`，两仓 `git diff --check` 与 Markdown code-link audit 通过。 |
+| 当前运行态 | not accepted | 当前源码预检的 1 与运行浮窗的 5 已形成根因证据，但旧运行实例未由 Agent 重启，真实浮窗尚未消费本次修复。Computer Use 调试过程中浮窗被显式 toggle 为隐藏；用户需通过原有 EyPc/uTools 显示入口恢复并重载插件后验收。 |
+
+结论：RAW-111 已完成源码、测试合同和授权范围内的静态收口，状态为 `reported`；重载后的真实角标与状态切换仍为 `未校验，待用户验收`。
 
 ## RAW-110 当前交付状态
 

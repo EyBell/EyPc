@@ -4,7 +4,7 @@ Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
 Documentation level: `controlled`
-Requirement version: `2026-07-29.1`
+Requirement version: `2026-07-29.2`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
@@ -56,6 +56,8 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 修订 `2026-07-29.1` 追加 RAW-110：`thread/started.params.thread.id` 正确标脏新任务，使验证库存只重读其 latest Turn 并复用其它缓存；已登记任务的完整新鲜 `turn/started` 直接更新 inProgress，完整单调的 `turn/completed` 直接收敛为脱敏 `targeted-after-exit`，不再先丢弃 Turn 元数据并等待额外 RPC。未知新任务仍完成安全登记，不完整、旧或非完成通知继续走 50ms/3 秒保守核验。代码默认稳定窗保持 0ms，设置页纠正默认项标识，既有持久化选择不迁移。
 
+修订 `2026-07-29.2` 追加 RAW-111：真实运行实例的角标/卡片 5 条与当前源码只读预检 1 条不一致，证实 uTools 旧 Preload/主 Controller 与较新浮窗 Renderer 的版本偏斜。任务状态链新增统一 revision；任一边界缺失/不匹配时任务投影 fail-closed 为空并提示重载，额度/config 继续独立可用，版本一致后恢复 RAW-108 同源投影。
+
 ## Current Requirement And Implementation Map
 
 | 领域 | 当前合同 | 实现与证据 |
@@ -95,6 +97,14 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 - 新鲜通知更新同一 session-only Turn cache，取消同任务尚未执行的定向 latest-Turn retry，并立即发出 `lastTurnEvidence=targeted-after-exit` 的匿名 Activity Delta。Controller 已有强证据合同因此绕过普通 `completionPresentationDelayMs`，卡片、角标、归档能力和无障碍摘要从同一稳定快照一次切换。未决 input/approval 仍优先，完成证据只在请求解除后恢复其正常投影。
 - 缺 Turn、缺时间、旧修订、未知任务、failed/interrupted 或 active interval 晚于完成时间时，通知不授予新的状态权威：继续标脏并请求 50ms urgent 完整校对；已知 active 仍可使用 3 秒 `[0,300,1000]` 定向 latest-Turn 核验。只有 Desktop active→idle 的路径也保持该有界核验，因此跨进程通知缺失不会被误判完成。
 - `completionPresentationDelayMs` 的领域默认值保持 `0ms`，设置页只纠正“不等待（默认）”标签；所有已有持久化值与 `500–3000ms` 可选平滑档保持不变，不新增迁移、Renderer timer、Controller debounce、协议字段或动作。本轮只补充既有 bridge 测试合同，不执行测试、typecheck、build、uTools 或真实 Codex 操作；状态为 `reported / 未校验，待用户验收`。
+
+## RAW-111 End-to-End Task-State Revision Guard
+
+- [codex.ts](../../../../src/domain/codex.ts#L1) 定义无身份、无状态数据的 `CODEX_TASK_STATE_REVISION`。当前 [preload/index.js](../../../../preload/index.js#L1) 与 public 镜像通过 `codex.taskStateRevision` 暴露同值；[eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1) 把旧 Preload 的缺失值显式归一为 `legacy`，避免能力缺失继续伪装成兼容。
+- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 只在 production adapter revision 精确匹配时读取/订阅任务库存和 Activity Delta。`legacy` 或未来不兼容值会清空 receipt 派生的历史任务、完成 hold、active-exit 与来源基线，发布 `preload-version-mismatch` 错误空态；额度/config lane 与环境核查仍可独立运行。
+- Controller 当前浮窗快照携带同一 revision。[FloatApp.vue](../../../../src/FloatApp.vue#L1) 在读取任何卡片、动态段或三个角标前再次精确核验，所以较新浮窗即使仍连接旧主 Controller，也只显示任务状态过期提示和零任务角标，不再展示旧数字。设置页真实预检字段同步显示该错误。
+- 这是一项只读兼容门禁，不是新的状态协议或计时层：Activity Delta V1/V2、Projection V3、RAW-108 展示资格、RAW-110 快路、3 秒/50ms 抖动保护、动作、存储和迁移均不变。插件不会自动结束或重启 uTools；用户重载后整条链路重新建立，revision 匹配才恢复任务展示。
+- 既有 platform/Controller/UI 测试文件补充 legacy 归一、旧 Preload 空投影、旧 Controller 浮窗抑制和当前 revision 透传合同，但依授权不执行 tests、typecheck、build 或 uTools 验收。只读 Computer Use/线程工具/本机预检用于定位，不能替代重载后的真实状态切换验收。
 
 ## RAW-056 Codex Desktop Live Authority Contract
 
