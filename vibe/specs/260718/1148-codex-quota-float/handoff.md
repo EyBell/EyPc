@@ -1,9 +1,9 @@
 # Codex Companion 真实会话与交互交接
 
 Tool: codex
-Date: 2026-07-22
+Date: 2026-07-29
 Status: `reported-unverified-awaiting-user-acceptance`
-Requirement version: `2026-07-28.2`
+Requirement version: `2026-07-29.1`
 
 ## Result
 
@@ -11,6 +11,7 @@ Requirement version: `2026-07-28.2`
 - RAW-089 将未知/传输异常收敛为进行中；RAW-091 再把 terminal Turn + exact live idle/not-running 的明确停止拆出为“已停止”。当前动态页顺序是待输入、正在进行中、已停止、已完成未读、已完成；bridge failed、系统错误、notLoaded、inProgress 与权威缺失仍显示“进行中”。标题普通点击直达，Ctrl/Cmd 标题点击选择，元信息行只聚焦高亮以继承 `Ctrl+T` 的项目上下文。
 - RAW-108 把上述状态段与角标收敛为一个 Renderer 展示投影：[codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1) 从 Controller 稳定快照一次生成最近 6 小时、非隐藏的互斥动态段和 active 数；`active / waiting-approval / ongoing` 都进入“正在进行中”，waiting-input 不重复，stopped 立即离开。浮窗动态 Tab、状态段、三个角标、主水球摘要及设置页预览共用这一结果；搜索只过滤展开行，隐藏/超过 6 小时任务不进入 active，待输入/完成未读仍使用含隐藏的完整集合。
 - RAW-109 将“上一个/下一个 Codex 任务”的普通候选同步到这份展示资格：[codexController.ts](../../../../src/runtime/codexController.ts#L1) 依次使用完整待输入与最近 6 小时、非隐藏 active 组，不再读取整个 30 天 ongoing 桶。完成未读保留独立首条动作；只有普通池为空且用户明确在 EyPc 本地置顶时，非停止的旧/隐藏任务才可作为回退。所指旧任务已由用户主动归档，但修复不依赖归档。
+- RAW-110 缩短正向状态路径：[preload/index.js](../../../../preload/index.js#L1) 与 public 镜像从 `thread/started.params.thread.id` 精确标脏全新任务，安全库存登记因此只重读该任务的 latest Turn；对已登记任务则直接消费完整更新的 inProgress，并把完整、新鲜且单调的 completed Turn只按状态/开始/完成时间发布为匿名 `targeted-after-exit`，不再等待额外 RPC。未知/畸形/旧或非目标通知仍走 50ms dirty-task / 3 秒定向核验，待输入优先和全部防抖/隐私门禁不变。
 - RAW-065 已恢复仅由 Weekly 数据驱动的 SVG 进度环及连续/20 段、粗细、颜色和光晕设置。用户跟进截图暴露的最外层完整圆来自宿主水球按钮 focus outline，并被根整圆背景与同尺寸外发光强化；当前连同 inset、border、inset outline 与 shell 一并删除，键盘焦点改为中央读数下划线。无 Weekly 时不显示任何外圈；历史 `shellOpacity` 只保留持久化兼容。
 - RAW-066 保留上游 interrupted 原始证据；RAW-089 把不确定异常统一为进行中，RAW-091 只在同一任务同时具备 live idle/not-running 明确停止证据时投影“已停止”。进行中角标不再计算这些停止项；动态/项目/已隐藏卡、详情与 Shift 预览统一消费同一桶，`attentionCount/unknownCount` 固定为 0。
 - RAW-082 收敛 RAW-067 的完成未读路径：水球完成未读角标与 `eypc-codex-completed-unread` uTools 全局功能/快捷键共同调用 `codex.completed-unread.openFirst`，都按完整计数集合的置顶优先/稳定源顺序取第一条，立即仅在 EyPc 本地确认该任务当前完成 revision 后打开。该 revision 在全部 EyPc 视图立即变为 completed/read，后续完成 revision 自动重新未读；不写 Codex Desktop 原生 unread。待输入继续使用完整 `inputRequired` 只打开第一条，不改状态；进行中角标仍只展开。
@@ -19,7 +20,7 @@ Requirement version: `2026-07-28.2`
 - RAW-087 取代 RAW-085/086：用户确认移除入口读取后 uTools 恢复加载，现已删除全部宿主快捷键回读、私有同步 IPC、运行时快照和 Codex/窗口页反馈；所有入口只打开官方 uTools 配置。Codex 配置页默认显示置顶“快捷方式”Tab，另分“任务 / 水球 / 卡片 / 运行”，只渲染当前面板并将详细说明收进可聚焦信息按钮。项目规则 `EYPC-UTOOLS-HOST-001` 与已验证错误共识已固定，后续 preload/Renderer 变更必须保持入口零同步宿主依赖。
 - RAW-088 将内置外观主题固定为 12 套，并统一模仿默认海盐材质：`gradient` 液体、实体圆环（无分段钟表环）、球体底色不透明、软光晕与额度环色。十二套仅以色相区分（海盐/石墨/靛砂/极光夜/琥珀雾/霓虹潮/绯焰/翠璃/紫电/日曜/冰棱/玫璃），配置下拉与预览/真实浮窗共用同一预设表。
 - RAW-068 让投影 ongoing 与 desktop-live active 共用稳定的 `blocked-active`；RAW-091 的 stopped 使用 `blocked-stopped`。RAW-089 的 completed-only 归档门禁不变：固定 `归` 槽保持可见但禁用，停止任务给出“会话已停止但未完成”的精确原因，抽屉、Shift 预览、确认和批量候选共用同一 capability。
-- `completionPresentationDelayMs` 继续允许 `0 / 500 / 1000 / 1500 / 2000 / 3000ms`，当前代码默认值为 `0ms`，已有用户持久化值保持不变；RAW-089 后它只作用于明确 completed 的展示，并从真实 active 退出事件起算。RAW-108 未修改该设置，Renderer 也没有独立角标延迟。
+- `completionPresentationDelayMs` 继续允许 `0 / 500 / 1000 / 1500 / 2000 / 3000ms`，当前代码默认值为 `0ms`，配置页已纠正为“不等待（默认）”；已有用户持久化值保持不变。它只平滑普通快照确认的 completed，RAW-110 的完整 Turn 通知和既有 active-exit 定向强证据均立即发布；Renderer 没有独立角标延迟。
 - RAW-089 删除固定 2 秒 Activity Delta 防抖。Desktop active 退出立即投影为进行中，同时在 preload 对该任务做总计 3 秒有界的 latest-Turn 核验；Controller 和 Preload 都拒绝把 active 前未变化的旧 completed revision 当成本轮完成。成功随脱敏 delta 发布，失败才触发完整库存校对。`taskRefreshSeconds=15` 是新任务、项目变化和漏事件的完整校对周期，不是实时状态缓存。
 - RAW-090 不再把单次完整快照中的任务缺行立即发布为任务消失。Controller 保留上一份内存稳定清单、标记 stale 诊断并自动完整复核；只有同一 missing-key 集合在至少两份完整快照中连续成立且经过 `max(15s, taskRefreshSeconds)` 后，才一次性接纳数量下降。期间重现、候选集改变或中间读失败都会重置。
 - RAW-091 修正旧 `4 ongoing` 偏差：本机匿名会话级复核证明纠偏检查点实际是 `2 active + 2 live-idle/interrupted`。领域/Controller/浮窗现在增加独立 stopped 桶；active 永远优先，active→idle 首个携带旧 terminal 的 ordinary delta 先保持进行中，退出后定向重读用有限证据标记确认同 Turn 停止，通常无需等 15 秒完整校对；bridge not-running + failed/interrupted 可直接停止。纠偏预检为 `18 = 14 completed + 2 stopped + 2 ongoing`；收尾时库存新增一条 exact active，最新为 `19 = 14 + 2 + 3`，其中 `3 active / 0 unconfirmed ongoing`。
@@ -70,6 +71,7 @@ Requirement version: `2026-07-28.2`
 
 ## User Acceptance
 
+- RAW-110 为 `未校验，待用户验收`：重载 uTools preload 后，在长时间空闲后新建一条任务，安全库存登记应只读取该新任务的 latest Turn，不再随任务池规模全量重读；对一条已进入稳定库存的任务发起新 Turn，完整 started 通知应让进行中卡片/角标同步出现且无额外 RPC。再让任务自然完成，完整完成通知应让卡片、角标、完成分段和归档能力一次同步切换，不等待普通稳定窗或额外 RPC。制造短暂 active→ongoing→active、缺字段/旧完成通知或桥断连时仍须保守进行中。若保存了 1.5 秒等普通完成平滑档，该选择应保留；“不等待”只影响普通快照完成。
 - RAW-109 为 `未校验，待用户验收`：准备一条超过 6 小时、非隐藏、未在 EyPc 本地置顶且因传输不确定仍为保守 ongoing 的任务，前后任务快捷键不得打开它；动态进行中卡片与角标也均不包含它。再明确执行 EyPc 本地置顶并确保普通候选为空，它才可进入回退循环。完成未读任务继续只由自己的首条动作处理，不应出现在通用前后循环。
 - RAW-108 为 `未校验，待用户验收`：在真实任务经历 active→短暂 ongoing→active 时，最近 6 小时“正在进行中”卡片和角标必须始终同步且数量相同；targeted completed 或明确 stopped 到达后两者及归档能力一次切换。搜索不得改变紧凑数字，隐藏/超过 6 小时任务不得进入 active；待输入/完成未读仍包含隐藏。配置水球预览、按钮提示与 ARIA 应显示相同数字，进行中点击只展开。
 - RAW-089/091/092 为 `未校验，待用户验收`：新建一条直接进入待输入的任务，确认它无需等待 15 秒完整周期；让一条真实任务自然完成，确认 active 退出后先稳定为进行中、定向 completed 到达后立即且只切换一次已完成；再主动停止一条任务并关闭一次 Codex，确认 terminal + live idle/not-running 只切换一次已停止。单纯断连/bridge failed、缺 Turn 或临时缺行必须继续显示进行中且不让任务消失。
