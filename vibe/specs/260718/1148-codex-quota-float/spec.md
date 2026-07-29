@@ -4,7 +4,7 @@ Tool: codex
 Date: 2026-07-22
 Status: `reported-unverified-awaiting-user-acceptance`
 Documentation level: `controlled`
-Requirement version: `2026-07-29.7`
+Requirement version: `2026-07-29.8`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
@@ -518,3 +518,9 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 - RAW-116 成功保留并定向续订 owner shadow 后，若该 shadow 为无 input/approval 等待的 active，[preload/index.js](../../../../preload/index.js#L1) 同时对主任务（Side Chat 使用父任务）调度既有 `verifyStaleActive` latest-Turn 单飞读取。它覆盖任务切换与完整 `turn/completed` 漏收的竞态，不等待旧 active 替换 snapshot 自己退出。
 - 同一/更新 Turn 已 completed 时只发布现有脱敏状态/时间和 `targeted-after-exit`，由既有 Controller 原子包与 stale-active 完成排序一次更新完成分段、卡片和角标。latest Turn 仍 inProgress、live waiting、读取失败或真实 activity 更新时保持 active/ongoing；不删除 shadow、不新增 Renderer 补数或完成推断。
 - 既有 [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 增加“完成通知漏收 + 定向续订仍回放旧 active snapshot”合同，要求只增加一次该任务 latest-Turn 读取并发布 completed。双 preload 镜像同步；依项目规则不执行测试、typecheck、build、uTools 或真实任务切换。
+
+## RAW-118 Exact Completion Timestamp Ordering
+
+- [preload/index.js](../../../../preload/index.js#L1) 对形状完整、任务已登记的 `turn/completed` 继续按 Turn revision 判新鲜：更新 `startedAt`、同一 `inProgress` Turn，或同一已完成 Turn 的递增 `completedAt` 才可接受。它不再要求 provider `completedAt` 严格晚于本机 `desktopActiveSince`，因为两者来自不同时间源/粒度，且任务切换可在完成后重新观察 active。
+- 接受后仍只发布匿名 key、完成状态与时间及 `targeted-after-exit`；Controller 的单一任务状态包立即重投影卡片、分组和角标。普通 snapshot、缺形状/旧 revision、读取失败和未知任务仍使用 RAW-112/117 的保守路径，不从时间或 idle 猜完成。
+- 既有 [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 增加秒级完成时间比本机 active 观测早 900ms 的合同，要求即时完成、零 latest-Turn reread且不泄露 raw identity/content。依项目规则不执行测试、typecheck、build、uTools 或真实任务切换。
