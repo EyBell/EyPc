@@ -11,6 +11,29 @@ Tool: codex
 - Error memory: [../knowledge/error-memory.md](../knowledge/error-memory.md#L1).
 - Data notes: [../ai-db/README.md](../ai-db/README.md#L1), with AI-DB storage and naming delegated to [CodeNote DB governance](../../../../../czz/CzzProj/CodeNote/DevelopRef/调试工具/db/governance/README.md#5-workspace-shape-and-naming).
 - Reusable uTools plugin development guides and failure usage: [CodeNote uTools module](../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/README.md#L1).
+- End-user feature operation guides (settings「说明」): [../../src/help/guides/](../../src/help/guides/) · loader [../../src/help/guides/index.ts](../../src/help/guides/index.ts#L1).
+
+## Feature Help Guides (required)
+
+User-facing operation help is product surface, not optional developer notes. Authority for coverage is [featureRegistry.ts](../../src/runtime/feature/featureRegistry.ts#L1) `FEATURES` plus matching Markdown under [src/help/guides/](../../src/help/guides/).
+
+### When a guide is mandatory
+
+- **New feature type / Tab** (`AppTabId`, `FEATURES` entry, default feature config, and usually `plugin.json` feature): add `[id].md` in the same change. The settings「功能开关」row must open a non-empty guide; coverage is asserted by `missingFeatureHelpIds()` / the feature-help unit contract.
+- **User-visible behavior change** on an existing feature (workflow, shortcuts defaults, risk/boundary, enablement default, platform capability, uTools entry): update that feature’s `[id].md` in the same change. Do not leave the guide describing superseded behavior.
+- **Shared cross-feature keyboard/workbench** changes (Quick Jump, left/right drawers, Escape recovery, edit soul): update [settings.md](../../src/help/guides/settings.md#L1); other guides only adjust cross-references if their local wording becomes wrong.
+- **Removed or renamed feature id**: remove or rename the matching guide file and keep `FEATURES` ↔ guides 1:1.
+
+### Writing constraints
+
+- Write for end users: operable steps, defaults, risks/boundaries, and effective default shortcuts (note they may be rebound).
+- Do not paste RAW ids, source paths, error-memory, private IPC, or unverified acceptance promises.
+- Prefer current page/runtime/Spec behavior over stale storefront blurbs or lagging PRD bullets; if PRD drifts, record the gap in the task process doc—do not silently ship outdated user help.
+- Guides are build-time embedded (`?raw`); do not load `vibe/` at runtime.
+
+### Closeout checklist item
+
+Medium/larger feature or interaction tasks must list whether the matching `src/help/guides/{id}.md` was added or updated, or explicitly state why no user-visible guide impact exists.
 
 ## Closeout
 

@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Ban, Braces, Keyboard, MoreHorizontal, RotateCcw, X } from '@lucide/vue'
+import FeatureHelpDialog from '../components/FeatureHelpDialog.vue'
 import type { AppSettings, AppTabId, FeatureConfig, KeybindingOverride, MqttStorageStatus, ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
+import { getFeatureHelp, hasFeatureHelp, type FeatureHelpDoc } from '../help/guides'
 import type { RuntimeActionDefinition } from '../runtime/action/types'
 import { featureDefinitionFor } from '../runtime/feature/featureRegistry'
 import {
@@ -106,6 +108,7 @@ const commandTooltipY = ref(0)
 const draftShortcutProfiles = ref<ShortcutProfileMap>(cloneShortcutProfiles(props.shortcutProfiles || props.settings.shortcutProfiles))
 const draftFeatureConfigs = ref<FeatureConfig[]>(cloneFeatureConfigs(props.featureConfigs))
 const draggingFeatureId = ref<AppTabId | null>(null)
+const featureHelpDoc = ref<FeatureHelpDoc | null>(null)
 const contextPanel = ref<'detail' | 'actions' | null>(null)
 let contextPanelTrigger: HTMLElement | null = null
 
@@ -330,6 +333,14 @@ function onFeatureDrop(row: FeatureConfig) {
   const [item] = next.splice(fromIndex, 1)
   next.splice(toIndex, 0, item)
   setDraftFeatureConfigs(next)
+}
+
+function openFeatureHelp(id: AppTabId) {
+  featureHelpDoc.value = getFeatureHelp(id)
+}
+
+function closeFeatureHelp() {
+  featureHelpDoc.value = null
 }
 
 function saveFeatureDraft() {
@@ -972,8 +983,18 @@ function isRecordableShortcutId(shortcutId: string) {
               @drop.prevent="onFeatureDrop(row)"
             >
               <span class="feature-config-main">
-                <strong>{{ row.title }}</strong>
-                <small>{{ row.description }}</small>
+                <span class="feature-config-copy">
+                  <strong>{{ row.title }}</strong>
+                  <small>{{ row.description }}</small>
+                </span>
+                <button
+                  type="button"
+                  class="feature-help-trigger"
+                  :disabled="!hasFeatureHelp(row.id)"
+                  :aria-label="`查看${row.title}操作说明`"
+                  :title="hasFeatureHelp(row.id) ? '操作说明' : '暂无操作说明'"
+                  @click.stop="openFeatureHelp(row.id)"
+                >说明</button>
               </span>
               <span class="feature-config-toggle">
                 <input
@@ -1325,5 +1346,12 @@ function isRecordableShortcutId(shortcutId: string) {
         </footer>
       </section>
     </div>
+
+    <FeatureHelpDialog
+      v-if="featureHelpDoc"
+      :title="featureHelpDoc.title"
+      :markdown="featureHelpDoc.markdown"
+      @close="closeFeatureHelp"
+    />
   </section>
 </template>

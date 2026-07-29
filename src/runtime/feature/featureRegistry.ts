@@ -12,6 +12,7 @@ export interface VisibleFeatureDefinition extends FeatureDefinition {
   shortcutCommandId: string
 }
 
+/** Each entry requires a matching `src/help/guides/{id}.md` (EYPC-FEATURE-HELP-001). */
 export const FEATURES: FeatureDefinition[] = [
   { id: 'ports', title: '端口进程', description: '扫描指定端口进程并安全终止' },
   { id: 'mqtt', title: 'MQTT', description: '快速连接 MQTT over WebSocket 并归档收发记录' },
