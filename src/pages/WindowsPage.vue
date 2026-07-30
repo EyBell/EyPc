@@ -348,9 +348,9 @@ function operationDetailLabel(detail: NonNullable<AppRuntimeSnapshot['windowOper
     'single-window-frontmost': '单窗口进程前置兜底',
     'multiwindow-blocked': '多窗口进程已阻断',
     'current-space-inferred': '推断当前桌面无需切换',
-    'cg-ordinal-fallback': 'CG序号回退匹配',
-    'title-match': '标题精确匹配',
-    'title-mismatch': '标题或应用已变化',
+    'instance-match': '窗口实例精确匹配',
+    'instance-mismatch': '窗口实例不一致',
+    'identity-unavailable': '实例身份不可用',
     'focus-state-mismatch': '窗口焦点属性未确认',
     'isolated-space-bridge': '隔离Space桥',
     'ax-cg-id-match': 'AX与CG窗口精确匹配',
@@ -368,9 +368,9 @@ function envSnapshotLabel(snapshot: NonNullable<AppRuntimeSnapshot['windowOperat
   }
   const parts = [
     `桥接=${snapshot.bridgeRevision || 'unknown'}`,
-    `CG目标=${snapshot.cgTargetMatches}`,
+    `原生实例=${snapshot.nativeInstanceMatches}`,
     `CG所属窗口=${snapshot.ownerCgWindowCount ?? '?'}`,
-    `AX目标=${snapshot.axTargetMatches}`,
+    `AX实例=${snapshot.axInstanceMatches}`,
     `AX窗口=${snapshot.axWindowCount ?? '?'}`,
     `Space绑定=${bindingLabels[snapshot.spaceBinding] || snapshot.spaceBinding}`
   ]
@@ -410,7 +410,9 @@ const operationCodeMessages: Record<string, string> = {
   'space-unbound-multiwindow': '目标应用有多个窗口且无法绑定目标桌面。',
   'space-ambiguous': '目标窗口同时绑定到多个非当前桌面。',
   'space-switch-timeout': '目标桌面切换未在时限内确认。',
-  'target-title-changed': '目标窗口标题或所属应用已变化，请重新确认。',
+  'rebind-required': '原窗口实例已失效，请明确选择同应用候选；标题仅供辨认。',
+  'instance-mismatch': '窗口实例与保存目标不一致，请重新确认。',
+  'identity-unavailable': '无法建立稳定的系统窗口实例身份。',
   'focus-denied': '系统拒绝聚焦该窗口。',
   'activation-not-found': '激活时窗口引用已失效。',
   'activation-failed': '宿主未能完成窗口激活。',
@@ -508,9 +510,9 @@ function actionTargetsShortLabel(rows: readonly WindowRow[]) {
   return `${rows[0].displayName}、${rows[1].displayName} 等 ${rows.length} 个`
 }
 
-function updateDraft(field: 'alias' | 'titleLocator', event: Event) {
+function updateDraft(field: 'alias', event: Event) {
   const value = (event.target as HTMLInputElement).value
-  emit('updateDraft', field === 'alias' ? { alias: value } : { titleLocator: value })
+  emit('updateDraft', { alias: value })
 }
 
 watch(logHasBlocking, (blocking) => {
@@ -583,7 +585,7 @@ onBeforeUnmount(() => {
 
     <p v-else class="window-status-band" aria-live="polite">
       <LoaderCircle v-if="snapshot.windowLoading" :size="14" class="spinning" />
-      <template v-else-if="showCandidateHint">已进入多候选筛选：选择正确窗口后按 Enter；Escape 返回完整列表。</template>
+      <template v-else-if="showCandidateHint">原窗口实例已失效；标题仅供人工辨认。请选择正确窗口后按 Enter 确认，或按 Escape 取消并返回原目标。</template>
       <template v-else-if="showUnloadHint">列表未加载。手动加载后写入会话缓存；全局槽位会先静默解析，缓存未命中时自动重扫一次，仅失败才展开本页。</template>
       <template v-else-if="showEmptyHint">没有匹配窗口。请调整搜索词，或重新加载列表。</template>
       <template v-else>{{ snapshot.windowRows.length }} 个可见项目 · 列表置顶优先 · 按应用排序 · {{ snapshot.windowCapability.canList ? '按需扫描' : '等待授权' }}</template>
@@ -848,7 +850,7 @@ onBeforeUnmount(() => {
     <section v-if="snapshot.windowDraft" data-role="window-editor" class="window-editor-layer" aria-label="窗口目标编辑">
       <header>
         <div>
-          <p class="eyebrow">{{ snapshot.windowDraft.mode === 'rename' ? '仅 EyPc 别名' : '窗口定位条件' }}</p>
+          <p class="eyebrow">{{ snapshot.windowDraft.mode === 'rename' ? '仅 EyPc 别名' : '窗口目标' }}</p>
           <h3>{{ snapshot.windowDraft.mode === 'rename' ? '编辑窗口别名' : '完整编辑窗口目标' }}</h3>
         </div>
         <button type="button" class="icon-button" aria-label="取消窗口编辑" @click="$emit('cancelDraft')"><X :size="16" /></button>
@@ -858,10 +860,10 @@ onBeforeUnmount(() => {
         <input data-field="alias" type="text" :value="snapshot.windowDraft.alias" @input="updateDraft('alias', $event)" />
       </label>
       <label v-if="snapshot.windowDraft.mode === 'edit'">
-        <span>标题定位条件</span>
-        <input data-field="titleLocator" type="text" :value="snapshot.windowDraft.titleLocator" @input="updateDraft('titleLocator', $event)" />
+        <span>当前/上次窗口标题</span>
+        <input data-field="lastKnownTitle" type="text" :value="snapshot.windowDraft.lastKnownTitle" readonly aria-readonly="true" />
       </label>
-      <p class="window-editor-meta">应用：{{ snapshot.windowDraft.appName }} · 此处不会修改真实窗口标题。</p>
+      <p class="window-editor-meta">应用：{{ snapshot.windowDraft.appName }} · 标题仅用于展示、搜索与人工辨认，不参与窗口身份判断。</p>
       <footer>
         <button type="button" @click="$emit('cancelDraft')">取消</button>
         <button type="button" class="primary" @click="$emit('dispatch', 'windows.editor.save')">保存 <kbd>{{ commandLabel('windows.editor.save', 'c-s / ↵') }}</kbd></button>

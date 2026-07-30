@@ -99,6 +99,7 @@ const codexActivityListeners = new Set()
 let codexActivityInventory = new Map()
 let codexActivitySourceFingerprint = ''
 let codexActivityGeneration = 0
+let codexLiveEvidenceSequence = 0
 let codexDesktopBridge = null
 const codexThreadTurnStatusCache = new Map()
 const codexThreadTurnStatusDirty = new Map()
@@ -265,6 +266,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 
 public sealed class EypcWindowInfo {
+  public string instanceId { get; set; }
   public string nativeRef { get; set; }
   public int pid { get; set; }
   public string appId { get; set; }
@@ -294,16 +296,6 @@ public static class EypcWindowApi {
   const uint WS_EX_TOOLWINDOW = 0x00000080;
   const uint WS_EX_APPWINDOW = 0x00040000;
   const uint WS_EX_NOACTIVATE = 0x08000000;
-
-  static bool IsNoiseTitle(string title, string appName) {
-    var normalized = (title ?? "").Trim().ToLowerInvariant();
-    if (String.IsNullOrWhiteSpace(normalized)) return true;
-    if (normalized == "program manager" || normalized == "default ime" || normalized == "msctfime ui" || normalized == "gdi+ window" || normalized == "olemainthreadwndname" || normalized == "cicerouiwndframe") return true;
-    var app = (appName ?? "").Trim().ToLowerInvariant();
-    var chromium = app.Contains("edge") || app.Contains("chrome") || app.Contains("chromium") || app.Contains("brave") || app.Contains("opera") || app.Contains("vivaldi");
-    if (chromium && normalized == "window") return true;
-    return false;
-  }
 
   static bool IsCloaked(IntPtr hWnd) {
     try {
@@ -343,11 +335,9 @@ public static class EypcWindowApi {
     EnumWindows(delegate(IntPtr hWnd, IntPtr ignored) {
       if (!IsActionableWindow(hWnd)) return true;
       var length = GetWindowTextLength(hWnd);
-      if (length <= 0) return true;
-      var titleBuilder = new StringBuilder(Math.Min(length + 1, 8192));
+      var titleBuilder = new StringBuilder(Math.Min(Math.Max(length + 1, 2), 8192));
       GetWindowText(hWnd, titleBuilder, titleBuilder.Capacity);
       var title = titleBuilder.ToString().Trim();
-      if (String.IsNullOrWhiteSpace(title)) return true;
       uint rawPid;
       GetWindowThreadProcessId(hWnd, out rawPid);
       var pid = unchecked((int)rawPid);
@@ -359,13 +349,13 @@ public static class EypcWindowApi {
           appName = appProcess.ProcessName;
         }
       } catch { return true; }
-      if (IsNoiseTitle(title, appName)) return true;
       rows.Add(new EypcWindowInfo {
+        instanceId = "win32:" + pid.ToString() + ":" + hWnd.ToInt64().ToString(),
         nativeRef = hWnd.ToInt64().ToString(),
         pid = pid,
         appId = appName,
         appName = appName,
-        title = title,
+        title = String.IsNullOrWhiteSpace(title) ? appName : title,
         minimized = IsIconic(hWnd),
         focused = hWnd == foreground
       });
@@ -385,30 +375,69 @@ using System;
 using System.Runtime.InteropServices;
 public static class EypcWindowActivator {
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
+  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
+  public static bool IsActionableTopLevel(IntPtr hWnd) {
+    if (!IsWindow(hWnd) || !IsWindowVisible(hWnd) || GetAncestor(hWnd, 2) != hWnd) return false;
+    try { int cloaked = 0; if (DwmGetWindowAttribute(hWnd, 14, out cloaked, 4) == 0 && cloaked != 0) return false; } catch {}
+    var exStyle = unchecked((uint)GetWindowLong(hWnd, -20));
+    var appWindow = (exStyle & 0x00040000) != 0;
+    if ((exStyle & 0x00000080) != 0 && !appWindow) return false;
+    if ((exStyle & 0x08000000) != 0 && !appWindow) return false;
+    return true;
+  }
 }
 '@
 $debugTrace = [string]::Equals([Environment]::GetEnvironmentVariable('EYPC_WINDOW_DEBUG_TRACE'), '1', [System.StringComparison]::Ordinal)
+$expectedInstanceId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_INSTANCE_ID')
+$expectedAppId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_TARGET_APP_ID')
 $trace = New-Object System.Collections.Generic.List[object]
-function Add-EypcTrace([string] $stage, [string] $outcome) {
+function Add-EypcTrace([string] $stage, [string] $outcome, [string] $detail = '') {
   if ($debugTrace -and $trace.Count -lt 16) {
-    [void]$trace.Add([pscustomobject]@{ stage = $stage; outcome = $outcome })
+    $entry = @{ stage = $stage; outcome = $outcome }
+    if ($detail) { $entry.detail = $detail }
+    [void]$trace.Add([pscustomobject]$entry)
   }
 }
-function Write-EypcOutcome([string] $outcome) {
+function Write-EypcOutcome([string] $outcome, [string] $reasonCode = '', [string] $instanceId = '') {
   $payload = @{ outcome = $outcome }
+  if ($reasonCode) { $payload.reasonCode = $reasonCode }
+  if ($instanceId) { $payload.instanceId = $instanceId }
   if ($debugTrace) { $payload.trace = @($trace.ToArray()) }
   $payload | ConvertTo-Json -Compress -Depth 4
 }
 $handle = [IntPtr]::new(__EYPC_WINDOW_HANDLE__)
-if (-not [EypcWindowActivator]::IsWindow($handle)) {
+if (-not [EypcWindowActivator]::IsActionableTopLevel($handle)) {
   Add-EypcTrace 'target' 'not-found'
   Write-EypcOutcome 'not-found'
   exit 0
 }
-Add-EypcTrace 'target' 'ok'
+[uint32]$ownerPid = 0
+if ([EypcWindowActivator]::GetWindowThreadProcessId($handle, [ref]$ownerPid) -eq 0 -or $ownerPid -le 0) {
+  Add-EypcTrace 'target' 'unavailable' 'instance-mismatch'
+  Write-EypcOutcome 'not-found' 'identity-unavailable'
+  exit 0
+}
+try { $ownerAppId = (Get-Process -Id $ownerPid -ErrorAction Stop).ProcessName } catch {
+  Add-EypcTrace 'process' 'not-found'
+  Write-EypcOutcome 'not-found'
+  exit 0
+}
+$instanceId = 'win32:' + [string]$ownerPid + ':' + [string]$handle.ToInt64()
+$appMatches = -not $expectedAppId -or [string]::Equals($expectedAppId, $ownerAppId, [System.StringComparison]::OrdinalIgnoreCase)
+$instanceMatches = -not $expectedInstanceId -or [string]::Equals($expectedInstanceId, $instanceId, [System.StringComparison]::Ordinal)
+if (-not $appMatches -or -not $instanceMatches) {
+  Add-EypcTrace 'target' 'not-found' 'instance-mismatch'
+  Write-EypcOutcome 'not-found' 'instance-mismatch'
+  exit 0
+}
+Add-EypcTrace 'target' 'ok' 'instance-match'
 if ([EypcWindowActivator]::IsIconic($handle)) {
   [void][EypcWindowActivator]::ShowWindow($handle, 9)
   if ([EypcWindowActivator]::IsIconic($handle)) {
@@ -422,7 +451,7 @@ if ([EypcWindowActivator]::IsIconic($handle)) {
 }
 if ([EypcWindowActivator]::SetForegroundWindow($handle)) {
   Add-EypcTrace 'foreground' 'ok'
-  Write-EypcOutcome 'activated'
+  Write-EypcOutcome 'activated' '' $instanceId
 } else {
   Add-EypcTrace 'foreground' 'denied'
   Write-EypcOutcome 'focus-denied'
@@ -436,31 +465,70 @@ using System;
 using System.Runtime.InteropServices;
 public static class EypcWindowTopmost {
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
+  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
+  public static bool IsActionableTopLevel(IntPtr hWnd) {
+    if (!IsWindow(hWnd) || !IsWindowVisible(hWnd) || GetAncestor(hWnd, 2) != hWnd) return false;
+    try { int cloaked = 0; if (DwmGetWindowAttribute(hWnd, 14, out cloaked, 4) == 0 && cloaked != 0) return false; } catch {}
+    var exStyle = unchecked((uint)GetWindowLong(hWnd, -20));
+    var appWindow = (exStyle & 0x00040000) != 0;
+    if ((exStyle & 0x00000080) != 0 && !appWindow) return false;
+    if ((exStyle & 0x08000000) != 0 && !appWindow) return false;
+    return true;
+  }
 }
 '@
 $debugTrace = [string]::Equals([Environment]::GetEnvironmentVariable('EYPC_WINDOW_DEBUG_TRACE'), '1', [System.StringComparison]::Ordinal)
+$expectedInstanceId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_INSTANCE_ID')
+$expectedAppId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_TARGET_APP_ID')
 $trace = New-Object System.Collections.Generic.List[object]
-function Add-EypcTrace([string] $stage, [string] $outcome) {
+function Add-EypcTrace([string] $stage, [string] $outcome, [string] $detail = '') {
   if ($debugTrace -and $trace.Count -lt 16) {
-    [void]$trace.Add([pscustomobject]@{ stage = $stage; outcome = $outcome })
+    $entry = @{ stage = $stage; outcome = $outcome }
+    if ($detail) { $entry.detail = $detail }
+    [void]$trace.Add([pscustomobject]$entry)
   }
 }
-function Write-EypcOutcome([string] $outcome) {
+function Write-EypcOutcome([string] $outcome, [string] $reasonCode = '', [string] $instanceId = '') {
   $payload = @{ outcome = $outcome }
+  if ($reasonCode) { $payload.reasonCode = $reasonCode }
+  if ($instanceId) { $payload.instanceId = $instanceId }
   if ($debugTrace) { $payload.trace = @($trace.ToArray()) }
   $payload | ConvertTo-Json -Compress -Depth 4
 }
 $handle = [IntPtr]::new(__EYPC_WINDOW_HANDLE__)
-if (-not [EypcWindowTopmost]::IsWindow($handle)) {
+if (-not [EypcWindowTopmost]::IsActionableTopLevel($handle)) {
   Add-EypcTrace 'target' 'not-found'
   Write-EypcOutcome 'not-found'
   exit 0
 }
-Add-EypcTrace 'target' 'ok'
+[uint32]$ownerPid = 0
+if ([EypcWindowTopmost]::GetWindowThreadProcessId($handle, [ref]$ownerPid) -eq 0 -or $ownerPid -le 0) {
+  Add-EypcTrace 'target' 'unavailable' 'instance-mismatch'
+  Write-EypcOutcome 'not-found' 'identity-unavailable'
+  exit 0
+}
+try { $ownerAppId = (Get-Process -Id $ownerPid -ErrorAction Stop).ProcessName } catch {
+  Add-EypcTrace 'process' 'not-found'
+  Write-EypcOutcome 'not-found'
+  exit 0
+}
+$instanceId = 'win32:' + [string]$ownerPid + ':' + [string]$handle.ToInt64()
+$appMatches = -not $expectedAppId -or [string]::Equals($expectedAppId, $ownerAppId, [System.StringComparison]::OrdinalIgnoreCase)
+$instanceMatches = -not $expectedInstanceId -or [string]::Equals($expectedInstanceId, $instanceId, [System.StringComparison]::Ordinal)
+if (-not $appMatches -or -not $instanceMatches) {
+  Add-EypcTrace 'target' 'not-found' 'instance-mismatch'
+  Write-EypcOutcome 'not-found' 'instance-mismatch'
+  exit 0
+}
+Add-EypcTrace 'target' 'ok' 'instance-match'
 if ([EypcWindowTopmost]::IsIconic($handle)) {
   [void][EypcWindowTopmost]::ShowWindow($handle, 9)
   if ([EypcWindowTopmost]::IsIconic($handle)) {
@@ -481,7 +549,7 @@ if (-not [EypcWindowTopmost]::SetWindowPos($handle, [IntPtr]::new(-1), 0, 0, 0, 
 Add-EypcTrace 'topmost' 'ok'
 if ([EypcWindowTopmost]::SetForegroundWindow($handle)) {
   Add-EypcTrace 'foreground' 'ok'
-  Write-EypcOutcome 'activated'
+  Write-EypcOutcome 'activated' '' $instanceId
 } else {
   Add-EypcTrace 'foreground' 'denied'
   Write-EypcOutcome 'focus-denied'
@@ -496,10 +564,28 @@ using System.Runtime.InteropServices;
 public static class EypcWindowCloser {
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 }
 '@
+$expectedInstanceId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_INSTANCE_ID')
+$expectedAppId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_TARGET_APP_ID')
 $handle = [IntPtr]::new(__EYPC_WINDOW_HANDLE__)
 if (-not [EypcWindowCloser]::IsWindow($handle)) {
+  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
+  exit 0
+}
+[uint32]$ownerPid = 0
+if ([EypcWindowCloser]::GetWindowThreadProcessId($handle, [ref]$ownerPid) -eq 0 -or $ownerPid -le 0) {
+  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
+  exit 0
+}
+try { $ownerAppId = (Get-Process -Id $ownerPid -ErrorAction Stop).ProcessName } catch {
+  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
+  exit 0
+}
+$instanceId = 'win32:' + [string]$ownerPid + ':' + [string]$handle.ToInt64()
+if (($expectedInstanceId -and -not [string]::Equals($expectedInstanceId, $instanceId, [System.StringComparison]::Ordinal)) -or
+    ($expectedAppId -and -not [string]::Equals($expectedAppId, $ownerAppId, [System.StringComparison]::OrdinalIgnoreCase))) {
   @{ outcome = 'not-found' } | ConvertTo-Json -Compress
   exit 0
 }
@@ -530,18 +616,6 @@ function attempt(callback, fallback) {
   try { return callback() } catch (error) { return fallback }
 }
 function asText(value) { return String(value || '').trim() }
-function normalizeTitle(value) { return asText(value).toLowerCase().replace(/\s+/g, ' ') }
-function isChromiumFamily(appName, appId) {
-  const text = normalizeTitle(appName + ' ' + appId)
-  return /microsoft edge|google chrome|chromium|brave|vivaldi|opera|\barc\b|com\.microsoft\.edgemac|com\.google\.chrome|com\.brave\.browser/.test(text)
-}
-function isNoiseTitle(title, appName, appId) {
-  const normalized = normalizeTitle(title)
-  if (!normalized) return true
-  if (['program manager', 'default ime', 'msctfime ui', 'gdi+ window', 'olemainthreadwndname', 'cicerouiwndframe', 'cicero ui wnd frame'].indexOf(normalized) >= 0) return true
-  if (normalized === 'window' && isChromiumFamily(appName, appId)) return true
-  return false
-}
 const excludedPid = __EYPC_HOST_PID__
 const excludedParentPid = __EYPC_PARENT_PID__
 const raw = attempt(() => ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID))), [])
@@ -562,24 +636,21 @@ for (const item of list) {
   const alpha = Number(item.kCGWindowAlpha)
   if (Number.isFinite(alpha) && alpha <= 0) continue
   if (pid === excludedPid || pid === excludedParentPid || pid === $.NSProcessInfo.processInfo.processIdentifier) continue
-  if (!title) {
-    unnamedOwnerWindows += 1
-    continue
-  }
-  namedOwnerWindows += 1
+  if (title) namedOwnerWindows += 1
+  else unnamedOwnerWindows += 1
   const running = attempt(() => $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid), null)
   if (!running || attempt(() => running.terminated === true, false) || Number(attempt(() => running.activationPolicy, -1)) !== 0) continue
   const appId = asText(attempt(() => running && running.bundleIdentifier && ObjC.unwrap(running.bundleIdentifier), appName)) || appName
-  if (isNoiseTitle(title, appName, appId)) continue
   const key = String(pid) + ':' + String(windowNumber)
   if (seen[key]) continue
   seen[key] = true
   rows.push({
+    instanceId: 'darwin:' + String(pid) + ':' + String(windowNumber),
     nativeRef: String(pid) + ':0:' + String(windowNumber),
     pid,
     appId,
     appName,
-    title,
+    title: title || appName,
     // kCGWindowIsOnscreen is also false for a normal window on another Space; it is not a minimize flag.
     minimized: false,
     focused: false,
@@ -590,26 +661,22 @@ const screenRecordingLikelyMissing = namedOwnerWindows === 0 && unnamedOwnerWind
 JSON.stringify({ windows: rows, screenRecordingLikelyMissing: screenRecordingLikelyMissing })
 `
 
-/** Current-Space inventory via System Events AX; used when CGWindowList yields no titled windows. */
+/** Current-Space AX inventory. Only rows with an exact CGWindowID mapping are actionable. */
 const MACOS_AX_WINDOW_LIST_SCRIPT = String.raw`
 ObjC.import('Foundation')
 ObjC.import('AppKit')
+ObjC.import('ApplicationServices')
+let exactAxApiAvailable = false
+try {
+  ObjC.bindFunction('AXUIElementCreateApplication', ['id', ['int']])
+  ObjC.bindFunction('AXUIElementCopyAttributeValue', ['int', ['id', 'id', 'id *']])
+  ObjC.bindFunction('_AXUIElementGetWindow', ['int', ['id', 'uint32_t *']])
+  exactAxApiAvailable = true
+} catch (error) {}
 function attempt(callback, fallback) {
   try { return callback() } catch (error) { return fallback }
 }
 function asText(value) { return String(value || '').trim() }
-function normalizeTitle(value) { return asText(value).toLowerCase().replace(/\s+/g, ' ') }
-function isChromiumFamily(appName, appId) {
-  const text = normalizeTitle(appName + ' ' + appId)
-  return /microsoft edge|google chrome|chromium|brave|vivaldi|opera|\barc\b|com\.microsoft\.edgemac|com\.google\.chrome|com\.brave\.browser/.test(text)
-}
-function isNoiseTitle(title, appName, appId) {
-  const normalized = normalizeTitle(title)
-  if (!normalized) return true
-  if (['program manager', 'default ime', 'msctfime ui', 'gdi+ window', 'olemainthreadwndname', 'cicerouiwndframe', 'cicero ui wnd frame'].indexOf(normalized) >= 0) return true
-  if (normalized === 'window' && isChromiumFamily(appName, appId)) return true
-  return false
-}
 const systemEvents = Application('System Events')
 const selfPid = $.NSProcessInfo.processInfo.processIdentifier
 const excludedPid = __EYPC_HOST_PID__
@@ -617,6 +684,22 @@ const excludedParentPid = __EYPC_PARENT_PID__
 const processes = attempt(() => systemEvents.applicationProcesses.whose({ backgroundOnly: false })(), [])
 const rows = []
 const seen = {}
+function copyAxAttribute(element, name) {
+  if (!exactAxApiAvailable || !element) return null
+  try {
+    const output = Ref()
+    if (Number($.AXUIElementCopyAttributeValue(element, $.NSString.stringWithString(name), output)) !== 0) return null
+    return output[0]
+  } catch (error) { return null }
+}
+function exactCgWindowNumber(element) {
+  if (!exactAxApiAvailable || !element) return 0
+  try {
+    const output = Ref()
+    if (Number($._AXUIElementGetWindow(element, output)) !== 0) return 0
+    return Math.trunc(Number(output[0] || 0))
+  } catch (error) { return 0 }
+}
 for (let p = 0; p < processes.length; p += 1) {
   const proc = processes[p]
   const pid = Math.trunc(Number(attempt(() => proc.unixId(), 0)))
@@ -626,27 +709,27 @@ for (let p = 0; p < processes.length; p += 1) {
   const running = attempt(() => $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid), null)
   if (!running || attempt(() => running.terminated === true, false) || Number(attempt(() => running.activationPolicy, -1)) !== 0) continue
   const appId = asText(attempt(() => running && running.bundleIdentifier && ObjC.unwrap(running.bundleIdentifier), appName)) || appName
-  const windows = attempt(() => proc.windows(), [])
-  if (!windows || !windows.length) continue
-  for (let index = 0; index < windows.length; index += 1) {
-    const win = windows[index]
-    let title = asText(attempt(() => win.name(), ''))
-    if (!title) title = asText(attempt(() => win.attributes.byName('AXTitle').value(), ''))
-    if (isNoiseTitle(title, appName, appId)) continue
-    let windowNumber = 0
-    try { windowNumber = Math.trunc(Number(win.attributes.byName('AXWindowNumber').value())) } catch (error) {}
-    const minimized = attempt(() => win.attributes.byName('AXMinimized').value() === true, false)
-    const nativeRef = windowNumber > 0
-      ? String(pid) + ':0:' + String(windowNumber)
-      : String(pid) + ':' + String(index + 1) + ':0'
+  const appElement = attempt(() => $.AXUIElementCreateApplication(pid), null)
+  const windows = copyAxAttribute(appElement, 'AXWindows')
+  const count = windows ? Math.max(0, Math.trunc(Number(windows.count || 0))) : 0
+  for (let index = 0; index < count; index += 1) {
+    const win = attempt(() => windows.objectAtIndex(index), null)
+    const windowNumber = exactCgWindowNumber(win)
+    if (!win || windowNumber <= 0) continue
+    const titleValue = copyAxAttribute(win, 'AXTitle')
+    const title = asText(attempt(() => titleValue ? ObjC.unwrap(titleValue) : '', ''))
+    const minimizedValue = copyAxAttribute(win, 'AXMinimized')
+    const minimized = attempt(() => minimizedValue ? Boolean(ObjC.unwrap(minimizedValue)) : false, false)
+    const nativeRef = String(pid) + ':0:' + String(windowNumber)
     if (seen[nativeRef]) continue
     seen[nativeRef] = true
     rows.push({
+      instanceId: 'darwin:' + String(pid) + ':' + String(windowNumber),
       nativeRef,
       pid,
       appId,
       appName,
-      title,
+      title: title || appName,
       minimized: minimized === true,
       focused: false
     })
@@ -659,6 +742,14 @@ const MACOS_ENV_SNAPSHOT_SCRIPT = String.raw`
 ObjC.import('Foundation')
 ObjC.import('CoreGraphics')
 ObjC.import('AppKit')
+ObjC.import('ApplicationServices')
+let exactAxApiAvailable = false
+try {
+  ObjC.bindFunction('AXUIElementCreateApplication', ['id', ['int']])
+  ObjC.bindFunction('AXUIElementCopyAttributeValue', ['int', ['id', 'id', 'id *']])
+  ObjC.bindFunction('_AXUIElementGetWindow', ['int', ['id', 'uint32_t *']])
+  exactAxApiAvailable = true
+} catch (error) {}
 function attempt(callback, fallback) {
   try { return callback() } catch (error) { return fallback }
 }
@@ -670,7 +761,6 @@ function environmentValue(name) {
 }
 const processId = __EYPC_TARGET_PID__
 const cgWindowNumber = __EYPC_CG_WINDOW_NUMBER__
-const targetTitle = normalizeTitle(environmentValue('EYPC_WINDOW_TARGET_TITLE'))
 const targetApp = normalizeTitle(environmentValue('EYPC_WINDOW_TARGET_APP_ID'))
 const running = attempt(() => $.NSRunningApplication.runningApplicationWithProcessIdentifier(processId), null)
 const runningBundle = normalizeTitle(attempt(() => running && running.bundleIdentifier && ObjC.unwrap(running.bundleIdentifier), ''))
@@ -678,8 +768,7 @@ const runningName = normalizeTitle(attempt(() => running && running.localizedNam
 const appMatches = Boolean(running && (!targetApp || targetApp === runningBundle || targetApp === runningName))
 const raw = attempt(() => ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID))), [])
 const cgList = Array.isArray(raw) ? raw : []
-let cgTargetMatches = 0
-let cgWindowIdMatches = 0
+let nativeInstanceMatches = 0
 let ownerCgWindowCount = 0
 for (const item of cgList) {
   if (!item || typeof item !== 'object') continue
@@ -688,34 +777,39 @@ for (const item of cgList) {
   const pid = Math.trunc(Number(item.kCGWindowOwnerPID || 0))
   if (pid !== processId) continue
   const wid = Math.trunc(Number(item.kCGWindowNumber || 0))
-  const title = normalizeTitle(item.kCGWindowName)
   const alpha = Number(item.kCGWindowAlpha)
-  if (!title || (Number.isFinite(alpha) && alpha <= 0)) continue
+  if (wid <= 0 || (Number.isFinite(alpha) && alpha <= 0)) continue
   ownerCgWindowCount += 1
-  if (cgWindowNumber > 0 && wid === cgWindowNumber) {
-    cgWindowIdMatches += 1
-    if (appMatches && (!targetTitle || title === targetTitle)) cgTargetMatches += 1
-    continue
-  }
-  if (cgWindowNumber <= 0 && appMatches && targetTitle && title === targetTitle) cgTargetMatches += 1
+  if (appMatches && cgWindowNumber > 0 && wid === cgWindowNumber) nativeInstanceMatches += 1
 }
-const systemEvents = Application('System Events')
-let axTargetMatches = 0
+function copyAxAttribute(element, name) {
+  if (!exactAxApiAvailable || !element) return null
+  try {
+    const output = Ref()
+    if (Number($.AXUIElementCopyAttributeValue(element, $.NSString.stringWithString(name), output)) !== 0) return null
+    return output[0]
+  } catch (error) { return null }
+}
+function exactCgWindowNumber(element) {
+  if (!exactAxApiAvailable || !element) return 0
+  try {
+    const output = Ref()
+    if (Number($._AXUIElementGetWindow(element, output)) !== 0) return 0
+    return Math.trunc(Number(output[0] || 0))
+  } catch (error) { return 0 }
+}
+let axInstanceMatches = 0
 let axWindowCount = 0
-try {
-  const processes = systemEvents.applicationProcesses.whose({ unixId: processId })()
-  if (processes.length) {
-    const windows = processes[0].windows()
-    axWindowCount = windows.length
-    for (let i = 0; i < windows.length; i += 1) {
-      let title = ''
-      try { title = String(windows[i].name() || '') } catch (e) {}
-      if (!title) { try { title = String(windows[i].attributes.byName('AXTitle').value() || '') } catch (e) {} }
-      if (targetTitle && normalizeTitle(title) === targetTitle) axTargetMatches += 1
-    }
+const appElement = exactAxApiAvailable ? attempt(() => $.AXUIElementCreateApplication(processId), null) : null
+const axWindows = copyAxAttribute(appElement, 'AXWindows')
+axWindowCount = axWindows ? Math.max(0, Math.trunc(Number(axWindows.count || 0))) : 0
+for (let i = 0; i < axWindowCount; i += 1) {
+  const candidate = attempt(() => axWindows.objectAtIndex(i), null)
+  if (candidate && exactCgWindowNumber(candidate) === cgWindowNumber) {
+    axInstanceMatches += 1
   }
-} catch (error) {}
-JSON.stringify({ appMatches, cgTargetMatches, cgWindowIdMatches, ownerCgWindowCount, axTargetMatches, axWindowCount })
+}
+JSON.stringify({ appMatches, nativeInstanceMatches, ownerCgWindowCount, axInstanceMatches, axWindowCount })
 `
 
 /**
@@ -754,7 +848,6 @@ function executeSpaceBridge() {
   ObjC.bindFunction('SLSCopyWindowsWithOptionsAndTags', ['id', ['int', 'uint32_t', 'id', 'uint32_t', 'void *', 'void *']])
   ObjC.bindFunction('SLSManagedDisplaySetCurrentSpace', ['void', ['int', 'id', 'uint64_t']])
   const cid = $.SLSMainConnectionID()
-  const expectedTitle = normalizeTitle(environmentValue('EYPC_WINDOW_TARGET_TITLE'))
   const expectedApp = normalizeTitle(environmentValue('EYPC_WINDOW_TARGET_APP_ID'))
   const running = attempt(() => $.NSRunningApplication.runningApplicationWithProcessIdentifier(processId), null)
   const runningBundle = normalizeTitle(attempt(() => running && running.bundleIdentifier && ObjC.unwrap(running.bundleIdentifier), ''))
@@ -772,9 +865,6 @@ function executeSpaceBridge() {
   })
   if (targets.length !== 1 || !appMatches) {
     return { bridge: 'isolated-jxa', detail: 'bad-ref', bindingCount: 0, bindingSource: 'none', sameSpace: false, managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
-  }
-  if (expectedTitle && normalizeTitle(targets[0].kCGWindowName) !== expectedTitle) {
-    return { bridge: 'isolated-jxa', detail: 'title-mismatch', bindingCount: 0, bindingSource: 'none', sameSpace: false, managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
   }
   function managedRows() {
     const rows = attempt(() => ObjC.deepUnwrap($.SLSCopyManagedDisplaySpaces(cid)), [])
@@ -867,16 +957,15 @@ JSON.stringify(payload)
 `
 }
 
-function macosActivateWindowScript(pid, ordinal, cgWindowNumber) {
+function macosActivateWindowScript(pid, cgWindowNumber) {
   return String.raw`
 ObjC.import('Foundation')
 ObjC.import('CoreGraphics')
 ObjC.import('ApplicationServices')
 ObjC.import('AppKit')
-const systemEvents = Application('System Events')
 const processId = ${pid}
-const ordinal = ${ordinal}
 const cgWindowNumber = ${cgWindowNumber}
+const instanceId = 'darwin:' + String(processId) + ':' + String(cgWindowNumber)
 let exactAxApiAvailable = false
 try {
   ObjC.bindFunction('AXUIElementCreateApplication', ['id', ['int']])
@@ -900,16 +989,12 @@ function addTrace(stage, outcome, detail) {
 function emit(outcome) {
   const payload = { outcome }
   if (activationReasonCode) payload.reasonCode = activationReasonCode
+  if (outcome === 'activated') payload.instanceId = instanceId
   if (debugTrace) payload.trace = trace
   return JSON.stringify(payload)
 }
-function expectedTargetTitle() {
-  return environmentValue('EYPC_WINDOW_TARGET_TITLE')
-}
-const expectedTitle = expectedTargetTitle()
 const expectedApp = normalizeTitle(environmentValue('EYPC_WINDOW_TARGET_APP_ID'))
-const requireExactAx = environmentValue('EYPC_WINDOW_REQUIRE_EXACT_AX') === '1'
-const allowProcessSpaceFallback = environmentValue('EYPC_WINDOW_ALLOW_PROCESS_SPACE_FALLBACK') === '1'
+const expectedInstanceId = environmentValue('EYPC_WINDOW_INSTANCE_ID')
 function axAttributeName(name) {
   return $.NSString.stringWithString(name)
 }
@@ -977,9 +1062,6 @@ function validateExactCgTarget() {
       return !Number.isFinite(alpha) || alpha > 0
     })
     if (matches.length !== 1) return { outcome: matches.length > 1 ? 'ambiguous' : 'not-found' }
-    const actualTitle = normalizeTitle(matches[0].kCGWindowName)
-    if (!actualTitle) return { outcome: 'unavailable' }
-    if (expectedTitle && actualTitle !== normalizeTitle(expectedTitle)) return { outcome: 'title-mismatch' }
     return { outcome: 'matched' }
   } catch (error) {
     return { outcome: 'unavailable' }
@@ -1004,8 +1086,13 @@ function activateExactAxTarget(resolved) {
     try { return running.localizedName ? ObjC.unwrap(running.localizedName) : '' } catch (error) { return '' }
   })())
   if (expectedApp && expectedApp !== runningBundle && expectedApp !== runningName) {
-    activationReasonCode = 'target-title-changed'
-    addTrace('target', 'not-found', 'title-mismatch')
+    activationReasonCode = 'instance-mismatch'
+    addTrace('target', 'not-found', 'instance-mismatch')
+    return 'not-found'
+  }
+  if (expectedInstanceId && expectedInstanceId !== instanceId) {
+    activationReasonCode = 'instance-mismatch'
+    addTrace('target', 'not-found', 'instance-mismatch')
     return 'not-found'
   }
   const minimized = copyAxAttribute(target, 'AXMinimized')
@@ -1048,240 +1135,97 @@ function activateExactAxTarget(resolved) {
 function normalizeTitle(value) {
   return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
 }
-function currentWindowTitle(window) {
-  let title = ''
-  try { title = String(window.name() || '') } catch (error) {}
-  if (!title) {
-    try { title = String(window.attributes.byName('AXTitle').value() || '') } catch (error) {}
-  }
-  return normalizeTitle(title)
-}
-function resolveTargetWindow(windows, targetOrdinal, targetTitle) {
-  const normalizedTargetTitle = normalizeTitle(targetTitle)
-  const titleMatches = []
-  let ordinalMatch = null
-  for (let index = 0; index < windows.length; index += 1) {
-    const current = windows[index]
-    const title = currentWindowTitle(current)
-    if (targetOrdinal > 0 && index + 1 === targetOrdinal) ordinalMatch = { current, title }
-    if (normalizedTargetTitle && title === normalizedTargetTitle) titleMatches.push(current)
-  }
-  if (titleMatches.length === 1) return { target: titleMatches[0] }
-  if (titleMatches.length > 1) {
-    if (ordinalMatch && ordinalMatch.title === normalizedTargetTitle) return { target: ordinalMatch.current }
-    return { outcome: 'ambiguous' }
-  }
-  if (!normalizedTargetTitle && ordinalMatch) return { target: ordinalMatch.current }
-  return { outcome: 'not-found' }
-}
-function resolveCgOrdinal() {
-  if (cgWindowNumber <= 0) return 0
-  try {
-    const raw = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID)))
-    const cgList = Array.isArray(raw) ? raw : []
-    let index = 0
-    for (const item of cgList) {
-      if (!item || typeof item !== 'object') continue
-      const layer = Math.trunc(Number(item.kCGWindowLayer || 0))
-      if (layer !== 0) continue
-      const itemPid = Math.trunc(Number(item.kCGWindowOwnerPID || 0))
-      if (itemPid !== processId) continue
-      const wid = Math.trunc(Number(item.kCGWindowNumber || 0))
-      const title = normalizeTitle(item.kCGWindowName)
-      const alpha = Number(item.kCGWindowAlpha)
-      if (!title || (Number.isFinite(alpha) && alpha <= 0)) continue
-      index += 1
-      if (wid === cgWindowNumber) return index
-    }
-  } catch (error) {}
-  return 0
-}
-function booleanAttribute(target, name) {
-  try { return { known: true, value: target.attributes.byName(name).value() === true } } catch (error) { return { known: false, value: false } }
-}
 function activate() {
-  if (cgWindowNumber > 0) {
-    const cgIdentity = validateExactCgTarget()
-    if (cgIdentity.outcome === 'title-mismatch') {
-      activationReasonCode = 'target-title-changed'
-      addTrace('target', 'not-found', 'title-mismatch')
-      return 'not-found'
-    }
-    if (cgIdentity.outcome === 'ambiguous') {
-      addTrace('target', 'ambiguous')
-      return 'ambiguous'
-    }
-    if (cgIdentity.outcome === 'not-found') {
-      addTrace('target', 'not-found')
-      return 'not-found'
-    }
-    if (cgIdentity.outcome !== 'matched') {
-      addTrace('target', 'unavailable', 'title-match')
-      return 'failed'
-    }
-    addTrace('target', 'ok', 'title-match')
+  if (cgWindowNumber <= 0 || (expectedInstanceId && expectedInstanceId !== instanceId)) {
+    activationReasonCode = cgWindowNumber <= 0 ? 'identity-unavailable' : 'instance-mismatch'
+    addTrace('target', 'unavailable', cgWindowNumber <= 0 ? 'identity-unavailable' : 'instance-mismatch')
+    return cgWindowNumber <= 0 ? 'failed' : 'not-found'
   }
+  const cgIdentity = validateExactCgTarget()
+  if (cgIdentity.outcome === 'ambiguous') {
+    addTrace('target', 'ambiguous')
+    return 'ambiguous'
+  }
+  if (cgIdentity.outcome === 'not-found') {
+    addTrace('target', 'not-found')
+    return 'not-found'
+  }
+  if (cgIdentity.outcome !== 'matched') {
+    activationReasonCode = 'identity-unavailable'
+    addTrace('target', 'unavailable', 'identity-unavailable')
+    return 'failed'
+  }
+  addTrace('target', 'ok', 'instance-match')
   const exact = resolveExactAxTarget()
   if (exact.outcome === 'matched') return activateExactAxTarget(exact)
   if (exact.outcome === 'ambiguous') {
     addTrace('target', 'ambiguous', 'ax-cg-id-match')
     return 'ambiguous'
   }
-  if (requireExactAx) {
-    addTrace('target', exact.outcome === 'not-found' ? 'not-found' : 'unavailable', 'ax-cg-id-match')
-    return exact.outcome === 'not-found' ? 'not-found' : 'failed'
-  }
-  let processes = []
-  try { processes = systemEvents.applicationProcesses.whose({ unixId: processId })() } catch (error) {
-    addTrace('process', 'denied')
-    return 'permission-required'
-  }
-  if (!processes.length) {
-    addTrace('process', 'not-found')
-    return 'not-found'
-  }
-  addTrace('process', 'ok')
-  const targetProcess = processes[0]
-  let windows = []
-  try { windows = targetProcess.windows() } catch (error) {
-    addTrace('target', 'denied')
-    return 'permission-required'
-  }
-  let resolved = resolveTargetWindow(windows, ordinal, expectedTitle)
-  let resolvedByCgOrdinal = false
-  if (!resolved.target && resolved.outcome !== 'ambiguous' && allowProcessSpaceFallback) {
-    try {
-      targetProcess.frontmost = true
-      addTrace('space', 'ok', 'single-window-frontmost')
-      windows = targetProcess.windows()
-      resolved = resolveTargetWindow(windows, ordinal, expectedTitle)
-    } catch (error) {}
-  }
-  if (!resolved.target && resolved.outcome !== 'ambiguous' && cgWindowNumber > 0) {
-    const cgOrdinal = resolveCgOrdinal()
-    if (cgOrdinal > 0) {
-      resolved = resolveTargetWindow(windows, cgOrdinal, '')
-      if (resolved.target) resolvedByCgOrdinal = true
-    }
-  }
-  if (resolved.outcome === 'ambiguous') {
-    addTrace('target', 'ambiguous')
-    return 'ambiguous'
-  }
-  if (!resolved.target) {
-    addTrace('target', 'not-found')
-    return 'not-found'
-  }
-  addTrace('target', 'ok', resolvedByCgOrdinal ? 'cg-ordinal-fallback' : 'title-match')
-  const target = resolved.target
-  const minimized = booleanAttribute(target, 'AXMinimized')
-  if (minimized.known && minimized.value) {
-    try { target.attributes.byName('AXMinimized').set({ value: false }) } catch (error) {
-      addTrace('restore', 'failed')
-      return 'failed'
-    }
-    const restored = booleanAttribute(target, 'AXMinimized')
-    if (restored.known && restored.value) {
-      addTrace('restore', 'failed')
-      return 'failed'
-    }
-    addTrace('restore', 'ok')
-  } else {
-    addTrace('restore', minimized.known ? 'skipped' : 'unavailable')
-  }
-  try { targetProcess.frontmost = true } catch (error) {
-    addTrace('foreground', 'denied')
-    return 'focus-denied'
-  }
-  try { target.attributes.byName('AXFocused').set({ value: true }) } catch (error) {}
-  addTrace('foreground', 'ok')
-  try { target.actions.byName('AXRaise').perform() } catch (error) {
-    addTrace('raise', 'failed')
-    return 'failed'
-  }
-  addTrace('raise', 'ok')
-  const minimizedAfterRaise = booleanAttribute(target, 'AXMinimized')
-  if (minimizedAfterRaise.known && minimizedAfterRaise.value) {
-    addTrace('verify', 'failed')
-    return 'failed'
-  }
-  const focusedAfterRaise = booleanAttribute(target, 'AXFocused')
-  if (focusedAfterRaise.known && !focusedAfterRaise.value) {
-    addTrace('verify', 'unavailable', 'focus-state-mismatch')
-    return 'activated'
-  }
-  addTrace('verify', minimizedAfterRaise.known || focusedAfterRaise.known ? 'ok' : 'unavailable')
-  return 'activated'
+  activationReasonCode = exact.outcome === 'not-found' ? 'instance-mismatch' : 'identity-unavailable'
+  addTrace('target', exact.outcome === 'not-found' ? 'not-found' : 'unavailable', 'ax-cg-id-match')
+  return exact.outcome === 'not-found' ? 'not-found' : 'failed'
 }
 emit(activate())
 `
 }
 
-function macosCloseWindowScript(pid, ordinal) {
+function macosCloseWindowScript(pid, cgWindowNumber) {
   return String.raw`
 ObjC.import('Foundation')
-const systemEvents = Application('System Events')
+ObjC.import('ApplicationServices')
 const processId = ${pid}
-const ordinal = ${ordinal}
-function expectedTargetTitle() {
-  const value = $.NSProcessInfo.processInfo.environment.objectForKey('EYPC_WINDOW_TARGET_TITLE')
-  return value ? String(ObjC.unwrap(value) || '') : ''
+const cgWindowNumber = ${cgWindowNumber}
+let available = false
+try {
+  ObjC.bindFunction('AXUIElementCreateApplication', ['id', ['int']])
+  ObjC.bindFunction('AXUIElementCopyAttributeValue', ['int', ['id', 'id', 'id *']])
+  ObjC.bindFunction('AXUIElementPerformAction', ['int', ['id', 'id']])
+  ObjC.bindFunction('_AXUIElementGetWindow', ['int', ['id', 'uint32_t *']])
+  available = true
+} catch (error) {}
+function copyAttribute(element, name) {
+  if (!available || !element) return null
+  try {
+    const output = Ref()
+    if (Number($.AXUIElementCopyAttributeValue(element, $.NSString.stringWithString(name), output)) !== 0) return null
+    return output[0]
+  } catch (error) { return null }
 }
-function normalizeTitle(value) {
-  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+function windowNumber(element) {
+  if (!available || !element) return 0
+  try {
+    const output = Ref()
+    if (Number($._AXUIElementGetWindow(element, output)) !== 0) return 0
+    return Math.trunc(Number(output[0] || 0))
+  } catch (error) { return 0 }
 }
-function currentWindowTitle(window) {
-  let title = ''
-  try { title = String(window.name() || '') } catch (error) {}
-  if (!title) {
-    try { title = String(window.attributes.byName('AXTitle').value() || '') } catch (error) {}
-  }
-  return normalizeTitle(title)
+const app = available && cgWindowNumber > 0 ? $.AXUIElementCreateApplication(processId) : null
+const windows = copyAttribute(app, 'AXWindows')
+const matches = []
+const count = windows ? Math.max(0, Math.trunc(Number(windows.count || 0))) : 0
+for (let index = 0; index < count; index += 1) {
+  const candidate = windows.objectAtIndex(index)
+  if (windowNumber(candidate) === cgWindowNumber) matches.push(candidate)
 }
-function resolveTargetWindow(windows, targetOrdinal, targetTitle) {
-  const normalizedTargetTitle = normalizeTitle(targetTitle)
-  const titleMatches = []
-  let ordinalMatch = null
-  for (let index = 0; index < windows.length; index += 1) {
-    const current = windows[index]
-    const title = currentWindowTitle(current)
-    if (targetOrdinal > 0 && index + 1 === targetOrdinal) ordinalMatch = { current, title }
-    if (normalizedTargetTitle && title === normalizedTargetTitle) titleMatches.push(current)
-  }
-  if (titleMatches.length === 1) return { target: titleMatches[0] }
-  if (titleMatches.length > 1) {
-    if (ordinalMatch && ordinalMatch.title === normalizedTargetTitle) return { target: ordinalMatch.current }
-    return { outcome: 'ambiguous' }
-  }
-  if (!normalizedTargetTitle && ordinalMatch) return { target: ordinalMatch.current }
-  return { outcome: 'not-found' }
-}
-const expectedTitle = expectedTargetTitle()
-const processes = systemEvents.applicationProcesses.whose({ unixId: processId })()
-if (!processes.length) {
-  JSON.stringify({ outcome: 'not-found' })
+if (!available || !app || !windows) {
+  JSON.stringify({ outcome: 'failed', message: 'identity-unavailable' })
+} else if (matches.length !== 1) {
+  JSON.stringify({ outcome: matches.length > 1 ? 'ambiguous' : 'not-found' })
 } else {
-  const targetProcess = processes[0]
-  const windows = targetProcess.windows()
-  const resolved = resolveTargetWindow(windows, ordinal, expectedTitle)
-  if (resolved.outcome === 'ambiguous') {
-    JSON.stringify({ outcome: 'ambiguous' })
-  } else if (!resolved.target) {
-    JSON.stringify({ outcome: 'not-found' })
+  const target = matches[0]
+  let closed = false
+  const closeButton = copyAttribute(target, 'AXCloseButton')
+  try {
+    if (closeButton) closed = Number($.AXUIElementPerformAction(closeButton, $.NSString.stringWithString('AXPress'))) === 0
+  } catch (error) {}
+  if (!closed) {
+    try { closed = Number($.AXUIElementPerformAction(target, $.NSString.stringWithString('AXClose'))) === 0 } catch (error) {}
+  }
+  if (closed) {
+    JSON.stringify({ outcome: 'closed' })
   } else {
-    const target = resolved.target
-    try {
-      const closeButton = target.attributes.byName('AXCloseButton').value()
-      closeButton.actions.byName('AXPress').perform()
-      JSON.stringify({ outcome: 'closed' })
-    } catch (error) {
-      try {
-        target.actions.byName('AXPress').perform()
-        JSON.stringify({ outcome: 'closed' })
-      } catch (inner) {
-        JSON.stringify({ outcome: 'close-denied', message: String(inner) })
-      }
-    }
+    JSON.stringify({ outcome: 'close-denied' })
   }
 }
 `
@@ -1290,7 +1234,7 @@ if (!processes.length) {
 // Private SkyLight CGS: resolve a concrete CGWindowNumber against the current managed-Space map.
 // Direct per-window queries are authoritative; per-Space tag scans only corroborate/fill a direct miss.
 // Bindings stay preload-session-only because CG window IDs, PIDs, titles and Space IDs are recyclable.
-const WINDOW_BRIDGE_REVISION = 'wj18-cg-title-source'
+const WINDOW_BRIDGE_REVISION = 'wj19-native-instance-id'
 const MACOS_CGS_WINDOW_TAG_MASK = 0x7
 const MACOS_CGS_SPACE_QUERY_MASKS = [0x7, 0x7fffffff]
 const MACOS_CGS_SPACE_SETTLE_MS = 120
@@ -1755,19 +1699,17 @@ function macosWarmWindowSpaceCacheFromInventory(windows) {
   } catch {}
 }
 
-function runWindowCommand(command, args, targetWindowTitle = null, debugTrace = false, allowProcessSpaceFallback = false, extraEnvironment = null) {
+function runWindowCommand(command, args, debugTrace = false, extraEnvironment = null) {
   return new Promise((resolve) => {
     const options = {
       windowsHide: true,
       timeout: WINDOW_BRIDGE_TIMEOUT_MS,
       maxBuffer: WINDOW_BRIDGE_OUTPUT_LIMIT
     }
-    if (targetWindowTitle !== null || debugTrace || allowProcessSpaceFallback || (extraEnvironment && typeof extraEnvironment === 'object')) {
+    if (debugTrace || (extraEnvironment && typeof extraEnvironment === 'object')) {
       options.env = {
         ...process.env,
-        ...(targetWindowTitle !== null ? { EYPC_WINDOW_TARGET_TITLE: targetWindowTitle } : {}),
         ...(debugTrace ? { EYPC_WINDOW_DEBUG_TRACE: '1' } : {}),
-        ...(allowProcessSpaceFallback ? { EYPC_WINDOW_ALLOW_PROCESS_SPACE_FALLBACK: '1' } : {}),
         ...(extraEnvironment && typeof extraEnvironment === 'object' ? extraEnvironment : {})
       }
     }
@@ -1783,7 +1725,7 @@ function parseMacosIsolatedSpaceBridge(output) {
   try {
     const value = JSON.parse(String(output || '').trim() || '{}')
     const detail = String(value && value.detail || '')
-    if (!['current', 'remote', 'switch-confirmed', 'switch-timeout', 'ambiguous-spaces', 'empty-spaces', 'bad-ref', 'title-mismatch', 'error'].includes(detail)) return null
+    if (!['current', 'remote', 'switch-confirmed', 'switch-timeout', 'ambiguous-spaces', 'empty-spaces', 'bad-ref', 'error'].includes(detail)) return null
     const source = String(value && value.bindingSource || '')
     const bindingSource = ['isolated-direct', 'isolated-reverse', 'isolated-direct+reverse', 'none'].includes(source) ? source : 'none'
     const bindings = Array.isArray(value && value.bindings) ? value.bindings.slice(0, 16).flatMap((item) => {
@@ -1826,14 +1768,11 @@ async function runMacosIsolatedSpaceBridge(target, switchRequested) {
   if (ordinal !== 0 || !Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) {
     return { switched: false, detail: 'ax-fallback', bridge: 'isolated-jxa', bindingCount: 0, bindingSource: 'none' }
   }
-  const title = String(source.title || '').replace(/\u0000/g, '').slice(0, 4096)
   const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
   const script = macosIsolatedSpaceBridgeScript(pid, cgWindowNumber, switchRequested === true)
   const result = await runWindowCommand(
     '/usr/bin/osascript',
     ['-l', 'JavaScript', '-e', script],
-    title,
-    false,
     false,
     { EYPC_WINDOW_TARGET_APP_ID: appId }
   )
@@ -1859,10 +1798,9 @@ function unavailableWindowEnvironment(platform = 'unsupported') {
     bridgeRevision: WINDOW_BRIDGE_REVISION,
     identityAvailable: false,
     appMatches: false,
-    cgTargetMatches: 0,
-    cgWindowIdMatches: 0,
+    nativeInstanceMatches: 0,
     ownerCgWindowCount: 0,
-    axTargetMatches: 0,
+    axInstanceMatches: 0,
     axWindowCount: 0,
     spaceBinding: 'unavailable',
     spaceBindingCount: 0,
@@ -1879,8 +1817,7 @@ function macosWindowIdentityCacheKey(target) {
   const source = target && typeof target === 'object' ? target : {}
   const nativeRef = String(source.nativeRef || '').trim()
   const appId = String(source.appId || source.appName || '').trim().toLowerCase()
-  const title = String(source.title || '').trim().replace(/\s+/g, ' ').toLowerCase()
-  return nativeRef && appId && title ? `${nativeRef}\u0000${appId}\u0000${title}` : ''
+  return nativeRef && appId ? `${nativeRef}\u0000${appId}` : ''
 }
 
 function invalidateMacosWindowIdentity(target) {
@@ -1901,7 +1838,6 @@ async function readMacosWindowIdentity(target) {
   if (!parts) return unavailableWindowEnvironment('darwin')
   const pid = Number(parts[1])
   const cgWindowNumber = Number(parts[3])
-  const title = String(source.title || '').slice(0, 4096)
   const appId = String(source.appId || source.appName || '').slice(0, 512)
   const script = MACOS_ENV_SNAPSHOT_SCRIPT
     .replace('__EYPC_TARGET_PID__', String(pid))
@@ -1909,8 +1845,6 @@ async function readMacosWindowIdentity(target) {
   const result = await runWindowCommand(
     '/usr/bin/osascript',
     ['-l', 'JavaScript', '-e', script],
-    title,
-    false,
     false,
     { EYPC_WINDOW_TARGET_APP_ID: appId }
   )
@@ -1920,10 +1854,9 @@ async function readMacosWindowIdentity(target) {
       const parsed = JSON.parse(String(result.stdout || '').trim() || '{}')
       snapshot.identityAvailable = true
       snapshot.appMatches = parsed.appMatches === true
-      snapshot.cgTargetMatches = Math.max(0, Math.trunc(Number(parsed.cgTargetMatches || 0)))
-      snapshot.cgWindowIdMatches = Math.max(0, Math.trunc(Number(parsed.cgWindowIdMatches || 0)))
+      snapshot.nativeInstanceMatches = Math.max(0, Math.trunc(Number(parsed.nativeInstanceMatches || 0)))
       snapshot.ownerCgWindowCount = Math.max(0, Math.trunc(Number(parsed.ownerCgWindowCount || 0)))
-      snapshot.axTargetMatches = Math.max(0, Math.trunc(Number(parsed.axTargetMatches || 0)))
+      snapshot.axInstanceMatches = Math.max(0, Math.trunc(Number(parsed.axInstanceMatches || 0)))
       snapshot.axWindowCount = Math.max(0, Math.trunc(Number(parsed.axWindowCount || 0)))
       if (cacheKey) macosWindowIdentityCache.set(cacheKey, { checkedAt: Date.now(), snapshot: { ...snapshot } })
     } catch {}
@@ -1997,14 +1930,14 @@ function parseWindowJson(output, platform) {
   const windows = rows.flatMap((item) => {
     if (!item || typeof item !== 'object') return []
     const nativeRef = String(item.nativeRef || '').trim()
+    const instanceId = String(item.instanceId || '').trim()
     const pid = Math.trunc(Number(item.pid))
     const appId = String(item.appId || item.appName || '').trim()
     const appName = String(item.appName || appId || '').trim()
     const title = String(item.title || '').trim()
-    const id = `${platform}:${nativeRef}`
-    if (!nativeRef || !Number.isInteger(pid) || pid <= 0 || !appId || !title || seen.has(id)) return []
-    seen.add(id)
-    return [{ id, platform, nativeRef, appId, appName, pid, title, minimized: item.minimized === true, focused: item.focused === true }]
+    if (!nativeRef || !instanceId || !Number.isInteger(pid) || pid <= 0 || !appId || !title || seen.has(instanceId)) return []
+    seen.add(instanceId)
+    return [{ id: instanceId, instanceId, platform, nativeRef, appId, appName, pid, title, minimized: item.minimized === true, focused: item.focused === true }]
   })
   return { windows, screenRecordingLikelyMissing: envelope.screenRecordingLikelyMissing === true }
 }
@@ -2099,11 +2032,11 @@ const WINDOW_OPERATION_TRACE_OUTCOMES = new Set(['ok', 'skipped', 'not-found', '
 const WINDOW_OPERATION_TRACE_DETAILS = new Set([
   'switched', 'switch-confirmed', 'switch-timeout', 'current', 'walked', 'direct-unique', 'direct-multiple', 'reverse-unique', 'session-cache',
   'ambiguous-spaces', 'ax-fallback', 'bad-ref', 'no-api', 'empty-spaces', 'no-space-id', 'no-display',
-  'process-frontmost', 'single-window-frontmost', 'multiwindow-blocked', 'current-space-inferred', 'cg-ordinal-fallback', 'title-match', 'title-mismatch', 'focus-state-mismatch', 'error',
+  'process-frontmost', 'single-window-frontmost', 'multiwindow-blocked', 'current-space-inferred', 'instance-match', 'instance-mismatch', 'identity-unavailable', 'focus-state-mismatch', 'error',
   'isolated-space-bridge', 'ax-cg-id-match', 'ax-focused-window'
 ])
 const WINDOW_ACTIVATION_REASON_CODES = new Set([
-  'space-unbound', 'space-unbound-multiwindow', 'space-ambiguous', 'space-switch-timeout', 'target-title-changed'
+  'space-unbound', 'space-unbound-multiwindow', 'space-ambiguous', 'space-switch-timeout', 'instance-mismatch', 'identity-unavailable'
 ])
 
 function debugTraceRequested(options) {
@@ -2168,7 +2101,8 @@ function parseWindowActivationResult(output, fallback = 'failed') {
     if (['activated', 'not-found', 'ambiguous', 'focus-denied', 'permission-required', 'unsupported', 'failed'].includes(outcome)) {
       const trace = parseWindowOperationTrace(value)
       const reasonCode = String(value && value.reasonCode || '')
-      return { outcome, ...(WINDOW_ACTIVATION_REASON_CODES.has(reasonCode) ? { reasonCode } : {}), ...(trace ? { trace } : {}) }
+      const instanceId = String(value && value.instanceId || '').trim()
+      return { outcome, ...(instanceId ? { instanceId } : {}), ...(WINDOW_ACTIVATION_REASON_CODES.has(reasonCode) ? { reasonCode } : {}), ...(trace ? { trace } : {}) }
     }
   } catch {}
   return { outcome: fallback }
@@ -2188,7 +2122,13 @@ async function activateWindow(target, options = {}) {
     }
     const systemRoot = process.env.SystemRoot || 'C:\\Windows'
     const script = WINDOWS_ACTIVATE_SCRIPT.replace('__EYPC_WINDOW_HANDLE__', nativeRef)
-    const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], null, debugTrace)
+    const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
+    const sourceInstanceId = String(source.instanceId || '').replace(/\u0000/g, '').slice(0, 512)
+    const instanceId = sourceInstanceId.includes(':legacy:') ? '' : sourceInstanceId
+    const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], debugTrace, {
+      EYPC_WINDOW_TARGET_APP_ID: appId,
+      ...(instanceId ? { EYPC_WINDOW_INSTANCE_ID: instanceId } : {})
+    })
     if (!result.ok) return { outcome: 'failed', message: 'Windows 无法执行窗口激活', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }]) }
     const activation = parseWindowActivationResult(result.stdout)
     return activation.outcome === 'focus-denied'
@@ -2197,14 +2137,21 @@ async function activateWindow(target, options = {}) {
   }
   const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
   if (!parts) return { outcome: 'not-found', message: 'macOS 窗口引用已失效', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }]) }
-  const title = String(source.title || '').replace(/\u0000/g, '').slice(0, 4096)
   const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
   const pid = Number(parts[1])
   const ordinal = Number(parts[2])
   const cgWindowNumber = Number(parts[3])
+  const actualInstanceId = `darwin:${pid}:${cgWindowNumber}`
+  const sourceInstanceId = String(source.instanceId || '').trim()
+  const expectedInstanceId = sourceInstanceId.includes(':legacy:') ? '' : sourceInstanceId
+  if (ordinal !== 0 || !Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) {
+    return { outcome: 'failed', reasonCode: 'identity-unavailable', message: '无法建立稳定的 macOS 窗口实例身份', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'unavailable', detail: 'identity-unavailable' }]) }
+  }
+  if (expectedInstanceId && expectedInstanceId !== actualInstanceId) {
+    return { outcome: 'not-found', reasonCode: 'instance-mismatch', message: '窗口实例与保存目标不一致，需要重新确认', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found', detail: 'instance-mismatch' }]) }
+  }
   let identity = unavailableWindowEnvironment('darwin')
   let spaceAttempt = ordinal === 0 && cgWindowNumber > 0 ? trySwitchMacosSpaceFromSessionCache(nativeRef) : null
-  const sessionCacheFastPath = Boolean(spaceAttempt)
   if (!spaceAttempt) {
     identity = await readMacosWindowIdentity(source)
     if (ordinal === 0 && cgWindowNumber > 0 && !identity.identityAvailable) {
@@ -2215,7 +2162,7 @@ async function activateWindow(target, options = {}) {
       }
     }
     if (ordinal === 0 && cgWindowNumber > 0) {
-      if (identity.cgWindowIdMatches !== 1) {
+      if (identity.nativeInstanceMatches !== 1) {
         invalidateMacosWindowIdentity(source)
         return {
           outcome: 'not-found',
@@ -2223,13 +2170,13 @@ async function activateWindow(target, options = {}) {
           ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }])
         }
       }
-      if (!identity.appMatches || identity.cgTargetMatches !== 1) {
+      if (!identity.appMatches) {
         invalidateMacosWindowIdentity(source)
         return {
           outcome: 'not-found',
-          reasonCode: 'target-title-changed',
-          message: '目标窗口标题或所属应用已变化，需要重新确认',
-          ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found', detail: 'title-mismatch' }])
+          reasonCode: 'instance-mismatch',
+          message: '窗口实例或所属应用与保存目标不一致，需要重新确认',
+          ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found', detail: 'instance-mismatch' }])
         }
       }
     }
@@ -2241,12 +2188,8 @@ async function activateWindow(target, options = {}) {
   const spacePrefix = debugTrace
     ? [...(bridgeStep ? [bridgeStep] : []), ...(bindingStep ? [bindingStep] : []), macosSpaceTraceStep(spaceAttempt)]
     : []
-  if (spaceAttempt.detail === 'bad-ref' || spaceAttempt.detail === 'title-mismatch') {
-    const failure = {
-      outcome: 'not-found',
-      ...(spaceAttempt.detail === 'title-mismatch' ? { reasonCode: 'target-title-changed' } : {}),
-      message: spaceAttempt.detail === 'title-mismatch' ? '目标窗口标题或所属应用已变化，需要重新确认' : 'macOS 窗口引用已失效'
-    }
+  if (spaceAttempt.detail === 'bad-ref') {
+    const failure = { outcome: 'not-found', reasonCode: 'instance-mismatch', message: 'macOS 窗口实例已失效，需要重新确认' }
     return debugTrace ? mergeDebugTraceSteps(spacePrefix, failure) : failure
   }
   if (spaceAttempt.detail === 'ambiguous-spaces') {
@@ -2298,13 +2241,11 @@ async function activateWindow(target, options = {}) {
     : []
   const result = await runWindowCommand(
     '/usr/bin/osascript',
-    ['-l', 'JavaScript', '-e', macosActivateWindowScript(pid, ordinal, cgWindowNumber)],
-    title,
+    ['-l', 'JavaScript', '-e', macosActivateWindowScript(pid, cgWindowNumber)],
     debugTrace,
-    allowSingleWindowFallback,
     {
       EYPC_WINDOW_TARGET_APP_ID: appId,
-      ...(sessionCacheFastPath ? { EYPC_WINDOW_REQUIRE_EXACT_AX: '1' } : {})
+      EYPC_WINDOW_INSTANCE_ID: expectedInstanceId || actualInstanceId
     }
   )
   if (!result.ok) {
@@ -2341,7 +2282,13 @@ async function alwaysOnTopWindow(target, options = {}) {
   }
   const systemRoot = process.env.SystemRoot || 'C:\\Windows'
   const script = WINDOWS_TOPMOST_SCRIPT.replace('__EYPC_WINDOW_HANDLE__', nativeRef)
-  const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], null, debugTrace)
+  const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
+  const sourceInstanceId = String(source.instanceId || '').replace(/\u0000/g, '').slice(0, 512)
+  const instanceId = sourceInstanceId.includes(':legacy:') ? '' : sourceInstanceId
+  const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], debugTrace, {
+    EYPC_WINDOW_TARGET_APP_ID: appId,
+    ...(instanceId ? { EYPC_WINDOW_INSTANCE_ID: instanceId } : {})
+  })
   if (!result.ok) return { outcome: 'failed', message: 'Windows 无法执行页面置顶', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }]) }
   const activation = parseWindowActivationResult(result.stdout)
   return activation.outcome === 'focus-denied'
@@ -2369,14 +2316,30 @@ async function closeWindow(target) {
     if (!/^\d{1,20}$/.test(nativeRef)) return { outcome: 'not-found', message: '窗口句柄无效' }
     const systemRoot = process.env.SystemRoot || 'C:\\Windows'
     const script = WINDOWS_CLOSE_SCRIPT.replace('__EYPC_WINDOW_HANDLE__', nativeRef)
-    const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script])
+    const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
+    const sourceInstanceId = String(source.instanceId || '').replace(/\u0000/g, '').slice(0, 512)
+    const instanceId = sourceInstanceId.includes(':legacy:') ? '' : sourceInstanceId
+    const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], false, {
+      EYPC_WINDOW_TARGET_APP_ID: appId,
+      ...(instanceId ? { EYPC_WINDOW_INSTANCE_ID: instanceId } : {})
+    })
     if (!result.ok) return { outcome: 'failed', message: 'Windows 无法关闭该窗口' }
     return parseWindowLifecycleResult(result.stdout)
   }
   const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
   if (!parts) return { outcome: 'not-found', message: 'macOS 窗口引用已失效' }
-  const title = String(source.title || '').replace(/\u0000/g, '').slice(0, 4096)
-  const result = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', macosCloseWindowScript(Number(parts[1]), Number(parts[2]))], title)
+  const pid = Number(parts[1])
+  const ordinal = Number(parts[2])
+  const cgWindowNumber = Number(parts[3])
+  const actualInstanceId = `darwin:${pid}:${cgWindowNumber}`
+  const sourceInstanceId = String(source.instanceId || '').trim()
+  const expectedInstanceId = sourceInstanceId.includes(':legacy:') ? '' : sourceInstanceId
+  if (ordinal !== 0 || cgWindowNumber <= 0) return { outcome: 'failed', message: '无法建立稳定的 macOS 窗口实例身份' }
+  if (expectedInstanceId && expectedInstanceId !== actualInstanceId) return { outcome: 'not-found', message: '窗口实例与保存目标不一致' }
+  const identity = await readMacosWindowIdentity(source)
+  if (!identity.identityAvailable) return { outcome: 'failed', message: '无法重新验证 macOS 窗口身份' }
+  if (!identity.appMatches || identity.nativeInstanceMatches !== 1) return { outcome: 'not-found', message: '窗口实例或所属应用与保存目标不一致' }
+  const result = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', macosCloseWindowScript(pid, cgWindowNumber)])
   if (!result.ok) {
     const detail = `${result.error}\n${result.stderr}`
     return isMacWindowPermissionError(detail)
@@ -3433,6 +3396,31 @@ function codexRecord(value) {
   return value && typeof value === 'object' ? value : {}
 }
 
+function codexNextLiveEvidenceSequence() {
+  codexLiveEvidenceSequence += 1
+  return codexLiveEvidenceSequence
+}
+
+function codexMarkAppServerLiveActive(known) {
+  if (!known) return
+  known.appServerLiveActive = true
+  known.appServerLiveSequence = codexNextLiveEvidenceSequence()
+}
+
+function codexClearAppServerLiveActive(known) {
+  if (!known) return
+  known.appServerLiveActive = false
+  delete known.appServerLiveSequence
+}
+
+function codexDesktopActivitySupersedesAppServer(known, shadows) {
+  if (known?.appServerLiveActive !== true || !Number.isInteger(known.appServerLiveSequence)) return false
+  const latestDesktopSequence = Math.max(0, ...shadows
+    .filter(Boolean)
+    .map((shadow) => Number.isInteger(shadow.activityEventSequence) ? shadow.activityEventSequence : 0))
+  return latestDesktopSequence > known.appServerLiveSequence
+}
+
 function codexNumber(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
@@ -4117,7 +4105,7 @@ function codexApplyCachedCompletedTurnEvidence(known, threadId) {
   if (turn.completedAt) known.lastTurnCompletedAt = turn.completedAt
   else delete known.lastTurnCompletedAt
   known.lastTurnEvidence = 'targeted-after-exit'
-  known.appServerLiveActive = false
+  codexClearAppServerLiveActive(known)
   return true
 }
 
@@ -4153,7 +4141,7 @@ function codexApplyCompletedTurnNotification(bridge, known, threadId, value) {
   if (turn.completedAt) known.lastTurnCompletedAt = turn.completedAt
   else delete known.lastTurnCompletedAt
   known.lastTurnEvidence = 'turn-completed'
-  known.appServerLiveActive = false
+  codexClearAppServerLiveActive(known)
   bridge.cancelLatestTurnRefresh(threadId)
   // Any false already present when the exact completion arrives belongs to
   // the pre-completion epoch, even when an unresolved request flag is still
@@ -4170,7 +4158,7 @@ function codexApplyStartedTurnNotification(bridge, known, threadId, value) {
   const previousStartedAt = codexTimestampMs(known.lastTurnStartedAt)
   const alreadyDesktopActive = known.statusAuthority === 'desktop-live' && known.status === 'active'
   const restoreAppServerActive = () => {
-    known.appServerLiveActive = true
+    codexMarkAppServerLiveActive(known)
     if (alreadyDesktopActive) return
     known.status = 'active'
     known.activeFlags = []
@@ -4277,7 +4265,7 @@ class CodexDesktopCompanionBridge {
   }
 
   publishTargetedCompletion(known, threadId, evidence = 'targeted-after-exit') {
-    known.appServerLiveActive = false
+    codexClearAppServerLiveActive(known)
     known.lastTurnEvidence = evidence
     this.applyFreshCompletionUnread(known, threadId, { clearStaleLiveFalse: true })
     emitCodexActivityDelta([known], false)
@@ -4334,7 +4322,7 @@ class CodexDesktopCompanionBridge {
     known.lastTurnStartedAt = turn.startedAt
     if (turn.status === 'completed' && turn.completedAt) known.lastTurnCompletedAt = turn.completedAt
     else delete known.lastTurnCompletedAt
-    known.appServerLiveActive = false
+    codexClearAppServerLiveActive(known)
     shadow.suppressUncorroboratedActive = true
     delete shadow.desktopActiveSince
     this.emitParentActivity(threadId)
@@ -4561,7 +4549,7 @@ class CodexDesktopCompanionBridge {
           known.lastTurnStartedAt = turn.startedAt
           if (turn.status === 'completed' && turn.completedAt) known.lastTurnCompletedAt = turn.completedAt
           else delete known.lastTurnCompletedAt
-          known.appServerLiveActive = false
+          codexClearAppServerLiveActive(known)
           finish(false)
           if (turn.status === 'completed') this.publishTargetedCompletion(known, threadId)
           else {
@@ -4895,6 +4883,7 @@ class CodexDesktopCompanionBridge {
     if (containsActivityPatch) {
       shadow.activityRevision = change.revision
       shadow.activityEvidence = 'activity-event'
+      shadow.activityEventSequence = codexNextLiveEvidenceSequence()
       delete shadow.suppressUncorroboratedActive
     }
     const isActive = codexDesktopShadowActivity(shadow)?.status === 'active'
@@ -4926,8 +4915,11 @@ class CodexDesktopCompanionBridge {
     if (!known || !activity) return
     const previousStatus = known.status
     const desktopEvidence = shadow.activityEvidence === 'activity-event' ? 'activity-event' : 'initial-snapshot'
-    if (desktopEvidence === 'activity-event' && activity.status !== 'active') known.appServerLiveActive = false
-    const appServerActive = known.appServerLiveActive === true && desktopEvidence !== 'activity-event' && activity.status !== 'active'
+    const desktopInactiveSupersedes = desktopEvidence === 'activity-event'
+      && activity.status !== 'active'
+      && codexDesktopActivitySupersedesAppServer(known, [shadow])
+    if (desktopInactiveSupersedes) codexClearAppServerLiveActive(known)
+    const appServerActive = known.appServerLiveActive === true && activity.status !== 'active'
     known.status = appServerActive ? 'active' : activity.status
     known.activeFlags = appServerActive ? [...known.connectorActiveFlags] : activity.activeFlags
     known.statusAuthority = appServerActive ? 'app-server-live' : 'desktop-live'
@@ -4959,11 +4951,15 @@ class CodexDesktopCompanionBridge {
     const hasApproval = activeFlags.includes('waitingOnApproval')
     const hasActive = activities.some((activity) => activity.status === 'active')
     const hasSystemError = activities.some((activity) => activity.status === 'systemError')
-    const desktopActivityEvent = [this.shadows.get(parentThreadId), ...children]
-      .filter(Boolean)
-      .some((shadow) => shadow.activityEvidence === 'activity-event')
-    if (desktopActivityEvent && !hasActive && !hasInput && !hasApproval) known.appServerLiveActive = false
-    const appServerActive = known.appServerLiveActive === true && !desktopActivityEvent && !hasActive && !hasInput && !hasApproval
+    const evidenceShadows = [this.shadows.get(parentThreadId), ...children].filter(Boolean)
+    const desktopActivityEvent = evidenceShadows.some((shadow) => shadow.activityEvidence === 'activity-event')
+    const desktopInactiveSupersedes = desktopActivityEvent
+      && !hasActive
+      && !hasInput
+      && !hasApproval
+      && codexDesktopActivitySupersedesAppServer(known, evidenceShadows)
+    if (desktopInactiveSupersedes) codexClearAppServerLiveActive(known)
+    const appServerActive = known.appServerLiveActive === true && !hasActive && !hasInput && !hasApproval
     const status = hasInput || hasApproval || hasActive || appServerActive
       ? 'active'
       : hasSystemError ? 'systemError' : own.status
@@ -4977,7 +4973,6 @@ class CodexDesktopCompanionBridge {
       ? (appServerActive ? [...known.connectorActiveFlags] : activeFlags)
       : []
     known.statusAuthority = appServerActive ? 'app-server-live' : 'desktop-live'
-    const evidenceShadows = [this.shadows.get(parentThreadId), ...children].filter(Boolean)
     known.activityEvidence = appServerActive || evidenceShadows.some((shadow) => shadow.activityEvidence === 'activity-event')
       ? 'activity-event'
       : 'initial-snapshot'
@@ -5493,9 +5488,9 @@ function handleCodexServerMessage(message) {
       const exitedActive = known.connectorStatus === 'active' && activity.status !== 'active'
       known.connectorStatus = activity.status
       known.connectorActiveFlags = activity.activeFlags
-      known.appServerLiveActive = activity.status === 'active'
       if (activity.status === 'active') {
         const bridge = codexEnsureDesktopBridge()
+        codexMarkAppServerLiveActive(known)
         known.status = 'active'
         known.activeFlags = activity.activeFlags
         known.statusAuthority = 'app-server-live'
@@ -5508,13 +5503,16 @@ function handleCodexServerMessage(message) {
         bridge.cancelLatestTurnRefresh(threadId)
         bridge.cancelCompletionUnreadRefresh(threadId)
         delete known.desktopActiveSince
-      } else if (known.statusAuthority !== 'desktop-live') {
-        known.status = activity.status
-        known.activeFlags = activity.activeFlags
-        known.statusAuthority = 'connector'
-        known.activityEvidence = 'connector'
-        known.activityRevision = codexActivityGeneration
-        delete known.desktopActiveSince
+      } else {
+        codexClearAppServerLiveActive(known)
+        if (known.statusAuthority !== 'desktop-live') {
+          known.status = activity.status
+          known.activeFlags = activity.activeFlags
+          known.statusAuthority = 'connector'
+          known.activityEvidence = 'connector'
+          known.activityRevision = codexActivityGeneration
+          delete known.desktopActiveSince
+        }
       }
       if (exitedActive) markCodexThreadTurnStatusDirty(threadId)
       emitCodexActivityDelta([known], exitedActive, exitedActive ? 'urgent' : 'normal')
@@ -6526,7 +6524,12 @@ async function scanVerifiedCodexInventory() {
         statusAuthority: preserveAppServerActive ? 'app-server-live' : 'connector',
         activityEvidence: preserveAppServerActive ? 'activity-event' : 'connector',
         activityRevision: 0,
-        ...(preserveAppServerActive ? { appServerLiveActive: true } : {}),
+        ...(preserveAppServerActive ? {
+          appServerLiveActive: true,
+          ...(Number.isInteger(previousActivity.appServerLiveSequence)
+            ? { appServerLiveSequence: previousActivity.appServerLiveSequence }
+            : {})
+        } : {}),
         hasUnreadTurn: projection?.hasUnreadTurn === true,
         connectorHasUnreadTurn: projection?.hasUnreadTurn === true,
         connectorUnreadAuthority: projection?.unreadAuthority || 'unavailable',

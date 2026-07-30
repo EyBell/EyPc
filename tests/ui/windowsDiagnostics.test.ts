@@ -217,7 +217,7 @@ describe('development window operation trace', () => {
       focused: true,
       selected: false,
       slotNumbers: [],
-      live: { id: 'win32:100', platform: 'win32', nativeRef: '100', appId: 'browser.exe', appName: 'Browser', pid: 100, title: 'Docs', minimized: false, focused: false },
+      live: { id: 'win32:100:100', instanceId: 'win32:100:100', platform: 'win32', nativeRef: '100', appId: 'browser.exe', appName: 'Browser', pid: 100, title: 'Docs', minimized: false, focused: false },
       target: null
     }
     const windowsSnapshot: AppRuntimeSnapshot = {
@@ -263,7 +263,7 @@ describe('development window operation trace', () => {
       focused: true,
       selected: false,
       slotNumbers: [],
-      live: { id: 'win32:200', platform: 'win32', nativeRef: '424242', appId: 'browser.exe', appName: 'Browser', pid: 200, title: longTitle, minimized: false, focused: false },
+      live: { id: 'win32:200:424242', instanceId: 'win32:200:424242', platform: 'win32', nativeRef: '424242', appId: 'browser.exe', appName: 'Browser', pid: 200, title: longTitle, minimized: false, focused: false },
       target: null
     }
     const second: AppRuntimeSnapshot['windowRows'][number] = {
@@ -271,14 +271,14 @@ describe('development window operation trace', () => {
       id: 'live:win32:201',
       displayName: 'Second',
       title: 'Second',
-      live: { ...row.live!, id: 'win32:201', nativeRef: '201', title: 'Second' }
+      live: { ...row.live!, id: 'win32:201:201', instanceId: 'win32:201:201', nativeRef: '201', title: 'Second' }
     }
     const third: AppRuntimeSnapshot['windowRows'][number] = {
       ...row,
       id: 'live:win32:202',
       displayName: 'Third',
       title: 'Third',
-      live: { ...row.live!, id: 'win32:202', nativeRef: '202', title: 'Third' }
+      live: { ...row.live!, id: 'win32:202:202', instanceId: 'win32:202:202', nativeRef: '202', title: 'Third' }
     }
     const listWrapper = mount(WindowsPage, {
       props: {
@@ -386,7 +386,7 @@ describe('slot inline binding mode', () => {
     rows: AppRuntimeSnapshot['windowRows'][number][]
   ): AppRuntimeSnapshot {
     const base = snapshotWithDiagnostics()
-    const target = { id: targetId, alias, platform: 'darwin' as const, appId: 'app.exe', appName: 'App', titleLocator: '', lastNativeRef: null, favorite: false, pinned: false, createdAt: Date.now(), updatedAt: Date.now() }
+    const target = { id: targetId, alias, platform: 'darwin' as const, appId: 'app.exe', appName: 'App', lastKnownTitle: '', lastInstanceId: null, lastNativeRef: null, favorite: false, pinned: false, createdAt: Date.now(), updatedAt: Date.now() }
     return {
       ...base,
       windowCapability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true, canAlwaysOnTop: false },
@@ -401,6 +401,34 @@ describe('slot inline binding mode', () => {
       }
     }
   }
+
+  it('announces manual rebind semantics even when only one candidate is visible', () => {
+    const wrapper = mount(WindowsPage, {
+      props: { snapshot: snapshotWithRows([makeRow('candidate:darwin:91:222', 'Browser tab')], { windowCandidateTargetId: 'target-1' }) }
+    })
+
+    const status = wrapper.get('.window-status-band')
+    expect(status.attributes('aria-live')).toBe('polite')
+    expect(status.text()).toContain('原窗口实例已失效')
+    expect(status.text()).toContain('标题仅供人工辨认')
+    expect(status.text()).toContain('Enter')
+    expect(status.text()).toContain('Escape')
+    expect(wrapper.get('#window-list').attributes('role')).toBe('listbox')
+  })
+
+  it('renders the current or last title as read-only display metadata', () => {
+    const snapshot = snapshotWithRows([], {
+      windowDraft: {
+        mode: 'edit', targetId: 'target-1', sourceWindowId: null, alias: 'Browser', appName: 'Browser', appId: 'com.browser',
+        lastKnownTitle: 'Current tab title', activeField: 'alias'
+      }
+    })
+    const wrapper = mount(WindowsPage, { props: { snapshot } })
+
+    expect(wrapper.get('[data-field="lastKnownTitle"]').attributes('readonly')).toBeDefined()
+    expect(wrapper.text()).toContain('标题仅用于展示、搜索与人工辨认，不参与窗口身份判断')
+    expect(wrapper.find('[data-field="titleLocator"]').exists()).toBe(false)
+  })
 
   it('enters binding mode when clicking an unassigned slot and shows the hint bar', async () => {
     const wrapper = mount(WindowsPage, {

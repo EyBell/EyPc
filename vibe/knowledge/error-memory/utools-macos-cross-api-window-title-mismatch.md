@@ -1,11 +1,11 @@
 ---
 id: eypc-utools-macos-cross-api-window-title-mismatch
-status: candidate
+status: archived
 scope: project-pointer
 fingerprint: macos-exact-cg-window-reported-title-changed__cgwindowname-compared-to-axtitle__same-source-cg-title-validation
 first_seen: 2026-07-29
-last_verified: 2026-07-29
-review_after: promote after a real uTools preload reload verifies unchanged-target success and real same-source title-change guarding
+last_verified: 2026-07-30
+review_after: superseded by WJ-19 title-independent identity
 evidence:
   - preload/index.js
   - public/preload.js
@@ -18,8 +18,8 @@ tags:
   - project-pointer
 ---
 
-# macOS 跨 API 标题误判（项目指针）
+# macOS 跨 API 标题误判（历史项目指针；WJ-19 已取代）
 
 跨项目权威记录：[utools-macos-cross-api-window-title-mismatch.md](../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/error-memory/utools-macos-cross-api-window-title-mismatch.md#L1)。
 
-EyPc WJ-18 将标题变化判断限制为同一 PID/CG window ID 的保存/current `kCGWindowName` 比较；`AXTitle` 不再反证已精确映射的 CG 目标。不可读的 CG 标题只形成普通阻断，精确 `_AXUIElementGetWindow` 与 `AXFocusedWindow` 回读仍保留。真实 uTools reload/激活尚待用户验收。
+WJ-18 曾将标题变化判断限制为同一 PID/CGWindowID 的 Core Graphics 同源比较。WJ-19 进一步移除全部标题身份门禁：PID/application + CGWindowID、精确 `_AXUIElementGetWindow` 和最终 `AXFocusedWindow` 回读是唯一现行激活身份链；标题仅用于展示、搜索和人工辨认。本文只保留问题来源，不再作为当前预防规则。
