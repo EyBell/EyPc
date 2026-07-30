@@ -1,10 +1,10 @@
 import {
-  acknowledgeCodexCompletedUnread,
   conversationSnapshotFromReceipts,
   emptyCodexEnvironment,
   emptyCodexModelCatalog,
   emptyConversationSnapshot,
   hideCodexThread,
+  isCodexConfirmedTerminalEvidence,
   isCodexTaskTab,
   normalizeCodexConfig,
   normalizeCodexEnvironment,
@@ -18,10 +18,10 @@ import {
   type CodexActivityDelta,
   type CodexActivityDeltaEntryV2,
   type CodexConfigSnapshotV1,
-  type CodexColorSettings,
   type CodexEnvironmentSnapshotV1,
   type CodexExpandedSizePreference,
   type CodexHostProject,
+  type CodexHostSnapshot,
   type CodexHostThread,
   type CodexLocalPin,
   type CodexModelCatalogSnapshotV1,
@@ -127,7 +127,6 @@ function inventoryDisappearanceHold(settings: CodexSettings): number {
 type ActivityExitBaseline = Pick<CodexHostThread, 'lastTurnStatus' | 'lastTurnStartedAt' | 'lastTurnCompletedAt'>
 
 type ActivityExitTransitionOptions = {
-  confirmedTerminalEvidence?: boolean
   explicitDesktopExitStop?: boolean
 }
 
@@ -147,7 +146,7 @@ type StructuralRefreshPriority = 'normal' | 'urgent'
 function isLiveActiveThread(thread: CodexHostThread): boolean {
   if (!['desktop-live', 'app-server-live'].includes(thread.statusAuthority || '') || thread.status !== 'active') return false
   return thread.lastTurnStatus !== 'completed'
-    || !['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(thread.lastTurnEvidence || '')
+    || !isCodexConfirmedTerminalEvidence(thread.lastTurnEvidence)
 }
 
 function hasFreshTurnOutcomeAfterExit(thread: CodexHostThread, baseline: ActivityExitBaseline, targetedAfterExit = false): boolean {
@@ -185,7 +184,7 @@ function reduceActivityExitTransition(
     || candidate.lastTurnStatus === 'interrupted'
   if (!terminal) return { thread: candidate, baseline }
 
-  const confirmedTerminal = options.confirmedTerminalEvidence === true
+  const confirmedTerminal = isCodexConfirmedTerminalEvidence(candidate.lastTurnEvidence)
     || options.explicitDesktopExitStop === true
   if (hasFreshTurnOutcomeAfterExit(candidate, baseline, confirmedTerminal)) {
     return { thread: candidate }
@@ -199,7 +198,7 @@ function reduceActivityExitTransition(
 
 function preserveLatestTurnEvidence(thread: CodexHostThread, previous: CodexHostThread | undefined): CodexHostThread {
   if (!previous) return thread
-  const candidate = thread.updatedAt < previous.updatedAt ? { ...thread, updatedAt: previous.updatedAt } : thread
+  let candidate = thread.updatedAt < previous.updatedAt ? { ...thread, updatedAt: previous.updatedAt } : thread
   const explicitLiveRestart = candidate.lastTurnStatus === 'inProgress'
     && candidate.status === 'active'
     && ['desktop-live', 'app-server-live'].includes(candidate.statusAuthority || '')
@@ -209,6 +208,13 @@ function preserveLatestTurnEvidence(thread: CodexHostThread, previous: CodexHost
   const nextStartedAt = Number.isFinite(candidate.lastTurnStartedAt) ? candidate.lastTurnStartedAt! : 0
   const previousCompletedAt = Number.isFinite(previous.lastTurnCompletedAt) ? previous.lastTurnCompletedAt! : 0
   const nextCompletedAt = Number.isFinite(candidate.lastTurnCompletedAt) ? candidate.lastTurnCompletedAt! : 0
+  const sameTurnOutcome = previousStartedAt > 0
+    && nextStartedAt === previousStartedAt
+    && candidate.lastTurnStatus === previous.lastTurnStatus
+  if (sameTurnOutcome && previous.lastTurnEvidence
+    && (!candidate.lastTurnEvidence || candidate.lastTurnEvidence === 'inventory')) {
+    candidate = { ...candidate, lastTurnEvidence: previous.lastTurnEvidence }
+  }
   const regressedRevision = previousStartedAt > 0 && nextStartedAt < previousStartedAt
   const regressedCompletedOutcome = previousStartedAt > 0
     && nextStartedAt === previousStartedAt
@@ -231,6 +237,8 @@ function preserveLatestTurnEvidence(thread: CodexHostThread, previous: CodexHost
   } else {
     delete stable.lastTurnCompletedAt
   }
+  if (previous.lastTurnEvidence) stable.lastTurnEvidence = previous.lastTurnEvidence
+  else delete stable.lastTurnEvidence
   return stable
 }
 
@@ -295,7 +303,6 @@ export function createCodexController(options: CodexControllerOptions) {
   let refreshGeneration = 0
   let lastQuotaReadAt = quota.updatedAt
   let lastTaskReadAt = options.getAppState().codex.lastTaskScanAt
-  let cardColorPreview: CodexColorSettings | null = null
   let inventoryDisappearanceCandidate: InventoryDisappearanceCandidate | null = null
 
   function codexState(): CodexState {
@@ -479,7 +486,6 @@ export function createCodexController(options: CodexControllerOptions) {
     const knownKeys = new Set(lastThreads.map((thread) => thread.key))
     if ([...byKey.keys()].some((key) => !knownKeys.has(key))) {
       scheduleStructuralRefresh('urgent')
-      return
     }
     let changed = false
     const nextThreads = lastThreads.map((thread) => {
@@ -535,9 +541,7 @@ export function createCodexController(options: CodexControllerOptions) {
       const explicitDesktopExitStop = delta.version === 2
         && delta.desktopBridgeState === 'not-running'
         && (next.lastTurnStatus === 'failed' || next.lastTurnStatus === 'interrupted')
-      const confirmedAfterExit = (hasLatestTurnEvidence && ['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(liveEntry?.lastTurnEvidence || ''))
       next = applyActivityExitTransition(thread, next, {
-        confirmedTerminalEvidence: confirmedAfterExit,
         explicitDesktopExitStop
       })
       if (hasSameActivityState(thread, next)) {
@@ -618,6 +622,61 @@ export function createCodexController(options: CodexControllerOptions) {
     state.cachedQuota = normalizeCodexQuota(quota)
     state.cachedConfig = normalizeCodexConfig(config)
     options.save()
+  }
+
+  function publishVerifiedThreadInventory(
+    host: CodexHostSnapshot,
+    threads: CodexHostThread[],
+    exitTransitions: ReadonlyMap<string, ActivityExitTransition>,
+    receivedAt: number,
+    input: {
+      advanceScan: boolean
+      retainMissing: boolean
+      status?: ConversationSnapshotV1['status']
+    }
+  ) {
+    const refreshedKeys = new Set(threads.map((thread) => thread.key))
+    if (!input.retainMissing) {
+      for (const key of activityExitBaselines.keys()) if (!refreshedKeys.has(key)) activityExitBaselines.delete(key)
+    }
+    for (const [key, transition] of exitTransitions) commitActivityExitTransition(key, transition)
+
+    lastThreads = threads
+    if (host.version === 2) {
+      const incomingProjects = host.projects || []
+      if (input.retainMissing) {
+        const incomingProjectKeys = new Set(incomingProjects.map((project) => project.key))
+        const retainedProjectKeys = new Set(threads.map((thread) => thread.projectKey).filter(Boolean))
+        lastProjects = [
+          ...incomingProjects,
+          ...lastProjects.filter((project) => retainedProjectKeys.has(project.key) && !incomingProjectKeys.has(project.key))
+        ]
+      } else {
+        lastProjects = incomingProjects
+      }
+    } else {
+      lastProjects = []
+    }
+    lastThreadsPartial = host.threadsPartial === true
+    lastTaskAuthority = host.taskAuthority || 'mixed'
+    lastSourceCount = input.retainMissing ? threads.length : host.version === 2 ? host.eligibleSourceCount ?? threads.length : threads.length
+    lastSourceFingerprint = host.version === 2 ? host.sourceFingerprint || '' : ''
+    lastCompleteness = host.version === 2 ? host.completeness : undefined
+    lastRawSourceCount = host.version === 2 ? host.rawSourceCount ?? threads.length : threads.length
+    lastEligibleSourceCount = host.version === 2 ? host.eligibleSourceCount ?? threads.length : threads.length
+    lastExcludedSourceCount = host.version === 2 ? host.excludedSourceCount ?? 0 : 0
+    lastNonConversationCount = host.version === 2 ? host.nonConversationCount ?? 0 : 0
+    lastActivityGeneration = host.version === 2
+      && Number.isInteger(host.activityGeneration)
+      && host.activityGeneration! > 0
+      ? host.activityGeneration!
+      : 0
+    publishConversationProjection({ receivedAt, advanceScan: input.advanceScan, status: input.status })
+    codexState().firstPromptTimes = normalizeCodexFirstPromptTimes([
+      ...threads.flatMap((thread) => thread.firstPromptAt ? [{ key: thread.key, firstPromptAt: thread.firstPromptAt, updatedAt: receivedAt }] : []),
+      ...codexState().firstPromptTimes
+    ])
+    lastTaskReadAt = receivedAt
   }
 
   function publishConversationProjection(input: { receivedAt: number; advanceScan: boolean; status?: ConversationSnapshotV1['status'] }) {
@@ -808,38 +867,31 @@ export function createCodexController(options: CodexControllerOptions) {
             })
             const disappearance = inventoryDisappearanceDecision(threads)
             if (!disappearance.accept) {
-              updateConversationStatus({
-                status: rawConversations.updatedAt > 0 ? 'stale' : 'error',
+              const status = rawConversations.updatedAt > 0 ? 'stale' : 'error'
+              rawConversations = { ...rawConversations,
+                status,
                 errorCode: 'protocol-error',
                 errorMessage: 'Codex 任务清单数量暂时不稳定，已保留上一份稳定状态'
+              }
+              const incomingKeys = new Set(threads.map((thread) => thread.key))
+              const stabilizedThreads = [
+                ...threads,
+                ...lastThreads.filter((thread) => !incomingKeys.has(thread.key))
+              ]
+              publishVerifiedThreadInventory(host, stabilizedThreads, exitTransitions, taskReceivedAt, {
+                advanceScan: false,
+                retainMissing: true,
+                status
               })
-              lastTaskReadAt = taskReceivedAt
               if (disappearance.firstObservation) {
                 options.setMessage(`检测到 ${disappearance.missingCount} 项任务暂时缺失，已保留上一份稳定清单并自动复核`)
                 scheduleStructuralRefresh()
               }
             } else {
-              const refreshedKeys = new Set(threads.map((thread) => thread.key))
-              for (const key of activityExitBaselines.keys()) if (!refreshedKeys.has(key)) activityExitBaselines.delete(key)
-              for (const [key, transition] of exitTransitions) commitActivityExitTransition(key, transition)
-              lastThreads = threads
-              lastProjects = host.version === 2 ? host.projects || [] : []
-              lastThreadsPartial = host.threadsPartial === true
-              lastTaskAuthority = host.taskAuthority || 'mixed'
-              lastSourceCount = host.version === 2 ? host.eligibleSourceCount ?? threads.length : threads.length
-              lastSourceFingerprint = host.version === 2 ? host.sourceFingerprint || '' : ''
-              lastCompleteness = host.version === 2 ? host.completeness : undefined
-              lastRawSourceCount = host.version === 2 ? host.rawSourceCount ?? threads.length : threads.length
-              lastEligibleSourceCount = host.version === 2 ? host.eligibleSourceCount ?? threads.length : threads.length
-              lastExcludedSourceCount = host.version === 2 ? host.excludedSourceCount ?? 0 : 0
-              lastNonConversationCount = host.version === 2 ? host.nonConversationCount ?? 0 : 0
-              lastActivityGeneration = 0
-              publishConversationProjection({ receivedAt: taskReceivedAt, advanceScan: true })
-              codexState().firstPromptTimes = normalizeCodexFirstPromptTimes([
-                ...threads.flatMap((thread) => thread.firstPromptAt ? [{ key: thread.key, firstPromptAt: thread.firstPromptAt, updatedAt: taskReceivedAt }] : []),
-                ...codexState().firstPromptTimes
-              ])
-              lastTaskReadAt = taskReceivedAt
+              publishVerifiedThreadInventory(host, threads, exitTransitions, taskReceivedAt, {
+                advanceScan: true,
+                retainMissing: false
+              })
             }
           }
         } else if (!threadResult.ok) {
@@ -882,10 +934,6 @@ export function createCodexController(options: CodexControllerOptions) {
   function syncActivation(force = false) {
     if (!started || disposed) return
     if (!isFeatureEnabled()) {
-      if (cardColorPreview) {
-        cardColorPreview = null
-        options.notify()
-      }
       environmentGeneration += 1
       if (environment.checking) {
         environment = { ...environment, checking: false }
@@ -947,38 +995,6 @@ export function createCodexController(options: CodexControllerOptions) {
       current.taskRefreshSeconds !== next.taskRefreshSeconds
     syncActivation(needsFreshRead || (!current.floatEnabled && next.floatEnabled))
     return true
-  }
-
-  function resolveCardColorCandidate(colors: Partial<CodexColorSettings>): CodexColorSettings | null {
-    const current = codexState().settings
-    const candidate = { ...current.colors, ...colors }
-    return candidate
-  }
-
-  function previewCardColors(colors: Partial<CodexColorSettings>) {
-    const candidate = resolveCardColorCandidate(colors)
-    if (!candidate) return false
-    cardColorPreview = candidate
-    options.notify()
-    return true
-  }
-
-  function clearCardColorPreview() {
-    if (!cardColorPreview) return true
-    cardColorPreview = null
-    options.notify()
-    return true
-  }
-
-  function commitCardColors(colors: Partial<CodexColorSettings>) {
-    const candidate = resolveCardColorCandidate(colors)
-    if (!candidate) return false
-    const previousPreview = cardColorPreview
-    cardColorPreview = null
-    if (updateSettings({ colors: candidate })) return true
-    cardColorPreview = previousPreview
-    options.notify()
-    return false
   }
 
   async function setLaunchPath(pathValue: string) {
@@ -1207,13 +1223,10 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function openFirstCompletedUnread() {
     const task = displayOrderedTasks(allTasks().filter((item) => item.bucket === 'completed-unread'))[0]
-    const completionRevision = task?.completionRevision
-    if (!task?.actionAlias || typeof completionRevision !== 'number' || !Number.isFinite(completionRevision) || completionRevision <= 0) {
+    if (!task?.actionAlias) {
       options.setMessage('当前没有已完成未读任务')
       return false
     }
-    codexState().receipts = acknowledgeCodexCompletedUnread(codexState().receipts, task.key, completionRevision)
-    republishAfterReceiptChange()
     void openThread(task.key, task.actionAlias)
     return true
   }
@@ -1533,7 +1546,6 @@ export function createCodexController(options: CodexControllerOptions) {
     },
     dispose() {
       disposed = true
-      cardColorPreview = null
       environmentGeneration += 1
       refreshGeneration += 1
       if (environment.checking) environment = { ...environment, checking: false }
@@ -1552,9 +1564,6 @@ export function createCodexController(options: CodexControllerOptions) {
     setLaunchPath,
     clearLaunchPath,
     updateSettings,
-    previewCardColors,
-    clearCardColorPreview,
-    commitCardColors,
     dismiss,
     hide,
     restore,
@@ -1608,11 +1617,11 @@ export function createCodexController(options: CodexControllerOptions) {
         version: 2,
         taskStateRevision: CODEX_TASK_STATE_REVISION,
         taskState,
-        style: cardColorPreview ? 'card' : settings.displayStyle,
+        style: settings.displayStyle,
         conversationInboxEnabled: settings.conversationInboxEnabled,
         compactFields: settings.compactFields,
         expandedFields: settings.expandedFields,
-        colors: cardColorPreview || settings.colors,
+        colors: settings.colors,
         counterColors: settings.counterColors,
         waterAppearance: settings.waterAppearance,
         expandedCardAppearance: settings.expandedCardAppearance,

@@ -236,7 +236,17 @@ describe('Codex domain', () => {
         lastTurnCompletedAt: 800,
         hasUnreadTurn: true
       })],
-      receipts: [{ key: KEY, acknowledgedRecency: 400, acknowledgedAt: 450, pendingRecency: 0, pendingSince: 0 }],
+      receipts: [{
+        key: KEY,
+        acknowledgedRecency: 400,
+        acknowledgedAt: 450,
+        pendingRecency: 0,
+        pendingSince: 0,
+        // Legacy EyPc-only acknowledgement must not suppress a Codex-owned
+        // unread=true observation for the same completion revision.
+        completedUnreadAcknowledgedRevision: 800,
+        completedUnreadAcknowledgedAt: 850
+      }],
       lastTaskScanAt: 600,
       now: 1_000
     })
@@ -289,14 +299,15 @@ describe('Codex domain', () => {
     const live = projectConversations({
       threads: [
         thread('active', 1_000, [], keyAt(1), { lastTurnStatus: 'interrupted', lastTurnStartedAt: 900 }),
-        thread('idle', 900, [], keyAt(2), { lastTurnStatus: 'failed', lastTurnStartedAt: 800 })
+        thread('idle', 900, [], keyAt(2), { lastTurnStatus: 'failed', lastTurnStartedAt: 800 }),
+        thread('idle', 850, [], keyAt(4), { lastTurnStartedAt: 750 })
       ],
       receipts: [],
       lastTaskScanAt: 700,
       now: 1_100,
       desktopBridgeState: 'connected'
     })
-    expect(live.snapshot.ongoing.map((task) => task.key)).toEqual([keyAt(1)])
+    expect(live.snapshot.ongoing.map((task) => task.key)).toEqual([keyAt(1), keyAt(4)])
     expect(live.snapshot.stopped.map((task) => task.key)).toEqual([keyAt(2)])
 
     const uncertain = projectConversations({
@@ -322,16 +333,20 @@ describe('Codex domain', () => {
     expect(connectedUncertain.snapshot).toMatchObject({ ongoingCount: 1, stoppedCount: 0, runningCount: 0 })
 
     const exited = projectConversations({
-      threads: [thread('notLoaded', 900, [], keyAt(3), { statusAuthority: 'connector', lastTurnStatus: 'interrupted', lastTurnStartedAt: 800 })],
+      threads: [
+        thread('notLoaded', 900, [], keyAt(3), { statusAuthority: 'connector', lastTurnStatus: 'interrupted', lastTurnStartedAt: 800 }),
+        thread('notLoaded', 850, [], keyAt(4), { statusAuthority: 'connector', lastTurnStartedAt: 750 })
+      ],
       receipts: [],
       lastTaskScanAt: 700,
       now: 1_100,
       desktopBridgeState: 'not-running'
     })
-    expect(exited.snapshot).toMatchObject({ ongoingCount: 0, stoppedCount: 1 })
+    expect(exited.snapshot).toMatchObject({ ongoingCount: 1, stoppedCount: 1 })
+    expect(exited.snapshot.ongoing[0]).toMatchObject({ key: keyAt(4), activityState: 'ongoing' })
     expect(projectCodexDynamicStatus(exited.snapshot, 1_100)).toMatchObject({
-      compactCounts: { active: 0 },
-      groups: { active: [], stopped: [{ key: keyAt(3) }] }
+      compactCounts: { active: 1 },
+      groups: { active: [{ key: keyAt(4) }], stopped: [{ key: keyAt(3) }] }
     })
   })
 
