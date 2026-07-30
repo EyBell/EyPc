@@ -29,6 +29,10 @@ const TARGET_SELECTOR = [
 const HOVER_DELAY_MS = 100
 const VIEWPORT_MARGIN = 8
 const TOOLTIP_GAP = 7
+const SHORTCUT_NAMED_KEY = '(?:[a-z0-9]|f(?:[1-9]|1[0-2])|esc(?:ape)?|enter|return|space|tab|delete|del|backspace|bs|home|end|pageup|pagedown|arrow(?:left|right|up|down)|left|right|up|down|[←→↑↓])'
+const SHORTCUT_MODIFIER = '(?:ctrl|control|cmd|command|meta|option|opt|alt|shift|c|s|m|a|⌘|⌥|⌃|⇧)'
+const MODIFIER_SHORTCUT_PATTERN = new RegExp(`^(?:${SHORTCUT_MODIFIER}\\s*(?:\\+|-)\\s*)+${SHORTCUT_NAMED_KEY}$`, 'i')
+const STANDALONE_SHORTCUT_PATTERN = /^(?:f(?:[1-9]|1[0-2])|esc(?:ape)?|enter|return|space|tab|delete|del|backspace|bs|home|end|pageup|pagedown|[←→↑↓])$/i
 
 const visible = ref(false)
 const label = ref('')
@@ -36,6 +40,7 @@ const detail = ref('')
 const shortcut = ref('')
 const left = ref(0)
 const top = ref(0)
+const arrowLeft = ref(0)
 const placement = ref<'above' | 'below'>('above')
 const tooltip = ref<HTMLElement | null>(null)
 
@@ -66,10 +71,27 @@ function titleValue(target: HTMLElement) {
   return normalizedText(target.dataset.operationNativeTitle || target.getAttribute('title'))
 }
 
+function isShortcutHint(value: string) {
+  const candidate = normalizedText(value)
+  return MODIFIER_SHORTCUT_PATTERN.test(candidate)
+    || STANDALONE_SHORTCUT_PATTERN.test(candidate)
+    || /^[⌘⌥⌃⇧]+[a-z0-9]$/i.test(candidate)
+}
+
+function parsedTitle(target: HTMLElement) {
+  const title = titleValue(target)
+  const trailingHint = title.match(/^(.*?)\s*\(([^()]+)\)\s*$/)
+  if (!trailingHint || !isShortcutHint(trailingHint[2])) return { label: title, shortcut: '' }
+  return {
+    label: normalizedText(trailingHint[1]) || title,
+    shortcut: normalizedText(trailingHint[2])
+  }
+}
+
 function targetLabel(target: HTMLElement) {
   return normalizedText(target.dataset.operationTooltip)
     || normalizedText(target.getAttribute('aria-label'))
-    || titleValue(target)
+    || parsedTitle(target).label
     || normalizedText(
       target instanceof HTMLInputElement || target instanceof HTMLSelectElement
         ? target.labels?.[0]?.textContent
@@ -85,6 +107,7 @@ function targetDetail(target: HTMLElement) {
     return normalizedText(target.dataset.disabledReason) || '当前条件下不可用'
   }
   return normalizedText(target.dataset.operationDescription)
+    || normalizedText(target.dataset.tip)
     || (target.matches('[role="option"], [role="treeitem"]') ? '单击聚焦；可使用双击、右键或快捷键执行相关操作' : '')
     || (target.matches('[draggable="true"]') ? '可拖拽调整位置；也可使用行内操作' : '')
 }
@@ -92,8 +115,7 @@ function targetDetail(target: HTMLElement) {
 function targetShortcut(target: HTMLElement) {
   const explicit = normalizedText(target.dataset.operationShortcut || target.dataset.mqttShortcutHint)
   if (explicit) return explicit
-  const titled = titleValue(target).match(/\(([^()]+)\)\s*$/)
-  return titled ? normalizedText(titled[1]) : ''
+  return parsedTitle(target).shortcut
 }
 
 function suppressNativeTitle(target: HTMLElement) {
@@ -143,9 +165,14 @@ async function positionTooltip(target: HTMLElement) {
   const targetRect = target.getBoundingClientRect()
   const tooltipRect = tooltip.value.getBoundingClientRect()
   const preferredLeft = targetRect.left + targetRect.width / 2 - tooltipRect.width / 2
-  left.value = Math.min(
+  const resolvedLeft = Math.min(
     Math.max(preferredLeft, VIEWPORT_MARGIN),
     Math.max(VIEWPORT_MARGIN, window.innerWidth - tooltipRect.width - VIEWPORT_MARGIN)
+  )
+  left.value = resolvedLeft
+  arrowLeft.value = Math.min(
+    Math.max(targetRect.left + targetRect.width / 2 - resolvedLeft, 10),
+    Math.max(10, tooltipRect.width - 10)
   )
   const above = targetRect.top - tooltipRect.height - TOOLTIP_GAP
   if (above >= VIEWPORT_MARGIN) {
@@ -214,6 +241,16 @@ function onViewportChange() {
   if (activeTarget) void positionTooltip(activeTarget)
 }
 
+function onPointerDown() {
+  hideTooltip()
+}
+
+function onWindowBlur() {
+  focusedTarget = null
+  hoveredTarget = null
+  hideTooltip()
+}
+
 function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape' || event.key === 'Enter' || event.key === ' ') hideTooltip()
 }
@@ -227,22 +264,42 @@ onMounted(() => {
   mutationObserver = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
       if (mutation.type === 'attributes' && mutation.target instanceof HTMLElement) {
-        suppressNativeTitle(mutation.target)
+        if (mutation.attributeName === 'title') suppressNativeTitle(mutation.target)
+        if (mutation.target === activeTarget) showTooltip(mutation.target)
         return
       }
       mutation.addedNodes.forEach((node) => {
         if (node instanceof HTMLElement) suppressTitles(node)
       })
     })
+    if (activeTarget && !activeTarget.isConnected) hideTooltip()
   })
-  mutationObserver.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['title'] })
+  mutationObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: [
+      'title',
+      'data-operation-tooltip',
+      'data-operation-description',
+      'data-operation-shortcut',
+      'data-mqtt-shortcut-hint',
+      'data-disabled-reason',
+      'data-tip',
+      'aria-label',
+      'aria-disabled',
+      'disabled'
+    ]
+  })
   window.addEventListener('pointermove', onPointerMove, { passive: true, capture: true })
+  window.addEventListener('pointerdown', onPointerDown, true)
   document.addEventListener('pointerleave', onPointerLeave)
   document.addEventListener('focusin', onFocusIn)
   document.addEventListener('focusout', onFocusOut)
   window.addEventListener('resize', onViewportChange)
   window.addEventListener('scroll', onViewportChange, true)
   window.addEventListener('keydown', onKeydown, true)
+  window.addEventListener('blur', onWindowBlur)
 })
 
 onUnmounted(() => {
@@ -254,12 +311,14 @@ onUnmounted(() => {
   })
   suppressedTitles.clear()
   window.removeEventListener('pointermove', onPointerMove, true)
+  window.removeEventListener('pointerdown', onPointerDown, true)
   document.removeEventListener('pointerleave', onPointerLeave)
   document.removeEventListener('focusin', onFocusIn)
   document.removeEventListener('focusout', onFocusOut)
   window.removeEventListener('resize', onViewportChange)
   window.removeEventListener('scroll', onViewportChange, true)
   window.removeEventListener('keydown', onKeydown, true)
+  window.removeEventListener('blur', onWindowBlur)
 })
 </script>
 
@@ -271,7 +330,7 @@ onUnmounted(() => {
       ref="tooltip"
       class="operation-tooltip"
       :class="`operation-tooltip--${placement}`"
-      :style="{ left: `${left}px`, top: `${top}px` }"
+      :style="{ left: `${left}px`, top: `${top}px`, '--operation-tooltip-arrow-left': `${arrowLeft}px` }"
       role="tooltip"
     >
       <span class="operation-tooltip-label">{{ label }}</span>
