@@ -90,7 +90,10 @@ function targetDetail(target: HTMLElement) {
 }
 
 function targetShortcut(target: HTMLElement) {
-  return normalizedText(target.dataset.operationShortcut || target.dataset.mqttShortcutHint)
+  const explicit = normalizedText(target.dataset.operationShortcut || target.dataset.mqttShortcutHint)
+  if (explicit) return explicit
+  const titled = titleValue(target).match(/\(([^()]+)\)\s*$/)
+  return titled ? normalizedText(titled[1]) : ''
 }
 
 function suppressNativeTitle(target: HTMLElement) {
