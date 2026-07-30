@@ -8009,15 +8009,6 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const source = args?.settings && typeof args.settings === 'object' ? args.settings : args
       return codexController.updateSettings((source || {}) as Partial<CodexSettings>)
     } })
-    actions.register({ id: 'codex.card-colors.preview', title: '预览 Codex 卡片配对颜色', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
-      const colors = args?.colors && typeof args.colors === 'object' ? args.colors : args
-      return codexController.previewCardColors((colors || {}) as Partial<CodexSettings['colors']>)
-    } })
-    actions.register({ id: 'codex.card-colors.cancel', title: '取消 Codex 卡片配色预览', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.clearCardColorPreview() })
-    actions.register({ id: 'codex.card-colors.commit', title: '应用 Codex 卡片配对颜色', group: 'Codex', risk: 'data-write', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
-      const colors = args?.colors && typeof args.colors === 'object' ? args.colors : args
-      return codexController.commitCardColors((colors || {}) as Partial<CodexSettings['colors']>)
-    } })
     actions.register({ id: 'codex.task.open', title: '打开 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
       const key = typeof args?.key === 'string' ? args.key : ''
       const actionAlias = typeof args?.actionAlias === 'string' ? args.actionAlias : ''
@@ -8025,7 +8016,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       return Boolean(key && actionAlias)
     } })
     actions.register({ id: 'codex.input.open', title: '打开 Codex 待输入任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.openFirstInput() })
-    actions.register({ id: 'codex.completed-unread.openFirst', title: '打开并标记第一个 Codex 已完成未读任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.openFirstCompletedUnread() })
+    actions.register({ id: 'codex.completed-unread.openFirst', title: '打开第一个 Codex 已完成未读任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.openFirstCompletedUnread() })
     actions.register({ id: 'codex.task.previous', title: '上一个 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.cycleTask(-1) })
     actions.register({ id: 'codex.task.next', title: '下一个 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.cycleTask(1) })
     actions.register({ id: 'codex.task.hide', title: '隐藏 Codex 任务到 Companion 已隐藏区', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
@@ -8178,8 +8169,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       return opened
     } })
     actions.register({ id: 'codex.completed-unread.hotkey.configure', title: '配置 Codex 已完成未读快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
-      const opened = platform.app.configureHotkey?.('打开并标记第一个 Codex 已完成未读任务') === true
-      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“打开并标记第一个 Codex 已完成未读任务”绑定快捷键')
+      const opened = platform.app.configureHotkey?.('打开第一个 Codex 已完成未读任务') === true
+      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“打开第一个 Codex 已完成未读任务”绑定快捷键')
       return opened
     } })
     actions.register({ id: 'codex.task.previous.hotkey.configure', title: '配置上一个 Codex 任务快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {

@@ -192,6 +192,10 @@ export type CodexUnreadAuthority = 'desktop-live' | 'desktop-persisted' | 'unava
 export type CodexActivityEvidenceOrigin = 'connector' | 'initial-snapshot' | 'activity-event'
 export type CodexTurnEvidenceOrigin = 'inventory' | 'turn-started' | 'turn-completed' | 'targeted-after-exit' | 'snapshot-corroborated'
 
+export function isCodexConfirmedTerminalEvidence(value: unknown): value is Extract<CodexTurnEvidenceOrigin, 'turn-completed' | 'targeted-after-exit' | 'snapshot-corroborated'> {
+  return value === 'turn-completed' || value === 'targeted-after-exit' || value === 'snapshot-corroborated'
+}
+
 export interface CodexHostThread {
   /** Provider-issued stable anonymous correlation key; never a raw thread id. */
   key: string
@@ -299,6 +303,8 @@ export interface CodexHostSnapshotV2 {
   config?: CodexHostSnapshotV1['config']
   threads?: CodexHostThread[]
   projects?: CodexHostProject[]
+  /** Monotonic preload activity sequence captured after this inventory was assembled. */
+  activityGeneration?: number
   /** Hash of the allowlisted native project registry projection. */
   sourceFingerprint?: string
   completeness?: 'verified'
@@ -437,8 +443,9 @@ export interface CodexThreadReceipt {
   /** Legacy local-view watermark; never authoritative for Codex unread state. */
   acknowledgedRecency: number
   acknowledgedAt: number
-  /** Explicit user acknowledgement of one completed revision in EyPc only. */
+  /** @deprecated Ignored; Codex native unread is the only unread authority. */
   completedUnreadAcknowledgedRevision?: number
+  /** @deprecated Ignored; Codex native unread is the only unread authority. */
   completedUnreadAcknowledgedAt?: number
   /** Legacy completion-pending fields, cleared when a current host row is projected. */
   pendingRecency: number
@@ -1255,8 +1262,6 @@ export function normalizeCodexReceipts(value: unknown): CodexThreadReceipt[] {
       key,
       acknowledgedRecency: numberValue(source.acknowledgedRecency, 0),
       acknowledgedAt: numberValue(source.acknowledgedAt, 0),
-      ...(numberValue(source.completedUnreadAcknowledgedRevision, 0) > 0 ? { completedUnreadAcknowledgedRevision: numberValue(source.completedUnreadAcknowledgedRevision, 0) } : {}),
-      ...(numberValue(source.completedUnreadAcknowledgedAt, 0) > 0 ? { completedUnreadAcknowledgedAt: numberValue(source.completedUnreadAcknowledgedAt, 0) } : {}),
       pendingRecency: numberValue(source.pendingRecency, 0),
       pendingSince: numberValue(source.pendingSince, 0),
       ...(source.pendingMode === 'completion' || source.pendingMode === 'recency' ? { pendingMode: source.pendingMode } : {}),
@@ -1266,19 +1271,19 @@ export function normalizeCodexReceipts(value: unknown): CodexThreadReceipt[] {
       ...(numberValue(source.hiddenPendingAt, 0) > 0 ? { hiddenPendingAt: numberValue(source.hiddenPendingAt, 0) } : {})
     }
     const previous = byKey.get(key)
-    const receiptWatermark = Math.max(receipt.pendingRecency, receipt.acknowledgedRecency, receipt.completedUnreadAcknowledgedRevision || 0, receipt.dismissedActivityRecency || 0, receipt.hiddenPendingRecency || 0)
-    const previousWatermark = Math.max(previous?.pendingRecency || 0, previous?.acknowledgedRecency || 0, previous?.completedUnreadAcknowledgedRevision || 0, previous?.dismissedActivityRecency || 0, previous?.hiddenPendingRecency || 0)
+    const receiptWatermark = Math.max(receipt.pendingRecency, receipt.acknowledgedRecency, receipt.dismissedActivityRecency || 0, receipt.hiddenPendingRecency || 0)
+    const previousWatermark = Math.max(previous?.pendingRecency || 0, previous?.acknowledgedRecency || 0, previous?.dismissedActivityRecency || 0, previous?.hiddenPendingRecency || 0)
     if (!previous || receiptWatermark >= previousWatermark) byKey.set(key, receipt)
   }
   const sorted = [...byKey.values()]
-    .sort((a, b) => Math.max(b.pendingRecency, b.acknowledgedRecency, b.completedUnreadAcknowledgedRevision || 0, b.dismissedActivityRecency || 0, b.hiddenPendingRecency || 0) - Math.max(a.pendingRecency, a.acknowledgedRecency, a.completedUnreadAcknowledgedRevision || 0, a.dismissedActivityRecency || 0, a.hiddenPendingRecency || 0))
+    .sort((a, b) => Math.max(b.pendingRecency, b.acknowledgedRecency, b.dismissedActivityRecency || 0, b.hiddenPendingRecency || 0) - Math.max(a.pendingRecency, a.acknowledgedRecency, a.dismissedActivityRecency || 0, a.hiddenPendingRecency || 0))
   const durableUserManaged = sorted.filter((receipt) =>
     (receipt.pendingMode === 'completion' && receipt.pendingRecency > receipt.acknowledgedRecency)
     || (receipt.dismissedActivityRecency || 0) > 0
   )
   const boundedBookkeeping = sorted.filter((receipt) => !durableUserManaged.includes(receipt)).slice(0, 100)
   return [...durableUserManaged, ...boundedBookkeeping]
-    .sort((a, b) => Math.max(b.pendingRecency, b.acknowledgedRecency, b.completedUnreadAcknowledgedRevision || 0, b.dismissedActivityRecency || 0, b.hiddenPendingRecency || 0) - Math.max(a.pendingRecency, a.acknowledgedRecency, a.completedUnreadAcknowledgedRevision || 0, a.dismissedActivityRecency || 0, a.hiddenPendingRecency || 0))
+    .sort((a, b) => Math.max(b.pendingRecency, b.acknowledgedRecency, b.dismissedActivityRecency || 0, b.hiddenPendingRecency || 0) - Math.max(a.pendingRecency, a.acknowledgedRecency, a.dismissedActivityRecency || 0, a.hiddenPendingRecency || 0))
 }
 
 export function createDefaultCodexState(): CodexState {
@@ -1326,7 +1331,7 @@ function hasConfirmedCompletionOverLiveTask(thread: CodexHostThread) {
   // Live activity wins over inventory/replayed terminal shape. Only a
   // completion already confirmed in this activity epoch may close it while a
   // stale active snapshot/request is still draining.
-  return ['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(thread.lastTurnEvidence || '')
+  return isCodexConfirmedTerminalEvidence(thread.lastTurnEvidence)
 }
 
 function isCurrentLiveActiveTask(thread: CodexHostThread) {
@@ -1341,8 +1346,7 @@ function isExplicitlyStoppedTask(thread: CodexHostThread, desktopBridgeState?: C
   // for the first Desktop live shadow after inventory registration.
   if (thread.lastTurnStatus === 'inProgress') return false
   const hasTerminalStopEvidence = thread.lastTurnStatus === 'interrupted' || thread.lastTurnStatus === 'failed'
-  const hasNoTurnOutcome = !thread.lastTurnStatus
-  if (!hasTerminalStopEvidence && !hasNoTurnOutcome) return false
+  if (!hasTerminalStopEvidence) return false
   // Exact live idle or Desktop exit remain the strongest stop proofs.
   if (thread.statusAuthority === 'desktop-live' && thread.status === 'idle') return true
   if (desktopBridgeState === 'not-running') return true
@@ -1518,8 +1522,7 @@ export function projectConversations(input: {
     }
 
     const unreadKnown = thread.unreadAuthority === 'desktop-live' || thread.unreadAuthority === 'desktop-persisted'
-    const locallyAcknowledged = (receipt.completedUnreadAcknowledgedRevision || 0) >= completionRevision
-    const unread = completionRevision > 0 && unreadKnown && thread.hasUnreadTurn === true && !locallyAcknowledged
+    const unread = completionRevision > 0 && unreadKnown && thread.hasUnreadTurn === true
     if (receipt.pendingMode === 'completion' || receipt.pendingRecency > 0) {
       receipt.pendingRecency = 0
       receipt.pendingSince = 0
@@ -1583,7 +1586,7 @@ export function projectConversations(input: {
     else if (bucket === 'completed') completed.push(card)
     else ongoing.push(card)
 
-    if (receipt.pendingRecency || receipt.acknowledgedRecency || receipt.completedUnreadAcknowledgedRevision || receipt.dismissedActivityRecency || receipt.hiddenPendingRecency) receiptMap.set(thread.key, receipt)
+    if (receipt.pendingRecency || receipt.acknowledgedRecency || receipt.dismissedActivityRecency || receipt.hiddenPendingRecency) receiptMap.set(thread.key, receipt)
   }
 
   ongoing.sort(compareConversationTasks)
@@ -1748,16 +1751,6 @@ export function dismissCodexThread(receipts: CodexThreadReceipt[], key: string, 
   const receipt = byKey.get(key) || { key, acknowledgedRecency: 0, acknowledgedAt: 0, pendingRecency: 0, pendingSince: 0 }
   receipt.dismissedActivityRecency = Math.max(receipt.dismissedActivityRecency || 0, activityRecency)
   receipt.dismissedAt = now
-  byKey.set(key, receipt)
-  return normalizeCodexReceipts([...byKey.values()])
-}
-
-export function acknowledgeCodexCompletedUnread(receipts: CodexThreadReceipt[], key: string, completionRevision: number, now = Date.now()): CodexThreadReceipt[] {
-  if (!RECEIPT_KEY.test(key) || !Number.isFinite(completionRevision) || completionRevision <= 0) return normalizeCodexReceipts(receipts)
-  const byKey = new Map(normalizeCodexReceipts(receipts).map((receipt) => [receipt.key, { ...receipt }]))
-  const receipt = byKey.get(key) || { key, acknowledgedRecency: 0, acknowledgedAt: 0, pendingRecency: 0, pendingSince: 0 }
-  receipt.completedUnreadAcknowledgedRevision = Math.max(receipt.completedUnreadAcknowledgedRevision || 0, completionRevision)
-  receipt.completedUnreadAcknowledgedAt = Math.max(receipt.completedUnreadAcknowledgedAt || 0, now)
   byKey.set(key, receipt)
   return normalizeCodexReceipts([...byKey.values()])
 }
