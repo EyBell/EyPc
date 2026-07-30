@@ -673,7 +673,7 @@ describe('mqtt page layout', () => {
     expect(css).not.toContain('grid-template-areas:')
     expect(css).not.toContain('"summary records"')
     expect(css).not.toContain('"filters filters"')
-    expect(css).toMatch(/@media \(max-width: 1100px\) \{[\s\S]*\.mqtt-command-bar \{[\s\S]*grid-template-columns:\s*minmax\(118px,\s*0\.78fr\)\s*minmax\(92px,\s*0\.58fr\)\s*max-content;/s)
+    expect(css).toMatch(/@media \(max-width: 1100px\) \{[\s\S]*\.mqtt-command-bar \{[\s\S]*grid-template-columns:\s*minmax\(\s*118px,\s*0\.78fr\s*\)\s*minmax\(\s*92px,\s*0\.58fr\s*\)\s*max-content;/s)
     expect(css).toMatch(/@media \(max-width: 1100px\) \{[\s\S]*\.mqtt-publish-command-bar \{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*24px\s*max-content;/s)
     expect(css).toMatch(/@media \(max-width: 700px\) \{[\s\S]*body \{[\s\S]*min-width:\s*0;/s)
     expect(css).toMatch(/@media \(max-width: 700px\) \{[\s\S]*\.mqtt-command-bar \{[\s\S]*grid-template-columns:\s*118px\s*minmax\(92px,\s*1fr\)\s*82px;/s)

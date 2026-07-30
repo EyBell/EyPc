@@ -114,10 +114,14 @@ describe('global quick jump UI wiring', () => {
   it('cancels Quick Jump Escape in layers without mapping to app hide', () => {
     const app = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
     const float = readFileSync(resolve(process.cwd(), 'src/FloatApp.vue'), 'utf8')
+    const handler = app.slice(
+      app.indexOf('function handleQuickJumpShortcut'),
+      app.indexOf('function onKeydown')
+    )
 
     expect(app).toMatch(/if \(quickJump\.value\.open && shortcutId === 'Escape'\) \{[\s\S]*?if \(quickJump\.value\.query\) applyQuickJumpQuery\(''\)[\s\S]*?else closeQuickJump\(\)/)
     expect(float).toMatch(/if \(quickJump\.value\.open\) \{[\s\S]*?if \(quickJump\.value\.query\) \{[\s\S]*?resolveQuickJumpQuery\(quickJump\.value\.sourceTargets, ''\)[\s\S]*?closeQuickJump\(true\)/)
-    expect(app).not.toMatch(/handleQuickJumpShortcut[\s\S]*?app\.hide/)
+    expect(handler).not.toContain('app.hide')
   })
 
   it('uses target rectangles directly without title-anchor positioning', () => {

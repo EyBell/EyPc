@@ -57,6 +57,12 @@ describe('Codex quota-auto new-thread policy', () => {
       reason: 'quota-spark',
       quota: { remainingPercent: 91 }
     })
+    expect(resolveCodexNewThreadModel({ quota: quota({ short: 33, weekly: 0, sparkWeekly: 91 }), modelCatalog: catalog })).toMatchObject({
+      modelId: 'gpt-5.3-codex-spark',
+      family: 'spark',
+      reason: 'quota-spark',
+      quota: { remainingPercent: 91 }
+    })
   })
 
   it('requires a manual choice when ordinary quota is exhausted and Spark cannot be used', () => {
