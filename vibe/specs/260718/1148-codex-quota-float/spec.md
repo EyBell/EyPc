@@ -2,9 +2,9 @@
 
 Tool: codex
 Date: 2026-07-30
-Status: `implemented-verified-awaiting-host-acceptance`
+Status: `implemented-unverified-awaiting-host-acceptance`
 Documentation level: `controlled`
-Requirement version: `2026-07-30.11`
+Requirement version: `2026-07-30.12`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 
@@ -18,7 +18,7 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 
 ## 证据合同
 
-- Activity 来源为 `connector / initial-snapshot / activity-event`，并携带会话期 revision。
+- Activity 来源为 `connector / initial-snapshot / activity-event`，并携带会话期 revision；Preload 内真实 Desktop patch 与精确 App Server active 另共享一个不出 Host 的单调 evidence sequence，用于判断跨来源先后。
 - Turn 来源为 `inventory / turn-started / turn-completed / targeted-after-exit / snapshot-corroborated`。
 - `readStateOnly` 只能修改 unread；不得重放 Activity 或 Turn。
 - Unread 区分初始 snapshot 与明确 read-state event。Codex 原生持久化 `true` 可覆盖完成前旧 snapshot `false`；完成后的明确 live event `false/true` 仍最高优先。
@@ -32,7 +32,7 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 ## 唯一状态优先级
 
 1. exact live 待输入/审批请求进入 `waiting-input / waiting-approval`。
-2. 真实 Desktop activity patch、精确 App Server `active` 或精确/new `inProgress` 建立 live active；`app-server-live` 覆盖旧 initial/refollow idle，并跨 inventory 重建保留到后续明确终止。
+2. 真实 Desktop activity patch、精确 App Server `active` 或精确/new `inProgress` 建立 live active；`app-server-live` 覆盖旧 initial/refollow idle 和更早的 idle activity event，并携带私有建立水位跨 inventory 重建保留。Desktop 非 active 只有其真实 patch 水位严格更晚时才可撤销；read-state-only、Side Chat 聚合或 inventory 重放旧 shadow 不能撤销。
 3. 精确、定向或佐证 completed 立即进入 `completed`；普通 inventory completed 只有在没有更强 live active 时成立。精确通知和 snapshot 佐证都允许缺失 `completedAt`，confirmed provenance 写回会话期 inventory。
 4. `failed/interrupted` 只有相对当前 active-exit baseline 前进并经退出后定向证据确认，或与 Desktop 明确 `not-running` 共同出现时进入 `stopped`；缺失 Turn outcome 永不构成停止。
 5. 不完整、乱序、断连或互相冲突的证据保持 `ongoing`。
@@ -46,6 +46,7 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - 单任务 Turn 复核只合并兼容模式；相同 active snapshot 复用一个 `[0,300,1000]` 周期。新 unread 事件、任务切换歧义、Activity epoch/映射或复核模式变化才取消旧复核并由新周期接管，旧异步结果不得清除或回写新周期。
 - Activity Delta 每次发布递增 generation，完整 snapshot 携带已组装库存的 generation 屏障；严格更旧增量不得覆盖 snapshot。
 - 完整 inventory 重建保留更强的精确 inProgress、confirmed terminal 与同 revision provenance。未知 key 只触发 urgent 结构复核，已知条目仍即时应用。
+- 完整 inventory 同时保留 `app-server-live` 私有 evidence sequence；该序号不进入 Activity Delta、Host Snapshot、Renderer、存储或日志。
 - 50/200ms 结构合并、5s/1s watchdog、15s 完整校对和 missing-key 隔离只保护证据/库存，不延迟已确认完成；missing-key 只保留缺失行，同批仍存在的任务状态立即发布。
 - `task-state-v3` 是当前语义。v2/旧来源仍读取并发布 degraded 原子包，不清空任务或停止订阅。
 - 旧 runtime/float `conversations` 别名只作一版兼容；当前消费者以 `taskState` 为权威。

@@ -2,7 +2,7 @@
 
 Tool: codex
 Date: 2026-07-30
-State: `implemented-verified-awaiting-host-acceptance`
+State: `implemented-unverified-awaiting-host-acceptance`
 
 ## 当前结论
 
@@ -23,10 +23,11 @@ State: `implemented-verified-awaiting-host-acceptance`
 - 新会话 `quota-auto` 已按 RAW-046 收敛：任一实际返回的普通 5 小时/周窗口为 0 都切换最高可用 Spark；缺失窗口不等于 0，普通池读数优先正值 5 小时。
 - RAW-071 的旧配色格式/对比度/配对色域/暂态预览/回滚路径已从现行 Runtime 撤掉；测试、PRD、架构、Soul 和错误记忆统一为独立 token 直存直渲。
 - MQTT 响应式与 Quick Jump Escape 静态合同已限制在对应 media/function 边界，等价换行或后续无关函数不再制造假失败。
+- RAW-130 给真实 Desktop activity patch 与精确 App Server active/Turn-started 分配同一进程内 evidence sequence。旧 idle activity-event 即使因 read-state-only、Side Chat 或 inventory 重放再次经过发布器，也不能撤销更晚的 `app-server-live`；只有真正后到的 Desktop 非 active patch，或精确 terminal/App Server non-active，才能关闭该水位。
 
 ## 验证
 
-详细命令与结果见 [verify.md](verify.md#L1)。状态链专项 `115 / 115`、状态矩阵 `168 / 168`、完整 Codex 文件组 `189 / 189`、完整仓库 `633 / 633` 均通过。类型、正式构建、uTools runtime、preload 语法、双镜像和文档链接门禁以验证记录为准；不再保留“既有失败”债务。
+详细命令与历史结果见 [verify.md](verify.md#L1)。状态链专项 `115 / 115`、状态矩阵 `168 / 168`、完整 Codex 文件组 `189 / 189`、完整仓库 `633 / 633` 是 RAW-129 基线；RAW-130 已补回归合同但依项目门禁未执行测试、类型、构建、preload 语法或真实运行验收。双 preload 的 Codex 局部修复已静态对齐，最终仍为 `未校验，待用户验收`。
 
 ## 真实宿主验收
 
@@ -34,3 +35,4 @@ State: `implemented-verified-awaiting-host-acceptance`
 2. 验收普通 active→completed-unread，卡片、角标和归档能力同批更新。
 3. 验收 interrupted/failed 后恢复运行再 completed-unread，不得经过 stopped，也不依赖任务切换。
 4. 在 completed、stopped 和 active 任务间切换，未选中任务的状态不得改变。
+5. 让一条曾 interrupted 的后台任务恢复运行，触发其它任务切换/未读变化和两轮清单刷新，确认它始终保持进行中；随后真实停止，确认后到 idle 才进入已停止。
