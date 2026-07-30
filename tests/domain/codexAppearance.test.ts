@@ -15,7 +15,7 @@ import {
 import { defaultCodexSettings } from '../../src/domain/codex'
 
 describe('Codex appearance', () => {
-  it('keeps every preset as a paired dark-water and contrast-safe card theme', () => {
+  it('keeps every built-in preset complete and exactly matchable', () => {
     for (const preset of CODEX_THEME_PRESETS) {
       expect(preset.colors.cardForeground).toMatch(/^#[0-9A-F]{6}$/)
       expect(validateCodexCustomColors(preset.colors)).toEqual({ valid: true, message: '' })
@@ -26,31 +26,27 @@ describe('Codex appearance', () => {
     expect(matchCodexThemePreset({ ...defaultCodexSettings().colors, cardForeground: '#F8FCFB' })).toBeNull()
   })
 
-  it('derives accessible text, boundary, focus and status colors for both surfaces', () => {
+  it('derives readable surface copy and status labels without rewriting persisted accent tokens', () => {
     for (const preset of CODEX_THEME_PRESETS) {
       for (const style of ['water', 'card'] as const) {
         const theme = resolveCodexSurfaceTheme(style, preset.colors, 42)
         expect(contrastRatio(theme.foreground, theme.surface)).toBeGreaterThanOrEqual(4.5)
         expect(contrastRatio(theme.secondary, theme.surface)).toBeGreaterThanOrEqual(4.5)
         expect(contrastRatio(theme.border, theme.surface)).toBeGreaterThanOrEqual(3)
-        expect(contrastRatio(theme.focus, theme.surface)).toBeGreaterThanOrEqual(3)
-        expect(contrastRatio(theme.accent, theme.surface)).toBeGreaterThanOrEqual(3)
-        expect(contrastRatio(theme.foreground, theme.liquid)).toBeGreaterThanOrEqual(4.5)
-        expect(contrastRatio(theme.foreground, theme.liquidCrest)).toBeGreaterThanOrEqual(4.5)
+        expect(theme.focus).toBe(preset.colors.warning)
+        expect(theme.accent).toBe(preset.colors.warning)
         expect(contrastRatio(theme.onRunning, theme.running)).toBeGreaterThanOrEqual(4.5)
         expect(contrastRatio(theme.onPending, theme.pending)).toBeGreaterThanOrEqual(4.5)
       }
     }
   })
 
-  it('accepts deep and light card pairs but rejects malformed, low-contrast, or light-water colors', () => {
+  it('keeps validation compatibility calls non-blocking for direct color persistence', () => {
     const base = CODEX_THEME_PRESETS[0].colors
-    expect(validateCodexCustomColors({ ...base, healthy: 'teal' }).valid).toBe(false)
-    expect(validateCodexCustomColors({ ...base, water: '#F5F5F5' }).valid).toBe(false)
-    expect(validateCodexCustomColors({ ...base, card: '#20252A', cardForeground: '#F8FCFB' }).valid).toBe(true)
-    expect(validateCodexCustomColors({ ...base, card: '#F7F9F7', cardForeground: '#07161D' }).valid).toBe(true)
-    expect(validateCodexCustomColors({ ...base, card: '#20252A', cardForeground: '#30353A' }).valid).toBe(false)
-    expect(validateCodexCustomColors({ ...base, cardForeground: '#12345G' }).valid).toBe(false)
+    expect(validateCodexCustomColors({ ...base, healthy: 'teal' })).toEqual({ valid: true, message: '' })
+    expect(validateCodexCustomColors({ ...base, water: '#F5F5F5' })).toEqual({ valid: true, message: '' })
+    expect(validateCodexCustomColors({ ...base, card: '#20252A', cardForeground: '#30353A' })).toEqual({ valid: true, message: '' })
+    expect(validateCodexCustomColors({ ...base, cardForeground: '#12345G' })).toEqual({ valid: true, message: '' })
   })
 
   it('round-trips HEX and HSL values in both directions', () => {
@@ -74,19 +70,24 @@ describe('Codex appearance', () => {
     expect(isHslContrastSafe(source, '#F7F9F7')).toBe(false)
   })
 
-  it('rejects invalid water bounds and low-contrast custom ring or liquid colors', () => {
+  it('keeps water appearance validation non-blocking for direct token persistence', () => {
     const preset = CODEX_THEME_PRESETS[0]
-    expect(validateCodexWaterAppearance(preset.colors, { ...preset.waterAppearance, inner: { ...preset.waterAppearance.inner, opacity: 39 } }).valid).toBe(false)
-    expect(validateCodexWaterAppearance(preset.colors, { ...preset.waterAppearance, outer: { ...preset.waterAppearance.outer, thickness: 7 } }).valid).toBe(false)
-    expect(validateCodexWaterAppearance(preset.colors, { ...preset.waterAppearance, inner: { ...preset.waterAppearance.inner, colorB: '#FFFFFF' } }).valid).toBe(false)
-    expect(validateCodexWaterAppearance(preset.colors, { ...preset.waterAppearance, outer: { ...preset.waterAppearance.outer, colorMode: 'custom', progressColor: preset.colors.water } }).valid).toBe(false)
+    expect(validateCodexWaterAppearance(preset.colors, { ...preset.waterAppearance, inner: { ...preset.waterAppearance.inner, opacity: 39 } })).toEqual({ valid: true, message: '' })
+    expect(validateCodexWaterAppearance(preset.colors, { ...preset.waterAppearance, outer: { ...preset.waterAppearance.outer, thickness: 7 } })).toEqual({ valid: true, message: '' })
+    expect(validateCodexWaterAppearance(preset.colors, { ...preset.waterAppearance, inner: { ...preset.waterAppearance.inner, fillColorB: '#FFFFFF' } })).toEqual({ valid: true, message: '' })
+    expect(validateCodexWaterAppearance(preset.colors, { ...preset.waterAppearance, outer: { ...preset.waterAppearance.outer, colorMode: 'custom', progressColor: preset.colors.water } })).toEqual({ valid: true, message: '' })
   })
 
-  it('resolves quota-driven outer-ring colors to a visible 3:1 boundary', () => {
+  it('derives quota ring status color but preserves a dedicated custom ring color exactly', () => {
     const preset = CODEX_THEME_PRESETS[0]
     const colors = { ...preset.colors, healthy: '#132F3E' }
-    const vars = codexWaterAppearanceCssVars(preset.waterAppearance, colors, 80, 10)
-    expect(vars['--ring-progress']).toBe(resolveCodexSurfaceTheme('water', colors, 10).accent)
-    expect(contrastRatio(vars['--ring-progress'], colors.water)).toBeGreaterThanOrEqual(3)
+    const quotaVars = codexWaterAppearanceCssVars(preset.waterAppearance, colors, 80, 10)
+    const customAppearance = {
+      ...preset.waterAppearance,
+      outer: { ...preset.waterAppearance.outer, colorMode: 'custom' as const, progressColor: '#132F3E' }
+    }
+    const customVars = codexWaterAppearanceCssVars(customAppearance, colors, 80, 10)
+    expect(quotaVars['--ring-progress']).toBe(resolveCodexSurfaceTheme('water', colors, 10).accent)
+    expect(customVars['--ring-progress']).toBe('#132F3E')
   })
 })
