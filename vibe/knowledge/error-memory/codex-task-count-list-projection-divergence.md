@@ -52,7 +52,7 @@ Final product eligibility was not represented by one reusable pure projection. C
 1. Name the final user-visible eligibility set, including time window, hidden handling, mutually exclusive states, search behavior and explicit pin exceptions.
 2. Compare its row keys, displayed count and every eligible action key, not merely their upstream snapshot or broad bucket names.
 3. Search all consumers for `slice`, independent time comparisons, hidden filters, full-bucket queries and action-only caches/debounces.
-4. Check semantic exceptions separately: complete waiting-input/unread collections, dedicated completed-unread acknowledgement and explicitly EyPc-local pinned fallback must not be accidentally collapsed into active-card eligibility.
+4. Check semantic exceptions separately: complete waiting-input/unread collections, dedicated completed-unread open-first action and explicitly EyPc-local pinned fallback must not be accidentally collapsed into active-card eligibility.
 5. Use fixtures on both sides of each boundary: hidden, exactly/just beyond six hours, waiting-input versus active, stopped, completed-unread, ordinary unpinned and explicit local pin.
 6. Confirm search remains downstream of counts and that action invocation computes from the current stabilized snapshot without a second timer.
 
@@ -66,7 +66,7 @@ Define final product eligibility once as a stateless pure projection over the st
 - The active group contains only `active / waiting-approval / ongoing`; waiting-input is mutually exclusive and stopped exits immediately.
 - Input and unread compact counts remain complete and hidden-inclusive; search filters expanded rows only.
 - Float cards, badges, summaries/ARIA and settings preview share the projection.
-- Previous/next ordinary candidates are complete input-required followed by the shared active group. Completed-unread remains on its dedicated acknowledgement/open action.
+- Previous/next ordinary candidates are complete input-required followed by the shared active group. Completed-unread remains on its dedicated open-first action; no command changes native unread.
 - Only an explicit EyPc-local pin and non-stopped state may enter the fallback when ordinary candidates are empty; native pin is not equivalent.
 - Communication/Controller stabilization remains upstream and unchanged; the shared projection is stateless and adds no clock.
 
