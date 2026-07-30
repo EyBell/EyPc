@@ -1,11 +1,11 @@
 ---
 id: eypc-utools-window-target-auto-rebind-after-restart
-status: candidate
+status: archived
 scope: project-pointer
 fingerprint: persisted-window-slot-native-ref-expires-after-restart__exact-title-drift-misses-same-logical-window__safe-complete-inventory-auto-rebind
 first_seen: 2026-07-29
-last_verified: 2026-07-29
-review_after: promote after real uTools reboot/reopen verifies one unique replacement and one ambiguous sibling refusal
+last_verified: 2026-07-30
+review_after: superseded by WJ-19 explicit instance rebind
 evidence:
   - src/domain/windows.ts
   - src/domain/state.ts
@@ -22,7 +22,9 @@ tags:
   - pointer
 ---
 
-# Restarted Window Target Needs Logical Rebinding
+# Automatic Restart Rebinding (Historical; Superseded by WJ-19)
+
+> WJ-19 keeps the logical target but forbids title-derived automatic replacement after the native instance lifecycle ends. The earlier scoring design remains historical evidence only.
 
 ## Symptom
 
@@ -47,16 +49,16 @@ PID, HWND and macOS CG window references are process/session identities and rout
 
 ## Prevention Rule
 
-Model a fixed slot as a persisted logical target, not a permanent OS handle. Keep only the current locator and a bounded history of successfully verified titles. Never learn from an unmatched inventory row, failed activation, partial/current-Space inventory, PID alone, application name alone, or candidate ordering. Manual locator edits reset learned history.
+Model a fixed slot as a persisted logical target whose `lastInstanceId` refers only to one OS-window lifecycle. When that instance disappears, a complete inventory may show all same-app candidates but must not choose even a sole candidate automatically. Only explicit confirmation plus successful native activation may atomically update instance/native/application/title metadata. Partial inventories retain the old binding; title history and similarity scoring do not exist.
 
 Cross-project uTools authority belongs under CodeNote [`error-memory`](../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/error-memory/README.md#L1). That owner directory already contains unrelated dirty/untracked work, so WJ-17 does not overwrite it; owner merge remains pending.
 
 ## Alternative Route
 
-- Status: `candidate`
+- Status: `archived / superseded-by-WJ-19`
 - Preconditions: a persisted target's native reference is stale; list capability is healthy; a complete current inventory is available.
-- Steps: exact app gate → exact current/history title → conservative similarity ranking → unique score/margin gate → native activation → success-only persisted replacement.
-- Verification: reboot/recreate one fixed Rider/AiTools target and invoke its slot without editing; require correct activation and persisted reuse on the next call. Then expose two similarly named browser windows and require explicit selection.
+- Steps: exact instance lookup → one bounded refresh → explicit selection among all same-app candidates → native activation → success-only persisted replacement.
+- Verification: close/recreate one fixed target, require explicit confirmation even with one candidate, verify Escape focus return and success-only backfill; equal-title siblings never auto-match.
 - Applicability boundary: replacement of an already user-bound logical window. It does not launch a closed application, background-poll windows, change real titles, or authorize Space/display identity persistence.
 - Fallback: retain the binding and show confirmation/blocking diagnostics.
 
@@ -64,4 +66,5 @@ Cross-project uTools authority belongs under CodeNote [`error-memory`](../../../
 
 | Date | Task | Trigger | Failed route | Recovery | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| 2026-07-29 | EyPc WJ-17 | User required fixed windows to survive reboot/reopen without manual rebinding | exact title plus stale native reference; same-PID fallback cannot cross restart | complete-inventory exact-app high-confidence unique replacement with success-only learning | source/domain/runtime verified; real uTools restart acceptance pending |
+| 2026-07-29 | EyPc WJ-17 | User required fixed windows to survive reboot/reopen without manual rebinding | exact title plus stale native reference; same-PID fallback cannot cross restart | complete-inventory exact-app high-confidence unique replacement with success-only learning | historical implementation; superseded by WJ-19 |
+| 2026-07-30 | EyPc WJ-19 | Browser Tab/title changes must not invalidate a window, and a closed instance must never title-rebind | title similarity conflated logical intent with native identity | lifecycle instance ID plus explicit candidate confirmation | source/contracts updated; host acceptance pending |

@@ -125,6 +125,24 @@ describe('app runtime', () => {
                   return { ...result, capability: normalizeTestWindowCapability(result.capability) }
                 }
               }
+            : {}),
+          ...(windowOverrides.activate
+            ? {
+                activate: async (...args: Parameters<NonNullable<typeof windowOverrides.activate>>) => {
+                  const result = await windowOverrides.activate!(...args)
+                  const instanceId = args[0].instanceId.includes(':legacy:') ? `${args[0].platform}:verified:${args[0].nativeRef}` : args[0].instanceId
+                  return result.outcome === 'activated' && !result.instanceId ? { ...result, instanceId } : result
+                }
+              }
+            : {}),
+          ...(windowOverrides.alwaysOnTop
+            ? {
+                alwaysOnTop: async (...args: Parameters<NonNullable<typeof windowOverrides.alwaysOnTop>>) => {
+                  const result = await windowOverrides.alwaysOnTop!(...args)
+                  const instanceId = args[0].instanceId.includes(':legacy:') ? `${args[0].platform}:verified:${args[0].nativeRef}` : args[0].instanceId
+                  return result.outcome === 'activated' && !result.instanceId ? { ...result, instanceId } : result
+                }
+              }
             : {})
         }
       : undefined
@@ -4932,8 +4950,8 @@ describe('app runtime', () => {
         list: async () => ({
           capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true },
           windows: [
-            { id: 'darwin:91:1:11', platform: 'darwin', nativeRef: '91:1:11', appId: 'com.browser', appName: 'Browser', pid: 91, title: 'Docs', minimized: false, focused: false },
-            { id: 'darwin:91:2:12', platform: 'darwin', nativeRef: '91:2:12', appId: 'com.browser', appName: 'Browser', pid: 91, title: 'Docs', minimized: false, focused: false }
+            { id: 'darwin:91:1:11', instanceId: 'darwin:91:1:11', platform: 'darwin', nativeRef: '91:1:11', appId: 'com.browser', appName: 'Browser', pid: 91, title: 'Docs', minimized: false, focused: false },
+            { id: 'darwin:91:2:12', instanceId: 'darwin:91:2:12', platform: 'darwin', nativeRef: '91:2:12', appId: 'com.browser', appName: 'Browser', pid: 91, title: 'Docs', minimized: false, focused: false }
           ]
         }),
         activate: async (window) => { activated.push(window.nativeRef); return { outcome: 'activated' as const } }
@@ -4941,7 +4959,7 @@ describe('app runtime', () => {
     })
     enableWindows(state)
     state.activeTab = 'ports'
-    state.windowTargets = [{ id: 'work-browser', alias: '工作浏览器', platform: 'darwin', appId: 'com.browser', appName: 'Browser', titleLocator: 'Docs', lastNativeRef: null, favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
+    state.windowTargets = [{ id: 'work-browser', alias: '工作浏览器', platform: 'darwin', appId: 'com.browser', appName: 'Browser', lastKnownTitle: 'Docs', lastInstanceId: null, lastNativeRef: null, favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
     state.windowSlots[0].targetIdByPlatform.darwin = 'work-browser'
     const runtime = createAppRuntime(state)
 
@@ -4957,7 +4975,7 @@ describe('app runtime', () => {
     await flushWindowActions()
 
     expect(activated).toEqual(['91:2:12'])
-    expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastNativeRef: '91:2:12', titleLocator: 'Docs' })
+    expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastNativeRef: '91:2:12', lastKnownTitle: 'Docs' })
     expect(getHideCount()).toBe(1)
 
     runtime.focusWindow('target:work-browser')
@@ -4978,14 +4996,14 @@ describe('app runtime', () => {
           listCount += 1
           return {
             capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true },
-            windows: [{ id: 'darwin:7:1:1', platform: 'darwin', nativeRef: '7:1:1', appId: 'com.notes', appName: 'Notes', pid: 7, title: 'Inbox', minimized: false, focused: false }]
+            windows: [{ id: 'darwin:7:1:1', instanceId: 'darwin:7:1:1', platform: 'darwin', nativeRef: '7:1:1', appId: 'com.notes', appName: 'Notes', pid: 7, title: 'Inbox', minimized: false, focused: false }]
           }
         },
         activate: async () => ({ outcome: 'activated' as const })
       }
     })
     enableWindows(state)
-    state.windowTargets = [{ id: 'notes', alias: '笔记', platform: 'darwin', appId: 'com.notes', appName: 'Notes', titleLocator: 'Inbox', lastNativeRef: '7:1:1', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
+    state.windowTargets = [{ id: 'notes', alias: '笔记', platform: 'darwin', appId: 'com.notes', appName: 'Notes', lastKnownTitle: 'Inbox', lastInstanceId: null, lastNativeRef: '7:1:1', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
     state.windowSlots[0].targetIdByPlatform.darwin = 'notes'
     const runtime = createAppRuntime(state)
 
@@ -5031,7 +5049,7 @@ describe('app runtime', () => {
     })
     enableWindows(state)
     state.activeTab = 'ports'
-    state.windowTargets = [{ id: 'docs', alias: '文档', platform: 'win32', appId: 'browser.exe', appName: 'Browser', titleLocator: 'Docs', lastNativeRef: '424242', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
+    state.windowTargets = [{ id: 'docs', alias: '文档', platform: 'win32', appId: 'browser.exe', appName: 'Browser', lastKnownTitle: 'Docs', lastInstanceId: null, lastNativeRef: '424242', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
     state.windowSlots[0].targetIdByPlatform.win32 = 'docs'
     const runtime = createAppRuntime(state)
 
@@ -5061,7 +5079,7 @@ describe('app runtime', () => {
     })
     enableWindows(state)
     state.activeTab = 'ports'
-    state.windowTargets = [{ id: 'pinned', alias: '固定编辑器', platform: 'darwin', appId: 'com.editor', appName: 'Editor', titleLocator: 'Main', lastNativeRef: null, favorite: false, pinned: false, createdAt: 1, updatedAt: 1 }]
+    state.windowTargets = [{ id: 'pinned', alias: '固定编辑器', platform: 'darwin', appId: 'com.editor', appName: 'Editor', lastKnownTitle: 'Main', lastInstanceId: null, lastNativeRef: null, favorite: false, pinned: false, createdAt: 1, updatedAt: 1 }]
     state.windowSlots[2].targetIdByPlatform.darwin = 'pinned'
     const runtime = createAppRuntime(state)
 
@@ -5088,8 +5106,8 @@ describe('app runtime', () => {
         list: async () => ({
           capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true },
           windows: [
-            { id: 'darwin:1:1:1', platform: 'darwin', nativeRef: '1:1:1', appId: 'com.a', appName: 'Alpha', pid: 1, title: 'One', minimized: false, focused: false },
-            { id: 'darwin:2:1:1', platform: 'darwin', nativeRef: '2:1:1', appId: 'com.b', appName: 'Beta', pid: 2, title: 'Two', minimized: false, focused: false }
+            { id: 'darwin:1:1:1', instanceId: 'darwin:1:1:1', platform: 'darwin', nativeRef: '1:1:1', appId: 'com.a', appName: 'Alpha', pid: 1, title: 'One', minimized: false, focused: false },
+            { id: 'darwin:2:1:1', instanceId: 'darwin:2:1:1', platform: 'darwin', nativeRef: '2:1:1', appId: 'com.b', appName: 'Beta', pid: 2, title: 'Two', minimized: false, focused: false }
           ]
         }),
         activate: async () => ({ outcome: 'activated' as const })
@@ -5126,8 +5144,8 @@ describe('app runtime', () => {
         list: async () => ({
           capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true },
           windows: [
-            { id: 'darwin:2:1:1', platform: 'darwin', nativeRef: '2:1:1', appId: 'com.beta', appName: 'Beta', pid: 2, title: 'Two', minimized: false, focused: false },
-            { id: 'darwin:1:1:1', platform: 'darwin', nativeRef: '1:1:1', appId: 'com.alpha', appName: 'Alpha', pid: 1, title: 'One', minimized: false, focused: false }
+            { id: 'darwin:2:1:1', instanceId: 'darwin:2:1:1', platform: 'darwin', nativeRef: '2:1:1', appId: 'com.beta', appName: 'Beta', pid: 2, title: 'Two', minimized: false, focused: false },
+            { id: 'darwin:1:1:1', instanceId: 'darwin:1:1:1', platform: 'darwin', nativeRef: '1:1:1', appId: 'com.alpha', appName: 'Alpha', pid: 1, title: 'One', minimized: false, focused: false }
           ]
         }),
         activate: async () => ({ outcome: 'activated' as const })
@@ -5164,7 +5182,7 @@ describe('app runtime', () => {
         capabilities: async () => ({ platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true }),
         list: async () => ({
           capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true },
-          windows: [{ id: 'darwin:3:1:1', platform: 'darwin', nativeRef: '3:1:1', appId: 'com.notes', appName: 'Notes', pid: 3, title: 'Inbox', minimized: false, focused: false }]
+          windows: [{ id: 'darwin:3:1:1', instanceId: 'darwin:3:1:1', platform: 'darwin', nativeRef: '3:1:1', appId: 'com.notes', appName: 'Notes', pid: 3, title: 'Inbox', minimized: false, focused: false }]
         }),
         activate: async () => ({ outcome: 'activated' as const })
       }
@@ -5189,7 +5207,7 @@ describe('app runtime', () => {
     expect(runtime.snapshot().windowRows[0]).toMatchObject({ id: 'live:darwin:3:1:1', favorite: false, pinned: false })
   })
 
-  it('does not deduplicate a stale target by pid alone when title evidence changes', async () => {
+  it('does not deduplicate a stale target by pid or application when the native instance differs', async () => {
     const { state } = installPlatform({
       windows: {
         capabilities: async () => ({ platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true }),
@@ -5197,6 +5215,7 @@ describe('app runtime', () => {
           capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true },
           windows: [{
             id: 'darwin:7:0:222',
+            instanceId: 'darwin:7:0:222',
             platform: 'darwin',
             nativeRef: '7:0:222',
             appId: 'com.example',
@@ -5217,7 +5236,8 @@ describe('app runtime', () => {
       platform: 'darwin',
       appId: 'com.example',
       appName: 'Example',
-      titleLocator: 'Old Title',
+      lastKnownTitle: 'Old Title',
+      lastInstanceId: null,
       lastNativeRef: '7:0:111',
       favorite: true,
       pinned: false,
@@ -5244,6 +5264,7 @@ describe('app runtime', () => {
           capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true },
           windows: [{
             id: 'darwin:9:0:33',
+            instanceId: 'darwin:9:0:33',
             platform: 'darwin',
             nativeRef: '9:0:33',
             appId: 'com.notes',
@@ -5270,8 +5291,8 @@ describe('app runtime', () => {
 
   it('retains windows missing from a partial refresh and marks only the retained rows as cached', async () => {
     let listCount = 0
-    const first = { id: 'darwin:1:0:11', platform: 'darwin' as const, nativeRef: '1:0:11', appId: 'com.a', appName: 'Alpha', pid: 1, title: 'One', minimized: false, focused: false }
-    const second = { id: 'darwin:2:0:22', platform: 'darwin' as const, nativeRef: '2:0:22', appId: 'com.b', appName: 'Beta', pid: 2, title: 'Two', minimized: false, focused: false }
+    const first = { id: 'darwin:1:0:11', instanceId: 'darwin:1:0:11', platform: 'darwin' as const, nativeRef: '1:0:11', appId: 'com.a', appName: 'Alpha', pid: 1, title: 'One', minimized: false, focused: false }
+    const second = { id: 'darwin:2:0:22', instanceId: 'darwin:2:0:22', platform: 'darwin' as const, nativeRef: '2:0:22', appId: 'com.b', appName: 'Beta', pid: 2, title: 'Two', minimized: false, focused: false }
     const capability = { platform: 'darwin' as const, supported: true, permission: 'granted' as const, canList: true, canActivate: true }
     const { state } = installPlatform({
       windows: {
@@ -5308,8 +5329,8 @@ describe('app runtime', () => {
         list: async () => ({
           capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true, canClose: true },
           windows: [
-            { id: 'darwin:1:0:11', platform: 'darwin', nativeRef: '1:0:11', appId: 'com.a', appName: 'Alpha', pid: 1, title: 'One', minimized: false, focused: false },
-            { id: 'darwin:2:0:22', platform: 'darwin', nativeRef: '2:0:22', appId: 'com.b', appName: 'Beta', pid: 2, title: 'Two', minimized: false, focused: false }
+            { id: 'darwin:1:0:11', instanceId: 'darwin:1:0:11', platform: 'darwin', nativeRef: '1:0:11', appId: 'com.a', appName: 'Alpha', pid: 1, title: 'One', minimized: false, focused: false },
+            { id: 'darwin:2:0:22', instanceId: 'darwin:2:0:22', platform: 'darwin', nativeRef: '2:0:22', appId: 'com.b', appName: 'Beta', pid: 2, title: 'Two', minimized: false, focused: false }
           ]
         }),
         activate: async () => ({ outcome: 'activated' as const }),
@@ -5356,13 +5377,13 @@ describe('app runtime', () => {
         capabilities: async () => ({ platform: 'win32', supported: true, permission: 'granted', canList: true, canActivate: true }),
         list: async () => ({
           capability: { platform: 'win32', supported: true, permission: 'granted', canList: true, canActivate: true },
-          windows: [{ id: 'win32:123', platform: 'win32', nativeRef: '123', appId: 'browser.exe', appName: 'Browser', pid: 10, title: 'Docs', minimized: true, focused: false }]
+          windows: [{ id: 'win32:123', instanceId: 'win32:123', platform: 'win32', nativeRef: '123', appId: 'browser.exe', appName: 'Browser', pid: 10, title: 'Docs', minimized: true, focused: false }]
         }),
         activate: async () => ({ outcome: 'focus-denied' as const, message: '系统拒绝聚焦该窗口；EyPc 未尝试绕过前台保护' })
       }
     })
     enableWindows(state)
-    state.windowTargets = [{ id: 'browser', alias: '浏览器', platform: 'win32', appId: 'browser.exe', appName: 'Browser', titleLocator: 'Docs', lastNativeRef: '123', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
+    state.windowTargets = [{ id: 'browser', alias: '浏览器', platform: 'win32', appId: 'browser.exe', appName: 'Browser', lastKnownTitle: 'Docs', lastInstanceId: null, lastNativeRef: '123', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
     const runtime = createAppRuntime(state)
 
     runtime.setTab('windows')
@@ -5409,7 +5430,8 @@ describe('app runtime', () => {
         platform: 'darwin',
         appId: 'com.example.target',
         appName: 'Example',
-        titleLocator: 'Target',
+        lastKnownTitle: 'Target',
+        lastInstanceId: null,
         lastNativeRef,
         favorite: true,
         pinned: false,
@@ -5516,7 +5538,7 @@ describe('app runtime', () => {
           capabilities: async () => darwinCapability,
           list: async () => ({
             capability: darwinCapability,
-            windows: [{ id: 'darwin:slot-live', platform: 'darwin', nativeRef: 'slot-live', appId: 'com.example.slot', appName: 'Example', pid: 7, title: 'Slot target', minimized: false, focused: false }]
+            windows: [{ id: 'darwin:slot-live', instanceId: 'darwin:slot-live', platform: 'darwin', nativeRef: 'slot-live', appId: 'com.example.slot', appName: 'Example', pid: 7, title: 'Slot target', minimized: false, focused: false }]
           }),
           activate: async () => ({ outcome: 'activated' as const })
         }
@@ -5538,7 +5560,7 @@ describe('app runtime', () => {
       ]))
     })
 
-    it('resets learned title history when the user explicitly edits the locator', () => {
+    it('keeps the last known title read-only while editing the alias', () => {
       const { state } = installPlatform({
         windows: {
           capabilities: async () => darwinCapability,
@@ -5549,15 +5571,15 @@ describe('app runtime', () => {
       enableWindows(state)
       state.activeTab = 'windows'
       assignSlotTarget(state, null)
-      state.windowTargets[0].titleHistory = ['Earlier Target', 'Old Target']
       const runtime = createAppRuntime(state)
 
       runtime.focusWindow('target:diagnostic-target')
       expect(runtime.dispatch('windows.edit').handled).toBe(true)
-      runtime.updateWindowDraft({ titleLocator: 'User-selected locator' })
+      expect(runtime.snapshot().windowDraft).toMatchObject({ lastKnownTitle: 'Target', activeField: 'alias' })
+      runtime.updateWindowDraft({ alias: 'Renamed target' })
       expect(runtime.dispatch('windows.editor.save').handled).toBe(true)
 
-      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ titleLocator: 'User-selected locator', titleHistory: [] })
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ alias: 'Renamed target', lastKnownTitle: 'Target' })
     })
 
     it('uses a separate Windows page-topmost call and treats unsupported topmost as blocking', async () => {
@@ -5568,7 +5590,7 @@ describe('app runtime', () => {
           capabilities: async () => win32Capability,
           list: async () => ({
             capability: win32Capability,
-            windows: [{ id: 'win32:880', platform: 'win32', nativeRef: '880', appId: 'browser.exe', appName: 'Browser', pid: 88, title: 'Docs', minimized: true, focused: false }]
+            windows: [{ id: 'win32:880', instanceId: 'win32:880', platform: 'win32', nativeRef: '880', appId: 'browser.exe', appName: 'Browser', pid: 88, title: 'Docs', minimized: true, focused: false }]
           }),
           activate: async () => ({ outcome: 'activated' as const }),
           alwaysOnTop: async (window) => {
@@ -5614,7 +5636,7 @@ describe('app runtime', () => {
             listCount += 1
             return {
               capability: darwinCapability,
-              windows: [{ id: 'darwin:new-ref', platform: 'darwin', nativeRef: 'new-ref', appId: 'com.example.target', appName: 'Example', pid: 7, title: 'Target', minimized: false, focused: false }]
+              windows: [{ id: 'darwin:new-ref', instanceId: 'darwin:new-ref', platform: 'darwin', nativeRef: 'new-ref', appId: 'com.example.target', appName: 'Example', pid: 7, title: 'Target', minimized: false, focused: false }]
             }
           },
           activate: async (window) => {
@@ -5636,7 +5658,7 @@ describe('app runtime', () => {
       expect(runtime.snapshot().windowActivationDiagnostics.filter((diagnostic) => diagnostic.level === 'blocking')).toEqual([])
     })
 
-    it('automatically replaces a persisted target after restart when one complete-scan candidate is strongly similar', async () => {
+    it('requires confirmation before rebinding even when a complete scan has only one same-app candidate', async () => {
       const activated: string[] = []
       const previousTitle = 'agro-management [~/work/czzWork/GuoJi/agro] – /Users/gdkmjd/work/czzWork/GuoJi/agro/WebCore/appsettings.Mac.json'
       const currentTitle = 'agro-management [~/work/czzWork/GuoJi/agro] – /Users/gdkmjd/work/czzWork/GuoJi/agro/WebCore/Program.cs'
@@ -5646,7 +5668,7 @@ describe('app runtime', () => {
           list: async () => ({
             capability: darwinCapability,
             completeness: 'complete' as const,
-            windows: [{ id: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: currentTitle, minimized: false, focused: false }]
+            windows: [{ id: 'darwin:91:0:222', instanceId: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: currentTitle, minimized: false, focused: false }]
           }),
           activate: async (window) => {
             activated.push(window.nativeRef)
@@ -5655,18 +5677,29 @@ describe('app runtime', () => {
         }
       })
       enableWindows(state)
-      state.windowTargets = [{ id: 'rider', alias: '农业项目', platform: 'darwin', appId: 'com.jetbrains.rider', appName: 'Rider', titleLocator: previousTitle, lastNativeRef: '7:0:111', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
+      state.windowTargets = [{ id: 'rider', alias: '农业项目', platform: 'darwin', appId: 'com.jetbrains.rider', appName: 'Rider', lastKnownTitle: previousTitle, lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
       state.windowSlots[0].targetIdByPlatform.darwin = 'rider'
       const runtime = createAppRuntime(state)
 
       runtime.dispatch('windows.slot.activate', { slot: 1 })
       await flushWindowActions()
 
-      const persisted = runtime.snapshot().state.windowTargets[0]
-      expect(activated).toEqual(['7:0:111', '91:0:222'])
-      expect(persisted).toMatchObject({ lastNativeRef: '91:0:222', titleLocator: currentTitle })
-      expect(persisted.titleHistory).toContain(previousTitle)
-      expect(runtime.snapshot().windowActivationDiagnostics.filter((diagnostic) => diagnostic.level === 'blocking')).toEqual([])
+      expect(activated).toEqual(['7:0:111'])
+      expect(runtime.snapshot().windowCandidateTargetId).toBe('rider')
+      expect(runtime.snapshot().windowRows).toHaveLength(1)
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111', lastKnownTitle: previousTitle })
+      expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'rebind-required', level: 'blocking' }))
+
+      expect(runtime.dispatch('windows.candidates.clear').handled).toBe(true)
+      expect(runtime.snapshot().focusedWindowId).toBe('target:rider')
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+      runtime.focusWindow('candidate:darwin:91:0:222')
+      runtime.dispatch('windows.activate')
+      await flushWindowActions()
+
+      expect(activated).toEqual(['7:0:111', '7:0:111', '91:0:222'])
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastInstanceId: 'darwin:91:0:222', lastNativeRef: '91:0:222', lastKnownTitle: currentTitle })
     })
 
     it('does not learn an automatic replacement when the new candidate fails native focus verification', async () => {
@@ -5678,24 +5711,29 @@ describe('app runtime', () => {
           list: async () => ({
             capability: darwinCapability,
             completeness: 'complete' as const,
-            windows: [{ id: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: currentTitle, minimized: false, focused: false }]
+            windows: [{ id: 'darwin:91:0:222', instanceId: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: currentTitle, minimized: false, focused: false }]
           }),
           activate: async (window) => ({ outcome: window.nativeRef === '7:0:111' ? 'not-found' as const : 'focus-denied' as const })
         }
       })
       enableWindows(state)
-      state.windowTargets = [{ id: 'rider', alias: '农业项目', platform: 'darwin', appId: 'com.jetbrains.rider', appName: 'Rider', titleLocator: previousTitle, lastNativeRef: '7:0:111', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
+      state.windowTargets = [{ id: 'rider', alias: '农业项目', platform: 'darwin', appId: 'com.jetbrains.rider', appName: 'Rider', lastKnownTitle: previousTitle, lastInstanceId: null, lastNativeRef: '7:0:111', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
       state.windowSlots[0].targetIdByPlatform.darwin = 'rider'
       const runtime = createAppRuntime(state)
 
       runtime.dispatch('windows.slot.activate', { slot: 1 })
       await flushWindowActions()
 
-      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastNativeRef: '7:0:111', titleLocator: previousTitle, titleHistory: [] })
+      runtime.focusWindow('candidate:darwin:91:0:222')
+      runtime.dispatch('windows.activate')
+      await flushWindowActions()
+
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastNativeRef: '7:0:111', lastKnownTitle: previousTitle })
+      expect(runtime.snapshot().state.windowTargets[0]).not.toHaveProperty('titleHistory')
       expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'focus-denied', level: 'blocking' }))
     })
 
-    it('keeps similar same-app replacements manual when a complete inventory cannot choose uniquely', async () => {
+    it('keeps every same-app replacement manual regardless of title similarity', async () => {
       const activated: string[] = []
       const { state } = installPlatform({
         windows: {
@@ -5704,8 +5742,8 @@ describe('app runtime', () => {
             capability: darwinCapability,
             completeness: 'complete' as const,
             windows: [
-              { id: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.google.Chrome', appName: 'Google Chrome', pid: 91, title: 'AiTools - Chat - Google Chrome', minimized: false, focused: false },
-              { id: 'darwin:92:0:333', platform: 'darwin', nativeRef: '92:0:333', appId: 'com.google.Chrome', appName: 'Google Chrome', pid: 92, title: 'AiTools - Settings - Google Chrome', minimized: false, focused: false }
+              { id: 'darwin:91:0:222', instanceId: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.google.Chrome', appName: 'Google Chrome', pid: 91, title: 'AiTools - Chat - Google Chrome', minimized: false, focused: false },
+              { id: 'darwin:92:0:333', instanceId: 'darwin:92:0:333', platform: 'darwin', nativeRef: '92:0:333', appId: 'com.google.Chrome', appName: 'Google Chrome', pid: 92, title: 'AiTools - Settings - Google Chrome', minimized: false, focused: false }
             ]
           }),
           activate: async (window) => {
@@ -5715,7 +5753,7 @@ describe('app runtime', () => {
         }
       })
       enableWindows(state)
-      state.windowTargets = [{ id: 'aitools', alias: 'AiTools', platform: 'darwin', appId: 'com.google.Chrome', appName: 'Google Chrome', titleLocator: 'AiTools - Dashboard - Google Chrome', lastNativeRef: '7:0:111', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
+      state.windowTargets = [{ id: 'aitools', alias: 'AiTools', platform: 'darwin', appId: 'com.google.Chrome', appName: 'Google Chrome', lastKnownTitle: 'AiTools - Dashboard - Google Chrome', lastInstanceId: null, lastNativeRef: '7:0:111', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
       state.windowSlots[0].targetIdByPlatform.darwin = 'aitools'
       const runtime = createAppRuntime(state)
 
@@ -5725,8 +5763,8 @@ describe('app runtime', () => {
       expect(activated).toEqual(['7:0:111'])
       expect(runtime.snapshot().windowCandidateTargetId).toBe('aitools')
       expect(runtime.snapshot().windowRows).toHaveLength(2)
-      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastNativeRef: '7:0:111', titleLocator: 'AiTools - Dashboard - Google Chrome' })
-      expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'target-title-changed', level: 'blocking' }))
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastNativeRef: '7:0:111', lastKnownTitle: 'AiTools - Dashboard - Google Chrome' })
+      expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'rebind-required', level: 'blocking' }))
     })
 
     it('does not auto-replace from a partial inventory even when its only visible candidate is similar', async () => {
@@ -5737,7 +5775,7 @@ describe('app runtime', () => {
           list: async () => ({
             capability: darwinCapability,
             completeness: 'partial' as const,
-            windows: [{ id: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: 'agro-management – Program.cs', minimized: false, focused: false }]
+            windows: [{ id: 'darwin:91:0:222', instanceId: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: 'agro-management – Program.cs', minimized: false, focused: false }]
           }),
           activate: async (window) => {
             activated.push(window.nativeRef)
@@ -5746,7 +5784,7 @@ describe('app runtime', () => {
         }
       })
       enableWindows(state)
-      state.windowTargets = [{ id: 'rider', alias: '农业项目', platform: 'darwin', appId: 'com.jetbrains.rider', appName: 'Rider', titleLocator: 'agro-management – appsettings.Mac.json', lastNativeRef: '7:0:111', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
+      state.windowTargets = [{ id: 'rider', alias: '农业项目', platform: 'darwin', appId: 'com.jetbrains.rider', appName: 'Rider', lastKnownTitle: 'agro-management – appsettings.Mac.json', lastInstanceId: null, lastNativeRef: '7:0:111', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
       state.windowSlots[0].targetIdByPlatform.darwin = 'rider'
       const runtime = createAppRuntime(state)
 
@@ -5765,7 +5803,7 @@ describe('app runtime', () => {
           capabilities: async () => darwinCapability,
           list: async () => ({
             capability: darwinCapability,
-            windows: [{ id: 'darwin:manual-new', platform: 'darwin', nativeRef: 'manual-new', appId: 'com.example.target', appName: 'Example', pid: 8, title: 'Target', minimized: false, focused: false }]
+            windows: [{ id: 'darwin:manual-new', instanceId: 'darwin:manual-new', platform: 'darwin', nativeRef: 'manual-new', appId: 'com.example.target', appName: 'Example', pid: 8, title: 'Target', minimized: false, focused: false }]
           }),
           activate: async (window) => {
             activated.push(window.nativeRef)

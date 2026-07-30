@@ -8,7 +8,7 @@ import { resolveDrawerTargets, toggleIdWithAdvance } from '../domain/listSelecti
 import { normalizeAppState } from '../domain/state'
 import { formatShortcutLabel, formatShortcutList } from '../domain/shortcuts'
 import { normalizeToolPreviewPrefs } from '../domain/toolPreview'
-import { compareWindowRowsByApplication, filterJumpableLiveWindows, normalizeWindowText, rememberWindowTargetTitle, resolveWindowTargetCandidate, targetMatchesLiveWindow, type LiveWindow, type WindowPlatform, type WindowTarget } from '../domain/windows'
+import { compareWindowRowsByApplication, filterIdentifiedLiveWindows, normalizeWindowText, targetMatchesLiveWindow, windowTargetAppMatches, type LiveWindow, type WindowPlatform, type WindowTarget } from '../domain/windows'
 import type { CodexFloatPosition, CodexSettings } from '../domain/codex'
 import type { AppState, AppTabId, FavoriteNode, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttConnectionGroup, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
 import type { PortGroupTreeRow } from '../domain/ports'
@@ -180,7 +180,7 @@ export type MqttPublishField = 'topic' | 'payload'
 export type MqttPublishDraftHistoryEditMode = 'rename' | 'edit'
 export type MqttPublishDraftHistoryEditField = 'title' | 'note' | 'topic' | 'payload'
 export type WindowDraftMode = 'rename' | 'edit'
-export type WindowDraftField = 'alias' | 'titleLocator'
+export type WindowDraftField = 'alias'
 export type WindowActivationEntry = 'slot' | 'manual'
 export type WindowActivationDiagnosticLevel = 'accepted' | 'blocking'
 export type WindowActivationDiagnosticStage = 'entry' | 'capability' | 'resolve' | 'refresh' | 'activate' | 'topmost' | 'visibility'
@@ -201,7 +201,9 @@ export type WindowActivationDiagnosticCode =
   | 'space-unbound-multiwindow'
   | 'space-ambiguous'
   | 'space-switch-timeout'
-  | 'target-title-changed'
+  | 'rebind-required'
+  | 'instance-mismatch'
+  | 'identity-unavailable'
   | 'focus-denied'
   | 'activation-not-found'
   | 'activation-failed'
@@ -227,7 +229,7 @@ export type WindowOperationTraceResult = 'success' | 'blocking' | 'target-closed
 export type WindowOperationTraceRuntimeStage = 'entry' | 'capability' | 'cache' | 'resolve' | 'refresh' | 'native' | 'visibility'
 export type WindowOperationTraceRuntimeOutcome = 'ok' | 'skipped' | 'not-found' | 'ambiguous' | 'failed' | 'denied' | 'unsupported' | 'unavailable'
 
-/** Development-only session record. It contains the user-authorized target title but no app, PID, handle, native reference, or host output. */
+/** Development-only session record. The title is display-only and never participates in identity matching. */
 export interface WindowOperationDebugRecord {
   id: string
   timestamp: number
@@ -297,7 +299,7 @@ export interface WindowDraft {
   alias: string
   appName: string
   appId: string
-  titleLocator: string
+  lastKnownTitle: string
   activeField: WindowDraftField
 }
 
@@ -727,6 +729,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   let windowDraft: WindowDraft | null = null
   let windowCandidateTargetId: string | null = null
   let windowCandidateLiveIds: string[] = []
+  let windowCandidateRestoreFocusId: string | null = null
   let windowFocusRequestId = 0
   let windowActionsFocusRequestId = 0
   let windowActivationDiagnostics: WindowActivationDiagnostic[] = []
@@ -903,7 +906,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     'space-unbound-multiwindow': '目标应用存在多个窗口且无法绑定目标桌面，未前置任意窗口。',
     'space-ambiguous': '目标窗口同时绑定到多个非当前桌面，需要明确后才能切换。',
     'space-switch-timeout': '目标桌面切换未在时限内确认，未继续激活窗口。',
-    'target-title-changed': '目标窗口标题或所属应用已变化，请在候选窗口中重新确认。',
+    'rebind-required': '原窗口实例已失效，请在同一应用的候选窗口中明确确认；标题仅供辨认。',
+    'instance-mismatch': '当前窗口实例与保存目标不一致，需要重新确认。',
+    'identity-unavailable': '无法建立稳定的系统窗口实例身份，未执行收藏、绑定或激活。',
     'focus-denied': '系统拒绝聚焦该窗口；EyPc 未尝试绕过前台保护。',
     'activation-not-found': '激活时窗口引用已失效，尚未满足确认关闭条件。',
     'activation-failed': '宿主未能完成窗口激活，请在工作台中核查。',
@@ -922,7 +927,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   const nativeTraceDetails = new Set<NonNullable<WindowOperationTrace['steps'][number]['detail']>>([
     'switched', 'switch-confirmed', 'switch-timeout', 'current', 'walked', 'direct-unique', 'direct-multiple', 'reverse-unique', 'session-cache', 'ambiguous-spaces',
     'ax-fallback', 'bad-ref', 'no-api', 'empty-spaces', 'no-space-id', 'no-display', 'process-frontmost', 'single-window-frontmost',
-    'multiwindow-blocked', 'current-space-inferred', 'cg-ordinal-fallback', 'title-match', 'title-mismatch', 'focus-state-mismatch',
+    'multiwindow-blocked', 'current-space-inferred', 'instance-match', 'instance-mismatch', 'identity-unavailable', 'focus-state-mismatch',
     'isolated-space-bridge', 'ax-cg-id-match', 'ax-focused-window', 'error'
   ])
 
@@ -1099,35 +1104,13 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return id ? state.windowTargets.find((target) => target.id === id) || null : null
   }
 
-  function liveWindowsForTarget(target: WindowTarget, freshOnly = false): { live: LiveWindow | null; candidates: LiveWindow[]; candidateReason: 'ambiguous' | 'title-changed' | null; matchKind: 'reference' | 'exact' | 'similar' | null } {
-    const samePlatform = liveWindows.filter((live) => live.platform === target.platform && (!freshOnly || windowFreshLiveIds.has(live.id)))
-    const byRef = target.lastNativeRef
-      ? samePlatform.find((live) => live.nativeRef === target.lastNativeRef
-        && resolveWindowTargetCandidate(target, [live], { allowSimilar: false }).live === live) || null
-      : null
-    if (byRef) return { live: byRef, candidates: [byRef], candidateReason: null, matchKind: 'reference' }
-    const resolved = resolveWindowTargetCandidate(target, samePlatform, { allowSimilar: windowInventoryCompleteness === 'complete' })
-    if (resolved.live) return { live: resolved.live, candidates: resolved.candidates, candidateReason: null, matchKind: resolved.kind === 'similar' ? 'similar' : 'exact' }
-    if (resolved.candidates.length) {
-      return {
-        live: null,
-        candidates: resolved.candidates,
-        candidateReason: resolved.kind === 'ambiguous' && resolved.score === 1 ? 'ambiguous' : 'title-changed',
-        matchKind: null
-      }
-    }
-    if (target.lastNativeRef) {
-      const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(String(target.lastNativeRef || '').trim())
-      if (parts) {
-        const targetPid = Number(parts[1])
-        if (Number.isInteger(targetPid) && targetPid > 0) {
-          const targetApp = normalizeWindowText(target.appId || target.appName)
-          const byPid = samePlatform.filter((live) => live.pid === targetPid && normalizeWindowText(live.appId || live.appName) === targetApp)
-          if (byPid.length) return { live: null, candidates: byPid, candidateReason: 'title-changed', matchKind: null }
-        }
-      }
-    }
-    return { live: null, candidates: [], candidateReason: null, matchKind: null }
+  function liveWindowsForTarget(target: WindowTarget, freshOnly = false): { live: LiveWindow | null; candidates: LiveWindow[] } {
+    const samePlatform = liveWindows.filter((live) => live.platform === target.platform && (!freshOnly || windowFreshLiveIds.has(live.instanceId)))
+    const exact = samePlatform.find((live) => targetMatchesLiveWindow(target, live)) || null
+    if (exact) return { live: exact, candidates: [exact] }
+    if (freshOnly && windowInventoryCompleteness !== 'complete') return { live: null, candidates: [] }
+    const candidates = samePlatform.filter((live) => windowTargetAppMatches(target, live))
+    return { live: null, candidates }
   }
 
   function windowSlotNumbers(targetId: string): number[] {
@@ -1145,8 +1128,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function makeWindowRow(target: WindowTarget | null, live: LiveWindow | null, ambiguous = false, rowId?: string): WindowRow {
-    const id = rowId || (target ? `target:${target.id}` : `live:${live?.id || ''}`)
-    const title = live?.title || target?.titleLocator || ''
+    const id = rowId || (target ? `target:${target.id}` : `live:${live?.instanceId || ''}`)
+    const title = live?.title || target?.lastKnownTitle || ''
     const appName = live?.appName || target?.appName || ''
     return {
       id,
@@ -1161,7 +1144,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       focused: id === focusedWindowId,
       selected: selectedWindowIds.includes(id),
       unavailable: Boolean(target && !live),
-      cached: Boolean(live && windowListLoaded && !windowFreshLiveIds.has(live.id)),
+      cached: Boolean(live && windowListLoaded && !windowFreshLiveIds.has(live.instanceId)),
       ambiguous
     }
   }
@@ -1172,8 +1155,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const target = windowTargetById(windowCandidateTargetId)
       const ids = new Set(windowCandidateLiveIds)
       return liveWindows
-        .filter((live) => ids.has(live.id))
-        .map((live) => makeWindowRow(target, live, false, `candidate:${live.id}`))
+        .filter((live) => ids.has(live.instanceId))
+        .map((live) => makeWindowRow(target, live, false, `candidate:${live.instanceId}`))
         .sort(compareWindowRowsByApplication)
     }
     const targets = state.windowTargets
@@ -1181,11 +1164,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     const usedLiveIds = new Set<string>()
     const savedRows = targets.map((target) => {
       const resolved = liveWindowsForTarget(target)
-      if (resolved.live) usedLiveIds.add(resolved.live.id)
+      if (resolved.live) usedLiveIds.add(resolved.live.instanceId)
       return makeWindowRow(target, resolved.live, resolved.candidates.length > 1)
     })
     const liveRows = liveWindows
-      .filter((live) => !usedLiveIds.has(live.id))
+      .filter((live) => !usedLiveIds.has(live.instanceId))
       .map((live) => makeWindowRow(null, live))
     const keyword = normalizeWindowText(state.windowSearch)
     const rows = [...savedRows, ...liveRows].sort(compareWindowRowsByApplication)
@@ -1233,12 +1216,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       }
     }
     if (previous.live) {
-      const liveMatch = liveWindows.find((live) => live.platform === previous.live!.platform
-        && live.appId === previous.live!.appId
-        && normalizeWindowText(live.title) === normalizeWindowText(previous.live!.title))
+      const liveMatch = liveWindows.find((live) => live.instanceId === previous.live!.instanceId)
       if (liveMatch) {
-        const liveRow = rows.find((row) => row.live?.id === liveMatch.id)
-        focusedWindowId = liveRow?.id || `live:${liveMatch.id}`
+        const liveRow = rows.find((row) => row.live?.instanceId === liveMatch.instanceId)
+        focusedWindowId = liveRow?.id || `live:${liveMatch.instanceId}`
         if (windowActionsOpen) windowActionTargetId = focusedWindowId
         return
       }
@@ -1258,8 +1239,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       platform: live.platform,
       appId: live.appId,
       appName: live.appName,
-      titleLocator: live.title,
-      titleHistory: [],
+      lastKnownTitle: live.title,
+      lastInstanceId: live.instanceId,
       lastNativeRef: live.nativeRef,
       favorite,
       pinned: false,
@@ -1306,21 +1287,24 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const result = await platform.windows.list()
       if (requestId !== windowRequestId) return 'superseded'
       windowCapability = result.capability
-      const freshWindows = filterJumpableLiveWindows(result.windows.map((window) => ({ ...window })))
+      const freshWindows = filterIdentifiedLiveWindows(result.windows.map((window) => ({ ...window })))
       const completeness = result.completeness === 'partial' ? 'partial' : 'complete'
       if (completeness === 'partial') {
-        const freshIds = new Set(freshWindows.map((window) => window.id))
-        liveWindows = [...freshWindows, ...liveWindows.filter((window) => !freshIds.has(window.id))]
+        const freshIds = new Set(freshWindows.map((window) => window.instanceId))
+        liveWindows = [...freshWindows, ...liveWindows.filter((window) => !freshIds.has(window.instanceId))]
       } else {
         liveWindows = freshWindows
       }
       windowInventoryCompleteness = completeness
-      windowFreshLiveIds = new Set(freshWindows.map((window) => window.id))
+      windowFreshLiveIds = new Set(freshWindows.map((window) => window.instanceId))
       windowListLoaded = true
       windowCacheUpdatedAt = Date.now()
       const candidateIds = windowFreshLiveIds
       windowCandidateLiveIds = windowCandidateLiveIds.filter((id) => candidateIds.has(id))
-      if (!windowCandidateLiveIds.length) windowCandidateTargetId = null
+      if (!windowCandidateLiveIds.length) {
+        windowCandidateTargetId = null
+        windowCandidateRestoreFocusId = null
+      }
       rematchFocusedWindowAfterRefresh(previousFocus)
       return completeness === 'partial' ? 'loaded-partial' : 'loaded-complete'
     } catch {
@@ -1345,8 +1329,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
 
   function clearWindowCandidates() {
     if (!windowCandidateTargetId && !windowCandidateLiveIds.length) return false
+    const restoreFocusId = windowCandidateRestoreFocusId
     windowCandidateTargetId = null
     windowCandidateLiveIds = []
+    windowCandidateRestoreFocusId = null
+    if (restoreFocusId) focusedWindowId = restoreFocusId
     normalizeFocusedWindow(false)
     notify()
     return true
@@ -1378,7 +1365,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (reasonCode === 'space-unbound-multiwindow') return 'space-unbound-multiwindow'
     if (reasonCode === 'space-ambiguous') return 'space-ambiguous'
     if (reasonCode === 'space-switch-timeout') return 'space-switch-timeout'
-    if (reasonCode === 'target-title-changed') return 'target-title-changed'
+    if (reasonCode === 'instance-mismatch') return 'instance-mismatch'
+    if (reasonCode === 'identity-unavailable') return 'identity-unavailable'
     if (operation === 'always-on-top' && outcome === 'unsupported') return 'topmost-unsupported'
     if (operation === 'always-on-top' && outcome === 'failed') return 'topmost-failed'
     if (outcome === 'focus-denied') return 'focus-denied'
@@ -1483,33 +1471,31 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function clearStaleWindowNativeRef(target: WindowTarget) {
-    if (!target.lastNativeRef) return
+    if (!target.lastNativeRef && !target.lastInstanceId) return
+    target.lastInstanceId = null
     target.lastNativeRef = null
     target.updatedAt = Date.now()
     save()
   }
 
-  function rememberVerifiedWindowTarget(target: WindowTarget, live: LiveWindow, automatic: boolean) {
-    const titleChanged = normalizeWindowText(target.titleLocator) !== normalizeWindowText(live.title)
+  function rememberVerifiedWindowTarget(target: WindowTarget, live: LiveWindow, verifiedInstanceId: string) {
+    if (!verifiedInstanceId || verifiedInstanceId !== live.instanceId) return false
+    const titleChanged = target.lastKnownTitle !== live.title
     const appChanged = target.appId !== live.appId || target.appName !== live.appName
-    if (!titleChanged && !appChanged && target.lastNativeRef === live.nativeRef) return
-    if (titleChanged) {
-      const currentTitle = normalizeWindowText(live.title)
-      target.titleHistory = rememberWindowTargetTitle(target, live.title)
-        .filter((title) => normalizeWindowText(title) !== currentTitle)
-        .slice(0, 4)
-      target.titleLocator = live.title
-    }
+    const instanceChanged = target.lastInstanceId !== verifiedInstanceId || target.lastNativeRef !== live.nativeRef
+    if (!titleChanged && !appChanged && !instanceChanged) return true
+    target.lastKnownTitle = live.title
     target.appId = live.appId
     target.appName = live.appName
+    target.lastInstanceId = verifiedInstanceId
     target.lastNativeRef = live.nativeRef
     target.updatedAt = Date.now()
     save()
-    if (automatic && titleChanged) setMessage('已自动识别新窗口并更新固定绑定')
+    return true
   }
 
   async function activateLiveWindow(live: LiveWindow, target: WindowTarget | null, attempt: WindowActivationAttempt): Promise<WindowActivationOutcome> {
-    if (attempt.trace && !attempt.trace.targetTitle) attempt.trace.targetTitle = target?.titleLocator || live.title
+    if (attempt.trace && !attempt.trace.targetTitle) attempt.trace.targetTitle = target?.lastKnownTitle || live.title
     const phase: WindowEnvironmentPhase = attempt.nativeAttemptCount === 0 ? 'pre-initial' : 'pre-retry'
     attempt.nativeAttemptCount += 1
     attempt.nativeReasonCode = undefined
@@ -1544,14 +1530,19 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
               ? 'unsupported'
               : 'failed')
     if (result.outcome === 'activated') {
-      windowFreshLiveIds.add(live.id)
-      if (target) {
-        target.lastNativeRef = live.nativeRef
-        target.updatedAt = Date.now()
-        save()
+      const legacyInstance = live.instanceId.includes(':legacy:')
+      if (!result.instanceId || (!legacyInstance && result.instanceId !== live.instanceId)) {
+        attempt.nativeReasonCode = 'identity-unavailable'
+        appendWindowOperationTrace(attempt, 'native', 'unavailable')
+        setMessage(windowActivationDiagnosticMessages['identity-unavailable'])
+        return 'failed'
       }
+      const verifiedLive = legacyInstance ? { ...live, id: result.instanceId, instanceId: result.instanceId } : live
+      windowFreshLiveIds.add(result.instanceId)
+      if (target) rememberVerifiedWindowTarget(target, verifiedLive, result.instanceId)
       windowCandidateTargetId = null
       windowCandidateLiveIds = []
+      windowCandidateRestoreFocusId = null
       setMessage(attempt.operation === 'always-on-top' ? '页面已置顶并前置' : '窗口已展开并前置')
       const hidden = await hideAppWindow()
       if (!hidden) {
@@ -1612,23 +1603,16 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   async function activateWindowTargetWithRecovery(target: WindowTarget, attempt: WindowActivationAttempt): Promise<boolean> {
-    if (attempt.trace && !attempt.trace.targetTitle) attempt.trace.targetTitle = target.titleLocator
+    if (attempt.trace && !attempt.trace.targetTitle) attempt.trace.targetTitle = target.lastKnownTitle
     const focusRowId = `target:${target.id}`
     const platformId = target.platform
-    const cachedLive = liveWindowFromPersistedTarget(target)
+    const cachedLive = liveWindowsForTarget(target).live || liveWindowFromPersistedTarget(target)
     if (cachedLive) {
       appendWindowOperationTrace(attempt, 'cache', 'ok')
       const outcome = await activateLiveWindow(cachedLive, target, attempt)
       if (outcome === 'activated') return true
       if (outcome !== 'not-found') return finishActivationOutcome(attempt, outcome, focusRowId, platformId)
-    } else {
-      appendWindowOperationTrace(attempt, 'cache', 'skipped')
-      const initial = await resolveAndActivateWindowTargetForAttempt(target, attempt)
-      if (initial.kind === 'activated') return true
-      if (initial.kind === 'ambiguous') return finishWindowActivation(attempt, 'resolve', 'ambiguous-target', 'blocking', { focusRowId: focusedWindowId, platformId })
-      if (initial.kind === 'rebind-required') return finishWindowActivation(attempt, 'resolve', 'target-title-changed', 'blocking', { focusRowId: focusedWindowId, platformId })
-      if (initial.kind === 'activation-failed' && initial.outcome !== 'not-found') return finishActivationOutcome(attempt, initial.outcome, focusRowId, platformId)
-    }
+    } else appendWindowOperationTrace(attempt, 'cache', 'skipped')
 
     const refreshCompleteness = await refreshForWindowActivation(attempt, focusRowId, platformId)
     if (!refreshCompleteness) return false
@@ -1642,7 +1626,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       return finishWindowActivation(attempt, 'resolve', 'target-closed', 'accepted', { focusRowId, platformId })
     }
     if (retried.kind === 'ambiguous') return finishWindowActivation(attempt, 'resolve', 'ambiguous-target', 'blocking', { focusRowId: focusedWindowId, platformId })
-    if (retried.kind === 'rebind-required') return finishWindowActivation(attempt, 'resolve', 'target-title-changed', 'blocking', { focusRowId: focusedWindowId, platformId })
+    if (retried.kind === 'rebind-required') return finishWindowActivation(attempt, 'resolve', 'rebind-required', 'blocking', { focusRowId: focusedWindowId, platformId })
     return finishActivationOutcome(attempt, retried.outcome, focusRowId, platformId)
   }
 
@@ -1651,22 +1635,18 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (resolved.live) {
       appendWindowOperationTrace(attempt, 'resolve', 'ok')
       const outcome = await activateLiveWindow(resolved.live, target, attempt)
-      if (outcome === 'activated' && normalizeWindowText(target.titleLocator) !== normalizeWindowText(resolved.live.title)) {
-        rememberVerifiedWindowTarget(target, resolved.live, true)
-      }
       return outcome === 'activated' ? { kind: 'activated' } : { kind: 'activation-failed', outcome }
     }
     if (resolved.candidates.length) {
-      const rebindRequired = resolved.candidateReason === 'title-changed'
-      appendWindowOperationTrace(attempt, 'resolve', rebindRequired ? 'not-found' : 'ambiguous')
+      appendWindowOperationTrace(attempt, 'resolve', 'not-found')
+      windowCandidateRestoreFocusId = `target:${target.id}`
       windowCandidateTargetId = target.id
-      windowCandidateLiveIds = resolved.candidates.map((window) => window.id)
-      focusedWindowId = `candidate:${resolved.candidates[0].id}`
+      windowCandidateLiveIds = resolved.candidates.map((window) => window.instanceId)
+      focusedWindowId = `candidate:${resolved.candidates[0].instanceId}`
       windowActionsOpen = false
       windowActionTargetId = null
-      setMessage(windowActivationDiagnosticMessages[rebindRequired ? 'target-title-changed' : 'ambiguous-target'])
-      if (rebindRequired) return { kind: 'rebind-required' }
-      return { kind: 'ambiguous' }
+      setMessage(windowActivationDiagnosticMessages['rebind-required'])
+      return { kind: 'rebind-required' }
     }
     appendWindowOperationTrace(attempt, 'resolve', 'not-found')
     setMessage('未找到匹配窗口，正在进行实时重扫。')
@@ -1674,17 +1654,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function liveWindowAfterRefresh(live: LiveWindow): { live: LiveWindow | null; ambiguous: boolean } {
-    const freshWindows = liveWindows.filter((candidate) => windowFreshLiveIds.has(candidate.id))
-    const exact = freshWindows.find((candidate) => candidate.platform === live.platform && candidate.nativeRef === live.nativeRef) || null
-    if (exact) return { live: exact, ambiguous: false }
-    const candidates = freshWindows.filter((candidate) => candidate.platform === live.platform
-      && candidate.appId === live.appId
-      && normalizeWindowText(candidate.title) === normalizeWindowText(live.title))
-    return { live: candidates.length === 1 ? candidates[0] : null, ambiguous: candidates.length > 1 }
+    const exact = liveWindows.find((candidate) => windowFreshLiveIds.has(candidate.instanceId) && candidate.instanceId === live.instanceId) || null
+    return { live: exact, ambiguous: false }
   }
 
   async function activateLiveWindowWithRecovery(live: LiveWindow, target: WindowTarget | null, attempt: WindowActivationAttempt): Promise<boolean> {
-    const focusRowId = target ? `target:${target.id}` : `live:${live.id}`
+    const focusRowId = target ? `target:${target.id}` : `live:${live.instanceId}`
     const outcome = await activateLiveWindow(live, target, attempt)
     if (outcome === 'activated') return true
     if (outcome !== 'not-found') return finishActivationOutcome(attempt, outcome, focusRowId, live.platform)
@@ -1713,9 +1688,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (attempt.trace) attempt.trace.targetTitle = live.title
     const activated = await activateLiveWindowWithRecovery(live, target, attempt)
     if (!activated) return false
-    rememberVerifiedWindowTarget(target, live, false)
     windowCandidateTargetId = null
     windowCandidateLiveIds = []
+    windowCandidateRestoreFocusId = null
     return true
   }
 
@@ -1755,14 +1730,17 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
 
   function liveWindowFromPersistedTarget(target: WindowTarget): LiveWindow | null {
     if (!target.lastNativeRef) return null
+    const macRef = target.platform === 'darwin' ? /^(\d{1,12}):0:(\d{1,12})$/.exec(target.lastNativeRef) : null
+    const instanceId = target.lastInstanceId || (macRef ? `darwin:${macRef[1]}:${macRef[2]}` : `${target.platform}:legacy:${target.lastNativeRef}`)
     return {
-      id: `${target.platform}:${target.lastNativeRef}`,
+      id: instanceId,
+      instanceId,
       platform: target.platform,
       nativeRef: target.lastNativeRef,
       appId: target.appId,
       appName: target.appName,
       pid: 0,
-      title: target.titleLocator,
+      title: target.lastKnownTitle,
       minimized: false,
       focused: false
     }
@@ -1925,7 +1903,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       if (!target.favorite) {
         pruneOrphanWindowTargets()
         if (!windowTargetById(target.id) && row.live) {
-          remapWindowRowIdentity(row.id, `live:${row.live.id}`)
+          remapWindowRowIdentity(row.id, `live:${row.live.instanceId}`)
         }
       }
       save()
@@ -1966,7 +1944,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         ? { ...item, pinned: pin, updatedAt: Date.now() }
         : item)
       if (pin && !row.target) remapWindowRowIdentity(row.id, `target:${target.id}`)
-      if (!pin && row.live) liveFocusByTargetId.set(target.id, `live:${row.live.id}`)
+      if (!pin && row.live) liveFocusByTargetId.set(target.id, `live:${row.live.instanceId}`)
       changed += 1
     }
     if (!changed) {
@@ -1998,11 +1976,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     windowDraft = {
       mode,
       targetId: target?.id || null,
-      sourceWindowId: source?.id || null,
+      sourceWindowId: source?.instanceId || null,
       alias: target?.alias || source?.title || '',
       appName: target?.appName || source?.appName || '',
       appId: target?.appId || source?.appId || '',
-      titleLocator: target?.titleLocator || source?.title || '',
+      lastKnownTitle: source?.title || target?.lastKnownTitle || '',
       activeField: 'alias'
     }
     windowActionsOpen = false
@@ -2012,7 +1990,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return true
   }
 
-  function updateWindowDraft(input: Partial<Pick<WindowDraft, 'alias' | 'titleLocator' | 'activeField'>>) {
+  function updateWindowDraft(input: Partial<Pick<WindowDraft, 'alias' | 'activeField'>>) {
     if (!windowDraft) return
     windowDraft = { ...windowDraft, ...input }
     notify()
@@ -2026,7 +2004,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       notify()
       return true
     }
-    windowDraft = { ...windowDraft, activeField: windowDraft.activeField === 'alias' ? 'titleLocator' : 'alias' }
+    windowDraft = { ...windowDraft, activeField: 'alias' }
     windowFocusRequestId += direction
     notify()
     return true
@@ -2035,28 +2013,31 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   function saveWindowDraft() {
     if (!windowDraft) return false
     const alias = windowDraft.alias.trim()
-    const titleLocator = windowDraft.titleLocator.trim()
-    if (!alias || !titleLocator || !windowDraft.appId.trim()) {
-      setMessage('别名、应用和标题定位条件不能为空')
+    if (!alias || !windowDraft.appId.trim()) {
+      setMessage('别名和应用不能为空')
       return false
     }
     const existing = windowTargetById(windowDraft.targetId)
-    const source = liveWindows.find((live) => live.id === windowDraft?.sourceWindowId) || null
+    const source = liveWindows.find((live) => live.instanceId === windowDraft?.sourceWindowId) || null
     const now = Date.now()
-    const target: WindowTarget = existing
+    const target: WindowTarget | null = existing
       ? {
           ...existing,
           alias,
-          titleLocator,
-          titleHistory: normalizeWindowText(existing.titleLocator) === normalizeWindowText(titleLocator) ? existing.titleHistory || [] : [],
+          lastKnownTitle: source?.title || existing.lastKnownTitle,
           appId: windowDraft.appId.trim(),
           appName: windowDraft.appName.trim() || windowDraft.appId.trim(),
+          lastInstanceId: source?.instanceId || existing.lastInstanceId,
           lastNativeRef: source?.nativeRef || existing.lastNativeRef,
           updatedAt: now
         }
       : source
-        ? { ...createWindowTarget(source, alias), titleLocator, appId: windowDraft.appId.trim(), appName: windowDraft.appName.trim() || windowDraft.appId.trim(), updatedAt: now }
-        : { id: `window:${now}:${Math.random().toString(36).slice(2, 10)}`, alias, platform: currentWindowPlatform() || 'darwin', appId: windowDraft.appId.trim(), appName: windowDraft.appName.trim() || windowDraft.appId.trim(), titleLocator, titleHistory: [], lastNativeRef: null, favorite: true, pinned: false, createdAt: now, updatedAt: now }
+        ? { ...createWindowTarget(source, alias), appId: windowDraft.appId.trim(), appName: windowDraft.appName.trim() || windowDraft.appId.trim(), updatedAt: now }
+        : null
+    if (!target) {
+      setMessage('无法为缺少稳定实例身份的窗口创建目标')
+      return false
+    }
     state.windowTargets = existing
       ? state.windowTargets.map((item) => item.id === target.id ? target : item)
       : [...state.windowTargets, target]
@@ -2064,7 +2045,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     windowDraft = null
     windowFocusRequestId += 1
     save()
-    setMessage('已保存 EyPc 窗口别名与定位条件')
+    setMessage('已保存 EyPc 窗口别名')
     return true
   }
 
@@ -8458,6 +8439,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       if (windowCandidateTargetId) {
         windowCandidateTargetId = null
         windowCandidateLiveIds = []
+        windowCandidateRestoreFocusId = null
       }
       normalizeFocusedWindow(false)
       save()

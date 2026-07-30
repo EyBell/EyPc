@@ -22,6 +22,7 @@
 | WJ-16 | Add guarded session Space fast path and complete/partial inventory retention | source/type/focused-tests-verified / host-latency-pending |
 | WJ-17 | Add restart-safe logical-window recognition and success-only automatic rebind | source/type/focused-tests-verified / restart-host-pending |
 | WJ-18 | Stop cross-API CG/AX title equality from falsely reporting a stable window as changed | static-verified / host-acceptance-pending |
+| WJ-19 | Make native window-instance identity authoritative and require explicit replacement confirmation | implemented / verification-pending |
 
 ## Execution Journal
 
@@ -78,3 +79,7 @@
 - 2026-07-29 — WJ-18 user correction identifies a new false-positive gate introduced after the WJ-15 exact mapping: the selected AX element already mapped to the saved PID/CG window ID, but its `AXTitle` was still required to equal the saved Core Graphics title. Because the APIs may expose different strings for one unchanged window, Runtime surfaced `target-title-changed` even without a real target change.
 - 2026-07-29 — WJ-18 now revalidates title only against the current same-PID/same-CG-ID `kCGWindowName`, fixes the aggregate JXA whitespace normalizer, keeps app identity plus exact AX→CG/focused-window verification, and returns a generic failure when same-source title evidence is unavailable. Bridge revision is `wj18-cg-title-source`; no state/UI protocol or persistence shape changed.
 - 2026-07-29 — WJ-18 static closeout passes: both preload files and both generated activation scripts parse, the mirrors are byte-identical, the bridge revision appears in the two preloads plus Renderer platform constant, private synchronous IPC search is empty, scoped project/CodeNote diff checks pass, and both repositories' changed Markdown code links audit cleanly. Tests, typecheck, build, dist preparation, uTools reload, screenshots and native activation remain deliberately unrun and user-owned.
+- 2026-07-30 — WJ-19 replaces WJ-17 automatic title recovery and WJ-18 title equality with `WindowInstanceId`. State migration keeps only `lastKnownTitle`; Runtime identity paths use `instanceId`; one bounded complete refresh exposes all same-app candidates for manual confirmation, while a partial inventory cannot clear binding.
+- 2026-07-30 — Native bridge revision is `wj19-native-instance-id`. Windows now revalidates actionable HWND + owner/app and returns the verified instance ID. macOS list/activate/close require PID + CGWindowID and exact AX mapping/readback; title/ordinal fallbacks and title environment gates are removed. Canonical/public preload files are byte-identical.
+- 2026-07-30 — WJ-19 follow-up removes title-content membership filters as well: actionable native rows remain listed across empty/`Window`/host-like title changes, with application-name display fallback. Runtime deduplicates only by `instanceId`; existing tests were updated as unexecuted contracts.
+- 2026-07-30 — Existing domain/state, platform, Runtime and diagnostics UI tests were rewritten as WJ-19 contracts without execution. Typecheck, build, uTools reload, real window activation and visual acceptance remain `未校验，待用户验收`.

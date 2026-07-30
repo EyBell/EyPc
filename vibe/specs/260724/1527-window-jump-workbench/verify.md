@@ -2,7 +2,15 @@
 
 ## Current Status
 
-`wj18-cg-title-source / static-verified; host-acceptance-pending` — WJ-18 corrects the false `target-title-changed` report on an unchanged macOS target by removing CG-title-to-AXTitle equality from the exact mapping path. The saved title is now compared only with the current same-PID/same-CG-ID `kCGWindowName`; exact `_AXUIElementGetWindow` and `AXFocusedWindow` checks remain unchanged. WJ-17's 21/21 domain/state and 17/17 Runtime results remain historical evidence. WJ-18 tests/typecheck/build/uTools/native activation were deliberately not run; a normal preload reload and real stable-window retry remain required.
+`wj19-native-instance-id / implemented; verification-pending` — current source separates logical targets from native window instances and removes title-derived identity/recovery. Existing tests were updated as unexecuted contracts. Per the WJ-19 boundary, tests, typecheck, build, uTools reload, native activation and visual acceptance were not run and remain user-owned.
+
+## WJ-19 Unexecuted Contract Evidence
+
+- Domain/state contracts require `LiveWindow.instanceId`, match the same instance despite arbitrary title change, reject equal app/title with a different instance, migrate legacy `titleLocator` into `lastKnownTitle`, discard title history and defer legacy instance backfill until bridge-verified success.
+- Platform source contracts cover bridge `wj19-native-instance-id`, Windows actionable HWND owner/app verification and verified instance return, macOS CG list identity, AX fallback rows with mandatory `_AXUIElementGetWindow`, exact activate/close mapping and the absence of title/ordinal gates. Canonical and public preload bytes currently compare equal.
+- Runtime contracts cover one bounded refresh, explicit rebind for all same-app candidates including a sole candidate, success-only atomic instance/native/app/title update, partial-inventory retention, complete no-candidate clearing and Escape focus return.
+- UI contracts cover the listbox status text “原窗口实例已失效，标题仅供人工辨认”, Enter/Escape instructions and the read-only current/last title field.
+- These are source contracts only: no test process, semantic typecheck, build, preload syntax execution, uTools runtime, real window jump or screenshot was executed for WJ-19.
 
 ## WJ-08 Targeted Evidence
 
@@ -16,7 +24,7 @@
 
 - `public/plugin.json` parses as JSON, contains exactly ten `eypc-window-slot-*` entries, and each slot feature sets `mainHide: true`.
 - The runtime-validator source rejects a missing window-jump feature, any missing stable slot label, or a slot without `mainHide`.
-- macOS `listWindows` prefers CG titled results and falls back to `MACOS_AX_WINDOW_LIST_SCRIPT` when CG is empty/failed so refresh cannot silently leave only favorites/slots.
+- macOS `listWindows` prefers CG instance rows and falls back to `MACOS_AX_WINDOW_LIST_SCRIPT` when CG is empty/failed; absent titles use the application name for display, and title content never decides whether a stable instance is actionable.
 - The CG reference is cast before deep-unwrapping; both macOS paths exclude host/background/non-regular application surfaces. Windows requires a live visible non-cloaked root handle and validates extended style plus root-owner/last-active-popup eligibility before exposing an HWND.
 - `WindowTarget.pinned` normalizes from local state independently of favorite/slot retention; Runtime sorts pinned rows first and all remaining saved/live rows globally by application. The native pin button exposes visible state and `aria-pressed`; multi-target pin sets every selected row.
 - The explicit `windows.refresh` command clears persisted `windowSearch` before requesting inventory; background cache-miss and close/lifecycle refreshes retain it.
@@ -172,12 +180,12 @@ Residual host gates:
 
 ## Required User-owned Validation
 
-- WJ-16 production build, dist preparation, and uTools manifest/runtime gates; focused source/unit/type checks already pass.
-- WJ-17 restart path: reboot or recreate one fixed Rider/AiTools window so PID/native reference changes, invoke its slot without reopening the editor, and confirm the correct unique window activates and the next invocation uses the new persisted reference. Repeat with two similar browser windows and require explicit choice rather than automatic substitution.
-- WJ-18 stable-reference path: after a full uTools preload reload, invoke the same unchanged macOS target that previously produced “目标窗口标题或所属应用已变化”. It must activate without rebind; then deliberately change the CG-visible title and confirm only that real same-source change can produce `target-title-changed` or conservative candidate recovery.
+- WJ-19: reload preload and confirm `bridge=wj19-native-instance-id`; bind one browser window, switch tabs repeatedly and confirm the slot/favorite still targets that same OS window. Close it, verify even one same-app candidate requires Enter, verify Escape restores the original target row, then confirm successful choice updates binding. Repeat with equal-title sibling windows and require no automatic match.
+- WJ-19 platform gates: Windows must reject a recycled/non-actionable HWND or owner mismatch. macOS must reject any target without a positive CGWindowID or exact AX→CG mapping and must finish only when `AXFocusedWindow` maps to the requested CG ID.
+- WJ-16 historical production/build evidence remains historical only; WJ-19 typecheck, build, dist preparation and uTools manifest/runtime gates are all unverified.
 - Silent slot jump / missing-target workbench / manual Tab load (no auto-scan).
 - With a nonempty window query, toolbar load/refresh and `Ctrl+R` clear the query and reveal the refreshed complete list; an automatic cache-miss rescan does not clear it.
-- macOS: Screen Recording + Accessibility; refresh prefers CG for other Spaces/displays and falls back to AX current-Space list when CG has no titled windows; verify exact AX→CG mapping/focus on additional applications, compatibility title/ordinal ambiguity when private mapping is unavailable, AX close, and confirm-gated force terminate. “页面置顶” must not claim persistent third-party success.
+- macOS: Screen Recording + Accessibility; refresh prefers CG for other Spaces/displays and falls back to exact-CG-mapped AX current-Space rows when CG is unavailable; verify title changes and absent titles do not change instance identity, missing exact AX→CG mapping blocks, AX close stays exact, and force terminate remains confirmation-gated. “页面置顶” must not claim persistent third-party success.
 - Windows: EnumWindows across virtual desktops/displays; cloaked shells absent; `WM_CLOSE` then confirm kill.
 - Windows: browser/helper/native child handles are absent while each real main browser window remains; pin/unpin and application ordering persist across a plugin reopen.
 - `Space` toggles multi-select and advances; Esc clears selection before closing the action panel; right-click / `c-→` opens single vs multi action surface.
@@ -188,4 +196,4 @@ Residual host gates:
 
 ## Verification Boundary
 
-WJ-15 did run the focused suites, typecheck/production build/uTools runtime validator, isolated privacy-safe probes, and two real AiTools off-Space global-slot activations. WJ-16 ran preload syntax/mirror/diff checks, an initial semantic type checkpoint, three focused Runtime cases, platform and diagnostics UI suites, plus one broader non-green Runtime file. WJ-17 ran domain/state 21/21 and Window activation diagnostics 17/17; the then-current typecheck was blocked only by unrelated concurrent Float work. WJ-18 is limited to source inspection, preload syntax/mirror/revision/static-contract checks, diff checks and documentation audits; it does not claim any test, typecheck, build, uTools reload, native activation or visual acceptance. All real-host WJ-18 behavior remains `未校验，待用户验收`.
+WJ-15 did run the focused suites, typecheck/production build/uTools runtime validator, isolated privacy-safe probes, and two real AiTools off-Space global-slot activations. WJ-16 ran preload syntax/mirror/diff checks, an initial semantic type checkpoint, three focused Runtime cases, platform and diagnostics UI suites, plus one broader non-green Runtime file. WJ-17 ran domain/state 21/21 and Window activation diagnostics 17/17; WJ-18 ran static-only checks. Those results are historical and do not validate the superseding WJ-19 contract. WJ-19 intentionally does not run tests, typecheck, build, dist preparation, uTools reload, native activation or visual acceptance; all such behavior remains `未校验，待用户验收`.

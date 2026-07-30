@@ -5,7 +5,7 @@ import { normalizeShortcutId } from './shortcuts'
 import { normalizeToolPreviewPrefs } from './toolPreview'
 import { normalizeFavoriteGraph } from './favorites'
 import { createDefaultCodexState, normalizeCodexState } from './codex'
-import { createWindowSlots, normalizeWindowText, type WindowPlatform, type WindowSlot, type WindowTarget } from './windows'
+import { createWindowSlots, type WindowPlatform, type WindowSlot, type WindowTarget } from './windows'
 
 const VALID_TABS = new Set<AppTabId>(['ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings'])
 const TAB_IDS: AppTabId[] = ['ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings']
@@ -95,20 +95,17 @@ function normalizeWindowTargets(value: unknown, now: number): WindowTarget[] {
     const platform = windowPlatform(source.platform)
     const appId = stringValue(source.appId).trim()
     const appName = stringValue(source.appName).trim()
-    const titleLocator = stringValue(source.titleLocator).trim()
-    if (!id || ids.has(id) || !platform || !(appId || appName) || !titleLocator) continue
+    const lastKnownTitle = stringValue(source.lastKnownTitle || source.titleLocator).trim()
+    if (!id || ids.has(id) || !platform || !(appId || appName)) continue
     ids.add(id)
     targets.push({
       id,
-      alias: stringValue(source.alias).trim() || titleLocator,
+      alias: stringValue(source.alias).trim() || lastKnownTitle || appName || appId,
       platform,
       appId: appId || appName,
       appName: appName || appId,
-      titleLocator,
-      titleHistory: strings(source.titleHistory)
-        .filter((title) => normalizeWindowText(title) !== normalizeWindowText(titleLocator))
-        .filter((title, index, all) => all.findIndex((candidate) => normalizeWindowText(candidate) === normalizeWindowText(title)) === index)
-        .slice(0, 4),
+      lastKnownTitle,
+      lastInstanceId: stringValue(source.lastInstanceId).trim() || null,
       lastNativeRef: stringValue(source.lastNativeRef).trim() || null,
       favorite: source.favorite !== false,
       pinned: source.pinned === true,
