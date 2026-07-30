@@ -5,7 +5,7 @@ Date: 2026-07-30
 
 ## Review Target
 
-- Requirement: [RAW-116–129](raw-requirement.md#L1)
+- Requirement: [RAW-116–130](raw-requirement.md#L1)
 - Plan: [plan.md](plan.md#L1)
 - Implementation: preload 直接证据/原生 unread/Activity generation 与 mode-aware latest-Turn 复核、Controller 单一 active-exit 转换器和行级库存隔离、Domain 明确停止与原生 unread 投影；quota-auto 普通窗口仲裁、直接外观持久化和结构边界静态回归同步收口。
 - Sidecar: 主线程。
@@ -22,9 +22,10 @@ Date: 2026-07-30
 | 残留矩阵专项 | `61 / 61` pass，`5 / 5` 文件通过；覆盖直存直渲外观、任一普通窗口归零切 Spark、Controller 无暂态配色覆盖、MQTT media 边界与 Quick Jump 函数边界 |
 | TypeScript | `pnpm run typecheck` pass |
 | 正式构建 | `pnpm run build` pass；含 Vite build、uTools runtime preparation 与 `validate:utools` |
-| Preload | canonical/public 两份 `node --check` pass，且字节一致；`git diff --check` pass |
+| Preload | RAW-129 基线两份 `node --check` pass 且当时字节一致；RAW-130 当前仅做静态检查：canonical/public Codex 段精确一致、私有 sequence 未进入公开 Activity entry、`git diff --check` pass。两份文件的其它 Window Jump 差异属于并行既有改动，未覆盖 |
 | 文档引用 | changed Markdown 全量 `audit_code_links.py` pass；`Code link audit: OK` |
 | 完整仓库 | `633 / 633` pass，`53 / 53` 文件通过；无“既有/已知失败”留存 |
+| RAW-130 增量 | 实现与 Bridge 回归合同已写；链接审计和上述静态边界检查通过。依项目门禁未执行测试、typecheck、build、preload 语法或真实 uTools 验收 |
 
 ## Full Matrix Findings
 
@@ -56,6 +57,7 @@ Date: 2026-07-30
 - P1: 已修复——active 退出可把相同旧 inventory completed 无条件标成 targeted completion；现只接受缓存相对 baseline 前进或已有 confirmed provenance。
 - P1: 已修复——冷启动原生 unread 已为 true 时，库存投影也已为 true，旧“值变化”判断漏掉首次 Turn 复核；现用会话期原生观测水位只唤醒首个 true，后续轮询不重启。
 - P1: 已修复——confirmed terminal 由 delta 调用方额外传入，full snapshot 同 revision 佐证仍会被纯转换器压回 inProgress；现转换器直接读取 candidate provenance，两条入口零差异。
+- P1: 已实现、未执行——较早的 Desktop idle `activity-event` 可在较新的 App Server active 后因 read-state/inventory 重放再次撤销 `app-server-live`；现两种真实事件共享进程内单调 sequence，只有严格后到的 Desktop 非 active 才能撤销，并在 full inventory 中保留私有水位。
 - P1: 已修复——`codexNewThread` 只检查周额度归零且优先展示周读数，违反“任一已返回普通窗口为 0 即切 Spark”和普通 5 小时优先合同。
 - P2: 已修复——3 条历史外观测试、3 个 Runtime 配色 Action 与 Controller 暂态覆盖仍携带 RAW-071 已废止的本地颜色/对比度/配对预览门禁。
 - P2: 已修复——MQTT media 正则对等价 CSS 换行敏感，Quick Jump 否定正则跨越函数边界命中后续合法 `app.hide`；两者均改为结构边界断言。

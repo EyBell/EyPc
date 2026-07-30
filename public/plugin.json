@@ -128,7 +128,7 @@
     },
     {
       "code": "eypc-codex-completed-unread",
-      "explain": "打开并标记第一个 Codex 已完成未读任务",
+      "explain": "打开第一个 Codex 已完成未读任务",
       "mainHide": true,
       "cmds": ["Codex已完成未读", "打开第一个 Codex 已完成未读", "Codex 未读完成"]
     },

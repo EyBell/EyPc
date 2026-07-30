@@ -1691,7 +1691,7 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
-  it('lets a fresh App Server active event outrank a replayed interrupted Desktop idle snapshot', async () => {
+  it('lets a fresh App Server active event outrank an older interrupted Desktop idle event across read-state and inventory replay', async () => {
     const child = new FakeCodexProcess()
     child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
     const desktopSocket = new FakeCodexDesktopSocket()
@@ -1705,6 +1705,24 @@ describe('Codex App Server preload bridge', () => {
       statusAuthority: 'desktop-live',
       lastTurnStatus: 'interrupted'
     })
+
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: FIXED_THREAD_IDS[3],
+        change: {
+          type: 'patches',
+          baseRevision: 1,
+          revision: 2,
+          patches: [{ op: 'replace', path: ['threadRuntimeStatus', 'type'], value: 'idle' }]
+        }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
     child.interruptedTurnIds.delete(FIXED_THREAD_IDS[3])
     child.inProgressTurnIds.add(FIXED_THREAD_IDS[3])
@@ -1724,6 +1742,29 @@ describe('Codex App Server preload bridge', () => {
 
     desktopSocket.push({
       type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: FIXED_THREAD_IDS[3],
+        change: {
+          type: 'patches',
+          baseRevision: 2,
+          revision: 3,
+          patches: [{ op: 'replace', path: ['hasUnreadTurn'], value: false }]
+        }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      status: 'active',
+      statusAuthority: 'app-server-live',
+      lastTurnStatus: 'inProgress'
+    })
+
+    desktopSocket.push({
+      type: 'broadcast',
       method: 'thread-stream-following-changed',
       sourceClientId: 'codex-desktop-owner',
       version: 1,
@@ -1738,10 +1779,35 @@ describe('Codex App Server preload bridge', () => {
       lastTurnStatus: 'inProgress'
     })
 
-    expect((await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })).value.threads
-      .find((thread: Record<string, any>) => thread.key === task.key)).toMatchObject({
-      status: 'active',
-      statusAuthority: 'app-server-live',
+    for (let scan = 0; scan < 2; scan += 1) {
+      expect((await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })).value.threads
+        .find((thread: Record<string, any>) => thread.key === task.key)).toMatchObject({
+        status: 'active',
+        statusAuthority: 'app-server-live',
+        lastTurnStatus: 'inProgress'
+      })
+    }
+
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: FIXED_THREAD_IDS[3],
+        change: {
+          type: 'patches',
+          baseRevision: 1,
+          revision: 2,
+          patches: [{ op: 'replace', path: ['threadRuntimeStatus', 'type'], value: 'idle' }]
+        }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      status: 'idle',
+      statusAuthority: 'desktop-live',
       lastTurnStatus: 'inProgress'
     })
     bridge.close()

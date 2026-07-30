@@ -32,4 +32,6 @@ Tool: codex
 | 外观回归与现行直存直渲合同统一 | complete |
 | MQTT/Quick Jump 静态断言限制到 media/function 边界 | complete |
 | 清理 PRD、Soul、架构和错误记忆中的旧配色阻断认知 | complete |
+| 跨来源 live evidence sequence 阻止旧 Desktop idle 重放撤销新 App Server active | complete |
+| RAW-130 Bridge 回归合同执行 | pending / project-rule-blocked |
 | 真实 uTools 重载与状态转换验收 | pending / user-owned |
