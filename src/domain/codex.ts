@@ -187,7 +187,7 @@ export type CodexThreadStatus = 'active' | 'idle' | 'notLoaded' | 'systemError'
 export type CodexThreadActiveFlag = 'waitingOnApproval' | 'waitingOnUserInput'
 export type CodexTurnStatus = 'completed' | 'interrupted' | 'failed' | 'inProgress'
 export type CodexDesktopBridgeState = 'not-checked' | 'connecting' | 'connected' | 'not-running' | 'incompatible' | 'failed'
-export type CodexStatusAuthority = 'desktop-live' | 'connector' | 'unavailable'
+export type CodexStatusAuthority = 'desktop-live' | 'app-server-live' | 'connector' | 'unavailable'
 export type CodexUnreadAuthority = 'desktop-live' | 'desktop-persisted' | 'unavailable'
 export type CodexActivityEvidenceOrigin = 'connector' | 'initial-snapshot' | 'activity-event'
 export type CodexTurnEvidenceOrigin = 'inventory' | 'turn-started' | 'turn-completed' | 'targeted-after-exit' | 'snapshot-corroborated'
@@ -1317,33 +1317,24 @@ export function normalizeCodexState(value: unknown): CodexState {
 }
 
 function isLikelyActiveTask(thread: CodexHostThread) {
-  return thread.statusAuthority === 'desktop-live' && thread.status === 'active'
+  return (thread.statusAuthority === 'desktop-live' || thread.statusAuthority === 'app-server-live')
+    && thread.status === 'active'
 }
 
-function isSupersededDesktopActiveTask(thread: CodexHostThread) {
+function hasConfirmedCompletionOverLiveTask(thread: CodexHostThread) {
   if (!isLikelyActiveTask(thread) || thread.lastTurnStatus !== 'completed') return false
-  // Unresolved live user decisions still outrank a completed Turn.
-  if (thread.activeFlags.includes('waitingOnUserInput') || thread.activeFlags.includes('waitingOnApproval')) return false
-  // A real activity patch starts a new activity epoch. Old inventory Turn
-  // metadata must not keep that task completed while its new Turn event is
-  // still in flight. Exact/corroborated completion evidence in the same epoch
-  // remains stronger and may complete immediately.
-  if (thread.activityEvidence === 'activity-event'
-    && !['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(thread.lastTurnEvidence || '')) return false
-  const completedAt = numberValue(thread.lastTurnCompletedAt, 0)
-  const startedAt = numberValue(thread.lastTurnStartedAt, 0)
-  // Provider Turn timestamps and the local live-observation clock are not
-  // comparable. A complete latest-Turn shape is the terminal authority; an
-  // actual newer run must first advance its Turn revision or waiting state.
-  return startedAt > 0 && completedAt > 0
+  // Live activity wins over inventory/replayed terminal shape. Only a
+  // completion already confirmed in this activity epoch may close it while a
+  // stale active snapshot/request is still draining.
+  return ['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(thread.lastTurnEvidence || '')
 }
 
-function isCurrentDesktopActiveTask(thread: CodexHostThread) {
-  return isLikelyActiveTask(thread) && !isSupersededDesktopActiveTask(thread)
+function isCurrentLiveActiveTask(thread: CodexHostThread) {
+  return isLikelyActiveTask(thread) && !hasConfirmedCompletionOverLiveTask(thread)
 }
 
 function isExplicitlyStoppedTask(thread: CodexHostThread, desktopBridgeState?: CodexDesktopBridgeState) {
-  if (isCurrentDesktopActiveTask(thread)) return false
+  if (isCurrentLiveActiveTask(thread)) return false
   // Completed work leaves through the completion revision path, not stopped.
   if (thread.lastTurnStatus === 'completed') return false
   // Keep a brief ongoing window for inProgress rows that may still be waiting
@@ -1359,7 +1350,7 @@ function isExplicitlyStoppedTask(thread: CodexHostThread, desktopBridgeState?: C
 }
 
 function taskActivityState(thread: CodexHostThread, explicitlyStopped: boolean): CodexTaskActivityState {
-  if (isCurrentDesktopActiveTask(thread)) {
+  if (isCurrentLiveActiveTask(thread)) {
     if (thread.activeFlags.includes('waitingOnUserInput')) return 'waiting-input'
     if (thread.activeFlags.includes('waitingOnApproval')) return 'waiting-approval'
     return 'active'
@@ -1506,7 +1497,7 @@ export function projectConversations(input: {
     statuses[thread.key] = thread.status
     const timing = taskTiming(thread)
     const receipt = receiptMap.get(thread.key) || { key: thread.key, acknowledgedRecency: 0, acknowledgedAt: 0, pendingRecency: 0, pendingSince: 0 }
-    const authoritativeActive = isCurrentDesktopActiveTask(thread)
+    const authoritativeActive = isCurrentLiveActiveTask(thread)
     const completionRevision = !authoritativeActive && thread.lastTurnStatus === 'completed'
       ? numberValue(thread.lastTurnCompletedAt, 0) || numberValue(thread.lastTurnStartedAt, 0)
       : 0

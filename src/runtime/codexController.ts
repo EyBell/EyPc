@@ -134,13 +134,10 @@ type InventoryDisappearanceCandidate = {
 
 type StructuralRefreshPriority = 'normal' | 'urgent'
 
-function isDesktopLiveActiveThread(thread: CodexHostThread): boolean {
-  if (thread.statusAuthority !== 'desktop-live' || thread.status !== 'active') return false
-  if (thread.activeFlags.includes('waitingOnUserInput') || thread.activeFlags.includes('waitingOnApproval')) return true
-  if (thread.lastTurnStatus !== 'completed') return true
-  const completedAt = Number.isFinite(thread.lastTurnCompletedAt) ? thread.lastTurnCompletedAt! : 0
-  const startedAt = Number.isFinite(thread.lastTurnStartedAt) ? thread.lastTurnStartedAt! : 0
-  return !(startedAt > 0 && completedAt > 0)
+function isLiveActiveThread(thread: CodexHostThread): boolean {
+  if (!['desktop-live', 'app-server-live'].includes(thread.statusAuthority || '') || thread.status !== 'active') return false
+  return thread.lastTurnStatus !== 'completed'
+    || !['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(thread.lastTurnEvidence || '')
 }
 
 function hasFreshTurnOutcomeAfterExit(thread: CodexHostThread, baseline: ActivityExitBaseline, targetedAfterExit = false): boolean {
@@ -159,6 +156,11 @@ function hasFreshTurnOutcomeAfterExit(thread: CodexHostThread, baseline: Activit
 function preserveLatestTurnEvidence(thread: CodexHostThread, previous: CodexHostThread | undefined): CodexHostThread {
   if (!previous) return thread
   const candidate = thread.updatedAt < previous.updatedAt ? { ...thread, updatedAt: previous.updatedAt } : thread
+  const explicitLiveRestart = candidate.lastTurnStatus === 'inProgress'
+    && candidate.status === 'active'
+    && ['desktop-live', 'app-server-live'].includes(candidate.statusAuthority || '')
+    && (candidate.activityEvidence === 'activity-event' || candidate.lastTurnEvidence === 'turn-started')
+  if (explicitLiveRestart) return candidate
   const previousStartedAt = Number.isFinite(previous.lastTurnStartedAt) ? previous.lastTurnStartedAt! : 0
   const nextStartedAt = Number.isFinite(candidate.lastTurnStartedAt) ? candidate.lastTurnStartedAt! : 0
   const previousCompletedAt = Number.isFinite(previous.lastTurnCompletedAt) ? previous.lastTurnCompletedAt! : 0
@@ -477,8 +479,8 @@ export function createCodexController(options: CodexControllerOptions) {
       // A Desktop active→idle push proves only that live execution stopped. If
       // its delta still carries the same latest-Turn revision, keep the task
       // ongoing until the targeted status-only read supplies a fresh outcome.
-      const exitedDesktopActivity = isDesktopLiveActiveThread(thread) && !isDesktopLiveActiveThread(next)
-      if (exitedDesktopActivity && !activityExitBaselines.has(thread.key)) {
+      const exitedLiveActivity = isLiveActiveThread(thread) && !isLiveActiveThread(next)
+      if (exitedLiveActivity && !activityExitBaselines.has(thread.key)) {
         activityExitBaselines.set(thread.key, {
           lastTurnStatus: thread.lastTurnStatus,
           lastTurnStartedAt: thread.lastTurnStartedAt,
@@ -512,7 +514,7 @@ export function createCodexController(options: CodexControllerOptions) {
     for (const thread of nextThreads) {
       const previous = previousByKey.get(thread.key)
       if (!previous || hasSameActivityState(previous, thread)) continue
-      const nextActive = isDesktopLiveActiveThread(thread)
+      const nextActive = isLiveActiveThread(thread)
       if (nextActive) {
         activityExitBaselines.delete(thread.key)
       } else if (thread.lastTurnStatus && thread.lastTurnStatus !== 'inProgress') {
@@ -781,7 +783,7 @@ export function createCodexController(options: CodexControllerOptions) {
               const refreshedKeys = new Set(threads.map((thread) => thread.key))
               for (const key of activityExitBaselines.keys()) if (!refreshedKeys.has(key)) activityExitBaselines.delete(key)
               for (const thread of threads) {
-                if (isDesktopLiveActiveThread(thread) || thread.lastTurnStatus && thread.lastTurnStatus !== 'inProgress') {
+                if (isLiveActiveThread(thread) || thread.lastTurnStatus && thread.lastTurnStatus !== 'inProgress') {
                   activityExitBaselines.delete(thread.key)
                 }
               }

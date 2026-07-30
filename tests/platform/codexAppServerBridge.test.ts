@@ -243,6 +243,7 @@ class FakeCodexDesktopSocket extends EventEmitter {
   streamOwnerConnected = true
   activeSnapshotThreadIds = new Set<string>()
   waitingInputSnapshotThreadIds = new Set<string>()
+  unreadSnapshotThreadIds = new Set<string>([FIXED_THREAD_IDS[3]])
   writes: Array<Record<string, any>> = []
 
   open() {
@@ -282,7 +283,7 @@ class FakeCodexDesktopSocket extends EventEmitter {
             conversationState: {
               threadRuntimeStatus: { type: activeSnapshot ? 'active' : 'idle', activeFlags: [] },
               resumeState: '',
-              hasUnreadTurn: threadId === FIXED_THREAD_IDS[3],
+              hasUnreadTurn: this.unreadSnapshotThreadIds.has(threadId),
               requests: waitingInput ? [{ type: 'userInput', method: 'requestUserInput' }] : [],
               conversation: [{ role: 'user', content: 'private desktop snapshot content' }]
             }
@@ -338,6 +339,14 @@ function nativeRegistryText() {
   })
 }
 
+function nativeRegistryTextWithUnread(threadIds: string[]) {
+  const value = JSON.parse(nativeRegistryText()) as Record<string, unknown>
+  value['electron-persisted-atom-state'] = JSON.stringify({
+    'unread-thread-ids-by-host-v1': JSON.stringify({ local: threadIds })
+  })
+  return JSON.stringify(value)
+}
+
 function loadCodexBridge(
   child: FakeCodexProcess,
   readRegistry: (candidate: string, readIndex: number) => string = () => nativeRegistryText(),
@@ -349,6 +358,7 @@ function loadCodexBridge(
   const execFile = vi.fn(noSystemProxyExecFile)
   const openExternal = vi.fn(async () => undefined)
   const registryReads: string[] = []
+  const nativeStateWatchers: Array<(event: string, filename: string) => void> = []
   const sandbox = {
     window: {} as Record<string, unknown>,
     globalThis: {} as Record<string, unknown>,
@@ -384,7 +394,11 @@ function loadCodexBridge(
           if (candidate === '/tmp/.codex/.codex-global-state.json' || candidate === '/tmp/.codex/.codex-global-state.json.bak') return { isFile: () => true, size: 1024 }
           return { isFile: () => false, size: 1 }
         },
-        promises: {}
+        promises: {},
+        watch: (_candidate: string, _options: Record<string, unknown>, listener: (event: string, filename: string) => void) => {
+          nativeStateWatchers.push(listener)
+          return { close() {}, unref() {}, on() {} }
+        }
       }
       if (name === 'node:path') return pathModule
       if (name === 'node:os') return { homedir: () => '/tmp' }
@@ -418,7 +432,8 @@ function loadCodexBridge(
     }).__codexNativeTest,
     registryReads,
     spawn,
-    openExternal
+    openExternal,
+    triggerNativeStateChange: () => nativeStateWatchers.forEach((listener) => listener('change', '.codex-global-state.json'))
   }
 }
 
@@ -526,7 +541,7 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
-  it('uses the desktop bridge watchdog without polling App Server and keeps App Server status non-authoritative', async () => {
+  it('uses the desktop bridge watchdog without polling App Server and accepts an exact App Server active event', async () => {
     const child = new FakeCodexProcess()
     const { bridge } = loadCodexBridge(child)
     const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
@@ -545,7 +560,7 @@ describe('Codex App Server preload bridge', () => {
       version: 2,
       desktopBridgeState: 'not-running',
       inventoryChanged: false,
-      entries: [{ key: baseline.value.threads[0].key, status: 'active', activeFlags: [], statusAuthority: 'connector', unreadAuthority: 'unavailable' }]
+      entries: [{ key: baseline.value.threads[0].key, status: 'active', activeFlags: [], statusAuthority: 'app-server-live', unreadAuthority: 'unavailable' }]
     })
 
     child.stdout.emit('data', `${JSON.stringify({ method: 'turn/completed', params: { threadId: FIXED_THREAD_IDS[0] } })}\n`)
@@ -621,6 +636,188 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
+  it('accepts an exact completed notification without completedAt and uses startedAt as the revision', async () => {
+    const child = new FakeCodexProcess()
+    child.inProgressTurnIds.add(FIXED_THREAD_IDS[3])
+    const { bridge } = loadCodexBridge(child)
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const task = baseline.value.threads[3]
+
+    child.stdout.emit('data', `${JSON.stringify({
+      method: 'turn/completed',
+      params: {
+        threadId: FIXED_THREAD_IDS[3],
+        turn: { status: 'completed', startedAt: 1_900_000_000 }
+      }
+    })}\n`)
+
+    const entry = (await bridge.readActivitySnapshot()).value.entries.find((item: Record<string, any>) => item.key === task.key)
+    expect(entry).toMatchObject({
+      lastTurnStatus: 'completed',
+      lastTurnStartedAt: 1_900_000_000_000,
+      lastTurnEvidence: 'turn-completed'
+    })
+    expect(entry).not.toHaveProperty('lastTurnCompletedAt')
+    bridge.close()
+  })
+
+  it('promotes a late native unread write over a stale completion snapshot false', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(2_000_000_300_000)
+    try {
+      let nativeUnread = false
+      const child = new FakeCodexProcess()
+      const desktopSocket = new FakeCodexDesktopSocket()
+      desktopSocket.unreadSnapshotThreadIds.delete(FIXED_THREAD_IDS[0])
+      const { bridge, triggerNativeStateChange } = loadCodexBridge(
+        child,
+        () => nativeRegistryTextWithUnread(nativeUnread ? [FIXED_THREAD_IDS[0]] : []),
+        desktopSocket,
+        true
+      )
+      const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await Promise.resolve()
+      await Promise.resolve()
+      const task = baseline.value.threads[0]
+      const deltas: Array<Record<string, any>> = []
+      const stop = bridge.onActivityChanged((delta) => deltas.push(delta))
+
+      desktopSocket.push({
+        type: 'broadcast',
+        method: 'thread-stream-state-changed',
+        sourceClientId: 'codex-desktop-owner',
+        version: 11,
+        params: {
+          hostId: 'local',
+          conversationId: FIXED_THREAD_IDS[0],
+          change: {
+            type: 'patches',
+            baseRevision: 1,
+            revision: 2,
+            patches: [{ op: 'replace', path: ['hasUnreadTurn'], value: false }]
+          }
+        }
+      })
+      await Promise.resolve()
+
+      child.stdout.emit('data', `${JSON.stringify({
+        method: 'turn/completed',
+        params: {
+          threadId: FIXED_THREAD_IDS[0],
+          turn: { status: 'completed', startedAt: 2_000_000_200, completedAt: 2_000_000_201 }
+        }
+      })}\n`)
+      await Promise.resolve()
+      expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+        lastTurnStatus: 'completed',
+        hasUnreadTurn: false
+      })
+
+      nativeUnread = true
+      triggerNativeStateChange()
+      await vi.advanceTimersByTimeAsync(25)
+
+      expect(deltas.at(-1)).toMatchObject({
+        entries: [{
+          key: task.key,
+          readStateOnly: true,
+          hasUnreadTurn: true,
+          unreadAuthority: 'desktop-persisted'
+        }]
+      })
+      expect(deltas.at(-1)?.entries?.[0]).not.toHaveProperty('status')
+      stop()
+      bridge.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('applies the shared late-unread path to an ordinary active completion', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(2_000_000_400_000)
+    try {
+      let nativeUnread = false
+      const child = new FakeCodexProcess()
+      child.inProgressTurnIds.add(FIXED_THREAD_IDS[1])
+      const desktopSocket = new FakeCodexDesktopSocket()
+      desktopSocket.activeSnapshotThreadIds.add(FIXED_THREAD_IDS[1])
+      desktopSocket.unreadSnapshotThreadIds.delete(FIXED_THREAD_IDS[1])
+      const { bridge, triggerNativeStateChange } = loadCodexBridge(
+        child,
+        () => nativeRegistryTextWithUnread(nativeUnread ? [FIXED_THREAD_IDS[1]] : []),
+        desktopSocket,
+        true
+      )
+      const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await Promise.resolve()
+      await Promise.resolve()
+      const task = baseline.value.threads[1]
+      const deltas: Array<Record<string, any>> = []
+      const stop = bridge.onActivityChanged((delta) => deltas.push(delta))
+
+      child.inProgressTurnIds.delete(FIXED_THREAD_IDS[1])
+      child.stdout.emit('data', `${JSON.stringify({
+        method: 'turn/completed',
+        params: {
+          threadId: FIXED_THREAD_IDS[1],
+          turn: { status: 'completed', startedAt: 2_000_000_300, completedAt: 2_000_000_301 }
+        }
+      })}\n`)
+      await Promise.resolve()
+      nativeUnread = true
+      triggerNativeStateChange()
+      await vi.advanceTimersByTimeAsync(25)
+
+      expect(deltas.at(-1)).toMatchObject({
+        entries: [{ key: task.key, readStateOnly: true, hasUnreadTurn: true, unreadAuthority: 'desktop-persisted' }]
+      })
+      expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+        lastTurnStatus: 'completed',
+        lastTurnEvidence: 'turn-completed',
+        hasUnreadTurn: true
+      })
+      stop()
+      bridge.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('hydrates an existing native unread over snapshot false and keeps a later exact read event stronger', async () => {
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    desktopSocket.unreadSnapshotThreadIds.delete(FIXED_THREAD_IDS[2])
+    const { bridge } = loadCodexBridge(
+      child,
+      () => nativeRegistryTextWithUnread([FIXED_THREAD_IDS[2]]),
+      desktopSocket
+    )
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const task = baseline.value.threads[2]
+
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      lastTurnStatus: 'completed',
+      hasUnreadTurn: true,
+      unreadAuthority: 'desktop-persisted'
+    })
+
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-read-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 2,
+      params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[2], hasUnreadTurn: false }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      hasUnreadTurn: false,
+      unreadAuthority: 'desktop-live'
+    })
+    bridge.close()
+  })
+
   it('accepts a resumed interrupted Turn completion whose second-granular timestamp does not exceed the live active observation', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(2_000_000_071_900)
@@ -678,6 +875,17 @@ describe('Codex App Server preload bridge', () => {
       expect(JSON.stringify(deltas)).not.toContain(FIXED_THREAD_IDS[3])
       expect(JSON.stringify(deltas)).not.toContain('private-fast-turn-id')
       expect(JSON.stringify(deltas)).not.toContain('private fast completion body')
+      desktopSocket.push({
+        type: 'broadcast',
+        method: 'thread-read-state-changed',
+        sourceClientId: 'codex-desktop-owner',
+        version: 2,
+        params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[3], hasUnreadTurn: true }
+      })
+      await Promise.resolve()
+      expect(deltas.at(-1)).toMatchObject({
+        entries: [{ key: task.key, readStateOnly: true, hasUnreadTurn: true, unreadAuthority: 'desktop-live' }]
+      })
       stop()
       bridge.close()
     } finally {
@@ -685,9 +893,8 @@ describe('Codex App Server preload bridge', () => {
     }
   })
 
-  it('promotes an exact same-revision started event only from a recoverable interrupted outcome', async () => {
+  it('promotes an exact same-revision started event after a completed outcome', async () => {
     const child = new FakeCodexProcess()
-    child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
     const desktopSocket = new FakeCodexDesktopSocket()
     desktopSocket.activeSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
     const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
@@ -1032,6 +1239,62 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
+  it('lets a fresh App Server active event outrank a replayed interrupted Desktop idle snapshot', async () => {
+    const child = new FakeCodexProcess()
+    child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const task = baseline.value.threads[3]
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      status: 'idle',
+      statusAuthority: 'desktop-live',
+      lastTurnStatus: 'interrupted'
+    })
+
+    child.interruptedTurnIds.delete(FIXED_THREAD_IDS[3])
+    child.inProgressTurnIds.add(FIXED_THREAD_IDS[3])
+    child.stdout.emit('data', `${JSON.stringify({
+      method: 'turn/started',
+      params: {
+        threadId: FIXED_THREAD_IDS[3],
+        turn: { status: 'inProgress', startedAt: 1_900_000_000 }
+      }
+    })}\n`)
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      status: 'active',
+      statusAuthority: 'app-server-live',
+      activityEvidence: 'activity-event',
+      lastTurnStatus: 'inProgress'
+    })
+
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-following-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 1,
+      params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[3], following: false }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      status: 'active',
+      statusAuthority: 'app-server-live',
+      lastTurnStatus: 'inProgress'
+    })
+
+    expect((await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })).value.threads
+      .find((thread: Record<string, any>) => thread.key === task.key)).toMatchObject({
+      status: 'active',
+      statusAuthority: 'app-server-live',
+      lastTurnStatus: 'inProgress'
+    })
+    bridge.close()
+  })
+
   it('reconciles a previously interrupted Turn when a task-switch refollow replays the old active snapshot', async () => {
     const child = new FakeCodexProcess()
     child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
@@ -1197,6 +1460,33 @@ describe('Codex App Server preload bridge', () => {
       })
       await vi.advanceTimersByTimeAsync(0)
       expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.threadId === FIXED_THREAD_IDS[3])).toHaveLength(5)
+      bridge.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a replayed active snapshot current when a targeted read finds same-revision inProgress after completion', async () => {
+    vi.useFakeTimers()
+    try {
+      const child = new FakeCodexProcess()
+      const desktopSocket = new FakeCodexDesktopSocket()
+      desktopSocket.activeSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
+      const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket, true)
+      const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await Promise.resolve()
+      await Promise.resolve()
+      const task = baseline.value.threads[3]
+
+      child.inProgressTurnIds.add(FIXED_THREAD_IDS[3])
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+        status: 'active',
+        statusAuthority: 'desktop-live',
+        lastTurnStatus: 'inProgress',
+        lastTurnStartedAt: 1_900_000_000_000
+      })
       bridge.close()
     } finally {
       vi.useRealTimers()

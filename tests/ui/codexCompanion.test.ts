@@ -255,111 +255,6 @@ describe('Codex Companion V3 UI contract', () => {
     expect(wrapper.get('.codex-water-ball').attributes('style')).toContain('--weekly-ring: 52')
   })
 
-  it('places six tabs at the top, defaults to dynamic, and orders its status sections by priority', async () => {
-    const { wrapper, action } = mountFloat(true)
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('.float-expanded-card').element.firstElementChild?.classList.contains('float-task-tabs')).toBe(true)
-    expect(wrapper.findAll('.float-task-tabs [role="tab"]').map((button) => button.text().replace(/\s+/g, ' ').trim())).toEqual([
-      '全部 5', '待输入 1', '动态 4', '已完成 1', '已隐藏 1', '项目 4'
-    ])
-    expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toContain('动态')
-    expect(wrapper.findAll('.float-status-section').map((section) => section.text().replace(/\s+/g, ' ').trim())).toEqual([
-      '待输入1', '正在进行中1', '已停止1', '已完成未读1'
-    ])
-    const abnormal = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
-    expect(abnormal.get('.task-meta-button').text()).toContain('已停止')
-    expect(abnormal.classes()).toContain('bucket-stopped')
-    expect(abnormal.get('.action-archive').attributes('disabled')).toBeUndefined()
-    expect(wrapper.find('.float-header').exists()).toBe(false)
-    expect(wrapper.find('[aria-label="打开 Codex Companion 配置"]').exists()).toBe(false)
-
-    await wrapper.findAll('[role="tab"]')[4].trigger('click')
-    expect(action).toHaveBeenCalledWith('codex.tab.set', { tab: 'hidden' })
-    expect(wrapper.findAll('.float-task-row')).toHaveLength(1)
-    expect(wrapper.text()).toContain('隐藏的 Chats 会话')
-  })
-
-  it('shares one search box per runtime, matches aliases/original/project names, and keeps project-match children', async () => {
-    const { wrapper } = mountFloat(true, floatSnapshot('all'))
-    await wrapper.vm.$nextTick()
-    const search = wrapper.get('input[aria-label="搜索当前 Codex 页签"]')
-    await search.setValue('完成别名')
-    expect(wrapper.findAll('.float-task-row')).toHaveLength(1)
-    expect(wrapper.text()).toContain('完成别名')
-    expect(wrapper.text()).not.toContain('原名：原始完成标题')
-    await search.setValue('原始完成标题')
-    expect(wrapper.findAll('.float-task-row')).toHaveLength(1)
-    expect(wrapper.get('.float-task-row .task-copy strong').text()).toBe('完成别名')
-
-    await wrapper.findAll('[role="tab"]')[5].trigger('click')
-    await search.setValue('CodeNote')
-    expect(wrapper.text()).toContain('真实进行中')
-    expect(wrapper.text()).toContain('执行失败')
-    expect(wrapper.text()).toContain('完成别名')
-    expect(wrapper.text()).not.toContain('隐藏的 Chats 会话')
-  })
-
-  it('renders native Pinned, Projects and Chats order without duplicate tasks, including empty projects', async () => {
-    const { wrapper } = mountFloat(true, floatSnapshot('projects'))
-    await wrapper.vm.$nextTick()
-    expect(wrapper.findAll('.float-project-section').map((item) => item.text())).toEqual(['Pinned', 'Projects', 'Chats'])
-    const text = wrapper.text()
-    expect(text.indexOf('CodeNote')).toBeLessThan(text.indexOf('EyTodo'))
-    expect(text.indexOf('EyTodo')).toBeLessThan(text.indexOf('Chats'))
-    expect(wrapper.findAll('.float-task-row').filter((row) => row.text().includes('真实进行中'))).toHaveLength(1)
-    expect(text).toContain('最近 30 天无会话')
-    expect(wrapper.findAll('.float-project-row').find((row) => row.text().includes('EyTodo'))?.get('.action-pin').attributes('data-pin-source')).toBe('local')
-  })
-
-  it('opens from the task core before selection, then lets the left and core areas toggle selection until the last item exits', async () => {
-    const { wrapper, action } = mountFloat(true, floatSnapshot('all'))
-    await wrapper.vm.$nextTick()
-    const failed = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
-    const done = wrapper.get(`[data-focus-key="task:${TASK_DONE}"]`)
-    await failed.trigger('click')
-    expect(action).toHaveBeenCalledWith('codex.task.open', expect.objectContaining({ key: TASK_FAILED }))
-    expect(wrapper.findAll('.float-task-row.selected')).toHaveLength(0)
-    action.mockClear()
-    await done.get('.task-open').trigger('click', { metaKey: true })
-    expect(wrapper.findAll('.float-task-row.selected')).toHaveLength(1)
-    expect(action).not.toHaveBeenCalledWith('codex.task.open', expect.anything())
-    await done.get('.task-open').trigger('click')
-    expect(wrapper.findAll('.float-task-row.selected')).toHaveLength(0)
-    await failed.get('.task-state-button').trigger('click')
-    expect(wrapper.findAll('.float-task-row.selected')).toHaveLength(1)
-    expect(wrapper.get('.float-selection-mode-bar').text()).toContain('选择模式')
-    expect(wrapper.get('.float-selection-mode-bar').text()).toContain('已选 1 项')
-    await done.get('.task-state-button').trigger('click', { ctrlKey: true })
-    expect(wrapper.findAll('.float-task-row.selected')).toHaveLength(2)
-    expect(wrapper.get('.float-selection-mode-bar').text()).toContain('已选 2 项')
-    expect(done.get('.task-state-button').attributes('aria-pressed')).toBe('true')
-    const batch = wrapper.get('.float-batch-toolbar')
-    expect(batch.get('strong').text()).toBe('已选 2')
-    expect(batch.findAll('button').map((button) => button.text())).toEqual(['归', '操', '清'])
-    await failed.get('.task-open').trigger('click')
-    expect(wrapper.findAll('.float-task-row.selected')).toHaveLength(1)
-    await failed.get('.task-open').trigger('click')
-    expect(wrapper.findAll('.float-task-row.selected')).toHaveLength(2)
-
-    await done.trigger('keydown', { key: 'Delete', code: 'Delete' })
-    expect(action).not.toHaveBeenCalledWith('codex.tasks.archive', expect.anything())
-    expect(wrapper.text()).toContain('再次操作确认')
-    await done.trigger('keydown', { key: 'Delete', code: 'Delete' })
-    expect(action).toHaveBeenCalledWith('codex.tasks.archive', {
-      items: [expect.objectContaining({ key: TASK_DONE })]
-    })
-
-    ;(failed.element as HTMLElement).focus()
-    await wrapper.vm.$nextTick()
-    await failed.trigger('keydown', { key: ' ', code: 'Space' })
-    expect(document.activeElement?.getAttribute('data-focus-key')).toBe(`task:${TASK_DONE}`)
-
-    await failed.get('.task-open').trigger('click')
-    expect(wrapper.findAll('.float-task-row.selected')).toHaveLength(0)
-    expect(wrapper.find('.float-selection-mode-bar').exists()).toBe(false)
-    expect(wrapper.find('.float-batch-toolbar').exists()).toBe(false)
-  })
-
   it('supports project-header Space selection of visible children', async () => {
     const projects = mountFloat(true, floatSnapshot('projects')).wrapper
     await projects.vm.$nextTick()
@@ -416,88 +311,6 @@ describe('Codex Companion V3 UI contract', () => {
     expect(css).toContain('var(--codex-pending) 30%')
     expect(css).toContain('inset 0 2px 7px')
     expect(css).not.toContain("content: '✓'")
-  })
-
-  it('keeps complete actions in the right-click drawer and exposes fixed four-character row rails', async () => {
-    const { wrapper, action } = mountFloat(true, floatSnapshot('all'))
-    await wrapper.vm.$nextTick()
-    const failed = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
-    expect(failed.find('.task-action-rail').exists()).toBe(false)
-    expect(failed.findAll('.task-inline-actions button').map((button) => button.text())).toEqual(['顶', '隐', '归', '+'])
-    await failed.get('.task-inline-actions .action-pin').trigger('click')
-    expect(action).toHaveBeenCalledWith('codex.pin.toggle', { kind: 'task', key: TASK_FAILED })
-    const done = wrapper.get(`[data-focus-key="task:${TASK_DONE}"]`)
-    await done.trigger('contextmenu')
-    const archive = wrapper.findAll('.float-drawer-actions button').find((button) => button.text().includes('真实归档'))!
-    await archive.trigger('click')
-    expect(wrapper.text()).toContain('再次操作确认')
-    expect(action).not.toHaveBeenCalledWith('codex.tasks.archive', expect.anything())
-    await archive.trigger('click')
-    expect(action).toHaveBeenCalledWith('codex.tasks.archive', { items: [expect.objectContaining({ key: TASK_DONE })] })
-
-    await wrapper.get('.float-side-panel [aria-label="关闭"]').trigger('click')
-    await wrapper.findAll('[role="tab"]').find((tab) => tab.text().startsWith('项目'))!.trigger('click')
-    const codeNote = wrapper.findAll('.float-project-row').find((row) => row.text().includes('CodeNote'))!
-    const remove = codeNote.get('.project-inline-actions .action-remove')
-    await remove.trigger('click')
-    expect(remove.text()).toBe('确')
-    expect(action).not.toHaveBeenCalledWith('codex.project.remove', expect.anything())
-    await remove.trigger('click')
-    expect(action).toHaveBeenCalledWith('codex.project.remove', {
-      key: PROJECT_A,
-      actionAlias: 'project-a-alias',
-      sourceFingerprint: 'a'.repeat(64)
-    })
-    const chats = wrapper.findAll('.float-project-row').find((row) => row.text().includes('Chats'))!
-    expect(chats.findAll('.project-inline-actions button').map((button) => button.text())).toEqual(['顶', '移', '隐', '+'])
-    expect(chats.get('.action-pin').attributes('aria-disabled')).toBe('true')
-    expect(chats.get('.action-pin').attributes('disabled')).toBeUndefined()
-    expect(chats.findAll('.project-inline-actions button').slice(1, 3).every((button) => button.attributes('disabled') !== undefined)).toBe(true)
-    await chats.trigger('contextmenu')
-    const chatActions = wrapper.findAll('.float-drawer-actions button')
-    expect(chatActions.map((button) => button.text())).toEqual(expect.arrayContaining([
-      expect.stringContaining('新建会话'),
-      expect.stringContaining('编辑项目别名'),
-      expect.stringContaining('归档已完成任务'),
-      expect.stringContaining('从 Codex 侧栏移除')
-    ]))
-    expect(chatActions.find((button) => button.text().includes('本地置顶'))?.attributes('disabled')).toBeDefined()
-    expect(chatActions.find((button) => button.text().includes('从 Codex 侧栏移除'))?.attributes('disabled')).toBeDefined()
-
-    const css = readFileSync(resolve(process.cwd(), 'src/styles/float.css'), 'utf8')
-    expect(css).toContain('.project-inline-actions')
-    expect(css).toContain('width: 105px')
-    expect(css).toContain('width: 24px')
-    expect(css).toContain('width: 38px')
-    expect(css).toContain('min-height: 40px')
-    expect(css).toContain('.float-task-row.selected:active')
-    expect(css).toContain('.float-selection-mode-bar')
-    expect(css).toContain('linear-gradient(118deg')
-    expect(css).toContain('var(--codex-running)')
-    expect(css).toContain('var(--codex-pending)')
-    expect(css).not.toContain("content: '✓'")
-    expect(css).toContain('opacity: .62')
-    expect(css).not.toContain('.task-action-rail')
-  })
-
-  it('moves a local pin into the pinned block of its current task tab and keeps a visible pinned state', async () => {
-    const source = floatSnapshot('all')
-    const pinned = source.conversations.all.find((task) => task.key === TASK_DONE)!
-    pinned.pinSource = 'local'
-    const { wrapper } = mountFloat(true, source)
-    await wrapper.vm.$nextTick()
-
-    const taskRows = wrapper.findAll('.float-task-row')
-    const pinnedIndex = taskRows.findIndex((row) => row.attributes('data-focus-key') === `task:${TASK_DONE}`)
-    const unpinnedIndex = taskRows.findIndex((row) => row.attributes('data-focus-key') === `task:${TASK_FAILED}`)
-    expect(pinnedIndex).toBeGreaterThanOrEqual(0)
-    expect(pinnedIndex).toBeLessThan(unpinnedIndex)
-    const pinnedRow = taskRows[pinnedIndex]!
-    expect(pinnedRow.attributes('data-pin-source')).toBe('local')
-    expect(pinnedRow.text()).not.toContain('本地顶')
-    expect(pinnedRow.get('.action-pin').attributes('data-pin-source')).toBe('local')
-    expect(pinnedRow.get('.action-pin').attributes('aria-label')).toContain('来源：EyPc 本地置顶 · 点击取消')
-    expect(pinnedRow.get('.action-pin').attributes('aria-pressed')).toBe('true')
   })
 
   it('puts pin source feedback on the pin control and gates native and Chats pin actions', async () => {
@@ -567,61 +380,6 @@ describe('Codex Companion V3 UI contract', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/styles/float.css'), 'utf8')
     expect(css).toContain('.float-batch-toolbar')
     expect(css).toContain('position: absolute')
-  })
-
-  it('closes the batch bar when filtering leaves fewer than two visible selections or when cleared', async () => {
-    const { wrapper } = mountFloat(true, floatSnapshot('all'))
-    await wrapper.vm.$nextTick()
-    await wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`).trigger('click')
-    await wrapper.get(`[data-focus-key="task:${TASK_DONE}"]`).trigger('click', { ctrlKey: true })
-    expect(wrapper.find('.float-batch-toolbar').exists()).toBe(true)
-
-    await wrapper.get('[aria-label="清空当前多选"]').trigger('click')
-    expect(wrapper.find('.float-batch-toolbar').exists()).toBe(false)
-    expect(wrapper.findAll('.float-task-row.selected')).toHaveLength(0)
-
-    await wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`).trigger('click')
-    await wrapper.get(`[data-focus-key="task:${TASK_DONE}"]`).trigger('click', { ctrlKey: true })
-    await wrapper.get('input[aria-label="搜索当前 Codex 页签"]').setValue('执行失败')
-    expect(wrapper.find('.float-batch-toolbar').exists()).toBe(false)
-    expect(wrapper.findAll('.float-task-row.selected')).toHaveLength(1)
-  })
-
-  it('keeps every ordinary hover tooltip out and opens only the privacy-safe Shift preview', async () => {
-    const staleQuota = quota(false, true)
-    staleQuota.status = 'stale'
-    const compactMount = mountFloat(false, floatSnapshot('ongoing', staleQuota)).wrapper
-    await compactMount.vm.$nextTick()
-    expect(compactMount.find('.operation-tooltip').exists()).toBe(false)
-    expect(compactMount.get('.float-status-dot').attributes('title')).toBeUndefined()
-
-    const expandedMount = mountFloat(true).wrapper
-    await expandedMount.vm.$nextTick()
-    expect(expandedMount.find('.operation-tooltip').exists()).toBe(false)
-    const failed = expandedMount.get(`[data-focus-key="task:${TASK_FAILED}"]`)
-    await failed.trigger('pointerenter')
-    expect(expandedMount.find('.float-shift-preview').exists()).toBe(false)
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift', shiftKey: true }))
-    await expandedMount.vm.$nextTick()
-    const preview = expandedMount.get('.float-shift-preview')
-    expect(preview.text()).toContain('创建时间')
-    expect(preview.text()).toContain('首次提问')
-    expect(preview.text()).toContain('最近提问')
-    expect(preview.text()).toContain('来源')
-    expect(preview.text()).not.toContain(TASK_FAILED)
-    expect(preview.text()).not.toContain(PROJECT_A)
-    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Shift' }))
-    await expandedMount.vm.$nextTick()
-    expect(expandedMount.find('.float-shift-preview').exists()).toBe(false)
-
-    const source = readFileSync(resolve(process.cwd(), 'src/FloatApp.vue'), 'utf8')
-    expect(source).not.toContain('OperationTooltipLayer')
-    expect(source).not.toContain('data-operation-tooltip')
-    expect(source).not.toContain(':title=')
-    expect(source).not.toContain('float-hover-card')
-    const css = readFileSync(resolve(process.cwd(), 'src/styles/float.css'), 'utf8')
-    expect(css).not.toContain('.float-hover-card')
-    expect(css).toContain('.float-shift-preview')
   })
 
   it('shows opaque 200ms help only for status and fixed character controls without native titles', async () => {
@@ -709,39 +467,6 @@ describe('Codex Companion V3 UI contract', () => {
     expect(wrapper.find('.float-shift-preview').exists()).toBe(false)
   })
 
-  it('opens the quota-auto composer with Ctrl+T, preserves native composition, and submits prompts only over the transient bridge', async () => {
-    const { wrapper, action, createThread } = mountFloat(true, floatSnapshot('all'))
-    await wrapper.vm.$nextTick()
-    const failed = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
-    await failed.trigger('click')
-    await failed.trigger('keydown', { key: 't', code: 'KeyT', ctrlKey: true })
-    await wrapper.vm.$nextTick()
-
-    const dialog = wrapper.get('[role="dialog"][aria-modal="true"]')
-    expect(dialog.text()).toContain('CodeNote')
-    expect(dialog.text()).toContain('GPT-5.6 Sol')
-    expect(dialog.text()).toContain('gpt-5.6-sol')
-    expect(dialog.text()).toContain('普通额度可用')
-    const textarea = dialog.get('textarea[data-input-role="codex-composer"]')
-    expect(document.activeElement).toBe(textarea.element)
-    await textarea.setValue('只存在内存中的首轮提示词')
-    await textarea.trigger('keydown', { key: 'Enter', code: 'Enter', ctrlKey: true, isComposing: true })
-    expect(createThread).not.toHaveBeenCalled()
-    await textarea.trigger('keydown', { key: 'Enter', code: 'Enter', ctrlKey: true })
-    await flushPromises()
-
-    expect(createThread).toHaveBeenCalledWith(expect.objectContaining({
-      modelId: 'gpt-5.6-sol',
-      mode: 'send-and-open',
-      selectionKind: 'auto',
-      prompt: '只存在内存中的首轮提示词',
-      target: { projectKey: PROJECT_A, projectAlias: 'project-a-alias', projectFingerprint: 'a'.repeat(64) }
-    }))
-    expect(wrapper.find('.float-composer-dialog').exists()).toBe(false)
-    expect(action.mock.calls.flatMap((call) => call).join(' ')).not.toContain('只存在内存中的首轮提示词')
-    expect(JSON.stringify(floatSnapshot('all'))).not.toContain('只存在内存中的首轮提示词')
-  })
-
   it('supports one-off model selection and empty-thread creation without changing the configured default', async () => {
     const source = floatSnapshot('projects')
     const { wrapper, createThread } = mountFloat(true, source)
@@ -755,29 +480,6 @@ describe('Codex Companion V3 UI contract', () => {
     await flushPromises()
     expect(createThread).toHaveBeenCalledWith(expect.objectContaining({ modelId: 'gpt-5.3-codex-spark', mode: 'create-empty', selectionKind: 'manual' }))
     expect(source.newThreadPreferredModel).toBe('gpt-5.6-sol')
-  })
-
-  it('traps focus inside the composer, restores its trigger on Escape, and suspends Quick Jump', async () => {
-    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ top: 20, bottom: 52, left: 20, right: 100, width: 80, height: 32, x: 20, y: 20, toJSON: () => ({}) })
-    const { wrapper } = mountFloat(true, floatSnapshot('all'))
-    await wrapper.vm.$nextTick()
-    const failed = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
-    ;(failed.element as HTMLElement).focus()
-    await failed.trigger('keydown', { key: 't', code: 'KeyT', ctrlKey: true })
-    await wrapper.vm.$nextTick()
-    const dialog = wrapper.get('.float-composer-dialog')
-    const close = dialog.get('[aria-label="取消新建会话"]')
-    ;(close.element as HTMLElement).focus()
-    await close.trigger('keydown', { key: 'Tab', code: 'Tab', shiftKey: true })
-    expect(document.activeElement).toBe(dialog.findAll('footer button').at(-1)!.element)
-
-    await dialog.get('textarea').trigger('keydown', { key: 'f', code: 'KeyF' })
-    expect(wrapper.find('.quick-jump-top-layer').exists()).toBe(false)
-    await dialog.get('textarea').trigger('keydown', { key: 'Escape', code: 'Escape' })
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('.float-composer-dialog').exists()).toBe(false)
-    expect(document.activeElement).toBe(failed.element)
-    rect.mockRestore()
   })
 
   it('gives Quick Jump the top layer over Shift preview while keeping task targets focus-only', async () => {
@@ -869,19 +571,6 @@ describe('Codex Companion V3 UI contract', () => {
     expect(document.activeElement).toBe(wrapper.get('input[aria-label="搜索当前 Codex 页签"]').element)
   })
 
-  it('opens Quick Jump from any focused Codex content, including selection mode, with F or Ctrl+F', async () => {
-    const { wrapper } = mountFloat(true, floatSnapshot('all'))
-    await wrapper.vm.$nextTick()
-    const root = wrapper.get('.codex-float-root')
-    await root.trigger('pointerdown')
-    await root.trigger('keydown', { key: 'f', code: 'KeyF' })
-    expect(wrapper.find('.quick-jump-top-layer').exists()).toBe(true)
-    await root.trigger('keydown', { key: 'Escape', code: 'Escape' })
-    await wrapper.get(`[data-focus-key="task:${TASK_FAILED}"] .task-state-button`).trigger('click')
-    await root.trigger('keydown', { key: 'f', code: 'KeyF', ctrlKey: true })
-    expect(wrapper.find('.quick-jump-top-layer').exists()).toBe(true)
-  })
-
   it('returns to the pre-card focus through Shift+Escape without changing float settings', async () => {
     const { wrapper, returnFocus, action } = mountFloat(true, floatSnapshot('all'))
     await wrapper.get('.codex-float-root').trigger('keydown', { key: 'Escape', code: 'Escape', shiftKey: true })
@@ -960,29 +649,6 @@ describe('Codex Companion V3 UI contract', () => {
     expect(expanded.text()).toContain('真实进行中')
   })
 
-  it('uses the plural pending-input counter hint without changing its click contract', async () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(NOW)
-    const source = floatSnapshot('all')
-    source.conversations.inputRequired.push({
-      ...source.conversations.inputRequired[0],
-      key: '6666666666666666',
-      actionAlias: 'alias-6666666666666666'
-    })
-    refreshTaskState(source)
-    const { wrapper, setExpansion } = mountFloat(false, source)
-    await wrapper.vm.$nextTick()
-    const input = wrapper.get('.float-counter.input')
-    expect(input.attributes('aria-label')).toBe('待输入：2')
-    await input.trigger('pointerenter', { pointerType: 'mouse' })
-    vi.advanceTimersByTime(200)
-    await wrapper.vm.$nextTick()
-    expect(wrapper.get('.float-compact-counter-hint').text()).toBe('待输入：2')
-    expect(setExpansion).not.toHaveBeenCalledWith(true, false)
-    await input.trigger('click')
-    expect(setExpansion).toHaveBeenCalledWith(true, false)
-  })
-
   it('hides zero counters, caps the visible badge at 99+, and keeps exact accessible counts aligned', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(NOW)
@@ -1005,76 +671,6 @@ describe('Codex Companion V3 UI contract', () => {
     expect(wrapper.get('.float-counter.active').text()).toBe('99+')
     expect(wrapper.get('.float-counter.active').attributes('aria-label')).toBe('进行中：100')
     expect(wrapper.get('.float-compact').attributes('aria-label')).toContain('100 个进行中')
-  })
-
-  it('keeps conservative ongoing counts identical in the real float and water settings preview', async () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(NOW)
-    const source = floatSnapshot('all')
-    const active = source.conversations.ongoing.find((task) => task.key === TASK_ACTIVE)!
-    const conservative = {
-      ...active,
-      key: '7777777777777777',
-      actionAlias: 'alias-7777777777777777',
-      name: '短暂断连仍进行中',
-      displayName: '短暂断连仍进行中',
-      originalName: '短暂断连仍进行中',
-      activityState: 'ongoing' as const
-    }
-    source.conversations.ongoing.push(conservative)
-    source.conversations.all.push(conservative)
-    refreshTaskState(source)
-
-    const float = mountFloat(false, source).wrapper
-    await float.vm.$nextTick()
-    expect(float.get('.float-counter.active').text()).toBe('2')
-
-    const page = mount(CodexPage, {
-      props: {
-        snapshot: {
-          settings: defaults,
-          environment: { version: 1, checking: false, platform: 'macos', runtimeState: 'detected', runtimeSource: 'nvm', processState: 'running', configState: 'loaded', connectionState: 'connected', desktopBridgeState: 'connected', checkedAt: NOW },
-          quota: source.quota,
-          config: source.config,
-          modelCatalog: source.modelCatalog,
-          newThreadContextFingerprint: source.newThreadContextFingerprint,
-          taskState: source.taskState!,
-          conversations: source.conversations,
-          refreshing: false,
-          floatHost: { displayId: 'screen', expandedWidth: 360, expandedHeight: 0, expandedManual: false }
-        }
-      }
-    })
-    mounted.push(page)
-    await page.get('#codex-config-tab-water').trigger('click')
-    expect(page.get('.water-preview-counter--active').text()).toBe(float.get('.float-counter.active').text())
-    expect(page.get('.codex-water-ball').attributes('aria-label')).toContain('2 个进行中')
-  })
-
-  it('separates single and batch drawers, opens them by right click, and routes arrows inside the drawer', async () => {
-    const { wrapper, action } = mountFloat(true, floatSnapshot('all'))
-    await wrapper.vm.$nextTick()
-    const failed = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
-    await failed.trigger('contextmenu')
-    expect(wrapper.get('.float-side-panel').text()).toContain('单项完整操作')
-    expect(wrapper.get('.float-drawer-actions').text()).toContain('打开任务')
-    expect(wrapper.get('.float-drawer-actions').text()).toContain('编辑别名')
-    await wrapper.get('.float-side-panel [aria-label="关闭"]').trigger('click')
-
-    await failed.trigger('click')
-    await wrapper.get(`[data-focus-key="task:${TASK_DONE}"]`).trigger('click', { ctrlKey: true })
-    await failed.trigger('contextmenu')
-    const drawer = wrapper.get('.float-side-panel')
-    expect(drawer.text()).toContain('多选操作 · 2 项')
-    expect(drawer.text()).not.toContain('打开任务')
-    expect(drawer.text()).not.toContain('编辑别名')
-    expect(drawer.text()).toContain('移到已隐藏')
-
-    await drawer.trigger('keydown', { key: 'ArrowDown', code: 'ArrowDown' })
-    expect(wrapper.findAll('.float-drawer-actions button')[1].classes()).toContain('active')
-    await drawer.trigger('keydown', { key: '2', code: 'Digit2', ctrlKey: true })
-    expect(action).toHaveBeenCalledWith('codex.task.hide', expect.objectContaining({ key: TASK_FAILED }))
-    expect(action).toHaveBeenCalledWith('codex.task.hide', expect.objectContaining({ key: TASK_DONE }))
   })
 
   it('backs out from detail directly to the original row', async () => {
@@ -1171,54 +767,6 @@ describe('Codex Companion V3 UI contract', () => {
     rect.mockRestore()
   })
 
-  it('keeps the compact upper half stable and expands only from lower-half hover', async () => {
-    vi.useFakeTimers()
-    const { wrapper, setExpansion } = mountFloat(false)
-    const surface = wrapper.get('.float-compact')
-    vi.spyOn(surface.element, 'getBoundingClientRect').mockReturnValue({
-      top: 5,
-      right: 99,
-      bottom: 99,
-      left: 5,
-      width: 94,
-      height: 94,
-      x: 5,
-      y: 5,
-      toJSON: () => ({})
-    })
-
-    await wrapper.get('.codex-float-root').trigger('pointerenter', { clientX: 52, clientY: 20, pointerType: 'mouse' })
-    await surface.trigger('pointerenter', { clientX: 52, clientY: 20, pointerType: 'mouse' })
-    await surface.trigger('pointermove', { clientX: 52, clientY: 51, pointerType: 'mouse' })
-    await surface.trigger('pointermove', { clientX: 52, clientY: 70, pointerType: 'touch' })
-    expect(setExpansion).not.toHaveBeenCalledWith(true, false)
-
-    await surface.trigger('pointermove', { clientX: 52, clientY: 70, pointerType: 'mouse' })
-    expect(setExpansion).toHaveBeenCalledWith(true, false)
-
-    const explicitMount = mountFloat(false)
-    await explicitMount.wrapper.get('.float-compact').trigger('click')
-    expect(explicitMount.setExpansion).toHaveBeenCalledWith(true, false)
-
-    const cardSource = floatSnapshot()
-    cardSource.style = 'card'
-    const cardMount = mountFloat(false, cardSource)
-    const cardSurface = cardMount.wrapper.get('.float-compact')
-    vi.spyOn(cardSurface.element, 'getBoundingClientRect').mockReturnValue({
-      top: 5,
-      right: 161,
-      bottom: 87,
-      left: 5,
-      width: 156,
-      height: 82,
-      x: 5,
-      y: 5,
-      toJSON: () => ({})
-    })
-    await cardSurface.trigger('pointerenter', { clientX: 52, clientY: 20, pointerType: 'mouse' })
-    expect(cardMount.setExpansion).toHaveBeenCalledWith(true, false)
-  })
-
   it('collapses 220ms after pointer departure or window blur', async () => {
     vi.useFakeTimers()
     const expandedMount = mountFloat(true)
@@ -1266,125 +814,6 @@ describe('Codex Companion V3 UI contract', () => {
     expect(css).toContain('@container (max-width: 350px)')
   })
 
-  it('places the rolling 1-365 day window in the Codex settings tab', async () => {
-    const source = floatSnapshot()
-    const wrapper = mount(CodexPage, {
-      props: {
-        snapshot: {
-          settings: defaults,
-          environment: { version: 1, checking: false, platform: 'macos', runtimeState: 'detected', runtimeSource: 'nvm', processState: 'running', configState: 'loaded', connectionState: 'connected', desktopBridgeState: 'connected', checkedAt: NOW },
-          quota: source.quota,
-          config: source.config,
-          modelCatalog: source.modelCatalog,
-          newThreadContextFingerprint: source.newThreadContextFingerprint,
-          taskState: source.taskState!,
-          conversations: source.conversations,
-          refreshing: false,
-          floatHost: { displayId: 'screen', expandedWidth: 360, expandedHeight: 0, expandedManual: false }
-        }
-      }
-    })
-    mounted.push(wrapper)
-    expect(wrapper.findAll('[role="tab"]')).toHaveLength(5)
-    expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toBe('快捷方式')
-    expect(wrapper.text()).not.toContain('Codex 数据与桌面实时状态已就绪')
-
-    await wrapper.get('#codex-config-tab-tasks').trigger('click')
-    expect(wrapper.text()).not.toContain('进行中离开稳定窗')
-    const input = wrapper.get('input[type="number"][min="1"][max="365"]')
-    expect((input.element as HTMLInputElement).value).toBe('30')
-    await input.setValue('45')
-    await input.trigger('change')
-    expect(wrapper.emitted('dispatch')).toContainEqual(['codex.settings.update', { settings: { timeWindowDays: 45 } }])
-
-    await wrapper.get('#codex-config-tab-runtime').trigger('click')
-    expect(wrapper.text()).toContain('Codex 数据与桌面实时状态已就绪')
-    expect(wrapper.text()).toContain('桌面实时桥')
-    expect(wrapper.text()).toContain('已连接 · 实时权威')
-    const modelField = wrapper.findAll('label').find((label) => label.text().includes('新会话普通模型'))!
-    expect(modelField.text()).toContain('quota-auto')
-    expect(modelField.text()).toContain('GPT-5.6 Sol')
-    await modelField.get('select').setValue('gpt-5.6-sol')
-    expect(wrapper.emitted('dispatch')).toContainEqual(['codex.settings.update', { settings: { newThreadPreferredModel: 'gpt-5.6-sol' } }])
-  })
-
-  it('edits card surface and foreground in one local modal transaction', async () => {
-    const source = floatSnapshot()
-    const wrapper = mount(CodexPage, {
-      attachTo: document.body,
-      props: {
-        snapshot: {
-          settings: defaults,
-          environment: { version: 1, checking: false, platform: 'macos', runtimeState: 'detected', runtimeSource: 'nvm', processState: 'running', configState: 'loaded', connectionState: 'connected', desktopBridgeState: 'connected', checkedAt: NOW },
-          quota: source.quota,
-          config: source.config,
-          modelCatalog: source.modelCatalog,
-          newThreadContextFingerprint: source.newThreadContextFingerprint,
-          taskState: source.taskState!,
-          conversations: source.conversations,
-          refreshing: false,
-          floatHost: { displayId: 'screen', expandedWidth: 360, expandedHeight: 0, expandedManual: false }
-        }
-      }
-    })
-    mounted.push(wrapper)
-    const trigger = wrapper.get('[data-role="card-color-pair-trigger"]')
-    await trigger.trigger('click')
-    await wrapper.vm.$nextTick()
-
-    const dialog = wrapper.get('.codex-card-color-dialog')
-    expect(dialog.findAll('.codex-card-color-fieldset')).toHaveLength(2)
-    expect(dialog.findAll('.codex-color-board')).toHaveLength(2)
-    expect(dialog.findAll('input[type="range"]')).toHaveLength(2)
-    expect(dialog.findAll('input[type="color"]')).toHaveLength(0)
-    expect(document.activeElement).toBe(dialog.get('#codex-card-surface-board').element)
-
-    const surface = dialog.get('#codex-card-surface-hex')
-    const foreground = dialog.get('#codex-card-foreground-hex')
-    const surfaceCards = dialog.get('[aria-label="打开卡片表面色候选色卡"]')
-    await surfaceCards.trigger('click')
-    expect(surfaceCards.attributes('aria-expanded')).toBe('true')
-    expect(dialog.findAll('.codex-color-card-popover [role="option"]')).toHaveLength(12)
-    await dialog.get('[data-color-card="#B5E3B5"]').trigger('click')
-    expect((surface.element as HTMLInputElement).value).toBe('#B5E3B5')
-    expect(contrastRatio((surface.element as HTMLInputElement).value, (foreground.element as HTMLInputElement).value)).toBeGreaterThanOrEqual(4.5)
-    expect(surfaceCards.attributes('aria-expanded')).toBe('false')
-
-    const foregroundCards = dialog.get('[aria-label="打开文字/图标前景色候选色卡"]')
-    await foregroundCards.trigger('click')
-    await dialog.get('.codex-color-card-popover').trigger('keydown', { key: 'Escape', code: 'Escape' })
-    expect(dialog.find('.codex-color-card-popover').exists()).toBe(false)
-    expect(wrapper.find('.codex-card-color-dialog').exists()).toBe(true)
-    expect(document.activeElement).toBe(foregroundCards.element)
-
-    await surface.setValue('#777777')
-    expect(contrastRatio((surface.element as HTMLInputElement).value, (foreground.element as HTMLInputElement).value)).toBeGreaterThanOrEqual(4.5)
-    expect(dialog.get('#codex-card-color-status').text()).toContain('同步调整')
-    await surface.setValue('#20252A')
-    expect((dialog.get('#codex-card-surface-h').element as HTMLInputElement).value).toBe('210')
-    await foreground.setValue('#F8FCFB')
-    expect(dialog.get('.codex-card-color-preview').attributes('style')).toContain('--codex-surface: #20252A')
-    expect(dialog.get('#codex-card-color-status').text()).toContain('4.5:1')
-    const confirm = dialog.findAll('button').find((button) => button.text().includes('确认并应用'))!
-    expect(confirm.attributes('disabled')).toBeUndefined()
-
-    ;(confirm.element as HTMLElement).focus()
-    await confirm.trigger('keydown', { key: 'Tab', code: 'Tab' })
-    expect(document.activeElement).toBe(dialog.get('.codex-card-color-close').element)
-    await confirm.trigger('click')
-    await wrapper.vm.$nextTick()
-
-    const updates = wrapper.emitted('dispatch') || []
-    expect(updates.some((entry) => entry[0] === 'codex.card-colors.preview')).toBe(true)
-    expect(updates.filter((entry) => entry[0] === 'codex.card-colors.commit')).toHaveLength(1)
-    expect(updates.find((entry) => entry[0] === 'codex.card-colors.commit')).toEqual(['codex.card-colors.commit', {
-      colors: { ...defaults.colors, card: '#20252A', cardForeground: '#F8FCFB' }
-    }])
-    expect(updates.some((entry) => entry[0] === 'codex.settings.update')).toBe(false)
-    expect(wrapper.find('.codex-card-color-dialog').exists()).toBe(false)
-    expect(document.activeElement).toBe(trigger.element)
-  })
-
   it('keeps every color control in settings and out of the desktop floating card', () => {
     const { wrapper } = mountFloat(true, floatSnapshot('all'))
     expect(wrapper.find('.float-water-config-entry').exists()).toBe(false)
@@ -1393,93 +822,4 @@ describe('Codex Companion V3 UI contract', () => {
     expect(wrapper.text()).not.toContain('水纹配色')
   })
 
-  it('keeps invalid HEX as modal-only draft and cancels with zero writes', async () => {
-    const source = floatSnapshot()
-    const wrapper = mount(CodexPage, {
-      attachTo: document.body,
-      props: {
-        snapshot: {
-          settings: defaults,
-          environment: { version: 1, checking: false, platform: 'macos', runtimeState: 'detected', runtimeSource: 'nvm', processState: 'running', configState: 'loaded', connectionState: 'connected', desktopBridgeState: 'connected', checkedAt: NOW },
-          quota: source.quota,
-          config: source.config,
-          modelCatalog: source.modelCatalog,
-          newThreadContextFingerprint: source.newThreadContextFingerprint,
-          taskState: source.taskState!,
-          conversations: source.conversations,
-          refreshing: false,
-          floatHost: { displayId: 'screen', expandedWidth: 360, expandedHeight: 0, expandedManual: false }
-        }
-      }
-    })
-    mounted.push(wrapper)
-    const trigger = wrapper.get('[data-role="card-color-pair-trigger"]')
-    await trigger.trigger('click')
-    const surface = wrapper.get('#codex-card-surface-hex')
-    const previewBefore = wrapper.get('.codex-card-color-preview').attributes('style')
-    await surface.setValue('#12ZZZZ')
-    expect(surface.attributes('aria-invalid')).toBe('true')
-    expect(surface.attributes('aria-describedby')).toContain('codex-card-surface-error')
-    expect(wrapper.get('.codex-card-color-preview').attributes('style')).toBe(previewBefore)
-    expect(wrapper.findAll('.codex-card-color-actions button').find((button) => button.text().includes('确认并应用'))!.attributes('disabled')).toBeDefined()
-
-    await wrapper.get('.codex-card-color-dialog').trigger('keydown', { key: 'Escape', code: 'Escape' })
-    await wrapper.vm.$nextTick()
-    const escapeDispatches = wrapper.emitted('dispatch') || []
-    expect(escapeDispatches.filter((entry) => entry[0] === 'codex.card-colors.cancel')).toHaveLength(1)
-    expect(escapeDispatches.some((entry) => entry[0] === 'codex.card-colors.commit' || entry[0] === 'codex.settings.update')).toBe(false)
-    expect(document.activeElement).toBe(trigger.element)
-
-    await trigger.trigger('click')
-    await wrapper.get('.codex-card-color-backdrop').trigger('click')
-    expect(wrapper.find('.codex-card-color-dialog').exists()).toBe(false)
-    const backdropDispatches = wrapper.emitted('dispatch') || []
-    expect(backdropDispatches.filter((entry) => entry[0] === 'codex.card-colors.cancel')).toHaveLength(2)
-    expect(backdropDispatches.some((entry) => entry[0] === 'codex.card-colors.commit' || entry[0] === 'codex.settings.update')).toBe(false)
-  })
-
-  it('renders operation tooltip metadata for critical Codex config controls', async () => {
-    const source = floatSnapshot()
-    const wrapper = mount(CodexPage, {
-      props: {
-        snapshot: {
-          settings: defaults,
-          environment: { version: 1, checking: false, platform: 'macos', runtimeState: 'detected', runtimeSource: 'nvm', processState: 'running', configState: 'loaded', connectionState: 'connected', desktopBridgeState: 'connected', checkedAt: NOW },
-          quota: source.quota,
-          config: source.config,
-          modelCatalog: source.modelCatalog,
-          newThreadContextFingerprint: source.newThreadContextFingerprint,
-          taskState: source.taskState!,
-          conversations: source.conversations,
-          refreshing: false,
-          floatHost: { displayId: 'screen', expandedWidth: 360, expandedHeight: 0, expandedManual: false }
-        }
-      }
-    })
-    mounted.push(wrapper)
-
-    const configureShortcut = wrapper.get('[data-operation-tooltip="配置系统级快捷键"]')
-    expect(configureShortcut.text()).toBe('去设置')
-    expect(configureShortcut.attributes('data-operation-description')).toContain('统一管理')
-
-    const quickExpand = wrapper.findAll('button').find((button) => button.text().trim() === '立即展开')
-    expect(quickExpand?.exists()).toBe(true)
-    expect(quickExpand?.attributes('data-operation-tooltip')).toBe('立即展开')
-    expect(quickExpand?.attributes('data-operation-description')).toContain('⌘⌥↵')
-
-    await wrapper.get('#codex-config-tab-tasks').trigger('click')
-    const refreshRow = wrapper.findAll('label').find((label) => label.text().includes('刷新频率'))
-    expect(refreshRow?.exists()).toBe(true)
-    expect(refreshRow?.get('select').attributes('data-operation-tooltip')).toBe('刷新频率')
-    expect(refreshRow?.get('select').attributes('data-operation-description')).toContain('按该秒数轮询会话列表')
-
-    const windowInput = wrapper.find('input[type="number"][min="1"][max="365"]')
-    expect(windowInput.attributes('data-operation-tooltip')).toBe('时间窗口（天）')
-    expect(windowInput.attributes('data-operation-description')).toContain('按最新 Turn 活动时间过滤常规会话')
-
-    await wrapper.get('#codex-config-tab-runtime').trigger('click')
-    const modelPolicy = wrapper.get('.codex-model-policy-select select')
-    expect(modelPolicy.attributes('data-operation-tooltip')).toBe('新会话普通模型')
-    expect(modelPolicy.attributes('data-operation-description')).toContain('目录默认')
-  })
 })

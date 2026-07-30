@@ -111,12 +111,12 @@ describe('Codex controller', () => {
       { includeQuota: true, includeConfig: true, includeThreads: false },
       { includeQuota: false, includeConfig: false, includeThreads: true }
     ])
-    expect(controller.view().environment).toMatchObject({ configState: 'loaded', connectionState: 'connected', processState: 'running' })
+    expect(controller.view().environment).toMatchObject({ configState: 'loaded', connectionState: 'connected', processState: 'not-running' })
     controller.dispose()
     expect(closeCount).toBeGreaterThan(0)
   })
 
-  it('promotes a successful App Server read over an incomplete legacy readiness result', async () => {
+  it('keeps explicit readiness diagnostics while a successful App Server read loads data', async () => {
     const state = createInitialState(1)
     state.activeTab = 'codex'
     const platform = {
@@ -151,8 +151,8 @@ describe('Codex controller', () => {
 
     expect(controller.view().environment).toMatchObject({
       platform: 'macos',
-      runtimeState: 'detected',
-      processState: 'running',
+      runtimeState: 'missing',
+      processState: 'unknown',
       configState: 'loaded',
       connectionState: 'connected'
     })
@@ -621,9 +621,8 @@ describe('Codex controller', () => {
     expect(notifyCount).toBe(beforeRelease)
   })
 
-  it('rejects low-contrast theme patches outside the configuration UI', () => {
+  it('persists direct color strings without a contrast gate', () => {
     const state = createInitialState(1)
-    const messages: string[] = []
     const save = vi.fn()
     const original = structuredClone(state.codex.settings.colors)
     const controller = createCodexController({
@@ -631,26 +630,16 @@ describe('Codex controller', () => {
       getAppState: () => state,
       save,
       notify: () => undefined,
-      setMessage: (message) => messages.push(message)
+      setMessage: () => undefined
     })
 
-    expect(controller.updateSettings({ colors: { ...original, water: '#FFFFFF' } })).toBe(false)
-    expect(state.codex.settings.colors).toEqual(original)
-    expect(messages.at(-1)).toContain('已保留上一次有效主题')
-
-    expect(controller.updateSettings({ colors: { card: '#20252A' } } as never)).toBe(false)
-    expect(controller.updateSettings({ colors: { ...original, card: '#20252A', cardForeground: '#30353A' } })).toBe(false)
-    expect(controller.updateSettings({ colors: { ...original, card: '#20252A', cardForeground: 'broken' } })).toBe(false)
-    expect(state.codex.settings.colors).toEqual(original)
-    expect(save).not.toHaveBeenCalled()
-
-    expect(controller.updateSettings({ colors: { ...original, water: '#18212B', card: '#20252A', cardForeground: '#F8FCFB' } })).toBe(true)
-    expect(state.codex.settings.colors).toMatchObject({ water: '#18212B', card: '#20252A', cardForeground: '#F8FCFB' })
+    expect(controller.updateSettings({ colors: { ...original, water: '#FFFFFF', card: '#20252A', cardForeground: 'broken' } })).toBe(true)
+    expect(state.codex.settings.colors).toMatchObject({ water: '#FFFFFF', card: '#20252A', cardForeground: 'broken' })
     expect(save).toHaveBeenCalledTimes(1)
     controller.dispose()
   })
 
-  it('previews a paired card theme on the real float without saving, then rolls back or commits atomically', () => {
+  it('previews partial card colors on the real float, then rolls back or commits', () => {
     const state = createInitialState(1)
     state.codex.settings.displayStyle = 'water'
     const original = structuredClone(state.codex.settings.colors)
@@ -671,8 +660,8 @@ describe('Codex controller', () => {
     expect(controller.floatSnapshot()).toMatchObject({ style: 'card', colors: preview })
     expect(save).not.toHaveBeenCalled()
 
-    expect(controller.previewCardColors({ card: '#333333' })).toBe(false)
-    expect(controller.floatSnapshot()).toMatchObject({ style: 'card', colors: preview })
+    expect(controller.previewCardColors({ card: '#333333' })).toBe(true)
+    expect(controller.floatSnapshot()).toMatchObject({ style: 'card', colors: { ...original, card: '#333333' } })
     expect(controller.clearCardColorPreview()).toBe(true)
     expect(controller.floatSnapshot()).toMatchObject({ style: 'water', colors: original })
     expect(save).not.toHaveBeenCalled()
@@ -784,6 +773,23 @@ describe('Codex controller', () => {
 
     expect(controller.view().conversations).toMatchObject({ ongoingCount: 0, completedUnreadCount: 0, completedCount: 1 })
     expect(controller.view().conversations.completed[0]).toMatchObject({ key: taskKey, unreadState: 'read' })
+
+    activityListeners[0]({
+      version: 2,
+      sourceFingerprint,
+      generation: 3,
+      receivedAt: Date.now() + 2,
+      inventoryChanged: false,
+      desktopBridgeState: 'connected',
+      entries: [{
+        key: taskKey,
+        readStateOnly: true,
+        hasUnreadTurn: true,
+        unreadAuthority: 'desktop-persisted'
+      }]
+    })
+    expect(controller.view().conversations).toMatchObject({ ongoingCount: 0, completedUnreadCount: 1, completedCount: 0 })
+    expect(controller.view().conversations.completedUnread[0]).toMatchObject({ key: taskKey, bucket: 'completed-unread', unreadState: 'unread' })
     controller.dispose()
   })
 
@@ -819,9 +825,13 @@ describe('Codex controller', () => {
     activityListeners[0]({ version: 2, sourceFingerprint, generation: 1, receivedAt, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', desktopActiveSince: activeSince, hasUnreadTurn: false, unreadAuthority: 'desktop-live' }] })
     expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'active' })
 
-    activityListeners[0]({ version: 2, sourceFingerprint, generation: 2, receivedAt: receivedAt + 1, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', desktopActiveSince: activeSince, hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'completed', lastTurnStartedAt: activeSince + 500, lastTurnCompletedAt: activeSince + 1_000 }] })
+    activityListeners[0]({ version: 2, sourceFingerprint, generation: 2, receivedAt: receivedAt + 1, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', desktopActiveSince: activeSince, hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'completed', lastTurnStartedAt: activeSince + 500, lastTurnCompletedAt: activeSince + 1_000, lastTurnEvidence: 'turn-completed' }] })
     expect(controller.view().conversations).toMatchObject({ ongoingCount: 0, completedCount: 1 })
     expect(controller.view().conversations.completed[0]).toMatchObject({ key: taskKey, completionRevision: activeSince + 1_000 })
+
+    activityListeners[0]({ version: 2, sourceFingerprint, generation: 3, receivedAt: receivedAt + 2, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', activityEvidence: 'initial-snapshot', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'inProgress', lastTurnStartedAt: activeSince + 500, lastTurnEvidence: 'turn-started' }] })
+    expect(controller.view().conversations).toMatchObject({ ongoingCount: 1, completedCount: 0 })
+    expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'active' })
     controller.dispose()
   })
 
