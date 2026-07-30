@@ -148,6 +148,9 @@
 .codex-diagnostic-grid > div { min-width: 0; padding: 6px 7px; border: 1px solid color-mix(in srgb, currentColor 22%, transparent); border-radius: 7px; background: rgba(255, 255, 255, .52); }
 .codex-diagnostic-grid dt, .codex-diagnostic-grid dd { overflow: hidden; margin: 0; text-overflow: ellipsis; white-space: nowrap; }
 .codex-diagnostic-grid dt { font-size: 10px; opacity: .76; }
+.codex-diagnostic-grid dt.has-detail { display: flex; overflow: visible; align-items: center; gap: 4px; }
+.codex-diagnostic-grid > div:focus-within { position: relative; z-index: 5; }
+.codex-diagnostic-tip { width: 14px; height: 14px; font-size: 9px; }
 .codex-diagnostic-grid dd { margin-top: 2px; font-size: 10px; font-weight: 800; }
 .codex-launch-config { display: grid; grid-column: 1 / -1; grid-template-columns: minmax(170px, .8fr) minmax(230px, 1.35fr) auto; gap: 8px 10px; align-items: end; padding: 9px; border: 1px solid color-mix(in srgb, currentColor 24%, transparent); border-radius: 8px; background: rgba(255, 255, 255, .4); }
 .codex-launch-copy strong { display: block; font-size: 11px; }
@@ -262,11 +265,13 @@
 .codex-switch-row input:checked + i { border-color: #087d73; background: #087d73; }
 .codex-switch-row input:checked + i::after { transform: translateX(14px); }
 .codex-tip {
+  appearance: none;
   position: relative;
   z-index: 0;
   display: inline-flex;
   width: 17px;
   height: 17px;
+  padding: 0;
   flex: none;
   align-items: center;
   justify-content: center;
@@ -274,6 +279,7 @@
   border: 1px solid #7697a4;
   background: linear-gradient(180deg, #eef6fa, #dce7ee);
   color: #1a4553;
+  font-family: inherit;
   font-size: 11px;
   font-weight: 800;
   line-height: 1;
