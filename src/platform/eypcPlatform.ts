@@ -88,6 +88,18 @@ export interface FileActionResult {
   paths?: string[]
 }
 
+export interface SaveTextFileInput {
+  suggestedName: string
+  text: string
+  mimeType?: string
+}
+
+export interface SaveTextFileResult {
+  outcome: 'saved' | 'cancelled' | 'failed'
+  errorCode?: FileErrorCode
+  message?: string
+}
+
 export interface FileCapabilities {
   open: boolean
   reveal: boolean
@@ -250,6 +262,7 @@ export interface EypcPlatformApi {
     pickFavorite?(): Promise<PickedFavorite | null>
     pickFavorites?(kind: PickedFavoriteKind): Promise<PickedFavorite[]>
     listDirectory(path: string): Promise<FavoriteDirectoryListResult>
+    saveTextFile(input: SaveTextFileInput): Promise<SaveTextFileResult>
   }
   clipboard: {
     copyText(text: string): Promise<boolean>
@@ -329,6 +342,27 @@ async function callFileAction(call: (() => Promise<unknown>) | undefined, unsupp
       outcome: 'failed',
       errorCode: errorCodeFromUnknown(error),
       message: error instanceof Error ? error.message : unsupportedMessage
+    }
+  }
+}
+
+function normalizeSaveTextFileResult(value: unknown): SaveTextFileResult {
+  if (value && typeof value === 'object' && 'outcome' in value) {
+    const outcome = String((value as { outcome?: unknown }).outcome)
+    if (outcome === 'saved' || outcome === 'cancelled' || outcome === 'failed') return value as SaveTextFileResult
+  }
+  return { outcome: 'failed', errorCode: 'io-error', message: 'save text file failed' }
+}
+
+async function callSaveTextFile(call: (() => Promise<unknown>) | undefined): Promise<SaveTextFileResult> {
+  if (!call) return { outcome: 'failed', errorCode: 'unsupported', message: 'save text file unavailable' }
+  try {
+    return normalizeSaveTextFileResult(await call())
+  } catch (error) {
+    return {
+      outcome: 'failed',
+      errorCode: errorCodeFromUnknown(error),
+      message: error instanceof Error ? error.message : 'save text file failed'
     }
   }
 }
@@ -618,6 +652,31 @@ async function pickFavoritesViaBrowserInput(kind: PickedFavoriteKind): Promise<P
   })
 }
 
+async function saveTextFileViaBrowser(input: SaveTextFileInput): Promise<SaveTextFileResult> {
+  if (typeof document === 'undefined' || !document.body || typeof URL === 'undefined' || typeof Blob === 'undefined') {
+    return { outcome: 'failed', errorCode: 'unsupported', message: 'browser download unavailable' }
+  }
+  const suggestedName = input.suggestedName.trim() || 'mqtt-export.json'
+  try {
+    const objectUrl = URL.createObjectURL(new Blob([input.text], { type: input.mimeType || 'text/plain;charset=utf-8' }))
+    const anchor = document.createElement('a')
+    anchor.href = objectUrl
+    anchor.download = suggestedName
+    anchor.hidden = true
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
+    return { outcome: 'saved' }
+  } catch (error) {
+    return {
+      outcome: 'failed',
+      errorCode: errorCodeFromUnknown(error),
+      message: error instanceof Error ? error.message : 'browser download failed'
+    }
+  }
+}
+
 export function getPlatform(): EypcPlatformApi {
   if (typeof window !== 'undefined' && window.eypcPlatform) {
     const hostFiles = window.eypcPlatform.files
@@ -669,7 +728,8 @@ export function getPlatform(): EypcPlatformApi {
           const picked = await hostFiles.pickFavorite?.()
           return picked ? [picked] : []
         }),
-        listDirectory: hostFiles.listDirectory || (async () => ({ ok: false, entries: [], error: 'directory listing unavailable', errorCode: 'unsupported' }))
+        listDirectory: hostFiles.listDirectory || (async () => ({ ok: false, entries: [], error: 'directory listing unavailable', errorCode: 'unsupported' })),
+        saveTextFile: (input) => callSaveTextFile(hostFiles.saveTextFile ? () => hostFiles.saveTextFile(input) : undefined)
       },
       clipboard: {
         copyText: hostClipboard?.copyText || (async () => false)
@@ -764,7 +824,8 @@ export function getPlatform(): EypcPlatformApi {
       copyItems: async () => ({ outcome: 'failed', errorCode: 'unsupported', message: 'copy items unavailable in browser' }),
       inspectPaths: async (paths) => paths.map((path) => unknownInspection(path)),
       pickFavorites: pickFavoritesViaBrowserInput,
-      listDirectory: async () => ({ ok: false, entries: [], error: 'directory listing unavailable', errorCode: 'unsupported' })
+      listDirectory: async () => ({ ok: false, entries: [], error: 'directory listing unavailable', errorCode: 'unsupported' }),
+      saveTextFile: saveTextFileViaBrowser
     },
     clipboard: {
       copyText: async (text) => {

@@ -24,6 +24,7 @@ import {
   toMqttPublishDraft,
   updateMqttPublishDraftHistory
 } from '../../src/domain/mqtt'
+import { buildMqttMergedJsonExport, mqttMergedJsonFileName, stringifyMqttMergedJsonExport, stringifyMqttPayloadsCopy, stringifyMqttTopicsCopy, type MqttMergedExportSource } from '../../src/domain/mqttExport'
 
 describe('mqtt domain', () => {
   it('normalizes connection configs with safe defaults and clamped connection options', () => {
@@ -545,5 +546,70 @@ describe('mqtt domain', () => {
     expect(archive.publishTemplates.map((item) => item.id)).toEqual(['used', 'edited', 'old'])
     expect(archive.publishTemplates[0]).toMatchObject({ id: 'used', operatedAt: 50 })
     expect(archive.publishTemplates[1]).toMatchObject({ id: 'edited', operatedAt: 40 })
+  })
+
+  it('builds a lossless merged JSON export for selected MQTT records', () => {
+    const records: MqttMergedExportSource[] = [
+      {
+        id: 'incoming-1',
+        connectionId: 'dev',
+        sessionId: 'session-1',
+        direction: 'incoming' as const,
+        topic: 'plc/status',
+        payload: '{"ok":true,"value":12}',
+        qos: 1 as const,
+        retain: false,
+        timestamp: 1_000,
+        title: 'Status',
+        note: 'diagnostic'
+      },
+      {
+        id: 'template-1',
+        connectionId: 'dev',
+        title: 'Reset',
+        topic: 'plc/reset',
+        payload: 'reset=1',
+        qos: 0 as const,
+        retain: true,
+        createdAt: 1_100,
+        updatedAt: 1_200,
+        operatedAt: 1_300
+      }
+    ]
+
+    expect(buildMqttMergedJsonExport(records, 2_000)).toEqual({
+      schema: 'eypc-mqtt-merged-export/v1',
+      exportedAt: '1970-01-01T00:00:02.000Z',
+      count: 2,
+      records: [
+        {
+          kind: 'message',
+          direction: 'incoming',
+          topic: 'plc/status',
+          payload: '{"ok":true,"value":12}',
+          payloadFormat: 'json',
+          payloadJson: { ok: true, value: 12 },
+          qos: 1,
+          retain: false,
+          occurredAt: '1970-01-01T00:00:01.000Z',
+          title: 'Status',
+          note: 'diagnostic'
+        },
+        {
+          kind: 'template',
+          topic: 'plc/reset',
+          payload: 'reset=1',
+          payloadFormat: 'text',
+          qos: 0,
+          retain: true,
+          occurredAt: '1970-01-01T00:00:01.300Z',
+          title: 'Reset'
+        }
+      ]
+    })
+    expect(stringifyMqttMergedJsonExport(records, 2_000)).toMatch(/\n$/)
+    expect(stringifyMqttTopicsCopy(records)).toBe('plc/status\nplc/reset')
+    expect(stringifyMqttPayloadsCopy(records)).toBe('{"ok":true,"value":12}\n\nreset=1')
+    expect(mqttMergedJsonFileName(2_000)).toBe('mqtt-merged-1970-01-01T00-00-02Z.json')
   })
 })

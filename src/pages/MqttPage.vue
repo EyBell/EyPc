@@ -11,6 +11,7 @@ import {
   Copy,
   CornerDownLeft,
   Eraser,
+  Eye,
   Folder,
   FolderPlus,
   Hash,
@@ -24,7 +25,9 @@ import {
   RefreshCw,
   Save,
   Send,
+  SlidersHorizontal,
   Star,
+  TextCursorInput,
   Trash2,
   Unplug,
   X
@@ -347,6 +350,7 @@ const activeToolbarSearchPlaceholder = computed(() => props.snapshot.activeMqttR
 const showMqttToolbarSearch = computed(() => mqttToolbarSearchOpen.value || Boolean(activeToolbarSearchValue.value.trim()))
 const activeRecordListRows = computed(() => props.snapshot.activeMqttRecordList === 'history' ? props.snapshot.mqttPublishHistoryRows : props.snapshot.mqttPublishTemplateRows)
 const activeRecordListState = computed(() => props.snapshot.activeMqttRecordList === 'history' ? props.snapshot.mqttRecordListStates.history : props.snapshot.mqttRecordListStates.templates)
+const activeRecordSelectedCount = computed(() => props.snapshot.mqttRecordListStates[props.snapshot.activeMqttRecordList].selectedIds.length)
 const activeRecordSelectedKind = computed(() => props.snapshot.mqttSelectedRecord?.kind === 'publish-template' ? 'publish-template' : props.snapshot.mqttSelectedRecord?.kind === 'message' ? 'message' : null)
 const activeSubscriptionLabel = computed(() => {
   if (!props.snapshot.mqttActiveSubscriptionTopics.length) return '全部 topic'
@@ -603,7 +607,7 @@ const mqttIconComponents: Record<string, Component> = {
   connect: Plug,
   disconnect: Unplug,
   edit: Pencil,
-  rename: Pencil,
+  rename: TextCursorInput,
   log: Logs,
   'clear-selected': BadgeX,
   'clear-all': Eraser,
@@ -626,9 +630,11 @@ const mqttIconComponents: Record<string, Component> = {
   apply: CornerDownLeft,
   send: Send,
   more: MoreHorizontal,
+  options: SlidersHorizontal,
   draft: ClipboardList,
   save: Save,
   refresh: RefreshCw,
+  preview: Eye,
   detail: Info,
   plug: Plug,
   unplug: Unplug,
@@ -1943,6 +1949,7 @@ onUnmounted(() => {
           type="button"
           class="mqtt-panel-toggle group-panel-toggle group-panel-toggle-inline"
           :title="`收起连接栏 ${commandLabel('mqtt.panel.toggle', 'c-s-w')}`"
+          aria-label="收起连接栏"
           @click="emit('dispatch', 'mqtt.panel.toggle')"
         >
           <span class="group-panel-toggle-icon" aria-hidden="true"></span>
@@ -2135,10 +2142,10 @@ onUnmounted(() => {
             <small class="mqtt-subscription-route">{{ row.topic }}</small>
           </span>
           <span class="mqtt-subscription-row-actions" aria-label="订阅操作">
-            <button type="button" class="mqtt-icon-button mqtt-subscription-copy" title="复制 topic" aria-label="复制订阅 topic" @click.stop="copySubscriptionTopic(row.topic)">
+            <button type="button" class="mqtt-icon-button mqtt-subscription-copy" :title="commandTitle('复制 topic', 'mqtt.subscription.copyTopic', 'c-c')" aria-label="复制订阅 topic" @click.stop="copySubscriptionTopic(row.topic)">
               <MqttIcon name="copy-topic" />
             </button>
-            <button type="button" class="mqtt-icon-button mqtt-subscription-apply" title="填入发布" aria-label="填入发布 topic" @click.stop="useSubscriptionTopic(row.topic)">
+            <button type="button" class="mqtt-icon-button mqtt-subscription-apply" :title="commandTitle('填入发布', 'mqtt.subscription.useAsPublishTopic', 'c-cr')" aria-label="填入发布 topic" @click.stop="useSubscriptionTopic(row.topic)">
               <MqttIcon name="apply" />
             </button>
             <button type="button" class="mqtt-icon-button mqtt-subscription-more" :title="commandTitle('快捷操作', 'mqtt.drawer.open', 'c-→')" aria-label="订阅快捷操作" @click.stop="openSubscriptionMenu(row.topic)">
@@ -2255,6 +2262,45 @@ onUnmounted(() => {
           </span>
         </span>
         <span class="mqtt-record-mode-buttons" aria-label="记录视图">
+          <span v-if="activeRecordSelectedCount" class="mqtt-record-export-actions" role="toolbar" aria-label="已选 MQTT 记录快速导出">
+            <small class="mqtt-record-export-count" role="status" aria-live="polite">已选 {{ activeRecordSelectedCount }} 条</small>
+            <button
+              type="button"
+              class="mqtt-filter-button mqtt-icon-button mqtt-record-export-button"
+              :title="`只复制 ${activeRecordSelectedCount} 条 topic`"
+              :aria-label="`只复制 ${activeRecordSelectedCount} 条 topic`"
+              @click="emit('dispatch', 'mqtt.record.export.copyTopics', { list: props.snapshot.activeMqttRecordList })"
+            >
+              <MqttIcon name="copy-topic" />
+            </button>
+            <button
+              type="button"
+              class="mqtt-filter-button mqtt-icon-button mqtt-record-export-button"
+              :title="`只复制 ${activeRecordSelectedCount} 条 payload`"
+              :aria-label="`只复制 ${activeRecordSelectedCount} 条 payload`"
+              @click="emit('dispatch', 'mqtt.record.export.copyPayloads', { list: props.snapshot.activeMqttRecordList })"
+            >
+              <MqttIcon name="copy-payload" />
+            </button>
+            <button
+              type="button"
+              class="mqtt-filter-button mqtt-icon-button mqtt-record-export-button"
+              :title="`全都复制 ${activeRecordSelectedCount} 条记录的融合 JSON`"
+              :aria-label="`全都复制 ${activeRecordSelectedCount} 条记录的融合 JSON`"
+              @click="emit('dispatch', 'mqtt.record.export.copyMergedJson', { list: props.snapshot.activeMqttRecordList })"
+            >
+              <MqttIcon name="copy" />
+            </button>
+            <button
+              type="button"
+              class="mqtt-filter-button mqtt-icon-button mqtt-record-export-button"
+              :title="`导出 ${activeRecordSelectedCount} 条记录的融合 JSON 文件`"
+              :aria-label="`导出 ${activeRecordSelectedCount} 条记录的融合 JSON 文件`"
+              @click="emit('dispatch', 'mqtt.record.export.saveMergedJson', { list: props.snapshot.activeMqttRecordList })"
+            >
+              <MqttIcon name="save" />
+            </button>
+          </span>
           <button
             type="button"
             class="mqtt-filter-button mqtt-icon-button"
@@ -2621,6 +2667,8 @@ onUnmounted(() => {
               role="option"
               tabindex="-1"
               :class="{ focused: recordSelected('message', message.id), selected: props.snapshot.mqttRecordListStates.messages.selectedIds.includes(message.id), incoming: message.direction === 'incoming', outgoing: message.direction === 'outgoing' }"
+              :data-operation-tooltip="`消息 ${messageRouteLabel(message)}`"
+              data-operation-description="单击聚焦；右键打开快捷操作；预览/详情/更多见行内按钮"
               :data-mqtt-preview-target="previewTargetValue('message', message.id)"
               :data-quick-jump-label="messageRouteLabel(message)"
               :data-quick-jump-search="`${message.topic} ${payloadSnippet(message.payload)}`"
@@ -2661,10 +2709,10 @@ onUnmounted(() => {
                 </span>
                 <span class="mqtt-message-actions" aria-label="消息操作">
                   <button type="button" class="mqtt-icon-button" :title="commandTitle('预览消息', 'mqtt.preview.open', 'c-i')" aria-label="预览消息" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.preview.open')" @click.stop="previewMessage(message, 'messages')">
-                    <MqttIcon name="detail" />
+                    <MqttIcon name="preview" />
                   </button>
                   <button type="button" class="mqtt-icon-button" :title="commandTitle('详情消息', 'mqtt.detail.open', 'c-←')" aria-label="详情消息" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.detail.open')" @click.stop="openMessageDetail(message, 'messages')">
-                    <MqttIcon name="log" />
+                    <MqttIcon name="detail" />
                   </button>
                   <button type="button" class="mqtt-icon-button" :title="commandTitle('快捷操作', 'mqtt.drawer.open', 'c-→')" aria-label="快捷操作" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.drawer.open')" @click.stop="openMessageMenu(message, 'messages')">
                     <MqttIcon name="more" />
@@ -2703,12 +2751,12 @@ onUnmounted(() => {
                 type="button"
                 class="mqtt-icon-button mqtt-publish-options-button"
                 data-role="mqtt-publish-editor"
-                :title="commandTitle('发送选项', 'mqtt.publish.options.open')"
+                :title="commandTitle('发送选项', 'mqtt.publish.options.open', 'c-s-o')"
                 aria-label="发送选项"
                 :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.publish.options.open')"
                 @click="emit('dispatch', 'mqtt.publish.options.open')"
               >
-                <MqttIcon name="more" />
+                <MqttIcon name="options" />
               </button>
               <div
                 v-if="props.snapshot.mqttPublishOptionsOpen"
@@ -2821,22 +2869,22 @@ onUnmounted(() => {
                         <button type="button" class="mqtt-icon-button" :title="commandTitle('草稿操作', 'mqtt.drawer.open', 'c-→')" aria-label="草稿操作" @click.stop="openPublishDraftHistoryMenu(row)">
                           <MqttIcon name="more" />
                         </button>
-                        <button type="button" class="mqtt-icon-button" title="应用草稿" aria-label="应用草稿" @click.stop="applyPublishDraftHistory(row)">
+                        <button type="button" class="mqtt-icon-button" :title="commandTitle('应用草稿', 'mqtt.publish.draft.apply', 'cr')" aria-label="应用草稿" @click.stop="applyPublishDraftHistory(row)">
                           <MqttIcon name="apply" />
                         </button>
                         <button type="button" class="mqtt-icon-button" :title="commandTitle('发送草稿', 'mqtt.publish.draft.send', 'c-cr')" aria-label="发送草稿" @click.stop="sendPublishDraftHistory(row)">
                           <MqttIcon name="send" />
                         </button>
-                        <button type="button" class="mqtt-icon-button" title="收藏草稿" aria-label="收藏草稿" @click.stop="favoritePublishDraftHistory(row)">
+                        <button type="button" class="mqtt-icon-button" :title="commandTitle('收藏草稿', 'mqtt.publish.draft.favorite', 'c-s')" aria-label="收藏草稿" @click.stop="favoritePublishDraftHistory(row)">
                           <MqttIcon name="star" />
                         </button>
                         <button type="button" class="mqtt-icon-button" :title="commandTitle('草稿别名', 'mqtt.publish.draft.rename', 'f2')" aria-label="草稿别名" @click.stop="renamePublishDraftHistory(row)">
-                          <MqttIcon name="edit" />
+                          <MqttIcon name="rename" />
                         </button>
                         <button type="button" class="mqtt-icon-button" :title="commandTitle('完整编辑草稿', 'mqtt.publish.draft.edit', 's-f2')" aria-label="完整编辑草稿" @click.stop="editPublishDraftHistory(row)">
                           <MqttIcon name="edit" />
                         </button>
-                        <button type="button" class="mqtt-icon-button danger" title="删除草稿" aria-label="删除草稿" @click.stop="deletePublishDraftHistory(row)">
+                        <button type="button" class="mqtt-icon-button danger" :title="commandTitle('删除草稿', 'mqtt.publish.draft.delete', 'del')" aria-label="删除草稿" @click.stop="deletePublishDraftHistory(row)">
                           <MqttIcon name="delete" />
                         </button>
                       </span>
@@ -3208,13 +3256,16 @@ onUnmounted(() => {
           </dl>
           <div class="mqtt-detail-actions">
             <button v-if="detailTarget?.kind !== 'publish-draft-history'" type="button" class="mqtt-icon-button" :title="commandTitle('预览', 'mqtt.preview.open', 'c-i')" aria-label="预览详情记录" :data-mqtt-shortcut-hint="shortcutHintAttr('mqtt.preview.open')" @click="emit('dispatch', 'mqtt.preview.open', { ...detailRecordCommandArgs(), source: 'keyboard' })">
-              <MqttIcon name="detail" />
+              <MqttIcon name="preview" />
             </button>
-            <button type="button" class="mqtt-icon-button" title="复制 topic" aria-label="复制 topic" @click="emit('dispatch', 'mqtt.record.copyTopic', detailRecordCommandArgs())">
+            <button type="button" class="mqtt-icon-button" :title="commandTitle('复制 topic', 'mqtt.record.copyTopic', 'c-s-c')" aria-label="复制 topic" @click="emit('dispatch', 'mqtt.record.copyTopic', detailRecordCommandArgs())">
               <MqttIcon name="copy-topic" />
             </button>
-            <button type="button" class="mqtt-icon-button" title="复制 payload" aria-label="复制 payload" @click="emit('dispatch', 'mqtt.record.copyPayload', detailRecordCommandArgs())">
+            <button type="button" class="mqtt-icon-button" :title="commandTitle('复制 payload', 'mqtt.record.copyPayload', 'c-c')" aria-label="复制 payload" @click="emit('dispatch', 'mqtt.record.copyPayload', detailRecordCommandArgs())">
               <MqttIcon name="copy-payload" />
+            </button>
+            <button type="button" class="mqtt-icon-button" title="全都复制" aria-label="全都复制完整记录 JSON" @click="emit('dispatch', 'mqtt.record.copyAll', detailRecordCommandArgs())">
+              <MqttIcon name="copy" />
             </button>
           </div>
           <div class="mqtt-preview-payload mqtt-detail-payload">
@@ -3286,14 +3337,14 @@ onUnmounted(() => {
       </aside>
     </div>
 
-    <div v-if="props.snapshot.mqttDrawer.open && props.snapshot.mqttDrawer.active" class="drawer-overlay drawer-overlay-right" role="presentation" @click="emit('dispatch', 'mqtt.drawer.close')">
+    <div v-if="props.snapshot.mqttDrawer.open && props.snapshot.mqttDrawer.active" class="drawer-overlay drawer-overlay-right mqtt-action-drawer-overlay" role="presentation" @click="emit('dispatch', 'mqtt.drawer.close')">
       <aside class="port-detail-drawer mqtt-action-drawer mqtt-context-panel active" aria-label="MQTT 动作抽屉" @click.stop>
         <header class="drawer-header">
           <span>
             <strong>快捷操作</strong>
             <small>{{ props.snapshot.mqttDrawer.targetKind || '当前上下文' }}</small>
           </span>
-          <button type="button" class="mqtt-icon-button" title="关闭抽屉" aria-label="关闭抽屉" @click="emit('dispatch', 'mqtt.drawer.close')">
+          <button type="button" class="mqtt-icon-button" :title="commandTitle('关闭抽屉', 'mqtt.drawer.close', '← / esc')" aria-label="关闭抽屉" @click="emit('dispatch', 'mqtt.drawer.close')">
             <MqttIcon name="close" />
           </button>
         </header>
@@ -3317,7 +3368,7 @@ onUnmounted(() => {
               <strong>{{ item.title }}</strong>
               <small>{{ item.description }}</small>
             </span>
-            <kbd>{{ item.shortcutLabel || '未绑定' }}</kbd>
+            <kbd>{{ item.shortcutLabel || '点击' }}</kbd>
           </button>
           <p v-if="!props.snapshot.mqttDrawerItems.length" class="empty-note">当前没有可执行动作</p>
         </div>

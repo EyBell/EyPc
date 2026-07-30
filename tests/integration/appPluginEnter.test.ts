@@ -69,7 +69,8 @@ function installHost(payload: { code?: string } | null, codexEnabled = true, win
       reveal: async () => ({ outcome: 'failed', errorCode: 'unsupported' }),
       copyPath: async () => ({ outcome: 'failed', errorCode: 'unsupported' }),
       inspectPaths: async (paths) => paths.map((path) => ({ path, status: 'unknown', kind: 'unknown', exists: false, isSymbolicLink: false })),
-      listDirectory: async () => ({ ok: false, entries: [], errorCode: 'unsupported' })
+      listDirectory: async () => ({ ok: false, entries: [], errorCode: 'unsupported' }),
+      saveTextFile: async () => ({ outcome: 'failed', errorCode: 'unsupported' })
     },
     clipboard: { copyText: async () => false },
     codex: {

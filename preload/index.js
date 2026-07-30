@@ -3105,6 +3105,53 @@ async function copyText(target) {
   return result.outcome === 'success' || result.outcome === 'dispatched'
 }
 
+function saveTextFilePath(result) {
+  if (typeof result === 'string') return result.trim()
+  if (result && typeof result === 'object' && typeof result.filePath === 'string' && !result.canceled) return result.filePath.trim()
+  return ''
+}
+
+function saveTextFileName(value) {
+  const base = path.basename(String(value || '').trim()) || 'mqtt-export.json'
+  return base.toLowerCase().endsWith('.json') ? base : `${base}.json`
+}
+
+async function saveTextFile(input) {
+  const source = input && typeof input === 'object' ? input : {}
+  const suggestedName = saveTextFileName(source.suggestedName)
+  const text = String(source.text ?? '')
+  const options = {
+    title: '保存 MQTT 融合 JSON',
+    defaultPath: suggestedName,
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  }
+  let target = ''
+  try {
+    if (globalThis.utools && typeof globalThis.utools.showSaveDialog === 'function') {
+      target = saveTextFilePath(await globalThis.utools.showSaveDialog(options))
+    } else {
+      const electron = require('electron')
+      const dialog = electron.dialog || (electron.remote && electron.remote.dialog)
+      if (dialog && typeof dialog.showSaveDialogSync === 'function') {
+        target = saveTextFilePath(dialog.showSaveDialogSync(options))
+      } else if (dialog && typeof dialog.showSaveDialog === 'function') {
+        target = saveTextFilePath(await dialog.showSaveDialog(options))
+      } else {
+        return { outcome: 'failed', errorCode: 'unsupported', message: 'save dialog unavailable' }
+      }
+    }
+    if (!target) return { outcome: 'cancelled' }
+    await withFileActionTimeout(fs.promises.writeFile(target, text, { encoding: 'utf8' }))
+    return { outcome: 'saved' }
+  } catch (error) {
+    return {
+      outcome: 'failed',
+      errorCode: fileErrorCode(error),
+      message: fileErrorMessage(error, 'save text file failed')
+    }
+  }
+}
+
 async function copyFavoritePath(target) {
   const normalizedTarget = String(target || '').trim()
   if (!normalizedTarget) return fileActionResult('failed', { errorCode: 'invalid-path', message: 'empty path' })
@@ -8113,7 +8160,8 @@ window.eypcPlatform = {
     inspectPaths: inspectFavoritePaths,
     pickFavorite: pickFavoritePath,
     pickFavorites: pickFavoritePaths,
-    listDirectory: listFavoriteDirectory
+    listDirectory: listFavoriteDirectory,
+    saveTextFile
   },
   clipboard: {
     copyText

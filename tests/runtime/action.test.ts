@@ -52,10 +52,11 @@ describe('app runtime', () => {
     state.activeTab = 'windows'
   }
 
-  function installPlatform(overrides: Partial<Window['eypcPlatform']> = {}) {
+  function installPlatform(overrides: Omit<Partial<Window['eypcPlatform']>, 'files'> & { files?: Partial<Window['eypcPlatform']['files']> } = {}) {
     const state = createInitialState(100)
     const killed: Array<{ pid: number; port: number; force: boolean }> = []
     const copied: string[] = []
+    const savedTextFiles: Array<{ suggestedName: string; text: string; mimeType?: string }> = []
     const copiedItems: string[][] = []
     const opened: string[] = []
     const revealed: string[] = []
@@ -64,6 +65,36 @@ describe('app runtime', () => {
     let hideCount = 0
     let showCount = 0
     let scanCount = 0
+    const files = {
+      capabilities: { open: true, reveal: true, copyPath: true, copyItems: true, pickFiles: true, pickFolders: true, listDirectory: true, inspectPaths: true },
+      open: async (target: string) => {
+        opened.push(target)
+        return { outcome: 'success' as const }
+      },
+      reveal: async (target: string) => {
+        revealed.push(target)
+        return { outcome: 'success' as const }
+      },
+      copyPath: async (path: string) => {
+        copied.push(path)
+        return { outcome: 'success' as const }
+      },
+      copyItems: async (paths: string[]) => {
+        copiedItems.push(paths)
+        return { outcome: 'success' as const }
+      },
+      inspectPaths: async (paths: string[]) => paths.map((path) => ({ path, status: 'available' as const, kind: 'file' as const, exists: true, isSymbolicLink: false })),
+      pickFavorite: async () => null,
+      pickFavorites: async () => [],
+      listDirectory: async (target: string) => {
+        listed.push(target)
+        return { ok: false, entries: [], error: 'unavailable' }
+      },
+      saveTextFile: async (input: { suggestedName: string; text: string; mimeType?: string }) => {
+        savedTextFiles.push(input)
+        return { outcome: 'saved' as const }
+      }
+    }
     const platform = {
       storage: {
         getState: () => state,
@@ -88,32 +119,7 @@ describe('app runtime', () => {
           return { ok: true, ...request }
         }
       },
-      files: {
-        capabilities: { open: true, reveal: true, copyPath: true, copyItems: true, pickFiles: true, pickFolders: true, listDirectory: true, inspectPaths: true },
-        open: async (target: string) => {
-          opened.push(target)
-          return { outcome: 'success' as const }
-        },
-        reveal: async (target: string) => {
-          revealed.push(target)
-          return { outcome: 'success' as const }
-        },
-        copyPath: async (path: string) => {
-          copied.push(path)
-          return { outcome: 'success' as const }
-        },
-        copyItems: async (paths: string[]) => {
-          copiedItems.push(paths)
-          return { outcome: 'success' as const }
-        },
-        inspectPaths: async (paths: string[]) => paths.map((path) => ({ path, status: 'available' as const, kind: 'file' as const, exists: true, isSymbolicLink: false })),
-        pickFavorite: async () => null,
-        pickFavorites: async () => [],
-        listDirectory: async (target: string) => {
-          listed.push(target)
-          return { ok: false, entries: [], error: 'unavailable' }
-        }
-      },
+      files,
       clipboard: {
         copyText: async (text: string) => {
           copied.push(text)
@@ -136,10 +142,11 @@ describe('app runtime', () => {
       },
       getEnterPayload: () => null,
       clearEnterPayload: () => undefined,
-      ...overrides
+      ...overrides,
+      files: { ...files, ...overrides.files }
     }
     globalThis.window = { eypcPlatform: platform } as unknown as Window & typeof globalThis
-    return { state, killed, copied, copiedItems, opened, revealed, listed, configuredHotkeys, platform, getScanCount: () => scanCount, getHideCount: () => hideCount, getShowCount: () => showCount }
+    return { state, killed, copied, copiedItems, savedTextFiles, opened, revealed, listed, configuredHotkeys, platform, getScanCount: () => scanCount, getHideCount: () => hideCount, getShowCount: () => showCount }
   }
 
   async function flushWindowActions() {
@@ -1690,7 +1697,7 @@ describe('app runtime', () => {
       'mqtt.connection.connect',
       'mqtt.connection.disconnect',
       'mqtt.config.edit',
-      'mqtt.record.delete'
+      'mqtt.connection.delete'
     ]))
 
     expect(runtime.dispatch('mqtt.connection.deleteSelected').handled).toBe(true)
@@ -1850,6 +1857,13 @@ describe('app runtime', () => {
       'mqtt.connectionGroup.expand',
       'mqtt.connectionGroup.delete'
     ])
+    const collapseItem = runtime.snapshot().mqttDrawerItems.find((item) => item.commandId === 'mqtt.connectionGroup.collapse')
+    const expandItem = runtime.snapshot().mqttDrawerItems.find((item) => item.commandId === 'mqtt.connectionGroup.expand')
+    expect(collapseItem?.shortcutLabel.startsWith('c-7')).toBe(true)
+    expect(collapseItem?.shortcutLabel.includes('←')).toBe(false)
+    expect(expandItem?.shortcutLabel.startsWith('c-8')).toBe(true)
+    expect(expandItem?.shortcutLabel.includes('→')).toBe(false)
+    expect(runtime.snapshot().mqttDrawerItems.find((item) => item.commandId === 'mqtt.config.create')?.icon).toBe('add')
   })
 
   it('uses MQTT connection focus scope to choose create parent targets', () => {
@@ -3173,11 +3187,15 @@ describe('app runtime', () => {
       'mqtt.record.favorite',
       'mqtt.record.copyTopic',
       'mqtt.record.copyPayload',
+      'mqtt.record.copyAll',
       'mqtt.record.resendDraft',
       'mqtt.record.repeatSend',
       'mqtt.record.delete',
       'mqtt.messages.clearAll'
     ]))
+    expect(runtime.snapshot().mqttDrawerItems[0]?.shortcutLabel.startsWith('c-1')).toBe(true)
+    expect(runtime.snapshot().mqttDrawerItems[1]?.shortcutLabel.startsWith('c-2')).toBe(true)
+    expect(runtime.snapshot().mqttDrawerItems.every((item) => !item.shortcutLabel.includes('未绑定'))).toBe(true)
     expect(runtime.dispatch('mqtt.drawer.next').handled).toBe(true)
     expect(runtime.snapshot().mqttDrawer.activeIndex).toBe(1)
 
@@ -3500,6 +3518,66 @@ describe('app runtime', () => {
       selectedIds: []
     })
     expect(runtime.snapshot().mqttSelectedRecord).toEqual({ kind: 'publish-template', id: templateIds[2] })
+  })
+
+  it('copies and saves selected MQTT records as one merged JSON export without clearing selection', async () => {
+    const { state, copied, savedTextFiles } = installPlatform()
+    state.settings.featureConfigs = [
+      { id: 'ports', enabled: true, sortOrder: 1 },
+      { id: 'mqtt', enabled: true, sortOrder: 2 },
+      { id: 'favorites', enabled: false, sortOrder: 3 },
+      { id: 'settings', enabled: true, sortOrder: 4 }
+    ]
+    const runtime = createAppRuntime(state)
+
+    runtime.setTab('mqtt')
+    runtime.dispatch('mqtt.config.create')
+    runtime.updateMqttConfigDraft({
+      name: 'PLC',
+      protocol: 'ws',
+      host: 'broker.example',
+      port: '8083',
+      path: '/',
+      clientId: 'client-a',
+      syncRecords: true
+    })
+    runtime.dispatch('mqtt.config.save')
+    runtime.appendMqttMessageRecord({ id: 'export-a', direction: 'incoming', topic: 'plc/a', payload: '{"value":1}', qos: 1, retain: false, timestamp: 1_000 })
+    runtime.appendMqttMessageRecord({ id: 'export-b', direction: 'incoming', topic: 'plc/b', payload: 'plain text', qos: 0, retain: true, timestamp: 1_100 })
+
+    expect(runtime.dispatch('mqtt.record.toggleSelect', { kind: 'message', id: 'export-a', list: 'messages' }).handled).toBe(true)
+    expect(runtime.dispatch('mqtt.record.toggleSelect', { kind: 'message', id: 'export-b', list: 'messages' }).handled).toBe(true)
+    const selectedIds = [...runtime.snapshot().mqttRecordListStates.messages.selectedIds]
+
+    expect(runtime.dispatch('mqtt.record.export.copyMergedJson', { list: 'messages' }).handled).toBe(true)
+    expect(runtime.dispatch('mqtt.record.export.copyTopics', { list: 'messages' }).handled).toBe(true)
+    expect(runtime.dispatch('mqtt.record.export.copyPayloads', { list: 'messages' }).handled).toBe(true)
+    expect(runtime.dispatch('mqtt.record.export.saveMergedJson', { list: 'messages' }).handled).toBe(true)
+    await flushWindowActions()
+
+    expect(copied).toEqual(expect.arrayContaining([
+      'plc/b\nplc/a',
+      'plain text\n\n{"value":1}'
+    ]))
+    const copiedExport = JSON.parse(copied.find((item) => item.includes('eypc-mqtt-merged-export/v1')) || '{}')
+    expect(copiedExport).toMatchObject({ schema: 'eypc-mqtt-merged-export/v1', count: 2 })
+    expect(copiedExport.records).toEqual([
+      expect.objectContaining({ topic: 'plc/b', payload: 'plain text', payloadFormat: 'text' }),
+      expect.objectContaining({ topic: 'plc/a', payload: '{"value":1}', payloadFormat: 'json', payloadJson: { value: 1 } })
+    ])
+    expect(runtime.dispatch('mqtt.record.copyAll', { kind: 'message', id: 'export-a' }).handled).toBe(true)
+    await flushWindowActions()
+    const singleExport = JSON.parse(copied.at(-1) || '{}')
+    expect(singleExport).toMatchObject({ schema: 'eypc-mqtt-merged-export/v1', count: 1 })
+    expect(singleExport.records).toEqual([
+      expect.objectContaining({ topic: 'plc/a', payload: '{"value":1}' })
+    ])
+    expect(savedTextFiles).toHaveLength(1)
+    expect(savedTextFiles[0]).toMatchObject({ mimeType: 'application/json;charset=utf-8' })
+    expect(savedTextFiles[0].suggestedName).toMatch(/^mqtt-merged-.+\.json$/)
+    const savedExport = JSON.parse(savedTextFiles[0].text)
+    expect(savedExport).toMatchObject({ schema: 'eypc-mqtt-merged-export/v1', count: 2, records: copiedExport.records })
+    expect(runtime.snapshot().mqttRecordListStates.messages.selectedIds).toEqual(selectedIds)
   })
 
   it('recovers MQTT message focus after delete and isolates template/history search and selection state', () => {

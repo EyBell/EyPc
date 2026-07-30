@@ -1,11 +1,12 @@
 import { addFavoriteNode, deleteFavoriteMetadata, favoriteParentOptions, favoritePathIdentityKey, favoriteVirtualChildren, filterFavoriteContainerTree, filterFavoriteGroupTree, filterFavoriteItems, filterFavoriteTree, flattenFavoriteTree, inferFavoriteNameFromPath, isValidFavoriteParent, moveFavoriteNode, normalizeFavoritePath } from '../domain/favorites'
 import { DEFAULT_MQTT_LAYOUT_PREFS, MQTT_LAYOUT_RATIO_MAX, MQTT_LAYOUT_RATIO_MIN, appendMqttMessage, buildMqttWebSocketUrl, clearMqttPublishDraftHistory, createMqttClientId, createMqttConnectionConfig, createMqttConnectionSnapshot, createMqttSession, deleteMqttPublishDraftHistory, deleteMqttPublishTemplate, deleteMqttRecord, matchMqttTopicFilter, mqttConnectOptionsFromConfig, mqttPublishTemplateOperationTime, normalizeMqttArchiveState, normalizeMqttTopicColor, parseMqttWebSocketUrl, renameMqttPublishTemplate, renameMqttRecord, saveMqttPublishDraftHistory, saveMqttPublishTemplate, toMqttPublishDraft, touchMqttPublishTemplate, updateMqttPublishDraftHistory } from '../domain/mqtt'
 import { buildMqttConnectionTreeRows, deleteMqttConnectionGroup, isValidMqttConnectionGroupParent, moveMqttConnectionTreeTarget, mqttConnectionTreeMoveTarget, normalizeMqttConfigGroupRefs, normalizeMqttConnectionGroups, type MqttConnectionTreeDropPosition, type MqttConnectionTreeRow, type MqttConnectionTreeTarget } from '../domain/mqttConnectionTree'
+import { mqttMergedJsonFileName, stringifyMqttMergedJsonExport, stringifyMqttPayloadsCopy, stringifyMqttTopicsCopy, type MqttMergedExportSource } from '../domain/mqttExport'
 import { dedupePortProcesses, filterPortProcesses, flattenPortGroupTargets, matchPortGroupProcesses, matchPortGroupTargetProcesses, movePortGroupToFolder, shouldProcessMatchVerifiedPort } from '../domain/ports'
 import { applyRecordListDeleteRecovery, computeRecordListDeleteAnchor, toggleRecordListSelection } from '../domain/recordListSelection'
 import { resolveDrawerTargets, toggleIdWithAdvance } from '../domain/listSelection'
 import { normalizeAppState } from '../domain/state'
-import { formatShortcutList } from '../domain/shortcuts'
+import { formatShortcutLabel, formatShortcutList } from '../domain/shortcuts'
 import { normalizeToolPreviewPrefs } from '../domain/toolPreview'
 import { compareWindowRowsByApplication, filterJumpableLiveWindows, normalizeWindowText, rememberWindowTargetTitle, resolveWindowTargetCandidate, targetMatchesLiveWindow, type LiveWindow, type WindowPlatform, type WindowTarget } from '../domain/windows'
 import type { CodexFloatPosition, CodexSettings } from '../domain/codex'
@@ -4961,9 +4962,34 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       icon,
       args,
       risk: action?.risk || 'normal',
-      shortcutLabel: shortcutLabelsFor(commandId),
+      shortcutLabel: '',
       enabled: Boolean(action?.when(context()))
     }
+  }
+
+  function secondaryMqttDrawerActionShortcut(commandId: string) {
+    const labels = buildEffectiveKeybindings(state.settings.shortcutProfiles, state.settings.featureConfigs)
+      .filter((binding) => binding.actionId === commandId && !binding.disabled && binding.source !== 'removed')
+      .map((binding) => binding.shortcutId)
+      .filter((shortcutId) => {
+        const normalized = normalizeShortcutId(shortcutId)
+        return normalized !== 'ArrowLeft' && normalized !== 'ArrowRight'
+      })
+    return formatShortcutList(labels)
+  }
+
+  function composeMqttDrawerShortcutLabel(index: number, commandId: string) {
+    const indexLabel = index < 9 ? formatShortcutLabel(`Ctrl+${index + 1}`) : ''
+    const actionLabel = secondaryMqttDrawerActionShortcut(commandId)
+    if (indexLabel && actionLabel) return `${indexLabel} · ${actionLabel}`
+    return indexLabel || actionLabel
+  }
+
+  function finalizeMqttDrawerItems(items: MqttDrawerItem[]): MqttDrawerItem[] {
+    return items.map((item, index) => ({
+      ...item,
+      shortcutLabel: composeMqttDrawerShortcutLabel(index, item.commandId)
+    }))
   }
 
   function buildMqttDrawerItems(drawer = mqttDrawer): MqttDrawerItem[] {
@@ -4973,87 +4999,90 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       : mqttTargetFromArgs()
     const args = mqttTargetArgs(target)
     if (target?.kind === 'log') {
-      return [
-        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前日志详情。', 'detail', args),
+      return finalizeMqttDrawerItems([
+        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前日志详情。抽屉内可用索引快捷键或 Enter。', 'detail', args),
         mqttDrawerItem('mqtt.log.delete', '删除', '删除当前日志记录。', 'trash', args),
         mqttDrawerItem('mqtt.log.clearCurrentConfig', '清空本连接', '清空当前连接日志。', 'clear', args),
         mqttDrawerItem('mqtt.log.clearAll', '清空全部', '清空全部 MQTT 日志。', 'clear-all', args)
-      ]
+      ])
     }
     if (target?.kind === 'publish-template') {
-      return [
-        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前收藏模板详情。', 'detail', args),
+      return finalizeMqttDrawerItems([
+        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前收藏模板详情。抽屉内可用索引快捷键或 Enter。', 'detail', args),
         mqttDrawerItem('mqtt.record.rename', '别名', '编辑当前收藏模板标题或备注。', 'rename', args),
         mqttDrawerItem('mqtt.record.edit', '完整编辑', '编辑模板 topic、payload、QoS 与 retain。', 'edit', args),
         mqttDrawerItem('mqtt.record.copyTopic', '复制主题', '复制模板 topic。', 'copy-topic', args),
         mqttDrawerItem('mqtt.record.copyPayload', '复制内容', '复制模板 payload。', 'copy-payload', args),
+        mqttDrawerItem('mqtt.record.copyAll', '全都复制', '复制模板完整融合 JSON。', 'copy', args),
         mqttDrawerItem('mqtt.record.resendDraft', '填入发布', '把模板填入发布编辑区。', 'apply', args),
         mqttDrawerItem('mqtt.publish.template.send', '再次发送', '直接发送当前模板。', 'send', args),
         mqttDrawerItem('mqtt.publish.template.delete', '删除', '删除当前模板。', 'trash', args)
-      ]
+      ])
     }
     if (target?.kind === 'publish-draft-history') {
-      return [
-        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前发送草稿详情。', 'detail', args),
+      return finalizeMqttDrawerItems([
+        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前发送草稿详情。抽屉内可用索引快捷键或 Enter。', 'detail', args),
         mqttDrawerItem('mqtt.publish.draft.apply', '应用草稿', '把当前草稿填入发送编辑区。', 'apply', args),
         mqttDrawerItem('mqtt.publish.draft.send', '发送草稿', '把当前草稿填入发送编辑区并立即发送。', 'send', args),
         mqttDrawerItem('mqtt.publish.draft.favorite', '收藏草稿', '保存或更新为发送收藏模板。', 'star', args),
         mqttDrawerItem('mqtt.record.copyTopic', '复制主题', '复制草稿 topic。', 'copy-topic', args),
         mqttDrawerItem('mqtt.record.copyPayload', '复制内容', '复制草稿 payload。', 'copy-payload', args),
+        mqttDrawerItem('mqtt.record.copyAll', '全都复制', '复制草稿完整融合 JSON。', 'copy', args),
         mqttDrawerItem('mqtt.publish.draft.rename', '别名', '编辑草稿标题或备注。', 'rename', args),
         mqttDrawerItem('mqtt.publish.draft.edit', '完整编辑', '编辑草稿 topic 与 payload。', 'edit', args),
         mqttDrawerItem('mqtt.publish.draft.delete', '删除', '删除当前草稿。', 'trash', args)
-      ]
+      ])
     }
     if (target?.kind === 'message') {
       const historyTarget = activeMqttRecordList === 'history' && mqttRecordRowsForList('history').some((row) => row.id === target.id)
-      return [
-        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前 MQTT 消息详情。', 'detail', args),
+      return finalizeMqttDrawerItems([
+        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前 MQTT 消息详情。抽屉内可用索引快捷键或 Enter。', 'detail', args),
         mqttDrawerItem('mqtt.record.rename', '别名', '编辑当前消息别名或备注。', 'rename', args),
         mqttDrawerItem('mqtt.record.edit', '完整编辑', '编辑当前消息 topic、payload、QoS 与 retain。', 'edit', args),
         mqttDrawerItem('mqtt.record.favorite', '收藏/取消收藏', '保存为发送收藏；别名可用 F2 另行编辑。', 'star', args),
         mqttDrawerItem('mqtt.record.copyTopic', '复制主题', '复制当前消息 topic。', 'copy-topic', args),
         mqttDrawerItem('mqtt.record.copyPayload', '复制内容', '复制当前消息 payload。', 'copy-payload', args),
+        mqttDrawerItem('mqtt.record.copyAll', '全都复制', '复制当前消息完整融合 JSON。', 'copy', args),
         mqttDrawerItem('mqtt.record.resendDraft', '填入发布', '把当前消息填入发布编辑区。', 'apply', args),
         mqttDrawerItem('mqtt.record.repeatSend', '再次发送', '用当前消息内容再次发送。', 'send', args),
         mqttDrawerItem('mqtt.record.delete', '删除', '删除当前消息记录。', 'trash', args),
         historyTarget
           ? mqttDrawerItem('mqtt.history.clearAll', '清空历史', '清理当前历史列表中的记录。', 'clear-all', args)
           : mqttDrawerItem('mqtt.messages.clearAll', '清空消息', '清理当前消息视图中的记录。', 'clear-all', args)
-      ]
+      ])
     }
     if (target?.kind === 'connection-group') {
-      return [
-        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前连接分组。', 'detail', args),
+      return finalizeMqttDrawerItems([
+        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前连接分组。抽屉内可用索引快捷键或 Enter。', 'detail', args),
         mqttDrawerItem('mqtt.connectionGroup.create', '子分组', '在当前分组下新增子分组。', 'folder-plus', { parentId: target.id }),
-        mqttDrawerItem('mqtt.config.create', '新建连接', '在当前分组下新增 MQTT 连接。', 'plus', args),
+        mqttDrawerItem('mqtt.config.create', '新建连接', '在当前分组下新增 MQTT 连接。', 'add', args),
         mqttDrawerItem('mqtt.connectionGroup.moveParent', '移动父级', '选择当前分组所在的父级分组，或留空放在根层。', 'folder', args),
         mqttDrawerItem('mqtt.connectionGroup.rename', '重命名', '只编辑当前连接分组名称。', 'rename', args),
         mqttDrawerItem('mqtt.connectionGroup.edit', '编辑分组', '编辑当前连接分组名称、颜色和父级。', 'edit', args),
         mqttDrawerItem('mqtt.connectionGroup.collapse', '折叠', '折叠当前连接分组。', 'collapse', args),
         mqttDrawerItem('mqtt.connectionGroup.expand', '展开', '展开当前连接分组。', 'expand', args),
         mqttDrawerItem('mqtt.connectionGroup.delete', '删除', '删除分组并提升直接子项。', 'trash', args)
-      ]
+      ])
     }
     if (target?.kind === 'config') {
-      return [
-        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前连接配置。', 'detail', args),
+      return finalizeMqttDrawerItems([
+        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前连接配置。抽屉内可用索引快捷键或 Enter。', 'detail', args),
         mqttDrawerItem('mqtt.connection.copyAddress', '复制地址', '复制当前连接 URL。', 'copy', args),
         mqttDrawerItem('mqtt.connection.connect', '连接', '连接或重连当前 MQTT。', 'plug', args),
         mqttDrawerItem('mqtt.connection.disconnect', '断开', '断开当前 MQTT。', 'unplug', args),
         mqttDrawerItem('mqtt.config.edit', '配置', '编辑当前连接配置。', 'edit', args),
         mqttDrawerItem('mqtt.log.drawer.open', '日志', '打开当前连接日志。', 'log', args),
-        mqttDrawerItem('mqtt.record.delete', '删除', '删除当前连接配置。', 'trash', args)
-      ]
+        mqttDrawerItem('mqtt.connection.delete', '删除', '删除当前连接配置。', 'trash', args)
+      ])
     }
     if (target?.kind === 'subscription') {
-      return [
-        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前订阅 topic。', 'detail', args),
+      return finalizeMqttDrawerItems([
+        mqttDrawerItem('mqtt.detail.open', '详情', '查看当前订阅 topic。抽屉内可用索引快捷键或 Enter。', 'detail', args),
         mqttDrawerItem('mqtt.subscription.copyTopic', '复制 topic', '复制当前订阅 topic。', 'copy-topic', args),
         mqttDrawerItem('mqtt.subscription.useAsPublishTopic', '填入发布', '把订阅 topic 填入发布编辑区。', 'apply', args),
         mqttDrawerItem('mqtt.subscription.editor.open', '编辑', '打开订阅管理。', 'edit', args),
         mqttDrawerItem('mqtt.subscription.delete', '删除', '删除当前订阅 topic。', 'trash', args)
-      ]
+      ])
     }
     return []
   }
@@ -5111,6 +5140,102 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     const record = mqttPublishableRecordFromArgs(args)
     if (!record) return false
     void copyText(record.payload, '已复制 MQTT payload')
+    return true
+  }
+
+  function copyMqttRecordAll(args?: Record<string, unknown>) {
+    const record = mqttPublishableRecordFromArgs(args)
+    if (!record) return false
+    const exportSource: MqttMergedExportSource = 'direction' in record
+      ? record
+      : 'source' in record
+        ? (({ source: _source, ...rest }) => rest)(record)
+        : record
+    void copyText(stringifyMqttMergedJsonExport([exportSource]), '已复制 MQTT 完整记录 JSON')
+    return true
+  }
+
+  function mqttRecordListFromArgs(args?: Record<string, unknown>): MqttRecordListId {
+    return args?.list === 'templates' || args?.list === 'history' || args?.list === 'messages'
+      ? args.list
+      : activeMqttRecordList
+  }
+
+  function selectedMqttRecordsForExport(args?: Record<string, unknown>): MqttMergedExportSource[] {
+    const list = mqttRecordListFromArgs(args)
+    const selectedIds = new Set(mqttRecordListStates[list].selectedIds)
+    const records: MqttMergedExportSource[] = []
+    for (const row of mqttRecordRowsForList(list)) {
+      if (!selectedIds.has(row.id)) continue
+      const record = row.kind === 'message'
+        ? mqttMessageById(row.id)
+        : row.kind === 'publish-template'
+          ? mqttTemplateById(row.id)
+          : null
+      if (record) records.push(record)
+    }
+    return records
+  }
+
+  function mqttMergedExportPayload(args?: Record<string, unknown>) {
+    const records = selectedMqttRecordsForExport(args)
+    if (!records.length) {
+      setMessage('请先多选要导出的 MQTT 通信数据')
+      return null
+    }
+    const now = Date.now()
+    return {
+      count: records.length,
+      fileName: mqttMergedJsonFileName(now),
+      text: stringifyMqttMergedJsonExport(records, now)
+    }
+  }
+
+  function copySelectedMqttRecordsAsMergedJson(args?: Record<string, unknown>) {
+    const payload = mqttMergedExportPayload(args)
+    if (!payload) return false
+    void copyText(payload.text, `已复制 ${payload.count} 条 MQTT 记录的完整融合 JSON`)
+    return true
+  }
+
+  function copySelectedMqttRecordTopics(args?: Record<string, unknown>) {
+    const records = selectedMqttRecordsForExport(args)
+    if (!records.length) {
+      setMessage('请先多选要导出的 MQTT 通信数据')
+      return false
+    }
+    void copyText(stringifyMqttTopicsCopy(records), `已复制 ${records.length} 条 MQTT topic`)
+    return true
+  }
+
+  function copySelectedMqttRecordPayloads(args?: Record<string, unknown>) {
+    const records = selectedMqttRecordsForExport(args)
+    if (!records.length) {
+      setMessage('请先多选要导出的 MQTT 通信数据')
+      return false
+    }
+    void copyText(stringifyMqttPayloadsCopy(records), `已复制 ${records.length} 条 MQTT payload`)
+    return true
+  }
+
+  function saveSelectedMqttRecordsAsMergedJson(args?: Record<string, unknown>) {
+    const payload = mqttMergedExportPayload(args)
+    if (!payload) return false
+    void platform.files.saveTextFile({
+      suggestedName: payload.fileName,
+      text: payload.text,
+      mimeType: 'application/json;charset=utf-8'
+    }).then((result) => {
+      if (result.outcome === 'saved') {
+        setMessage(`已导出 ${payload.count} 条 MQTT 记录的融合 JSON`)
+        return
+      }
+      if (result.outcome === 'cancelled') {
+        setMessage('已取消 MQTT 融合 JSON 导出')
+        return
+      }
+      setMessage(result.message || 'MQTT 融合 JSON 导出失败')
+    })
     return true
   }
 
@@ -7725,8 +7850,13 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'mqtt.record.resendDraft', title: '从记录填充 MQTT 发布草稿', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, shortcut: 'Enter', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => fillMqttPublishDraftFromSelection(args) })
     actions.register({ id: 'mqtt.record.repeatSend', title: '重复发送 MQTT 记录', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => repeatMqttPublishRecords(args) })
     actions.register({ id: 'mqtt.record.toggleSelect', title: '多选 MQTT 发送记录', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 90, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => toggleMqttRecordSelectionFromArgs(args) })
+    actions.register({ id: 'mqtt.record.export.copyMergedJson', title: '全都复制多选 MQTT 融合 JSON', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 89, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => copySelectedMqttRecordsAsMergedJson(args) })
+    actions.register({ id: 'mqtt.record.export.copyTopics', title: '只复制多选 MQTT topic', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 89, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => copySelectedMqttRecordTopics(args) })
+    actions.register({ id: 'mqtt.record.export.copyPayloads', title: '只复制多选 MQTT payload', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 89, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => copySelectedMqttRecordPayloads(args) })
+    actions.register({ id: 'mqtt.record.export.saveMergedJson', title: '导出多选 MQTT 融合 JSON 文件', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 89, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => saveSelectedMqttRecordsAsMergedJson(args) })
     actions.register({ id: 'mqtt.record.copyTopic', title: '复制 MQTT topic', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 89, shortcut: 'Ctrl+Shift+C', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => copyMqttRecordTopic(args) })
     actions.register({ id: 'mqtt.record.copyPayload', title: '复制 MQTT payload', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 89, shortcut: 'Ctrl+C', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => copyMqttRecordPayload(args) })
+    actions.register({ id: 'mqtt.record.copyAll', title: '全都复制 MQTT 记录', group: 'MQTT', risk: 'normal', scope: 'tab', priority: 89, when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => copyMqttRecordAll(args) })
     actions.register({ id: 'mqtt.record.favorite', title: '收藏/取消收藏 MQTT 消息', group: 'MQTT', risk: 'data-write', scope: 'tab', priority: 89, shortcut: 'Ctrl+S', when: (ctx) => ctx.tab === 'mqtt', run: (_ctx, args) => toggleMqttRecordFavorite(args) })
     actions.register({ id: 'mqtt.record.favorite.save', title: '保存 MQTT 消息收藏', group: 'MQTT', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.layerIds.includes('mqtt-favorite-editor'), run: (_ctx, args) => saveMqttFavoriteDraft(args) })
     actions.register({ id: 'mqtt.record.favorite.cancel', title: '取消 MQTT 消息收藏', group: 'MQTT', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.layerIds.includes('mqtt-favorite-editor'), run: () => cancelMqttFavoriteDraft() })

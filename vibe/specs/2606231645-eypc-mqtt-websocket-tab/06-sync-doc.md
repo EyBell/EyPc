@@ -25,11 +25,11 @@ This document maps the current MQTT workbench behavior from product requirement 
 | --- | --- | --- |
 | Feature shell | Feature registration, entry routing, lazy MQTT page mount, and tab restore. | [featureRegistry.ts](../../../src/runtime/feature/featureRegistry.ts#L1), [featureRouting.ts](../../../src/runtime/feature/featureRouting.ts#L1), [App.vue](../../../src/App.vue#L1) |
 | State contracts | MQTT config state, view prefs, archive shape, storage status, layout prefs, and publish records. | [types.ts](../../../src/domain/types.ts#L1) |
-| Domain normalization | WebSocket endpoint parsing, config cleanup, topic colors, publish topics, connection group hierarchy cleanup, archive trimming, draft history, and template operation time. | [mqtt.ts](../../../src/domain/mqtt.ts#L1), [mqttConnectionTree.ts](../../../src/domain/mqttConnectionTree.ts#L1) |
-| Runtime | Archive loading, focus state, connection lifecycle, record projections, publish/draft actions, drawers, previews, and shortcut context. | [appRuntime.ts](../../../src/runtime/appRuntime.ts#L1) |
+| Domain normalization/export | WebSocket endpoint parsing, config cleanup, topic colors, publish topics, connection group hierarchy cleanup, archive trimming, draft history, template operation time, and versioned merged JSON projection. | [mqtt.ts](../../../src/domain/mqtt.ts#L1), [mqttConnectionTree.ts](../../../src/domain/mqttConnectionTree.ts#L1), [mqttExport.ts](../../../src/domain/mqttExport.ts#L1) |
+| Runtime | Archive loading, focus state, connection lifecycle, record projections, publish/draft/export actions, drawers, previews, and shortcut context. | [appRuntime.ts](../../../src/runtime/appRuntime.ts#L1) |
 | Keybindings | Layered MQTT shortcuts, text-input allowlists, popover/editor ownership, and input role extraction. | [keybindingRuntime.ts](../../../src/runtime/keybinding/keybindingRuntime.ts#L1), [keyboardEvent.ts](../../../src/runtime/keyboardEvent.ts#L1) |
-| Platform | Host bridge, SQLite-first archive, legacy fallback, local-only secrets, storage status, and clipboard. | [eypcPlatform.ts](../../../src/platform/eypcPlatform.ts#L1), [preload/index.js](../../../preload/index.js#L1) |
-| UI | Compact MQTT workbench, record rows, config drawer, send-area draft popover, preview layer, and shortcut hints. | [MqttPage.vue](../../../src/pages/MqttPage.vue#L1), [MqttPublishRecordList.vue](../../../src/components/MqttPublishRecordList.vue#L1), [app.css](../../../src/styles/app.css#L1) |
+| Platform | Host bridge, SQLite-first archive, legacy fallback, local-only secrets, storage status, clipboard, and user-chosen UTF-8 JSON save. | [eypcPlatform.ts](../../../src/platform/eypcPlatform.ts#L1), [preload/index.js](../../../preload/index.js#L1) |
+| UI | Compact MQTT workbench, conditional selected-count/copy/save toolbar, record rows, config drawer, send-area draft popover, preview layer, and shortcut hints. | [MqttPage.vue](../../../src/pages/MqttPage.vue#L1), [MqttPublishRecordList.vue](../../../src/components/MqttPublishRecordList.vue#L1), [app.css](../../../src/styles/app.css#L1) |
 
 ## State Contracts
 
@@ -58,6 +58,7 @@ This document maps the current MQTT workbench behavior from product requirement 
 - The connection-config editor has a deterministic focus matrix covering connection fields, each subscription alias/topic/color row, each publish-topic row, MQTT option fields, and storage options.
 - Runtime shortcut context treats an open draft-history popover or editor as the effective MQTT command layer before trusting DOM focus, preventing stale publish-editor focus from stealing draft-history commands.
 - `Escape` recovers top MQTT layers inward first: preview, draft-history editor/popover, publish options, topic dropdown, record editor/drawers, search/filter state, then page-level focus.
+- Multi-select quick export reads only selected IDs from the requested message/template/history list and preserves that selection. Copy and file-save actions serialize current visible order through [mqttExport.ts](../../../src/domain/mqttExport.ts#L1); file output is written only to the path returned by the user-facing host save dialog.
 
 ## Shortcut And Input Ownership
 
@@ -78,7 +79,7 @@ This document maps the current MQTT workbench behavior from product requirement 
 
 - The MQTT page renders a compact workbench with connection tree rail, subscription rail, and message/publish workspace in [MqttPage.vue](../../../src/pages/MqttPage.vue#L1); visual density is owned by [app.css](../../../src/styles/app.css#L1).
 - Connection tree rows expose visible group/config hierarchy, active/selected/focused states, row-local detail/edit/move/more controls, `c-` shortcut hint badges, native drag/drop, Quick Jump row anchors, and contextmenu action drawer entry. Group rows use a single left disclosure control before the label, without a separate folder/logo icon.
-- The top command bar owns connection status, topic filter dropdown, current-list search, `全/收/发/藏`, and layout controls. Template/history lists no longer carry their own header search.
+- The top command bar owns connection status, topic filter dropdown, current-list search, `全/收/发/藏`, layout controls, and a conditional selected-count/copy/save cluster. Template/history lists no longer carry their own header search.
 - Message/template/history rows share fixed-height row behavior and payload snippets. Topic visuals use subscription alias/color when available.
 - Message row time uses conditional date display and distinct date/clock parts so current-day traffic stays compact while older traffic keeps enough context for diagnosis.
 - Message detail and preview headers use full date-time to seconds even when the row is from today.
@@ -104,9 +105,11 @@ This document maps the current MQTT workbench behavior from product requirement 
 | Editing keyboard ownership and publish options outside close | [editing ownership verify](../260626-eypc-mqtt-editing-keyboard-ownership/04-verify.md#L1) |
 | MQTT connection tree grouping and drag-drop | [connection tree verify](../260627-eypc-mqtt-connection-tree/04-verify.md#L1) |
 | Local-only encrypted password/token persistence | 2026-06-26 targeted storage regression in [mqttSqlitePreload.test.ts](../../../tests/platform/mqttSqlitePreload.test.ts#L1), plus typecheck, build, and uTools runtime validation |
+| Selected-record merged JSON copy/save | [multi-export spec](../260730/1016-mqtt-multi-export/spec.md#L1); existing domain/runtime/platform/UI contracts updated, execution remains user-owned |
 
 ## Boundaries
 
 - Current local-only secret change affects only on-disk durability location; passwords/tokens still do not enter app state, archive JSON, SQLite mirrors, templates, synced storage, broker protocol behavior, external MQTT traffic, or uTools manifest window size.
 - `syncRecords=false` remains a user-facing sync/privacy preference; it is not a local durability kill switch.
 - `preload/index.js` is the source-of-truth preload implementation. Generated public preload artifacts should not be cited as authoritative logic unless packaging output is the subject.
+- Merged JSON may contain payload, title, and note content. It never adds passwords/tokens or connection/session/internal IDs; clipboard and chosen file destinations remain explicit user-controlled disclosure points.
