@@ -1234,7 +1234,9 @@ function taskArchiveConfirming(task: CodexTaskCard) {
 }
 
 function taskArchiveBlockedReason(task: CodexTaskCard) {
-  return '任务仍在进行中，暂不能归档'
+  return task.archiveCapability === 'blocked-stopped'
+    ? '会话已停止但未完成'
+    : '任务仍在进行中，暂不能归档'
 }
 
 function requestTaskArchive(task?: CodexTaskCard | CodexTaskCard[]) {
@@ -1244,7 +1246,7 @@ function requestTaskArchive(task?: CodexTaskCard | CodexTaskCard[]) {
   const normalized = targetTasks.filter((candidate) => candidate.canArchive)
   const tasks = targetTasks.length ? normalized : archiveCandidates()
   if (!tasks.length) {
-    liveMessage.value = '当前没有可归档的已完成或已停止任务'
+    liveMessage.value = '当前没有可归档的已完成任务'
     return
   }
   const identity = tasks.map((task) => `${task.key}:${task.revisionAt}`).sort().join('|')

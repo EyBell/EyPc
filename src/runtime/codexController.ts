@@ -6,6 +6,7 @@ import {
   hideCodexThread,
   isCodexConfirmedTerminalEvidence,
   isCodexTaskTab,
+  normalizeCodexActivityDecisionDiagnostics,
   normalizeCodexConfig,
   normalizeCodexEnvironment,
   normalizeCodexFirstPromptTimes,
@@ -14,8 +15,10 @@ import {
   normalizeCodexVisibleTaskTab,
   projectConversations,
   restoreCodexThread,
+  sameCodexActivityDecisionDiagnostics,
   CODEX_TASK_STATE_REVISION,
   type CodexActivityDelta,
+  type CodexActivityDecisionDiagnostics,
   type CodexActivityDeltaEntryV2,
   type CodexConfigSnapshotV1,
   type CodexEnvironmentSnapshotV1,
@@ -56,6 +59,7 @@ export interface CodexRuntimeView {
   taskState: CodexTaskStatePackageV1
   /** @deprecated Consume taskState.conversations. */
   conversations: ConversationSnapshotV1
+  activityDecisionDiagnostics: CodexActivityDecisionDiagnostics
   refreshing: boolean
   floatHost: {
     displayId: string
@@ -298,6 +302,7 @@ export function createCodexController(options: CodexControllerOptions) {
   let stopActivityListener: (() => void) | null = null
   let activityFailureCount = 0
   let lastActivityGeneration = 0
+  let activityDecisionDiagnostics = normalizeCodexActivityDecisionDiagnostics(null)
   let environmentInFlight: Promise<void> | null = null
   let environmentGeneration = 0
   let refreshGeneration = 0
@@ -464,19 +469,33 @@ export function createCodexController(options: CodexControllerOptions) {
     if (disposed || !shouldRun() || (delta?.version !== 1 && delta?.version !== 2)) return
     if (!Number.isFinite(delta.receivedAt) || !Number.isFinite(delta.generation) || delta.generation <= 0) return
     let environmentChanged = false
+    let diagnosticsChanged = false
     const structuralPriority: StructuralRefreshPriority = delta.version === 2 && delta.inventoryRefreshPriority === 'urgent'
       ? 'urgent'
       : 'normal'
+    const inventoryBaselineMatches = Boolean(lastSourceFingerprint)
+      && lastCompleteness === 'verified'
+      && delta.sourceFingerprint === lastSourceFingerprint
+    // A same-source Activity generation orders the whole delta, including the
+    // Desktop bridge state. Letting an older delta update only bridge state can
+    // later turn failed/interrupted evidence into a false explicit stop.
+    if (inventoryBaselineMatches && delta.generation < lastActivityGeneration) return
+    if (inventoryBaselineMatches && delta.version === 2 && delta.decisionDiagnostics) {
+      const diagnostics = normalizeCodexActivityDecisionDiagnostics(delta.decisionDiagnostics)
+      if (!sameCodexActivityDecisionDiagnostics(activityDecisionDiagnostics, diagnostics)) {
+        activityDecisionDiagnostics = diagnostics
+        diagnosticsChanged = true
+      }
+    }
     if (delta.version === 2 && delta.receivedAt >= environment.checkedAt && environment.desktopBridgeState !== delta.desktopBridgeState) {
       environment = { ...environment, desktopBridgeState: delta.desktopBridgeState, checkedAt: delta.receivedAt }
       environmentChanged = true
     }
-    if (!lastSourceFingerprint || lastCompleteness !== 'verified' || delta.sourceFingerprint !== lastSourceFingerprint) {
+    if (!inventoryBaselineMatches) {
       if (delta.inventoryChanged) scheduleStructuralRefresh(structuralPriority)
       if (environmentChanged) options.notify()
       return
     }
-    if (delta.generation < lastActivityGeneration) return
     if (delta.receivedAt < rawConversations.updatedAt && delta.version !== 2) return
     lastActivityGeneration = delta.generation
     const archivedRemoved = delta.version === 2
@@ -552,7 +571,7 @@ export function createCodexController(options: CodexControllerOptions) {
     })
 
     if (!changed) {
-      if (environmentChanged) options.notify()
+      if (environmentChanged || diagnosticsChanged) options.notify()
       if (delta.inventoryChanged || archivedRemoved) scheduleStructuralRefresh(archivedRemoved ? 'urgent' : structuralPriority)
       return
     }
@@ -666,11 +685,12 @@ export function createCodexController(options: CodexControllerOptions) {
     lastEligibleSourceCount = host.version === 2 ? host.eligibleSourceCount ?? threads.length : threads.length
     lastExcludedSourceCount = host.version === 2 ? host.excludedSourceCount ?? 0 : 0
     lastNonConversationCount = host.version === 2 ? host.nonConversationCount ?? 0 : 0
-    lastActivityGeneration = host.version === 2
+    const incomingActivityGeneration = host.version === 2
       && Number.isInteger(host.activityGeneration)
       && host.activityGeneration! > 0
       ? host.activityGeneration!
       : 0
+    lastActivityGeneration = Math.max(lastActivityGeneration, incomingActivityGeneration)
     publishConversationProjection({ receivedAt, advanceScan: input.advanceScan, status: input.status })
     codexState().firstPromptTimes = normalizeCodexFirstPromptTimes([
       ...threads.flatMap((thread) => thread.firstPromptAt ? [{ key: thread.key, firstPromptAt: thread.firstPromptAt, updatedAt: receivedAt }] : []),
@@ -837,6 +857,11 @@ export function createCodexController(options: CodexControllerOptions) {
             && typeof host.sourceFingerprint === 'string'
             && /^[a-f0-9]{64}$/.test(host.sourceFingerprint)
             && Array.isArray(host.projects)
+          const hostActivityGeneration = host.version === 2
+            && Number.isInteger(host.activityGeneration)
+            && host.activityGeneration! > 0
+            ? host.activityGeneration!
+            : 0
           if (host.version === 2 && !verifiedV2) {
             resetInventoryDisappearanceCandidate()
             updateConversationStatus({
@@ -846,6 +871,11 @@ export function createCodexController(options: CodexControllerOptions) {
             })
             lastTaskReadAt = taskReceivedAt
             options.setMessage('Codex 会话预检不完整，已保留上一份已验证快照')
+          } else if (host.version === 2
+            && lastActivityGeneration > 0
+            && (hostActivityGeneration === 0 || hostActivityGeneration < lastActivityGeneration)) {
+            scheduleStructuralRefresh('urgent')
+            options.setMessage('Codex 会话快照缺少当前实时代次或早于实时状态，已保留较新的任务状态并自动复核')
           } else {
             const firstPromptByKey = new Map(codexState().firstPromptTimes.map((entry) => [entry.key, entry.firstPromptAt]))
             const previousByKey = new Map(lastThreads.map((thread) => [thread.key, thread] as const))
@@ -1409,7 +1439,9 @@ export function createCodexController(options: CodexControllerOptions) {
     const task = allTasks()
       .find((item) => item.key === key && item.revisionAt === recency)
     if (!task || task.archiveCapability !== 'allowed' || !task.actionAlias || !task.lastTurnStartedAt || taskState.conversations.completeness !== 'verified' || !taskState.conversations.sourceFingerprint || taskArchive.status === 'archiving') {
-      options.setMessage('任务仍在进行中，暂不能归档')
+      options.setMessage(task?.archiveCapability === 'blocked-stopped'
+        ? '会话已停止但未完成，不能归档'
+        : '任务仍在进行中，暂不能归档')
       return false
     }
     taskArchive = { key, status: 'archiving', message: '正在归档 Codex 任务' }
@@ -1425,7 +1457,7 @@ export function createCodexController(options: CodexControllerOptions) {
       ...(task.lastTurnCompletedAt ? { expectedCompletionAt: task.lastTurnCompletedAt } : {}),
       expectedLastTurnStartedAt: task.lastTurnStartedAt || 0,
       expectedSourceFingerprint: taskState.conversations.sourceFingerprint,
-      evidence: task.bucket === 'stopped' ? 'stopped' : 'completed'
+      evidence: 'completed'
     })
     archivingKeys.delete(key)
     if (disposed) return false
@@ -1497,8 +1529,8 @@ export function createCodexController(options: CodexControllerOptions) {
       ? `；${desktopSyncFailedCount} 项未确认 Codex 桌面端即时刷新`
       : result.archivedKeys.length > 0 ? '，并已通知 Codex 桌面端刷新' : ''
     const archiveMessage = result.outcome === 'partial'
-      ? `${result.archivedKeys.length} 项已归档，${result.failed.length} 项失败，${result.skippedActiveKeys.length} 项仍在进行中${desktopSyncMessage}`
-      : `已归档 ${result.archivedKeys.length} 项${desktopSyncMessage}；跳过 ${result.skippedActiveKeys.length} 项进行中任务`
+      ? `${result.archivedKeys.length} 项已归档，${result.failed.length} 项失败，${result.skippedActiveKeys.length} 项未完成${desktopSyncMessage}`
+      : `已归档 ${result.archivedKeys.length} 项${desktopSyncMessage}；跳过 ${result.skippedActiveKeys.length} 项未完成任务`
     projectArchive = {
       key: '',
       status: result.outcome === 'partial' ? 'error' : 'idle',
@@ -1601,6 +1633,7 @@ export function createCodexController(options: CodexControllerOptions) {
         newThreadContextFingerprint,
         taskState,
         conversations: taskState.conversations,
+        activityDecisionDiagnostics,
         refreshing,
         floatHost: {
           displayId,
