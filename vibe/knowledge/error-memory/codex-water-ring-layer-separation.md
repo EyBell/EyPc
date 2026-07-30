@@ -4,7 +4,7 @@ status: candidate
 scope: project
 fingerprint: codex-water-ring-layer__weekly-data-svg-removed-while-static-surface-rim-remained__semantic-and-decorative-circles-confused__inventory-layer-ownership-before-removal
 first_seen: 2026-07-22
-last_verified: 2026-07-22
+last_verified: 2026-07-30
 review_after: 2026-08-22
 evidence:
   - src/components/CodexWaterBall.vue
@@ -38,7 +38,7 @@ The rendered control had more than two circular systems: a quota-owned SVG track
 
 - [CodexWaterBall.vue](../../../src/components/CodexWaterBall.vue#L1) now renders the SVG ring only for a Weekly reading, keeps the root transparent and removes static surface rim and same-size outer-glow layers.
 - [float.css](../../../src/styles/float.css#L1) suppresses the generic external circular focus outline only for the water button and moves the keyboard focus cue to the center reading.
-- [codexAppearance.ts](../../../src/domain/codexAppearance.ts#L1) supplies only data-ring width/progress/track/glow tokens and their contrast validation; `shellOpacity` no longer affects rendering.
+- [codexAppearance.ts](../../../src/domain/codexAppearance.ts#L1) supplies only data-ring width/progress/track/glow tokens without local color correction or contrast rejection; `shellOpacity` no longer affects rendering.
 - [CodexPage.vue](../../../src/pages/CodexPage.vue#L1) exposes only the data-ring controls and no ordinary outline-opacity entry.
 - [verify.md](../../specs/260718/1148-codex-quota-float/verify.md#L1) retains user-owned acceptance for the four quota-state scenarios.
 
@@ -69,3 +69,4 @@ Before removing a visually duplicated ring, separate semantic/data layers from d
 | --- | --- | --- | --- | --- | --- |
 | 2026-07-22 | RAW-065 Weekly ring correction | User reported that the wrong circle was removed | Removed Weekly SVG/controls but retained the static surface rim | Restored the Weekly data ring and controls; removed inset, border, inset outline and shell | candidate; user visual acceptance pending |
 | 2026-07-22 | RAW-065 outermost-circle follow-up | User screenshot showed a complete outer circle still present after the first correction | Inspected only component-local rim layers and missed root glow/background plus the host button focus outline | Removed the remaining decorative sources and replaced the circular focus outline with a center-reading underline | candidate; refreshed static checks passed, user visual acceptance pending |
+| 2026-07-30 | RAW-129 residual misconception cleanup | Evidence text still claimed the data ring had active contrast validation after RAW-071 removed it | Recalled an old safety gate while describing current layer ownership | Corrected the record to direct token pass-through; semantic-vs-decorative ring rule remains unchanged | verified documentation correction |

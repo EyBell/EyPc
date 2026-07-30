@@ -4,7 +4,7 @@ status: candidate
 scope: project
 fingerprint: codex-task-count-flicker__single-complete-snapshot-omitted-existing-keys-and-replaced-lastthreads__transport-completeness-confused-with-temporal-deletion-proof__hold-stable-inventory-until-same-missing-set-survives-reconciliation
 first_seen: 2026-07-26
-last_verified: 2026-07-27
+last_verified: 2026-07-30
 review_after: 2026-08-26
 evidence:
   - preload/index.js
@@ -35,12 +35,12 @@ The Controller treated Host V2 structural completeness as sufficient temporal de
 
 ## Candidate Root Cause
 
-Structural completeness proves that one scan followed the protocol; it does not prove that every upstream source returned a temporally stable inventory. Task deletion needs evidence across observations or an explicit verified mutation result. The same boundary also needs monotonic latest-Turn/update evidence so an older status transfer cannot regress an accepted task revision.
+Structural completeness proves that one scan followed the protocol; it does not prove that every upstream source returned a temporally stable inventory. Task deletion needs evidence across observations or an explicit verified mutation result. RAW-128 showed that this protection must be row-scoped: retaining the entire old projection also blocks valid completion/unread changes for rows that are still present. The same boundary needs monotonic latest-Turn/update/provenance evidence so an older status transfer cannot regress an accepted task revision.
 
 ## Evidence
 
 - User correction established that abnormal task states and counts can be transport problems rather than real task disappearance.
-- [codexController.ts](../../../src/runtime/codexController.ts#L1) now detects missing prior anonymous keys before replacing `lastThreads`, keeps the previous task/project/count projection, marks the lane stale and requests one immediate complete recheck.
+- [codexController.ts](../../../src/runtime/codexController.ts#L1) detects missing prior anonymous keys before replacing `lastThreads`, retains only those missing rows plus required project metadata, applies all present rows, marks the lane stale and requests one immediate complete recheck.
 - The same missing-key signature must survive at least two complete snapshots plus `max(15s, taskRefreshSeconds)` before the lower inventory publishes. Reappearance, a changed set, an intervening failed/incomplete read, disablement or disposal resets the candidate.
 - Activity Delta and full inventory now preserve newer `updatedAt`, latest Turn `startedAt`, completed outcome and `completedAt` against regressive evidence.
 - Verified single/project archive and native-project removal paths explicitly remove their targets and reset the candidate, so real user-authorized deletion is not delayed.
@@ -50,7 +50,7 @@ Structural completeness proves that one scan followed the protocol; it does not 
 
 1. Compare the incoming anonymous key set with the last published in-memory inventory before replacing any task/project/count projection.
 2. Separate additions from disappearance: additions-only snapshots can publish; any missing prior key creates a disappearance candidate.
-3. Keep the last stable projection and perform one immediate complete recheck instead of publishing a lower count.
+3. Keep only missing rows from the last stable projection, publish present-row updates immediately, and perform one immediate complete recheck instead of publishing a lower count.
 4. Track the sorted missing-key signature, observation count and first-seen time. Reset when the task reappears, the signature changes or a read is failed/incomplete.
 5. Accept disappearance only after the same signature appears in at least two complete observations and spans one configured full-reconciliation interval, with a 15-second minimum.
 6. Independently compare latest-Turn and update timestamps; never overwrite a newer revision with an older Turn, same-Turn completed regression or smaller completion/update timestamp.
@@ -58,11 +58,11 @@ Structural completeness proves that one scan followed the protocol; it does not 
 
 ## Prevention Rule
 
-Do not equate one successful inventory response with deletion authority. Keep the last stable in-memory projection when previously published keys are missing, confirm the identical absence across a real reconciliation interval, and merge status/version evidence monotonically. Do not solve count flicker by persisting task lists, inventing phantom rows, shortening the all-thread poll, or delaying exact Desktop live activity.
+Do not equate one successful inventory response with deletion authority, and do not turn deletion uncertainty into a batch-wide status freeze. Retain only missing rows, publish present rows immediately, confirm the identical absence across a real reconciliation interval, and merge status/version/provenance evidence monotonically. Do not solve count flicker by persisting task lists, inventing phantom rows, shortening the all-thread poll, or delaying exact Desktop live activity.
 
 ## Latest Applicable Implementation
 
-[codexController.ts](../../../src/runtime/codexController.ts#L1) owns the runtime-only disappearance candidate and monotonic evidence merge. The hold duration is `max(15s, taskRefreshSeconds)`; the first omission schedules the ordinary 200ms forced structural refresh. RAW-092 makes the asymmetry explicit: additions/start/turn signals may request a separate 50ms dirty-task scan and publish as soon as a verified additive snapshot arrives, while only missing prior keys enter the disappearance hold. Existing Host completeness, Desktop push, targeted latest-Turn confirmation and completed-only archive gates remain unchanged.
+[codexController.ts](../../../src/runtime/codexController.ts#L1) owns the runtime-only disappearance candidate, row merge and monotonic evidence merge. The hold duration is `max(15s, taskRefreshSeconds)`; the first omission schedules the ordinary 200ms forced structural refresh. RAW-092 makes the asymmetry explicit: additions/start/turn signals may request a separate 50ms dirty-task scan and publish as soon as a verified additive snapshot arrives, while only missing prior keys enter the disappearance hold. RAW-128 applies that asymmetry inside a lower snapshot too: present rows update while absent rows remain quarantined. Existing Host completeness, Desktop push, targeted latest-Turn confirmation and completed-only archive gates remain unchanged.
 
 ## Alternative Route
 
@@ -79,3 +79,4 @@ Do not equate one successful inventory response with deletion authority. Keep th
 | --- | --- | --- | --- | --- | --- | --- |
 | 2026-07-26 | RAW-090 inventory stability | User clarified that abnormal status/count transfer can omit tasks without real deletion | Immediately replace `lastThreads` after every structurally complete response | User correction plus Controller source trace | Missing-key quarantine, immediate recheck, interval-spanning confirmation and monotonic evidence | candidate; source/link closeout passed, runtime acceptance pending |
 | 2026-07-27 | RAW-092 asymmetric status timing | User required new/waiting tasks to appear quickly while abnormal count jitter remained hidden | Applying one generic delay policy to both additions and disappearance would either lag positive feedback or reintroduce count flicker | Existing missing-key rule plus a separate 50ms dirty-task event path for additions; no weakening of deletion proof | Positive additions are immediate after verification, negative disappearance remains interval-confirmed | candidate; contracts updated, real jitter/latency acceptance pending |
+| 2026-07-30 | RAW-128 row-scoped quarantine | A lower snapshot omitted one task while another present task completed/unread | Retained the entire previous projection until disappearance confirmation | Controller regression plus global status-chain audit | Merge present rows immediately and retain only missing rows through the existing hold | automated Controller contract verified; real host dropout acceptance pending |

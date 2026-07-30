@@ -34,7 +34,7 @@ A runtime finite-number check was assumed to narrow an optional property for lat
 
 ## Evidence
 
-- [codexController.ts](../../../src/runtime/codexController.ts#L1087) now captures the optional revision once and explicitly verifies `typeof completionRevision === 'number'` before applying finite/positive guards and persisting the local acknowledgement.
+- The historical [codexController.ts](../../../src/runtime/codexController.ts#L1) occurrence captured the optional revision once and explicitly verified `typeof completionRevision === 'number'` before applying finite/positive guards. RAW-128 later removed that local-acknowledgement path; the TypeScript narrowing rule remains generally applicable.
 - The user-supplied compiler diagnostic and source review identified the optional value passed to the receipt function.
 
 ## Detection Order
@@ -51,7 +51,7 @@ When an optional numeric value must be passed to a strict numeric API, do not re
 
 ## Latest Applicable Implementation
 
-[codexController.ts](../../../src/runtime/codexController.ts#L1087) keeps completed-unread acknowledgement scoped to a valid selected completion revision; invalid or absent revisions retain the existing unavailable-message path.
+The originating completed-unread acknowledgement implementation was removed by RAW-128. Apply this rule at the next optional-number boundary rather than restoring that retired product path.
 
 ## Alternative Route
 
@@ -67,3 +67,4 @@ When an optional numeric value must be passed to a strict numeric API, do not re
 | Date | Task | Trigger | Failed Route | Recovery | Outcome |
 | --- | --- | --- | --- | --- | --- |
 | 2026-07-24 | Codex completed-unread acknowledgement | Compiler diagnostic on an optional completion revision | Used `Number.isFinite` as the only narrowing condition | Captured the revision and added an explicit primitive-type guard before existing finite/positive checks | candidate; typecheck remains user-owned |
+| 2026-07-30 | RAW-128 unread-authority cleanup | Local completion acknowledgement was removed | Leaving the implementation pointer as current could revive a retired product route | Marked the occurrence historical while retaining the general TypeScript rule | superseded implementation; generic candidate remains |
