@@ -10,7 +10,7 @@ Date: 2026-07-30
 ## Behavior
 
 1. **图标：** `rename`≠`edit`；消息预览=`Eye`，详情=`Info`；发送选项=`SlidersHorizontal`；分组抽屉新建连接 icon=`add`。
-2. **悬浮提示：** 已有绑定的行按钮统一 `commandTitle`；消息行补 `data-operation-tooltip`。
+2. **悬浮提示：** 图标按钮走产品层 `data-operation-tooltip` + 常驻 `data-operation-shortcut`（`commandTooltip` / `plainTooltip`），不依赖仅在 Ctrl 提示模式下才写入的 `data-mqtt-shortcut-hint`；原生 `title` 仅作回退并由 `OperationTooltipLayer` 压制。
 3. **抽屉 kbd：** 第 1–9 项主显示 `c-N`；可附带抽屉外仍有效的次要和弦；过滤纯 `←`/`→`；无标签时显示「点击」而非「未绑定」。连接删除使用 `mqtt.connection.delete`。
 4. **默认绑定：** `mqtt.record.repeatSend` / `mqtt.publish.template.send` → `Ctrl+Shift+Enter`（按 `mqttTargetKind` 互斥）；`mqtt.log.drawer.open` → `Ctrl+Shift+L`；`mqtt.publish.options.open` → `Ctrl+Shift+O`。
 

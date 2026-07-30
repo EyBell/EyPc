@@ -119,4 +119,17 @@ describe('operation tooltip layer', () => {
     expect(document.querySelector('[role="tooltip"]')?.textContent).toContain('目录默认优先')
     wrapper.unmount()
   })
+
+  it('parses shortcut chords from suppressed native titles', async () => {
+    document.body.innerHTML = `<main class="app-shell"><button id="mqtt-preview" title="预览消息 (c-i)" aria-label="预览消息">预览</button></main>`
+    const wrapper = mount(OperationTooltipLayer, { attachTo: document.body })
+    const button = document.querySelector<HTMLButtonElement>('#mqtt-preview')!
+    await Promise.resolve()
+    button.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    await wrapper.vm.$nextTick()
+
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain('预览消息')
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toContain('c-i')
+    wrapper.unmount()
+  })
 })
