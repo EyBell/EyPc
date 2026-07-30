@@ -188,7 +188,8 @@ describe('Codex domain', () => {
         desktopActiveSince: 850,
         lastTurnStatus: 'completed',
         lastTurnStartedAt: 400,
-        lastTurnCompletedAt: 500
+        lastTurnCompletedAt: 500,
+        lastTurnEvidence: 'turn-completed'
       })],
       receipts: [],
       lastTaskScanAt: 0,
@@ -288,11 +289,48 @@ describe('Codex domain', () => {
       bucket: 'stopped',
       activityState: 'stopped',
       state: 'stopped',
-      archiveCapability: 'allowed',
-      canArchive: true,
+      archiveCapability: 'blocked-stopped',
+      canArchive: false,
       revisionAt: 600
     })
     expect(result.snapshot).toMatchObject({ ongoingCount: 4, stoppedCount: 1, waitingCount: 1, runningCount: 0, attentionCount: 0, unknownCount: 0 })
+  })
+
+  it.each([
+    { name: 'exact active beats interrupted', status: 'active', flags: [], authority: 'desktop-live', turn: 'interrupted', evidence: 'inventory', bucket: 'ongoing', activity: 'active', archive: 'blocked-active' },
+    { name: 'initial active conflict stays ongoing', status: 'notLoaded', flags: [], authority: 'desktop-live', turn: 'failed', evidence: 'targeted-after-exit', bucket: 'ongoing', activity: 'ongoing', archive: 'blocked-active' },
+    { name: 'uncertain terminal stays ongoing', status: 'notLoaded', flags: [], authority: 'connector', turn: 'interrupted', evidence: 'inventory', bucket: 'ongoing', activity: 'ongoing', archive: 'blocked-active' },
+    { name: 'exact idle plus failure is stopped', status: 'idle', flags: [], authority: 'desktop-live', turn: 'failed', evidence: 'targeted-after-exit', bucket: 'stopped', activity: 'stopped', archive: 'blocked-stopped' },
+    { name: 'plain completed shape cannot beat active', status: 'active', flags: [], authority: 'desktop-live', turn: 'completed', evidence: 'inventory', bucket: 'ongoing', activity: 'active', archive: 'blocked-active' },
+    { name: 'confirmed completion can close stale active', status: 'active', flags: [], authority: 'desktop-live', turn: 'completed', evidence: 'turn-completed', bucket: 'completed', activity: 'ongoing', archive: 'allowed' },
+    { name: 'waiting still beats confirmed completion', status: 'active', flags: ['waitingOnUserInput'], authority: 'desktop-live', turn: 'completed', evidence: 'turn-completed', bucket: 'ongoing', activity: 'waiting-input', archive: 'blocked-active' }
+  ])('$name', ({ status, flags, authority, turn: turnStatus, evidence, bucket, activity, archive }) => {
+    const result = projectConversations({
+      threads: [thread(
+        status as CodexHostThread['status'],
+        1_000,
+        flags as CodexHostThread['activeFlags'],
+        keyAt(9),
+        {
+          statusAuthority: authority as CodexHostThread['statusAuthority'],
+          lastTurnStatus: turnStatus as CodexHostThread['lastTurnStatus'],
+          lastTurnStartedAt: 900,
+          ...(turnStatus === 'completed' ? { lastTurnCompletedAt: 950 } : {}),
+          lastTurnEvidence: evidence as CodexHostThread['lastTurnEvidence']
+        }
+      )],
+      receipts: [],
+      lastTaskScanAt: 800,
+      now: 1_100,
+      desktopBridgeState: 'connected'
+    })
+    const projected = [
+      ...result.snapshot.ongoing,
+      ...result.snapshot.stopped,
+      ...result.snapshot.completedUnread,
+      ...result.snapshot.completed
+    ].find((task) => task.key === keyAt(9))
+    expect(projected).toMatchObject({ bucket, activityState: activity, archiveCapability: archive })
   })
 
   it('requires exact live-idle or desktop-exit evidence before a failed/interrupted Turn is stopped', () => {

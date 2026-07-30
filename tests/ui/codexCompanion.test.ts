@@ -204,6 +204,20 @@ describe('Codex Companion V3 UI contract', () => {
     expect(source).not.toContain('completionPresentationDelayMs')
   })
 
+  it('surfaces aggregate activity decision diagnostics without an identity field', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
+    expect(source).toContain("label: '状态裁决'")
+    expect(source).toContain('丢弃旧读')
+    expect(source).toContain('延后分支终态')
+    expect(source).toContain('`保护 ${protectionCount} · 周期 ${decisions.liveEpochOpened}`')
+    expect(source).toContain(':data-tip="row.detail"')
+    expect(source).toContain('class="codex-diagnostic-copy" :role="diagnosticRole" aria-live="polite" aria-atomic="true"')
+    expect(source).not.toContain('class="codex-diagnostic" :class="diagnostic.tone" :role="diagnosticRole"')
+    expect(source).not.toContain('role="button"')
+    expect(source).not.toContain('tabindex="0" aria-label=')
+    expect(source).not.toContain('decisions.task')
+  })
+
   it('shows Weekly-only 23% with a complete Weekly ring and no false 5h label', () => {
     const quotaValue = quota(false, true)
     const compact = buildCodexCompactPresentation({
@@ -400,10 +414,11 @@ describe('Codex Companion V3 UI contract', () => {
     expect(wrapper.find('.float-action-hint').exists()).toBe(false)
 
     const stoppedArchive = failed.get('.task-inline-actions .action-archive')
+    expect(stoppedArchive.attributes('disabled')).toBeDefined()
     await stoppedArchive.trigger('pointerenter')
     vi.advanceTimersByTime(200)
     await wrapper.vm.$nextTick()
-    expect(wrapper.get('.float-action-hint').text()).toContain('真实归档')
+    expect(wrapper.get('.float-action-hint').text()).toContain('会话已停止但未完成')
     await stoppedArchive.trigger('pointerleave')
 
     const archive = wrapper.get(`[data-focus-key="task:${TASK_DONE}"] .task-inline-actions .action-archive`)
