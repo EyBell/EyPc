@@ -3923,6 +3923,28 @@ function codexDesktopPersistedUnread(known) {
   }
 }
 
+function codexDesktopUnreadObservation(bridge, known, threadId, shadow, persistedUnreadIds) {
+  const liveUnread = bridge?.state === 'connected' ? bridge.liveUnread.get(threadId) : null
+  const exact = shadow?.unreadEvidence === 'event'
+    ? shadow
+    : liveUnread?.unreadEvidence === 'event' ? liveUnread : null
+  if (exact && typeof exact.hasUnreadTurn === 'boolean') {
+    return { hasUnreadTurn: exact.hasUnreadTurn === true, unreadAuthority: 'desktop-live' }
+  }
+  if (liveUnread?.hasUnreadTurn === true || shadow?.hasUnreadTurn === true) {
+    return { hasUnreadTurn: true, unreadAuthority: 'desktop-live' }
+  }
+  if (persistedUnreadIds instanceof Set) {
+    return { hasUnreadTurn: persistedUnreadIds.has(threadId), unreadAuthority: 'desktop-persisted' }
+  }
+  const fallback = codexDesktopPersistedUnread(known)
+  if (fallback.unreadAuthority === 'desktop-persisted') return fallback
+  if (typeof liveUnread?.hasUnreadTurn === 'boolean' || typeof shadow?.hasUnreadTurn === 'boolean') {
+    return { hasUnreadTurn: false, unreadAuthority: 'desktop-live' }
+  }
+  return fallback
+}
+
 function codexDesktopRuntimeProjection(value) {
   const activity = sanitizeCodexActivityStatus(value)
   return activity ? { type: activity.status, activeFlags: activity.activeFlags } : null
@@ -3949,6 +3971,7 @@ function codexDesktopShadowFromSnapshot(change) {
         : '',
     resumeState: typeof state.resumeState === 'string' ? state.resumeState.slice(0, 40) : '',
     hasUnreadTurn: typeof state.hasUnreadTurn === 'boolean' ? state.hasUnreadTurn : undefined,
+    unreadEvidence: typeof state.hasUnreadTurn === 'boolean' ? 'snapshot' : '',
     requests
   }
   if (codexDesktopShadowActivity(shadow)?.status === 'active') shadow.desktopActiveSince = Date.now()
@@ -3999,8 +4022,13 @@ function codexApplyDesktopShadowPatch(shadow, patch) {
   if (patchPath.length > 8) return false
   if (root === 'hasUnreadTurn') {
     if (patchPath.length !== 1) return false
-    if (operation === 'remove') shadow.hasUnreadTurn = undefined
-    else if (typeof source.value === 'boolean') shadow.hasUnreadTurn = source.value
+    if (operation === 'remove') {
+      shadow.hasUnreadTurn = undefined
+      shadow.unreadEvidence = ''
+    } else if (typeof source.value === 'boolean') {
+      shadow.hasUnreadTurn = source.value
+      shadow.unreadEvidence = 'event'
+    }
     else return false
     return true
   }
@@ -4085,13 +4113,14 @@ function codexApplyCachedCompletedTurnEvidence(known, threadId) {
   if (turn.completedAt) known.lastTurnCompletedAt = turn.completedAt
   else delete known.lastTurnCompletedAt
   known.lastTurnEvidence = 'targeted-after-exit'
+  known.appServerLiveActive = false
   return true
 }
 
 function codexApplyCompletedTurnNotification(bridge, known, threadId, value) {
   if (!bridge || !known || !validCodexThreadId(threadId)) return false
   const turn = sanitizeCodexTurnStatus(value)
-  if (turn?.status !== 'completed' || !turn.startedAt || !turn.completedAt) return false
+  if (turn?.status !== 'completed' || !turn.startedAt) return false
   const previousStartedAt = codexTimestampMs(known.lastTurnStartedAt)
   const previousCompletedAt = codexTimestampMs(known.lastTurnCompletedAt)
   // An exact turn/completed notification is stronger than the local time at
@@ -4114,17 +4143,16 @@ function codexApplyCompletedTurnNotification(bridge, known, threadId, value) {
   codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
   known.lastTurnStatus = 'completed'
   known.lastTurnStartedAt = turn.startedAt
-  known.lastTurnCompletedAt = turn.completedAt
+  if (turn.completedAt) known.lastTurnCompletedAt = turn.completedAt
+  else delete known.lastTurnCompletedAt
   known.lastTurnEvidence = 'turn-completed'
+  known.appServerLiveActive = false
   bridge.cancelLatestTurnRefresh(threadId)
-  const waitingLive = Array.isArray(known.activeFlags)
-    && known.activeFlags.some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
-  if (waitingLive) {
-    emitCodexActivityDelta([{ ...known, lastTurnEvidence: 'turn-completed' }], false)
-    bridge.scheduleCompletionUnreadRefresh(threadId)
-  } else {
-    bridge.publishTargetedCompletion(known, threadId, 'turn-completed')
-  }
+  // Any false already present when the exact completion arrives belongs to
+  // the pre-completion epoch, even when an unresolved request flag is still
+  // draining. Clear it through the shared completion publisher; a genuinely
+  // later read-state event can immediately reassert explicit false.
+  bridge.publishTargetedCompletion(known, threadId, 'turn-completed')
   return true
 }
 
@@ -4133,20 +4161,35 @@ function codexApplyStartedTurnNotification(bridge, known, threadId, value) {
   const turn = sanitizeCodexTurnStatus(value)
   if (turn?.status !== 'inProgress' || !turn.startedAt) return false
   const previousStartedAt = codexTimestampMs(known.lastTurnStartedAt)
+  const alreadyDesktopActive = known.statusAuthority === 'desktop-live' && known.status === 'active'
+  const restoreAppServerActive = () => {
+    known.appServerLiveActive = true
+    if (alreadyDesktopActive) return
+    known.status = 'active'
+    known.activeFlags = []
+    known.statusAuthority = 'app-server-live'
+    known.activityEvidence = 'activity-event'
+    known.activityRevision = codexActivityGeneration
+    delete known.desktopActiveSince
+  }
   if (known.lastTurnStatus === 'inProgress' && turn.startedAt === previousStartedAt) {
+    restoreAppServerActive()
     bridge.cancelLatestTurnRefresh(threadId)
     bridge.cancelCompletionUnreadRefresh(threadId)
+    emitCodexActivityDelta([known], false)
     return true
   }
-  const resumedTerminalRevision = turn.startedAt === previousStartedAt
-    && (known.lastTurnStatus === 'interrupted' || known.lastTurnStatus === 'failed')
-  if (turn.startedAt < previousStartedAt || turn.startedAt === previousStartedAt && !resumedTerminalRevision) return false
+  // App Server notifications are ordered on one stream. A same-second
+  // completed/interrupted → started transition is therefore a real restart,
+  // not a timestamp regression. Only an actually older startedAt is stale.
+  if (turn.startedAt < previousStartedAt) return false
 
   codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
   known.lastTurnStatus = 'inProgress'
   known.lastTurnStartedAt = turn.startedAt
   delete known.lastTurnCompletedAt
   known.lastTurnEvidence = 'turn-started'
+  restoreAppServerActive()
   bridge.cancelLatestTurnRefresh(threadId)
   bridge.cancelCompletionUnreadRefresh(threadId)
   if (!bridge.restoreSuppressedActive(threadId)) emitCodexActivityDelta([known], false)
@@ -4184,6 +4227,8 @@ class CodexDesktopCompanionBridge {
     this.liveUnread = new Map()
     this.turnRefreshes = new Map()
     this.unreadRefreshes = new Map()
+    this.unreadStateWatcher = null
+    this.unreadStateWatchTimer = null
     this.lastSocketError = ''
   }
 
@@ -4211,32 +4256,20 @@ class CodexDesktopCompanionBridge {
   applyFreshCompletionUnread(known, threadId, options = {}) {
     if (!known || !validCodexThreadId(threadId)) return false
     if (options.clearStaleLiveFalse === true) codexClearStalePreCompletionLiveUnread(this, threadId)
-    const shadow = this.shadows.get(threadId)
-    const liveUnread = this.state === 'connected' ? this.liveUnread.get(threadId) : null
-    if (typeof shadow?.hasUnreadTurn === 'boolean' || liveUnread) {
-      known.hasUnreadTurn = typeof shadow?.hasUnreadTurn === 'boolean'
-        ? shadow.hasUnreadTurn === true
-        : liveUnread.hasUnreadTurn === true
-      known.unreadAuthority = 'desktop-live'
-      return known.hasUnreadTurn === true
-    }
     let unreadIds = null
     try { unreadIds = readCodexDesktopUnreadIds() } catch {}
     if (unreadIds) {
-      const hasUnreadTurn = unreadIds.has(threadId)
-      known.hasUnreadTurn = hasUnreadTurn
-      known.unreadAuthority = 'desktop-persisted'
-      known.connectorHasUnreadTurn = hasUnreadTurn
+      known.connectorHasUnreadTurn = unreadIds.has(threadId)
       known.connectorUnreadAuthority = 'desktop-persisted'
-      return hasUnreadTurn
     }
-    const fallback = codexDesktopPersistedUnread(known)
-    known.hasUnreadTurn = fallback.hasUnreadTurn
-    known.unreadAuthority = fallback.unreadAuthority
+    const observation = codexDesktopUnreadObservation(this, known, threadId, this.shadows.get(threadId), unreadIds)
+    known.hasUnreadTurn = observation.hasUnreadTurn
+    known.unreadAuthority = observation.unreadAuthority
     return known.hasUnreadTurn === true
   }
 
   publishTargetedCompletion(known, threadId, evidence = 'targeted-after-exit') {
+    known.appServerLiveActive = false
     this.applyFreshCompletionUnread(known, threadId, { clearStaleLiveFalse: true })
     emitCodexActivityDelta([{ ...known, lastTurnEvidence: evidence }], false)
     if (known.hasUnreadTurn !== true) this.scheduleCompletionUnreadRefresh(threadId)
@@ -4292,6 +4325,7 @@ class CodexDesktopCompanionBridge {
     known.lastTurnStartedAt = turn.startedAt
     if (turn.status === 'completed' && turn.completedAt) known.lastTurnCompletedAt = turn.completedAt
     else delete known.lastTurnCompletedAt
+    known.appServerLiveActive = false
     shadow.suppressUncorroboratedActive = true
     delete shadow.desktopActiveSince
     this.emitParentActivity(threadId)
@@ -4456,13 +4490,14 @@ class CodexDesktopCompanionBridge {
           return
         }
         const resumedTerminalRevision = turn?.startedAt === refresh.baselineTurnStartedAt
-          && (refresh.baselineTurnStatus === 'interrupted' || refresh.baselineTurnStatus === 'failed')
+          && refresh.baselineTurnStatus !== 'inProgress'
         if (refresh.verifyStaleActive && turn?.status === 'inProgress'
           && (turn.startedAt > refresh.baselineTurnStartedAt || resumedTerminalRevision)) {
           codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
           known.lastTurnStatus = 'inProgress'
           known.lastTurnStartedAt = turn.startedAt
           delete known.lastTurnCompletedAt
+          delete known.lastTurnEvidence
           finish(false)
           emitCodexActivityDelta([known], false)
           return
@@ -4476,6 +4511,7 @@ class CodexDesktopCompanionBridge {
           known.lastTurnStartedAt = turn.startedAt
           if (turn.status === 'completed' && turn.completedAt) known.lastTurnCompletedAt = turn.completedAt
           else delete known.lastTurnCompletedAt
+          known.appServerLiveActive = false
           finish(false)
           if (turn.status === 'completed') this.publishTargetedCompletion(known, threadId)
           else emitCodexActivityDelta([{ ...known, lastTurnEvidence: 'targeted-after-exit' }], false)
@@ -4812,7 +4848,14 @@ class CodexDesktopCompanionBridge {
     if (containsActivityPatch && isActive && !wasActive) {
       const evidenceThreadId = shadow.sideConversation ? shadow.parentThreadId : params.conversationId
       const known = codexActivityInventory.get(evidenceThreadId)
-      if (known) delete known.lastTurnEvidence
+      if (known) {
+        known.lastTurnStatus = 'inProgress'
+        delete known.lastTurnCompletedAt
+        delete known.lastTurnEvidence
+        codexThreadTurnStatusCache.delete(evidenceThreadId)
+        this.cancelLatestTurnRefresh(evidenceThreadId)
+        this.cancelCompletionUnreadRefresh(evidenceThreadId)
+      }
     }
     if (isActive) {
       if (!wasActive || !codexTimestampMs(shadow.desktopActiveSince)) shadow.desktopActiveSince = Date.now()
@@ -4829,26 +4872,21 @@ class CodexDesktopCompanionBridge {
     const activity = codexDesktopShadowActivity(shadow)
     if (!known || !activity) return
     const previousStatus = known.status
-    known.status = activity.status
-    known.activeFlags = activity.activeFlags
-    known.statusAuthority = 'desktop-live'
-    known.activityEvidence = shadow.activityEvidence === 'activity-event' ? 'activity-event' : 'initial-snapshot'
+    const desktopEvidence = shadow.activityEvidence === 'activity-event' ? 'activity-event' : 'initial-snapshot'
+    if (desktopEvidence === 'activity-event' && activity.status !== 'active') known.appServerLiveActive = false
+    const appServerActive = known.appServerLiveActive === true && desktopEvidence !== 'activity-event' && activity.status !== 'active'
+    known.status = appServerActive ? 'active' : activity.status
+    known.activeFlags = appServerActive ? [...known.connectorActiveFlags] : activity.activeFlags
+    known.statusAuthority = appServerActive ? 'app-server-live' : 'desktop-live'
+    known.activityEvidence = appServerActive ? 'activity-event' : desktopEvidence
     known.activityRevision = shadow.activityRevision
     if (activity.desktopActiveSince) known.desktopActiveSince = activity.desktopActiveSince
     else delete known.desktopActiveSince
-    if (typeof shadow.hasUnreadTurn === 'boolean') {
-      known.hasUnreadTurn = shadow.hasUnreadTurn
-      known.unreadAuthority = 'desktop-live'
-    } else if (this.state === 'connected' && this.liveUnread.has(threadId)) {
-      const liveUnread = this.liveUnread.get(threadId)
-      known.hasUnreadTurn = liveUnread.hasUnreadTurn
-      known.unreadAuthority = 'desktop-live'
-    } else {
-      const fallback = codexDesktopPersistedUnread(known)
-      known.hasUnreadTurn = fallback.hasUnreadTurn
-      known.unreadAuthority = fallback.unreadAuthority
-      this.liveUnread.delete(threadId)
-    }
+    let unreadIds = null
+    try { unreadIds = readCodexDesktopUnreadIds() } catch {}
+    const unread = codexDesktopUnreadObservation(this, known, threadId, shadow, unreadIds)
+    known.hasUnreadTurn = unread.hasUnreadTurn
+    known.unreadAuthority = unread.unreadAuthority
     this.emitParentActivity(threadId, previousStatus, readStateOnly)
   }
 
@@ -4868,7 +4906,12 @@ class CodexDesktopCompanionBridge {
     const hasApproval = activeFlags.includes('waitingOnApproval')
     const hasActive = activities.some((activity) => activity.status === 'active')
     const hasSystemError = activities.some((activity) => activity.status === 'systemError')
-    const status = hasInput || hasApproval || hasActive
+    const desktopActivityEvent = [this.shadows.get(parentThreadId), ...children]
+      .filter(Boolean)
+      .some((shadow) => shadow.activityEvidence === 'activity-event')
+    if (desktopActivityEvent && !hasActive && !hasInput && !hasApproval) known.appServerLiveActive = false
+    const appServerActive = known.appServerLiveActive === true && !desktopActivityEvent && !hasActive && !hasInput && !hasApproval
+    const status = hasInput || hasApproval || hasActive || appServerActive
       ? 'active'
       : hasSystemError ? 'systemError' : own.status
     const desktopActiveSince = status === 'active'
@@ -4877,41 +4920,36 @@ class CodexDesktopCompanionBridge {
         .map((activity) => codexTimestampMs(activity.desktopActiveSince)))
       : 0
     known.status = status
-    known.activeFlags = status === 'active' ? activeFlags : []
-    known.statusAuthority = 'desktop-live'
+    known.activeFlags = status === 'active'
+      ? (appServerActive ? [...known.connectorActiveFlags] : activeFlags)
+      : []
+    known.statusAuthority = appServerActive ? 'app-server-live' : 'desktop-live'
     const evidenceShadows = [this.shadows.get(parentThreadId), ...children].filter(Boolean)
-    known.activityEvidence = evidenceShadows.some((shadow) => shadow.activityEvidence === 'activity-event')
+    known.activityEvidence = appServerActive || evidenceShadows.some((shadow) => shadow.activityEvidence === 'activity-event')
       ? 'activity-event'
       : 'initial-snapshot'
     known.activityRevision = Math.max(0, ...evidenceShadows.map((shadow) => Number.isInteger(shadow.activityRevision) ? shadow.activityRevision : 0))
     if (desktopActiveSince) known.desktopActiveSince = desktopActiveSince
     else delete known.desktopActiveSince
     const ownShadow = this.shadows.get(parentThreadId)
-    const ownLiveUnread = this.state === 'connected' ? this.liveUnread.get(parentThreadId) : null
-    const ownUnreadKnown = typeof ownShadow?.hasUnreadTurn === 'boolean' || Boolean(ownLiveUnread)
-    const ownUnread = typeof ownShadow?.hasUnreadTurn === 'boolean'
-      ? ownShadow.hasUnreadTurn === true
-      : ownLiveUnread?.hasUnreadTurn === true
+    let unreadIds = null
+    try { unreadIds = readCodexDesktopUnreadIds() } catch {}
+    const ownUnread = codexDesktopUnreadObservation(this, known, parentThreadId, ownShadow, unreadIds)
     const childUnread = childEntries.map(([threadId, shadow]) => {
-      const liveUnread = this.state === 'connected' ? this.liveUnread.get(threadId) : null
-      const known = typeof shadow.hasUnreadTurn === 'boolean' || Boolean(liveUnread)
-      return {
-        known,
-        hasUnreadTurn: typeof shadow.hasUnreadTurn === 'boolean'
-          ? shadow.hasUnreadTurn === true
-          : liveUnread?.hasUnreadTurn === true
-      }
+      return codexDesktopUnreadObservation(this, known, threadId, shadow, unreadIds)
     })
-    const childUnreadKnown = childUnread.some((child) => child.known)
-    const fallback = codexDesktopPersistedUnread(known)
-    const unread = (ownUnreadKnown ? ownUnread : fallback.hasUnreadTurn)
-      || childUnread.some((child) => child.hasUnreadTurn)
-    if (childUnreadKnown || ownUnreadKnown) {
+    const unread = ownUnread.hasUnreadTurn || childUnread.some((child) => child.hasUnreadTurn)
+    const liveAuthority = ownUnread.unreadAuthority === 'desktop-live'
+      || childUnread.some((child) => child.unreadAuthority === 'desktop-live')
+    if (liveAuthority) {
       known.hasUnreadTurn = unread
       known.unreadAuthority = 'desktop-live'
     } else {
-      known.hasUnreadTurn = fallback.hasUnreadTurn
-      known.unreadAuthority = fallback.unreadAuthority
+      known.hasUnreadTurn = unread
+      known.unreadAuthority = ownUnread.unreadAuthority === 'desktop-persisted'
+        || childUnread.some((child) => child.unreadAuthority === 'desktop-persisted')
+        ? 'desktop-persisted'
+        : 'unavailable'
     }
     emitCodexActivityDelta([readStateOnly ? { ...known, readStateOnly: true } : known], false)
     if (status === 'active') {
@@ -4943,7 +4981,8 @@ class CodexDesktopCompanionBridge {
       sideShadow.hasUnreadTurn = params.hasUnreadTurn
       this.liveUnread.set(params.conversationId, {
         ownerClientId: typeof ownerClientId === 'string' && ownerClientId ? ownerClientId : 'desktop-live',
-        hasUnreadTurn: params.hasUnreadTurn
+        hasUnreadTurn: params.hasUnreadTurn,
+        unreadEvidence: 'event'
       })
       this.emitParentActivity(sideShadow.parentThreadId, undefined, true)
       return
@@ -4952,10 +4991,14 @@ class CodexDesktopCompanionBridge {
     known.unreadAuthority = 'desktop-live'
     this.liveUnread.set(params.conversationId, {
       ownerClientId: typeof ownerClientId === 'string' && ownerClientId ? ownerClientId : 'desktop-live',
-      hasUnreadTurn: params.hasUnreadTurn
+      hasUnreadTurn: params.hasUnreadTurn,
+      unreadEvidence: 'event'
     })
     const shadow = this.shadows.get(params.conversationId)
-    if (shadow) shadow.hasUnreadTurn = params.hasUnreadTurn
+    if (shadow) {
+      shadow.hasUnreadTurn = params.hasUnreadTurn
+      shadow.unreadEvidence = 'event'
+    }
     emitCodexActivityDelta([{ ...known, readStateOnly: true }], false)
   }
 
@@ -5044,27 +5087,44 @@ class CodexDesktopCompanionBridge {
       const known = codexActivityInventory.get(threadId)
       if (!known) continue
       const shadow = this.shadows.get(threadId)
-      const liveUnread = this.state === 'connected' ? this.liveUnread.get(threadId) : null
-      if (typeof shadow?.hasUnreadTurn === 'boolean' || liveUnread) {
-        const hasUnreadTurn = typeof shadow?.hasUnreadTurn === 'boolean'
-          ? shadow.hasUnreadTurn
-          : liveUnread.hasUnreadTurn
-        if (known.hasUnreadTurn === hasUnreadTurn && known.unreadAuthority === 'desktop-live') continue
-        known.hasUnreadTurn = hasUnreadTurn
-        known.unreadAuthority = 'desktop-live'
-        changed.push(codexActivityPublicEntry(known))
-        continue
-      }
-      const hasUnreadTurn = unreadIds ? unreadIds.has(threadId) : false
-      const authority = unreadIds ? 'desktop-persisted' : 'unavailable'
-      known.connectorHasUnreadTurn = hasUnreadTurn
-      known.connectorUnreadAuthority = authority
-      if (known.hasUnreadTurn === hasUnreadTurn && known.unreadAuthority === authority) continue
-      known.hasUnreadTurn = hasUnreadTurn
-      known.unreadAuthority = authority
-      changed.push(codexActivityPublicEntry(known))
+      const connectorHasUnreadTurn = unreadIds ? unreadIds.has(threadId) : false
+      const connectorAuthority = unreadIds ? 'desktop-persisted' : 'unavailable'
+      known.connectorHasUnreadTurn = connectorHasUnreadTurn
+      known.connectorUnreadAuthority = connectorAuthority
+      const observation = codexDesktopUnreadObservation(this, known, threadId, shadow, unreadIds)
+      if (known.hasUnreadTurn === observation.hasUnreadTurn && known.unreadAuthority === observation.unreadAuthority) continue
+      known.hasUnreadTurn = observation.hasUnreadTurn
+      known.unreadAuthority = observation.unreadAuthority
+      changed.push(codexActivityPublicEntry({ ...known, readStateOnly: true }))
     }
     if (emit && changed.length) emitCodexActivityDelta(changed, false)
+  }
+
+  ensureUnreadStateWatcher() {
+    if (this.unreadStateWatcher || !this.inventory.size || typeof fs.watch !== 'function') return
+    const { primary } = codexNativeStatePaths()
+    try {
+      this.unreadStateWatcher = fs.watch(path.dirname(primary), { persistent: false }, (_event, filename) => {
+        if (filename && String(filename) !== path.basename(primary)) return
+        if (this.unreadStateWatchTimer) clearTimeout(this.unreadStateWatchTimer)
+        this.unreadStateWatchTimer = setTimeout(() => {
+          this.unreadStateWatchTimer = null
+          if (!this.closed) this.refreshPersistedUnread(true)
+        }, 25)
+        this.unreadStateWatchTimer.unref?.()
+      })
+      this.unreadStateWatcher.unref?.()
+      this.unreadStateWatcher.on?.('error', () => this.closeUnreadStateWatcher())
+    } catch {
+      this.unreadStateWatcher = null
+    }
+  }
+
+  closeUnreadStateWatcher() {
+    if (this.unreadStateWatchTimer) clearTimeout(this.unreadStateWatchTimer)
+    this.unreadStateWatchTimer = null
+    try { this.unreadStateWatcher?.close() } catch {}
+    this.unreadStateWatcher = null
   }
 
   resetLiveAuthority() {
@@ -5106,6 +5166,8 @@ class CodexDesktopCompanionBridge {
     }
     this.inventory = next
     this.refreshPersistedUnread(false)
+    if (next.size) this.ensureUnreadStateWatcher()
+    else this.closeUnreadStateWatcher()
     this.ensure()
     for (const [threadId, shadow] of this.shadows) {
       if (next.has(threadId)) {
@@ -5191,6 +5253,7 @@ class CodexDesktopCompanionBridge {
   dispose() {
     this.closed = true
     this.clearLatestTurnRefreshes()
+    this.closeUnreadStateWatcher()
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     if (this.initializeTimer) clearTimeout(this.initializeTimer)
     this.reconnectTimer = null
@@ -5248,7 +5311,7 @@ function codexActivityPublicEntry(value) {
   const activeFlags = status === 'active' && Array.isArray(source.activeFlags)
     ? [...new Set(source.activeFlags.filter((flag) => flag === 'waitingOnApproval' || flag === 'waitingOnUserInput'))]
     : []
-  const statusAuthority = ['desktop-live', 'connector', 'unavailable'].includes(source.statusAuthority)
+  const statusAuthority = ['desktop-live', 'app-server-live', 'connector', 'unavailable'].includes(source.statusAuthority)
     ? source.statusAuthority
     : 'unavailable'
   const activityEvidence = ['connector', 'initial-snapshot', 'activity-event'].includes(source.activityEvidence)
@@ -5339,7 +5402,22 @@ function handleCodexServerMessage(message) {
       const exitedActive = known.connectorStatus === 'active' && activity.status !== 'active'
       known.connectorStatus = activity.status
       known.connectorActiveFlags = activity.activeFlags
-      if (known.statusAuthority !== 'desktop-live') {
+      known.appServerLiveActive = activity.status === 'active'
+      if (activity.status === 'active') {
+        const bridge = codexEnsureDesktopBridge()
+        known.status = 'active'
+        known.activeFlags = activity.activeFlags
+        known.statusAuthority = 'app-server-live'
+        known.activityEvidence = 'activity-event'
+        known.activityRevision = codexActivityGeneration
+        known.lastTurnStatus = 'inProgress'
+        delete known.lastTurnCompletedAt
+        delete known.lastTurnEvidence
+        codexThreadTurnStatusCache.delete(threadId)
+        bridge.cancelLatestTurnRefresh(threadId)
+        bridge.cancelCompletionUnreadRefresh(threadId)
+        delete known.desktopActiveSince
+      } else if (known.statusAuthority !== 'desktop-live') {
         known.status = activity.status
         known.activeFlags = activity.activeFlags
         known.statusAuthority = 'connector'
@@ -6254,6 +6332,7 @@ function sanitizeCodexProjects(registry) {
 
 async function scanVerifiedCodexInventory() {
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    const previousActivityInventory = codexActivityInventory
     const dirtySnapshot = new Map(codexThreadTurnStatusDirty)
     const registry = readCodexNativeRegistry()
     const listedRows = await listAllCodexThreads(false)
@@ -6289,14 +6368,18 @@ async function scanVerifiedCodexInventory() {
       const activity = sanitizeCodexActivityStatus(thread.status)
       if (!activity) throw codexError('protocol-error', 'Codex thread activity status is invalid')
       const projection = threadByKey.get(key)
+      const previousActivity = previousActivityInventory.get(thread.id)
+      const preserveAppServerActive = previousActivity?.appServerLiveActive === true
       activityInventory.set(thread.id, {
         key,
         ...activity,
         connectorStatus: activity.status,
         connectorActiveFlags: activity.activeFlags,
-        statusAuthority: 'connector',
-        activityEvidence: 'connector',
+        ...(preserveAppServerActive ? { status: 'active', activeFlags: [...(previousActivity.activeFlags || [])] } : {}),
+        statusAuthority: preserveAppServerActive ? 'app-server-live' : 'connector',
+        activityEvidence: preserveAppServerActive ? 'activity-event' : 'connector',
         activityRevision: 0,
+        ...(preserveAppServerActive ? { appServerLiveActive: true } : {}),
         hasUnreadTurn: projection?.hasUnreadTurn === true,
         connectorHasUnreadTurn: projection?.hasUnreadTurn === true,
         connectorUnreadAuthority: projection?.unreadAuthority || 'unavailable',

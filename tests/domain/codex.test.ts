@@ -60,7 +60,7 @@ describe('Codex domain', () => {
       expandedFields: ['tasks', 'config'],
       position: { displayId: 'screen-2', x: 102, y: -50, edge: 'left' }
     })
-    expect(settings.colors).toEqual({ ...defaultCodexSettings().colors, healthy: '#00AA99' })
+    expect(settings.colors).toEqual({ ...defaultCodexSettings().colors, healthy: '#00aa99', warning: 'invalid' })
   })
 
   it('preserves explicit empty field selections and drops obsolete cap/retention settings', () => {
@@ -89,24 +89,24 @@ describe('Codex domain', () => {
     })
 
     expect(settings.colors).toEqual({
-      healthy: '#00AA99',
-      warning: '#DD9900',
-      critical: '#DD3344',
-      water: '#13243A',
-      card: '#F7F9F7',
+      healthy: '#00aa99',
+      warning: '#dd9900',
+      critical: '#dd3344',
+      water: '#13243a',
+      card: '#13243a',
       cardForeground: '#07161D'
     })
     expect(settings.waterAppearance).toMatchObject({
-      inner: { palette: 'aurora', colorA: '#102C3C', colorB: '#0B6570', opacity: 95, amplitude: 4, motion: 'fast' },
-      outer: { style: 'segmented', thickness: 6, colorMode: 'custom', progressColor: '#23B5A5', trackColor: '#718A94', glow: 'strong' }
+      inner: { palette: 'aurora', fillColorA: '#102c3c', fillColorB: '#0b6570', opacity: 95, amplitude: 4, motion: 'fast' },
+      outer: { style: 'segmented', thickness: 6, colorMode: 'custom', progressColor: '#23b5a5', trackColor: '#718a94', glow: 'strong' }
     })
     expect(settings.expandedSizes).toHaveLength(8)
   })
 
-  it('migrates a missing card foreground with the existing readable-foreground choice', () => {
+  it('uses the configured default when a card foreground is missing', () => {
     expect(normalizeCodexSettings({
       colors: { ...defaultCodexSettings().colors, card: '#20252A', cardForeground: undefined }
-    }).colors).toMatchObject({ card: '#20252A', cardForeground: '#F8FCFB' })
+    }).colors).toMatchObject({ card: '#20252A', cardForeground: '#07161D' })
 
     expect(normalizeCodexSettings({
       colors: { ...defaultCodexSettings().colors, card: '#F7F9F7', cardForeground: undefined }
@@ -156,7 +156,8 @@ describe('Codex domain', () => {
         desktopActiveSince: 200,
         lastTurnStatus: 'completed',
         lastTurnStartedAt: 400,
-        lastTurnCompletedAt: 500
+        lastTurnCompletedAt: 500,
+        lastTurnEvidence: 'snapshot-corroborated'
       })],
       receipts: [],
       lastTaskScanAt: 0,
@@ -173,7 +174,8 @@ describe('Codex domain', () => {
         desktopActiveSince: 850,
         lastTurnStatus: 'completed',
         lastTurnStartedAt: 400,
-        lastTurnCompletedAt: 500
+        lastTurnCompletedAt: 500,
+        lastTurnEvidence: 'turn-completed'
       })],
       receipts: [],
       lastTaskScanAt: 0,
@@ -333,7 +335,30 @@ describe('Codex domain', () => {
     })
   })
 
-  it('does not promote connector or persisted-turn heuristics without desktop live active authority', () => {
+  it('keeps an interrupted revision ongoing when a fresh App Server event says the task is active', () => {
+    const result = projectConversations({
+      threads: [thread('active', 1_000, [], KEY, {
+        statusAuthority: 'app-server-live',
+        activityEvidence: 'activity-event',
+        lastTurnStatus: 'interrupted',
+        lastTurnStartedAt: 900
+      })],
+      receipts: [],
+      lastTaskScanAt: 700,
+      now: 1_100,
+      desktopBridgeState: 'connected'
+    })
+
+    expect(result.snapshot).toMatchObject({ ongoingCount: 1, stoppedCount: 0, runningCount: 1 })
+    expect(result.snapshot.ongoing[0]).toMatchObject({
+      key: KEY,
+      bucket: 'ongoing',
+      activityState: 'active',
+      state: 'running'
+    })
+  })
+
+  it('does not promote connector or persisted-turn heuristics without a live active event', () => {
     const result = projectConversations({
       threads: [
         thread('active', 900, ['waitingOnUserInput'], KEY, { statusAuthority: 'connector', lastTurnStatus: 'inProgress', lastTurnStartedAt: 800 }),
