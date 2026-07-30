@@ -835,19 +835,20 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
-  it('keeps interrupted work active while Desktop is live, then removes it from ongoing on exact idle evidence', async () => {
+  it('keeps stale interrupted inventory ongoing, then accepts completion-unread or a fresh stop', async () => {
     const state = createInitialState(1)
     state.activeTab = 'codex'
     const sourceFingerprint = 'b'.repeat(64)
     const taskKey = '1234567890abcdef'
     const baselineTurnStartedAt = Date.now() - 1_000
     const activityListeners: Array<(delta: any) => void> = []
+    let fullThread: CodexHostThread = { key: taskKey, actionAlias: 'stopped-alias', name: '停止边界', status: 'notLoaded', activeFlags: [], statusAuthority: 'connector', hasUnreadTurn: false, unreadAuthority: 'desktop-persisted', updatedAt: Date.now() - 10, lastTurnStatus: 'interrupted', lastTurnStartedAt: baselineTurnStartedAt, projectKey: 'chats', projectName: 'Chats', projectKind: 'chats' }
     const platform = {
       codex: {
         readSnapshot: async (options: Record<string, boolean>) => {
           const receivedAt = Date.now()
           return options.includeThreads
-            ? { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt, threads: [{ key: taskKey, actionAlias: 'stopped-alias', name: '停止边界', status: 'notLoaded' as const, activeFlags: [], statusAuthority: 'connector' as const, hasUnreadTurn: false, unreadAuthority: 'desktop-persisted' as const, updatedAt: receivedAt - 10, lastTurnStatus: 'interrupted' as const, lastTurnStartedAt: baselineTurnStartedAt, projectKey: 'chats', projectName: 'Chats', projectKind: 'chats' as const }], projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }], sourceFingerprint, completeness: 'verified' as const } }
+            ? { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt, threads: [fullThread], projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }], sourceFingerprint, completeness: 'verified' as const } }
             : { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt } }
         },
         readActivitySnapshot: async () => await new Promise<never>(() => undefined),
@@ -872,17 +873,29 @@ describe('Codex controller', () => {
     expect(controller.view().conversations).toMatchObject({ ongoingCount: 1, stoppedCount: 0 })
     expect(projectCodexDynamicStatus(controller.view().conversations, receivedAt + 1).compactCounts.active).toBe(1)
 
-    activityListeners[0]({ version: 2, sourceFingerprint, generation: 3, receivedAt: receivedAt + 2, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'interrupted', lastTurnStartedAt: baselineTurnStartedAt, lastTurnEvidence: 'targeted-after-exit' }] })
-    expect(controller.view().conversations).toMatchObject({ ongoingCount: 0, stoppedCount: 1 })
-    expect(controller.view().conversations.stopped[0]).toMatchObject({ key: taskKey, activityState: 'stopped', archiveCapability: 'allowed' })
+    fullThread = {
+      ...fullThread,
+      status: 'idle',
+      updatedAt: receivedAt + 1,
+      lastTurnStatus: 'interrupted',
+      lastTurnStartedAt: baselineTurnStartedAt
+    }
+    await controller.refresh()
+    expect(controller.view().conversations).toMatchObject({ ongoingCount: 1, stoppedCount: 0 })
+    expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'ongoing' })
+
+    activityListeners[0]({ version: 2, sourceFingerprint, generation: 3, receivedAt: receivedAt + 2, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: true, unreadAuthority: 'desktop-persisted', lastTurnStatus: 'completed', lastTurnStartedAt: baselineTurnStartedAt, lastTurnCompletedAt: receivedAt + 2, lastTurnEvidence: 'targeted-after-exit' }] })
+    expect(controller.view().conversations).toMatchObject({ ongoingCount: 0, stoppedCount: 0, completedUnreadCount: 1 })
+    expect(controller.view().conversations.completedUnread[0]).toMatchObject({ key: taskKey, bucket: 'completed-unread', unreadState: 'unread', archiveCapability: 'allowed' })
     expect(projectCodexDynamicStatus(controller.view().conversations, receivedAt + 2)).toMatchObject({
       compactCounts: { active: 0 },
-      groups: { active: [], stopped: [{ key: taskKey }] }
+      groups: { active: [], unread: [{ key: taskKey }] }
     })
 
-    activityListeners[0]({ version: 2, sourceFingerprint, generation: 4, receivedAt: receivedAt + 3, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live' }] })
+    const resumedTurnStartedAt = baselineTurnStartedAt + 100
+    activityListeners[0]({ version: 2, sourceFingerprint, generation: 4, receivedAt: receivedAt + 3, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'active', activeFlags: [], statusAuthority: 'desktop-live', activityEvidence: 'activity-event', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'inProgress', lastTurnStartedAt: resumedTurnStartedAt, lastTurnEvidence: 'turn-started' }] })
     expect(controller.view().conversations).toMatchObject({ ongoingCount: 1, stoppedCount: 0 })
-    activityListeners[0]({ version: 2, sourceFingerprint, generation: 5, receivedAt: receivedAt + 4, inventoryChanged: false, desktopBridgeState: 'not-running', entries: [{ key: taskKey, status: 'notLoaded', activeFlags: [], statusAuthority: 'connector', hasUnreadTurn: false, unreadAuthority: 'desktop-persisted', lastTurnStatus: 'interrupted', lastTurnStartedAt: baselineTurnStartedAt }] })
+    activityListeners[0]({ version: 2, sourceFingerprint, generation: 5, receivedAt: receivedAt + 4, inventoryChanged: false, desktopBridgeState: 'connected', entries: [{ key: taskKey, status: 'idle', activeFlags: [], statusAuthority: 'desktop-live', hasUnreadTurn: false, unreadAuthority: 'desktop-live', lastTurnStatus: 'interrupted', lastTurnStartedAt: resumedTurnStartedAt, lastTurnEvidence: 'targeted-after-exit' }] })
     expect(controller.view().conversations).toMatchObject({ ongoingCount: 0, stoppedCount: 1 })
     expect(projectCodexDynamicStatus(controller.view().conversations, receivedAt + 4).compactCounts.active).toBe(0)
     controller.dispose()

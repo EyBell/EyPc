@@ -12,4 +12,7 @@ Tool: codex
 | 移除当前 completion delay 设置形状 | complete |
 | 同步 canonical/技术/帮助/错误记忆 | complete |
 | 静态与状态链自动验证 | complete |
+| 实时与完整快照共用 active-exit 转换器 | complete |
+| 晚到原生 unread 唤醒 latest-Turn 复核 | complete |
+| 旧 interrupted 全量快照不得发布 stopped | complete |
 | 真实 uTools 重载与状态转换验收 | pending / user-owned |
