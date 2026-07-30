@@ -42,6 +42,51 @@
   font-size: 12px;
   line-height: 1.3;
   pointer-events: none;
+  animation: operation-tooltip-enter 90ms ease-out;
+}
+
+.operation-tooltip::after {
+  content: "";
+  position: absolute;
+  left: var(--operation-tooltip-arrow-left, 50%);
+  width: 7px;
+  height: 7px;
+  border: solid #aebfc9;
+  background: rgba(248, 251, 252, 0.98);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.operation-tooltip--above::after {
+  bottom: -5px;
+  border-width: 0 1px 1px 0;
+}
+
+.operation-tooltip--below::after {
+  top: -5px;
+  border-width: 1px 0 0 1px;
+}
+
+/* The main app uses the shared tooltip layer; the Float child keeps its own stylesheet-owned hints. */
+.app-shell .codex-tip.codex-tip::after {
+  content: none;
+  display: none;
+}
+
+@keyframes operation-tooltip-enter {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .operation-tooltip {
+    animation: none;
+  }
 }
 
 .operation-tooltip-label,

@@ -11,10 +11,12 @@ evidence:
   - src/pages/MqttPage.vue
   - tests/ui/operationTooltip.test.ts
   - vibe/specs/260730/1044-mqtt-tooltip-shortcut-polish/verify.md
+  - vibe/specs/260730/2050-global-operation-tooltip-polish/spec.md
 tags:
   - accessibility
   - tooltip
   - mqtt
+  - cross-page
   - operation-help
   - shortcut-hint
 ---
@@ -50,7 +52,7 @@ Native `title` / `commandTitle(...)` was assumed to be the product hover tip. `d
 
 ## Prevention Rule
 
-For EyPc operation icons, set `data-operation-tooltip` and an always-on `data-operation-shortcut` (or an equivalent helper such as MQTT `commandTooltip` / `plainTooltip`) in the same change as the control. Treat native `title` as accessibility fallback only; never gate product-tip shortcuts behind Ctrl-hint attributes. Prefer explicit `data-operation-*` over relying on suppressed titles.
+For EyPc operation icons, set `data-operation-tooltip` and an always-on `data-operation-shortcut` (or an equivalent helper such as MQTT `commandTooltip` / `plainTooltip`) in the same change as the control. Treat native `title` as accessibility fallback only; never gate product-tip shortcuts behind Ctrl-hint attributes. Prefer explicit `data-operation-*` over relying on suppressed titles, and do not add a page-owned pseudo-tooltip inside `.app-shell` where the shared layer already owns presentation.
 
 ## Alternative Route
 
@@ -66,3 +68,4 @@ For EyPc operation icons, set `data-operation-tooltip` and an always-on `data-op
 | Date | Task | Trigger | Failed Route | Evidence | Recovery | Outcome |
 | --- | --- | --- | --- | --- | --- | --- |
 | 2026-07-30 | MQTT tooltip/shortcut polish follow-up | User: “还是没有悬浮的提示信息” | MQTT buttons used `commandTitle`/`title` plus Ctrl-gated `data-mqtt-shortcut-hint` | Live hover after title-only polish | `commandTooltip`/`plainTooltip` + always-on `data-operation-shortcut`; title chord parse fallback | verified; user reload acceptance pending |
+| 2026-07-30 | Global operation-tooltip expansion | User requested verification/optimization across every page | MQTT-local coverage and a competing Codex main-page pseudo-tip did not guarantee one cross-page presentation owner | Static inventory of 271 native buttons and shared selectors/styles | Shared fallback normalization, active metadata refresh, main Codex pseudo-tip suppression and Float boundary | implemented; user runtime acceptance pending |
