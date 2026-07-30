@@ -35,7 +35,8 @@ describe('favorite file bridge source', () => {
               readdir: async () => [],
               lstat: async () => ({ isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false, size: 12, mtimeMs: 34 }),
               stat: async () => ({ isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false, size: 12, mtimeMs: 34 }),
-              access: async () => undefined
+              access: async () => undefined,
+              writeFile: async () => undefined
             },
             ...fsOverrides
           }
@@ -85,6 +86,34 @@ describe('favorite file bridge source', () => {
     expect(validateScript).toContain("dist package.json type must be commonjs")
     expect(validateScript).toContain('public preload.js must match preload/index.js')
     expect(validateScript).toContain('dist preload.js must match preload/index.js')
+  })
+
+  it('saves JSON text only after the user chooses a target path and reports cancellation', async () => {
+    const writeFile = vi.fn(async () => undefined)
+    const showSaveDialog = vi.fn(() => '/tmp/mqtt-export.json')
+    const window = loadPreload('darwin', () => undefined, { showSaveDialog }, undefined, {
+      promises: {
+        readdir: async () => [],
+        lstat: async () => ({ isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false }),
+        stat: async () => ({ isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false }),
+        access: async () => undefined,
+        writeFile
+      }
+    })
+
+    await expect(window.eypcPlatform.files.saveTextFile({
+      suggestedName: 'mqtt-export.json',
+      text: '{"ok":true}\n',
+      mimeType: 'application/json'
+    })).resolves.toMatchObject({ outcome: 'saved' })
+    expect(showSaveDialog).toHaveBeenCalledWith(expect.objectContaining({
+      defaultPath: 'mqtt-export.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    }))
+    expect(writeFile).toHaveBeenCalledWith('/tmp/mqtt-export.json', '{"ok":true}\n', { encoding: 'utf8' })
+
+    const cancelledWindow = loadPreload('darwin', () => undefined, { showSaveDialog: () => undefined })
+    await expect(cancelledWindow.eypcPlatform.files.saveTextFile({ suggestedName: 'mqtt-export.json', text: '{}' })).resolves.toMatchObject({ outcome: 'cancelled' })
   })
 
   it('prefers Electron openPath and preserves spaces and Unicode arguments', async () => {

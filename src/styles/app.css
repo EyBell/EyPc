@@ -4677,12 +4677,44 @@ kbd {
 }
 
 .mqtt-record-mode-buttons {
-  display: grid;
-  grid-template-columns: repeat(2, 26px);
+  display: flex;
+  align-items: center;
   justify-content: end;
   gap: 4px;
   min-width: max-content;
   overflow: visible;
+}
+
+.mqtt-record-export-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 2px;
+  padding-right: 6px;
+  border-right: 1px solid #d3e1e5;
+}
+
+.mqtt-record-export-count {
+  min-width: max-content;
+  padding: 2px 6px;
+  border: 1px solid #bcd8d4;
+  border-radius: 999px;
+  background: #eaf7f4;
+  color: #27675f;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.mqtt-record-export-button {
+  border-color: #bcd8d4;
+  background: #f7fcfb;
+  color: #27675f;
+}
+
+.mqtt-record-export-button:hover {
+  border-color: #7eb7ae;
+  background: #eaf7f4;
 }
 
 .mqtt-record-mode-panel {
@@ -6443,17 +6475,17 @@ body,
     grid-column: 1;
   }
 
-  .mqtt-workbench-grid:has(> .drawer-overlay) {
+  .mqtt-workbench-grid:has(> .drawer-overlay:not(.mqtt-action-drawer-overlay)) {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .mqtt-workbench-grid:has(> .drawer-overlay) > .mqtt-connection-rail,
-  .mqtt-workbench-grid:has(> .drawer-overlay) > .mqtt-subscription-rail,
-  .mqtt-workbench-grid:has(> .drawer-overlay) > .mqtt-rail-trigger {
+  .mqtt-workbench-grid:has(> .drawer-overlay:not(.mqtt-action-drawer-overlay)) > .mqtt-connection-rail,
+  .mqtt-workbench-grid:has(> .drawer-overlay:not(.mqtt-action-drawer-overlay)) > .mqtt-subscription-rail,
+  .mqtt-workbench-grid:has(> .drawer-overlay:not(.mqtt-action-drawer-overlay)) > .mqtt-rail-trigger {
     display: none;
   }
 
-  .mqtt-workbench-grid:has(> .drawer-overlay) > .mqtt-message-workspace {
+  .mqtt-workbench-grid:has(> .drawer-overlay:not(.mqtt-action-drawer-overlay)) > .mqtt-message-workspace {
     grid-column: 1;
     grid-row: 1;
   }
@@ -6724,6 +6756,30 @@ body,
 .mqtt-workbench-grid:has(> .mqtt-config-drawer-overlay) {
   padding-left: 3px;
   padding-right: 3px;
+}
+
+/* MQTT 右键/快捷操作：右侧侧窗浮层，不挤压工作区布局 */
+.drawer-overlay.mqtt-action-drawer-overlay {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(80, 102, 117, 0.14);
+  pointer-events: auto;
+  z-index: var(--z-drawer-overlay);
+}
+
+.drawer-overlay.mqtt-action-drawer-overlay > aside {
+  width: min(390px, 42%);
+  max-width: 100%;
+  height: 100%;
+  pointer-events: auto;
+}
+
+.mqtt-workbench-grid:has(> .mqtt-action-drawer-overlay) {
+  padding-right: 0;
 }
 
 /* Window jump workbench: transient native rows, persisted EyPc targets. */
