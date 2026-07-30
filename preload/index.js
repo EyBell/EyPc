@@ -4985,6 +4985,7 @@ class CodexDesktopCompanionBridge {
         unreadEvidence: 'event'
       })
       this.emitParentActivity(sideShadow.parentThreadId, undefined, true)
+      this.reconcileLateUnread(sideShadow.parentThreadId, params.hasUnreadTurn)
       return
     }
     known.hasUnreadTurn = params.hasUnreadTurn
@@ -5000,6 +5001,14 @@ class CodexDesktopCompanionBridge {
       shadow.unreadEvidence = 'event'
     }
     emitCodexActivityDelta([{ ...known, readStateOnly: true }], false)
+    this.reconcileLateUnread(params.conversationId, params.hasUnreadTurn)
+  }
+
+  reconcileLateUnread(threadId, hasUnreadTurn) {
+    if (hasUnreadTurn !== true || !validCodexThreadId(threadId)) return
+    const known = codexActivityInventory.get(threadId)
+    if (!known || known.status === 'active' || known.lastTurnStatus === 'completed') return
+    this.scheduleLatestTurnRefresh(threadId)
   }
 
   follow(threadId, following, targetClientIds) {
@@ -5092,10 +5101,14 @@ class CodexDesktopCompanionBridge {
       known.connectorHasUnreadTurn = connectorHasUnreadTurn
       known.connectorUnreadAuthority = connectorAuthority
       const observation = codexDesktopUnreadObservation(this, known, threadId, shadow, unreadIds)
-      if (known.hasUnreadTurn === observation.hasUnreadTurn && known.unreadAuthority === observation.unreadAuthority) continue
+      if (known.hasUnreadTurn === observation.hasUnreadTurn && known.unreadAuthority === observation.unreadAuthority) {
+        this.reconcileLateUnread(threadId, observation.hasUnreadTurn)
+        continue
+      }
       known.hasUnreadTurn = observation.hasUnreadTurn
       known.unreadAuthority = observation.unreadAuthority
       changed.push(codexActivityPublicEntry({ ...known, readStateOnly: true }))
+      this.reconcileLateUnread(threadId, observation.hasUnreadTurn)
     }
     if (emit && changed.length) emitCodexActivityDelta(changed, false)
   }

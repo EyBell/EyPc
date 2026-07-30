@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: codex-task-status-mismatch__stale-desktop-snapshot-outranks-newer-live-event__order-positive-and-terminal-events-above-initial-refollow-replay
 first_seen: 2026-07-27
-last_verified: 2026-07-29
+last_verified: 2026-07-30
 review_after: 2026-08-27
 evidence:
   - preload/index.js
@@ -40,12 +40,14 @@ Initial/refollow Desktop snapshots were treated as permanently newer than events
 
 The reverse defect remained in the App Server notification handler: `thread/status/changed=active` updated only connector fallback whenever a Desktop shadow already existed. A stale Desktop idle snapshot therefore retained `desktop-live` authority over the fresh positive event and kept a resumed interrupted task in stopped. The corrected bridge records session-only `app-server-live`, preserves it across snapshot replay/inventory rebuild, and clears it only on exact terminal/non-active evidence or a Desktop non-active activity patch.
 
+RAW-126 exposed a second reverse edge after active exited: Controller guarded an unchanged old completed result in the delta path, but the full-inventory path could accept the same old interrupted/failed result and then delete the active-exit baseline merely because it looked terminal. The task therefore moved from active to stopped before the latest completed Turn arrived. Both inputs now use one exit-transition reducer; an unchanged pre-active terminal is projected as ongoing and keeps the epoch open.
+
 ## Evidence
 
 - A user-visible task-status mismatch showed ongoing rows alongside a completed row where the task lifecycle was no longer coherent.
 - [preload/index.js](../../../preload/index.js#L1) and [public/preload.js](../../../public/preload.js#L1) now record `desktopActiveSince` only on a snapshot/patch entering active, retain it through ordinary inventory projection, and clear it on active exit or live-authority loss. A replacement active snapshot inherits the previous shadow's `desktopActiveSince` instead of replacing it with `Date.now()`, so a resubscribe or owner change cannot push the interval past an already-known `completedAt`.
-- [codex.ts](../../../src/domain/codex.ts#L1) and [codexController.ts](../../../src/runtime/codexController.ts#L1) accept a latest explicit completion only when `completedAt > desktopActiveSince`; absent, earlier or non-completed evidence keeps the desktop-live task active.
-- [codex.test.ts](../../../tests/domain/codex.test.ts#L1) and [codexController.test.ts](../../../tests/runtime/codexController.test.ts#L1) contain the domain and Activity Delta V2 contracts. They are updated but intentionally unexecuted under the project validation rule.
+- [codex.ts](../../../src/domain/codex.ts#L1) accepts only confirmed terminal provenance over live activity; [codexController.ts](../../../src/runtime/codexController.ts#L1) applies one active-exit transition to both deltas and full inventory without cross-clock ordering.
+- [codex.test.ts](../../../tests/domain/codex.test.ts#L1) and [codexController.test.ts](../../../tests/runtime/codexController.test.ts#L1) contain the domain and Activity Delta V2 contracts; the Controller regression covers stale interrupted full inventory followed by completed-unread and a genuinely fresh stop.
 - RAW-112 read-only correlation showed three anonymous rows as `desktop-live active` while all three latest Turns were `interrupted`; their active observation times were minted within the same millisecond-scale subscription burst. [codexAppServerBridge.test.ts](../../../tests/platform/codexAppServerBridge.test.ts#L1) now contains the uncorroborated active-snapshot and real-new-Turn recovery contract; it is intentionally unexecuted.
 
 ## Detection Order
@@ -55,8 +57,8 @@ The reverse defect remained in the App Server notification handler: `thread/stat
 3. Determine whether active came from a runtime/request patch or fresh inProgress Turn, versus the first snapshot replay of a subscription.
 4. For a conflicting first snapshot, keep ongoing while rereading only that latest Turn through the existing bounded schedule; track a session-only activity revision and never settle across a patch, waiting request, remap or failed read.
 5. Carry only an anonymous local interval timestamp across preload; do not carry a raw ID, body, cwd, path or private patch data.
-6. Permit completion to supersede an established interval only when the latest Turn is explicit `completed` and its completion time is strictly later; permit an uncorroborated snapshot to settle only after an unchanged final successful terminal read.
-7. Verify real new activity, waiting flags, missing timestamps, older/equal completions, read failures and uncertain bridge states remain active/ongoing.
+6. Apply the same active-exit baseline to real-time and full-inventory candidates. Accept confirmed/fresh terminal evidence once; keep an unchanged pre-active terminal ongoing and retain the baseline.
+7. Verify real new activity, waiting flags, missing timestamps, old interrupted inventory, read failures and uncertain bridge states remain active/ongoing.
 
 ## Prevention Rule
 
@@ -64,22 +66,22 @@ Desktop live active is authoritative for an interval actually observed through a
 
 Apply the same ordering in reverse: an initial/refollow idle snapshot must not suppress a later exact App Server active or Turn-started event. Connector inventory active remains insufficient; only a live event creates `app-server-live`, and only later explicit terminal/non-active evidence revokes it.
 
-Do not rebuild the removed filter stack. A plain completed shape cannot close live activity, `completedAt` is not mandatory for an exact completed notification, and same-revision exact started/targeted inProgress is forward progress. Keep only strict older-revision rejection plus the bounded initial-snapshot/active-exit checks.
+Do not rebuild the removed filter stack. A plain completed shape cannot close live activity, `completedAt` is not mandatory for an exact completed notification, and same-revision exact started/targeted inProgress is forward progress. Keep only strict older-revision rejection plus the bounded initial-snapshot/active-exit checks, and run delta/full-snapshot candidates through the same exit reducer.
 
 ## Latest Applicable Implementation
 
 - The preload creates `desktopActiveSince` on active snapshot entry or non-active-to-active patch transition, retains it for that same shadow, clears it on inactive/authority reset, and aggregates Side Chats using the latest still-active child interval.
 - Activity Delta V2 and full inventory pass only the anonymous timestamp with the existing anonymous key and sanitized status fields.
-- Domain and Controller apply the identical strict ordering rule before assigning active priority or preserving active lifecycle state.
+- Domain owns visible priority; Controller owns one exit-transition reducer shared by real-time and verified-inventory inputs.
 - The preload keeps `activityRevision` and `suppressUncorroboratedActive` process-only. Runtime/request patches clear suppression and advance the revision; a complete newer `turn/started` restores active without scheduling an extra latest-Turn read. The initial-snapshot path reuses `[0,300,1000]` and requires the unchanged final successful terminal result.
-- The ordinary configurable completion presentation hold still governs already-proven ordinary completion; the interval timestamp does not add a second delay.
+- Accepted completion publishes immediately. The exit baseline and bounded Turn read fill an evidence gap only; they add no presentation hold.
 
 ## Alternative Route
 
 - Status: `verified` by Bridge/Domain regressions; real preload-reloaded host acceptance remains pending.
 - Preconditions: an existing or newly replayed desktop-live active projection, a current anonymous task mapping, and a latest Turn that provides explicit status/timestamps.
-- Ordered steps: distinguish snapshot replay from real transition; preserve ongoing while corroborating the conflicting snapshot; settle only the unchanged final successful terminal result; preserve established interval timestamps through full inventory projection; project terminal state through the existing shared presentation owner.
-- Verification: an interrupted/completed active subscription snapshot settles after the bounded reads; a genuine activity patch or fresh inProgress Turn remains active and cancels settlement; waiting/read failure/revision changes do not complete; renderer-visible payload contains no raw identity/content.
+- Ordered steps: distinguish snapshot replay from real transition; preserve ongoing while corroborating the conflicting snapshot; pass delta and full inventory through the same active-exit reducer; settle only accepted terminal evidence; project once through the shared package owner.
+- Verification: stale interrupted inventory cannot become stopped after active exit; completed-unread and a genuinely fresh interrupted Turn both settle; a genuine activity patch or fresh inProgress Turn cancels the old epoch; renderer-visible payload contains no raw identity/content.
 - Fallback: when the shadow changes, a read fails, or explicit terminal evidence is unavailable, preserve conservative active/ongoing and wait for ordinary verified evidence.
 
 ## Occurrence History
@@ -92,3 +94,4 @@ Do not rebuild the removed filter stack. A plain completed shape cannot close li
 | 2026-07-29 | RAW-112 initial follow snapshot replay | User saw two terminal tasks remain ongoing and a real current task raise the count to three | Fresh follow snapshots replayed stale active for terminal interrupted Turns and minted all intervals together | Preserve ongoing through bounded Turn corroboration; suppress only an unchanged terminal snapshot; restore immediately on activity/waiting/new Turn; bump task-state revision | candidate; source/public mirror/test contract updated, reload acceptance pending |
 | 2026-07-30 | RAW-124 stale idle over resumed activity | A real ongoing task was displayed as stopped after an earlier interruption | App Server exact active was ignored whenever an old Desktop idle shadow already owned status authority | Add `app-server-live`, retain it through refollow/inventory replay, and clear it only on explicit later terminal/non-active evidence | verified by 38/38 Bridge and Domain regression; real host reload pending |
 | 2026-07-30 | RAW-125 over-filter audit | Repeated state fixes still left exact starts/completions behind shape, same-revision and completedAt gates | Multiple owners independently revalidated the same live/terminal edge | Close live only with confirmed completion provenance; allow same-revision forward status and exact completion without completedAt | verified by 40/40 Bridge and 152/152 Codex matrix; real host reload pending |
+| 2026-07-30 | RAW-126 split exit arbitration | Active→completed-unread disappeared into stopped, especially after an earlier interruption | Delta guarded only old completed while full inventory accepted old interrupted/failed and cleared the same epoch | Share one exit reducer across delta/full snapshot; keep unchanged old terminal ongoing until accepted evidence | verified by Controller 33/33 and Codex state matrix 153/153; real host reload pending |

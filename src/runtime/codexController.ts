@@ -126,6 +126,16 @@ function inventoryDisappearanceHold(settings: CodexSettings): number {
 
 type ActivityExitBaseline = Pick<CodexHostThread, 'lastTurnStatus' | 'lastTurnStartedAt' | 'lastTurnCompletedAt'>
 
+type ActivityExitTransitionOptions = {
+  confirmedTerminalEvidence?: boolean
+  explicitDesktopExitStop?: boolean
+}
+
+type ActivityExitTransition = {
+  thread: CodexHostThread
+  baseline?: ActivityExitBaseline
+}
+
 type InventoryDisappearanceCandidate = {
   signature: string
   firstSeenAt: number
@@ -151,6 +161,40 @@ function hasFreshTurnOutcomeAfterExit(thread: CodexHostThread, baseline: Activit
   const completedAt = Number.isFinite(thread.lastTurnCompletedAt) ? thread.lastTurnCompletedAt! : 0
   const baselineCompletedAt = Number.isFinite(baseline.lastTurnCompletedAt) ? baseline.lastTurnCompletedAt! : 0
   return completedAt > baselineCompletedAt
+}
+
+function reduceActivityExitTransition(
+  previous: CodexHostThread,
+  candidate: CodexHostThread,
+  currentBaseline: ActivityExitBaseline | undefined,
+  options: ActivityExitTransitionOptions = {}
+): ActivityExitTransition {
+  if (isLiveActiveThread(candidate)) return { thread: candidate }
+
+  const baseline = currentBaseline || (isLiveActiveThread(previous) && !isLiveActiveThread(candidate)
+    ? {
+        lastTurnStatus: previous.lastTurnStatus,
+        lastTurnStartedAt: previous.lastTurnStartedAt,
+        lastTurnCompletedAt: previous.lastTurnCompletedAt
+      }
+    : undefined)
+  if (!baseline) return { thread: candidate }
+
+  const terminal = candidate.lastTurnStatus === 'completed'
+    || candidate.lastTurnStatus === 'failed'
+    || candidate.lastTurnStatus === 'interrupted'
+  if (!terminal) return { thread: candidate, baseline }
+
+  const confirmedTerminal = options.confirmedTerminalEvidence === true
+    || options.explicitDesktopExitStop === true
+  if (hasFreshTurnOutcomeAfterExit(candidate, baseline, confirmedTerminal)) {
+    return { thread: candidate }
+  }
+
+  const guarded = { ...candidate, lastTurnStatus: 'inProgress' as const }
+  delete guarded.lastTurnCompletedAt
+  delete guarded.lastTurnEvidence
+  return { thread: guarded, baseline }
 }
 
 function preserveLatestTurnEvidence(thread: CodexHostThread, previous: CodexHostThread | undefined): CodexHostThread {
@@ -364,12 +408,24 @@ export function createCodexController(options: CodexControllerOptions) {
     publishTaskStatePackage(next)
   }
 
-  function guardStaleExitCompletion(thread: CodexHostThread): CodexHostThread {
-    const baseline = activityExitBaselines.get(thread.key)
-    if (!baseline || thread.lastTurnStatus !== 'completed' || hasFreshTurnOutcomeAfterExit(thread, baseline)) return thread
-    const guarded = { ...thread, lastTurnStatus: 'inProgress' as const }
-    delete guarded.lastTurnCompletedAt
-    return guarded
+  function applyActivityExitTransition(
+    previous: CodexHostThread,
+    candidate: CodexHostThread,
+    transitionOptions: ActivityExitTransitionOptions = {}
+  ): CodexHostThread {
+    const transition = reduceActivityExitTransition(
+      previous,
+      candidate,
+      activityExitBaselines.get(candidate.key),
+      transitionOptions
+    )
+    commitActivityExitTransition(candidate.key, transition)
+    return transition.thread
+  }
+
+  function commitActivityExitTransition(key: string, transition: ActivityExitTransition) {
+    if (transition.baseline) activityExitBaselines.set(key, transition.baseline)
+    else activityExitBaselines.delete(key)
   }
 
   function armStructuralRefresh() {
@@ -476,27 +532,14 @@ export function createCodexController(options: CodexControllerOptions) {
         }
       }
       next = preserveLatestTurnEvidence(next, thread)
-      // A Desktop active→idle push proves only that live execution stopped. If
-      // its delta still carries the same latest-Turn revision, keep the task
-      // ongoing until the targeted status-only read supplies a fresh outcome.
-      const exitedLiveActivity = isLiveActiveThread(thread) && !isLiveActiveThread(next)
-      if (exitedLiveActivity && !activityExitBaselines.has(thread.key)) {
-        activityExitBaselines.set(thread.key, {
-          lastTurnStatus: thread.lastTurnStatus,
-          lastTurnStartedAt: thread.lastTurnStartedAt,
-          lastTurnCompletedAt: thread.lastTurnCompletedAt
-        })
-      }
-      const exitBaseline = activityExitBaselines.get(thread.key)
       const explicitDesktopExitStop = delta.version === 2
         && delta.desktopBridgeState === 'not-running'
         && (next.lastTurnStatus === 'failed' || next.lastTurnStatus === 'interrupted')
       const confirmedAfterExit = (hasLatestTurnEvidence && ['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(liveEntry?.lastTurnEvidence || ''))
-        || explicitDesktopExitStop
-      if (exitBaseline && next.lastTurnStatus && next.lastTurnStatus !== 'inProgress' && !hasFreshTurnOutcomeAfterExit(next, exitBaseline, confirmedAfterExit)) {
-        next.lastTurnStatus = 'inProgress'
-        delete next.lastTurnCompletedAt
-      }
+      next = applyActivityExitTransition(thread, next, {
+        confirmedTerminalEvidence: confirmedAfterExit,
+        explicitDesktopExitStop
+      })
       if (hasSameActivityState(thread, next)) {
         return thread
       }
@@ -508,21 +551,6 @@ export function createCodexController(options: CodexControllerOptions) {
       if (environmentChanged) options.notify()
       if (delta.inventoryChanged || archivedRemoved) scheduleStructuralRefresh(archivedRemoved ? 'urgent' : structuralPriority)
       return
-    }
-
-    const previousByKey = new Map(lastThreads.map((thread) => [thread.key, thread] as const))
-    for (const thread of nextThreads) {
-      const previous = previousByKey.get(thread.key)
-      if (!previous || hasSameActivityState(previous, thread)) continue
-      const nextActive = isLiveActiveThread(thread)
-      if (nextActive) {
-        activityExitBaselines.delete(thread.key)
-      } else if (thread.lastTurnStatus && thread.lastTurnStatus !== 'inProgress') {
-        // Once a terminal outcome survives the exit guard it closes that
-        // activity epoch. Keeping the baseline would let an identical later
-        // inventory snapshot regress an already accepted completion.
-        activityExitBaselines.delete(thread.key)
-      }
     }
 
     lastThreads = nextThreads
@@ -762,11 +790,22 @@ export function createCodexController(options: CodexControllerOptions) {
           } else {
             const firstPromptByKey = new Map(codexState().firstPromptTimes.map((entry) => [entry.key, entry.firstPromptAt]))
             const previousByKey = new Map(lastThreads.map((thread) => [thread.key, thread] as const))
+            const exitTransitions = new Map<string, ActivityExitTransition>()
             const threads = (host.threads as CodexHostThread[]).filter((thread) => !archivingKeys.has(thread.key)).map((thread) => ({
               ...thread,
               ...(thread.firstPromptAt ? {} : firstPromptByKey.has(thread.key) ? { firstPromptAt: firstPromptByKey.get(thread.key) } : {})
-            })).map((thread) => preserveLatestTurnEvidence(thread, previousByKey.get(thread.key)))
-              .map((thread) => guardStaleExitCompletion(thread))
+            })).map((thread) => {
+              const previous = previousByKey.get(thread.key)
+              const preserved = preserveLatestTurnEvidence(thread, previous)
+              if (!previous) return preserved
+              const transition = reduceActivityExitTransition(
+                previous,
+                preserved,
+                activityExitBaselines.get(thread.key)
+              )
+              exitTransitions.set(thread.key, transition)
+              return transition.thread
+            })
             const disappearance = inventoryDisappearanceDecision(threads)
             if (!disappearance.accept) {
               updateConversationStatus({
@@ -782,11 +821,7 @@ export function createCodexController(options: CodexControllerOptions) {
             } else {
               const refreshedKeys = new Set(threads.map((thread) => thread.key))
               for (const key of activityExitBaselines.keys()) if (!refreshedKeys.has(key)) activityExitBaselines.delete(key)
-              for (const thread of threads) {
-                if (isLiveActiveThread(thread) || thread.lastTurnStatus && thread.lastTurnStatus !== 'inProgress') {
-                  activityExitBaselines.delete(thread.key)
-                }
-              }
+              for (const [key, transition] of exitTransitions) commitActivityExitTransition(key, transition)
               lastThreads = threads
               lastProjects = host.version === 2 ? host.projects || [] : []
               lastThreadsPartial = host.threadsPartial === true

@@ -733,6 +733,67 @@ describe('Codex App Server preload bridge', () => {
     }
   })
 
+  it('uses a late native unread write to reconcile a stale interrupted Turn without a task switch', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(2_000_000_350_000)
+    try {
+      let nativeUnread = false
+      const child = new FakeCodexProcess()
+      child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
+      const desktopSocket = new FakeCodexDesktopSocket()
+      desktopSocket.unreadSnapshotThreadIds.delete(FIXED_THREAD_IDS[3])
+      const { bridge, triggerNativeStateChange } = loadCodexBridge(
+        child,
+        () => nativeRegistryTextWithUnread(nativeUnread ? [FIXED_THREAD_IDS[3]] : []),
+        desktopSocket,
+        true
+      )
+      const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await Promise.resolve()
+      await Promise.resolve()
+      const task = baseline.value.threads[3]
+      expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+        status: 'idle',
+        lastTurnStatus: 'interrupted',
+        hasUnreadTurn: false
+      })
+
+      const deltas: Array<Record<string, any>> = []
+      const stop = bridge.onActivityChanged((delta) => deltas.push(delta))
+      const statusReadsBefore = child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.limit === 1).length
+      child.interruptedTurnIds.delete(FIXED_THREAD_IDS[3])
+      nativeUnread = true
+      triggerNativeStateChange()
+      await vi.advanceTimersByTimeAsync(25)
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.limit === 1).length).toBe(statusReadsBefore + 1)
+      expect(deltas).toContainEqual(expect.objectContaining({
+        entries: [expect.objectContaining({
+          key: task.key,
+          readStateOnly: true,
+          hasUnreadTurn: true,
+          unreadAuthority: 'desktop-persisted'
+        })]
+      }))
+      const completedEntries = deltas.flatMap((delta) => delta.entries || [])
+        .filter((entry: Record<string, any>) => entry.key === task.key && entry.lastTurnStatus === 'completed')
+      expect(completedEntries.at(-1)).toMatchObject({
+        status: 'idle',
+        lastTurnStatus: 'completed',
+        lastTurnEvidence: 'targeted-after-exit',
+        hasUnreadTurn: true,
+        unreadAuthority: 'desktop-persisted'
+      })
+      expect(JSON.stringify(deltas)).not.toContain(FIXED_THREAD_IDS[3])
+      stop()
+      bridge.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('applies the shared late-unread path to an ordinary active completion', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(2_000_000_400_000)
@@ -1439,7 +1500,8 @@ describe('Codex App Server preload bridge', () => {
         lastTurnStatus: 'interrupted'
       })
       expect(settled.value.entries.find((entry: Record<string, any>) => entry.key === task.key)).not.toHaveProperty('desktopActiveSince')
-      expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.threadId === FIXED_THREAD_IDS[3])).toHaveLength(5)
+      const statusReadsAfterSettle = child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.threadId === FIXED_THREAD_IDS[3]).length
+      expect(statusReadsAfterSettle).toBeGreaterThanOrEqual(5)
 
       child.stdout.emit('data', `${JSON.stringify({
         method: 'turn/started',
@@ -1459,7 +1521,7 @@ describe('Codex App Server preload bridge', () => {
         desktopActiveSince: 2_100_000_001_400
       })
       await vi.advanceTimersByTimeAsync(0)
-      expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.threadId === FIXED_THREAD_IDS[3])).toHaveLength(5)
+      expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.threadId === FIXED_THREAD_IDS[3])).toHaveLength(statusReadsAfterSettle)
       bridge.close()
     } finally {
       vi.useRealTimers()

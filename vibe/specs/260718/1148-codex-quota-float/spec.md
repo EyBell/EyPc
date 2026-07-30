@@ -2,9 +2,9 @@
 
 Tool: codex
 Date: 2026-07-30
-Status: `implemented-static-verified-awaiting-host-acceptance`
+Status: `implemented-verified-awaiting-host-acceptance`
 Documentation level: `controlled`
-Requirement version: `2026-07-30.6`
+Requirement version: `2026-07-30.7`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 
@@ -24,6 +24,7 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - Unread 区分初始 snapshot 与明确 read-state event。Codex 原生持久化 `true` 可覆盖完成前旧 snapshot `false`；完成后的明确 live event `false/true` 仍最高优先。
 - 精确 `turn/completed` 统一关闭完成前 unread false 周期，即使旧待输入/审批 flag 尚未排空；完成后新到达的明确 read-state event 可重新声明已读。
 - Preload 只读监听 Codex 原生状态文件变化，经短合并后仅发布匿名 `readStateOnly` 增量，不把文件路径或私有内容送入 Renderer。
+- 原生 unread 变为 `true` 时，若任务非 active 且 latest Turn 尚未确认 completed，只唤醒一次既有有界 Turn 复核；unread 不直接改变 Activity 或发明完成。
 - raw thread/Turn ID、正文、cwd、路径和私有 patch 值不跨越 preload。
 - `desktopActiveSince` 只作 v2 兼容输入，不与 provider 时间比较；`completionPresentationDelayMs` 已退出当前设置形状。
 
@@ -32,10 +33,10 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 1. exact live 待输入/审批请求进入 `waiting-input / waiting-approval`。
 2. 真实 Desktop activity patch、精确 App Server `active` 或精确/new `inProgress` 建立 live active；`app-server-live` 覆盖旧 initial/refollow idle，并跨 inventory 重建保留到后续明确终止。
 3. 精确、定向或佐证 completed 立即进入 `completed`；普通 inventory completed 只有在没有更强 live active 时成立，精确通知允许缺失 `completedAt`。
-4. `failed/interrupted + exact idle` 或 Desktop `not-running` 进入 `stopped`。
+4. `failed/interrupted` 只有相对当前 active-exit baseline 前进并经退出后定向证据确认，或 Desktop 明确 `not-running` 时进入 `stopped`。
 5. 不完整、乱序、断连或互相冲突的证据保持 `ongoing`。
 
-真实 activity patch 开启新周期时，旧 completed 元数据不能压住 active。完成通过 active-exit 门禁后必须清除该 baseline，相同后续快照不得把 completed 改回 inProgress。
+真实 activity patch 开启新周期时，旧 terminal 元数据不能压住 active。实时 delta 与完整 snapshot 复用同一个 active-exit 转换器；未前进的旧 completed/interrupted/failed 统一保持 ongoing 并保留 baseline。终态通过门禁后关闭该周期，相同后续快照不得把完成反判为 inProgress，也不得把旧中断误判为 stopped。
 
 ## 稳定性与兼容
 
@@ -49,4 +50,4 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 
 - 不重做外观、模型选择、项目移除或整个 EyPc 架构。
 - 未授权真实 Codex/uTools 写操作；除已定义的项目移除事务外，Codex 原生状态保持只读。
-- 实现接受仍需用户重载真实 uTools 并验收 stopped↔active、普通/中断恢复 active→completed 及任务切换。
+- 实现接受仍需用户重载真实 uTools 并验收 stopped↔active、普通/中断恢复 active→completed-unread 及任务切换。
