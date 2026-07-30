@@ -2,7 +2,7 @@
 
 ## Current Status
 
-`wj19-native-instance-id / implemented; verification-pending` — current source separates logical targets from native window instances and removes title-derived identity/recovery. Existing tests were updated as unexecuted contracts. Per the WJ-19 boundary, tests, typecheck, build, uTools reload, native activation and visual acceptance were not run and remain user-owned.
+`wj19-native-instance-id / WJ-19.3 implemented; verification-pending` — current source separates logical targets from native window instances, removes title-derived identity/recovery, keeps manual replacement in an explicit confirm/cancel flow even when a refresh temporarily has no candidates, and centralizes that flow behind one pure state machine plus one action policy. Existing tests were updated as unexecuted contracts. Per the WJ-19 boundary, tests, typecheck, build, uTools reload, native activation and visual acceptance were not run and remain user-owned.
 
 ## WJ-19 Unexecuted Contract Evidence
 
@@ -10,7 +10,34 @@
 - Platform source contracts cover bridge `wj19-native-instance-id`, Windows actionable HWND owner/app verification and verified instance return, macOS CG list identity, AX fallback rows with mandatory `_AXUIElementGetWindow`, exact activate/close mapping and the absence of title/ordinal gates. Canonical and public preload bytes currently compare equal.
 - Runtime contracts cover one bounded refresh, explicit rebind for all same-app candidates including a sole candidate, success-only atomic instance/native/app/title update, partial-inventory retention, complete no-candidate clearing and Escape focus return.
 - UI contracts cover the listbox status text “原窗口实例已失效，标题仅供人工辨认”, Enter/Escape instructions and the read-only current/last title field.
+- WJ-19.1 Runtime/UI contracts additionally require each candidate's own live title, no inherited favorite/pin/slot state, selection clearing and first-candidate focus request on entry, one-step Escape with target-row focus request, disabled search/slot rail, and blocked action-panel/selection/edit/mutation commands.
+- WJ-19.1 platform source contracts require a force-refreshed identity gate to appear before `trySwitchMacosSpaceFromSessionCache`, require Space cache entries to use `darwin:PID:CGWindowID`, and retain canonical/public preload byte equality. Windows PID+HWND remains a current verified locator, not an asserted cross-reuse generation ID.
+- WJ-19.2 Runtime contracts keep candidate context when a complete refresh returns no options, clear only the proven-stale instance/native binding, replace membership on later complete snapshots, union and cache-retain on partial snapshots, and request focus when a candidate reappears or is replaced. UI contracts require logical alias + last-title context, live frontmost/minimized/cache labels, and an explicit refresh-or-Escape empty state.
+- WJ-19.3 domain contracts cover begin/dedup/focus, partial retain+union, complete replace/empty stale-binding effect, target-scoped confirmation, cancel focus restoration and `always / browse / rebind` policy. Runtime/UI contracts consume `windowRebind` rather than parallel candidate variables.
+- Regression static review must keep all superseded paths absent: title similarity/equality identity gates, sole-candidate auto-rebind, macOS title/ordinal fallback, Space-cache use before force-refreshed identity, and candidate-mode action/selection mutation.
 - These are source contracts only: no test process, semantic typecheck, build, preload syntax execution, uTools runtime, real window jump or screenshot was executed for WJ-19.
+
+## WJ-19.2 Implementation Review
+
+- Requirement alignment: candidate context is now independent from candidate-row count; complete snapshots replace membership and may clear only a proven-stale binding, while partial snapshots retain/union and mark absent observations cached. Alias/last-title and live-state additions are presentation-only.
+- Regression review: static source search found no title-history/similarity identity code, retired `target-title-changed`/title-environment/`ax-fallback`/ordinal-fallback symbols, or sole-candidate automatic activation. The only `titleLocator` source reference is the required one-way legacy migration into `lastKnownTitle`.
+- Platform ordering: both preload mirrors place force-refreshed macOS identity verification before the session Space-cache call and remain byte-identical.
+- Findings: no P0/P1 source defect found in the scoped review. Runtime/type/build/uTools/native/visual behavior remains an explicit unverified acceptance gate rather than inferred success.
+- Static closeout passed: canonical/public preload mirror, identity-before-Space-cache ordering, retired title-identity symbol absence, sole-candidate auto-rebind absence, title-history/similarity Runtime absence, candidate-refresh contract markers, both repositories' Markdown code-link audits, and scoped diff checks.
+
+## WJ-19.3 Architecture Review
+
+- [windowRebind.ts](../../../../src/domain/windowRebind.ts#L1) is the only source assignment point for `candidateInstanceIds`; its transition is pure and platform-independent. Runtime keeps one `WindowRebindState`, applies explicit effects and publishes one `WindowRebindView`.
+- Candidate confirmation clears only when the successfully verified target ID equals the active rebind target, so an unrelated successful slot action cannot silently dismiss a pending manual choice.
+- Action registration and direct mutation guards use the same interaction policy. Page code reads phase/target projection only and contains no inventory, matching or state-transition rule.
+- 提交前复核发现编辑草稿与异步槽位恢复可能同时抵达候选入口；现保留未保存草稿并以 `editor-active` 明确阻断换绑，不创建第二个候选层，从而保持一次 `Escape` 的候选合同与无隐式数据丢失边界。对应 Runtime 合同已补写但未执行。
+- Scoped static checks found no legacy parallel candidate variables, Runtime/UI title identity path, sole-candidate auto-bind, or new native fallback. Canonical/public preload bytes remain equal. Tests/typecheck/build/host/UI execution remain deliberately unrun.
+
+## 2026-07-30 分批提交前复核
+
+- 第一性原理：逻辑目标与 OS 窗口实例分离；桥接层只证明实例，标题只帮助人辨认；实例失效后只能由用户确认并在原生成功后换绑。纯状态机拥有候选集合/刷新/焦点效果，Runtime 只适配，页面只投影。
+- 原始需求：WJ-19 的实例身份和人工换绑、WJ-19.1 的窄交互与缓存前身份核验、WJ-19.2 的空/部分/替换刷新连续性、WJ-19.3 的单一流程 owner 均已逐项映射。提交前补齐了编辑层与候选层互斥这一边界。
+- 实现合理性：Windows 每次复核 HWND owner/app/actionability，macOS 在 Space cache 前强制核验 PID/app/CG ID 并以完整实例键缓存；候选流程不包含标题匹配、唯一候选捷径或副操作。静态审阅未发现未修复 P0/P1；运行与宿主结论仍未校验。
 
 ## WJ-08 Targeted Evidence
 
@@ -52,8 +79,8 @@
 ## B-route SkyLight Space Switch Evidence
 
 - Dependency: `koffi` in `package.json`; [scripts/prepare-utools-runtime.mjs](../../../../scripts/prepare-utools-runtime.mjs#L1) copies it into plugin `node_modules`.
-- Preloads remain byte-identical and include `trySwitchMacosSpaceByCGS` wired in `activateWindow` before osascript; AX-fallback refs `pid:ordinal:0` skip the helper.
-- Development traces prepend a sanitized `space` step with allowlisted details (`switched` / `ax-fallback` / `no-api` / `empty-spaces` / …). The short “窗口激活被阻断” panel is hidden while the development operation-trace panel is enabled; each trace row exposes a one-line plain-text summary for copy.
+- Historical WJ-10 evidence used to let AX-fallback refs `pid:ordinal:0` skip the Space helper; WJ-19 supersedes and removes that branch, so non-zero ordinal refs now fail closed as `bad-ref` before activation.
+- Development traces still prepend a sanitized `space` step, but WJ-19 removes `ax-fallback` from the live allowlist. The short “窗口激活被阻断” panel is hidden while the development operation-trace panel is enabled; each trace row exposes a one-line plain-text summary for copy.
 - Local Node/`koffi` probe on a live CG window: Space switch returned `ok: true`; AX-fallback ref returned skip. No titles/PIDs/native refs were persisted.
 - CodeNote pathway/error memory: [macos-window-activation.md](../../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/macos-window-activation.md#L1) · [utools-macos-ax-activation-misses-other-spaces.md](../../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/error-memory/utools-macos-ax-activation-misses-other-spaces.md#L1).
 - Host still reported `activation-not-found` (process ok → target not-found after rescan) before the richer `space` detail UI; pending re-acceptance with the one-line copy.
@@ -167,10 +194,10 @@ Accepted on 2026-07-28:
 Residual host gates:
 
 1. Repeat on another multi-window Chromium profile/application and on the single-window Rider route.
-2. Force/observe unbound multi-window, ambiguous binding, switch timeout, exact-AX-focus failure, weak/tied title drift, and truly closed target; each must retain its fail-closed/manual result. Separately verify one unique high-confidence restart replacement learns only after exact activation success.
+2. Force/observe unbound multi-window, ambiguous binding, switch timeout, exact-AX-focus failure, stale instance, and truly closed target; each must retain its fail-closed/manual result. Every replacement, including a sole candidate, must remain manual and commit only after exact activation success.
 3. Confirm production-installed trace absence and retain Windows normal/minimized/page-topmost plus close/confirm-terminate acceptance.
 4. On macOS, permanent page-topmost remains unsupported. Any other unverified outcome must preserve only stable sanitized evidence.
-5. Reload the preload and confirm `bridge=wj18-cg-title-source`; then retry the unchanged target that previously showed `target-title-changed`. It must activate through `title-match → ax-cg-id-match → ax-focused-window` without a title-change diagnostic. Also compare first/repeated invocation latency, require repeated traces to include `session-cache`, verify stale-cache miss recovers once, and confirm the workbench retains off-Space rows across partial refreshes.
+5. Historical WJ-18 host evidence is superseded. Reload the preload and confirm `bridge=wj19-native-instance-id`; repeated traces may use `session-cache` only after the exact force-refreshed instance/app gate, stale-cache miss may recover once, and partial refreshes must retain off-Space rows.
 
 ## Authorized Read-only Local Evidence
 
@@ -181,7 +208,9 @@ Residual host gates:
 ## Required User-owned Validation
 
 - WJ-19: reload preload and confirm `bridge=wj19-native-instance-id`; bind one browser window, switch tabs repeatedly and confirm the slot/favorite still targets that same OS window. Close it, verify even one same-app candidate requires Enter, verify Escape restores the original target row, then confirm successful choice updates binding. Repeat with equal-title sibling windows and require no automatic match.
-- WJ-19 platform gates: Windows must reject a recycled/non-actionable HWND or owner mismatch. macOS must reject any target without a positive CGWindowID or exact AX→CG mapping and must finish only when `AXFocusedWindow` maps to the requested CG ID.
+- WJ-19 platform gates: Windows must reject a non-actionable/current-owner/app mismatch and must not claim PID+HWND survives handle reuse. macOS must reject any target without a positive CGWindowID or exact AX→CG mapping, must validate before any Space-cache switch, and must finish only when `AXFocusedWindow` maps to the requested CG ID.
+- WJ-19.1 interaction gate: the candidate list must visibly distinguish sibling windows by current title, suppress inherited target badges/actions, focus the first option on entry, ignore Space/right-click/action shortcuts, and restore the original target with one Escape.
+- WJ-19.2 interaction gate: refresh the candidate flow through complete-empty → partial-new → partial-empty → complete-replacement. The flow must never close implicitly; complete-empty clears only the stale instance/native binding, partial-empty retains a visibly cached candidate, reappearing/replacement candidates regain focus, and Escape alone returns to the logical target row.
 - WJ-16 historical production/build evidence remains historical only; WJ-19 typecheck, build, dist preparation and uTools manifest/runtime gates are all unverified.
 - Silent slot jump / missing-target workbench / manual Tab load (no auto-scan).
 - With a nonempty window query, toolbar load/refresh and `Ctrl+R` clear the query and reveal the refreshed complete list; an automatic cache-miss rescan does not clear it.
@@ -196,4 +225,4 @@ Residual host gates:
 
 ## Verification Boundary
 
-WJ-15 did run the focused suites, typecheck/production build/uTools runtime validator, isolated privacy-safe probes, and two real AiTools off-Space global-slot activations. WJ-16 ran preload syntax/mirror/diff checks, an initial semantic type checkpoint, three focused Runtime cases, platform and diagnostics UI suites, plus one broader non-green Runtime file. WJ-17 ran domain/state 21/21 and Window activation diagnostics 17/17; WJ-18 ran static-only checks. Those results are historical and do not validate the superseding WJ-19 contract. WJ-19 intentionally does not run tests, typecheck, build, dist preparation, uTools reload, native activation or visual acceptance; all such behavior remains `未校验，待用户验收`.
+WJ-15 did run the focused suites, typecheck/production build/uTools runtime validator, isolated privacy-safe probes, and two real AiTools off-Space global-slot activations. WJ-16 ran preload syntax/mirror/diff checks, an initial semantic type checkpoint, three focused Runtime cases, platform and diagnostics UI suites, plus one broader non-green Runtime file. WJ-17 ran domain/state 21/21 and Window activation diagnostics 17/17; WJ-18 ran static-only checks. Those results are historical and do not validate the superseding WJ-19/WJ-19.1/WJ-19.2/WJ-19.3 contract. WJ-19.3 intentionally does not run tests, typecheck, build, preload syntax execution, dist preparation, uTools reload, native activation or visual acceptance; all such behavior remains `未校验，待用户验收`.

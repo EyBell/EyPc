@@ -7484,6 +7484,15 @@ body,
   grid-template-columns: minmax(0, 1fr) minmax(0, min(320px, 42%));
 }
 
+.window-workbench.candidate-mode {
+  border-color: #91b9c3;
+}
+
+.window-search-row .primary-search:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .window-list-panel,
 .window-list {
   min-width: 0;
@@ -7530,6 +7539,10 @@ body,
 
 .window-row.selected.active {
   background: #dceef1;
+}
+
+.window-row.candidate {
+  cursor: pointer;
 }
 
 .window-selection-cue {
