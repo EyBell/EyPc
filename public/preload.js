@@ -1415,27 +1415,34 @@ function macosDedupeSpaceBindings(bindings) {
   return result
 }
 
-function macosCacheSpaceBindings(cache, cgWindowNumber, bindings) {
-  const wid = cgWindowNumber >>> 0
-  if (!wid) return
+function macosWindowInstanceKey(pid, cgWindowNumber) {
+  const ownerPid = Math.trunc(Number(pid))
+  const wid = Math.trunc(Number(cgWindowNumber))
+  if (!Number.isInteger(ownerPid) || ownerPid <= 0 || !Number.isInteger(wid) || wid <= 0) return ''
+  return `darwin:${ownerPid}:${wid}`
+}
+
+function macosCacheSpaceBindings(cache, instanceKey, bindings) {
+  const key = String(instanceKey || '').trim()
+  if (!key) return
   const normalized = macosDedupeSpaceBindings(bindings)
-  if (normalized.length) cache.set(wid, normalized)
-  else cache.delete(wid)
+  if (normalized.length) cache.set(key, normalized)
+  else cache.delete(key)
 }
 
 /** Reads only a previously verified/prewarmed binding and refreshes current-Space state. */
-function macosCachedWindowSpaceResolution(api, cid, cgWindowNumber) {
-  const want = cgWindowNumber >>> 0
-  const cached = macosDedupeSpaceBindings(macosWindowSpaceCache.get(want) || [])
-  if (!want || !cached.length) return null
+function macosCachedWindowSpaceResolution(api, cid, instanceKey) {
+  const key = String(instanceKey || '').trim()
+  const cached = macosDedupeSpaceBindings(macosWindowSpaceCache.get(key) || [])
+  if (!key || !cached.length) return null
   const managed = macosLoadDisplayBySpaceMap(api, cid)
   macosManagedSpaceSnapshot = managed
   const bindings = cached.filter((binding) => managed.displayBySpace.get(binding.spaceId.toString()) === binding.displayUuid)
   if (!bindings.length) {
-    macosWindowSpaceCache.delete(want)
+    macosWindowSpaceCache.delete(key)
     return null
   }
-  macosCacheSpaceBindings(macosWindowSpaceCache, want, bindings)
+  macosCacheSpaceBindings(macosWindowSpaceCache, key, bindings)
   return {
     bindings,
     source: 'session-cache',
@@ -1542,34 +1549,39 @@ function macosRebuildWindowSpaceCache(api, cid, inventoryWindows) {
   const { displayBySpace, currentByDisplay, entries } = macosLoadDisplayBySpaceMap(api, cid)
   macosManagedSpaceSnapshot = { entries, displayBySpace, currentByDisplay }
   const next = new Map()
+  const bindingsByWindowNumber = new Map()
   for (const entry of entries) {
     for (const wid of macosWindowNumbersOnSpace(api, cid, entry.spaceId)) {
-      const existing = next.get(wid) || []
-      macosCacheSpaceBindings(next, wid, [...existing, { spaceId: entry.spaceId, displayUuid: entry.displayUuid }])
+      const existing = bindingsByWindowNumber.get(wid) || []
+      bindingsByWindowNumber.set(wid, macosDedupeSpaceBindings([...existing, { spaceId: entry.spaceId, displayUuid: entry.displayUuid }]))
     }
   }
   for (const item of Array.isArray(inventoryWindows) ? inventoryWindows : []) {
     const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(String(item && item.nativeRef || '').trim())
     if (!parts || Number(parts[2]) !== 0) continue
+    const pid = Number(parts[1])
     const wid = Number(parts[3])
-    if (!Number.isInteger(wid) || wid <= 0) continue
+    const instanceKey = macosWindowInstanceKey(pid, wid)
+    if (!instanceKey) continue
     const direct = macosDirectBindingsForWindow(api, cid, wid, displayBySpace)
-    if (direct.length) macosCacheSpaceBindings(next, wid, [...(next.get(wid) || []), ...direct])
+    const bindings = macosDedupeSpaceBindings([...(bindingsByWindowNumber.get(wid) || []), ...direct])
+    macosCacheSpaceBindings(next, instanceKey, bindings)
   }
   macosWindowSpaceCache = next
   return { cache: next, displayBySpace, currentByDisplay, entries, windowNumbers: next.size }
 }
 
-function macosLookupOrResolveWindowSpaceBinding(api, cid, cgWindowNumber) {
+function macosLookupOrResolveWindowSpaceBinding(api, cid, pid, cgWindowNumber) {
   const want = cgWindowNumber >>> 0
-  const cached = macosCachedWindowSpaceResolution(api, cid, want)
+  const instanceKey = macosWindowInstanceKey(pid, want)
+  const cached = macosCachedWindowSpaceResolution(api, cid, instanceKey)
   if (cached) return cached
   const managed = macosLoadDisplayBySpaceMap(api, cid)
   macosManagedSpaceSnapshot = managed
   const direct = macosDirectBindingsForWindow(api, cid, want, managed.displayBySpace)
   const reverse = macosResolveBindingsByReverseScan(api, cid, want, managed.displayBySpace, managed.entries)
   const bindings = macosDedupeSpaceBindings([...direct, ...reverse])
-  macosCacheSpaceBindings(macosWindowSpaceCache, want, bindings)
+  macosCacheSpaceBindings(macosWindowSpaceCache, instanceKey, bindings)
   const source = direct.length && reverse.length ? 'direct+reverse' : direct.length ? 'direct' : reverse.length ? 'reverse' : 'none'
   return {
     bindings,
@@ -1585,12 +1597,14 @@ function trySwitchMacosSpaceFromSessionCache(nativeRef) {
   try {
     const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(String(nativeRef || '').trim())
     if (!parts || Number(parts[2]) !== 0) return null
+    const pid = Number(parts[1])
     const cgWindowNumber = Number(parts[3])
-    if (!Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) return null
+    const instanceKey = macosWindowInstanceKey(pid, cgWindowNumber)
+    if (!instanceKey) return null
     const api = loadMacosCgsApi()
     if (!api) return null
     const cid = api.SLSMainConnectionID()
-    const resolved = macosCachedWindowSpaceResolution(api, cid, cgWindowNumber)
+    const resolved = macosCachedWindowSpaceResolution(api, cid, instanceKey)
     if (!resolved) return null
     const probe = {
       bridge: 'in-process',
@@ -1610,7 +1624,7 @@ function trySwitchMacosSpaceFromSessionCache(nativeRef) {
     const binding = resolved.bindings[0]
     const switched = macosSwitchToCachedSpace(api, cid, binding, resolved.currentByDisplay)
     if (['no-display', 'no-space-id'].includes(switched.detail)) {
-      macosWindowSpaceCache.delete(cgWindowNumber >>> 0)
+      macosWindowSpaceCache.delete(instanceKey)
       return null
     }
     return { ...probe, ...switched, binding, sameSpace: false, cacheHit: true }
@@ -1641,14 +1655,15 @@ function trySwitchMacosSpaceByCGSInProcess(nativeRef) {
   try {
     const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(String(nativeRef || '').trim())
     if (!parts) return { switched: false, detail: 'bad-ref', bridge: 'in-process' }
+    const pid = Number(parts[1])
     const ordinal = Number(parts[2])
     const cgWindowNumber = Number(parts[3])
-    // CG inventory refs are pid:0:cgWindowNumber; AX-fallback refs use a non-zero ordinal and zero window number.
-    if (ordinal !== 0 || !Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) return { switched: false, detail: 'ax-fallback', bridge: 'in-process' }
+    // Only PID + positive CGWindowID refs are actionable. Legacy ordinal refs fail closed.
+    if (ordinal !== 0 || !Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) return { switched: false, detail: 'bad-ref', bridge: 'in-process' }
     const api = loadMacosCgsApi()
     if (!api) return { switched: false, detail: 'no-api', bridge: 'in-process', managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
     const cid = api.SLSMainConnectionID()
-    const resolved = macosLookupOrResolveWindowSpaceBinding(api, cid, cgWindowNumber)
+    const resolved = macosLookupOrResolveWindowSpaceBinding(api, cid, pid, cgWindowNumber)
     const probe = {
       bridge: 'in-process',
       managedSpaceCount: resolved.managedSpaceCount,
@@ -1766,7 +1781,7 @@ async function runMacosIsolatedSpaceBridge(target, switchRequested) {
   const ordinal = Number(parts[2])
   const cgWindowNumber = Number(parts[3])
   if (ordinal !== 0 || !Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) {
-    return { switched: false, detail: 'ax-fallback', bridge: 'isolated-jxa', bindingCount: 0, bindingSource: 'none' }
+    return { switched: false, detail: 'bad-ref', bridge: 'isolated-jxa', bindingCount: 0, bindingSource: 'none' }
   }
   const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
   const script = macosIsolatedSpaceBridgeScript(pid, cgWindowNumber, switchRequested === true)
@@ -1780,7 +1795,7 @@ async function runMacosIsolatedSpaceBridge(target, switchRequested) {
     return { switched: false, detail: 'error', bridge: 'isolated-jxa', bindingCount: 0, bindingSource: 'none', managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
   }
   const parsed = parseMacosIsolatedSpaceBridge(result.stdout)
-  if (parsed && parsed.bindings.length) macosCacheSpaceBindings(macosWindowSpaceCache, cgWindowNumber, parsed.bindings)
+  if (parsed && parsed.bindings.length) macosCacheSpaceBindings(macosWindowSpaceCache, macosWindowInstanceKey(pid, cgWindowNumber), parsed.bindings)
   return parsed
     || { switched: false, detail: 'error', bridge: 'isolated-jxa', bindingCount: 0, bindingSource: 'none', managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
 }
@@ -1825,10 +1840,11 @@ function invalidateMacosWindowIdentity(target) {
   if (key) macosWindowIdentityCache.delete(key)
 }
 
-async function readMacosWindowIdentity(target) {
+async function readMacosWindowIdentity(target, options = {}) {
   const source = target && typeof target === 'object' ? target : {}
   const cacheKey = macosWindowIdentityCacheKey(source)
-  const cached = cacheKey ? macosWindowIdentityCache.get(cacheKey) : null
+  if (options.forceRefresh === true && cacheKey) macosWindowIdentityCache.delete(cacheKey)
+  const cached = options.forceRefresh === true || !cacheKey ? null : macosWindowIdentityCache.get(cacheKey)
   if (cached && Date.now() - cached.checkedAt <= MACOS_WINDOW_IDENTITY_CACHE_TTL_MS) {
     return { ...cached.snapshot }
   }
@@ -1872,6 +1888,7 @@ async function inspectWindowEnvironment(target) {
   const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
   if (!parts) return snapshot
   const ordinal = Number(parts[2])
+  const pid = Number(parts[1])
   const cgWindowNumber = Number(parts[3])
   if (ordinal !== 0 || !Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) return snapshot
   let probe = null
@@ -1879,7 +1896,7 @@ async function inspectWindowEnvironment(target) {
     const api = loadMacosCgsApi()
     if (api) {
       const cid = api.SLSMainConnectionID()
-      const resolved = macosLookupOrResolveWindowSpaceBinding(api, cid, cgWindowNumber)
+      const resolved = macosLookupOrResolveWindowSpaceBinding(api, cid, pid, cgWindowNumber)
       probe = {
         bridge: 'in-process',
         bindingCount: resolved.bindings.length,
@@ -2030,9 +2047,9 @@ async function listWindows() {
 const WINDOW_OPERATION_TRACE_STAGES = new Set(['bridge', 'space', 'target', 'process', 'restore', 'foreground', 'raise', 'verify', 'topmost'])
 const WINDOW_OPERATION_TRACE_OUTCOMES = new Set(['ok', 'skipped', 'not-found', 'ambiguous', 'failed', 'denied', 'unsupported', 'unavailable'])
 const WINDOW_OPERATION_TRACE_DETAILS = new Set([
-  'switched', 'switch-confirmed', 'switch-timeout', 'current', 'walked', 'direct-unique', 'direct-multiple', 'reverse-unique', 'session-cache',
-  'ambiguous-spaces', 'ax-fallback', 'bad-ref', 'no-api', 'empty-spaces', 'no-space-id', 'no-display',
-  'process-frontmost', 'single-window-frontmost', 'multiwindow-blocked', 'current-space-inferred', 'instance-match', 'instance-mismatch', 'identity-unavailable', 'focus-state-mismatch', 'error',
+  'switched', 'switch-confirmed', 'switch-timeout', 'current', 'direct-unique', 'direct-multiple', 'reverse-unique', 'session-cache',
+  'ambiguous-spaces', 'bad-ref', 'no-api', 'empty-spaces', 'no-space-id', 'no-display',
+  'multiwindow-blocked', 'current-space-inferred', 'instance-match', 'instance-mismatch', 'identity-unavailable', 'focus-state-mismatch', 'error',
   'isolated-space-bridge', 'ax-cg-id-match', 'ax-focused-window'
 ])
 const WINDOW_ACTIVATION_REASON_CODES = new Set([
@@ -2051,7 +2068,7 @@ function macosSpaceTraceStep(spaceAttempt) {
   const detail = WINDOW_OPERATION_TRACE_DETAILS.has(spaceAttempt.detail) ? spaceAttempt.detail : 'error'
   const outcome = detail === 'switched' || detail === 'switch-confirmed'
     ? 'ok'
-    : (detail === 'bad-ref' || detail === 'ax-fallback' || detail === 'current' || detail === 'current-space-inferred' ? 'skipped' : detail === 'ambiguous-spaces' ? 'ambiguous' : 'failed')
+    : (detail === 'bad-ref' || detail === 'current' || detail === 'current-space-inferred' ? 'skipped' : detail === 'ambiguous-spaces' ? 'ambiguous' : 'failed')
   return { stage: 'space', outcome, detail }
 }
 
@@ -2150,38 +2167,34 @@ async function activateWindow(target, options = {}) {
   if (expectedInstanceId && expectedInstanceId !== actualInstanceId) {
     return { outcome: 'not-found', reasonCode: 'instance-mismatch', message: '窗口实例与保存目标不一致，需要重新确认', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found', detail: 'instance-mismatch' }]) }
   }
-  let identity = unavailableWindowEnvironment('darwin')
-  let spaceAttempt = ordinal === 0 && cgWindowNumber > 0 ? trySwitchMacosSpaceFromSessionCache(nativeRef) : null
-  if (!spaceAttempt) {
-    identity = await readMacosWindowIdentity(source)
-    if (ordinal === 0 && cgWindowNumber > 0 && !identity.identityAvailable) {
-      return {
-        outcome: 'failed',
-        message: '无法重新验证 macOS 窗口身份',
-        ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }])
-      }
+  // Validate the exact PID + CGWindowID owner before any Space cache can move the desktop.
+  const identity = await readMacosWindowIdentity(source, { forceRefresh: true })
+  if (!identity.identityAvailable) {
+    return {
+      outcome: 'failed',
+      message: '无法重新验证 macOS 窗口身份',
+      ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }])
     }
-    if (ordinal === 0 && cgWindowNumber > 0) {
-      if (identity.nativeInstanceMatches !== 1) {
-        invalidateMacosWindowIdentity(source)
-        return {
-          outcome: 'not-found',
-          message: 'macOS 窗口引用已失效',
-          ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }])
-        }
-      }
-      if (!identity.appMatches) {
-        invalidateMacosWindowIdentity(source)
-        return {
-          outcome: 'not-found',
-          reasonCode: 'instance-mismatch',
-          message: '窗口实例或所属应用与保存目标不一致，需要重新确认',
-          ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found', detail: 'instance-mismatch' }])
-        }
-      }
-    }
-    spaceAttempt = await trySwitchMacosSpace(source)
   }
+  if (identity.nativeInstanceMatches !== 1) {
+    invalidateMacosWindowIdentity(source)
+    return {
+      outcome: 'not-found',
+      message: 'macOS 窗口引用已失效',
+      ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }])
+    }
+  }
+  if (!identity.appMatches) {
+    invalidateMacosWindowIdentity(source)
+    return {
+      outcome: 'not-found',
+      reasonCode: 'instance-mismatch',
+      message: '窗口实例或所属应用与保存目标不一致，需要重新确认',
+      ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found', detail: 'instance-mismatch' }])
+    }
+  }
+  let spaceAttempt = trySwitchMacosSpaceFromSessionCache(nativeRef)
+  if (!spaceAttempt) spaceAttempt = await trySwitchMacosSpace(source)
 
   const bridgeStep = debugTrace ? macosSpaceBridgeTraceStep(spaceAttempt) : null
   const bindingStep = debugTrace ? macosBindingTraceStep(spaceAttempt) : null
@@ -2258,7 +2271,7 @@ async function activateWindow(target, options = {}) {
   const activation = parseWindowActivationResult(result.stdout)
   if (activation.outcome === 'not-found') {
     invalidateMacosWindowIdentity(source)
-    if (cgWindowNumber > 0) macosWindowSpaceCache.delete(cgWindowNumber >>> 0)
+    if (cgWindowNumber > 0) macosWindowSpaceCache.delete(macosWindowInstanceKey(pid, cgWindowNumber))
   }
   const classified = activation.outcome === 'not-found' && allowSingleWindowFallback && !activation.reasonCode
     ? { ...activation, reasonCode: 'space-unbound' }
@@ -2336,7 +2349,7 @@ async function closeWindow(target) {
   const expectedInstanceId = sourceInstanceId.includes(':legacy:') ? '' : sourceInstanceId
   if (ordinal !== 0 || cgWindowNumber <= 0) return { outcome: 'failed', message: '无法建立稳定的 macOS 窗口实例身份' }
   if (expectedInstanceId && expectedInstanceId !== actualInstanceId) return { outcome: 'not-found', message: '窗口实例与保存目标不一致' }
-  const identity = await readMacosWindowIdentity(source)
+  const identity = await readMacosWindowIdentity(source, { forceRefresh: true })
   if (!identity.identityAvailable) return { outcome: 'failed', message: '无法重新验证 macOS 窗口身份' }
   if (!identity.appMatches || identity.nativeInstanceMatches !== 1) return { outcome: 'not-found', message: '窗口实例或所属应用与保存目标不一致' }
   const result = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', macosCloseWindowScript(pid, cgWindowNumber)])

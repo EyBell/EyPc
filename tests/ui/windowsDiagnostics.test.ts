@@ -402,18 +402,100 @@ describe('slot inline binding mode', () => {
     }
   }
 
-  it('announces manual rebind semantics even when only one candidate is visible', () => {
+  it('shows a focused manual rebind flow even when only one candidate is visible', async () => {
+    const currentTitle = 'Settings - Google Chrome'
+    const candidate = {
+      ...makeRow('candidate:darwin:91:222', currentTitle, [1]),
+      candidate: true,
+      favorite: false,
+      pinned: false,
+      slotNumbers: [],
+      live: { id: 'darwin:91:222', instanceId: 'darwin:91:222', platform: 'darwin' as const, nativeRef: '91:222', appId: 'com.google.Chrome', appName: 'Google Chrome', pid: 91, title: currentTitle, minimized: false, focused: true }
+    }
+    const snapshot = snapshotWithRows([candidate], {
+      windowRebind: { phase: 'confirming', targetId: 'target-1', candidateInstanceIds: ['darwin:91:222'] }
+    })
+    snapshot.state.windowTargets = [{
+      id: 'target-1', alias: '工作浏览器', platform: 'darwin', appId: 'com.google.Chrome', appName: 'Google Chrome',
+      lastKnownTitle: 'Dashboard - Google Chrome', lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111',
+      favorite: true, pinned: true, createdAt: 1, updatedAt: 1
+    }]
     const wrapper = mount(WindowsPage, {
-      props: { snapshot: snapshotWithRows([makeRow('candidate:darwin:91:222', 'Browser tab')], { windowCandidateTargetId: 'target-1' }) }
+      props: { snapshot }
     })
 
     const status = wrapper.get('.window-status-band')
     expect(status.attributes('aria-live')).toBe('polite')
+    expect(status.text()).toContain('工作浏览器')
+    expect(status.text()).toContain('上次标题「Dashboard - Google Chrome」')
     expect(status.text()).toContain('原窗口实例已失效')
-    expect(status.text()).toContain('标题仅供人工辨认')
+    expect(status.text()).toContain('标题与状态仅供人工辨认')
     expect(status.text()).toContain('Enter')
     expect(status.text()).toContain('Escape')
-    expect(wrapper.get('#window-list').attributes('role')).toBe('listbox')
+    const list = wrapper.get('#window-list')
+    expect(list.attributes('role')).toBe('listbox')
+    expect(list.attributes('aria-multiselectable')).toBeUndefined()
+    expect(list.attributes('aria-describedby')).toBe('window-status-band')
+    expect(wrapper.get('.window-row strong').text()).toBe(currentTitle)
+    expect(wrapper.get('.window-status').text()).toBe('前台 · 待确认')
+    expect(wrapper.find('.window-pin-badge').exists()).toBe(false)
+    expect(wrapper.find('.window-slot-badges').exists()).toBe(false)
+    expect(wrapper.find('.window-slot-rail').exists()).toBe(false)
+    expect(wrapper.find('.window-log-rail').exists()).toBe(false)
+    expect(wrapper.get('[data-role="window-search"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('.window-row').trigger('contextmenu')
+    expect(wrapper.emitted('dispatch')).toBeUndefined()
+  })
+
+  it('keeps an empty candidate flow visible until the user refreshes or cancels', () => {
+    const snapshot = snapshotWithRows([], {
+      windowRebind: { phase: 'confirming', targetId: 'target-1', candidateInstanceIds: [] },
+      focusedWindowId: null
+    })
+    snapshot.state.windowTargets = [{
+      id: 'target-1', alias: '工作浏览器', platform: 'darwin', appId: 'com.google.Chrome', appName: 'Google Chrome',
+      lastKnownTitle: 'Dashboard - Google Chrome', lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111',
+      favorite: true, pinned: true, createdAt: 1, updatedAt: 1
+    }]
+    const wrapper = mount(WindowsPage, { props: { snapshot } })
+
+    expect(wrapper.get('.window-status-band').text()).toContain('工作浏览器')
+    expect(wrapper.get('.empty-state').text()).toContain('当前没有可确认的同应用窗口')
+    expect(wrapper.get('.empty-state').text()).toContain('刷新重试')
+    expect(wrapper.get('.empty-state').text()).toContain('Escape 返回原目标')
+    expect(wrapper.get('#window-list').attributes('aria-describedby')).toBe('window-status-band')
+    expect(wrapper.find('.window-slot-rail').exists()).toBe(false)
+    expect(wrapper.find('.window-log-rail').exists()).toBe(false)
+  })
+
+  it('labels minimized and partial-cache candidates without treating those states as identity', () => {
+    const minimizedTitle = 'Downloads - Google Chrome'
+    const cachedTitle = 'Docs - Google Chrome'
+    const minimized = {
+      ...makeRow('candidate:darwin:91:333', minimizedTitle),
+      candidate: true,
+      live: { id: 'darwin:91:333', instanceId: 'darwin:91:333', platform: 'darwin' as const, nativeRef: '91:333', appId: 'com.google.Chrome', appName: 'Google Chrome', pid: 91, title: minimizedTitle, minimized: true, focused: false }
+    }
+    const cached = {
+      ...makeRow('candidate:darwin:91:444', cachedTitle),
+      candidate: true,
+      cached: true,
+      live: { id: 'darwin:91:444', instanceId: 'darwin:91:444', platform: 'darwin' as const, nativeRef: '91:444', appId: 'com.google.Chrome', appName: 'Google Chrome', pid: 91, title: cachedTitle, minimized: false, focused: true }
+    }
+    const snapshot = snapshotWithRows([minimized, cached], {
+      windowRebind: { phase: 'confirming', targetId: 'target-1', candidateInstanceIds: ['darwin:91:333', 'darwin:91:444'] }
+    })
+    snapshot.state.windowTargets = [{
+      id: 'target-1', alias: '工作浏览器', platform: 'darwin', appId: 'com.google.Chrome', appName: 'Google Chrome',
+      lastKnownTitle: 'Dashboard - Google Chrome', lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111',
+      favorite: true, pinned: false, createdAt: 1, updatedAt: 1
+    }]
+    const wrapper = mount(WindowsPage, { props: { snapshot } })
+    const statuses = wrapper.findAll('.window-status').map((status) => status.text())
+
+    expect(statuses).toContain('已最小化 · 待确认')
+    expect(statuses).toContain('缓存候选 · 待确认')
+    expect(wrapper.text()).toContain('标题与状态仅供人工辨认')
   })
 
   it('renders the current or last title as read-only display metadata', () => {

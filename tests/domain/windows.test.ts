@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { compareWindowRowsByApplication, filterIdentifiedLiveWindows, liveWindowIdentity, targetMatchesLiveWindow, windowTargetAppMatches } from '../../src/domain/windows'
+import { createWindowRebindState, transitionWindowRebind, windowInteractionAllowed, windowRebindView } from '../../src/domain/windowRebind'
 
 describe('window row application order', () => {
   it('keeps pinned rows first and sorts each section by application name', () => {
@@ -75,5 +76,73 @@ describe('native window instance identity', () => {
       appId: 'com.jetbrains.rider', appName: 'Rider', title: 'any title'
     }
     expect(targetMatchesLiveWindow(legacy, live)).toBe(true)
+  })
+})
+
+describe('window rebind state machine', () => {
+  it('owns entry, candidate deduplication, focus, and interaction policy', () => {
+    const transition = transitionWindowRebind(createWindowRebindState(), {
+      type: 'begin',
+      targetId: 'browser',
+      candidateInstanceIds: ['darwin:91:222', 'darwin:91:222', 'darwin:91:333'],
+      restoreFocusRowId: 'target:browser'
+    })
+
+    expect(windowRebindView(transition.state)).toEqual({
+      phase: 'confirming',
+      targetId: 'browser',
+      candidateInstanceIds: ['darwin:91:222', 'darwin:91:333']
+    })
+    expect(transition.effects.focusCandidateInstanceId).toBe('darwin:91:222')
+    expect(windowInteractionAllowed(transition.state, 'browse')).toBe(false)
+    expect(windowInteractionAllowed(transition.state, 'rebind')).toBe(true)
+    expect(windowInteractionAllowed(transition.state, 'always')).toBe(true)
+  })
+
+  it('retains cached candidates for partial inventory and replaces them for complete inventory', () => {
+    const begun = transitionWindowRebind(createWindowRebindState(), {
+      type: 'begin',
+      targetId: 'browser',
+      candidateInstanceIds: ['darwin:91:222'],
+      restoreFocusRowId: 'target:browser'
+    }).state
+    const partial = transitionWindowRebind(begun, {
+      type: 'inventory',
+      completeness: 'partial',
+      freshCandidateInstanceIds: ['darwin:91:333'],
+      retainedInstanceIds: ['darwin:91:222', 'darwin:91:333'],
+      focusedCandidateInstanceId: 'darwin:91:222'
+    })
+    expect(windowRebindView(partial.state).candidateInstanceIds).toEqual(['darwin:91:222', 'darwin:91:333'])
+    expect(partial.effects.clearStaleBindingTargetId).toBeNull()
+
+    const complete = transitionWindowRebind(partial.state, {
+      type: 'inventory',
+      completeness: 'complete',
+      freshCandidateInstanceIds: [],
+      retainedInstanceIds: [],
+      focusedCandidateInstanceId: 'darwin:91:222'
+    })
+    expect(windowRebindView(complete.state)).toEqual({ phase: 'confirming', targetId: 'browser', candidateInstanceIds: [] })
+    expect(complete.effects.clearStaleBindingTargetId).toBe('browser')
+  })
+
+  it('ends only for the matching confirmed target or an explicit cancel', () => {
+    const begun = transitionWindowRebind(createWindowRebindState(), {
+      type: 'begin',
+      targetId: 'browser',
+      candidateInstanceIds: ['darwin:91:222'],
+      restoreFocusRowId: 'target:browser'
+    }).state
+
+    const unrelated = transitionWindowRebind(begun, { type: 'confirmed', targetId: 'editor' })
+    expect(unrelated.state).toEqual(begun)
+
+    const cancelled = transitionWindowRebind(unrelated.state, { type: 'cancel' })
+    expect(windowRebindView(cancelled.state)).toEqual({ phase: 'idle', targetId: null, candidateInstanceIds: [] })
+    expect(cancelled.effects.restoreFocusRowId).toBe('target:browser')
+
+    const confirmed = transitionWindowRebind(begun, { type: 'confirmed', targetId: 'browser' })
+    expect(windowRebindView(confirmed.state)).toEqual({ phase: 'idle', targetId: null, candidateInstanceIds: [] })
   })
 })

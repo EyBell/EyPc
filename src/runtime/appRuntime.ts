@@ -9,6 +9,7 @@ import { normalizeAppState } from '../domain/state'
 import { formatShortcutLabel, formatShortcutList } from '../domain/shortcuts'
 import { normalizeToolPreviewPrefs } from '../domain/toolPreview'
 import { compareWindowRowsByApplication, filterIdentifiedLiveWindows, normalizeWindowText, targetMatchesLiveWindow, windowTargetAppMatches, type LiveWindow, type WindowPlatform, type WindowTarget } from '../domain/windows'
+import { createWindowRebindState, transitionWindowRebind, windowInteractionAllowed, windowRebindView, type WindowInteractionPolicy, type WindowRebindEvent, type WindowRebindState, type WindowRebindView } from '../domain/windowRebind'
 import type { CodexFloatPosition, CodexSettings } from '../domain/codex'
 import type { AppState, AppTabId, FavoriteNode, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttConnectionGroup, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
 import type { PortGroupTreeRow } from '../domain/ports'
@@ -95,7 +96,7 @@ export interface AppRuntimeSnapshot {
   windowActionTargets: WindowRow[]
   windowActionsMode: 'single' | 'multi'
   windowDraft: WindowDraft | null
-  windowCandidateTargetId: string | null
+  windowRebind: WindowRebindView
   windowFocusRequestId: number
   windowActionsFocusRequestId: number
   windowActivationDiagnostics: WindowActivationDiagnostic[]
@@ -196,6 +197,7 @@ export type WindowActivationDiagnosticCode =
   | 'refresh-failed'
   | 'refresh-superseded'
   | 'refresh-incomplete'
+  | 'editor-active'
   | 'ambiguous-target'
   | 'space-unbound'
   | 'space-unbound-multiwindow'
@@ -290,6 +292,8 @@ export interface WindowRow {
   /** Present in the retained session inventory but absent from the latest partial snapshot. */
   cached?: boolean
   ambiguous: boolean
+  /** A live same-application option shown only for explicit instance rebinding. */
+  candidate?: boolean
 }
 
 export interface WindowDraft {
@@ -727,9 +731,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   let windowActionTargetId: string | null = null
   let windowActionsMode: 'single' | 'multi' = 'single'
   let windowDraft: WindowDraft | null = null
-  let windowCandidateTargetId: string | null = null
-  let windowCandidateLiveIds: string[] = []
-  let windowCandidateRestoreFocusId: string | null = null
+  let windowRebindState: WindowRebindState = createWindowRebindState()
   let windowFocusRequestId = 0
   let windowActionsFocusRequestId = 0
   let windowActivationDiagnostics: WindowActivationDiagnostic[] = []
@@ -901,6 +903,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     'refresh-failed': '无法完成窗口实时重扫，未把目标视为已关闭。',
     'refresh-superseded': '窗口实时重扫被新的请求替代，请重试。',
     'refresh-incomplete': '本次只读取到局部窗口，已保留缓存且未把目标视为已关闭。',
+    'editor-active': '请先保存或取消窗口编辑，再重新选择替代窗口。',
     'ambiguous-target': '匹配到多个候选窗口，需要在工作台中明确选择。',
     'space-unbound': '无法唯一绑定目标窗口所在桌面，未执行不确定的桌面切换。',
     'space-unbound-multiwindow': '目标应用存在多个窗口且无法绑定目标桌面，未前置任意窗口。',
@@ -925,8 +928,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     'ok', 'skipped', 'not-found', 'ambiguous', 'failed', 'denied', 'unsupported', 'unavailable'
   ])
   const nativeTraceDetails = new Set<NonNullable<WindowOperationTrace['steps'][number]['detail']>>([
-    'switched', 'switch-confirmed', 'switch-timeout', 'current', 'walked', 'direct-unique', 'direct-multiple', 'reverse-unique', 'session-cache', 'ambiguous-spaces',
-    'ax-fallback', 'bad-ref', 'no-api', 'empty-spaces', 'no-space-id', 'no-display', 'process-frontmost', 'single-window-frontmost',
+    'switched', 'switch-confirmed', 'switch-timeout', 'current', 'direct-unique', 'direct-multiple', 'reverse-unique', 'session-cache', 'ambiguous-spaces',
+    'bad-ref', 'no-api', 'empty-spaces', 'no-space-id', 'no-display',
     'multiwindow-blocked', 'current-space-inferred', 'instance-match', 'instance-mismatch', 'identity-unavailable', 'focus-state-mismatch',
     'isolated-space-bridge', 'ax-cg-id-match', 'ax-focused-window', 'error'
   ])
@@ -1127,7 +1130,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return windowSlotNumbers(targetId).length > 0
   }
 
-  function makeWindowRow(target: WindowTarget | null, live: LiveWindow | null, ambiguous = false, rowId?: string): WindowRow {
+  function makeWindowRow(target: WindowTarget | null, live: LiveWindow | null, ambiguous = false, rowId?: string, candidate = false): WindowRow {
     const id = rowId || (target ? `target:${target.id}` : `live:${live?.instanceId || ''}`)
     const title = live?.title || target?.lastKnownTitle || ''
     const appName = live?.appName || target?.appName || ''
@@ -1135,28 +1138,43 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       id,
       live,
       target,
-      displayName: target?.alias || title || appName || '未命名窗口',
+      displayName: candidate ? (title || appName || '未命名候选窗口') : (target?.alias || title || appName || '未命名窗口'),
       appName,
       title,
-      favorite: Boolean(target?.favorite),
-      pinned: Boolean(target?.pinned),
-      slotNumbers: target ? windowSlotNumbers(target.id) : [],
+      favorite: candidate ? false : Boolean(target?.favorite),
+      pinned: candidate ? false : Boolean(target?.pinned),
+      slotNumbers: candidate || !target ? [] : windowSlotNumbers(target.id),
       focused: id === focusedWindowId,
       selected: selectedWindowIds.includes(id),
       unavailable: Boolean(target && !live),
       cached: Boolean(live && windowListLoaded && !windowFreshLiveIds.has(live.instanceId)),
-      ambiguous
+      ambiguous,
+      candidate
     }
+  }
+
+  function advanceWindowRebind(event: WindowRebindEvent) {
+    const transition = transitionWindowRebind(windowRebindState, event)
+    windowRebindState = transition.state
+    return transition.effects
+  }
+
+  function activeWindowRebindTarget(): WindowTarget | null {
+    return windowRebindState.phase === 'confirming' ? windowTargetById(windowRebindState.targetId) : null
+  }
+
+  function windowInteractionAvailable(policy: WindowInteractionPolicy): boolean {
+    return windowInteractionAllowed(windowRebindState, policy)
   }
 
   function windowRows(): WindowRow[] {
     const platform = currentWindowPlatform()
-    if (windowCandidateTargetId && windowCandidateLiveIds.length) {
-      const target = windowTargetById(windowCandidateTargetId)
-      const ids = new Set(windowCandidateLiveIds)
+    if (windowRebindState.phase === 'confirming') {
+      const target = windowTargetById(windowRebindState.targetId)
+      const ids = new Set(windowRebindState.candidateInstanceIds)
       return liveWindows
         .filter((live) => ids.has(live.instanceId))
-        .map((live) => makeWindowRow(target, live, false, `candidate:${live.instanceId}`))
+        .map((live) => makeWindowRow(target, live, false, `candidate:${live.instanceId}`, true))
         .sort(compareWindowRowsByApplication)
     }
     const targets = state.windowTargets
@@ -1266,6 +1284,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     | { kind: 'no-match' }
     | { kind: 'ambiguous' }
     | { kind: 'rebind-required' }
+    | { kind: 'editor-active' }
     | { kind: 'activation-failed'; outcome: Exclude<WindowActivationOutcome, 'activated'> }
 
   async function refreshWindows({ clearSearch = false }: { clearSearch?: boolean } = {}): Promise<WindowRefreshOutcome> {
@@ -1299,13 +1318,37 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       windowFreshLiveIds = new Set(freshWindows.map((window) => window.instanceId))
       windowListLoaded = true
       windowCacheUpdatedAt = Date.now()
-      const candidateIds = windowFreshLiveIds
-      windowCandidateLiveIds = windowCandidateLiveIds.filter((id) => candidateIds.has(id))
-      if (!windowCandidateLiveIds.length) {
-        windowCandidateTargetId = null
-        windowCandidateRestoreFocusId = null
+      let candidateFocusInstanceId: string | null = null
+      if (windowRebindState.phase === 'confirming') {
+        const candidateTarget = windowTargetById(windowRebindState.targetId)
+        if (!candidateTarget) {
+          advanceWindowRebind({ type: 'target-missing' })
+        } else {
+          const freshCandidateIds = freshWindows
+            .filter((live) => live.platform === candidateTarget.platform && windowTargetAppMatches(candidateTarget, live))
+            .map((live) => live.instanceId)
+          const focusedCandidateInstanceId = focusedWindowId?.startsWith('candidate:')
+            ? focusedWindowId.slice('candidate:'.length)
+            : null
+          const effects = advanceWindowRebind({
+            type: 'inventory',
+            completeness,
+            freshCandidateInstanceIds: freshCandidateIds,
+            retainedInstanceIds: liveWindows.map((live) => live.instanceId),
+            focusedCandidateInstanceId
+          })
+          if (effects.clearStaleBindingTargetId) {
+            const staleTarget = windowTargetById(effects.clearStaleBindingTargetId)
+            if (staleTarget) clearStaleWindowNativeRef(staleTarget)
+          }
+          candidateFocusInstanceId = effects.focusCandidateInstanceId
+        }
       }
       rematchFocusedWindowAfterRefresh(previousFocus)
+      if (candidateFocusInstanceId) {
+        focusedWindowId = `candidate:${candidateFocusInstanceId}`
+        windowFocusRequestId += 1
+      }
       return completeness === 'partial' ? 'loaded-partial' : 'loaded-complete'
     } catch {
       if (requestId !== windowRequestId) return 'superseded'
@@ -1328,15 +1371,29 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function clearWindowCandidates() {
-    if (!windowCandidateTargetId && !windowCandidateLiveIds.length) return false
-    const restoreFocusId = windowCandidateRestoreFocusId
-    windowCandidateTargetId = null
-    windowCandidateLiveIds = []
-    windowCandidateRestoreFocusId = null
-    if (restoreFocusId) focusedWindowId = restoreFocusId
+    if (!windowInteractionAvailable('rebind')) return false
+    const effects = advanceWindowRebind({ type: 'cancel' })
+    if (effects.restoreFocusRowId) focusedWindowId = effects.restoreFocusRowId
     normalizeFocusedWindow(false)
+    windowFocusRequestId += 1
     notify()
     return true
+  }
+
+  function rejectUnavailableWindowInteraction(policy: WindowInteractionPolicy) {
+    if (windowInteractionAvailable(policy)) return false
+    setMessage('请先按 Enter 确认候选窗口，或按 Escape 取消；候选确认期间不会修改收藏、置顶或槽位。')
+    return true
+  }
+
+  function whenWindowInteraction(
+    context: RuntimeActionContext,
+    policy: WindowInteractionPolicy,
+    options: { outsideEditor?: boolean } = {}
+  ): boolean {
+    return context.tab === 'windows'
+      && windowInteractionAvailable(policy)
+      && (!options.outsideEditor || !context.layerIds.includes('window-editor'))
   }
 
   function showWindowWorkbench(options: { focusRowId?: string | null; messageText?: string } = {}) {
@@ -1539,10 +1596,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       }
       const verifiedLive = legacyInstance ? { ...live, id: result.instanceId, instanceId: result.instanceId } : live
       windowFreshLiveIds.add(result.instanceId)
-      if (target) rememberVerifiedWindowTarget(target, verifiedLive, result.instanceId)
-      windowCandidateTargetId = null
-      windowCandidateLiveIds = []
-      windowCandidateRestoreFocusId = null
+      if (target) {
+        rememberVerifiedWindowTarget(target, verifiedLive, result.instanceId)
+        advanceWindowRebind({ type: 'confirmed', targetId: target.id })
+      }
       setMessage(attempt.operation === 'always-on-top' ? '页面已置顶并前置' : '窗口已展开并前置')
       const hidden = await hideAppWindow()
       if (!hidden) {
@@ -1625,6 +1682,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       clearStaleWindowNativeRef(target)
       return finishWindowActivation(attempt, 'resolve', 'target-closed', 'accepted', { focusRowId, platformId })
     }
+    if (retried.kind === 'editor-active') return false
     if (retried.kind === 'ambiguous') return finishWindowActivation(attempt, 'resolve', 'ambiguous-target', 'blocking', { focusRowId: focusedWindowId, platformId })
     if (retried.kind === 'rebind-required') return finishWindowActivation(attempt, 'resolve', 'rebind-required', 'blocking', { focusRowId: focusedWindowId, platformId })
     return finishActivationOutcome(attempt, retried.outcome, focusRowId, platformId)
@@ -1638,13 +1696,25 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       return outcome === 'activated' ? { kind: 'activated' } : { kind: 'activation-failed', outcome }
     }
     if (resolved.candidates.length) {
+      if (windowDraft) {
+        finishWindowActivation(attempt, 'resolve', 'editor-active', 'blocking', {
+          focusRowId: `target:${target.id}`,
+          platformId: target.platform
+        })
+        return { kind: 'editor-active' }
+      }
       appendWindowOperationTrace(attempt, 'resolve', 'not-found')
-      windowCandidateRestoreFocusId = `target:${target.id}`
-      windowCandidateTargetId = target.id
-      windowCandidateLiveIds = resolved.candidates.map((window) => window.instanceId)
-      focusedWindowId = `candidate:${resolved.candidates[0].instanceId}`
+      const effects = advanceWindowRebind({
+        type: 'begin',
+        targetId: target.id,
+        candidateInstanceIds: resolved.candidates.map((window) => window.instanceId),
+        restoreFocusRowId: `target:${target.id}`
+      })
+      if (effects.focusCandidateInstanceId) focusedWindowId = `candidate:${effects.focusCandidateInstanceId}`
+      selectedWindowIds = []
       windowActionsOpen = false
       windowActionTargetId = null
+      windowFocusRequestId += 1
       setMessage(windowActivationDiagnosticMessages['rebind-required'])
       return { kind: 'rebind-required' }
     }
@@ -1686,12 +1756,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
 
   async function activateConfirmedWindowCandidate(live: LiveWindow, target: WindowTarget, attempt: WindowActivationAttempt): Promise<boolean> {
     if (attempt.trace) attempt.trace.targetTitle = live.title
-    const activated = await activateLiveWindowWithRecovery(live, target, attempt)
-    if (!activated) return false
-    windowCandidateTargetId = null
-    windowCandidateLiveIds = []
-    windowCandidateRestoreFocusId = null
-    return true
+    return activateLiveWindowWithRecovery(live, target, attempt)
   }
 
   async function activateWindowRow(rowId?: string) {
@@ -1703,7 +1768,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       return finishWindowActivation(attempt, 'entry', 'activation-failed', 'blocking')
     }
     if (row.live) {
-      const candidateTarget = windowCandidateTargetId ? windowTargetById(windowCandidateTargetId) : null
+      const candidateTarget = activeWindowRebindTarget()
       if (candidateTarget) return activateConfirmedWindowCandidate(row.live, candidateTarget, attempt)
       if (row.target) return activateWindowTargetWithRecovery(row.target, attempt)
       return activateLiveWindowWithRecovery(row.live, null, attempt)
@@ -1715,12 +1780,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   async function setWindowAlwaysOnTop(rowId?: string) {
     const attempt = activationAttemptFor('manual', null, 'always-on-top')
     if (!isTabEnabled('windows')) return finishWindowActivation(attempt, 'entry', 'feature-disabled', 'blocking')
+    if (rejectUnavailableWindowInteraction('browse')) return false
     if (!await readWindowActivationCapability(attempt)) return false
     const row = windowRowById(rowId || focusedWindowId)
     if (!row) return finishWindowActivation(attempt, 'entry', 'topmost-failed', 'blocking')
     if (row.live) {
-      const candidateTarget = windowCandidateTargetId ? windowTargetById(windowCandidateTargetId) : null
-      if (candidateTarget) return activateConfirmedWindowCandidate(row.live, candidateTarget, attempt)
       if (row.target) return activateWindowTargetWithRecovery(row.target, attempt)
       return activateLiveWindowWithRecovery(row.live, null, attempt)
     }
@@ -1781,6 +1845,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function openWindowActions(rowId?: string) {
+    if (rejectUnavailableWindowInteraction('browse')) return false
     const { mode, targets } = resolveWindowActionTargets(rowId)
     if (!targets.length) {
       setMessage('没有可操作的窗口')
@@ -1820,6 +1885,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   async function closeWindowRows(rowId?: string, force = false) {
+    if (rejectUnavailableWindowInteraction('browse')) return false
     const rows = windowRowsForClose(rowId).filter((row) => row.live)
     if (!rows.length) {
       setMessage('没有可关闭的实时窗口')
@@ -1867,6 +1933,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function favoriteWindowRows(rowId?: string) {
+    if (rejectUnavailableWindowInteraction('browse')) return false
     const targets = resolveWindowActionTargets(rowId).targets
     if (!targets.length) {
       setMessage('没有可收藏的窗口')
@@ -1892,6 +1959,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function toggleWindowFavorite(rowId?: string) {
+    if (rejectUnavailableWindowInteraction('browse')) return false
     const row = windowRowById(rowId || focusedWindowId)
     if (!row) {
       setMessage('没有可收藏的窗口')
@@ -1929,6 +1997,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function toggleWindowPins(rowId?: string) {
+    if (rejectUnavailableWindowInteraction('browse')) return false
     const targets = resolveWindowActionTargets(rowId).targets
     if (!targets.length) {
       setMessage('没有可加入列表置顶的窗口')
@@ -1965,6 +2034,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function beginWindowDraft(mode: WindowDraftMode, rowId?: string) {
+    if (rejectUnavailableWindowInteraction('browse')) return false
     const row = windowRowById(rowId || focusedWindowId)
     if (!row) {
       setMessage('请先选择窗口')
@@ -2058,6 +2128,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function assignWindowSlot(slotNumber: number, rowId?: string) {
+    if (rejectUnavailableWindowInteraction('browse')) return false
     const row = windowRowById(rowId || focusedWindowId)
     const platform = currentWindowPlatform()
     if (!row || !platform || slotNumber < 1 || slotNumber > 10) {
@@ -2144,6 +2215,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   async function copyWindowHandle(rowId?: string) {
+    if (rejectUnavailableWindowInteraction('browse')) return false
     const row = windowRowById(rowId || focusedWindowId)
     if (!row?.live || row.live.platform !== 'win32') {
       setMessage('仅 Windows 实时窗口可复制 HWND')
@@ -6317,6 +6389,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       return
     }
     if (state.activeTab === 'windows' && focusedWindowId) {
+      if (rejectUnavailableWindowInteraction('browse')) return
       const rows = windowRows()
       const next = toggleIdWithAdvance({ rows, focusedId: focusedWindowId, selectedIds: selectedWindowIds, advance })
       selectedWindowIds = next.selectedIds
@@ -7537,40 +7610,40 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         run: () => { setTab(feature.id); return true }
       })
     }
-    actions.register({ id: 'windows.refresh', title: '刷新窗口列表', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+R', when: (ctx) => ctx.tab === 'windows', run: () => { void refreshWindows({ clearSearch: true }); return true } })
-    actions.register({ id: 'windows.search.focus', title: '聚焦窗口搜索', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+F', when: (ctx) => ctx.tab === 'windows', run: () => { searchFocusTarget = 'windows'; searchFocusRequestId += 1; notify(); return true } })
-    actions.register({ id: 'windows.activate', title: '展开并前置当前窗口', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 98, shortcut: 'Enter', when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: (_ctx, args) => {
+    actions.register({ id: 'windows.refresh', title: '刷新窗口列表', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+R', when: (ctx) => whenWindowInteraction(ctx, 'always'), run: () => { void refreshWindows({ clearSearch: true }); return true } })
+    actions.register({ id: 'windows.search.focus', title: '聚焦窗口搜索', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+F', when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: () => { searchFocusTarget = 'windows'; searchFocusRequestId += 1; notify(); return true } })
+    actions.register({ id: 'windows.activate', title: '展开并前置当前窗口', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 98, shortcut: 'Enter', when: (ctx) => whenWindowInteraction(ctx, 'always', { outsideEditor: true }), run: (_ctx, args) => {
       void activateWindowRow(typeof args?.rowId === 'string' ? args.rowId : undefined).catch(() => {
         finishWindowActivation(activationAttemptFor('manual'), 'activate', 'activation-failed', 'blocking')
       })
       return true
     } })
-    actions.register({ id: 'windows.actions.open', title: '打开窗口操作面板', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 98, shortcut: 'Ctrl+ArrowRight', when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: (_ctx, args) => openWindowActions(typeof args?.rowId === 'string' ? args.rowId : undefined) })
-    actions.register({ id: 'windows.actions.close', title: '返回窗口列表', group: '窗口跳转', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => ctx.tab === 'windows' && ctx.layerIds.includes('window-actions'), run: () => closeWindowActions() })
-    actions.register({ id: 'windows.layer.toggle', title: '切换窗口列表与操作层', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 97, shortcut: 'Tab', when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: () => windowActionsOpen ? closeWindowActions() : openWindowActions() })
-    actions.register({ id: 'windows.layer.togglePrev', title: '反向切换窗口列表与操作层', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 97, shortcut: 'Shift+Tab', when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: () => windowActionsOpen ? closeWindowActions() : openWindowActions() })
-    actions.register({ id: 'windows.favorite.toggle', title: '收藏或取消收藏窗口', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 96, when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: (_ctx, args) => {
+    actions.register({ id: 'windows.actions.open', title: '打开窗口操作面板', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 98, shortcut: 'Ctrl+ArrowRight', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => openWindowActions(typeof args?.rowId === 'string' ? args.rowId : undefined) })
+    actions.register({ id: 'windows.actions.close', title: '返回窗口列表', group: '窗口跳转', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => whenWindowInteraction(ctx, 'always') && ctx.layerIds.includes('window-actions'), run: () => closeWindowActions() })
+    actions.register({ id: 'windows.layer.toggle', title: '切换窗口列表与操作层', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 97, shortcut: 'Tab', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: () => windowActionsOpen ? closeWindowActions() : openWindowActions() })
+    actions.register({ id: 'windows.layer.togglePrev', title: '反向切换窗口列表与操作层', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 97, shortcut: 'Shift+Tab', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: () => windowActionsOpen ? closeWindowActions() : openWindowActions() })
+    actions.register({ id: 'windows.favorite.toggle', title: '收藏或取消收藏窗口', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => {
       if (typeof args?.rowId === 'string' || windowActionsMode === 'single' || selectedWindowIds.length <= 1) {
         return toggleWindowFavorite(typeof args?.rowId === 'string' ? args.rowId : undefined)
       }
       return favoriteWindowRows()
     } })
-    actions.register({ id: 'windows.alwaysOnTop', title: '页面置顶', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 97, when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: (_ctx, args) => {
+    actions.register({ id: 'windows.alwaysOnTop', title: '页面置顶', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 97, when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => {
       void setWindowAlwaysOnTop(typeof args?.rowId === 'string' ? args.rowId : undefined).catch(() => {
         finishWindowActivation(activationAttemptFor('manual', null, 'always-on-top'), 'topmost', 'topmost-failed', 'blocking')
       })
       return true
     } })
-    actions.register({ id: 'windows.pin.toggle', title: '切换窗口列表置顶', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 96, when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: (_ctx, args) => toggleWindowPins(typeof args?.rowId === 'string' ? args.rowId : undefined) })
-    actions.register({ id: 'windows.close', title: '关闭窗口', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 97, shortcut: 'Ctrl+Delete', when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: (_ctx, args) => { void closeWindowRows(typeof args?.rowId === 'string' ? args.rowId : undefined, false); return true } })
-    actions.register({ id: 'windows.close.force', title: '强制关闭窗口', group: '窗口跳转', risk: 'destructive', scope: 'tab', priority: 97, when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: (_ctx, args) => { void closeWindowRows(typeof args?.rowId === 'string' ? args.rowId : undefined, true); return true } })
-    actions.register({ id: 'windows.selection.clear', title: '清空窗口多选', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 95, when: (ctx) => ctx.tab === 'windows', run: () => clearWindowSelection() })
-    actions.register({ id: 'windows.rename', title: '编辑窗口别名', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 96, shortcut: 'Shift+F2', when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: (_ctx, args) => beginWindowDraft('rename', typeof args?.rowId === 'string' ? args.rowId : undefined) })
-    actions.register({ id: 'windows.edit', title: '编辑窗口目标', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 96, shortcut: 'F2', when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'), run: (_ctx, args) => beginWindowDraft('edit', typeof args?.rowId === 'string' ? args.rowId : undefined) })
-    actions.register({ id: 'windows.editor.save', title: '保存窗口目标', group: '窗口跳转', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.tab === 'windows' && ctx.layerIds.includes('window-editor'), run: () => saveWindowDraft() })
-    actions.register({ id: 'windows.editor.cancel', title: '取消窗口编辑', group: '窗口跳转', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.tab === 'windows' && ctx.layerIds.includes('window-editor'), run: () => cancelWindowDraft() })
-    actions.register({ id: 'windows.editor.nextField', title: '窗口编辑下一个字段', group: '窗口跳转', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.tab === 'windows' && ctx.layerIds.includes('window-editor'), run: () => moveWindowDraftField(1) })
-    actions.register({ id: 'windows.editor.prevField', title: '窗口编辑上一个字段', group: '窗口跳转', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.tab === 'windows' && ctx.layerIds.includes('window-editor'), run: () => moveWindowDraftField(-1) })
+    actions.register({ id: 'windows.pin.toggle', title: '切换窗口列表置顶', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => toggleWindowPins(typeof args?.rowId === 'string' ? args.rowId : undefined) })
+    actions.register({ id: 'windows.close', title: '关闭窗口', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 97, shortcut: 'Ctrl+Delete', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => { void closeWindowRows(typeof args?.rowId === 'string' ? args.rowId : undefined, false); return true } })
+    actions.register({ id: 'windows.close.force', title: '强制关闭窗口', group: '窗口跳转', risk: 'destructive', scope: 'tab', priority: 97, when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => { void closeWindowRows(typeof args?.rowId === 'string' ? args.rowId : undefined, true); return true } })
+    actions.register({ id: 'windows.selection.clear', title: '清空窗口多选', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 95, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: () => clearWindowSelection() })
+    actions.register({ id: 'windows.rename', title: '编辑窗口别名', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 96, shortcut: 'Shift+F2', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => beginWindowDraft('rename', typeof args?.rowId === 'string' ? args.rowId : undefined) })
+    actions.register({ id: 'windows.edit', title: '编辑窗口目标', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 96, shortcut: 'F2', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => beginWindowDraft('edit', typeof args?.rowId === 'string' ? args.rowId : undefined) })
+    actions.register({ id: 'windows.editor.save', title: '保存窗口目标', group: '窗口跳转', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => whenWindowInteraction(ctx, 'always') && ctx.layerIds.includes('window-editor'), run: () => saveWindowDraft() })
+    actions.register({ id: 'windows.editor.cancel', title: '取消窗口编辑', group: '窗口跳转', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => whenWindowInteraction(ctx, 'always') && ctx.layerIds.includes('window-editor'), run: () => cancelWindowDraft() })
+    actions.register({ id: 'windows.editor.nextField', title: '窗口编辑下一个字段', group: '窗口跳转', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => whenWindowInteraction(ctx, 'always') && ctx.layerIds.includes('window-editor'), run: () => moveWindowDraftField(1) })
+    actions.register({ id: 'windows.editor.prevField', title: '窗口编辑上一个字段', group: '窗口跳转', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => whenWindowInteraction(ctx, 'always') && ctx.layerIds.includes('window-editor'), run: () => moveWindowDraftField(-1) })
     actions.register({ id: 'windows.slot.activate', title: '跳转窗口槽位', group: '窗口跳转', risk: 'normal', scope: 'global', priority: 101, when: () => true, run: (_ctx, args) => {
       const slot = Math.trunc(Number(args?.slot))
       if (slot < 1 || slot > 10) return false
@@ -7579,9 +7652,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       })
       return true
     } })
-    actions.register({ id: 'windows.activation.diagnostics.clear', title: '清空本次窗口激活诊断', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 94, when: (ctx) => ctx.tab === 'windows', run: () => clearWindowActivationDiagnostics() })
-    actions.register({ id: 'windows.operation.traces.clear', title: '清空开发窗口操作追踪', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 94, when: (ctx) => ctx.tab === 'windows' && windowOperationTraceEnabled, run: () => clearWindowOperationTraces() })
-    actions.register({ id: 'windows.slot.assign', title: '分配窗口槽位', group: '窗口跳转', risk: 'data-write', scope: 'row', priority: 96, when: (ctx) => ctx.tab === 'windows', run: (_ctx, args) => assignWindowSlot(Math.trunc(Number(args?.slot)), typeof args?.rowId === 'string' ? args.rowId : undefined) })
+    actions.register({ id: 'windows.activation.diagnostics.clear', title: '清空本次窗口激活诊断', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 94, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: () => clearWindowActivationDiagnostics() })
+    actions.register({ id: 'windows.operation.traces.clear', title: '清空开发窗口操作追踪', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 94, when: (ctx) => whenWindowInteraction(ctx, 'browse') && windowOperationTraceEnabled, run: () => clearWindowOperationTraces() })
+    actions.register({ id: 'windows.slot.assign', title: '分配窗口槽位', group: '窗口跳转', risk: 'data-write', scope: 'row', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: (_ctx, args) => assignWindowSlot(Math.trunc(Number(args?.slot)), typeof args?.rowId === 'string' ? args.rowId : undefined) })
     for (let slot = 1; slot <= 10; slot += 1) {
       actions.register({
         id: `windows.slot.assign.${slot}`,
@@ -7591,16 +7664,16 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         scope: 'row',
         priority: 95,
         shortcut: slot === 10 ? 'Ctrl+0' : `Ctrl+${slot}`,
-        when: (ctx) => ctx.tab === 'windows' && !ctx.layerIds.includes('window-editor'),
+        when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }),
         run: () => assignWindowSlot(slot)
       })
     }
-    actions.register({ id: 'windows.slot.clear', title: '清除窗口槽关联', group: '窗口跳转', risk: 'data-write', scope: 'row', priority: 96, when: (ctx) => ctx.tab === 'windows', run: (_ctx, args) => clearWindowSlot(Math.trunc(Number(args?.slot))) })
-    actions.register({ id: 'windows.slot.focus', title: '聚焦窗口槽目标', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => ctx.tab === 'windows', run: (_ctx, args) => focusWindowSlot(Math.trunc(Number(args?.slot))) })
-    actions.register({ id: 'windows.slot.configure', title: '配置窗口槽全局快捷键', group: '窗口跳转', risk: 'normal', scope: 'row', priority: 96, when: (ctx) => ctx.tab === 'windows', run: (_ctx, args) => configureWindowSlotHotkey(Math.trunc(Number(args?.slot))) })
-    actions.register({ id: 'windows.hwnd.copy', title: '复制 Windows HWND', group: '窗口跳转', risk: 'normal', scope: 'row', priority: 96, when: (ctx) => ctx.tab === 'windows', run: (_ctx, args) => { void copyWindowHandle(typeof args?.rowId === 'string' ? args.rowId : undefined); return true } })
-    actions.register({ id: 'windows.permission.settings', title: '打开 macOS 辅助功能设置', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => ctx.tab === 'windows', run: () => { void platform.windows.openPermissionSettings?.(); return true } })
-    actions.register({ id: 'windows.candidates.clear', title: '退出窗口候选筛选', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => ctx.tab === 'windows', run: () => clearWindowCandidates() })
+    actions.register({ id: 'windows.slot.clear', title: '清除窗口槽关联', group: '窗口跳转', risk: 'data-write', scope: 'row', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: (_ctx, args) => clearWindowSlot(Math.trunc(Number(args?.slot))) })
+    actions.register({ id: 'windows.slot.focus', title: '聚焦窗口槽目标', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: (_ctx, args) => focusWindowSlot(Math.trunc(Number(args?.slot))) })
+    actions.register({ id: 'windows.slot.configure', title: '配置窗口槽全局快捷键', group: '窗口跳转', risk: 'normal', scope: 'row', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: (_ctx, args) => configureWindowSlotHotkey(Math.trunc(Number(args?.slot))) })
+    actions.register({ id: 'windows.hwnd.copy', title: '复制 Windows HWND', group: '窗口跳转', risk: 'normal', scope: 'row', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: (_ctx, args) => { void copyWindowHandle(typeof args?.rowId === 'string' ? args.rowId : undefined); return true } })
+    actions.register({ id: 'windows.permission.settings', title: '打开 macOS 辅助功能设置', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'always'), run: () => { void platform.windows.openPermissionSettings?.(); return true } })
+    actions.register({ id: 'windows.candidates.clear', title: '退出窗口候选筛选', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'rebind'), run: () => clearWindowCandidates() })
     actions.register({ id: 'ports.scan', title: '刷新端口', group: '端口', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+R', when: (ctx) => ctx.tab === 'ports', run: () => { void scanPorts(); return true } })
     actions.register({ id: 'ports.groups.togglePanel', title: '展开/收起端口组栏', group: '端口', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+Shift+W', when: (ctx) => ctx.tab === 'ports', run: () => toggleGroupPanel() })
     actions.register({ id: 'ports.search.focus', title: '聚焦端口搜索', group: '端口', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'Ctrl+F', when: (ctx) => ctx.tab === 'ports', run: () => focusPortSearch() })
@@ -8357,7 +8430,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
           : [],
         windowActionsMode,
         windowDraft,
-        windowCandidateTargetId,
+        windowRebind: windowRebindView(windowRebindState),
         windowFocusRequestId,
         windowActionsFocusRequestId,
         windowActivationDiagnostics: windowActivationDiagnostics.map((diagnostic) => ({ ...diagnostic })),
@@ -8435,12 +8508,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     refreshWindows,
     setTab,
     setWindowSearch(value: string) {
+      if (rejectUnavailableWindowInteraction('browse')) return
       state.windowSearch = value
-      if (windowCandidateTargetId) {
-        windowCandidateTargetId = null
-        windowCandidateLiveIds = []
-        windowCandidateRestoreFocusId = null
-      }
       normalizeFocusedWindow(false)
       save()
       notify()
@@ -8836,6 +8905,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         return 'favorites.pickReview.cancel'
       }
       if (shortcutId === 'Escape') {
+        if (state.activeTab === 'windows' && clearWindowCandidates()) {
+          return 'windows.candidates.clear'
+        }
         if (state.activeTab === 'windows' && windowActionsOpen) {
           closeWindowActions()
           return 'windows.actions.close'
@@ -8843,9 +8915,6 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         if (state.activeTab === 'windows' && selectedWindowIds.length) {
           clearWindowSelection()
           return 'windows.selection.clear'
-        }
-        if (state.activeTab === 'windows' && clearWindowCandidates()) {
-          return 'windows.candidates.clear'
         }
         const windowSearchFocused = input.activeInputRole === 'window-search'
         if (state.activeTab === 'windows' && windowSearchFocused && state.windowSearch) {

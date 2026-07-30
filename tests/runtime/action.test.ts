@@ -4967,7 +4967,7 @@ describe('app runtime', () => {
     await flushWindowActions()
 
     expect(runtime.snapshot().state.activeTab).toBe('windows')
-    expect(runtime.snapshot().windowCandidateTargetId).toBe('work-browser')
+    expect(runtime.snapshot().windowRebind).toMatchObject({ phase: 'confirming', targetId: 'work-browser' })
     expect(getShowCount()).toBeGreaterThan(0)
     expect(activated).toEqual([])
     runtime.focusWindow('candidate:darwin:91:2:12')
@@ -5680,18 +5680,38 @@ describe('app runtime', () => {
       state.windowTargets = [{ id: 'rider', alias: '农业项目', platform: 'darwin', appId: 'com.jetbrains.rider', appName: 'Rider', lastKnownTitle: previousTitle, lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
       state.windowSlots[0].targetIdByPlatform.darwin = 'rider'
       const runtime = createAppRuntime(state)
+      runtime.focusWindow('target:rider')
+      expect(runtime.handleShortcut('Space', false)).toBe('list.toggleSelection')
+      expect(runtime.snapshot().selectedWindowIds).toEqual(['target:rider'])
+      const focusRequestBeforeRebind = runtime.snapshot().windowFocusRequestId
 
       runtime.dispatch('windows.slot.activate', { slot: 1 })
       await flushWindowActions()
 
       expect(activated).toEqual(['7:0:111'])
-      expect(runtime.snapshot().windowCandidateTargetId).toBe('rider')
+      expect(runtime.snapshot().windowRebind).toMatchObject({ phase: 'confirming', targetId: 'rider' })
       expect(runtime.snapshot().windowRows).toHaveLength(1)
+      expect(runtime.snapshot().windowRows[0]).toMatchObject({
+        id: 'candidate:darwin:91:0:222',
+        displayName: currentTitle,
+        title: currentTitle,
+        candidate: true,
+        favorite: false,
+        pinned: false,
+        slotNumbers: []
+      })
+      expect(runtime.snapshot().selectedWindowIds).toEqual([])
+      expect(runtime.snapshot().windowFocusRequestId).toBeGreaterThan(focusRequestBeforeRebind)
       expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111', lastKnownTitle: previousTitle })
       expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'rebind-required', level: 'blocking' }))
+      expect(runtime.dispatch('windows.actions.open', { rowId: 'candidate:darwin:91:0:222' }).handled).toBe(false)
+      expect(runtime.handleShortcut('Space', false)).toBe('list.toggleSelection')
+      expect(runtime.snapshot().selectedWindowIds).toEqual([])
 
-      expect(runtime.dispatch('windows.candidates.clear').handled).toBe(true)
+      const focusRequestBeforeCancel = runtime.snapshot().windowFocusRequestId
+      expect(runtime.handleShortcut('Escape', false)).toBe('windows.candidates.clear')
       expect(runtime.snapshot().focusedWindowId).toBe('target:rider')
+      expect(runtime.snapshot().windowFocusRequestId).toBeGreaterThan(focusRequestBeforeCancel)
       runtime.dispatch('windows.slot.activate', { slot: 1 })
       await flushWindowActions()
       runtime.focusWindow('candidate:darwin:91:0:222')
@@ -5700,6 +5720,95 @@ describe('app runtime', () => {
 
       expect(activated).toEqual(['7:0:111', '7:0:111', '91:0:222'])
       expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastInstanceId: 'darwin:91:0:222', lastNativeRef: '91:0:222', lastKnownTitle: currentTitle })
+    })
+
+    it('preserves an active editor instead of opening a competing rebind flow', async () => {
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({
+            capability: darwinCapability,
+            completeness: 'complete' as const,
+            windows: [{ id: 'darwin:91:0:222', instanceId: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: 'Program.cs', minimized: false, focused: false }]
+          }),
+          activate: async () => ({ outcome: 'not-found' as const })
+        }
+      })
+      enableWindows(state)
+      state.windowTargets = [{ id: 'rider', alias: '农业项目', platform: 'darwin', appId: 'com.jetbrains.rider', appName: 'Rider', lastKnownTitle: 'appsettings.Mac.json', lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
+      state.windowSlots[0].targetIdByPlatform.darwin = 'rider'
+      const runtime = createAppRuntime(state)
+
+      runtime.focusWindow('target:rider')
+      expect(runtime.dispatch('windows.edit').handled).toBe(true)
+      runtime.updateWindowDraft({ alias: '未保存的新别名' })
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(runtime.snapshot().windowDraft).toMatchObject({ alias: '未保存的新别名' })
+      expect(runtime.snapshot().windowRebind).toEqual({ phase: 'idle', targetId: null, candidateInstanceIds: [] })
+      expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'editor-active', level: 'blocking' }))
+    })
+
+    it('keeps candidate recovery active across empty, partial, and replacement refreshes until the user exits', async () => {
+      let listCount = 0
+      const firstCandidate = { id: 'darwin:91:0:222', instanceId: 'darwin:91:0:222', platform: 'darwin' as const, nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: 'Program.cs', minimized: false, focused: false }
+      const partialCandidate = { ...firstCandidate, id: 'darwin:91:0:333', instanceId: 'darwin:91:0:333', nativeRef: '91:0:333', title: 'README.md' }
+      const replacementCandidate = { ...firstCandidate, id: 'darwin:91:0:444', instanceId: 'darwin:91:0:444', nativeRef: '91:0:444', title: 'package.json' }
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => {
+            listCount += 1
+            if (listCount === 1) return { capability: darwinCapability, completeness: 'complete' as const, windows: [firstCandidate] }
+            if (listCount === 2) return { capability: darwinCapability, completeness: 'complete' as const, windows: [] }
+            if (listCount === 3) return { capability: darwinCapability, completeness: 'partial' as const, windows: [partialCandidate] }
+            if (listCount === 4) return { capability: darwinCapability, completeness: 'partial' as const, windows: [] }
+            return { capability: darwinCapability, completeness: 'complete' as const, windows: [replacementCandidate] }
+          },
+          activate: async (window) => ({ outcome: window.nativeRef === '7:0:111' ? 'not-found' as const : 'activated' as const })
+        }
+      })
+      enableWindows(state)
+      state.windowTargets = [{ id: 'rider', alias: '农业项目', platform: 'darwin', appId: 'com.jetbrains.rider', appName: 'Rider', lastKnownTitle: 'appsettings.Mac.json', lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111', favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
+      state.windowSlots[0].targetIdByPlatform.darwin = 'rider'
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+      expect(runtime.snapshot().windowRows.map((row) => row.id)).toEqual(['candidate:darwin:91:0:222'])
+
+      runtime.dispatch('windows.refresh')
+      await flushWindowActions()
+      expect(runtime.snapshot().windowRebind).toMatchObject({ phase: 'confirming', targetId: 'rider', candidateInstanceIds: [] })
+      expect(runtime.snapshot().windowRows).toEqual([])
+      expect(runtime.snapshot().focusedWindowId).toBeNull()
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastInstanceId: null, lastNativeRef: null })
+
+      const focusRequestBeforeCandidateReturns = runtime.snapshot().windowFocusRequestId
+      runtime.dispatch('windows.refresh')
+      await flushWindowActions()
+      expect(runtime.snapshot().windowRows).toEqual([
+        expect.objectContaining({ id: 'candidate:darwin:91:0:333', cached: false, candidate: true })
+      ])
+      expect(runtime.snapshot().focusedWindowId).toBe('candidate:darwin:91:0:333')
+      expect(runtime.snapshot().windowFocusRequestId).toBeGreaterThan(focusRequestBeforeCandidateReturns)
+
+      runtime.dispatch('windows.refresh')
+      await flushWindowActions()
+      expect(runtime.snapshot().windowRows).toEqual([
+        expect.objectContaining({ id: 'candidate:darwin:91:0:333', cached: true, candidate: true })
+      ])
+
+      runtime.dispatch('windows.refresh')
+      await flushWindowActions()
+      expect(runtime.snapshot().windowRows).toEqual([
+        expect.objectContaining({ id: 'candidate:darwin:91:0:444', cached: false, candidate: true })
+      ])
+      expect(runtime.snapshot().focusedWindowId).toBe('candidate:darwin:91:0:444')
+      expect(runtime.handleShortcut('Escape', false)).toBe('windows.candidates.clear')
+      expect(runtime.snapshot().windowRebind).toEqual({ phase: 'idle', targetId: null, candidateInstanceIds: [] })
+      expect(runtime.snapshot().focusedWindowId).toBe('target:rider')
     })
 
     it('does not learn an automatic replacement when the new candidate fails native focus verification', async () => {
@@ -5761,7 +5870,7 @@ describe('app runtime', () => {
       await flushWindowActions()
 
       expect(activated).toEqual(['7:0:111'])
-      expect(runtime.snapshot().windowCandidateTargetId).toBe('aitools')
+      expect(runtime.snapshot().windowRebind).toMatchObject({ phase: 'confirming', targetId: 'aitools' })
       expect(runtime.snapshot().windowRows).toHaveLength(2)
       expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastNativeRef: '7:0:111', lastKnownTitle: 'AiTools - Dashboard - Google Chrome' })
       expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'rebind-required', level: 'blocking' }))

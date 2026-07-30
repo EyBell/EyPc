@@ -35,7 +35,12 @@ const needsPermission = computed(() => props.snapshot.windowCapability.permissio
 const unsupported = computed(() => !props.snapshot.windowCapability.supported)
 const showCapabilityNotice = computed(() => unsupported.value || needsPermission.value)
 const showUnloadHint = computed(() => !props.snapshot.windowLoading && !props.snapshot.windowListLoaded && !showCapabilityNotice.value)
-const showCandidateHint = computed(() => Boolean(props.snapshot.windowCandidateTargetId))
+const showCandidateHint = computed(() => props.snapshot.windowRebind.phase === 'confirming')
+const candidateTarget = computed(() => props.snapshot.windowRebind.targetId
+  ? props.snapshot.state.windowTargets.find((target) => target.id === props.snapshot.windowRebind.targetId) || null
+  : null)
+const candidateTargetLabel = computed(() => candidateTarget.value?.alias || candidateTarget.value?.appName || '原窗口目标')
+const candidateTargetLastTitle = computed(() => candidateTarget.value?.lastKnownTitle || '')
 const showEmptyHint = computed(() => !props.snapshot.windowLoading && props.snapshot.windowListLoaded && !props.snapshot.windowRows.length && !showCandidateHint.value)
 const selectionCount = computed(() => props.snapshot.selectedWindowIds.length)
 const windowActivationDiagnostics = computed(() => props.snapshot.windowActivationDiagnostics)
@@ -106,6 +111,7 @@ function alwaysOnTop(row?: WindowRow) {
 }
 
 function openActions(row?: WindowRow) {
+  if (showCandidateHint.value) return
   emit('dispatch', 'windows.actions.open', row ? { rowId: row.id } : undefined)
 }
 
@@ -208,6 +214,10 @@ function assignPickerRow(row: WindowRow) {
 }
 
 function onWindowRowClick(row: WindowRow) {
+  if (showCandidateHint.value) {
+    focus(row)
+    return
+  }
   if (slotPickerSlot.value != null) {
     assignPickerRow(row)
     return
@@ -216,6 +226,7 @@ function onWindowRowClick(row: WindowRow) {
 }
 
 function onWindowRowKeydown(event: KeyboardEvent) {
+  if (showCandidateHint.value) return
   if (slotPickerSlot.value == null) return
   if (event.key === 'Escape') {
     event.preventDefault()
@@ -332,20 +343,16 @@ function operationDetailLabel(detail: NonNullable<AppRuntimeSnapshot['windowOper
     'switch-confirmed': '切换已确认',
     'switch-timeout': '切换确认超时',
     current: '已在当前桌面',
-    walked: '旧版遍历桌面切换',
     'direct-unique': '直接绑定唯一',
     'direct-multiple': '直接绑定多个',
     'reverse-unique': '反查绑定唯一',
     'session-cache': '会话缓存命中',
     'ambiguous-spaces': '绑定桌面不唯一',
-    'ax-fallback': 'AX回退引用',
     'bad-ref': '引用无效',
     'no-api': 'SkyLight不可用',
     'empty-spaces': '未查到Space',
     'no-space-id': '无SpaceID',
     'no-display': '无托管显示器',
-    'process-frontmost': '旧版进程前置兜底',
-    'single-window-frontmost': '单窗口进程前置兜底',
     'multiwindow-blocked': '多窗口进程已阻断',
     'current-space-inferred': '推断当前桌面无需切换',
     'instance-match': '窗口实例精确匹配',
@@ -472,6 +479,12 @@ async function copyOperationTracePlainText(record: AppRuntimeSnapshot['windowOpe
 }
 
 function rowStatus(row: WindowRow) {
+  if (row.candidate) {
+    if (row.cached) return '缓存候选 · 待确认'
+    if (row.live?.focused) return '前台 · 待确认'
+    if (row.live?.minimized) return '已最小化 · 待确认'
+    return '待确认'
+  }
   if (row.ambiguous) return '多个匹配'
   if (row.unavailable) return props.snapshot.windowListLoaded ? '当前不可用' : '待加载'
   if (row.cached) return '缓存保留'
@@ -486,7 +499,7 @@ function statusClass(row: WindowRow) {
     unavailable: row.unavailable,
     cached: row.cached,
     ambiguous: row.ambiguous,
-    focused: row.live?.focused
+    focused: Boolean(row.live?.focused && !row.cached)
   }
 }
 
@@ -519,6 +532,10 @@ watch(logHasBlocking, (blocking) => {
   if (blocking) logRailExpanded.value = true
 }, { immediate: true })
 
+watch(showCandidateHint, (active) => {
+  if (active) exitSlotBinding()
+})
+
 onMounted(() => {
   document.addEventListener('pointerdown', onDocumentPointerDown, true)
 })
@@ -547,6 +564,8 @@ onBeforeUnmount(() => {
           type="search"
           role="searchbox"
           placeholder="搜索别名、窗口标题或应用名"
+          :disabled="showCandidateHint"
+          :aria-disabled="showCandidateHint"
           :value="snapshot.state.windowSearch"
           :aria-activedescendant="snapshot.focusedWindowId ? rowDomId(snapshot.focusedWindowId) : undefined"
           aria-controls="window-list"
@@ -583,9 +602,9 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <p v-else class="window-status-band" aria-live="polite">
+    <p id="window-status-band" v-else class="window-status-band" aria-live="polite">
       <LoaderCircle v-if="snapshot.windowLoading" :size="14" class="spinning" />
-      <template v-else-if="showCandidateHint">原窗口实例已失效；标题仅供人工辨认。请选择正确窗口后按 Enter 确认，或按 Escape 取消并返回原目标。</template>
+      <template v-else-if="showCandidateHint">正在为「{{ candidateTargetLabel }}」重新选择窗口。<template v-if="candidateTargetLastTitle">上次标题「{{ candidateTargetLastTitle }}」；</template>原窗口实例已失效，下方标题与状态仅供人工辨认。按 Enter 确认，或按 Escape 取消并返回原目标。</template>
       <template v-else-if="showUnloadHint">列表未加载。手动加载后写入会话缓存；全局槽位会先静默解析，缓存未命中时自动重扫一次，仅失败才展开本页。</template>
       <template v-else-if="showEmptyHint">没有匹配窗口。请调整搜索词，或重新加载列表。</template>
       <template v-else>{{ snapshot.windowRows.length }} 个可见项目 · 列表置顶优先 · 按应用排序 · {{ snapshot.windowCapability.canList ? '按需扫描' : '等待授权' }}</template>
@@ -593,6 +612,7 @@ onBeforeUnmount(() => {
 
     <div class="windows-body">
       <aside
+        v-if="!showCandidateHint"
         class="window-slot-rail"
         :class="{ expanded: slotRailExpanded, 'picker-open': slotPickerSlot != null }"
         aria-label="稳定快捷槽"
@@ -637,7 +657,7 @@ onBeforeUnmount(() => {
         </div>
       </aside>
 
-      <div class="window-workbench" :class="{ 'has-actions': snapshot.windowActionsOpen }">
+      <div class="window-workbench" :class="{ 'has-actions': snapshot.windowActionsOpen, 'candidate-mode': showCandidateHint }">
         <section class="window-list-panel" aria-label="窗口列表">
           <div
             v-if="slotPickerSlot != null"
@@ -653,7 +673,8 @@ onBeforeUnmount(() => {
             class="window-list"
             role="listbox"
             tabindex="0"
-            aria-multiselectable="true"
+            :aria-multiselectable="showCandidateHint ? undefined : true"
+            :aria-describedby="showCandidateHint ? 'window-status-band' : undefined"
             :aria-activedescendant="snapshot.focusedWindowId ? rowDomId(snapshot.focusedWindowId) : undefined"
             @keydown="onWindowRowKeydown"
           >
@@ -662,11 +683,11 @@ onBeforeUnmount(() => {
               :id="rowDomId(row.id)"
               :key="row.id"
               class="window-row"
-              :class="{ active: row.focused, selected: row.selected, favorite: row.favorite, pinned: row.pinned, unavailable: row.unavailable, cached: row.cached, binding: slotPickerSlot != null, 'binding-assigned': bindingSlotAssignedRowId === row.id }"
+              :class="{ active: row.focused, selected: row.selected, favorite: row.favorite, pinned: row.pinned, unavailable: row.unavailable, cached: row.cached, candidate: row.candidate, binding: slotPickerSlot != null, 'binding-assigned': bindingSlotAssignedRowId === row.id }"
               role="option"
               :aria-selected="row.selected || row.focused"
               :data-operation-tooltip="rowIdentityLabel(row)"
-              data-operation-description="单击聚焦；双击展开并前置；右键打开操作"
+              :data-operation-description="row.candidate ? '单击聚焦；双击或按 Enter 确认换绑；按 Escape 取消' : '单击聚焦；双击展开并前置；右键打开操作'"
               :data-quick-jump-target="true"
               :data-quick-jump-label="`${row.displayName} ${row.appName}`"
               :data-quick-jump-search="`${row.title} ${row.appName}`"
@@ -676,6 +697,7 @@ onBeforeUnmount(() => {
             >
               <span class="window-row-leading" aria-hidden="true">
                 <Check v-if="bindingSlotAssignedRowId === row.id" :size="15" class="binding-checkmark" />
+                <AppWindow v-else-if="row.candidate" :size="15" />
                 <Star v-else-if="row.favorite" :size="15" fill="currentColor" />
                 <AppWindow v-else :size="15" />
               </span>
@@ -684,21 +706,21 @@ onBeforeUnmount(() => {
                 <small>{{ row.appName }}</small>
               </span>
               <span class="window-row-trailing">
-                <span v-if="row.pinned" class="window-pin-badge" aria-label="已在列表置顶"><Pin :size="11" aria-hidden="true" />列表置顶</span>
-                <span v-if="row.slotNumbers.length" class="window-slot-badges" :aria-label="`槽位 ${row.slotNumbers.join('、')}`">
+                <span v-if="!row.candidate && row.pinned" class="window-pin-badge" aria-label="已在列表置顶"><Pin :size="11" aria-hidden="true" />列表置顶</span>
+                <span v-if="!row.candidate && row.slotNumbers.length" class="window-slot-badges" :aria-label="`槽位 ${row.slotNumbers.join('、')}`">
                   <kbd v-for="slot in row.slotNumbers" :key="slot">{{ slot }}</kbd>
                 </span>
                 <span class="window-status" :class="statusClass(row)">{{ rowStatus(row) }}</span>
               </span>
             </div>
             <p v-if="!snapshot.windowRows.length && !snapshot.windowLoading" class="empty-state">
-              {{ showUnloadHint ? '尚未加载实时窗口。可先查看已保存的收藏与稳定槽，再点击加载。' : '没有匹配窗口。请刷新、调整搜索词，或在授权后重试。' }}
+              {{ showCandidateHint ? '当前没有可确认的同应用窗口。可刷新重试，或按 Escape 返回原目标。' : showUnloadHint ? '尚未加载实时窗口。可先查看已保存的收藏与稳定槽，再点击加载。' : '没有匹配窗口。请刷新、调整搜索词，或在授权后重试。' }}
             </p>
-            <p v-if="selectionCount" class="window-selection-cue" aria-live="polite">已选 {{ selectionCount }} · Esc 清空 · Space 切换并下移</p>
+            <p v-if="selectionCount && !showCandidateHint" class="window-selection-cue" aria-live="polite">已选 {{ selectionCount }} · Esc 清空 · Space 切换并下移</p>
           </div>
         </section>
 
-        <aside v-if="snapshot.windowActionsOpen" data-role="window-actions" class="window-actions-panel" aria-label="窗口操作面板">
+        <aside v-if="snapshot.windowActionsOpen && !showCandidateHint" data-role="window-actions" class="window-actions-panel" aria-label="窗口操作面板">
           <header>
             <div>
               <p class="eyebrow">{{ multiActions ? `已选 ${snapshot.windowActionTargets.length} 个窗口` : '当前窗口' }}</p>
@@ -769,6 +791,7 @@ onBeforeUnmount(() => {
       </div>
 
       <aside
+        v-if="!showCandidateHint"
         class="window-log-rail"
         :class="{ expanded: logRailExpanded, blocking: logHasBlocking }"
         aria-label="窗口日志"

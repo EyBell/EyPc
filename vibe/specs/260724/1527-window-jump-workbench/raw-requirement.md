@@ -28,6 +28,24 @@ Add an opt-in, keyboard-first EyPc surface that lets a user discover interactive
 - 旧 `titleLocator` 仅迁移为 `lastKnownTitle`，`titleHistory` 丢弃。旧 `lastNativeRef` 只有经过桥接层实例/应用验证并成功激活后才回填 `lastInstanceId`。
 - WJ-19 明确取代 WJ-17 的标题相似度自动恢复与 WJ-18 的同源标题等值身份门禁。
 
+## 2026-07-30 User Acceptance (WJ-19.1)
+
+- 用户要求在 WJ-19 实施后再次从原始需求和第一性原理统一核验，并明确“交互的方便性才是最核心的”；随后接受所识别问题并要求继续优化。
+- 人工候选必须直接展示每个实时窗口自己的当前标题，不能重复原目标别名，也不能继承原目标的收藏、列表置顶或槽位徽标。
+- 候选态是一条窄的确认/取消流程：进入时清空无关多选、聚焦候选列表；只允许移动焦点、`Enter` 确认、`Escape` 取消及显式刷新，不打开操作面板、编辑、收藏、置顶、关窗或改槽位。一次 `Escape` 必须先退出候选态并恢复原目标行焦点。
+- macOS 在读取或使用 Space 会话缓存前必须先重新核验 PID、应用与 CGWindowID；Space 缓存按完整 `PID + CGWindowID` 实例键保存，不能只按可复用的 CGWindowID 命中。
+- `win32:PID:HWND` 是当前已观测窗口的原生定位键。HWND 可能被系统复用，因此 EyPc 必须在每次操作前复核可操作顶层窗口、owner PID 与应用；当前合同不承诺跨关闭/复用周期的数学绝对唯一性，失效后仍走人工换绑。
+
+## 2026-07-30 User Acceptance (WJ-19.2)
+
+- 用户继续追问“还有需要优化的吗”，并在确认剩余交互问题后要求继续优化；本轮仍以“方便完成正确换绑”为核心，而不是增加身份猜测或更多操作入口。
+- 候选态中的显式刷新即使暂时没有同应用候选，也不能静默退出或把用户抛回普通列表。候选上下文必须保留，空态明确提示继续刷新或按 `Escape` 返回；完整清单确认无候选时仍按 WJ-19 清除已失效实例绑定，部分清单只能保留并补充候选。
+- 候选说明同时展示逻辑目标别名与上次标题，候选行展示当前前台、最小化或部分清单缓存状态，所有标题与状态只帮助人工辨认，不参与自动匹配或换绑。
+- 候选从空态重新出现或被完整清单替换时，焦点必须落到可确认候选；流程仍只能由成功确认或 `Escape` 明确结束。
+- 用户进一步要求确保本轮优化不带回之前已经纠正的错误；标题相似/等值身份、唯一候选自动换绑、macOS 标题/序号回退、实例核验前使用 Space 缓存以及候选态副操作都必须继续保持移除或阻断。
+- 用户继续要求从第一性原理统一代码：关键身份与换绑逻辑必须封装，不能让候选集合、刷新证据、焦点恢复和动作禁用条件散落在 Runtime、页面与动作注册中。
+- 当前增量采用一个会话级换绑状态机作为唯一流程所有者，并用一个 `always / browse / rebind` 交互策略入口约束所有窗口动作。平台桥接继续只负责证明 OS 窗口实例，页面只读取 Runtime 投影；不得借“统一框架”重新引入标题、序号、唯一候选或任意同应用窗口猜测。
+
 ### Historical WJ-18 Detail (superseded by WJ-19)
 
 - Exact activation may compare a saved Core Graphics title only with the current `kCGWindowName` for the same PID and CG window ID. It must not require a System Accessibility `AXTitle` to equal the Core Graphics title, because those APIs can expose different strings for the same window.
@@ -65,7 +83,7 @@ Add an opt-in, keyboard-first EyPc surface that lets a user discover interactive
 - No public uTools API is assumed for enumerating or activating another application window.
 - macOS exposes a session window reference, not an HWND. Only Windows renders and copies an HWND.
 - No real window title modification, hidden background polling, simulated input, accessibility privilege escalation, arbitrary external write, or focus-protection workaround is allowed.
-- Saved data is limited to user-created target metadata (including a retained target required by a stable slot), the current locator plus a bounded local history of successfully verified titles, and platform-slot mappings in local plugin state. Unmatched live window titles remain transient runtime data.
+- Saved data is limited to user-created target metadata (including a retained target required by a stable slot), the last verified instance/native reference, display-only `lastKnownTitle`, and platform-slot mappings in local plugin state. Unmatched live window titles remain transient runtime data; no title history or title-derived identity is persisted.
 
 ## Acceptance Scenarios
 
@@ -88,7 +106,7 @@ Add an opt-in, keyboard-first EyPc surface that lets a user discover interactive
 17. Historical WJ-13 acceptance (superseded by WJ-19): process-frontmost retry is no longer an identity fallback; unbound stable identity blocks.
 18. A target bound to several non-current Spaces returns `space-ambiguous`; a requested switch that is not confirmed returns `space-switch-timeout` and never continues to AX activation.
 19. A stale preload revision produces `bridge-stale` before native activation. Development traces retain separate pre-initial and pre-retry aggregate snapshots without raw identity data.
-20. Historical WJ-13 acceptance: a sole same-PID title change required explicit confirmation. WJ-17 supersedes this only when a complete inventory proves one high-confidence unique logical match; every weak or ambiguous case retains the explicit path.
+20. Historical WJ-13/WJ-17 acceptance (superseded by WJ-19): title change/similarity no longer decides whether a replacement may bind; every replacement remains explicit.
 21. Stable global-slot targets may reuse a preload-session Space binding instead of repeating full direct/reverse lookup on every invocation. A cache hit remains a hint only: current display mapping, application/native instance, exact CG→AX mapping, and final focused AX window must still verify; native miss evicts the hint and permits one normal recovery scan. Space/display bindings must not persist across preload lifetimes.
 22. A macOS Core Graphics row with `kCGWindowIsOnscreen=false` must not be classified as minimized solely from that field because ordinary windows on another Space are also offscreen. Complete list snapshots may evict absent rows; partial/current-Space snapshots must merge into the prior session list, visibly mark retained rows as cached, and must not prove `target-closed`.
 23. Historical WJ-17 acceptance (superseded by WJ-19): title similarity no longer authorizes automatic restart replacement, even for one candidate.
@@ -98,4 +116,8 @@ Add an opt-in, keyboard-first EyPc surface that lets a user discover interactive
 27. Equal application/title with different `instanceId` never matches automatically.
 28. A complete refresh with one replacement candidate still enters manual confirmation; Escape restores the logical target row and successful Enter activation alone updates binding.
 29. Legacy locator data becomes `lastKnownTitle`, history is removed, and a legacy native reference gains `lastInstanceId` only from bridge-verified activation success.
-30. Windows rejects recycled/non-actionable/owner-mismatched HWNDs; macOS rejects rows or activations without a positive CGWindowID and exact AX mapping/readback. Canonical/public preload behavior remains byte-identical.
+30. Windows rejects non-actionable, owner/app-mismatched or no-longer-current HWND observations and never treats `PID+HWND` as a persistence guarantee across handle reuse; macOS rejects rows or activations without a positive CGWindowID and exact AX mapping/readback. Canonical/public preload behavior remains byte-identical.
+31. Candidate rows show their own live titles and no inherited favorite/pin/slot state. Entry focuses the first candidate and clears unrelated selection; one Escape exits directly and restores the original target row. Candidate-mode side actions remain unavailable.
+32. macOS force-refreshes exact instance/application identity before any session-cache Space switch, and that cache is keyed by the full `darwin:PID:CGWindowID` instance rather than CGWindowID alone.
+33. An open candidate flow survives complete-empty, partial-new, partial-empty and complete-replacement refreshes. Complete-empty clears only the stale instance/native binding, partial snapshots retain and add candidates, returned/replacement candidates regain focus, and no refresh auto-confirms or silently exits.
+34. Candidate lifecycle state, complete/partial inventory transitions, stale-binding effects, candidate focus and cancel focus restoration are decided by one pure state machine. Runtime only adapts its effects, action availability uses one shared policy, and the page consumes a read-only rebind projection.
