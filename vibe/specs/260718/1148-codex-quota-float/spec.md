@@ -2,9 +2,9 @@
 
 Tool: codex
 Date: 2026-07-30
-Status: `implemented-unverified-awaiting-host-acceptance`
+Status: `implemented-unverified`
 Documentation level: `controlled`
-Requirement version: `2026-07-30.12`
+Requirement version: `2026-07-30.16`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 
@@ -15,6 +15,30 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 ## 第一性目标
 
 Codex 任务的卡片、分组、角标和归档能力必须在同一份 Controller 原子包中反映真实状态。已接受的完成立即发布且不得反弹；真实新活动立即恢复 active；证据不足时才保守 ongoing。
+
+## RAW-131 实现结果与接纳门禁
+
+- RAW-131 已实现 stale-active 定向读取 positive-epoch 屏障、synthetic idle 去除、任意 exact active activity patch（含 active→active waiting）开启新 epoch、缺行会话映射、Side Chat 子 Turn/重放、双向 generation barrier 和 stopped `blocked-stopped` 七项修复，并写入对应 Bridge/Controller/Domain/UI 合同。
+- `initial-snapshot active + interrupted/failed` 是互相冲突的证据，只能保守 ongoing；不得通过内部 suppression 伪造 `desktop-live idle` 以满足 stopped。
+- `verifyStaleActive` 只能处理未被后续真实 activity/精确 App Server positive evidence 更新的 initial snapshot；read-state、任务切换或定向读取不得撤销更新的 positive epoch。
+- 任意 exact activity patch 只要结果仍为 active 就高于旧 completed presentation并开启新 epoch；waiting request 还必须立即进入待输入，即使 runtime 在 patch 前后都为 active。
+- Controller 必须双向执行 Activity generation 屏障；Preload/Controller 的 missing-row 保留边界必须一致；Side Chat 必须按 child evidence 重放并拥有回归合同。
+- stopped 的归档能力必须与 canonical `blocked-stopped` 单一合同一致。七项运行实现已清零，但闭合矩阵尚未获准执行，因此当前只能标记 `implemented-unverified`，不得标记 accepted。
+
+## RAW-132 回归安全优化
+
+- 父任务 Activity 聚合由一个纯解析器统一计算 main、Side Chat、等待标记、system error 与 App Server live 的优先级；发布器不得再维护第二套状态分支。
+- child latest-Turn 是分支级证据。某个 child 返回 completed/failed/interrupted 时，只要 main、其它 child 或不可归属到该 child 的 exact App Server live 仍活跃，父任务必须重新保持 `active/inProgress`，不得被该 child 的异步终态读回改成 completed/stopped。
+- 优化不得放宽 RAW-131 的反向合同：更新 positive epoch 拒绝旧 Turn 读回；冲突 active+terminal 保持 ongoing；missing row 保留匿名映射；旧 delta/full snapshot 不跨 generation；stopped 继续禁止归档。
+- Preload 只输出五个会话期匿名裁决计数，Controller 只在 source fingerprint 匹配且 generation 未回退时接纳，设置页“状态裁决”只显示聚合数字。诊断中不得出现 raw/anonymous task key、会话 ID、正文、路径或时间线内容。
+- Domain 状态模型表、Bridge 多分支终态竞争合同、Controller 旧代次诊断回退合同均已写入但未执行；当前状态仍为 `implemented-unverified`。
+
+## RAW-133 统一诊断投影
+
+- [codex.ts](../../../../src/domain/codex.ts#L1) 是五项诊断 key、非负安全整数规范化和等值比较的唯一权威；Controller 与 Renderer 不复制字段清单或边界规则。
+- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 只能在同源 fingerprint 与非回退 generation 通过后接纳整份诊断包。仅诊断变化时恰好通知一次；相同包、旧代次或不匹配来源均不刷新视图。
+- [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 常驻短摘要只显示保护合计与周期数，五项明细由原生信息按钮按 hover/focus 展示；`aria-live` 只包围连接诊断标题，不包围内部累计计数。所有同页信息提示统一为原生按钮，不保留 `span role=button` 分支。
+- 父聚合优先级测试调用真实生产纯解析器，不复制另一份状态算法；Controller/UI 合同覆盖诊断-only 通知、malformed 输入和可访问性结构。合同未获准执行，状态保持 `implemented-unverified`。
 
 ## 证据合同
 
@@ -44,10 +68,10 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - 首次 active snapshot 与 terminal Turn 冲突时，复用 `[0,300,1000]` 单任务佐证；真实 patch、等待请求或新 Turn 立即取消抑制。
 - 同 revision 的精确 started/定向 inProgress 是状态前进，只有严格更旧的 `startedAt` 被拒绝；不再使用 completed shape、跨时钟或 completedAt 必填阻断 live 事件。
 - 单任务 Turn 复核只合并兼容模式；相同 active snapshot 复用一个 `[0,300,1000]` 周期。新 unread 事件、任务切换歧义、Activity epoch/映射或复核模式变化才取消旧复核并由新周期接管，旧异步结果不得清除或回写新周期。
-- Activity Delta 每次发布递增 generation，完整 snapshot 携带已组装库存的 generation 屏障；严格更旧增量不得覆盖 snapshot。
+- Activity Delta 每次发布递增 generation，完整 snapshot 携带已组装库存的 generation 屏障；严格更旧增量不得覆盖 snapshot，严格更旧 snapshot 也不得覆盖已接纳 delta，Controller 水位只单调前进。
 - 完整 inventory 重建保留更强的精确 inProgress、confirmed terminal 与同 revision provenance。未知 key 只触发 urgent 结构复核，已知条目仍即时应用。
 - 完整 inventory 同时保留 `app-server-live` 私有 evidence sequence；该序号不进入 Activity Delta、Host Snapshot、Renderer、存储或日志。
-- 50/200ms 结构合并、5s/1s watchdog、15s 完整校对和 missing-key 隔离只保护证据/库存，不延迟已确认完成；missing-key 只保留缺失行，同批仍存在的任务状态立即发布。
+- 50/200ms 结构合并、5s/1s watchdog、15s 完整校对和 missing-key 隔离只保护证据/库存，不延迟已确认完成；missing-key 只保留缺失行，同批仍存在的任务状态立即发布。Preload 在 source fingerprint 未变化时把已发布缺行任务的匿名映射保留 120 秒，覆盖 Controller 最长 60 秒隔离窗口；显式归档仍立即清除。
 - `task-state-v3` 是当前语义。v2/旧来源仍读取并发布 degraded 原子包，不清空任务或停止订阅。
 - 旧 runtime/float `conversations` 别名只作一版兼容；当前消费者以 `taskState` 为权威。
 

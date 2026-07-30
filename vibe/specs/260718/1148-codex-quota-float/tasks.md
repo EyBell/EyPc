@@ -34,4 +34,17 @@ Tool: codex
 | 清理 PRD、Soul、架构和错误记忆中的旧配色阻断认知 | complete |
 | 跨来源 live evidence sequence 阻止旧 Desktop idle 重放撤销新 App Server active | complete |
 | RAW-130 Bridge 回归合同执行 | pending / project-rule-blocked |
+| RAW-131 全状态机写入/撤销/重放/消费点静态摘取 | complete |
+| RAW-131 七个 P1 运行实现修复 | complete / unverified |
+| RAW-131 闭合转换矩阵合同编写 | complete / unverified |
+| RAW-131 闭合转换矩阵执行 | pending / project-rule-blocked |
+| RAW-132 父任务纯聚合与 Side Chat 分支终态保护 | complete / unverified |
+| RAW-132 匿名裁决计数与设置页诊断 | complete / unverified |
+| RAW-132 镜像、空白、隐私形状与文档链接静态检查 | complete |
+| RAW-132 反向回归合同执行 | pending / project-rule-blocked |
+| RAW-133 Domain 诊断规范化/比较唯一权威 | complete / unverified |
+| RAW-133 Controller 原子接纳与 diagnostics-only 单通知 | complete / unverified |
+| RAW-133 紧凑诊断、live-region 隔离与原生帮助按钮统一 | complete / unverified |
+| RAW-133 镜像、空白、唯一权威与文档链接静态检查 | complete |
+| RAW-133 父聚合真值表与诊断通知合同执行 | pending / project-rule-blocked |
 | 真实 uTools 重载与状态转换验收 | pending / user-owned |
