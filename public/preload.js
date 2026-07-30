@@ -100,6 +100,14 @@ let codexActivityInventory = new Map()
 let codexActivitySourceFingerprint = ''
 let codexActivityGeneration = 0
 let codexLiveEvidenceSequence = 0
+let codexActivityDecisionCounters = {
+  liveEpochOpened: 0,
+  staleTurnDiscarded: 0,
+  branchTerminalDeferred: 0,
+  snapshotConflictSuppressed: 0,
+  missingMappingRetained: 0
+}
+const CODEX_MISSING_ACTIVITY_MAPPING_RETENTION_MS = 120_000
 let codexDesktopBridge = null
 const codexThreadTurnStatusCache = new Map()
 const codexThreadTurnStatusDirty = new Map()
@@ -3414,6 +3422,18 @@ function codexNextLiveEvidenceSequence() {
   return codexLiveEvidenceSequence
 }
 
+function codexNoteActivityDecision(name) {
+  if (!Object.prototype.hasOwnProperty.call(codexActivityDecisionCounters, name)) return
+  codexActivityDecisionCounters[name] = Math.min(
+    Number.MAX_SAFE_INTEGER,
+    codexActivityDecisionCounters[name] + 1
+  )
+}
+
+function codexActivityDecisionDiagnostics() {
+  return { ...codexActivityDecisionCounters }
+}
+
 function codexMarkAppServerLiveActive(known) {
   if (!known) return
   known.appServerLiveActive = true
@@ -3997,13 +4017,43 @@ function codexDesktopShadowActivity(shadow) {
   const status = activeFlags.size > 0
     ? 'active'
     : shadow.suppressUncorroboratedActive === true && shadow.runtime.type === 'active'
-      ? 'idle'
+      ? 'notLoaded'
       : shadow.runtime.type
   const desktopActiveSince = status === 'active' ? codexTimestampMs(shadow.desktopActiveSince) : 0
   return {
     status,
     activeFlags: status === 'active' ? [...activeFlags] : [],
     ...(desktopActiveSince ? { desktopActiveSince } : {})
+  }
+}
+
+function codexResolveParentActivity(own, childActivities, options = {}) {
+  const activities = [own, ...childActivities].filter(Boolean)
+  const activeFlags = [...new Set(activities.flatMap((activity) => activity.activeFlags || []))]
+  const hasInput = activeFlags.includes('waitingOnUserInput')
+  const hasApproval = activeFlags.includes('waitingOnApproval')
+  const hasActive = activities.some((activity) => activity.status === 'active')
+  const hasSystemError = activities.some((activity) => activity.status === 'systemError')
+  const appServerActive = options.appServerActive === true && !hasActive && !hasInput && !hasApproval
+  const status = hasInput || hasApproval || hasActive || appServerActive
+    ? 'active'
+    : hasSystemError ? 'systemError' : own.status
+  const desktopActiveSince = status === 'active'
+    ? Math.max(0, ...activities
+      .filter((activity) => activity.status === 'active')
+      .map((activity) => codexTimestampMs(activity.desktopActiveSince)))
+    : 0
+  return {
+    status,
+    activeFlags: status === 'active'
+      ? (appServerActive ? [...(options.connectorActiveFlags || [])] : activeFlags)
+      : [],
+    hasInput,
+    hasApproval,
+    hasActive,
+    hasSystemError,
+    appServerActive,
+    desktopActiveSince
   }
 }
 
@@ -4241,12 +4291,22 @@ class CodexDesktopCompanionBridge {
     this.lastSocketError = ''
   }
 
-  cancelLatestTurnRefresh(threadId) {
-    const refresh = this.turnRefreshes.get(threadId)
-    if (!refresh) return
+  cancelLatestTurnRefreshByKey(refreshKey) {
+    const refresh = this.turnRefreshes.get(refreshKey)
+    if (!refresh) return false
     refresh.cancelled = true
     if (refresh.timer) clearTimeout(refresh.timer)
-    this.turnRefreshes.delete(threadId)
+    this.turnRefreshes.delete(refreshKey)
+    return true
+  }
+
+  cancelLatestTurnRefresh(threadId) {
+    if (!validCodexThreadId(threadId)) return
+    for (const [refreshKey, refresh] of [...this.turnRefreshes]) {
+      if (refresh.parentThreadId === threadId || refresh.queryThreadId === threadId) {
+        this.cancelLatestTurnRefreshByKey(refreshKey)
+      }
+    }
   }
 
   cancelCompletionUnreadRefresh(threadId) {
@@ -4258,8 +4318,60 @@ class CodexDesktopCompanionBridge {
   }
 
   clearLatestTurnRefreshes() {
-    for (const threadId of this.turnRefreshes.keys()) this.cancelLatestTurnRefresh(threadId)
+    for (const refreshKey of [...this.turnRefreshes.keys()]) this.cancelLatestTurnRefreshByKey(refreshKey)
     for (const threadId of this.unreadRefreshes.keys()) this.cancelCompletionUnreadRefresh(threadId)
+  }
+
+  parentLiveEvidenceSequence(threadId) {
+    const known = codexActivityInventory.get(threadId)
+    const shadows = [
+      this.shadows.get(threadId),
+      ...[...this.sideShadows.values()].filter((shadow) => shadow.parentThreadId === threadId)
+    ].filter(Boolean)
+    return Math.max(
+      known?.appServerLiveActive === true && Number.isInteger(known.appServerLiveSequence)
+        ? known.appServerLiveSequence
+        : 0,
+      ...shadows.map((shadow) => {
+        const activity = codexDesktopShadowActivity(shadow)
+        return activity?.status === 'active'
+          && shadow.activityEvidence === 'activity-event'
+          && Number.isInteger(shadow.activityEventSequence)
+          ? shadow.activityEventSequence
+          : 0
+      })
+    )
+  }
+
+  hasExactPositiveActivity(threadId) {
+    return this.parentLiveEvidenceSequence(threadId) > 0
+  }
+
+  hasOtherActiveBranch(parentThreadId, branchThreadId) {
+    if (!validCodexThreadId(parentThreadId) || !validCodexThreadId(branchThreadId)) return false
+    const known = codexActivityInventory.get(parentThreadId)
+    if (branchThreadId !== parentThreadId && known?.appServerLiveActive === true) return true
+    const branches = [
+      [parentThreadId, this.shadows.get(parentThreadId)],
+      ...[...this.sideShadows.entries()].filter(([, shadow]) => shadow.parentThreadId === parentThreadId)
+    ]
+    return branches.some(([threadId, shadow]) => {
+      if (threadId === branchThreadId || !shadow) return false
+      return codexDesktopShadowActivity(shadow)?.status === 'active'
+    })
+  }
+
+  openParentLiveEpoch(threadId, options = {}) {
+    const known = codexActivityInventory.get(threadId)
+    if (!known) return false
+    known.lastTurnStatus = 'inProgress'
+    delete known.lastTurnCompletedAt
+    delete known.lastTurnEvidence
+    codexThreadTurnStatusCache.delete(threadId)
+    if (options.preserveLatestTurnRefresh !== true) this.cancelLatestTurnRefresh(threadId)
+    this.cancelCompletionUnreadRefresh(threadId)
+    codexNoteActivityDecision('liveEpochOpened')
+    return true
   }
 
   applyFreshCompletionUnread(known, threadId, options = {}) {
@@ -4312,10 +4424,12 @@ class CodexDesktopCompanionBridge {
       || known?.lastTurnStatus === 'failed'
       || known?.lastTurnStatus === 'interrupted'
     if (!known || !validCodexThreadId(parentThreadId) || !terminalTurn || !known.lastTurnStartedAt) return
+    if (shadow.activityEvidence !== 'initial-snapshot' || this.hasExactPositiveActivity(parentThreadId)) return
     if (activity?.status !== 'active' || activity.activeFlags.length > 0) return
     this.scheduleLatestTurnRefresh(parentThreadId, {
       verifyStaleActive: true,
       settleSnapshotTerminal: true,
+      queryThreadId: threadId,
       snapshotThreadId: threadId,
       snapshotActivityRevision: shadow.activityRevision,
       restart: options.restart === true
@@ -4329,25 +4443,38 @@ class CodexDesktopCompanionBridge {
     if (activity?.status !== 'active' || activity.activeFlags.length > 0) return false
     const parentThreadId = shadow.sideConversation ? shadow.parentThreadId : refresh.snapshotThreadId
     if (parentThreadId !== threadId || codexActivityInventory.get(threadId) !== known) return false
+    if (refresh.queryThreadId !== threadId
+      && this.hasOtherActiveBranch(threadId, refresh.queryThreadId)) {
+      shadow.suppressUncorroboratedActive = true
+      delete shadow.desktopActiveSince
+      this.openParentLiveEpoch(threadId, { preserveLatestTurnRefresh: true })
+      codexNoteActivityDecision('branchTerminalDeferred')
+      this.emitParentActivity(threadId)
+      return true
+    }
 
     codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
     known.lastTurnStatus = turn.status
     known.lastTurnStartedAt = turn.startedAt
     if (turn.status === 'completed' && turn.completedAt) known.lastTurnCompletedAt = turn.completedAt
     else delete known.lastTurnCompletedAt
-    codexClearAppServerLiveActive(known)
+    if (turn.status === 'completed') codexClearAppServerLiveActive(known)
     shadow.suppressUncorroboratedActive = true
     delete shadow.desktopActiveSince
+    codexNoteActivityDecision('snapshotConflictSuppressed')
     this.emitParentActivity(threadId)
     const settled = codexActivityInventory.get(threadId)
     if (settled?.status !== 'active') {
       if (turn.status === 'completed') {
-        // The first idle delta intentionally preserves the exact shadow
+        // The first non-active delta intentionally preserves the exact shadow
         // transition. Always follow it with targeted completion evidence so
         // Controller cannot guard a recovered same-revision completion back
         // to inProgress.
         this.publishTargetedCompletion(settled, threadId, 'snapshot-corroborated')
       } else {
+        // A replayed active snapshot and a failed/interrupted latest Turn are
+        // conflicting evidence. Suppression projects unavailable/ongoing, not
+        // synthetic idle/stopped, until a real non-active patch arrives.
         settled.lastTurnEvidence = 'targeted-after-exit'
         emitCodexActivityDelta([settled], false)
       }
@@ -4413,9 +4540,15 @@ class CodexDesktopCompanionBridge {
     const verifyStaleActive = options.verifyStaleActive === true
     const settleSnapshotTerminal = verifyStaleActive && options.settleSnapshotTerminal === true
     const confirmCurrentTerminal = verifyStaleActive && !settleSnapshotTerminal && options.confirmCurrentTerminal === true
+    const queryThreadId = validCodexThreadId(options.queryThreadId) ? options.queryThreadId : threadId
+    const refreshKey = queryThreadId === threadId ? threadId : `${threadId}:${queryThreadId}`
+    if (verifyStaleActive && this.hasExactPositiveActivity(threadId)) {
+      codexNoteActivityDecision('staleTurnDiscarded')
+      return
+    }
     const snapshotThreadId = settleSnapshotTerminal && validCodexThreadId(options.snapshotThreadId) ? options.snapshotThreadId : ''
     const snapshotActivityRevision = settleSnapshotTerminal && Number.isInteger(options.snapshotActivityRevision) ? options.snapshotActivityRevision : -1
-    const existing = this.turnRefreshes.get(threadId)
+    const existing = this.turnRefreshes.get(refreshKey)
     if (existing) {
       let incompatibleMode = options.restart === true
         || existing.baselineInventory !== codexActivityInventory.get(threadId)
@@ -4430,13 +4563,15 @@ class CodexDesktopCompanionBridge {
         }
       }
       if (!incompatibleMode) return
-      this.cancelLatestTurnRefresh(threadId)
+      this.cancelLatestTurnRefreshByKey(refreshKey)
     }
     const baseline = codexActivityInventory.get(threadId)
     const refresh = {
       cancelled: false,
       timer: null,
       attempt: 0,
+      parentThreadId: threadId,
+      queryThreadId,
       verifyStaleActive,
       settleSnapshotTerminal,
       confirmCurrentTerminal,
@@ -4448,14 +4583,15 @@ class CodexDesktopCompanionBridge {
       baselineInventory: baseline,
       baselineStatusAuthority: baseline?.statusAuthority,
       baselineActivityEvidence: baseline?.activityEvidence,
-      baselineActivityRevision: baseline?.activityRevision
+      baselineActivityRevision: baseline?.activityRevision,
+      baselinePositiveSequence: this.parentLiveEvidenceSequence(threadId)
     }
-    this.turnRefreshes.set(threadId, refresh)
+    this.turnRefreshes.set(refreshKey, refresh)
 
     const finish = (inventoryChanged = false) => {
       if (refresh.timer) clearTimeout(refresh.timer)
       refresh.timer = null
-      if (this.turnRefreshes.get(threadId) === refresh) this.turnRefreshes.delete(threadId)
+      if (this.turnRefreshes.get(refreshKey) === refresh) this.turnRefreshes.delete(refreshKey)
       if (inventoryChanged) {
         const known = codexActivityInventory.get(threadId)
         markCodexThreadTurnStatusDirty(threadId)
@@ -4480,6 +4616,11 @@ class CodexDesktopCompanionBridge {
           finish(false)
           return
         }
+        if (this.parentLiveEvidenceSequence(threadId) !== refresh.baselinePositiveSequence) {
+          codexNoteActivityDecision('staleTurnDiscarded')
+          finish(false)
+          return
+        }
       }
       if (!refresh.verifyStaleActive && codexApplyCachedCompletedTurnEvidence(known, threadId)) {
         finish(false)
@@ -4494,7 +4635,7 @@ class CodexDesktopCompanionBridge {
       refresh.attempt += 1
       try {
         const page = await requestCodexRpc('thread/turns/list', {
-          threadId,
+          threadId: queryThreadId,
           limit: 1,
           sortDirection: 'desc',
           itemsView: 'notLoaded'
@@ -4511,6 +4652,12 @@ class CodexDesktopCompanionBridge {
         const latestWaitingLive = Array.isArray(known.activeFlags)
           && known.activeFlags.some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
         if (refresh.verifyStaleActive && (known.status !== 'active' || latestWaitingLive)) {
+          finish(false)
+          return
+        }
+        if (refresh.verifyStaleActive
+          && this.parentLiveEvidenceSequence(threadId) !== refresh.baselinePositiveSequence) {
+          codexNoteActivityDecision('staleTurnDiscarded')
           finish(false)
           return
         }
@@ -4557,6 +4704,17 @@ class CodexDesktopCompanionBridge {
           || turn?.startedAt === refresh.baselineTurnStartedAt
             && (refresh.baselineTurnStatus === 'inProgress' || turn.status !== refresh.baselineTurnStatus)
         if (turn?.startedAt && turn.status !== 'inProgress' && freshTerminalTurn) {
+          if (queryThreadId !== threadId && this.hasOtherActiveBranch(threadId, queryThreadId)) {
+            // A child result is branch-scoped evidence. Keep the aggregate Turn
+            // epoch live while a sibling/main branch is still authoritatively
+            // active; otherwise this async read can reintroduce the old
+            // running -> stopped/completed parent regression.
+            this.openParentLiveEpoch(threadId, { preserveLatestTurnRefresh: true })
+            codexNoteActivityDecision('branchTerminalDeferred')
+            finish(false)
+            this.emitParentActivity(threadId)
+            return
+          }
           codexThreadTurnStatusCache.set(threadId, { turn: { ...turn } })
           known.lastTurnStatus = turn.status
           known.lastTurnStartedAt = turn.startedAt
@@ -4768,8 +4926,16 @@ class CodexDesktopCompanionBridge {
           // A task switch can race with turn/completed: the refollowed owner may
           // replay the old active snapshot after the completion notification was
           // missed. Confirm that one ambiguous active edge from latest-Turn data.
-          if (known && activity?.status === 'active' && !waitingLive) {
-            this.scheduleLatestTurnRefresh(parentThreadId, { verifyStaleActive: true, restart: true })
+          if (known
+            && activity?.status === 'active'
+            && !waitingLive
+            && shadow.activityEvidence === 'initial-snapshot'
+            && !this.hasExactPositiveActivity(parentThreadId)) {
+            this.scheduleLatestTurnRefresh(parentThreadId, {
+              verifyStaleActive: true,
+              queryThreadId: threadId,
+              restart: true
+            })
           }
           return
         }
@@ -4857,6 +5023,10 @@ class CodexDesktopCompanionBridge {
         this.sideShadows.set(params.conversationId, shadow)
         this.publishSideShadow(params.conversationId, shadow)
         this.verifyTerminalActiveSnapshot(params.conversationId, shadow)
+        if (codexDesktopShadowActivity(shadow)?.status === 'active'
+          && this.openParentLiveEpoch(shadow.parentThreadId, { preserveLatestTurnRefresh: true })) {
+          this.emitParentActivity(shadow.parentThreadId)
+        }
       } else {
         // Keep an unregistered main-task shadow inside preload until the
         // verified inventory scan supplies its anonymous key and action alias.
@@ -4900,17 +5070,10 @@ class CodexDesktopCompanionBridge {
       delete shadow.suppressUncorroboratedActive
     }
     const isActive = codexDesktopShadowActivity(shadow)?.status === 'active'
-    if (containsActivityPatch && isActive && !wasActive) {
+    if (containsActivityPatch && isActive) {
       const evidenceThreadId = shadow.sideConversation ? shadow.parentThreadId : params.conversationId
       const known = codexActivityInventory.get(evidenceThreadId)
-      if (known) {
-        known.lastTurnStatus = 'inProgress'
-        delete known.lastTurnCompletedAt
-        delete known.lastTurnEvidence
-        codexThreadTurnStatusCache.delete(evidenceThreadId)
-        this.cancelLatestTurnRefresh(evidenceThreadId)
-        this.cancelCompletionUnreadRefresh(evidenceThreadId)
-      }
+      if (known) this.openParentLiveEpoch(evidenceThreadId)
     }
     if (isActive) {
       if (!wasActive || !codexTimestampMs(shadow.desktopActiveSince)) shadow.desktopActiveSince = Date.now()
@@ -4918,7 +5081,9 @@ class CodexDesktopCompanionBridge {
       delete shadow.desktopActiveSince
     }
     const readStateOnly = containsReadStatePatch && !containsActivityPatch
-    if (this.sideShadows.has(params.conversationId)) this.publishSideShadow(params.conversationId, shadow, readStateOnly)
+    if (this.sideShadows.has(params.conversationId)) {
+      this.publishSideShadow(params.conversationId, shadow, readStateOnly, wasActive && !isActive)
+    }
     else this.publishShadow(params.conversationId, shadow, readStateOnly)
   }
 
@@ -4948,7 +5113,7 @@ class CodexDesktopCompanionBridge {
     this.emitParentActivity(threadId, previousStatus, readStateOnly)
   }
 
-  emitParentActivity(parentThreadId, previousStatus, readStateOnly = false) {
+  emitParentActivity(parentThreadId, previousStatus, readStateOnly = false, exitQueryThreadId = '') {
     const known = codexActivityInventory.get(parentThreadId)
     if (!known) return
     const priorStatus = previousStatus || known.status
@@ -4958,35 +5123,30 @@ class CodexDesktopCompanionBridge {
     }
     const childEntries = [...this.sideShadows.entries()].filter(([, shadow]) => shadow.parentThreadId === parentThreadId)
     const children = childEntries.map(([, shadow]) => shadow)
-    const activities = [own, ...children.map(codexDesktopShadowActivity).filter(Boolean)]
-    const activeFlags = [...new Set(activities.flatMap((activity) => activity.activeFlags || []))]
-    const hasInput = activeFlags.includes('waitingOnUserInput')
-    const hasApproval = activeFlags.includes('waitingOnApproval')
-    const hasActive = activities.some((activity) => activity.status === 'active')
-    const hasSystemError = activities.some((activity) => activity.status === 'systemError')
+    const childActivities = children.map(codexDesktopShadowActivity).filter(Boolean)
     const evidenceShadows = [this.shadows.get(parentThreadId), ...children].filter(Boolean)
     const desktopActivityEvent = evidenceShadows.some((shadow) => shadow.activityEvidence === 'activity-event')
+    let projection = codexResolveParentActivity(own, childActivities, {
+      appServerActive: known.appServerLiveActive === true,
+      connectorActiveFlags: known.connectorActiveFlags
+    })
     const desktopInactiveSupersedes = desktopActivityEvent
-      && !hasActive
-      && !hasInput
-      && !hasApproval
+      && !projection.hasActive
+      && !projection.hasInput
+      && !projection.hasApproval
       && codexDesktopActivitySupersedesAppServer(known, evidenceShadows)
-    if (desktopInactiveSupersedes) codexClearAppServerLiveActive(known)
-    const appServerActive = known.appServerLiveActive === true && !hasActive && !hasInput && !hasApproval
-    const status = hasInput || hasApproval || hasActive || appServerActive
-      ? 'active'
-      : hasSystemError ? 'systemError' : own.status
-    const desktopActiveSince = status === 'active'
-      ? Math.max(0, ...activities
-        .filter((activity) => activity.status === 'active')
-        .map((activity) => codexTimestampMs(activity.desktopActiveSince)))
-      : 0
+    if (desktopInactiveSupersedes) {
+      codexClearAppServerLiveActive(known)
+      projection = codexResolveParentActivity(own, childActivities, {
+        appServerActive: false,
+        connectorActiveFlags: known.connectorActiveFlags
+      })
+    }
+    const { status, activeFlags, desktopActiveSince } = projection
     known.status = status
-    known.activeFlags = status === 'active'
-      ? (appServerActive ? [...known.connectorActiveFlags] : activeFlags)
-      : []
-    known.statusAuthority = appServerActive ? 'app-server-live' : 'desktop-live'
-    known.activityEvidence = appServerActive || evidenceShadows.some((shadow) => shadow.activityEvidence === 'activity-event')
+    known.activeFlags = activeFlags
+    known.statusAuthority = projection.appServerActive ? 'app-server-live' : 'desktop-live'
+    known.activityEvidence = projection.appServerActive || evidenceShadows.some((shadow) => shadow.activityEvidence === 'activity-event')
       ? 'activity-event'
       : 'initial-snapshot'
     known.activityRevision = Math.max(0, ...evidenceShadows.map((shadow) => Number.isInteger(shadow.activityRevision) ? shadow.activityRevision : 0))
@@ -5012,12 +5172,21 @@ class CodexDesktopCompanionBridge {
         ? 'desktop-persisted'
         : 'unavailable'
     }
-    emitCodexActivityDelta([readStateOnly ? { ...known, readStateOnly: true } : known], false)
+    const waitingLive = status === 'active'
+      && (activeFlags.includes('waitingOnUserInput') || activeFlags.includes('waitingOnApproval'))
+    const openedWaitingEpoch = waitingLive
+      && known.lastTurnStatus !== 'inProgress'
+      && this.openParentLiveEpoch(parentThreadId)
+    emitCodexActivityDelta([readStateOnly && !openedWaitingEpoch ? { ...known, readStateOnly: true } : known], false)
     if (status === 'active') {
-      const waitingLive = activeFlags.includes('waitingOnUserInput') || activeFlags.includes('waitingOnApproval')
       if (!waitingLive && (known.lastTurnStatus === 'completed'
         || priorStatus !== 'active' && known.lastTurnStatus !== 'inProgress')) {
-        this.scheduleLatestTurnRefresh(parentThreadId, { verifyStaleActive: true })
+        for (const [evidenceThreadId, shadow] of [
+          [parentThreadId, this.shadows.get(parentThreadId)],
+          ...childEntries
+        ]) {
+          this.verifyTerminalActiveSnapshot(evidenceThreadId, shadow)
+        }
       } else if (waitingLive) {
         this.cancelLatestTurnRefresh(parentThreadId)
       }
@@ -5026,13 +5195,15 @@ class CodexDesktopCompanionBridge {
       const confirmedCompletion = known.lastTurnStatus === 'completed'
         && codexIsConfirmedTurnEvidence(known.lastTurnEvidence)
       if (cachedCompleted || confirmedCompletion) this.publishTargetedCompletion(known, parentThreadId)
-      else this.scheduleLatestTurnRefresh(parentThreadId)
+      else this.scheduleLatestTurnRefresh(parentThreadId, {
+        queryThreadId: validCodexThreadId(exitQueryThreadId) ? exitQueryThreadId : parentThreadId
+      })
     }
   }
 
-  publishSideShadow(threadId, shadow, readStateOnly = false) {
+  publishSideShadow(threadId, shadow, readStateOnly = false, exitedActive = false) {
     if (!shadow?.parentThreadId || !this.sideShadows.has(threadId)) return
-    this.emitParentActivity(shadow.parentThreadId, undefined, readStateOnly)
+    this.emitParentActivity(shadow.parentThreadId, undefined, readStateOnly, exitedActive ? threadId : '')
   }
 
   handleReadState(params, ownerClientId) {
@@ -5048,7 +5219,7 @@ class CodexDesktopCompanionBridge {
         unreadEvidence: 'event'
       })
       this.emitParentActivity(sideShadow.parentThreadId, undefined, true)
-      this.reconcileLateUnread(sideShadow.parentThreadId, params.hasUnreadTurn)
+      this.reconcileLateUnread(sideShadow.parentThreadId, params.hasUnreadTurn, params.conversationId)
       return
     }
     known.hasUnreadTurn = params.hasUnreadTurn
@@ -5064,15 +5235,16 @@ class CodexDesktopCompanionBridge {
       shadow.unreadEvidence = 'event'
     }
     emitCodexActivityDelta([{ ...known, readStateOnly: true }], false)
-    this.reconcileLateUnread(params.conversationId, params.hasUnreadTurn)
+    this.reconcileLateUnread(params.conversationId, params.hasUnreadTurn, params.conversationId)
   }
 
-  reconcileLateUnread(threadId, hasUnreadTurn) {
+  reconcileLateUnread(threadId, hasUnreadTurn, queryThreadId = threadId) {
     if (hasUnreadTurn !== true || !validCodexThreadId(threadId)) return
     const known = codexActivityInventory.get(threadId)
     if (!known) return
     if (known.status === 'active') {
       if (known.lastTurnEvidence === 'turn-started') return
+      if (this.hasExactPositiveActivity(threadId)) return
       const waitingLive = Array.isArray(known.activeFlags)
         && known.activeFlags.some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
       if (waitingLive || known.lastTurnStatus === 'completed' && codexIsConfirmedTurnEvidence(known.lastTurnEvidence)) return
@@ -5080,6 +5252,7 @@ class CodexDesktopCompanionBridge {
       if (known.lastTurnStatus === 'completed' && shadow) this.verifyTerminalActiveSnapshot(threadId, shadow, { restart: true })
       else this.scheduleLatestTurnRefresh(threadId, {
         verifyStaleActive: true,
+        queryThreadId,
         confirmCurrentTerminal: known.lastTurnStatus === 'completed',
         restart: true
       })
@@ -5253,7 +5426,9 @@ class CodexDesktopCompanionBridge {
     }
     for (const threadId of this.liveUnread.keys()) if (!next.has(threadId)) this.liveUnread.delete(threadId)
     for (const threadId of this.persistedUnread.keys()) if (!next.has(threadId)) this.persistedUnread.delete(threadId)
-    for (const threadId of this.turnRefreshes.keys()) if (!next.has(threadId)) this.cancelLatestTurnRefresh(threadId)
+    for (const [refreshKey, refresh] of [...this.turnRefreshes]) {
+      if (!next.has(refresh.parentThreadId)) this.cancelLatestTurnRefreshByKey(refreshKey)
+    }
     for (const threadId of this.unreadRefreshes.keys()) if (!next.has(threadId)) this.cancelCompletionUnreadRefresh(threadId)
     for (const [threadId, shadow] of this.sideShadows) {
       if (next.has(shadow.parentThreadId)) continue
@@ -5271,6 +5446,13 @@ class CodexDesktopCompanionBridge {
         this.verifyTerminalActiveSnapshot(threadId, shadow)
       }
     }
+    const sideParents = new Set()
+    for (const [threadId, shadow] of this.sideShadows) {
+      if (!next.has(shadow.parentThreadId)) continue
+      sideParents.add(shadow.parentThreadId)
+      this.verifyTerminalActiveSnapshot(threadId, shadow)
+    }
+    for (const parentThreadId of sideParents) this.emitParentActivity(parentThreadId)
     if (this.state === 'connected') {
       for (const threadId of next) if (!previous.has(threadId)) this.follow(threadId, true)
     }
@@ -5382,6 +5564,13 @@ function resetCodexThreadSessionState() {
   codexActivityInventory = new Map()
   codexActivitySourceFingerprint = ''
   codexActivityGeneration += 1
+  codexActivityDecisionCounters = {
+    liveEpochOpened: 0,
+    staleTurnDiscarded: 0,
+    branchTerminalDeferred: 0,
+    snapshotConflictSuppressed: 0,
+    missingMappingRetained: 0
+  }
   codexDesktopBridge?.updateInventory(new Set())
   codexThreadTurnStatusCache.clear()
   codexThreadTurnStatusDirty.clear()
@@ -5462,6 +5651,7 @@ function codexArchivedActivityKey(threadId) {
   codexThreadTurnStatusCache.delete(threadId)
   codexThreadTurnStatusDirty.delete(threadId)
   codexThreadFirstPromptCache.delete(threadId)
+  codexActivityInventory.delete(threadId)
   return known.key
 }
 
@@ -5476,6 +5666,7 @@ function codexActivityDelta(entries, inventoryChanged, receivedAt = Date.now(), 
     inventoryChanged: inventoryChanged === true,
     ...(inventoryChanged === true ? { inventoryRefreshPriority: inventoryRefreshPriority === 'urgent' ? 'urgent' : 'normal' } : {}),
     desktopBridgeState: codexDesktopBridge?.state || 'not-checked',
+    decisionDiagnostics: codexActivityDecisionDiagnostics(),
     receivedAt
   }
 }
@@ -6550,6 +6741,18 @@ async function scanVerifiedCodexInventory() {
         ...turnFields
       })
     }
+    const retainedAt = Date.now()
+    const retainMissingMappings = codexActivitySourceFingerprint === registry.fingerprint
+    for (const [threadId, previousActivity] of retainMissingMappings ? previousActivityInventory : []) {
+      if (activityInventory.has(threadId) || !validCodexThreadId(threadId)) continue
+      const missingSince = codexTimestampMs(previousActivity.inventoryMissingSince) || retainedAt
+      if (retainedAt - missingSince > CODEX_MISSING_ACTIVITY_MAPPING_RETENTION_MS) continue
+      activityInventory.set(threadId, {
+        ...previousActivity,
+        inventoryMissingSince: missingSince
+      })
+      codexNoteActivityDecision('missingMappingRetained')
+    }
     codexActivityInventory = activityInventory
     codexActivitySourceFingerprint = registry.fingerprint
     codexActivityGeneration += 1
@@ -6665,7 +6868,7 @@ async function archiveCodexThread(actionAlias, request) {
   const expectedCompletionAt = Number.isFinite(input.expectedCompletionAt) && input.expectedCompletionAt > 0 ? input.expectedCompletionAt : 0
   const expectedLastTurnStartedAt = Number.isFinite(input.expectedLastTurnStartedAt) && input.expectedLastTurnStartedAt > 0 ? input.expectedLastTurnStartedAt : 0
   const expectedSourceFingerprint = typeof input.expectedSourceFingerprint === 'string' && /^[a-f0-9]{64}$/.test(input.expectedSourceFingerprint) ? input.expectedSourceFingerprint : ''
-  const evidence = input.evidence === 'completed' || input.evidence === 'stopped' ? input.evidence : ''
+  const evidence = input.evidence === 'completed' ? input.evidence : ''
   const requestIsValid = typeof actionAlias === 'string'
     && /^ct_[A-Za-z0-9_-]{16,80}$/.test(actionAlias)
     && expectedUpdatedAt > 0
@@ -6673,11 +6876,7 @@ async function archiveCodexThread(actionAlias, request) {
     && expectedLastTurnStartedAt > 0
     && Boolean(expectedSourceFingerprint)
     && Boolean(evidence)
-    && (
-      evidence === 'completed'
-        ? expectedRevisionAt === (expectedCompletionAt || expectedLastTurnStartedAt)
-        : expectedRevisionAt === expectedLastTurnStartedAt && expectedCompletionAt === 0
-    )
+    && expectedRevisionAt === (expectedCompletionAt || expectedLastTurnStartedAt)
   if (!requestIsValid) {
     return { outcome: 'failed', errorCode: 'invalid-request', message: '归档请求已失效，请刷新后重试' }
   }
@@ -6715,12 +6914,8 @@ async function archiveCodexThread(actionAlias, request) {
     if (desktopActivity?.status === 'active' || status === 'active' || turn?.status === 'inProgress') {
       return { outcome: 'failed', errorCode: 'active-task', message: '任务已恢复进行中，未执行归档' }
     }
-    if (evidence === 'completed') {
-      if (!turn || turn.status !== 'completed' || (turn.completedAt || turn.startedAt) !== expectedRevisionAt || (expectedCompletionAt > 0 && turn.completedAt !== expectedCompletionAt)) {
-        return { outcome: 'failed', errorCode: 'completion-changed', message: '任务完成版本已更新，未执行归档' }
-      }
-    } else if (!turn || (turn.status !== 'failed' && turn.status !== 'interrupted') || turn.startedAt !== expectedRevisionAt) {
-      return { outcome: 'failed', errorCode: 'completion-changed', message: '任务停止版本已更新，未执行归档' }
+    if (!turn || turn.status !== 'completed' || (turn.completedAt || turn.startedAt) !== expectedRevisionAt || (expectedCompletionAt > 0 && turn.completedAt !== expectedCompletionAt)) {
+      return { outcome: 'failed', errorCode: 'completion-changed', message: '任务完成版本已更新，未执行归档' }
     }
     await requestCodexRpc('thread/archive', { threadId: entry.threadId })
     const [unarchivedRows, archivedRows] = await Promise.all([
@@ -6737,6 +6932,8 @@ async function archiveCodexThread(actionAlias, request) {
     }
     codexThreadTurnStatusCache.delete(entry.threadId)
     codexThreadFirstPromptCache.delete(entry.threadId)
+    const archivedKey = codexArchivedActivityKey(entry.threadId)
+    if (archivedKey) emitCodexActivityDelta([], true, 'urgent', [archivedKey])
     const desktopSync = await codexEnsureDesktopBridge().notifyThreadArchived(
       entry.threadId,
       typeof thread.cwd === 'string' ? thread.cwd : ''
@@ -6834,13 +7031,17 @@ async function archiveCodexProject(actionAlias, request) {
         const remainingIds = new Set(remainingRows.map((thread) => thread.id))
         const archivedIds = new Set(archivedRows.map((thread) => thread.id))
         const verified = []
+        const removedActivityKeys = []
         for (const item of staged) {
           if (!remainingIds.has(item.id) && archivedIds.has(item.id)) {
             archivedKeys.push(item.key)
             verified.push(item)
+            const removedKey = codexArchivedActivityKey(item.id)
+            if (removedKey) removedActivityKeys.push(removedKey)
           }
           else failed.push({ key: item.key, errorCode: 'archive-not-verified' })
         }
+        if (removedActivityKeys.length) emitCodexActivityDelta([], true, 'urgent', removedActivityKeys)
         const syncResults = await Promise.all(verified.map(async (item) => {
           try {
             return { key: item.key, result: await codexEnsureDesktopBridge().notifyThreadArchived(item.id, item.cwd) }

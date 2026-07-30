@@ -365,6 +365,46 @@ export interface CodexActivityDeltaEntryV2 {
   lastTurnEvidence?: CodexTurnEvidenceOrigin
 }
 
+export interface CodexActivityDecisionDiagnostics {
+  liveEpochOpened: number
+  staleTurnDiscarded: number
+  branchTerminalDeferred: number
+  snapshotConflictSuppressed: number
+  missingMappingRetained: number
+}
+
+export const CODEX_ACTIVITY_DECISION_DIAGNOSTIC_KEYS = [
+  'liveEpochOpened',
+  'staleTurnDiscarded',
+  'branchTerminalDeferred',
+  'snapshotConflictSuppressed',
+  'missingMappingRetained'
+] as const satisfies readonly (keyof CodexActivityDecisionDiagnostics)[]
+
+function normalizeCodexActivityDecisionCounter(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.trunc(value)))
+    : 0
+}
+
+export function normalizeCodexActivityDecisionDiagnostics(value: unknown): CodexActivityDecisionDiagnostics {
+  const source = value && typeof value === 'object'
+    ? value as Partial<Record<keyof CodexActivityDecisionDiagnostics, unknown>>
+    : {}
+  const diagnostics = {} as CodexActivityDecisionDiagnostics
+  for (const key of CODEX_ACTIVITY_DECISION_DIAGNOSTIC_KEYS) {
+    diagnostics[key] = normalizeCodexActivityDecisionCounter(source[key])
+  }
+  return diagnostics
+}
+
+export function sameCodexActivityDecisionDiagnostics(
+  left: CodexActivityDecisionDiagnostics,
+  right: CodexActivityDecisionDiagnostics
+): boolean {
+  return CODEX_ACTIVITY_DECISION_DIAGNOSTIC_KEYS.every((key) => left[key] === right[key])
+}
+
 export interface CodexActivityDeltaV2 {
   version: 2
   sourceFingerprint: string
@@ -376,6 +416,8 @@ export interface CodexActivityDeltaV2 {
   /** Urgent upserts/terminal events bypass the ordinary structural coalescing window. */
   inventoryRefreshPriority?: 'urgent' | 'normal'
   desktopBridgeState: CodexDesktopBridgeState
+  /** Session-only anonymous decision counters; contains no task identity or content. */
+  decisionDiagnostics?: CodexActivityDecisionDiagnostics
   receivedAt: number
 }
 
@@ -409,7 +451,7 @@ export interface CodexThreadArchiveRequest {
   expectedCompletionAt?: number
   expectedLastTurnStartedAt?: number
   expectedSourceFingerprint?: string
-  evidence: 'completed' | 'stopped'
+  evidence: 'completed'
 }
 
 export interface CodexProjectArchiveRequest {
@@ -1328,6 +1370,7 @@ function isLikelyActiveTask(thread: CodexHostThread) {
 
 function hasConfirmedCompletionOverLiveTask(thread: CodexHostThread) {
   if (!isLikelyActiveTask(thread) || thread.lastTurnStatus !== 'completed') return false
+  if (thread.activeFlags.includes('waitingOnUserInput') || thread.activeFlags.includes('waitingOnApproval')) return false
   // Live activity wins over inventory/replayed terminal shape. Only a
   // completion already confirmed in this activity epoch may close it while a
   // stale active snapshot/request is still draining.
@@ -1535,9 +1578,9 @@ export function projectConversations(input: {
         ? unread ? 'completed-unread' : 'completed'
         : explicitlyStopped ? 'stopped' : 'ongoing'
     const activityState = taskActivityState(thread, explicitlyStopped)
-    const archiveCapability: CodexArchiveCapability = completionRevision > 0 || explicitlyStopped
+    const archiveCapability: CodexArchiveCapability = completionRevision > 0
       ? 'allowed'
-      : 'blocked-active'
+      : explicitlyStopped ? 'blocked-stopped' : 'blocked-active'
     const revisionAt = completionRevision
       || (explicitlyStopped ? numberValue(thread.lastTurnStartedAt, 0) : 0)
       || thread.updatedAt
