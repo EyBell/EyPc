@@ -72,7 +72,7 @@ Tool: codex
 ## Shared Operation Help And Command Panels
 
 - Last verified: 2026-07-13.
-- [OperationTooltipLayer.vue](../../src/components/OperationTooltipLayer.vue#L1) delegates hover/focus handling from the App root. Its operation selector covers buttons, summary/menu/tab/option/treeitem roles, draggable rows, checkbox/radio/number/range controls and selects; associated labels prevent a nested checkbox from inheriting its row's context-menu description.
+- [OperationTooltipLayer.vue](../../src/components/OperationTooltipLayer.vue#L1) delegates hover/focus handling from the App root. Its operation selector covers buttons, summary/menu/tab/option/treeitem roles, draggable rows, checkbox/radio/number/range controls and selects; associated labels prevent a nested checkbox from inheriting its row's context-menu description. Native `title` is suppressed; product tips require always-on `data-operation-tooltip` / `data-operation-shortcut` (or MQTT `commandTooltip` / `plainTooltip`). Shortcut chords may also be parsed from a suppressed `Label (chord)` title as fallback.
 - Disabled controls require captured `pointermove` plus `document.elementFromPoint` because disabled elements do not reliably bubble pointer events. The shared layer reports `data-disabled-reason` or the standard unavailable reason and suspends while Quick Jump is open.
 - Cross-tab target resolution and default keybindings live in [appRuntime.ts](../../src/runtime/appRuntime.ts#L1) and [keybindingRuntime.ts](../../src/runtime/keybinding/keybindingRuntime.ts#L1). Explicit args replace existing frozen targets; missing explicit entities fail. Favorites distinguish left detail with `favoriteDrawer.active=false` from right actions with `true`, while Quick Favorites filters the action projection to safe commands.
 - Ports, Favorites/Quick Favorites and MQTT watch panel kind/side/target changes, not only the open boolean, so `Ctrl/Cmd+Left → Ctrl/Cmd+Right` focuses the newly rendered close/action control. Settings implements the same contract locally for non-editing shortcut rows.
@@ -148,10 +148,11 @@ Tool: codex
 
 ## MQTT UI And Preview
 
-- Last verified: 2026-06-27.
+- Last verified: 2026-07-30.
 
 - UI source: [src/pages/MqttPage.vue](../../src/pages/MqttPage.vue#L1), [src/components/MqttPublishRecordList.vue](../../src/components/MqttPublishRecordList.vue#L1), and [src/styles/app.css](../../src/styles/app.css#L1).
 - The top MQTT command bar owns connection status, topic filter, current-list search, `全/收/发/藏`, layout controls, and the conditional multi-select export cluster. Its native buttons have explicit labels and the selected-count status is polite-live; template/history lists do not carry separate headers.
+- Icon and row action buttons bind product hover help through `commandTooltip` / `plainTooltip` (`data-operation-tooltip` + always-on `data-operation-shortcut`). Ctrl-hint badges still use `data-mqtt-shortcut-hint` only while shortcut-hint mode is active.
 - The config drawer owns endpoint preview, compact endpoint fields, connection group assignment, subscription alias/topic/color rows, publish topic candidate rows, and compact connection options.
 - Connection tree and subscription rows expose active, selected, hover, and keyboard-focus styling. Row-local buttons and right-click menus dispatch the same runtime actions as keyboard shortcuts.
 - The connection rail renders a compact EyTodo-like hierarchy with nested groups, chevron collapse/expand controls, folder color marks, child-count metadata, `c-` shortcut hints, Quick Jump row targets, and visible drag/drop target states.
@@ -160,6 +161,7 @@ Tool: codex
 - Publish options and draft-history popovers are editor-adjacent transient layers. They guard inside clicks through their anchor elements and close on outside pointerdown.
 - Shift preview is pure-Shift only. `Ctrl/Command+Shift` suppresses preview for `c-s-*` shortcuts. Draft-history preview is allowed only for Shift-sourced preview.
 - Payload previews use tokenized text segments from [src/domain/mqttPayloadPreview.ts](../../src/domain/mqttPayloadPreview.ts#L1) without `v-html`.
+- MQTT selected-record merged JSON export and tooltip/shortcut polish evidence: [../specs/260730/1016-mqtt-multi-export/spec.md](../specs/260730/1016-mqtt-multi-export/spec.md#L1), [../specs/260730/1044-mqtt-tooltip-shortcut-polish/spec.md](../specs/260730/1044-mqtt-tooltip-shortcut-polish/spec.md#L1).
 
 ## MQTT Verification Map
 

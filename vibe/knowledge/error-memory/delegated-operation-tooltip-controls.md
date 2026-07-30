@@ -67,3 +67,4 @@ Listen for pointer movement in capture phase and resolve the hit element with `d
 | --- | --- | --- | --- | --- | --- | --- |
 | 2026-07-13 | Cross-tab responsive command panels | Universal operation-help audit | Bubble-only disabled hover and parent-row fallback for form controls | Closeout review, component and browser checks | Captured delegation plus control-local label resolution | verified |
 | 2026-07-13 | Cross-tab final acceptance review | MQTT/Favorites actionable row coverage | Button/form-only delegated selector | Reviewer source audit and MQTT row browser focus | Add option/treeitem/draggable targets and row-specific descriptions | verified |
+| 2026-07-30 | MQTT tooltip follow-up | Title-only MQTT icons lost product tips | Relied on suppressed native title / Ctrl-gated hints | User report after title polish | See [operation-tooltip-title-only-missing-product-attrs.md](operation-tooltip-title-only-missing-product-attrs.md#L1) | routed to sibling record |
