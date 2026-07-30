@@ -3,7 +3,23 @@ import { createActionRuntime } from '../../src/runtime/action/actionRuntime'
 import { createInitialState, normalizeAppState } from '../../src/domain/state'
 import { createAppRuntime } from '../../src/runtime/appRuntime'
 import { createMqttConnectionConfig } from '../../src/domain/mqtt'
-import { WINDOW_BRIDGE_REVISION } from '../../src/platform/eypcPlatform'
+import { WINDOW_BRIDGE_REVISION, type EypcPlatformApi } from '../../src/platform/eypcPlatform'
+
+type TestPlatformOverrides = {
+  [Key in keyof EypcPlatformApi]?: EypcPlatformApi[Key] extends (...args: never[]) => unknown
+    ? EypcPlatformApi[Key]
+    : Partial<EypcPlatformApi[Key]>
+}
+
+type TestWindowCapability = Awaited<ReturnType<EypcPlatformApi['windows']['capabilities']>>
+
+function normalizeTestWindowCapability(capability: TestWindowCapability): TestWindowCapability {
+  // Ordinary supported-window fixtures target the current bridge. Tests can still
+  // provide an explicit stale revision when bridge-version behavior is in scope.
+  return capability.supported && capability.bridgeRevision === undefined
+    ? { ...capability, bridgeRevision: WINDOW_BRIDGE_REVISION }
+    : capability
+}
 
 describe('action runtime', () => {
   it('dispatches runnable action and captures write snapshots', () => {
@@ -52,7 +68,7 @@ describe('app runtime', () => {
     state.activeTab = 'windows'
   }
 
-  function installPlatform(overrides: Omit<Partial<Window['eypcPlatform']>, 'files'> & { files?: Partial<Window['eypcPlatform']['files']> } = {}) {
+  function installPlatform(overrides: TestPlatformOverrides = {}) {
     const state = createInitialState(100)
     const killed: Array<{ pid: number; port: number; force: boolean }> = []
     const copied: string[] = []
@@ -95,11 +111,28 @@ describe('app runtime', () => {
         return { outcome: 'saved' as const }
       }
     }
+    const windowOverrides = overrides.windows
+    const windows = windowOverrides
+      ? {
+          ...windowOverrides,
+          ...(windowOverrides.capabilities
+            ? { capabilities: async () => normalizeTestWindowCapability(await windowOverrides.capabilities!()) }
+            : {}),
+          ...(windowOverrides.list
+            ? {
+                list: async () => {
+                  const result = await windowOverrides.list!()
+                  return { ...result, capability: normalizeTestWindowCapability(result.capability) }
+                }
+              }
+            : {})
+        }
+      : undefined
     const platform = {
       storage: {
         getState: () => state,
         setState: () => true,
-        getMqttArchive: () => ({ version: 1 as const, connectionSnapshots: [], sessions: [], publishTemplates: [] }),
+        getMqttArchive: () => ({ version: 1 as const, connectionSnapshots: [], sessions: [], publishTemplates: [], publishDraftHistory: [] }),
         setMqttArchive: () => true,
         getMqttStorageStatus: () => ({ mode: 'browser-localStorage' as const, sqliteAvailable: false, migratedLegacyArchive: false }),
         getMqttSecrets: () => ({}),
@@ -119,7 +152,6 @@ describe('app runtime', () => {
           return { ok: true, ...request }
         }
       },
-      files,
       clipboard: {
         copyText: async (text: string) => {
           copied.push(text)
@@ -143,6 +175,7 @@ describe('app runtime', () => {
       getEnterPayload: () => null,
       clearEnterPayload: () => undefined,
       ...overrides,
+      ...(windows ? { windows } : {}),
       files: { ...files, ...overrides.files }
     }
     globalThis.window = { eypcPlatform: platform } as unknown as Window & typeof globalThis
@@ -1233,7 +1266,7 @@ describe('app runtime', () => {
 
     expect(runtime.snapshot().state.codex.settings.floatEnabled).toBe(false)
     expect(runtime.dispatch('codex.hotkey.configure').handled).toBe(true)
-    expect(configuredHotkeys).toEqual(['切换 Codex 悬浮球'])
+    expect(configuredHotkeys).toEqual(['直接展开 Codex 卡片'])
     expect(runtime.handleShortcut('Ctrl+Alt+Q', { textInputFocused: true, activeInputRole: 'port-search' })).toBe('codex.float.toggle')
     expect(runtime.snapshot().state.codex.settings.floatEnabled).toBe(true)
     expect(runtime.handleShortcut('Ctrl+Alt+Q', { textInputFocused: true, activeInputRole: 'other' })).toBe('codex.float.toggle')
@@ -1343,7 +1376,8 @@ describe('app runtime', () => {
       { id: 'favorites', enabled: true, sortOrder: 2 },
       { id: 'mqtt', enabled: true, sortOrder: 3 },
       { id: 'ports', enabled: true, sortOrder: 4 },
-      { id: 'codex', enabled: true, sortOrder: 5 }
+      { id: 'codex', enabled: true, sortOrder: 5 },
+      { id: 'windows', enabled: false, sortOrder: 6 }
     ])
     expect(runtime.snapshot().visibleFeatures.map((feature) => ({
       id: feature.id,
@@ -1369,7 +1403,8 @@ describe('app runtime', () => {
           { id: 'favorites', enabled: true, sortOrder: 2 },
           { id: 'mqtt', enabled: true, sortOrder: 3 },
           { id: 'ports', enabled: true, sortOrder: 4 },
-          { id: 'codex', enabled: true, sortOrder: 5 }
+          { id: 'codex', enabled: true, sortOrder: 5 },
+          { id: 'windows', enabled: false, sortOrder: 6 }
         ]
       }
     })
@@ -1380,7 +1415,7 @@ describe('app runtime', () => {
     const storageCalls: string[] = []
     platform.storage.getMqttArchive = () => {
       storageCalls.push('read')
-      return { version: 1, connectionSnapshots: [], sessions: [], publishTemplates: [] }
+      return { version: 1, connectionSnapshots: [], sessions: [], publishTemplates: [], publishDraftHistory: [] }
     }
     platform.storage.setMqttArchive = () => {
       storageCalls.push('write')
@@ -1414,7 +1449,7 @@ describe('app runtime', () => {
   it('manages MQTT configs and keeps message records durable even when syncRecords is disabled', () => {
     const { state, platform } = installPlatform()
     const archiveWrites: unknown[] = []
-    platform.storage.getMqttArchive = () => ({ version: 1, connectionSnapshots: [], sessions: [], publishTemplates: [] })
+    platform.storage.getMqttArchive = () => ({ version: 1, connectionSnapshots: [], sessions: [], publishTemplates: [], publishDraftHistory: [] })
     platform.storage.setMqttArchive = (archive: unknown) => {
       archiveWrites.push(archive)
       return true
@@ -4666,7 +4701,7 @@ describe('app runtime', () => {
     expect(runtime.snapshot().state.favorites.find((item) => item.id === 'two')?.path).toBe('C:\\Other')
   })
 
-  it('keeps a frozen drawer target and never falls back from invalid explicit targets', async () => {
+  it('retargets an open drawer to current focus and never falls back from invalid explicit targets', async () => {
     const opened: string[] = []
     const { state } = installPlatform({
       files: {
@@ -4691,11 +4726,11 @@ describe('app runtime', () => {
     runtime.focusFavorite('two')
     runtime.dispatch('favorites.open')
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(opened).toEqual(['/one.txt'])
+    expect(opened).toEqual(['/two.txt'])
 
     runtime.dispatch('favorites.open', { favoriteId: 'missing' })
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(opened).toEqual(['/one.txt'])
+    expect(opened).toEqual(['/two.txt'])
     expect(runtime.snapshot().message).toBe('没有选中的文件或文件夹')
 
     runtime.dispatch('favorites.drawer.close')
@@ -4707,12 +4742,12 @@ describe('app runtime', () => {
     runtime.focusFavorite('two')
     runtime.dispatch('favorites.open')
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(opened).toEqual(['/one.txt', '/folder/child.txt'])
+    expect(opened).toEqual(['/two.txt', '/two.txt'])
     expect(runtime.snapshot().favoriteDrawerItems.map((item) => item.commandId)).toContain('favorites.copyItems')
 
     runtime.dispatch('favorites.directory.open', { directoryPaths: ['/folder/missing.txt'] })
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(opened).toEqual(['/one.txt', '/folder/child.txt'])
+    expect(opened).toEqual(['/two.txt', '/two.txt'])
     expect(runtime.snapshot().message).toBe('没有选中的实际目录项')
   })
 
@@ -5009,7 +5044,7 @@ describe('app runtime', () => {
     expect(runtime.snapshot().state.activeTab).toBe('ports')
   })
 
-  it('keeps slot-bound non-favorite targets visible and opens the workbench when the cached target is missing', async () => {
+  it('keeps slot-bound non-favorite targets visible and opens the workbench after a complete scan confirms closure', async () => {
     let listCount = 0
     const { state, getShowCount } = installPlatform({
       windows: {
@@ -5039,7 +5074,10 @@ describe('app runtime', () => {
     expect(listCount).toBe(1)
     expect(runtime.snapshot().state.activeTab).toBe('windows')
     expect(runtime.snapshot().focusedWindowId).toBe('target:pinned')
-    expect(runtime.snapshot().message).toContain('固定编辑器')
+    expect(runtime.snapshot().message).toBe('已确认目标窗口已关闭，已清除陈旧引用。')
+    expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(
+      expect.objectContaining({ entry: 'slot', slot: 3, code: 'target-closed', level: 'accepted' })
+    )
     expect(getShowCount()).toBeGreaterThan(0)
   })
 
@@ -5151,7 +5189,7 @@ describe('app runtime', () => {
     expect(runtime.snapshot().windowRows[0]).toMatchObject({ id: 'live:darwin:3:1:1', favorite: false, pinned: false })
   })
 
-  it('deduplicates a stale window target by pid when title locator changes', async () => {
+  it('does not deduplicate a stale target by pid alone when title evidence changes', async () => {
     const { state } = installPlatform({
       windows: {
         capabilities: async () => ({ platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true }),
@@ -5192,9 +5230,10 @@ describe('app runtime', () => {
     await flushWindowActions()
 
     const rows = runtime.snapshot().windowRows
-    expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ id: 'target:t1', unavailable: false, title: 'New Title' })
-    expect(rows[0].live?.nativeRef).toBe('7:0:222')
+    expect(rows).toEqual([
+      expect.objectContaining({ id: 'target:t1', unavailable: true, title: 'Old Title' }),
+      expect.objectContaining({ id: 'live:darwin:7:0:222', unavailable: false, title: 'New Title' })
+    ])
   })
 
   it('keeps darwin minimized live windows because off-Space CG windows are also reported offscreen', async () => {
