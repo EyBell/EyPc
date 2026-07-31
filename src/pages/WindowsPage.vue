@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { AppWindow, Check, ChevronLeft, ChevronRight, Copy, Keyboard, LoaderCircle, Pencil, Pin, Power, RefreshCw, ScrollText, ShieldAlert, SquareArrowOutUpRight, Star, X } from '@lucide/vue'
-import type { AppRuntimeSnapshot, WindowDraft, WindowRow } from '../runtime/appRuntime'
+import { AppWindow, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Folder, FolderOpen, Keyboard, LoaderCircle, Pencil, Pin, Power, RefreshCw, ScrollText, ShieldAlert, SquareArrowOutUpRight, Star, X } from '@lucide/vue'
+import type { WindowRow } from '../domain/windowTree'
+import type { AppRuntimeSnapshot, WindowDraft } from '../runtime/appRuntime'
 
 const props = defineProps<{ snapshot: AppRuntimeSnapshot; showShortcutHints?: boolean }>()
 const emit = defineEmits<{
@@ -50,7 +51,11 @@ const canAlwaysOnTop = computed(() => props.snapshot.windowCapability.canAlwaysO
 const pageTopmostHint = computed(() => canAlwaysOnTop.value
   ? '页面置顶会让实际窗口保持在普通窗口之上；列表置顶只改变 EyPc 内的排序。'
   : 'macOS 只能展开并前置第三方窗口；EyPc 不会伪造永久页面置顶。')
-const multiActions = computed(() => props.snapshot.windowActionsOpen && props.snapshot.windowActionsMode === 'multi')
+const multiActions = computed(() => props.snapshot.windowActionsOpen && props.snapshot.windowActionsContext === 'selection')
+const groupActions = computed(() => props.snapshot.windowActionsOpen && props.snapshot.windowActionsContext === 'file-manager-group')
+const slotActions = computed(() => props.snapshot.windowActionsOpen && props.snapshot.windowActionsContext === 'slot')
+const actionSlot = computed(() => props.snapshot.windowActionSlot)
+const topLevelWindowCount = computed(() => props.snapshot.windowRows.filter((row) => row.treeLevel === 1).length)
 const allActionTargetsPinned = computed(() => {
   const rows = multiActions.value
     ? props.snapshot.windowActionTargets
@@ -63,13 +68,18 @@ const pinActionLabel = computed(() => multiActions.value
   ? (allActionTargetsPinned.value ? '批量取消列表置顶' : '批量列表置顶')
   : (allActionTargetsPinned.value ? '取消列表置顶' : '列表置顶'))
 
-const assignedSlotCount = computed(() => {
-  let count = 0
-  for (let slot = 1; slot <= 10; slot += 1) {
-    if (slotAssigned(slot)) count += 1
-  }
-  return count
+const slotTargets = computed(() => {
+  const platform = props.snapshot.windowCapability.platform
+  const targetsById = new Map(props.snapshot.state.windowTargets.map((target) => [target.id, target]))
+  return new Map(props.snapshot.state.windowSlots.flatMap((slot) => {
+    const targetId = platform === 'darwin' || platform === 'win32'
+      ? slot.targetIdByPlatform[platform]
+      : Object.values(slot.targetIdByPlatform).find(Boolean)
+    const target = targetId ? targetsById.get(targetId) : null
+    return target ? [[slot.slot, target] as const] : []
+  }))
 })
+const assignedSlotCount = computed(() => slotTargets.value.size)
 
 const logBadgeCount = computed(() => {
   if (props.snapshot.windowOperationTraceEnabled) return windowOperationTraces.value.length
@@ -140,6 +150,23 @@ function configureSlot(slot: number) {
   emit('dispatch', 'windows.slot.configure', { slot })
 }
 
+function openSlotActions(slot: number) {
+  exitSlotBinding()
+  emit('dispatch', 'windows.slot.actions.open', { slot })
+}
+
+function activateActionSlot() {
+  if (actionSlot.value == null) return
+  emit('dispatch', 'windows.slot.activate', { slot: actionSlot.value })
+}
+
+function reselectActionSlot() {
+  if (actionSlot.value == null) return
+  const slot = actionSlot.value
+  emit('dispatch', 'windows.actions.close')
+  enterSlotBinding(slot)
+}
+
 function clearSlot(slot: number) {
   emit('dispatch', 'windows.slot.clear', { slot })
 }
@@ -149,22 +176,16 @@ function focusSlot(slot: number) {
 }
 
 function slotTargetLabel(slot: number) {
-  const platform = props.snapshot.windowCapability.platform
-  if (platform !== 'darwin' && platform !== 'win32') {
-    const anyId = Object.values(props.snapshot.state.windowSlots.find((item) => item.slot === slot)?.targetIdByPlatform || {}).find(Boolean)
-    return props.snapshot.state.windowTargets.find((target) => target.id === anyId)?.alias || '未分配'
-  }
-  const targetId = props.snapshot.state.windowSlots.find((item) => item.slot === slot)?.targetIdByPlatform[platform]
-  return props.snapshot.state.windowTargets.find((target) => target.id === targetId)?.alias || '未分配'
+  return slotTargets.value.get(slot)?.alias || '未分配'
 }
 
 function slotAssigned(slot: number) {
-  return slotTargetLabel(slot) !== '未分配'
+  return slotTargets.value.has(slot)
 }
 
 function slotChipTitle(slot: number) {
   if (slotAssigned(slot)) {
-    return `槽 ${slot}：${slotTargetLabel(slot)}（右键打开快捷键设置，Shift+点击清除）`
+    return `槽 ${slot}：${slotTargetLabel(slot)}（右键打开槽位操作，Shift+点击清除）`
   }
   return `槽 ${slot}：未分配（点击选择窗口）`
 }
@@ -223,6 +244,16 @@ function onWindowRowClick(row: WindowRow) {
     return
   }
   focus(row)
+}
+
+function toggleGroup(row: WindowRow) {
+  if (row.kind !== 'file-manager-group') return
+  emit('dispatch', 'windows.tree.toggle', { rowId: row.id, expanded: !row.expanded })
+}
+
+function onWindowRowDoubleClick(row: WindowRow) {
+  if (row.kind === 'file-manager-group' && row.candidate) return
+  activate(row)
 }
 
 function onWindowRowKeydown(event: KeyboardEvent) {
@@ -311,7 +342,6 @@ function operationStageLabel(stage: AppRuntimeSnapshot['windowOperationTraces'][
     native: '宿主汇总',
     visibility: '可见性',
     bridge: '桥接',
-    space: 'Space切换',
     target: '目标引用',
     process: '进程',
     restore: '展开',
@@ -339,65 +369,16 @@ function operationOutcomeLabel(outcome: AppRuntimeSnapshot['windowOperationTrace
 
 function operationDetailLabel(detail: NonNullable<AppRuntimeSnapshot['windowOperationTraces'][number]['steps'][number]['detail']>) {
   const labels: Record<string, string> = {
-    switched: '已切换',
-    'switch-confirmed': '切换已确认',
-    'switch-timeout': '切换确认超时',
-    current: '已在当前桌面',
-    'direct-unique': '直接绑定唯一',
-    'direct-multiple': '直接绑定多个',
-    'reverse-unique': '反查绑定唯一',
-    'session-cache': '会话缓存命中',
-    'ambiguous-spaces': '绑定桌面不唯一',
-    'bad-ref': '引用无效',
-    'no-api': 'SkyLight不可用',
-    'empty-spaces': '未查到Space',
-    'no-space-id': '无SpaceID',
-    'no-display': '无托管显示器',
-    'multiwindow-blocked': '多窗口进程已阻断',
-    'current-space-inferred': '推断当前桌面无需切换',
     'instance-match': '窗口实例精确匹配',
     'instance-mismatch': '窗口实例不一致',
     'identity-unavailable': '实例身份不可用',
     'focus-state-mismatch': '窗口焦点属性未确认',
-    'isolated-space-bridge': '隔离Space桥',
+    'root-family-match': '根窗口族已确认',
     'ax-cg-id-match': 'AX与CG窗口精确匹配',
-    'ax-focused-window': '精确焦点已确认',
+    'ax-focused-root-window': '根窗口焦点已确认',
     error: '调用异常'
   }
   return labels[detail] || detail
-}
-
-function envSnapshotLabel(snapshot: NonNullable<AppRuntimeSnapshot['windowOperationTraces'][number]['envSnapshot']>) {
-  const bindingLabels: Record<string, string> = {
-    bound: '已绑定',
-    unbound: '未绑定',
-    unavailable: '不可用'
-  }
-  const parts = [
-    `桥接=${snapshot.bridgeRevision || 'unknown'}`,
-    `原生实例=${snapshot.nativeInstanceMatches}`,
-    `CG所属窗口=${snapshot.ownerCgWindowCount ?? '?'}`,
-    `AX实例=${snapshot.axInstanceMatches}`,
-    `AX窗口=${snapshot.axWindowCount ?? '?'}`,
-    `Space绑定=${bindingLabels[snapshot.spaceBinding] || snapshot.spaceBinding}`
-  ]
-  if (typeof snapshot.spaceBindingCount === 'number') parts.push(`绑定数=${snapshot.spaceBindingCount}`)
-  if (snapshot.spaceBindingSource) parts.push(`来源=${snapshot.spaceBindingSource}`)
-  if (snapshot.spaceBridge) parts.push(`通道=${snapshot.spaceBridge}`)
-  if (typeof snapshot.managedSpaceCount === 'number') {
-    parts.push(`探针=${snapshot.managedSpaceCount}/${snapshot.directSpaceBindingCount ?? '?'}/${snapshot.reverseSpaceBindingCount ?? '?'}`)
-  }
-  if (typeof snapshot.sameSpace === 'boolean') parts.push(snapshot.sameSpace ? '当前Space=是' : '当前Space=否')
-  return parts.join(' · ')
-}
-
-function operationEnvSnapshots(record: AppRuntimeSnapshot['windowOperationTraces'][number]) {
-  if (record.envSnapshots?.length) return record.envSnapshots
-  return record.envSnapshot ? [{ phase: 'pre-initial' as const, snapshot: record.envSnapshot }] : []
-}
-
-function envSnapshotPhaseLabel(phase: 'pre-initial' | 'pre-retry') {
-  return phase === 'pre-retry' ? '重扫后重试前' : '首次原生调用前'
 }
 
 const operationCodeMessages: Record<string, string> = {
@@ -413,10 +394,6 @@ const operationCodeMessages: Record<string, string> = {
   'refresh-superseded': '窗口实时重扫被新的请求替代，请重试。',
   'refresh-incomplete': '本次只读取到局部窗口，已保留缓存。',
   'ambiguous-target': '匹配到多个候选窗口，需要明确选择。',
-  'space-unbound': '无法唯一绑定目标窗口所在桌面。',
-  'space-unbound-multiwindow': '目标应用有多个窗口且无法绑定目标桌面。',
-  'space-ambiguous': '目标窗口同时绑定到多个非当前桌面。',
-  'space-switch-timeout': '目标桌面切换未在时限内确认。',
   'rebind-required': '原窗口实例已失效，请明确选择同应用候选；标题仅供辨认。',
   'instance-mismatch': '窗口实例与保存目标不一致，请重新确认。',
   'identity-unavailable': '无法建立稳定的系统窗口实例身份。',
@@ -453,9 +430,6 @@ function operationTracePlainText(record: AppRuntimeSnapshot['windowOperationTrac
     record.code,
     steps
   ]
-  for (const item of operationEnvSnapshots(record)) {
-    parts.push(`环境快照(${envSnapshotPhaseLabel(item.phase)})：${envSnapshotLabel(item.snapshot)}`)
-  }
   return parts.join(' | ')
 }
 
@@ -479,6 +453,10 @@ async function copyOperationTracePlainText(record: AppRuntimeSnapshot['windowOpe
 }
 
 function rowStatus(row: WindowRow) {
+  if (row.kind === 'file-manager-group') {
+    if (row.unavailable) return '当前无可用窗口'
+    return `${row.childCount} 个窗口`
+  }
   if (row.candidate) {
     if (row.cached) return '缓存候选 · 待确认'
     if (row.live?.focused) return '前台 · 待确认'
@@ -510,6 +488,7 @@ function rowIdentityLabel(row: WindowRow) {
   if (row.title && row.title !== row.displayName) parts.push(row.title)
   if (row.appName && row.appName !== row.displayName && row.appName !== row.title) parts.push(row.appName)
   if (row.live?.platform === 'win32' && row.live.nativeRef) parts.push(`HWND ${row.live.nativeRef}`)
+  if (row.kind === 'file-manager-group') parts.push(`${row.childCount} 个独立主窗口`)
   return parts.join(' · ') || '窗口'
 }
 
@@ -607,7 +586,7 @@ onBeforeUnmount(() => {
       <template v-else-if="showCandidateHint">正在为「{{ candidateTargetLabel }}」重新选择窗口。<template v-if="candidateTargetLastTitle">上次标题「{{ candidateTargetLastTitle }}」；</template>原窗口实例已失效，下方标题与状态仅供人工辨认。按 Enter 确认，或按 Escape 取消并返回原目标。</template>
       <template v-else-if="showUnloadHint">列表未加载。手动加载后写入会话缓存；全局槽位会先静默解析，缓存未命中时自动重扫一次，仅失败才展开本页。</template>
       <template v-else-if="showEmptyHint">没有匹配窗口。请调整搜索词，或重新加载列表。</template>
-      <template v-else>{{ snapshot.windowRows.length }} 个可见项目 · 列表置顶优先 · 按应用排序 · {{ snapshot.windowCapability.canList ? '按需扫描' : '等待授权' }}</template>
+      <template v-else>{{ topLevelWindowCount }} 个主项目 · {{ snapshot.windowRows.length }} 个可见树节点 · 内部页签不单列 · {{ snapshot.windowCapability.canList ? '按需扫描' : '等待授权' }}</template>
     </p>
 
     <div class="windows-body">
@@ -648,7 +627,7 @@ onBeforeUnmount(() => {
               data-quick-jump-target
               :data-quick-jump-label="`窗口槽 ${slot}`"
               @pointerdown="onSlotChipPointerDown(slot, $event)"
-              @contextmenu.prevent="configureSlot(slot)"
+              @contextmenu.prevent="openSlotActions(slot)"
             >
               <kbd>{{ slot }}</kbd>
               <span>{{ slotTargetLabel(slot) }}</span>
@@ -671,7 +650,7 @@ onBeforeUnmount(() => {
             id="window-list"
             data-role="window-list"
             class="window-list"
-            role="listbox"
+            role="tree"
             tabindex="0"
             :aria-multiselectable="showCandidateHint ? undefined : true"
             :aria-describedby="showCandidateHint ? 'window-status-band' : undefined"
@@ -683,20 +662,41 @@ onBeforeUnmount(() => {
               :id="rowDomId(row.id)"
               :key="row.id"
               class="window-row"
-              :class="{ active: row.focused, selected: row.selected, favorite: row.favorite, pinned: row.pinned, unavailable: row.unavailable, cached: row.cached, candidate: row.candidate, binding: slotPickerSlot != null, 'binding-assigned': bindingSlotAssignedRowId === row.id }"
-              role="option"
-              :aria-selected="row.selected || row.focused"
+              :class="{ active: row.focused, selected: row.selected, favorite: row.favorite, pinned: row.pinned, unavailable: row.unavailable, cached: row.cached, candidate: row.candidate, binding: slotPickerSlot != null, 'binding-assigned': bindingSlotAssignedRowId === row.id, 'file-manager-group': row.kind === 'file-manager-group', 'tree-level-2': row.treeLevel === 2 }"
+              role="treeitem"
+              :aria-level="row.treeLevel"
+              :aria-expanded="row.expandable ? row.expanded : undefined"
+              :aria-disabled="row.kind === 'file-manager-group' && row.candidate ? true : undefined"
+              :aria-selected="row.kind === 'window' && !showCandidateHint ? row.selected : undefined"
               :data-operation-tooltip="rowIdentityLabel(row)"
-              :data-operation-description="row.candidate ? '单击聚焦；双击或按 Enter 确认换绑；按 Escape 取消' : '单击聚焦；双击展开并前置；右键打开操作'"
+              :data-operation-description="row.kind === 'file-manager-group' ? '单击聚焦；双击或 Enter 激活最近子窗口；左右方向键展开或收起；右键打开操作' : row.candidate ? '单击聚焦；双击或按 Enter 确认换绑；按 Escape 取消' : '单击聚焦；双击激活整个主窗口；右键打开操作'"
               :data-quick-jump-target="true"
               :data-quick-jump-label="`${row.displayName} ${row.appName}`"
               :data-quick-jump-search="`${row.title} ${row.appName}`"
               @click="onWindowRowClick(row)"
-              @dblclick="activate(row)"
+              @dblclick="onWindowRowDoubleClick(row)"
               @contextmenu.prevent="openActions(row)"
             >
+              <button
+                v-if="row.kind === 'file-manager-group'"
+                type="button"
+                class="window-tree-toggle"
+                tabindex="-1"
+                :disabled="row.candidate"
+                :aria-label="row.expanded ? `收起 ${row.displayName}` : `展开 ${row.displayName}`"
+                :aria-expanded="row.expanded"
+                aria-controls="window-list"
+                @click.stop="toggleGroup(row)"
+                @dblclick.stop
+              >
+                <ChevronDown v-if="row.expanded" :size="14" aria-hidden="true" />
+                <ChevronRight v-else :size="14" aria-hidden="true" />
+              </button>
+              <span v-else class="window-tree-spacer" aria-hidden="true"></span>
               <span class="window-row-leading" aria-hidden="true">
                 <Check v-if="bindingSlotAssignedRowId === row.id" :size="15" class="binding-checkmark" />
+                <FolderOpen v-else-if="row.kind === 'file-manager-group' && row.expanded" :size="15" />
+                <Folder v-else-if="row.kind === 'file-manager-group'" :size="15" />
                 <AppWindow v-else-if="row.candidate" :size="15" />
                 <Star v-else-if="row.favorite" :size="15" fill="currentColor" />
                 <AppWindow v-else :size="15" />
@@ -723,12 +723,12 @@ onBeforeUnmount(() => {
         <aside v-if="snapshot.windowActionsOpen && !showCandidateHint" data-role="window-actions" class="window-actions-panel" aria-label="窗口操作面板">
           <header>
             <div>
-              <p class="eyebrow">{{ multiActions ? `已选 ${snapshot.windowActionTargets.length} 个窗口` : '当前窗口' }}</p>
+              <p class="eyebrow">{{ slotActions ? `稳定槽 ${actionSlot || '—'}` : groupActions ? '文件管理器父节点' : multiActions ? `已选 ${snapshot.windowActionTargets.length} 个窗口` : '当前主窗口' }}</p>
               <h3
                 class="window-actions-title"
                 :title="multiActions ? undefined : (snapshot.windowActionTarget ? rowIdentityLabel(snapshot.windowActionTarget) : undefined)"
                 :data-operation-tooltip="multiActions ? undefined : (snapshot.windowActionTarget ? rowIdentityLabel(snapshot.windowActionTarget) : undefined)"
-              >{{ multiActions ? '批量操作' : (snapshot.windowActionTarget?.displayName || '未选择') }}</h3>
+              >{{ slotActions && actionSlot ? slotTargetLabel(actionSlot) : multiActions ? '批量操作' : (snapshot.windowActionTarget?.displayName || '未选择') }}</h3>
               <p
                 class="window-actions-subtitle"
                 :title="multiActions
@@ -737,7 +737,9 @@ onBeforeUnmount(() => {
                 :data-operation-tooltip="multiActions
                   ? actionTargetsFullLabel(snapshot.windowActionTargets)
                   : (snapshot.windowActionTarget ? rowIdentityLabel(snapshot.windowActionTarget) : undefined)"
-              >{{ multiActions
+              >{{ slotActions
+                ? '激活、重新选择、清除或配置该槽位'
+                : multiActions
                 ? actionTargetsShortLabel(snapshot.windowActionTargets)
                 : (snapshot.windowActionTarget?.appName || '选择列表项后可操作') }}</p>
             </div>
@@ -745,33 +747,39 @@ onBeforeUnmount(() => {
           </header>
 
           <div class="window-primary-actions">
-            <button v-if="!multiActions" type="button" :disabled="!snapshot.windowActionTarget" @click="activate(snapshot.windowActionTarget || undefined)"><SquareArrowOutUpRight :size="15" />展开并前置</button>
+            <button v-if="slotActions" type="button" :disabled="!actionSlot || !slotAssigned(actionSlot || 0)" @click="activateActionSlot"><SquareArrowOutUpRight :size="15" />激活槽位</button>
+            <button v-if="slotActions" type="button" :disabled="!actionSlot" @click="reselectActionSlot"><AppWindow :size="15" />重新选择目标</button>
+            <button v-if="slotActions" type="button" :disabled="!actionSlot || !slotAssigned(actionSlot || 0)" @click="actionSlot && clearSlot(actionSlot)"><X :size="15" />清除槽位</button>
+            <button v-if="slotActions" type="button" :disabled="!actionSlot" @click="actionSlot && configureSlot(actionSlot)"><Keyboard :size="15" />打开 uTools 快捷键设置</button>
+            <button v-if="!multiActions && !slotActions" type="button" :disabled="!snapshot.windowActionTarget" @click="activate(snapshot.windowActionTarget || undefined)"><SquareArrowOutUpRight :size="15" />{{ groupActions ? '激活最近子窗口' : '展开并前置' }}</button>
+            <button v-if="groupActions" type="button" :disabled="!snapshot.windowActionTarget" @click="snapshot.windowActionTarget && toggleGroup(snapshot.windowActionTarget)"><ChevronDown v-if="snapshot.windowActionTarget?.expanded" :size="15" /><ChevronRight v-else :size="15" />{{ snapshot.windowActionTarget?.expanded ? '收起子窗口' : '展开子窗口' }}</button>
             <button
-              v-if="!multiActions"
+              v-if="!multiActions && !groupActions && !slotActions"
               type="button"
               class="window-page-topmost"
               :disabled="!snapshot.windowActionTarget || !canAlwaysOnTop"
               :title="canAlwaysOnTop ? '将实际窗口保持在其他普通窗口上方' : 'macOS 只能展开并前置，不能将第三方窗口保持在最上层'"
               @click="alwaysOnTop(snapshot.windowActionTarget || undefined)"
             ><Pin :size="15" />页面置顶</button>
-            <button type="button" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="toggleFavorite(multiActions ? undefined : (snapshot.windowActionTarget || undefined))"><Star :size="15" />{{ multiActions ? '批量收藏' : (snapshot.windowActionTarget?.favorite ? '取消收藏' : '收藏') }}</button>
+            <button v-if="!slotActions" type="button" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="toggleFavorite(multiActions ? undefined : (snapshot.windowActionTarget || undefined))"><Star :size="15" />{{ multiActions ? '批量收藏' : (snapshot.windowActionTarget?.favorite ? '取消收藏' : '收藏') }}</button>
             <button
+              v-if="!slotActions"
               type="button"
               :class="{ pinned: allActionTargetsPinned }"
               :aria-pressed="allActionTargetsPinned"
               :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget"
               @click="togglePin(multiActions ? undefined : (snapshot.windowActionTarget || undefined))"
             ><Pin :size="15" />{{ pinActionLabel }}</button>
-            <button type="button" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="closeWindows(false)"><Power :size="15" />关闭窗口</button>
-            <button type="button" class="danger" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="closeWindows(true)"><Power :size="15" />强制关闭</button>
-            <button v-if="!multiActions" type="button" :disabled="!snapshot.windowActionTarget" @click="snapshot.windowActionTarget && edit(snapshot.windowActionTarget, 'rename')"><Pencil :size="15" />编辑别名</button>
-            <button v-if="!multiActions" type="button" :disabled="!snapshot.windowActionTarget" @click="snapshot.windowActionTarget && edit(snapshot.windowActionTarget, 'edit')"><Pencil :size="15" />完整编辑</button>
-            <button v-if="!multiActions && snapshot.windowActionTarget?.live?.platform === 'win32'" type="button" @click="$emit('dispatch', 'windows.hwnd.copy', { rowId: snapshot.windowActionTarget?.id })"><Copy :size="15" />复制 HWND</button>
-            <kbd v-if="commandLabel('windows.close', 'c-del')" class="window-actions-chord">{{ commandLabel('windows.close', 'c-del') }}</kbd>
+            <button v-if="!groupActions && !slotActions" type="button" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="closeWindows(false)"><Power :size="15" />关闭窗口</button>
+            <button v-if="!groupActions && !slotActions" type="button" class="danger" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="closeWindows(true)"><Power :size="15" />强制关闭</button>
+            <button v-if="!multiActions && !slotActions" type="button" :disabled="!snapshot.windowActionTarget" @click="snapshot.windowActionTarget && edit(snapshot.windowActionTarget, 'rename')"><Pencil :size="15" />编辑别名</button>
+            <button v-if="!multiActions && !groupActions && !slotActions" type="button" :disabled="!snapshot.windowActionTarget" @click="snapshot.windowActionTarget && edit(snapshot.windowActionTarget, 'edit')"><Pencil :size="15" />完整编辑</button>
+            <button v-if="!multiActions && !groupActions && !slotActions && snapshot.windowActionTarget?.live?.platform === 'win32'" type="button" @click="$emit('dispatch', 'windows.hwnd.copy', { rowId: snapshot.windowActionTarget?.id })"><Copy :size="15" />复制 HWND</button>
+            <kbd v-if="!groupActions && !slotActions && commandLabel('windows.close', 'c-del')" class="window-actions-chord">{{ commandLabel('windows.close', 'c-del') }}</kbd>
           </div>
-          <p v-if="!multiActions" class="window-topmost-note" role="status">{{ pageTopmostHint }}</p>
+          <p v-if="!multiActions && !groupActions && !slotActions" class="window-topmost-note" role="status">{{ pageTopmostHint }}</p>
 
-          <section v-if="!multiActions" class="window-slot-section" aria-label="稳定快捷槽分配">
+          <section v-if="!multiActions && !slotActions" class="window-slot-section" aria-label="稳定快捷槽分配">
             <div class="window-slot-heading">
               <div><Keyboard :size="15" /><strong>分配稳定槽</strong></div>
               <small>Ctrl+1…0 · 改别名不改 uTools 绑定</small>
