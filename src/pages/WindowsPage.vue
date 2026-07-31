@@ -53,6 +53,7 @@ const pageTopmostHint = computed(() => canAlwaysOnTop.value
   : 'macOS 只能展开并前置第三方窗口；EyPc 不会伪造永久页面置顶。')
 const multiActions = computed(() => props.snapshot.windowActionsOpen && props.snapshot.windowActionsContext === 'selection')
 const groupActions = computed(() => props.snapshot.windowActionsOpen && props.snapshot.windowActionsContext === 'file-manager-group')
+const childActions = computed(() => props.snapshot.windowActionsOpen && props.snapshot.windowActionsContext === 'child-window')
 const slotActions = computed(() => props.snapshot.windowActionsOpen && props.snapshot.windowActionsContext === 'slot')
 const actionSlot = computed(() => props.snapshot.windowActionSlot)
 const topLevelWindowCount = computed(() => props.snapshot.windowRows.filter((row) => row.treeLevel === 1).length)
@@ -226,6 +227,7 @@ function exitSlotBinding() {
 function assignPickerRow(row: WindowRow) {
   const slot = slotPickerSlot.value
   if (slot == null) return
+  if (row.kind === 'child-window') return
   if (row.slotNumbers.includes(slot)) {
     exitSlotBinding()
     return
@@ -247,7 +249,7 @@ function onWindowRowClick(row: WindowRow) {
 }
 
 function toggleGroup(row: WindowRow) {
-  if (row.kind !== 'file-manager-group') return
+  if (!row.expandable) return
   emit('dispatch', 'windows.tree.toggle', { rowId: row.id, expanded: !row.expanded })
 }
 
@@ -457,6 +459,12 @@ function rowStatus(row: WindowRow) {
     if (row.unavailable) return '当前无可用窗口'
     return `${row.childCount} 个窗口`
   }
+  if (row.kind === 'child-window') {
+    if (row.cached) return '缓存子窗口'
+    if (row.live?.focused) return '当前子窗口'
+    if (row.live?.minimized) return '已最小化'
+    return row.live?.canClose ? '可精确打开/关闭' : '可精确打开'
+  }
   if (row.candidate) {
     if (row.cached) return '缓存候选 · 待确认'
     if (row.live?.focused) return '前台 · 待确认'
@@ -489,6 +497,7 @@ function rowIdentityLabel(row: WindowRow) {
   if (row.appName && row.appName !== row.displayName && row.appName !== row.title) parts.push(row.appName)
   if (row.live?.platform === 'win32' && row.live.nativeRef) parts.push(`HWND ${row.live.nativeRef}`)
   if (row.kind === 'file-manager-group') parts.push(`${row.childCount} 个独立主窗口`)
+  if (row.kind === 'child-window') parts.push('真实子窗口')
   return parts.join(' · ') || '窗口'
 }
 
@@ -572,7 +581,7 @@ onBeforeUnmount(() => {
     <section v-if="showCapabilityNotice" class="window-capability-notice" role="status">
       <ShieldAlert :size="20" />
       <div>
-        <strong>{{ needsPermission ? '需要 macOS 辅助功能权限' : '当前宿主不支持窗口跳转' }}</strong>
+        <strong>{{ needsPermission ? '需要 macOS 窗口权限' : '当前宿主不支持窗口跳转' }}</strong>
         <p>{{ snapshot.windowCapability.reason || '窗口能力会在支持的 uTools preload 中可用。' }}</p>
       </div>
       <div class="window-notice-actions">
@@ -586,7 +595,7 @@ onBeforeUnmount(() => {
       <template v-else-if="showCandidateHint">正在为「{{ candidateTargetLabel }}」重新选择窗口。<template v-if="candidateTargetLastTitle">上次标题「{{ candidateTargetLastTitle }}」；</template>原窗口实例已失效，下方标题与状态仅供人工辨认。按 Enter 确认，或按 Escape 取消并返回原目标。</template>
       <template v-else-if="showUnloadHint">列表未加载。手动加载后写入会话缓存；全局槽位会先静默解析，缓存未命中时自动重扫一次，仅失败才展开本页。</template>
       <template v-else-if="showEmptyHint">没有匹配窗口。请调整搜索词，或重新加载列表。</template>
-      <template v-else>{{ topLevelWindowCount }} 个主项目 · {{ snapshot.windowRows.length }} 个可见树节点 · 内部页签不单列 · {{ snapshot.windowCapability.canList ? '按需扫描' : '等待授权' }}</template>
+      <template v-else>{{ topLevelWindowCount }} 个主项目 · {{ snapshot.windowRows.length }} 个可见树节点 · 仅展示可验证的用户窗口 · {{ snapshot.windowCapability.canList ? '按需扫描' : '等待授权' }}</template>
     </p>
 
     <div class="windows-body">
@@ -669,7 +678,7 @@ onBeforeUnmount(() => {
               :aria-disabled="row.kind === 'file-manager-group' && row.candidate ? true : undefined"
               :aria-selected="row.kind === 'window' && !showCandidateHint ? row.selected : undefined"
               :data-operation-tooltip="rowIdentityLabel(row)"
-              :data-operation-description="row.kind === 'file-manager-group' ? '单击聚焦；双击或 Enter 激活最近子窗口；左右方向键展开或收起；右键打开操作' : row.candidate ? '单击聚焦；双击或按 Enter 确认换绑；按 Escape 取消' : '单击聚焦；双击激活整个主窗口；右键打开操作'"
+              :data-operation-description="row.kind === 'file-manager-group' ? '单击聚焦；双击或 Enter 激活最近主窗口；左右方向键展开或收起；右键打开操作' : row.kind === 'child-window' ? '单击聚焦；双击或 Enter 精确激活该子窗口；右键打开精确操作' : row.candidate ? '单击聚焦；双击或按 Enter 确认换绑；按 Escape 取消' : '单击聚焦；双击或 Enter 激活主窗口当前子窗口；左右方向键展开或收起；右键打开操作'"
               :data-quick-jump-target="true"
               :data-quick-jump-label="`${row.displayName} ${row.appName}`"
               :data-quick-jump-search="`${row.title} ${row.appName}`"
@@ -678,7 +687,7 @@ onBeforeUnmount(() => {
               @contextmenu.prevent="openActions(row)"
             >
               <button
-                v-if="row.kind === 'file-manager-group'"
+                v-if="row.expandable"
                 type="button"
                 class="window-tree-toggle"
                 tabindex="-1"
@@ -723,7 +732,7 @@ onBeforeUnmount(() => {
         <aside v-if="snapshot.windowActionsOpen && !showCandidateHint" data-role="window-actions" class="window-actions-panel" aria-label="窗口操作面板">
           <header>
             <div>
-              <p class="eyebrow">{{ slotActions ? `稳定槽 ${actionSlot || '—'}` : groupActions ? '文件管理器父节点' : multiActions ? `已选 ${snapshot.windowActionTargets.length} 个窗口` : '当前主窗口' }}</p>
+              <p class="eyebrow">{{ slotActions ? `稳定槽 ${actionSlot || '—'}` : groupActions ? '文件管理器父节点' : childActions ? '指定子窗口' : multiActions ? `已选 ${snapshot.windowActionTargets.length} 个窗口` : '当前主窗口' }}</p>
               <h3
                 class="window-actions-title"
                 :title="multiActions ? undefined : (snapshot.windowActionTarget ? rowIdentityLabel(snapshot.windowActionTarget) : undefined)"
@@ -751,35 +760,35 @@ onBeforeUnmount(() => {
             <button v-if="slotActions" type="button" :disabled="!actionSlot" @click="reselectActionSlot"><AppWindow :size="15" />重新选择目标</button>
             <button v-if="slotActions" type="button" :disabled="!actionSlot || !slotAssigned(actionSlot || 0)" @click="actionSlot && clearSlot(actionSlot)"><X :size="15" />清除槽位</button>
             <button v-if="slotActions" type="button" :disabled="!actionSlot" @click="actionSlot && configureSlot(actionSlot)"><Keyboard :size="15" />打开 uTools 快捷键设置</button>
-            <button v-if="!multiActions && !slotActions" type="button" :disabled="!snapshot.windowActionTarget" @click="activate(snapshot.windowActionTarget || undefined)"><SquareArrowOutUpRight :size="15" />{{ groupActions ? '激活最近子窗口' : '展开并前置' }}</button>
+            <button v-if="!multiActions && !slotActions" type="button" :disabled="!snapshot.windowActionTarget" @click="activate(snapshot.windowActionTarget || undefined)"><SquareArrowOutUpRight :size="15" />{{ groupActions ? '激活最近主窗口' : childActions ? '精确打开子窗口' : '打开当前子窗口' }}</button>
             <button v-if="groupActions" type="button" :disabled="!snapshot.windowActionTarget" @click="snapshot.windowActionTarget && toggleGroup(snapshot.windowActionTarget)"><ChevronDown v-if="snapshot.windowActionTarget?.expanded" :size="15" /><ChevronRight v-else :size="15" />{{ snapshot.windowActionTarget?.expanded ? '收起子窗口' : '展开子窗口' }}</button>
             <button
-              v-if="!multiActions && !groupActions && !slotActions"
+              v-if="!multiActions && !groupActions && !childActions && !slotActions"
               type="button"
               class="window-page-topmost"
               :disabled="!snapshot.windowActionTarget || !canAlwaysOnTop"
               :title="canAlwaysOnTop ? '将实际窗口保持在其他普通窗口上方' : 'macOS 只能展开并前置，不能将第三方窗口保持在最上层'"
               @click="alwaysOnTop(snapshot.windowActionTarget || undefined)"
             ><Pin :size="15" />页面置顶</button>
-            <button v-if="!slotActions" type="button" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="toggleFavorite(multiActions ? undefined : (snapshot.windowActionTarget || undefined))"><Star :size="15" />{{ multiActions ? '批量收藏' : (snapshot.windowActionTarget?.favorite ? '取消收藏' : '收藏') }}</button>
+            <button v-if="!slotActions && !childActions" type="button" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="toggleFavorite(multiActions ? undefined : (snapshot.windowActionTarget || undefined))"><Star :size="15" />{{ multiActions ? '批量收藏' : (snapshot.windowActionTarget?.favorite ? '取消收藏' : '收藏') }}</button>
             <button
-              v-if="!slotActions"
+              v-if="!slotActions && !childActions"
               type="button"
               :class="{ pinned: allActionTargetsPinned }"
               :aria-pressed="allActionTargetsPinned"
               :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget"
               @click="togglePin(multiActions ? undefined : (snapshot.windowActionTarget || undefined))"
             ><Pin :size="15" />{{ pinActionLabel }}</button>
-            <button v-if="!groupActions && !slotActions" type="button" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="closeWindows(false)"><Power :size="15" />关闭窗口</button>
-            <button v-if="!groupActions && !slotActions" type="button" class="danger" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="closeWindows(true)"><Power :size="15" />强制关闭</button>
-            <button v-if="!multiActions && !slotActions" type="button" :disabled="!snapshot.windowActionTarget" @click="snapshot.windowActionTarget && edit(snapshot.windowActionTarget, 'rename')"><Pencil :size="15" />编辑别名</button>
-            <button v-if="!multiActions && !groupActions && !slotActions" type="button" :disabled="!snapshot.windowActionTarget" @click="snapshot.windowActionTarget && edit(snapshot.windowActionTarget, 'edit')"><Pencil :size="15" />完整编辑</button>
+            <button v-if="!groupActions && !slotActions" type="button" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget || (childActions && snapshot.windowActionTarget.live?.canClose !== true)" @click="closeWindows(false)"><Power :size="15" />{{ childActions ? '精确关闭子窗口' : '关闭窗口' }}</button>
+            <button v-if="!groupActions && !childActions && !slotActions" type="button" class="danger" :disabled="multiActions ? !snapshot.windowActionTargets.length : !snapshot.windowActionTarget" @click="closeWindows(true)"><Power :size="15" />强制关闭</button>
+            <button v-if="!multiActions && !childActions && !slotActions" type="button" :disabled="!snapshot.windowActionTarget" @click="snapshot.windowActionTarget && edit(snapshot.windowActionTarget, 'rename')"><Pencil :size="15" />编辑别名</button>
+            <button v-if="!multiActions && !groupActions && !childActions && !slotActions" type="button" :disabled="!snapshot.windowActionTarget" @click="snapshot.windowActionTarget && edit(snapshot.windowActionTarget, 'edit')"><Pencil :size="15" />完整编辑</button>
             <button v-if="!multiActions && !groupActions && !slotActions && snapshot.windowActionTarget?.live?.platform === 'win32'" type="button" @click="$emit('dispatch', 'windows.hwnd.copy', { rowId: snapshot.windowActionTarget?.id })"><Copy :size="15" />复制 HWND</button>
             <kbd v-if="!groupActions && !slotActions && commandLabel('windows.close', 'c-del')" class="window-actions-chord">{{ commandLabel('windows.close', 'c-del') }}</kbd>
           </div>
-          <p v-if="!multiActions && !groupActions && !slotActions" class="window-topmost-note" role="status">{{ pageTopmostHint }}</p>
+          <p v-if="!multiActions && !groupActions && !childActions && !slotActions" class="window-topmost-note" role="status">{{ pageTopmostHint }}</p>
 
-          <section v-if="!multiActions && !slotActions" class="window-slot-section" aria-label="稳定快捷槽分配">
+          <section v-if="!multiActions && !childActions && !slotActions" class="window-slot-section" aria-label="稳定快捷槽分配">
             <div class="window-slot-heading">
               <div><Keyboard :size="15" /><strong>分配稳定槽</strong></div>
               <small>Ctrl+1…0 · 改别名不改 uTools 绑定</small>
