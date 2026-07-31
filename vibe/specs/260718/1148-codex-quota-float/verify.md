@@ -33,6 +33,7 @@ Date: 2026-07-30
 | RAW-132 静态收口 | `git diff --check` pass；canonical/public Codex 段与顶层计数定义分别精确一致；changed Markdown `audit_code_links.py` pass；诊断公开形状仅含五个数值字段，Bridge 合同已写 child raw ID 泄漏的负向断言但未执行 |
 | RAW-133 统一诊断投影 | Domain 单一 key/规范化/比较；Controller generation 后整包接纳与 diagnostics-only 单通知；Runtime 紧凑摘要、focus 明细、live-region 隔离及全页原生帮助按钮已写 |
 | RAW-133 合同状态 | 生产父解析器完整优先级表、malformed 诊断规范化、变化单通知、相同/旧代次零通知与 UI 源码合同已写；依项目规则未执行测试、typecheck、build、preload 语法或真实宿主 |
+| 2026-07-31 TypeScript 门禁 | 用户执行 `vue-tsc --noEmit` 暴露反向 generation 屏障夹具的异步 release 回调被收窄为 `never`；改为可调用门闩加独立 pending 信号后，`pnpm run typecheck` 通过。未执行 Vitest、build、preload 语法或真实宿主 |
 | RAW-133 静态收口 | `git diff --check` pass；canonical/public preload 全文件精确一致；诊断 key/counter normalizer 在 `src/` 各只有一个定义；CodexPage 无 `span role=button`/手写 tabindex 提示；changed Markdown `audit_code_links.py` pass |
 | 设计偏好收口 | `DesignTaskCloseout` 生成 `eligible-for-root-review` 的 W29 canary candidate；`writes_performed=false`，未写偏好缓存、传播状态或 Hook |
 
@@ -148,7 +149,7 @@ Date: 2026-07-30
 
 ## Not Checked
 
-- 依项目验证门禁，本轮未执行 RAW-131–133 新增/改写测试、`pnpm run typecheck`、`pnpm run build`、preload `node --check` 或真实宿主加载；历史通过数不能替代本轮运行验证。
+- 2026-07-31 的 `pnpm run typecheck` 已通过；RAW-131–133 新增/改写 Vitest 合同、`pnpm run build`、preload `node --check` 与真实宿主加载仍未执行。历史通过数与本次类型门禁都不能替代状态转换运行验收。
 - 未操作真实 Codex 任务、未归档/移除项目、未启停进程。
 - 真实 uTools 宿主需正常重载后验收中断恢复 completed-unread、普通完成、任务切换和角标同步。
 
