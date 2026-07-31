@@ -47,5 +47,8 @@ Tool: codex
 | RAW-133 紧凑诊断、live-region 隔离与原生帮助按钮统一 | complete / unverified |
 | RAW-133 镜像、空白、唯一权威与文档链接静态检查 | complete |
 | RAW-133 父聚合真值表与诊断通知合同执行 | pending / project-rule-blocked |
+| RAW-134 动态小时设置、默认/规范化与配置页输入 | complete / unverified |
+| RAW-134 原子包即时重投影、时间边界与任务循环合同 | complete / unverified |
+| RAW-134 Domain/Controller/UI 合同执行 | pending / project-rule-blocked |
 | 反向 generation 屏障夹具 TS2349 修复与 typecheck | complete / typecheck-verified |
 | 真实 uTools 重载与状态转换验收 | pending / user-owned |

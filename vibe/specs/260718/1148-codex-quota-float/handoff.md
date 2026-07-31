@@ -1,7 +1,7 @@
 # Codex 任务状态交接
 
 Tool: codex
-Date: 2026-07-30
+Date: 2026-07-31
 State: `implemented-unverified`
 
 ## 当前结论
@@ -27,10 +27,11 @@ State: `implemented-unverified`
 - RAW-131 已完成 stale-active reader positive-epoch 屏障、synthetic idle 去除、任意 exact active patch（含 active→active waiting）开新 epoch、missing-row mapping/verified-archive 清理、Side Chat 初始与最终 active-exit 子 Turn/重放、整份 delta + full snapshot generation race 与 stopped archive 七项实现，并补入闭合矩阵合同；当前仍须执行合同和真实宿主验收，不能仅凭静态实现宣称 accepted。
 - RAW-132 在不放宽上述七项门禁的前提下，把 main/Side Chat 父任务聚合收敛为纯解析器；单个 child 的 terminal 读回在其它分支仍 exact active 时只延后该分支并保持父任务 `active/inProgress`。五项会话期匿名裁决计数通过同一 generation 屏障进入设置页“状态裁决”，不含任务身份或内容；Domain/Bridge/Controller 反向合同已写但未执行。
 - RAW-133 把诊断 key、规范化和相等判断收敛到 Domain，Controller 在既有 source/generation 屏障后接纳整包且 diagnostics-only 变化只通知一次。运行页常驻值压缩为“保护合计 · 周期”，明细只在原生帮助按钮 hover/focus 时展示，内部计数不进入 `aria-live`；同页旧 `span role=button` 已统一清理。父聚合表直接执行生产纯解析器，避免测试复制状态算法；合同未执行。
+- RAW-134 把悬浮卡 `动态` Tab 的固定 6 小时过滤改为任务配置页可编辑的 `dynamicTaskWindowHours`，默认 24 小时、范围 1–8760。Domain 原子包、进行中角标、前后任务循环与下一时间边界共用该值；Controller 在设置保存后立即重投影，不等待 Provider 校对。测试合同已写但未执行。
 
 ## 验证
 
-详细命令、七项修复、闭合矩阵与 RAW-132/133 回归安全合同见 [verify.md](verify.md#L1)。静态检查已通过空白、双 preload 全文件镜像、诊断 schema 唯一性、伪按钮残留和文档链接审计；2026-07-31 修复异步 release 夹具 TS2349 后，`pnpm run typecheck` 通过。状态链专项 `115 / 115`、状态矩阵 `168 / 168`、完整 Codex 文件组 `189 / 189`、完整仓库 `633 / 633` 仅是 RAW-129 的历史基线；RAW-131–133 新增或改写的状态矩阵、父聚合、匿名诊断、变更通知与可访问性合同仍未执行。当前最终状态为 `implemented / 运行验收未完成`。
+详细命令、七项修复、闭合矩阵与 RAW-132–134 增量合同见 [verify.md](verify.md#L1)。静态检查已通过空白、双 preload 全文件镜像、诊断 schema 唯一性、伪按钮残留和文档链接审计；2026-07-31 修复异步 release 夹具 TS2349 后，`pnpm run typecheck` 通过。状态链专项 `115 / 115`、状态矩阵 `168 / 168`、完整 Codex 文件组 `189 / 189`、完整仓库 `633 / 633` 仅是 RAW-129 的历史基线；RAW-131–134 新增或改写的状态矩阵、父聚合、匿名诊断、变更通知、可访问性和动态窗口合同仍未执行。当前最终状态为 `implemented / 运行验收未完成`。
 
 ## 真实宿主验收
 
