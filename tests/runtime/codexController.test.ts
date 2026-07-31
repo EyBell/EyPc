@@ -1536,7 +1536,8 @@ describe('Codex controller', () => {
     const taskKey = 'abcdef01234567bb'
     const activityListeners: Array<(delta: any) => void> = []
     let snapshotCall = 0
-    let releaseOlderSnapshot: (() => void) | null = null
+    let olderSnapshotPending = false
+    let releaseOlderSnapshot: () => void = () => undefined
     const snapshotThread = (status: 'active' | 'idle', activeFlags: CodexHostThread['activeFlags'] = []): CodexHostThread => ({
       key: taskKey,
       actionAlias: 'reverse-barrier-alias',
@@ -1562,7 +1563,10 @@ describe('Codex controller', () => {
           if (snapshotCall === 1) {
             return { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt, activityGeneration: 1, threads: [snapshotThread('idle')], projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }], sourceFingerprint, completeness: 'verified' as const } }
           }
-          await new Promise<void>((resolve) => { releaseOlderSnapshot = () => resolve() })
+          await new Promise<void>((resolve) => {
+            olderSnapshotPending = true
+            releaseOlderSnapshot = () => resolve()
+          })
           return { ok: true as const, receivedAt, value: { version: 2 as const, receivedAt, activityGeneration: 2, threads: [snapshotThread('idle')], projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }], sourceFingerprint, completeness: 'verified' as const } }
         },
         readActivitySnapshot: async () => await new Promise<never>(() => undefined),
@@ -1580,7 +1584,7 @@ describe('Codex controller', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     const pendingRefresh = controller.refresh()
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(releaseOlderSnapshot).not.toBeNull()
+    expect(olderSnapshotPending).toBe(true)
     activityListeners[0]({
       version: 2,
       sourceFingerprint,
@@ -1592,7 +1596,7 @@ describe('Codex controller', () => {
     })
     expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'waiting-input' })
 
-    releaseOlderSnapshot?.()
+    releaseOlderSnapshot()
     await pendingRefresh
     expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, activityState: 'waiting-input' })
     controller.dispose()
