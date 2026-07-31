@@ -219,7 +219,7 @@ describe('development window operation trace', () => {
       slotNumbers: [],
       live: { id: 'win32:100:100', instanceId: 'win32:100:100', platform: 'win32', nativeRef: '100', appId: 'browser.exe', appName: 'Browser', pid: 100, title: 'Docs', minimized: false, focused: false },
       target: null,
-      kind: 'window', treeLevel: 1, parentGroupKey: null, groupKey: null, expandable: false, expanded: false, childCount: 0, groupLiveInstanceIds: []
+      kind: 'window', treeLevel: 1, parentGroupKey: null, parentRowId: null, groupKey: null, expandable: false, expanded: false, childCount: 0, groupLiveInstanceIds: []
     }
     const windowsSnapshot: AppRuntimeSnapshot = {
       ...base,
@@ -233,7 +233,7 @@ describe('development window operation trace', () => {
 
     expect(wrapper.get('.window-page-topmost').attributes('disabled')).toBeUndefined()
     expect(wrapper.text()).toContain('列表置顶')
-    expect(wrapper.text()).toContain('展开并前置')
+    expect(wrapper.text()).toContain('打开当前子窗口')
     expect(wrapper.text()).toContain('编辑别名')
     expect(wrapper.text()).toContain('完整编辑')
     await wrapper.get('.window-page-topmost').trigger('click')
@@ -266,7 +266,7 @@ describe('development window operation trace', () => {
       slotNumbers: [],
       live: { id: 'win32:200:424242', instanceId: 'win32:200:424242', platform: 'win32', nativeRef: '424242', appId: 'browser.exe', appName: 'Browser', pid: 200, title: longTitle, minimized: false, focused: false },
       target: null,
-      kind: 'window', treeLevel: 1, parentGroupKey: null, groupKey: null, expandable: false, expanded: false, childCount: 0, groupLiveInstanceIds: []
+      kind: 'window', treeLevel: 1, parentGroupKey: null, parentRowId: null, groupKey: null, expandable: false, expanded: false, childCount: 0, groupLiveInstanceIds: []
     }
     const second: AppRuntimeSnapshot['windowRows'][number] = {
       ...row,
@@ -365,7 +365,7 @@ describe('slot inline binding mode', () => {
       slotNumbers,
       live: null,
       target: null,
-      kind: 'window', treeLevel: 1, parentGroupKey: null, groupKey: null, expandable: false, expanded: false, childCount: 0, groupLiveInstanceIds: []
+      kind: 'window', treeLevel: 1, parentGroupKey: null, parentRowId: null, groupKey: null, expandable: false, expanded: false, childCount: 0, groupLiveInstanceIds: []
     }
   }
 
@@ -619,7 +619,7 @@ describe('slot inline binding mode', () => {
     expect(wrapper.findAll('[role="treeitem"]')[1].attributes('aria-level')).toBe('2')
     await wrapper.get('.window-tree-toggle').trigger('click')
     expect(wrapper.emitted('dispatch')).toContainEqual(['windows.tree.toggle', { rowId: group.id, expanded: false }])
-    expect(wrapper.text()).toContain('激活最近子窗口')
+    expect(wrapper.text()).toContain('激活最近主窗口')
     expect(wrapper.text()).toContain('收起子窗口')
     expect(wrapper.text()).not.toContain('页面置顶')
     expect(wrapper.text()).not.toContain('强制关闭')

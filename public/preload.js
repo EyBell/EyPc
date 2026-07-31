@@ -285,6 +285,11 @@ public sealed class EypcWindowInfo {
   public string title { get; set; }
   public bool minimized { get; set; }
   public bool focused { get; set; }
+  public string relationship { get; set; }
+  public string relationEvidence { get; set; }
+  public bool userVisible { get; set; }
+  public bool canActivate { get; set; }
+  public bool canClose { get; set; }
 }
 
 public static class EypcWindowApi {
@@ -300,13 +305,24 @@ public static class EypcWindowApi {
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
   [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
   [DllImport("user32.dll")] public static extern IntPtr GetLastActivePopup(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
 
+  [StructLayout(LayoutKind.Sequential)] public struct RECT {
+    public int Left;
+    public int Top;
+    public int Right;
+    public int Bottom;
+  }
+
+  const int GWL_STYLE = -16;
   const int GWL_EXSTYLE = -20;
   const uint GA_ROOT = 2;
   const uint GA_ROOTOWNER = 3;
   const uint WS_EX_TOOLWINDOW = 0x00000080;
   const uint WS_EX_APPWINDOW = 0x00040000;
   const uint WS_EX_NOACTIVATE = 0x08000000;
+  const uint WS_EX_TRANSPARENT = 0x00000020;
+  const uint WS_CHILD = 0x40000000;
 
   static bool IsCloaked(IntPtr hWnd) {
     try {
@@ -318,18 +334,40 @@ public static class EypcWindowApi {
 
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
 
+  static bool HasUserBounds(IntPtr hWnd) {
+    RECT rect;
+    return GetWindowRect(hWnd, out rect) && rect.Right - rect.Left > 1 && rect.Bottom - rect.Top > 1;
+  }
+
+  static bool IsSystemHelperProcess(string appName) {
+    return String.Equals(appName, "dwm", StringComparison.OrdinalIgnoreCase)
+      || String.Equals(appName, "ShellExperienceHost", StringComparison.OrdinalIgnoreCase)
+      || String.Equals(appName, "StartMenuExperienceHost", StringComparison.OrdinalIgnoreCase)
+      || String.Equals(appName, "SearchHost", StringComparison.OrdinalIgnoreCase)
+      || String.Equals(appName, "TextInputHost", StringComparison.OrdinalIgnoreCase)
+      || String.Equals(appName, "LockApp", StringComparison.OrdinalIgnoreCase);
+  }
+
   static bool IsActionableWindow(IntPtr hWnd) {
     if (!IsWindow(hWnd) || !IsWindowVisible(hWnd) || IsCloaked(hWnd)) return false;
+    if (!HasUserBounds(hWnd)) return false;
+    if ((unchecked((uint)GetWindowLong(hWnd, GWL_STYLE)) & WS_CHILD) != 0) return false;
     var exStyle = unchecked((uint)GetWindowLong(hWnd, GWL_EXSTYLE));
     var appWindow = (exStyle & WS_EX_APPWINDOW) != 0;
     if ((exStyle & WS_EX_TOOLWINDOW) != 0 && !appWindow) return false;
-    if ((exStyle & WS_EX_NOACTIVATE) != 0 && !appWindow) return false;
+    if ((exStyle & WS_EX_NOACTIVATE) != 0) return false;
+    if ((exStyle & WS_EX_TRANSPARENT) != 0) return false;
     if (GetAncestor(hWnd, GA_ROOT) != hWnd) return false;
     return true;
   }
 
   static bool IsVisibleMemberWindow(IntPtr hWnd) {
-    return IsWindow(hWnd) && IsWindowVisible(hWnd) && !IsCloaked(hWnd);
+    if (!IsWindow(hWnd) || !IsWindowVisible(hWnd) || IsCloaked(hWnd) || !HasUserBounds(hWnd)) return false;
+    if (GetAncestor(hWnd, GA_ROOT) != hWnd) return false;
+    if ((unchecked((uint)GetWindowLong(hWnd, GWL_STYLE)) & WS_CHILD) != 0) return false;
+    var exStyle = unchecked((uint)GetWindowLong(hWnd, GWL_EXSTYLE));
+    if ((exStyle & WS_EX_NOACTIVATE) != 0 || (exStyle & WS_EX_TRANSPARENT) != 0) return false;
+    return true;
   }
 
   public static List<EypcWindowInfo> ListWindows() {
@@ -356,6 +394,7 @@ public static class EypcWindowApi {
           appName = appProcess.ProcessName;
         }
       } catch { return true; }
+      if (IsSystemHelperProcess(appName)) return true;
       var root = GetAncestor(hWnd, GA_ROOTOWNER);
       if (root == IntPtr.Zero || !IsWindow(root)) root = hWnd;
       uint rawRootPid;
@@ -389,7 +428,12 @@ public static class EypcWindowApi {
         appName = rootAppName,
         title = String.IsNullOrWhiteSpace(title) ? rootAppName : title,
         minimized = IsIconic(root),
-        focused = foreground == hWnd
+        focused = foreground == hWnd,
+        relationship = root == hWnd ? "root" : "child",
+        relationEvidence = root == hWnd ? "root-self" : "win32-root-owner",
+        userVisible = true,
+        canActivate = true,
+        canClose = true
       });
       return true;
     }, IntPtr.Zero);
@@ -416,14 +460,24 @@ public static class EypcWindowActivator {
   [DllImport("user32.dll")] public static extern IntPtr GetLastActivePopup(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
-  public static bool IsActionableTopLevel(IntPtr hWnd) {
-    if (!IsWindow(hWnd) || !IsWindowVisible(hWnd) || GetAncestor(hWnd, 2) != hWnd) return false;
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+  static bool HasUserBounds(IntPtr hWnd) {
+    RECT rect;
+    return GetWindowRect(hWnd, out rect) && rect.Right - rect.Left > 1 && rect.Bottom - rect.Top > 1;
+  }
+  public static bool IsActionableMember(IntPtr hWnd) {
+    if (!IsWindow(hWnd) || !IsWindowVisible(hWnd) || GetAncestor(hWnd, 2) != hWnd || !HasUserBounds(hWnd)) return false;
     try { int cloaked = 0; if (DwmGetWindowAttribute(hWnd, 14, out cloaked, 4) == 0 && cloaked != 0) return false; } catch {}
+    var exStyle = unchecked((uint)GetWindowLong(hWnd, -20));
+    return (exStyle & 0x08000000) == 0 && (exStyle & 0x00000020) == 0;
+  }
+  public static bool IsActionableTopLevel(IntPtr hWnd) {
+    if (!IsActionableMember(hWnd)) return false;
     var exStyle = unchecked((uint)GetWindowLong(hWnd, -20));
     var appWindow = (exStyle & 0x00040000) != 0;
     if ((exStyle & 0x00000080) != 0 && !appWindow) return false;
-    if ((exStyle & 0x08000000) != 0 && !appWindow) return false;
     return true;
   }
   public static IntPtr ResolveActivationTarget(IntPtr root) {
@@ -483,6 +537,24 @@ if (-not $appMatches -or -not $instanceMatches) {
 }
 Add-EypcTrace 'target' 'ok' 'instance-match'
 $activationHandle = [EypcWindowActivator]::ResolveActivationTarget($handle)
+if (-not [EypcWindowActivator]::IsActionableMember($activationHandle)) {
+  Add-EypcTrace 'target' 'not-found'
+  Write-EypcOutcome 'not-found' 'instance-mismatch'
+  exit 0
+}
+$activationRoot = [EypcWindowActivator]::GetAncestor($activationHandle, 3)
+if ($activationRoot -eq [IntPtr]::Zero) { $activationRoot = $activationHandle }
+[uint32]$activationPid = 0
+[void][EypcWindowActivator]::GetWindowThreadProcessId($activationHandle, [ref]$activationPid)
+try { $activationAppId = (Get-Process -Id $activationPid -ErrorAction Stop).ProcessName } catch {
+  Write-EypcOutcome 'not-found' 'identity-unavailable'
+  exit 0
+}
+if ($activationRoot -ne $handle -or -not [string]::Equals($ownerAppId, $activationAppId, [System.StringComparison]::OrdinalIgnoreCase)) {
+  Add-EypcTrace 'target' 'not-found' 'instance-mismatch'
+  Write-EypcOutcome 'not-found' 'instance-mismatch'
+  exit 0
+}
 if ([EypcWindowActivator]::IsIconic($activationHandle)) {
   [void][EypcWindowActivator]::ShowWindow($activationHandle, 9)
   if ([EypcWindowActivator]::IsIconic($activationHandle)) {
@@ -512,6 +584,115 @@ if ([EypcWindowActivator]::SetForegroundWindow($activationHandle)) {
 }
 `
 
+const WINDOWS_ACTIVATE_MEMBER_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class EypcWindowMemberActivator {
+  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+  public static bool IsVisibleActionable(IntPtr hWnd) {
+    RECT rect;
+    if (!IsWindow(hWnd) || !IsWindowVisible(hWnd) || GetAncestor(hWnd, 2) != hWnd || !GetWindowRect(hWnd, out rect) || rect.Right - rect.Left <= 1 || rect.Bottom - rect.Top <= 1) return false;
+    try { int cloaked = 0; if (DwmGetWindowAttribute(hWnd, 14, out cloaked, 4) == 0 && cloaked != 0) return false; } catch {}
+    var exStyle = unchecked((uint)GetWindowLong(hWnd, -20));
+    return (exStyle & 0x08000000) == 0 && (exStyle & 0x00000020) == 0;
+  }
+  public static bool IsActionableRoot(IntPtr hWnd) {
+    if (!IsVisibleActionable(hWnd)) return false;
+    var exStyle = unchecked((uint)GetWindowLong(hWnd, -20));
+    var appWindow = (exStyle & 0x00040000) != 0;
+    return (exStyle & 0x00000080) == 0 || appWindow;
+  }
+}
+'@
+$debugTrace = [string]::Equals([Environment]::GetEnvironmentVariable('EYPC_WINDOW_DEBUG_TRACE'), '1', [System.StringComparison]::Ordinal)
+$expectedAppId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_TARGET_APP_ID')
+$expectedRootInstanceId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_INSTANCE_ID')
+$expectedMemberInstanceId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_MEMBER_INSTANCE_ID')
+$trace = New-Object System.Collections.Generic.List[object]
+function Add-EypcTrace([string] $stage, [string] $outcome, [string] $detail = '') {
+  if ($debugTrace -and $trace.Count -lt 16) {
+    $entry = @{ stage = $stage; outcome = $outcome }
+    if ($detail) { $entry.detail = $detail }
+    [void]$trace.Add([pscustomobject]$entry)
+  }
+}
+function Write-EypcOutcome([string] $outcome, [string] $reasonCode = '', [string] $rootInstanceId = '', [string] $memberInstanceId = '') {
+  $payload = @{ outcome = $outcome }
+  if ($reasonCode) { $payload.reasonCode = $reasonCode }
+  if ($rootInstanceId) { $payload.instanceId = $rootInstanceId }
+  if ($memberInstanceId) { $payload.memberInstanceId = $memberInstanceId }
+  if ($debugTrace) { $payload.trace = @($trace.ToArray()) }
+  $payload | ConvertTo-Json -Compress -Depth 4
+}
+$root = [IntPtr]::new(__EYPC_WINDOW_HANDLE__)
+$member = [IntPtr]::new(__EYPC_WINDOW_MEMBER_HANDLE__)
+if (-not [EypcWindowMemberActivator]::IsActionableRoot($root) -or -not [EypcWindowMemberActivator]::IsVisibleActionable($member)) {
+  Add-EypcTrace 'target' 'not-found'
+  Write-EypcOutcome 'not-found' 'member-mismatch'
+  exit 0
+}
+$verifiedRoot = [EypcWindowMemberActivator]::GetAncestor($member, 3)
+if ($verifiedRoot -eq [IntPtr]::Zero) { $verifiedRoot = $member }
+if ($verifiedRoot -ne $root) {
+  Add-EypcTrace 'target' 'not-found' 'instance-mismatch'
+  Write-EypcOutcome 'not-found' 'member-mismatch'
+  exit 0
+}
+[uint32]$rootPid = 0
+[uint32]$memberPid = 0
+[void][EypcWindowMemberActivator]::GetWindowThreadProcessId($root, [ref]$rootPid)
+[void][EypcWindowMemberActivator]::GetWindowThreadProcessId($member, [ref]$memberPid)
+try {
+  $rootAppId = (Get-Process -Id $rootPid -ErrorAction Stop).ProcessName
+  $memberAppId = (Get-Process -Id $memberPid -ErrorAction Stop).ProcessName
+} catch {
+  Write-EypcOutcome 'not-found' 'identity-unavailable'
+  exit 0
+}
+$rootInstanceId = 'win32:' + [string]$rootPid + ':' + [string]$root.ToInt64()
+$memberInstanceId = 'win32:' + [string]$memberPid + ':' + [string]$member.ToInt64()
+$identityMatches = [string]::Equals($rootAppId, $memberAppId, [System.StringComparison]::OrdinalIgnoreCase) -and
+  (-not $expectedAppId -or [string]::Equals($expectedAppId, $rootAppId, [System.StringComparison]::OrdinalIgnoreCase)) -and
+  (-not $expectedRootInstanceId -or [string]::Equals($expectedRootInstanceId, $rootInstanceId, [System.StringComparison]::Ordinal)) -and
+  (-not $expectedMemberInstanceId -or [string]::Equals($expectedMemberInstanceId, $memberInstanceId, [System.StringComparison]::Ordinal))
+if (-not $identityMatches) {
+  Add-EypcTrace 'target' 'not-found' 'instance-mismatch'
+  Write-EypcOutcome 'not-found' 'member-mismatch'
+  exit 0
+}
+Add-EypcTrace 'target' 'ok' 'root-family-match'
+if ([EypcWindowMemberActivator]::IsIconic($member)) { [void][EypcWindowMemberActivator]::ShowWindow($member, 9) }
+if (-not [EypcWindowMemberActivator]::SetForegroundWindow($member)) {
+  Add-EypcTrace 'foreground' 'denied'
+  Write-EypcOutcome 'focus-denied'
+  exit 0
+}
+[System.Threading.Thread]::Sleep(20)
+$foreground = [EypcWindowMemberActivator]::GetForegroundWindow()
+$foregroundRoot = if ($foreground -eq [IntPtr]::Zero) { [IntPtr]::Zero } else { [EypcWindowMemberActivator]::GetAncestor($foreground, 3) }
+if ($foregroundRoot -eq [IntPtr]::Zero) { $foregroundRoot = $foreground }
+if ($foreground -eq $member -and $foregroundRoot -eq $root) {
+  Add-EypcTrace 'verify' 'ok' 'root-family-match'
+  Write-EypcOutcome 'activated' '' $rootInstanceId $memberInstanceId
+} else {
+  Add-EypcTrace 'verify' 'failed' 'focus-state-mismatch'
+  Write-EypcOutcome 'focus-denied' 'member-mismatch'
+}
+`
+
 const WINDOWS_TOPMOST_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
@@ -529,14 +710,17 @@ public static class EypcWindowTopmost {
   [DllImport("user32.dll")] public static extern IntPtr GetLastActivePopup(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
   public static bool IsActionableTopLevel(IntPtr hWnd) {
-    if (!IsWindow(hWnd) || !IsWindowVisible(hWnd) || GetAncestor(hWnd, 2) != hWnd) return false;
+    RECT rect;
+    if (!IsWindow(hWnd) || !IsWindowVisible(hWnd) || GetAncestor(hWnd, 2) != hWnd || !GetWindowRect(hWnd, out rect) || rect.Right - rect.Left <= 1 || rect.Bottom - rect.Top <= 1) return false;
     try { int cloaked = 0; if (DwmGetWindowAttribute(hWnd, 14, out cloaked, 4) == 0 && cloaked != 0) return false; } catch {}
     var exStyle = unchecked((uint)GetWindowLong(hWnd, -20));
     var appWindow = (exStyle & 0x00040000) != 0;
     if ((exStyle & 0x00000080) != 0 && !appWindow) return false;
-    if ((exStyle & 0x08000000) != 0 && !appWindow) return false;
+    if ((exStyle & 0x08000000) != 0 || (exStyle & 0x00000020) != 0) return false;
     return true;
   }
   public static IntPtr ResolveActivationTarget(IntPtr root) {
@@ -639,21 +823,50 @@ using System;
 using System.Runtime.InteropServices;
 public static class EypcWindowCloser {
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
   [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+  public static bool IsAdmittedWindow(IntPtr hWnd) {
+    RECT rect;
+    if (!IsWindow(hWnd) || !IsWindowVisible(hWnd) || GetAncestor(hWnd, 2) != hWnd || !GetWindowRect(hWnd, out rect) || rect.Right - rect.Left <= 1 || rect.Bottom - rect.Top <= 1) return false;
+    try { int cloaked = 0; if (DwmGetWindowAttribute(hWnd, 14, out cloaked, 4) == 0 && cloaked != 0) return false; } catch {}
+    var exStyle = unchecked((uint)GetWindowLong(hWnd, -20));
+    return (exStyle & 0x08000000) == 0 && (exStyle & 0x00000020) == 0;
+  }
+  public static bool IsAdmittedRoot(IntPtr hWnd) {
+    if (!IsAdmittedWindow(hWnd)) return false;
+    var exStyle = unchecked((uint)GetWindowLong(hWnd, -20));
+    var appWindow = (exStyle & 0x00040000) != 0;
+    return (exStyle & 0x00000080) == 0 || appWindow;
+  }
 }
 '@
 $expectedInstanceId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_INSTANCE_ID')
 $expectedAppId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_TARGET_APP_ID')
+$expectedRootRef = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_ROOT_REF')
 $handle = [IntPtr]::new(__EYPC_WINDOW_HANDLE__)
-if (-not [EypcWindowCloser]::IsWindow($handle)) {
+if (-not [EypcWindowCloser]::IsAdmittedWindow($handle)) {
   @{ outcome = 'not-found' } | ConvertTo-Json -Compress
   exit 0
 }
 $rootHandle = [EypcWindowCloser]::GetAncestor($handle, 3)
 if ($rootHandle -eq [IntPtr]::Zero) { $rootHandle = $handle }
-if ($rootHandle -ne $handle) {
+if ($expectedRootRef) {
+  $expectedRootHandle = [IntPtr]::new([long]$expectedRootRef)
+  if ($rootHandle -ne $expectedRootHandle) {
+    @{ outcome = 'not-found' } | ConvertTo-Json -Compress
+    exit 0
+  }
+} elseif ($rootHandle -ne $handle) {
+  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
+  exit 0
+}
+if (-not [EypcWindowCloser]::IsAdmittedRoot($rootHandle)) {
   @{ outcome = 'not-found' } | ConvertTo-Json -Compress
   exit 0
 }
@@ -666,8 +879,15 @@ try { $ownerAppId = (Get-Process -Id $ownerPid -ErrorAction Stop).ProcessName } 
   @{ outcome = 'not-found' } | ConvertTo-Json -Compress
   exit 0
 }
+[uint32]$rootOwnerPid = 0
+[void][EypcWindowCloser]::GetWindowThreadProcessId($rootHandle, [ref]$rootOwnerPid)
+try { $rootOwnerAppId = (Get-Process -Id $rootOwnerPid -ErrorAction Stop).ProcessName } catch {
+  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
+  exit 0
+}
 $instanceId = 'win32:' + [string]$ownerPid + ':' + [string]$handle.ToInt64()
 if (($expectedInstanceId -and -not [string]::Equals($expectedInstanceId, $instanceId, [System.StringComparison]::Ordinal)) -or
+    -not [string]::Equals($rootOwnerAppId, $ownerAppId, [System.StringComparison]::OrdinalIgnoreCase) -or
     ($expectedAppId -and -not [string]::Equals($expectedAppId, $ownerAppId, [System.StringComparison]::OrdinalIgnoreCase))) {
   @{ outcome = 'not-found' } | ConvertTo-Json -Compress
   exit 0
@@ -691,119 +911,12 @@ try {
 }
 `
 
-const MACOS_WINDOW_LIST_SCRIPT = String.raw`
-ObjC.import('Foundation')
-ObjC.import('CoreGraphics')
-ObjC.import('AppKit')
-ObjC.import('ApplicationServices')
-let exactAxApiAvailable = false
-try {
-  ObjC.bindFunction('AXUIElementCreateApplication', ['id', ['int']])
-  ObjC.bindFunction('AXUIElementCopyAttributeValue', ['int', ['id', 'id', 'id *']])
-  ObjC.bindFunction('_AXUIElementGetWindow', ['int', ['id', 'uint32_t *']])
-  exactAxApiAvailable = true
-} catch (error) {}
-function attempt(callback, fallback) {
-  try { return callback() } catch (error) { return fallback }
-}
-function asText(value) { return String(value || '').trim() }
-const excludedPid = __EYPC_HOST_PID__
-const excludedParentPid = __EYPC_PARENT_PID__
-const raw = attempt(() => ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID))), [])
-const list = Array.isArray(raw) ? raw : []
-const rows = []
-const seen = {}
-const axFamilies = {}
-let namedOwnerWindows = 0
-let unnamedOwnerWindows = 0
-function copyAxAttribute(element, name) {
-  if (!exactAxApiAvailable || !element) return null
-  try {
-    const output = Ref()
-    if (Number($.AXUIElementCopyAttributeValue(element, $.NSString.stringWithString(name), output)) !== 0) return null
-    return output[0]
-  } catch (error) { return null }
-}
-function exactCgWindowNumber(element) {
-  if (!exactAxApiAvailable || !element) return 0
-  try {
-    const output = Ref()
-    if (Number($._AXUIElementGetWindow(element, output)) !== 0) return 0
-    return Math.trunc(Number(output[0] || 0))
-  } catch (error) { return 0 }
-}
-function axFamilyMap(pid) {
-  const cacheKey = String(pid)
-  if (axFamilies[cacheKey]) return axFamilies[cacheKey]
-  const result = {}
-  const appElement = exactAxApiAvailable ? attempt(() => $.AXUIElementCreateApplication(pid), null) : null
-  const windows = copyAxAttribute(appElement, 'AXWindows')
-  const focusedWindow = copyAxAttribute(appElement, 'AXFocusedWindow')
-  const focusedId = exactCgWindowNumber(focusedWindow)
-  const count = windows ? Math.max(0, Math.trunc(Number(windows.count || 0))) : 0
-  for (let index = 0; index < count; index += 1) {
-    const element = attempt(() => windows.objectAtIndex(index), null)
-    const memberId = exactCgWindowNumber(element)
-    if (!element || memberId <= 0) continue
-    const containingWindow = copyAxAttribute(element, 'AXWindow')
-    const topLevelElement = copyAxAttribute(element, 'AXTopLevelUIElement')
-    const topLevelId = exactCgWindowNumber(topLevelElement)
-    const rootId = topLevelId || exactCgWindowNumber(containingWindow) || memberId
-    result[String(memberId)] = {
-      rootId,
-      focused: focusedId === memberId
-    }
-  }
-  axFamilies[cacheKey] = result
-  return result
-}
-for (const item of list) {
-  if (!item || typeof item !== 'object') continue
-  const layer = Math.trunc(Number(item.kCGWindowLayer || 0))
-  if (layer !== 0) continue
-  const pid = Math.trunc(Number(item.kCGWindowOwnerPID || 0))
-  const windowNumber = Math.trunc(Number(item.kCGWindowNumber || 0))
-  const title = asText(item.kCGWindowName)
-  const appName = asText(item.kCGWindowOwnerName)
-  if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(windowNumber) || windowNumber <= 0 || !appName) continue
-  const alpha = Number(item.kCGWindowAlpha)
-  if (Number.isFinite(alpha) && alpha <= 0) continue
-  if (pid === excludedPid || pid === excludedParentPid || pid === $.NSProcessInfo.processInfo.processIdentifier) continue
-  if (title) namedOwnerWindows += 1
-  else unnamedOwnerWindows += 1
-  const running = attempt(() => $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid), null)
-  if (!running || attempt(() => running.terminated === true, false) || Number(attempt(() => running.activationPolicy, -1)) !== 0) continue
-  const appId = asText(attempt(() => running && running.bundleIdentifier && ObjC.unwrap(running.bundleIdentifier), appName)) || appName
-  const family = axFamilyMap(pid)[String(windowNumber)] || null
-  const rootWindowNumber = family && family.rootId > 0 ? family.rootId : windowNumber
-  const key = String(pid) + ':' + String(windowNumber)
-  if (seen[key]) continue
-  seen[key] = true
-  rows.push({
-    instanceId: 'darwin:' + String(pid) + ':' + String(windowNumber),
-    nativeRef: String(pid) + ':0:' + String(windowNumber),
-    pid,
-    rootInstanceId: 'darwin:' + String(pid) + ':' + String(rootWindowNumber),
-    rootNativeRef: String(pid) + ':0:' + String(rootWindowNumber),
-    rootPid: pid,
-    appId,
-    appName,
-    title: title || appName,
-    // kCGWindowIsOnscreen is also false for a normal window on another Space; it is not a minimize flag.
-    minimized: false,
-    focused: Boolean(family && family.focused),
-    screenRecordingHint: false
-  })
-}
-const screenRecordingLikelyMissing = namedOwnerWindows === 0 && unnamedOwnerWindows > 0
-JSON.stringify({ windows: rows, screenRecordingLikelyMissing: screenRecordingLikelyMissing })
-`
-
-/** Current-Space AX inventory. Only rows with an exact CGWindowID mapping are actionable. */
+/** AX-first inventory. Core Graphics only corroborates exact identity and user-visible bounds. */
 const MACOS_AX_WINDOW_LIST_SCRIPT = String.raw`
 ObjC.import('Foundation')
 ObjC.import('AppKit')
 ObjC.import('ApplicationServices')
+ObjC.import('CoreGraphics')
 let exactAxApiAvailable = false
 try {
   ObjC.bindFunction('AXUIElementCreateApplication', ['id', ['int']])
@@ -815,20 +928,40 @@ function attempt(callback, fallback) {
   try { return callback() } catch (error) { return fallback }
 }
 function asText(value) { return String(value || '').trim() }
-const systemEvents = Application('System Events')
 const selfPid = $.NSProcessInfo.processInfo.processIdentifier
 const excludedPid = __EYPC_HOST_PID__
 const excludedParentPid = __EYPC_PARENT_PID__
-const processes = attempt(() => systemEvents.applicationProcesses.whose({ backgroundOnly: false })(), [])
+const runningApps = attempt(() => $.NSWorkspace.sharedWorkspace.runningApplications, null)
+const cgRaw = attempt(() => ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID))), [])
+const cgRows = Array.isArray(cgRaw) ? cgRaw : []
+const cgSurfaceKeys = {}
+for (const item of cgRows) {
+  if (!item || typeof item !== 'object') continue
+  const layer = Math.trunc(Number(item.kCGWindowLayer || 0))
+  const pid = Math.trunc(Number(item.kCGWindowOwnerPID || 0))
+  const windowNumber = Math.trunc(Number(item.kCGWindowNumber || 0))
+  const alpha = Number(item.kCGWindowAlpha)
+  const bounds = item.kCGWindowBounds && typeof item.kCGWindowBounds === 'object' ? item.kCGWindowBounds : {}
+  const width = Number(bounds.Width || bounds.width || 0)
+  const height = Number(bounds.Height || bounds.height || 0)
+  if (layer !== 0 || pid <= 0 || windowNumber <= 0 || (Number.isFinite(alpha) && alpha <= 0) || width <= 1 || height <= 1) continue
+  cgSurfaceKeys[String(pid) + ':' + String(windowNumber)] = true
+}
 const rows = []
 const seen = {}
-function copyAxAttribute(element, name) {
-  if (!exactAxApiAvailable || !element) return null
+let permissionDenied = false
+let admittedAxCandidates = 0
+function copyAxAttributeResult(element, name) {
+  if (!exactAxApiAvailable || !element) return { error: -1, value: null }
   try {
     const output = Ref()
-    if (Number($.AXUIElementCopyAttributeValue(element, $.NSString.stringWithString(name), output)) !== 0) return null
-    return output[0]
-  } catch (error) { return null }
+    const error = Number($.AXUIElementCopyAttributeValue(element, $.NSString.stringWithString(name), output))
+    if (error === -25211 || error === -25204) permissionDenied = true
+    return { error, value: error === 0 ? output[0] : null }
+  } catch (error) { return { error: -1, value: null } }
+}
+function copyAxAttribute(element, name) {
+  return copyAxAttributeResult(element, name).value
 }
 function exactCgWindowNumber(element) {
   if (!exactAxApiAvailable || !element) return 0
@@ -838,17 +971,30 @@ function exactCgWindowNumber(element) {
     return Math.trunc(Number(output[0] || 0))
   } catch (error) { return 0 }
 }
-for (let p = 0; p < processes.length; p += 1) {
-  const proc = processes[p]
-  const pid = Math.trunc(Number(attempt(() => proc.unixId(), 0)))
+function axText(element, name) {
+  const value = copyAxAttribute(element, name)
+  return asText(attempt(() => value ? ObjC.unwrap(value) : '', ''))
+}
+function isAdmittedWindowRole(role, subrole) {
+  if (role === 'AXSheet' || role === 'AXDialog') return true
+  if (role !== 'AXWindow') return false
+  return subrole === 'AXStandardWindow'
+    || subrole === 'AXDialog'
+    || subrole === 'AXSystemDialog'
+    || subrole === 'AXFloatingWindow'
+}
+const appCount = runningApps ? Math.max(0, Math.trunc(Number(runningApps.count || 0))) : 0
+for (let p = 0; p < appCount; p += 1) {
+  const running = attempt(() => runningApps.objectAtIndex(p), null)
+  const pid = Math.trunc(Number(attempt(() => running.processIdentifier, 0)))
   if (!Number.isInteger(pid) || pid <= 0 || pid === selfPid || pid === excludedPid || pid === excludedParentPid) continue
-  const appName = asText(attempt(() => proc.name(), ''))
-  if (!appName) continue
-  const running = attempt(() => $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid), null)
   if (!running || attempt(() => running.terminated === true, false) || Number(attempt(() => running.activationPolicy, -1)) !== 0) continue
-  const appId = asText(attempt(() => running && running.bundleIdentifier && ObjC.unwrap(running.bundleIdentifier), appName)) || appName
+  const appName = asText(attempt(() => running.localizedName ? ObjC.unwrap(running.localizedName) : '', ''))
+  if (!appName) continue
+  const appId = asText(attempt(() => running.bundleIdentifier ? ObjC.unwrap(running.bundleIdentifier) : appName, appName)) || appName
   const appElement = attempt(() => $.AXUIElementCreateApplication(pid), null)
-  const windows = copyAxAttribute(appElement, 'AXWindows')
+  const windowsResult = copyAxAttributeResult(appElement, 'AXWindows')
+  const windows = windowsResult.value
   const focusedWindow = copyAxAttribute(appElement, 'AXFocusedWindow')
   const focusedWindowNumber = exactCgWindowNumber(focusedWindow)
   const count = windows ? Math.max(0, Math.trunc(Number(windows.count || 0))) : 0
@@ -856,14 +1002,23 @@ for (let p = 0; p < processes.length; p += 1) {
     const win = attempt(() => windows.objectAtIndex(index), null)
     const windowNumber = exactCgWindowNumber(win)
     if (!win || windowNumber <= 0) continue
-    const titleValue = copyAxAttribute(win, 'AXTitle')
-    const title = asText(attempt(() => titleValue ? ObjC.unwrap(titleValue) : '', ''))
+    const role = axText(win, 'AXRole')
+    const subrole = axText(win, 'AXSubrole')
+    if (!isAdmittedWindowRole(role, subrole)) continue
+    admittedAxCandidates += 1
+    if (!cgSurfaceKeys[String(pid) + ':' + String(windowNumber)]) continue
+    const title = axText(win, 'AXTitle')
     const minimizedValue = copyAxAttribute(win, 'AXMinimized')
     const minimized = attempt(() => minimizedValue ? Boolean(ObjC.unwrap(minimizedValue)) : false, false)
     const containingWindow = copyAxAttribute(win, 'AXWindow')
     const topLevelElement = copyAxAttribute(win, 'AXTopLevelUIElement')
+    const parentElement = copyAxAttribute(win, 'AXParent')
     const topLevelWindowNumber = exactCgWindowNumber(topLevelElement)
-    const rootWindowNumber = topLevelWindowNumber || exactCgWindowNumber(containingWindow) || windowNumber
+    const containingWindowNumber = exactCgWindowNumber(containingWindow)
+    const parentWindowNumber = exactCgWindowNumber(parentElement)
+    const relatedWindowNumbers = [parentWindowNumber, topLevelWindowNumber, containingWindowNumber]
+    const rootWindowNumber = relatedWindowNumbers.find((candidate) => candidate > 0 && candidate !== windowNumber) || windowNumber
+    if (!cgSurfaceKeys[String(pid) + ':' + String(rootWindowNumber)]) continue
     const nativeRef = String(pid) + ':0:' + String(windowNumber)
     const key = String(pid) + ':' + String(windowNumber)
     if (seen[key]) continue
@@ -879,14 +1034,24 @@ for (let p = 0; p < processes.length; p += 1) {
       appName,
       title: title || appName,
       minimized: minimized === true,
-      focused: focusedWindowNumber === windowNumber
+      focused: focusedWindowNumber === windowNumber,
+      relationship: rootWindowNumber === windowNumber ? 'root' : 'child',
+      relationEvidence: rootWindowNumber === windowNumber ? 'root-self' : 'macos-ax-top-level',
+      userVisible: true,
+      canActivate: true,
+      canClose: Boolean(copyAxAttribute(win, 'AXCloseButton'))
     })
   }
 }
-JSON.stringify({ windows: rows, screenRecordingLikelyMissing: false })
+JSON.stringify({
+  windows: rows,
+  permissionDenied,
+  identityCorroborationMissing: admittedAxCandidates > 0 && rows.length === 0,
+  screenRecordingLikelyMissing: admittedAxCandidates > 0 && rows.length === 0
+})
 `
 
-function macosActivateWindowScript(pid, cgWindowNumber) {
+function macosActivateWindowScript(pid, cgWindowNumber, memberCgWindowNumber = 0) {
   return String.raw`
 ObjC.import('Foundation')
 ObjC.import('CoreGraphics')
@@ -894,7 +1059,9 @@ ObjC.import('ApplicationServices')
 ObjC.import('AppKit')
 const processId = ${pid}
 const cgWindowNumber = ${cgWindowNumber}
+const memberCgWindowNumber = ${memberCgWindowNumber}
 const instanceId = 'darwin:' + String(processId) + ':' + String(cgWindowNumber)
+const memberInstanceId = memberCgWindowNumber > 0 ? 'darwin:' + String(processId) + ':' + String(memberCgWindowNumber) : ''
 let exactAxApiAvailable = false
 try {
   ObjC.bindFunction('AXUIElementCreateApplication', ['id', ['int']])
@@ -919,11 +1086,13 @@ function emit(outcome) {
   const payload = { outcome }
   if (activationReasonCode) payload.reasonCode = activationReasonCode
   if (outcome === 'activated') payload.instanceId = instanceId
+  if (outcome === 'activated' && memberInstanceId) payload.memberInstanceId = memberInstanceId
   if (debugTrace) payload.trace = trace
   return JSON.stringify(payload)
 }
 const expectedApp = normalizeAppIdentity(environmentValue('EYPC_WINDOW_TARGET_APP_ID'))
 const expectedInstanceId = environmentValue('EYPC_WINDOW_INSTANCE_ID')
+const expectedMemberInstanceId = environmentValue('EYPC_WINDOW_MEMBER_INSTANCE_ID')
 function axAttributeName(name) {
   return $.NSString.stringWithString(name)
 }
@@ -959,9 +1128,25 @@ function rootCgWindowNumber(element) {
   if (!element) return 0
   const containing = copyAxAttribute(element, 'AXWindow')
   const topLevel = copyAxAttribute(element, 'AXTopLevelUIElement')
-  return (topLevel.error === 0 && topLevel.value ? exactCgWindowNumber(topLevel.value) : 0)
-    || (containing.error === 0 && containing.value ? exactCgWindowNumber(containing.value) : 0)
-    || exactCgWindowNumber(element)
+  const parent = copyAxAttribute(element, 'AXParent')
+  const own = exactCgWindowNumber(element)
+  const related = [
+    parent.error === 0 && parent.value ? exactCgWindowNumber(parent.value) : 0,
+    topLevel.error === 0 && topLevel.value ? exactCgWindowNumber(topLevel.value) : 0,
+    containing.error === 0 && containing.value ? exactCgWindowNumber(containing.value) : 0
+  ]
+  return related.find((candidate) => candidate > 0 && candidate !== own) || own
+}
+function axText(element, name) {
+  const copied = copyAxAttribute(element, name)
+  if (copied.error !== 0 || !copied.value) return ''
+  try { return String(ObjC.unwrap(copied.value) || '').trim() } catch (error) { return '' }
+}
+function isAdmittedAxWindow(element) {
+  const role = axText(element, 'AXRole')
+  const subrole = axText(element, 'AXSubrole')
+  if (role === 'AXSheet' || role === 'AXDialog') return true
+  return role === 'AXWindow' && (subrole === 'AXStandardWindow' || subrole === 'AXDialog' || subrole === 'AXSystemDialog' || subrole === 'AXFloatingWindow')
 }
 function resolveRootAxTarget() {
   if (!exactAxApiAvailable || cgWindowNumber <= 0) return { outcome: 'unavailable' }
@@ -976,11 +1161,15 @@ function resolveRootAxTarget() {
   for (let index = 0; index < count; index += 1) {
     let candidate = null
     try { candidate = copied.value.objectAtIndex(index) } catch (error) {}
-    if (!candidate || rootCgWindowNumber(candidate) !== cgWindowNumber) continue
+    if (!candidate || !isAdmittedAxWindow(candidate) || rootCgWindowNumber(candidate) !== cgWindowNumber) continue
     family.push(candidate)
     if (exactCgWindowNumber(candidate) === cgWindowNumber) exactRoot = candidate
   }
   if (!family.length) return { outcome: 'not-found' }
+  if (memberCgWindowNumber > 0) {
+    const exactMember = family.find((candidate) => exactCgWindowNumber(candidate) === memberCgWindowNumber) || null
+    return exactMember ? { outcome: 'matched', app, target: exactMember } : { outcome: 'not-found' }
+  }
   const focused = copyAxAttribute(app, 'AXFocusedWindow')
   const focusedTarget = focused.error === 0 && focused.value && rootCgWindowNumber(focused.value) === cgWindowNumber
     ? focused.value
@@ -989,10 +1178,11 @@ function resolveRootAxTarget() {
 }
 function rootAxFocused(app) {
   const focused = copyAxAttribute(app, 'AXFocusedWindow')
-  return focused.error === 0 && focused.value && rootCgWindowNumber(focused.value) === cgWindowNumber
+  if (focused.error !== 0 || !focused.value || rootCgWindowNumber(focused.value) !== cgWindowNumber) return false
+  return memberCgWindowNumber <= 0 || exactCgWindowNumber(focused.value) === memberCgWindowNumber
 }
-function validateExactCgTarget() {
-  if (cgWindowNumber <= 0) return { outcome: 'unavailable' }
+function validateExactCgTarget(targetWindowNumber) {
+  if (targetWindowNumber <= 0) return { outcome: 'unavailable' }
   try {
     const raw = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID)))
     const cgList = Array.isArray(raw) ? raw : []
@@ -1000,9 +1190,13 @@ function validateExactCgTarget() {
       if (!item || typeof item !== 'object') return false
       if (Math.trunc(Number(item.kCGWindowLayer || 0)) !== 0) return false
       if (Math.trunc(Number(item.kCGWindowOwnerPID || 0)) !== processId) return false
-      if (Math.trunc(Number(item.kCGWindowNumber || 0)) !== cgWindowNumber) return false
+      if (Math.trunc(Number(item.kCGWindowNumber || 0)) !== targetWindowNumber) return false
       const alpha = Number(item.kCGWindowAlpha)
-      return !Number.isFinite(alpha) || alpha > 0
+      if (Number.isFinite(alpha) && alpha <= 0) return false
+      const bounds = item.kCGWindowBounds && typeof item.kCGWindowBounds === 'object' ? item.kCGWindowBounds : {}
+      const width = Number(bounds.Width || bounds.width || 0)
+      const height = Number(bounds.Height || bounds.height || 0)
+      return width > 1 && height > 1
     })
     if (matches.length !== 1) return { outcome: matches.length > 1 ? 'ambiguous' : 'not-found' }
     return { outcome: 'matched' }
@@ -1035,6 +1229,11 @@ function activateRootAxTarget(resolved) {
   }
   if (expectedInstanceId && expectedInstanceId !== instanceId) {
     activationReasonCode = 'instance-mismatch'
+    addTrace('target', 'not-found', 'instance-mismatch')
+    return 'not-found'
+  }
+  if (memberCgWindowNumber > 0 && expectedMemberInstanceId && expectedMemberInstanceId !== memberInstanceId) {
+    activationReasonCode = 'member-mismatch'
     addTrace('target', 'not-found', 'instance-mismatch')
     return 'not-found'
   }
@@ -1083,7 +1282,7 @@ function activate() {
     addTrace('target', 'unavailable', cgWindowNumber <= 0 ? 'identity-unavailable' : 'instance-mismatch')
     return cgWindowNumber <= 0 ? 'failed' : 'not-found'
   }
-  const cgIdentity = validateExactCgTarget()
+  const cgIdentity = validateExactCgTarget(cgWindowNumber)
   if (cgIdentity.outcome === 'ambiguous') {
     addTrace('target', 'ambiguous')
     return 'ambiguous'
@@ -1096,6 +1295,14 @@ function activate() {
     activationReasonCode = 'identity-unavailable'
     addTrace('target', 'unavailable', 'identity-unavailable')
     return 'failed'
+  }
+  if (memberCgWindowNumber > 0) {
+    const memberIdentity = validateExactCgTarget(memberCgWindowNumber)
+    if (memberIdentity.outcome !== 'matched') {
+      activationReasonCode = memberIdentity.outcome === 'not-found' ? 'member-mismatch' : 'identity-unavailable'
+      addTrace('target', memberIdentity.outcome === 'not-found' ? 'not-found' : 'unavailable', 'ax-cg-id-match')
+      return memberIdentity.outcome === 'not-found' ? 'not-found' : 'failed'
+    }
   }
   addTrace('target', 'ok', 'instance-match')
   const exact = resolveRootAxTarget()
@@ -1112,13 +1319,14 @@ emit(activate())
 `
 }
 
-function macosCloseWindowScript(pid, cgWindowNumber) {
+function macosCloseWindowScript(pid, cgWindowNumber, rootCgWindowNumber = cgWindowNumber) {
   return String.raw`
 ObjC.import('Foundation')
 ObjC.import('ApplicationServices')
 ObjC.import('AppKit')
 const processId = ${pid}
 const cgWindowNumber = ${cgWindowNumber}
+const rootCgWindowNumber = ${rootCgWindowNumber}
 let available = false
 try {
   ObjC.bindFunction('AXUIElementCreateApplication', ['id', ['int']])
@@ -1150,6 +1358,24 @@ function windowNumber(element) {
     return Math.trunc(Number(output[0] || 0))
   } catch (error) { return 0 }
 }
+function rootWindowNumber(element) {
+  if (!element) return 0
+  const topLevel = copyAttribute(element, 'AXTopLevelUIElement')
+  const containing = copyAttribute(element, 'AXWindow')
+  const parent = copyAttribute(element, 'AXParent')
+  const own = windowNumber(element)
+  return [windowNumber(parent), windowNumber(topLevel), windowNumber(containing)].find((candidate) => candidate > 0 && candidate !== own) || own
+}
+function axText(element, name) {
+  const value = copyAttribute(element, name)
+  try { return value ? String(ObjC.unwrap(value) || '').trim() : '' } catch (error) { return '' }
+}
+function isAdmittedAxWindow(element) {
+  const role = axText(element, 'AXRole')
+  const subrole = axText(element, 'AXSubrole')
+  if (role === 'AXSheet' || role === 'AXDialog') return true
+  return role === 'AXWindow' && (subrole === 'AXStandardWindow' || subrole === 'AXDialog' || subrole === 'AXSystemDialog' || subrole === 'AXFloatingWindow')
+}
 const app = available && cgWindowNumber > 0 ? $.AXUIElementCreateApplication(processId) : null
 const expectedApp = normalizeAppIdentity(environmentValue('EYPC_WINDOW_TARGET_APP_ID'))
 const running = (() => {
@@ -1167,7 +1393,7 @@ const matches = []
 const count = windows ? Math.max(0, Math.trunc(Number(windows.count || 0))) : 0
 for (let index = 0; index < count; index += 1) {
   const candidate = windows.objectAtIndex(index)
-  if (windowNumber(candidate) === cgWindowNumber) matches.push(candidate)
+  if (isAdmittedAxWindow(candidate) && windowNumber(candidate) === cgWindowNumber && rootWindowNumber(candidate) === rootCgWindowNumber) matches.push(candidate)
 }
 if (!appMatches) {
   JSON.stringify({ outcome: 'not-found', message: 'instance-mismatch' })
@@ -1194,7 +1420,7 @@ if (!appMatches) {
 `
 }
 
-const WINDOW_BRIDGE_REVISION = 'wj20-root-window-family'
+const WINDOW_BRIDGE_REVISION = 'wj21-main-child-window-tree'
 
 function runWindowCommand(command, args, debugTrace = false, extraEnvironment = null) {
   return new Promise((resolve) => {
@@ -1238,7 +1464,7 @@ function uniqueWindowTexts(values) {
 
 function parseWindowJson(output, platform) {
   let parsed
-  try { parsed = JSON.parse(String(output || '').trim() || '[]') } catch { return { windows: [], screenRecordingLikelyMissing: false } }
+  try { parsed = JSON.parse(String(output || '').trim() || '[]') } catch { return { windows: [], permissionDenied: false, identityCorroborationMissing: false, screenRecordingLikelyMissing: false } }
   const envelope = parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.windows)
     ? parsed
     : { windows: Array.isArray(parsed) ? parsed : [parsed], screenRecordingLikelyMissing: false }
@@ -1252,6 +1478,13 @@ function parseWindowJson(output, platform) {
     const appName = String(item.appName || appId || '').trim()
     const title = String(item.title || '').trim()
     if (!nativeRef || !instanceId || !Number.isInteger(pid) || pid <= 0 || !appId) return []
+    const rootInstanceId = String(item.rootInstanceId || '').trim() || instanceId
+    const rootNativeRef = String(item.rootNativeRef || '').trim() || nativeRef
+    const relationship = item.relationship === 'child' ? 'child' : 'root'
+    const relationEvidence = String(item.relationEvidence || '')
+    const expectedChildEvidence = platform === 'win32' ? 'win32-root-owner' : 'macos-ax-top-level'
+    if (relationship === 'child' && (rootInstanceId === instanceId || rootNativeRef === nativeRef || relationEvidence !== expectedChildEvidence)) return []
+    if (relationship === 'root' && (rootInstanceId !== instanceId || rootNativeRef !== nativeRef || relationEvidence !== 'root-self')) return []
     return [{
       id: instanceId,
       instanceId,
@@ -1262,9 +1495,14 @@ function parseWindowJson(output, platform) {
       title: title || appName,
       minimized: item.minimized === true,
       focused: item.focused === true,
-      rootInstanceId: String(item.rootInstanceId || '').trim() || instanceId,
-      rootNativeRef: String(item.rootNativeRef || '').trim() || nativeRef,
+      rootInstanceId,
+      rootNativeRef,
       rootPid: Math.trunc(Number(item.rootPid || pid)),
+      relationship,
+      relationEvidence,
+      userVisible: item.userVisible !== false,
+      canActivate: item.canActivate !== false,
+      canClose: item.canClose === true,
       memberInstanceIds: uniqueWindowTexts(item.memberInstanceIds),
       memberNativeRefs: uniqueWindowTexts(item.memberNativeRefs),
       searchTitles: uniqueWindowTexts(item.searchTitles)
@@ -1272,7 +1510,12 @@ function parseWindowJson(output, platform) {
   })
   // Keep this bridge as an observation adapter. The Renderer domain owns the
   // single root-family coalescer and every product-level tree decision.
-  return { windows: observations.map((observation) => ({ ...observation, platform })), screenRecordingLikelyMissing: envelope.screenRecordingLikelyMissing === true }
+  return {
+    windows: observations.map((observation) => ({ ...observation, platform })),
+    permissionDenied: envelope.permissionDenied === true,
+    identityCorroborationMissing: envelope.identityCorroborationMissing === true,
+    screenRecordingLikelyMissing: envelope.screenRecordingLikelyMissing === true
+  }
 }
 
 async function windowCapabilities() {
@@ -1291,68 +1534,45 @@ async function listWindows() {
     return { capability: windowCapability('granted'), windows: parsed.windows, completeness: 'complete' }
   }
   if (process.platform === 'darwin') {
-    const cgScript = MACOS_WINDOW_LIST_SCRIPT
+    // Product rows are admitted only from exact AX windows. Core Graphics is
+    // queried inside this script solely to corroborate PID+CGWindowID/bounds.
+    const axScript = MACOS_AX_WINDOW_LIST_SCRIPT
       .replace('__EYPC_HOST_PID__', String(process.pid))
       .replace('__EYPC_PARENT_PID__', String(process.ppid || 0))
-    const cgResult = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', cgScript])
-    let cgParsed = { windows: [], screenRecordingLikelyMissing: false }
-    let preferAx = false
-    if (!cgResult.ok) {
-      // Never treat CG failure as a final empty granted list; try AX current-Space inventory.
-      preferAx = true
-    } else {
-      cgParsed = parseWindowJson(cgResult.stdout, 'darwin')
-      if (cgParsed.windows.length > 0) {
+    const axResult = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', axScript])
+    if (!axResult.ok) {
+      const detail = `${axResult.error}\n${axResult.stderr}`
+      if (isMacWindowPermissionError(detail)) {
         return {
-          capability: windowCapability('granted', cgParsed.screenRecordingLikelyMissing ? '部分窗口标题可能因屏幕录制权限受限' : ''),
-          windows: cgParsed.windows,
-          completeness: cgParsed.screenRecordingLikelyMissing ? 'partial' : 'complete',
-          ...(cgParsed.screenRecordingLikelyMissing ? { message: '部分窗口缺少标题；请确认屏幕录制权限以覆盖全部 Space' } : {})
-        }
-      }
-      // Empty CG result (unwrap failure, no titles, or screen-recording gap) must fall back to AX.
-      preferAx = true
-    }
-    if (preferAx) {
-      const axScript = MACOS_AX_WINDOW_LIST_SCRIPT
-        .replace('__EYPC_HOST_PID__', String(process.pid))
-        .replace('__EYPC_PARENT_PID__', String(process.ppid || 0))
-      const axResult = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', axScript])
-      if (!axResult.ok) {
-        const detail = `${axResult.error}\n${axResult.stderr}\n${cgResult.error}\n${cgResult.stderr}`
-        if (isMacWindowPermissionError(detail) || cgParsed.screenRecordingLikelyMissing) {
-          const needsScreen = cgParsed.screenRecordingLikelyMissing || /screen recording/i.test(detail)
-          return {
-            capability: windowCapability('required', needsScreen
-              ? '需要屏幕录制权限以枚举全部 Space / 显示器；当前桌面列表也需要辅助功能'
-              : '需要辅助功能或自动化权限'),
-            windows: [],
-            completeness: 'partial',
-            message: needsScreen
-              ? '需要在系统设置中允许 EyPc 的屏幕录制与辅助功能权限'
-              : '需要在系统设置中允许 EyPc 控制 System Events 以读取当前桌面窗口'
-          }
-        }
-        return { capability: windowCapability('unknown', '无法读取 macOS 窗口'), windows: [], completeness: 'partial', message: '无法读取 macOS 窗口；请确认屏幕录制与辅助功能授权' }
-      }
-      const axParsed = parseWindowJson(axResult.stdout, 'darwin')
-      if (axParsed.windows.length > 0) {
-        return {
-          capability: windowCapability('granted', '当前为辅助功能列表（当前 Space）；授权屏幕录制可覆盖全部桌面'),
-          windows: axParsed.windows,
-          completeness: 'partial',
-          message: '已回退到当前桌面窗口列表；授权屏幕录制后可列出其他 Space / 显示器'
-        }
-      }
-      if (cgParsed.screenRecordingLikelyMissing) {
-        return {
-          capability: windowCapability('required', '需要屏幕录制权限以枚举全部 Space / 显示器'),
+          capability: windowCapability('required', '需要辅助功能权限以读取可操作的用户窗口'),
           windows: [],
           completeness: 'partial',
-          message: '需要在系统设置中允许 EyPc 的屏幕录制权限，才能列出全部桌面与显示器上的窗口'
+          message: '需要在系统设置中允许 EyPc 使用辅助功能'
         }
       }
-      return { capability: windowCapability('granted'), windows: [], completeness: cgResult.ok ? 'complete' : 'partial' }
+      return { capability: windowCapability('unknown', '无法读取 macOS 用户窗口'), windows: [], completeness: 'partial', message: '无法读取 macOS 用户窗口；未显示任何未验证表面' }
+    }
+    const axParsed = parseWindowJson(axResult.stdout, 'darwin')
+    if (axParsed.permissionDenied) {
+      return {
+        capability: windowCapability('required', '需要辅助功能权限以读取可操作的用户窗口'),
+        windows: [],
+        completeness: 'partial',
+        message: '需要在系统设置中允许 EyPc 使用辅助功能'
+      }
+    }
+    if (axParsed.identityCorroborationMissing) {
+      return {
+        capability: windowCapability('required', '需要屏幕录制权限来佐证 AX 窗口的 CG 身份'),
+        windows: [],
+        completeness: 'partial',
+        message: 'AX 窗口存在，但 CG 身份不可验证；EyPc 已省略全部未验证表面'
+      }
+    }
+    return {
+      capability: windowCapability('granted', '仅展示 AX 准入且由 CG 身份佐证的用户窗口'),
+      windows: axParsed.windows,
+      completeness: 'complete'
     }
   }
   return { capability: windowCapability('unsupported'), windows: [], completeness: 'partial', message: '当前系统不支持窗口跳转' }
@@ -1365,7 +1585,7 @@ const WINDOW_OPERATION_TRACE_DETAILS = new Set([
   'root-family-match', 'ax-cg-id-match', 'ax-focused-root-window'
 ])
 const WINDOW_ACTIVATION_REASON_CODES = new Set([
-  'instance-mismatch', 'identity-unavailable'
+  'instance-mismatch', 'member-mismatch', 'identity-unavailable'
 ])
 
 function debugTraceRequested(options) {
@@ -1397,15 +1617,19 @@ function parseWindowActivationResult(output, fallback = 'failed') {
       const trace = parseWindowOperationTrace(value)
       const reasonCode = String(value && value.reasonCode || '')
       const instanceId = String(value && value.instanceId || '').trim()
-      return { outcome, ...(instanceId ? { instanceId } : {}), ...(WINDOW_ACTIVATION_REASON_CODES.has(reasonCode) ? { reasonCode } : {}), ...(trace ? { trace } : {}) }
+      const memberInstanceId = String(value && value.memberInstanceId || '').trim()
+      return { outcome, ...(instanceId ? { instanceId } : {}), ...(memberInstanceId ? { memberInstanceId } : {}), ...(WINDOW_ACTIVATION_REASON_CODES.has(reasonCode) ? { reasonCode } : {}), ...(trace ? { trace } : {}) }
     }
   } catch {}
   return { outcome: fallback }
 }
 
-async function activateWindow(target, options = {}) {
+async function activateWindow(request, options = {}) {
   const debugTrace = debugTraceRequested(options)
-  const source = target && typeof target === 'object' ? target : {}
+  const payload = request && typeof request === 'object' ? request : {}
+  const mode = payload.mode === 'member-exact' ? 'member-exact' : 'root-current'
+  const source = payload.root && typeof payload.root === 'object' ? payload.root : payload
+  const member = mode === 'member-exact' && payload.member && typeof payload.member === 'object' ? payload.member : null
   const platform = source.platform === 'win32' || source.platform === 'darwin' ? source.platform : ''
   const nativeRef = String(source.nativeRef || '').trim()
   if (!platform || !nativeRef || platform !== process.platform) {
@@ -1416,13 +1640,21 @@ async function activateWindow(target, options = {}) {
       return { outcome: 'not-found', message: '窗口句柄无效', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }]) }
     }
     const systemRoot = process.env.SystemRoot || 'C:\\Windows'
-    const script = WINDOWS_ACTIVATE_SCRIPT.replace('__EYPC_WINDOW_HANDLE__', nativeRef)
+    const memberNativeRef = String(member && member.nativeRef || '').trim()
+    if (mode === 'member-exact' && !/^\d{1,20}$/.test(memberNativeRef)) {
+      return { outcome: 'not-found', reasonCode: 'member-mismatch', message: '指定子窗口句柄已失效', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }]) }
+    }
+    const script = (mode === 'member-exact' ? WINDOWS_ACTIVATE_MEMBER_SCRIPT : WINDOWS_ACTIVATE_SCRIPT)
+      .replace('__EYPC_WINDOW_HANDLE__', nativeRef)
+      .replace('__EYPC_WINDOW_MEMBER_HANDLE__', memberNativeRef || nativeRef)
     const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
     const sourceInstanceId = String(source.instanceId || '').replace(/\u0000/g, '').slice(0, 512)
     const instanceId = sourceInstanceId.includes(':legacy:') ? '' : sourceInstanceId
+    const memberInstanceId = String(member && member.instanceId || '').replace(/\u0000/g, '').slice(0, 512)
     const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], debugTrace, {
       EYPC_WINDOW_TARGET_APP_ID: appId,
-      ...(instanceId ? { EYPC_WINDOW_INSTANCE_ID: instanceId } : {})
+      ...(instanceId ? { EYPC_WINDOW_INSTANCE_ID: instanceId } : {}),
+      ...(mode === 'member-exact' && memberInstanceId ? { EYPC_WINDOW_MEMBER_INSTANCE_ID: memberInstanceId } : {})
     })
     if (!result.ok) return { outcome: 'failed', message: 'Windows 无法执行窗口激活', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }]) }
     const activation = parseWindowActivationResult(result.stdout)
@@ -1439,25 +1671,32 @@ async function activateWindow(target, options = {}) {
   const actualInstanceId = `darwin:${pid}:${cgWindowNumber}`
   const sourceInstanceId = String(source.instanceId || '').trim()
   const expectedInstanceId = sourceInstanceId.includes(':legacy:') ? '' : sourceInstanceId
+  const memberParts = mode === 'member-exact' ? /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(String(member && member.nativeRef || '').trim()) : null
+  const memberCgWindowNumber = memberParts ? Number(memberParts[3]) : 0
+  const memberInstanceId = String(member && member.instanceId || '').trim()
   if (ordinal !== 0 || !Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) {
     return { outcome: 'failed', reasonCode: 'identity-unavailable', message: '无法建立稳定的 macOS 窗口实例身份', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'unavailable', detail: 'identity-unavailable' }]) }
   }
   if (expectedInstanceId && expectedInstanceId !== actualInstanceId) {
     return { outcome: 'not-found', reasonCode: 'instance-mismatch', message: '窗口实例与保存目标不一致，需要重新确认', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found', detail: 'instance-mismatch' }]) }
   }
+  if (mode === 'member-exact' && (!memberParts || Number(memberParts[1]) !== pid || Number(memberParts[2]) !== 0 || memberCgWindowNumber <= 0)) {
+    return { outcome: 'not-found', reasonCode: 'member-mismatch', message: '指定子窗口实例与主窗口关系已失效', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found', detail: 'instance-mismatch' }]) }
+  }
   const result = await runWindowCommand(
     '/usr/bin/osascript',
-    ['-l', 'JavaScript', '-e', macosActivateWindowScript(pid, cgWindowNumber)],
+    ['-l', 'JavaScript', '-e', macosActivateWindowScript(pid, cgWindowNumber, memberCgWindowNumber)],
     debugTrace,
     {
       EYPC_WINDOW_TARGET_APP_ID: appId,
-      EYPC_WINDOW_INSTANCE_ID: expectedInstanceId || actualInstanceId
+      EYPC_WINDOW_INSTANCE_ID: expectedInstanceId || actualInstanceId,
+      ...(mode === 'member-exact' && memberInstanceId ? { EYPC_WINDOW_MEMBER_INSTANCE_ID: memberInstanceId } : {})
     }
   )
   if (!result.ok) {
     const detail = `${result.error}\n${result.stderr}`
     return isMacWindowPermissionError(detail)
-      ? { outcome: 'permission-required', message: '需要在系统设置中允许 EyPc 控制 System Events', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'denied' }]) }
+      ? { outcome: 'permission-required', message: '需要在系统设置中允许 EyPc 使用辅助功能', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'denied' }]) }
       : { outcome: 'failed', message: 'macOS 无法激活该根窗口', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }]) }
   }
   return parseWindowActivationResult(result.stdout)
@@ -1516,9 +1755,11 @@ async function closeWindow(target) {
     const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
     const sourceInstanceId = String(source.instanceId || '').replace(/\u0000/g, '').slice(0, 512)
     const instanceId = sourceInstanceId.includes(':legacy:') ? '' : sourceInstanceId
+    const rootNativeRef = String(source.rootNativeRef || '').trim()
     const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], false, {
       EYPC_WINDOW_TARGET_APP_ID: appId,
-      ...(instanceId ? { EYPC_WINDOW_INSTANCE_ID: instanceId } : {})
+      ...(instanceId ? { EYPC_WINDOW_INSTANCE_ID: instanceId } : {}),
+      ...(rootNativeRef && rootNativeRef !== nativeRef ? { EYPC_WINDOW_ROOT_REF: rootNativeRef } : {})
     })
     if (!result.ok) return { outcome: 'failed', message: 'Windows 无法关闭该窗口' }
     return parseWindowLifecycleResult(result.stdout)
@@ -1531,19 +1772,21 @@ async function closeWindow(target) {
   const actualInstanceId = `darwin:${pid}:${cgWindowNumber}`
   const sourceInstanceId = String(source.instanceId || '').trim()
   const expectedInstanceId = sourceInstanceId.includes(':legacy:') ? '' : sourceInstanceId
+  const rootParts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(String(source.rootNativeRef || nativeRef).trim())
+  const rootCgWindowNumber = rootParts && Number(rootParts[1]) === pid && Number(rootParts[2]) === 0 ? Number(rootParts[3]) : cgWindowNumber
   if (ordinal !== 0 || cgWindowNumber <= 0) return { outcome: 'failed', message: '无法建立稳定的 macOS 窗口实例身份' }
   if (expectedInstanceId && expectedInstanceId !== actualInstanceId) return { outcome: 'not-found', message: '窗口实例与保存目标不一致' }
   const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
   const result = await runWindowCommand(
     '/usr/bin/osascript',
-    ['-l', 'JavaScript', '-e', macosCloseWindowScript(pid, cgWindowNumber)],
+    ['-l', 'JavaScript', '-e', macosCloseWindowScript(pid, cgWindowNumber, rootCgWindowNumber)],
     false,
     { EYPC_WINDOW_TARGET_APP_ID: appId }
   )
   if (!result.ok) {
     const detail = `${result.error}\n${result.stderr}`
     return isMacWindowPermissionError(detail)
-      ? { outcome: 'permission-required', message: '需要在系统设置中允许 EyPc 控制 System Events' }
+      ? { outcome: 'permission-required', message: '需要在系统设置中允许 EyPc 使用辅助功能' }
       : { outcome: 'failed', message: 'macOS 无法关闭该窗口' }
   }
   return parseWindowLifecycleResult(result.stdout)

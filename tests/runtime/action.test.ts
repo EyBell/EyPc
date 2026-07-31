@@ -3,6 +3,7 @@ import { createActionRuntime } from '../../src/runtime/action/actionRuntime'
 import { createInitialState, normalizeAppState } from '../../src/domain/state'
 import { createAppRuntime } from '../../src/runtime/appRuntime'
 import { createMqttConnectionConfig } from '../../src/domain/mqtt'
+import type { LiveWindow, WindowActivationRequest } from '../../src/domain/windows'
 import { WINDOW_BRIDGE_REVISION, type EypcPlatformApi } from '../../src/platform/eypcPlatform'
 
 type TestPlatformOverrides = {
@@ -19,6 +20,10 @@ function normalizeTestWindowCapability(capability: TestWindowCapability): TestWi
   return capability.supported && capability.bridgeRevision === undefined
     ? { ...capability, bridgeRevision: WINDOW_BRIDGE_REVISION }
     : capability
+}
+
+function activationLandingWindow(request: WindowActivationRequest): LiveWindow {
+  return request.mode === 'member-exact' ? request.member : request.root
 }
 
 describe('action runtime', () => {
@@ -130,8 +135,16 @@ describe('app runtime', () => {
             ? {
                 activate: async (...args: Parameters<NonNullable<typeof windowOverrides.activate>>) => {
                   const result = await windowOverrides.activate!(...args)
-                  const instanceId = args[0].instanceId.includes(':legacy:') ? `${args[0].platform}:verified:${args[0].nativeRef}` : args[0].instanceId
-                  return result.outcome === 'activated' && !result.instanceId ? { ...result, instanceId } : result
+                  if (result.outcome !== 'activated') return result
+                  const root = args[0].root
+                  const instanceId = root.instanceId.includes(':legacy:') ? `${root.platform}:verified:${root.nativeRef}` : root.instanceId
+                  return {
+                    ...result,
+                    instanceId: result.instanceId || instanceId,
+                    ...(args[0].mode === 'member-exact'
+                      ? { memberInstanceId: result.memberInstanceId || args[0].member.instanceId }
+                      : {})
+                  }
                 }
               }
             : {}),
@@ -4954,7 +4967,7 @@ describe('app runtime', () => {
             { id: 'darwin:91:2:12', instanceId: 'darwin:91:2:12', platform: 'darwin', nativeRef: '91:2:12', appId: 'com.browser', appName: 'Browser', pid: 91, title: 'Docs', minimized: false, focused: false }
           ]
         }),
-        activate: async (window) => { activated.push(window.nativeRef); return { outcome: 'activated' as const } }
+        activate: async (request) => { activated.push(activationLandingWindow(request).nativeRef); return { outcome: 'activated' as const } }
       }
     })
     enableWindows(state)
@@ -4988,19 +5001,27 @@ describe('app runtime', () => {
     expect(runtime.snapshot().state.windowSlots[0].targetIdByPlatform.darwin).toBe('work-browser')
   })
 
-  it('projects every proven native member as one root row and activates the root regardless of the focused member title', async () => {
-    const activated: string[] = []
+  it('switches a stable root to its current child and opens an explicit child exactly', async () => {
+    const activations: Array<{ mode: WindowActivationRequest['mode']; root: string; member: string | null }> = []
     const { state } = installPlatform({
       windows: {
         capabilities: async () => ({ platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true }),
         list: async () => ({
           capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true },
           windows: [
-            { id: 'member-a', instanceId: 'darwin:9:201', rootInstanceId: 'darwin:9:100', platform: 'darwin', nativeRef: '9:0:201', rootNativeRef: '9:0:100', rootPid: 9, appId: 'com.browser', appName: 'Browser', pid: 9, title: 'Tab A', minimized: false, focused: false },
-            { id: 'member-b', instanceId: 'darwin:9:202', rootInstanceId: 'darwin:9:100', platform: 'darwin', nativeRef: '9:0:202', rootNativeRef: '9:0:100', rootPid: 9, appId: 'com.browser', appName: 'Browser', pid: 9, title: 'Tab B', minimized: false, focused: true }
+            { id: 'root', instanceId: 'darwin:9:100', relationship: 'root' as const, relationEvidence: 'root-self' as const, rootInstanceId: 'darwin:9:100', platform: 'darwin' as const, nativeRef: '9:0:100', rootNativeRef: '9:0:100', rootPid: 9, appId: 'com.browser', appName: 'Browser', pid: 9, title: 'Browser Main', minimized: false, focused: false },
+            { id: 'member-a', instanceId: 'darwin:9:201', relationship: 'child' as const, relationEvidence: 'macos-ax-top-level' as const, rootInstanceId: 'darwin:9:100', platform: 'darwin' as const, nativeRef: '9:0:201', rootNativeRef: '9:0:100', rootPid: 9, appId: 'com.browser', appName: 'Browser', pid: 9, title: 'Tab A', minimized: false, focused: false },
+            { id: 'member-b', instanceId: 'darwin:9:202', relationship: 'child' as const, relationEvidence: 'macos-ax-top-level' as const, rootInstanceId: 'darwin:9:100', platform: 'darwin' as const, nativeRef: '9:0:202', rootNativeRef: '9:0:100', rootPid: 9, appId: 'com.browser', appName: 'Browser', pid: 9, title: 'Tab B', minimized: false, focused: true }
           ]
         }),
-        activate: async (window) => { activated.push(window.nativeRef); return { outcome: 'activated' as const } }
+        activate: async (request) => {
+          activations.push({
+            mode: request.mode,
+            root: request.root.instanceId,
+            member: request.mode === 'member-exact' ? request.member.instanceId : null
+          })
+          return { outcome: 'activated' as const }
+        }
       }
     })
     enableWindows(state)
@@ -5014,11 +5035,69 @@ describe('app runtime', () => {
     runtime.dispatch('windows.refresh')
     await flushWindowActions()
 
-    expect(runtime.snapshot().windowRows).toMatchObject([{ id: 'target:browser-root', title: 'Tab B' }])
+    expect(runtime.snapshot().windowRows).toMatchObject([{
+      id: 'target:browser-root',
+      title: 'Browser Main',
+      kind: 'window',
+      treeLevel: 1,
+      expandable: true,
+      childCount: 2
+    }])
     expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastInstanceId: 'darwin:9:100', lastNativeRef: '9:0:100' })
     runtime.dispatch('windows.slot.activate', { slot: 1 })
     await flushWindowActions()
-    expect(activated).toEqual(['9:0:100'])
+    expect(activations).toEqual([{ mode: 'root-current', root: 'darwin:9:100', member: null }])
+
+    runtime.dispatch('windows.tree.toggle', { rowId: 'target:browser-root', expanded: true })
+    const child = runtime.snapshot().windowRows.find((row) => row.kind === 'child-window' && row.title === 'Tab A')
+    expect(child).toMatchObject({ treeLevel: 2, parentRowId: 'target:browser-root', favorite: false, pinned: false, slotNumbers: [] })
+    runtime.focusWindow(child!.id)
+    runtime.dispatch('windows.activate')
+    await flushWindowActions()
+
+    expect(activations).toEqual([
+      { mode: 'root-current', root: 'darwin:9:100', member: null },
+      { mode: 'member-exact', root: 'darwin:9:100', member: 'darwin:9:201' }
+    ])
+  })
+
+  it('does not fall back to a root or sibling after the requested child disappears', async () => {
+    let listCount = 0
+    const activations: WindowActivationRequest[] = []
+    const root = { id: 'root', instanceId: 'darwin:9:100', relationship: 'root' as const, relationEvidence: 'root-self' as const, rootInstanceId: 'darwin:9:100', platform: 'darwin' as const, nativeRef: '9:0:100', rootNativeRef: '9:0:100', rootPid: 9, appId: 'com.browser', appName: 'Browser', pid: 9, title: 'Browser Main', minimized: false, focused: false }
+    const child = { id: 'child', instanceId: 'darwin:9:201', relationship: 'child' as const, relationEvidence: 'macos-ax-top-level' as const, rootInstanceId: 'darwin:9:100', platform: 'darwin' as const, nativeRef: '9:0:201', rootNativeRef: '9:0:100', rootPid: 9, appId: 'com.browser', appName: 'Browser', pid: 9, title: 'Tab A', minimized: false, focused: true }
+    const { state } = installPlatform({
+      windows: {
+        capabilities: async () => ({ platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true }),
+        list: async () => {
+          listCount += 1
+          return {
+            capability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true },
+            completeness: 'complete' as const,
+            windows: listCount === 1 ? [root, child] : [root]
+          }
+        },
+        activate: async (request) => {
+          activations.push(request)
+          return { outcome: 'activated' as const }
+        }
+      }
+    })
+    enableWindows(state)
+    const runtime = createAppRuntime(state)
+    runtime.dispatch('windows.refresh')
+    await flushWindowActions()
+
+    const rootRow = runtime.snapshot().windowRows.find((row) => row.kind === 'window')!
+    runtime.dispatch('windows.tree.toggle', { rowId: rootRow.id, expanded: true })
+    const childRow = runtime.snapshot().windowRows.find((row) => row.kind === 'child-window')!
+    runtime.focusWindow(childRow.id)
+    runtime.dispatch('windows.activate')
+    await flushWindowActions()
+
+    expect(activations).toEqual([])
+    expect(runtime.snapshot().message).toContain('指定子窗口已失效')
+    expect(runtime.snapshot().focusedWindowId).toBe(rootRow.id)
   })
 
   it('keeps Finder roots under one virtual parent, excludes the parent from selection, and activates the focused child first', async () => {
@@ -5033,7 +5112,7 @@ describe('app runtime', () => {
             { id: 'finder-b', instanceId: 'darwin:21:101', platform: 'darwin', nativeRef: '21:0:101', appId: 'com.apple.finder', appName: 'Finder', pid: 21, title: 'Projects', minimized: false, focused: true }
           ]
         }),
-        activate: async (window) => { activated.push(window.instanceId); return { outcome: 'activated' as const } }
+        activate: async (request) => { activated.push(activationLandingWindow(request).instanceId); return { outcome: 'activated' as const } }
       }
     })
     enableWindows(state)
@@ -5159,8 +5238,8 @@ describe('app runtime', () => {
             windows: []
           }
         },
-        activate: async (window) => {
-          activated.push(window.nativeRef)
+        activate: async (request) => {
+          activated.push(activationLandingWindow(request).nativeRef)
           return { outcome: 'activated' as const }
         }
       }
@@ -5752,7 +5831,7 @@ describe('app runtime', () => {
       expect(unsupportedRuntime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'topmost-unsupported', level: 'blocking' }))
     })
 
-    it('rescans a stale native reference once and updates it after recovery', async () => {
+    it('rescans a stale native reference once but requires explicit replacement confirmation', async () => {
       const activated: string[] = []
       let listCount = 0
       const { state } = installPlatform({
@@ -5765,7 +5844,8 @@ describe('app runtime', () => {
               windows: [{ id: 'darwin:new-ref', instanceId: 'darwin:new-ref', platform: 'darwin', nativeRef: 'new-ref', appId: 'com.example.target', appName: 'Example', pid: 7, title: 'Target', minimized: false, focused: false }]
             }
           },
-          activate: async (window) => {
+          activate: async (request) => {
+            const window = activationLandingWindow(request)
             activated.push(window.nativeRef)
             return { outcome: window.nativeRef === 'old-ref' ? 'not-found' as const : 'activated' as const }
           }
@@ -5778,10 +5858,11 @@ describe('app runtime', () => {
       runtime.dispatch('windows.slot.activate', { slot: 1 })
       await flushWindowActions()
 
-      expect(activated).toEqual(['old-ref', 'new-ref'])
+      expect(activated).toEqual(['old-ref'])
       expect(listCount).toBe(1)
-      expect(runtime.snapshot().state.windowTargets[0].lastNativeRef).toBe('new-ref')
-      expect(runtime.snapshot().windowActivationDiagnostics.filter((diagnostic) => diagnostic.level === 'blocking')).toEqual([])
+      expect(runtime.snapshot().state.windowTargets[0].lastNativeRef).toBe('old-ref')
+      expect(runtime.snapshot().windowRebind).toMatchObject({ phase: 'confirming', targetId: 'diagnostic-target' })
+      expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'rebind-required', level: 'blocking' }))
     })
 
     it('requires confirmation before rebinding even when a complete scan has only one same-app candidate', async () => {
@@ -5796,7 +5877,8 @@ describe('app runtime', () => {
             completeness: 'complete' as const,
             windows: [{ id: 'darwin:91:0:222', instanceId: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: currentTitle, minimized: false, focused: false }]
           }),
-          activate: async (window) => {
+          activate: async (request) => {
+            const window = activationLandingWindow(request)
             activated.push(window.nativeRef)
             return { outcome: window.nativeRef === '7:0:111' ? 'not-found' as const : 'activated' as const }
           }
@@ -5892,7 +5974,7 @@ describe('app runtime', () => {
             if (listCount === 4) return { capability: darwinCapability, completeness: 'partial' as const, windows: [] }
             return { capability: darwinCapability, completeness: 'complete' as const, windows: [replacementCandidate] }
           },
-          activate: async (window) => ({ outcome: window.nativeRef === '7:0:111' ? 'not-found' as const : 'activated' as const })
+          activate: async (request) => ({ outcome: activationLandingWindow(request).nativeRef === '7:0:111' ? 'not-found' as const : 'activated' as const })
         }
       })
       enableWindows(state)
@@ -5948,7 +6030,7 @@ describe('app runtime', () => {
             completeness: 'complete' as const,
             windows: [{ id: 'darwin:91:0:222', instanceId: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: currentTitle, minimized: false, focused: false }]
           }),
-          activate: async (window) => ({ outcome: window.nativeRef === '7:0:111' ? 'not-found' as const : 'focus-denied' as const })
+          activate: async (request) => ({ outcome: activationLandingWindow(request).nativeRef === '7:0:111' ? 'not-found' as const : 'focus-denied' as const })
         }
       })
       enableWindows(state)
@@ -5981,8 +6063,8 @@ describe('app runtime', () => {
               { id: 'darwin:92:0:333', instanceId: 'darwin:92:0:333', platform: 'darwin', nativeRef: '92:0:333', appId: 'com.google.Chrome', appName: 'Google Chrome', pid: 92, title: 'AiTools - Settings - Google Chrome', minimized: false, focused: false }
             ]
           }),
-          activate: async (window) => {
-            activated.push(window.nativeRef)
+          activate: async (request) => {
+            activated.push(activationLandingWindow(request).nativeRef)
             return { outcome: 'not-found' as const }
           }
         }
@@ -6012,8 +6094,8 @@ describe('app runtime', () => {
             completeness: 'partial' as const,
             windows: [{ id: 'darwin:91:0:222', instanceId: 'darwin:91:0:222', platform: 'darwin', nativeRef: '91:0:222', appId: 'com.jetbrains.rider', appName: 'Rider', pid: 91, title: 'agro-management – Program.cs', minimized: false, focused: false }]
           }),
-          activate: async (window) => {
-            activated.push(window.nativeRef)
+          activate: async (request) => {
+            activated.push(activationLandingWindow(request).nativeRef)
             return { outcome: 'not-found' as const }
           }
         }
@@ -6031,7 +6113,7 @@ describe('app runtime', () => {
       expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'refresh-incomplete', level: 'blocking' }))
     })
 
-    it('uses the same stale-reference recovery for manual workbench activation', async () => {
+    it('uses the same explicit rebind requirement for manual workbench activation', async () => {
       const activated: string[] = []
       const { state } = installPlatform({
         windows: {
@@ -6040,7 +6122,8 @@ describe('app runtime', () => {
             capability: darwinCapability,
             windows: [{ id: 'darwin:manual-new', instanceId: 'darwin:manual-new', platform: 'darwin', nativeRef: 'manual-new', appId: 'com.example.target', appName: 'Example', pid: 8, title: 'Target', minimized: false, focused: false }]
           }),
-          activate: async (window) => {
+          activate: async (request) => {
+            const window = activationLandingWindow(request)
             activated.push(window.nativeRef)
             return { outcome: window.nativeRef === 'old-ref' ? 'not-found' as const : 'activated' as const }
           }
@@ -6054,9 +6137,10 @@ describe('app runtime', () => {
       expect(runtime.dispatch('windows.activate').handled).toBe(true)
       await flushWindowActions()
 
-      expect(activated).toEqual(['old-ref', 'manual-new'])
-      expect(runtime.snapshot().state.windowTargets[0].lastNativeRef).toBe('manual-new')
-      expect(runtime.snapshot().windowActivationDiagnostics.filter((diagnostic) => diagnostic.level === 'blocking')).toEqual([])
+      expect(activated).toEqual(['old-ref'])
+      expect(runtime.snapshot().state.windowTargets[0].lastNativeRef).toBe('old-ref')
+      expect(runtime.snapshot().windowRebind).toMatchObject({ phase: 'confirming', targetId: 'diagnostic-target' })
+      expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'rebind-required', level: 'blocking' }))
     })
 
     it('marks a target closed only after a healthy rescan finds no match', async () => {

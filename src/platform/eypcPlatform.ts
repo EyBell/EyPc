@@ -1,7 +1,7 @@
 import { normalizeAppState } from '../domain/state'
 import { normalizeMqttArchiveState } from '../domain/mqtt'
 import type { AppState, FavoriteNode, KillRequest, KillResult, MqttArchiveState, MqttStorageStatus, PortProcess } from '../domain/types'
-import type { LiveWindow, NativeWindowObservation, WindowPlatform } from '../domain/windows'
+import type { LiveWindow, NativeWindowObservation, WindowActivationRequest, WindowPlatform } from '../domain/windows'
 import type {
   CodexActivityDelta,
   CodexBridgeResult,
@@ -31,9 +31,9 @@ export type FileActionOutcome = 'success' | 'dispatched' | 'revealed-instead' | 
 export type FileErrorCode = 'invalid-path' | 'not-found' | 'permission-denied' | 'no-handler' | 'timeout' | 'unsupported' | 'io-error'
 export type FavoritePathStatus = 'available' | 'missing' | 'permission-denied' | 'offline' | 'invalid' | 'unknown'
 export type WindowPermissionState = 'granted' | 'required' | 'unknown' | 'unsupported'
-export const WINDOW_BRIDGE_REVISION = 'wj20-root-window-family'
+export const WINDOW_BRIDGE_REVISION = 'wj21-main-child-window-tree'
 export type WindowActivationOutcome = 'activated' | 'not-found' | 'ambiguous' | 'permission-required' | 'focus-denied' | 'unsupported' | 'failed'
-export type WindowActivationReasonCode = 'instance-mismatch' | 'identity-unavailable'
+export type WindowActivationReasonCode = 'instance-mismatch' | 'member-mismatch' | 'identity-unavailable'
 export type WindowOperationTraceStage = 'bridge' | 'target' | 'process' | 'restore' | 'foreground' | 'raise' | 'verify' | 'topmost'
 export type WindowOperationTraceOutcome = 'ok' | 'skipped' | 'not-found' | 'ambiguous' | 'failed' | 'denied' | 'unsupported' | 'unavailable'
 export type WindowOperationTraceDetail =
@@ -137,6 +137,7 @@ export interface WindowActivationResult {
   outcome: WindowActivationOutcome
   /** Current bridge-verified identity, returned on success for legacy-state backfill. */
   instanceId?: string
+  memberInstanceId?: string
   reasonCode?: WindowActivationReasonCode
   message?: string
   candidates?: LiveWindow[]
@@ -200,7 +201,7 @@ export interface EypcPlatformApi {
   windows: {
     capabilities(): Promise<WindowCapability>
     list(): Promise<WindowListResult>
-    activate(window: LiveWindow, options?: WindowActivationOptions): Promise<WindowActivationResult>
+    activate(request: WindowActivationRequest, options?: WindowActivationOptions): Promise<WindowActivationResult>
     /** Sets a real Windows topmost z-order; unsupported on macOS instead of pretending to persist it. */
     alwaysOnTop?(window: LiveWindow, options?: WindowActivationOptions): Promise<WindowActivationResult>
     close?(window: LiveWindow): Promise<WindowCloseResult>

@@ -6,6 +6,7 @@ import {
   targetMatchesLiveWindow,
   windowSlotNumbersForTarget,
   type LiveWindow,
+  type WindowFamily,
   type WindowInstanceId,
   type WindowPlatform,
   type WindowSlot,
@@ -42,6 +43,14 @@ export function liveWindowRowId(instanceId: WindowInstanceId): string {
   return `live:${instanceId}`
 }
 
+export function childWindowRowId(rootInstanceId: WindowInstanceId, memberInstanceId: WindowInstanceId): string {
+  return `child:${rootInstanceId}:${memberInstanceId}`
+}
+
+export function windowFamilyExpansionKey(rootInstanceId: WindowInstanceId): string {
+  return `family:${rootInstanceId}`
+}
+
 export function candidateWindowRowId(instanceId: WindowInstanceId): string {
   return `candidate:${instanceId}`
 }
@@ -61,6 +70,8 @@ export interface WindowTreeLeafSource<T> {
   title: string
   pinned: boolean
   searchText: string
+  familyKey?: string | null
+  children?: WindowTreeLeafSource<T>[]
 }
 
 export interface FileManagerGroupMetadata {
@@ -91,10 +102,14 @@ export interface WindowRow {
   ambiguous: boolean
   /** A live same-application option shown only for explicit instance rebinding. */
   candidate?: boolean
-  kind: 'window' | 'file-manager-group'
+  kind: 'window' | 'child-window' | 'file-manager-group'
   treeLevel: 1 | 2
   parentGroupKey: string | null
+  parentRowId: string | null
   groupKey: string | null
+  expansionKey?: string | null
+  /** Root identity used for root-current or member-exact native requests. */
+  rootLive?: LiveWindow | null
   expandable: boolean
   expanded: boolean
   childCount: number
@@ -102,20 +117,28 @@ export interface WindowRow {
 }
 
 export type WindowActionsMode = 'single' | 'multi'
-export type WindowActionsContext = 'window' | 'file-manager-group' | 'selection' | 'slot'
+export type WindowActionsContext = 'window' | 'child-window' | 'file-manager-group' | 'selection' | 'slot'
 
 export function windowActionsContextFor(
   kind: WindowRow['kind'],
   mode: WindowActionsMode
 ): Exclude<WindowActionsContext, 'slot'> {
-  return mode === 'multi' ? 'selection' : kind === 'file-manager-group' ? 'file-manager-group' : 'window'
+  return mode === 'multi'
+    ? 'selection'
+    : kind === 'file-manager-group'
+      ? 'file-manager-group'
+      : kind === 'child-window'
+        ? 'child-window'
+        : 'window'
 }
 
 export interface BuildWindowTreeRowsOptions {
   targets: readonly WindowTarget[]
   slots: readonly WindowSlot[]
   liveWindows: readonly LiveWindow[]
+  windowFamilies?: readonly WindowFamily[]
   freshInstanceIds: ReadonlySet<WindowInstanceId>
+  freshMemberInstanceIds?: ReadonlySet<WindowInstanceId>
   currentPlatform: WindowPlatform | null
   listLoaded: boolean
   focusedRowId: string | null
@@ -127,7 +150,14 @@ export interface BuildWindowTreeRowsOptions {
 }
 
 export type WindowTreeProjection<T> =
-  | { kind: 'window'; source: WindowTreeLeafSource<T>; level: 1; parentGroupKey: null }
+  | {
+      kind: 'window-family'
+      source: WindowTreeLeafSource<T>
+      children: WindowTreeLeafSource<T>[]
+      visibleChildren: WindowTreeLeafSource<T>[]
+      expanded: boolean
+      level: 1
+    }
   | {
       kind: 'file-manager-group'
       groupKey: string
@@ -139,7 +169,7 @@ export type WindowTreeProjection<T> =
     }
 
 export type VisibleWindowTreeItem<T> =
-  | { kind: 'window'; source: WindowTreeLeafSource<T>; level: 1 | 2; parentGroupKey: string | null }
+  | { kind: 'window'; source: WindowTreeLeafSource<T>; level: 1 | 2; parentGroupKey: string | null; parentRowId: string | null; expanded?: boolean }
   | { kind: 'file-manager-group'; projection: Extract<WindowTreeProjection<T>, { kind: 'file-manager-group' }> }
 
 function compareSources<T>(left: WindowTreeLeafSource<T>, right: WindowTreeLeafSource<T>): number {
@@ -151,8 +181,9 @@ function compareSources<T>(left: WindowTreeLeafSource<T>, right: WindowTreeLeafS
 }
 
 /**
- * Build the one-level product tree. Only Finder/Explorer receive a virtual
- * application parent; every child remains an independent root window.
+ * Build the fixed two-level product tree. Ordinary applications use a real
+ * root → real child family. Finder/Explorer alone use a virtual parent → real
+ * roots and deliberately omit a third level.
  */
 export function projectWindowTree<T>(
   leaves: readonly WindowTreeLeafSource<T>[],
@@ -168,9 +199,21 @@ export function projectWindowTree<T>(
   for (const source of [...leaves].sort(compareSources)) {
     const groupKey = fileManagerGroupKey(source.platform, source.appId)
     if (!groupKey) {
-      if (!keyword || normalizeWindowText(source.searchText).includes(keyword)) {
-        ordinary.push({ kind: 'window', source, level: 1, parentGroupKey: null })
-      }
+      const children = source.children || []
+      const rootMatches = !keyword || normalizeWindowText(source.searchText).includes(keyword)
+      const matchingChildren = keyword
+        ? children.filter((child) => normalizeWindowText(child.searchText).includes(keyword))
+        : children
+      if (keyword && !rootMatches && !matchingChildren.length) continue
+      const expanded = Boolean(children.length && (keyword || (source.familyKey && expandedGroupKeys.has(source.familyKey))))
+      ordinary.push({
+        kind: 'window-family',
+        source,
+        children,
+        visibleChildren: expanded ? (rootMatches ? children : matchingChildren) : [],
+        expanded,
+        level: 1
+      })
       continue
     }
     const group = groups.get(groupKey) || {
@@ -209,13 +252,13 @@ export function projectWindowTree<T>(
   }
 
   return [...ordinary, ...grouped].sort((left, right) => {
-    const leftPinned = left.kind === 'window' ? left.source.pinned : left.metadata.pinned
-    const rightPinned = right.kind === 'window' ? right.source.pinned : right.metadata.pinned
+    const leftPinned = left.kind === 'window-family' ? left.source.pinned : left.metadata.pinned
+    const rightPinned = right.kind === 'window-family' ? right.source.pinned : right.metadata.pinned
     if (leftPinned !== rightPinned) return leftPinned ? -1 : 1
-    const leftApp = left.kind === 'window' ? left.source.appName : left.metadata.appName
-    const rightApp = right.kind === 'window' ? right.source.appName : right.metadata.appName
-    const leftName = left.kind === 'window' ? left.source.displayName : left.metadata.displayName
-    const rightName = right.kind === 'window' ? right.source.displayName : right.metadata.displayName
+    const leftApp = left.kind === 'window-family' ? left.source.appName : left.metadata.appName
+    const rightApp = right.kind === 'window-family' ? right.source.appName : right.metadata.appName
+    const leftName = left.kind === 'window-family' ? left.source.displayName : left.metadata.displayName
+    const rightName = right.kind === 'window-family' ? right.source.displayName : right.metadata.displayName
     return leftApp.localeCompare(rightApp, undefined, { sensitivity: 'base' })
       || leftName.localeCompare(rightName, undefined, { sensitivity: 'base' })
   })
@@ -223,15 +266,25 @@ export function projectWindowTree<T>(
 
 /** The only flattening rule consumed by the page-facing Runtime list. */
 export function flattenWindowTree<T>(projection: readonly WindowTreeProjection<T>[]): VisibleWindowTreeItem<T>[] {
-  return projection.flatMap((item): VisibleWindowTreeItem<T>[] => item.kind === 'window'
-    ? [{ kind: 'window', source: item.source, level: 1, parentGroupKey: null }]
+  return projection.flatMap((item): VisibleWindowTreeItem<T>[] => item.kind === 'window-family'
+    ? [
+        { kind: 'window', source: item.source, level: 1, parentGroupKey: null, parentRowId: null, expanded: item.expanded },
+        ...item.visibleChildren.map((source): VisibleWindowTreeItem<T> => ({
+          kind: 'window',
+          source,
+          level: 2,
+          parentGroupKey: null,
+          parentRowId: item.source.id
+        }))
+      ]
     : [
         { kind: 'file-manager-group', projection: item },
         ...item.visibleChildren.map((source): VisibleWindowTreeItem<T> => ({
           kind: 'window',
           source,
           level: 2,
-          parentGroupKey: item.groupKey
+          parentGroupKey: item.groupKey,
+          parentRowId: fileManagerGroupRowId(item.groupKey)
         }))
       ])
 }
@@ -275,7 +328,10 @@ export function buildWindowTreeRows(options: BuildWindowTreeRowsOptions): Window
       kind: 'window',
       treeLevel: 1,
       parentGroupKey: null,
+      parentRowId: null,
       groupKey: null,
+      expansionKey: null,
+      rootLive: live,
       expandable: false,
       expanded: false,
       childCount: 0,
@@ -287,8 +343,43 @@ export function buildWindowTreeRows(options: BuildWindowTreeRowsOptions): Window
     row.title,
     row.appName,
     ...(row.target?.alternateAliases || []),
-    ...(row.live?.searchTitles || [])
+    ...(row.live && fileManagerGroupKey(row.live.platform, row.live.appId) ? row.live.searchTitles || [] : [])
   ].join(' ')
+  const familyByRootId = new Map((options.windowFamilies || []).map((family) => [family.root.instanceId, family]))
+  const childRowsFor = (row: WindowRow): WindowRow[] => {
+    const root = row.live
+    if (!root || row.candidate || fileManagerGroupKey(root.platform, root.appId)) return []
+    const family = familyByRootId.get(root.instanceId)
+    if (!family) return []
+    return family.children.map((child): WindowRow => ({
+      id: childWindowRowId(root.instanceId, child.instanceId),
+      live: child,
+      rootLive: root,
+      target: null,
+      displayName: child.title || child.appName || '未命名子窗口',
+      appName: child.appName,
+      title: child.title,
+      favorite: false,
+      pinned: false,
+      slotNumbers: [],
+      focused: childWindowRowId(root.instanceId, child.instanceId) === options.focusedRowId,
+      selected: false,
+      unavailable: false,
+      cached: options.listLoaded && !options.freshMemberInstanceIds?.has(child.instanceId),
+      ambiguous: false,
+      candidate: false,
+      kind: 'child-window',
+      treeLevel: 2,
+      parentGroupKey: null,
+      parentRowId: row.id,
+      groupKey: null,
+      expansionKey: null,
+      expandable: false,
+      expanded: false,
+      childCount: 0,
+      groupLiveInstanceIds: []
+    }))
+  }
 
   const candidateMode = Boolean(options.rebind.targetId)
   let baseRows: WindowRow[]
@@ -336,7 +427,7 @@ export function buildWindowTreeRows(options: BuildWindowTreeRowsOptions): Window
     }
   }
 
-  const leaves: WindowTreeLeafSource<WindowRow>[] = baseRows.map((row) => ({
+  const sourceForRow = (row: WindowRow): WindowTreeLeafSource<WindowRow> => ({
     row,
     id: row.id,
     platform: row.live?.platform || row.target!.platform,
@@ -346,7 +437,16 @@ export function buildWindowTreeRows(options: BuildWindowTreeRowsOptions): Window
     title: row.title,
     pinned: row.pinned,
     searchText: rowSearchText(row)
-  }))
+  })
+  const leaves: WindowTreeLeafSource<WindowRow>[] = baseRows.map((row) => {
+    const source = sourceForRow(row)
+    const children = childRowsFor(row).map(sourceForRow)
+    return {
+      ...source,
+      familyKey: row.live ? windowFamilyExpansionKey(row.live.instanceId) : null,
+      children
+    }
+  })
   const forcedExpanded = new Set(options.expandedGroupKeys)
   if (candidateMode) {
     for (const leaf of leaves) {
@@ -363,11 +463,20 @@ export function buildWindowTreeRows(options: BuildWindowTreeRowsOptions): Window
 
   return flattenWindowTree(projection).map((item): WindowRow => {
     if (item.kind === 'window') {
+      const children = item.level === 1 ? item.source.children || [] : []
       return {
         ...item.source.row,
+        // Child rows already carry their semantic kind; hierarchy must not
+        // reconstruct product identity from presentation depth.
+        kind: item.source.row.kind,
         treeLevel: item.level,
         parentGroupKey: item.parentGroupKey,
-        groupKey: item.parentGroupKey
+        parentRowId: item.parentRowId,
+        groupKey: item.parentGroupKey,
+        expansionKey: item.level === 1 ? item.source.familyKey || null : null,
+        expandable: item.level === 1 && children.length > 0,
+        expanded: item.level === 1 ? item.expanded === true : false,
+        childCount: item.level === 1 ? children.length : 0
       }
     }
     const group = item.projection
@@ -401,7 +510,10 @@ export function buildWindowTreeRows(options: BuildWindowTreeRowsOptions): Window
       kind: 'file-manager-group',
       treeLevel: 1,
       parentGroupKey: null,
+      parentRowId: null,
       groupKey: group.groupKey,
+      expansionKey: group.groupKey,
+      rootLive: null,
       expandable: true,
       expanded: group.expanded,
       childCount: children.length,
@@ -419,6 +531,9 @@ export function resolveWindowTreeActionTargets<T extends Pick<WindowRow, 'id' | 
   const primary = primaryId ? byId.get(primaryId) || null : null
   if (primary?.kind === 'file-manager-group') {
     return { mode: 'single', context: 'file-manager-group', targets: [primary] }
+  }
+  if (primary?.kind === 'child-window') {
+    return { mode: 'single', context: 'child-window', targets: [primary] }
   }
   const resolved = resolveDrawerTargets(input)
   const targets = resolved.targetIds.flatMap((id) => {
@@ -441,34 +556,34 @@ export interface WindowTreeNavigationResult {
 
 /** Resolve ArrowLeft/ArrowRight without mutating Runtime state. */
 export function resolveWindowTreeNavigation(
-  rows: readonly Pick<WindowRow, 'id' | 'kind' | 'groupKey' | 'parentGroupKey' | 'expanded'>[],
+  rows: readonly Pick<WindowRow, 'id' | 'kind' | 'groupKey' | 'parentGroupKey' | 'parentRowId' | 'expansionKey' | 'expandable' | 'expanded'>[],
   focusedId: string | null,
   direction: 'expand' | 'collapse'
 ): WindowTreeNavigationResult {
   const row = rows.find((item) => item.id === focusedId) || null
   if (!row) return { handled: false, focusedId, groupKey: null, expanded: null }
   if (direction === 'collapse') {
-    if (row.parentGroupKey) {
-      return { handled: true, focusedId: fileManagerGroupRowId(row.parentGroupKey), groupKey: null, expanded: null }
+    if (row.parentRowId) {
+      return { handled: true, focusedId: row.parentRowId, groupKey: null, expanded: null }
     }
-    if (row.kind === 'file-manager-group' && row.groupKey && row.expanded) {
-      return { handled: true, focusedId: row.id, groupKey: row.groupKey, expanded: false }
+    if (row.expandable && row.expansionKey && row.expanded) {
+      return { handled: true, focusedId: row.id, groupKey: row.expansionKey, expanded: false }
     }
     return { handled: false, focusedId, groupKey: null, expanded: null }
   }
-  if (row.kind !== 'file-manager-group' || !row.groupKey) {
+  if (!row.expandable || !row.expansionKey) {
     return { handled: false, focusedId, groupKey: null, expanded: null }
   }
-  if (!row.expanded) return { handled: true, focusedId: row.id, groupKey: row.groupKey, expanded: true }
+  if (!row.expanded) return { handled: true, focusedId: row.id, groupKey: row.expansionKey, expanded: true }
   const index = rows.findIndex((item) => item.id === row.id)
-  const child = rows.slice(index + 1).find((item) => item.kind === 'window' && item.parentGroupKey === row.groupKey)
+  const child = rows.slice(index + 1).find((item) => item.parentRowId === row.id)
   return child
     ? { handled: true, focusedId: child.id, groupKey: null, expanded: null }
     : { handled: false, focusedId, groupKey: null, expanded: null }
 }
 
 export function toggleWindowTreeSelection(
-  rows: readonly Pick<WindowRow, 'id' | 'kind' | 'groupKey' | 'parentGroupKey'>[],
+  rows: readonly Pick<WindowRow, 'id' | 'kind' | 'groupKey' | 'parentGroupKey' | 'parentRowId'>[],
   input: { focusedId: string | null; selectedIds: readonly string[]; advance?: boolean }
 ): { focusedId: string | null; selectedIds: string[]; virtualParentBlocked: boolean } {
   const focused = rows.find((row) => row.id === input.focusedId) || null
@@ -482,6 +597,9 @@ export function toggleWindowTreeSelection(
       : rows.slice(index + 1).find((row) => row.kind === 'window' && row.parentGroupKey === focused.groupKey)
     return { focusedId: child?.id || focused.id, selectedIds, virtualParentBlocked: true }
   }
+  if (focused?.kind === 'child-window') {
+    return { focusedId: focused.id, selectedIds, virtualParentBlocked: true }
+  }
   const next = toggleIdWithAdvance({
     rows: selectableRows,
     focusedId: input.focusedId,
@@ -492,10 +610,11 @@ export function toggleWindowTreeSelection(
 }
 
 export function resolveVisibleWindowTreeFocus(
-  previous: { id: string; parentGroupKey: string | null } | null,
+  previous: { id: string; parentGroupKey: string | null; parentRowId?: string | null } | null,
   visibleRows: readonly { id: string }[]
 ): string | null {
   if (previous && visibleRows.some((row) => row.id === previous.id)) return previous.id
+  if (previous?.parentRowId && visibleRows.some((row) => row.id === previous.parentRowId)) return previous.parentRowId
   if (previous?.parentGroupKey) {
     const parentId = fileManagerGroupRowId(previous.parentGroupKey)
     if (visibleRows.some((row) => row.id === parentId)) return parentId

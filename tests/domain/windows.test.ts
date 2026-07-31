@@ -82,39 +82,47 @@ describe('native window instance identity', () => {
 })
 
 describe('root window family coalescing', () => {
-  it('collapses proven child surfaces into one title-blind root while preserving member search titles', () => {
-    const windows = coalesceNativeWindowFamilies([
-      { id: 'tab-a', instanceId: 'darwin:10:201', rootInstanceId: 'darwin:10:100', platform: 'darwin', nativeRef: '10:0:201', rootNativeRef: '10:0:100', rootPid: 10, appId: 'com.browser', appName: 'Browser', pid: 10, title: 'Tab A', minimized: false, focused: false },
-      { id: 'tab-b', instanceId: 'darwin:10:202', rootInstanceId: 'darwin:10:100', platform: 'darwin', nativeRef: '10:0:202', rootNativeRef: '10:0:100', rootPid: 10, appId: 'com.browser', appName: 'Browser', pid: 10, title: 'Tab B', minimized: false, focused: true }
+  it('keeps one real root with its proven, title-blind child relationship', () => {
+    const families = coalesceNativeWindowFamilies([
+      { id: 'root', instanceId: 'darwin:10:100', relationship: 'root', relationEvidence: 'root-self', rootInstanceId: 'darwin:10:100', platform: 'darwin', nativeRef: '10:0:100', rootNativeRef: '10:0:100', rootPid: 10, appId: 'com.browser', appName: 'Browser', pid: 10, title: 'Browser Main', minimized: false, focused: false },
+      { id: 'tab-a', instanceId: 'darwin:10:201', relationship: 'child', relationEvidence: 'macos-ax-top-level', rootInstanceId: 'darwin:10:100', platform: 'darwin', nativeRef: '10:0:201', rootNativeRef: '10:0:100', rootPid: 10, appId: 'com.browser', appName: 'Browser', pid: 10, title: 'Tab A', minimized: false, focused: false },
+      { id: 'tab-b', instanceId: 'darwin:10:202', relationship: 'child', relationEvidence: 'macos-ax-top-level', rootInstanceId: 'darwin:10:100', platform: 'darwin', nativeRef: '10:0:202', rootNativeRef: '10:0:100', rootPid: 10, appId: 'com.browser', appName: 'Browser', pid: 10, title: 'Tab B', minimized: false, focused: true }
     ])
 
-    expect(windows).toHaveLength(1)
-    expect(windows[0]).toMatchObject({ instanceId: 'darwin:10:100', nativeRef: '10:0:100', title: 'Tab B', focused: true })
-    expect(windows[0].memberInstanceIds).toEqual(['darwin:10:201', 'darwin:10:202'])
-    expect(windows[0].searchTitles).toEqual(['Tab A', 'Tab B'])
+    expect(families).toHaveLength(1)
+    expect(families[0].root).toMatchObject({ instanceId: 'darwin:10:100', nativeRef: '10:0:100', title: 'Browser Main', focused: true })
+    expect(families[0].root.memberInstanceIds).toEqual(['darwin:10:100', 'darwin:10:201', 'darwin:10:202'])
+    expect(families[0].root.searchTitles).toEqual(['Browser Main', 'Tab A', 'Tab B'])
+    expect(families[0].children.map((child) => child.instanceId)).toEqual(['darwin:10:202', 'darwin:10:201'])
   })
 
   it('never merges independent roots merely because app and title are equal', () => {
     const common = { platform: 'darwin' as const, appId: 'com.browser', appName: 'Browser', pid: 10, title: 'Same', minimized: false, focused: false }
-    const windows = coalesceNativeWindowFamilies([
+    const families = coalesceNativeWindowFamilies([
       { ...common, id: 'one', instanceId: 'darwin:10:100', nativeRef: '10:0:100' },
       { ...common, id: 'two', instanceId: 'darwin:10:101', nativeRef: '10:0:101' }
     ])
-    expect(windows.map((window) => window.instanceId)).toEqual(['darwin:10:100', 'darwin:10:101'])
+    expect(families.map((family) => family.root.instanceId)).toEqual(['darwin:10:100', 'darwin:10:101'])
   })
 
   it('does not retain a stale standalone member and preserves proven family evidence in a partial inventory', () => {
     const common = { platform: 'darwin' as const, appId: 'com.editor', appName: 'Editor', pid: 10, minimized: false, focused: false }
-    const stale: LiveWindow = { ...common, id: 'member', instanceId: 'member', nativeRef: 'member', title: 'Tool', memberInstanceIds: ['old-sheet'], memberNativeRefs: ['old-sheet-ref'], searchTitles: ['Old sheet'] }
-    const root: LiveWindow = { ...common, id: 'root', instanceId: 'root', nativeRef: 'root', title: 'Main', memberInstanceIds: ['member'] }
-    expect(mergePartialWindowFamilyInventory([stale], [root])).toEqual([
-      expect.objectContaining({
-        instanceId: 'root',
-        memberInstanceIds: ['member', 'old-sheet'],
-        memberNativeRefs: ['member', 'old-sheet-ref'],
-        searchTitles: ['Tool', 'Old sheet']
-      })
-    ])
+    const staleRoot: LiveWindow = { ...common, id: 'member', instanceId: 'member', nativeRef: 'member', title: 'Tool', relationship: 'root', memberInstanceIds: ['member', 'old-sheet'], memberNativeRefs: ['member', 'old-sheet-ref'], searchTitles: ['Tool', 'Old sheet'] }
+    const staleChild: LiveWindow = { ...common, id: 'old-sheet', instanceId: 'old-sheet', nativeRef: 'old-sheet-ref', title: 'Old sheet', relationship: 'child', rootInstanceId: 'member', rootNativeRef: 'member' }
+    const root: LiveWindow = { ...common, id: 'root', instanceId: 'root', nativeRef: 'root', title: 'Main', relationship: 'root', memberInstanceIds: ['root', 'member'], memberNativeRefs: ['root', 'member'], searchTitles: ['Main', 'Tool'] }
+    const member: LiveWindow = { ...common, id: 'member', instanceId: 'member', nativeRef: 'member', title: 'Tool', relationship: 'child', rootInstanceId: 'root', rootNativeRef: 'root' }
+    const merged = mergePartialWindowFamilyInventory(
+      [{ root: staleRoot, children: [staleChild] }],
+      [{ root, children: [member] }]
+    )
+    expect(merged).toHaveLength(1)
+    expect(merged[0].root).toMatchObject({
+      instanceId: 'root',
+      memberInstanceIds: ['root', 'member', 'old-sheet'],
+      memberNativeRefs: ['root', 'member', 'old-sheet-ref'],
+      searchTitles: ['Main', 'Tool', 'Old sheet']
+    })
+    expect(merged[0].children.map((child) => child.instanceId)).toEqual(['member', 'old-sheet'])
   })
 })
 
