@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: window-list-current-space-only__system-events-ax__miss-other-spaces-displays__cgwindowlist-required
 first_seen: 2026-07-26
-last_verified: 2026-07-29
+last_verified: 2026-07-31
 review_after: 2027-01-28
 evidence:
   - preload/index.js
@@ -29,11 +29,11 @@ tags:
 1. Window Jump refresh only shows windows on the current Space/desktop even though other Spaces and displays have real app windows.
 2. Or the list shows the window (CG inventory) but「展开并前置」returns `activation-not-found` after a healthy rescan when the target is on another Space/display.
 3. A successful refresh intermittently removes windows on other Spaces even though Core Graphics returned them in an earlier inventory.
-4. Repeated stable-slot calls remain slow because the preload fills `macosWindowSpaceCache` but ignores it during activation and repeats direct/reverse or isolated lookup.
+4. Historical WJ-11–WJ-19 builds also attempted private Space lookup/cache/switch routes; WJ-20 no longer contains that activation path.
 
 ## Wrong Assumption
 
-`System Events` `process.windows()` enumerates and can raise every desktop the user can switch to; `kCGWindowIsOnscreen=false` proves minimization; and a cache that is populated but never read still accelerates activation.
+`System Events` `process.windows()` enumerates and can raise every desktop the user can switch to; `kCGWindowIsOnscreen=false` proves minimization; or a private Space cache is required as product identity.
 
 ## Verified Root Cause
 
@@ -41,20 +41,20 @@ AX via System Events typically exposes windows on the active Space. Cross-Space/
 
 Core Graphics “onscreen” is visibility on the current composited Space, not an `AXMinimized` equivalent. A normal window on another Space can report `kCGWindowIsOnscreen=false`; converting that to `minimized=true` and filtering minimized macOS rows deletes valid cross-Space content. Likewise, an AX fallback is a partial/current-Space snapshot, so replacing the previous full list with it turns an observation gap into fabricated deletion.
 
-The WJ-15 preload also populated a session Space map during inventory/resolution but `macosLookupOrResolveWindowSpaceBinding` rebuilt direct and reverse evidence on every call. The cache had no read path, so it could not reduce latency.
+The former session Space-map performance issue is retained only as historical evidence. WJ-20 removes that route instead of treating Space/display binding as window identity.
 
 ## Prevention Rule
 
 Prefer CoreGraphics for full-desktop inventory and use System Events only as a current-Space fallback. Never infer minimization from `kCGWindowIsOnscreen`; keep minimized/off-Space rows visible unless Accessibility supplies a real minimize attribute. Tag each list result complete or partial: complete snapshots may evict, partial snapshots must merge into the prior session list and cannot prove closure.
 
-Before full Space resolution, validate any preload-session binding against the current managed-display map. A unique cache hit may skip direct/reverse/isolated lookup only when the activation child still verifies application/title, unique `_AXUIElementGetWindow` CG identity, and exact application `AXFocusedWindow` readback. Native miss evicts the hint and permits one normal recovery. Import an isolated unique binding only into the current preload session; never persist CG/PID/title/Space/display binding data. Do not use `SLSCopyManagedDisplayForSpace`, desktop walking, learned bindings, title-only Chromium selection, or process-frontmost for a multi-window owner. Cross-project authority: [utools-macos-ax-activation-misses-other-spaces.md](../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/error-memory/utools-macos-ax-activation-misses-other-spaces.md#L1) · [macos-window-activation.md](../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/macos-window-activation.md#L1). The linked CodeNote files have pre-existing dirty/untracked content and were not overwritten by WJ-16.
+Current EyPc prevention is narrower: use Core Graphics for the broadest legal inventory, classify incomplete AX results as partial, retain proven root/member cache on partial refresh, and never infer minimize/closure from offscreen absence. Activation uses exact CG↔AX root mapping and fails closed when the current host cannot focus that root. Do not use private Space lookup/cache/switch, desktop walking, learned binding, title/ordinal selection or process-frontmost fallback. Cross-project Space records remain historical platform research, not current EyPc implementation authority.
 
 ## Alternative Route
 
-- Status: `verified`
-- Preconditions: macOS host; target on another Space/display; Accessibility (+ Screen Recording for full list).
-- Steps: load complete inventory via CG; retain the prior list on partial AX fallback; read/validate a session Space hint or resolve/switch one Space through in-process/isolated SkyLight; map exact AX→CG; validate app/title; Raise/focus and read back exact `AXFocusedWindow`; evict hint on native miss.
-- Verification: from a different Space than a multi-window Chromium target, invoke its stable slot twice and require the repeated call to include `session-cache → switch-confirmed/current → ax-cg-id-match → ax-focused-window`; partial refresh must retain the other-Space row and cannot emit `target-closed`.
+- Status: `verified` for inventory/partial-cache prevention; former private Space activation route is superseded by WJ-20.
+- Preconditions: macOS host; Screen Recording for broad CG inventory and Accessibility for AX root proof.
+- Steps: load CG observations; merge any partial AX snapshot into the prior root cache; activate only through exact root CG↔AX evidence and final focused-root readback; otherwise block visibly.
+- Verification: source/contracts cover partial retention and absence of every former Space symbol; real WJ-20 off-Space behavior remains user-owned.
 - Applicability boundary: inventory + activation; no permanent macOS topmost.
 - Fallback: Accessibility-only hosts remain current-Space for AX; blocking diagnostics stay visible.
 
