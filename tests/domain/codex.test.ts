@@ -45,6 +45,7 @@ describe('Codex domain', () => {
       displayStyle: 'card',
       quotaRefreshMinutes: 0,
       taskRefreshSeconds: 60,
+      dynamicTaskWindowHours: 48,
       compactFields: ['weekly', 'tasks', 'unknown'],
       expandedFields: ['tasks', 'config'],
       colors: { healthy: '#00aa99', warning: 'invalid' },
@@ -56,11 +57,19 @@ describe('Codex domain', () => {
       displayStyle: 'card',
       quotaRefreshMinutes: 0,
       taskRefreshSeconds: 60,
+      dynamicTaskWindowHours: 48,
       compactFields: ['weekly', 'tasks'],
       expandedFields: ['tasks', 'config'],
       position: { displayId: 'screen-2', x: 102, y: -50, edge: 'left' }
     })
     expect(settings.colors).toEqual({ ...defaultCodexSettings().colors, healthy: '#00aa99', warning: 'invalid' })
+  })
+
+  it('defaults the dynamic task window to 24 hours and bounds persisted edits', () => {
+    expect(defaultCodexSettings().dynamicTaskWindowHours).toBe(24)
+    expect(normalizeCodexSettings({ dynamicTaskWindowHours: 0 }).dynamicTaskWindowHours).toBe(1)
+    expect(normalizeCodexSettings({ dynamicTaskWindowHours: 999_999 }).dynamicTaskWindowHours).toBe(365 * 24)
+    expect(normalizeCodexSettings({ dynamicTaskWindowHours: 'invalid' }).dynamicTaskWindowHours).toBe(24)
   })
 
   it('preserves explicit empty field selections and drops obsolete cap/retention settings', () => {

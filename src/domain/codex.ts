@@ -1,6 +1,9 @@
 export type CodexDisplayStyle = 'water' | 'card'
 export type CodexQuotaRefreshMinutes = 5 | 10 | 15 | 30 | 0
 export type CodexTaskRefreshSeconds = 15 | 30 | 60 | 0
+export const CODEX_DEFAULT_DYNAMIC_TASK_WINDOW_HOURS = 24
+export const CODEX_MIN_DYNAMIC_TASK_WINDOW_HOURS = 1
+export const CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS = 365 * 24
 export type CodexFloatEdge = 'left' | 'right' | 'top' | 'bottom'
 export type CodexCompactField = 'short' | 'weekly' | 'tasks'
 export type CodexExpandedField = 'plan' | 'short' | 'weekly' | 'reset' | 'config' | 'tasks' | 'updatedAt'
@@ -602,8 +605,10 @@ export interface CodexSettings {
   newThreadModelPolicy: CodexNewThreadModelPolicy
   /** Applies only while ordinary Codex quota is selected by quota-auto. */
   newThreadPreferredModel: string
-  /** Rolling latest-Turn activity window for task projections; the dynamic view adds a fixed six-hour filter. */
+  /** Rolling latest-Turn activity window for the full task inventory. */
   timeWindowDays: number
+  /** Latest-Turn activity window used by the floating card's Dynamic tab and active task cycle. */
+  dynamicTaskWindowHours: number
   /**
    * Optional default project for Environment Action slots.
    * Empty means “use the float Projects tab context” instead of a fixed project.
@@ -1152,6 +1157,7 @@ export function defaultCodexSettings(): CodexSettings {
     newThreadModelPolicy: 'quota-auto',
     newThreadPreferredModel: '',
     timeWindowDays: 30,
+    dynamicTaskWindowHours: CODEX_DEFAULT_DYNAMIC_TASK_WINDOW_HOURS,
     actionDefaultProjectKey: '',
     compactFields: [...COMPACT_FIELDS],
     expandedFields: [...EXPANDED_FIELDS],
@@ -1182,6 +1188,12 @@ export function normalizeCodexSettings(value: unknown): CodexSettings {
       ? source.newThreadPreferredModel
       : '',
     timeWindowDays: boundedInteger(source.timeWindowDays, 1, 365, fallback.timeWindowDays),
+    dynamicTaskWindowHours: boundedInteger(
+      source.dynamicTaskWindowHours,
+      CODEX_MIN_DYNAMIC_TASK_WINDOW_HOURS,
+      CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS,
+      fallback.dynamicTaskWindowHours
+    ),
     actionDefaultProjectKey: typeof source.actionDefaultProjectKey === 'string'
       && /^[a-z0-9]{8,64}$/i.test(source.actionDefaultProjectKey.trim())
       ? source.actionDefaultProjectKey.trim().slice(0, 64)

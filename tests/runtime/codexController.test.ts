@@ -1932,7 +1932,7 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
-  it('excludes conservative ongoing tasks older than six hours unless they are explicitly pinned in EyPc', async () => {
+  it('reprojects conservative ongoing tasks when the dynamic window changes and keeps the local-pin fallback', async () => {
     const now = Date.now()
     const state = createInitialState(1)
     state.activeTab = 'codex'
@@ -1942,7 +1942,7 @@ describe('Codex controller', () => {
     const threads: CodexHostThread[] = [{
       key: taskKey,
       actionAlias: 'alias-old-conservative',
-      name: '超过六小时的保守进行中',
+      name: '超过默认动态窗口的保守进行中',
       status: 'notLoaded',
       activeFlags: [],
       statusAuthority: 'connector',
@@ -1973,6 +1973,15 @@ describe('Codex controller', () => {
     expect(controller.cycleTask(1)).toBe(false)
     expect(openThread).not.toHaveBeenCalled()
     expect(messages.at(-1)).toBe('当前没有可切换的 Codex 任务')
+
+    expect(controller.updateSettings({ dynamicTaskWindowHours: 48 })).toBe(true)
+    expect(controller.view().taskState.dynamic.groups.active.map((task) => task.key)).toEqual([taskKey])
+    expect(controller.cycleTask(1)).toBe(true)
+    expect(openThread).toHaveBeenCalledWith('alias-old-conservative')
+
+    openThread.mockClear()
+    expect(controller.updateSettings({ dynamicTaskWindowHours: 24 })).toBe(true)
+    expect(controller.view().taskState.dynamic.groups.active).toHaveLength(0)
 
     expect(controller.toggleLocalPin('task', taskKey)).toBe(true)
     expect(controller.view().conversations.ongoing[0]).toMatchObject({ key: taskKey, pinSource: 'local' })

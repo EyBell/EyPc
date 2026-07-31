@@ -7,7 +7,14 @@ import type {
   CodexTaskCard,
   ConversationSnapshotV1
 } from './codex'
-import { CODEX_TASK_STATE_REVISION, emptyConversationSnapshot, normalizeCodexQuota } from './codex'
+import {
+  CODEX_DEFAULT_DYNAMIC_TASK_WINDOW_HOURS,
+  CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS,
+  CODEX_MIN_DYNAMIC_TASK_WINDOW_HOURS,
+  CODEX_TASK_STATE_REVISION,
+  emptyConversationSnapshot,
+  normalizeCodexQuota
+} from './codex'
 import { highestSparkQuotaPool } from './codexNewThread'
 
 export interface CodexQuotaReading {
@@ -83,7 +90,7 @@ export interface CodexTaskStatePackageV1 {
 
 export const CODEX_TASK_STATE_DEGRADED_MESSAGE = 'Codex 任务状态桥版本较旧，状态已保留；建议在 uTools 中重新加载 EyPc 插件'
 
-export const CODEX_DYNAMIC_TASK_WINDOW_MS = 6 * 60 * 60 * 1000
+export const CODEX_DYNAMIC_TASK_WINDOW_MS = CODEX_DEFAULT_DYNAMIC_TASK_WINDOW_HOURS * 60 * 60 * 1000
 
 type CodexDynamicConversationSource = Pick<
   ConversationSnapshotV1,
@@ -104,6 +111,13 @@ function emptyDynamicStatusProjection(): CodexDynamicStatusProjection {
   return { tasks: [], groups, compactCounts: { input: 0, active: 0, unread: 0 }, nextTransitionAt: null }
 }
 
+function dynamicTaskWindowMs(hours: number): number {
+  const normalizedHours = Number.isFinite(hours)
+    ? Math.min(CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS, Math.max(CODEX_MIN_DYNAMIC_TASK_WINDOW_HOURS, Math.round(hours)))
+    : CODEX_DEFAULT_DYNAMIC_TASK_WINDOW_HOURS
+  return normalizedHours * 60 * 60 * 1000
+}
+
 /**
  * Projects the already-stabilized Controller snapshot into the visible dynamic
  * status groups and compact counters. This layer is intentionally stateless:
@@ -111,11 +125,13 @@ function emptyDynamicStatusProjection(): CodexDynamicStatusProjection {
  */
 export function projectCodexDynamicStatus(
   conversations: CodexDynamicConversationSource | null | undefined,
-  now = Date.now()
+  now = Date.now(),
+  windowHours = CODEX_DEFAULT_DYNAMIC_TASK_WINDOW_HOURS
 ): CodexDynamicStatusProjection {
   if (!conversations) return emptyDynamicStatusProjection()
   const effectiveNow = Number.isFinite(now) ? now : Date.now()
-  const windowStart = effectiveNow - CODEX_DYNAMIC_TASK_WINDOW_MS
+  const windowMs = dynamicTaskWindowMs(windowHours)
+  const windowStart = effectiveNow - windowMs
   const recent = [
     ...conversations.ongoing,
     ...(conversations.stopped || []),
@@ -132,7 +148,7 @@ export function projectCodexDynamicStatus(
   }
   const tasks = [groups.input, groups.active, groups.stopped, groups.unread, groups.completed].flat()
   const nextTransitionAt = recent.length
-    ? Math.min(...recent.map((task) => taskActivityAt(task) + CODEX_DYNAMIC_TASK_WINDOW_MS + 1))
+    ? Math.min(...recent.map((task) => taskActivityAt(task) + windowMs + 1))
     : null
   return {
     tasks,
@@ -149,7 +165,7 @@ export function projectCodexDynamicStatus(
 
 export function buildCodexTaskStatePackage(
   conversations: ConversationSnapshotV1,
-  options: { sourceRevision?: string; now?: number } = {}
+  options: { sourceRevision?: string; now?: number; dynamicTaskWindowHours?: number } = {}
 ): CodexTaskStatePackageV1 {
   const now = Number.isFinite(options.now) ? options.now! : Date.now()
   const sourceRevision = options.sourceRevision || 'legacy'
@@ -161,7 +177,7 @@ export function buildCodexTaskStatePackage(
     compatibility,
     compatibilityMessage: compatibility === 'degraded' ? CODEX_TASK_STATE_DEGRADED_MESSAGE : '',
     conversations,
-    dynamic: projectCodexDynamicStatus(conversations, now),
+    dynamic: projectCodexDynamicStatus(conversations, now, options.dynamicTaskWindowHours),
     generatedAt: now
   }
 }
