@@ -174,10 +174,10 @@ describe('development window operation trace', () => {
         snapshot: snapshotWithDiagnostics([], {
           traceEnabled: true,
           traces: [operationTrace({
-            code: 'space-unbound-multiwindow',
+            code: 'instance-mismatch',
             result: 'blocking',
             steps: [
-              { stage: 'space', outcome: 'failed', detail: 'multiwindow-blocked' },
+              { stage: 'target', outcome: 'not-found', detail: 'instance-mismatch' },
               { stage: 'process', outcome: 'ok' },
               { stage: 'target', outcome: 'not-found' }
             ]
@@ -186,11 +186,11 @@ describe('development window operation trace', () => {
       }
     })
     const summary = wrapper.get('[data-role="window-operation-trace-summary"]')
-    expect(summary.text()).toContain('展开并前置 · 阻断：目标应用有多个窗口且无法绑定目标桌面。')
+    expect(summary.text()).toContain('展开并前置 · 阻断：窗口实例与保存目标不一致，请重新确认。')
     expect(wrapper.find('[data-role="window-operation-trace-copy"]').exists()).toBe(true)
     expect(wrapper.find('[data-role="window-operation-trace-plain"]').exists()).toBe(false)
   })
-  it('omits the environment snapshot line when no snapshot is attached', () => {
+  it('does not render retired environment snapshot markup', () => {
     const wrapper = mount(WindowsPage, {
       props: {
         snapshot: snapshotWithDiagnostics([], {
@@ -218,7 +218,8 @@ describe('development window operation trace', () => {
       selected: false,
       slotNumbers: [],
       live: { id: 'win32:100:100', instanceId: 'win32:100:100', platform: 'win32', nativeRef: '100', appId: 'browser.exe', appName: 'Browser', pid: 100, title: 'Docs', minimized: false, focused: false },
-      target: null
+      target: null,
+      kind: 'window', treeLevel: 1, parentGroupKey: null, groupKey: null, expandable: false, expanded: false, childCount: 0, groupLiveInstanceIds: []
     }
     const windowsSnapshot: AppRuntimeSnapshot = {
       ...base,
@@ -264,7 +265,8 @@ describe('development window operation trace', () => {
       selected: false,
       slotNumbers: [],
       live: { id: 'win32:200:424242', instanceId: 'win32:200:424242', platform: 'win32', nativeRef: '424242', appId: 'browser.exe', appName: 'Browser', pid: 200, title: longTitle, minimized: false, focused: false },
-      target: null
+      target: null,
+      kind: 'window', treeLevel: 1, parentGroupKey: null, groupKey: null, expandable: false, expanded: false, childCount: 0, groupLiveInstanceIds: []
     }
     const second: AppRuntimeSnapshot['windowRows'][number] = {
       ...row,
@@ -305,6 +307,7 @@ describe('development window operation trace', () => {
           windowCapability: { platform: 'win32', supported: true, permission: 'granted', canList: true, canActivate: true, canAlwaysOnTop: true },
           windowActionsOpen: true,
           windowActionsMode: 'multi',
+          windowActionsContext: 'selection',
           windowActionTarget: row,
           windowActionTargets: [row, second, third]
         }
@@ -361,7 +364,8 @@ describe('slot inline binding mode', () => {
       selected: false,
       slotNumbers,
       live: null,
-      target: null
+      target: null,
+      kind: 'window', treeLevel: 1, parentGroupKey: null, groupKey: null, expandable: false, expanded: false, childCount: 0, groupLiveInstanceIds: []
     }
   }
 
@@ -386,7 +390,7 @@ describe('slot inline binding mode', () => {
     rows: AppRuntimeSnapshot['windowRows'][number][]
   ): AppRuntimeSnapshot {
     const base = snapshotWithDiagnostics()
-    const target = { id: targetId, alias, platform: 'darwin' as const, appId: 'app.exe', appName: 'App', lastKnownTitle: '', lastInstanceId: null, lastNativeRef: null, favorite: false, pinned: false, createdAt: Date.now(), updatedAt: Date.now() }
+    const target = { id: targetId, alias, scope: 'instance' as const, platform: 'darwin' as const, appId: 'app.exe', appName: 'App', lastKnownTitle: '', lastInstanceId: null, lastNativeRef: null, groupKey: null, lastActiveInstanceId: null, alternateAliases: [], favorite: false, pinned: false, createdAt: Date.now(), updatedAt: Date.now() }
     return {
       ...base,
       windowCapability: { platform: 'darwin', supported: true, permission: 'granted', canList: true, canActivate: true, canAlwaysOnTop: false },
@@ -416,8 +420,8 @@ describe('slot inline binding mode', () => {
       windowRebind: { phase: 'confirming', targetId: 'target-1', candidateInstanceIds: ['darwin:91:222'] }
     })
     snapshot.state.windowTargets = [{
-      id: 'target-1', alias: '工作浏览器', platform: 'darwin', appId: 'com.google.Chrome', appName: 'Google Chrome',
-      lastKnownTitle: 'Dashboard - Google Chrome', lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111',
+      id: 'target-1', alias: '工作浏览器', scope: 'instance', platform: 'darwin', appId: 'com.google.Chrome', appName: 'Google Chrome',
+      lastKnownTitle: 'Dashboard - Google Chrome', lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111', groupKey: null, lastActiveInstanceId: null, alternateAliases: [],
       favorite: true, pinned: true, createdAt: 1, updatedAt: 1
     }]
     const wrapper = mount(WindowsPage, {
@@ -433,7 +437,7 @@ describe('slot inline binding mode', () => {
     expect(status.text()).toContain('Enter')
     expect(status.text()).toContain('Escape')
     const list = wrapper.get('#window-list')
-    expect(list.attributes('role')).toBe('listbox')
+    expect(list.attributes('role')).toBe('tree')
     expect(list.attributes('aria-multiselectable')).toBeUndefined()
     expect(list.attributes('aria-describedby')).toBe('window-status-band')
     expect(wrapper.get('.window-row strong').text()).toBe(currentTitle)
@@ -453,8 +457,8 @@ describe('slot inline binding mode', () => {
       focusedWindowId: null
     })
     snapshot.state.windowTargets = [{
-      id: 'target-1', alias: '工作浏览器', platform: 'darwin', appId: 'com.google.Chrome', appName: 'Google Chrome',
-      lastKnownTitle: 'Dashboard - Google Chrome', lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111',
+      id: 'target-1', alias: '工作浏览器', scope: 'instance', platform: 'darwin', appId: 'com.google.Chrome', appName: 'Google Chrome',
+      lastKnownTitle: 'Dashboard - Google Chrome', lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111', groupKey: null, lastActiveInstanceId: null, alternateAliases: [],
       favorite: true, pinned: true, createdAt: 1, updatedAt: 1
     }]
     const wrapper = mount(WindowsPage, { props: { snapshot } })
@@ -486,8 +490,8 @@ describe('slot inline binding mode', () => {
       windowRebind: { phase: 'confirming', targetId: 'target-1', candidateInstanceIds: ['darwin:91:333', 'darwin:91:444'] }
     })
     snapshot.state.windowTargets = [{
-      id: 'target-1', alias: '工作浏览器', platform: 'darwin', appId: 'com.google.Chrome', appName: 'Google Chrome',
-      lastKnownTitle: 'Dashboard - Google Chrome', lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111',
+      id: 'target-1', alias: '工作浏览器', scope: 'instance', platform: 'darwin', appId: 'com.google.Chrome', appName: 'Google Chrome',
+      lastKnownTitle: 'Dashboard - Google Chrome', lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111', groupKey: null, lastActiveInstanceId: null, alternateAliases: [],
       favorite: true, pinned: false, createdAt: 1, updatedAt: 1
     }]
     const wrapper = mount(WindowsPage, { props: { snapshot } })
@@ -501,7 +505,7 @@ describe('slot inline binding mode', () => {
   it('renders the current or last title as read-only display metadata', () => {
     const snapshot = snapshotWithRows([], {
       windowDraft: {
-        mode: 'edit', targetId: 'target-1', sourceWindowId: null, alias: 'Browser', appName: 'Browser', appId: 'com.browser',
+        mode: 'edit', targetId: 'target-1', sourceWindowId: null, sourceGroupKey: null, alias: 'Browser', appName: 'Browser', appId: 'com.browser',
         lastKnownTitle: 'Current tab title', activeField: 'alias'
       }
     })
@@ -553,6 +557,17 @@ describe('slot inline binding mode', () => {
     expect(wrapper.find('[data-role="window-slot-binding-hint"]').exists()).toBe(true)
   })
 
+  it('uses target identity instead of the visible alias to decide whether a slot is assigned', async () => {
+    const wrapper = mount(WindowsPage, {
+      props: { snapshot: snapshotWithAssignedSlot(1, 'target-1', '未分配', [makeRow('w1', 'Window 1')]) }
+    })
+    const chip = wrapper.get('[data-slot-chip="1"]')
+    expect(chip.classes()).toContain('assigned')
+    await chip.trigger('pointerdown', { button: 0 })
+    expect(wrapper.emitted('dispatch')).toContainEqual(['windows.slot.focus', { slot: 1 }])
+    expect(wrapper.find('[data-role="window-slot-binding-hint"]').exists()).toBe(false)
+  })
+
   it('exits binding mode on Escape keydown', async () => {
     const wrapper = mount(WindowsPage, {
       props: { snapshot: snapshotWithRows([makeRow('w1', 'Window 1')]) }
@@ -568,5 +583,67 @@ describe('slot inline binding mode', () => {
       props: { snapshot: snapshotWithRows([makeRow('w1', 'Window 1')]) }
     })
     expect(wrapper.find('[data-role="window-slot-picker"]').exists()).toBe(false)
+  })
+
+  it('renders file managers as an accessible parent-child tree and exposes only parent-safe actions', async () => {
+    const group: AppRuntimeSnapshot['windowRows'][number] = {
+      ...makeRow('group:file-manager:darwin:com.apple.finder', 'Finder'),
+      appName: 'Finder',
+      kind: 'file-manager-group',
+      groupKey: 'file-manager:darwin:com.apple.finder',
+      expandable: true,
+      expanded: true,
+      childCount: 1,
+      groupLiveInstanceIds: ['darwin:20:100']
+    }
+    const child: AppRuntimeSnapshot['windowRows'][number] = {
+      ...makeRow('live:darwin:20:100', 'Downloads'),
+      appName: 'Finder',
+      treeLevel: 2,
+      parentGroupKey: group.groupKey,
+      groupKey: group.groupKey
+    }
+    const snapshot = snapshotWithRows([group, child], {
+      focusedWindowId: group.id,
+      windowActionsOpen: true,
+      windowActionsContext: 'file-manager-group',
+      windowActionTarget: group,
+      windowActionTargets: [group]
+    })
+    const wrapper = mount(WindowsPage, { props: { snapshot } })
+
+    expect(wrapper.get('#window-list').attributes('role')).toBe('tree')
+    expect(wrapper.findAll('[role="treeitem"]')).toHaveLength(2)
+    expect(wrapper.findAll('[role="treeitem"]')[0].attributes('aria-expanded')).toBe('true')
+    expect(wrapper.findAll('[role="treeitem"]')[0].attributes('aria-selected')).toBeUndefined()
+    expect(wrapper.findAll('[role="treeitem"]')[1].attributes('aria-level')).toBe('2')
+    await wrapper.get('.window-tree-toggle').trigger('click')
+    expect(wrapper.emitted('dispatch')).toContainEqual(['windows.tree.toggle', { rowId: group.id, expanded: false }])
+    expect(wrapper.text()).toContain('激活最近子窗口')
+    expect(wrapper.text()).toContain('收起子窗口')
+    expect(wrapper.text()).not.toContain('页面置顶')
+    expect(wrapper.text()).not.toContain('强制关闭')
+    expect(wrapper.text()).not.toContain('完整编辑')
+  })
+
+  it('opens a unified slot action panel from right click with activate, reselect, clear, and settings actions', async () => {
+    const row = makeRow('target:target-1', 'Target 1', [1])
+    const snapshot = snapshotWithAssignedSlot(1, 'target-1', 'Target 1', [row])
+    snapshot.windowActionsOpen = true
+    snapshot.windowActionsContext = 'slot'
+    snapshot.windowActionSlot = 1
+    snapshot.windowActionTarget = row
+    snapshot.windowActionTargets = [row]
+    const wrapper = mount(WindowsPage, { props: { snapshot } })
+
+    expect(wrapper.text()).toContain('稳定槽 1')
+    expect(wrapper.text()).toContain('激活槽位')
+    expect(wrapper.text()).toContain('重新选择目标')
+    expect(wrapper.text()).toContain('清除槽位')
+    expect(wrapper.text()).toContain('打开 uTools 快捷键设置')
+    expect(wrapper.text()).not.toContain('强制关闭')
+
+    await wrapper.get('[data-slot-chip="1"]').trigger('contextmenu')
+    expect(wrapper.emitted('dispatch')).toContainEqual(['windows.slot.actions.open', { slot: 1 }])
   })
 })
