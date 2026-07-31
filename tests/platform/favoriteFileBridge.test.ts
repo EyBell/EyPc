@@ -70,6 +70,8 @@ describe('favorite file bridge source', () => {
     const publicPackageJson = JSON.parse(readFileSync(resolve(process.cwd(), 'public/package.json'), 'utf8')) as { type?: string }
     const prepareScript = readFileSync(resolve(process.cwd(), 'scripts/prepare-utools-runtime.mjs'), 'utf8')
     const validateScript = readFileSync(resolve(process.cwd(), 'scripts/validate-utools-runtime.mjs'), 'utf8')
+    const viteConfig = readFileSync(resolve(process.cwd(), 'vite.config.ts'), 'utf8')
+    const appSource = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
 
     expect(packageJson.type).toBe('module')
     expect(pluginJson.preload).toBe('preload.js')
@@ -86,6 +88,16 @@ describe('favorite file bridge source', () => {
     expect(validateScript).toContain("dist package.json type must be commonjs")
     expect(validateScript).toContain('public preload.js must match preload/index.js')
     expect(validateScript).toContain('dist preload.js must match preload/index.js')
+    expect(viteConfig).toContain("return 'vendor-vue'")
+    expect(viteConfig).toContain("return 'vendor-markdown'")
+    expect(viteConfig).toContain("return 'vendor-icons'")
+    expect(viteConfig).toContain('manualChunks: stableVendorChunk')
+    expect(validateScript).toContain('const maxJavaScriptChunkBytes = 500_000')
+    expect(validateScript).toContain('JavaScript chunks must stay within 500 kB')
+    for (const page of ['PortsPage', 'FavoritesPage', 'QuickFavoritesPage', 'WindowsPage', 'MqttPage', 'CodexPage', 'SettingsPage']) {
+      expect(appSource).toContain("const " + page + " = defineAsyncComponent(() => import('./pages/" + page + ".vue'))")
+      expect(appSource).not.toContain("import " + page + " from './pages/" + page + ".vue'")
+    }
   })
 
   it('saves JSON text only after the user chooses a target path and reports cancellation', async () => {

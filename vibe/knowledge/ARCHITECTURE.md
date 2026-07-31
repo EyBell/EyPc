@@ -30,6 +30,7 @@ uTools feature entry / keyboard input
 - Process status and task routing live in [../specs/PROJECT_STATUS.md](../specs/PROJECT_STATUS.md#L1), not in architecture memory.
 - Current product contracts live in [../specs/PRODUCT_REQUIREMENTS.md](../specs/PRODUCT_REQUIREMENTS.md#L1).
 - Current MQTT implementation mapping lives in [../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
+- Verification is impact-driven. Root [package.json](../../package.json#L1) exposes independent test, semantic typecheck and non-watch build commands; frontend/runtime changes run relevant focused tests plus typecheck/build, while docs-only work uses its own audits. [App.vue](../../src/App.vue#L1) lazy-loads all seven main tabs, [vite.config.ts](../../vite.config.ts#L1) owns stable Vue/Markdown/icon vendor chunks, and [validate-utools-runtime.mjs](../../scripts/validate-utools-runtime.mjs#L1) rejects any generated JavaScript asset above 500 kB. Build/package evidence never substitutes for real uTools, native-window, visual or interaction acceptance.
 
 ## Ports
 

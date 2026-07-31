@@ -6,11 +6,6 @@ import ConfirmLayer from './components/ConfirmLayer.vue'
 import OperationTooltipLayer from './components/OperationTooltipLayer.vue'
 import QuickJumpLayer from './components/QuickJumpLayer.vue'
 import TabShell from './components/TabShell.vue'
-import PortsPage from './pages/PortsPage.vue'
-import FavoritesPage from './pages/FavoritesPage.vue'
-import QuickFavoritesPage from './pages/QuickFavoritesPage.vue'
-import WindowsPage from './pages/WindowsPage.vue'
-import SettingsPage from './pages/SettingsPage.vue'
 import { assignQuickJumpMarkers, moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
 import type { QuickJumpTarget } from './domain/quickJump'
 import { quickJumpHitStackContainsTarget, quickJumpHitTestPoints } from './domain/quickJumpHitTest'
@@ -20,8 +15,13 @@ import { activeInputRoleFromTarget, blockHandledShortcutEvent, isEditableTarget,
 import { createShortcutHintTiming } from './runtime/shortcutHintTiming'
 
 const platform = getPlatform()
+const PortsPage = defineAsyncComponent(() => import('./pages/PortsPage.vue'))
+const FavoritesPage = defineAsyncComponent(() => import('./pages/FavoritesPage.vue'))
+const QuickFavoritesPage = defineAsyncComponent(() => import('./pages/QuickFavoritesPage.vue'))
+const WindowsPage = defineAsyncComponent(() => import('./pages/WindowsPage.vue'))
 const MqttPage = defineAsyncComponent(() => import('./pages/MqttPage.vue'))
 const CodexPage = defineAsyncComponent(() => import('./pages/CodexPage.vue'))
+const SettingsPage = defineAsyncComponent(() => import('./pages/SettingsPage.vue'))
 const runtime = createAppRuntime(normalizeAppState(platform.storage.getState()))
 const version = ref(0)
 const shiftPreview = ref(false)

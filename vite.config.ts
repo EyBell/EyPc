@@ -3,6 +3,15 @@ import { defineConfig } from 'vitest/config'
 import { resolve } from 'node:path'
 import { handleDevPortApi } from './src/platform/devPortServer'
 
+function stableVendorChunk(id: string) {
+  const normalizedId = id.replaceAll('\\', '/')
+  if (!normalizedId.includes('/node_modules/')) return undefined
+  if (normalizedId.includes('/.pnpm/vue@') || normalizedId.includes('/.pnpm/@vue+')) return 'vendor-vue'
+  if (normalizedId.includes('/.pnpm/marked@')) return 'vendor-markdown'
+  if (normalizedId.includes('/.pnpm/@lucide+vue@')) return 'vendor-icons'
+  return undefined
+}
+
 export default defineConfig({
   base: './',
   plugins: [
@@ -28,6 +37,9 @@ export default defineConfig({
       input: {
         main: resolve(import.meta.dirname, 'index.html'),
         float: resolve(import.meta.dirname, 'float.html')
+      },
+      output: {
+        manualChunks: stableVendorChunk
       }
     }
   }

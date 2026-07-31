@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer'
 import crypto from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import * as pathModule from 'node:path'
 import { resolve } from 'node:path'
 import vm from 'node:vm'
@@ -11,6 +11,7 @@ const canonicalPreload = readFileSync(resolve(root, 'preload/index.js'), 'utf8')
 const publicPreload = readFileSync(resolve(root, 'public/preload.js'), 'utf8')
 const canonicalFloatPreload = readFileSync(resolve(root, 'preload/float.js'), 'utf8')
 const publicFloatPreload = readFileSync(resolve(root, 'public/float-preload.js'), 'utf8')
+const maxJavaScriptChunkBytes = 500_000
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -33,6 +34,9 @@ for (const file of ['index.html', 'float.html', 'plugin.json', 'package.json', '
 
 assert(publicPreload === canonicalPreload, 'public preload.js must match preload/index.js')
 assert(publicFloatPreload === canonicalFloatPreload, 'public float-preload.js must match preload/float.js')
+const oversizedJavaScriptChunks = readdirSync(resolve(distDir, 'assets'))
+  .filter((file) => file.endsWith('.js') && statSync(resolve(distDir, 'assets', file)).size > maxJavaScriptChunkBytes)
+assert(oversizedJavaScriptChunks.length === 0, 'JavaScript chunks must stay within 500 kB: ' + oversizedJavaScriptChunks.join(', '))
 
 const indexHtml = readFileSync(resolve(distDir, 'index.html'), 'utf8')
 assert(!/\b(?:src|href)="\/assets\//.test(indexHtml), 'dist index.html must use relative asset paths for uTools packages')

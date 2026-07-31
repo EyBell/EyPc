@@ -10,6 +10,7 @@ Read first:
 - [../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/VibeAi.md](../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/VibeAi.md#L1)
 
 Hard constraints:
+- Start every actionable task, review, diagnosis, implementation, verification, or closeout with the global [task-skill-reminder](../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Skills/global/task-skill-reminder/SKILL.md#L1): emit one dedicated `Skill 提醒` block containing only materially applicable Skills and the selected verification level; update it only when the route changes.
 - Keep project-specific rules in `vibe/rules/`; do not copy the CodeNote master into this repository.
 - Preserve unrelated user changes and generated IDE files.
 - High-risk actions require confirmation: process kill, file delete, DB writes outside local plugin storage, publish/deploy, credentials, or external service writes.
