@@ -20,7 +20,8 @@ describe('keybinding runtime', () => {
 
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+R', searchContext)?.actionId).toBe('windows.refresh')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', searchContext)?.actionId).toBe('windows.list.down')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowRight', searchContext)?.actionId).toBe('windows.actions.open')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowRight', searchContext)?.actionId).toBe('windows.tree.expand')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowLeft', searchContext)?.actionId).toBe('windows.tree.collapse')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowRight', searchContext)?.actionId).toBe('windows.actions.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', { ...searchContext, windowActionsOpen: true, textInputFocused: false })?.actionId).toBe('windows.actions.close')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowUp', { ...searchContext, windowActionsOpen: true, textInputFocused: false })?.actionId).toBe('windows.list.up')

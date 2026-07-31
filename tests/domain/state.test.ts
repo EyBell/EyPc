@@ -248,6 +248,7 @@ describe('state domain', () => {
       windowTargets: [
         { id: 'mac-browser', alias: '工作浏览器', platform: 'darwin', appId: 'com.google.Chrome', appName: 'Google Chrome', titleLocator: '项目面板', titleHistory: ['旧项目面板', '旧项目面板', ' 项目面板 '], lastNativeRef: '901:0:12', favorite: true, pinned: true, createdAt: 10, updatedAt: 11 },
         { id: 'win-browser', alias: '', platform: 'win32', appId: 'chrome.exe', appName: 'Google Chrome', lastKnownTitle: '项目面板', lastInstanceId: 'win32:42:123456', lastNativeRef: '123456', favorite: false, createdAt: 12, updatedAt: 13 },
+        { id: 'finder-group', alias: '文件管理', scope: 'file-manager-group', platform: 'darwin', appId: 'com.apple.finder', appName: 'Finder', lastKnownTitle: 'Downloads', lastInstanceId: 'must-be-cleared', lastNativeRef: 'must-be-cleared', lastActiveInstanceId: 'darwin:8:88', alternateAliases: ['旧文件管理', '文件管理'], favorite: true, createdAt: 14, updatedAt: 15 },
         { id: 'invalid', platform: 'win32', titleLocator: '' },
         { id: 'mac-browser', platform: 'darwin', appId: 'duplicate', titleLocator: 'duplicate' }
       ],
@@ -260,8 +261,9 @@ describe('state domain', () => {
     }, 100)
 
     expect(state.windowTargets).toEqual([
-      expect.objectContaining({ id: 'mac-browser', alias: '工作浏览器', platform: 'darwin', lastKnownTitle: '项目面板', lastInstanceId: null, lastNativeRef: '901:0:12', favorite: true, pinned: true }),
-      expect.objectContaining({ id: 'win-browser', alias: '项目面板', platform: 'win32', lastKnownTitle: '项目面板', lastInstanceId: 'win32:42:123456', favorite: false, pinned: false })
+      expect.objectContaining({ id: 'mac-browser', alias: '工作浏览器', scope: 'instance', platform: 'darwin', lastKnownTitle: '项目面板', lastInstanceId: null, lastNativeRef: '901:0:12', groupKey: null, alternateAliases: [], favorite: true, pinned: true }),
+      expect.objectContaining({ id: 'win-browser', alias: '项目面板', scope: 'instance', platform: 'win32', lastKnownTitle: '项目面板', lastInstanceId: 'win32:42:123456', favorite: false, pinned: false }),
+      expect.objectContaining({ id: 'finder-group', alias: '文件管理', scope: 'file-manager-group', groupKey: 'file-manager:darwin:com.apple.finder', lastInstanceId: null, lastNativeRef: null, lastActiveInstanceId: 'darwin:8:88', alternateAliases: ['旧文件管理'] })
     ])
     expect(state.windowTargets[0]).not.toHaveProperty('titleHistory')
     expect(state.windowSlots).toHaveLength(10)
