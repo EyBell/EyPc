@@ -2,9 +2,22 @@
 
 ## Current Status
 
-`wj20-root-window-family / WJ-20.1 implemented; verification-pending` — current source normalizes proven native members into one independent OS root window, keeps unrelated roots distinct, adds the Finder/Explorer virtual tree, and retains WJ-19 explicit rebind only after the root actually disappears. The follow-up re-audit centralizes row IDs/projection, target+slot resolution, action context, navigation and real-root-only selection in the existing domain framework. Existing tests were updated as unexecuted contracts. Tests, `vue-tsc`, build, uTools reload, native activation and visual acceptance were not run and remain user-owned.
+`wj21-main-child-window-tree / WJ-21 implemented; focused-tests/typecheck/build/static-verified / host-validation-pending` — current source keeps each real main/root window as the stable persisted switch unit, exposes only bridge-proven ordinary-app members as transient exact child destinations, and keeps Finder/Explorer fixed at virtual parent → real roots. Explicit `root-current` and `member-exact` requests prevent stale-child fallback. Native inventory is now user-window-only: Windows top-level/owned popups with `GA_ROOTOWNER`, macOS admitted AX windows with positive CG identity corroboration; CG-only/system/helper/unproven surfaces are omitted. Relevant automated checks, semantic typecheck, production build and uTools package validation pass. Real uTools reload, native activation/close and visual acceptance remain pending.
 
-## WJ-20 Unexecuted Contract Evidence
+## WJ-21 Executed Development Evidence
+
+- Domain source defines `WindowFamily { root, children }`, explicit relation/capability evidence and discriminated `root-current` / `member-exact` requests. Complete inventory replaces families; partial inventory retains cached members without declaring them closed.
+- Tree projection makes ordinary roots level one and their verified children level two, keeps independent same-app roots side by side, and keeps Finder/Explorer exactly virtual parent → real roots. Search auto-expands matches without mutating manual expansion; stale/hidden/collapsed child focus returns to the root.
+- Child rows are transient and excluded from target creation, favorite, local pin, alias edit, slot assignment, multi-selection, page-topmost, force terminate and batch actions. Their action context is exact activation, capability-gated exact close, read-only details and Windows HWND copy only.
+- Runtime revalidates an exact child immediately before activation or close. `member-exact` success must return both the requested root and member instance IDs; absence/mismatch is blocking and cannot retry the root or a sibling. Root/slot activation continues through `root-current`, so changing the current child does not mutate persisted root metadata.
+- Windows source uses `EnumWindows`, same-app `GA_ROOTOWNER` and final foreground verification; it filters child/no-activate/cloaked/transparent/host/helper surfaces and does not call `EnumChildWindows`. macOS list source is AX-first for regular apps and admitted roles; `_AXUIElementGetWindow` plus Core Graphics corroborates identity, and `AXParent`/`AXTopLevelUIElement`/`AXWindow` proves relationships. A Core Graphics row alone cannot manufacture a product row.
+- Renderer/platform and both preload mirrors use revision `wj21-main-child-window-tree`.
+- `pnpm run typecheck` passes after making the normalized `WindowRow.parentRowId` contract required and updating all affected fixtures/request mocks.
+- The exact staged WJ-21 snapshot passes all four changed window suites: `219/219` tests across domain, platform/preload, Runtime and UI. The Runtime contracts explicitly prove `root-current`, `member-exact`, stale-child no-fallback, focus restoration and precise failure messaging.
+- `pnpm run typecheck` and `pnpm run build` pass on that isolated snapshot. Build includes a second semantic typecheck, Vite production compile, uTools runtime preparation and `validate:utools`; it launches no uTools/browser/dev/preview/native operation. The pre-optimization Vite configuration still reports a 595.12 kB main-chunk warning, tracked by the separate build-size closeout.
+- Full-suite A/B shows no WJ regression: parent `9ba8b91` passes `661/675` with 14 failures, while WJ commit `d834f7b` passes `664/676` with 12 failures. The same 12 remaining failures are confined to three untouched Codex Activity/Companion files; WJ-21 removes both parent window-runtime failures and adds no failure. Their already-present working-tree fixes remain outside the WJ commit boundary.
+
+## WJ-20 Unexecuted Contract Evidence (Historical)
 
 - WJ-20.1 review found and corrected two documentation contradictions without restoring code: the current requirement no longer describes environment/Space activation or bare `ArrowRight` as the action-panel shortcut. The active contract is root-native focus only, tree `ArrowLeft/ArrowRight`, and `Ctrl+ArrowRight` for the panel.
 - `buildWindowTreeRows` is now the single page-facing row projection. Existing domain contracts cover centralized row ID round-trips, Finder/Explorer projection, action context, horizontal navigation, parent blocking, real-root-only selection and selection advance that skips virtual parents. Runtime no longer contains its former `makeWindowRow`/group/search/tree assembly or manual candidate-row parser; the page imports `WindowRow` from the domain and resolves slots through one computed map.
@@ -208,7 +221,7 @@ Residual host gates:
 2. Verify exact-root AX focus failure, stale instance, and truly closed target retain their fail-closed/manual result. Confirm retired `space-unbound-multiwindow`, `space-ambiguous` and `space-switch-timeout` routes/codes never appear. Every replacement, including a sole candidate, must remain manual and commit only after exact activation success.
 3. Confirm production-installed trace absence and retain Windows normal/minimized/page-topmost plus close/confirm-terminate acceptance.
 4. On macOS, permanent page-topmost remains unsupported. Any other unverified outcome must preserve only stable sanitized evidence.
-5. Historical WJ-15–WJ-19 Space/cache host evidence is superseded for the current bridge. Reload and confirm `bridge=wj20-root-window-family`; traces must use root-native identity/focus only, with no environment snapshot or Space lookup/cache/switch route. Partial refreshes still retain proven root/member cache and cannot prove closure.
+5. Historical WJ-15–WJ-20 Space/cache/member-suppression host evidence is superseded for the current bridge. Reload and confirm `bridge=wj21-main-child-window-tree`; traces must use root/member-native identity and focus only, with no environment snapshot or Space lookup/cache/switch route. Partial refreshes retain proven root/member cache and cannot prove closure.
 
 ## Authorized Read-only Local Evidence
 
@@ -218,9 +231,10 @@ Residual host gates:
 
 ## Required User-owned Validation
 
-- WJ-20: reload preload and confirm `bridge=wj20-root-window-family`; bind one browser/IDE root, switch tabs/editors and open/close proven internal dialogs, and confirm the list/favorite/slot remains one root target with the current member title only as display/search metadata. Two independent equal-title roots must remain separate.
-- WJ-20 platform gates: Windows must map same-app owned popups through `GA_ROOTOWNER`, reject root owner/app/actionability mismatch and finish only when the foreground root owner matches. macOS must reject missing CG identity, map AX top-level/window evidence to the requested root, and finish only when `AXFocusedWindow` maps through that root. No environment/Space/title/ordinal fallback may execute.
-- WJ-20 file-manager gate: Finder/Explorer with one or many roots always presents one virtual parent and concrete children; parent landing order is focused → persisted last → session recent → visible first; a no-child parent remains saved and does not launch the app. Validate parent/child favorite, pin, alias, slots, search expansion, ArrowLeft/Right, panel-first Escape and parent exclusion from multi-close.
+- WJ-21 root/current gate: reload preload and confirm `bridge=wj21-main-child-window-tree`; bind one browser/IDE root, change its current child/dialog/editor, then activate the saved root/slot and confirm it opens that root's current child without changing the target, favorite or slot. Two independent same-app roots remain two level-one rows.
+- WJ-21 exact-child gate: choose a visible child and confirm only that member receives focus; close/expire it and require an explicit exact-member failure with no root/sibling fallback. Child rows must offer no favorite/pin/edit/slot/select/topmost/force/batch action; exact close appears only when supported.
+- WJ-21 filtering/platform gate: enterprise WeChat and similar apps must not expose CG-only/system/helper floods. Windows admits only visible actionable top-level/owned popup surfaces, uses `GA_ROOTOWNER`, rejects control/no-activate/cloaked/transparent/host/helper handles and verifies root plus exact member focus. macOS admits only actionable AX windows with positive CG ID corroboration, rejects CG-only/unproven rows, and verifies final `AXFocusedWindow` root/member. No environment/Space/title/ordinal/position/size/unique-candidate fallback may execute.
+- WJ-21 tree/file-manager gate: ordinary roots/children are level one/two; Finder/Explorer is always virtual parent → real roots and never gains level three. Validate search auto-expansion/manual-state restoration, ArrowLeft/Right, right-click context, panel-first Escape, child disappearance/collapse focus return and complete/partial cached-family behavior.
 - WJ-19.1 interaction gate: the candidate list must visibly distinguish sibling windows by current title, suppress inherited target badges/actions, focus the first option on entry, ignore Space/right-click/action shortcuts, and restore the original target with one Escape.
 - WJ-19.2 interaction gate: refresh the candidate flow through complete-empty → partial-new → partial-empty → complete-replacement. The flow must never close implicitly; complete-empty clears only the stale instance/native binding, partial-empty retains a visibly cached candidate, reappearing/replacement candidates regain focus, and Escape alone returns to the logical target row.
 - Earlier production/build evidence remains historical only; WJ-20 tests, `vue-tsc`, build, dist preparation and uTools manifest/runtime gates are all unverified.
@@ -229,7 +243,7 @@ Residual host gates:
 - macOS: Screen Recording + Accessibility; verify CG observations and exact AX root evidence, title changes/absent titles, unproven member separation, exact-root close and confirm-gated force terminate. “页面置顶” must not claim persistent third-party success.
 - Windows: EnumWindows across virtual desktops/displays; cloaked shells absent; `WM_CLOSE` then confirm kill.
 - Windows: browser/helper/native child handles are absent while each real main browser window remains; pin/unpin and application ordering persist across a plugin reopen.
-- `Space` toggles only real-root multi-select and advances; virtual file-manager parents never join selection. Escape closes the right action panel before search/edit/rebind/selection; right-click first focuses and then opens the contextual panel.
+- `Space` toggles only real-root multi-select and advances; child rows and virtual file-manager parents never join selection. Escape closes the right action panel before search/edit/rebind/selection; right-click first focuses and then opens the contextual panel.
 - `c-del` / `c-bs` OS-closes selection/focus; failures prompt force terminate.
 - Ports/Favorites/MQTT Space advance matches Workbench List Taste; ports right-click on a selected row opens multi drawer.
 - Window list `↑↓` with action panel open keeps list ownership and scrolls the focused row.
@@ -237,8 +251,48 @@ Residual host gates:
 
 ## Verification Boundary
 
-WJ-20 static closeout passes: canonical/public preload files are byte-identical; `wj20-root-window-family` is consistent between both preloads and Renderer; the production tree contains exactly one root-family coalescer; removed title, ordinal, environment-snapshot and Space lookup/cache/switch symbols are absent from production sources; project and CodeNote code-link audits pass; both scoped diff checks pass. Static review also confirms that a partial inventory unions previously proven member evidence into the newly observed root instead of splitting or resurrecting a member row.
+WJ-20/WJ-20.1 static evidence remains historical and does not validate WJ-21 because the product tree, native admission and activation protocol changed.
 
-WJ-20.1 static closeout also passes: selected TypeScript sources/tests and the Vue SFC parse without syntax diagnostics; `buildWindowTreeRows` and the root-family coalescer each have one production definition; Runtime has no former row/group/search constructor or manual candidate-prefix branch; canonical/public preload bytes remain equal; retired native symbols remain absent; project/CodeNote code-link audits and scoped diff checks pass. This is syntax/source evidence, not semantic type or runtime evidence.
+WJ-21 static closeout passes:
 
-WJ-15 did run focused suites, typecheck/build/runtime validation and scoped native probes; WJ-16/WJ-17 also retain historical focused evidence, while WJ-18–WJ-19.3 were static/contract-only. None validates WJ-20/WJ-20.1 because their root-family bridge, removed Space route, tree model, migration semantics and concentrated workbench projection are superseding changes. WJ-20/WJ-20.1 intentionally do not run tests, `vue-tsc`, build, preload execution, dist preparation, uTools reload, native activation or visual acceptance; all remain `未校验，待用户验收`.
+- `node --check` passes for canonical/public preload and `cmp -s` confirms byte identity.
+- TypeScript `transpileModule` reports no syntax diagnostics for `windows.ts`, `windowTree.ts`, `eypcPlatform.ts`, `appRuntime.ts` and `keybindingRuntime.ts`; the extracted `WindowsPage.vue` script-setup block also reports no TypeScript syntax diagnostic. The Vue fallback does not compile the SFC/template and neither check is semantic type checking.
+- Renderer plus both preloads contain `wj21-main-child-window-tree`; production source contains no old bridge revision, `EnumChildWindows` or standalone `MACOS_WINDOW_LIST_SCRIPT`. The AX-first list symbol has one definition and one execution reference. `WindowFamily`, `root-current`, `member-exact`, `child-window` and fresh-member evidence are present.
+- Existing window contract files were intentionally updated; the exact staged snapshot passes the four changed suites at `219/219`.
+- The changed project Markdown and CodeNote EyPc Markdown code-link audits pass. Project `git diff --check` and CodeNote's scoped three-file `git diff --check` pass.
+
+## WJ-21 Implementation Re-review
+
+Tool: codex
+
+### Review Target
+
+- Requirement: preserve a real root as the only stable target, expose only proven session children, keep Finder/Explorer at two levels, and omit every unproven or non-actionable native surface.
+- Plan: WJ-21 in [plan.md](plan.md#L1), including explicit bridge-version isolation and regression preservation.
+- Implementation: [windows.ts](../../../../src/domain/windows.ts#L1), [windowTree.ts](../../../../src/domain/windowTree.ts#L1), [appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1), [WindowsPage.vue](../../../../src/pages/WindowsPage.vue#L1), [eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1), and the two preload mirrors.
+
+### Checked
+
+- Requirement alignment: persisted targets, favorites, pins, slots, edit, selection, page-topmost, force termination and batch actions remain root/group-only; exact children remain session-only and fail closed.
+- Plan-to-implementation coverage: complete/partial family inventory, root-current/member-exact routing, two-level Finder/Explorer projection, search/focus recovery, bridge filtering and final-focus validation were traced from page command through Runtime to the native bridge.
+- Risk and compatibility: all native window side effects still cross the existing Runtime/platform boundary; no Files, Ports, MQTT, Codex, storage schema or EzAgentPlatform contract was changed.
+- Maintainability: family/root/freshness assignment now passes through one Runtime inventory function; bridge compatibility is checked by one predicate for both list and activation; semantic child identity is carried by the child row instead of being inferred again from tree depth.
+
+### Findings
+
+- P0: none found in the static scope.
+- P1, fixed — stale preload list mixing: activation already rejected a wrong bridge revision, but list refresh could still consume observations first. Refresh now applies the same revision gate before coalescing or replacing inventory, disables window operations and requests a preload reload.
+- P1, fixed — macOS operation-time CG admission: exact activation rechecked PID/window/layer/alpha but not the valid window bounds required by inventory admission. It now rechecks width and height before AX activation.
+- P2, fixed — parallel inventory state and hidden-child action context: family/root/fresh sets are updated through one function, and collapsing a root retargets an open action panel to that visible root instead of retaining a hidden child target.
+- P2, fixed — redundant bridge type/projection inference: `NativeWindowObservation` no longer redeclares root fields already owned by `LiveWindow`; row projection trusts the semantic child kind created by the domain builder.
+
+### Optimization Decision
+
+- No cross-language mega-helper or new UI/native dependency was introduced. PowerShell and JXA operations remain separately executable fail-closed programs, while shared product policy stays in the TypeScript domain/Runtime modules. A broad preload rewrite would add coordination risk without evidence of a user-visible defect.
+
+### Not Checked
+
+- Real uTools reload, native activation/close, Windows-host enumeration and real visual/accessibility acceptance remain unrun.
+- The complete repository suite is not globally green at commit `d834f7b`: `664/676` pass and the 12 remaining failures are the same untouched Codex baseline failures described above. This is reported separately from the green WJ-focused/typecheck/build evidence.
+
+WJ-15 did run focused suites, typecheck/build/runtime validation and scoped native probes; WJ-16/WJ-17 retain historical focused evidence, while WJ-18–WJ-20.1 were later static/contract-only increments. WJ-21 has `219/219` focused contracts, semantic typecheck, build, dist preparation and preload/uTools validation, plus a parent/child full-suite A/B proving zero new failures. uTools reload, native activation/close and visual acceptance remain `未校验，待用户验收`.
