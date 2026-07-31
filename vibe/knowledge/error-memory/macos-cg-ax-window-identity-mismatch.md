@@ -27,15 +27,15 @@ tags:
 
 ## EyPc 专属差异
 
-WJ-20 keeps `darwin:PID:CGWindowID` as native evidence but makes the product identity the proven root family. [preload/index.js](../../../preload/index.js#L1) maps AX elements through `_AXUIElementGetWindow`, prefers `AXTopLevelUIElement` and then `AXWindow` to derive the root CG ID, and returns member/root observations to the Renderer. The single domain coalescer creates root-only `LiveWindow`; missing relation proof stays independent rather than falling through to title, ordinal, PID/app or list position.
+WJ-21 keeps `darwin:PID:CGWindowID` as native identity evidence while the real root remains the stable product target. [preload/index.js](../../../preload/index.js#L1) starts from admitted AX windows, maps them through `_AXUIElementGetWindow`, and uses `AXParent`/`AXTopLevelUIElement`/`AXWindow` to derive root/member relationships. Core Graphics corroborates the AX identity but cannot create a row by itself; CG-only/system/helper/non-actionable surfaces are omitted. The domain creates `WindowFamily { root, children }`; title, ordinal, PID/app, position, size or list order never substitutes for relationship proof.
 
-Activation requires the requested PID/application/root CG identity, selects only an AX element whose root mapping equals it, and succeeds only when final `AXFocusedWindow` maps through the same root. Exact-root focus failure cannot fall through to a sibling. The previous isolated-Space route remains historical host evidence only: WJ-20 removes environment snapshots, Space lookup/cache/switch, title gates and AX ordinal fallback from the current bridge. See [verify.md](../../specs/260724/1527-window-jump-workbench/verify.md#L1) and archived title evidence [utools-macos-cross-api-window-title-mismatch.md](utools-macos-cross-api-window-title-mismatch.md#L1).
+`root-current` requires the requested PID/application/root CG identity and succeeds only when final `AXFocusedWindow` maps through that root. `member-exact` additionally requires the requested member CG identity and exact final focus; it cannot fall through to the root or a sibling. The previous isolated-Space route remains historical host evidence only: the current bridge has no environment snapshot, Space lookup/cache/switch, title gate or AX ordinal fallback. See [verify.md](../../specs/260724/1527-window-jump-workbench/verify.md#L1) and archived title evidence [utools-macos-cross-api-window-title-mismatch.md](utools-macos-cross-api-window-title-mismatch.md#L1).
 
 ## Alternative Route
 
 - Status: `verified`
-- Preconditions: selected root has a positive CG ID, matching application identity and Accessibility authorization.
-- Steps: enumerate raw application AX windows; map each through `_AXUIElementGetWindow` plus top-level/window attributes; select only the requested root family; restore/Raise/activate; map final `AXFocusedWindow` back to the requested root CG ID.
-- Verification: WJ-20 source/contracts require `ax-cg-id-match → ax-focused-root-window`; real WJ-20 host execution remains pending.
+- Preconditions: selected root/member has an admitted AX role, positive CG ID, matching application identity and Accessibility authorization.
+- Steps: enumerate admitted application AX windows; map each through `_AXUIElementGetWindow` plus parent/top-level/window attributes; select only the requested root family or exact member; restore/Raise/activate; map final `AXFocusedWindow` back to the requested root/member CG ID.
+- Verification: WJ-21 source/contracts require exact root/member readback; real WJ-21 host execution remains pending.
 - Applicability boundary: no actionable fallback exists when root mapping is unavailable; no Space switch is attempted by the current bridge.
 - Fallback: return blocking `ambiguous`/`failed`/permission state and retain the selected target for visible recovery.

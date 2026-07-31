@@ -28,8 +28,12 @@
 | WJ-19.3 | Centralize rebind lifecycle, effects and action availability behind one domain state machine | implemented / verification-pending |
 | WJ-20 | Collapse native members into independent root-window targets and add the Finder/Explorer virtual tree | implemented / verification-pending |
 | WJ-20.1 | Centralize page-facing tree projection, row identity, navigation, selection and action context; remove stale current-contract text | implemented / static-closeout-complete / host-validation-pending |
+| WJ-21 | Preserve roots as stable targets, expose verified ordinary-app children as transient exact destinations, and filter unproven native surfaces | implemented / focused-tests-typecheck-build-verified / host-validation-pending |
 
 ## Execution Journal
+
+- 2026-07-31 — User replaced the former no-execution rule with impact-based verification. WJ-21 now has executed domain/platform/UI/window-Runtime tests, explicit semantic typecheck, production build and uTools package validation. The required-field/type-mock repair removed all 23 reported TypeScript errors; exact-child disappearance now preserves its specific no-fallback message.
+- 2026-07-31 — Exact staged-snapshot verification passes all four changed window files at `219/219`, semantic typecheck, production build and uTools validation. Full-suite A/B improves from parent `9ba8b91` at `661/675` with 14 failures to WJ commit `d834f7b` at `664/676` with 12 failures: the two former window failures close, no new failure appears, and every remainder is confined to three untouched Codex files. No uTools/app/browser/dev server/native window operation ran.
 
 - 2026-07-24 15:27 CST — Classified this as controlled: it crosses persisted product state, preload-native capability, manifest routing, keyboard behavior, and a new UI surface. Preserved the pre-existing dirty worktree; no external or destructive operation was authorized.
 - 2026-07-24 15:27 CST — UI preference lookup passed for task-only full-ui work with global stable authorities and no conflicts. Selected a narrowly applicable accessibility/keyboard primitive reference; implementation stays Vue-native.
@@ -106,3 +110,10 @@
 - 2026-07-31 — WJ-20 静态收口通过：双 preload 字节一致、桥接版本一致、生产树仅一个根族 coalescer、旧标题/序号/环境快照/Space 路径零命中、项目与 CodeNote 代码链接审计及 scoped diff 检查通过。部分清单合并额外收紧为保留已证明成员证据但不复活独立成员。测试、`vue-tsc`、构建、preload 执行、uTools 重载、真实跳转与视觉验收仍未执行。
 - 2026-07-31 — WJ-20.1 根据用户再次提出的第一性原理/全局精简要求复核需求与实现：修正 raw/spec 中仍把环境快照、Space 切换和裸 `ArrowRight` 操作层写成当前合同的矛盾；把目标解析、槽位映射、行 ID/候选解析、完整树行投影、动作上下文、左右导航和只允许真实根的选择统一收进 [windows.ts](../../../../src/domain/windows.ts#L1) 与 [windowTree.ts](../../../../src/domain/windowTree.ts#L1)。Runtime 只传入状态并执行副作用，页面改为消费领域 `WindowRow` 与一次性槽位映射。既有测试合同同步但未执行。
 - 2026-07-31 — WJ-20.1 静态收口通过：选定 TypeScript/测试源码和 `WindowsPage.vue` 语法解析通过，根族 coalescer 与 `buildWindowTreeRows` 各仅一个生产定义，Runtime 旧行构造/候选前缀分支及所有退役原生符号零命中，双 preload 一致，项目/CodeNote 链接审计和 scoped diff 检查通过。未运行测试、语义类型检查、构建、preload、uTools 或真实窗口验收。
+- 2026-07-31 — 用户通过截图与第一性原理纠正 WJ-20 的成员展示：普通应用必须是“真实主窗口 → 真实子窗口”，稳定收藏/槽位仍只属于根；根按 `root-current` 打开当前子窗，用户点选子窗时按 `member-exact` 精确打开且失效不回退。Finder/Explorer 继续固定为“虚拟父 → 真实根”两级，WJ-20“成员全部吞并不展示”降为历史。
+- 2026-07-31 — WJ-21 领域层新增 `WindowFamily`、显式关系/能力证据与根/成员激活请求；完整清单替换家族，部分清单保留缓存成员。树投影为普通根/子窗、文件管理器虚拟父/根，搜索展开与折叠/消失焦点回根由同一 `windowTree` 处理。子窗不进入持久化、收藏、列表置顶、槽位、多选、编辑、页面置顶、强杀或批量动作。
+- 2026-07-31 — Windows 桥仅从 `EnumWindows` 顶层/owned popup 与同应用 `GA_ROOTOWNER` 建关系，过滤 child/no-activate/cloaked/transparent/host/helper；macOS 改为 AX-first admitted window role + 正 CGWindowID 佐证，CG-only/system/helper/non-actionable 表面不生成产品行。根/成员激活和成员关闭均在调用时重验实例、应用与关系，精确成员失败不得打开根或兄弟。
+- 2026-07-31 — 当前桥版本升级为 `wj21-main-child-window-tree`。本轮按用户边界只修改生产代码与文档，没有新增或修改测试文件；最终只执行双 preload 镜像、版本/静态符号、语法、代码链接和 scoped diff 检查，不运行测试、类型检查、构建、preload/uTools 或真实窗口操作。真实噪声过滤、根当前子窗、精确子窗、两独立根、Finder/Explorer 固定两级与完整/部分焦点行为仍待用户宿主验收。
+- 2026-07-31 — WJ-21 静态收口通过：双 preload JS 语法与字节镜像、五个变更 TypeScript 文件和 `WindowsPage.vue` script-setup 的 TypeScript 语法转译、三处桥版本、`WindowFamily/root-current/member-exact/child-window` 符号、生产源码无旧桥/`EnumChildWindows`/CG-only 清单脚本、未改测试文件、项目/CodeNote 代码链接及两仓 scoped `git diff --check` 均通过。Vue 检查是脚本语法回退，不是 SFC/语义类型检查；测试、typecheck、build、preload/uTools 和真实窗口操作仍未执行。
+- 2026-07-31 — WJ-21 第一性原理/回归复核完成：旧 preload 的列表刷新现在与激活共用版本门禁，拒绝在 coalescer 前混用；Runtime 用一个 inventory 函数原子更新 family/root/freshness，主窗口折叠会把已打开的子窗操作上下文收回可见根；macOS 精确激活补齐操作时 CG 有效范围复验。静态调用链确认窗口原生副作用仍只有 Runtime → platform 一条边界，Files/Ports/MQTT/Codex/存储合同未变化。
+- 2026-07-31 — 本次 review 无静态 P0，发现的两个 P1 与两个 P2 均已按最小范围修复；没有为了去重重写跨进程 PowerShell/JXA，也没有增加 UI/原生依赖。既有 WJ-20 测试合同仍属历史且按用户边界未修改、未执行，不能作为 WJ-21 回归通过证据；宿主验收状态不变。

@@ -46,7 +46,7 @@ Add an opt-in, keyboard-first EyPc surface that lets a user discover interactive
 - 用户继续要求从第一性原理统一代码：关键身份与换绑逻辑必须封装，不能让候选集合、刷新证据、焦点恢复和动作禁用条件散落在 Runtime、页面与动作注册中。
 - 当前增量采用一个会话级换绑状态机作为唯一流程所有者，并用一个 `always / browse / rebind` 交互策略入口约束所有窗口动作。平台桥接继续只负责证明 OS 窗口实例，页面只读取 Runtime 投影；不得借“统一框架”重新引入标题、序号、唯一候选或任意同应用窗口猜测。
 
-## 2026-07-31 User Requirement (WJ-20)
+## 2026-07-31 User Requirement (WJ-20; member-visibility clause superseded by WJ-21)
 
 - 产品目标从“枚举每个原生表面”进一步收敛为“切换一个独立操作系统主窗口”：浏览器 Tab、IDE 编辑页、Sheet、Dialog、Tool Window 等内部成员只要能被原生关系证明属于同一根窗口，就必须映射到同一个根 `WindowInstanceId`，不得新增主列表记录或使收藏/槽位失效。
 - 普通应用的两个独立主窗口仍是两个精确目标，不能因为应用、PID、标题相同而合并。无法证明成员关系时宁可保留独立根，也不使用标题、序号、唯一候选或同应用猜测。
@@ -67,6 +67,20 @@ Add an opt-in, keyboard-first EyPc surface that lets a user discover interactive
 - 集中化不能改变核心行为：内部成员仍只归入真实根，普通独立根仍分开，文件管理器父节点仍是展示/快捷入口，根失效仍人工换绑，标题/Space/序号/唯一候选旧路径仍不得回流。
 - 当前权威需求中与 WJ-20 冲突的旧环境快照、Space 激活和 `ArrowRight` 操作层描述必须明确降为历史，避免文档重新驱动出错误实现。
 
+## 2026-07-31 User Correction (WJ-21)
+
+- 第一性目标是把稳定切换单位收敛为“主窗口”，同时保留用户可见、可验证的真实子窗口结构。WJ-20“成员全部吞并、不展示”的条款降为历史：普通应用必须展示“真实主窗口 → 真实子窗口”，同应用的多个独立主窗口保持并列一级项，不创建应用虚拟父节点。
+- Finder/Explorer 是唯一例外，只显示固定两级“虚拟文件管理器父节点 → 真实主窗口”；文件管理器真实主窗口下面不再展示第三级子窗。
+- 主窗口默认激活使用 `root-current`：请求只持有真实主窗口；执行时重新解析该根当前活动或最近活动的真实子窗口。因此子窗口、Tab、编辑页或对话变化不改变主窗口收藏、列表置顶、槽位和默认切换身份。
+- 用户可选择一个真实子窗口执行 `member-exact`：请求同时携带根和成员，操作前重新验证平台、应用、实例与真实父根；精确子窗消失或关系失效时必须明确失败，不能静默回退到根或兄弟窗口。
+- `WindowTarget` 仍只持久化真实主窗口或文件管理器虚拟组。真实子窗口只在会话清单中存在，不收藏、不列表置顶、不改名、不绑定槽位、不参与多选；只允许精确激活、能力允许时精确关闭、只读详情以及 Windows HWND 复制。强杀、页面置顶和批量动作只属于真实主窗口。
+- 完整清单替换根和子窗；部分清单保留旧家族节点并标记缓存，不能证明某个子窗已经关闭。子窗消失、折叠或因搜索隐藏时，焦点回到其真实主窗口。
+- 普通应用的真实主窗为 ARIA 一级 `treeitem`，真实子窗为二级；根 `Enter`/双击执行 `root-current`，子窗执行 `member-exact`。`ArrowRight/ArrowLeft` 负责展开、进入、返回和收起；搜索可临时展开命中子窗，但不能覆盖手动展开状态。继续使用现有 Vue 原生树和已选 `build-primitive` ARIA/焦点原则，不新增 UI 依赖。
+- 平台桥必须只接纳可验证的用户可见、可操作窗口。Windows 只从 `EnumWindows` 顶层/owned popup 与 `GA_ROOTOWNER` owner 链建立关系，不调用会递归枚举控件 HWND 的 `EnumChildWindows`；过滤 `WS_CHILD`、cloaked、no-activate、透明隐藏、宿主、系统辅助和无有效窗口范围的表面。macOS 以普通前台应用中的有效 `AXWindow`/`AXSheet`/`AXDialog`、正 CGWindowID 及 `AXParent`/`AXTopLevelUIElement`/`AXWindow` 关系为准；Core Graphics 只做身份佐证，CG-only、系统层、辅助层和无可操作 AX 身份的表面全部省略。
+- 两个平台都不得用标题、应用名、位置、尺寸或“唯一候选”猜父子关系，也不得绕过系统前台保护。根激活必须验证最终焦点仍属于请求根；精确子窗激活必须额外验证最终焦点命中请求成员。
+- 桥接版本提升为 `wj21-main-child-window-tree`，canonical/public 双 preload 必须字节一致；旧 preload 必须提示重载并阻止混用。
+- 需求、Controlled 任务、产品权威、架构、Developer Soul、状态页、窗口指南及 CodeNote EyPc 摘要必须同步；本轮不改变 EzAgentPlatform 共享合同。只执行镜像、版本、静态符号、代码链接和 `git diff --check` 检查，不新增/修改测试文件，不运行测试、类型检查、构建或真实 uTools 操作；宿主验收保持用户所有。
+
 ### Historical WJ-18 Detail (superseded by WJ-19)
 
 - Exact activation may compare a saved Core Graphics title only with the current `kCGWindowName` for the same PID and CG window ID. It must not require a System Accessibility `AXTitle` to equal the Core Graphics title, because those APIs can expose different strings for the same window.
@@ -85,17 +99,17 @@ Add an opt-in, keyboard-first EyPc surface that lets a user discover interactive
 - “展开并前置” is the common window-open operation: Windows restores a minimized target before one foreground attempt; macOS restores `AXMinimized` where readable, requests the owning process/window foreground state, performs `AXRaise`, and verifies readable state. A readable post-raise `AXFocused=false` is non-authoritative after successful foreground and raise, so it is trace-visible but does not overturn activation. “页面置顶” is a separate Windows-only operation backed by `SetWindowPos(HWND_TOPMOST)` plus the same restore/foreground rules. macOS must state that it cannot force an arbitrary third-party window to remain permanently topmost and must not report a false success.
 - On macOS, a Core Graphics window ID is an inventory/session reference, not a System Events `AXWindowNumber`. Activation revalidates the same PID/application/CGWindowID, then maps each owning-process `AXUIElement` through `_AXUIElementGetWindow` and requires exactly one element whose returned CG ID equals the selected reference. Final success requires `AXFocusedWindow` to map back to that same CG ID. Title/ordinal compatibility fallback is prohibited; a row without exact mapping has no stable actionable identity.
 - Historical WJ-13–WJ-18 only: the bridge once resolved and switched a target Space through CG/SkyLight evidence. WJ-20 supersedes and removes this entire lookup/cache/switch route; no current activation branch may use a Space binding, environment snapshot, isolated-JXA Space resolver or current-Space inference.
-- The Renderer and preload expose the same fixed `wj20-root-window-family` revision; a stale/missing host bridge blocks activation with a reconnect instruction. PID/CGWindowID remains current root identity evidence, not a persisted Space binding.
+- The Renderer and preload expose the same fixed `wj21-main-child-window-tree` revision; a stale/missing host bridge blocks activation with a reconnect instruction. PID/CGWindowID remains current root identity evidence, not a persisted Space binding.
 - A slot validates its last native instance under exact platform/application ownership. A complete refresh missing that instance exposes every same-platform/same-application live instance for explicit confirmation, including a sole candidate; no title score or sole-candidate shortcut may replace it automatically. Only confirmed successful native activation commits the new instance/native/application/title fields. A partial inventory cannot prove closure or change binding.
 - WJ-17 automatic recognition and the earlier WJ-13/WJ-18 title rules are retained only as historical evidence. WJ-19 never substitutes a sibling merely because it belongs to the same application or has the same/similar title.
 - A local list pin is independent from favorite, OS page topmost, and slot assignment. Pinning a live row creates only the minimum EyPc target metadata needed to retain it; assigning a live row to a stable slot creates non-favorite retention by default; unpinning does not remove a favorite or slot mapping.
-- Native discovery admits only actionable application windows. macOS requires a valid CoreGraphics window number backed by a running regular application; Windows requires an existing visible non-cloaked top-level/Alt-Tab-eligible handle and rejects tool/helper/native browser handles that are not the active root/popup surface. Neither platform uses a size threshold.
+- Native discovery admits only actionable user-visible windows. macOS requires an admitted AX window role in a running regular application plus a positive CoreGraphics window number used only as identity corroboration; CG-only/system/helper surfaces never create rows. Windows requires a visible non-cloaked, activatable top-level or owned-popup HWND with valid bounds and filters child controls, no-activate, transparent, host and helper surfaces. Neither platform uses a title/position/size heuristic to infer relationships.
 
 ## Interaction Contract
 
 - The page is a dense toolbar/list workbench. Pinned targets come first; every remaining saved/live row sorts globally by application name, then display name/title. Favorites and slot-bound targets remain visible when unavailable but do not override application ordering unless pinned. Search covers plugin alias, native title, and application name.
 - Stable slots `1–10` live in a left collapsible vertical rail; empty slots open a picker to assign, assigned slots focus the bound target.
-- `ArrowUp`/`ArrowDown` change the active tree row; `Enter` attempts activation; `ArrowRight` expands a file-manager parent or enters its first child; `ArrowLeft` returns to the parent or collapses it. `Ctrl+ArrowRight` opens the right-side action layer, `Ctrl+ArrowLeft` returns to the list, and `Tab`/`Shift+Tab` move between list and action controls.
+- `ArrowUp`/`ArrowDown` change the active tree row; `Enter` activates a root through `root-current` or a child through `member-exact`; `ArrowRight` expands any expandable root/group or enters its first child; `ArrowLeft` returns to the parent or collapses it. `Ctrl+ArrowRight` opens the right-side action layer, `Ctrl+ArrowLeft` returns to the list, and `Tab`/`Shift+Tab` move between list and action controls.
 - `Shift+F2` edits the local alias, `F2` opens the complete target editor, `Ctrl+S`/`Enter` saves, `Escape` backs out from editor to actions to selection/search, `Space` toggles multi-selection and advances, and `Ctrl+R` manually loads/refreshes live windows. Favorite and pin are explicit action-panel commands; a pin toggle exposes `aria-pressed` and visible state.
 - Text fields retain native editing ownership. Window-list shortcuts apply only outside an ordinary editor except for the named editor commands.
 
@@ -142,3 +156,8 @@ Add an opt-in, keyboard-first EyPc surface that lets a user discover interactive
 32. Historical WJ-19.1 acceptance (superseded by WJ-20): the full-instance-before-Space-cache ordering remains evidence for why the old route was safe, but the current bridge has no Space cache or switch branch.
 33. An open candidate flow survives complete-empty, partial-new, partial-empty and complete-replacement refreshes. Complete-empty clears only the stale instance/native binding, partial snapshots retain and add candidates, returned/replacement candidates regain focus, and no refresh auto-confirms or silently exits.
 34. Candidate lifecycle state, complete/partial inventory transitions, stale-binding effects, candidate focus and cancel focus restoration are decided by one pure state machine. Runtime only adapts its effects, action availability uses one shared policy, and the page consumes a read-only rebind projection.
+35. Ordinary applications display independent real roots as level-one rows and only bridge-proven real children as level-two rows. Activating a saved root after its child changes opens the root's current/last member without changing the saved target; choosing a child activates exactly that member.
+36. A missing or relation-mismatched child produces an explicit exact-member failure and never activates the root or a sibling. Children never persist, favorite, pin, bind slots, join selection, edit, force-terminate or request page-topmost; exact close appears only when the bridge reports it closable.
+37. Finder/Explorer remains exactly two levels—virtual parent to real roots—and never exposes a third child level. Two independent ordinary roots in one application remain two level-one rows.
+38. macOS CG-only/system/helper surfaces and Windows child-control/no-activate/cloaked/transparent/host/helper handles never enter the product tree. Unproven visibility, actionability or parentage is omission, not an app-level fallback group.
+39. A complete snapshot replaces root/child membership; a partial snapshot retains cached family nodes and cannot prove a child closed. When a child disappears, collapses or becomes search-hidden, focus returns to its root; search auto-expansion never mutates manual expansion state.
