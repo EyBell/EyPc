@@ -277,6 +277,9 @@ public sealed class EypcWindowInfo {
   public string instanceId { get; set; }
   public string nativeRef { get; set; }
   public int pid { get; set; }
+  public string rootInstanceId { get; set; }
+  public string rootNativeRef { get; set; }
+  public int rootPid { get; set; }
   public string appId { get; set; }
   public string appName { get; set; }
   public string title { get; set; }
@@ -322,17 +325,11 @@ public static class EypcWindowApi {
     if ((exStyle & WS_EX_TOOLWINDOW) != 0 && !appWindow) return false;
     if ((exStyle & WS_EX_NOACTIVATE) != 0 && !appWindow) return false;
     if (GetAncestor(hWnd, GA_ROOT) != hWnd) return false;
-    if (appWindow) return true;
+    return true;
+  }
 
-    var candidate = GetAncestor(hWnd, GA_ROOTOWNER);
-    if (candidate == IntPtr.Zero) candidate = hWnd;
-    for (var depth = 0; depth < 32; depth += 1) {
-      var popup = GetLastActivePopup(candidate);
-      if (popup == IntPtr.Zero || popup == candidate) break;
-      candidate = popup;
-      if (IsWindowVisible(candidate)) break;
-    }
-    return candidate == hWnd;
+  static bool IsVisibleMemberWindow(IntPtr hWnd) {
+    return IsWindow(hWnd) && IsWindowVisible(hWnd) && !IsCloaked(hWnd);
   }
 
   public static List<EypcWindowInfo> ListWindows() {
@@ -341,7 +338,9 @@ public static class EypcWindowApi {
     var excludedPid = __EYPC_HOST_PID__;
     var excludedParentPid = __EYPC_PARENT_PID__;
     EnumWindows(delegate(IntPtr hWnd, IntPtr ignored) {
-      if (!IsActionableWindow(hWnd)) return true;
+      // Observe visible owned members as family evidence. Product eligibility is
+      // decided on the resolved root, so an active dialog cannot split the root.
+      if (!IsVisibleMemberWindow(hWnd)) return true;
       var length = GetWindowTextLength(hWnd);
       var titleBuilder = new StringBuilder(Math.Min(Math.Max(length + 1, 2), 8192));
       GetWindowText(hWnd, titleBuilder, titleBuilder.Capacity);
@@ -357,15 +356,40 @@ public static class EypcWindowApi {
           appName = appProcess.ProcessName;
         }
       } catch { return true; }
+      var root = GetAncestor(hWnd, GA_ROOTOWNER);
+      if (root == IntPtr.Zero || !IsWindow(root)) root = hWnd;
+      uint rawRootPid;
+      GetWindowThreadProcessId(root, out rawRootPid);
+      var rootPid = unchecked((int)rawRootPid);
+      if (rootPid <= 0 || rootPid == excludedPid || rootPid == excludedParentPid) return true;
+      string rootAppName;
+      try {
+        using (var rootProcess = Process.GetProcessById(rootPid)) {
+          if (rootProcess.HasExited) return true;
+          rootAppName = rootProcess.ProcessName;
+        }
+      } catch { return true; }
+      // Owner relationships across applications are not a safe product-family proof.
+      if (!String.Equals(rootAppName, appName, StringComparison.OrdinalIgnoreCase)) {
+        if (!IsActionableWindow(hWnd)) return true;
+        root = hWnd;
+        rootPid = pid;
+        rootAppName = appName;
+      } else if (!IsActionableWindow(root)) {
+        return true;
+      }
       rows.Add(new EypcWindowInfo {
         instanceId = "win32:" + pid.ToString() + ":" + hWnd.ToInt64().ToString(),
         nativeRef = hWnd.ToInt64().ToString(),
         pid = pid,
-        appId = appName,
-        appName = appName,
-        title = String.IsNullOrWhiteSpace(title) ? appName : title,
-        minimized = IsIconic(hWnd),
-        focused = hWnd == foreground
+        rootInstanceId = "win32:" + rootPid.ToString() + ":" + root.ToInt64().ToString(),
+        rootNativeRef = root.ToInt64().ToString(),
+        rootPid = rootPid,
+        appId = rootAppName,
+        appName = rootAppName,
+        title = String.IsNullOrWhiteSpace(title) ? rootAppName : title,
+        minimized = IsIconic(root),
+        focused = foreground == hWnd
       });
       return true;
     }, IntPtr.Zero);
@@ -389,6 +413,8 @@ public static class EypcWindowActivator {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
   [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+  [DllImport("user32.dll")] public static extern IntPtr GetLastActivePopup(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
   public static bool IsActionableTopLevel(IntPtr hWnd) {
@@ -399,6 +425,16 @@ public static class EypcWindowActivator {
     if ((exStyle & 0x00000080) != 0 && !appWindow) return false;
     if ((exStyle & 0x08000000) != 0 && !appWindow) return false;
     return true;
+  }
+  public static IntPtr ResolveActivationTarget(IntPtr root) {
+    var candidate = root;
+    for (var depth = 0; depth < 32; depth += 1) {
+      var popup = GetLastActivePopup(candidate);
+      if (popup == IntPtr.Zero || popup == candidate) break;
+      candidate = popup;
+      if (IsWindowVisible(candidate)) break;
+    }
+    return IsWindow(candidate) && IsWindowVisible(candidate) ? candidate : root;
   }
 }
 '@
@@ -446,9 +482,10 @@ if (-not $appMatches -or -not $instanceMatches) {
   exit 0
 }
 Add-EypcTrace 'target' 'ok' 'instance-match'
-if ([EypcWindowActivator]::IsIconic($handle)) {
-  [void][EypcWindowActivator]::ShowWindow($handle, 9)
-  if ([EypcWindowActivator]::IsIconic($handle)) {
+$activationHandle = [EypcWindowActivator]::ResolveActivationTarget($handle)
+if ([EypcWindowActivator]::IsIconic($activationHandle)) {
+  [void][EypcWindowActivator]::ShowWindow($activationHandle, 9)
+  if ([EypcWindowActivator]::IsIconic($activationHandle)) {
     Add-EypcTrace 'restore' 'failed'
     Write-EypcOutcome 'failed'
     exit 0
@@ -457,9 +494,18 @@ if ([EypcWindowActivator]::IsIconic($handle)) {
 } else {
   Add-EypcTrace 'restore' 'skipped'
 }
-if ([EypcWindowActivator]::SetForegroundWindow($handle)) {
-  Add-EypcTrace 'foreground' 'ok'
-  Write-EypcOutcome 'activated' '' $instanceId
+if ([EypcWindowActivator]::SetForegroundWindow($activationHandle)) {
+  [System.Threading.Thread]::Sleep(20)
+  $foreground = [EypcWindowActivator]::GetForegroundWindow()
+  $foregroundRoot = if ($foreground -eq [IntPtr]::Zero) { [IntPtr]::Zero } else { [EypcWindowActivator]::GetAncestor($foreground, 3) }
+  if ($foregroundRoot -eq [IntPtr]::Zero) { $foregroundRoot = $foreground }
+  if ($foregroundRoot -eq $handle) {
+    Add-EypcTrace 'foreground' 'ok' 'root-family-match'
+    Write-EypcOutcome 'activated' '' $instanceId
+  } else {
+    Add-EypcTrace 'verify' 'failed' 'instance-mismatch'
+    Write-EypcOutcome 'focus-denied' 'instance-mismatch'
+  }
 } else {
   Add-EypcTrace 'foreground' 'denied'
   Write-EypcOutcome 'focus-denied'
@@ -480,6 +526,8 @@ public static class EypcWindowTopmost {
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
   [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+  [DllImport("user32.dll")] public static extern IntPtr GetLastActivePopup(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
   public static bool IsActionableTopLevel(IntPtr hWnd) {
@@ -490,6 +538,16 @@ public static class EypcWindowTopmost {
     if ((exStyle & 0x00000080) != 0 && !appWindow) return false;
     if ((exStyle & 0x08000000) != 0 && !appWindow) return false;
     return true;
+  }
+  public static IntPtr ResolveActivationTarget(IntPtr root) {
+    var candidate = root;
+    for (var depth = 0; depth < 32; depth += 1) {
+      var popup = GetLastActivePopup(candidate);
+      if (popup == IntPtr.Zero || popup == candidate) break;
+      candidate = popup;
+      if (IsWindowVisible(candidate)) break;
+    }
+    return IsWindow(candidate) && IsWindowVisible(candidate) ? candidate : root;
   }
 }
 '@
@@ -537,9 +595,10 @@ if (-not $appMatches -or -not $instanceMatches) {
   exit 0
 }
 Add-EypcTrace 'target' 'ok' 'instance-match'
-if ([EypcWindowTopmost]::IsIconic($handle)) {
-  [void][EypcWindowTopmost]::ShowWindow($handle, 9)
-  if ([EypcWindowTopmost]::IsIconic($handle)) {
+$activationHandle = [EypcWindowTopmost]::ResolveActivationTarget($handle)
+if ([EypcWindowTopmost]::IsIconic($activationHandle)) {
+  [void][EypcWindowTopmost]::ShowWindow($activationHandle, 9)
+  if ([EypcWindowTopmost]::IsIconic($activationHandle)) {
     Add-EypcTrace 'restore' 'failed'
     Write-EypcOutcome 'failed'
     exit 0
@@ -549,15 +608,24 @@ if ([EypcWindowTopmost]::IsIconic($handle)) {
   Add-EypcTrace 'restore' 'skipped'
 }
 # SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW; HWND_TOPMOST is -1.
-if (-not [EypcWindowTopmost]::SetWindowPos($handle, [IntPtr]::new(-1), 0, 0, 0, 0, 0x0043)) {
+if (-not [EypcWindowTopmost]::SetWindowPos($activationHandle, [IntPtr]::new(-1), 0, 0, 0, 0, 0x0043)) {
   Add-EypcTrace 'topmost' 'failed'
   Write-EypcOutcome 'failed'
   exit 0
 }
 Add-EypcTrace 'topmost' 'ok'
-if ([EypcWindowTopmost]::SetForegroundWindow($handle)) {
-  Add-EypcTrace 'foreground' 'ok'
-  Write-EypcOutcome 'activated' '' $instanceId
+if ([EypcWindowTopmost]::SetForegroundWindow($activationHandle)) {
+  [System.Threading.Thread]::Sleep(20)
+  $foreground = [EypcWindowTopmost]::GetForegroundWindow()
+  $foregroundRoot = if ($foreground -eq [IntPtr]::Zero) { [IntPtr]::Zero } else { [EypcWindowTopmost]::GetAncestor($foreground, 3) }
+  if ($foregroundRoot -eq [IntPtr]::Zero) { $foregroundRoot = $foreground }
+  if ($foregroundRoot -eq $handle) {
+    Add-EypcTrace 'foreground' 'ok' 'root-family-match'
+    Write-EypcOutcome 'activated' '' $instanceId
+  } else {
+    Add-EypcTrace 'verify' 'failed' 'instance-mismatch'
+    Write-EypcOutcome 'focus-denied' 'instance-mismatch'
+  }
 } else {
   Add-EypcTrace 'foreground' 'denied'
   Write-EypcOutcome 'focus-denied'
@@ -573,12 +641,19 @@ public static class EypcWindowCloser {
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
 }
 '@
 $expectedInstanceId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_INSTANCE_ID')
 $expectedAppId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_TARGET_APP_ID')
 $handle = [IntPtr]::new(__EYPC_WINDOW_HANDLE__)
 if (-not [EypcWindowCloser]::IsWindow($handle)) {
+  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
+  exit 0
+}
+$rootHandle = [EypcWindowCloser]::GetAncestor($handle, 3)
+if ($rootHandle -eq [IntPtr]::Zero) { $rootHandle = $handle }
+if ($rootHandle -ne $handle) {
   @{ outcome = 'not-found' } | ConvertTo-Json -Compress
   exit 0
 }
@@ -620,6 +695,14 @@ const MACOS_WINDOW_LIST_SCRIPT = String.raw`
 ObjC.import('Foundation')
 ObjC.import('CoreGraphics')
 ObjC.import('AppKit')
+ObjC.import('ApplicationServices')
+let exactAxApiAvailable = false
+try {
+  ObjC.bindFunction('AXUIElementCreateApplication', ['id', ['int']])
+  ObjC.bindFunction('AXUIElementCopyAttributeValue', ['int', ['id', 'id', 'id *']])
+  ObjC.bindFunction('_AXUIElementGetWindow', ['int', ['id', 'uint32_t *']])
+  exactAxApiAvailable = true
+} catch (error) {}
 function attempt(callback, fallback) {
   try { return callback() } catch (error) { return fallback }
 }
@@ -630,8 +713,50 @@ const raw = attempt(() => ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCop
 const list = Array.isArray(raw) ? raw : []
 const rows = []
 const seen = {}
+const axFamilies = {}
 let namedOwnerWindows = 0
 let unnamedOwnerWindows = 0
+function copyAxAttribute(element, name) {
+  if (!exactAxApiAvailable || !element) return null
+  try {
+    const output = Ref()
+    if (Number($.AXUIElementCopyAttributeValue(element, $.NSString.stringWithString(name), output)) !== 0) return null
+    return output[0]
+  } catch (error) { return null }
+}
+function exactCgWindowNumber(element) {
+  if (!exactAxApiAvailable || !element) return 0
+  try {
+    const output = Ref()
+    if (Number($._AXUIElementGetWindow(element, output)) !== 0) return 0
+    return Math.trunc(Number(output[0] || 0))
+  } catch (error) { return 0 }
+}
+function axFamilyMap(pid) {
+  const cacheKey = String(pid)
+  if (axFamilies[cacheKey]) return axFamilies[cacheKey]
+  const result = {}
+  const appElement = exactAxApiAvailable ? attempt(() => $.AXUIElementCreateApplication(pid), null) : null
+  const windows = copyAxAttribute(appElement, 'AXWindows')
+  const focusedWindow = copyAxAttribute(appElement, 'AXFocusedWindow')
+  const focusedId = exactCgWindowNumber(focusedWindow)
+  const count = windows ? Math.max(0, Math.trunc(Number(windows.count || 0))) : 0
+  for (let index = 0; index < count; index += 1) {
+    const element = attempt(() => windows.objectAtIndex(index), null)
+    const memberId = exactCgWindowNumber(element)
+    if (!element || memberId <= 0) continue
+    const containingWindow = copyAxAttribute(element, 'AXWindow')
+    const topLevelElement = copyAxAttribute(element, 'AXTopLevelUIElement')
+    const topLevelId = exactCgWindowNumber(topLevelElement)
+    const rootId = topLevelId || exactCgWindowNumber(containingWindow) || memberId
+    result[String(memberId)] = {
+      rootId,
+      focused: focusedId === memberId
+    }
+  }
+  axFamilies[cacheKey] = result
+  return result
+}
 for (const item of list) {
   if (!item || typeof item !== 'object') continue
   const layer = Math.trunc(Number(item.kCGWindowLayer || 0))
@@ -649,6 +774,8 @@ for (const item of list) {
   const running = attempt(() => $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid), null)
   if (!running || attempt(() => running.terminated === true, false) || Number(attempt(() => running.activationPolicy, -1)) !== 0) continue
   const appId = asText(attempt(() => running && running.bundleIdentifier && ObjC.unwrap(running.bundleIdentifier), appName)) || appName
+  const family = axFamilyMap(pid)[String(windowNumber)] || null
+  const rootWindowNumber = family && family.rootId > 0 ? family.rootId : windowNumber
   const key = String(pid) + ':' + String(windowNumber)
   if (seen[key]) continue
   seen[key] = true
@@ -656,12 +783,15 @@ for (const item of list) {
     instanceId: 'darwin:' + String(pid) + ':' + String(windowNumber),
     nativeRef: String(pid) + ':0:' + String(windowNumber),
     pid,
+    rootInstanceId: 'darwin:' + String(pid) + ':' + String(rootWindowNumber),
+    rootNativeRef: String(pid) + ':0:' + String(rootWindowNumber),
+    rootPid: pid,
     appId,
     appName,
     title: title || appName,
     // kCGWindowIsOnscreen is also false for a normal window on another Space; it is not a minimize flag.
     minimized: false,
-    focused: false,
+    focused: Boolean(family && family.focused),
     screenRecordingHint: false
   })
 }
@@ -719,6 +849,8 @@ for (let p = 0; p < processes.length; p += 1) {
   const appId = asText(attempt(() => running && running.bundleIdentifier && ObjC.unwrap(running.bundleIdentifier), appName)) || appName
   const appElement = attempt(() => $.AXUIElementCreateApplication(pid), null)
   const windows = copyAxAttribute(appElement, 'AXWindows')
+  const focusedWindow = copyAxAttribute(appElement, 'AXFocusedWindow')
+  const focusedWindowNumber = exactCgWindowNumber(focusedWindow)
   const count = windows ? Math.max(0, Math.trunc(Number(windows.count || 0))) : 0
   for (let index = 0; index < count; index += 1) {
     const win = attempt(() => windows.objectAtIndex(index), null)
@@ -728,242 +860,31 @@ for (let p = 0; p < processes.length; p += 1) {
     const title = asText(attempt(() => titleValue ? ObjC.unwrap(titleValue) : '', ''))
     const minimizedValue = copyAxAttribute(win, 'AXMinimized')
     const minimized = attempt(() => minimizedValue ? Boolean(ObjC.unwrap(minimizedValue)) : false, false)
+    const containingWindow = copyAxAttribute(win, 'AXWindow')
+    const topLevelElement = copyAxAttribute(win, 'AXTopLevelUIElement')
+    const topLevelWindowNumber = exactCgWindowNumber(topLevelElement)
+    const rootWindowNumber = topLevelWindowNumber || exactCgWindowNumber(containingWindow) || windowNumber
     const nativeRef = String(pid) + ':0:' + String(windowNumber)
-    if (seen[nativeRef]) continue
-    seen[nativeRef] = true
+    const key = String(pid) + ':' + String(windowNumber)
+    if (seen[key]) continue
+    seen[key] = true
     rows.push({
       instanceId: 'darwin:' + String(pid) + ':' + String(windowNumber),
       nativeRef,
       pid,
+      rootInstanceId: 'darwin:' + String(pid) + ':' + String(rootWindowNumber),
+      rootNativeRef: String(pid) + ':0:' + String(rootWindowNumber),
+      rootPid: pid,
       appId,
       appName,
       title: title || appName,
       minimized: minimized === true,
-      focused: false
+      focused: focusedWindowNumber === windowNumber
     })
   }
 }
 JSON.stringify({ windows: rows, screenRecordingLikelyMissing: false })
 `
-
-const MACOS_ENV_SNAPSHOT_SCRIPT = String.raw`
-ObjC.import('Foundation')
-ObjC.import('CoreGraphics')
-ObjC.import('AppKit')
-ObjC.import('ApplicationServices')
-let exactAxApiAvailable = false
-try {
-  ObjC.bindFunction('AXUIElementCreateApplication', ['id', ['int']])
-  ObjC.bindFunction('AXUIElementCopyAttributeValue', ['int', ['id', 'id', 'id *']])
-  ObjC.bindFunction('_AXUIElementGetWindow', ['int', ['id', 'uint32_t *']])
-  exactAxApiAvailable = true
-} catch (error) {}
-function attempt(callback, fallback) {
-  try { return callback() } catch (error) { return fallback }
-}
-function asText(value) { return String(value || '').trim() }
-function normalizeTitle(value) { return asText(value).toLowerCase().replace(/\s+/g, ' ') }
-function environmentValue(name) {
-  const value = $.NSProcessInfo.processInfo.environment.objectForKey(name)
-  return value ? String(ObjC.unwrap(value) || '') : ''
-}
-const processId = __EYPC_TARGET_PID__
-const cgWindowNumber = __EYPC_CG_WINDOW_NUMBER__
-const targetApp = normalizeTitle(environmentValue('EYPC_WINDOW_TARGET_APP_ID'))
-const running = attempt(() => $.NSRunningApplication.runningApplicationWithProcessIdentifier(processId), null)
-const runningBundle = normalizeTitle(attempt(() => running && running.bundleIdentifier && ObjC.unwrap(running.bundleIdentifier), ''))
-const runningName = normalizeTitle(attempt(() => running && running.localizedName && ObjC.unwrap(running.localizedName), ''))
-const appMatches = Boolean(running && (!targetApp || targetApp === runningBundle || targetApp === runningName))
-const raw = attempt(() => ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID))), [])
-const cgList = Array.isArray(raw) ? raw : []
-let nativeInstanceMatches = 0
-let ownerCgWindowCount = 0
-for (const item of cgList) {
-  if (!item || typeof item !== 'object') continue
-  const layer = Math.trunc(Number(item.kCGWindowLayer || 0))
-  if (layer !== 0) continue
-  const pid = Math.trunc(Number(item.kCGWindowOwnerPID || 0))
-  if (pid !== processId) continue
-  const wid = Math.trunc(Number(item.kCGWindowNumber || 0))
-  const alpha = Number(item.kCGWindowAlpha)
-  if (wid <= 0 || (Number.isFinite(alpha) && alpha <= 0)) continue
-  ownerCgWindowCount += 1
-  if (appMatches && cgWindowNumber > 0 && wid === cgWindowNumber) nativeInstanceMatches += 1
-}
-function copyAxAttribute(element, name) {
-  if (!exactAxApiAvailable || !element) return null
-  try {
-    const output = Ref()
-    if (Number($.AXUIElementCopyAttributeValue(element, $.NSString.stringWithString(name), output)) !== 0) return null
-    return output[0]
-  } catch (error) { return null }
-}
-function exactCgWindowNumber(element) {
-  if (!exactAxApiAvailable || !element) return 0
-  try {
-    const output = Ref()
-    if (Number($._AXUIElementGetWindow(element, output)) !== 0) return 0
-    return Math.trunc(Number(output[0] || 0))
-  } catch (error) { return 0 }
-}
-let axInstanceMatches = 0
-let axWindowCount = 0
-const appElement = exactAxApiAvailable ? attempt(() => $.AXUIElementCreateApplication(processId), null) : null
-const axWindows = copyAxAttribute(appElement, 'AXWindows')
-axWindowCount = axWindows ? Math.max(0, Math.trunc(Number(axWindows.count || 0))) : 0
-for (let i = 0; i < axWindowCount; i += 1) {
-  const candidate = attempt(() => axWindows.objectAtIndex(i), null)
-  if (candidate && exactCgWindowNumber(candidate) === cgWindowNumber) {
-    axInstanceMatches += 1
-  }
-}
-JSON.stringify({ appMatches, nativeInstanceMatches, ownerCgWindowCount, axInstanceMatches, axWindowCount })
-`
-
-/**
- * Runs SkyLight in a fresh osascript process. uTools' Electron renderer can expose a valid
- * SkyLight connection while returning empty per-Space collections; the isolated process avoids
- * that host-context coupling without walking or fronting unrelated windows.
- */
-function macosIsolatedSpaceBridgeScript(pid, cgWindowNumber, switchRequested) {
-  return String.raw`
-ObjC.import('Foundation')
-ObjC.import('CoreGraphics')
-ObjC.import('AppKit')
-const processId = ${pid}
-const cgWindowNumber = ${cgWindowNumber}
-const shouldSwitch = ${switchRequested ? 'true' : 'false'}
-function attempt(callback, fallback) {
-  try { return callback() } catch (error) { return fallback }
-}
-function environmentValue(name) {
-  const value = $.NSProcessInfo.processInfo.environment.objectForKey(name)
-  return value ? String(ObjC.unwrap(value) || '') : ''
-}
-function normalizeTitle(value) {
-  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
-}
-function numberList(value) {
-  const rows = attempt(() => ObjC.deepUnwrap(value), [])
-  return Array.isArray(rows) ? rows.map((item) => Math.trunc(Number(item || 0))).filter((item) => item > 0) : []
-}
-function executeSpaceBridge() {
-  ObjC.bindFunction('calloc', ['void *', ['unsigned long', 'unsigned long']])
-  ObjC.bindFunction('free', ['void', ['void *']])
-  ObjC.bindFunction('SLSMainConnectionID', ['int', []])
-  ObjC.bindFunction('SLSCopyManagedDisplaySpaces', ['id', ['int']])
-  ObjC.bindFunction('SLSCopySpacesForWindows', ['id', ['int', 'int', 'id']])
-  ObjC.bindFunction('SLSCopyWindowsWithOptionsAndTags', ['id', ['int', 'uint32_t', 'id', 'uint32_t', 'void *', 'void *']])
-  ObjC.bindFunction('SLSManagedDisplaySetCurrentSpace', ['void', ['int', 'id', 'uint64_t']])
-  const cid = $.SLSMainConnectionID()
-  const expectedApp = normalizeTitle(environmentValue('EYPC_WINDOW_TARGET_APP_ID'))
-  const running = attempt(() => $.NSRunningApplication.runningApplicationWithProcessIdentifier(processId), null)
-  const runningBundle = normalizeTitle(attempt(() => running && running.bundleIdentifier && ObjC.unwrap(running.bundleIdentifier), ''))
-  const runningName = normalizeTitle(attempt(() => running && running.localizedName && ObjC.unwrap(running.localizedName), ''))
-  const appMatches = Boolean(running && (!expectedApp || expectedApp === runningBundle || expectedApp === runningName))
-  const rawWindows = attempt(() => ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID))), [])
-  const windows = Array.isArray(rawWindows) ? rawWindows : []
-  const targets = windows.filter((item) => {
-    if (!item || typeof item !== 'object') return false
-    if (Math.trunc(Number(item.kCGWindowLayer || 0)) !== 0) return false
-    if (Math.trunc(Number(item.kCGWindowOwnerPID || 0)) !== processId) return false
-    if (Math.trunc(Number(item.kCGWindowNumber || 0)) !== cgWindowNumber) return false
-    const alpha = Number(item.kCGWindowAlpha)
-    return !Number.isFinite(alpha) || alpha > 0
-  })
-  if (targets.length !== 1 || !appMatches) {
-    return { bridge: 'isolated-jxa', detail: 'bad-ref', bindingCount: 0, bindingSource: 'none', sameSpace: false, managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
-  }
-  function managedRows() {
-    const rows = attempt(() => ObjC.deepUnwrap($.SLSCopyManagedDisplaySpaces(cid)), [])
-    return Array.isArray(rows) ? rows : []
-  }
-  const managed = managedRows()
-  const entries = []
-  for (const display of managed) {
-    if (!display || typeof display !== 'object') continue
-    const displayUuid = String(display['Display Identifier'] || '').trim()
-    const currentSpaceId = Math.trunc(Number(display['Current Space'] && display['Current Space'].id64 || 0))
-    if (!displayUuid) continue
-    for (const space of Array.isArray(display.Spaces) ? display.Spaces : []) {
-      const spaceId = Math.trunc(Number(space && space.id64 || 0))
-      if (spaceId > 0) entries.push({ displayUuid, spaceId, currentSpaceId })
-    }
-  }
-  const windowIds = $.NSArray.arrayWithObject($.NSNumber.numberWithUnsignedInt(cgWindowNumber))
-  const directIds = []
-  for (const mask of [0x7, 0x7fffffff]) {
-    for (const spaceId of numberList(attempt(() => $.SLSCopySpacesForWindows(cid, mask, windowIds), null))) {
-      if (directIds.indexOf(spaceId) < 0) directIds.push(spaceId)
-    }
-  }
-  const direct = entries.filter((entry) => directIds.indexOf(entry.spaceId) >= 0)
-  const reverse = []
-  const setTags = $.calloc(1, 8)
-  const clearTags = $.calloc(1, 8)
-  try {
-    for (const entry of entries) {
-      const spaces = $.NSArray.arrayWithObject($.NSNumber.numberWithUnsignedLongLong(entry.spaceId))
-      const ids = numberList(attempt(() => $.SLSCopyWindowsWithOptionsAndTags(cid, 0, spaces, 0x7, setTags, clearTags), null))
-      if (ids.indexOf(cgWindowNumber) >= 0) reverse.push(entry)
-    }
-  } finally {
-    $.free(setTags)
-    $.free(clearTags)
-  }
-  const bindings = []
-  const seen = {}
-  for (const entry of direct.concat(reverse)) {
-    const key = entry.displayUuid + ':' + String(entry.spaceId)
-    if (seen[key]) continue
-    seen[key] = true
-    bindings.push(entry)
-  }
-  const source = direct.length && reverse.length
-    ? 'isolated-direct+reverse'
-    : direct.length
-      ? 'isolated-direct'
-      : reverse.length
-        ? 'isolated-reverse'
-        : 'none'
-  const base = {
-    bridge: 'isolated-jxa',
-    bindingCount: bindings.length,
-    bindingSource: source,
-    bindings: bindings.slice(0, 16).map((binding) => ({
-      spaceId: String(binding.spaceId),
-      displayUuid: String(binding.displayUuid || '')
-    })),
-    managedSpaceCount: entries.length,
-    directBindingCount: direct.length,
-    reverseBindingCount: reverse.length
-  }
-  if (!bindings.length) return Object.assign(base, { detail: 'empty-spaces', sameSpace: false })
-  const current = bindings.filter((binding) => binding.currentSpaceId === binding.spaceId)
-  if (current.length) return Object.assign(base, { detail: 'current', sameSpace: true, switched: false, confirmed: true })
-  if (bindings.length !== 1) return Object.assign(base, { detail: 'ambiguous-spaces', sameSpace: false, switched: false, confirmed: false })
-  if (!shouldSwitch) return Object.assign(base, { detail: 'remote', sameSpace: false, switched: false, confirmed: false })
-  const binding = bindings[0]
-  const display = $.NSString.stringWithString(binding.displayUuid)
-  $.SLSManagedDisplaySetCurrentSpace(cid, display, binding.spaceId)
-  const deadline = Date.now() + 2000
-  while (Date.now() <= deadline) {
-    const confirmed = managedRows().some((item) => String(item && item['Display Identifier'] || '') === binding.displayUuid
-      && Math.trunc(Number(item && item['Current Space'] && item['Current Space'].id64 || 0)) === binding.spaceId)
-    if (confirmed) return Object.assign(base, { detail: 'switch-confirmed', sameSpace: false, switched: true, confirmed: true })
-    $.NSThread.sleepForTimeInterval(0.05)
-  }
-  return Object.assign(base, { detail: 'switch-timeout', sameSpace: false, switched: false, confirmed: false })
-}
-let payload
-try {
-  payload = executeSpaceBridge()
-} catch (error) {
-  payload = { bridge: 'isolated-jxa', detail: 'error', bindingCount: 0, bindingSource: 'none', sameSpace: false, managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
-}
-JSON.stringify(payload)
-`
-}
 
 function macosActivateWindowScript(pid, cgWindowNumber) {
   return String.raw`
@@ -1001,7 +922,7 @@ function emit(outcome) {
   if (debugTrace) payload.trace = trace
   return JSON.stringify(payload)
 }
-const expectedApp = normalizeTitle(environmentValue('EYPC_WINDOW_TARGET_APP_ID'))
+const expectedApp = normalizeAppIdentity(environmentValue('EYPC_WINDOW_TARGET_APP_ID'))
 const expectedInstanceId = environmentValue('EYPC_WINDOW_INSTANCE_ID')
 function axAttributeName(name) {
   return $.NSString.stringWithString(name)
@@ -1034,27 +955,41 @@ function exactCgWindowNumber(element) {
     return 0
   }
 }
-function resolveExactAxTarget() {
+function rootCgWindowNumber(element) {
+  if (!element) return 0
+  const containing = copyAxAttribute(element, 'AXWindow')
+  const topLevel = copyAxAttribute(element, 'AXTopLevelUIElement')
+  return (topLevel.error === 0 && topLevel.value ? exactCgWindowNumber(topLevel.value) : 0)
+    || (containing.error === 0 && containing.value ? exactCgWindowNumber(containing.value) : 0)
+    || exactCgWindowNumber(element)
+}
+function resolveRootAxTarget() {
   if (!exactAxApiAvailable || cgWindowNumber <= 0) return { outcome: 'unavailable' }
   let app = null
   try { app = $.AXUIElementCreateApplication(processId) } catch (error) {}
   if (!app) return { outcome: 'unavailable' }
   const copied = copyAxAttribute(app, 'AXWindows')
   if (copied.error !== 0 || !copied.value) return { outcome: 'unavailable' }
-  const matches = []
+  const family = []
+  let exactRoot = null
   const count = Math.max(0, Math.trunc(Number(copied.value.count || 0)))
   for (let index = 0; index < count; index += 1) {
     let candidate = null
     try { candidate = copied.value.objectAtIndex(index) } catch (error) {}
-    if (candidate && exactCgWindowNumber(candidate) === cgWindowNumber) matches.push(candidate)
+    if (!candidate || rootCgWindowNumber(candidate) !== cgWindowNumber) continue
+    family.push(candidate)
+    if (exactCgWindowNumber(candidate) === cgWindowNumber) exactRoot = candidate
   }
-  if (matches.length === 1) return { outcome: 'matched', app, target: matches[0] }
-  if (matches.length > 1) return { outcome: 'ambiguous' }
-  return { outcome: 'not-found' }
-}
-function exactAxFocused(app) {
+  if (!family.length) return { outcome: 'not-found' }
   const focused = copyAxAttribute(app, 'AXFocusedWindow')
-  return focused.error === 0 && focused.value && exactCgWindowNumber(focused.value) === cgWindowNumber
+  const focusedTarget = focused.error === 0 && focused.value && rootCgWindowNumber(focused.value) === cgWindowNumber
+    ? focused.value
+    : null
+  return { outcome: 'matched', app, target: focusedTarget || exactRoot || family[0] }
+}
+function rootAxFocused(app) {
+  const focused = copyAxAttribute(app, 'AXFocusedWindow')
+  return focused.error === 0 && focused.value && rootCgWindowNumber(focused.value) === cgWindowNumber
 }
 function validateExactCgTarget() {
   if (cgWindowNumber <= 0) return { outcome: 'unavailable' }
@@ -1075,7 +1010,7 @@ function validateExactCgTarget() {
     return { outcome: 'unavailable' }
   }
 }
-function activateExactAxTarget(resolved) {
+function activateRootAxTarget(resolved) {
   addTrace('process', 'ok')
   addTrace('target', 'ok', 'ax-cg-id-match')
   const target = resolved.target
@@ -1087,10 +1022,10 @@ function activateExactAxTarget(resolved) {
     addTrace('process', 'not-found')
     return 'not-found'
   }
-  const runningBundle = normalizeTitle((() => {
+  const runningBundle = normalizeAppIdentity((() => {
     try { return running.bundleIdentifier ? ObjC.unwrap(running.bundleIdentifier) : '' } catch (error) { return '' }
   })())
-  const runningName = normalizeTitle((() => {
+  const runningName = normalizeAppIdentity((() => {
     try { return running.localizedName ? ObjC.unwrap(running.localizedName) : '' } catch (error) { return '' }
   })())
   if (expectedApp && expectedApp !== runningBundle && expectedApp !== runningName) {
@@ -1119,8 +1054,7 @@ function activateExactAxTarget(resolved) {
   try { foreground = Boolean(running.activateWithOptions($.NSApplicationActivateIgnoringOtherApps)) } catch (error) {}
   $.NSThread.sleepForTimeInterval(0.05)
   for (let retry = 0; retry < 4; retry += 1) {
-    // Chromium advertises AXFocusedWindow as read-only, but accepts this exact AX element and
-    // otherwise keeps the previously focused sibling window in a multi-window process.
+    // Prefer the current member, but verify the containing root so internal surfaces may change.
     setAxAttribute(app, 'AXFocusedWindow', target)
     setAxAttribute(app, 'AXMainWindow', target)
     setAxAttribute(target, 'AXMain', $.NSNumber.numberWithBool(true))
@@ -1128,10 +1062,10 @@ function activateExactAxTarget(resolved) {
     raised = performAxAction(target, 'AXRaise') || raised
     try { foreground = Boolean(running.activateWithOptions($.NSApplicationActivateIgnoringOtherApps)) || foreground } catch (error) {}
     $.NSThread.sleepForTimeInterval(0.06)
-    if (exactAxFocused(app)) {
+    if (rootAxFocused(app)) {
       addTrace('foreground', foreground ? 'ok' : 'unavailable')
       addTrace('raise', raised ? 'ok' : 'unavailable')
-      addTrace('verify', 'ok', 'ax-focused-window')
+      addTrace('verify', 'ok', 'ax-focused-root-window')
       return 'activated'
     }
   }
@@ -1140,7 +1074,7 @@ function activateExactAxTarget(resolved) {
   addTrace('verify', 'failed', 'focus-state-mismatch')
   return 'failed'
 }
-function normalizeTitle(value) {
+function normalizeAppIdentity(value) {
   return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
 }
 function activate() {
@@ -1164,8 +1098,8 @@ function activate() {
     return 'failed'
   }
   addTrace('target', 'ok', 'instance-match')
-  const exact = resolveExactAxTarget()
-  if (exact.outcome === 'matched') return activateExactAxTarget(exact)
+  const exact = resolveRootAxTarget()
+  if (exact.outcome === 'matched') return activateRootAxTarget(exact)
   if (exact.outcome === 'ambiguous') {
     addTrace('target', 'ambiguous', 'ax-cg-id-match')
     return 'ambiguous'
@@ -1182,6 +1116,7 @@ function macosCloseWindowScript(pid, cgWindowNumber) {
   return String.raw`
 ObjC.import('Foundation')
 ObjC.import('ApplicationServices')
+ObjC.import('AppKit')
 const processId = ${pid}
 const cgWindowNumber = ${cgWindowNumber}
 let available = false
@@ -1192,6 +1127,13 @@ try {
   ObjC.bindFunction('_AXUIElementGetWindow', ['int', ['id', 'uint32_t *']])
   available = true
 } catch (error) {}
+function environmentValue(name) {
+  const value = $.NSProcessInfo.processInfo.environment.objectForKey(name)
+  return value ? String(ObjC.unwrap(value) || '') : ''
+}
+function normalizeAppIdentity(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+}
 function copyAttribute(element, name) {
   if (!available || !element) return null
   try {
@@ -1209,6 +1151,17 @@ function windowNumber(element) {
   } catch (error) { return 0 }
 }
 const app = available && cgWindowNumber > 0 ? $.AXUIElementCreateApplication(processId) : null
+const expectedApp = normalizeAppIdentity(environmentValue('EYPC_WINDOW_TARGET_APP_ID'))
+const running = (() => {
+  try { return $.NSRunningApplication.runningApplicationWithProcessIdentifier(processId) } catch (error) { return null }
+})()
+const runningBundle = normalizeAppIdentity((() => {
+  try { return running && running.bundleIdentifier ? ObjC.unwrap(running.bundleIdentifier) : '' } catch (error) { return '' }
+})())
+const runningName = normalizeAppIdentity((() => {
+  try { return running && running.localizedName ? ObjC.unwrap(running.localizedName) : '' } catch (error) { return '' }
+})())
+const appMatches = Boolean(running && !running.terminated && (!expectedApp || expectedApp === runningBundle || expectedApp === runningName))
 const windows = copyAttribute(app, 'AXWindows')
 const matches = []
 const count = windows ? Math.max(0, Math.trunc(Number(windows.count || 0))) : 0
@@ -1216,7 +1169,9 @@ for (let index = 0; index < count; index += 1) {
   const candidate = windows.objectAtIndex(index)
   if (windowNumber(candidate) === cgWindowNumber) matches.push(candidate)
 }
-if (!available || !app || !windows) {
+if (!appMatches) {
+  JSON.stringify({ outcome: 'not-found', message: 'instance-mismatch' })
+} else if (!available || !app || !windows) {
   JSON.stringify({ outcome: 'failed', message: 'identity-unavailable' })
 } else if (matches.length !== 1) {
   JSON.stringify({ outcome: matches.length > 1 ? 'ambiguous' : 'not-found' })
@@ -1239,488 +1194,7 @@ if (!available || !app || !windows) {
 `
 }
 
-// Private SkyLight CGS: resolve a concrete CGWindowNumber against the current managed-Space map.
-// Direct per-window queries are authoritative; per-Space tag scans only corroborate/fill a direct miss.
-// Bindings stay preload-session-only because CG window IDs, PIDs, titles and Space IDs are recyclable.
-const WINDOW_BRIDGE_REVISION = 'wj19-native-instance-id'
-const MACOS_CGS_WINDOW_TAG_MASK = 0x7
-const MACOS_CGS_SPACE_QUERY_MASKS = [0x7, 0x7fffffff]
-const MACOS_CGS_SPACE_SETTLE_MS = 120
-const MACOS_CGS_SPACE_CONFIRM_TIMEOUT_MS = 2_000
-const MACOS_CGS_SPACE_CONFIRM_INTERVAL_MS = 50
-const MACOS_WINDOW_IDENTITY_CACHE_TTL_MS = 5 * 60 * 1_000
-const MACOS_CF_STRING_ENCODING_UTF8 = 0x08000100
-let macosCgsApi = null
-/** @type {Map<number, Array<{ spaceId: bigint, displayUuid: string }>>} */
-let macosWindowSpaceCache = new Map()
-/** @type {{ entries: Array<{ spaceId: bigint, displayUuid: string }>, displayBySpace: Map<string, string>, currentByDisplay: Map<string, string> } | null} */
-let macosManagedSpaceSnapshot = null
-/** @type {Map<string, { checkedAt: number, snapshot: object }>} */
-let macosWindowIdentityCache = new Map()
-const MACOS_WINDOW_SPACE_LEARNED_KEY = 'eypc/macos-window-spaces/v1'
-let macosLegacySpaceBindingMigrationAttempted = false
-
-function loadMacosCgsApi() {
-  if (macosCgsApi !== null) return macosCgsApi
-  macosCgsApi = false
-  if (process.platform !== 'darwin') return false
-  try {
-    let koffi = null
-    const candidates = ['koffi', path.join(__dirname, 'node_modules', 'koffi'), path.join(__dirname, '..', 'node_modules', 'koffi')]
-    for (const id of candidates) {
-      try {
-        koffi = require(id)
-        break
-      } catch {}
-    }
-    if (!koffi) return false
-    const sky = koffi.load('/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/SkyLight')
-    const cf = koffi.load('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
-    macosCgsApi = {
-      koffi,
-      SLSMainConnectionID: sky.func('SLSMainConnectionID', 'int', []),
-      SLSCopySpacesForWindows: sky.func('SLSCopySpacesForWindows', 'void *', ['int', 'int', 'void *']),
-      SLSCopyManagedDisplaySpaces: sky.func('SLSCopyManagedDisplaySpaces', 'void *', ['int']),
-      SLSCopyWindowsWithOptionsAndTags: sky.func('SLSCopyWindowsWithOptionsAndTags', 'void *', ['int', 'uint32', 'void *', 'uint32', 'void *', 'void *']),
-      SLSManagedDisplaySetCurrentSpace: sky.func('SLSManagedDisplaySetCurrentSpace', 'void', ['int', 'void *', 'uint64']),
-      CFNumberCreate: cf.func('CFNumberCreate', 'void *', ['void *', 'int', 'void *']),
-      CFArrayCreate: cf.func('CFArrayCreate', 'void *', ['void *', 'void *', 'long', 'void *']),
-      CFArrayGetCount: cf.func('CFArrayGetCount', 'long', ['void *']),
-      CFArrayGetValueAtIndex: cf.func('CFArrayGetValueAtIndex', 'void *', ['void *', 'long']),
-      CFNumberGetValue: cf.func('CFNumberGetValue', 'bool', ['void *', 'int', 'void *']),
-      CFStringCreateWithCString: cf.func('CFStringCreateWithCString', 'void *', ['void *', 'str', 'uint32']),
-      CFStringGetLength: cf.func('CFStringGetLength', 'long', ['void *']),
-      CFStringGetMaximumSizeForEncoding: cf.func('CFStringGetMaximumSizeForEncoding', 'long', ['long', 'uint32']),
-      CFStringGetCString: cf.func('CFStringGetCString', 'bool', ['void *', 'void *', 'long', 'uint32']),
-      CFDictionaryGetValue: cf.func('CFDictionaryGetValue', 'void *', ['void *', 'void *']),
-      CFRelease: cf.func('CFRelease', 'void', ['void *'])
-    }
-    return macosCgsApi
-  } catch {
-    macosCgsApi = false
-    return false
-  }
-}
-
-function macosCreateCfNumber(api, value, bits) {
-  if (bits === 64) {
-    const buf = Buffer.alloc(8)
-    buf.writeBigUInt64LE(BigInt(value), 0)
-    return api.CFNumberCreate(null, 4, buf)
-  }
-  const buf = Buffer.alloc(4)
-  buf.writeUInt32LE(Number(value) >>> 0, 0)
-  return api.CFNumberCreate(null, 3, buf)
-}
-
-function macosCreateCfArrayOne(api, cfValue) {
-  const ptrArray = Buffer.alloc(8)
-  ptrArray.writeBigUInt64LE(BigInt(api.koffi.address(cfValue)), 0)
-  return api.CFArrayCreate(null, ptrArray, 1, null)
-}
-
-function macosReadCfU64(api, cfNum) {
-  if (!cfNum) return null
-  const out = Buffer.alloc(8)
-  if (!api.CFNumberGetValue(cfNum, 4, out)) return null
-  return out.readBigUInt64LE(0)
-}
-
-function macosReadCfWindowId(api, cfNum) {
-  if (!cfNum) return null
-  const as64 = macosReadCfU64(api, cfNum)
-  if (as64 != null) return Number(as64)
-  const out = Buffer.alloc(4)
-  if (!api.CFNumberGetValue(cfNum, 3, out)) return null
-  return out.readUInt32LE(0)
-}
-
-function macosReadCfString(api, cfString) {
-  if (!cfString) return ''
-  const length = Number(api.CFStringGetLength(cfString))
-  const max = Number(api.CFStringGetMaximumSizeForEncoding(length, MACOS_CF_STRING_ENCODING_UTF8)) + 1
-  if (!Number.isFinite(max) || max <= 1) return ''
-  const buf = Buffer.alloc(max)
-  if (!api.CFStringGetCString(cfString, buf, buf.length, MACOS_CF_STRING_ENCODING_UTF8)) return ''
-  const end = buf.indexOf(0)
-  return buf.toString('utf8', 0, end < 0 ? buf.length : end).trim()
-}
-
-function macosCreateCfKey(api, name) {
-  return api.CFStringCreateWithCString(null, name, MACOS_CF_STRING_ENCODING_UTF8)
-}
-
-/** Native CF walk of every managed display → Spaces id64 + current Space + Display Identifier. */
-function macosLoadDisplayBySpaceMap(api, cid) {
-  const displayBySpace = new Map()
-  const currentByDisplay = new Map()
-  const entries = []
-  const managed = api.SLSCopyManagedDisplaySpaces(cid)
-  if (!managed) return { displayBySpace, currentByDisplay, entries }
-  const keyDisplay = macosCreateCfKey(api, 'Display Identifier')
-  const keySpaces = macosCreateCfKey(api, 'Spaces')
-  const keyCurrent = macosCreateCfKey(api, 'Current Space')
-  const keyId = macosCreateCfKey(api, 'id64')
-  try {
-    if (!keyDisplay || !keySpaces || !keyCurrent || !keyId) return { displayBySpace, currentByDisplay, entries }
-    const displayCount = Number(api.CFArrayGetCount(managed))
-    for (let i = 0; i < displayCount; i++) {
-      const displayDict = api.CFArrayGetValueAtIndex(managed, i)
-      if (!displayDict) continue
-      const displayUuid = macosReadCfString(api, api.CFDictionaryGetValue(displayDict, keyDisplay))
-      if (!displayUuid) continue
-      const currentDict = api.CFDictionaryGetValue(displayDict, keyCurrent)
-      if (currentDict) {
-        const currentId = macosReadCfU64(api, api.CFDictionaryGetValue(currentDict, keyId))
-        if (currentId != null && currentId > 0n) currentByDisplay.set(displayUuid, currentId.toString())
-      }
-      const spaces = api.CFDictionaryGetValue(displayDict, keySpaces)
-      if (!spaces) continue
-      const spaceCount = Number(api.CFArrayGetCount(spaces))
-      for (let j = 0; j < spaceCount; j++) {
-        const spaceDict = api.CFArrayGetValueAtIndex(spaces, j)
-        if (!spaceDict) continue
-        const spaceId = macosReadCfU64(api, api.CFDictionaryGetValue(spaceDict, keyId))
-        if (spaceId == null || spaceId <= 0n) continue
-        const raw = spaceId.toString()
-        entries.push({ spaceId, displayUuid })
-        displayBySpace.set(raw, displayUuid)
-      }
-    }
-  } finally {
-    if (keyDisplay) api.CFRelease(keyDisplay)
-    if (keySpaces) api.CFRelease(keySpaces)
-    if (keyCurrent) api.CFRelease(keyCurrent)
-    if (keyId) api.CFRelease(keyId)
-    api.CFRelease(managed)
-  }
-  return { displayBySpace, currentByDisplay, entries }
-}
-
-function macosRemoveLegacySpaceBindingCache() {
-  if (macosLegacySpaceBindingMigrationAttempted) return
-  macosLegacySpaceBindingMigrationAttempted = true
-  try {
-    const storage = globalThis.utools && globalThis.utools.dbStorage
-    if (storage && typeof storage.removeItem === 'function') storage.removeItem(MACOS_WINDOW_SPACE_LEARNED_KEY)
-  } catch {}
-}
-
-function macosSpaceBindingKey(binding) {
-  if (!binding || !binding.spaceId || !binding.displayUuid) return ''
-  return `${binding.spaceId.toString()}:${String(binding.displayUuid)}`
-}
-
-function macosDedupeSpaceBindings(bindings) {
-  const result = []
-  const seen = new Set()
-  for (const binding of Array.isArray(bindings) ? bindings : []) {
-    const key = macosSpaceBindingKey(binding)
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    result.push({ spaceId: binding.spaceId, displayUuid: String(binding.displayUuid) })
-  }
-  return result
-}
-
-function macosWindowInstanceKey(pid, cgWindowNumber) {
-  const ownerPid = Math.trunc(Number(pid))
-  const wid = Math.trunc(Number(cgWindowNumber))
-  if (!Number.isInteger(ownerPid) || ownerPid <= 0 || !Number.isInteger(wid) || wid <= 0) return ''
-  return `darwin:${ownerPid}:${wid}`
-}
-
-function macosCacheSpaceBindings(cache, instanceKey, bindings) {
-  const key = String(instanceKey || '').trim()
-  if (!key) return
-  const normalized = macosDedupeSpaceBindings(bindings)
-  if (normalized.length) cache.set(key, normalized)
-  else cache.delete(key)
-}
-
-/** Reads only a previously verified/prewarmed binding and refreshes current-Space state. */
-function macosCachedWindowSpaceResolution(api, cid, instanceKey) {
-  const key = String(instanceKey || '').trim()
-  const cached = macosDedupeSpaceBindings(macosWindowSpaceCache.get(key) || [])
-  if (!key || !cached.length) return null
-  const managed = macosLoadDisplayBySpaceMap(api, cid)
-  macosManagedSpaceSnapshot = managed
-  const bindings = cached.filter((binding) => managed.displayBySpace.get(binding.spaceId.toString()) === binding.displayUuid)
-  if (!bindings.length) {
-    macosWindowSpaceCache.delete(key)
-    return null
-  }
-  macosCacheSpaceBindings(macosWindowSpaceCache, key, bindings)
-  return {
-    bindings,
-    source: 'session-cache',
-    currentByDisplay: managed.currentByDisplay,
-    managedSpaceCount: managed.entries.length,
-    directBindingCount: 0,
-    reverseBindingCount: 0,
-    cacheHit: true
-  }
-}
-
-function macosSpacesForWindow(api, cid, cgWindowNumber, mask) {
-  const cfNum = macosCreateCfNumber(api, cgWindowNumber, 32)
-  if (!cfNum) return []
-  const cfArr = macosCreateCfArrayOne(api, cfNum)
-  if (!cfArr) {
-    api.CFRelease(cfNum)
-    return []
-  }
-  const spaceIds = []
-  const spaces = api.SLSCopySpacesForWindows(cid, mask, cfArr)
-  if (spaces) {
-    const count = Number(api.CFArrayGetCount(spaces))
-    for (let i = 0; i < count; i++) {
-      const spaceId = macosReadCfU64(api, api.CFArrayGetValueAtIndex(spaces, i))
-      if (spaceId != null && spaceId > 0n) spaceIds.push(spaceId)
-    }
-    api.CFRelease(spaces)
-  }
-  api.CFRelease(cfArr)
-  api.CFRelease(cfNum)
-  return spaceIds
-}
-
-function macosWindowNumbersOnSpace(api, cid, spaceId) {
-  const spaceNum = macosCreateCfNumber(api, spaceId, 64)
-  if (!spaceNum) return []
-  const spaceArr = macosCreateCfArrayOne(api, spaceNum)
-  if (!spaceArr) {
-    api.CFRelease(spaceNum)
-    return []
-  }
-  const ids = []
-  const setTags = Buffer.alloc(8)
-  const clearTags = Buffer.alloc(8)
-  const windows = api.SLSCopyWindowsWithOptionsAndTags(cid, 0, spaceArr, MACOS_CGS_WINDOW_TAG_MASK, setTags, clearTags)
-  if (windows) {
-    const count = Number(api.CFArrayGetCount(windows))
-    const seen = new Set()
-    for (let i = 0; i < count; i++) {
-      const wid = macosReadCfWindowId(api, api.CFArrayGetValueAtIndex(windows, i))
-      if (!Number.isInteger(wid) || wid <= 0 || seen.has(wid)) continue
-      seen.add(wid)
-      ids.push(wid)
-    }
-    api.CFRelease(windows)
-  }
-  api.CFRelease(spaceArr)
-  api.CFRelease(spaceNum)
-  return ids
-}
-
-function macosBindingsFromSpaceIds(spaceIds, displayBySpace) {
-  const bindings = []
-  for (const spaceId of spaceIds) {
-    const displayUuid = displayBySpace.get(spaceId.toString())
-    if (displayUuid) bindings.push({ spaceId, displayUuid })
-  }
-  return macosDedupeSpaceBindings(bindings)
-}
-
-function macosResolveBindingsByReverseScan(api, cid, cgWindowNumber, displayBySpace, entries) {
-  const want = cgWindowNumber >>> 0
-  const bindings = []
-  for (const entry of entries) {
-    const ids = macosWindowNumbersOnSpace(api, cid, entry.spaceId)
-    if (!ids.includes(want)) continue
-    const displayUuid = displayBySpace.get(entry.spaceId.toString()) || entry.displayUuid
-    if (!displayUuid) continue
-    bindings.push({ spaceId: entry.spaceId, displayUuid })
-  }
-  return macosDedupeSpaceBindings(bindings)
-}
-
-function macosDirectBindingsForWindow(api, cid, cgWindowNumber, displayBySpace) {
-  const spaceIds = []
-  const seen = new Set()
-  for (const mask of MACOS_CGS_SPACE_QUERY_MASKS) {
-    for (const spaceId of macosSpacesForWindow(api, cid, cgWindowNumber, mask)) {
-      const raw = spaceId.toString()
-      if (seen.has(raw)) continue
-      seen.add(raw)
-      spaceIds.push(spaceId)
-    }
-  }
-  return macosBindingsFromSpaceIds(spaceIds, displayBySpace)
-}
-
-/**
- * Full reload: cache session-only bindings from managed-Space tags, then corroborate inventory
- * CG refs with direct per-window queries. No binding crosses a preload lifetime.
- */
-function macosRebuildWindowSpaceCache(api, cid, inventoryWindows) {
-  const { displayBySpace, currentByDisplay, entries } = macosLoadDisplayBySpaceMap(api, cid)
-  macosManagedSpaceSnapshot = { entries, displayBySpace, currentByDisplay }
-  const next = new Map()
-  const bindingsByWindowNumber = new Map()
-  for (const entry of entries) {
-    for (const wid of macosWindowNumbersOnSpace(api, cid, entry.spaceId)) {
-      const existing = bindingsByWindowNumber.get(wid) || []
-      bindingsByWindowNumber.set(wid, macosDedupeSpaceBindings([...existing, { spaceId: entry.spaceId, displayUuid: entry.displayUuid }]))
-    }
-  }
-  for (const item of Array.isArray(inventoryWindows) ? inventoryWindows : []) {
-    const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(String(item && item.nativeRef || '').trim())
-    if (!parts || Number(parts[2]) !== 0) continue
-    const pid = Number(parts[1])
-    const wid = Number(parts[3])
-    const instanceKey = macosWindowInstanceKey(pid, wid)
-    if (!instanceKey) continue
-    const direct = macosDirectBindingsForWindow(api, cid, wid, displayBySpace)
-    const bindings = macosDedupeSpaceBindings([...(bindingsByWindowNumber.get(wid) || []), ...direct])
-    macosCacheSpaceBindings(next, instanceKey, bindings)
-  }
-  macosWindowSpaceCache = next
-  return { cache: next, displayBySpace, currentByDisplay, entries, windowNumbers: next.size }
-}
-
-function macosLookupOrResolveWindowSpaceBinding(api, cid, pid, cgWindowNumber) {
-  const want = cgWindowNumber >>> 0
-  const instanceKey = macosWindowInstanceKey(pid, want)
-  const cached = macosCachedWindowSpaceResolution(api, cid, instanceKey)
-  if (cached) return cached
-  const managed = macosLoadDisplayBySpaceMap(api, cid)
-  macosManagedSpaceSnapshot = managed
-  const direct = macosDirectBindingsForWindow(api, cid, want, managed.displayBySpace)
-  const reverse = macosResolveBindingsByReverseScan(api, cid, want, managed.displayBySpace, managed.entries)
-  const bindings = macosDedupeSpaceBindings([...direct, ...reverse])
-  macosCacheSpaceBindings(macosWindowSpaceCache, instanceKey, bindings)
-  const source = direct.length && reverse.length ? 'direct+reverse' : direct.length ? 'direct' : reverse.length ? 'reverse' : 'none'
-  return {
-    bindings,
-    source,
-    currentByDisplay: managed.currentByDisplay,
-    managedSpaceCount: managed.entries.length,
-    directBindingCount: direct.length,
-    reverseBindingCount: reverse.length
-  }
-}
-
-function trySwitchMacosSpaceFromSessionCache(nativeRef) {
-  try {
-    const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(String(nativeRef || '').trim())
-    if (!parts || Number(parts[2]) !== 0) return null
-    const pid = Number(parts[1])
-    const cgWindowNumber = Number(parts[3])
-    const instanceKey = macosWindowInstanceKey(pid, cgWindowNumber)
-    if (!instanceKey) return null
-    const api = loadMacosCgsApi()
-    if (!api) return null
-    const cid = api.SLSMainConnectionID()
-    const resolved = macosCachedWindowSpaceResolution(api, cid, instanceKey)
-    if (!resolved) return null
-    const probe = {
-      bridge: 'in-process',
-      managedSpaceCount: resolved.managedSpaceCount,
-      directBindingCount: 0,
-      reverseBindingCount: 0,
-      bindingCount: resolved.bindings.length,
-      bindingSource: 'session-cache'
-    }
-    const currentBindings = resolved.bindings.filter((binding) => resolved.currentByDisplay.get(binding.displayUuid) === binding.spaceId.toString())
-    if (currentBindings.length) {
-      return { ...probe, switched: false, detail: 'current', binding: currentBindings[0], sameSpace: true, cacheHit: true }
-    }
-    if (resolved.bindings.length !== 1) {
-      return { ...probe, switched: false, detail: 'ambiguous-spaces', sameSpace: false, cacheHit: true }
-    }
-    const binding = resolved.bindings[0]
-    const switched = macosSwitchToCachedSpace(api, cid, binding, resolved.currentByDisplay)
-    if (['no-display', 'no-space-id'].includes(switched.detail)) {
-      macosWindowSpaceCache.delete(instanceKey)
-      return null
-    }
-    return { ...probe, ...switched, binding, sameSpace: false, cacheHit: true }
-  } catch {
-    return null
-  }
-}
-
-function macosSwitchToCachedSpace(api, cid, binding, currentByDisplay) {
-  if (!binding || !binding.spaceId || binding.spaceId <= 0n || !binding.displayUuid) {
-    return { switched: false, detail: binding && binding.spaceId ? 'no-display' : 'no-space-id' }
-  }
-  const currentId = currentByDisplay && currentByDisplay.get(String(binding.displayUuid))
-  if (currentId && currentId === binding.spaceId.toString()) {
-    return { switched: false, detail: 'current' }
-  }
-  const display = api.CFStringCreateWithCString(null, String(binding.displayUuid), MACOS_CF_STRING_ENCODING_UTF8)
-  if (!display) return { switched: false, detail: 'no-display' }
-  try {
-    api.SLSManagedDisplaySetCurrentSpace(cid, display, binding.spaceId)
-    return { switched: true, detail: 'switched' }
-  } finally {
-    api.CFRelease(display)
-  }
-}
-
-function trySwitchMacosSpaceByCGSInProcess(nativeRef) {
-  try {
-    const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(String(nativeRef || '').trim())
-    if (!parts) return { switched: false, detail: 'bad-ref', bridge: 'in-process' }
-    const pid = Number(parts[1])
-    const ordinal = Number(parts[2])
-    const cgWindowNumber = Number(parts[3])
-    // Only PID + positive CGWindowID refs are actionable. Legacy ordinal refs fail closed.
-    if (ordinal !== 0 || !Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) return { switched: false, detail: 'bad-ref', bridge: 'in-process' }
-    const api = loadMacosCgsApi()
-    if (!api) return { switched: false, detail: 'no-api', bridge: 'in-process', managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
-    const cid = api.SLSMainConnectionID()
-    const resolved = macosLookupOrResolveWindowSpaceBinding(api, cid, pid, cgWindowNumber)
-    const probe = {
-      bridge: 'in-process',
-      managedSpaceCount: resolved.managedSpaceCount,
-      directBindingCount: resolved.directBindingCount,
-      reverseBindingCount: resolved.reverseBindingCount
-    }
-    if (!resolved.bindings.length) return { ...probe, switched: false, detail: 'empty-spaces', bindingCount: 0, bindingSource: resolved.source, sameSpace: false }
-    const currentBindings = resolved.bindings.filter((binding) => resolved.currentByDisplay.get(binding.displayUuid) === binding.spaceId.toString())
-    if (currentBindings.length) {
-      return { ...probe, switched: false, detail: 'current', binding: currentBindings[0], bindingCount: resolved.bindings.length, bindingSource: resolved.source, sameSpace: true }
-    }
-    if (resolved.bindings.length !== 1) {
-      return { ...probe, switched: false, detail: 'ambiguous-spaces', bindingCount: resolved.bindings.length, bindingSource: resolved.source, sameSpace: false }
-    }
-    const binding = resolved.bindings[0]
-    const switched = macosSwitchToCachedSpace(api, cid, binding, resolved.currentByDisplay)
-    return { ...probe, ...switched, binding, bindingCount: 1, bindingSource: resolved.source, sameSpace: false }
-  } catch {
-    return { switched: false, detail: 'error', bridge: 'in-process', managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
-  }
-}
-
-async function macosConfirmManagedSpace(binding) {
-  if (!binding || !binding.spaceId || !binding.displayUuid) return false
-  const api = loadMacosCgsApi()
-  if (!api) return false
-  const cid = api.SLSMainConnectionID()
-  const expected = binding.spaceId.toString()
-  const deadline = Date.now() + MACOS_CGS_SPACE_CONFIRM_TIMEOUT_MS
-  while (Date.now() <= deadline) {
-    try {
-      const current = macosLoadDisplayBySpaceMap(api, cid).currentByDisplay.get(String(binding.displayUuid))
-      if (current === expected) return true
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, MACOS_CGS_SPACE_CONFIRM_INTERVAL_MS))
-  }
-  return false
-}
-
-/** Refresh-owned full reload of Space bindings for every CG window (all displays / all desktops). */
-function macosWarmWindowSpaceCacheFromInventory(windows) {
-  if (process.platform !== 'darwin') return
-  try {
-    macosRemoveLegacySpaceBindingCache()
-    const api = loadMacosCgsApi()
-    if (!api) return
-    macosRebuildWindowSpaceCache(api, api.SLSMainConnectionID(), windows)
-  } catch {}
-}
+const WINDOW_BRIDGE_REVISION = 'wj20-root-window-family'
 
 function runWindowCommand(command, args, debugTrace = false, extraEnvironment = null) {
   return new Promise((resolve) => {
@@ -1744,192 +1218,6 @@ function runWindowCommand(command, args, debugTrace = false, extraEnvironment = 
   })
 }
 
-function parseMacosIsolatedSpaceBridge(output) {
-  try {
-    const value = JSON.parse(String(output || '').trim() || '{}')
-    const detail = String(value && value.detail || '')
-    if (!['current', 'remote', 'switch-confirmed', 'switch-timeout', 'ambiguous-spaces', 'empty-spaces', 'bad-ref', 'error'].includes(detail)) return null
-    const source = String(value && value.bindingSource || '')
-    const bindingSource = ['isolated-direct', 'isolated-reverse', 'isolated-direct+reverse', 'none'].includes(source) ? source : 'none'
-    const bindings = Array.isArray(value && value.bindings) ? value.bindings.slice(0, 16).flatMap((item) => {
-      const spaceId = String(item && item.spaceId || '').trim()
-      const displayUuid = String(item && item.displayUuid || '').trim()
-      if (!/^\d{1,20}$/.test(spaceId) || !displayUuid) return []
-      try {
-        const parsed = BigInt(spaceId)
-        return parsed > 0n ? [{ spaceId: parsed, displayUuid }] : []
-      } catch {
-        return []
-      }
-    }) : []
-    return {
-      bridge: 'isolated-jxa',
-      detail,
-      switched: value && value.switched === true,
-      confirmed: value && value.confirmed === true,
-      sameSpace: value && value.sameSpace === true,
-      bindingCount: Math.max(0, Math.trunc(Number(value && value.bindingCount || 0))),
-      bindingSource,
-      bindings: macosDedupeSpaceBindings(bindings),
-      managedSpaceCount: Math.max(0, Math.trunc(Number(value && value.managedSpaceCount || 0))),
-      directBindingCount: Math.max(0, Math.trunc(Number(value && value.directBindingCount || 0))),
-      reverseBindingCount: Math.max(0, Math.trunc(Number(value && value.reverseBindingCount || 0)))
-    }
-  } catch {
-    return null
-  }
-}
-
-async function runMacosIsolatedSpaceBridge(target, switchRequested) {
-  const source = target && typeof target === 'object' ? target : {}
-  const nativeRef = String(source.nativeRef || '').trim()
-  const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
-  if (!parts) return { switched: false, detail: 'bad-ref', bridge: 'isolated-jxa', bindingCount: 0, bindingSource: 'none' }
-  const pid = Number(parts[1])
-  const ordinal = Number(parts[2])
-  const cgWindowNumber = Number(parts[3])
-  if (ordinal !== 0 || !Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) {
-    return { switched: false, detail: 'bad-ref', bridge: 'isolated-jxa', bindingCount: 0, bindingSource: 'none' }
-  }
-  const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
-  const script = macosIsolatedSpaceBridgeScript(pid, cgWindowNumber, switchRequested === true)
-  const result = await runWindowCommand(
-    '/usr/bin/osascript',
-    ['-l', 'JavaScript', '-e', script],
-    false,
-    { EYPC_WINDOW_TARGET_APP_ID: appId }
-  )
-  if (!result.ok) {
-    return { switched: false, detail: 'error', bridge: 'isolated-jxa', bindingCount: 0, bindingSource: 'none', managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
-  }
-  const parsed = parseMacosIsolatedSpaceBridge(result.stdout)
-  if (parsed && parsed.bindings.length) macosCacheSpaceBindings(macosWindowSpaceCache, macosWindowInstanceKey(pid, cgWindowNumber), parsed.bindings)
-  return parsed
-    || { switched: false, detail: 'error', bridge: 'isolated-jxa', bindingCount: 0, bindingSource: 'none', managedSpaceCount: 0, directBindingCount: 0, reverseBindingCount: 0 }
-}
-
-async function trySwitchMacosSpace(target) {
-  const nativeRef = String(target && target.nativeRef || '').trim()
-  const inProcess = trySwitchMacosSpaceByCGSInProcess(nativeRef)
-  if (!['empty-spaces', 'no-api', 'no-space-id', 'no-display', 'error'].includes(inProcess.detail)) return inProcess
-  return runMacosIsolatedSpaceBridge(target, true)
-}
-
-function unavailableWindowEnvironment(platform = 'unsupported') {
-  return {
-    platform,
-    bridgeRevision: WINDOW_BRIDGE_REVISION,
-    identityAvailable: false,
-    appMatches: false,
-    nativeInstanceMatches: 0,
-    ownerCgWindowCount: 0,
-    axInstanceMatches: 0,
-    axWindowCount: 0,
-    spaceBinding: 'unavailable',
-    spaceBindingCount: 0,
-    spaceBindingSource: 'unavailable',
-    spaceBridge: 'unavailable',
-    managedSpaceCount: 0,
-    directSpaceBindingCount: 0,
-    reverseSpaceBindingCount: 0,
-    sameSpace: null
-  }
-}
-
-function macosWindowIdentityCacheKey(target) {
-  const source = target && typeof target === 'object' ? target : {}
-  const nativeRef = String(source.nativeRef || '').trim()
-  const appId = String(source.appId || source.appName || '').trim().toLowerCase()
-  return nativeRef && appId ? `${nativeRef}\u0000${appId}` : ''
-}
-
-function invalidateMacosWindowIdentity(target) {
-  const key = macosWindowIdentityCacheKey(target)
-  if (key) macosWindowIdentityCache.delete(key)
-}
-
-async function readMacosWindowIdentity(target, options = {}) {
-  const source = target && typeof target === 'object' ? target : {}
-  const cacheKey = macosWindowIdentityCacheKey(source)
-  if (options.forceRefresh === true && cacheKey) macosWindowIdentityCache.delete(cacheKey)
-  const cached = options.forceRefresh === true || !cacheKey ? null : macosWindowIdentityCache.get(cacheKey)
-  if (cached && Date.now() - cached.checkedAt <= MACOS_WINDOW_IDENTITY_CACHE_TTL_MS) {
-    return { ...cached.snapshot }
-  }
-  if (cached) macosWindowIdentityCache.delete(cacheKey)
-  const nativeRef = String(source.nativeRef || '').trim()
-  const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
-  if (!parts) return unavailableWindowEnvironment('darwin')
-  const pid = Number(parts[1])
-  const cgWindowNumber = Number(parts[3])
-  const appId = String(source.appId || source.appName || '').slice(0, 512)
-  const script = MACOS_ENV_SNAPSHOT_SCRIPT
-    .replace('__EYPC_TARGET_PID__', String(pid))
-    .replace('__EYPC_CG_WINDOW_NUMBER__', String(cgWindowNumber))
-  const result = await runWindowCommand(
-    '/usr/bin/osascript',
-    ['-l', 'JavaScript', '-e', script],
-    false,
-    { EYPC_WINDOW_TARGET_APP_ID: appId }
-  )
-  const snapshot = unavailableWindowEnvironment('darwin')
-  if (result.ok) {
-    try {
-      const parsed = JSON.parse(String(result.stdout || '').trim() || '{}')
-      snapshot.identityAvailable = true
-      snapshot.appMatches = parsed.appMatches === true
-      snapshot.nativeInstanceMatches = Math.max(0, Math.trunc(Number(parsed.nativeInstanceMatches || 0)))
-      snapshot.ownerCgWindowCount = Math.max(0, Math.trunc(Number(parsed.ownerCgWindowCount || 0)))
-      snapshot.axInstanceMatches = Math.max(0, Math.trunc(Number(parsed.axInstanceMatches || 0)))
-      snapshot.axWindowCount = Math.max(0, Math.trunc(Number(parsed.axWindowCount || 0)))
-      if (cacheKey) macosWindowIdentityCache.set(cacheKey, { checkedAt: Date.now(), snapshot: { ...snapshot } })
-    } catch {}
-  }
-  return snapshot
-}
-
-async function inspectWindowEnvironment(target) {
-  if (process.platform !== 'darwin') return unavailableWindowEnvironment('unsupported')
-  const source = target && typeof target === 'object' ? target : {}
-  const snapshot = await readMacosWindowIdentity(source)
-  const nativeRef = String(source.nativeRef || '').trim()
-  const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
-  if (!parts) return snapshot
-  const ordinal = Number(parts[2])
-  const pid = Number(parts[1])
-  const cgWindowNumber = Number(parts[3])
-  if (ordinal !== 0 || !Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) return snapshot
-  let probe = null
-  try {
-    const api = loadMacosCgsApi()
-    if (api) {
-      const cid = api.SLSMainConnectionID()
-      const resolved = macosLookupOrResolveWindowSpaceBinding(api, cid, pid, cgWindowNumber)
-      probe = {
-        bridge: 'in-process',
-        bindingCount: resolved.bindings.length,
-        bindingSource: resolved.source,
-        sameSpace: resolved.bindings.length
-          ? resolved.bindings.some((binding) => resolved.currentByDisplay.get(binding.displayUuid) === binding.spaceId.toString())
-          : false,
-        managedSpaceCount: resolved.managedSpaceCount,
-        directBindingCount: resolved.directBindingCount,
-        reverseBindingCount: resolved.reverseBindingCount
-      }
-    }
-  } catch {}
-  if (!probe || !probe.bindingCount) probe = await runMacosIsolatedSpaceBridge(source, false)
-  snapshot.spaceBinding = probe.bindingCount ? 'bound' : 'unbound'
-  snapshot.spaceBindingCount = probe.bindingCount
-  snapshot.spaceBindingSource = probe.bindingSource
-  snapshot.spaceBridge = probe.bridge
-  snapshot.managedSpaceCount = probe.managedSpaceCount
-  snapshot.directSpaceBindingCount = probe.directBindingCount
-  snapshot.reverseSpaceBindingCount = probe.reverseBindingCount
-  snapshot.sameSpace = probe.bindingCount ? probe.sameSpace === true : false
-  return snapshot
-}
-
 function windowCapability(permission = 'unknown', reason = '', extras = {}) {
   if (process.platform === 'win32') {
     return { platform: 'win32', bridgeRevision: WINDOW_BRIDGE_REVISION, supported: true, permission: 'granted', canList: true, canActivate: true, canClose: true, canAlwaysOnTop: true, ...(reason ? { reason } : {}), ...extras }
@@ -1944,6 +1232,10 @@ function isMacWindowPermissionError(value) {
   return /not authorized|not permitted|accessibility|assistive access|automation|screen recording|-1743/i.test(String(value || ''))
 }
 
+function uniqueWindowTexts(values) {
+  return [...new Set((Array.isArray(values) ? values : []).flatMap((value) => typeof value === 'string' && value.trim() ? [value.trim()] : []))]
+}
+
 function parseWindowJson(output, platform) {
   let parsed
   try { parsed = JSON.parse(String(output || '').trim() || '[]') } catch { return { windows: [], screenRecordingLikelyMissing: false } }
@@ -1951,8 +1243,7 @@ function parseWindowJson(output, platform) {
     ? parsed
     : { windows: Array.isArray(parsed) ? parsed : [parsed], screenRecordingLikelyMissing: false }
   const rows = Array.isArray(envelope.windows) ? envelope.windows : []
-  const seen = new Set()
-  const windows = rows.flatMap((item) => {
+  const observations = rows.flatMap((item) => {
     if (!item || typeof item !== 'object') return []
     const nativeRef = String(item.nativeRef || '').trim()
     const instanceId = String(item.instanceId || '').trim()
@@ -1960,15 +1251,31 @@ function parseWindowJson(output, platform) {
     const appId = String(item.appId || item.appName || '').trim()
     const appName = String(item.appName || appId || '').trim()
     const title = String(item.title || '').trim()
-    if (!nativeRef || !instanceId || !Number.isInteger(pid) || pid <= 0 || !appId || !title || seen.has(instanceId)) return []
-    seen.add(instanceId)
-    return [{ id: instanceId, instanceId, platform, nativeRef, appId, appName, pid, title, minimized: item.minimized === true, focused: item.focused === true }]
+    if (!nativeRef || !instanceId || !Number.isInteger(pid) || pid <= 0 || !appId) return []
+    return [{
+      id: instanceId,
+      instanceId,
+      nativeRef,
+      pid,
+      appId,
+      appName,
+      title: title || appName,
+      minimized: item.minimized === true,
+      focused: item.focused === true,
+      rootInstanceId: String(item.rootInstanceId || '').trim() || instanceId,
+      rootNativeRef: String(item.rootNativeRef || '').trim() || nativeRef,
+      rootPid: Math.trunc(Number(item.rootPid || pid)),
+      memberInstanceIds: uniqueWindowTexts(item.memberInstanceIds),
+      memberNativeRefs: uniqueWindowTexts(item.memberNativeRefs),
+      searchTitles: uniqueWindowTexts(item.searchTitles)
+    }]
   })
-  return { windows, screenRecordingLikelyMissing: envelope.screenRecordingLikelyMissing === true }
+  // Keep this bridge as an observation adapter. The Renderer domain owns the
+  // single root-family coalescer and every product-level tree decision.
+  return { windows: observations.map((observation) => ({ ...observation, platform })), screenRecordingLikelyMissing: envelope.screenRecordingLikelyMissing === true }
 }
 
 async function windowCapabilities() {
-  if (process.platform === 'darwin') macosRemoveLegacySpaceBindingCache()
   return windowCapability()
 }
 
@@ -1996,7 +1303,6 @@ async function listWindows() {
     } else {
       cgParsed = parseWindowJson(cgResult.stdout, 'darwin')
       if (cgParsed.windows.length > 0) {
-        macosWarmWindowSpaceCacheFromInventory(cgParsed.windows)
         return {
           capability: windowCapability('granted', cgParsed.screenRecordingLikelyMissing ? '部分窗口标题可能因屏幕录制权限受限' : ''),
           windows: cgParsed.windows,
@@ -2052,16 +1358,14 @@ async function listWindows() {
   return { capability: windowCapability('unsupported'), windows: [], completeness: 'partial', message: '当前系统不支持窗口跳转' }
 }
 
-const WINDOW_OPERATION_TRACE_STAGES = new Set(['bridge', 'space', 'target', 'process', 'restore', 'foreground', 'raise', 'verify', 'topmost'])
+const WINDOW_OPERATION_TRACE_STAGES = new Set(['bridge', 'target', 'process', 'restore', 'foreground', 'raise', 'verify', 'topmost'])
 const WINDOW_OPERATION_TRACE_OUTCOMES = new Set(['ok', 'skipped', 'not-found', 'ambiguous', 'failed', 'denied', 'unsupported', 'unavailable'])
 const WINDOW_OPERATION_TRACE_DETAILS = new Set([
-  'switched', 'switch-confirmed', 'switch-timeout', 'current', 'direct-unique', 'direct-multiple', 'reverse-unique', 'session-cache',
-  'ambiguous-spaces', 'bad-ref', 'no-api', 'empty-spaces', 'no-space-id', 'no-display',
-  'multiwindow-blocked', 'current-space-inferred', 'instance-match', 'instance-mismatch', 'identity-unavailable', 'focus-state-mismatch', 'error',
-  'isolated-space-bridge', 'ax-cg-id-match', 'ax-focused-window'
+  'instance-match', 'instance-mismatch', 'identity-unavailable', 'focus-state-mismatch', 'error',
+  'root-family-match', 'ax-cg-id-match', 'ax-focused-root-window'
 ])
 const WINDOW_ACTIVATION_REASON_CODES = new Set([
-  'space-unbound', 'space-unbound-multiwindow', 'space-ambiguous', 'space-switch-timeout', 'instance-mismatch', 'identity-unavailable'
+  'instance-mismatch', 'identity-unavailable'
 ])
 
 function debugTraceRequested(options) {
@@ -2070,40 +1374,6 @@ function debugTraceRequested(options) {
 
 function optionalWindowOperationTrace(debugTrace, steps) {
   return debugTrace ? { trace: { steps } } : {}
-}
-
-function macosSpaceTraceStep(spaceAttempt) {
-  const detail = WINDOW_OPERATION_TRACE_DETAILS.has(spaceAttempt.detail) ? spaceAttempt.detail : 'error'
-  const outcome = detail === 'switched' || detail === 'switch-confirmed'
-    ? 'ok'
-    : (detail === 'bad-ref' || detail === 'current' || detail === 'current-space-inferred' ? 'skipped' : detail === 'ambiguous-spaces' ? 'ambiguous' : 'failed')
-  return { stage: 'space', outcome, detail }
-}
-
-function macosBindingTraceStep(spaceAttempt) {
-  const count = Math.max(0, Math.trunc(Number(spaceAttempt && spaceAttempt.bindingCount || 0)))
-  const source = String(spaceAttempt && spaceAttempt.bindingSource || '')
-  if (!count) return null
-  const detail = count > 1
-    ? 'direct-multiple'
-    : source === 'session-cache'
-      ? 'session-cache'
-    : source.includes('direct')
-      ? 'direct-unique'
-      : 'reverse-unique'
-  return { stage: 'space', outcome: count > 1 ? 'ambiguous' : 'ok', detail }
-}
-
-function macosSpaceBridgeTraceStep(spaceAttempt) {
-  return spaceAttempt && spaceAttempt.bridge === 'isolated-jxa'
-    ? { stage: 'bridge', outcome: 'ok', detail: 'isolated-space-bridge' }
-    : null
-}
-
-function mergeDebugTraceSteps(prefixSteps, result) {
-  const existing = result && result.trace && Array.isArray(result.trace.steps) ? result.trace.steps : []
-  const steps = [...prefixSteps, ...existing].slice(0, 16)
-  return { ...result, ...(steps.length ? { trace: { steps } } : {}) }
 }
 
 function parseWindowOperationTrace(value) {
@@ -2175,91 +1445,6 @@ async function activateWindow(target, options = {}) {
   if (expectedInstanceId && expectedInstanceId !== actualInstanceId) {
     return { outcome: 'not-found', reasonCode: 'instance-mismatch', message: '窗口实例与保存目标不一致，需要重新确认', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found', detail: 'instance-mismatch' }]) }
   }
-  // Validate the exact PID + CGWindowID owner before any Space cache can move the desktop.
-  const identity = await readMacosWindowIdentity(source, { forceRefresh: true })
-  if (!identity.identityAvailable) {
-    return {
-      outcome: 'failed',
-      message: '无法重新验证 macOS 窗口身份',
-      ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }])
-    }
-  }
-  if (identity.nativeInstanceMatches !== 1) {
-    invalidateMacosWindowIdentity(source)
-    return {
-      outcome: 'not-found',
-      message: 'macOS 窗口引用已失效',
-      ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }])
-    }
-  }
-  if (!identity.appMatches) {
-    invalidateMacosWindowIdentity(source)
-    return {
-      outcome: 'not-found',
-      reasonCode: 'instance-mismatch',
-      message: '窗口实例或所属应用与保存目标不一致，需要重新确认',
-      ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found', detail: 'instance-mismatch' }])
-    }
-  }
-  let spaceAttempt = trySwitchMacosSpaceFromSessionCache(nativeRef)
-  if (!spaceAttempt) spaceAttempt = await trySwitchMacosSpace(source)
-
-  const bridgeStep = debugTrace ? macosSpaceBridgeTraceStep(spaceAttempt) : null
-  const bindingStep = debugTrace ? macosBindingTraceStep(spaceAttempt) : null
-  const spacePrefix = debugTrace
-    ? [...(bridgeStep ? [bridgeStep] : []), ...(bindingStep ? [bindingStep] : []), macosSpaceTraceStep(spaceAttempt)]
-    : []
-  if (spaceAttempt.detail === 'bad-ref') {
-    const failure = { outcome: 'not-found', reasonCode: 'instance-mismatch', message: 'macOS 窗口实例已失效，需要重新确认' }
-    return debugTrace ? mergeDebugTraceSteps(spacePrefix, failure) : failure
-  }
-  if (spaceAttempt.detail === 'ambiguous-spaces') {
-    const failure = { outcome: 'ambiguous', reasonCode: 'space-ambiguous', message: '目标窗口同时绑定到多个非当前桌面，EyPc 未任意选择' }
-    return debugTrace ? mergeDebugTraceSteps(spacePrefix, failure) : failure
-  }
-  if (spaceAttempt.detail === 'switch-timeout') {
-    const failure = { outcome: 'failed', reasonCode: 'space-switch-timeout', message: '目标桌面切换未在时限内确认' }
-    return debugTrace ? mergeDebugTraceSteps(spacePrefix, failure) : failure
-  }
-  if (spaceAttempt.switched && !spaceAttempt.confirmed) {
-    const confirmed = await macosConfirmManagedSpace(spaceAttempt.binding)
-    if (!confirmed) {
-      const failedAttempt = { ...spaceAttempt, detail: 'switch-timeout' }
-      const failedPrefix = debugTrace
-        ? [...(bridgeStep ? [bridgeStep] : []), ...(bindingStep ? [bindingStep] : []), macosSpaceTraceStep(failedAttempt)]
-        : []
-      const failure = { outcome: 'failed', reasonCode: 'space-switch-timeout', message: '目标桌面切换未在时限内确认' }
-      return debugTrace ? mergeDebugTraceSteps(failedPrefix, failure) : failure
-    }
-    spaceAttempt.detail = 'switch-confirmed'
-  }
-  if (spaceAttempt.switched) await new Promise((resolve) => setTimeout(resolve, MACOS_CGS_SPACE_SETTLE_MS))
-
-  const spaceUnavailable = ['empty-spaces', 'no-api', 'no-space-id', 'no-display', 'error'].includes(spaceAttempt.detail)
-  const allowSingleWindowFallback = spaceUnavailable && identity.identityAvailable && identity.ownerCgWindowCount === 1
-  const allowCurrentSpaceInferred = spaceUnavailable && identity.identityAvailable && identity.ownerCgWindowCount > 1
-    && identity.axWindowCount > 0 && identity.axWindowCount === identity.ownerCgWindowCount
-  if (spaceUnavailable && !allowSingleWindowFallback && !allowCurrentSpaceInferred) {
-    const multiple = identity.identityAvailable && identity.ownerCgWindowCount > 1
-    const reasonCode = multiple ? 'space-unbound-multiwindow' : 'space-unbound'
-    const detail = multiple ? 'multiwindow-blocked' : spaceAttempt.detail
-    const failurePrefix = debugTrace
-      ? [...(bridgeStep ? [bridgeStep] : []), ...(bindingStep ? [bindingStep] : []), { stage: 'space', outcome: 'failed', detail }]
-      : []
-    const failure = {
-      outcome: 'not-found',
-      reasonCode,
-      message: multiple ? '无法唯一绑定目标桌面；多窗口进程未执行任意前置' : '无法绑定目标窗口所在桌面'
-    }
-    return debugTrace ? mergeDebugTraceSteps(failurePrefix, failure) : failure
-  }
-  if (allowCurrentSpaceInferred) {
-    spaceAttempt.detail = 'current-space-inferred'
-  }
-
-  const finalSpacePrefix = debugTrace
-    ? [...(bridgeStep ? [bridgeStep] : []), ...(bindingStep ? [bindingStep] : []), macosSpaceTraceStep(spaceAttempt)]
-    : []
   const result = await runWindowCommand(
     '/usr/bin/osascript',
     ['-l', 'JavaScript', '-e', macosActivateWindowScript(pid, cgWindowNumber)],
@@ -2271,20 +1456,11 @@ async function activateWindow(target, options = {}) {
   )
   if (!result.ok) {
     const detail = `${result.error}\n${result.stderr}`
-    const failure = isMacWindowPermissionError(detail)
+    return isMacWindowPermissionError(detail)
       ? { outcome: 'permission-required', message: '需要在系统设置中允许 EyPc 控制 System Events', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'denied' }]) }
-      : { outcome: 'failed', message: 'macOS 无法激活该窗口', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }]) }
-    return debugTrace ? mergeDebugTraceSteps(finalSpacePrefix, failure) : failure
+      : { outcome: 'failed', message: 'macOS 无法激活该根窗口', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }]) }
   }
-  const activation = parseWindowActivationResult(result.stdout)
-  if (activation.outcome === 'not-found') {
-    invalidateMacosWindowIdentity(source)
-    if (cgWindowNumber > 0) macosWindowSpaceCache.delete(macosWindowInstanceKey(pid, cgWindowNumber))
-  }
-  const classified = activation.outcome === 'not-found' && allowSingleWindowFallback && !activation.reasonCode
-    ? { ...activation, reasonCode: 'space-unbound' }
-    : activation
-  return debugTrace ? mergeDebugTraceSteps(finalSpacePrefix, classified) : classified
+  return parseWindowActivationResult(result.stdout)
 }
 
 async function alwaysOnTopWindow(target, options = {}) {
@@ -2357,10 +1533,13 @@ async function closeWindow(target) {
   const expectedInstanceId = sourceInstanceId.includes(':legacy:') ? '' : sourceInstanceId
   if (ordinal !== 0 || cgWindowNumber <= 0) return { outcome: 'failed', message: '无法建立稳定的 macOS 窗口实例身份' }
   if (expectedInstanceId && expectedInstanceId !== actualInstanceId) return { outcome: 'not-found', message: '窗口实例与保存目标不一致' }
-  const identity = await readMacosWindowIdentity(source, { forceRefresh: true })
-  if (!identity.identityAvailable) return { outcome: 'failed', message: '无法重新验证 macOS 窗口身份' }
-  if (!identity.appMatches || identity.nativeInstanceMatches !== 1) return { outcome: 'not-found', message: '窗口实例或所属应用与保存目标不一致' }
-  const result = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', macosCloseWindowScript(pid, cgWindowNumber)])
+  const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
+  const result = await runWindowCommand(
+    '/usr/bin/osascript',
+    ['-l', 'JavaScript', '-e', macosCloseWindowScript(pid, cgWindowNumber)],
+    false,
+    { EYPC_WINDOW_TARGET_APP_ID: appId }
+  )
   if (!result.ok) {
     const detail = `${result.error}\n${result.stderr}`
     return isMacWindowPermissionError(detail)
@@ -8598,7 +7777,6 @@ window.eypcPlatform = {
     capabilities: windowCapabilities,
     list: listWindows,
     activate: activateWindow,
-    inspectEnvironment: inspectWindowEnvironment,
     alwaysOnTop: alwaysOnTopWindow,
     close: closeWindow,
     terminate: terminateWindow,

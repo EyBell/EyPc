@@ -6,6 +6,7 @@ import { normalizeToolPreviewPrefs } from './toolPreview'
 import { normalizeFavoriteGraph } from './favorites'
 import { createDefaultCodexState, normalizeCodexState } from './codex'
 import { createWindowSlots, type WindowPlatform, type WindowSlot, type WindowTarget } from './windows'
+import { fileManagerGroupKey } from './windowTree'
 
 const VALID_TABS = new Set<AppTabId>(['ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings'])
 const TAB_IDS: AppTabId[] = ['ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings']
@@ -97,16 +98,23 @@ function normalizeWindowTargets(value: unknown, now: number): WindowTarget[] {
     const appName = stringValue(source.appName).trim()
     const lastKnownTitle = stringValue(source.lastKnownTitle || source.titleLocator).trim()
     if (!id || ids.has(id) || !platform || !(appId || appName)) continue
+    const expectedGroupKey = platform ? fileManagerGroupKey(platform, appId || appName) : null
+    const scope = source.scope === 'file-manager-group' && expectedGroupKey ? 'file-manager-group' : 'instance'
+    const alias = stringValue(source.alias).trim() || lastKnownTitle || appName || appId
     ids.add(id)
     targets.push({
       id,
-      alias: stringValue(source.alias).trim() || lastKnownTitle || appName || appId,
+      alias,
+      scope,
       platform,
       appId: appId || appName,
       appName: appName || appId,
       lastKnownTitle,
-      lastInstanceId: stringValue(source.lastInstanceId).trim() || null,
-      lastNativeRef: stringValue(source.lastNativeRef).trim() || null,
+      lastInstanceId: scope === 'instance' ? stringValue(source.lastInstanceId).trim() || null : null,
+      lastNativeRef: scope === 'instance' ? stringValue(source.lastNativeRef).trim() || null : null,
+      groupKey: scope === 'file-manager-group' ? expectedGroupKey : null,
+      lastActiveInstanceId: scope === 'file-manager-group' ? stringValue(source.lastActiveInstanceId).trim() || null : null,
+      alternateAliases: strings(source.alternateAliases).filter((item) => item !== alias),
       favorite: source.favorite !== false,
       pinned: source.pinned === true,
       createdAt: numberValue(source.createdAt, now),

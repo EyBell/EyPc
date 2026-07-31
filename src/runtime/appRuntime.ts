@@ -4,16 +4,35 @@ import { buildMqttConnectionTreeRows, deleteMqttConnectionGroup, isValidMqttConn
 import { mqttMergedJsonFileName, stringifyMqttMergedJsonExport, stringifyMqttPayloadsCopy, stringifyMqttTopicsCopy, type MqttMergedExportSource } from '../domain/mqttExport'
 import { dedupePortProcesses, filterPortProcesses, flattenPortGroupTargets, matchPortGroupProcesses, matchPortGroupTargetProcesses, movePortGroupToFolder, shouldProcessMatchVerifiedPort } from '../domain/ports'
 import { applyRecordListDeleteRecovery, computeRecordListDeleteAnchor, toggleRecordListSelection } from '../domain/recordListSelection'
-import { resolveDrawerTargets, toggleIdWithAdvance } from '../domain/listSelection'
+import { toggleIdWithAdvance } from '../domain/listSelection'
 import { normalizeAppState } from '../domain/state'
 import { formatShortcutLabel, formatShortcutList } from '../domain/shortcuts'
 import { normalizeToolPreviewPrefs } from '../domain/toolPreview'
-import { compareWindowRowsByApplication, filterIdentifiedLiveWindows, normalizeWindowText, targetMatchesLiveWindow, windowTargetAppMatches, type LiveWindow, type WindowPlatform, type WindowTarget } from '../domain/windows'
+import { coalesceNativeWindowFamilies, mergePartialWindowFamilyInventory, normalizeWindowText, resolveLiveWindowsForTarget, targetMatchesLiveWindow, windowTargetAppMatches, type LiveWindow, type WindowPlatform, type WindowTarget } from '../domain/windows'
+import {
+  buildWindowTreeRows,
+  candidateInstanceIdFromRowId,
+  candidateWindowRowId,
+  chooseFileManagerGroupLanding,
+  fileManagerGroupKey,
+  fileManagerGroupRowId,
+  liveWindowRowId,
+  reconcileWindowTargetsWithFamilies,
+  resolveVisibleWindowTreeFocus,
+  resolveWindowTreeActionTargets,
+  resolveWindowTreeNavigation,
+  targetWindowRowId,
+  toggleWindowTreeSelection,
+  windowActionsContextFor,
+  type WindowActionsContext,
+  type WindowActionsMode,
+  type WindowRow
+} from '../domain/windowTree'
 import { createWindowRebindState, transitionWindowRebind, windowInteractionAllowed, windowRebindView, type WindowInteractionPolicy, type WindowRebindEvent, type WindowRebindState, type WindowRebindView } from '../domain/windowRebind'
 import type { CodexFloatPosition, CodexSettings } from '../domain/codex'
 import type { AppState, AppTabId, FavoriteNode, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttConnectionGroup, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
 import type { PortGroupTreeRow } from '../domain/ports'
-import { WINDOW_BRIDGE_REVISION, getPlatform, normalizeFileActionResult, type FavoriteDirectoryEntry, type FavoritePathInspection, type FileActionResult, type FileCapabilities, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind, type WindowActivationOutcome, type WindowActivationReasonCode, type WindowCapability, type WindowEnvironmentPhase, type WindowEnvironmentPhaseSnapshot, type WindowEnvironmentSnapshot, type WindowOperationTrace } from '../platform/eypcPlatform'
+import { WINDOW_BRIDGE_REVISION, getPlatform, normalizeFileActionResult, type FavoriteDirectoryEntry, type FavoritePathInspection, type FileActionResult, type FileCapabilities, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind, type WindowActivationOutcome, type WindowActivationReasonCode, type WindowCapability, type WindowOperationTrace } from '../platform/eypcPlatform'
 import { createActionRuntime } from './action/actionRuntime'
 import type { RuntimeActionContext, RuntimeActionRisk } from './action/types'
 import { FEATURES, visibleFeatures, type VisibleFeatureDefinition } from './feature/featureRegistry'
@@ -94,7 +113,9 @@ export interface AppRuntimeSnapshot {
   windowActionsOpen: boolean
   windowActionTarget: WindowRow | null
   windowActionTargets: WindowRow[]
-  windowActionsMode: 'single' | 'multi'
+  windowActionsMode: WindowActionsMode
+  windowActionsContext: WindowActionsContext
+  windowActionSlot: number | null
   windowDraft: WindowDraft | null
   windowRebind: WindowRebindView
   windowFocusRequestId: number
@@ -199,10 +220,6 @@ export type WindowActivationDiagnosticCode =
   | 'refresh-incomplete'
   | 'editor-active'
   | 'ambiguous-target'
-  | 'space-unbound'
-  | 'space-unbound-multiwindow'
-  | 'space-ambiguous'
-  | 'space-switch-timeout'
   | 'rebind-required'
   | 'instance-mismatch'
   | 'identity-unavailable'
@@ -242,8 +259,6 @@ export interface WindowOperationDebugRecord {
   operation: WindowOperationKind
   result: WindowOperationTraceResult
   code: WindowActivationDiagnosticCode | 'activated' | 'topmost-enabled'
-  envSnapshot?: WindowEnvironmentSnapshot
-  envSnapshots?: WindowEnvironmentPhaseSnapshot[]
   steps: Array<{
     stage: WindowOperationTraceRuntimeStage | WindowOperationTrace['steps'][number]['stage']
     outcome: WindowOperationTraceRuntimeOutcome | WindowOperationTrace['steps'][number]['outcome']
@@ -276,30 +291,11 @@ export interface MqttRecordEditDraft {
   activeField: MqttRecordEditField
 }
 
-export interface WindowRow {
-  id: string
-  live: LiveWindow | null
-  target: WindowTarget | null
-  displayName: string
-  appName: string
-  title: string
-  favorite: boolean
-  pinned: boolean
-  slotNumbers: number[]
-  focused: boolean
-  selected: boolean
-  unavailable: boolean
-  /** Present in the retained session inventory but absent from the latest partial snapshot. */
-  cached?: boolean
-  ambiguous: boolean
-  /** A live same-application option shown only for explicit instance rebinding. */
-  candidate?: boolean
-}
-
 export interface WindowDraft {
   mode: WindowDraftMode
   targetId: string | null
   sourceWindowId: string | null
+  sourceGroupKey: string | null
   alias: string
   appName: string
   appId: string
@@ -729,7 +725,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   let selectedWindowIds: string[] = []
   let windowActionsOpen = false
   let windowActionTargetId: string | null = null
-  let windowActionsMode: 'single' | 'multi' = 'single'
+  let windowActionsMode: WindowActionsMode = 'single'
+  let windowActionsContext: WindowActionsContext = 'window'
+  let windowActionSlot: number | null = null
+  let expandedWindowGroupKeys = new Set<string>()
+  const recentFileManagerWindowByGroup = new Map<string, string>()
   let windowDraft: WindowDraft | null = null
   let windowRebindState: WindowRebindState = createWindowRebindState()
   let windowFocusRequestId = 0
@@ -886,9 +886,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     operation: WindowOperationKind
     trace: WindowOperationDebugRecord | null
     traceCompleted: boolean
-    nativeAttemptCount: number
     nativeReasonCode?: WindowActivationReasonCode
-    envSnapshots: WindowEnvironmentPhaseSnapshot[]
   }
 
   const windowActivationDiagnosticMessages: Record<WindowActivationDiagnosticCode, string> = {
@@ -905,10 +903,6 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     'refresh-incomplete': '本次只读取到局部窗口，已保留缓存且未把目标视为已关闭。',
     'editor-active': '请先保存或取消窗口编辑，再重新选择替代窗口。',
     'ambiguous-target': '匹配到多个候选窗口，需要在工作台中明确选择。',
-    'space-unbound': '无法唯一绑定目标窗口所在桌面，未执行不确定的桌面切换。',
-    'space-unbound-multiwindow': '目标应用存在多个窗口且无法绑定目标桌面，未前置任意窗口。',
-    'space-ambiguous': '目标窗口同时绑定到多个非当前桌面，需要明确后才能切换。',
-    'space-switch-timeout': '目标桌面切换未在时限内确认，未继续激活窗口。',
     'rebind-required': '原窗口实例已失效，请在同一应用的候选窗口中明确确认；标题仅供辨认。',
     'instance-mismatch': '当前窗口实例与保存目标不一致，需要重新确认。',
     'identity-unavailable': '无法建立稳定的系统窗口实例身份，未执行收藏、绑定或激活。',
@@ -922,16 +916,14 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   const nativeTraceStages = new Set<WindowOperationTrace['steps'][number]['stage']>([
-    'bridge', 'space', 'target', 'process', 'restore', 'foreground', 'raise', 'verify', 'topmost'
+    'bridge', 'target', 'process', 'restore', 'foreground', 'raise', 'verify', 'topmost'
   ])
   const nativeTraceOutcomes = new Set<WindowOperationTrace['steps'][number]['outcome']>([
     'ok', 'skipped', 'not-found', 'ambiguous', 'failed', 'denied', 'unsupported', 'unavailable'
   ])
   const nativeTraceDetails = new Set<NonNullable<WindowOperationTrace['steps'][number]['detail']>>([
-    'switched', 'switch-confirmed', 'switch-timeout', 'current', 'direct-unique', 'direct-multiple', 'reverse-unique', 'session-cache', 'ambiguous-spaces',
-    'bad-ref', 'no-api', 'empty-spaces', 'no-space-id', 'no-display',
-    'multiwindow-blocked', 'current-space-inferred', 'instance-match', 'instance-mismatch', 'identity-unavailable', 'focus-state-mismatch',
-    'isolated-space-bridge', 'ax-cg-id-match', 'ax-focused-window', 'error'
+    'instance-match', 'instance-mismatch', 'identity-unavailable', 'focus-state-mismatch',
+    'root-family-match', 'ax-cg-id-match', 'ax-focused-root-window', 'error'
   ])
 
   function appendWindowOperationTrace(
@@ -966,10 +958,6 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       platform: platformId,
       result,
       code,
-      ...(attempt.envSnapshots.length ? {
-        envSnapshot: attempt.envSnapshots[attempt.envSnapshots.length - 1].snapshot,
-        envSnapshots: attempt.envSnapshots.map((item) => ({ phase: item.phase, snapshot: { ...item.snapshot } }))
-      } : {}),
       steps: attempt.trace.steps.map((step) => ({ ...step }))
     }
     windowOperationTraces = [record, ...windowOperationTraces].slice(0, 50)
@@ -1107,50 +1095,22 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return id ? state.windowTargets.find((target) => target.id === id) || null : null
   }
 
+  function fileManagerTargetByGroupKey(groupKey: string | null | undefined): WindowTarget | null {
+    if (!groupKey) return null
+    return state.windowTargets.find((target) => target.scope === 'file-manager-group' && target.groupKey === groupKey) || null
+  }
+
+  function fileManagerWindows(groupKey: string, freshOnly = false): LiveWindow[] {
+    return liveWindows.filter((live) => fileManagerGroupKey(live.platform, live.appId) === groupKey
+      && (!freshOnly || windowFreshLiveIds.has(live.instanceId)))
+  }
+
   function liveWindowsForTarget(target: WindowTarget, freshOnly = false): { live: LiveWindow | null; candidates: LiveWindow[] } {
-    const samePlatform = liveWindows.filter((live) => live.platform === target.platform && (!freshOnly || windowFreshLiveIds.has(live.instanceId)))
-    const exact = samePlatform.find((live) => targetMatchesLiveWindow(target, live)) || null
-    if (exact) return { live: exact, candidates: [exact] }
-    if (freshOnly && windowInventoryCompleteness !== 'complete') return { live: null, candidates: [] }
-    const candidates = samePlatform.filter((live) => windowTargetAppMatches(target, live))
-    return { live: null, candidates }
-  }
-
-  function windowSlotNumbers(targetId: string): number[] {
-    const platform = currentWindowPlatform()
-    return state.windowSlots
-      .filter((slot) => {
-        if (platform) return slot.targetIdByPlatform[platform] === targetId
-        return Object.values(slot.targetIdByPlatform).includes(targetId)
-      })
-      .map((slot) => slot.slot)
-  }
-
-  function isSlotBoundWindowTarget(targetId: string): boolean {
-    return windowSlotNumbers(targetId).length > 0
-  }
-
-  function makeWindowRow(target: WindowTarget | null, live: LiveWindow | null, ambiguous = false, rowId?: string, candidate = false): WindowRow {
-    const id = rowId || (target ? `target:${target.id}` : `live:${live?.instanceId || ''}`)
-    const title = live?.title || target?.lastKnownTitle || ''
-    const appName = live?.appName || target?.appName || ''
-    return {
-      id,
-      live,
-      target,
-      displayName: candidate ? (title || appName || '未命名候选窗口') : (target?.alias || title || appName || '未命名窗口'),
-      appName,
-      title,
-      favorite: candidate ? false : Boolean(target?.favorite),
-      pinned: candidate ? false : Boolean(target?.pinned),
-      slotNumbers: candidate || !target ? [] : windowSlotNumbers(target.id),
-      focused: id === focusedWindowId,
-      selected: selectedWindowIds.includes(id),
-      unavailable: Boolean(target && !live),
-      cached: Boolean(live && windowListLoaded && !windowFreshLiveIds.has(live.instanceId)),
-      ambiguous,
-      candidate
-    }
+    return resolveLiveWindowsForTarget(target, liveWindows, {
+      freshOnly,
+      freshInstanceIds: windowFreshLiveIds,
+      inventoryCompleteness: windowInventoryCompleteness
+    })
   }
 
   function advanceWindowRebind(event: WindowRebindEvent) {
@@ -1168,30 +1128,20 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function windowRows(): WindowRow[] {
-    const platform = currentWindowPlatform()
-    if (windowRebindState.phase === 'confirming') {
-      const target = windowTargetById(windowRebindState.targetId)
-      const ids = new Set(windowRebindState.candidateInstanceIds)
-      return liveWindows
-        .filter((live) => ids.has(live.instanceId))
-        .map((live) => makeWindowRow(target, live, false, `candidate:${live.instanceId}`, true))
-        .sort(compareWindowRowsByApplication)
-    }
-    const targets = state.windowTargets
-      .filter((target) => (!platform || target.platform === platform) && (target.favorite || target.pinned || isSlotBoundWindowTarget(target.id)))
-    const usedLiveIds = new Set<string>()
-    const savedRows = targets.map((target) => {
-      const resolved = liveWindowsForTarget(target)
-      if (resolved.live) usedLiveIds.add(resolved.live.instanceId)
-      return makeWindowRow(target, resolved.live, resolved.candidates.length > 1)
+    return buildWindowTreeRows({
+      targets: state.windowTargets,
+      slots: state.windowSlots,
+      liveWindows,
+      freshInstanceIds: windowFreshLiveIds,
+      currentPlatform: currentWindowPlatform(),
+      listLoaded: windowListLoaded,
+      focusedRowId: focusedWindowId,
+      selectedRowIds: selectedWindowIds,
+      expandedGroupKeys: expandedWindowGroupKeys,
+      recentFileManagerInstanceIds: recentFileManagerWindowByGroup,
+      searchQuery: state.windowSearch,
+      rebind: windowRebindView(windowRebindState)
     })
-    const liveRows = liveWindows
-      .filter((live) => !usedLiveIds.has(live.instanceId))
-      .map((live) => makeWindowRow(null, live))
-    const keyword = normalizeWindowText(state.windowSearch)
-    const rows = [...savedRows, ...liveRows].sort(compareWindowRowsByApplication)
-    if (!keyword) return rows
-    return rows.filter((row) => normalizeWindowText([row.displayName, row.title, row.appName].join(' ')).includes(keyword))
   }
 
   function windowRowById(id: string | null | undefined): WindowRow | null {
@@ -1205,16 +1155,42 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     selectedWindowIds = Array.from(new Set(selectedWindowIds.map((id) => id === fromId ? toId : id)))
   }
 
+  function resetWindowActionsState() {
+    windowActionsOpen = false
+    windowActionTargetId = null
+    windowActionsMode = 'single'
+    windowActionsContext = 'window'
+    windowActionSlot = null
+  }
+
+  function openWindowActionsState(input: {
+    targetId: string | null
+    mode: WindowActionsMode
+    context: WindowActionsContext
+    slot?: number | null
+  }) {
+    windowActionTargetId = input.targetId
+    windowActionsMode = input.mode
+    windowActionsContext = input.context
+    windowActionSlot = input.slot ?? null
+    windowActionsOpen = true
+  }
+
   function normalizeFocusedWindow(notifyAfter = true) {
     const rows = windowRows()
     if (!rows.some((row) => row.id === focusedWindowId)) focusedWindowId = rows[0]?.id || null
     const visibleIds = new Set(rows.map((row) => row.id))
     selectedWindowIds = selectedWindowIds.filter((id) => visibleIds.has(id))
     if (windowActionTargetId && !rows.some((row) => row.id === windowActionTargetId)) {
-      windowActionTargetId = null
-      windowActionsOpen = false
-      windowActionsMode = 'single'
+      resetWindowActionsState()
     }
+    if (notifyAfter) notify()
+  }
+
+  function restoreWindowTreeFocus(previousRow: WindowRow | null, notifyAfter = true) {
+    const rows = windowRows()
+    focusedWindowId = resolveVisibleWindowTreeFocus(previousRow, rows)
+    normalizeFocusedWindow(false)
     if (notifyAfter) notify()
   }
 
@@ -1237,7 +1213,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const liveMatch = liveWindows.find((live) => live.instanceId === previous.live!.instanceId)
       if (liveMatch) {
         const liveRow = rows.find((row) => row.live?.instanceId === liveMatch.instanceId)
-        focusedWindowId = liveRow?.id || `live:${liveMatch.instanceId}`
+        focusedWindowId = liveRow?.id || liveWindowRowId(liveMatch.instanceId)
         if (windowActionsOpen) windowActionTargetId = focusedWindowId
         return
       }
@@ -1254,12 +1230,16 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return {
       id: `window:${now}:${Math.random().toString(36).slice(2, 10)}`,
       alias: alias.trim() || live.title,
+      scope: 'instance',
       platform: live.platform,
       appId: live.appId,
       appName: live.appName,
       lastKnownTitle: live.title,
       lastInstanceId: live.instanceId,
       lastNativeRef: live.nativeRef,
+      groupKey: null,
+      lastActiveInstanceId: null,
+      alternateAliases: [],
       favorite,
       pinned: false,
       createdAt: now,
@@ -1269,6 +1249,36 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
 
   function ensureWindowTarget(row: WindowRow, options: { favorite?: boolean } = {}): WindowTarget | null {
     if (row.target) return row.target
+    if (row.kind === 'file-manager-group' && row.groupKey) {
+      const existingGroup = fileManagerTargetByGroupKey(row.groupKey)
+      if (existingGroup) return existingGroup
+      const now = Date.now()
+      const groupWindows = fileManagerWindows(row.groupKey)
+      const preferred = groupWindows.find((live) => live.focused)
+        || groupWindows[0]
+        || null
+      const target: WindowTarget = {
+        id: `window-group:${now}:${Math.random().toString(36).slice(2, 10)}`,
+        alias: row.displayName.trim() || row.appName || '文件管理器',
+        scope: 'file-manager-group',
+        platform: preferred?.platform || (row.groupKey.includes(':win32:') ? 'win32' : 'darwin'),
+        appId: preferred?.appId || row.appName,
+        appName: preferred?.appName || row.appName,
+        lastKnownTitle: preferred?.title || row.title,
+        lastInstanceId: null,
+        lastNativeRef: null,
+        groupKey: row.groupKey,
+        lastActiveInstanceId: preferred?.instanceId || null,
+        alternateAliases: [],
+        favorite: options.favorite ?? true,
+        pinned: false,
+        createdAt: now,
+        updatedAt: now
+      }
+      state.windowTargets = [...state.windowTargets, target]
+      save()
+      return target
+    }
     if (!row.live) return null
     const existing = state.windowTargets.find((target) => targetMatchesLiveWindow(target, row.live!))
     if (existing) return existing
@@ -1306,11 +1316,16 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const result = await platform.windows.list()
       if (requestId !== windowRequestId) return 'superseded'
       windowCapability = result.capability
-      const freshWindows = filterIdentifiedLiveWindows(result.windows.map((window) => ({ ...window })))
+      const freshWindows = coalesceNativeWindowFamilies(result.windows.map((window) => ({ ...window })))
+      const reconciliation = reconcileWindowTargetsWithFamilies(state.windowTargets, state.windowSlots, freshWindows)
+      if (reconciliation.changed) {
+        state.windowTargets = reconciliation.targets
+        state.windowSlots = reconciliation.slots
+        save()
+      }
       const completeness = result.completeness === 'partial' ? 'partial' : 'complete'
       if (completeness === 'partial') {
-        const freshIds = new Set(freshWindows.map((window) => window.instanceId))
-        liveWindows = [...freshWindows, ...liveWindows.filter((window) => !freshIds.has(window.instanceId))]
+        liveWindows = mergePartialWindowFamilyInventory(liveWindows, freshWindows)
       } else {
         liveWindows = freshWindows
       }
@@ -1327,9 +1342,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
           const freshCandidateIds = freshWindows
             .filter((live) => live.platform === candidateTarget.platform && windowTargetAppMatches(candidateTarget, live))
             .map((live) => live.instanceId)
-          const focusedCandidateInstanceId = focusedWindowId?.startsWith('candidate:')
-            ? focusedWindowId.slice('candidate:'.length)
-            : null
+          const focusedCandidateInstanceId = candidateInstanceIdFromRowId(focusedWindowId)
           const effects = advanceWindowRebind({
             type: 'inventory',
             completeness,
@@ -1346,7 +1359,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       }
       rematchFocusedWindowAfterRefresh(previousFocus)
       if (candidateFocusInstanceId) {
-        focusedWindowId = `candidate:${candidateFocusInstanceId}`
+        focusedWindowId = candidateWindowRowId(candidateFocusInstanceId)
         windowFocusRequestId += 1
       }
       return completeness === 'partial' ? 'loaded-partial' : 'loaded-complete'
@@ -1380,6 +1393,45 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return true
   }
 
+  function resolveWindowEscapeStep(input: ShortcutInputContext): string | null {
+    if (windowActionsOpen) {
+      closeWindowActions()
+      return 'windows.actions.close'
+    }
+    const searchFocused = input.activeInputRole === 'window-search'
+    if (searchFocused && state.windowSearch) {
+      const previousRow = windowRowById(focusedWindowId)
+      state.windowSearch = ''
+      searchBlurRequestId += 1
+      restoreWindowTreeFocus(previousRow, false)
+      save()
+      notify()
+      return 'windows.search.clear'
+    }
+    if (searchFocused) {
+      blurSearchFocus()
+      return 'windows.search.blur'
+    }
+    if (state.windowSearch) {
+      const previousRow = windowRowById(focusedWindowId)
+      state.windowSearch = ''
+      restoreWindowTreeFocus(previousRow, false)
+      save()
+      notify()
+      return 'windows.search.clear'
+    }
+    if (windowDraft) {
+      cancelWindowDraft()
+      return 'windows.editor.cancel'
+    }
+    if (clearWindowCandidates()) return 'windows.candidates.clear'
+    if (selectedWindowIds.length) {
+      clearWindowSelection()
+      return 'windows.selection.clear'
+    }
+    return null
+  }
+
   function rejectUnavailableWindowInteraction(policy: WindowInteractionPolicy) {
     if (windowInteractionAvailable(policy)) return false
     setMessage('请先按 Enter 确认候选窗口，或按 Escape 取消；候选确认期间不会修改收藏、置顶或槽位。')
@@ -1401,8 +1453,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     else state.activeTab = 'settings'
     if (options.focusRowId) focusedWindowId = options.focusRowId
     if (options.messageText) message = options.messageText
-    windowActionsOpen = false
-    windowActionTargetId = null
+    resetWindowActionsState()
     windowFocusRequestId += 1
     save()
     notify()
@@ -1418,10 +1469,6 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     operation: WindowOperationKind = 'activate',
     reasonCode?: WindowActivationReasonCode
   ): WindowActivationDiagnosticCode {
-    if (reasonCode === 'space-unbound') return 'space-unbound'
-    if (reasonCode === 'space-unbound-multiwindow') return 'space-unbound-multiwindow'
-    if (reasonCode === 'space-ambiguous') return 'space-ambiguous'
-    if (reasonCode === 'space-switch-timeout') return 'space-switch-timeout'
     if (reasonCode === 'instance-mismatch') return 'instance-mismatch'
     if (reasonCode === 'identity-unavailable') return 'identity-unavailable'
     if (operation === 'always-on-top' && outcome === 'unsupported') return 'topmost-unsupported'
@@ -1528,6 +1575,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function clearStaleWindowNativeRef(target: WindowTarget) {
+    if (target.scope !== 'instance') return
     if (!target.lastNativeRef && !target.lastInstanceId) return
     target.lastInstanceId = null
     target.lastNativeRef = null
@@ -1536,32 +1584,34 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function rememberVerifiedWindowTarget(target: WindowTarget, live: LiveWindow, verifiedInstanceId: string) {
+    if (target.scope !== 'instance') return false
     if (!verifiedInstanceId || verifiedInstanceId !== live.instanceId) return false
     const titleChanged = target.lastKnownTitle !== live.title
     const appChanged = target.appId !== live.appId || target.appName !== live.appName
     const instanceChanged = target.lastInstanceId !== verifiedInstanceId || target.lastNativeRef !== live.nativeRef
-    if (!titleChanged && !appChanged && !instanceChanged) return true
+    if (!titleChanged && !appChanged && !instanceChanged) return false
     target.lastKnownTitle = live.title
     target.appId = live.appId
     target.appName = live.appName
     target.lastInstanceId = verifiedInstanceId
     target.lastNativeRef = live.nativeRef
     target.updatedAt = Date.now()
-    save()
     return true
+  }
+
+  function rememberSuccessfulWindowActivation(live: LiveWindow, target: WindowTarget | null, verifiedInstanceId: string) {
+    let changed = target ? rememberVerifiedWindowTarget(target, live, verifiedInstanceId) : false
+    const groupKey = fileManagerGroupKey(live.platform, live.appId)
+    if (groupKey) {
+      recentFileManagerWindowByGroup.set(groupKey, live.instanceId)
+      changed = rememberFileManagerLanding(fileManagerTargetByGroupKey(groupKey), live) || changed
+    }
+    if (changed) save()
   }
 
   async function activateLiveWindow(live: LiveWindow, target: WindowTarget | null, attempt: WindowActivationAttempt): Promise<WindowActivationOutcome> {
     if (attempt.trace && !attempt.trace.targetTitle) attempt.trace.targetTitle = target?.lastKnownTitle || live.title
-    const phase: WindowEnvironmentPhase = attempt.nativeAttemptCount === 0 ? 'pre-initial' : 'pre-retry'
-    attempt.nativeAttemptCount += 1
     attempt.nativeReasonCode = undefined
-    if (windowOperationTraceEnabled && platform.windows.inspectEnvironment) {
-      try {
-        const snapshot = await platform.windows.inspectEnvironment(live)
-        attempt.envSnapshots = [...attempt.envSnapshots, { phase, snapshot }].slice(-3)
-      } catch {}
-    }
     let result: Awaited<ReturnType<typeof platform.windows.activate>>
     try {
       result = attempt.operation === 'always-on-top'
@@ -1597,9 +1647,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const verifiedLive = legacyInstance ? { ...live, id: result.instanceId, instanceId: result.instanceId } : live
       windowFreshLiveIds.add(result.instanceId)
       if (target) {
-        rememberVerifiedWindowTarget(target, verifiedLive, result.instanceId)
+        rememberSuccessfulWindowActivation(verifiedLive, target, result.instanceId)
         advanceWindowRebind({ type: 'confirmed', targetId: target.id })
-      }
+      } else rememberSuccessfulWindowActivation(verifiedLive, null, result.instanceId)
       setMessage(attempt.operation === 'always-on-top' ? '页面已置顶并前置' : '窗口已展开并前置')
       const hidden = await hideAppWindow()
       if (!hidden) {
@@ -1641,7 +1691,74 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
           steps: [{ stage: 'entry' as const, outcome: 'ok' as const }]
         }
       : null
-    return { entry, slot, operation, trace, traceCompleted: false, nativeAttemptCount: 0, envSnapshots: [] }
+    return { entry, slot, operation, trace, traceCompleted: false }
+  }
+
+  function preferredFileManagerWindow(groupKey: string, target: WindowTarget | null, freshOnly = false): LiveWindow | null {
+    const available = fileManagerWindows(groupKey, freshOnly)
+    const orderedInstanceIds = windowRows().find((row) => row.kind === 'file-manager-group' && row.groupKey === groupKey)?.groupLiveInstanceIds
+    return chooseFileManagerGroupLanding(available, {
+      lastActiveInstanceId: target?.lastActiveInstanceId,
+      recentInstanceId: recentFileManagerWindowByGroup.get(groupKey),
+      orderedInstanceIds
+    })
+  }
+
+  function rememberFileManagerLanding(target: WindowTarget | null, live: LiveWindow): boolean {
+    if (!target) return false
+    if (
+      target.appId === live.appId
+      && target.appName === live.appName
+      && target.lastKnownTitle === live.title
+      && target.lastActiveInstanceId === live.instanceId
+    ) return false
+    state.windowTargets = state.windowTargets.map((item) => item.id === target.id
+      ? {
+          ...item,
+          appId: live.appId,
+          appName: live.appName,
+          lastKnownTitle: live.title,
+          lastActiveInstanceId: live.instanceId,
+          updatedAt: Date.now()
+      }
+      : item)
+    return true
+  }
+
+  async function activateFileManagerGroup(groupKey: string | null, target: WindowTarget | null, attempt: WindowActivationAttempt): Promise<boolean> {
+    if (!groupKey) return finishWindowActivation(attempt, 'entry', 'activation-failed', 'blocking')
+    if (attempt.trace && !attempt.trace.targetTitle) attempt.trace.targetTitle = target?.alias || target?.appName || '文件管理器'
+    let live = preferredFileManagerWindow(groupKey, target)
+    if (live) {
+      appendWindowOperationTrace(attempt, 'cache', 'ok')
+      const outcome = await activateLiveWindow(live, null, attempt)
+      if (outcome === 'activated') {
+        return true
+      }
+      if (outcome !== 'not-found') return finishActivationOutcome(attempt, outcome, fileManagerGroupRowId(groupKey), live.platform)
+    } else appendWindowOperationTrace(attempt, 'cache', 'skipped')
+
+    const platformId = target?.platform || (groupKey.includes(':win32:') ? 'win32' : 'darwin')
+    const refreshed = await refreshForWindowActivation(attempt, fileManagerGroupRowId(groupKey), platformId)
+    if (!refreshed) return false
+    live = preferredFileManagerWindow(groupKey, target, true)
+    if (!live) {
+      appendWindowOperationTrace(attempt, 'resolve', 'not-found')
+      const result = finishWindowActivation(attempt, 'resolve', refreshed === 'partial' ? 'refresh-incomplete' : 'activation-failed', 'blocking', {
+        focusRowId: fileManagerGroupRowId(groupKey),
+        platformId
+      })
+      setMessage(refreshed === 'partial'
+        ? '文件管理器清单不完整，已保留当前父节点状态'
+        : '文件管理器当前没有可用窗口；EyPc 不会自动启动 Finder/Explorer')
+      return result
+    }
+    appendWindowOperationTrace(attempt, 'resolve', 'ok')
+    const retried = await activateLiveWindow(live, null, attempt)
+    if (retried === 'activated') {
+      return true
+    }
+    return finishActivationOutcome(attempt, retried, fileManagerGroupRowId(groupKey), live.platform)
   }
 
   function finishActivationOutcome(
@@ -1660,8 +1777,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   async function activateWindowTargetWithRecovery(target: WindowTarget, attempt: WindowActivationAttempt): Promise<boolean> {
+    if (target.scope === 'file-manager-group') {
+      return activateFileManagerGroup(target.groupKey, target, attempt)
+    }
     if (attempt.trace && !attempt.trace.targetTitle) attempt.trace.targetTitle = target.lastKnownTitle
-    const focusRowId = `target:${target.id}`
+    const focusRowId = targetWindowRowId(target.id)
     const platformId = target.platform
     const cachedLive = liveWindowsForTarget(target).live || liveWindowFromPersistedTarget(target)
     if (cachedLive) {
@@ -1698,7 +1818,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (resolved.candidates.length) {
       if (windowDraft) {
         finishWindowActivation(attempt, 'resolve', 'editor-active', 'blocking', {
-          focusRowId: `target:${target.id}`,
+          focusRowId: targetWindowRowId(target.id),
           platformId: target.platform
         })
         return { kind: 'editor-active' }
@@ -1708,12 +1828,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         type: 'begin',
         targetId: target.id,
         candidateInstanceIds: resolved.candidates.map((window) => window.instanceId),
-        restoreFocusRowId: `target:${target.id}`
+        restoreFocusRowId: targetWindowRowId(target.id)
       })
-      if (effects.focusCandidateInstanceId) focusedWindowId = `candidate:${effects.focusCandidateInstanceId}`
+      if (effects.focusCandidateInstanceId) focusedWindowId = candidateWindowRowId(effects.focusCandidateInstanceId)
       selectedWindowIds = []
-      windowActionsOpen = false
-      windowActionTargetId = null
+      resetWindowActionsState()
       windowFocusRequestId += 1
       setMessage(windowActivationDiagnosticMessages['rebind-required'])
       return { kind: 'rebind-required' }
@@ -1729,7 +1848,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   async function activateLiveWindowWithRecovery(live: LiveWindow, target: WindowTarget | null, attempt: WindowActivationAttempt): Promise<boolean> {
-    const focusRowId = target ? `target:${target.id}` : `live:${live.instanceId}`
+    const focusRowId = target ? targetWindowRowId(target.id) : liveWindowRowId(live.instanceId)
     const outcome = await activateLiveWindow(live, target, attempt)
     if (outcome === 'activated') return true
     if (outcome !== 'not-found') return finishActivationOutcome(attempt, outcome, focusRowId, live.platform)
@@ -1767,6 +1886,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (!row) {
       return finishWindowActivation(attempt, 'entry', 'activation-failed', 'blocking')
     }
+    if (row.kind === 'file-manager-group') {
+      if (row.candidate || !row.groupKey) {
+        return finishWindowActivation(attempt, 'entry', 'rebind-required', 'blocking')
+      }
+      return activateFileManagerGroup(row.groupKey, row.target, attempt)
+    }
     if (row.live) {
       const candidateTarget = activeWindowRebindTarget()
       if (candidateTarget) return activateConfirmedWindowCandidate(row.live, candidateTarget, attempt)
@@ -1784,6 +1909,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (!await readWindowActivationCapability(attempt)) return false
     const row = windowRowById(rowId || focusedWindowId)
     if (!row) return finishWindowActivation(attempt, 'entry', 'topmost-failed', 'blocking')
+    if (row.kind === 'file-manager-group') {
+      setMessage('文件管理器父节点不提供窗口置顶；请展开并选择具体窗口')
+      return finishWindowActivation(attempt, 'entry', 'topmost-unsupported', 'blocking')
+    }
     if (row.live) {
       if (row.target) return activateWindowTargetWithRecovery(row.target, attempt)
       return activateLiveWindowWithRecovery(row.live, null, attempt)
@@ -1793,6 +1922,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function liveWindowFromPersistedTarget(target: WindowTarget): LiveWindow | null {
+    if (target.scope !== 'instance') return null
     if (!target.lastNativeRef) return null
     const macRef = target.platform === 'darwin' ? /^(\d{1,12}):0:(\d{1,12})$/.exec(target.lastNativeRef) : null
     const instanceId = target.lastInstanceId || (macRef ? `darwin:${macRef[1]}:${macRef[2]}` : `${target.platform}:legacy:${target.lastNativeRef}`)
@@ -1832,29 +1962,22 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function resolveWindowActionTargets(rowId?: string) {
-    const resolved = resolveDrawerTargets({
+    return resolveWindowTreeActionTargets(windowRows(), {
       focusedId: focusedWindowId,
       selectedIds: selectedWindowIds,
       explicitId: rowId || null
     })
-    const rows = windowRows()
-    const targets = resolved.targetIds
-      .map((id) => rows.find((row) => row.id === id) || null)
-      .filter((row): row is WindowRow => Boolean(row))
-    return { mode: resolved.mode, targets }
   }
 
   function openWindowActions(rowId?: string) {
     if (rejectUnavailableWindowInteraction('browse')) return false
-    const { mode, targets } = resolveWindowActionTargets(rowId)
+    const { mode, context, targets } = resolveWindowActionTargets(rowId)
     if (!targets.length) {
       setMessage('没有可操作的窗口')
       return false
     }
-    windowActionsMode = mode
     focusedWindowId = targets[0].id
-    windowActionTargetId = targets[0].id
-    windowActionsOpen = true
+    openWindowActionsState({ targetId: targets[0].id, mode, context })
     windowActionsFocusRequestId += 1
     notify()
     return true
@@ -1862,10 +1985,65 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
 
   function closeWindowActions() {
     if (!windowActionsOpen) return false
-    windowActionsOpen = false
-    windowActionTargetId = null
-    windowActionsMode = 'single'
+    resetWindowActionsState()
     windowFocusRequestId += 1
+    notify()
+    return true
+  }
+
+  function syncOpenWindowActionsToFocusedRow(row: WindowRow) {
+    if (!windowActionsOpen || windowActionsContext === 'slot') return
+    windowActionTargetId = row.id
+    windowActionsContext = windowActionsContextFor(row.kind, windowActionsMode)
+  }
+
+  function setWindowGroupExpanded(rowId: string | undefined, expanded?: boolean) {
+    if (rejectUnavailableWindowInteraction('browse')) return false
+    const row = windowRowById(rowId || focusedWindowId)
+    if (!row || row.kind !== 'file-manager-group' || !row.groupKey) return false
+    const nextExpanded = expanded ?? !row.expanded
+    if (nextExpanded) expandedWindowGroupKeys.add(row.groupKey)
+    else expandedWindowGroupKeys.delete(row.groupKey)
+    focusedWindowId = row.id
+    windowFocusRequestId += 1
+    notify()
+    return true
+  }
+
+  function navigateFocusedWindowTree(direction: 'expand' | 'collapse') {
+    if (rejectUnavailableWindowInteraction('browse')) return false
+    const rows = windowRows()
+    const result = resolveWindowTreeNavigation(rows, focusedWindowId, direction)
+    if (!result.handled) return false
+    if (result.groupKey && result.expanded != null) {
+      if (result.expanded) expandedWindowGroupKeys.add(result.groupKey)
+      else expandedWindowGroupKeys.delete(result.groupKey)
+    }
+    focusedWindowId = result.focusedId
+    windowFocusRequestId += 1
+    notify()
+    return true
+  }
+
+  function openWindowSlotActions(slotNumber: number) {
+    if (rejectUnavailableWindowInteraction('browse')) return false
+    if (slotNumber < 1 || slotNumber > 10) return false
+    const platformId = currentWindowPlatform()
+    const slot = state.windowSlots.find((item) => item.slot === slotNumber)
+    const targetId = platformId ? slot?.targetIdByPlatform[platformId] : Object.values(slot?.targetIdByPlatform || {}).find(Boolean)
+    const target = windowTargetById(targetId)
+    let rowId: string | null = null
+    if (target?.scope === 'file-manager-group' && target.groupKey) {
+      rowId = fileManagerGroupRowId(target.groupKey)
+    } else if (target) {
+      const live = liveWindowsForTarget(target).live
+      const groupKey = live ? fileManagerGroupKey(live.platform, live.appId) : null
+      if (groupKey) expandedWindowGroupKeys.add(groupKey)
+      rowId = targetWindowRowId(target.id)
+    }
+    if (rowId && windowRowById(rowId)) focusedWindowId = rowId
+    openWindowActionsState({ targetId: rowId, mode: 'single', context: 'slot', slot: slotNumber })
+    windowActionsFocusRequestId += 1
     notify()
     return true
   }
@@ -1886,7 +2064,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
 
   async function closeWindowRows(rowId?: string, force = false) {
     if (rejectUnavailableWindowInteraction('browse')) return false
-    const rows = windowRowsForClose(rowId).filter((row) => row.live)
+    const rows = windowRowsForClose(rowId).filter((row) => row.kind === 'window' && row.live)
     if (!rows.length) {
       setMessage('没有可关闭的实时窗口')
       return false
@@ -1970,8 +2148,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       state.windowTargets = state.windowTargets.map((item) => item.id === target.id ? target : item)
       if (!target.favorite) {
         pruneOrphanWindowTargets()
-        if (!windowTargetById(target.id) && row.live) {
-          remapWindowRowIdentity(row.id, `live:${row.live.instanceId}`)
+        if (!windowTargetById(target.id) && row.live && row.kind === 'window') {
+          remapWindowRowIdentity(row.id, liveWindowRowId(row.live.instanceId))
         }
       }
       save()
@@ -1988,7 +2166,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       target.favorite = true
       target.updatedAt = Date.now()
     }
-    const targetRowId = `target:${target.id}`
+    const targetRowId = row.kind === 'file-manager-group' && row.groupKey
+      ? fileManagerGroupRowId(row.groupKey)
+      : targetWindowRowId(target.id)
     remapWindowRowIdentity(row.id, targetRowId)
     focusedWindowId = targetRowId
     save()
@@ -2012,8 +2192,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       state.windowTargets = state.windowTargets.map((item) => item.id === target.id
         ? { ...item, pinned: pin, updatedAt: Date.now() }
         : item)
-      if (pin && !row.target) remapWindowRowIdentity(row.id, `target:${target.id}`)
-      if (!pin && row.live) liveFocusByTargetId.set(target.id, `live:${row.live.instanceId}`)
+      if (pin && !row.target && row.kind === 'window') remapWindowRowIdentity(row.id, targetWindowRowId(target.id))
+      if (!pin && row.live) liveFocusByTargetId.set(target.id, liveWindowRowId(row.live.instanceId))
       changed += 1
     }
     if (!changed) {
@@ -2023,7 +2203,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (!pin) {
       pruneOrphanWindowTargets()
       for (const [targetId, liveRowId] of liveFocusByTargetId) {
-        if (!windowTargetById(targetId)) remapWindowRowIdentity(`target:${targetId}`, liveRowId)
+        if (!windowTargetById(targetId)) remapWindowRowIdentity(targetWindowRowId(targetId), liveRowId)
       }
     }
     save()
@@ -2040,21 +2220,22 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       setMessage('请先选择窗口')
       return false
     }
+    if (row.kind === 'file-manager-group') mode = 'rename'
     const source = row.live
-    const target = row.target
+    const target = row.target || (row.kind === 'file-manager-group' ? ensureWindowTarget(row, { favorite: false }) : null)
     if (!source && !target) return false
     windowDraft = {
       mode,
       targetId: target?.id || null,
       sourceWindowId: source?.instanceId || null,
+      sourceGroupKey: row.groupKey,
       alias: target?.alias || source?.title || '',
       appName: target?.appName || source?.appName || '',
       appId: target?.appId || source?.appId || '',
       lastKnownTitle: source?.title || target?.lastKnownTitle || '',
       activeField: 'alias'
     }
-    windowActionsOpen = false
-    windowActionTargetId = null
+    resetWindowActionsState()
     windowFocusRequestId += 1
     notify()
     return true
@@ -2094,11 +2275,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       ? {
           ...existing,
           alias,
-          lastKnownTitle: source?.title || existing.lastKnownTitle,
-          appId: windowDraft.appId.trim(),
-          appName: windowDraft.appName.trim() || windowDraft.appId.trim(),
-          lastInstanceId: source?.instanceId || existing.lastInstanceId,
-          lastNativeRef: source?.nativeRef || existing.lastNativeRef,
+          lastKnownTitle: existing.scope === 'file-manager-group' ? existing.lastKnownTitle : (source?.title || existing.lastKnownTitle),
+          appId: existing.scope === 'file-manager-group' ? existing.appId : windowDraft.appId.trim(),
+          appName: existing.scope === 'file-manager-group' ? existing.appName : (windowDraft.appName.trim() || windowDraft.appId.trim()),
+          lastInstanceId: existing.scope === 'file-manager-group' ? null : (source?.instanceId || existing.lastInstanceId),
+          lastNativeRef: existing.scope === 'file-manager-group' ? null : (source?.nativeRef || existing.lastNativeRef),
+          alternateAliases: [],
           updatedAt: now
         }
       : source
@@ -2111,7 +2293,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     state.windowTargets = existing
       ? state.windowTargets.map((item) => item.id === target.id ? target : item)
       : [...state.windowTargets, target]
-    focusedWindowId = `target:${target.id}`
+    focusedWindowId = target.scope === 'file-manager-group' && target.groupKey
+      ? fileManagerGroupRowId(target.groupKey)
+      : targetWindowRowId(target.id)
     windowDraft = null
     windowFocusRequestId += 1
     save()
@@ -2141,7 +2325,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     state.windowSlots = state.windowSlots.map((slot) => slot.slot === slotNumber
       ? { ...slot, targetIdByPlatform: { ...slot.targetIdByPlatform, [platform]: target.id } }
       : slot)
-    focusedWindowId = `target:${target.id}`
+    focusedWindowId = target.scope === 'file-manager-group' && target.groupKey
+      ? fileManagerGroupRowId(target.groupKey)
+      : targetWindowRowId(target.id)
     save()
     setMessage(`已将 “${target.alias}” 分配到窗口槽 ${slotNumber}（${platform === 'darwin' ? 'macOS' : 'Windows'}）`)
     return true
@@ -2208,7 +2394,15 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       setMessage(`窗口槽 ${slotNumber} 尚未分配目标`)
       return false
     }
-    focusedWindowId = `target:${targetId}`
+    const target = windowTargetById(targetId)
+    if (target?.scope === 'file-manager-group' && target.groupKey) {
+      focusedWindowId = fileManagerGroupRowId(target.groupKey)
+    } else {
+      const live = target ? liveWindowsForTarget(target).live : null
+      const groupKey = live ? fileManagerGroupKey(live.platform, live.appId) : null
+      if (groupKey) expandedWindowGroupKeys.add(groupKey)
+      focusedWindowId = targetWindowRowId(targetId)
+    }
     windowFocusRequestId += 1
     notify()
     return true
@@ -6307,7 +6501,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const current = currentIndex >= 0 ? currentIndex : direction > 0 ? -1 : rows.length
       const next = Math.min(rows.length - 1, Math.max(0, current + direction * (page ? 5 : 1)))
       focusedWindowId = rows[next].id
-      if (windowActionsOpen) windowActionTargetId = focusedWindowId
+      syncOpenWindowActionsToFocusedRow(rows[next])
       windowFocusRequestId += 1
       notify()
       return
@@ -6391,9 +6585,16 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (state.activeTab === 'windows' && focusedWindowId) {
       if (rejectUnavailableWindowInteraction('browse')) return
       const rows = windowRows()
-      const next = toggleIdWithAdvance({ rows, focusedId: focusedWindowId, selectedIds: selectedWindowIds, advance })
+      const next = toggleWindowTreeSelection(rows, {
+        focusedId: focusedWindowId,
+        selectedIds: selectedWindowIds,
+        advance
+      })
       selectedWindowIds = next.selectedIds
       focusedWindowId = next.focusedId
+      if (next.virtualParentBlocked) {
+        setMessage('文件管理器父节点不参与批量选择；请展开后选择具体窗口')
+      }
       if (windowActionsOpen) windowActionTargetId = focusedWindowId
       windowFocusRequestId += 1
       notify()
@@ -7620,6 +7821,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     } })
     actions.register({ id: 'windows.actions.open', title: '打开窗口操作面板', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 98, shortcut: 'Ctrl+ArrowRight', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => openWindowActions(typeof args?.rowId === 'string' ? args.rowId : undefined) })
     actions.register({ id: 'windows.actions.close', title: '返回窗口列表', group: '窗口跳转', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Ctrl+ArrowLeft', when: (ctx) => whenWindowInteraction(ctx, 'always') && ctx.layerIds.includes('window-actions'), run: () => closeWindowActions() })
+    actions.register({ id: 'windows.tree.expand', title: '展开文件管理器父节点或进入首个子窗口', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'ArrowRight', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }) && !ctx.layerIds.includes('window-actions'), run: () => navigateFocusedWindowTree('expand') })
+    actions.register({ id: 'windows.tree.collapse', title: '收起文件管理器父节点或返回父节点', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 99, shortcut: 'ArrowLeft', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }) && !ctx.layerIds.includes('window-actions'), run: () => navigateFocusedWindowTree('collapse') })
+    actions.register({ id: 'windows.tree.toggle', title: '切换文件管理器父节点展开状态', group: '窗口跳转', risk: 'normal', scope: 'row', priority: 99, when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => setWindowGroupExpanded(typeof args?.rowId === 'string' ? args.rowId : undefined, typeof args?.expanded === 'boolean' ? args.expanded : undefined) })
     actions.register({ id: 'windows.layer.toggle', title: '切换窗口列表与操作层', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 97, shortcut: 'Tab', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: () => windowActionsOpen ? closeWindowActions() : openWindowActions() })
     actions.register({ id: 'windows.layer.togglePrev', title: '反向切换窗口列表与操作层', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 97, shortcut: 'Shift+Tab', when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: () => windowActionsOpen ? closeWindowActions() : openWindowActions() })
     actions.register({ id: 'windows.favorite.toggle', title: '收藏或取消收藏窗口', group: '窗口跳转', risk: 'data-write', scope: 'tab', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse', { outsideEditor: true }), run: (_ctx, args) => {
@@ -7670,6 +7874,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     }
     actions.register({ id: 'windows.slot.clear', title: '清除窗口槽关联', group: '窗口跳转', risk: 'data-write', scope: 'row', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: (_ctx, args) => clearWindowSlot(Math.trunc(Number(args?.slot))) })
     actions.register({ id: 'windows.slot.focus', title: '聚焦窗口槽目标', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: (_ctx, args) => focusWindowSlot(Math.trunc(Number(args?.slot))) })
+    actions.register({ id: 'windows.slot.actions.open', title: '打开窗口槽操作面板', group: '窗口跳转', risk: 'normal', scope: 'row', priority: 97, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: (_ctx, args) => openWindowSlotActions(Math.trunc(Number(args?.slot))) })
     actions.register({ id: 'windows.slot.configure', title: '配置窗口槽全局快捷键', group: '窗口跳转', risk: 'normal', scope: 'row', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: (_ctx, args) => configureWindowSlotHotkey(Math.trunc(Number(args?.slot))) })
     actions.register({ id: 'windows.hwnd.copy', title: '复制 Windows HWND', group: '窗口跳转', risk: 'normal', scope: 'row', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'browse'), run: (_ctx, args) => { void copyWindowHandle(typeof args?.rowId === 'string' ? args.rowId : undefined); return true } })
     actions.register({ id: 'windows.permission.settings', title: '打开 macOS 辅助功能设置', group: '窗口跳转', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => whenWindowInteraction(ctx, 'always'), run: () => { void platform.windows.openPermissionSettings?.(); return true } })
@@ -8429,6 +8634,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
             : (windowActionTarget ? [windowActionTarget] : []))
           : [],
         windowActionsMode,
+        windowActionsContext,
+        windowActionSlot,
         windowDraft,
         windowRebind: windowRebindView(windowRebindState),
         windowFocusRequestId,
@@ -8509,15 +8716,17 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     setTab,
     setWindowSearch(value: string) {
       if (rejectUnavailableWindowInteraction('browse')) return
+      const previousRow = windowRowById(focusedWindowId)
       state.windowSearch = value
-      normalizeFocusedWindow(false)
+      restoreWindowTreeFocus(previousRow, false)
       save()
       notify()
     },
     focusWindow(id: string) {
-      if (!windowRowById(id)) return
+      const row = windowRowById(id)
+      if (!row) return
       focusedWindowId = id
-      if (windowActionsOpen) windowActionTargetId = id
+      syncOpenWindowActionsToFocusedRow(row)
       windowFocusRequestId += 1
       notify()
     },
@@ -8856,6 +9065,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         confirmNowInternal()
         return 'confirm.accept'
       }
+      if (state.activeTab === 'windows' && shortcutId === 'Escape') {
+        const resolved = resolveWindowEscapeStep(input)
+        if (resolved) return resolved
+      }
       if (state.activeTab === 'mqtt' && mqttPreview.open && shortcutId === 'Escape') {
         closeMqttPreview()
         return 'mqtt.preview.close'
@@ -8885,10 +9098,6 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         notify()
         return 'mqtt.record.edit.cancel'
       }
-      if (windowDraft && shortcutId === 'Escape') {
-        cancelWindowDraft()
-        return 'windows.editor.cancel'
-      }
       if (mqttConfigDraft && shortcutId === 'Escape') {
         mqttConfigDraft = null
         notify()
@@ -8905,37 +9114,6 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         return 'favorites.pickReview.cancel'
       }
       if (shortcutId === 'Escape') {
-        if (state.activeTab === 'windows' && clearWindowCandidates()) {
-          return 'windows.candidates.clear'
-        }
-        if (state.activeTab === 'windows' && windowActionsOpen) {
-          closeWindowActions()
-          return 'windows.actions.close'
-        }
-        if (state.activeTab === 'windows' && selectedWindowIds.length) {
-          clearWindowSelection()
-          return 'windows.selection.clear'
-        }
-        const windowSearchFocused = input.activeInputRole === 'window-search'
-        if (state.activeTab === 'windows' && windowSearchFocused && state.windowSearch) {
-          state.windowSearch = ''
-          searchBlurRequestId += 1
-          normalizeFocusedWindow(false)
-          save()
-          notify()
-          return 'windows.search.clear'
-        }
-        if (state.activeTab === 'windows' && windowSearchFocused) {
-          blurSearchFocus()
-          return 'windows.search.blur'
-        }
-        if (state.activeTab === 'windows' && state.windowSearch) {
-          state.windowSearch = ''
-          normalizeFocusedWindow(false)
-          save()
-          notify()
-          return 'windows.search.clear'
-        }
         if (state.activeTab === 'ports') {
           return resolvePortEscapeStep(input)
         }

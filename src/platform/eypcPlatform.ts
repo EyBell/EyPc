@@ -1,7 +1,7 @@
 import { normalizeAppState } from '../domain/state'
 import { normalizeMqttArchiveState } from '../domain/mqtt'
 import type { AppState, FavoriteNode, KillRequest, KillResult, MqttArchiveState, MqttStorageStatus, PortProcess } from '../domain/types'
-import type { LiveWindow, WindowPlatform } from '../domain/windows'
+import type { LiveWindow, NativeWindowObservation, WindowPlatform } from '../domain/windows'
 import type {
   CodexActivityDelta,
   CodexBridgeResult,
@@ -31,35 +31,19 @@ export type FileActionOutcome = 'success' | 'dispatched' | 'revealed-instead' | 
 export type FileErrorCode = 'invalid-path' | 'not-found' | 'permission-denied' | 'no-handler' | 'timeout' | 'unsupported' | 'io-error'
 export type FavoritePathStatus = 'available' | 'missing' | 'permission-denied' | 'offline' | 'invalid' | 'unknown'
 export type WindowPermissionState = 'granted' | 'required' | 'unknown' | 'unsupported'
-export const WINDOW_BRIDGE_REVISION = 'wj19-native-instance-id'
+export const WINDOW_BRIDGE_REVISION = 'wj20-root-window-family'
 export type WindowActivationOutcome = 'activated' | 'not-found' | 'ambiguous' | 'permission-required' | 'focus-denied' | 'unsupported' | 'failed'
-export type WindowActivationReasonCode = 'space-unbound' | 'space-unbound-multiwindow' | 'space-ambiguous' | 'space-switch-timeout' | 'instance-mismatch' | 'identity-unavailable'
-export type WindowOperationTraceStage = 'bridge' | 'space' | 'target' | 'process' | 'restore' | 'foreground' | 'raise' | 'verify' | 'topmost'
+export type WindowActivationReasonCode = 'instance-mismatch' | 'identity-unavailable'
+export type WindowOperationTraceStage = 'bridge' | 'target' | 'process' | 'restore' | 'foreground' | 'raise' | 'verify' | 'topmost'
 export type WindowOperationTraceOutcome = 'ok' | 'skipped' | 'not-found' | 'ambiguous' | 'failed' | 'denied' | 'unsupported' | 'unavailable'
 export type WindowOperationTraceDetail =
-  | 'switched'
-  | 'switch-confirmed'
-  | 'switch-timeout'
-  | 'current'
-  | 'direct-unique'
-  | 'direct-multiple'
-  | 'reverse-unique'
-  | 'session-cache'
-  | 'ambiguous-spaces'
-  | 'bad-ref'
-  | 'no-api'
-  | 'empty-spaces'
-  | 'no-space-id'
-  | 'no-display'
-  | 'multiwindow-blocked'
-  | 'current-space-inferred'
   | 'instance-match'
   | 'instance-mismatch'
   | 'identity-unavailable'
   | 'focus-state-mismatch'
-  | 'isolated-space-bridge'
+  | 'root-family-match'
   | 'ax-cg-id-match'
-  | 'ax-focused-window'
+  | 'ax-focused-root-window'
   | 'error'
 
 /** A bounded, sanitized native-operation trace. It is returned only when a development renderer requests it. */
@@ -135,36 +119,11 @@ export interface WindowCapability {
 
 export interface WindowListResult {
   capability: WindowCapability
-  windows: LiveWindow[]
+  /** Raw native observations; Runtime must normalize these through the domain coalescer. */
+  windows: NativeWindowObservation[]
   /** Whether this snapshot can authoritatively evict windows absent from the result. */
   completeness?: 'complete' | 'partial'
   message?: string
-}
-
-export interface WindowEnvironmentSnapshot {
-  platform: WindowPlatform | 'unsupported'
-  bridgeRevision?: string
-  identityAvailable?: boolean
-  appMatches?: boolean
-  nativeInstanceMatches: number
-  ownerCgWindowCount?: number
-  axInstanceMatches: number
-  axWindowCount?: number
-  spaceBinding: 'bound' | 'unbound' | 'unavailable'
-  spaceBindingCount?: number
-  spaceBindingSource?: 'direct' | 'reverse' | 'direct+reverse' | 'isolated-direct' | 'isolated-reverse' | 'isolated-direct+reverse' | 'session-cache' | 'none' | 'unavailable'
-  spaceBridge?: 'in-process' | 'isolated-jxa' | 'unavailable'
-  managedSpaceCount?: number
-  directSpaceBindingCount?: number
-  reverseSpaceBindingCount?: number
-  sameSpace?: boolean | null
-}
-
-export type WindowEnvironmentPhase = 'pre-initial' | 'pre-retry'
-
-export interface WindowEnvironmentPhaseSnapshot {
-  phase: WindowEnvironmentPhase
-  snapshot: WindowEnvironmentSnapshot
 }
 
 export type WindowCloseOutcome = 'closed' | 'terminated' | 'close-denied' | 'not-found' | 'ambiguous' | 'permission-required' | 'unsupported' | 'failed'
@@ -241,7 +200,6 @@ export interface EypcPlatformApi {
   windows: {
     capabilities(): Promise<WindowCapability>
     list(): Promise<WindowListResult>
-    inspectEnvironment?(window: LiveWindow): Promise<WindowEnvironmentSnapshot>
     activate(window: LiveWindow, options?: WindowActivationOptions): Promise<WindowActivationResult>
     /** Sets a real Windows topmost z-order; unsupported on macOS instead of pretending to persist it. */
     alwaysOnTop?(window: LiveWindow, options?: WindowActivationOptions): Promise<WindowActivationResult>
@@ -698,7 +656,6 @@ export function getPlatform(): EypcPlatformApi {
         capabilities: hostWindows?.capabilities || (async () => unsupportedWindowCapability('当前 preload 未提供窗口能力')),
         list: hostWindows?.list || (async () => unsupportedWindowList('当前 preload 未提供窗口能力')),
         activate: hostWindows?.activate || (async () => ({ outcome: 'unsupported', message: '当前 preload 未提供窗口激活能力' })),
-        inspectEnvironment: hostWindows?.inspectEnvironment || (async () => ({ platform: 'unsupported', nativeInstanceMatches: 0, axInstanceMatches: 0, spaceBinding: 'unavailable' })),
         alwaysOnTop: hostWindows?.alwaysOnTop || (async () => ({ outcome: 'unsupported', message: '当前 preload 未提供页面置顶能力' })),
         close: hostWindows?.close || (async () => ({ outcome: 'unsupported', message: '当前 preload 未提供窗口关闭能力' })),
         terminate: hostWindows?.terminate || (async () => ({ outcome: 'unsupported', message: '当前 preload 未提供窗口强杀能力' })),
@@ -789,7 +746,6 @@ export function getPlatform(): EypcPlatformApi {
       capabilities: async () => unsupportedWindowCapability('浏览器预览不提供系统窗口能力'),
       list: async () => unsupportedWindowList('浏览器预览不提供系统窗口能力'),
       activate: async () => ({ outcome: 'unsupported', message: '浏览器预览不提供系统窗口激活能力' }),
-      inspectEnvironment: async () => ({ platform: 'unsupported', nativeInstanceMatches: 0, axInstanceMatches: 0, spaceBinding: 'unavailable' }),
       alwaysOnTop: async () => ({ outcome: 'unsupported', message: '浏览器预览不提供页面置顶能力' }),
       close: async () => ({ outcome: 'unsupported', message: '浏览器预览不提供系统窗口关闭能力' }),
       terminate: async () => ({ outcome: 'unsupported', message: '浏览器预览不提供系统窗口强杀能力' })
