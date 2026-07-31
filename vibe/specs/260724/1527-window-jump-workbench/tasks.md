@@ -26,6 +26,8 @@
 | WJ-19.1 | Make candidate recovery focused and title-readable; verify identity before instance-keyed Space-cache use | implemented / verification-pending |
 | WJ-19.2 | Keep recovery stable across empty/partial refreshes and expose recognition context without identity inference | implemented / verification-pending |
 | WJ-19.3 | Centralize rebind lifecycle, effects and action availability behind one domain state machine | implemented / verification-pending |
+| WJ-20 | Collapse native members into independent root-window targets and add the Finder/Explorer virtual tree | implemented / verification-pending |
+| WJ-20.1 | Centralize page-facing tree projection, row identity, navigation, selection and action context; remove stale current-contract text | implemented / static-closeout-complete / host-validation-pending |
 
 ## Execution Journal
 
@@ -96,3 +98,11 @@
 - 2026-07-30 — WJ-19.3 replaces the three parallel Runtime candidate variables and hand-written refresh/focus branches with [windowRebind.ts](../../../../src/domain/windowRebind.ts#L1). The reducer is the sole candidate-membership owner and returns effects for stale-binding clear, candidate focus and cancel focus restoration; Runtime applies effects without duplicating transition policy.
 - 2026-07-30 — All window action predicates now route candidate availability through one `always / browse / rebind` policy, and [WindowsPage.vue](../../../../src/pages/WindowsPage.vue#L1) consumes one `windowRebind` projection. Existing domain/Runtime/UI tests were updated as unexecuted contracts. Static searches and diff checks only; no test, typecheck, build, preload execution, uTools reload, native operation or visual acceptance ran.
 - 2026-07-30 — 分批提交前从 WJ-19.1 的“一次 Escape、无候选副层”回查异步入口，发现窗口编辑草稿可能与槽位恢复同时抵达换绑分支。Runtime 现保留草稿并用 `editor-active` 阻断候选创建；新增合同确认编辑内容不丢失、`windowRebind` 保持 idle。合同未执行。
+- 2026-07-31 — WJ-20 将产品身份统一为独立 OS 根窗口族：桥接只输出 `rootInstanceId/rootNativeRef/rootPid` 与成员观察，唯一 [windows.ts](../../../../src/domain/windows.ts#L1) coalescer 生成根 `LiveWindow`；Runtime、缓存、焦点、槽位和换绑均只消费根 ID。相同应用/标题的独立根不合并，无法证明的成员关系保持独立。
+- 2026-07-31 — 新增 [windowTree.ts](../../../../src/domain/windowTree.ts#L1) 作为唯一树领域框架，集中 Finder/Explorer allowlist/groupKey、树排序/搜索/扁平化、收起焦点恢复、父节点激活落点和桥接证据驱动的旧目标无损合并。普通应用始终按独立根平铺；文件管理器始终保留虚拟父子结构。
+- 2026-07-31 — Windows 原生观察使用同应用 `GA_ROOTOWNER`，激活可前置最后活动成员但最终核验前台 root owner。macOS 使用 CGWindowID + `AXTopLevelUIElement`/`AXWindow` + `_AXUIElementGetWindow` 建立根关系并核验最终 `AXFocusedWindow` 根。旧环境快照、SkyLight/Space 查找缓存切换、标题/序号/唯一候选门禁已删除；版本升级为 `wj20-root-window-family`。
+- 2026-07-31 — 页面升级为 ARIA tree，文件管理器父节点支持展开、收藏、列表置顶、别名和槽位，禁止批量选择/页面置顶/关闭全部；右键统一 `window / file-manager-group / selection / slot` 面板，Escape 先关闭面板，搜索临时展开消失时焦点回父节点。只更新既有测试模块。所有测试、`vue-tsc`、构建、preload 执行、uTools 重载、真实 Windows/macOS 跳转和视觉验收均未执行。
+- 2026-07-31 — Closeout 未发现新的可复用失败模式：`releaseOlderSnapshot` 的 TypeScript 异步闭包问题已有 [typescript-async-closure-release-narrows-to-never.md](../../../../vibe/knowledge/error-memory/typescript-async-closure-release-narrows-to-never.md#L1) 并保持“声明即 callable + 直接调用”；本轮只把三个旧 macOS Space 记录标为 WJ-20 历史/局部适用，未新建错误记忆、规则或 AI-DB 记录。
+- 2026-07-31 — WJ-20 静态收口通过：双 preload 字节一致、桥接版本一致、生产树仅一个根族 coalescer、旧标题/序号/环境快照/Space 路径零命中、项目与 CodeNote 代码链接审计及 scoped diff 检查通过。部分清单合并额外收紧为保留已证明成员证据但不复活独立成员。测试、`vue-tsc`、构建、preload 执行、uTools 重载、真实跳转与视觉验收仍未执行。
+- 2026-07-31 — WJ-20.1 根据用户再次提出的第一性原理/全局精简要求复核需求与实现：修正 raw/spec 中仍把环境快照、Space 切换和裸 `ArrowRight` 操作层写成当前合同的矛盾；把目标解析、槽位映射、行 ID/候选解析、完整树行投影、动作上下文、左右导航和只允许真实根的选择统一收进 [windows.ts](../../../../src/domain/windows.ts#L1) 与 [windowTree.ts](../../../../src/domain/windowTree.ts#L1)。Runtime 只传入状态并执行副作用，页面改为消费领域 `WindowRow` 与一次性槽位映射。既有测试合同同步但未执行。
+- 2026-07-31 — WJ-20.1 静态收口通过：选定 TypeScript/测试源码和 `WindowsPage.vue` 语法解析通过，根族 coalescer 与 `buildWindowTreeRows` 各仅一个生产定义，Runtime 旧行构造/候选前缀分支及所有退役原生符号零命中，双 preload 一致，项目/CodeNote 链接审计和 scoped diff 检查通过。未运行测试、语义类型检查、构建、preload、uTools 或真实窗口验收。

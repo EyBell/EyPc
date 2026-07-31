@@ -1,10 +1,10 @@
 ---
 id: eypc-utools-macos-ax-activation-misses-other-spaces
-status: verified
+status: superseded
 scope: project-pointer
 fingerprint: cg-inventory-finds-window__system-events-ax-target-not-found__activation-not-found-after-healthy-rescan__cgs-space-switch-before-axraise
 first_seen: 2026-07-27
-last_verified: 2026-07-29
+last_verified: 2026-07-31
 review_after: 2027-01-28
 evidence:
   - vibe/specs/260724/1527-window-jump-workbench/verify.md
@@ -22,6 +22,8 @@ tags:
 - [utools-macos-ax-activation-misses-other-spaces.md](../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/error-memory/utools-macos-ax-activation-misses-other-spaces.md#L1)
 
 ## EyPc 专属差异
+
+WJ-20 supersedes this implementation route. Current EyPc contains no private SkyLight/managed-Space lookup, cache, switch, isolated bridge or environment snapshot; it uses exact CG↔AX root-family proof and final focused-root verification, then blocks if the host cannot complete that operation. The bullets below are retained only as WJ-11–WJ-19 historical host evidence and must not be reintroduced as current activation logic.
 
 - 实现：[preload/index.js](../../../preload/index.js#L1) / [public/preload.js](../../../public/preload.js#L1) 先尝试 preload 内 `koffi`，空绑定时改用隔离 JXA 复跑相同 direct+reverse SkyLight 解析并确认唯一切换；`scripts/prepare-utools-runtime.mjs` 保持运行时镜像与依赖同步。
 - 任务证据：[verify.md](../../specs/260724/1527-window-jump-workbench/verify.md#L1)
@@ -42,9 +44,7 @@ tags:
 
 ## Alternative Route
 
-- Status: `verified`
-- Preconditions: macOS Screen Recording + Accessibility; selected target has an exact CG reference; private SkyLight/AX symbols are available.
-- Steps: validate a session hint against the current display map → on miss run in-process direct+reverse lookup → on empty repeat in isolated JXA and import one binding into this preload session → switch/confirm → require app/title + exact `_AXUIElementGetWindow` match → focus/Raise → read back exact `AXFocusedWindow`; evict on native miss.
-- Verification: a non-current-Space multi-window Chromium target completes the WJ-15 exact route; WJ-16 host acceptance additionally requires a repeated call with `session-cache` plus retained off-Space rows after a partial refresh.
-- Applicability boundary: no desktop walk, learned binding, simulated input, permanent topmost, permission mutation, arbitrary sibling focus, or multi-window process-frontmost.
-- Fallback: ambiguity, no binding, switch timeout, unavailable permission, or exact-focus mismatch remains blocking and opens the visible workbench path.
+- Status: `superseded` for EyPc activation; linked CodeNote material remains historical platform research.
+- Current route: exact PID/application/root CG↔AX mapping → restore/Raise/activate → final `AXFocusedWindow` root readback.
+- Verification: WJ-20 source/contracts only; real native acceptance remains pending.
+- Fallback: unavailable root proof or focus remains blocking and opens the visible workbench path; no Space route runs.
