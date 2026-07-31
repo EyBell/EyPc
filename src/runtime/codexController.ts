@@ -272,7 +272,10 @@ export function createCodexController(options: CodexControllerOptions) {
   let newThreadContextFingerprint = ''
   let environment = emptyCodexEnvironment()
   let rawConversations = conversationSnapshotFromReceipts(options.getAppState().codex.receipts)
-  let taskState = buildCodexTaskStatePackage(rawConversations, { sourceRevision: taskStateSourceRevision })
+  let taskState = buildCodexTaskStatePackage(rawConversations, {
+    sourceRevision: taskStateSourceRevision,
+    dynamicTaskWindowHours: options.getAppState().codex.settings.dynamicTaskWindowHours
+  })
   let taskCycleKey = ''
   let lastThreads: CodexHostThread[] = []
   let lastProjects: CodexHostProject[] = []
@@ -378,7 +381,8 @@ export function createCodexController(options: CodexControllerOptions) {
   function publishTaskStatePackage(conversations: ConversationSnapshotV1, now = Date.now()) {
     taskState = buildCodexTaskStatePackage(conversations, {
       sourceRevision: taskStateSourceRevision,
-      now
+      now,
+      dynamicTaskWindowHours: codexState().settings.dynamicTaskWindowHours
     })
     if (started && !disposed && shouldRun()) schedule()
   }
@@ -1017,6 +1021,8 @@ export function createCodexController(options: CodexControllerOptions) {
       resetConversationProjection(emptyConversationSnapshot())
     } else if (current.timeWindowDays !== next.timeWindowDays && lastThreads.length) {
       publishConversationProjection({ receivedAt: Date.now(), advanceScan: false, status: rawConversations.status })
+    } else if (current.dynamicTaskWindowHours !== next.dynamicTaskWindowHours) {
+      publishTaskStatePackage(rawConversations)
     }
     options.save()
     options.notify()

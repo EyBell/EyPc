@@ -169,6 +169,27 @@ describe('Codex dynamic status projection', () => {
     expect(value.groups.active.map((item) => item.key)).not.toContain('hidden-active')
   })
 
+  it('uses the configured dynamic task window for cards, counters and the next transition', () => {
+    const activityAt = NOW - 18 * 60 * 60 * 1000
+    const active = task('configured-window', { lastTurnStartedAt: activityAt })
+    const conversations = {
+      ongoing: [active],
+      stopped: [],
+      completedUnread: [],
+      completed: [],
+      hidden: [],
+      inputRequired: []
+    }
+
+    expect(projectCodexDynamicStatus(conversations, NOW).groups.active).toHaveLength(1)
+    expect(projectCodexDynamicStatus(conversations, NOW, 12).groups.active).toHaveLength(0)
+
+    const configured = projectCodexDynamicStatus(conversations, NOW, 36)
+    expect(configured.groups.active.map((item) => item.key)).toEqual(['configured-window'])
+    expect(configured.compactCounts.active).toBe(1)
+    expect(configured.nextTransitionAt).toBe(activityAt + 36 * 60 * 60 * 1000 + 1)
+  })
+
   it('keeps card and active counter aligned through active/ongoing jitter, then switches once on stabilized completion', () => {
     for (const activityState of ['active', 'ongoing', 'active'] as const) {
       const current = task('jitter', { activityState })

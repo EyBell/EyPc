@@ -204,6 +204,14 @@ describe('Codex Companion V3 UI contract', () => {
     expect(source).not.toContain('completionPresentationDelayMs')
   })
 
+  it('exposes the floating Dynamic-tab time filter in the task settings', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
+    expect(source).toContain('动态时间筛选（小时）')
+    expect(source).toContain(':value="snapshot.settings.dynamicTaskWindowHours"')
+    expect(source).toContain('update({ dynamicTaskWindowHours:')
+    expect(source).toContain('默认 24 小时')
+  })
+
   it('surfaces aggregate activity decision diagnostics without an identity field', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
     expect(source).toContain("label: '状态裁决'")

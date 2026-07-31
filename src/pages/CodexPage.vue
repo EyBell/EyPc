@@ -27,6 +27,10 @@ import {
   resolveCodexExpandedCardTheme
 } from '../domain/codexAppearance'
 import { buildCodexCompactPresentation, codexBadgeText } from '../domain/codexPresentation'
+import {
+  CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS,
+  CODEX_MIN_DYNAMIC_TASK_WINDOW_HOURS
+} from '../domain/codex'
 import type {
   CodexColorSettings,
   CodexCompactField,
@@ -788,7 +792,23 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               :value="snapshot.settings.timeWindowDays"
               @change="update({ timeWindowDays: Number(($event.target as HTMLInputElement).value) })"
               data-operation-tooltip="时间窗口（天）"
-              data-operation-description="按最新 Turn 活动时间过滤常规会话；动态页固定显示最近 6 小时活动。"
+              data-operation-description="按最新 Turn 活动时间过滤完整任务库存；悬浮卡片动态页另用下方小时数筛选。"
+            />
+          </label>
+          <label>
+            <span class="codex-label-row">
+              <span>动态时间筛选（小时）</span>
+            </span>
+            <input
+              class="codex-number"
+              type="number"
+              :min="CODEX_MIN_DYNAMIC_TASK_WINDOW_HOURS"
+              :max="CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS"
+              step="1"
+              :value="snapshot.settings.dynamicTaskWindowHours"
+              @change="update({ dynamicTaskWindowHours: Number(($event.target as HTMLInputElement).value) })"
+              data-operation-tooltip="动态时间筛选（小时）"
+              data-operation-description="控制悬浮卡片「动态」Tab、进行中角标和前后任务循环使用的最近活动范围；默认 24 小时。"
             />
           </label>
           <label>
