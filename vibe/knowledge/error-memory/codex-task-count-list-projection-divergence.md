@@ -43,7 +43,7 @@ Final product eligibility was not represented by one reusable pure projection. C
 ## Evidence
 
 - The first occurrence used a complete group count while a Renderer consumer applied `slice(0, maxTasksPerGroup)`, so the visible list and eligible actions no longer matched the summary.
-- RAW-108 added [codexPresentation.ts](../../../src/domain/codexPresentation.ts#L1), which derives recent-six-hour non-hidden mutually exclusive dynamic groups and compact `{ input, active, unread }` counts from one Controller-stabilized snapshot. [FloatApp.vue](../../../src/FloatApp.vue#L1) and [CodexPage.vue](../../../src/pages/CodexPage.vue#L1) consume it without another state timer.
+- RAW-108 added [codexPresentation.ts](../../../src/domain/codexPresentation.ts#L1), which derives non-hidden mutually exclusive dynamic groups and compact `{ input, active, unread }` counts from one Controller-stabilized snapshot. RAW-134 makes its hours parameter persistent/configurable with a 24-hour default; [FloatApp.vue](../../../src/FloatApp.vue#L1) and [CodexPage.vue](../../../src/pages/CodexPage.vue#L1) still consume the same package without another state timer.
 - RAW-109 source tracing found [codexController.ts](../../../src/runtime/codexController.ts#L1) still rebuilt previous/next candidates from every `bucket='ongoing'` task. The action now consumes the shared active group after the complete input-required collection; only an explicit EyPc-local non-stopped pin may enter the empty-pool fallback.
 - Existing contracts in [codexPresentation.test.ts](../../../tests/domain/codexPresentation.test.ts#L1), [codexController.test.ts](../../../tests/runtime/codexController.test.ts#L1) and [codexCompanion.test.ts](../../../tests/ui/codexCompanion.test.ts#L1) cover shared counts/cards and old conservative-ongoing action exclusion. They were updated but intentionally not executed under the current verification boundary.
 
@@ -53,7 +53,7 @@ Final product eligibility was not represented by one reusable pure projection. C
 2. Compare its row keys, displayed count and every eligible action key, not merely their upstream snapshot or broad bucket names.
 3. Search all consumers for `slice`, independent time comparisons, hidden filters, full-bucket queries and action-only caches/debounces.
 4. Check semantic exceptions separately: complete waiting-input/unread collections, dedicated completed-unread open-first action and explicitly EyPc-local pinned fallback must not be accidentally collapsed into active-card eligibility.
-5. Use fixtures on both sides of each boundary: hidden, exactly/just beyond six hours, waiting-input versus active, stopped, completed-unread, ordinary unpinned and explicit local pin.
+5. Use fixtures on both sides of each configured time boundary: hidden, exactly/just beyond the selected hours, waiting-input versus active, stopped, completed-unread, ordinary unpinned and explicit local pin.
 6. Confirm search remains downstream of counts and that action invocation computes from the current stabilized snapshot without a second timer.
 
 ## Prevention Rule
@@ -62,7 +62,7 @@ Define final product eligibility once as a stateless pure projection over the st
 
 ## Latest Applicable Implementation
 
-- [codexPresentation.ts](../../../src/domain/codexPresentation.ts#L1) owns recent-six-hour, non-hidden dynamic grouping and compact counts.
+- [codexPresentation.ts](../../../src/domain/codexPresentation.ts#L1) owns configured recent-hours, non-hidden dynamic grouping and compact counts; `dynamicTaskWindowHours` defaults to 24 and is normalized in the Codex settings domain.
 - The active group contains only `active / waiting-approval / ongoing`; waiting-input is mutually exclusive and stopped exits immediately.
 - Input and unread compact counts remain complete and hidden-inclusive; search filters expanded rows only.
 - Float cards, badges, summaries/ARIA and settings preview share the projection.
@@ -75,7 +75,7 @@ Define final product eligibility once as a stateless pure projection over the st
 - Status: `candidate`; source, contracts and static closeout are synchronized, while automated and real-host acceptance remain pending.
 - Preconditions: all consumers receive the same versioned, Controller-stabilized conversation snapshot and a pure projection can express final display eligibility.
 - Ordered steps: derive final arrays once; expose explicit counts; make every visual consumer use them; make generic action pools reuse the same active array; preserve separately named full-collection/dedicated-action/local-pin exceptions; remove duplicate filters and timers.
-- Verification: cards and active badge have identical keys/counts across jitter; an unpinned task just beyond six hours is absent from both active display and previous/next; local pin restores only the documented empty-pool fallback; completed-unread stays outside generic cycling; search never changes compact counts.
+- Verification: cards and active badge have identical keys/counts across jitter; an unpinned task just beyond the configured hours is absent from both active display and previous/next; editing the hours immediately changes both through the same package; local pin restores only the documented empty-pool fallback; completed-unread stays outside generic cycling; search never changes compact counts.
 - Fallback: if an action genuinely needs different eligibility, define and document a separate named domain projection with explicit semantics. Do not silently query a broader inventory bucket.
 
 ## Occurrence History

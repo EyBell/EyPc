@@ -1,10 +1,10 @@
 # Codex Companion 当前规范
 
 Tool: codex
-Date: 2026-07-30
+Date: 2026-07-31
 Status: `implemented-unverified`
 Documentation level: `controlled`
-Requirement version: `2026-07-30.16`
+Requirement version: `2026-07-31.1`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 
@@ -39,6 +39,14 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - [codexController.ts](../../../../src/runtime/codexController.ts#L1) 只能在同源 fingerprint 与非回退 generation 通过后接纳整份诊断包。仅诊断变化时恰好通知一次；相同包、旧代次或不匹配来源均不刷新视图。
 - [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 常驻短摘要只显示保护合计与周期数，五项明细由原生信息按钮按 hover/focus 展示；`aria-live` 只包围连接诊断标题，不包围内部累计计数。所有同页信息提示统一为原生按钮，不保留 `span role=button` 分支。
 - 父聚合优先级测试调用真实生产纯解析器，不复制另一份状态算法；Controller/UI 合同覆盖诊断-only 通知、malformed 输入和可访问性结构。合同未获准执行，状态保持 `implemented-unverified`。
+
+## RAW-134 动态时间筛选配置
+
+- `CodexSettings.dynamicTaskWindowHours` 是悬浮卡片 `动态` Tab 的唯一持久化时间筛选，默认 `24`，旧存量缺字段自动迁移为默认值；输入按整小时规范化到 `1–8760`。完整任务库存仍由独立的 `timeWindowDays` 控制。
+- [codexPresentation.ts](../../../../src/domain/codexPresentation.ts#L1) 使用该小时数一次生成动态五分组、进行中角标、前后任务 active 候选和 `nextTransitionAt`；Renderer 不再也不得拥有第二套时间过滤。
+- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 在任务快照发布与设置变更时都传入当前小时数。修改配置立即重建现有原子包并复用同一调度器，不等待完整任务校对、不请求 Provider、不新增 timer。
+- [CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 的 `任务` 配置面板新增 `动态时间筛选（小时）` 数字输入，并区分完整库存天数与悬浮卡动态小时数。用户帮助同步默认值和前后任务循环的共享范围。
+- 现有 Domain、Controller、UI 合同补充默认值/边界、可配置筛选/下一边界和设置即时重投影；依项目规则不执行测试、typecheck、build、截图或真实 uTools 验收，状态保持 `implemented-unverified`。
 
 ## 证据合同
 
