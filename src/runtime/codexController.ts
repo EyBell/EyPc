@@ -111,7 +111,7 @@ export interface CodexControllerOptions {
 }
 
 function quotaDelay(settings: CodexSettings): number {
-  return settings.quotaRefreshMinutes > 0 ? settings.quotaRefreshMinutes * 60_000 : Number.POSITIVE_INFINITY
+  return settings.quotaRefreshSeconds > 0 ? settings.quotaRefreshSeconds * 1000 : Number.POSITIVE_INFINITY
 }
 
 function taskDelay(settings: CodexSettings): number {
@@ -249,6 +249,7 @@ function preserveLatestTurnEvidence(thread: CodexHostThread, previous: CodexHost
 function hasSameActivityState(previous: CodexHostThread, next: CodexHostThread): boolean {
   return previous.status === next.status
     && [...previous.activeFlags].sort().join('|') === [...next.activeFlags].sort().join('|')
+    && (previous.planImplementationOnly === true) === (next.planImplementationOnly === true)
     && previous.statusAuthority === next.statusAuthority
     && previous.activityEvidence === next.activityEvidence
     && previous.activityRevision === next.activityRevision
@@ -296,12 +297,15 @@ export function createCodexController(options: CodexControllerOptions) {
   let timer: ReturnType<typeof setTimeout> | null = null
   let activityTimer: ReturnType<typeof setTimeout> | null = null
   let structuralRefreshTimer: ReturnType<typeof setTimeout> | null = null
+  let inventoryDisappearanceTimer: ReturnType<typeof setTimeout> | null = null
   let structuralRefreshPending = false
   let structuralRefreshPriority: StructuralRefreshPriority = 'normal'
   const activityExitBaselines = new Map<string, ActivityExitBaseline>()
   let inFlight: Promise<void> | null = null
+  let actionPreflightInFlight = false
   let activityInFlight: Promise<void> | null = null
   const archivingKeys = new Set<string>()
+  let directTaskCommandQueue: Promise<void> = Promise.resolve()
   let stopActivityListener: (() => void) | null = null
   let activityFailureCount = 0
   let lastActivityGeneration = 0
@@ -309,6 +313,8 @@ export function createCodexController(options: CodexControllerOptions) {
   let environmentInFlight: Promise<void> | null = null
   let environmentGeneration = 0
   let refreshGeneration = 0
+  let runtimeGeneration = 0
+  let runtimeActive = false
   let lastQuotaReadAt = quota.updatedAt
   let lastTaskReadAt = options.getAppState().codex.lastTaskScanAt
   let inventoryDisappearanceCandidate: InventoryDisappearanceCandidate | null = null
@@ -318,6 +324,8 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function resetInventoryDisappearanceCandidate() {
+    if (inventoryDisappearanceTimer) clearTimeout(inventoryDisappearanceTimer)
+    inventoryDisappearanceTimer = null
     inventoryDisappearanceCandidate = null
   }
 
@@ -346,27 +354,35 @@ export function createCodexController(options: CodexControllerOptions) {
   // Host completeness validates one scan's structure, not temporal deletion.
   // Keep the published inventory until the same absence survives a real
   // reconciliation interval; explicit verified mutations remove keys earlier.
-  function inventoryDisappearanceDecision(threads: CodexHostThread[], now = Date.now()): { accept: boolean; firstObservation: boolean; missingCount: number } {
+  function inventoryDisappearanceDecision(threads: CodexHostThread[], now = Date.now()): { accept: boolean; firstObservation: boolean; missingCount: number; retryAfterMs: number } {
     if (!lastThreads.length) {
       resetInventoryDisappearanceCandidate()
-      return { accept: true, firstObservation: false, missingCount: 0 }
+      return { accept: true, firstObservation: false, missingCount: 0, retryAfterMs: 0 }
     }
     const incomingKeys = new Set(threads.map((thread) => thread.key))
     const missingKeys = lastThreads.map((thread) => thread.key).filter((key) => !incomingKeys.has(key)).sort()
     if (!missingKeys.length) {
       resetInventoryDisappearanceCandidate()
-      return { accept: true, firstObservation: false, missingCount: 0 }
+      return { accept: true, firstObservation: false, missingCount: 0, retryAfterMs: 0 }
     }
     const signature = missingKeys.join('|')
     const firstObservation = inventoryDisappearanceCandidate?.signature !== signature
+    if (firstObservation && inventoryDisappearanceTimer) {
+      clearTimeout(inventoryDisappearanceTimer)
+      inventoryDisappearanceTimer = null
+    }
     const candidate = firstObservation
       ? { signature, firstSeenAt: now, confirmations: 1 }
       : { ...inventoryDisappearanceCandidate!, confirmations: inventoryDisappearanceCandidate!.confirmations + 1 }
     inventoryDisappearanceCandidate = candidate
     const hold = inventoryDisappearanceHold(codexState().settings)
-    const accept = candidate.confirmations >= 2 && now - candidate.firstSeenAt >= hold
+    const elapsed = now - candidate.firstSeenAt
+    const accept = candidate.confirmations >= 2 && elapsed >= hold
+    const retryAfterMs = candidate.confirmations >= 2 && !accept
+      ? Math.max(1, hold - elapsed)
+      : 0
     if (accept) resetInventoryDisappearanceCandidate()
-    return { accept, firstObservation, missingCount: missingKeys.length }
+    return { accept, firstObservation, missingCount: missingKeys.length, retryAfterMs }
   }
 
   function isFeatureEnabled(): boolean {
@@ -384,7 +400,7 @@ export function createCodexController(options: CodexControllerOptions) {
       now,
       dynamicTaskWindowHours: codexState().settings.dynamicTaskWindowHours
     })
-    if (started && !disposed && shouldRun()) schedule()
+    if (started && !disposed && !actionPreflightInFlight && shouldRun()) schedule()
   }
 
   function clearTimer() {
@@ -424,6 +440,34 @@ export function createCodexController(options: CodexControllerOptions) {
     publishTaskStatePackage(next)
   }
 
+  function resetCodexTaskDerivedState() {
+    taskCycleKey = ''
+    lastThreads = []
+    lastProjects = []
+    lastThreadsPartial = false
+    lastTaskAuthority = 'inventory-only'
+    lastSourceCount = 0
+    lastSourceFingerprint = ''
+    lastCompleteness = undefined
+    lastRawSourceCount = 0
+    lastEligibleSourceCount = 0
+    lastExcludedSourceCount = 0
+    lastNonConversationCount = 0
+    lastActivityGeneration = 0
+    activityFailureCount = 0
+    activityDecisionDiagnostics = normalizeCodexActivityDecisionDiagnostics(null)
+    lastTaskReadAt = 0
+    resetInventoryDisappearanceCandidate()
+    resetConversationProjection(emptyConversationSnapshot())
+  }
+
+  function resetCodexDerivedRuntimeState() {
+    resetCodexTaskDerivedState()
+    lastQuotaReadAt = 0
+    modelCatalog = emptyCodexModelCatalog()
+    newThreadContextFingerprint = ''
+  }
+
   function applyActivityExitTransition(
     previous: CodexHostThread,
     candidate: CodexHostThread,
@@ -460,13 +504,30 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function scheduleStructuralRefresh(priority: StructuralRefreshPriority = 'normal') {
-    if (disposed || !shouldRun()) return
+    if (disposed || actionPreflightInFlight || !shouldRun()) return
     const promoted = priority === 'urgent' && structuralRefreshPriority !== 'urgent'
     structuralRefreshPending = true
     if (promoted) structuralRefreshPriority = 'urgent'
     lastTaskReadAt = 0
     if (promoted && structuralRefreshTimer) clearStructuralRefreshTimer()
     armStructuralRefresh()
+  }
+
+  function scheduleInventoryDisappearanceRecheck(delay: number) {
+    if (inventoryDisappearanceTimer) clearTimeout(inventoryDisappearanceTimer)
+    inventoryDisappearanceTimer = null
+    if (disposed || actionPreflightInFlight || !shouldRun() || !Number.isFinite(delay) || delay <= 0) return
+    inventoryDisappearanceTimer = setTimeout(() => {
+      inventoryDisappearanceTimer = null
+      if (disposed || !shouldRun() || !inventoryDisappearanceCandidate) return
+      lastTaskReadAt = 0
+      if (inFlight) {
+        structuralRefreshPending = true
+        structuralRefreshPriority = 'urgent'
+        return
+      }
+      void refresh({ forceTasks: true })
+    }, Math.max(1, Math.ceil(delay)))
   }
 
   function applyActivityDelta(delta: CodexActivityDelta) {
@@ -530,13 +591,14 @@ export function createCodexController(options: CodexControllerOptions) {
               ...thread,
               ...(liveEntry?.status ? { status: liveEntry.status } : {}),
               activeFlags,
+              planImplementationOnly: liveEntry?.planImplementationOnly === true,
               ...(liveEntry?.statusAuthority ? { statusAuthority: liveEntry.statusAuthority } : {}),
               ...(liveEntry?.activityEvidence ? { activityEvidence: liveEntry.activityEvidence } : {}),
               ...(Number.isInteger(liveEntry?.activityRevision) ? { activityRevision: liveEntry!.activityRevision } : {}),
               ...(typeof liveEntry?.hasUnreadTurn === 'boolean' ? { hasUnreadTurn: liveEntry.hasUnreadTurn } : {}),
               ...(liveEntry?.unreadAuthority ? { unreadAuthority: liveEntry.unreadAuthority } : {})
             }
-        : { ...thread, status: entry.status || thread.status, activeFlags, statusAuthority: 'connector' as const }) as CodexHostThread
+        : { ...thread, status: entry.status || thread.status, activeFlags, planImplementationOnly: false, statusAuthority: 'connector' as const }) as CodexHostThread
       if (delta.version === 2 && !readStateOnly && liveEntry?.status) {
         if (liveEntry.status === 'active' && Number.isFinite(liveEntry.desktopActiveSince) && liveEntry.desktopActiveSince! > 0) {
           next.desktopActiveSince = liveEntry.desktopActiveSince!
@@ -600,9 +662,10 @@ export function createCodexController(options: CodexControllerOptions) {
   async function pollActivity() {
     if (disposed || !shouldRun() || typeof options.platform.codex.readActivitySnapshot !== 'function') return
     if (activityInFlight) return activityInFlight
+    const runtimeToken = runtimeGeneration
     const operation = (async () => {
       const result = await options.platform.codex.readActivitySnapshot!()
-      if (disposed || !shouldRun()) return
+      if (disposed || !shouldRun() || runtimeToken !== runtimeGeneration) return
       if (result.ok) {
         activityFailureCount = 0
         applyActivityDelta(result.value)
@@ -610,8 +673,9 @@ export function createCodexController(options: CodexControllerOptions) {
         activityFailureCount += 1
       }
     })().finally(() => {
-      if (activityInFlight === operation) activityInFlight = null
-      scheduleActivity()
+      if (activityInFlight !== operation) return
+      activityInFlight = null
+      if (runtimeToken === runtimeGeneration) scheduleActivity()
     })
     activityInFlight = operation
     return activityInFlight
@@ -777,14 +841,21 @@ export function createCodexController(options: CodexControllerOptions) {
     return environmentInFlight
   }
 
-  async function refresh(input: { force?: boolean; forceTasks?: boolean } = {}) {
-    if (disposed || !shouldRun()) return
-    if (inFlight) return inFlight
+  async function refresh(input: { force?: boolean; forceTasks?: boolean; actionPreflight?: boolean } = {}) {
+    const actionPreflight = input.actionPreflight === true
+    const refreshAllowed = () => actionPreflight ? isFeatureEnabled() : shouldRun()
+    if (disposed || !refreshAllowed()) return
+    if (inFlight) {
+      await inFlight
+      if (actionPreflight && !disposed && refreshAllowed()) return refresh(input)
+      return
+    }
+    const runtimeToken = runtimeGeneration
     const now = Date.now()
     const settings = codexState().settings
-    const includeQuota = input.force === true || quota.updatedAt <= 0 || (Number.isFinite(quotaDelay(settings)) && now - lastQuotaReadAt >= quotaDelay(settings))
-    const includeThreads = settings.conversationInboxEnabled && (input.force === true || input.forceTasks === true || rawConversations.updatedAt <= 0 || (Number.isFinite(taskDelay(settings)) && now - lastTaskReadAt >= taskDelay(settings)))
-    const includeConfig = includeQuota
+    const includeQuota = !actionPreflight && (input.force === true || quota.updatedAt <= 0 || (Number.isFinite(quotaDelay(settings)) && now - lastQuotaReadAt >= quotaDelay(settings)))
+    const includeThreads = actionPreflight || settings.conversationInboxEnabled && (input.force === true || input.forceTasks === true || rawConversations.updatedAt <= 0 || (Number.isFinite(taskDelay(settings)) && now - lastTaskReadAt >= taskDelay(settings)))
+    const includeConfig = includeQuota && !actionPreflight
     if (!includeQuota && !includeThreads) {
       schedule()
       return
@@ -795,13 +866,14 @@ export function createCodexController(options: CodexControllerOptions) {
       structuralRefreshPriority = 'normal'
     }
     refreshing = true
+    if (actionPreflight) actionPreflightInFlight = true
     if (includeQuota && quota.updatedAt <= 0) quota = { ...quota, status: 'loading' }
     if (includeThreads && rawConversations.updatedAt <= 0) updateConversationStatus({ status: 'loading' })
     options.notify()
     const generation = ++refreshGeneration
     const operation = (async () => {
       await inspectEnvironment(input.force === true)
-      if (disposed || !shouldRun() || generation !== refreshGeneration) return
+      if (disposed || !refreshAllowed() || runtimeToken !== runtimeGeneration || generation !== refreshGeneration) return
       const [quotaResult, threadResult] = await Promise.all([
         includeQuota
           ? options.platform.codex.readSnapshot({ includeQuota: true, includeConfig: true, includeThreads: false })
@@ -810,7 +882,7 @@ export function createCodexController(options: CodexControllerOptions) {
           ? options.platform.codex.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
           : Promise.resolve(null)
       ])
-      if (disposed || !shouldRun() || generation !== refreshGeneration) return
+      if (disposed || !refreshAllowed() || runtimeToken !== runtimeGeneration || generation !== refreshGeneration) return
       const receivedAt = Math.max(quotaResult?.receivedAt || 0, threadResult?.receivedAt || 0, Date.now())
       const successful = [quotaResult, threadResult].filter((result) => result?.ok === true)
       const failures = [quotaResult, threadResult].filter((result) => result?.ok === false)
@@ -920,6 +992,8 @@ export function createCodexController(options: CodexControllerOptions) {
               if (disappearance.firstObservation) {
                 options.setMessage(`检测到 ${disappearance.missingCount} 项任务暂时缺失，已保留上一份稳定清单并自动复核`)
                 scheduleStructuralRefresh()
+              } else if (disappearance.retryAfterMs > 0) {
+                scheduleInventoryDisappearanceRecheck(disappearance.retryAfterMs)
               }
             } else {
               publishVerifiedThreadInventory(host, threads, exitTransitions, taskReceivedAt, {
@@ -952,14 +1026,15 @@ export function createCodexController(options: CodexControllerOptions) {
       if (firstFailure && !firstFailure.ok) options.setMessage(firstFailure.error.message)
       if (successful.length) persistSnapshots()
     })().finally(() => {
-      const retryInvalidatedRead = !disposed && shouldRun() && generation !== refreshGeneration
+      if (actionPreflight) actionPreflightInFlight = false
+      if (inFlight !== operation) return
       refreshing = false
-      if (inFlight === operation) inFlight = null
+      inFlight = null
       if (!disposed) options.notify()
-      if (retryInvalidatedRead) queueMicrotask(() => { void refresh({ force: true }) })
-      else if (structuralRefreshPending) armStructuralRefresh()
+      if (disposed || actionPreflight || !shouldRun() || runtimeToken !== runtimeGeneration) return
+      if (structuralRefreshPending) armStructuralRefresh()
       else schedule()
-      if (!retryInvalidatedRead) scheduleActivity(0)
+      scheduleActivity(0)
     })
     inFlight = operation
     return inFlight
@@ -967,28 +1042,46 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function syncActivation(force = false) {
     if (!started || disposed) return
-    if (!isFeatureEnabled()) {
+    const featureEnabled = isFeatureEnabled()
+    const running = shouldRun()
+    if (!featureEnabled) {
       environmentGeneration += 1
+      environmentInFlight = null
       if (environment.checking) {
         environment = { ...environment, checking: false }
         options.notify()
       }
     }
-    if (isFeatureEnabled() && environment.checkedAt <= 0) void inspectEnvironment()
-    if (!shouldRun()) {
+    if (featureEnabled && environment.checkedAt <= 0) void inspectEnvironment()
+    if (!running) {
+      runtimeActive = false
+      runtimeGeneration += 1
       refreshGeneration += 1
+      inFlight = null
+      activityInFlight = null
+      refreshing = false
       clearTimer()
       clearActivityTimer()
       resetStructuralRefresh()
-      resetInventoryDisappearanceCandidate()
-      resetConversationProjection(emptyConversationSnapshot())
+      resetCodexDerivedRuntimeState()
       options.platform.codex.close()
       return
     }
+    const resuming = !runtimeActive
+    if (resuming) {
+      runtimeActive = true
+      runtimeGeneration += 1
+      refreshGeneration += 1
+      inFlight = null
+      activityInFlight = null
+      resetStructuralRefresh()
+      resetCodexDerivedRuntimeState()
+    }
+    if (featureEnabled && resuming) void inspectEnvironment(true)
     if (taskState.compatibility === 'degraded') {
       options.setMessage(CODEX_TASK_STATE_DEGRADED_MESSAGE)
     }
-    if (force || (quota.updatedAt <= 0 && rawConversations.updatedAt <= 0)) void refresh({ force: true })
+    if (resuming || force || (quota.updatedAt <= 0 && rawConversations.updatedAt <= 0)) void refresh({ force: true })
     else {
       schedule()
       scheduleActivity(0)
@@ -1016,9 +1109,17 @@ export function createCodexController(options: CodexControllerOptions) {
       position: patch.position ? { ...current.position, ...patch.position } : current.position
     })
     codexState().settings = next
-    if (!next.conversationInboxEnabled) {
-      resetInventoryDisappearanceCandidate()
-      resetConversationProjection(emptyConversationSnapshot())
+    const inboxChanged = current.conversationInboxEnabled !== next.conversationInboxEnabled
+    if (inboxChanged) {
+      runtimeGeneration += 1
+      refreshGeneration += 1
+      inFlight = null
+      activityInFlight = null
+      refreshing = false
+      clearTimer()
+      clearActivityTimer()
+      resetStructuralRefresh()
+      resetCodexTaskDerivedState()
     } else if (current.timeWindowDays !== next.timeWindowDays && lastThreads.length) {
       publishConversationProjection({ receivedAt: Date.now(), advanceScan: false, status: rawConversations.status })
     } else if (current.dynamicTaskWindowHours !== next.dynamicTaskWindowHours) {
@@ -1026,8 +1127,8 @@ export function createCodexController(options: CodexControllerOptions) {
     }
     options.save()
     options.notify()
-    const needsFreshRead = current.conversationInboxEnabled !== next.conversationInboxEnabled ||
-      current.quotaRefreshMinutes !== next.quotaRefreshMinutes ||
+    const needsFreshRead = inboxChanged ||
+      current.quotaRefreshSeconds !== next.quotaRefreshSeconds ||
       current.taskRefreshSeconds !== next.taskRefreshSeconds
     syncActivation(needsFreshRead || (!current.floatEnabled && next.floatEnabled))
     return true
@@ -1228,13 +1329,28 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   async function openThread(key: string, actionAlias: string) {
-    const task = allTasks()
-      .find((item) => item.key === key && item.actionAlias === actionAlias)
+    if (!key || !actionAlias || disposed || !isFeatureEnabled()) return false
+    let task = allTasks().find((item) => item.key === key && item.actionAlias === actionAlias)
+    if (!task) {
+      await refresh({ actionPreflight: true })
+      if (disposed || !isFeatureEnabled()) return false
+      task = allTasks().find((item) => item.key === key && item.actionAlias)
+    }
     if (!task) {
       options.setMessage('线程动作已失效，请刷新后重试')
       return false
     }
-    const result = await options.platform.codex.openThread(actionAlias)
+    let result = await options.platform.codex.openThread(task.actionAlias!)
+    if (['expired-alias', 'invalid-alias', 'stale-alias'].includes(result.errorCode || '')) {
+      const previousAlias = task.actionAlias
+      await refresh({ actionPreflight: true })
+      if (disposed || !isFeatureEnabled()) return false
+      const refreshedTask = allTasks().find((item) => item.key === key && item.actionAlias)
+      if (refreshedTask?.actionAlias && refreshedTask.actionAlias !== previousAlias) {
+        task = refreshedTask
+        result = await options.platform.codex.openThread(refreshedTask.actionAlias)
+      }
+    }
     if (result.outcome === 'opened') {
       if (task.hiddenKind) {
         options.setMessage('已打开，任务仍在 Companion 已隐藏区')
@@ -1247,7 +1363,7 @@ export function createCodexController(options: CodexControllerOptions) {
     return result.outcome === 'dispatched'
   }
 
-  function openFirstInput() {
+  function openFirstInputFromCurrentInventory() {
     const task = taskState.conversations.inputRequired[0]
     if (!task?.actionAlias) {
       options.setMessage('当前没有待输入任务')
@@ -1257,7 +1373,7 @@ export function createCodexController(options: CodexControllerOptions) {
     return true
   }
 
-  function openFirstCompletedUnread() {
+  function openFirstCompletedUnreadFromCurrentInventory() {
     const task = displayOrderedTasks(allTasks().filter((item) => item.bucket === 'completed-unread'))[0]
     if (!task?.actionAlias) {
       options.setMessage('当前没有已完成未读任务')
@@ -1267,13 +1383,36 @@ export function createCodexController(options: CodexControllerOptions) {
     return true
   }
 
+  function runDirectTaskCommand(command: () => boolean) {
+    if (disposed || !isFeatureEnabled()) return false
+    if (lastThreads.length) return command()
+    // A uTools mainHide entry can reach Runtime immediately after start(),
+    // while syncActivation has intentionally cleared the previous lifecycle's
+    // inventory. Serialize those accepted commands behind one tasks-only read
+    // so a cold shortcut is not consumed against an empty projection.
+    directTaskCommandQueue = directTaskCommandQueue
+      .catch(() => undefined)
+      .then(async () => {
+        if (disposed || !isFeatureEnabled()) return
+        if (!lastThreads.length) await refresh({ actionPreflight: true })
+        if (disposed || !isFeatureEnabled()) return
+        command()
+      })
+    return true
+  }
+
+  function openFirstInput() {
+    return runDirectTaskCommand(openFirstInputFromCurrentInventory)
+  }
+
+  function openFirstCompletedUnread() {
+    return runDirectTaskCommand(openFirstCompletedUnreadFromCurrentInventory)
+  }
+
   function cycleTasks(): Array<CodexTaskCard & { actionAlias: string }> {
     const tasks = allTasks()
+    const inputRequiredTasks = displayOrderedTasks(taskState.conversations.inputRequired)
     const recentActiveTasks = taskState.dynamic.groups.active
-    const groups = [
-      displayOrderedTasks(taskState.conversations.inputRequired),
-      displayOrderedTasks(recentActiveTasks)
-    ]
     const usableTasks = (candidates: CodexTaskCard[]) => {
       const seen = new Set<string>()
       return candidates.filter((task): task is CodexTaskCard & { actionAlias: string } => {
@@ -1282,13 +1421,22 @@ export function createCodexController(options: CodexControllerOptions) {
         return true
       })
     }
-    const candidates = usableTasks(groups.flat())
-    return candidates.length
-      ? candidates
-      : usableTasks(displayOrderedTasks(tasks.filter((task) => task.pinSource === 'local' && task.bucket !== 'stopped')))
+    const tiers = [
+      [
+        ...inputRequiredTasks.filter((task) => task.planImplementationOnly !== true),
+        ...displayOrderedTasks(recentActiveTasks.filter((task) => task.activityState === 'waiting-approval'))
+      ],
+      inputRequiredTasks.filter((task) => task.planImplementationOnly === true),
+      displayOrderedTasks(recentActiveTasks.filter((task) => task.activityState !== 'waiting-approval'))
+    ]
+    for (const tier of tiers) {
+      const candidates = usableTasks(tier)
+      if (candidates.length) return candidates
+    }
+    return usableTasks(displayOrderedTasks(tasks.filter((task) => task.pinSource === 'local' && task.bucket !== 'stopped')))
   }
 
-  function cycleTask(direction: -1 | 1) {
+  function cycleTaskFromCurrentInventory(direction: -1 | 1) {
     const tasks = cycleTasks()
     if (!tasks.length) {
       options.setMessage('当前没有可切换的 Codex 任务')
@@ -1302,6 +1450,10 @@ export function createCodexController(options: CodexControllerOptions) {
     taskCycleKey = task.key
     void openThread(task.key, task.actionAlias)
     return true
+  }
+
+  function cycleTask(direction: -1 | 1) {
+    return runDirectTaskCommand(() => cycleTaskFromCurrentInventory(direction))
   }
 
   const environmentRememberedByProject: Record<string, string> = {}

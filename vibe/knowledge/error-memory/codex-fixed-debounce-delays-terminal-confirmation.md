@@ -4,7 +4,7 @@ status: candidate
 scope: project
 fingerprint: codex-live-status-lag__fixed-activity-debounce-and-full-inventory-scan-delayed-completion__push-immediate-ongoing-and-confirm-one-latest-turn
 first_seen: 2026-07-26
-last_verified: 2026-07-30
+last_verified: 2026-07-31
 review_after: 2026-08-26
 evidence:
   - preload/index.js
@@ -34,9 +34,11 @@ The Codex task surface could remain behind the native Desktop state by a visibly
 
 Every non-input activity change was treated as noise that should wait for a generic debounce, while a full inventory scan was treated as the normal way to discover the latest completed Turn. That coupled high-frequency status feedback to an expensive all-thread reconciliation and exposed provider anomalies as separate product states.
 
-## Candidate Root Cause
+## Verified Source Root Cause / Host Latency Pending
 
-The live channel knew exactly which task left active, but it did not carry a fresh latest-Turn result. The Controller therefore saw only an active-to-idle transition and waited for both a fixed debounce and a later full scan before it could receive authoritative completion evidence.
+The live channel knew exactly which task left active, but it did not always carry a fresh latest-Turn result. The Controller therefore saw only an active-to-idle transition and historically waited for both a fixed debounce and a later full scan before it could receive authoritative completion evidence.
+
+RAW-135 verified one remaining source-level delay after those holds were removed: an exact App Server `turn/completed` notification may contain only the thread identity. The generic fallback scheduled `verifyStaleActive`, but the same thread's existing exact-positive activity waterline correctly rejected stale-active verification. That left only `inventoryChanged=urgent`, so the 50ms Controller coalescer launched an all-thread inventory scan and real completion could still appear 1–2 seconds later. The corrected route gives this exact notification its own completion-event mode and never treats it as stale-active evidence. Real uTools latency after reload remains pending user acceptance, so the record stays `candidate` rather than claiming host verification.
 
 ## Evidence
 
@@ -44,6 +46,7 @@ The live channel knew exactly which task left active, but it did not carry a fre
 - The local persisted settings were 15 seconds for task reconciliation and 1500ms for completion presentation. The former is structurally expensive because a verified scan enumerates unarchived inventory and reads the latest Turn for every eligible thread.
 - [preload/index.js](../../../preload/index.js#L1) now reacts to a Desktop active exit with one cancellable, single-flight latest-Turn request bounded to three seconds. It emits only anonymous status/timestamps and asks for a full inventory refresh only when confirmation is exhausted.
 - [codexController.ts](../../../src/runtime/codexController.ts#L1) applies Activity Delta immediately and publishes any completion that passes the Turn revision/status gate without a second presentation hold.
+- A payload-less exact `turn/completed` now resolves the known main/Side Chat target, reads only that latest Turn immediately, and retries after 25/75/150/300/600/1000ms inside the existing three-second deadline. New positive activity cancels the reader; only exhaustion returns to urgent full inventory.
 - [codex.ts](../../../src/domain/codex.ts#L1) permits only explicit latest-Turn completed evidence to leave ongoing. Abnormal, missing and authority-loss states remain `ongoing/running/blocked-active`.
 - Focused contracts in [codexAppServerBridge.test.ts](../../../tests/platform/codexAppServerBridge.test.ts#L1) and [codexController.test.ts](../../../tests/runtime/codexController.test.ts#L1) cover the one-thread request, privacy projection, immediate delta application and absence of an extra two-second delay. They were updated but not executed under the project validation rule.
 
@@ -65,6 +68,7 @@ Do not reduce a verified all-thread inventory interval merely to improve one tas
 
 - Desktop push owns exact active/input/approval transitions.
 - Active exit starts a three-second bounded single-task latest-Turn confirmation with immediate, 300ms and 1000ms attempts.
+- A known exact completion event without a usable Turn payload uses the denser completion-only table: immediate, then 25/75/150/300/600/1000ms. It accepts only completed with valid `startedAt`, never failed/interrupted, and remains cancellable by a newer activity epoch.
 - Activity Delta V2 may include only sanitized latest-Turn status and timestamps; raw IDs and Turn content stay in preload. A prior completed revision must not satisfy a later active exit.
 - Controller applies deltas immediately; RAW-120 removes every completion presentation deadline.
 - Urgent structural events coalesce for 50ms; event scans reuse session-verified Turn cache for unchanged tasks and reread dirty/uncached tasks, while no-event periodic scans remain complete. A pending event after an in-flight scan is replayed once.
@@ -77,7 +81,7 @@ Do not reduce a verified all-thread inventory interval merely to improve one tas
 - Status: `candidate`; source and contracts are complete, but a real native active-to-completed transition has not been accepted.
 - Preconditions: a privacy-safe live event identifies one changed task and the provider exposes a bounded latest-Turn metadata read.
 - Ordered steps: publish ongoing while evidence is unresolved; start one cancellable targeted request; emit sanitized completed evidence on success; request full reconciliation on exhaustion; apply one shared projection immediately without a presentation hold.
-- Verification: one active exit causes one target Turn read in the success case; no raw identity/content crosses the bridge; completion does not wait for the 15-second scan or an extra two-second debounce; failure/interruption/disconnect remains ongoing and archive-disabled.
+- Verification: one active exit causes one target Turn read in the success case; a payload-less exact completion succeeds with one targeted read or, when the first result is still inProgress, retries at 25ms without a full inventory read; no raw identity/content crosses the bridge; completion does not wait for the configured structural scan or an extra display debounce; failure/interruption/disconnect remains ongoing and archive-disabled.
 - Fallback: when a targeted method is unavailable or repeatedly fails, retain ongoing and schedule the existing verified inventory scan. Never infer completion from idle, notLoaded, elapsed time or retry count.
 
 ## Occurrence History
@@ -88,3 +92,4 @@ Do not reduce a verified all-thread inventory interval merely to improve one tas
 | 2026-07-27 | RAW-092 positive-signal fast path | New tasks, waiting-input and completion still felt late while count/status jitter had to remain filtered | One structural delay/scan path for both positive additions and negative uncertainty; in-flight events could wait for later scheduling; targeted completion still used the ordinary hold | 50ms urgent coalescing, dirty-task cached event scan, in-flight replay, pending Desktop shadow and targeted completion direct publish | candidate; source/contracts synchronized, real transition latency acceptance pending |
 | 2026-07-30 | RAW-120 evidence-only completion | Exact task state made the remaining ordinary completion hold and cross-clock filters redundant | Treated proven completion as presentation noise after its revision/status had already been accepted | Remove the hold and cross-clock ordering; retain only bounded evidence reconciliation and inventory protection | focused bridge/Controller/Domain/UI/type verification passed; real uTools acceptance pending |
 | 2026-07-30 | RAW-121 terminal epoch closure | An accepted completion could later return to ongoing after a full snapshot | Kept the active-exit baseline after terminal acceptance, so the next identical inventory row reused a guard that belonged to the closed epoch | Clear the baseline when terminal evidence survives the guard; add targeted-completed → identical-full-snapshot regression coverage | automated status chain passed; real uTools acceptance pending |
+| 2026-07-31 | RAW-135 payload-less exact completion | User observed completed synchronization still lagging 1–2 seconds after presentation holds were removed | Routed an exact completed notification without Turn data through stale-active verification; the exact-positive waterline rejected it, forcing urgent all-thread inventory | Add a completion-event single-flight with immediate + 25/75/150/300/600/1000ms entity reads, positive-epoch cancellation and full-scan fallback only on exhaustion | Four related files `165/165`, typecheck, production build and uTools runtime validation passed; real uTools latency acceptance pending |

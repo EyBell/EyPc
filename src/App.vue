@@ -367,11 +367,11 @@ function applyPluginRoute(payload: { code?: string } | null) {
   initialMaintenanceSection.value = route.settingsMaintenanceSection || null
   if (typeof route.favoriteQuick === 'boolean') runtime.setFavoriteQuickMode(route.favoriteQuick)
   else if (!restoreEntry) runtime.setFavoriteQuickMode(false)
-  if (!route.hideAfterAction) runtime.setTab(route.tab)
+  if (!route.hideAfterAction && !route.preserveCurrentTab) runtime.setTab(route.tab)
   if (route.actionId) {
     runtime.dispatch(route.actionId, { source: 'utools-feature', ...(route.actionArgs || {}) })
-    if (route.hideAfterAction && !isWindowSlot) requestAnimationFrame(() => { void platform.app.hide() })
-    else if (payload?.code === 'eypc-codex-toggle') requestAnimationFrame(() => { platform.app.show?.() })
+    if (route.hideAfterAction && route.visibilityOwner !== 'mainHide' && !isWindowSlot) requestAnimationFrame(() => { void platform.app.hide() })
+    else if (payload?.code === 'eypc-codex-toggle' && route.visibilityOwner !== 'mainHide') requestAnimationFrame(() => { platform.app.show?.() })
   }
   if (route.focusSearch) {
     runtime.dispatch(route.tab === 'favorites' ? 'favorites.search.focus' : route.tab === 'mqtt' ? 'mqtt.search.focus' : route.tab === 'windows' ? 'windows.search.focus' : 'search.focus')

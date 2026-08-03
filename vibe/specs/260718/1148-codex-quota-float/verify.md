@@ -1,18 +1,18 @@
 # Codex 任务状态验证记录
 
 Tool: codex
-Date: 2026-07-31
+Date: 2026-08-03
 
 ## Review Target
 
-- Requirement: [RAW-116–134](raw-requirement.md#L1)
+- Requirement: [RAW-116–139](raw-requirement.md#L1)
 - Plan: [plan.md](plan.md#L1)
-- Implementation: preload 直接证据/原生 unread/Activity generation 与 mode-aware latest-Turn 复核、Controller 单一 active-exit 转换器和行级库存隔离、Domain 明确停止与原生 unread 投影；quota-auto 普通窗口仲裁、直接外观持久化和结构边界静态回归同步收口。
+- Implementation: preload 直接证据/原生 unread/Activity generation 与 mode-aware latest-Turn 复核、无 Turn 载荷 completed 专属快路、精确 Plan-only 隐私标记、已知 Side Chat 会话期拓扑重订，Controller 单一 active-exit 转换器、停用代次重建、行级库存隔离/零周期自闭合、冷任务动作 tasks-only preflight、同 key alias 重建与普通等待→Plan→近期 active 独占循环；Feature route 由 `mainHide` 独占 Codex 全局入口可见性；Domain 明确停止/原生 unread/Plan 卡片投影；额度/完整校对自由秒数、quota-auto 普通窗口仲裁、直接外观持久化和结构边界静态回归同步收口。
 - Sidecar: 主线程。
 
 ## Checked
 
-下表中 Bridge/Controller/状态链/类型/构建/整仓通过数均为 RAW-129 历史基线；RAW-130–134 只以各自增量行记录当前证据，不得把历史通过数解释为本轮执行结果。
+下表先保留 RAW-129 历史基线和 RAW-130–134 当时的增量记录；2026-07-31 最新执行结果以紧随其后的“自动化收口”行及文末结论为准，它们覆盖早先的“未执行”状态。
 
 | 验证 | 结果 |
 | --- | --- |
@@ -36,6 +36,36 @@ Date: 2026-07-31
 | RAW-134 可配置动态窗口 | `dynamicTaskWindowHours` 默认 24、1–8760 规范化、Domain 可配置分组/边界、Controller 设置即时重投影和任务页输入已写；帮助、PRD、架构与任务文档已同步 |
 | RAW-134 合同状态 | 复用现有 Domain/Controller/UI 测试文件补默认/边界、12/36 小时筛选、24→48→24 即时重投影及配置源码合同；依项目规则未执行测试、typecheck、build、截图或真实宿主 |
 | RAW-134 静态收口 | `git diff --check` pass；`dynamicTaskWindowHours` 的类型/默认/规范化、Domain 消费、Controller 发布/设置重投影和 UI 读写入口均有唯一直接命中；changed Markdown `audit_code_links.py` 返回 `Code link audit: OK` |
+| RAW-135 秒级刷新配置 | `quotaRefreshSeconds` 默认 300、旧 `quotaRefreshMinutes × 60` 迁移、额度/完整校对均规范化到整数 `0–86400`；运行/任务页改为数字秒输入，0 明示仅手动；Controller 2 秒额度与 3 秒库存两条调度互不等待 |
+| RAW-135 完成事件快路 | 已知 main/Side Chat 的无 Turn 载荷 `turn/completed` 不再走 stale-active → full inventory；改为 completion-event 单飞，立即 + `25/75/150/300/600/1000ms` 读取，更新 positive epoch 取消，非 completed/失败/耗尽才 urgent 回退 |
+| RAW-135 相关回归 | Bridge 全文件 `58 / 58`、Domain/Controller/UI `107 / 107`，四文件组合 `165 / 165` pass。新 Bridge 合同证明首次最新 Turn 仍 inProgress 时，25ms 第二读确认 completed，期间 `thread/list` 零新增 |
+| RAW-135 自动门禁 | 双 preload 已由 `pnpm run sync:preloads` 同步且全文件一致，canonical/public `node --check` pass；`pnpm run typecheck` pass；`pnpm run build` pass，含再次 typecheck、production Vite build、uTools runtime preparation 与 `validate:utools`。真实 uTools 中完成事件体感时延仍未执行 |
+| RAW-135 文档门禁 | raw/Spec/Plan/Tasks/Verify/Handoff、帮助、PRD、项目状态、架构、技术细节与错误记忆已同步；changed Markdown `audit_code_links.py` 返回 `Code link audit: OK` |
+| RAW-136 相关回归 | Bridge/Domain/Controller/平台四文件 `151 / 151` pass；覆盖 Plan-only 精确标记/清除/隐私、父分支混合等待、Domain 卡片、read-state-only 保留和普通等待→Plan→recent active 独占循环 |
+| RAW-136 自动门禁 | `pnpm run verify` 同步 canonical/public preload 后通过完整 Vitest `697 / 697`（`57 / 57` 文件）、`vue-tsc --noEmit`、production Vite build、uTools runtime preparation 与 `validate:utools`；真实快捷键顺序仍为 host-pending |
+| RAW-136 文档门禁 | raw/Spec/Plan/Tasks/Verify/Handoff、帮助、PRD、项目状态、架构、技术细节与 Developer Soul 已同步；changed Markdown `audit_code_links.py` 返回 `Code link audit: OK` |
+| RAW-137 聚焦状态链 | Bridge `62 / 62`、Controller `44 / 44`，合计 `106 / 106` pass；覆盖 snapshot true + persisted false、反向 true、精确事件覆盖、原生不可用回退既有合同、main/Side 聚合、IPC refollow 的 active/completed/input/approval/Plan、新 Turn、桥关闭重开与 App Server-only 库存重建下的已知/未知 Side Chat、feature/inbox 旧异步隔离、关闭期间库存增删/项目离库/保留任务归属与原生置顶变化，以及 `taskRefreshSeconds=0` 缺行闭合 |
+| RAW-137 完整仓库 | 最终 `pnpm run verify` 成功：同步 canonical/public preload，完整 Vitest `704 / 704`（`57 / 57` 文件），随后 `vue-tsc --noEmit`、production Vite build、uTools runtime preparation 与 `validate:utools` 全部通过。首次尝试因外层 120 秒上限在 Vitest 期间被终止、无断言失败；补充 inbox 合同后的下一次尝试先通过 `704/704`，再由 typecheck 捕获测试误向零参数公开 `refresh()` 传参，修正后聚焦测试/typecheck 与最终统一门禁均通过 |
+| RAW-137 构建与宿主包 | `pnpm run typecheck` pass；`pnpm run build` pass，含再次 typecheck、production Vite build、uTools runtime preparation 与 `validate:utools`；`pnpm run sync:preloads` 后 canonical/public 三类 preload 镜像一致 |
+| RAW-137 文档与真实宿主 | raw/Spec/Plan/Tasks/Verify/Handoff、项目状态、架构、既有 unread 与会话状态机错误记忆已同步；真实 uTools/Codex 关闭—读取/完成/等待/归档/删除/项目变化—重开矩阵未执行，保持 host-pending |
+| RAW-138 当前宿主只读证据 | 当前 uTools 运行包含 RAW-137 标记且 canonical/public/dist 资产一致；当前 IPC owner 的 Codex 扩展为 revisioned stream/read v11/v2，字段含本地 host。宿主日志中的精确 read-state 广播早于最新插件进程启动，而之后的原生 unread 集合仍保留旧 true；结合用户提供的 Codex 已读界面，确认缺口为“断开期 event 不重放 + persisted true 反压 refollow false”，不是旧包或当前协议不匹配。未记录 raw ID、标题、路径或内容 |
+| RAW-138 Bridge/Controller 聚焦回归 | Bridge `67 / 67`、Controller `49 / 49`，组合 `116 / 116` pass；新增覆盖 refollow snapshot false + persisted true、snapshot true + persisted false 保持、v1/v2 exact event、v6/v11 stream、main/Side 聚合、成功打开/打开失败、Desktop IPC 不可用时的 open 确认及新 completion 清理旧 false |
+| RAW-138 完整仓库 | `pnpm run verify` 成功：同步 canonical/public preload，完整 Vitest `722 / 722`（`57 / 57` 文件），随后 `vue-tsc --noEmit`、production Vite build、uTools runtime preparation 与 `validate:utools` 全部通过；耗时 131.6 秒，无断言/类型/构建失败，仅保留 Node SQLite experimental warning |
+| RAW-138 镜像与宿主门禁 | canonical/public preload SHA-256 一致且 `node --check` 通过，正式构建已生成 dist 并由 uTools runtime validation 接纳；没有安装/重载新包、点击真实任务或写 Codex 原生状态，因此新代码的真实卡片打开与关闭期已读恢复仍为 host-pending |
+| RAW-139 真实宿主版本与点击证据 | 当前机器缓存多个 EyPc ASAR；悬浮窗初始实际 URL 对应 1.2.6，激活插件后切到 1.2.33，后者的 main/public/dist preload 哈希与源码一致并含 RAW-138 open acknowledgement。正确实例点击第一条完成未读卡片后，Codex 日志确认打开预期 task route，插件计数 2→1；Codex 原生 unread 集合仍为 true，符合“不写原生状态”的显式边界。证据只记录版本/哈希/计数与路由结论，不写 task ID、标题、路径或内容 |
+| RAW-139 聚焦回归 | `tests/integration/appPluginEnter.test.ts`、`featureRouting.test.ts`、`tests/runtime/codexController.test.ts`、`tests/platform/codexAppServerBridge.test.ts`、`codexActionRuntime.test.ts` 合计 `141 / 141` pass；覆盖 mainHide 无二次 hide/show、当前 Tab 保留、冷库存 completed-unread/input/前后任务 preflight、同 key alias 恢复、过期 alias 一次刷新重试，以及成功打开已读/插件隐藏生命周期合同 |
+| RAW-139 TypeScript | `pnpm run typecheck` pass |
+| RAW-139 完整仓库 | `pnpm run verify` 成功：同步 canonical/public 三类 preload，完整 Vitest `730 / 730`（`57 / 57` 文件），随后 `vue-tsc --noEmit`、production Vite build、runtime preparation 与 `validate:utools` 全部通过；耗时 136.1 秒，仅有 Node SQLite experimental warning |
+| RAW-139 静态收口 | `git diff --check` pass；main/float/action 的 canonical/public/dist preload 各组三份 SHA-256 一致，三份 canonical `node --check` pass；项目本轮更新 Markdown 与 CodeNote 四份 uTools 权威/错误记忆文档分别执行 `audit_code_links.py`，均返回 `Code link audit: OK` |
+| RAW-139 宿主门禁 | 源码修复后的包尚未安装/重载；真实全局快捷键冷启动、跨显隐旧卡片 alias 重建和中断期 App 已读恢复保持 host-pending。当前真实点击仅接纳 RAW-138 在正确 1.2.33 preload 中的行为，不冒充 RAW-139 新 route/preflight 验收 |
+| RAW-140 失败复现 | 新增快捷键成功打开后的 IPC reset/refollow 时序断言；修复前稳定收到 `desktop-live=false → desktop-persisted=true`，直接证明确认被 Bridge reset 清除，而非 Renderer 延迟或点击失败 |
+| RAW-140 生命周期修复 | 成功打开确认提升为 preload 进程内最多 1000 条 completion-epoch 提示；普通 mainHide close/rebuild、IPC reset、resubscribe 与 refollow 保留，同 completion 晚到证据不反压；精确 active/started、库存新 Turn、更新 completion revision 和明确移除清理 |
+| RAW-140 聚焦回归 | `codexAppServerBridge.test.ts` 全文件 `70/70`；App route/Controller/Bridge/Action 五文件 `144/144`；覆盖断桥前不可用、IPC reset、mainHide 关闭并重建、同 completion 晚到证据与新 Turn 释放 |
+| RAW-140 TypeScript | `pnpm run typecheck` pass；仅有 Node SQLite experimental warning |
+| RAW-140 完整仓库 | 最终 `pnpm run verify` pass：同步 canonical/public/dist preload，完整 Vitest `733/733`（`57/57` 文件），随后 `vue-tsc --noEmit`、production Vite build、runtime preparation 与 `validate:utools` 全部通过；耗时 134.5 秒，仅有 Node SQLite experimental warning |
+| RAW-140 静态收口 | main preload canonical/public/dist SHA-256 均为 `332d0845327b616e10b22ba3fb1796f55feb665c47e67782eab4b3612642d0c2`；float/action 三份镜像也各自一致，三份 canonical `node --check` pass。项目本轮 changed Markdown 与 CodeNote `mainHide/onPluginOut` 两份权威/错误记忆显式链接审计均为 `Code link audit: OK`；两个仓库 `git diff --check` pass |
+| RAW-140 提交边界 | 从 Git index 写出独立 detached 临时 worktree，排除未暂存的 Action Runner / Window Jump 改动后，Codex 相关 7 文件 `212/212` pass 且 `vue-tsc --noEmit` pass；暂存的 main/public preload SHA-256 同为 `42fce409f21b519ecd3854774e91acd7ee14fe69318f179b5db159d409a5b3a1` |
+| RAW-140 宿主门禁 | 新构建尚未安装/重载；真实完成未读全局快捷键成功打开后跨 mainHide/轮询持续已读、随后新 Turn 再次未读仍为 host-pending |
 | 2026-07-31 TypeScript 门禁 | 用户执行 `vue-tsc --noEmit` 暴露反向 generation 屏障夹具的异步 release 回调被收窄为 `never`；改为可调用门闩加独立 pending 信号后，`pnpm run typecheck` 通过。未执行 Vitest、build、preload 语法或真实宿主 |
 | RAW-133 静态收口 | `git diff --check` pass；canonical/public preload 全文件精确一致；诊断 key/counter normalizer 在 `src/` 各只有一个定义；CodexPage 无 `span role=button`/手写 tabindex 提示；changed Markdown `audit_code_links.py` pass |
 | 设计偏好收口 | `DesignTaskCloseout` 生成 `eligible-for-root-review` 的 W29 canary candidate；`writes_performed=false`，未写偏好缓存、传播状态或 Hook |
@@ -50,7 +80,7 @@ Date: 2026-07-31
 4. missing-row、source fingerprint 和 Activity generation 的 Preload/Controller 边界必须对称；保留旧卡片时也必须保留其可接收正向事件的会话映射。
 5. 主任务与 Side Chat 使用同一因果规则；卡片、分组、三个角标和归档能力消费同一稳定结果。
 
-### 修复记录（实现与合同未执行）
+### 修复记录（实现与合同已自动化验证）
 
 | 级别 | 结论 | 原缺口与影响 | RAW-131 实现 | 合同 |
 | --- | --- | --- | --- | --- |
@@ -72,7 +102,7 @@ Date: 2026-07-31
 | 终态 | completed、interrupted、failed 的若干单例 | conflicting interrupted/failed 不得合成 idle；same-revision stale terminal after exact active |
 | 最终消费 | 部分 Bridge/Controller/Domain 单层断言 | 同一序列的 authority、bucket、compact count、archive capability 端到端断言 |
 
-实现结论：此前通过数量是示例合同的通过，不是状态空间闭合证明；RAW-131 已改写 synthetic idle 和 stopped archive 的错误期望，并为其它五类缺口补入合同。合同尚未执行，因此当前结论是 `implemented-unverified`，不是 accepted。
+实现结论：此前通过数量是示例合同的通过，不是状态空间闭合证明；RAW-131 已改写 synthetic idle 和 stopped archive 的错误期望，并为其它五类缺口补入合同。当前合同已随完整仓库 `697 / 697` 自动化验证通过；真实宿主仍未 accepted。
 
 ## RAW-132 回归安全复核
 
@@ -85,7 +115,7 @@ Date: 2026-07-31
 5. 同源 generation 继续同时保护 task fields、Desktop bridge state 与新增诊断计数；低代次 delta 和低代次/无代次 V2 full snapshot 均不得回退。
 6. stopped 继续是 `blocked-stopped`，Domain、Controller、Host 和 UI 均不恢复归档能力。
 
-### 新增优化合同（未执行）
+### 新增优化合同（已自动化验证）
 
 | 关注点 | 实现 | 反向失败条件 |
 | --- | --- | --- |
@@ -94,7 +124,7 @@ Date: 2026-07-31
 | 匿名诊断 | 仅输出五个非负累计计数，Controller 在 generation 门禁后接纳，设置页只显示计数 | 出现 task key/raw ID/content，或 generation 5 覆盖 generation 6 即失败 |
 | Domain 模型 | exact active/waiting/uncertain/completed/stopped 的表驱动反向组合 | 任一旧状态优先级或 archive capability 返回历史错误即失败 |
 
-静态实现已写；依项目验证规则，本轮没有执行上述合同。当前只能确认“未发现代码形状上放宽旧门禁”，不能声称运行时 accepted。
+静态实现及上述反向合同均已执行通过；这证明自动化运行语义未放宽旧门禁，但不替代真实宿主 accepted。
 
 ## RAW-133 统一与效率复核
 
@@ -106,7 +136,7 @@ Date: 2026-07-31
 | 常驻信息密度 | 页面只显示“保护合计 · 周期”，五项明细留在原生帮助按钮 | 永久长串占宽、明细含身份/content、帮助只支持鼠标 |
 | 辅助技术 | `aria-live` 只包围连接诊断标题；内部累计值不在 live region；所有 `.codex-tip` 均为原生按钮 | 每次计数增长都被播报，或保留 `span role=button/tabindex` 分支 |
 
-本轮静态复核不发现第二套诊断规范、第二套父聚合算法或旧伪按钮分支。运行合同仍未执行，因此结论保持 `implemented-unverified`。
+本轮复核不发现第二套诊断规范、第二套父聚合算法或旧伪按钮分支，相关运行合同已通过；结论更新为 `automated-verified / host-pending`。
 
 ## 2026-07-30 分批提交前复核
 
@@ -114,11 +144,23 @@ Date: 2026-07-31
 - 原始需求：逐项回看 RAW-131 的七个状态缺口、RAW-132 的父任务聚合/Side Chat/匿名诊断、RAW-133 的 Domain 单一 schema/原子通知/紧凑可访问呈现；对应生产入口和未执行合同均有直接映射，未发现遗漏或扩成任务身份/内容采集。
 - 实现合理性：父聚合与诊断规范化各只有一个生产算法，Preload/Controller 两侧都以同源 generation 做顺序屏障，stopped 归档在 Domain、Controller、Host 与 Float 四层一致阻断。提交前静态审阅未发现新的 P0/P1；运行行为仍受下方用户验收门禁约束。
 
+## RAW-136 快捷键优先级复核
+
+| 关注点 | 自动合同 | 反向失败条件 |
+| --- | --- | --- |
+| Plan 分类与隐私 | 精确 `item/plan/requestImplementation` 只发布 `planImplementationOnly=true`；普通输入/审批混合使父任务为 false | Delta/快照含方法、正文、raw identity，或混合等待仍被当作 Plan |
+| 生命周期 | 普通 Activity Delta 显式 false 清除 Plan；`readStateOnly` 在 Controller 保留当前值 | 请求已解决仍残留 Plan，或未读变化误清 Plan |
+| 独占优先级 | 普通待输入/近期待审批存在时只在普通层回绕；清空后只在两个 Plan 间回绕；Plan 完成后才进入 recent active | 同一轮跨层、Plan 抢占普通输入、Plan 未清空就进入 active |
+| 方向与回绕 | 游标不属于新层时 next 从首项、previous 从末项；层内每次前进/后退并首尾回绕 | 解决上一层后跳过首项、触发一次不前进或循环越层 |
+| 兼容与回退 | `task-state-v4` 端到端一致；v3/缺失标记保守归普通等待；三层空后沿用非停止 EyPc 本地置顶 | 旧 preload 清空任务、未知等待进入 Plan、改变 native pin/stopped 资格 |
+
+执行证据：Bridge/Domain/Controller/平台四文件 `151 / 151`；`pnpm run typecheck`；production `pnpm run build`（包含再次 typecheck、Vite、runtime preparation、`validate:utools`）；canonical/public preload 镜像一致。真实 uTools 快捷键顺序未执行，保持 `host-pending`。
+
 ## Full Matrix Findings
 
-- RAW-129 历史基线中的状态主矩阵为 `168 / 168`；RAW-128 当时覆盖 10 类跨层可复现阻断。RAW-131–133 修改后的当前矩阵尚未执行。
-- 同一历史基线中，仓库内 9 个 Codex 命名测试文件为 `189 / 189`；这些数字不作为当前父聚合、诊断通知或辅助技术合同的通过证据。
-- 完整仓库 `633 / 633` 同样只属于 RAW-129 历史基线；RAW-131–133 之后没有新的整仓执行结果。
+- RAW-129 历史基线中的状态主矩阵为 `168 / 168`；RAW-128 当时覆盖 10 类跨层可复现阻断。RAW-131–136 修改后的合同已在 2026-07-31 最新完整仓库执行中通过。
+- 同一历史基线中，仓库内 9 个 Codex 命名测试文件为 `189 / 189`；最新聚焦四文件回归为 `151 / 151`。
+- 最新完整仓库结果为 `697 / 697`、`57 / 57` 文件；它取代 `688 / 688` 作为当前自动化基线。
 
 ## Findings
 
@@ -144,7 +186,7 @@ Date: 2026-07-31
 - P1: 已修复——active 退出可把相同旧 inventory completed 无条件标成 targeted completion；现只接受缓存相对 baseline 前进或已有 confirmed provenance。
 - P1: 已修复——冷启动原生 unread 已为 true 时，库存投影也已为 true，旧“值变化”判断漏掉首次 Turn 复核；现用会话期原生观测水位只唤醒首个 true，后续轮询不重启。
 - P1: 已修复——confirmed terminal 由 delta 调用方额外传入，full snapshot 同 revision 佐证仍会被纯转换器压回 inProgress；现转换器直接读取 candidate provenance，两条入口零差异。
-- P1: 已实现、未执行——较早的 Desktop idle `activity-event` 可在较新的 App Server active 后因 read-state/inventory 重放再次撤销 `app-server-live`；现两种真实事件共享进程内单调 sequence，只有严格后到的 Desktop 非 active 才能撤销，并在 full inventory 中保留私有水位。
+- P1: 已修复并验证——较早的 Desktop idle `activity-event` 可在较新的 App Server active 后因 read-state/inventory 重放再次撤销 `app-server-live`；现两种真实事件共享进程内单调 sequence，只有严格后到的 Desktop 非 active 才能撤销，并在 full inventory 中保留私有水位。
 - P1: 已修复——`codexNewThread` 只检查周额度归零且优先展示周读数，违反“任一已返回普通窗口为 0 即切 Spark”和普通 5 小时优先合同。
 - P2: 已修复——3 条历史外观测试、3 个 Runtime 配色 Action 与 Controller 暂态覆盖仍携带 RAW-071 已废止的本地颜色/对比度/配对预览门禁。
 - P2: 已修复——MQTT media 正则对等价 CSS 换行敏感，Quick Jump 否定正则跨越函数边界命中后续合法 `app.hide`；两者均改为结构边界断言。
@@ -152,7 +194,7 @@ Date: 2026-07-31
 
 ## Not Checked
 
-- 2026-07-31 的 `pnpm run typecheck` 已通过；RAW-131–133 新增/改写 Vitest 合同、`pnpm run build`、preload `node --check` 与真实宿主加载仍未执行。历史通过数与本次类型门禁都不能替代状态转换运行验收。
+- 2026-08-01 的完整 Vitest、`pnpm run typecheck`、`pnpm run build`、preload 镜像/VM 合同和 uTools runtime validation 已通过；真实宿主加载与中断状态转换仍未执行。自动化通过不能替代真实宿主验收。
 - 未操作真实 Codex 任务、未归档/移除项目、未启停进程。
 - 真实 uTools 宿主需正常重载后验收中断恢复 completed-unread、普通完成、任务切换和角标同步。
 

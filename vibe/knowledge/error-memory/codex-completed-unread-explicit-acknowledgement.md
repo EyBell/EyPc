@@ -2,15 +2,21 @@
 id: eypc-codex-completed-unread-explicit-acknowledgement
 status: superseded
 scope: project
-fingerprint: codex-completed-unread-badge-or-global-command-opened-without-the-user-required-local-revision-acknowledgement__shared-command-must-acknowledge-only-the-selected-completion-revision-in-eypc__keep-waiting-input-and-generic-open-open-only__eypc-codex-companion
+fingerprint: codex-task-open-read-acknowledgement__persistent-completion-receipt-conflicts-with-native-unread-but-open-only-misses-plugin-navigation__shared-host-open-success-creates-session-false__failure-or-unconfirmed-dispatch-does-not
 first_seen: 2026-07-24
-last_verified: 2026-07-30
+last_verified: 2026-08-03
 review_after: 2026-10-24
 evidence:
   - user-correction
   - static-source-review
   - controlled-requirement-raw-082
   - controlled-requirement-raw-128
+  - controlled-requirement-raw-138
+  - successful-host-open-session-read-regression
+  - failed-and-unconfirmed-open-no-ack-regression
+  - real-utools-correct-preload-open-ack
+  - cold-task-action-preflight-regression
+  - mainhide-bridge-rebuild-read-ack-regression
 tags:
   - codex-companion
   - completed-unread
@@ -19,48 +25,49 @@ tags:
   - interaction-command
 ---
 
-# Explicit Completed-Unread Acknowledgement (Superseded)
+# Persistent Completed-Unread Acknowledgement (Superseded)
 
 ## Current Resolution
 
-RAW-128 supersedes this local-acknowledgement design. Codex Desktop live/persisted read-state is now the sole unread authority. The completed-unread compact/global command resolves the same first counted task and only opens it; EyPc no longer writes a completion-revision acknowledgement or uses one to suppress native unread. The historical sections below are retained only to explain the retired route.
+RAW-128 permanently supersedes the persisted completion-revision receipt described in the historical sections below. RAW-138 adds a narrower replacement: every plugin task-open entry uses one Host Deep-Link path, and only a confirmed successful open publishes a session-only exact read false for the parent and known Side Chats. RAW-139 protects access to that path across uTools lifecycle boundaries: `mainHide` owns visibility, cold shortcuts wait for tasks-only inventory, and stale card aliases rebuild only from the same anonymous task key. RAW-140 corrects the remaining lifetime error: the acknowledgement belongs to the current preload process and completion epoch, not to one replaceable Desktop Bridge instance, so ordinary mainHide/pluginOut connection close, IPC reset, resubscribe and refollow preserve it. Failed navigation and unconfirmed dispatch do nothing. EyPc still writes neither Codex native unread nor a persistent acknowledgement, and a new Turn/completion or explicit removal clears the older session false.
 
 ## Symptom
 
-The completed-unread compact counter could open the first task without changing its EyPc status, while the required user command should immediately show that exact completed revision as read. Reusing the same behavior for waiting-input would risk marking a task handled before input actually occurs.
+The completed-unread compact counter could open the first task without changing its EyPc status. After the persistent receipt was removed, the same gap affected generic cards and task shortcuts whenever Codex did not deliver a read event back to the connected plugin.
 
 ## Wrong Assumption
 
-All first-task entry points can share a generic open-only action, or every task open can be treated as acknowledgement.
+Either every open must remain navigation-only until a provider event arrives, or every attempted open may be treated as acknowledgement.
 
 ## Root Cause
 
-The product has two intentionally different user commands: waiting-input means navigation only, whereas the explicit completed-unread counter/global command means navigation plus a local user acknowledgement. Neither command authorizes a write to Codex Desktop's native unread state. The acknowledgement must therefore be scoped to the selected task's current completion revision in EyPc storage so a newer completion can become unread again.
+The original design incorrectly solved immediate UI feedback with a persisted completion-revision receipt, which could later mask Codex-native unread true. Removing that receipt fixed authority conflicts but left a missing fact: EyPc itself knows when its Host successfully opens a task, while App Server does not replay read state and the exact Desktop read event may occur outside the plugin connection window. RAW-138 then stored the replacement inside `CodexDesktopCompanionBridge.liveUnread`; ordinary `onPluginOut(false)` and IPC reset correctly destroyed that transport object, but accidentally destroyed the user-confirmed product fact too. The safe acknowledgement is success-gated and preload-session-only, shared by all task-open routes and independent of an individual Bridge connection.
 
 ## Correct Detection Order
 
-1. Resolve candidates from the same complete final projection used by the displayed count, including hidden rows.
-2. Apply the established pinned-first, stable display ordering and select only the first candidate.
-3. If the command is waiting-input or generic task open, open without changing receipt state.
-4. If the command is explicit completed-unread activation, record only the selected task's exact current completion revision in the local receipt, republish the shared projection, then open the task.
-5. Confirm that no provider, Desktop IPC or global Codex state write is involved; a later completion revision must no longer match the local acknowledgement.
+1. Resolve the task using the existing card/counter/shortcut candidate rules. If lifecycle cleanup left the inventory empty, first perform one serialized tasks-only preflight; if a card alias is stale, rebuild it only from the same anonymous task key.
+2. Wait for the Electron Deep-Link operation to resolve successfully; if Side Chat direct-open fails but parent fallback succeeds, acknowledge the parent fallback only.
+3. On confirmed success, publish read false for the parent, actual target and known Side Chat relations through the anonymous `readStateOnly` path, and retain only their identity/revision hint in bounded preload-process memory.
+4. On failure or an API that only reports dispatch without confirmation, preserve unread.
+5. Do not clear the hint for ordinary Bridge close/reset/resubscribe/refollow or same-completion replay. Clear it for an exact new live epoch, a newer Turn/completion found by bootstrap, explicit removal or process end.
+6. Write no receipt or Codex native state.
 
 ## Prevention Rule
 
-Do not restore the local completion-revision acknowledgement. Completed-unread command surfaces may share one open-first action, but unread projection must consume only Codex Desktop live/persisted read-state. Legacy acknowledgement fields are ignored migration input and must never suppress native unread.
+Do not restore the local completion-revision acknowledgement and do not acknowledge before navigation success. All plugin task-open surfaces must share the same Host success boundary. `mainHide` routes must not add a Renderer hide that can terminate the preflight, and alias recovery must never fall back to a different task. The acknowledgement stays in bounded preload-process memory outside the replaceable Bridge, overrides replay for the same completion, does not mutate native state, and is invalidated by a new Turn/completion epoch or explicit removal. Legacy acknowledgement fields remain ignored migration input.
 
 ## Latest Applicable Implementation
 
-[codex.ts](../../../src/domain/codex.ts#L1) ignores legacy completion acknowledgements during receipt normalization and projects native unread directly. [codexController.ts](../../../src/runtime/codexController.ts#L1) resolves and opens the first completed-unread task without a receipt write. [FloatApp.vue](../../../src/FloatApp.vue#L1), [featureRouting.ts](../../../src/runtime/feature/featureRouting.ts#L1), [appRuntime.ts](../../../src/runtime/appRuntime.ts#L1) and [plugin.json](../../../public/plugin.json#L1) dispatch the same open-first action. The acceptance boundary is in [verify.md](../../specs/260718/1148-codex-quota-float/verify.md#L1).
+[codex.ts](../../../src/domain/codex.ts#L1) ignores legacy completion acknowledgements during receipt normalization. [codexController.ts](../../../src/runtime/codexController.ts#L1), [FloatApp.vue](../../../src/FloatApp.vue#L1), [featureRouting.ts](../../../src/runtime/feature/featureRouting.ts#L1), [appRuntime.ts](../../../src/runtime/appRuntime.ts#L1) and [plugin.json](../../../public/plugin.json#L1) converge card/counter/shortcut entry points on the same open action. [preload/index.js](../../../preload/index.js#L1) owns the confirmed-success session acknowledgement and new-completion cleanup. The acceptance boundary is in [verify.md](../../specs/260718/1148-codex-quota-float/verify.md#L1).
 
 ## Alternative Route
 
-- Status: `superseded` by RAW-128.
-- Preconditions: a completed-unread task has a valid completion revision and the user invokes the explicit compact or uTools global command.
-- Ordered steps: resolve the same counted first task; persist its local revision acknowledgement; republish all EyPc projections; request the existing open action; keep waiting-input and generic open unchanged.
-- Verification: pending user validation in uTools and Codex Desktop with multiple, pinned and hidden completed-unread tasks, then a newer completion revision.
-- Applicability boundary: EyPc's local Companion presentation only; it does not change Codex Desktop native unread state.
-- Fallback: if no valid completed-unread task/revision exists, show the existing unavailable message and make no receipt change.
+- Status: `verified` for the RAW-140 preload-session replacement; the persistent RAW-082 route remains superseded.
+- Preconditions: any plugin task card, completed-unread counter, waiting-input counter or task-navigation shortcut reaches the shared Host open action.
+- Ordered steps: resolve the target; attempt the Deep Link; acknowledge only a confirmed target or parent-fallback success; republish the parent aggregate; retain the completion hint across routine Bridge teardown; remove it only at a new Turn/completion or explicit deletion.
+- Verification: successful parent/Side Chat open, failed open, initially unavailable Bridge, IPC reset/refollow, mainHide close/rebuild, same-completion replay and new-Turn release contracts pass.
+- Applicability boundary: EyPc's current preload process only; it neither asserts that Codex persisted the read nor fabricates an unknown transient Side Chat.
+- Fallback: if the Host cannot confirm success, return the existing failed/dispatched result and preserve unread.
 
 ## Occurrence History
 
@@ -68,3 +75,6 @@ Do not restore the local completion-revision acknowledgement. Completed-unread c
 | --- | --- | --- | --- | --- | --- | --- |
 | 2026-07-24 | Codex quota/task companion | User clarified completed-unread click/global semantics and exempted waiting-input | Reused generic open-only handling for both statuses | User correction and RAW-082 scope | Added a shared explicit local-revision acknowledgement action; kept waiting-input open-only | candidate pending runtime acceptance |
 | 2026-07-30 | RAW-128 global state-chain audit | Native unread true could be hidden by an EyPc-only acknowledgement | Treated a local presentation receipt as an equal unread authority | Domain/Controller regression and full-chain source audit | Removed the write/projection override; completed-unread command is open-only and native read-state is sole authority | superseded; automated matrix verified, real host reload pending |
+| 2026-08-03 | RAW-138 repeated completed-unread mismatch | Successful plugin navigation had no acknowledgement when Codex read events were missed or not replayed | Kept every task-open path open-only after removing the unsafe persistent receipt | User requirement, active extension/plugin timing and Bridge/Controller regression | Added one success-gated, session-only Host acknowledgement for all task-open paths; preserved failure/no-confirmation and new-completion reset | automated verified 722/722; rebuilt host reload/acceptance pending |
+| 2026-08-03 | RAW-139 host correction | uTools retained an older float/preload while the latest ASAR was installed; after correct activation the card acknowledgement worked, but cold global actions still read an intentionally cleared inventory and Renderer hid a `mainHide` route again | Assumed installed version implied active child version and consumed synchronous commands before bootstrap | Real float URL/version/hash, Codex route log, 2→1 plugin counter, source trace and focused regressions | Assigned visibility solely to `mainHide`, serialized empty-inventory commands behind tasks-only preflight, and rebuilt/retried aliases only for the same key | current 1.2.33 card host-confirmed; RAW-139 focused 141/141 and full verify 730/730, rebuilt cold-host acceptance pending |
+| 2026-08-03 | RAW-140 shortcut acknowledgement rebound | Completed-unread shortcut showed read immediately, then returned to unread after normal mainHide lifecycle | Stored a user-confirmed completion fact only in `CodexDesktopCompanionBridge.liveUnread`, which routine pluginOut/reset/rebuild correctly clears | User shortcut reproduction plus a failing `desktop-live=false → desktop-persisted=true` IPC reset contract | Moved a bounded identity/revision hint to preload-process scope, made same completion replay subordinate, and released only on new Turn/removal | Bridge 70/70, focused 144/144 and full verify 733/733 pass; rebuilt host acceptance pending |

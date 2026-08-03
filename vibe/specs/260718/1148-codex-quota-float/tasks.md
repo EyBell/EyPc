@@ -33,22 +33,59 @@ Tool: codex
 | MQTT/Quick Jump 静态断言限制到 media/function 边界 | complete |
 | 清理 PRD、Soul、架构和错误记忆中的旧配色阻断认知 | complete |
 | 跨来源 live evidence sequence 阻止旧 Desktop idle 重放撤销新 App Server active | complete |
-| RAW-130 Bridge 回归合同执行 | pending / project-rule-blocked |
+| RAW-130 Bridge 回归合同执行 | complete / automated-verified |
 | RAW-131 全状态机写入/撤销/重放/消费点静态摘取 | complete |
-| RAW-131 七个 P1 运行实现修复 | complete / unverified |
-| RAW-131 闭合转换矩阵合同编写 | complete / unverified |
-| RAW-131 闭合转换矩阵执行 | pending / project-rule-blocked |
-| RAW-132 父任务纯聚合与 Side Chat 分支终态保护 | complete / unverified |
-| RAW-132 匿名裁决计数与设置页诊断 | complete / unverified |
+| RAW-131 七个 P1 运行实现修复 | complete / automated-verified |
+| RAW-131 闭合转换矩阵合同编写 | complete / automated-verified |
+| RAW-131 闭合转换矩阵执行 | complete / automated-verified |
+| RAW-132 父任务纯聚合与 Side Chat 分支终态保护 | complete / automated-verified |
+| RAW-132 匿名裁决计数与设置页诊断 | complete / automated-verified |
 | RAW-132 镜像、空白、隐私形状与文档链接静态检查 | complete |
-| RAW-132 反向回归合同执行 | pending / project-rule-blocked |
-| RAW-133 Domain 诊断规范化/比较唯一权威 | complete / unverified |
-| RAW-133 Controller 原子接纳与 diagnostics-only 单通知 | complete / unverified |
-| RAW-133 紧凑诊断、live-region 隔离与原生帮助按钮统一 | complete / unverified |
+| RAW-132 反向回归合同执行 | complete / automated-verified |
+| RAW-133 Domain 诊断规范化/比较唯一权威 | complete / automated-verified |
+| RAW-133 Controller 原子接纳与 diagnostics-only 单通知 | complete / automated-verified |
+| RAW-133 紧凑诊断、live-region 隔离与原生帮助按钮统一 | complete / automated-verified |
 | RAW-133 镜像、空白、唯一权威与文档链接静态检查 | complete |
-| RAW-133 父聚合真值表与诊断通知合同执行 | pending / project-rule-blocked |
-| RAW-134 动态小时设置、默认/规范化与配置页输入 | complete / unverified |
-| RAW-134 原子包即时重投影、时间边界与任务循环合同 | complete / unverified |
-| RAW-134 Domain/Controller/UI 合同执行 | pending / project-rule-blocked |
+| RAW-133 父聚合真值表与诊断通知合同执行 | complete / automated-verified |
+| RAW-134 动态小时设置、默认/规范化与配置页输入 | complete / automated-verified |
+| RAW-134 原子包即时重投影、时间边界与任务循环合同 | complete / automated-verified |
+| RAW-134 Domain/Controller/UI 合同执行 | complete / automated-verified |
+| RAW-135 额度刷新自由秒数、默认/边界与旧分钟迁移 | complete / automated-verified |
+| RAW-135 完整校对自由秒数与独立 2s/3s 调度合同 | complete / automated-verified |
+| RAW-135 无 Turn 载荷 completed 专属单任务快路与 25ms 重试 | complete / automated-verified |
+| RAW-135 双 preload 镜像、帮助、canonical、架构与错误记忆同步 | complete |
+| RAW-135 typecheck、production build 与完整相关回归 | complete / automated-verified |
+| RAW-135 真实 uTools 完成事件时延验收 | pending / user-owned |
+| RAW-136 Plan-only 隐私标记、父任务聚合与 `task-state-v4` | complete / automated-verified |
+| RAW-136 普通输入/审批 → Plan → 最近活跃独占循环 | complete / automated-verified |
+| RAW-136 Bridge/Domain/Controller/平台合同与 preload 镜像 | complete / automated-verified |
+| RAW-136 帮助、canonical、架构、Soul 与过程文档同步 | complete |
+| RAW-136 相关回归、typecheck、production build 与静态审计 | complete / automated-verified |
+| RAW-136 真实 uTools 快捷键顺序验收 | pending / user-owned |
+| RAW-137 unread 成员/非成员双向权威与 main/Side 聚合 | complete / automated-verified |
+| RAW-137 Controller 停用基线清理、新代次 bootstrap 与旧异步隔离 | complete / automated-verified |
+| RAW-137 零周期 missing-key 剩余窗口自唤醒 | complete / automated-verified |
+| RAW-137 已知 Side Chat 会话期拓扑重订、App Server-only 库存重建与 bounded child Turn 校对 | complete / automated-verified |
+| RAW-137 聚焦 106 项、全库 704 项、typecheck/build/preload/uTools runtime 门禁 | complete / automated-verified |
+| RAW-137 真实 uTools 关闭—变更—重开状态矩阵 | pending / user-owned |
+| RAW-138 当前运行包、IPC owner/版本、read-event 时间线与原生 unread 冲突只读核验 | complete / host-evidence |
+| RAW-138 refollow false 清除 stale persisted true，保留 persisted false 压住 snapshot true | complete / automated-verified |
+| RAW-138 成功打开 parent/已知 Side Chat 即会话期已读，失败与断桥边界 | complete / automated-verified |
+| RAW-138 当前 v11/v2 与已核验旧 v6/v1 协议合同 | complete / automated-verified |
+| RAW-138 Bridge 67 项、Bridge+Controller 116 项与全库 722 项门禁 | complete / automated-verified |
+| RAW-138 新构建重载后的卡片打开与关闭期已读恢复 | pending / user-owned |
+| RAW-139 真实宿主 ASAR/preload 身份、Deep Link 目标与成功已读反馈核验 | complete / host-evidence |
+| RAW-139 Codex `mainHide` 入口移除 Renderer 二次 hide/show并保持当前 Tab | complete / automated-verified |
+| RAW-139 空库存快捷命令 tasks-only preflight 与串行执行 | complete / automated-verified |
+| RAW-139 卡片生命周期 alias 按同一 task key 重建及一次 stale retry | complete / automated-verified |
+| RAW-139 聚焦 141 项、全库 730 项、typecheck/build/runtime validation 与文档/错误记忆同步 | complete / automated-verified |
+| RAW-139 新构建重载后的真实快捷键与卡片冷启动复验 | pending / user-owned |
+| RAW-140 快捷键成功打开后 mainHide/IPC reset/refollow 已读反弹复现 | complete / automated-reproduced |
+| RAW-140 有界 preload 会话确认及同 completion/new Turn 仲裁 | complete / automated-verified |
+| RAW-140 Bridge 70 项、聚焦五文件 144 项与 typecheck | complete / automated-verified |
+| RAW-140 完整 verify `733/733`、文档/错误记忆审计 | complete / automated-verified |
+| RAW-140 新构建重载后的完成未读快捷键持续已读验收 | pending / user-owned |
 | 反向 generation 屏障夹具 TS2349 修复与 typecheck | complete / typecheck-verified |
+| 统一 `pnpm run verify`（preload 同步、全量测试、typecheck、production build） | complete / automated-verified |
+| 三类 uTools preload 单一资产清单与镜像同步 | complete / automated-verified |
 | 真实 uTools 重载与状态转换验收 | pending / user-owned |
