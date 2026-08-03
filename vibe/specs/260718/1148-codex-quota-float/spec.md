@@ -4,7 +4,7 @@ Tool: codex
 Date: 2026-08-03
 Status: `automated-verified / host-pending`
 Documentation level: `controlled`
-Requirement version: `2026-08-03.1`
+Requirement version: `2026-08-03.2`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 
@@ -96,6 +96,14 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - 对该已确认 completion，重放 snapshot、仍为成员的原生 unread 集合和晚到的同 epoch unread true 均不得把它恢复成未读。精确 active/Turn-started、完整库存发现 inProgress/failed/interrupted 或更新 completed revision、以及明确归档/删除会清除 parent/相关 child 确认；随后新 completion 可按 exact/native true 重新成为未读。
 - 卡片、完成未读角标和全局快捷键仍共享 RAW-138/139 的成功 Host open 边界；失败、仅 dispatched 或错误 alias 不创建确认。`task-state-v4`、Controller/Renderer 判断、Codex 原生文件和 legacy receipt 均不变化。
 
+## RAW-141 owner 中断后的待输入连续性
+
+- 精确 Desktop `conversationState.requests` 仍是普通输入、审批和 `item/plan/requestImplementation` 的最高权威；但当前 owner 已消失时，新 follower 不能假定 Desktop 会向它重放快照。`following=true` 只证明订阅已登记，不证明当前请求已恢复。
+- 对 App Server latest Turn 为 `interrupted / failed / inProgress` 的库存行，Preload 可读取该行 `path` 指向的 rollout 作为唯一持久回退。路径必须经 realpath 验证位于 `CODEX_HOME/sessions`，只读普通文件，单次最多读取尾部 4 MiB；解析器只保留 `response_item` 类型、精确 `request_user_input` 名称、最长 200 字符 call ID、匹配的 `function_call_output` 与后续 user-message 边界，不解析或发布 prompt、答案、路径和 raw identity。
+- rollout 中仍有未匹配的精确 `request_user_input` 时，库存投影为 connector-backed `active + waitingOnUserInput`。匹配 output、后续 user message、新 exact Desktop snapshot、App Server active/new Turn/completion、库存 Turn/outcome/updated revision 或明确归档/移除均结束旧回退。普通 connector active 仍不得成为 input 权威，未知 function call 不得伪造等待。
+- 已观察到的普通输入、审批和 Plan 请求 shadow 可在 owner/transport 丢失后保留于当前 preload 会话；普通无等待 active 必须降回 connector。普通 `onPluginOut(false)` 只清 App Server/公开库存并保留 Desktop observer，显式 feature disable、`onPluginOut(true)` 或进程结束完全关闭。新快照/新 Turn 清除 sticky shadow；不新增持久化、公开字段、Renderer 判断或 Codex 原生写入，`task-state-v4` 不变。
+- 当前真实宿主中唯一原生 `Needs input` 任务已由 `notLoaded + interrupted` 恢复为 `active + waitingOnUserInput`；只读预检计为一条权威 active。普通输入与 Plan 的既有精确映射继续由回归合同保护；聚焦 `170/170`、完整工作树 `737/737` 与独立暂存提交 `711/711`、typecheck、build/runtime validation 已通过，新构建实际卡片/快捷键展示仍需重载验收。
+
 ## 证据合同
 
 - Activity 来源为 `connector / initial-snapshot / activity-event`，并携带会话期 revision；Preload 内真实 Desktop patch 与精确 App Server active 另共享一个不出 Host 的单调 evidence sequence，用于判断跨来源先后。
@@ -111,7 +119,7 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 
 ## 唯一状态优先级
 
-1. exact live 待输入/审批请求进入 `waiting-input / waiting-approval`。
+1. exact live 待输入/审批请求进入 `waiting-input / waiting-approval`；owner 已消失时，只有会话期 sticky exact request 或安全 rollout 尾部尚未匹配的精确 `request_user_input` 可保留/恢复 waiting-input。
 2. 真实 Desktop activity patch、精确 App Server `active` 或精确/new `inProgress` 建立 live active；`app-server-live` 覆盖旧 initial/refollow idle 和更早的 idle activity event，并携带私有建立水位跨 inventory 重建保留。Desktop 非 active 只有其真实 patch 水位严格更晚时才可撤销；read-state-only、Side Chat 聚合或 inventory 重放旧 shadow 不能撤销。
 3. 精确、定向或佐证 completed 立即进入 `completed`；普通 inventory completed 只有在没有更强 live active 时成立。精确通知和 snapshot 佐证都允许缺失 `completedAt`，confirmed provenance 写回会话期 inventory。
 4. `failed/interrupted` 只有相对当前 active-exit baseline 前进并经退出后定向证据确认，或与 Desktop 明确 `not-running` 共同出现时进入 `stopped`；缺失 Turn outcome 永不构成停止。

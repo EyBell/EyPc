@@ -1064,7 +1064,7 @@ export function createCodexController(options: CodexControllerOptions) {
       clearActivityTimer()
       resetStructuralRefresh()
       resetCodexDerivedRuntimeState()
-      options.platform.codex.close()
+      options.platform.codex.close({ preserveDesktop: featureEnabled })
       return
     }
     const resuming = !runtimeActive

@@ -13,6 +13,7 @@ evidence:
   - tests/runtime/codexController.test.ts
   - full-verify-722-of-722
   - cold-task-action-preflight-regression
+  - ownerless-pending-request-recovery-regression
 tags:
   - codex-companion
   - app-server
@@ -46,6 +47,7 @@ tags:
 - Controller 停用或任务收件箱关闭时必须先递增 runtime generation、解除旧 in-flight 所有权并清空所有 Codex 派生任务/项目库存、来源/Activity 水位、active-exit baseline、missing-key 状态与任务循环游标；设置、别名、本地置顶、隐藏和折叠等 EyPc 自有状态必须保留。
 - 新一代启用后必须立即执行额度、配置、完整库存和 latest-Turn bootstrap；每个 refresh/activity continuation 在写回与 `finally` 前校验捕获的 runtime generation 和 operation owner，旧会话不能阻挡或清除新会话。
 - 清空旧库存不能让显式用户命令失效：若 `mainHide` 全局任务入口在停用边界后到达且当前库存为空，Controller 接纳该命令并串行执行一次 tasks-only action preflight，再从新一代投影解析目标。它不能恢复旧库存，也不能把冷缓存为空误报成最终“无任务”。
+- 区分显式停用/kill 与普通宿主隐藏：前者关闭 App Server 和 Desktop bridge；`onPluginOut(false)` 或仅离开 Codex 活跃面只重置 App Server/公开派生状态并保留 Desktop observer，避免 ownerless input/approval/Plan 在库存重建前失去唯一精确会话证据。App Server latest/full Turn 不能替代 pending-request 权威。
 
 ## Regression Evidence
 
@@ -54,6 +56,7 @@ tags:
 - [codexController.test.ts](../../../tests/runtime/codexController.test.ts#L1) 持有第一代异步读取并停用/重启，断言第二代 bootstrap 不等待旧请求；同时覆盖停用期间归档、删除、项目离库、新任务加入、保留任务项目归属与原生置顶变化，以及 `taskRefreshSeconds=0` 的缺行自动闭合。
 - [codexController.ts](../../../src/runtime/codexController.ts#L1) 以 runtime generation 和 operation owner 保护 activity/refresh 写回，并在每次停用时清除 Codex 派生基线。
 - RAW-139 Controller 回归在非 Codex Tab/Float 关闭的冷态触发 completed-unread、input 与 cycle，证明只读取 tasks、不读取 quota/config，并在新库存发布后打开；卡片旧 alias 只按同一 key 重建。
+- RAW-141 Bridge/Controller 回归证明普通 pluginOut 仍保持 Desktop socket/follow，库存重建后重新发布此前精确观察的 Plan；kill 会关闭 socket。当前真实 ownerless input 另由安全 rollout 回退恢复，App Server latest Turn 单独不足以证明或解除等待。
 
 ## Detection Order
 
@@ -64,6 +67,7 @@ tags:
 5. 对 Controller 分别执行 feature disable/enable 与 inbox disable/enable；核对投影、库存、来源指纹、Activity generation、active-exit baseline、missing-key timer/candidate 和任务游标是否同批清空。
 6. 在第一代 refresh/activity 仍挂起时启用第二代，确认新 bootstrap 已发出，再释放旧请求并确认它不能写回或清除第二代 in-flight 状态。
 7. 在停用清空后直接触发一个全局任务命令，确认它等待 tasks-only preflight 后执行一次；连续命令保持顺序，失败不能回退旧库存或其它任务。
+8. 分别触发非 kill plugin hiding、显式 feature disable 与 kill；前者应保持 Desktop observer/有限 request shadow，后两者应完全关闭。库存重建必须接受新 snapshot/Turn 并清除已过期 shadow，而不能用旧 App Server terminal 覆盖仍未决的精确请求。
 
 ## Alternative Route
 
@@ -72,6 +76,7 @@ tags:
 - Ordered steps: increment the owning generation; detach old operation ownership; run the appropriate shared reset; invalidate session-only aliases/caches/cursors or Controller-derived inventory/waterlines while retaining EyPc-owned persistent settings; start the new Controller bootstrap immediately; let every pending continuation compare its captured generation and operation owner before spawn, writeback or cleanup.
 - Verification: bridge contracts hold background paging across process exit and reject old aliases; Controller contracts hold an old async read across disable/enable, prove immediate second-generation bootstrap, reconstruct off-period inventory changes, and reject the released old result.
 - Applicability boundary: in-process App Server and Controller-derived session state. It does not authorize killing Codex Desktop, clearing persisted plugin settings or replaying actions that the user did not explicitly trigger；显式冷启动命令自己的最小 preflight 属于同一次动作。
+- Soft-lifecycle boundary: preserving the Desktop observer on non-kill hiding is allowed only for read-only live/request observation; it does not preserve public inventory, action aliases, App Server RPC ownership or ordinary active state.
 - Fallback: if generation ownership is uncertain, discard the continuation and require a new explicit read.
 
 ## Occurrence History
@@ -81,3 +86,4 @@ tags:
 | 2026-07-19 | App Server lifecycle cleanup | Unexpected child exit left aliases/cursors and a pending scan from the old session | Maintain separate close and exit cleanup | Bridge process-exit regression | Share one generation-owned reset and guard asynchronous continuations | verified by existing bridge regression contract |
 | 2026-08-01 | RAW-137 interruption recovery | Controller disable/enable retained old inventory/source/evidence baselines and an old async owner | Clear only the visible projection and rely on the next ordinary poll | Controller interruption/inventory matrix | Reset all Codex-derived runtime baselines, immediately bootstrap under a new generation, and self-schedule missing-key closure | verified again by RAW-138 full verify 722/722 on 2026-08-03; real-host interruption acceptance pending |
 | 2026-08-03 | RAW-139 cold task entry | Correct RAW-137 cleanup left no inventory when a `mainHide` task shortcut was synchronously consumed before bootstrap | Treat empty cold projection as final “no task” and hide the Renderer again | Source call chain, uTools lifecycle evidence and Controller/App route regressions | Keep the reset, but serialize the explicit command behind tasks-only preflight; let `mainHide` alone own visibility | focused 141/141 and full verify 730/730; rebuilt cold-host acceptance pending |
+| 2026-08-03 | RAW-141 ownerless pending request | Ordinary non-kill plugin exit closed Desktop observation, while new follower and App Server could not reconstruct the current request | Treat every pluginOut as a full bridge close and assume refollow/latest Turn is complete state | Current live socket/follower/App Server/rollout evidence plus Bridge lifecycle regression | Keep Desktop observer and finite observed request shadows across non-kill hiding; explicit disable/kill still performs full reset; use safe rollout only for exact ordinary input | focused 170/170, full workspace 737/737 and isolated commit 711/711 plus type/build/runtime gates pass; rebuilt uTools display pending |

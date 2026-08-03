@@ -5,7 +5,7 @@ Date: 2026-08-03
 
 ## Review Target
 
-- Requirement: [RAW-116–139](raw-requirement.md#L1)
+- Requirement: [RAW-116–141](raw-requirement.md#L1)
 - Plan: [plan.md](plan.md#L1)
 - Implementation: preload 直接证据/原生 unread/Activity generation 与 mode-aware latest-Turn 复核、无 Turn 载荷 completed 专属快路、精确 Plan-only 隐私标记、已知 Side Chat 会话期拓扑重订，Controller 单一 active-exit 转换器、停用代次重建、行级库存隔离/零周期自闭合、冷任务动作 tasks-only preflight、同 key alias 重建与普通等待→Plan→近期 active 独占循环；Feature route 由 `mainHide` 独占 Codex 全局入口可见性；Domain 明确停止/原生 unread/Plan 卡片投影；额度/完整校对自由秒数、quota-auto 普通窗口仲裁、直接外观持久化和结构边界静态回归同步收口。
 - Sidecar: 主线程。
@@ -66,6 +66,14 @@ Date: 2026-08-03
 | RAW-140 静态收口 | main preload canonical/public/dist SHA-256 均为 `332d0845327b616e10b22ba3fb1796f55feb665c47e67782eab4b3612642d0c2`；float/action 三份镜像也各自一致，三份 canonical `node --check` pass。项目本轮 changed Markdown 与 CodeNote `mainHide/onPluginOut` 两份权威/错误记忆显式链接审计均为 `Code link audit: OK`；两个仓库 `git diff --check` pass |
 | RAW-140 提交边界 | 从 Git index 写出独立 detached 临时 worktree，排除未暂存的 Action Runner / Window Jump 改动后，Codex 相关 7 文件 `212/212` pass 且 `vue-tsc --noEmit` pass；暂存的 main/public preload SHA-256 同为 `42fce409f21b519ecd3854774e91acd7ee14fe69318f179b5db159d409a5b3a1` |
 | RAW-140 宿主门禁 | 新构建尚未安装/重载；真实完成未读全局快捷键成功打开后跨 mainHide/轮询持续已读、随后新 Turn 再次未读仍为 host-pending |
+| RAW-141 真实根因 | 当前原生 `Needs input` 任务的 stream owner 已消失；新 follower 只获 `following=true` 而无 snapshot，App Server 库存为 `notLoaded`、latest Turn 为 `interrupted` 且完整 Turn view 不含 pending request。rollout 尾部存在唯一未匹配 `request_user_input`，与当前 25 条未归档库存中的唯一原生待输入一一对应；证据记录未保留 task ID、路径、call ID、prompt 或答案 |
+| RAW-141 持久回退 | 只对 interrupted/failed/inProgress、只在 `CODEX_HOME/sessions` realpath 内、只读最多 4 MiB 尾部；仅匹配精确 `request_user_input` call/output 与后续 user-message 边界。纯解析与完整库存投影合同覆盖未决、已回答、用户继续和其它 function call，公开 snapshot 不含 call ID |
+| RAW-141 owner 连续性 | owner disconnect/bridge reset 保留已观察普通输入、审批和 Plan sticky shadow，普通 active 降回 connector；新 Desktop snapshot、精确 App Server new Turn/completion 和较新库存 revision 清除。普通 pluginOut 保留 Desktop observer 并在库存重建后恢复公开状态，kill 完全关闭 |
+| RAW-141 聚焦回归 | Bridge/Controller/Domain/Presentation 四文件 `170/170` pass；`node --check preload/index.js` pass；`pnpm run typecheck` pass。完整仓库结果在最终收口行记录 |
+| RAW-141 当前真实投影 | 修复后同一真实任务由 `notLoaded + interrupted + connector` 恢复为 `active + waitingOnUserInput + connector`；更新后的只读预检返回 `active=1`、`unconfirmedOngoing=1`，与 Codex 原生状态一致。该证据验证源码读取路径，不冒充已安装 uTools 新构建验收 |
+| RAW-141 完整仓库 | `pnpm run verify` pass：同步 canonical/public preload，完整 Vitest `737/737`（`57/57` 文件）、`vue-tsc --noEmit`、production Vite build、runtime preparation 与 `validate:utools` 全部通过；耗时 137.6 秒，仅有 Node SQLite experimental warning |
+| RAW-141 提交边界 | 从 Git index 导出独立目录，排除 Action Runner、窗口、样式和其它未暂存修改；该提交自身完整 Vitest `711/711`（`54/54` 文件）、`vue-tsc --noEmit`、production build、runtime preparation 与 uTools validation 全部通过，耗时 144.4 秒。暂存 main/public preload 字节一致且 `node --check` pass |
+| RAW-141 宿主门禁 | 当前只读源码查询已验证 ownerless input 恢复；新构建尚未安装/重载，真实普通输入、Plan 实施确认和该长期 Needs input 在卡片/角标/前后快捷键中的连续展示与解除仍为 host-pending |
 | 2026-07-31 TypeScript 门禁 | 用户执行 `vue-tsc --noEmit` 暴露反向 generation 屏障夹具的异步 release 回调被收窄为 `never`；改为可调用门闩加独立 pending 信号后，`pnpm run typecheck` 通过。未执行 Vitest、build、preload 语法或真实宿主 |
 | RAW-133 静态收口 | `git diff --check` pass；canonical/public preload 全文件精确一致；诊断 key/counter normalizer 在 `src/` 各只有一个定义；CodexPage 无 `span role=button`/手写 tabindex 提示；changed Markdown `audit_code_links.py` pass |
 | 设计偏好收口 | `DesignTaskCloseout` 生成 `eligible-for-root-review` 的 W29 canary candidate；`writes_performed=false`，未写偏好缓存、传播状态或 Hook |

@@ -35,10 +35,11 @@ State: `automated-verified / host-pending`
 - RAW-138 根据真实宿主复验细化了 unread 冲突：当前 Codex read-state 广播发生在插件重载前，App Server 不补发，而原生集合仍保留 stale true；因此 refollow 的当前 false 必须能清除它，同时 persisted false 仍压住 snapshot true。所有插件任务 Deep Link 只有成功打开后才写入会话期 false 并即时发匿名 `readStateOnly`，parent 与已知 Side Chat 同步收敛；失败不改状态，Desktop IPC 不可用时确认仍在本 preload 会话有效，新 completion 会清理该 false。没有 legacy receipt、公开字段或 Codex 原生写入。
 - RAW-139 复核发现当前机器同时缓存多个 EyPc ASAR，悬浮窗最初仍运行 1.2.6，激活后才切到与源码/镜像一致的 1.2.33；正确实例的真实卡片点击已精确打开预期任务并把插件未读数 2→1。独立代码缺陷是 Codex `mainHide` 入口在同步 dispatch 后又由 Renderer 二次 hide，以及停用清空库存后快捷命令在 bootstrap 前读取空投影。现由 `mainHide` 独占可见性，空库存命令串行等待 tasks-only preflight；卡片 alias 跨生命周期时只按同一 task key 重建，Host 明确拒绝旧 alias 时至多重试一次，不会跳到其它任务。
 - RAW-140 复现了完成未读快捷键成功打开后的状态反弹：普通 `mainHide → onPluginOut(false)` 会关闭并重建 Desktop/App Server Bridge，旧确认只在 Bridge `liveUnread` 内，因此 refollow 后被原生 stale true 回灌。确认现为 preload 进程内最多 1000 条的 completion-epoch 提示，跨普通 close/reset/resubscribe/refollow 保留；同 completion 重放不反压，新 Turn 或明确移除才释放。Bridge `70/70`、五文件聚焦 `144/144` 与 typecheck 已通过。
+- RAW-141 用当前真实 `Needs input` 任务确认了新的 owner-loss 缺口：原 stream owner 消失后，新 follower 不会获得当前请求快照；App Server latest Turn 只显示 interrupted，只有 sessions rollout 中未匹配的精确 `request_user_input` 仍能证明等待。Preload 现以 4 MiB 安全尾读恢复该 input；已观察输入/审批/Plan 在软中断后保留 sticky shadow，普通 active 降级，新快照/Turn/库存 revision 清理；普通 pluginOut 保留 Desktop observer，kill/显式停用完全关闭。真实源码预检已显示 `active=1`，新构建 uTools 展示仍待重载。
 
 ## 验证
 
-详细命令、七项修复、闭合矩阵与 RAW-132–140 增量合同见 [verify.md](verify.md#L1)。RAW-140 的 Bridge 回归为 `70/70`、App route/Controller/Bridge/Action 聚焦回归为 `144/144`；最终 `pnpm run verify` 通过完整 `733/733`（`57/57` 文件）、typecheck、production build、runtime preparation 与 uTools validation。真实宿主已确认正确 1.2.33 实例的卡片打开与即时已读反馈有效；RAW-139/140 新构建尚未重载，冷启动快捷键、跨 mainHide 持续已读、alias 恢复和中断期 App 已读恢复仍为 host-pending。
+详细命令、七项修复、闭合矩阵与 RAW-132–141 增量合同见 [verify.md](verify.md#L1)。RAW-141 Bridge/Controller/Domain/Presentation 聚焦回归 `170/170`；当前完整工作树 `pnpm run verify` 通过 `737/737`（`57/57` 文件），排除其它未提交改动后的 Git index 独立副本通过 `711/711`（`54/54` 文件）、typecheck、production build、runtime preparation 与 uTools validation；preload 语法和真实源码预检也通过。真实宿主已确认源码能把当前 ownerless `Needs input` 恢复为待输入，但 RAW-139–141 新构建尚未重载，冷启动快捷键、跨 mainHide 持续已读、alias 恢复、普通输入/Plan 与 ownerless 等待展示仍为 host-pending。
 
 ## 真实宿主验收
 
@@ -56,3 +57,4 @@ State: `automated-verified / host-pending`
 10. 重载新构建后，用一条已完成未读任务分别验证：插件卡片/完成未读角标打开成功后立即转为已读；模拟打开失败时保持未读；随后产生新 Turn 完成时重新进入未读。
 11. 完全退出当前 EyPc 页面后，从 uTools 全局入口依次触发待输入、已完成未读、上一个和下一个任务；确认不显示/闪烁主窗口、首次冷启动也能打开正确任务。保留一张旧卡片跨一次插件显隐后再点击，确认只打开同一卡片任务且不会跳到列表首项。
 12. 用“查看已完成未读”全局快捷键打开一条未读任务，确认即时转为已读后跨至少两轮 mainHide/refollow/完整校对仍保持已读；随后在同一任务产生并完成新 Turn，确认它重新进入已完成未读。
+13. 重载 RAW-141 新构建后确认当前长期 `Needs input` 任务显示“需要输入”；另各准备一条普通输入和一个已规划未实现 Plan，执行普通显隐、全局前后任务快捷键和一次 owner/transport 重连，三者仍按普通输入优先、Plan 次级展示。回答普通输入或确认 Plan 后，状态应由新快照/Turn 自动解除，不保留 sticky 旧等待。

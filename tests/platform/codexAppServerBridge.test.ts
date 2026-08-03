@@ -39,6 +39,7 @@ class FakeCodexProcess extends EventEmitter {
   inProgressTurnIds = new Set<string>()
   failedTurnIds = new Set<string>()
   interruptedTurnIds = new Set<string>()
+  rolloutTexts = new Map<string, string>()
   createdThreadId = '92345678-1234-4234-8234-123456789abc'
   createdModelOverride = ''
   failTurnStart = false
@@ -166,7 +167,15 @@ class FakeCodexProcess extends EventEmitter {
           },
           { id: '22345678-1234-4234-8234-123456789abc', name: '运行中', status: { type: 'active', activeFlags: [] }, recencyAt: 2_000_000_090 },
           { id: '32345678-1234-4234-8234-123456789abc', name: '空闲', status: { type: 'idle', activeFlags: ['waitingOnUserInput'] }, recencyAt: 2_000_000_080 },
-          { id: '42345678-1234-4234-8234-123456789abc', name: '跨端未知', status: { type: 'notLoaded', activeFlags: ['waitingOnApproval'] }, recencyAt: 2_000_000_070 + this.threadRecencyOffset },
+          {
+            id: '42345678-1234-4234-8234-123456789abc',
+            name: '跨端未知',
+            status: { type: 'notLoaded', activeFlags: ['waitingOnApproval'] },
+            recencyAt: 2_000_000_070 + this.threadRecencyOffset,
+            ...(this.rolloutTexts.has(FIXED_THREAD_IDS[3])
+              ? { path: `/tmp/.codex/sessions/${FIXED_THREAD_IDS[3]}.jsonl` }
+              : {})
+          },
           { id: '52345678-1234-4234-8234-123456789abc', name: '系统异常', status: { type: 'systemError', activeFlags: ['waitingOnApproval'] }, recencyAt: 2_000_000_060 },
           ...(this.includeCreatedThreadInInventory
             ? [{ id: this.createdThreadId, name: '刚创建的待输入任务', status: { type: 'active', activeFlags: [] }, recencyAt: 2_000_000_110 }]
@@ -389,6 +398,11 @@ function loadCodexBridge(
   const openExternal = vi.fn(async () => undefined)
   const registryReads: string[] = []
   const nativeStateWatchers: Array<(event: string, filename: string) => void> = []
+  const pluginOutListeners: Array<(isKill: boolean) => void> = []
+  const rolloutTextForPath = (candidate: string) => {
+    const filename = pathModule.basename(candidate, '.jsonl')
+    return child.rolloutTexts.get(filename)
+  }
   const sandbox = {
     window: {} as Record<string, unknown>,
     globalThis: {} as Record<string, unknown>,
@@ -398,6 +412,10 @@ function loadCodexBridge(
       env: { CODEX_HOME: '/tmp/.codex', CODEX_CLI_PATH: '/tmp/codex' },
       cwd: () => '/host/eypc',
       getuid: () => 501
+    },
+    utools: {
+      onPluginEnter: () => undefined,
+      onPluginOut: (listener: (isKill: boolean) => void) => pluginOutListeners.push(listener)
     },
     setTimeout,
     clearTimeout,
@@ -422,8 +440,16 @@ function loadCodexBridge(
         realpathSync: (candidate: string) => candidate,
         statSync: (candidate: string) => {
           if (candidate === '/tmp/.codex/.codex-global-state.json' || candidate === '/tmp/.codex/.codex-global-state.json.bak') return { isFile: () => true, size: 1024 }
+          const rolloutText = rolloutTextForPath(candidate)
+          if (rolloutText !== undefined) return { isFile: () => true, size: Buffer.byteLength(rolloutText), mtimeMs: 1_900_000_000 }
           return { isFile: () => false, size: 1 }
         },
+        openSync: (candidate: string) => candidate,
+        readSync: (descriptor: string, buffer: Buffer, offset: number, length: number, position: number) => {
+          const source = Buffer.from(rolloutTextForPath(descriptor) || '', 'utf8')
+          return source.copy(buffer, offset, position, position + length)
+        },
+        closeSync: () => undefined,
         promises: {},
         watch: (_candidate: string, _options: Record<string, unknown>, listener: (event: string, filename: string) => void) => {
           nativeStateWatchers.push(listener)
@@ -438,7 +464,7 @@ function loadCodexBridge(
   }
   if (useHostDate) Object.assign(sandbox, { Date })
   sandbox.globalThis = sandbox
-  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, resetCodexThreadSessionState };`, sandbox, { filename: 'preload.js' })
+  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, codexRolloutHasPendingUserInputText, resetCodexThreadSessionState };`, sandbox, { filename: 'preload.js' })
   return {
     bridge: (sandbox.window as {
       eypcPlatform: {
@@ -450,7 +476,7 @@ function loadCodexBridge(
           createThread(request: Record<string, unknown>): Promise<Record<string, any>>
           archiveThread(actionAlias: string, request: Record<string, unknown>): Promise<Record<string, any>>
           archiveProject(actionAlias: string, request: Record<string, unknown>): Promise<Record<string, any>>
-          close(): void
+          close(options?: { preserveDesktop?: boolean }): void
         }
       }
     }).eypcPlatform.codex,
@@ -460,17 +486,53 @@ function loadCodexBridge(
         readCodexNativeRegistry(): Record<string, any>
         codexThreadNativeProject(thread: Record<string, unknown>, registry: Record<string, any>): Record<string, any> | null
         codexResolveParentActivity(own: Record<string, unknown>, children: Record<string, unknown>[], options?: Record<string, unknown>): Record<string, any>
+        codexRolloutHasPendingUserInputText(text: string): boolean
         resetCodexThreadSessionState(): void
       }
     }).__codexNativeTest,
     registryReads,
     spawn,
     openExternal,
+    triggerPluginOut: (isKill: boolean) => pluginOutListeners.forEach((listener) => listener(isKill)),
     triggerNativeStateChange: () => nativeStateWatchers.forEach((listener) => listener('change', '.codex-global-state.json'))
   }
 }
 
 describe('Codex App Server preload bridge', () => {
+  it('recovers only an unresolved persisted request_user_input call from a bounded rollout tail', () => {
+    const { bridge, native } = loadCodexBridge(new FakeCodexProcess())
+    const call = (callId: string) => JSON.stringify({ type: 'response_item', payload: { type: 'function_call', name: 'request_user_input', call_id: callId } })
+    const output = (callId: string) => JSON.stringify({ type: 'response_item', payload: { type: 'function_call_output', call_id: callId } })
+    const userMessage = JSON.stringify({ type: 'event_msg', payload: { type: 'user_message' } })
+
+    expect(native.codexRolloutHasPendingUserInputText(call('pending'))).toBe(true)
+    expect(native.codexRolloutHasPendingUserInputText([call('resolved'), output('resolved')].join('\n'))).toBe(false)
+    expect(native.codexRolloutHasPendingUserInputText([call('cancelled'), userMessage].join('\n'))).toBe(false)
+    expect(native.codexRolloutHasPendingUserInputText(JSON.stringify({ type: 'response_item', payload: { type: 'function_call', name: 'exec', call_id: 'other' } }))).toBe(false)
+    bridge.close()
+  })
+
+  it('projects an interrupted App Server row as waiting-input when its safe rollout has an unresolved request', async () => {
+    const child = new FakeCodexProcess()
+    child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
+    child.rolloutTexts.set(FIXED_THREAD_IDS[3], JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'function_call', name: 'request_user_input', call_id: 'pending' }
+    }))
+    const { bridge } = loadCodexBridge(child)
+
+    const snapshot = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+
+    expect(snapshot.value.threads.find((thread: Record<string, any>) => thread.name === '跨端未知')).toMatchObject({
+      status: 'active',
+      activeFlags: ['waitingOnUserInput'],
+      statusAuthority: 'connector',
+      lastTurnStatus: 'interrupted'
+    })
+    expect(JSON.stringify(snapshot)).not.toContain('pending')
+    bridge.close()
+  })
+
   it('resolves the complete parent activity priority table through one pure reducer', () => {
     const { bridge, native } = loadCodexBridge(new FakeCodexProcess())
     const cases = [
@@ -2681,10 +2743,124 @@ describe('Codex App Server preload bridge', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     const disconnectedActivity = await bridge.readActivitySnapshot()
     expect(disconnectedActivity.value.entries.find((entry: Record<string, any>) => entry.key === baseline.value.threads[0].key)).toMatchObject({
-      statusAuthority: 'connector',
-      unreadAuthority: 'unavailable'
+      status: 'active',
+      activeFlags: ['waitingOnUserInput'],
+      statusAuthority: 'desktop-live',
+      unreadAuthority: 'desktop-live'
     })
     bridge.close()
+  })
+
+  it('retains sticky input and Plan requests across owner loss but drops ordinary active state and accepts newer evidence', async () => {
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    desktopSocket.waitingInputSnapshotThreadIds.clear()
+    desktopSocket.waitingInputSnapshotThreadIds.add(FIXED_THREAD_IDS[4])
+    desktopSocket.planImplementationSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
+    desktopSocket.activeSnapshotThreadIds.add(FIXED_THREAD_IDS[1])
+    const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    desktopSocket.streamOwnerConnected = false
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'client-status-changed',
+      sourceClientId: 'desktop-broker',
+      version: 0,
+      params: { clientId: 'codex-desktop-owner', status: 'disconnected' }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const afterDisconnect = await bridge.readActivitySnapshot()
+    const byKey = new Map(afterDisconnect.value.entries.map((entry: Record<string, any>) => [entry.key, entry]))
+    expect(byKey.get(baseline.value.threads[4].key)).toMatchObject({
+      status: 'active',
+      activeFlags: ['waitingOnUserInput'],
+      statusAuthority: 'desktop-live'
+    })
+    expect(byKey.get(baseline.value.threads[3].key)).toMatchObject({
+      status: 'active',
+      activeFlags: ['waitingOnUserInput'],
+      planImplementationOnly: true,
+      statusAuthority: 'desktop-live'
+    })
+    expect(byKey.get(baseline.value.threads[1].key)).toMatchObject({
+      status: 'active',
+      activeFlags: [],
+      statusAuthority: 'connector'
+    })
+
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner-2',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: FIXED_THREAD_IDS[4],
+        change: {
+          type: 'snapshot',
+          revision: 1,
+          conversationState: {
+            threadRuntimeStatus: { type: 'idle', activeFlags: [] },
+            resumeState: '',
+            hasUnreadTurn: false,
+            requests: []
+          }
+        }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === baseline.value.threads[4].key)).toMatchObject({
+      status: 'idle',
+      activeFlags: [],
+      statusAuthority: 'desktop-live'
+    })
+
+    child.stdout.emit('data', `${JSON.stringify({
+      method: 'turn/started',
+      params: { threadId: FIXED_THREAD_IDS[3], turn: { status: 'inProgress', startedAt: 2_100_000_000 } }
+    })}\n`)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === baseline.value.threads[3].key)).toMatchObject({
+      status: 'active',
+      activeFlags: [],
+      planImplementationOnly: false,
+      statusAuthority: 'app-server-live'
+    })
+    bridge.close()
+  })
+
+  it('keeps Desktop observation alive across a non-kill pluginOut and rebuilds the public inventory from current shadows', async () => {
+    const child = new FakeCodexProcess(false, false)
+    const desktopSocket = new FakeCodexDesktopSocket()
+    desktopSocket.planImplementationSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
+    const { bridge, triggerPluginOut } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const planTask = baseline.value.threads[3]
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === planTask.key)).toMatchObject({
+      activeFlags: ['waitingOnUserInput'],
+      planImplementationOnly: true,
+      statusAuthority: 'desktop-live'
+    })
+    const unfollowsBefore = desktopSocket.writes.filter((message) => message.method === 'thread-stream-following-changed' && message.params?.following === false).length
+
+    triggerPluginOut(false)
+    expect(desktopSocket.writable).toBe(true)
+    expect(desktopSocket.writes.filter((message) => message.method === 'thread-stream-following-changed' && message.params?.following === false)).toHaveLength(unfollowsBefore)
+
+    const reopened = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(reopened.value.threads.find((thread: Record<string, any>) => thread.key === planTask.key)).toMatchObject({
+      status: 'active',
+      activeFlags: ['waitingOnUserInput'],
+      planImplementationOnly: true,
+      statusAuthority: 'desktop-live'
+    })
+
+    triggerPluginOut(true)
+    expect(desktopSocket.writable).toBe(false)
   })
 
   it('keeps stopped authority while Codex Desktop switches its followed task', async () => {
