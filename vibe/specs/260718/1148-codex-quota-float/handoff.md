@@ -15,10 +15,10 @@ State: `automated-verified / host-pending`
 - Activity Delta 每次发布递增 generation，完整 snapshot 带同一序列屏障；full inventory 保留精确 inProgress 与 confirmed terminal provenance，严格旧增量不能反压。
 - mixed-key delta 的已知任务即时应用；missing-key 清单只隔离缺失行，同批现存任务的完成/未读不再被整批冻结。
 - 重复相同 active snapshot 复用一个 `[0,300,1000]` 周期；首次/新到达 unread=true 可启动一次，只有任务切换歧义、Activity/映射或模式变化才替换兼容周期。
-- Codex read-state 与已确认成功的插件 Host 打开共同构成当前会话未读权威；所有卡片/角标/快捷键仍只走共享打开动作，成功后立即发布会话期已读，失败或仅派发不改状态。旧 EyPc completion receipt 不再参与投影，也不写 Codex 原生状态。
+- Codex read-state 与已确认成功的插件 Host 打开共同构成当前会话未读权威；所有卡片/角标/快捷键仍只走共享打开动作，Electron 成功或 uTools 明确接受派发后立即发布会话期已读，失败/明确拒绝不改状态。旧 EyPc completion receipt 不再参与投影，也不写 Codex 原生状态。
 - Activity 来源已区分 connector、initial snapshot 与真实 patch；Turn 来源已区分 inventory、exact、targeted 和 corroborated。active-exit 转换器自身在 delta/full snapshot 两条入口识别 confirmed provenance，同 revision 完成不再因入口差异回到 ongoing。
 - 真实 activity patch 可以在旧 completed 元数据仍存在时立即开始新 active 周期；同轮精确 completed 仍立即完成。
-- 任务状态语义是 `task-state-v4`；v3/v2/旧 preload 仅标记 degraded，不清空任务，缺失 Plan 分类时保守归入普通输入层。
+- 任务状态语义是 `task-state-v5`；v4/v3/v2/旧 preload 仅标记 degraded，不清空任务。v4 Plan-only 标记继续兼容，但普通 connector waiting 只有 v5 的 `persisted-decision` provenance 才能恢复为待输入。
 - `completionPresentationDelayMs` 已从当前设置类型、默认值和规范化输出移除；展示层无独立延迟。
 - 新会话 `quota-auto` 已按 RAW-046 收敛：任一实际返回的普通 5 小时/周窗口为 0 都切换最高可用 Spark；缺失窗口不等于 0，普通池读数优先正值 5 小时。
 - RAW-071 的旧配色格式/对比度/配对色域/暂态预览/回滚路径已从现行 Runtime 撤掉；测试、PRD、架构、Soul 和错误记忆统一为独立 token 直存直渲。
@@ -35,17 +35,22 @@ State: `automated-verified / host-pending`
 - RAW-138 根据真实宿主复验细化了 unread 冲突：当前 Codex read-state 广播发生在插件重载前，App Server 不补发，而原生集合仍保留 stale true；因此 refollow 的当前 false 必须能清除它，同时 persisted false 仍压住 snapshot true。所有插件任务 Deep Link 只有成功打开后才写入会话期 false 并即时发匿名 `readStateOnly`，parent 与已知 Side Chat 同步收敛；失败不改状态，Desktop IPC 不可用时确认仍在本 preload 会话有效，新 completion 会清理该 false。没有 legacy receipt、公开字段或 Codex 原生写入。
 - RAW-139 复核发现当前机器同时缓存多个 EyPc ASAR，悬浮窗最初仍运行 1.2.6，激活后才切到与源码/镜像一致的 1.2.33；正确实例的真实卡片点击已精确打开预期任务并把插件未读数 2→1。独立代码缺陷是 Codex `mainHide` 入口在同步 dispatch 后又由 Renderer 二次 hide，以及停用清空库存后快捷命令在 bootstrap 前读取空投影。现由 `mainHide` 独占可见性，空库存命令串行等待 tasks-only preflight；卡片 alias 跨生命周期时只按同一 task key 重建，Host 明确拒绝旧 alias 时至多重试一次，不会跳到其它任务。
 - RAW-140 复现了完成未读快捷键成功打开后的状态反弹：普通 `mainHide → onPluginOut(false)` 会关闭并重建 Desktop/App Server Bridge，旧确认只在 Bridge `liveUnread` 内，因此 refollow 后被原生 stale true 回灌。确认现为 preload 进程内最多 1000 条的 completion-epoch 提示，跨普通 close/reset/resubscribe/refollow 保留；同 completion 重放不反压，新 Turn 或明确移除才释放。Bridge `70/70`、五文件聚焦 `144/144` 与 typecheck 已通过。
-- RAW-141 用当前真实 `Needs input` 任务确认了新的 owner-loss 缺口：原 stream owner 消失后，新 follower 不会获得当前请求快照；App Server latest Turn 只显示 interrupted，只有 sessions rollout 中未匹配的精确 `request_user_input` 仍能证明等待。Preload 现以 4 MiB 安全尾读恢复该 input；已观察输入/审批/Plan 在软中断后保留 sticky shadow，普通 active 降级，新快照/Turn/库存 revision 清理；普通 pluginOut 保留 Desktop observer，kill/显式停用完全关闭。真实源码预检已显示 `active=1`，新构建 uTools 展示仍待重载。
+- RAW-141 用当前真实 `Needs input` 任务确认了 owner-loss 缺口：原 stream owner 消失后，新 follower 不会获得当前请求快照；App Server latest Turn 只显示 interrupted，只有 sessions rollout 中未匹配的精确 `request_user_input` 仍能证明等待。4 MiB 安全尾读与 sticky shadow 仍保留，但 RAW-145 已证明当时“源码预检 active=1”只覆盖 Preload，不能代表产品 Domain 已接纳。
+- RAW-142 把 latest completed Turn 中精确完成的 Plan 视为“待实现”决定：rollout/App Server item 只投影匿名 Plan-only waiting，优先于 unread 与 completed-unread，下一 Turn 开始即解除。Unread 在原生 atom 瞬时不可用或库存对象替换时沿用本 Bridge 最近一次成功解析的原生结果，防止快捷键/刷新路径先闪出错误未读再纠正；精确事件和新原生集合仍可覆盖。
+- RAW-143 证明快捷键慢不是项目列表本地判断，而是普通 mainHide 清空 App Server alias/latest-Turn cache 后反复全量重建。普通 `onPluginOut(false)` 现只隐藏窗口并保留热会话；kill、feature disable 与显式 Controller close 仍清理。Controller 并发 action preflight 只复用真正发布成功的 threads scan，Runner 首次/stale alias 才全量预检；热 task alias 打开新增库存 RPC 为 0。
+- RAW-144 进一步把任务物化与 Activity 订阅固定到 Codex 功能启用生命周期，离开页面/隐藏 Float 不再清缓存，额度仍按 surface 门控；Runner catalog 改为每项目增量新增/失效/单飞。已读确认现覆盖 uTools fallback，并用 preload 内部 Turn ID 区分 completion epoch：同一 Turn 的完成时间补全和旧 full snapshot 不会让已读复现，新 Turn 仍会重新进入未读。
+- RAW-145 在当前本机真实 Provider 数据上复现了跨层断点：Preload 恢复一条 connector waiting，但生产 Domain 投影为零条待输入；旧预检复制宽松算法而误报成功。v5 现用 `persisted-decision` 明确标记安全 rollout 输入/Plan 决定，贯通库存、Activity 与 Domain，并由精确新 Turn/active/completion 清除；普通 connector waiting 仍拒绝。首个修复后真实匿名预检收敛为 persisted waiting 1、产品 waiting 1；Provider 随后解除决定时最终复跑同步为 0、0，没有 sticky 反弹。
+- RAW-146 收口非宿主残留：Controller/Float 共用 Domain 置顶优先显示排序，全局待输入、紧凑角标与循环不再对同一完整集合选择不同首条；输入/未读的 200ms 帮助和 ARIA 明示“打开第一条”。反向测试覆盖源数组首项未置顶、后项置顶，旧文案断言已清除；canonical/过程文档同步 `persisted-decision`、默认 24 小时、最新 `752/752` 基线及当前 8092 未监听事实。
 
 ## 验证
 
-详细命令、七项修复、闭合矩阵与 RAW-132–141 增量合同见 [verify.md](verify.md#L1)。RAW-141 Bridge/Controller/Domain/Presentation 聚焦回归 `170/170`；当前完整工作树 `pnpm run verify` 通过 `737/737`（`57/57` 文件），排除其它未提交改动后的 Git index 独立副本通过 `711/711`（`54/54` 文件）、typecheck、production build、runtime preparation 与 uTools validation；preload 语法和真实源码预检也通过。真实宿主已确认源码能把当前 ownerless `Needs input` 恢复为待输入，但 RAW-139–141 新构建尚未重载，冷启动快捷键、跨 mainHide 持续已读、alias 恢复、普通输入/Plan 与 ownerless 等待展示仍为 host-pending。
+详细命令、七项状态机修复、闭合矩阵与 RAW-132–146 增量合同见 [verify.md](verify.md#L1)。RAW-146 聚焦 `90/90`、完整 Vitest `752/752`、typecheck、preload/运行时静态门禁、真实 Provider→Domain 预检与文档链接审计通过。8092 当前未监听，安装 ASAR 仍是修复前 v4；本轮按用户要求没有启动服务、更新 ASAR、重载或操作实际 uTools，后续宿主证据不得由源码自动化代替。
 
 ## 真实宿主验收
 
 以下步骤是剩余的真实宿主验收清单，不构成当前自动化接纳：
 
-1. 正常重载 uTools 插件，确认运行中 preload 与 Renderer 同为 v4。
+1. 正常重载 uTools 插件，确认运行中 preload 与 Renderer 同为 v5。
 2. 验收普通 active→completed-unread，卡片、角标和归档能力同批更新。
 3. 验收 interrupted/failed 后恢复运行再 completed-unread，不得经过 stopped，也不依赖任务切换。
 4. 在 completed、stopped 和 active 任务间切换，未选中任务的状态不得改变。
@@ -58,3 +63,7 @@ State: `automated-verified / host-pending`
 11. 完全退出当前 EyPc 页面后，从 uTools 全局入口依次触发待输入、已完成未读、上一个和下一个任务；确认不显示/闪烁主窗口、首次冷启动也能打开正确任务。保留一张旧卡片跨一次插件显隐后再点击，确认只打开同一卡片任务且不会跳到列表首项。
 12. 用“查看已完成未读”全局快捷键打开一条未读任务，确认即时转为已读后跨至少两轮 mainHide/refollow/完整校对仍保持已读；随后在同一任务产生并完成新 Turn，确认它重新进入已完成未读。
 13. 重载 RAW-141 新构建后确认当前长期 `Needs input` 任务显示“需要输入”；另各准备一条普通输入和一个已规划未实现 Plan，执行普通显隐、全局前后任务快捷键和一次 owner/transport 重连，三者仍按普通输入优先、Plan 次级展示。回答普通输入或确认 Plan 后，状态应由新快照/Turn 自动解除，不保留 sticky 旧等待。
+14. 准备一条完成规划但尚未开始实现的 Plan，确认无论是否已读都显示“需要输入”且不进入“已完成未读”；开始新 Turn 后立即解除。连续触发任务刷新和“查看已完成未读”快捷键，确认不存在先闪为未读再回到已读的中间帧。
+15. 连续触发待输入、完成未读、上一个/下一个任务及 Runner 快捷键；首次冷启动可有一次预检，随后普通 mainHide 往返应直接打开且无明显全量扫描等待。真实退出/重载后允许重新冷启动一次。
+16. 重载 v5 后复验用户截图中的同一 ownerless 任务：Codex 原生 `Needs input` 时 EyPc 必须为“需要输入”；回答后或开始精确新 Turn 时立即解除。再制造一条只有普通 connector waiting hint 的夹具/状态，确认仍保守“进行中”，不得因本修复扩大误报。
+17. 准备两条待输入任务，让较新的任务不置顶、较旧任务置顶；紧凑角标和全局待输入入口都必须打开同一置顶首条，鼠标/键盘说明读出“打开第一条”，不得切页或跳过首项。

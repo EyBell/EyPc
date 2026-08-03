@@ -91,6 +91,28 @@ Tool: codex
 | RAW-141 非 kill pluginOut Desktop observer 连续性及 Controller close 合同 | complete / automated-verified |
 | RAW-141 聚焦 `170/170`、完整工作树 `737/737`、独立暂存提交 `711/711` 与 typecheck/build/preload/uTools runtime 门禁 | complete / automated-verified |
 | RAW-141 新构建重载后的普通输入、Plan 与 ownerless Needs input 展示 | pending / user-owned |
+| RAW-142 completed Plan 精确 rollout/App Server item 待实现投影，且不受 unread 影响 | complete / focused-automated-verified |
+| RAW-142 原生 unread 瞬时不可用与库存替换期间不发布错误 true 中间帧 | complete / focused-automated-verified |
+| RAW-142 Bridge+Domain 114 项、Controller 2 项、typecheck、preload 语法/镜像/同步 IPC 定向门禁 | complete / focused-automated-verified |
+| RAW-142 真实 uTools completed Plan、新 Turn 解除与完成未读无闪跳验收 | pending / user-owned |
+| RAW-143 普通 mainHide 保留 App Server alias/latest-Turn 热会话，kill/显式 close 仍清理 | complete / focused-automated-verified |
+| RAW-143 tasks preflight 发布成功感知单飞、verified 空库存与 Runner 热库存复用 | complete / focused-automated-verified |
+| RAW-143 四文件 `149/149`、typecheck、preload 语法/镜像与 diff 定向门禁 | complete / focused-automated-verified |
+| RAW-143 新构建连续任务/Runner 快捷键体感与冷启动时延验收 | pending / user-owned |
+| RAW-144 feature-lifetime 任务/Activity 热缓存与额度 surface 门控 | complete / focused-automated-verified |
+| RAW-144 Runner per-project catalog 增量新增、alias 失效与 single-flight | complete / focused-automated-verified |
+| RAW-144 uTools fallback 成功确认、Turn ID 绑定与旧 snapshot 反压保护 | complete / focused-automated-verified |
+| RAW-144 受影响 15 文件 `301/301`、typecheck、三类 preload 语法/镜像、Vite/runtime/uTools packaging 与 diff | complete / focused-automated-verified |
+| RAW-144 真实 uTools 连续快捷键、fallback 打开与同 Turn 时间补全验收 | pending / user-owned |
+| RAW-145 当前本机 Provider → Preload → Domain 真实投影复现与根因定位 | complete / host-readonly-evidence |
+| RAW-145 `persisted-decision` 端到端来源、v5 协议与精确新 Turn 清理 | complete / focused-automated-verified |
+| RAW-145 四文件 `192/192`、typecheck、完整 build、三份 main preload 镜像与真实预检 | complete / focused-automated-verified |
+| RAW-145 8092 开发服务与 main/float/action 重载入口 | pending / current-not-listening |
+| RAW-145 新构建重载后的同一 `Needs input` 卡片与解除边界 | pending / user-owned |
+| RAW-146 Controller/Float 共用置顶优先稳定显示排序，待输入首条一致 | complete / automated-verified |
+| RAW-146 紧凑角标帮助/ARIA及旧测试合同修正 | complete / automated-verified |
+| RAW-146 canonical/过程文档漂移、错误记忆与链接审计 | complete / automated-verified |
+| RAW-146 实际 uTools ASAR/进程/8092 启动或重载 | excluded / user-request |
 | 反向 generation 屏障夹具 TS2349 修复与 typecheck | complete / typecheck-verified |
 | 统一 `pnpm run verify`（preload 同步、全量测试、typecheck、production build） | complete / automated-verified |
 | 三类 uTools preload 单一资产清单与镜像同步 | complete / automated-verified |
