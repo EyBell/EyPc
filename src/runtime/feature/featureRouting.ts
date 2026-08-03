@@ -11,6 +11,8 @@ export interface FeatureRoute {
   actionId?: string
   actionArgs?: Record<string, unknown>
   hideAfterAction?: boolean
+  preserveCurrentTab?: boolean
+  visibilityOwner?: 'renderer' | 'mainHide'
   settingsMaintenanceSection?: 'features'
 }
 
@@ -52,27 +54,27 @@ export function routePluginFeature(payload: PluginEnterPayload | null | undefine
       return enabledRoute('codex', false, featureConfigs)
     case 'eypc-codex-toggle':
       return isFeatureEnabled('codex', featureConfigs)
-        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.float.toggle', hideAfterAction: true }
+        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.float.toggle', preserveCurrentTab: true, visibilityOwner: 'mainHide' }
         : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'codex.float.toggle' }
     case 'eypc-codex-activate':
       return isFeatureEnabled('codex', featureConfigs)
-        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.float.activate', hideAfterAction: true }
+        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.float.activate', preserveCurrentTab: true, visibilityOwner: 'mainHide' }
         : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'codex.float.activate' }
     case 'eypc-codex-input':
       return isFeatureEnabled('codex', featureConfigs)
-        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.input.open', hideAfterAction: true }
+        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.input.open', preserveCurrentTab: true, visibilityOwner: 'mainHide' }
         : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'codex.input.open' }
     case 'eypc-codex-completed-unread':
       return isFeatureEnabled('codex', featureConfigs)
-        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.completed-unread.openFirst', hideAfterAction: true }
+        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.completed-unread.openFirst', preserveCurrentTab: true, visibilityOwner: 'mainHide' }
         : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'codex.completed-unread.openFirst' }
     case 'eypc-codex-task-previous':
       return isFeatureEnabled('codex', featureConfigs)
-        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.task.previous', hideAfterAction: true }
+        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.task.previous', preserveCurrentTab: true, visibilityOwner: 'mainHide' }
         : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'codex.task.previous' }
     case 'eypc-codex-task-next':
       return isFeatureEnabled('codex', featureConfigs)
-        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.task.next', hideAfterAction: true }
+        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.task.next', preserveCurrentTab: true, visibilityOwner: 'mainHide' }
         : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'codex.task.next' }
     case 'eypc-codex-action-1':
     case 'eypc-codex-action-2':

@@ -1,7 +1,7 @@
 # Codex 任务状态收敛计划
 
 Tool: codex
-Status: `implemented-unverified`
+Status: `automated-verified / host-pending`
 
 1. 用序列测试复现“完成通过定向核验，后续完整快照反判回进行中”。
 2. 完成通过 active-exit 门禁后立即关闭周期并清除 baseline。
@@ -19,5 +19,11 @@ Status: `implemented-unverified`
 14. 在不放宽 RAW-131 门禁的前提下，将父任务聚合收敛为纯解析器，增加 Side Chat 分支终态延后保护与匿名裁决计数，并用反向合同证明旧 Turn、旧 generation 和 stopped archive 不能回归。
 15. 将匿名诊断的字段、规范化和比较收敛到 Domain；Controller 只做 generation 后原子接纳与变更通知；运行页压缩常驻文案、隔离 live region 并统一原生帮助按钮，再用生产纯解析器真值表和诊断通知合同封住回归。
 16. 将动态页固定 6 小时窗口收敛为 `CodexSettings.dynamicTaskWindowHours`：默认 24 小时，任务配置页可编辑，Controller 原子包与既有时间边界调度器即时重投影，Renderer/Preload 不新增过滤或请求。
+17. 将额度刷新与完整库存校对放宽为 `0–86400` 整数秒配置，并把无 Turn 载荷的精确 completed 事件从 stale-active/全量扫描退化路径拆为密集有界的单任务完成确认；更新 positive epoch 继续取消旧结果，失败才回退完整校对。
+18. 为精确 Plan 实施确认增加隐私安全的 plan-only 会话语义并升级到 `task-state-v4`；Controller 将前后任务候选拆为普通输入/审批、Plan、最近活跃三个独占循环层，保留方向、回绕、去重和本地置顶兜底，并补齐 Bridge/Domain/Controller/平台、帮助与文档合同。
+19. 闭合插件中断恢复：让当前原生 unread 集合的存在/不存在双向压过重连 snapshot，停用时清空 Controller 派生基线并以新运行代次立即 bootstrap，给零周期 missing-key 增加剩余隔离窗自唤醒，并用最多 1000 条 preload 内存拓扑提示重订已知 Side Chat；保持公开 v4 协议、本地用户状态与未知 ephemeral child 边界不变。
+20. 复核真实宿主仍未收敛的已读：区分运行包、当前 IPC 协议、事件时间线和原生集合，允许当前 refollow `false` 清除遗漏事件留下的 persisted `true`；所有插件任务 Deep Link 成功后走同一会话期已读确认，失败不改状态，新 completion 清理旧 false，并补 main/Side、断桥和协议兼容合同。
+21. 复核真实 uTools 的 ASAR/preload 身份与任务打开路径；把 Codex 全局入口统一为 `mainHide` 独占可见性，空库存指令经 tasks-only preflight 后执行，卡片失效 alias 只按同一 key 重建并至多重试一次；补 App route、Controller、Bridge 与真实点击证据。
+22. 复现完成未读快捷键“先已读后反弹”的生命周期：把成功打开确认从单个 Bridge `liveUnread` 提升为有界 preload 会话 epoch，跨普通 mainHide/IPC reset/resubscribe/连接重建保留，并仅由新 Turn 或明确移除释放；补同 completion 重放与新 Turn 反向合同。
 
 执行证据见 [verify.md](verify.md#L1)，当前交接见 [handoff.md](handoff.md#L1)。

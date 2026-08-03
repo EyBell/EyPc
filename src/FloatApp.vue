@@ -2570,7 +2570,7 @@ onUnmounted(() => {
                     data-confirm-slot
                     data-quick-jump-target
                     :data-quick-jump-label="`归档 ${taskDisplayLabel(row.task)}`"
-                    :disabled="!row.task.canArchive"
+                    :aria-disabled="!row.task.canArchive"
                     @pointerenter="queueActionHint($event, taskArchiveConfirming(row.task) ? '再次点击确认真实归档' : row.task.canArchive ? '真实归档 Codex 会话' : taskArchiveBlockedReason(row.task))"
                   @pointerleave="clearActionHint"
                   @focus="queueActionHint($event, taskArchiveConfirming(row.task) ? '再次点击确认真实归档' : row.task.canArchive ? '真实归档 Codex 会话' : taskArchiveBlockedReason(row.task))"

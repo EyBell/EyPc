@@ -1,6 +1,11 @@
 export type CodexDisplayStyle = 'water' | 'card'
-export type CodexQuotaRefreshMinutes = 5 | 10 | 15 | 30 | 0
-export type CodexTaskRefreshSeconds = 15 | 30 | 60 | 0
+export const CODEX_DEFAULT_QUOTA_REFRESH_SECONDS = 5 * 60
+export const CODEX_MIN_QUOTA_REFRESH_SECONDS = 0
+export const CODEX_MAX_QUOTA_REFRESH_SECONDS = 24 * 60 * 60
+export const CODEX_DEFAULT_TASK_REFRESH_SECONDS = 15
+export const CODEX_MIN_TASK_REFRESH_SECONDS = 0
+export const CODEX_MAX_TASK_REFRESH_SECONDS = 24 * 60 * 60
+export type CodexTaskRefreshSeconds = number
 export const CODEX_DEFAULT_DYNAMIC_TASK_WINDOW_HOURS = 24
 export const CODEX_MIN_DYNAMIC_TASK_WINDOW_HOURS = 1
 export const CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS = 365 * 24
@@ -208,6 +213,8 @@ export interface CodexHostThread {
   name: string
   status: CodexThreadStatus
   activeFlags: CodexThreadActiveFlag[]
+  /** True only when every current actionable wait is an exact Plan implementation confirmation. */
+  planImplementationOnly?: boolean
   /** Activity is authoritative only while the desktop follower is live. */
   statusAuthority?: CodexStatusAuthority
   /** Evidence provenance used to distinguish a replayed snapshot from a real later activity patch. */
@@ -249,6 +256,8 @@ export interface CodexHostProject {
   nativePinned: boolean
   nativePinnedOrder?: number
   nativeOrder?: number
+  /** Codex native selected/current project, used only after default and pinned priorities. */
+  selected?: boolean
 }
 
 export interface CodexRecoveredPendingSource {
@@ -277,7 +286,7 @@ export interface CodexPendingRecoverySnapshotV1 {
  * marked degraded, but its atomic task-state package is preserved rather than
  * being independently cleared by Controller or Renderer.
  */
-export const CODEX_TASK_STATE_REVISION = 'task-state-v3'
+export const CODEX_TASK_STATE_REVISION = 'task-state-v4'
 
 export interface CodexHostSnapshotV1 {
   version: 1
@@ -353,6 +362,8 @@ export interface CodexActivityDeltaEntryV2 {
   readStateOnly?: boolean
   status?: CodexThreadStatus
   activeFlags?: CodexThreadActiveFlag[]
+  /** Privacy-safe Plan subtype; omitted read-state-only entries must preserve the current value. */
+  planImplementationOnly?: boolean
   statusAuthority?: CodexStatusAuthority
   activityEvidence?: CodexActivityEvidenceOrigin
   activityRevision?: number
@@ -600,7 +611,8 @@ export interface CodexSettings {
   floatEnabled: boolean
   displayStyle: CodexDisplayStyle
   conversationInboxEnabled: boolean
-  quotaRefreshMinutes: CodexQuotaRefreshMinutes
+  /** Automatic quota refresh interval in whole seconds; 0 keeps refresh manual-only. */
+  quotaRefreshSeconds: number
   taskRefreshSeconds: CodexTaskRefreshSeconds
   newThreadModelPolicy: CodexNewThreadModelPolicy
   /** Applies only while ordinary Codex quota is selected by quota-auto. */
@@ -675,6 +687,8 @@ export interface CodexTaskCard {
   state: 'running' | 'stopped' | 'recent-activity' | 'waiting-approval' | 'waiting-input' | 'attention' | 'pending-review'
   /** Preserves simultaneous live requirements instead of collapsing both flags. */
   activeFlags?: CodexThreadActiveFlag[]
+  /** Current actionable wait contains only exact Plan implementation confirmation requests. */
+  planImplementationOnly?: boolean
   updatedAt: number
   pendingSince?: number
   createdAt?: number
@@ -706,6 +720,7 @@ export interface CodexProjectCard {
   nativePinned: boolean
   nativePinnedOrder?: number
   nativeOrder?: number
+  selected?: boolean
   pinSource?: 'native' | 'local'
   collapsed: boolean
   tasks: CodexTaskCard[]
@@ -1152,8 +1167,8 @@ export function defaultCodexSettings(): CodexSettings {
     floatEnabled: false,
     displayStyle: 'water',
     conversationInboxEnabled: true,
-    quotaRefreshMinutes: 5,
-    taskRefreshSeconds: 15,
+    quotaRefreshSeconds: CODEX_DEFAULT_QUOTA_REFRESH_SECONDS,
+    taskRefreshSeconds: CODEX_DEFAULT_TASK_REFRESH_SECONDS,
     newThreadModelPolicy: 'quota-auto',
     newThreadPreferredModel: '',
     timeWindowDays: 30,
@@ -1181,8 +1196,25 @@ export function normalizeCodexSettings(value: unknown): CodexSettings {
     floatEnabled: source.floatEnabled === true,
     displayStyle: enumValue(source.displayStyle, ['water', 'card'] as const, fallback.displayStyle),
     conversationInboxEnabled: source.conversationInboxEnabled !== false,
-    quotaRefreshMinutes: enumValue(source.quotaRefreshMinutes, [0, 5, 10, 15, 30] as const, fallback.quotaRefreshMinutes),
-    taskRefreshSeconds: enumValue(source.taskRefreshSeconds, [0, 15, 30, 60] as const, fallback.taskRefreshSeconds),
+    quotaRefreshSeconds: boundedInteger(
+      source.quotaRefreshSeconds,
+      CODEX_MIN_QUOTA_REFRESH_SECONDS,
+      CODEX_MAX_QUOTA_REFRESH_SECONDS,
+      typeof source.quotaRefreshMinutes === 'number' && Number.isFinite(source.quotaRefreshMinutes)
+        ? boundedInteger(
+            source.quotaRefreshMinutes * 60,
+            CODEX_MIN_QUOTA_REFRESH_SECONDS,
+            CODEX_MAX_QUOTA_REFRESH_SECONDS,
+            fallback.quotaRefreshSeconds
+          )
+        : fallback.quotaRefreshSeconds
+    ),
+    taskRefreshSeconds: boundedInteger(
+      source.taskRefreshSeconds,
+      CODEX_MIN_TASK_REFRESH_SECONDS,
+      CODEX_MAX_TASK_REFRESH_SECONDS,
+      fallback.taskRefreshSeconds
+    ),
     newThreadModelPolicy: enumValue(source.newThreadModelPolicy, ['quota-auto'] as const, fallback.newThreadModelPolicy),
     newThreadPreferredModel: typeof source.newThreadPreferredModel === 'string' && /^[A-Za-z0-9._:-]{1,120}$/.test(source.newThreadPreferredModel)
       ? source.newThreadPreferredModel
@@ -1624,6 +1656,7 @@ export function projectConversations(input: {
       ...(completionRevision ? { unreadState: unreadKnown ? unread ? 'unread' : 'read' : 'unknown' } : {}),
       state: legacyTaskState(bucket, activityState),
       ...(authoritativeActive ? { activeFlags: [...thread.activeFlags] } : {}),
+      ...(authoritativeActive && thread.planImplementationOnly === true ? { planImplementationOnly: true } : {}),
       updatedAt: thread.updatedAt,
       ...(unread ? { pendingSince: completionRevision } : {}),
       source: 'current',
@@ -1678,6 +1711,7 @@ export function projectConversations(input: {
       nativePinned: project.nativePinned,
       ...(typeof project.nativePinnedOrder === 'number' ? { nativePinnedOrder: project.nativePinnedOrder } : {}),
       ...(typeof project.nativeOrder === 'number' ? { nativeOrder: project.nativeOrder } : {}),
+      ...(project.selected ? { selected: true } : {}),
       ...(localProjectPins.has(project.key)
         ? { pinSource: 'local' as const }
         : project.nativePinned ? { pinSource: 'native' as const } : {}),

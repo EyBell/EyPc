@@ -72,7 +72,7 @@ Define final product eligibility once as a stateless pure projection over the st
 
 ## Alternative Route
 
-- Status: `candidate`; source, contracts and static closeout are synchronized, while automated and real-host acceptance remain pending.
+- Status: `candidate`; source, contracts and automated verification are synchronized, while real-host acceptance remains pending.
 - Preconditions: all consumers receive the same versioned, Controller-stabilized conversation snapshot and a pure projection can express final display eligibility.
 - Ordered steps: derive final arrays once; expose explicit counts; make every visual consumer use them; make generic action pools reuse the same active array; preserve separately named full-collection/dedicated-action/local-pin exceptions; remove duplicate filters and timers.
 - Verification: cards and active badge have identical keys/counts across jitter; an unpinned task just beyond the configured hours is absent from both active display and previous/next; editing the hours immediately changes both through the same package; local pin restores only the documented empty-pool fallback; completed-unread stays outside generic cycling; search never changes compact counts.

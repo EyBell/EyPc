@@ -34,13 +34,43 @@ describe('uTools feature routing', () => {
       tab: 'mqtt',
       focusSearch: false,
       actionId: 'codex.float.toggle',
-      hideAfterAction: true
+      preserveCurrentTab: true,
+      visibilityOwner: 'mainHide'
     })
     expect(routePluginFeature({ code: 'eypc-codex-activate' }, undefined, 'mqtt')).toEqual({
       tab: 'mqtt',
       focusSearch: false,
       actionId: 'codex.float.activate',
-      hideAfterAction: true
+      preserveCurrentTab: true,
+      visibilityOwner: 'mainHide'
+    })
+    expect(routePluginFeature({ code: 'eypc-codex-input' }, undefined, 'mqtt')).toEqual({
+      tab: 'mqtt',
+      focusSearch: false,
+      actionId: 'codex.input.open',
+      preserveCurrentTab: true,
+      visibilityOwner: 'mainHide'
+    })
+    expect(routePluginFeature({ code: 'eypc-codex-completed-unread' }, undefined, 'mqtt')).toEqual({
+      tab: 'mqtt',
+      focusSearch: false,
+      actionId: 'codex.completed-unread.openFirst',
+      preserveCurrentTab: true,
+      visibilityOwner: 'mainHide'
+    })
+    expect(routePluginFeature({ code: 'eypc-codex-task-previous' }, undefined, 'mqtt')).toEqual({
+      tab: 'mqtt',
+      focusSearch: false,
+      actionId: 'codex.task.previous',
+      preserveCurrentTab: true,
+      visibilityOwner: 'mainHide'
+    })
+    expect(routePluginFeature({ code: 'eypc-codex-task-next' }, undefined, 'mqtt')).toEqual({
+      tab: 'mqtt',
+      focusSearch: false,
+      actionId: 'codex.task.next',
+      preserveCurrentTab: true,
+      visibilityOwner: 'mainHide'
     })
     for (let slot = 1; slot <= 5; slot += 1) {
       expect(routePluginFeature({ code: `eypc-codex-action-${slot}` }, undefined, 'mqtt')).toEqual({

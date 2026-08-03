@@ -212,6 +212,18 @@ describe('Codex Companion V3 UI contract', () => {
     expect(source).toContain('默认 24 小时')
   })
 
+  it('uses custom whole-second inputs for quota refresh and full reconciliation', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
+    expect(source).toContain('额度刷新（秒）')
+    expect(source).toContain(':value="snapshot.settings.quotaRefreshSeconds"')
+    expect(source).toContain('update({ quotaRefreshSeconds:')
+    expect(source).toContain('完整校对频率（秒）')
+    expect(source).toContain(':value="snapshot.settings.taskRefreshSeconds"')
+    expect(source).toContain('update({ taskRefreshSeconds:')
+    expect(source).toContain('0 表示仅手动，最大 86400 秒')
+    expect(source).not.toContain('snapshot.settings.quotaRefreshMinutes')
+  })
+
   it('surfaces aggregate activity decision diagnostics without an identity field', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
     expect(source).toContain("label: '状态裁决'")
@@ -422,7 +434,8 @@ describe('Codex Companion V3 UI contract', () => {
     expect(wrapper.find('.float-action-hint').exists()).toBe(false)
 
     const stoppedArchive = failed.get('.task-inline-actions .action-archive')
-    expect(stoppedArchive.attributes('disabled')).toBeDefined()
+    expect(stoppedArchive.attributes('aria-disabled')).toBe('true')
+    expect(stoppedArchive.attributes('disabled')).toBeUndefined()
     await stoppedArchive.trigger('pointerenter')
     vi.advanceTimersByTime(200)
     await wrapper.vm.$nextTick()

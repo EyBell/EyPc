@@ -22,7 +22,7 @@ function thread(
   updatedAt: number,
   activeFlags: CodexHostThread['activeFlags'] = [],
   key = KEY,
-  evidence: Partial<Pick<CodexHostThread, 'createdAt' | 'firstPromptAt' | 'lastTurnStatus' | 'lastTurnStartedAt' | 'lastTurnCompletedAt' | 'lastTurnEvidence' | 'statusAuthority' | 'activityEvidence' | 'activityRevision' | 'desktopActiveSince' | 'hasUnreadTurn' | 'unreadAuthority'>> = {}
+  evidence: Partial<Pick<CodexHostThread, 'createdAt' | 'firstPromptAt' | 'lastTurnStatus' | 'lastTurnStartedAt' | 'lastTurnCompletedAt' | 'lastTurnEvidence' | 'statusAuthority' | 'activityEvidence' | 'activityRevision' | 'desktopActiveSince' | 'hasUnreadTurn' | 'unreadAuthority' | 'planImplementationOnly'>> = {}
 ): CodexHostThread {
   return {
     key,
@@ -43,8 +43,8 @@ describe('Codex domain', () => {
     const settings = normalizeCodexSettings({
       floatEnabled: true,
       displayStyle: 'card',
-      quotaRefreshMinutes: 0,
-      taskRefreshSeconds: 60,
+      quotaRefreshSeconds: 7,
+      taskRefreshSeconds: 23,
       dynamicTaskWindowHours: 48,
       compactFields: ['weekly', 'tasks', 'unknown'],
       expandedFields: ['tasks', 'config'],
@@ -55,14 +55,32 @@ describe('Codex domain', () => {
     expect(settings).toMatchObject({
       floatEnabled: true,
       displayStyle: 'card',
-      quotaRefreshMinutes: 0,
-      taskRefreshSeconds: 60,
+      quotaRefreshSeconds: 7,
+      taskRefreshSeconds: 23,
       dynamicTaskWindowHours: 48,
       compactFields: ['weekly', 'tasks'],
       expandedFields: ['tasks', 'config'],
       position: { displayId: 'screen-2', x: 102, y: -50, edge: 'left' }
     })
     expect(settings.colors).toEqual({ ...defaultCodexSettings().colors, healthy: '#00aa99', warning: 'invalid' })
+  })
+
+  it('normalizes custom second refresh intervals and migrates the legacy minute field', () => {
+    expect(defaultCodexSettings()).toMatchObject({ quotaRefreshSeconds: 300, taskRefreshSeconds: 15 })
+    expect(normalizeCodexSettings({ quotaRefreshMinutes: 10 }).quotaRefreshSeconds).toBe(600)
+    expect(normalizeCodexSettings({ quotaRefreshMinutes: 0 }).quotaRefreshSeconds).toBe(0)
+    expect(normalizeCodexSettings({ quotaRefreshSeconds: 1.6, taskRefreshSeconds: 2.4 })).toMatchObject({
+      quotaRefreshSeconds: 2,
+      taskRefreshSeconds: 2
+    })
+    expect(normalizeCodexSettings({ quotaRefreshSeconds: -1, taskRefreshSeconds: -1 })).toMatchObject({
+      quotaRefreshSeconds: 0,
+      taskRefreshSeconds: 0
+    })
+    expect(normalizeCodexSettings({ quotaRefreshSeconds: 999_999, taskRefreshSeconds: 999_999 })).toMatchObject({
+      quotaRefreshSeconds: 86_400,
+      taskRefreshSeconds: 86_400
+    })
   })
 
   it('defaults the dynamic task window to 24 hours and bounds persisted edits', () => {
@@ -195,6 +213,7 @@ describe('Codex domain', () => {
     const waiting = projectConversations({
       threads: [thread('active', 900, ['waitingOnUserInput'], KEY, {
         desktopActiveSince: 850,
+        planImplementationOnly: true,
         lastTurnStatus: 'completed',
         lastTurnStartedAt: 400,
         lastTurnCompletedAt: 500,
@@ -204,7 +223,7 @@ describe('Codex domain', () => {
       lastTaskScanAt: 0,
       now: 900
     })
-    expect(waiting.snapshot.ongoing[0]).toMatchObject({ key: KEY, activityState: 'waiting-input' })
+    expect(waiting.snapshot.ongoing[0]).toMatchObject({ key: KEY, activityState: 'waiting-input', planImplementationOnly: true })
   })
 
   it('lets a real activity patch start a new epoch while exact completion still closes it immediately', () => {

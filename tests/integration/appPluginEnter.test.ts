@@ -107,6 +107,10 @@ function activateCalls() {
   return dispatchProbe.dispatch.mock.calls.filter(([actionId]) => actionId === 'codex.float.activate')
 }
 
+function completedUnreadCalls() {
+  return dispatchProbe.dispatch.mock.calls.filter(([actionId]) => actionId === 'codex.completed-unread.openFirst')
+}
+
 function windowSlotCalls() {
   return dispatchProbe.dispatch.mock.calls.filter(([actionId]) => actionId === 'windows.slot.activate')
 }
@@ -123,7 +127,7 @@ afterEach(() => {
 })
 
 describe('App uTools Codex toggle entry', () => {
-  it('handles the global Codex card activation entry and hides the main window', async () => {
+  it('handles the global Codex card activation entry without adding a renderer hide', async () => {
     const host = installHost({ code: 'eypc-codex-activate' })
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => { callback(0); return 1 })
 
@@ -131,11 +135,11 @@ describe('App uTools Codex toggle entry', () => {
     await flushPromises()
 
     expect(activateCalls()).toHaveLength(1)
-    expect(host.hide).toHaveBeenCalledTimes(1)
+    expect(host.hide).not.toHaveBeenCalled()
     expect(host.saved.at(-1)?.codex.settings.floatEnabled).toBe(true)
   })
 
-  it('handles a cold-start enabled payload exactly once and hides the main window', async () => {
+  it('handles a cold-start enabled payload exactly once and leaves visibility to mainHide', async () => {
     const host = installHost({ code: 'eypc-codex-toggle' })
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => { callback(0); return 1 })
 
@@ -143,14 +147,14 @@ describe('App uTools Codex toggle entry', () => {
     await flushPromises()
 
     expect(toggleCalls()).toHaveLength(1)
-    expect(host.hide).toHaveBeenCalledTimes(1)
+    expect(host.hide).not.toHaveBeenCalled()
     expect(host.show).not.toHaveBeenCalled()
     expect(host.clearEnterPayload).toHaveBeenCalledTimes(1)
     expect(host.listeners.size).toBe(1)
     expect(host.saved.at(-1)?.codex.settings.floatEnabled).toBe(true)
   })
 
-  it('handles a hot re-entry exactly once, hides, and disposes the listener', async () => {
+  it('handles a hot re-entry exactly once without a second hide and disposes the listener', async () => {
     const host = installHost(null)
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => { callback(0); return 1 })
     wrapper = shallowMount(App)
@@ -163,12 +167,25 @@ describe('App uTools Codex toggle entry', () => {
     await flushPromises()
 
     expect(toggleCalls()).toHaveLength(1)
-    expect(host.hide).toHaveBeenCalledTimes(1)
+    expect(host.hide).not.toHaveBeenCalled()
     expect(host.show).not.toHaveBeenCalled()
     expect(host.saved.at(-1)?.codex.settings.floatEnabled).toBe(true)
     wrapper.unmount()
     wrapper = null
     expect(host.listeners.size).toBe(0)
+  })
+
+  it('dispatches a cold completed-unread shortcut without changing the current tab or hiding twice', async () => {
+    const host = installHost({ code: 'eypc-codex-completed-unread' })
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => { callback(0); return 1 })
+
+    wrapper = shallowMount(App)
+    await flushPromises()
+
+    expect(completedUnreadCalls()).toHaveLength(1)
+    expect(host.hide).not.toHaveBeenCalled()
+    expect(host.show).not.toHaveBeenCalled()
+    expect(host.saved).toHaveLength(0)
   })
 
   it('shows Settings instead of hiding when the Codex feature is disabled', async () => {

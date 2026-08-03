@@ -29,7 +29,11 @@ import {
 import { buildCodexCompactPresentation, codexBadgeText } from '../domain/codexPresentation'
 import {
   CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS,
-  CODEX_MIN_DYNAMIC_TASK_WINDOW_HOURS
+  CODEX_MAX_QUOTA_REFRESH_SECONDS,
+  CODEX_MAX_TASK_REFRESH_SECONDS,
+  CODEX_MIN_DYNAMIC_TASK_WINDOW_HOURS,
+  CODEX_MIN_QUOTA_REFRESH_SECONDS,
+  CODEX_MIN_TASK_REFRESH_SECONDS
 } from '../domain/codex'
 import type {
   CodexColorSettings,
@@ -767,18 +771,20 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         <div class="codex-form-grid">
           <label>
             <span class="codex-label-row">
-              <span>完整校对频率</span>
+              <span>完整校对频率（秒）</span>
             </span>
-            <select
-              class="codex-select"
+            <input
+              class="codex-number"
+              type="number"
+              :min="CODEX_MIN_TASK_REFRESH_SECONDS"
+              :max="CODEX_MAX_TASK_REFRESH_SECONDS"
+              step="1"
               :value="snapshot.settings.taskRefreshSeconds"
-              @change="update({ taskRefreshSeconds: Number(($event.target as HTMLSelectElement).value) as CodexSettings['taskRefreshSeconds'] })"
+              @change="update({ taskRefreshSeconds: Number(($event.target as HTMLInputElement).value) })"
               title="完整任务校对周期"
-              data-operation-tooltip="完整校对频率"
-              data-operation-description="用于兜底发现漏事件和核对完整清单；新增任务、待输入与完成事件会触发快速单任务校对，不等待该周期。"
-            >
-              <option :value="15">15 秒</option><option :value="30">30 秒</option><option :value="60">60 秒</option><option :value="0">仅手动</option>
-            </select>
+              data-operation-tooltip="完整校对频率（秒）"
+              data-operation-description="按整数秒兜底发现漏事件和核对完整清单；0 表示仅手动，最大 86400 秒。新增任务、待输入与完成事件仍走快速校对。"
+            />
           </label>
           <label>
             <span class="codex-label-row">
@@ -962,16 +968,18 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         </div>
         <div class="codex-form-grid refresh-grid">
           <label>
-            <span>额度刷新</span>
-            <select
-              class="codex-select"
-              :value="snapshot.settings.quotaRefreshMinutes"
-              @change="update({ quotaRefreshMinutes: Number(($event.target as HTMLSelectElement).value) as CodexSettings['quotaRefreshMinutes'] })"
-              data-operation-tooltip="额度刷新"
-              data-operation-description="按固定周期刷新额度状态；1~30 分钟可提升额度准确性。"
-            >
-              <option :value="5">5 分钟</option><option :value="10">10 分钟</option><option :value="15">15 分钟</option><option :value="30">30 分钟</option><option :value="0">仅手动</option>
-            </select>
+            <span>额度刷新（秒）</span>
+            <input
+              class="codex-number"
+              type="number"
+              :min="CODEX_MIN_QUOTA_REFRESH_SECONDS"
+              :max="CODEX_MAX_QUOTA_REFRESH_SECONDS"
+              step="1"
+              :value="snapshot.settings.quotaRefreshSeconds"
+              @change="update({ quotaRefreshSeconds: Number(($event.target as HTMLInputElement).value) })"
+              data-operation-tooltip="额度刷新（秒）"
+              data-operation-description="按整数秒设置自动额度刷新周期；0 表示仅手动，最大 86400 秒。"
+            />
           </label>
           <button
             type="button"
