@@ -192,6 +192,7 @@ class FakeCodexProcess extends EventEmitter {
       const interrupted = this.interruptedTurnIds.has(threadId)
       return {
         data: [{
+          id: `turn-${threadId}`,
           status: inProgress ? 'inProgress' : failed ? 'failed' : interrupted ? 'interrupted' : 'completed',
           ...(this.missingTurnStartedAtIds.has(threadId) ? {} : { startedAt: 1_900_000_000 }),
           ...(inProgress || failed || interrupted || this.missingTurnCompletedAtIds.has(threadId) ? {} : { completedAt: 2_000_000_071 }),
@@ -390,12 +391,14 @@ function loadCodexBridge(
   child: FakeCodexProcess,
   readRegistry: (candidate: string, readIndex: number) => string = () => nativeRegistryText(),
   desktopSocket: FakeCodexDesktopSocket | null = null,
-  useHostDate = false
+  useHostDate = false,
+  useElectronShell = true
 ) {
   const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
   const spawn = vi.fn(() => child)
   const execFile = vi.fn(noSystemProxyExecFile)
   const openExternal = vi.fn(async () => undefined)
+  const shellOpenExternal = vi.fn(() => undefined)
   const registryReads: string[] = []
   const nativeStateWatchers: Array<(event: string, filename: string) => void> = []
   const pluginOutListeners: Array<(isKill: boolean) => void> = []
@@ -415,7 +418,8 @@ function loadCodexBridge(
     },
     utools: {
       onPluginEnter: () => undefined,
-      onPluginOut: (listener: (isKill: boolean) => void) => pluginOutListeners.push(listener)
+      onPluginOut: (listener: (isKill: boolean) => void) => pluginOutListeners.push(listener),
+      shellOpenExternal
     },
     setTimeout,
     clearTimeout,
@@ -458,13 +462,13 @@ function loadCodexBridge(
       }
       if (name === 'node:path') return pathModule
       if (name === 'node:os') return { homedir: () => '/tmp' }
-      if (name === 'electron') return { ipcRenderer: { on() {} }, shell: { openExternal } }
+      if (name === 'electron') return { ipcRenderer: { on() {} }, ...(useElectronShell ? { shell: { openExternal } } : {}) }
       throw new Error(`unexpected require: ${name}`)
     }
   }
   if (useHostDate) Object.assign(sandbox, { Date })
   sandbox.globalThis = sandbox
-  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, codexRolloutHasPendingUserInputText, resetCodexThreadSessionState };`, sandbox, { filename: 'preload.js' })
+  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, resetCodexThreadSessionState };`, sandbox, { filename: 'preload.js' })
   return {
     bridge: (sandbox.window as {
       eypcPlatform: {
@@ -487,12 +491,14 @@ function loadCodexBridge(
         codexThreadNativeProject(thread: Record<string, unknown>, registry: Record<string, any>): Record<string, any> | null
         codexResolveParentActivity(own: Record<string, unknown>, children: Record<string, unknown>[], options?: Record<string, unknown>): Record<string, any>
         codexRolloutHasPendingUserInputText(text: string): boolean
+        codexRolloutPendingPlanStateText(text: string): { known: boolean; pending: boolean }
         resetCodexThreadSessionState(): void
       }
     }).__codexNativeTest,
     registryReads,
     spawn,
     openExternal,
+    shellOpenExternal,
     triggerPluginOut: (isKill: boolean) => pluginOutListeners.forEach((listener) => listener(isKill)),
     triggerNativeStateChange: () => nativeStateWatchers.forEach((listener) => listener('change', '.codex-global-state.json'))
   }
@@ -512,6 +518,97 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
+  it('recognizes only a Plan item in the latest rollout Turn as pending implementation', () => {
+    const { bridge, native } = loadCodexBridge(new FakeCodexProcess())
+    const started = (mode: string) => JSON.stringify({
+      type: 'event_msg',
+      payload: { type: 'task_started', collaboration_mode_kind: mode }
+    })
+    const item = (type: string) => JSON.stringify({
+      type: 'event_msg',
+      payload: { type: 'item_completed', item: { type, text: 'private body' } }
+    })
+
+    expect(native.codexRolloutPendingPlanStateText([started('plan'), item('Plan')].join('\n'))).toEqual({
+      known: true,
+      pending: true
+    })
+    expect(native.codexRolloutPendingPlanStateText([started('plan'), item('Plan'), started('default'), item('AgentMessage')].join('\n'))).toEqual({
+      known: true,
+      pending: false
+    })
+    expect(native.codexRolloutPendingPlanStateText(item('AgentMessage'))).toEqual({
+      known: false,
+      pending: false
+    })
+    bridge.close()
+  })
+
+  it('projects a completed unread Plan as pending input before Desktop request replay', async () => {
+    const child = new FakeCodexProcess()
+    child.rolloutTexts.set(FIXED_THREAD_IDS[3], [
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', collaboration_mode_kind: 'plan' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'Plan', text: 'private plan body' } } })
+    ].join('\n'))
+    const { bridge } = loadCodexBridge(
+      child,
+      () => nativeRegistryTextWithUnread([FIXED_THREAD_IDS[3]])
+    )
+
+    const snapshot = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(snapshot.value.threads.find((thread: Record<string, any>) => thread.name === '跨端未知')).toMatchObject({
+      status: 'active',
+      activeFlags: ['waitingOnUserInput'],
+      planImplementationOnly: true,
+      statusAuthority: 'persisted-decision',
+      hasUnreadTurn: true,
+      lastTurnStatus: 'completed'
+    })
+    expect(JSON.stringify(snapshot)).not.toContain('private plan body')
+    bridge.close()
+  })
+
+  it('publishes an exact completed Plan item as waiting instead of a terminal unread frame', async () => {
+    const child = new FakeCodexProcess()
+    child.inProgressTurnIds.add(FIXED_THREAD_IDS[1])
+    const { bridge } = loadCodexBridge(
+      child,
+      () => nativeRegistryTextWithUnread([FIXED_THREAD_IDS[1]])
+    )
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const task = baseline.value.threads.find((thread: Record<string, any>) => thread.name === '运行中')
+    const deltas: Array<Record<string, any>> = []
+    const stop = bridge.onActivityChanged((delta) => deltas.push(delta))
+
+    child.stdout.emit('data', JSON.stringify({
+      method: 'item/completed',
+      params: {
+        threadId: FIXED_THREAD_IDS[1],
+        item: { type: 'Plan', text: 'private plan body' }
+      }
+    }) + '\n' + JSON.stringify({
+      method: 'turn/completed',
+      params: {
+        threadId: FIXED_THREAD_IDS[1],
+        turn: { status: 'completed', startedAt: 1_900_000_000, completedAt: 2_000_000_071 }
+      }
+    }) + '\n')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(deltas.at(-1)).toMatchObject({
+      entries: [{
+        key: task.key,
+        status: 'active',
+        activeFlags: ['waitingOnUserInput'],
+        planImplementationOnly: true,
+        lastTurnStatus: 'completed'
+      }]
+    })
+    expect(JSON.stringify(deltas)).not.toContain('private plan body')
+    stop()
+    bridge.close()
+  })
+
   it('projects an interrupted App Server row as waiting-input when its safe rollout has an unresolved request', async () => {
     const child = new FakeCodexProcess()
     child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
@@ -526,10 +623,58 @@ describe('Codex App Server preload bridge', () => {
     expect(snapshot.value.threads.find((thread: Record<string, any>) => thread.name === '跨端未知')).toMatchObject({
       status: 'active',
       activeFlags: ['waitingOnUserInput'],
-      statusAuthority: 'connector',
+      statusAuthority: 'persisted-decision',
       lastTurnStatus: 'interrupted'
     })
     expect(JSON.stringify(snapshot)).not.toContain('pending')
+    bridge.close()
+  })
+
+  it('clears persisted input-decision authority on an exact newer Turn lifecycle', async () => {
+    const child = new FakeCodexProcess()
+    child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
+    child.rolloutTexts.set(FIXED_THREAD_IDS[3], JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'function_call', name: 'request_user_input', call_id: 'pending' }
+    }))
+    const { bridge } = loadCodexBridge(child)
+    const snapshot = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const task = snapshot.value.threads.find((thread: Record<string, any>) => thread.name === '跨端未知')
+
+    child.stdout.emit('data', `${JSON.stringify({
+      method: 'turn/started',
+      params: {
+        threadId: FIXED_THREAD_IDS[3],
+        turn: { status: 'inProgress', startedAt: 1_900_000_100 }
+      }
+    })}\n`)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      status: 'active',
+      activeFlags: [],
+      statusAuthority: 'app-server-live',
+      lastTurnStatus: 'inProgress',
+      lastTurnStartedAt: 1_900_000_100_000
+    })
+
+    child.stdout.emit('data', `${JSON.stringify({
+      method: 'turn/completed',
+      params: {
+        threadId: FIXED_THREAD_IDS[3],
+        turn: { status: 'completed', startedAt: 1_900_000_100, completedAt: 1_900_000_120 }
+      }
+    })}\n`)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      status: 'notLoaded',
+      activeFlags: [],
+      planImplementationOnly: false,
+      statusAuthority: 'connector',
+      lastTurnStatus: 'completed',
+      lastTurnStartedAt: 1_900_000_100_000
+    })
     bridge.close()
   })
 
@@ -1643,6 +1788,36 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
+  it('keeps a completed task read after the accepted uTools fallback dispatch and a repeated inventory read', async () => {
+    const child = new FakeCodexProcess()
+    const threadId = FIXED_THREAD_IDS[2]
+    const { bridge, shellOpenExternal } = loadCodexBridge(
+      child,
+      () => nativeRegistryTextWithUnread([threadId]),
+      null,
+      false,
+      false
+    )
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const task = baseline.value.threads[2]
+    expect(task).toMatchObject({ hasUnreadTurn: true, lastTurnStatus: 'completed' })
+
+    await expect(bridge.openThread(task.actionAlias)).resolves.toMatchObject({ outcome: 'dispatched' })
+    expect(shellOpenExternal).toHaveBeenCalledWith(`codex://threads/${threadId}`)
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      hasUnreadTurn: false,
+      unreadAuthority: 'desktop-live'
+    })
+
+    const repeated = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(repeated.value.threads[2]).toMatchObject({
+      key: task.key,
+      hasUnreadTurn: false,
+      unreadAuthority: 'desktop-live'
+    })
+    bridge.close()
+  })
+
   it('keeps the successful-open read acknowledgement effective while Desktop IPC is unavailable', async () => {
     const child = new FakeCodexProcess()
     const { bridge } = loadCodexBridge(
@@ -1775,6 +1950,24 @@ describe('Codex App Server preload bridge', () => {
       entries: [{ key: task.key, readStateOnly: true, hasUnreadTurn: false, unreadAuthority: 'desktop-live' }]
     })
 
+    child.stdout.emit('data', `${JSON.stringify({
+      method: 'turn/completed',
+      params: {
+        threadId,
+        turn: {
+          id: `turn-${threadId}`,
+          status: 'completed',
+          startedAt: 1_900_000_000,
+          completedAt: 2_000_000_072
+        }
+      }
+    })}\n`)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      hasUnreadTurn: false,
+      unreadAuthority: 'desktop-live'
+    })
+
     child.stdout.emit('data', `${JSON.stringify({ method: 'turn/completed', params: { threadId } })}\n`)
     await new Promise((resolve) => setTimeout(resolve, 0))
     await new Promise((resolve) => setTimeout(resolve, 0))
@@ -1785,11 +1978,11 @@ describe('Codex App Server preload bridge', () => {
 
     child.stdout.emit('data', `${JSON.stringify({
       method: 'turn/started',
-      params: { threadId, turn: { status: 'inProgress', startedAt: 2_000_000_200 } }
+      params: { threadId, turn: { id: 'new-turn-after-read', status: 'inProgress', startedAt: 2_000_000_200 } }
     })}\n`)
     child.stdout.emit('data', `${JSON.stringify({
       method: 'turn/completed',
-      params: { threadId, turn: { status: 'completed', startedAt: 2_000_000_200, completedAt: 2_000_000_201 } }
+      params: { threadId, turn: { id: 'new-turn-after-read', status: 'completed', startedAt: 2_000_000_200, completedAt: 2_000_000_201 } }
     })}\n`)
     await new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -1833,6 +2026,55 @@ describe('Codex App Server preload bridge', () => {
       hasUnreadTurn: true,
       unreadAuthority: 'desktop-live'
     })
+    bridge.close()
+  })
+
+  it('retains the last parsed native nonmembership across a transient unread-file read failure', async () => {
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const threadId = FIXED_THREAD_IDS[3]
+    desktopSocket.unreadSnapshotThreadIds.add(threadId)
+    let nativeUnreadReadable = true
+    const { bridge } = loadCodexBridge(
+      child,
+      () => nativeUnreadReadable ? nativeRegistryTextWithUnread([]) : nativeRegistryText(),
+      desktopSocket
+    )
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const task = baseline.value.threads[3]
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      hasUnreadTurn: false,
+      unreadAuthority: 'desktop-persisted'
+    })
+
+    const deltas: Array<Record<string, any>> = []
+    const stop = bridge.onActivityChanged((delta) => deltas.push(delta))
+    nativeUnreadReadable = false
+    const refreshed = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(refreshed.value.threads.find((thread: Record<string, any>) => thread.key === task.key)).toMatchObject({
+      hasUnreadTurn: false,
+      unreadAuthority: 'desktop-persisted'
+    })
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'ipc-connection-reset',
+      sourceClientId: 'codex-desktop-owner',
+      version: 1,
+      params: {}
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
+      hasUnreadTurn: false,
+      unreadAuthority: 'desktop-persisted'
+    })
+    expect(deltas.flatMap((delta) => delta.entries || [])).not.toContainEqual(expect.objectContaining({
+      key: task.key,
+      hasUnreadTurn: true
+    }))
+    stop()
     bridge.close()
   })
 
@@ -2832,11 +3074,11 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
-  it('keeps Desktop observation alive across a non-kill pluginOut and rebuilds the public inventory from current shadows', async () => {
+  it('keeps App Server aliases and Desktop observation hot across a non-kill pluginOut', async () => {
     const child = new FakeCodexProcess(false, false)
     const desktopSocket = new FakeCodexDesktopSocket()
     desktopSocket.planImplementationSnapshotThreadIds.add(FIXED_THREAD_IDS[3])
-    const { bridge, triggerPluginOut } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const { bridge, spawn, triggerPluginOut } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
     const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
     await new Promise((resolve) => setTimeout(resolve, 0))
     const planTask = baseline.value.threads[3]
@@ -2848,10 +3090,16 @@ describe('Codex App Server preload bridge', () => {
     const unfollowsBefore = desktopSocket.writes.filter((message) => message.method === 'thread-stream-following-changed' && message.params?.following === false).length
 
     triggerPluginOut(false)
+    expect(child.endCalls).toBe(0)
+    expect(spawn).toHaveBeenCalledTimes(1)
     expect(desktopSocket.writable).toBe(true)
     expect(desktopSocket.writes.filter((message) => message.method === 'thread-stream-following-changed' && message.params?.following === false)).toHaveLength(unfollowsBefore)
+    const inventoryReadsBeforeOpen = child.writes.filter((frame) => frame.method === 'thread/list' || frame.method === 'thread/turns/list').length
+    await expect(bridge.openThread(planTask.actionAlias)).resolves.toMatchObject({ outcome: 'opened' })
+    expect(child.writes.filter((frame) => frame.method === 'thread/list' || frame.method === 'thread/turns/list')).toHaveLength(inventoryReadsBeforeOpen)
 
     const reopened = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(spawn).toHaveBeenCalledTimes(1)
     expect(reopened.value.threads.find((thread: Record<string, any>) => thread.key === planTask.key)).toMatchObject({
       status: 'active',
       activeFlags: ['waitingOnUserInput'],
@@ -2860,6 +3108,7 @@ describe('Codex App Server preload bridge', () => {
     })
 
     triggerPluginOut(true)
+    expect(child.endCalls).toBe(1)
     expect(desktopSocket.writable).toBe(false)
   })
 

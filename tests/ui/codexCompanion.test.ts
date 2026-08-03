@@ -622,9 +622,9 @@ describe('Codex Companion V3 UI contract', () => {
     const input = wrapper.get('.float-counter.input')
     const active = wrapper.get('.float-counter.active')
     const unread = wrapper.get('.float-counter.unread')
-    expect(input.attributes('aria-label')).toBe('待输入：1')
-    expect(active.attributes('aria-label')).toBe('进行中：1')
-    expect(unread.attributes('aria-label')).toBe('已完成未读：1')
+    expect(input.attributes('aria-label')).toBe('待输入 1 · 打开第一条')
+    expect(active.attributes('aria-label')).toBe('进行中 1')
+    expect(unread.attributes('aria-label')).toBe('未读 1 · 打开第一条')
 
     await input.trigger('click')
     expect(action).toHaveBeenCalledWith('codex.task.open', expect.objectContaining({ key: TASK_INPUT }))
@@ -636,9 +636,9 @@ describe('Codex Companion V3 UI contract', () => {
     expect(wrapper.find('.float-compact-counter-hint').exists()).toBe(false)
 
     for (const [counter, label] of [
-      [input, '待输入：1'],
-      [active, '进行中：1'],
-      [unread, '已完成未读：1']
+      [input, '待输入 1 · 打开第一条'],
+      [active, '进行中 1'],
+      [unread, '未读 1 · 打开第一条']
     ] as const) {
       await counter.trigger('pointerenter', { pointerType: 'mouse' })
       vi.advanceTimersByTime(199)
@@ -654,7 +654,7 @@ describe('Codex Companion V3 UI contract', () => {
     await unread.trigger('focus')
     vi.advanceTimersByTime(200)
     await wrapper.vm.$nextTick()
-    expect(wrapper.get('.float-compact-counter-hint').text()).toBe('已完成未读：1')
+    expect(wrapper.get('.float-compact-counter-hint').text()).toBe('未读 1 · 打开第一条')
     await unread.trigger('blur')
     expect(wrapper.find('.float-compact-counter-hint').exists()).toBe(false)
     expect(action).not.toHaveBeenCalledWith('codex.tab.set', { tab: 'input' })
@@ -705,7 +705,7 @@ describe('Codex Companion V3 UI contract', () => {
     expect(wrapper.find('.float-counter.input').exists()).toBe(false)
     expect(wrapper.find('.float-counter.unread').exists()).toBe(false)
     expect(wrapper.get('.float-counter.active').text()).toBe('99+')
-    expect(wrapper.get('.float-counter.active').attributes('aria-label')).toBe('进行中：100')
+    expect(wrapper.get('.float-counter.active').attributes('aria-label')).toBe('进行中 100')
     expect(wrapper.get('.float-compact').attributes('aria-label')).toContain('100 个进行中')
   })
 

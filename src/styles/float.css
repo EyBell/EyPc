@@ -828,6 +828,7 @@ button { font: inherit; }
 .inline-character-button.action-pin[data-pin-source="native"] { border-color: color-mix(in srgb, var(--codex-accent) 52%, var(--codex-border)); background: color-mix(in srgb, var(--codex-accent) 9%, var(--codex-surface)); color: color-mix(in srgb, var(--codex-accent) 72%, var(--codex-muted)); }
 .inline-character-button.action-pin[aria-disabled="true"] { cursor: not-allowed; }
 .inline-character-button.action-pin[aria-disabled="true"]:hover { border-color: var(--codex-focus); }
+.inline-character-button.action-archive[aria-disabled="true"] { cursor: not-allowed; opacity: .4; }
 .inline-character-button.action-archive { border-color: color-mix(in srgb, var(--codex-critical) 62%, var(--codex-border)); color: var(--codex-critical); }
 .inline-character-button.action-remove { border-color: color-mix(in srgb, var(--codex-warning) 68%, var(--codex-border)); color: var(--codex-warning); }
 .inline-character-button.action-archive.confirming { border-color: var(--codex-critical); background: var(--codex-critical); color: #fff; }

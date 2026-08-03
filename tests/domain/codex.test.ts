@@ -226,6 +226,38 @@ describe('Codex domain', () => {
     expect(waiting.snapshot.ongoing[0]).toMatchObject({ key: KEY, activityState: 'waiting-input', planImplementationOnly: true })
   })
 
+  it('lets a verified persisted Plan wait outrank completed unread without live authority', () => {
+    const result = projectConversations({
+      threads: [thread('active', 900, ['waitingOnUserInput'], KEY, {
+        statusAuthority: 'connector',
+        planImplementationOnly: true,
+        hasUnreadTurn: true,
+        unreadAuthority: 'desktop-persisted',
+        lastTurnStatus: 'completed',
+        lastTurnStartedAt: 400,
+        lastTurnCompletedAt: 500,
+        lastTurnEvidence: 'inventory'
+      })],
+      receipts: [],
+      lastTaskScanAt: 0,
+      now: 900
+    })
+
+    expect(result.snapshot).toMatchObject({
+      ongoingCount: 1,
+      inputRequiredCount: 1,
+      completedUnreadCount: 0,
+      completedCount: 0
+    })
+    expect(result.snapshot.ongoing[0]).toMatchObject({
+      key: KEY,
+      bucket: 'ongoing',
+      activityState: 'waiting-input',
+      planImplementationOnly: true,
+      archiveCapability: 'blocked-active'
+    })
+  })
+
   it('lets a real activity patch start a new epoch while exact completion still closes it immediately', () => {
     const active = projectConversations({
       threads: [thread('active', 900, [], KEY, {
@@ -456,6 +488,38 @@ describe('Codex domain', () => {
       [keyAt(2), 'ongoing']
     ])
     expect(result.snapshot).toMatchObject({ ongoingCount: 2, waitingCount: 0, runningCount: 0, unknownCount: 0 })
+  })
+
+  it('promotes only provenance-marked persisted input decisions without widening plain connector hints', () => {
+    const result = projectConversations({
+      threads: [
+        thread('active', 900, ['waitingOnUserInput'], KEY, {
+          statusAuthority: 'persisted-decision',
+          lastTurnStatus: 'interrupted',
+          lastTurnStartedAt: 800
+        }),
+        thread('active', 850, ['waitingOnUserInput'], keyAt(2), {
+          statusAuthority: 'connector',
+          lastTurnStatus: 'inProgress',
+          lastTurnStartedAt: 750
+        })
+      ],
+      receipts: [],
+      lastTaskScanAt: 700,
+      now: 1_000
+    })
+
+    expect(result.snapshot.inputRequired).toHaveLength(1)
+    expect(result.snapshot.inputRequired[0]).toMatchObject({
+      key: KEY,
+      bucket: 'ongoing',
+      activityState: 'waiting-input',
+      archiveCapability: 'blocked-active'
+    })
+    expect(result.snapshot.ongoing.find((task) => task.key === keyAt(2))).toMatchObject({
+      activityState: 'ongoing'
+    })
+    expect(result.snapshot).toMatchObject({ ongoingCount: 2, waitingCount: 1, runningCount: 0 })
   })
 
   it('uses desktop live state immediately and removes active classification as soon as that authority is lost', () => {

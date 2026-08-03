@@ -13,6 +13,7 @@ import {
   normalizeCodexQuota,
   normalizeCodexSettings,
   normalizeCodexVisibleTaskTab,
+  orderCodexTasksForDisplay,
   projectConversations,
   restoreCodexThread,
   sameCodexActivityDecisionDiagnostics,
@@ -289,6 +290,7 @@ export function createCodexController(options: CodexControllerOptions) {
   let lastEligibleSourceCount = 0
   let lastExcludedSourceCount = 0
   let lastNonConversationCount = 0
+  let taskInventoryPublishSequence = 0
   let taskArchive = { key: '', status: 'idle' as 'idle' | 'archiving' | 'error', message: '' }
   let projectArchive = { key: '', status: 'idle' as 'idle' | 'archiving' | 'error', message: '' }
   let refreshing = false
@@ -302,6 +304,7 @@ export function createCodexController(options: CodexControllerOptions) {
   let structuralRefreshPriority: StructuralRefreshPriority = 'normal'
   const activityExitBaselines = new Map<string, ActivityExitBaseline>()
   let inFlight: Promise<void> | null = null
+  let inFlightIncludesThreads = false
   let actionPreflightInFlight = false
   let activityInFlight: Promise<void> | null = null
   const archivingKeys = new Set<string>()
@@ -390,8 +393,20 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function shouldRun(): boolean {
+    // Global task shortcuts consume the same Controller-owned materialized
+    // view as the Codex page and float. Keep that view subscribed and
+    // reconciled for the whole enabled feature lifetime; changing tabs or
+    // hiding a surface is not a cache/session boundary.
+    return isFeatureEnabled()
+  }
+
+  function shouldRefreshSurfaceData(): boolean {
     const state = options.getAppState()
     return isFeatureEnabled() && (state.activeTab === 'codex' || state.codex.settings.floatEnabled)
+  }
+
+  function shouldMaintainTaskData(): boolean {
+    return isFeatureEnabled() && codexState().settings.conversationInboxEnabled
   }
 
   function publishTaskStatePackage(conversations: ConversationSnapshotV1, now = Date.now()) {
@@ -531,7 +546,7 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function applyActivityDelta(delta: CodexActivityDelta) {
-    if (disposed || !shouldRun() || (delta?.version !== 1 && delta?.version !== 2)) return
+    if (disposed || !shouldRun() || !shouldMaintainTaskData() || (delta?.version !== 1 && delta?.version !== 2)) return
     if (!Number.isFinite(delta.receivedAt) || !Number.isFinite(delta.generation) || delta.generation <= 0) return
     let environmentChanged = false
     let diagnosticsChanged = false
@@ -654,13 +669,13 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function scheduleActivity(delay?: number) {
     clearActivityTimer()
-    if (!started || disposed || !shouldRun() || typeof options.platform.codex.readActivitySnapshot !== 'function') return
+    if (!started || disposed || !shouldRun() || !shouldMaintainTaskData() || typeof options.platform.codex.readActivitySnapshot !== 'function') return
     const wait = delay ?? (activityFailureCount >= 3 ? 1_000 : 5_000)
     activityTimer = setTimeout(() => { void pollActivity() }, Math.max(0, wait))
   }
 
   async function pollActivity() {
-    if (disposed || !shouldRun() || typeof options.platform.codex.readActivitySnapshot !== 'function') return
+    if (disposed || !shouldRun() || !shouldMaintainTaskData() || typeof options.platform.codex.readActivitySnapshot !== 'function') return
     if (activityInFlight) return activityInFlight
     const runtimeToken = runtimeGeneration
     const operation = (async () => {
@@ -686,8 +701,10 @@ export function createCodexController(options: CodexControllerOptions) {
     if (!started || disposed || !shouldRun()) return
     const settings = codexState().settings
     const now = Date.now()
-    const quotaWait = Number.isFinite(quotaDelay(settings)) ? Math.max(1000, lastQuotaReadAt + quotaDelay(settings) - now) : Number.POSITIVE_INFINITY
-    const taskWait = Number.isFinite(taskDelay(settings)) ? Math.max(1000, lastTaskReadAt + taskDelay(settings) - now) : Number.POSITIVE_INFINITY
+    const quotaWait = shouldRefreshSurfaceData() && Number.isFinite(quotaDelay(settings)) ? Math.max(1000, lastQuotaReadAt + quotaDelay(settings) - now) : Number.POSITIVE_INFINITY
+    const taskWait = settings.conversationInboxEnabled && Number.isFinite(taskDelay(settings))
+      ? Math.max(1000, lastTaskReadAt + taskDelay(settings) - now)
+      : Number.POSITIVE_INFINITY
     const nextTaskTransitionAt = taskState.dynamic.nextTransitionAt
     const taskTransitionWait = nextTaskTransitionAt === null
       ? Number.POSITIVE_INFINITY
@@ -759,6 +776,7 @@ export function createCodexController(options: CodexControllerOptions) {
       ? host.activityGeneration!
       : 0
     lastActivityGeneration = Math.max(lastActivityGeneration, incomingActivityGeneration)
+    taskInventoryPublishSequence += 1
     publishConversationProjection({ receivedAt, advanceScan: input.advanceScan, status: input.status })
     codexState().firstPromptTimes = normalizeCodexFirstPromptTimes([
       ...threads.flatMap((thread) => thread.firstPromptAt ? [{ key: thread.key, firstPromptAt: thread.firstPromptAt, updatedAt: receivedAt }] : []),
@@ -846,14 +864,19 @@ export function createCodexController(options: CodexControllerOptions) {
     const refreshAllowed = () => actionPreflight ? isFeatureEnabled() : shouldRun()
     if (disposed || !refreshAllowed()) return
     if (inFlight) {
+      const existingIncludesThreads = inFlightIncludesThreads
+      const inventorySequenceBeforeWait = taskInventoryPublishSequence
       await inFlight
-      if (actionPreflight && !disposed && refreshAllowed()) return refresh(input)
+      if (actionPreflight
+        && (!existingIncludesThreads || taskInventoryPublishSequence === inventorySequenceBeforeWait)
+        && !disposed
+        && refreshAllowed()) return refresh(input)
       return
     }
     const runtimeToken = runtimeGeneration
     const now = Date.now()
     const settings = codexState().settings
-    const includeQuota = !actionPreflight && (input.force === true || quota.updatedAt <= 0 || (Number.isFinite(quotaDelay(settings)) && now - lastQuotaReadAt >= quotaDelay(settings)))
+    const includeQuota = !actionPreflight && shouldRefreshSurfaceData() && (input.force === true || quota.updatedAt <= 0 || (Number.isFinite(quotaDelay(settings)) && now - lastQuotaReadAt >= quotaDelay(settings)))
     const includeThreads = actionPreflight || settings.conversationInboxEnabled && (input.force === true || input.forceTasks === true || rawConversations.updatedAt <= 0 || (Number.isFinite(taskDelay(settings)) && now - lastTaskReadAt >= taskDelay(settings)))
     const includeConfig = includeQuota && !actionPreflight
     if (!includeQuota && !includeThreads) {
@@ -1030,12 +1053,14 @@ export function createCodexController(options: CodexControllerOptions) {
       if (inFlight !== operation) return
       refreshing = false
       inFlight = null
+      inFlightIncludesThreads = false
       if (!disposed) options.notify()
       if (disposed || actionPreflight || !shouldRun() || runtimeToken !== runtimeGeneration) return
       if (structuralRefreshPending) armStructuralRefresh()
       else schedule()
       scheduleActivity(0)
     })
+    inFlightIncludesThreads = includeThreads
     inFlight = operation
     return inFlight
   }
@@ -1058,6 +1083,7 @@ export function createCodexController(options: CodexControllerOptions) {
       runtimeGeneration += 1
       refreshGeneration += 1
       inFlight = null
+      inFlightIncludesThreads = false
       activityInFlight = null
       refreshing = false
       clearTimer()
@@ -1073,6 +1099,7 @@ export function createCodexController(options: CodexControllerOptions) {
       runtimeGeneration += 1
       refreshGeneration += 1
       inFlight = null
+      inFlightIncludesThreads = false
       activityInFlight = null
       resetStructuralRefresh()
       resetCodexDerivedRuntimeState()
@@ -1114,6 +1141,7 @@ export function createCodexController(options: CodexControllerOptions) {
       runtimeGeneration += 1
       refreshGeneration += 1
       inFlight = null
+      inFlightIncludesThreads = false
       activityInFlight = null
       refreshing = false
       clearTimer()
@@ -1194,20 +1222,11 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function displayOrderedTasks(tasks: CodexTaskCard[]): CodexTaskCard[] {
-    const pinnedOrder = new Map<string, number>()
     const pinned = taskState.conversations.projectSections.find((section) => section.id === 'pinned')
-    for (const entry of pinned?.entries || []) {
-      if (entry.kind === 'task' && !pinnedOrder.has(entry.task.key)) pinnedOrder.set(entry.task.key, pinnedOrder.size)
-    }
-    return tasks
-      .map((task, index) => ({ task, index, pinned: pinnedOrder.get(task.key) }))
-      .sort((left, right) => {
-        if (left.pinned !== undefined && right.pinned !== undefined) return left.pinned - right.pinned
-        if (left.pinned !== undefined) return -1
-        if (right.pinned !== undefined) return 1
-        return left.index - right.index
-      })
-      .map(({ task }) => task)
+    const pinnedTaskKeys = (pinned?.entries || [])
+      .filter((entry) => entry.kind === 'task')
+      .map((entry) => entry.task.key)
+    return orderCodexTasksForDisplay(tasks, pinnedTaskKeys)
   }
 
   function setTaskTab(tab: CodexTaskTab) {
@@ -1364,7 +1383,7 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function openFirstInputFromCurrentInventory() {
-    const task = taskState.conversations.inputRequired[0]
+    const task = displayOrderedTasks(taskState.conversations.inputRequired)[0]
     if (!task?.actionAlias) {
       options.setMessage('当前没有待输入任务')
       return false
@@ -1383,9 +1402,19 @@ export function createCodexController(options: CodexControllerOptions) {
     return true
   }
 
+  function hasVerifiedTaskInventory() {
+    return rawConversations.updatedAt > 0
+      && lastCompleteness === 'verified'
+      && /^[a-f0-9]{64}$/.test(lastSourceFingerprint)
+  }
+
+  function hasCurrentTaskInventory() {
+    return lastThreads.length > 0 || hasVerifiedTaskInventory()
+  }
+
   function runDirectTaskCommand(command: () => boolean) {
     if (disposed || !isFeatureEnabled()) return false
-    if (lastThreads.length) return command()
+    if (hasCurrentTaskInventory()) return command()
     // A uTools mainHide entry can reach Runtime immediately after start(),
     // while syncActivation has intentionally cleared the previous lifecycle's
     // inventory. Serialize those accepted commands behind one tasks-only read
@@ -1394,7 +1423,7 @@ export function createCodexController(options: CodexControllerOptions) {
       .catch(() => undefined)
       .then(async () => {
         if (disposed || !isFeatureEnabled()) return
-        if (!lastThreads.length) await refresh({ actionPreflight: true })
+        if (!hasCurrentTaskInventory()) await refresh({ actionPreflight: true })
         if (disposed || !isFeatureEnabled()) return
         command()
       })
