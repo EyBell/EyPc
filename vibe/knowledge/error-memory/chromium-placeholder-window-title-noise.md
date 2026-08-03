@@ -2,10 +2,10 @@
 id: eypc-chromium-placeholder-window-title-noise
 status: archived
 scope: project
-fingerprint: live-window-list-shows-title-window__chromium-edge-ax-or-hwnd-shell__raw-title-passthrough__eypc-window-jump
+fingerprint: live-window-list-shows-title-window__title-denylist-used-as-window-admission
 first_seen: 2026-07-26
-last_verified: 2026-07-30
-review_after: superseded by WJ-19 native-instance identity
+last_verified: 2026-07-31
+review_after: superseded by WJ-19/WJ-21 native admission
 evidence:
   - src/domain/windows.ts
   - src/runtime/appRuntime.ts
@@ -20,51 +20,20 @@ tags:
   - macos
 ---
 
-# Chromium Placeholder Title Filtering (Historical; Superseded by WJ-19)
+# Chromium Placeholder Title Filtering (Historical)
 
-> WJ-19 makes title display/search metadata only. This record preserves the earlier symptom and tradeoff, but its title-denylist prevention rule is no longer current authority.
+## Historical Failure
 
-## Symptom
+Chromium、IME、宿主和 helper 表面曾以空标题、应用名或字面量 `Window` 进入列表。按标题 denylist 或尺寸过滤又会误删真实窗口，并在浏览器 Tab/标题变化后破坏持久目标。
 
-Microsoft Edge (and similar Chromium apps) contribute live rows titled exactly `Window` that are not Mission Control / taskbar document windows. Users see more “实时窗口” than the pages they opened and may try to favorite or bind slots to unusable shells.
+## Current Prevention Rule
 
-## Wrong Assumption
+标题只用于展示、搜索和人工辨认，不能准入、拒绝、去重、证明关系或恢复身份。WJ-21 由平台原生证据准入：
 
-Any non-empty native title from System Events / EnumWindows is a user-facing jump target. Empty-title filtering alone is enough.
+- Windows 要求可见、非 cloaked、可激活且有有效范围的顶层/owned popup，并以同应用 `GA_ROOTOWNER` 证明关系；过滤控件、no-activate、透明、宿主、系统/helper 表面。
+- macOS 要求允许的普通应用 AX 窗口角色、正 CGWindowID 身份佐证和可证明 AX 根关系；CG-only/system/helper 表面省略。
+- 无标题的已准入窗口可用应用名作为显示回退；标题为 `Window` 本身既不准入也不拒绝。
 
-## Verified Root Cause
-
-Edge exposes unnamed AX/HWND shells whose title is the placeholder `Window`. Win32 also surfaces IME/`Program Manager`/GDI chrome. EyPc previously passed titles through after only empty-title and tool-window checks.
-
-## Evidence
-
-- User screenshot of two Edge `Window` rows beside real Feishu/Edge document titles.
-- Domain filter: [windows.ts](../../../src/domain/windows.ts#L1); Runtime apply: [appRuntime.ts](../../../src/runtime/appRuntime.ts#L1).
-- Native size/title guards: [preload/index.js](../../../preload/index.js#L1) mirrored in [public/preload.js](../../../public/preload.js#L1) (title denylist only; size thresholds removed after they dropped real windows).
-- Contract: [windows.test.ts](../../../tests/domain/windows.test.ts#L1).
-
-## Correct Detection Order
-
-1. Refresh the windows Tab with Edge open and note any title-only `Window` rows.
-2. Confirm real document titles remain and ordinary desktop windows are not mass-dropped.
-3. On Windows, confirm IME/`Program Manager` shells stay absent.
-
-## Prevention Rule
-
-Do not use title content to admit, reject, match or recover a native window. Native platform actionability plus required `WindowInstanceId` owns list membership and deduplication; an empty native title falls back to the application name for display. This prevents a browser Tab/title change—including `Window` or an empty title—from invalidating a saved instance. Any future helper-window suppression must use non-title native actionability evidence.
-
-## Alternative Route
-
-- Status: `archived / superseded-by-WJ-19`
-- Preconditions: window jump list refresh on macOS/Windows with Chromium browsers present.
-- Steps: retain native actionability checks, require stable instance identity, and use application-name display fallback when title is absent.
-- Verification: unexecuted WJ-19 domain/platform contracts; user-owned refresh in EyPc.
-- Applicability boundary: live enumeration only; persisted favorites/slots with intentional locators remain visible even if live match is missing.
-- Fallback: if a real Chromium shell uses title `Window`, user can still open via alias after explicit target create from a non-noise window.
-
-## Occurrence History
-
-| Date | Trigger | Recovery | Outcome |
-| --- | --- | --- | --- |
-| 2026-07-26/27 | Size thresholds + title==appName / global `Window` denylist caused refresh “丢失”; macOS bridge later treated CG IDs as `AXWindowNumber` | Removed size filter; narrowed title filter to Chromium exact `Window` + host/IME shells; keep CG IDs inventory-only and resolve AX activation by title/ordinal | historical candidate; later superseded |
-| 2026-07-30 | WJ-19 requires title-independent lifecycle identity | Removed title-content list filters; native actionability + `WindowInstanceId` are authoritative and empty titles use app-name display fallback | source/contracts updated; runtime acceptance pending |
+- 状态：`archived / superseded-by-WJ-19/WJ-21`
+- 回流门禁：不得恢复标题 denylist、尺寸阈值、标题身份或唯一候选规则。
+- 宿主验收：企业微信/Chromium 不出现系统/helper 洪泛，同时真实独立根与已证明子窗保留。

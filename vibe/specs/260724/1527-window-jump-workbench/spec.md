@@ -1,90 +1,63 @@
 # Window Jump Workbench — Controlled Specification
 
+Tool: codex
+Updated: 2026-08-01
+
 ## Status
 
-`wj21-main-child-window-tree / WJ-21 implemented; focused-tests/typecheck/build/static-verified / host-validation-pending` — the persisted switching identity remains a real main/root window, while ordinary applications now expose bridge-proven real child windows as session-only level-two exact destinations. A root activation resolves its current/last member at call time; an exact child activation fails closed when that member is stale. Finder/Explorer remains the sole virtual structure and is fixed at virtual parent → real roots, with no third level. CG-only/system/helper and other unproven surfaces are omitted. The exact WJ snapshot passes `219/219` focused tests, semantic typecheck, production build, uTools package validation and static mirror/revision/link gates. Full-suite parent/child comparison proves zero new WJ failures; uTools reload and native activation remain unrun.
+`wj21-main-child-window-tree / implemented / focused-tests-typecheck-build-verified / host-validation-pending`
 
-## WJ-19 Current Identity Contract
+真实主窗口是稳定持久目标；普通应用只展示原生桥证明的真实子窗口作为会话级精确落点；Finder/Explorer 固定为虚拟父→真实根两级。无法证明为用户可见、可操作窗口或无法证明关系的表面不进入产品树。
 
-- `LiveWindow.instanceId` is required. Runtime list merge, focus recovery, deduplication, cache hits, target resolution and slot activation use it; app identity is an additional ownership guard, never a title substitute.
-- `WindowTarget` persists `lastKnownTitle`, `lastInstanceId` and `lastNativeRef`. Legacy `titleLocator` migrates only into `lastKnownTitle`; title history is discarded. A legacy native reference gains an instance ID only from a successful bridge-verified activation.
-- Windows revalidates that HWND is a current actionable top-level window and that its owner process still matches the saved application. `PID+HWND` is a bounded native locator, not a guarantee against later system handle reuse. macOS requires a positive CGWindowID, the same PID/application, one `_AXUIElementGetWindow` match and final `AXFocusedWindow` readback. AX title/ordinal fallback is prohibited.
-- After one bounded refresh, a missing instance never auto-rebinds. A complete inventory exposes every same-platform/same-app candidate for explicit confirmation, including a sole candidate. During that confirmation flow, a later complete refresh replaces the candidate set but never exits the flow merely because the set is empty; a partial refresh retains prior candidates and adds fresh same-app observations. Only confirmation plus successful native activation atomically updates instance/native/app/title fields. Cancellation restores the logical target row.
-- Complete inventory with no candidate clears only instance/native binding. Partial inventory retains the binding and cannot prove closure. `instance-mismatch`, `rebind-required` and `identity-unavailable` replace title-change diagnostics.
-- The editor exposes the current/last title read-only and explains that it is for recognition only. Candidate guidance names the logical alias and last title; rows show each live title plus current frontmost/minimized or retained-cache state rather than the logical alias, and suppress inherited favorite/pin/slot state. Candidate mode clears unrelated selection, requests initial/reappearing candidate focus, blocks unrelated side actions, preserves an explicit zero-candidate refresh/cancel state, and gives Escape priority so one press restores the original target row. WJ-20 upgrades the list to an ARIA tree without adding a component library, visual language, or unrelated shortcut.
-- [windowRebind.ts](../../../../src/domain/windowRebind.ts#L1) is the sole session-flow authority. Its pure transition handles begin, complete/partial inventory, explicit cancel, matching-target confirmation and missing-target termination; it alone owns candidate membership and emits stale-binding/focus effects. Runtime adapts those effects and gates actions through one `always / browse / rebind` policy. The page receives only `WindowRebindView` and never reconstructs lifecycle rules. Native identity proof remains in the platform bridge and is intentionally not folded into this UI state machine.
+## Authority
 
-## WJ-20 Root-window-family Contract (Historical where superseded by WJ-21)
+- 当前用户事实：[raw-requirement.md](raw-requirement.md#L1)
+- 产品权威：[PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
+- 架构权威：[ARCHITECTURE.md](../../../knowledge/ARCHITECTURE.md#L1)
+- 验证记录：[verify.md](verify.md#L1)
+- 当前状态：[PROJECT_STATUS.md](../../PROJECT_STATUS.md#L1)
 
-- [windows.ts](../../../../src/domain/windows.ts#L1) separates raw `NativeWindowObservation` from normalized `LiveWindow`. The bridge may attach `rootInstanceId/rootNativeRef/rootPid` member evidence, but every `LiveWindow.instanceId/nativeRef` consumed by Runtime denotes the root. The single title-blind `coalesceNativeWindowFamilies` unions member IDs/refs and current search titles, selects the focused member title for display, and never merges unrelated roots by app, PID, title or list position.
-- [windowTree.ts](../../../../src/domain/windowTree.ts#L1) is the single product/workbench-tree framework. It owns row IDs, Finder/Explorer allowlisting and stable group keys, retained-target/slot projection, pinned/tree sorting, query projection, visible-tree flattening, action target/context resolution, real-root-only selection, horizontal navigation, collapsed-child focus recovery, parent landing priority, bridge-proven legacy adoption and lossless duplicate-target merge. [windows.ts](../../../../src/domain/windows.ts#L1) owns the shared title-blind target and slot resolution. Runtime supplies state/native observations and applies effects; the page receives rows and never infers native families or resolves slots by repeated state scans.
-- `WindowTarget.scope='instance'` identifies a concrete root; `scope='file-manager-group'` identifies a virtual Finder/Explorer parent whose identity is `groupKey = platform + normalized application`. A group persists alias/favorite/pin/slots and `lastActiveInstanceId`. Other merged aliases are search-only `alternateAliases`, cleared by an explicit user rename.
-- WJ-20 originally projected ordinary roots as leaves and hid every proven member. WJ-21 supersedes only that visibility/interaction clause; the root identity, title-blind relation proof, independent-root separation, file-manager virtual group and WJ-19 persisted-target/rebind contracts remain applicable.
-- A file-manager parent activates in the centralized order `focused → persisted lastActive → Runtime-session recent → current visible tree order`. No child leaves the saved parent available with a clear empty state and never auto-launches Finder/Explorer. A concrete child remains an exact root target and follows WJ-19 manual rebind if it closes.
-- The ARIA tree gives `ArrowRight` expand/enter-first-child and `ArrowLeft` parent/collapse semantics. Right-click first focuses, then opens one existing panel under `window / file-manager-group / selection / slot` context. Virtual groups are excluded from selection and never offer page-topmost, close-all or force-close-all. Escape resolves right panel before search, editor, rebind and selection; hiding an auto-expanded child restores focus to its parent.
-- Windows enumerates visible observations, proves families with same-app `GA_ROOTOWNER`, emits root PID+HWND, and validates root actionability/owner/app before activation. It may foreground the last active member but succeeds only when the final foreground `GA_ROOTOWNER` equals the requested root. macOS maps AX observations through `AXTopLevelUIElement`/`AXWindow` and `_AXUIElementGetWindow`, requires exact PID/application/CG identity, and validates final `AXFocusedWindow` through the requested root CGWindowID. Unproven relations stay independent.
-- WJ-20 removes the old macOS environment snapshot, private Space lookup/cache/switch and every title/ordinal/sole-candidate identity path. Its bridge revision is historical; WJ-21 advances the current revision to `wj21-main-child-window-tree` and canonical/public preload mirrors remain byte-identical.
+## Current Contract
 
-## WJ-21 Main/child-window Tree Contract
+### Domain and persistence
 
-- [windows.ts](../../../../src/domain/windows.ts#L1) produces `WindowFamily { root, children }`. The root is the only stable/persistable `WindowTarget`; every child is a transient `LiveWindow` carrying verified `rootInstanceId` and relation evidence. Complete inventories replace both levels; partial inventories merge fresh observations into the existing families and visibly retain absent nodes as cache evidence without proving closure.
-- Ordinary applications project one real root at ARIA level one and its proven real children at level two. Independent roots of one application remain sibling level-one rows, with no application virtual parent. Finder/Explorer alone project one virtual level-one parent and real roots at level two; their members are intentionally suppressed so the special tree never gains a third level.
-- Activation is an explicit discriminated request. `root-current` carries only the root and re-resolves the current/last family member during the native call; child changes do not alter favorites, local pins, aliases or slots. `member-exact` carries root plus member, revalidates platform/application/instances/relationship, and must verify final focus hits that exact member inside the requested root. A stale member returns an explicit failure and never falls back to the root or a sibling.
-- Children are session-only and excluded from persistence, favorites, list pins, aliases, slots, multi-selection, page-topmost, force termination and batch actions. A child exposes exact activation, read-only details, Windows HWND copy, and exact close only when `canClose` is true. Root rows retain the existing stable-target, topmost, edit, slot and confirmation-only replacement behavior.
-- Windows enumerates only top-level/owned popup candidates through `EnumWindows`; it does not use `EnumChildWindows`. Admission requires visible, non-cloaked, activatable, valid-bounds HWNDs and same-app `GA_ROOTOWNER` proof; child controls, no-activate, transparent, host, system and helper surfaces are filtered. macOS admits only regular foreground applications and exact AX window roles (`AXWindow`, `AXSheet`, `AXDialog`) with a positive CGWindowID; `AXParent`/`AXTopLevelUIElement`/`AXWindow` prove root relationships, while Core Graphics supplies identity corroboration only. CG-only/system/helper/non-actionable surfaces create no row.
-- Neither bridge infers a relation from title, app name, position, size or candidate count. Root success verifies final focus remains inside the requested root; exact-child success additionally verifies the requested member. Windows foreground protection is not bypassed and macOS permission/AX failures remain explicit.
-- [windowTree.ts](../../../../src/domain/windowTree.ts#L1) owns hierarchy, row identity, search flattening, manual/session expansion and focus recovery. `ArrowRight/ArrowLeft` expands, enters, returns and collapses; search temporarily expands a child match without changing manual expansion. When a child disappears, collapses or becomes hidden, focus returns to its root. Right-click and `Enter` dispatch according to root/group/child context through the existing Vue-native ARIA tree and `build-primitive` focus principles.
+- [windows.ts](../../../../src/domain/windows.ts#L1) 是原生观察准入后关系、能力、`WindowFamily { root, children }`、持久目标解析和 `root-current`/`member-exact` 请求的唯一领域 owner。
+- 根是唯一普通持久目标；文件管理器虚拟组是唯一虚拟持久目标。子窗口、前台/最小化/缓存状态与原生家族清单只保留在 Runtime 会话。
+- 完整清单替换家族；部分清单合并新观察并保留缺席节点为缓存，不能证明根或成员关闭。
+- [windowRebind.ts](../../../../src/domain/windowRebind.ts#L1) 只处理持久根实例失效后的人工换绑。所有候选包括唯一候选都必须明确确认，且只有原生激活成功才提交新实例绑定。
 
-## Scope and Authority
+### Product tree
 
-- Normalized requirement: [raw-requirement.md](raw-requirement.md#L1).
-- Product requirement authority: [../PRODUCT_REQUIREMENTS.md](../PRODUCT_REQUIREMENTS.md#L1), to be synchronized in this task.
-- Architecture authority: [../../knowledge/ARCHITECTURE.md](../../knowledge/ARCHITECTURE.md#L1), to be synchronized in this task.
-- UI preference lookup: task-only `interaction-flow` profile, Window surface, developer-soul Workbench List Taste authority; missing motion/accessibility/content fields were acknowledged task-locally. The selected implementation aid is the `ibelick/fixing-accessibility` guidance; Vue-native semantic markup remains the implementation style.
-- WJ-21 keeps the existing dense list/action visual language and extends the same native ARIA tree to ordinary root/child families. No component dependency or new visual system is introduced.
+- [windowTree.ts](../../../../src/domain/windowTree.ts#L1) 独占树行身份、层级、排序、搜索投影、手动/临时展开、动作上下文、根专属选择、左右导航及焦点恢复。
+- 普通应用：真实根为一级，已证明真实子窗为二级；同应用独立根并列，不存在应用虚拟父节点。
+- Finder/Explorer：虚拟组为一级、真实根为二级，根下面的成员不投影，确保永远没有第三级。
+- 子窗口不创建/修改持久目标，不收藏、pin、改名、绑槽、多选、置顶、强杀或批量操作；只开放精确激活、可关闭时精确关闭、只读详情和 Windows HWND 复制。
 
-## Preflight
+### Activation
 
-| Check | Result |
-| --- | --- |
-| Existing working tree | Retain all unrelated edits, including current preload, manifest, Codex runtime, test, rule, and environment changes. |
-| Write authority | User explicitly requested implementation. New source, task docs, product requirement, architecture, and status updates are in scope. |
-| External-write authority | None. No publish, deployment, credential, database, or external service mutation is needed. |
-| Native-risk boundary | Historical WJ-15 evidence included a user-authorized selected-Space/focus probe. WJ-21 performs no host operation and contains no current Space-switch route; title mutation, simulated input, permission mutation and unrelated-window manipulation remain out of scope. Exact child close is implemented but not executed. |
-| Verification authority | WJ-21 changes production source and documents only. It runs static mirror/revision/symbol/link/diff checks; no test file, test, typecheck, build, dist preparation, uTools reload or real activation/close is in this delivery evidence. |
-| Documentation impact | `requirement-canonical` and `project-current`; this controlled document set, product requirements, architecture, status hub, and verification record must move together. |
+- 根行和槽位发送 `root-current`，只携带根身份；原生调用时重新解析该根当前/最近活动成员，最终焦点必须仍属于请求根。
+- 子行发送 `member-exact`，携带根与成员；调用前重验平台、应用、实例和关系，最终焦点必须命中该成员。
+- `member-exact` 的成员缺失、关系漂移或焦点不匹配均明确失败，不得重试 `root-current` 或打开兄弟窗口。
 
-## Functional Contract
+### Platform admission
 
-### Domain state
+- Windows 仅枚举 `EnumWindows` 顶层/owned popup；准入要求可见、非 cloaked、可激活、有效范围，并以同应用 `GA_ROOTOWNER` 证明关系。`WS_CHILD`、no-activate、透明、宿主、系统/helper 表面被过滤，`EnumChildWindows` 禁止使用。
+- macOS 从普通应用的允许 AX 窗口角色出发；`_AXUIElementGetWindow` 与正 CGWindowID 佐证身份，`AXParent`/`AXTopLevelUIElement`/`AXWindow` 证明根关系。CG-only、系统层、辅助层和不可操作 AX 表面不生成行。
+- 标题、应用名、位置、尺寸、列表顺序和候选数量不得推断身份或关系。环境快照、Space 查找/缓存/切换、标题/序号回退和应用级前台猜测均不存在。
 
-`AppState` persists feature configuration, the search query, user-created root/group target metadata, and ten platform-separated slot records. `WindowTarget.id` is the stable EyPc logical identity. A target stores a local alias, platform, application identity/name, read-only `lastKnownTitle`, last bridge-verified root `lastInstanceId`, `lastNativeRef`, favorite/pinned states, and timestamps. Legacy `titleLocator` migrates only into `lastKnownTitle`; title history is discarded. Pin is independent from favorite and slot assignment. Live root and child windows are never persisted; Runtime keeps session `WindowFamily` inventory plus a root projection for existing target/rebind logic. A complete inventory replaces families; a partial inventory retains absent roots/children as visibly cached. Only root/group targets may remain through favorite, pin or slot retention.
+### Runtime and UI
 
-### Platform bridge
+- [appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1) 先验证桥版本，再通过单一 inventory 更新入口原子更新 family/root/freshness；原生副作用只经现有 platform seam。
+- [WindowsPage.vue](../../../../src/pages/WindowsPage.vue#L1) 只渲染领域 `WindowRow`。根/子使用 ARIA level 1/2；搜索临时展开不改手动状态；子窗消失、收起或隐藏时焦点和打开的动作上下文回到根。
+- `ArrowRight/ArrowLeft` 负责树展开、进入、返回和收起；`Ctrl+ArrowRight/Ctrl+ArrowLeft` 负责动作层；右键先聚焦，`Escape` 先关闭动作层。
+- 功能默认关闭、页面显式刷新、十个 `mainHide` 槽位和会话级隐私安全诊断沿用既有合同。桥版本不匹配时不得接纳清单或执行窗口动作。
 
-The preload bridge returns a window capability record, a transient list record, activation/topmost results, and an optional macOS system-settings launch. Browser/stale-preload fallback is explicitly unsupported and never fabricates windows. Shortcut slots may open the official uTools configuration screen, but the bridge never reads or returns current host bindings.
+## Safety and Non-goals
 
-Windows only invokes fixed PowerShell/User32 code through `execFile`. Enumeration uses `EnumWindows` and never recursively enumerates controls. It admits visible, non-cloaked, activatable top-level/owned popup surfaces with valid bounds, rejects `WS_CHILD`, no-activate, transparent, host/system/helper surfaces, and maps same-application members to actionable `GA_ROOTOWNER` roots. `root-current` re-resolves the last active popup and verifies its final `GA_ROOTOWNER`; `member-exact` verifies exact member/root/app identity before focus and returns the exact member ID only when final foreground focus hits it. Because Windows may reuse an HWND, every locator is authoritative only for the current verified observation.
+- 不修改真实窗口标题，不模拟输入，不提升权限，不绕过 Windows 前台保护，不自动启动已关闭应用，不后台轮询窗口。
+- macOS 不宣称可将任意第三方窗口永久置顶；强制终止只在用户明确确认后作用于根窗口。
+- 本任务不改变 Files、Ports、MQTT、Codex、存储 schema 或 EzAgentPlatform 共享合同。
 
-macOS starts from Accessibility windows of regular applications, admits only `AXWindow`/`AXSheet`/`AXDialog` roles and allowed subroles, and requires `_AXUIElementGetWindow` to yield a positive CGWindowID corroborated by a visible valid Core Graphics record. `AXParent`, `AXTopLevelUIElement` and `AXWindow` establish the root/member relation. Core Graphics alone can never create a product row; CG-only, system-layer, helper and non-actionable surfaces are omitted. No environment snapshot, Space lookup/cache/switch, title comparison, AX ordinal, PID-only or unique-candidate route participates.
+## Supersession Boundary
 
-The macOS activation child re-enumerates admitted AX family elements for the requested root. `root-current` prefers the currently focused member inside the family and otherwise selects the root/current family member; `member-exact` requires the requested member CG ID and rejects disappearance or relation drift. It unminimizes where readable, raises and activates the owning `NSRunningApplication`, and succeeds only when final `AXFocusedWindow` maps to the requested root—and, for exact mode, to the requested member. Exact child close performs the same relationship validation. Bridge revision is `wj21-main-child-window-tree`; activation success returns verified root and optional member IDs. macOS still makes no arbitrary third-party permanent-topmost claim.
-
-### Runtime and routing
-
-`eypc-windows` opens the enabled page without auto-scanning. `eypc-window-slot-1` … `eypc-window-slot-10` remain `mainHide` features and always resolve a persisted root/group, never a child. Root rows and slots call `root-current`; child rows call `member-exact` only after a fresh relationship revalidation. Runtime retains WJ-19 explicit replacement only for missing persisted roots and never offers a child as a persistent replacement. Child disappearance under complete/partial inventory is handled inside session families and cannot mutate root binding. Bridge/member mismatch, stale exact member, permission/read/focus failure and refresh incompleteness are blocking diagnostics; exact-member failure never retries as root-current.
-
-When `import.meta.env.DEV === true`, Runtime creates an in-memory `WindowOperationDebugRecord` for each activation/topmost attempt. The user-authorized selected target title appears at the start of that development-only trace; native bridge data remains limited to bounded root-identity/focus `{ stage, outcome, detail }` values. The trace is capped at 50 records, separately clearable, validated again at the Runtime boundary, and absent from `AppState`/storage. No build requests or renders the retired environment/Space snapshot; a non-development build creates no operation record and exposes no trace UI.
-
-### UI
-
-The `windows` feature owns a compact toolbar, a single-line status band, a persistent left slot rail, a right diagnostics rail, and a tree-first workbench. Ordinary root rows are level one with proven child rows at level two; Finder/Explorer uses a virtual level-one parent with real roots at level two and hides further members. Root Enter/double-click dispatches `root-current`; child Enter/double-click dispatches `member-exact`. Right-click first focuses and reuses the accessible panel under `window / child-window / file-manager-group / selection / slot` context. Child context contains only exact activation, optional exact close, read-only details and Windows HWND copy. `ArrowRight/ArrowLeft` navigate hierarchy, search auto-expands matches without overwriting manual expansion, and hidden/stale child focus returns to the root. `Ctrl+1`…`Ctrl+0`, selection and edit/favorite/pin/topmost/force actions reject children.
-
-## Out of Scope
-
-- Hardware-specific APIs, private uTools host APIs, app/window-title writes, simulated input, and automatic global-hotkey registration.
-- Background reconciliation, launch/reopen of a closed application, macOS HWND emulation/permanent-third-party-topmost, and focus workaround techniques.
-
-## Rollback
-
-Disable the feature in EyPc settings. Existing local target and slot metadata remains inert; removing the feature code later does not require any external state restoration.
+WJ-11–WJ-18 的 Space/标题路线和 WJ-20 的成员隐藏方案只保留于 Git 历史与对应错误记忆，不再展开在当前 Spec、Plan、Tasks 或 Verify 中。当前行为只由 WJ-21 合同及仍适用的 WJ-19 根实例人工换绑合同共同定义。
