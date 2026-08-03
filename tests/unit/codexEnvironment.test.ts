@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CODEX_ACTION_HOST_RUNTIME_REVISION,
   buildCodexEnvironmentActionSlots,
   buildCodexEnvironmentProjectCandidates,
   classifyCodexEnvironmentActionRisk,
   parseCodexEnvironmentToml,
   projectCodexEnvironmentFromParsed,
-  resolveCodexEnvironmentActionTarget
+  resolveCodexEnvironmentActionTarget,
+  validateCodexEnvironmentActionCommand
 } from '../../src/domain/codexEnvironment'
 
 describe('codexEnvironment TOML subset', () => {
@@ -61,6 +63,62 @@ command = 'echo hi # not comment'
 version = 2
 name = "X"
 `)).toBeNull()
+  })
+
+  it('accepts only the raw bare integer version token 1', () => {
+    expect(CODEX_ACTION_HOST_RUNTIME_REVISION).toMatch(/^action-host-v\d+-/)
+    for (const version of ['"1"', "'1'", '1.0', '1e0', '01']) {
+      expect(parseCodexEnvironmentToml(`
+version = ${version}
+name = "Rejected"
+`), version).toBeNull()
+    }
+  })
+})
+
+describe('codexEnvironment structured Action command allowlist', () => {
+  it('accepts only complete package-script, Vite and Git Push argv shapes', () => {
+    for (const manager of ['pnpm', 'npm', 'yarn', 'bun']) {
+      expect(validateCodexEnvironmentActionCommand(`${manager} run build`)).toEqual({
+        family: 'package-script',
+        executable: manager,
+        task: 'build',
+        argv: [manager, 'run', 'build'],
+        risk: 'normal'
+      })
+      expect(validateCodexEnvironmentActionCommand(`${manager} run serve`)).toMatchObject({
+        family: 'package-script',
+        executable: manager,
+        task: 'serve',
+        risk: 'long-running'
+      })
+    }
+    expect(validateCodexEnvironmentActionCommand('vite build')).toMatchObject({ family: 'vite', task: 'build', risk: 'normal' })
+    expect(validateCodexEnvironmentActionCommand('vite serve')).toMatchObject({ family: 'vite', task: 'serve', risk: 'long-running' })
+    expect(validateCodexEnvironmentActionCommand('git push')).toEqual({
+      family: 'git-push',
+      executable: 'git',
+      task: 'push',
+      argv: ['git', 'push'],
+      risk: 'external-write'
+    })
+  })
+
+  it('rejects shell syntax, flags, refs and every extra token', () => {
+    const rejected = [
+      'pnpm run build $(whoami)',
+      'pnpm run build &',
+      'pnpm run build | tee output.log',
+      'pnpm\nrun build',
+      'pnpm run build --',
+      'pnpm run build extra',
+      'vite build --config hostile.ts',
+      'vite serve --host',
+      'git push origin main',
+      'git push --force',
+      'git push --force-with-lease'
+    ]
+    for (const command of rejected) expect(validateCodexEnvironmentActionCommand(command), command).toBeNull()
   })
 })
 
