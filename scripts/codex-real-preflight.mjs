@@ -7,6 +7,7 @@ import vm from 'node:vm'
 const requireFromScript = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..')
 const preload = readFileSync(resolve(root, 'preload/index.js'), 'utf8')
+const codexDomainSource = readFileSync(resolve(root, 'src/domain/codex.ts'), 'utf8')
 const requestedDays = Number(process.argv[2] || 30)
 const timeWindowDays = Number.isFinite(requestedDays)
   ? Math.max(1, Math.min(365, Math.round(requestedDays)))
@@ -33,6 +34,27 @@ const sandbox = {
 sandbox.globalThis = sandbox
 vm.runInNewContext(preload, sandbox, { filename: 'preload/index.js' })
 
+const typescript = requireFromScript('typescript')
+const codexDomainModule = { exports: {} }
+const codexDomainScript = typescript.transpileModule(codexDomainSource, {
+  compilerOptions: {
+    module: typescript.ModuleKind.CommonJS,
+    target: typescript.ScriptTarget.ES2022
+  },
+  fileName: 'src/domain/codex.ts'
+}).outputText
+vm.runInNewContext(codexDomainScript, {
+  module: codexDomainModule,
+  exports: codexDomainModule.exports,
+  require: requireFromScript,
+  process,
+  console,
+  setTimeout,
+  clearTimeout,
+  structuredClone
+}, { filename: 'src/domain/codex.ts' })
+const { CODEX_TASK_STATE_REVISION, projectConversations } = codexDomainModule.exports
+
 const bridge = sandbox.window.eypcPlatform?.codex
 if (!bridge?.readSnapshot) throw new Error('Codex preload bridge is unavailable')
 
@@ -47,7 +69,8 @@ async function readSettledActivity(expectedTerminalKeys) {
     const terminalAuthorityReady = expectedTerminalKeys.every((key) => {
       const entry = byKey.get(key)
       return entry?.statusAuthority === 'desktop-live'
-        || entry?.statusAuthority === 'connector'
+        || entry?.statusAuthority === 'app-server-live'
+        || entry?.statusAuthority === 'persisted-decision'
           && entry?.status === 'active'
           && entry?.activeFlags?.includes('waitingOnUserInput')
     })
@@ -78,14 +101,15 @@ try {
     const activityResult = await readSettledActivity(expectedTerminalKeys)
     const activity = activityResult?.ok ? activityResult.value : null
     const activityByKey = new Map((activity?.entries || []).map((entry) => [entry.key, entry]))
-    const inWindow = (snapshot.threads || [])
+    const mergedThreads = (snapshot.threads || [])
       .map((thread) => ({ ...thread, ...(activityByKey.get(thread.key) || {}) }))
+    const inWindow = mergedThreads
       .filter((thread) => Number.isFinite(thread.lastTurnStartedAt) && thread.lastTurnStartedAt >= boundary)
       .sort((left, right) => right.lastTurnStartedAt - left.lastTurnStartedAt || left.key.localeCompare(right.key))
     const authoritativeActive = (thread) => thread.status === 'active'
       && (thread.statusAuthority === 'desktop-live'
         || thread.statusAuthority === 'app-server-live'
-        || thread.statusAuthority === 'connector' && thread.activeFlags?.includes('waitingOnUserInput'))
+        || thread.statusAuthority === 'persisted-decision')
     const completed = inWindow.filter((thread) => !authoritativeActive(thread) && thread.lastTurnStatus === 'completed')
     const stopped = inWindow.filter((thread) => !authoritativeActive(thread)
       && ['failed', 'interrupted'].includes(thread.lastTurnStatus)
@@ -93,15 +117,52 @@ try {
     const ongoing = inWindow.filter((thread) => !completed.includes(thread) && !stopped.includes(thread))
     const active = ongoing.filter(authoritativeActive)
     const unconfirmedOngoing = ongoing.filter((thread) => !authoritativeActive(thread))
+    const connectorWaitingInput = inWindow.filter((thread) => thread.status === 'active'
+      && thread.statusAuthority === 'connector'
+      && thread.activeFlags?.includes('waitingOnUserInput'))
+    const persistedWaitingInput = inWindow.filter((thread) => thread.status === 'active'
+      && thread.statusAuthority === 'persisted-decision'
+      && thread.activeFlags?.includes('waitingOnUserInput'))
+    const liveWaitingInput = inWindow.filter((thread) => thread.status === 'active'
+      && (thread.statusAuthority === 'desktop-live' || thread.statusAuthority === 'app-server-live')
+      && thread.activeFlags?.includes('waitingOnUserInput'))
+    const productProjection = projectConversations({
+      threads: mergedThreads,
+      projects: snapshot.projects || [],
+      receipts: [],
+      lastTaskScanAt: snapshot.receivedAt || Date.now(),
+      now: Date.now(),
+      timeWindowDays,
+      sourceFingerprint: snapshot.sourceFingerprint,
+      completeness: snapshot.completeness,
+      rawSourceCount: snapshot.rawSourceCount,
+      eligibleSourceCount: snapshot.eligibleSourceCount,
+      excludedSourceCount: snapshot.excludedSourceCount,
+      nonConversationCount: snapshot.nonConversationCount,
+      desktopBridgeState: activity?.desktopBridgeState
+    }).snapshot
+    const productWaitingKeys = new Set(productProjection.inputRequired.map((thread) => thread.key))
+    const provenWaitingReachesProduct = [...persistedWaitingInput, ...liveWaitingInput]
+      .every((thread) => productWaitingKeys.has(thread.key))
+    const plainConnectorWaitingStaysOut = connectorWaitingInput
+      .filter((thread) => thread.planImplementationOnly !== true)
+      .every((thread) => !productWaitingKeys.has(thread.key))
     const orderIsStrict = inWindow.every((thread, index) => index === 0 || inWindow[index - 1].lastTurnStartedAt >= thread.lastTurnStartedAt)
     const quotaWindows = [
       snapshot.quota?.short ? { name: '5 小时限额', remainingPercent: snapshot.quota.short.remainingPercent } : null,
       snapshot.quota?.weekly ? { name: '周限额', remainingPercent: snapshot.quota.weekly.remainingPercent } : null
     ].filter(Boolean)
 
+    const ok = snapshot.version === 2
+        && snapshot.completeness === 'verified'
+        && orderIsStrict
+        && bridge.taskStateRevision === CODEX_TASK_STATE_REVISION
+        && provenWaitingReachesProduct
+        && plainConnectorWaitingStaysOut
     console.log(JSON.stringify({
-      ok: snapshot.version === 2 && snapshot.completeness === 'verified' && orderIsStrict,
+      ok,
       hostVersion: snapshot.version,
+      taskStateRevision: bridge.taskStateRevision || 'unavailable',
       completeness: snapshot.completeness || 'unknown',
       desktopBridgeState: activity?.desktopBridgeState || 'unavailable',
       counts: {
@@ -114,7 +175,12 @@ try {
         stopped: stopped.length,
         ongoing: ongoing.length,
         active: active.length,
-        unconfirmedOngoing: unconfirmedOngoing.length
+        unconfirmedOngoing: unconfirmedOngoing.length,
+        connectorWaitingInput: connectorWaitingInput.length,
+        persistedWaitingInput: persistedWaitingInput.length,
+        liveWaitingInput: liveWaitingInput.length,
+        productWaitingInput: productProjection.inputRequired.length,
+        productActive: productProjection.ongoing.filter((task) => task.activityState === 'active' || task.activityState === 'waiting-approval').length
       },
       timeWindowDays,
       projectOrder: (snapshot.projects || []).map((project) => ({
@@ -126,6 +192,7 @@ try {
       })),
       quotaWindows
     }, null, 2))
+    if (!ok) process.exitCode = 1
   }
 } finally {
   bridge.close?.()

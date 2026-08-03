@@ -181,7 +181,7 @@ export interface CodexEnvironmentSnapshotV1 {
   manualLaunchPathState?: CodexManualLaunchPathState
   /** Privacy-safe labels only: no executable paths, PIDs, or environment values. */
   launchCandidates?: CodexLaunchCandidate[]
-  /** Connector fallback never grants Input/ongoing/unread authority. */
+  /** Plain connector activity grants no authority; verified finite persisted decisions may still project Input. */
   statusFeedMode?: CodexStatusFeedMode
 }
 
@@ -195,7 +195,7 @@ export type CodexThreadStatus = 'active' | 'idle' | 'notLoaded' | 'systemError'
 export type CodexThreadActiveFlag = 'waitingOnApproval' | 'waitingOnUserInput'
 export type CodexTurnStatus = 'completed' | 'interrupted' | 'failed' | 'inProgress'
 export type CodexDesktopBridgeState = 'not-checked' | 'connecting' | 'connected' | 'not-running' | 'incompatible' | 'failed'
-export type CodexStatusAuthority = 'desktop-live' | 'app-server-live' | 'connector' | 'unavailable'
+export type CodexStatusAuthority = 'desktop-live' | 'app-server-live' | 'persisted-decision' | 'connector' | 'unavailable'
 export type CodexUnreadAuthority = 'desktop-live' | 'desktop-persisted' | 'unavailable'
 export type CodexActivityEvidenceOrigin = 'connector' | 'initial-snapshot' | 'activity-event'
 export type CodexTurnEvidenceOrigin = 'inventory' | 'turn-started' | 'turn-completed' | 'targeted-after-exit' | 'snapshot-corroborated'
@@ -215,7 +215,7 @@ export interface CodexHostThread {
   activeFlags: CodexThreadActiveFlag[]
   /** True only when every current actionable wait is an exact Plan implementation confirmation. */
   planImplementationOnly?: boolean
-  /** Activity is authoritative only while the desktop follower is live. */
+  /** Ordinary activity is live-authoritative; finite waiting flags may also come from a verified local persisted decision. */
   statusAuthority?: CodexStatusAuthority
   /** Evidence provenance used to distinguish a replayed snapshot from a real later activity patch. */
   activityEvidence?: CodexActivityEvidenceOrigin
@@ -286,7 +286,7 @@ export interface CodexPendingRecoverySnapshotV1 {
  * marked degraded, but its atomic task-state package is preserved rather than
  * being independently cleared by Controller or Renderer.
  */
-export const CODEX_TASK_STATE_REVISION = 'task-state-v4'
+export const CODEX_TASK_STATE_REVISION = 'task-state-v5'
 
 export interface CodexHostSnapshotV1 {
   version: 1
@@ -1408,8 +1408,18 @@ export function normalizeCodexState(value: unknown): CodexState {
 }
 
 function isLikelyActiveTask(thread: CodexHostThread) {
-  return (thread.statusAuthority === 'desktop-live' || thread.statusAuthority === 'app-server-live')
-    && thread.status === 'active'
+  if (thread.status !== 'active') return false
+  // Plain connector active flags are inventory hints. Only an explicitly
+  // provenance-marked persisted decision, or the v4 Plan compatibility marker,
+  // may establish waiting state without a live Desktop/App Server event.
+  const persistedDecision = thread.statusAuthority === 'persisted-decision'
+    && (thread.activeFlags.includes('waitingOnUserInput') || thread.activeFlags.includes('waitingOnApproval'))
+  const persistedPlanDecision = thread.planImplementationOnly === true
+    && thread.activeFlags.includes('waitingOnUserInput')
+  return persistedDecision
+    || persistedPlanDecision
+    || thread.statusAuthority === 'desktop-live'
+    || thread.statusAuthority === 'app-server-live'
 }
 
 function hasConfirmedCompletionOverLiveTask(thread: CodexHostThread) {
@@ -1492,6 +1502,26 @@ export function compareConversationTasks(a: CodexTaskCard, b: CodexTaskCard): nu
   const bActivity = Math.max(b.completionRevision || 0, b.updatedAt || 0)
   if (aActivity !== bActivity) return bActivity - aActivity
   return a.key.localeCompare(b.key)
+}
+
+export function orderCodexTasksForDisplay(tasks: CodexTaskCard[], pinnedTaskKeys: string[] = []): CodexTaskCard[] {
+  const pinnedOrder = new Map(pinnedTaskKeys.map((key, index) => [key, index]))
+  return tasks
+    .map((task, sourceIndex) => ({ task, sourceIndex }))
+    .sort((left, right) => {
+      const leftPinned = Boolean(left.task.pinSource)
+      const rightPinned = Boolean(right.task.pinSource)
+      if (leftPinned !== rightPinned) return leftPinned ? -1 : 1
+      if (leftPinned && rightPinned) {
+        const leftOrder = pinnedOrder.get(left.task.key)
+        const rightOrder = pinnedOrder.get(right.task.key)
+        if (leftOrder !== undefined || rightOrder !== undefined) {
+          return (leftOrder ?? Number.MAX_SAFE_INTEGER) - (rightOrder ?? Number.MAX_SAFE_INTEGER) || left.sourceIndex - right.sourceIndex
+        }
+      }
+      return left.sourceIndex - right.sourceIndex
+    })
+    .map(({ task }) => task)
 }
 
 export function countConversationTasks(

@@ -45,7 +45,7 @@ import type {
   CodexResolvedNewThreadModel,
   CodexTaskCard
 } from './domain/codex'
-import { normalizeCodexQuota } from './domain/codex'
+import { normalizeCodexQuota, orderCodexTasksForDisplay } from './domain/codex'
 import type { CodexFloatResizeCorner, CodexFloatWindowState } from './float-env'
 import type { CodexFloatSnapshotV1 } from './runtime/codexController'
 
@@ -254,27 +254,11 @@ function taskTooltip(task: CodexTaskCard) {
 }
 
 function displayOrderedTasks(tasks: CodexTaskCard[]) {
-  const pinnedOrder = new Map<string, number>()
   const pinnedSection = conversations.value?.projectSections.find((section) => section.id === 'pinned')
-  for (const entry of pinnedSection?.entries || []) {
-    if (entry.kind === 'task' && !pinnedOrder.has(entry.task.key)) pinnedOrder.set(entry.task.key, pinnedOrder.size)
-  }
-  return tasks
-    .map((task, sourceIndex) => ({ task, sourceIndex }))
-    .sort((left, right) => {
-      const leftPinned = Boolean(left.task.pinSource)
-      const rightPinned = Boolean(right.task.pinSource)
-      if (leftPinned !== rightPinned) return leftPinned ? -1 : 1
-      if (leftPinned && rightPinned) {
-        const leftOrder = pinnedOrder.get(left.task.key)
-        const rightOrder = pinnedOrder.get(right.task.key)
-        if (leftOrder !== undefined || rightOrder !== undefined) {
-          return (leftOrder ?? Number.MAX_SAFE_INTEGER) - (rightOrder ?? Number.MAX_SAFE_INTEGER) || left.sourceIndex - right.sourceIndex
-        }
-      }
-      return left.sourceIndex - right.sourceIndex
-    })
-    .map(({ task }) => task)
+  const pinnedTaskKeys = (pinnedSection?.entries || [])
+    .filter((entry) => entry.kind === 'task')
+    .map((entry) => entry.task.key)
+  return orderCodexTasksForDisplay(tasks, pinnedTaskKeys)
 }
 
 const renderRows = computed<RenderRow[]>(() => {
@@ -1058,9 +1042,9 @@ function onCompactClick(event: MouseEvent) {
 
 function compactCounterHint(kind: 'input' | 'active' | 'unread') {
   const count = compactCounts.value[kind]
-  if (kind === 'input') return `待输入：${count}`
-  if (kind === 'active') return `进行中：${count}`
-  return `已完成未读：${count}`
+  if (kind === 'input') return `待输入 ${count} · 打开第一条`
+  if (kind === 'active') return `进行中 ${count}`
+  return `未读 ${count} · 打开第一条`
 }
 
 function queueCompactCounterHint(event: Event, kind: 'input' | 'active' | 'unread') {
