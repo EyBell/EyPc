@@ -1,22 +1,30 @@
 # Window Jump Workbench — Handoff
 
+Tool: codex
+Updated: 2026-08-01
+
 ## Delivery State
 
-`wj21-main-child-window-tree / WJ-21 implemented; focused-tests/typecheck/build-reviewed / host-validation-pending` — a real main/root window is still the stable persisted switch unit, but ordinary applications now show bridge-proven real children as session-only exact destinations. Root activation resolves the current/last child dynamically; exact-child activation or close fails explicitly when the member is stale and never falls back. Finder/Explorer remains fixed at virtual parent → real roots. A second first-principles review centralized inventory updates, applied the bridge-revision gate before list ingestion, restored hidden-child action context to the visible root, and aligned macOS operation-time CG bounds admission with inventory admission. Status: **生产代码、权威文档、窗口相关测试、语义 typecheck、生产 build 与 uTools 包静态校验已完成；真实 uTools 重载、跳转/关闭和视觉验收未执行**.
+`wj21-main-child-window-tree / implemented / automated-verified / host-validation-pending`
 
-## Delivered Surface
+当前交付以真实主窗口为稳定持久目标，普通应用显示桥证明的真实子窗口作为会话级精确落点；Finder/Explorer 固定为虚拟父→真实根两级。根使用 `root-current`，子窗使用无回退的 `member-exact`。系统/helper/CG-only/控件及其他不可证明表面不进入树。
 
-- Domain/state: [windows.ts](../../../../src/domain/windows.ts#L1) owns relationship/capability evidence, `WindowFamily { root, children }` and explicit `root-current`/`member-exact` requests. [windowTree.ts](../../../../src/domain/windowTree.ts#L1) projects ordinary real roots/children and the Finder/Explorer virtual-parent/real-root exception, including search expansion and focus return. Persisted targets and slots still resolve only roots/groups; children remain transient.
-- Native bridge: Windows admits only verified top-level/owned popup HWNDs from `EnumWindows`, proves same-app relations through `GA_ROOTOWNER`, and filters child/no-activate/cloaked/transparent/host/helper surfaces. macOS starts from admitted AX window roles in regular apps and uses positive CGWindowID only as identity corroboration; CG-only/system/helper/non-actionable surfaces are omitted. Both root and exact-member operations revalidate instances/relationship and final focus. See [preload/index.js](../../../../preload/index.js#L1), its byte mirror [public/preload.js](../../../../public/preload.js#L1), and [eypcPlatform.ts](../../../../src/platform/eypcPlatform.ts#L1).
-- Runtime/UI: [appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1) keeps complete/partial family inventory, calls `root-current` for roots/slots and fresh-revalidates `member-exact` for children. [WindowsPage.vue](../../../../src/pages/WindowsPage.vue#L1) renders one ARIA tree and limits child context to exact activate, optional exact close, readonly details and Windows HWND copy. Child persistence/favorite/pin/slot/select/edit/topmost/force/batch paths are blocked. [windowRebind.ts](../../../../src/domain/windowRebind.ts#L1) remains root-only WJ-19 replacement authority.
-- Verification: [verify.md](verify.md#L1) records `219/219` focused tests, semantic typecheck and production build on the exact WJ snapshot. Full-suite A/B improves from parent `661/675` with 14 failures to WJ `664/676` with 12 failures; every remaining failure belongs to three untouched Codex Activity/Companion files, so WJ adds no regression. Real native/visual acceptance is still required.
+## Authorities
 
-## User Validation Focus
+- 用户事实：[raw-requirement.md](raw-requirement.md#L1)
+- 当前合同：[spec.md](spec.md#L1)
+- 执行记录：[tasks.md](tasks.md#L1)
+- 验证与宿主门禁：[verify.md](verify.md#L1)
+- 领域/平台架构：[ARCHITECTURE.md](../../../knowledge/ARCHITECTURE.md#L1)
 
-Reload the non-hot-reloading preload and confirm `bridge=wj21-main-child-window-tree`. For enterprise WeChat/browser/IDE roots, verify that system/helper/CG-only noise is absent, real roots remain independent level-one rows and proven children appear at level two. Change the current child, activate a saved root/slot and require the current child; then choose an exact child and require exact focus. Expire that child and require an explicit failure with no root/sibling fallback. Confirm child actions/persistence restrictions, complete/partial cache and focus return. Finder/Explorer must remain exactly virtual parent → real roots with no third level. Finally re-run WJ-19 manual replacement only for a truly missing root.
+## Host Acceptance Focus
 
-Durable historical evidence: [utools-macos-cross-api-window-title-mismatch.md](../../../../vibe/knowledge/error-memory/utools-macos-cross-api-window-title-mismatch.md#L1) and [utools-window-target-auto-rebind-after-restart.md](../../../../vibe/knowledge/error-memory/utools-window-target-auto-rebind-after-restart.md#L1) explain superseded title recovery. [macos-cg-ax-window-identity-mismatch.md](../../../../vibe/knowledge/error-memory/macos-cg-ax-window-identity-mismatch.md#L1) remains applicable to exact CG↔AX identity proof, but WJ-21 explicitly forbids CG-only product rows. The former off-Space route and WJ-20 member-suppression clause are historical. [utools-mainhide-window-activation-diagnostics.md](../../../../vibe/knowledge/error-memory/utools-mainhide-window-activation-diagnostics.md#L1) remains the debug-trace production gate.
+重载 preload 后依次验收：根当前子会话、指定成员精确激活与失效无回退、同应用独立根、Finder/Explorer 固定两级、企业微信等噪声过滤、子窗动作限制、完整/部分缓存及搜索/折叠/`Escape` 焦点回根。持久根真正失效时仍走 WJ-19 人工换绑。
 
-## Safety Reminder
+## Documentation Boundary
 
-Neither the plugin nor this task should attempt to grant macOS accessibility/screen-recording access, alter an application title, or bypass Windows foreground protection. Force terminate runs only after an explicit user confirm.
+2026-08-01 已按用户授权移除 Controlled 文档中的逐代 Space、标题识别、成员隐藏和重复验证正文。历史实现与实验仍可从 Git 和 [error-memory/README.md](../../../knowledge/error-memory/README.md#L1) 追溯，但不得重新解释为当前行为。
+
+## Safety
+
+不得自动提升 macOS 权限、修改应用标题、模拟输入、绕过 Windows 前台保护或在未确认时强制终止进程。

@@ -1,56 +1,23 @@
-# Window Jump Workbench — Plan
+# Window Jump Workbench — Current Plan
 
-1. Add persistent target/slot contracts and normalizers without persisting live native windows.
-2. Extend the preload/platform bridge with fixed, bounded Windows and macOS adapters plus unsupported-stale fallback.
-3. Add the disabled feature, fixed uTools commands, route parsing, runtime resolution, focus-safe activation, and keyboard bindings.
-4. Build the dense accessible window list and action/editor layers, reusing EyPc list conventions.
-5. Synchronize requirement, architecture, status, task evidence, and code links; record user-owned validation gaps.
-6. Repair the verified CoreGraphics bridge regression, add platform-native actionable-window filters, then project one persisted local-pin state over a pinned-first/application-sorted list.
-7. WJ-08: remove duplicate `mainHide`/Runtime pre-hiding, route disabled slots into visible Runtime diagnostics, recover stale native references through one healthy rescan, and expose bounded session-only diagnostics in the workbench.
-8. WJ-09: replace the invalid macOS CG-window-ID → `AXWindowNumber` activation assumption with title-plus-fresh-ordinal AX resolution, preserving ambiguity blocking and no-title-interpolation boundaries.
-9. WJ-10: research platform-native restore/frontmost/topmost contracts; add a development-only sanitized operation trace, make Windows `SetWindowPos(HWND_TOPMOST)` a separate page-topmost action, keep macOS permanent topmost explicitly unsupported, and prevent stable-slot assignment from implicitly favoriting a live row.
-10. WJ-11/WJ-12: introduce the CG-derived SkyLight Space switch and a read-only preload-context environment snapshot, then retain their failed host attempts as historical evidence rather than accepted behavior.
-11. WJ-13: revalidate exact CG identity; resolve dual-mask direct plus managed-Space reverse evidence afresh; switch/confirm only one remote binding; use process-frontmost only for an unbound one-window owner; block unbound multi-window, multiple binding and timeout cases; remove desktop walking and learned binding persistence.
-12. Gate the renderer on bridge revision `wj13-exact-space`, preserve native Space reason codes, capture separate initial/retry aggregate snapshots, and require explicit candidate rebind when a same-PID window title changes.
-13. Sync the Controlled/canonical/current documents, prepare all preload mirrors, and run only non-runtime static parse/mirror/revision/stale-symbol/diff checks before user-owned host acceptance.
-14. WJ-14: when in-process SkyLight returns no binding inside the uTools Electron preload, run the same identity revalidation and direct+reverse lookup in a fresh JXA process; switch only one binding and confirm it before AX activation.
-15. WJ-15: map raw AX windows to CG IDs with `_AXUIElementGetWindow`, focus the exact element through application `AXFocusedWindow` plus main/Raise/activation, and verify the focused AX element maps back to the selected CG ID.
-16. Sync the WJ-15 bridge revision, trace vocabulary, project/canonical/memory docs, preload mirrors, focused tests, build/runtime validation, and scoped real global-slot evidence.
-17. WJ-16: read and validate preload-session Space bindings before full resolution, import unique isolated bindings into that cache, retain exact app/title/CG→AX/focused-window authority, and evict hints on native miss without persisting Space/display identity.
-18. Classify window inventories as complete or partial; stop deriving minimization from Core Graphics onscreen state, merge partial/current-Space snapshots into session cache, expose retained rows, and allow only complete scans to prove closure. Run focused cache/list/recovery tests, semantic typecheck, source/mirror checks, and leave native latency acceptance user-owned.
-19. Replace exact-title-only restart recovery with a persisted logical-target profile: exact platform/app identity, current plus bounded verified titles, and a complete-inventory high-confidence unique similarity decision. Commit a replacement only after successful activation; keep partial, weak, tied, and multiple candidates manual. Verify domain/state persistence plus automatic/ambiguous/partial Runtime paths and leave real reboot/rebind acceptance user-owned.
-20. WJ-18: replace exact-path CG-title-to-AXTitle equality with same-PID/CG-ID `kCGWindowName` revalidation, keep exact AX→CG mapping and focused-window readback, classify missing title evidence as generic verification failure, bump the bridge revision, and perform only permitted static/mirror/document checks before user host acceptance.
-21. WJ-19: replace all title-derived identity/recovery with native instance IDs, require exact platform-owner validation, make every replacement candidate confirmation-only, migrate legacy title data to display-only state, update the existing contracts/docs, and leave execution verification to user acceptance.
-22. WJ-19.1: make candidate recovery a narrow title-readable confirm/cancel flow, give one-step Escape and focus restoration priority, force macOS identity verification before Space-cache use, key that cache by full PID+CGWindowID, and document Windows PID+HWND as a bounded verified locator rather than an impossible absolute uniqueness promise.
-23. WJ-19.2: keep candidate recovery open across empty refreshes, replace/merge candidate membership according to complete/partial inventory evidence, restore candidate focus when options reappear, and expose prior-title plus live candidate state as display-only recognition aids.
-24. WJ-19.3: extract one pure rebind state machine for candidate lifecycle/effects, route window action availability through one interaction policy, expose one read-only snapshot projection, update existing contracts/docs only, and statically prove that superseded title/ordinal/sole-candidate routes remain absent.
-25. WJ-20: introduce raw native member observations and one title-blind root-family coalescer; make every Runtime identity/cache/slot/rebind path consume root `instanceId`; reconcile bridge-proven legacy duplicates without loss.
-26. Add one `windowTree` domain framework for Finder/Explorer virtual grouping, ordering/search/flatten/focus/parent landing; expose an ARIA tree and contextual right panel without creating a second component system.
-27. Upgrade Windows to `GA_ROOTOWNER` family proof/final root verification and macOS to CG↔AX top-level-root proof/final focused-root verification; delete the superseded environment/Space/title/ordinal routes and advance both preload mirrors to `wj20-root-window-family`.
-28. Update only existing test modules and the existing Controlled task/product/architecture/status/user-understanding documents. Perform static source/mirror/diff/document review only; leave tests, `vue-tsc`, build, uTools reload and native host acceptance unexecuted.
-29. WJ-20.1: re-audit current requirements against source, mark superseded Space/environment and old ArrowRight text historical, and move row identity/projection, target+slot resolution, action context, horizontal navigation and real-root-only selection into the existing `windows/windowTree` domain boundary. Keep Runtime as side-effect adapter and page as projection consumer; update existing contracts without executing runtime verification.
-30. WJ-21: supersede WJ-20 member suppression for ordinary applications. Preserve each real root as the stable target, retain verified members as session-only children, and keep Finder/Explorer as the sole virtual parent → real-root two-level tree.
-31. Extend the native observations with admission/capability/relationship evidence and generate `WindowFamily { root, children }`; make complete inventories replace families and partial inventories retain cached root/child nodes without proving closure.
-32. Introduce explicit `root-current` and `member-exact` activation requests. Revalidate application, root, member and relationship immediately before exact activation/close; require exact focus readback and forbid root/sibling fallback when a member expires.
-33. Tighten Windows to user-visible `EnumWindows` top-level/owned popups plus `GA_ROOTOWNER` and macOS to AX-first admitted window roles with positive CG identity corroboration. Filter child controls, cloaked/no-activate/transparent/host/system/helper and CG-only/non-actionable surfaces instead of projecting them.
-34. Extend the existing Vue-native ARIA tree to ordinary root/child families; keep child actions session-only and remove persistence/favorite/pin/slot/select/edit/topmost/force/batch paths. Preserve search auto-expansion, manual expansion, parent focus recovery and file-manager fixed depth.
-35. Advance Renderer and both preload mirrors to `wj21-main-child-window-tree`; synchronize task/canonical/current/CodeNote documents. Update the affected existing tests, run focused suites, semantic typecheck and non-watch production build, then perform mirror/revision/symbol/link/diff checks before user-owned host acceptance.
+Tool: codex
+Updated: 2026-08-01
 
-## Non-negotiable Execution Constraints
+## Completed Implementation Route
 
-- Preserve unrelated dirty files and changes.
-- For WJ-08/WJ-10, run only the user-authorized platform-bridge suite, named `window activation diagnostics` runtime group, and diagnostics UI suite. Do not use the slow aggregate action suite as a gate, and do not run full test, typecheck, build, browser/screenshot, or real uTools-host activation in this implementation evidence.
-- Keep all platform calls initiated by an explicit user interaction or uTools feature entry, with bounded process execution and no shell interpolation of user-controlled titles.
-- WJ-09 may use a bounded child-environment value for a normalized local title, but never places it in a shell command or JXA source; it must remain absent from diagnostics, storage, and logs.
-- WJ-10 native traces may contain only a fixed stage/outcome vocabulary and may be requested only from a development renderer; production UI and native calls omit that path.
-- WJ-13 never selects the first of multiple Space/window candidates, never walks all desktops, and never persists CG/PID/title/Space/display activation bindings. Its rule that every same-PID title mismatch requires explicit confirmation is historical and superseded by WJ-17 only for a complete inventory's high-confidence unique logical-target match; ambiguity remains manual.
-- WJ-17 persists only the current locator plus at most four successfully verified prior titles. It never persists unmatched inventory rows, candidate scores, PIDs, CG IDs, Space IDs, or display identities, and never learns from a failed activation or partial inventory.
-- WJ-18 emits `target-title-changed` only from an explicit same-source Core Graphics title mismatch. A CG/AX title disagreement or unavailable current CG title is never proof of change; exact AX→CG identity and focused-window readback remain mandatory.
-- WJ-19 supersedes the preceding WJ-17/WJ-18 matching rules: no title, title history, similarity score, ordinal or sole-candidate shortcut may establish/recover identity. A current native instance ID plus application ownership is the only automatic match.
-- WJ-20 refines “native instance” to the independently operable root-window family. Proven members normalize to the root before any product logic; unrelated roots never merge by application/PID/title. It also supersedes the WJ-13–WJ-19 Space cache/switch and environment-snapshot activation routes: current behavior relies only on root-native identity proof and final root focus verification.
-- WJ-21 keeps the WJ-20 root as the only stable persisted identity but supersedes its “members never render” clause. Ordinary verified members render only as transient child rows and exact activation/close destinations; Finder/Explorer never gains a third level.
-- WJ-21 rejects any native surface that cannot prove user visibility, actionability and an admitted root/member identity. The bridges do not infer relationships from title, application name, location, bounds or candidate count; `member-exact` never degrades to `root-current`.
-- The user's later verification correction supersedes WJ-21's initial no-execution boundary: affected existing tests, semantic typecheck and non-watch production build are required. Build may prepare/validate package assets but must not launch uTools, a dev/preview server or native activation/close.
-- WJ-13 does not add, modify, or run automated tests, typecheck, build, browser/UI automation, or live uTools activation; only static checks and user-owned host validation may be claimed.
-- WJ-15 supersedes that increment-local restriction because the user explicitly authorized online research, probes, and real host validation. Native actions remain limited to reversible Space selection and exact focus of the already selected target; no close, terminate, permission, title, or simulated-input action is allowed.
-- WJ-16 keeps Space/display bindings preload-session-only. Cache use is a performance hint, never identity or closure authority; cached activation must fail closed unless the exact app/title/CG→AX/focused-window chain verifies, and partial inventory may not evict or confirm closure.
+1. 保留真实主窗口作为唯一稳定普通目标，并由 `WindowFamily { root, children }` 表达会话主子关系。
+2. 让普通应用展示真实根→已证明子窗；让 Finder/Explorer 独占虚拟父→真实根的固定两级例外。
+3. 用 `root-current` 与 `member-exact` 分离默认根切换和指定成员精确激活，后者失效时禁止回退。
+4. 在原生桥收紧用户窗口准入：Windows 使用 `EnumWindows` + `GA_ROOTOWNER`，macOS 使用 AX-first + 正 CG 身份佐证。
+5. 把树投影、导航、搜索展开、焦点恢复和动作上下文集中到 `windows/windowTree`，Runtime 只协调状态与副作用，页面只渲染投影。
+6. 保持子窗会话化，阻断其持久化、收藏、pin、槽位、多选、编辑、置顶、强杀与批量入口。
+7. 提升并镜像桥版本 `wj21-main-child-window-tree`，在清单与操作入口统一阻断旧 preload。
+8. 更新既有窗口合同测试，执行聚焦测试、语义 typecheck、非 watch production/uTools build、镜像/符号/链接/差异检查；真实宿主验收保持独立。
+9. 2026-08-01 清理被取代的关系原始需求和重复过程证据，仅保留当前契约、简明取代关系、当前验证及宿主缺口。
+
+## Constraints
+
+- 保留无关脏树，不覆盖 Codex Companion、Action Runner 或其他并行修改。
+- 不新增 UI/原生依赖，不为去重重写跨进程 PowerShell/JXA，不扩大 native 权限或操作范围。
+- 文档清理不改变运行时行为；代码验证证据不得因文档压缩被重新解释为真实 uTools 验收。
+- 已清退的 Space、标题/序号、唯一候选、应用级关系猜测和成员隐藏方案不得回流。
