@@ -4,7 +4,7 @@ Tool: codex
 Date: 2026-08-03
 Status: `automated-verified / host-pending`
 Documentation level: `controlled`
-Requirement version: `2026-08-03.2`
+Requirement version: `2026-08-03.4`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 
@@ -91,25 +91,63 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 
 ## RAW-140 mainHide 已读确认连续性
 
-- `eypc-codex-completed-unread` 快捷键成功打开任务后产生的已读确认属于当前 preload 进程，而不是某一个 Desktop Bridge 连接。普通 `onPluginOut(false)` 关闭连接、IPC reset、revision resubscribe、App Server/Bridge 重建与 refollow 均不得丢失该确认。
+- `eypc-codex-completed-unread` 快捷键成功打开任务后产生的已读确认属于当前 preload 进程，而不是某一个 Desktop Bridge 连接。普通 `onPluginOut(false)` 热隐藏，以及显式连接关闭、IPC reset、revision resubscribe、App Server/Bridge 重建与 refollow 均不得丢失该确认。
 - Preload 最多保留 1000 条 parent/child 关联的成功打开确认，只保存 raw identity 与当时 latest-Turn revision，用于同进程内仲裁；不落盘、不进入 Renderer、日志或公开协议。进程真正结束后自然消失。
-- 对该已确认 completion，重放 snapshot、仍为成员的原生 unread 集合和晚到的同 epoch unread true 均不得把它恢复成未读。精确 active/Turn-started、完整库存发现 inProgress/failed/interrupted 或更新 completed revision、以及明确归档/删除会清除 parent/相关 child 确认；随后新 completion 可按 exact/native true 重新成为未读。
+- 对该已确认 completion，重放 snapshot、仍为成员的原生 unread 集合和晚到的同 epoch unread true 均不得把它恢复成未读。RAW-140 当时以 completed revision 变化作为释放线索；该口径已由 RAW-144 收紧为具体 Turn 身份：同一 Turn 仅补全 `completedAt` 不释放，只有新 Turn/新 active epoch 或明确归档删除才释放 parent/相关 child 确认。
 - 卡片、完成未读角标和全局快捷键仍共享 RAW-138/139 的成功 Host open 边界；失败、仅 dispatched 或错误 alias 不创建确认。`task-state-v4`、Controller/Renderer 判断、Codex 原生文件和 legacy receipt 均不变化。
 
 ## RAW-141 owner 中断后的待输入连续性
 
 - 精确 Desktop `conversationState.requests` 仍是普通输入、审批和 `item/plan/requestImplementation` 的最高权威；但当前 owner 已消失时，新 follower 不能假定 Desktop 会向它重放快照。`following=true` 只证明订阅已登记，不证明当前请求已恢复。
 - 对 App Server latest Turn 为 `interrupted / failed / inProgress` 的库存行，Preload 可读取该行 `path` 指向的 rollout 作为唯一持久回退。路径必须经 realpath 验证位于 `CODEX_HOME/sessions`，只读普通文件，单次最多读取尾部 4 MiB；解析器只保留 `response_item` 类型、精确 `request_user_input` 名称、最长 200 字符 call ID、匹配的 `function_call_output` 与后续 user-message 边界，不解析或发布 prompt、答案、路径和 raw identity。
-- rollout 中仍有未匹配的精确 `request_user_input` 时，库存投影为 connector-backed `active + waitingOnUserInput`。匹配 output、后续 user message、新 exact Desktop snapshot、App Server active/new Turn/completion、库存 Turn/outcome/updated revision 或明确归档/移除均结束旧回退。普通 connector active 仍不得成为 input 权威，未知 function call 不得伪造等待。
-- 已观察到的普通输入、审批和 Plan 请求 shadow 可在 owner/transport 丢失后保留于当前 preload 会话；普通无等待 active 必须降回 connector。普通 `onPluginOut(false)` 只清 App Server/公开库存并保留 Desktop observer，显式 feature disable、`onPluginOut(true)` 或进程结束完全关闭。新快照/新 Turn 清除 sticky shadow；不新增持久化、公开字段、Renderer 判断或 Codex 原生写入，`task-state-v4` 不变。
+- rollout 中仍有未匹配的精确 `request_user_input` 时，RAW-141 先把库存投影为 connector-backed `active + waitingOnUserInput`；该来源缺口已由 RAW-145 收紧为 `persisted-decision`。匹配 output、后续 user message、新 exact Desktop snapshot、App Server active/new Turn/completion、库存 Turn/outcome/updated revision 或明确归档/移除均结束旧回退。普通 connector active 仍不得成为 input 权威，未知 function call 不得伪造等待。
+- 已观察到的普通输入、审批和 Plan 请求 shadow 可在 owner/transport 丢失后保留于当前 preload 会话；普通无等待 active 必须降回 connector。自 RAW-143 起普通 `onPluginOut(false)` 同时保留 App Server 热会话与 Desktop observer；显式 Controller close、feature disable、`onPluginOut(true)` 或进程结束完全关闭。新快照/新 Turn 清除 sticky shadow；不新增持久化、公开字段、Renderer 判断或 Codex 原生写入，`task-state-v4` 不变。
 - 当前真实宿主中唯一原生 `Needs input` 任务已由 `notLoaded + interrupted` 恢复为 `active + waitingOnUserInput`；只读预检计为一条权威 active。普通输入与 Plan 的既有精确映射继续由回归合同保护；聚焦 `170/170`、完整工作树 `737/737` 与独立暂存提交 `711/711`、typecheck、build/runtime validation 已通过，新构建实际卡片/快捷键展示仍需重载验收。
+
+## RAW-142 已完成 Plan 待实现与未读稳定化
+
+- latest Turn 为 `completed` 且对应 rollout 最新 Turn 包含精确 `event_msg.item_completed`、`item.type=Plan` 时，该任务仍是等待用户决定是否实施：必须投影为 `active + waitingOnUserInput + planImplementationOnly`，优先于 completed/completed-unread，完全不读取 unread 作为 Plan 判定条件。后续 `task_started`、精确 active/new Turn 或实现开始清除该等待。
+- rollout 只允许 sessions realpath 内普通文件，按 `256 KiB / 1 MiB / 4 MiB` 渐进尾读；解析器只读取 Turn 边界和 Plan item 类型，不发布正文、路径或 raw identity。实时 App Server 精确 Plan item 与 completion 使用相同匿名投影；普通 connector active/普通 connector waiting 仍不扩权。
+- 原生 unread 文件瞬时不可用时，当前 Desktop Bridge 必须沿用最近一次成功解析的成员/非成员，且该证据跨一次完整库存对象替换保留；精确 read-state、成功打开确认、refollow false 或下一次成功原生读取仍按既有权威顺序立即覆盖。不得先发布错误 completed-unread 帧再纠正，也不在 Renderer 增加时间 debounce。
+- 本增量只执行影响项验证：Plan/unread Bridge 与 Domain 合同、两个 Controller 投影合同、preload 语法、typecheck、main preload 镜像和同步 IPC 静态检查。完整 verify/build 与真实 uTools 重载不属于本轮自动门禁。
+
+## RAW-143 mainHide 快捷键热缓存连续性
+
+- `onPluginOut(false)` 只是 uTools 后台隐藏，不得关闭 App Server 或清空 task/project alias、latest-Turn 与 Activity session cache；显式 Controller close、feature disable、`onPluginOut(true)` 和真实进程退出仍是完整清理边界。
+- 待输入、完成未读与前后任务命令在 Controller 已有任务扫描进行时，只能复用一次真正发布成功且覆盖 threads 的 single-flight；额度-only、被取消或未发布的读取不能冒充任务预检。已验证的空库存也是可复用缓存，不能因 `lastThreads.length === 0` 重复全扫。
+- Action Runner/五槽首次无 verified inventory 时执行一次 tasks-only preflight；之后先用当前 project alias 读取 Environment，只有 Host 明确返回 stale alias 才重建一次库存。执行前 Host 仍按 source fingerprint、target identity 与文件指纹 fail-closed，不以缓存替代安全校验。
+- 热任务 alias 打开不得新增 `thread/list` 或 `thread/turns/list`；并发过期 alias 最多共享一次全量任务预检。验证只覆盖相关 Controller/Bridge/Action lifecycle 文件、类型、preload 语法/镜像与 diff，不运行完整仓库门禁或真实宿主。
+
+## RAW-144 功能生命周期增量缓存与 Turn 绑定已读确认
+
+- Codex 功能启用期间，Controller 的任务/项目物化库存、Activity 订阅、source/generation 水位与任务 alias 必须持续保持并接纳增量；主窗口 Tab、Float 可见性和普通 `mainHide` 都不是清缓存边界。额度/config 仍只在 Codex 页面或 Float 活跃时轮询。feature/inbox disable、显式 dispose、kill 或进程结束仍完整清理并隔离旧异步结果。
+- Action Runner catalog 按 project key + 当前 action alias 分片缓存并 per-project single-flight。已验证库存新增项目只读取新项目，alias 变化只失效/重载对应项目，移除项目立即删除缓存；热 Runner 打开不重复读取未变化项目。项目级缓存只加速展示与目标解析，Host 每次执行/停止仍重读并验证当前 TOML、target identity 与 command fingerprint。
+- 成功打开确认必须绑定具体 Turn；没有有效 latest-Turn 身份时不得留下跨 Bridge 的长期 false。内部 Turn ID 可用于区分 epoch，但不得进入 Renderer、公开 snapshot、日志或持久化。同一 Turn 的 `completedAt` 迟到补全不释放确认；真正不同 Turn ID、新 active/inProgress epoch 或明确移除才释放。
+- Electron `openExternal` 成功与 uTools `shellOpenExternal` 明确接受（返回值不是 `false`）属于同一个 Host-open 成功边界；失败/拒绝不确认。成功后的 `readStateOnly=false` 必须压住同 Turn 的原生 stale true、refollow true、晚到 exact true 与较旧 full snapshot；Controller 的 Activity generation 反向屏障禁止旧 completed-unread 库存覆盖更新的已读增量。
+- 不新增 Renderer debounce、第二套快捷键缓存、公开字段或原生 unread 写入。自动验证只覆盖受影响的 Codex/Action/路由/UI 文件、类型、preload 语法/镜像、runtime packaging 与 diff；真实宿主仍单独验收。
+
+## RAW-145 持久决定端到端来源
+
+- [preload/index.js](../../../../preload/index.js#L1) 只把两类已结构化复核的有限决定标为 `statusAuthority='persisted-decision'`：未匹配的精确 `request_user_input`，以及最新 completed Turn 中尚无后续 Turn 的精确 Plan item。普通 App Server/connector `activeFlags` 继续使用 `connector`，不得借新来源扩成待输入。
+- `persisted-decision` 必须穿过完整库存构建、Activity inventory、公开 sanitizer 和 owner/transport 恢复路径而不降回 connector；Desktop/App Server live 仍拥有更强实时权威。精确 `turn/started`、ordinary active 或 completion 先清除旧 persisted baseline；仅当该 completion 同时拥有精确 Plan item 时才重新建立新的 Plan 决定。
+- [codex.ts](../../../../src/domain/codex.ts#L1) 只接受 `persisted-decision + waitingOnUserInput/waitingOnApproval` 为非 live 待处理状态，同时保留 v4 `planImplementationOnly` 的 degraded 兼容。未标记的普通 connector waiting 仍保持保守 ongoing，避免恢复历史误报。
+- `task-state-v5` 是 Preload、平台与 Controller 的当前语义修订；v4/v3/v2/缺失或未来来源继续保留原子任务包并标记 degraded，不自动清空、停止订阅或重启 uTools。v4 的精确 Plan-only 标记仍可兼容投影，普通输入恢复必须由 v5 provenance 证明。
+- [codex-real-preflight.mjs](../../../../scripts/codex-real-preflight.mjs#L1) 不再复制产品 active 算法；它以当前本机 Codex Provider 数据组装真实 Host snapshot，转译并调用生产 `projectConversations`，同时核对 preload/domain revision、已证明 waiting 是否到达 `inputRequired` 及普通 connector hint 是否被拒绝。修复前真实结果为 connector waiting 1、产品 waiting 0；首个修复后观测为 persisted waiting 1、产品 waiting 1，Provider 状态随后解除时最终复跑同步为 0、0。
+
+## RAW-146 首条排序与合同漂移收口
+
+- [codex.ts](../../../../src/domain/codex.ts#L1) 提供唯一 `orderCodexTasksForDisplay`：任何带 `pinSource` 的任务先于非置顶任务，置顶内部优先使用 `projectSections.pinned` 的既有顺序，缺失显式序号时保持源顺序。Controller 与 Float 不得再维护不同比较器。
+- 全局待输入命令、紧凑待输入角标和前后任务候选都从完整 `inputRequired` 集合应用该顺序后选择；隐藏计数任务仍可成为第一条，且不得跳过一个无可用 alias 的第一条去打开后项。
+- 紧凑角标帮助和 ARIA 固定为 `待输入 N · 打开第一条 / 进行中 N / 未读 N · 打开第一条`。测试必须覆盖单项、多项、超过 99、鼠标/键盘提示及“源数组首项未置顶、后项置顶”的反向顺序，不得把旧文案或只有一个候选的夹具冒充排序合同。
+- Canonical/过程文档统一 `persisted-decision`、可配置动态窗口默认 24 小时和当前服务事实；历史执行行可保留当时结果，但“最新”摘要不得继续引用过期计数或已结束的 8092 进程。本增量不启动/重载 uTools、不改 ASAR、不改 Provider/Preload 状态语义。
 
 ## 证据合同
 
 - Activity 来源为 `connector / initial-snapshot / activity-event`，并携带会话期 revision；Preload 内真实 Desktop patch 与精确 App Server active 另共享一个不出 Host 的单调 evidence sequence，用于判断跨来源先后。
 - Turn 来源为 `inventory / turn-started / turn-completed / targeted-after-exit / snapshot-corroborated`。
+- 非 live 决定来源为 `persisted-decision`，只证明已结构化复核的有限待输入/待审批决定；它不是普通 connector 活动的别名。
 - `readStateOnly` 只能修改 unread；不得重放 Activity 或 Turn。
-- Unread 区分初始 snapshot、明确 read-state event 与成功打开确认。成功打开确认对其 completion epoch 最强并跨普通 Bridge 重建保留；其余 exact true/false、refollow snapshot 与原生集合按当前证据仲裁。refollow snapshot `false` 可清除中断期遗漏事件留下的 persisted `true`；当前可解析原生集合的成员/非成员仍压过 snapshot `true`，原生文件不可用时才回退 snapshot/上一持久化值。新 Turn 证据先释放旧成功打开确认。
+- Unread 区分初始 snapshot、明确 read-state event 与成功打开确认。成功打开确认对其 completion epoch 最强并跨普通 Bridge 重建保留；其余 exact true/false、refollow snapshot 与原生集合按当前证据仲裁。refollow snapshot `false` 可清除中断期遗漏事件留下的 persisted `true`；当前可解析原生集合的成员/非成员仍压过 snapshot `true`，原生 atom 瞬时不可用时先沿用当前 Bridge 最后一次成功原生观测，再回退其它 snapshot。新 Turn 证据先释放旧成功打开确认。
 - 精确 `turn/completed` 统一关闭完成前 unread false 周期，即使旧待输入/审批 flag 尚未排空；完成后新到达的明确 read-state event 可重新声明已读。
 - Preload 只读监听 Codex 原生状态文件变化，经短合并后仅发布匿名 `readStateOnly` 增量，不把文件路径或私有内容送入 Renderer。
 - 原生 unread 首次观测或从非 true 变为 `true` 时，若 latest Turn 尚未确认 completed，非 active 任务启动一次普通有界复核；无 waiting flag、无精确 `turn-started` 的可疑 active 启动 `verifyStaleActive`。会话期观测水位防止相同 true 轮询重复重启；unread 只唤醒取证，不直接改变 Activity 或发明完成。
@@ -119,9 +157,9 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 
 ## 唯一状态优先级
 
-1. exact live 待输入/审批请求进入 `waiting-input / waiting-approval`；owner 已消失时，只有会话期 sticky exact request 或安全 rollout 尾部尚未匹配的精确 `request_user_input` 可保留/恢复 waiting-input。
+1. exact live 待输入/审批请求进入 `waiting-input / waiting-approval`；owner 已消失时，会话期 sticky exact request 或标为 `persisted-decision` 的安全 rollout 尾部精确未匹配 `request_user_input` 可保留/恢复普通 waiting-input；latest completed Turn 中标为同一来源的精确 Plan item 则恢复 Plan-only waiting，直到更新 Turn，且不受 unread 影响。普通 connector waiting 不进入该层。
 2. 真实 Desktop activity patch、精确 App Server `active` 或精确/new `inProgress` 建立 live active；`app-server-live` 覆盖旧 initial/refollow idle 和更早的 idle activity event，并携带私有建立水位跨 inventory 重建保留。Desktop 非 active 只有其真实 patch 水位严格更晚时才可撤销；read-state-only、Side Chat 聚合或 inventory 重放旧 shadow 不能撤销。
-3. 精确、定向或佐证 completed 立即进入 `completed`；普通 inventory completed 只有在没有更强 live active 时成立。精确通知和 snapshot 佐证都允许缺失 `completedAt`，confirmed provenance 写回会话期 inventory。
+3. 精确、定向或佐证 completed 立即进入 `completed`；但同一 latest Turn 的精确未实现 Plan 决定继续作为 waiting-input，直到下一 Turn。普通 inventory completed 只有在没有更强 live active/Plan 决定时成立。精确通知和 snapshot 佐证都允许缺失 `completedAt`，confirmed provenance 写回会话期 inventory。
 4. `failed/interrupted` 只有相对当前 active-exit baseline 前进并经退出后定向证据确认，或与 Desktop 明确 `not-running` 共同出现时进入 `stopped`；缺失 Turn outcome 永不构成停止。
 5. 不完整、乱序、断连或互相冲突的证据保持 `ongoing`。
 
@@ -136,7 +174,7 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - 完整 inventory 重建保留更强的精确 inProgress、confirmed terminal 与同 revision provenance。未知 key 只触发 urgent 结构复核，已知条目仍即时应用。
 - 完整 inventory 同时保留 `app-server-live` 私有 evidence sequence；该序号不进入 Activity Delta、Host Snapshot、Renderer、存储或日志。
 - 50/200ms 结构合并、5s/1s watchdog、默认 15s 完整校对和 missing-key 隔离只保护证据/库存，不延迟已确认完成；missing-key 只保留缺失行，同批仍存在的任务状态立即发布。连续确认早于隔离窗时按剩余时间自调度，普通周期为 0 也会闭合。Preload 在 source fingerprint 未变化时把已发布缺行任务的匿名映射保留 120 秒，覆盖 Controller 最长配置隔离窗口；显式归档仍立即清除。
-- `task-state-v4` 是当前语义。v3/v2/旧来源仍读取并发布 degraded 原子包，不清空任务或停止订阅；缺失 Plan 分类时保守进入普通输入层。
+- `task-state-v5` 是当前语义。v4/v3/v2/旧来源仍读取并发布 degraded 原子包，不清空任务或停止订阅；v4 Plan-only 标记保持兼容，缺失 persisted-decision provenance 的普通 connector waiting 不扩权。
 - 旧 runtime/float `conversations` 别名只作一版兼容；当前消费者以 `taskState` 为权威。
 
 ## 残留矩阵收口

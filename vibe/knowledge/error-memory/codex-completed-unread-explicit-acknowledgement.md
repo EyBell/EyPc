@@ -2,7 +2,7 @@
 id: eypc-codex-completed-unread-explicit-acknowledgement
 status: superseded
 scope: project
-fingerprint: codex-task-open-read-acknowledgement__persistent-completion-receipt-conflicts-with-native-unread-but-open-only-misses-plugin-navigation__shared-host-open-success-creates-session-false__failure-or-unconfirmed-dispatch-does-not
+fingerprint: codex-task-open-read-acknowledgement__persistent-completion-receipt-conflicts-with-native-unread-but-open-only-misses-plugin-navigation__shared-host-accepted-open-creates-turn-bound-session-false__failure-or-explicit-rejection-does-not
 first_seen: 2026-07-24
 last_verified: 2026-08-03
 review_after: 2026-10-24
@@ -17,6 +17,8 @@ evidence:
   - real-utools-correct-preload-open-ack
   - cold-task-action-preflight-regression
   - mainhide-bridge-rebuild-read-ack-regression
+  - accepted-utools-fallback-read-ack-regression
+  - same-turn-id-completion-enrichment-regression
 tags:
   - codex-companion
   - completed-unread
@@ -29,7 +31,7 @@ tags:
 
 ## Current Resolution
 
-RAW-128 permanently supersedes the persisted completion-revision receipt described in the historical sections below. RAW-138 adds a narrower replacement: every plugin task-open entry uses one Host Deep-Link path, and only a confirmed successful open publishes a session-only exact read false for the parent and known Side Chats. RAW-139 protects access to that path across uTools lifecycle boundaries: `mainHide` owns visibility, cold shortcuts wait for tasks-only inventory, and stale card aliases rebuild only from the same anonymous task key. RAW-140 corrects the remaining lifetime error: the acknowledgement belongs to the current preload process and completion epoch, not to one replaceable Desktop Bridge instance, so ordinary mainHide/pluginOut connection close, IPC reset, resubscribe and refollow preserve it. Failed navigation and unconfirmed dispatch do nothing. EyPc still writes neither Codex native unread nor a persistent acknowledgement, and a new Turn/completion or explicit removal clears the older session false.
+RAW-128 permanently supersedes the persisted completion-revision receipt described in the historical sections below. RAW-138 adds a narrower replacement: every plugin task-open entry uses one Host Deep-Link path, and a successful Electron open publishes a session-only exact read false for the parent and known Side Chats. RAW-139 protects access to that path across uTools lifecycle boundaries: `mainHide` owns visibility, cold shortcuts wait for tasks-only inventory, and stale card aliases rebuild only from the same anonymous task key. RAW-140 corrects the remaining lifetime error: the acknowledgement belongs to the current preload process and completion epoch, not to one replaceable Desktop Bridge instance, so ordinary mainHide/pluginOut connection close, IPC reset, resubscribe and refollow preserve it. RAW-144 closes two final edges: uTools `shellOpenExternal` exposes only accepted/rejected dispatch, so every non-`false` dispatch uses the same boundary; and the process hint is bound to a concrete internal Turn ID, so late `completedAt` enrichment for that same Turn cannot release it. Failure/explicit rejection does nothing. EyPc still writes neither Codex native unread nor a persistent acknowledgement, and a different Turn/active epoch or explicit removal clears the older session false.
 
 ## Symptom
 
@@ -46,15 +48,15 @@ The original design incorrectly solved immediate UI feedback with a persisted co
 ## Correct Detection Order
 
 1. Resolve the task using the existing card/counter/shortcut candidate rules. If lifecycle cleanup left the inventory empty, first perform one serialized tasks-only preflight; if a card alias is stale, rebuild it only from the same anonymous task key.
-2. Wait for the Electron Deep-Link operation to resolve successfully; if Side Chat direct-open fails but parent fallback succeeds, acknowledge the parent fallback only.
-3. On confirmed success, publish read false for the parent, actual target and known Side Chat relations through the anonymous `readStateOnly` path, and retain only their identity/revision hint in bounded preload-process memory.
-4. On failure or an API that only reports dispatch without confirmation, preserve unread.
-5. Do not clear the hint for ordinary Bridge close/reset/resubscribe/refollow or same-completion replay. Clear it for an exact new live epoch, a newer Turn/completion found by bootstrap, explicit removal or process end.
+2. Wait for the Electron Deep-Link operation to resolve successfully; if Side Chat direct-open fails but parent fallback succeeds, acknowledge the parent fallback only. On uTools fallback, treat only an explicit `false` return as rejection; other returns mean the host accepted dispatch.
+3. On accepted success, publish read false for the parent, actual target and known Side Chat relations through the anonymous `readStateOnly` path. Retain a bounded process hint only when the current latest Turn has valid timing, and prefer its sanitized internal Turn ID.
+4. On failure or explicit rejection, preserve unread.
+5. Do not clear the hint for ordinary Bridge close/reset/resubscribe/refollow, same-Turn replay or a later `completedAt` correction. Clear it for an exact new live epoch, a different Turn ID/startedAt found by bootstrap, explicit removal or process end.
 6. Write no receipt or Codex native state.
 
 ## Prevention Rule
 
-Do not restore the local completion-revision acknowledgement and do not acknowledge before navigation success. All plugin task-open surfaces must share the same Host success boundary. `mainHide` routes must not add a Renderer hide that can terminate the preflight, and alias recovery must never fall back to a different task. The acknowledgement stays in bounded preload-process memory outside the replaceable Bridge, overrides replay for the same completion, does not mutate native state, and is invalidated by a new Turn/completion epoch or explicit removal. Legacy acknowledgement fields remain ignored migration input.
+Do not restore the local completion-revision acknowledgement and do not acknowledge before the Host accepts navigation. Electron completion and uTools non-rejected dispatch are the two supported acceptance signals. All plugin task-open surfaces must share that boundary. `mainHide` routes must not add a Renderer hide that can terminate the preflight, and alias recovery must never fall back to a different task. The acknowledgement stays in bounded preload-process memory outside the replaceable Bridge, is created only for a concrete Turn, overrides replay/time enrichment for the same Turn, does not mutate native state, and is invalidated by a different Turn/active epoch or explicit removal. Legacy acknowledgement fields remain ignored migration input.
 
 ## Latest Applicable Implementation
 
@@ -62,10 +64,10 @@ Do not restore the local completion-revision acknowledgement and do not acknowle
 
 ## Alternative Route
 
-- Status: `verified` for the RAW-140 preload-session replacement; the persistent RAW-082 route remains superseded.
+- Status: `verified` for the RAW-140/144 preload-session replacement; the persistent RAW-082 route remains superseded.
 - Preconditions: any plugin task card, completed-unread counter, waiting-input counter or task-navigation shortcut reaches the shared Host open action.
-- Ordered steps: resolve the target; attempt the Deep Link; acknowledge only a confirmed target or parent-fallback success; republish the parent aggregate; retain the completion hint across routine Bridge teardown; remove it only at a new Turn/completion or explicit deletion.
-- Verification: successful parent/Side Chat open, failed open, initially unavailable Bridge, IPC reset/refollow, mainHide close/rebuild, same-completion replay and new-Turn release contracts pass.
+- Ordered steps: resolve the target; attempt the Deep Link; accept Electron success or non-rejected uTools dispatch; require a concrete Turn for the process hint; republish the parent aggregate; retain it across routine Bridge teardown and same-Turn enrichment; remove it only at a different Turn/active epoch or explicit deletion.
+- Verification: successful parent/Side Chat/uTools fallback open, failed open, initially unavailable Bridge, IPC reset/refollow, mainHide close/rebuild, same-Turn timestamp enrichment, older full-snapshot reverse race and new-Turn release contracts pass.
 - Applicability boundary: EyPc's current preload process only; it neither asserts that Codex persisted the read nor fabricates an unknown transient Side Chat.
 - Fallback: if the Host cannot confirm success, return the existing failed/dispatched result and preserve unread.
 
@@ -78,3 +80,4 @@ Do not restore the local completion-revision acknowledgement and do not acknowle
 | 2026-08-03 | RAW-138 repeated completed-unread mismatch | Successful plugin navigation had no acknowledgement when Codex read events were missed or not replayed | Kept every task-open path open-only after removing the unsafe persistent receipt | User requirement, active extension/plugin timing and Bridge/Controller regression | Added one success-gated, session-only Host acknowledgement for all task-open paths; preserved failure/no-confirmation and new-completion reset | automated verified 722/722; rebuilt host reload/acceptance pending |
 | 2026-08-03 | RAW-139 host correction | uTools retained an older float/preload while the latest ASAR was installed; after correct activation the card acknowledgement worked, but cold global actions still read an intentionally cleared inventory and Renderer hid a `mainHide` route again | Assumed installed version implied active child version and consumed synchronous commands before bootstrap | Real float URL/version/hash, Codex route log, 2→1 plugin counter, source trace and focused regressions | Assigned visibility solely to `mainHide`, serialized empty-inventory commands behind tasks-only preflight, and rebuilt/retried aliases only for the same key | current 1.2.33 card host-confirmed; RAW-139 focused 141/141 and full verify 730/730, rebuilt cold-host acceptance pending |
 | 2026-08-03 | RAW-140 shortcut acknowledgement rebound | Completed-unread shortcut showed read immediately, then returned to unread after normal mainHide lifecycle | Stored a user-confirmed completion fact only in `CodexDesktopCompanionBridge.liveUnread`, which routine pluginOut/reset/rebuild correctly clears | User shortcut reproduction plus a failing `desktop-live=false → desktop-persisted=true` IPC reset contract | Moved a bounded identity/revision hint to preload-process scope, made same completion replay subordinate, and released only on new Turn/removal | Bridge 70/70, focused 144/144 and full verify 733/733 pass; rebuilt host acceptance pending |
+| 2026-08-03 | RAW-144 fallback/Turn-identity hardening | uTools fallback could open without marking read; an already-read task could recur when the same Turn later gained a larger completedAt | Treated fallback dispatch as unconfirmed and used timestamps rather than stable Turn identity for the process hint | Source trace plus accepted-fallback, same-ID enrichment and delayed-full-snapshot regressions | Acknowledge non-rejected uTools dispatch, reject unbound hints, bind to internal Turn ID and keep the generation barrier | affected-suite 301/301 plus type/preload checks pass; real host pending |

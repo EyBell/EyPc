@@ -26,5 +26,10 @@ Status: `automated-verified / host-pending`
 21. 复核真实 uTools 的 ASAR/preload 身份与任务打开路径；把 Codex 全局入口统一为 `mainHide` 独占可见性，空库存指令经 tasks-only preflight 后执行，卡片失效 alias 只按同一 key 重建并至多重试一次；补 App route、Controller、Bridge 与真实点击证据。
 22. 复现完成未读快捷键“先已读后反弹”的生命周期：把成功打开确认从单个 Bridge `liveUnread` 提升为有界 preload 会话 epoch，跨普通 mainHide/IPC reset/resubscribe/连接重建保留，并仅由新 Turn 或明确移除释放；补同 completion 重放与新 Turn 反向合同。
 23. 用当前真实 `Needs input` 任务验证 owner 已消失后的证据缺口：对 `CODEX_HOME/sessions` 内有界 rollout 的未匹配 `request_user_input` 建立隐私安全 connector 回退；同时保留已观察的输入/审批/Plan sticky shadow、丢弃普通 active，并让非 kill pluginOut 保持 Desktop observer。补持久回退、owner loss/new evidence、Controller close 语义和真实预检合同。
+24. 将 completed Plan 的精确 rollout/App Server item 作为“待实现”决定投影，优先于 unread/completed；同时让最近一次成功原生 unread 观测跨库存替换稳定较弱 snapshot true。只跑 Bridge/Domain、相关 Controller、typecheck、preload 语法/镜像与同步 IPC 定向门禁。
+25. 将普通 `mainHide/onPluginOut(false)` 从 App Server teardown 改为热会话保留；给 Controller tasks preflight 增加发布成功感知的范围单飞，让 verified 空库存与 Runner catalog 可复用，并用 RPC 零新增/并发单扫合同验证，不运行完整门禁。
+26. 将任务物化视图提升为 Codex feature-lifetime 热缓存，Tab/Float 只门控额度；把 Runner catalog 拆成按项目增量失效/单飞，并把成功打开确认绑定内部 Turn ID，覆盖 uTools fallback、同 Turn completedAt 补全和旧全量快照反压。
+27. 先在当前本机以真实 Provider 数据贯通 Preload 与生产 Domain 投影，复现并清除“Preload 恢复 waiting、产品仍 ongoing”的跨层断点；用 `persisted-decision` 显式来源升级到 `task-state-v5`，保持普通 connector hint 拒绝与精确新 Turn 清理门禁，再验证聚焦状态机、类型、完整构建、镜像和真实只读预检。
+28. 排除实际宿主更新后收口剩余消费者与文档偏差：抽取 Controller/Float 共用的置顶优先显示排序，让全局待输入与紧凑首条一致；补“后项置顶”的反向测试，修正角标帮助/ARIA与旧断言，并同步 v5 provenance、24 小时默认、最新测试基线和 8092 当前状态。
 
 执行证据见 [verify.md](verify.md#L1)，当前交接见 [handoff.md](handoff.md#L1)。
