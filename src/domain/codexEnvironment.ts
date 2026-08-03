@@ -2,6 +2,31 @@
 
 export type CodexEnvironmentActionRisk = 'normal' | 'external-write' | 'long-running' | 'display-only'
 
+export const CODEX_ACTION_HOST_RUNTIME_REVISION = 'action-host-v2-exact-argv-target'
+
+export type CodexValidatedEnvironmentActionCommand =
+  | {
+      family: 'package-script'
+      executable: 'pnpm' | 'npm' | 'yarn' | 'bun'
+      task: 'build' | 'serve'
+      argv: [string, 'run', 'build' | 'serve']
+      risk: 'normal' | 'long-running'
+    }
+  | {
+      family: 'vite'
+      executable: 'vite'
+      task: 'build' | 'serve'
+      argv: ['vite', 'build' | 'serve']
+      risk: 'normal' | 'long-running'
+    }
+  | {
+      family: 'git-push'
+      executable: 'git'
+      task: 'push'
+      argv: ['git', 'push']
+      risk: 'external-write'
+    }
+
 export interface CodexEnvironmentActionProjection {
   id: string
   name: string
@@ -22,12 +47,15 @@ export interface CodexEnvironmentListResult {
   outcome: 'ok' | 'failed'
   errorCode?: string
   message?: string
+  runtimeRevision?: string
   projectKey?: string
+  targetId?: string
   environments: CodexEnvironmentProjection[]
 }
 
 export interface CodexEnvironmentActionSessionProjection {
   targetAlias: string
+  targetId: string
   projectKey: string
   environmentId: string
   actionId: string
@@ -69,19 +97,91 @@ export interface CodexParsedEnvironmentToml {
 }
 
 const ACTION_SLOT_COUNT = 5
+const CODEX_ACTION_PACKAGE_MANAGERS = new Set(['pnpm', 'npm', 'yarn', 'bun'])
+
+function tokenizeCodexEnvironmentActionCommand(command: string): string[] | null {
+  if (typeof command !== 'string' || !command.trim() || /[\r\n]/.test(command)) return null
+  const result: string[] = []
+  let current = ''
+  let quote: '"' | "'" | null = null
+  let escaped = false
+  for (const ch of command) {
+    if (escaped) {
+      current += ch
+      escaped = false
+      continue
+    }
+    if (quote) {
+      if (ch === '\\' && quote === '"') {
+        escaped = true
+        continue
+      }
+      if (ch === quote) {
+        quote = null
+        continue
+      }
+      current += ch
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      continue
+    }
+    if (ch === '\\') {
+      escaped = true
+      continue
+    }
+    if (/\s/.test(ch)) {
+      if (current) {
+        result.push(current)
+        current = ''
+      }
+      continue
+    }
+    current += ch
+  }
+  if (quote || escaped) return null
+  if (current) result.push(current)
+  return result
+}
+
+export function validateCodexEnvironmentActionCommand(command: string): CodexValidatedEnvironmentActionCommand | null {
+  const argv = tokenizeCodexEnvironmentActionCommand(command)
+  if (!argv) return null
+  if (argv.length === 3 && CODEX_ACTION_PACKAGE_MANAGERS.has(argv[0]!) && argv[1] === 'run' && (argv[2] === 'build' || argv[2] === 'serve')) {
+    const executable = argv[0] as 'pnpm' | 'npm' | 'yarn' | 'bun'
+    const task = argv[2] as 'build' | 'serve'
+    return {
+      family: 'package-script',
+      executable,
+      task,
+      argv: [executable, 'run', task],
+      risk: task === 'serve' ? 'long-running' : 'normal'
+    }
+  }
+  if (argv.length === 2 && argv[0] === 'vite' && (argv[1] === 'build' || argv[1] === 'serve')) {
+    const task = argv[1]
+    return {
+      family: 'vite',
+      executable: 'vite',
+      task,
+      argv: ['vite', task],
+      risk: task === 'serve' ? 'long-running' : 'normal'
+    }
+  }
+  if (argv.length === 2 && argv[0] === 'git' && argv[1] === 'push') {
+    return { family: 'git-push', executable: 'git', task: 'push', argv: ['git', 'push'], risk: 'external-write' }
+  }
+  return null
+}
 
 export function codexEnvironmentActionSlotCount(): number {
   return ACTION_SLOT_COUNT
 }
 
 export function classifyCodexEnvironmentActionRisk(name: string, command: string): CodexEnvironmentActionRisk {
-  const normalizedName = name.trim().toLowerCase()
-  const normalizedCommand = command.trim().toLowerCase()
-  if (normalizedName === 'git push' || /\bgit\s+push\b/.test(normalizedCommand)) return 'external-write'
-  if (normalizedName === 'serve' || /\b(pnpm|npm|yarn|bun)\s+run\s+serve\b/.test(normalizedCommand) || /\bvite\b/.test(normalizedCommand) && /\bserve\b/.test(normalizedCommand)) {
-    return 'long-running'
-  }
-  return 'normal'
+  void name
+  return validateCodexEnvironmentActionCommand(command)?.risk || 'display-only'
 }
 
 export function actionIdFromName(name: string, index: number): string {
@@ -93,19 +193,20 @@ export function projectCodexEnvironmentActions(
   actions: Array<{ name: string; icon: string; command: string }>
 ): CodexEnvironmentActionProjection[] {
   const seen = new Set<string>()
-  return actions.map((action, index) => {
+  return actions.flatMap((action, index) => {
+    const validated = validateCodexEnvironmentActionCommand(action.command)
+    if (!validated) return []
     let id = actionIdFromName(action.name, index)
     if (seen.has(id)) id = `${id}-${index + 1}`
     seen.add(id)
-    const risk = classifyCodexEnvironmentActionRisk(action.name, action.command)
-    return {
+    return [{
       id,
       name: action.name.trim().slice(0, 80) || `Action ${index + 1}`,
       icon: (action.icon || 'run').trim().slice(0, 40) || 'run',
-      risk,
+      risk: validated.risk,
       displayOnly: false,
       slotEligible: true
-    }
+    }]
   })
 }
 
@@ -203,12 +304,13 @@ export function parseCodexEnvironmentToml(text: string): CodexParsedEnvironmentT
     const eq = line.indexOf('=')
     if (eq <= 0) continue
     const key = line.slice(0, eq).trim()
-    const value = unquoteTomlString(line.slice(eq + 1))
+    const rawValue = line.slice(eq + 1).trim()
+    const value = unquoteTomlString(rawValue)
     if (section === 'root') {
       if (key === 'version') {
         versionPresent = true
-        const parsed = Number(value)
-        version = Number.isFinite(parsed) ? parsed : NaN
+        if (rawValue !== '1') parseError = true
+        version = rawValue === '1' ? 1 : NaN
       }
       else if (key === 'name') name = value.slice(0, 120)
     } else if (section === 'setup') {
