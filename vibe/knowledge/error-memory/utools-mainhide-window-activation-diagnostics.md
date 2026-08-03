@@ -4,8 +4,8 @@ status: candidate
 scope: project-pointer
 fingerprint: mainHide-slot-route-applies-generic-hide-after-dispatch-or-runtime-hides-before-async-activation__fallback-concealed__failure-undiagnosable
 first_seen: 2026-07-27
-last_verified: 2026-07-27
-review_after: promote only after a real uTools host run has a valid-slot zero-blocking result and a closed-target target-closed-only result
+last_verified: 2026-08-03
+review_after: promote only after current WJ-21 root/member host activation and RAW-139 cold Codex task entries pass real-host acceptance
 evidence:
   - vibe/specs/260724/1527-window-jump-workbench/verify.md
 tags:
@@ -15,15 +15,16 @@ tags:
 
 # `mainHide` 激活诊断（项目指针）
 
-权威正文已迁入 CodeNote：
+跨项目权威：
 
 - [mainhide-activation.md](../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/mainhide-activation.md#L1)
 - [utools-mainhide-activation-diagnostics.md](../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/error-memory/utools-mainhide-activation-diagnostics.md#L1)
 
-## EyPc 专属差异
+## EyPc 当前差异
 
-- 应用于 Window Jump 槽位 `eypc-window-slot-1` … `eypc-window-slot-10`
-- 任务证据：[verify.md](../../specs/260724/1527-window-jump-workbench/verify.md#L1)
-- WJ-10 将详细操作追踪限制在 `import.meta.env.DEV === true`：用户授权的选定目标标题与固定阶段/结果码进入 Runtime 内存，真实安装既不请求原生 trace 也不显示追踪模块。应用名、PID、句柄、native reference、原始宿主输出仍不进入追踪；Windows 页面置顶与 macOS 不支持的边界仍走同一 blocking 诊断契约。
-- WJ-12 在每次激活尝试前捕获只读环境快照（CG/AX 目标匹配数与 Space 绑定状态），显示在开发追踪侧栏，仅存于当前会话内存。快照不激活、不切换任何窗口或桌面，为 AiTools 与 Rider 的激活差异提供可复现证据。
-- 状态仍为 `candidate`，直至真实 uTools 宿主验收：有效槽位零 blocking、已关闭目标仅 `target-closed`、开发追踪无原始数据且真实安装不显示追踪模块、环境快照行在重测中可见
+- 适用于 Window Jump 槽位 `eypc-window-slot-1` … `eypc-window-slot-10`；任务证据见 [verify.md](../../specs/260724/1527-window-jump-workbench/verify.md#L1)。
+- `mainHide` 是唯一宿主隐藏入口。Runtime 只在窗口激活成功后保持静默；失败必须打开工作台并展示会话级、脱敏的 blocking 诊断。
+- 开发追踪只在 `import.meta.env.DEV === true` 存在，使用有界固定阶段/结果码；真实安装不请求也不渲染追踪模块。应用名、PID、句柄、native ref 和原始宿主输出不得进入追踪。
+- 当前 WJ-21 桥不再采集环境快照，也没有 Space 查找、缓存或切换阶段。宿主验收只看根/成员身份复验、最终焦点、关闭确认和 production trace 缺失。
+- RAW-139 将同一通用合同应用到 Codex task 入口：`mainHide` 独占可见性，Renderer 不二次 hide/show；停用后空库存先做 tasks-only preflight，旧卡片 alias 只按同一匿名 task key 重建。任务证据见 [Codex verify](../../specs/260718/1148-codex-quota-float/verify.md#L1)。
+- RAW-140 补充成功后的状态所有权：普通 `onPluginOut(false)` 可关闭 Codex 连接，但不得随 Bridge 一起删除刚确认的同一 completion 已读事实；该最小提示由 preload 进程持有，并在新 Turn/明确移除时失效。
