@@ -252,7 +252,7 @@ export interface EypcPlatformApi {
       environmentId: string
       actionId: string
     }): Promise<CodexEnvironmentActionRunResult>
-    close(): void
+    close(options?: { preserveDesktop?: boolean }): void
   }
   float: {
     sync(payload: { visible: boolean; snapshot?: unknown; position?: unknown; expandedSizes?: unknown }): boolean

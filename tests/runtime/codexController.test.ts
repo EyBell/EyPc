@@ -2388,6 +2388,7 @@ describe('Codex controller', () => {
     ]
     const openThread = vi.fn(async () => ({ outcome: 'opened' as const }))
     let closeCount = 0
+    const closeOptions: Array<{ preserveDesktop?: boolean } | undefined> = []
     const reads: Array<Record<string, boolean>> = []
     const platform = {
       codex: {
@@ -2396,7 +2397,10 @@ describe('Codex controller', () => {
           return { ok: true as const, receivedAt: now, value: { version: 2 as const, receivedAt: now, threads, projects: [], sourceFingerprint: 'a'.repeat(64), completeness: 'verified' as const } }
         },
         openThread,
-        close: () => { closeCount += 1 }
+        close: (options?: { preserveDesktop?: boolean }) => {
+          closeCount += 1
+          closeOptions.push(options)
+        }
       }
     } as unknown as EypcPlatformApi
     const controller = createCodexController({
@@ -2417,6 +2421,7 @@ describe('Codex controller', () => {
     state.activeTab = 'ports'
     controller.syncActivation(false)
     expect(closeCount).toBeGreaterThan(0)
+    expect(closeOptions).toContainEqual({ preserveDesktop: true })
     expect(controller.view().conversations.ongoing).toHaveLength(0)
 
     openThread.mockClear()

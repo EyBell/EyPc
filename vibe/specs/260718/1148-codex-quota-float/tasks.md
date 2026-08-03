@@ -85,6 +85,12 @@ Tool: codex
 | RAW-140 Bridge 70 项、聚焦五文件 144 项与 typecheck | complete / automated-verified |
 | RAW-140 完整 verify `733/733`、文档/错误记忆审计 | complete / automated-verified |
 | RAW-140 新构建重载后的完成未读快捷键持续已读验收 | pending / user-owned |
+| RAW-141 当前真实 Needs input、Desktop owner 与 App Server/rollout 证据链 | complete / host-readonly-evidence |
+| RAW-141 有界 rollout 未决输入回退与隐私边界 | complete / automated-verified |
+| RAW-141 owner loss 下输入/审批/Plan sticky、普通 active 降级与新证据清理 | complete / automated-verified |
+| RAW-141 非 kill pluginOut Desktop observer 连续性及 Controller close 合同 | complete / automated-verified |
+| RAW-141 聚焦 `170/170`、完整工作树 `737/737`、独立暂存提交 `711/711` 与 typecheck/build/preload/uTools runtime 门禁 | complete / automated-verified |
+| RAW-141 新构建重载后的普通输入、Plan 与 ownerless Needs input 展示 | pending / user-owned |
 | 反向 generation 屏障夹具 TS2349 修复与 typecheck | complete / typecheck-verified |
 | 统一 `pnpm run verify`（preload 同步、全量测试、typecheck、production build） | complete / automated-verified |
 | 三类 uTools preload 单一资产清单与镜像同步 | complete / automated-verified |

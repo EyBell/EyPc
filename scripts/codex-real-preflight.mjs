@@ -44,7 +44,13 @@ async function readSettledActivity(expectedTerminalKeys) {
     latest = await bridge.readActivitySnapshot()
     const entries = latest?.ok && Array.isArray(latest.value?.entries) ? latest.value.entries : []
     const byKey = new Map(entries.map((entry) => [entry.key, entry]))
-    const terminalAuthorityReady = expectedTerminalKeys.every((key) => byKey.get(key)?.statusAuthority === 'desktop-live')
+    const terminalAuthorityReady = expectedTerminalKeys.every((key) => {
+      const entry = byKey.get(key)
+      return entry?.statusAuthority === 'desktop-live'
+        || entry?.statusAuthority === 'connector'
+          && entry?.status === 'active'
+          && entry?.activeFlags?.includes('waitingOnUserInput')
+    })
     if (latest?.ok
       && latest.value?.desktopBridgeState !== 'connecting'
       && latest.value?.desktopBridgeState !== 'not-checked'
@@ -76,14 +82,17 @@ try {
       .map((thread) => ({ ...thread, ...(activityByKey.get(thread.key) || {}) }))
       .filter((thread) => Number.isFinite(thread.lastTurnStartedAt) && thread.lastTurnStartedAt >= boundary)
       .sort((left, right) => right.lastTurnStartedAt - left.lastTurnStartedAt || left.key.localeCompare(right.key))
-    const liveActive = (thread) => thread.statusAuthority === 'desktop-live' && thread.status === 'active'
-    const completed = inWindow.filter((thread) => !liveActive(thread) && thread.lastTurnStatus === 'completed')
-    const stopped = inWindow.filter((thread) => !liveActive(thread)
+    const authoritativeActive = (thread) => thread.status === 'active'
+      && (thread.statusAuthority === 'desktop-live'
+        || thread.statusAuthority === 'app-server-live'
+        || thread.statusAuthority === 'connector' && thread.activeFlags?.includes('waitingOnUserInput'))
+    const completed = inWindow.filter((thread) => !authoritativeActive(thread) && thread.lastTurnStatus === 'completed')
+    const stopped = inWindow.filter((thread) => !authoritativeActive(thread)
       && ['failed', 'interrupted'].includes(thread.lastTurnStatus)
       && (thread.statusAuthority === 'desktop-live' && thread.status === 'idle' || activity?.desktopBridgeState === 'not-running'))
     const ongoing = inWindow.filter((thread) => !completed.includes(thread) && !stopped.includes(thread))
-    const active = ongoing.filter(liveActive)
-    const unconfirmedOngoing = ongoing.filter((thread) => !liveActive(thread))
+    const active = ongoing.filter(authoritativeActive)
+    const unconfirmedOngoing = ongoing.filter((thread) => !authoritativeActive(thread))
     const orderIsStrict = inWindow.every((thread, index) => index === 0 || inWindow[index - 1].lastTurnStartedAt >= thread.lastTurnStartedAt)
     const quotaWindows = [
       snapshot.quota?.short ? { name: '5 小时限额', remainingPercent: snapshot.quota.short.remainingPercent } : null,

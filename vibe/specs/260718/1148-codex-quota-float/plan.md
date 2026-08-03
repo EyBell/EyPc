@@ -25,5 +25,6 @@ Status: `automated-verified / host-pending`
 20. 复核真实宿主仍未收敛的已读：区分运行包、当前 IPC 协议、事件时间线和原生集合，允许当前 refollow `false` 清除遗漏事件留下的 persisted `true`；所有插件任务 Deep Link 成功后走同一会话期已读确认，失败不改状态，新 completion 清理旧 false，并补 main/Side、断桥和协议兼容合同。
 21. 复核真实 uTools 的 ASAR/preload 身份与任务打开路径；把 Codex 全局入口统一为 `mainHide` 独占可见性，空库存指令经 tasks-only preflight 后执行，卡片失效 alias 只按同一 key 重建并至多重试一次；补 App route、Controller、Bridge 与真实点击证据。
 22. 复现完成未读快捷键“先已读后反弹”的生命周期：把成功打开确认从单个 Bridge `liveUnread` 提升为有界 preload 会话 epoch，跨普通 mainHide/IPC reset/resubscribe/连接重建保留，并仅由新 Turn 或明确移除释放；补同 completion 重放与新 Turn 反向合同。
+23. 用当前真实 `Needs input` 任务验证 owner 已消失后的证据缺口：对 `CODEX_HOME/sessions` 内有界 rollout 的未匹配 `request_user_input` 建立隐私安全 connector 回退；同时保留已观察的输入/审批/Plan sticky shadow、丢弃普通 active，并让非 kill pluginOut 保持 Desktop observer。补持久回退、owner loss/new evidence、Controller close 语义和真实预检合同。
 
 执行证据见 [verify.md](verify.md#L1)，当前交接见 [handoff.md](handoff.md#L1)。
