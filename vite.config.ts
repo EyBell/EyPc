@@ -36,7 +36,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(import.meta.dirname, 'index.html'),
-        float: resolve(import.meta.dirname, 'float.html')
+        float: resolve(import.meta.dirname, 'float.html'),
+        action: resolve(import.meta.dirname, 'action.html')
       },
       output: {
         manualChunks: stableVendorChunk

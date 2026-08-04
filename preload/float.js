@@ -21,13 +21,7 @@ const CHANNELS = {
   resizeStart: 'eypc-float:resize-start',
   resizeMove: 'eypc-float:resize-move',
   resizeEnd: 'eypc-float:resize-end',
-  resizeCancel: 'eypc-float:resize-cancel',
-  environmentList: 'eypc-float:environment-list',
-  environmentListResult: 'eypc-float:environment-list-result',
-  environmentRun: 'eypc-float:environment-run',
-  environmentRunResult: 'eypc-float:environment-run-result',
-  environmentSession: 'eypc-float:environment-session',
-  environmentSessionResult: 'eypc-float:environment-session-result'
+  resizeCancel: 'eypc-float:resize-cancel'
 }
 
 let lastSnapshot = null
@@ -107,9 +101,6 @@ ipcRenderer.on(CHANNELS.threadCreateResult, (_event, payload) => resolveTransien
 ipcRenderer.on(CHANNELS.threadOpenResult, (_event, payload) => resolveTransientRequest(payload))
 ipcRenderer.on(CHANNELS.blankOpenResult, (_event, payload) => resolveTransientRequest(payload))
 ipcRenderer.on(CHANNELS.copyTextResult, (_event, payload) => resolveTransientRequest(payload))
-ipcRenderer.on(CHANNELS.environmentListResult, (_event, payload) => resolveTransientRequest(payload))
-ipcRenderer.on(CHANNELS.environmentRunResult, (_event, payload) => resolveTransientRequest(payload))
-ipcRenderer.on(CHANNELS.environmentSessionResult, (_event, payload) => resolveTransientRequest(payload))
 
 window.eypcFloat = {
   getSnapshot: () => lastSnapshot,
@@ -138,10 +129,6 @@ window.eypcFloat = {
   reopenThread: (actionAlias) => transientRequest(CHANNELS.threadOpen, { actionAlias }),
   openBlank: () => transientRequest(CHANNELS.blankOpen, {}),
   copyText: (text) => transientRequest(CHANNELS.copyText, { text: typeof text === 'string' ? text : '' }),
-  listProjectEnvironments: (targetAlias) => transientRequest(CHANNELS.environmentList, { targetAlias: typeof targetAlias === 'string' ? targetAlias : '' }),
-  runProjectAction: (request) => transientRequest(CHANNELS.environmentRun, { request: request && typeof request === 'object' ? request : {} }, 12 * 60_000 + 5_000),
-  listActionSessions: () => transientRequest(CHANNELS.environmentSession, { mode: 'list' }),
-  stopActionSession: (request) => transientRequest(CHANNELS.environmentSession, { mode: 'stop', request: request && typeof request === 'object' ? request : {} }),
   dragStart: (screenX, screenY) => sendToParent(CHANNELS.dragStart, { screenX, screenY }),
   dragMove: (screenX, screenY) => sendToParent(CHANNELS.dragMove, { screenX, screenY }),
   dragEnd: () => sendToParent(CHANNELS.dragEnd, {}),

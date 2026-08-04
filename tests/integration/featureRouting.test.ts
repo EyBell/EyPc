@@ -72,12 +72,20 @@ describe('uTools feature routing', () => {
       preserveCurrentTab: true,
       visibilityOwner: 'mainHide'
     })
+    expect(routePluginFeature({ code: 'eypc-codex-action-runner' }, undefined, 'mqtt')).toEqual({
+      tab: 'mqtt',
+      focusSearch: false,
+      actionId: 'codex.actionRunner.activate',
+      preserveCurrentTab: true,
+      visibilityOwner: 'mainHide'
+    })
     for (let slot = 1; slot <= 5; slot += 1) {
       expect(routePluginFeature({ code: `eypc-codex-action-${slot}` }, undefined, 'mqtt')).toEqual({
         tab: 'mqtt',
         focusSearch: false,
         actionId: `codex.action.run.${slot}`,
-        hideAfterAction: false
+        preserveCurrentTab: true,
+        visibilityOwner: 'mainHide'
       })
     }
     expect(routePluginFeature({ code: 'eypc-settings' })).toEqual({ tab: 'settings', focusSearch: false })

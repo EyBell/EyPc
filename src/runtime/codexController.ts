@@ -29,6 +29,7 @@ import {
   type CodexHostThread,
   type CodexLocalPin,
   type CodexModelCatalogSnapshotV1,
+  type CodexProjectCard,
   type CodexQuotaSnapshotV1,
   type CodexSettings,
   type CodexState,
@@ -37,16 +38,13 @@ import {
   type ConversationSnapshotV1
 } from '../domain/codex'
 import { normalizeCodexModelCatalog } from '../domain/codexNewThread'
+import { CODEX_ACTION_HOST_RUNTIME_REVISION } from '../domain/codexEnvironment'
 import {
   buildCodexTaskStatePackage,
   CODEX_TASK_STATE_DEGRADED_MESSAGE,
   type CodexTaskStatePackageV1
 } from '../domain/codexPresentation'
-import {
-  buildCodexEnvironmentActionSlots,
-  buildCodexEnvironmentProjectCandidates,
-  resolveCodexEnvironmentActionTarget
-} from '../domain/codexEnvironment'
+import { codexActionLaneId, resolveCodexActionRunnerPriorityProject, type CodexActionRunnerCatalogV1 } from '../domain/codexActionRunner'
 import type { AppState } from '../domain/types'
 import type { CodexFloatWorkspaceDiagnostics, EypcPlatformApi } from '../platform/eypcPlatform'
 
@@ -456,6 +454,7 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function resetCodexTaskDerivedState() {
+    clearActionRunnerProjectCache()
     taskCycleKey = ''
     lastThreads = []
     lastProjects = []
@@ -778,6 +777,20 @@ export function createCodexController(options: CodexControllerOptions) {
     lastActivityGeneration = Math.max(lastActivityGeneration, incomingActivityGeneration)
     taskInventoryPublishSequence += 1
     publishConversationProjection({ receivedAt, advanceScan: input.advanceScan, status: input.status })
+    reconcileActionRunnerProjectCache()
+    if (runnerCatalog.generatedAt > 0) {
+      const selectedLaneId = runnerPersistedSelectedLaneId || runnerCatalog.selectedLaneId || ''
+      composeActionRunnerCatalog(selectedLaneId)
+      // Once Runner has been initialized, keep its project shards aligned with
+      // verified inventory in the background. The loader is per-project
+      // single-flight, so unchanged projects stay hot and only additions or
+      // alias revisions cross the Host boundary.
+      queueMicrotask(() => {
+        if (!disposed && runnerCatalog.generatedAt > 0) {
+          void refreshActionRunnerCatalog(selectedLaneId, true, false).catch(() => undefined)
+        }
+      })
+    }
     codexState().firstPromptTimes = normalizeCodexFirstPromptTimes([
       ...threads.flatMap((thread) => thread.firstPromptAt ? [{ key: thread.key, firstPromptAt: thread.firstPromptAt, updatedAt: receivedAt }] : []),
       ...codexState().firstPromptTimes
@@ -1485,108 +1498,487 @@ export function createCodexController(options: CodexControllerOptions) {
     return runDirectTaskCommand(() => cycleTaskFromCurrentInventory(direction))
   }
 
-  const environmentRememberedByProject: Record<string, string> = {}
-  let pendingEnvironmentPush: {
-    slotIndex: number
-    confirmToken: string
+  type RunnerTarget = {
+    laneId: string
+    targetId: string
+    projectKey: string
+    projectName: string
     targetAlias: string
     environmentId: string
+    environmentName: string
     actionId: string
-    until: number
-  } | null = null
+    actionName: string
+    risk: 'normal' | 'external-write' | 'long-running'
+  }
+  type RunnerProjectCache = {
+    projectKey: string
+    actionAlias: string
+    targetId: string
+    environments: CodexActionRunnerCatalogV1['projects'][number]['environments']
+  }
+  const runnerTargets = new Map<string, RunnerTarget>()
+  const runnerProjectCatalogCache = new Map<string, RunnerProjectCache>()
+  const runnerProjectCatalogInFlight = new Map<string, Promise<{ ok: boolean; message: string }>>()
+  let runnerCatalog: CodexActionRunnerCatalogV1 = { version: 1, projects: [], generatedAt: 0 }
+  let pendingEnvironmentPush: { laneId: string; confirmToken: string; until: number } | null = null
+  let runnerPreferenceLoaded = false
+  let runnerPersistedSelectedLaneId = ''
+  let runnerProjectCatalogGeneration = 0
 
-  function rememberEnvironmentForProject(projectKey: string, environmentId: string) {
-    if (typeof projectKey !== 'string' || !projectKey) return false
-    if (typeof environmentId !== 'string' || !environmentId) return false
-    environmentRememberedByProject[projectKey] = environmentId
+  function clearActionRunnerProjectCache() {
+    runnerProjectCatalogGeneration += 1
+    runnerProjectCatalogCache.clear()
+    runnerProjectCatalogInFlight.clear()
+    runnerTargets.clear()
+    pendingEnvironmentPush = null
+    runnerCatalog = { version: 1, projects: [], generatedAt: 0 }
+  }
+
+  function loadActionRunnerPreference() {
+    if (runnerPreferenceLoaded) return
+    const preference = options.platform.actionRunner?.readPreference?.()
+    runnerPersistedSelectedLaneId = typeof preference?.selectedLaneId === 'string'
+      ? preference.selectedLaneId.slice(0, 300)
+      : ''
+    runnerPreferenceLoaded = true
+  }
+
+  function syncActionRunnerCatalog(next: CodexActionRunnerCatalogV1) {
+    runnerCatalog = next
+    options.platform.actionRunner?.syncCatalog(runnerCatalog)
+  }
+
+  function setActionRunnerMessage(message: string, selectedLaneId = runnerCatalog.selectedLaneId || '') {
+    syncActionRunnerCatalog({ ...runnerCatalog, selectedLaneId, loading: false, message, generatedAt: Date.now() })
+    options.setMessage(message)
+  }
+
+  function showActionRunnerLoading(laneId = '', message = '正在刷新 Action 目标…') {
+    loadActionRunnerPreference()
+    const selectedLaneId = laneId || runnerPersistedSelectedLaneId || runnerCatalog.selectedLaneId || ''
+    syncActionRunnerCatalog({ ...runnerCatalog, selectedLaneId, loading: true, message, generatedAt: Date.now() })
+    return options.platform.actionRunner?.activate?.({ laneId: selectedLaneId }) !== false
+  }
+
+  function actionHostRevisionReady() {
+    return options.platform.codex.actionRuntimeRevision === CODEX_ACTION_HOST_RUNTIME_REVISION
+  }
+
+  function failOldActionHost(selectedLaneId = '') {
+    clearActionRunnerProjectCache()
+    const message = 'Action Host 版本过旧，需重载插件后再试'
+    syncActionRunnerCatalog({ version: 1, projects: [], selectedLaneId, loading: false, message, generatedAt: Date.now() })
+    options.setMessage(message)
+    return false
+  }
+
+  function orderedRunnerProjects() {
+    const projects = taskState.conversations.projects.filter((project) => project.kind === 'project')
+    const byKey = new Map(projects.map((project) => [project.key, project]))
+    const ordered: typeof projects = []
+    const seen = new Set<string>()
+    const add = (key: string) => {
+      const project = byKey.get(key)
+      if (!project || seen.has(project.key)) return
+      seen.add(project.key)
+      ordered.push(project)
+    }
+    const defaultKey = codexState().settings.actionDefaultProjectKey
+    if (defaultKey) add(defaultKey)
+    codexState().localPins.filter((pin) => pin.kind === 'project').forEach((pin) => add(pin.key))
+    projects.filter((project) => project.nativePinned).sort((left, right) => (left.nativePinnedOrder ?? Number.MAX_SAFE_INTEGER) - (right.nativePinnedOrder ?? Number.MAX_SAFE_INTEGER)).forEach((project) => add(project.key))
+    projects.filter((project) => project.selected).forEach((project) => add(project.key))
+    projects.sort((left, right) => (left.nativeOrder ?? Number.MAX_SAFE_INTEGER) - (right.nativeOrder ?? Number.MAX_SAFE_INTEGER)).forEach((project) => add(project.key))
+    return ordered
+  }
+
+  function runnerTargetProject() {
+    return resolveCodexActionRunnerPriorityProject({
+      defaultProjectKey: codexState().settings.actionDefaultProjectKey,
+      localProjectKeys: codexState().localPins.filter((pin) => pin.kind === 'project').map((pin) => pin.key),
+      projects: taskState.conversations.projects
+    })
+  }
+
+  function runnerProjectForLane(laneId: string) {
+    const cachedTarget = runnerTargets.get(laneId)
+    if (cachedTarget) return taskState.conversations.projects.find((project) => project.key === cachedTarget.projectKey)
+    const encodedProjectKey = String(laneId || '').split(':', 1)[0]
+    if (!encodedProjectKey) return undefined
+    let projectKey = ''
+    try { projectKey = decodeURIComponent(encodedProjectKey) } catch { return undefined }
+    return taskState.conversations.projects.find((project) => project.kind === 'project' && project.key === projectKey)
+  }
+
+  function reconcileActionRunnerProjectCache() {
+    const currentProjects = new Map(taskState.conversations.projects
+      .filter((project) => project.kind === 'project')
+      .map((project) => [project.key, project]))
+    let changed = false
+    for (const [projectKey, cached] of runnerProjectCatalogCache) {
+      const current = currentProjects.get(projectKey)
+      if (current?.actionAlias === cached.actionAlias) continue
+      runnerProjectCatalogCache.delete(projectKey)
+      changed = true
+    }
+    return changed
+  }
+
+  function composeActionRunnerCatalog(
+    selectionAuthority: string,
+    options: { loading?: boolean; message?: string } = {}
+  ) {
+    const now = Date.now()
+    runnerTargets.clear()
+    const catalogProjects: CodexActionRunnerCatalogV1['projects'] = []
+    for (const project of orderedRunnerProjects()) {
+      if (!project.actionAlias) continue
+      const cached = runnerProjectCatalogCache.get(project.key)
+      if (!cached || cached.actionAlias !== project.actionAlias) continue
+      const environments = cached.environments.map((environment) => ({
+        ...environment,
+        actions: environment.actions.map((action) => {
+          const laneId = codexActionLaneId(cached.targetId, environment.id, action.id)
+          runnerTargets.set(laneId, {
+            laneId,
+            targetId: cached.targetId,
+            projectKey: project.key,
+            projectName: project.name,
+            targetAlias: project.actionAlias!,
+            environmentId: environment.id,
+            environmentName: environment.name,
+            actionId: action.id,
+            actionName: action.name,
+            risk: action.risk as RunnerTarget['risk']
+          })
+          return {
+            ...action,
+            laneId,
+            state: pendingEnvironmentPush?.laneId === laneId && pendingEnvironmentPush.until >= now
+              ? 'confirm-required' as const
+              : 'idle' as const
+          }
+        })
+      })).filter((environment) => environment.actions.length > 0)
+      if (environments.length) {
+        catalogProjects.push({
+          key: project.key,
+          name: project.name,
+          pinSource: project.pinSource,
+          targetAlias: project.actionAlias,
+          targetId: cached.targetId,
+          environments
+        })
+      }
+    }
+    const priorityProject = runnerTargetProject()
+    const priorityCatalogProject = catalogProjects.find((project) => project.key === priorityProject?.key)
+    const defaultLaneId = priorityCatalogProject?.environments[0]?.actions[0]?.laneId || ''
+    const selectedLaneId = selectionAuthority || defaultLaneId
+    const selectedTarget = runnerTargets.get(selectedLaneId)
+    let message = options.message || ''
+    if (!priorityProject) message ||= '请先配置 Action 默认项目，或置顶一个项目'
+    else if (!priorityCatalogProject && options.loading !== true) message ||= '优先项目未配置可执行的 Environment Action'
+    else if (selectionAuthority && !selectedTarget && options.loading !== true) message ||= '上次选择的 Environment Action 已失效，请在 Runner 中重新选择'
+    else if (selectedTarget && selectedTarget.projectKey !== priorityProject.key) message ||= '当前 Environment 选择不属于优先项目；全局槽已停用，请在优先项目中重新选择'
+    syncActionRunnerCatalog({
+      version: 1,
+      projects: catalogProjects,
+      selectedLaneId,
+      confirmLaneId: pendingEnvironmentPush?.until && pendingEnvironmentPush.until >= now ? pendingEnvironmentPush.laneId : undefined,
+      loading: options.loading === true,
+      message,
+      generatedAt: now
+    })
+    return Boolean(priorityProject && priorityCatalogProject)
+  }
+
+  async function loadActionRunnerProject(
+    project: CodexProjectCard,
+    allowStaleAliasRetry = true,
+    force = false
+  ): Promise<{ ok: boolean; message: string }> {
+    if (!project.actionAlias || typeof options.platform.codex.listProjectEnvironments !== 'function') {
+      return { ok: false, message: '当前宿主不支持 Action Runner，请重载插件后再试' }
+    }
+    const cached = runnerProjectCatalogCache.get(project.key)
+    if (!force && cached?.actionAlias === project.actionAlias) return { ok: true, message: '' }
+    const existing = runnerProjectCatalogInFlight.get(project.key)
+    if (existing) return existing
+    const generation = runnerProjectCatalogGeneration
+    const operation = (async () => {
+      let current = project
+      let canRetryStaleAlias = allowStaleAliasRetry
+      for (;;) {
+        let listed
+        try {
+          listed = await options.platform.codex.listProjectEnvironments!(current.actionAlias!)
+        } catch {
+          return { ok: false, message: 'Action 目标读取失败' }
+        }
+        if (disposed || generation !== runnerProjectCatalogGeneration) return { ok: false, message: '' }
+        if (listed?.errorCode === 'stale-alias' && canRetryStaleAlias) {
+          canRetryStaleAlias = false
+          await refresh({ actionPreflight: true })
+          if (disposed || generation !== runnerProjectCatalogGeneration) return { ok: false, message: '' }
+          const refreshed = taskState.conversations.projects.find((candidate) => candidate.kind === 'project' && candidate.key === project.key)
+          if (!refreshed?.actionAlias) return { ok: false, message: 'Action 目标别名重建失败' }
+          current = refreshed
+          continue
+        }
+        if (!listed || listed.runtimeRevision !== CODEX_ACTION_HOST_RUNTIME_REVISION) {
+          failOldActionHost(runnerCatalog.selectedLaneId || '')
+          return { ok: false, message: 'Action Host 版本过旧，需重载插件后再试' }
+        }
+        if (listed.outcome !== 'ok') return { ok: false, message: listed.message || 'Action 目标读取失败' }
+        if (!listed.targetId || listed.projectKey !== current.key) return { ok: false, message: 'Action 目标身份校验失败，已拒绝执行' }
+        const latest = taskState.conversations.projects.find((candidate) => candidate.kind === 'project' && candidate.key === current.key)
+        if (!latest?.actionAlias || latest.actionAlias !== current.actionAlias) {
+          return { ok: false, message: 'Action 目标在读取期间发生变化，请重试' }
+        }
+        const environments = listed.environments.map((environment) => ({
+          id: environment.id,
+          name: environment.name,
+          actions: environment.actions
+            .filter((action) => action.slotEligible && ['normal', 'external-write', 'long-running'].includes(action.risk))
+            .map((action) => ({
+              id: action.id,
+              laneId: codexActionLaneId(listed.targetId!, environment.id, action.id),
+              name: action.name,
+              icon: action.icon,
+              risk: action.risk,
+              state: 'idle' as const
+            }))
+        }))
+        runnerProjectCatalogCache.set(current.key, {
+          projectKey: current.key,
+          actionAlias: current.actionAlias,
+          targetId: listed.targetId,
+          environments
+        })
+        return { ok: true, message: '' }
+      }
+    })().finally(() => {
+      if (runnerProjectCatalogInFlight.get(project.key) === operation) runnerProjectCatalogInFlight.delete(project.key)
+    })
+    runnerProjectCatalogInFlight.set(project.key, operation)
+    return operation
+  }
+
+  async function refreshActionRunnerCatalog(
+    selectedLaneId = '',
+    allowStaleAliasRetry = true,
+    runTasksPreflight = true,
+    scope: 'all' | 'priority' | 'selected' = 'all',
+    force = false
+  ): Promise<boolean> {
+    loadActionRunnerPreference()
+    const selectionAuthority = selectedLaneId || runnerPersistedSelectedLaneId || runnerCatalog.selectedLaneId || ''
+    if (!actionHostRevisionReady()) return failOldActionHost(selectionAuthority)
+    if (typeof options.platform.codex.listProjectEnvironments !== 'function') {
+      setActionRunnerMessage('当前宿主不支持 Action Runner，请重载插件后再试', selectionAuthority)
+      return false
+    }
+    if (runTasksPreflight && !hasVerifiedTaskInventory()) await refresh({ actionPreflight: true })
+    if (disposed) return false
+    reconcileActionRunnerProjectCache()
+    const projects = orderedRunnerProjects()
+    const priorityProject = runnerTargetProject()
+    const selectedProject = runnerProjectForLane(selectionAuthority)
+    const candidates = scope === 'priority'
+      ? priorityProject ? [priorityProject] : []
+      : scope === 'selected'
+        ? selectedProject ? [selectedProject] : priorityProject ? [priorityProject] : []
+        : [
+            ...(selectedProject ? [selectedProject] : []),
+            ...(priorityProject && priorityProject.key !== selectedProject?.key ? [priorityProject] : []),
+            ...projects.filter((project) => project.key !== selectedProject?.key && project.key !== priorityProject?.key)
+          ]
+    const pendingProjects = candidates.filter((project) => project.actionAlias && (force || runnerProjectCatalogCache.get(project.key)?.actionAlias !== project.actionAlias))
+    composeActionRunnerCatalog(selectionAuthority, {
+      loading: pendingProjects.length > 0,
+      message: pendingProjects.length > 0 ? '正在增量同步 Action 目标…' : ''
+    })
+    let failureMessage = ''
+    for (const project of pendingProjects) {
+      const result = await loadActionRunnerProject(project, allowStaleAliasRetry, force)
+      if (disposed) return false
+      failureMessage ||= result.message
+      composeActionRunnerCatalog(selectionAuthority, {
+        loading: project !== pendingProjects[pendingProjects.length - 1],
+        message: result.ok ? '' : failureMessage
+      })
+    }
+    return composeActionRunnerCatalog(selectionAuthority, { message: failureMessage })
+  }
+
+  async function activateActionRunner(laneId = '') {
+    showActionRunnerLoading(laneId)
+    await refreshActionRunnerCatalog(laneId)
+    return true
+  }
+
+  async function runActionRunnerLane(laneId: string, restartLongRunning = false) {
+    if (typeof options.platform.codex.runProjectAction !== 'function') return false
+    loadActionRunnerPreference()
+    if (!actionHostRevisionReady()) return failOldActionHost(laneId)
+    if (!hasVerifiedTaskInventory()) await refresh({ actionPreflight: true })
+    reconcileActionRunnerProjectCache()
+    composeActionRunnerCatalog(laneId, { message: '正在校验 Action 目标…' })
+    let target = runnerTargets.get(laneId)
+    if (!target) {
+      showActionRunnerLoading(laneId, '正在增量同步 Action 目标…')
+      await refreshActionRunnerCatalog(laneId, true, false, 'selected')
+      target = runnerTargets.get(laneId)
+    }
+    if (!target) {
+      setActionRunnerMessage('Action 目标已失效，请在 Runner 中重新选择', laneId)
+      return false
+    }
+    const now = Date.now()
+    const confirmToken = pendingEnvironmentPush?.laneId === laneId && pendingEnvironmentPush.until >= now ? pendingEnvironmentPush.confirmToken : undefined
+    syncActionRunnerCatalog({ ...runnerCatalog, selectedLaneId: laneId, loading: false, generatedAt: Date.now() })
+    options.platform.actionRunner?.activate?.({ laneId })
+    const execute = (current: RunnerTarget) => options.platform.codex.runProjectAction!({
+      targetAlias: current.targetAlias,
+      targetId: current.targetId,
+      projectKey: current.projectKey,
+      projectName: current.projectName,
+      environmentId: current.environmentId,
+      environmentName: current.environmentName,
+      actionId: current.actionId,
+      actionName: current.actionName,
+      confirmToken,
+      restartIfRunning: restartLongRunning && current.risk === 'long-running'
+    })
+    let result = await execute(target)
+    if (disposed) return false
+    if (result?.errorCode === 'stale-alias') {
+      runnerProjectCatalogCache.delete(target.projectKey)
+      await refresh({ actionPreflight: true })
+      await refreshActionRunnerCatalog(laneId, false, false, 'selected', true)
+      target = runnerTargets.get(laneId)
+      if (!target) {
+        setActionRunnerMessage('Action 目标重建失败，已拒绝执行', laneId)
+        return false
+      }
+      result = await execute(target)
+      if (disposed) return false
+    }
+    if (result?.outcome === 'confirm-required' && result.confirmToken) {
+      pendingEnvironmentPush = { laneId, confirmToken: result.confirmToken, until: now + 30_000 }
+      composeActionRunnerCatalog(laneId)
+      setActionRunnerMessage(`${target.actionName}：请在 Runner 中确认 Git Push`, laneId)
+      return true
+    }
+    pendingEnvironmentPush = null
+    if (['action-missing', 'target-mismatch', 'cwd-missing', 'ambiguous-root', 'unsupported-target', 'environment-id-collision'].includes(result?.errorCode || '')) {
+      runnerProjectCatalogCache.delete(target.projectKey)
+      await refreshActionRunnerCatalog(laneId, false, false, 'selected', true)
+    } else {
+      composeActionRunnerCatalog(laneId)
+    }
+    setActionRunnerMessage(result?.message || `${target.actionName} 执行失败`, laneId)
+    return ['ok', 'started', 'running', 'stopping'].includes(result?.outcome || '')
+  }
+
+  async function stopActionRunnerLane(laneId: string) {
+    if (typeof options.platform.codex.stopActionSession !== 'function') return false
+    if (!actionHostRevisionReady()) return failOldActionHost(laneId)
+    if (!hasVerifiedTaskInventory()) await refresh({ actionPreflight: true })
+    reconcileActionRunnerProjectCache()
+    let target = runnerTargets.get(laneId)
+    if (!target) {
+      await refreshActionRunnerCatalog(laneId, true, false, 'selected')
+      target = runnerTargets.get(laneId)
+    }
+    if (!target) return false
+    const result = await options.platform.codex.stopActionSession({ targetId: target.targetId, projectKey: target.projectKey, environmentId: target.environmentId, actionId: target.actionId })
+    setActionRunnerMessage(result?.message || '停止请求失败', laneId)
+    return result?.outcome === 'stopping'
+  }
+
+  async function setActionRunnerRunArchived(runId: string, archived: boolean) {
+    const result = await options.platform.codex.setActionRunArchived?.({ runId, archived })
+    if (!result?.ok) options.setMessage(result?.message || '记录状态更新失败')
+    return result?.ok === true
+  }
+
+  function updateActionRunnerPreference(payload: {
+    pinned?: boolean
+    view?: 'records' | 'archived'
+    selectedLaneId?: string
+    runtime?: { projectKey: string; mode: 'auto' | 'manual'; candidateId?: string }
+  }) {
+    if (payload.selectedLaneId && runnerTargets.has(payload.selectedLaneId)) {
+      runnerPreferenceLoaded = true
+      runnerPersistedSelectedLaneId = payload.selectedLaneId
+      syncActionRunnerCatalog({ ...runnerCatalog, selectedLaneId: payload.selectedLaneId, message: '', generatedAt: Date.now() })
+    }
+    if (payload.runtime && !runnerCatalog.projects.some((project) => project.key === payload.runtime?.projectKey)) return false
+    return options.platform.actionRunner?.updatePreference?.(payload) === true
+  }
+
+  function reorderActionRunnerProjects(projectKeys: string[]) {
+    const pins = [...codexState().localPins]
+    const localKeys = pins.filter((pin) => pin.kind === 'project').map((pin) => pin.key)
+    const localSet = new Set(localKeys)
+    const proposed = projectKeys.filter((key) => localSet.has(key))
+    if (proposed.length !== localKeys.length || new Set(proposed).size !== localSet.size) return false
+    let projectIndex = 0
+    codexState().localPins = pins.map((pin) => pin.kind === 'project' ? { kind: 'project' as const, key: proposed[projectIndex++] } : pin)
+    republishAfterReceiptChange()
+    composeActionRunnerCatalog(runnerCatalog.selectedLaneId || '')
     return true
   }
 
   async function runEnvironmentActionSlot(slotIndex: number) {
     if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex > 4) return false
-    if (typeof options.platform.codex.listProjectEnvironments !== 'function' || typeof options.platform.codex.runProjectAction !== 'function') {
-      options.setMessage('当前宿主不支持 Environment Action')
+    showActionRunnerLoading('', `正在解析 Action 槽 ${slotIndex + 1}…`)
+    loadActionRunnerPreference()
+    const selectionAuthority = runnerPersistedSelectedLaneId || runnerCatalog.selectedLaneId || ''
+    await refreshActionRunnerCatalog(selectionAuthority, true, true, 'priority')
+    if (!actionHostRevisionReady()) return false
+    const targetProject = runnerTargetProject()
+    if (!targetProject) {
+      setActionRunnerMessage('请先配置 Action 默认项目，或置顶一个项目', selectionAuthority)
       return false
     }
-    const settings = codexState().settings
-    // uTools 全局热键冷启动时，可能尚未完成 Codex 会话快照装载；这里先拉取一次，避免 target 解析失败导致窗口被隐藏/执行空转。
-    if (taskState.conversations.projects.length === 0 && lastCompleteness !== 'verified') {
-      await refresh({ force: true })
-    }
-    let target = resolveCodexEnvironmentActionTarget({
-      selectedTasks: [],
-      defaultProjectKey: settings.actionDefaultProjectKey || '',
-      projects: taskState.conversations.projects
-    })
-    if (!target) {
-      const pinnedProjects = (taskState.conversations.projectSections.find((section) => section.id === 'pinned')?.entries || [])
-        .filter((entry): entry is { kind: 'project'; project: (typeof taskState.conversations.projects)[number]; pinSource?: 'native' | 'local' } => entry.kind === 'project')
-        .map((entry) => entry.project)
-      const candidates = buildCodexEnvironmentProjectCandidates({
-        pinnedProjects,
-        projects: taskState.conversations.projects
-      })
-      const first = candidates.find((item) => item.actionAlias)
-      if (first?.actionAlias) {
-        target = {
-          kind: 'project',
-          projectKey: first.projectKey,
-          projectName: first.projectName,
-          targetAlias: first.actionAlias
-        }
-      }
-    }
-    if (!target) {
-      options.setMessage('请先配置 Action 默认项目，或在悬浮卡「项目」Tab 置顶项目')
+    if (!targetProject.actionAlias) {
+      setActionRunnerMessage('目标项目动作别名已失效，请刷新后重试', selectionAuthority)
       return false
     }
-    const listed = await options.platform.codex.listProjectEnvironments(target.targetAlias)
-    if (disposed) return false
-    if (!listed || listed.outcome !== 'ok' || !listed.environments.length) {
-      options.setMessage(listed?.message || '该项目未配置 Environment')
+    const catalogProject = runnerCatalog.projects.find((project) => project.key === targetProject.key)
+    if (!catalogProject) {
+      setActionRunnerMessage('优先项目未配置可执行的 Environment Action', selectionAuthority)
       return false
     }
-    const remembered = environmentRememberedByProject[target.projectKey]
-    const environment = listed.environments.find((item) => item.id === remembered) || listed.environments[0]
-    environmentRememberedByProject[target.projectKey] = environment.id
-    const slots = buildCodexEnvironmentActionSlots(environment)
-    const action = slots[slotIndex]?.action
+    const selectedLaneId = runnerPersistedSelectedLaneId || runnerCatalog.selectedLaneId || ''
+    const selectedProject = runnerProjectForLane(selectedLaneId)
+    if (selectedProject && selectedProject.key !== targetProject.key) {
+      setActionRunnerMessage('当前 Environment 选择不属于优先项目；请在优先项目中重新选择', selectedLaneId)
+      return false
+    }
+    const selectedTarget = runnerTargets.get(selectedLaneId)
+    if (!selectedTarget) {
+      setActionRunnerMessage('上次选择的 Environment Action 已失效，请在 Runner 中重新选择', selectedLaneId)
+      return false
+    }
+    if (selectedTarget.projectKey !== targetProject.key) {
+      setActionRunnerMessage('当前 Environment 选择不属于优先项目；请在优先项目中重新选择', selectedLaneId)
+      return false
+    }
+    const selectedEnvironment = catalogProject.environments.find((environment) => environment.id === selectedTarget.environmentId)
+    if (!selectedEnvironment) {
+      setActionRunnerMessage('目标 Environment 已失效，请在 Runner 中重新选择', selectedLaneId)
+      return false
+    }
+    const action = selectedEnvironment.actions[slotIndex]
     if (!action) {
-      options.setMessage(`Action 槽 ${slotIndex + 1} 为空`)
+      setActionRunnerMessage(`${selectedEnvironment.name} 的 Action 槽 ${slotIndex + 1} 为空；未回退其他 Environment`, selectedLaneId)
       return false
     }
-    const now = Date.now()
-    const confirmToken = pendingEnvironmentPush
-      && pendingEnvironmentPush.slotIndex === slotIndex
-      && pendingEnvironmentPush.until >= now
-      && pendingEnvironmentPush.targetAlias === target.targetAlias
-      && pendingEnvironmentPush.environmentId === environment.id
-      && pendingEnvironmentPush.actionId === action.id
-      ? pendingEnvironmentPush.confirmToken
-      : undefined
-    const result = await options.platform.codex.runProjectAction({
-      targetAlias: target.targetAlias,
-      environmentId: environment.id,
-      actionId: action.id,
-      confirmToken,
-      stopIfRunning: action.risk === 'long-running'
-    })
-    if (disposed) return false
-    if (result?.outcome === 'confirm-required' && result.confirmToken) {
-      pendingEnvironmentPush = {
-        slotIndex,
-        confirmToken: result.confirmToken,
-        targetAlias: target.targetAlias,
-        environmentId: environment.id,
-        actionId: action.id,
-        until: now + 5_000
-      }
-      options.setMessage(`${action.name}：请在 5 秒内再次触发全局快捷键确认（外部写入）`)
-      return true
-    }
-    pendingEnvironmentPush = null
-    options.setMessage(result?.message || (result?.outcome === 'ok' || result?.outcome === 'started' ? `${action.name} 已执行` : `${action.name} 执行失败`))
-    return result?.outcome === 'ok' || result?.outcome === 'started' || result?.outcome === 'running' || result?.outcome === 'stopping'
+    return runActionRunnerLane(action.laneId, true)
   }
 
   function hide(key: string, recency?: number) {
@@ -1794,6 +2186,12 @@ export function createCodexController(options: CodexControllerOptions) {
     openFirstCompletedUnread,
     cycleTask,
     runEnvironmentActionSlot,
+    activateActionRunner,
+    runActionRunnerLane,
+    stopActionRunnerLane,
+    setActionRunnerRunArchived,
+    updateActionRunnerPreference,
+    reorderActionRunnerProjects,
     setTaskTab,
     setProjectCollapsed,
     setAlias,
@@ -1805,7 +2203,6 @@ export function createCodexController(options: CodexControllerOptions) {
     saveGeometry,
     resetPosition,
     resetExpandedSize,
-    rememberEnvironmentForProject,
     view(): CodexRuntimeView {
       const settings = codexState().settings
       const displayId = settings.position.displayId || settings.expandedSizes[0]?.displayId || ''

@@ -3,14 +3,12 @@ import crypto from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import * as pathModule from 'node:path'
 import { resolve } from 'node:path'
+import { createRequire } from 'node:module'
 import vm from 'node:vm'
+import { UTOOLS_PRELOAD_ASSETS, UTOOLS_PRELOAD_MODULE_ASSETS } from './utools-preload-assets.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const distDir = resolve(root, 'dist')
-const canonicalPreload = readFileSync(resolve(root, 'preload/index.js'), 'utf8')
-const publicPreload = readFileSync(resolve(root, 'public/preload.js'), 'utf8')
-const canonicalFloatPreload = readFileSync(resolve(root, 'preload/float.js'), 'utf8')
-const publicFloatPreload = readFileSync(resolve(root, 'public/float-preload.js'), 'utf8')
 const maxJavaScriptChunkBytes = 500_000
 
 function assert(condition, message) {
@@ -28,20 +26,62 @@ function assertRelativeFile(pluginJson, field) {
   assert(existsSync(resolve(distDir, value)), `plugin.json ${field} target is missing: ${value}`)
 }
 
-for (const file of ['index.html', 'float.html', 'plugin.json', 'package.json', 'preload.js', 'float-preload.js', 'logo.svg']) {
+for (const file of ['index.html', 'float.html', 'action.html', 'plugin.json', 'package.json', 'preload.js', 'float-preload.js', 'action-preload.js', 'logo.svg']) {
   assert(existsSync(resolve(distDir, file)), `dist runtime file is missing: ${file}`)
 }
 
-assert(publicPreload === canonicalPreload, 'public preload.js must match preload/index.js')
-assert(publicFloatPreload === canonicalFloatPreload, 'public float-preload.js must match preload/float.js')
 const oversizedJavaScriptChunks = readdirSync(resolve(distDir, 'assets'))
   .filter((file) => file.endsWith('.js') && statSync(resolve(distDir, 'assets', file)).size > maxJavaScriptChunkBytes)
-assert(oversizedJavaScriptChunks.length === 0, 'JavaScript chunks must stay within 500 kB: ' + oversizedJavaScriptChunks.join(', '))
+assert(oversizedJavaScriptChunks.length === 0, `JavaScript chunks must stay within 500 kB: ${oversizedJavaScriptChunks.join(', ')}`)
+
+const preloadSources = Object.fromEntries(UTOOLS_PRELOAD_ASSETS.map((asset) => {
+  const canonical = readFileSync(resolve(root, asset.canonical), 'utf8')
+  const publicMirror = readFileSync(resolve(root, asset.public), 'utf8')
+  const distMirror = readFileSync(resolve(distDir, asset.dist), 'utf8')
+  assert(publicMirror === canonical, `${asset.public} must match ${asset.canonical}`)
+  assert(distMirror === canonical, `dist/${asset.dist} must match ${asset.canonical}`)
+  return [asset.id, distMirror]
+}))
+
+const preloadModuleSources = new Map()
+for (const asset of UTOOLS_PRELOAD_MODULE_ASSETS) {
+  const canonical = readFileSync(resolve(root, asset.canonical), 'utf8')
+  const publicMirror = readFileSync(resolve(root, asset.public), 'utf8')
+  const distMirror = readFileSync(resolve(distDir, asset.dist), 'utf8')
+  assert(publicMirror === canonical, `${asset.public} must match ${asset.canonical}`)
+  assert(distMirror === canonical, `dist/${asset.dist} must match ${asset.canonical}`)
+  preloadModuleSources.set(asset.dist, canonical)
+}
+
+const canonicalMainPreload = preloadSources.main
+const macosWindowModuleSource = preloadModuleSources.get('windows/macos.cjs') || ''
+const win32WindowModuleSource = preloadModuleSources.get('windows/win32.cjs') || ''
+for (const marker of ['MACOS_AX_WINDOW_LIST_SCRIPT', 'WINDOWS_ENUM_SCRIPT', 'CGWindowListCopyWindowInfo', 'SLSCopySpacesForWindows', 'EnumWindows']) {
+  assert(!canonicalMainPreload.includes(marker), `main preload must not retain native window implementation: ${marker}`)
+}
+assert(macosWindowModuleSource.includes('MACOS_AX_WINDOW_LIST_SCRIPT'), 'macOS window module must own the AX/CG inventory script')
+assert(macosWindowModuleSource.includes('function macosActivateWindowScript'), 'macOS window module must own exact activation')
+assert(win32WindowModuleSource.includes('WINDOWS_ENUM_SCRIPT'), 'Win32 window module must own EnumWindows inventory')
+assert(win32WindowModuleSource.includes('WINDOWS_TOPMOST_SCRIPT'), 'Win32 window module must own foreground/topmost behavior')
+
+const distRequire = createRequire(resolve(distDir, 'preload.js'))
+const windowModule = distRequire('./windows/index.cjs')
+assert(typeof windowModule.createWindowSubsystem === 'function', 'window preload module must expose createWindowSubsystem')
+const windowModuleProbe = windowModule.createWindowSubsystem({ execFile() { throw new Error('native window command must stay lazy during validation') } })
+assert(typeof windowModuleProbe.probeInstance === 'function', 'window preload module must expose exact instance probing')
+assert(typeof windowModuleProbe.prepareActivation === 'function', 'window preload module must expose Space-aware activation preparation')
+assert(typeof windowModuleProbe.runNativeCommand === 'function', 'window preload module must own bounded native command execution')
+for (const method of ['capabilities', 'list', 'activate', 'close', 'terminate', 'alwaysOnTop']) {
+  assert(typeof windowModuleProbe[method] === 'function', `window preload module must expose stable ${method}`)
+}
+assert(typeof windowModuleProbe.openPermissionSettings === 'function', 'window preload module must expose permission settings routing')
 
 const indexHtml = readFileSync(resolve(distDir, 'index.html'), 'utf8')
 assert(!/\b(?:src|href)="\/assets\//.test(indexHtml), 'dist index.html must use relative asset paths for uTools packages')
 const floatHtml = readFileSync(resolve(distDir, 'float.html'), 'utf8')
 assert(!/\b(?:src|href)="\/assets\//.test(floatHtml), 'dist float.html must use relative asset paths for uTools packages')
+const actionHtml = readFileSync(resolve(distDir, 'action.html'), 'utf8')
+assert(!/\b(?:src|href)="\/assets\//.test(actionHtml), 'dist action.html must use relative asset paths for uTools packages')
 
 const pluginJson = readJson('plugin.json')
 const distPackageJson = readJson('package.json')
@@ -77,17 +117,20 @@ assert(codexToggleFeature?.cmds?.includes('切换 Codex 悬浮球'), 'Codex floa
 const codexActivateFeature = pluginJson.features.find((feature) => feature.code === 'eypc-codex-activate')
 assert(codexActivateFeature?.mainHide === true, 'Codex card activation feature must run with mainHide=true')
 assert(codexActivateFeature?.cmds?.includes('直接展开 Codex 卡片'), 'Codex card activation feature must expose the stable global-hotkey command label')
+const actionRunnerFeature = pluginJson.features.find((feature) => feature.code === 'eypc-codex-action-runner')
+assert(actionRunnerFeature?.mainHide === true, 'Action Runner feature must run with mainHide=true')
+assert(actionRunnerFeature?.cmds?.includes('打开 Action 执行工作台'), 'Action Runner must expose the stable global-hotkey command label')
 
-const preloadSource = readFileSync(resolve(distDir, 'preload.js'), 'utf8')
-assert(preloadSource === canonicalPreload, 'dist preload.js must match preload/index.js')
-const floatPreloadSource = readFileSync(resolve(distDir, 'float-preload.js'), 'utf8')
-assert(floatPreloadSource === canonicalFloatPreload, 'dist float-preload.js must match preload/float.js')
+const preloadSource = preloadSources.main
+const floatPreloadSource = preloadSources.float
+const actionPreloadSource = preloadSources.action
 const ipcListeners = new Map()
 const sandbox = {
   window: {},
   globalThis: {},
   process: { platform: 'darwin', env: {}, cwd: () => '/tmp' },
   require(name) {
+    if (name === './windows/index.cjs') return windowModule
     if (name === 'node:buffer') return { Buffer }
     if (name === 'node:child_process') return { execFile() {}, spawn() { throw new Error('spawn unavailable in validation') } }
     if (name === 'node:crypto') return crypto
@@ -115,6 +158,7 @@ assert(typeof sandbox.window.eypcPlatform.ports.scan === 'function', 'preload mu
 assert(typeof sandbox.window.eypcPlatform.ports.kill === 'function', 'preload must expose ports.kill')
 assert(typeof sandbox.window.eypcPlatform.windows.capabilities === 'function', 'preload must expose windows.capabilities')
 assert(typeof sandbox.window.eypcPlatform.windows.list === 'function', 'preload must expose windows.list')
+assert(typeof sandbox.window.eypcPlatform.windows.probeInstance === 'function', 'preload must expose windows.probeInstance')
 assert(typeof sandbox.window.eypcPlatform.windows.activate === 'function', 'preload must expose windows.activate')
 assert(typeof sandbox.window.eypcPlatform.windows.alwaysOnTop === 'function', 'preload must expose windows.alwaysOnTop')
 assert(typeof sandbox.window.eypcPlatform.files.copyPath === 'function', 'preload must expose files.copyPath')
@@ -136,6 +180,22 @@ assert(await sandbox.window.eypcPlatform.files.pickFavorite() === null, 'pickFav
 assert(Array.isArray(await sandbox.window.eypcPlatform.files.pickFavorites()), 'pickFavorites fallback must return an array')
 assert((await sandbox.window.eypcPlatform.files.listDirectory('/tmp')).ok === false, 'listDirectory fallback must report unavailable')
 
+const degradedSandbox = {
+  window: {},
+  globalThis: {},
+  process: sandbox.process,
+  require(name) {
+    if (name === './windows/index.cjs' || String(name).endsWith('/windows/index.cjs')) throw new Error('window module intentionally unavailable')
+    return sandbox.require(name)
+  }
+}
+degradedSandbox.globalThis = degradedSandbox
+vm.runInNewContext(preloadSource, degradedSandbox, { filename: 'preload-without-windows.js' })
+const nonWindowApiKeys = (value) => Object.keys(value).filter((key) => key !== 'windows').sort().join(',')
+assert(nonWindowApiKeys(degradedSandbox.window.eypcPlatform) === nonWindowApiKeys(sandbox.window.eypcPlatform), 'window module failure must not change non-window platform API keys')
+const degradedWindowCapability = await degradedSandbox.window.eypcPlatform.windows.capabilities()
+assert(degradedWindowCapability.canList === false && degradedWindowCapability.canActivate === false, 'window module failure must degrade only window capability')
+
 const floatSandbox = {
   window: {},
   globalThis: {},
@@ -152,5 +212,19 @@ assert(typeof floatSandbox.window.eypcFloat?.resizeStart === 'function', 'float 
 assert(typeof floatSandbox.window.eypcFloat?.resizeMove === 'function', 'float preload must expose resizeMove')
 assert(typeof floatSandbox.window.eypcFloat?.resizeEnd === 'function', 'float preload must expose resizeEnd')
 assert(typeof floatSandbox.window.eypcFloat?.resizeCancel === 'function', 'float preload must expose resizeCancel')
+
+const actionSandbox = {
+  window: {},
+  globalThis: {},
+  require(name) {
+    if (name === 'electron') return { ipcRenderer: { on() {} } }
+    throw new Error(`unexpected action preload require: ${name}`)
+  }
+}
+actionSandbox.globalThis = actionSandbox
+vm.runInNewContext(actionPreloadSource, actionSandbox, { filename: 'action-preload.js' })
+assert(typeof actionSandbox.window.eypcActionRunner?.onSnapshot === 'function', 'action preload must expose snapshot subscription')
+assert(typeof actionSandbox.window.eypcActionRunner?.onLog === 'function', 'action preload must expose ordered log deltas')
+assert(typeof actionSandbox.window.eypcActionRunner?.action === 'function', 'action preload must expose runtime actions')
 
 console.log('uTools runtime validation passed')

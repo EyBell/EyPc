@@ -4,6 +4,7 @@ import {
   normalizeWindowText,
   resolveLiveWindowsForTarget,
   targetMatchesLiveWindow,
+  windowTargetAppMatches,
   windowSlotNumbersForTarget,
   type LiveWindow,
   type WindowFamily,
@@ -644,14 +645,14 @@ export function chooseFileManagerGroupLanding(
     || null
 }
 
-function targetSlotRank(targetId: string, slots: readonly WindowSlot[]): number {
-  const matches = slots.filter((slot) => Object.values(slot.targetIdByPlatform).includes(targetId)).map((slot) => slot.slot)
-  return matches.length ? Math.min(...matches) : Number.POSITIVE_INFINITY
-}
-
 /**
- * Adopt bridge-proven root identities and losslessly merge only targets that
- * are proven to be members of the same current root window.
+ * Adopt a bridge-proven root identity for each logical target independently.
+ *
+ * A native family is projection evidence, not authority to merge persisted
+ * user intent. Multiple legacy targets may resolve to the same current root;
+ * they remain distinct so aliases, favorites and slot assignments are never
+ * rewritten by a refresh. Users can repair an ambiguous legacy assignment
+ * explicitly, one slot at a time.
  */
 export function reconcileWindowTargetsWithFamilies(
   targets: readonly WindowTarget[],
@@ -660,12 +661,29 @@ export function reconcileWindowTargetsWithFamilies(
   now = Date.now()
 ): { targets: WindowTarget[]; slots: WindowSlot[]; changed: boolean } {
   let changed = false
-  const liveByTargetId = new Map<string, LiveWindow>()
-  let nextTargets = targets.map((target) => {
+  const adoptionByTargetId = new Map<string, LiveWindow>()
+  const adoptionTargetIdsByRoot = new Map<string, string[]>()
+  for (const target of targets) {
+    if (target.scope !== 'instance') continue
+    const live = windows.find((candidate) => {
+      if (!windowTargetAppMatches(target, candidate)) return false
+      if (target.lastInstanceId) return candidate.memberInstanceIds?.includes(target.lastInstanceId) === true
+      return Boolean(target.lastNativeRef && candidate.memberNativeRefs?.includes(target.lastNativeRef))
+    })
+    if (!live) continue
+    adoptionByTargetId.set(target.id, live)
+    adoptionTargetIdsByRoot.set(live.instanceId, [...(adoptionTargetIdsByRoot.get(live.instanceId) || []), target.id])
+  }
+  const nextTargets = targets.map((target) => {
     if (target.scope !== 'instance') return { ...target, alternateAliases: [...target.alternateAliases] }
-    const live = windows.find((candidate) => targetMatchesLiveWindow(target, candidate))
+    const exact = windows.find((candidate) => targetMatchesLiveWindow(target, candidate))
+    const proposed = adoptionByTargetId.get(target.id) || null
+    // Projection evidence may migrate one legacy member target to its proven
+    // root, but two historical targets converging on the same root are a user
+    // decision. Preserve both identities and let explicit per-slot recovery
+    // choose a destination; never merge or select a survivor here.
+    const live = exact || (proposed && adoptionTargetIdsByRoot.get(proposed.instanceId)?.length === 1 ? proposed : null)
     if (!live) return { ...target, alternateAliases: [...target.alternateAliases] }
-    liveByTargetId.set(target.id, live)
     if (target.lastInstanceId === live.instanceId && target.lastNativeRef === live.nativeRef
       && target.appId === live.appId && target.appName === live.appName) {
       return { ...target, alternateAliases: [...target.alternateAliases] }
@@ -682,58 +700,9 @@ export function reconcileWindowTargetsWithFamilies(
       alternateAliases: [...target.alternateAliases]
     }
   })
-
-  const mergeGroups = new Map<string, WindowTarget[]>()
-  for (const target of nextTargets) {
-    const live = liveByTargetId.get(target.id)
-    if (!live || target.scope !== 'instance') continue
-    const key = `${target.platform}\u0000${normalizeWindowText(target.appId)}\u0000${live.instanceId}`
-    const group = mergeGroups.get(key) || []
-    group.push(target)
-    mergeGroups.set(key, group)
-  }
-
-  const remap = new Map<string, string>()
-  const removed = new Set<string>()
-  for (const group of mergeGroups.values()) {
-    if (group.length < 2) continue
-    const ranked = [...group].sort((left, right) => targetSlotRank(left.id, slots) - targetSlotRank(right.id, slots)
-      || left.createdAt - right.createdAt
-      || left.id.localeCompare(right.id))
-    const survivor = ranked[0]
-    const live = liveByTargetId.get(survivor.id)!
-    const aliases = [...new Set(ranked.flatMap((target) => [target.alias, ...target.alternateAliases]).map((alias) => alias.trim()).filter(Boolean))]
-      .filter((alias) => alias !== survivor.alias)
-    const merged: WindowTarget = {
-      ...survivor,
-      appId: live.appId,
-      appName: live.appName,
-      lastKnownTitle: live.title,
-      lastInstanceId: live.instanceId,
-      lastNativeRef: live.nativeRef,
-      favorite: ranked.some((target) => target.favorite),
-      pinned: ranked.some((target) => target.pinned),
-      alternateAliases: aliases,
-      createdAt: Math.min(...ranked.map((target) => target.createdAt)),
-      updatedAt: Math.max(now, ...ranked.map((target) => target.updatedAt))
-    }
-    nextTargets = nextTargets.map((target) => target.id === survivor.id ? merged : target)
-    for (const duplicate of ranked.slice(1)) {
-      remap.set(duplicate.id, survivor.id)
-      removed.add(duplicate.id)
-    }
-    changed = true
-  }
-
-  if (removed.size) nextTargets = nextTargets.filter((target) => !removed.has(target.id))
-  const nextSlots = slots.map((slot) => {
-    const targetIdByPlatform = { ...slot.targetIdByPlatform }
-    for (const platform of ['darwin', 'win32'] as const) {
-      const targetId = targetIdByPlatform[platform]
-      const survivorId = targetId ? remap.get(targetId) : null
-      if (survivorId) targetIdByPlatform[platform] = survivorId
-    }
-    return { ...slot, targetIdByPlatform }
-  })
+  const nextSlots = slots.map((slot) => ({
+    ...slot,
+    targetIdByPlatform: { ...slot.targetIdByPlatform }
+  }))
   return { targets: nextTargets, slots: nextSlots, changed }
 }

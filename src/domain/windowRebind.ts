@@ -7,6 +7,8 @@ export type WindowRebindState =
       targetId: string
       candidateInstanceIds: WindowInstanceId[]
       restoreFocusRowId: string
+      /** Only a slot-originated recovery may replace that one slot mapping. */
+      slotNumber: number | null
     }
 
 export type WindowRebindView =
@@ -19,6 +21,7 @@ export type WindowRebindEvent =
       targetId: string
       candidateInstanceIds: WindowInstanceId[]
       restoreFocusRowId: string
+      slotNumber?: number | null
     }
   | {
       type: 'inventory'
@@ -32,7 +35,8 @@ export type WindowRebindEvent =
   | { type: 'target-missing' }
 
 export interface WindowRebindEffects {
-  clearStaleBindingTargetId: string | null
+  /** Inventory absence requests an exact native probe; it never clears by itself. */
+  probeStaleBindingTargetId: string | null
   focusCandidateInstanceId: WindowInstanceId | null
   restoreFocusRowId: string | null
 }
@@ -45,7 +49,7 @@ export interface WindowRebindTransition {
 export type WindowInteractionPolicy = 'always' | 'browse' | 'rebind'
 
 const NO_EFFECTS: WindowRebindEffects = {
-  clearStaleBindingTargetId: null,
+  probeStaleBindingTargetId: null,
   focusCandidateInstanceId: null,
   restoreFocusRowId: null
 }
@@ -80,7 +84,8 @@ export function transitionWindowRebind(state: WindowRebindState, event: WindowRe
         phase: 'confirming',
         targetId: event.targetId,
         candidateInstanceIds,
-        restoreFocusRowId: event.restoreFocusRowId
+        restoreFocusRowId: event.restoreFocusRowId,
+        slotNumber: Number.isInteger(event.slotNumber) ? Math.trunc(Number(event.slotNumber)) : null
       },
       effects: {
         ...NO_EFFECTS,
@@ -122,7 +127,7 @@ export function transitionWindowRebind(state: WindowRebindState, event: WindowRe
   return {
     state: { ...state, candidateInstanceIds },
     effects: {
-      clearStaleBindingTargetId: event.completeness === 'complete' && candidateInstanceIds.length === 0 ? state.targetId : null,
+      probeStaleBindingTargetId: event.completeness === 'complete' && candidateInstanceIds.length === 0 ? state.targetId : null,
       focusCandidateInstanceId: shouldFocusCandidate ? candidateInstanceIds[0] : null,
       restoreFocusRowId: null
     }

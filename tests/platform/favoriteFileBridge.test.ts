@@ -65,10 +65,11 @@ describe('favorite file bridge source', () => {
   })
 
   it('packages the uTools preload bridge in a CommonJS package scope', () => {
-    const packageJson = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')) as { type?: string }
+    const packageJson = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')) as { type?: string; scripts?: Record<string, string> }
     const pluginJson = JSON.parse(readFileSync(resolve(process.cwd(), 'public/plugin.json'), 'utf8')) as { preload?: string }
     const publicPackageJson = JSON.parse(readFileSync(resolve(process.cwd(), 'public/package.json'), 'utf8')) as { type?: string }
     const prepareScript = readFileSync(resolve(process.cwd(), 'scripts/prepare-utools-runtime.mjs'), 'utf8')
+    const preloadAssetsScript = readFileSync(resolve(process.cwd(), 'scripts/utools-preload-assets.mjs'), 'utf8')
     const validateScript = readFileSync(resolve(process.cwd(), 'scripts/validate-utools-runtime.mjs'), 'utf8')
     const viteConfig = readFileSync(resolve(process.cwd(), 'vite.config.ts'), 'utf8')
     const appSource = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
@@ -81,13 +82,17 @@ describe('favorite file bridge source', () => {
     expect(prepareScript).toContain("const pluginSource = resolve(root, 'public/plugin.json')")
     expect(prepareScript).toContain("const distPlugin = resolve(distDir, 'plugin.json')")
     expect(prepareScript).toContain('copyFileSync(pluginSource, distPlugin)')
-    expect(prepareScript).toContain("const publicPreload = resolve(root, 'public/preload.js')")
-    expect(prepareScript).toContain("const distPreload = resolve(distDir, 'preload.js')")
-    expect(validateScript).toContain("['index.html', 'float.html', 'plugin.json', 'package.json', 'preload.js', 'float-preload.js', 'logo.svg']")
-    expect(validateScript).toContain("readFileSync(resolve(distDir, 'preload.js'), 'utf8')")
+    expect(prepareScript).toContain("syncUtoolsPreloads(root, 'public')")
+    expect(prepareScript).toContain("syncUtoolsPreloads(root, 'dist')")
+    expect(preloadAssetsScript).toContain("canonical: 'preload/index.js', public: 'public/preload.js', dist: 'preload.js'")
+    expect(preloadAssetsScript).toContain("canonical: 'preload/action.js', public: 'public/action-preload.js', dist: 'action-preload.js'")
+    expect(packageJson.scripts?.['sync:preloads']).toBe('node scripts/sync-utools-preloads.mjs')
+    expect(packageJson.scripts?.verify).toBe('pnpm run sync:preloads && pnpm run test && pnpm run build')
+    expect(validateScript).toContain("['index.html', 'float.html', 'action.html', 'plugin.json', 'package.json', 'preload.js', 'float-preload.js', 'action-preload.js', 'logo.svg']")
+    expect(validateScript).toContain('UTOOLS_PRELOAD_ASSETS.map')
     expect(validateScript).toContain("dist package.json type must be commonjs")
-    expect(validateScript).toContain('public preload.js must match preload/index.js')
-    expect(validateScript).toContain('dist preload.js must match preload/index.js')
+    expect(validateScript).toContain('`${asset.public} must match ${asset.canonical}`')
+    expect(validateScript).toContain('`dist/${asset.dist} must match ${asset.canonical}`')
     expect(viteConfig).toContain("return 'vendor-vue'")
     expect(viteConfig).toContain("return 'vendor-markdown'")
     expect(viteConfig).toContain("return 'vendor-icons'")
@@ -95,8 +100,8 @@ describe('favorite file bridge source', () => {
     expect(validateScript).toContain('const maxJavaScriptChunkBytes = 500_000')
     expect(validateScript).toContain('JavaScript chunks must stay within 500 kB')
     for (const page of ['PortsPage', 'FavoritesPage', 'QuickFavoritesPage', 'WindowsPage', 'MqttPage', 'CodexPage', 'SettingsPage']) {
-      expect(appSource).toContain("const " + page + " = defineAsyncComponent(() => import('./pages/" + page + ".vue'))")
-      expect(appSource).not.toContain("import " + page + " from './pages/" + page + ".vue'")
+      expect(appSource).toContain(`const ${page} = defineAsyncComponent(() => import('./pages/${page}.vue'))`)
+      expect(appSource).not.toContain(`import ${page} from './pages/${page}.vue'`)
     }
   })
 

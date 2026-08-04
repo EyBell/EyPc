@@ -76,6 +76,10 @@ export function routePluginFeature(payload: PluginEnterPayload | null | undefine
       return isFeatureEnabled('codex', featureConfigs)
         ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.task.next', preserveCurrentTab: true, visibilityOwner: 'mainHide' }
         : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'codex.task.next' }
+    case 'eypc-codex-action-runner':
+      return isFeatureEnabled('codex', featureConfigs)
+        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.actionRunner.activate', preserveCurrentTab: true, visibilityOwner: 'mainHide' }
+        : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'codex.actionRunner.activate' }
     case 'eypc-codex-action-1':
     case 'eypc-codex-action-2':
     case 'eypc-codex-action-3':
@@ -84,7 +88,7 @@ export function routePluginFeature(payload: PluginEnterPayload | null | undefine
       const slot = Number(String(payload?.code || '').slice(-1))
       const actionId = `codex.action.run.${slot}`
       return isFeatureEnabled('codex', featureConfigs)
-        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId, hideAfterAction: false }
+        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId, preserveCurrentTab: true, visibilityOwner: 'mainHide' }
         : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId }
     }
     case 'eypc-favorites-quick':

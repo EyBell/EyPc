@@ -10,6 +10,8 @@
     "test": "vitest run",
     "typecheck": "vue-tsc --noEmit",
     "build": "pnpm run typecheck && vite build && node scripts/prepare-utools-runtime.mjs && pnpm run validate:utools",
+    "sync:preloads": "node scripts/sync-utools-preloads.mjs",
+    "verify": "pnpm run sync:preloads && pnpm run test && pnpm run build",
     "validate:utools": "node scripts/validate-utools-runtime.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 4174"
   },

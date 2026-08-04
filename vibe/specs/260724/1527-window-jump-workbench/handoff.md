@@ -1,30 +1,30 @@
 # Window Jump Workbench — Handoff
 
 Tool: codex
-Updated: 2026-08-01
+Updated: 2026-08-04
 
 ## Delivery State
 
-`wj21-main-child-window-tree / implemented / automated-verified / host-validation-pending`
+`wj22-native-instance-space-cache / implemented / 767-tests-type-build-package-post-extraction-macos-native-verified / utools-reload-and-windows-host-pending`
 
-当前交付以真实主窗口为稳定持久目标，普通应用显示桥证明的真实子窗口作为会话级精确落点；Finder/Explorer 固定为虚拟父→真实根两级。根使用 `root-current`，子窗使用无回退的 `member-exact`。系统/helper/CG-only/控件及其他不可证明表面不进入树。
+WJ-22 restores exact cross-Space activation without allowing projections to own identity. A saved root remains `PID+CGWindowID/HWND`; current Tab/title and display/Space are mutable state. Current-Space omission preserves the session record, and only an exact native `gone` proof can clear the locator.
 
 ## Authorities
 
 - 用户事实：[raw-requirement.md](raw-requirement.md#L1)
 - 当前合同：[spec.md](spec.md#L1)
 - 执行记录：[tasks.md](tasks.md#L1)
-- 验证与宿主门禁：[verify.md](verify.md#L1)
+- 验证与剩余门禁：[verify.md](verify.md#L1)
 - 领域/平台架构：[ARCHITECTURE.md](../../../knowledge/ARCHITECTURE.md#L1)
 
-## Host Acceptance Focus
+## Operational focus
 
-重载 preload 后依次验收：根当前子会话、指定成员精确激活与失效无回退、同应用独立根、Finder/Explorer 固定两级、企业微信等噪声过滤、子窗动作限制、完整/部分缓存及搜索/折叠/`Escape` 焦点回根。持久根真正失效时仍走 WJ-19 人工换绑。
-
-## Documentation Boundary
-
-2026-08-01 已按用户授权移除 Controlled 文档中的逐代 Space、标题识别、成员隐藏和重复验证正文。历史实现与实验仍可从 Git 和 [error-memory/README.md](../../../knowledge/error-memory/README.md#L1) 追溯，但不得重新解释为当前行为。
+- Reload the generated uTools package before acceptance; bridge revision must be `wj22-native-instance-space-cache`.
+- Verify assigned slots, not only the workbench button: target display should switch, non-target display should not, and final root CGWindowID/HWND must be exact.
+- Same-browser roots require separate targets. Switching a browser Tab must not create or rebind a target.
+- “当前桌面未观察到” and “当前无法确认” preserve binding; only “已确认目标窗口已关闭” clears the native locator.
+- Candidate confirmation after one slot failure updates that slot only and does not copy old alias/favorite/pin into a new unrelated target.
 
 ## Safety
 
-不得自动提升 macOS 权限、修改应用标题、模拟输入、绕过 Windows 前台保护或在未确认时强制终止进程。
+No background polling, persistent Space/liveness cache, title matching, unique-candidate auto-rebind, simulated input or unrelated business change is permitted. Real close/terminate testing remains confirmation-gated.
