@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createInitialState } from '../../src/domain/state'
 import { CODEX_TASK_STATE_REVISION, type CodexHostThread, type CodexThreadOpenResult } from '../../src/domain/codex'
+import { CODEX_ACTION_HOST_RUNTIME_REVISION } from '../../src/domain/codexEnvironment'
+import { codexActionLaneId } from '../../src/domain/codexActionRunner'
 import { CODEX_DYNAMIC_TASK_WINDOW_MS, projectCodexDynamicStatus } from '../../src/domain/codexPresentation'
 import type { EypcPlatformApi } from '../../src/platform/eypcPlatform'
 import { createCodexController } from '../../src/runtime/codexController'
@@ -2910,4 +2912,445 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
+  it('shares one tasks preflight across concurrent opens whose aliases expired together', async () => {
+    const now = Date.now()
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    const taskKey = '6666666666666666'
+    let taskReads = 0
+    const openThread = vi.fn(async (alias: string) => alias === 'alias-initial'
+      ? { outcome: 'failed' as const, errorCode: 'expired-alias', message: 'expired' }
+      : { outcome: 'opened' as const })
+    const platform = {
+      codex: {
+        readSnapshot: async (options: Record<string, boolean>) => {
+          const alias = options.includeThreads && ++taskReads > 1 ? 'alias-refreshed' : 'alias-initial'
+          return {
+            ok: true as const,
+            receivedAt: now + taskReads,
+            value: options.includeThreads
+              ? {
+                  version: 2 as const,
+                  receivedAt: now + taskReads,
+                  threads: [{ key: taskKey, actionAlias: alias, name: '并发别名重建', status: 'active' as const, activeFlags: [], statusAuthority: 'desktop-live' as const, updatedAt: now, lastTurnStatus: 'inProgress' as const, lastTurnStartedAt: now }],
+                  projects: [],
+                  sourceFingerprint: `${taskReads}`.repeat(64),
+                  completeness: 'verified' as const
+                }
+              : { version: 2 as const, receivedAt: now + taskReads }
+          }
+        },
+        openThread,
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({
+      platform,
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: () => undefined
+    })
+
+    await controller.refresh()
+    await expect(Promise.all([
+      controller.openThread(taskKey, 'alias-initial'),
+      controller.openThread(taskKey, 'alias-initial')
+    ])).resolves.toEqual([true, true])
+
+    expect(taskReads).toBe(2)
+    expect(openThread.mock.calls).toEqual([
+      ['alias-initial'],
+      ['alias-initial'],
+      ['alias-refreshed'],
+      ['alias-refreshed']
+    ])
+    controller.dispose()
+  })
+
+  it('shows Runner first and performs a tasks-only cold preflight before running the persisted Env B slot', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'ports'
+    state.codex.settings.floatEnabled = false
+    const projectKey = 'a'.repeat(32)
+    const actionAlias = `cp_${'b'.repeat(24)}`
+    const selectedLaneId = codexActionLaneId(projectKey, 'env-b', 'build-b')
+    const events: string[] = []
+    const reads: Array<Record<string, boolean>> = []
+    const catalogs: any[] = []
+    const runProjectAction = vi.fn(async (request: any) => ({ outcome: 'started' as const, message: `${request.environmentId} started` }))
+    const listProjectEnvironments = vi.fn(async () => ({
+      outcome: 'ok' as const,
+      runtimeRevision: CODEX_ACTION_HOST_RUNTIME_REVISION,
+      projectKey,
+      targetId: projectKey,
+      environments: [
+        { id: 'env-a', name: 'Env A', setupScriptPresent: false, actions: [{ id: 'build-a', name: 'Build A', icon: 'run', risk: 'normal' as const, displayOnly: false, slotEligible: true }] },
+        { id: 'env-b', name: 'Env B', setupScriptPresent: false, actions: [{ id: 'build-b', name: 'Build B', icon: 'run', risk: 'normal' as const, displayOnly: false, slotEligible: true }] }
+      ]
+    }))
+    const platform = {
+      codex: {
+        actionRuntimeRevision: CODEX_ACTION_HOST_RUNTIME_REVISION,
+        readSnapshot: async (options: Record<string, boolean>) => {
+          events.push('tasks-preflight')
+          reads.push(options)
+          return {
+            ok: true as const,
+            receivedAt: Date.now(),
+            value: {
+              version: 2 as const,
+              receivedAt: Date.now(),
+              threads: [],
+              projects: [{ key: projectKey, actionAlias, name: 'Priority', kind: 'project' as const, nativePinned: true, nativePinnedOrder: 0 }],
+              sourceFingerprint: 'c'.repeat(64),
+              completeness: 'verified' as const
+            }
+          }
+        },
+        listProjectEnvironments,
+        runProjectAction,
+        close: () => undefined
+      },
+      actionRunner: {
+        readPreference: () => ({ selectedLaneId }),
+        syncCatalog: (catalog: any) => { catalogs.push(structuredClone(catalog)); return true },
+        activate: () => { events.push('runner-visible'); return true },
+        updatePreference: () => true,
+        close: () => undefined,
+        onAction: () => () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined })
+
+    const result = await controller.runEnvironmentActionSlot(0)
+
+    expect(result).toBe(true)
+    expect(events[0]).toBe('runner-visible')
+    expect(reads).toHaveLength(1)
+    expect(reads.every((options) => options.includeThreads === true && options.includeQuota === false && options.includeConfig === false)).toBe(true)
+    expect(runProjectAction).toHaveBeenCalledWith(expect.objectContaining({
+      targetId: projectKey,
+      projectKey,
+      environmentId: 'env-b',
+      actionId: 'build-b'
+    }))
+    expect(catalogs.at(-1)?.selectedLaneId).toBe(selectedLaneId)
+    expect(listProjectEnvironments).toHaveBeenCalledTimes(1)
+    await expect(controller.activateActionRunner(selectedLaneId)).resolves.toBe(true)
+    expect(reads).toHaveLength(1)
+    expect(listProjectEnvironments).toHaveBeenCalledTimes(1)
+    controller.dispose()
+  })
+
+  it('keeps Action project catalogs hot and incrementally reloads only added or re-aliased projects', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'ports'
+    state.codex.settings.floatEnabled = false
+    const firstKey = '1'.repeat(32)
+    const secondKey = '2'.repeat(32)
+    const thirdKey = '3'.repeat(32)
+    const firstAlias = `cp_${'a'.repeat(24)}`
+    const oldSecondAlias = `cp_${'b'.repeat(24)}`
+    const newSecondAlias = `cp_${'c'.repeat(24)}`
+    const thirdAlias = `cp_${'d'.repeat(24)}`
+    let inventoryVersion = 0
+    const projectForAlias = new Map([
+      [firstAlias, firstKey],
+      [oldSecondAlias, secondKey],
+      [newSecondAlias, secondKey],
+      [thirdAlias, thirdKey]
+    ])
+    const readSnapshot = vi.fn(async () => {
+      inventoryVersion += 1
+      const projects = inventoryVersion === 1
+        ? [
+            { key: firstKey, actionAlias: firstAlias, name: 'First', kind: 'project' as const, nativePinned: true, nativePinnedOrder: 0 },
+            { key: secondKey, actionAlias: oldSecondAlias, name: 'Second', kind: 'project' as const, nativePinned: false, nativeOrder: 1 }
+          ]
+        : [
+            { key: firstKey, actionAlias: firstAlias, name: 'First', kind: 'project' as const, nativePinned: true, nativePinnedOrder: 0 },
+            { key: secondKey, actionAlias: newSecondAlias, name: 'Second', kind: 'project' as const, nativePinned: false, nativeOrder: 1 },
+            { key: thirdKey, actionAlias: thirdAlias, name: 'Third', kind: 'project' as const, nativePinned: false, nativeOrder: 2 }
+          ]
+      return {
+        ok: true as const,
+        receivedAt: Date.now() + inventoryVersion,
+        value: {
+          version: 2 as const,
+          receivedAt: Date.now() + inventoryVersion,
+          threads: [],
+          projects,
+          sourceFingerprint: `${inventoryVersion}`.repeat(64),
+          completeness: 'verified' as const
+        }
+      }
+    })
+    const listProjectEnvironments = vi.fn(async (alias: string) => {
+      const projectKey = projectForAlias.get(alias)!
+      return {
+        outcome: 'ok' as const,
+        runtimeRevision: CODEX_ACTION_HOST_RUNTIME_REVISION,
+        projectKey,
+        targetId: projectKey,
+        environments: [{
+          id: `env-${projectKey[0]}`,
+          name: `Env ${projectKey[0]}`,
+          setupScriptPresent: false,
+          actions: [{ id: 'build', name: 'Build', icon: 'run', risk: 'normal' as const, displayOnly: false, slotEligible: true }]
+        }]
+      }
+    })
+    const catalogs: any[] = []
+    const platform = {
+      codex: {
+        actionRuntimeRevision: CODEX_ACTION_HOST_RUNTIME_REVISION,
+        readSnapshot,
+        listProjectEnvironments,
+        close: () => undefined
+      },
+      actionRunner: {
+        readPreference: () => ({ selectedLaneId: '' }),
+        syncCatalog: (catalog: any) => { catalogs.push(structuredClone(catalog)); return true },
+        activate: () => true,
+        close: () => undefined,
+        onAction: () => () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined })
+
+    await expect(controller.activateActionRunner()).resolves.toBe(true)
+    expect(listProjectEnvironments.mock.calls.map(([alias]) => alias)).toEqual([firstAlias, oldSecondAlias])
+
+    await controller.refresh()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(listProjectEnvironments.mock.calls.map(([alias]) => alias)).toEqual([
+      firstAlias,
+      oldSecondAlias,
+      newSecondAlias,
+      thirdAlias
+    ])
+    await expect(controller.activateActionRunner()).resolves.toBe(true)
+
+    expect(readSnapshot).toHaveBeenCalledTimes(2)
+    expect(listProjectEnvironments.mock.calls.map(([alias]) => alias)).toEqual([
+      firstAlias,
+      oldSecondAlias,
+      newSecondAlias,
+      thirdAlias
+    ])
+    expect(catalogs.at(-1)?.projects.map((project: any) => project.key)).toEqual([firstKey, secondKey, thirdKey])
+    controller.dispose()
+  })
+
+  it('fails closed in Runner when the long-lived preload lacks the Action Host runtime revision', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'ports'
+    const readSnapshot = vi.fn()
+    const runProjectAction = vi.fn()
+    const catalogs: any[] = []
+    const activate = vi.fn(() => true)
+    const platform = {
+      codex: {
+        actionRuntimeRevision: 'legacy',
+        readSnapshot,
+        runProjectAction,
+        close: () => undefined
+      },
+      actionRunner: {
+        readPreference: () => ({ selectedLaneId: '' }),
+        syncCatalog: (catalog: any) => { catalogs.push(structuredClone(catalog)); return true },
+        activate,
+        close: () => undefined,
+        onAction: () => () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined })
+
+    expect(await controller.runEnvironmentActionSlot(0)).toBe(false)
+    expect(activate).toHaveBeenCalled()
+    expect(readSnapshot).not.toHaveBeenCalled()
+    expect(runProjectAction).not.toHaveBeenCalled()
+    expect(catalogs.at(-1)?.message).toContain('需重载')
+    controller.dispose()
+  })
+
+  it('does not fall back when the persisted selection belongs to another project', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'ports'
+    const firstKey = '1'.repeat(32)
+    const secondKey = '2'.repeat(32)
+    const firstAlias = `cp_${'d'.repeat(24)}`
+    const secondAlias = `cp_${'e'.repeat(24)}`
+    const selectedLaneId = codexActionLaneId(secondKey, 'other-env', 'other-build')
+    const messages: string[] = []
+    const catalogs: any[] = []
+    const runProjectAction = vi.fn()
+    const platform = {
+      codex: {
+        actionRuntimeRevision: CODEX_ACTION_HOST_RUNTIME_REVISION,
+        readSnapshot: async () => ({
+          ok: true as const,
+          receivedAt: Date.now(),
+          value: {
+            version: 2 as const,
+            receivedAt: Date.now(),
+            threads: [],
+            projects: [
+              { key: firstKey, actionAlias: firstAlias, name: 'Priority', kind: 'project' as const, nativePinned: true, nativePinnedOrder: 0 },
+              { key: secondKey, actionAlias: secondAlias, name: 'Other', kind: 'project' as const, nativePinned: false, nativeOrder: 1 }
+            ],
+            sourceFingerprint: 'd'.repeat(64),
+            completeness: 'verified' as const
+          }
+        }),
+        listProjectEnvironments: async (alias: string) => {
+          const other = alias === secondAlias
+          const projectKey = other ? secondKey : firstKey
+          return {
+            outcome: 'ok' as const,
+            runtimeRevision: CODEX_ACTION_HOST_RUNTIME_REVISION,
+            projectKey,
+            targetId: projectKey,
+            environments: [{
+              id: other ? 'other-env' : 'priority-env',
+              name: other ? 'Other Env' : 'Priority Env',
+              setupScriptPresent: false,
+              actions: [{ id: other ? 'other-build' : 'priority-build', name: 'Build', icon: 'run', risk: 'normal' as const, displayOnly: false, slotEligible: true }]
+            }]
+          }
+        },
+        runProjectAction,
+        close: () => undefined
+      },
+      actionRunner: {
+        readPreference: () => ({ selectedLaneId }),
+        syncCatalog: (catalog: any) => { catalogs.push(structuredClone(catalog)); return true },
+        activate: () => true,
+        close: () => undefined,
+        onAction: () => () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: (message) => messages.push(message) })
+
+    expect(await controller.runEnvironmentActionSlot(0)).toBe(false)
+    expect(runProjectAction).not.toHaveBeenCalled()
+    expect(catalogs.at(-1)?.selectedLaneId).toBe(selectedLaneId)
+    expect(catalogs.at(-1)?.message || messages.at(-1)).toContain('优先项目')
+    controller.dispose()
+  })
+
+  it('rejects a stale persisted selection and a missing slot without falling back to the first Environment', async () => {
+    const projectKey = '9'.repeat(32)
+    const actionAlias = `cp_${'9'.repeat(24)}`
+    const envBSelection = codexActionLaneId(projectKey, 'env-b', 'build-b')
+    const staleSelection = codexActionLaneId(projectKey, 'removed-env', 'removed-action')
+    for (const scenario of [
+      { selectedLaneId: staleSelection, slotIndex: 0, expectedMessage: '已失效' },
+      { selectedLaneId: envBSelection, slotIndex: 1, expectedMessage: '未回退其他 Environment' }
+    ]) {
+      const state = createInitialState(1)
+      state.activeTab = 'ports'
+      const messages: string[] = []
+      const runProjectAction = vi.fn()
+      const platform = {
+        codex: {
+          actionRuntimeRevision: CODEX_ACTION_HOST_RUNTIME_REVISION,
+          readSnapshot: async () => ({
+            ok: true as const,
+            receivedAt: Date.now(),
+            value: {
+              version: 2 as const,
+              receivedAt: Date.now(),
+              threads: [],
+              projects: [{ key: projectKey, actionAlias, name: 'Priority', kind: 'project' as const, nativePinned: true }],
+              sourceFingerprint: '9'.repeat(64),
+              completeness: 'verified' as const
+            }
+          }),
+          listProjectEnvironments: async () => ({
+            outcome: 'ok' as const,
+            runtimeRevision: CODEX_ACTION_HOST_RUNTIME_REVISION,
+            projectKey,
+            targetId: projectKey,
+            environments: [
+              {
+                id: 'env-a', name: 'Env A', setupScriptPresent: false, actions: [
+                  { id: 'build-a', name: 'Build A', icon: 'run', risk: 'normal' as const, displayOnly: false, slotEligible: true },
+                  { id: 'serve-a', name: 'Serve A', icon: 'run', risk: 'long-running' as const, displayOnly: false, slotEligible: true }
+                ]
+              },
+              { id: 'env-b', name: 'Env B', setupScriptPresent: false, actions: [{ id: 'build-b', name: 'Build B', icon: 'run', risk: 'normal' as const, displayOnly: false, slotEligible: true }] }
+            ]
+          }),
+          runProjectAction,
+          close: () => undefined
+        },
+        actionRunner: {
+          readPreference: () => ({ selectedLaneId: scenario.selectedLaneId }),
+          syncCatalog: () => true,
+          activate: () => true,
+          close: () => undefined,
+          onAction: () => () => undefined
+        }
+      } as unknown as EypcPlatformApi
+      const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: (message) => messages.push(message) })
+
+      expect(await controller.runEnvironmentActionSlot(scenario.slotIndex)).toBe(false)
+      expect(runProjectAction).not.toHaveBeenCalled()
+      expect(messages.at(-1)).toContain(scenario.expectedMessage)
+      controller.dispose()
+    }
+  })
+
+  it('rebuilds a stale project alias once and never retries a stale run more than once', async () => {
+    const state = createInitialState(1)
+    state.activeTab = 'ports'
+    const projectKey = 'f'.repeat(32)
+    const actionAlias = `cp_${'a'.repeat(24)}`
+    const readSnapshot = vi.fn(async () => ({
+      ok: true as const,
+      receivedAt: Date.now(),
+      value: {
+        version: 2 as const,
+        receivedAt: Date.now(),
+        threads: [],
+        projects: [{ key: projectKey, actionAlias, name: 'Project', kind: 'project' as const, nativePinned: true }],
+        sourceFingerprint: 'e'.repeat(64),
+        completeness: 'verified' as const
+      }
+    }))
+    const validList = {
+      outcome: 'ok',
+      runtimeRevision: CODEX_ACTION_HOST_RUNTIME_REVISION,
+      projectKey,
+      targetId: projectKey,
+      environments: [{ id: 'env', name: 'Env', setupScriptPresent: false, actions: [{ id: 'build', name: 'Build', icon: 'run', risk: 'normal', displayOnly: false, slotEligible: true }] }]
+    }
+    const listProjectEnvironments = vi.fn()
+      .mockResolvedValueOnce({ outcome: 'failed', errorCode: 'stale-alias', message: 'stale', environments: [] })
+      .mockResolvedValue(validList)
+    const runProjectAction = vi.fn().mockResolvedValue({ outcome: 'failed', errorCode: 'stale-alias', message: 'stale run' })
+    const catalogs: any[] = []
+    const platform = {
+      codex: { actionRuntimeRevision: CODEX_ACTION_HOST_RUNTIME_REVISION, readSnapshot, listProjectEnvironments, runProjectAction, close: () => undefined },
+      actionRunner: {
+        readPreference: () => ({ selectedLaneId: '' }),
+        syncCatalog: (catalog: any) => { catalogs.push(structuredClone(catalog)); return true },
+        activate: () => true,
+        close: () => undefined,
+        onAction: () => () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined })
+
+    expect(await controller.activateActionRunner()).toBe(true)
+    expect(listProjectEnvironments).toHaveBeenCalledTimes(2)
+    expect(readSnapshot).toHaveBeenCalledTimes(2)
+    expect(catalogs.at(-1)?.projects[0]?.environments[0]?.id).toBe('env')
+    expect(await controller.runActionRunnerLane(codexActionLaneId(projectKey, 'env', 'build'))).toBe(false)
+    expect(runProjectAction).toHaveBeenCalledTimes(2)
+    controller.dispose()
+  })
 })

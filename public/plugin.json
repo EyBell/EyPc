@@ -145,6 +145,12 @@
       "cmds": ["下一个 Codex 任务", "Codex 下一个任务", "Codex next task"]
     },
     {
+      "code": "eypc-codex-action-runner",
+      "explain": "打开 Codex Action 执行工作台",
+      "mainHide": true,
+      "cmds": ["打开 Action 执行工作台", "Codex Action Runner", "Action 执行记录"]
+    },
+    {
       "code": "eypc-codex-action-1",
       "explain": "执行 Codex Environment Action 槽 1",
       "mainHide": true,

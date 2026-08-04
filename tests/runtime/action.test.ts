@@ -4988,17 +4988,24 @@ describe('app runtime', () => {
     await flushWindowActions()
 
     expect(activated).toEqual(['91:2:12'])
-    expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastNativeRef: '91:2:12', lastKnownTitle: 'Docs' })
+    const recovered = runtime.snapshot().state.windowTargets.find((target) => target.id !== 'work-browser')
+    expect(runtime.snapshot().state.windowTargets.find((target) => target.id === 'work-browser')).toMatchObject({
+      alias: '工作浏览器',
+      lastNativeRef: null,
+      alternateAliases: ['旧浏览器'],
+      favorite: true
+    })
+    expect(recovered).toMatchObject({ lastNativeRef: '91:2:12', lastKnownTitle: 'Docs', favorite: false, alternateAliases: [] })
     expect(getHideCount()).toBe(1)
 
-    runtime.focusWindow('target:work-browser')
+    runtime.focusWindow(`target:${recovered?.id}`)
     runtime.dispatch('windows.rename')
     runtime.updateWindowDraft({ alias: '文档浏览器' })
     runtime.dispatch('windows.editor.save')
 
-    expect(runtime.snapshot().state.windowTargets[0].alias).toBe('文档浏览器')
-    expect(runtime.snapshot().state.windowTargets[0].alternateAliases).toEqual([])
-    expect(runtime.snapshot().state.windowSlots[0].targetIdByPlatform.darwin).toBe('work-browser')
+    expect(runtime.snapshot().state.windowTargets.find((target) => target.id === recovered?.id)?.alias).toBe('文档浏览器')
+    expect(runtime.snapshot().state.windowTargets.find((target) => target.id === 'work-browser')?.alternateAliases).toEqual(['旧浏览器'])
+    expect(runtime.snapshot().state.windowSlots[0].targetIdByPlatform.darwin).toBe(recovered?.id)
   })
 
   it('switches a stable root to its current child and opens an explicit child exactly', async () => {
@@ -5079,7 +5086,9 @@ describe('app runtime', () => {
         },
         activate: async (request) => {
           activations.push(request)
-          return { outcome: 'activated' as const }
+          return request.mode === 'member-exact'
+            ? { outcome: 'not-found' as const, reasonCode: 'member-mismatch' as const }
+            : { outcome: 'activated' as const }
         }
       }
     })
@@ -5095,7 +5104,8 @@ describe('app runtime', () => {
     runtime.dispatch('windows.activate')
     await flushWindowActions()
 
-    expect(activations).toEqual([])
+    expect(activations).toHaveLength(1)
+    expect(activations[0]).toMatchObject({ mode: 'member-exact', root: { instanceId: 'darwin:9:100' }, member: { instanceId: 'darwin:9:201' } })
     expect(runtime.snapshot().message).toContain('指定子窗口已失效')
     expect(runtime.snapshot().focusedWindowId).toBe(rootRow.id)
   })
@@ -5259,7 +5269,7 @@ describe('app runtime', () => {
     expect(runtime.snapshot().state.activeTab).toBe('ports')
   })
 
-  it('keeps slot-bound non-favorite targets visible and opens the workbench after a complete scan confirms closure', async () => {
+  it('keeps slot-bound non-favorite targets visible and opens the workbench after an exact probe confirms closure', async () => {
     let listCount = 0
     const { state, getShowCount } = installPlatform({
       windows: {
@@ -5271,12 +5281,13 @@ describe('app runtime', () => {
             windows: []
           }
         },
+        probeInstance: async (window) => ({ status: 'gone' as const, instanceId: window.instanceId, liveness: 'verified-gone' as const, reason: 'native-window-absent' as const }),
         activate: async () => ({ outcome: 'not-found' as const })
       }
     })
     enableWindows(state)
     state.activeTab = 'ports'
-    state.windowTargets = [{ id: 'pinned', alias: '固定编辑器', scope: 'instance', platform: 'darwin', appId: 'com.editor', appName: 'Editor', lastKnownTitle: 'Main', lastInstanceId: null, lastNativeRef: null, groupKey: null, lastActiveInstanceId: null, alternateAliases: [], favorite: false, pinned: false, createdAt: 1, updatedAt: 1 }]
+    state.windowTargets = [{ id: 'pinned', alias: '固定编辑器', scope: 'instance', platform: 'darwin', appId: 'com.editor', appName: 'Editor', lastKnownTitle: 'Main', lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111', groupKey: null, lastActiveInstanceId: null, alternateAliases: [], favorite: false, pinned: false, createdAt: 1, updatedAt: 1 }]
     state.windowSlots[2].targetIdByPlatform.darwin = 'pinned'
     const runtime = createAppRuntime(state)
 
@@ -5865,7 +5876,7 @@ describe('app runtime', () => {
       expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'rebind-required', level: 'blocking' }))
     })
 
-    it('requires confirmation before rebinding even when a complete scan has only one same-app candidate', async () => {
+    it('rebinds only the originating slot after explicit confirmation and preserves the shared old target', async () => {
       const activated: string[] = []
       const previousTitle = 'agro-management [~/work/czzWork/GuoJi/agro] – /Users/gdkmjd/work/czzWork/GuoJi/agro/WebCore/appsettings.Mac.json'
       const currentTitle = 'agro-management [~/work/czzWork/GuoJi/agro] – /Users/gdkmjd/work/czzWork/GuoJi/agro/WebCore/Program.cs'
@@ -5887,6 +5898,7 @@ describe('app runtime', () => {
       enableWindows(state)
       state.windowTargets = [{ id: 'rider', alias: '农业项目', scope: 'instance', platform: 'darwin', appId: 'com.jetbrains.rider', appName: 'Rider', lastKnownTitle: previousTitle, lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111', groupKey: null, lastActiveInstanceId: null, alternateAliases: [], favorite: true, pinned: false, createdAt: 1, updatedAt: 1 }]
       state.windowSlots[0].targetIdByPlatform.darwin = 'rider'
+      state.windowSlots[1].targetIdByPlatform.darwin = 'rider'
       const runtime = createAppRuntime(state)
       runtime.focusWindow('target:rider')
       expect(runtime.handleShortcut('Space', false)).toBe('list.toggleSelection')
@@ -5927,7 +5939,25 @@ describe('app runtime', () => {
       await flushWindowActions()
 
       expect(activated).toEqual(['7:0:111', '7:0:111', '91:0:222'])
-      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastInstanceId: 'darwin:91:0:222', lastNativeRef: '91:0:222', lastKnownTitle: currentTitle })
+      const snapshot = runtime.snapshot().state
+      expect(snapshot.windowTargets.find((target) => target.id === 'rider')).toMatchObject({
+        alias: '农业项目',
+        favorite: true,
+        lastInstanceId: 'darwin:7:111',
+        lastNativeRef: '7:0:111',
+        lastKnownTitle: previousTitle
+      })
+      const replacement = snapshot.windowTargets.find((target) => target.id !== 'rider')
+      expect(replacement).toMatchObject({
+        favorite: false,
+        pinned: false,
+        alternateAliases: [],
+        lastInstanceId: 'darwin:91:0:222',
+        lastNativeRef: '91:0:222',
+        lastKnownTitle: currentTitle
+      })
+      expect(snapshot.windowSlots[0].targetIdByPlatform.darwin).toBe(replacement?.id)
+      expect(snapshot.windowSlots[1].targetIdByPlatform.darwin).toBe('rider')
     })
 
     it('preserves an active editor instead of opening a competing rebind flow', async () => {
@@ -5991,7 +6021,8 @@ describe('app runtime', () => {
       expect(runtime.snapshot().windowRebind).toMatchObject({ phase: 'confirming', targetId: 'rider', candidateInstanceIds: [] })
       expect(runtime.snapshot().windowRows).toEqual([])
       expect(runtime.snapshot().focusedWindowId).toBeNull()
-      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastInstanceId: null, lastNativeRef: null })
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111' })
+      expect(runtime.snapshot().message).toContain('无法确认目标窗口状态')
 
       const focusRequestBeforeCandidateReturns = runtime.snapshot().windowFocusRequestId
       runtime.dispatch('windows.refresh')
@@ -6110,7 +6141,7 @@ describe('app runtime', () => {
 
       expect(activated).toEqual(['7:0:111'])
       expect(runtime.snapshot().state.windowTargets[0].lastNativeRef).toBe('7:0:111')
-      expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'refresh-incomplete', level: 'blocking' }))
+      expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'target-indeterminate', level: 'blocking' }))
     })
 
     it('uses the same explicit rebind requirement for manual workbench activation', async () => {
@@ -6143,16 +6174,19 @@ describe('app runtime', () => {
       expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'rebind-required', level: 'blocking' }))
     })
 
-    it('marks a target closed only after a healthy rescan finds no match', async () => {
+    it('marks a target closed only after an exact native-instance probe proves it gone', async () => {
       const { state, getShowCount } = installPlatform({
         windows: {
           capabilities: async () => darwinCapability,
           list: async () => ({ capability: darwinCapability, windows: [] }),
+          probeInstance: async (window) => ({ status: 'gone' as const, instanceId: window.instanceId, liveness: 'verified-gone' as const, reason: 'native-window-absent' as const }),
           activate: async () => ({ outcome: 'not-found' as const })
         }
       })
       enableWindows(state)
       assignSlotTarget(state)
+      state.windowTargets[0].lastInstanceId = 'darwin:7:111'
+      state.windowTargets[0].lastNativeRef = '7:0:111'
       const runtime = createAppRuntime(state)
 
       runtime.dispatch('windows.slot.activate', { slot: 1 })
@@ -6163,6 +6197,54 @@ describe('app runtime', () => {
         expect.objectContaining({ entry: 'slot', slot: 1, stage: 'resolve', code: 'target-closed', level: 'accepted' })
       ])
       expect(getShowCount()).toBe(1)
+    })
+
+    it('keeps a unique off-Space instance when a complete projection omits it but the native probe proves it live', async () => {
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({ capability: darwinCapability, windows: [], completeness: 'complete' as const }),
+          probeInstance: async (window) => ({ status: 'live' as const, instanceId: window.instanceId, liveness: 'verified-live' as const, evidence: 'space-binding' as const }),
+          activate: async () => ({ outcome: 'not-found' as const })
+        }
+      })
+      enableWindows(state)
+      assignSlotTarget(state)
+      state.windowTargets[0].lastInstanceId = 'darwin:7:111'
+      state.windowTargets[0].lastNativeRef = '7:0:111'
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111' })
+      expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(
+        expect.objectContaining({ code: 'target-unobserved', level: 'blocking' })
+      )
+    })
+
+    it('keeps a unique instance when native liveness is indeterminate', async () => {
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => ({ capability: darwinCapability, windows: [], completeness: 'complete' as const }),
+          probeInstance: async (window) => ({ status: 'indeterminate' as const, instanceId: window.instanceId, liveness: 'indeterminate' as const, reason: 'native-query-failed' as const }),
+          activate: async () => ({ outcome: 'not-found' as const })
+        }
+      })
+      enableWindows(state)
+      assignSlotTarget(state)
+      state.windowTargets[0].lastInstanceId = 'darwin:7:111'
+      state.windowTargets[0].lastNativeRef = '7:0:111'
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111' })
+      expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(
+        expect.objectContaining({ code: 'target-indeterminate', level: 'blocking' })
+      )
     })
 
     it('keeps a stale reference when a partial rescan cannot confirm that the target closed', async () => {
@@ -6182,8 +6264,32 @@ describe('app runtime', () => {
 
       expect(runtime.snapshot().state.windowTargets[0].lastNativeRef).toBe('old-ref')
       expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(
-        expect.objectContaining({ code: 'refresh-incomplete', level: 'blocking' })
+        expect.objectContaining({ code: 'target-indeterminate', level: 'blocking' })
       )
+    })
+
+    it('keeps a precise slot binding and skips inventory rebind when only the Space mapping is unavailable', async () => {
+      let listCount = 0
+      const { state } = installPlatform({
+        windows: {
+          capabilities: async () => darwinCapability,
+          list: async () => { listCount += 1; return { capability: darwinCapability, windows: [], completeness: 'partial' as const } },
+          activate: async () => ({ outcome: 'not-found' as const, reasonCode: 'space-unbound-multiwindow' as const })
+        }
+      })
+      enableWindows(state)
+      assignSlotTarget(state)
+      state.windowTargets[0].lastInstanceId = 'darwin:7:111'
+      state.windowTargets[0].lastNativeRef = '7:0:111'
+      const runtime = createAppRuntime(state)
+
+      runtime.dispatch('windows.slot.activate', { slot: 1 })
+      await flushWindowActions()
+
+      expect(listCount).toBe(0)
+      expect(runtime.snapshot().state.windowTargets[0]).toMatchObject({ lastInstanceId: 'darwin:7:111', lastNativeRef: '7:0:111' })
+      expect(runtime.snapshot().windowRebind).toEqual({ phase: 'idle', targetId: null, candidateInstanceIds: [] })
+      expect(runtime.snapshot().windowActivationDiagnostics).toContainEqual(expect.objectContaining({ code: 'space-unbound', level: 'blocking' }))
     })
 
     it('records focus, permission, host-call, feature-disabled, unassigned-slot, workbench-show, and silent-hide failures as blocking', async () => {

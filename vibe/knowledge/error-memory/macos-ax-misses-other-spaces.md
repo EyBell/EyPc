@@ -4,10 +4,12 @@ status: verified
 scope: project
 fingerprint: partial-ax-window-inventory__absence-treated-as-closure__cg-offscreen-treated-as-minimized
 first_seen: 2026-07-26
-last_verified: 2026-07-31
+last_verified: 2026-08-04
 review_after: 2027-01-28
 evidence:
   - preload/index.js
+  - preload/windows/macos-space.cjs
+  - preload/windows/session-cache.cjs
   - public/preload.js
   - src/platform/eypcPlatform.ts
   - vibe/specs/260724/1527-window-jump-workbench/verify.md
@@ -38,13 +40,13 @@ AX 可见范围可能受当前 Space、权限和宿主状态影响，因此一�
 
 ## Current Prevention Rule
 
-- WJ-21 从允许的普通应用 AX 窗口角色出发，要求 `_AXUIElementGetWindow` 返回正 CGWindowID 作为身份佐证，并以 `AXParent`/`AXTopLevelUIElement`/`AXWindow` 证明主子关系。
-- CG-only、系统、辅助和无可操作 AX 身份的表面省略；`kCGWindowIsOnscreen` 单独既不证明最小化，也不证明关闭。
-- 只有明确标记为完整的家族清单可以替换根/成员；部分清单必须合并并保留既有节点为缓存，不能清除持久绑定或确认 `target-closed`。
-- 激活只走精确 AX↔CG 根/成员映射与最终 `AXFocusedWindow` 回读。当前代码不使用私有 Space 查找、缓存、切换、桌面遍历、标题/序号或 process-frontmost 回退。
+- WJ-22 的 macOS AX 清单固定标记为 `partial`；任何清单缺席只把缓存记录标为 `temporarily-unobserved`。
+- CG-only、系统、辅助和无可操作 AX 身份的表面仍不制造产品行；`kCGWindowIsOnscreen` 既不证明最小化，也不证明关闭。
+- 清除持久原生引用前必须调用 `probeInstance()`。只有 owner 退出/不匹配，或 CG 与 SkyLight 权威定点查询都成功且确认实例不存在，才能返回 `verified-gone`；权限/API/拓扑不足返回 `indeterminate`。
+- 每个 `PID+CGWindowID` 在 preload 会话内缓存自己的 `displayUuid+spaceId`；热路径只刷新托管显示器当前 Space，冷路径只解析目标，切换只作用于目标显示器。最终仍以精确 AX↔CG 根/成员和 `AXFocusedWindow` 回读为准。
 
 ## Evidence Boundary
 
 - 当前开发证据：[verify.md](../../specs/260724/1527-window-jump-workbench/verify.md#L1)
-- 已验证：清单完整/部分语义、CG offscreen 非最小化、CG-only 不制造行、退役 Space 符号缺失。
-- 未验证：真实 uTools 在多个普通/全屏 Space 上的当前 WJ-21 AX 准入、缓存保留与根/成员激活。
+- 已验证：自动化覆盖 partial/indeterminate/gone、offscreen 非死亡、缓存与显示器隔离；2026-08-04 直接 macOS 原生烟测复现“当前投影缺席但实例 live”，并完成准确 Space/根激活及非目标显示器保持。
+- 未验证：实际 uTools 重载后的十个全局槽位视觉路径、全屏 Space 变体和 Windows 宿主。

@@ -38,6 +38,6 @@ JXA 的 `CGWindowListCopyWindowInfo` 返回 CoreFoundation/Objective-C proxy。�
 
 ## Evidence Boundary
 
-- 2026-07-26 的只读实验验证 cast-before-deepUnwrap 能把非空 proxy 转为真实数组；该实验不验证当前 WJ-21 产品准入。
+- 2026-07-26 的只读实验验证 cast-before-deepUnwrap 能把非空 proxy 转为真实数组；WJ-22 继续要求 AX-first 产品准入，CG/SkyLight 只提供身份佐证、存活证明与目标级 Space 路由。
 - 当前源码在 AX-first 清单和操作时 CG 复验中都保留 cast-before-deepUnwrap。
 - 真实 uTools 多 Space/权限组合仍由宿主验收。

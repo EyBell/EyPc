@@ -1,7 +1,7 @@
 import { normalizeAppState } from '../domain/state'
 import { normalizeMqttArchiveState } from '../domain/mqtt'
 import type { AppState, FavoriteNode, KillRequest, KillResult, MqttArchiveState, MqttStorageStatus, PortProcess } from '../domain/types'
-import type { LiveWindow, NativeWindowObservation, WindowActivationRequest, WindowPlatform } from '../domain/windows'
+import type { LiveWindow, NativeWindowObservation, WindowActivationRequest, WindowInstanceProbeResult, WindowPlatform } from '../domain/windows'
 import type {
   CodexActivityDelta,
   CodexBridgeResult,
@@ -23,6 +23,10 @@ import type {
   CodexEnvironmentActionSessionProjection,
   CodexEnvironmentListResult
 } from '../domain/codexEnvironment'
+import type {
+  CodexActionRunnerActionEvent,
+  CodexActionRunnerCatalogV1
+} from '../domain/codexActionRunner'
 
 export type PickedFavoriteKind = Exclude<FavoriteNode['kind'], 'group'>
 export type PickedFavorite = Pick<FavoriteNode, 'path' | 'name' | 'parentId' | 'tags' | 'color'> & { kind: PickedFavoriteKind }
@@ -31,10 +35,10 @@ export type FileActionOutcome = 'success' | 'dispatched' | 'revealed-instead' | 
 export type FileErrorCode = 'invalid-path' | 'not-found' | 'permission-denied' | 'no-handler' | 'timeout' | 'unsupported' | 'io-error'
 export type FavoritePathStatus = 'available' | 'missing' | 'permission-denied' | 'offline' | 'invalid' | 'unknown'
 export type WindowPermissionState = 'granted' | 'required' | 'unknown' | 'unsupported'
-export const WINDOW_BRIDGE_REVISION = 'wj21-main-child-window-tree'
+export const WINDOW_BRIDGE_REVISION = 'wj22-native-instance-space-cache'
 export type WindowActivationOutcome = 'activated' | 'not-found' | 'ambiguous' | 'permission-required' | 'focus-denied' | 'unsupported' | 'failed'
-export type WindowActivationReasonCode = 'instance-mismatch' | 'member-mismatch' | 'identity-unavailable'
-export type WindowOperationTraceStage = 'bridge' | 'target' | 'process' | 'restore' | 'foreground' | 'raise' | 'verify' | 'topmost'
+export type WindowActivationReasonCode = 'space-unbound' | 'space-unbound-multiwindow' | 'space-ambiguous' | 'space-switch-timeout' | 'instance-mismatch' | 'member-mismatch' | 'identity-unavailable'
+export type WindowOperationTraceStage = 'bridge' | 'space' | 'target' | 'process' | 'restore' | 'foreground' | 'raise' | 'verify' | 'topmost'
 export type WindowOperationTraceOutcome = 'ok' | 'skipped' | 'not-found' | 'ambiguous' | 'failed' | 'denied' | 'unsupported' | 'unavailable'
 export type WindowOperationTraceDetail =
   | 'instance-match'
@@ -44,6 +48,10 @@ export type WindowOperationTraceDetail =
   | 'root-family-match'
   | 'ax-cg-id-match'
   | 'ax-focused-root-window'
+  | 'session-cache'
+  | 'direct-space-binding'
+  | 'reverse-space-binding'
+  | 'space-switch-confirmed'
   | 'error'
 
 /** A bounded, sanitized native-operation trace. It is returned only when a development renderer requests it. */
@@ -201,6 +209,8 @@ export interface EypcPlatformApi {
   windows: {
     capabilities(): Promise<WindowCapability>
     list(): Promise<WindowListResult>
+    /** Exact native-instance liveness probe. Inventory absence is not closure evidence. */
+    probeInstance?(window: LiveWindow): Promise<WindowInstanceProbeResult>
     activate(request: WindowActivationRequest, options?: WindowActivationOptions): Promise<WindowActivationResult>
     /** Sets a real Windows topmost z-order; unsupported on macOS instead of pretending to persist it. */
     alwaysOnTop?(window: LiveWindow, options?: WindowActivationOptions): Promise<WindowActivationResult>
@@ -226,6 +236,8 @@ export interface EypcPlatformApi {
   codex: {
     /** Missing on older long-lived preload instances; the adapter normalizes that case to `legacy`. */
     taskStateRevision?: string
+    /** Missing on older long-lived preload instances; Action execution must fail closed in that case. */
+    actionRuntimeRevision?: string
     inspectEnvironment(): Promise<CodexEnvironmentSnapshotV1>
     setLaunchPath?(path: string): Promise<CodexEnvironmentSnapshotV1>
     clearLaunchPath?(): Promise<CodexEnvironmentSnapshotV1>
@@ -241,17 +253,25 @@ export interface EypcPlatformApi {
     listProjectEnvironments?(targetAlias: string): Promise<CodexEnvironmentListResult> | CodexEnvironmentListResult
     runProjectAction?(request: {
       targetAlias: string
+      targetId: string
+      projectKey?: string
+      projectName?: string
       environmentId: string
+      environmentName?: string
       actionId: string
+      actionName?: string
       confirmToken?: string
       stopIfRunning?: boolean
+      restartIfRunning?: boolean
     }): Promise<CodexEnvironmentActionRunResult>
     listActionSessions?(): Promise<CodexEnvironmentActionSessionProjection[]> | CodexEnvironmentActionSessionProjection[]
     stopActionSession?(request: {
-      projectKey: string
+      targetId: string
+      projectKey?: string
       environmentId: string
       actionId: string
     }): Promise<CodexEnvironmentActionRunResult>
+    setActionRunArchived?(request: { runId: string; archived: boolean }): Promise<{ ok: boolean; message?: string }>
     close(options?: { preserveDesktop?: boolean }): void
   }
   float: {
@@ -261,6 +281,19 @@ export interface EypcPlatformApi {
     resetGeometry?(payload?: { position?: unknown; expandedSizes?: unknown }): boolean
     close(): void
     onAction(listener: (action: CodexFloatAction) => void): () => void
+  }
+  actionRunner?: {
+    syncCatalog(catalog: CodexActionRunnerCatalogV1): boolean
+    activate?(payload?: { laneId?: string }): boolean
+    readPreference?(): { selectedLaneId: string }
+    updatePreference?(payload: {
+      pinned?: boolean
+      view?: 'records' | 'archived'
+      selectedLaneId?: string
+      runtime?: { projectKey: string; mode: 'auto' | 'manual'; candidateId?: string }
+    }): boolean
+    close(): void
+    onAction(listener: (action: CodexActionRunnerActionEvent) => void): () => void
   }
   app: {
     hide(): Promise<boolean> | boolean
@@ -640,6 +673,7 @@ export function getPlatform(): EypcPlatformApi {
     const hostStorage = window.eypcPlatform.storage
     const hostCodex = window.eypcPlatform.codex
     const hostFloat = window.eypcPlatform.float
+    const hostActionRunner = window.eypcPlatform.actionRunner
     const hostWindows = window.eypcPlatform.windows
     const hostCapabilities: FileCapabilities = hostFiles.capabilities || {
       open: typeof hostFiles.open === 'function',
@@ -656,6 +690,12 @@ export function getPlatform(): EypcPlatformApi {
       windows: {
         capabilities: hostWindows?.capabilities || (async () => unsupportedWindowCapability('当前 preload 未提供窗口能力')),
         list: hostWindows?.list || (async () => unsupportedWindowList('当前 preload 未提供窗口能力')),
+        probeInstance: hostWindows?.probeInstance || (async (window) => ({
+          status: 'indeterminate' as const,
+          instanceId: window.instanceId,
+          liveness: 'indeterminate' as const,
+          reason: 'unsupported' as const
+        })),
         activate: hostWindows?.activate || (async () => ({ outcome: 'unsupported', message: '当前 preload 未提供窗口激活能力' })),
         alwaysOnTop: hostWindows?.alwaysOnTop || (async () => ({ outcome: 'unsupported', message: '当前 preload 未提供页面置顶能力' })),
         close: hostWindows?.close || (async () => ({ outcome: 'unsupported', message: '当前 preload 未提供窗口关闭能力' })),
@@ -695,6 +735,11 @@ export function getPlatform(): EypcPlatformApi {
             ? hostCodex.taskStateRevision
             : 'legacy'
           : undefined,
+        actionRuntimeRevision: typeof hostCodex?.listProjectEnvironments === 'function'
+          ? typeof hostCodex.actionRuntimeRevision === 'string' && hostCodex.actionRuntimeRevision
+            ? hostCodex.actionRuntimeRevision
+            : 'legacy'
+          : undefined,
         // uTools can keep a previous preload alive while loading a newer renderer.
         // Treat an existing snapshot bridge as positive capability evidence instead
         // of misreporting the desktop host as an unsupported browser.
@@ -716,6 +761,7 @@ export function getPlatform(): EypcPlatformApi {
         runProjectAction: hostCodex?.runProjectAction,
         listActionSessions: hostCodex?.listActionSessions,
         stopActionSession: hostCodex?.stopActionSession,
+        setActionRunArchived: hostCodex?.setActionRunArchived,
         close: hostCodex?.close || (() => undefined)
       },
       float: {
@@ -725,6 +771,14 @@ export function getPlatform(): EypcPlatformApi {
         resetGeometry: hostFloat?.resetGeometry,
         close: hostFloat?.close || (() => undefined),
         onAction: hostFloat?.onAction || (() => () => undefined)
+      },
+      actionRunner: {
+        syncCatalog: hostActionRunner?.syncCatalog || (() => false),
+        activate: hostActionRunner?.activate,
+        readPreference: hostActionRunner?.readPreference,
+        updatePreference: hostActionRunner?.updatePreference,
+        close: hostActionRunner?.close || (() => undefined),
+        onAction: hostActionRunner?.onAction || (() => () => undefined)
       },
       app: window.eypcPlatform.app || { hide: async () => false }
     }
@@ -746,6 +800,7 @@ export function getPlatform(): EypcPlatformApi {
     windows: {
       capabilities: async () => unsupportedWindowCapability('浏览器预览不提供系统窗口能力'),
       list: async () => unsupportedWindowList('浏览器预览不提供系统窗口能力'),
+      probeInstance: async (window) => ({ status: 'indeterminate', instanceId: window.instanceId, liveness: 'indeterminate', reason: 'unsupported' }),
       activate: async () => ({ outcome: 'unsupported', message: '浏览器预览不提供系统窗口激活能力' }),
       alwaysOnTop: async () => ({ outcome: 'unsupported', message: '浏览器预览不提供页面置顶能力' }),
       close: async () => ({ outcome: 'unsupported', message: '浏览器预览不提供系统窗口关闭能力' }),
@@ -791,6 +846,7 @@ export function getPlatform(): EypcPlatformApi {
       }
     },
     codex: {
+      actionRuntimeRevision: undefined,
       inspectEnvironment: async () => unsupportedCodexEnvironment(),
       setLaunchPath: undefined,
       clearLaunchPath: undefined,
@@ -807,6 +863,7 @@ export function getPlatform(): EypcPlatformApi {
       runProjectAction: undefined,
       listActionSessions: undefined,
       stopActionSession: undefined,
+      setActionRunArchived: undefined,
       close: () => undefined
     },
     float: {
@@ -814,6 +871,14 @@ export function getPlatform(): EypcPlatformApi {
       activate: () => false,
       diagnostics: () => ({ supported: false, alwaysOnTop: false, allWorkspaces: false, visibleOnFullScreen: false, checkedAt: 0, errorCode: 'unsupported' }),
       resetGeometry: () => false,
+      close: () => undefined,
+      onAction: () => () => undefined
+    },
+    actionRunner: {
+      syncCatalog: () => false,
+      activate: () => false,
+      readPreference: () => ({ selectedLaneId: '' }),
+      updatePreference: () => false,
       close: () => undefined,
       onAction: () => () => undefined
     },

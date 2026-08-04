@@ -8,7 +8,7 @@ import { toggleIdWithAdvance } from '../domain/listSelection'
 import { normalizeAppState } from '../domain/state'
 import { formatShortcutLabel, formatShortcutList } from '../domain/shortcuts'
 import { normalizeToolPreviewPrefs } from '../domain/toolPreview'
-import { coalesceNativeWindowFamilies, mergePartialWindowFamilyInventory, normalizeWindowText, resolveLiveWindowsForTarget, targetMatchesLiveWindow, windowFamilyRoots, windowTargetAppMatches, type LiveWindow, type WindowFamily, type WindowPlatform, type WindowTarget } from '../domain/windows'
+import { coalesceNativeWindowFamilies, normalizeWindowText, resolveLiveWindowsForTarget, targetMatchesLiveWindow, windowFamilyRoots, windowTargetAppMatches, type LiveWindow, type WindowFamily, type WindowInstanceProbeResult, type WindowPlatform, type WindowTarget } from '../domain/windows'
 import {
   buildWindowTreeRows,
   candidateInstanceIdFromRowId,
@@ -40,6 +40,8 @@ import { buildDefaultKeybindings, buildEffectiveKeybindings, normalizeShortcutId
 import type { KeybindingContext } from './keybinding/keybindingRuntime'
 import { resolveMqttConnect, type MqttRuntimeClient } from './mqttClientModule'
 import { createCodexController, type CodexFloatSnapshotV1, type CodexRuntimeView } from './codexController'
+import { createWindowActivationRequest, isWindowSpaceFailureReason } from './window/windowActivationRuntime'
+import { applyWindowInventoryUpdate, normalizeWindowInventoryCompleteness } from './window/windowInventoryRuntime'
 
 export interface AppRuntimeSnapshot {
   state: AppState
@@ -208,6 +210,8 @@ export type WindowActivationDiagnosticLevel = 'accepted' | 'blocking'
 export type WindowActivationDiagnosticStage = 'entry' | 'capability' | 'resolve' | 'refresh' | 'activate' | 'topmost' | 'visibility'
 export type WindowActivationDiagnosticCode =
   | 'target-closed'
+  | 'target-unobserved'
+  | 'target-indeterminate'
   | 'feature-disabled'
   | 'slot-missing'
   | 'slot-unassigned'
@@ -224,6 +228,9 @@ export type WindowActivationDiagnosticCode =
   | 'instance-mismatch'
   | 'member-mismatch'
   | 'identity-unavailable'
+  | 'space-unbound'
+  | 'space-ambiguous'
+  | 'space-switch-timeout'
   | 'focus-denied'
   | 'activation-not-found'
   | 'activation-failed'
@@ -894,6 +901,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
 
   const windowActivationDiagnosticMessages: Record<WindowActivationDiagnosticCode, string> = {
     'target-closed': '已确认目标窗口已关闭，已清除陈旧引用。',
+    'target-unobserved': '当前桌面未观察到目标窗口，已保留唯一实例与快捷槽缓存。',
+    'target-indeterminate': '当前无法确认目标窗口状态，已保留唯一实例与快捷槽缓存。',
     'feature-disabled': '窗口跳转功能已关闭，请在设置中启用后重试。',
     'slot-missing': '窗口槽位不存在，请检查当前配置。',
     'slot-unassigned': '当前窗口槽尚未分配目标，请在窗口页完成分配。',
@@ -910,6 +919,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     'instance-mismatch': '当前窗口实例与保存目标不一致，需要重新确认。',
     'member-mismatch': '指定子窗口已失效或不再属于该主窗口；EyPc 未回退打开主窗口或兄弟窗口。',
     'identity-unavailable': '无法建立稳定的系统窗口实例身份，未执行收藏、绑定或激活。',
+    'space-unbound': '无法唯一确认目标窗口所在桌面，已保留窗口身份和快捷槽缓存。',
+    'space-ambiguous': '目标窗口映射到多个远端桌面，EyPc 未执行不确定切换。',
+    'space-switch-timeout': '目标桌面切换未在时限内得到确认，未前置同应用其他窗口。',
     'focus-denied': '系统拒绝聚焦该窗口；EyPc 未尝试绕过前台保护。',
     'activation-not-found': '激活时窗口引用已失效，尚未满足确认关闭条件。',
     'activation-failed': '宿主未能完成窗口激活，请在工作台中核查。',
@@ -920,14 +932,15 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   const nativeTraceStages = new Set<WindowOperationTrace['steps'][number]['stage']>([
-    'bridge', 'target', 'process', 'restore', 'foreground', 'raise', 'verify', 'topmost'
+    'bridge', 'space', 'target', 'process', 'restore', 'foreground', 'raise', 'verify', 'topmost'
   ])
   const nativeTraceOutcomes = new Set<WindowOperationTrace['steps'][number]['outcome']>([
     'ok', 'skipped', 'not-found', 'ambiguous', 'failed', 'denied', 'unsupported', 'unavailable'
   ])
   const nativeTraceDetails = new Set<NonNullable<WindowOperationTrace['steps'][number]['detail']>>([
     'instance-match', 'instance-mismatch', 'identity-unavailable', 'focus-state-mismatch',
-    'root-family-match', 'ax-cg-id-match', 'ax-focused-root-window', 'error'
+    'root-family-match', 'ax-cg-id-match', 'ax-focused-root-window', 'session-cache',
+    'direct-space-binding', 'reverse-space-binding', 'space-switch-confirmed', 'error'
   ])
 
   function appendWindowOperationTrace(
@@ -1113,13 +1126,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function applyWindowInventory(freshFamilies: WindowFamily[], completeness: 'complete' | 'partial') {
-    windowFamilies = completeness === 'partial'
-      ? mergePartialWindowFamilyInventory(windowFamilies, freshFamilies)
-      : freshFamilies
-    liveWindows = windowFamilyRoots(windowFamilies)
-    windowInventoryCompleteness = completeness
-    windowFreshLiveIds = new Set(freshFamilies.map((family) => family.root.instanceId))
-    windowFreshMemberIds = new Set(freshFamilies.flatMap((family) => family.children.map((child) => child.instanceId)))
+    const inventory = applyWindowInventoryUpdate(windowFamilies, freshFamilies, completeness)
+    windowFamilies = inventory.families
+    liveWindows = inventory.roots
+    windowInventoryCompleteness = inventory.completeness
+    windowFreshLiveIds = inventory.freshRootIds
+    windowFreshMemberIds = inventory.freshMemberIds
     windowListLoaded = true
     windowCacheUpdatedAt = Date.now()
   }
@@ -1399,7 +1411,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         state.windowSlots = reconciliation.slots
         save()
       }
-      const completeness = result.completeness === 'partial' ? 'partial' : 'complete'
+      const completeness = normalizeWindowInventoryCompleteness(result.completeness)
       applyWindowInventory(freshFamilies, completeness)
       let candidateFocusInstanceId: string | null = null
       if (windowRebindState.phase === 'confirming') {
@@ -1418,9 +1430,19 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
             retainedInstanceIds: liveWindows.map((live) => live.instanceId),
             focusedCandidateInstanceId
           })
-          if (effects.clearStaleBindingTargetId) {
-            const staleTarget = windowTargetById(effects.clearStaleBindingTargetId)
-            if (staleTarget) clearStaleWindowNativeRef(staleTarget)
+          if (effects.probeStaleBindingTargetId) {
+            const staleTarget = windowTargetById(effects.probeStaleBindingTargetId)
+            if (staleTarget) {
+              const proof = await probeWindowTargetInstance(staleTarget)
+              if (proof.status === 'gone') {
+                clearVerifiedGoneWindowNativeRef(staleTarget, proof)
+                message = windowActivationDiagnosticMessages['target-closed']
+              } else {
+                message = windowActivationDiagnosticMessages[proof.status === 'live' || proof.liveness === 'temporarily-unobserved'
+                  ? 'target-unobserved'
+                  : 'target-indeterminate']
+              }
+            }
           }
           candidateFocusInstanceId = effects.focusCandidateInstanceId
         }
@@ -1538,6 +1560,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (reasonCode === 'instance-mismatch') return 'instance-mismatch'
     if (reasonCode === 'member-mismatch') return 'member-mismatch'
     if (reasonCode === 'identity-unavailable') return 'identity-unavailable'
+    if (reasonCode === 'space-unbound' || reasonCode === 'space-unbound-multiwindow') return 'space-unbound'
+    if (reasonCode === 'space-ambiguous') return 'space-ambiguous'
+    if (reasonCode === 'space-switch-timeout') return 'space-switch-timeout'
     if (operation === 'always-on-top' && outcome === 'unsupported') return 'topmost-unsupported'
     if (operation === 'always-on-top' && outcome === 'failed') return 'topmost-failed'
     if (outcome === 'focus-denied') return 'focus-denied'
@@ -1643,13 +1668,53 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return outcome === 'loaded-partial' ? 'partial' : 'complete'
   }
 
-  function clearStaleWindowNativeRef(target: WindowTarget) {
+  async function probeWindowTargetInstance(target: WindowTarget): Promise<WindowInstanceProbeResult> {
+    const persisted = liveWindowFromPersistedTarget(target)
+    const instanceId = target.lastInstanceId || persisted?.instanceId || ''
+    if (!persisted || !instanceId) {
+      return { status: 'indeterminate', instanceId, liveness: 'indeterminate', reason: 'identity-unavailable' }
+    }
+    if (!platform.windows.probeInstance) {
+      return { status: 'indeterminate', instanceId, liveness: 'indeterminate', reason: 'unsupported' }
+    }
+    try {
+      const result = await platform.windows.probeInstance(persisted)
+      return result.instanceId === instanceId
+        ? result
+        : { status: 'indeterminate', instanceId, liveness: 'indeterminate', reason: 'identity-unavailable' }
+    } catch {
+      return { status: 'indeterminate', instanceId, liveness: 'indeterminate', reason: 'native-query-failed' }
+    }
+  }
+
+  function clearVerifiedGoneWindowNativeRef(target: WindowTarget, proof: WindowInstanceProbeResult) {
     if (target.scope !== 'instance') return
+    if (proof.status !== 'gone' || !target.lastInstanceId || proof.instanceId !== target.lastInstanceId) return
     if (!target.lastNativeRef && !target.lastInstanceId) return
     target.lastInstanceId = null
     target.lastNativeRef = null
     target.updatedAt = Date.now()
     save()
+  }
+
+  async function resolveMissingWindowTarget(
+    target: WindowTarget,
+    attempt: WindowActivationAttempt,
+    focusRowId: string | null,
+    platformId: WindowPlatform
+  ): Promise<boolean> {
+    const proof = await probeWindowTargetInstance(target)
+    if (proof.status === 'gone') {
+      clearVerifiedGoneWindowNativeRef(target, proof)
+      return finishWindowActivation(attempt, 'resolve', 'target-closed', 'accepted', { focusRowId, platformId })
+    }
+    return finishWindowActivation(
+      attempt,
+      'resolve',
+      proof.status === 'live' || proof.liveness === 'temporarily-unobserved' ? 'target-unobserved' : 'target-indeterminate',
+      'blocking',
+      { focusRowId, platformId }
+    )
   }
 
   function rememberVerifiedWindowTarget(target: WindowTarget, live: LiveWindow, verifiedInstanceId: string) {
@@ -1685,9 +1750,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     try {
       result = attempt.operation === 'always-on-top'
         ? (await platform.windows.alwaysOnTop?.(root, { debugTrace: windowOperationTraceEnabled }) ?? { outcome: 'unsupported' as const })
-        : await platform.windows.activate(member
-          ? { mode: 'member-exact', root, member }
-          : { mode: 'root-current', root }, { debugTrace: windowOperationTraceEnabled })
+        : await platform.windows.activate(createWindowActivationRequest(root, member), { debugTrace: windowOperationTraceEnabled })
     } catch {
       attempt.nativeReasonCode = undefined
       appendWindowOperationTrace(attempt, 'native', 'failed')
@@ -1864,7 +1927,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       appendWindowOperationTrace(attempt, 'cache', 'ok')
       const outcome = await activateLiveWindow(cachedLive, target, attempt)
       if (outcome === 'activated') return true
-      if (outcome !== 'not-found') return finishActivationOutcome(attempt, outcome, focusRowId, platformId)
+      if (outcome !== 'not-found' || isWindowSpaceFailureReason(attempt.nativeReasonCode)) return finishActivationOutcome(attempt, outcome, focusRowId, platformId)
     } else appendWindowOperationTrace(attempt, 'cache', 'skipped')
 
     const refreshCompleteness = await refreshForWindowActivation(attempt, focusRowId, platformId)
@@ -1872,11 +1935,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     const retried = await resolveAndActivateWindowTargetForAttempt(target, attempt, true)
     if (retried.kind === 'activated') return true
     if (retried.kind === 'no-match') {
-      if (refreshCompleteness === 'partial') {
-        return finishWindowActivation(attempt, 'refresh', 'refresh-incomplete', 'blocking', { focusRowId, platformId })
-      }
-      clearStaleWindowNativeRef(target)
-      return finishWindowActivation(attempt, 'resolve', 'target-closed', 'accepted', { focusRowId, platformId })
+      return resolveMissingWindowTarget(target, attempt, focusRowId, platformId)
     }
     if (retried.kind === 'editor-active') return false
     if (retried.kind === 'ambiguous') return finishWindowActivation(attempt, 'resolve', 'ambiguous-target', 'blocking', { focusRowId: focusedWindowId, platformId })
@@ -1904,7 +1963,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         type: 'begin',
         targetId: target.id,
         candidateInstanceIds: resolved.candidates.map((window) => window.instanceId),
-        restoreFocusRowId: targetWindowRowId(target.id)
+        restoreFocusRowId: targetWindowRowId(target.id),
+        slotNumber: attempt.entry === 'slot' ? attempt.slot : null
       })
       if (effects.focusCandidateInstanceId) focusedWindowId = candidateWindowRowId(effects.focusCandidateInstanceId)
       selectedWindowIds = []
@@ -1927,7 +1987,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     const focusRowId = target ? targetWindowRowId(target.id) : liveWindowRowId(live.instanceId)
     const outcome = await activateLiveWindow(live, target, attempt)
     if (outcome === 'activated') return true
-    if (outcome !== 'not-found') return finishActivationOutcome(attempt, outcome, focusRowId, live.platform)
+    if (outcome !== 'not-found' || isWindowSpaceFailureReason(attempt.nativeReasonCode)) return finishActivationOutcome(attempt, outcome, focusRowId, live.platform)
 
     const refreshCompleteness = await refreshForWindowActivation(attempt, focusRowId, live.platform)
     if (!refreshCompleteness) return false
@@ -1938,11 +1998,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     }
     if (!refreshed.live) {
       appendWindowOperationTrace(attempt, 'resolve', 'not-found')
+      if (target) return resolveMissingWindowTarget(target, attempt, focusRowId, live.platform)
       if (refreshCompleteness === 'partial') {
         return finishWindowActivation(attempt, 'refresh', 'refresh-incomplete', 'blocking', { focusRowId, platformId: live.platform })
       }
-      if (target) clearStaleWindowNativeRef(target)
-      return finishWindowActivation(attempt, 'resolve', 'target-closed', 'accepted', { focusRowId, platformId: live.platform })
+      return finishWindowActivation(attempt, 'resolve', 'activation-not-found', 'blocking', { focusRowId, platformId: live.platform })
     }
     const retried = await activateLiveWindow(refreshed.live, target, attempt)
     if (retried === 'activated') return true
@@ -1951,6 +2011,36 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
 
   async function activateConfirmedWindowCandidate(live: LiveWindow, target: WindowTarget, attempt: WindowActivationAttempt): Promise<boolean> {
     if (attempt.trace) attempt.trace.targetTitle = live.title
+    const slotNumber = windowRebindState.phase === 'confirming' && windowRebindState.targetId === target.id
+      ? windowRebindState.slotNumber
+      : null
+    if (slotNumber != null) {
+      // A slot recovery is intentionally non-destructive: activate the exact
+      // candidate first, then repoint only the originating slot. The old
+      // logical target and every other slot keep their own user-owned state.
+      const activated = await activateLiveWindowWithRecovery(live, null, attempt)
+      if (!activated) return false
+      let replacement = state.windowTargets.find((candidate) => targetMatchesLiveWindow(candidate, live)) || null
+      let changed = false
+      if (!replacement) {
+        replacement = createWindowTarget(live, live.title, false)
+        state.windowTargets = [...state.windowTargets, replacement]
+        changed = true
+      } else {
+        changed = rememberVerifiedWindowTarget(replacement, live, live.instanceId) || changed
+      }
+      const currentSlot = state.windowSlots.find((slot) => slot.slot === slotNumber)
+      if (currentSlot?.targetIdByPlatform[live.platform] === target.id) {
+        state.windowSlots = state.windowSlots.map((slot) => slot.slot === slotNumber
+          ? { ...slot, targetIdByPlatform: { ...slot.targetIdByPlatform, [live.platform]: replacement!.id } }
+          : slot)
+        changed = true
+      }
+      advanceWindowRebind({ type: 'confirmed', targetId: target.id })
+      focusedWindowId = targetWindowRowId(replacement.id)
+      if (changed) save()
+      return true
+    }
     return activateLiveWindowWithRecovery(live, target, attempt)
   }
 
@@ -1961,7 +2051,15 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       return finishWindowActivation(attempt, 'entry', 'activation-failed', 'blocking')
     }
     if (attempt.trace) attempt.trace.targetTitle = cachedMember.title
-    // Exact child actions always revalidate the current root/member relationship.
+    // The native bridge switches to the root Space and revalidates the exact
+    // relationship atomically. A current-Space AX refresh before this call
+    // would incorrectly discard a valid off-Space member.
+    const cachedOutcome = await activateLiveWindow(cachedRoot, null, attempt, cachedMember)
+    if (cachedOutcome === 'activated') return true
+    if (cachedOutcome !== 'not-found' || isWindowSpaceFailureReason(attempt.nativeReasonCode)) {
+      return finishActivationOutcome(attempt, cachedOutcome, row.parentRowId, cachedRoot.platform)
+    }
+    // A native exact miss gets one bounded refresh after the Space-aware call.
     const completeness = await refreshForWindowActivation(attempt, row.id, cachedRoot.platform)
     if (!completeness) return false
     const freshRoot = windowFamilyForRoot(cachedRoot.instanceId, true)?.root || null
@@ -2035,6 +2133,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     if (target.scope !== 'instance') return null
     if (!target.lastNativeRef) return null
     const macRef = target.platform === 'darwin' ? /^(\d{1,12}):0:(\d{1,12})$/.exec(target.lastNativeRef) : null
+    const windowsInstance = target.platform === 'win32' ? /^win32:(\d{1,12}):(\d{1,20})$/.exec(target.lastInstanceId || '') : null
     const instanceId = target.lastInstanceId || (macRef ? `darwin:${macRef[1]}:${macRef[2]}` : `${target.platform}:legacy:${target.lastNativeRef}`)
     return {
       id: instanceId,
@@ -2043,7 +2142,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       nativeRef: target.lastNativeRef,
       appId: target.appId,
       appName: target.appName,
-      pid: 0,
+      pid: macRef ? Number(macRef[1]) : windowsInstance ? Number(windowsInstance[1]) : 0,
       title: target.lastKnownTitle,
       minimized: false,
       focused: false
@@ -8568,10 +8667,46 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       return true
     } })
     actions.register({ id: 'codex.float.hide', title: '隐藏 Codex 悬浮球', group: 'Codex', risk: 'data-write', scope: 'global', priority: 90, when: () => true, run: () => codexController.updateSettings({ floatEnabled: false }) })
-    actions.register({ id: 'codex.float.environment.select', title: '同步 Codex Float Environment 选择', group: 'Codex', risk: 'data-write', scope: 'global', priority: 89, when: () => true, run: (_ctx, args) => {
-      const projectKey = typeof args?.projectKey === 'string' ? args.projectKey : ''
-      const environmentId = typeof args?.environmentId === 'string' ? args.environmentId : ''
-      return codexController.rememberEnvironmentForProject(projectKey, environmentId)
+    actions.register({ id: 'codex.actionRunner.activate', title: '打开 Codex Action 执行工作台', group: 'Codex', risk: 'normal', scope: 'global', priority: 1000, when: () => true, run: (_ctx, args) => {
+      void codexController.activateActionRunner(typeof args?.laneId === 'string' ? args.laneId : '')
+      return true
+    } })
+    actions.register({ id: 'codex.actionRunner.run', title: '执行 Runner Action', group: 'Codex', risk: 'data-write', scope: 'global', priority: 999, when: () => true, run: (_ctx, args) => {
+      if (typeof args?.laneId !== 'string') return false
+      void codexController.runActionRunnerLane(args.laneId, args.restartIfRunning === true)
+      return true
+    } })
+    actions.register({ id: 'codex.actionRunner.stop', title: '停止 Runner Action', group: 'Codex', risk: 'data-write', scope: 'global', priority: 999, when: () => true, run: (_ctx, args) => {
+      if (typeof args?.laneId !== 'string') return false
+      void codexController.stopActionRunnerLane(args.laneId)
+      return true
+    } })
+    actions.register({ id: 'codex.actionRunner.run.archive', title: '归档 Action 执行记录', group: 'Codex', risk: 'data-write', scope: 'global', priority: 998, when: () => true, run: (_ctx, args) => {
+      if (typeof args?.runId !== 'string') return false
+      void codexController.setActionRunnerRunArchived(args.runId, true)
+      return true
+    } })
+    actions.register({ id: 'codex.actionRunner.run.restore', title: '恢复 Action 执行记录', group: 'Codex', risk: 'data-write', scope: 'global', priority: 998, when: () => true, run: (_ctx, args) => {
+      if (typeof args?.runId !== 'string') return false
+      void codexController.setActionRunnerRunArchived(args.runId, false)
+      return true
+    } })
+    actions.register({ id: 'codex.actionRunner.preference.update', title: '更新 Action Runner 窗口偏好', group: 'Codex', risk: 'data-write', scope: 'global', priority: 997, when: () => true, run: (_ctx, args) => codexController.updateActionRunnerPreference({ pinned: typeof args?.pinned === 'boolean' ? args.pinned : undefined, view: args?.view === 'records' || args?.view === 'archived' ? args.view : undefined, selectedLaneId: typeof args?.selectedLaneId === 'string' ? args.selectedLaneId : undefined }) })
+    actions.register({ id: 'codex.actionRunner.runtime.update', title: '更新 Action Runner 项目 Node', group: 'Codex', risk: 'data-write', scope: 'global', priority: 997, when: () => true, run: (_ctx, args) => {
+      if (typeof args?.projectKey !== 'string' || (args?.mode !== 'auto' && args?.mode !== 'manual')) return false
+      return codexController.updateActionRunnerPreference({
+        runtime: {
+          projectKey: args.projectKey,
+          mode: args.mode,
+          candidateId: typeof args?.candidateId === 'string' ? args.candidateId : undefined
+        }
+      })
+    } })
+    actions.register({ id: 'codex.actionRunner.project.reorder', title: '调整 Action Runner 项目顺序', group: 'Codex', risk: 'data-write', scope: 'global', priority: 997, when: () => true, run: (_ctx, args) => codexController.reorderActionRunnerProjects(Array.isArray(args?.projectKeys) ? args.projectKeys.filter((key): key is string => typeof key === 'string') : []) })
+    actions.register({ id: 'codex.actionRunner.hotkey.configure', title: '配置 Action Runner 全局快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 997, when: () => true, run: () => {
+      const opened = platform.app.configureHotkey?.('打开 Action 执行工作台') === true
+      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“打开 Action 执行工作台”绑定快捷键')
+      return opened
     } })
     actions.register({ id: 'codex.hotkey.configure', title: '配置 Codex 系统级快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
       const opened = platform.app.configureHotkey?.('直接展开 Codex 卡片') === true

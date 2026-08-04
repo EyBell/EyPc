@@ -31,6 +31,7 @@ const appRoot = ref<HTMLElement | null>(null)
 let disposeRuntime: (() => void) | null = null
 let disposeEnterPayload: (() => void) | null = null
 let disposeFloatAction: (() => void) | null = null
+let disposeActionRunnerAction: (() => void) | null = null
 const shortcutHintTiming = createShortcutHintTiming({
   show: () => { shortcutHints.value = true },
   hide: () => { shortcutHints.value = false }
@@ -476,6 +477,9 @@ onMounted(() => {
   disposeFloatAction = platform.float.onAction(({ actionId, args }) => {
     runtime.dispatch(actionId, args)
   })
+  disposeActionRunnerAction = platform.actionRunner?.onAction(({ actionId, args }) => {
+    runtime.dispatch(actionId, args)
+  }) || null
   platform.clearEnterPayload()
   void runtime.scanPorts()
 })
@@ -484,6 +488,7 @@ onUnmounted(() => {
   disposeRuntime?.()
   disposeEnterPayload?.()
   disposeFloatAction?.()
+  disposeActionRunnerAction?.()
   runtime.dispose()
   platform.float.close()
   shortcutHintTiming.dispose()

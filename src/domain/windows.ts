@@ -3,6 +3,30 @@ export type WindowInstanceId = string
 export type WindowTargetScope = 'instance' | 'file-manager-group'
 export type WindowRelationship = 'root' | 'child'
 export type WindowRelationEvidence = 'root-self' | 'win32-root-owner' | 'macos-ax-top-level'
+export type WindowLivenessState = 'verified-live' | 'temporarily-unobserved' | 'indeterminate' | 'verified-gone'
+export type WindowInstanceGoneReason = 'owner-exited' | 'owner-mismatch' | 'native-window-absent'
+export type WindowInstanceIndeterminateReason = 'permission-required' | 'identity-unavailable' | 'native-query-failed' | 'unsupported'
+
+/** Exact native-instance evidence. Inventory absence alone can never produce `gone`. */
+export type WindowInstanceProbeResult =
+  | {
+      status: 'live'
+      instanceId: WindowInstanceId
+      liveness: 'verified-live'
+      evidence: 'native-owner' | 'native-window' | 'space-binding'
+    }
+  | {
+      status: 'gone'
+      instanceId: WindowInstanceId
+      liveness: 'verified-gone'
+      reason: WindowInstanceGoneReason
+    }
+  | {
+      status: 'indeterminate'
+      instanceId: WindowInstanceId
+      liveness: 'temporarily-unobserved' | 'indeterminate'
+      reason: WindowInstanceIndeterminateReason
+    }
 
 export interface LiveWindow {
   id: string
@@ -96,20 +120,16 @@ export function liveWindowIdentity(window: Pick<LiveWindow, 'instanceId'>): Wind
 
 export function targetMatchesLiveWindow(
   target: Pick<WindowTarget, 'scope' | 'platform' | 'appId' | 'appName' | 'lastInstanceId' | 'lastNativeRef'>,
-  window: Pick<LiveWindow, 'platform' | 'appId' | 'appName' | 'instanceId' | 'nativeRef' | 'memberInstanceIds' | 'memberNativeRefs'>
+  window: Pick<LiveWindow, 'platform' | 'appId' | 'appName' | 'instanceId' | 'nativeRef'>
 ): boolean {
   if (target.scope !== 'instance') return false
   if (!windowTargetAppMatches(target, window)) return false
   if (target.lastInstanceId) {
     return target.lastInstanceId === window.instanceId
-      || Boolean(window.memberInstanceIds?.includes(target.lastInstanceId))
   }
   // Legacy migration only: the old native reference may be adopted once after
   // the bridge has revalidated its current owner/application.
-  return Boolean(target.lastNativeRef && (
-    target.lastNativeRef === window.nativeRef
-    || window.memberNativeRefs?.includes(target.lastNativeRef)
-  ))
+  return Boolean(target.lastNativeRef && target.lastNativeRef === window.nativeRef)
 }
 
 export function windowTargetAppMatches(

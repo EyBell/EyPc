@@ -221,7 +221,22 @@ describe('legacy member target reconciliation', () => {
     return { id, alias, scope: 'instance', platform: 'darwin', appId: 'com.editor', appName: 'Editor', lastKnownTitle: alias, lastInstanceId: null, lastNativeRef: nativeRef, groupKey: null, lastActiveInstanceId: null, alternateAliases: [], favorite: id === 'later', pinned: id === 'earlier', createdAt, updatedAt: createdAt }
   }
 
-  it('adopts a proven root, merges duplicate member targets losslessly, and remaps every slot', () => {
+  it('adopts a proven root for one unambiguous historical member target', () => {
+    const live: LiveWindow = { id: 'darwin:8:100', instanceId: 'darwin:8:100', platform: 'darwin', nativeRef: '8:0:100', appId: 'com.editor', appName: 'Editor', pid: 8, title: 'Current', minimized: false, focused: true, memberNativeRefs: ['8:0:201', '8:0:202'], memberInstanceIds: ['darwin:8:201', 'darwin:8:202'] }
+    const result = reconcileWindowTargetsWithFamilies(
+      [target('earlier', 'Old editor', '8:0:201', 1)],
+      [{ slot: 1, targetIdByPlatform: { darwin: 'earlier' } }],
+      [live],
+      10
+    )
+    expect(result.targets).toMatchObject([
+      { id: 'earlier', alias: 'Old editor', lastInstanceId: 'darwin:8:100', lastNativeRef: '8:0:100', favorite: false, pinned: true, alternateAliases: [] }
+    ])
+    expect(result.slots[0].targetIdByPlatform.darwin).toBe('earlier')
+    expect(result.changed).toBe(true)
+  })
+
+  it('preserves multiple historical targets that converge on one root for explicit recovery', () => {
     const live: LiveWindow = { id: 'darwin:8:100', instanceId: 'darwin:8:100', platform: 'darwin', nativeRef: '8:0:100', appId: 'com.editor', appName: 'Editor', pid: 8, title: 'Current', minimized: false, focused: true, memberNativeRefs: ['8:0:201', '8:0:202'], memberInstanceIds: ['darwin:8:201', 'darwin:8:202'] }
     const result = reconcileWindowTargetsWithFamilies(
       [target('earlier', 'Old editor', '8:0:201', 1), target('later', 'Second alias', '8:0:202', 2)],
@@ -229,9 +244,13 @@ describe('legacy member target reconciliation', () => {
       [live],
       10
     )
-    expect(result.targets).toHaveLength(1)
-    expect(result.targets[0]).toMatchObject({ id: 'later', lastInstanceId: 'darwin:8:100', lastNativeRef: '8:0:100', favorite: true, pinned: true, alternateAliases: ['Old editor'] })
-    expect(result.slots.map((slot) => slot.targetIdByPlatform.darwin)).toEqual(['later', 'later'])
+
+    expect(result.targets).toMatchObject([
+      { id: 'earlier', lastInstanceId: null, lastNativeRef: '8:0:201', alias: 'Old editor', favorite: false, pinned: true },
+      { id: 'later', lastInstanceId: null, lastNativeRef: '8:0:202', alias: 'Second alias', favorite: true, pinned: false }
+    ])
+    expect(result.slots.map((slot) => slot.targetIdByPlatform.darwin)).toEqual(['later', 'earlier'])
+    expect(result.changed).toBe(false)
   })
 })
 
@@ -241,7 +260,8 @@ describe('window rebind state machine', () => {
       type: 'begin',
       targetId: 'browser',
       candidateInstanceIds: ['darwin:91:222', 'darwin:91:222', 'darwin:91:333'],
-      restoreFocusRowId: 'target:browser'
+      restoreFocusRowId: 'target:browser',
+      slotNumber: 2
     })
 
     expect(windowRebindView(transition.state)).toEqual({
@@ -250,6 +270,7 @@ describe('window rebind state machine', () => {
       candidateInstanceIds: ['darwin:91:222', 'darwin:91:333']
     })
     expect(transition.effects.focusCandidateInstanceId).toBe('darwin:91:222')
+    expect(transition.state).toMatchObject({ phase: 'confirming', slotNumber: 2 })
     expect(windowInteractionAllowed(transition.state, 'browse')).toBe(false)
     expect(windowInteractionAllowed(transition.state, 'rebind')).toBe(true)
     expect(windowInteractionAllowed(transition.state, 'always')).toBe(true)
@@ -270,7 +291,7 @@ describe('window rebind state machine', () => {
       focusedCandidateInstanceId: 'darwin:91:222'
     })
     expect(windowRebindView(partial.state).candidateInstanceIds).toEqual(['darwin:91:222', 'darwin:91:333'])
-    expect(partial.effects.clearStaleBindingTargetId).toBeNull()
+    expect(partial.effects.probeStaleBindingTargetId).toBeNull()
 
     const complete = transitionWindowRebind(partial.state, {
       type: 'inventory',
@@ -280,7 +301,7 @@ describe('window rebind state machine', () => {
       focusedCandidateInstanceId: 'darwin:91:222'
     })
     expect(windowRebindView(complete.state)).toEqual({ phase: 'confirming', targetId: 'browser', candidateInstanceIds: [] })
-    expect(complete.effects.clearStaleBindingTargetId).toBe('browser')
+    expect(complete.effects.probeStaleBindingTargetId).toBe('browser')
   })
 
   it('ends only for the matching confirmed target or an explicit cancel', () => {

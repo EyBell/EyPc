@@ -26,6 +26,7 @@ Use [public/plugin.json](public/plugin.json#L1) in uTools Developer Tools during
 ## Window Jump
 
 - A row represents one independent OS root window. Browser tabs, IDE editors and proven native child surfaces stay inside that row; changing their title does not break favorites or slots.
+- On macOS, a preload-session cache resolves each exact root to its display/Space. Slot activation switches only the target display, so another display's current Space remains independent.
 - Finder/Explorer always appears as an expandable parent with each independent file-manager window beneath it. Press `ArrowRight` to expand/enter a child and `ArrowLeft` to return/collapse.
 - Right-click first focuses the row and opens the existing contextual panel. File-manager parents can activate, expand, favorite, list-pin, rename and bind slots, but cannot bulk-close or page-topmost children.
-- If an exact root closes, EyPc shows same-app root candidates for explicit confirmation. Even one candidate is never rebound automatically; titles are only recognition hints. `Escape` closes the action panel first, then clears search/editor/rebind state in order.
+- A missing current-Space inventory row is retained as temporarily unobserved. Only an exact native `gone` probe clears the saved locator; replacement stays explicit and a slot-originated recovery changes that slot only. Titles are recognition hints only.

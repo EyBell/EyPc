@@ -63,6 +63,58 @@ const CODEX_FLOAT_EXPANDED_MAX_HEIGHT = 460
 const CODEX_FLOAT_MARGIN = 12
 const WINDOW_BRIDGE_TIMEOUT_MS = 5_000
 const WINDOW_BRIDGE_OUTPUT_LIMIT = 1024 * 1024
+const WINDOW_BRIDGE_REVISION = 'wj22-native-instance-space-cache'
+let windowSubsystem = null
+let windowSubsystemLoadError = ''
+try {
+  let windowModule = null
+  let relativeLoadError = null
+  try {
+    windowModule = require('./windows/index.cjs')
+  } catch (error) {
+    relativeLoadError = error
+  }
+  if (!windowModule) {
+    const baseCandidates = [
+      typeof __dirname === 'string' ? __dirname : '',
+      process.cwd(),
+      path.join(process.cwd(), 'preload'),
+      path.join(process.cwd(), 'public')
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(baseCandidates))) {
+      try {
+        windowModule = require(path.join(base, 'windows', 'index.cjs'))
+        break
+      } catch {}
+    }
+  }
+  const createWindowSubsystem = windowModule && windowModule.createWindowSubsystem
+  if (typeof createWindowSubsystem !== 'function') throw relativeLoadError || new Error('window module factory unavailable')
+  windowSubsystem = createWindowSubsystem({
+    execFile,
+    platform: process.platform,
+    process,
+    globalThis,
+    timeoutMs: WINDOW_BRIDGE_TIMEOUT_MS,
+    outputLimit: WINDOW_BRIDGE_OUTPUT_LIMIT
+  })
+} catch (error) {
+  windowSubsystemLoadError = String(error && error.message || error || 'window module unavailable')
+}
+
+function unavailableWindowCapability(reason = '') {
+  return {
+    platform: 'unsupported',
+    bridgeRevision: WINDOW_BRIDGE_REVISION,
+    supported: false,
+    permission: 'unsupported',
+    canList: false,
+    canActivate: false,
+    canClose: false,
+    canAlwaysOnTop: false,
+    reason: reason || '窗口子系统未加载'
+  }
+}
 const CODEX_FLOAT_CHANNELS = {
   snapshot: 'eypc-float:snapshot',
   state: 'eypc-float:state',
@@ -84,14 +136,27 @@ const CODEX_FLOAT_CHANNELS = {
   resizeStart: 'eypc-float:resize-start',
   resizeMove: 'eypc-float:resize-move',
   resizeEnd: 'eypc-float:resize-end',
-  resizeCancel: 'eypc-float:resize-cancel',
-  environmentList: 'eypc-float:environment-list',
-  environmentListResult: 'eypc-float:environment-list-result',
-  environmentRun: 'eypc-float:environment-run',
-  environmentRunResult: 'eypc-float:environment-run-result',
-  environmentSession: 'eypc-float:environment-session',
-  environmentSessionResult: 'eypc-float:environment-session-result'
+  resizeCancel: 'eypc-float:resize-cancel'
 }
+const CODEX_ACTION_RUNNER_CHANNELS = {
+  snapshot: 'eypc-action-runner:snapshot',
+  log: 'eypc-action-runner:log',
+  action: 'eypc-action-runner:action',
+  snapshotRequest: 'eypc-action-runner:snapshot-request',
+  hide: 'eypc-action-runner:hide',
+  dragStart: 'eypc-action-runner:drag-start',
+  dragMove: 'eypc-action-runner:drag-move',
+  dragEnd: 'eypc-action-runner:drag-end',
+  resizeStart: 'eypc-action-runner:resize-start',
+  resizeMove: 'eypc-action-runner:resize-move',
+  resizeEnd: 'eypc-action-runner:resize-end',
+  resizeCancel: 'eypc-action-runner:resize-cancel'
+}
+const CODEX_ACTION_RUNNER_STORAGE_KEY = 'eypc/codex/action-runner/v1'
+const CODEX_ACTION_RUNNER_MIN_WIDTH = 720
+const CODEX_ACTION_RUNNER_MIN_HEIGHT = 420
+const CODEX_ACTION_LOG_FLUSH_MS = 50
+const CODEX_ACTION_LOG_FLUSH_BYTES = 16 * 1024
 let lastEnterPayload = null
 const enterPayloadListeners = new Set()
 let mqttSqliteAdapter = null
@@ -161,6 +226,20 @@ let codexFloatWorkspaceDiagnostics = {
   errorCode: process.platform === 'darwin' ? 'not-checked' : 'unsupported'
 }
 const codexFloatActionListeners = new Set()
+const codexActionRunnerActionListeners = new Set()
+let codexActionRunnerWindow = null
+let codexActionRunnerCatalog = { version: 1, projects: [], generatedAt: 0 }
+let codexActionRunnerPreference = { pinned: false, view: 'records', runtimeByProject: {} }
+let codexActionRunnerPreferenceLoaded = false
+let codexActionRunnerForceClose = false
+let codexActionRunnerVisible = false
+let codexActionRunnerDrag = null
+let codexActionRunnerResize = null
+let codexActionRunDatabase = null
+let codexActionRunDatabaseReady = false
+let codexActionRunMemory = []
+let codexNodeRuntimeDiscoveryCache = { expiresAt: 0, candidates: [] }
+
 function run(command, args) {
   return new Promise((resolve) => {
     execFile(command, args, { windowsHide: true, timeout: 10_000 }, (error, stdout, stderr) => {
@@ -287,1570 +366,6 @@ async function killProcess(request) {
   }
   const result = await runFirst(killPlans(pid, force))
   return { ok: result.ok, pid, port, force, error: result.ok ? undefined : result.error || result.stderr || 'kill failed' }
-}
-
-const WINDOWS_ENUM_SCRIPT = String.raw`
-$ErrorActionPreference = 'Stop'
-Add-Type -TypeDefinition @'
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
-using System.Text;
-
-public sealed class EypcWindowInfo {
-  public string instanceId { get; set; }
-  public string nativeRef { get; set; }
-  public int pid { get; set; }
-  public string rootInstanceId { get; set; }
-  public string rootNativeRef { get; set; }
-  public int rootPid { get; set; }
-  public string appId { get; set; }
-  public string appName { get; set; }
-  public string title { get; set; }
-  public bool minimized { get; set; }
-  public bool focused { get; set; }
-  public string relationship { get; set; }
-  public string relationEvidence { get; set; }
-  public bool userVisible { get; set; }
-  public bool canActivate { get; set; }
-  public bool canClose { get; set; }
-}
-
-public static class EypcWindowApi {
-  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int maxCount);
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
-  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
-  [DllImport("user32.dll")] public static extern IntPtr GetLastActivePopup(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-
-  [StructLayout(LayoutKind.Sequential)] public struct RECT {
-    public int Left;
-    public int Top;
-    public int Right;
-    public int Bottom;
-  }
-
-  const int GWL_STYLE = -16;
-  const int GWL_EXSTYLE = -20;
-  const uint GA_ROOT = 2;
-  const uint GA_ROOTOWNER = 3;
-  const uint WS_EX_TOOLWINDOW = 0x00000080;
-  const uint WS_EX_APPWINDOW = 0x00040000;
-  const uint WS_EX_NOACTIVATE = 0x08000000;
-  const uint WS_EX_TRANSPARENT = 0x00000020;
-  const uint WS_CHILD = 0x40000000;
-
-  static bool IsCloaked(IntPtr hWnd) {
-    try {
-      int cloaked = 0;
-      if (DwmGetWindowAttribute(hWnd, 14, out cloaked, 4) != 0) return false;
-      return cloaked != 0;
-    } catch { return false; }
-  }
-
-  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
-
-  static bool HasUserBounds(IntPtr hWnd) {
-    RECT rect;
-    return GetWindowRect(hWnd, out rect) && rect.Right - rect.Left > 1 && rect.Bottom - rect.Top > 1;
-  }
-
-  static bool IsSystemHelperProcess(string appName) {
-    return String.Equals(appName, "dwm", StringComparison.OrdinalIgnoreCase)
-      || String.Equals(appName, "ShellExperienceHost", StringComparison.OrdinalIgnoreCase)
-      || String.Equals(appName, "StartMenuExperienceHost", StringComparison.OrdinalIgnoreCase)
-      || String.Equals(appName, "SearchHost", StringComparison.OrdinalIgnoreCase)
-      || String.Equals(appName, "TextInputHost", StringComparison.OrdinalIgnoreCase)
-      || String.Equals(appName, "LockApp", StringComparison.OrdinalIgnoreCase);
-  }
-
-  static bool IsActionableWindow(IntPtr hWnd) {
-    if (!IsWindow(hWnd) || !IsWindowVisible(hWnd) || IsCloaked(hWnd)) return false;
-    if (!HasUserBounds(hWnd)) return false;
-    if ((unchecked((uint)GetWindowLong(hWnd, GWL_STYLE)) & WS_CHILD) != 0) return false;
-    var exStyle = unchecked((uint)GetWindowLong(hWnd, GWL_EXSTYLE));
-    var appWindow = (exStyle & WS_EX_APPWINDOW) != 0;
-    if ((exStyle & WS_EX_TOOLWINDOW) != 0 && !appWindow) return false;
-    if ((exStyle & WS_EX_NOACTIVATE) != 0) return false;
-    if ((exStyle & WS_EX_TRANSPARENT) != 0) return false;
-    if (GetAncestor(hWnd, GA_ROOT) != hWnd) return false;
-    return true;
-  }
-
-  static bool IsVisibleMemberWindow(IntPtr hWnd) {
-    if (!IsWindow(hWnd) || !IsWindowVisible(hWnd) || IsCloaked(hWnd) || !HasUserBounds(hWnd)) return false;
-    if (GetAncestor(hWnd, GA_ROOT) != hWnd) return false;
-    if ((unchecked((uint)GetWindowLong(hWnd, GWL_STYLE)) & WS_CHILD) != 0) return false;
-    var exStyle = unchecked((uint)GetWindowLong(hWnd, GWL_EXSTYLE));
-    if ((exStyle & WS_EX_NOACTIVATE) != 0 || (exStyle & WS_EX_TRANSPARENT) != 0) return false;
-    return true;
-  }
-
-  public static List<EypcWindowInfo> ListWindows() {
-    var rows = new List<EypcWindowInfo>();
-    var foreground = GetForegroundWindow();
-    var excludedPid = __EYPC_HOST_PID__;
-    var excludedParentPid = __EYPC_PARENT_PID__;
-    EnumWindows(delegate(IntPtr hWnd, IntPtr ignored) {
-      // Observe visible owned members as family evidence. Product eligibility is
-      // decided on the resolved root, so an active dialog cannot split the root.
-      if (!IsVisibleMemberWindow(hWnd)) return true;
-      var length = GetWindowTextLength(hWnd);
-      var titleBuilder = new StringBuilder(Math.Min(Math.Max(length + 1, 2), 8192));
-      GetWindowText(hWnd, titleBuilder, titleBuilder.Capacity);
-      var title = titleBuilder.ToString().Trim();
-      uint rawPid;
-      GetWindowThreadProcessId(hWnd, out rawPid);
-      var pid = unchecked((int)rawPid);
-      if (pid <= 0 || pid == excludedPid || pid == excludedParentPid) return true;
-      string appName;
-      try {
-        using (var appProcess = Process.GetProcessById(pid)) {
-          if (appProcess.HasExited) return true;
-          appName = appProcess.ProcessName;
-        }
-      } catch { return true; }
-      if (IsSystemHelperProcess(appName)) return true;
-      var root = GetAncestor(hWnd, GA_ROOTOWNER);
-      if (root == IntPtr.Zero || !IsWindow(root)) root = hWnd;
-      uint rawRootPid;
-      GetWindowThreadProcessId(root, out rawRootPid);
-      var rootPid = unchecked((int)rawRootPid);
-      if (rootPid <= 0 || rootPid == excludedPid || rootPid == excludedParentPid) return true;
-      string rootAppName;
-      try {
-        using (var rootProcess = Process.GetProcessById(rootPid)) {
-          if (rootProcess.HasExited) return true;
-          rootAppName = rootProcess.ProcessName;
-        }
-      } catch { return true; }
-      // Owner relationships across applications are not a safe product-family proof.
-      if (!String.Equals(rootAppName, appName, StringComparison.OrdinalIgnoreCase)) {
-        if (!IsActionableWindow(hWnd)) return true;
-        root = hWnd;
-        rootPid = pid;
-        rootAppName = appName;
-      } else if (!IsActionableWindow(root)) {
-        return true;
-      }
-      rows.Add(new EypcWindowInfo {
-        instanceId = "win32:" + pid.ToString() + ":" + hWnd.ToInt64().ToString(),
-        nativeRef = hWnd.ToInt64().ToString(),
-        pid = pid,
-        rootInstanceId = "win32:" + rootPid.ToString() + ":" + root.ToInt64().ToString(),
-        rootNativeRef = root.ToInt64().ToString(),
-        rootPid = rootPid,
-        appId = rootAppName,
-        appName = rootAppName,
-        title = String.IsNullOrWhiteSpace(title) ? rootAppName : title,
-        minimized = IsIconic(root),
-        focused = foreground == hWnd,
-        relationship = root == hWnd ? "root" : "child",
-        relationEvidence = root == hWnd ? "root-self" : "win32-root-owner",
-        userVisible = true,
-        canActivate = true,
-        canClose = true
-      });
-      return true;
-    }, IntPtr.Zero);
-    return rows;
-  }
-}
-'@
-[EypcWindowApi]::ListWindows() | ConvertTo-Json -Compress -Depth 4
-`
-
-const WINDOWS_ACTIVATE_SCRIPT = String.raw`
-$ErrorActionPreference = 'Stop'
-Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-public static class EypcWindowActivator {
-  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
-  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
-  [DllImport("user32.dll")] public static extern IntPtr GetLastActivePopup(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
-  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
-  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-  static bool HasUserBounds(IntPtr hWnd) {
-    RECT rect;
-    return GetWindowRect(hWnd, out rect) && rect.Right - rect.Left > 1 && rect.Bottom - rect.Top > 1;
-  }
-  public static bool IsActionableMember(IntPtr hWnd) {
-    if (!IsWindow(hWnd) || !IsWindowVisible(hWnd) || GetAncestor(hWnd, 2) != hWnd || !HasUserBounds(hWnd)) return false;
-    try { int cloaked = 0; if (DwmGetWindowAttribute(hWnd, 14, out cloaked, 4) == 0 && cloaked != 0) return false; } catch {}
-    var exStyle = unchecked((uint)GetWindowLong(hWnd, -20));
-    return (exStyle & 0x08000000) == 0 && (exStyle & 0x00000020) == 0;
-  }
-  public static bool IsActionableTopLevel(IntPtr hWnd) {
-    if (!IsActionableMember(hWnd)) return false;
-    var exStyle = unchecked((uint)GetWindowLong(hWnd, -20));
-    var appWindow = (exStyle & 0x00040000) != 0;
-    if ((exStyle & 0x00000080) != 0 && !appWindow) return false;
-    return true;
-  }
-  public static IntPtr ResolveActivationTarget(IntPtr root) {
-    var candidate = root;
-    for (var depth = 0; depth < 32; depth += 1) {
-      var popup = GetLastActivePopup(candidate);
-      if (popup == IntPtr.Zero || popup == candidate) break;
-      candidate = popup;
-      if (IsWindowVisible(candidate)) break;
-    }
-    return IsWindow(candidate) && IsWindowVisible(candidate) ? candidate : root;
-  }
-}
-'@
-$debugTrace = [string]::Equals([Environment]::GetEnvironmentVariable('EYPC_WINDOW_DEBUG_TRACE'), '1', [System.StringComparison]::Ordinal)
-$expectedInstanceId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_INSTANCE_ID')
-$expectedAppId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_TARGET_APP_ID')
-$trace = New-Object System.Collections.Generic.List[object]
-function Add-EypcTrace([string] $stage, [string] $outcome, [string] $detail = '') {
-  if ($debugTrace -and $trace.Count -lt 16) {
-    $entry = @{ stage = $stage; outcome = $outcome }
-    if ($detail) { $entry.detail = $detail }
-    [void]$trace.Add([pscustomobject]$entry)
-  }
-}
-function Write-EypcOutcome([string] $outcome, [string] $reasonCode = '', [string] $instanceId = '') {
-  $payload = @{ outcome = $outcome }
-  if ($reasonCode) { $payload.reasonCode = $reasonCode }
-  if ($instanceId) { $payload.instanceId = $instanceId }
-  if ($debugTrace) { $payload.trace = @($trace.ToArray()) }
-  $payload | ConvertTo-Json -Compress -Depth 4
-}
-$handle = [IntPtr]::new(__EYPC_WINDOW_HANDLE__)
-if (-not [EypcWindowActivator]::IsActionableTopLevel($handle)) {
-  Add-EypcTrace 'target' 'not-found'
-  Write-EypcOutcome 'not-found'
-  exit 0
-}
-[uint32]$ownerPid = 0
-if ([EypcWindowActivator]::GetWindowThreadProcessId($handle, [ref]$ownerPid) -eq 0 -or $ownerPid -le 0) {
-  Add-EypcTrace 'target' 'unavailable' 'instance-mismatch'
-  Write-EypcOutcome 'not-found' 'identity-unavailable'
-  exit 0
-}
-try { $ownerAppId = (Get-Process -Id $ownerPid -ErrorAction Stop).ProcessName } catch {
-  Add-EypcTrace 'process' 'not-found'
-  Write-EypcOutcome 'not-found'
-  exit 0
-}
-$instanceId = 'win32:' + [string]$ownerPid + ':' + [string]$handle.ToInt64()
-$appMatches = -not $expectedAppId -or [string]::Equals($expectedAppId, $ownerAppId, [System.StringComparison]::OrdinalIgnoreCase)
-$instanceMatches = -not $expectedInstanceId -or [string]::Equals($expectedInstanceId, $instanceId, [System.StringComparison]::Ordinal)
-if (-not $appMatches -or -not $instanceMatches) {
-  Add-EypcTrace 'target' 'not-found' 'instance-mismatch'
-  Write-EypcOutcome 'not-found' 'instance-mismatch'
-  exit 0
-}
-Add-EypcTrace 'target' 'ok' 'instance-match'
-$activationHandle = [EypcWindowActivator]::ResolveActivationTarget($handle)
-if (-not [EypcWindowActivator]::IsActionableMember($activationHandle)) {
-  Add-EypcTrace 'target' 'not-found'
-  Write-EypcOutcome 'not-found' 'instance-mismatch'
-  exit 0
-}
-$activationRoot = [EypcWindowActivator]::GetAncestor($activationHandle, 3)
-if ($activationRoot -eq [IntPtr]::Zero) { $activationRoot = $activationHandle }
-[uint32]$activationPid = 0
-[void][EypcWindowActivator]::GetWindowThreadProcessId($activationHandle, [ref]$activationPid)
-try { $activationAppId = (Get-Process -Id $activationPid -ErrorAction Stop).ProcessName } catch {
-  Write-EypcOutcome 'not-found' 'identity-unavailable'
-  exit 0
-}
-if ($activationRoot -ne $handle -or -not [string]::Equals($ownerAppId, $activationAppId, [System.StringComparison]::OrdinalIgnoreCase)) {
-  Add-EypcTrace 'target' 'not-found' 'instance-mismatch'
-  Write-EypcOutcome 'not-found' 'instance-mismatch'
-  exit 0
-}
-if ([EypcWindowActivator]::IsIconic($activationHandle)) {
-  [void][EypcWindowActivator]::ShowWindow($activationHandle, 9)
-  if ([EypcWindowActivator]::IsIconic($activationHandle)) {
-    Add-EypcTrace 'restore' 'failed'
-    Write-EypcOutcome 'failed'
-    exit 0
-  }
-  Add-EypcTrace 'restore' 'ok'
-} else {
-  Add-EypcTrace 'restore' 'skipped'
-}
-if ([EypcWindowActivator]::SetForegroundWindow($activationHandle)) {
-  [System.Threading.Thread]::Sleep(20)
-  $foreground = [EypcWindowActivator]::GetForegroundWindow()
-  $foregroundRoot = if ($foreground -eq [IntPtr]::Zero) { [IntPtr]::Zero } else { [EypcWindowActivator]::GetAncestor($foreground, 3) }
-  if ($foregroundRoot -eq [IntPtr]::Zero) { $foregroundRoot = $foreground }
-  if ($foregroundRoot -eq $handle) {
-    Add-EypcTrace 'foreground' 'ok' 'root-family-match'
-    Write-EypcOutcome 'activated' '' $instanceId
-  } else {
-    Add-EypcTrace 'verify' 'failed' 'instance-mismatch'
-    Write-EypcOutcome 'focus-denied' 'instance-mismatch'
-  }
-} else {
-  Add-EypcTrace 'foreground' 'denied'
-  Write-EypcOutcome 'focus-denied'
-}
-`
-
-const WINDOWS_ACTIVATE_MEMBER_SCRIPT = String.raw`
-$ErrorActionPreference = 'Stop'
-Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-public static class EypcWindowMemberActivator {
-  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
-  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
-  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
-  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
-  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-  public static bool IsVisibleActionable(IntPtr hWnd) {
-    RECT rect;
-    if (!IsWindow(hWnd) || !IsWindowVisible(hWnd) || GetAncestor(hWnd, 2) != hWnd || !GetWindowRect(hWnd, out rect) || rect.Right - rect.Left <= 1 || rect.Bottom - rect.Top <= 1) return false;
-    try { int cloaked = 0; if (DwmGetWindowAttribute(hWnd, 14, out cloaked, 4) == 0 && cloaked != 0) return false; } catch {}
-    var exStyle = unchecked((uint)GetWindowLong(hWnd, -20));
-    return (exStyle & 0x08000000) == 0 && (exStyle & 0x00000020) == 0;
-  }
-  public static bool IsActionableRoot(IntPtr hWnd) {
-    if (!IsVisibleActionable(hWnd)) return false;
-    var exStyle = unchecked((uint)GetWindowLong(hWnd, -20));
-    var appWindow = (exStyle & 0x00040000) != 0;
-    return (exStyle & 0x00000080) == 0 || appWindow;
-  }
-}
-'@
-$debugTrace = [string]::Equals([Environment]::GetEnvironmentVariable('EYPC_WINDOW_DEBUG_TRACE'), '1', [System.StringComparison]::Ordinal)
-$expectedAppId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_TARGET_APP_ID')
-$expectedRootInstanceId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_INSTANCE_ID')
-$expectedMemberInstanceId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_MEMBER_INSTANCE_ID')
-$trace = New-Object System.Collections.Generic.List[object]
-function Add-EypcTrace([string] $stage, [string] $outcome, [string] $detail = '') {
-  if ($debugTrace -and $trace.Count -lt 16) {
-    $entry = @{ stage = $stage; outcome = $outcome }
-    if ($detail) { $entry.detail = $detail }
-    [void]$trace.Add([pscustomobject]$entry)
-  }
-}
-function Write-EypcOutcome([string] $outcome, [string] $reasonCode = '', [string] $rootInstanceId = '', [string] $memberInstanceId = '') {
-  $payload = @{ outcome = $outcome }
-  if ($reasonCode) { $payload.reasonCode = $reasonCode }
-  if ($rootInstanceId) { $payload.instanceId = $rootInstanceId }
-  if ($memberInstanceId) { $payload.memberInstanceId = $memberInstanceId }
-  if ($debugTrace) { $payload.trace = @($trace.ToArray()) }
-  $payload | ConvertTo-Json -Compress -Depth 4
-}
-$root = [IntPtr]::new(__EYPC_WINDOW_HANDLE__)
-$member = [IntPtr]::new(__EYPC_WINDOW_MEMBER_HANDLE__)
-if (-not [EypcWindowMemberActivator]::IsActionableRoot($root) -or -not [EypcWindowMemberActivator]::IsVisibleActionable($member)) {
-  Add-EypcTrace 'target' 'not-found'
-  Write-EypcOutcome 'not-found' 'member-mismatch'
-  exit 0
-}
-$verifiedRoot = [EypcWindowMemberActivator]::GetAncestor($member, 3)
-if ($verifiedRoot -eq [IntPtr]::Zero) { $verifiedRoot = $member }
-if ($verifiedRoot -ne $root) {
-  Add-EypcTrace 'target' 'not-found' 'instance-mismatch'
-  Write-EypcOutcome 'not-found' 'member-mismatch'
-  exit 0
-}
-[uint32]$rootPid = 0
-[uint32]$memberPid = 0
-[void][EypcWindowMemberActivator]::GetWindowThreadProcessId($root, [ref]$rootPid)
-[void][EypcWindowMemberActivator]::GetWindowThreadProcessId($member, [ref]$memberPid)
-try {
-  $rootAppId = (Get-Process -Id $rootPid -ErrorAction Stop).ProcessName
-  $memberAppId = (Get-Process -Id $memberPid -ErrorAction Stop).ProcessName
-} catch {
-  Write-EypcOutcome 'not-found' 'identity-unavailable'
-  exit 0
-}
-$rootInstanceId = 'win32:' + [string]$rootPid + ':' + [string]$root.ToInt64()
-$memberInstanceId = 'win32:' + [string]$memberPid + ':' + [string]$member.ToInt64()
-$identityMatches = [string]::Equals($rootAppId, $memberAppId, [System.StringComparison]::OrdinalIgnoreCase) -and
-  (-not $expectedAppId -or [string]::Equals($expectedAppId, $rootAppId, [System.StringComparison]::OrdinalIgnoreCase)) -and
-  (-not $expectedRootInstanceId -or [string]::Equals($expectedRootInstanceId, $rootInstanceId, [System.StringComparison]::Ordinal)) -and
-  (-not $expectedMemberInstanceId -or [string]::Equals($expectedMemberInstanceId, $memberInstanceId, [System.StringComparison]::Ordinal))
-if (-not $identityMatches) {
-  Add-EypcTrace 'target' 'not-found' 'instance-mismatch'
-  Write-EypcOutcome 'not-found' 'member-mismatch'
-  exit 0
-}
-Add-EypcTrace 'target' 'ok' 'root-family-match'
-if ([EypcWindowMemberActivator]::IsIconic($member)) { [void][EypcWindowMemberActivator]::ShowWindow($member, 9) }
-if (-not [EypcWindowMemberActivator]::SetForegroundWindow($member)) {
-  Add-EypcTrace 'foreground' 'denied'
-  Write-EypcOutcome 'focus-denied'
-  exit 0
-}
-[System.Threading.Thread]::Sleep(20)
-$foreground = [EypcWindowMemberActivator]::GetForegroundWindow()
-$foregroundRoot = if ($foreground -eq [IntPtr]::Zero) { [IntPtr]::Zero } else { [EypcWindowMemberActivator]::GetAncestor($foreground, 3) }
-if ($foregroundRoot -eq [IntPtr]::Zero) { $foregroundRoot = $foreground }
-if ($foreground -eq $member -and $foregroundRoot -eq $root) {
-  Add-EypcTrace 'verify' 'ok' 'root-family-match'
-  Write-EypcOutcome 'activated' '' $rootInstanceId $memberInstanceId
-} else {
-  Add-EypcTrace 'verify' 'failed' 'focus-state-mismatch'
-  Write-EypcOutcome 'focus-denied' 'member-mismatch'
-}
-`
-
-const WINDOWS_TOPMOST_SCRIPT = String.raw`
-$ErrorActionPreference = 'Stop'
-Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-public static class EypcWindowTopmost {
-  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int command);
-  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
-  [DllImport("user32.dll")] public static extern IntPtr GetLastActivePopup(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
-  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
-  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-  public static bool IsActionableTopLevel(IntPtr hWnd) {
-    RECT rect;
-    if (!IsWindow(hWnd) || !IsWindowVisible(hWnd) || GetAncestor(hWnd, 2) != hWnd || !GetWindowRect(hWnd, out rect) || rect.Right - rect.Left <= 1 || rect.Bottom - rect.Top <= 1) return false;
-    try { int cloaked = 0; if (DwmGetWindowAttribute(hWnd, 14, out cloaked, 4) == 0 && cloaked != 0) return false; } catch {}
-    var exStyle = unchecked((uint)GetWindowLong(hWnd, -20));
-    var appWindow = (exStyle & 0x00040000) != 0;
-    if ((exStyle & 0x00000080) != 0 && !appWindow) return false;
-    if ((exStyle & 0x08000000) != 0 || (exStyle & 0x00000020) != 0) return false;
-    return true;
-  }
-  public static IntPtr ResolveActivationTarget(IntPtr root) {
-    var candidate = root;
-    for (var depth = 0; depth < 32; depth += 1) {
-      var popup = GetLastActivePopup(candidate);
-      if (popup == IntPtr.Zero || popup == candidate) break;
-      candidate = popup;
-      if (IsWindowVisible(candidate)) break;
-    }
-    return IsWindow(candidate) && IsWindowVisible(candidate) ? candidate : root;
-  }
-}
-'@
-$debugTrace = [string]::Equals([Environment]::GetEnvironmentVariable('EYPC_WINDOW_DEBUG_TRACE'), '1', [System.StringComparison]::Ordinal)
-$expectedInstanceId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_INSTANCE_ID')
-$expectedAppId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_TARGET_APP_ID')
-$trace = New-Object System.Collections.Generic.List[object]
-function Add-EypcTrace([string] $stage, [string] $outcome, [string] $detail = '') {
-  if ($debugTrace -and $trace.Count -lt 16) {
-    $entry = @{ stage = $stage; outcome = $outcome }
-    if ($detail) { $entry.detail = $detail }
-    [void]$trace.Add([pscustomobject]$entry)
-  }
-}
-function Write-EypcOutcome([string] $outcome, [string] $reasonCode = '', [string] $instanceId = '') {
-  $payload = @{ outcome = $outcome }
-  if ($reasonCode) { $payload.reasonCode = $reasonCode }
-  if ($instanceId) { $payload.instanceId = $instanceId }
-  if ($debugTrace) { $payload.trace = @($trace.ToArray()) }
-  $payload | ConvertTo-Json -Compress -Depth 4
-}
-$handle = [IntPtr]::new(__EYPC_WINDOW_HANDLE__)
-if (-not [EypcWindowTopmost]::IsActionableTopLevel($handle)) {
-  Add-EypcTrace 'target' 'not-found'
-  Write-EypcOutcome 'not-found'
-  exit 0
-}
-[uint32]$ownerPid = 0
-if ([EypcWindowTopmost]::GetWindowThreadProcessId($handle, [ref]$ownerPid) -eq 0 -or $ownerPid -le 0) {
-  Add-EypcTrace 'target' 'unavailable' 'instance-mismatch'
-  Write-EypcOutcome 'not-found' 'identity-unavailable'
-  exit 0
-}
-try { $ownerAppId = (Get-Process -Id $ownerPid -ErrorAction Stop).ProcessName } catch {
-  Add-EypcTrace 'process' 'not-found'
-  Write-EypcOutcome 'not-found'
-  exit 0
-}
-$instanceId = 'win32:' + [string]$ownerPid + ':' + [string]$handle.ToInt64()
-$appMatches = -not $expectedAppId -or [string]::Equals($expectedAppId, $ownerAppId, [System.StringComparison]::OrdinalIgnoreCase)
-$instanceMatches = -not $expectedInstanceId -or [string]::Equals($expectedInstanceId, $instanceId, [System.StringComparison]::Ordinal)
-if (-not $appMatches -or -not $instanceMatches) {
-  Add-EypcTrace 'target' 'not-found' 'instance-mismatch'
-  Write-EypcOutcome 'not-found' 'instance-mismatch'
-  exit 0
-}
-Add-EypcTrace 'target' 'ok' 'instance-match'
-$activationHandle = [EypcWindowTopmost]::ResolveActivationTarget($handle)
-if ([EypcWindowTopmost]::IsIconic($activationHandle)) {
-  [void][EypcWindowTopmost]::ShowWindow($activationHandle, 9)
-  if ([EypcWindowTopmost]::IsIconic($activationHandle)) {
-    Add-EypcTrace 'restore' 'failed'
-    Write-EypcOutcome 'failed'
-    exit 0
-  }
-  Add-EypcTrace 'restore' 'ok'
-} else {
-  Add-EypcTrace 'restore' 'skipped'
-}
-# SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW; HWND_TOPMOST is -1.
-if (-not [EypcWindowTopmost]::SetWindowPos($activationHandle, [IntPtr]::new(-1), 0, 0, 0, 0, 0x0043)) {
-  Add-EypcTrace 'topmost' 'failed'
-  Write-EypcOutcome 'failed'
-  exit 0
-}
-Add-EypcTrace 'topmost' 'ok'
-if ([EypcWindowTopmost]::SetForegroundWindow($activationHandle)) {
-  [System.Threading.Thread]::Sleep(20)
-  $foreground = [EypcWindowTopmost]::GetForegroundWindow()
-  $foregroundRoot = if ($foreground -eq [IntPtr]::Zero) { [IntPtr]::Zero } else { [EypcWindowTopmost]::GetAncestor($foreground, 3) }
-  if ($foregroundRoot -eq [IntPtr]::Zero) { $foregroundRoot = $foreground }
-  if ($foregroundRoot -eq $handle) {
-    Add-EypcTrace 'foreground' 'ok' 'root-family-match'
-    Write-EypcOutcome 'activated' '' $instanceId
-  } else {
-    Add-EypcTrace 'verify' 'failed' 'instance-mismatch'
-    Write-EypcOutcome 'focus-denied' 'instance-mismatch'
-  }
-} else {
-  Add-EypcTrace 'foreground' 'denied'
-  Write-EypcOutcome 'focus-denied'
-}
-`
-
-const WINDOWS_CLOSE_SCRIPT = String.raw`
-$ErrorActionPreference = 'Stop'
-Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-public static class EypcWindowCloser {
-  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam);
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
-  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
-  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
-  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-  public static bool IsAdmittedWindow(IntPtr hWnd) {
-    RECT rect;
-    if (!IsWindow(hWnd) || !IsWindowVisible(hWnd) || GetAncestor(hWnd, 2) != hWnd || !GetWindowRect(hWnd, out rect) || rect.Right - rect.Left <= 1 || rect.Bottom - rect.Top <= 1) return false;
-    try { int cloaked = 0; if (DwmGetWindowAttribute(hWnd, 14, out cloaked, 4) == 0 && cloaked != 0) return false; } catch {}
-    var exStyle = unchecked((uint)GetWindowLong(hWnd, -20));
-    return (exStyle & 0x08000000) == 0 && (exStyle & 0x00000020) == 0;
-  }
-  public static bool IsAdmittedRoot(IntPtr hWnd) {
-    if (!IsAdmittedWindow(hWnd)) return false;
-    var exStyle = unchecked((uint)GetWindowLong(hWnd, -20));
-    var appWindow = (exStyle & 0x00040000) != 0;
-    return (exStyle & 0x00000080) == 0 || appWindow;
-  }
-}
-'@
-$expectedInstanceId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_INSTANCE_ID')
-$expectedAppId = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_TARGET_APP_ID')
-$expectedRootRef = [Environment]::GetEnvironmentVariable('EYPC_WINDOW_ROOT_REF')
-$handle = [IntPtr]::new(__EYPC_WINDOW_HANDLE__)
-if (-not [EypcWindowCloser]::IsAdmittedWindow($handle)) {
-  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
-  exit 0
-}
-$rootHandle = [EypcWindowCloser]::GetAncestor($handle, 3)
-if ($rootHandle -eq [IntPtr]::Zero) { $rootHandle = $handle }
-if ($expectedRootRef) {
-  $expectedRootHandle = [IntPtr]::new([long]$expectedRootRef)
-  if ($rootHandle -ne $expectedRootHandle) {
-    @{ outcome = 'not-found' } | ConvertTo-Json -Compress
-    exit 0
-  }
-} elseif ($rootHandle -ne $handle) {
-  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
-  exit 0
-}
-if (-not [EypcWindowCloser]::IsAdmittedRoot($rootHandle)) {
-  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
-  exit 0
-}
-[uint32]$ownerPid = 0
-if ([EypcWindowCloser]::GetWindowThreadProcessId($handle, [ref]$ownerPid) -eq 0 -or $ownerPid -le 0) {
-  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
-  exit 0
-}
-try { $ownerAppId = (Get-Process -Id $ownerPid -ErrorAction Stop).ProcessName } catch {
-  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
-  exit 0
-}
-[uint32]$rootOwnerPid = 0
-[void][EypcWindowCloser]::GetWindowThreadProcessId($rootHandle, [ref]$rootOwnerPid)
-try { $rootOwnerAppId = (Get-Process -Id $rootOwnerPid -ErrorAction Stop).ProcessName } catch {
-  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
-  exit 0
-}
-$instanceId = 'win32:' + [string]$ownerPid + ':' + [string]$handle.ToInt64()
-if (($expectedInstanceId -and -not [string]::Equals($expectedInstanceId, $instanceId, [System.StringComparison]::Ordinal)) -or
-    -not [string]::Equals($rootOwnerAppId, $ownerAppId, [System.StringComparison]::OrdinalIgnoreCase) -or
-    ($expectedAppId -and -not [string]::Equals($expectedAppId, $ownerAppId, [System.StringComparison]::OrdinalIgnoreCase))) {
-  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
-  exit 0
-}
-if ([EypcWindowCloser]::PostMessage($handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
-  @{ outcome = 'closed' } | ConvertTo-Json -Compress
-} else {
-  @{ outcome = 'close-denied' } | ConvertTo-Json -Compress
-}
-`
-
-const WINDOWS_TERMINATE_SCRIPT = String.raw`
-$ErrorActionPreference = 'Stop'
-$pidValue = __EYPC_WINDOW_PID__
-try {
-  $proc = Get-Process -Id $pidValue -ErrorAction Stop
-  Stop-Process -Id $pidValue -Force -ErrorAction Stop
-  @{ outcome = 'terminated' } | ConvertTo-Json -Compress
-} catch {
-  @{ outcome = 'not-found' } | ConvertTo-Json -Compress
-}
-`
-
-/** AX-first inventory. Core Graphics only corroborates exact identity and user-visible bounds. */
-const MACOS_AX_WINDOW_LIST_SCRIPT = String.raw`
-ObjC.import('Foundation')
-ObjC.import('AppKit')
-ObjC.import('ApplicationServices')
-ObjC.import('CoreGraphics')
-let exactAxApiAvailable = false
-try {
-  ObjC.bindFunction('AXUIElementCreateApplication', ['id', ['int']])
-  ObjC.bindFunction('AXUIElementCopyAttributeValue', ['int', ['id', 'id', 'id *']])
-  ObjC.bindFunction('_AXUIElementGetWindow', ['int', ['id', 'uint32_t *']])
-  exactAxApiAvailable = true
-} catch (error) {}
-function attempt(callback, fallback) {
-  try { return callback() } catch (error) { return fallback }
-}
-function asText(value) { return String(value || '').trim() }
-const selfPid = $.NSProcessInfo.processInfo.processIdentifier
-const excludedPid = __EYPC_HOST_PID__
-const excludedParentPid = __EYPC_PARENT_PID__
-const runningApps = attempt(() => $.NSWorkspace.sharedWorkspace.runningApplications, null)
-const cgRaw = attempt(() => ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID))), [])
-const cgRows = Array.isArray(cgRaw) ? cgRaw : []
-const cgSurfaceKeys = {}
-for (const item of cgRows) {
-  if (!item || typeof item !== 'object') continue
-  const layer = Math.trunc(Number(item.kCGWindowLayer || 0))
-  const pid = Math.trunc(Number(item.kCGWindowOwnerPID || 0))
-  const windowNumber = Math.trunc(Number(item.kCGWindowNumber || 0))
-  const alpha = Number(item.kCGWindowAlpha)
-  const bounds = item.kCGWindowBounds && typeof item.kCGWindowBounds === 'object' ? item.kCGWindowBounds : {}
-  const width = Number(bounds.Width || bounds.width || 0)
-  const height = Number(bounds.Height || bounds.height || 0)
-  if (layer !== 0 || pid <= 0 || windowNumber <= 0 || (Number.isFinite(alpha) && alpha <= 0) || width <= 1 || height <= 1) continue
-  cgSurfaceKeys[String(pid) + ':' + String(windowNumber)] = true
-}
-const rows = []
-const seen = {}
-let permissionDenied = false
-let admittedAxCandidates = 0
-function copyAxAttributeResult(element, name) {
-  if (!exactAxApiAvailable || !element) return { error: -1, value: null }
-  try {
-    const output = Ref()
-    const error = Number($.AXUIElementCopyAttributeValue(element, $.NSString.stringWithString(name), output))
-    if (error === -25211 || error === -25204) permissionDenied = true
-    return { error, value: error === 0 ? output[0] : null }
-  } catch (error) { return { error: -1, value: null } }
-}
-function copyAxAttribute(element, name) {
-  return copyAxAttributeResult(element, name).value
-}
-function exactCgWindowNumber(element) {
-  if (!exactAxApiAvailable || !element) return 0
-  try {
-    const output = Ref()
-    if (Number($._AXUIElementGetWindow(element, output)) !== 0) return 0
-    return Math.trunc(Number(output[0] || 0))
-  } catch (error) { return 0 }
-}
-function axText(element, name) {
-  const value = copyAxAttribute(element, name)
-  return asText(attempt(() => value ? ObjC.unwrap(value) : '', ''))
-}
-function isAdmittedWindowRole(role, subrole) {
-  if (role === 'AXSheet' || role === 'AXDialog') return true
-  if (role !== 'AXWindow') return false
-  return subrole === 'AXStandardWindow'
-    || subrole === 'AXDialog'
-    || subrole === 'AXSystemDialog'
-    || subrole === 'AXFloatingWindow'
-}
-const appCount = runningApps ? Math.max(0, Math.trunc(Number(runningApps.count || 0))) : 0
-for (let p = 0; p < appCount; p += 1) {
-  const running = attempt(() => runningApps.objectAtIndex(p), null)
-  const pid = Math.trunc(Number(attempt(() => running.processIdentifier, 0)))
-  if (!Number.isInteger(pid) || pid <= 0 || pid === selfPid || pid === excludedPid || pid === excludedParentPid) continue
-  if (!running || attempt(() => running.terminated === true, false) || Number(attempt(() => running.activationPolicy, -1)) !== 0) continue
-  const appName = asText(attempt(() => running.localizedName ? ObjC.unwrap(running.localizedName) : '', ''))
-  if (!appName) continue
-  const appId = asText(attempt(() => running.bundleIdentifier ? ObjC.unwrap(running.bundleIdentifier) : appName, appName)) || appName
-  const appElement = attempt(() => $.AXUIElementCreateApplication(pid), null)
-  const windowsResult = copyAxAttributeResult(appElement, 'AXWindows')
-  const windows = windowsResult.value
-  const focusedWindow = copyAxAttribute(appElement, 'AXFocusedWindow')
-  const focusedWindowNumber = exactCgWindowNumber(focusedWindow)
-  const count = windows ? Math.max(0, Math.trunc(Number(windows.count || 0))) : 0
-  for (let index = 0; index < count; index += 1) {
-    const win = attempt(() => windows.objectAtIndex(index), null)
-    const windowNumber = exactCgWindowNumber(win)
-    if (!win || windowNumber <= 0) continue
-    const role = axText(win, 'AXRole')
-    const subrole = axText(win, 'AXSubrole')
-    if (!isAdmittedWindowRole(role, subrole)) continue
-    admittedAxCandidates += 1
-    if (!cgSurfaceKeys[String(pid) + ':' + String(windowNumber)]) continue
-    const title = axText(win, 'AXTitle')
-    const minimizedValue = copyAxAttribute(win, 'AXMinimized')
-    const minimized = attempt(() => minimizedValue ? Boolean(ObjC.unwrap(minimizedValue)) : false, false)
-    const containingWindow = copyAxAttribute(win, 'AXWindow')
-    const topLevelElement = copyAxAttribute(win, 'AXTopLevelUIElement')
-    const parentElement = copyAxAttribute(win, 'AXParent')
-    const topLevelWindowNumber = exactCgWindowNumber(topLevelElement)
-    const containingWindowNumber = exactCgWindowNumber(containingWindow)
-    const parentWindowNumber = exactCgWindowNumber(parentElement)
-    const relatedWindowNumbers = [parentWindowNumber, topLevelWindowNumber, containingWindowNumber]
-    const rootWindowNumber = relatedWindowNumbers.find((candidate) => candidate > 0 && candidate !== windowNumber) || windowNumber
-    if (!cgSurfaceKeys[String(pid) + ':' + String(rootWindowNumber)]) continue
-    const nativeRef = String(pid) + ':0:' + String(windowNumber)
-    const key = String(pid) + ':' + String(windowNumber)
-    if (seen[key]) continue
-    seen[key] = true
-    rows.push({
-      instanceId: 'darwin:' + String(pid) + ':' + String(windowNumber),
-      nativeRef,
-      pid,
-      rootInstanceId: 'darwin:' + String(pid) + ':' + String(rootWindowNumber),
-      rootNativeRef: String(pid) + ':0:' + String(rootWindowNumber),
-      rootPid: pid,
-      appId,
-      appName,
-      title: title || appName,
-      minimized: minimized === true,
-      focused: focusedWindowNumber === windowNumber,
-      relationship: rootWindowNumber === windowNumber ? 'root' : 'child',
-      relationEvidence: rootWindowNumber === windowNumber ? 'root-self' : 'macos-ax-top-level',
-      userVisible: true,
-      canActivate: true,
-      canClose: Boolean(copyAxAttribute(win, 'AXCloseButton'))
-    })
-  }
-}
-JSON.stringify({
-  windows: rows,
-  permissionDenied,
-  identityCorroborationMissing: admittedAxCandidates > 0 && rows.length === 0,
-  screenRecordingLikelyMissing: admittedAxCandidates > 0 && rows.length === 0
-})
-`
-
-function macosActivateWindowScript(pid, cgWindowNumber, memberCgWindowNumber = 0) {
-  return String.raw`
-ObjC.import('Foundation')
-ObjC.import('CoreGraphics')
-ObjC.import('ApplicationServices')
-ObjC.import('AppKit')
-const processId = ${pid}
-const cgWindowNumber = ${cgWindowNumber}
-const memberCgWindowNumber = ${memberCgWindowNumber}
-const instanceId = 'darwin:' + String(processId) + ':' + String(cgWindowNumber)
-const memberInstanceId = memberCgWindowNumber > 0 ? 'darwin:' + String(processId) + ':' + String(memberCgWindowNumber) : ''
-let exactAxApiAvailable = false
-try {
-  ObjC.bindFunction('AXUIElementCreateApplication', ['id', ['int']])
-  ObjC.bindFunction('AXUIElementCopyAttributeValue', ['int', ['id', 'id', 'id *']])
-  ObjC.bindFunction('AXUIElementSetAttributeValue', ['int', ['id', 'id', 'id']])
-  ObjC.bindFunction('AXUIElementPerformAction', ['int', ['id', 'id']])
-  ObjC.bindFunction('_AXUIElementGetWindow', ['int', ['id', 'uint32_t *']])
-  exactAxApiAvailable = true
-} catch (error) {}
-function environmentValue(name) {
-  const value = $.NSProcessInfo.processInfo.environment.objectForKey(name)
-  return value ? String(ObjC.unwrap(value) || '') : ''
-}
-const debugTrace = environmentValue('EYPC_WINDOW_DEBUG_TRACE') === '1'
-const trace = []
-let activationReasonCode = ''
-function addTrace(stage, outcome, detail) {
-  if (!debugTrace || trace.length >= 16) return
-  trace.push(detail ? { stage, outcome, detail } : { stage, outcome })
-}
-function emit(outcome) {
-  const payload = { outcome }
-  if (activationReasonCode) payload.reasonCode = activationReasonCode
-  if (outcome === 'activated') payload.instanceId = instanceId
-  if (outcome === 'activated' && memberInstanceId) payload.memberInstanceId = memberInstanceId
-  if (debugTrace) payload.trace = trace
-  return JSON.stringify(payload)
-}
-const expectedApp = normalizeAppIdentity(environmentValue('EYPC_WINDOW_TARGET_APP_ID'))
-const expectedInstanceId = environmentValue('EYPC_WINDOW_INSTANCE_ID')
-const expectedMemberInstanceId = environmentValue('EYPC_WINDOW_MEMBER_INSTANCE_ID')
-function axAttributeName(name) {
-  return $.NSString.stringWithString(name)
-}
-function copyAxAttribute(element, name) {
-  if (!exactAxApiAvailable || !element) return { error: -1, value: null }
-  try {
-    const output = Ref()
-    const error = Number($.AXUIElementCopyAttributeValue(element, axAttributeName(name), output))
-    return { error, value: error === 0 ? output[0] : null }
-  } catch (error) {
-    return { error: -1, value: null }
-  }
-}
-function setAxAttribute(element, name, value) {
-  if (!exactAxApiAvailable || !element) return false
-  try { return Number($.AXUIElementSetAttributeValue(element, axAttributeName(name), value)) === 0 } catch (error) { return false }
-}
-function performAxAction(element, name) {
-  if (!exactAxApiAvailable || !element) return false
-  try { return Number($.AXUIElementPerformAction(element, axAttributeName(name))) === 0 } catch (error) { return false }
-}
-function exactCgWindowNumber(element) {
-  if (!exactAxApiAvailable || !element) return 0
-  try {
-    const output = Ref()
-    if (Number($._AXUIElementGetWindow(element, output)) !== 0) return 0
-    return Math.trunc(Number(output[0] || 0))
-  } catch (error) {
-    return 0
-  }
-}
-function rootCgWindowNumber(element) {
-  if (!element) return 0
-  const containing = copyAxAttribute(element, 'AXWindow')
-  const topLevel = copyAxAttribute(element, 'AXTopLevelUIElement')
-  const parent = copyAxAttribute(element, 'AXParent')
-  const own = exactCgWindowNumber(element)
-  const related = [
-    parent.error === 0 && parent.value ? exactCgWindowNumber(parent.value) : 0,
-    topLevel.error === 0 && topLevel.value ? exactCgWindowNumber(topLevel.value) : 0,
-    containing.error === 0 && containing.value ? exactCgWindowNumber(containing.value) : 0
-  ]
-  return related.find((candidate) => candidate > 0 && candidate !== own) || own
-}
-function axText(element, name) {
-  const copied = copyAxAttribute(element, name)
-  if (copied.error !== 0 || !copied.value) return ''
-  try { return String(ObjC.unwrap(copied.value) || '').trim() } catch (error) { return '' }
-}
-function isAdmittedAxWindow(element) {
-  const role = axText(element, 'AXRole')
-  const subrole = axText(element, 'AXSubrole')
-  if (role === 'AXSheet' || role === 'AXDialog') return true
-  return role === 'AXWindow' && (subrole === 'AXStandardWindow' || subrole === 'AXDialog' || subrole === 'AXSystemDialog' || subrole === 'AXFloatingWindow')
-}
-function resolveRootAxTarget() {
-  if (!exactAxApiAvailable || cgWindowNumber <= 0) return { outcome: 'unavailable' }
-  let app = null
-  try { app = $.AXUIElementCreateApplication(processId) } catch (error) {}
-  if (!app) return { outcome: 'unavailable' }
-  const copied = copyAxAttribute(app, 'AXWindows')
-  if (copied.error !== 0 || !copied.value) return { outcome: 'unavailable' }
-  const family = []
-  let exactRoot = null
-  const count = Math.max(0, Math.trunc(Number(copied.value.count || 0)))
-  for (let index = 0; index < count; index += 1) {
-    let candidate = null
-    try { candidate = copied.value.objectAtIndex(index) } catch (error) {}
-    if (!candidate || !isAdmittedAxWindow(candidate) || rootCgWindowNumber(candidate) !== cgWindowNumber) continue
-    family.push(candidate)
-    if (exactCgWindowNumber(candidate) === cgWindowNumber) exactRoot = candidate
-  }
-  if (!family.length) return { outcome: 'not-found' }
-  if (memberCgWindowNumber > 0) {
-    const exactMember = family.find((candidate) => exactCgWindowNumber(candidate) === memberCgWindowNumber) || null
-    return exactMember ? { outcome: 'matched', app, target: exactMember } : { outcome: 'not-found' }
-  }
-  const focused = copyAxAttribute(app, 'AXFocusedWindow')
-  const focusedTarget = focused.error === 0 && focused.value && rootCgWindowNumber(focused.value) === cgWindowNumber
-    ? focused.value
-    : null
-  return { outcome: 'matched', app, target: focusedTarget || exactRoot || family[0] }
-}
-function rootAxFocused(app) {
-  const focused = copyAxAttribute(app, 'AXFocusedWindow')
-  if (focused.error !== 0 || !focused.value || rootCgWindowNumber(focused.value) !== cgWindowNumber) return false
-  return memberCgWindowNumber <= 0 || exactCgWindowNumber(focused.value) === memberCgWindowNumber
-}
-function validateExactCgTarget(targetWindowNumber) {
-  if (targetWindowNumber <= 0) return { outcome: 'unavailable' }
-  try {
-    const raw = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, $.kCGNullWindowID)))
-    const cgList = Array.isArray(raw) ? raw : []
-    const matches = cgList.filter((item) => {
-      if (!item || typeof item !== 'object') return false
-      if (Math.trunc(Number(item.kCGWindowLayer || 0)) !== 0) return false
-      if (Math.trunc(Number(item.kCGWindowOwnerPID || 0)) !== processId) return false
-      if (Math.trunc(Number(item.kCGWindowNumber || 0)) !== targetWindowNumber) return false
-      const alpha = Number(item.kCGWindowAlpha)
-      if (Number.isFinite(alpha) && alpha <= 0) return false
-      const bounds = item.kCGWindowBounds && typeof item.kCGWindowBounds === 'object' ? item.kCGWindowBounds : {}
-      const width = Number(bounds.Width || bounds.width || 0)
-      const height = Number(bounds.Height || bounds.height || 0)
-      return width > 1 && height > 1
-    })
-    if (matches.length !== 1) return { outcome: matches.length > 1 ? 'ambiguous' : 'not-found' }
-    return { outcome: 'matched' }
-  } catch (error) {
-    return { outcome: 'unavailable' }
-  }
-}
-function activateRootAxTarget(resolved) {
-  addTrace('process', 'ok')
-  addTrace('target', 'ok', 'ax-cg-id-match')
-  const target = resolved.target
-  const app = resolved.app
-  const running = (() => {
-    try { return $.NSRunningApplication.runningApplicationWithProcessIdentifier(processId) } catch (error) { return null }
-  })()
-  if (!running || Boolean(running.terminated)) {
-    addTrace('process', 'not-found')
-    return 'not-found'
-  }
-  const runningBundle = normalizeAppIdentity((() => {
-    try { return running.bundleIdentifier ? ObjC.unwrap(running.bundleIdentifier) : '' } catch (error) { return '' }
-  })())
-  const runningName = normalizeAppIdentity((() => {
-    try { return running.localizedName ? ObjC.unwrap(running.localizedName) : '' } catch (error) { return '' }
-  })())
-  if (expectedApp && expectedApp !== runningBundle && expectedApp !== runningName) {
-    activationReasonCode = 'instance-mismatch'
-    addTrace('target', 'not-found', 'instance-mismatch')
-    return 'not-found'
-  }
-  if (expectedInstanceId && expectedInstanceId !== instanceId) {
-    activationReasonCode = 'instance-mismatch'
-    addTrace('target', 'not-found', 'instance-mismatch')
-    return 'not-found'
-  }
-  if (memberCgWindowNumber > 0 && expectedMemberInstanceId && expectedMemberInstanceId !== memberInstanceId) {
-    activationReasonCode = 'member-mismatch'
-    addTrace('target', 'not-found', 'instance-mismatch')
-    return 'not-found'
-  }
-  const minimized = copyAxAttribute(target, 'AXMinimized')
-  if (minimized.error === 0 && Boolean(ObjC.unwrap(minimized.value))) {
-    if (!setAxAttribute(target, 'AXMinimized', $.NSNumber.numberWithBool(false))) {
-      addTrace('restore', 'failed')
-      return 'failed'
-    }
-    addTrace('restore', 'ok')
-  } else {
-    addTrace('restore', minimized.error === 0 ? 'skipped' : 'unavailable')
-  }
-  let raised = performAxAction(target, 'AXRaise')
-  setAxAttribute(target, 'AXMain', $.NSNumber.numberWithBool(true))
-  let foreground = false
-  try { foreground = Boolean(running.activateWithOptions($.NSApplicationActivateIgnoringOtherApps)) } catch (error) {}
-  $.NSThread.sleepForTimeInterval(0.05)
-  for (let retry = 0; retry < 4; retry += 1) {
-    // Prefer the current member, but verify the containing root so internal surfaces may change.
-    setAxAttribute(app, 'AXFocusedWindow', target)
-    setAxAttribute(app, 'AXMainWindow', target)
-    setAxAttribute(target, 'AXMain', $.NSNumber.numberWithBool(true))
-    setAxAttribute(target, 'AXFocused', $.NSNumber.numberWithBool(true))
-    raised = performAxAction(target, 'AXRaise') || raised
-    try { foreground = Boolean(running.activateWithOptions($.NSApplicationActivateIgnoringOtherApps)) || foreground } catch (error) {}
-    $.NSThread.sleepForTimeInterval(0.06)
-    if (rootAxFocused(app)) {
-      addTrace('foreground', foreground ? 'ok' : 'unavailable')
-      addTrace('raise', raised ? 'ok' : 'unavailable')
-      addTrace('verify', 'ok', 'ax-focused-root-window')
-      return 'activated'
-    }
-  }
-  addTrace('foreground', foreground ? 'ok' : 'unavailable')
-  addTrace('raise', raised ? 'ok' : 'failed')
-  addTrace('verify', 'failed', 'focus-state-mismatch')
-  return 'failed'
-}
-function normalizeAppIdentity(value) {
-  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
-}
-function activate() {
-  if (cgWindowNumber <= 0 || (expectedInstanceId && expectedInstanceId !== instanceId)) {
-    activationReasonCode = cgWindowNumber <= 0 ? 'identity-unavailable' : 'instance-mismatch'
-    addTrace('target', 'unavailable', cgWindowNumber <= 0 ? 'identity-unavailable' : 'instance-mismatch')
-    return cgWindowNumber <= 0 ? 'failed' : 'not-found'
-  }
-  const cgIdentity = validateExactCgTarget(cgWindowNumber)
-  if (cgIdentity.outcome === 'ambiguous') {
-    addTrace('target', 'ambiguous')
-    return 'ambiguous'
-  }
-  if (cgIdentity.outcome === 'not-found') {
-    addTrace('target', 'not-found')
-    return 'not-found'
-  }
-  if (cgIdentity.outcome !== 'matched') {
-    activationReasonCode = 'identity-unavailable'
-    addTrace('target', 'unavailable', 'identity-unavailable')
-    return 'failed'
-  }
-  if (memberCgWindowNumber > 0) {
-    const memberIdentity = validateExactCgTarget(memberCgWindowNumber)
-    if (memberIdentity.outcome !== 'matched') {
-      activationReasonCode = memberIdentity.outcome === 'not-found' ? 'member-mismatch' : 'identity-unavailable'
-      addTrace('target', memberIdentity.outcome === 'not-found' ? 'not-found' : 'unavailable', 'ax-cg-id-match')
-      return memberIdentity.outcome === 'not-found' ? 'not-found' : 'failed'
-    }
-  }
-  addTrace('target', 'ok', 'instance-match')
-  const exact = resolveRootAxTarget()
-  if (exact.outcome === 'matched') return activateRootAxTarget(exact)
-  if (exact.outcome === 'ambiguous') {
-    addTrace('target', 'ambiguous', 'ax-cg-id-match')
-    return 'ambiguous'
-  }
-  activationReasonCode = exact.outcome === 'not-found' ? 'instance-mismatch' : 'identity-unavailable'
-  addTrace('target', exact.outcome === 'not-found' ? 'not-found' : 'unavailable', 'ax-cg-id-match')
-  return exact.outcome === 'not-found' ? 'not-found' : 'failed'
-}
-emit(activate())
-`
-}
-
-function macosCloseWindowScript(pid, cgWindowNumber, rootCgWindowNumber = cgWindowNumber) {
-  return String.raw`
-ObjC.import('Foundation')
-ObjC.import('ApplicationServices')
-ObjC.import('AppKit')
-const processId = ${pid}
-const cgWindowNumber = ${cgWindowNumber}
-const rootCgWindowNumber = ${rootCgWindowNumber}
-let available = false
-try {
-  ObjC.bindFunction('AXUIElementCreateApplication', ['id', ['int']])
-  ObjC.bindFunction('AXUIElementCopyAttributeValue', ['int', ['id', 'id', 'id *']])
-  ObjC.bindFunction('AXUIElementPerformAction', ['int', ['id', 'id']])
-  ObjC.bindFunction('_AXUIElementGetWindow', ['int', ['id', 'uint32_t *']])
-  available = true
-} catch (error) {}
-function environmentValue(name) {
-  const value = $.NSProcessInfo.processInfo.environment.objectForKey(name)
-  return value ? String(ObjC.unwrap(value) || '') : ''
-}
-function normalizeAppIdentity(value) {
-  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
-}
-function copyAttribute(element, name) {
-  if (!available || !element) return null
-  try {
-    const output = Ref()
-    if (Number($.AXUIElementCopyAttributeValue(element, $.NSString.stringWithString(name), output)) !== 0) return null
-    return output[0]
-  } catch (error) { return null }
-}
-function windowNumber(element) {
-  if (!available || !element) return 0
-  try {
-    const output = Ref()
-    if (Number($._AXUIElementGetWindow(element, output)) !== 0) return 0
-    return Math.trunc(Number(output[0] || 0))
-  } catch (error) { return 0 }
-}
-function rootWindowNumber(element) {
-  if (!element) return 0
-  const topLevel = copyAttribute(element, 'AXTopLevelUIElement')
-  const containing = copyAttribute(element, 'AXWindow')
-  const parent = copyAttribute(element, 'AXParent')
-  const own = windowNumber(element)
-  return [windowNumber(parent), windowNumber(topLevel), windowNumber(containing)].find((candidate) => candidate > 0 && candidate !== own) || own
-}
-function axText(element, name) {
-  const value = copyAttribute(element, name)
-  try { return value ? String(ObjC.unwrap(value) || '').trim() : '' } catch (error) { return '' }
-}
-function isAdmittedAxWindow(element) {
-  const role = axText(element, 'AXRole')
-  const subrole = axText(element, 'AXSubrole')
-  if (role === 'AXSheet' || role === 'AXDialog') return true
-  return role === 'AXWindow' && (subrole === 'AXStandardWindow' || subrole === 'AXDialog' || subrole === 'AXSystemDialog' || subrole === 'AXFloatingWindow')
-}
-const app = available && cgWindowNumber > 0 ? $.AXUIElementCreateApplication(processId) : null
-const expectedApp = normalizeAppIdentity(environmentValue('EYPC_WINDOW_TARGET_APP_ID'))
-const running = (() => {
-  try { return $.NSRunningApplication.runningApplicationWithProcessIdentifier(processId) } catch (error) { return null }
-})()
-const runningBundle = normalizeAppIdentity((() => {
-  try { return running && running.bundleIdentifier ? ObjC.unwrap(running.bundleIdentifier) : '' } catch (error) { return '' }
-})())
-const runningName = normalizeAppIdentity((() => {
-  try { return running && running.localizedName ? ObjC.unwrap(running.localizedName) : '' } catch (error) { return '' }
-})())
-const appMatches = Boolean(running && !running.terminated && (!expectedApp || expectedApp === runningBundle || expectedApp === runningName))
-const windows = copyAttribute(app, 'AXWindows')
-const matches = []
-const count = windows ? Math.max(0, Math.trunc(Number(windows.count || 0))) : 0
-for (let index = 0; index < count; index += 1) {
-  const candidate = windows.objectAtIndex(index)
-  if (isAdmittedAxWindow(candidate) && windowNumber(candidate) === cgWindowNumber && rootWindowNumber(candidate) === rootCgWindowNumber) matches.push(candidate)
-}
-if (!appMatches) {
-  JSON.stringify({ outcome: 'not-found', message: 'instance-mismatch' })
-} else if (!available || !app || !windows) {
-  JSON.stringify({ outcome: 'failed', message: 'identity-unavailable' })
-} else if (matches.length !== 1) {
-  JSON.stringify({ outcome: matches.length > 1 ? 'ambiguous' : 'not-found' })
-} else {
-  const target = matches[0]
-  let closed = false
-  const closeButton = copyAttribute(target, 'AXCloseButton')
-  try {
-    if (closeButton) closed = Number($.AXUIElementPerformAction(closeButton, $.NSString.stringWithString('AXPress'))) === 0
-  } catch (error) {}
-  if (!closed) {
-    try { closed = Number($.AXUIElementPerformAction(target, $.NSString.stringWithString('AXClose'))) === 0 } catch (error) {}
-  }
-  if (closed) {
-    JSON.stringify({ outcome: 'closed' })
-  } else {
-    JSON.stringify({ outcome: 'close-denied' })
-  }
-}
-`
-}
-
-const WINDOW_BRIDGE_REVISION = 'wj21-main-child-window-tree'
-
-function runWindowCommand(command, args, debugTrace = false, extraEnvironment = null) {
-  return new Promise((resolve) => {
-    const options = {
-      windowsHide: true,
-      timeout: WINDOW_BRIDGE_TIMEOUT_MS,
-      maxBuffer: WINDOW_BRIDGE_OUTPUT_LIMIT
-    }
-    if (debugTrace || (extraEnvironment && typeof extraEnvironment === 'object')) {
-      options.env = {
-        ...process.env,
-        ...(debugTrace ? { EYPC_WINDOW_DEBUG_TRACE: '1' } : {}),
-        ...(extraEnvironment && typeof extraEnvironment === 'object' ? extraEnvironment : {})
-      }
-    }
-    execFile(command, args, {
-      ...options
-    }, (error, stdout, stderr) => {
-      resolve({ ok: !error, stdout: String(stdout || ''), stderr: String(stderr || ''), error: error ? String(error.message || error) : '' })
-    })
-  })
-}
-
-function windowCapability(permission = 'unknown', reason = '', extras = {}) {
-  if (process.platform === 'win32') {
-    return { platform: 'win32', bridgeRevision: WINDOW_BRIDGE_REVISION, supported: true, permission: 'granted', canList: true, canActivate: true, canClose: true, canAlwaysOnTop: true, ...(reason ? { reason } : {}), ...extras }
-  }
-  if (process.platform === 'darwin') {
-    return { platform: 'darwin', bridgeRevision: WINDOW_BRIDGE_REVISION, supported: true, permission, canList: permission !== 'required', canActivate: permission !== 'required', canClose: permission !== 'required', canAlwaysOnTop: false, ...(reason ? { reason } : {}), ...extras }
-  }
-  return { platform: 'unsupported', bridgeRevision: WINDOW_BRIDGE_REVISION, supported: false, permission: 'unsupported', canList: false, canActivate: false, canClose: false, canAlwaysOnTop: false, reason: reason || '当前系统不支持窗口跳转', ...extras }
-}
-
-function isMacWindowPermissionError(value) {
-  return /not authorized|not permitted|accessibility|assistive access|automation|screen recording|-1743/i.test(String(value || ''))
-}
-
-function uniqueWindowTexts(values) {
-  return [...new Set((Array.isArray(values) ? values : []).flatMap((value) => typeof value === 'string' && value.trim() ? [value.trim()] : []))]
-}
-
-function parseWindowJson(output, platform) {
-  let parsed
-  try { parsed = JSON.parse(String(output || '').trim() || '[]') } catch { return { windows: [], permissionDenied: false, identityCorroborationMissing: false, screenRecordingLikelyMissing: false } }
-  const envelope = parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.windows)
-    ? parsed
-    : { windows: Array.isArray(parsed) ? parsed : [parsed], screenRecordingLikelyMissing: false }
-  const rows = Array.isArray(envelope.windows) ? envelope.windows : []
-  const observations = rows.flatMap((item) => {
-    if (!item || typeof item !== 'object') return []
-    const nativeRef = String(item.nativeRef || '').trim()
-    const instanceId = String(item.instanceId || '').trim()
-    const pid = Math.trunc(Number(item.pid))
-    const appId = String(item.appId || item.appName || '').trim()
-    const appName = String(item.appName || appId || '').trim()
-    const title = String(item.title || '').trim()
-    if (!nativeRef || !instanceId || !Number.isInteger(pid) || pid <= 0 || !appId) return []
-    const rootInstanceId = String(item.rootInstanceId || '').trim() || instanceId
-    const rootNativeRef = String(item.rootNativeRef || '').trim() || nativeRef
-    const relationship = item.relationship === 'child' ? 'child' : 'root'
-    const relationEvidence = String(item.relationEvidence || '')
-    const expectedChildEvidence = platform === 'win32' ? 'win32-root-owner' : 'macos-ax-top-level'
-    if (relationship === 'child' && (rootInstanceId === instanceId || rootNativeRef === nativeRef || relationEvidence !== expectedChildEvidence)) return []
-    if (relationship === 'root' && (rootInstanceId !== instanceId || rootNativeRef !== nativeRef || relationEvidence !== 'root-self')) return []
-    return [{
-      id: instanceId,
-      instanceId,
-      nativeRef,
-      pid,
-      appId,
-      appName,
-      title: title || appName,
-      minimized: item.minimized === true,
-      focused: item.focused === true,
-      rootInstanceId,
-      rootNativeRef,
-      rootPid: Math.trunc(Number(item.rootPid || pid)),
-      relationship,
-      relationEvidence,
-      userVisible: item.userVisible !== false,
-      canActivate: item.canActivate !== false,
-      canClose: item.canClose === true,
-      memberInstanceIds: uniqueWindowTexts(item.memberInstanceIds),
-      memberNativeRefs: uniqueWindowTexts(item.memberNativeRefs),
-      searchTitles: uniqueWindowTexts(item.searchTitles)
-    }]
-  })
-  // Keep this bridge as an observation adapter. The Renderer domain owns the
-  // single root-family coalescer and every product-level tree decision.
-  return {
-    windows: observations.map((observation) => ({ ...observation, platform })),
-    permissionDenied: envelope.permissionDenied === true,
-    identityCorroborationMissing: envelope.identityCorroborationMissing === true,
-    screenRecordingLikelyMissing: envelope.screenRecordingLikelyMissing === true
-  }
-}
-
-async function windowCapabilities() {
-  return windowCapability()
-}
-
-async function listWindows() {
-  if (process.platform === 'win32') {
-    const systemRoot = process.env.SystemRoot || 'C:\\Windows'
-    const windowScript = WINDOWS_ENUM_SCRIPT
-      .replace('__EYPC_HOST_PID__', String(process.pid))
-      .replace('__EYPC_PARENT_PID__', String(process.ppid || 0))
-    const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', windowScript])
-    if (!result.ok) return { capability: windowCapability('unknown', '无法读取 Windows 桌面窗口'), windows: [], completeness: 'partial', message: '无法读取 Windows 桌面窗口' }
-    const parsed = parseWindowJson(result.stdout, 'win32')
-    return { capability: windowCapability('granted'), windows: parsed.windows, completeness: 'complete' }
-  }
-  if (process.platform === 'darwin') {
-    // Product rows are admitted only from exact AX windows. Core Graphics is
-    // queried inside this script solely to corroborate PID+CGWindowID/bounds.
-    const axScript = MACOS_AX_WINDOW_LIST_SCRIPT
-      .replace('__EYPC_HOST_PID__', String(process.pid))
-      .replace('__EYPC_PARENT_PID__', String(process.ppid || 0))
-    const axResult = await runWindowCommand('/usr/bin/osascript', ['-l', 'JavaScript', '-e', axScript])
-    if (!axResult.ok) {
-      const detail = `${axResult.error}\n${axResult.stderr}`
-      if (isMacWindowPermissionError(detail)) {
-        return {
-          capability: windowCapability('required', '需要辅助功能权限以读取可操作的用户窗口'),
-          windows: [],
-          completeness: 'partial',
-          message: '需要在系统设置中允许 EyPc 使用辅助功能'
-        }
-      }
-      return { capability: windowCapability('unknown', '无法读取 macOS 用户窗口'), windows: [], completeness: 'partial', message: '无法读取 macOS 用户窗口；未显示任何未验证表面' }
-    }
-    const axParsed = parseWindowJson(axResult.stdout, 'darwin')
-    if (axParsed.permissionDenied) {
-      return {
-        capability: windowCapability('required', '需要辅助功能权限以读取可操作的用户窗口'),
-        windows: [],
-        completeness: 'partial',
-        message: '需要在系统设置中允许 EyPc 使用辅助功能'
-      }
-    }
-    if (axParsed.identityCorroborationMissing) {
-      return {
-        capability: windowCapability('required', '需要屏幕录制权限来佐证 AX 窗口的 CG 身份'),
-        windows: [],
-        completeness: 'partial',
-        message: 'AX 窗口存在，但 CG 身份不可验证；EyPc 已省略全部未验证表面'
-      }
-    }
-    return {
-      capability: windowCapability('granted', '仅展示 AX 准入且由 CG 身份佐证的用户窗口'),
-      windows: axParsed.windows,
-      completeness: 'complete'
-    }
-  }
-  return { capability: windowCapability('unsupported'), windows: [], completeness: 'partial', message: '当前系统不支持窗口跳转' }
-}
-
-const WINDOW_OPERATION_TRACE_STAGES = new Set(['bridge', 'target', 'process', 'restore', 'foreground', 'raise', 'verify', 'topmost'])
-const WINDOW_OPERATION_TRACE_OUTCOMES = new Set(['ok', 'skipped', 'not-found', 'ambiguous', 'failed', 'denied', 'unsupported', 'unavailable'])
-const WINDOW_OPERATION_TRACE_DETAILS = new Set([
-  'instance-match', 'instance-mismatch', 'identity-unavailable', 'focus-state-mismatch', 'error',
-  'root-family-match', 'ax-cg-id-match', 'ax-focused-root-window'
-])
-const WINDOW_ACTIVATION_REASON_CODES = new Set([
-  'instance-mismatch', 'member-mismatch', 'identity-unavailable'
-])
-
-function debugTraceRequested(options) {
-  return Boolean(options && typeof options === 'object' && options.debugTrace === true)
-}
-
-function optionalWindowOperationTrace(debugTrace, steps) {
-  return debugTrace ? { trace: { steps } } : {}
-}
-
-function parseWindowOperationTrace(value) {
-  if (!value || typeof value !== 'object' || !Array.isArray(value.trace)) return undefined
-  const steps = []
-  for (const step of value.trace.slice(0, 16)) {
-    const stage = step && typeof step === 'object' ? String(step.stage || '') : ''
-    const outcome = step && typeof step === 'object' ? String(step.outcome || '') : ''
-    const detail = step && typeof step === 'object' ? String(step.detail || '') : ''
-    if (!WINDOW_OPERATION_TRACE_STAGES.has(stage) || !WINDOW_OPERATION_TRACE_OUTCOMES.has(outcome)) continue
-    steps.push(WINDOW_OPERATION_TRACE_DETAILS.has(detail) ? { stage, outcome, detail } : { stage, outcome })
-  }
-  return steps.length ? { steps } : undefined
-}
-
-function parseWindowActivationResult(output, fallback = 'failed') {
-  try {
-    const value = JSON.parse(String(output || '').trim() || '{}')
-    const outcome = String(value && value.outcome || '')
-    if (['activated', 'not-found', 'ambiguous', 'focus-denied', 'permission-required', 'unsupported', 'failed'].includes(outcome)) {
-      const trace = parseWindowOperationTrace(value)
-      const reasonCode = String(value && value.reasonCode || '')
-      const instanceId = String(value && value.instanceId || '').trim()
-      const memberInstanceId = String(value && value.memberInstanceId || '').trim()
-      return { outcome, ...(instanceId ? { instanceId } : {}), ...(memberInstanceId ? { memberInstanceId } : {}), ...(WINDOW_ACTIVATION_REASON_CODES.has(reasonCode) ? { reasonCode } : {}), ...(trace ? { trace } : {}) }
-    }
-  } catch {}
-  return { outcome: fallback }
-}
-
-async function activateWindow(request, options = {}) {
-  const debugTrace = debugTraceRequested(options)
-  const payload = request && typeof request === 'object' ? request : {}
-  const mode = payload.mode === 'member-exact' ? 'member-exact' : 'root-current'
-  const source = payload.root && typeof payload.root === 'object' ? payload.root : payload
-  const member = mode === 'member-exact' && payload.member && typeof payload.member === 'object' ? payload.member : null
-  const platform = source.platform === 'win32' || source.platform === 'darwin' ? source.platform : ''
-  const nativeRef = String(source.nativeRef || '').trim()
-  if (!platform || !nativeRef || platform !== process.platform) {
-    return { outcome: 'not-found', message: '窗口引用已失效或不属于当前系统', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }]) }
-  }
-  if (platform === 'win32') {
-    if (!/^\d{1,20}$/.test(nativeRef)) {
-      return { outcome: 'not-found', message: '窗口句柄无效', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }]) }
-    }
-    const systemRoot = process.env.SystemRoot || 'C:\\Windows'
-    const memberNativeRef = String(member && member.nativeRef || '').trim()
-    if (mode === 'member-exact' && !/^\d{1,20}$/.test(memberNativeRef)) {
-      return { outcome: 'not-found', reasonCode: 'member-mismatch', message: '指定子窗口句柄已失效', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }]) }
-    }
-    const script = (mode === 'member-exact' ? WINDOWS_ACTIVATE_MEMBER_SCRIPT : WINDOWS_ACTIVATE_SCRIPT)
-      .replace('__EYPC_WINDOW_HANDLE__', nativeRef)
-      .replace('__EYPC_WINDOW_MEMBER_HANDLE__', memberNativeRef || nativeRef)
-    const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
-    const sourceInstanceId = String(source.instanceId || '').replace(/\u0000/g, '').slice(0, 512)
-    const instanceId = sourceInstanceId.includes(':legacy:') ? '' : sourceInstanceId
-    const memberInstanceId = String(member && member.instanceId || '').replace(/\u0000/g, '').slice(0, 512)
-    const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], debugTrace, {
-      EYPC_WINDOW_TARGET_APP_ID: appId,
-      ...(instanceId ? { EYPC_WINDOW_INSTANCE_ID: instanceId } : {}),
-      ...(mode === 'member-exact' && memberInstanceId ? { EYPC_WINDOW_MEMBER_INSTANCE_ID: memberInstanceId } : {})
-    })
-    if (!result.ok) return { outcome: 'failed', message: 'Windows 无法执行窗口激活', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }]) }
-    const activation = parseWindowActivationResult(result.stdout)
-    return activation.outcome === 'focus-denied'
-      ? { ...activation, message: '系统拒绝聚焦该窗口；EyPc 未尝试绕过前台保护' }
-      : activation
-  }
-  const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
-  if (!parts) return { outcome: 'not-found', message: 'macOS 窗口引用已失效', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }]) }
-  const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
-  const pid = Number(parts[1])
-  const ordinal = Number(parts[2])
-  const cgWindowNumber = Number(parts[3])
-  const actualInstanceId = `darwin:${pid}:${cgWindowNumber}`
-  const sourceInstanceId = String(source.instanceId || '').trim()
-  const expectedInstanceId = sourceInstanceId.includes(':legacy:') ? '' : sourceInstanceId
-  const memberParts = mode === 'member-exact' ? /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(String(member && member.nativeRef || '').trim()) : null
-  const memberCgWindowNumber = memberParts ? Number(memberParts[3]) : 0
-  const memberInstanceId = String(member && member.instanceId || '').trim()
-  if (ordinal !== 0 || !Number.isInteger(cgWindowNumber) || cgWindowNumber <= 0) {
-    return { outcome: 'failed', reasonCode: 'identity-unavailable', message: '无法建立稳定的 macOS 窗口实例身份', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'unavailable', detail: 'identity-unavailable' }]) }
-  }
-  if (expectedInstanceId && expectedInstanceId !== actualInstanceId) {
-    return { outcome: 'not-found', reasonCode: 'instance-mismatch', message: '窗口实例与保存目标不一致，需要重新确认', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found', detail: 'instance-mismatch' }]) }
-  }
-  if (mode === 'member-exact' && (!memberParts || Number(memberParts[1]) !== pid || Number(memberParts[2]) !== 0 || memberCgWindowNumber <= 0)) {
-    return { outcome: 'not-found', reasonCode: 'member-mismatch', message: '指定子窗口实例与主窗口关系已失效', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found', detail: 'instance-mismatch' }]) }
-  }
-  const result = await runWindowCommand(
-    '/usr/bin/osascript',
-    ['-l', 'JavaScript', '-e', macosActivateWindowScript(pid, cgWindowNumber, memberCgWindowNumber)],
-    debugTrace,
-    {
-      EYPC_WINDOW_TARGET_APP_ID: appId,
-      EYPC_WINDOW_INSTANCE_ID: expectedInstanceId || actualInstanceId,
-      ...(mode === 'member-exact' && memberInstanceId ? { EYPC_WINDOW_MEMBER_INSTANCE_ID: memberInstanceId } : {})
-    }
-  )
-  if (!result.ok) {
-    const detail = `${result.error}\n${result.stderr}`
-    return isMacWindowPermissionError(detail)
-      ? { outcome: 'permission-required', message: '需要在系统设置中允许 EyPc 使用辅助功能', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'denied' }]) }
-      : { outcome: 'failed', message: 'macOS 无法激活该根窗口', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }]) }
-  }
-  return parseWindowActivationResult(result.stdout)
-}
-
-async function alwaysOnTopWindow(target, options = {}) {
-  const debugTrace = debugTraceRequested(options)
-  const source = target && typeof target === 'object' ? target : {}
-  const platform = source.platform === 'win32' || source.platform === 'darwin' ? source.platform : ''
-  const nativeRef = String(source.nativeRef || '').trim()
-  if (!platform || !nativeRef || platform !== process.platform) {
-    return { outcome: 'not-found', message: '窗口引用已失效或不属于当前系统', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }]) }
-  }
-  if (platform !== 'win32') {
-    return { outcome: 'unsupported', message: 'macOS 只能展开并前置第三方窗口，不能将其保持在最上层', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'topmost', outcome: 'unsupported' }]) }
-  }
-  if (!/^\d{1,20}$/.test(nativeRef)) {
-    return { outcome: 'not-found', message: '窗口句柄无效', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'target', outcome: 'not-found' }]) }
-  }
-  const systemRoot = process.env.SystemRoot || 'C:\\Windows'
-  const script = WINDOWS_TOPMOST_SCRIPT.replace('__EYPC_WINDOW_HANDLE__', nativeRef)
-  const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
-  const sourceInstanceId = String(source.instanceId || '').replace(/\u0000/g, '').slice(0, 512)
-  const instanceId = sourceInstanceId.includes(':legacy:') ? '' : sourceInstanceId
-  const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], debugTrace, {
-    EYPC_WINDOW_TARGET_APP_ID: appId,
-    ...(instanceId ? { EYPC_WINDOW_INSTANCE_ID: instanceId } : {})
-  })
-  if (!result.ok) return { outcome: 'failed', message: 'Windows 无法执行页面置顶', ...optionalWindowOperationTrace(debugTrace, [{ stage: 'bridge', outcome: 'failed' }]) }
-  const activation = parseWindowActivationResult(result.stdout)
-  return activation.outcome === 'focus-denied'
-    ? { ...activation, message: '系统拒绝聚焦该窗口；EyPc 未尝试绕过前台保护' }
-    : activation
-}
-
-function parseWindowLifecycleResult(output, fallback = 'failed') {
-  try {
-    const value = JSON.parse(String(output || '').trim() || '{}')
-    const outcome = String(value && value.outcome || '')
-    if (['closed', 'terminated', 'close-denied', 'not-found', 'ambiguous', 'permission-required', 'unsupported', 'failed'].includes(outcome)) {
-      return { outcome, ...(typeof value.message === 'string' && value.message ? { message: value.message } : {}) }
-    }
-  } catch {}
-  return { outcome: fallback }
-}
-
-async function closeWindow(target) {
-  const source = target && typeof target === 'object' ? target : {}
-  const platform = source.platform === 'win32' || source.platform === 'darwin' ? source.platform : ''
-  const nativeRef = String(source.nativeRef || '').trim()
-  if (!platform || !nativeRef || platform !== process.platform) return { outcome: 'not-found', message: '窗口引用已失效或不属于当前系统' }
-  if (platform === 'win32') {
-    if (!/^\d{1,20}$/.test(nativeRef)) return { outcome: 'not-found', message: '窗口句柄无效' }
-    const systemRoot = process.env.SystemRoot || 'C:\\Windows'
-    const script = WINDOWS_CLOSE_SCRIPT.replace('__EYPC_WINDOW_HANDLE__', nativeRef)
-    const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
-    const sourceInstanceId = String(source.instanceId || '').replace(/\u0000/g, '').slice(0, 512)
-    const instanceId = sourceInstanceId.includes(':legacy:') ? '' : sourceInstanceId
-    const rootNativeRef = String(source.rootNativeRef || '').trim()
-    const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], false, {
-      EYPC_WINDOW_TARGET_APP_ID: appId,
-      ...(instanceId ? { EYPC_WINDOW_INSTANCE_ID: instanceId } : {}),
-      ...(rootNativeRef && rootNativeRef !== nativeRef ? { EYPC_WINDOW_ROOT_REF: rootNativeRef } : {})
-    })
-    if (!result.ok) return { outcome: 'failed', message: 'Windows 无法关闭该窗口' }
-    return parseWindowLifecycleResult(result.stdout)
-  }
-  const parts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(nativeRef)
-  if (!parts) return { outcome: 'not-found', message: 'macOS 窗口引用已失效' }
-  const pid = Number(parts[1])
-  const ordinal = Number(parts[2])
-  const cgWindowNumber = Number(parts[3])
-  const actualInstanceId = `darwin:${pid}:${cgWindowNumber}`
-  const sourceInstanceId = String(source.instanceId || '').trim()
-  const expectedInstanceId = sourceInstanceId.includes(':legacy:') ? '' : sourceInstanceId
-  const rootParts = /^(\d{1,12}):(\d{1,6}):(\d{1,12})$/.exec(String(source.rootNativeRef || nativeRef).trim())
-  const rootCgWindowNumber = rootParts && Number(rootParts[1]) === pid && Number(rootParts[2]) === 0 ? Number(rootParts[3]) : cgWindowNumber
-  if (ordinal !== 0 || cgWindowNumber <= 0) return { outcome: 'failed', message: '无法建立稳定的 macOS 窗口实例身份' }
-  if (expectedInstanceId && expectedInstanceId !== actualInstanceId) return { outcome: 'not-found', message: '窗口实例与保存目标不一致' }
-  const appId = String(source.appId || source.appName || '').replace(/\u0000/g, '').slice(0, 512)
-  const result = await runWindowCommand(
-    '/usr/bin/osascript',
-    ['-l', 'JavaScript', '-e', macosCloseWindowScript(pid, cgWindowNumber, rootCgWindowNumber)],
-    false,
-    { EYPC_WINDOW_TARGET_APP_ID: appId }
-  )
-  if (!result.ok) {
-    const detail = `${result.error}\n${result.stderr}`
-    return isMacWindowPermissionError(detail)
-      ? { outcome: 'permission-required', message: '需要在系统设置中允许 EyPc 使用辅助功能' }
-      : { outcome: 'failed', message: 'macOS 无法关闭该窗口' }
-  }
-  return parseWindowLifecycleResult(result.stdout)
-}
-
-async function terminateWindow(target) {
-  const source = target && typeof target === 'object' ? target : {}
-  const platform = source.platform === 'win32' || source.platform === 'darwin' ? source.platform : ''
-  const pid = Math.trunc(Number(source.pid))
-  if (!platform || platform !== process.platform || !Number.isInteger(pid) || pid <= 0) {
-    return { outcome: 'not-found', message: '进程引用已失效或不属于当前系统' }
-  }
-  if (platform === 'win32') {
-    const systemRoot = process.env.SystemRoot || 'C:\\Windows'
-    const script = WINDOWS_TERMINATE_SCRIPT.replace('__EYPC_WINDOW_PID__', String(pid))
-    const result = await runWindowCommand(`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script])
-    if (!result.ok) return { outcome: 'failed', message: 'Windows 无法强制终止该进程' }
-    return parseWindowLifecycleResult(result.stdout, 'failed')
-  }
-  try {
-    process.kill(pid, 'SIGKILL')
-    return { outcome: 'terminated' }
-  } catch (error) {
-    const code = error && typeof error === 'object' ? error.code : ''
-    if (code === 'ESRCH') return { outcome: 'not-found', message: '进程已不存在' }
-    return { outcome: 'failed', message: 'macOS 无法强制终止该进程' }
-  }
-}
-
-async function openWindowPermissionSettings() {
-  if (process.platform !== 'darwin') return false
-  try {
-    if (globalThis.utools && typeof globalThis.utools.shellOpenExternal === 'function') {
-      globalThis.utools.shellOpenExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture')
-      globalThis.utools.shellOpenExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility')
-      return true
-    }
-  } catch {}
-  return false
 }
 
 function readState() {
@@ -5921,22 +4436,13 @@ function closeCodexServer() {
 }
 
 function closeCodexConnections(options = {}) {
-  try {
-    for (const session of codexEnvironmentActionSessions.values()) {
-      if (!session || session.state === 'idle') continue
-      try {
-        session.state = 'stopping'
-        session.message = '正在停止 Serve'
-        if (process.platform !== 'win32' && typeof session.childPid === 'number') process.kill(-session.childPid, 'SIGTERM')
-        else session.child?.kill?.('SIGTERM')
-      } catch {}
-    }
-  } catch {}
-  codexEnvironmentActionSessions.clear()
-  codexEnvironmentConfirmTokens.clear()
-  codexEnvironmentCommandVault.clear()
-  closeCodexServer()
   if (options.preserveDesktop !== true) closeCodexDesktopBridge()
+  if (options.force !== true && shouldDeferCodexActionServerClose()) {
+    codexActionDeferredServerClose = true
+    return
+  }
+  codexActionDeferredServerClose = false
+  closeCodexServer()
 }
 
 function sanitizeCodexQuotaWindow(value) {
@@ -6127,6 +4633,14 @@ function parseCodexNativeRegistryText(text) {
   if (!assignmentsSource || typeof assignmentsSource !== 'object' || Array.isArray(assignmentsSource)) throw codexError('protocol-error', 'Codex native project state is invalid')
   const projectOrder = codexNativeStringList(source['project-order'])
   const pinnedProjectIds = codexNativeStringList(source['pinned-project-ids'])
+  const selectedProjectSource = source['selected-project']
+  const selectedProjectRecord = codexRecord(selectedProjectSource)
+  const selectedProjectId = typeof selectedProjectSource === 'string'
+    ? codexNativeString(selectedProjectSource)
+    : selectedProjectSource && typeof selectedProjectSource === 'object' && selectedProjectRecord.type === 'local'
+      ? codexNativeString(selectedProjectRecord.projectId)
+      : ''
+  if (selectedProjectSource !== undefined && selectedProjectSource !== null && !selectedProjectId) throw codexError('protocol-error', 'Codex selected project state is invalid')
   const pinnedThreadIds = codexNativeStringList(source['pinned-thread-ids']).filter(validCodexThreadId)
   const projectlessThreadIds = codexNativeStringList(source['projectless-thread-ids']).filter(validCodexThreadId)
   const projects = []
@@ -6163,6 +4677,7 @@ function parseCodexNativeRegistryText(text) {
     projects: projects.map((project) => ({ id: project.id, name: project.name, roots: [...project.roots].sort() })),
     projectOrder,
     pinnedProjectIds,
+    selectedProjectId,
     pinnedThreadIds,
     assignments: [...assignments.entries()].sort(([left], [right]) => left.localeCompare(right)),
     projectlessThreadIds: [...projectlessThreadIds].sort()
@@ -6180,6 +4695,7 @@ function parseCodexNativeRegistryText(text) {
     assignments,
     projectlessThreadIds: new Set(projectlessThreadIds),
     pinnedThreadOrder: new Map(pinnedThreadIds.map((id, index) => [id, index])),
+    selectedProjectId,
     fingerprint
   }
 }
@@ -6753,6 +5269,7 @@ function sanitizeCodexProjects(registry) {
       name: project.name,
       kind: 'project',
       nativePinned: typeof project.nativePinnedOrder === 'number',
+      selected: registry.selectedProjectId === project.id,
       ...(typeof project.nativePinnedOrder === 'number' ? { nativePinnedOrder: project.nativePinnedOrder } : {}),
       ...(typeof project.nativeOrder === 'number' ? { nativeOrder: project.nativeOrder } : {})
     }))
@@ -7275,7 +5792,9 @@ async function removeCodexProject(actionAlias, request) {
   const source = codexRecord(value)
   const localProjects = source['local-projects']
   const selectedProject = source['selected-project']
+  const selectedProjectRecord = codexRecord(selectedProject)
   const selectedProjectSupported = selectedProject === undefined || selectedProject === null || typeof selectedProject === 'string'
+    || (selectedProjectRecord.type === 'local' && typeof selectedProjectRecord.projectId === 'string')
   if (!localProjects || typeof localProjects !== 'object' || Array.isArray(localProjects)
     || !Object.prototype.hasOwnProperty.call(localProjects, project.id)
     || !Array.isArray(source['project-order'])
@@ -7301,7 +5820,7 @@ async function removeCodexProject(actionAlias, request) {
   delete localProjects[project.id]
   source['project-order'] = source['project-order'].filter((id) => id !== project.id)
   source['pinned-project-ids'] = source['pinned-project-ids'].filter((id) => id !== project.id)
-  if (selectedProject === project.id) source['selected-project'] = null
+  if (selectedProject === project.id || selectedProjectRecord.projectId === project.id) source['selected-project'] = null
   const serialized = Buffer.from(JSON.stringify(source), 'utf8')
   if (!serialized.length || serialized.length > CODEX_NATIVE_STATE_MAX_BYTES) {
     return failed('unsupported-schema', 'Codex 项目状态无法安全序列化，未执行移除')
@@ -8094,34 +6613,6 @@ function installCodexFloatIpc() {
     if (!codexFloatAlive()) return
     try { codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.threadOpenResult, { requestId, result }) } catch {}
   })
-  ipc.on(CODEX_FLOAT_CHANNELS.environmentList, async (_event, payload) => {
-    const source = codexRecord(payload)
-    const requestId = typeof source.requestId === 'string' && /^ftr_[A-Za-z0-9_-]{6,80}$/.test(source.requestId) ? source.requestId : ''
-    const targetAlias = typeof source.targetAlias === 'string' ? source.targetAlias : ''
-    if (!requestId) return
-    const result = listCodexProjectEnvironments(targetAlias)
-    if (!codexFloatAlive()) return
-    try { codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.environmentListResult, { requestId, result }) } catch {}
-  })
-  ipc.on(CODEX_FLOAT_CHANNELS.environmentRun, async (_event, payload) => {
-    const source = codexRecord(payload)
-    const requestId = typeof source.requestId === 'string' && /^ftr_[A-Za-z0-9_-]{6,80}$/.test(source.requestId) ? source.requestId : ''
-    if (!requestId) return
-    const result = await runCodexProjectEnvironmentAction(source.request || source)
-    if (!codexFloatAlive()) return
-    try { codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.environmentRunResult, { requestId, result }) } catch {}
-  })
-  ipc.on(CODEX_FLOAT_CHANNELS.environmentSession, async (_event, payload) => {
-    const source = codexRecord(payload)
-    const requestId = typeof source.requestId === 'string' && /^ftr_[A-Za-z0-9_-]{6,80}$/.test(source.requestId) ? source.requestId : ''
-    if (!requestId) return
-    const mode = source.mode === 'stop' ? 'stop' : 'list'
-    const result = mode === 'stop'
-      ? stopCodexEnvironmentActionSession(source.request || source)
-      : { outcome: 'ok', sessions: listCodexEnvironmentActionSessions() }
-    if (!codexFloatAlive()) return
-    try { codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.environmentSessionResult, { requestId, result }) } catch {}
-  })
   ipc.on(CODEX_FLOAT_CHANNELS.dragStart, (_event, payload) => {
     if (codexFloatResize || !codexFloatAlive() || typeof codexFloatWindow.getBounds !== 'function') return
     const point = codexRecord(payload)
@@ -8219,6 +6710,8 @@ if (globalThis.utools && typeof globalThis.utools.onPluginEnter === 'function') 
 if (globalThis.utools && typeof globalThis.utools.onPluginOut === 'function') {
   globalThis.utools.onPluginOut((isKill) => {
     if (isKill) {
+      shutdownCodexEnvironmentActions()
+      closeCodexActionRunner()
       closeCodexFloat()
       closeCodexConnections({ force: true })
       return
@@ -8231,10 +6724,13 @@ if (globalThis.utools && typeof globalThis.utools.onPluginOut === 'function') {
   })
 }
 
+const CODEX_ACTION_HOST_RUNTIME_REVISION = 'action-host-v2-exact-argv-target'
 const CODEX_ENV_ACTION_CONFIRM_TTL_MS = 30_000
 const codexEnvironmentCommandVault = new Map()
 const codexEnvironmentActionSessions = new Map()
 const codexEnvironmentConfirmTokens = new Map()
+let codexActionDeferredServerClose = false
+let codexEnvironmentShuttingDown = false
 
 function codexEnvUnquoteTomlString(raw) {
   const value = String(raw || '').trim()
@@ -8303,12 +6799,13 @@ function parseCodexEnvironmentTomlText(text) {
     const eq = line.indexOf('=')
     if (eq <= 0) continue
     const key = line.slice(0, eq).trim()
-    const value = codexEnvUnquoteTomlString(line.slice(eq + 1))
+    const rawValue = line.slice(eq + 1).trim()
+    const value = codexEnvUnquoteTomlString(rawValue)
     if (section === 'root') {
       if (key === 'version') {
         versionPresent = true
-        const parsed = Number(value)
-        version = Number.isFinite(parsed) ? parsed : NaN
+        if (rawValue !== '1') parseError = true
+        version = rawValue === '1' ? 1 : NaN
       }
       else if (key === 'name') name = value.slice(0, 120)
     } else if (section === 'setup') {
@@ -8331,19 +6828,76 @@ function codexEnvironmentActionIdFromName(name, index) {
   return slug || `action-${index + 1}`
 }
 
-function classifyCodexEnvironmentActionRiskHost(name, command) {
-  const normalizedName = String(name || '').trim().toLowerCase()
-  const normalizedCommand = String(command || '').trim().toLowerCase()
-  if (normalizedName === 'git push' || /\bgit\s+push\b/.test(normalizedCommand)) return 'external-write'
-  if (normalizedName === 'serve' || /\b(pnpm|npm|yarn|bun)\s+run\s+serve\b/.test(normalizedCommand) || /\bvite\b/.test(normalizedCommand) && /\bserve\b/.test(normalizedCommand)) return 'long-running'
-  if (normalizedName === 'build' || /\b(pnpm|npm|yarn|bun)\s+run\s+build\b/.test(normalizedCommand) || /\bvite\b/.test(normalizedCommand) && /\bbuild\b/.test(normalizedCommand)) return 'normal'
-  return 'rejected'
+function tokenizeCodexEnvironmentActionCommandHost(command) {
+  if (typeof command !== 'string' || !command.trim() || /[\r\n]/.test(command)) return null
+  const result = []
+  let current = ''
+  let quote = null
+  let escaped = false
+  for (const ch of command) {
+    if (escaped) {
+      current += ch
+      escaped = false
+      continue
+    }
+    if (quote) {
+      if (ch === '\\' && quote === '"') { escaped = true; continue }
+      if (ch === quote) { quote = null; continue }
+      current += ch
+      continue
+    }
+    if (ch === '"' || ch === "'") { quote = ch; continue }
+    if (ch === '\\') { escaped = true; continue }
+    if (/\s/.test(ch)) {
+      if (current) { result.push(current); current = '' }
+      continue
+    }
+    current += ch
+  }
+  if (quote || escaped) return null
+  if (current) result.push(current)
+  return result
+}
+
+function validateCodexEnvironmentActionCommandHost(command) {
+  const argv = tokenizeCodexEnvironmentActionCommandHost(command)
+  if (!argv) return null
+  if (argv.length === 3 && ['pnpm', 'npm', 'yarn', 'bun'].includes(argv[0]) && argv[1] === 'run' && ['build', 'serve'].includes(argv[2])) {
+    return {
+      family: 'package-script',
+      executable: argv[0],
+      task: argv[2],
+      argv: [argv[0], 'run', argv[2]],
+      risk: argv[2] === 'serve' ? 'long-running' : 'normal'
+    }
+  }
+  if (argv.length === 2 && argv[0] === 'vite' && ['build', 'serve'].includes(argv[1])) {
+    return {
+      family: 'vite',
+      executable: 'vite',
+      task: argv[1],
+      argv: ['vite', argv[1]],
+      risk: argv[1] === 'serve' ? 'long-running' : 'normal'
+    }
+  }
+  if (argv.length === 2 && argv[0] === 'git' && argv[1] === 'push') {
+    return { family: 'git-push', executable: 'git', task: 'push', argv: ['git', 'push'], risk: 'external-write' }
+  }
+  return null
 }
 
 function codexEnvironmentIdFromFileName(fileName) {
   const base = String(fileName || '').replace(/\.toml$/i, '').trim().toLowerCase()
   const slug = base.replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64)
   return slug || 'environment'
+}
+
+function codexEnvironmentTargetId(input) {
+  const projectKey = String(input?.projectKey || '')
+  if (!projectKey) return ''
+  if (input?.kind === 'project') return projectKey
+  const executionCwd = path.resolve(String(input?.executionCwd || ''))
+  return `cat_${crypto.createHash('sha256').update(`codex-action-target\0${projectKey}\0${executionCwd}`).digest('hex').slice(0, 32)}`
 }
 
 function resolveCodexEnvironmentTargetCwd(targetAlias) {
@@ -8362,13 +6916,23 @@ function resolveCodexEnvironmentTargetCwd(targetAlias) {
         : null
       const byAssignment = registry.projectById.get(registry.assignments.get(entry.threadId)) || null
       const project = byKey || byAssignment
-      const cwd = typeof entry.cwd === 'string' && entry.cwd ? entry.cwd : ''
-      const pathApi = process.platform === 'win32' ? path.win32 : path
-      if (!project?.roots?.length || !cwd) return { errorCode: 'cwd-missing', message: '无法解析会话工作目录' }
-      const configRoot = project.roots[0]
-      if (!configRoot) return { errorCode: 'cwd-missing', message: '无法解析会话工作目录' }
-      if (!pathApi.isAbsolute(cwd)) return { errorCode: 'cwd-missing', message: '无法解析会话工作目录' }
-      return { configRoot, executionCwd: cwd, projectKey: project.key, kind: 'task' }
+      const roots = (project?.roots || []).filter((root) => {
+        try { return fs.statSync(path.join(root, '.codex', 'environments')).isDirectory() } catch { return false }
+      })
+      if (roots.length !== 1) {
+        return roots.length > 1
+          ? { errorCode: 'ambiguous-root', message: '项目存在多个 Environment 根目录，请先消除歧义' }
+          : { errorCode: 'cwd-missing', message: '项目未配置 Environment 根目录' }
+      }
+      const executionCwd = codexNormalizeNativeRoot(entry.cwd)
+      if (!executionCwd) return { errorCode: 'cwd-missing', message: '会话缺少精确工作目录，请刷新后重试' }
+      try {
+        if (!fs.statSync(executionCwd).isDirectory()) return { errorCode: 'cwd-missing', message: '会话工作目录已失效，请刷新后重试' }
+      } catch {
+        return { errorCode: 'cwd-missing', message: '会话工作目录已失效，请刷新后重试' }
+      }
+      const target = { configRoot: roots[0], executionCwd, projectKey: project.key, kind: 'task' }
+      return { ...target, targetId: codexEnvironmentTargetId(target) }
     } catch {}
     return { errorCode: 'cwd-missing', message: '无法解析会话工作目录' }
   }
@@ -8382,10 +6946,14 @@ function resolveCodexEnvironmentTargetCwd(targetAlias) {
         return { errorCode: 'stale-alias', message: '项目动作已失效，请刷新后重试' }
       }
       const project = registry.projectById.get(entry.projectId) || registry.projects.find((item) => item.key === entry.projectKey)
-      if (project?.roots?.[0]) {
-        const configRoot = project.roots[0]
-        return { configRoot, executionCwd: configRoot, projectKey: project.key, kind: 'project' }
+      const roots = (project?.roots || []).filter((root) => {
+        try { return fs.statSync(path.join(root, '.codex', 'environments')).isDirectory() } catch { return false }
+      })
+      if (roots.length === 1) {
+        const target = { configRoot: roots[0], executionCwd: roots[0], projectKey: project.key, kind: 'project' }
+        return { ...target, targetId: codexEnvironmentTargetId(target) }
       }
+      if (roots.length > 1) return { errorCode: 'ambiguous-root', message: '项目存在多个 Environment 根目录，请先消除歧义' }
     } catch {}
     return { errorCode: 'cwd-missing', message: '无法解析项目根目录' }
   }
@@ -8407,7 +6975,7 @@ function rememberCodexEnvironmentCommands(vaultKey, environments) {
 function listCodexProjectEnvironments(targetAlias) {
   const resolved = resolveCodexEnvironmentTargetCwd(targetAlias)
   if (resolved.errorCode) {
-    return { outcome: 'failed', errorCode: resolved.errorCode, message: resolved.message, environments: [] }
+    return { outcome: 'failed', runtimeRevision: CODEX_ACTION_HOST_RUNTIME_REVISION, errorCode: resolved.errorCode, message: resolved.message, environments: [] }
   }
   const envDir = path.join(resolved.configRoot, '.codex', 'environments')
   let entries = []
@@ -8416,9 +6984,9 @@ function listCodexProjectEnvironments(targetAlias) {
   } catch (error) {
     const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : ''
     if (code === 'ENOENT') {
-      return { outcome: 'ok', projectKey: resolved.projectKey, environments: [], message: '未发现 Environment 配置' }
+      return { outcome: 'ok', runtimeRevision: CODEX_ACTION_HOST_RUNTIME_REVISION, projectKey: resolved.projectKey, targetId: resolved.targetId, environments: [], message: '未发现 Environment 配置' }
     }
-    return { outcome: 'failed', errorCode: 'unreadable', message: '无法读取 Environment 配置', environments: [] }
+    return { outcome: 'failed', runtimeRevision: CODEX_ACTION_HOST_RUNTIME_REVISION, errorCode: 'unreadable', message: '无法读取 Environment 配置', environments: [] }
   }
   const environments = []
   const seenEnvironmentIds = new Set()
@@ -8431,7 +6999,7 @@ function listCodexProjectEnvironments(targetAlias) {
     const environmentFileFingerprint = crypto.createHash('sha256').update(text).digest('hex')
     const id = codexEnvironmentIdFromFileName(entry.name)
     if (seenEnvironmentIds.has(id)) {
-      return { outcome: 'failed', errorCode: 'environment-id-collision', message: 'Environment 标识冲突，请检查文件名', environments: [] }
+      return { outcome: 'failed', runtimeRevision: CODEX_ACTION_HOST_RUNTIME_REVISION, errorCode: 'environment-id-collision', message: 'Environment 标识冲突，请检查文件名', environments: [] }
     }
     seenEnvironmentIds.add(id)
     const seen = new Set()
@@ -8441,10 +7009,11 @@ function listCodexProjectEnvironments(targetAlias) {
       let actionId = codexEnvironmentActionIdFromName(action.name, index)
       if (seen.has(actionId)) actionId = `${actionId}-${index + 1}`
       seen.add(actionId)
-      const risk = classifyCodexEnvironmentActionRiskHost(action.name, action.command)
-      if (risk === 'rejected') return
+      const validatedCommand = validateCodexEnvironmentActionCommandHost(action.command)
+      if (!validatedCommand) return
+      const risk = validatedCommand.risk
       const commandFingerprint = crypto.createHash('sha256').update(String(action.command || '')).digest('hex')
-      hostActions.push({ id: actionId, name: action.name, icon: action.icon || 'run', command: action.command, risk, environmentFileFingerprint, commandFingerprint })
+      hostActions.push({ id: actionId, name: action.name, icon: action.icon || 'run', validatedCommand, risk, environmentFileFingerprint, commandFingerprint })
       actions.push({
         id: actionId,
         name: String(action.name || '').trim().slice(0, 80) || `Action ${index + 1}`,
@@ -8463,10 +7032,12 @@ function listCodexProjectEnvironments(targetAlias) {
     })
   }
   environments.sort((left, right) => left.id.localeCompare(right.id))
-  rememberCodexEnvironmentCommands(targetAlias, environments)
+  rememberCodexEnvironmentCommands(resolved.targetId, environments)
   return {
     outcome: 'ok',
+    runtimeRevision: CODEX_ACTION_HOST_RUNTIME_REVISION,
     projectKey: resolved.projectKey,
+    targetId: resolved.targetId,
     environments: environments.map((item) => ({
       id: item.id,
       name: item.name,
@@ -8476,14 +7047,15 @@ function listCodexProjectEnvironments(targetAlias) {
   }
 }
 
-function codexEnvironmentSessionKey(targetAlias, environmentId, actionId) {
-  return `${targetAlias}\0${environmentId}\0${actionId}`
+function codexEnvironmentSessionKey(targetId, environmentId, actionId) {
+  return `${targetId}\0${environmentId}\0${actionId}`
 }
 
 function sanitizeCodexEnvironmentSession(session) {
   if (!session) return null
   return {
     targetAlias: typeof session.targetAlias === 'string' && session.targetAlias ? session.targetAlias : (typeof session.projectKey === 'string' ? session.projectKey : ''),
+    targetId: session.targetId,
     projectKey: session.projectKey,
     environmentId: session.environmentId,
     actionId: session.actionId,
@@ -8499,31 +7071,59 @@ function listCodexEnvironmentActionSessions() {
 }
 
 function stopCodexEnvironmentActionSession(input) {
-  const targetAlias = typeof input?.targetAlias === 'string'
-    ? input.targetAlias
-    : (typeof input?.projectKey === 'string' ? input.projectKey : '')
+  const requestedTargetId = typeof input?.targetId === 'string' ? input.targetId : ''
+  const projectKey = typeof input?.projectKey === 'string' ? input.projectKey : ''
+  const targetId = requestedTargetId || projectKey
   const environmentId = typeof input?.environmentId === 'string' ? input.environmentId : ''
   const actionId = typeof input?.actionId === 'string' ? input.actionId : ''
-  const key = codexEnvironmentSessionKey(targetAlias, environmentId, actionId)
+  if (!targetId || !environmentId || !actionId) return { outcome: 'failed', errorCode: 'invalid-request', message: '停止请求无效' }
+  const key = codexEnvironmentSessionKey(targetId, environmentId, actionId)
   const session = codexEnvironmentActionSessions.get(key)
   if (!session) return { outcome: 'failed', errorCode: 'not-running', message: '没有运行中的 Action 会话' }
+  if (projectKey && session.projectKey !== projectKey) return { outcome: 'failed', errorCode: 'target-mismatch', message: 'Action 目标身份不匹配' }
   if (session.state === 'stopping') return { outcome: 'stopping', session: sanitizeCodexEnvironmentSession(session) }
   session.state = 'stopping'
-  session.message = '正在停止 Serve'
-  try {
-    if (process.platform !== 'win32' && typeof session.childPid === 'number') {
-      process.kill(-session.childPid, 'SIGTERM')
-    } else {
-      session.child?.kill?.('SIGTERM')
-    }
-  } catch {}
+  session.message = '正在停止 Action'
+  if (session.run) {
+    session.run.status = 'stopping'
+    session.run.message = session.message
+    persistCodexActionRun(session.run)
+    pushCodexActionRunnerSnapshot(session.message)
+  }
+  signalCodexEnvironmentSession(session)
   return { outcome: 'stopping', session: sanitizeCodexEnvironmentSession(session) }
 }
 
-function issueCodexEnvironmentConfirmToken(targetAlias, environmentId, actionId, environmentFileFingerprint, commandFingerprint) {
+function signalCodexEnvironmentSession(session) {
+  try {
+    if (process.platform !== 'win32' && typeof session.childPid === 'number') {
+      process.kill(-session.childPid, 'SIGTERM')
+      return
+    }
+    if (process.platform === 'win32' && typeof session.childPid === 'number') {
+      const systemRoot = typeof process.env.SystemRoot === 'string' && process.env.SystemRoot.trim()
+        ? path.win32.resolve(process.env.SystemRoot.trim())
+        : 'C:\\Windows'
+      const taskkill = /^[A-Za-z]:\\/.test(systemRoot)
+        ? path.win32.join(systemRoot, 'System32', 'taskkill.exe')
+        : 'C:\\Windows\\System32\\taskkill.exe'
+      void run(taskkill, ['/PID', String(session.childPid), '/T']).then((result) => {
+        if (!result.ok) {
+          try { session.child?.kill?.('SIGTERM') } catch {}
+        }
+      })
+      return
+    }
+    session.child?.kill?.('SIGTERM')
+  } catch {
+    try { session.child?.kill?.('SIGTERM') } catch {}
+  }
+}
+
+function issueCodexEnvironmentConfirmToken(targetId, environmentId, actionId, environmentFileFingerprint, commandFingerprint) {
   const token = `cet_${crypto.randomBytes(12).toString('base64url')}`
   codexEnvironmentConfirmTokens.set(token, {
-    targetAlias,
+    targetId,
     environmentId,
     actionId,
     environmentFileFingerprint,
@@ -8533,12 +7133,12 @@ function issueCodexEnvironmentConfirmToken(targetAlias, environmentId, actionId,
   return token
 }
 
-function consumeCodexEnvironmentConfirmToken(token, targetAlias, environmentId, actionId, environmentFileFingerprint, commandFingerprint) {
+function consumeCodexEnvironmentConfirmToken(token, targetId, environmentId, actionId, environmentFileFingerprint, commandFingerprint) {
   const entry = codexEnvironmentConfirmTokens.get(token)
   codexEnvironmentConfirmTokens.delete(token)
   if (!entry || entry.expiresAt <= Date.now()) return false
   return (
-    entry.targetAlias === targetAlias &&
+    entry.targetId === targetId &&
     entry.environmentId === environmentId &&
     entry.actionId === actionId &&
     entry.environmentFileFingerprint === environmentFileFingerprint &&
@@ -8546,12 +7146,704 @@ function consumeCodexEnvironmentConfirmToken(token, targetAlias, environmentId, 
   )
 }
 
+function shouldDeferCodexActionServerClose() {
+  if (codexEnvironmentShuttingDown) return false
+  if (codexActionRunnerVisible) return true
+  if (codexActionRunnerCatalog?.loading === true) return true
+  return [...codexEnvironmentActionSessions.values()].some((session) => session?.state === 'running' || session?.state === 'stopping')
+}
+
+function flushCodexActionDeferredServerClose() {
+  if (!codexActionDeferredServerClose || shouldDeferCodexActionServerClose()) return false
+  codexActionDeferredServerClose = false
+  closeCodexServer()
+  return true
+}
+
+function shutdownCodexEnvironmentActions() {
+  codexEnvironmentShuttingDown = true
+  const sessions = [...codexEnvironmentActionSessions.values()]
+  for (const session of sessions) {
+    session.pendingRestart = null
+    if (session.run && (session.run.status === 'running' || session.run.status === 'stopping')) {
+      finishCodexActionRun(session.run, 'interrupted', undefined, '宿主进程结束，运行已中断')
+    }
+  }
+  codexEnvironmentActionSessions.clear()
+  codexEnvironmentCommandVault.clear()
+  codexEnvironmentConfirmTokens.clear()
+  for (const session of sessions) signalCodexEnvironmentSession(session)
+  try { codexActionRunDatabase?.close?.() } catch {}
+  codexActionRunDatabase = null
+  codexActionRunDatabaseReady = false
+}
+
+function codexActionRunnerPreferences() {
+  const stored = globalThis.utools?.dbStorage?.getItem?.(CODEX_ACTION_RUNNER_STORAGE_KEY)
+  const source = codexRecord(stored)
+  const runtimeByProject = {}
+  for (const [projectKey, value] of Object.entries(codexRecord(source.runtimeByProject)).slice(0, 100)) {
+    const preference = codexRecord(value)
+    if (!projectKey || projectKey.length > 160 || preference.mode !== 'manual' || typeof preference.candidateId !== 'string' || !preference.candidateId) continue
+    runtimeByProject[projectKey] = { mode: 'manual', candidateId: preference.candidateId.slice(0, 120) }
+  }
+  return {
+    pinned: source.pinned === true,
+    view: source.view === 'archived' ? 'archived' : 'records',
+    selectedLaneId: typeof source.selectedLaneId === 'string' ? source.selectedLaneId.slice(0, 300) : '',
+    bounds: codexRecord(source.bounds),
+    runtimeByProject
+  }
+}
+
+function ensureCodexActionRunnerPreferencesLoaded() {
+  if (codexActionRunnerPreferenceLoaded) return
+  codexActionRunnerPreference = { ...codexActionRunnerPreference, ...codexActionRunnerPreferences() }
+  codexActionRunnerPreferenceLoaded = true
+}
+
+function writeCodexActionRunnerPreferences() {
+  const payload = { version: 1, ...codexActionRunnerPreference }
+  try {
+    if (codexActionRunnerAlive() && typeof codexActionRunnerWindow.getBounds === 'function') payload.bounds = codexActionRunnerWindow.getBounds()
+    return globalThis.utools?.dbStorage?.setItem?.(CODEX_ACTION_RUNNER_STORAGE_KEY, payload) !== false
+  } catch { return false }
+}
+
+function codexActionRunnerAlive() {
+  if (!codexActionRunnerWindow) return false
+  try { return typeof codexActionRunnerWindow.isDestroyed !== 'function' || !codexActionRunnerWindow.isDestroyed() } catch { return false }
+}
+
+function codexActionRunDatabasePath() {
+  let base = ''
+  try { base = globalThis.utools?.getPath?.('userData') || '' } catch {}
+  if (!base) base = path.join(os.homedir(), '.eypc')
+  fs.mkdirSync(base, { recursive: true })
+  return path.join(base, 'codex-action-runs.sqlite')
+}
+
+function enforceCodexActionRunRetention(database) {
+  try {
+    const rows = database.prepare('SELECT run_id, log_bytes FROM action_runs ORDER BY started_at DESC').all()
+    let retainedBytes = 0
+    const retained = new Set()
+    for (const [index, row] of rows.entries()) {
+      const bytes = Math.max(0, Number(row.log_bytes) || 0)
+      if (index < 200 && retainedBytes + bytes <= 100 * 1024 * 1024) {
+        retained.add(row.run_id)
+        retainedBytes += bytes
+      }
+    }
+    const removed = rows.filter((row) => !retained.has(row.run_id)).map((row) => row.run_id)
+    const remove = database.prepare('DELETE FROM action_runs WHERE run_id = ?')
+    for (const runId of removed) remove.run(runId)
+    if (removed.length) codexActionRunMemory = codexActionRunMemory.filter((run) => retained.has(run.runId))
+  } catch {}
+}
+
+function ensureCodexActionRunDatabase() {
+  if (codexActionRunDatabaseReady) return codexActionRunDatabase
+  codexActionRunDatabaseReady = true
+  try {
+    const { DatabaseSync } = require('node:sqlite')
+    const database = new DatabaseSync(codexActionRunDatabasePath())
+    database.exec(`
+      PRAGMA journal_mode = WAL;
+      CREATE TABLE IF NOT EXISTS action_runs (
+        run_id TEXT PRIMARY KEY,
+        lane_id TEXT NOT NULL,
+        project_key TEXT NOT NULL,
+        project_name TEXT NOT NULL,
+        environment_id TEXT NOT NULL,
+        environment_name TEXT NOT NULL,
+        action_id TEXT NOT NULL,
+        action_name TEXT NOT NULL,
+        risk TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        exit_code INTEGER,
+        archived_at INTEGER,
+        log_text TEXT NOT NULL DEFAULT '',
+        log_bytes INTEGER NOT NULL DEFAULT 0,
+        log_lines INTEGER NOT NULL DEFAULT 0,
+        message TEXT NOT NULL DEFAULT '',
+        runtime_mode TEXT,
+        runtime_source TEXT,
+        runtime_version TEXT,
+        runtime_label TEXT
+      );
+      CREATE INDEX IF NOT EXISTS action_runs_started_at ON action_runs(started_at DESC);
+    `)
+    const columns = new Set(database.prepare('PRAGMA table_info(action_runs)').all().map((column) => column.name))
+    for (const [name, type] of [['runtime_mode', 'TEXT'], ['runtime_source', 'TEXT'], ['runtime_version', 'TEXT'], ['runtime_label', 'TEXT']]) {
+      if (!columns.has(name)) database.exec(`ALTER TABLE action_runs ADD COLUMN ${name} ${type}`)
+    }
+    database.prepare("UPDATE action_runs SET status = 'interrupted', ended_at = COALESCE(ended_at, ?), message = '宿主上次退出，运行状态已中断' WHERE status IN ('running', 'stopping')").run(Date.now())
+    database.prepare('DELETE FROM action_runs WHERE started_at < ?').run(Date.now() - 30 * 24 * 60 * 60_000)
+    database.prepare('DELETE FROM action_runs WHERE run_id IN (SELECT run_id FROM action_runs ORDER BY started_at DESC LIMIT -1 OFFSET 200)').run()
+    enforceCodexActionRunRetention(database)
+    const rows = database.prepare('SELECT * FROM action_runs ORDER BY started_at DESC LIMIT 200').all()
+    codexActionRunMemory = rows.map((row) => ({
+      version: 1,
+      runId: row.run_id,
+      laneId: row.lane_id,
+      projectKey: row.project_key,
+      projectName: row.project_name,
+      environmentId: row.environment_id,
+      environmentName: row.environment_name,
+      actionId: row.action_id,
+      actionName: row.action_name,
+      risk: row.risk,
+      status: row.status,
+      startedAt: row.started_at,
+      endedAt: row.ended_at || undefined,
+      exitCode: typeof row.exit_code === 'number' ? row.exit_code : undefined,
+      archivedAt: row.archived_at || undefined,
+      logText: row.log_text || '',
+      logBytes: row.log_bytes || 0,
+      logLines: row.log_lines || 0,
+      message: row.message || '',
+      cursor: 0,
+      runtimeMode: row.runtime_mode || undefined,
+      runtimeSource: row.runtime_source || undefined,
+      runtimeVersion: row.runtime_version || undefined,
+      runtimeLabel: row.runtime_label || undefined
+    }))
+    codexActionRunDatabase = database
+  } catch {
+    codexActionRunDatabase = null
+  }
+  return codexActionRunDatabase
+}
+
+function persistCodexActionRun(run) {
+  const database = ensureCodexActionRunDatabase()
+  if (!database) return
+  try {
+    database.prepare(`INSERT INTO action_runs (
+      run_id, lane_id, project_key, project_name, environment_id, environment_name, action_id, action_name,
+      risk, status, started_at, ended_at, exit_code, archived_at, log_text, log_bytes, log_lines, message
+      , runtime_mode, runtime_source, runtime_version, runtime_label
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(run_id) DO UPDATE SET status=excluded.status, ended_at=excluded.ended_at,
+      exit_code=excluded.exit_code, archived_at=excluded.archived_at, log_text=excluded.log_text,
+      log_bytes=excluded.log_bytes, log_lines=excluded.log_lines, message=excluded.message,
+      runtime_mode=excluded.runtime_mode, runtime_source=excluded.runtime_source,
+      runtime_version=excluded.runtime_version, runtime_label=excluded.runtime_label`).run(
+      run.runId, run.laneId, run.projectKey, run.projectName, run.environmentId, run.environmentName,
+      run.actionId, run.actionName, run.risk, run.status, run.startedAt, run.endedAt || null,
+      typeof run.exitCode === 'number' ? run.exitCode : null, run.archivedAt || null,
+      run.logText || '', run.logBytes || 0, run.logLines || 0, run.message || '',
+      run.runtimeMode || null, run.runtimeSource || null, run.runtimeVersion || null, run.runtimeLabel || null
+    )
+  } catch {}
+}
+
+function sanitizeCodexActionLogText(text, privatePaths = []) {
+  let value = String(text || '')
+    .replace(/\u001B\[[0-?]*[ -/]*[@-~]|\u001B[@-_]/g, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+  const paths = [...new Set([os.homedir(), ...privatePaths].filter(Boolean))].sort((left, right) => right.length - left.length)
+  for (const privatePath of paths) value = value.split(privatePath).join('<private-path>')
+  return value
+    .replace(/(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s'"`]+/gi, '$1<redacted>')
+    .replace(/((?:token|password|passwd|secret|api[_-]?key)\s*[:=]\s*)[^\s'"`]+/gi, '$1<redacted>')
+    .replace(/(https?:\/\/)([^\s/@:]+):([^\s/@]+)@/gi, '$1<redacted>@')
+    .slice(0, 32 * 1024)
+}
+
+function codexActionFlushLog(run) {
+  if (!run) return
+  if (run._logFlushTimer) {
+    clearTimeout(run._logFlushTimer)
+    run._logFlushTimer = null
+  }
+  const queue = Array.isArray(run._logQueue) ? run._logQueue.splice(0) : []
+  run._logQueueBytes = 0
+  if (!queue.length) return
+  let next = run.logText || ''
+  const deltas = []
+  for (const item of queue) {
+    next += item.text
+    run.cursor = (run.cursor || 0) + 1
+    deltas.push({ version: 1, runId: run.runId, cursor: run.cursor, stream: item.stream, text: item.text, receivedAt: item.receivedAt })
+  }
+  run.logText = next.length > 2 * 1024 * 1024 ? next.slice(next.length - 2 * 1024 * 1024) : next
+  run.logBytes = Buffer.byteLength(run.logText, 'utf8')
+  run.logLines = (run.logText.match(/\n/g) || []).length + (run.logText && !run.logText.endsWith('\n') ? 1 : 0)
+  persistCodexActionRun(run)
+  if (!codexActionRunnerAlive()) return
+  for (const delta of deltas) {
+    try { codexActionRunnerWindow.webContents.send(CODEX_ACTION_RUNNER_CHANNELS.log, delta) } catch {}
+  }
+}
+
+function codexActionQueueSafeLog(run, stream, text) {
+  if (!text) return
+  run._logQueue ||= []
+  const previous = run._logQueue[run._logQueue.length - 1]
+  if (previous && previous.stream === stream && Buffer.byteLength(previous.text, 'utf8') + Buffer.byteLength(text, 'utf8') <= CODEX_ACTION_LOG_FLUSH_BYTES) {
+    previous.text += text
+    previous.receivedAt = Date.now()
+  } else {
+    run._logQueue.push({ stream, text, receivedAt: Date.now() })
+  }
+  run._logQueueBytes = (run._logQueueBytes || 0) + Buffer.byteLength(text, 'utf8')
+  if (run._logQueueBytes >= CODEX_ACTION_LOG_FLUSH_BYTES) codexActionFlushLog(run)
+  else if (!run._logFlushTimer) run._logFlushTimer = setTimeout(() => codexActionFlushLog(run), CODEX_ACTION_LOG_FLUSH_MS)
+}
+
+function codexActionLogStream(run, stream, privatePaths) {
+  run._logStreams ||= new Map()
+  if (run._logStreams.has(stream)) return run._logStreams.get(stream)
+  let decoder = null
+  try {
+    const { StringDecoder } = require('node:string_decoder')
+    decoder = new StringDecoder('utf8')
+  } catch {
+    decoder = { write: (chunk) => Buffer.from(chunk).toString('utf8'), end: () => '' }
+  }
+  const state = { decoder, pending: '', dropUntilNewline: false, privatePaths: [...new Set(privatePaths || [])] }
+  run._logStreams.set(stream, state)
+  return state
+}
+
+function codexActionConsumeDecodedLog(run, stream, state, decoded, final = false) {
+  if (decoded) state.pending += decoded
+  if (state.dropUntilNewline) {
+    const newline = state.pending.indexOf('\n')
+    if (newline < 0) {
+      state.pending = ''
+      return
+    }
+    state.pending = state.pending.slice(newline + 1)
+    state.dropUntilNewline = false
+  }
+  for (;;) {
+    const newline = state.pending.indexOf('\n')
+    if (newline < 0) break
+    const complete = state.pending.slice(0, newline + 1)
+    state.pending = state.pending.slice(newline + 1)
+    codexActionQueueSafeLog(run, stream, sanitizeCodexActionLogText(complete, state.privatePaths))
+  }
+  if (state.pending.length > 64 * 1024) {
+    codexActionQueueSafeLog(run, 'system', '[单行输出超过安全上限，已截断]\n')
+    state.pending = ''
+    state.dropUntilNewline = true
+  }
+  if (final && state.pending) {
+    codexActionQueueSafeLog(run, stream, sanitizeCodexActionLogText(state.pending, state.privatePaths))
+    state.pending = ''
+  }
+}
+
+function appendCodexActionRunLog(run, stream, chunk, privatePaths) {
+  if (!run || !['stdout', 'stderr', 'system'].includes(stream)) return
+  const state = codexActionLogStream(run, stream, privatePaths)
+  codexActionConsumeDecodedLog(run, stream, state, state.decoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk || ''))))
+}
+
+function finalizeCodexActionRunLogs(run) {
+  if (!run?._logStreams) {
+    codexActionFlushLog(run)
+    return
+  }
+  for (const [stream, state] of run._logStreams) codexActionConsumeDecodedLog(run, stream, state, state.decoder.end(), true)
+  codexActionFlushLog(run)
+  run._logStreams.clear()
+}
+
+function createCodexActionRun(input, resolved, hostAction, launch = null) {
+  ensureCodexActionRunDatabase()
+  const run = {
+    version: 1,
+    runId: `car_${Date.now().toString(36)}_${crypto.randomBytes(6).toString('base64url')}`,
+    laneId: `${encodeURIComponent(resolved.targetId)}:${encodeURIComponent(input.environmentId)}:${encodeURIComponent(input.actionId)}`,
+    projectKey: resolved.projectKey,
+    projectName: String(input.projectName || resolved.projectKey).slice(0, 120),
+    environmentId: input.environmentId,
+    environmentName: String(input.environmentName || input.environmentId).slice(0, 120),
+    actionId: input.actionId,
+    actionName: String(input.actionName || hostAction.name || input.actionId).slice(0, 120),
+    risk: hostAction.risk,
+    status: 'running',
+    startedAt: Date.now(),
+    logText: '',
+    logBytes: 0,
+    logLines: 0,
+    message: '正在执行',
+    cursor: 0,
+    runtimeMode: launch?.runtime?.mode,
+    runtimeSource: launch?.runtime?.source,
+    runtimeVersion: launch?.runtime?.version,
+    runtimeLabel: launch?.runtime?.label
+  }
+  codexActionRunMemory.unshift(run)
+  codexActionRunMemory = codexActionRunMemory.slice(0, 200)
+  persistCodexActionRun(run)
+  return run
+}
+
+function recordCodexActionRestartFailure(input, result) {
+  const now = Date.now()
+  const run = {
+    version: 1,
+    runId: `car_${now.toString(36)}_${crypto.randomBytes(6).toString('base64url')}`,
+    laneId: `${encodeURIComponent(String(input.targetId || input.projectKey || ''))}:${encodeURIComponent(String(input.environmentId || ''))}:${encodeURIComponent(String(input.actionId || ''))}`,
+    projectKey: String(input.projectKey || '').slice(0, 160),
+    projectName: String(input.projectName || input.projectKey || '项目').slice(0, 120),
+    environmentId: String(input.environmentId || '').slice(0, 64),
+    environmentName: String(input.environmentName || input.environmentId || 'Environment').slice(0, 120),
+    actionId: String(input.actionId || '').slice(0, 80),
+    actionName: String(input.actionName || input.actionId || 'Serve').slice(0, 120),
+    risk: 'long-running',
+    status: 'failed',
+    startedAt: now,
+    endedAt: now,
+    logText: '',
+    logBytes: 0,
+    logLines: 0,
+    message: String(result?.message || 'Serve 重新执行前校验失败').slice(0, 240),
+    cursor: 0
+  }
+  codexActionRunMemory.unshift(run)
+  codexActionRunMemory = codexActionRunMemory.slice(0, 200)
+  persistCodexActionRun(run)
+  pushCodexActionRunnerSnapshot(run.message)
+}
+
+async function restartCodexEnvironmentActionAfterExit(input) {
+  if (codexEnvironmentShuttingDown) return
+  const previousRunIds = new Set(codexActionRunMemory.map((run) => run.runId))
+  const result = await runCodexProjectEnvironmentAction(input)
+  const created = codexActionRunMemory.some((run) => !previousRunIds.has(run.runId))
+  if (!created && !['ok', 'started', 'running', 'stopping'].includes(result?.outcome)) recordCodexActionRestartFailure(input, result)
+}
+
+function finishCodexActionRun(run, status, exitCode, message) {
+  if (!run) return
+  finalizeCodexActionRunLogs(run)
+  run.status = status
+  run.endedAt = Date.now()
+  if (typeof exitCode === 'number') run.exitCode = exitCode
+  run.message = message
+  persistCodexActionRun(run)
+  if (codexActionRunDatabase) enforceCodexActionRunRetention(codexActionRunDatabase)
+  pushCodexActionRunnerSnapshot(message)
+}
+
+function codexActionUsableFile(candidate) {
+  try {
+    if (!path.isAbsolute(candidate) || !fs.statSync(candidate).isFile()) return ''
+    return fs.realpathSync(candidate)
+  } catch { return '' }
+}
+
+function codexActionProbeNodeVersion(candidate) {
+  const command = codexActionUsableFile(candidate)
+  if (!command) return ''
+  try {
+    const { execFileSync } = require('node:child_process')
+    if (typeof execFileSync !== 'function') return ''
+    const output = String(execFileSync(command, ['--version'], {
+      encoding: 'utf8',
+      timeout: 1_500,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore']
+    }) || '').trim()
+    return /^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(output) ? output : ''
+  } catch { return '' }
+}
+
+function codexActionSemverParts(version) {
+  const match = String(version || '').match(/^v?(\d+)\.(\d+)\.(\d+)/)
+  return match ? match.slice(1, 4).map(Number) : [0, 0, 0]
+}
+
+function codexActionCompareNodeCandidates(left, right) {
+  const leftParts = codexActionSemverParts(left.version)
+  const rightParts = codexActionSemverParts(right.version)
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index] !== rightParts[index]) return rightParts[index] - leftParts[index]
+  }
+  return left.id.localeCompare(right.id)
+}
+
+function codexActionNvmRoots() {
+  if (process.platform !== 'darwin') return []
+  const home = os.homedir()
+  const xdg = typeof process.env.XDG_CONFIG_HOME === 'string' && path.isAbsolute(process.env.XDG_CONFIG_HOME)
+    ? path.join(process.env.XDG_CONFIG_HOME, 'nvm')
+    : ''
+  const candidates = [
+    typeof process.env.NVM_DIR === 'string' && path.isAbsolute(process.env.NVM_DIR) ? process.env.NVM_DIR : '',
+    xdg,
+    path.join(home, '.nvm')
+  ]
+  const roots = []
+  const seen = new Set()
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    try {
+      const real = fs.realpathSync(candidate)
+      if (!fs.statSync(real).isDirectory() || seen.has(real)) continue
+      seen.add(real)
+      roots.push(real)
+    } catch {}
+  }
+  return roots
+}
+
+function codexActionNodeRuntimeCandidates(force = false) {
+  const now = Date.now()
+  if (!force && codexNodeRuntimeDiscoveryCache.expiresAt > now) return codexNodeRuntimeDiscoveryCache.candidates
+  const candidates = []
+  const seenPaths = new Set()
+  for (const root of codexActionNvmRoots()) {
+    const versionRoot = path.join(root, 'versions', 'node')
+    let entries = []
+    try { entries = fs.readdirSync(versionRoot, { withFileTypes: true }) } catch {}
+    for (const entry of entries) {
+      if (!entry?.isDirectory?.() || !/^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(entry.name)) continue
+      const requestedPath = path.join(versionRoot, entry.name, 'bin', process.platform === 'win32' ? 'node.exe' : 'node')
+      const nodePath = codexActionUsableFile(requestedPath)
+      if (!nodePath || seenPaths.has(nodePath)) continue
+      const version = codexActionProbeNodeVersion(nodePath)
+      if (!version) continue
+      if (candidates.some((candidate) => candidate.id === `nvm:${version}`)) continue
+      seenPaths.add(nodePath)
+      candidates.push({
+        id: `nvm:${version}`,
+        label: `Node ${version} · NVM`,
+        version,
+        source: 'nvm',
+        nodePath,
+        binDir: path.dirname(requestedPath),
+        nvmRoot: root
+      })
+    }
+  }
+  candidates.sort(codexActionCompareNodeCandidates)
+  const systemPaths = process.platform === 'darwin'
+    ? [
+        process.arch === 'arm64' ? '/opt/homebrew/bin/node' : '/usr/local/bin/node',
+        process.arch === 'arm64' ? '/usr/local/bin/node' : '/opt/homebrew/bin/node',
+        '/usr/bin/node',
+        path.basename(process.execPath || '') === 'node' ? process.execPath : ''
+      ]
+    : process.platform === 'win32'
+      ? [path.join(process.env.ProgramFiles || 'C:\\Program Files', 'nodejs', 'node.exe')]
+      : ['/usr/local/bin/node', '/usr/bin/node', path.basename(process.execPath || '') === 'node' ? process.execPath : '']
+  for (const requestedPath of systemPaths) {
+    if (!requestedPath) continue
+    const nodePath = codexActionUsableFile(requestedPath)
+    if (!nodePath || seenPaths.has(nodePath)) continue
+    const version = codexActionProbeNodeVersion(nodePath)
+    if (!version) continue
+    seenPaths.add(nodePath)
+    const id = `system:${crypto.createHash('sha256').update(nodePath).digest('hex').slice(0, 12)}`
+    candidates.push({ id, label: `Node ${version} · 系统`, version, source: 'system', nodePath, binDir: path.dirname(requestedPath), nvmRoot: '' })
+  }
+  codexNodeRuntimeDiscoveryCache = { expiresAt: now + 5_000, candidates }
+  return candidates
+}
+
+function codexActionReadVersionToken(filePath, nvmrc = false) {
+  let text = ''
+  try {
+    if (!fs.statSync(filePath).isFile()) return { present: true, token: '', invalid: true }
+  } catch (error) {
+    return error && typeof error === 'object' && error.code === 'ENOENT'
+      ? { present: false, token: '' }
+      : { present: true, token: '', invalid: true }
+  }
+  try { text = fs.readFileSync(filePath, 'utf8') } catch { return { present: true, token: '', invalid: true } }
+  if (text.length > 4_096) return { present: true, token: '', invalid: true }
+  const values = []
+  for (const sourceLine of text.split(/\r?\n/)) {
+    const line = (nvmrc ? sourceLine.replace(/#.*/, '') : sourceLine).trim()
+    if (!line || nvmrc && /^[A-Za-z_][A-Za-z0-9_]*\s*=/.test(line)) continue
+    values.push(line)
+  }
+  const token = values.length === 1 ? values[0] : ''
+  const invalid = !token || /\s|[\\`;$|&<>]/.test(token) || token.startsWith('/') || token.includes('..') || token.length > 80
+  return { present: true, token: invalid ? '' : token, invalid }
+}
+
+function codexActionProjectNodeHint(projectRoot) {
+  const nvmrc = codexActionReadVersionToken(path.join(projectRoot, '.nvmrc'), true)
+  if (nvmrc.present) return { ...nvmrc, source: '.nvmrc' }
+  const nodeVersion = codexActionReadVersionToken(path.join(projectRoot, '.node-version'), false)
+  return nodeVersion.present ? { ...nodeVersion, source: '.node-version' } : { present: false, token: '', source: '' }
+}
+
+function codexActionReadNvmAlias(root, token) {
+  const normalized = String(token || '').replace(/^v/, '')
+  if (!normalized || !/^[A-Za-z0-9*._/-]+$/.test(normalized) || normalized.includes('..')) return ''
+  const aliasRoot = path.join(root, 'alias')
+  const aliasPath = path.resolve(aliasRoot, ...normalized.split('/'))
+  const relative = path.relative(aliasRoot, aliasPath)
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return ''
+  const value = codexActionReadVersionToken(aliasPath, true)
+  return value.present && !value.invalid ? value.token : ''
+}
+
+function codexActionResolveNodeToken(token, candidates, roots, depth = 0) {
+  if (depth > 8) return null
+  const normalized = String(token || '').trim().toLowerCase().replace(/^v(?=\d)/, '')
+  const nvmCandidates = candidates.filter((candidate) => candidate.source === 'nvm')
+  if (!normalized) return null
+  if (normalized === 'node' || normalized === 'stable' || normalized === 'current') return nvmCandidates[0] || null
+  if (normalized === 'lts/*') {
+    for (const root of roots) {
+      const value = codexActionReadNvmAlias(root, 'lts/*')
+      if (value) return codexActionResolveNodeToken(value, candidates, roots, depth + 1)
+    }
+    return null
+  }
+  if (/^\d+(?:\.\d+){0,2}$/.test(normalized)) {
+    const prefix = normalized.split('.')
+    return nvmCandidates.find((candidate) => {
+      const actual = candidate.version.replace(/^v/, '').split(/[.-]/).slice(0, prefix.length)
+      return actual.join('.') === prefix.join('.')
+    }) || null
+  }
+  for (const root of roots) {
+    const alias = codexActionReadNvmAlias(root, normalized)
+    if (!alias || alias.toLowerCase() === normalized) continue
+    const candidate = codexActionResolveNodeToken(alias, candidates, roots, depth + 1)
+    if (candidate) return candidate
+  }
+  return null
+}
+
+function codexActionRuntimePreference(projectKey) {
+  ensureCodexActionRunnerPreferencesLoaded()
+  const source = codexRecord(codexActionRunnerPreference.runtimeByProject)[projectKey]
+  const preference = codexRecord(source)
+  return preference.mode === 'manual' && typeof preference.candidateId === 'string' && preference.candidateId
+    ? { mode: 'manual', candidateId: preference.candidateId.slice(0, 120) }
+    : { mode: 'auto', candidateId: '' }
+}
+
+function codexActionRuntimeProjection(projectKey, projectRoot, force = false) {
+  const candidates = codexActionNodeRuntimeCandidates(force)
+  const roots = codexActionNvmRoots()
+  const preference = codexActionRuntimePreference(projectKey)
+  const publicCandidates = candidates.map((candidate) => ({ id: candidate.id, label: candidate.label, version: candidate.version, source: candidate.source }))
+  let resolved = null
+  let state = 'ready'
+  let message = ''
+  let hintSource = ''
+  if (preference.mode === 'manual') {
+    resolved = candidates.find((candidate) => candidate.id === preference.candidateId) || null
+    if (!resolved) {
+      state = 'unavailable'
+      message = '手动选择的 Node 已不可用，请重新选择'
+    }
+  } else {
+    const hint = codexActionProjectNodeHint(projectRoot)
+    if (hint.present) {
+      hintSource = hint.source
+      resolved = hint.invalid ? null : codexActionResolveNodeToken(hint.token, candidates, roots)
+      if (!resolved) {
+        state = 'invalid-project-version'
+        message = `${hint.source} 指定的 Node 未安装或格式无效`
+      }
+    } else {
+      for (const root of roots) {
+        const defaultAlias = codexActionReadNvmAlias(root, 'default')
+        if (!defaultAlias) continue
+        resolved = codexActionResolveNodeToken(defaultAlias, candidates, roots)
+        if (resolved) break
+      }
+      resolved ||= candidates.find((candidate) => candidate.source === 'nvm') || candidates.find((candidate) => candidate.source === 'system') || null
+      if (!resolved) {
+        state = 'unavailable'
+        message = '未检测到可用的 NVM 或系统 Node'
+      }
+    }
+  }
+  return {
+    preference,
+    resolved,
+    public: {
+      mode: preference.mode,
+      state,
+      selectedCandidateId: preference.candidateId || undefined,
+      resolvedCandidateId: resolved?.id,
+      label: resolved?.label,
+      version: resolved?.version,
+      source: resolved?.source,
+      hintSource: hintSource || undefined,
+      candidates: publicCandidates,
+      message: message || undefined
+    }
+  }
+}
+
+function codexActionPackageManagerEntry(runtime, name) {
+  if (!runtime) return ''
+  const prefix = path.resolve(runtime.binDir, '..')
+  const direct = codexActionUsableFile(path.join(runtime.binDir, process.platform === 'win32' ? `${name}.cmd` : name))
+  if (direct && /\.(?:c?js|mjs)$/i.test(direct)) return direct
+  const byName = {
+    npm: [path.join(prefix, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'), path.join(prefix, 'node_modules', 'npm', 'bin', 'npm-cli.js')],
+    pnpm: [path.join(prefix, 'lib', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs'), path.join(prefix, 'lib', 'node_modules', 'pnpm', 'bin', 'pnpm.js')],
+    yarn: [path.join(prefix, 'lib', 'node_modules', 'yarn', 'bin', 'yarn.js')]
+  }
+  if (runtime.source === 'system') {
+    byName.pnpm.push('/opt/homebrew/lib/node_modules/pnpm/bin/pnpm.cjs', '/usr/local/lib/node_modules/pnpm/bin/pnpm.cjs')
+    byName.yarn.push('/opt/homebrew/lib/node_modules/yarn/bin/yarn.js', '/usr/local/lib/node_modules/yarn/bin/yarn.js')
+  }
+  return (byName[name] || []).map(codexActionUsableFile).find(Boolean) || ''
+}
+
+function resolveCodexActionLaunchPlan(validatedCommand, projectRoot, projectKey = '') {
+  const verified = validateCodexEnvironmentActionCommandHost(Array.isArray(validatedCommand?.argv) ? validatedCommand.argv.join(' ') : '')
+  if (!verified || JSON.stringify(verified) !== JSON.stringify(validatedCommand)) return null
+  const name = verified.executable
+  const args = verified.argv.slice(1)
+  if (name === 'vite' || name === 'npm' || name === 'pnpm' || name === 'yarn') {
+    const runtimeResult = codexActionRuntimeProjection(projectKey, projectRoot, true)
+    if (!runtimeResult.resolved) return { errorCode: 'node-runtime-unavailable', message: runtimeResult.public.message || 'Node 运行时不可用', runtime: runtimeResult.public }
+    const script = name === 'vite'
+      ? codexActionUsableFile(path.join(projectRoot, 'node_modules', 'vite', 'bin', 'vite.js'))
+      : codexActionPackageManagerEntry(runtimeResult.resolved, name)
+    if (!script) return { errorCode: 'package-manager-unavailable', message: `所选 Node 未提供 ${name} 入口`, runtime: runtimeResult.public }
+    return {
+      command: runtimeResult.resolved.nodePath,
+      args: [script, ...args],
+      binDir: runtimeResult.resolved.binDir,
+      runtime: runtimeResult.public
+    }
+  }
+  const home = os.homedir()
+  const candidatesByName = {
+    git: process.platform === 'win32'
+      ? [path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'cmd', 'git.exe')]
+      : ['/usr/bin/git', '/opt/homebrew/bin/git', '/usr/local/bin/git'],
+    pnpm: process.platform === 'win32'
+      ? [path.join(process.env.LOCALAPPDATA || '', 'pnpm', 'pnpm.exe')]
+      : [path.join(home, 'Library', 'pnpm', 'pnpm'), path.join(home, '.local', 'share', 'pnpm', 'pnpm'), '/opt/homebrew/bin/pnpm', '/usr/local/bin/pnpm'],
+    yarn: process.platform === 'win32' ? [] : ['/opt/homebrew/bin/yarn', '/usr/local/bin/yarn'],
+    bun: process.platform === 'win32' ? [path.join(home, '.bun', 'bin', 'bun.exe')] : [path.join(home, '.bun', 'bin', 'bun'), '/opt/homebrew/bin/bun']
+  }
+  const command = (candidatesByName[name] || []).map(codexActionUsableFile).find(Boolean)
+  return command ? { command, args } : null
+}
+
 async function runCodexProjectEnvironmentAction(input) {
   const targetAlias = typeof input?.targetAlias === 'string' ? input.targetAlias : ''
+  const requestedTargetId = typeof input?.targetId === 'string' ? input.targetId : ''
+  const compatibilityProjectKey = typeof input?.projectKey === 'string' ? input.projectKey : ''
   const environmentId = typeof input?.environmentId === 'string' ? input.environmentId.slice(0, 64) : ''
   const actionId = typeof input?.actionId === 'string' ? input.actionId.slice(0, 80) : ''
   const confirmToken = typeof input?.confirmToken === 'string' ? input.confirmToken : ''
   const stopIfRunning = input?.stopIfRunning === true
+  const restartIfRunning = input?.restartIfRunning === true
   if (!targetAlias || !environmentId || !actionId) {
     return { outcome: 'failed', errorCode: 'invalid-request', message: 'Action 请求无效' }
   }
@@ -8562,11 +7854,18 @@ async function runCodexProjectEnvironmentAction(input) {
   if (resolved.errorCode) {
     return { outcome: 'failed', errorCode: resolved.errorCode, message: resolved.message }
   }
-  let vault = codexEnvironmentCommandVault.get(targetAlias)
-  if (!vault) {
-    listCodexProjectEnvironments(targetAlias)
-    vault = codexEnvironmentCommandVault.get(targetAlias)
+  if (requestedTargetId && requestedTargetId !== resolved.targetId) {
+    return { outcome: 'failed', errorCode: 'target-mismatch', message: 'Action 目标身份不匹配' }
   }
+  if (!requestedTargetId && (resolved.kind !== 'project' || compatibilityProjectKey !== resolved.projectKey)) {
+    return { outcome: 'failed', errorCode: 'runtime-revision-required', message: 'Action Host 已更新，请重载插件后再试' }
+  }
+  const latestList = listCodexProjectEnvironments(targetAlias)
+  if (latestList.outcome !== 'ok') return latestList
+  if (latestList.runtimeRevision !== CODEX_ACTION_HOST_RUNTIME_REVISION || latestList.targetId !== resolved.targetId) {
+    return { outcome: 'failed', errorCode: 'target-mismatch', message: 'Action 目标刷新结果不一致' }
+  }
+  const vault = codexEnvironmentCommandVault.get(resolved.targetId)
   const hostAction = vault?.get(environmentId)?.get(actionId)
   if (!hostAction) {
     return { outcome: 'failed', errorCode: 'action-missing', message: '未找到对应 Action，请刷新后重试' }
@@ -8579,12 +7878,22 @@ async function runCodexProjectEnvironmentAction(input) {
   }
   const environmentFileFingerprint = typeof hostAction.environmentFileFingerprint === 'string' ? hostAction.environmentFileFingerprint : ''
   const commandFingerprint = typeof hostAction.commandFingerprint === 'string' ? hostAction.commandFingerprint : ''
-  const sessionKey = codexEnvironmentSessionKey(targetAlias, environmentId, actionId)
+  const sessionKey = codexEnvironmentSessionKey(resolved.targetId, environmentId, actionId)
   const existing = codexEnvironmentActionSessions.get(sessionKey)
+  if (existing?.state === 'running' && hostAction.risk !== 'long-running') {
+    return { outcome: 'running', session: sanitizeCodexEnvironmentSession(existing), message: '该 Action 正在运行，已定位到当前记录' }
+  }
+  if (existing?.state === 'stopping' && hostAction.risk !== 'long-running') {
+    return { outcome: 'stopping', session: sanitizeCodexEnvironmentSession(existing), message: '该 Action 正在停止' }
+  }
   if (hostAction.risk === 'long-running') {
     if (existing?.state === 'running') {
       const existingEnvironmentFileFingerprint = typeof existing.environmentFileFingerprint === 'string' ? existing.environmentFileFingerprint : ''
       const existingCommandFingerprint = typeof existing.commandFingerprint === 'string' ? existing.commandFingerprint : ''
+      if (restartIfRunning) {
+        existing.pendingRestart = { ...input, confirmToken: undefined, restartIfRunning: false }
+        return stopCodexEnvironmentActionSession({ targetId: resolved.targetId, projectKey: resolved.projectKey, environmentId, actionId })
+      }
       if ((existingEnvironmentFileFingerprint && existingCommandFingerprint) && (existingEnvironmentFileFingerprint !== environmentFileFingerprint || existingCommandFingerprint !== commandFingerprint)) {
         return {
           outcome: 'rejected',
@@ -8592,7 +7901,7 @@ async function runCodexProjectEnvironmentAction(input) {
           message: 'Serve 运行的命令/环境指纹与当前 Action 不一致，请先停止该会话后重试'
         }
       }
-      if (stopIfRunning) return stopCodexEnvironmentActionSession({ targetAlias, projectKey: resolved.projectKey, environmentId, actionId })
+      if (stopIfRunning) return stopCodexEnvironmentActionSession({ targetId: resolved.targetId, projectKey: resolved.projectKey, environmentId, actionId })
       return { outcome: 'running', session: sanitizeCodexEnvironmentSession(existing), message: 'Serve 仍在运行；再次确认可停止' }
     }
     if (existing?.state === 'stopping') {
@@ -8604,8 +7913,8 @@ async function runCodexProjectEnvironmentAction(input) {
     }
   }
   if (hostAction.risk === 'external-write') {
-    if (!confirmToken || !consumeCodexEnvironmentConfirmToken(confirmToken, targetAlias, environmentId, actionId, environmentFileFingerprint, commandFingerprint)) {
-      const token = issueCodexEnvironmentConfirmToken(targetAlias, environmentId, actionId, environmentFileFingerprint, commandFingerprint)
+    if (!confirmToken || !consumeCodexEnvironmentConfirmToken(confirmToken, resolved.targetId, environmentId, actionId, environmentFileFingerprint, commandFingerprint)) {
+      const token = issueCodexEnvironmentConfirmToken(resolved.targetId, environmentId, actionId, environmentFileFingerprint, commandFingerprint)
       return {
         outcome: 'confirm-required',
         errorCode: 'confirm-required',
@@ -8615,69 +7924,43 @@ async function runCodexProjectEnvironmentAction(input) {
       }
     }
   }
-  const normalizedCommand = String(hostAction.command || '').trim().toLowerCase()
-  const unsafeShell = /[;\n\r`]|&&|\|\||\|/.test(normalizedCommand)
-  if (hostAction.risk === 'normal') {
-    if (unsafeShell || (!/^\s*(pnpm|npm|yarn|bun)\s+run\s+build\b/.test(normalizedCommand) && !/^\s*vite\b.*\bbuild\b/.test(normalizedCommand))) {
-      return { outcome: 'rejected', errorCode: 'action-not-allowed', message: '该 Action 不在允许列表中' }
-    }
-  } else if (hostAction.risk === 'long-running') {
-    if (unsafeShell || (!/^\s*(pnpm|npm|yarn|bun)\s+run\s+serve\b/.test(normalizedCommand) && !/^\s*vite\b.*\bserve\b/.test(normalizedCommand))) {
-      return { outcome: 'rejected', errorCode: 'action-not-allowed', message: '该 Action 不在允许列表中' }
-    }
-  } else if (hostAction.risk === 'external-write') {
-    if (unsafeShell || !/^\s*git\s+push\b/.test(normalizedCommand)) {
-      return { outcome: 'rejected', errorCode: 'action-not-allowed', message: '该 Action 不在允许列表中' }
-    }
+  const launch = resolveCodexActionLaunchPlan(hostAction.validatedCommand, resolved.executionCwd, resolved.projectKey)
+  if (!launch || launch.errorCode) return {
+    outcome: 'rejected',
+    errorCode: launch?.errorCode || 'executable-unavailable',
+    message: launch?.message || '未找到受信任的绝对可执行入口'
   }
-  const tokenizeCodexEnvironmentCommandToArgv = (command) => {
-    if (typeof command !== 'string') return []
-    const result = []
-    let current = ''
-    let quote = null
-    let escaped = false
-    for (let i = 0; i < command.length; i += 1) {
-      const ch = command[i]
-      if (escaped) {
-        current += ch
-        escaped = false
-        continue
-      }
-      if (quote) {
-        if (ch === '\\' && quote === '"') { escaped = true; continue }
-        if (ch === quote) { quote = null; continue }
-        current += ch
-        continue
-      }
-      if (ch === '"' || ch === "'") { quote = ch; continue }
-      if (ch === '\\') { escaped = true; continue }
-      if (/\s/.test(ch)) {
-        if (current) { result.push(current); current = '' }
-        continue
-      }
-      current += ch
-    }
-    if (quote) return []
-    if (current) result.push(current)
-    return result
+  const spawnEnvironment = {
+    ...process.env,
+    PATH: [
+      launch.binDir,
+      '/opt/homebrew/bin',
+      '/usr/local/bin',
+      '/usr/bin',
+      '/bin',
+      '/usr/sbin',
+      '/sbin'
+    ].filter(Boolean).join(path.delimiter)
   }
-  const argv = tokenizeCodexEnvironmentCommandToArgv(hostAction.command)
-  if (!argv.length || !argv[0]) return { outcome: 'rejected', errorCode: 'invalid-command', message: '该 Action 不可执行' }
   if (hostAction.risk === 'long-running') {
+    const run = createCodexActionRun({ ...input, environmentId, actionId }, resolved, hostAction, launch)
     let child
     try {
-      child = spawn(argv[0], argv.slice(1), {
+      child = spawn(launch.command, launch.args, {
         cwd: resolved.executionCwd,
-        env: process.env,
+        env: spawnEnvironment,
         detached: process.platform !== 'win32',
         windowsHide: true,
-        stdio: ['ignore', 'ignore', 'ignore']
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: false
       })
     } catch {
+      finishCodexActionRun(run, 'failed', undefined, '无法启动 Serve')
       return { outcome: 'failed', errorCode: 'spawn-failed', message: '无法启动 Serve' }
     }
     const session = {
       targetAlias,
+      targetId: resolved.targetId,
       projectKey: resolved.projectKey,
       environmentId,
       actionId,
@@ -8686,17 +7969,27 @@ async function runCodexProjectEnvironmentAction(input) {
       state: 'running',
       startedAt: Date.now(),
       message: 'Serve 已启动',
+      run,
       child,
       childPid: typeof child?.pid === 'number' ? child.pid : undefined,
     }
     codexEnvironmentActionSessions.set(sessionKey, session)
+    pushCodexActionRunnerSnapshot(session.message)
+    child.stdout?.on?.('data', (chunk) => appendCodexActionRunLog(run, 'stdout', chunk, [resolved.executionCwd]))
+    child.stderr?.on?.('data', (chunk) => appendCodexActionRunLog(run, 'stderr', chunk, [resolved.executionCwd]))
     child.on?.('exit', (code) => {
       const current = codexEnvironmentActionSessions.get(sessionKey)
       if (!current || current.child !== child) return
+      const wasStopping = current.state === 'stopping'
+      const pendingRestart = current.pendingRestart
+      current.pendingRestart = null
       current.state = 'idle'
       current.exitCode = typeof code === 'number' ? code : 0
       current.message = code === 0 ? 'Serve 已结束' : `Serve 已退出（${code}）`
       current.child = null
+      finishCodexActionRun(run, wasStopping ? 'stopped' : (code === 0 ? 'completed' : 'failed'), typeof code === 'number' ? code : undefined, current.message)
+      flushCodexActionDeferredServerClose()
+      if (pendingRestart && !codexEnvironmentShuttingDown) queueMicrotask(() => { void restartCodexEnvironmentActionAfterExit(pendingRestart) })
     })
     child.on?.('error', () => {
       const current = codexEnvironmentActionSessions.get(sessionKey)
@@ -8705,61 +7998,436 @@ async function runCodexProjectEnvironmentAction(input) {
       current.exitCode = undefined
       current.message = 'Serve 启动失败'
       current.child = null
+      finishCodexActionRun(run, 'failed', undefined, current.message)
+      flushCodexActionDeferredServerClose()
     })
     return { outcome: 'started', session: sanitizeCodexEnvironmentSession(session) }
   }
   const nonLongTimeoutMs = 10 * 60_000
   const result = await new Promise((resolvePromise) => {
     let done = false
-    let graceTimeoutId = null
+    let timedOut = false
     let child
+    const run = createCodexActionRun({ ...input, environmentId, actionId }, resolved, hostAction, launch)
     try {
-      child = spawn(argv[0], argv.slice(1), {
+      child = spawn(launch.command, launch.args, {
         cwd: resolved.executionCwd,
-        env: process.env,
+        env: spawnEnvironment,
         detached: process.platform !== 'win32',
         windowsHide: true,
-        stdio: ['ignore', 'ignore', 'ignore']
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: false
       })
     } catch {
+      finishCodexActionRun(run, 'failed', undefined, '命令启动失败')
       resolvePromise({ outcome: 'failed', errorCode: 'spawn-failed', exitCode: undefined, message: '命令启动失败' })
       return
     }
+    const session = {
+      targetAlias,
+      targetId: resolved.targetId,
+      projectKey: resolved.projectKey,
+      environmentId,
+      actionId,
+      environmentFileFingerprint,
+      commandFingerprint,
+      state: 'running',
+      startedAt: run.startedAt,
+      message: '正在执行',
+      run,
+      child,
+      childPid: typeof child?.pid === 'number' ? child.pid : undefined
+    }
+    codexEnvironmentActionSessions.set(sessionKey, session)
+    pushCodexActionRunnerSnapshot(session.message)
+    child.stdout?.on?.('data', (chunk) => appendCodexActionRunLog(run, 'stdout', chunk, [resolved.executionCwd]))
+    child.stderr?.on?.('data', (chunk) => appendCodexActionRunLog(run, 'stderr', chunk, [resolved.executionCwd]))
     const timeoutId = setTimeout(() => {
       if (done) return
-      try {
-        if (process.platform !== 'win32' && typeof child?.pid === 'number') process.kill(-child.pid, 'SIGTERM')
-        else child?.kill?.('SIGTERM')
-      } catch {}
-      graceTimeoutId = setTimeout(() => {
-        if (done) return
-        done = true
-        resolvePromise({ outcome: 'failed', errorCode: 'command-timeout', exitCode: undefined, message: '命令执行超时' })
-      }, 2_500)
+      timedOut = true
+      session.state = 'stopping'
+      session.message = '执行超时，正在停止'
+      run.status = 'stopping'
+      run.message = session.message
+      persistCodexActionRun(run)
+      pushCodexActionRunnerSnapshot(session.message)
+      signalCodexEnvironmentSession(session)
     }, nonLongTimeoutMs)
     child.on?.('exit', (code) => {
       if (done) return
       done = true
       clearTimeout(timeoutId)
-      if (graceTimeoutId) clearTimeout(graceTimeoutId)
       const exitCode = typeof code === 'number' ? code : 0
+      const explicitlyStopped = session.state === 'stopping' && !timedOut
+      const status = timedOut ? 'failed' : explicitlyStopped ? 'stopped' : exitCode === 0 ? 'completed' : 'failed'
+      const message = timedOut ? '命令执行超时并已停止' : explicitlyStopped ? '已停止' : exitCode === 0 ? '已完成' : `命令退出（${exitCode}）`
+      session.state = 'idle'
+      session.child = null
+      session.exitCode = exitCode
+      session.message = message
+      finishCodexActionRun(run, status, exitCode, message)
+      flushCodexActionDeferredServerClose()
       resolvePromise({
-        outcome: exitCode === 0 ? 'ok' : 'failed',
-        errorCode: exitCode === 0 ? undefined : 'command-exit',
+        outcome: status === 'completed' ? 'ok' : 'failed',
+        errorCode: timedOut ? 'command-timeout' : status === 'stopped' ? 'stopped' : exitCode === 0 ? undefined : 'command-exit',
         exitCode,
-        message: exitCode === 0 ? '已完成' : `命令退出（${exitCode}）`
+        message
       })
     })
     child.on?.('error', () => {
       if (done) return
       done = true
       clearTimeout(timeoutId)
-      if (graceTimeoutId) clearTimeout(graceTimeoutId)
+      session.state = 'idle'
+      session.child = null
+      finishCodexActionRun(run, 'failed', undefined, '命令启动失败')
+      flushCodexActionDeferredServerClose()
       resolvePromise({ outcome: 'failed', errorCode: 'spawn-error', exitCode: undefined, message: '命令启动失败' })
     })
   })
   return result
 }
+
+function codexActionRunnerCatalogProjection() {
+  return {
+    ...codexActionRunnerCatalog,
+    capabilities: ['node-runtime-selection-v1', 'log-cursor-v1', 'explicit-window-geometry-v1'],
+    projects: (codexActionRunnerCatalog.projects || []).map((project) => {
+      const { targetAlias, targetId, ...publicProject } = project
+      const resolved = typeof targetAlias === 'string' && targetAlias ? resolveCodexEnvironmentTargetCwd(targetAlias) : null
+      const nodeRuntime = resolved && !resolved.errorCode
+        ? codexActionRuntimeProjection(project.key, resolved.executionCwd).public
+        : { mode: codexActionRuntimePreference(project.key).mode, state: 'unavailable', candidates: codexActionNodeRuntimeCandidates().map((candidate) => ({ id: candidate.id, label: candidate.label, version: candidate.version, source: candidate.source })), message: '项目工作目录不可用' }
+      return {
+        ...publicProject,
+        nodeRuntime,
+        environments: (project.environments || []).map((environment) => ({
+          ...environment,
+          actions: (environment.actions || []).map((action) => {
+            const session = codexEnvironmentActionSessions.get(codexEnvironmentSessionKey(targetId || project.key, environment.id, action.id))
+            const state = session?.state === 'running' || session?.state === 'stopping' ? session.state : action.state === 'confirm-required' ? 'confirm-required' : 'idle'
+            return { ...action, state }
+          })
+        }))
+      }
+    })
+  }
+}
+
+function pushCodexActionRunnerSnapshot(message = '') {
+  ensureCodexActionRunDatabase()
+  if (!codexActionRunnerAlive()) return false
+  const catalog = codexActionRunnerCatalogProjection()
+  const selectedLaneId = typeof catalog.selectedLaneId === 'string' ? catalog.selectedLaneId : ''
+  const snapshot = {
+    version: 1,
+    catalog,
+    capabilities: ['node-runtime-selection-v1', 'log-cursor-v1', 'explicit-window-geometry-v1'],
+    runs: codexActionRunMemory.slice(0, 200).map((run) => ({
+      version: 1,
+      runId: run.runId,
+      laneId: run.laneId,
+      projectKey: run.projectKey,
+      projectName: run.projectName,
+      environmentId: run.environmentId,
+      environmentName: run.environmentName,
+      actionId: run.actionId,
+      actionName: run.actionName,
+      risk: run.risk,
+      status: run.status,
+      startedAt: run.startedAt,
+      endedAt: run.endedAt,
+      exitCode: run.exitCode,
+      archivedAt: run.archivedAt,
+      logText: run.logText,
+      logBytes: run.logBytes,
+      logLines: run.logLines,
+      message: run.message,
+      cursor: run.cursor || 0,
+      runtimeMode: run.runtimeMode,
+      runtimeSource: run.runtimeSource,
+      runtimeVersion: run.runtimeVersion,
+      runtimeLabel: run.runtimeLabel
+    })),
+    selectedLaneId,
+    view: codexActionRunnerPreference.view,
+    pinned: codexActionRunnerPreference.pinned,
+    loading: catalog.loading === true,
+    message: message || catalog.message || '',
+    generatedAt: Date.now()
+  }
+  try { codexActionRunnerWindow.webContents.send(CODEX_ACTION_RUNNER_CHANNELS.snapshot, snapshot); return true } catch { return false }
+}
+
+function codexActionRunnerDevelopmentEntry() {
+  const href = typeof globalThis.location?.href === 'string' ? globalThis.location.href : ''
+  return /^http:\/\/127\.0\.0\.1:8092(?:\/|$)/.test(href) ? 'http://127.0.0.1:8092/action.html' : ''
+}
+
+function clampCodexActionRunnerBounds(bounds, display) {
+  const area = display?.workArea || display?.bounds || { x: 0, y: 0, width: 1440, height: 900 }
+  const maxWidth = Math.max(1, Math.round(area.width))
+  const maxHeight = Math.max(1, Math.round(area.height))
+  const width = Math.min(maxWidth, Math.max(Math.min(CODEX_ACTION_RUNNER_MIN_WIDTH, maxWidth), Math.round(Number(bounds.width) || 980)))
+  const height = Math.min(maxHeight, Math.max(Math.min(CODEX_ACTION_RUNNER_MIN_HEIGHT, maxHeight), Math.round(Number(bounds.height) || 640)))
+  const requestedX = Number.isFinite(bounds.x) ? Math.round(bounds.x) : area.x
+  const requestedY = Number.isFinite(bounds.y) ? Math.round(bounds.y) : area.y
+  const x = Math.min(area.x + maxWidth - width, Math.max(area.x, requestedX))
+  const y = Math.min(area.y + maxHeight - height, Math.max(area.y, requestedY))
+  return { x, y, width, height }
+}
+
+function resizeCodexActionRunnerBounds(start, screenX, screenY) {
+  const dx = screenX - start.pointerX
+  const dy = screenY - start.pointerY
+  const left = start.corner.includes('left')
+  const top = start.corner.includes('top')
+  const area = start.display?.workArea || start.display?.bounds || { x: 0, y: 0, width: 1440, height: 900 }
+  const oppositeX = left ? start.bounds.x + start.bounds.width : start.bounds.x
+  const oppositeY = top ? start.bounds.y + start.bounds.height : start.bounds.y
+  const requestedWidth = left ? start.bounds.width - dx : start.bounds.width + dx
+  const requestedHeight = top ? start.bounds.height - dy : start.bounds.height + dy
+  const maxWidth = left ? oppositeX - area.x : area.x + area.width - oppositeX
+  const maxHeight = top ? oppositeY - area.y : area.y + area.height - oppositeY
+  const width = Math.min(maxWidth, Math.max(Math.min(CODEX_ACTION_RUNNER_MIN_WIDTH, maxWidth), Math.round(requestedWidth)))
+  const height = Math.min(maxHeight, Math.max(Math.min(CODEX_ACTION_RUNNER_MIN_HEIGHT, maxHeight), Math.round(requestedHeight)))
+  return { x: left ? oppositeX - width : oppositeX, y: top ? oppositeY - height : oppositeY, width, height }
+}
+
+function createCodexActionRunner() {
+  const utools = globalThis.utools
+  if (!utools || typeof utools.createBrowserWindow !== 'function') return false
+  ensureCodexActionRunnerPreferencesLoaded()
+  const bounds = codexRecord(codexActionRunnerPreference.bounds)
+  const validBounds = Number.isFinite(bounds.x) && Number.isFinite(bounds.y) && Number.isFinite(bounds.width) && Number.isFinite(bounds.height)
+  const initialDisplay = validBounds ? floatDisplayForPoint({ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }) : floatDisplayForPosition(null)
+  const initialBounds = clampCodexActionRunnerBounds(validBounds ? bounds : { width: 980, height: 640 }, initialDisplay)
+  const developmentEntry = codexActionRunnerDevelopmentEntry()
+  let redirected = false
+  const ready = () => {
+    try {
+      codexActionRunnerWindow.setAlwaysOnTop(codexActionRunnerPreference.pinned === true, 'floating')
+      codexActionRunnerWindow.show()
+      codexActionRunnerWindow.focus?.()
+      codexActionRunnerVisible = true
+    } catch {}
+    pushCodexActionRunnerSnapshot()
+  }
+  try {
+    codexActionRunnerWindow = utools.createBrowserWindow('action.html', {
+      show: false,
+      title: 'EyPc Action Runner',
+      ...initialBounds,
+      minWidth: CODEX_ACTION_RUNNER_MIN_WIDTH,
+      minHeight: CODEX_ACTION_RUNNER_MIN_HEIGHT,
+      backgroundColor: '#080d19',
+      frame: false,
+      transparent: false,
+      resizable: false,
+      movable: true,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      closable: false,
+      alwaysOnTop: codexActionRunnerPreference.pinned === true,
+      skipTaskbar: false,
+      autoHideMenuBar: true,
+      webPreferences: { preload: 'action-preload.js' }
+    }, () => {
+      if (developmentEntry && !redirected && typeof codexActionRunnerWindow?.loadURL === 'function') {
+        redirected = true
+        try {
+          const loading = codexActionRunnerWindow.loadURL(developmentEntry)
+          if (loading && typeof loading.then === 'function') loading.then(ready).catch(ready)
+          return
+        } catch {}
+      }
+      ready()
+    })
+    return true
+  } catch {
+    codexActionRunnerWindow = null
+    return false
+  }
+}
+
+function activateCodexActionRunner(payload) {
+  const source = codexRecord(payload)
+  if (typeof source.laneId === 'string' && source.laneId) codexActionRunnerCatalog = { ...codexActionRunnerCatalog, selectedLaneId: source.laneId }
+  if (!codexActionRunnerAlive() && !createCodexActionRunner()) return false
+  try {
+    codexActionRunnerWindow.show()
+    codexActionRunnerWindow.focus?.()
+    codexActionRunnerWindow.restore?.()
+    codexActionRunnerVisible = true
+  } catch { return false }
+  pushCodexActionRunnerSnapshot()
+  return true
+}
+
+function syncCodexActionRunnerCatalog(catalog) {
+  const source = codexRecord(catalog)
+  if (source.version !== 1 || !Array.isArray(source.projects)) return false
+  codexActionRunnerCatalog = { ...source, version: 1, projects: source.projects.slice(0, 100) }
+  pushCodexActionRunnerSnapshot()
+  flushCodexActionDeferredServerClose()
+  return true
+}
+
+function readCodexActionRunnerPreference() {
+  ensureCodexActionRunnerPreferencesLoaded()
+  return {
+    selectedLaneId: typeof codexActionRunnerPreference.selectedLaneId === 'string'
+      ? codexActionRunnerPreference.selectedLaneId.slice(0, 300)
+      : ''
+  }
+}
+
+function updateCodexActionRunnerPreference(payload) {
+  const source = codexRecord(payload)
+  if (typeof source.pinned === 'boolean') codexActionRunnerPreference.pinned = source.pinned
+  if (source.view === 'records' || source.view === 'archived') codexActionRunnerPreference.view = source.view
+  if (typeof source.selectedLaneId === 'string' && source.selectedLaneId) {
+    codexActionRunnerPreference.selectedLaneId = source.selectedLaneId.slice(0, 300)
+    codexActionRunnerCatalog = { ...codexActionRunnerCatalog, selectedLaneId: codexActionRunnerPreference.selectedLaneId }
+  }
+  const runtime = codexRecord(source.runtime)
+  if (typeof runtime.projectKey === 'string' && runtime.projectKey && (codexActionRunnerCatalog.projects || []).some((project) => project.key === runtime.projectKey)) {
+    const runtimeByProject = { ...codexRecord(codexActionRunnerPreference.runtimeByProject) }
+    if (runtime.mode === 'auto') {
+      delete runtimeByProject[runtime.projectKey]
+    } else if (runtime.mode === 'manual' && typeof runtime.candidateId === 'string') {
+      const candidate = codexActionNodeRuntimeCandidates(true).find((item) => item.id === runtime.candidateId)
+      if (!candidate) return false
+      runtimeByProject[runtime.projectKey] = { mode: 'manual', candidateId: candidate.id }
+    }
+    codexActionRunnerPreference.runtimeByProject = runtimeByProject
+  }
+  try { codexActionRunnerWindow?.setAlwaysOnTop?.(codexActionRunnerPreference.pinned, 'floating') } catch {}
+  writeCodexActionRunnerPreferences()
+  pushCodexActionRunnerSnapshot()
+  return true
+}
+
+function setCodexActionRunArchived(input) {
+  ensureCodexActionRunDatabase()
+  const runId = typeof input?.runId === 'string' ? input.runId : ''
+  const run = codexActionRunMemory.find((item) => item.runId === runId)
+  if (!run) return Promise.resolve({ ok: false, message: '未找到执行记录' })
+  if (!['completed', 'failed', 'stopped', 'interrupted'].includes(run.status)) return Promise.resolve({ ok: false, message: '仅已结束记录可归档' })
+  run.archivedAt = input?.archived === true ? Date.now() : undefined
+  persistCodexActionRun(run)
+  pushCodexActionRunnerSnapshot(run.archivedAt ? '已归档' : '已恢复')
+  return Promise.resolve({ ok: true })
+}
+
+function closeCodexActionRunner() {
+  writeCodexActionRunnerPreferences()
+  codexActionRunnerDrag = null
+  codexActionRunnerResize = null
+  if (codexActionRunnerAlive()) {
+    codexActionRunnerForceClose = true
+    try { codexActionRunnerWindow.close() } catch {}
+  }
+  codexActionRunnerWindow = null
+  codexActionRunnerVisible = false
+  codexActionRunnerForceClose = false
+  flushCodexActionDeferredServerClose()
+}
+
+function validCodexActionRunnerSender(event) {
+  if (!codexActionRunnerAlive()) return false
+  const expected = codexActionRunnerWindow?.webContents?.id
+  const actual = event && Number.isFinite(event.senderId) ? event.senderId : event?.sender?.id
+  return Number.isFinite(expected) && Number.isFinite(actual) && expected === actual
+}
+
+function installCodexActionRunnerIpc() {
+  const ipc = electronIpcRenderer()
+  if (!ipc || typeof ipc.on !== 'function') return
+  const allowed = new Set([
+    'codex.actionRunner.run',
+    'codex.actionRunner.stop',
+    'codex.actionRunner.run.archive',
+    'codex.actionRunner.run.restore',
+    'codex.actionRunner.preference.update',
+    'codex.actionRunner.runtime.update',
+    'codex.actionRunner.project.reorder',
+    'codex.actionRunner.hotkey.configure'
+  ])
+  ipc.on(CODEX_ACTION_RUNNER_CHANNELS.action, (event, payload) => {
+    if (!validCodexActionRunnerSender(event)) return
+    const source = codexRecord(payload)
+    const actionId = typeof source.actionId === 'string' ? source.actionId : ''
+    if (!allowed.has(actionId)) return
+    const args = codexRecord(source.args)
+    for (const listener of codexActionRunnerActionListeners) {
+      try { listener({ actionId, args }) } catch {}
+    }
+  })
+  ipc.on(CODEX_ACTION_RUNNER_CHANNELS.snapshotRequest, (event) => {
+    if (validCodexActionRunnerSender(event)) pushCodexActionRunnerSnapshot()
+  })
+  ipc.on(CODEX_ACTION_RUNNER_CHANNELS.hide, (event) => {
+    if (!validCodexActionRunnerSender(event) || !codexActionRunnerAlive()) return
+    codexActionRunnerDrag = null
+    codexActionRunnerResize = null
+    writeCodexActionRunnerPreferences()
+    try { codexActionRunnerWindow.hide() } catch {}
+    codexActionRunnerVisible = false
+    flushCodexActionDeferredServerClose()
+  })
+  ipc.on(CODEX_ACTION_RUNNER_CHANNELS.dragStart, (event, payload) => {
+    if (!validCodexActionRunnerSender(event) || codexActionRunnerResize || !codexActionRunnerAlive() || typeof codexActionRunnerWindow.getBounds !== 'function') return
+    const point = codexRecord(payload)
+    if (!Number.isFinite(point.screenX) || !Number.isFinite(point.screenY)) return
+    codexActionRunnerDrag = { pointerX: point.screenX, pointerY: point.screenY, bounds: codexActionRunnerWindow.getBounds() }
+  })
+  ipc.on(CODEX_ACTION_RUNNER_CHANNELS.dragMove, (event, payload) => {
+    if (!validCodexActionRunnerSender(event) || !codexActionRunnerDrag || !codexActionRunnerAlive()) return
+    const point = codexRecord(payload)
+    if (!Number.isFinite(point.screenX) || !Number.isFinite(point.screenY)) return
+    const candidate = {
+      ...codexActionRunnerDrag.bounds,
+      x: codexActionRunnerDrag.bounds.x + point.screenX - codexActionRunnerDrag.pointerX,
+      y: codexActionRunnerDrag.bounds.y + point.screenY - codexActionRunnerDrag.pointerY
+    }
+    const display = floatDisplayForPoint({ x: candidate.x + candidate.width / 2, y: candidate.y + candidate.height / 2 })
+    try { codexActionRunnerWindow.setBounds(clampCodexActionRunnerBounds(candidate, display)) } catch {}
+  })
+  ipc.on(CODEX_ACTION_RUNNER_CHANNELS.dragEnd, (event) => {
+    if (!validCodexActionRunnerSender(event) || !codexActionRunnerDrag) return
+    codexActionRunnerDrag = null
+    writeCodexActionRunnerPreferences()
+  })
+  ipc.on(CODEX_ACTION_RUNNER_CHANNELS.resizeStart, (event, payload) => {
+    if (!validCodexActionRunnerSender(event) || codexActionRunnerDrag || codexActionRunnerResize || !codexActionRunnerAlive() || typeof codexActionRunnerWindow.getBounds !== 'function') return
+    const point = codexRecord(payload)
+    if (!Number.isFinite(point.screenX) || !Number.isFinite(point.screenY) || !validCodexResizeCorner(point.corner)) return
+    const bounds = codexActionRunnerWindow.getBounds()
+    const display = floatDisplayForPoint({ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 })
+    codexActionRunnerResize = { pointerX: point.screenX, pointerY: point.screenY, bounds: { ...bounds }, display, corner: point.corner }
+  })
+  ipc.on(CODEX_ACTION_RUNNER_CHANNELS.resizeMove, (event, payload) => {
+    if (!validCodexActionRunnerSender(event) || !codexActionRunnerResize || !codexActionRunnerAlive()) return
+    const point = codexRecord(payload)
+    if (!Number.isFinite(point.screenX) || !Number.isFinite(point.screenY)) return
+    try { codexActionRunnerWindow.setBounds(resizeCodexActionRunnerBounds(codexActionRunnerResize, point.screenX, point.screenY)) } catch {}
+  })
+  ipc.on(CODEX_ACTION_RUNNER_CHANNELS.resizeEnd, (event) => {
+    if (!validCodexActionRunnerSender(event) || !codexActionRunnerResize) return
+    codexActionRunnerResize = null
+    writeCodexActionRunnerPreferences()
+  })
+  ipc.on(CODEX_ACTION_RUNNER_CHANNELS.resizeCancel, (event) => {
+    if (!validCodexActionRunnerSender(event) || !codexActionRunnerResize || !codexActionRunnerAlive()) return
+    const bounds = codexActionRunnerResize.bounds
+    codexActionRunnerResize = null
+    try { codexActionRunnerWindow.setBounds(bounds) } catch {}
+  })
+}
+
+installCodexActionRunnerIpc()
 
 window.eypcPlatform = {
   storage: {
@@ -8776,13 +8444,20 @@ window.eypcPlatform = {
     kill: killProcess
   },
   windows: {
-    capabilities: windowCapabilities,
-    list: listWindows,
-    activate: activateWindow,
-    alwaysOnTop: alwaysOnTopWindow,
-    close: closeWindow,
-    terminate: terminateWindow,
-    openPermissionSettings: openWindowPermissionSettings
+    capabilities: (...args) => windowSubsystem
+      ? windowSubsystem.capabilities(...args)
+      : Promise.resolve(unavailableWindowCapability(`窗口子系统未加载：${windowSubsystemLoadError || 'unknown error'}`)),
+    list: (...args) => windowSubsystem
+      ? windowSubsystem.list(...args)
+      : Promise.resolve({ capability: unavailableWindowCapability('窗口子系统未加载'), windows: [], completeness: 'partial' }),
+    probeInstance: (...args) => windowSubsystem
+      ? windowSubsystem.probeInstance(...args)
+      : Promise.resolve({ status: 'indeterminate', instanceId: String(args[0] && args[0].instanceId || ''), liveness: 'indeterminate', reason: 'unsupported' }),
+    activate: (...args) => windowSubsystem ? windowSubsystem.activate(...args) : Promise.resolve({ outcome: 'unsupported', message: '窗口桥接实现不可用' }),
+    alwaysOnTop: (...args) => windowSubsystem ? windowSubsystem.alwaysOnTop(...args) : Promise.resolve({ outcome: 'unsupported', message: '窗口桥接实现不可用' }),
+    close: (...args) => windowSubsystem ? windowSubsystem.close(...args) : Promise.resolve({ outcome: 'unsupported', message: '窗口桥接实现不可用' }),
+    terminate: (...args) => windowSubsystem ? windowSubsystem.terminate(...args) : Promise.resolve({ outcome: 'unsupported', message: '窗口桥接实现不可用' }),
+    openPermissionSettings: (...args) => windowSubsystem ? windowSubsystem.openPermissionSettings(...args) : Promise.resolve(false)
   },
   files: {
     capabilities: favoriteFileCapabilities(),
@@ -8801,6 +8476,7 @@ window.eypcPlatform = {
   },
   codex: {
     taskStateRevision: CODEX_TASK_STATE_REVISION,
+    actionRuntimeRevision: CODEX_ACTION_HOST_RUNTIME_REVISION,
     inspectEnvironment: inspectCodexEnvironment,
     setLaunchPath: setCodexLaunchPath,
     clearLaunchPath: clearCodexLaunchPath,
@@ -8821,6 +8497,7 @@ window.eypcPlatform = {
     runProjectAction: runCodexProjectEnvironmentAction,
     listActionSessions: listCodexEnvironmentActionSessions,
     stopActionSession: stopCodexEnvironmentActionSession,
+    setActionRunArchived: setCodexActionRunArchived,
     close: closeCodexConnections
   },
   float: {
@@ -8836,6 +8513,18 @@ window.eypcPlatform = {
       if (typeof listener !== 'function') return () => {}
       codexFloatActionListeners.add(listener)
       return () => codexFloatActionListeners.delete(listener)
+    }
+  },
+  actionRunner: {
+    syncCatalog: syncCodexActionRunnerCatalog,
+    activate: activateCodexActionRunner,
+    readPreference: readCodexActionRunnerPreference,
+    updatePreference: updateCodexActionRunnerPreference,
+    close: closeCodexActionRunner,
+    onAction(listener) {
+      if (typeof listener !== 'function') return () => {}
+      codexActionRunnerActionListeners.add(listener)
+      return () => codexActionRunnerActionListeners.delete(listener)
     }
   },
   app: {

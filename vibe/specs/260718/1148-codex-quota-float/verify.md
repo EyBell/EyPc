@@ -100,6 +100,9 @@ Date: 2026-08-03
 | 设计偏好收口 | `DesignTaskCloseout` 生成 `eligible-for-root-review` 的 W29 canary candidate；`writes_performed=false`，未写偏好缓存、传播状态或 Hook |
 | 2026-07-31 自动化收口 | 聚焦回归 `151 / 151`（`4 / 4` 文件）；`pnpm run verify` 依次同步三类 canonical preload 镜像、通过完整 Vitest `697 / 697`（`57 / 57` 文件）、`vue-tsc --noEmit`、production Vite build、uTools runtime preparation 与 `validate:utools` |
 | 首轮命令时限诊断 | 首次 `pnpm run verify` 仅因 120 秒命令上限在仍持续通过的慢速 Runtime 文件中被截断，不计为验收结果；确认不是并发泄漏后，以 10 分钟有界命令原样复跑并在 140.2 秒完成全绿 |
+| Preload 单一来源 | [scripts/utools-preload-assets.mjs](../../../../scripts/utools-preload-assets.mjs#L1) 统一 main/float/action canonical、public 与 dist 路径；prepare、validate 与测试消费同一清单，[scripts/sync-utools-preloads.mjs](../../../../scripts/sync-utools-preloads.mjs#L1) 只负责显式同步 public 镜像 |
+| 非阻断警告 | Node SQLite experimental warning；Vite 主 chunk `599.74 kB` 超过 `500 kB` 提示。两者均未造成类型、测试、构建或 uTools validation 失败 |
+| Closeout shell 复核 | 一次含 Markdown 反引号的双引号 `rg` 参数触发 zsh 命令替换；该输出已作废，按 CodeNote [verified error memory](../../../../../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/memory/error-archive/2026-07-10-zsh-double-quoted-backtick-command-substitution.md#L1) 改为单引号并重跑，未写文件或影响验收证据 |
 
 ## RAW-131 闭合状态机审计
 
