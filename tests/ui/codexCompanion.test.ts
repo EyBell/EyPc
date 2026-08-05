@@ -16,6 +16,7 @@ import {
 } from '../../src/domain/codex'
 import { buildCodexCompactPresentation, buildCodexTaskStatePackage } from '../../src/domain/codexPresentation'
 import { contrastRatio } from '../../src/domain/codexAppearance'
+import { emptyClaudeEnvironment, normalizeClaudeQuota } from '../../src/domain/claude'
 import type { CodexFloatSnapshotV1 } from '../../src/runtime/codexController'
 
 const NOW = 1_784_364_000_000
@@ -823,7 +824,7 @@ describe('Codex Companion V3 UI contract', () => {
   it('shows only server-returned quota windows in the expanded card', async () => {
     const { wrapper } = mountFloat(true, floatSnapshot('ongoing', quota(false, true)))
     await wrapper.vm.$nextTick()
-    expect(wrapper.findAll('.float-quota-text > div')).toHaveLength(1)
+    expect(wrapper.findAll('.float-quota-chip')).toHaveLength(1)
     expect(wrapper.find('.float-action-slots').exists()).toBe(false)
     expect(wrapper.find('.float-action-picker').exists()).toBe(false)
     expect(wrapper.text()).toContain('周限额')
@@ -831,7 +832,7 @@ describe('Codex Companion V3 UI contract', () => {
 
     const dual = mountFloat(true, floatSnapshot('ongoing', quota(true, true))).wrapper
     await dual.vm.$nextTick()
-    expect(dual.findAll('.float-quota-text > div')).toHaveLength(2)
+    expect(dual.findAll('.float-quota-chip')).toHaveLength(2)
 
     const emptyQuota = quota(false, false)
     const compact = buildCodexCompactPresentation({
@@ -848,6 +849,96 @@ describe('Codex Companion V3 UI contract', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/styles/float.css'), 'utf8')
     expect(css).toContain('container-type: inline-size')
     expect(css).toContain('@container (max-width: 350px)')
+  })
+
+  it('keeps the quota area on one line and moves titles into hover help', async () => {
+    // Pinned to the fixture clock so the reset wording is a real assertion.
+    vi.useFakeTimers({ now: NOW })
+    const { wrapper } = mountFloat(true, floatSnapshot('ongoing', quota(true, true)))
+    await wrapper.vm.$nextTick()
+
+    // One section, one group, no stacked provider block.
+    expect(wrapper.findAll('.float-quota-text')).toHaveLength(1)
+    expect(wrapper.findAll('.float-quota-group')).toHaveLength(1)
+    expect(wrapper.find('.float-quota-group.divided').exists()).toBe(false)
+
+    const chips = wrapper.findAll('.float-quota-chip')
+    expect(chips.map((chip) => chip.get('span[aria-hidden="true"]').text())).toEqual(['5h', '周'])
+    expect(chips.map((chip) => chip.get('strong').text())).toEqual(['78%', '23%'])
+
+    // The dense row must not carry the long title or the reset line any more,
+    // but the accessible name still carries both without a hover.
+    const visible = chips[0].findAll('[aria-hidden="true"]').map((node) => node.text()).join(' ')
+    expect(visible).not.toContain('5 小时限额')
+    expect(visible).not.toContain('重置')
+    expect(chips[0].get('.sr-only').text()).toBe('5 小时限额，剩余 78%，1 小时后重置')
+
+    // Codex-only stays byte-identical to the pre-multi-provider row: no caption.
+    expect(wrapper.find('.float-quota-provider').exists()).toBe(false)
+
+    await chips[0].trigger('pointerenter')
+    vi.advanceTimersByTime(200)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.float-action-hint').text()).toBe('5 小时限额 · 1 小时后重置')
+
+    await chips[0].trigger('pointerleave')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.float-action-hint').exists()).toBe(false)
+  })
+
+  it('marks Spark inside the same row instead of adding a second row', async () => {
+    vi.useFakeTimers({ now: NOW })
+    const { wrapper } = mountFloat(true, floatSnapshot('ongoing', sparkQuota()))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('.float-quota-group')).toHaveLength(1)
+    expect(wrapper.findAll('.float-quota-chip').map((chip) => chip.get('span[aria-hidden="true"]').text()))
+      .toEqual(['5h', '周', 'S5h', 'S周'])
+    expect(wrapper.findAll('.float-quota-chip.spark')).toHaveLength(2)
+  })
+
+  it('renders both providers in one row with a caption and a platform tone', async () => {
+    vi.useFakeTimers({ now: NOW })
+    const snapshot = {
+      ...floatSnapshot('ongoing', quota(true, true)),
+      companion: {
+        providers: { codex: true, claude: true },
+        claudeQuota: normalizeClaudeQuota({ five_hour: { used_percentage: 30 }, seven_day: { used_percentage: 55 } }),
+        claudeEnvironment: {
+          ...emptyClaudeEnvironment(),
+          installed: true,
+          homeReady: true,
+          authenticated: true,
+          cliVersion: '2.1.220',
+          hooks: 'installed' as const,
+          statusline: 'installed' as const
+        }
+      }
+    }
+    const { wrapper } = mountFloat(true, snapshot)
+    await wrapper.vm.$nextTick()
+
+    // Still one section — the Claude windows join the row rather than stacking.
+    expect(wrapper.findAll('.float-quota-text')).toHaveLength(1)
+    const groups = wrapper.findAll('.float-quota-group')
+    expect(groups).toHaveLength(2)
+    expect(groups[0].classes()).toContain('provider-codex')
+    expect(groups[1].classes()).toContain('provider-claude')
+    expect(groups[1].classes()).toContain('divided')
+    expect(groups[1].get('.float-quota-provider').text()).toBe('Claude')
+    expect(wrapper.findAll('.float-quota-chip')).toHaveLength(4)
+
+    // Once the row is mixed, help and accessible names name the platform.
+    const claudeChip = groups[1].findAll('.float-quota-chip')[0]
+    expect(claudeChip.get('.sr-only').text()).toContain('Claude 5 小时限额，剩余 70%')
+    await claudeChip.trigger('pointerenter')
+    vi.advanceTimersByTime(200)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.float-action-hint').text()).toContain('Claude · 5 小时限额')
+
+    // Platform separation is a token, not a hard-coded brand color.
+    const css = readFileSync(resolve(process.cwd(), 'src/styles/float.css'), 'utf8')
+    expect(css).toContain('.float-quota-group.provider-codex .float-quota-chip strong { color: var(--codex-quota-codex); }')
+    expect(css).toContain('.float-quota-group.provider-claude .float-quota-chip strong { color: var(--codex-quota-claude); }')
   })
 
   it('keeps every color control in settings and out of the desktop floating card', () => {

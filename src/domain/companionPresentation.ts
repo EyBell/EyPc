@@ -112,6 +112,9 @@ export interface CompanionQuotaRow {
   resetAt: number | null
 }
 
+/** Which limit window a quota reading covers. Drives the short caption. */
+export type CompanionQuotaWindow = 'short' | 'weekly'
+
 export interface CompanionQuotaSection {
   provider: CompanionProviderId
   label: string
@@ -155,6 +158,133 @@ export function buildClaudeQuotaSection(
     rows,
     emptyReason: rows.length ? '' : '尚未读到额度，运行一次 Claude Code 后自动更新'
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * Single-row quota strip
+ * ------------------------------------------------------------------ */
+
+/**
+ * One Codex quota window as the float already resolves it. Passing the windows in
+ * keeps this module off `codex.ts`, so the presentation layer stays consumable by
+ * any provider rather than becoming Codex-shaped.
+ */
+export interface CompanionCodexQuotaWindow {
+  key: string
+  label: string
+  family: 'normal' | 'spark'
+  window: CompanionQuotaWindow
+  remainingPercent: number
+  resetAt: number | null
+}
+
+export interface CompanionQuotaChip {
+  key: string
+  provider: CompanionProviderId
+  /** Spark pools stay visually subordinate to the ordinary Codex windows. */
+  spark: boolean
+  /** Dense caption carried in the row: `5h`, `周`, `S5h`, `S周`. */
+  shortLabel: string
+  /** Full product title, moved into hover help and the accessible name. */
+  label: string
+  remainingPercent: number
+  resetAt: number | null
+}
+
+export interface CompanionQuotaGroup {
+  provider: CompanionProviderId
+  /**
+   * Provider caption. Empty in Codex-only compatibility mode, where a single
+   * "Codex" caption would repeat what the whole surface already means.
+   */
+  caption: string
+  chips: CompanionQuotaChip[]
+  /** Set when the provider is enabled but has nothing to show yet. */
+  emptyReason: string
+}
+
+export interface CompanionQuotaStrip {
+  groups: CompanionQuotaGroup[]
+  /** True once more than one provider group is present, so a separator is meaningful. */
+  multiProvider: boolean
+}
+
+/** `S` is the established Spark marker; short/weekly keep the row scannable. */
+function shortWindowLabel(window: CompanionQuotaWindow, spark: boolean): string {
+  return `${spark ? 'S' : ''}${window === 'short' ? '5h' : '周'}`
+}
+
+/**
+ * Builds the whole quota row as one ordered structure.
+ *
+ * The renderer must not decide which provider owns a reading, whether a provider
+ * caption is meaningful, or what the dense caption for a window is — all three are
+ * policy and all three live here.
+ */
+export function buildCompanionQuotaStrip(
+  codexWindows: readonly CompanionCodexQuotaWindow[],
+  slice: CompanionSnapshotSlice | null | undefined,
+  codexEmptyReason = ''
+): CompanionQuotaStrip {
+  const claudeSection = buildClaudeQuotaSection(slice)
+  const codexEnabled = !slice || slice.providers.codex === true
+  const groups: CompanionQuotaGroup[] = []
+
+  if (codexEnabled) {
+    groups.push({
+      provider: 'codex',
+      caption: '',
+      chips: codexWindows.map((item) => ({
+        key: item.key,
+        provider: 'codex',
+        spark: item.family === 'spark',
+        shortLabel: shortWindowLabel(item.window, item.family === 'spark'),
+        label: item.label,
+        remainingPercent: item.remainingPercent,
+        resetAt: item.resetAt
+      })),
+      emptyReason: codexWindows.length ? '' : (codexEmptyReason || '服务端未返回额度窗口')
+    })
+  }
+
+  if (claudeSection) {
+    groups.push({
+      provider: 'claude',
+      caption: claudeSection.label,
+      chips: claudeSection.rows.map((row) => ({
+        key: row.key,
+        provider: 'claude',
+        spark: false,
+        shortLabel: shortWindowLabel(row.key.endsWith('-weekly') ? 'weekly' : 'short', false),
+        label: row.label,
+        remainingPercent: row.remainingPercent,
+        resetAt: row.resetAt
+      })),
+      emptyReason: claudeSection.emptyReason
+    })
+  }
+
+  const multiProvider = groups.length > 1
+  return {
+    // A lone Codex group keeps the pre-multi-provider rendering: no caption at all.
+    groups: multiProvider ? groups : groups.map((group) => ({ ...group, caption: '' })),
+    multiProvider
+  }
+}
+
+/**
+ * Hover help and accessible name for one chip. The reset text is passed in rather
+ * than formatted here so this stays a pure function of its arguments and the
+ * float keeps one clock.
+ */
+export function companionQuotaChipHint(chip: CompanionQuotaChip, resetText: string, withProvider: boolean): string {
+  const head = withProvider ? `${COMPANION_PROVIDER_LABELS[chip.provider]} · ${chip.label}` : chip.label
+  return resetText ? `${head} · ${resetText}` : head
+}
+
+export function companionQuotaChipAriaLabel(chip: CompanionQuotaChip, resetText: string, withProvider: boolean): string {
+  const head = withProvider ? `${COMPANION_PROVIDER_LABELS[chip.provider]} ${chip.label}` : chip.label
+  return `${head}，剩余 ${chip.remainingPercent}%${resetText ? `，${resetText}` : ''}`
 }
 
 /**

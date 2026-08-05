@@ -20,10 +20,13 @@ import {
 } from '@lucide/vue'
 import CodexWaterBall from './components/CodexWaterBall.vue'
 import {
-  buildClaudeQuotaSection,
+  buildCompanionQuotaStrip,
+  companionQuotaChipAriaLabel,
+  companionQuotaChipHint,
   resolveCompanionRowMarker,
   resolveCompanionWaterBallPresentation
 } from './domain/companionPresentation'
+import type { CompanionQuotaChip } from './domain/companionPresentation'
 import QuickJumpLayer from './components/QuickJumpLayer.vue'
 import {
   CODEX_THEME_PRESETS,
@@ -188,7 +191,6 @@ const compact = computed(() => buildCodexCompactPresentation({
 const compactCounts = computed(() => compact.value.taskCounts)
 const companionSlice = computed(() => snapshot.value?.companion || null)
 const companionWaterBall = computed(() => resolveCompanionWaterBallPresentation(companionSlice.value))
-const claudeQuotaSection = computed(() => buildClaudeQuotaSection(companionSlice.value))
 function rowMarker(task: CodexTaskCard) {
   return resolveCompanionRowMarker(task, companionSlice.value?.providers || { codex: true, claude: false })
 }
@@ -221,15 +223,38 @@ watch(rootStyle, (tokens) => {
 
 const expandedQuota = computed(() => {
   const normalized = normalizeCodexQuota(quota.value || { version: 1, status: 'idle', plan: '', short: null, weekly: null, updatedAt: 0 })
-  const result: Array<{ key: string; label: string; family: 'normal' | 'spark'; bucket: CodexQuotaBucket }> = []
-  if (normalized.normal.short) result.push({ key: 'normal-short', label: '5 小时限额', family: 'normal', bucket: normalized.normal.short })
-  if (normalized.normal.weekly) result.push({ key: 'normal-weekly', label: '周限额', family: 'normal', bucket: normalized.normal.weekly })
+  const result: Array<{ key: string; label: string; family: 'normal' | 'spark'; window: 'short' | 'weekly'; bucket: CodexQuotaBucket }> = []
+  if (normalized.normal.short) result.push({ key: 'normal-short', label: '5 小时限额', family: 'normal', window: 'short', bucket: normalized.normal.short })
+  if (normalized.normal.weekly) result.push({ key: 'normal-weekly', label: '周限额', family: 'normal', window: 'weekly', bucket: normalized.normal.weekly })
   for (const pool of normalized.spark) {
-    if (pool.short) result.push({ key: `${pool.limitId}-short`, label: 'Spark 额度', family: 'spark', bucket: pool.short })
-    if (pool.weekly) result.push({ key: `${pool.limitId}-weekly`, label: 'Spark 周额度', family: 'spark', bucket: pool.weekly })
+    if (pool.short) result.push({ key: `${pool.limitId}-short`, label: 'Spark 额度', family: 'spark', window: 'short', bucket: pool.short })
+    if (pool.weekly) result.push({ key: `${pool.limitId}-weekly`, label: 'Spark 周额度', family: 'spark', window: 'weekly', bucket: pool.weekly })
   }
   return result
 })
+
+/**
+ * The whole quota area is one row: both providers, ordered, with the provider
+ * caption and Spark subordination already resolved by the domain.
+ */
+const quotaStrip = computed(() => buildCompanionQuotaStrip(
+  expandedQuota.value.map((item) => ({
+    key: item.key,
+    label: item.label,
+    family: item.family,
+    window: item.window,
+    remainingPercent: item.bucket.remainingPercent,
+    resetAt: item.bucket.resetAt
+  })),
+  companionSlice.value,
+  compact.value.stateLabel
+))
+function quotaChipHint(chip: CompanionQuotaChip) {
+  return companionQuotaChipHint(chip, formatReset(chip.resetAt), quotaStrip.value.multiProvider)
+}
+function quotaChipAria(chip: CompanionQuotaChip) {
+  return companionQuotaChipAriaLabel(chip, formatReset(chip.resetAt), quotaStrip.value.multiProvider)
+}
 const statusText = computed(() => {
   if (!snapshot.value) return '等待真实会话预检'
   if (taskState.value.compatibility === 'degraded') return taskState.value.compatibilityMessage
@@ -2409,24 +2434,32 @@ onUnmounted(() => {
         <button v-if="searchText" type="button" aria-label="清空搜索" data-quick-jump-target @click.stop="searchText = ''"><X :size="13" /></button>
       </label>
 
-      <section class="float-quota-text" aria-label="Codex 实际额度窗口">
-        <div v-for="item in expandedQuota" :key="item.key" :class="item.family">
-          <span>{{ item.label }}</span><strong>{{ item.bucket.remainingPercent }}%</strong><small>{{ formatReset(item.bucket.resetAt) }}</small>
+      <!-- One row for every enabled provider. The full title and the reset time
+           live in the shared 200ms child hint and in each chip's accessible name,
+           so the row itself stays a single line of readings. -->
+      <section class="float-quota-text" aria-label="实际额度窗口">
+        <div
+          v-for="(group, groupIndex) in quotaStrip.groups"
+          :key="group.provider"
+          class="float-quota-group"
+          :class="[`provider-${group.provider}`, { divided: groupIndex > 0 }]"
+        >
+          <h3 v-if="group.caption" class="float-quota-provider">{{ group.caption }}</h3>
+          <div
+            v-for="chip in group.chips"
+            :key="chip.key"
+            class="float-quota-chip"
+            :class="{ spark: chip.spark }"
+            @pointerenter="queueActionHint($event, quotaChipHint(chip))"
+            @pointerleave="clearActionHint"
+          >
+            <span class="sr-only">{{ quotaChipAria(chip) }}</span>
+            <span aria-hidden="true">{{ chip.shortLabel }}</span><strong aria-hidden="true">{{ chip.remainingPercent }}%</strong>
+          </div>
+          <p v-if="group.emptyReason">{{ group.emptyReason }}</p>
         </div>
-        <p v-if="!expandedQuota.length">{{ compact.stateLabel || '服务端未返回额度窗口' }}</p>
       </section>
 
-      <section
-        v-if="claudeQuotaSection"
-        class="float-quota-text float-quota-claude"
-        :aria-label="`${claudeQuotaSection.label} 实际额度窗口`"
-      >
-        <h3 class="float-quota-provider">{{ claudeQuotaSection.label }}</h3>
-        <div v-for="item in claudeQuotaSection.rows" :key="item.key">
-          <span>{{ item.label }}</span><strong>{{ item.remainingPercent }}%</strong><small>{{ formatReset(item.resetAt) }}</small>
-        </div>
-        <p v-if="claudeQuotaSection.emptyReason">{{ claudeQuotaSection.emptyReason }}</p>
-      </section>
       <div class="float-source-status" :class="conversations?.status" role="status" aria-live="polite">
         <span>{{ statusText }}</span>
         <span v-if="pendingConfirm" class="confirm-hint">{{ pendingConfirm.label }} · 再次操作确认</span>
