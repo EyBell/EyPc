@@ -14,13 +14,27 @@ const props = withDefaults(defineProps<{
   taskCount?: number
   signal?: 'ongoing' | 'completed-unread' | 'completed' | 'quiet'
   decorative?: boolean
+  /**
+   * Centre percentage owned by another provider. Null keeps the Codex-derived
+   * rendering, which is the compatibility path: the liquid level and the ring
+   * are unaffected either way, only the number in the middle changes.
+   */
+  percentOverride?: number | null
+  /** Short provider label shown beside an overridden percentage. */
+  percentProviderLabel?: string
 }>(), {
   taskCount: 0,
   signal: 'quiet',
-  decorative: false
+  decorative: false,
+  percentOverride: null,
+  percentProviderLabel: ''
 })
 
+// Liquid level always follows this ball's own primary reading; an override only
+// replaces the displayed number.
 const percent = computed(() => props.primary?.bucket.remainingPercent ?? 0)
+const hasPercentOverride = computed(() => typeof props.percentOverride === 'number' && Number.isFinite(props.percentOverride))
+const displayPercent = computed(() => hasPercentOverride.value ? props.percentOverride as number : props.primary?.bucket.remainingPercent ?? null)
 const weekly = computed(() => props.primary?.kind === 'weekly' ? props.primary : props.secondary?.kind === 'weekly' ? props.secondary : null)
 const weeklyPercent = computed(() => weekly.value?.bucket.remainingPercent ?? 0)
 const activeWeeklySegments = computed(() => Math.ceil(weeklyPercent.value / 5))
@@ -79,9 +93,10 @@ const style = computed(() => ({
       </template>
     </svg>
 
-    <div v-if="!primary || appearance.inner.showPercent" class="codex-water-ball__value" :class="[`percent-${appearance.inner.percentPosition}`, { empty: !primary }]">
+    <div v-if="!primary || appearance.inner.showPercent" class="codex-water-ball__value" :class="[`percent-${appearance.inner.percentPosition}`, { empty: !primary && !hasPercentOverride }]">
       <span v-if="primary?.family === 'spark'" class="codex-water-ball__spark" aria-hidden="true">S</span>
-      <strong>{{ primary ? `${primary.bucket.remainingPercent}%` : stateLabel }}</strong>
+      <strong>{{ displayPercent === null ? stateLabel : `${displayPercent}%` }}</strong>
+      <em v-if="hasPercentOverride && percentProviderLabel" class="codex-water-ball__percent-source">{{ percentProviderLabel }}</em>
     </div>
   </div>
 </template>
@@ -274,6 +289,17 @@ const style = computed(() => ({
   font-weight: 900;
   line-height: 1.25;
   letter-spacing: .08em;
+}
+.codex-water-ball__percent-source {
+  display: block;
+  margin-top: 1px;
+  font-size: 8px;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  opacity: .72;
+  color: var(--water-percent-color, inherit);
 }
 .codex-water-ball__value.empty { width: 64px; padding: 0 7px; text-align: center; }
 .codex-water-ball__value.empty strong { font-size: 11px; line-height: 1.15; letter-spacing: 0; }

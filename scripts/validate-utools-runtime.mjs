@@ -76,6 +76,33 @@ for (const method of ['capabilities', 'list', 'activate', 'close', 'terminate', 
 }
 assert(typeof windowModuleProbe.openPermissionSettings === 'function', 'window preload module must expose permission settings routing')
 
+const claudeModule = distRequire('./claude/index.cjs')
+const claudeScriptsModule = distRequire('./claude/scripts.cjs')
+assert(typeof claudeModule.createClaudeBridge === 'function', 'claude preload module must expose createClaudeBridge')
+const claudeModuleProbe = claudeModule.createClaudeBridge({
+  fs: { readdirSync: () => [], statSync() { throw new Error('claude module must stay lazy during validation') }, readFileSync() { throw new Error('lazy') } },
+  path: pathModule,
+  os: { homedir: () => '/tmp' },
+  dataDirectory: '/tmp/eypc-claude-validation'
+})
+for (const method of ['inspect', 'readSnapshot', 'readQuotaFallback', 'install', 'uninstall', 'openTask', 'close']) {
+  assert(typeof claudeModuleProbe[method] === 'function', `claude preload module must expose stable ${method}`)
+}
+assert(claudeModuleProbe.readSnapshot().sessions.length === 0, 'claude module must degrade to an empty inventory without a readable home')
+const claudeSettingsSource = preloadModuleSources.get('claude/settings.cjs') || ''
+assert(claudeSettingsSource.includes('eypc-claude-companion'), 'claude settings module must carry the uninstall marker')
+const claudeScriptsSource = preloadModuleSources.get('claude/scripts.cjs') || ''
+assert(claudeScriptsSource.includes('exit 0'), 'generated claude scripts must fail open')
+// EyPc's data directory lives under a path with a space on macOS, and Claude
+// Code runs the registered entry through a shell.
+assert(
+  claudeScriptsModule.settingsCommandLine('/a b/hook.sh', 'darwin') === "'/a b/hook.sh'",
+  'registered claude command must be shell quoted'
+)
+const claudeQuotaSource = preloadModuleSources.get('claude/quota.cjs') || ''
+assert(claudeQuotaSource.includes('settings.enabled !== true'), 'claude quota fallback must stay opt-in')
+assert(!claudeQuotaSource.includes('writeFileSync'), 'claude quota fallback must never persist a credential')
+
 const indexHtml = readFileSync(resolve(distDir, 'index.html'), 'utf8')
 assert(!/\b(?:src|href)="\/assets\//.test(indexHtml), 'dist index.html must use relative asset paths for uTools packages')
 const floatHtml = readFileSync(resolve(distDir, 'float.html'), 'utf8')
@@ -131,6 +158,7 @@ const sandbox = {
   process: { platform: 'darwin', env: {}, cwd: () => '/tmp' },
   require(name) {
     if (name === './windows/index.cjs') return windowModule
+    if (name === './claude/index.cjs') return claudeModule
     if (name === 'node:buffer') return { Buffer }
     if (name === 'node:child_process') return { execFile() {}, spawn() { throw new Error('spawn unavailable in validation') } }
     if (name === 'node:crypto') return crypto
@@ -172,6 +200,17 @@ assert(typeof sandbox.window.eypcPlatform.codex.readSnapshot === 'function', 'pr
 assert(typeof sandbox.window.eypcPlatform.codex.readActivitySnapshot === 'function', 'preload must expose codex.readActivitySnapshot')
 assert(typeof sandbox.window.eypcPlatform.codex.inspectEnvironment === 'function', 'preload must expose codex.inspectEnvironment')
 assert(typeof sandbox.window.eypcPlatform.codex.openThread === 'function', 'preload must expose codex.openThread')
+assert(typeof sandbox.window.eypcPlatform.claude.inspect === 'function', 'preload must expose claude.inspect')
+assert(typeof sandbox.window.eypcPlatform.claude.readSnapshot === 'function', 'preload must expose claude.readSnapshot')
+// The Controller feature-detects this one. Asserting it on the module alone
+// is not enough: the facade omitted it, so the opt-in quota fallback was a
+// dead switch in every packaged build while the module test stayed green.
+assert(typeof sandbox.window.eypcPlatform.claude.readQuotaFallback === 'function', 'preload must expose claude.readQuotaFallback')
+assert(typeof sandbox.window.eypcPlatform.claude.install === 'function', 'preload must expose claude.install')
+assert(typeof sandbox.window.eypcPlatform.claude.uninstall === 'function', 'preload must expose claude.uninstall')
+assert(typeof sandbox.window.eypcPlatform.claude.openTask === 'function', 'preload must expose claude.openTask')
+assert(typeof sandbox.window.eypcPlatform.claude.diagnostics === 'function', 'preload must expose claude.diagnostics')
+assert(sandbox.window.eypcPlatform.claude.diagnostics().loaded === true, 'claude bridge must load from the packaged module')
 assert(typeof sandbox.window.eypcPlatform.float.sync === 'function', 'preload must expose float.sync')
 assert(typeof sandbox.window.eypcPlatform.float.resetGeometry === 'function', 'preload must expose float.resetGeometry')
 assert((await sandbox.window.eypcPlatform.files.copyPath('/tmp/demo')).outcome === 'failed', 'copyPath fallback must report a structured failure when host API is unavailable')
@@ -195,6 +234,23 @@ const nonWindowApiKeys = (value) => Object.keys(value).filter((key) => key !== '
 assert(nonWindowApiKeys(degradedSandbox.window.eypcPlatform) === nonWindowApiKeys(sandbox.window.eypcPlatform), 'window module failure must not change non-window platform API keys')
 const degradedWindowCapability = await degradedSandbox.window.eypcPlatform.windows.capabilities()
 assert(degradedWindowCapability.canList === false && degradedWindowCapability.canActivate === false, 'window module failure must degrade only window capability')
+
+const degradedClaudeSandbox = {
+  window: {},
+  globalThis: {},
+  process: sandbox.process,
+  require(name) {
+    if (name === './claude/index.cjs' || String(name).endsWith('/claude/index.cjs')) throw new Error('claude module intentionally unavailable')
+    return sandbox.require(name)
+  }
+}
+degradedClaudeSandbox.globalThis = degradedClaudeSandbox
+vm.runInNewContext(preloadSource, degradedClaudeSandbox, { filename: 'preload-without-claude.js' })
+const nonClaudeApiKeys = (value) => Object.keys(value).filter((key) => key !== 'claude').sort().join(',')
+assert(nonClaudeApiKeys(degradedClaudeSandbox.window.eypcPlatform) === nonClaudeApiKeys(sandbox.window.eypcPlatform), 'claude module failure must not change non-claude platform API keys')
+assert(degradedClaudeSandbox.window.eypcPlatform.claude.diagnostics().loaded === false, 'claude module failure must be reported as not loaded')
+assert(degradedClaudeSandbox.window.eypcPlatform.claude.readSnapshot().sessions.length === 0, 'claude module failure must degrade to an empty inventory')
+assert(typeof (await degradedClaudeSandbox.window.eypcPlatform.codex.readSnapshot) === 'function', 'claude module failure must leave the codex port intact')
 
 const floatSandbox = {
   window: {},

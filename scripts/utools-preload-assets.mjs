@@ -7,18 +7,32 @@ export const UTOOLS_PRELOAD_ASSETS = Object.freeze([
   { id: 'action', canonical: 'preload/action.js', public: 'public/action-preload.js', dist: 'action-preload.js' }
 ])
 
-export const UTOOLS_PRELOAD_MODULE_ASSETS = Object.freeze([
-  'index.cjs',
-  'native-command.cjs',
-  'session-cache.cjs',
-  'macos.cjs',
-  'macos-space.cjs',
-  'win32.cjs'
-].map((file) => ({
-  canonical: `preload/windows/${file}`,
-  public: `public/windows/${file}`,
-  dist: `windows/${file}`
-})))
+/**
+ * Preload module groups mirrored verbatim into public/ and dist/. Each group is
+ * a self-contained subsystem the main preload loads through a guarded require,
+ * so a group can be added without touching the sync, prepare or validate steps.
+ */
+export const UTOOLS_PRELOAD_MODULE_GROUPS = Object.freeze([
+  {
+    id: 'windows',
+    directory: 'windows',
+    files: ['index.cjs', 'native-command.cjs', 'session-cache.cjs', 'macos.cjs', 'macos-space.cjs', 'win32.cjs']
+  },
+  {
+    id: 'claude',
+    directory: 'claude',
+    files: ['index.cjs', 'transcript.cjs', 'settings.cjs', 'events.cjs', 'scripts.cjs', 'environment.cjs', 'open.cjs', 'quota.cjs']
+  }
+])
+
+export const UTOOLS_PRELOAD_MODULE_ASSETS = Object.freeze(
+  UTOOLS_PRELOAD_MODULE_GROUPS.flatMap((group) => group.files.map((file) => ({
+    group: group.id,
+    canonical: `preload/${group.directory}/${file}`,
+    public: `public/${group.directory}/${file}`,
+    dist: `${group.directory}/${file}`
+  })))
+)
 
 export function syncUtoolsPreloads(root, target) {
   if (target !== 'public' && target !== 'dist') throw new Error(`unsupported preload target: ${target}`)

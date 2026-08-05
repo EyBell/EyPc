@@ -91,3 +91,4 @@ describe('Codex appearance', () => {
     expect(customVars['--ring-progress']).toBe('#132F3E')
   })
 })
+

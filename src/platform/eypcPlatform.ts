@@ -18,6 +18,7 @@ import type {
   CodexThreadArchiveResult,
   CodexThreadOpenResult
 } from '../domain/codex'
+import type { ClaudeEnvironmentSnapshot, ClaudeRateLimitsInput, ClaudeSessionObservation } from '../domain/claude'
 import type {
   CodexEnvironmentActionRunResult,
   CodexEnvironmentActionSessionProjection,
@@ -192,6 +193,28 @@ export interface CodexFloatWorkspaceDiagnostics {
   errorCode?: string
 }
 
+export interface ClaudeBridgeSnapshot {
+  version: 1
+  revision: string
+  sessions: ClaudeSessionObservation[]
+  truncated: boolean
+  quota: { rateLimits: ClaudeRateLimitsInput; updatedAt: number } | null
+  readAt: number
+}
+
+export interface ClaudeRegistrationResult {
+  ok: boolean
+  hooks?: string
+  statusline?: string
+  message?: string
+}
+
+export interface ClaudeOpenResult {
+  outcome: 'opened' | 'dispatched' | 'unavailable' | 'failed'
+  confirmsRead: boolean
+  message?: string
+}
+
 export interface EypcPlatformApi {
   storage: {
     getState(): AppState
@@ -273,6 +296,22 @@ export interface EypcPlatformApi {
     }): Promise<CodexEnvironmentActionRunResult>
     setActionRunArchived?(request: { runId: string; archived: boolean }): Promise<{ ok: boolean; message?: string }>
     close(options?: { preserveDesktop?: boolean }): void
+  }
+  /**
+   * Claude companion provider. Optional because an older long-lived preload can
+   * still be alive while a newer renderer loads; every consumer must treat an
+   * absent port as "Claude unavailable" rather than as an error.
+   */
+  claude?: {
+    inspect(): Promise<ClaudeEnvironmentSnapshot> | ClaudeEnvironmentSnapshot
+    readSnapshot(options?: { now?: number; windowMs?: number }): Promise<ClaudeBridgeSnapshot> | ClaudeBridgeSnapshot
+    /** Opt-in network fallback; resolves null for every non-success path. */
+    readQuotaFallback?(options?: { enabled?: boolean; now?: number; minStaleMs?: number }): Promise<{ rateLimits: ClaudeRateLimitsInput; updatedAt: number } | null>
+    install(options?: { statusline?: boolean }): Promise<ClaudeRegistrationResult> | ClaudeRegistrationResult
+    uninstall(): Promise<ClaudeRegistrationResult> | ClaudeRegistrationResult
+    openTask(sessionId: string, options?: { pid?: number; cwd?: string }): Promise<ClaudeOpenResult>
+    diagnostics(): { revision: string; loaded: boolean; loadError: string }
+    close(): void
   }
   float: {
     sync(payload: { visible: boolean; snapshot?: unknown; position?: unknown; expandedSizes?: unknown }): boolean
@@ -675,6 +714,7 @@ export function getPlatform(): EypcPlatformApi {
     const hostFloat = window.eypcPlatform.float
     const hostActionRunner = window.eypcPlatform.actionRunner
     const hostWindows = window.eypcPlatform.windows
+    const hostClaude = window.eypcPlatform.claude
     const hostCapabilities: FileCapabilities = hostFiles.capabilities || {
       open: typeof hostFiles.open === 'function',
       reveal: typeof hostFiles.reveal === 'function',
@@ -764,6 +804,10 @@ export function getPlatform(): EypcPlatformApi {
         setActionRunArchived: hostCodex?.setActionRunArchived,
         close: hostCodex?.close || (() => undefined)
       },
+      // Passed through only when the packaged preload actually exposes it; an
+      // older preload simply leaves `claude` undefined and the Controller then
+      // keeps the provider dormant.
+      claude: hostClaude && typeof hostClaude.readSnapshot === 'function' ? hostClaude : undefined,
       float: {
         sync: hostFloat?.sync || (() => false),
         activate: hostFloat?.activate,

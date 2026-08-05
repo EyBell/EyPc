@@ -19,6 +19,11 @@ import {
   X
 } from '@lucide/vue'
 import CodexWaterBall from './components/CodexWaterBall.vue'
+import {
+  buildClaudeQuotaSection,
+  resolveCompanionRowMarker,
+  resolveCompanionWaterBallPresentation
+} from './domain/companionPresentation'
 import QuickJumpLayer from './components/QuickJumpLayer.vue'
 import {
   CODEX_THEME_PRESETS,
@@ -181,6 +186,12 @@ const compact = computed(() => buildCodexCompactPresentation({
   taskCounts: dynamicStatus.value.compactCounts
 }))
 const compactCounts = computed(() => compact.value.taskCounts)
+const companionSlice = computed(() => snapshot.value?.companion || null)
+const companionWaterBall = computed(() => resolveCompanionWaterBallPresentation(companionSlice.value))
+const claudeQuotaSection = computed(() => buildClaudeQuotaSection(companionSlice.value))
+function rowMarker(task: CodexTaskCard) {
+  return resolveCompanionRowMarker(task, companionSlice.value?.providers || { codex: true, claude: false })
+}
 const primaryPercent = computed(() => compact.value.primary?.bucket.remainingPercent ?? 0)
 const selectedWeekly = computed(() => {
   if (compact.value.primary?.kind === 'weekly') return compact.value.primary
@@ -2335,9 +2346,11 @@ onUnmounted(() => {
           :primary="compact.primary"
           :secondary="compact.secondary"
           :state-label="compact.stateLabel"
-          :label="compact.ariaLabel"
+          :label="`${compact.ariaLabel}${companionWaterBall.ariaSuffix}`"
           :appearance="settings?.waterAppearance || fallbackWaterAppearance"
           :colors="settings?.colors || fallbackColors"
+          :percent-override="companionWaterBall.percentOverride"
+          :percent-provider-label="companionWaterBall.percentProviderLabel"
           decorative
         />
         <template v-else>
@@ -2403,6 +2416,17 @@ onUnmounted(() => {
         <p v-if="!expandedQuota.length">{{ compact.stateLabel || '服务端未返回额度窗口' }}</p>
       </section>
 
+      <section
+        v-if="claudeQuotaSection"
+        class="float-quota-text float-quota-claude"
+        :aria-label="`${claudeQuotaSection.label} 实际额度窗口`"
+      >
+        <h3 class="float-quota-provider">{{ claudeQuotaSection.label }}</h3>
+        <div v-for="item in claudeQuotaSection.rows" :key="item.key">
+          <span>{{ item.label }}</span><strong>{{ item.remainingPercent }}%</strong><small>{{ formatReset(item.resetAt) }}</small>
+        </div>
+        <p v-if="claudeQuotaSection.emptyReason">{{ claudeQuotaSection.emptyReason }}</p>
+      </section>
       <div class="float-source-status" :class="conversations?.status" role="status" aria-live="polite">
         <span>{{ statusText }}</span>
         <span v-if="pendingConfirm" class="confirm-hint">{{ pendingConfirm.label }} · 再次操作确认</span>
@@ -2508,12 +2532,19 @@ onUnmounted(() => {
                     :aria-label="`打开会话 ${taskDisplayLabel(row.task)}`"
                     @click.stop="activateTaskTitle(row.task, $event)"
                   >{{ taskDisplayLabel(row.task) }}</button>
-                  <button
-                    type="button"
-                    class="task-meta-button"
-                    :aria-label="`聚焦会话 ${taskDisplayLabel(row.task)}，以接收会话快捷键`"
-                    @click.stop="focusTaskMetadata(row.task)"
-                  >{{ row.task.projectName }} · {{ taskStateLabel(row.task) }} · {{ formatTaskTime(row.task.lastQuestionAt) }}</button>
+                  <div class="task-meta-line">
+                    <span
+                      v-if="rowMarker(row.task)"
+                      class="task-provider-marker"
+                      :class="`provider-${rowMarker(row.task)!.provider}`"
+                    >{{ rowMarker(row.task)!.label }}</span>
+                    <button
+                      type="button"
+                      class="task-meta-button"
+                      :aria-label="`聚焦会话 ${taskDisplayLabel(row.task)}，以接收会话快捷键`"
+                      @click.stop="focusTaskMetadata(row.task)"
+                    >{{ row.task.projectName }} · {{ taskStateLabel(row.task) }} · {{ formatTaskTime(row.task.lastQuestionAt) }}</button>
+                  </div>
                 </div>
                 <div class="task-inline-actions" role="toolbar" :aria-label="`${taskDisplayLabel(row.task)} 会话操作`">
                 <button

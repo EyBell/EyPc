@@ -63,3 +63,42 @@ Date: 2026-08-03
 - Runner 冷加载项目后再次打开的 Environment catalog 读取为 0；下一份 verified inventory 保留未变项目、仅为新增项目和 alias 变化项目各读取一次，最终 catalog 顺序/选择仍来自当前 Controller 投影。
 - Host run/stop 的当前 TOML、target 与 command 指纹校验未被缓存替代；旧 Action Host revision 与 stale alias 仍 fail-closed/单次重建。
 - 15 个相关 Codex/Action/路由/UI 测试文件 `301/301`、typecheck、三类 preload syntax/mirror、Vite build、runtime preparation、uTools validation 与 diff 通过；未运行完整 Vitest/`pnpm run verify`，真实 uTools 连续 Runner/五槽时延 pending。
+
+## Review Implementation — 2026-08-05
+
+Tool: cursor-review-implementation
+
+## Review Target
+- Requirement: [raw-requirement.md](raw-requirement.md#L1) / [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L111)（Action Runner 独立子窗、exact argv、tasks-only preflight、selectedLaneId、`onPluginOut(isKill)`、Float 无 Action 状态）
+- Plan: [plan.md](plan.md#L1) / [tasks.md](tasks.md#L1) T1–T16 均标记完成；同提交共载 WJ-22 native module 拆分见 [window verify](../../260724/1527-window-jump-workbench/verify.md#L1)
+- Implementation: commit `18461bb`（`feat(codex): 落地 Action Runner 工作台并拆分窗口 preload`）。复核在干净 detached worktree 执行，排除主工作树未提交 Claude Companion 脏改。
+
+## Checked
+- Requirement alignment: 独立 `action.html`/ActionApp、白名单 action preload、五槽+Runner `mainHide` 路由、exact argv Domain/Host、runtime revision、selectedLaneId 五槽权威、`onPluginOut(false)` 保留 live Action / `(true)` interrupted flush、Float 无 Environment IPC、单 Environment 省略中间层、Quick Jump F/Shift+F、关闭仅隐藏 — 与 spec 对齐。
+- Plan-to-implementation coverage: T1–T16 与计划条目在代码/测试/文档均有对应；真实宿主门禁仍按计划 pending。
+- Risk and compatibility: Runner 无 spawn/fs/db；`shell:false`；Action stop 无自动 `SIGKILL`；Windows `taskkill /T` 无 `/F`；项目 `targetId=projectKey` 保持；WJ native 实现仅在 `preload/windows/*.cjs` 且 public/dist 镜像。
+- Verification evidence（本轮重跑，干净 `18461bb` worktree）:
+  - 聚焦 14 文件 `433/433`（Action Controller/Runtime/Bridge/UI/Environment/routing + Window preload/domain/platform）
+  - preload `node --check` + `sync:preloads` + action/float/windows 镜像一致
+  - `pnpm run typecheck` 通过
+  - `pnpm run build`（含 Vite 产出 `action.html`/`action-preload.js`/`windows/*`、prepare、`validate:utools`）通过
+  - 未在本轮重跑完整 Vitest / `pnpm run verify`（历史记录仍为 57 文件 `733/733`）
+
+## Findings
+- P0: 无
+- P1: 无（自动化闭环成立；真实 uTools/Windows/真实 Action 按权威保持 host-pending，不构成未满足需求）
+- P2:
+  - Quick Jump 仅在 `catalog.confirmLaneId` 时禁用；Host 投影的 `action.state === 'confirm-required'` 本身不阻断 F。若“确认层”意图覆盖 Git Push 按钮确认态，可补同一门禁。
+  - `tests/ui/actionRunner.test.ts` 以源码合同为主，交互/DOM 行为覆盖偏薄。
+  - 主工作树另有未提交 Claude Companion 改动重叠 `codexController`/preload；合入前需防回归 Action 契约。
+
+## Optimization Suggestions
+- 宿主验收按 [Residual Gates](handoff.md#L29) 执行：Runner 显隐/hotkey、普通 hide vs kill、真实 Build/Serve（非外部写入强制）、Windows 进程树。
+- 可选：确认态统一阻断 Quick Jump；为 Runner 左右栏补少量 Vue Test Utils 交互用例。
+
+## Not Checked
+- 真实 uTools child window / 全局快捷键 / 多显示器
+- 真实 Git Push、Build/Serve、长期 Serve、外部写入
+- 真实 Windows `taskkill` 进程树
+- 本轮完整 Vitest 全量与 CodeNote 外部文档
+- 主工作树未提交的 Claude Companion / `_to_delete/`
