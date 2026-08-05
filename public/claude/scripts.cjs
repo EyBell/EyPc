@@ -1,0 +1,190 @@
+'use strict'
+
+/**
+ * Generated companion scripts.
+ *
+ * Both scripts are written into EyPc's own data directory and referenced from
+ * `~/.claude/settings.json`. They are deliberately tiny, dependency-free POSIX
+ * shell, and they fail open: if anything goes wrong they exit 0 without
+ * blocking Claude Code.
+ *
+ * The `eypc-claude-companion` marker string must appear in every generated
+ * script and in every settings entry, because that is how uninstall identifies
+ * exactly what to remove.
+ */
+
+const { EYPC_MARKER } = require('./settings.cjs')
+
+const HOOK_SCRIPT_NAME = 'eypc-claude-companion-hook.sh'
+const STATUSLINE_SCRIPT_NAME = 'eypc-claude-companion-statusline.sh'
+const QUOTA_FILE_NAME = 'eypc-claude-quota.json'
+const DEFAULT_MAX_QUEUE_BYTES = 512 * 1024
+
+function shellQuote(value) {
+  return `'${String(value === undefined || value === null ? '' : value).replace(/'/g, `'\\''`)}'`
+}
+
+/**
+ * The hook script.
+ *
+ * It reads the hook JSON on stdin and appends one compact record to the queue.
+ *
+ * Only the session id and the event name are read out of the payload. Fields
+ * that can also appear inside a tool's own input — notably `cwd` — are
+ * deliberately NOT read here: a text match would pick up the tool's path rather
+ * than the session's, which would put a tool argument into a persisted file.
+ * The transcript is the authoritative source for the working directory, so
+ * nothing is lost by omitting it.
+ */
+function hookScript(options) {
+  const queuePath = shellQuote((options && options.queuePath) || '')
+  const maxBytes = Number.isFinite(options && options.maxQueueBytes)
+    ? Math.max(4096, Math.trunc(options.maxQueueBytes))
+    : DEFAULT_MAX_QUEUE_BYTES
+  return `#!/bin/sh
+# ${EYPC_MARKER} — EyPc Claude companion hook bridge.
+# Appends privacy-safe session events to EyPc's own queue. Never blocks Claude Code.
+set -u
+QUEUE=${queuePath}
+INPUT=$(cat 2>/dev/null || true)
+[ -n "$INPUT" ] || exit 0
+
+# First occurrence only: splitting on commas puts each key/value on its own line
+# so "head -n 1" takes the earliest match rather than the last one. The value is
+# validated below regardless, so a stray nested key cannot poison the queue.
+first_value() {
+  printf '%s' "$INPUT" | tr ',' '\\n' | sed -n "s/.*\\"$1\\"[[:space:]]*:[[:space:]]*\\"\\([^\\"]*\\)\\".*/\\1/p" | head -n 1
+}
+
+SESSION=$(first_value session_id)
+EVENT=$(first_value hook_event_name)
+
+case "$SESSION" in
+  '' ) exit 0 ;;
+  *[!A-Za-z0-9_-]* ) exit 0 ;;
+esac
+case "$EVENT" in
+  '' ) exit 0 ;;
+  *[!A-Za-z]* ) exit 0 ;;
+esac
+
+# Self-cap the queue: the plugin truncates it while running, but the hooks stay
+# registered when the plugin is closed and nothing else would bound it.
+if [ -f "$QUEUE" ]; then
+  SIZE=$(wc -c < "$QUEUE" 2>/dev/null | tr -d ' ')
+  case "$SIZE" in
+    '' ) : ;;
+    *[!0-9]* ) : ;;
+    * ) if [ "$SIZE" -gt ${maxBytes} ]; then : > "$QUEUE" 2>/dev/null || true; fi ;;
+  esac
+fi
+
+NOW=$(date +%s)
+printf '{"s":"%s","e":"%s","t":%s000,"p":%s}\\n' "$SESSION" "$EVENT" "$NOW" "$PPID" >> "$QUEUE" 2>/dev/null || true
+exit 0
+`
+}
+
+/**
+ * The status line script.
+ *
+ * Claude Code hands the session JSON — including the official `rate_limits`
+ * object — to whatever status line command is configured. The companion writes
+ * that object to its own cache file and then chains to the user's original
+ * status line so their display is unchanged.
+ */
+/**
+ * A chained status line is a shell *command line*, not a path: Claude Code runs
+ * `statusLine.command` through a shell, so quoting it as a single word would
+ * break every status line that takes arguments. It is therefore interpolated
+ * verbatim — but only after rejecting anything that could add script lines of
+ * its own.
+ */
+function safeChainedCommand(value) {
+  const command = String(value === undefined || value === null ? '' : value).trim()
+  if (!command) return ''
+  if (/[\r\n]/.test(command)) return ''
+  return command
+}
+
+function statuslineScript(options) {
+  const quotaPath = shellQuote((options && options.quotaPath) || '')
+  const chained = safeChainedCommand(options && options.chainedCommand)
+  const chainBlock = chained
+    ? `
+# Chain to the status line that was configured before EyPc was installed.
+printf '%s' "$INPUT" | ${chained} 2>/dev/null || true
+`
+    : `
+# No status line was configured before EyPc; print nothing.
+`
+  return `#!/bin/sh
+# ${EYPC_MARKER} — EyPc Claude companion status line bridge.
+# Caches the official rate_limits object, then defers to any pre-existing status line.
+set -u
+QUOTA=${quotaPath}
+INPUT=$(cat 2>/dev/null || true)
+
+if [ -n "$INPUT" ]; then
+  # Brace-balanced extraction. A regex cannot do this: rate_limits nests one
+  # object per window, so a "match up to a closing brace" pattern truncates the
+  # payload after the first window and produces invalid JSON.
+  RATE=$(printf '%s' "$INPUT" | awk '
+    { buffer = buffer $0 }
+    END {
+      key = index(buffer, "\\"rate_limits\\"")
+      if (key == 0) exit
+      rest = substr(buffer, key)
+      opened = index(rest, "{")
+      if (opened == 0) exit
+      start = key + opened - 1
+      depth = 0
+      total = length(buffer)
+      for (i = start; i <= total; i++) {
+        c = substr(buffer, i, 1)
+        if (c == "{") { depth++ }
+        else if (c == "}") {
+          depth--
+          if (depth == 0) { print substr(buffer, start, i - start + 1); exit }
+        }
+      }
+    }
+  ')
+  if [ -n "$RATE" ]; then
+    NOW=$(date +%s)
+    printf '{"version":1,"updatedAt":%s000,"rate_limits":%s}\\n' "$NOW" "$RATE" > "$QUOTA" 2>/dev/null || true
+  fi
+fi
+${chainBlock}
+exit 0
+`
+}
+
+/**
+ * Parses the quota cache file written by the status line script. Returns the
+ * raw `rate_limits` shape so the domain layer owns normalization.
+ */
+function parseQuotaCache(text) {
+  let parsed
+  try { parsed = JSON.parse(String(text || '')) } catch { return null }
+  if (!parsed || typeof parsed !== 'object' || parsed.version !== 1) return null
+  const rateLimits = parsed.rate_limits && typeof parsed.rate_limits === 'object' ? parsed.rate_limits : null
+  if (!rateLimits) return null
+  const updatedAt = Number(parsed.updatedAt)
+  return {
+    rateLimits,
+    updatedAt: Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : 0
+  }
+}
+
+module.exports = {
+  HOOK_SCRIPT_NAME,
+  safeChainedCommand,
+  STATUSLINE_SCRIPT_NAME,
+  QUOTA_FILE_NAME,
+  DEFAULT_MAX_QUEUE_BYTES,
+  shellQuote,
+  hookScript,
+  statuslineScript,
+  parseQuotaCache
+}

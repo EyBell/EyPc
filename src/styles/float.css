@@ -667,6 +667,40 @@ button { font: inherit; }
   background: transparent;
 }
 .float-quota-text > div { display: grid; min-width: 0; grid-template-columns: auto auto; align-items: baseline; gap: 1px 5px; }
+/* Claude section of the expanded quota area. Reuses the Codex row language and
+   only adds a leading provider caption plus a separating rule. */
+.float-quota-claude { min-height: 0; padding-top: 0; }
+.float-quota-claude .float-quota-provider {
+  margin: 0;
+  padding-right: 2px;
+  border-right: 1px solid color-mix(in srgb, var(--codex-accent) 30%, transparent);
+  padding-inline-end: 10px;
+  color: var(--codex-muted);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .02em;
+}
+.float-quota-claude p { margin: 0; color: var(--codex-muted); font-size: 10px; }
+/* Row-level provider marker.
+   It rides the existing bottom metadata line rather than adding an element of
+   its own: the dense list's row height and learned spatial rhythm must not
+   change, and source must not become a separate row-tail text line. */
+.task-meta-line { display: flex; min-width: 0; align-items: center; gap: 5px; }
+.task-meta-line .task-meta-button { flex: 1 1 auto; min-width: 0; }
+.task-provider-marker {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid color-mix(in srgb, var(--codex-accent) 32%, transparent);
+  border-radius: 4px;
+  margin-top: 2px;
+  color: var(--codex-muted);
+  font-size: 9px;
+  font-weight: 750;
+  /* Matches the metadata line box so the row stays at its established height. */
+  line-height: 13px;
+  letter-spacing: .03em;
+}
+.task-provider-marker.provider-claude { border-color: color-mix(in srgb, var(--codex-accent) 58%, transparent); color: var(--codex-fg); }
 .float-quota-text > div.spark { padding-left: 8px; border-left: 1px solid color-mix(in srgb, var(--codex-accent) 38%, transparent); }
 .float-quota-text span { color: var(--codex-muted); font-size: 10px; font-weight: 750; }
 .float-quota-text strong { color: var(--codex-fg); font-size: 16px; line-height: 1; }

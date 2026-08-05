@@ -1,3 +1,6 @@
+import type { CompanionProviderEnablement, CompanionProviderId } from './companionProvider'
+import { normalizeCompanionEnablement, orderCompanionTasksForDisplay } from './companionProvider'
+
 export type CodexDisplayStyle = 'water' | 'card'
 export const CODEX_DEFAULT_QUOTA_REFRESH_SECONDS = 5 * 60
 export const CODEX_MIN_QUOTA_REFRESH_SECONDS = 0
@@ -626,6 +629,18 @@ export interface CodexSettings {
    * Empty means “use the float Projects tab context” instead of a fixed project.
    */
   actionDefaultProjectKey: string
+  /**
+   * Which companion providers are enabled. Absent on every stored settings
+   * object that predates multi-provider support, which normalizes back into
+   * Codex-only — the exact pre-existing behavior.
+   */
+  providers: CompanionProviderEnablement
+  /**
+   * Opt-in fallback for Claude quota during idle periods. It reads an OAuth
+   * token (prompting for keychain access on macOS) and calls an endpoint
+   * Anthropic does not document, so it stays off unless the user asks for it.
+   */
+  claudeQuotaFallback: boolean
   compactFields: CodexCompactField[]
   expandedFields: CodexExpandedField[]
   colors: CodexColorSettings
@@ -650,6 +665,8 @@ export interface CodexLocalPin {
 export interface CodexState {
   settings: CodexSettings
   receipts: CodexThreadReceipt[]
+  /** EyPc-owned read receipts for providers with no native read state. */
+  claudeReceipts?: Record<string, number>
   firstPromptTimes: CodexFirstPromptTimeCacheEntry[]
   lastTaskScanAt: number
   cachedQuota: CodexQuotaSnapshotV1
@@ -708,6 +725,12 @@ export interface CodexTaskCard {
   projectKind: 'project' | 'chats'
   isHidden: boolean
   pinSource?: 'native' | 'local'
+  /**
+   * Owning companion provider. Absent on every legacy Codex card, which is why
+   * readers must go through `companionTaskProvider()` instead of reading it
+   * directly; the default is always `codex`.
+   */
+  provider?: CompanionProviderId
 }
 
 export interface CodexProjectCard {
@@ -800,8 +823,18 @@ export interface ConversationProjection {
   pendingKeys: string[]
 }
 
-const RECEIPT_KEY = /^[a-f0-9]{16,64}$/
-const PROJECT_KEY = /^(?:[a-f0-9]{16,64}|chats)$/
+/**
+ * Persisted key shapes.
+ *
+ * The bare hexadecimal form is the Codex thread id and stays exactly as it was,
+ * so existing receipts, aliases and pins are unaffected. Foreign providers are
+ * namespaced (`claude:<sessionId>`); without accepting that form here, hiding,
+ * renaming and pinning a foreign task would silently no-op — the write would be
+ * dropped by normalization while the UI still reported success.
+ */
+const FOREIGN_KEY = /^[a-z]{2,16}:[A-Za-z0-9._:-]{1,128}$/
+const RECEIPT_KEY = /^(?:[a-f0-9]{16,64}|[a-z]{2,16}:[A-Za-z0-9._:-]{1,128})$/
+const PROJECT_KEY = /^(?:[a-f0-9]{16,64}|chats|[a-z]{2,16}:[A-Za-z0-9._:/\\-]{1,256})$/
 const COMPACT_FIELDS: CodexCompactField[] = ['short', 'weekly', 'tasks']
 const EXPANDED_FIELDS: CodexExpandedField[] = ['plan', 'short', 'weekly', 'reset', 'config', 'tasks', 'updatedAt']
 const MAX_SAVED_THEME_PRESETS = 20
@@ -1174,6 +1207,8 @@ export function defaultCodexSettings(): CodexSettings {
     timeWindowDays: 30,
     dynamicTaskWindowHours: CODEX_DEFAULT_DYNAMIC_TASK_WINDOW_HOURS,
     actionDefaultProjectKey: '',
+    providers: { codex: true, claude: false },
+    claudeQuotaFallback: false,
     compactFields: [...COMPACT_FIELDS],
     expandedFields: [...EXPANDED_FIELDS],
     colors,
@@ -1230,6 +1265,8 @@ export function normalizeCodexSettings(value: unknown): CodexSettings {
       && /^[a-z0-9]{8,64}$/i.test(source.actionDefaultProjectKey.trim())
       ? source.actionDefaultProjectKey.trim().slice(0, 64)
       : '',
+    providers: normalizeCompanionEnablement(source.providers),
+    claudeQuotaFallback: source.claudeQuotaFallback === true,
     compactFields: orderedFields(source.compactFields, COMPACT_FIELDS, fallback.compactFields),
     expandedFields: orderedFields(source.expandedFields, EXPANDED_FIELDS, fallback.expandedFields),
     colors,
@@ -1394,6 +1431,7 @@ export function normalizeCodexState(value: unknown): CodexState {
   return {
     settings: normalizeCodexSettings(source.settings),
     receipts: normalizeCodexReceipts(source.receipts),
+    claudeReceipts: normalizeCompanionReadReceipts(source.claudeReceipts),
     firstPromptTimes: normalizeCodexFirstPromptTimes(source.firstPromptTimes),
     lastTaskScanAt: numberValue(source.lastTaskScanAt, 0),
     cachedQuota: normalizeCodexQuota(source.cachedQuota),
@@ -1504,24 +1542,37 @@ export function compareConversationTasks(a: CodexTaskCard, b: CodexTaskCard): nu
   return a.key.localeCompare(b.key)
 }
 
+/**
+ * Display order for Codex task cards. The comparator itself is owned by
+ * [companionProvider.ts](companionProvider.ts#L1) so display order and the
+ * provider-grouped cycle order can never drift apart; this is the Codex-typed
+ * entry point onto it.
+ */
+/**
+ * Bounded, numeric-only read receipts for providers that have no native read
+ * state. Kept here rather than in the provider module so persistence
+ * normalization stays with the rest of the state contract.
+ */
+export function normalizeCompanionReadReceipts(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const entries: Array<[string, number]> = []
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!RECEIPT_KEY.test(key)) continue
+    const at = typeof raw === 'number' ? raw : Number(raw)
+    if (!Number.isFinite(at) || at <= 0) continue
+    entries.push([key, Math.trunc(at)])
+  }
+  entries.sort((left, right) => right[1] - left[1])
+  return Object.fromEntries(entries.slice(0, 500))
+}
+
+/** True for a task key owned by a provider other than Codex. */
+export function isForeignCompanionKey(key: string): boolean {
+  return FOREIGN_KEY.test(typeof key === 'string' ? key : '')
+}
+
 export function orderCodexTasksForDisplay(tasks: CodexTaskCard[], pinnedTaskKeys: string[] = []): CodexTaskCard[] {
-  const pinnedOrder = new Map(pinnedTaskKeys.map((key, index) => [key, index]))
-  return tasks
-    .map((task, sourceIndex) => ({ task, sourceIndex }))
-    .sort((left, right) => {
-      const leftPinned = Boolean(left.task.pinSource)
-      const rightPinned = Boolean(right.task.pinSource)
-      if (leftPinned !== rightPinned) return leftPinned ? -1 : 1
-      if (leftPinned && rightPinned) {
-        const leftOrder = pinnedOrder.get(left.task.key)
-        const rightOrder = pinnedOrder.get(right.task.key)
-        if (leftOrder !== undefined || rightOrder !== undefined) {
-          return (leftOrder ?? Number.MAX_SAFE_INTEGER) - (rightOrder ?? Number.MAX_SAFE_INTEGER) || left.sourceIndex - right.sourceIndex
-        }
-      }
-      return left.sourceIndex - right.sourceIndex
-    })
-    .map(({ task }) => task)
+  return orderCompanionTasksForDisplay(tasks, pinnedTaskKeys)
 }
 
 export function countConversationTasks(

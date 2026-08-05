@@ -27,6 +27,7 @@ import {
   resolveCodexExpandedCardTheme
 } from '../domain/codexAppearance'
 import { buildCodexCompactPresentation, codexBadgeText } from '../domain/codexPresentation'
+import { claudeSetupHint, resolveCompanionWaterBallPresentation } from '../domain/companionPresentation'
 import {
   CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS,
   CODEX_MAX_QUOTA_REFRESH_SECONDS,
@@ -109,6 +110,18 @@ const waterPreview = computed(() => buildCodexCompactPresentation({
   compactFields: props.snapshot.settings.compactFields,
   conversationInboxEnabled: props.snapshot.settings.conversationInboxEnabled,
   taskCounts: waterPreviewProjection.value.compactCounts
+}))
+
+/**
+ * The configuration preview and the desktop float must render one component off
+ * one projection. Without feeding the same companion slice in, the float would
+ * show a centre reading the preview never shows, and the preview would drift
+ * from runtime.
+ */
+const companionPreview = computed(() => resolveCompanionWaterBallPresentation({
+  providers: props.snapshot.settings.providers,
+  claudeQuota: props.snapshot.claudeQuota,
+  claudeEnvironment: props.snapshot.claudeEnvironment
 }))
 
 const waterPreviewStyle = computed<Record<string, string>>(() => {
@@ -369,6 +382,23 @@ function clearLaunchPath() {
 
 function update(patch: Partial<CodexSettings>) {
   emit('dispatch', 'codex.settings.update', { settings: patch })
+}
+
+const claudeRegistered = computed(() => props.snapshot.claudeEnvironment?.hooks === 'installed')
+const claudeStatusText = computed(() => {
+  if (!props.snapshot.settings.providers.claude) return '关闭时不读取任何 Claude 数据'
+  const hint = claudeSetupHint(props.snapshot.claudeEnvironment)
+  if (hint) return hint
+  const version = props.snapshot.claudeEnvironment?.cliVersion
+  return version ? `已连接 Claude Code ${version}` : '已连接 Claude Code'
+})
+
+function toggleClaude(enabled: boolean) {
+  update({ providers: { ...props.snapshot.settings.providers, claude: enabled } })
+}
+
+function registerClaude(register: boolean) {
+  emit('dispatch', 'codex.claude.register', { register, statusline: true })
 }
 
 function changeStyle(style: CodexDisplayStyle) {
@@ -876,7 +906,9 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
                 :primary="waterPreview.primary"
                 :secondary="waterPreview.secondary"
                 :state-label="waterPreview.stateLabel"
-                :label="waterPreview.ariaLabel"
+                :label="`${waterPreview.ariaLabel}${companionPreview.ariaSuffix}`"
+                :percent-override="companionPreview.percentOverride"
+                :percent-provider-label="companionPreview.percentProviderLabel"
                 :appearance="waterDraft"
                 :colors="snapshot.settings.colors"
                 decorative
@@ -947,6 +979,62 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             <div class="codex-appearance-zone-head"><div><span>02 · 状态信号</span><h3 id="signal-appearance-title">额度状态色</h3></div><button type="button" class="codex-tip" aria-label="额度状态颜色说明" data-tip="用于跟随额度状态的 Weekly 进度和状态强调：充足、提醒、紧张。">i</button></div>
             <div class="codex-signal-controls"><label class="codex-color-control"><input type="color" :value="snapshot.settings.colors.healthy" @input="updateColor('healthy', ($event.target as HTMLInputElement).value)" /><span><strong>充足</strong><small>高额度状态</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.colors.warning" @input="updateColor('warning', ($event.target as HTMLInputElement).value)" /><span><strong>提醒</strong><small>中额度状态</small></span></label><label class="codex-color-control"><input type="color" :value="snapshot.settings.colors.critical" @input="updateColor('critical', ($event.target as HTMLInputElement).value)" /><span><strong>紧张</strong><small>低额度状态</small></span></label></div>
           </section>
+        </div>
+      </article>
+
+      <article v-if="activeConfigTab === 'runtime'" class="codex-panel codex-settings-section">
+        <div class="codex-panel-title">
+          <div><CircleGauge :size="17" /><strong>接入来源</strong></div>
+          <button
+            type="button"
+            class="codex-tip"
+            aria-label="接入来源区域说明"
+            data-tip="Codex 与 Claude Code 是两个独立来源，可分别开关，也可同时开启共享同一个水球。关闭的来源完全不读取。"
+          >i</button>
+        </div>
+        <label class="codex-switch-row">
+          <span>
+            <strong>接入 Claude Code</strong>
+            <small>{{ claudeStatusText }}</small>
+          </span>
+          <input
+            type="checkbox"
+            :checked="snapshot.settings.providers.claude"
+            data-operation-tooltip="接入 Claude Code"
+            data-operation-description="开启后，Claude Code 会话与 Codex 任务在同一水球中按状态汇总；关闭时完全不读取 Claude 数据。"
+            @change="toggleClaude(($event.target as HTMLInputElement).checked)"
+          />
+          <i />
+        </label>
+        <label v-if="snapshot.settings.providers.claude" class="codex-switch-row">
+          <span>
+            <strong>空闲时补充读取额度</strong>
+          </span>
+          <input
+            type="checkbox"
+            :checked="snapshot.settings.claudeQuotaFallback"
+            data-operation-tooltip="空闲时补充读取额度"
+            data-operation-description="默认关闭。状态栏脚本只在 Claude Code 渲染时更新额度；开启后仅在读数明显过期时改用账号用量接口补一次。代价是需读取登录凭证（macOS 会弹出钥匙串授权）并调用未公开接口，失败只保留上次读数。"
+            @change="update({ claudeQuotaFallback: ($event.target as HTMLInputElement).checked })"
+          />
+          <i />
+        </label>
+        <div v-if="snapshot.settings.providers.claude" class="codex-claude-actions">
+          <button
+            type="button"
+            class="codex-secondary-button"
+            data-operation-tooltip="注册 Claude 事件钩子"
+            data-operation-description="向 ~/.claude/settings.json 写入 EyPc 的事件钩子与状态栏包装；保留你已有的钩子与状态栏，可随时移除。"
+            @click="registerClaude(true)"
+          >{{ claudeRegistered ? '重新注册钩子' : '注册事件钩子' }}</button>
+          <button
+            v-if="claudeRegistered"
+            type="button"
+            class="codex-secondary-button"
+            data-operation-tooltip="移除 Claude 事件钩子"
+            data-operation-description="从 ~/.claude/settings.json 移除 EyPc 写入的条目并还原你原有的状态栏。"
+            @click="registerClaude(false)"
+          >移除钩子</button>
         </div>
       </article>
 

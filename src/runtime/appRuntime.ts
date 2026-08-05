@@ -8496,6 +8496,24 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       })
     }
     actions.register({ id: 'codex.refresh', title: '刷新 Codex 状态', group: 'Codex', risk: 'normal', scope: 'global', priority: 100, shortcut: 'Ctrl+R', when: () => true, run: () => { void codexController.refresh(); return true } })
+    // Registering the Claude bridge writes into the user's own Claude settings
+    // file, so it is modelled as a confirmed data-write action rather than a
+    // silent side effect of enabling the provider.
+    actions.register({
+      id: 'codex.claude.register',
+      title: '注册 Claude 事件钩子',
+      group: 'Codex',
+      risk: 'data-write',
+      scope: 'global',
+      priority: 97,
+      when: () => true,
+      run: (_ctx, args) => {
+        const register = (args as { register?: boolean } | undefined)?.register !== false
+        const statusline = (args as { statusline?: boolean } | undefined)?.statusline !== false
+        void codexController.setClaudeRegistration(register, { statusline })
+        return true
+      }
+    })
     actions.register({ id: 'codex.inspect-environment', title: '检测 Codex 连接环境', group: 'Codex', risk: 'normal', scope: 'global', priority: 99, when: () => true, run: () => { void codexController.inspectEnvironment(); return true } })
     actions.register({ id: 'codex.set-launch-path', title: '设置 Codex CLI 位置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
       const value = args?.path

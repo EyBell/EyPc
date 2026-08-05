@@ -91,6 +91,17 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 - MQTT UI uses compact rails, red/green/gray status rectangles, connection-title `host:port` hover text, a top topic dropdown without a `topic:` prefix, unified record/favorite/history rows, a send-area draft-history popover, a draft editor modal, and a publish options popover.
 - MQTT local popovers for topic filtering, publish options, and draft history must be topmost inside the workbench in both stack and split layouts, but must stay below global detail/action drawer masks, previews, modals, and shortcut top-layer hints.
 
+## Companion 多来源汇总
+
+- Codex 与 Claude Code 是两个彼此独立的来源，可各自开关，也可同时开启共享同一个水球。默认只开启 Codex，此时插件完全不读取任何 Claude 数据，界面、文案与角标含义与只有 Codex 时逐字一致。
+- 任务排布与角标以**状态**为准而非来源：待输入、进行中、已完成未读的角标数字是启用来源的合计；任务列表显示顺序不按来源分组。
+- 「上一个/下一个」任务循环在同一状态层内按来源分组遍历，组序固定（Codex 在前），且顺序稳定单调——循环过程中新到达的任务不会移动既有项的相对次序。直接打开类命令（打开第一条待输入 / 第一条完成未读）跟随循环序，因此快捷键打开的任务与循环会落到的任务一致。
+- 每个任务行只有一个明显的底部来源标记位；仅启用单一来源时该标记完全不出现。
+- 跳转由各来源自身能力执行：Codex 沿用深链打开；Claude 优先聚焦承载该会话的终端窗口，聚焦不到时在新终端 `claude --resume` 恢复。Claude 没有原生已读状态，只有确认聚焦成功才写已读。
+- 水球额度映射随启用组合变化：仅 Codex 时与旧版完全一致；仅 Claude 时 Claude 独占整个水球；两者同时启用时外圈进度表示 Codex、球心百分比表示 Claude 并标注来源，Claude 未连接或无读数时百分比回退为 Codex 原样。
+- 展开卡额度区按来源分区展示；Claude 分区在来源不可用时显示可执行的原因提示而非空行。
+- 事件钩子注册是插件唯一一次写入用户的 Claude 安装，需用户在设置中显式操作，保留用户已有钩子与状态栏并可干净卸载。对话正文、工具参数与凭证值永不进入观测、诊断或落盘文件。
+
 ## Codex Companion
 
 Current increment authority and detailed requirement/implementation map: [260718/1148-codex-quota-float/spec.md](260718/1148-codex-quota-float/spec.md#current-requirement-and-implementation-map).

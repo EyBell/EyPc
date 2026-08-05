@@ -7,13 +7,13 @@ import {
   isCodexConfirmedTerminalEvidence,
   isCodexTaskTab,
   normalizeCodexActivityDecisionDiagnostics,
+  normalizeCompanionReadReceipts,
   normalizeCodexConfig,
   normalizeCodexEnvironment,
   normalizeCodexFirstPromptTimes,
   normalizeCodexQuota,
   normalizeCodexSettings,
   normalizeCodexVisibleTaskTab,
-  orderCodexTasksForDisplay,
   projectConversations,
   restoreCodexThread,
   sameCodexActivityDecisionDiagnostics,
@@ -37,6 +37,28 @@ import {
   type CodexTaskCard,
   type ConversationSnapshotV1
 } from '../domain/codex'
+import {
+  companionTaskKey,
+  companionTaskProvider,
+  parseCompanionTaskKey,
+  isCompanionCompatibilityMode,
+  isCompanionProviderEnabled,
+  orderCompanionTasksForCycle
+} from '../domain/companionProvider'
+import { mergeCompanionConversations, withoutCompanionProvider } from '../domain/companionAggregate'
+import type { CompanionSnapshotSlice } from '../domain/companionPresentation'
+import {
+  emptyClaudeEnvironment,
+  emptyClaudeQuota,
+  isClaudeAvailable,
+  normalizeClaudeQuota,
+  projectClaudeTaskCards,
+  staleClaudeQuota,
+  type ClaudeEnvironmentSnapshot,
+  type ClaudeQuotaSnapshot,
+  type ClaudeReadReceipts,
+  type ClaudeSessionObservation
+} from '../domain/claude'
 import { normalizeCodexModelCatalog } from '../domain/codexNewThread'
 import { CODEX_ACTION_HOST_RUNTIME_REVISION } from '../domain/codexEnvironment'
 import {
@@ -59,6 +81,9 @@ export interface CodexRuntimeView {
   /** @deprecated Consume taskState.conversations. */
   conversations: ConversationSnapshotV1
   activityDecisionDiagnostics: CodexActivityDecisionDiagnostics
+  /** Claude provider state for the settings page. */
+  claudeEnvironment: ClaudeEnvironmentSnapshot
+  claudeQuota: ClaudeQuotaSnapshot
   refreshing: boolean
   floatHost: {
     displayId: string
@@ -98,6 +123,11 @@ export interface CodexFloatSnapshotV1 {
   timeWindowDays: number
   actionDefaultProjectKey?: string
   keybindings?: Array<{ actionId: string; shortcutId: string; layer: string; when: string; weight: number }>
+  /**
+   * Multi-provider payload. Optional so an older floating child simply ignores
+   * it and keeps rendering the Codex-only presentation.
+   */
+  companion?: CompanionSnapshotSlice
   generatedAt: number
 }
 
@@ -277,6 +307,16 @@ export function createCodexController(options: CodexControllerOptions) {
     dynamicTaskWindowHours: options.getAppState().codex.settings.dynamicTaskWindowHours
   })
   let taskCycleKey = ''
+  // Claude provider lane. Kept entirely separate from the Codex lane so a
+  // Claude failure degrades Claude alone; every field resets on disable.
+  let claudeEnvironment: ClaudeEnvironmentSnapshot = emptyClaudeEnvironment()
+  let claudeSessions: ClaudeSessionObservation[] = []
+  let claudeQuota: ClaudeQuotaSnapshot = emptyClaudeQuota()
+  // Persisted through app state so a completed session does not become unread
+  // again on every plugin restart.
+  let claudeReceipts: ClaudeReadReceipts = companionReceiptsToSessionMap(options.getAppState().codex.claudeReceipts)
+  let lastClaudeReadAt = 0
+  let claudeRefreshInFlight = false
   let lastThreads: CodexHostThread[] = []
   let lastProjects: CodexHostProject[] = []
   let lastThreadsPartial = false
@@ -407,13 +447,179 @@ export function createCodexController(options: CodexControllerOptions) {
     return isFeatureEnabled() && codexState().settings.conversationInboxEnabled
   }
 
+  function options_platform_claude() {
+    return options.platform.claude || null
+  }
+
+  /** Persisted receipts are keyed by companion task key; the lane keys by session id. */
+  function companionReceiptsToSessionMap(persisted: Record<string, number> | undefined) {
+    const normalized = normalizeCompanionReadReceipts(persisted)
+    const map: Record<string, number> = {}
+    for (const [key, at] of Object.entries(normalized)) {
+      const parsed = parseCompanionTaskKey(key)
+      if (parsed.provider === 'claude' && parsed.rawKey) map[parsed.rawKey] = at
+    }
+    return map
+  }
+
+  function claudeEnabled(): boolean {
+    return isCompanionProviderEnabled(codexState().settings.providers, 'claude')
+  }
+
+  /** Claude task cards for the current lane state; empty while disabled. */
+  function claudeCards(now: number) {
+    if (!claudeEnabled() || !claudeSessions.length) return []
+    const state = codexState()
+    const dismissedByKey = new Map(state.receipts.map((receipt) => [receipt.key, receipt.dismissedActivityRecency || 0]))
+    // Hiding uses the same contract as Codex: a dismissal sticks only while the
+    // task's revision is unchanged, so any new activity brings the card back.
+    const hiddenKeys = claudeSessions
+      .map((session) => ({
+        key: companionTaskKey('claude', session.sessionId),
+        revision: Math.max(session.updatedAt || 0, session.startedAt || 0)
+      }))
+      .filter((entry) => entry.revision > 0 && dismissedByKey.get(entry.key) === entry.revision)
+      .map((entry) => entry.key)
+    return projectClaudeTaskCards(claudeSessions, {
+      now,
+      receipts: claudeReceipts,
+      aliases: Object.fromEntries(state.taskAliases.map((entry) => [entry.key, entry.alias])),
+      hiddenKeys,
+      localPinnedKeys: state.localPins.filter((pin) => pin.kind === 'task').map((pin) => pin.key)
+    })
+  }
+
   function publishTaskStatePackage(conversations: ConversationSnapshotV1, now = Date.now()) {
-    taskState = buildCodexTaskStatePackage(conversations, {
+    // Claude cards are folded in here rather than inside the Codex projection,
+    // so the Codex-only path stays byte-identical to the previous release.
+    //
+    // Callers legitimately re-publish from `taskState.conversations`, which is
+    // already merged. Stripping first makes the merge a replace rather than an
+    // append: without it a card that was appended once would keep its original
+    // bucket forever, because appending skips keys that are already present.
+    // Compatibility mode must not touch the snapshot at all: both aggregate
+    // helpers recompute counters from their own arrays, and that recomputation
+    // omits the hidden-unread term the canonical Codex counter includes. Running
+    // them with nothing to merge would silently change a default-configuration
+    // number.
+    const cards = claudeCards(now)
+    // Skip both aggregate helpers when there is genuinely nothing to do. They
+    // recompute counters from their own arrays, and that recomputation omits the
+    // hidden-unread term the canonical Codex counter includes — running them on
+    // an untouched Codex snapshot would silently change a default-configuration
+    // number. The foreign-card check is what makes this safe across a
+    // provider being switched off: callers re-publish from an already merged
+    // snapshot, which must still be stripped.
+    const carriesForeign = conversations.all.some((task) => companionTaskProvider(task) !== 'codex')
+    const merged = !cards.length && !carriesForeign
+      ? conversations
+      : mergeCompanionConversations(withoutCompanionProvider(conversations, 'claude'), cards)
+    taskState = buildCodexTaskStatePackage(merged, {
       sourceRevision: taskStateSourceRevision,
       now,
       dynamicTaskWindowHours: codexState().settings.dynamicTaskWindowHours
     })
     if (started && !disposed && !actionPreflightInFlight && shouldRun()) schedule()
+  }
+
+  /** Applies an enablement change immediately instead of waiting for a Codex tick. */
+  function syncClaudeEnablement() {
+    if (!claudeEnabled()) {
+      resetClaudeLane()
+      publishTaskStatePackage(taskState.conversations)
+      options.notify()
+      return
+    }
+    void refreshClaude(Date.now()).then((changed) => {
+      if (disposed || !changed) return
+      publishTaskStatePackage(taskState.conversations)
+      options.notify()
+    }).catch(() => { /* claude lane degrades on its own */ })
+  }
+
+  function resetClaudeLane() {
+    claudeEnvironment = emptyClaudeEnvironment()
+    claudeSessions = []
+    claudeQuota = emptyClaudeQuota()
+    lastClaudeReadAt = 0
+  }
+
+  /**
+   * Refreshes the Claude lane. Every failure mode degrades to a stale reading
+   * plus an empty inventory; it never throws into the Codex lane.
+   */
+  async function refreshClaude(now = Date.now()) {
+    if (!claudeEnabled()) {
+      if (claudeSessions.length || claudeQuota.status !== 'idle') resetClaudeLane()
+      return false
+    }
+    const bridge = options.platform.claude
+    if (!bridge) {
+      claudeEnvironment = emptyClaudeEnvironment()
+      claudeSessions = []
+      claudeQuota = staleClaudeQuota(claudeQuota)
+      // Record the attempt so the scheduler does not spin at the minimum delay
+      // forever against a preload that will never expose the port.
+      lastClaudeReadAt = now
+      return false
+    }
+    if (claudeRefreshInFlight) return false
+    claudeRefreshInFlight = true
+    lastClaudeReadAt = now
+    const laneToken = runtimeGeneration
+    const stale = () => disposed || laneToken !== runtimeGeneration
+    try {
+      let environmentSnapshot
+      try {
+        environmentSnapshot = await bridge.inspect()
+      } catch {
+        environmentSnapshot = emptyClaudeEnvironment()
+      }
+      if (stale()) return false
+      claudeEnvironment = environmentSnapshot
+      if (!isClaudeAvailable(claudeEnvironment)) {
+        claudeSessions = []
+        claudeQuota = staleClaudeQuota(claudeQuota)
+        return true
+      }
+      let sessions: ClaudeSessionObservation[] = []
+      let quotaSnapshot: ClaudeQuotaSnapshot | null = null
+      try {
+        const snapshot = await bridge.readSnapshot({ now })
+        sessions = Array.isArray(snapshot?.sessions) ? snapshot.sessions : []
+        quotaSnapshot = snapshot?.quota
+          ? normalizeClaudeQuota(snapshot.quota.rateLimits, { updatedAt: snapshot.quota.updatedAt })
+          : null
+      } catch {
+        sessions = []
+        quotaSnapshot = null
+      }
+      if (stale()) return false
+      claudeSessions = sessions
+      claudeQuota = quotaSnapshot || staleClaudeQuota(claudeQuota)
+
+      // Opt-in fallback for the idle gap: the status line only runs while
+      // Claude Code renders, so without it an idle machine keeps showing the
+      // last reading forever. It never overrides a fresh primary reading.
+      if (codexState().settings.claudeQuotaFallback && typeof bridge.readQuotaFallback === 'function') {
+        try {
+          const fallback = await bridge.readQuotaFallback({
+            enabled: true,
+            now,
+            minStaleMs: Math.max(taskDelay(codexState().settings) * 4, 10 * 60 * 1000)
+          })
+          if (!stale() && fallback) {
+            claudeQuota = normalizeClaudeQuota(fallback.rateLimits, {
+              updatedAt: fallback.updatedAt,
+              source: 'usage-api'
+            })
+          }
+        } catch { /* the fallback is best effort by design */ }
+      }
+      return true
+    } finally {
+      claudeRefreshInFlight = false
+    }
   }
 
   function clearTimer() {
@@ -708,7 +914,10 @@ export function createCodexController(options: CodexControllerOptions) {
     const taskTransitionWait = nextTaskTransitionAt === null
       ? Number.POSITIVE_INFINITY
       : Math.max(1, nextTaskTransitionAt - now)
-    const delay = Math.min(quotaWait, taskWait, taskTransitionWait)
+    const claudeWait = claudeEnabled() && Number.isFinite(taskDelay(settings))
+      ? Math.max(1000, lastClaudeReadAt + taskDelay(settings) - now)
+      : Number.POSITIVE_INFINITY
+    const delay = Math.min(quotaWait, taskWait, taskTransitionWait, claudeWait)
     if (!Number.isFinite(delay)) return
     timer = setTimeout(() => {
       const wokeAt = Date.now()
@@ -892,6 +1101,19 @@ export function createCodexController(options: CodexControllerOptions) {
     const includeQuota = !actionPreflight && shouldRefreshSurfaceData() && (input.force === true || quota.updatedAt <= 0 || (Number.isFinite(quotaDelay(settings)) && now - lastQuotaReadAt >= quotaDelay(settings)))
     const includeThreads = actionPreflight || settings.conversationInboxEnabled && (input.force === true || input.forceTasks === true || rawConversations.updatedAt <= 0 || (Number.isFinite(taskDelay(settings)) && now - lastTaskReadAt >= taskDelay(settings)))
     const includeConfig = includeQuota && !actionPreflight
+    // Independent Claude lane: it reuses the task cadence but never blocks or is
+    // blocked by the Codex round-trip, and it is skipped entirely while the
+    // provider is disabled.
+    const includeClaude = !actionPreflight && claudeEnabled()
+      && (input.force === true || input.forceTasks === true || lastClaudeReadAt <= 0
+        || (Number.isFinite(taskDelay(settings)) && now - lastClaudeReadAt >= taskDelay(settings)))
+    if (includeClaude) {
+      void refreshClaude(now).then((changed) => {
+        if (disposed || !changed || runtimeGeneration !== runtimeToken) return
+        publishTaskStatePackage(taskState.conversations)
+        options.notify()
+      }).catch(() => { /* claude lane degrades on its own */ })
+    }
     if (!includeQuota && !includeThreads) {
       schedule()
       return
@@ -1104,6 +1326,7 @@ export function createCodexController(options: CodexControllerOptions) {
       resetStructuralRefresh()
       resetCodexDerivedRuntimeState()
       options.platform.codex.close({ preserveDesktop: featureEnabled })
+      try { options.platform.claude?.close() } catch { /* provider teardown is best effort */ }
       return
     }
     const resuming = !runtimeActive
@@ -1149,6 +1372,7 @@ export function createCodexController(options: CodexControllerOptions) {
       position: patch.position ? { ...current.position, ...patch.position } : current.position
     })
     codexState().settings = next
+    const claudeEnablementChanged = current.providers.claude !== next.providers.claude
     const inboxChanged = current.conversationInboxEnabled !== next.conversationInboxEnabled
     if (inboxChanged) {
       runtimeGeneration += 1
@@ -1172,6 +1396,9 @@ export function createCodexController(options: CodexControllerOptions) {
       current.quotaRefreshSeconds !== next.quotaRefreshSeconds ||
       current.taskRefreshSeconds !== next.taskRefreshSeconds
     syncActivation(needsFreshRead || (!current.floatEnabled && next.floatEnabled))
+    // A provider toggle must take effect now: disabling should clear the lane
+    // immediately rather than leaving stale cards until the next Codex tick.
+    if (claudeEnablementChanged) syncClaudeEnablement()
     return true
   }
 
@@ -1234,12 +1461,20 @@ export function createCodexController(options: CodexControllerOptions) {
       : [...conversations.ongoing, ...conversations.completedUnread, ...conversations.completed, ...conversations.hidden]
   }
 
-  function displayOrderedTasks(tasks: CodexTaskCard[]): CodexTaskCard[] {
+  function pinnedTaskKeys(): string[] {
     const pinned = taskState.conversations.projectSections.find((section) => section.id === 'pinned')
-    const pinnedTaskKeys = (pinned?.entries || [])
+    return (pinned?.entries || [])
       .filter((entry) => entry.kind === 'task')
       .map((entry) => entry.task.key)
-    return orderCodexTasksForDisplay(tasks, pinnedTaskKeys)
+  }
+
+  /**
+   * Cycle order: the same base comparator with a provider group as primary key.
+   * Task cycling and every direct-open command consume this projection so the
+   * task a shortcut opens is always the task the cycle would land on.
+   */
+  function cycleOrderedTasks(tasks: CodexTaskCard[]): CodexTaskCard[] {
+    return orderCompanionTasksForCycle(tasks, pinnedTaskKeys())
   }
 
   function setTaskTab(tab: CodexTaskTab) {
@@ -1360,8 +1595,42 @@ export function createCodexController(options: CodexControllerOptions) {
     return true
   }
 
+  /**
+   * Opens a Claude session with that provider's own jump mechanism. Only a
+   * confirmed terminal focus writes a read receipt; a resume dispatch is a
+   * weaker signal and deliberately leaves the task unread.
+   */
+  async function openClaudeTask(key: string, actionAlias: string) {
+    const bridge = options.platform.claude
+    const task = allTasks().find((item) => item.key === key)
+    if (!bridge) {
+      options.setMessage('Claude 模块不可用')
+      return false
+    }
+    const session = claudeSessions.find((item) => item.sessionId === actionAlias)
+    const result = await bridge.openTask(actionAlias, { pid: session?.pid, cwd: session?.cwd })
+    if (result?.confirmsRead && task) {
+      claudeReceipts = { ...claudeReceipts, [actionAlias]: Math.max(task.completionRevision || 0, task.updatedAt || 0) }
+      codexState().claudeReceipts = normalizeCompanionReadReceipts(
+        Object.fromEntries(Object.entries(claudeReceipts).map(([id, at]) => [companionTaskKey('claude', id), at]))
+      )
+      options.save()
+      publishTaskStatePackage(taskState.conversations)
+      options.notify()
+    }
+    if (result?.outcome === 'opened') {
+      options.setMessage('已聚焦 Claude 会话终端')
+      return true
+    }
+    options.setMessage(result?.message || (result?.outcome === 'dispatched' ? '已在新终端恢复会话' : 'Claude 会话打开失败'))
+    return result?.outcome === 'dispatched'
+  }
+
   async function openThread(key: string, actionAlias: string) {
     if (!key || !actionAlias || disposed || !isFeatureEnabled()) return false
+    if (companionTaskProvider({ provider: allTasks().find((item) => item.key === key)?.provider }) === 'claude') {
+      return openClaudeTask(key, actionAlias)
+    }
     let task = allTasks().find((item) => item.key === key && item.actionAlias === actionAlias)
     if (!task) {
       await refresh({ actionPreflight: true })
@@ -1396,7 +1665,7 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function openFirstInputFromCurrentInventory() {
-    const task = displayOrderedTasks(taskState.conversations.inputRequired)[0]
+    const task = cycleOrderedTasks(taskState.conversations.inputRequired)[0]
     if (!task?.actionAlias) {
       options.setMessage('当前没有待输入任务')
       return false
@@ -1406,7 +1675,7 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function openFirstCompletedUnreadFromCurrentInventory() {
-    const task = displayOrderedTasks(allTasks().filter((item) => item.bucket === 'completed-unread'))[0]
+    const task = cycleOrderedTasks(allTasks().filter((item) => item.bucket === 'completed-unread'))[0]
     if (!task?.actionAlias) {
       options.setMessage('当前没有已完成未读任务')
       return false
@@ -1453,7 +1722,7 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function cycleTasks(): Array<CodexTaskCard & { actionAlias: string }> {
     const tasks = allTasks()
-    const inputRequiredTasks = displayOrderedTasks(taskState.conversations.inputRequired)
+    const inputRequiredTasks = cycleOrderedTasks(taskState.conversations.inputRequired)
     const recentActiveTasks = taskState.dynamic.groups.active
     const usableTasks = (candidates: CodexTaskCard[]) => {
       const seen = new Set<string>()
@@ -1464,24 +1733,28 @@ export function createCodexController(options: CodexControllerOptions) {
       })
     }
     const tiers = [
-      [
+      cycleOrderedTasks([
         ...inputRequiredTasks.filter((task) => task.planImplementationOnly !== true),
-        ...displayOrderedTasks(recentActiveTasks.filter((task) => task.activityState === 'waiting-approval'))
-      ],
+        ...cycleOrderedTasks(recentActiveTasks.filter((task) => task.activityState === 'waiting-approval'))
+      ]),
       inputRequiredTasks.filter((task) => task.planImplementationOnly === true),
-      displayOrderedTasks(recentActiveTasks.filter((task) => task.activityState !== 'waiting-approval'))
+      cycleOrderedTasks(recentActiveTasks.filter((task) => task.activityState !== 'waiting-approval'))
     ]
     for (const tier of tiers) {
       const candidates = usableTasks(tier)
       if (candidates.length) return candidates
     }
-    return usableTasks(displayOrderedTasks(tasks.filter((task) => task.pinSource === 'local' && task.bucket !== 'stopped')))
+    return usableTasks(cycleOrderedTasks(tasks.filter((task) => task.pinSource === 'local' && task.bucket !== 'stopped')))
   }
 
   function cycleTaskFromCurrentInventory(direction: -1 | 1) {
     const tasks = cycleTasks()
     if (!tasks.length) {
-      options.setMessage('当前没有可切换的 Codex 任务')
+      // Compatibility mode keeps the exact legacy wording; only a genuinely
+      // multi-provider companion drops the Codex-specific noun.
+      options.setMessage(isCompanionCompatibilityMode(codexState().settings.providers)
+        ? '当前没有可切换的 Codex 任务'
+        : '当前没有可切换的任务')
       return false
     }
     const currentIndex = tasks.findIndex((task) => task.key === taskCycleKey)
@@ -2013,7 +2286,20 @@ export function createCodexController(options: CodexControllerOptions) {
     return true
   }
 
+  /**
+   * Claude has no archive concept, and its session id would be rejected by the
+   * Codex bridge anyway. Fail with an accurate message instead of issuing a
+   * cross-provider call.
+   */
+  function rejectForeignArchive(key: string): boolean {
+    const task = allTasks().find((item) => item.key === key)
+    if (!task || companionTaskProvider(task) === 'codex') return false
+    options.setMessage('Claude 会话不支持归档')
+    return true
+  }
+
   async function archive(key: string, recency?: number) {
+    if (rejectForeignArchive(key)) return false
     if (!Number.isFinite(recency) || typeof options.platform.codex.archiveThread !== 'function') return false
     const task = allTasks()
       .find((item) => item.key === key && item.revisionAt === recency)
@@ -2171,6 +2457,28 @@ export function createCodexController(options: CodexControllerOptions) {
     },
     syncActivation,
     refresh: () => refresh({ force: true }),
+    /**
+     * Registers or removes the Claude hook/status-line bridge. This is the only
+     * write into the user's Claude installation, so the caller must have taken
+     * an explicit confirmation first.
+     */
+    async setClaudeRegistration(register: boolean, request: { statusline?: boolean } = {}) {
+      const bridge = options_platform_claude()
+      if (!bridge) {
+        options.setMessage('Claude 模块不可用')
+        return false
+      }
+      const result = register ? await bridge.install(request) : await bridge.uninstall()
+      if (!result?.ok) {
+        options.setMessage(result?.message || (register ? 'Claude 注册失败' : 'Claude 注销失败'))
+        return false
+      }
+      options.setMessage(register ? '已注册 Claude 事件钩子' : '已移除 Claude 事件钩子')
+      await refreshClaude(Date.now())
+      publishTaskStatePackage(taskState.conversations)
+      options.notify()
+      return true
+    },
     inspectEnvironment: () => inspectEnvironment(true),
     setLaunchPath,
     clearLaunchPath,
@@ -2218,6 +2526,8 @@ export function createCodexController(options: CodexControllerOptions) {
         taskState,
         conversations: taskState.conversations,
         activityDecisionDiagnostics,
+        claudeEnvironment,
+        claudeQuota,
         refreshing,
         floatHost: {
           displayId,
@@ -2254,6 +2564,11 @@ export function createCodexController(options: CodexControllerOptions) {
         projectArchive,
         timeWindowDays: settings.timeWindowDays,
         actionDefaultProjectKey: settings.actionDefaultProjectKey || '',
+      companion: {
+        providers: settings.providers,
+        claudeQuota,
+        claudeEnvironment
+      },
         generatedAt: Date.now()
       }
     }

@@ -1,5 +1,5 @@
 const { Buffer } = require('node:buffer')
-const { execFile, spawn } = require('node:child_process')
+const { execFile, execFileSync, spawn } = require('node:child_process')
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const net = require('node:net')
@@ -100,6 +100,62 @@ try {
   })
 } catch (error) {
   windowSubsystemLoadError = String(error && error.message || error || 'window module unavailable')
+}
+
+// Claude companion bridge. Loaded exactly like the window subsystem: a guarded
+// require with public/dist fallbacks, so a missing or broken module degrades the
+// Claude provider alone and never touches Codex, MQTT, ports or favorites.
+let claudeBridge = null
+let claudeBridgeLoadError = ''
+try {
+  let claudeModule = null
+  let claudeRelativeLoadError = null
+  try {
+    claudeModule = require('./claude/index.cjs')
+  } catch (error) {
+    claudeRelativeLoadError = error
+  }
+  if (!claudeModule) {
+    const claudeBaseCandidates = [
+      typeof __dirname === 'string' ? __dirname : '',
+      process.cwd(),
+      path.join(process.cwd(), 'preload'),
+      path.join(process.cwd(), 'public')
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(claudeBaseCandidates))) {
+      try {
+        claudeModule = require(path.join(base, 'claude', 'index.cjs'))
+        break
+      } catch {}
+    }
+  }
+  const createClaudeBridge = claudeModule && claudeModule.createClaudeBridge
+  if (typeof createClaudeBridge !== 'function') throw claudeRelativeLoadError || new Error('claude module factory unavailable')
+  claudeBridge = createClaudeBridge({
+    fs,
+    path,
+    os,
+    execFile,
+    execFileSync,
+    platform: process.platform,
+    dataDirectory: resolveClaudeDataDirectory(),
+    windows: {
+      list: (...args) => windowSubsystem ? windowSubsystem.list(...args) : Promise.resolve({ windows: [] }),
+      activate: (...args) => windowSubsystem ? windowSubsystem.activate(...args) : Promise.resolve({ outcome: 'unsupported' })
+    }
+  })
+} catch (error) {
+  claudeBridgeLoadError = String(error && error.message || error || 'claude module unavailable')
+}
+
+function claudeUnavailable(shape) {
+  const message = `Claude 模块未加载：${claudeBridgeLoadError || 'unknown error'}`
+  if (shape === 'snapshot') return { version: 1, revision: '', sessions: [], truncated: false, quota: null, readAt: Date.now() }
+  if (shape === 'environment') {
+    return { version: 1, installed: false, homeReady: false, authenticated: false, cliVersion: '', hooks: 'unknown', statusline: 'unknown', checkedAt: Date.now() }
+  }
+  if (shape === 'open') return { outcome: 'unavailable', confirmsRead: false, message }
+  return { ok: false, message }
 }
 
 function unavailableWindowCapability(reason = '') {
@@ -476,6 +532,23 @@ function resolveMqttSqlitePath() {
     }
   }
   return path.join(baseDir, 'mqtt-archive.sqlite')
+}
+
+function resolveClaudeDataDirectory() {
+  let baseDir = ''
+  try {
+    if (globalThis.utools && typeof globalThis.utools.getPath === 'function') {
+      baseDir = String(globalThis.utools.getPath('userData') || '').trim()
+    }
+  } catch {}
+  if (!baseDir) {
+    try {
+      baseDir = path.join(os.homedir(), '.eypc')
+    } catch {
+      baseDir = path.join(process.cwd(), '.eypc')
+    }
+  }
+  return path.join(baseDir, 'claude-companion')
 }
 
 function resolveMqttUserDataDir() {
@@ -8458,6 +8531,23 @@ window.eypcPlatform = {
     close: (...args) => windowSubsystem ? windowSubsystem.close(...args) : Promise.resolve({ outcome: 'unsupported', message: '窗口桥接实现不可用' }),
     terminate: (...args) => windowSubsystem ? windowSubsystem.terminate(...args) : Promise.resolve({ outcome: 'unsupported', message: '窗口桥接实现不可用' }),
     openPermissionSettings: (...args) => windowSubsystem ? windowSubsystem.openPermissionSettings(...args) : Promise.resolve(false)
+  },
+  claude: {
+    inspect: () => claudeBridge ? claudeBridge.inspect() : claudeUnavailable('environment'),
+    readSnapshot: (...args) => claudeBridge ? claudeBridge.readSnapshot(...args) : claudeUnavailable('snapshot'),
+    // Opt-in idle fallback. The Controller feature-detects this method, so
+    // omitting it here silently disabled the `claudeQuotaFallback` setting no
+    // matter what the user chose.
+    readQuotaFallback: (...args) => claudeBridge ? claudeBridge.readQuotaFallback(...args) : Promise.resolve(null),
+    install: (...args) => claudeBridge ? claudeBridge.install(...args) : claudeUnavailable('result'),
+    uninstall: (...args) => claudeBridge ? claudeBridge.uninstall(...args) : claudeUnavailable('result'),
+    openTask: (...args) => claudeBridge ? claudeBridge.openTask(...args) : Promise.resolve(claudeUnavailable('open')),
+    diagnostics: () => ({
+      revision: claudeBridge ? claudeBridge.revision : '',
+      loaded: Boolean(claudeBridge),
+      loadError: claudeBridgeLoadError
+    }),
+    close: () => { if (claudeBridge) claudeBridge.close() }
   },
   files: {
     capabilities: favoriteFileCapabilities(),

@@ -257,6 +257,21 @@
 .codex-switch-row strong, .codex-switch-row small { display: block; }
 .codex-switch-row strong { color: #203a44; font-size: 12px; }
 .codex-switch-row small { margin-top: 2px; color: #526872; font-size: 10px; }
+/* Claude registration controls. Reuses the existing float-toggle button
+   language so the block reads as part of the same settings surface. */
+.codex-claude-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.codex-config-page button.codex-secondary-button {
+  height: 26px;
+  padding: 0 11px;
+  border: 1px solid #91a9b1;
+  border-radius: 9px;
+  background: #f6f9f9;
+  color: #294752;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.codex-config-page button.codex-secondary-button:hover { border-color: #087d73; color: #075f58; }
 .codex-label-row { justify-content: space-between; gap: 6px; }
 .codex-switch-row input { position: absolute; opacity: 0; }
 .codex-switch-row i { position: relative; width: 36px; height: 22px; flex: none; border: 1px solid #8ea0a7; border-radius: 999px; background: #a8b6bb; transition: 200ms ease-out; }
