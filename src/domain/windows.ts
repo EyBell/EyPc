@@ -106,7 +106,25 @@ export function normalizeWindowText(value: string): string {
   return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
 }
 
-export function compareWindowRowsByApplication<T extends { pinned: boolean; appName: string; displayName: string; title: string; id: string }>(left: T, right: T): number {
+/** Smallest bound slot wins list priority; unbound rows fall through to pin/app order. */
+export function primaryWindowSlotNumber(slotNumbers: readonly number[] | null | undefined): number | null {
+  if (!slotNumbers?.length) return null
+  let min = slotNumbers[0]!
+  for (let index = 1; index < slotNumbers.length; index += 1) {
+    const slot = slotNumbers[index]!
+    if (slot < min) min = slot
+  }
+  return min
+}
+
+export function compareWindowRowsByApplication<T extends { pinned: boolean; appName: string; displayName: string; title: string; id: string; slotNumbers?: readonly number[] }>(left: T, right: T): number {
+  const leftSlot = primaryWindowSlotNumber(left.slotNumbers)
+  const rightSlot = primaryWindowSlotNumber(right.slotNumbers)
+  if (leftSlot != null || rightSlot != null) {
+    if (leftSlot == null) return 1
+    if (rightSlot == null) return -1
+    if (leftSlot !== rightSlot) return leftSlot - rightSlot
+  }
   if (left.pinned !== right.pinned) return left.pinned ? -1 : 1
   return left.appName.localeCompare(right.appName, undefined, { sensitivity: 'base' })
     || left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' })
@@ -180,6 +198,7 @@ export function windowSlotNumbersForTarget(
       ? slot.targetIdByPlatform[platform] === targetId
       : Object.values(slot.targetIdByPlatform).includes(targetId))
     .map((slot) => slot.slot)
+    .sort((left, right) => left - right)
 }
 
 /** Keep one actionable row per opaque native instance; titles never affect membership. */
