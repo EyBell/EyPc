@@ -70,6 +70,7 @@ export interface WindowTreeLeafSource<T> {
   displayName: string
   title: string
   pinned: boolean
+  slotNumbers: number[]
   searchText: string
   familyKey?: string | null
   children?: WindowTreeLeafSource<T>[]
@@ -82,6 +83,7 @@ export interface FileManagerGroupMetadata {
   appName: string
   displayName: string
   pinned: boolean
+  slotNumbers: number[]
   searchText: string
 }
 
@@ -174,11 +176,7 @@ export type VisibleWindowTreeItem<T> =
   | { kind: 'file-manager-group'; projection: Extract<WindowTreeProjection<T>, { kind: 'file-manager-group' }> }
 
 function compareSources<T>(left: WindowTreeLeafSource<T>, right: WindowTreeLeafSource<T>): number {
-  if (left.pinned !== right.pinned) return left.pinned ? -1 : 1
-  return left.appName.localeCompare(right.appName, undefined, { sensitivity: 'base' })
-    || left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' })
-    || left.title.localeCompare(right.title, undefined, { sensitivity: 'base' })
-    || left.id.localeCompare(right.id, undefined, { sensitivity: 'base' })
+  return compareWindowRowsByApplication(left, right)
 }
 
 /**
@@ -225,6 +223,7 @@ export function projectWindowTree<T>(
         appName: source.appName,
         displayName: source.appName || '文件管理器',
         pinned: false,
+        slotNumbers: [],
         searchText: `${source.appName} ${source.appId}`
       },
       children: []
@@ -253,15 +252,27 @@ export function projectWindowTree<T>(
   }
 
   return [...ordinary, ...grouped].sort((left, right) => {
-    const leftPinned = left.kind === 'window-family' ? left.source.pinned : left.metadata.pinned
-    const rightPinned = right.kind === 'window-family' ? right.source.pinned : right.metadata.pinned
-    if (leftPinned !== rightPinned) return leftPinned ? -1 : 1
-    const leftApp = left.kind === 'window-family' ? left.source.appName : left.metadata.appName
-    const rightApp = right.kind === 'window-family' ? right.source.appName : right.metadata.appName
-    const leftName = left.kind === 'window-family' ? left.source.displayName : left.metadata.displayName
-    const rightName = right.kind === 'window-family' ? right.source.displayName : right.metadata.displayName
-    return leftApp.localeCompare(rightApp, undefined, { sensitivity: 'base' })
-      || leftName.localeCompare(rightName, undefined, { sensitivity: 'base' })
+    const leftMeta = left.kind === 'window-family'
+      ? left.source
+      : {
+          pinned: left.metadata.pinned,
+          slotNumbers: left.metadata.slotNumbers,
+          appName: left.metadata.appName,
+          displayName: left.metadata.displayName,
+          title: '',
+          id: left.groupKey
+        }
+    const rightMeta = right.kind === 'window-family'
+      ? right.source
+      : {
+          pinned: right.metadata.pinned,
+          slotNumbers: right.metadata.slotNumbers,
+          appName: right.metadata.appName,
+          displayName: right.metadata.displayName,
+          title: '',
+          id: right.groupKey
+        }
+    return compareWindowRowsByApplication(leftMeta, rightMeta)
   })
 }
 
@@ -423,6 +434,7 @@ export function buildWindowTreeRows(options: BuildWindowTreeRowsOptions): Window
         appName: target.appName,
         displayName: target.alias,
         pinned: target.pinned,
+        slotNumbers: slotNumbers(target.id),
         searchText: [target.alias, target.appName, target.appId, ...target.alternateAliases].join(' ')
       })
     }
@@ -437,6 +449,7 @@ export function buildWindowTreeRows(options: BuildWindowTreeRowsOptions): Window
     displayName: row.displayName,
     title: row.title,
     pinned: row.pinned,
+    slotNumbers: row.slotNumbers,
     searchText: rowSearchText(row)
   })
   const leaves: WindowTreeLeafSource<WindowRow>[] = baseRows.map((row) => {

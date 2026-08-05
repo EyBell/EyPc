@@ -19,6 +19,24 @@ describe('window row application order', () => {
       'beta'
     ])
   })
+
+  it('prioritizes bound slots by ascending slot number before pin and application order', () => {
+    const rows = [
+      { id: 'pin-only', pinned: true, appName: 'Alpha', displayName: 'Pinned', title: 'Pinned', slotNumbers: [] as number[] },
+      { id: 'slot-5', pinned: false, appName: 'Zeta', displayName: 'Slot Five', title: 'Slot Five', slotNumbers: [5] },
+      { id: 'slot-1', pinned: false, appName: 'Omega', displayName: 'Slot One', title: 'Slot One', slotNumbers: [1] },
+      { id: 'plain', pinned: false, appName: 'Beta', displayName: 'Plain', title: 'Plain', slotNumbers: [] as number[] },
+      { id: 'slot-2-and-9', pinned: true, appName: 'Gamma', displayName: 'Multi', title: 'Multi', slotNumbers: [9, 2] }
+    ]
+
+    expect(rows.sort(compareWindowRowsByApplication).map((row) => row.id)).toEqual([
+      'slot-1',
+      'slot-2-and-9',
+      'slot-5',
+      'pin-only',
+      'plain'
+    ])
+  })
 })
 
 describe('identified live window filter', () => {
@@ -136,6 +154,7 @@ describe('file manager product tree', () => {
     displayName: id,
     title: id,
     pinned: false,
+    slotNumbers: [] as number[],
     searchText: id
   })
 
@@ -213,6 +232,59 @@ describe('file manager product tree', () => {
     expect(resolveWindowTreeActionTargets(rows, { focusedId: children[0].id, selectedIds: [children[0].id, browser.id] })).toMatchObject({ mode: 'multi', context: 'selection', targets: [{ id: children[0].id }, { id: browser.id }] })
     expect(candidateInstanceIdFromRowId(candidateWindowRowId('darwin:1:2'))).toBe('darwin:1:2')
     expect(targetWindowRowId('saved')).toBe('target:saved')
+  })
+
+  it('orders retained slot-bound roots by ascending slot number ahead of pin-only and live rows', () => {
+    const live: LiveWindow[] = [
+      { id: 'live-a', instanceId: 'live-a', platform: 'darwin', nativeRef: 'live-a', appId: 'com.alpha', appName: 'Alpha', pid: 1, title: 'Live Alpha', minimized: false, focused: false },
+      { id: 'slot-5', instanceId: 'slot-5', platform: 'darwin', nativeRef: 'slot-5', appId: 'com.zeta', appName: 'Zeta', pid: 5, title: 'Slot Five', minimized: false, focused: false },
+      { id: 'slot-1', instanceId: 'slot-1', platform: 'darwin', nativeRef: 'slot-1', appId: 'com.omega', appName: 'Omega', pid: 1, title: 'Slot One', minimized: false, focused: false }
+    ]
+    const target = (id: string, alias: string, instanceId: string, pinned: boolean): WindowTarget => ({
+      id,
+      alias,
+      scope: 'instance',
+      platform: 'darwin',
+      appId: live.find((item) => item.instanceId === instanceId)!.appId,
+      appName: live.find((item) => item.instanceId === instanceId)!.appName,
+      lastKnownTitle: alias,
+      lastInstanceId: instanceId,
+      lastNativeRef: instanceId,
+      groupKey: null,
+      lastActiveInstanceId: null,
+      alternateAliases: [],
+      favorite: false,
+      pinned,
+      createdAt: 1,
+      updatedAt: 1
+    })
+    const rows = buildWindowTreeRows({
+      targets: [
+        target('t-pin', 'Pinned Alpha', 'live-a', true),
+        target('t-5', 'Slot Five', 'slot-5', false),
+        target('t-1', 'Slot One', 'slot-1', false)
+      ],
+      slots: [
+        { slot: 5, targetIdByPlatform: { darwin: 't-5' } },
+        { slot: 1, targetIdByPlatform: { darwin: 't-1' } }
+      ],
+      liveWindows: live,
+      freshInstanceIds: new Set(live.map((window) => window.instanceId)),
+      currentPlatform: 'darwin',
+      listLoaded: true,
+      focusedRowId: null,
+      selectedRowIds: [],
+      expandedGroupKeys: new Set(),
+      recentFileManagerInstanceIds: new Map(),
+      searchQuery: '',
+      rebind: { targetId: null, candidateInstanceIds: [] }
+    })
+
+    expect(rows.filter((row) => row.treeLevel === 1).map((row) => ({ id: row.id, slots: row.slotNumbers }))).toEqual([
+      { id: targetWindowRowId('t-1'), slots: [1] },
+      { id: targetWindowRowId('t-5'), slots: [5] },
+      { id: targetWindowRowId('t-pin'), slots: [] }
+    ])
   })
 })
 
