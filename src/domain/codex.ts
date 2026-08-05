@@ -1,5 +1,9 @@
 import type { CompanionProviderEnablement, CompanionProviderId } from './companionProvider'
 import { normalizeCompanionEnablement, orderCompanionTasksForDisplay } from './companionProvider'
+// `codexAppearance` owns the color math (HSL, contrast) and only type-imports this
+// module, so this value edge is one-directional at runtime: the type import is
+// erased and the emitted `codexAppearance` module has no imports at all.
+import { defaultCompanionQuotaTones } from './codexAppearance'
 
 export type CodexDisplayStyle = 'water' | 'card'
 export const CODEX_DEFAULT_QUOTA_REFRESH_SECONDS = 5 * 60
@@ -585,6 +589,10 @@ export interface CodexExpandedCardAppearanceSettings {
   accent: string
   running: string
   pending: string
+  /** Reading tone for Codex quota windows in the expanded card's quota row. */
+  codexQuota: string
+  /** Reading tone for Claude quota windows in the same row. */
+  claudeQuota: string
 }
 
 export interface CodexSavedThemePreset {
@@ -931,7 +939,8 @@ export function defaultCodexExpandedCardAppearance(colors: CodexColorSettings = 
     focus: colors.healthy,
     accent: colors.healthy,
     running: '#2F7CC0',
-    pending: '#C6631A'
+    pending: '#C6631A',
+    ...defaultCompanionQuotaTones(colors)
   }
 }
 
@@ -998,7 +1007,11 @@ export function normalizeCodexExpandedCardAppearance(
     focus: color(source.focus, fallback.focus),
     accent: color(source.accent, fallback.accent),
     running: color(source.running, fallback.running),
-    pending: color(source.pending, fallback.pending)
+    pending: color(source.pending, fallback.pending),
+    // Settings and saved themes stored before the per-provider quota row simply
+    // fall through to the derived defaults, so no migration pass is needed.
+    codexQuota: color(source.codexQuota, fallback.codexQuota),
+    claudeQuota: color(source.claudeQuota, fallback.claudeQuota)
   }
 }
 

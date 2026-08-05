@@ -6,13 +6,16 @@ import {
   hexToHsl,
   hslToHex,
   isHslContrastSafe,
+  codexThemeCssVars,
+  defaultCompanionQuotaTones,
   matchCodexThemePreset,
   nearestContrastHsl,
+  resolveCodexExpandedCardTheme,
   resolveCodexSurfaceTheme,
   validateCodexCustomColors,
   validateCodexWaterAppearance
 } from '../../src/domain/codexAppearance'
-import { defaultCodexSettings } from '../../src/domain/codex'
+import { defaultCodexSettings, normalizeCodexExpandedCardAppearance } from '../../src/domain/codex'
 
 describe('Codex appearance', () => {
   it('keeps every built-in preset complete and exactly matchable', () => {
@@ -92,3 +95,49 @@ describe('Codex appearance', () => {
   })
 })
 
+
+describe('per-provider quota tones', () => {
+  it('gives every built-in theme two separable, readable quota tones', () => {
+    for (const preset of CODEX_THEME_PRESETS) {
+      const { codexQuota, claudeQuota } = preset.expandedCardAppearance
+      expect(codexQuota).toMatch(/^#[0-9A-F]{6}$/)
+      expect(claudeQuota).toMatch(/^#[0-9A-F]{6}$/)
+      // Readable, because these tones carry the percentage text itself.
+      expect(contrastRatio(codexQuota, preset.expandedCardAppearance.surface)).toBeGreaterThanOrEqual(4.5)
+      expect(contrastRatio(claudeQuota, preset.expandedCardAppearance.surface)).toBeGreaterThanOrEqual(4.5)
+      // Separable in every preset — this is the reason the default is a hue
+      // rotation rather than a pairing of the theme's own signal colors.
+      const codexHue = hexToHsl(codexQuota)?.h ?? 0
+      const claudeHue = hexToHsl(claudeQuota)?.h ?? 0
+      const distance = Math.abs(((codexHue - claudeHue + 540) % 360) - 180)
+      expect(distance).toBeGreaterThan(60)
+    }
+  })
+
+  it('exposes both tones as expanded-card tokens', () => {
+    const settings = defaultCodexSettings()
+    const vars = codexThemeCssVars(resolveCodexExpandedCardTheme(settings.colors, settings.expandedCardAppearance))
+    expect(vars['--codex-quota-codex']).toBe(settings.expandedCardAppearance.codexQuota)
+    expect(vars['--codex-quota-claude']).toBe(settings.expandedCardAppearance.claudeQuota)
+    expect(vars['--codex-quota-codex']).not.toBe(vars['--codex-quota-claude'])
+
+    // The compact skin has no quota row but must not emit undefined tokens.
+    const compact = codexThemeCssVars(resolveCodexSurfaceTheme('water', settings.colors))
+    expect(compact['--codex-quota-codex']).toMatch(/^#[0-9A-F]{6}$/)
+    expect(compact['--codex-quota-claude']).toMatch(/^#[0-9A-F]{6}$/)
+  })
+
+  it('backfills a settings object stored before the quota row existed', () => {
+    const colors = defaultCodexSettings().colors
+    const legacy = { ...defaultCodexSettings().expandedCardAppearance } as Record<string, unknown>
+    delete legacy.codexQuota
+    delete legacy.claudeQuota
+    const normalized = normalizeCodexExpandedCardAppearance(legacy, colors)
+    expect(normalized.codexQuota).toBe(defaultCompanionQuotaTones(colors).codexQuota)
+    expect(normalized.claudeQuota).toBe(defaultCompanionQuotaTones(colors).claudeQuota)
+
+    // An explicit user choice still wins over the derived default.
+    const custom = normalizeCodexExpandedCardAppearance({ ...legacy, claudeQuota: '#123456' }, colors)
+    expect(custom.claudeQuota).toBe('#123456')
+  })
+})

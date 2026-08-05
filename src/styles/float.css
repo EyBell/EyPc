@@ -657,30 +657,43 @@ button { font: inherit; }
 .float-search input::placeholder { color: var(--codex-muted); }
 .float-search > button { display: grid; width: 26px; height: 26px; padding: 0; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--codex-muted); cursor: pointer; }
 
+/* Single-line quota row.
+   Every enabled provider renders inside this one row, so the surface below it
+   keeps a constant top edge whether or not a second provider is connected — the
+   old stacked sections made the task list jump when Claude was enabled. The full
+   window title and reset time are deliberately not in the row: they are in the
+   shared 200ms child hint and in each chip's screen-reader text. */
 .float-quota-text {
   display: flex;
-  min-height: 38px;
+  min-height: 30px;
   flex: none;
   align-items: center;
-  gap: 14px;
-  padding: 2px 12px 5px;
+  gap: 10px;
+  padding: 2px 12px 4px;
+  overflow: hidden;
   background: transparent;
 }
-.float-quota-text > div { display: grid; min-width: 0; grid-template-columns: auto auto; align-items: baseline; gap: 1px 5px; }
-/* Claude section of the expanded quota area. Reuses the Codex row language and
-   only adds a leading provider caption plus a separating rule. */
-.float-quota-claude { min-height: 0; padding-top: 0; }
-.float-quota-claude .float-quota-provider {
+.float-quota-group { display: flex; min-width: 0; align-items: baseline; gap: 8px; }
+/* Separator between provider groups: platform color is the second cue, this
+   structural break and the caption are the first. */
+.float-quota-group.divided {
+  padding-left: 10px;
+  border-left: 1px solid color-mix(in srgb, var(--codex-border) 62%, transparent);
+}
+.float-quota-provider {
   margin: 0;
-  padding-right: 2px;
-  border-right: 1px solid color-mix(in srgb, var(--codex-accent) 30%, transparent);
-  padding-inline-end: 10px;
   color: var(--codex-muted);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 750;
   letter-spacing: .02em;
+  white-space: nowrap;
 }
-.float-quota-claude p { margin: 0; color: var(--codex-muted); font-size: 10px; }
+.float-quota-group > p { margin: 0; overflow: hidden; color: var(--codex-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.float-quota-chip { display: flex; min-width: 0; align-items: baseline; gap: 3px; white-space: nowrap; }
+.float-quota-chip.spark { padding-left: 7px; border-left: 1px solid color-mix(in srgb, var(--codex-border) 46%, transparent); }
+.float-quota-group.provider-codex .float-quota-chip strong { color: var(--codex-quota-codex); }
+.float-quota-group.provider-claude .float-quota-chip strong { color: var(--codex-quota-claude); }
+.float-quota-group.provider-claude .float-quota-provider { color: var(--codex-quota-claude); }
 /* Row-level provider marker.
    It rides the existing bottom metadata line rather than adding an element of
    its own: the dense list's row height and learned spatial rhythm must not
@@ -701,11 +714,8 @@ button { font: inherit; }
   letter-spacing: .03em;
 }
 .task-provider-marker.provider-claude { border-color: color-mix(in srgb, var(--codex-accent) 58%, transparent); color: var(--codex-fg); }
-.float-quota-text > div.spark { padding-left: 8px; border-left: 1px solid color-mix(in srgb, var(--codex-accent) 38%, transparent); }
-.float-quota-text span { color: var(--codex-muted); font-size: 10px; font-weight: 750; }
-.float-quota-text strong { color: var(--codex-fg); font-size: 16px; line-height: 1; }
-.float-quota-text small { grid-column: 1 / -1; color: var(--codex-muted); font-size: 9px; white-space: nowrap; }
-.float-quota-text p { margin: 0; color: var(--codex-muted); font-size: 10px; }
+.float-quota-chip span { color: var(--codex-muted); font-size: 9px; font-weight: 750; letter-spacing: .02em; }
+.float-quota-chip strong { font-size: 13px; font-weight: 800; line-height: 1; }
 
 .float-source-status {
   display: flex;
@@ -957,7 +967,12 @@ button { font: inherit; }
 @container (max-width: 320px) {
   .float-expanded-card > .float-task-tabs button { font-size: 9px; }
   .float-expanded-card > .float-task-tabs button span:first-child { display: none; }
-  .float-quota-text { gap: 8px; padding-inline: 9px; }
+  .float-quota-text { gap: 7px; padding-inline: 9px; }
+  .float-quota-group { gap: 6px; }
+  .float-quota-group.divided { padding-left: 7px; }
+  /* Readings survive; the caption is the first thing to go, because the platform
+     tone plus the separator still tell the two groups apart. */
+  .float-quota-provider { display: none; }
   .float-project-row { padding-right: 111px; }
   .float-task-row { padding-right: 7px; }
 }
@@ -967,6 +982,10 @@ button { font: inherit; }
 }
 
 @media (forced-colors: active) {
+  /* Platform tones collapse to system colors here, so the caption has to come
+     back — it is the only remaining provider cue. */
+  .float-quota-provider { display: inline; }
+  .float-quota-group.divided { border-left-color: CanvasText; }
   .inline-character-button,
   .float-action-hint { border: 1px solid ButtonText; }
 }

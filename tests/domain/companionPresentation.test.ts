@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildClaudeQuotaSection,
+  buildCompanionQuotaStrip,
   claudeSetupHint,
+  companionQuotaChipAriaLabel,
+  companionQuotaChipHint,
   resolveCompanionRowMarker,
   resolveCompanionWaterBallPresentation,
+  type CompanionCodexQuotaWindow,
   type CompanionSnapshotSlice
 } from '../../src/domain/companionPresentation'
 import { emptyClaudeEnvironment, emptyClaudeQuota, normalizeClaudeQuota } from '../../src/domain/claude'
@@ -134,6 +138,60 @@ describe('claude quota section', () => {
     const section = buildClaudeQuotaSection(slice({ claudeQuota: emptyClaudeQuota() }))
     expect(section?.rows).toEqual([])
     expect(section?.emptyReason).toContain('尚未读到额度')
+  })
+})
+
+describe('single-row quota strip', () => {
+  const CODEX_WINDOWS: CompanionCodexQuotaWindow[] = [
+    { key: 'normal-short', label: '5 小时限额', family: 'normal', window: 'short', remainingPercent: 78, resetAt: 10 },
+    { key: 'normal-weekly', label: '周限额', family: 'normal', window: 'weekly', remainingPercent: 23, resetAt: 20 },
+    { key: 'codex_bengalfox-weekly', label: 'Spark 周额度', family: 'spark', window: 'weekly', remainingPercent: 52, resetAt: 30 }
+  ]
+
+  it('keeps codex-only output free of any provider caption', () => {
+    const strip = buildCompanionQuotaStrip(CODEX_WINDOWS, slice({ providers: { codex: true, claude: false } }))
+    expect(strip.multiProvider).toBe(false)
+    expect(strip.groups).toHaveLength(1)
+    expect(strip.groups[0].caption).toBe('')
+    expect(strip.groups[0].chips.map((chip) => chip.shortLabel)).toEqual(['5h', '周', 'S周'])
+    expect(strip.groups[0].chips.map((chip) => chip.spark)).toEqual([false, false, true])
+  })
+
+  it('joins both providers into one ordered strip once claude is enabled', () => {
+    const strip = buildCompanionQuotaStrip(CODEX_WINDOWS, slice())
+    expect(strip.multiProvider).toBe(true)
+    expect(strip.groups.map((group) => group.provider)).toEqual(['codex', 'claude'])
+    expect(strip.groups[0].caption).toBe('')
+    expect(strip.groups[1].caption).toBe('Claude')
+    expect(strip.groups[1].chips.map((chip) => chip.shortLabel)).toEqual(['5h', '周'])
+    expect(strip.groups[1].chips.every((chip) => chip.spark === false)).toBe(true)
+  })
+
+  it('drops the codex group entirely when only claude is enabled', () => {
+    const strip = buildCompanionQuotaStrip([], slice({ providers: { codex: false, claude: true } }))
+    expect(strip.groups.map((group) => group.provider)).toEqual(['claude'])
+    expect(strip.multiProvider).toBe(false)
+    expect(strip.groups[0].caption).toBe('')
+  })
+
+  it('carries a per-group reason instead of an empty row', () => {
+    const codexOnly = buildCompanionQuotaStrip([], slice({ providers: { codex: true, claude: false } }))
+    expect(codexOnly.groups[0].emptyReason).toBe('服务端未返回额度窗口')
+    expect(buildCompanionQuotaStrip([], slice({ providers: { codex: true, claude: false } }), '连接异常').groups[0].emptyReason)
+      .toBe('连接异常')
+
+    const unusableClaude = buildCompanionQuotaStrip(CODEX_WINDOWS, slice({ claudeEnvironment: emptyClaudeEnvironment() }))
+    expect(unusableClaude.groups[1].chips).toEqual([])
+    expect(unusableClaude.groups[1].emptyReason).toBe('未检测到 Claude Code')
+  })
+
+  it('names the platform in help only once the row actually mixes providers', () => {
+    const chip = buildCompanionQuotaStrip(CODEX_WINDOWS, slice()).groups[1].chips[0]
+    expect(companionQuotaChipHint(chip, '3 小时后重置', true)).toBe('Claude · 5 小时限额 · 3 小时后重置')
+    expect(companionQuotaChipHint(chip, '3 小时后重置', false)).toBe('5 小时限额 · 3 小时后重置')
+    expect(companionQuotaChipHint(chip, '', false)).toBe('5 小时限额')
+    expect(companionQuotaChipAriaLabel(chip, '3 小时后重置', true)).toBe('Claude 5 小时限额，剩余 70%，3 小时后重置')
+    expect(companionQuotaChipAriaLabel(chip, '', false)).toBe('5 小时限额，剩余 70%')
   })
 })
 

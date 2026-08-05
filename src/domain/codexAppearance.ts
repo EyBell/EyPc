@@ -39,6 +39,10 @@ export interface CodexSurfaceTheme {
   onAccent: string
   onRunning: string
   onPending: string
+  /** Percentage tone for Codex quota windows in the expanded card. */
+  quotaCodex: string
+  /** Percentage tone for Claude quota windows in the expanded card. */
+  quotaClaude: string
 }
 
 export interface CodexColorValidation {
@@ -326,8 +330,38 @@ function presetExpandedCardAppearance(colors: CodexColorSettings): CodexExpanded
     focus: colors.healthy,
     accent: colors.healthy,
     running: '#2F7CC0',
-    pending: '#C6631A'
+    pending: '#C6631A',
+    ...defaultCompanionQuotaTones(colors)
   }
+}
+
+/**
+ * Default per-provider quota tones for the expanded card's single quota row.
+ *
+ * Both derive from the theme's own signal hue, so a built-in or saved theme keeps
+ * one visual family instead of gaining an unrelated brand color. They are held
+ * apart by a fixed hue rotation rather than by borrowing `warning` or `critical`:
+ * several presets (`amber-mist`, `solar-crown`, `crimson-flare`, `rose-crystal`)
+ * put those within a few degrees of `healthy`, so a signal-color pairing would
+ * collapse into one hue exactly where the user needs to tell two providers apart,
+ * and `critical` additionally already means "quota is tight".
+ *
+ * Each tone is pulled to a 4.5:1 ratio against the card surface because it
+ * carries the percentage text itself, not just a decorative rule.
+ */
+export function defaultCompanionQuotaTones(colors: CodexColorSettings): { codexQuota: string; claudeQuota: string } {
+  return {
+    codexQuota: providerQuotaTone(colors.healthy, colors.card, 0),
+    claudeQuota: providerQuotaTone(colors.healthy, colors.card, 150)
+  }
+}
+
+function providerQuotaTone(base: string, surface: string, hueShift: number): string {
+  const hsl = hexToHsl(base)
+  if (!hsl) return base
+  // A washed-out theme hue would rotate into another washed-out hue, so the
+  // saturation floor is what actually keeps the two providers separable.
+  return hslToHex(nearestContrastHsl({ h: hsl.h + hueShift, s: Math.max(hsl.s, 45), l: hsl.l }, surface, 4.5))
 }
 
 export function quotaStatusColor(percent: number, colors: CodexColorSettings): string {
@@ -365,7 +399,11 @@ export function resolveCodexSurfaceTheme(style: CodexDisplayStyle, colors: Codex
     pending,
     onAccent: strictForeground(accent),
     onRunning: strictForeground(running),
-    onPending: strictForeground(pending)
+    onPending: strictForeground(pending),
+    // The compact skin has no quota row; these keep the token set complete so a
+    // shared stylesheet never resolves an undefined variable mid-transition.
+    quotaCodex: providerQuotaTone(colors.healthy, surface, 0),
+    quotaClaude: providerQuotaTone(colors.healthy, surface, 150)
   }
 }
 
@@ -393,7 +431,9 @@ export function resolveCodexExpandedCardTheme(
     pending: appearance.pending,
     onAccent: strictForeground(accent),
     onRunning: strictForeground(appearance.running),
-    onPending: strictForeground(appearance.pending)
+    onPending: strictForeground(appearance.pending),
+    quotaCodex: appearance.codexQuota,
+    quotaClaude: appearance.claudeQuota
   }
 }
 
@@ -482,6 +522,8 @@ export function codexThemeCssVars(theme: CodexSurfaceTheme): Record<string, stri
     '--codex-pending': theme.pending,
     '--codex-on-accent': theme.onAccent,
     '--codex-on-running': theme.onRunning,
-    '--codex-on-pending': theme.onPending
+    '--codex-on-pending': theme.onPending,
+    '--codex-quota-codex': theme.quotaCodex,
+    '--codex-quota-claude': theme.quotaClaude
   }
 }
