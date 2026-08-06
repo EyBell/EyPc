@@ -27,7 +27,7 @@ import {
   resolveCodexExpandedCardTheme
 } from '../domain/codexAppearance'
 import { buildCodexCompactPresentation, codexBadgeText } from '../domain/codexPresentation'
-import { claudeSetupHint, resolveCompanionWaterBallPresentation } from '../domain/companionPresentation'
+import { claudeRegistrationRows, claudeSourceStatusText, resolveCompanionWaterBallPresentation } from '../domain/companionPresentation'
 import {
   CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS,
   CODEX_MAX_QUOTA_REFRESH_SECONDS,
@@ -384,14 +384,20 @@ function update(patch: Partial<CodexSettings>) {
   emit('dispatch', 'codex.settings.update', { settings: patch })
 }
 
-const claudeRegistered = computed(() => props.snapshot.claudeEnvironment?.hooks === 'installed')
-const claudeStatusText = computed(() => {
-  if (!props.snapshot.settings.providers.claude) return '关闭时不读取任何 Claude 数据'
-  const hint = claudeSetupHint(props.snapshot.claudeEnvironment)
-  if (hint) return hint
-  const version = props.snapshot.claudeEnvironment?.cliVersion
-  return version ? `已连接 Claude Code ${version}` : '已连接 Claude Code'
+// `outdated` means our marked entries are present but their command string no
+// longer matches, so the honest label is "重新注册" and removal must stay
+// available — treating it as "never registered" left the only way to clean up
+// hidden behind a successful re-registration.
+const claudeRegistered = computed(() => {
+  const hooks = props.snapshot.claudeEnvironment?.hooks
+  return hooks === 'installed' || hooks === 'outdated'
 })
+const claudeRegistrationGrid = computed(() => claudeRegistrationRows(props.snapshot.claudeEnvironment, Date.now()))
+const claudeStatusText = computed(() => claudeSourceStatusText({
+  enabled: props.snapshot.settings.providers.claude,
+  environment: props.snapshot.claudeEnvironment,
+  desktopSessionCount: props.snapshot.claudeDesktopSessionCount
+}))
 
 function toggleClaude(enabled: boolean) {
   update({ providers: { ...props.snapshot.settings.providers, claude: enabled } })
@@ -1001,7 +1007,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             type="checkbox"
             :checked="snapshot.settings.providers.claude"
             data-operation-tooltip="接入 Claude Code"
-            data-operation-description="开启后，Claude Code 会话与 Codex 任务在同一水球中按状态汇总；关闭时完全不读取 Claude 数据。"
+            data-operation-description="开启后，Claude Code 会话与 Codex 任务在同一水球中按状态汇总；关闭时完全不读取 Claude 数据。Claude 桌面端在本机运行的会话同属这一开关，只读取会话元数据与事件日志，无需注册任何东西；从卡片打开它们只能把桌面端前置，再由你在应用内选中该会话。"
             @change="toggleClaude(($event.target as HTMLInputElement).checked)"
           />
           <i />
@@ -1019,6 +1025,20 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
           />
           <i />
         </label>
+        <dl v-if="snapshot.settings.providers.claude" class="codex-diagnostic-grid codex-claude-grid">
+          <div v-for="row in claudeRegistrationGrid" :key="row.id">
+            <dt class="has-detail">
+              <span>{{ row.label }}</span>
+              <button
+                type="button"
+                class="codex-tip codex-diagnostic-tip"
+                :aria-label="`${row.label}详情`"
+                :data-tip="row.detail"
+              >i</button>
+            </dt>
+            <dd :class="`is-${row.tone}`">{{ row.value }}</dd>
+          </div>
+        </dl>
         <div v-if="snapshot.settings.providers.claude" class="codex-claude-actions">
           <button
             type="button"

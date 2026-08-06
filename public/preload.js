@@ -8731,6 +8731,25 @@ window.eypcPlatform = {
     // omitting it here silently disabled the `claudeQuotaFallback` setting no
     // matter what the user chose.
     readQuotaFallback: (...args) => claudeBridge ? claudeBridge.readQuotaFallback(...args) : Promise.resolve(null),
+    // Read-only desktop-app lane. Feature-detected by the Controller for the
+    // same reason as `readQuotaFallback` above — and omitted here for exactly
+    // the same reason too: the module existed, the packaging manifest listed
+    // it, the module-level validator asserted it, and the whole desktop lane
+    // was still silently dead on the host because it never reached this facade
+    // (P5 review). The facade is the contract the Controller actually sees.
+    readDesktopSnapshot: (...args) => claudeBridge
+      ? claudeBridge.readDesktopSnapshot(...args)
+      : { version: 1, revision: '', sessions: [], truncated: false, readAt: Date.now() },
+    // Null when the app has never written a usage sample, which the Controller
+    // treats as "no freshness source", not as an error.
+    readPlanUsage: (...args) => claudeBridge ? claudeBridge.readPlanUsage(...args) : null,
+    // The desktop app's own unread set, this lane's read authority. `null` is
+    // "could not tell" and must stay distinct from an observed empty set — the
+    // latter is a claim that the user has read everything.
+    readDesktopUnread: (...args) => claudeBridge ? claudeBridge.readDesktopUnread(...args) : null,
+    // Returns a disposer, or null when nothing could be armed so the caller
+    // knows to retry rather than assume a live subscription.
+    watchDesktopSessions: (...args) => claudeBridge ? claudeBridge.watchDesktopSessions(...args) : null,
     // Push lane for hook-queue appends. Returns a disposer in every case, so a
     // caller never has to branch on whether the bridge loaded.
     watchEvents: (...args) => claudeBridge ? claudeBridge.watchEvents(...args) : (() => {}),

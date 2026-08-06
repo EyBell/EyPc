@@ -14,7 +14,9 @@ import {
   emptyClaudeEnvironment,
   emptyClaudeQuota,
   isClaudeAvailable,
+  mergeClaudePlanUsage,
   normalizeClaudeHookEvent,
+  claudeResetAtToMs,
   normalizeClaudeQuota,
   normalizeClaudeReceipts,
   projectClaudeTaskCard,
@@ -287,16 +289,155 @@ describe('side chat folding', () => {
   })
 })
 
+describe('quota windows beyond the original two', () => {
+  /**
+   * A Max plan shows `5-hour limit`, `Weekly · all models` and a per-model
+   * weekly at once. The status-line cache already carried the third window's
+   * bytes; only the projection was hardcoded to two keys, so the account's most
+   * constrained limit was the one the user could not see.
+   */
+  it('keeps every declared window and derives its label from the payload key', () => {
+    const quota = normalizeClaudeQuota({
+      seven_day_fable: { used_percentage: 44, resets_at: 1_738_857_600 },
+      five_hour: { used_percentage: 35, resets_at: 1_738_425_600 },
+      seven_day: { used_percentage: 29, resets_at: 1_738_857_600 }
+    }, { updatedAt: NOW })
+    expect(quota.windows.map((entry) => entry.key)).toEqual(['five_hour', 'seven_day', 'seven_day_fable'])
+    expect(quota.windows.map((entry) => entry.label)).toEqual(['5 小时限额', '周限额', '周限额 · Fable'])
+    expect(quota.windows.map((entry) => entry.shortLabel)).toEqual(['5h', '周', '周·Fable'])
+    expect(quota.windows[2]).toMatchObject({ kind: 'weekly', scope: 'Fable', remainingPercent: 56 })
+  })
+
+  it('never lets a per-model window impersonate the plain one', () => {
+    const quota = normalizeClaudeQuota({
+      seven_day_opus: { used_percentage: 90 },
+      seven_day: { used_percentage: 10 }
+    }, { updatedAt: NOW })
+    // `weekly` feeds the water-ball centre and the legacy consumers; it must
+    // stay the all-models window even though the scoped one is tighter.
+    expect(quota.weekly?.remainingPercent).toBe(90)
+    expect(quota.windows.map((entry) => entry.scope)).toEqual(['', 'Opus'])
+  })
+
+  it('carries an unrecognized key instead of dropping it', () => {
+    const quota = normalizeClaudeQuota({ monthly_extra: { used_percentage: 20 } }, { updatedAt: NOW })
+    expect(quota.windows.map((entry) => entry.kind)).toEqual(['other'])
+    expect(quota.windows[0].label).toBe('Monthly extra')
+    expect(quota.short).toBeNull()
+    expect(quota.weekly).toBeNull()
+    // The centre reading must still find something to show.
+    expect(claudePrimaryQuotaWindow(quota)?.remainingPercent).toBe(80)
+  })
+
+  it('expires on any window whose own reset moment has passed', () => {
+    const now = 1_738_500_000_000
+    const quota = normalizeClaudeQuota({
+      five_hour: { used_percentage: 10, resets_at: now / 1000 + 3600 },
+      seven_day_opus: { used_percentage: 10, resets_at: now / 1000 - 60 }
+    }, { updatedAt: now, now })
+    expect(quota.status).toBe('stale')
+  })
+})
+
+describe('desktop app usage history merge', () => {
+  const statusline = () => normalizeClaudeQuota({
+    five_hour: { used_percentage: 60, resets_at: 1_800_000_000 },
+    seven_day: { used_percentage: 20, resets_at: 1_800_600_000 },
+    seven_day_fable: { used_percentage: 56, resets_at: 1_800_600_000 }
+  }, { updatedAt: 1_000 })
+
+  it('moves the two shared windows forward while keeping resets and the per-model window', () => {
+    const merged = mergeClaudePlanUsage(statusline(), {
+      at: 2_000,
+      fiveHourUsedPercent: 65,
+      sevenDayUsedPercent: 29
+    }, 1_500)
+    expect(merged.short?.remainingPercent).toBe(35)
+    expect(merged.weekly?.remainingPercent).toBe(71)
+    // Reset moments and the per-model window are not in the sample, so they
+    // must survive rather than be blanked or aligned to the all-models number.
+    expect(merged.short?.resetAt).toBe(1_800_000_000_000)
+    expect(merged.windows[2]).toMatchObject({ key: 'seven_day_fable', remainingPercent: 44 })
+    expect(merged.updatedAt).toBe(2_000)
+    expect(merged.source).toBe('statusline')
+  })
+
+  it('never walks a reading backwards with an older or absent sample', () => {
+    const base = statusline()
+    expect(mergeClaudePlanUsage(base, { at: 500, fiveHourUsedPercent: 99, sevenDayUsedPercent: 99 }, 1_500)).toBe(base)
+    expect(mergeClaudePlanUsage(base, null, 1_500)).toBe(base)
+    expect(mergeClaudePlanUsage(base, { at: 0, fiveHourUsedPercent: 5, sevenDayUsedPercent: 5 }, 1_500)).toBe(base)
+  })
+
+  it('seeds a first reading from the sample alone, without inventing reset moments', () => {
+    const merged = mergeClaudePlanUsage(emptyClaudeQuota(), {
+      at: 2_000,
+      fiveHourUsedPercent: 35,
+      sevenDayUsedPercent: 29
+    }, 2_100)
+    expect(merged.windows.map((entry) => entry.key)).toEqual(['five_hour', 'seven_day'])
+    expect(merged.short).toMatchObject({ remainingPercent: 65, resetAt: null })
+    expect(merged.source).toBe('plan-history')
+    expect(merged.status).toBe('ok')
+  })
+
+  it('ignores a sample whose windows are both absent', () => {
+    const base = statusline()
+    expect(mergeClaudePlanUsage(base, { at: 9_000, fiveHourUsedPercent: null, sevenDayUsedPercent: null }, 9_100).windows)
+      .toEqual(base.windows)
+    expect(mergeClaudePlanUsage(emptyClaudeQuota(), { at: 9_000, fiveHourUsedPercent: null, sevenDayUsedPercent: null }, 9_100).windows)
+      .toEqual([])
+  })
+})
+
 describe('quota normalization', () => {
   it('converts the official used_percentage into the remaining-percent bucket contract', () => {
     const quota = normalizeClaudeQuota({
       five_hour: { used_percentage: 23.5, resets_at: 1_738_425_600 },
       seven_day: { used_percentage: 41.2, resets_at: 1_738_857_600 }
     }, { updatedAt: NOW })
-    expect(quota.short).toEqual({ remainingPercent: 76.5, resetAt: 1_738_425_600_000, windowMinutes: CLAUDE_SHORT_WINDOW_MINUTES })
-    expect(quota.weekly).toEqual({ remainingPercent: 58.8, resetAt: 1_738_857_600_000, windowMinutes: CLAUDE_WEEKLY_WINDOW_MINUTES })
+    // Whole percent, matching the Codex chip that renders beside it and the
+    // water-ball centre above it — one fact, one precision.
+    expect(quota.short).toMatchObject({ remainingPercent: 77, resetAt: 1_738_425_600_000, windowMinutes: CLAUDE_SHORT_WINDOW_MINUTES })
+    expect(quota.weekly).toMatchObject({ remainingPercent: 59, resetAt: 1_738_857_600_000, windowMinutes: CLAUDE_WEEKLY_WINDOW_MINUTES })
     expect(quota.status).toBe('ok')
     expect(quota.source).toBe('statusline')
+  })
+
+  it('marks a reading stale once its own window has already reset', () => {
+    // `stale` was previously reachable only when a read failed outright, so a
+    // reading could sit unrefreshed for hours and still render as current.
+    // A window whose `resets_at` has passed is expired by definition — its
+    // percentage describes a window that no longer exists.
+    const resetAt = 1_738_425_600
+    const fresh = normalizeClaudeQuota(
+      { five_hour: { used_percentage: 80, resets_at: resetAt } },
+      { updatedAt: NOW, now: resetAt * 1000 - 60_000 }
+    )
+    expect(fresh.status).toBe('ok')
+    const expired = normalizeClaudeQuota(
+      { five_hour: { used_percentage: 80, resets_at: resetAt } },
+      { updatedAt: NOW, now: resetAt * 1000 + 1 }
+    )
+    expect(expired.status).toBe('stale')
+    // The reading itself is preserved, not discarded — same contract as
+    // `staleClaudeQuota`.
+    expect(expired.short?.remainingPercent).toBe(20)
+    // Without a clock the caller gets the old permissive behaviour rather than
+    // a wrong guess.
+    expect(normalizeClaudeQuota({ five_hour: { used_percentage: 80, resets_at: resetAt } }).status).toBe('ok')
+  })
+
+  it('accepts every resets_at shape the two sources can produce', () => {
+    // Epoch seconds is what Claude Code documents; the usage-API fallback
+    // produced ISO strings, and both land in this one normalizer so the two
+    // sources cannot disagree about the same field.
+    expect(claudeResetAtToMs(1_738_425_600)).toBe(1_738_425_600_000)
+    expect(claudeResetAtToMs(1_738_425_600_000)).toBe(1_738_425_600_000)
+    expect(claudeResetAtToMs('2026-08-06T12:00:00.000Z')).toBe(Date.parse('2026-08-06T12:00:00.000Z'))
+    expect(claudeResetAtToMs(0)).toBeNull()
+    expect(claudeResetAtToMs('nonsense')).toBeNull()
+    expect(claudeResetAtToMs(null)).toBeNull()
   })
 
   it('handles an independently absent window without failing the other one', () => {

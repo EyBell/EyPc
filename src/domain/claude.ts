@@ -428,14 +428,41 @@ export interface ClaudeQuotaWindow {
   windowMinutes: number
 }
 
+/** Which family a limit window belongs to. `other` is any future shape. */
+export type ClaudeQuotaWindowKind = 'short' | 'weekly' | 'other'
+
+/**
+ * One limit window exactly as the payload declared it.
+ *
+ * The account can carry more windows than the two this plugin originally knew
+ * about — a Max plan shows `5-hour limit`, `Weekly · all models` and a
+ * per-model weekly side by side. Hardcoding two keys silently dropped the third
+ * even though the status-line cache already held its bytes, so the payload's own
+ * key is what identifies a window here and the display label is derived from it.
+ * A model name we have never seen still renders correctly.
+ */
+export interface ClaudeQuotaWindowEntry extends ClaudeQuotaWindow {
+  /** Raw payload key, e.g. `five_hour`, `seven_day`, `seven_day_opus`. */
+  key: string
+  kind: ClaudeQuotaWindowKind
+  /** Qualifier parsed off the key, already display-cased. Empty for a plain window. */
+  scope: string
+  /** Full product title: `5 小时限额` / `周限额` / `周限额 · Opus`. */
+  label: string
+  /** Dense row caption: `5h` / `周` / `周·Opus`. */
+  shortLabel: string
+}
+
 export interface ClaudeQuotaSnapshot {
   version: 1
   status: ClaudeQuotaStatus
-  /** 5-hour rolling window. */
+  /** Every window the payload declared, in display order. Authoritative. */
+  windows: ClaudeQuotaWindowEntry[]
+  /** 5-hour rolling window. Derived from `windows`, kept for existing consumers. */
   short: ClaudeQuotaWindow | null
-  /** 7-day window. */
+  /** Plain 7-day window (never a per-model one). Derived from `windows`. */
   weekly: ClaudeQuotaWindow | null
-  source: 'statusline' | 'usage-api' | 'none'
+  source: 'statusline' | 'usage-api' | 'plan-history' | 'none'
   updatedAt: number
 }
 
@@ -443,19 +470,54 @@ export const CLAUDE_SHORT_WINDOW_MINUTES = 5 * 60
 export const CLAUDE_WEEKLY_WINDOW_MINUTES = 7 * 24 * 60
 
 export function emptyClaudeQuota(): ClaudeQuotaSnapshot {
-  return { version: 1, status: 'idle', short: null, weekly: null, source: 'none', updatedAt: 0 }
+  return { version: 1, status: 'idle', windows: [], short: null, weekly: null, source: 'none', updatedAt: 0 }
 }
 
 function usedPercentToRemaining(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null
   const used = Math.min(100, Math.max(0, value))
-  return Math.round((100 - used) * 10) / 10
+  // Whole percent, matching the Codex bucket contract (`clampPercent`). The
+  // two chips sit on the same quota row and the water ball centre rounds
+  // anyway, so a one-decimal Claude reading rendered "17.6%" beside Codex's
+  // "18%" and above a ball centre showing "18" — three precisions for one
+  // fact. Codex's formatting is frozen by the byte-identical contract, so
+  // Claude is the side that aligns.
+  return Math.round(100 - used)
 }
 
-function resetAtToMs(value: unknown): number | null {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null
-  // Claude Code reports Unix epoch seconds; tolerate a millisecond value too.
-  return value > 1e11 ? Math.round(value) : Math.round(value * 1000)
+/**
+ * Normalizes `resets_at` from the official `rate_limits` payload.
+ *
+ * Claude Code documents epoch seconds. Milliseconds and ISO strings are
+ * tolerated because the usage-API fallback already produced the latter and the
+ * two sources must not disagree about the same field — the domain is the one
+ * place both go through.
+ */
+export function claudeResetAtToMs(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return value > 1e11 ? Math.round(value) : Math.round(value * 1000)
+  }
+  if (typeof value === 'string' && value) {
+    const parsed = Date.parse(value)
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+  }
+  return null
+}
+
+/**
+ * True once a window's own reset moment has passed.
+ *
+ * This is the exact, evidence-backed definition of a stale quota reading: the
+ * window has rolled over, so its `used_percentage` no longer describes
+ * anything real — the user actually has *more* headroom than the number shows.
+ * It needs no invented age threshold, and it is the same fact that stops the
+ * UI rendering a past reset moment as "今天 <过去的时刻>（0 分钟后）".
+ */
+export function claudeQuotaWindowExpired(
+  window: Pick<ClaudeQuotaWindow, 'resetAt'> | null | undefined,
+  now: number
+): boolean {
+  return Boolean(window && window.resetAt !== null && now >= window.resetAt)
 }
 
 interface ClaudeRateLimitWindowInput {
@@ -466,13 +528,68 @@ interface ClaudeRateLimitWindowInput {
 export interface ClaudeRateLimitsInput {
   five_hour?: ClaudeRateLimitWindowInput | null
   seven_day?: ClaudeRateLimitWindowInput | null
+  /** Any further window the account carries, e.g. a per-model weekly. */
+  [key: string]: ClaudeRateLimitWindowInput | null | undefined
 }
 
-function windowFrom(input: ClaudeRateLimitWindowInput | null | undefined, windowMinutes: number): ClaudeQuotaWindow | null {
+/**
+ * Splits a payload key into its family and qualifier.
+ *
+ * Deliberately pattern-based rather than a lookup table: the qualifier is a
+ * model name, and a table would silently drop the next model Anthropic ships —
+ * which is exactly the failure this whole change is fixing.
+ */
+function describeQuotaKey(key: string): { kind: ClaudeQuotaWindowKind; scope: string; windowMinutes: number } {
+  const match = /^(five_hour|seven_day)(?:[_-](.+))?$/.exec(key)
+  const scope = titleCaseScope(match?.[2] || '')
+  if (match?.[1] === 'five_hour') return { kind: 'short', scope, windowMinutes: CLAUDE_SHORT_WINDOW_MINUTES }
+  if (match?.[1] === 'seven_day') return { kind: 'weekly', scope, windowMinutes: CLAUDE_WEEKLY_WINDOW_MINUTES }
+  return { kind: 'other', scope: titleCaseScope(key), windowMinutes: 0 }
+}
+
+/** `opus` → `Opus`, `all_models` → `All models`. Never invents a translation. */
+function titleCaseScope(value: string): string {
+  const cleaned = value.replace(/[_-]+/g, ' ').trim()
+  if (!cleaned) return ''
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
+}
+
+function quotaWindowLabels(kind: ClaudeQuotaWindowKind, scope: string): { label: string; shortLabel: string } {
+  const base = kind === 'short' ? '5 小时限额' : kind === 'weekly' ? '周限额' : scope || '限额'
+  const shortBase = kind === 'short' ? '5h' : kind === 'weekly' ? '周' : (scope || '限额').slice(0, 4)
+  if (!scope || kind === 'other') return { label: base, shortLabel: shortBase }
+  return { label: `${base} · ${scope}`, shortLabel: `${shortBase}·${scope}` }
+}
+
+/** Ordering: 5 hour, plain weekly, per-model weeklies, then anything unrecognized. */
+function quotaWindowRank(entry: ClaudeQuotaWindowEntry): number {
+  if (entry.kind === 'short') return entry.scope ? 1 : 0
+  if (entry.kind === 'weekly') return entry.scope ? 3 : 2
+  return 4
+}
+
+function windowFrom(
+  key: string,
+  input: ClaudeRateLimitWindowInput | null | undefined
+): ClaudeQuotaWindowEntry | null {
   if (!input || typeof input !== 'object') return null
   const remainingPercent = usedPercentToRemaining(input.used_percentage)
   if (remainingPercent === null) return null
-  return { remainingPercent, resetAt: resetAtToMs(input.resets_at), windowMinutes }
+  const { kind, scope, windowMinutes } = describeQuotaKey(key)
+  return {
+    key,
+    kind,
+    scope,
+    ...quotaWindowLabels(kind, scope),
+    remainingPercent,
+    resetAt: claudeResetAtToMs(input.resets_at),
+    windowMinutes
+  }
+}
+
+/** The plain window of a family — never a per-model one. */
+function plainWindow(windows: readonly ClaudeQuotaWindowEntry[], kind: ClaudeQuotaWindowKind): ClaudeQuotaWindow | null {
+  return windows.find((item) => item.kind === kind && !item.scope) || null
 }
 
 /**
@@ -482,31 +599,124 @@ function windowFrom(input: ClaudeRateLimitWindowInput | null | undefined, window
  */
 export function normalizeClaudeQuota(
   input: ClaudeRateLimitsInput | null | undefined,
-  options: { source?: ClaudeQuotaSnapshot['source']; updatedAt?: number; status?: ClaudeQuotaStatus } = {}
+  options: {
+    source?: ClaudeQuotaSnapshot['source']
+    updatedAt?: number
+    status?: ClaudeQuotaStatus
+    /** Wall clock used to decide whether a window has already reset. */
+    now?: number
+  } = {}
 ): ClaudeQuotaSnapshot {
-  const short = windowFrom(input?.five_hour, CLAUDE_SHORT_WINDOW_MINUTES)
-  const weekly = windowFrom(input?.seven_day, CLAUDE_WEEKLY_WINDOW_MINUTES)
-  const hasReading = Boolean(short || weekly)
+  const windows = (input && typeof input === 'object' ? Object.keys(input) : [])
+    .map((key) => windowFrom(key, input?.[key]))
+    .filter((entry): entry is ClaudeQuotaWindowEntry => entry !== null)
+    // Stable within a rank so two per-model weeklies keep payload order.
+    .sort((a, b) => quotaWindowRank(a) - quotaWindowRank(b))
+  const hasReading = windows.length > 0
+  // `stale` used to be reachable only when a read failed outright, so a reading
+  // that sat unrefreshed for hours still rendered as current. A window whose
+  // own reset moment has passed is expired by definition, which is the precise
+  // signal — no invented age threshold required.
+  const now = Number.isFinite(options.now) ? options.now! : null
+  const expired = now !== null
+    && hasReading
+    && windows.some((entry) => claudeQuotaWindowExpired(entry, now))
   return {
     version: 1,
-    status: options.status || (hasReading ? 'ok' : 'idle'),
-    short,
-    weekly,
+    status: options.status || (hasReading ? (expired ? 'stale' : 'ok') : 'idle'),
+    windows,
+    short: plainWindow(windows, 'short'),
+    weekly: plainWindow(windows, 'weekly'),
     source: hasReading ? (options.source || 'statusline') : 'none',
     updatedAt: Number.isFinite(options.updatedAt) ? options.updatedAt! : 0
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * Desktop app usage history (freshness source)
+ * ------------------------------------------------------------------ */
+
+/**
+ * One sample from the desktop app's own `plan-usage-history.json`.
+ *
+ * Verified on a real installation 2026-08-06: the app appends `{t, org, u:{fh,
+ * sd}}` every ~5 minutes and its latest values are the ones its `Plan usage
+ * limits` panel shows. It carries **no reset moments and no per-model window**,
+ * so it is a freshness source, not a replacement for the status-line payload.
+ */
+export interface ClaudePlanUsageSample {
+  /** Epoch ms the app recorded the sample. */
+  at: number
+  /** Used percentage of the 5-hour window, or null when absent. */
+  fiveHourUsedPercent: number | null
+  /** Used percentage of the plain weekly window, or null when absent. */
+  sevenDayUsedPercent: number | null
+}
+
+/**
+ * Folds a fresher app sample into an existing reading.
+ *
+ * The two sources are complementary rather than ranked: the status line owns
+ * reset moments and every window, the app history owns recency for the two
+ * windows it keeps. So percentages move to the newer sample while each window's
+ * `resetAt` and any per-model window survive untouched. An older sample changes
+ * nothing — this must never walk a reading backwards.
+ */
+export function mergeClaudePlanUsage(
+  quota: ClaudeQuotaSnapshot | null | undefined,
+  sample: ClaudePlanUsageSample | null | undefined,
+  now: number = Date.now()
+): ClaudeQuotaSnapshot {
+  const base = quota || emptyClaudeQuota()
+  if (!sample || !Number.isFinite(sample.at) || sample.at <= 0) return base
+  if (sample.at <= base.updatedAt) return base
+  const byKind: Partial<Record<'short' | 'weekly', number | null>> = {
+    short: sample.fiveHourUsedPercent,
+    weekly: sample.sevenDayUsedPercent
+  }
+  const patched = base.windows.map((entry) => {
+    // Per-model windows are absent from the sample, so they keep their own
+    // reading rather than being silently aligned to the all-models number.
+    if (entry.scope || entry.kind === 'other') return entry
+    const used = byKind[entry.kind]
+    const remaining = usedPercentToRemaining(used)
+    return remaining === null ? entry : { ...entry, remainingPercent: remaining }
+  })
+  // A first reading with no status-line payload yet: the sample alone is worth
+  // showing, minus the reset moments it does not carry.
+  const seeded = patched.length ? patched : ([
+    seedWindow('five_hour', sample.fiveHourUsedPercent),
+    seedWindow('seven_day', sample.sevenDayUsedPercent)
+  ].filter((entry): entry is ClaudeQuotaWindowEntry => entry !== null))
+  if (!seeded.length) return base
+  const expired = seeded.some((entry) => claudeQuotaWindowExpired(entry, now))
+  return {
+    version: 1,
+    status: expired ? 'stale' : 'ok',
+    windows: seeded,
+    short: plainWindow(seeded, 'short'),
+    weekly: plainWindow(seeded, 'weekly'),
+    source: patched.length ? base.source : 'plan-history',
+    updatedAt: sample.at
+  }
+}
+
+function seedWindow(key: string, usedPercent: number | null): ClaudeQuotaWindowEntry | null {
+  return usedPercent === null ? null : windowFrom(key, { used_percentage: usedPercent })
+}
+
 /** Marks a previously good reading as stale instead of discarding it. */
 export function staleClaudeQuota(previous: ClaudeQuotaSnapshot | null | undefined): ClaudeQuotaSnapshot {
-  if (!previous || (!previous.short && !previous.weekly)) return { ...emptyClaudeQuota(), status: 'stale' }
+  if (!previous || !previous.windows.length) return { ...emptyClaudeQuota(), status: 'stale' }
   return { ...previous, status: 'stale' }
 }
 
 /** Primary reading for the water ball centre percentage. */
 export function claudePrimaryQuotaWindow(quota: ClaudeQuotaSnapshot | null | undefined): ClaudeQuotaWindow | null {
   if (!quota) return null
-  return quota.short || quota.weekly
+  // The plain windows keep priority; the last fallback only matters for an
+  // account whose payload carries a scoped window but neither plain one.
+  return quota.short || quota.weekly || quota.windows[0] || null
 }
 
 /* ------------------------------------------------------------------ *

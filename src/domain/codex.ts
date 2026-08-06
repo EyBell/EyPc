@@ -675,6 +675,12 @@ export interface CodexState {
   receipts: CodexThreadReceipt[]
   /** EyPc-owned read receipts for providers with no native read state. */
   claudeReceipts?: Record<string, number>
+  /**
+   * Last observed unread set of the Claude desktop app, used only to detect the
+   * moment a session leaves it. Absent means "no baseline yet", which produces
+   * no receipts at all — see `resolveClaudeDesktopReadTransitions`.
+   */
+  claudeDesktopUnread?: string[]
   firstPromptTimes: CodexFirstPromptTimeCacheEntry[]
   lastTaskScanAt: number
   cachedQuota: CodexQuotaSnapshotV1
@@ -842,6 +848,7 @@ export interface ConversationProjection {
  */
 const FOREIGN_KEY = /^[a-z]{2,16}:[A-Za-z0-9._:-]{1,128}$/
 const RECEIPT_KEY = /^(?:[a-f0-9]{16,64}|[a-z]{2,16}:[A-Za-z0-9._:-]{1,128})$/
+const DESKTOP_SESSION_ID = /^local_[0-9a-f][0-9a-f-]*$/i
 const PROJECT_KEY = /^(?:[a-f0-9]{16,64}|chats|[a-z]{2,16}:[A-Za-z0-9._:/\\-]{1,256})$/
 const COMPACT_FIELDS: CodexCompactField[] = ['short', 'weekly', 'tasks']
 const EXPANDED_FIELDS: CodexExpandedField[] = ['plan', 'short', 'weekly', 'reset', 'config', 'tasks', 'updatedAt']
@@ -1073,6 +1080,22 @@ export function normalizeCodexFirstPromptTimes(value: unknown): CodexFirstPrompt
     if (!previous || entry.updatedAt >= previous.updatedAt) byKey.set(key, entry)
   }
   return [...byKey.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 100)
+}
+
+/**
+ * Persisted baseline of the Claude desktop app's unread set.
+ *
+ * `undefined` and `[]` are different states and both have to survive a round
+ * trip: absent means "no baseline", which suppresses read receipts entirely,
+ * while empty means "the app was observed with nothing unread".
+ */
+function normalizeClaudeDesktopUnreadBaseline(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  return [...new Set(value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => DESKTOP_SESSION_ID.test(item)))]
+    .slice(0, 500)
 }
 
 function normalizeAnonymousKeys(value: unknown, maximum: number, projectKeys = false): string[] {
@@ -1445,6 +1468,7 @@ export function normalizeCodexState(value: unknown): CodexState {
     settings: normalizeCodexSettings(source.settings),
     receipts: normalizeCodexReceipts(source.receipts),
     claudeReceipts: normalizeCompanionReadReceipts(source.claudeReceipts),
+    claudeDesktopUnread: normalizeClaudeDesktopUnreadBaseline(source.claudeDesktopUnread),
     firstPromptTimes: normalizeCodexFirstPromptTimes(source.firstPromptTimes),
     lastTaskScanAt: numberValue(source.lastTaskScanAt, 0),
     cachedQuota: normalizeCodexQuota(source.cachedQuota),

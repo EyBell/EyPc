@@ -18,7 +18,7 @@ import type {
   CodexThreadArchiveResult,
   CodexThreadOpenResult
 } from '../domain/codex'
-import type { ClaudeEnvironmentSnapshot, ClaudeRateLimitsInput, ClaudeSessionObservation } from '../domain/claude'
+import type { ClaudeEnvironmentSnapshot, ClaudePlanUsageSample, ClaudeRateLimitsInput, ClaudeSessionObservation } from '../domain/claude'
 import type {
   CodexEnvironmentActionRunResult,
   CodexEnvironmentActionSessionProjection,
@@ -378,9 +378,27 @@ export interface EypcPlatformApi {
     readDesktopSnapshot?(options?: { now?: number; windowMs?: number }): Promise<ClaudeDesktopBridgeSnapshot> | ClaudeDesktopBridgeSnapshot
     /** Fires on desktop metadata heartbeats; returns a disposer. */
     watchDesktopSessions?(listener: () => void): () => void
+    /**
+     * The desktop app's own unread set, read from its Local Storage. `null`
+     * means the reading failed — which is deliberately not the same as an empty
+     * set, because an empty set is a claim that nothing is unread.
+     */
+    readDesktopUnread?(): { version: 1; ids: string[]; readAt: number } | null
+    /**
+     * Latest quota sample the desktop app recorded for itself. Credential-free
+     * and independent of the status line, so it keeps the reading moving at the
+     * app's own cadence. Null when the app has never written one.
+     */
+    readPlanUsage?(): Promise<ClaudePlanUsageSample | null> | ClaudePlanUsageSample | null
     install(options?: { statusline?: boolean }): Promise<ClaudeRegistrationResult> | ClaudeRegistrationResult
     uninstall(): Promise<ClaudeRegistrationResult> | ClaudeRegistrationResult
-    openTask(sessionId: string, options?: { pid?: number; cwd?: string }): Promise<ClaudeOpenResult>
+    /**
+     * Opens the session in the Claude desktop app via its `claude://resume`
+     * deep link. A desktop id (`local_<uuid>`) and a CLI id (a bare uuid) are
+     * the only input the route needs — there is no terminal fallback and so no
+     * pid, cwd or title to pass.
+     */
+    openTask(sessionId: string): Promise<ClaudeOpenResult>
     diagnostics(): { revision: string; loaded: boolean; loadError: string }
     close(): void
   }

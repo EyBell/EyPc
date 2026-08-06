@@ -21,7 +21,7 @@ export const UTOOLS_PRELOAD_MODULE_GROUPS = Object.freeze([
   {
     id: 'claude',
     directory: 'claude',
-    files: ['index.cjs', 'transcript.cjs', 'settings.cjs', 'events.cjs', 'scripts.cjs', 'environment.cjs', 'open.cjs', 'quota.cjs']
+    files: ['index.cjs', 'transcript.cjs', 'settings.cjs', 'events.cjs', 'scripts.cjs', 'environment.cjs', 'open.cjs', 'quota.cjs', 'desktop.cjs']
   }
 ])
 

@@ -260,6 +260,15 @@
 /* Claude registration controls. Reuses the existing float-toggle button
    language so the block reads as part of the same settings surface. */
 .codex-claude-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+/* Registration state reuses the diagnostic grid's row language; only the tone
+   colors are restated, because this grid sits on the white settings panel
+   instead of inside the tinted diagnostic banner that owns `currentColor`. */
+.codex-claude-grid { margin-top: 8px; }
+.codex-claude-grid > div { border-color: #cbd7da; background: #f6f9f9; }
+.codex-claude-grid dt { color: #526872; opacity: 1; }
+.codex-claude-grid dd.is-ready { color: #087d73; }
+.codex-claude-grid dd.is-warning { color: #8a5a00; }
+.codex-claude-grid dd.is-muted { color: #526872; }
 .codex-config-page button.codex-secondary-button {
   height: 26px;
   padding: 0 11px;

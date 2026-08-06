@@ -159,6 +159,15 @@ if [ -n "$INPUT" ]; then
       key = index(buffer, "\\"rate_limits\\"")
       if (key == 0) exit
       rest = substr(buffer, key)
+      # The value must be an object right here. Claude Code documents that rate
+      # limits are absent until the first API response of a session, so a null
+      # rate_limits value is ordinary after every /clear -- and searching for
+      # the next brace anywhere in the payload then captured the following
+      # object (usually "model") and overwrote a good cached reading with it.
+      # Skip the key, the colon and any whitespace, and require an open brace.
+      value = substr(rest, length("\\"rate_limits\\"") + 1)
+      sub(/^[ \\t\\r\\n]*:[ \\t\\r\\n]*/, "", value)
+      if (substr(value, 1, 1) != "{") exit
       opened = index(rest, "{")
       if (opened == 0) exit
       start = key + opened - 1

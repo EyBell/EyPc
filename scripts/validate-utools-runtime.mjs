@@ -85,10 +85,35 @@ const claudeModuleProbe = claudeModule.createClaudeBridge({
   os: { homedir: () => '/tmp' },
   dataDirectory: '/tmp/eypc-claude-validation'
 })
-for (const method of ['inspect', 'readSnapshot', 'readQuotaFallback', 'watchEvents', 'install', 'uninstall', 'openTask', 'close']) {
+for (const method of ['inspect', 'readSnapshot', 'readQuotaFallback', 'readDesktopSnapshot', 'readPlanUsage', 'readDesktopUnread', 'watchDesktopSessions', 'watchEvents', 'install', 'uninstall', 'openTask', 'close']) {
   assert(typeof claudeModuleProbe[method] === 'function', `claude preload module must expose stable ${method}`)
 }
 assert(claudeModuleProbe.readSnapshot().sessions.length === 0, 'claude module must degrade to an empty inventory without a readable home')
+assert(claudeModuleProbe.readDesktopSnapshot().sessions.length === 0, 'claude desktop reader must degrade to an empty inventory without a readable root')
+assert(claudeModuleProbe.readPlanUsage() === null, 'claude plan-usage reader must degrade to null without a readable history file')
+// `null` and `{ids: []}` are different claims: the second one would be spent as
+// "the user has read everything", so an unreadable store must never produce it.
+assert(claudeModuleProbe.readDesktopUnread() === null, 'claude unread reader must degrade to null, never to an empty set')
+const claudeDesktopSource = preloadModuleSources.get('claude/desktop.cjs') || ''
+// Deny-list every mutating fs call, not just the three that happened to be
+// used. The previous three-literal check would have waved through
+// `appendFileSync`, `mkdirSync`, `rmSync`, `truncateSync` or a write-mode
+// `createWriteStream` (P5 review).
+// Match call sites, not prose: the module's own comments legitimately discuss
+// rename and archive rewrites, so a bare substring test would fail on its
+// documentation instead of on its behaviour.
+const claudeDesktopCode = claudeDesktopSource
+  .replace(/\/\*[\s\S]*?\*\//g, ' ')
+  .replace(/(^|[^:])\/\/.*$/gm, '$1')
+for (const forbidden of [
+  'writeFileSync', 'writeFile', 'appendFileSync', 'appendFile', 'renameSync', 'rename',
+  'unlinkSync', 'unlink', 'rmSync', 'rmdirSync', 'mkdirSync', 'mkdtempSync', 'copyFileSync',
+  'truncateSync', 'ftruncateSync', 'chmodSync', 'chownSync', 'utimesSync', 'createWriteStream', 'writeSync'
+]) {
+  const callSite = new RegExp(`\\b${forbidden}\\s*\\(`)
+  assert(!callSite.test(claudeDesktopCode), `claude desktop reader must stay strictly read-only (found ${forbidden})`)
+}
+assert(claudeDesktopSource.includes('systemPrompt'), 'claude desktop reader must document the metadata whitelist against content-bearing fields')
 const claudeSettingsSource = preloadModuleSources.get('claude/settings.cjs') || ''
 assert(claudeSettingsSource.includes('eypc-claude-companion'), 'claude settings module must carry the uninstall marker')
 const claudeScriptsSource = preloadModuleSources.get('claude/scripts.cjs') || ''
@@ -206,6 +231,29 @@ assert(typeof sandbox.window.eypcPlatform.claude.readSnapshot === 'function', 'p
 // is not enough: the facade omitted it, so the opt-in quota fallback was a
 // dead switch in every packaged build while the module test stayed green.
 assert(typeof sandbox.window.eypcPlatform.claude.readQuotaFallback === 'function', 'preload must expose claude.readQuotaFallback')
+// ...and then the desktop lane was added without heeding the comment directly
+// above it: module present, manifest updated, module-level assertion green,
+// facade untouched, entire feature dead on the host (P5 review). Enumerating
+// the module's own surface makes the next omission fail here instead of on a
+// user's machine — a port may only be module-private by being listed below.
+// Ports that are deliberately module-internal. Adding a name here is a claim
+// that no Controller code path feature-detects it — check before you do.
+// `readQuota` is the bridge's own cache reader, consumed internally and by
+// tests/platform/claudeBridgeSafety.test.ts, never by the renderer.
+const CLAUDE_MODULE_PRIVATE_PORTS = new Set(['revision', 'readQuota'])
+for (const method of Object.keys(claudeModuleProbe)) {
+  if (CLAUDE_MODULE_PRIVATE_PORTS.has(method)) continue
+  if (typeof claudeModuleProbe[method] !== 'function') continue
+  assert(
+    typeof sandbox.window.eypcPlatform.claude[method] === 'function',
+    `claude bridge port ${method} exists but never reached window.eypcPlatform.claude`
+  )
+}
+assert(typeof sandbox.window.eypcPlatform.claude.readDesktopSnapshot === 'function', 'preload must expose claude.readDesktopSnapshot')
+assert(Array.isArray(sandbox.window.eypcPlatform.claude.readDesktopSnapshot({}).sessions), 'claude.readDesktopSnapshot must always return a sessions array')
+assert(typeof sandbox.window.eypcPlatform.claude.readPlanUsage === 'function', 'preload must expose claude.readPlanUsage')
+assert(sandbox.window.eypcPlatform.claude.readPlanUsage() === null, 'claude.readPlanUsage must degrade to null without a readable history file')
+assert(typeof sandbox.window.eypcPlatform.claude.watchDesktopSessions === 'function', 'preload must expose claude.watchDesktopSessions')
 assert(typeof sandbox.window.eypcPlatform.claude.watchEvents === 'function', 'preload must expose claude.watchEvents')
 assert(typeof sandbox.window.eypcPlatform.claude.watchEvents(() => {}) === 'function', 'claude.watchEvents must always return a disposer')
 assert(typeof sandbox.window.eypcPlatform.claude.install === 'function', 'preload must expose claude.install')

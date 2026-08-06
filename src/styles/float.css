@@ -589,6 +589,12 @@ button { font: inherit; }
 
 @container (max-width: 400px) {
   .float-quota-grid { grid-template-columns: 1fr; }
+  /* An account can carry three Claude windows (5h, weekly, per-model weekly),
+     so the row now holds up to six readings. The caption is still the first
+     thing to go — the platform tone and the group separator keep the two
+     providers apart — and it goes earlier than it used to, because a clipped
+     reading is worse than an unlabelled group. */
+  .float-quota-provider { display: none; }
   .float-header { min-height: 90px; grid-template-areas: 'brand actions' 'switch switch'; grid-template-columns: minmax(54px, 1fr) auto; grid-template-rows: auto auto; }
   .float-brand { grid-area: brand; }
   .float-header > .codex-style-switch { grid-area: switch; justify-self: center; }
@@ -694,6 +700,11 @@ button { font: inherit; }
 .float-quota-group.provider-codex .float-quota-chip strong { color: var(--codex-quota-codex); }
 .float-quota-group.provider-claude .float-quota-chip strong { color: var(--codex-quota-claude); }
 .float-quota-group.provider-claude .float-quota-provider { color: var(--codex-quota-claude); }
+/* Stale Claude reading: dimming is the glanceable cue; the equivalent
+   non-color cue lives in the 200ms hint and the accessible name
+   （"读数…可能已过期"）, per the accessibility preference. */
+.float-quota-chip.is-stale { opacity: .55; }
+.float-quota-chip.is-stale strong { color: var(--codex-muted); }
 /* Row-level provider marker.
    It rides the existing bottom metadata line rather than adding an element of
    its own: the dense list's row height and learned spatial rhythm must not

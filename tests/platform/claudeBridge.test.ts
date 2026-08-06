@@ -312,39 +312,150 @@ describe('snapshot assembly', () => {
 })
 
 describe('task jump', () => {
-  it('reports unavailable rather than throwing when nothing can focus the terminal', async () => {
-    const home = makeHome()
-    const bridge = makeBridge(home)
-    const result = await bridge.openTask('s1', { pid: 0 })
-    expect(['unavailable', 'failed']).toContain(result.outcome)
-    expect(result.confirmsRead).toBe(false)
+  const openModule = require_(resolve(process.cwd(), 'preload/claude/open.cjs'))
+  const desktopWindow = (overrides: Record<string, unknown> = {}) => ({
+    pid: 900,
+    instanceId: 'd1',
+    nativeRef: '900:0:5',
+    platform: 'darwin',
+    appId: 'com.anthropic.claudefordesktop',
+    appName: 'Claude',
+    title: 'Claude',
+    relationship: 'root',
+    userVisible: true,
+    canActivate: true,
+    ...overrides
+  })
+  const CLI_ID = '7badfe6b-950e-488b-a70c-cc6756e96763'
+  const DESKTOP_ID = `local_${CLI_ID}`
+
+  /** Captures the dispatched command without ever reaching a real `open`. */
+  function makeDispatchBridge(home: ReturnType<typeof makeHome>, rows: Record<string, unknown>[] | null, overrides: Record<string, unknown> = {}) {
+    const dispatched: { command: string; args: string[] }[] = []
+    const bridge = makeBridge(home, {
+      windows: rows === null ? undefined : { list: async () => rows, activate: async () => ({ outcome: 'activated' }) },
+      execFile: (command: string, args: string[], _opts: unknown, callback: (error: Error | null) => void) => {
+        dispatched.push({ command, args })
+        callback(null)
+      },
+      ...overrides
+    })
+    return { bridge, dispatched }
+  }
+
+  it('admits the desktop app by application identity, never by window title', () => {
+    expect(openModule.isClaudeDesktopWindow(desktopWindow())).toBe(true)
+    expect(openModule.isClaudeDesktopWindow({ appId: 'com.apple.Terminal', appName: 'Terminal', title: 'claude — 80x24' })).toBe(false)
+    expect(openModule.isClaudeDesktopWindow({ appId: 'com.anthropic.claude.url-handler', appName: 'Claude Code URL Handler' })).toBe(false)
+    expect(openModule.isClaudeDesktopWindow({ appId: '', appName: 'Claude' })).toBe(true)
   })
 
-  it('confirms a read only after a verified window activation', async () => {
-    const home = makeHome()
-    const bridge = makeBridge(home, {
-      windows: {
-        list: async () => [{ pid: process.pid, instanceId: 'i1', nativeRef: 'n1' }],
-        activate: async () => ({ outcome: 'ok' })
-      },
-      execFileSync: () => { throw new Error('no ps') }
-    })
-    const result = await bridge.openTask('s1', { pid: process.pid })
-    expect(result).toMatchObject({ outcome: 'opened', confirmsRead: true })
+  /**
+   * The deep link is the whole contract with the desktop app: a desktop id is
+   * `local_` + the uuid the handler wants, a CLI id is that uuid already, and
+   * anything the handler's own regex would drop must be rejected here instead
+   * of dispatched into a silent no-op.
+   */
+  it('reduces both session families to the same deep-link uuid', () => {
+    expect(openModule.deepLinkSessionUuid(DESKTOP_ID)).toBe(CLI_ID)
+    expect(openModule.deepLinkSessionUuid(CLI_ID)).toBe(CLI_ID)
+    expect(openModule.deepLinkSessionUuid(CLI_ID.toUpperCase())).toBe(CLI_ID)
+    expect(openModule.deepLinkSessionUuid('local_abc')).toBe('')
+    expect(openModule.deepLinkSessionUuid('')).toBe('')
+    expect(openModule.desktopResumeUrl(CLI_ID)).toBe(`claude://resume?session=${CLI_ID}`)
   })
 
-  it('does not confirm a read when activation fails', async () => {
+  it('opens a CLI session through the desktop app rather than a terminal', async () => {
+    const home = makeHome()
+    const { bridge, dispatched } = makeDispatchBridge(home, [desktopWindow()])
+    const result = await bridge.openTask(CLI_ID)
+    expect(dispatched).toEqual([{ command: 'open', args: [`claude://resume?session=${CLI_ID}`] }])
+    expect(result).toMatchObject({ outcome: 'dispatched', confirmsRead: false })
+  })
+
+  it('strips the local_ prefix before addressing a desktop session', async () => {
+    const home = makeHome()
+    const { bridge, dispatched } = makeDispatchBridge(home, [desktopWindow()])
+    const result = await bridge.openTask(DESKTOP_ID)
+    expect(dispatched[0].args).toEqual([`claude://resume?session=${CLI_ID}`])
+    expect(result.outcome).toBe('dispatched')
+  })
+
+  /**
+   * A hand-off is never proof that the user saw the session: the OS handler
+   * takes the URL and returns, so an expired sign-in looks exactly like a
+   * successful navigation. Nothing here may clear `completed-unread`.
+   */
+  it('never confirms a read', async () => {
+    const home = makeHome()
+    const { bridge } = makeDispatchBridge(home, [desktopWindow()])
+    expect((await bridge.openTask(CLI_ID)).confirmsRead).toBe(false)
+  })
+
+  it('refuses ids the resume handler would drop, without dispatching anything', async () => {
+    const home = makeHome()
+    const { bridge, dispatched } = makeDispatchBridge(home, [desktopWindow()])
+    const result = await bridge.openTask('local_abc')
+    expect(dispatched).toEqual([])
+    expect(result).toMatchObject({ outcome: 'unavailable', confirmsRead: false })
+  })
+
+  it('reports a closed desktop app instead of launching one', async () => {
+    const home = makeHome()
+    const { bridge, dispatched } = makeDispatchBridge(home, [])
+    const result = await bridge.openTask(CLI_ID)
+    expect(dispatched).toEqual([])
+    expect(result.outcome).toBe('unavailable')
+    expect(result.message).toContain('桌面端未在运行')
+  })
+
+  it('ignores child and non-visible rows when deciding the app is up', async () => {
+    const home = makeHome()
+    const { bridge, dispatched } = makeDispatchBridge(home, [
+      desktopWindow({ instanceId: 'c1', relationship: 'child' }),
+      desktopWindow({ instanceId: 'c3', userVisible: false })
+    ])
+    expect((await bridge.openTask(CLI_ID)).outcome).toBe('unavailable')
+    expect(dispatched).toEqual([])
+  })
+
+  /**
+   * A denied accessibility permission produces the same empty inventory as a
+   * closed app — but the deep link needs no accessibility at all, so refusing
+   * on that evidence would block a jump that works fine.
+   */
+  it('still dispatches when the inventory is blocked rather than empty', async () => {
+    const home = makeHome()
+    const { bridge, dispatched } = makeDispatchBridge(home, null, {
+      windows: {
+        list: async () => ({
+          capability: { platform: 'darwin', supported: true, permission: 'required', canList: false },
+          windows: [],
+          completeness: 'partial'
+        })
+      }
+    })
+    const result = await bridge.openTask(CLI_ID)
+    expect(result.outcome).toBe('dispatched')
+    expect(dispatched).toHaveLength(1)
+  })
+
+  it('dispatches even when no window subsystem is present at all', async () => {
+    const home = makeHome()
+    const { bridge, dispatched } = makeDispatchBridge(home, null)
+    expect((await bridge.openTask(CLI_ID)).outcome).toBe('dispatched')
+    expect(dispatched).toHaveLength(1)
+  })
+
+  it('reports a rejected dispatch as failed rather than pretending it opened', async () => {
     const home = makeHome()
     const bridge = makeBridge(home, {
-      windows: {
-        list: async () => [{ pid: process.pid, instanceId: 'i1', nativeRef: 'n1' }],
-        activate: async () => ({ outcome: 'failed' })
-      },
-      execFileSync: () => { throw new Error('no ps') },
-      execFile: (_cmd: string, _args: string[], _opts: unknown, callback: (error: Error | null) => void) => callback(null)
+      windows: { list: async () => [desktopWindow()] },
+      execFile: (_command: string, _args: string[], _opts: unknown, callback: (error: Error | null) => void) => {
+        callback(new Error('no handler'))
+      }
     })
-    const result = await bridge.openTask('s1', { pid: process.pid })
-    expect(result.confirmsRead).toBe(false)
+    expect(await bridge.openTask(CLI_ID)).toMatchObject({ outcome: 'failed', confirmsRead: false })
   })
 })
 

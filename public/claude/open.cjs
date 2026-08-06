@@ -3,19 +3,80 @@
 /**
  * Claude task jump.
  *
- * Claude Code has no deep link, so opening a task is a two-level fallback:
+ * Every Claude task opens inside the Claude desktop app — CLI sessions
+ * (`~/.claude`, a bare uuid) and desktop sessions (`local_<uuid>`) alike. There
+ * is no terminal route: the plugin never focuses a terminal window and never
+ * runs `claude --resume`.
  *
- *  1. Focus the terminal window that owns the session's `claude` process. The
- *     process id comes from a hook event, and the actual focusing is delegated
- *     to the window platform the plugin already ships — this module never
- *     executes native window code itself.
- *  2. Otherwise resume the session in a new terminal via `claude --resume`.
+ * The address is the desktop app's own deep link, read out of Claude 1.25927.0's
+ * `claudeURLHandler`:
  *
- * Only a confirmed focus is strong enough to be reported as `opened`; a resume
- * is reported as `dispatched`, which the Controller treats as a weaker signal.
+ *   claude://resume?session=<uuid>
+ *
+ * The handler accepts a canonical UUID only, then hands it to
+ * `LocalSessionManager.importCliSession(uuid)`, which resolves to the desktop
+ * session id `local_<uuid>` and navigates the app there. One link therefore
+ * serves both families:
+ *
+ *  - a desktop session is already in the app's store, so the manager returns
+ *    early: it un-archives the session, navigates, and touches nothing else;
+ *  - a CLI session is imported first, and that import is not free. The app
+ *    strips thinking blocks from `~/.claude/projects/**\/<uuid>.jsonl` **in
+ *    place**, marks the session's cwd as a trusted workspace and may claim its
+ *    git worktree. EyPc stays read-only — it only dispatches the link — but the
+ *    writes do happen, once per session, on the desktop app's side.
+ *
+ * The result is always `dispatched`, never `opened`. The OS handler takes the
+ * URL and returns immediately, so an expired sign-in, a missing transcript and
+ * a successful navigation are indistinguishable from here. None of them is
+ * evidence that the user saw the session, so no jump writes a read receipt.
  */
 
-const RESUME_TIMEOUT_MS = 8000
+/** Dispatch timeout for the deep-link handoff. */
+const OPEN_TIMEOUT_MS = 8000
+
+/**
+ * Application identity of the Claude desktop app. Identity comes from the app,
+ * never from a window title — the Window Jump contract is explicit that titles,
+ * tabs, ordinals and geometry establish neither identity nor relationship.
+ * `Claude Code URL Handler` shares the vendor prefix but ships no user-visible
+ * window; it is excluded anyway so an unexpected one can never win.
+ */
+const DESKTOP_APP_ID_PREFIX = 'com.anthropic.claude'
+const DESKTOP_APP_ID_EXCLUDE = /url[-_.]?handler|helper|updater/
+const DESKTOP_APP_NAMES = new Set(['claude', 'claude for desktop'])
+
+/**
+ * Canonical UUID — the only shape the `resume` handler accepts. Its own regex is
+ * exactly this, and anything else is dropped before the session manager is ever
+ * reached, so rejecting it here buys the user a real message instead of a
+ * silent no-op.
+ */
+const SESSION_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function isClaudeDesktopWindow(row) {
+  if (!row || typeof row !== 'object') return false
+  const appId = String(row.appId || '').trim().toLowerCase()
+  const appName = String(row.appName || '').trim().toLowerCase()
+  if (appId.startsWith(DESKTOP_APP_ID_PREFIX) && !DESKTOP_APP_ID_EXCLUDE.test(appId)) return true
+  return DESKTOP_APP_NAMES.has(appName)
+}
+
+/**
+ * Session id → deep-link uuid.
+ *
+ * A desktop id is `local_` followed by the very uuid the link wants, and a CLI
+ * id is that uuid already, so both families reduce to the same value. Returns
+ * '' for anything the handler would reject.
+ */
+function deepLinkSessionUuid(sessionId) {
+  const uuid = String(sessionId || '').trim().replace(/^local_/i, '')
+  return SESSION_UUID_PATTERN.test(uuid) ? uuid.toLowerCase() : ''
+}
+
+function desktopResumeUrl(uuid) {
+  return `claude://resume?session=${encodeURIComponent(uuid)}`
+}
 
 function outcome(kind, message, confirmsRead) {
   return {
@@ -25,135 +86,108 @@ function outcome(kind, message, confirmsRead) {
   }
 }
 
-function isAliveProcess(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return Boolean(error && error.code === 'EPERM')
-  }
-}
-
-/**
- * Walks up from the `claude` process to the terminal application that hosts it.
- * A terminal emulator is the first ancestor that is not a shell, so the walk is
- * bounded and stops as soon as it leaves the shell chain.
- */
-function resolveTerminalPid(dependencies, pid) {
-  const execFileSync = dependencies.execFileSync
-  if (typeof execFileSync !== 'function' || !isAliveProcess(pid)) return 0
-  const SHELLS = new Set(['sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'login', 'node', 'claude'])
-  let current = pid
-  for (let depth = 0; depth < 8; depth += 1) {
-    let output = ''
-    try {
-      output = String(execFileSync('ps', ['-o', 'ppid=,comm=', '-p', String(current)], {
-        timeout: 2000,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore']
-      })).trim()
-    } catch { return 0 }
-    if (!output) return 0
-    const match = output.match(/^(\d+)\s+(.*)$/)
-    if (!match) return 0
-    const parentPid = Number(match[1])
-    if (!Number.isInteger(parentPid) || parentPid <= 1) return 0
-    let parentName = ''
-    try {
-      parentName = String(execFileSync('ps', ['-o', 'comm=', '-p', String(parentPid)], {
-        timeout: 2000,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore']
-      })).trim()
-    } catch { return 0 }
-    const base = parentName.split('/').pop() || ''
-    if (base && !SHELLS.has(base.replace(/^-/, ''))) return parentPid
-    current = parentPid
-  }
-  return 0
-}
-
 function createOpener(dependencies) {
   const windows = dependencies.windows || null
   const execFile = dependencies.execFile || null
 
-  /** Level 1 — focus the owning terminal window. */
-  async function focusTerminal(pid) {
-    if (!isAliveProcess(pid)) return outcome('unavailable', '会话进程已结束')
-    if (!windows || typeof windows.list !== 'function' || typeof windows.activate !== 'function') {
-      return outcome('unavailable', '窗口跳转能力不可用')
-    }
-    const terminalPid = resolveTerminalPid(dependencies, pid) || pid
-    let rows = []
-    try {
-      const listed = await windows.list()
-      rows = Array.isArray(listed) ? listed : (listed && Array.isArray(listed.windows) ? listed.windows : [])
-    } catch {
-      return outcome('unavailable', '窗口清单读取失败')
-    }
-    const target = rows.find((row) => row && Number(row.pid) === terminalPid)
-    if (!target) return outcome('unavailable', '未找到承载该会话的终端窗口')
-    try {
-      const result = await windows.activate({ kind: 'root-current', instanceId: target.instanceId, nativeRef: target.nativeRef, pid: terminalPid })
-      const ok = result === true || (result && result.outcome === 'ok')
-      return ok ? outcome('opened', '', true) : outcome('failed', '终端窗口激活失败')
-    } catch {
-      return outcome('failed', '终端窗口激活失败')
+  function windowsUnavailable() {
+    return !windows || typeof windows.list !== 'function'
+  }
+
+  /** Window inventory, tolerant of both the array and enveloped shapes. */
+  async function listWindowRows() {
+    const listed = await windows.list()
+    if (Array.isArray(listed)) return { rows: listed, capability: null }
+    return {
+      rows: listed && Array.isArray(listed.windows) ? listed.windows : [],
+      capability: listed && typeof listed.capability === 'object' ? listed.capability : null
     }
   }
 
-  /** Level 2 — resume the session in a new terminal. */
-  function resumeInTerminal(sessionId, options) {
-    const settings = options || {}
-    const cliPath = String(settings.cliPath || '').trim()
-    const cwd = String(settings.cwd || '').trim()
-    if (!cliPath) return Promise.resolve(outcome('unavailable', '未找到 Claude Code CLI'))
+  /**
+   * Whether an empty inventory is empty because nothing is running, or because
+   * the plugin was never allowed to look. Returns '' when the inventory is
+   * simply empty.
+   */
+  function inventoryBlockReason(capability) {
+    if (!capability || typeof capability !== 'object') return ''
+    if (capability.supported === false) return '当前系统不支持窗口跳转'
+    if (capability.permission === 'required' || capability.canList === false) {
+      return '需要在系统设置中允许 EyPc 使用辅助功能'
+    }
+    return ''
+  }
+
+  /**
+   * Is the desktop app up?
+   *
+   * Only a readable inventory can answer that. A denied accessibility
+   * permission produces exactly the same empty list as a closed app — and the
+   * deep link needs no accessibility at all — so an unreadable inventory
+   * answers `unknown` and the jump proceeds, rather than refusing on evidence
+   * the plugin was never allowed to collect.
+   */
+  async function desktopRunningState() {
+    if (windowsUnavailable()) return 'unknown'
+    let listed = null
+    try {
+      listed = await listWindowRows()
+    } catch {
+      return 'unknown'
+    }
+    if (inventoryBlockReason(listed.capability)) return 'unknown'
+    const running = listed.rows.some((row) => isClaudeDesktopWindow(row)
+      && row.relationship !== 'child'
+      && row.userVisible !== false)
+    return running ? 'running' : 'closed'
+  }
+
+  /**
+   * Hands the deep link to the OS URL handler, which is what brings the app
+   * forward. Success here means the URL was accepted for delivery, nothing more
+   * — see the note on `dispatched` at the top of this file.
+   */
+  function dispatchDeepLink(url, platform) {
     if (typeof execFile !== 'function') return Promise.resolve(outcome('unavailable', '命令派发不可用'))
-    const platform = settings.platform || process.platform
-    const command = `${JSON.stringify(cliPath)} --resume ${JSON.stringify(sessionId)}`
-    const script = cwd ? `cd ${JSON.stringify(cwd)} && ${command}` : command
+    const host = platform || process.platform
     return new Promise((resolvePromise) => {
-      const done = (value) => resolvePromise(value)
+      const done = (error) => resolvePromise(error
+        ? outcome('failed', '唤起 Claude 桌面端失败')
+        : outcome('dispatched', '已在 Claude 桌面端打开该任务'))
       try {
-        if (platform === 'darwin') {
-          const applescript = `tell application "Terminal"\nactivate\ndo script ${JSON.stringify(script)}\nend tell`
-          execFile('osascript', ['-e', applescript], { timeout: RESUME_TIMEOUT_MS }, (error) => {
-            done(error ? outcome('failed', '终端恢复会话失败') : outcome('dispatched', '已在新终端恢复会话'))
-          })
+        if (host === 'darwin') {
+          execFile('open', [url], { timeout: OPEN_TIMEOUT_MS }, done)
           return
         }
-        if (platform === 'win32') {
-          execFile('cmd', ['/c', 'start', '', 'cmd', '/k', script], { timeout: RESUME_TIMEOUT_MS }, (error) => {
-            done(error ? outcome('failed', '终端恢复会话失败') : outcome('dispatched', '已在新终端恢复会话'))
-          })
+        if (host === 'win32') {
+          execFile('cmd', ['/c', 'start', '', url], { timeout: OPEN_TIMEOUT_MS }, done)
           return
         }
-        execFile('x-terminal-emulator', ['-e', 'sh', '-c', script], { timeout: RESUME_TIMEOUT_MS }, (error) => {
-          done(error ? outcome('unavailable', '未找到可用终端') : outcome('dispatched', '已在新终端恢复会话'))
-        })
+        execFile('xdg-open', [url], { timeout: OPEN_TIMEOUT_MS }, done)
       } catch {
-        done(outcome('failed', '终端恢复会话失败'))
+        done(new Error('dispatch failed'))
       }
     })
   }
 
   async function openTask(sessionId, options) {
     const settings = options || {}
-    const focused = await focusTerminal(Number(settings.pid))
-    if (focused.outcome === 'opened') return focused
-    const resumed = await resumeInTerminal(sessionId, settings)
-    if (resumed.outcome === 'dispatched' || resumed.outcome === 'opened') return resumed
-    // Report the more informative of the two failures.
-    return focused.outcome === 'unavailable' && resumed.outcome !== 'unavailable' ? resumed : focused
+    const uuid = deepLinkSessionUuid(sessionId)
+    // Without a canonical uuid the handler drops the link silently, so say so
+    // here instead of reporting a hand-off that never happened.
+    if (!uuid) return outcome('unavailable', '该会话没有可用于桌面端的地址')
+    if (await desktopRunningState() === 'closed') return outcome('unavailable', 'Claude 桌面端未在运行')
+    return dispatchDeepLink(desktopResumeUrl(uuid), settings.platform)
   }
 
-  return { focusTerminal, resumeInTerminal, openTask }
+  return { openTask }
 }
 
 module.exports = {
-  RESUME_TIMEOUT_MS,
-  isAliveProcess,
-  resolveTerminalPid,
+  OPEN_TIMEOUT_MS,
+  SESSION_UUID_PATTERN,
+  isClaudeDesktopWindow,
+  deepLinkSessionUuid,
+  desktopResumeUrl,
   createOpener
 }
