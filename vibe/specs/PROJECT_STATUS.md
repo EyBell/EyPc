@@ -1,7 +1,7 @@
 # EyPc Project Status Hub
 
 Tool: codex
-Date: 2026-08-03
+Date: 2026-08-06
 
 ## Purpose
 
@@ -33,7 +33,7 @@ This hub routes current implementation, verification gates and durable authoriti
 ## Other Active Deliveries
 
 - Window Jump: [spec](260724/1527-window-jump-workbench/spec.md#L1) / [verify](260724/1527-window-jump-workbench/verify.md#L1). WJ-22 keeps exact root identity as `PID+CGWindowID/HWND`, treats browser Tab/title/display/Space as mutable state, and clears a locator only after `probeInstance()` returns matching verified-gone evidence. A preload-session per-instance/per-display Space cache switches only the target display and retries one stale target once; same-app roots remain isolated, family projection cannot merge targets/slots, and slot recovery updates one slot. Native window scripts and operations now live exclusively in the platform modules; the main preload only guards, injects and mounts. Bridge `wj22-native-instance-space-cache`; full Vitest `58/58` files and `767/767` tests, typecheck, production/uTools build/package validation and post-extraction direct macOS multi-display/multi-Space exact-root smoke pass. Actual uTools reload/global-hotkey visual acceptance and Windows real-host checks remain pending.
-- File Favorites: [traceability](260711/1452-file-favorites-workbench/requirements-traceability.md#L1). Automated acceptance remains `36 files / 332 tests`; real macOS uTools file-action and Windows/Linux checks remain pending.
+- File Favorites: [current increment spec](260806/1120-favorite-quick-open-runners-slots/spec.md#L1) / [original workbench traceability](260711/1452-file-favorites-workbench/requirements-traceability.md#L1). 2026-08-06 状态 `automated-verified / host-pending`：按平台信任的结构化运行器、10 个 `mainHide` 文件槽、跨分组快速搜索、30 天半衰期学习、`Ctrl+1…0` 结果/抽屉分层和完整页槽位/学习管理已完成。收藏聚焦 `91/91`，新增 Runtime `4/4`，typecheck、production build、preload prepare 与 uTools validation 通过；当前并行工作树完整 Vitest 为 `1124/1127`，两项失败来自非收藏 Claude hook 监听，另一项 MQTT Runtime 超时已在干净 `HEAD 28e5db6` 复现。macOS/Windows/Linux 真实默认打开、后台/终端脚本、全局快捷键、重启与平台绑定仍为宿主门禁；固定角独立窗口是第二阶段，未实现。
 - Cross-tab command panels: [spec](260713/0834-cross-tab-responsive-command-panels/spec.md#L1) / [verify](260713/0834-cross-tab-responsive-command-panels/verify.md#L1). Shared panels/tooltips and responsive browser matrix are accepted; real host file actions remain pending.
 - Global operation tooltip: [spec](260730/2050-global-operation-tooltip-polish/spec.md#L1). All 271 current main-app native buttons have a static name source (including MQTT tooltip helpers); the shared layer now owns title-chord normalization, descriptions, disabled reasons, dynamic refresh and lifecycle cleanup, and suppresses the competing Codex main-page pseudo-tip. Float remains child-owned; development acceptance is user-owned.
 - Quick Jump: [spec](260718/0947-quick-jump-center-overlay/spec.md#L1). Target-center overlay automated/browser acceptance is retained; real uTools visual smoke remains pending.

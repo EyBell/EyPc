@@ -36,16 +36,21 @@ Current increment authorities: [260713/0834-cross-tab-responsive-command-panels/
 
 ## File Favorites
 
-Current increment authority: [260711/1452-file-favorites-workbench/spec.md](260711/1452-file-favorites-workbench/spec.md#L1); implementation traceability: [260711/1452-file-favorites-workbench/requirements-traceability.md](260711/1452-file-favorites-workbench/requirements-traceability.md#L1).
+Current increment authorities: [260711/1452-file-favorites-workbench/spec.md](260711/1452-file-favorites-workbench/spec.md#L1) and [260806/1120-favorite-quick-open-runners-slots/spec.md](260806/1120-favorite-quick-open-runners-slots/spec.md#L1); original workbench implementation traceability: [260711/1452-file-favorites-workbench/requirements-traceability.md](260711/1452-file-favorites-workbench/requirements-traceability.md#L1).
 
 - Favorites are plugin metadata for file/folder paths and virtual groups. Removing a favorite never deletes the disk file or folder.
-- Quick favorite mode is search/open/reveal/copy only; management mode supports add, edit, move, duplicate focus, and directory listing.
-- Open/reveal/copy stays behind the platform bridge in [src/platform/eypcPlatform.ts](../../src/platform/eypcPlatform.ts#L1) and [preload/index.js](../../preload/index.js#L1).
+- Quick favorite mode is a readonly, cross-group search/open-or-run/reveal/copy surface; management mode supports add, edit, move, duplicate focus, directory listing, runner trust, slot maintenance and learning reset.
+- Default open/reveal/copy and structured runner execution stay behind the platform bridge in [src/platform/eypcPlatform.ts](../../src/platform/eypcPlatform.ts#L1) and [preload/index.js](../../preload/index.js#L1).
 - Favorite metadata normalizes duplicate ids, orphan/self/cyclic parents, and equivalent paths without rewriting the displayed path. Windows drive and UNC paths compare case-insensitively with normalized separators; POSIX paths remain case-sensitive.
 - File action results distinguish confirmed success, host dispatch, reveal-as-open fallback, and failure. Missing, offline, or denied paths remain saved and surface runtime health instead of being silently removed.
 - Full favorites use command-owned `containers`, `items`, and one-level `directory` targets with deterministic focus, selection, drawer targeting, `Escape` recovery, inline rename, batch metadata actions, and one-step metadata-removal undo.
+- Each file/folder may store one custom runner per macOS/Windows/Linux platform. Runners use an executable plus argument array and `{path}` / `{dir}` / `{name}` placeholders; raw shell strings, custom environment variables, secrets and PowerShell policy bypasses are unsupported. Any platform, target identity/path/name or runner-config drift invalidates trust until the user confirms the fully resolved preview again.
+- Ten stable `mainHide` uTools entries (`eypc-favorite-slot-1`…`10`) bind favorites independently per platform. Full favorites expose one compact slot manager for assign/replace/clear/test/hotkey settings; failed or untrusted slots open the manager with a repair reason, while successful background/default opens keep the uTools main window hidden.
+- Quick entry autofocuses one global search and highlights the first result. Text exact/prefix/contains tiers precede query-specific successful-use affinity, global 30-day-half-life frecency and manual order; learning is bounded to 50 LRU queries and 10 favorites per query and increments only after a successful open/runner start. Full favorites can reset item/global learning.
+- Quick result rows 1–10 show `1…9,0`; with the drawer closed, `Ctrl+1…Ctrl+9` / `Ctrl+0` execute those results. An open action drawer has higher shortcut priority and reuses the same keys for its first ten actions.
 - Full favorites keep a compact two-pane layout, collapse containers into a command-controlled side layer below 720px, and provide keyboard, focus, ARIA, loading, empty, error, unsupported, and 420px overflow-safe states. Quick favorites remain readonly and never inherit management-page selection or drawers.
 - File favorites never create, move, rename, or delete real files; directory reads are non-recursive and do not follow symbolic links.
+- A fixed-corner launcher is a separate second-phase window proposal; the product does not monitor, move or pin the uTools main search window.
 
 ## Window Jump Workbench
 
