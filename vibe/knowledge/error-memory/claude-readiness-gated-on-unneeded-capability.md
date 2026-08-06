@@ -4,8 +4,9 @@ status: verified
 scope: project
 fingerprint: provider-lane-reports-empty__cli-binary-not-discoverable-under-gui-path__readiness-conflated-open-capability-with-data-readability__split-capability-and-widen-version-manager-roots__eypc-utools-claude-provider
 first_seen: 2026-08-05
-last_verified: 2026-08-05
-review_after: 2027-02-05
+last_verified: 2026-08-06
+review_after: 2027-02-06
+recurred: 2026-08-06
 evidence:
   - user-host-observation
   - user-screenshot
@@ -66,8 +67,35 @@ tags:
 - 适用边界：EyPc 的 Claude provider。不授权执行任意路径、不授权 shell 执行、不读取凭证。
 - 回退：仍找不到二进制时，卡片打开报「未找到 Claude Code CLI」，状态与额度不受影响。
 
+## 2026-08-06 复发：同一个门，新的被害者
+
+桌面端 provider 接入时，`refreshClaude` 里写着：
+
+```ts
+if (!isClaudeAvailable(claudeEnvironment)) {
+  claudeSessions = []
+  claudeDesktopSessions = []   // ← 桌面端跟着一起清空
+```
+
+`isClaudeAvailable` 描述的仍然是 **CLI**：它的二进制、它的 `~/.claude` 家目录、它的登录态。
+桌面端会话在 `~/Library/Application Support/Claude/` 下，三者一个都不需要。
+于是「只装了 Claude 桌面 App、从没装过 Claude Code」的用户开启开关后一张卡都没有。
+
+上一轮的预防规则写的是"拆分 capability"，做到了 `canOpenClaudeTask`；但**新增数据源时没有
+重新问那句话**——「这个能力的缺失，会让哪些数据读不出来」。答案是：让 CLI 转录读不出来，
+和桌面端毫无关系。
+
+一个刺眼的旁证：`companionPresentation.test.ts` 里有一条断言
+`claudeSourceStatusText({ enabled: true, environment: emptyClaudeEnvironment(), desktopSessionCount: 2 })`
+→ `'未检测到 Claude Code · 桌面端 2 个会话'`。**controller 永远产不出这个状态**（环境空 →
+桌面数组被清空 → count 恒 0）。测试描述了正确行为，实现做不到，没人对账。
+
+**加强后的规则**：每接入一个新数据源，必须重新走一遍 readiness 判定，逐条确认"这个门禁描述的
+能力，是这个新数据源需要的吗"。readiness 是**每个数据源各自**的属性，不是 provider 级别的。
+
 ## 记录历史
 
 | 日期 | 任务 | 触发 | 失败路线 | 证据 | 恢复 | 结果 |
 | --- | --- | --- | --- | --- | --- | --- |
 | 2026-08-05 | Claude 水球运行期缺陷修复 | 用户报告开启后卡片与额度全空 | 用二进制发现结果作为整条通道的 readiness | 用户终端 `type -a claude` 落在 nvm 路径 + 空 PATH 复现 | 拆分 capability、扩大发现根、改文案 | verified（源码）；宿主验收归用户 |
+| 2026-08-06 | Claude 桌面端 provider P5 对抗复核 | 复核发现桌面 lane 被 CLI readiness 连坐 | 新数据源沿用了旧的 provider 级 readiness 门 | 源码 + 一条自相矛盾的既有呈现层测试 | CLI 读取包进 `cliReadable` 分支，桌面 lane 只受 provider 开关约束；补「只装桌面端也能看到卡」回归 | verified（源码）；宿主验收归用户 |
