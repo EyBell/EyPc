@@ -1,6 +1,6 @@
 # EyPc Technical Details
 
-Tool: codex
+Tool: tool-neutral (codex, claude, and any CodeNote-routed agent)
 
 ## File Favorites Runtime
 
@@ -25,6 +25,15 @@ Tool: codex
 - Current product requirements: [../specs/PRODUCT_REQUIREMENTS.md](../specs/PRODUCT_REQUIREMENTS.md#L1).
 - Current MQTT implementation sync: [../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
 - Durable architecture facts live in [ARCHITECTURE.md](ARCHITECTURE.md#L1); repeated wrong paths live in [error-memory.md](error-memory.md#L1); interaction taste lives in [developer-soul.md](developer-soul.md#L1).
+
+## Claude Companion Provider
+
+- Last verified: 2026-08-06.
+- Pure domain: [claude.ts](../../src/domain/claude.ts#L1) owns CLI session/quota/readiness; [claudeDesktop.ts](../../src/domain/claudeDesktop.ts#L1) owns desktop metadata/audit projection, dedup and `combineClaudeLaneCards` into the shared `claude:` lane. [companionPresentation.ts](../../src/domain/companionPresentation.ts#L1) owns the expanded quota strip, registration rows, source-status text and Claude chip hint copy.
+- Preload: guarded `preload/claude/` facade. `desktop.cjs` is read-only discovery, metadata, audit-tail summary, plan-usage history, unread byte-scan and directory watch; `open.cjs` dispatches only `claude://resume?session=<uuid>` and never focuses a terminal or runs `claude --resume`. Plan-usage and unread ports fail closed to `null`, never to an empty invented set.
+- Controller: [codexController.ts](../../src/runtime/codexController.ts#L1) refreshes desktop snapshots on the Claude cadence, merges cards through the combiner, folds App unread into `codex.claudeDesktopUnread`, and treats deep-link open as `dispatched` without a read acknowledgement.
+- Product contract: [PRODUCT_REQUIREMENTS.md](../specs/PRODUCT_REQUIREMENTS.md#L99) Companion section. Task evidence: [1046](../specs/260806/1046-claude-quota-status-visibility/verify.md#L1), [1130](../specs/260806/1130-claude-desktop-provider/verify.md#L1), [2115](../specs/260806/2115-claude-registration-visibility/verify.md#L1), [2147](../specs/260806/2147-claude-open-in-desktop-app/verify.md#L1) / [unread-authority](../specs/260806/2147-claude-open-in-desktop-app/unread-authority.md#L1), [2210](../specs/260806/2210-claude-quota-all-windows/verify.md#L1).
+- Update trigger: change this record when the Claude open route, unread authority, quota merge sources, desktop lane fold, registration rows or preload packaging ports change.
 
 ## Codex App Server And Floating Surface
 
