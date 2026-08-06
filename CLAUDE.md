@@ -1,10 +1,10 @@
-# EyPc AI Adapter
+# EyPc AI Adapter (Claude Code)
 
 Tool: tool-neutral (codex, claude, and any CodeNote-routed agent)
 
-**Canonical adapter body.** Codex / cross-tool entry; [CLAUDE.md](CLAUDE.md#L1) mirrors this file for Claude Code, which does not read `AGENTS.md` natively. Change both together. Neither restates the CodeNote master.
+Repository-owned entry for Claude Code. **Mirror of [AGENTS.md](AGENTS.md#L1)** — that file is the canonical adapter body; keep this one synchronized with it and change both together. Neither restates the CodeNote master.
 
-> A global SessionStart hook may additionally inject this file into Claude Code (see `~/.claude/settings.json`). That is redundancy, not discovery — it travels with the machine, not the repository. When both arrive, treat them as one authority rather than two.
+> A global SessionStart hook may also inject `AGENTS.md`. That is convenience, not discovery: it travels with the machine, not this repository. This file is what makes the repo self-sufficient for Claude Code; when both arrive, treat them as one authority, not two.
 
 Read first:
 - [vibe/rules/README.md](vibe/rules/README.md#L1)
