@@ -8535,6 +8535,13 @@ window.eypcPlatform = {
   claude: {
     inspect: () => claudeBridge ? claudeBridge.inspect() : claudeUnavailable('environment'),
     readSnapshot: (...args) => claudeBridge ? claudeBridge.readSnapshot(...args) : claudeUnavailable('snapshot'),
+    // Opt-in idle fallback. The Controller feature-detects this method, so
+    // omitting it here silently disabled the `claudeQuotaFallback` setting no
+    // matter what the user chose.
+    readQuotaFallback: (...args) => claudeBridge ? claudeBridge.readQuotaFallback(...args) : Promise.resolve(null),
+    // Push lane for hook-queue appends. Returns a disposer in every case, so a
+    // caller never has to branch on whether the bridge loaded.
+    watchEvents: (...args) => claudeBridge ? claudeBridge.watchEvents(...args) : (() => {}),
     install: (...args) => claudeBridge ? claudeBridge.install(...args) : claudeUnavailable('result'),
     uninstall: (...args) => claudeBridge ? claudeBridge.uninstall(...args) : claudeUnavailable('result'),
     openTask: (...args) => claudeBridge ? claudeBridge.openTask(...args) : Promise.resolve(claudeUnavailable('open')),

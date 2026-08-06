@@ -67,6 +67,8 @@ function createClaudeBridge(dependencies) {
   const hookCommandLine = settingsCommandLine(hookCommandPath, dependencies.platform)
   const statuslineCommandLine = settingsCommandLine(statuslineCommandPath, dependencies.platform)
 
+  let eventWatchDispose = null
+
   // Newest CLI version seen in a transcript. Claude Code stamps every entry
   // with the version that wrote it, which avoids spawning the binary just to
   // ask what it is.
@@ -188,6 +190,7 @@ function createClaudeBridge(dependencies) {
     const cached = readQuota()
     return quotaFallback.read({
       enabled: settings.enabled === true,
+      coldStart: settings.coldStart === true,
       now: settings.now,
       minStaleMs: settings.minStaleMs,
       primaryUpdatedAt: cached ? cached.updatedAt : 0,
@@ -268,7 +271,30 @@ function createClaudeBridge(dependencies) {
     })
   }
 
+  /**
+   * Subscribes to hook-queue appends. One subscription at a time: the Controller
+   * owns exactly one lane, and leaking watchers across provider toggles would
+   * fan one event out into several redundant reads.
+   */
+  function watchEvents(listener, options) {
+    if (eventWatchDispose) {
+      eventWatchDispose()
+      eventWatchDispose = null
+    }
+    if (typeof listener !== 'function') return () => {}
+    const dispose = queue.watch(listener, options)
+    eventWatchDispose = dispose
+    return () => {
+      if (eventWatchDispose === dispose) eventWatchDispose = null
+      dispose()
+    }
+  }
+
   function close() {
+    if (eventWatchDispose) {
+      eventWatchDispose()
+      eventWatchDispose = null
+    }
     queue.reset()
     quotaFallback.reset()
   }
@@ -287,6 +313,7 @@ function createClaudeBridge(dependencies) {
     readSnapshot,
     readQuota,
     readQuotaFallback,
+    watchEvents,
     openTask,
     close
   }

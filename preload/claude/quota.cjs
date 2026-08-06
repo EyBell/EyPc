@@ -26,6 +26,15 @@ const REQUEST_TIMEOUT_MS = 8000
 const DEFAULT_MIN_STALE_MS = 10 * 60 * 1000
 /** Never call more often than this, whatever the caller asks for. */
 const MIN_CALL_INTERVAL_MS = 5 * 60 * 1000
+/**
+ * How many times the cold-start path may try before giving up for this process.
+ *
+ * Cold start runs without the user opting in, so it must be self-limiting. A
+ * denied keychain prompt or a withdrawn endpoint returns the same "no reading"
+ * as a transient network failure, and retrying that forever would re-prompt the
+ * user indefinitely for a read they never asked for.
+ */
+const MAX_COLD_START_ATTEMPTS = 3
 
 function readTokenFromCredentialsFile(dependencies, claudeHome) {
   const fs = dependencies.fs
@@ -122,26 +131,39 @@ function toRateLimits(payload) {
 function createQuotaFallback(dependencies) {
   const fetchImpl = dependencies.fetch || (typeof fetch === 'function' ? fetch : null)
   let lastAttemptAt = 0
+  let coldStartAttempts = 0
 
   /**
    * Attempts one fallback read.
    *
-   * Returns null for every non-success path — disabled, rate limited by our own
-   * interval, no token, network failure, unexpected shape. The caller treats
-   * null as "keep the previous reading", never as an error.
+   * Two callers, one mechanism. `enabled` is the user's opt-in for the periodic
+   * idle refresh; `coldStart` is the unconditional first read that only applies
+   * while no reading exists at all. Either one may authorize an attempt, and
+   * both are bounded — `enabled` by the call interval, `coldStart` by that plus
+   * an attempt cap.
+   *
+   * Returns null for every non-success path — not authorized, rate limited by
+   * our own interval, no token, network failure, unexpected shape. The caller
+   * treats null as "keep the previous reading", never as an error.
    */
   async function read(options) {
     const settings = options || {}
-    if (settings.enabled !== true) return null
-    if (typeof fetchImpl !== 'function') return null
     const now = Number.isFinite(settings.now) ? settings.now : Date.now()
     const minStaleMs = Number.isFinite(settings.minStaleMs) ? settings.minStaleMs : DEFAULT_MIN_STALE_MS
     const primaryAt = Number.isFinite(settings.primaryUpdatedAt) ? settings.primaryUpdatedAt : 0
+    // A cold start is only cold while nothing has ever been read. A caller that
+    // still has a cached status line reading is asking for the idle refresh,
+    // whatever flag it passed.
+    const coldStart = settings.coldStart === true && primaryAt <= 0
+    if (settings.enabled !== true && !coldStart) return null
+    if (coldStart && settings.enabled !== true && coldStartAttempts >= MAX_COLD_START_ATTEMPTS) return null
+    if (typeof fetchImpl !== 'function') return null
     // The status line is authoritative while it is fresh; only reach for the
     // undocumented endpoint once the primary reading has actually gone stale.
     if (primaryAt > 0 && now - primaryAt < minStaleMs) return null
     if (lastAttemptAt > 0 && now - lastAttemptAt < MIN_CALL_INTERVAL_MS) return null
     lastAttemptAt = now
+    if (coldStart) coldStartAttempts += 1
 
     return withAccessToken(dependencies, settings.claudeHome || '', async (token) => {
       const controller = typeof AbortController === 'function' ? new AbortController() : null
@@ -168,7 +190,7 @@ function createQuotaFallback(dependencies) {
     })
   }
 
-  return { read, reset: () => { lastAttemptAt = 0 } }
+  return { read, reset: () => { lastAttemptAt = 0; coldStartAttempts = 0 } }
 }
 
 module.exports = {
@@ -177,6 +199,7 @@ module.exports = {
   KEYCHAIN_SERVICE,
   DEFAULT_MIN_STALE_MS,
   MIN_CALL_INTERVAL_MS,
+  MAX_COLD_START_ATTEMPTS,
   toRateLimits,
   withAccessToken,
   createQuotaFallback

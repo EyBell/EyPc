@@ -52,6 +52,9 @@ interface HarnessOptions {
   quota?: { five_hour?: { used_percentage: number } } | null
   openResult?: { outcome: string; confirmsRead: boolean; message?: string }
   codexThreads?: unknown[]
+  quotaFallbackResult?: { rateLimits: { five_hour?: { used_percentage: number } }; updatedAt: number } | null
+  /** Hold each readSnapshot until the test releases it, to exercise in-flight replay. */
+  gateSnapshot?: boolean
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -61,14 +64,21 @@ function harness(options: HarnessOptions = {}) {
   state.codex.settings.floatEnabled = true
   state.codex.settings.providers = { codex: true, claude: options.claudeEnabled !== false }
   const openCalls: Array<{ sessionId: string; pid?: number }> = []
+  const fallbackCalls: Array<{ enabled?: boolean; coldStart?: boolean }> = []
+  const eventListeners: Array<() => void> = []
+  let watchDisposals = 0
+  const snapshotGates: Array<() => void> = []
   let snapshotReads = 0
   const claudeBridge = {
     inspect: () => options.unavailable
       ? { version: 1 as const, installed: false, homeReady: false, authenticated: false, cliVersion: '', hooks: 'missing' as const, statusline: 'missing' as const, checkedAt: Date.now() }
       : { version: 1 as const, installed: true, homeReady: true, authenticated: true, cliVersion: '2.1.220', hooks: 'installed' as const, statusline: 'installed' as const, checkedAt: Date.now() },
-    readSnapshot: () => {
+    readSnapshot: async () => {
       snapshotReads += 1
       if (options.throwOnSnapshot) throw new Error('claude bridge exploded')
+      if (options.gateSnapshot) {
+        await new Promise<void>((release) => { snapshotGates.push(release) })
+      }
       return {
         version: 1 as const,
         revision: 'test',
@@ -77,6 +87,14 @@ function harness(options: HarnessOptions = {}) {
         quota: options.quota === null ? null : { rateLimits: options.quota || { five_hour: { used_percentage: 25 } }, updatedAt: Date.now() },
         readAt: Date.now()
       }
+    },
+    readQuotaFallback: async (opts?: { enabled?: boolean; coldStart?: boolean }) => {
+      fallbackCalls.push({ enabled: opts?.enabled, coldStart: opts?.coldStart })
+      return options.quotaFallbackResult ?? null
+    },
+    watchEvents: (listener: () => void) => {
+      eventListeners.push(listener)
+      return () => { watchDisposals += 1 }
     },
     install: () => ({ ok: true }),
     uninstall: () => ({ ok: true }),
@@ -124,8 +142,14 @@ function harness(options: HarnessOptions = {}) {
     controller,
     state,
     openCalls,
+    fallbackCalls,
     messages,
     snapshotReads: () => snapshotReads,
+    subscriptions: () => eventListeners.length,
+    disposals: () => watchDisposals,
+    emitHookEvent: () => { eventListeners[eventListeners.length - 1]?.() },
+    releaseSnapshot: () => { snapshotGates.shift()?.() },
+    pendingGates: () => snapshotGates.length,
     setSessions: (next: ClaudeSessionSeed[]) => { sessions = next }
   }
 }
@@ -450,5 +474,129 @@ describe('claude refresh lane', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('quota cold start versus idle drift', () => {
+  /**
+   * The status line is the credential-free source but only runs while Claude
+   * Code renders. Until it has run once the quota area is blank, which is worth
+   * one automatic read; after that, keeping an existing reading fresh is the
+   * user's decision because it means reading credentials periodically.
+   */
+  it('asks for a cold read when the status line has produced nothing', async () => {
+    const app = harness({ sessions: [{ sessionId: 's1' }], quota: null })
+    await app.controller.start()
+    await app.controller.refresh()
+
+    expect(app.state.codex.settings.claudeQuotaFallback).toBe(false)
+    expect(app.fallbackCalls.length).toBeGreaterThan(0)
+    expect(app.fallbackCalls[0]).toEqual({ enabled: false, coldStart: true })
+  })
+
+  it('stops asking once any reading exists', async () => {
+    const app = harness({ sessions: [{ sessionId: 's1' }] })
+    await app.controller.start()
+    await app.controller.refresh()
+    // The bridge snapshot carried a status line reading, so there is nothing
+    // blank to rescue and the opt-in switch is off.
+    expect(app.fallbackCalls).toEqual([])
+    expect(app.controller.view().claudeQuota.short?.remainingPercent).toBe(75)
+  })
+
+  it('keeps the periodic refresh behind the opt-in switch', async () => {
+    const app = harness({ sessions: [{ sessionId: 's1' }] })
+    app.state.codex.settings.claudeQuotaFallback = true
+    await app.controller.start()
+    await app.controller.refresh()
+    expect(app.fallbackCalls[0]).toEqual({ enabled: true, coldStart: false })
+  })
+
+  it('adopts a cold reading and reports it as coming from the usage API', async () => {
+    const app = harness({
+      sessions: [{ sessionId: 's1' }],
+      quota: null,
+      quotaFallbackResult: { rateLimits: { five_hour: { used_percentage: 40 } }, updatedAt: Date.now() }
+    })
+    await app.controller.start()
+    await app.controller.refresh()
+    const view = app.controller.view()
+    expect(view.claudeQuota.short?.remainingPercent).toBe(60)
+    expect(view.claudeQuota.source).toBe('usage-api')
+  })
+})
+
+describe('hook events push instead of waiting for the interval', () => {
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  it('subscribes while the provider is on and refreshes on an event', async () => {
+    const app = harness({ sessions: [{ sessionId: 's1' }] })
+    await app.controller.start()
+    await app.controller.refresh()
+    expect(app.subscriptions()).toBe(1)
+
+    const before = app.snapshotReads()
+    app.setSessions([{ sessionId: 's1' }, { sessionId: 's2' }])
+    app.emitHookEvent()
+    await tick()
+    await tick()
+
+    // No timer advanced: the read happened because the queue changed.
+    expect(app.snapshotReads()).toBeGreaterThan(before)
+    const keys = app.controller.view().taskState.conversations.all.map((task) => task.key)
+    expect(keys).toContain('claude:s2')
+  })
+
+  it('replays an event that arrived while a read was in flight', async () => {
+    const app = harness({ sessions: [{ sessionId: 's1' }], gateSnapshot: true })
+    await app.controller.start()
+    void app.controller.refresh()
+    await tick()
+    expect(app.pendingGates()).toBe(1)
+
+    // The queue grew mid-read. Dropping this would lose the event entirely,
+    // because the append already happened and nothing re-announces it.
+    app.emitHookEvent()
+    const before = app.snapshotReads()
+    app.releaseSnapshot()
+    await tick()
+    await tick()
+    expect(app.snapshotReads()).toBeGreaterThan(before)
+    app.releaseSnapshot()
+  })
+
+  it('unsubscribes when the provider is switched off and resubscribes when it returns', async () => {
+    const app = harness({ sessions: [{ sessionId: 's1' }] })
+    await app.controller.start()
+    expect(app.subscriptions()).toBe(1)
+
+    app.controller.updateSettings({ providers: { codex: true, claude: false } })
+    expect(app.disposals()).toBe(1)
+    expect(app.subscriptions()).toBe(1)
+
+    app.controller.updateSettings({ providers: { codex: true, claude: true } })
+    expect(app.subscriptions()).toBe(2)
+  })
+
+  it('ignores an event after dispose', async () => {
+    const app = harness({ sessions: [{ sessionId: 's1' }] })
+    await app.controller.start()
+    await app.controller.refresh()
+    app.controller.dispose()
+    expect(app.disposals()).toBe(1)
+
+    const before = app.snapshotReads()
+    app.emitHookEvent()
+    await tick()
+    await tick()
+    expect(app.snapshotReads()).toBe(before)
+  })
+
+  it('starts without a push lane when the preload is too old to offer one', async () => {
+    const app = harness({ sessions: [{ sessionId: 's1' }] })
+    await app.controller.start()
+    await app.controller.refresh()
+    // The lane is optional; the interval alone still produced the inventory.
+    expect(app.controller.view().taskState.conversations.all.length).toBeGreaterThan(0)
   })
 })

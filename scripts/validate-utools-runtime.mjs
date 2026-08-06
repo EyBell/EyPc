@@ -85,7 +85,7 @@ const claudeModuleProbe = claudeModule.createClaudeBridge({
   os: { homedir: () => '/tmp' },
   dataDirectory: '/tmp/eypc-claude-validation'
 })
-for (const method of ['inspect', 'readSnapshot', 'readQuotaFallback', 'install', 'uninstall', 'openTask', 'close']) {
+for (const method of ['inspect', 'readSnapshot', 'readQuotaFallback', 'watchEvents', 'install', 'uninstall', 'openTask', 'close']) {
   assert(typeof claudeModuleProbe[method] === 'function', `claude preload module must expose stable ${method}`)
 }
 assert(claudeModuleProbe.readSnapshot().sessions.length === 0, 'claude module must degrade to an empty inventory without a readable home')
@@ -206,6 +206,8 @@ assert(typeof sandbox.window.eypcPlatform.claude.readSnapshot === 'function', 'p
 // is not enough: the facade omitted it, so the opt-in quota fallback was a
 // dead switch in every packaged build while the module test stayed green.
 assert(typeof sandbox.window.eypcPlatform.claude.readQuotaFallback === 'function', 'preload must expose claude.readQuotaFallback')
+assert(typeof sandbox.window.eypcPlatform.claude.watchEvents === 'function', 'preload must expose claude.watchEvents')
+assert(typeof sandbox.window.eypcPlatform.claude.watchEvents(() => {}) === 'function', 'claude.watchEvents must always return a disposer')
 assert(typeof sandbox.window.eypcPlatform.claude.install === 'function', 'preload must expose claude.install')
 assert(typeof sandbox.window.eypcPlatform.claude.uninstall === 'function', 'preload must expose claude.uninstall')
 assert(typeof sandbox.window.eypcPlatform.claude.openTask === 'function', 'preload must expose claude.openTask')

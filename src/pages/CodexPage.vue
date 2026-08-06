@@ -946,9 +946,9 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             <div class="codex-expanded-card-preview" :style="cardPreviewStyle" aria-label="悬浮展开卡片颜色部位预览">
               <div class="expanded-card-preview-tabs"><b><i>3</i>动态</b><span>已完成</span><span>已隐藏</span><span>项目</span></div>
               <div class="expanded-card-preview-search"><i /><span>搜索会话、别名或项目</span></div>
-              <div class="expanded-card-preview-quota"><b class="preview-quota-codex"><span>5h</span><strong>72%</strong></b><b class="preview-quota-codex"><span>周</span><strong>83%</strong></b><em>Claude</em><b class="preview-quota-claude"><span>5h</span><strong>58%</strong></b></div>
+              <div class="expanded-card-preview-quota"><span>5 小时限额</span><strong>72%</strong><i><b /></i></div>
               <div class="expanded-card-preview-task"><i /><span>进行中的 Codex 会话</span><small>2 分钟前</small></div>
-              <div class="expanded-card-preview-map"><span><b>层次</b>主背景、内层块与边框</span><span><b>内容</b>主/次文字、选中和焦点</span><span><b>状态</b>进行中与完成未读</span><span><b>额度</b>Codex 与 Claude 读数</span></div>
+              <div class="expanded-card-preview-map"><span><b>层次</b>主背景、内层块与边框</span><span><b>内容</b>主/次文字、选中和焦点</span><span><b>状态</b>进行中与完成未读</span></div>
             </div>
             <div class="codex-card-appearance-controls" aria-label="展开卡片主题配置">
               <div class="codex-card-config-group">
@@ -966,11 +966,6 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
                 <strong>交互强调</strong>
                 <label class="codex-color-control"><input type="color" :value="snapshot.settings.expandedCardAppearance.accent" @input="updateExpandedCardAppearance('accent', ($event.target as HTMLInputElement).value)" /><span><strong>选中 / 进度强调</strong><small>当前页签、进度与完成状态</small></span></label>
                 <label class="codex-color-control"><input type="color" :value="snapshot.settings.expandedCardAppearance.focus" @input="updateExpandedCardAppearance('focus', ($event.target as HTMLInputElement).value)" /><span><strong>键盘焦点</strong><small>页签和按钮的焦点框</small></span></label>
-              </div>
-              <div class="codex-card-config-group">
-                <strong>额度读数</strong>
-                <label class="codex-color-control"><input type="color" :value="snapshot.settings.expandedCardAppearance.codexQuota" @input="updateExpandedCardAppearance('codexQuota', ($event.target as HTMLInputElement).value)" /><span><strong>Codex 额度</strong><small>额度行里 Codex 与 Spark 的百分比</small></span></label>
-                <label class="codex-color-control"><input type="color" :value="snapshot.settings.expandedCardAppearance.claudeQuota" @input="updateExpandedCardAppearance('claudeQuota', ($event.target as HTMLInputElement).value)" /><span><strong>Claude 额度</strong><small>额度行里 Claude 的来源标与百分比</small></span></label>
               </div>
               <div class="codex-card-config-group">
                 <strong>任务状态</strong>
@@ -1013,13 +1008,13 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         </label>
         <label v-if="snapshot.settings.providers.claude" class="codex-switch-row">
           <span>
-            <strong>空闲时补充读取额度</strong>
+            <strong>空闲时持续补充读取额度</strong>
           </span>
           <input
             type="checkbox"
             :checked="snapshot.settings.claudeQuotaFallback"
-            data-operation-tooltip="空闲时补充读取额度"
-            data-operation-description="默认关闭。状态栏脚本只在 Claude Code 渲染时更新额度；开启后仅在读数明显过期时改用账号用量接口补一次。代价是需读取登录凭证（macOS 会弹出钥匙串授权）并调用未公开接口，失败只保留上次读数。"
+            data-operation-tooltip="空闲时持续补充读取额度"
+            data-operation-description="默认关闭，只影响「已有读数、但正在变旧」的情况。一次读数都没有时，无论此开关如何都会自动补读一次，避免额度区一直空着。开启后会在读数明显过期时继续补读，代价是周期性读取登录凭证（macOS 会弹出钥匙串授权）并调用未公开接口，失败只保留上次读数。"
             @change="update({ claudeQuotaFallback: ($event.target as HTMLInputElement).checked })"
           />
           <i />

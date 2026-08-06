@@ -305,8 +305,18 @@ export interface EypcPlatformApi {
   claude?: {
     inspect(): Promise<ClaudeEnvironmentSnapshot> | ClaudeEnvironmentSnapshot
     readSnapshot(options?: { now?: number; windowMs?: number }): Promise<ClaudeBridgeSnapshot> | ClaudeBridgeSnapshot
-    /** Opt-in network fallback; resolves null for every non-success path. */
-    readQuotaFallback?(options?: { enabled?: boolean; now?: number; minStaleMs?: number }): Promise<{ rateLimits: ClaudeRateLimitsInput; updatedAt: number } | null>
+    /**
+     * Network fallback; resolves null for every non-success path. `enabled` is
+     * the user's opt-in for the periodic idle refresh, `coldStart` the bounded
+     * first read taken only while no reading exists at all.
+     */
+    readQuotaFallback?(options?: { enabled?: boolean; coldStart?: boolean; now?: number; minStaleMs?: number }): Promise<{ rateLimits: ClaudeRateLimitsInput; updatedAt: number } | null>
+    /**
+     * Fires once per burst of hook-queue appends and returns a disposer.
+     * Optional: an older preload simply never pushes and the Controller's
+     * interval remains the only source of freshness.
+     */
+    watchEvents?(listener: () => void, options?: { coalesceMs?: number }): () => void
     install(options?: { statusline?: boolean }): Promise<ClaudeRegistrationResult> | ClaudeRegistrationResult
     uninstall(): Promise<ClaudeRegistrationResult> | ClaudeRegistrationResult
     openTask(sessionId: string, options?: { pid?: number; cwd?: string }): Promise<ClaudeOpenResult>
