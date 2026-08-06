@@ -280,7 +280,7 @@ export interface AppState {
   codex: CodexState
   settings: AppSettings
   settingsTabId: 'shortcuts' | 'maintenance'
-  settingsMaintenanceSectionId: 'features' | 'tools' | 'layers' | 'storage' | 'commands' | 'resolution' | 'reservations'
+  settingsMaintenanceSectionId: 'features' | 'tools' | 'layers' | 'storage' | 'commands' | 'resolution' | 'reservations' | 'window-diagnostics'
   updatedAt: number
 }
 

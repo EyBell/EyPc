@@ -6,6 +6,7 @@ import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createInitialState } from '../../src/domain/state'
 import { createAppRuntime, type AppRuntimeSnapshot, type WindowActivationDiagnostic, type WindowOperationDebugRecord } from '../../src/runtime/appRuntime'
+import SettingsPage from '../../src/pages/SettingsPage.vue'
 import WindowsPage from '../../src/pages/WindowsPage.vue'
 
 function snapshotWithDiagnostics(
@@ -17,6 +18,17 @@ function snapshotWithDiagnostics(
   state.activeTab = 'windows'
   return {
     ...createAppRuntime(state).snapshot(),
+    windowCapability: {
+      platform: 'darwin',
+      bridgeRevision: 'wj22-native-instance-space-cache',
+      supported: true,
+      permission: 'granted',
+      canList: true,
+      canActivate: true,
+      canClose: true,
+      canAlwaysOnTop: false
+    },
+    windowListLoaded: true,
     windowActivationDiagnostics,
     windowOperationTraceEnabled: options.traceEnabled === true,
     windowOperationTraces: options.traces || []
@@ -66,18 +78,29 @@ describe('window activation diagnostics panel', () => {
   it('stays hidden when this runtime has no diagnostics', () => {
     const wrapper = mount(WindowsPage, { props: { snapshot: snapshotWithDiagnostics() } })
     expect(wrapper.find('.window-activation-diagnostics').exists()).toBe(false)
+    expect(wrapper.get('#window-status-band').text()).not.toContain('系统拒绝聚焦')
   })
 
-  it('keeps slots and logs in collapsible side rails so the list remains the main surface', () => {
+  it('hides the production log rail and keeps only the slot rail beside the list', () => {
     const wrapper = mount(WindowsPage, { props: { snapshot: snapshotWithDiagnostics() } })
     expect(wrapper.find('.window-slot-rail').exists()).toBe(true)
-    expect(wrapper.find('.window-log-rail').exists()).toBe(true)
+    expect(wrapper.find('.window-log-rail').exists()).toBe(false)
     expect(wrapper.find('.windows-body .window-workbench').exists()).toBe(true)
     expect(wrapper.find('.window-slot-strip').exists()).toBe(false)
     const css = readFileSync(resolve(process.cwd(), 'src/styles/app.css'), 'utf8')
     expect(css).toContain('.window-slot-rail.expanded')
     expect(css).toContain('grid-template-rows: repeat(10, minmax(0, 1fr))')
     expect(css).toContain('.window-log-rail.expanded')
+  })
+
+  it('keeps the development log rail only when operation tracing is enabled', () => {
+    const wrapper = mount(WindowsPage, {
+      props: {
+        snapshot: snapshotWithDiagnostics([], { traceEnabled: true, traces: [operationTrace()] })
+      }
+    })
+    expect(wrapper.find('.window-log-rail').exists()).toBe(true)
+    expect(wrapper.find('[data-role="window-operation-trace"]').exists()).toBe(true)
   })
 
   it('hides the short blocking panel while development operation traces are enabled', () => {
@@ -90,22 +113,21 @@ describe('window activation diagnostics panel', () => {
     expect(wrapper.find('[data-role="window-operation-trace"]').exists()).toBe(true)
   })
 
-  it('renders blocking diagnostics with alert semantics and only sanitized fields', () => {
+  it('surfaces the latest sanitized diagnostic on the status band in production builds', () => {
     const wrapper = mount(WindowsPage, { props: { snapshot: snapshotWithDiagnostics([diagnostic()]) } })
-    const panel = wrapper.get('.window-activation-diagnostics')
+    const band = wrapper.get('#window-status-band')
 
-    expect(panel.get('.window-activation-diagnostics-summary').attributes('role')).toBe('alert')
-    expect(panel.get('li').attributes('role')).toBe('alert')
-    expect(panel.text()).toContain('focus-denied')
-    expect(panel.text()).toContain('全局槽 3')
-    expect(panel.text()).toContain('macOS · 激活')
-    expect(panel.text()).not.toContain('Secret Application')
-    expect(panel.text()).not.toContain('secret-window-title')
-    expect(panel.text()).not.toContain('424242')
-    expect(panel.text()).not.toContain('0xDEADBEEF')
+    expect(wrapper.find('.window-log-rail').exists()).toBe(false)
+    expect(wrapper.find('.window-activation-diagnostics').exists()).toBe(false)
+    expect(band.attributes('role')).toBe('alert')
+    expect(band.text()).toContain('系统拒绝聚焦该窗口；EyPc 未尝试绕过前台保护。')
+    expect(band.text()).not.toContain('Secret Application')
+    expect(band.text()).not.toContain('secret-window-title')
+    expect(band.text()).not.toContain('424242')
+    expect(band.text()).not.toContain('0xDEADBEEF')
   })
 
-  it('renders confirmed closed diagnostics as status and dispatches the session-only clear action', async () => {
+  it('renders confirmed closed diagnostics as status on the band without opening a log rail', () => {
     const wrapper = mount(WindowsPage, {
       props: {
         snapshot: snapshotWithDiagnostics([diagnostic({
@@ -120,10 +142,46 @@ describe('window activation diagnostics panel', () => {
       }
     })
 
-    expect(wrapper.get('.window-activation-diagnostics-summary').attributes('role')).toBe('status')
-    expect(wrapper.get('li').attributes('role')).toBe('status')
-    expect(wrapper.get('li').text()).toContain('手动激活')
-    expect(wrapper.get('li').text()).toContain('Windows · 解析')
+    const band = wrapper.get('#window-status-band')
+    expect(wrapper.find('.window-log-rail').exists()).toBe(false)
+    expect(band.attributes('role')).toBeUndefined()
+    expect(band.text()).toContain('已确认目标窗口已关闭，已清除陈旧引用。')
+  })
+})
+
+describe('settings window diagnostics section', () => {
+  it('renders blocking diagnostics with alert semantics and clears through the shared action', async () => {
+    const state = createInitialState(1)
+    const wrapper = mount(SettingsPage, {
+      attachTo: document.body,
+      props: {
+        actions: [],
+        defaultKeybindings: [],
+        overrides: [],
+        shortcutProfiles: state.settings.shortcutProfiles,
+        featureConfigs: state.settings.featureConfigs,
+        settings: state.settings,
+        mqttStorageStatus: {
+          mode: 'browser-localStorage' as const,
+          sqliteAvailable: false,
+          migratedLegacyArchive: false
+        },
+        persistedSettingsTabId: 'maintenance' as const,
+        persistedMaintenanceSectionId: 'window-diagnostics' as const,
+        windowActivationDiagnostics: [diagnostic()],
+        windowOperationTraceEnabled: false,
+        windowOperationTraces: []
+      }
+    })
+
+    const panel = wrapper.get('[data-role="settings-window-diagnostics"]')
+    expect(panel.get('.window-activation-diagnostics-summary').attributes('role')).toBe('alert')
+    expect(panel.get('li').attributes('role')).toBe('alert')
+    expect(panel.text()).toContain('focus-denied')
+    expect(panel.text()).toContain('全局槽 3')
+    expect(panel.text()).toContain('macOS · 激活')
+    expect(panel.text()).not.toContain('Secret Application')
+    expect(panel.text()).not.toContain('424242')
     await wrapper.get('[data-role="window-activation-diagnostics-clear"]').trigger('click')
     expect(wrapper.emitted('dispatch')).toContainEqual(['windows.activation.diagnostics.clear'])
   })

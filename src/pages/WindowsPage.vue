@@ -82,17 +82,11 @@ const slotTargets = computed(() => {
 })
 const assignedSlotCount = computed(() => slotTargets.value.size)
 
-const logBadgeCount = computed(() => {
-  if (props.snapshot.windowOperationTraceEnabled) return windowOperationTraces.value.length
-  return windowActivationDiagnostics.value.length
-})
+const showLogRail = computed(() => props.snapshot.windowOperationTraceEnabled)
 
-const logHasBlocking = computed(() => {
-  if (props.snapshot.windowOperationTraceEnabled) {
-    return windowOperationTraces.value.some((record) => record.result === 'blocking')
-  }
-  return windowActivationDiagnostics.value.some((item) => item.level === 'blocking')
-})
+const logBadgeCount = computed(() => windowOperationTraces.value.length)
+
+const logHasBlocking = computed(() => windowOperationTraces.value.some((record) => record.result === 'blocking'))
 
 const bindingSlotAssignedRowId = computed(() => {
   const slot = slotPickerSlot.value
@@ -517,7 +511,7 @@ function updateDraft(field: 'alias', event: Event) {
 }
 
 watch(logHasBlocking, (blocking) => {
-  if (blocking) logRailExpanded.value = true
+  if (showLogRail.value && blocking) logRailExpanded.value = true
 }, { immediate: true })
 
 watch(showCandidateHint, (active) => {
@@ -590,9 +584,16 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <p id="window-status-band" v-else class="window-status-band" aria-live="polite">
+    <p
+      id="window-status-band"
+      v-else
+      class="window-status-band"
+      :aria-live="latestWindowActivationDiagnostic?.level === 'blocking' && !showCandidateHint && !snapshot.windowLoading ? 'assertive' : 'polite'"
+      :role="latestWindowActivationDiagnostic?.level === 'blocking' && !showCandidateHint && !snapshot.windowLoading ? 'alert' : undefined"
+    >
       <LoaderCircle v-if="snapshot.windowLoading" :size="14" class="spinning" />
       <template v-else-if="showCandidateHint">正在为「{{ candidateTargetLabel }}」重新选择窗口。<template v-if="candidateTargetLastTitle">上次标题「{{ candidateTargetLastTitle }}」；</template>原窗口实例已失效，下方标题与状态仅供人工辨认。按 Enter 确认，或按 Escape 取消并返回原目标。</template>
+      <template v-else-if="latestWindowActivationDiagnostic">{{ latestWindowActivationDiagnostic.message }}</template>
       <template v-else-if="showUnloadHint">列表未加载。手动加载后写入会话缓存；全局槽位会先静默解析，缓存未命中时自动重扫一次，仅失败才展开本页。</template>
       <template v-else-if="showEmptyHint">没有匹配窗口。请调整搜索词，或重新加载列表。</template>
       <template v-else>{{ topLevelWindowCount }} 个主项目 · {{ snapshot.windowRows.length }} 个可见树节点 · 仅展示可验证的用户窗口 · {{ snapshot.windowCapability.canList ? '按需扫描' : '等待授权' }}</template>
@@ -808,7 +809,7 @@ onBeforeUnmount(() => {
       </div>
 
       <aside
-        v-if="!showCandidateHint"
+        v-if="!showCandidateHint && showLogRail"
         class="window-log-rail"
         :class="{ expanded: logRailExpanded, blocking: logHasBlocking }"
         aria-label="窗口日志"
