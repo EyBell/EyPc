@@ -21,6 +21,7 @@ const { createEventQueue } = require('./events.cjs')
 const { createEnvironmentProbe } = require('./environment.cjs')
 const { createOpener } = require('./open.cjs')
 const { createQuotaFallback } = require('./quota.cjs')
+const { createDesktopReader } = require('./desktop.cjs')
 const {
   HOOK_SCRIPT_NAME,
   STATUSLINE_SCRIPT_NAME,
@@ -55,6 +56,8 @@ function createClaudeBridge(dependencies) {
   const queue = createEventQueue({ fs, path, directory: dataDirectory })
   const opener = createOpener(dependencies)
   const quotaFallback = createQuotaFallback(dependencies)
+  // Read-only desktop-app session reader; shares the claude lane, writes nothing.
+  const desktop = createDesktopReader(dependencies)
 
   const hookCommandPath = path.join(dataDirectory, HOOK_SCRIPT_NAME)
   const statuslineCommandPath = path.join(dataDirectory, STATUSLINE_SCRIPT_NAME)
@@ -261,14 +264,10 @@ function createClaudeBridge(dependencies) {
     }
   }
 
-  function openTask(sessionId, options) {
-    const settings = options || {}
-    return opener.openTask(String(sessionId || ''), {
-      pid: settings.pid,
-      cwd: settings.cwd,
-      cliPath: environment.locateCli(),
-      platform: dependencies.platform
-    })
+  // Both session families resolve to the same `claude://resume` deep link, so
+  // the caller passes an id and nothing else — no pid, no cwd, no CLI path.
+  function openTask(sessionId) {
+    return opener.openTask(String(sessionId || ''), { platform: dependencies.platform })
   }
 
   /**
@@ -290,6 +289,34 @@ function createClaudeBridge(dependencies) {
     }
   }
 
+  /** Desktop lane: read-only snapshot of the Claude desktop app's sessions. */
+  function readDesktopSnapshot(options) {
+    return desktop.readSnapshot(options)
+  }
+
+  /** Desktop lane push: metadata heartbeat rewrites under the user directory. */
+  function watchDesktopSessions(listener) {
+    return desktop.watchSessions(listener)
+  }
+
+  /**
+   * Latest quota sample the desktop app itself recorded. Credential-free and
+   * independent of whether Claude Code has rendered a status line recently, so
+   * it is the lane that keeps the reading moving at the app's own cadence.
+   */
+  function readPlanUsage() {
+    return desktop.readPlanUsage()
+  }
+
+  /**
+   * The desktop app's own unread set. `null` means the reading failed, which is
+   * deliberately distinct from an empty set — see the reader for why that
+   * distinction is load-bearing.
+   */
+  function readDesktopUnread() {
+    return desktop.readUnreadSet()
+  }
+
   function close() {
     if (eventWatchDispose) {
       eventWatchDispose()
@@ -297,6 +324,7 @@ function createClaudeBridge(dependencies) {
     }
     queue.reset()
     quotaFallback.reset()
+    desktop.close()
   }
 
   return {
@@ -313,6 +341,10 @@ function createClaudeBridge(dependencies) {
     readSnapshot,
     readQuota,
     readQuotaFallback,
+    readDesktopSnapshot,
+    readDesktopUnread,
+    readPlanUsage,
+    watchDesktopSessions,
     watchEvents,
     openTask,
     close

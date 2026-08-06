@@ -21,8 +21,11 @@ import {
 import CodexWaterBall from './components/CodexWaterBall.vue'
 import {
   buildCompanionQuotaStrip,
+  claudeRealtimeGapNote,
   companionQuotaChipAriaLabel,
   companionQuotaChipHint,
+  companionQuotaFreshnessText,
+  companionResetDetailText,
   resolveCompanionRowMarker,
   resolveCompanionWaterBallPresentation
 } from './domain/companionPresentation'
@@ -249,10 +252,33 @@ const quotaStrip = computed(() => buildCompanionQuotaStrip(
   companionSlice.value,
   compact.value.stateLabel
 ))
+/**
+ * Claude chips get the precise reset moment plus reading freshness in the hint
+ * and accessible name (user decision 2026-08-06); Codex chips keep the original
+ * `formatReset` strings byte-for-byte.
+ */
 function quotaChipHint(chip: CompanionQuotaChip) {
+  if (chip.provider === 'claude') {
+    const now = Date.now()
+    return companionQuotaChipHint(
+      chip,
+      companionResetDetailText(chip.resetAt, now),
+      quotaStrip.value.multiProvider,
+      companionQuotaFreshnessText(companionSlice.value?.claudeQuota, now)
+    )
+  }
   return companionQuotaChipHint(chip, formatReset(chip.resetAt), quotaStrip.value.multiProvider)
 }
 function quotaChipAria(chip: CompanionQuotaChip) {
+  if (chip.provider === 'claude') {
+    const now = Date.now()
+    return companionQuotaChipAriaLabel(
+      chip,
+      companionResetDetailText(chip.resetAt, now),
+      quotaStrip.value.multiProvider,
+      companionQuotaFreshnessText(companionSlice.value?.claudeQuota, now)
+    )
+  }
   return companionQuotaChipAriaLabel(chip, formatReset(chip.resetAt), quotaStrip.value.multiProvider)
 }
 const statusText = computed(() => {
@@ -261,7 +287,12 @@ const statusText = computed(() => {
   if (conversations.value?.status === 'stale') return '数据已过期 · 展示上一份已验证快照'
   if (conversations.value?.status === 'error') return conversations.value.errorMessage || '真实会话预检失败'
   if (conversations.value?.completeness === 'verified') {
-    return `最近 ${settings.value?.timeWindowDays || 30} 天的 ${conversations.value.all.length} 条`
+    const base = `最近 ${settings.value?.timeWindowDays || 30} 天的 ${conversations.value.all.length} 条`
+    // Degraded-but-readable Claude lane: cards and quota render, yet hooks or
+    // the status line are unregistered. Silent before, which hid why "进行中"
+    // never appeared. Empty whenever Claude is disabled (Codex-only unchanged).
+    const note = claudeRealtimeGapNote(companionSlice.value)
+    return note ? `${base} · ${note}` : base
   }
   return '等待真实会话预检'
 })
@@ -2449,7 +2480,7 @@ onUnmounted(() => {
             v-for="chip in group.chips"
             :key="chip.key"
             class="float-quota-chip"
-            :class="{ spark: chip.spark }"
+            :class="{ spark: chip.spark, 'is-stale': chip.stale === true }"
             @pointerenter="queueActionHint($event, quotaChipHint(chip))"
             @pointerleave="clearActionHint"
           >

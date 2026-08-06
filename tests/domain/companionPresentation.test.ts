@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
   buildClaudeQuotaSection,
   buildCompanionQuotaStrip,
+  claudeRealtimeGapNote,
+  claudeRegistrationRows,
   claudeSetupHint,
+  claudeSourceStatusText,
   companionQuotaChipAriaLabel,
   companionQuotaChipHint,
+  companionQuotaFreshnessText,
+  companionResetDetailText,
   resolveCompanionRowMarker,
   resolveCompanionWaterBallPresentation,
   type CompanionCodexQuotaWindow,
@@ -123,9 +128,21 @@ describe('claude quota section', () => {
 
   it('lists both windows with their reset times', () => {
     const section = buildClaudeQuotaSection(slice())
-    expect(section?.rows.map((row) => row.key)).toEqual(['claude-short', 'claude-weekly'])
+    expect(section?.rows.map((row) => row.key)).toEqual(['claude-five_hour', 'claude-seven_day'])
     expect(section?.rows[0]).toMatchObject({ label: '5 小时限额', remainingPercent: 70 })
     expect(section?.emptyReason).toBe('')
+  })
+
+  it('lists a per-model weekly as its own row, in payload-independent order', () => {
+    const section = buildClaudeQuotaSection(slice({
+      claudeQuota: normalizeClaudeQuota({
+        seven_day_fable: { used_percentage: 56 },
+        five_hour: { used_percentage: 65 },
+        seven_day: { used_percentage: 71 }
+      }, { updatedAt: 1 })
+    }))
+    expect(section?.rows.map((row) => row.label)).toEqual(['5 小时限额', '周限额', '周限额 · Fable'])
+    expect(section?.rows.map((row) => row.shortLabel)).toEqual(['5h', '周', '周·Fable'])
   })
 
   it('explains an unusable provider instead of showing empty rows', () => {
@@ -165,6 +182,25 @@ describe('single-row quota strip', () => {
     expect(strip.groups[1].caption).toBe('Claude')
     expect(strip.groups[1].chips.map((chip) => chip.shortLabel)).toEqual(['5h', '周'])
     expect(strip.groups[1].chips.every((chip) => chip.spark === false)).toBe(true)
+  })
+
+  /**
+   * User decision 2026-08-06: everything visible in the Claude app must be
+   * visible here, so a third window becomes a third chip on the same single
+   * row rather than being hidden behind the expanded card.
+   */
+  it('emits one chip per declared window, per-model weekly included', () => {
+    const strip = buildCompanionQuotaStrip(CODEX_WINDOWS, slice({
+      claudeQuota: normalizeClaudeQuota({
+        five_hour: { used_percentage: 65 },
+        seven_day: { used_percentage: 71 },
+        seven_day_fable: { used_percentage: 56 }
+      }, { updatedAt: 1 })
+    }))
+    expect(strip.groups[1].chips.map((chip) => chip.shortLabel)).toEqual(['5h', '周', '周·Fable'])
+    expect(strip.groups[1].chips.map((chip) => chip.remainingPercent)).toEqual([35, 29, 44])
+    // Still one Codex group untouched beside it — the row stays one row.
+    expect(strip.groups[0].chips.map((chip) => chip.shortLabel)).toEqual(['5h', '周', 'S周'])
   })
 
   it('drops the codex group entirely when only claude is enabled', () => {
@@ -224,5 +260,241 @@ describe('setup hints', () => {
     ]) {
       expect(claudeSetupHint(environment)).not.toContain('/')
     }
+  })
+})
+
+describe('reset detail text', () => {
+  // GMT+8 wall-time fixtures (user decision 2026-08-06): the display timezone
+  // is fixed, so the instants are built via Date.UTC minus the +8 offset and
+  // the assertions hold on a runner in any TZ.
+  const gmt8 = (month: number, day: number, hour: number, minute: number) =>
+    Date.UTC(2026, month - 1, day, hour - 8, minute)
+  const base = gmt8(8, 6, 10, 0) // 周四 10:00 GMT+8
+
+  it('is empty without a usable reset timestamp', () => {
+    expect(companionResetDetailText(null, base)).toBe('')
+    expect(companionResetDetailText(0, base)).toBe('')
+    expect(companionResetDetailText(undefined, base)).toBe('')
+  })
+
+  it('gives the absolute GMT+8 clock plus a relative distance for the same day', () => {
+    expect(companionResetDetailText(gmt8(8, 6, 13, 30), base)).toBe('今天 13:30 重置（约 3 小时后）')
+  })
+
+  it('uses minutes below one hour', () => {
+    expect(companionResetDetailText(gmt8(8, 6, 10, 25), base)).toBe('今天 10:25 重置（25 分钟后）')
+  })
+
+  it('says 明天 across one GMT+8 midnight even within 24 hours', () => {
+    expect(companionResetDetailText(gmt8(8, 7, 8, 0), base)).toBe('明天 08:00 重置（约 22 小时后）')
+  })
+
+  it('names the weekday for the weekly window', () => {
+    expect(companionResetDetailText(gmt8(8, 10, 3, 0), base)).toBe('周一 03:00 重置（3 天后）')
+  })
+
+  it('falls back to a calendar date beyond one week', () => {
+    expect(companionResetDetailText(gmt8(8, 20, 3, 0), base)).toBe('8月20日 03:00 重置（13 天后）')
+  })
+
+  it('reports an already-rolled-over window instead of a past clock time', () => {
+    // The ordinary case once Claude Code has not run for a while: the reading
+    // is old enough that its reset moment has passed. Stating "今天 09:00 重置
+    // （0 分钟后）" would be wrong twice over.
+    expect(companionResetDetailText(gmt8(8, 6, 9, 0), base)).toBe('额度窗口已重置 · 等待新读数')
+    expect(companionResetDetailText(base, base)).toBe('额度窗口已重置 · 等待新读数')
+  })
+
+  it('renders GMT+8 independent of the runner timezone', () => {
+    // 2026-08-06 16:00:00Z is 2026-08-07 00:00 GMT+8: the clock must read
+    // 00:00 and the day boundary must be GMT+8's, not the runner's.
+    const at = Date.UTC(2026, 7, 6, 16, 0)
+    expect(companionResetDetailText(at, base)).toBe('明天 00:00 重置（约 14 小时后）')
+  })
+})
+
+describe('quota freshness text', () => {
+  const now = new Date(2026, 7, 6, 10, 0).getTime()
+
+  it('is empty without a snapshot or a fresh unread state', () => {
+    expect(companionQuotaFreshnessText(null, now)).toBe('')
+    expect(companionQuotaFreshnessText({ status: 'idle', updatedAt: 0 }, now)).toBe('')
+  })
+
+  it('reports the reading age', () => {
+    expect(companionQuotaFreshnessText({ status: 'ok', updatedAt: now - 12 * 60_000 }, now)).toBe('读数更新于 12 分钟前')
+    expect(companionQuotaFreshnessText({ status: 'ok', updatedAt: now - 20_000 }, now)).toBe('读数刚刚更新')
+    expect(companionQuotaFreshnessText({ status: 'ok', updatedAt: now - 3 * 3_600_000 }, now)).toBe('读数更新于 3 小时前')
+  })
+
+  it('says a stale reading may be outdated, as the non-color cue for dimming', () => {
+    expect(companionQuotaFreshnessText({ status: 'stale', updatedAt: now - 60 * 60_000 }, now))
+      .toBe('读数更新于 1 小时前，可能已过期')
+    expect(companionQuotaFreshnessText({ status: 'stale', updatedAt: 0 }, now)).toBe('读数可能已过期')
+  })
+})
+
+describe('quota chip staleness projection', () => {
+  const CODEX_WINDOWS: CompanionCodexQuotaWindow[] = [
+    { key: 'normal-short', label: '5 小时限额', family: 'normal', window: 'short', remainingPercent: 78, resetAt: 10 }
+  ]
+
+  it('marks only claude chips while the claude reading is stale', () => {
+    const staleSlice = slice()
+    staleSlice.claudeQuota = { ...staleSlice.claudeQuota, status: 'stale' }
+    const strip = buildCompanionQuotaStrip(CODEX_WINDOWS, staleSlice)
+    expect(strip.groups[0].chips[0].stale).toBeUndefined()
+    expect(strip.groups[1].chips.every((chip) => chip.stale === true)).toBe(true)
+  })
+
+  it('leaves the codex chip shape untouched with a fresh claude reading', () => {
+    const strip = buildCompanionQuotaStrip(CODEX_WINDOWS, slice())
+    expect('stale' in strip.groups[0].chips[0]).toBe(false)
+    expect(strip.groups[1].chips.every((chip) => chip.stale === false)).toBe(true)
+  })
+
+  it('keeps the three-argument hint and aria output byte-identical', () => {
+    const chip = buildCompanionQuotaStrip(CODEX_WINDOWS, slice()).groups[1].chips[0]
+    expect(companionQuotaChipHint(chip, '3 小时后重置', true)).toBe('Claude · 5 小时限额 · 3 小时后重置')
+    expect(companionQuotaChipAriaLabel(chip, '', false)).toBe('5 小时限额，剩余 70%')
+  })
+
+  it('appends freshness after the reset text in hint and aria', () => {
+    const chip = buildCompanionQuotaStrip(CODEX_WINDOWS, slice()).groups[1].chips[0]
+    expect(companionQuotaChipHint(chip, '今天 13:30 重置（约 3 小时后）', true, '读数更新于 12 分钟前'))
+      .toBe('Claude · 5 小时限额 · 今天 13:30 重置（约 3 小时后） · 读数更新于 12 分钟前')
+    expect(companionQuotaChipAriaLabel(chip, '今天 13:30 重置（约 3 小时后）', false, '读数更新于 12 分钟前'))
+      .toBe('5 小时限额，剩余 70%，今天 13:30 重置（约 3 小时后），读数更新于 12 分钟前')
+    expect(companionQuotaChipHint(chip, '', false, '读数可能已过期')).toBe('5 小时限额 · 读数可能已过期')
+  })
+})
+
+describe('realtime gap note', () => {
+  it('is empty whenever claude is disabled, so the codex-only status line never changes', () => {
+    expect(claudeRealtimeGapNote(null)).toBe('')
+    expect(claudeRealtimeGapNote(slice({ providers: { codex: true, claude: false } }))).toBe('')
+  })
+
+  it('stays silent for the fully-registered lane and the fully-unusable lane', () => {
+    expect(claudeRealtimeGapNote(slice())).toBe('')
+    // The unusable lane belongs to claudeSetupHint, not the status line.
+    expect(claudeRealtimeGapNote(slice({ claudeEnvironment: emptyClaudeEnvironment() }))).toBe('')
+  })
+
+  it('names outdated hooks first, then missing hooks, then the status line', () => {
+    expect(claudeRealtimeGapNote(slice({ claudeEnvironment: { ...READY_ENVIRONMENT, hooks: 'outdated' } })))
+      .toBe('Claude 钩子已过期，重新注册后恢复实时状态')
+    expect(claudeRealtimeGapNote(slice({ claudeEnvironment: { ...READY_ENVIRONMENT, hooks: 'missing' } })))
+      .toBe('Claude 钩子未注册，任务状态非实时')
+    expect(claudeRealtimeGapNote(slice({ claudeEnvironment: { ...READY_ENVIRONMENT, statusline: 'missing' } })))
+      .toBe('Claude 状态栏未注册，额度不会自动更新')
+  })
+
+  it('never leaks a filesystem path', () => {
+    for (const environment of [
+      { ...READY_ENVIRONMENT, hooks: 'outdated' as const },
+      { ...READY_ENVIRONMENT, hooks: 'missing' as const },
+      { ...READY_ENVIRONMENT, statusline: 'missing' as const }
+    ]) {
+      expect(claudeRealtimeGapNote(slice({ claudeEnvironment: environment }))).not.toContain('/')
+    }
+  })
+})
+
+describe('claude source status line', () => {
+  it('says nothing is read while the provider is off, desktop sessions included', () => {
+    expect(claudeSourceStatusText({ enabled: false, environment: READY_ENVIRONMENT, desktopSessionCount: 4 }))
+      .toBe('关闭时不读取任何 Claude 数据')
+  })
+
+  it('appends the desktop fact to the connected state instead of adding a control', () => {
+    expect(claudeSourceStatusText({ enabled: true, environment: READY_ENVIRONMENT, desktopSessionCount: 3 }))
+      .toBe('已连接 Claude Code 2.1.220 · 桌面端 3 个会话')
+    expect(claudeSourceStatusText({ enabled: true, environment: READY_ENVIRONMENT, desktopSessionCount: 0 }))
+      .toBe('已连接 Claude Code 2.1.220')
+  })
+
+  /**
+   * No CLI plus live desktop sessions is a real state, so the two facts are
+   * joined rather than ranked — reporting only "未检测到 Claude Code" while
+   * three desktop cards render is what makes a status line untrustworthy.
+   */
+  it('keeps a cli hint and a desktop count together', () => {
+    expect(claudeSourceStatusText({ enabled: true, environment: emptyClaudeEnvironment(), desktopSessionCount: 2 }))
+      .toBe('未检测到 Claude Code · 桌面端 2 个会话')
+  })
+
+  it('tolerates a missing environment and a nonsense count', () => {
+    expect(claudeSourceStatusText({ enabled: true, environment: null, desktopSessionCount: Number.NaN }))
+      .toBe('Claude 状态未知')
+    expect(claudeSourceStatusText({ enabled: true, environment: READY_ENVIRONMENT, desktopSessionCount: -3 }))
+      .toBe('已连接 Claude Code 2.1.220')
+  })
+})
+
+describe('claude registration rows', () => {
+  const now = Date.UTC(2026, 7, 6, 2, 0)
+  const rows = (environment: Parameters<typeof claudeRegistrationRows>[0], at = now) =>
+    Object.fromEntries(claudeRegistrationRows(environment, at).map((row) => [row.id, row]))
+
+  it('keeps the same row set whatever the state, so a healthy panel is still checkable', () => {
+    const healthy = claudeRegistrationRows(READY_ENVIRONMENT, now).map((row) => row.id)
+    const empty = claudeRegistrationRows(emptyClaudeEnvironment(), now).map((row) => row.id)
+    const missing = claudeRegistrationRows(null, now).map((row) => row.id)
+    expect(healthy).toEqual(['hooks', 'statusline', 'auth', 'cli', 'home', 'checked'])
+    expect(empty).toEqual(healthy)
+    expect(missing).toEqual(healthy)
+  })
+
+  it('reads every registered part as ready', () => {
+    const row = rows({ ...READY_ENVIRONMENT, checkedAt: now - 30_000 })
+    expect(row.hooks.value).toBe('已注册')
+    expect(row.hooks.tone).toBe('ready')
+    expect(row.statusline.value).toBe('已注册')
+    expect(row.auth.value).toBe('已登录')
+    expect(row.cli.value).toBe('已找到 2.1.220')
+    expect(row.home.value).toBe('可读')
+    expect(row.checked.value).toBe('刚刚')
+  })
+
+  it('separates outdated hooks from unregistered ones, both as warnings', () => {
+    expect(rows({ ...READY_ENVIRONMENT, hooks: 'outdated' }).hooks).toMatchObject({ value: '已过期', tone: 'warning' })
+    expect(rows({ ...READY_ENVIRONMENT, hooks: 'missing' }).hooks).toMatchObject({ value: '未注册', tone: 'warning' })
+    // Distinct remediation copy: an outdated hook needs re-registration, a
+    // missing one explains what is lost.
+    expect(rows({ ...READY_ENVIRONMENT, hooks: 'outdated' }).hooks.detail)
+      .not.toBe(rows({ ...READY_ENVIRONMENT, hooks: 'missing' }).hooks.detail)
+  })
+
+  it('leaves an unknown probe muted rather than alarming', () => {
+    const row = rows(emptyClaudeEnvironment())
+    expect(row.hooks).toMatchObject({ value: '未知', tone: 'muted' })
+    expect(row.statusline).toMatchObject({ value: '未知', tone: 'muted' })
+  })
+
+  /** The binary only serves the jump action; a healthy panel must not go warning over it. */
+  it('keeps a missing cli muted while the blocking parts stay warnings', () => {
+    const row = rows({ ...READY_ENVIRONMENT, installed: false, cliVersion: '' })
+    expect(row.cli).toMatchObject({ value: '未找到', tone: 'muted' })
+    expect(row.hooks.tone).toBe('ready')
+    expect(rows({ ...READY_ENVIRONMENT, authenticated: false }).auth.tone).toBe('warning')
+    expect(rows({ ...READY_ENVIRONMENT, homeReady: false }).home.tone).toBe('warning')
+  })
+
+  it('reports the check age in the same vocabulary as the quota reading', () => {
+    expect(rows({ ...READY_ENVIRONMENT, checkedAt: 0 }).checked.value).toBe('尚未检查')
+    expect(rows({ ...READY_ENVIRONMENT, checkedAt: now - 12 * 60_000 }).checked.value).toBe('12 分钟前')
+    expect(rows({ ...READY_ENVIRONMENT, checkedAt: now - 3 * 3_600_000 }).checked.value).toBe('3 小时前')
+    expect(rows({ ...READY_ENVIRONMENT, checkedAt: now - 2 * 86_400_000 }).checked.value).toBe('2 天前')
+  })
+
+  it('never leaks a filesystem path, matching the setup hint boundary', () => {
+    const serialized = JSON.stringify([
+      claudeRegistrationRows(READY_ENVIRONMENT, now),
+      claudeRegistrationRows(emptyClaudeEnvironment(), now),
+      claudeRegistrationRows({ ...READY_ENVIRONMENT, hooks: 'outdated', statusline: 'missing' }, now)
+    ])
+    expect(serialized).not.toMatch(/[/\\]/)
+    expect(serialized).not.toContain('~')
   })
 })

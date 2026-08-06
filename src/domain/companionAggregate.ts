@@ -15,7 +15,15 @@ import { companionTaskProvider, type CompanionProviderId } from './companionProv
  * makes the Codex-only path byte-identical to the pre-multi-provider release.
  */
 
-/** Buckets a card belongs to, derived from its own state rather than its source. */
+/**
+ * Buckets a card belongs to, derived from its own state rather than its source.
+ *
+ * Hidden cards land in `hidden` only, matching the Codex projection
+ * (codex.ts:1765). That projection also stamps `hiddenKind: 'task'` on the way
+ * in, and the restore control is gated on it (`FloatApp.taskCanRestore`), so a
+ * foreign card that arrives here without the stamp gets a permanently disabled
+ * 「显」 button — see `withHiddenKind` below.
+ */
 function bucketsFor(card: CodexTaskCard): Array<keyof ConversationSnapshotV1 & string> {
   if (card.isHidden) return ['hidden']
   const buckets: Array<keyof ConversationSnapshotV1 & string> = []
@@ -25,6 +33,18 @@ function bucketsFor(card: CodexTaskCard): Array<keyof ConversationSnapshotV1 & s
   if (card.bucket === 'completed') buckets.push('completed', 'completedTab')
   if (card.bucket === 'ongoing' && card.activityState === 'waiting-input') buckets.push('inputRequired')
   return buckets
+}
+
+/**
+ * Stamps `hiddenKind: 'task'` on foreign cards entering the hidden bucket.
+ *
+ * The Codex projection does this inline (codex.ts:1765) and `restore()` plus
+ * the 「显」 control both key off it, so foreign cards without the stamp were
+ * hideable but never restorable — the button rendered permanently disabled and
+ * batch restore never offered them. Cards that already carry a kind keep it.
+ */
+function withHiddenKind(cards: readonly CodexTaskCard[]): CodexTaskCard[] {
+  return cards.map((card) => (card.hiddenKind ? card : { ...card, hiddenKind: 'task' as const }))
 }
 
 /** Latest activity a card can be ordered by; 0 when it has none. */
@@ -96,7 +116,7 @@ export function mergeCompanionConversations(
   next.completed = mergeByRecency(snapshot.completed, byBucket.get('completed') || [])
   next.completedTab = mergeByRecency(snapshot.completedTab, byBucket.get('completedTab') || [])
   next.inputRequired = mergeByRecency(snapshot.inputRequired, byBucket.get('inputRequired') || [])
-  next.hidden = mergeByRecency(snapshot.hidden, byBucket.get('hidden') || [])
+  next.hidden = mergeByRecency(snapshot.hidden, withHiddenKind(byBucket.get('hidden') || []))
   // `pending` is the deprecated V1 alias of completedUnread and must not drift.
   next.pending = next.completedUnread
   next.all = mergeByRecency(snapshot.all, cards)

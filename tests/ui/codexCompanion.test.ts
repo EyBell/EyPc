@@ -239,6 +239,25 @@ describe('Codex Companion V3 UI contract', () => {
     expect(source).not.toContain('decisions.task')
   })
 
+  it('renders Claude registration state as checkable rows with focusable detail', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
+    // The rows reuse the diagnostic grid's row language rather than inventing a
+    // second status vocabulary, and every explanation stays behind a real
+    // focusable button (RAW-087: no permanently visible instructional copy).
+    expect(source).toContain('class="codex-diagnostic-grid codex-claude-grid"')
+    expect(source).toContain('v-for="row in claudeRegistrationGrid"')
+    expect(source).toContain('claudeRegistrationRows(props.snapshot.claudeEnvironment, Date.now())')
+    expect(source).toContain(':class="`is-${row.tone}`"')
+    expect(source).not.toContain('role="button"')
+  })
+
+  it('treats outdated hooks as registered so re-register and remove both stay reachable', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
+    expect(source).toContain("hooks === 'installed' || hooks === 'outdated'")
+    expect(source).toContain("claudeRegistered ? '重新注册钩子' : '注册事件钩子'")
+    expect(source).toContain('v-if="claudeRegistered"')
+  })
+
   it('shows Weekly-only 23% with a complete Weekly ring and no false 5h label', () => {
     const quotaValue = quota(false, true)
     const compact = buildCodexCompactPresentation({
