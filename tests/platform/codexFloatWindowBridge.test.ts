@@ -39,16 +39,18 @@ function loadPreloadHarness() {
   const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
   const ipcHandlers = new Map<string, (...args: unknown[]) => void>()
   const sent: Array<{ channel: string; payload: unknown }> = []
+  const pluginOutListeners: Array<(isKill: boolean) => void> = []
   const displays = [
     { id: 'left', workArea: { x: -1280, y: 0, width: 1280, height: 800 }, bounds: { x: -1280, y: 0, width: 1280, height: 800 } },
     { id: 'right', workArea: { x: 1920, y: -100, width: 1440, height: 900 }, bounds: { x: 1920, y: -100, width: 1440, height: 900 } }
   ]
   let floatBounds: Rect | null = null
+  let floatDestroyed = false
   const floatWindow = {
-    isDestroyed: () => false,
+    isDestroyed: () => floatDestroyed,
     getBounds: () => ({ ...(floatBounds as Rect) }),
     setBounds: vi.fn((bounds: Rect) => { floatBounds = { ...bounds } }),
-    close: vi.fn(),
+    close: vi.fn(() => { floatDestroyed = true }),
     setAlwaysOnTop: vi.fn(),
     isAlwaysOnTop: vi.fn(() => true),
     setVisibleOnAllWorkspaces: vi.fn(),
@@ -63,9 +65,11 @@ function loadPreloadHarness() {
     getCursorScreenPoint: () => ({ x: 2500, y: 300 }),
     getDisplayNearestPoint: (point: { x: number }) => point.x < 0 ? displays[0] : displays[1],
     createBrowserWindow: vi.fn((_url: string, options: Rect) => {
+      floatDestroyed = false
       floatBounds = { x: options.x, y: options.y, width: options.width, height: options.height }
       return floatWindow
-    })
+    }),
+    onPluginOut: (listener: (isKill: boolean) => void) => { pluginOutListeners.push(listener) }
   }
   const sandbox: Record<string, any> = {
     window: {},
@@ -96,6 +100,7 @@ function loadPreloadHarness() {
       activate(): boolean
       diagnostics(): Record<string, unknown>
       resetGeometry(payload: Record<string, unknown>): boolean
+      close(): void
       onAction(listener: (action: { actionId: string; args: Record<string, unknown> }) => void): () => void
     },
     geometry: sandbox.window.__codexFloatGeometry as {
@@ -107,7 +112,10 @@ function loadPreloadHarness() {
     displays,
     sent,
     floatWindow,
-    bounds: () => floatBounds as Rect
+    bounds: () => floatBounds as Rect,
+    createCount: () => utools.createBrowserWindow.mock.calls.length,
+    triggerPluginOut: (isKill: boolean) => pluginOutListeners.forEach((listener) => listener(isKill)),
+    isFloatDestroyed: () => floatDestroyed
   }
 }
 
@@ -361,5 +369,51 @@ describe('Codex float preload sizing', () => {
 
     setExpansion(ipcHandlers, true, true)
     expect(bounds()).toEqual({ x: 2988, y: 418, width: 360, height: 370 })
+  })
+
+  it('keeps a visible float across remount close and non-kill pluginOut', () => {
+    const { bridge, createCount, floatWindow, triggerPluginOut, isFloatDestroyed } = loadPreloadHarness()
+    const position = { displayId: 'right', x: 3244, y: 120, edge: 'right' }
+
+    expect(bridge.sync({ visible: true, snapshot: snapshot(), position })).toBe(true)
+    expect(createCount()).toBe(1)
+    floatWindow.close.mockClear()
+
+    // Simulate mainHide remount: renderer may destroy the child without clearing
+    // the last sync(visible:true) intent.
+    bridge.close()
+    expect(isFloatDestroyed()).toBe(true)
+    expect(createCount()).toBe(1)
+
+    triggerPluginOut(false)
+    triggerPluginOut(false)
+    expect(createCount()).toBe(1)
+
+    expect(bridge.sync({ visible: true, snapshot: snapshot(), position })).toBe(true)
+    expect(createCount()).toBe(2)
+    expect(isFloatDestroyed()).toBe(false)
+  })
+
+  it('closes the float only on sync(visible:false) or kill pluginOut', () => {
+    const position = { displayId: 'right', x: 3244, y: 120, edge: 'right' }
+
+    {
+      const { bridge, createCount, triggerPluginOut, isFloatDestroyed } = loadPreloadHarness()
+      expect(bridge.sync({ visible: true, snapshot: snapshot(), position })).toBe(true)
+      expect(bridge.sync({ visible: false })).toBe(true)
+      expect(isFloatDestroyed()).toBe(true)
+      triggerPluginOut(false)
+      expect(bridge.sync({ visible: true, snapshot: snapshot(), position })).toBe(true)
+      expect(createCount()).toBe(2)
+    }
+
+    {
+      const { bridge, createCount, triggerPluginOut, isFloatDestroyed } = loadPreloadHarness()
+      expect(bridge.sync({ visible: true, snapshot: snapshot(), position })).toBe(true)
+      triggerPluginOut(true)
+      expect(isFloatDestroyed()).toBe(true)
+      expect(bridge.sync({ visible: true, snapshot: snapshot(), position })).toBe(true)
+      expect(createCount()).toBe(2)
+    }
   })
 })

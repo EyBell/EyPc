@@ -490,7 +490,9 @@ onUnmounted(() => {
   disposeFloatAction?.()
   disposeActionRunnerAction?.()
   runtime.dispose()
-  platform.float.close()
+  // Do not float.close() here. mainHide global shortcuts remount the main
+  // renderer while the companion float must stay; sync({ visible:false }),
+  // feature disable, and onPluginOut(true) own teardown.
   shortcutHintTiming.dispose()
   window.removeEventListener('keydown', onKeydown, true)
   window.removeEventListener('keyup', onKeyup, true)
