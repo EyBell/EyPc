@@ -19,7 +19,16 @@ describe('uTools feature routing', () => {
     expect(routePluginFeature({ code: 'eypc-ports' })).toEqual({ tab: 'ports', focusSearch: true })
     expect(routePluginFeature({ code: 'eypc-mqtt' })).toEqual({ tab: 'mqtt', focusSearch: true })
     expect(routePluginFeature({ code: 'eypc-favorites' })).toEqual({ tab: 'favorites', focusSearch: true })
-    expect(routePluginFeature({ code: 'eypc-favorites-quick' })).toEqual({ tab: 'favorites', focusSearch: false, favoriteQuick: true })
+    expect(routePluginFeature({ code: 'eypc-favorites-quick' })).toEqual({ tab: 'favorites', focusSearch: true, favoriteQuick: true })
+    for (let slot = 1; slot <= 10; slot += 1) {
+      expect(routePluginFeature({ code: `eypc-favorite-slot-${slot}` }, undefined, 'mqtt')).toEqual({
+        tab: 'mqtt',
+        focusSearch: false,
+        actionId: `favorites.slot.activate.${slot}`,
+        preserveCurrentTab: true,
+        visibilityOwner: 'mainHide'
+      })
+    }
     expect(routePluginFeature({ code: 'eypc-windows' })).toEqual({ tab: 'windows', focusSearch: true })
     for (let slot = 1; slot <= 10; slot += 1) {
       expect(routePluginFeature({ code: `eypc-window-slot-${slot}` }, undefined, 'mqtt')).toEqual({
@@ -147,6 +156,12 @@ describe('uTools feature routing', () => {
       tab: 'settings',
       focusSearch: false,
       settingsMaintenanceSection: 'features'
+    })
+    expect(routePluginFeature({ code: 'eypc-favorite-slot-1' }, featureConfigs)).toEqual({
+      tab: 'settings',
+      focusSearch: false,
+      settingsMaintenanceSection: 'features',
+      actionId: 'favorites.slot.activate.1'
     })
     expect(routePluginFeature({ code: 'eypc-windows' }, featureConfigs)).toEqual({
       tab: 'settings',

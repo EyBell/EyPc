@@ -8128,3 +8128,226 @@ body,
     text-overflow: ellipsis;
   }
 }
+
+/* Favorite quick launcher, trusted runner editor, and platform-specific file slots. */
+.favorite-editor {
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+}
+
+.quick-favorite-row {
+  grid-template-columns: 24px 8px 20px minmax(0, 1fr) minmax(70px, auto) auto;
+}
+
+.quick-favorite-number {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--node-color, #2f80ed) 35%, #d5dce8);
+  border-radius: 5px;
+  background: #fff;
+  color: #46566d;
+  font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  box-shadow: 0 1px 2px rgba(28, 43, 63, 0.08);
+}
+
+.quick-favorite-number-placeholder {
+  width: 20px;
+}
+
+.favorite-breadcrumb {
+  overflow: hidden;
+  color: #7a8798;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.favorite-runner-editor {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid #dbe2ec;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.favorite-runner-editor legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  color: #46566d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.favorite-runner-editor label,
+.favorite-slot-target-picker {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.favorite-runner-editor label:has(textarea),
+.favorite-runner-heading,
+.favorite-runner-preview,
+.favorite-runner-warning {
+  grid-column: 1 / -1;
+}
+
+.favorite-runner-editor textarea {
+  min-height: 76px;
+  resize: vertical;
+}
+
+.favorite-runner-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.favorite-runner-heading > span,
+.favorite-runner-heading > button,
+.favorite-runner-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.favorite-runner-heading > span {
+  color: #a05a16;
+  font-size: 11px;
+}
+
+.favorite-runner-heading > span.trusted {
+  color: #137a50;
+}
+
+.favorite-runner-preview {
+  display: grid;
+  gap: 4px;
+  padding: 8px 9px;
+  border: 1px solid #d8e4f3;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.favorite-runner-preview code,
+.favorite-runner-preview small {
+  overflow-wrap: anywhere;
+}
+
+.favorite-runner-warning {
+  margin: 0;
+  color: #8b5a1d;
+  font-size: 11px;
+}
+
+.favorite-slot-manager {
+  display: grid;
+  width: min(820px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  gap: 12px;
+  overflow: hidden;
+}
+
+.favorite-slot-manager-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.favorite-slot-manager-header h2 {
+  margin: 0 0 3px;
+}
+
+.favorite-slot-manager-header small {
+  color: #6f7d8f;
+}
+
+.favorite-slot-list {
+  display: grid;
+  gap: 5px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.favorite-slot-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid #e2e7ef;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.favorite-slot-row > kbd {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+}
+
+.favorite-slot-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.favorite-slot-copy small {
+  overflow: hidden;
+  color: #748195;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.favorite-slot-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.favorite-slot-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .favorite-runner-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .favorite-runner-editor > * {
+    grid-column: 1;
+  }
+
+  .favorite-slot-row {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .favorite-slot-actions {
+    grid-column: 1 / -1;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 520px) {
+  .quick-favorite-row {
+    grid-template-columns: 24px 18px minmax(0, 1fr) auto;
+  }
+
+  .quick-favorite-row > .color-dot,
+  .quick-favorite-row > .favorite-path-state {
+    display: none;
+  }
+}

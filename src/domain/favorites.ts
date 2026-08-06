@@ -1,4 +1,5 @@
-import type { FavoriteKind, FavoriteNode, FavoriteTreeNode } from './types'
+import { favoriteFrecency, favoriteSearchAffinityScore } from './favoriteLaunch'
+import type { FavoriteKind, FavoriteNode, FavoriteSearchAffinity, FavoriteTreeNode } from './types'
 
 export interface FavoriteFilter {
   keyword: string
@@ -9,6 +10,8 @@ export interface FavoriteFilter {
 export interface FavoriteItemFilter {
   keyword: string
   groupId: string | null
+  affinities?: readonly FavoriteSearchAffinity[]
+  now?: number
 }
 
 export type FavoriteTargetKind = Exclude<FavoriteKind, 'group'>
@@ -239,16 +242,16 @@ function itemMatchScore(node: FavoriteNode, keyword: string): number {
   const name = node.name.toLowerCase()
   const path = node.path.toLowerCase()
   const tags = node.tags.map((tag) => tag.toLowerCase())
-  if (name === keyword || path === keyword || tags.includes(keyword)) return 100
-  if (name.startsWith(keyword) || path.split(/[\\/]/).pop()?.toLowerCase().startsWith(keyword)) return 80
-  if (path.startsWith(keyword)) return 70
-  if (name.includes(keyword)) return 60
-  if (path.includes(keyword) || tags.some((tag) => tag.includes(keyword))) return 40
+  if (name === keyword || path === keyword || tags.includes(keyword)) return 3
+  if (name.startsWith(keyword) || path.startsWith(keyword) || path.split(/[\\/]/).pop()?.startsWith(keyword) || tags.some((tag) => tag.startsWith(keyword))) return 2
+  if (name.includes(keyword) || path.includes(keyword) || tags.some((tag) => tag.includes(keyword))) return 1
   return -1
 }
 
 export function filterFavoriteItems(nodes: FavoriteNode[], filter: FavoriteItemFilter): FavoriteNode[] {
   const keyword = filter.keyword.trim().toLowerCase()
+  const now = filter.now ?? Date.now()
+  const affinities = filter.affinities || []
   const groupScope = filter.groupId ? collectAllDescendantIds(nodes, filter.groupId) : null
   return nodes
     .filter((node) => isFavoriteItem(node))
@@ -260,10 +263,16 @@ export function filterFavoriteItems(nodes: FavoriteNode[], filter: FavoriteItemF
     .sort((a, b) => {
       const scoreCompare = b.score - a.score
       if (scoreCompare !== 0) return scoreCompare
-      const usageCompare = (b.node.usageCount || 0) - (a.node.usageCount || 0)
-      if (usageCompare !== 0) return usageCompare
+      const affinityCompare = favoriteSearchAffinityScore(affinities, keyword, b.node.id, now)
+        - favoriteSearchAffinityScore(affinities, keyword, a.node.id, now)
+      if (affinityCompare !== 0) return affinityCompare
+      const frecencyCompare = favoriteFrecency(b.node.usageCount, b.node.lastUsedAt, now)
+        - favoriteFrecency(a.node.usageCount, a.node.lastUsedAt, now)
+      if (frecencyCompare !== 0) return frecencyCompare
       const lastUsedCompare = (b.node.lastUsedAt || 0) - (a.node.lastUsedAt || 0)
       if (lastUsedCompare !== 0) return lastUsedCompare
+      const usageCompare = (b.node.usageCount || 0) - (a.node.usageCount || 0)
+      if (usageCompare !== 0) return usageCompare
       return a.node.sortOrder - b.node.sortOrder || a.node.createdAt - b.node.createdAt || a.node.id.localeCompare(b.node.id)
     })
     .map(({ node }) => node)

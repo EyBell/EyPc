@@ -39,6 +39,66 @@
       "cmds": ["文件快开", "快速文件", "quick favorites"]
     },
     {
+      "code": "eypc-favorite-slot-1",
+      "explain": "EyPc 文件槽 1",
+      "mainHide": true,
+      "cmds": ["EyPc 文件槽 1"]
+    },
+    {
+      "code": "eypc-favorite-slot-2",
+      "explain": "EyPc 文件槽 2",
+      "mainHide": true,
+      "cmds": ["EyPc 文件槽 2"]
+    },
+    {
+      "code": "eypc-favorite-slot-3",
+      "explain": "EyPc 文件槽 3",
+      "mainHide": true,
+      "cmds": ["EyPc 文件槽 3"]
+    },
+    {
+      "code": "eypc-favorite-slot-4",
+      "explain": "EyPc 文件槽 4",
+      "mainHide": true,
+      "cmds": ["EyPc 文件槽 4"]
+    },
+    {
+      "code": "eypc-favorite-slot-5",
+      "explain": "EyPc 文件槽 5",
+      "mainHide": true,
+      "cmds": ["EyPc 文件槽 5"]
+    },
+    {
+      "code": "eypc-favorite-slot-6",
+      "explain": "EyPc 文件槽 6",
+      "mainHide": true,
+      "cmds": ["EyPc 文件槽 6"]
+    },
+    {
+      "code": "eypc-favorite-slot-7",
+      "explain": "EyPc 文件槽 7",
+      "mainHide": true,
+      "cmds": ["EyPc 文件槽 7"]
+    },
+    {
+      "code": "eypc-favorite-slot-8",
+      "explain": "EyPc 文件槽 8",
+      "mainHide": true,
+      "cmds": ["EyPc 文件槽 8"]
+    },
+    {
+      "code": "eypc-favorite-slot-9",
+      "explain": "EyPc 文件槽 9",
+      "mainHide": true,
+      "cmds": ["EyPc 文件槽 9"]
+    },
+    {
+      "code": "eypc-favorite-slot-10",
+      "explain": "EyPc 文件槽 10",
+      "mainHide": true,
+      "cmds": ["EyPc 文件槽 10"]
+    },
+    {
       "code": "eypc-windows",
       "explain": "窗口跳转与收藏",
       "cmds": ["窗口跳转", "窗口收藏", "window jump"]

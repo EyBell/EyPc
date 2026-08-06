@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, watch } from 'vue'
-import { AlertTriangle, Copy, File, Files, Folder, LocateFixed, MoreHorizontal, SquareArrowOutUpRight, X } from '@lucide/vue'
+import { AlertTriangle, Copy, File, Files, Folder, LocateFixed, MoreHorizontal, Play, SquareArrowOutUpRight, X } from '@lucide/vue'
 import SearchSuggestBox from '../components/SearchSuggestBox.vue'
 import { favoritePathIdentityKey } from '../domain/favorites'
 import type { AppRuntimeSnapshot } from '../runtime/appRuntime'
@@ -58,6 +58,31 @@ function drawerIcon(commandId: string) {
   if (commandId.includes('copyPath')) return Copy
   if (commandId.includes('reveal')) return LocateFixed
   return SquareArrowOutUpRight
+}
+
+function shortcutNumber(index: number) {
+  return index === 9 ? '0' : String(index + 1)
+}
+
+function groupBreadcrumb(itemId: string) {
+  const byId = new Map(props.snapshot.state.favorites.map((item) => [item.id, item]))
+  const names: string[] = []
+  let parentId = byId.get(itemId)?.parentId || null
+  const visited = new Set<string>()
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId)
+    const parent = byId.get(parentId)
+    if (!parent) break
+    names.unshift(parent.name)
+    parentId = parent.parentId
+  }
+  return names.length ? names.join(' / ') : '未分组'
+}
+
+function hasCurrentRunner(itemId: string) {
+  const item = props.snapshot.state.favorites.find((favorite) => favorite.id === itemId)
+  const platform = props.snapshot.favoriteCurrentPlatform
+  return Boolean(item && platform && item.runnerByPlatform?.[platform])
 }
 
 let panelTrigger: HTMLElement | null = null
@@ -126,13 +151,13 @@ watch(() => [
       :aria-activedescendant="props.snapshot.focusedFavoriteId ? rowDomId(props.snapshot.focusedFavoriteId) : undefined"
     >
       <div
-        v-for="item in props.snapshot.favoriteItemRows"
+        v-for="(item, index) in props.snapshot.favoriteItemRows"
         :key="item.id"
         class="favorite-row favorite-item-row quick-favorite-row"
         role="row"
         tabindex="-1"
         :id="rowDomId(item.id)"
-        data-operation-tooltip="双击打开；右键显示安全操作"
+        data-operation-tooltip="双击打开或运行；右键显示安全操作"
         data-operation-shortcut="Ctrl+← / Ctrl+→"
         :aria-selected="props.snapshot.selectedFavoriteIds.includes(item.id)"
         :class="{ focused: props.snapshot.focusedFavoriteId === item.id, selected: props.snapshot.selectedFavoriteIds.includes(item.id), 'path-error': pathStatusIsError(item.path) }"
@@ -141,6 +166,8 @@ watch(() => [
         @dblclick="emit('dispatch', 'favorites.open', { favoriteId: item.id })"
         @contextmenu.prevent="emit('focus', item.id); emit('dispatch', 'favorites.drawer.open', { favoriteId: item.id })"
       >
+        <kbd v-if="index < 10" class="quick-favorite-number" role="gridcell" :aria-label="`Ctrl+${shortcutNumber(index)} 打开第 ${index + 1} 项`">{{ shortcutNumber(index) }}</kbd>
+        <span v-else class="quick-favorite-number-placeholder" role="gridcell" aria-hidden="true" />
         <span class="color-dot" role="gridcell" />
         <span class="favorite-kind-icon" role="gridcell" :title="item.kind === 'folder' ? '文件夹' : '文件'">
           <Folder v-if="item.kind === 'folder'" :size="16" aria-hidden="true" />
@@ -149,10 +176,11 @@ watch(() => [
         <span class="favorite-primary-copy" role="gridcell">
           <span class="favorite-name">{{ item.name }}</span>
           <span class="favorite-path">{{ item.path }}</span>
+          <span class="favorite-breadcrumb">{{ item.kind === 'folder' ? '文件夹' : '文件' }} · {{ groupBreadcrumb(item.id) }}</span>
         </span>
         <span class="favorite-path-state" :class="{ error: pathStatusIsError(item.path) }" role="gridcell"><AlertTriangle v-if="pathStatusIsError(item.path)" :size="13" aria-hidden="true" />{{ pathStatus(item.path) }}</span>
         <span class="favorite-row-actions quick-favorite-row-actions" role="gridcell" @click.stop @dblclick.stop>
-          <button type="button" tabindex="-1" aria-label="打开" title="打开" :disabled="!props.snapshot.favoriteCapabilities.open" @click="emit('dispatch', 'favorites.open', { favoriteId: item.id })"><SquareArrowOutUpRight :size="14" aria-hidden="true" /></button>
+          <button type="button" tabindex="-1" :aria-label="hasCurrentRunner(item.id) ? '运行' : '打开'" :title="hasCurrentRunner(item.id) ? '运行自定义运行器' : '系统默认打开'" :disabled="!props.snapshot.favoriteCapabilities.open && !props.snapshot.favoriteCapabilities.run" @click="emit('dispatch', 'favorites.open', { favoriteId: item.id })"><Play v-if="hasCurrentRunner(item.id)" :size="14" aria-hidden="true" /><SquareArrowOutUpRight v-else :size="14" aria-hidden="true" /></button>
           <button type="button" tabindex="-1" aria-label="定位" title="定位" :disabled="!props.snapshot.favoriteCapabilities.reveal" @click="emit('dispatch', 'favorites.reveal', { favoriteId: item.id })"><LocateFixed :size="14" aria-hidden="true" /></button>
           <button type="button" tabindex="-1" aria-label="复制路径" title="复制路径" :disabled="!props.snapshot.favoriteCapabilities.copyPath" @click="emit('dispatch', 'favorites.copyPath', { favoriteId: item.id })"><Copy :size="14" aria-hidden="true" /></button>
           <button type="button" tabindex="-1" aria-label="复制真实项" title="复制真实项" :disabled="!props.snapshot.favoriteCapabilities.copyItems" @click="emit('dispatch', 'favorites.copyItems', { favoriteId: item.id })"><Files :size="14" aria-hidden="true" /></button>
@@ -221,7 +249,7 @@ watch(() => [
           >
             <span class="drawer-action-icon"><component :is="drawerIcon(item.commandId)" :size="16" aria-hidden="true" /></span>
             <span class="drawer-action-copy"><strong>{{ item.title }}</strong><small>{{ item.description }}</small></span>
-            <kbd>{{ item.shortcutLabel || `c-${index + 1}` }}</kbd>
+            <kbd>{{ item.shortcutLabel || `c-${index === 9 ? 0 : index + 1}` }}</kbd>
           </button>
         </div>
       </aside>

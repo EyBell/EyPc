@@ -1,4 +1,5 @@
 import { addFavoriteNode, deleteFavoriteMetadata, favoriteParentOptions, favoritePathIdentityKey, favoriteVirtualChildren, filterFavoriteContainerTree, filterFavoriteGroupTree, filterFavoriteItems, filterFavoriteTree, flattenFavoriteTree, inferFavoriteNameFromPath, isValidFavoriteParent, moveFavoriteNode, normalizeFavoritePath } from '../domain/favorites'
+import { createFavoriteSlots, favoriteRunnerFingerprint, isFavoritePlatform, isFavoriteRunnerTrusted, normalizeFavoriteRunnerConfig, recordFavoriteSearchAffinity, removeFavoriteLearning, resolveFavoriteRunner, suggestedFavoriteRunner, trustFavoriteRunner } from '../domain/favoriteLaunch'
 import { DEFAULT_MQTT_LAYOUT_PREFS, MQTT_LAYOUT_RATIO_MAX, MQTT_LAYOUT_RATIO_MIN, appendMqttMessage, buildMqttWebSocketUrl, clearMqttPublishDraftHistory, createMqttClientId, createMqttConnectionConfig, createMqttConnectionSnapshot, createMqttSession, deleteMqttPublishDraftHistory, deleteMqttPublishTemplate, deleteMqttRecord, matchMqttTopicFilter, mqttConnectOptionsFromConfig, mqttPublishTemplateOperationTime, normalizeMqttArchiveState, normalizeMqttTopicColor, parseMqttWebSocketUrl, renameMqttPublishTemplate, renameMqttRecord, saveMqttPublishDraftHistory, saveMqttPublishTemplate, toMqttPublishDraft, touchMqttPublishTemplate, updateMqttPublishDraftHistory } from '../domain/mqtt'
 import { buildMqttConnectionTreeRows, deleteMqttConnectionGroup, isValidMqttConnectionGroupParent, moveMqttConnectionTreeTarget, mqttConnectionTreeMoveTarget, normalizeMqttConfigGroupRefs, normalizeMqttConnectionGroups, type MqttConnectionTreeDropPosition, type MqttConnectionTreeRow, type MqttConnectionTreeTarget } from '../domain/mqttConnectionTree'
 import { mqttMergedJsonFileName, stringifyMqttMergedJsonExport, stringifyMqttPayloadsCopy, stringifyMqttTopicsCopy, type MqttMergedExportSource } from '../domain/mqttExport'
@@ -30,9 +31,9 @@ import {
 } from '../domain/windowTree'
 import { createWindowRebindState, transitionWindowRebind, windowInteractionAllowed, windowRebindView, type WindowInteractionPolicy, type WindowRebindEvent, type WindowRebindState, type WindowRebindView } from '../domain/windowRebind'
 import type { CodexFloatPosition, CodexSettings } from '../domain/codex'
-import type { AppState, AppTabId, FavoriteNode, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttConnectionGroup, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
+import type { AppState, AppTabId, FavoriteNode, FavoritePlatform, FavoriteRunnerConfig, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttConnectionGroup, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
 import type { PortGroupTreeRow } from '../domain/ports'
-import { WINDOW_BRIDGE_REVISION, getPlatform, normalizeFileActionResult, type FavoriteDirectoryEntry, type FavoritePathInspection, type FileActionResult, type FileCapabilities, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind, type WindowActivationOutcome, type WindowActivationReasonCode, type WindowCapability, type WindowOperationTrace } from '../platform/eypcPlatform'
+import { WINDOW_BRIDGE_REVISION, getPlatform, normalizeFavoriteRunResult, normalizeFileActionResult, type FavoriteDirectoryEntry, type FavoritePathInspection, type FavoriteRunResult, type FileActionResult, type FileCapabilities, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind, type WindowActivationOutcome, type WindowActivationReasonCode, type WindowCapability, type WindowOperationTrace } from '../platform/eypcPlatform'
 import { createActionRuntime } from './action/actionRuntime'
 import type { RuntimeActionContext, RuntimeActionRisk } from './action/types'
 import { FEATURES, visibleFeatures, type VisibleFeatureDefinition } from './feature/featureRegistry'
@@ -101,6 +102,9 @@ export interface AppRuntimeSnapshot {
   favoriteDrawer: FavoriteDrawerState
   favoriteDrawerItems: FavoriteDrawerItem[]
   favoriteQuickMode: boolean
+  favoriteSlotManagerOpen: boolean
+  favoriteSlotManagerTargetId: string | null
+  favoriteCurrentPlatform: FavoritePlatform | null
   favoritePickReview: FavoritePickReview | null
   favoriteDraft: FavoriteDraft | null
   favoriteParentOptions: FavoriteNode[]
@@ -614,10 +618,18 @@ export interface FavoriteDraft {
   tagsText: string
   color: string
   parentId: string | null
+  runnerEnabled: boolean
+  runnerMode: FavoriteRunnerConfig['mode']
+  runnerExecutable: string
+  runnerArgsText: string
+  runnerCwdMode: FavoriteRunnerConfig['cwdMode']
+  runnerCwd: string
+  runnerPlatform: FavoritePlatform | null
+  runnerTrusted: boolean
   activeField: FavoriteDraftField
 }
 
-export type FavoriteDraftField = 'kind' | 'name' | 'path' | 'tags' | 'color' | 'parent'
+export type FavoriteDraftField = 'kind' | 'name' | 'path' | 'tags' | 'color' | 'parent' | 'runner-enabled' | 'runner-mode' | 'runner-executable' | 'runner-args' | 'runner-cwd-mode' | 'runner-cwd'
 
 export interface FavoritePickReviewItem {
   id: string
@@ -647,6 +659,8 @@ interface FavoriteRemovalContext {
 interface FavoriteRemovalUndo {
   removed: Array<{ node: FavoriteNode; index: number }>
   collapsedGroupIds: string[]
+  favoriteSlots: AppState['favoriteSlots']
+  favoriteSearchAffinities: AppState['favoriteSearchAffinities']
   before: FavoriteRemovalContext
   after: FavoriteRemovalContext
 }
@@ -667,6 +681,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   // Vite replaces DEV in production builds. A packaged plugin therefore never creates or renders this trace surface.
   const windowOperationTraceEnabled = isDebugWindowOperationTracingBuild()
   const favoriteCapabilities: FileCapabilities = platform.files.capabilities || {
+    platform: 'unsupported',
     open: true,
     reveal: true,
     copyPath: true,
@@ -674,9 +689,14 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     pickFiles: Boolean(platform.files.pickFavorites || platform.files.pickFavorite),
     pickFolders: Boolean(platform.files.pickFavorites),
     listDirectory: true,
-    inspectPaths: Boolean(platform.files.inspectPaths)
+    inspectPaths: Boolean(platform.files.inspectPaths),
+    run: Boolean(platform.files.run),
+    terminalRun: Boolean(platform.files.run)
   }
   let state = normalizeAppState(initialState)
+  function currentFavoritePlatform(): FavoritePlatform | null {
+    return isFavoritePlatform(favoriteCapabilities.platform) ? favoriteCapabilities.platform : null
+  }
   let ports: PortProcess[] = []
   let selectedPortIds: string[] = []
   let selectedFavoriteIds: string[] = []
@@ -719,6 +739,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   let favoriteRemovalUndo: FavoriteRemovalUndo | null = null
   let favoriteDrawer: FavoriteDrawerState = { open: false, active: false, activeIndex: 0, targetKind: 'favorite', targetIds: [] }
   let favoriteQuickMode = false
+  let favoriteSlotManagerOpen = false
+  let favoriteSlotManagerTargetId: string | null = null
   let favoritePickReview: FavoritePickReview | null = null
   let favoriteDraft: FavoriteDraft | null = null
   let windowCapability: WindowCapability = { platform: 'unsupported', supported: false, permission: 'unsupported', canList: false, canActivate: false, reason: '尚未请求窗口能力' }
@@ -853,6 +875,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       mqttPreview.open ? 'mqtt-preview' : null,
       favoriteDraft ? 'favorites-editor' : null,
       favoritePickReview ? 'favorites-pick-review' : null,
+      favoriteSlotManagerOpen ? 'favorites-slot-manager' : null,
       portGroupDetail.open ? 'port-group-detail' : null,
       portDetail.open ? 'port-detail' : null,
       portDrawer.open ? 'port-drawer' : null,
@@ -6448,7 +6471,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     const args = target ? { favoriteId: target.id } : {}
     const batchArgs = drawer.targetIds.length ? { favoriteIds: drawer.targetIds } : args
     const pathItems = target?.kind === 'group' ? [] : [
-      favoriteDrawerItem('favorites.open', '打开', '打开当前收藏目标。', 'open', batchArgs),
+      favoriteDrawerItem('favorites.open', currentFavoritePlatform() && target?.runnerByPlatform?.[currentFavoritePlatform() as FavoritePlatform] ? '运行' : '打开', '使用系统默认方式打开，或执行已信任的当前平台运行器。', 'open', batchArgs),
       favoriteDrawerItem('favorites.reveal', '定位', '在系统文件管理器中定位当前收藏。', 'reveal', batchArgs),
       favoriteDrawerItem('favorites.copyPath', '复制路径', '复制当前收藏的绝对路径。', 'copy', batchArgs),
       favoriteDrawerItem('favorites.copyItems', '复制真实项', '复制真实文件或文件夹到系统剪贴板。', 'copy', batchArgs)
@@ -6460,6 +6483,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       favoriteDrawerItem('favorites.edit', '编辑', '编辑当前收藏元数据。', 'edit', args),
       favoriteDrawerItem('favorites.rename', '重命名', '只重命名插件收藏元数据。', 'rename', args),
       favoriteDrawerItem('favorites.group.moveParent', '移动父级', '调整当前节点所在虚拟父级。', 'move', batchArgs),
+      ...(target?.kind !== 'group' && drawer.targetIds.length === 1
+        ? [
+            favoriteDrawerItem('favorites.slot.manager.open', '分配到文件槽…', '打开当前平台的 1–10 文件槽管理器。', 'slot', args),
+            favoriteDrawerItem('favorites.learning.resetItem', '重置搜索学习', '清除该收藏的使用次数、最近使用和查询偏好。', 'reset', args)
+          ]
+        : []),
       favoriteDrawerItem('favorites.remove', '移出收藏', '确认后移除插件收藏元数据。', 'remove', batchArgs),
       favoriteDrawerItem('favorites.remove.force', '直接移除', '跳过确认，只删除插件收藏元数据。', 'delete', batchArgs)
     ]
@@ -6560,7 +6589,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   function currentFavoriteItems() {
     return filterFavoriteItems(state.favorites, {
       keyword: state.favoriteSearch,
-      groupId: favoriteQuickMode ? null : selectedFavoriteGroupId
+      groupId: favoriteQuickMode ? null : selectedFavoriteGroupId,
+      affinities: state.favoriteSearchAffinities
     })
   }
 
@@ -7583,8 +7613,15 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       index: state.favorites.findIndex((item) => item.id === node.id)
     }))
     const collapsedGroupIds = state.collapsedFavoriteGroupIds.filter((id) => removedIds.has(id))
+    const favoriteSlots = state.favoriteSlots.map((slot) => ({ ...slot, favoriteIdByPlatform: { ...slot.favoriteIdByPlatform } }))
+    const favoriteSearchAffinities = state.favoriteSearchAffinities.map((item) => ({ ...item }))
     const selectedContainerRemoved = Boolean(selectedFavoriteGroupId && removedIds.has(selectedFavoriteGroupId))
     state.favorites = plan.remaining
+    state.favoriteSlots = state.favoriteSlots.map((slot) => ({
+      ...slot,
+      favoriteIdByPlatform: Object.fromEntries(Object.entries(slot.favoriteIdByPlatform).filter(([, favoriteId]) => !removedIds.has(String(favoriteId))))
+    }))
+    state.favoriteSearchAffinities = removeFavoriteLearning(state.favoriteSearchAffinities, [...removedIds])
     state.collapsedFavoriteGroupIds = state.collapsedFavoriteGroupIds.filter((id) => state.favorites.some((item) => item.id === id))
     selectedFavoriteIds = []
     if (favoriteDrawer.open && favoriteDrawer.targetKind === 'favorite' && favoriteDrawer.targetIds.some((id) => !state.favorites.some((item) => item.id === id))) closeFavoriteDrawer(false)
@@ -7603,7 +7640,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       focusedFavoriteId = null
       focusedFavoriteGroupId = null
     }
-    favoriteRemovalUndo = { removed, collapsedGroupIds, before, after: favoriteRemovalContext() }
+    favoriteRemovalUndo = { removed, collapsedGroupIds, favoriteSlots, favoriteSearchAffinities, before, after: favoriteRemovalContext() }
     if (selectedContainerRemoved) void loadSelectedFavoriteDirectory()
     save()
     void refreshFavoritePathInspections()
@@ -7623,6 +7660,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       existing.add(entry.node.id)
     }
     state.favorites = restored
+    state.favoriteSlots = undo.favoriteSlots.map((slot) => ({ ...slot, favoriteIdByPlatform: { ...slot.favoriteIdByPlatform } }))
+    state.favoriteSearchAffinities = undo.favoriteSearchAffinities.map((item) => ({ ...item }))
     state.collapsedFavoriteGroupIds = [...new Set([...state.collapsedFavoriteGroupIds, ...undo.collapsedGroupIds])]
     favoriteRemovalUndo = null
     if (restoreContext) {
@@ -7654,9 +7693,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return true
   }
 
-  function markFavoriteUsed(id: string) {
+  function markFavoriteUsed(id: string, query = state.favoriteSearch) {
     const now = Date.now()
     state.favorites = state.favorites.map((item) => item.id === id ? { ...item, usageCount: (item.usageCount || 0) + 1, lastUsedAt: now, updatedAt: now } : item)
+    state.favoriteSearchAffinities = recordFavoriteSearchAffinity(state.favoriteSearchAffinities, query, id, now)
     save()
     notify()
   }
@@ -7695,6 +7735,98 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return count > 1 ? `已复制 ${count} 条路径` : '路径已复制'
   }
 
+  function showFavoriteWorkbench(messageText: string, targetId: string | null = null) {
+    if (isTabEnabled('favorites')) state.activeTab = 'favorites'
+    else state.activeTab = 'settings'
+    favoriteQuickMode = false
+    favoriteSlotManagerOpen = true
+    favoriteSlotManagerTargetId = targetId
+    if (targetId && favoriteById(targetId)?.kind !== 'group') {
+      focusedFavoriteId = targetId
+      activeFavoritePane = 'items'
+    }
+    message = messageText
+    save()
+    notify()
+    try {
+      return platform.app.show?.() === true
+    } catch {
+      return false
+    }
+  }
+
+  function favoriteRunNotice(result: FavoriteRunResult) {
+    if (result.outcome === 'started') return '已启动自定义运行器'
+    if (result.outcome === 'dispatched') return '已请求终端运行收藏'
+    if (result.outcome === 'unsupported') return result.message || '当前宿主不支持该运行方式'
+    return `运行失败：${fileActionFailureText({ outcome: 'failed', errorCode: result.errorCode, message: result.message })}`
+  }
+
+  async function executeFavoriteItem(
+    item: FavoriteNode,
+    options: { source?: 'manual' | 'quick-result' | 'slot'; query?: string } = {}
+  ): Promise<boolean> {
+    if (!item.path || item.kind === 'group') {
+      const notice = '没有选中的文件或文件夹'
+      if (options.source === 'slot') showFavoriteWorkbench(notice, item.id)
+      else setMessage(notice)
+      return false
+    }
+    const platformId = currentFavoritePlatform()
+    const runner = platformId ? item.runnerByPlatform?.[platformId] : undefined
+    if (runner) {
+      if (!platformId || !favoriteCapabilities.run || !platform.files.run) {
+        const notice = '当前宿主不支持自定义运行器'
+        if (options.source === 'slot') showFavoriteWorkbench(notice, item.id)
+        else setMessage(notice)
+        return false
+      }
+      if (runner.mode === 'terminal' && favoriteCapabilities.terminalRun === false) {
+        const notice = '当前宿主不支持终端运行模式'
+        if (options.source === 'slot') showFavoriteWorkbench(notice, item.id)
+        else setMessage(notice)
+        return false
+      }
+      if (!isFavoriteRunnerTrusted(item, platformId, runner)) {
+        const notice = '运行器配置已变更或尚未确认，请重新编辑并确认'
+        if (options.source === 'slot') showFavoriteWorkbench(notice, item.id)
+        else setMessage(notice)
+        return false
+      }
+      const resolved = resolveFavoriteRunner(item, runner, platformId)
+      if (!resolved) {
+        const notice = '运行器配置无效，请检查程序、参数和工作目录'
+        if (options.source === 'slot') showFavoriteWorkbench(notice, item.id)
+        else setMessage(notice)
+        return false
+      }
+      const result = normalizeFavoriteRunResult(await platform.files.run({
+        targetPath: item.path,
+        ...resolved
+      }))
+      const accepted = result.outcome === 'started' || result.outcome === 'dispatched'
+      if (accepted) {
+        markFavoriteUsed(item.id, options.query ?? (options.source === 'slot' ? '' : state.favoriteSearch))
+        if (favoriteQuickMode && options.source !== 'slot') void hideAppWindow()
+      }
+      const notice = favoriteRunNotice(result)
+      if (!accepted && options.source === 'slot') showFavoriteWorkbench(notice, item.id)
+      else setMessage(notice)
+      return accepted
+    }
+
+    const result = normalizeFileActionResult(await platform.files.open(item.path))
+    const accepted = acceptedFileAction(result)
+    if (accepted) {
+      markFavoriteUsed(item.id, options.query ?? (options.source === 'slot' ? '' : state.favoriteSearch))
+      if (favoriteQuickMode && options.source !== 'slot') void hideAppWindow()
+    }
+    const notice = fileActionNotice('open', result)
+    if (!accepted && options.source === 'slot') showFavoriteWorkbench(notice, item.id)
+    else setMessage(notice)
+    return accepted
+  }
+
   async function openFavorite(args?: Record<string, unknown> | null) {
     const ids = resolveFavoriteIds(args)
     if (ids.length !== 1) {
@@ -7702,16 +7834,138 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       return
     }
     const item = favoriteById(ids[0])
-    if (!item?.path || item.kind === 'group') {
+    if (!item) {
       setMessage('没有选中的文件或文件夹')
       return
     }
-    const result = normalizeFileActionResult(await platform.files.open(item.path))
-    if (acceptedFileAction(result)) {
-      markFavoriteUsed(item.id)
-      if (favoriteQuickMode) void hideAppWindow()
+    await executeFavoriteItem(item, { source: favoriteQuickMode ? 'quick-result' : 'manual' })
+  }
+
+  function favoriteSlotLabel(slotNumber: number) {
+    return `EyPc 文件槽 ${slotNumber}`
+  }
+
+  function openFavoriteSlotManager(args?: Record<string, unknown> | null) {
+    if (favoriteQuickMode) {
+      setMessage('快速收藏页保持只读，请在完整收藏页维护文件槽')
+      return false
     }
-    setMessage(fileActionNotice('open', result))
+    const targetId = favoriteIdFromArgs(args) || focusedFavoriteId
+    const target = favoriteById(targetId)
+    favoriteSlotManagerTargetId = target && target.kind !== 'group' ? target.id : null
+    favoriteSlotManagerOpen = true
+    notify()
+    return true
+  }
+
+  function closeFavoriteSlotManager() {
+    if (!favoriteSlotManagerOpen) return false
+    favoriteSlotManagerOpen = false
+    favoriteSlotManagerTargetId = null
+    notify()
+    return true
+  }
+
+  function assignFavoriteSlot(slotNumber: number, args?: Record<string, unknown> | null) {
+    const platformId = currentFavoritePlatform()
+    const targetId = favoriteIdFromArgs(args) || favoriteSlotManagerTargetId || focusedFavoriteId
+    const target = favoriteById(targetId)
+    if (!platformId) {
+      setMessage('当前宿主无法识别文件槽平台')
+      return false
+    }
+    if (slotNumber < 1 || slotNumber > 10 || !target || target.kind === 'group') {
+      setMessage('请选择一个已保存的文件或文件夹收藏')
+      return false
+    }
+    state.favoriteSlots = state.favoriteSlots.map((slot) => {
+      const favoriteIdByPlatform = { ...slot.favoriteIdByPlatform }
+      if (favoriteIdByPlatform[platformId] === target.id) delete favoriteIdByPlatform[platformId]
+      if (slot.slot === slotNumber) favoriteIdByPlatform[platformId] = target.id
+      return { ...slot, favoriteIdByPlatform }
+    })
+    favoriteSlotManagerTargetId = target.id
+    save()
+    setMessage(`已将“${target.name}”分配到文件槽 ${slotNumber}（${platformId}）`)
+    return true
+  }
+
+  function clearFavoriteSlot(slotNumber: number) {
+    const platformId = currentFavoritePlatform()
+    if (!platformId || slotNumber < 1 || slotNumber > 10) {
+      setMessage('当前无法清除文件槽')
+      return false
+    }
+    const slot = state.favoriteSlots.find((item) => item.slot === slotNumber)
+    if (!slot?.favoriteIdByPlatform[platformId]) {
+      setMessage(`文件槽 ${slotNumber} 当前平台尚未分配`)
+      return false
+    }
+    state.favoriteSlots = state.favoriteSlots.map((item) => {
+      if (item.slot !== slotNumber) return item
+      const favoriteIdByPlatform = { ...item.favoriteIdByPlatform }
+      delete favoriteIdByPlatform[platformId]
+      return { ...item, favoriteIdByPlatform }
+    })
+    save()
+    setMessage(`已清除文件槽 ${slotNumber} 的 ${platformId} 绑定；uTools 全局快捷键需在官方设置中自行解绑`)
+    return true
+  }
+
+  function configureFavoriteSlotHotkey(slotNumber: number) {
+    if (slotNumber < 1 || slotNumber > 10) return false
+    const opened = platform.app.configureHotkey?.(favoriteSlotLabel(slotNumber)) || false
+    if (!opened) setMessage('当前宿主无法打开 uTools 快捷键设置')
+    return opened
+  }
+
+  async function activateFavoriteSlot(slotNumber: number) {
+    const platformId = currentFavoritePlatform()
+    if (!isTabEnabled('favorites')) {
+      showFavoriteWorkbench('收藏功能已禁用，请先在功能设置中启用')
+      return false
+    }
+    if (!platformId) {
+      showFavoriteWorkbench('当前宿主无法识别文件槽平台')
+      return false
+    }
+    const slot = state.favoriteSlots.find((item) => item.slot === slotNumber)
+    const targetId = slot?.favoriteIdByPlatform[platformId]
+    const target = favoriteById(targetId || null)
+    if (!slot || !target || target.kind === 'group') {
+      showFavoriteWorkbench(`文件槽 ${slotNumber} 尚未为 ${platformId} 分配收藏`)
+      return false
+    }
+    return executeFavoriteItem(target, { source: 'slot', query: '' })
+  }
+
+  function resetFavoriteLearning(args?: Record<string, unknown> | null) {
+    const targetId = favoriteIdFromArgs(args)
+    if (targetId) {
+      state.favorites = state.favorites.map((item) => item.id === targetId
+        ? (({ usageCount: _usageCount, lastUsedAt: _lastUsedAt, ...rest }) => ({ ...rest, updatedAt: Date.now() }))(item)
+        : item)
+      state.favoriteSearchAffinities = removeFavoriteLearning(state.favoriteSearchAffinities, [targetId])
+      save()
+      setMessage('已重置该收藏的搜索学习')
+      return true
+    }
+    state.favorites = state.favorites.map((item) => (({ usageCount: _usageCount, lastUsedAt: _lastUsedAt, ...rest }) => ({ ...rest, updatedAt: Date.now() }))(item))
+    state.favoriteSearchAffinities = []
+    save()
+    setMessage('已重置全部收藏搜索学习')
+    return true
+  }
+
+  async function executeQuickFavoriteAt(index: number) {
+    if (!favoriteQuickMode || favoriteDrawer.open) return false
+    const item = currentFavoriteItems()[index]
+    if (!item) {
+      setMessage(`当前没有第 ${index === 9 ? 10 : index + 1} 项搜索结果`)
+      return false
+    }
+    focusedFavoriteId = item.id
+    return executeFavoriteItem(item, { source: 'quick-result' })
   }
 
   async function revealFavorite(args?: Record<string, unknown> | null) {
@@ -7904,6 +8158,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       name: favoriteDraft.name.trim() || item.name?.trim() || inferFavoriteNameFromPath(path),
       tagsText: favoriteDraft.tagsText.trim() || (item.tags || []).join(', '),
       color: item.color || favoriteDraft.color || (kind === 'folder' ? '#2F80ED' : '#F2994A'),
+      runnerTrusted: false,
       activeField: 'path'
     }
     notify()
@@ -7935,6 +8190,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     const target = favoriteById(targetIds[0] || null)
     if (mode !== 'create-group' && mode !== 'create-target' && !target) return false
     const kind = mode === 'create-group' ? 'group' : mode === 'create-target' ? 'folder' : target?.kind || 'folder'
+    const runnerPlatform = currentFavoritePlatform()
+    const runner = runnerPlatform ? target?.runnerByPlatform?.[runnerPlatform] : undefined
     favoriteDraft = {
       mode,
       targetId: target?.id || null,
@@ -7945,6 +8202,14 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       tagsText: target?.tags.join(', ') || '',
       color: target?.color || (kind === 'group' ? '#00A676' : '#2F80ED'),
       parentId: mode === 'create-group' || mode === 'create-target' ? selectedFavoriteParentId() : target?.parentId || null,
+      runnerEnabled: Boolean(runner),
+      runnerMode: runner?.mode || 'background',
+      runnerExecutable: runner?.executable || '',
+      runnerArgsText: runner?.args.join('\n') || '',
+      runnerCwdMode: runner?.cwdMode || 'target-directory',
+      runnerCwd: runner?.cwd || '',
+      runnerPlatform,
+      runnerTrusted: Boolean(target && runnerPlatform && isFavoriteRunnerTrusted(target, runnerPlatform, runner)),
       activeField: mode === 'move-parent' ? 'parent' : mode === 'create-target' ? 'path' : 'name'
     }
     if (mode === 'create-group' || mode === 'create-target') {
@@ -7955,10 +8220,34 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return true
   }
 
-  function updateFavoriteDraft(input: Partial<Pick<FavoriteDraft, 'kind' | 'name' | 'path' | 'tagsText' | 'color' | 'parentId' | 'activeField'>>) {
+  function updateFavoriteDraft(input: Partial<Pick<FavoriteDraft, 'kind' | 'name' | 'path' | 'tagsText' | 'color' | 'parentId' | 'runnerEnabled' | 'runnerMode' | 'runnerExecutable' | 'runnerArgsText' | 'runnerCwdMode' | 'runnerCwd' | 'activeField'>>) {
     if (!favoriteDraft) return
-    favoriteDraft = { ...favoriteDraft, ...input }
+    const runnerChanged = ['kind', 'name', 'path', 'runnerEnabled', 'runnerMode', 'runnerExecutable', 'runnerArgsText', 'runnerCwdMode', 'runnerCwd']
+      .some((key) => key in input)
+    favoriteDraft = { ...favoriteDraft, ...input, ...(runnerChanged ? { runnerTrusted: false } : {}) }
     notify()
+  }
+
+  function applySuggestedFavoriteRunner() {
+    if (!favoriteDraft || favoriteDraft.kind === 'group' || !favoriteDraft.runnerPlatform) return false
+    const suggestion = suggestedFavoriteRunner(favoriteDraft.path, favoriteDraft.runnerPlatform)
+    if (!suggestion) {
+      setMessage('当前文件类型没有内置建议，请手动填写结构化运行器')
+      return false
+    }
+    favoriteDraft = {
+      ...favoriteDraft,
+      runnerEnabled: true,
+      runnerMode: suggestion.mode,
+      runnerExecutable: suggestion.executable,
+      runnerArgsText: suggestion.args.join('\n'),
+      runnerCwdMode: suggestion.cwdMode,
+      runnerCwd: suggestion.cwd || '',
+      runnerTrusted: false,
+      activeField: 'runner-executable'
+    }
+    notify()
+    return true
   }
 
   function cycleFavoriteDraftField(direction: 1 | -1) {
@@ -7967,14 +8256,102 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       ? ['parent']
       : favoriteDraft.kind === 'group'
         ? ['name', 'color', 'parent']
-        : ['kind', 'name', 'path', 'tags', 'color', 'parent']
+        : favoriteDraft.mode === 'rename'
+          ? ['name']
+          : [
+              'kind', 'name', 'path', 'tags', 'color', 'parent', 'runner-enabled',
+              ...(favoriteDraft.runnerEnabled
+                ? [
+                    'runner-mode', 'runner-executable', 'runner-args', 'runner-cwd-mode',
+                    ...(favoriteDraft.runnerCwdMode === 'custom' ? ['runner-cwd'] : [])
+                  ] as FavoriteDraftField[]
+                : [])
+            ]
     const current = Math.max(0, fields.indexOf(favoriteDraft.activeField))
     favoriteDraft.activeField = fields[(current + direction + fields.length) % fields.length]
     notify()
     return true
   }
 
-  function saveFavoriteDraft(input: Partial<Pick<FavoriteDraft, 'kind' | 'name' | 'path' | 'tagsText' | 'color' | 'parentId'>> = {}) {
+  function commitFavoriteDraft(draft: FavoriteDraft, runnerConfig: FavoriteRunnerConfig | null, trustRunner: boolean) {
+    const target = favoriteById(draft.targetId)
+    const name = draft.name.trim()
+    const kind = draft.mode === 'create-group' ? 'group' : draft.kind
+    const parentId = draft.parentId || null
+    const displayPath = kind === 'group' ? '' : draft.path.trim()
+    const now = Date.now()
+    if (draft.mode === 'create-group') {
+      const id = `fav-group:${now}:${Math.random().toString(36).slice(2, 8)}`
+      state.favorites.push({ id, kind: 'group', path: '', name, parentId, tags: [], color: draft.color || '#00A676', sortOrder: state.favorites.length + 1, createdAt: now, updatedAt: now })
+      focusedFavoriteGroupId = id
+      activeFavoritePane = 'containers'
+    } else if (draft.mode === 'create-target' && (kind === 'file' || kind === 'folder')) {
+      const result = addFavorite({
+        kind,
+        path: displayPath,
+        name: name || inferFavoriteNameFromPath(draft.path),
+        parentId,
+        tags: tagsTextToList(draft.tagsText),
+        color: draft.color || '#2F80ED'
+      })
+      if (!result || result.duplicate) return false
+      if (runnerConfig && draft.runnerPlatform) {
+        state.favorites = state.favorites.map((item) => item.id === result.node.id
+          ? {
+              ...item,
+              runnerByPlatform: {
+                ...item.runnerByPlatform,
+                [draft.runnerPlatform as FavoritePlatform]: trustRunner
+                  ? trustFavoriteRunner(item, draft.runnerPlatform as FavoritePlatform, runnerConfig, now)
+                  : runnerConfig
+              },
+              updatedAt: now
+            }
+          : item)
+      }
+    } else if (target) {
+      state.favorites = state.favorites.map((item) => {
+        if (draft.mode === 'move-parent') return draft.targetIds.includes(item.id) ? { ...item, parentId, updatedAt: now } : item
+        if (item.id !== target.id) return item
+        if (draft.mode === 'rename') return { ...item, name, updatedAt: now }
+        const next: FavoriteNode = {
+          ...item,
+          kind,
+          name: name || inferFavoriteNameFromPath(draft.path),
+          path: displayPath,
+          tags: tagsTextToList(draft.tagsText),
+          color: draft.color || item.color,
+          parentId,
+          updatedAt: now
+        }
+        if (kind === 'group') {
+          delete next.runnerByPlatform
+          return next
+        }
+        if (draft.runnerPlatform) {
+          const runnerByPlatform = { ...item.runnerByPlatform }
+          if (runnerConfig) {
+            runnerByPlatform[draft.runnerPlatform] = trustRunner
+              ? trustFavoriteRunner(next, draft.runnerPlatform, runnerConfig, now)
+              : runnerConfig
+          } else {
+            delete runnerByPlatform[draft.runnerPlatform]
+          }
+          next.runnerByPlatform = Object.keys(runnerByPlatform).length ? runnerByPlatform : undefined
+        }
+        return next
+      })
+      if (kind === 'group') focusedFavoriteGroupId = target.id
+      else focusedFavoriteId = target.id
+    }
+    favoriteDraft = null
+    save()
+    void refreshFavoritePathInspections()
+    notify()
+    return true
+  }
+
+  function saveFavoriteDraft(input: Partial<Pick<FavoriteDraft, 'kind' | 'name' | 'path' | 'tagsText' | 'color' | 'parentId' | 'runnerEnabled' | 'runnerMode' | 'runnerExecutable' | 'runnerArgsText' | 'runnerCwdMode' | 'runnerCwd'>> = {}) {
     if (!favoriteDraft) return false
     const draft = { ...favoriteDraft, ...input }
     const target = favoriteById(draft.targetId)
@@ -8007,43 +8384,97 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         return false
       }
     }
-    const now = Date.now()
-    if (draft.mode === 'create-group') {
-      const id = `fav-group:${now}:${Math.random().toString(36).slice(2, 8)}`
-      state.favorites.push({ id, kind: 'group', path: '', name, parentId, tags: [], color: draft.color || '#00A676', sortOrder: state.favorites.length + 1, createdAt: now, updatedAt: now })
-      focusedFavoriteGroupId = id
-      activeFavoritePane = 'containers'
-    } else if (draft.mode === 'create-target' && (kind === 'file' || kind === 'folder')) {
-      addFavorite({
-        kind,
-        path: displayPath,
-        name: name || inferFavoriteNameFromPath(draft.path),
-        parentId,
-        tags: tagsTextToList(draft.tagsText),
-        color: draft.color || '#2F80ED'
-      })
-    } else if (target) {
-      state.favorites = state.favorites.map((item) => {
-        if (draft.mode === 'move-parent') return draft.targetIds.includes(item.id) ? { ...item, parentId, updatedAt: now } : item
-        if (item.id !== target.id) return item
-        if (draft.mode === 'rename') return { ...item, name, updatedAt: now }
-        return {
-          ...item,
-          kind,
-          name: name || inferFavoriteNameFromPath(draft.path),
-          path: displayPath,
-          tags: tagsTextToList(draft.tagsText),
-          color: draft.color || item.color,
-          parentId,
-          updatedAt: now
-        }
-      })
-      if (kind === 'group') focusedFavoriteGroupId = target.id
-      else focusedFavoriteId = target.id
+    if (draft.mode === 'create-target' && kind !== 'group') {
+      const pathKey = favoritePathIdentityKey(displayPath)
+      const duplicate = state.favorites.find((item) => item.kind === kind && favoritePathIdentityKey(item.path) === pathKey)
+      if (duplicate) {
+        focusDuplicateFavorite(duplicate.id)
+        setMessage('已有等价路径的同类型收藏')
+        return false
+      }
     }
-    favoriteDraft = null
-    save()
-    void refreshFavoritePathInspections()
+
+    const runnerEditable = (draft.mode === 'create-target' || draft.mode === 'edit') && kind !== 'group'
+    let runnerConfig: FavoriteRunnerConfig | null = null
+    if (runnerEditable && draft.runnerEnabled) {
+      if (!draft.runnerPlatform) {
+        setMessage('当前宿主无法识别运行器平台')
+        return false
+      }
+      if (!draft.runnerExecutable.trim()) {
+        setMessage('自定义运行器的可执行程序不能为空')
+        return false
+      }
+      if (draft.runnerCwdMode === 'custom' && !draft.runnerCwd.trim()) {
+        setMessage('自定义工作目录不能为空')
+        return false
+      }
+      runnerConfig = normalizeFavoriteRunnerConfig({
+        mode: draft.runnerMode,
+        executable: draft.runnerExecutable,
+        args: draft.runnerArgsText.split(/\r?\n/).filter((item) => item.trim().length > 0),
+        cwdMode: draft.runnerCwdMode,
+        ...(draft.runnerCwdMode === 'custom' ? { cwd: draft.runnerCwd } : {})
+      })
+      if (!runnerConfig) {
+        setMessage('运行器配置无效：请检查程序、参数数量、长度和空字符')
+        return false
+      }
+    }
+
+    if (!runnerConfig || !runnerEditable || !draft.runnerPlatform) {
+      return commitFavoriteDraft(draft, runnerEditable ? runnerConfig : null, false)
+    }
+
+    const candidate: FavoriteNode = target
+      ? {
+          ...target,
+          kind,
+          path: displayPath,
+          name: name || inferFavoriteNameFromPath(draft.path)
+        }
+      : {
+          id: draft.targetId || 'favorite-draft',
+          kind,
+          path: displayPath,
+          name: name || inferFavoriteNameFromPath(draft.path),
+          parentId,
+          tags: tagsTextToList(draft.tagsText),
+          color: draft.color || '#2F80ED',
+          sortOrder: state.favorites.length + 1,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        }
+    const existingRunner = target?.runnerByPlatform?.[draft.runnerPlatform]
+    const unchangedTrusted = Boolean(
+      existingRunner?.trustedAt
+      && existingRunner.trustedFingerprint === favoriteRunnerFingerprint(candidate, draft.runnerPlatform, runnerConfig)
+    )
+    if (unchangedTrusted && existingRunner) {
+      return commitFavoriteDraft(draft, existingRunner, false)
+    }
+
+    const resolved = resolveFavoriteRunner(candidate, runnerConfig, draft.runnerPlatform)
+    if (!resolved) {
+      setMessage('运行器占位符解析失败，请检查程序、参数和工作目录')
+      return false
+    }
+    const platformLabel = draft.runnerPlatform === 'darwin' ? 'macOS' : draft.runnerPlatform === 'win32' ? 'Windows' : 'Linux'
+    confirm = {
+      title: '信任并保存自定义运行器',
+      detail: [
+        `平台：${platformLabel}`,
+        `程序：${resolved.executable}`,
+        `参数：${resolved.args.length ? resolved.args.map((value) => JSON.stringify(value)).join(' ') : '（无）'}`,
+        `工作目录：${resolved.cwd}`,
+        `模式：${resolved.mode === 'terminal' ? '系统终端' : '后台启动'}`,
+        '确认后，双击、Enter、数字快捷键和文件槽均可直接启动该程序。EyPc 不使用 shell 拼接，也不记录输出；请只信任你理解的配置。'
+      ].join('\n'),
+      onConfirm: () => {
+        confirm = null
+        commitFavoriteDraft(draft, runnerConfig, true)
+      }
+    }
     notify()
     return true
   }
@@ -8442,13 +8873,14 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'favorites.group.moveParent', title: '移动收藏父级', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+F2', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => beginFavoriteDraft('move-parent', args) })
     actions.register({ id: 'favorites.group.collapse', title: '折叠收藏分组', group: '收藏', risk: 'normal', scope: 'tab', priority: 95, shortcut: 'ArrowLeft', when: (ctx) => ctx.tab === 'favorites', run: () => { if (!focusedFavoriteGroupId) return false; state.collapsedFavoriteGroupIds = [...new Set([...state.collapsedFavoriteGroupIds, focusedFavoriteGroupId])]; save(); notify(); return true } })
     actions.register({ id: 'favorites.group.expand', title: '展开收藏分组', group: '收藏', risk: 'normal', scope: 'tab', priority: 95, shortcut: 'ArrowRight', when: (ctx) => ctx.tab === 'favorites', run: () => { if (!focusedFavoriteGroupId) return false; state.collapsedFavoriteGroupIds = state.collapsedFavoriteGroupIds.filter((id) => id !== focusedFavoriteGroupId); save(); notify(); return true } })
-    actions.register({ id: 'favorites.open', title: '打开收藏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Enter', when: (ctx) => ctx.tab === 'favorites' && favoriteCapabilities.open, run: (_ctx, args) => { if (favoriteActionTargetKind(args) === 'directory') void openDirectoryTargets(directoryPathsFromArgs(args)); else void openFavorite(args); return true } })
+    actions.register({ id: 'favorites.open', title: '打开或运行收藏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Enter', when: (ctx) => ctx.tab === 'favorites' && (favoriteCapabilities.open || favoriteCapabilities.run === true), run: (_ctx, args) => { if (favoriteActionTargetKind(args) === 'directory') void openDirectoryTargets(directoryPathsFromArgs(args)); else void openFavorite(args); return true } })
     actions.register({ id: 'favorites.reveal', title: '定位收藏', group: '收藏', risk: 'normal', scope: 'tab', priority: 100, shortcut: 'Ctrl+Enter', when: (ctx) => ctx.tab === 'favorites' && favoriteCapabilities.reveal, run: (_ctx, args) => { if (favoriteActionTargetKind(args) === 'directory') void revealDirectoryTargets(directoryPathsFromArgs(args)); else void revealFavorite(args); return true } })
     actions.register({ id: 'favorites.copyPath', title: '复制收藏路径', group: '收藏', risk: 'normal', scope: 'tab', priority: 95, when: (ctx) => ctx.tab === 'favorites' && favoriteCapabilities.copyPath, run: (_ctx, args) => { if (favoriteActionTargetKind(args) === 'directory') void copyDirectoryTargetPaths(directoryPathsFromArgs(args)); else void copyFavoritePath(args); return true } })
     actions.register({ id: 'favorites.copyItems', title: '复制真实文件或文件夹', group: '收藏', risk: 'normal', scope: 'tab', priority: 95, shortcut: 'Ctrl+Shift+C', when: (ctx) => ctx.tab === 'favorites' && Boolean(platform.files.capabilities?.copyItems), run: (_ctx, args) => { void copyFavoriteItems(args); return true } })
     actions.register({ id: 'favorites.pick.files', title: '选择文件并审核收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 95, shortcut: 'Ctrl+O', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode && favoriteCapabilities.pickFiles, run: () => { favoriteAddMenuOpen = false; void pickFavoritesForReview('file'); return true } })
     actions.register({ id: 'favorites.pick.folders', title: '选择文件夹并审核收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 94, shortcut: 'Ctrl+Shift+O', when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode && favoriteCapabilities.pickFolders, run: () => { favoriteAddMenuOpen = false; void pickFavoritesForReview('folder'); return true } })
     actions.register({ id: 'favorites.draft.pickPath', title: '为收藏草稿选择路径', group: '收藏', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-editor'), run: (_ctx, args) => { void pickFavoriteDraftPath(favoritePickKindFromArgs(args)); return true } })
+    actions.register({ id: 'favorites.runner.applySuggestion', title: '填入常见脚本运行器建议', group: '收藏', risk: 'normal', scope: 'layer', priority: 96, when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-editor'), run: () => applySuggestedFavoriteRunner() })
     actions.register({ id: 'favorites.add.duplicateFocus', title: '定位重复收藏', group: '收藏', risk: 'normal', scope: 'tab', priority: 80, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => focusDuplicateFavorite(typeof args?.id === 'string' ? args.id : null) })
     actions.register({ id: 'favorites.remove', title: '移出收藏', group: '收藏', risk: 'data-write', scope: 'tab', priority: 100, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => removeFavorite(selectedFavoriteMetadataIds(args)) })
     actions.register({ id: 'favorites.remove.force', title: '直接移出收藏元数据', group: '收藏', risk: 'destructive', scope: 'tab', priority: 100, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => removeFavoriteNow(selectedFavoriteMetadataIds(args)) })
@@ -8464,6 +8896,19 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'favorites.edit.nextField', title: '收藏编辑下一个字段', group: '收藏', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-editor'), run: () => cycleFavoriteDraftField(1) })
     actions.register({ id: 'favorites.edit.prevField', title: '收藏编辑上一个字段', group: '收藏', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Shift+Tab', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-editor'), run: () => cycleFavoriteDraftField(-1) })
     actions.register({ id: 'favorites.cancel', title: '取消收藏编辑', group: '收藏', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-editor'), run: () => { favoriteDraft = null; notify(); return true } })
+    actions.register({ id: 'favorites.slot.manager.open', title: '打开文件槽管理器', group: '收藏', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => openFavoriteSlotManager(args) })
+    actions.register({ id: 'favorites.slot.manager.close', title: '关闭文件槽管理器', group: '收藏', risk: 'normal', scope: 'layer', priority: 101, shortcut: 'Escape', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-slot-manager'), run: () => closeFavoriteSlotManager() })
+    actions.register({ id: 'favorites.learning.reset', title: '重置全部收藏搜索学习', group: '收藏', risk: 'data-write', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: () => resetFavoriteLearning() })
+    actions.register({ id: 'favorites.learning.resetItem', title: '重置当前收藏搜索学习', group: '收藏', risk: 'data-write', scope: 'row', priority: 91, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => resetFavoriteLearning(args) })
+    for (let slot = 1; slot <= 10; slot += 1) {
+      actions.register({ id: `favorites.slot.assign.${slot}`, title: `分配到文件槽 ${slot}`, group: '收藏', risk: 'data-write', scope: 'layer', priority: 90, when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-slot-manager'), run: (_ctx, args) => assignFavoriteSlot(slot, args) })
+      actions.register({ id: `favorites.slot.clear.${slot}`, title: `清除文件槽 ${slot}`, group: '收藏', risk: 'data-write', scope: 'layer', priority: 89, when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-slot-manager'), run: () => clearFavoriteSlot(slot) })
+      actions.register({ id: `favorites.slot.test.${slot}`, title: `测试文件槽 ${slot}`, group: '收藏', risk: 'normal', scope: 'layer', priority: 88, when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-slot-manager'), run: () => { void activateFavoriteSlot(slot); return true } })
+      actions.register({ id: `favorites.slot.hotkey.${slot}`, title: `配置文件槽 ${slot} 全局快捷键`, group: '收藏', risk: 'normal', scope: 'layer', priority: 87, when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-slot-manager'), run: () => configureFavoriteSlotHotkey(slot) })
+      actions.register({ id: `favorites.slot.activate.${slot}`, title: `执行文件槽 ${slot}`, group: '收藏', risk: 'normal', scope: 'global', priority: 102, when: () => true, run: () => { void activateFavoriteSlot(slot); return true } })
+      const numberShortcut = slot === 10 ? 'Ctrl+0' : `Ctrl+${slot}`
+      actions.register({ id: `favorites.quick.open.${slot}`, title: `打开快速收藏第 ${slot} 项`, group: '收藏', risk: 'normal', scope: 'tab', priority: 100 - slot, shortcut: numberShortcut, when: (ctx) => ctx.tab === 'favorites' && ctx.favoriteQuickMode === true && !ctx.layerIds.includes('favorites-drawer'), run: () => { void executeQuickFavoriteAt(slot - 1); return true } })
+    }
     actions.register({ id: 'favorites.pickReview.commit', title: '保存点选收藏', group: '收藏', risk: 'data-write', scope: 'layer', priority: 100, shortcut: 'Ctrl+S', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-pick-review'), run: () => commitFavoritePickReview() })
     actions.register({ id: 'favorites.pickReview.cancel', title: '取消点选收藏', group: '收藏', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-pick-review'), run: () => cancelFavoritePickReview() })
     actions.register({ id: 'favorites.pickReview.next', title: '点选审核下一个项目', group: '收藏', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Tab', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-pick-review'), run: () => cycleFavoritePickReview(1) })
@@ -8480,7 +8925,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'favorites.directory.reveal', title: '定位实际目录项', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode && favoriteCapabilities.reveal, run: (_ctx, args) => { void revealDirectoryTargets(directoryPathsFromArgs(args)); return true } })
     actions.register({ id: 'favorites.directory.copyPath', title: '复制实际目录项路径', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode && favoriteCapabilities.copyPath, run: (_ctx, args) => { void copyDirectoryTargetPaths(directoryPathsFromArgs(args)); return true } })
     actions.register({ id: 'favorites.directory.addSelected', title: '添加实际目录项到收藏', group: '收藏', risk: 'data-write', scope: 'row', priority: 91, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => addSelectedDirectoryEntries(directoryPathsFromArgs(args)) })
-    for (let index = 1; index <= 9; index += 1) {
+    for (let index = 1; index <= 10; index += 1) {
       actions.register({
         id: `favorites.drawer.select.${index}`,
         title: `执行收藏抽屉第 ${index} 个动作`,
@@ -8490,7 +8935,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         risk: 'normal',
         scope: 'layer',
         priority: 90 - index,
-        shortcut: `Ctrl+${index}`,
+        shortcut: index === 10 ? 'Ctrl+0' : `Ctrl+${index}`,
         when: (ctx) => ctx.tab === 'favorites',
         run: () => executeFavoriteDrawerItem(index - 1)
       })
@@ -8924,6 +9369,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         favoriteDrawer,
         favoriteDrawerItems: buildFavoriteDrawerItems(),
         favoriteQuickMode,
+        favoriteSlotManagerOpen,
+        favoriteSlotManagerTargetId,
+        favoriteCurrentPlatform: currentFavoritePlatform(),
         favoritePickReview,
         favoriteDraft,
         favoriteParentOptions: favoriteParentOptions(state.favorites, favoriteDraft?.targetId || null),
@@ -9154,6 +9602,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         favoriteAddMenuOpen = false
         favoritePickReview = null
         favoriteDraft = null
+        favoriteSlotManagerOpen = false
+        favoriteSlotManagerTargetId = null
         favoriteDirectoryRequestId += 1
         favoriteDirectoryEntries = []
         favoriteDirectoryError = null
@@ -9421,6 +9871,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         favoritePickReview = null
         notify()
         return 'favorites.pickReview.cancel'
+      }
+      if (favoriteSlotManagerOpen && shortcutId === 'Escape') {
+        closeFavoriteSlotManager()
+        return 'favorites.slot.manager.close'
       }
       if (shortcutId === 'Escape') {
         if (state.activeTab === 'ports') {

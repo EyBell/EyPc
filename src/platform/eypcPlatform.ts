@@ -1,6 +1,6 @@
 import { normalizeAppState } from '../domain/state'
 import { normalizeMqttArchiveState } from '../domain/mqtt'
-import type { AppState, FavoriteNode, KillRequest, KillResult, MqttArchiveState, MqttStorageStatus, PortProcess } from '../domain/types'
+import type { AppState, FavoriteNode, FavoritePlatform, FavoriteRunnerMode, KillRequest, KillResult, MqttArchiveState, MqttStorageStatus, PortProcess } from '../domain/types'
 import type { LiveWindow, NativeWindowObservation, WindowActivationRequest, WindowInstanceProbeResult, WindowPlatform } from '../domain/windows'
 import type {
   CodexActivityDelta,
@@ -90,6 +90,7 @@ export interface SaveTextFileResult {
 }
 
 export interface FileCapabilities {
+  platform?: FavoritePlatform | 'unsupported'
   open: boolean
   reveal: boolean
   copyPath: boolean
@@ -98,6 +99,23 @@ export interface FileCapabilities {
   pickFolders: boolean
   listDirectory: boolean
   inspectPaths: boolean
+  run?: boolean
+  terminalRun?: boolean
+}
+
+export interface FavoriteRunRequest {
+  targetPath: string
+  executable: string
+  args: string[]
+  cwd: string
+  mode: FavoriteRunnerMode
+}
+
+export interface FavoriteRunResult {
+  outcome: 'started' | 'dispatched' | 'unsupported' | 'failed'
+  errorCode?: FileErrorCode
+  message?: string
+  paths?: string[]
 }
 
 export interface FavoritePathInspection {
@@ -215,6 +233,41 @@ export interface ClaudeOpenResult {
   message?: string
 }
 
+/**
+ * One desktop-app (Cowork) session as the read-only bridge reports it: the
+ * metadata whitelist plus a bounded audit-tail summary. Content-bearing fields
+ * never cross the bridge.
+ */
+export interface ClaudeDesktopBridgeSession {
+  sessionId: string
+  title: string
+  cwd: string
+  userSelectedFolders: string[]
+  createdAt: number
+  lastActivityAt: number
+  model: string
+  isArchived: boolean
+  scheduledTaskId: string
+  cliSessionId: string
+  metadataUpdatedAt: number
+  auditBytes: number
+  auditUpdatedAt: number
+  lastEvent: string | null
+  lastEventAt: number
+  lastResultAt: number
+  lastPermissionRequestAt: number
+  lastPermissionResponseAt: number
+  rateLimit: { resetsAt: number | null; limited: boolean; windowType: string } | null
+}
+
+export interface ClaudeDesktopBridgeSnapshot {
+  version: 1
+  revision: string
+  sessions: ClaudeDesktopBridgeSession[]
+  truncated: boolean
+  readAt: number
+}
+
 export interface EypcPlatformApi {
   storage: {
     getState(): AppState
@@ -244,6 +297,7 @@ export interface EypcPlatformApi {
   files: {
     capabilities?: FileCapabilities
     open(path: string): Promise<FileActionResult>
+    run?(request: FavoriteRunRequest): Promise<FavoriteRunResult>
     reveal(path: string): Promise<FileActionResult>
     copyPath(path: string): Promise<FileActionResult>
     copyItems?(paths: string[]): Promise<FileActionResult>
@@ -317,6 +371,13 @@ export interface EypcPlatformApi {
      * interval remains the only source of freshness.
      */
     watchEvents?(listener: () => void, options?: { coalesceMs?: number }): () => void
+    /**
+     * Desktop-app session lane, strictly read-only. Optional: an older preload
+     * has no desktop reader and the claude lane simply stays CLI-only.
+     */
+    readDesktopSnapshot?(options?: { now?: number; windowMs?: number }): Promise<ClaudeDesktopBridgeSnapshot> | ClaudeDesktopBridgeSnapshot
+    /** Fires on desktop metadata heartbeats; returns a disposer. */
+    watchDesktopSessions?(listener: () => void): () => void
     install(options?: { statusline?: boolean }): Promise<ClaudeRegistrationResult> | ClaudeRegistrationResult
     uninstall(): Promise<ClaudeRegistrationResult> | ClaudeRegistrationResult
     openTask(sessionId: string, options?: { pid?: number; cwd?: string }): Promise<ClaudeOpenResult>
@@ -360,6 +421,13 @@ export function normalizeFileActionResult(value: unknown, failedErrorCode: FileE
   }
   if (value === true) return { outcome: 'dispatched', message: 'legacy host reported dispatch only' }
   return { outcome: 'failed', errorCode: failedErrorCode }
+}
+
+export function normalizeFavoriteRunResult(value: unknown): FavoriteRunResult {
+  if (value && typeof value === 'object' && 'outcome' in value && ['started', 'dispatched', 'unsupported', 'failed'].includes(String((value as { outcome?: unknown }).outcome))) {
+    return value as FavoriteRunResult
+  }
+  return { outcome: 'failed', errorCode: 'io-error', message: 'invalid runner result' }
 }
 
 function errorCodeFromUnknown(error: unknown): FileErrorCode {
@@ -726,6 +794,7 @@ export function getPlatform(): EypcPlatformApi {
     const hostWindows = window.eypcPlatform.windows
     const hostClaude = window.eypcPlatform.claude
     const hostCapabilities: FileCapabilities = hostFiles.capabilities || {
+      platform: 'unsupported',
       open: typeof hostFiles.open === 'function',
       reveal: typeof hostFiles.reveal === 'function',
       copyPath: typeof hostFiles.copyPath === 'function',
@@ -733,7 +802,9 @@ export function getPlatform(): EypcPlatformApi {
       pickFiles: typeof hostFiles.pickFavorites === 'function' || typeof hostFiles.pickFavorite === 'function',
       pickFolders: typeof hostFiles.pickFavorites === 'function',
       listDirectory: typeof hostFiles.listDirectory === 'function',
-      inspectPaths: typeof hostFiles.inspectPaths === 'function'
+      inspectPaths: typeof hostFiles.inspectPaths === 'function',
+      run: typeof hostFiles.run === 'function',
+      terminalRun: typeof hostFiles.run === 'function'
     }
     return {
       ...window.eypcPlatform,
@@ -764,6 +835,7 @@ export function getPlatform(): EypcPlatformApi {
       files: {
         capabilities: hostCapabilities,
         open: (path) => callFileAction(hostFiles.open ? () => hostFiles.open(path) : undefined, 'open unavailable'),
+        run: hostFiles.run ? (request) => Promise.resolve(hostFiles.run!(request)).then(normalizeFavoriteRunResult).catch((error) => ({ outcome: 'failed', errorCode: errorCodeFromUnknown(error), message: error instanceof Error ? error.message : 'runner failed' })) : undefined,
         reveal: (path) => callFileAction(hostFiles.reveal ? () => hostFiles.reveal(path) : undefined, 'reveal unavailable'),
         copyPath: (path) => callFileAction(hostFiles.copyPath ? () => hostFiles.copyPath(path) : undefined, 'copy path unavailable'),
         copyItems: (paths) => callFileAction(hostFiles.copyItems ? () => hostFiles.copyItems!(paths) : undefined, 'copy items unavailable'),
@@ -862,6 +934,7 @@ export function getPlatform(): EypcPlatformApi {
     },
     files: {
       capabilities: {
+        platform: 'unsupported',
         open: false,
         reveal: false,
         copyPath: typeof navigator !== 'undefined' && Boolean(navigator.clipboard),
@@ -869,7 +942,9 @@ export function getPlatform(): EypcPlatformApi {
         pickFiles: typeof document !== 'undefined',
         pickFolders: typeof document !== 'undefined',
         listDirectory: false,
-        inspectPaths: false
+        inspectPaths: false,
+        run: false,
+        terminalRun: false
       },
       open: async () => ({ outcome: 'failed', errorCode: 'unsupported', message: 'open unavailable in browser' }),
       reveal: async () => ({ outcome: 'failed', errorCode: 'unsupported', message: 'reveal unavailable in browser' }),

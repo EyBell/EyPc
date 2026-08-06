@@ -61,7 +61,8 @@ describe('favorite tree accessibility and inline rename', () => {
 
     await wrapper.setProps({
       renameDraft: {
-        mode: 'rename', targetId: 'group', targetIds: ['group'], kind: 'group', name: '新资料', path: '', tagsText: '', color: '#2f80ed', parentId: null, activeField: 'name'
+        mode: 'rename', targetId: 'group', targetIds: ['group'], kind: 'group', name: '新资料', path: '', tagsText: '', color: '#2f80ed', parentId: null,
+        runnerEnabled: false, runnerMode: 'background', runnerExecutable: '', runnerArgsText: '', runnerCwdMode: 'target-directory', runnerCwd: '', runnerPlatform: 'darwin', runnerTrusted: false, activeField: 'name'
       }
     })
     const input = wrapper.get('input.favorite-inline-rename')
@@ -267,7 +268,8 @@ describe('favorites page dialogs, focus and states', () => {
     const base = snapshotWithFavorites([folder])
     const renameDraft = {
       mode: 'rename' as const, targetId: folder.id, targetIds: [folder.id], kind: folder.kind, name: folder.name, path: folder.path,
-      tagsText: '', color: folder.color, parentId: null, activeField: 'name' as const
+      tagsText: '', color: folder.color, parentId: null, runnerEnabled: false, runnerMode: 'background' as const, runnerExecutable: '',
+      runnerArgsText: '', runnerCwdMode: 'target-directory' as const, runnerCwd: '', runnerPlatform: 'darwin' as const, runnerTrusted: false, activeField: 'name' as const
     }
     const wrapper = mount(FavoritesPage, {
       props: { snapshot: { ...base, focusedFavoriteId: folder.id } },
@@ -330,7 +332,8 @@ describe('favorites page dialogs, focus and states', () => {
     manual.focus()
     const draft = {
       mode: 'create-target' as const, targetId: 'draft', targetIds: [] as string[], kind: 'folder' as const, name: '', path: '',
-      tagsText: '', color: '#2F80ED', parentId: null, activeField: 'name' as const
+      tagsText: '', color: '#2F80ED', parentId: null, runnerEnabled: false, runnerMode: 'background' as const, runnerExecutable: '',
+      runnerArgsText: '', runnerCwdMode: 'target-directory' as const, runnerCwd: '', runnerPlatform: 'darwin' as const, runnerTrusted: false, activeField: 'name' as const
     }
     await wrapper.setProps({ snapshot: { ...base, favoriteAddMenuOpen: false, favoriteDraft: draft } })
     await nextTick()
@@ -346,6 +349,68 @@ describe('favorites page dialogs, focus and states', () => {
     await wrapper.setProps({ snapshot: { ...base, favoriteDraft: null } })
     await nextTick()
     expect(document.activeElement).toBe(wrapper.get('.favorite-add-button').element)
+  })
+
+  it('renders structured runner preview and a compact ten-slot manager', async () => {
+    const item = favorite('script', 'file', 'Run script', '/tmp/run script.sh')
+    const base = snapshotWithFavorites([item])
+    const draft = {
+      mode: 'edit' as const,
+      targetId: item.id,
+      targetIds: [item.id],
+      kind: item.kind,
+      name: item.name,
+      path: item.path,
+      tagsText: '',
+      color: item.color,
+      parentId: null,
+      runnerEnabled: true,
+      runnerMode: 'background' as const,
+      runnerExecutable: '/bin/sh',
+      runnerArgsText: '{path}\n--name={name}',
+      runnerCwdMode: 'target-directory' as const,
+      runnerCwd: '',
+      runnerPlatform: 'darwin' as const,
+      runnerTrusted: false,
+      activeField: 'runner-executable' as const
+    }
+    const wrapper = mount(FavoritesPage, {
+      props: {
+        snapshot: {
+          ...base,
+          favoriteCurrentPlatform: 'darwin',
+          favoriteCapabilities: { ...base.favoriteCapabilities, platform: 'darwin', run: true, terminalRun: true },
+          favoriteDraft: draft
+        }
+      },
+      attachTo: document.body
+    })
+
+    expect(wrapper.get('.favorite-runner-editor legend').text()).toContain('macOS 打开方式')
+    expect(wrapper.get('.favorite-runner-preview').text()).toContain('/tmp/run script.sh')
+    expect(wrapper.get('.favorite-runner-heading').text()).toContain('保存时需要确认信任')
+
+    const slots = base.state.favoriteSlots.map((slot) => slot.slot === 1
+      ? { ...slot, favoriteIdByPlatform: { darwin: item.id } }
+      : slot)
+    await wrapper.setProps({
+      snapshot: {
+        ...base,
+        state: { ...base.state, favoriteSlots: slots },
+        favoriteCurrentPlatform: 'darwin',
+        favoriteDraft: null,
+        favoriteSlotManagerOpen: true,
+        favoriteSlotManagerTargetId: item.id
+      }
+    })
+    await nextTick()
+
+    const manager = wrapper.get('[data-role="favorite-slot-manager"]')
+    expect(manager.attributes()).toMatchObject({ role: 'dialog', 'aria-modal': 'true' })
+    expect(manager.findAll('.favorite-slot-row')).toHaveLength(10)
+    expect(manager.findAll('.favorite-slot-row')[0].text()).toContain('Run script')
+    await manager.findAll('.favorite-slot-row')[0].get('button').trigger('click')
+    expect(wrapper.emitted('dispatch')?.at(-1)).toEqual(['favorites.slot.assign.1'])
   })
 
   it('traps review focus, labels color fields, and restores its trigger', async () => {
