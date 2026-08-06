@@ -2821,6 +2821,152 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
+  it('falls back from the waiting-input shortcut to EyPc local-pinned tasks without changing the input badge', async () => {
+    const now = Date.now()
+    const state = createInitialState(1)
+    const completedKey = '5555555555555555'
+    const nativeKey = '6666666666666666'
+    state.codex.localPins = [{ kind: 'task', key: completedKey }]
+    const openThread = vi.fn(async () => ({ outcome: 'opened' as const }))
+    const messages: string[] = []
+    const platform = {
+      codex: {
+        readSnapshot: async () => ({
+          ok: true as const,
+          receivedAt: now,
+          value: {
+            version: 2 as const,
+            receivedAt: now,
+            threads: [
+              {
+                key: completedKey,
+                actionAlias: 'alias-local-completed',
+                name: '本地置顶已完成',
+                status: 'idle' as const,
+                activeFlags: [],
+                statusAuthority: 'desktop-live' as const,
+                updatedAt: now - 20,
+                lastTurnStatus: 'completed' as const,
+                lastTurnStartedAt: now - 40,
+                lastTurnCompletedAt: now - 20,
+                unread: false
+              },
+              {
+                key: nativeKey,
+                actionAlias: 'alias-native-pinned',
+                name: '原生置顶进行中',
+                status: 'active' as const,
+                activeFlags: [],
+                statusAuthority: 'desktop-live' as const,
+                nativePinned: true,
+                updatedAt: now - 10,
+                lastTurnStatus: 'inProgress' as const,
+                lastTurnStartedAt: now - 10
+              }
+            ],
+            projects: [],
+            sourceFingerprint: 'e'.repeat(64),
+            completeness: 'verified' as const
+          }
+        }),
+        openThread,
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({
+      platform,
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: (message) => messages.push(message)
+    })
+
+    await controller.refresh()
+    expect(controller.view().conversations.inputRequired).toHaveLength(0)
+    expect(controller.view().conversations.inputRequiredCount).toBe(0)
+    expect(controller.view().conversations.completed.find((task) => task.key === completedKey)).toMatchObject({
+      key: completedKey,
+      pinSource: 'local'
+    })
+    expect(controller.openFirstInput()).toBe(true)
+    expect(openThread).toHaveBeenCalledWith('alias-local-completed')
+    expect(controller.view().conversations.inputRequiredCount).toBe(0)
+
+    openThread.mockClear()
+    state.codex.localPins = []
+    await controller.refresh()
+    expect(controller.openFirstInput()).toBe(false)
+    expect(openThread).not.toHaveBeenCalled()
+    expect(messages.at(-1)).toBe('当前没有待输入任务')
+    controller.dispose()
+  })
+
+  it('keeps real waiting-input ahead of local-pin fallback for the input shortcut', async () => {
+    const now = Date.now()
+    const state = createInitialState(1)
+    const waitingKey = '7777777777777777'
+    const pinnedKey = '8888888888888888'
+    state.codex.localPins = [{ kind: 'task', key: pinnedKey }]
+    const openThread = vi.fn(async () => ({ outcome: 'opened' as const }))
+    const platform = {
+      codex: {
+        readSnapshot: async () => ({
+          ok: true as const,
+          receivedAt: now,
+          value: {
+            version: 2 as const,
+            receivedAt: now,
+            threads: [
+              {
+                key: waitingKey,
+                actionAlias: 'alias-waiting-input',
+                name: '真实待输入',
+                status: 'active' as const,
+                activeFlags: ['waitingOnUserInput' as const],
+                statusAuthority: 'desktop-live' as const,
+                updatedAt: now - 5,
+                lastTurnStatus: 'inProgress' as const,
+                lastTurnStartedAt: now - 5
+              },
+              {
+                key: pinnedKey,
+                actionAlias: 'alias-local-pin',
+                name: '本地置顶',
+                status: 'idle' as const,
+                activeFlags: [],
+                statusAuthority: 'desktop-live' as const,
+                updatedAt: now - 30,
+                lastTurnStatus: 'completed' as const,
+                lastTurnStartedAt: now - 50,
+                lastTurnCompletedAt: now - 30,
+                unread: false
+              }
+            ],
+            projects: [],
+            sourceFingerprint: 'f'.repeat(64),
+            completeness: 'verified' as const
+          }
+        }),
+        openThread,
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({
+      platform,
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: () => undefined
+    })
+
+    await controller.refresh()
+    expect(controller.view().conversations.inputRequired.map((task) => task.key)).toEqual([waitingKey])
+    expect(controller.openFirstInput()).toBe(true)
+    expect(openThread).toHaveBeenCalledWith('alias-waiting-input')
+    expect(openThread).not.toHaveBeenCalledWith('alias-local-pin')
+    controller.dispose()
+  })
+
   it('rebuilds the exact task alias before opening a card after lifecycle reset', async () => {
     const now = Date.now()
     const state = createInitialState(1)

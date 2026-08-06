@@ -1749,8 +1749,21 @@ export function createCodexController(options: CodexControllerOptions) {
     return result.outcome === 'dispatched'
   }
 
+  function firstLocalPinnedOpenableTask() {
+    const byKey = new Map(allTasks().map((task) => [task.key, task]))
+    for (const pin of codexState().localPins) {
+      if (pin.kind !== 'task') continue
+      const task = byKey.get(pin.key)
+      if (task?.pinSource === 'local' && task.actionAlias) return task as CodexTaskCard & { actionAlias: string }
+    }
+    return null
+  }
+
   function openFirstInputFromCurrentInventory() {
-    const task = cycleOrderedTasks(taskState.conversations.inputRequired)[0]
+    const waiting = cycleOrderedTasks(taskState.conversations.inputRequired).find((task) => Boolean(task.actionAlias))
+    const task = waiting?.actionAlias
+      ? waiting as CodexTaskCard & { actionAlias: string }
+      : firstLocalPinnedOpenableTask()
     if (!task?.actionAlias) {
       options.setMessage('当前没有待输入任务')
       return false

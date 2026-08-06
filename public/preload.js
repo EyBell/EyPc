@@ -6785,10 +6785,15 @@ if (globalThis.utools && typeof globalThis.utools.onPluginOut === 'function') {
     if (isKill) {
       shutdownCodexEnvironmentActions()
       closeCodexActionRunner()
+      // Kill is a process boundary: clear desired visibility with the window.
+      codexFloatPersistent = false
       closeCodexFloat()
       closeCodexConnections({ force: true })
       return
     }
+    // Ordinary mainHide/pluginOut must not tear down a float the last sync asked
+    // to keep. Renderer remount may call float.close() without clearing that
+    // intent; only sync({ visible:false }) or kill may clear it.
     if (!codexFloatPersistent) closeCodexFloat()
     // mainHide/background exit is a visibility transition, not a process
     // boundary. Keep the App Server session, aliases and latest-Turn cache hot
@@ -8599,7 +8604,9 @@ window.eypcPlatform = {
     diagnostics: getCodexFloatWorkspaceDiagnostics,
     resetGeometry: resetCodexFloatGeometry,
     close() {
-      codexFloatPersistent = false
+      // Destroy the child window only. Desired visibility stays owned by
+      // sync({ visible }) so a mainHide remount's float.close() cannot make the
+      // following pluginOut(false) treat an enabled float as disposable.
       closeCodexFloat()
     },
     onAction(listener) {
