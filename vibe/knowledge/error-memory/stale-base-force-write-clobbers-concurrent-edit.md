@@ -58,6 +58,11 @@ tags:
 
 ## 记录历史
 
+| 日期 | 任务 | 触发 | 失败路线 | 证据 | 恢复 | 结果 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-08-05 | float-quota-single-line | `companionPresentation.ts` 的改动凭空消失 | 读设备文件 → 容器编辑 → `force: true` 回写 | mtime 与 md5 比对 | 在对方版本上重新逐块套用 | verified |
+| 2026-08-05 | claude-companion 运行期缺陷修复（对向会话自查） | 读到本记录后回查自己的三轮回写 | 同上，且每轮都跨越了十分钟以上的测试/构建与一次等待用户回答 | `find -newermt` + 设备/容器 md5 比对 + 对方 verify 的文件清单 | 发现 `src/help/guides/codex.md` 被覆盖且此前无人察觉，按对方 spec 原地补回并留 `.bak` | verified；措辞为重述而非原文，若对方另有内容仍属丢失 |
+
 | 日期 | 事件 |
 | --- | --- |
 | 2026-08-05 | 首次发现并确认根因；丢失 `tests/domain/companionPresentation.test.ts` 中另一会话的修改，已按当时的源码实现补齐等价覆盖 |
