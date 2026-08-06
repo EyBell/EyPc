@@ -3,6 +3,7 @@ import { createActionRuntime } from '../../src/runtime/action/actionRuntime'
 import { createInitialState, normalizeAppState } from '../../src/domain/state'
 import { createAppRuntime } from '../../src/runtime/appRuntime'
 import { createMqttConnectionConfig } from '../../src/domain/mqtt'
+import { isFavoriteRunnerTrusted, trustFavoriteRunner } from '../../src/domain/favoriteLaunch'
 import type { LiveWindow, WindowActivationRequest } from '../../src/domain/windows'
 import { WINDOW_BRIDGE_REVISION, type EypcPlatformApi } from '../../src/platform/eypcPlatform'
 
@@ -3996,6 +3997,113 @@ describe('app runtime', () => {
     expect(getHideCount()).toBe(3)
   })
 
+  it('runs the first ten quick results with Ctrl+1…0 and learns only successful launches', async () => {
+    const runRequests: unknown[] = []
+    const { state, getHideCount } = installPlatform({
+      files: {
+        capabilities: { platform: 'darwin', open: true, reveal: true, copyPath: true, copyItems: true, pickFiles: true, pickFolders: true, listDirectory: true, inspectPaths: true, run: true, terminalRun: true },
+        run: async (request) => { runRequests.push(request); return { outcome: 'started' as const } }
+      }
+    })
+    enableFavorites(state)
+    state.favorites = Array.from({ length: 10 }, (_, index) => {
+      const node = { id: `script-${index + 1}`, kind: 'file' as const, path: `/work/script-${index + 1}.sh`, name: `Script ${index + 1}`, parentId: null, tags: [], color: '#F2994A', sortOrder: index + 1, createdAt: index + 1, updatedAt: index + 1 }
+      return index === 9
+        ? { ...node, runnerByPlatform: { darwin: trustFavoriteRunner(node, 'darwin', { mode: 'background', executable: '/bin/sh', args: ['{path}'], cwdMode: 'target-directory' }, 100) } }
+        : node
+    })
+    const runtime = createAppRuntime(state)
+    runtime.setFavoriteQuickMode(true)
+    runtime.setFavoriteSearch('script')
+
+    expect(runtime.handleShortcut('Ctrl+0', { textInputFocused: true, activeInputRole: 'favorite-search' })).toBe('favorites.quick.open.10')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(runRequests).toEqual([expect.objectContaining({ targetPath: '/work/script-10.sh', executable: '/bin/sh', args: ['/work/script-10.sh'], mode: 'background' })])
+    expect(getHideCount()).toBe(1)
+    expect(runtime.snapshot().state.favoriteSearchAffinities).toEqual([
+      expect.objectContaining({ query: 'script', favoriteId: 'script-10', usageCount: 1 })
+    ])
+    expect(runtime.snapshot().state.favorites.find((item) => item.id === 'script-10')?.usageCount).toBe(1)
+  })
+
+  it('requires one trust confirmation and blocks a runner after target metadata drifts', async () => {
+    const runRequests: unknown[] = []
+    const { state, getShowCount } = installPlatform({
+      files: {
+        capabilities: { platform: 'darwin', open: true, reveal: true, copyPath: true, copyItems: true, pickFiles: true, pickFolders: true, listDirectory: true, inspectPaths: true, run: true, terminalRun: true },
+        run: async (request) => { runRequests.push(request); return { outcome: 'started' as const } }
+      }
+    })
+    enableFavorites(state)
+    state.favorites = [{ id: 'script', kind: 'file', path: '/work/run.sh', name: 'Run', parentId: null, tags: [], color: '#F2994A', sortOrder: 1, createdAt: 1, updatedAt: 1 }]
+    const runtime = createAppRuntime(state)
+
+    runtime.focusFavorite('script')
+    runtime.dispatch('favorites.edit')
+    runtime.updateFavoriteDraft({ runnerEnabled: true, runnerMode: 'background', runnerExecutable: '/bin/sh', runnerArgsText: '{path}\n  --label=空 格  ', runnerCwdMode: 'target-directory' })
+    expect(runtime.dispatch('favorites.save').handled).toBe(true)
+    expect(runtime.snapshot().confirm?.title).toBe('信任并保存自定义运行器')
+    expect(runtime.snapshot().state.favorites[0].runnerByPlatform).toBeUndefined()
+    runtime.confirmNow()
+
+    const trusted = runtime.snapshot().state.favorites[0].runnerByPlatform?.darwin
+    expect(isFavoriteRunnerTrusted(runtime.snapshot().state.favorites[0], 'darwin', trusted)).toBe(true)
+    runtime.dispatch('favorites.slot.manager.open', { favoriteId: 'script' })
+    runtime.dispatch('favorites.slot.assign.1')
+    runtime.dispatch('favorites.slot.manager.close')
+    runtime.dispatch('favorites.open', { favoriteId: 'script' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(runRequests).toHaveLength(1)
+    expect(runRequests[0]).toMatchObject({ args: ['/work/run.sh', '  --label=空 格  '] })
+
+    runtime.focusFavorite('script')
+    runtime.dispatch('favorites.rename')
+    runtime.updateFavoriteDraft({ name: 'Renamed' })
+    runtime.dispatch('favorites.save')
+    runtime.dispatch('favorites.open', { favoriteId: 'script' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(runRequests).toHaveLength(1)
+    expect(runtime.snapshot().message).toContain('配置已变更或尚未确认')
+    runtime.dispatch('favorites.slot.activate.1')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(getShowCount()).toBe(1)
+    expect(runtime.snapshot().favoriteSlotManagerOpen).toBe(true)
+  })
+
+  it('keeps file slots platform-isolated and cleans slot and learning references on removal', async () => {
+    const { state, opened, configuredHotkeys, getShowCount } = installPlatform({
+      files: {
+        capabilities: { platform: 'darwin', open: true, reveal: true, copyPath: true, copyItems: true, pickFiles: true, pickFolders: true, listDirectory: true, inspectPaths: true, run: true, terminalRun: true }
+      }
+    })
+    enableFavorites(state)
+    state.favorites = [
+      { id: 'mac', kind: 'folder', path: '/work/mac', name: 'Mac', parentId: null, tags: [], color: '#2F80ED', sortOrder: 1, createdAt: 1, updatedAt: 1 },
+      { id: 'linux', kind: 'folder', path: '/work/linux', name: 'Linux', parentId: null, tags: [], color: '#2F80ED', sortOrder: 2, createdAt: 2, updatedAt: 2 }
+    ]
+    state.favoriteSlots[0].favoriteIdByPlatform = { darwin: 'mac', linux: 'linux' }
+    state.favoriteSearchAffinities = [{ query: 'mac', favoriteId: 'mac', usageCount: 1, lastUsedAt: 100 }]
+    const runtime = createAppRuntime(state)
+
+    expect(runtime.dispatch('favorites.slot.activate.1').handled).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(opened).toEqual(['/work/mac'])
+    expect(getShowCount()).toBe(0)
+
+    runtime.dispatch('favorites.slot.manager.open', { favoriteId: 'linux' })
+    runtime.dispatch('favorites.slot.assign.1')
+    expect(runtime.snapshot().state.favoriteSlots[0].favoriteIdByPlatform).toEqual({ darwin: 'linux', linux: 'linux' })
+    runtime.dispatch('favorites.slot.hotkey.1')
+    expect(configuredHotkeys).toContain('EyPc 文件槽 1')
+
+    runtime.focusFavorite('mac')
+    runtime.dispatch('favorites.remove.force')
+    expect(runtime.snapshot().state.favoriteSearchAffinities).toEqual([])
+    expect(Object.values(runtime.snapshot().state.favoriteSlots[0].favoriteIdByPlatform)).not.toContain('mac')
+  })
+
   it('opens the first quick favorite when entering quick mode without a search query', async () => {
     const { opened, getHideCount } = installPlatform()
     const state = createInitialState(100)
@@ -4952,6 +5060,7 @@ describe('app runtime', () => {
 
     expect(getHideCount()).toBe(0)
     expect(runtime.snapshot().state.favorites[0].usageCount).toBeUndefined()
+    expect(runtime.snapshot().state.favoriteSearchAffinities).toEqual([])
     expect(runtime.snapshot().message).toContain('路径不存在')
   })
 

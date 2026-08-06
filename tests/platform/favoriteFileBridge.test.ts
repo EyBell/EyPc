@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
+import { EventEmitter } from 'node:events'
 import vm from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -12,7 +13,8 @@ describe('favorite file bridge source', () => {
     execFile: (...args: unknown[]) => void,
     utools?: Record<string, unknown>,
     electronShell?: Record<string, unknown>,
-    fsOverrides: Record<string, unknown> = {}
+    fsOverrides: Record<string, unknown> = {},
+    spawnProcess: (...args: unknown[]) => unknown = vi.fn()
   ) {
     const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
     const sandbox = {
@@ -25,7 +27,7 @@ describe('favorite file bridge source', () => {
       require(name: string) {
         if (name === 'node:buffer') return requireModule('node:buffer')
         if (name === 'node:crypto') return requireModule('node:crypto')
-        if (name === 'node:child_process') return { execFile }
+        if (name === 'node:child_process') return { execFile, spawn: spawnProcess }
         if (name === 'node:net') return { connect: vi.fn() }
         if (name === 'node:fs') {
           return {
@@ -41,7 +43,7 @@ describe('favorite file bridge source', () => {
             ...fsOverrides
           }
         }
-        if (name === 'node:path') return requireModule('node:path')
+        if (name === 'node:path') return platform === 'win32' ? requireModule('node:path').win32 : requireModule('node:path')
         if (name === 'node:os') return { homedir: () => '/tmp' }
         if (name === 'electron') return { shell: electronShell }
         throw new Error(`unexpected require: ${name}`)
@@ -64,9 +66,216 @@ describe('favorite file bridge source', () => {
     expect(preload).toContain('listDirectory: listFavoriteDirectory')
   })
 
+  it('starts background runners with shell disabled and preserves structured arguments', async () => {
+    const calls: Array<{ command: string; args: string[]; options: Record<string, unknown> }> = []
+    const spawnProcess = vi.fn((command: unknown, args: unknown, options: unknown) => {
+      calls.push({ command: String(command), args: args as string[], options: options as Record<string, unknown> })
+      const child = new EventEmitter() as EventEmitter & { unref: () => void }
+      child.unref = vi.fn()
+      queueMicrotask(() => child.emit('spawn'))
+      return child
+    })
+    const window = loadPreload('linux', () => undefined, undefined, undefined, {
+      constants: { R_OK: 4, F_OK: 0, X_OK: 1 },
+      statSync: (target: string) => ({ isFile: () => target === '/usr/bin/node' }),
+      accessSync: () => undefined,
+      promises: {
+        readdir: async () => [],
+        lstat: async () => ({ isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false }),
+        stat: async () => ({ isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false }),
+        access: async () => undefined,
+        writeFile: async () => undefined
+      }
+    }, spawnProcess)
+
+    await expect(window.eypcPlatform.files.run({
+      targetPath: '/work/demo/run task.js',
+      executable: '/usr/bin/node',
+      args: ['/work/demo/run task.js', '--name=空 格'],
+      cwd: '/work/demo',
+      mode: 'background'
+    })).resolves.toMatchObject({ outcome: 'started' })
+
+    expect(calls).toEqual([{
+      command: '/usr/bin/node',
+      args: ['/work/demo/run task.js', '--name=空 格'],
+      options: expect.objectContaining({ cwd: '/work/demo', shell: false, detached: true, stdio: 'ignore', windowsHide: true })
+    }])
+  })
+
+  it('uses a controlled macOS terminal adapter without execution-policy bypasses or raw user shell', async () => {
+    const calls: Array<{ command: string; args: string[]; options: Record<string, unknown> }> = []
+    const spawnProcess = vi.fn((command: unknown, args: unknown, options: unknown) => {
+      calls.push({ command: String(command), args: args as string[], options: options as Record<string, unknown> })
+      const child = new EventEmitter() as EventEmitter & { unref: () => void }
+      child.unref = vi.fn()
+      queueMicrotask(() => child.emit('spawn'))
+      return child
+    })
+    const window = loadPreload('darwin', () => undefined, undefined, undefined, {
+      constants: { R_OK: 4, F_OK: 0, X_OK: 1 },
+      statSync: (target: string) => ({ isFile: () => target === '/bin/sh' || target === '/usr/bin/osascript' }),
+      accessSync: () => undefined,
+      promises: {
+        readdir: async () => [],
+        lstat: async () => ({ isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false }),
+        stat: async () => ({ isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false }),
+        access: async () => undefined,
+        writeFile: async () => undefined
+      }
+    }, spawnProcess)
+
+    await expect(window.eypcPlatform.files.run({
+      targetPath: '/work/demo/run task.sh',
+      executable: '/bin/sh',
+      args: ['/work/demo/run task.sh', '--name=空 格'],
+      cwd: '/work/demo',
+      mode: 'terminal'
+    })).resolves.toMatchObject({ outcome: 'dispatched' })
+
+    expect(calls[0].command).toBe('/usr/bin/osascript')
+    expect(calls[0].options).toMatchObject({ shell: false, detached: true, windowsHide: false })
+    expect(calls[0].args.slice(-4)).toEqual(['/work/demo', '/bin/sh', '/work/demo/run task.sh', '--name=空 格'])
+    const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
+    expect(preload).not.toContain('-ExecutionPolicy')
+    expect(preload).not.toContain('Bypass')
+  })
+
+  it('dispatches Windows terminal mode through a static PowerShell adapter and encoded structured payload', async () => {
+    const calls: Array<{ command: string; args: string[]; options: Record<string, unknown> }> = []
+    const spawnProcess = vi.fn((command: unknown, args: unknown, options: unknown) => {
+      calls.push({ command: String(command), args: args as string[], options: options as Record<string, unknown> })
+      const child = new EventEmitter() as EventEmitter & { unref: () => void }
+      child.unref = vi.fn()
+      queueMicrotask(() => child.emit('spawn'))
+      return child
+    })
+    const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+    const executable = 'C:\\Tools\\runner.exe'
+    const window = loadPreload('win32', () => undefined, undefined, undefined, {
+      constants: { R_OK: 4, F_OK: 0, X_OK: 1 },
+      statSync: (target: string) => ({ isFile: () => target === powershell || target === executable }),
+      accessSync: () => undefined,
+      promises: {
+        readdir: async () => [],
+        lstat: async () => ({ isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false }),
+        stat: async () => ({ isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false }),
+        access: async () => undefined,
+        writeFile: async () => undefined
+      }
+    }, spawnProcess)
+
+    await expect(window.eypcPlatform.files.run({
+      targetPath: 'C:\\work\\task.ps1',
+      executable,
+      args: ['C:\\work\\task.ps1', '--name=空 格'],
+      cwd: 'C:\\work',
+      mode: 'terminal'
+    })).resolves.toMatchObject({ outcome: 'dispatched' })
+
+    expect(calls[0].command).toBe(powershell)
+    expect(calls[0].args).toEqual(expect.arrayContaining(['-NoLogo', '-NoProfile', '-NoExit', '-Command']))
+    expect(calls[0].args.join(' ')).not.toContain('Bypass')
+    expect(calls[0].options).toMatchObject({ shell: false, detached: true, windowsHide: false })
+    const payload = JSON.parse(Buffer.from(calls[0].args.at(-1) || '', 'base64').toString('utf8'))
+    expect(payload).toEqual({ cwd: 'C:\\work', executable, args: ['C:\\work\\task.ps1', '--name=空 格'] })
+    expect(calls[0].args.join(' ')).not.toContain('C:\\work\\task.ps1')
+  })
+
+  it('reports unsupported when Linux terminal mode has no known terminal and never falls back to background', async () => {
+    const spawnProcess = vi.fn()
+    const window = loadPreload('linux', () => undefined, undefined, undefined, {
+      constants: { R_OK: 4, F_OK: 0, X_OK: 1 },
+      statSync: (target: string) => ({ isFile: () => target === '/bin/sh' }),
+      accessSync: () => undefined,
+      promises: {
+        readdir: async () => [],
+        lstat: async () => ({ isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false }),
+        stat: async () => ({ isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false }),
+        access: async () => undefined,
+        writeFile: async () => undefined
+      }
+    }, spawnProcess)
+
+    await expect(window.eypcPlatform.files.run({
+      targetPath: '/work/task.sh',
+      executable: '/bin/sh',
+      args: ['/work/task.sh'],
+      cwd: '/work',
+      mode: 'terminal'
+    })).resolves.toMatchObject({ outcome: 'unsupported' })
+    expect(spawnProcess).not.toHaveBeenCalled()
+  })
+
+  it('rejects relative executable paths and malformed requests before spawning', async () => {
+    const spawnProcess = vi.fn()
+    const window = loadPreload('linux', () => undefined, undefined, undefined, {}, spawnProcess)
+
+    await expect(window.eypcPlatform.files.run({
+      targetPath: '/work/demo/task.sh',
+      executable: './task.sh',
+      args: [],
+      cwd: '/work/demo',
+      mode: 'background'
+    })).resolves.toMatchObject({ outcome: 'failed', errorCode: 'invalid-path' })
+    expect(spawnProcess).not.toHaveBeenCalled()
+  })
+
+  it('maps an inaccessible executable to permission-denied without spawning', async () => {
+    const spawnProcess = vi.fn()
+    const permissionError = Object.assign(new Error('access denied'), { code: 'EACCES' })
+    const window = loadPreload('linux', () => undefined, undefined, undefined, {
+      constants: { R_OK: 4, F_OK: 0, X_OK: 1 },
+      statSync: () => ({ isFile: () => true }),
+      accessSync: () => { throw permissionError },
+      promises: {
+        readdir: async () => [],
+        lstat: async () => ({ isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false }),
+        stat: async () => ({ isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false }),
+        access: async () => undefined,
+        writeFile: async () => undefined
+      }
+    }, spawnProcess)
+
+    await expect(window.eypcPlatform.files.run({
+      targetPath: '/work/demo/task.sh',
+      executable: '/work/tools/runner',
+      args: [],
+      cwd: '/work/demo',
+      mode: 'background'
+    })).resolves.toMatchObject({ outcome: 'failed', errorCode: 'permission-denied' })
+    expect(spawnProcess).not.toHaveBeenCalled()
+  })
+
+  it('rejects direct Windows cmd and bat executables so scripts must use explicit cmd.exe arguments', async () => {
+    const spawnProcess = vi.fn()
+    const executable = 'C:\\work\\task.cmd'
+    const window = loadPreload('win32', () => undefined, undefined, undefined, {
+      constants: { R_OK: 4, F_OK: 0, X_OK: 1 },
+      statSync: (target: string) => ({ isFile: () => target === executable }),
+      accessSync: () => undefined,
+      promises: {
+        readdir: async () => [],
+        lstat: async () => ({ isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false }),
+        stat: async () => ({ isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false }),
+        access: async () => undefined,
+        writeFile: async () => undefined
+      }
+    }, spawnProcess)
+
+    await expect(window.eypcPlatform.files.run({
+      targetPath: executable,
+      executable,
+      args: [],
+      cwd: 'C:\\work',
+      mode: 'background'
+    })).resolves.toMatchObject({ outcome: 'failed', errorCode: 'invalid-path' })
+    expect(spawnProcess).not.toHaveBeenCalled()
+  })
+
   it('packages the uTools preload bridge in a CommonJS package scope', () => {
     const packageJson = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')) as { type?: string; scripts?: Record<string, string> }
-    const pluginJson = JSON.parse(readFileSync(resolve(process.cwd(), 'public/plugin.json'), 'utf8')) as { preload?: string }
+    const pluginJson = JSON.parse(readFileSync(resolve(process.cwd(), 'public/plugin.json'), 'utf8')) as { preload?: string; features?: Array<{ code?: string; explain?: string; mainHide?: boolean; cmds?: string[] }> }
     const publicPackageJson = JSON.parse(readFileSync(resolve(process.cwd(), 'public/package.json'), 'utf8')) as { type?: string }
     const prepareScript = readFileSync(resolve(process.cwd(), 'scripts/prepare-utools-runtime.mjs'), 'utf8')
     const preloadAssetsScript = readFileSync(resolve(process.cwd(), 'scripts/utools-preload-assets.mjs'), 'utf8')
@@ -76,6 +285,17 @@ describe('favorite file bridge source', () => {
 
     expect(packageJson.type).toBe('module')
     expect(pluginJson.preload).toBe('preload.js')
+    expect(pluginJson.features?.filter((feature) => /^eypc-favorite-slot-(?:[1-9]|10)$/.test(feature.code || '')).map((feature) => ({
+      code: feature.code,
+      explain: feature.explain,
+      mainHide: feature.mainHide,
+      command: feature.cmds?.[0]
+    }))).toEqual(Array.from({ length: 10 }, (_, index) => ({
+      code: `eypc-favorite-slot-${index + 1}`,
+      explain: `EyPc 文件槽 ${index + 1}`,
+      mainHide: true,
+      command: `EyPc 文件槽 ${index + 1}`
+    })))
     expect(publicPackageJson.type).toBe('commonjs')
     expect(prepareScript).toContain("const publicPackageJson = resolve(root, 'public/package.json')")
     expect(prepareScript).toContain("const distPackageJson = resolve(distDir, 'package.json')")

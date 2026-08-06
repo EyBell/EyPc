@@ -1278,6 +1278,7 @@ function favoriteFileCapabilities() {
   } catch {}
   const canPick = typeof utools.showOpenDialog === 'function' || Boolean(dialog && (dialog.showOpenDialog || dialog.showOpenDialogSync))
   return {
+    platform: process.platform === 'darwin' || process.platform === 'win32' || process.platform === 'linux' ? process.platform : 'unsupported',
     open: Boolean((shell && typeof shell.openPath === 'function') || process.platform === 'darwin' || typeof utools.shellOpenPath === 'function'),
     reveal: Boolean(process.platform === 'darwin' || (shell && typeof shell.showItemInFolder === 'function') || typeof utools.shellShowItemInFolder === 'function'),
     copyPath: typeof utools.copyText === 'function',
@@ -1285,8 +1286,194 @@ function favoriteFileCapabilities() {
     pickFiles: canPick,
     pickFolders: canPick,
     listDirectory: true,
-    inspectPaths: true
+    inspectPaths: true,
+    run: process.platform === 'darwin' || process.platform === 'win32' || process.platform === 'linux',
+    terminalRun: process.platform === 'darwin' || process.platform === 'win32' || process.platform === 'linux'
   }
+}
+
+function favoriteRunResult(outcome, options = {}) {
+  return { outcome, ...options }
+}
+
+function normalizeFavoriteRunRequest(value) {
+  if (!value || typeof value !== 'object') return null
+  const targetPath = String(value.targetPath || '').trim()
+  const executable = String(value.executable || '').trim()
+  const cwd = String(value.cwd || '').trim()
+  const mode = value.mode === 'terminal' ? 'terminal' : value.mode === 'background' ? 'background' : null
+  const args = Array.isArray(value.args) ? value.args : null
+  if (!mode || !targetPath || !executable || !cwd || !args || args.length > 64) return null
+  if (executable.length > 4096 || cwd.length > 4096 || executable.includes('\0') || cwd.includes('\0')) return null
+  if (!args.every((item) => typeof item === 'string' && item.length <= 4096 && !item.includes('\0'))) return null
+  if (!isAbsoluteFavoritePath(targetPath) || !isAbsoluteFavoritePath(cwd)) return null
+  if (!path.isAbsolute(executable) && (executable.includes('/') || executable.includes('\\'))) return null
+  return { targetPath, executable, args: [...args], cwd, mode }
+}
+
+function windowsSystemExecutable(name) {
+  if (process.platform !== 'win32') return ''
+  const windowsRoot = String(process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows')
+  const aliases = {
+    'cmd.exe': path.win32.join(windowsRoot, 'System32', 'cmd.exe'),
+    cmd: path.win32.join(windowsRoot, 'System32', 'cmd.exe'),
+    'powershell.exe': path.win32.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    powershell: path.win32.join(windowsRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+  }
+  return aliases[String(name || '').toLowerCase()] || ''
+}
+
+function favoriteExecutableCandidates(executable) {
+  if (path.isAbsolute(executable)) return [executable]
+  const candidates = []
+  const systemExecutable = windowsSystemExecutable(executable)
+  if (systemExecutable) candidates.push(systemExecutable)
+  const pathEntries = String(process.env.PATH || '').split(path.delimiter).map((entry) => entry.trim()).filter(Boolean)
+  const extensions = process.platform === 'win32'
+    ? String(process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
+    : ['']
+  const hasExtension = process.platform !== 'win32' || Boolean(path.win32.extname(executable))
+  for (const directory of pathEntries) {
+    if (hasExtension) candidates.push(path.join(directory, executable))
+    else for (const extension of extensions) candidates.push(path.join(directory, `${executable}${extension}`))
+  }
+  return [...new Set(candidates)]
+}
+
+function inspectFavoriteExecutable(executable) {
+  let permissionDenied = false
+  for (const candidate of favoriteExecutableCandidates(executable)) {
+    let stat = null
+    try {
+      stat = fs.statSync(candidate)
+    } catch (error) {
+      if (fileErrorCode(error) === 'permission-denied') permissionDenied = true
+      continue
+    }
+    if (!stat.isFile()) continue
+    try {
+      fs.accessSync(candidate, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK)
+      return { path: candidate, errorCode: null }
+    } catch (error) {
+      if (fileErrorCode(error) === 'permission-denied') permissionDenied = true
+    }
+  }
+  return { path: '', errorCode: permissionDenied ? 'permission-denied' : 'not-found' }
+}
+
+function resolveFavoriteExecutable(executable) {
+  return inspectFavoriteExecutable(executable).path
+}
+
+function spawnFavoriteDetached(command, args, cwd, outcome) {
+  return new Promise((resolve) => {
+    let settled = false
+    let timer = null
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      resolve(result)
+    }
+    let child = null
+    try {
+      child = spawn(command, args, {
+        cwd,
+        shell: false,
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: outcome !== 'dispatched'
+      })
+    } catch (error) {
+      finish(favoriteRunResult('failed', { errorCode: fileErrorCode(error), message: fileErrorMessage(error, 'runner start failed') }))
+      return
+    }
+    child.once('error', (error) => finish(favoriteRunResult('failed', { errorCode: fileErrorCode(error), message: fileErrorMessage(error, 'runner start failed') })))
+    child.once('spawn', () => {
+      try { child.unref() } catch {}
+      finish(favoriteRunResult(outcome))
+    })
+    timer = setTimeout(() => finish(favoriteRunResult('failed', { errorCode: 'timeout', message: 'runner start timed out' })), 5_000)
+  })
+}
+
+function favoriteTerminalAdapter(executable, args, cwd) {
+  if (process.platform === 'darwin') {
+    const osascript = '/usr/bin/osascript'
+    const script = [
+      'on run argv',
+      'set workDir to item 1 of argv',
+      'set executablePath to item 2 of argv',
+      'set commandText to "cd " & quoted form of workDir & " && exec " & quoted form of executablePath',
+      'repeat with itemIndex from 3 to count argv',
+      'set commandText to commandText & " " & quoted form of (item itemIndex of argv)',
+      'end repeat',
+      'tell application "Terminal"',
+      'activate',
+      'do script commandText',
+      'end tell',
+      'end run'
+    ].join('\n')
+    return { command: osascript, args: ['-e', script, cwd, executable, ...args] }
+  }
+  if (process.platform === 'win32') {
+    const powershell = resolveFavoriteExecutable('powershell.exe')
+    if (!powershell) return null
+    const payload = Buffer.from(JSON.stringify({ cwd, executable, args }), 'utf8').toString('base64')
+    const script = '$payload = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($args[0])) | ConvertFrom-Json; Set-Location -LiteralPath ([string]$payload.cwd); $runnerArgs = @($payload.args | ForEach-Object { [string]$_ }); & ([string]$payload.executable) @runnerArgs'
+    return { command: powershell, args: ['-NoLogo', '-NoProfile', '-NoExit', '-Command', script, payload] }
+  }
+  if (process.platform === 'linux') {
+    const terminals = [
+      { executable: 'x-terminal-emulator', prefix: ['-e'] },
+      { executable: 'gnome-terminal', prefix: ['--'] },
+      { executable: 'konsole', prefix: ['-e'] },
+      { executable: 'xfce4-terminal', prefix: ['-x'] }
+    ]
+    for (const terminal of terminals) {
+      const command = resolveFavoriteExecutable(terminal.executable)
+      if (command) return { command, args: [...terminal.prefix, executable, ...args] }
+    }
+  }
+  return null
+}
+
+async function runFavorite(request) {
+  const normalized = normalizeFavoriteRunRequest(request)
+  if (!normalized) return favoriteRunResult('failed', { errorCode: 'invalid-path', message: 'invalid structured runner request' })
+  const target = await preflightFavoritePath(normalized.targetPath)
+  if (target.result) return favoriteRunResult('failed', { errorCode: target.result.errorCode, message: target.result.message, paths: [normalized.targetPath] })
+  try {
+    const cwdStat = await withFileActionTimeout(fs.promises.stat(normalized.cwd))
+    if (!cwdStat.isDirectory()) return favoriteRunResult('failed', { errorCode: 'invalid-path', message: 'working directory is not a directory', paths: [normalized.targetPath] })
+  } catch (error) {
+    return favoriteRunResult('failed', { errorCode: fileErrorCode(error), message: fileErrorMessage(error, 'working directory unavailable'), paths: [normalized.targetPath] })
+  }
+  const executableInspection = inspectFavoriteExecutable(normalized.executable)
+  const executable = executableInspection.path
+  if (!executable) {
+    const permissionDenied = executableInspection.errorCode === 'permission-denied'
+    return favoriteRunResult('failed', {
+      errorCode: permissionDenied ? 'permission-denied' : 'not-found',
+      message: permissionDenied ? 'executable is not permitted' : 'executable not found',
+      paths: [normalized.targetPath]
+    })
+  }
+  if (process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(executable)) {
+    return favoriteRunResult('failed', {
+      errorCode: 'invalid-path',
+      message: 'cmd and bat files must use explicit cmd.exe arguments',
+      paths: [normalized.targetPath]
+    })
+  }
+  if (normalized.mode === 'background') {
+    return spawnFavoriteDetached(executable, normalized.args, normalized.cwd, 'started')
+  }
+  const adapter = favoriteTerminalAdapter(executable, normalized.args, normalized.cwd)
+  if (!adapter) return favoriteRunResult('unsupported', { errorCode: 'unsupported', message: 'supported terminal application not found', paths: [normalized.targetPath] })
+  const adapterExecutable = resolveFavoriteExecutable(adapter.command)
+  if (!adapterExecutable) return favoriteRunResult('unsupported', { errorCode: 'not-found', message: 'terminal adapter not found', paths: [normalized.targetPath] })
+  return spawnFavoriteDetached(adapterExecutable, adapter.args, normalized.cwd, 'dispatched')
 }
 
 function normalizePickedFavorite(result, kind) {
@@ -8564,6 +8751,7 @@ window.eypcPlatform = {
     copyPath: copyFavoritePath,
     copyItems: copyFavoriteItems,
     inspectPaths: inspectFavoritePaths,
+    run: runFavorite,
     pickFavorite: pickFavoritePath,
     pickFavorites: pickFavoritePaths,
     listDirectory: listFavoriteDirectory,

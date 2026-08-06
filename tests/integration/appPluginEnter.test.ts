@@ -34,12 +34,13 @@ interface EnterHarness {
   emit(payload: { code?: string } | null): void
 }
 
-function installHost(payload: { code?: string } | null, codexEnabled = true, windowsEnabled = false): EnterHarness {
+function installHost(payload: { code?: string } | null, codexEnabled = true, windowsEnabled = false, favoritesEnabled = false): EnterHarness {
   const state = createInitialState(100)
   state.activeTab = 'ports'
   state.settings.featureConfigs = state.settings.featureConfigs.map((item) => {
     if (item.id === 'codex') return { ...item, enabled: codexEnabled }
     if (item.id === 'windows') return { ...item, enabled: windowsEnabled }
+    if (item.id === 'favorites') return { ...item, enabled: favoritesEnabled }
     return item
   })
   const saved: AppState[] = []
@@ -65,6 +66,7 @@ function installHost(payload: { code?: string } | null, codexEnabled = true, win
       activate: async () => ({ outcome: 'unsupported' as const })
     },
     files: {
+      capabilities: { platform: 'darwin', open: true, reveal: true, copyPath: true, copyItems: false, pickFiles: false, pickFolders: false, listDirectory: true, inspectPaths: true, run: false, terminalRun: false },
       open: async () => ({ outcome: 'failed', errorCode: 'unsupported' }),
       reveal: async () => ({ outcome: 'failed', errorCode: 'unsupported' }),
       copyPath: async () => ({ outcome: 'failed', errorCode: 'unsupported' }),
@@ -113,6 +115,10 @@ function completedUnreadCalls() {
 
 function windowSlotCalls() {
   return dispatchProbe.dispatch.mock.calls.filter(([actionId]) => actionId === 'windows.slot.activate')
+}
+
+function favoriteSlotCalls() {
+  return dispatchProbe.dispatch.mock.calls.filter(([actionId]) => String(actionId).startsWith('favorites.slot.activate.'))
 }
 
 let wrapper: VueWrapper | null = null
@@ -227,5 +233,18 @@ describe('App uTools Codex toggle entry', () => {
     expect(host.hide).not.toHaveBeenCalled()
     expect(host.show).toHaveBeenCalledTimes(1)
     expect(host.saved.at(-1)?.activeTab).toBe('settings')
+  })
+
+  it('opens the favorite slot repair manager only when a mainHide file slot cannot launch', async () => {
+    const host = installHost({ code: 'eypc-favorite-slot-1' }, true, false, true)
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => { callback(0); return 1 })
+
+    wrapper = shallowMount(App)
+    await flushPromises()
+
+    expect(favoriteSlotCalls()).toHaveLength(1)
+    expect(host.hide).not.toHaveBeenCalled()
+    expect(host.show).toHaveBeenCalledTimes(1)
+    expect(host.saved.at(-1)?.activeTab).toBe('favorites')
   })
 })

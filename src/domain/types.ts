@@ -41,6 +41,31 @@ export type PortGroupTarget =
   | { kind: 'folder'; id: string }
 
 export type FavoriteKind = 'file' | 'folder' | 'group'
+export type FavoritePlatform = 'darwin' | 'win32' | 'linux'
+export type FavoriteRunnerMode = 'background' | 'terminal'
+export type FavoriteRunnerCwdMode = 'target-directory' | 'custom'
+
+export interface FavoriteRunnerConfig {
+  mode: FavoriteRunnerMode
+  executable: string
+  args: string[]
+  cwdMode: FavoriteRunnerCwdMode
+  cwd?: string
+  trustedAt?: number
+  trustedFingerprint?: string
+}
+
+export interface FavoriteSlot {
+  slot: number
+  favoriteIdByPlatform: Partial<Record<FavoritePlatform, string>>
+}
+
+export interface FavoriteSearchAffinity {
+  query: string
+  favoriteId: string
+  usageCount: number
+  lastUsedAt: number
+}
 
 export type MqttQos = 0 | 1 | 2
 export type MqttMessageDirection = 'incoming' | 'outgoing' | 'event'
@@ -211,6 +236,7 @@ export interface FavoriteNode {
   updatedAt: number
   usageCount?: number
   lastUsedAt?: number
+  runnerByPlatform?: Partial<Record<FavoritePlatform, FavoriteRunnerConfig>>
 }
 
 export interface FavoriteTreeNode {
@@ -274,6 +300,8 @@ export interface AppState {
   collapsedPortGroupFolderIds: string[]
   collapsedFavoriteGroupIds: string[]
   favorites: FavoriteNode[]
+  favoriteSlots: FavoriteSlot[]
+  favoriteSearchAffinities: FavoriteSearchAffinity[]
   windowTargets: WindowTarget[]
   windowSlots: WindowSlot[]
   mqtt: MqttState

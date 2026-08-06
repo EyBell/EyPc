@@ -268,6 +268,8 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', { ...itemContext, favoriteQuickMode: true })).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F2', { ...itemContext, favoriteQuickMode: true })).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Tab', { ...searchContext, favoriteQuickMode: true })).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+1', { ...searchContext, favoriteQuickMode: true })?.actionId).toBe('favorites.quick.open.1')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+0', { ...searchContext, favoriteQuickMode: true })?.actionId).toBe('favorites.quick.open.10')
   })
 
   it('maps MQTT workbench shortcuts and edit-layer ownership', () => {
@@ -696,6 +698,8 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowLeft', drawerContext)?.actionId).toBe('favorites.drawer.close')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', drawerContext)?.actionId).toBe('favorites.detail.open')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+1', drawerContext)?.actionId).toBe('favorites.drawer.select.1')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+0', drawerContext)?.actionId).toBe('favorites.drawer.select.10')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+0', { ...drawerContext, favoriteQuickMode: true })?.actionId).toBe('favorites.drawer.select.10')
 
     const detailContext = {
       ...itemContext,

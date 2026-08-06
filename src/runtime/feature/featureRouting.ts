@@ -34,6 +34,14 @@ function restoreCurrentRoute(currentTab: AppTabId | null | undefined, featureCon
 }
 
 export function routePluginFeature(payload: PluginEnterPayload | null | undefined, featureConfigs?: FeatureConfig[], currentTab?: AppTabId | null): FeatureRoute {
+  const favoriteSlotMatch = /^eypc-favorite-slot-([1-9]|10)$/.exec(payload?.code || '')
+  if (favoriteSlotMatch) {
+    const slot = Number(favoriteSlotMatch[1])
+    const actionId = `favorites.slot.activate.${slot}`
+    return isFeatureEnabled('favorites', featureConfigs)
+      ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId, preserveCurrentTab: true, visibilityOwner: 'mainHide' }
+      : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId }
+  }
   const slotMatch = /^eypc-window-slot-([1-9]|10)$/.exec(payload?.code || '')
   if (slotMatch) {
     const slot = Number(slotMatch[1])
@@ -93,7 +101,7 @@ export function routePluginFeature(payload: PluginEnterPayload | null | undefine
     }
     case 'eypc-favorites-quick':
       return isFeatureEnabled('favorites', featureConfigs)
-        ? { tab: 'favorites', focusSearch: false, favoriteQuick: true }
+        ? { tab: 'favorites', focusSearch: true, favoriteQuick: true }
         : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features' }
     case 'eypc-settings':
       return { tab: 'settings', focusSearch: false }

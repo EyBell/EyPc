@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, watch } from 'vue'
-import { AlertTriangle, Check, Copy, File, Files, Folder, FolderPlus, FolderTree, LocateFixed, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Plus, RefreshCw, SquareArrowOutUpRight, Trash2, X } from '@lucide/vue'
+import { AlertTriangle, Check, Copy, File, Files, Folder, FolderPlus, FolderTree, Keyboard, LocateFixed, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Play, Plus, RefreshCw, RotateCcw, ShieldCheck, SquareArrowOutUpRight, Terminal, Trash2, Wand, X } from '@lucide/vue'
 import SearchSuggestBox from '../components/SearchSuggestBox.vue'
 import FavoriteTree from '../components/FavoriteTree.vue'
 import { favoritePathIdentityKey, inferFavoriteNameFromPath } from '../domain/favorites'
+import { normalizeFavoriteRunnerConfig, resolveFavoriteRunner } from '../domain/favoriteLaunch'
 import type { AppRuntimeSnapshot, FavoriteDraft, FavoritePickReviewItem } from '../runtime/appRuntime'
 import type { FavoriteKind, FavoriteNode } from '../domain/types'
 
@@ -146,11 +147,44 @@ function drawerIcon(commandId: string) {
   if (commandId.includes('copyItems')) return Files
   if (commandId.includes('copyPath')) return Copy
   if (commandId.includes('reveal')) return LocateFixed
+  if (commandId.includes('slot')) return Keyboard
   if (commandId.endsWith('.open')) return SquareArrowOutUpRight
   if (commandId.includes('remove')) return Trash2
   if (commandId.includes('edit') || commandId.includes('rename')) return Pencil
   if (commandId.includes('create') || commandId.includes('add')) return Plus
+  if (commandId.includes('learning')) return RotateCcw
   return MoreHorizontal
+}
+
+function platformName() {
+  if (props.snapshot.favoriteCurrentPlatform === 'darwin') return 'macOS'
+  if (props.snapshot.favoriteCurrentPlatform === 'win32') return 'Windows'
+  if (props.snapshot.favoriteCurrentPlatform === 'linux') return 'Linux'
+  return '不支持的平台'
+}
+
+function draftRunnerPreview() {
+  const draft = props.snapshot.favoriteDraft
+  if (!draft?.runnerEnabled || draft.kind === 'group') return null
+  const config = normalizeFavoriteRunnerConfig({
+    mode: draft.runnerMode,
+    executable: draft.runnerExecutable,
+    args: draft.runnerArgsText.split(/\r?\n/).filter((item) => item.trim().length > 0),
+    cwdMode: draft.runnerCwdMode,
+    ...(draft.runnerCwdMode === 'custom' ? { cwd: draft.runnerCwd } : {})
+  })
+  return config ? resolveFavoriteRunner({ kind: draft.kind, path: draft.path, name: draft.name || inferFavoriteNameFromPath(draft.path) }, config, draft.runnerPlatform || undefined) : null
+}
+
+function favoriteSlotTarget(slot: number) {
+  const platform = props.snapshot.favoriteCurrentPlatform
+  const binding = props.snapshot.state.favoriteSlots.find((item) => item.slot === slot)
+  const favoriteId = platform ? binding?.favoriteIdByPlatform[platform] : undefined
+  return props.snapshot.state.favorites.find((item) => item.id === favoriteId) || null
+}
+
+function favoriteSlotManagerTarget() {
+  return props.snapshot.state.favorites.find((item) => item.id === props.snapshot.favoriteSlotManagerTargetId && item.kind !== 'group') || null
 }
 
 function parentName(parentId: string | null) {
@@ -231,6 +265,7 @@ let drawerTrigger: HTMLElement | null = null
 let reviewTrigger: HTMLElement | null = null
 let editorTrigger: HTMLElement | null = null
 let renameTrigger: HTMLElement | null = null
+let slotManagerTrigger: HTMLElement | null = null
 
 function activePaneOwner(): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-role="favorite-${props.snapshot.activeFavoritePane}"]`)
@@ -278,6 +313,16 @@ watch(() => Boolean(props.snapshot.favoriteDraft && props.snapshot.favoriteDraft
   else if (!open && previous) {
     restoreTrigger(editorTrigger, () => document.querySelector<HTMLElement>('.favorite-add-button'))
     editorTrigger = null
+  }
+})
+
+watch(() => props.snapshot.favoriteSlotManagerOpen, (open, previous) => {
+  if (open && !previous) {
+    slotManagerTrigger = document.activeElement as HTMLElement | null
+    nextTick(() => document.querySelector<HTMLElement>('[data-role="favorite-slot-manager"] select')?.focus())
+  } else if (!open && previous) {
+    restoreTrigger(slotManagerTrigger)
+    slotManagerTrigger = null
   }
 })
 
@@ -428,6 +473,8 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
         </div>
         <div class="toolbar-actions favorite-add-anchor">
           <button type="button" aria-label="刷新目录和路径状态" title="刷新目录和路径状态" @click="emit('dispatch', 'favorites.refresh')"><RefreshCw :size="16" aria-hidden="true" /></button>
+          <button type="button" aria-label="管理文件槽" title="管理 1–10 文件槽" @click="emit('dispatch', 'favorites.slot.manager.open')"><Keyboard :size="16" aria-hidden="true" /><span>文件槽</span></button>
+          <button type="button" aria-label="重置全部搜索学习" title="重置全部收藏使用次数和查询偏好" @click="emit('dispatch', 'favorites.learning.reset')"><RotateCcw :size="16" aria-hidden="true" /></button>
           <button type="button" class="favorite-add-button" aria-haspopup="menu" :aria-expanded="props.snapshot.favoriteAddMenuOpen" aria-controls="favorite-add-menu" @click="emit('dispatch', 'favorites.addMenu.toggle')"><Plus :size="16" aria-hidden="true" /><span>添加</span></button>
           <div v-if="props.snapshot.favoriteAddMenuOpen" id="favorite-add-menu" class="favorite-add-menu" role="menu" aria-label="添加收藏" @keydown="handleAddMenuKeydown">
             <button type="button" role="menuitem" tabindex="-1" :disabled="!props.snapshot.favoriteCapabilities.pickFiles" @click="emit('dispatch', 'favorites.pick.files')"><File :size="15" aria-hidden="true" />选择文件</button>
@@ -468,7 +515,7 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
             :aria-selected="props.snapshot.selectedFavoriteIds.includes(item.id)"
             :class="{ selected: props.snapshot.selectedFavoriteIds.includes(item.id), focused: props.snapshot.focusedFavoriteId === item.id, 'path-error': item.kind !== 'group' && pathStatusIsError(item.path) }"
             :style="{ '--node-color': item.color }"
-            data-operation-tooltip="双击打开；右键显示收藏操作"
+            data-operation-tooltip="双击打开或运行；右键显示收藏操作"
             data-operation-shortcut="Ctrl+← / Ctrl+→"
             draggable="true"
             @dragstart="$event.dataTransfer?.setData('text/plain', item.id)"
@@ -507,7 +554,7 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
             </span>
             <span v-else class="favorite-path-state" role="gridcell">虚拟</span>
             <span class="favorite-row-actions" role="gridcell" @click.stop>
-              <button v-if="item.kind !== 'group'" type="button" tabindex="-1" aria-label="打开" title="打开" :disabled="!props.snapshot.favoriteCapabilities.open" @click="dispatchFavoriteRowAction(item, 'favorites.open')"><SquareArrowOutUpRight :size="14" aria-hidden="true" /></button>
+              <button v-if="item.kind !== 'group'" type="button" tabindex="-1" aria-label="打开或运行" title="打开或运行" :disabled="!props.snapshot.favoriteCapabilities.open && !props.snapshot.favoriteCapabilities.run" @click="dispatchFavoriteRowAction(item, 'favorites.open')"><Play v-if="props.snapshot.favoriteCurrentPlatform && item.runnerByPlatform?.[props.snapshot.favoriteCurrentPlatform]" :size="14" aria-hidden="true" /><SquareArrowOutUpRight v-else :size="14" aria-hidden="true" /></button>
               <button v-if="item.kind !== 'group'" type="button" tabindex="-1" aria-label="定位" title="定位" :disabled="!props.snapshot.favoriteCapabilities.reveal" @click="dispatchFavoriteRowAction(item, 'favorites.reveal')"><LocateFixed :size="14" aria-hidden="true" /></button>
               <button v-if="item.kind !== 'group'" type="button" tabindex="-1" aria-label="复制路径" title="复制路径" :disabled="!props.snapshot.favoriteCapabilities.copyPath" @click="dispatchFavoriteRowAction(item, 'favorites.copyPath')"><Copy :size="14" aria-hidden="true" /></button>
               <button v-if="isRenaming(item.id)" type="button" tabindex="-1" aria-label="保存重命名" title="保存" @click="emit('saveFavoriteDraft')"><Check :size="14" aria-hidden="true" /></button>
@@ -720,6 +767,41 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
       </form>
     </div>
 
+    <div v-if="props.snapshot.favoriteSlotManagerOpen" class="modal-backdrop" @click.self="emit('dispatch', 'favorites.slot.manager.close')">
+      <section class="favorite-slot-manager confirm-layer" data-role="favorite-slot-manager" role="dialog" aria-modal="true" aria-labelledby="favorite-slot-manager-title" @keydown.tab="trapFocus">
+        <header class="favorite-slot-manager-header">
+          <div>
+            <h2 id="favorite-slot-manager-title">文件槽 1–10</h2>
+            <small>{{ platformName() }} 独立绑定；全局快捷键在 uTools 设置中维护</small>
+          </div>
+          <button type="button" aria-label="关闭文件槽管理器" @click="emit('dispatch', 'favorites.slot.manager.close')"><X :size="15" aria-hidden="true" /></button>
+        </header>
+        <label class="favorite-slot-target-picker">
+          要分配的收藏
+          <select :value="props.snapshot.favoriteSlotManagerTargetId || ''" @change="emit('dispatch', 'favorites.slot.manager.open', { favoriteId: ($event.target as HTMLSelectElement).value })">
+            <option value="">请选择已收藏的文件或文件夹</option>
+            <option v-for="item in props.snapshot.state.favorites.filter((favorite) => favorite.kind !== 'group')" :key="item.id" :value="item.id">{{ item.name }} — {{ item.path }}</option>
+          </select>
+        </label>
+        <div class="favorite-slot-list">
+          <article v-for="slot in props.snapshot.state.favoriteSlots" :key="slot.slot" class="favorite-slot-row">
+            <kbd>{{ slot.slot === 10 ? '0' : slot.slot }}</kbd>
+            <span class="favorite-slot-copy">
+              <strong>文件槽 {{ slot.slot }}</strong>
+              <small v-if="favoriteSlotTarget(slot.slot)">{{ favoriteSlotTarget(slot.slot)?.name }} · {{ favoriteSlotTarget(slot.slot)?.path }}</small>
+              <small v-else>当前平台未分配</small>
+            </span>
+            <span class="favorite-slot-actions">
+              <button type="button" :disabled="!favoriteSlotManagerTarget()" @click="emit('dispatch', `favorites.slot.assign.${slot.slot}`)">{{ favoriteSlotTarget(slot.slot) ? '替换' : '分配' }}</button>
+              <button type="button" :disabled="!favoriteSlotTarget(slot.slot)" @click="emit('dispatch', `favorites.slot.test.${slot.slot}`)"><Play :size="13" aria-hidden="true" />测试</button>
+              <button type="button" @click="emit('dispatch', `favorites.slot.hotkey.${slot.slot}`)"><Keyboard :size="13" aria-hidden="true" />快捷键</button>
+              <button type="button" class="danger" :disabled="!favoriteSlotTarget(slot.slot)" @click="emit('dispatch', `favorites.slot.clear.${slot.slot}`)">清除</button>
+            </span>
+          </article>
+        </div>
+      </section>
+    </div>
+
     <div v-if="props.snapshot.favoriteDraft && props.snapshot.favoriteDraft.mode !== 'rename'" class="modal-backdrop" @click.self="emit('cancelFavoriteDraft')">
       <form class="favorite-editor confirm-layer" data-role="favorite-editor" role="dialog" aria-modal="true" aria-labelledby="favorite-editor-title" @keydown.tab="trapFocus" @submit.prevent="emit('saveFavoriteDraft')">
         <h2 id="favorite-editor-title">{{ props.snapshot.favoriteDraft.mode === 'create-group' ? '新建分组' : props.snapshot.favoriteDraft.mode === 'create-target' ? '新增目标' : props.snapshot.favoriteDraft.mode === 'move-parent' ? '移动父级' : '编辑收藏' }}</h2>
@@ -757,6 +839,55 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
             <option v-for="group in props.snapshot.favoriteParentOptions" :key="group.id" :value="group.id">{{ group.name }} - {{ kindName(group.kind) }}</option>
           </select>
         </label>
+        <fieldset v-if="props.snapshot.favoriteDraft.kind !== 'group' && (props.snapshot.favoriteDraft.mode === 'edit' || props.snapshot.favoriteDraft.mode === 'create-target')" class="favorite-runner-editor">
+          <legend><Terminal :size="15" aria-hidden="true" />{{ platformName() }} 打开方式</legend>
+          <label>
+            执行方式
+            <select data-field="runner-enabled" :value="props.snapshot.favoriteDraft.runnerEnabled ? 'custom' : 'default'" @change="updateDraft({ runnerEnabled: ($event.target as HTMLSelectElement).value === 'custom' })">
+              <option value="default">系统默认打开</option>
+              <option value="custom">自定义运行器</option>
+            </select>
+          </label>
+          <template v-if="props.snapshot.favoriteDraft.runnerEnabled">
+            <div class="favorite-runner-heading">
+              <span :class="{ trusted: props.snapshot.favoriteDraft.runnerTrusted }"><ShieldCheck :size="14" aria-hidden="true" />{{ props.snapshot.favoriteDraft.runnerTrusted ? '配置已信任' : '保存时需要确认信任' }}</span>
+              <button type="button" @click="emit('dispatch', 'favorites.runner.applySuggestion')"><Wand :size="14" aria-hidden="true" />填入脚本建议</button>
+            </div>
+            <label>
+              模式
+              <select data-field="runner-mode" :value="props.snapshot.favoriteDraft.runnerMode" @change="updateDraft({ runnerMode: ($event.target as HTMLSelectElement).value as FavoriteDraft['runnerMode'] })">
+                <option value="background">后台启动</option>
+                <option value="terminal" :disabled="props.snapshot.favoriteCapabilities.terminalRun === false">系统终端</option>
+              </select>
+            </label>
+            <label>
+              可执行程序
+              <input data-field="runner-executable" :value="props.snapshot.favoriteDraft.runnerExecutable" placeholder="绝对路径或 PATH 中的程序名" @input="updateDraft({ runnerExecutable: ($event.target as HTMLInputElement).value })" />
+            </label>
+            <label>
+              参数（每行一个）
+              <textarea data-field="runner-args" :value="props.snapshot.favoriteDraft.runnerArgsText" placeholder="支持 {path}、{dir}、{name}" @input="updateDraft({ runnerArgsText: ($event.target as HTMLTextAreaElement).value })" />
+            </label>
+            <label>
+              工作目录
+              <select data-field="runner-cwd-mode" :value="props.snapshot.favoriteDraft.runnerCwdMode" @change="updateDraft({ runnerCwdMode: ($event.target as HTMLSelectElement).value as FavoriteDraft['runnerCwdMode'] })">
+                <option value="target-directory">目标所在目录</option>
+                <option value="custom">自定义目录</option>
+              </select>
+            </label>
+            <label v-if="props.snapshot.favoriteDraft.runnerCwdMode === 'custom'">
+              自定义工作目录
+              <input data-field="runner-cwd" :value="props.snapshot.favoriteDraft.runnerCwd" placeholder="可使用 {path}、{dir}、{name}" @input="updateDraft({ runnerCwd: ($event.target as HTMLInputElement).value })" />
+            </label>
+            <section v-if="draftRunnerPreview()" class="favorite-runner-preview" aria-label="解析后运行器预览">
+              <strong>解析预览</strong>
+              <code>{{ draftRunnerPreview()?.executable }}</code>
+              <code>{{ draftRunnerPreview()?.args.map((item) => JSON.stringify(item)).join(' ') || '（无参数）' }}</code>
+              <small>{{ draftRunnerPreview()?.cwd }}</small>
+            </section>
+            <p v-else class="favorite-runner-warning"><AlertTriangle :size="14" aria-hidden="true" />请补全程序与工作目录。不会拼接原始 shell，也不会保存环境变量或凭据。</p>
+          </template>
+        </fieldset>
         <div class="dialog-actions">
           <button type="button" @click="emit('cancelFavoriteDraft')">取消</button>
           <button type="submit">保存</button>

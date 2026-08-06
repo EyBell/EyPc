@@ -364,7 +364,8 @@ function clearShiftPreview() {
 function applyPluginRoute(payload: { code?: string } | null) {
   const route = routePluginFeature(payload, snapshot.value.state.settings.featureConfigs, snapshot.value.state.activeTab)
   const isWindowSlot = /^eypc-window-slot-(?:[1-9]|10)$/.test(payload?.code || '')
-  const restoreEntry = !payload?.code || payload.code === 'eypc-main' || payload.code === 'eypc-codex-toggle' || (!isWindowSlot && !['eypc-ports', 'eypc-mqtt', 'eypc-favorites', 'eypc-favorites-quick', 'eypc-windows', 'eypc-codex', 'eypc-settings'].includes(payload.code))
+  const isFavoriteSlot = /^eypc-favorite-slot-(?:[1-9]|10)$/.test(payload?.code || '')
+  const restoreEntry = !payload?.code || payload.code === 'eypc-main' || payload.code === 'eypc-codex-toggle' || (!isWindowSlot && !isFavoriteSlot && !['eypc-ports', 'eypc-mqtt', 'eypc-favorites', 'eypc-favorites-quick', 'eypc-windows', 'eypc-codex', 'eypc-settings'].includes(payload.code))
   initialMaintenanceSection.value = route.settingsMaintenanceSection || null
   if (typeof route.favoriteQuick === 'boolean') runtime.setFavoriteQuickMode(route.favoriteQuick)
   else if (!restoreEntry) runtime.setFavoriteQuickMode(false)
@@ -376,9 +377,6 @@ function applyPluginRoute(payload: { code?: string } | null) {
   }
   if (route.focusSearch) {
     runtime.dispatch(route.tab === 'favorites' ? 'favorites.search.focus' : route.tab === 'mqtt' ? 'mqtt.search.focus' : route.tab === 'windows' ? 'windows.search.focus' : 'search.focus')
-  }
-  if (route.favoriteQuick) {
-    requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-role="favorite-items"]')?.focus())
   }
 }
 

@@ -1,9 +1,10 @@
-import type { AppState, AppTabId, FavoriteKind, FavoriteNode, FeatureConfig, KeybindingOverride, PortGroup, PortGroupFolder, ShortcutProfileId, ShortcutProfileMap } from './types'
+import type { AppState, AppTabId, FavoriteKind, FavoriteNode, FavoriteSearchAffinity, FavoriteSlot, FeatureConfig, KeybindingOverride, PortGroup, PortGroupFolder, ShortcutProfileId, ShortcutProfileMap } from './types'
 import { normalizeMqttState } from './mqtt'
 import { emptySearchHistories, normalizeSearchHistoryList } from './searchHistory'
 import { normalizeShortcutId } from './shortcuts'
 import { normalizeToolPreviewPrefs } from './toolPreview'
 import { normalizeFavoriteGraph } from './favorites'
+import { createFavoriteSlots, isFavoritePlatform, normalizeFavoriteRunnerByPlatform, pruneFavoriteSearchAffinities } from './favoriteLaunch'
 import { createDefaultCodexState, normalizeCodexState } from './codex'
 import { createWindowSlots, type WindowPlatform, type WindowSlot, type WindowTarget } from './windows'
 import { fileManagerGroupKey } from './windowTree'
@@ -245,6 +246,7 @@ function normalizeFavorite(value: unknown, now: number): FavoriteNode | null {
   if (!id || !kind || (kind !== 'group' && !path)) return null
   const usageCount = numberValue(item.usageCount, 0)
   const lastUsedAt = numberValue(item.lastUsedAt, 0)
+  const runnerByPlatform = kind === 'group' ? undefined : normalizeFavoriteRunnerByPlatform(item.runnerByPlatform)
   return {
     id,
     kind,
@@ -257,8 +259,43 @@ function normalizeFavorite(value: unknown, now: number): FavoriteNode | null {
     createdAt: numberValue(item.createdAt, now),
     updatedAt: numberValue(item.updatedAt, now),
     ...(usageCount > 0 ? { usageCount } : {}),
-    ...(lastUsedAt > 0 ? { lastUsedAt } : {})
+    ...(lastUsedAt > 0 ? { lastUsedAt } : {}),
+    ...(runnerByPlatform ? { runnerByPlatform } : {})
   }
+}
+
+function normalizeFavoriteSlots(value: unknown, favoriteIds: ReadonlySet<string>): FavoriteSlot[] {
+  const bySlot = new Map<number, FavoriteSlot>()
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const source = record(item)
+      const slot = Math.floor(numberValue(source.slot, 0))
+      if (slot < 1 || slot > 10 || bySlot.has(slot)) continue
+      const rawTargets = record(source.favoriteIdByPlatform)
+      const favoriteIdByPlatform: FavoriteSlot['favoriteIdByPlatform'] = {}
+      for (const platform of ['darwin', 'win32', 'linux'] as const) {
+        if (!isFavoritePlatform(platform)) continue
+        const favoriteId = stringValue(rawTargets[platform]).trim()
+        if (favoriteId && favoriteIds.has(favoriteId)) favoriteIdByPlatform[platform] = favoriteId
+      }
+      bySlot.set(slot, { slot, favoriteIdByPlatform })
+    }
+  }
+  return createFavoriteSlots().map((fallback) => bySlot.get(fallback.slot) || fallback)
+}
+
+function normalizeFavoriteSearchAffinities(value: unknown, favoriteIds: ReadonlySet<string>): FavoriteSearchAffinity[] {
+  if (!Array.isArray(value)) return []
+  const entries = value.flatMap((item) => {
+    const source = record(item)
+    const query = stringValue(source.query)
+    const favoriteId = stringValue(source.favoriteId).trim()
+    const usageCount = numberValue(source.usageCount, 0)
+    const lastUsedAt = numberValue(source.lastUsedAt, 0)
+    if (!query.trim() || !favoriteIds.has(favoriteId) || !usageCount || !lastUsedAt) return []
+    return [{ query, favoriteId, usageCount, lastUsedAt }]
+  })
+  return pruneFavoriteSearchAffinities(entries)
 }
 
 function normalizePortGroupFolders(value: unknown): PortGroupFolder[] {
@@ -318,6 +355,8 @@ export function createInitialState(now = Date.now()): AppState {
     collapsedPortGroupFolderIds: [],
     collapsedFavoriteGroupIds: [],
     favorites: [],
+    favoriteSlots: createFavoriteSlots(),
+    favoriteSearchAffinities: [],
     windowTargets: [],
     windowSlots: createWindowSlots(),
     mqtt: normalizeMqttState(null, now),
@@ -368,6 +407,8 @@ export function normalizeAppState(value: unknown, now = Date.now()): AppState {
     collapsedPortGroupFolderIds: strings(source.collapsedPortGroupFolderIds).filter((id) => validFolderIds.has(id)),
     collapsedFavoriteGroupIds: strings(source.collapsedFavoriteGroupIds).filter((id) => favoriteIds.has(id)),
     favorites,
+    favoriteSlots: normalizeFavoriteSlots(source.favoriteSlots, favoriteIds),
+    favoriteSearchAffinities: normalizeFavoriteSearchAffinities(source.favoriteSearchAffinities, favoriteIds),
     windowTargets,
     windowSlots: normalizeWindowSlots(source.windowSlots, windowTargetsById),
     mqtt: normalizeMqttState(source.mqtt, now),
