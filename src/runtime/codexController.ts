@@ -312,6 +312,8 @@ export function createCodexController(options: CodexControllerOptions) {
   let claudeEnvironment: ClaudeEnvironmentSnapshot = emptyClaudeEnvironment()
   let claudeSessions: ClaudeSessionObservation[] = []
   let claudeQuota: ClaudeQuotaSnapshot = emptyClaudeQuota()
+  let claudeEventDispose: (() => void) | null = null
+  let claudeEventPending = false
   // Persisted through app state so a completed session does not become unread
   // again on every plugin restart.
   let claudeReceipts: ClaudeReadReceipts = companionReceiptsToSessionMap(options.getAppState().codex.claudeReceipts)
@@ -522,14 +524,76 @@ export function createCodexController(options: CodexControllerOptions) {
     if (started && !disposed && !actionPreflightInFlight && shouldRun()) schedule()
   }
 
+  /**
+   * Push lane for the Claude provider.
+   *
+   * The hook script appends to EyPc's own queue file the moment Claude Code
+   * emits an event, but until now nothing noticed until the next task tick —
+   * so a status change could sit unseen for the whole interval while the Codex
+   * lane next to it updated in milliseconds. Watching the queue closes that gap
+   * without touching the user's Claude installation.
+   *
+   * It is strictly an accelerator. `fs.watch` misses events on some filesystems
+   * and says nothing when it does, and a user who has not registered the hooks
+   * has no queue to watch at all, so the interval below stays exactly as it was.
+   */
+  function subscribeClaudeEvents() {
+    if (disposed || !claudeEnabled()) {
+      unsubscribeClaudeEvents()
+      return
+    }
+    // Idempotent on purpose: start() and the runtime-resume path both call this,
+    // and stacking watchers would fan one append out into several reads.
+    if (claudeEventDispose) return
+    const bridge = options.platform.claude
+    if (!bridge || typeof bridge.watchEvents !== 'function') return
+    try {
+      claudeEventDispose = bridge.watchEvents(() => handleClaudeEvent())
+    } catch {
+      claudeEventDispose = null
+    }
+  }
+
+  function unsubscribeClaudeEvents() {
+    claudeEventPending = false
+    if (!claudeEventDispose) return
+    try { claudeEventDispose() } catch { /* teardown is best effort */ }
+    claudeEventDispose = null
+  }
+
+  /**
+   * A burst that lands mid-read must not be dropped: the queue is append-only,
+   * so the events are still there, but `refreshClaude` refuses to re-enter and
+   * would otherwise return without ever seeing them. Replaying once after the
+   * in-flight read settles is what makes the lane lossless.
+   */
+  function handleClaudeEvent() {
+    if (disposed || !claudeEnabled()) return
+    if (claudeRefreshInFlight) {
+      claudeEventPending = true
+      return
+    }
+    claudeEventPending = false
+    const laneToken = runtimeGeneration
+    void refreshClaude(Date.now()).then((changed) => {
+      if (disposed || laneToken !== runtimeGeneration) return
+      if (changed) {
+        publishTaskStatePackage(taskState.conversations)
+        options.notify()
+      }
+    }).catch(() => { claudeEventPending = false })
+  }
+
   /** Applies an enablement change immediately instead of waiting for a Codex tick. */
   function syncClaudeEnablement() {
     if (!claudeEnabled()) {
+      unsubscribeClaudeEvents()
       resetClaudeLane()
       publishTaskStatePackage(taskState.conversations)
       options.notify()
       return
     }
+    subscribeClaudeEvents()
     void refreshClaude(Date.now()).then((changed) => {
       if (disposed || !changed) return
       publishTaskStatePackage(taskState.conversations)
@@ -598,13 +662,25 @@ export function createCodexController(options: CodexControllerOptions) {
       claudeSessions = sessions
       claudeQuota = quotaSnapshot || staleClaudeQuota(claudeQuota)
 
-      // Opt-in fallback for the idle gap: the status line only runs while
-      // Claude Code renders, so without it an idle machine keeps showing the
-      // last reading forever. It never overrides a fresh primary reading.
-      if (codexState().settings.claudeQuotaFallback && typeof bridge.readQuotaFallback === 'function') {
+      // The status line only runs while Claude Code renders, which leaves two
+      // different gaps and they deserve different answers:
+      //
+      //  - Cold start: no reading has ever arrived, so the quota area is empty
+      //    and the water ball centre has nothing to show. Reading the usage API
+      //    once is worth a single credential prompt, because the alternative is
+      //    showing the user nothing at all until they happen to run Claude Code.
+      //  - Idle drift: a reading exists but is ageing. That is a comfort
+      //    improvement, not a blank screen, so it stays opt-in exactly as the
+      //    user decided — periodic credential reads are a real cost.
+      //
+      // `hasReading` is what separates them, and it is also what stops the cold
+      // path from repeating: once any reading lands the condition is false.
+      const hasReading = Boolean(claudeQuota.short || claudeQuota.weekly)
+      if ((codexState().settings.claudeQuotaFallback || !hasReading) && typeof bridge.readQuotaFallback === 'function') {
         try {
           const fallback = await bridge.readQuotaFallback({
-            enabled: true,
+            enabled: codexState().settings.claudeQuotaFallback === true,
+            coldStart: !hasReading,
             now,
             minStaleMs: Math.max(taskDelay(codexState().settings) * 4, 10 * 60 * 1000)
           })
@@ -619,6 +695,11 @@ export function createCodexController(options: CodexControllerOptions) {
       return true
     } finally {
       claudeRefreshInFlight = false
+      // An event that landed mid-read is already in the queue and nothing will
+      // re-announce it. The replay therefore hangs off the release of the lock,
+      // not off whichever caller happened to be holding it — an interval-driven
+      // read holds the same lock as a pushed one.
+      if (claudeEventPending && !disposed) queueMicrotask(() => handleClaudeEvent())
     }
   }
 
@@ -1326,12 +1407,16 @@ export function createCodexController(options: CodexControllerOptions) {
       resetStructuralRefresh()
       resetCodexDerivedRuntimeState()
       options.platform.codex.close({ preserveDesktop: featureEnabled })
+      // The bridge's close() drops its watcher, so the disposer we hold is
+      // already spent; keeping it would make the next subscribe a no-op.
+      unsubscribeClaudeEvents()
       try { options.platform.claude?.close() } catch { /* provider teardown is best effort */ }
       return
     }
     const resuming = !runtimeActive
     if (resuming) {
       runtimeActive = true
+      subscribeClaudeEvents()
       runtimeGeneration += 1
       refreshGeneration += 1
       inFlight = null
@@ -2438,6 +2523,7 @@ export function createCodexController(options: CodexControllerOptions) {
       if (started || disposed) return
       started = true
       stopActivityListener = options.platform.codex.onActivityChanged?.((delta) => applyActivityDelta(delta)) || null
+      subscribeClaudeEvents()
       if (isFeatureEnabled()) void inspectEnvironment()
       syncActivation(true)
     },
@@ -2453,6 +2539,7 @@ export function createCodexController(options: CodexControllerOptions) {
       resetConversationProjection()
       stopActivityListener?.()
       stopActivityListener = null
+      unsubscribeClaudeEvents()
       options.platform.codex.close()
     },
     syncActivation,

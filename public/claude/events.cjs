@@ -15,6 +15,15 @@
 const QUEUE_FILE_NAME = 'eypc-claude-events.jsonl'
 const MAX_QUEUE_BYTES = 512 * 1024
 const MAX_EVENTS_PER_READ = 2000
+/**
+ * How long to wait after the first append before notifying.
+ *
+ * One turn produces a burst — PreToolUse, PostToolUse, Stop and so on land
+ * within milliseconds of each other — and the consumer only needs to know that
+ * something changed, not how many times. Matches the Codex event lane's window
+ * so both providers feel the same.
+ */
+const DEFAULT_COALESCE_MS = 50
 
 /** Raw `hook_event_name` → companion event class. Mirrors src/domain/claude.ts. */
 const HOOK_EVENT_CLASSES = Object.freeze({
@@ -106,12 +115,83 @@ function createEventQueue(dependencies) {
   const directory = dependencies.directory
   const maxBytes = Number.isFinite(dependencies.maxBytes) ? dependencies.maxBytes : MAX_QUEUE_BYTES
   const queuePath = path.join(directory, QUEUE_FILE_NAME)
+  const setTimer = dependencies.setTimeout || setTimeout
+  const clearTimer = dependencies.clearTimeout || clearTimeout
   let offset = 0
   let sessionState = new Map()
+  let watcher = null
+  let watchTimer = null
 
   function reset() {
     offset = 0
     sessionState = new Map()
+  }
+
+  function stopWatching() {
+    if (watchTimer) {
+      clearTimer(watchTimer)
+      watchTimer = null
+    }
+    if (watcher) {
+      try { watcher.close() } catch { /* already gone */ }
+      watcher = null
+    }
+  }
+
+  /**
+   * Calls `listener` once per burst of appends, so the consumer can react to a
+   * hook event immediately instead of waiting for its next poll.
+   *
+   * Three deliberate choices:
+   *
+   *  - The *directory* is watched, not the file. The queue does not exist until
+   *    the user registers the hooks, and rotation truncates it; watching a path
+   *    that may not exist yet or may be replaced underneath us is how watchers
+   *    silently stop working.
+   *  - `persistent: false`, so a watcher can never be the reason a process
+   *    refuses to exit.
+   *  - This is an accelerator, never a replacement for the caller's interval.
+   *    `fs.watch` misses events on some filesystems and network volumes and
+   *    reports no error when it does, so the poll has to stay.
+   */
+  function watch(listener, options) {
+    const settings = options || {}
+    if (typeof listener !== 'function') return () => {}
+    const coalesceMs = Number.isFinite(settings.coalesceMs)
+      ? Math.max(0, settings.coalesceMs)
+      : DEFAULT_COALESCE_MS
+    stopWatching()
+    try { fs.mkdirSync(directory, { recursive: true }) } catch { /* the watch below reports it */ }
+    let disposed = false
+    const fire = () => {
+      watchTimer = null
+      if (disposed) return
+      // A throwing consumer must not take the watcher down with it: the next
+      // append still has to be delivered.
+      try { listener() } catch { /* consumer's problem */ }
+    }
+    const onChange = (_event, filename) => {
+      if (disposed) return
+      // Some platforms report a null filename; treat that as "might be ours".
+      if (filename && String(filename) !== QUEUE_FILE_NAME) return
+      if (watchTimer) return
+      watchTimer = setTimer(fire, coalesceMs)
+    }
+    try {
+      watcher = fs.watch(directory, { persistent: false }, onChange)
+      if (watcher && typeof watcher.on === 'function') {
+        // A watcher error is not fatal — it means this machine falls back to
+        // polling, which is exactly the pre-existing behavior.
+        watcher.on('error', () => stopWatching())
+      }
+    } catch {
+      watcher = null
+      return () => {}
+    }
+    return () => {
+      disposed = true
+      stopWatching()
+    }
   }
 
   /** Reads everything appended since the previous call. */
@@ -166,6 +246,8 @@ function createEventQueue(dependencies) {
     drain,
     rotateIfNeeded,
     reset,
+    watch,
+    stopWatching,
     state: () => new Map(sessionState)
   }
 }
@@ -173,6 +255,7 @@ function createEventQueue(dependencies) {
 module.exports = {
   QUEUE_FILE_NAME,
   MAX_QUEUE_BYTES,
+  DEFAULT_COALESCE_MS,
   HOOK_EVENT_CLASSES,
   normalizeEventClass,
   normalizeQueueEntry,

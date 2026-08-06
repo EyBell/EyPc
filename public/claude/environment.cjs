@@ -18,6 +18,7 @@ function candidateBinaryPaths(dependencies) {
   const os = dependencies.os
   const home = os.homedir()
   const platform = dependencies.platform || process.platform
+  const environment = dependencies.env || process.env || {}
   const suffix = platform === 'win32' ? '.cmd' : ''
   const roots = [
     path.join(home, '.claude', 'local'),
@@ -26,13 +27,71 @@ function candidateBinaryPaths(dependencies) {
     '/usr/local/bin',
     '/usr/bin',
     path.join(home, '.bun', 'bin'),
-    path.join(home, '.volta', 'bin')
+    path.join(home, '.volta', 'bin'),
+    // Global npm/pnpm/yarn prefixes. `npm i -g` lands here whenever the user
+    // set a prefix instead of writing into the Node installation itself.
+    path.join(home, '.npm-global', 'bin'),
+    path.join(home, '.npm-packages', 'bin'),
+    path.join(home, 'Library', 'pnpm'),
+    path.join(home, '.local', 'share', 'pnpm'),
+    path.join(home, '.yarn', 'bin'),
+    path.join(home, '.asdf', 'shims'),
+    ...(platform === 'win32' && environment.APPDATA ? [path.join(String(environment.APPDATA), 'npm')] : [])
   ]
   const candidates = []
-  for (const root of roots) {
+  for (const root of [...roots, ...versionManagerBinRoots(dependencies)]) {
     for (const name of CLI_BINARY_NAMES) candidates.push(path.join(root, `${name}${suffix}`))
   }
   return candidates
+}
+
+/** Newest-first ordering for `v24.14.0`-style directory names. */
+function compareVersionNamesDesc(left, right) {
+  const parse = (value) => String(value).replace(/^v/, '').split('.').map((part) => Number.parseInt(part, 10))
+  const a = parse(left)
+  const b = parse(right)
+  const length = Math.max(a.length, b.length)
+  for (let index = 0; index < length; index += 1) {
+    const x = Number.isFinite(a[index]) ? a[index] : -1
+    const y = Number.isFinite(b[index]) ? b[index] : -1
+    if (x !== y) return y - x
+  }
+  return String(right).localeCompare(String(left))
+}
+
+/**
+ * Per-version `bin` directories of the common Node version managers.
+ *
+ * uTools is launched from the Dock or Finder, so `process.env.PATH` is the bare
+ * GUI PATH — it never contains the nvm/fnm/asdf entry the user's shell exports.
+ * A Claude Code installed with `npm i -g` under a managed Node is therefore
+ * invisible to both the PATH scan and the fixed roots above, which is exactly
+ * how a working installation ended up reported as "not installed". Enumerating
+ * the version directories directly is the only way to see it; newest version
+ * first, because that is the one the user is almost certainly running.
+ */
+function versionManagerBinRoots(dependencies) {
+  const fs = dependencies.fs
+  const path = dependencies.path
+  const home = dependencies.os.homedir()
+  const layouts = [
+    { base: path.join(home, '.nvm', 'versions', 'node'), tail: ['bin'] },
+    { base: path.join(home, '.fnm', 'node-versions'), tail: ['installation', 'bin'] },
+    { base: path.join(home, 'Library', 'Application Support', 'fnm', 'node-versions'), tail: ['installation', 'bin'] },
+    { base: path.join(home, '.local', 'share', 'fnm', 'node-versions'), tail: ['installation', 'bin'] },
+    { base: path.join(home, '.asdf', 'installs', 'nodejs'), tail: ['bin'] },
+    { base: path.join(home, '.nodenv', 'versions'), tail: ['bin'] },
+    { base: path.join(home, '.n', 'versions', 'node'), tail: ['bin'] }
+  ]
+  const roots = []
+  for (const layout of layouts) {
+    let children = []
+    try { children = fs.readdirSync(layout.base) } catch { continue }
+    for (const child of children.slice().sort(compareVersionNamesDesc)) {
+      roots.push(path.join(layout.base, child, ...layout.tail))
+    }
+  }
+  return roots
 }
 
 /**
@@ -162,11 +221,19 @@ function createEnvironmentProbe(dependencies) {
     return readSettingsFile(fs, settingsPath())
   }
 
+  /** Discovery with a per-call manual override, falling back to the bridge's. */
+  function resolveCliPath(options) {
+    const manual = options && typeof options.manualPath === 'string' && options.manualPath.trim()
+      ? options.manualPath
+      : dependencies.manualPath
+    return locateCli({ ...dependencies, manualPath: manual })
+  }
+
   function inspect(options) {
     const settings = options || {}
     const home = claudeHome()
     const versionHint = typeof settings.cliVersionHint === 'string' ? settings.cliVersionHint : ''
-    const cliPath = locateCli(dependencies)
+    const cliPath = resolveCliPath(settings)
     let homeReady = false
     try { homeReady = fs.statSync(path.join(home, 'projects')).isDirectory() } catch { homeReady = false }
     const userSettings = readSettings()
@@ -211,13 +278,15 @@ function createEnvironmentProbe(dependencies) {
     return rows
   }
 
-  return { claudeHome, settingsPath, readSettings, inspectSettingsFile, inspect, listTranscripts, locateCli: () => locateCli(dependencies) }
+  return { claudeHome, settingsPath, readSettings, inspectSettingsFile, inspect, listTranscripts, locateCli: (options) => resolveCliPath(options) }
 }
 
 module.exports = {
   CLI_BINARY_NAMES,
   readSettingsFile,
   candidateBinaryPaths,
+  compareVersionNamesDesc,
+  versionManagerBinRoots,
   pathBinaryCandidates,
   locateCli,
   probeAuthentication,

@@ -27,6 +27,7 @@ const {
   QUOTA_FILE_NAME,
   hookScript,
   statuslineScript,
+  settingsCommandLine,
   parseQuotaCache
 } = require('./scripts.cjs')
 const {
@@ -59,6 +60,15 @@ function createClaudeBridge(dependencies) {
   const statuslineCommandPath = path.join(dataDirectory, STATUSLINE_SCRIPT_NAME)
   const quotaPath = path.join(dataDirectory, QUOTA_FILE_NAME)
 
+  // Filesystem paths are what we write; shell-quoted command lines are what we
+  // register. Registration and the install-state comparison must use the exact
+  // same string, otherwise a correctly installed hook reads back as `outdated`
+  // forever and the settings page keeps asking the user to register again.
+  const hookCommandLine = settingsCommandLine(hookCommandPath, dependencies.platform)
+  const statuslineCommandLine = settingsCommandLine(statuslineCommandPath, dependencies.platform)
+
+  let eventWatchDispose = null
+
   // Newest CLI version seen in a transcript. Claude Code stamps every entry
   // with the version that wrote it, which avoids spawning the binary just to
   // ask what it is.
@@ -66,8 +76,8 @@ function createClaudeBridge(dependencies) {
 
   function inspect() {
     return environment.inspect({
-      hookCommand: hookCommandPath,
-      statuslineCommand: statuslineCommandPath,
+      hookCommand: hookCommandLine,
+      statuslineCommand: statuslineCommandLine,
       cliVersionHint: observedCliVersion
     })
   }
@@ -120,7 +130,7 @@ function createClaudeBridge(dependencies) {
     try {
       queue.ensureQueueFile()
       writeExecutable(hookCommandPath, hookScript({ queuePath: queue.queuePath }))
-      let next = withEypcHooks(current.value, { command: hookCommandPath })
+      let next = withEypcHooks(current.value, { command: hookCommandLine })
       if (settings.statusline !== false) {
         // Only a status line that is not ours may be chained to. Matching on the
         // marker rather than on a file name is what stops a re-install from
@@ -130,7 +140,7 @@ function createClaudeBridge(dependencies) {
           return command && !command.includes(EYPC_MARKER_TOKEN) ? command : ''
         })()
         writeExecutable(statuslineCommandPath, statuslineScript({ quotaPath, chainedCommand: chained }))
-        next = withEypcStatusline(next, { command: statuslineCommandPath })
+        next = withEypcStatusline(next, { command: statuslineCommandLine })
       }
       writeSettings(next, current.raw)
       return { ok: true, hooks: 'installed', statusline: settings.statusline === false ? 'missing' : 'installed' }
@@ -180,6 +190,7 @@ function createClaudeBridge(dependencies) {
     const cached = readQuota()
     return quotaFallback.read({
       enabled: settings.enabled === true,
+      coldStart: settings.coldStart === true,
       now: settings.now,
       minStaleMs: settings.minStaleMs,
       primaryUpdatedAt: cached ? cached.updatedAt : 0,
@@ -260,7 +271,30 @@ function createClaudeBridge(dependencies) {
     })
   }
 
+  /**
+   * Subscribes to hook-queue appends. One subscription at a time: the Controller
+   * owns exactly one lane, and leaking watchers across provider toggles would
+   * fan one event out into several redundant reads.
+   */
+  function watchEvents(listener, options) {
+    if (eventWatchDispose) {
+      eventWatchDispose()
+      eventWatchDispose = null
+    }
+    if (typeof listener !== 'function') return () => {}
+    const dispose = queue.watch(listener, options)
+    eventWatchDispose = dispose
+    return () => {
+      if (eventWatchDispose === dispose) eventWatchDispose = null
+      dispose()
+    }
+  }
+
   function close() {
+    if (eventWatchDispose) {
+      eventWatchDispose()
+      eventWatchDispose = null
+    }
     queue.reset()
     quotaFallback.reset()
   }
@@ -269,6 +303,8 @@ function createClaudeBridge(dependencies) {
     revision: CLAUDE_BRIDGE_REVISION,
     hookCommandPath,
     statuslineCommandPath,
+    hookCommandLine,
+    statuslineCommandLine,
     quotaPath,
     queuePath: queue.queuePath,
     inspect,
@@ -277,6 +313,7 @@ function createClaudeBridge(dependencies) {
     readSnapshot,
     readQuota,
     readQuotaFallback,
+    watchEvents,
     openTask,
     close
   }

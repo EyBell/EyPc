@@ -25,6 +25,30 @@ function shellQuote(value) {
 }
 
 /**
+ * The command string written into `~/.claude/settings.json`.
+ *
+ * Claude Code does not exec these entries directly — it hands them to a shell.
+ * A bare absolute path therefore breaks the moment it contains a space, and on
+ * macOS EyPc's own data directory lives under `~/Library/Application Support/`,
+ * which always does: `/bin/sh` split the path and every hook failed with
+ * "/Users/<name>/Library/Application: No such file or directory". Quoting here
+ * is what makes the registered command runnable at all.
+ *
+ * This is the inverse of the chained status line in `statuslineScript`: that
+ * value is a user-authored *command line* and must stay verbatim, while this
+ * one is a single path we generated and must stay one word.
+ */
+function settingsCommandLine(filePath, platform) {
+  const value = String(filePath === undefined || filePath === null ? '' : filePath)
+  if (!value) return ''
+  // Windows runs settings commands through cmd.exe, where single quotes are
+  // literal characters rather than quoting. A double quote cannot appear in a
+  // Windows path, so stripping it cannot corrupt a legitimate one.
+  if ((platform || process.platform) === 'win32') return `"${value.replace(/"/g, '')}"`
+  return shellQuote(value)
+}
+
+/**
  * The hook script.
  *
  * It reads the hook JSON on stdin and appends one compact record to the queue.
@@ -184,6 +208,7 @@ module.exports = {
   QUOTA_FILE_NAME,
   DEFAULT_MAX_QUEUE_BYTES,
   shellQuote,
+  settingsCommandLine,
   hookScript,
   statuslineScript,
   parseQuotaCache

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createRequire } from 'node:module'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import * as fs from 'node:fs'
@@ -345,5 +345,102 @@ describe('task jump', () => {
     })
     const result = await bridge.openTask('s1', { pid: process.pid })
     expect(result.confirmsRead).toBe(false)
+  })
+})
+
+describe('hook queue push lane', () => {
+  /**
+   * The queue is append-only and the poll interval is 15 seconds, so without a
+   * watcher a status change can sit unseen for the whole interval while the
+   * Codex lane beside it updates in milliseconds.
+   */
+  const settle = (ms = 60) => new Promise((resolve) => setTimeout(resolve, ms))
+
+  it('notifies when the hook script appends', async () => {
+    const home = makeHome()
+    const bridge = makeBridge(home)
+    bridge.install()
+    let hits = 0
+    const stop = bridge.watchEvents(() => { hits += 1 }, { coalesceMs: 10 })
+    try {
+      appendFileSync(bridge.queuePath, `${JSON.stringify({ s: 'push-1', e: 'Stop', t: Date.now(), p: 1 })}\n`)
+      await settle()
+      expect(hits).toBe(1)
+      // The consumer can now see the event without waiting for a poll.
+      expect(bridge.readSnapshot({ now: Date.now() })).toBeTruthy()
+    } finally {
+      stop()
+    }
+  })
+
+  it('coalesces a burst into one notification', async () => {
+    const home = makeHome()
+    const bridge = makeBridge(home)
+    bridge.install()
+    let hits = 0
+    const stop = bridge.watchEvents(() => { hits += 1 }, { coalesceMs: 30 })
+    try {
+      for (const event of ['UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop']) {
+        appendFileSync(bridge.queuePath, `${JSON.stringify({ s: 'burst', e: event, t: Date.now(), p: 1 })}\n`)
+      }
+      await settle(120)
+      expect(hits).toBe(1)
+    } finally {
+      stop()
+    }
+  })
+
+  it('watches before registration, so the first install is seen too', async () => {
+    const home = makeHome()
+    const bridge = makeBridge(home)
+    let hits = 0
+    // No install yet: the queue file does not exist. Watching the directory is
+    // what makes this case work at all.
+    const stop = bridge.watchEvents(() => { hits += 1 }, { coalesceMs: 10 })
+    try {
+      bridge.install()
+      await settle()
+      expect(hits).toBeGreaterThan(0)
+    } finally {
+      stop()
+    }
+  })
+
+  it('stops on dispose and on close, and never keeps more than one subscription', async () => {
+    const home = makeHome()
+    const bridge = makeBridge(home)
+    bridge.install()
+    let first = 0
+    let second = 0
+    const stopFirst = bridge.watchEvents(() => { first += 1 }, { coalesceMs: 10 })
+    // A second subscription replaces the first rather than stacking; two live
+    // watchers would fan one event into two reads.
+    const stopSecond = bridge.watchEvents(() => { second += 1 }, { coalesceMs: 10 })
+    appendFileSync(bridge.queuePath, `${JSON.stringify({ s: 'one', e: 'Stop', t: Date.now(), p: 1 })}\n`)
+    await settle()
+    expect(first).toBe(0)
+    expect(second).toBe(1)
+
+    stopSecond()
+    appendFileSync(bridge.queuePath, `${JSON.stringify({ s: 'two', e: 'Stop', t: Date.now(), p: 1 })}\n`)
+    await settle()
+    expect(second).toBe(1)
+
+    let third = 0
+    bridge.watchEvents(() => { third += 1 }, { coalesceMs: 10 })
+    bridge.close()
+    appendFileSync(bridge.queuePath, `${JSON.stringify({ s: 'three', e: 'Stop', t: Date.now(), p: 1 })}\n`)
+    await settle()
+    expect(third).toBe(0)
+    stopFirst()
+  })
+
+  it('degrades to a no-op disposer instead of throwing', () => {
+    const home = makeHome()
+    const bridge = makeBridge(home, {
+      fs: { ...fs, watch: () => { throw new Error('watch unsupported on this filesystem') } }
+    })
+    expect(() => bridge.watchEvents(() => undefined)()).not.toThrow()
+    expect(typeof bridge.watchEvents(null)).toBe('function')
   })
 })

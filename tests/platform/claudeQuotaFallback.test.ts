@@ -215,3 +215,112 @@ describe('response mapping', () => {
     expect(mapped).toEqual({ five_hour: { used_percentage: 3 } })
   })
 })
+
+describe('cold start is automatic but self-limiting', () => {
+  /**
+   * The status line is credential-free but only runs while Claude Code renders.
+   * Until it has run once there is nothing to show at all, so one usage-API read
+   * is worth a single prompt — but it must never become a standing periodic read
+   * behind the user's back, which is what the opt-in switch is still for.
+   */
+  it('reads once without the opt-in when no reading has ever arrived', async () => {
+    const home = makeHome()
+    const fetchImpl = vi.fn(async () => okResponse({ five_hour: { used_percentage: 30 } }))
+    const fallback = makeFallback(fetchImpl)
+    const result = await fallback.read({
+      enabled: false,
+      coldStart: true,
+      now: NOW,
+      primaryUpdatedAt: 0,
+      claudeHome: home.claudeHome
+    })
+    expect(result?.rateLimits.five_hour.used_percentage).toBe(30)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('is not cold once a status line reading exists, however fresh', async () => {
+    const home = makeHome()
+    const fetchImpl = vi.fn()
+    const fallback = makeFallback(fetchImpl)
+    const result = await fallback.read({
+      enabled: false,
+      coldStart: true,
+      now: NOW,
+      // A cached reading means the status line has run: this is idle drift, and
+      // idle drift is the user's decision, not ours.
+      primaryUpdatedAt: NOW - 24 * 60 * 60 * 1000,
+      minStaleMs: 10 * 60 * 1000,
+      claudeHome: home.claudeHome
+    })
+    expect(result).toBeNull()
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('gives up after a bounded number of failures instead of re-prompting forever', async () => {
+    const home = makeHome(false)
+    const fetchImpl = vi.fn()
+    const fallback = makeFallback(fetchImpl)
+    const attempt = (index: number) => fallback.read({
+      enabled: false,
+      coldStart: true,
+      // Past the internal call interval every time, so only the attempt cap can
+      // stop it.
+      now: NOW + index * quota.MIN_CALL_INTERVAL_MS * 2,
+      primaryUpdatedAt: 0,
+      claudeHome: home.claudeHome
+    })
+    for (let index = 0; index < quota.MAX_COLD_START_ATTEMPTS + 3; index += 1) {
+      expect(await attempt(index)).toBeNull()
+    }
+    // No credentials, so no request was ever made; the cap is what we assert.
+    expect(fetchImpl).not.toHaveBeenCalled()
+
+    // The opt-in switch is not subject to the cold-start cap.
+    const credentialed = makeHome()
+    const openFetch = vi.fn(async () => okResponse({ five_hour: { used_percentage: 10 } }))
+    const opted = makeFallback(openFetch)
+    for (let index = 0; index < quota.MAX_COLD_START_ATTEMPTS + 2; index += 1) {
+      await opted.read({
+        enabled: true,
+        coldStart: true,
+        now: NOW + index * quota.MIN_CALL_INTERVAL_MS * 2,
+        primaryUpdatedAt: 0,
+        claudeHome: credentialed.claudeHome
+      })
+    }
+    expect(openFetch.mock.calls.length).toBeGreaterThan(quota.MAX_COLD_START_ATTEMPTS)
+  })
+
+  it('still respects the minimum call interval on the cold path', async () => {
+    const home = makeHome()
+    const fetchImpl = vi.fn(async () => okResponse({ five_hour: { used_percentage: 30 } }))
+    const fallback = makeFallback(fetchImpl)
+    const options = { enabled: false, coldStart: true, primaryUpdatedAt: 0, claudeHome: home.claudeHome }
+    expect(await fallback.read({ ...options, now: NOW })).not.toBeNull()
+    expect(await fallback.read({ ...options, now: NOW + 60_000 })).toBeNull()
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('releases the cap on reset, so re-enabling the provider can try again', async () => {
+    const home = makeHome()
+    const fetchImpl = vi.fn(async () => null)
+    const fallback = makeFallback(fetchImpl)
+    const options = { enabled: false, coldStart: true, primaryUpdatedAt: 0, claudeHome: home.claudeHome }
+    const spaced = (index: number) => NOW + index * quota.MIN_CALL_INTERVAL_MS * 2
+
+    for (let index = 0; index < quota.MAX_COLD_START_ATTEMPTS; index += 1) {
+      expect(await fallback.read({ ...options, now: spaced(index) })).toBeNull()
+    }
+    expect(fetchImpl).toHaveBeenCalledTimes(quota.MAX_COLD_START_ATTEMPTS)
+
+    // Capped: further attempts do not reach the network at all.
+    await fallback.read({ ...options, now: spaced(quota.MAX_COLD_START_ATTEMPTS) })
+    expect(fetchImpl).toHaveBeenCalledTimes(quota.MAX_COLD_START_ATTEMPTS)
+
+    // `close()` on the bridge calls reset; toggling the provider off and on
+    // must not leave the user permanently unable to get a first reading.
+    fallback.reset()
+    await fallback.read({ ...options, now: spaced(quota.MAX_COLD_START_ATTEMPTS + 1) })
+    expect(fetchImpl).toHaveBeenCalledTimes(quota.MAX_COLD_START_ATTEMPTS + 1)
+  })
+})
