@@ -380,7 +380,7 @@ export function normalizeAppState(value: unknown, now = Date.now()): AppState {
       preferSqlite: settings.preferSqlite === true
     },
     settingsTabId: source.settingsTabId === 'maintenance' ? 'maintenance' : 'shortcuts',
-    settingsMaintenanceSectionId: (['features', 'tools', 'layers', 'storage', 'commands', 'resolution', 'reservations'] as const).includes(source.settingsMaintenanceSectionId as any) ? (source.settingsMaintenanceSectionId as AppState['settingsMaintenanceSectionId']) : 'features',
+    settingsMaintenanceSectionId: (['features', 'tools', 'layers', 'storage', 'commands', 'resolution', 'reservations', 'window-diagnostics'] as const).includes(source.settingsMaintenanceSectionId as any) ? (source.settingsMaintenanceSectionId as AppState['settingsMaintenanceSectionId']) : 'features',
     updatedAt: numberValue(source.updatedAt, now)
   }
 }

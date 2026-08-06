@@ -607,12 +607,16 @@ onUnmounted(() => {
           :persisted-maintenance-section-id="snapshot.state.settingsMaintenanceSectionId"
           :settings="snapshot.state.settings"
           :mqtt-storage-status="snapshot.mqttStorageStatus"
+          :window-activation-diagnostics="snapshot.windowActivationDiagnostics"
+          :window-operation-trace-enabled="snapshot.windowOperationTraceEnabled"
+          :window-operation-traces="snapshot.windowOperationTraces"
           @update-keybinding="runtime.updateKeybinding"
           @reset-keybinding="runtime.resetKeybinding"
           @save-shortcut-profiles="runtime.saveShortcutProfiles"
           @save-feature-configs="runtime.saveFeatureConfigs"
           @update-tool-preview-prefs="(input) => runtime.dispatch('tool.preview.hover.update', input)"
           @update-settings-path="runtime.setSettingsPath"
+          @dispatch="runtime.dispatch"
         />
       </template>
     </TabShell>

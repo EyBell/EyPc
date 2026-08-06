@@ -5,6 +5,7 @@ import FeatureHelpDialog from '../components/FeatureHelpDialog.vue'
 import type { AppSettings, AppTabId, FeatureConfig, KeybindingOverride, MqttStorageStatus, ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
 import { getFeatureHelp, hasFeatureHelp, type FeatureHelpDoc } from '../help/guides'
 import type { RuntimeActionDefinition } from '../runtime/action/types'
+import type { WindowActivationDiagnostic, WindowOperationDebugRecord } from '../runtime/appRuntime'
 import { featureDefinitionFor } from '../runtime/feature/featureRegistry'
 import {
   LAYER_PRIORITY,
@@ -22,7 +23,7 @@ import { formatShortcutLabel, formatShortcutList, normalizeShortcutId, shortcutF
 
 type SettingsTabId = 'shortcuts' | 'maintenance'
 type ShortcutScopeId = 'all' | 'global' | 'ports' | 'mqtt' | 'favorites' | 'windows' | 'codex' | 'settings'
-type MaintenanceSectionId = 'features' | 'tools' | 'layers' | 'storage' | 'commands' | 'resolution' | 'reservations'
+type MaintenanceSectionId = 'features' | 'tools' | 'layers' | 'storage' | 'commands' | 'resolution' | 'reservations' | 'window-diagnostics'
 
 interface KeybindingUpdatePayload {
   commandId: string
@@ -45,6 +46,9 @@ const props = defineProps<{
   persistedMaintenanceSectionId?: MaintenanceSectionId
   settings: AppSettings
   mqttStorageStatus: MqttStorageStatus
+  windowActivationDiagnostics?: WindowActivationDiagnostic[]
+  windowOperationTraceEnabled?: boolean
+  windowOperationTraces?: WindowOperationDebugRecord[]
 }>()
 const emit = defineEmits<{
   updateKeybinding: [payload: KeybindingUpdatePayload]
@@ -53,6 +57,7 @@ const emit = defineEmits<{
   saveFeatureConfigs: [configs: FeatureConfig[]]
   updateToolPreviewPrefs: [input: { enabled?: boolean; delayMs?: number }]
   updateSettingsPath: [tabId: SettingsTabId, sectionId: MaintenanceSectionId]
+  dispatch: [actionId: string, args?: Record<string, unknown>]
 }>()
 
 const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings']
@@ -184,8 +189,71 @@ const maintenanceSections = computed<Array<{ id: MaintenanceSectionId; label: st
   { id: 'storage', label: '存储状态', meta: storageModeLabel.value },
   { id: 'commands', label: 'Layer Commands', meta: `${maintenanceShortcutRows.value.length} 命令` },
   { id: 'resolution', label: '解析候选', meta: previewResult.value.winner?.actionId || '未命中' },
-  { id: 'reservations', label: '保留键与接管层', meta: `${SHORTCUT_RESERVATION_RULES.length} 条规则` }
+  { id: 'reservations', label: '保留键与接管层', meta: `${SHORTCUT_RESERVATION_RULES.length} 条规则` },
+  {
+    id: 'window-diagnostics',
+    label: '窗口诊断',
+    meta: props.windowOperationTraceEnabled
+      ? `${(props.windowOperationTraces || []).length} 条开发追踪`
+      : `${(props.windowActivationDiagnostics || []).length} 条会话记录`
+  }
 ])
+
+const windowActivationDiagnostics = computed(() => props.windowActivationDiagnostics || [])
+const windowOperationTraces = computed(() => props.windowOperationTraces || [])
+const latestWindowActivationDiagnostic = computed(() => windowActivationDiagnostics.value[0] || null)
+
+function activationEntryLabel(diagnostic: WindowActivationDiagnostic) {
+  return diagnostic.entry === 'slot' ? `全局槽 ${diagnostic.slot || '—'}` : '手动激活'
+}
+
+function activationPlatformLabel(diagnostic: WindowActivationDiagnostic) {
+  return diagnostic.platform === 'darwin' ? 'macOS' : diagnostic.platform === 'win32' ? 'Windows' : '当前宿主'
+}
+
+function activationStageLabel(diagnostic: WindowActivationDiagnostic) {
+  const labels: Record<string, string> = {
+    entry: '入口',
+    capability: '能力',
+    resolve: '解析',
+    refresh: '重扫',
+    activate: '激活',
+    topmost: '页面置顶',
+    visibility: '可见性'
+  }
+  return labels[diagnostic.stage] || diagnostic.stage
+}
+
+function diagnosticTimestampLabel(timestamp: number) {
+  const stamp = new Date(timestamp)
+  return `${String(stamp.getHours()).padStart(2, '0')}:${String(stamp.getMinutes()).padStart(2, '0')}:${String(stamp.getSeconds()).padStart(2, '0')}`
+}
+
+function operationEntryLabel(record: WindowOperationDebugRecord) {
+  return record.entry === 'slot' ? `全局槽 ${record.slot || '—'}` : '手动操作'
+}
+
+function operationTargetLabel(record: WindowOperationDebugRecord) {
+  return record.targetTitle || '目标尚未解析'
+}
+
+function operationPlatformLabel(record: WindowOperationDebugRecord) {
+  return record.platform === 'darwin' ? 'macOS' : record.platform === 'win32' ? 'Windows' : '当前宿主'
+}
+
+function operationKindLabel(record: WindowOperationDebugRecord) {
+  return record.operation === 'always-on-top' ? '页面置顶' : '展开并前置'
+}
+
+function operationResultLabel(record: WindowOperationDebugRecord) {
+  return record.result === 'success' ? '完成' : record.result === 'target-closed' ? '已确认关闭' : '阻断'
+}
+
+function operationTraceSummary(record: WindowOperationDebugRecord) {
+  const kind = operationKindLabel(record)
+  const result = operationResultLabel(record)
+  return `${kind} · ${result}`
+}
 const shortcutRecordMergedIds = computed(() => [...new Set([...shortcutRecordActiveIds.value, ...shortcutRecordPendingIds.value].map(normalizeShortcutId).filter(Boolean))])
 const shortcutRecordDirty = computed(() => {
   const current = shortcutRecordCapturedId.value ? [...shortcutRecordMergedIds.value, normalizeShortcutId(shortcutRecordCapturedId.value)].filter(Boolean) : shortcutRecordMergedIds.value
@@ -956,9 +1024,13 @@ function isRecordableShortcutId(shortcutId: string) {
             <strong>解析候选</strong>
             <small>{{ previewResult.winner?.actionId || '未命中或被输入层阻断' }}</small>
           </span>
-          <span v-else>
+          <span v-else-if="maintenanceSectionId === 'reservations'">
             <strong>保留键与接管层</strong>
             <small>{{ SHORTCUT_RESERVATION_RULES.length }} 条保留键规则</small>
+          </span>
+          <span v-else>
+            <strong>窗口诊断</strong>
+            <small>会话级激活记录；正式安装不在窗口列表侧栏显示</small>
           </span>
         </header>
 
@@ -1189,7 +1261,7 @@ function isRecordableShortcutId(shortcutId: string) {
           </div>
         </div>
 
-        <div v-else class="maintenance-panel-body maintenance-reservation-body">
+        <div v-else-if="maintenanceSectionId === 'reservations'" class="maintenance-panel-body maintenance-reservation-body">
           <div v-for="rule in SHORTCUT_RESERVATION_RULES" :key="`${rule.commandId}-${rule.shortcutId}-${rule.when}`" class="reservation-row">
             <kbd>{{ formatShortcutLabel(rule.shortcutId) }}</kbd>
             <span>
@@ -1197,6 +1269,69 @@ function isRecordableShortcutId(shortcutId: string) {
               <small>{{ rule.layer }} · {{ rule.when || 'always' }}</small>
               <small>{{ rule.description }}</small>
             </span>
+          </div>
+        </div>
+
+        <div v-else class="maintenance-panel-body maintenance-window-diagnostics-body" data-role="settings-window-diagnostics">
+          <div class="settings-subpanel">
+            <h3>本次窗口激活诊断</h3>
+            <p class="empty-note">会话内记录，不写入长期配置；正式安装仅在此查看完整列表。</p>
+            <div
+              v-if="latestWindowActivationDiagnostic"
+              class="window-activation-diagnostics-summary"
+              :class="latestWindowActivationDiagnostic.level"
+              :role="latestWindowActivationDiagnostic.level === 'blocking' ? 'alert' : 'status'"
+            >
+              <strong>{{ latestWindowActivationDiagnostic.level === 'blocking' ? '窗口激活被阻断' : '已确认目标关闭' }}</strong>
+              <span>{{ latestWindowActivationDiagnostic.message }}</span>
+            </div>
+            <ol v-if="windowActivationDiagnostics.length" class="window-activation-diagnostics-list">
+              <li
+                v-for="diagnostic in windowActivationDiagnostics"
+                :key="diagnostic.id"
+                :class="diagnostic.level"
+                :role="diagnostic.level === 'blocking' ? 'alert' : 'status'"
+              >
+                <div>
+                  <span>{{ diagnosticTimestampLabel(diagnostic.timestamp) }}</span>
+                  <span>{{ activationEntryLabel(diagnostic) }}</span>
+                  <span>{{ activationPlatformLabel(diagnostic) }} · {{ activationStageLabel(diagnostic) }}</span>
+                  <code>{{ diagnostic.code }}</code>
+                </div>
+                <p>{{ diagnostic.message }}</p>
+              </li>
+            </ol>
+            <p v-else class="empty-note">暂无会话诊断记录。</p>
+            <button
+              v-if="windowActivationDiagnostics.length"
+              type="button"
+              data-role="window-activation-diagnostics-clear"
+              @click="emit('dispatch', 'windows.activation.diagnostics.clear')"
+            >清空本次记录</button>
+          </div>
+
+          <div v-if="windowOperationTraceEnabled" class="settings-subpanel" data-role="window-operation-trace" role="status" aria-label="开发窗口操作追踪">
+            <h3>开发窗口操作追踪</h3>
+            <p class="empty-note">仅开发环境显示；含已授权目标标题，其余字段保持脱敏。</p>
+            <p v-if="!windowOperationTraces.length" class="empty-note">尚无本次窗口操作记录。</p>
+            <ol v-else class="window-operation-trace-list">
+              <li v-for="record in windowOperationTraces" :key="record.id" :class="record.result">
+                <div class="window-operation-trace-meta">
+                  <span>{{ diagnosticTimestampLabel(record.timestamp) }}</span>
+                  <span>目标窗口：{{ operationTargetLabel(record) }}</span>
+                  <span>{{ operationEntryLabel(record) }}</span>
+                  <span>{{ operationPlatformLabel(record) }}</span>
+                  <span>{{ operationKindLabel(record) }} · {{ operationResultLabel(record) }}</span>
+                </div>
+                <p class="window-operation-trace-summary" data-role="window-operation-trace-summary">{{ operationTraceSummary(record) }}</p>
+              </li>
+            </ol>
+            <button
+              v-if="windowOperationTraces.length"
+              type="button"
+              data-role="window-operation-trace-clear"
+              @click="emit('dispatch', 'windows.operation.traces.clear')"
+            >清空开发记录</button>
           </div>
         </div>
       </section>
