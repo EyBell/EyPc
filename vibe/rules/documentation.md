@@ -1,6 +1,6 @@
 # EyPc Documentation Rules
 
-Tool: codex
+Tool: tool-neutral (codex, claude, and any CodeNote-routed agent)
 
 ## Tiers
 

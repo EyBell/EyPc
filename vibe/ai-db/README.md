@@ -1,6 +1,6 @@
 # EyPc AI DB Notes
 
-Tool: codex
+Tool: tool-neutral (codex, claude, and any CodeNote-routed agent)
 
 EyPc MVP stores state in `utools.dbStorage` under `eypc/state/v1`.
 
