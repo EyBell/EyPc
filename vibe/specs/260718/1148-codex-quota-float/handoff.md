@@ -1,7 +1,7 @@
 # Codex 任务状态交接
 
 Tool: codex
-Date: 2026-08-03
+Date: 2026-08-07
 State: `automated-verified / host-pending`
 
 ## 当前结论
@@ -41,10 +41,12 @@ State: `automated-verified / host-pending`
 - RAW-144 进一步把任务物化与 Activity 订阅固定到 Codex 功能启用生命周期，离开页面/隐藏 Float 不再清缓存，额度仍按 surface 门控；Runner catalog 改为每项目增量新增/失效/单飞。已读确认现覆盖 uTools fallback，并用 preload 内部 Turn ID 区分 completion epoch：同一 Turn 的完成时间补全和旧 full snapshot 不会让已读复现，新 Turn 仍会重新进入未读。
 - RAW-145 在当前本机真实 Provider 数据上复现了跨层断点：Preload 恢复一条 connector waiting，但生产 Domain 投影为零条待输入；旧预检复制宽松算法而误报成功。v5 现用 `persisted-decision` 明确标记安全 rollout 输入/Plan 决定，贯通库存、Activity 与 Domain，并由精确新 Turn/active/completion 清除；普通 connector waiting 仍拒绝。首个修复后真实匿名预检收敛为 persisted waiting 1、产品 waiting 1；Provider 随后解除决定时最终复跑同步为 0、0，没有 sticky 反弹。
 - RAW-146 收口非宿主残留：Controller/Float 共用 Domain 置顶优先显示排序，全局待输入、紧凑角标与循环不再对同一完整集合选择不同首条；输入/未读的 200ms 帮助和 ARIA 明示“打开第一条”。反向测试覆盖源数组首项未置顶、后项置顶，旧文案断言已清除；canonical/过程文档同步 `persisted-decision`、默认 24 小时、最新 `752/752` 基线及当前 8092 未监听事实。
+- RAW-147 清除正向 follower 公告回声：`following=true` 只描述发送方 follower 状态并直接消费，只有显式 following-status request 才定向重报一次；`following=false` 的 owner 连续性规则保持不变。Bridge 新合同先 RED 后 GREEN且全文件 `81/81`，精确变更快照的 typecheck/production build、当前三份 Preload/运行时门禁与修复后的生产 Domain 真实预检通过；交付产物连接真实 broker 时出站 follow 保持有界。并发 Claude 改动后的当前整树 build 复跑被其测试夹具类型漂移阻断，未纳入本写集。当前运行 uTools 仍为 pre-RAW-147，必须重载后再验收 owner snapshot 与 active→waiting。
+- 提交收口把 stream-follow 回声固定到一个错误记忆主记录，并在 pending-request 依赖记录中加入更新引入；任务、项目状态、架构、技术细节、验证与错误索引已按同一协议语义同步。共享文件只允许暂存 RAW-147 hunks，并发 Claude 重构保持未提交。
 
 ## 验证
 
-详细命令、七项状态机修复、闭合矩阵与 RAW-132–146 增量合同见 [verify.md](verify.md#L1)。RAW-146 聚焦 `90/90`、完整 Vitest `752/752`、typecheck、preload/运行时静态门禁、真实 Provider→Domain 预检与文档链接审计通过。8092 当前未监听，安装 ASAR 仍是修复前 v4；本轮按用户要求没有启动服务、更新 ASAR、重载或操作实际 uTools，后续宿主证据不得由源码自动化代替。
+详细命令、七项状态机修复、闭合矩阵与 RAW-132–147 增量合同见 [verify.md](verify.md#L1)。RAW-147 Bridge `81/81`、精确变更快照的 typecheck/production build、当前 Preload 三向镜像/语法/同步 IPC、uTools runtime validation、真实 Provider→Domain 预检、有界 packaged-source IPC 与错误记忆“一主一引”审计通过；当前整树 typecheck/build 的独立 Claude fixture 阻断见验证记录。8092 当前未监听，运行 ASAR 为修复前 v5（pre-RAW-147）；本轮没有启动服务、更新 ASAR、重载或操作实际 uTools，后续宿主证据不得由源码自动化代替。
 
 ## 真实宿主验收
 
@@ -67,3 +69,4 @@ State: `automated-verified / host-pending`
 15. 连续触发待输入、完成未读、上一个/下一个任务及 Runner 快捷键；首次冷启动可有一次预检，随后普通 mainHide 往返应直接打开且无明显全量扫描等待。真实退出/重载后允许重新冷启动一次。
 16. 重载 v5 后复验用户截图中的同一 ownerless 任务：Codex 原生 `Needs input` 时 EyPc 必须为“需要输入”；回答后或开始精确新 Turn 时立即解除。再制造一条只有普通 connector waiting hint 的夹具/状态，确认仍保守“进行中”，不得因本修复扩大误报。
 17. 准备两条待输入任务，让较新的任务不置顶、较旧任务置顶；紧凑角标和全局待输入入口都必须打开同一置顶首条，鼠标/键盘说明读出“打开第一条”，不得切页或跳过首项。
+18. 重载 RAW-147 构建后观察 IPC：正向 follower 公告不得产生回发，控制消息必须保持有界，并至少收到当前 owner 的状态 snapshot；随后让任务从 active 进入普通输入/审批等待，卡片与角标应实时进入待输入而不等待 15 秒完整校对。

@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: codex-desktop-pending-request__plan-confirmation-was-misclassified-after-runtime-became-idle__inspect-finite-unresolved-requests-before-terminal-projection
 first_seen: 2026-07-27
-last_verified: 2026-08-03
+last_verified: 2026-08-07
 review_after: 2027-02-03
 evidence:
   - user-status-correction
@@ -16,6 +16,7 @@ evidence:
   - completed-plan-rollout-and-live-item-regressions
   - provider-to-domain-real-path-preflight
   - persisted-decision-provenance-regressions
+  - relative-domain-module-preflight-loader
 tags:
   - codex-companion
   - desktop-ipc
@@ -27,6 +28,10 @@ tags:
 ---
 
 # Pending User Requests Override Idle Runtime
+
+## 更新引入（2026-08-07）
+
+本记录继续只主责有限待输入决定的 live/sticky/rollout 证据与生产 Domain 投影。RAW-147 更正了它依赖的 stream 前提：`following=true` 既不是状态快照，也不是要求接收方重报的请求；正向公告回声的根因、修复和宿主验收统一由 [task-switch follow 主记录](codex-task-switch-unfollow-must-not-drop-live-shadow.md#L1) 管理。这里保留该前提用于检测顺序，不再形成第二份协议回声记忆。
 
 ## Symptom
 
@@ -53,14 +58,14 @@ The current ChatGPT/Codex Desktop creates unresolved finite requests in `convers
 
 ## Detection Order
 
-1. Prefer a valid, version-matched Desktop live snapshot or patch. A successful follow acknowledgement alone is not a snapshot and cannot restore an ownerless request.
+1. Prefer a valid, version-matched Desktop live snapshot or patch. A positive follower-state announcement alone is not a snapshot and cannot restore an ownerless request.
 2. Inspect the unresolved request list using a finite method allowlist before accepting idle/completed presentation.
 3. Map exact `item/plan/requestImplementation` to `waitingOnUserInput`; map only the existing finite input/approval request families otherwise.
 4. While a recognized request exists, publish the known anonymous task immediately as Desktop live active/input. For an unregistered task, retain the private shadow until verified inventory creates its anonymous identity.
 5. Across owner/transport loss, retain only an already observed finite input/approval/Plan request shadow for this preload session; ordinary active must drop. Clear the shadow on a new snapshot, exact active/new Turn/completion, newer inventory revision or explicit removal.
 6. When no live/sticky request exists, allow interrupted/failed/inProgress inventory with a real rollout under `CODEX_HOME/sessions` to recover an unmatched exact `request_user_input` from a bounded tail. Publish it with explicit `persisted-decision` provenance; matching output or later user input clears it.
 7. Separately, for latest Turn `completed` only, allow an exact latest-Turn `item_completed.item.type=Plan` to establish `planImplementationOnly` with the same persisted-decision provenance; a later `task_started` clears it. This decision outranks completed and unread.
-8. Run any host preflight through the production Domain projection and semantic revision gate; a Bridge/source count alone cannot prove the user-visible bucket.
+8. Run any host preflight through the production Domain projection and semantic revision gate; resolve every transpiled module's relative imports from that module's own source path. A Bridge/source count or a preflight that stops before Domain cannot prove the user-visible bucket.
 9. Never infer input from arbitrary request names, plan text, `resumeState` alone, elapsed time, ordinary connector activity or other rollout content.
 
 ## Prevention Rule
@@ -84,3 +89,4 @@ For live state machines, an unresolved finite user-decision request outranks an 
 | 2026-08-03 | RAW-141 ownerless current input | Native Codex showed one long-lived `Needs input` while EyPc showed ongoing | Assumed refollow would replay current request; dropped every shadow on owner loss and trusted App Server latest Turn, which omitted the request | Kept finite observed request shadows across soft owner loss, preserved Desktop observation across non-kill hiding, and added bounded exact `request_user_input` rollout fallback | verified by unique current-host evidence, focused 170/170, full workspace 737/737 and isolated commit 711/711 plus type/build/runtime gates; rebuilt uTools display pending |
 | 2026-08-03 | RAW-142 completed Plan implementation wait | A finished planning Turn appeared as completed-unread although implementation had not started | Required a replayable Desktop request and treated completed Turn as terminal regardless of exact Plan item | Parse exact latest-Turn Plan item from bounded rollout/live item events; project Plan-only waiting until a newer Turn, independent of unread | focused Bridge+Domain 114/114, Controller 2/2 and type/preload checks pass; real uTools pending |
 | 2026-08-03 | RAW-145 persisted ordinary input recurrence | Native Codex again showed `Needs input` while EyPc showed ongoing, despite RAW-141 source preflight claiming active | Persisted fallback lost provenance as plain connector at the Domain boundary; the preflight copied a looser active predicate and never ran the production consumer | Added `persisted-decision`, preserved it through inventory/Activity reconstruction, cleared it on exact newer evidence, upgraded to v5 and made preflight execute production Domain | Provider→Domain first converged 1→1, then after decision removal 0→0; focused 192/192, typecheck/full build/mirror pass; installed uTools ASAR reload pending |
+| 2026-08-07 | RAW-147 preflight import drift | The production-Domain preflight failed after `codex.ts` gained relative value imports | Evaluated the transpiled root with a `require` anchored at `scripts/`, so `./companionProvider` resolved outside `src/domain` | Added a cached in-memory TypeScript module loader that resolves each relative dependency from its importing source file | Current 30-day production projection returns `ok=true`, v5 and verified completeness; no generated source or private task data persisted |

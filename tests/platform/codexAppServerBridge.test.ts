@@ -3159,6 +3159,56 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
+  it('re-announces follow only for an explicit status request, never a peer follow announcement', async () => {
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const positiveFollowsBefore = desktopSocket.writes.filter((message) => (
+      message.method === 'thread-stream-following-changed'
+      && message.params?.conversationId === FIXED_THREAD_IDS[0]
+      && message.params?.following === true
+    )).length
+    expect(positiveFollowsBefore).toBeGreaterThan(0)
+
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-following-status-requested',
+      sourceClientId: 'codex-desktop-owner',
+      targetClientIds: ['eypc-test-client'],
+      version: 1,
+      params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[0] }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const positiveFollowsAfterRequest = desktopSocket.writes.filter((message) => (
+      message.method === 'thread-stream-following-changed'
+      && message.params?.conversationId === FIXED_THREAD_IDS[0]
+      && message.params?.following === true
+    ))
+    expect(positiveFollowsAfterRequest).toHaveLength(positiveFollowsBefore + 1)
+    expect(positiveFollowsAfterRequest.at(-1)?.targetClientIds).toEqual(['codex-desktop-owner'])
+
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-following-changed',
+      sourceClientId: 'codex-peer-follower',
+      targetClientIds: ['eypc-test-client'],
+      version: 1,
+      params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[0], following: true }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(desktopSocket.writes.filter((message) => (
+      message.method === 'thread-stream-following-changed'
+      && message.params?.conversationId === FIXED_THREAD_IDS[0]
+      && message.params?.following === true
+    ))).toHaveLength(positiveFollowsBefore + 1)
+    bridge.close()
+  })
+
   it('lets a fresh App Server active event outrank an older interrupted Desktop idle event across read-state and inventory replay', async () => {
     const child = new FakeCodexProcess()
     child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])

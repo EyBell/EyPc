@@ -1,18 +1,18 @@
 # Codex 任务状态验证记录
 
 Tool: codex
-Date: 2026-08-03
+Date: 2026-08-07
 
 ## Review Target
 
-- Requirement: [RAW-116–145](raw-requirement.md#L1)
+- Requirement: [RAW-116–147](raw-requirement.md#L1)
 - Plan: [plan.md](plan.md#L1)
-- Implementation: preload 直接证据/原生 unread/Activity generation 与 mode-aware latest-Turn 复核、无 Turn 载荷 completed 专属快路、精确 Plan-only 隐私标记、已知 Side Chat 会话期拓扑重订及普通 mainHide 热 App Server/alias 连续性；Controller 单一 active-exit 转换器、停用代次重建、行级库存隔离/零周期自闭合、发布成功感知的 tasks-preflight single-flight、同 key alias 重建、Runner verified inventory 复用与普通等待→Plan→近期 active 独占循环；Feature route 由 `mainHide` 独占 Codex 全局入口可见性；Domain 明确停止/原生 unread/Plan 卡片投影；额度/完整校对自由秒数、quota-auto 普通窗口仲裁、直接外观持久化和结构边界静态回归同步收口。
+- Implementation: preload 直接证据/原生 unread/Activity generation 与 mode-aware latest-Turn 复核、无 Turn 载荷 completed 专属快路、精确 Plan-only 隐私标记、已知 Side Chat 会话期拓扑重订、普通 mainHide 热 App Server/alias 连续性及 follower 公告去回声；Controller 单一 active-exit 转换器、停用代次重建、行级库存隔离/零周期自闭合、发布成功感知的 tasks-preflight single-flight、同 key alias 重建、Runner verified inventory 复用与普通等待→Plan→近期 active 独占循环；Feature route 由 `mainHide` 独占 Codex 全局入口可见性；Domain 明确停止/原生 unread/Plan 卡片投影；真实预检按源模块解析 TypeScript 相对依赖；额度/完整校对自由秒数、quota-auto 普通窗口仲裁、直接外观持久化和结构边界静态回归同步收口。
 - Sidecar: 主线程。
 
 ## Checked
 
-下表保留 RAW-129 历史基线和 RAW-130–145 当时的增量记录；当前执行结果以 RAW-146 行及文末 Full Matrix Findings 为准，历史“未执行”或旧计数不再冒充最新状态。
+下表保留 RAW-129 历史基线和 RAW-130–146 当时的增量记录；当前执行结果以 RAW-147 行及文末 Full Matrix Findings 为准，历史“未执行”或旧计数不再冒充最新状态。
 
 | 验证 | 结果 |
 | --- | --- |
@@ -95,6 +95,14 @@ Date: 2026-08-03
 | RAW-145 重载产物与当前服务事实 | `dist/plugin.json` 仍保持本地 preload 并把 development main 指向 `127.0.0.1:8092`；RAW-145 当时三入口曾 HTTP 200，但 RAW-146 核验时该端口已不监听。产物可供后续正常启动/接入，本轮按用户要求不启动服务、不改写缓存、不重载或重启 uTools |
 | RAW-146 首条排序与角标合同 | Domain 新增唯一显示排序函数，Controller/Float 共用置顶优先和稳定源顺序；全局待输入不再直接读取 `inputRequired[0]`。反向夹具让较新未置顶任务排在源数组首位、较旧置顶任务排在后位，命令仍精确打开置顶任务。待输入/未读的 hover/focus/ARIA 明确写“打开第一条”，超过 99 的进行中 ARIA 同步新格式 |
 | RAW-146 自动门禁 | Controller/UI 聚焦 `90/90`、完整 Vitest `752/752`（`57/57` 文件）、`pnpm run typecheck`、main preload 语法/镜像、`validate:utools`、`git diff --check` 与 changed Markdown 链接审计通过；当前真实 Provider→Domain 预检仍为 `persistedWaitingInput=1 / productWaitingInput=1`。实际 uTools 更新明确排除 |
+| 2026-08-07 当前宿主身份复核 | 两个活动 EyPc Renderer 都加载 `task-state-v5`，排除历史“当前安装 ASAR 仍为 v4”的解释；RAW-147 写入后 canonical/public/dist 已同步为新产物，而活动 ASAR 仍是缺少 RAW-147 的旧 v5。`8092` 未监听，最终 owner snapshot 与状态转换必须在正常重载后验收 |
+| 2026-08-07 故障复现时的实时状态缺口 | 诊断采样时 Codex 任务接口报告 EyPc 工作区有 2 条 active；两条匿名键均存在于 EyPc 的 25 条库存和 Activity 映射，但都只有 `connector + notLoaded`，`liveEpochOpened=0`，排除库存丢失并确认当时缺的是 Desktop live/request authority。该计数是时点证据，不作为提交时当前态 |
+| 2026-08-07 follow 回声实机复现 | EyPc 初始化后确实发送 follow；两个已加载旧实现的 peer follower 各自发送定向 `following=true` 公告，而当前 [no-reply boundary](../../../../preload/index.js#L3519) 所替代的旧分支把公告再次回发。250ms 内计得 32,329 次定向正向回声，2.5s 计得约 368,000 次，期间没有 `thread-stream-state-changed`。当前 Codex 包内实现确认正向消息是发送方 follower 状态，真正要求重报的是 `thread-stream-following-status-requested` |
+| RAW-147 协议修复与回归 | 移除正向公告回发；显式 following-status request 仍只定向回复一次。新增 [Bridge 反向合同](../../../../tests/platform/codexAppServerBridge.test.ts#L3163) 先 RED（同线程出站 1→2）后 GREEN；完整 Bridge `81/81` pass。RAW-147 精确变更快照的 `pnpm run build` 内 typecheck、Vite、runtime preparation 与 `validate:utools` 全部通过；随后并发进入的 Claude 改动使当前整树复跑停在未纳入本提交的 fixture `projectKey` 可选性类型错误，未越界修改该独立写集 |
+| RAW-147 Preload 与真实预检 | canonical/public/dist main preload 字节一致，三份 `node --check` 与同步 IPC 静态搜索通过。[codex-real-preflight.mjs](../../../../scripts/codex-real-preflight.mjs#L1) 改为缓存式内存 TypeScript 模块加载并从 importer 位置解析相对依赖；提交前 30 天真实 Provider→生产 Domain 投影返回 `ok=true`、`task-state-v5`、`completeness=verified`，最新时点为 `productActive=0 / unconfirmedOngoing=4` |
+| RAW-147 有界真实 IPC | 最终 `dist/preload.js` 连接真实 broker 只发送 24 条初始正向 follow；收到两个旧客户端共 48 条正向公告后没有追加出站，证明递归已被交付产物切断。旧 uTools ASAR 尚未重载，因此 `incomingState=0` 只作为宿主仍旧的门禁证据，不冒充 snapshot/active→waiting 验收 |
+| RAW-147 文档与错误记忆收口 | task/current/technical 权威层已复核；[stream-follow 主记录](../../../knowledge/error-memory/codex-task-switch-unfollow-must-not-drop-live-shadow.md#L1) 唯一持有回声根因与路线，[pending-request 记录](../../../knowledge/error-memory/codex-pending-user-request-overrides-idle-runtime.md#L1) 通过更新引入只保留检测依赖。索引禁止再建第二份协议回声诊断；并发 Claude 文档与实现写集不进入本提交 |
+| 2026-08-07 实现状态 | RAW-147 源码、聚焦回归、精确快照类型/构建、当前三向镜像/runtime、真实预检与有界 IPC 已验证；当前整树 typecheck/build 复跑受并发 Claude fixture 类型漂移阻断。真实 uTools 重载、owner snapshot 与 active→waiting 转换仍为 host-pending。本轮没有启动 8092、没有重载/重启 uTools、没有写 Codex 原生状态 |
 | 2026-07-31 TypeScript 门禁 | 用户执行 `vue-tsc --noEmit` 暴露反向 generation 屏障夹具的异步 release 回调被收窄为 `never`；改为可调用门闩加独立 pending 信号后，`pnpm run typecheck` 通过。未执行 Vitest、build、preload 语法或真实宿主 |
 | RAW-133 静态收口 | `git diff --check` pass；canonical/public preload 全文件精确一致；诊断 key/counter normalizer 在 `src/` 各只有一个定义；CodexPage 无 `span role=button`/手写 tabindex 提示；changed Markdown `audit_code_links.py` pass |
 | 设计偏好收口 | `DesignTaskCloseout` 生成 `eligible-for-root-review` 的 W29 canary candidate；`writes_performed=false`，未写偏好缓存、传播状态或 Hook |
@@ -194,7 +202,8 @@ Date: 2026-08-03
 
 - RAW-129 历史基线中的状态主矩阵为 `168 / 168`；RAW-128 当时覆盖 10 类跨层可复现阻断。RAW-131–145 的历史执行数保留在上表，不能覆盖当前结果。
 - RAW-146 直接受影响的 Controller/UI 两文件为 `90 / 90`；新增合同覆盖完整待输入集合中较新未置顶与较旧置顶的反向顺序。
-- 最新完整 Vitest 为 `752 / 752`、`57 / 57` 文件；它取代 `751 / 751` 作为当前自动化基线。类型、preload/运行时静态门禁独立记录，不把实际宿主计入自动接纳。
+- RAW-147 直接受影响的 Bridge 文件为 `81 / 81`；新增合同先以正向 peer announcement 导致额外写入稳定 RED，再证明只有显式 following-status request 会定向重报一次。
+- 最新完整仓库 Vitest 仍是 RAW-146 的历史基线 `752 / 752`、`57 / 57` 文件；RAW-147 没有触发整仓升级，只执行当前受影响的完整 Bridge 文件。类型、preload/运行时静态门禁独立记录，不把实际宿主计入自动接纳。
 
 ## Findings
 
@@ -223,17 +232,20 @@ Date: 2026-08-03
 - P1: 已修复并验证——较早的 Desktop idle `activity-event` 可在较新的 App Server active 后因 read-state/inventory 重放再次撤销 `app-server-live`；现两种真实事件共享进程内单调 sequence，只有严格后到的 Desktop 非 active 才能撤销，并在 full inventory 中保留私有水位。
 - P1: 已修复——`codexNewThread` 只检查周额度归零且优先展示周读数，违反“任一已返回普通窗口为 0 即切 Spark”和普通 5 小时优先合同。
 - P1: 已修复——全局待输入动作直接使用源数组首项，绕过紧凑角标/任务循环的置顶优先显示顺序；现三者共用 Domain 排序函数，并由“后项置顶”反向合同锁定。
+- P1: 已修复——正向 peer follower 状态公告被误当作请求再次回发，两个已加载旧实现的 EyPc follower 可互相放大控制消息并饿死 owner snapshot；现公告单向消费，只有显式 following-status request 才回复一次。
 - P2: 已修复——3 条历史外观测试、3 个 Runtime 配色 Action 与 Controller 暂态覆盖仍携带 RAW-071 已废止的本地颜色/对比度/配对预览门禁。
 - P2: 已修复——MQTT media 正则对等价 CSS 换行敏感，Quick Jump 否定正则跨越函数边界命中后续合法 `app.hide`；两者均改为结构边界断言。
 - P2: 已修复——紧凑角标帮助/ARIA 未说明“打开第一条”，且测试把旧文案固化为成功；现输入/未读动作语义进入可见提示与 ARIA，并扫描清除旧断言。
 - P2: 已修复——PROJECT_STATUS/PRD/Verify 对 persisted-decision、24 小时默认、最新测试基线与 8092 当前存活状态存在漂移；现区分历史证据、当前静态产物和未执行的真实宿主更新。
+- P2: 已修复——真实预检从仓库根直接执行单个 TypeScript 文件，无法加载生产 Domain 新增的相对值依赖；现用缓存式内存模块加载器按 importer 路径解析依赖。
 - P2: 旧 runtime/float `conversations` 别名仍保留一版兼容，待 v2 退役后删除。
 
 ## Not Checked
 
-- 2026-08-03 的完整 Vitest、`pnpm run typecheck`、preload 镜像/语法、真实只读预检和 uTools runtime validation 已通过；本增量未重新执行会写入 `dist` 的 production build，现有 dist preload 与 canonical/public 字节一致。真实宿主加载与状态转换仍未执行，自动化通过不能替代宿主验收。
+- RAW-147 已执行受影响的完整 Bridge 文件 `81/81`、精确变更快照的 `pnpm run typecheck` 与 production build、当前三份 main preload 镜像/语法/同步 IPC 检查、runtime validation、真实只读预检和有界真实 IPC；影响面没有触发整仓 Vitest 或 `pnpm run verify` 升级。并发 Claude 改动后的当前整树 typecheck/build 复跑被独立 fixture 的 `projectKey` 可选性错误阻断。
+- 运行中的 uTools 尚未重载 RAW-147 产物；owner snapshot 与 active→普通输入/审批 waiting 的宿主切换仍未验收，自动化通过不能替代该门禁。
 - 未操作真实 Codex 任务、未归档/移除项目、未启停进程。
-- 真实 uTools 宿主需正常重载后验收中断恢复 completed-unread、普通完成、任务切换和角标同步。
+- 真实 uTools 宿主需正常重载后验收正向 follower 公告零回发、owner snapshot、active→waiting、任务切换与角标同步。
 
 ## Retained Minimal Guards
 
