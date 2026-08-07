@@ -141,6 +141,14 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - 紧凑角标帮助和 ARIA 固定为 `待输入 N · 打开第一条 / 进行中 N / 未读 N · 打开第一条`。测试必须覆盖单项、多项、超过 99、鼠标/键盘提示及“源数组首项未置顶、后项置顶”的反向顺序，不得把旧文案或只有一个候选的夹具冒充排序合同。
 - Canonical/过程文档统一 `persisted-decision`、可配置动态窗口默认 24 小时和当前服务事实；历史执行行可保留当时结果，但“最新”摘要不得继续引用过期计数或已结束的 8092 进程。本增量不启动/重载 uTools、不改 ASAR、不改 Provider/Preload 状态语义。
 
+## RAW-147 follower 状态协议去回声
+
+- `thread-stream-following-changed(following=true)` 是发送方自己的 follower 状态公告，不是接收方重报请求；Preload 必须消费后结束处理，禁止向 source 或广播回发同一正向公告。
+- 只有 `thread-stream-following-status-requested` 可以触发一次定向 `following=true` 重报。测试必须同时证明显式请求增加恰好一次出站消息，而随后收到的 peer 正向公告不会增加出站数量。
+- owner `following=false` 的 RAW-116/117 连续性规则保持不变：仅在 source 确实拥有当前 shadow/unread 且 main/Side parent 仍在 inventory 时定向续订；真实 client 断开、桥失败、归档和离库仍独立撤权。
+- 真实预检必须从各 TypeScript 源文件自身位置解析相对依赖并执行生产 Domain，不得因 Domain 拆分退回复制投影或跳过消费者。Preload canonical/public/dist 仍由生成链保持逐字节一致。
+- 真实宿主接纳必须在所有旧 EyPc follower 重载后确认控制消息有界、owner snapshot 恢复，并实测 active→waiting 不依赖 15 秒完整库存兜底；源码/构建探针不能冒充该宿主门禁。
+
 ## 证据合同
 
 - Activity 来源为 `connector / initial-snapshot / activity-event`，并携带会话期 revision；Preload 内真实 Desktop patch 与精确 App Server active 另共享一个不出 Host 的单调 evidence sequence，用于判断跨来源先后。

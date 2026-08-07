@@ -3509,9 +3509,9 @@ class CodexDesktopCompanionBridge {
           emitCodexActivityDelta([known], false)
         }
       }
-      if (params.hostId === 'local' && params.following === true && ownerClientId && validCodexThreadId(threadId)) {
-        this.followAny(threadId, true, [ownerClientId])
-      }
+      // `following=true` announces the sender's own follower state; it is not
+      // a request for our state. Only `thread-stream-following-status-requested`
+      // asks us to re-announce, otherwise two followers can echo forever.
       return
     }
     if (message.method === 'thread-stream-state-changed') {

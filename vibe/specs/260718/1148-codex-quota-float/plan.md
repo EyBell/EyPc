@@ -31,5 +31,7 @@ Status: `automated-verified / host-pending`
 26. 将任务物化视图提升为 Codex feature-lifetime 热缓存，Tab/Float 只门控额度；把 Runner catalog 拆成按项目增量失效/单飞，并把成功打开确认绑定内部 Turn ID，覆盖 uTools fallback、同 Turn completedAt 补全和旧全量快照反压。
 27. 先在当前本机以真实 Provider 数据贯通 Preload 与生产 Domain 投影，复现并清除“Preload 恢复 waiting、产品仍 ongoing”的跨层断点；用 `persisted-decision` 显式来源升级到 `task-state-v5`，保持普通 connector hint 拒绝与精确新 Turn 清理门禁，再验证聚焦状态机、类型、完整构建、镜像和真实只读预检。
 28. 排除实际宿主更新后收口剩余消费者与文档偏差：抽取 Controller/Float 共用的置顶优先显示排序，让全局待输入与紧凑首条一致；补“后项置顶”的反向测试，修正角标帮助/ARIA与旧断言，并同步 v5 provenance、24 小时默认、最新测试基线和 8092 当前状态。
+29. 修复正向 follower 公告回声：仅响应显式 following-status request，补定向公告反向合同；恢复真实预检的相对 TypeScript 依赖加载，执行聚焦 Bridge、类型、Preload 三向镜像/构建及有界真实 IPC 探针，真实 uTools 重载后再接纳状态转换。
+30. 提交前同步 task/current/technical/error-memory 权威层：把 stream-follow 回声固定到单一主记录，为依赖记录补更新引入并清除双主表述；按 hunk 隔离并发 Claude 写集，验证暂存快照后仅创建本地提交。
 
 执行证据见 [verify.md](verify.md#L1)，当前交接见 [handoff.md](handoff.md#L1)。

@@ -1,13 +1,12 @@
 import { Buffer } from 'node:buffer'
 import { createRequire } from 'node:module'
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { dirname, extname, resolve } from 'node:path'
 import vm from 'node:vm'
 
 const requireFromScript = createRequire(import.meta.url)
 const root = resolve(import.meta.dirname, '..')
 const preload = readFileSync(resolve(root, 'preload/index.js'), 'utf8')
-const codexDomainSource = readFileSync(resolve(root, 'src/domain/codex.ts'), 'utf8')
 const requestedDays = Number(process.argv[2] || 30)
 const timeWindowDays = Number.isFinite(requestedDays)
   ? Math.max(1, Math.min(365, Math.round(requestedDays)))
@@ -35,25 +34,41 @@ sandbox.globalThis = sandbox
 vm.runInNewContext(preload, sandbox, { filename: 'preload/index.js' })
 
 const typescript = requireFromScript('typescript')
-const codexDomainModule = { exports: {} }
-const codexDomainScript = typescript.transpileModule(codexDomainSource, {
-  compilerOptions: {
-    module: typescript.ModuleKind.CommonJS,
-    target: typescript.ScriptTarget.ES2022
-  },
-  fileName: 'src/domain/codex.ts'
-}).outputText
-vm.runInNewContext(codexDomainScript, {
-  module: codexDomainModule,
-  exports: codexDomainModule.exports,
-  require: requireFromScript,
-  process,
-  console,
-  setTimeout,
-  clearTimeout,
-  structuredClone
-}, { filename: 'src/domain/codex.ts' })
-const { CODEX_TASK_STATE_REVISION, projectConversations } = codexDomainModule.exports
+const domainModuleCache = new Map()
+
+function loadDomainModule(filename) {
+  const resolvedFilename = extname(filename) ? filename : `${filename}.ts`
+  const cached = domainModuleCache.get(resolvedFilename)
+  if (cached) return cached.exports
+
+  const source = readFileSync(resolvedFilename, 'utf8')
+  const domainModule = { exports: {} }
+  domainModuleCache.set(resolvedFilename, domainModule)
+  const script = typescript.transpileModule(source, {
+    compilerOptions: {
+      module: typescript.ModuleKind.CommonJS,
+      target: typescript.ScriptTarget.ES2022
+    },
+    fileName: resolvedFilename
+  }).outputText
+  const requireFromDomain = createRequire(resolvedFilename)
+  const localRequire = (specifier) => specifier.startsWith('.')
+    ? loadDomainModule(resolve(dirname(resolvedFilename), specifier))
+    : requireFromDomain(specifier)
+  vm.runInNewContext(script, {
+    module: domainModule,
+    exports: domainModule.exports,
+    require: localRequire,
+    process,
+    console,
+    setTimeout,
+    clearTimeout,
+    structuredClone
+  }, { filename: resolvedFilename })
+  return domainModule.exports
+}
+
+const { CODEX_TASK_STATE_REVISION, projectConversations } = loadDomainModule(resolve(root, 'src/domain/codex.ts'))
 
 const bridge = sandbox.window.eypcPlatform?.codex
 if (!bridge?.readSnapshot) throw new Error('Codex preload bridge is unavailable')

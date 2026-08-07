@@ -113,6 +113,12 @@ Tool: codex
 | RAW-146 紧凑角标帮助/ARIA及旧测试合同修正 | complete / automated-verified |
 | RAW-146 canonical/过程文档漂移、错误记忆与链接审计 | complete / automated-verified |
 | RAW-146 实际 uTools ASAR/进程/8092 启动或重载 | excluded / user-request |
+| RAW-147 正向 follower 公告不回声、显式 status request 单次重报 | complete / focused-automated-verified |
+| RAW-147 精确变更快照的 Bridge `81/81`、typecheck、production build、三向 Preload/语法/同步 IPC/runtime 门禁 | complete / focused-automated-verified |
+| RAW-147 真实预检相对 TypeScript 依赖加载与生产 Domain 投影 | complete / host-readonly-evidence |
+| RAW-147 task/current/technical 文档冲突扫描与错误记忆“一主一引”更新引入 | complete / documentation-memory-verified |
+| 并发 Claude 改动后的当前整树 typecheck/build 复跑 | blocked / unrelated-dirty-tree（未纳入本提交的 fixture 存在 `projectKey` 可选性漂移） |
+| RAW-147 新构建重载后的有界 IPC snapshot 与 active→waiting 转换 | pending / user-owned |
 | 反向 generation 屏障夹具 TS2349 修复与 typecheck | complete / typecheck-verified |
 | 统一 `pnpm run verify`（preload 同步、全量测试、typecheck、production build） | complete / automated-verified |
 | 三类 uTools preload 单一资产清单与镜像同步 | complete / automated-verified |
