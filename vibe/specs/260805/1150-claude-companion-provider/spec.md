@@ -42,13 +42,13 @@ Raw source: [raw-requirement.md](raw-requirement.md#L1)
 - Claude 无 Plan-only 概念：Plan-only 独占层仅 Codex 任务参与，Claude 任务不进入该层。
 - Claude read-state 完全由 EyPc 自管：成功派发打开动作即写已读；无原生已读集合仲裁负担。漏事件冷恢复以 JSONL 重建为准，宁保守 ongoing 不伪造终态。
 
-## 3. 排布、角标与顺序合同（修订 RAW-146）
+## 3. 排布、角标与顺序合同（历史基线；专用 attention 入口由 RAW-149 取代）
 
 - **角标数字**：跨 provider 按状态合并统计（待输入合计、进行中合计、完成未读合计），不分来源。
 - **显示序**（列表/展开卡）：沿用现有 pinned-first 稳定序，**不**按 provider 分组。
 - **循环序**（上一个/下一个）：在现有分层独占框架（普通待输入/审批 → Plan-only → 时间窗内最近活跃 → 置顶回退）之上，**层内按 provider 分组**：先遍历完游标当前所在 provider 组，再切入另一组；组间相对顺序固定（Codex 组在前，Claude 组在后），组内沿用 pinned-first 稳定序。首尾回绕跨组连续。
 - **稳定性合同**：循环进行中，新事件只允许在游标身后或组尾插入投影更新，不得移动游标当前项与其前驱后继的相对顺序（“不出现一会儿上一会儿下”）；游标所在项离层时沿用现有“下一个从首项、上一个从末项”恢复规则。
-- **直接打开**（“打开第一条待输入”、compact 动作）：跟随**循环序**首项。RAW-146 的“单一共享顺序”修订为：Controller 与 Float 共享同一**基础比较器**（pinned-first 稳定序），循环序与直接打开在其上附加 provider 分组主键；compact 计数与列表显示继续使用不分组投影。二者由同一 Domain 函数族导出，禁止第二套排序实现。
+- **直接 attention 入口（当前）**：RAW-149 已取代本任务当时的“跟随循环序首项”。待输入与完成未读跨 Provider 按状态出现时间倒序，并由 Controller 持久化匿名未打开进度；置顶与 Provider 分组不得覆盖。通用上一个/下一个仍保留本节的循环序合同。
 
 ## 4. 跳转（per-provider self-jump）
 

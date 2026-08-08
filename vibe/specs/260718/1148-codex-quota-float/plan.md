@@ -34,5 +34,6 @@ Status: `automated-verified / host-pending`
 29. 修复正向 follower 公告回声：仅响应显式 following-status request，补定向公告反向合同；恢复真实预检的相对 TypeScript 依赖加载，执行聚焦 Bridge、类型、Preload 三向镜像/构建及有界真实 IPC 探针，真实 uTools 重载后再接纳状态转换。
 30. 提交前同步 task/current/technical/error-memory 权威层：把 stream-follow 回声固定到单一主记录，为依赖记录补更新引入并清除双主表述；按 hunk 隔离并发 Claude 写集，验证暂存快照后仅创建本地提交。
 31. 复核 Codex Tab 的环境与来源识别：把 Runtime 横幅/表格/帮助/兼容等待抽成一个 Domain 投影，任务/项目行归属各只解析一次，启动路径 mutation 复用 Host 返回快照并移除二次 inspect；以 RAW-022 裁定规则/PRD 冲突，更新既有 supersession 错误记忆并执行聚焦测试、typecheck 与文档审计。
+32. 以 RAW-149 扩展 Desktop follower 的未决请求投影：把命令/文件/权限审批与 MCP elicitation 纳入待输入，升级 `task-state-v6` 和匿名状态时间；为待输入/完成未读建立跨 Provider 最新倒序与最多 200 条的持久化未打开进度，保持通用循环和本地置顶兜底不变；完成 Bridge/Domain/Presentation/Controller/UI 聚焦验证、文档审计与构建后，再进入真实非 Full Access 宿主验收。
 
 执行证据见 [verify.md](verify.md#L1)，当前交接见 [handoff.md](handoff.md#L1)。

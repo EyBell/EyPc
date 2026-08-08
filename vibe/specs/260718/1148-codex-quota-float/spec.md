@@ -131,10 +131,10 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - [preload/index.js](../../../../preload/index.js#L1) 只把两类已结构化复核的有限决定标为 `statusAuthority='persisted-decision'`：未匹配的精确 `request_user_input`，以及最新 completed Turn 中尚无后续 Turn 的精确 Plan item。普通 App Server/connector `activeFlags` 继续使用 `connector`，不得借新来源扩成待输入。
 - `persisted-decision` 必须穿过完整库存构建、Activity inventory、公开 sanitizer 和 owner/transport 恢复路径而不降回 connector；Desktop/App Server live 仍拥有更强实时权威。精确 `turn/started`、ordinary active 或 completion 先清除旧 persisted baseline；仅当该 completion 同时拥有精确 Plan item 时才重新建立新的 Plan 决定。
 - [codex.ts](../../../../src/domain/codex.ts#L1) 只接受 `persisted-decision + waitingOnUserInput/waitingOnApproval` 为非 live 待处理状态，同时保留 v4 `planImplementationOnly` 的 degraded 兼容。未标记的普通 connector waiting 仍保持保守 ongoing，避免恢复历史误报。
-- `task-state-v5` 是 Preload、平台与 Controller 的当前语义修订；v4/v3/v2/缺失或未来来源继续保留原子任务包并标记 degraded，不自动清空、停止订阅或重启 uTools。v4 的精确 Plan-only 标记仍可兼容投影，普通输入恢复必须由 v5 provenance 证明。
-- [codex-real-preflight.mjs](../../../../scripts/codex-real-preflight.mjs#L1) 不再复制产品 active 算法；它以当前本机 Codex Provider 数据组装真实 Host snapshot，转译并调用生产 `projectConversations`，同时核对 preload/domain revision、已证明 waiting 是否到达 `inputRequired` 及普通 connector hint 是否被拒绝。修复前真实结果为 connector waiting 1、产品 waiting 0；首个修复后观测为 persisted waiting 1、产品 waiting 1，Provider 状态随后解除时最终复跑同步为 0、0。
+- `task-state-v5` 是 RAW-145 当时引入 persisted-decision 的历史修订，现已由 RAW-149 的 v6 取代；v4 的精确 Plan-only 标记仍可兼容投影，普通输入恢复仍必须由 v5+ provenance 证明。
+- [codex-real-preflight.mjs](../../../../scripts/codex-real-preflight.mjs#L1) 不再复制产品 active 算法；它以当前本机 Codex Provider 数据组装真实 Host snapshot，转译并调用生产 `projectConversations` 与 `projectCodexDynamicStatus`，同时核对 preload/domain revision、已证明 waiting 是否到达 `inputRequired`、审批是否与 active 互斥及普通 connector hint 是否被拒绝。修复前真实结果为 connector waiting 1、产品 waiting 0；首个修复后观测为 persisted waiting 1、产品 waiting 1，Provider 状态随后解除时最终复跑同步为 0、0。
 
-## RAW-146 首条排序与合同漂移收口
+## RAW-146 首条排序与合同漂移收口（历史；专用入口顺序已由 RAW-149 取代）
 
 - [codex.ts](../../../../src/domain/codex.ts#L1) 提供唯一 `orderCodexTasksForDisplay`：任何带 `pinSource` 的任务先于非置顶任务，置顶内部优先使用 `projectSections.pinned` 的既有顺序，缺失显式序号时保持源顺序。Controller 与 Float 不得再维护不同比较器。
 - 全局待输入命令、紧凑待输入角标和前后任务候选都从完整 `inputRequired` 集合应用该顺序后选择；隐藏计数任务仍可成为第一条，且不得跳过一个无可用 alias 的第一条去打开后项。
@@ -157,11 +157,22 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - Codex-only 兼容只约束数据、状态、额度、空态和角标语义；任务/项目归属标记是 RAW-022 明确引入的展示差异。任何“单来源隐藏标记”或“整个界面逐字一致”的当前表述均视为已取代，不得继续进入规则、PRD 或测试。
 - 接纳要求：环境诊断分支表、兼容等待与状态裁决投影有纯 Domain 反向测试；启动路径变更证明 mutation 各一次、额外 inspect 为零；归属测试覆盖 Codex、Claude、legacy Codex 与缺失任务；UI 合同同时证明 Domain 持有语义、Page 只消费投影。若不触碰 Preload/构建入口，不升级到 build、镜像或真实宿主门禁。
 
+## RAW-149 权限待输入、状态时间与最新优先进度
+
+- Desktop follower 的私有 `conversationState.requests` shadow 精确识别 `item/commandExecution/requestApproval`、`item/fileChange/requestApproval`、`item/permissions/requestApproval`、`item/tool/requestUserInput`、`mcpServer/elicitation/request` 与 `item/plan/requestImplementation`；兼容别名仅限已核验的同义方法。请求自带 `startedAt / createdAt / timestamp` 优先，缺失时记录该私有实例首次观测时间；进程随机盐仅在私有内存中散列有限请求标识，以便完整快照中同方法、无时间的并发请求仍保持各自首次观测时间。原始标识及散列值都不跨桥、不持久化；重复快照不得刷新时间，请求移除、整包替换清空或 resolved 后立即重算。父任务聚合 main/Side Chat 的最新未决时间。
+- 公开匿名合同只增加 `CodexHostThread.waitingSince?`、Activity Delta 同名字段与 `CodexTaskCard.statusEnteredAt?`。待输入/审批取当前未决请求最新时间；完成未读取当前 completion revision；Claude 分别复用 `waitingApprovalAt / waitingInputAt / phaseUpdatedAt / completedAt`。任何请求正文、命令、文件路径、权限内容、raw request/thread ID 均不得进入公开 snapshot、Renderer、持久化或日志。
+- `waiting-input` 与 `waiting-approval` 同属 `inputRequired`、待输入角标和动态待输入段；审批不得再重复计入 ongoing。待输入与完成未读在 Codex、Claude 汇总后统一按 `statusEnteredAt DESC` 排序，同值以匿名稳定 key 排序。置顶、Provider 分组、源数组和普通 `orderCodexTasksForDisplay` 不得覆盖这两个状态组；普通项目页、置顶展示及通用前后任务独占层循环保持既有合同。
+- 两个专用入口共用 Controller 持久化 `attentionOpenHistory`。一个状态实例由 `kind + anonymous task key + statusEnteredAt` 定义；每次选择倒序候选中第一条未成功打开实例，新任务或同任务新时间立即插队，打开后继续旧未访问项。全部访问后仅在下一次成功打开时清空该组旧进度并从最新项回绕。Host 的 Electron `opened` 与 uTools 明确接受 `dispatched` 都算成功；列表手动成功打开也计入，失败/拒绝不推进。
+- 进度每组最多 200 条，只保存 kind、匿名 task key、状态时间和打开时间；任务离组或状态时间变化时清除旧实例，跨 EyPc Renderer 重载保留。没有真实待输入时继续按既有 EyPc 本地置顶兜底，兜底不计入待输入角标或进度。紧凑待输入必须调用 Controller 动作，不得由 Renderer 读取 `[0]`；提示为“最新优先，连续触发依次打开”。
+- `task-state-v6` 是当前语义修订；v5/v4/v3/v2/缺失或未来来源继续 degraded 投影并 fail closed，不根据 Access 设置自行推断等待。EyPc 只提示并打开原任务，不批准、拒绝、提交或清理任何请求。
+- 接纳要求覆盖：所有请求类别的新增/共存/移除/无时间回退/Side Chat 聚合/白名单；审批角标原子更新与跨 Provider 最新倒序；`1→2→3，新 6 到达→6→4→5`、同任务新实例、回绕、重载、失败不推进、手动打开推进；普通排序与通用循环不受影响；v6/v5 降级。自动验证完成后才进入真实非 Full Access 宿主门禁。
+
 ## 证据合同
 
 - Activity 来源为 `connector / initial-snapshot / activity-event`，并携带会话期 revision；Preload 内真实 Desktop patch 与精确 App Server active 另共享一个不出 Host 的单调 evidence sequence，用于判断跨来源先后。
 - Turn 来源为 `inventory / turn-started / turn-completed / targeted-after-exit / snapshot-corroborated`。
 - 非 live 决定来源为 `persisted-decision`，只证明已结构化复核的有限待输入/待审批决定；它不是普通 connector 活动的别名。
+- 未决请求时间只证明当前状态实例何时出现，不参与 Activity/Turn 因果仲裁；源时间缺失时的首次观测时间及会话随机盐关联只保留在私有 shadow，公开层只得到匿名 `waitingSince`，不取得原始或散列请求身份。
 - `readStateOnly` 只能修改 unread；不得重放 Activity 或 Turn。
 - Unread 区分初始 snapshot、明确 read-state event 与成功打开确认。成功打开确认对其 completion epoch 最强并跨普通 Bridge 重建保留；其余 exact true/false、refollow snapshot 与原生集合按当前证据仲裁。refollow snapshot `false` 可清除中断期遗漏事件留下的 persisted `true`；当前可解析原生集合的成员/非成员仍压过 snapshot `true`，原生 atom 瞬时不可用时先沿用当前 Bridge 最后一次成功原生观测，再回退其它 snapshot。新 Turn 证据先释放旧成功打开确认。
 - 精确 `turn/completed` 统一关闭完成前 unread false 周期，即使旧待输入/审批 flag 尚未排空；完成后新到达的明确 read-state event 可重新声明已读。
@@ -190,7 +201,7 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - 完整 inventory 重建保留更强的精确 inProgress、confirmed terminal 与同 revision provenance。未知 key 只触发 urgent 结构复核，已知条目仍即时应用。
 - 完整 inventory 同时保留 `app-server-live` 私有 evidence sequence；该序号不进入 Activity Delta、Host Snapshot、Renderer、存储或日志。
 - 50/200ms 结构合并、5s/1s watchdog、默认 15s 完整校对和 missing-key 隔离只保护证据/库存，不延迟已确认完成；missing-key 只保留缺失行，同批仍存在的任务状态立即发布。连续确认早于隔离窗时按剩余时间自调度，普通周期为 0 也会闭合。Preload 在 source fingerprint 未变化时把已发布缺行任务的匿名映射保留 120 秒，覆盖 Controller 最长配置隔离窗口；显式归档仍立即清除。
-- `task-state-v5` 是当前语义。v4/v3/v2/旧来源仍读取并发布 degraded 原子包，不清空任务或停止订阅；v4 Plan-only 标记保持兼容，缺失 persisted-decision provenance 的普通 connector waiting 不扩权。
+- `task-state-v6` 是当前语义。v5/v4/v3/v2/旧来源仍读取并发布 degraded 原子包，不清空任务或停止订阅；v4 Plan-only 标记保持兼容，缺失 persisted-decision provenance 的普通 connector waiting 不扩权，缺失 v6 状态时间时不得从 Access 配置猜测审批。
 - 旧 runtime/float `conversations` 别名只作一版兼容；当前消费者以 `taskState` 为权威。
 
 ## 残留矩阵收口

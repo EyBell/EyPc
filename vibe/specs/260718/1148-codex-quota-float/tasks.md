@@ -122,6 +122,13 @@ Tool: codex
 | RAW-148 启动路径 set/clear 共用发布 helper 且额外 inspect 为零 | complete / focused-automated-verified |
 | RAW-148 RAW-022 与规则/PRD 冲突裁定、架构/技术/错误记忆同步 | complete / documentation-memory-verified |
 | RAW-148 聚焦四文件 `188/188`、typecheck、冲突词与链接审计 | complete / documentation-memory-verified |
+| RAW-149 Desktop 权限/命令/文件/MCP/输入/Plan 请求识别、首次观测时间与 Side Chat 聚合 | complete / implementation-written |
+| RAW-149 v6 匿名状态时间、审批纳入待输入、跨 Provider 最新倒序 | complete / implementation-written |
+| RAW-149 待输入/完成未读持久化未打开进度、插队/续队/回绕/手动成功/失败边界 | complete / implementation-written |
+| RAW-149 Bridge/Domain/Presentation/Controller/UI 聚焦自动化与隐私白名单 | complete / `8/8` files, `292/292` tests |
+| RAW-149 typecheck、production build、Preload 镜像/runtime 与文档链接审计 | complete / automated-verified |
+| RAW-149 真实 Provider→生产 Domain v6 只读预检 | complete / host-evidence；bridge connected、completeness verified |
+| RAW-149 非 Full Access 真机“请求进入→打开原任务→解除清除”及重载遍历 | pending / host-gate；首次 UI 观察因 Mac 锁屏中断，未重试 |
 | 并发 Claude 改动后的当前整树 typecheck/build 复跑 | superseded / 当前整树 typecheck 已恢复通过；RAW-148 未触发 build，RAW-147 当时的独立阻断保留在历史验证记录 |
 | RAW-147 新构建重载后的有界 IPC snapshot 与 active→waiting 转换 | pending / user-owned |
 | 反向 generation 屏障夹具 TS2349 修复与 typecheck | complete / typecheck-verified |
