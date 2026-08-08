@@ -1,0 +1,47 @@
+# Claude Code Companion 权威重置 — 规范化用户事实
+
+spec_id: `SPEC-260807-CLAUDE-CODE-COMPANION-AUTHORITY-RESET`
+source_format: `chat`
+source_kind: `chat-requirement-summary`
+capture_fidelity: `normalized-material-requirement`
+privacy_boundary: `no-verbatim-prompt-or-transcript`
+updated: `2026-08-07`
+
+> 本文件只保留会改变范围、行为、选择或验收的语义；不保存原始提示词、截图文字转录、命令、工具输出、会话身份或推理过程。
+
+## Material Requirements
+
+| Raw ID | State | Normalized material requirement |
+| --- | --- | --- |
+| RAW-001 | active | Claude 来源只展示 Claude App **Code 模式**的本机会话；CLI-only、Cowork 和其它桌面会话族不得混入。 |
+| RAW-002 | active | 卡片标题使用 Claude App 展示标题；空标题使用稳定的人类可读回退，不把 UUID/唯一编码暴露为标题。 |
+| RAW-003 | active | 「进行中 / 待确认 / 已完成 / 未读」必须来自真实状态通信，互斥展示、快速更新，不能因多个证据源而重复出现在多个分组。 |
+| RAW-004 | active | 点击卡片必须在已经运行的 Claude App 中打开**原有历史 Code 会话**；不得导入、复制或新建会话，不需要 CLI 兜底。 |
+| RAW-005 | active | 已经由 App 产生的重复 Code 会话严格按 App 镜像保留；EyPc 不自动隐藏、合并、删除或修复用户的 Claude 数据。 |
+| RAW-006 | active | 未读选择 Claude App 原生小点为权威；失败时显示未知而不是伪造已读/未读，也不把插件自身打开回执当成原生未读。 |
+| RAW-007 | active | 额度显示全部上游窗口，包含账号实际存在的 Fable/Fable 5 或其它按模型周限额；较新的两窗口样本不得抹掉第三窗口或重置字段。 |
+| RAW-008 | active | 更新既有计划并同步所有相关权威、派生理解、当前状态和错误记忆；错误路线只保留为明确标记的历史证据，不再作为当前需求或实现建议。 |
+| RAW-009 | active | 固化全部已选选项、被比较的技术路线与最终选择，避免后续对话重复调研或回到已否决方案。 |
+| RAW-010 | active | 形成一份可复用的本地通信状态谨慎调研和严格本地测试通路；实现须抽取清晰模块并通过真实宿主门禁后才可声称完成。 |
+| RAW-011 | active | Claude 任务使用与 Codex 同构的插件进程级热缓存；功能启用期间跨页面、悬浮窗显隐和快捷键持续订阅，插件重启后从真实来源冷启动，不持久化旧 live phase。 |
+| RAW-012 | active | 库存、phase、unread、quota、App presence 是独立增量权威；任一事件不得触发整轮全量刷新，额度网络失败或 8 秒阻塞不得阻塞任务状态发布。 |
+| RAW-013 | active | 最终状态路线固定为“Claude App 版本门禁私有日志 + 官方 Hooks + Code 元数据 + 原生 LevelDB 未读快照”；仅 Hooks 和私有 IPC 注入均被拒绝。 |
+| RAW-014 | active | 历史状态由 `completedTurns` 与更新证据恢复；App 本地 ID 精确事件优先，唯一 Hook 次之，冲突时保持 unknown，不基于进程或时间猜测。 |
+| RAW-015 | active | 上一个/下一个只读取全局物化视图，缓存 Claude 主进程身份并用 latest-target-wins 单飞派发 Epitaxy deep link；连续操作不得乱序、自动启动 App、修改未读或产生会话副本。 |
+| RAW-016 | active | 额度 transport 必须兼容 Node 16，动态保留全部窗口；过期 reset 不得继续显示，补充读取按立即、1 分钟、5 分钟、15 分钟、随后每小时重试，成功后恢复 5 分钟最小刷新间隔。 |
+| RAW-017 | active | 只有实际 uTools/Claude 完整矩阵与 Fable 同屏核对通过后才恢复“完成”状态；新任务热路径成立不能替代历史、未读、变更和额度路径验收。 |
+| RAW-018 | active | 规划阶段必须先按独立设计/代码改动建立 provisional `VerificationImpactTrace`，再选择 focused checks；不得预填完整 `test → typecheck → build → verify`，也不得把用户批准 Agent 自拟计划解释为独立全量测试授权。相关全局规则、规划/复核/编排 Skills、项目适配器和当前计划必须同步纠正。 |
+| RAW-019 | active | Claude App 当前账号的加密 OAuth 缓存是额度与 reset 的主权威；必须显式授权、只读解密、动态解析 `session / weekly_all / weekly_scoped`，多账号无法唯一仲裁时失败关闭，令牌不得离开请求闭包或进入诊断。 |
+| RAW-020 | active | inventory、live-state、unread、quota 使用独立时钟；App 日志事件即时 hot-read，1 秒恢复轮询兜底，source generation → Controller revision → Float applied revision 全链拒绝倒退，连续状态失败两轮后活动态降为 unknown。 |
+| RAW-021 | active | Codex/Claude 原生项目不写入；EyPc 以规范路径完全相同优先、双方名称唯一次之生成虚拟项目，Claude 独有项目批量加入。项目页提供会话级 `全部 / 只显示 Codex / 只显示 Claude`，并同步过滤任务与重算计数。 |
+| RAW-022 | active | 所有状态任务和项目必须以文字/图标/可访问名称明确显示“归属 Codex/Claude”，并用现有来源色做 8% 普通、12% 悬停/选中背景区分；状态颜色继续只表达进行中、待输入、完成等状态。 |
+| RAW-023 | active | 原生 unread 仍是持久权威，但成功派发精确 Claude deep link 后允许创建仅进程内、仅同一 `sessionId + completionEpoch` 的可撤销已读提示并立即重读原生集合；同轮迟到 `true` 不得回跳，新运行/等待或更晚完成必须重新允许未读。 |
+
+## Source Lineage
+
+- RAW-001–007：来自连续截图核验、行为纠正和明确选项选择。
+- RAW-008–010：来自对计划、文档、选择账本、技术路线和严格测试通路的明确补充。
+- RAW-011–017：来自最终批准的“Codex 同构状态与全局缓存改造”执行计划。
+- RAW-018：来自对该计划验证范围与规则执行时点的明确纠正；修订的是规划门禁，不改变 Claude 产品行为合同。
+- RAW-019–023：来自本轮对真实 Claude App 额度、状态刷新、项目归属、来源视觉及完成态已读回跳的明确修复计划。
+- 旧需求证据仍留在其原任务目录；当前取代关系由 [spec.md](spec.md#L1) 的 `DEC-* / ARCH-*` 记录管理。

@@ -149,6 +149,14 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - 真实预检必须从各 TypeScript 源文件自身位置解析相对依赖并执行生产 Domain，不得因 Domain 拆分退回复制投影或跳过消费者。Preload canonical/public/dist 仍由生成链保持逐字节一致。
 - 真实宿主接纳必须在所有旧 EyPc follower 重载后确认控制消息有界、owner snapshot 恢复，并实测 active→waiting 不依赖 15 秒完整库存兜底；源码/构建探针不能冒充该宿主门禁。
 
+## RAW-148 Codex 识别单一所有者与去重
+
+- [codexEnvironmentPresentation.ts](../../../../src/domain/codexEnvironmentPresentation.ts#L1) 是 Codex Runtime 展示语义的唯一所有者：同一输入一次生成横幅、`alert/status` 角色、十行诊断、兼容宿主等待判断、启动候选与帮助说明。[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 不得复制环境状态分支或标签表。
+- [companionPresentation.ts](../../../../src/domain/companionPresentation.ts#L1) 的 `resolveCompanionRowMarker(task)` 只由任务身份决定，不接受 provider enablement；项目归属由同模块的 `resolveCompanionProjectMarker(project)` 统一生成。RAW-022 继续要求 Codex-only、Claude-only 和混合列表都显示一个文本化、可访问的归属标记；[FloatApp.vue](../../../../src/FloatApp.vue#L1) 在构造任务/项目行时各解析一次，文本、来源色与 ARIA 共用同一结果。
+- `setLaunchPath` / `clearLaunchPath` 的 Host 方法返回一次完整且已规范化的最新环境快照；[codexController.ts](../../../../src/runtime/codexController.ts#L1) 必须直接发布，不得随后无条件调用 `inspectEnvironment` 造成第二次进程/配置扫描。失败与宿主不支持提示仍由同一 Controller helper 归一。
+- Codex-only 兼容只约束数据、状态、额度、空态和角标语义；任务/项目归属标记是 RAW-022 明确引入的展示差异。任何“单来源隐藏标记”或“整个界面逐字一致”的当前表述均视为已取代，不得继续进入规则、PRD 或测试。
+- 接纳要求：环境诊断分支表、兼容等待与状态裁决投影有纯 Domain 反向测试；启动路径变更证明 mutation 各一次、额外 inspect 为零；归属测试覆盖 Codex、Claude、legacy Codex 与缺失任务；UI 合同同时证明 Domain 持有语义、Page 只消费投影。若不触碰 Preload/构建入口，不升级到 build、镜像或真实宿主门禁。
+
 ## 证据合同
 
 - Activity 来源为 `connector / initial-snapshot / activity-event`，并携带会话期 revision；Preload 内真实 Desktop patch 与精确 App Server active 另共享一个不出 Host 的单调 evidence sequence，用于判断跨来源先后。

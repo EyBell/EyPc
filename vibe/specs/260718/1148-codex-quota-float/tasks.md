@@ -117,7 +117,12 @@ Tool: codex
 | RAW-147 精确变更快照的 Bridge `81/81`、typecheck、production build、三向 Preload/语法/同步 IPC/runtime 门禁 | complete / focused-automated-verified |
 | RAW-147 真实预检相对 TypeScript 依赖加载与生产 Domain 投影 | complete / host-readonly-evidence |
 | RAW-147 task/current/technical 文档冲突扫描与错误记忆“一主一引”更新引入 | complete / documentation-memory-verified |
-| 并发 Claude 改动后的当前整树 typecheck/build 复跑 | blocked / unrelated-dirty-tree（未纳入本提交的 fixture 存在 `projectKey` 可选性漂移） |
+| RAW-148 Runtime 环境横幅/诊断表/帮助与兼容等待单一 Domain 投影 | complete / focused-automated-verified |
+| RAW-148 任务归属参数与行内重复解析去除，Codex/Claude/legacy 合同 | complete / focused-automated-verified |
+| RAW-148 启动路径 set/clear 共用发布 helper 且额外 inspect 为零 | complete / focused-automated-verified |
+| RAW-148 RAW-022 与规则/PRD 冲突裁定、架构/技术/错误记忆同步 | complete / documentation-memory-verified |
+| RAW-148 聚焦四文件 `188/188`、typecheck、冲突词与链接审计 | complete / documentation-memory-verified |
+| 并发 Claude 改动后的当前整树 typecheck/build 复跑 | superseded / 当前整树 typecheck 已恢复通过；RAW-148 未触发 build，RAW-147 当时的独立阻断保留在历史验证记录 |
 | RAW-147 新构建重载后的有界 IPC snapshot 与 active→waiting 转换 | pending / user-owned |
 | 反向 generation 屏障夹具 TS2349 修复与 typecheck | complete / typecheck-verified |
 | 统一 `pnpm run verify`（preload 同步、全量测试、typecheck、production build） | complete / automated-verified |

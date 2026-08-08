@@ -42,11 +42,12 @@ State: `automated-verified / host-pending`
 - RAW-145 在当前本机真实 Provider 数据上复现了跨层断点：Preload 恢复一条 connector waiting，但生产 Domain 投影为零条待输入；旧预检复制宽松算法而误报成功。v5 现用 `persisted-decision` 明确标记安全 rollout 输入/Plan 决定，贯通库存、Activity 与 Domain，并由精确新 Turn/active/completion 清除；普通 connector waiting 仍拒绝。首个修复后真实匿名预检收敛为 persisted waiting 1、产品 waiting 1；Provider 随后解除决定时最终复跑同步为 0、0，没有 sticky 反弹。
 - RAW-146 收口非宿主残留：Controller/Float 共用 Domain 置顶优先显示排序，全局待输入、紧凑角标与循环不再对同一完整集合选择不同首条；输入/未读的 200ms 帮助和 ARIA 明示“打开第一条”。反向测试覆盖源数组首项未置顶、后项置顶，旧文案断言已清除；canonical/过程文档同步 `persisted-decision`、默认 24 小时、最新 `752/752` 基线及当前 8092 未监听事实。
 - RAW-147 清除正向 follower 公告回声：`following=true` 只描述发送方 follower 状态并直接消费，只有显式 following-status request 才定向重报一次；`following=false` 的 owner 连续性规则保持不变。Bridge 新合同先 RED 后 GREEN且全文件 `81/81`，精确变更快照的 typecheck/production build、当前三份 Preload/运行时门禁与修复后的生产 Domain 真实预检通过；交付产物连接真实 broker 时出站 follow 保持有界。并发 Claude 改动后的当前整树 build 复跑被其测试夹具类型漂移阻断，未纳入本写集。当前运行 uTools 仍为 pre-RAW-147，必须重载后再验收 owner snapshot 与 active→waiting。
+- RAW-148 将 Codex Runtime 横幅、诊断表、兼容等待和启动帮助收敛到 `codexEnvironmentPresentation`；任务归属解析移除无效 enablement 参数，任务/项目 marker 均在 Float 行构造时只执行一次；启动路径 set/clear 直接发布 Host 返回快照，不再二次 inspect。RAW-022 与旧 Codex-only 兼容文案的冲突已按“数据/状态/额度兼容、归属标记始终显示”裁定并同步规则、PRD、架构、技术细节与既有错误记忆。
 - 提交收口把 stream-follow 回声固定到一个错误记忆主记录，并在 pending-request 依赖记录中加入更新引入；任务、项目状态、架构、技术细节、验证与错误索引已按同一协议语义同步。共享文件只允许暂存 RAW-147 hunks，并发 Claude 重构保持未提交。
 
 ## 验证
 
-详细命令、七项状态机修复、闭合矩阵与 RAW-132–147 增量合同见 [verify.md](verify.md#L1)。RAW-147 Bridge `81/81`、精确变更快照的 typecheck/production build、当前 Preload 三向镜像/语法/同步 IPC、uTools runtime validation、真实 Provider→Domain 预检、有界 packaged-source IPC 与错误记忆“一主一引”审计通过；当前整树 typecheck/build 的独立 Claude fixture 阻断见验证记录。8092 当前未监听，运行 ASAR 为修复前 v5（pre-RAW-147）；本轮没有启动服务、更新 ASAR、重载或操作实际 uTools，后续宿主证据不得由源码自动化代替。
+详细命令、七项状态机修复、闭合矩阵与 RAW-132–148 增量合同见 [verify.md](verify.md#L1)。RAW-148 聚焦 Domain/Controller/UI `188/188` 与当前整树 typecheck 通过，RAW-147 当时的独立 Claude fixture 类型阻断已不是当前事实；本轮未触碰 Preload、Bridge 或构建入口，故未追加 build/镜像/真实宿主门禁。RAW-147 的 Bridge、构建、运行时、真实 Provider→Domain 与有界 IPC 证据继续有效。8092 当前未监听，运行 ASAR 仍为修复前 v5（pre-RAW-147）；本轮没有启动服务、更新 ASAR、重载或操作实际 uTools，后续宿主证据不得由源码自动化代替。
 
 ## 真实宿主验收
 

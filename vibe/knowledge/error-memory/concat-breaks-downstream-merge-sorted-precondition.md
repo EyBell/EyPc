@@ -7,9 +7,9 @@ first_seen: 2026-08-06
 last_verified: 2026-08-06
 review_after: 2027-02-06
 evidence:
-  - src/domain/claudeDesktop.ts
   - src/domain/companionAggregate.ts
-  - tests/domain/claudeDesktop.test.ts
+  - vibe/specs/260806/1130-claude-desktop-provider/verify.md
+  - vibe/specs/260807/claude-code-companion-authority-reset/research.md
 tags:
   - aggregation
   - ordering
@@ -17,6 +17,8 @@ tags:
 ---
 
 # Concat Breaks A Downstream Merge's Sorted Precondition
+
+> **Current implementation note (2026-08-07).** 下文 CLI/desktop 拼接器已删除；有序归并前提仍为 verified，因为 [companionAggregate.ts](../../../src/domain/companionAggregate.ts#L1) 仍消费有序 additions。当前 Claude 只有 Code inventory，不能据此恢复双 lane。
 
 ## Symptom
 

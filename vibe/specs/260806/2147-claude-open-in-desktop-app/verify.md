@@ -1,16 +1,16 @@
 # Verify：Claude 任务一律在桌面端 App 打开
 
+> **Superseded verification.** 本文件证明旧 `claude://resume` 实现的自动化合同，不证明它打开原历史会话。该路线会进入 import 并可产生副本。当前路线缓存主 App PID/启动代次，连续操作通过 latest-target-wins 单飞派发 exact Epitaxy local id；成功派发后只由 Controller 建立同 completion 会话提示并复核原生未读，bridge 仍不声称 `confirmsRead`。十次实机连跳与 no-clone 证据见 [权威重置](../../260807/claude-code-companion-authority-reset/spec.md#L1) / [research](../../260807/claude-code-companion-authority-reset/research.md#L1)。
+
 Date: 2026-08-06 · 状态 `automated-verified / host-pending`
 
 ## 交付
 
 | 位置 | 改动 |
 | --- | --- |
-| [preload/claude/open.cjs](../../../preload/claude/open.cjs#L1) | 重写为单一深链路线：`deepLinkSessionUuid()` 把 `local_<uuid>` 与裸 uuid 归一到同一个 uuid，`desktopResumeUrl()` 拼 `claude://resume?session=<uuid>`，`dispatchDeepLink()` 按平台交给 `open` / `cmd start` / `xdg-open`。删除 `focusTerminal` / `resumeInTerminal` / `resolveTerminalPid` / `isAliveProcess` 与 `activateRow`——终端路线整条移除 |
-| [preload/claude/index.cjs](../../../preload/claude/index.cjs#L1) | facade `openTask(sessionId)` 只收 id：不再解析 pid / cwd / `environment.locateCli()` / `desktop` / `title` |
-| [src/platform/eypcPlatform.ts](../../../src/platform/eypcPlatform.ts#L1) | `openTask(sessionId): Promise<ClaudeOpenResult>` |
-| [src/runtime/codexController.ts](../../../src/runtime/codexController.ts#L1) | `openClaudeTask()` 去掉 CLI/桌面端分支与已读回执写入；消息统一 |
-| [src/help/guides/codex.md](../../../src/help/guides/codex.md#L1) | 「从卡片打开 Claude 任务」新章节：深链、两族行为差异、首次导入的桌面端写入、不写已读、App 未运行不自动拉起 |
+| 当时的 open bridge | 曾构造 `claude://resume?session=<uuid>`；该 import 路线现已删除，不能从当前源码反推历史实现 |
+| 当时的 Claude facade/platform/controller | 曾把 CLI/桌面打开合为单一 import 派发；当前合同见 [权威重置](../../260807/claude-code-companion-authority-reset/spec.md#L1) |
+| 当时的帮助文档 | 曾披露首次导入写入；当前 [帮助](../../../../src/help/guides/codex.md#L1) 只描述 exact Epitaxy no-clone 路线 |
 
 ## 设计决定
 

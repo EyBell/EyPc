@@ -4,13 +4,16 @@ status: verified
 scope: project
 fingerprint: soul-entry-quoted-as-current__product-requirements-superseded-it__no-supersession-search-performed__review-finding-wrongly-overturned__wrong-conclusion-written-into-docs-and-help
 first_seen: 2026-08-06
-last_verified: 2026-08-06
+last_verified: 2026-08-07
 review_after: 2027-02-06
 evidence:
   - vibe/knowledge/developer-soul.md
   - vibe/specs/PRODUCT_REQUIREMENTS.md
+  - vibe/rules/README.md
+  - vibe/specs/260718/1148-codex-quota-float/raw-requirement.md
   - vibe/specs/260806/1130-claude-desktop-provider/design-preference-receipt.md
   - src/help/guides/codex.md
+  - tests/domain/companionPresentation.test.ts
 tags:
   - rules
   - supersession
@@ -67,8 +70,18 @@ soul:64/70 这么做），而不是留着让下一个人再踩。
 **推翻他人（含子代理）的结论，举证门槛高于提出结论。** 否决一条复核发现前，其事实前提必须
 有可执行证据，不能只有代码阅读。
 
-## History
+## Alternative Route
 
-| 日期 | 记录 |
-| --- | --- |
-| 2026-08-06 | 首次归档：用户质疑「角标消失逻辑」后逐条实跑，两条否决理由全部证伪；soul:64/70 就地标注失效，verify/回执/帮助文档三处更正，桌面卡改按 Codex 的 `unreadKnown === false → completed` 通路落地 |
+- Status: `verified`
+- Preconditions: 当前实现、测试或较新任务规范已经表达新合同，但 canonical/rule/旧任务仍出现相反措辞。
+- Steps: 按固定权威顺序定位最新决策；对冲突词做 owner + 一跳链接扫描；保留历史事实但在当前权威中明确 supersession；让测试分别锁定语义所有者和消费端，不再把文案固定在旧文件。
+- Verification: 运行受影响的行为测试、类型边界、冲突词扫描与 Markdown 链接审计，并确认旧表述只留在已标注历史范围。
+- Applicability boundary: 只处理已由日期、RAW/DEC 或当前用户请求明确裁定的冲突；存在两个未裁定的同级方案时仍需用户决定。
+- Fallback: 无法证明 supersession 时停止 canonical 写入，将冲突和证据并列报告。
+
+## Occurrence History
+
+| 日期 | 任务 | 触发 | 失败路线 | 证据 | 恢复 | 结果 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-08-06 | Claude 桌面端未读权威 | 用户复核角标消失逻辑 | 未查 supersession 就用旧 soul 否决复核发现 | PRD、运行测试、Codex 未读投影 | 标注旧 soul 失效并同步 verify/回执/帮助 | verified |
+| 2026-08-07 | Codex Tab 来源识别精简 | 核对原始需求与同步文档 | 规则/PRD 仍称 Codex-only 逐字一致或隐藏单来源标记，而 RAW-022、RAW-148、实现和测试已要求始终显示归属 | RAW、ARCHITECTURE、`companionPresentation` 测试与冲突词扫描 | 把兼容边界收窄为数据/状态/额度/空态，明确归属标记例外；测试改锁 Domain 所有者与 Page 消费 | verified |

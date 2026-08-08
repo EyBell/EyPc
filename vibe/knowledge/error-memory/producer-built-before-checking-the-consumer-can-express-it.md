@@ -7,8 +7,9 @@ first_seen: 2026-08-06
 last_verified: 2026-08-06
 review_after: 2027-02-06
 evidence:
-  - src/domain/claudeDesktop.ts
   - vibe/specs/260806/2147-claude-open-in-desktop-app/unread-authority.md
+  - vibe/specs/260807/claude-code-companion-authority-reset/verify.md
+  - src/domain/claudeCode.ts
 tags:
   - design-sequence
   - contracts
@@ -16,6 +17,8 @@ tags:
 ---
 
 # A Producer Built Before Checking the Consumer Could Express It
+
+> **Current implementation note (2026-08-07).** 本记录的设计顺序教训仍为 verified，但“消费侧不产生 Claude 未读”只描述已删除的 mixed-desktop 领域模型。现行 [Claude Code domain](../../../src/domain/claudeCode.ts#L1) 已把原生 unread 作为 completed phase 的正交维度，并通过 [current verification](../../specs/260807/claude-code-companion-authority-reset/verify.md#L1)。不得据本记录恢复旧回执/差分路线或断言当前 UI 无法表达未读。
 
 ## Symptom
 
@@ -28,7 +31,7 @@ tags:
 
 全部通过。然后写第一个 controller 集成测试，断言角标从 1 变 0——**结果是 0 变 0**。
 
-消费侧根本不产生未读：[claudeDesktop.ts](../../../src/domain/claudeDesktop.ts#L408) 的 `completedState` 里有一条既有产品合同，桌面端会话一律落 `completed` + `unreadState: 'unknown'`。回执写下去无人消费，整条链路是空转的。
+当时的消费侧根本不产生未读：已删除的旧 `completedState` 合同让桌面端会话一律落 `completed` + `unreadState: 'unknown'`。回执写下去无人消费，整条链路是空转的。
 
 ## Wrong Assumption
 

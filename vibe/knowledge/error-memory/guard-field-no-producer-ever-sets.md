@@ -7,9 +7,9 @@ first_seen: 2026-08-06
 last_verified: 2026-08-06
 review_after: 2027-02-06
 evidence:
-  - src/domain/claudeDesktop.ts
-  - src/runtime/codexController.ts
-  - tests/domain/claudeDesktop.test.ts
+  - vibe/specs/260806/1130-claude-desktop-provider/verify.md
+  - vibe/specs/260807/claude-code-companion-authority-reset/research.md
+  - preload/claude/events.cjs
 tags:
   - domain
   - dead-code
@@ -18,6 +18,8 @@ tags:
 ---
 
 # A Guard Field No Producer Ever Sets
+
+> **Current implementation note (2026-08-07).** 触发本记录的 mixed-desktop observation 与假 `appRunning` guard 已随旧 lane 删除。记录仅保留“可选守卫必须有真实 producer”的 verified 规则；当前 phase 由 [ordered Hooks](../../../preload/claude/events.cjs#L1) 产生，打开动作的 App-running 正向证明是另一个局部合同。
 
 ## Symptom
 

@@ -1,0 +1,91 @@
+---
+id: eypc-independent-authorities-coupled-by-full-refresh
+status: verified
+scope: project
+fingerprint: companion-materialized-view__independent-inventory-state-unread-quota-presence-authorities-coupled-by-one-full-refresh__slow-or-failed-source-blocks-or-erases-unrelated-state__split-lanes-with-authority-specific-failure-semantics
+first_seen: 2026-08-07
+last_verified: 2026-08-07
+review_after: 2027-02-07
+evidence:
+  - vibe/specs/260807/claude-code-companion-authority-reset/research.md
+  - vibe/specs/260807/claude-code-companion-authority-reset/verify.md
+  - preload/claude/index.cjs
+  - src/runtime/codexController.ts
+  - tests/runtime/claudeCompanionController.test.ts
+tags:
+  - claude-companion
+  - materialized-view
+  - authority
+  - cache
+  - failure-isolation
+---
+
+# Independent Authorities Must Not Be Coupled By A Full Refresh
+
+## Symptom
+
+Claude 的新任务能出现，但历史状态、已完成未读和既有变更同步慢或错误；任一 watcher 事件都会重新读取库存、LevelDB 和额度。额度慢时状态跟着慢，库存瞬时失败时既有卡片可能被清空，未读失败又可能错误复用旧集合。
+
+## Wrong Assumption
+
+把“最终 UI 需要组合多个来源”误写成“每次变化必须重新读取所有来源”。原子投影需要在 merge/publish 边界一致，不等于所有 authority 要共享同一次 I/O、相同 freshness 或相同失败策略。
+
+## Verified Root Cause
+
+- inventory、phase、unread、quota 和 App presence 的变化频率、成本、身份和失败语义不同，却由同一个 refresh promise 串联。
+- 网络 quota await 位于任务状态热路径，使无关网络延迟成为 phase latency 的上界。
+- 全量 replacement 没有 authority-owned patch 规则，慢 inventory 可能覆盖更新 state，失败读取可能把最后有效 membership 当成空。
+- 页面/打开动作重建缓存，快捷键又重复做窗口枚举，破坏 feature-lifetime 热路径。
+
+## Detection Order
+
+1. 为每个字段声明唯一 authority、事件类型、freshness、generation 和 failure value。
+2. 画出 watcher→reader→merge→publish 的 await graph；任一横跨无关 authority 的 await 都是风险点。
+3. 为 membership、state patch、set membership、network snapshot 和 process presence 分别测试失败。
+4. 制造慢旧 inventory 与快新 state 的竞态，断言 metadata 可 patch、phase 不回退。
+5. 在页面切换、float 隐藏和连续快捷键下记录 reader 调用次数，确认缓存生命周期属于 feature/process 而非 surface。
+
+## Prevention Rule
+
+- 独立 authority 必须有独立 in-flight/pending lane；事件只更新自己拥有的 Map/Set/fields。
+- 原子性放在单一 materialized projection/publish，不通过全量 I/O 获得。
+- failure semantics 必须按 authority 固定：inventory 保留最后有效 membership；unread 清除确定性为 unknown；quota 只更新自身 diagnostic/retry；presence 失效只触发 open 冷复核。
+- live phase 不持久化；重启从真实来源冷启动。快捷键冷启动只预热 tasks，不读取 quota。
+- 每条来源的 generation 只在本 authority 内比较，跨层使用 Controller revision 与 Float applied revision；读取连续失败两次后，旧 running/waiting 必须降为 unknown，不能把“保留最后视图”误写成“永久保留活动态”。
+- quota 自己处理启用/唤醒/网络/reset+1 秒唤醒、401/403 凭据变化、429 Retry-After 和其它退避；任何 quota timer 都不能进入 state/inventory 发布链。
+
+## Alternative Route
+
+Status: `verified`
+
+Preconditions:
+
+- Bridge 可拆 inventory/state/unread/quota/App presence 端口。
+- Controller 是任务快照的唯一 materialized owner。
+
+Ordered steps:
+
+1. 建立 feature-lifetime inventory Map、state evidence Map、unread Set/unknown、quota snapshot 和 presence cache。
+2. 为五条来源分别注册 watcher/read lane 和单飞；删除共享 full-refresh 回调。
+3. inventory 只拥有 membership/metadata，state 只 patch evidence/phase，unread 只 patch membership，quota/presence 不触碰 task fields。
+4. 应用 per-authority generation/evidence barrier、Controller revision 和 Float applied revision，再由一个投影函数计算互斥 cards/groups/counts/virtual projects。
+5. 测试 quota 阻塞、inventory 失败、state 连续失败降级、unread 失败、slow-inventory/new-state 竞态和旧 Float snapshot 拒绝；再测试 surface 隐藏/快捷键复用。
+
+Verification:
+
+- [Controller implementation](../../../src/runtime/codexController.ts#L1) 和 [regressions](../../../tests/runtime/claudeCompanionController.test.ts#L1) 证明 quota pending 不阻塞 100 次 state publish、inventory 不被重读、slow inventory 不回退 state、失败语义彼此隔离。
+
+Fallback:
+
+- 某 authority 不能增量观察时，只给该 lane 使用有界 reconciliation；不得把它扩散成全 provider refresh。
+
+Applicability boundary:
+
+- 适用于 EyPc Companion 多来源物化视图。需要跨来源事务写一致性的业务必须另行设计事务边界，不能直接套用此只读状态规则。
+
+## Occurrence History
+
+| Date | Task | Trigger | Failed route | Evidence | Recovery | Outcome |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-08-07 | Claude Companion authority reset | 历史/未读/变更滞后，上一/下一任务缓慢 | 任一 watcher 调 inventory+unread+quota 整轮刷新 | controller call chain + 8s quota behavior | 五条独立热 lane、单调 patch、authority-specific failure | verified |
+| 2026-08-07 | Claude quota/state/unread/project follow-up | 进行中不更新、周 reset 刷新错误、未读回跳、Claude 项目不进入项目投影 | authority 有 lane 但缺 source→Controller→Float 完整 revision、state failure retirement 与 quota 生命周期唤醒 | focused generation/revision/read-hint/filter regressions + live quota/state/unread probes | 补齐四条时钟、分层 revision、两轮失败 unknown、同 completion read hint 与虚拟项目投影 | automated/data-host verified; interactive UI pending |

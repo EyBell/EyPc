@@ -1,14 +1,15 @@
 ---
 id: eypc-capability-gap-asserted-without-reading-the-shipped-app
-status: verified
+status: superseded
 scope: project
 fingerprint: third-party-capability-declared-missing__source-was-external-claim-not-the-installed-binary__gap-hardened-into-comments-specs-help-and-a-design-decision__inspecting-the-app-bundle-found-the-capability-shipped
 first_seen: 2026-08-06
-last_verified: 2026-08-06
+last_verified: 2026-08-07
 review_after: 2027-02-06
 evidence:
   - preload/claude/open.cjs
   - vibe/specs/260806/2147-claude-open-in-desktop-app/raw-requirement.md
+  - vibe/specs/260807/claude-code-companion-authority-reset/research.md
 tags:
   - external-dependency
   - evidence
@@ -17,6 +18,8 @@ tags:
 ---
 
 # A Capability Gap Asserted Without Reading the Shipped App
+
+> **Superseded 2026-08-07.** “先读已安装产物再断言能力不存在”仍是有效教训，但本记录把 `claude://resume` 的存在误写成当前 exact-open 解法。该 handler 会进入 `importCliSession()` 并可产生副本；现行 root cause、精确 Epitaxy 路线和 no-clone 门禁见 [新记录](claude-session-family-open-route-and-state-authority-conflation.md#L1) 与 [research](../../specs/260807/claude-code-companion-authority-reset/research.md#L1)。本文件只保留历史推理，不参与自动路线选择。
 
 ## Symptom
 

@@ -170,10 +170,13 @@ Privacy boundary: `no-verbatim-prompt-or-transcript`
 
 - `RAW-147` (`focused-automated-verified-host-pending`, `refines-RAW-116-117-141-145`, `positive-follow-announcement-no-echo`): 用户原文：“优化吧”。对“进行中 → 待输入”缓慢或不切换的真实 IPC 核验发现，EyPc 把任何 peer 发出的 `thread-stream-following-changed(following=true)` 当成请求并定向回发；两个已加载旧实现的 EyPc follower 会互相重报，250ms 内产生 32,329 次、2.5s 约 368,000 次控制消息并挤压状态快照。当前 Codex 包内协议实现确认该消息只是发送方自己的 follower 状态公告；只有 `thread-stream-following-status-requested` 才要求接收方重报。修复后 Preload 直接消费正向公告而不回写，显式 status request 仍只向请求方回复一次；`following=false` 的 inventoried owner shadow 保留/定向续订、断开清理、状态/未读/Turn 权威与隐私边界均不变。回归先稳定 RED（一次公告令同线程出站 follow 从 1 增至 2），修复后专项与 Bridge 全文件 `81/81` 通过；typecheck、production build、canonical/public/dist Preload 三向镜像、语法、同步 IPC 静态门禁及 uTools runtime validation 通过。真实预检脚本同时改为按源模块相对位置递归转译有限 TypeScript 依赖，恢复生产 Domain 投影并在当前数据上返回 `ok=true`。最终 `dist/preload.js` 连接真实 broker 的有界探针只发送 24 条初始 follow，虽收到两个旧客户端共 48 条正向公告也不再追加出站消息；当前运行 uTools 仍加载修复前 ASAR且没有重载，故 live snapshot 与真实 active→waiting 转换验收保持 host-pending。
 
+- `RAW-148` (`focused-automated-verified`, `refines-RAW-133-and-RAW-022`, `codex-recognition-single-owner-and-dedup`): 本轮规范化增量要求复核 Codex 功能 Tab 的运行环境识别与 Codex/Claude 来源识别，优先抽取重复策略并同步最新文档，不改变状态、额度、启动或 Bridge 语义。运行页原先同时维护环境横幅、诊断表、启动帮助和两份相同的兼容宿主等待谓词；现由纯 Domain [codexEnvironmentPresentation.ts](../../../../src/domain/codexEnvironmentPresentation.ts#L1) 一次生成，Page 只渲染。任务/项目归属继续按 RAW-022 在单来源/多来源都显示；`resolveCompanionRowMarker` 移除已失效的 enablement 参数，任务与项目 marker 都在 Float 构造行时只解析一次并复用于可见文本、来源色与 ARIA。Host 的启动路径保存/清除已经返回最新环境快照，Controller 统一发布该结果且不再紧接一次完整环境扫描。冲突核验确认项目规则与 PRD 仍残留“Codex-only 全文逐字一致/单来源隐藏标记”的旧口径；按 RAW-022 将兼容范围收窄到数据、状态、额度、空态和角标语义，归属标记明确为有意例外，并更新既有 supersession 错误记忆而不新建重复记录。聚焦 Domain/Controller/UI 四文件 `188/188` 与当前整树 typecheck 通过；未触碰 Preload、Bridge、产物或真实 Codex/uTools，因此未扩大到 build、镜像与宿主验收。
+
 ## Latest Superseding Requirement Map
 
 | 主题 | 当前唯一合同 | 来源 |
 | --- | --- | --- |
+| Codex 识别展示 | 运行环境横幅、诊断表、兼容宿主等待判断和启动帮助只由 `codexEnvironmentPresentation` 生成；Page 不复制状态机。任务/项目来源标记在单来源与多来源都始终可见，两类行都只解析一次归属并复用。启动路径保存/清除直接发布 Host 返回的新环境快照，不再追加第二次完整探测 | `RAW-022`、`RAW-133`、`RAW-148` |
 | Stream owner 连续性 | Desktop 当前选中项变化产生的 owner `following=false` 不等于 client 断开；仍在库的主任务或父任务仍在库的 Side Chat 保留最后 exact shadow，并向同一 owner 定向续订。`following=true` 只描述发送方自己的 follower 状态，接收后不得回发；只有显式 `thread-stream-following-status-requested` 才重报一次。上一 shadow 若是无等待的 active，同时用既有单任务有界读取校对可能漏收的完成；只有独立断开、bridge 失败、归档或离库才撤销 live authority | `RAW-116`、`RAW-117`、`RAW-147` |
 | 真实库存 | 原生项目注册 + 完整未归档分页 + 固定归属优先级 + 指纹一致；单次缺行不删任务，只有跨完整校对周期的连续同集合确认才接纳数量下降；已映射的明确归档事件可立即移除其匿名 key 并 urgent 复核 | `RAW-035`、`RAW-043`、`RAW-090`、`RAW-095` |
 | 时间与完整性 | 1–365 天滚动窗口；latest Turn `startedAt`；整批 fail-closed；Turn 版本、完成时间和 `updatedAt` 不得回退 | `RAW-036`、`RAW-090` |

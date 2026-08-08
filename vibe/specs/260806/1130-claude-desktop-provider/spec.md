@@ -1,8 +1,10 @@
 # Spec：Claude 桌面端 provider（骨架，Phase 0 前完成细化）
 
+> **Historical evidence only.** 2026-08-07 起，本文件的 `local-agent-mode-sessions`/Cowork 混合库存、audit/mtime 状态推断、跨 CLI 去重/投影和旧打开/未读结论被 [Code-mode 权威重置](../../260807/claude-code-companion-authority-reset/spec.md#L1) revision 4 取代。当前状态是版本门禁 App 日志 + 唯一 Hook + `completedTurns` history、稳定 V2 unread/read-hint、App OAuth 动态额度和 EyPc 虚拟项目；App 元数据/审计观察只能作历史证据，不能恢复为当前需求。
+
 RAW: [raw-requirement.md](raw-requirement.md#L1) · Plan: [plan.md](plan.md#L1)
 
-状态：**P0 采样后已细化**（2026-08-06）。证据→状态映射与去重键见 [sampling.md](sampling.md#L1) 与 [claudeDesktop.ts](../../../../src/domain/claudeDesktop.ts#L1)（事件优先 + 增长脉冲兜底；`audit.session_id === cliSessionId` 为去重键）。仍待定（Phase 3 前）：水球三方额度合并策略、`rate_limit_event` 的 resetsAt 是否并入额度校准——均属 UI/呈现决策，届时出设计偏好回执。
+状态：**历史 P0 采样记录**（2026-08-06）。当时的证据→状态映射与去重键见 [sampling.md](sampling.md#L1)；对应 mixed-desktop 领域模块已在 2026-08-07 权威重置中删除，不能作为当前代码入口。当前实现见 [Code-mode 权威重置](../../260807/claude-code-companion-authority-reset/spec.md#L1)。
 
 **角标合并（历史定案，已被取代）**：1130/2115 曾定「桌面端会话不产生已完成未读」（无深链、无法证明已读）。**2026-08-06 起被 [2147 unread-authority](../2147-claude-open-in-desktop-app/unread-authority.md#L1) 取代**：EyPc 镜像桌面端 App 的 `epitaxy-unread-v1` 集合；产品合同见 [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L103)。下文若仍写「不产生未读」，一律以 2147 为准。
 

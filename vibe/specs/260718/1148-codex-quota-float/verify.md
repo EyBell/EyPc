@@ -198,11 +198,31 @@ Date: 2026-08-07
 
 执行证据：Bridge/Domain/Controller/平台四文件 `151 / 151`；`pnpm run typecheck`；production `pnpm run build`（包含再次 typecheck、Vite、runtime preparation、`validate:utools`）；canonical/public preload 镜像一致。真实 uTools 快捷键顺序未执行，保持 `host-pending`。
 
+## RAW-148 Codex 识别与精简复核
+
+### 识别链结论
+
+- Runtime 识别的 Host 输入合同没有重复实现；重复发生在 Renderer 展示投影。[codexEnvironmentPresentation.ts](../../../../src/domain/codexEnvironmentPresentation.ts#L1) 现统一拥有横幅优先级、兼容宿主等待谓词、诊断表、状态裁决明细、启动候选与帮助说明，[CodexPage.vue](../../../../src/pages/CodexPage.vue#L1) 只渲染一个 computed projection。
+- [companionPresentation.ts](../../../../src/domain/companionPresentation.ts#L1) 的任务归属解析不再接收未使用的 provider enablement，项目归属也由同一模块投影；[FloatApp.vue](../../../../src/FloatApp.vue#L1) 构造任务/项目 `RenderRow` 时各解析一次 marker，ARIA、文本与来源 class 不再各自维护识别逻辑。
+- [codexController.ts](../../../../src/runtime/codexController.ts#L1) 的手动路径保存/恢复共享 `applyLaunchPathChange`。Host mutation 返回的新环境直接成为当前快照，测试证明 set/clear 各调用一次、`inspectEnvironment` 零调用。
+
+### 冲突裁定
+
+- 当前 RAW-022、RAW-148、架构和对应 Domain/UI 测试一致要求每条任务/项目始终显示归属。
+- [项目规则](../../../rules/README.md#L1) 与 [PRODUCT_REQUIREMENTS](../../PRODUCT_REQUIREMENTS.md#L1) 的旧 Codex-only “全文逐字一致/单来源隐藏标记”表述与之冲突。按权威顺序裁定为：数据、状态、额度、空态、角标语义保持兼容；归属标记是明确例外。既有 [superseded-rule error memory](../../../knowledge/error-memory/superseded-rule-cited-as-authority.md#L1) 追加本次 occurrence 和 verified alternative route，没有新建重复记录。
+
+### 自动化证据
+
+- 聚焦：`tests/domain/codexEnvironmentPresentation.test.ts`、`tests/domain/companionPresentation.test.ts`、`tests/runtime/codexController.test.ts`、`tests/ui/codexCompanion.test.ts`，结果 `4/4` 文件、`188/188` 测试通过。
+- 语义类型边界：当前整树 `vue-tsc --noEmit` 通过；RAW-147 当时由并发 Claude fixture 导致的阻断已不再是当前事实。
+- 未触发：本轮没有修改 Bridge、Preload、构建入口或生成产物，因此没有运行 build、preload 镜像/语法、真实 Codex/uTools 或浏览器验收。
+
 ## Full Matrix Findings
 
 - RAW-129 历史基线中的状态主矩阵为 `168 / 168`；RAW-128 当时覆盖 10 类跨层可复现阻断。RAW-131–145 的历史执行数保留在上表，不能覆盖当前结果。
 - RAW-146 直接受影响的 Controller/UI 两文件为 `90 / 90`；新增合同覆盖完整待输入集合中较新未置顶与较旧置顶的反向顺序。
 - RAW-147 直接受影响的 Bridge 文件为 `81 / 81`；新增合同先以正向 peer announcement 导致额外写入稳定 RED，再证明只有显式 following-status request 会定向重报一次。
+- RAW-148 直接受影响的 Domain/Controller/UI 四文件为 `188 / 188`；环境展示分支表、兼容等待、任务/项目归属识别和 mutation 零二次探测均有反向合同。
 - 最新完整仓库 Vitest 仍是 RAW-146 的历史基线 `752 / 752`、`57 / 57` 文件；RAW-147 没有触发整仓升级，只执行当前受影响的完整 Bridge 文件。类型、preload/运行时静态门禁独立记录，不把实际宿主计入自动接纳。
 
 ## Findings
@@ -242,7 +262,8 @@ Date: 2026-08-07
 
 ## Not Checked
 
-- RAW-147 已执行受影响的完整 Bridge 文件 `81/81`、精确变更快照的 `pnpm run typecheck` 与 production build、当前三份 main preload 镜像/语法/同步 IPC 检查、runtime validation、真实只读预检和有界真实 IPC；影响面没有触发整仓 Vitest 或 `pnpm run verify` 升级。并发 Claude 改动后的当前整树 typecheck/build 复跑被独立 fixture 的 `projectKey` 可选性错误阻断。
+- RAW-148 未触碰 Preload、Bridge、入口或产物，故按影响轨迹未运行 build、镜像/语法、真实 Codex/uTools；这些不是本轮自动接纳条件。
+- RAW-147 已执行受影响的完整 Bridge 文件 `81/81`、精确变更快照的 `pnpm run typecheck` 与 production build、当前三份 main preload 镜像/语法/同步 IPC 检查、runtime validation、真实只读预检和有界真实 IPC；影响面没有触发整仓 Vitest 或 `pnpm run verify` 升级。当时并发 Claude fixture 的 `projectKey` 可选性错误阻断了整树复跑；该历史阻断在 RAW-148 当前整树 typecheck 中已不再出现，本轮仍未因无触发器而补跑 build。
 - 运行中的 uTools 尚未重载 RAW-147 产物；owner snapshot 与 active→普通输入/审批 waiting 的宿主切换仍未验收，自动化通过不能替代该门禁。
 - 未操作真实 Codex 任务、未归档/移除项目、未启停进程。
 - 真实 uTools 宿主需正常重载后验收正向 follower 公告零回发、owner snapshot、active→waiting、任务切换与角标同步。
