@@ -6,6 +6,7 @@ import {
   createFavoriteSlots,
   favoriteFrecency,
   favoriteRunnerFingerprint,
+  favoriteRunnerParameters,
   isFavoriteRunnerTrusted,
   legacyFavoriteRunnerFingerprint,
   normalizeFavoriteRunnerByPlatform,
@@ -117,6 +118,78 @@ describe('favorite launch domain', () => {
     expect(resolveFavoriteRunner({ ...file, path: '/work/{name}/run.sh', name: '{dir}' }, runner, 'linux')).toMatchObject({
       args: ['/work/{name}/run.sh', '--cwd=/work/{name}', '--name={dir}']
     })
+  })
+
+  it('declares dynamic parameters from argument templates only', () => {
+    const dynamic: FavoriteRunnerConfig = {
+      mode: 'background',
+      executable: '/bin/sh',
+      args: ['{path}', '--env={ask:环境=dev}', '--tag={ask:标签}', '--again={ask:环境}'],
+      cwdMode: 'target-directory'
+    }
+
+    expect(favoriteRunnerParameters(dynamic)).toEqual([
+      { name: '环境', required: false, defaultValue: 'dev' },
+      { name: '标签', required: true, defaultValue: '' }
+    ])
+    // Neither the executable nor the working directory may become a prompt.
+    expect(favoriteRunnerParameters({ ...dynamic, args: [], executable: '{ask:程序}' })).toEqual([])
+    expect(favoriteRunnerParameters({ ...dynamic, args: [], cwdMode: 'custom', cwd: '/work/{ask:目录}' })).toEqual([])
+  })
+
+  it('substitutes collected values as literal text without a second expansion pass', () => {
+    const dynamic: FavoriteRunnerConfig = {
+      mode: 'background',
+      executable: '/bin/sh',
+      args: ['{path}', '--env={ask:环境=dev}', '--tag={ask:标签}'],
+      cwdMode: 'target-directory'
+    }
+
+    // A missing required value refuses to resolve rather than launching a half-built command line.
+    expect(resolveFavoriteRunner(file, dynamic, 'darwin')).toBeNull()
+    expect(resolveFavoriteRunner(file, dynamic, 'darwin', { 标签: '' })).toBeNull()
+
+    expect(resolveFavoriteRunner(file, dynamic, 'darwin', { 标签: 'v1' })).toMatchObject({
+      args: ['/work/demo/run task.sh', '--env=dev', '--tag=v1']
+    })
+    expect(resolveFavoriteRunner(file, dynamic, 'darwin', { 环境: 'prod', 标签: 'v2' })).toMatchObject({
+      args: ['/work/demo/run task.sh', '--env=prod', '--tag=v2']
+    })
+
+    // Entered text stays literal: placeholders and separators inside it are never re-interpreted.
+    expect(resolveFavoriteRunner(file, dynamic, 'darwin', { 标签: '{path} && rm -rf /' })).toMatchObject({
+      args: ['/work/demo/run task.sh', '--env=dev', '--tag={path} && rm -rf /']
+    })
+    expect(resolveFavoriteRunner(file, dynamic, 'darwin', { 标签: 'bad\0value' })).toBeNull()
+    expect(resolveFavoriteRunner(file, dynamic, 'darwin', { 标签: 'x'.repeat(4097) })).toBeNull()
+  })
+
+  it('never turns expanded favorite data into a new prompt slot', () => {
+    const hostile = { ...file, path: '/work/{ask:注入}/run.sh', name: '{ask:名字}' }
+    const dynamic: FavoriteRunnerConfig = {
+      mode: 'background',
+      executable: '/bin/sh',
+      args: ['{path}', '--name={name}', '--tag={ask:标签}'],
+      cwdMode: 'target-directory'
+    }
+
+    expect(favoriteRunnerParameters(dynamic).map((item) => item.name)).toEqual(['标签'])
+    expect(resolveFavoriteRunner(hostile, dynamic, 'linux', { 标签: 'v1' })).toMatchObject({
+      args: ['/work/{ask:注入}/run.sh', '--name={ask:名字}', '--tag=v1']
+    })
+  })
+
+  it('keeps trust bound to the parameter declaration rather than the entered value', () => {
+    const dynamic: FavoriteRunnerConfig = {
+      mode: 'background',
+      executable: '/bin/sh',
+      args: ['{path}', '--tag={ask:标签}'],
+      cwdMode: 'target-directory'
+    }
+    const trusted = trustFavoriteRunner(file, 'darwin', dynamic, 100)
+
+    expect(isFavoriteRunnerTrusted(file, 'darwin', trusted)).toBe(true)
+    expect(isFavoriteRunnerTrusted(file, 'darwin', { ...trusted, args: ['{path}', '--tag={ask:标签=默认}'] })).toBe(false)
   })
 
   it('preserves malformed runner metadata for repair while keeping it non-executable', () => {

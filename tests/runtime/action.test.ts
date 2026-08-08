@@ -6,7 +6,7 @@ import { createMqttConnectionConfig } from '../../src/domain/mqtt'
 import { isFavoriteRunnerTrusted, trustFavoriteRunner } from '../../src/domain/favoriteLaunch'
 import type { FavoriteRunRecord } from '../../src/domain/types'
 import type { LiveWindow, WindowActivationRequest } from '../../src/domain/windows'
-import { WINDOW_BRIDGE_REVISION, type EypcPlatformApi } from '../../src/platform/eypcPlatform'
+import { WINDOW_BRIDGE_REVISION, type EypcPlatformApi, type FavoriteRunRequest } from '../../src/platform/eypcPlatform'
 
 type TestPlatformOverrides = {
   [Key in keyof EypcPlatformApi]?: EypcPlatformApi[Key] extends (...args: never[]) => unknown
@@ -4143,6 +4143,66 @@ describe('app runtime', () => {
 
     runtime.dispose()
     expect(listeners).toHaveLength(0)
+  })
+
+  it('collects dynamic runner parameters before launching and cancels without running', async () => {
+    const runRequests: FavoriteRunRequest[] = []
+    const { state, getShowCount } = installPlatform({
+      files: {
+        capabilities: { platform: 'darwin', open: true, reveal: true, copyPath: true, copyItems: true, pickFiles: true, pickFolders: true, listDirectory: true, inspectPaths: true, run: true, terminalRun: true },
+        run: async (request: FavoriteRunRequest) => { runRequests.push(request); return { outcome: 'started' as const } }
+      }
+    })
+    enableFavorites(state)
+    const node = { id: 'script', kind: 'file' as const, path: '/work/run.sh', name: 'Run', parentId: null, tags: [], color: '#F2994A', sortOrder: 1, createdAt: 1, updatedAt: 1 }
+    const runner = { mode: 'background' as const, executable: '/bin/sh', args: ['{path}', '--env={ask:环境=dev}', '--tag={ask:标签}'], cwdMode: 'target-directory' as const }
+    state.favorites = [{ ...node, runnerByPlatform: { darwin: trustFavoriteRunner(node, 'darwin', runner, 100) } }]
+    const runtime = createAppRuntime(state)
+
+    runtime.dispatch('favorites.open', { favoriteId: 'script' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // Nothing launches until the required value exists.
+    expect(runRequests).toHaveLength(0)
+    const prompt = runtime.snapshot().favoriteRunPrompt
+    expect(prompt?.fields).toEqual([
+      { name: '环境', required: false, value: 'dev' },
+      { name: '标签', required: true, value: '' }
+    ])
+    expect(prompt?.preview).toBe('')
+    expect(prompt?.error).toContain('标签')
+
+    expect(runtime.submitFavoriteRunPrompt()).toBe(false)
+    expect(runRequests).toHaveLength(0)
+
+    runtime.updateFavoriteRunPrompt('标签', 'v1 空格')
+    expect(runtime.snapshot().favoriteRunPrompt?.preview).toBe('"/bin/sh" "/work/run.sh" "--env=dev" "--tag=v1 空格"')
+    runtime.submitFavoriteRunPrompt()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(runtime.snapshot().favoriteRunPrompt).toBeNull()
+    expect(runRequests).toHaveLength(1)
+    expect(runRequests[0]).toMatchObject({ args: ['/work/run.sh', '--env=dev', '--tag=v1 空格'] })
+
+    // The last values are remembered for this session, and cancelling never launches.
+    runtime.dispatch('favorites.open', { favoriteId: 'script' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(runtime.snapshot().favoriteRunPrompt?.fields.find((field) => field.name === '标签')?.value).toBe('v1 空格')
+    runtime.cancelFavoriteRunPrompt()
+    expect(runtime.snapshot().favoriteRunPrompt).toBeNull()
+    expect(runtime.snapshot().message).toBe('已取消本次运行')
+    expect(runRequests).toHaveLength(1)
+
+    // A slot launch gives up its silent promise instead of failing quietly.
+    runtime.dispatch('favorites.slot.manager.open', { favoriteId: 'script' })
+    runtime.dispatch('favorites.slot.assign.1')
+    runtime.dispatch('favorites.slot.manager.close')
+    const showsBefore = getShowCount()
+    runtime.dispatch('favorites.slot.activate.1')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(runtime.snapshot().favoriteRunPrompt?.favoriteId).toBe('script')
+    expect(getShowCount()).toBe(showsBefore + 1)
+    expect(runRequests).toHaveLength(1)
   })
 
   it('keeps file slots platform-isolated and cleans slot and learning references on removal', async () => {

@@ -246,6 +246,65 @@ function isFavoriteRunnerExecutable(value: string, platform?: FavoritePlatform):
   return isAbsoluteFavoriteRunnerPath(value, platform) || (!value.includes('/') && !value.includes('\\'))
 }
 
+/**
+ * `{ask:名称}` / `{ask:名称=默认值}` declares a value collected from the user right before launch.
+ * Deliberately restricted to argument templates: the executable and the working directory must stay
+ * static so a prompt can never redirect what runs or where it runs.
+ */
+const FAVORITE_ASK_TOKEN = /\{ask:([^{}=]{1,40})(?:=([^{}]{0,200}))?\}/g
+export const FAVORITE_RUNNER_MAX_PARAMETERS = 8
+
+export interface FavoriteRunnerParameter {
+  name: string
+  required: boolean
+  defaultValue: string
+}
+
+export function favoriteRunnerParameters(config: FavoriteRunnerConfig): FavoriteRunnerParameter[] {
+  const byName = new Map<string, FavoriteRunnerParameter>()
+  for (const template of config.args) {
+    for (const match of template.matchAll(FAVORITE_ASK_TOKEN)) {
+      const name = match[1].trim()
+      if (!name || byName.has(name)) continue
+      const defaultValue = typeof match[2] === 'string' ? match[2] : ''
+      byName.set(name, { name, required: typeof match[2] !== 'string', defaultValue })
+      if (byName.size >= FAVORITE_RUNNER_MAX_PARAMETERS) return [...byName.values()]
+    }
+  }
+  return [...byName.values()]
+}
+
+/**
+ * Substitutes collected values without ever routing them through placeholder expansion.
+ * The template is split on the ask tokens first, each literal segment is expanded on its own, and
+ * the raw values are spliced between them — so a value containing `{path}`, or an expanded `{path}`
+ * containing `{ask:…}`, stays literal text instead of becoming a second substitution round.
+ */
+function applyFavoriteRunnerArgument(
+  template: string,
+  node: Pick<FavoriteNode, 'kind' | 'path' | 'name'>,
+  values: Record<string, string> | undefined,
+  parameters: readonly FavoriteRunnerParameter[]
+): string | null {
+  FAVORITE_ASK_TOKEN.lastIndex = 0
+  let result = ''
+  let cursor = 0
+  for (const match of template.matchAll(FAVORITE_ASK_TOKEN)) {
+    const index = match.index ?? 0
+    result += expandFavoriteRunnerTokens(template.slice(cursor, index), node)
+    const name = match[1].trim()
+    const declared = parameters.find((item) => item.name === name)
+    const provided = values?.[name]
+    const value = typeof provided === 'string' && provided.length ? provided : declared?.defaultValue ?? ''
+    if (!value && declared?.required) return null
+    if (value.includes('\0') || value.length > RUNNER_MAX_ARGUMENT_LENGTH) return null
+    result += value
+    cursor = index + match[0].length
+  }
+  result += expandFavoriteRunnerTokens(template.slice(cursor), node)
+  return result
+}
+
 function expandFavoriteRunnerTokens(value: string, node: Pick<FavoriteNode, 'kind' | 'path' | 'name'>): string {
   const directory = favoriteTargetDirectory(node)
   const replacements: Record<string, string> = {
@@ -259,12 +318,20 @@ function expandFavoriteRunnerTokens(value: string, node: Pick<FavoriteNode, 'kin
 export function resolveFavoriteRunner(
   node: Pick<FavoriteNode, 'kind' | 'path' | 'name'>,
   config: FavoriteRunnerConfig,
-  platform?: FavoritePlatform
+  platform?: FavoritePlatform,
+  values?: Record<string, string>
 ): ResolvedFavoriteRunner | null {
   const normalized = normalizeFavoriteRunnerConfig(config)
   if (!normalized) return null
+  // The executable never takes user input, so it is expanded with the static tokens only.
   const executable = expandFavoriteRunnerTokens(normalized.executable, node).trim()
-  const args = normalized.args.map((item) => expandFavoriteRunnerTokens(item, node))
+  const parameters = favoriteRunnerParameters(normalized)
+  const args: string[] = []
+  for (const template of normalized.args) {
+    const resolvedArgument = applyFavoriteRunnerArgument(template, node, values, parameters)
+    if (resolvedArgument === null) return null
+    args.push(resolvedArgument)
+  }
   const cwd = normalized.cwdMode === 'custom'
     ? expandFavoriteRunnerTokens(normalized.cwd || '', node).trim()
     : favoriteTargetDirectory(node)

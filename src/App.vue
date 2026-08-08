@@ -3,6 +3,7 @@ import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } fr
 import { normalizeAppState } from './domain/state'
 import { getPlatform } from './platform/eypcPlatform'
 import ConfirmLayer from './components/ConfirmLayer.vue'
+import FavoriteRunPromptLayer from './components/FavoriteRunPromptLayer.vue'
 import OperationTooltipLayer from './components/OperationTooltipLayer.vue'
 import QuickJumpLayer from './components/QuickJumpLayer.vue'
 import TabShell from './components/TabShell.vue'
@@ -627,6 +628,13 @@ onUnmounted(() => {
       :restore-focus-selectors="confirmRestoreFocusSelectors"
       @cancel="runtime.cancelConfirm"
       @confirm="runtime.confirmNow"
+    />
+    <FavoriteRunPromptLayer
+      v-if="snapshot.favoriteRunPrompt"
+      :prompt="snapshot.favoriteRunPrompt"
+      @update="runtime.updateFavoriteRunPrompt"
+      @submit="runtime.submitFavoriteRunPrompt"
+      @cancel="runtime.cancelFavoriteRunPrompt"
     />
     <OperationTooltipLayer :suspended="quickJump.open" />
     <QuickJumpLayer

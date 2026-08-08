@@ -1,5 +1,5 @@
 import { addFavoriteNode, deleteFavoriteMetadata, favoriteParentOptions, favoritePathIdentityKey, favoriteVirtualChildren, filterFavoriteContainerTree, filterFavoriteGroupTree, filterFavoriteItems, filterFavoriteTree, flattenFavoriteTree, inferFavoriteNameFromPath, isValidFavoriteParent, moveFavoriteNode, normalizeFavoritePath } from '../domain/favorites'
-import { createFavoriteSlots, favoriteRunnerFingerprint, isFavoritePlatform, isFavoriteRunnerTrusted, normalizeFavoriteRunnerConfig, recordFavoriteSearchAffinity, removeFavoriteLearning, resolveFavoriteRunner, suggestedFavoriteRunner, trustFavoriteRunner } from '../domain/favoriteLaunch'
+import { createFavoriteSlots, favoriteRunnerFingerprint, favoriteRunnerParameters, isFavoritePlatform, isFavoriteRunnerTrusted, normalizeFavoriteRunnerConfig, recordFavoriteSearchAffinity, removeFavoriteLearning, resolveFavoriteRunner, suggestedFavoriteRunner, trustFavoriteRunner } from '../domain/favoriteLaunch'
 import { DEFAULT_MQTT_LAYOUT_PREFS, MQTT_LAYOUT_RATIO_MAX, MQTT_LAYOUT_RATIO_MIN, appendMqttMessage, buildMqttWebSocketUrl, clearMqttPublishDraftHistory, createMqttClientId, createMqttConnectionConfig, createMqttConnectionSnapshot, createMqttSession, deleteMqttPublishDraftHistory, deleteMqttPublishTemplate, deleteMqttRecord, matchMqttTopicFilter, mqttConnectOptionsFromConfig, mqttPublishTemplateOperationTime, normalizeMqttArchiveState, normalizeMqttTopicColor, parseMqttWebSocketUrl, renameMqttPublishTemplate, renameMqttRecord, saveMqttPublishDraftHistory, saveMqttPublishTemplate, toMqttPublishDraft, touchMqttPublishTemplate, updateMqttPublishDraftHistory } from '../domain/mqtt'
 import { buildMqttConnectionTreeRows, deleteMqttConnectionGroup, isValidMqttConnectionGroupParent, moveMqttConnectionTreeTarget, mqttConnectionTreeMoveTarget, normalizeMqttConfigGroupRefs, normalizeMqttConnectionGroups, type MqttConnectionTreeDropPosition, type MqttConnectionTreeRow, type MqttConnectionTreeTarget } from '../domain/mqttConnectionTree'
 import { mqttMergedJsonFileName, stringifyMqttMergedJsonExport, stringifyMqttPayloadsCopy, stringifyMqttTopicsCopy, type MqttMergedExportSource } from '../domain/mqttExport'
@@ -43,6 +43,21 @@ import { resolveMqttConnect, type MqttRuntimeClient } from './mqttClientModule'
 import { createCodexController, type CodexFloatSnapshotV1, type CodexRuntimeView } from './codexController'
 import { createWindowActivationRequest, isWindowSpaceFailureReason } from './window/windowActivationRuntime'
 import { applyWindowInventoryUpdate, normalizeWindowInventoryCompleteness } from './window/windowInventoryRuntime'
+
+export interface FavoriteRunPromptField {
+  name: string
+  required: boolean
+  value: string
+}
+
+export interface FavoriteRunPrompt {
+  favoriteId: string
+  favoriteName: string
+  fields: FavoriteRunPromptField[]
+  /** Preview of the resolved argv with current values; empty when the values are not yet valid. */
+  preview: string
+  error: string
+}
 
 export interface FavoriteRunSummary {
   status: FavoriteRunRecord['status']
@@ -116,6 +131,8 @@ export interface AppRuntimeSnapshot {
   favoriteRuns: FavoriteRunRecord[]
   /** Latest run per favorite id, pre-worded so the view never restates exit-code semantics. */
   favoriteRunSummaries: Record<string, FavoriteRunSummary>
+  /** Open only while dynamic runner parameters are being collected for a launch. */
+  favoriteRunPrompt: FavoriteRunPrompt | null
   favoriteSlotManagerTargetId: string | null
   favoriteCurrentPlatform: FavoritePlatform | null
   favoritePickReview: FavoritePickReview | null
@@ -756,6 +773,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   const FAVORITE_RUN_VIEW_LIMIT = 30
   let favoriteRuns: FavoriteRunRecord[] = []
   let disposeFavoriteRunWatch: (() => void) | null = null
+  let favoriteRunPrompt: FavoriteRunPrompt | null = null
+  let favoriteRunPromptOrigin: { source?: 'manual' | 'quick-result' | 'slot'; query?: string } = {}
+  const favoriteRunLastValues = new Map<string, Record<string, string>>()
   let favoriteSlotManagerOpen = false
   let favoriteSlotManagerTargetId: string | null = null
   let favoritePickReview: FavoritePickReview | null = null
@@ -893,6 +913,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       favoriteDraft ? 'favorites-editor' : null,
       favoritePickReview ? 'favorites-pick-review' : null,
       favoriteSlotManagerOpen ? 'favorites-slot-manager' : null,
+      favoriteRunPrompt ? 'favorites-run-prompt' : null,
       portGroupDetail.open ? 'port-group-detail' : null,
       portDetail.open ? 'port-detail' : null,
       portDrawer.open ? 'port-drawer' : null,
@@ -7896,9 +7917,62 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return copied
   }
 
+  function favoriteRunPromptPreview(item: FavoriteNode, runner: FavoriteRunnerConfig, platformId: FavoritePlatform, fields: FavoriteRunPromptField[]) {
+    const values = Object.fromEntries(fields.map((field) => [field.name, field.value]))
+    const resolved = resolveFavoriteRunner(item, runner, platformId, values)
+    if (!resolved) {
+      const missing = fields.filter((field) => field.required && !field.value).map((field) => field.name)
+      return { preview: '', error: missing.length ? `请填写：${missing.join('、')}` : '当前取值无法解析为有效命令行' }
+    }
+    return { preview: [resolved.executable, ...resolved.args].map((part) => JSON.stringify(part)).join(' '), error: '' }
+  }
+
+  function updateFavoriteRunPrompt(name: string, value: string) {
+    if (!favoriteRunPrompt) return false
+    const item = favoriteById(favoriteRunPrompt.favoriteId)
+    const platformId = currentFavoritePlatform()
+    const runner = item && platformId ? item.runnerByPlatform?.[platformId] : undefined
+    if (!item || !platformId || !runner) return false
+    const fields = favoriteRunPrompt.fields.map((field) => field.name === name ? { ...field, value } : field)
+    favoriteRunPrompt = { ...favoriteRunPrompt, fields, ...favoriteRunPromptPreview(item, runner, platformId, fields) }
+    notify()
+    return true
+  }
+
+  function cancelFavoriteRunPrompt() {
+    if (!favoriteRunPrompt) return false
+    favoriteRunPrompt = null
+    setMessage('已取消本次运行')
+    return true
+  }
+
+  function submitFavoriteRunPrompt() {
+    const prompt = favoriteRunPrompt
+    if (!prompt) return false
+    const item = favoriteById(prompt.favoriteId)
+    if (!item) {
+      favoriteRunPrompt = null
+      setMessage('收藏已不存在')
+      return false
+    }
+    const missing = prompt.fields.filter((field) => field.required && !field.value)
+    if (missing.length) {
+      favoriteRunPrompt = { ...prompt, error: `请填写：${missing.map((field) => field.name).join('、')}` }
+      notify()
+      return false
+    }
+    const values = Object.fromEntries(prompt.fields.map((field) => [field.name, field.value]))
+    // Remembered per plugin session only, and never written into the synced favorite metadata.
+    favoriteRunLastValues.set(prompt.favoriteId, values)
+    favoriteRunPrompt = null
+    notify()
+    void executeFavoriteItem(item, { ...favoriteRunPromptOrigin, values })
+    return true
+  }
+
   async function executeFavoriteItem(
     item: FavoriteNode,
-    options: { source?: 'manual' | 'quick-result' | 'slot'; query?: string } = {}
+    options: { source?: 'manual' | 'quick-result' | 'slot'; query?: string; values?: Record<string, string> } = {}
   ): Promise<boolean> {
     if (!item.path || item.kind === 'group') {
       const notice = '没有选中的文件或文件夹'
@@ -7927,7 +8001,31 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         else setMessage(notice)
         return false
       }
-      const resolved = resolveFavoriteRunner(item, runner, platformId)
+      // Dynamic slots are collected before launch. A slot or number-key launch therefore gives up
+      // its silent promise and shows the window: a visible prompt beats a silent no-op.
+      const parameters = favoriteRunnerParameters(runner)
+      if (parameters.length && !options.values) {
+        const remembered = favoriteRunLastValues.get(item.id) || {}
+        const fields = parameters.map((parameter) => ({
+          name: parameter.name,
+          required: parameter.required,
+          value: remembered[parameter.name] ?? parameter.defaultValue
+        }))
+        favoriteRunPromptOrigin = { source: options.source, query: options.query }
+        favoriteRunPrompt = {
+          favoriteId: item.id,
+          favoriteName: item.name,
+          fields,
+          ...favoriteRunPromptPreview(item, runner, platformId, fields)
+        }
+        if (options.source === 'slot') {
+          if (isTabEnabled('favorites')) state.activeTab = 'favorites'
+          try { platform.app.show?.() } catch {}
+        }
+        notify()
+        return false
+      }
+      const resolved = resolveFavoriteRunner(item, runner, platformId, options.values)
       if (!resolved) {
         const notice = '运行器配置无效，请检查程序、参数和工作目录'
         if (options.source === 'slot') showFavoriteWorkbench(notice, item.id)
@@ -9038,6 +9136,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'favorites.cancel', title: '取消收藏编辑', group: '收藏', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-editor'), run: () => { favoriteDraft = null; notify(); return true } })
     actions.register({ id: 'favorites.slot.manager.open', title: '打开文件槽管理器', group: '收藏', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => openFavoriteSlotManager(args) })
     actions.register({ id: 'favorites.slot.manager.close', title: '关闭文件槽管理器', group: '收藏', risk: 'normal', scope: 'layer', priority: 101, shortcut: 'Escape', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-slot-manager'), run: () => closeFavoriteSlotManager() })
+    actions.register({ id: 'favorites.run.prompt.submit', title: '确认运行参数', group: '收藏', risk: 'normal', scope: 'layer', priority: 103, shortcut: 'Ctrl+Enter', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-run-prompt'), run: () => submitFavoriteRunPrompt() })
+    actions.register({ id: 'favorites.run.prompt.cancel', title: '取消本次运行', group: '收藏', risk: 'normal', scope: 'layer', priority: 103, shortcut: 'Escape', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-run-prompt'), run: () => cancelFavoriteRunPrompt() })
     actions.register({ id: 'favorites.run.openLog', title: '打开运行日志', group: '收藏', risk: 'normal', scope: 'row', priority: 93, when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => { void openFavoriteRunLog(args); return true } })
     actions.register({ id: 'favorites.run.revealLog', title: '定位运行日志', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => { void revealFavoriteRunLog(args); return true } })
     actions.register({ id: 'favorites.run.copyLogPath', title: '复制运行日志路径', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => { void copyFavoriteRunLogPath(args); return true } })
@@ -9519,6 +9619,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         favoriteSlotManagerTargetId,
         favoriteRuns,
         favoriteRunSummaries: favoriteRunSummaryById(),
+        favoriteRunPrompt,
         favoriteCurrentPlatform: currentFavoritePlatform(),
         favoritePickReview,
         favoriteDraft,
@@ -9885,6 +9986,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     removeFavorite,
     updateFavoritePickReviewItem,
     updateFavoriteDraft,
+    updateFavoriteRunPrompt,
+    submitFavoriteRunPrompt,
+    cancelFavoriteRunPrompt,
     saveFavoriteDraft,
     cancelFavoriteDraft() {
       favoriteDraft = null

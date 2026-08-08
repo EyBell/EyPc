@@ -873,7 +873,7 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
             </label>
             <label>
               参数（每行一个）
-              <textarea data-field="runner-args" :value="props.snapshot.favoriteDraft.runnerArgsText" placeholder="支持 {path}、{dir}、{name}" @input="updateDraft({ runnerArgsText: ($event.target as HTMLTextAreaElement).value })" />
+              <textarea data-field="runner-args" :value="props.snapshot.favoriteDraft.runnerArgsText" placeholder="支持 {path}、{dir}、{name}；用 {ask:名称} 或 {ask:名称=默认值} 声明运行前询问的参数" @input="updateDraft({ runnerArgsText: ($event.target as HTMLTextAreaElement).value })" />
             </label>
             <label>
               工作目录
