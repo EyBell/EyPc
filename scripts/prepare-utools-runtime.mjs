@@ -1,11 +1,11 @@
-import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { syncUtoolsPreloads } from './utools-preload-assets.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const pluginSource = resolve(root, 'public/plugin.json')
 const publicPackageJson = resolve(root, 'public/package.json')
-const koffiSource = resolve(root, 'node_modules/koffi')
 const distDir = resolve(root, 'dist')
 const distPlugin = resolve(distDir, 'plugin.json')
 const distPackageJson = resolve(distDir, 'package.json')
@@ -24,25 +24,63 @@ const developmentActionEntry = `<!doctype html>
 </html>
 `
 
-function copyKoffiInto(pluginDir) {
-  if (!existsSync(koffiSource)) return
-  const target = resolve(pluginDir, 'node_modules/koffi')
-  mkdirSync(resolve(pluginDir, 'node_modules'), { recursive: true })
-  // Replace any prior symlink/tree so pnpm's linked node_modules/koffi is never cpSync'd onto itself.
-  rmSync(target, { recursive: true, force: true })
-  cpSync(koffiSource, target, { recursive: true, dereference: true })
+const runtimeRequire = createRequire(import.meta.url)
+const obsoleteRuntimeDependencies = [
+  'leveldown',
+  'abstract-leveldown',
+  'level-concat-iterator',
+  'napi-macros',
+  'node-gyp-build'
+]
+
+/**
+ * Copies one production dependency and its complete runtime closure into the
+ * standalone uTools plugin directory. pnpm keeps dependencies as siblings in
+ * its virtual store, so copying only a package's own directory is insufficient
+ * for modules such as `leveldown`.
+ */
+function copyRuntimeDependencyInto(pluginDir, packageName) {
+  const copied = new Set()
+  const visit = (name, lookupPaths) => {
+    if (copied.has(name)) return
+    const manifestPath = runtimeRequire.resolve(`${name}/package.json`, { paths: lookupPaths })
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    const source = resolve(manifestPath, '..')
+    const target = resolve(pluginDir, 'node_modules', ...name.split('/'))
+    mkdirSync(resolve(target, '..'), { recursive: true })
+    rmSync(target, { recursive: true, force: true })
+    cpSync(source, target, { recursive: true, dereference: true })
+    copied.add(name)
+    for (const dependency of Object.keys(manifest.dependencies || {})) {
+      visit(dependency, [source])
+    }
+  }
+  visit(packageName, [root])
+}
+
+function copyRuntimeDependencies(pluginDir) {
+  // A rejected prototype bundled `leveldown`, but macOS Hardened Runtime will
+  // not load that differently signed addon inside uTools. Production uses the
+  // host-signed copy and removes every generated prototype artifact by exact
+  // package name before packaging.
+  for (const packageName of obsoleteRuntimeDependencies) {
+    rmSync(resolve(pluginDir, 'node_modules', ...packageName.split('/')), { recursive: true, force: true })
+  }
+  for (const packageName of ['koffi']) {
+    copyRuntimeDependencyInto(pluginDir, packageName)
+  }
 }
 
 writeFileSync(publicPackageJson, commonJsPackageScope)
 syncUtoolsPreloads(root, 'public')
-copyKoffiInto(resolve(root, 'public'))
+copyRuntimeDependencies(resolve(root, 'public'))
 
 if (existsSync(distDir)) {
   mkdirSync(distDir, { recursive: true })
   copyFileSync(pluginSource, distPlugin)
   writeFileSync(distPackageJson, commonJsPackageScope)
   syncUtoolsPreloads(root, 'dist')
-  copyKoffiInto(distDir)
+  copyRuntimeDependencies(distDir)
   if (developmentMode) {
     writeFileSync(resolve(distDir, 'float.html'), developmentFloatEntry)
     writeFileSync(resolve(distDir, 'action.html'), developmentActionEntry)

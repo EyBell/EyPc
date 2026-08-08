@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { mergeCompanionConversations, resolveCompanionWaterBallReadings, withoutCompanionProvider } from '../../src/domain/companionAggregate'
-import { emptyConversationSnapshot, type CodexTaskCard, type ConversationSnapshotV1 } from '../../src/domain/codex'
+import { emptyConversationSnapshot, type CodexProjectCard, type CodexTaskCard, type ConversationSnapshotV1 } from '../../src/domain/codex'
 import type { CompanionProviderId } from '../../src/domain/companionProvider'
 
 function card(
@@ -51,6 +51,26 @@ function codexSnapshot(): ConversationSnapshotV1 {
 
 function keys(cards: readonly CodexTaskCard[]): string[] {
   return cards.map((item) => item.key)
+}
+
+function snapshotWithProjects(definitions: Array<Pick<CodexProjectCard, 'key' | 'name' | 'originalName'> & { actionAlias?: string }>) {
+  const snapshot = codexSnapshot()
+  const projects: CodexProjectCard[] = definitions.map((project) => ({
+    ...project,
+    kind: 'project',
+    nativePinned: false,
+    collapsed: false,
+    tasks: snapshot.all.filter((task) => task.projectKey === project.key)
+  }))
+  return {
+    ...snapshot,
+    projects,
+    projectSections: [
+      { id: 'pinned' as const, title: 'Pinned' as const, entries: [] },
+      { id: 'projects' as const, title: 'Projects' as const, entries: projects.map((project) => ({ kind: 'project' as const, project })) },
+      { id: 'chats' as const, title: 'Chats' as const, entries: [] }
+    ]
+  }
 }
 
 describe('merging a second provider', () => {
@@ -193,6 +213,57 @@ describe('removing a provider', () => {
   it('treats a card without a provider field as codex', () => {
     const merged = mergeCompanionConversations(codexSnapshot(), [card('claude:l1', { provider: 'claude' })])
     expect(keys(withoutCompanionProvider(merged, 'codex').ongoing)).toEqual(['claude:l1'])
+  })
+})
+
+describe('virtual companion projects', () => {
+  it('merges exact opaque project keys and keeps the Codex action capability', () => {
+    const snapshot = snapshotWithProjects([{ key: 'p', name: 'EyPc', originalName: 'EyPc', actionAlias: 'codex-project' }])
+    const merged = mergeCompanionConversations(snapshot, [card('claude:exact', {
+      provider: 'claude', projectKey: 'p', projectName: 'Other label', originalProjectName: 'Other label'
+    })])
+    expect(merged.projects).toHaveLength(1)
+    expect(merged.projects[0]).toMatchObject({
+      key: 'p',
+      actionAlias: 'codex-project',
+      providers: ['codex', 'claude'],
+      providerTaskCounts: { codex: 3, claude: 1 },
+      virtual: true
+    })
+  })
+
+  it('uses a normalized unique name only when it is unique on both sides', () => {
+    const snapshot = snapshotWithProjects([{ key: 'codex-eypc', name: 'EyPc', originalName: 'EyPc', actionAlias: 'codex-project' }])
+    const merged = mergeCompanionConversations(snapshot, [card('claude:named', {
+      provider: 'claude', projectKey: 'claude-eypc', projectName: ' eYpC ', originalProjectName: ' eYpC '
+    })])
+    expect(merged.projects).toHaveLength(1)
+    expect(merged.all.find((task) => task.key === 'claude:named')?.projectKey).toBe('codex-eypc')
+  })
+
+  it('keeps ambiguous names separate and marks the Claude-only project virtual', () => {
+    const snapshot = snapshotWithProjects([
+      { key: 'codex-a', name: 'Shared', originalName: 'Shared', actionAlias: 'a' },
+      { key: 'codex-b', name: 'Shared', originalName: 'Shared', actionAlias: 'b' }
+    ])
+    const merged = mergeCompanionConversations(snapshot, [card('claude:ambiguous', {
+      provider: 'claude', projectKey: 'claude-shared', projectName: 'Shared', originalProjectName: 'Shared'
+    })])
+    expect(merged.projects.map((project) => project.key)).toEqual(['codex-a', 'codex-b', 'claude-shared'])
+    expect(merged.projects.at(-1)).toMatchObject({ providers: ['claude'], virtual: true })
+    expect(merged.projects.at(-1)).not.toHaveProperty('actionAlias')
+  })
+
+  it('adds locally pinned Claude tasks to Pinned and removes the virtual project cleanly on disable', () => {
+    const snapshot = snapshotWithProjects([])
+    const merged = mergeCompanionConversations(snapshot, [card('claude:pinned', {
+      provider: 'claude', projectKey: 'claude-only', projectName: 'Claude only', originalProjectName: 'Claude only', pinSource: 'local'
+    })])
+    expect(merged.projectSections.find((section) => section.id === 'pinned')?.entries[0]).toMatchObject({ kind: 'task' })
+    expect(merged.projectSections.find((section) => section.id === 'projects')?.entries).toHaveLength(1)
+    const stripped = withoutCompanionProvider(merged, 'claude')
+    expect(stripped.projects).toHaveLength(0)
+    expect(stripped.projectSections.every((section) => section.entries.length === 0)).toBe(true)
   })
 })
 

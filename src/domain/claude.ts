@@ -1,466 +1,58 @@
-import type {
-  CodexArchiveCapability,
-  CodexTaskActivityState,
-  CodexTaskBucket,
-  CodexTaskCard
-} from './codex'
-import { companionTaskKey } from './companionProvider'
-
-/**
- * Claude Code companion domain.
- *
- * This module is pure: it turns the privacy-safe observations produced by the
- * Claude preload bridge into the same task cards and quota buckets the rest of
- * the companion already speaks. It never reads the filesystem, never touches a
- * credential and never sees prompt or transcript content — the bridge is
- * responsible for keeping those out of the observation in the first place.
- */
-
-/* ------------------------------------------------------------------ *
- * Hook events
- * ------------------------------------------------------------------ */
-
-/**
- * The subset of Claude Code hook events the companion subscribes to, reduced to
- * privacy-safe classes. The bridge maps raw `hook_event_name` values onto these
- * and discards every payload field except session identity and timing.
- */
-export type ClaudeHookEvent =
-  | 'session-start'
-  | 'prompt-submit'
-  | 'pre-tool'
-  | 'post-tool'
-  | 'permission-request'
-  | 'notification'
-  | 'stop'
-  | 'stop-failure'
-  | 'subagent-start'
-  | 'subagent-stop'
-  | 'session-end'
-
-const CLAUDE_HOOK_EVENTS: readonly ClaudeHookEvent[] = [
-  'session-start',
-  'prompt-submit',
-  'pre-tool',
-  'post-tool',
-  'permission-request',
-  'notification',
-  'stop',
-  'stop-failure',
-  'subagent-start',
-  'subagent-stop',
-  'session-end'
-]
-
-/** Raw Claude Code `hook_event_name` → companion event class. */
-export const CLAUDE_HOOK_EVENT_NAMES: Readonly<Record<string, ClaudeHookEvent>> = {
-  SessionStart: 'session-start',
-  UserPromptSubmit: 'prompt-submit',
-  PreToolUse: 'pre-tool',
-  PostToolUse: 'post-tool',
-  PostToolUseFailure: 'post-tool',
-  PostToolBatch: 'post-tool',
-  PermissionRequest: 'permission-request',
-  Notification: 'notification',
-  Stop: 'stop',
-  StopFailure: 'stop-failure',
-  SubagentStart: 'subagent-start',
-  SubagentStop: 'subagent-stop',
-  SessionEnd: 'session-end'
-}
-
-export function normalizeClaudeHookEvent(value: unknown): ClaudeHookEvent | null {
-  if (typeof value !== 'string' || !value) return null
-  if ((CLAUDE_HOOK_EVENTS as readonly string[]).includes(value)) return value as ClaudeHookEvent
-  return CLAUDE_HOOK_EVENT_NAMES[value] || null
-}
-
-/* ------------------------------------------------------------------ *
- * Observations
- * ------------------------------------------------------------------ */
-
-export interface ClaudeSessionObservation {
-  sessionId: string
-  /** Encoded project directory name under `~/.claude/projects`. */
-  projectSlug: string
-  /** Decoded working directory of the session. */
-  cwd: string
-  gitBranch?: string
-  startedAt?: number
-  /** Latest evidence timestamp: newest hook event or transcript append. */
-  updatedAt: number
-  lastPromptAt?: number
-  lastAssistantAt?: number
-  lastStopAt?: number
-  model?: string
-  /** Claude Code sub-agent transcript; the companion treats it as a side chat. */
-  isSidechain?: boolean
-  parentSessionId?: string
-  turns?: number
-  /** Tool calls issued but not yet answered by a tool result. */
-  pendingToolUse?: number
-  contextTokens?: number
-  /** Newest hook event observed for this session in the current bridge session. */
-  hookEvent?: ClaudeHookEvent | null
-  hookEventAt?: number
-  /** Whether the owning `claude` process is still alive, when the bridge knows. */
-  processAlive?: boolean
-  /** Terminal-window jump hint; never leaves the local machine. */
-  pid?: number
-}
-
-/**
- * Session-scoped read receipts owned by EyPc. Claude has no native read-state,
- * so a completed session stays unread until the plugin itself opens it.
- */
-export interface ClaudeReadReceipts {
-  /** Session id → completion watermark that has already been opened. */
-  readonly [sessionId: string]: number | undefined
-}
-
-/**
- * Normalizes persisted read receipts. Bounded and numeric-only, so a corrupted
- * or hand-edited state file cannot grow without limit or inject a non-number
- * into the completion comparison.
- */
-export const CLAUDE_MAX_RECEIPTS = 500
-
-export function normalizeClaudeReceipts(value: unknown): ClaudeReadReceipts {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  const entries: Array<[string, number]> = []
-  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof key !== 'string' || !key || key.length > 128) continue
-    const at = typeof raw === 'number' ? raw : Number(raw)
-    if (!Number.isFinite(at) || at <= 0) continue
-    entries.push([key, Math.trunc(at)])
-  }
-  entries.sort((left, right) => right[1] - left[1])
-  return Object.fromEntries(entries.slice(0, CLAUDE_MAX_RECEIPTS))
-}
-
-/**
- * Idle grace period. A session whose newest evidence is older than this and
- * whose last event was an assistant reply is treated as finished rather than
- * still running, which is how a session that ended without a `Stop` hook (or
- * while the plugin was closed) still resolves.
- */
-export const CLAUDE_IDLE_GRACE_MS = 45_000
-
-/**
- * How long a hook event stays authoritative without any follow-up.
- *
- * Hook evidence is exact but it is not self-expiring: a `Notification` fired
- * just before the user killed the terminal produces no `Stop` and no
- * `SessionEnd`. Without a ceiling the task would sit in "waiting for input"
- * forever and keep capturing the task cycle. Past the ceiling the transcript
- * plus the idle grace period decides instead.
- */
-export const CLAUDE_HOOK_EVIDENCE_MAX_AGE_MS = 30 * 60 * 1000
-
-function isHookEvidenceStale(observation: ClaudeSessionObservation, now: number): boolean {
-  if (!observation.hookEvent) return true
-  const at = observation.hookEventAt || 0
-  if (at <= 0) return false
-  return now - at > CLAUDE_HOOK_EVIDENCE_MAX_AGE_MS
-}
-
-/* ------------------------------------------------------------------ *
- * State resolution
- * ------------------------------------------------------------------ */
-
-export interface ClaudeResolvedState {
-  bucket: CodexTaskBucket
-  activityState: CodexTaskActivityState
-  archiveCapability: CodexArchiveCapability
-  /** True while the evidence is too weak to claim a terminal state. */
-  conservative: boolean
-}
-
-function isRunningHook(event: ClaudeHookEvent | null | undefined): boolean {
-  return event === 'prompt-submit' || event === 'pre-tool' || event === 'post-tool'
-    || event === 'session-start' || event === 'subagent-start' || event === 'subagent-stop'
-}
-
-/**
- * Resolves one session's companion state.
- *
- * Hook evidence outranks transcript shape because it is exact and current. When
- * no hook has been seen — a cold start, or a session that ran while the plugin
- * was closed — the transcript tail plus the idle grace period is used, and any
- * genuinely ambiguous case stays `ongoing` rather than inventing a terminal
- * state.
- */
-export function resolveClaudeSessionState(
-  observation: ClaudeSessionObservation,
-  now: number = Date.now(),
-  receipts: ClaudeReadReceipts = {}
-): ClaudeResolvedState {
-  const ongoing = (activityState: CodexTaskActivityState, conservative = false): ClaudeResolvedState => ({
-    bucket: 'ongoing',
-    activityState,
-    archiveCapability: 'blocked-active',
-    conservative
-  })
-  const event = observation.hookEvent ?? null
-
-  const stopped: ClaudeResolvedState = {
-    bucket: 'stopped',
-    activityState: 'stopped',
-    archiveCapability: 'blocked-stopped',
-    conservative: false
-  }
-  // A turn that finished normally before the CLI exited is a completed
-  // conversation, not a stopped one. `SessionEnd` follows `Stop` in ordinary
-  // usage, so letting it win would erase the completed-unread badge every time
-  // the user simply quits the terminal.
-  const endedAfterCompletedTurn = (observation.lastStopAt || 0) > 0
-    && (observation.lastStopAt || 0) >= (observation.lastPromptAt || 0)
-
-  if (isHookEvidenceStale(observation, now)) {
-    // Fall through to the transcript below rather than trusting a hook that has
-    // had no follow-up for long enough that the session may be gone.
-  } else if (event === 'permission-request') return ongoing('waiting-approval')
-  else if (event === 'notification') return ongoing('waiting-input')
-  else if (event === 'session-end') return endedAfterCompletedTurn ? completedState(observation, receipts) : stopped
-  else if (event === 'stop-failure') return stopped
-  else if (observation.processAlive === false && event !== 'stop') return stopped
-  else if (event === 'stop') return completedState(observation, receipts)
-  else if (isRunningHook(event)) return ongoing('active')
-
-  if (observation.processAlive === false) return stopped
-
-  // No usable hook evidence: fall back to transcript shape.
-  const idleFor = Math.max(0, now - (observation.updatedAt || 0))
-  const pendingTools = Math.max(0, observation.pendingToolUse || 0)
-  if (idleFor < CLAUDE_IDLE_GRACE_MS) return ongoing('active')
-  const assistantLast = (observation.lastAssistantAt || 0) >= (observation.lastPromptAt || 0)
-  if (!assistantLast) {
-    // The user's prompt is the newest thing in the transcript and nothing has
-    // answered it. That is unresolved, not finished.
-    return ongoing('ongoing', true)
-  }
-  if (pendingTools > 0) return ongoing('ongoing', true)
-  return completedState(observation, receipts)
-}
-
-function completedState(observation: ClaudeSessionObservation, receipts: ClaudeReadReceipts): ClaudeResolvedState {
-  const watermark = claudeCompletionRevision(observation)
-  const readAt = receipts[observation.sessionId]
-  const read = typeof readAt === 'number' && readAt >= watermark
-  return {
-    bucket: read ? 'completed' : 'completed-unread',
-    activityState: 'ongoing',
-    archiveCapability: 'allowed',
-    conservative: false
-  }
-}
-
-/** Privacy-safe completion watermark: a timestamp, never turn content. */
-export function claudeCompletionRevision(observation: ClaudeSessionObservation): number {
-  return Math.max(
-    observation.lastStopAt || 0,
-    observation.lastAssistantAt || 0,
-    observation.updatedAt || 0
-  )
-}
-
-/* ------------------------------------------------------------------ *
- * Project identity
- * ------------------------------------------------------------------ */
-
-/**
- * Claude Code encodes a project directory by replacing path separators and dots
- * with dashes, so the slug alone cannot be decoded back into a path. The bridge
- * therefore reports the real `cwd` from the transcript and this helper is only a
- * display fallback for a session whose transcript had no cwd yet.
- */
-export function claudeProjectNameFromSlug(slug: string): string {
-  const value = typeof slug === 'string' ? slug : ''
-  const trimmed = value.replace(/^-+/, '')
-  if (!trimmed) return 'Claude'
-  const segments = trimmed.split('-').filter(Boolean)
-  return segments.length ? segments[segments.length - 1] : trimmed
-}
-
-export function claudeProjectKey(observation: ClaudeSessionObservation): string {
-  const base = observation.cwd || observation.projectSlug || 'claude'
-  return companionTaskKey('claude', `project:${base}`)
-}
-
-function claudeProjectName(observation: ClaudeSessionObservation): string {
-  if (observation.cwd) {
-    const segments = observation.cwd.replace(/[\\/]+$/, '').split(/[\\/]/).filter(Boolean)
-    if (segments.length) return segments[segments.length - 1]
-  }
-  return claudeProjectNameFromSlug(observation.projectSlug)
-}
-
-/** Short, stable display name. Never derived from prompt or reply content. */
-export function claudeSessionDisplayName(observation: ClaudeSessionObservation): string {
-  const project = claudeProjectName(observation)
-  const suffix = (observation.sessionId || '').slice(0, 8)
-  const base = observation.isSidechain ? `${project} · 子会话` : project
-  return suffix ? `${base} ${suffix}` : base
-}
-
-/* ------------------------------------------------------------------ *
- * Task card projection
- * ------------------------------------------------------------------ */
-
-export interface ClaudeTaskProjectionOptions {
-  now?: number
-  receipts?: ClaudeReadReceipts
-  /** EyPc-local aliases keyed by companion task key. */
-  aliases?: Readonly<Record<string, string | undefined>>
-  hiddenKeys?: readonly string[]
-  localPinnedKeys?: readonly string[]
-}
-
-export function projectClaudeTaskCard(
-  observation: ClaudeSessionObservation,
-  options: ClaudeTaskProjectionOptions = {}
-): CodexTaskCard {
-  const now = Number.isFinite(options.now) ? options.now! : Date.now()
-  const state = resolveClaudeSessionState(observation, now, options.receipts || {})
-  const key = companionTaskKey('claude', observation.sessionId)
-  const originalName = claudeSessionDisplayName(observation)
-  const alias = options.aliases?.[key]
-  const hidden = (options.hiddenKeys || []).includes(key)
-  const locallyPinned = (options.localPinnedKeys || []).includes(key)
-  const projectName = claudeProjectName(observation)
-  return {
-    key,
-    actionAlias: observation.sessionId,
-    name: alias || originalName,
-    displayName: alias || originalName,
-    originalName,
-    ...(alias ? { alias } : {}),
-    bucket: state.bucket,
-    activityState: state.activityState,
-    archiveCapability: state.archiveCapability,
-    revisionAt: Math.max(observation.updatedAt || 0, observation.startedAt || 0),
-    completionRevision: state.bucket === 'completed' || state.bucket === 'completed-unread'
-      ? claudeCompletionRevision(observation)
-      : undefined,
-    unreadState: state.bucket === 'completed-unread' ? 'unread' : state.bucket === 'completed' ? 'read' : 'unknown',
-    lastQuestionAt: observation.lastPromptAt,
-    state: legacyPresentationState(state),
-    activeFlags: state.activityState === 'waiting-approval'
-      ? ['waitingOnApproval']
-      : state.activityState === 'waiting-input'
-        ? ['waitingOnUserInput']
-        : undefined,
-    updatedAt: observation.updatedAt || 0,
-    createdAt: observation.startedAt,
-    firstPromptAt: observation.startedAt,
-    lastTurnStartedAt: observation.lastPromptAt,
-    lastTurnCompletedAt: observation.lastAssistantAt,
-    source: 'current',
-    hasCurrentActivity: state.bucket === 'ongoing',
-    canArchive: state.archiveCapability === 'allowed',
-    projectKey: claudeProjectKey(observation),
-    projectName,
-    originalProjectName: projectName,
-    projectKind: 'project',
-    isHidden: hidden,
-    ...(locallyPinned ? { pinSource: 'local' as const } : {}),
-    provider: 'claude'
-  }
-}
-
-function legacyPresentationState(state: ClaudeResolvedState): CodexTaskCard['state'] {
-  if (state.activityState === 'waiting-approval') return 'waiting-approval'
-  if (state.activityState === 'waiting-input') return 'waiting-input'
-  if (state.bucket === 'stopped') return 'stopped'
-  if (state.bucket === 'completed-unread') return 'pending-review'
-  if (state.bucket === 'completed') return 'recent-activity'
-  return 'running'
-}
-
-/**
- * Projects a whole inventory. Side chats are folded into their parent when the
- * parent is present, mirroring the Codex Side Chat contract: a child's terminal
- * state can never close a parent that is still active elsewhere.
- */
-export function projectClaudeTaskCards(
-  observations: readonly ClaudeSessionObservation[],
-  options: ClaudeTaskProjectionOptions = {}
-): CodexTaskCard[] {
-  const parents = new Set(observations.filter((item) => !item.isSidechain).map((item) => item.sessionId))
-  const cards: CodexTaskCard[] = []
-  const childActivity = new Map<string, boolean>()
-  for (const observation of observations) {
-    if (observation.isSidechain && observation.parentSessionId && parents.has(observation.parentSessionId)) {
-      const state = resolveClaudeSessionState(observation, options.now, options.receipts || {})
-      if (state.bucket === 'ongoing') childActivity.set(observation.parentSessionId, true)
-      continue
-    }
-    cards.push(projectClaudeTaskCard(observation, options))
-  }
-  return cards.map((card) => {
-    const rawKey = card.actionAlias || ''
-    if (!childActivity.get(rawKey) || card.bucket === 'ongoing') return card
-    // A live side chat keeps its parent ongoing even after the parent's own
-    // latest turn resolved.
-    return {
-      ...card,
-      bucket: 'ongoing',
-      activityState: 'active',
-      archiveCapability: 'blocked-active',
-      canArchive: false,
-      hasCurrentActivity: true,
-      unreadState: 'unknown',
-      state: 'running'
-    }
-  })
-}
-
-/* ------------------------------------------------------------------ *
- * Quota
- * ------------------------------------------------------------------ */
+/** Pure quota and registration-readiness domain for the Claude provider. */
 
 export type ClaudeQuotaStatus = 'idle' | 'loading' | 'ok' | 'stale' | 'error'
+export type ClaudeQuotaWindowKind = 'short' | 'weekly' | 'other'
+export type ClaudeQuotaAccessStatus = 'idle' | 'ok' | 'credential-unavailable' | 'rate-limited' | 'failed'
+
+/** Privacy-safe App OAuth health; contains no account, path, task or token data. */
+export interface ClaudeQuotaAccessSnapshot {
+  status: ClaudeQuotaAccessStatus
+  lastAttemptAt: number
+  retryAt: number
+}
+
+export function emptyClaudeQuotaAccess(): ClaudeQuotaAccessSnapshot {
+  return { status: 'idle', lastAttemptAt: 0, retryAt: 0 }
+}
+
+export function normalizeClaudeQuotaAccess(value: unknown): ClaudeQuotaAccessSnapshot {
+  const source = value && typeof value === 'object' ? value as Partial<ClaudeQuotaAccessSnapshot> : {}
+  const status: ClaudeQuotaAccessStatus = ['idle', 'ok', 'credential-unavailable', 'rate-limited', 'failed'].includes(String(source.status))
+    ? source.status as ClaudeQuotaAccessStatus
+    : 'idle'
+  return {
+    status,
+    lastAttemptAt: Number.isFinite(source.lastAttemptAt) ? Math.max(0, Number(source.lastAttemptAt)) : 0,
+    retryAt: Number.isFinite(source.retryAt) ? Math.max(0, Number(source.retryAt)) : 0
+  }
+}
 
 export interface ClaudeQuotaWindow {
-  /** Remaining share of the window, 0–100, matching the Codex bucket contract. */
   remainingPercent: number
   resetAt: number | null
   windowMinutes: number
 }
 
-/** Which family a limit window belongs to. `other` is any future shape. */
-export type ClaudeQuotaWindowKind = 'short' | 'weekly' | 'other'
-
-/**
- * One limit window exactly as the payload declared it.
- *
- * The account can carry more windows than the two this plugin originally knew
- * about — a Max plan shows `5-hour limit`, `Weekly · all models` and a
- * per-model weekly side by side. Hardcoding two keys silently dropped the third
- * even though the status-line cache already held its bytes, so the payload's own
- * key is what identifies a window here and the display label is derived from it.
- * A model name we have never seen still renders correctly.
- */
+/** One limit window exactly as the upstream payload declared it. */
 export interface ClaudeQuotaWindowEntry extends ClaudeQuotaWindow {
-  /** Raw payload key, e.g. `five_hour`, `seven_day`, `seven_day_opus`. */
   key: string
   kind: ClaudeQuotaWindowKind
-  /** Qualifier parsed off the key, already display-cased. Empty for a plain window. */
   scope: string
-  /** Full product title: `5 小时限额` / `周限额` / `周限额 · Opus`. */
+  /** Upstream window discriminator, e.g. session / weekly_all / weekly_scoped. */
+  upstreamType?: string
   label: string
-  /** Dense row caption: `5h` / `周` / `周·Opus`. */
   shortLabel: string
+  /** Per-window provenance prevents the UI from inferring it from a merged snapshot. */
+  source?: ClaudeQuotaSnapshot['source']
+  updatedAt?: number
+  freshness?: 'fresh' | 'stale' | 'unknown'
 }
 
 export interface ClaudeQuotaSnapshot {
   version: 1
   status: ClaudeQuotaStatus
-  /** Every window the payload declared, in display order. Authoritative. */
   windows: ClaudeQuotaWindowEntry[]
-  /** 5-hour rolling window. Derived from `windows`, kept for existing consumers. */
   short: ClaudeQuotaWindow | null
-  /** Plain 7-day window (never a per-model one). Derived from `windows`. */
   weekly: ClaudeQuotaWindow | null
   source: 'statusline' | 'usage-api' | 'plan-history' | 'none'
   updatedAt: number
@@ -475,44 +67,21 @@ export function emptyClaudeQuota(): ClaudeQuotaSnapshot {
 
 function usedPercentToRemaining(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null
-  const used = Math.min(100, Math.max(0, value))
-  // Whole percent, matching the Codex bucket contract (`clampPercent`). The
-  // two chips sit on the same quota row and the water ball centre rounds
-  // anyway, so a one-decimal Claude reading rendered "17.6%" beside Codex's
-  // "18%" and above a ball centre showing "18" — three precisions for one
-  // fact. Codex's formatting is frozen by the byte-identical contract, so
-  // Claude is the side that aligns.
-  return Math.round(100 - used)
+  return Math.round(100 - Math.min(100, Math.max(0, value)))
 }
 
-/**
- * Normalizes `resets_at` from the official `rate_limits` payload.
- *
- * Claude Code documents epoch seconds. Milliseconds and ISO strings are
- * tolerated because the usage-API fallback already produced the latter and the
- * two sources must not disagree about the same field — the domain is the one
- * place both go through.
- */
+/** Normalizes epoch seconds, epoch milliseconds or an ISO reset timestamp. */
 export function claudeResetAtToMs(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
     return value > 1e11 ? Math.round(value) : Math.round(value * 1000)
   }
   if (typeof value === 'string' && value) {
     const parsed = Date.parse(value)
-    if (Number.isFinite(parsed) && parsed > 0) return parsed
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null
   }
   return null
 }
 
-/**
- * True once a window's own reset moment has passed.
- *
- * This is the exact, evidence-backed definition of a stale quota reading: the
- * window has rolled over, so its `used_percentage` no longer describes
- * anything real — the user actually has *more* headroom than the number shows.
- * It needs no invented age threshold, and it is the same fact that stops the
- * UI rendering a past reset moment as "今天 <过去的时刻>（0 分钟后）".
- */
 export function claudeQuotaWindowExpired(
   window: Pick<ClaudeQuotaWindow, 'resetAt'> | null | undefined,
   now: number
@@ -523,35 +92,28 @@ export function claudeQuotaWindowExpired(
 interface ClaudeRateLimitWindowInput {
   used_percentage?: unknown
   resets_at?: unknown
+  display_name?: unknown
+  scope?: unknown
+  upstream_type?: unknown
 }
 
 export interface ClaudeRateLimitsInput {
   five_hour?: ClaudeRateLimitWindowInput | null
   seven_day?: ClaudeRateLimitWindowInput | null
-  /** Any further window the account carries, e.g. a per-model weekly. */
   [key: string]: ClaudeRateLimitWindowInput | null | undefined
 }
 
-/**
- * Splits a payload key into its family and qualifier.
- *
- * Deliberately pattern-based rather than a lookup table: the qualifier is a
- * model name, and a table would silently drop the next model Anthropic ships —
- * which is exactly the failure this whole change is fixing.
- */
+function titleCaseScope(value: string): string {
+  const cleaned = value.replace(/[_-]+/g, ' ').trim()
+  return cleaned ? cleaned.charAt(0).toUpperCase() + cleaned.slice(1) : ''
+}
+
 function describeQuotaKey(key: string): { kind: ClaudeQuotaWindowKind; scope: string; windowMinutes: number } {
   const match = /^(five_hour|seven_day)(?:[_-](.+))?$/.exec(key)
   const scope = titleCaseScope(match?.[2] || '')
   if (match?.[1] === 'five_hour') return { kind: 'short', scope, windowMinutes: CLAUDE_SHORT_WINDOW_MINUTES }
   if (match?.[1] === 'seven_day') return { kind: 'weekly', scope, windowMinutes: CLAUDE_WEEKLY_WINDOW_MINUTES }
   return { kind: 'other', scope: titleCaseScope(key), windowMinutes: 0 }
-}
-
-/** `opus` → `Opus`, `all_models` → `All models`. Never invents a translation. */
-function titleCaseScope(value: string): string {
-  const cleaned = value.replace(/[_-]+/g, ' ').trim()
-  if (!cleaned) return ''
-  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1)
 }
 
 function quotaWindowLabels(kind: ClaudeQuotaWindowKind, scope: string): { label: string; shortLabel: string } {
@@ -561,7 +123,6 @@ function quotaWindowLabels(kind: ClaudeQuotaWindowKind, scope: string): { label:
   return { label: `${base} · ${scope}`, shortLabel: `${shortBase}·${scope}` }
 }
 
-/** Ordering: 5 hour, plain weekly, per-model weeklies, then anything unrecognized. */
 function quotaWindowRank(entry: ClaudeQuotaWindowEntry): number {
   if (entry.kind === 'short') return entry.scope ? 1 : 0
   if (entry.kind === 'weekly') return entry.scope ? 3 : 2
@@ -570,98 +131,101 @@ function quotaWindowRank(entry: ClaudeQuotaWindowEntry): number {
 
 function windowFrom(
   key: string,
-  input: ClaudeRateLimitWindowInput | null | undefined
+  input: ClaudeRateLimitWindowInput | null | undefined,
+  metadata: { source?: ClaudeQuotaSnapshot['source']; updatedAt?: number } = {}
 ): ClaudeQuotaWindowEntry | null {
   if (!input || typeof input !== 'object') return null
   const remainingPercent = usedPercentToRemaining(input.used_percentage)
   if (remainingPercent === null) return null
-  const { kind, scope, windowMinutes } = describeQuotaKey(key)
+  const inferred = describeQuotaKey(key)
+  const declaredScope = typeof input.display_name === 'string' && input.display_name.trim()
+    ? input.display_name.trim().slice(0, 80)
+    : typeof input.scope === 'string' && input.scope.trim()
+      ? input.scope.trim().slice(0, 80)
+      : ''
+  const description = { ...inferred, scope: declaredScope || inferred.scope }
   return {
     key,
-    kind,
-    scope,
-    ...quotaWindowLabels(kind, scope),
+    ...description,
+    upstreamType: typeof input.upstream_type === 'string' ? input.upstream_type.slice(0, 80) : undefined,
+    ...quotaWindowLabels(description.kind, description.scope),
     remainingPercent,
     resetAt: claudeResetAtToMs(input.resets_at),
-    windowMinutes
+    source: metadata.source || 'statusline',
+    updatedAt: Number.isFinite(metadata.updatedAt) ? metadata.updatedAt : 0,
+    freshness: 'unknown'
   }
 }
 
-/** The plain window of a family — never a per-model one. */
-function plainWindow(windows: readonly ClaudeQuotaWindowEntry[], kind: ClaudeQuotaWindowKind): ClaudeQuotaWindow | null {
-  return windows.find((item) => item.kind === kind && !item.scope) || null
+function plausibleResetAt(entry: ClaudeQuotaWindowEntry, now: number): boolean {
+  if (entry.resetAt === null) return false
+  const tolerance = 5 * 60 * 1000
+  const maximum = entry.windowMinutes > 0
+    ? entry.windowMinutes * 60 * 1000 + tolerance
+    : 366 * 24 * 60 * 60 * 1000
+  return entry.resetAt > now && entry.resetAt <= now + maximum
 }
 
-/**
- * Normalizes the official `rate_limits` object Claude Code hands to a status
- * line script. Each window may be independently absent, which is not an error —
- * it just means that window has not been reported yet this session.
- */
+function plainWindow(
+  windows: readonly ClaudeQuotaWindowEntry[],
+  kind: ClaudeQuotaWindowKind
+): ClaudeQuotaWindow | null {
+  return windows.find((entry) => entry.kind === kind && !entry.scope) || null
+}
+
+/** Keeps all declared windows; model names are data, never an allowlist. */
 export function normalizeClaudeQuota(
   input: ClaudeRateLimitsInput | null | undefined,
   options: {
     source?: ClaudeQuotaSnapshot['source']
     updatedAt?: number
     status?: ClaudeQuotaStatus
-    /** Wall clock used to decide whether a window has already reset. */
     now?: number
   } = {}
 ): ClaudeQuotaSnapshot {
-  const windows = (input && typeof input === 'object' ? Object.keys(input) : [])
-    .map((key) => windowFrom(key, input?.[key]))
-    .filter((entry): entry is ClaudeQuotaWindowEntry => entry !== null)
-    // Stable within a rank so two per-model weeklies keep payload order.
-    .sort((a, b) => quotaWindowRank(a) - quotaWindowRank(b))
-  const hasReading = windows.length > 0
-  // `stale` used to be reachable only when a read failed outright, so a reading
-  // that sat unrefreshed for hours still rendered as current. A window whose
-  // own reset moment has passed is expired by definition, which is the precise
-  // signal — no invented age threshold required.
+  const source = options.source || 'statusline'
+  const updatedAt = Number.isFinite(options.updatedAt) ? options.updatedAt! : 0
   const now = Number.isFinite(options.now) ? options.now! : null
-  const expired = now !== null
-    && hasReading
-    && windows.some((entry) => claudeQuotaWindowExpired(entry, now))
+  let invalidReset = false
+  const windows = (input && typeof input === 'object' ? Object.keys(input) : [])
+    .map((key) => windowFrom(key, input?.[key], { source, updatedAt }))
+    .filter((entry): entry is ClaudeQuotaWindowEntry => entry !== null)
+    .map((entry) => {
+      if (now === null) return entry
+      const valid = plausibleResetAt(entry, now)
+      if (!valid) invalidReset = true
+      return {
+        ...entry,
+        resetAt: valid ? entry.resetAt : null,
+        freshness: valid ? 'fresh' as const : 'stale' as const
+      }
+    })
+    .sort((left, right) => quotaWindowRank(left) - quotaWindowRank(right))
   return {
     version: 1,
-    status: options.status || (hasReading ? (expired ? 'stale' : 'ok') : 'idle'),
+    status: options.status || (windows.length ? (invalidReset ? 'stale' : 'ok') : 'idle'),
     windows,
     short: plainWindow(windows, 'short'),
     weekly: plainWindow(windows, 'weekly'),
-    source: hasReading ? (options.source || 'statusline') : 'none',
-    updatedAt: Number.isFinite(options.updatedAt) ? options.updatedAt! : 0
+    source: windows.length ? source : 'none',
+    updatedAt
   }
 }
 
-/* ------------------------------------------------------------------ *
- * Desktop app usage history (freshness source)
- * ------------------------------------------------------------------ */
-
-/**
- * One sample from the desktop app's own `plan-usage-history.json`.
- *
- * Verified on a real installation 2026-08-06: the app appends `{t, org, u:{fh,
- * sd}}` every ~5 minutes and its latest values are the ones its `Plan usage
- * limits` panel shows. It carries **no reset moments and no per-model window**,
- * so it is a freshness source, not a replacement for the status-line payload.
- */
+/** Latest two-window sample written by Claude App plan history. */
 export interface ClaudePlanUsageSample {
-  /** Epoch ms the app recorded the sample. */
   at: number
-  /** Used percentage of the 5-hour window, or null when absent. */
   fiveHourUsedPercent: number | null
-  /** Used percentage of the plain weekly window, or null when absent. */
   sevenDayUsedPercent: number | null
 }
 
-/**
- * Folds a fresher app sample into an existing reading.
- *
- * The two sources are complementary rather than ranked: the status line owns
- * reset moments and every window, the app history owns recency for the two
- * windows it keeps. So percentages move to the newer sample while each window's
- * `resetAt` and any per-model window survive untouched. An older sample changes
- * nothing — this must never walk a reading backwards.
- */
+function seedWindow(key: string, usedPercent: number | null, updatedAt: number): ClaudeQuotaWindowEntry | null {
+  return usedPercent === null
+    ? null
+    : windowFrom(key, { used_percentage: usedPercent }, { source: 'plan-history', updatedAt })
+}
+
+/** Refreshes plain percentages without erasing resets or scoped windows. */
 export function mergeClaudePlanUsage(
   quota: ClaudeQuotaSnapshot | null | undefined,
   sample: ClaudePlanUsageSample | null | undefined,
@@ -669,69 +233,125 @@ export function mergeClaudePlanUsage(
 ): ClaudeQuotaSnapshot {
   const base = quota || emptyClaudeQuota()
   if (!sample || !Number.isFinite(sample.at) || sample.at <= 0) return base
-  if (sample.at <= base.updatedAt) return base
   const byKind: Partial<Record<'short' | 'weekly', number | null>> = {
     short: sample.fiveHourUsedPercent,
     weekly: sample.sevenDayUsedPercent
   }
   const patched = base.windows.map((entry) => {
-    // Per-model windows are absent from the sample, so they keep their own
-    // reading rather than being silently aligned to the all-models number.
     if (entry.scope || entry.kind === 'other') return entry
-    const used = byKind[entry.kind]
-    const remaining = usedPercentToRemaining(used)
-    return remaining === null ? entry : { ...entry, remainingPercent: remaining }
+    if (sample.at <= (entry.updatedAt || 0)) return entry
+    const remainingPercent = usedPercentToRemaining(byKind[entry.kind])
+    return remainingPercent === null ? entry : {
+      ...entry,
+      remainingPercent,
+      source: 'plan-history',
+      updatedAt: sample.at,
+      freshness: entry.resetAt && entry.resetAt > now ? 'fresh' : 'stale'
+    }
   })
-  // A first reading with no status-line payload yet: the sample alone is worth
-  // showing, minus the reset moments it does not carry.
-  const seeded = patched.length ? patched : ([
-    seedWindow('five_hour', sample.fiveHourUsedPercent),
-    seedWindow('seven_day', sample.sevenDayUsedPercent)
-  ].filter((entry): entry is ClaudeQuotaWindowEntry => entry !== null))
-  if (!seeded.length) return base
-  const expired = seeded.some((entry) => claudeQuotaWindowExpired(entry, now))
+  const hasPlainShort = patched.some((entry) => entry.kind === 'short' && !entry.scope)
+  const hasPlainWeekly = patched.some((entry) => entry.kind === 'weekly' && !entry.scope)
+  const windows = [
+    ...patched,
+    ...(hasPlainShort ? [] : [seedWindow('five_hour', sample.fiveHourUsedPercent, sample.at)]),
+    ...(hasPlainWeekly ? [] : [seedWindow('seven_day', sample.sevenDayUsedPercent, sample.at)])
+  ]
+    .filter((entry): entry is ClaudeQuotaWindowEntry => entry !== null)
+    .sort((left, right) => quotaWindowRank(left) - quotaWindowRank(right))
+  if (!windows.length) return base
   return {
     version: 1,
-    status: expired ? 'stale' : 'ok',
-    windows: seeded,
-    short: plainWindow(seeded, 'short'),
-    weekly: plainWindow(seeded, 'weekly'),
+    status: windows.some((entry) => !entry.resetAt || claudeQuotaWindowExpired(entry, now)) ? 'stale' : 'ok',
+    windows,
+    short: plainWindow(windows, 'short'),
+    weekly: plainWindow(windows, 'weekly'),
     source: patched.length ? base.source : 'plan-history',
-    updatedAt: sample.at
+    updatedAt: Math.max(base.updatedAt, sample.at)
   }
 }
 
-function seedWindow(key: string, usedPercent: number | null): ClaudeQuotaWindowEntry | null {
-  return usedPercent === null ? null : windowFrom(key, { used_percentage: usedPercent })
+/** A two-window sample cannot prove that no scoped weekly window exists. */
+export function quotaNeedsClaudeSupplement(
+  quota: ClaudeQuotaSnapshot | null | undefined,
+  now: number = Date.now()
+): boolean {
+  return !quota?.windows.length
+    || !quota.short
+    || !quota.weekly
+    || quota.short.resetAt === null
+    || quota.short.resetAt <= now
+    || quota.weekly.resetAt === null
+    || quota.weekly.resetAt <= now
+    || !quota.windows.some((entry) => Boolean(entry.scope))
+    || quota.windows.some((entry) => Boolean(entry.scope) && (entry.resetAt === null || entry.resetAt <= now))
 }
 
-/** Marks a previously good reading as stale instead of discarding it. */
-export function staleClaudeQuota(previous: ClaudeQuotaSnapshot | null | undefined): ClaudeQuotaSnapshot {
-  if (!previous || !previous.windows.length) return { ...emptyClaudeQuota(), status: 'stale' }
-  return { ...previous, status: 'stale' }
+/** Non-destructive, key-based merge of a bounded complete-source supplement. */
+export function mergeClaudeQuotaWindows(
+  baseInput: ClaudeQuotaSnapshot | null | undefined,
+  incoming: ClaudeQuotaSnapshot | null | undefined,
+  now: number = Date.now()
+): ClaudeQuotaSnapshot {
+  const base = baseInput || emptyClaudeQuota()
+  if (!incoming?.windows.length) return base
+  const byKey = new Map(base.windows.map((entry) => [entry.key, entry]))
+  for (const entry of incoming.windows) {
+    const previous = byKey.get(entry.key)
+    const incomingWindowAt = entry.updatedAt || incoming.updatedAt
+    const previousWindowAt = previous?.updatedAt || base.updatedAt
+    if (!previous || incomingWindowAt >= previousWindowAt) {
+      byKey.set(entry.key, {
+        ...entry,
+        // A percentage-only source may advance usage, but it cannot erase a
+        // still-valid reset moment from a complete earlier source.
+        resetAt: entry.resetAt ?? (previous?.resetAt && previous.resetAt > now ? previous.resetAt : null),
+        freshness: entry.resetAt || previous?.resetAt && previous.resetAt > now ? 'fresh' : 'stale'
+      })
+    }
+  }
+  const windows = [...byKey.values()]
+    .map((entry) => entry.resetAt !== null && entry.resetAt <= now
+      ? { ...entry, resetAt: null, freshness: 'stale' as const }
+      : entry)
+    .sort((left, right) => quotaWindowRank(left) - quotaWindowRank(right))
+  return {
+    version: 1,
+    status: windows.some((entry) => !entry.resetAt || claudeQuotaWindowExpired(entry, now)) ? 'stale' : 'ok',
+    windows,
+    short: plainWindow(windows, 'short'),
+    weekly: plainWindow(windows, 'weekly'),
+    source: incoming.updatedAt >= base.updatedAt || base.source === 'none' ? incoming.source : base.source,
+    updatedAt: Math.max(base.updatedAt, incoming.updatedAt)
+  }
 }
 
-/** Primary reading for the water ball centre percentage. */
+export function staleClaudeQuota(
+  previous: ClaudeQuotaSnapshot | null | undefined,
+  now: number = Date.now()
+): ClaudeQuotaSnapshot {
+  if (!previous?.windows.length) return { ...emptyClaudeQuota(), status: 'stale' }
+  const windows = previous.windows.map((entry) => entry.resetAt !== null && entry.resetAt <= now
+    ? { ...entry, resetAt: null, freshness: 'stale' as const }
+    : entry)
+  return {
+    ...previous,
+    status: 'stale',
+    windows,
+    short: plainWindow(windows, 'short'),
+    weekly: plainWindow(windows, 'weekly')
+  }
+}
+
 export function claudePrimaryQuotaWindow(quota: ClaudeQuotaSnapshot | null | undefined): ClaudeQuotaWindow | null {
-  if (!quota) return null
-  // The plain windows keep priority; the last fallback only matters for an
-  // account whose payload carries a scoped window but neither plain one.
-  return quota.short || quota.weekly || quota.windows[0] || null
+  return quota?.short || quota?.weekly || quota?.windows[0] || null
 }
-
-/* ------------------------------------------------------------------ *
- * Readiness
- * ------------------------------------------------------------------ */
 
 export interface ClaudeEnvironmentSnapshot {
   version: 1
-  /** CLI binary was located. */
   installed: boolean
-  /** `~/.claude` exists and is readable. */
   homeReady: boolean
   authenticated: boolean
   cliVersion: string
-  /** Hook bridge registration state. */
   hooks: 'installed' | 'missing' | 'outdated' | 'unknown'
   statusline: 'installed' | 'missing' | 'unknown'
   checkedAt: number
@@ -750,40 +370,18 @@ export function emptyClaudeEnvironment(): ClaudeEnvironmentSnapshot {
   }
 }
 
-/**
- * Readiness describes whether Claude *state* can be read, which is not the same
- * question as whether the CLI binary can be found.
- *
- * Task cards come from the transcripts under `~/.claude/projects` and the quota
- * comes from the status line cache; neither needs the executable. The binary is
- * required for exactly one thing — resuming a session from a card — so a Claude
- * Code installed through a Node version manager the probe cannot see must
- * degrade that single capability instead of silently emptying the whole lane.
- * `installed: false` therefore only means "not installed at all" when the data
- * directory is missing too.
- */
+/** App inventory can remain readable when CLI registration is degraded. */
 export function claudeReadinessReason(
   environment: ClaudeEnvironmentSnapshot | null | undefined
 ): 'ready' | 'not-installed' | 'not-authenticated' | 'degraded' | 'unknown' {
   if (!environment) return 'unknown'
   if (!environment.installed && !environment.homeReady) return 'not-installed'
   if (!environment.authenticated) return 'not-authenticated'
-  if (!environment.homeReady) return 'degraded'
-  if (!environment.installed) return 'degraded'
-  if (environment.hooks !== 'installed') return 'degraded'
+  if (!environment.homeReady || !environment.installed || environment.hooks !== 'installed') return 'degraded'
   return 'ready'
 }
 
 export function isClaudeAvailable(environment: ClaudeEnvironmentSnapshot | null | undefined): boolean {
   const reason = claudeReadinessReason(environment)
   return reason === 'ready' || reason === 'degraded'
-}
-
-/**
- * Whether a card can hand a session back to Claude Code. This is the one
- * capability the CLI binary actually gates, kept separate from readiness so a
- * missing binary never reaches the reading paths.
- */
-export function canOpenClaudeTask(environment: ClaudeEnvironmentSnapshot | null | undefined): boolean {
-  return environment?.installed === true
 }

@@ -5,7 +5,7 @@ import * as pathModule from 'node:path'
 import { resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import vm from 'node:vm'
-import { UTOOLS_PRELOAD_ASSETS, UTOOLS_PRELOAD_MODULE_ASSETS } from './utools-preload-assets.mjs'
+import { UTOOLS_PRELOAD_ASSETS, UTOOLS_PRELOAD_MODULE_ASSETS, UTOOLS_PRELOAD_MODULE_GROUPS } from './utools-preload-assets.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const distDir = resolve(root, 'dist')
@@ -53,6 +53,18 @@ for (const asset of UTOOLS_PRELOAD_MODULE_ASSETS) {
   preloadModuleSources.set(asset.dist, canonical)
 }
 
+for (const group of UTOOLS_PRELOAD_MODULE_GROUPS) {
+  const expected = [...group.files].sort()
+  for (const [label, directory] of [
+    ['canonical', resolve(root, 'preload', group.directory)],
+    ['public', resolve(root, 'public', group.directory)],
+    ['dist', resolve(distDir, group.directory)]
+  ]) {
+    const actual = readdirSync(directory).filter((file) => file.endsWith('.cjs')).sort()
+    assert(JSON.stringify(actual) === JSON.stringify(expected), `${label}/${group.directory} must contain exactly the managed module set`)
+  }
+}
+
 const canonicalMainPreload = preloadSources.main
 const macosWindowModuleSource = preloadModuleSources.get('windows/macos.cjs') || ''
 const win32WindowModuleSource = preloadModuleSources.get('windows/win32.cjs') || ''
@@ -85,24 +97,20 @@ const claudeModuleProbe = claudeModule.createClaudeBridge({
   os: { homedir: () => '/tmp' },
   dataDirectory: '/tmp/eypc-claude-validation'
 })
-for (const method of ['inspect', 'readSnapshot', 'readQuotaFallback', 'readDesktopSnapshot', 'readPlanUsage', 'readDesktopUnread', 'watchDesktopSessions', 'watchEvents', 'install', 'uninstall', 'openTask', 'close']) {
+for (const method of ['inspect', 'readSnapshot', 'readQuotaFallback', 'readCodeSnapshot', 'readCodeStateSnapshot', 'readPlanUsage', 'readCodeUnread', 'readAppPresence', 'watchCodeSessions', 'watchCodeState', 'watchCodeUnread', 'watchEvents', 'install', 'uninstall', 'openTask', 'close']) {
   assert(typeof claudeModuleProbe[method] === 'function', `claude preload module must expose stable ${method}`)
 }
 assert(claudeModuleProbe.readSnapshot().sessions.length === 0, 'claude module must degrade to an empty inventory without a readable home')
-assert(claudeModuleProbe.readDesktopSnapshot().sessions.length === 0, 'claude desktop reader must degrade to an empty inventory without a readable root')
+assert(claudeModuleProbe.readCodeSnapshot().sessions.length === 0, 'claude Code reader must degrade to an empty inventory without a readable root')
+const emptyClaudeStateDelta = claudeModuleProbe.readCodeStateSnapshot()
+assert(Array.isArray(emptyClaudeStateDelta.sessions) && Number.isInteger(emptyClaudeStateDelta.generation), 'claude state V2 delta must expose sessions and generation')
+assert(emptyClaudeStateDelta.freshness && Number.isFinite(emptyClaudeStateDelta.freshness.readAt), 'claude state V2 delta must expose freshness')
 assert(claudeModuleProbe.readPlanUsage() === null, 'claude plan-usage reader must degrade to null without a readable history file')
 // `null` and `{ids: []}` are different claims: the second one would be spent as
 // "the user has read everything", so an unreadable store must never produce it.
-assert(claudeModuleProbe.readDesktopUnread() === null, 'claude unread reader must degrade to null, never to an empty set')
-const claudeDesktopSource = preloadModuleSources.get('claude/desktop.cjs') || ''
-// Deny-list every mutating fs call, not just the three that happened to be
-// used. The previous three-literal check would have waved through
-// `appendFileSync`, `mkdirSync`, `rmSync`, `truncateSync` or a write-mode
-// `createWriteStream` (P5 review).
-// Match call sites, not prose: the module's own comments legitimately discuss
-// rename and archive rewrites, so a bare substring test would fail on its
-// documentation instead of on its behaviour.
-const claudeDesktopCode = claudeDesktopSource
+assert(await claudeModuleProbe.readCodeUnread() === null, 'claude unread reader must degrade to null, never to an empty set')
+const claudeCodeSource = preloadModuleSources.get('claude/code-sessions.cjs') || ''
+const claudeCode = claudeCodeSource
   .replace(/\/\*[\s\S]*?\*\//g, ' ')
   .replace(/(^|[^:])\/\/.*$/gm, '$1')
 for (const forbidden of [
@@ -111,9 +119,24 @@ for (const forbidden of [
   'truncateSync', 'ftruncateSync', 'chmodSync', 'chownSync', 'utimesSync', 'createWriteStream', 'writeSync'
 ]) {
   const callSite = new RegExp(`\\b${forbidden}\\s*\\(`)
-  assert(!callSite.test(claudeDesktopCode), `claude desktop reader must stay strictly read-only (found ${forbidden})`)
+  assert(!callSite.test(claudeCode), `claude Code inventory must stay strictly read-only (found ${forbidden})`)
 }
-assert(claudeDesktopSource.includes('systemPrompt'), 'claude desktop reader must document the metadata whitelist against content-bearing fields')
+const claudeUnreadSource = preloadModuleSources.get('claude/unread.cjs') || ''
+for (const marker of ['mkdtempSync', 'chmodSync', 'cpSync', 'rmSync', "app.asar', 'node_modules', 'leveldown", 'createIfMissing: false']) {
+  assert(claudeUnreadSource.includes(marker), `claude unread snapshot gate is missing: ${marker}`)
+}
+assert(!claudeUnreadSource.includes("require('leveldown')"), 'claude unread must not package a differently signed native addon')
+assert(claudeUnreadSource.includes('keyText === UNREAD_LEVELDB_KEY'), 'claude unread must match the exact origin-scoped LevelDB key')
+const claudeAppStateSource = preloadModuleSources.get('claude/app-state.cjs') || ''
+for (const marker of ['SUPPORTED_APP_VERSIONS', 'parseAppStateLine', 'permission-response', 'LOG_RECOVERY_POLL_MS']) {
+  assert(claudeAppStateSource.includes(marker), `claude App state compatibility gate is missing: ${marker}`)
+}
+const claudeAppState = claudeAppStateSource
+  .replace(/\/\*[\s\S]*?\*\//g, ' ')
+  .replace(/(^|[^:])\/\/.*$/gm, '$1')
+for (const forbidden of ['writeFileSync', 'appendFileSync', 'renameSync', 'unlinkSync', 'rmSync', 'mkdirSync', 'createWriteStream']) {
+  assert(!new RegExp(`\\b${forbidden}\\s*\\(`).test(claudeAppState), `claude App state log reader must stay read-only (found ${forbidden})`)
+}
 const claudeSettingsSource = preloadModuleSources.get('claude/settings.cjs') || ''
 assert(claudeSettingsSource.includes('eypc-claude-companion'), 'claude settings module must carry the uninstall marker')
 const claudeScriptsSource = preloadModuleSources.get('claude/scripts.cjs') || ''
@@ -125,7 +148,9 @@ assert(
   'registered claude command must be shell quoted'
 )
 const claudeQuotaSource = preloadModuleSources.get('claude/quota.cjs') || ''
-assert(claudeQuotaSource.includes('settings.enabled !== true'), 'claude quota fallback must stay opt-in')
+for (const marker of ['createNodeHttpsFetch', 'FAILURE_RETRY_DELAYS_MS', 'FAILURE_COOLDOWN_MS', 'nextAllowedAt']) {
+  assert(claudeQuotaSource.includes(marker), `claude automatic quota supplement gate is missing: ${marker}`)
+}
 assert(!claudeQuotaSource.includes('writeFileSync'), 'claude quota fallback must never persist a credential')
 
 const indexHtml = readFileSync(resolve(distDir, 'index.html'), 'utf8')
@@ -249,16 +274,21 @@ for (const method of Object.keys(claudeModuleProbe)) {
     `claude bridge port ${method} exists but never reached window.eypcPlatform.claude`
   )
 }
-assert(typeof sandbox.window.eypcPlatform.claude.readDesktopSnapshot === 'function', 'preload must expose claude.readDesktopSnapshot')
-assert(Array.isArray(sandbox.window.eypcPlatform.claude.readDesktopSnapshot({}).sessions), 'claude.readDesktopSnapshot must always return a sessions array')
+assert(typeof sandbox.window.eypcPlatform.claude.readCodeSnapshot === 'function', 'preload must expose claude.readCodeSnapshot')
+assert(Array.isArray(sandbox.window.eypcPlatform.claude.readCodeSnapshot({}).sessions), 'claude.readCodeSnapshot must always return a sessions array')
+assert(typeof sandbox.window.eypcPlatform.claude.readCodeStateSnapshot === 'function', 'preload must expose claude.readCodeStateSnapshot')
+assert(Number.isInteger(sandbox.window.eypcPlatform.claude.readCodeStateSnapshot({}).generation), 'claude.readCodeStateSnapshot must expose V2 generation')
 assert(typeof sandbox.window.eypcPlatform.claude.readPlanUsage === 'function', 'preload must expose claude.readPlanUsage')
 assert(sandbox.window.eypcPlatform.claude.readPlanUsage() === null, 'claude.readPlanUsage must degrade to null without a readable history file')
-assert(typeof sandbox.window.eypcPlatform.claude.watchDesktopSessions === 'function', 'preload must expose claude.watchDesktopSessions')
+assert(typeof sandbox.window.eypcPlatform.claude.watchCodeSessions === 'function', 'preload must expose claude.watchCodeSessions')
+assert(typeof sandbox.window.eypcPlatform.claude.watchCodeState === 'function', 'preload must expose claude.watchCodeState')
+assert(typeof sandbox.window.eypcPlatform.claude.watchCodeUnread === 'function', 'preload must expose claude.watchCodeUnread')
 assert(typeof sandbox.window.eypcPlatform.claude.watchEvents === 'function', 'preload must expose claude.watchEvents')
 assert(typeof sandbox.window.eypcPlatform.claude.watchEvents(() => {}) === 'function', 'claude.watchEvents must always return a disposer')
 assert(typeof sandbox.window.eypcPlatform.claude.install === 'function', 'preload must expose claude.install')
 assert(typeof sandbox.window.eypcPlatform.claude.uninstall === 'function', 'preload must expose claude.uninstall')
 assert(typeof sandbox.window.eypcPlatform.claude.openTask === 'function', 'preload must expose claude.openTask')
+assert(typeof sandbox.window.eypcPlatform.claude.readAppPresence === 'function', 'preload must expose claude.readAppPresence')
 assert(typeof sandbox.window.eypcPlatform.claude.diagnostics === 'function', 'preload must expose claude.diagnostics')
 assert(sandbox.window.eypcPlatform.claude.diagnostics().loaded === true, 'claude bridge must load from the packaged module')
 assert(typeof sandbox.window.eypcPlatform.float.sync === 'function', 'preload must expose float.sync')

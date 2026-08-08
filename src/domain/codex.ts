@@ -644,10 +644,11 @@ export interface CodexSettings {
    */
   providers: CompanionProviderEnablement
   /**
-   * Opt-in fallback for Claude quota during idle periods. It reads an OAuth
-   * token (prompting for keychain access on macOS) and calls an endpoint
-   * Anthropic does not document, so it stays off unless the user asks for it.
+   * Explicit permission to read the current Claude App OAuth cache for quota.
+   * New profiles default off. The legacy fallback flag is migrated below.
    */
+  claudeAppQuotaAccess: boolean
+  /** @deprecated One-release storage compatibility for pre-access-gate profiles. */
   claudeQuotaFallback: boolean
   compactFields: CodexCompactField[]
   expandedFields: CodexExpandedField[]
@@ -673,14 +674,6 @@ export interface CodexLocalPin {
 export interface CodexState {
   settings: CodexSettings
   receipts: CodexThreadReceipt[]
-  /** EyPc-owned read receipts for providers with no native read state. */
-  claudeReceipts?: Record<string, number>
-  /**
-   * Last observed unread set of the Claude desktop app, used only to detect the
-   * moment a session leaves it. Absent means "no baseline yet", which produces
-   * no receipts at all — see `resolveClaudeDesktopReadTransitions`.
-   */
-  claudeDesktopUnread?: string[]
   firstPromptTimes: CodexFirstPromptTimeCacheEntry[]
   lastTaskScanAt: number
   cachedQuota: CodexQuotaSnapshotV1
@@ -745,6 +738,8 @@ export interface CodexTaskCard {
    * directly; the default is always `codex`.
    */
   provider?: CompanionProviderId
+  /** Claude Code's exact phase; absent for Codex and legacy cards. */
+  claudePhase?: 'running' | 'waiting-approval' | 'waiting-input' | 'completed' | 'stopped' | 'unknown'
 }
 
 export interface CodexProjectCard {
@@ -761,6 +756,11 @@ export interface CodexProjectCard {
   pinSource?: 'native' | 'local'
   collapsed: boolean
   tasks: CodexTaskCard[]
+  /** Providers represented by this EyPc projection; absent means legacy Codex-only. */
+  providers?: CompanionProviderId[]
+  providerTaskCounts?: Partial<Record<CompanionProviderId, number>>
+  /** True for Claude-only and cross-provider projects synthesized by EyPc. */
+  virtual?: boolean
 }
 
 export type CodexProjectEntry =
@@ -848,7 +848,6 @@ export interface ConversationProjection {
  */
 const FOREIGN_KEY = /^[a-z]{2,16}:[A-Za-z0-9._:-]{1,128}$/
 const RECEIPT_KEY = /^(?:[a-f0-9]{16,64}|[a-z]{2,16}:[A-Za-z0-9._:-]{1,128})$/
-const DESKTOP_SESSION_ID = /^local_[0-9a-f][0-9a-f-]*$/i
 const PROJECT_KEY = /^(?:[a-f0-9]{16,64}|chats|[a-z]{2,16}:[A-Za-z0-9._:/\\-]{1,256})$/
 const COMPACT_FIELDS: CodexCompactField[] = ['short', 'weekly', 'tasks']
 const EXPANDED_FIELDS: CodexExpandedField[] = ['plan', 'short', 'weekly', 'reset', 'config', 'tasks', 'updatedAt']
@@ -1082,22 +1081,6 @@ export function normalizeCodexFirstPromptTimes(value: unknown): CodexFirstPrompt
   return [...byKey.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 100)
 }
 
-/**
- * Persisted baseline of the Claude desktop app's unread set.
- *
- * `undefined` and `[]` are different states and both have to survive a round
- * trip: absent means "no baseline", which suppresses read receipts entirely,
- * while empty means "the app was observed with nothing unread".
- */
-function normalizeClaudeDesktopUnreadBaseline(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined
-  return [...new Set(value
-    .filter((item): item is string => typeof item === 'string')
-    .map((item) => item.trim())
-    .filter((item) => DESKTOP_SESSION_ID.test(item)))]
-    .slice(0, 500)
-}
-
 function normalizeAnonymousKeys(value: unknown, maximum: number, projectKeys = false): string[] {
   if (!Array.isArray(value)) return []
   const pattern = projectKeys ? PROJECT_KEY : RECEIPT_KEY
@@ -1244,6 +1227,7 @@ export function defaultCodexSettings(): CodexSettings {
     dynamicTaskWindowHours: CODEX_DEFAULT_DYNAMIC_TASK_WINDOW_HOURS,
     actionDefaultProjectKey: '',
     providers: { codex: true, claude: false },
+    claudeAppQuotaAccess: false,
     claudeQuotaFallback: false,
     compactFields: [...COMPACT_FIELDS],
     expandedFields: [...EXPANDED_FIELDS],
@@ -1302,6 +1286,7 @@ export function normalizeCodexSettings(value: unknown): CodexSettings {
       ? source.actionDefaultProjectKey.trim().slice(0, 64)
       : '',
     providers: normalizeCompanionEnablement(source.providers),
+    claudeAppQuotaAccess: source.claudeAppQuotaAccess === true || source.claudeQuotaFallback === true,
     claudeQuotaFallback: source.claudeQuotaFallback === true,
     compactFields: orderedFields(source.compactFields, COMPACT_FIELDS, fallback.compactFields),
     expandedFields: orderedFields(source.expandedFields, EXPANDED_FIELDS, fallback.expandedFields),
@@ -1467,8 +1452,6 @@ export function normalizeCodexState(value: unknown): CodexState {
   return {
     settings: normalizeCodexSettings(source.settings),
     receipts: normalizeCodexReceipts(source.receipts),
-    claudeReceipts: normalizeCompanionReadReceipts(source.claudeReceipts),
-    claudeDesktopUnread: normalizeClaudeDesktopUnreadBaseline(source.claudeDesktopUnread),
     firstPromptTimes: normalizeCodexFirstPromptTimes(source.firstPromptTimes),
     lastTaskScanAt: numberValue(source.lastTaskScanAt, 0),
     cachedQuota: normalizeCodexQuota(source.cachedQuota),
@@ -1579,35 +1562,17 @@ export function compareConversationTasks(a: CodexTaskCard, b: CodexTaskCard): nu
   return a.key.localeCompare(b.key)
 }
 
+/** True for a task key owned by a provider other than Codex. */
+export function isForeignCompanionKey(key: string): boolean {
+  return FOREIGN_KEY.test(typeof key === 'string' ? key : '')
+}
+
 /**
  * Display order for Codex task cards. The comparator itself is owned by
  * [companionProvider.ts](companionProvider.ts#L1) so display order and the
  * provider-grouped cycle order can never drift apart; this is the Codex-typed
  * entry point onto it.
  */
-/**
- * Bounded, numeric-only read receipts for providers that have no native read
- * state. Kept here rather than in the provider module so persistence
- * normalization stays with the rest of the state contract.
- */
-export function normalizeCompanionReadReceipts(value: unknown): Record<string, number> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  const entries: Array<[string, number]> = []
-  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
-    if (!RECEIPT_KEY.test(key)) continue
-    const at = typeof raw === 'number' ? raw : Number(raw)
-    if (!Number.isFinite(at) || at <= 0) continue
-    entries.push([key, Math.trunc(at)])
-  }
-  entries.sort((left, right) => right[1] - left[1])
-  return Object.fromEntries(entries.slice(0, 500))
-}
-
-/** True for a task key owned by a provider other than Codex. */
-export function isForeignCompanionKey(key: string): boolean {
-  return FOREIGN_KEY.test(typeof key === 'string' ? key : '')
-}
-
 export function orderCodexTasksForDisplay(tasks: CodexTaskCard[], pinnedTaskKeys: string[] = []): CodexTaskCard[] {
   return orderCompanionTasksForDisplay(tasks, pinnedTaskKeys)
 }

@@ -83,6 +83,13 @@ describe('Codex domain', () => {
     })
   })
 
+  it('defaults Claude App quota access off and migrates an existing fallback opt-in', () => {
+    expect(defaultCodexSettings().claudeAppQuotaAccess).toBe(false)
+    expect(normalizeCodexSettings({}).claudeAppQuotaAccess).toBe(false)
+    expect(normalizeCodexSettings({ claudeQuotaFallback: true }).claudeAppQuotaAccess).toBe(true)
+    expect(normalizeCodexSettings({ claudeAppQuotaAccess: true, claudeQuotaFallback: false }).claudeAppQuotaAccess).toBe(true)
+  })
+
   it('defaults the dynamic task window to 24 hours and bounds persisted edits', () => {
     expect(defaultCodexSettings().dynamicTaskWindowHours).toBe(24)
     expect(normalizeCodexSettings({ dynamicTaskWindowHours: 0 }).dynamicTaskWindowHours).toBe(1)

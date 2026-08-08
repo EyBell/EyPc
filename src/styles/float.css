@@ -705,6 +705,9 @@ button { font: inherit; }
    （"读数…可能已过期"）, per the accessibility preference. */
 .float-quota-chip.is-stale { opacity: .55; }
 .float-quota-chip.is-stale strong { color: var(--codex-muted); }
+.float-quota-chip.is-warning:not(.is-stale) strong { color: var(--codex-warning); }
+.float-quota-chip.is-danger:not(.is-stale) strong { color: var(--codex-critical); }
+.float-quota-group.provider-claude .float-quota-chip:focus-visible { border-radius: 4px; outline: 2px solid var(--codex-focus); outline-offset: 2px; }
 /* Row-level provider marker.
    It rides the existing bottom metadata line rather than adding an element of
    its own: the dense list's row height and learned spatial rhythm must not
@@ -1345,4 +1348,94 @@ button { font: inherit; }
 @media (forced-colors: active) {
   .quick-jump-badge,
   .quick-jump-badge.active { border-color: ButtonText; background: Canvas; color: CanvasText; forced-color-adjust: auto; }
+}
+
+/* Provider-aware project controls and cards. Ownership is always written in
+   text; the 8/12% tints are a secondary scanning aid and keep row height fixed. */
+.float-project-provider-tabs {
+  display: grid;
+  min-height: 30px;
+  flex: none;
+  grid-template-columns: repeat(3, minmax(0, auto)) minmax(72px, 1fr);
+  align-items: center;
+  gap: 3px;
+  margin: 0 9px 6px;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--codex-border) 58%, transparent);
+  border-radius: 9px;
+  background: var(--codex-surface-raised);
+}
+.float-project-provider-tabs button {
+  min-height: 24px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--codex-muted);
+  font-size: 9px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.float-project-provider-tabs button:hover { border-color: var(--codex-border); color: var(--codex-fg); }
+.float-project-provider-tabs button.active { border-color: var(--codex-focus); background: var(--codex-surface); color: var(--codex-fg); }
+.float-project-provider-tabs button:focus-visible { outline: 2px solid var(--codex-focus); outline-offset: 1px; }
+.float-project-provider-tabs > span { overflow: hidden; color: var(--codex-muted); font-size: 8px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+
+.float-task-row.provider-codex:not(.selected),
+.float-project-row.provider-codex { background: color-mix(in srgb, var(--codex-quota-codex) 8%, var(--codex-surface-raised)); }
+.float-task-row.provider-claude:not(.selected),
+.float-project-row.provider-claude { background: color-mix(in srgb, var(--codex-quota-claude) 8%, var(--codex-surface-raised)); }
+.float-project-row.provider-shared { background: linear-gradient(90deg, color-mix(in srgb, var(--codex-quota-codex) 8%, var(--codex-surface-raised)), color-mix(in srgb, var(--codex-quota-claude) 8%, var(--codex-surface-raised))); }
+.float-task-row.provider-codex:not(.selected):hover,
+.float-task-row.provider-codex:not(.selected):focus-visible,
+.float-task-row.provider-codex:not(.selected):focus-within,
+.float-project-row.provider-codex:hover,
+.float-project-row.provider-codex:focus-visible { background: color-mix(in srgb, var(--codex-quota-codex) 12%, var(--codex-surface-raised)); }
+.float-task-row.provider-claude:not(.selected):hover,
+.float-task-row.provider-claude:not(.selected):focus-visible,
+.float-task-row.provider-claude:not(.selected):focus-within,
+.float-project-row.provider-claude:hover,
+.float-project-row.provider-claude:focus-visible { background: color-mix(in srgb, var(--codex-quota-claude) 12%, var(--codex-surface-raised)); }
+.float-project-row.provider-shared:hover,
+.float-project-row.provider-shared:focus-visible { background: linear-gradient(90deg, color-mix(in srgb, var(--codex-quota-codex) 12%, var(--codex-surface-raised)), color-mix(in srgb, var(--codex-quota-claude) 12%, var(--codex-surface-raised))); }
+
+.task-provider-marker.provider-codex { border-color: color-mix(in srgb, var(--codex-quota-codex) 58%, transparent); color: var(--codex-quota-codex); }
+.task-provider-marker.provider-claude { border-color: color-mix(in srgb, var(--codex-quota-claude) 58%, transparent); color: var(--codex-quota-claude); }
+.project-main > span { position: relative; }
+.project-main strong { padding-right: 86px; }
+.project-provider-marker {
+  position: absolute;
+  top: 0;
+  right: 0;
+  max-width: 82px;
+  overflow: hidden;
+  color: var(--codex-muted);
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-provider-marker.provider-codex { color: var(--codex-quota-codex); }
+.project-provider-marker.provider-claude { color: var(--codex-quota-claude); }
+.project-provider-marker.provider-shared { color: var(--codex-fg); }
+
+@container (max-width: 330px) {
+  .float-project-provider-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .float-project-provider-tabs > span { display: none; }
+  .float-project-provider-tabs button { padding-inline: 3px; font-size: 8px; }
+}
+
+@media (forced-colors: active) {
+  .float-project-provider-tabs,
+  .float-project-provider-tabs button.active,
+  .task-provider-marker,
+  .project-provider-marker { border-color: CanvasText; color: CanvasText; forced-color-adjust: auto; }
+  .float-task-row.provider-codex,
+  .float-task-row.provider-claude,
+  .float-project-row.provider-codex,
+  .float-project-row.provider-claude,
+  .float-project-row.provider-shared { background: Canvas; }
 }

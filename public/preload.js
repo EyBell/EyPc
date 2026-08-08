@@ -5,6 +5,8 @@ const fs = require('node:fs')
 const net = require('node:net')
 const os = require('node:os')
 const path = require('node:path')
+let https = null
+try { https = require('node:https') } catch { /* older constrained preload harness: quota fallback stays unavailable */ }
 
 const STORAGE_KEY = 'eypc/state/v1'
 const CODEX_LAUNCH_PATH_STORAGE_KEY = 'eypc/codex/launch-path/v1'
@@ -135,9 +137,14 @@ try {
     fs,
     path,
     os,
+    crypto,
     execFile,
     execFileSync,
+    https,
+    process,
     platform: process.platform,
+    resourcesPath: typeof process.resourcesPath === 'string' ? process.resourcesPath : '',
+    safeStorage: getElectronSafeStorage(),
     dataDirectory: resolveClaudeDataDirectory(),
     windows: {
       list: (...args) => windowSubsystem ? windowSubsystem.list(...args) : Promise.resolve({ windows: [] }),
@@ -8727,36 +8734,48 @@ window.eypcPlatform = {
   claude: {
     inspect: () => claudeBridge ? claudeBridge.inspect() : claudeUnavailable('environment'),
     readSnapshot: (...args) => claudeBridge ? claudeBridge.readSnapshot(...args) : claudeUnavailable('snapshot'),
-    // Opt-in idle fallback. The Controller feature-detects this method, so
-    // omitting it here silently disabled the `claudeQuotaFallback` setting no
-    // matter what the user chose.
+    // Explicitly authorized App quota authority. The Controller feature-detects
+    // this method so an older preload degrades the quota lane alone.
     readQuotaFallback: (...args) => claudeBridge ? claudeBridge.readQuotaFallback(...args) : Promise.resolve(null),
-    // Read-only desktop-app lane. Feature-detected by the Controller for the
-    // same reason as `readQuotaFallback` above — and omitted here for exactly
-    // the same reason too: the module existed, the packaging manifest listed
-    // it, the module-level validator asserted it, and the whole desktop lane
-    // was still silently dead on the host because it never reached this facade
-    // (P5 review). The facade is the contract the Controller actually sees.
-    readDesktopSnapshot: (...args) => claudeBridge
-      ? claudeBridge.readDesktopSnapshot(...args)
-      : { version: 1, revision: '', sessions: [], truncated: false, readAt: Date.now() },
+    // Exact App Code-mode inventory. Older mixed Desktop/CLI ports are not
+    // exposed: a long-lived stale preload degrades this lane instead of
+    // reintroducing Cowork or CLI-only cards.
+    readCodeSnapshot: (...args) => claudeBridge
+      ? claudeBridge.readCodeSnapshot(...args)
+      : { version: 2, revision: '', sessions: [], truncated: false, readAt: Date.now() },
+    readCodeStateSnapshot: (...args) => claudeBridge
+      ? claudeBridge.readCodeStateSnapshot(...args)
+      : {
+          version: 2,
+          revision: '',
+          sessions: [],
+          truncated: false,
+          readAt: Date.now(),
+          generation: 0,
+          source: 'none',
+          freshness: { readAt: Date.now(), newestEvidenceAt: 0 },
+          compatibility: 'unsupported',
+          stateGeneration: 0,
+          stateCompatibility: 'unsupported'
+        },
     // Null when the app has never written a usage sample, which the Controller
     // treats as "no freshness source", not as an error.
     readPlanUsage: (...args) => claudeBridge ? claudeBridge.readPlanUsage(...args) : null,
-    // The desktop app's own unread set, this lane's read authority. `null` is
-    // "could not tell" and must stay distinct from an observed empty set — the
-    // latter is a claim that the user has read everything.
-    readDesktopUnread: (...args) => claudeBridge ? claudeBridge.readDesktopUnread(...args) : null,
-    // Returns a disposer, or null when nothing could be armed so the caller
-    // knows to retry rather than assume a live subscription.
-    watchDesktopSessions: (...args) => claudeBridge ? claudeBridge.watchDesktopSessions(...args) : null,
+    readCodeUnread: (...args) => claudeBridge ? claudeBridge.readCodeUnread(...args) : Promise.resolve(null),
+    watchCodeSessions: (...args) => claudeBridge ? claudeBridge.watchCodeSessions(...args) : (() => {}),
+    watchCodeState: (...args) => claudeBridge ? claudeBridge.watchCodeState(...args) : (() => {}),
+    watchCodeUnread: (...args) => claudeBridge ? claudeBridge.watchCodeUnread(...args) : (() => {}),
     // Push lane for hook-queue appends. Returns a disposer in every case, so a
     // caller never has to branch on whether the bridge loaded.
     watchEvents: (...args) => claudeBridge ? claudeBridge.watchEvents(...args) : (() => {}),
+    readAppPresence: () => claudeBridge
+      ? claudeBridge.readAppPresence()
+      : Promise.resolve({ status: 'unknown', pid: 0, appId: '', instanceId: '', startToken: '', verifiedAt: 0 }),
     install: (...args) => claudeBridge ? claudeBridge.install(...args) : claudeUnavailable('result'),
     uninstall: (...args) => claudeBridge ? claudeBridge.uninstall(...args) : claudeUnavailable('result'),
     openTask: (...args) => claudeBridge ? claudeBridge.openTask(...args) : Promise.resolve(claudeUnavailable('open')),
     diagnostics: () => ({
+      ...(claudeBridge && typeof claudeBridge.diagnostics === 'function' ? claudeBridge.diagnostics() : {}),
       revision: claudeBridge ? claudeBridge.revision : '',
       loaded: Boolean(claudeBridge),
       loadError: claudeBridgeLoadError

@@ -7,7 +7,6 @@ import {
   isCodexConfirmedTerminalEvidence,
   isCodexTaskTab,
   normalizeCodexActivityDecisionDiagnostics,
-  normalizeCompanionReadReceipts,
   normalizeCodexConfig,
   normalizeCodexEnvironment,
   normalizeCodexFirstPromptTimes,
@@ -40,7 +39,6 @@ import {
 import {
   companionTaskKey,
   companionTaskProvider,
-  parseCompanionTaskKey,
   isCompanionCompatibilityMode,
   isCompanionProviderEnabled,
   orderCompanionTasksForCycle
@@ -50,26 +48,25 @@ import type { CompanionSnapshotSlice } from '../domain/companionPresentation'
 import {
   emptyClaudeEnvironment,
   emptyClaudeQuota,
-  isClaudeAvailable,
+  emptyClaudeQuotaAccess,
+  mergeClaudeQuotaWindows,
   mergeClaudePlanUsage,
   normalizeClaudeQuota,
-  projectClaudeTaskCards,
+  normalizeClaudeQuotaAccess,
+  quotaNeedsClaudeSupplement,
   staleClaudeQuota,
   type ClaudeEnvironmentSnapshot,
-  type ClaudeQuotaSnapshot,
-  type ClaudeReadReceipts,
-  type ClaudeSessionObservation
+  type ClaudeQuotaAccessSnapshot,
+  type ClaudeQuotaSnapshot
 } from '../domain/claude'
 import {
-  claudeDesktopCompletionRevision,
-  combineClaudeLaneCards,
-  normalizeClaudeDesktopUnread,
-  normalizeClaudeDesktopAuditEventName,
-  normalizeClaudeDesktopSession,
-  projectClaudeDesktopTaskCards,
-  type ClaudeDesktopObservation,
-  type ClaudeDesktopUnreadObservation
-} from '../domain/claudeDesktop'
+  claudeCodeCompletionEpoch,
+  normalizeClaudeCodeObservation,
+  normalizeClaudeCodeUnread,
+  projectClaudeCodeTaskCards,
+  type ClaudeCodeObservation,
+  type ClaudeCodeUnreadObservation
+} from '../domain/claudeCode'
 import { normalizeCodexModelCatalog } from '../domain/codexNewThread'
 import { CODEX_ACTION_HOST_RUNTIME_REVISION } from '../domain/codexEnvironment'
 import {
@@ -98,7 +95,7 @@ export interface CodexRuntimeView {
    * Non-archived desktop-app sessions in the current inventory. Settings-page
    * status only; the cards themselves already arrive merged in `taskState`.
    */
-  claudeDesktopSessionCount: number
+  claudeCodeSessionCount: number
   claudeQuota: ClaudeQuotaSnapshot
   refreshing: boolean
   floatHost: {
@@ -163,20 +160,31 @@ function taskDelay(settings: CodexSettings): number {
   return settings.conversationInboxEnabled && settings.taskRefreshSeconds > 0 ? settings.taskRefreshSeconds * 1000 : Number.POSITIVE_INFINITY
 }
 
-/**
- * Cadence for the Claude lane.
- *
- * One read serves both surfaces — the bridge returns sessions and the status
- * line's quota cache in the same call — so the lane must wake on whichever of
- * the two is due first. Binding it to `taskDelay` alone meant switching off the
- * conversation inbox (which makes `taskDelay` infinite) also froze the quota
- * reading, leaving the water ball on a number that never updated again. The
- * spec assigns quota the `quotaRefreshSeconds` cadence
- * (260805/1150-claude-companion-provider/spec.md), and a provider that renders
- * quota must honour it whether or not the user wants the task list.
- */
 function claudeLaneDelay(settings: CodexSettings): number {
-  return Math.min(taskDelay(settings), quotaDelay(settings))
+  return taskDelay(settings)
+}
+
+/** Independent Claude quota wake-up: cadence or the earliest reset + 1 second. */
+export function claudeQuotaScheduleDelay(
+  settings: Pick<CodexSettings, 'quotaRefreshSeconds'>,
+  lastReadAt: number,
+  windows: readonly { resetAt: number | null }[],
+  now: number
+): number {
+  const cadence = settings.quotaRefreshSeconds > 0
+    ? Math.max(1000, lastReadAt + settings.quotaRefreshSeconds * 1000 - now)
+    : Number.POSITIVE_INFINITY
+  const earliestResetAt = windows.reduce<number | null>((earliest, window) => {
+    if (window.resetAt === null) return earliest
+    const wakeAt = window.resetAt + 1000
+    // A reset wake-up is one-shot. Once a read has started at or after the
+    // deadline, a retained stale reset must not create a 1ms retry loop; the
+    // quota adapter's credential/Retry-After/backoff clock owns later retries.
+    if (lastReadAt >= wakeAt) return earliest
+    return earliest === null ? window.resetAt : Math.min(earliest, window.resetAt)
+  }, null)
+  const reset = earliestResetAt === null ? Number.POSITIVE_INFINITY : Math.max(1, earliestResetAt + 1000 - now)
+  return Math.min(cadence, reset)
 }
 
 const MIN_INVENTORY_DISAPPEARANCE_HOLD_MS = 3_000
@@ -342,26 +350,35 @@ export function createCodexController(options: CodexControllerOptions) {
   // Claude provider lane. Kept entirely separate from the Codex lane so a
   // Claude failure degrades Claude alone; every field resets on disable.
   let claudeEnvironment: ClaudeEnvironmentSnapshot = emptyClaudeEnvironment()
-  let claudeSessions: ClaudeSessionObservation[] = []
-  let claudeDesktopSessions: ClaudeDesktopObservation[] = []
+  let claudeCodeSessions: ClaudeCodeObservation[] = []
   let claudeQuota: ClaudeQuotaSnapshot = emptyClaudeQuota()
+  let claudeQuotaAccess: ClaudeQuotaAccessSnapshot = emptyClaudeQuotaAccess()
+  const claudeAppQuotaKeys = new Set<string>()
   let claudeEventDispose: (() => void) | null = null
-  let claudeDesktopWatchDispose: (() => void) | null = null
-  let claudeEventPending = false
-  // Persisted through app state so a completed session does not become unread
-  // again on every plugin restart.
-  let claudeReceipts: ClaudeReadReceipts = companionReceiptsToSessionMap(options.getAppState().codex.claudeReceipts)
-  /**
-   * Last observed unread set of the Claude desktop app — this lane's read
-   * authority. Persisted so a restart mirrors the app's dots immediately
-   * instead of waiting for its next write; `null` means never observed, which
-   * produces no badge at all.
-   */
-  let claudeDesktopUnread: string[] | null = options.getAppState().codex.claudeDesktopUnread
-    ? [...options.getAppState().codex.claudeDesktopUnread!]
-    : null
+  let claudeCodeWatchDispose: (() => void) | null = null
+  let claudeUnreadWatchDispose: (() => void) | null = null
+  let claudeStatePending = false
+  let claudeInventoryPending = false
+  let claudeUnreadPending = false
+  // Exact native unread is deliberately process-local. A failed current
+  // snapshot is `unknown`; persisted legacy sets must never impersonate it.
+  let claudeCodeUnread: string[] | null = null
+  type ClaudeReadHint = { completionEpoch: string; acknowledgedAt: number; nativeConfirmed: boolean }
+  const claudeReadHints = new Map<string, ClaudeReadHint>()
+  const claudeUnreadRecheckTimers = new Set<ReturnType<typeof setTimeout>>()
+  let lastClaudeUnreadVersion: 0 | 1 | 2 = 0
+  let lastClaudeUnreadGeneration = 0
+  let lastClaudeUnreadReadAt = 0
+  let lastClaudeStateGeneration = 0
+  let claudeStateFailureCount = 0
+  let claudeControllerRevision = 0
   let lastClaudeReadAt = 0
-  let claudeRefreshInFlight = false
+  let lastClaudeQuotaReadAt = 0
+  let claudeStateRecoveryTimer: ReturnType<typeof setInterval> | null = null
+  let claudeStateInFlight = false
+  let claudeInventoryInFlight = false
+  let claudeUnreadInFlight = false
+  let claudeQuotaInFlight = false
   let lastThreads: CodexHostThread[] = []
   let lastProjects: CodexHostProject[] = []
   let lastThreadsPartial = false
@@ -393,6 +410,7 @@ export function createCodexController(options: CodexControllerOptions) {
   const archivingKeys = new Set<string>()
   let directTaskCommandQueue: Promise<void> = Promise.resolve()
   let stopActivityListener: (() => void) | null = null
+  let stopClaudeQuotaLifecycleListener: (() => void) | null = null
   let activityFailureCount = 0
   let lastActivityGeneration = 0
   let activityDecisionDiagnostics = normalizeCodexActivityDecisionDiagnostics(null)
@@ -496,67 +514,18 @@ export function createCodexController(options: CodexControllerOptions) {
     return options.platform.claude || null
   }
 
-  /** Persisted receipts are keyed by companion task key; the lane keys by session id. */
-  function companionReceiptsToSessionMap(persisted: Record<string, number> | undefined) {
-    const normalized = normalizeCompanionReadReceipts(persisted)
-    const map: Record<string, number> = {}
-    for (const [key, at] of Object.entries(normalized)) {
-      const parsed = parseCompanionTaskKey(key)
-      if (parsed.provider === 'claude' && parsed.rawKey) map[parsed.rawKey] = at
-    }
-    return map
-  }
-
   function claudeEnabled(): boolean {
     return isCompanionProviderEnabled(codexState().settings.providers, 'claude')
   }
 
-  /** Bridge desktop session → domain observation; a malformed row drops alone. */
-  function toClaudeDesktopObservation(row: unknown): ClaudeDesktopObservation | null {
-    if (!row || typeof row !== 'object') return null
-    const source = row as Record<string, unknown>
-    const metadata = normalizeClaudeDesktopSession(source)
-    if (!metadata) return null
-    const at = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0)
-    return {
-      metadata,
-      lastEvent: normalizeClaudeDesktopAuditEventName(source.lastEvent),
-      lastEventAt: at(source.lastEventAt),
-      lastResultAt: at(source.lastResultAt),
-      lastPermissionRequestAt: at(source.lastPermissionRequestAt),
-      lastPermissionResponseAt: at(source.lastPermissionResponseAt),
-      auditUpdatedAt: at(source.auditUpdatedAt),
-      // Byte counts are not timestamps; `at()` happens to be a plain positive-
-      // number filter, but say so rather than leaving the next reader to guess.
-      auditBytes: typeof source.auditBytes === 'number' && Number.isFinite(source.auditBytes) && source.auditBytes > 0
-        ? source.auditBytes
-        : 0,
-      // Missing port or older preload reads as "nothing unparsed", which is the
-      // permissive value; the bridge sets it true whenever it was actually
-      // blind, and the domain then refuses to call a `result` terminal.
-      auditTailUnparsed: source.auditTailUnparsed === true
-    }
-  }
-
   /** Claude task cards for the current lane state; empty while disabled. */
-  function claudeCards(now: number) {
-    if (!claudeEnabled() || (!claudeSessions.length && !claudeDesktopSessions.length)) return []
+  function claudeCards(_now: number) {
+    if (!claudeEnabled() || !claudeCodeSessions.length) return []
     const state = codexState()
     const dismissedByKey = new Map(state.receipts.map((receipt) => [receipt.key, receipt.dismissedActivityRecency || 0]))
     const aliases = Object.fromEntries(state.taskAliases.map((entry) => [entry.key, entry.alias]))
+    const projectAliases = Object.fromEntries(state.projectAliases.map((entry) => [entry.key, entry.alias]))
     const localPinnedKeys = state.localPins.filter((pin) => pin.kind === 'task').map((pin) => pin.key)
-    // Hidden state is reconciled against the card's own `revisionAt` — the
-    // number `hide()` stored (codexController hide → `task.revisionAt`) — and
-    // never against a separately recomputed expression. Both Claude lanes used
-    // to recompute it from the raw observation; the CLI copy happened to agree
-    // with `claude.ts:341`, but the desktop copy stopped agreeing the moment
-    // `claudeDesktopCompletionRevision` narrowed to content-only evidence, and
-    // 「隐」 silently became a no-op that still reported success. Projecting
-    // first and filtering the projection keeps exactly one expression in play.
-    //
-    // The comparison is `>=`, matching Codex (codex.ts:1761): a stored
-    // watermark keeps hiding an unchanged card, and any newer revision releases
-    // it. Strict equality was a second, narrower divergence.
     const hideResolved = <T>(
       project: (hiddenKeys: readonly string[]) => T[]
     ): T[] => {
@@ -566,30 +535,18 @@ export function createCodexController(options: CodexControllerOptions) {
         .map((card) => card.key)
       return hiddenKeys.length ? project(hiddenKeys) : open
     }
-    const cliCards = claudeSessions.length
-      ? hideResolved((hiddenKeys) => projectClaudeTaskCards(claudeSessions, {
-        now,
-        receipts: claudeReceipts,
-        aliases,
-        hiddenKeys,
-        localPinnedKeys
-      }))
-      : []
-    if (!claudeDesktopSessions.length) return cliCards
-    const desktopCards = hideResolved((hiddenKeys) => projectClaudeDesktopTaskCards(claudeDesktopSessions, {
-      now,
-      receipts: claudeReceipts,
-      appUnread: claudeDesktopUnread,
+    const effectiveUnread = claudeCodeUnread?.filter((sessionId) => {
+      const row = claudeCodeSessions.find((candidate) => candidate.sessionId === sessionId)
+      const hint = claudeReadHints.get(sessionId)
+      return !row || !hint || hint.completionEpoch !== claudeCodeCompletionEpoch(row)
+    }) ?? null
+    return hideResolved((hiddenKeys) => projectClaudeCodeTaskCards(claudeCodeSessions, {
+      appUnread: effectiveUnread,
       aliases,
+      projectAliases,
       hiddenKeys,
       localPinnedKeys
     }))
-    const combined = combineClaudeLaneCards(
-      cliCards,
-      desktopCards,
-      claudeDesktopSessions.map((observation) => observation.metadata)
-    )
-    return combined === cliCards ? cliCards : [...combined]
   }
 
   function publishTaskStatePackage(conversations: ConversationSnapshotV1, now = Date.now()) {
@@ -625,19 +582,7 @@ export function createCodexController(options: CodexControllerOptions) {
     if (started && !disposed && !actionPreflightInFlight && shouldRun()) schedule()
   }
 
-  /**
-   * Push lane for the Claude provider.
-   *
-   * The hook script appends to EyPc's own queue file the moment Claude Code
-   * emits an event, but until now nothing noticed until the next task tick —
-   * so a status change could sit unseen for the whole interval while the Codex
-   * lane next to it updated in milliseconds. Watching the queue closes that gap
-   * without touching the user's Claude installation.
-   *
-   * It is strictly an accelerator. `fs.watch` misses events on some filesystems
-   * and says nothing when it does, and a user who has not registered the hooks
-   * has no queue to watch at all, so the interval below stays exactly as it was.
-   */
+  /** Feature-lifetime subscriptions. Each authority refreshes only its lane. */
   function subscribeClaudeEvents() {
     if (disposed || !claudeEnabled()) {
       unsubscribeClaudeEvents()
@@ -647,56 +592,220 @@ export function createCodexController(options: CodexControllerOptions) {
     // and stacking watchers would fan one append out into several reads.
     const bridge = options.platform.claude
     if (!bridge) return
-    if (!claudeEventDispose && typeof bridge.watchEvents === 'function') {
+    const watchState = bridge.watchCodeState || bridge.watchEvents
+    if (!claudeEventDispose && typeof watchState === 'function') {
       try {
-        claudeEventDispose = bridge.watchEvents(() => handleClaudeEvent())
+        claudeEventDispose = watchState.call(bridge, () => handleClaudeStateEvent())
       } catch {
         claudeEventDispose = null
       }
     }
-    // Desktop lane push: metadata heartbeats. Same accelerator contract as the
-    // hook queue — best effort, the interval below stays authoritative.
-    if (!claudeDesktopWatchDispose && typeof bridge.watchDesktopSessions === 'function') {
+    if (!claudeCodeWatchDispose && typeof bridge.watchCodeSessions === 'function') {
       try {
-        claudeDesktopWatchDispose = bridge.watchDesktopSessions(() => handleClaudeEvent())
+        claudeCodeWatchDispose = bridge.watchCodeSessions(() => handleClaudeInventoryEvent())
       } catch {
-        claudeDesktopWatchDispose = null
+        claudeCodeWatchDispose = null
       }
+    }
+    if (!claudeUnreadWatchDispose && typeof bridge.watchCodeUnread === 'function') {
+      try {
+        claudeUnreadWatchDispose = bridge.watchCodeUnread(() => handleClaudeUnreadEvent())
+      } catch {
+        claudeUnreadWatchDispose = null
+      }
+    }
+    if (!claudeStateRecoveryTimer) {
+      claudeStateRecoveryTimer = setInterval(() => handleClaudeStateEvent(), 1000)
     }
   }
 
   function unsubscribeClaudeEvents() {
-    claudeEventPending = false
-    if (claudeDesktopWatchDispose) {
-      try { claudeDesktopWatchDispose() } catch { /* teardown is best effort */ }
-      claudeDesktopWatchDispose = null
+    claudeStatePending = false
+    claudeInventoryPending = false
+    claudeUnreadPending = false
+    if (claudeStateRecoveryTimer) clearInterval(claudeStateRecoveryTimer)
+    claudeStateRecoveryTimer = null
+    if (claudeCodeWatchDispose) {
+      try { claudeCodeWatchDispose() } catch { /* teardown is best effort */ }
+      claudeCodeWatchDispose = null
+    }
+    if (claudeUnreadWatchDispose) {
+      try { claudeUnreadWatchDispose() } catch { /* teardown is best effort */ }
+      claudeUnreadWatchDispose = null
     }
     if (!claudeEventDispose) return
     try { claudeEventDispose() } catch { /* teardown is best effort */ }
     claudeEventDispose = null
   }
 
-  /**
-   * A burst that lands mid-read must not be dropped: the queue is append-only,
-   * so the events are still there, but `refreshClaude` refuses to re-enter and
-   * would otherwise return without ever seeing them. Replaying once after the
-   * in-flight read settles is what makes the lane lossless.
-   */
-  function handleClaudeEvent() {
+  function sameClaudeRows(left: readonly ClaudeCodeObservation[], right: readonly ClaudeCodeObservation[]) {
+    return JSON.stringify(left) === JSON.stringify(right)
+  }
+
+  function normalizeClaudeRows(snapshot: unknown): { rows: ClaudeCodeObservation[]; generation: number } | null {
+    if (!snapshot || typeof snapshot !== 'object' || !Array.isArray((snapshot as { sessions?: unknown }).sessions)) return null
+    if ((snapshot as { available?: unknown }).available === false) return null
+    const rows: ClaudeCodeObservation[] = []
+    for (const row of (snapshot as { sessions: unknown[] }).sessions) {
+      const observation = normalizeClaudeCodeObservation(row)
+      if (observation) rows.push(observation)
+    }
+    const declaredGeneration = Number((snapshot as { generation?: unknown; stateGeneration?: unknown }).generation
+      ?? (snapshot as { stateGeneration?: unknown }).stateGeneration)
+    const generation = Number.isInteger(declaredGeneration) && declaredGeneration > 0 ? declaredGeneration : 0
+    return {
+      rows: generation > 0 ? rows.map((row) => ({ ...row, stateGeneration: generation })) : rows,
+      generation
+    }
+  }
+
+  function claudeStateEvidenceAt(row: ClaudeCodeObservation): number {
+    return Math.max(
+      row.phaseUpdatedAt,
+      row.turnStartedAt,
+      row.hookActivityAt,
+      row.waitingApprovalAt,
+      row.waitingInputAt,
+      row.lastStopAt,
+      row.lastSessionEndAt
+    )
+  }
+
+  function claudeStateAuthority(row: ClaudeCodeObservation): number {
+    if (row.stateSource === 'app-log') return 4
+    if (row.stateSource === 'hook') return 3
+    if (row.stateSource === 'metadata-history') return 2
+    return 1
+  }
+
+  function shouldApplyClaudeState(
+    current: ClaudeCodeObservation,
+    incoming: ClaudeCodeObservation,
+    allowExactTie: boolean
+  ): boolean {
+    const currentAt = claudeStateEvidenceAt(current)
+    const incomingAt = claudeStateEvidenceAt(incoming)
+    if (incomingAt !== currentAt) return incomingAt > currentAt
+    if (incoming.stateGeneration !== current.stateGeneration) return incoming.stateGeneration > current.stateGeneration
+    const authorityDelta = claudeStateAuthority(incoming) - claudeStateAuthority(current)
+    return authorityDelta !== 0 ? authorityDelta > 0 : allowExactTie
+  }
+
+  function patchClaudeState(
+    current: ClaudeCodeObservation,
+    incoming: ClaudeCodeObservation,
+    allowExactTie = true
+  ): ClaudeCodeObservation {
+    if (!shouldApplyClaudeState(current, incoming, allowExactTie)) return current
+    return {
+      ...current,
+      statusCorrelation: incoming.statusCorrelation,
+      stateSource: incoming.stateSource,
+      stateCompatibility: incoming.stateCompatibility,
+      stateGeneration: incoming.stateGeneration,
+      phase: incoming.phase,
+      phaseUpdatedAt: incoming.phaseUpdatedAt,
+      turnStartedAt: incoming.turnStartedAt,
+      hookActivityAt: incoming.hookActivityAt,
+      waitingApprovalAt: incoming.waitingApprovalAt,
+      waitingInputAt: incoming.waitingInputAt,
+      lastStopAt: incoming.lastStopAt,
+      lastSessionEndAt: incoming.lastSessionEndAt
+    }
+  }
+
+  /** Inventory owns membership/metadata; an existing row keeps state-lane fields. */
+  function mergeClaudeInventory(incoming: readonly ClaudeCodeObservation[]): ClaudeCodeObservation[] {
+    const currentById = new Map(claudeCodeSessions.map((row) => [row.sessionId, row] as const))
+    return incoming.map((row) => {
+      const current = currentById.get(row.sessionId)
+      if (!current) return row
+      return {
+        ...row,
+        statusCorrelation: current.statusCorrelation,
+        stateSource: current.stateSource,
+        stateCompatibility: current.stateCompatibility,
+        stateGeneration: current.stateGeneration,
+        phase: current.phase,
+        phaseUpdatedAt: current.phaseUpdatedAt,
+        turnStartedAt: current.turnStartedAt,
+        hookActivityAt: current.hookActivityAt,
+        waitingApprovalAt: current.waitingApprovalAt,
+        waitingInputAt: current.waitingInputAt,
+        lastStopAt: current.lastStopAt,
+        lastSessionEndAt: current.lastSessionEndAt
+      }
+    })
+  }
+
+  /** A state delta cannot add/drop inventory rows after the cache is warm. */
+  function applyClaudeStateDelta(incoming: readonly ClaudeCodeObservation[]): ClaudeCodeObservation[] {
+    if (!claudeCodeSessions.length) return [...incoming]
+    const incomingById = new Map(incoming.map((row) => [row.sessionId, row] as const))
+    return claudeCodeSessions.map((current) => {
+      const row = incomingById.get(current.sessionId)
+      return row ? patchClaudeState(current, row) : current
+    })
+  }
+
+  function reconcileClaudeReadHints() {
+    for (const [sessionId, hint] of claudeReadHints) {
+      const row = claudeCodeSessions.find((candidate) => candidate.sessionId === sessionId)
+      if (!row || claudeCodeCompletionEpoch(row) !== hint.completionEpoch) claudeReadHints.delete(sessionId)
+    }
+  }
+
+  function degradeStuckClaudeActivity() {
+    let changed = false
+    claudeCodeSessions = claudeCodeSessions.map((row) => {
+      if (!['running', 'waiting-input', 'waiting-approval'].includes(row.phase)) return row
+      changed = true
+      return { ...row, phase: 'unknown', stateSource: 'none', statusCorrelation: 'none' }
+    })
+    if (changed) reconcileClaudeReadHints()
+    return changed
+  }
+
+  function publishClaudeTaskChange(changed: boolean, laneToken: number) {
+    if (!changed || disposed || laneToken !== runtimeGeneration) return
+    publishTaskStatePackage(taskState.conversations)
+    options.notify()
+  }
+
+  function handleClaudeStateEvent() {
     if (disposed || !claudeEnabled()) return
-    if (claudeRefreshInFlight) {
-      claudeEventPending = true
+    if (claudeStateInFlight) {
+      claudeStatePending = true
       return
     }
-    claudeEventPending = false
+    claudeStatePending = false
     const laneToken = runtimeGeneration
-    void refreshClaude(Date.now()).then((changed) => {
-      if (disposed || laneToken !== runtimeGeneration) return
-      if (changed) {
-        publishTaskStatePackage(taskState.conversations)
-        options.notify()
-      }
-    }).catch(() => { claudeEventPending = false })
+    void refreshClaudeState(Date.now()).then((changed) => publishClaudeTaskChange(changed, laneToken))
+      .catch(() => { claudeStatePending = false })
+  }
+
+  function handleClaudeInventoryEvent() {
+    if (disposed || !claudeEnabled()) return
+    if (claudeInventoryInFlight) {
+      claudeInventoryPending = true
+      return
+    }
+    claudeInventoryPending = false
+    const laneToken = runtimeGeneration
+    void refreshClaudeInventory(Date.now()).then((changed) => publishClaudeTaskChange(changed, laneToken))
+      .catch(() => { claudeInventoryPending = false })
+  }
+
+  function handleClaudeUnreadEvent() {
+    if (disposed || !claudeEnabled()) return
+    if (claudeUnreadInFlight) {
+      claudeUnreadPending = true
+      return
+    }
+    claudeUnreadPending = false
+    const laneToken = runtimeGeneration
+    void refreshClaudeUnread().then((changed) => publishClaudeTaskChange(changed, laneToken))
+      .catch(() => { claudeUnreadPending = false })
   }
 
   /** Applies an enablement change immediately instead of waiting for a Codex tick. */
@@ -717,158 +826,311 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function resetClaudeLane() {
+    const carriedMaterial = claudeCodeSessions.length > 0 || claudeQuota.windows.length > 0 || claudeCodeUnread !== null
     claudeEnvironment = emptyClaudeEnvironment()
-    claudeSessions = []
-    claudeDesktopSessions = []
+    claudeCodeSessions = []
+    claudeCodeUnread = null
     claudeQuota = emptyClaudeQuota()
+    claudeQuotaAccess = emptyClaudeQuotaAccess()
+    claudeAppQuotaKeys.clear()
+    claudeReadHints.clear()
+    for (const timer of claudeUnreadRecheckTimers) clearTimeout(timer)
+    claudeUnreadRecheckTimers.clear()
+    lastClaudeUnreadVersion = 0
+    lastClaudeUnreadGeneration = 0
+    lastClaudeUnreadReadAt = 0
+    lastClaudeStateGeneration = 0
+    claudeStateFailureCount = 0
     lastClaudeReadAt = 0
+    lastClaudeQuotaReadAt = 0
+    if (carriedMaterial) claudeControllerRevision += 1
   }
 
-  /**
-   * Refreshes the Claude lane. Every failure mode degrades to a stale reading
-   * plus an empty inventory; it never throws into the Codex lane.
-   */
-  async function refreshClaude(now = Date.now()) {
-    if (!claudeEnabled()) {
-      // The desktop array has to be part of this test, not just the CLI one:
-      // a desktop-only user has no CLI sessions and an idle quota, so without
-      // it the lane kept live desktop observations after the provider was
-      // switched off — "关闭时不读取任何 Claude 数据" held only by accident.
-      if (claudeSessions.length || claudeDesktopSessions.length || claudeQuota.status !== 'idle') resetClaudeLane()
-      return false
-    }
+  async function refreshClaudeEnvironment() {
     const bridge = options.platform.claude
-    if (!bridge) {
-      claudeEnvironment = emptyClaudeEnvironment()
-      claudeSessions = []
-      claudeQuota = staleClaudeQuota(claudeQuota)
-      // Record the attempt so the scheduler does not spin at the minimum delay
-      // forever against a preload that will never expose the port.
-      lastClaudeReadAt = now
-      return false
-    }
-    if (claudeRefreshInFlight) return false
-    claudeRefreshInFlight = true
-    lastClaudeReadAt = now
-    const laneToken = runtimeGeneration
-    const stale = () => disposed || laneToken !== runtimeGeneration
+    if (!bridge) return false
+    const previous = JSON.stringify(claudeEnvironment)
     try {
-      let environmentSnapshot
-      try {
-        environmentSnapshot = await bridge.inspect()
-      } catch {
-        environmentSnapshot = emptyClaudeEnvironment()
-      }
-      if (stale()) return false
-      claudeEnvironment = environmentSnapshot
-      // `isClaudeAvailable` describes the *CLI*: its binary, its `~/.claude`
-      // home and its login state. The desktop app keeps its sessions somewhere
-      // else entirely and needs none of those, so gating the desktop lane on it
-      // meant a user who installed only the desktop app saw nothing at all —
-      // the same shape as the archived `claude-readiness-gated-on-unneeded-
-      // capability` failure (P5 review). Only the provider switch may empty the
-      // desktop lane.
-      const cliReadable = isClaudeAvailable(claudeEnvironment)
-      if (!cliReadable) {
-        claudeSessions = []
-        claudeQuota = staleClaudeQuota(claudeQuota)
-      }
-      if (cliReadable) {
-        let sessions: ClaudeSessionObservation[] = []
-        let quotaSnapshot: ClaudeQuotaSnapshot | null = null
-        try {
-          const snapshot = await bridge.readSnapshot({ now })
-          sessions = Array.isArray(snapshot?.sessions) ? snapshot.sessions : []
-          quotaSnapshot = snapshot?.quota
-            ? normalizeClaudeQuota(snapshot.quota.rateLimits, { updatedAt: snapshot.quota.updatedAt, now })
-            : null
-        } catch {
-          sessions = []
-          quotaSnapshot = null
-        }
-        if (stale()) return false
-        claudeSessions = sessions
-        claudeQuota = quotaSnapshot || staleClaudeQuota(claudeQuota)
-      }
+      claudeEnvironment = await bridge.inspect()
+    } catch {
+      claudeEnvironment = emptyClaudeEnvironment()
+    }
+    const changed = previous !== JSON.stringify(claudeEnvironment)
+    if (changed) claudeControllerRevision += 1
+    return changed
+  }
 
-      // Desktop-app lane (read-only), same cadence, degrades alone. An older
-      // preload without the port leaves the lane empty, which keeps the claude
-      // cards byte-identical to the CLI-only build.
-      let desktopObservations: ClaudeDesktopObservation[] = []
-      if (typeof bridge.readDesktopSnapshot === 'function') {
-        try {
-          const desktopSnapshot = await bridge.readDesktopSnapshot({ now })
-          const rows = Array.isArray(desktopSnapshot?.sessions) ? desktopSnapshot.sessions : []
-          for (const row of rows) {
-            const observation = toClaudeDesktopObservation(row)
-            if (observation) desktopObservations.push(observation)
-          }
-        } catch {
-          desktopObservations = []
-        }
-      }
-      if (stale()) return false
-      claudeDesktopSessions = desktopObservations
-      refreshDesktopUnread()
-      // Re-attempt the push subscription each cycle. `watchDesktopSessions`
-      // returns null when it could not arm a single watcher — which is the
-      // normal state before the user's first desktop session creates the
-      // directory tree — and the guard inside makes this a no-op once armed.
+  async function refreshClaudeInventory(now = Date.now()) {
+    const bridge = options.platform.claude
+    if (!bridge || typeof bridge.readCodeSnapshot !== 'function' || claudeInventoryInFlight) return false
+    claudeInventoryInFlight = true
+    const laneToken = runtimeGeneration
+    try {
+      const snapshot = await bridge.readCodeSnapshot({ now })
+      const normalized = normalizeClaudeRows(snapshot)
+      if (disposed || laneToken !== runtimeGeneration || normalized === null) return false
+      const rows = mergeClaudeInventory(normalized.rows)
+      const changed = !sameClaudeRows(claudeCodeSessions, rows)
+      if (changed) claudeCodeSessions = rows
+      if (changed) claudeControllerRevision += 1
+      reconcileClaudeReadHints()
       subscribeClaudeEvents()
+      return changed
+    } catch {
+      // Inventory failure retains the last valid feature-lifetime materialized
+      // view. Unlike unread, absence of a fresh scan is not proof of deletion.
+      return false
+    } finally {
+      claudeInventoryInFlight = false
+      if (claudeInventoryPending && !disposed) queueMicrotask(() => handleClaudeInventoryEvent())
+    }
+  }
 
-      // Freshness lane: the desktop app records its own usage sample every few
-      // minutes, and that sample is what its `Plan usage limits` panel shows.
-      // It costs no credentials and does not need Claude Code to be running, so
-      // it is folded in before the credential-bearing fallback is even
-      // considered — the merge keeps every reset moment and per-model window
-      // the status line contributed and only moves the two percentages forward.
+  async function refreshClaudeState(now = Date.now()) {
+    const bridge = options.platform.claude
+    if (!bridge || claudeStateInFlight) return false
+    claudeStateInFlight = true
+    const laneToken = runtimeGeneration
+    try {
+      const snapshot = typeof bridge.readCodeStateSnapshot === 'function'
+        ? await bridge.readCodeStateSnapshot({ now })
+        : typeof bridge.readCodeSnapshot === 'function'
+          ? await bridge.readCodeSnapshot({ now })
+          : null
+      const normalized = normalizeClaudeRows(snapshot)
+      if (disposed || laneToken !== runtimeGeneration) return false
+      if (normalized === null) {
+        claudeStateFailureCount += 1
+        const changed = claudeStateFailureCount >= 2 ? degradeStuckClaudeActivity() : false
+        if (changed) claudeControllerRevision += 1
+        return changed
+      }
+      if (normalized.generation > 0 && lastClaudeStateGeneration > 0 && normalized.generation < lastClaudeStateGeneration) return false
+      if (normalized.generation > 0) lastClaudeStateGeneration = normalized.generation
+      claudeStateFailureCount = 0
+      const rows = applyClaudeStateDelta(normalized.rows)
+      const changed = !sameClaudeRows(claudeCodeSessions, rows)
+      if (changed) claudeCodeSessions = rows
+      if (changed) claudeControllerRevision += 1
+      reconcileClaudeReadHints()
+      return changed
+    } catch {
+      claudeStateFailureCount += 1
+      const changed = claudeStateFailureCount >= 2 ? degradeStuckClaudeActivity() : false
+      if (changed) claudeControllerRevision += 1
+      return changed
+    } finally {
+      claudeStateInFlight = false
+      if (claudeStatePending && !disposed) queueMicrotask(() => handleClaudeStateEvent())
+    }
+  }
+
+  async function refreshClaudeUnread() {
+    const bridge = options.platform.claude
+    if (!bridge || claudeUnreadInFlight) return false
+    claudeUnreadInFlight = true
+    const laneToken = runtimeGeneration
+    try {
+      const snapshot = typeof bridge.readCodeUnread === 'function' ? await bridge.readCodeUnread() : null
+      const observation: ClaudeCodeUnreadObservation | null = normalizeClaudeCodeUnread(snapshot)
+      if (disposed || laneToken !== runtimeGeneration) return false
+      if (!observation) {
+        const changed = claudeCodeUnread !== null
+        claudeCodeUnread = null
+        if (changed) claudeControllerRevision += 1
+        return changed
+      }
+      if (lastClaudeUnreadVersion === 2 && observation.version === 1) return false
+      if (observation.version === 2 && lastClaudeUnreadVersion === 2) {
+        if (observation.generation < lastClaudeUnreadGeneration) return false
+        if (observation.generation === lastClaudeUnreadGeneration && observation.readAt < lastClaudeUnreadReadAt) return false
+      }
+      lastClaudeUnreadVersion = observation.version
+      lastClaudeUnreadGeneration = observation.generation
+      lastClaudeUnreadReadAt = observation.readAt
+      const next = [...observation.ids]
+      const changed = JSON.stringify(claudeCodeUnread) !== JSON.stringify(next)
+      claudeCodeUnread = next
+      if (changed) claudeControllerRevision += 1
+      for (const [sessionId, hint] of claudeReadHints) {
+        if (!next.includes(sessionId) && !hint.nativeConfirmed) claudeReadHints.set(sessionId, { ...hint, nativeConfirmed: true })
+      }
+      return changed
+    } catch {
+      const changed = claudeCodeUnread !== null
+      claudeCodeUnread = null
+      if (changed) claudeControllerRevision += 1
+      return changed
+    } finally {
+      claudeUnreadInFlight = false
+      if (claudeUnreadPending && !disposed) queueMicrotask(() => handleClaudeUnreadEvent())
+    }
+  }
+
+  async function refreshClaudeQuota(now = Date.now()) {
+    const bridge = options.platform.claude
+    if (!bridge || claudeQuotaInFlight) return false
+    claudeQuotaInFlight = true
+    const laneToken = runtimeGeneration
+    const previous = JSON.stringify({ quota: claudeQuota, access: claudeQuotaAccess })
+    try {
+      const snapshot = await Promise.resolve(bridge.readSnapshot({ now })).catch(() => null)
+      if (disposed || laneToken !== runtimeGeneration) return false
+      if (snapshot?.quota) {
+        const primary = normalizeClaudeQuota(snapshot.quota.rateLimits, {
+          updatedAt: snapshot.quota.updatedAt,
+          now
+        })
+        if (!codexState().settings.claudeAppQuotaAccess) claudeAppQuotaKeys.clear()
+        const supplement = claudeAppQuotaKeys.size
+          ? { ...primary, windows: primary.windows.filter((window) => !claudeAppQuotaKeys.has(window.key)) }
+          : primary
+        claudeQuota = mergeClaudeQuotaWindows(claudeQuota, supplement, now)
+      } else {
+        claudeQuota = staleClaudeQuota(claudeQuota, now)
+      }
       if (typeof bridge.readPlanUsage === 'function') {
         try {
           const sample = await bridge.readPlanUsage()
-          if (!stale() && sample) claudeQuota = mergeClaudePlanUsage(claudeQuota, sample, now)
-        } catch { /* freshness is best effort; never degrade the existing reading */ }
+          if (!disposed && laneToken === runtimeGeneration && sample) {
+            const appOwned = new Map(claudeQuota.windows
+              .filter((window) => claudeAppQuotaKeys.has(window.key))
+              .map((window) => [window.key, window] as const))
+            const planPatched = mergeClaudePlanUsage(claudeQuota, sample, now)
+            if (!appOwned.size) claudeQuota = planPatched
+            else {
+              const windows = planPatched.windows.map((window) => appOwned.get(window.key) || window)
+              claudeQuota = {
+                ...planPatched,
+                windows,
+                short: windows.find((window) => window.kind === 'short' && !window.scope) || null,
+                weekly: windows.find((window) => window.kind === 'weekly' && !window.scope) || null,
+                source: claudeQuota.source
+              }
+            }
+          }
+        } catch { /* independent best-effort freshness */ }
       }
-
-      // The status line only runs while Claude Code renders, which leaves two
-      // different gaps and they deserve different answers:
-      //
-      //  - Cold start: no reading has ever arrived, so the quota area is empty
-      //    and the water ball centre has nothing to show. Reading the usage API
-      //    once is worth a single credential prompt, because the alternative is
-      //    showing the user nothing at all until they happen to run Claude Code.
-      //  - Idle drift: a reading exists but is ageing. That is a comfort
-      //    improvement, not a blank screen, so it stays opt-in exactly as the
-      //    user decided — periodic credential reads are a real cost.
-      //
-      // `hasReading` is what separates them, and it is also what stops the cold
-      // path from repeating: once any reading lands the condition is false.
-      const hasReading = Boolean(claudeQuota.short || claudeQuota.weekly)
-      if ((codexState().settings.claudeQuotaFallback || !hasReading) && typeof bridge.readQuotaFallback === 'function') {
+      const needsSupplement = quotaNeedsClaudeSupplement(claudeQuota, now)
+      if (codexState().settings.claudeAppQuotaAccess && typeof bridge.readQuotaFallback === 'function') {
         try {
           const fallback = await bridge.readQuotaFallback({
-            enabled: codexState().settings.claudeQuotaFallback === true,
-            coldStart: !hasReading,
+            enabled: codexState().settings.claudeAppQuotaAccess === true,
+            coldStart: claudeQuota.windows.length === 0,
+            supplement: needsSupplement,
             now,
-            minStaleMs: Math.max(claudeLaneDelay(codexState().settings) * 4, 10 * 60 * 1000)
+            minStaleMs: Number.isFinite(quotaDelay(codexState().settings))
+              ? Math.max(quotaDelay(codexState().settings) * 4, 10 * 60 * 1000)
+              : 10 * 60 * 1000,
+            refreshIntervalMs: Number.isFinite(quotaDelay(codexState().settings))
+              ? quotaDelay(codexState().settings)
+              : 0
           })
-          if (!stale() && fallback) {
-            claudeQuota = normalizeClaudeQuota(fallback.rateLimits, {
+          if (!disposed && laneToken === runtimeGeneration && fallback) {
+            const appQuota = normalizeClaudeQuota(fallback.rateLimits, {
               updatedAt: fallback.updatedAt,
               source: 'usage-api',
               now
             })
+            const incomingKeys = new Set(appQuota.windows.map((window) => window.key))
+            const preservedWindows = claudeQuota.windows.filter((window) => !incomingKeys.has(window.key))
+            const preserved: ClaudeQuotaSnapshot = {
+              ...claudeQuota,
+              windows: preservedWindows,
+              short: preservedWindows.find((window) => window.kind === 'short' && !window.scope) || null,
+              weekly: preservedWindows.find((window) => window.kind === 'weekly' && !window.scope) || null
+            }
+            claudeQuota = mergeClaudeQuotaWindows(preserved, appQuota, now)
+            claudeAppQuotaKeys.clear()
+            for (const key of incomingKeys) claudeAppQuotaKeys.add(key)
           }
-        } catch { /* the fallback is best effort by design */ }
+          if (!disposed && laneToken === runtimeGeneration) {
+            const access = normalizeClaudeQuotaAccess(bridge.diagnostics().quotaAccess)
+            claudeQuotaAccess = access
+            if (!fallback && access.lastAttemptAt >= now && access.status !== 'idle' && access.status !== 'ok') {
+              claudeQuota = staleClaudeQuota(claudeQuota, now)
+            }
+          }
+        } catch { /* bounded fallback never affects state publication */ }
+      } else {
+        claudeQuotaAccess = emptyClaudeQuotaAccess()
       }
-      return true
+      const changed = previous !== JSON.stringify({ quota: claudeQuota, access: claudeQuotaAccess })
+      if (changed) claudeControllerRevision += 1
+      return changed
     } finally {
-      claudeRefreshInFlight = false
-      // An event that landed mid-read is already in the queue and nothing will
-      // re-announce it. The replay therefore hangs off the release of the lock,
-      // not off whichever caller happened to be holding it — an interval-driven
-      // read holds the same lock as a pushed one.
-      if (claudeEventPending && !disposed) queueMicrotask(() => handleClaudeEvent())
+      claudeQuotaInFlight = false
     }
+  }
+
+  function kickClaudeQuota(now = Date.now()) {
+    if (claudeQuotaInFlight) return
+    lastClaudeQuotaReadAt = now
+    const laneToken = runtimeGeneration
+    void refreshClaudeQuota(now).then((changed) => {
+      if (changed && !disposed && laneToken === runtimeGeneration) options.notify()
+    }).catch(() => undefined)
+  }
+
+  function subscribeClaudeQuotaLifecycle() {
+    if (stopClaudeQuotaLifecycleListener) return
+    const target = globalThis as typeof globalThis & {
+      addEventListener?: (type: string, listener: EventListener) => void
+      removeEventListener?: (type: string, listener: EventListener) => void
+      document?: Document
+    }
+    if (typeof target.addEventListener !== 'function' || typeof target.removeEventListener !== 'function') return
+    const requestRefresh = () => {
+      if (disposed || !started || !claudeEnabled()) return
+      kickClaudeQuota(Date.now())
+    }
+    const refreshOnResume: EventListener = () => requestRefresh()
+    const refreshWhenVisible: EventListener = () => {
+      if (target.document?.visibilityState === 'hidden') return
+      requestRefresh()
+    }
+    target.addEventListener('online', refreshOnResume)
+    target.addEventListener('focus', refreshOnResume)
+    target.addEventListener('pageshow', refreshOnResume)
+    target.document?.addEventListener('visibilitychange', refreshWhenVisible)
+    stopClaudeQuotaLifecycleListener = () => {
+      target.removeEventListener?.('online', refreshOnResume)
+      target.removeEventListener?.('focus', refreshOnResume)
+      target.removeEventListener?.('pageshow', refreshOnResume)
+      target.document?.removeEventListener('visibilitychange', refreshWhenVisible)
+    }
+  }
+
+  function kickClaudeAppPresence() {
+    const bridge = options.platform.claude
+    if (!bridge || typeof bridge.readAppPresence !== 'function') return
+    void Promise.resolve(bridge.readAppPresence()).catch(() => undefined)
+  }
+
+  /** Cold/interval reconciliation. Quota starts in parallel and is never awaited. */
+  async function refreshClaude(now = Date.now(), includeQuota = true) {
+    if (!claudeEnabled()) {
+      if (claudeCodeSessions.length || claudeQuota.status !== 'idle') resetClaudeLane()
+      return false
+    }
+    const bridge = options.platform.claude
+    lastClaudeReadAt = now
+    if (!bridge) {
+      claudeEnvironment = emptyClaudeEnvironment()
+      claudeCodeSessions = []
+      claudeCodeUnread = null
+      claudeQuota = staleClaudeQuota(claudeQuota)
+      return false
+    }
+    subscribeClaudeEvents()
+    kickClaudeAppPresence()
+    if (includeQuota) kickClaudeQuota(now)
+    const results = await Promise.all([
+      refreshClaudeEnvironment(),
+      refreshClaudeInventory(now),
+      refreshClaudeUnread()
+    ])
+    return results.some(Boolean)
   }
 
   function clearTimer() {
@@ -1163,10 +1425,19 @@ export function createCodexController(options: CodexControllerOptions) {
     const taskTransitionWait = nextTaskTransitionAt === null
       ? Number.POSITIVE_INFINITY
       : Math.max(1, nextTaskTransitionAt - now)
-    const claudeWait = claudeEnabled() && Number.isFinite(claudeLaneDelay(settings))
+    const claudeTaskWait = claudeEnabled() && Number.isFinite(claudeLaneDelay(settings))
       ? Math.max(1000, lastClaudeReadAt + claudeLaneDelay(settings) - now)
       : Number.POSITIVE_INFINITY
-    const delay = Math.min(quotaWait, taskWait, taskTransitionWait, claudeWait)
+    const claudeQuotaWait = claudeEnabled() && !claudeQuotaInFlight
+      ? claudeQuotaScheduleDelay(settings, lastClaudeQuotaReadAt, claudeQuota.windows, now)
+      : Number.POSITIVE_INFINITY
+    const delay = Math.min(
+      quotaWait,
+      taskWait,
+      taskTransitionWait,
+      claudeTaskWait,
+      claudeQuotaWait
+    )
     if (!Number.isFinite(delay)) return
     timer = setTimeout(() => {
       const wokeAt = Date.now()
@@ -1356,13 +1627,20 @@ export function createCodexController(options: CodexControllerOptions) {
     const includeClaude = !actionPreflight && claudeEnabled()
       && (input.force === true || input.forceTasks === true || lastClaudeReadAt <= 0
         || (Number.isFinite(claudeLaneDelay(settings)) && now - lastClaudeReadAt >= claudeLaneDelay(settings)))
+    const includeClaudeQuota = !actionPreflight && claudeEnabled()
+      && (input.force === true || lastClaudeQuotaReadAt <= 0
+        || (Number.isFinite(quotaDelay(settings)) && now - lastClaudeQuotaReadAt >= quotaDelay(settings))
+        || claudeQuota.windows.some((window) => window.resetAt !== null
+          && now >= window.resetAt + 1000
+          && lastClaudeQuotaReadAt < window.resetAt + 1000))
     if (includeClaude) {
-      void refreshClaude(now).then((changed) => {
+      void refreshClaude(now, false).then((changed) => {
         if (disposed || !changed || runtimeGeneration !== runtimeToken) return
         publishTaskStatePackage(taskState.conversations)
         options.notify()
       }).catch(() => { /* claude lane degrades on its own */ })
     }
+    if (includeClaudeQuota) kickClaudeQuota(now)
     if (!includeQuota && !includeThreads) {
       schedule()
       return
@@ -1647,12 +1925,34 @@ export function createCodexController(options: CodexControllerOptions) {
     options.notify()
     const needsFreshRead = inboxChanged ||
       current.quotaRefreshSeconds !== next.quotaRefreshSeconds ||
-      current.taskRefreshSeconds !== next.taskRefreshSeconds
+      current.taskRefreshSeconds !== next.taskRefreshSeconds ||
+      current.claudeAppQuotaAccess !== next.claudeAppQuotaAccess
     syncActivation(needsFreshRead || (!current.floatEnabled && next.floatEnabled))
     // A provider toggle must take effect now: disabling should clear the lane
     // immediately rather than leaving stale cards until the next Codex tick.
     if (claudeEnablementChanged) syncClaudeEnablement()
     return true
+  }
+
+  async function applyLaunchPathChange(
+    change: (() => Promise<CodexEnvironmentSnapshotV1>) | undefined,
+    messages: { unsupported: string; success: string; failure: string }
+  ) {
+    if (!change) {
+      options.setMessage(messages.unsupported)
+      options.notify()
+      return false
+    }
+    try {
+      environment = normalizeCodexEnvironment(await change())
+      options.setMessage(messages.success)
+      options.notify()
+      return true
+    } catch (error) {
+      options.setMessage(error instanceof Error ? error.message : messages.failure)
+      options.notify()
+      return false
+    }
   }
 
   async function setLaunchPath(pathValue: string) {
@@ -1662,43 +1962,27 @@ export function createCodexController(options: CodexControllerOptions) {
       options.notify()
       return false
     }
-    const setLaunchPath = options.platform.codex.setLaunchPath
-    if (typeof setLaunchPath !== 'function') {
-      options.setMessage('当前宿主不支持手动设置 Codex CLI 路径，请更新插件 preload 后重试')
-      options.notify()
-      return false
-    }
-    try {
-      environment = normalizeCodexEnvironment(await setLaunchPath(path))
-      options.setMessage('已保存手动 Codex CLI 位置；不会中断当前 App Server，下次启动将使用该位置')
-      options.notify()
-      void inspectEnvironment(true)
-      return true
-    } catch (error) {
-      options.setMessage(error instanceof Error ? error.message : '手动 Codex CLI 位置不可用')
-      options.notify()
-      return false
-    }
+    const change = options.platform.codex.setLaunchPath
+    return applyLaunchPathChange(
+      typeof change === 'function' ? () => change(path) : undefined,
+      {
+        unsupported: '当前宿主不支持手动设置 Codex CLI 路径，请更新插件 preload 后重试',
+        success: '已保存手动 Codex CLI 位置；不会中断当前 App Server，下次启动将使用该位置',
+        failure: '手动 Codex CLI 位置不可用'
+      }
+    )
   }
 
-  async function clearLaunchPath() {
-    const clearLaunchPath = options.platform.codex.clearLaunchPath
-    if (typeof clearLaunchPath !== 'function') {
-      options.setMessage('当前宿主不支持恢复 Codex CLI 自动发现，请更新插件 preload 后重试')
-      options.notify()
-      return false
-    }
-    try {
-      environment = normalizeCodexEnvironment(await clearLaunchPath())
-      options.setMessage('已恢复 Codex CLI 自动发现；不会中断当前 App Server，下次启动将使用自动发现')
-      options.notify()
-      void inspectEnvironment(true)
-      return true
-    } catch (error) {
-      options.setMessage(error instanceof Error ? error.message : '无法恢复 Codex CLI 自动发现')
-      options.notify()
-      return false
-    }
+  function clearLaunchPath() {
+    const change = options.platform.codex.clearLaunchPath
+    return applyLaunchPathChange(
+      typeof change === 'function' ? () => change() : undefined,
+      {
+        unsupported: '当前宿主不支持恢复 Codex CLI 自动发现，请更新插件 preload 后重试',
+        success: '已恢复 Codex CLI 自动发现；不会中断当前 App Server，下次启动将使用自动发现',
+        failure: '无法恢复 Codex CLI 自动发现'
+      }
+    )
   }
 
   function republishAfterReceiptChange() {
@@ -1849,53 +2133,26 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   /**
-   * Keeps the desktop app's own unread set — the sessions still carrying a dot
-   * in its sidebar — as this lane's read authority.
-   *
-   * EyPc's jump into the app is a hand-off and proves nothing, so it writes no
-   * receipt. The app itself does know: it drops a session out of that set the
-   * moment you open it there. The card projection mirrors the set, so the badge
-   * clears on the next reading after you read it in the app.
-   *
-   * The reading is a write-window observation, not a durable read: the app's
-   * Local Storage compacts the record into a form the reader cannot see into,
-   * and only a fresh write puts it back in the clear. That is why a `null`
-   * reading keeps the last known set instead of replacing it — and it is also
-   * why the timing works at all, because the write that matters is exactly the
-   * one that clears a dot. Never observed at all means no authority and no
-   * badge, which is the behaviour this lane shipped with.
-   */
-  function refreshDesktopUnread() {
-    const bridge = options.platform.claude
-    if (!bridge || typeof bridge.readDesktopUnread !== 'function') return
-    let observation: ClaudeDesktopUnreadObservation | null = null
-    try {
-      observation = normalizeClaudeDesktopUnread(bridge.readDesktopUnread())
-    } catch {
-      observation = null
-    }
-    if (!observation) return
-    if (sameIdList(claudeDesktopUnread, observation.ids)) return
-    claudeDesktopUnread = [...observation.ids]
-    codexState().claudeDesktopUnread = [...observation.ids]
-    options.save()
-  }
-
-  function sameIdList(left: readonly string[] | null, right: readonly string[]) {
-    if (!left || left.length !== right.length) return false
-    return left.every((id, index) => id === right[index])
-  }
-
-  /**
    * Opens a Claude session in the Claude desktop app.
    *
-   * Both families take the same route — the bridge turns `local_<uuid>` and a
-   * bare CLI uuid into the same `claude://resume` deep link — so there is no
-   * per-family branch here and no terminal fallback. The hand-off is never
-   * strong enough to prove the user saw the session, so it deliberately writes
-   * no read receipt: `completed-unread` survives the jump.
+   * Only an exact App local id reaches the bridge. The hand-off writes no read
+   * receipt. A process-local hint suppresses late native `true` values only for
+   * the same completion epoch while bounded native rereads confirm the result.
    */
-  async function openClaudeTask(_key: string, actionAlias: string) {
+  function scheduleClaudeUnreadRechecks() {
+    const laneToken = runtimeGeneration
+    for (const delay of [0, 100, 300, 1000]) {
+      const timer = setTimeout(() => {
+        claudeUnreadRecheckTimers.delete(timer)
+        if (disposed || laneToken !== runtimeGeneration || !claudeEnabled()) return
+        void refreshClaudeUnread().then((changed) => publishClaudeTaskChange(changed, laneToken))
+          .catch(() => undefined)
+      }, delay)
+      claudeUnreadRecheckTimers.add(timer)
+    }
+  }
+
+  async function openClaudeTask(key: string, actionAlias: string) {
     const bridge = options.platform.claude
     if (!bridge) {
       options.setMessage('Claude 模块不可用')
@@ -1905,7 +2162,20 @@ export function createCodexController(options: CodexControllerOptions) {
     options.setMessage(result?.message || (result?.outcome === 'dispatched'
       ? '已在 Claude 桌面端打开该任务'
       : 'Claude 桌面端打开失败'))
-    return result?.outcome === 'dispatched' || result?.outcome === 'opened'
+    const dispatched = result?.outcome === 'dispatched'
+    if (dispatched) {
+      const row = claudeCodeSessions.find((candidate) => candidate.sessionId === actionAlias
+        && companionTaskKey('claude', candidate.sessionId) === key)
+      const completionEpoch = row ? claudeCodeCompletionEpoch(row) : ''
+      if (row && completionEpoch) {
+        claudeReadHints.set(row.sessionId, { completionEpoch, acknowledgedAt: Date.now(), nativeConfirmed: false })
+        claudeControllerRevision += 1
+        publishTaskStatePackage(taskState.conversations)
+        options.notify()
+      }
+      scheduleClaudeUnreadRechecks()
+    }
+    return dispatched
   }
 
   async function openThread(key: string, actionAlias: string) {
@@ -1986,7 +2256,7 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function hasCurrentTaskInventory() {
-    return lastThreads.length > 0 || hasVerifiedTaskInventory()
+    return claudeCodeSessions.length > 0 || lastThreads.length > 0 || hasVerifiedTaskInventory()
   }
 
   function runDirectTaskCommand(command: () => boolean) {
@@ -2000,7 +2270,18 @@ export function createCodexController(options: CodexControllerOptions) {
       .catch(() => undefined)
       .then(async () => {
         if (disposed || !isFeatureEnabled()) return
-        if (!hasCurrentTaskInventory()) await refresh({ actionPreflight: true })
+        if (!hasCurrentTaskInventory()) {
+          // Cold shortcut hydration is task-only: never wait for Claude quota,
+          // plan history or environment inspection before selecting a target.
+          await Promise.all([
+            refresh({ actionPreflight: true }),
+            claudeEnabled()
+              ? Promise.all([refreshClaudeInventory(Date.now()), refreshClaudeUnread()])
+              : Promise.resolve()
+          ])
+          publishTaskStatePackage(taskState.conversations)
+          options.notify()
+        }
         if (disposed || !isFeatureEnabled()) return
         command()
       })
@@ -2733,6 +3014,7 @@ export function createCodexController(options: CodexControllerOptions) {
       if (started || disposed) return
       started = true
       stopActivityListener = options.platform.codex.onActivityChanged?.((delta) => applyActivityDelta(delta)) || null
+      subscribeClaudeQuotaLifecycle()
       subscribeClaudeEvents()
       if (isFeatureEnabled()) void inspectEnvironment()
       syncActivation(true)
@@ -2749,7 +3031,10 @@ export function createCodexController(options: CodexControllerOptions) {
       resetConversationProjection()
       stopActivityListener?.()
       stopActivityListener = null
+      stopClaudeQuotaLifecycleListener?.()
+      stopClaudeQuotaLifecycleListener = null
       unsubscribeClaudeEvents()
+      resetClaudeLane()
       options.platform.codex.close()
     },
     syncActivation,
@@ -2824,8 +3109,8 @@ export function createCodexController(options: CodexControllerOptions) {
         conversations: taskState.conversations,
         activityDecisionDiagnostics,
         claudeEnvironment,
-        claudeDesktopSessionCount: claudeDesktopSessions.reduce(
-          (total, observation) => total + (observation.metadata.isArchived ? 0 : 1),
+        claudeCodeSessionCount: claudeCodeSessions.reduce(
+          (total, observation) => total + (observation.isArchived ? 0 : 1),
           0
         ),
         claudeQuota,
@@ -2867,6 +3152,11 @@ export function createCodexController(options: CodexControllerOptions) {
         actionDefaultProjectKey: settings.actionDefaultProjectKey || '',
       companion: {
         providers: settings.providers,
+        claudeAppQuotaAccess: settings.claudeAppQuotaAccess,
+        revision: claudeControllerRevision,
+        stateGeneration: lastClaudeStateGeneration,
+        unreadGeneration: lastClaudeUnreadGeneration,
+        claudeQuotaAccess,
         claudeQuota,
         claudeEnvironment
       },

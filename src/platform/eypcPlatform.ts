@@ -18,7 +18,8 @@ import type {
   CodexThreadArchiveResult,
   CodexThreadOpenResult
 } from '../domain/codex'
-import type { ClaudeEnvironmentSnapshot, ClaudePlanUsageSample, ClaudeRateLimitsInput, ClaudeSessionObservation } from '../domain/claude'
+import type { ClaudeEnvironmentSnapshot, ClaudePlanUsageSample, ClaudeQuotaAccessSnapshot, ClaudeRateLimitsInput } from '../domain/claude'
+import type { ClaudeCodePhase, ClaudeCodeStatusCorrelation } from '../domain/claudeCode'
 import type {
   CodexEnvironmentActionRunResult,
   CodexEnvironmentActionSessionProjection,
@@ -214,7 +215,8 @@ export interface CodexFloatWorkspaceDiagnostics {
 export interface ClaudeBridgeSnapshot {
   version: 1
   revision: string
-  sessions: ClaudeSessionObservation[]
+  /** Compatibility field; current Code inventory uses `readCodeSnapshot`. */
+  sessions: []
   truncated: boolean
   quota: { rateLimits: ClaudeRateLimitsInput; updatedAt: number } | null
   readAt: number
@@ -233,39 +235,70 @@ export interface ClaudeOpenResult {
   message?: string
 }
 
-/**
- * One desktop-app (Cowork) session as the read-only bridge reports it: the
- * metadata whitelist plus a bounded audit-tail summary. Content-bearing fields
- * never cross the bridge.
- */
-export interface ClaudeDesktopBridgeSession {
+/** One privacy-safe Claude App Code-mode session observation. */
+export interface ClaudeCodeBridgeSession {
   sessionId: string
+  cliSessionId: string
   title: string
   cwd: string
-  userSelectedFolders: string[]
+  originCwd: string
+  /** Opaque fingerprint using the same normalized-root algorithm as Codex projects. */
+  projectKey?: string
   createdAt: number
   lastActivityAt: number
+  lastFocusedAt: number
   model: string
   isArchived: boolean
-  scheduledTaskId: string
-  cliSessionId: string
+  completedTurns: number
   metadataUpdatedAt: number
-  auditBytes: number
-  auditUpdatedAt: number
-  lastEvent: string | null
-  lastEventAt: number
-  lastResultAt: number
-  lastPermissionRequestAt: number
-  lastPermissionResponseAt: number
-  rateLimit: { resetsAt: number | null; limited: boolean; windowType: string } | null
+  statusCorrelation: ClaudeCodeStatusCorrelation
+  stateSource: 'app-log' | 'hook' | 'metadata-history' | 'none'
+  stateCompatibility: 'compatible' | 'fallback' | 'unsupported'
+  stateGeneration: number
+  phase: ClaudeCodePhase
+  phaseUpdatedAt: number
+  turnStartedAt: number
+  hookActivityAt: number
+  waitingApprovalAt: number
+  waitingInputAt: number
+  lastStopAt: number
+  lastSessionEndAt: number
 }
 
-export interface ClaudeDesktopBridgeSnapshot {
-  version: 1
+export interface ClaudeCodeBridgeSnapshot {
+  version: 2
   revision: string
-  sessions: ClaudeDesktopBridgeSession[]
+  sessions: ClaudeCodeBridgeSession[]
+  /** False means the scan was incomplete/unreadable and must not replace a hot cache. */
+  available?: boolean
   truncated: boolean
   readAt: number
+  /** Compatibility aliases retained for a long-lived preload/Renderer pair. */
+  stateGeneration?: number
+  stateCompatibility?: 'compatible' | 'fallback' | 'unsupported'
+}
+
+export type ClaudeCodeStateDeltaSource = 'app-log' | 'hook' | 'metadata-history' | 'mixed' | 'none'
+
+/** State-only V2 payload. Inventory identity and unread/quota are not part of this authority. */
+export interface ClaudeCodeStateDeltaV2 extends ClaudeCodeBridgeSnapshot {
+  version: 2
+  generation: number
+  source: ClaudeCodeStateDeltaSource
+  freshness: {
+    readAt: number
+    newestEvidenceAt: number
+  }
+  compatibility: 'compatible' | 'fallback' | 'unsupported'
+}
+
+export interface ClaudeAppPresenceSnapshot {
+  status: 'running' | 'closed' | 'unknown'
+  pid: number
+  appId: string
+  instanceId: string
+  startToken: string
+  verifiedAt: number
 }
 
 export interface EypcPlatformApi {
@@ -360,46 +393,42 @@ export interface EypcPlatformApi {
     inspect(): Promise<ClaudeEnvironmentSnapshot> | ClaudeEnvironmentSnapshot
     readSnapshot(options?: { now?: number; windowMs?: number }): Promise<ClaudeBridgeSnapshot> | ClaudeBridgeSnapshot
     /**
-     * Network fallback; resolves null for every non-success path. `enabled` is
-     * the user's opt-in for the periodic idle refresh, `coldStart` the bounded
-     * first read taken only while no reading exists at all.
+     * Authorized Claude App quota read. `enabled` is the hard access gate;
+     * coldStart/supplement describe urgency and never bypass that gate.
      */
-    readQuotaFallback?(options?: { enabled?: boolean; coldStart?: boolean; now?: number; minStaleMs?: number }): Promise<{ rateLimits: ClaudeRateLimitsInput; updatedAt: number } | null>
+    readQuotaFallback?(options?: { enabled?: boolean; coldStart?: boolean; supplement?: boolean; now?: number; minStaleMs?: number; refreshIntervalMs?: number }): Promise<{ rateLimits: ClaudeRateLimitsInput; updatedAt: number } | null>
     /**
      * Fires once per burst of hook-queue appends and returns a disposer.
      * Optional: an older preload simply never pushes and the Controller's
      * interval remains the only source of freshness.
      */
     watchEvents?(listener: () => void, options?: { coalesceMs?: number }): () => void
-    /**
-     * Desktop-app session lane, strictly read-only. Optional: an older preload
-     * has no desktop reader and the claude lane simply stays CLI-only.
-     */
-    readDesktopSnapshot?(options?: { now?: number; windowMs?: number }): Promise<ClaudeDesktopBridgeSnapshot> | ClaudeDesktopBridgeSnapshot
-    /** Fires on desktop metadata heartbeats; returns a disposer. */
-    watchDesktopSessions?(listener: () => void): () => void
-    /**
-     * The desktop app's own unread set, read from its Local Storage. `null`
-     * means the reading failed — which is deliberately not the same as an empty
-     * set, because an empty set is a claim that nothing is unread.
-     */
-    readDesktopUnread?(): { version: 1; ids: string[]; readAt: number } | null
+    readCodeSnapshot?(options?: { now?: number; windowMs?: number }): Promise<ClaudeCodeBridgeSnapshot> | ClaudeCodeBridgeSnapshot
+    /** State-only hot projection over the bridge's feature-lifetime inventory cache. */
+    readCodeStateSnapshot?(options?: { now?: number }): Promise<ClaudeCodeStateDeltaV2> | ClaudeCodeStateDeltaV2
+    watchCodeState?(listener: () => void, options?: { coalesceMs?: number }): () => void
+    watchCodeSessions?(listener: () => void): () => void
+    readCodeUnread?(): Promise<
+      | { version: 1; revision: string; ids: string[]; readAt: number }
+      | { version: 2; revision: string; ids: string[]; readAt: number; generation: number; sourceFingerprint: string }
+      | null
+    >
+    watchCodeUnread?(listener: () => void): () => void
     /**
      * Latest quota sample the desktop app recorded for itself. Credential-free
      * and independent of the status line, so it keeps the reading moving at the
      * app's own cadence. Null when the app has never written one.
      */
     readPlanUsage?(): Promise<ClaudePlanUsageSample | null> | ClaudePlanUsageSample | null
+    readAppPresence?(): Promise<ClaudeAppPresenceSnapshot> | ClaudeAppPresenceSnapshot
     install(options?: { statusline?: boolean }): Promise<ClaudeRegistrationResult> | ClaudeRegistrationResult
     uninstall(): Promise<ClaudeRegistrationResult> | ClaudeRegistrationResult
     /**
-     * Opens the session in the Claude desktop app via its `claude://resume`
-     * deep link. A desktop id (`local_<uuid>`) and a CLI id (a bare uuid) are
-     * the only input the route needs — there is no terminal fallback and so no
-     * pid, cwd or title to pass.
+     * Opens one existing App Code history row by exact local id. The bridge
+     * refuses CLI ids and refuses to dispatch unless App-running is proven.
      */
     openTask(sessionId: string): Promise<ClaudeOpenResult>
-    diagnostics(): { revision: string; loaded: boolean; loadError: string }
+    diagnostics(): { revision: string; loaded: boolean; loadError: string; quotaAccess?: ClaudeQuotaAccessSnapshot }
     close(): void
   }
   float: {
