@@ -36,7 +36,7 @@ Current increment authorities: [260713/0834-cross-tab-responsive-command-panels/
 
 ## File Favorites
 
-Current increment authorities: [260711/1452-file-favorites-workbench/spec.md](260711/1452-file-favorites-workbench/spec.md#L1) and [260806/1120-favorite-quick-open-runners-slots/spec.md](260806/1120-favorite-quick-open-runners-slots/spec.md#L1); original workbench implementation traceability: [260711/1452-file-favorites-workbench/requirements-traceability.md](260711/1452-file-favorites-workbench/requirements-traceability.md#L1).
+Current increment authorities: [260711/1452-file-favorites-workbench/spec.md](260711/1452-file-favorites-workbench/spec.md#L1) and [260806/1120-favorite-quick-open-runners-slots/spec.md](260806/1120-favorite-quick-open-runners-slots/spec.md#L1); original workbench implementation traceability: [260711/1452-file-favorites-workbench/requirements-traceability.md](260711/1452-file-favorites-workbench/requirements-traceability.md#L1). Approved-but-unimplemented next increment: [260807/1740-favorite-runner-console-sync-and-args/spec.md](260807/1740-favorite-runner-console-sync-and-args/spec.md#L1) — its bullets are collected at the end of this section and are not shipped behavior.
 
 - Favorites are plugin metadata for file/folder paths and virtual groups. Removing a favorite never deletes the disk file or folder.
 - Quick favorite mode is a readonly, cross-group search/open-or-run/reveal/copy surface; management mode supports add, edit, move, duplicate focus, directory listing, runner trust, slot maintenance and learning reset.
@@ -52,6 +52,17 @@ Current increment authorities: [260711/1452-file-favorites-workbench/spec.md](26
 - Full favorites keep a compact two-pane layout, collapse containers into a command-controlled side layer below 720px, and provide keyboard, focus, ARIA, loading, empty, error, unsupported, and 420px overflow-safe states. Quick favorites remain readonly and never inherit management-page selection or drawers.
 - File favorites never create, move, rename, or delete real files; directory reads are non-recursive and do not follow symbolic links.
 - A fixed-corner launcher is a separate second-phase window proposal; the product does not monitor, move or pin the uTools main search window.
+
+Next increment — **approved requirement, not implemented**: [260807/1740-favorite-runner-console-sync-and-args/spec.md](260807/1740-favorite-runner-console-sync-and-args/spec.md#L1). Nothing below is shipped behavior yet.
+
+- Every favorite carries a sync choice (`synced` by default, or local-only). Synced data stays in the uTools plugin database and follows the user's own account sync switch; local-only data lives in a channel that never enters that database. uTools sync is account-level and whole-database with no per-document opt-out, so the granularity is the plugin's own responsibility.
+- Runner trust never syncs. A synced favorite carries its runner configuration to another machine but not its trusted state, because trust is a human confirmation of one executable path on one machine.
+- **Shipped 2026-08-07** — Trust survives a rename: the fingerprint includes the favorite name only when a runner argument or working directory actually references `{name}`. Existing trusted configurations upgrade in place; a fingerprint matching neither algorithm is kept as-is and stays non-executable, so migration never invents trust.
+- **Shipped 2026-08-07** — There is no in-plugin terminal or console UI. A background run leaves one local run record — resolved command line, working directory, status and exit code — shown on the favorite row, with open / reveal / copy actions that hand the log to the system's default viewer.
+- **Shipped 2026-08-07** — Two definite log sources exist: the plugin's own redirected run log, and an optional absolute log path the runner declares (placeholder-expanded, never created and never executed; relative or malformed values are dropped). Run logs and records are local-only, bounded in size and count, and a log directory that cannot be opened degrades the launch to "no log", never to a silent success.
+- **Shipped 2026-08-07** — Background runs surface an exit code, and a non-zero exit is never presented with success wording. Exit codes are observable only while the plugin process lives; the child deliberately survives a plugin restart, so a historical exit code is not backfilled. System-terminal mode states that its exit code is unavailable rather than fabricating one, and remains the escape hatch for interactive prompts and full-screen programs.
+- Not yet implemented: a third, best-effort log source that scans the working/script directories for files modified during the run. It must be labelled a guess and kept distinguishable from the two definite sources. System log stores and privileged process-write tracing stay out of scope.
+- Runner arguments may declare dynamic slots collected from the user before launch. The entered value is passed as one argv element, is never word-split, shell-parsed or placeholder-expanded, and trust covers the declaration rather than the entered value.
 
 ## Window Jump Workbench
 
