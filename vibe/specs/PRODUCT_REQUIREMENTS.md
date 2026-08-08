@@ -99,16 +99,24 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 
 ## Companion 多来源汇总
 
-- Codex 与 Claude Code 是两个彼此独立的来源，可各自开关，也可同时开启共享同一个水球。默认只开启 Codex，此时插件完全不读取任何 Claude 数据，界面、文案与角标含义与只有 Codex 时逐字一致。
-- 任务排布与角标以**状态**为准而非来源：待输入、进行中、已完成未读的角标数字是启用来源的合计；任务列表显示顺序不按来源分组。
-- Claude 未读权威（2026-08-06，取代「无法证明已读则不产生未读」合同）：EyPc 镜像 Claude 桌面端 App 侧栏小点集合（Local Storage `epitaxy-unread-v1`）。观测到则在列表=未读、不在=已读；从未观测到则桌面端任务不产生未读角标；读取失败沿用最后已知集合（`codex.claudeDesktopUnread`）。从插件派发深链本身不算已读。该观测是写入窗口而非持久读取——错过一次熄灯只漏熄、不误熄。
+- Codex 与 Claude Code 是两个彼此独立的来源，可各自开关，也可同时开启共享同一个水球。默认只开启 Codex，此时插件完全不读取任何 Claude 数据，数据、状态、额度、空态与角标语义保持 Codex-only 兼容；唯一有意的展示差异是 RAW-022 要求任务/项目行即使在单来源模式也保留一个文本化、可访问的 Codex 归属标记。
+- 任务排布与角标以**状态**为准而非来源：待输入、进行中、已完成未读的角标数字是启用来源的合计；任务列表显示顺序不按来源分组。每条任务仍必须以文字、图标和可访问名称显示“归属 Codex/Claude”，并使用来源背景与状态标记正交区分。
+- Claude 当前需求权威为 [Claude Code Companion 权威重置](260807/claude-code-companion-authority-reset/spec.md#L1)，技术选择与严格测试门禁见其 [research](260807/claude-code-companion-authority-reset/research.md#L1)，实现/未验收边界见 [verify](260807/claude-code-companion-authority-reset/verify.md#L1)。代码已按 revision 4 路线落地，真实 Claude App quota 数据权威已通过；完整 uTools 状态/未读/项目筛选矩阵与最终 Fable/reset 渲染同屏仍待通过，因此不得宣称产品验收完成。
+- Claude 库存只镜像 Claude App **Code 模式**的 `claude-code-sessions/<org>/<user>/local_<uuid>.json`；CLI-only、Cowork、`local-agent-mode-sessions` 和云端索引均不进入卡片。卡片身份使用 App local id，标题使用 App `title`，空标题固定为 `General coding session`；UUID 不得成为可见标题。
+- App 已有的重复 Code 行严格保留，不由 EyPc 自动隐藏、合并、删除或修复。多个本地行共享一个 `cliSessionId` 时，Hook 状态必须经唯一映射或定向元数据脉冲关联；不能唯一归属则状态未知，不得一对多扇出。
+- Claude phase 与 unread 是两个正交维度。phase 为 `running / waiting-approval / waiting-input / completed / stopped / unknown`；待审批与待回答进入「待确认」，运行进入「进行中」，完成且 App 原生未读进入「已完成未读」，其余完成进入「已完成」。一张卡只能进入一个可见状态分组。
+- Claude phase 的生产路线是**版本门禁 App 私有日志 + 可唯一映射的官方 Hooks + Code 元数据历史恢复**：App local id 精确事件优先，唯一 Hook 次之，`completedTurns > 0` 且无更新 active 证据时恢复历史 completed，歧义或冲突保持 unknown。日志只接受已门禁版本的发送、权限/提问、request-id 响应、完成、停止/失败固定模板；失配 fail closed，原始行/正文/工具参数不跨 Bridge。Hooks-only 和私有 IPC 注入均为已拒绝路线。
+- Claude 未读持久权威是 App Local Storage 中包含 Chromium string tag 的 `epitaxy-unread-v1` 精确键。EyPc 只在权限 `0700` 的完整 LevelDB 临时快照上用真实 reader 读取，复制前后源指纹一致才发布 V2 generation 并立即清理；失败返回 unknown，不复用旧集合。精确 live running/waiting 优先；否则 native unread membership 可把非 live 历史任务确认为 completed-unread。成功精确跳转完成态后，只允许同 `sessionId + completionEpoch` 的进程内可撤销提示和 0/100/300/1000ms 原生复读；同轮迟到 true 不回跳，新轮次可再次未读。禁止持久回执、WAL/`.ldb` 字节扫描或写 App 未读。
+- Claude 功能启用期间由 Controller 维护进程级 `inventory / phase / unread / quota / appPresence` 物化视图；切页、悬浮窗显隐和快捷键复用同一缓存，重启后从真实来源冷启动且不持久化 live phase。五条 authority 独立增量更新；App state 事件即时读取并以 1 秒轮询补漏，连续两轮失败后活动态降为 unknown；source generation、Controller revision、Float applied revision 全链拒绝倒退。额度网络不得阻塞任务状态，watcher callback 延迟不得冒充最终 publish 延迟。
 - 「上一个/下一个」任务循环在同一状态层内按来源分组遍历，组序固定（Codex 在前），且顺序稳定单调——循环过程中新到达的任务不会移动既有项的相对次序。直接打开类命令（打开第一条待输入 / 第一条完成未读）跟随循环序，因此快捷键打开的任务与循环会落到的任务一致。
-- 每个任务行只有一个明显的底部来源标记位；仅启用单一来源时该标记完全不出现。
-- 跳转由各来源自身能力执行：Codex 沿用深链打开；Claude（CLI 与桌面端会话）一律经桌面端 App 深链 `claude://resume?session=<uuid>` 打开，不聚焦终端、不执行 `claude --resume`，也不自动拉起未运行的 App。派发结果恒为 `dispatched`，不作为已读证据；已读见上条镜像合同。
+- 每个任务行和项目行固定显示一个明显的文本化来源标记；即使只启用单一来源也不得省略，且图标与可访问名称必须同步表达来源。
+- 跳转由各来源自身能力执行：Codex 沿用自身深链；Claude 缓存主 App bundle/PID/启动代次并在热路径做低成本存活校验，上一个/下一个先推进全局缓存游标，再由 latest-target-wins 单飞队列派发 `claude://claude.ai/epitaxy/<encoded-local-session-id>`。禁止 `resume/import`、CLI/终端、标题点击、自动拉起、App 未读写入或会话复制；`ClaudeOpenResult.confirmsRead` 保持 false，会话提示不冒充原生确认。
 - 水球额度映射随启用组合变化：仅 Codex 时与旧版完全一致；仅 Claude 时 Claude 独占整个水球；两者同时启用时外圈进度表示 Codex、球心百分比表示 Claude 并标注来源，Claude 未连接或无读数时百分比回退为 Codex 原样。
-- 展开卡额度区按来源分区展示；Claude 分区在来源不可用时显示可执行的原因提示而非空行。
-- 额度窗口数量由来源声明决定，不由插件预设（2026-08-06）：账号在 Claude 官方界面能看到几个限额窗口，这里就显示几个读数，包含按模型的周限额。窗口标题由数据自身的键派生，出现新模型时无需插件更新；派生失败的窗口原样显示而不是被丢弃。按模型的窗口永远不会替代「全部模型」的那个读数。
-- Claude 额度有三条互补的本机只读来源，全部零写入（2026-08-06）：状态栏包装脚本给出全部窗口与精确重置时刻，但只在 Claude Code 渲染时更新；Claude 桌面端自己记录的用量给出与其面板一致的两个百分比、每数分钟一次、不需要凭证；账号用量接口用于冷启动一次与用户显式开启的空闲补读。合并只允许让读数前进，且只替换来源确实提供的字段——较新的来源不得抹掉较旧来源独有的重置时刻或按模型窗口。
+- 展开卡额度区按来源分区展示；Claude 分区在授权关闭、凭据不可用、Retry-After 或其它失败时显示对应安全原因，已有值保留但标为可能过期。
+- 新设置 `claudeAppQuotaAccess` 默认关闭，旧已授权 quota fallback 配置迁移为开启。授权后 macOS 只读 Claude App `oauth:tokenCacheV2` 并以内存方式使用 Claude 专属 Safe Storage Keychain 项；账号/组织无法唯一仲裁时失败关闭，密钥、令牌和缓存明文不进入诊断/Renderer/持久化。
+- 额度窗口由实际动态 limits 声明：`session`、`weekly_all`、`weekly_scoped` 映射为 5h、总周与稳定 scoped key，名称来自上游 Fable/Fable 5，`spend` 等非额度元数据不得显示。Node 16 通过显式 HTTPS 读取主权威，App history/statusline 只逐窗补充，不能抹掉 scoped 窗口、source、freshness 或 reset。启动/启用/恢复/网络、普通 cadence 与最早 reset+1s 唤醒；401/403 等凭据变化，429 遵循 Retry-After，其它失败按 1m/5m/15m/每小时退避。每个周限额显示剩余百分比，200ms 提示包含绝对/相对 reset 与 freshness，20%/10% 为警告/危险。
+- 项目区只生成 EyPc 虚拟项目，不写两端原生项目。合并先按规范绝对路径对应的稳定 key，双方名称都唯一时才以名称兜底；重名歧义保持分离，Claude-only 项目批量加入，共享项目只显示一次。Projects 子页签提供会话级 `全部 / 只显示 Codex / 只显示 Claude`，同步过滤子任务并重算计数。Claude 任务仅支持打开、本地置顶、本地隐藏；归档、移除、移动等不支持能力必须禁用并解释，不能误调 Codex 动作。
+- 来源视觉使用现有 Codex/Claude token：普通背景约 8%，悬停/选中约 12%；所有任务和项目显示文本化归属，不能只靠颜色。项目筛选使用原生 Tab/按钮键盘、焦点、`aria-selected` 和高对比度语义，并保持紧凑卡片高度。
 - 事件钩子注册是插件唯一一次写入用户的 Claude 安装，需用户在设置中显式操作，保留用户已有钩子与状态栏并可干净卸载。对话正文、工具参数与凭证值永不进入观测、诊断或落盘文件。
 
 ## Codex Companion

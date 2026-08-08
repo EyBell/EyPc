@@ -7,8 +7,9 @@ first_seen: 2026-08-06
 last_verified: 2026-08-06
 review_after: 2027-02-06
 evidence:
-  - src/domain/claudeDesktop.ts
-  - tests/domain/claudeDesktop.test.ts
+  - vibe/specs/260806/1130-claude-desktop-provider/verify.md
+  - vibe/specs/260807/claude-code-companion-authority-reset/research.md
+  - src/domain/claudeCode.ts
 tags:
   - aggregation
   - dedup
@@ -17,6 +18,8 @@ tags:
 ---
 
 # Dedup Set Wider Than The Projected Set
+
+> **Current implementation note (2026-08-07).** 触发本记录的 CLI + desktop 跨 lane 去重已删除。现行 [Code-mode domain](../../../src/domain/claudeCode.ts#L1) 保留 App 的每个本地包装行，歧义只让 phase=`unknown`，不压制或合并行。本记录只在未来真的引入“来源压制替代物”时适用，不能作为恢复去重的依据。
 
 ## Symptom
 

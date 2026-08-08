@@ -4,11 +4,13 @@ status: verified
 scope: project
 fingerprint: source-hands-over-a-whole-object__cache-stores-it-verbatim__projection-reads-two-hardcoded-keys__extra-declared-entries-vanish-silently__no-error-anywhere
 first_seen: 2026-08-06
-last_verified: 2026-08-06
+last_verified: 2026-08-07
 evidence:
   - src/domain/claude.ts
   - preload/claude/scripts.cjs
+  - preload/claude/quota.cjs
   - tests/domain/claude.test.ts
+  - tests/platform/claudeQuotaFallback.test.ts
 tags:
   - domain
   - projection
@@ -51,9 +53,11 @@ EyPc 只显示两个。用户以为是采集缺失，实际上：
 - 需要"某个特定条目"时（如水球球心的周读数），用**限定条件**取（无 scope 的那个），
   不要用位置或宽松前缀匹配——否则一个 `seven_day_opus` 会冒充 `seven_day`。
 - 不建模型名/条目名对照表：下一个新条目会重演本条记录。
+- 不要把旧缓存对象键当成网络接口的唯一形状；当前真实接口是动态 `limits[]`，应先按上游 window type/scope 规范化为稳定 key，再由通用投影枚举。额度凭据也必须来自用户明确授权且与当前 App 账号唯一匹配的权威，不能用另一个客户端的 token 猜测。
 
 ## History
 
 | 日期 | 记录 |
 | --- | --- |
 | 2026-08-06 | 首次归档：用户按官方面板截图指出只显示两个窗口；改为按键枚举 + 键名派生标签，并补 scoped 不得冒充 plain 的回归用例 |
+| 2026-08-07 | 再次发生：Claude Code 凭据返回 401，Claude App 当前凭据返回 200，真实 `limits[]` 包含 session / weekly_all / weekly_scoped Fable；改为显式授权的 App 凭据适配、动态 window/scope 解析和 spend 排除，并完成隐私安全实机探针 |

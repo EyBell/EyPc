@@ -7,9 +7,9 @@ first_seen: 2026-08-06
 last_verified: 2026-08-06
 review_after: 2027-02-06
 evidence:
-  - tests/domain/claudeDesktop.test.ts
-  - tests/platform/claudeDesktopBridge.test.ts
   - vibe/specs/260806/1130-claude-desktop-provider/verify.md
+  - tests/domain/claudeCode.test.ts
+  - tests/platform/claudeBridge.test.ts
 tags:
   - testing
   - assertion-quality
@@ -17,6 +17,8 @@ tags:
 ---
 
 # Tests That Cannot Fail
+
+> **Current implementation note (2026-08-07).** 下文用例名和字段属于已删除的 mixed-desktop suite；测试反证规则仍为 verified。现行 [Code domain tests](../../../tests/domain/claudeCode.test.ts#L1) 与 [bridge tests](../../../tests/platform/claudeBridge.test.ts#L1) 使用固定期望、精确键集、歧义/反例和 ordered-event 回放，旧 suite 不能作为当前通过证据。
 
 ## Symptom
 

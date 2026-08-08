@@ -1,5 +1,7 @@
 # Spec：额度全窗口 + 以 App 节奏同步
 
+> **Partially current, acquisition superseded.** 动态 N-window 与两窗口非破坏合并继续有效；完整来源现在由 [权威重置](../../260807/claude-code-companion-authority-reset/spec.md#L1) revision 4 的显式授权 Claude App OAuth、动态 `limits[]`、per-window source/freshness/reset、reset+1 秒唤醒与分类型退避接管。旧的 Claude Code 凭据、两窗口来源、三次进程期尝试和过期 reset 不能作为 Fable/Fable 5 的完整或当前快照。
+
 RAW: [raw-requirement.md](raw-requirement.md#L1) · Receipt: [design-preference-receipt.md](design-preference-receipt.md#L1)
 
 ## 1. 额度模型：两个固定字段 → N 个声明式窗口
@@ -17,7 +19,7 @@ RAW: [raw-requirement.md](raw-requirement.md#L1) · Receipt: [design-preference-
 
 ## 2. 同步时机：接入桌面端自己的用量记录
 
-[desktop.cjs](../../../../preload/claude/desktop.cjs#L1) 新增 `readPlanUsage()`：读 `local-agent-mode-sessions` 的兄弟文件 `plan-usage-history.json`，取**时间戳最大**的样本（不是最后一条），只输出 `{at, fiveHourUsedPercent, sevenDayUsedPercent}`。`org` 是账号标识，**显式丢弃**。任何不可用形状一律 `null`。
+[plan-usage.cjs](../../../../preload/claude/plan-usage.cjs#L1) 现独立承载 `readPlanUsage()`：读 `plan-usage-history.json`，取**时间戳最大**的样本（不是最后一条），只输出 `{at, fiveHourUsedPercent, sevenDayUsedPercent}`。`org` 是账号标识，**显式丢弃**。任何不可用形状一律 `null`。
 
 `mergeClaudePlanUsage(quota, sample, now)`（domain）：
 
@@ -38,6 +40,6 @@ RAW: [raw-requirement.md](raw-requirement.md#L1) · Receipt: [design-preference-
 
 ## 验收
 
-- 聚焦测试：`claude`（窗口枚举/排序/标签派生/scoped 不冒充 plain/过期；合并的前进、不倒退、播种、空样本）、`companionPresentation`（section 行与 chip 短标）、`claudeDesktopBridge`（读取器与 facade）、`claudeCompanionController`（合并落到 view、无样本不变）。
+- 聚焦测试：`claude`（窗口枚举/排序/标签派生/scoped 不冒充 plain/过期；合并的前进、不倒退、播种、空样本）、`companionPresentation`（section 行与 chip 短标）、`claudeBridge`（读取器与 facade）、`claudeCompanionController`（合并落到 view、无样本不变）。
 - `vue-tsc --noEmit` 0 错误；`vite build` + `prepare-utools-runtime` + `validate-utools-runtime` 通过。
 - 宿主视觉验收归用户：第三个 chip 的实际排布与窄宽表现。

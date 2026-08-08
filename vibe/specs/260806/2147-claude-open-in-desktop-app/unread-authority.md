@@ -1,5 +1,7 @@
 # 增补：未读状态改由 Claude 桌面端 App 做权威
 
+> **Partially superseded evidence.** `epitaxy-unread-v1` 仍是持久原生权威；本文件的“字节扫描写入窗口 + 最后已知集合”自 2026-08-07 起被 exact Chromium-tagged key、复制前后源指纹一致的 LevelDB V2 临时快照、真实 reader 与失败=`unknown` 取代。成功精确跳转只允许同 `sessionId + completionEpoch` 的可撤销进程内提示和有界原生复读，不产生持久回执，也不改变 phase。当前合同见 [权威重置](../../260807/claude-code-companion-authority-reset/spec.md#L1)。
+
 Date: 2026-08-06 · 状态 `automated-verified / host-pending`
 
 ## 用户原话
@@ -10,7 +12,7 @@ Date: 2026-08-06 · 状态 `automated-verified / host-pending`
 
 ## 前提修正
 
-用户的前提有一半不成立：EyPc 这边当时**没有可同步的未读**。1130 P4 → 2115 立下的产品合同是「桌面端会话永不产生 `completed-unread`」，理由写在 [claudeDesktop.ts](../../../src/domain/claudeDesktop.ts#L408) 的 `completedState` 上——当时没有任何来源能证明已读，一个谁也清不掉的角标比不显示更糟。桌面端卡片因此一律 `completed` + `unreadState: 'unknown'`。
+用户的前提有一半不成立：EyPc 这边当时**没有可同步的未读**。1130 P4 → 2115 立下的旧产品合同是「桌面端会话永不产生 `completed-unread`」——当时没有任何来源能证明已读，一个谁也清不掉的角标比不显示更糟。对应旧领域模块现已删除；这段只解释历史决策。
 
 本轮取证推翻了那条合同的前提。
 
@@ -50,20 +52,20 @@ Chromium LevelDB：写入先落未压缩 WAL，随后压进 `.ldb` 的 snappy �
 
 | 位置 | 改动 |
 | --- | --- |
-| [preload/claude/desktop.cjs](../../../preload/claude/desktop.cjs#L1) | `readUnreadSet()`：扫 `.log`/`.ldb`，WAL 优先、同文件取后写，按 key 定向抽取，非 `local_*` id 全丢 |
-| [preload/claude/index.cjs](../../../preload/claude/index.cjs#L1) · [preload/index.js](../../../preload/index.js#L1) | `readDesktopUnread` 端口（facade 层一并暴露，否则 validator 拦截） |
-| [src/domain/claudeDesktop.ts](../../../src/domain/claudeDesktop.ts#L1) | `normalizeClaudeDesktopUnread`；`completedState`/`resolveClaudeDesktopSessionState`/投影接受 `appUnread` |
-| [src/domain/codex.ts](../../../src/domain/codex.ts#L1) | 持久化 `claudeDesktopUnread`（`undefined` 与 `[]` 是两种状态，必须各自往返） |
-| [src/runtime/codexController.ts](../../../src/runtime/codexController.ts#L1) | `refreshDesktopUnread()` 同节奏刷新权威并透传给投影 |
-| [scripts/validate-utools-runtime.mjs](../../../scripts/validate-utools-runtime.mjs#L1) | 端口断言 + 「不可读时必须是 `null` 而非空集合」 |
-| [src/help/guides/codex.md](../../../src/help/guides/codex.md#L1) | 新增「未读小点跟着桌面端走」，含写入窗口限制与对齐办法 |
+| 已删除的旧 mixed-desktop reader | `readUnreadSet()` 曾扫描 `.log/.ldb`；该路线已被完整快照 reader 取代 |
+| 当时的 Claude facade | 曾暴露 `readDesktopUnread` 端口；当前端口为 Code/native-unread 拆分合同 |
+| 已删除的旧 desktop domain | 曾接受 `appUnread`；当前权威见 [claudeCode.ts](../../../../src/domain/claudeCode.ts#L1) |
+| [src/domain/codex.ts](../../../../src/domain/codex.ts#L1) | 旧持久化字段已删除并在归一化时丢弃，不再冒充当前原生状态 |
+| [src/runtime/codexController.ts](../../../../src/runtime/codexController.ts#L1) | 当前独立刷新 native unread，失败不清空其它 Claude lane |
+| [scripts/validate-utools-runtime.mjs](../../../../scripts/validate-utools-runtime.mjs#L1) | 当前断言真实 reader、端口、清理和禁止打包异签名 native addon |
+| [src/help/guides/codex.md](../../../../src/help/guides/codex.md#L1) | 当前帮助只描述完整快照与失败=`unknown` |
 
 ## 验证
 
 | 命令 | 结果 |
 | --- | --- |
-| `tests/platform/claudeDesktopBridge.test.ts` | 26/26（新增 10 项：WAL 优先、同文件后写、非法 id、同文件其它键不外泄、不可读返回 `null`） |
-| `tests/domain/claudeDesktop.test.ts` | 42/42（新增 5 项：归一、镜像、无观测无角标） |
+| 旧 desktop bridge suite（已删除） | 26/26（历史字节扫描证据，不再是当前验收） |
+| 旧 desktop domain suite（已删除） | 42/42（历史投影证据，不再是当前验收） |
 | `tests/runtime/claudeCompanionController.test.ts` | 52/52（新增 4 项：镜像与熄灯、读取失败保权威、从未读到无角标、重启恢复） |
 | `pnpm run typecheck` | 0 错误 |
 | `pnpm run test` | 1214/1216 |

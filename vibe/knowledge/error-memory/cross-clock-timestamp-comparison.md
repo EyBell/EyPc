@@ -7,9 +7,9 @@ first_seen: 2026-08-06
 last_verified: 2026-08-06
 review_after: 2027-02-06
 evidence:
-  - src/domain/claudeDesktop.ts
-  - preload/claude/desktop.cjs
-  - tests/domain/claudeDesktop.test.ts
+  - vibe/specs/260806/1130-claude-desktop-provider/verify.md
+  - vibe/specs/260807/claude-code-companion-authority-reset/research.md
+  - preload/claude/events.cjs
 tags:
   - state-machine
   - timestamps
@@ -19,6 +19,8 @@ tags:
 ---
 
 # Cross-Clock Timestamp Comparison
+
+> **Current implementation note (2026-08-07).** 下文函数/字段属于已删除的 mixed-desktop lane。跨时钟不可排序的规则仍为 verified；当前 Claude phase 使用 [同源 Hook 事件水位](../../../preload/claude/events.cjs#L1)，不得把旧 mtime/metadata completion heuristic 恢复为兜底。
 
 ## Symptom
 
