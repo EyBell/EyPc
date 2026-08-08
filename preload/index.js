@@ -33,9 +33,10 @@ const CODEX_THREAD_FIRST_PROMPT_PAGE_LIMIT = 50
 const CODEX_THREAD_FIRST_PROMPT_PAGE_BUDGET = 4
 const CODEX_DESKTOP_IPC_FRAME_MAX_BYTES = 256 * 1024 * 1024
 const CODEX_DESKTOP_IPC_RECONNECT_MAX_MS = 5_000
+const CODEX_DESKTOP_REQUEST_CORRELATION_SALT = crypto.randomBytes(16)
 // Keep synchronized with src/domain/codex.ts. This value crosses the context
 // boundary so a newer renderer can mark long-lived preload evidence degraded.
-const CODEX_TASK_STATE_REVISION = 'task-state-v5'
+const CODEX_TASK_STATE_REVISION = 'task-state-v6'
 const CODEX_DESKTOP_IPC_VERSIONS = {
   'client-status-changed': 0,
   'ipc-connection-reset': 1,
@@ -1928,6 +1929,19 @@ function codexStoredConnectorStatusAuthority(known) {
     : 'connector'
 }
 
+function codexRestoreConnectorActivity(known) {
+  if (!known) return
+  known.status = known.connectorStatus
+  known.activeFlags = [...known.connectorActiveFlags]
+  known.planImplementationOnly = known.connectorPlanImplementationOnly === true
+  known.statusAuthority = codexStoredConnectorStatusAuthority(known)
+  if (known.status === 'active'
+    && known.activeFlags.some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
+    && codexTimestampMs(known.connectorWaitingSince)) known.waitingSince = known.connectorWaitingSince
+  else delete known.waitingSince
+  delete known.desktopActiveSince
+}
+
 function codexDesktopActivitySupersedesAppServer(known, shadows) {
   if (known?.appServerLiveActive !== true || !Number.isInteger(known.appServerLiveSequence)) return false
   const latestDesktopSequence = Math.max(0, ...shadows
@@ -2394,12 +2408,75 @@ function codexDesktopIpcEndpointIsSecure(endpoint) {
   }
 }
 
-function codexDesktopProjectedRequest(value) {
+function codexDesktopRequestTimestamp(value) {
   const source = codexRecord(value)
-  return {
-    type: typeof source.type === 'string' ? source.type.slice(0, 80) : '',
-    method: typeof source.method === 'string' ? source.method.slice(0, 120) : ''
+  const params = codexRecord(source.params)
+  return codexTimestampMs(source.startedAt)
+    || codexTimestampMs(source.createdAt)
+    || codexTimestampMs(source.timestamp)
+    || codexTimestampMs(params.startedAt)
+    || codexTimestampMs(params.createdAt)
+    || codexTimestampMs(params.timestamp)
+}
+
+function codexDesktopRequestCorrelation(value) {
+  const source = codexRecord(value)
+  const params = codexRecord(source.params)
+  const identity = [source.requestId, source.id, source.callId, params.requestId, params.id, params.callId]
+    .find((candidate) => typeof candidate === 'string' && candidate.length > 0 && candidate.length <= 512
+      || Number.isSafeInteger(candidate))
+  if (identity === undefined) return ''
+  return crypto.createHash('sha256')
+    .update(CODEX_DESKTOP_REQUEST_CORRELATION_SALT)
+    .update('\0')
+    .update(String(identity))
+    .digest('hex')
+    .slice(0, 32)
+}
+
+function codexDesktopProjectedRequest(value, observedAt = Date.now(), previous = null) {
+  const source = codexRecord(value)
+  const type = typeof source.type === 'string' ? source.type.slice(0, 80) : ''
+  const method = typeof source.method === 'string' ? source.method.slice(0, 120) : ''
+  const correlation = codexDesktopRequestCorrelation(source)
+    || (previous?.type === type && previous?.method === method ? previous.correlation : '')
+  const projection = {
+    type,
+    method,
+    observedAt: codexTimestampMs(observedAt) || Date.now()
   }
+  if (correlation) projection.correlation = correlation
+  const suppliedStartedAt = codexDesktopRequestTimestamp(source)
+  const startedAt = suppliedStartedAt || codexTimestampMs(previous?.startedAt)
+  if (startedAt) projection.startedAt = startedAt
+  if (previous
+    && previous.type === projection.type
+    && previous.method === projection.method
+    && !suppliedStartedAt
+    && !startedAt
+    && codexTimestampMs(previous.observedAt)) projection.observedAt = previous.observedAt
+  return projection
+}
+
+function codexDesktopProjectedRequests(values, previous = []) {
+  const observations = Array.isArray(previous) ? [...previous] : []
+  const used = new Set()
+  const observedAt = Date.now()
+  return values.map((value) => {
+    const source = codexRecord(value)
+    const type = typeof source.type === 'string' ? source.type.slice(0, 80) : ''
+    const method = typeof source.method === 'string' ? source.method.slice(0, 120) : ''
+    const startedAt = codexDesktopRequestTimestamp(source)
+    const correlation = codexDesktopRequestCorrelation(source)
+    const matchIndex = observations.findIndex((item, index) => !used.has(index)
+      && (correlation
+        ? item.correlation === correlation
+        : item.type === type
+          && item.method === method
+          && (!startedAt || !item.startedAt || item.startedAt === startedAt)))
+    if (matchIndex >= 0) used.add(matchIndex)
+    return codexDesktopProjectedRequest(source, observedAt, matchIndex >= 0 ? observations[matchIndex] : null)
+  })
 }
 
 function codexDesktopIsPlanImplementationRequest(request) {
@@ -2409,14 +2486,18 @@ function codexDesktopIsPlanImplementationRequest(request) {
 function codexDesktopRequestFlag(request) {
   const type = String(request?.type || '').toLowerCase()
   const method = String(request?.method || '').toLowerCase()
-  const identifier = `${type}:${method}`.replace(/[^a-z0-9]/g, '')
   if (codexDesktopIsPlanImplementationRequest(request)
-    || identifier.includes('userinput')
-    || identifier.includes('optionpicker')
-    || identifier.includes('setupcodex')) return 'waitingOnUserInput'
-  if (identifier.includes('approval')
-    || identifier.includes('elicitation')
-    || identifier.includes('permissionrequest')) return 'waitingOnApproval'
+    || method === 'item/tool/requestuserinput'
+    || method === 'requestuserinput'
+    || type === 'userinput'
+    || type === 'optionpicker'
+    || type === 'setupcodex') return 'waitingOnUserInput'
+  if (method === 'item/commandexecution/requestapproval'
+    || method === 'item/filechange/requestapproval'
+    || method === 'item/permissions/requestapproval'
+    || method === 'mcpserver/elicitation/request'
+    || method === 'requestapproval' && (type === 'approval' || type === 'commandexecution' || type === 'filechange' || type === 'permissions')
+    || type === 'elicitation') return 'waitingOnApproval'
   return ''
 }
 
@@ -2603,12 +2684,12 @@ function codexDesktopRuntimeProjection(value) {
   return activity ? { type: activity.status, activeFlags: activity.activeFlags } : null
 }
 
-function codexDesktopShadowFromSnapshot(change) {
+function codexDesktopShadowFromSnapshot(change, previousShadow = null) {
   const state = codexRecord(change.conversationState)
   const revision = Number.isInteger(change.revision) && change.revision >= 0 ? change.revision : -1
   const runtime = codexDesktopRuntimeProjection(state.threadRuntimeStatus)
   const requests = Array.isArray(state.requests) && state.requests.length <= 10_000
-    ? state.requests.map(codexDesktopProjectedRequest)
+    ? codexDesktopProjectedRequests(state.requests, previousShadow?.requests)
     : null
   if (revision < 0 || !runtime || requests === null) return null
   const shadow = {
@@ -2627,6 +2708,13 @@ function codexDesktopShadowFromSnapshot(change) {
     unreadEvidence: typeof state.hasUnreadTurn === 'boolean' ? 'snapshot' : '',
     requests
   }
+  const runtimeWaiting = (runtime.activeFlags || []).some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
+  const previousRuntimeWaiting = (previousShadow?.runtime?.activeFlags || []).some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
+  if (runtimeWaiting) {
+    shadow.runtimeWaitingSince = previousRuntimeWaiting && codexTimestampMs(previousShadow?.runtimeWaitingSince)
+      ? previousShadow.runtimeWaitingSince
+      : Date.now()
+  }
   if (codexDesktopShadowActivity(shadow)?.status === 'active') shadow.desktopActiveSince = Date.now()
   return shadow
 }
@@ -2636,9 +2724,14 @@ function codexDesktopShadowActivity(shadow) {
   const activeFlags = new Set(shadow.runtime.activeFlags || [])
   let hasPlanImplementationRequest = false
   let hasOtherWaitingRequest = false
+  let requestWaitingSince = 0
   for (const request of shadow.requests || []) {
     const flag = codexDesktopRequestFlag(request)
     if (flag) activeFlags.add(flag)
+    if (flag) requestWaitingSince = Math.max(
+      requestWaitingSince,
+      codexTimestampMs(request.startedAt) || codexTimestampMs(request.observedAt)
+    )
     if (codexDesktopIsPlanImplementationRequest(request)) hasPlanImplementationRequest = true
     else if (flag) hasOtherWaitingRequest = true
   }
@@ -2652,6 +2745,9 @@ function codexDesktopShadowActivity(shadow) {
       ? 'notLoaded'
       : shadow.runtime.type
   const desktopActiveSince = status === 'active' ? codexTimestampMs(shadow.desktopActiveSince) : 0
+  const waitingSince = status === 'active' && (activeFlags.has('waitingOnUserInput') || activeFlags.has('waitingOnApproval'))
+    ? requestWaitingSince || codexTimestampMs(shadow.runtimeWaitingSince) || desktopActiveSince
+    : 0
   const planImplementationOnly = status === 'active'
     && hasPlanImplementationRequest
     && !hasOtherWaitingRequest
@@ -2660,6 +2756,7 @@ function codexDesktopShadowActivity(shadow) {
     status,
     activeFlags: status === 'active' ? [...activeFlags] : [],
     ...(planImplementationOnly ? { planImplementationOnly: true } : {}),
+    ...(waitingSince ? { waitingSince } : {}),
     ...(desktopActiveSince ? { desktopActiveSince } : {})
   }
 }
@@ -2719,6 +2816,10 @@ function codexResolveParentActivity(own, childActivities, options = {}) {
       .filter((activity) => activity.status === 'active')
       .map((activity) => codexTimestampMs(activity.desktopActiveSince)))
     : 0
+  const waitingSince = status === 'active' && (hasInput || hasApproval)
+    ? Math.max(0, ...waitingActivities.map((activity) => codexTimestampMs(activity.waitingSince)))
+      || codexTimestampMs(options.connectorWaitingSince)
+    : 0
   return {
     status,
     activeFlags: status === 'active'
@@ -2730,6 +2831,7 @@ function codexResolveParentActivity(own, childActivities, options = {}) {
     hasActive,
     hasSystemError,
     appServerActive,
+    waitingSince,
     desktopActiveSince
   }
 }
@@ -2808,7 +2910,7 @@ function codexApplyDesktopShadowPatch(shadow, patch) {
   if (root !== 'requests') return false
   if (patchPath.length === 1) {
     if (operation === 'remove') shadow.requests = []
-    else if (Array.isArray(source.value) && source.value.length <= 10_000) shadow.requests = source.value.map(codexDesktopProjectedRequest)
+    else if (Array.isArray(source.value) && source.value.length <= 10_000) shadow.requests = codexDesktopProjectedRequests(source.value, shadow.requests)
     else return false
     return true
   }
@@ -2818,14 +2920,30 @@ function codexApplyDesktopShadowPatch(shadow, patch) {
   if (patchPath.length === 2) {
     if (operation === 'remove') requests.splice(index, 1)
     else if (operation === 'add') requests.splice(index, 0, codexDesktopProjectedRequest(source.value))
-    else requests[index] = codexDesktopProjectedRequest(source.value)
+    else requests[index] = codexDesktopProjectedRequest(source.value, Date.now(), requests[index])
     shadow.requests = requests
     return true
   }
-  if (patchPath.length !== 3 || (patchPath[2] !== 'type' && patchPath[2] !== 'method')) return false
-  if (operation === 'remove') requests[index][patchPath[2]] = ''
-  else if (typeof source.value === 'string') requests[index][patchPath[2]] = source.value.slice(0, patchPath[2] === 'type' ? 80 : 120)
-  else return false
+  if (patchPath.length === 3 && (patchPath[2] === 'type' || patchPath[2] === 'method')) {
+    const field = patchPath[2]
+    if (operation === 'remove') requests[index][field] = ''
+    else if (typeof source.value === 'string') requests[index][field] = source.value.slice(0, field === 'type' ? 80 : 120)
+    else return false
+    requests[index].observedAt = Date.now()
+    return true
+  }
+  const timestampField = (patchPath.length === 3
+      && (patchPath[2] === 'startedAt' || patchPath[2] === 'createdAt' || patchPath[2] === 'timestamp'))
+    || (patchPath.length === 4
+      && patchPath[2] === 'params'
+      && (patchPath[3] === 'startedAt' || patchPath[3] === 'createdAt' || patchPath[3] === 'timestamp'))
+  if (!timestampField) return false
+  if (operation === 'remove') delete requests[index].startedAt
+  else {
+    const startedAt = codexTimestampMs(source.value)
+    if (!startedAt) return false
+    requests[index].startedAt = startedAt
+  }
   return true
 }
 
@@ -2862,9 +2980,13 @@ function codexPromoteCompletedPlanWait(known) {
   known.connectorStatus = 'active'
   known.connectorActiveFlags = [...new Set([...known.connectorActiveFlags, 'waitingOnUserInput'])]
   known.connectorStatusAuthority = 'persisted-decision'
+  known.connectorWaitingSince = codexTimestampMs(known.lastTurnCompletedAt)
+    || codexTimestampMs(known.lastTurnStartedAt)
+    || Date.now()
   known.status = 'active'
   known.activeFlags = [...new Set([...known.activeFlags, 'waitingOnUserInput'])]
   known.planImplementationOnly = !hasOtherWaiting
+  known.waitingSince = known.connectorWaitingSince
   if (known.statusAuthority !== 'desktop-live') {
     known.statusAuthority = 'persisted-decision'
     known.activityEvidence = 'connector'
@@ -2902,12 +3024,14 @@ function codexApplyCompletedTurnNotification(bridge, known, threadId, value) {
   bridge.clearOrphanedPending(threadId)
   known.connectorStatus = 'notLoaded'
   known.connectorActiveFlags = []
+  delete known.connectorWaitingSince
   known.connectorPlanImplementationOnly = false
   known.connectorStatusAuthority = 'connector'
   if (known.statusAuthority !== 'desktop-live') {
     known.status = 'notLoaded'
     known.activeFlags = []
     known.planImplementationOnly = false
+    delete known.waitingSince
     known.statusAuthority = 'connector'
     known.activityEvidence = 'connector'
     delete known.desktopActiveSince
@@ -2940,6 +3064,7 @@ function codexApplyStartedTurnNotification(bridge, known, threadId, value) {
   delete known.pendingCompletedPlanItem
   known.connectorStatus = 'active'
   known.connectorActiveFlags = []
+  delete known.connectorWaitingSince
   known.connectorPlanImplementationOnly = false
   known.connectorStatusAuthority = 'connector'
   const previousStartedAt = codexTimestampMs(known.lastTurnStartedAt)
@@ -2950,6 +3075,7 @@ function codexApplyStartedTurnNotification(bridge, known, threadId, value) {
     known.status = 'active'
     known.activeFlags = []
     known.planImplementationOnly = false
+    delete known.waitingSince
     known.statusAuthority = 'app-server-live'
     known.activityEvidence = 'activity-event'
     known.activityRevision = codexActivityGeneration
@@ -3752,11 +3878,7 @@ class CodexDesktopCompanionBridge {
           if (ownsShadow) {
             if (sideParentThreadId) this.emitParentActivity(sideParentThreadId)
             else {
-              known.status = known.connectorStatus
-              known.activeFlags = [...known.connectorActiveFlags]
-              known.planImplementationOnly = known.connectorPlanImplementationOnly === true
-              known.statusAuthority = codexStoredConnectorStatusAuthority(known)
-              delete known.desktopActiveSince
+              codexRestoreConnectorActivity(known)
             }
           }
           this.refreshPersistedUnread(false)
@@ -3815,7 +3937,7 @@ class CodexDesktopCompanionBridge {
       const normalizedChange = protocolVersion === 6 && !Number.isInteger(change.revision)
         ? { ...change, revision: previousShadow?.ownerClientId === ownerClientId ? previousShadow.revision + 1 : 1 }
         : change
-      const shadow = codexDesktopShadowFromSnapshot(normalizedChange)
+      const shadow = codexDesktopShadowFromSnapshot(normalizedChange, previousShadow)
       if (!shadow) {
         this.resubscribe(params.conversationId)
         return
@@ -3881,7 +4003,10 @@ class CodexDesktopCompanionBridge {
       this.resubscribe(params.conversationId)
       return
     }
-    const wasActive = codexDesktopShadowActivity(shadow)?.status === 'active'
+    const previousActivity = codexDesktopShadowActivity(shadow)
+    const wasActive = previousActivity?.status === 'active'
+    const previousRuntimeWaiting = [...new Set((shadow.runtime?.activeFlags || [])
+      .filter((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval'))].sort().join('|')
     let containsReadStatePatch = false
     let containsActivityPatch = false
     for (const patch of change.patches) {
@@ -3902,6 +4027,13 @@ class CodexDesktopCompanionBridge {
       shadow.activityEventSequence = codexNextLiveEvidenceSequence()
       delete shadow.suppressUncorroboratedActive
     }
+    const currentRuntimeWaiting = [...new Set((shadow.runtime?.activeFlags || [])
+      .filter((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval'))].sort().join('|')
+    if (currentRuntimeWaiting) {
+      if (currentRuntimeWaiting !== previousRuntimeWaiting || !codexTimestampMs(shadow.runtimeWaitingSince)) {
+        shadow.runtimeWaitingSince = Date.now()
+      }
+    } else delete shadow.runtimeWaitingSince
     const currentActivity = codexDesktopShadowActivity(shadow)
     const isActive = currentActivity?.status === 'active'
     if (containsActivityPatch && isActive) {
@@ -3945,6 +4077,9 @@ class CodexDesktopCompanionBridge {
     known.statusAuthority = appServerActive ? 'app-server-live' : 'desktop-live'
     known.activityEvidence = appServerActive ? 'activity-event' : desktopEvidence
     known.activityRevision = shadow.activityRevision
+    if (appServerActive && codexTimestampMs(known.connectorWaitingSince)) known.waitingSince = known.connectorWaitingSince
+    else if (!appServerActive && activity.waitingSince) known.waitingSince = activity.waitingSince
+    else delete known.waitingSince
     if (activity.desktopActiveSince) known.desktopActiveSince = activity.desktopActiveSince
     else delete known.desktopActiveSince
     let unreadIds = null
@@ -3961,7 +4096,8 @@ class CodexDesktopCompanionBridge {
     const priorStatus = previousStatus || known.status
     const own = codexDesktopShadowActivity(this.shadows.get(parentThreadId)) || {
       status: known.connectorStatus,
-      activeFlags: [...known.connectorActiveFlags]
+      activeFlags: [...known.connectorActiveFlags],
+      ...(codexTimestampMs(known.connectorWaitingSince) ? { waitingSince: known.connectorWaitingSince } : {})
     }
     const childEntries = [...this.sideShadows.entries()].filter(([, shadow]) => shadow.parentThreadId === parentThreadId)
     const children = childEntries.map(([, shadow]) => shadow)
@@ -3970,7 +4106,8 @@ class CodexDesktopCompanionBridge {
       childActivities.push({
         status: 'active',
         activeFlags: ['waitingOnUserInput'],
-        planImplementationOnly: true
+        planImplementationOnly: true,
+        ...(codexTimestampMs(known.connectorWaitingSince) ? { waitingSince: known.connectorWaitingSince } : {})
       })
     }
     const evidenceShadows = [this.shadows.get(parentThreadId), ...children].filter(Boolean)
@@ -3978,7 +4115,8 @@ class CodexDesktopCompanionBridge {
     const desktopActivityEvent = evidenceShadows.some((shadow) => shadow.activityEvidence === 'activity-event')
     let projection = codexResolveParentActivity(own, childActivities, {
       appServerActive: known.appServerLiveActive === true,
-      connectorActiveFlags: known.connectorActiveFlags
+      connectorActiveFlags: known.connectorActiveFlags,
+      connectorWaitingSince: known.connectorWaitingSince
     })
     const desktopInactiveSupersedes = desktopActivityEvent
       && !projection.hasActive
@@ -3989,10 +4127,11 @@ class CodexDesktopCompanionBridge {
       codexClearAppServerLiveActive(known)
       projection = codexResolveParentActivity(own, childActivities, {
         appServerActive: false,
-        connectorActiveFlags: known.connectorActiveFlags
+        connectorActiveFlags: known.connectorActiveFlags,
+        connectorWaitingSince: known.connectorWaitingSince
       })
     }
-    const { status, activeFlags, desktopActiveSince } = projection
+    const { status, activeFlags, waitingSince, desktopActiveSince } = projection
     known.status = status
     known.activeFlags = activeFlags
     known.planImplementationOnly = projection.planImplementationOnly === true
@@ -4001,6 +4140,8 @@ class CodexDesktopCompanionBridge {
       ? 'activity-event'
       : 'initial-snapshot'
     known.activityRevision = Math.max(0, ...evidenceShadows.map((shadow) => Number.isInteger(shadow.activityRevision) ? shadow.activityRevision : 0))
+    if (waitingSince) known.waitingSince = waitingSince
+    else delete known.waitingSince
     if (desktopActiveSince) known.desktopActiveSince = desktopActiveSince
     else delete known.desktopActiveSince
     const ownShadow = this.shadows.get(parentThreadId)
@@ -4202,12 +4343,8 @@ class CodexDesktopCompanionBridge {
     if (!changed) return false
     const known = codexActivityInventory.get(parentThreadId)
     if (known) {
-      known.status = known.connectorStatus
-      known.activeFlags = [...known.connectorActiveFlags]
-      known.planImplementationOnly = known.connectorPlanImplementationOnly === true
-      known.statusAuthority = codexStoredConnectorStatusAuthority(known)
+      codexRestoreConnectorActivity(known)
       known.activityEvidence = 'connector'
-      delete known.desktopActiveSince
     }
     return true
   }
@@ -4240,11 +4377,7 @@ class CodexDesktopCompanionBridge {
       }
       this.shadows.delete(threadId)
       if (!known) continue
-      known.status = known.connectorStatus
-      known.activeFlags = [...known.connectorActiveFlags]
-      known.planImplementationOnly = known.connectorPlanImplementationOnly === true
-      known.statusAuthority = codexStoredConnectorStatusAuthority(known)
-      delete known.desktopActiveSince
+      codexRestoreConnectorActivity(known)
       affected.add(threadId)
     }
     for (const [threadId, shadow] of this.sideShadows) {
@@ -4278,11 +4411,7 @@ class CodexDesktopCompanionBridge {
   restoreConnectorAuthority(threadId) {
     const known = codexActivityInventory.get(threadId)
     if (!known) return
-    known.status = known.connectorStatus
-    known.activeFlags = [...known.connectorActiveFlags]
-    known.planImplementationOnly = known.connectorPlanImplementationOnly === true
-    known.statusAuthority = codexStoredConnectorStatusAuthority(known)
-    delete known.desktopActiveSince
+    codexRestoreConnectorActivity(known)
     emitCodexActivityDelta([codexActivityPublicEntry(known)], false)
   }
 
@@ -4389,11 +4518,7 @@ class CodexDesktopCompanionBridge {
       const known = codexActivityInventory.get(threadId)
       if (!known) continue
       if (retainedParents.has(threadId)) continue
-      known.status = known.connectorStatus
-      known.activeFlags = [...known.connectorActiveFlags]
-      known.planImplementationOnly = known.connectorPlanImplementationOnly === true
-      known.statusAuthority = codexStoredConnectorStatusAuthority(known)
-      delete known.desktopActiveSince
+      codexRestoreConnectorActivity(known)
       changed.push(known)
     }
     this.refreshPersistedUnread(false)
@@ -4635,6 +4760,10 @@ function codexActivityPublicEntry(value) {
   const desktopActiveSince = status === 'active' && statusAuthority === 'desktop-live'
     ? codexTimestampMs(source.desktopActiveSince)
     : 0
+  const waitingSince = status === 'active'
+    && activeFlags.some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
+    ? codexTimestampMs(source.waitingSince)
+    : 0
   const lastTurnEvidence = ['inventory', 'turn-started', 'turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(source.lastTurnEvidence)
     ? source.lastTurnEvidence
     : undefined
@@ -4649,6 +4778,7 @@ function codexActivityPublicEntry(value) {
           statusAuthority,
           ...(activityEvidence ? { activityEvidence } : {}),
           ...(activityRevision !== undefined ? { activityRevision } : {}),
+          ...(waitingSince ? { waitingSince } : {}),
           ...(desktopActiveSince ? { desktopActiveSince } : {}),
           ...(lastTurnStatus ? { lastTurnStatus } : {}),
           ...(lastTurnStartedAt ? { lastTurnStartedAt } : {}),
@@ -4708,9 +4838,18 @@ function handleCodexServerMessage(message) {
     const activity = sanitizeCodexActivityStatus(params.status)
     if (known && activity) {
       const exitedActive = known.connectorStatus === 'active' && activity.status !== 'active'
+      const previousWaitingFlags = [...new Set((known.connectorActiveFlags || [])
+        .filter((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval'))].sort().join('|')
+      const currentWaitingFlags = [...new Set((activity.activeFlags || [])
+        .filter((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval'))].sort().join('|')
       known.connectorStatus = activity.status
       known.connectorActiveFlags = activity.activeFlags
       known.connectorStatusAuthority = 'connector'
+      if (activity.status === 'active' && currentWaitingFlags) {
+        if (currentWaitingFlags !== previousWaitingFlags || !codexTimestampMs(known.connectorWaitingSince)) {
+          known.connectorWaitingSince = Date.now()
+        }
+      } else delete known.connectorWaitingSince
       if (activity.status === 'active') {
         const bridge = codexEnsureDesktopBridge()
         bridge.clearOrphanedPending(threadId)
@@ -4721,6 +4860,8 @@ function handleCodexServerMessage(message) {
         known.status = 'active'
         known.activeFlags = activity.activeFlags
         known.planImplementationOnly = false
+        if (currentWaitingFlags && codexTimestampMs(known.connectorWaitingSince)) known.waitingSince = known.connectorWaitingSince
+        else delete known.waitingSince
         known.statusAuthority = 'app-server-live'
         known.activityEvidence = 'activity-event'
         known.activityRevision = codexActivityGeneration
@@ -4738,6 +4879,8 @@ function handleCodexServerMessage(message) {
           known.status = activity.status
           known.activeFlags = activity.activeFlags
           known.planImplementationOnly = known.connectorPlanImplementationOnly === true
+          if (currentWaitingFlags && codexTimestampMs(known.connectorWaitingSince)) known.waitingSince = known.connectorWaitingSince
+          else delete known.waitingSince
           known.statusAuthority = 'connector'
           known.activityEvidence = 'connector'
           known.activityRevision = codexActivityGeneration
@@ -5752,6 +5895,9 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
       name: typeof thread.name === 'string' && thread.name.trim() ? thread.name.trim().slice(0, 120) : '未命名任务',
       status,
       activeFlags,
+      ...(activeFlags.length
+        ? { waitingSince: codexTimestampMs(lastTurn.completedAt) || codexTimestampMs(lastTurn.startedAt) || now }
+        : {}),
       ...(persistedPendingPlan ? { planImplementationOnly: true } : {}),
       statusAuthority: persistedDecision ? 'persisted-decision' : 'connector',
       hasUnreadTurn: unreadIds ? unreadIds.has(thread.id) : false,
@@ -5918,6 +6064,9 @@ async function scanVerifiedCodexInventory() {
         ...activity,
         connectorStatus: activity.status,
         connectorActiveFlags: activity.activeFlags,
+        ...(codexTimestampMs(projection?.waitingSince)
+          ? { connectorWaitingSince: codexTimestampMs(projection.waitingSince) }
+          : {}),
         connectorPlanImplementationOnly: projection?.planImplementationOnly === true,
         connectorStatusAuthority,
         connectorUpdatedAt: projection?.updatedAt,
@@ -5928,6 +6077,13 @@ async function scanVerifiedCodexInventory() {
         activityEvidence: preserveAppServerActive ? 'activity-event' : 'connector',
         activityRevision: 0,
         planImplementationOnly: projection?.planImplementationOnly === true,
+        ...((preserveAppServerActive
+          ? codexTimestampMs(previousActivity.waitingSince) || codexTimestampMs(previousActivity.connectorWaitingSince)
+          : codexTimestampMs(projection?.waitingSince))
+          ? { waitingSince: preserveAppServerActive
+              ? codexTimestampMs(previousActivity.waitingSince) || codexTimestampMs(previousActivity.connectorWaitingSince)
+              : codexTimestampMs(projection.waitingSince) }
+          : {}),
         ...(preserveAppServerActive ? {
           appServerLiveActive: true,
           ...(Number.isInteger(previousActivity.appServerLiveSequence)
@@ -5968,6 +6124,8 @@ async function scanVerifiedCodexInventory() {
       thread.statusAuthority = activity.statusAuthority
       thread.activityEvidence = activity.activityEvidence
       thread.activityRevision = activity.activityRevision
+      if (activity.waitingSince) thread.waitingSince = activity.waitingSince
+      else delete thread.waitingSince
       if (activity.desktopActiveSince) thread.desktopActiveSince = activity.desktopActiveSince
       else delete thread.desktopActiveSince
       thread.hasUnreadTurn = activity.hasUnreadTurn === true

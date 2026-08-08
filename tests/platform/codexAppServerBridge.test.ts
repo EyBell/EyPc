@@ -2526,6 +2526,225 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
+  it('timestamps exact approval and elicitation requests, falls back to first observation, and clears on removal', async () => {
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const task = baseline.value.threads[1]
+    const observedAfter = Date.now()
+    const explicitTimes = [
+      observedAfter - 5_000,
+      observedAfter - 4_000,
+      observedAfter - 3_000,
+      observedAfter - 2_000,
+      observedAfter - 1_000
+    ]
+    const requests = [
+      { type: 'commandExecution', method: 'item/commandExecution/requestApproval', startedAt: explicitTimes[0] },
+      { type: 'fileChange', method: 'item/fileChange/requestApproval', startedAt: explicitTimes[1] },
+      { type: 'elicitation', method: 'mcpServer/elicitation/request', startedAt: explicitTimes[2] },
+      { type: 'userInput', method: 'item/tool/requestUserInput', startedAt: explicitTimes[3] },
+      { type: 'plan', method: 'item/plan/requestImplementation', startedAt: explicitTimes[4] },
+      {
+        type: 'permissions',
+        method: 'item/permissions/requestApproval',
+        requestId: 'raw-request-id',
+        params: { command: 'private command', cwd: '/private/path' }
+      }
+    ]
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: FIXED_THREAD_IDS[1],
+        change: {
+          type: 'snapshot',
+          revision: 1,
+          conversationState: {
+            threadRuntimeStatus: { type: 'idle', activeFlags: [] },
+            requests,
+            hasUnreadTurn: false
+          }
+        }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const first = (await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)
+    expect(first).toMatchObject({
+      status: 'active',
+      activeFlags: expect.arrayContaining(['waitingOnApproval', 'waitingOnUserInput']),
+      statusAuthority: 'desktop-live'
+    })
+    expect(first.waitingSince).toBeGreaterThanOrEqual(observedAfter)
+
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: FIXED_THREAD_IDS[1],
+        change: {
+          type: 'snapshot',
+          revision: 2,
+          conversationState: {
+            threadRuntimeStatus: { type: 'idle', activeFlags: [] },
+            requests,
+            hasUnreadTurn: false
+          }
+        }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const replayed = (await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)
+    expect(replayed.waitingSince).toBe(first.waitingSince)
+
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: FIXED_THREAD_IDS[1],
+        change: {
+          type: 'patches',
+          baseRevision: 2,
+          revision: 3,
+          patches: [{ op: 'remove', path: ['requests', 5] }]
+        }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const fallback = (await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)
+    expect(fallback.waitingSince).toBe(explicitTimes[4])
+
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: FIXED_THREAD_IDS[1],
+        change: {
+          type: 'patches',
+          baseRevision: 3,
+          revision: 4,
+          patches: [{ op: 'replace', path: ['requests'], value: [] }]
+        }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const resolved = (await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)
+    expect(resolved).toMatchObject({ status: 'idle', activeFlags: [] })
+    expect(resolved).not.toHaveProperty('waitingSince')
+    const publicPayload = JSON.stringify((await bridge.readActivitySnapshot()).value)
+    expect(publicPayload).not.toContain('raw-request-id')
+    expect(publicPayload).not.toContain('private command')
+    expect(publicPayload).not.toContain('/private/path')
+    expect(publicPayload).not.toContain('requestApproval')
+    bridge.close()
+  })
+
+  it('keeps distinct first-observation times for identical untimestamped approvals across full snapshots', async () => {
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const task = baseline.value.threads[1]
+    const approval = (requestId: string) => ({
+      type: 'permissions',
+      method: 'item/permissions/requestApproval',
+      requestId
+    })
+    const snapshot = (revision: number, requests: Record<string, unknown>[]) => ({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: FIXED_THREAD_IDS[1],
+        change: {
+          type: 'snapshot',
+          revision,
+          conversationState: {
+            threadRuntimeStatus: { type: 'idle', activeFlags: [] },
+            requests,
+            hasUnreadTurn: false
+          }
+        }
+      }
+    })
+
+    desktopSocket.push(snapshot(1, [approval('approval-a')]))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    const first = (await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)
+
+    desktopSocket.push(snapshot(2, [approval('approval-a'), approval('approval-b')]))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    const second = (await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)
+    expect(second.waitingSince).toBeGreaterThan(first.waitingSince)
+
+    desktopSocket.push(snapshot(3, [approval('approval-b')]))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const remaining = (await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)
+    expect(remaining.waitingSince).toBe(second.waitingSince)
+    expect(JSON.stringify((await bridge.readActivitySnapshot()).value)).not.toContain('approval-b')
+    bridge.close()
+  })
+
+  it('uses the latest unresolved Side Chat request time for the parent attention instance', async () => {
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const parent = baseline.value.threads[1]
+    const sideThreadId = 'a2345678-1234-4234-8234-123456789abc'
+    const parentAt = Date.now() - 2_000
+    const childAt = Date.now() - 1_000
+    const snapshot = (conversationId: string, requests: Record<string, any>[], sideConversation = false) => ({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId,
+        change: {
+          type: 'snapshot',
+          revision: 1,
+          conversationState: {
+            ...(sideConversation ? { sideConversation: true, forkedFromId: FIXED_THREAD_IDS[1] } : {}),
+            threadRuntimeStatus: { type: 'idle', activeFlags: [] },
+            requests,
+            hasUnreadTurn: false
+          }
+        }
+      }
+    })
+    desktopSocket.push(snapshot(FIXED_THREAD_IDS[1], [
+      { type: 'userInput', method: 'item/tool/requestUserInput', startedAt: parentAt }
+    ]))
+    desktopSocket.push(snapshot(sideThreadId, [
+      { type: 'permissions', method: 'item/permissions/requestApproval', startedAt: childAt }
+    ], true))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === parent.key)).toMatchObject({
+      activeFlags: expect.arrayContaining(['waitingOnUserInput', 'waitingOnApproval']),
+      waitingSince: childAt
+    })
+    bridge.close()
+  })
+
   it('lets any exact active activity patch reopen an epoch over confirmed completion', async () => {
     const child = new FakeCodexProcess()
     const desktopSocket = new FakeCodexDesktopSocket()

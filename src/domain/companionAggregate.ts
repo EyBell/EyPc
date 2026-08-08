@@ -5,6 +5,7 @@ import type {
   CodexTaskCard,
   ConversationSnapshotV1
 } from './codex'
+import { orderCodexAttentionTasks } from './codex'
 import { companionTaskProvider, type CompanionProviderId } from './companionProvider'
 
 /**
@@ -37,7 +38,7 @@ function bucketsFor(card: CodexTaskCard): Array<keyof ConversationSnapshotV1 & s
   if (card.bucket === 'stopped') buckets.push('stopped')
   if (card.bucket === 'completed-unread') buckets.push('completedUnread', 'completedTab')
   if (card.bucket === 'completed') buckets.push('completed', 'completedTab')
-  if (card.bucket === 'ongoing' && card.activityState === 'waiting-input') buckets.push('inputRequired')
+  if (card.bucket === 'ongoing' && (card.activityState === 'waiting-input' || card.activityState === 'waiting-approval')) buckets.push('inputRequired')
   return buckets
 }
 
@@ -291,21 +292,24 @@ export function mergeCompanionConversations(
   }
   next.ongoing = mergeByRecency(snapshot.ongoing, byBucket.get('ongoing') || [])
   next.stopped = mergeByRecency(snapshot.stopped, byBucket.get('stopped') || [])
-  next.completedUnread = mergeByRecency(snapshot.completedUnread, byBucket.get('completedUnread') || [])
+  next.completedUnread = orderCodexAttentionTasks(mergeByRecency(snapshot.completedUnread, byBucket.get('completedUnread') || []))
   next.completed = mergeByRecency(snapshot.completed, byBucket.get('completed') || [])
-  next.completedTab = mergeByRecency(snapshot.completedTab, byBucket.get('completedTab') || [])
-  next.inputRequired = mergeByRecency(snapshot.inputRequired, byBucket.get('inputRequired') || [])
+  next.completedTab = [...next.completedUnread, ...next.completed]
   next.hidden = mergeByRecency(snapshot.hidden, withHiddenKind(byBucket.get('hidden') || []))
   // `pending` is the deprecated V1 alias of completedUnread and must not drift.
   next.pending = next.completedUnread
   next.all = mergeByRecency(snapshot.all, cards)
+  // Attention shortcuts use the same complete hidden-inclusive set as Codex.
+  next.inputRequired = orderCodexAttentionTasks(next.all.filter((card) => card.bucket === 'ongoing'
+    && (card.activityState === 'waiting-input' || card.activityState === 'waiting-approval')))
 
   next.ongoingCount = next.ongoing.length
   next.stoppedCount = next.stopped.length + next.hidden.filter((card) => card.bucket === 'stopped').length
   next.waitingCount = countWaiting(next.ongoing)
   next.runningCount = next.ongoing.filter((card) => card.activityState === 'active').length
-  next.inputRequiredCount = [...next.ongoing, ...next.hidden].filter((card) => card.activityState === 'waiting-input').length
+  next.inputRequiredCount = [...next.ongoing, ...next.hidden].filter((card) => card.activityState === 'waiting-input' || card.activityState === 'waiting-approval').length
   next.completedUnreadCount = next.completedUnread.length
+    + next.hidden.filter((card) => card.bucket === 'completed-unread').length
   next.completedCount = next.completed.length
   next.pendingCount = next.completedUnreadCount
   next.hiddenCount = next.hidden.length
@@ -322,20 +326,24 @@ export function withoutCompanionProvider(
     ...snapshot,
     ongoing: keep(snapshot.ongoing),
     stopped: keep(snapshot.stopped),
-    completedUnread: keep(snapshot.completedUnread),
+    completedUnread: orderCodexAttentionTasks(keep(snapshot.completedUnread)),
     completed: keep(snapshot.completed),
-    completedTab: keep(snapshot.completedTab),
-    inputRequired: keep(snapshot.inputRequired),
+    completedTab: [],
+    inputRequired: [],
     hidden: keep(snapshot.hidden),
     all: keep(snapshot.all)
   }
+  next.completedTab = [...next.completedUnread, ...next.completed]
+  next.inputRequired = orderCodexAttentionTasks(next.all.filter((card) => card.bucket === 'ongoing'
+    && (card.activityState === 'waiting-input' || card.activityState === 'waiting-approval')))
   next.pending = next.completedUnread
   next.ongoingCount = next.ongoing.length
   next.stoppedCount = next.stopped.length + next.hidden.filter((card) => card.bucket === 'stopped').length
   next.waitingCount = countWaiting(next.ongoing)
   next.runningCount = next.ongoing.filter((card) => card.activityState === 'active').length
-  next.inputRequiredCount = [...next.ongoing, ...next.hidden].filter((card) => card.activityState === 'waiting-input').length
+  next.inputRequiredCount = [...next.ongoing, ...next.hidden].filter((card) => card.activityState === 'waiting-input' || card.activityState === 'waiting-approval').length
   next.completedUnreadCount = next.completedUnread.length
+    + next.hidden.filter((card) => card.bucket === 'completed-unread').length
   next.completedCount = next.completed.length
   next.pendingCount = next.completedUnreadCount
   next.hiddenCount = next.hidden.length

@@ -68,7 +68,7 @@ describe('Codex controller', () => {
     }
   })
 
-  it('preserves one atomic degraded task package when the production adapter reports a legacy bridge', async () => {
+  it('preserves one atomic degraded task package when the production adapter reports task-state-v5', async () => {
     const state = createInitialState(1)
     state.activeTab = 'codex'
     const now = Date.now()
@@ -76,7 +76,7 @@ describe('Codex controller', () => {
     const messages: string[] = []
     const platform = {
       codex: {
-        taskStateRevision: 'legacy',
+        taskStateRevision: 'task-state-v5',
         readSnapshot: async (options: Record<string, boolean>) => {
           reads.push(options)
           return {
@@ -127,7 +127,7 @@ describe('Codex controller', () => {
     ])
     expect(controller.view().taskState).toMatchObject({
       compatibility: 'degraded',
-      sourceRevision: 'legacy',
+      sourceRevision: 'task-state-v5',
       conversations: { status: 'ok', ongoingCount: 1 },
       dynamic: { compactCounts: { active: 1 } }
     })
@@ -2574,7 +2574,7 @@ describe('Codex controller', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(activityListeners[0]).toBeTypeOf('function')
     expect(controller.view().conversations.ongoing).toHaveLength(5)
-    expect(controller.view().conversations.inputRequired.map((task) => task.key)).toEqual([planAKey, planBKey, inputKey])
+    expect(controller.view().conversations.inputRequired.map((task) => task.key)).toEqual([approvalKey, planAKey, planBKey, inputKey])
     expect(controller.view().conversations.completedUnread).toHaveLength(1)
 
     controller.cycleTask(-1)
@@ -2844,7 +2844,7 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
-  it('opens the pinned-first display task from the complete waiting-input shortcut set', async () => {
+  it('opens the newest waiting task even when an older task is pinned', async () => {
     const now = Date.now()
     const state = createInitialState(1)
     const recentKey = '3333333333333333'
@@ -2883,7 +2883,189 @@ describe('Codex controller', () => {
     await controller.refresh()
     expect(controller.view().conversations.inputRequired.map((task) => task.key)).toEqual([recentKey, pinnedKey])
     expect(controller.openFirstInput()).toBe(true)
-    expect(openThread).toHaveBeenCalledWith('alias-pinned-input')
+    expect(openThread).toHaveBeenCalledWith('alias-recent-input')
+    controller.dispose()
+  })
+
+  it('persists unseen input progress, lets a new status preempt, then resumes the older queue', async () => {
+    const now = Date.now()
+    const state = createInitialState(1)
+    const makeThread = (rank: number, waitingSince: number): CodexHostThread => ({
+      key: rank.toString(16).padStart(16, '0'),
+      actionAlias: `alias-${rank}`,
+      name: `待输入 ${rank}`,
+      status: 'active',
+      activeFlags: ['waitingOnUserInput'],
+      statusAuthority: 'desktop-live',
+      waitingSince,
+      updatedAt: waitingSince,
+      lastTurnStatus: 'inProgress',
+      lastTurnStartedAt: waitingSince - 1
+    })
+    let threads = [
+      makeThread(1, now - 100),
+      makeThread(2, now - 200),
+      makeThread(3, now - 300),
+      makeThread(4, now - 400),
+      makeThread(5, now - 500)
+    ]
+    const openThread = vi.fn(async (_alias: string) => ({ outcome: 'opened' as const }))
+    const platform = {
+      codex: {
+        readSnapshot: async () => ({
+          ok: true as const,
+          receivedAt: Date.now(),
+          value: {
+            version: 2 as const,
+            receivedAt: Date.now(),
+            threads,
+            projects: [],
+            sourceFingerprint: '9'.repeat(64),
+            completeness: 'verified' as const
+          }
+        }),
+        openThread,
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const options = {
+      platform,
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: () => undefined
+    }
+    const trigger = async (controller: ReturnType<typeof createCodexController>) => {
+      expect(controller.openFirstInput()).toBe(true)
+      await Promise.resolve()
+      await Promise.resolve()
+    }
+
+    let controller = createCodexController(options)
+    await controller.refresh()
+    await trigger(controller)
+    await trigger(controller)
+    expect(openThread.mock.calls.map(([alias]) => alias)).toEqual(['alias-1', 'alias-2'])
+    controller.dispose()
+
+    controller = createCodexController(options)
+    await controller.refresh()
+    await trigger(controller)
+    expect(openThread.mock.calls.map(([alias]) => alias)).toEqual(['alias-1', 'alias-2', 'alias-3'])
+
+    threads = [makeThread(6, now + 100), ...threads]
+    await controller.refresh()
+    await trigger(controller)
+    await trigger(controller)
+    await trigger(controller)
+    expect(openThread.mock.calls.map(([alias]) => alias)).toEqual([
+      'alias-1', 'alias-2', 'alias-3', 'alias-6', 'alias-4', 'alias-5'
+    ])
+
+    threads = threads.map((item) => item.actionAlias === 'alias-3' ? makeThread(3, now + 200) : item)
+    await controller.refresh()
+    await trigger(controller)
+    expect(openThread).toHaveBeenLastCalledWith('alias-3')
+    expect(state.codex.attentionOpenHistory.every((entry) => entry.key !== makeThread(3, now - 300).key
+      || entry.statusEnteredAt === now + 200)).toBe(true)
+    controller.dispose()
+  })
+
+  it('does not advance attention progress on open failure and counts a manual successful open', async () => {
+    const now = Date.now()
+    const state = createInitialState(1)
+    const firstKey = 'aaaaaaaaaaaaaaaa'
+    const secondKey = 'bbbbbbbbbbbbbbbb'
+    const openThread = vi.fn()
+      .mockResolvedValueOnce({ outcome: 'failed' as const, errorCode: 'open-failed' as const })
+      .mockResolvedValue({ outcome: 'opened' as const })
+    const platform = {
+      codex: {
+        readSnapshot: async () => ({
+          ok: true as const,
+          receivedAt: now,
+          value: {
+            version: 2 as const,
+            receivedAt: now,
+            threads: [
+              { key: firstKey, actionAlias: 'alias-first', name: '最新', status: 'active' as const, activeFlags: ['waitingOnApproval' as const], statusAuthority: 'desktop-live' as const, waitingSince: now, updatedAt: now, lastTurnStatus: 'inProgress' as const, lastTurnStartedAt: now - 1 },
+              { key: secondKey, actionAlias: 'alias-second', name: '较旧', status: 'active' as const, activeFlags: ['waitingOnUserInput' as const], statusAuthority: 'desktop-live' as const, waitingSince: now - 10, updatedAt: now - 10, lastTurnStatus: 'inProgress' as const, lastTurnStartedAt: now - 11 }
+            ],
+            projects: [],
+            sourceFingerprint: '8'.repeat(64),
+            completeness: 'verified' as const
+          }
+        }),
+        openThread,
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({
+      platform,
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: () => undefined
+    })
+    await controller.refresh()
+
+    controller.openFirstInput()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(state.codex.attentionOpenHistory).toEqual([])
+    controller.openFirstInput()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(openThread.mock.calls.slice(0, 2)).toEqual([['alias-first'], ['alias-first']])
+
+    await controller.openThread(secondKey, 'alias-second')
+    controller.openFirstInput()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(openThread).toHaveBeenLastCalledWith('alias-first')
+    controller.dispose()
+  })
+
+  it('walks completed-unread by completion revision and wraps to the newest after all were opened', async () => {
+    const now = Date.now()
+    const state = createInitialState(1)
+    const olderKey = 'cccccccccccccccc'
+    const newerKey = 'dddddddddddddddd'
+    state.codex.localPins = [{ kind: 'task', key: olderKey }]
+    const openThread = vi.fn(async (_alias: string) => ({ outcome: 'opened' as const }))
+    const platform = {
+      codex: {
+        readSnapshot: async () => ({
+          ok: true as const,
+          receivedAt: now,
+          value: {
+            version: 2 as const,
+            receivedAt: now,
+            threads: [
+              { key: olderKey, actionAlias: 'alias-older-unread', name: '置顶旧完成', status: 'notLoaded' as const, activeFlags: [], updatedAt: now, lastTurnStatus: 'completed' as const, lastTurnStartedAt: now - 10, lastTurnCompletedAt: now - 100, hasUnreadTurn: true, unreadAuthority: 'desktop-live' as const },
+              { key: newerKey, actionAlias: 'alias-newer-unread', name: '最新完成', status: 'notLoaded' as const, activeFlags: [], updatedAt: now - 1_000, lastTurnStatus: 'completed' as const, lastTurnStartedAt: now - 2_000, lastTurnCompletedAt: now - 50, hasUnreadTurn: true, unreadAuthority: 'desktop-live' as const }
+            ],
+            projects: [],
+            sourceFingerprint: '7'.repeat(64),
+            completeness: 'verified' as const
+          }
+        }),
+        openThread,
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined })
+    await controller.refresh()
+    for (let index = 0; index < 3; index += 1) {
+      expect(controller.openFirstCompletedUnread()).toBe(true)
+      await Promise.resolve()
+      await Promise.resolve()
+    }
+    expect(openThread.mock.calls.map(([alias]) => alias)).toEqual([
+      'alias-newer-unread',
+      'alias-older-unread',
+      'alias-newer-unread'
+    ])
     controller.dispose()
   })
 

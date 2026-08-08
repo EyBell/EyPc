@@ -155,16 +155,16 @@ describe('Codex dynamic status projection', () => {
       completedUnread: [unread],
       completed: [completed],
       hidden: [hiddenActive, hiddenInput, hiddenUnread],
-      inputRequired: [input, hiddenInput]
+      inputRequired: [approval, input, hiddenInput]
     }, NOW)
 
-    expect(value.groups.input.map((item) => item.key)).toEqual(['input'])
-    expect(value.groups.active.map((item) => item.key)).toEqual(['active', 'approval', 'conservative'])
+    expect(value.groups.input.map((item) => item.key)).toEqual(['approval', 'input'])
+    expect(value.groups.active.map((item) => item.key)).toEqual(['active', 'conservative'])
     expect(value.groups.stopped.map((item) => item.key)).toEqual(['stopped'])
     expect(value.groups.unread.map((item) => item.key)).toEqual(['unread'])
     expect(value.groups.completed.map((item) => item.key)).toEqual(['completed'])
     expect(value.tasks).toHaveLength(7)
-    expect(value.compactCounts).toEqual({ input: 2, active: 3, unread: 2 })
+    expect(value.compactCounts).toEqual({ input: 3, active: 2, unread: 2 })
     expect(value.groups.active.map((item) => item.key)).not.toContain('old-active')
     expect(value.groups.active.map((item) => item.key)).not.toContain('hidden-active')
   })
@@ -188,6 +188,28 @@ describe('Codex dynamic status projection', () => {
     expect(configured.groups.active.map((item) => item.key)).toEqual(['configured-window'])
     expect(configured.compactCounts.active).toBe(1)
     expect(configured.nextTransitionAt).toBe(activityAt + 36 * 60 * 60 * 1000 + 1)
+  })
+
+  it('keeps a newly entered approval in the dynamic window even when its Turn is old', () => {
+    const statusEnteredAt = NOW - 1_000
+    const approval = task('new-approval-on-old-turn', {
+      activityState: 'waiting-approval',
+      state: 'waiting-approval',
+      lastTurnStartedAt: NOW - 48 * 60 * 60 * 1000,
+      statusEnteredAt
+    })
+    const value = projectCodexDynamicStatus({
+      ongoing: [approval],
+      stopped: [],
+      completedUnread: [],
+      completed: [],
+      hidden: [],
+      inputRequired: [approval]
+    }, NOW, 24)
+
+    expect(value.groups.input.map((item) => item.key)).toEqual(['new-approval-on-old-turn'])
+    expect(value.groups.active).toEqual([])
+    expect(value.nextTransitionAt).toBe(statusEnteredAt + 24 * 60 * 60 * 1000 + 1)
   })
 
   it('keeps card and active counter aligned through active/ongoing jitter, then switches once on stabilized completion', () => {

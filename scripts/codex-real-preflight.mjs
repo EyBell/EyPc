@@ -69,6 +69,7 @@ function loadDomainModule(filename) {
 }
 
 const { CODEX_TASK_STATE_REVISION, projectConversations } = loadDomainModule(resolve(root, 'src/domain/codex.ts'))
+const { projectCodexDynamicStatus } = loadDomainModule(resolve(root, 'src/domain/codexPresentation.ts'))
 
 const bridge = sandbox.window.eypcPlatform?.codex
 if (!bridge?.readSnapshot) throw new Error('Codex preload bridge is unavailable')
@@ -156,12 +157,16 @@ try {
       nonConversationCount: snapshot.nonConversationCount,
       desktopBridgeState: activity?.desktopBridgeState
     }).snapshot
+    const productDynamic = projectCodexDynamicStatus(productProjection, Date.now(), timeWindowDays * 24)
     const productWaitingKeys = new Set(productProjection.inputRequired.map((thread) => thread.key))
+    const productActiveKeys = new Set(productDynamic.groups.active.map((thread) => thread.key))
     const provenWaitingReachesProduct = [...persistedWaitingInput, ...liveWaitingInput]
       .every((thread) => productWaitingKeys.has(thread.key))
     const plainConnectorWaitingStaysOut = connectorWaitingInput
       .filter((thread) => thread.planImplementationOnly !== true)
       .every((thread) => !productWaitingKeys.has(thread.key))
+    const attentionDoesNotDoubleCountAsActive = [...productWaitingKeys]
+      .every((key) => !productActiveKeys.has(key))
     const orderIsStrict = inWindow.every((thread, index) => index === 0 || inWindow[index - 1].lastTurnStartedAt >= thread.lastTurnStartedAt)
     const quotaWindows = [
       snapshot.quota?.short ? { name: '5 小时限额', remainingPercent: snapshot.quota.short.remainingPercent } : null,
@@ -174,6 +179,7 @@ try {
         && bridge.taskStateRevision === CODEX_TASK_STATE_REVISION
         && provenWaitingReachesProduct
         && plainConnectorWaitingStaysOut
+        && attentionDoesNotDoubleCountAsActive
     console.log(JSON.stringify({
       ok,
       hostVersion: snapshot.version,
@@ -195,7 +201,7 @@ try {
         persistedWaitingInput: persistedWaitingInput.length,
         liveWaitingInput: liveWaitingInput.length,
         productWaitingInput: productProjection.inputRequired.length,
-        productActive: productProjection.ongoing.filter((task) => task.activityState === 'active' || task.activityState === 'waiting-approval').length
+        productActive: productActiveKeys.size
       },
       timeWindowDays,
       projectOrder: (snapshot.projects || []).map((project) => ({

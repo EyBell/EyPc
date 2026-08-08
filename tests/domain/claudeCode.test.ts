@@ -59,6 +59,20 @@ describe('Claude App Code domain', () => {
     expect(resolveClaudeCodeState(observation(phase))).toMatchObject({ phase, bucket, activityState })
   })
 
+  it('projects the exact Claude phase appearance time into attention status instances', () => {
+    expect(projectClaudeCodeTaskCards([
+      observation('waiting-approval', { waitingApprovalAt: 410 }),
+      observation('waiting-input', { sessionId: LOCAL_B, waitingInputAt: 420 })
+    ]).map((card) => card.statusEnteredAt)).toEqual([410, 420])
+    expect(projectClaudeCodeTaskCards([
+      observation('completed', { lastStopAt: 430 })
+    ], { appUnread: [LOCAL_A] })[0]).toMatchObject({
+      bucket: 'completed-unread',
+      statusEnteredAt: 430,
+      pendingSince: 430
+    })
+  })
+
   it('lets exact native unread recover any non-live historical row', () => {
     expect(resolveClaudeCodeState(observation('completed'), [LOCAL_A])).toMatchObject({ bucket: 'completed-unread', unreadState: 'unread' })
     expect(resolveClaudeCodeState(observation('completed'), [])).toMatchObject({ bucket: 'completed', unreadState: 'read' })

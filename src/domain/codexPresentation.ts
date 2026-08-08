@@ -13,7 +13,8 @@ import {
   CODEX_MIN_DYNAMIC_TASK_WINDOW_HOURS,
   CODEX_TASK_STATE_REVISION,
   emptyConversationSnapshot,
-  normalizeCodexQuota
+  normalizeCodexQuota,
+  orderCodexAttentionTasks
 } from './codex'
 import { highestSparkQuotaPool } from './codexNewThread'
 
@@ -98,12 +99,12 @@ type CodexDynamicConversationSource = Pick<
 >
 
 function taskActivityAt(task: CodexTaskCard): number {
-  return Math.max(task.lastTurnStartedAt || 0, task.lastTurnCompletedAt || 0)
+  return Math.max(task.statusEnteredAt || 0, task.lastTurnStartedAt || 0, task.lastTurnCompletedAt || 0)
 }
 
 function isDynamicActiveTask(task: CodexTaskCard): boolean {
   return task.bucket === 'ongoing'
-    && (task.activityState === 'active' || task.activityState === 'waiting-approval' || task.activityState === 'ongoing')
+    && (task.activityState === 'active' || task.activityState === 'ongoing')
 }
 
 function emptyDynamicStatusProjection(): CodexDynamicStatusProjection {
@@ -140,10 +141,10 @@ export function projectCodexDynamicStatus(
   ].filter((task) => !task.isHidden && taskActivityAt(task) >= windowStart)
   const recentOngoing = recent.filter((task) => task.bucket === 'ongoing')
   const groups: CodexDynamicStatusGroups = {
-    input: recentOngoing.filter((task) => task.activityState === 'waiting-input'),
+    input: orderCodexAttentionTasks(recentOngoing.filter((task) => task.activityState === 'waiting-input' || task.activityState === 'waiting-approval')),
     active: recentOngoing.filter(isDynamicActiveTask),
     stopped: recent.filter((task) => task.bucket === 'stopped'),
-    unread: recent.filter((task) => task.bucket === 'completed-unread'),
+    unread: orderCodexAttentionTasks(recent.filter((task) => task.bucket === 'completed-unread')),
     completed: recent.filter((task) => task.bucket === 'completed')
   }
   const tasks = [groups.input, groups.active, groups.stopped, groups.unread, groups.completed].flat()
