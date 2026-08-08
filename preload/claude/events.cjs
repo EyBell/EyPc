@@ -24,8 +24,9 @@ const MAX_EVENTS_PER_READ = 2000
  * so both providers feel the same.
  */
 const DEFAULT_COALESCE_MS = 50
+const DEFAULT_RECOVERY_POLL_MS = 1000
 
-/** Raw `hook_event_name` → companion event class. Mirrors src/domain/claude.ts. */
+/** Raw `hook_event_name` → companion event class. */
 const HOOK_EVENT_CLASSES = Object.freeze({
   SessionStart: 'session-start',
   UserPromptSubmit: 'prompt-submit',
@@ -66,13 +67,17 @@ function normalizeQueueEntry(value) {
   if (!sessionId || !event) return null
   const at = safeInteger(value.t)
   // Deliberately narrow: identity, event class, timing and the owning process.
-  // Working directory and parent session come from the transcript, which cannot
-  // be confused with a tool's own arguments.
+  // App project metadata comes from the Code inventory, never from hook input.
   return {
     sessionId,
     event,
     at: at || 0,
-    pid: safeInteger(value.p)
+    pid: safeInteger(value.p),
+    reason: value.r === 'ask-user-question'
+      ? 'ask-user-question'
+      : value.r === 'idle-prompt'
+        ? 'idle-prompt'
+        : ''
   }
 }
 
@@ -91,20 +96,56 @@ function parseQueueText(text) {
 }
 
 /**
- * Folds a batch of queue entries into per-session latest state. Later entries
- * win, which is what makes the queue order-preserving but replay-safe: reading
- * the same batch twice produces the same state.
+ * Folds a batch into independent monotonic waterlines plus the current phase.
+ * A later SessionEnd therefore cannot erase a Stop from the same Turn.
  */
 function foldQueueEntries(entries, previous) {
   const state = new Map(previous instanceof Map ? previous : [])
   for (const entry of Array.isArray(entries) ? entries : []) {
-    const known = state.get(entry.sessionId) || {}
-    if (known.hookEventAt && entry.at && entry.at < known.hookEventAt) continue
-    state.set(entry.sessionId, {
-      hookEvent: entry.event,
-      hookEventAt: entry.at || known.hookEventAt || 0,
-      pid: entry.pid || known.pid || 0
-    })
+    const known = state.get(entry.sessionId) || {
+      phase: 'unknown',
+      lastEvent: '',
+      lastEventAt: 0,
+      turnStartedAt: 0,
+      lastActivityAt: 0,
+      waitingApprovalAt: 0,
+      waitingInputAt: 0,
+      lastStopAt: 0,
+      lastSessionEndAt: 0,
+      pid: 0
+    }
+    // The file order resolves equal timestamps. A genuinely older record is a
+    // replay/out-of-order append and cannot roll the phase backwards.
+    if (known.lastEventAt && entry.at && entry.at < known.lastEventAt) continue
+    const at = entry.at || known.lastEventAt || 0
+    const next = { ...known, lastEvent: entry.event, lastEventAt: at, pid: entry.pid || known.pid || 0 }
+    if (entry.event === 'prompt-submit') {
+      next.turnStartedAt = at
+      next.lastActivityAt = at
+      next.phase = 'running'
+    } else if (entry.event === 'pre-tool' && entry.reason === 'ask-user-question') {
+      next.waitingInputAt = at
+      next.phase = 'waiting-input'
+    } else if (entry.event === 'permission-request') {
+      next.waitingApprovalAt = at
+      next.phase = 'waiting-approval'
+    } else if (entry.event === 'stop') {
+      next.lastStopAt = at
+      next.phase = 'completed'
+    } else if (entry.event === 'session-end') {
+      next.lastSessionEndAt = at
+      next.phase = next.lastStopAt > 0 && next.lastStopAt >= next.turnStartedAt
+        ? 'completed'
+        : 'stopped'
+    } else if (entry.event === 'stop-failure') {
+      next.phase = 'stopped'
+    } else if (entry.event === 'notification') {
+      // idle_prompt is only a wake-up hint. It never proves a user question.
+    } else {
+      next.lastActivityAt = at
+      next.phase = 'running'
+    }
+    state.set(entry.sessionId, next)
   }
   return state
 }
@@ -117,10 +158,14 @@ function createEventQueue(dependencies) {
   const queuePath = path.join(directory, QUEUE_FILE_NAME)
   const setTimer = dependencies.setTimeout || setTimeout
   const clearTimer = dependencies.clearTimeout || clearTimeout
+  const setIntervalFn = dependencies.setInterval || setInterval
+  const clearIntervalFn = dependencies.clearInterval || clearInterval
   let offset = 0
   let sessionState = new Map()
   let watcher = null
   let watchTimer = null
+  let recoveryTimer = null
+  let lastQueueSignature = ''
 
   function reset() {
     offset = 0
@@ -135,6 +180,19 @@ function createEventQueue(dependencies) {
     if (watcher) {
       try { watcher.close() } catch { /* already gone */ }
       watcher = null
+    }
+    if (recoveryTimer) {
+      clearIntervalFn(recoveryTimer)
+      recoveryTimer = null
+    }
+  }
+
+  function queueSignature() {
+    try {
+      const stat = fs.statSync(queuePath)
+      return `${Number(stat.size) || 0}:${Math.round(Number(stat.mtimeMs) || 0)}`
+    } catch {
+      return 'missing'
     }
   }
 
@@ -160,9 +218,13 @@ function createEventQueue(dependencies) {
     const coalesceMs = Number.isFinite(settings.coalesceMs)
       ? Math.max(0, settings.coalesceMs)
       : DEFAULT_COALESCE_MS
+    const recoveryPollMs = Number.isFinite(settings.recoveryPollMs)
+      ? Math.max(100, settings.recoveryPollMs)
+      : DEFAULT_RECOVERY_POLL_MS
     stopWatching()
     try { fs.mkdirSync(directory, { recursive: true }) } catch { /* the watch below reports it */ }
     let disposed = false
+    lastQueueSignature = queueSignature()
     const fire = () => {
       watchTimer = null
       if (disposed) return
@@ -186,8 +248,16 @@ function createEventQueue(dependencies) {
       }
     } catch {
       watcher = null
-      return () => {}
     }
+    // `fs.watch` is only the fast path. A bounded signature poll catches a
+    // dropped notification without publishing when nothing changed.
+    recoveryTimer = setIntervalFn(() => {
+      const next = queueSignature()
+      if (next === lastQueueSignature) return
+      lastQueueSignature = next
+      onChange('change', QUEUE_FILE_NAME)
+    }, recoveryPollMs)
+    if (recoveryTimer && typeof recoveryTimer.unref === 'function') recoveryTimer.unref()
     return () => {
       disposed = true
       stopWatching()
@@ -256,6 +326,7 @@ module.exports = {
   QUEUE_FILE_NAME,
   MAX_QUEUE_BYTES,
   DEFAULT_COALESCE_MS,
+  DEFAULT_RECOVERY_POLL_MS,
   HOOK_EVENT_CLASSES,
   normalizeEventClass,
   normalizeQueueEntry,

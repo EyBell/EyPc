@@ -10,6 +10,7 @@ import {
   companionQuotaChipHint,
   companionQuotaFreshnessText,
   companionResetDetailText,
+  resolveCompanionProjectMarker,
   resolveCompanionRowMarker,
   resolveCompanionWaterBallPresentation,
   type CompanionCodexQuotaWindow,
@@ -100,23 +101,30 @@ describe('water ball presentation', () => {
 })
 
 describe('row markers', () => {
-  it('is suppressed entirely in compatibility mode', () => {
-    expect(resolveCompanionRowMarker({ provider: 'codex' }, { codex: true, claude: false })).toBeNull()
-    expect(resolveCompanionRowMarker({ provider: 'claude' }, { codex: true, claude: false })).toBeNull()
-  })
-
-  it('labels both providers once the list can mix them', () => {
-    const providers = { codex: true, claude: true }
-    expect(resolveCompanionRowMarker({ provider: 'codex' }, providers)).toEqual({ provider: 'codex', label: 'Codex', tooltip: '来源：Codex' })
-    expect(resolveCompanionRowMarker({ provider: 'claude' }, providers)).toEqual({ provider: 'claude', label: 'Claude', tooltip: '来源：Claude' })
-  })
-
-  it('treats a legacy card without a provider field as codex', () => {
-    expect(resolveCompanionRowMarker({}, { codex: true, claude: true })?.provider).toBe('codex')
+  it.each([
+    ['Codex', { provider: 'codex' as const }, { provider: 'codex', label: '归属 Codex', tooltip: '归属 Codex' }],
+    ['Claude', { provider: 'claude' as const }, { provider: 'claude', label: '归属 Claude', tooltip: '归属 Claude' }],
+    ['legacy Codex', {}, { provider: 'codex', label: '归属 Codex', tooltip: '归属 Codex' }]
+  ])('always exposes one textual owner cue for %s cards', (_name, task, expected) => {
+    expect(resolveCompanionRowMarker(task)).toEqual(expected)
   })
 
   it('returns null for a missing task', () => {
-    expect(resolveCompanionRowMarker(null, { codex: true, claude: true })).toBeNull()
+    expect(resolveCompanionRowMarker(null)).toBeNull()
+  })
+
+  it.each([
+    ['Codex', { providers: ['codex' as const] }, { label: '归属 Codex', className: 'provider-codex', claudeOnly: false }],
+    ['Claude', { providers: ['claude' as const] }, { label: '归属 Claude', className: 'provider-claude', claudeOnly: true }],
+    ['shared', { providers: ['claude' as const, 'codex' as const] }, { label: '归属 Codex + Claude', className: 'provider-shared', claudeOnly: false }],
+    ['legacy empty', {}, { label: '归属 Codex', className: 'provider-codex', claudeOnly: false }]
+  ])('resolves one reusable %s project marker', (_name, project, expected) => {
+    expect(resolveCompanionProjectMarker(project)).toMatchObject(expected)
+  })
+
+  it('derives a legacy project provider from its tasks', () => {
+    expect(resolveCompanionProjectMarker({ tasks: [{ provider: 'claude' }] }))
+      .toMatchObject({ providers: ['claude'], label: '归属 Claude', claudeOnly: true })
   })
 })
 
@@ -151,10 +159,35 @@ describe('claude quota section', () => {
     expect(section?.emptyReason).toBe('未检测到 Claude Code')
   })
 
+  it('still presents App-authorized quota when Claude Code readiness is unavailable', () => {
+    const input = slice({
+      claudeEnvironment: emptyClaudeEnvironment(),
+      claudeAppQuotaAccess: true,
+      claudeQuota: normalizeClaudeQuota({ five_hour: { used_percentage: 30 }, seven_day: { used_percentage: 55 } }, { source: 'usage-api' })
+    })
+    expect(buildClaudeQuotaSection(input)?.rows).toHaveLength(2)
+    expect(resolveCompanionWaterBallPresentation(input).percentOverride).toBe(70)
+  })
+
   it('explains a connected provider that has no reading yet', () => {
     const section = buildClaudeQuotaSection(slice({ claudeQuota: emptyClaudeQuota() }))
     expect(section?.rows).toEqual([])
     expect(section?.emptyReason).toContain('尚未读到额度')
+  })
+
+  it('distinguishes credential and Retry-After failures without exposing identities', () => {
+    const credential = buildClaudeQuotaSection(slice({
+      claudeAppQuotaAccess: true,
+      claudeQuota: emptyClaudeQuota(),
+      claudeQuotaAccess: { status: 'credential-unavailable', lastAttemptAt: 10, retryAt: 0 }
+    }))
+    expect(credential?.emptyReason).toBe('Claude App 额度凭据不可用，等待账号凭据更新')
+    const rateLimited = buildClaudeQuotaSection(slice({
+      claudeAppQuotaAccess: true,
+      claudeQuota: emptyClaudeQuota(),
+      claudeQuotaAccess: { status: 'rate-limited', lastAttemptAt: 10, retryAt: 20 }
+    }))
+    expect(rateLimited?.emptyReason).toContain('Retry-After')
   })
 })
 
@@ -331,6 +364,13 @@ describe('quota freshness text', () => {
     expect(companionQuotaFreshnessText({ status: 'stale', updatedAt: now - 60 * 60_000 }, now))
       .toBe('读数更新于 1 小时前，可能已过期')
     expect(companionQuotaFreshnessText({ status: 'stale', updatedAt: 0 }, now)).toBe('读数可能已过期')
+    expect(companionQuotaFreshnessText({ freshness: 'unknown', updatedAt: now - 60_000 }, now))
+      .toBe('读数更新于 1 分钟前，可能已过期')
+  })
+
+  it('uses per-window freshness when it is available', () => {
+    expect(companionQuotaFreshnessText({ freshness: 'fresh', status: 'stale', updatedAt: now - 60_000 }, now))
+      .toBe('读数更新于 1 分钟前')
   })
 })
 
@@ -339,16 +379,29 @@ describe('quota chip staleness projection', () => {
     { key: 'normal-short', label: '5 小时限额', family: 'normal', window: 'short', remainingPercent: 78, resetAt: 10 }
   ]
 
-  it('marks only claude chips while the claude reading is stale', () => {
+  it('marks each Claude chip from its own freshness instead of the total snapshot', () => {
     const staleSlice = slice()
-    staleSlice.claudeQuota = { ...staleSlice.claudeQuota, status: 'stale' }
+    staleSlice.claudeQuota = {
+      ...staleSlice.claudeQuota,
+      status: 'stale',
+      windows: staleSlice.claudeQuota.windows.map((window, index) => ({
+        ...window,
+        freshness: index === 0 ? 'stale' : 'fresh'
+      }))
+    }
     const strip = buildCompanionQuotaStrip(CODEX_WINDOWS, staleSlice)
     expect(strip.groups[0].chips[0].stale).toBeUndefined()
-    expect(strip.groups[1].chips.every((chip) => chip.stale === true)).toBe(true)
+    expect(strip.groups[1].chips.map((chip) => chip.stale)).toEqual([true, false])
   })
 
-  it('leaves the codex chip shape untouched with a fresh claude reading', () => {
-    const strip = buildCompanionQuotaStrip(CODEX_WINDOWS, slice())
+  it('leaves the codex chip shape untouched with fresh Claude windows', () => {
+    const freshSlice = slice()
+    freshSlice.claudeQuota = {
+      ...freshSlice.claudeQuota,
+      status: 'stale',
+      windows: freshSlice.claudeQuota.windows.map((window) => ({ ...window, freshness: 'fresh' }))
+    }
+    const strip = buildCompanionQuotaStrip(CODEX_WINDOWS, freshSlice)
     expect('stale' in strip.groups[0].chips[0]).toBe(false)
     expect(strip.groups[1].chips.every((chip) => chip.stale === false)).toBe(true)
   })
@@ -402,32 +455,31 @@ describe('realtime gap note', () => {
 })
 
 describe('claude source status line', () => {
-  it('says nothing is read while the provider is off, desktop sessions included', () => {
-    expect(claudeSourceStatusText({ enabled: false, environment: READY_ENVIRONMENT, desktopSessionCount: 4 }))
+  it('says nothing is read while the provider is off, Code sessions included', () => {
+    expect(claudeSourceStatusText({ enabled: false, environment: READY_ENVIRONMENT, codeSessionCount: 4 }))
       .toBe('关闭时不读取任何 Claude 数据')
   })
 
-  it('appends the desktop fact to the connected state instead of adding a control', () => {
-    expect(claudeSourceStatusText({ enabled: true, environment: READY_ENVIRONMENT, desktopSessionCount: 3 }))
-      .toBe('已连接 Claude Code 2.1.220 · 桌面端 3 个会话')
-    expect(claudeSourceStatusText({ enabled: true, environment: READY_ENVIRONMENT, desktopSessionCount: 0 }))
+  it('appends the App Code fact to the connected state instead of adding a control', () => {
+    expect(claudeSourceStatusText({ enabled: true, environment: READY_ENVIRONMENT, codeSessionCount: 3 }))
+      .toBe('已连接 Claude Code 2.1.220 · App Code 3 个会话')
+    expect(claudeSourceStatusText({ enabled: true, environment: READY_ENVIRONMENT, codeSessionCount: 0 }))
       .toBe('已连接 Claude Code 2.1.220')
   })
 
   /**
-   * No CLI plus live desktop sessions is a real state, so the two facts are
-   * joined rather than ranked — reporting only "未检测到 Claude Code" while
-   * three desktop cards render is what makes a status line untrustworthy.
+   * No CLI plus live App Code sessions is a real state, so the two facts are
+   * joined rather than ranked.
    */
   it('keeps a cli hint and a desktop count together', () => {
-    expect(claudeSourceStatusText({ enabled: true, environment: emptyClaudeEnvironment(), desktopSessionCount: 2 }))
-      .toBe('未检测到 Claude Code · 桌面端 2 个会话')
+    expect(claudeSourceStatusText({ enabled: true, environment: emptyClaudeEnvironment(), codeSessionCount: 2 }))
+      .toBe('未检测到 Claude Code · App Code 2 个会话')
   })
 
   it('tolerates a missing environment and a nonsense count', () => {
-    expect(claudeSourceStatusText({ enabled: true, environment: null, desktopSessionCount: Number.NaN }))
+    expect(claudeSourceStatusText({ enabled: true, environment: null, codeSessionCount: Number.NaN }))
       .toBe('Claude 状态未知')
-    expect(claudeSourceStatusText({ enabled: true, environment: READY_ENVIRONMENT, desktopSessionCount: -3 }))
+    expect(claudeSourceStatusText({ enabled: true, environment: READY_ENVIRONMENT, codeSessionCount: -3 }))
       .toBe('已连接 Claude Code 2.1.220')
   })
 })

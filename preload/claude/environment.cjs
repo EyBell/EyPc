@@ -191,8 +191,7 @@ function probeAuthentication(dependencies, claudeHome) {
 function readCliVersion(dependencies, claudeHome) {
   const fs = dependencies.fs
   const path = dependencies.path
-  // The transcript carries the exact CLI version that wrote it, which avoids
-  // spawning the binary just to ask.
+  // Prefer Claude Code's own version marker over spawning the binary.
   const versionFile = readJsonFile(fs, path.join(claudeHome, 'version.json'))
   if (versionFile && typeof versionFile.version === 'string') return versionFile.version
   return ''
@@ -249,36 +248,7 @@ function createEnvironmentProbe(dependencies) {
     }
   }
 
-  /** Enumerates transcript files without reading them. */
-  function listTranscripts() {
-    const projects = path.join(claudeHome(), 'projects')
-    const rows = []
-    let slugs = []
-    try { slugs = fs.readdirSync(projects) } catch { return rows }
-    for (const slug of slugs) {
-      const directory = path.join(projects, slug)
-      let files = []
-      try {
-        if (!fs.statSync(directory).isDirectory()) continue
-        files = fs.readdirSync(directory)
-      } catch { continue }
-      for (const file of files) {
-        if (!file.endsWith('.jsonl')) continue
-        const filePath = path.join(directory, file)
-        let mtimeMs = 0
-        try { mtimeMs = Number(fs.statSync(filePath).mtimeMs) || 0 } catch { mtimeMs = 0 }
-        rows.push({
-          projectSlug: slug,
-          sessionId: file.slice(0, -'.jsonl'.length),
-          filePath,
-          mtimeMs
-        })
-      }
-    }
-    return rows
-  }
-
-  return { claudeHome, settingsPath, readSettings, inspectSettingsFile, inspect, listTranscripts, locateCli: (options) => resolveCliPath(options) }
+  return { claudeHome, settingsPath, readSettings, inspectSettingsFile, inspect, locateCli: (options) => resolveCliPath(options) }
 }
 
 module.exports = {

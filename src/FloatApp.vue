@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   CirclePlay,
+  CircleHelp,
   CircleStop,
   Clipboard,
   Eye,
@@ -26,10 +27,11 @@ import {
   companionQuotaChipHint,
   companionQuotaFreshnessText,
   companionResetDetailText,
+  resolveCompanionProjectMarker,
   resolveCompanionRowMarker,
   resolveCompanionWaterBallPresentation
 } from './domain/companionPresentation'
-import type { CompanionQuotaChip } from './domain/companionPresentation'
+import type { CompanionProjectMarker, CompanionQuotaChip, CompanionRowMarker } from './domain/companionPresentation'
 import QuickJumpLayer from './components/QuickJumpLayer.vue'
 import {
   CODEX_THEME_PRESETS,
@@ -57,15 +59,16 @@ import type {
   CodexTaskCard
 } from './domain/codex'
 import { normalizeCodexQuota, orderCodexTasksForDisplay } from './domain/codex'
+import { companionTaskProvider, type CompanionProviderId } from './domain/companionProvider'
 import type { CodexFloatResizeCorner, CodexFloatWindowState } from './float-env'
 import type { CodexFloatSnapshotV1 } from './runtime/codexController'
 
 type RenderRow =
   | { kind: 'section'; key: string; section: CodexProjectSection }
   | { kind: 'hidden-project-section'; key: string; title: string }
-  | { kind: 'status-section'; key: string; title: string; count: number; tone: 'input' | 'active' | 'stopped' | 'unread' | 'completed' }
-  | { kind: 'project'; key: string; project: CodexProjectCard; sectionId: string; hiddenProject?: boolean }
-  | { kind: 'task'; key: string; task: CodexTaskCard; sectionId?: string; parentProjectKey?: string; nested?: boolean }
+  | { kind: 'status-section'; key: string; title: string; count: number; tone: 'input' | 'active' | 'unknown' | 'stopped' | 'unread' | 'completed' }
+  | { kind: 'project'; key: string; project: CodexProjectCard; marker: CompanionProjectMarker; sectionId: string; hiddenProject?: boolean }
+  | { kind: 'task'; key: string; task: CodexTaskCard; marker: CompanionRowMarker; sectionId?: string; parentProjectKey?: string; nested?: boolean }
   | { kind: 'empty-project'; key: string; projectKey: string }
 
 type FocusItem = Extract<RenderRow, { kind: 'project' | 'task' }>
@@ -73,6 +76,7 @@ type PanelState = { mode: 'detail' | 'drawer'; item: FocusItem; returnActionId: 
 type AliasEditor = { kind: 'task' | 'project'; key: string; value: string; originalName: string } | null
 type DrawerAction = { id: string; label: string; danger?: boolean; disabled?: boolean; disabledReason?: string; run: () => void }
 type UiConversationTab = 'dynamic' | 'completed' | 'hidden' | 'projects'
+type CompanionProjectFilter = 'all' | CompanionProviderId
 type ComposerProjectPickerOption = {
   key: string
   label: string
@@ -194,8 +198,23 @@ const compact = computed(() => buildCodexCompactPresentation({
 const compactCounts = computed(() => compact.value.taskCounts)
 const companionSlice = computed(() => snapshot.value?.companion || null)
 const companionWaterBall = computed(() => resolveCompanionWaterBallPresentation(companionSlice.value))
-function rowMarker(task: CodexTaskCard) {
-  return resolveCompanionRowMarker(task, companionSlice.value?.providers || { codex: true, claude: false })
+function taskFocusItem(task: CodexTaskCard): Extract<FocusItem, { kind: 'task' }> {
+  return { kind: 'task', key: `task:${task.key}`, task, marker: resolveCompanionRowMarker(task)! }
+}
+function taskProvider(task: CodexTaskCard): CompanionProviderId {
+  return companionTaskProvider(task)
+}
+
+function projectMarker(project: CodexProjectCard): CompanionProjectMarker {
+  return resolveCompanionProjectMarker(project)!
+}
+
+function taskMatchesProjectFilter(task: CodexTaskCard) {
+  return projectProviderFilter.value === 'all' || taskProvider(task) === projectProviderFilter.value
+}
+
+function projectMatchesProvider(project: CodexProjectCard) {
+  return projectProviderFilter.value === 'all' || projectMarker(project).providers.includes(projectProviderFilter.value)
 }
 const primaryPercent = computed(() => compact.value.primary?.bucket.remainingPercent ?? 0)
 const selectedWeekly = computed(() => {
@@ -264,7 +283,7 @@ function quotaChipHint(chip: CompanionQuotaChip) {
       chip,
       companionResetDetailText(chip.resetAt, now),
       quotaStrip.value.multiProvider,
-      companionQuotaFreshnessText(companionSlice.value?.claudeQuota, now)
+      companionQuotaFreshnessText(chip, now)
     )
   }
   return companionQuotaChipHint(chip, formatReset(chip.resetAt), quotaStrip.value.multiProvider)
@@ -276,7 +295,7 @@ function quotaChipAria(chip: CompanionQuotaChip) {
       chip,
       companionResetDetailText(chip.resetAt, now),
       quotaStrip.value.multiProvider,
-      companionQuotaFreshnessText(companionSlice.value?.claudeQuota, now)
+      companionQuotaFreshnessText(chip, now)
     )
   }
   return companionQuotaChipAriaLabel(chip, formatReset(chip.resetAt), quotaStrip.value.multiProvider)
@@ -334,8 +353,8 @@ const renderRows = computed<RenderRow[]>(() => {
   const searchQuery = normalizedSearch()
   const usedProjectRows = new Set<string>()
 
-  function addProject(task: CodexTaskCard, sectionId?: string, parentProjectKey?: string, nested = false): RenderRow {
-    return { kind: 'task', key: `task:${task.key}`, task, sectionId, parentProjectKey, nested }
+  function addTaskRow(task: CodexTaskCard, sectionId?: string, parentProjectKey?: string, nested = false): RenderRow {
+    return { ...taskFocusItem(task), sectionId, parentProjectKey, nested }
   }
 
   function addProjectRow(project: CodexProjectCard, hiddenProject = false): RenderRow {
@@ -343,6 +362,7 @@ const renderRows = computed<RenderRow[]>(() => {
       kind: 'project',
       key: hiddenProject ? `hidden-project:${project.key}` : `project:${project.key}`,
       project,
+      marker: projectMarker(project),
       sectionId: hiddenProject ? 'hidden-projects' : 'projects',
       hiddenProject
     }
@@ -361,10 +381,13 @@ const renderRows = computed<RenderRow[]>(() => {
 
   if (selectedUiTab.value === 'dynamic') {
     const statusGroups = dynamicStatus.value.groups
+    const unknownTasks = statusGroups.stopped.filter((task) => task.claudePhase === 'unknown')
+    const stoppedTasks = statusGroups.stopped.filter((task) => task.claudePhase !== 'unknown')
     const groups = [
       { key: 'input', title: '待输入', tone: 'input' as const, tasks: statusGroups.input },
       { key: 'active', title: '正在进行中', tone: 'active' as const, tasks: statusGroups.active },
-      { key: 'stopped', title: '已停止', tone: 'stopped' as const, tasks: statusGroups.stopped },
+      { key: 'unknown', title: '状态未知', tone: 'unknown' as const, tasks: unknownTasks },
+      { key: 'stopped', title: '已停止', tone: 'stopped' as const, tasks: stoppedTasks },
       { key: 'unread', title: '已完成未读', tone: 'unread' as const, tasks: statusGroups.unread },
       { key: 'completed', title: '已完成', tone: 'completed' as const, tasks: statusGroups.completed }
     ]
@@ -373,46 +396,48 @@ const renderRows = computed<RenderRow[]>(() => {
       if (!tasks.length) return []
       return [
         { kind: 'status-section', key: `status:${group.key}`, title: group.title, count: tasks.length, tone: group.tone },
-        ...tasks.map((task) => addProject(task))
+        ...tasks.map((task) => addTaskRow(task))
       ]
     })
   }
 
   if (selectedUiTab.value === 'completed') {
     const tasks = displayOrderedTasks([...value.completedUnread, ...value.completed].filter((task) => taskMatched(task)))
-    return tasks.map((task) => addProject(task))
+    return tasks.map((task) => addTaskRow(task))
   }
 
   if (selectedUiTab.value === 'hidden') {
     const tasks = displayOrderedTasks(value.hidden.filter((task) => taskMatched(task)))
-    return tasks.map((task) => addProject(task))
+    return tasks.map((task) => addTaskRow(task))
   }
 
   const rows: RenderRow[] = []
   const addSectionTasks = (target: RenderRow[], tasks: CodexTaskCard[], sectionId: string, parentProjectKey?: string, forceOpen = false) => {
     const visibleTasks = displayOrderedTasks(tasks.filter((task) => taskMatched(task)))
     if (!visibleTasks.length) return
-    for (const task of visibleTasks) target.push(addProject(task, sectionId, parentProjectKey, forceOpen))
+    for (const task of visibleTasks) target.push(addTaskRow(task, sectionId, parentProjectKey, forceOpen))
   }
 
   for (const section of value.projectSections) {
     const sectionRows: RenderRow[] = []
     for (const entry of section.entries) {
       if (entry.kind === 'project') {
-        const shouldShowAllTasks = projectMatched(entry.project)
-        const projectTasks = displayOrderedTasks(shouldShowAllTasks || !searchQuery ? entry.project.tasks : entry.project.tasks.filter((task) => taskMatched(task)))
+        if (!projectMatchesProvider(entry.project)) continue
+        const filteredProject = { ...entry.project, tasks: entry.project.tasks.filter((task) => taskMatchesProjectFilter(task)) }
+        const shouldShowAllTasks = projectMatched(filteredProject)
+        const projectTasks = displayOrderedTasks(shouldShowAllTasks || !searchQuery ? filteredProject.tasks : filteredProject.tasks.filter((task) => taskMatched(task)))
         if (projectTasks.length || shouldShowAllTasks) {
-          const row = addProjectRow(entry.project)
+          const row = addProjectRow(filteredProject)
           usedProjectRows.add(row.key)
           sectionRows.push(row)
-          const openChildren = !isProjectCollapsed(entry.project) || Boolean(searchQuery)
+          const openChildren = !isProjectCollapsed(filteredProject) || Boolean(searchQuery)
           if (openChildren) {
-            const children = shouldShowAllTasks || !searchQuery ? entry.project.tasks : entry.project.tasks.filter((task) => taskMatched(task))
-            addSectionTasks(sectionRows, children, section.id, entry.project.key, openChildren)
+            const children = shouldShowAllTasks || !searchQuery ? filteredProject.tasks : filteredProject.tasks.filter((task) => taskMatched(task))
+            addSectionTasks(sectionRows, children, section.id, filteredProject.key, openChildren)
           }
         }
       } else {
-        if (taskMatched(entry.task)) sectionRows.push(addProject(entry.task, section.id))
+        if (taskMatchesProjectFilter(entry.task) && taskMatched(entry.task)) sectionRows.push(addTaskRow(entry.task, section.id))
       }
     }
     if (sectionRows.length) {
@@ -423,7 +448,10 @@ const renderRows = computed<RenderRow[]>(() => {
 
   if (value.hiddenProjects.length) {
     rows.push({ kind: 'hidden-project-section', key: 'hidden-projects', title: '已隐藏项目' })
-    const hiddenProjects = value.hiddenProjects.filter((project) => !searchQuery || projectMatched(project))
+    const hiddenProjects = value.hiddenProjects
+      .filter((project) => projectMatchesProvider(project))
+      .map((project) => ({ ...project, tasks: project.tasks.filter((task) => taskMatchesProjectFilter(task)) }))
+      .filter((project) => !searchQuery || projectMatched(project))
     for (const project of hiddenProjects) {
       const row = addProjectRow(project, true)
       if (usedProjectRows.has(row.key)) continue
@@ -444,25 +472,32 @@ const drawerIsBatch = computed(() => selectedTasks.value.length >= 2)
 const drawerItem = computed<FocusItem | null>(() => {
   if (drawerIsBatch.value) return panel.value?.item || focusedItem.value
   const selected = selectedTasks.value[0]
-  if (selected) return { kind: 'task', key: `task:${selected.key}`, task: selected }
+  if (selected) return taskFocusItem(selected)
   return panel.value?.item || focusedItem.value
 })
 
 const composerModels = computed(() => composer.value?.context.modelCatalog.models || [])
 const selectedUiTab = ref<UiConversationTab>('dynamic')
+const projectProviderFilter = ref<CompanionProjectFilter>('all')
+const appliedCompanionRevision = ref(0)
+const projectFilters = [
+  { id: 'all' as const, label: '全部' },
+  { id: 'codex' as const, label: '只显示 Codex' },
+  { id: 'claude' as const, label: '只显示 Claude' }
+]
 
 const projectCount = computed(() => {
   const value = conversations.value
   if (!value) return 0
-  const projectKeys = new Set<string>()
-  for (const section of value.projectSections) {
-    for (const entry of section.entries) {
-      if (entry.kind === 'project') projectKeys.add(entry.project.key)
-    }
+  return value.projects.filter((project) => projectMatchesProvider(project)).length
+})
+const projectTaskCount = computed(() => {
+  const tasks = new Set<string>()
+  for (const project of conversations.value?.projects || []) {
+    if (!projectMatchesProvider(project)) continue
+    for (const task of project.tasks) if (taskMatchesProjectFilter(task)) tasks.add(task.key)
   }
-  for (const project of value.hiddenProjects || []) projectKeys.add(project.key)
-  if (value.projects?.length && !projectKeys.size) for (const project of value.projects) projectKeys.add(project.key)
-  return projectKeys.size
+  return tasks.size
 })
 const tabs = computed(() => {
   const value = conversations.value
@@ -484,6 +519,22 @@ const tabLabelToBackend: Record<UiConversationTab, CodexTaskTab> = {
 function switchComposerTab(tab: UiConversationTab) {
   selectedUiTab.value = tab
   action('codex.tab.set', { tab: tabLabelToBackend[tab] })
+}
+
+function setProjectProviderFilter(filter: CompanionProjectFilter) {
+  projectProviderFilter.value = filter
+}
+
+function onProjectFilterKeydown(event: KeyboardEvent, index: number) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  const nextIndex = event.key === 'Home'
+    ? 0
+    : event.key === 'End'
+      ? projectFilters.length - 1
+      : (index + (event.key === 'ArrowRight' ? 1 : -1) + projectFilters.length) % projectFilters.length
+  setProjectProviderFilter(projectFilters[nextIndex].id)
+  void nextTick(() => rootElement.value?.querySelectorAll<HTMLElement>('.float-project-provider-tabs [role="tab"]')[nextIndex]?.focus())
 }
 
 function focusSelectedComposerTab() {
@@ -608,6 +659,10 @@ function closeShiftPreview(suppressUntilRelease = false) {
 }
 
 function openComposer(project?: CodexProjectCard, focusModel = false) {
+  if (project && projectMarker(project).claudeOnly) {
+    liveMessage.value = projectMutationBlockedReason(project, '新建会话')
+    return
+  }
   const targetProject = projectForNewThread(project)
   if (!targetProject) {
     liveMessage.value = '当前没有可用的项目上下文'
@@ -1029,8 +1084,8 @@ const drawerActions = computed<DrawerAction[]>(() => {
       { id: 'batch-archive', label: `归档已完成项（${archivable.length}/${tasks.length}）`, danger: true, disabled: !archivable.length, disabledReason: '选中项没有可归档的已完成任务', run: requestTaskArchive },
       { id: 'batch-hide', label: `移到已隐藏（${visible.length}）`, disabled: !visible.length, disabledReason: '选中项均已隐藏', run: () => visible.forEach(hideTask) },
       { id: 'batch-restore', label: `恢复显示（${hidden.length}）`, disabled: !hidden.length, disabledReason: '选中项没有可恢复的隐藏任务', run: () => hidden.forEach(restoreTask) },
-      { id: 'batch-pin', label: `本地置顶（${unpinned.length}）`, disabled: !unpinned.length, disabledReason: '选中项均已置顶', run: () => unpinned.forEach((task) => togglePin({ kind: 'task', key: `task:${task.key}`, task })) },
-      { id: 'batch-unpin', label: `取消本地置顶（${pinned.length}）`, disabled: !pinned.length, disabledReason: '选中项没有本地置顶', run: () => pinned.forEach((task) => togglePin({ kind: 'task', key: `task:${task.key}`, task })) },
+      { id: 'batch-pin', label: `本地置顶（${unpinned.length}）`, disabled: !unpinned.length, disabledReason: '选中项均已置顶', run: () => unpinned.forEach((task) => togglePin(taskFocusItem(task))) },
+      { id: 'batch-unpin', label: `取消本地置顶（${pinned.length}）`, disabled: !pinned.length, disabledReason: '选中项没有本地置顶', run: () => pinned.forEach((task) => togglePin(taskFocusItem(task))) },
       { id: 'batch-clear', label: '清空选择', run: clearSelection }
     ]
   }
@@ -1038,10 +1093,11 @@ const drawerActions = computed<DrawerAction[]>(() => {
   if (!item) return []
   if (item.kind === 'task') {
     const project = conversations.value?.projects.find((candidate) => candidate.key === item.task.projectKey)
+    const canCreateInProject = taskCanCreateInProject(item.task, project)
     return [
       { id: 'task-open', label: '打开', disabled: !item.task.actionAlias, disabledReason: '任务动作已失效', run: () => openTask(item.task) },
-      { id: 'task-new-thread', label: '在当前项目新建会话', disabled: !project?.actionAlias, disabledReason: '项目动作已失效', run: () => openComposer(project) },
-      { id: 'task-new-thread-model', label: '选择模型新建会话', disabled: !project?.actionAlias, disabledReason: '项目动作已失效', run: () => openComposer(project, true) },
+      { id: 'task-new-thread', label: '在当前项目新建会话', disabled: !canCreateInProject, disabledReason: taskProjectActionBlockedReason(item.task, project), run: () => openComposer(project) },
+      { id: 'task-new-thread-model', label: '选择模型新建会话', disabled: !canCreateInProject, disabledReason: taskProjectActionBlockedReason(item.task, project), run: () => openComposer(project, true) },
       { id: 'task-detail', label: '查看详情', run: () => openDetailPanel(item) },
       { id: 'task-alias', label: '编辑别名', run: () => editAlias(item) },
       { id: 'task-pin', label: item.task.pinSource === 'native' ? 'Codex 原生置顶（只读）' : item.task.pinSource === 'local' ? '取消本地置顶' : '本地置顶', disabled: item.task.pinSource === 'native', disabledReason: '原生置顶顺序由 Codex 管理', run: () => togglePin(item) },
@@ -1050,15 +1106,15 @@ const drawerActions = computed<DrawerAction[]>(() => {
     ]
   }
   return [
-    { id: 'project-new-thread', label: '新建会话', disabled: !item.project.actionAlias, disabledReason: '项目动作已失效', run: () => openComposer(item.project) },
-    { id: 'project-new-thread-model', label: '选择模型新建会话', disabled: !item.project.actionAlias, disabledReason: '项目动作已失效', run: () => openComposer(item.project, true) },
+    { id: 'project-new-thread', label: '新建会话', disabled: !item.project.actionAlias || item.marker.claudeOnly, disabledReason: projectActionBlockedReason(item.marker, '新建会话'), run: () => openComposer(item.project) },
+    { id: 'project-new-thread-model', label: '选择模型新建会话', disabled: !item.project.actionAlias || item.marker.claudeOnly, disabledReason: projectActionBlockedReason(item.marker, '新建会话'), run: () => openComposer(item.project, true) },
     { id: 'project-toggle', label: isProjectCollapsed(item.project) ? '展开项目' : '折叠项目', run: () => toggleProject(item.project) },
     { id: 'project-detail', label: '查看项目详情', run: () => openDetailPanel(item) },
     { id: 'project-alias', label: '编辑项目别名', run: () => editAlias(item) },
-    { id: 'project-pin', label: item.project.pinSource === 'native' ? 'Codex 原生置顶（只读）' : item.project.pinSource === 'local' ? '取消本地置顶' : '本地置顶', disabled: item.project.kind === 'chats' || item.project.pinSource === 'native', disabledReason: item.project.kind === 'chats' ? 'Chats 分组不可置顶' : '原生置顶顺序由 Codex 管理', run: () => togglePin(item) },
-    { id: 'project-hide', label: isProjectHidden(item.project) ? '恢复项目分组' : '隐藏项目分组', disabled: item.project.kind === 'chats', disabledReason: 'Chats 分组不可隐藏', run: () => toggleProjectHidden(item.project) },
-    { id: 'project-archive', label: '归档已完成任务', danger: true, disabled: !item.project.actionAlias, disabledReason: '项目没有可归档任务', run: () => requestProjectArchive(item.project) },
-    { id: 'project-remove', label: '从 Codex 侧栏移除', danger: true, disabled: item.project.kind === 'chats' || !item.project.actionAlias || !conversations.value?.sourceFingerprint, disabledReason: item.project.kind === 'chats' ? 'Chats 分组不可移除' : '项目动作已失效', run: () => requestProjectRemove(item.project) }
+    { id: 'project-pin', label: item.project.pinSource === 'native' ? 'Codex 原生置顶（只读）' : item.project.pinSource === 'local' ? '取消本地置顶' : '本地置顶', disabled: item.project.kind === 'chats' || item.project.pinSource === 'native' || item.marker.claudeOnly, disabledReason: item.project.kind === 'chats' ? 'Chats 分组不可置顶' : item.marker.claudeOnly ? projectActionBlockedReason(item.marker, '项目置顶') : '原生置顶顺序由 Codex 管理', run: () => togglePin(item) },
+    { id: 'project-hide', label: isProjectHidden(item.project) ? '恢复项目分组' : '隐藏项目分组', disabled: item.project.kind === 'chats' || item.marker.claudeOnly, disabledReason: item.project.kind === 'chats' ? 'Chats 分组不可隐藏' : projectActionBlockedReason(item.marker, '项目隐藏'), run: () => toggleProjectHidden(item.project) },
+    { id: 'project-archive', label: '归档已完成任务', danger: true, disabled: !item.project.actionAlias || item.marker.claudeOnly, disabledReason: projectActionBlockedReason(item.marker, '归档'), run: () => requestProjectArchive(item.project) },
+    { id: 'project-remove', label: '从 Codex 侧栏移除', danger: true, disabled: item.project.kind === 'chats' || item.marker.claudeOnly || !item.project.actionAlias || !conversations.value?.sourceFingerprint, disabledReason: item.project.kind === 'chats' ? 'Chats 分组不可移除' : projectActionBlockedReason(item.marker, '从 Codex 移除'), run: () => requestProjectRemove(item.project) }
   ]
 })
 
@@ -1177,6 +1233,10 @@ function isProjectHidden(project: CodexProjectCard) {
 
 function toggleProjectHidden(project: CodexProjectCard) {
   if (project.kind === 'chats') return
+  if (projectMarker(project).claudeOnly) {
+    liveMessage.value = projectMutationBlockedReason(project, '项目隐藏')
+    return
+  }
   action(isProjectHidden(project) ? 'codex.project.show' : 'codex.project.hide', { key: project.key })
 }
 
@@ -1188,6 +1248,7 @@ function isProjectCollapsed(project: CodexProjectCard) {
 
 function pinSourceHint(item: FocusItem) {
   if (item.kind === 'project' && item.project.kind === 'chats') return 'Chats 分组不可置顶'
+  if (item.kind === 'project' && item.marker.claudeOnly) return projectActionBlockedReason(item.marker, '项目置顶')
   const source = item.kind === 'task' ? item.task.pinSource : item.project.pinSource
   if (source === 'native') return '来源：Codex 原生置顶 · 顺序只读'
   if (source === 'local') return '来源：EyPc 本地置顶 · 点击取消'
@@ -1195,12 +1256,13 @@ function pinSourceHint(item: FocusItem) {
 }
 
 function pinSourceValue(item: FocusItem) {
-  if (item.kind === 'project' && item.project.kind === 'chats') return 'blocked'
+  if (item.kind === 'project' && (item.project.kind === 'chats' || item.marker.claudeOnly)) return 'blocked'
   return (item.kind === 'task' ? item.task.pinSource : item.project.pinSource) || 'none'
 }
 
 function pinIsReadOnly(item: FocusItem) {
-  return pinSourceValue(item) === 'native' || pinSourceValue(item) === 'blocked'
+  const source = pinSourceValue(item)
+  return source === 'native' || source === 'blocked'
 }
 
 function togglePin(item: FocusItem) {
@@ -1285,9 +1347,30 @@ function taskArchiveConfirming(task: CodexTaskCard) {
 }
 
 function taskArchiveBlockedReason(task: CodexTaskCard) {
+  if (taskProvider(task) === 'claude') return 'Claude 原生不提供兼容的归档操作'
+  if (task.claudePhase === 'unknown') return '状态证据不足，暂不能归档'
   return task.archiveCapability === 'blocked-stopped'
     ? '会话已停止但未完成'
     : '任务仍在进行中，暂不能归档'
+}
+
+function projectActionBlockedReason(marker: CompanionProjectMarker, actionName: string) {
+  return marker.claudeOnly
+    ? `Claude 虚拟项目不支持${actionName}；可打开、折叠，或对任务执行本地置顶与隐藏`
+    : '项目动作已失效'
+}
+
+function projectMutationBlockedReason(project: CodexProjectCard, actionName: string) {
+  return projectActionBlockedReason(projectMarker(project), actionName)
+}
+
+function taskProjectActionBlockedReason(task: CodexTaskCard, project?: CodexProjectCard) {
+  if (taskProvider(task) === 'claude') return 'Claude 任务只支持打开、本地置顶和本地隐藏；不会转发 Codex 新建动作'
+  return project ? projectMutationBlockedReason(project, '新建会话') : '项目动作已失效'
+}
+
+function taskCanCreateInProject(task: CodexTaskCard, project?: CodexProjectCard) {
+  return taskProvider(task) === 'codex' && Boolean(project?.actionAlias)
 }
 
 function requestTaskArchive(task?: CodexTaskCard | CodexTaskCard[]) {
@@ -1308,6 +1391,10 @@ function requestTaskArchive(task?: CodexTaskCard | CodexTaskCard[]) {
 }
 
 function requestProjectArchive(project: CodexProjectCard) {
+  if (projectMarker(project).claudeOnly) {
+    liveMessage.value = projectMutationBlockedReason(project, '归档')
+    return
+  }
   if (!project.actionAlias) return
   requestConfirmation(`archive-project:${project.key}`, `归档 ${project.name} 的全部已完成任务`, () => {
     action('codex.project.archive', { key: project.key, actionAlias: project.actionAlias })
@@ -1316,6 +1403,10 @@ function requestProjectArchive(project: CodexProjectCard) {
 
 function requestProjectRemove(project: CodexProjectCard) {
   const sourceFingerprint = conversations.value?.sourceFingerprint || ''
+  if (projectMarker(project).claudeOnly) {
+    liveMessage.value = projectMutationBlockedReason(project, '从 Codex 移除')
+    return
+  }
   if (!project.actionAlias || !sourceFingerprint || project.kind === 'chats') {
     liveMessage.value = '项目动作或状态指纹已失效，请刷新后重试'
     return
@@ -2263,6 +2354,7 @@ function queueActionHint(event: Event, label: string) {
 function taskStateLabel(task: CodexTaskCard) {
   if (task.activityState === 'waiting-input') return '等待输入'
   if (task.activityState === 'waiting-approval') return '等待审批'
+  if (task.claudePhase === 'unknown') return '状态未知'
   if (task.bucket === 'stopped') return '已停止'
   if (task.bucket === 'completed-unread') return '已完成 · 未读'
   if (task.bucket === 'completed') return '已完成'
@@ -2271,6 +2363,7 @@ function taskStateLabel(task: CodexTaskCard) {
 
 function taskIcon(task: CodexTaskCard) {
   if (task.isHidden) return EyeOff
+  if (task.claudePhase === 'unknown') return CircleHelp
   if (task.bucket === 'stopped') return CircleStop
   if (task.bucket === 'completed' || task.bucket === 'completed-unread') return Eye
   if (task.activityState === 'waiting-input') return MessageSquareText
@@ -2318,11 +2411,18 @@ watch(taskScroll, (element) => {
 })
 
 onMounted(() => {
-  snapshot.value = window.eypcFloat?.getSnapshot() || null
+  const applySnapshot = (value: CodexFloatSnapshotV1 | null) => {
+    const revision = value?.companion?.revision || 0
+    if (appliedCompanionRevision.value > 0 && revision === 0) return
+    if (revision > 0 && revision < appliedCompanionRevision.value) return
+    if (revision > 0) appliedCompanionRevision.value = revision
+    snapshot.value = value
+  }
+  applySnapshot(window.eypcFloat?.getSnapshot() || null)
   floatState.value = window.eypcFloat?.getState() || floatState.value
   expanded.value = floatState.value.expanded
   desiredExpanded = expanded.value
-  stopSnapshot = window.eypcFloat?.onSnapshot((value) => { snapshot.value = value }) || null
+  stopSnapshot = window.eypcFloat?.onSnapshot((value) => { applySnapshot(value) }) || null
   stopState = window.eypcFloat?.onState((value) => {
     floatState.value = value
     expanded.value = value.expanded
@@ -2375,6 +2475,7 @@ onUnmounted(() => {
     class="codex-float-root"
     :class="[{ expanded, resizing: floatState.resizing, card: settings?.style === 'card', water: settings?.style !== 'card' }, floatState.resizeCorner ? `resize-${floatState.resizeCorner}` : '']"
     :style="rootStyle"
+    :data-companion-revision="appliedCompanionRevision || undefined"
     tabindex="-1"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
@@ -2457,6 +2558,27 @@ onUnmounted(() => {
         </button>
       </div>
 
+      <div
+        v-if="selectedUiTab === 'projects'"
+        class="float-project-provider-tabs"
+        role="tablist"
+        aria-label="按项目归属筛选"
+      >
+        <button
+          v-for="(filter, index) in projectFilters"
+          :key="filter.id"
+          type="button"
+          role="tab"
+          :aria-selected="projectProviderFilter === filter.id"
+          aria-controls="project-task-list"
+          :tabindex="projectProviderFilter === filter.id ? 0 : -1"
+          :class="{ active: projectProviderFilter === filter.id }"
+          @click="setProjectProviderFilter(filter.id)"
+          @keydown="onProjectFilterKeydown($event, index)"
+        >{{ filter.label }}</button>
+        <span aria-live="polite">{{ projectCount }} 项目 · {{ projectTaskCount }} 任务</span>
+      </div>
+
       <div class="float-drag-handle" aria-hidden="true" />
 
       <label class="float-search">
@@ -2480,9 +2602,13 @@ onUnmounted(() => {
             v-for="chip in group.chips"
             :key="chip.key"
             class="float-quota-chip"
-            :class="{ spark: chip.spark, 'is-stale': chip.stale === true }"
+            :class="{ spark: chip.spark, 'is-stale': chip.stale === true, 'is-warning': chip.tone === 'warning', 'is-danger': chip.tone === 'danger' }"
+            :tabindex="chip.provider === 'claude' ? 0 : undefined"
+            :aria-label="chip.provider === 'claude' ? quotaChipAria(chip) : undefined"
             @pointerenter="queueActionHint($event, quotaChipHint(chip))"
             @pointerleave="clearActionHint"
+            @focus="queueActionHint($event, quotaChipHint(chip))"
+            @blur="clearActionHint"
           >
             <span class="sr-only">{{ quotaChipAria(chip) }}</span>
             <span aria-hidden="true">{{ chip.shortLabel }}</span><strong aria-hidden="true">{{ chip.remainingPercent }}%</strong>
@@ -2505,6 +2631,7 @@ onUnmounted(() => {
         <div class="float-task-list-stage" :class="{ 'selection-mode': selectedKeys.size > 0 }">
           <div
             ref="taskScroll"
+            id="project-task-list"
             class="float-task-scroll"
             :class="{
               'batch-toolbar-top': showBatchToolbar && batchPlacement === 'top',
@@ -2524,10 +2651,10 @@ onUnmounted(() => {
             <div
               v-else-if="row.kind === 'project'"
               class="float-project-row"
-              :class="{ highlighted: focusedKey === row.key, 'hidden-project': row.hiddenProject }"
+              :class="[row.marker.className, { highlighted: focusedKey === row.key, 'hidden-project': row.hiddenProject }]"
               role="treeitem"
               :aria-expanded="row.hiddenProject ? undefined : !isProjectCollapsed(row.project)"
-              :aria-label="`${row.project.name}，${row.project.tasks.length} 个窗口内任务${row.hiddenProject ? '，项目分组已隐藏' : ''}`"
+              :aria-label="`${row.project.name}，${row.marker.label}，${row.project.tasks.length} 个窗口内任务${row.hiddenProject ? '，项目分组已隐藏' : ''}`"
               :data-pin-source="row.project.pinSource"
               :tabindex="focusedKey === row.key ? 0 : -1"
               :data-focus-key="row.key"
@@ -2540,23 +2667,23 @@ onUnmounted(() => {
               <button type="button" class="project-main" data-quick-jump-target :data-quick-jump-label="row.hiddenProject ? `查看已隐藏项目 ${row.project.name}` : `${isProjectCollapsed(row.project) ? '展开' : '折叠'}项目 ${row.project.name}`" @click.stop="focusedKey = row.key; row.hiddenProject ? openContextDrawer(row) : toggleProject(row.project)">
                 <template v-if="row.hiddenProject"><EyeOff :size="14" /><Folder :size="15" /></template>
                 <template v-else><ChevronRight v-if="isProjectCollapsed(row.project)" :size="14" /><ChevronDown v-else :size="14" /><Folder v-if="isProjectCollapsed(row.project)" :size="15" /><FolderOpen v-else :size="15" /></template>
-                <span><strong>{{ row.project.name }}</strong><small v-if="row.hiddenProject">项目分组已隐藏 · 任务仍在其他页签</small><small v-else>{{ row.project.tasks.length ? `${row.project.tasks.length} 个最近任务` : `最近 ${settings?.timeWindowDays || 30} 天无会话` }}</small></span>
+                <span><strong>{{ row.project.name }}</strong><i class="project-provider-marker" :class="row.marker.className">{{ row.marker.label }}</i><small v-if="row.hiddenProject">项目分组已隐藏 · 任务仍在其他页签</small><small v-else>{{ row.project.tasks.length ? `${row.project.tasks.length} 个最近任务` : `最近 ${settings?.timeWindowDays || 30} 天无会话` }}</small></span>
               </button>
               <div class="project-inline-actions" role="toolbar" :aria-label="`${row.project.name} 项目操作`">
                 <button type="button" class="inline-character-button action-pin" :data-pin-source="pinSourceValue(row)" :aria-disabled="pinIsReadOnly(row)" :aria-pressed="Boolean(row.project.pinSource)" :aria-label="`${row.project.name}，${pinSourceHint(row)}`" data-quick-jump-target :data-quick-jump-label="pinSourceHint(row)" @pointerenter="queueActionHint($event, pinSourceHint(row))" @pointerleave="clearActionHint" @focus="queueActionHint($event, pinSourceHint(row))" @blur="clearActionHint" @click.stop="focusedKey = row.key; togglePin(row)">顶</button>
-                <button type="button" class="inline-character-button action-remove" :class="{ confirming: projectRemoveConfirming(row.project) }" :disabled="row.project.kind === 'chats' || !row.project.actionAlias || !conversations?.sourceFingerprint" :aria-label="projectRemoveConfirming(row.project) ? `确认从 Codex 侧栏移除 ${row.project.name}` : `从 Codex 侧栏移除 ${row.project.name}`" data-confirm-slot data-quick-jump-target :data-quick-jump-label="`从 Codex 移除 ${row.project.name}`" @pointerenter="queueActionHint($event, projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @pointerleave="clearActionHint" @focus="queueActionHint($event, projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @blur="clearActionHint" @click.stop="focusedKey = row.key; requestProjectRemove(row.project)">{{ projectRemoveConfirming(row.project) ? '确' : '移' }}</button>
-                <button type="button" class="inline-character-button action-hide" :disabled="row.project.kind === 'chats'" :aria-pressed="isProjectHidden(row.project)" :aria-label="isProjectHidden(row.project) ? `恢复项目分组 ${row.project.name}` : `隐藏项目分组 ${row.project.name}`" data-quick-jump-target :data-quick-jump-label="isProjectHidden(row.project) ? `恢复项目 ${row.project.name}` : `隐藏项目 ${row.project.name}`" @pointerenter="queueActionHint($event, isProjectHidden(row.project) ? '恢复项目页分组' : '仅隐藏项目页分组；任务仍保留')" @pointerleave="clearActionHint" @focus="queueActionHint($event, isProjectHidden(row.project) ? '恢复项目页分组' : '仅隐藏项目页分组；任务仍保留')" @blur="clearActionHint" @click.stop="focusedKey = row.key; toggleProjectHidden(row.project)">{{ isProjectHidden(row.project) ? '显' : '隐' }}</button>
-                <button type="button" class="inline-character-button action-create" :disabled="!row.project.actionAlias" :aria-label="row.project.actionAlias ? `在 ${row.project.name} 新建会话` : '项目动作已失效'" data-quick-jump-target :data-quick-jump-label="`在 ${row.project.name} 新建会话`" @pointerenter="queueActionHint($event, '在该项目新建会话')" @pointerleave="clearActionHint" @focus="queueActionHint($event, '在该项目新建会话')" @blur="clearActionHint" @click.stop="focusedKey = row.key; openComposer(row.project)">+</button>
+                <button type="button" class="inline-character-button action-remove" :class="{ confirming: projectRemoveConfirming(row.project) }" :disabled="row.project.kind === 'chats' || row.marker.claudeOnly || !row.project.actionAlias || !conversations?.sourceFingerprint" :title="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : '从 Codex 侧栏移除；需先完全退出 Codex'" :aria-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? `确认从 Codex 侧栏移除 ${row.project.name}` : `从 Codex 侧栏移除 ${row.project.name}`" data-confirm-slot data-quick-jump-target :data-quick-jump-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : `从 Codex 移除 ${row.project.name}`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @blur="clearActionHint" @click.stop="focusedKey = row.key; requestProjectRemove(row.project)">{{ projectRemoveConfirming(row.project) ? '确' : '移' }}</button>
+                <button type="button" class="inline-character-button action-hide" :disabled="row.project.kind === 'chats' || row.marker.claudeOnly" :aria-pressed="isProjectHidden(row.project)" :aria-label="isProjectHidden(row.project) ? `恢复项目分组 ${row.project.name}` : `隐藏项目分组 ${row.project.name}`" data-quick-jump-target :data-quick-jump-label="isProjectHidden(row.project) ? `恢复项目 ${row.project.name}` : `隐藏项目 ${row.project.name}`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '项目隐藏') : isProjectHidden(row.project) ? '恢复项目页分组' : '仅隐藏项目页分组；任务仍保留')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '项目隐藏') : isProjectHidden(row.project) ? '恢复项目页分组' : '仅隐藏项目页分组；任务仍保留')" @blur="clearActionHint" @click.stop="focusedKey = row.key; toggleProjectHidden(row.project)">{{ isProjectHidden(row.project) ? '显' : '隐' }}</button>
+                <button type="button" class="inline-character-button action-create" :disabled="row.marker.claudeOnly || !row.project.actionAlias" :aria-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : row.project.actionAlias ? `在 ${row.project.name} 新建会话` : '项目动作已失效'" data-quick-jump-target :data-quick-jump-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : `在 ${row.project.name} 新建会话`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : '在该项目新建会话')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : '在该项目新建会话')" @blur="clearActionHint" @click.stop="focusedKey = row.key; openComposer(row.project)">+</button>
               </div>
             </div>
 
             <div
               v-else-if="row.kind === 'task'"
               class="float-task-row"
-              :class="[`task-${row.task.activityState}`, `bucket-${row.task.bucket}`, { nested: row.nested, selected: selectedKeys.has(row.task.key), hidden: row.task.isHidden, highlighted: focusedKey === row.key }]"
+              :class="[`task-${row.task.activityState}`, `bucket-${row.task.bucket}`, `provider-${row.marker.provider}`, { nested: row.nested, selected: selectedKeys.has(row.task.key), hidden: row.task.isHidden, highlighted: focusedKey === row.key }]"
               role="option"
               :aria-selected="selectedKeys.has(row.task.key)"
-              :aria-label="`${taskDisplayLabel(row.task)}，${row.task.projectName}，${taskStateLabel(row.task)}`"
+              :aria-label="`${taskDisplayLabel(row.task)}，${row.marker.tooltip}，${row.task.projectName}，${taskStateLabel(row.task)}`"
               :data-pin-source="row.task.pinSource"
               :tabindex="focusedKey === row.key ? 0 : -1"
               :data-focus-key="row.key"
@@ -2597,11 +2724,7 @@ onUnmounted(() => {
                     @click.stop="activateTaskTitle(row.task, $event)"
                   >{{ taskDisplayLabel(row.task) }}</button>
                   <div class="task-meta-line">
-                    <span
-                      v-if="rowMarker(row.task)"
-                      class="task-provider-marker"
-                      :class="`provider-${rowMarker(row.task)!.provider}`"
-                    >{{ rowMarker(row.task)!.label }}</span>
+                    <span class="task-provider-marker" :class="`provider-${row.marker.provider}`">{{ row.marker.label }}</span>
                     <button
                       type="button"
                       class="task-meta-button"
@@ -2661,13 +2784,14 @@ onUnmounted(() => {
                 <button
                   type="button"
                   class="inline-character-button action-create"
-                    :aria-label="`在 ${row.task.projectName} 新建会话`"
+                    :aria-label="taskCanCreateInProject(row.task, taskProject(row.task)) ? `在 ${row.task.projectName} 新建会话` : taskProjectActionBlockedReason(row.task, taskProject(row.task))"
+                    :title="taskCanCreateInProject(row.task, taskProject(row.task)) ? `在 ${row.task.projectName} 新建会话` : taskProjectActionBlockedReason(row.task, taskProject(row.task))"
                     data-quick-jump-target
-                    :data-quick-jump-label="`在 ${row.task.projectName} 新建会话`"
-                    :disabled="!taskProject(row.task)?.actionAlias"
-                    @pointerenter="queueActionHint($event, '在所属项目新建会话')"
+                    :data-quick-jump-label="taskCanCreateInProject(row.task, taskProject(row.task)) ? `在 ${row.task.projectName} 新建会话` : taskProjectActionBlockedReason(row.task, taskProject(row.task))"
+                    :disabled="!taskCanCreateInProject(row.task, taskProject(row.task))"
+                    @pointerenter="queueActionHint($event, taskCanCreateInProject(row.task, taskProject(row.task)) ? '在所属项目新建会话' : taskProjectActionBlockedReason(row.task, taskProject(row.task)))"
                   @pointerleave="clearActionHint"
-                  @focus="queueActionHint($event, '在所属项目新建会话')"
+                  @focus="queueActionHint($event, taskCanCreateInProject(row.task, taskProject(row.task)) ? '在所属项目新建会话' : taskProjectActionBlockedReason(row.task, taskProject(row.task)))"
                   @blur="clearActionHint"
                   @click.stop="focusedKey = row.key; taskProject(row.task) && openComposer(taskProject(row.task)!)"
                 >+</button>

@@ -17,6 +17,7 @@ import {
 import { buildCodexCompactPresentation, buildCodexTaskStatePackage } from '../../src/domain/codexPresentation'
 import { contrastRatio } from '../../src/domain/codexAppearance'
 import { emptyClaudeEnvironment, normalizeClaudeQuota } from '../../src/domain/claude'
+import { mergeCompanionConversations } from '../../src/domain/companionAggregate'
 import type { CodexFloatSnapshotV1 } from '../../src/runtime/codexController'
 
 const NOW = 1_784_364_000_000
@@ -199,6 +200,22 @@ afterEach(() => {
 })
 
 describe('Codex Companion V3 UI contract', () => {
+  it('separates unknown Claude evidence from the stopped section', async () => {
+    const source = floatSnapshot('ongoing')
+    const task = source.conversations.stopped.find((candidate) => candidate.key === TASK_FAILED)!
+    task.provider = 'claude'
+    task.claudePhase = 'unknown'
+    task.state = 'attention'
+    task.activityState = 'ongoing'
+    refreshTaskState(source)
+    const { wrapper } = mountFloat(true, source)
+    await wrapper.vm.$nextTick()
+    const sectionTitles = wrapper.findAll('.float-status-section').map((row) => row.text())
+    expect(sectionTitles.some((text) => text.includes('状态未知'))).toBe(true)
+    expect(sectionTitles.some((text) => text.includes('已停止'))).toBe(false)
+    expect(wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`).text()).toContain('状态未知')
+  })
+
   it('removes the legacy completion presentation delay control', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
     expect(source).not.toContain('进行中离开稳定窗')
@@ -226,17 +243,19 @@ describe('Codex Companion V3 UI contract', () => {
   })
 
   it('surfaces aggregate activity decision diagnostics without an identity field', () => {
-    const source = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
-    expect(source).toContain("label: '状态裁决'")
-    expect(source).toContain('丢弃旧读')
-    expect(source).toContain('延后分支终态')
-    expect(source).toContain('`保护 ${protectionCount} · 周期 ${decisions.liveEpochOpened}`')
-    expect(source).toContain(':data-tip="row.detail"')
-    expect(source).toContain('class="codex-diagnostic-copy" :role="diagnosticRole" aria-live="polite" aria-atomic="true"')
-    expect(source).not.toContain('class="codex-diagnostic" :class="diagnostic.tone" :role="diagnosticRole"')
-    expect(source).not.toContain('role="button"')
-    expect(source).not.toContain('tabindex="0" aria-label=')
-    expect(source).not.toContain('decisions.task')
+    const pageSource = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
+    const presentationSource = readFileSync(resolve(process.cwd(), 'src/domain/codexEnvironmentPresentation.ts'), 'utf8')
+    expect(presentationSource).toContain("label: '状态裁决'")
+    expect(presentationSource).toContain('丢弃旧读')
+    expect(presentationSource).toContain('延后分支终态')
+    expect(presentationSource).toContain('`保护 ${protectionCount} · 周期 ${decisions.liveEpochOpened}`')
+    expect(presentationSource).not.toContain('decisions.task')
+    expect(pageSource).toContain('buildCodexEnvironmentPresentation(')
+    expect(pageSource).toContain(':data-tip="row.detail"')
+    expect(pageSource).toContain('class="codex-diagnostic-copy" :role="environmentPresentation.diagnostic.role" aria-live="polite" aria-atomic="true"')
+    expect(pageSource).not.toContain("label: '状态裁决'")
+    expect(pageSource).not.toContain('role="button"')
+    expect(pageSource).not.toContain('tabindex="0" aria-label=')
   })
 
   it('renders Claude registration state as checkable rows with focusable detail', () => {
@@ -321,6 +340,106 @@ describe('Codex Companion V3 UI contract', () => {
       expect.stringContaining('执行失败'),
       expect.stringContaining('完成别名')
     ]))
+  })
+
+  it('filters virtual projects by provider and keeps textual ownership plus action capabilities', async () => {
+    const source = floatSnapshot('projects')
+    const seed = source.conversations.all.find((task) => task.key === TASK_FAILED)!
+    source.conversations = mergeCompanionConversations(source.conversations, [
+      {
+        ...seed,
+        key: 'claude:shared-task',
+        actionAlias: 'local_11111111-1111-4111-8111-111111111111',
+        name: 'Claude shared task',
+        originalName: 'Claude shared task',
+        provider: 'claude',
+        projectKey: PROJECT_A,
+        projectName: 'CodeNote',
+        originalProjectName: 'CodeNote',
+        canArchive: false,
+        claudePhase: 'completed'
+      },
+      {
+        ...seed,
+        key: 'claude:solo-task',
+        actionAlias: 'local_22222222-2222-4222-8222-222222222222',
+        name: 'Claude solo task',
+        originalName: 'Claude solo task',
+        provider: 'claude',
+        projectKey: 'dddddddddddddddddddddddddddddddd',
+        projectName: 'ClaudeSolo',
+        originalProjectName: 'ClaudeSolo',
+        canArchive: false,
+        claudePhase: 'completed'
+      }
+    ])
+    source.companion = {
+      providers: { codex: true, claude: true },
+      claudeQuota: normalizeClaudeQuota(null),
+      claudeEnvironment: emptyClaudeEnvironment()
+    }
+    refreshTaskState(source)
+    const { wrapper } = mountFloat(true, source)
+    await wrapper.vm.$nextTick()
+
+    const filters = wrapper.findAll('.float-project-provider-tabs [role="tab"]')
+    expect(filters.map((filter) => filter.text())).toEqual(['全部', '只显示 Codex', '只显示 Claude'])
+    expect(filters[0].attributes('aria-selected')).toBe('true')
+    expect(wrapper.findAll('.float-project-row').some((row) => row.text().includes('归属 Codex + Claude'))).toBe(true)
+    expect(wrapper.findAll('.task-provider-marker').map((marker) => marker.text())).toEqual(expect.arrayContaining(['归属 Codex', '归属 Claude']))
+
+    await filters[1].trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('.float-task-row.provider-claude')).toHaveLength(0)
+    expect(wrapper.findAll('.float-project-row').some((row) => row.text().includes('ClaudeSolo'))).toBe(false)
+
+    await wrapper.findAll('.float-project-provider-tabs [role="tab"]')[2].trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('.float-task-row').every((row) => row.classes().includes('provider-claude'))).toBe(true)
+    expect(wrapper.get('.float-project-provider-tabs > span').text()).toContain('2 项目 · 2 任务')
+    const archive = wrapper.get('[data-focus-key="task:claude:shared-task"] .action-archive')
+    expect(archive.attributes('aria-disabled')).toBe('true')
+    const create = wrapper.get('[data-focus-key="task:claude:shared-task"] .action-create')
+    expect(create.attributes()).toHaveProperty('disabled')
+    expect(create.attributes('title')).toContain('不会转发 Codex 新建动作')
+    const claudeOnlyProject = wrapper.findAll('.float-project-row').find((row) => row.text().includes('ClaudeSolo'))!
+    expect(claudeOnlyProject.get('.action-create').attributes()).toHaveProperty('disabled')
+    expect(claudeOnlyProject.get('.action-remove').attributes()).toHaveProperty('disabled')
+    expect(claudeOnlyProject.get('.action-hide').attributes()).toHaveProperty('disabled')
+    expect(claudeOnlyProject.get('.action-pin').attributes('aria-disabled')).toBe('true')
+  })
+
+  it('uses 8% normal and 12% hover provider tints with forced-colors fallbacks', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/styles/float.css'), 'utf8')
+    expect(css).toContain('var(--codex-quota-codex) 8%')
+    expect(css).toContain('var(--codex-quota-claude) 8%')
+    expect(css).toContain('var(--codex-quota-codex) 12%')
+    expect(css).toContain('@media (forced-colors: active)')
+  })
+
+  it('rejects a regressing Controller companion revision in the Float renderer', async () => {
+    const source = floatSnapshot('all')
+    source.companion = {
+      providers: { codex: true, claude: true },
+      revision: 2,
+      stateGeneration: 4,
+      unreadGeneration: 3,
+      claudeQuota: normalizeClaudeQuota(null),
+      claudeEnvironment: emptyClaudeEnvironment()
+    }
+    const listenerBox: { current?: (value: CodexFloatSnapshotV1) => void } = {}
+    const { wrapper } = mountFloat(true, source, {
+      onSnapshot: (listener) => { listenerBox.current = listener; return () => undefined }
+    })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.codex-float-root').attributes('data-companion-revision')).toBe('2')
+    const older = { ...source, companion: { ...source.companion, revision: 1 } }
+    listenerBox.current?.(older)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.codex-float-root').attributes('data-companion-revision')).toBe('2')
+    listenerBox.current?.({ ...source, companion: { ...source.companion, revision: undefined } })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.codex-float-root').attributes('data-companion-revision')).toBe('2')
   })
 
   it('keeps Space and Enter owned by the focused child button instead of the task row', async () => {
@@ -949,7 +1068,14 @@ describe('Codex Companion V3 UI contract', () => {
     // Once the row is mixed, help and accessible names name the platform.
     const claudeChip = groups[1].findAll('.float-quota-chip')[0]
     expect(claudeChip.get('.sr-only').text()).toContain('Claude 5 小时限额，剩余 70%')
+    expect(claudeChip.attributes('tabindex')).toBe('0')
+    expect(claudeChip.attributes('aria-label')).toContain('Claude 5 小时限额，剩余 70%')
     await claudeChip.trigger('pointerenter')
+    vi.advanceTimersByTime(200)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.float-action-hint').text()).toContain('Claude · 5 小时限额')
+    await claudeChip.trigger('pointerleave')
+    await claudeChip.trigger('focus')
     vi.advanceTimersByTime(200)
     await wrapper.vm.$nextTick()
     expect(wrapper.get('.float-action-hint').text()).toContain('Claude · 5 小时限额')
@@ -958,6 +1084,7 @@ describe('Codex Companion V3 UI contract', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/styles/float.css'), 'utf8')
     expect(css).toContain('.float-quota-group.provider-codex .float-quota-chip strong { color: var(--codex-quota-codex); }')
     expect(css).toContain('.float-quota-group.provider-claude .float-quota-chip strong { color: var(--codex-quota-claude); }')
+    expect(css).toContain('.float-quota-group.provider-claude .float-quota-chip:focus-visible')
   })
 
   it('keeps every color control in settings and out of the desktop floating card', () => {

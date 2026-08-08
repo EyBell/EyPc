@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 export const UTOOLS_PRELOAD_ASSETS = Object.freeze([
@@ -21,7 +21,20 @@ export const UTOOLS_PRELOAD_MODULE_GROUPS = Object.freeze([
   {
     id: 'claude',
     directory: 'claude',
-    files: ['index.cjs', 'transcript.cjs', 'settings.cjs', 'events.cjs', 'scripts.cjs', 'environment.cjs', 'open.cjs', 'quota.cjs', 'desktop.cjs']
+    files: [
+      'index.cjs',
+      'app-paths.cjs',
+      'app-state.cjs',
+      'code-sessions.cjs',
+      'unread.cjs',
+      'plan-usage.cjs',
+      'settings.cjs',
+      'events.cjs',
+      'scripts.cjs',
+      'environment.cjs',
+      'open.cjs',
+      'quota.cjs'
+    ]
   }
 ])
 
@@ -41,6 +54,14 @@ export function syncUtoolsPreloads(root, target) {
       ? resolve(root, asset.public)
       : resolve(root, 'dist', asset.dist)
     copyFileSync(resolve(root, asset.canonical), destination)
+  }
+  for (const group of UTOOLS_PRELOAD_MODULE_GROUPS) {
+    const directory = resolve(root, target, group.directory)
+    if (!existsSync(directory)) continue
+    const expected = new Set(group.files)
+    for (const file of readdirSync(directory)) {
+      if (file.endsWith('.cjs') && !expected.has(file)) rmSync(resolve(directory, file), { force: true })
+    }
   }
   for (const asset of UTOOLS_PRELOAD_MODULE_ASSETS) {
     const destination = target === 'public'

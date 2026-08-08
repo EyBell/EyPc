@@ -53,12 +53,9 @@ function settingsCommandLine(filePath, platform) {
  *
  * It reads the hook JSON on stdin and appends one compact record to the queue.
  *
- * Only the session id and the event name are read out of the payload. Fields
- * that can also appear inside a tool's own input — notably `cwd` — are
- * deliberately NOT read here: a text match would pick up the tool's path rather
- * than the session's, which would put a tool argument into a persisted file.
- * The transcript is the authoritative source for the working directory, so
- * nothing is lost by omitting it.
+ * Only session identity, event name and one allowlisted reason are read. The
+ * reason is emitted only for `AskUserQuestion` and `idle_prompt`; no arbitrary
+ * tool name, prompt, tool input or response body reaches the queue.
  */
 function hookScript(options) {
   const queuePath = shellQuote((options && options.queuePath) || '')
@@ -82,6 +79,15 @@ first_value() {
 
 SESSION=$(first_value session_id)
 EVENT=$(first_value hook_event_name)
+REASON=''
+
+if [ "$EVENT" = 'PreToolUse' ]; then
+  TOOL=$(first_value tool_name)
+  if [ "$TOOL" = 'AskUserQuestion' ]; then REASON='ask-user-question'; fi
+elif [ "$EVENT" = 'Notification' ]; then
+  KIND=$(first_value notification_type)
+  if [ "$KIND" = 'idle_prompt' ]; then REASON='idle-prompt'; fi
+fi
 
 case "$SESSION" in
   '' ) exit 0 ;;
@@ -104,7 +110,7 @@ if [ -f "$QUEUE" ]; then
 fi
 
 NOW=$(date +%s)
-printf '{"s":"%s","e":"%s","t":%s000,"p":%s}\\n' "$SESSION" "$EVENT" "$NOW" "$PPID" >> "$QUEUE" 2>/dev/null || true
+printf '{"s":"%s","e":"%s","r":"%s","t":%s000,"p":%s}\\n' "$SESSION" "$EVENT" "$REASON" "$NOW" "$PPID" >> "$QUEUE" 2>/dev/null || true
 exit 0
 `
 }

@@ -14,14 +14,16 @@
  * directory. Nothing else in the user's Claude installation is ever modified.
  */
 
-const CLAUDE_BRIDGE_REVISION = 'claude-companion-hooks-transcript-v1'
+const CLAUDE_BRIDGE_REVISION = 'claude-code-companion-v3'
 
-const { createTranscriptReader } = require('./transcript.cjs')
 const { createEventQueue } = require('./events.cjs')
 const { createEnvironmentProbe } = require('./environment.cjs')
 const { createOpener } = require('./open.cjs')
 const { createQuotaFallback } = require('./quota.cjs')
-const { createDesktopReader } = require('./desktop.cjs')
+const { createCodeSessionReader, correlateCodeSessions } = require('./code-sessions.cjs')
+const { createUnreadReader } = require('./unread.cjs')
+const { createPlanUsageReader } = require('./plan-usage.cjs')
+const { createAppStateReader } = require('./app-state.cjs')
 const {
   HOOK_SCRIPT_NAME,
   STATUSLINE_SCRIPT_NAME,
@@ -42,22 +44,19 @@ const {
 
 const EYPC_MARKER_TOKEN = EYPC_MARKER
 
-/** Sessions older than this are not projected at all. */
-const DEFAULT_INVENTORY_WINDOW_MS = 14 * 24 * 60 * 60 * 1000
-const MAX_SESSIONS = 400
-
 function createClaudeBridge(dependencies) {
   const fs = dependencies.fs
   const path = dependencies.path
   const dataDirectory = dependencies.dataDirectory
 
   const environment = createEnvironmentProbe(dependencies)
-  const transcripts = createTranscriptReader(dependencies)
   const queue = createEventQueue({ fs, path, directory: dataDirectory })
   const opener = createOpener(dependencies)
   const quotaFallback = createQuotaFallback(dependencies)
-  // Read-only desktop-app session reader; shares the claude lane, writes nothing.
-  const desktop = createDesktopReader(dependencies)
+  const codeSessions = createCodeSessionReader(dependencies)
+  const unread = createUnreadReader(dependencies)
+  const planUsage = createPlanUsageReader(dependencies)
+  const appState = createAppStateReader(dependencies)
 
   const hookCommandPath = path.join(dataDirectory, HOOK_SCRIPT_NAME)
   const statuslineCommandPath = path.join(dataDirectory, STATUSLINE_SCRIPT_NAME)
@@ -71,17 +70,63 @@ function createClaudeBridge(dependencies) {
   const statuslineCommandLine = settingsCommandLine(statuslineCommandPath, dependencies.platform)
 
   let eventWatchDispose = null
+  let codeWatchDispose = null
+  let unreadWatchDispose = null
+  let previousCodeMetadata = new Map()
+  let lastCodeInventory = null
+  let codeStateGeneration = 0
+  let lastCodeStateFingerprint = ''
 
-  // Newest CLI version seen in a transcript. Claude Code stamps every entry
-  // with the version that wrote it, which avoids spawning the binary just to
-  // ask what it is.
-  let observedCliVersion = ''
+  function stateEnvelope(sessions, appSnapshot, readAt) {
+    const stateRows = sessions.map((session) => ({
+      sessionId: session.sessionId,
+      source: session.stateSource,
+      compatibility: session.stateCompatibility,
+      phase: session.phase,
+      phaseUpdatedAt: session.phaseUpdatedAt,
+      turnStartedAt: session.turnStartedAt,
+      waitingApprovalAt: session.waitingApprovalAt,
+      waitingInputAt: session.waitingInputAt,
+      lastStopAt: session.lastStopAt,
+      lastSessionEndAt: session.lastSessionEndAt
+    }))
+    const fingerprint = JSON.stringify(stateRows)
+    if (fingerprint !== lastCodeStateFingerprint) {
+      lastCodeStateFingerprint = fingerprint
+      codeStateGeneration += 1
+    }
+    const sources = new Set(stateRows.map((row) => row.source).filter((source) => source && source !== 'none'))
+    const source = sources.size > 1 ? 'mixed' : sources.values().next().value || 'none'
+    const compatibility = stateRows.some((row) => row.compatibility === 'compatible')
+      ? 'compatible'
+      : stateRows.some((row) => row.compatibility === 'fallback')
+        ? 'fallback'
+        : appSnapshot.compatibility || 'unsupported'
+    const newestEvidenceAt = stateRows.reduce((latest, row) => Math.max(
+      latest,
+      Number(row.phaseUpdatedAt) || 0,
+      Number(row.turnStartedAt) || 0,
+      Number(row.waitingApprovalAt) || 0,
+      Number(row.waitingInputAt) || 0,
+      Number(row.lastStopAt) || 0,
+      Number(row.lastSessionEndAt) || 0
+    ), 0)
+    return {
+      generation: codeStateGeneration,
+      source,
+      freshness: { readAt, newestEvidenceAt },
+      compatibility,
+      // Compatibility fields for a Renderer that predates the named V2 delta.
+      stateGeneration: codeStateGeneration,
+      stateCompatibility: compatibility
+    }
+  }
 
   function inspect() {
     return environment.inspect({
       hookCommand: hookCommandLine,
       statuslineCommand: statuslineCommandLine,
-      cliVersionHint: observedCliVersion
+      cliVersionHint: ''
     })
   }
 
@@ -178,12 +223,6 @@ function createClaudeBridge(dependencies) {
   }
 
   /**
-   * Builds the current session inventory.
-   *
-   * Transcript evidence is the cold baseline; hook state layered on top is the
-   * exact, current evidence. A session with neither is simply not reported.
-   */
-  /**
    * Optional fallback read. Separated from `readSnapshot` because it is
    * asynchronous and opt-in: the synchronous snapshot must never block on a
    * network call.
@@ -194,8 +233,10 @@ function createClaudeBridge(dependencies) {
     return quotaFallback.read({
       enabled: settings.enabled === true,
       coldStart: settings.coldStart === true,
+      supplement: settings.supplement === true,
       now: settings.now,
       minStaleMs: settings.minStaleMs,
+      refreshIntervalMs: settings.refreshIntervalMs,
       primaryUpdatedAt: cached ? cached.updatedAt : 0,
       claudeHome: environment.claudeHome()
     })
@@ -204,70 +245,87 @@ function createClaudeBridge(dependencies) {
   function readSnapshot(options) {
     const settings = options || {}
     const now = Number.isFinite(settings.now) ? settings.now : Date.now()
-    const windowMs = Number.isFinite(settings.windowMs) ? settings.windowMs : DEFAULT_INVENTORY_WINDOW_MS
-    queue.rotateIfNeeded()
-    queue.drain()
-    const hookState = queue.state()
-    // Cheap mtime gate before any tail read. Enumerating is cheap; opening and
-    // reading up to 256 KB from every transcript a user has ever created is not,
-    // and this runs synchronously on the renderer thread every task tick.
-    const rows = environment.listTranscripts().filter((row) => {
-      if (!Number.isFinite(row.mtimeMs) || row.mtimeMs <= 0) return true
-      return now - row.mtimeMs <= windowMs
-    })
-    const sessions = []
-    for (const row of rows) {
-      const summary = transcripts.summarize(row.filePath, row.sessionId)
-      if (!summary) continue
-      // Transcript timestamps are authoritative for activity because they
-      // describe the conversation itself; file mtime is only the fallback the
-      // reader already applied when the tail carried no parseable timestamp.
-      // Preferring mtime here would make a restored or copied transcript look
-      // freshly active.
-      const updatedAt = summary.lastEventAt || 0
-      if (!updatedAt || now - updatedAt > windowMs) continue
-      if (summary.cliVersion) observedCliVersion = summary.cliVersion
-      const hook = hookState.get(row.sessionId) || null
-      sessions.push({
-        sessionId: row.sessionId,
-        projectSlug: row.projectSlug,
-        // The transcript is the only source for cwd; the hook deliberately does
-        // not report it, because a text match there can pick up a tool argument.
-        cwd: summary.cwd || '',
-        gitBranch: summary.gitBranch || '',
-        startedAt: summary.startedAt || 0,
-        updatedAt: Math.max(updatedAt, hook && hook.hookEventAt ? hook.hookEventAt : 0),
-        lastPromptAt: summary.lastPromptAt || 0,
-        lastAssistantAt: summary.lastAssistantAt || 0,
-        lastStopAt: hook && hook.hookEvent === 'stop' ? hook.hookEventAt : 0,
-        model: summary.model || '',
-        isSidechain: summary.isSidechain === true,
-        parentSessionId: summary.parentSessionId || '',
-        turns: summary.turns || 0,
-        pendingToolUse: summary.pendingToolUse || 0,
-        contextTokens: summary.contextTokens || 0,
-        hookEvent: hook ? hook.hookEvent : null,
-        hookEventAt: hook ? hook.hookEventAt : 0,
-        pid: hook ? hook.pid : 0
-      })
-    }
-    sessions.sort((left, right) => right.updatedAt - left.updatedAt)
-    const limited = sessions.length > MAX_SESSIONS ? sessions.slice(0, MAX_SESSIONS) : sessions
     const quota = readQuota()
     return {
       version: 1,
       revision: CLAUDE_BRIDGE_REVISION,
-      sessions: limited,
-      truncated: sessions.length > limited.length,
+      // V1 compatibility only. Production inventory is `readCodeSnapshot`.
+      sessions: [],
+      truncated: false,
       quota: quota ? { rateLimits: quota.rateLimits, updatedAt: quota.updatedAt } : null,
       readAt: now
     }
   }
 
-  // Both session families resolve to the same `claude://resume` deep link, so
-  // the caller passes an id and nothing else — no pid, no cwd, no CLI path.
+  function readCodeSnapshot(options) {
+    queue.rotateIfNeeded()
+    queue.drain()
+    const inventory = codeSessions.readInventory(options)
+    const appSnapshot = appState.read()
+    if (inventory.available === false) {
+      const readAt = Number(inventory.readAt) || Date.now()
+      return {
+        ...inventory,
+        sessions: [],
+        ...stateEnvelope([], appSnapshot, readAt)
+      }
+    }
+    const correlated = correlateCodeSessions(inventory.sessions, queue.state(), previousCodeMetadata, appSnapshot)
+    previousCodeMetadata = correlated.nextMetadata
+    lastCodeInventory = inventory
+    const readAt = Number(inventory.readAt) || Date.now()
+    return {
+      ...inventory,
+      sessions: correlated.sessions,
+      ...stateEnvelope(correlated.sessions, appSnapshot, readAt)
+    }
+  }
+
+  /**
+   * State-only hot read. It reuses the last admitted Code inventory, drains the
+   * two lifecycle sources and never touches unread, quota or App metadata.
+   */
+  function readCodeStateSnapshot(options) {
+    queue.rotateIfNeeded()
+    queue.drain()
+    if (!lastCodeInventory) {
+      const inventory = codeSessions.readInventory(options)
+      if (inventory.available === false) {
+        const appSnapshot = appState.read()
+        const readAt = Date.now()
+        return {
+          version: 2,
+          revision: `${CLAUDE_BRIDGE_REVISION}:state-v2`,
+          sessions: [],
+          available: false,
+          truncated: false,
+          readAt,
+          ...stateEnvelope([], appSnapshot, readAt)
+        }
+      }
+      lastCodeInventory = inventory
+    }
+    const appSnapshot = appState.read()
+    const correlated = correlateCodeSessions(lastCodeInventory.sessions, queue.state(), previousCodeMetadata, appSnapshot)
+    previousCodeMetadata = correlated.nextMetadata
+    const readAt = Date.now()
+    return {
+      version: 2,
+      revision: `${CLAUDE_BRIDGE_REVISION}:state-v2`,
+      sessions: correlated.sessions,
+      truncated: lastCodeInventory.truncated === true,
+      readAt,
+      ...stateEnvelope(correlated.sessions, appSnapshot, readAt)
+    }
+  }
+
+  // Only the App-owned local id is accepted. No CLI import route exists.
   function openTask(sessionId) {
     return opener.openTask(String(sessionId || ''), { platform: dependencies.platform })
+  }
+
+  function readAppPresence() {
+    return opener.readPresence()
   }
 
   /**
@@ -281,7 +339,12 @@ function createClaudeBridge(dependencies) {
       eventWatchDispose = null
     }
     if (typeof listener !== 'function') return () => {}
-    const dispose = queue.watch(listener, options)
+    const queueDispose = queue.watch(listener, options)
+    const appDispose = appState.watch(listener)
+    const dispose = () => {
+      queueDispose()
+      appDispose()
+    }
     eventWatchDispose = dispose
     return () => {
       if (eventWatchDispose === dispose) eventWatchDispose = null
@@ -289,14 +352,30 @@ function createClaudeBridge(dependencies) {
     }
   }
 
-  /** Desktop lane: read-only snapshot of the Claude desktop app's sessions. */
-  function readDesktopSnapshot(options) {
-    return desktop.readSnapshot(options)
+  function watchCodeSessions(listener) {
+    if (codeWatchDispose) codeWatchDispose()
+    const dispose = codeSessions.watch(listener)
+    codeWatchDispose = dispose
+    return () => {
+      if (codeWatchDispose === dispose) codeWatchDispose = null
+      dispose()
+    }
   }
 
-  /** Desktop lane push: metadata heartbeat rewrites under the user directory. */
-  function watchDesktopSessions(listener) {
-    return desktop.watchSessions(listener)
+  // New name documents that this watcher owns phase only. `watchEvents` stays
+  // as a compatibility alias for a long-lived Renderer/preload pair.
+  function watchCodeState(listener, options) {
+    return watchEvents(listener, options)
+  }
+
+  function watchCodeUnread(listener) {
+    if (unreadWatchDispose) unreadWatchDispose()
+    const dispose = unread.watch(listener)
+    unreadWatchDispose = dispose
+    return () => {
+      if (unreadWatchDispose === dispose) unreadWatchDispose = null
+      dispose()
+    }
   }
 
   /**
@@ -305,16 +384,40 @@ function createClaudeBridge(dependencies) {
    * it is the lane that keeps the reading moving at the app's own cadence.
    */
   function readPlanUsage() {
-    return desktop.readPlanUsage()
+    return planUsage.read()
   }
 
   /**
-   * The desktop app's own unread set. `null` means the reading failed, which is
+   * The App's own unread set. `null` means the reading failed, which is
    * deliberately distinct from an empty set — see the reader for why that
    * distinction is load-bearing.
    */
-  function readDesktopUnread() {
-    return desktop.readUnreadSet()
+  function readCodeUnread() {
+    return unread.read()
+  }
+
+  /** Safe diagnostics only; raw status text, identities and credentials stay private. */
+  function diagnostics() {
+    const quota = quotaFallback.diagnostics()
+    const failure = String(quota.lastFailure || '')
+    const status = !quota.lastAttemptAt
+      ? 'idle'
+      : !failure
+        ? 'ok'
+        : failure === 'credential-unavailable' || failure === 'http-401' || failure === 'http-403'
+          ? 'credential-unavailable'
+          : failure === 'http-429'
+            ? 'rate-limited'
+            : 'failed'
+    return {
+      quotaAccess: {
+        status,
+        lastAttemptAt: Number(quota.lastAttemptAt) || 0,
+        retryAt: Number.isFinite(quota.nextAllowedAt) && quota.nextAllowedAt < Number.MAX_SAFE_INTEGER
+          ? Math.max(0, Number(quota.nextAllowedAt))
+          : 0
+      }
+    }
   }
 
   function close() {
@@ -324,7 +427,17 @@ function createClaudeBridge(dependencies) {
     }
     queue.reset()
     quotaFallback.reset()
-    desktop.close()
+    if (codeWatchDispose) codeWatchDispose()
+    if (unreadWatchDispose) unreadWatchDispose()
+    codeWatchDispose = null
+    unreadWatchDispose = null
+    previousCodeMetadata = new Map()
+    lastCodeInventory = null
+    codeStateGeneration = 0
+    lastCodeStateFingerprint = ''
+    codeSessions.close()
+    unread.close()
+    appState.close()
   }
 
   return {
@@ -339,21 +452,24 @@ function createClaudeBridge(dependencies) {
     install,
     uninstall,
     readSnapshot,
+    readCodeSnapshot,
+    readCodeStateSnapshot,
     readQuota,
     readQuotaFallback,
-    readDesktopSnapshot,
-    readDesktopUnread,
+    readCodeUnread,
     readPlanUsage,
-    watchDesktopSessions,
+    watchCodeSessions,
+    watchCodeState,
+    watchCodeUnread,
     watchEvents,
+    readAppPresence,
     openTask,
+    diagnostics,
     close
   }
 }
 
 module.exports = {
   CLAUDE_BRIDGE_REVISION,
-  DEFAULT_INVENTORY_WINDOW_MS,
-  MAX_SESSIONS,
   createClaudeBridge
 }

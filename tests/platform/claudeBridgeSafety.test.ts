@@ -242,43 +242,6 @@ describe('hook script privacy', () => {
   })
 })
 
-describe('inventory cost', () => {
-  it('does not open transcripts that fall outside the window', () => {
-    const home = makeHome()
-    const directory = join(home.claudeHome, 'projects', '-w-app')
-    mkdirSync(directory, { recursive: true })
-    const stale = join(directory, 'old.jsonl')
-    writeFileSync(stale, `${JSON.stringify({ type: 'user', timestamp: '2020-01-01T00:00:00.000Z' })}\n`)
-    const ancient = Date.now() - 40 * 24 * 3_600_000
-    fs.utimesSync(stale, ancient / 1000, ancient / 1000)
-
-    const opened: string[] = []
-    const bridge = makeBridge(home, {
-      fs: new Proxy(fs, {
-        get(target, key) {
-          if (key === 'openSync') {
-            return (file: string, ...rest: unknown[]) => {
-              opened.push(String(file))
-              return (target.openSync as (...args: unknown[]) => number)(file, ...rest)
-            }
-          }
-          return Reflect.get(target, key)
-        }
-      })
-    })
-    expect(bridge.readSnapshot({ now: Date.now() }).sessions).toHaveLength(0)
-    expect(opened).toEqual([])
-  })
-
-  it('still reads a transcript whose mtime is unknown', () => {
-    const home = makeHome()
-    const directory = join(home.claudeHome, 'projects', '-w-app')
-    mkdirSync(directory, { recursive: true })
-    writeFileSync(join(directory, 'fresh.jsonl'), `${JSON.stringify({ type: 'user', sessionId: 'fresh', cwd: '/w/app', timestamp: new Date().toISOString() })}\n`)
-    expect(makeBridge(home).readSnapshot({ now: Date.now() }).sessions).toHaveLength(1)
-  })
-})
-
 describe('generated scripts stay recoverable', () => {
   it('leaves nothing outside EyPc data directory after uninstall', () => {
     const home = makeHome()

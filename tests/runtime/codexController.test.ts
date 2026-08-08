@@ -1029,6 +1029,72 @@ describe('Codex controller', () => {
     expect(notifyCount).toBe(beforeRelease)
   })
 
+  it('publishes launch-path mutations directly without a redundant environment inspection', async () => {
+    const state = createInitialState(1)
+    const inspectEnvironment = vi.fn(async () => ({
+      version: 1 as const,
+      checking: false,
+      platform: 'macos' as const,
+      runtimeState: 'detected' as const,
+      runtimeSource: 'path' as const,
+      processState: 'not-running' as const,
+      configState: 'detected' as const,
+      connectionState: 'not-checked' as const,
+      desktopBridgeState: 'not-checked' as const,
+      launchMode: 'automatic' as const,
+      manualLaunchPathState: 'not-configured' as const,
+      checkedAt: 300
+    }))
+    const setLaunchPath = vi.fn(async () => ({
+      version: 1 as const,
+      checking: false,
+      platform: 'macos' as const,
+      runtimeState: 'detected' as const,
+      runtimeSource: 'manual' as const,
+      processState: 'not-running' as const,
+      configState: 'detected' as const,
+      connectionState: 'not-checked' as const,
+      desktopBridgeState: 'not-checked' as const,
+      launchMode: 'manual' as const,
+      manualLaunchPathState: 'valid' as const,
+      checkedAt: 100
+    }))
+    const clearLaunchPath = vi.fn(async () => ({
+      version: 1 as const,
+      checking: false,
+      platform: 'macos' as const,
+      runtimeState: 'detected' as const,
+      runtimeSource: 'homebrew' as const,
+      processState: 'not-running' as const,
+      configState: 'detected' as const,
+      connectionState: 'not-checked' as const,
+      desktopBridgeState: 'not-checked' as const,
+      launchMode: 'automatic' as const,
+      manualLaunchPathState: 'not-configured' as const,
+      checkedAt: 200
+    }))
+    const notify = vi.fn()
+    const controller = createCodexController({
+      platform: { codex: { inspectEnvironment, setLaunchPath, clearLaunchPath, close: () => undefined } } as unknown as EypcPlatformApi,
+      getAppState: () => state,
+      save: () => undefined,
+      notify,
+      setMessage: () => undefined
+    })
+
+    await expect(controller.setLaunchPath('  /opt/codex/bin/codex  ')).resolves.toBe(true)
+    expect(setLaunchPath).toHaveBeenCalledOnce()
+    expect(setLaunchPath).toHaveBeenCalledWith('/opt/codex/bin/codex')
+    expect(controller.view().environment).toMatchObject({ runtimeSource: 'manual', launchMode: 'manual', checkedAt: 100 })
+
+    await expect(controller.clearLaunchPath()).resolves.toBe(true)
+    expect(clearLaunchPath).toHaveBeenCalledOnce()
+    expect(controller.view().environment).toMatchObject({ runtimeSource: 'homebrew', launchMode: 'automatic', checkedAt: 200 })
+    expect(inspectEnvironment).not.toHaveBeenCalled()
+    expect(notify).toHaveBeenCalledTimes(2)
+    controller.dispose()
+  })
+
   it('persists direct color strings without a contrast gate', () => {
     const state = createInitialState(1)
     const save = vi.fn()

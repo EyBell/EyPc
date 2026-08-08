@@ -3,37 +3,22 @@
 /**
  * Claude task jump.
  *
- * Every Claude task opens inside the Claude desktop app — CLI sessions
- * (`~/.claude`, a bare uuid) and desktop sessions (`local_<uuid>`) alike. There
- * is no terminal route: the plugin never focuses a terminal window and never
- * runs `claude --resume`.
- *
- * The address is the desktop app's own deep link, read out of Claude 1.25927.0's
- * `claudeURLHandler`:
- *
- *   claude://resume?session=<uuid>
- *
- * The handler accepts a canonical UUID only, then hands it to
- * `LocalSessionManager.importCliSession(uuid)`, which resolves to the desktop
- * session id `local_<uuid>` and navigates the app there. One link therefore
- * serves both families:
- *
- *  - a desktop session is already in the app's store, so the manager returns
- *    early: it un-archives the session, navigates, and touches nothing else;
- *  - a CLI session is imported first, and that import is not free. The app
- *    strips thinking blocks from `~/.claude/projects/**\/<uuid>.jsonl` **in
- *    place**, marks the session's cwd as a trusted workspace and may claim its
- *    git worktree. EyPc stays read-only — it only dispatches the link — but the
- *    writes do happen, once per session, on the desktop app's side.
+ * Only an existing Claude App Code row (`local_<uuid>`) is accepted. The App's
+ * normal local-history route is `claude://claude.ai/epitaxy/<local-id>`; the
+ * import-oriented alternative handler is intentionally not present here.
  *
  * The result is always `dispatched`, never `opened`. The OS handler takes the
- * URL and returns immediately, so an expired sign-in, a missing transcript and
+ * URL and returns immediately, so an expired sign-in, missing local history and
  * a successful navigation are indistinguishable from here. None of them is
- * evidence that the user saw the session, so no jump writes a read receipt.
+ * evidence that Claude itself confirmed a read, so this bridge never reports
+ * `confirmsRead`. The Controller may still create a revocable, process-local
+ * hint for the exact completion epoch while it rechecks native unread state.
  */
 
 /** Dispatch timeout for the deep-link handoff. */
 const OPEN_TIMEOUT_MS = 8000
+const APP_PRESENCE_TTL_MS = 2000
+const APP_PRESENCE_PROBE_TIMEOUT_MS = 900
 
 /**
  * Application identity of the Claude desktop app. Identity comes from the app,
@@ -47,35 +32,31 @@ const DESKTOP_APP_ID_EXCLUDE = /url[-_.]?handler|helper|updater/
 const DESKTOP_APP_NAMES = new Set(['claude', 'claude for desktop'])
 
 /**
- * Canonical UUID — the only shape the `resume` handler accepts. Its own regex is
- * exactly this, and anything else is dropped before the session manager is ever
- * reached, so rejecting it here buys the user a real message instead of a
- * silent no-op.
+ * Canonical App-local id — the only shape admitted by this route. Rejecting
+ * every other id prevents a CLI id from creating an imported copy.
  */
-const SESSION_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const LOCAL_SESSION_PATTERN = /^local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function isClaudeDesktopWindow(row) {
   if (!row || typeof row !== 'object') return false
   const appId = String(row.appId || '').trim().toLowerCase()
   const appName = String(row.appName || '').trim().toLowerCase()
-  if (appId.startsWith(DESKTOP_APP_ID_PREFIX) && !DESKTOP_APP_ID_EXCLUDE.test(appId)) return true
+  if (appId && DESKTOP_APP_ID_EXCLUDE.test(appId)) return false
+  if (appId.startsWith(DESKTOP_APP_ID_PREFIX)) return true
   return DESKTOP_APP_NAMES.has(appName)
 }
 
 /**
- * Session id → deep-link uuid.
- *
- * A desktop id is `local_` followed by the very uuid the link wants, and a CLI
- * id is that uuid already, so both families reduce to the same value. Returns
- * '' for anything the handler would reject.
+ * App-local session id → exact deep-link id. Returns '' for CLI ids and every
+ * other shape, so this helper can never fall through to an import path.
  */
-function deepLinkSessionUuid(sessionId) {
-  const uuid = String(sessionId || '').trim().replace(/^local_/i, '')
-  return SESSION_UUID_PATTERN.test(uuid) ? uuid.toLowerCase() : ''
+function deepLinkLocalSessionId(sessionId) {
+  const localId = String(sessionId || '').trim().toLowerCase()
+  return LOCAL_SESSION_PATTERN.test(localId) ? localId : ''
 }
 
-function desktopResumeUrl(uuid) {
-  return `claude://resume?session=${encodeURIComponent(uuid)}`
+function desktopEpitaxyUrl(localSessionId) {
+  return `claude://claude.ai/epitaxy/${encodeURIComponent(localSessionId)}`
 }
 
 function outcome(kind, message, confirmsRead) {
@@ -89,6 +70,15 @@ function outcome(kind, message, confirmsRead) {
 function createOpener(dependencies) {
   const windows = dependencies.windows || null
   const execFile = dependencies.execFile || null
+  const execFileSync = dependencies.execFileSync || null
+  const processApi = dependencies.process || (typeof process === 'object' ? process : null)
+  const now = typeof dependencies.now === 'function' ? dependencies.now : Date.now
+  const setTimer = dependencies.setTimeout || setTimeout
+  const clearTimer = dependencies.clearTimeout || clearTimeout
+  let presence = null
+  let presenceCheckInFlight = null
+  let pendingOpen = null
+  let dispatchInFlight = false
 
   function windowsUnavailable() {
     return !windows || typeof windows.list !== 'function'
@@ -101,6 +91,20 @@ function createOpener(dependencies) {
     return {
       rows: listed && Array.isArray(listed.windows) ? listed.windows : [],
       capability: listed && typeof listed.capability === 'object' ? listed.capability : null
+    }
+  }
+
+  async function boundedWindowRows() {
+    let timer = null
+    try {
+      return await Promise.race([
+        listWindowRows(),
+        new Promise((resolvePromise) => {
+          timer = setTimer(() => resolvePromise(null), APP_PRESENCE_PROBE_TIMEOUT_MS)
+        })
+      ])
+    } finally {
+      if (timer) clearTimer(timer)
     }
   }
 
@@ -122,24 +126,86 @@ function createOpener(dependencies) {
    * Is the desktop app up?
    *
    * Only a readable inventory can answer that. A denied accessibility
-   * permission produces exactly the same empty list as a closed app — and the
-   * deep link needs no accessibility at all — so an unreadable inventory
-   * answers `unknown` and the jump proceeds, rather than refusing on evidence
-   * the plugin was never allowed to collect.
+   * permission produces exactly the same empty list as a closed app. The route
+   * must not auto-launch Claude, so unknown fails closed rather than dispatching.
    */
-  async function desktopRunningState() {
+  function processStartToken(pid) {
+    if (!Number.isInteger(pid) || pid <= 0 || typeof execFileSync !== 'function') return ''
+    try {
+      return String(execFileSync('ps', ['-p', String(pid), '-o', 'lstart='], {
+        encoding: 'utf8', timeout: 1000, stdio: ['ignore', 'pipe', 'ignore']
+      }) || '').trim()
+    } catch {
+      return ''
+    }
+  }
+
+  function cachedRunningState() {
+    if (!presence || presence.status !== 'running') return ''
+    const pid = Number(presence.pid) || 0
+    if (pid > 0 && processApi && typeof processApi.kill === 'function') {
+      try {
+        processApi.kill(pid, 0)
+        const currentToken = processStartToken(pid)
+        if (!presence.startToken || !currentToken || currentToken === presence.startToken) return 'running'
+      } catch { /* cache invalidated below */ }
+      presence = null
+      return ''
+    }
+    if (now() - presence.verifiedAt <= APP_PRESENCE_TTL_MS) return 'running'
+    presence = null
+    return ''
+  }
+
+  async function probeDesktopRunningState() {
+    const cached = cachedRunningState()
+    if (cached) return cached
     if (windowsUnavailable()) return 'unknown'
     let listed = null
     try {
-      listed = await listWindowRows()
+      listed = await boundedWindowRows()
     } catch {
       return 'unknown'
     }
+    if (!listed) return 'unknown'
     if (inventoryBlockReason(listed.capability)) return 'unknown'
-    const running = listed.rows.some((row) => isClaudeDesktopWindow(row)
-      && row.relationship !== 'child'
-      && row.userVisible !== false)
-    return running ? 'running' : 'closed'
+    const running = listed.rows.find((row) => isClaudeDesktopWindow(row)
+      && row.relationship !== 'child')
+    if (!running) {
+      presence = null
+      return 'closed'
+    }
+    const pid = Math.max(0, Math.trunc(Number(running.pid) || 0))
+    presence = {
+      status: 'running',
+      pid,
+      appId: String(running.appId || running.appName || ''),
+      instanceId: String(running.instanceId || ''),
+      startToken: processStartToken(pid),
+      verifiedAt: now()
+    }
+    return 'running'
+  }
+
+  function desktopRunningState() {
+    const cached = cachedRunningState()
+    if (cached) return Promise.resolve(cached)
+    if (presenceCheckInFlight) return presenceCheckInFlight
+    presenceCheckInFlight = probeDesktopRunningState().finally(() => { presenceCheckInFlight = null })
+    return presenceCheckInFlight
+  }
+
+  async function readPresence() {
+    const status = await desktopRunningState()
+    if (status === 'running' && presence) return { ...presence }
+    return {
+      status,
+      pid: 0,
+      appId: '',
+      instanceId: '',
+      startToken: '',
+      verifiedAt: now()
+    }
   }
 
   /**
@@ -170,24 +236,58 @@ function createOpener(dependencies) {
     })
   }
 
-  async function openTask(sessionId, options) {
+  async function dispatchTask(sessionId, options) {
     const settings = options || {}
-    const uuid = deepLinkSessionUuid(sessionId)
-    // Without a canonical uuid the handler drops the link silently, so say so
-    // here instead of reporting a hand-off that never happened.
-    if (!uuid) return outcome('unavailable', '该会话没有可用于桌面端的地址')
-    if (await desktopRunningState() === 'closed') return outcome('unavailable', 'Claude 桌面端未在运行')
-    return dispatchDeepLink(desktopResumeUrl(uuid), settings.platform)
+    const localSessionId = deepLinkLocalSessionId(sessionId)
+    if (!localSessionId) return outcome('unavailable', '该任务不是可定位的 Claude App Code 会话')
+    const running = await desktopRunningState()
+    if (running === 'closed') return outcome('unavailable', 'Claude 桌面端未在运行')
+    if (running !== 'running') return outcome('unavailable', '无法确认 Claude 桌面端正在运行')
+    return dispatchDeepLink(desktopEpitaxyUrl(localSessionId), settings.platform)
   }
 
-  return { openTask }
+  function pumpOpenQueue() {
+    if (dispatchInFlight || !pendingOpen) return
+    const current = pendingOpen
+    pendingOpen = null
+    dispatchInFlight = true
+    void dispatchTask(current.sessionId, current.options).then(current.resolve, () => {
+      current.resolve(outcome('failed', '唤起 Claude 桌面端失败'))
+    }).finally(() => {
+      dispatchInFlight = false
+      if (pendingOpen) queueMicrotask(pumpOpenQueue)
+    })
+  }
+
+  /** Single-flight, latest-target-wins dispatch for rapid previous/next keys. */
+  function openTask(sessionId, options) {
+    return new Promise((resolvePromise) => {
+      if (pendingOpen) {
+        pendingOpen.resolve(outcome('unavailable', '已由更新的 Claude 跳转目标替代'))
+      }
+      pendingOpen = { sessionId, options: options || {}, resolve: resolvePromise }
+      queueMicrotask(pumpOpenQueue)
+    })
+  }
+
+  function inspectPresence() {
+    return presence ? { ...presence } : { status: 'unknown', pid: 0, appId: '', instanceId: '', startToken: '', verifiedAt: 0 }
+  }
+
+  function invalidatePresence() {
+    presence = null
+  }
+
+  return { openTask, readPresence, inspectPresence, invalidatePresence }
 }
 
 module.exports = {
   OPEN_TIMEOUT_MS,
-  SESSION_UUID_PATTERN,
+  APP_PRESENCE_TTL_MS,
+  APP_PRESENCE_PROBE_TIMEOUT_MS,
+  LOCAL_SESSION_PATTERN,
   isClaudeDesktopWindow,
-  deepLinkSessionUuid,
-  desktopResumeUrl,
+  deepLinkLocalSessionId,
+  desktopEpitaxyUrl,
   createOpener
 }

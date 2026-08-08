@@ -2,12 +2,12 @@ import {
   claudePrimaryQuotaWindow,
   isClaudeAvailable,
   type ClaudeEnvironmentSnapshot,
+  type ClaudeQuotaAccessSnapshot,
   type ClaudeQuotaSnapshot
 } from './claude'
 import {
   COMPANION_PROVIDER_LABELS,
   companionTaskProvider,
-  isCompanionCompatibilityMode,
   resolveCompanionWaterBallMapping,
   type CompanionProviderEnablement,
   type CompanionProviderId,
@@ -18,13 +18,19 @@ import {
  * Companion presentation.
  *
  * The renderer must not decide which provider owns which visual channel, and it
- * must not decide when a provider marker is meaningful. Both are policy, so
+ * must not decide how provider ownership is expressed. Both are policy, so
  * both live here as pure functions the float and the settings page consume.
  */
 
 /** Snapshot payload the Controller publishes for the Claude provider. */
 export interface CompanionSnapshotSlice {
   providers: CompanionProviderEnablement
+  claudeAppQuotaAccess?: boolean
+  /** Controller-owned monotonic revision; Float rejects older publications. */
+  revision?: number
+  stateGeneration?: number
+  unreadGeneration?: number
+  claudeQuotaAccess?: ClaudeQuotaAccessSnapshot
   claudeQuota: ClaudeQuotaSnapshot
   claudeEnvironment: ClaudeEnvironmentSnapshot
 }
@@ -61,7 +67,10 @@ export function resolveCompanionWaterBallPresentation(
   slice: CompanionSnapshotSlice | null | undefined
 ): CompanionWaterBallPresentation {
   if (!slice) return EMPTY_PRESENTATION
-  const claudeLive = slice.providers.claude === true && isClaudeAvailable(slice.claudeEnvironment)
+  const appQuotaReadable = slice.claudeAppQuotaAccess === true
+    && slice.claudeQuota.windows.some((window) => window.source === 'usage-api')
+  const claudeLive = slice.providers.claude === true
+    && (isClaudeAvailable(slice.claudeEnvironment) || appQuotaReadable)
   const mapping = resolveCompanionWaterBallMapping(slice.providers, { claude: claudeLive })
   if (mapping.percent !== 'claude') return { ...EMPTY_PRESENTATION, mapping }
   const window = claudePrimaryQuotaWindow(slice.claudeQuota)
@@ -86,19 +95,43 @@ export interface CompanionRowMarker {
   tooltip: string
 }
 
+export interface CompanionProjectMarker {
+  providers: CompanionProviderId[]
+  label: string
+  className: `provider-${CompanionProviderId | 'shared'}`
+  claudeOnly: boolean
+}
+
 /**
- * A row marker is only meaningful once the list actually mixes providers.
- * In compatibility mode every row would carry the same "Codex" badge, which is
- * noise, so the marker is suppressed entirely.
+ * Every status row carries a textual owner cue. Color remains supplementary,
+ * so compatibility mode and forced-colors users receive the same information.
  */
 export function resolveCompanionRowMarker(
-  task: { provider?: CompanionProviderId } | null | undefined,
-  providers: CompanionProviderEnablement
+  task: { provider?: CompanionProviderId } | null | undefined
 ): CompanionRowMarker | null {
-  if (!task || isCompanionCompatibilityMode(providers)) return null
+  if (!task) return null
   const provider = companionTaskProvider(task)
   const label = COMPANION_PROVIDER_LABELS[provider]
-  return { provider, label, tooltip: `来源：${label}` }
+  return { provider, label: `归属 ${label}`, tooltip: `归属 ${label}` }
+}
+
+/** One ownership projection shared by project text, tint, filters and actions. */
+export function resolveCompanionProjectMarker(
+  project: { providers?: CompanionProviderId[]; tasks?: Array<{ provider?: CompanionProviderId }> } | null | undefined
+): CompanionProjectMarker | null {
+  if (!project) return null
+  const providers = [...new Set(project.providers?.length
+    ? project.providers
+    : (project.tasks || []).map(companionTaskProvider))]
+  if (!providers.length) providers.push('codex')
+  const shared = providers.length > 1
+  const owner = shared ? 'Codex + Claude' : COMPANION_PROVIDER_LABELS[providers[0]]
+  return {
+    providers,
+    label: `归属 ${owner}`,
+    className: `provider-${shared ? 'shared' : providers[0]}`,
+    claudeOnly: providers.length === 1 && providers[0] === 'claude'
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -112,6 +145,9 @@ export interface CompanionQuotaRow {
   shortLabel?: string
   remainingPercent: number
   resetAt: number | null
+  source?: ClaudeQuotaSnapshot['source']
+  updatedAt?: number
+  freshness?: 'fresh' | 'stale' | 'unknown'
 }
 
 /** Which limit window a quota reading covers. Drives the short caption. */
@@ -134,7 +170,9 @@ export function buildClaudeQuotaSection(
 ): CompanionQuotaSection | null {
   if (!slice || slice.providers.claude !== true) return null
   const label = COMPANION_PROVIDER_LABELS.claude
-  if (!isClaudeAvailable(slice.claudeEnvironment)) {
+  const appQuotaReadable = slice.claudeAppQuotaAccess === true
+    && slice.claudeQuota.windows.some((window) => window.source === 'usage-api')
+  if (!isClaudeAvailable(slice.claudeEnvironment) && !appQuotaReadable) {
     return { provider: 'claude', label, rows: [], emptyReason: claudeSetupHint(slice.claudeEnvironment) }
   }
   // One row per window the payload actually declared, in the domain's display
@@ -146,13 +184,26 @@ export function buildClaudeQuotaSection(
     label: entry.label,
     shortLabel: entry.shortLabel,
     remainingPercent: entry.remainingPercent,
-    resetAt: entry.resetAt
+    resetAt: entry.resetAt,
+    source: entry.source,
+    updatedAt: entry.updatedAt,
+    freshness: entry.freshness
   }))
+  const accessStatus = slice.claudeQuotaAccess?.status || 'idle'
+  const unavailableReason = accessStatus === 'rate-limited'
+    ? 'Claude App 额度暂受限，将按 Retry-After 重试'
+    : accessStatus === 'credential-unavailable'
+      ? 'Claude App 额度凭据不可用，等待账号凭据更新'
+      : 'Claude App 额度暂不可用，保留最近成功值'
   return {
     provider: 'claude',
     label,
     rows,
-    emptyReason: rows.length ? '' : '尚未读到额度，运行一次 Claude Code 后自动更新'
+    emptyReason: rows.length
+      ? ''
+      : slice.claudeAppQuotaAccess
+        ? unavailableReason
+        : '尚未读到额度；可授权只读 Claude App 额度'
   }
 }
 
@@ -185,12 +236,17 @@ export interface CompanionQuotaChip {
   label: string
   remainingPercent: number
   resetAt: number | null
+  source?: ClaudeQuotaSnapshot['source']
+  updatedAt?: number
+  freshness?: 'fresh' | 'stale' | 'unknown'
   /**
    * True when the reading is known to be stale. Only Claude chips carry the
    * flag: the Codex chip shape must stay untouched so the Codex-only rendering
    * remains byte-identical to the pre-companion float.
    */
   stale?: boolean
+  /** Claude-only remaining-capacity reminder; no system notification. */
+  tone?: 'normal' | 'warning' | 'danger'
 }
 
 export interface CompanionQuotaGroup {
@@ -261,7 +317,15 @@ export function buildCompanionQuotaStrip(
         label: row.label,
         remainingPercent: row.remainingPercent,
         resetAt: row.resetAt,
-        stale: slice?.claudeQuota.status === 'stale'
+        source: row.source,
+        updatedAt: row.updatedAt,
+        freshness: row.freshness,
+        stale: row.freshness !== 'fresh',
+        tone: row.remainingPercent <= 10
+          ? 'danger'
+          : row.remainingPercent <= 20
+            ? 'warning'
+            : 'normal'
       })),
       emptyReason: claudeSection.emptyReason
     })
@@ -377,11 +441,17 @@ export function companionResetDetailText(resetAt: number | null | undefined, now
  * color/opacity-only state cue.
  */
 export function companionQuotaFreshnessText(
-  quota: Pick<ClaudeQuotaSnapshot, 'status' | 'updatedAt'> | null | undefined,
+  quota: {
+    status?: ClaudeQuotaSnapshot['status']
+    freshness?: 'fresh' | 'stale' | 'unknown'
+    updatedAt?: number
+  } | null | undefined,
   now: number
 ): string {
   if (!quota) return ''
-  const stale = quota.status === 'stale'
+  const stale = quota.freshness
+    ? quota.freshness !== 'fresh'
+    : quota.status === 'stale'
   const at = quota.updatedAt || 0
   if (at <= 0) return stale ? '读数可能已过期' : ''
   const minutes = Math.max(0, Math.round((now - at) / 60_000))
@@ -430,32 +500,23 @@ export function claudeSetupHint(environment: ClaudeEnvironmentSnapshot | null | 
 export interface ClaudeSourceStatusInput {
   enabled: boolean
   environment: ClaudeEnvironmentSnapshot | null | undefined
-  /** Non-archived desktop-app sessions currently in the inventory. */
-  desktopSessionCount: number
+  /** Non-archived Claude App Code sessions currently in the inventory. */
+  codeSessionCount: number
 }
 
 /**
  * One status line for the settings page's Claude source row.
  *
- * The desktop app is not a separate provider and gets no separate switch — it
- * is the same account seen through another front end, and P1-2 already merged
- * it into the `claude` lane. So its presence is reported as a **fact appended
- * to the existing status**, never as new configuration: RAW-087 separates
- * status (may stay visible) from explanatory copy (must live behind a
- * focusable hint), and a second toggle here would be exactly the provider
- * sprawl the companion taste avoids.
- *
- * A CLI hint and a desktop count can be true at once — no Claude Code binary
- * with three desktop sessions is a real, useful state — so they are joined
- * rather than ranked.
+ * Code inventory is independent from CLI readiness, so both facts remain
+ * visible without turning Cowork/CLI-only sessions into task rows.
  */
 export function claudeSourceStatusText(input: ClaudeSourceStatusInput): string {
   if (!input.enabled) return '关闭时不读取任何 Claude 数据'
-  const count = Number.isFinite(input.desktopSessionCount) ? Math.max(0, Math.trunc(input.desktopSessionCount)) : 0
+  const count = Number.isFinite(input.codeSessionCount) ? Math.max(0, Math.trunc(input.codeSessionCount)) : 0
   const hint = claudeSetupHint(input.environment)
   const version = input.environment?.cliVersion || ''
   const base = hint || (version ? `已连接 Claude Code ${version}` : '已连接 Claude Code')
-  return count > 0 ? `${base} · 桌面端 ${count} 个会话` : base
+  return count > 0 ? `${base} · App Code ${count} 个会话` : base
 }
 
 /* ------------------------------------------------------------------ *

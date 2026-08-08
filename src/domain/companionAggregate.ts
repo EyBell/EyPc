@@ -1,4 +1,10 @@
-import type { CodexTaskCard, ConversationSnapshotV1 } from './codex'
+import type {
+  CodexProjectCard,
+  CodexProjectEntry,
+  CodexProjectSection,
+  CodexTaskCard,
+  ConversationSnapshotV1
+} from './codex'
 import { companionTaskProvider, type CompanionProviderId } from './companionProvider'
 
 /**
@@ -89,6 +95,179 @@ function countWaiting(cards: readonly CodexTaskCard[]): number {
   return cards.filter((card) => card.activityState === 'waiting-input' || card.activityState === 'waiting-approval').length
 }
 
+function normalizedProjectName(value: string): string {
+  return value.normalize('NFKC').trim().toLocaleLowerCase()
+}
+
+function projectWithProviders(project: CodexProjectCard, tasks: CodexTaskCard[]): CodexProjectCard {
+  const codex = tasks.filter((task) => companionTaskProvider(task) === 'codex').length
+  const claude = tasks.filter((task) => companionTaskProvider(task) === 'claude').length
+  const providers: CompanionProviderId[] = [
+    ...(codex > 0 || Boolean(project.actionAlias) || project.kind === 'chats' ? ['codex' as const] : []),
+    ...(claude > 0 ? ['claude' as const] : [])
+  ]
+  return {
+    ...project,
+    tasks,
+    providers,
+    providerTaskCounts: { codex, claude },
+    virtual: providers.includes('claude')
+  }
+}
+
+function sectionKeys(snapshot: ConversationSnapshotV1, sectionId: string, kind: 'task' | 'project'): string[] {
+  return (snapshot.projectSections.find((section) => section.id === sectionId)?.entries || [])
+    .filter((entry) => entry.kind === kind)
+    .map((entry) => entry.kind === 'task' ? entry.task.key : entry.project.key)
+}
+
+function buildProjectSections(
+  projects: readonly CodexProjectCard[],
+  allTasks: readonly CodexTaskCard[],
+  hiddenProjectKeys: ReadonlySet<string>,
+  pinnedTaskKeys: readonly string[],
+  pinnedProjectKeys: readonly string[],
+  regularProjectKeys: readonly string[]
+): CodexProjectSection[] {
+  const taskByKey = new Map(allTasks.map((task) => [task.key, task] as const))
+  const projectByKey = new Map(projects.map((project) => [project.key, project] as const))
+  const usedTasks = new Set<string>()
+  const usedProjects = new Set<string>()
+  const pinned: CodexProjectEntry[] = []
+  for (const key of pinnedTaskKeys) {
+    const task = taskByKey.get(key)
+    if (!task || usedTasks.has(key) || hiddenProjectKeys.has(task.projectKey)) continue
+    usedTasks.add(key)
+    const pinSource = task.pinSource || 'local'
+    pinned.push({ kind: 'task', task: { ...task, pinSource }, pinSource })
+  }
+  for (const key of pinnedProjectKeys) {
+    const project = projectByKey.get(key)
+    if (!project || project.kind === 'chats' || hiddenProjectKeys.has(key) || usedProjects.has(key)) continue
+    usedProjects.add(key)
+    const pinSource = project.pinSource || 'local'
+    pinned.push({
+      kind: 'project',
+      project: { ...project, tasks: project.tasks.filter((task) => !usedTasks.has(task.key)) },
+      pinSource
+    })
+  }
+  const orderedRegularKeys = [
+    ...regularProjectKeys,
+    ...projects.filter((project) => project.kind === 'project').map((project) => project.key)
+  ]
+  const regular: CodexProjectEntry[] = []
+  for (const key of orderedRegularKeys) {
+    const project = projectByKey.get(key)
+    if (!project || project.kind !== 'project' || hiddenProjectKeys.has(key) || usedProjects.has(key)) continue
+    usedProjects.add(key)
+    regular.push({ kind: 'project', project: { ...project, tasks: project.tasks.filter((task) => !usedTasks.has(task.key)) } })
+  }
+  const chats = projects.find((project) => project.kind === 'chats' && !hiddenProjectKeys.has(project.key))
+  return [
+    { id: 'pinned', title: 'Pinned', entries: pinned },
+    { id: 'projects', title: 'Projects', entries: regular },
+    { id: 'chats', title: 'Chats', entries: chats ? [{ kind: 'project', project: { ...chats, tasks: chats.tasks.filter((task) => !usedTasks.has(task.key)) } }] : [] }
+  ]
+}
+
+function mergeProjectProjection(
+  base: ConversationSnapshotV1,
+  snapshot: ConversationSnapshotV1,
+  foreignCards: readonly CodexTaskCard[]
+): ConversationSnapshotV1 {
+  const foreignGroups = new Map<string, CodexTaskCard[]>()
+  for (const card of foreignCards) {
+    const group = foreignGroups.get(card.projectKey) || []
+    group.push(card)
+    foreignGroups.set(card.projectKey, group)
+  }
+  const codexProjects = base.projects.filter((project) => project.kind === 'project')
+  const codexNames = new Map<string, CodexProjectCard[]>()
+  for (const project of codexProjects) {
+    const name = normalizedProjectName(project.originalName || project.name)
+    codexNames.set(name, [...(codexNames.get(name) || []), project])
+  }
+  const foreignNames = new Map<string, string[]>()
+  for (const [key, tasks] of foreignGroups) {
+    const name = normalizedProjectName(tasks[0]?.originalProjectName || tasks[0]?.projectName || '')
+    foreignNames.set(name, [...(foreignNames.get(name) || []), key])
+  }
+
+  const targetByForeignKey = new Map<string, { key: string; name: string; originalName: string }>()
+  for (const [foreignKey, tasks] of foreignGroups) {
+    const originalName = tasks[0]?.originalProjectName || tasks[0]?.projectName || 'Claude'
+    const normalizedName = normalizedProjectName(originalName)
+    const exact = codexProjects.find((project) => project.key === foreignKey)
+    const uniqueName = !exact && codexNames.get(normalizedName)?.length === 1 && foreignNames.get(normalizedName)?.length === 1
+      ? codexNames.get(normalizedName)![0]
+      : null
+    const target = exact || uniqueName
+    targetByForeignKey.set(foreignKey, target
+      ? { key: target.key, name: target.name, originalName: target.originalName }
+      : { key: foreignKey, name: tasks[0]?.projectName || originalName, originalName })
+  }
+
+  const remap = (task: CodexTaskCard): CodexTaskCard => {
+    if (companionTaskProvider(task) !== 'claude') return task
+    const target = targetByForeignKey.get(task.projectKey)
+    return target ? { ...task, projectKey: target.key, projectName: target.name, originalProjectName: target.originalName } : task
+  }
+  const remapList = (tasks: readonly CodexTaskCard[]) => tasks.map(remap)
+  const next: ConversationSnapshotV1 = {
+    ...snapshot,
+    ongoing: remapList(snapshot.ongoing),
+    stopped: remapList(snapshot.stopped),
+    completedUnread: remapList(snapshot.completedUnread),
+    completed: remapList(snapshot.completed),
+    completedTab: remapList(snapshot.completedTab),
+    inputRequired: remapList(snapshot.inputRequired),
+    hidden: remapList(snapshot.hidden),
+    all: remapList(snapshot.all)
+  }
+  next.pending = next.completedUnread
+
+  const definitions = new Map(base.projects.map((project) => [project.key, project] as const))
+  for (const [foreignKey, target] of targetByForeignKey) {
+    if (definitions.has(target.key)) continue
+    const tasks = foreignGroups.get(foreignKey) || []
+    definitions.set(target.key, {
+      key: target.key,
+      name: target.name,
+      originalName: target.originalName,
+      kind: 'project',
+      nativePinned: false,
+      collapsed: false,
+      tasks: []
+    })
+  }
+  const projects = [...definitions.values()].map((project) => projectWithProviders(
+    project,
+    next.all.filter((task) => task.projectKey === project.key)
+  ))
+  const hiddenProjectKeys = new Set(base.hiddenProjects.map((project) => project.key))
+  const pinnedTaskKeys = [
+    ...sectionKeys(base, 'pinned', 'task'),
+    ...next.all.filter((task) => task.pinSource === 'local' && companionTaskProvider(task) === 'claude').map((task) => task.key)
+  ]
+  const pinnedProjectKeys = sectionKeys(base, 'pinned', 'project')
+  const regularProjectKeys = [
+    ...sectionKeys(base, 'projects', 'project'),
+    ...projects.filter((project) => project.virtual && project.providers?.length === 1).map((project) => project.key)
+  ]
+  next.projects = projects
+  next.hiddenProjects = projects.filter((project) => hiddenProjectKeys.has(project.key))
+  next.projectSections = buildProjectSections(
+    projects,
+    next.all,
+    hiddenProjectKeys,
+    pinnedTaskKeys,
+    pinnedProjectKeys,
+    regularProjectKeys
+  )
+  return next
+}
+
 /**
  * Merges foreign-provider cards into a Codex conversation snapshot.
  *
@@ -130,7 +309,7 @@ export function mergeCompanionConversations(
   next.completedCount = next.completed.length
   next.pendingCount = next.completedUnreadCount
   next.hiddenCount = next.hidden.length
-  return next
+  return mergeProjectProjection(snapshot, next, cards)
 }
 
 /** Removes one provider's cards from a merged snapshot. */
@@ -160,6 +339,25 @@ export function withoutCompanionProvider(
   next.completedCount = next.completed.length
   next.pendingCount = next.completedUnreadCount
   next.hiddenCount = next.hidden.length
+  const projects = snapshot.projects
+    .map((project) => projectWithProviders(
+      project,
+      project.tasks.filter((task) => companionTaskProvider(task) !== provider)
+    ))
+    .filter((project) => project.kind === 'chats' || Boolean(project.actionAlias) || project.tasks.length > 0)
+  const hiddenProjectKeys = new Set(snapshot.hiddenProjects
+    .map((project) => project.key)
+    .filter((key) => projects.some((project) => project.key === key)))
+  next.projects = projects
+  next.hiddenProjects = projects.filter((project) => hiddenProjectKeys.has(project.key))
+  next.projectSections = buildProjectSections(
+    projects,
+    next.all,
+    hiddenProjectKeys,
+    sectionKeys(snapshot, 'pinned', 'task').filter((key) => next.all.some((task) => task.key === key)),
+    sectionKeys(snapshot, 'pinned', 'project').filter((key) => projects.some((project) => project.key === key)),
+    sectionKeys(snapshot, 'projects', 'project').filter((key) => projects.some((project) => project.key === key))
+  )
   return next
 }
 
