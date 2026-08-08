@@ -413,8 +413,8 @@ button { font: inherit; }
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--codex-focus) 18%, transparent);
 }
 .float-task-row,
-.float-task-row.pending-row { min-height: 48px; padding: 0 5px 0 0; gap: 4px; cursor: default; }
-.task-open { display: flex; min-width: 0; width: 0; min-height: 36px; flex: 1 1 auto; align-items: center; gap: 6px; padding: 3px 4px 3px 6px; border: 0; border-radius: 8px; background: transparent; color: var(--codex-muted); text-align: left; cursor: pointer; }
+.float-task-row.pending-row { min-height: 48px; padding: 0 2px 0 0; gap: 4px; cursor: default; }
+.task-open { display: flex; min-width: 0; width: 0; min-height: 36px; flex: 1 1 auto; align-items: center; gap: 3px; padding: 3px 2px 3px 4px; border: 0; border-radius: 8px; background: transparent; color: var(--codex-muted); text-align: left; cursor: pointer; }
 .task-open:hover { color: var(--codex-fg); }
 .task-open:focus-visible { outline: 2px solid color-mix(in srgb, var(--codex-focus) 48%, transparent); outline-offset: 1px; }
 .task-open:disabled { cursor: default; opacity: .78; }
@@ -808,8 +808,8 @@ button { font: inherit; }
   color: var(--codex-muted);
   outline: none;
 }
-.float-project-row { min-height: 40px; margin-bottom: 3px; padding: 0 111px 0 4px; }
-.float-task-row { height: 40px; min-height: 40px; margin: 0 0 3px; padding: 0 5px 0 0; gap: 5px; cursor: default; display: flex; align-items: stretch; }
+.float-project-row { min-height: 40px; margin-bottom: 3px; padding: 0 95px 0 4px; }
+.float-task-row { height: 40px; min-height: 40px; margin: 0 0 3px; padding: 0 2px 0 0; gap: 3px; cursor: default; display: flex; align-items: stretch; }
 .float-task-row + .float-task-row { margin-top: 0; }
 .float-task-row.nested { width: calc(100% - 16px); margin-left: 16px; }
 .float-project-row:hover,
@@ -817,7 +817,7 @@ button { font: inherit; }
 .float-project-row:focus-within,
 .float-task-row:hover,
 .float-task-row:focus-visible,
-.float-task-row:focus-within { border-color: var(--codex-focus); background: color-mix(in srgb, var(--codex-focus) 10%, var(--codex-surface-raised)); box-shadow: 0 5px 12px rgba(3, 18, 29, .14); transform: none; }
+.float-task-row:focus-within { border-color: var(--codex-focus); background: color-mix(in srgb, var(--codex-focus) 10%, var(--codex-surface-raised)); box-shadow: 0 5px 12px rgba(3, 18, 29, .16); transform: translateY(-1px); }
 .float-task-scroll.selection-mode .float-task-row:not(.selected) { opacity: .62; filter: saturate(.68); }
 .float-task-row.selected { border: 2px solid var(--codex-accent); background: linear-gradient(118deg, color-mix(in srgb, var(--codex-accent) 34%, var(--codex-surface-raised)) 0%, color-mix(in srgb, var(--codex-running) 28%, var(--codex-surface-raised)) 52%, color-mix(in srgb, var(--codex-pending) 30%, var(--codex-surface-raised)) 100%); box-shadow: 0 0 0 2px color-mix(in srgb, var(--codex-accent) 28%, transparent), 0 6px 16px color-mix(in srgb, var(--codex-accent) 26%, transparent); }
 .float-task-row.selected .task-copy strong,
@@ -852,21 +852,21 @@ button { font: inherit; }
   position: absolute;
   z-index: 7;
   top: 50%;
-  right: 5px;
+  right: 2px;
   display: inline-flex;
-  width: 102px;
-  height: 24px;
+  width: 86px;
+  height: 20px;
   align-items: center;
   gap: 2px;
   transform: translateY(-50%);
 }
-.task-inline-actions { width: 102px; gap: 2px; }
+.task-inline-actions { width: 86px; gap: 2px; }
 .inline-character-button {
   display: grid;
-  width: 24px;
-  min-width: 24px;
-  height: 24px;
-  flex: 0 0 24px;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
   padding: 0;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--codex-border) 78%, transparent);
@@ -987,8 +987,8 @@ button { font: inherit; }
   /* Readings survive; the caption is the first thing to go, because the platform
      tone plus the separator still tell the two groups apart. */
   .float-quota-provider { display: none; }
-  .float-project-row { padding-right: 111px; }
-  .float-task-row { padding-right: 7px; }
+  .float-project-row { padding-right: 95px; }
+  .float-task-row { padding-right: 3px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1119,9 +1119,10 @@ button { font: inherit; }
 
 .float-project-row:hover,
 .float-task-row:hover {
-  border-color: color-mix(in srgb, var(--codex-border) 38%, transparent);
-  background: var(--codex-surface-raised);
-  box-shadow: none;
+  border-color: var(--codex-focus);
+  background: color-mix(in srgb, var(--codex-focus) 10%, var(--codex-surface-raised));
+  box-shadow: 0 5px 12px rgba(3, 18, 29, .16);
+  transform: translateY(-1px);
 }
 .float-project-row.highlighted,
 .float-project-row:focus-visible,
@@ -1130,6 +1131,7 @@ button { font: inherit; }
   border-color: var(--codex-focus);
   background: color-mix(in srgb, var(--codex-focus) 11%, var(--codex-surface-raised));
   box-shadow: 0 5px 12px rgba(3, 18, 29, .16);
+  transform: translateY(-1px);
 }
 .float-shift-preview {
   position: fixed;
@@ -1327,7 +1329,7 @@ button { font: inherit; }
 @container (max-width: 350px) {
   .float-expanded-card > .float-task-tabs { gap: 1px; padding-inline: 2px; }
   .float-expanded-card > .float-task-tabs button { min-height: 29px; padding-inline: 1px; font-size: 9px; }
-  .float-task-row { padding-right: 7px; }
+  .float-task-row { padding-right: 3px; }
   .float-composer-layer { padding: 6px; }
   .float-composer-dialog { gap: 6px; padding: 8px; }
   .composer-model-card { grid-template-columns: auto minmax(0, 1fr); }
