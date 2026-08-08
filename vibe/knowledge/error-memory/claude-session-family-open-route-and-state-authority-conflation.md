@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: claude-companion__app-session-families-and-identities-treated-as-interchangeable__resume-import-presented-as-exact-open__latest-event-and-byte-scan-presented-as-native-state__code-only-authority-reset-required
 first_seen: 2026-08-07
-last_verified: 2026-08-07
+last_verified: 2026-08-08
 review_after: 2027-02-07
 evidence:
   - vibe/specs/260807/claude-code-companion-authority-reset/research.md
@@ -47,13 +47,14 @@ EyPc 同时出现五个表面问题：非 Code 会话进入卡片、空标题显
 5. 旧未读路线扫描原始字节，但 compacted/snappy LevelDB 不保证目标值可见；当前 [snapshot reader](../../../preload/claude/unread.cjs#L1) 只打开完整临时快照。
 6. 动态 N-window 领域可以保留 Fable，但两窗口 App history 只是 partial patch；把它当完整来源会让第三窗口永远缺席或被抹掉。Claude Code 凭据又不是 Claude App 当前额度凭据，实机分别返回 401 与 200。
 7. 点击精确历史只证明 deep-link 派发成功，不是 Claude 原生已读回执；完全拒绝会话级保护会让迟到的同轮 `unread=true` 覆盖 App 已经显示的已读。当前只对精确 `sessionId + completionEpoch` 建立可撤销进程内提示，并立即有界复核原生集合。
+8. 旧 Hook fold 没有显式父 Turn 生命周期：`Stop` 虽先写入 completed，随后 `SubagentStop`、工具尾事件或 SessionEnd 尾部却会落入普通 activity 分支并把父任务恢复为 running。当前纯 reducer 只允许 `UserPromptSubmit` 开启 Turn；subagent start/stop 只更新活动水位，关闭后的同 Turn 尾事件不能复活。
 
 ## Detection Order
 
 1. 先列出用户正在看的 Claude surface 和 session family；不要从一个泛称“桌面会话”开始设计。
 2. 为每个来源列 identity、title、phase、unread、open target、quota 字段，禁止一列空缺时用另一来源的同名 id 猜。
 3. 对 deep link 做**前后状态对照**：原 local id 是否相同、文件集合是否新增、CLI transcript 是否改写；只看“页面打开了”不算通过。
-4. 对事件 reducer 回放普通序列而非单事件：Stop→SessionEnd、Permission→tool、AskUserQuestion→answer。
+4. 对事件 reducer 回放普通序列而非单事件：Prompt→Stop→SubagentStop/PostTool/SessionEnd、新 Prompt 重启、Permission→tool、AskUserQuestion→answer；断言父 Turn 与子代理水位彼此独立。
 5. 对 Chromium 数据用 compacted snapshot 验证；WAL 或 grep 命中只证明偶然可见。
 6. 最后才接 Controller/UI，先用集合相交断言一张任务只能在一个桶。
 
@@ -77,7 +78,7 @@ Preconditions:
 Ordered route:
 
 1. Code metadata inventory + App title/local id.
-2. Version-gated exact App log + unique Hook fallback + `completedTurns` history priority.
+2. Version-gated exact App log + parent-Turn Hook reducer + unique Hook fallback + `completedTurns` history priority; App terminal wins same-Turn Hook tail and only a strictly newer prompt Turn reactivates.
 3. Complete LevelDB temporary snapshot + pre/post source fingerprint + exact Chromium-tagged target-key reader; failure→unknown.
 4. Feature-lifetime independent inventory/state/unread/quota/presence lanes with source generation、Controller revision 与 Float applied revision 单调屏障。
 5. Cached positive running proof + latest-target-wins exact Epitaxy local deep link; no fallback.
@@ -99,3 +100,4 @@ Applicability boundary:
 | Date | Task | Trigger | Failed route | Recovery | Outcome |
 | --- | --- | --- | --- | --- | --- |
 | 2026-08-07 | Claude Code Companion authority reset | User compared EyPc cards with Claude App Code UI and observed clone/status/title/scope/read drift | Mixed desktop + resume/import + latest event/Hooks-only + unstable snapshot + no same-completion hint + wrong quota credential/full refresh | Rebuilt versioned authorities, independent hot lanes, stable unread/read hint, virtual projects and App OAuth dynamic quota; ran automated/targeted gates | Core/data route verified; interactive unread/state/project/rendered-quota acceptance remains |
+| 2026-08-08 | Claude old-task state correction | App 已完成且已读的旧任务在 EyPc 长期显示 running | Stop 后 SubagentStop/工具尾事件被普通 activity fold 当成父 Turn 新活动；点击打开也没有单项 state/unread 同步 | 抽取纯父 Turn reducer、集中来源选择/版本比较、state/unread singleflight，并新增 Claude-only 精确同步动作与成功打开后静默同步 | focused code tests passed; final type/bundle/runtime and live UI acceptance pending |

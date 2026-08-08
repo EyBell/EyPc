@@ -42,8 +42,8 @@ These preload/packaging/path records may also route through the CodeNote uTools 
 
 ## Historical Or Migration Sources
 
-- [Original Claude provider](../../../specs/260805/1150-claude-companion-provider/spec.md#L1)
-- [Desktop provider](../../../specs/260806/1130-claude-desktop-provider/spec.md#L1)
-- [Old resume/open verification](../../../specs/260806/2147-claude-open-in-desktop-app/verify.md#L1)
-- [Old unread acquisition](../../../specs/260806/2147-claude-open-in-desktop-app/unread-authority.md#L1)
-- [N-window quota work](../../../specs/260806/2210-claude-quota-all-windows/spec.md#L1)
+- [已归档：Original Claude provider](../../../specs/260805/1150-claude-companion-provider/spec.md#L1) — CLI/mixed-session 当前权威已失效；替代为 [reset spec](../../../specs/260807/claude-code-companion-authority-reset/spec.md#L1)。
+- [已归档：Desktop provider](../../../specs/260806/1130-claude-desktop-provider/spec.md#L1) — Cowork/audit 推断已被 Code-only 真实来源替代；替代为 [reset spec](../../../specs/260807/claude-code-companion-authority-reset/spec.md#L1)。
+- [已归档：Old resume/open verification](../../../specs/260806/2147-claude-open-in-desktop-app/verify.md#L1) — import 路线不能证明原会话打开；替代为 [reset spec](../../../specs/260807/claude-code-companion-authority-reset/spec.md#L1)。
+- [已归档：Old unread acquisition](../../../specs/260806/2147-claude-open-in-desktop-app/unread-authority.md#L1) — 字节扫描/旧集合实现已失效；替代为 [reset spec](../../../specs/260807/claude-code-companion-authority-reset/spec.md#L1)。
+- [已归档：N-window quota work](../../../specs/260806/2210-claude-quota-all-windows/spec.md#L1) — N-window 设计已吸收，旧凭据/调度已失效；替代为 [reset spec](../../../specs/260807/claude-code-companion-authority-reset/spec.md#L1)。

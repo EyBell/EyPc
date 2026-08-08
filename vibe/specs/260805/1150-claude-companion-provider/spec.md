@@ -1,6 +1,12 @@
-# Claude Companion Provider 融合规范（计划稿）
+<!-- document-archive-notice-v1 status=archived-linked -->
+# [已归档] Claude Companion Provider 融合规范（计划稿）
 
-> **Historical evidence only.** 2026-08-07 起，CLI inventory、混合 session family、latest-event/Hooks-only state、页面级缓存、全 authority 刷新与 CLI/open 合同被 [Claude Code Companion 权威重置](../../260807/claude-code-companion-authority-reset/spec.md#L1) revision 4 取代。Hook 注册、共享 Companion 抽象和 N-window 内容只能作为被当前 spec 重新接纳后的实现证据，不能单独作为产品权威或完成证明。
+> **归档状态：** 已逻辑归档
+> **归档原因：** 本计划依赖 CLI/mixed session 与整轮刷新等已被实机证伪或取代的权威，不能继续作为当前 Claude Companion 方案。
+> **当前替代：** [Claude Code Companion 权威重置](../../260807/claude-code-companion-authority-reset/spec.md)
+> **物理迁移：** 未执行；项目尚未声明完整归档目录和精确目标，且本任务未授权移动、重命名或删除。
+
+> **Historical evidence only.** 2026-08-07 起，CLI inventory、混合 session family、latest-event/Hooks-only state、页面级缓存、全 authority 刷新与 CLI/open 合同被 [Claude Code Companion 权威重置](../../260807/claude-code-companion-authority-reset/spec.md#L1) 取代。Hook 注册、共享 Companion 抽象和 N-window 内容只能作为被当前 spec 重新接纳后的实现证据，不能单独作为产品权威或完成证明。
 
 Tool: claude (Cowork)
 Date: 2026-08-05

@@ -1,6 +1,6 @@
 # Claude Code Companion 权威重置 — Tasks
 
-updated: `2026-08-07`
+updated: `2026-08-08`
 overall_status: `implementation-landed / acceptance-pending`
 
 | ID | Work | Status |
@@ -25,6 +25,9 @@ overall_status: `implementation-landed / acceptance-pending`
 | CCR-17 | 精确打开后的同 completion 进程内已读提示与有界原生复读 | completed |
 | CCR-18 | 虚拟项目合并、Claude-only 项目、三态 provider 筛选与能力禁用 | completed |
 | CCR-19 | 文本化归属、8%/12% 来源背景、键盘/ARIA/高对比度 | completed |
+| CCR-20 | 父 Turn Hook reducer、App/Hook/history 集中仲裁与 generation-first 版本比较 | completed-focused-verified |
+| CCR-21 | state/unread Promise singleflight、Claude-only 单项同步与成功打开后静默同步 | completed-focused-verified |
+| CCR-22 | RAW-024、当前文档/索引/错误 occurrence 与五份 `archived-linked` 历史文档同步 | completed-linked / no-physical-migration |
 
 ## Execution Journal
 
@@ -39,3 +42,7 @@ overall_status: `implementation-landed / acceptance-pending`
 - 2026-08-07 — RAW-018/DEC-10 生效：计划命令必须来自 provisional impact trace；全局 testing/process/reminder/orchestration/review/closeout 与 EyPc 双适配器/项目规则同步，规则纠正只做受影响验证。
 - 2026-08-07 — RAW-019～023 落地：修复 Claude App quota 凭据/limits 形状、state/unread/revision 代际、同完成轮次已读回跳、虚拟项目筛选与文本化归属；受影响 12 文件自动化首轮 286/286、后续定向增量与 typecheck/build/uTools validator 通过。
 - 2026-08-07 — 最终受影响自动化 16 文件 343/343、typecheck、production/uTools build 通过。真实 Claude App usage 返回 200，严格为 5h、全模型周、Fable scoped 三窗口/reset；状态探针 26 行（3 running / 17 completed / 4 stopped / 2 unknown），unread 30/30 稳定读到 1 条且无临时目录泄漏，保留 EyPc 点击移除/不回跳交互门禁。
+- 2026-08-08 — RAW-024 复现 Stop→SubagentStop 假 running：旧 fold 把子代理/工具尾事件当父 Turn 活动；改为纯父 Turn reducer与 App terminal 同 Turn 优先，并加入真实单项 state/unread 同步。人工 completed/read 覆盖被明确排除。
+- 2026-08-08 — 五份仍以当前口吻出现的 Claude 历史文档按全局规则升级为 `archived-linked`；原路径和正文保留，物理迁移未执行且未获授权。
+- 2026-08-08 — RAW-024 聚焦回归 `4 files / 120 tests` 与固定动作 `1/1` 通过；临时 scoped `vue-tsc`、canonical preload sync、1868-module Vite production bundle、runtime preparation 和 uTools validator 通过。本机匿名探针把 27 条任务投影为 0 running / 24 completed / 1 stopped / 2 unknown，25 条由 App log 直接确认；真实旧任务 UI 点击同步与未读进出仍保留为交互门禁。
+- 2026-08-08 — EyPc 文档收据先以 26/41/22 精确命中，随后旧 provider 归档文档被并发 RAW-149 工作追加 attention 顺序说明而变为 `scope_changed`；归档/链接复核仍通过。本任务保留外来 hunk，停止重签，不把它纳入 RAW-024 成果。

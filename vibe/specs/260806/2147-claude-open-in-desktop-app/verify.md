@@ -1,4 +1,10 @@
-# Verify：Claude 任务一律在桌面端 App 打开
+<!-- document-archive-notice-v1 status=archived-linked -->
+# [已归档] Verify：Claude 任务一律在桌面端 App 打开
+
+> **归档状态：** 已逻辑归档
+> **归档原因：** 本记录验证的是会触发 import/副本风险的旧 `claude://resume` 路线，不能证明打开原有 local 会话。
+> **当前替代：** [Claude Code Companion 权威重置](../../260807/claude-code-companion-authority-reset/spec.md)
+> **物理迁移：** 未执行；项目尚未声明完整归档目录和精确目标，且本任务未授权移动、重命名或删除。
 
 > **Superseded verification.** 本文件证明旧 `claude://resume` 实现的自动化合同，不证明它打开原历史会话。该路线会进入 import 并可产生副本。当前路线缓存主 App PID/启动代次，连续操作通过 latest-target-wins 单飞派发 exact Epitaxy local id；成功派发后只由 Controller 建立同 completion 会话提示并复核原生未读，bridge 仍不声称 `confirmsRead`。十次实机连跳与 no-clone 证据见 [权威重置](../../260807/claude-code-companion-authority-reset/spec.md#L1) / [research](../../260807/claude-code-companion-authority-reset/research.md#L1)。
 

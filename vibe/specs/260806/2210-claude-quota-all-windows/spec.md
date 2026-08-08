@@ -1,6 +1,12 @@
-# Spec：额度全窗口 + 以 App 节奏同步
+<!-- document-archive-notice-v1 status=archived-linked -->
+# [已归档] Spec：额度全窗口 + 以 App 节奏同步
 
-> **Partially current, acquisition superseded.** 动态 N-window 与两窗口非破坏合并继续有效；完整来源现在由 [权威重置](../../260807/claude-code-companion-authority-reset/spec.md#L1) revision 4 的显式授权 Claude App OAuth、动态 `limits[]`、per-window source/freshness/reset、reset+1 秒唤醒与分类型退避接管。旧的 Claude Code 凭据、两窗口来源、三次进程期尝试和过期 reset 不能作为 Fable/Fable 5 的完整或当前快照。
+> **归档状态：** 已逻辑归档
+> **归档原因：** 动态 N-window 设计已并入当前权威，但旧 Claude Code 凭据、两窗口采集和有限重试不能提供真实 Fable/reset 数据。
+> **当前替代：** [Claude Code Companion 权威重置](../../260807/claude-code-companion-authority-reset/spec.md)
+> **物理迁移：** 未执行；项目尚未声明完整归档目录和精确目标，且本任务未授权移动、重命名或删除。
+
+> **Partially current, acquisition superseded.** 动态 N-window 与两窗口非破坏合并继续有效；完整来源现在由 [权威重置](../../260807/claude-code-companion-authority-reset/spec.md#L1) 的显式授权 Claude App OAuth、动态 `limits[]`、per-window source/freshness/reset、reset+1 秒唤醒与分类型退避接管。旧的 Claude Code 凭据、两窗口来源、三次进程期尝试和过期 reset 不能作为 Fable/Fable 5 的完整或当前快照。
 
 RAW: [raw-requirement.md](raw-requirement.md#L1) · Receipt: [design-preference-receipt.md](design-preference-receipt.md#L1)
 

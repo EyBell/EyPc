@@ -108,14 +108,16 @@
 
 Codex 与 Claude Code 是两个彼此独立的来源，可各自开关，也可同时开启共享同一个水球。**默认只开启 Codex**，此时插件完全不读取任何 Claude 数据。
 
-> 2026-08-07 状态：本轮额度权威、状态代际、已读回跳、虚拟项目筛选和归属视觉已完成代码与受影响自动化验证。真实 Claude App 额度已返回 5 小时、总周额度、Fable scoped 周额度及 reset；实际 permission / AskUserQuestion / 响应、未读进出集合、标题/重启、混合项目筛选和最终 uTools 同屏视觉仍需验收。
+> 2026-08-08 状态：额度权威、状态代际、旧任务 Stop→SubagentStop 终态纠正、单项真实同步、已读回跳、虚拟项目筛选和归属视觉已完成代码实现。真实 Claude App 额度已返回 5 小时、总周额度、Fable scoped 周额度及 reset；最终聚焦构建验证与实际 permission / AskUserQuestion / 响应、旧任务点击同步、未读进出集合、标题/重启、混合项目筛选和 uTools 同屏视觉仍需验收。
 
 ### 已确认的 Code-mode 合同
 
 - **只显示 App Code 会话**：库存来自 `claude-code-sessions`；CLI-only、Cowork 和其它桌面会话不显示。名称使用 App 标题，空标题显示 `General coding session`，不显示 UUID。
 - **状态互斥且可恢复历史**：兼容版本的 App 精确日志优先，唯一 official Hook 次之，`completedTurns` 恢复无更新 active 证据的历史完成；证据歧义显示 unknown。一张卡只进「待确认 / 进行中 / 已完成未读 / 已完成」中的一个分组。
+- **旧任务不会被子代理尾事件复活**：只有新 Prompt 开启父 Turn；Stop 后的 SubagentStop、工具或 SessionEnd 尾事件不能把已完成任务重新显示为进行中。App 明确完成优先同一轮 Hook 尾事件。
 - **未读精确镜像 + 同轮次防回跳**：从 App Local Storage 私有 LevelDB 快照读取 exact tagged `epitaxy-unread-v1`，复制前后指纹一致才接纳。成功打开一个已完成任务后，EyPc 仅为同一次完成在本进程立即显示已读并做四次有界原生复读；迟到旧 unread 不会回跳，新一次运行/完成仍可重新未读。失败跳转不确认，不写 Claude App，也不持久化。
 - **全局热缓存**：Claude 启用后，库存、状态、未读、额度和 App presence 跨页面/悬浮窗持续更新且相互隔离；状态事件即时读取并有 1 秒补漏，两轮连续失败会从进行中降为未知，旧 generation/revision 不会覆盖新状态。额度请求卡住不会拖慢任务状态。插件重启重新读取真实来源，不恢复旧 live phase。
+- **可单独同步真实状态**：Claude 任务的更多操作里可点“同步 Claude 状态”；成功打开任务后也会静默同步一次。它只重读真实 state/unread，可分别提示部分失败，不是人工“标完成/标已读”，也不会写 Claude App。Codex 任务不显示此操作。
 - **只打开原历史且连续按键收敛**：缓存已运行 App 的进程代次，上一个/下一个直接从全局缓存选取，连续操作只派发最终 Epitaxy 目标；不使用 `resume/import`、CLI、标题点击、自动启动或未读写入。
 - **重复行不擅自清理**：App 已有多少 Code 行就展示多少；共享 CLI id 且无法唯一关联时只把状态标为未知。
 - **额度显示全部窗口**：在「运行」显式开启“允许读取 Claude App 额度”后，只读 App 加密缓存；5 小时、全模型周、Fable/Fable 5 或未来模型周限额按上游动态展示，两窗口补充样本不能抹掉 scoped/reset。401/403 等待凭据变化，429 遵循 Retry-After，其它失败按 1m/5m/15m/每小时退避；旧值保留但标为可能过期，200ms 提示展示绝对/相对 reset 和新鲜度。令牌不会进入界面、诊断或持久化。
@@ -126,6 +128,6 @@ Codex 与 Claude Code 是两个彼此独立的来源，可各自开关，也可�
 ### 当前验证边界
 
 - Code-only 标题/历史、App log 版本门禁、Hook 唯一关联、LevelDB 精确键、authority lane 隔离、blocked quota 下状态发布、Epitaxy singleflight/no-clone 和动态 N-window 合并均已有确定性测试。
-- 最新本机探针观察到 26 条 Code 元数据，其中 3 running / 17 completed / 4 stopped / 2 unknown；uTools reader 30/30 成功。此前十次连续跳转只派发最终目标且没有新增元数据行。探针不输出会话身份、标题、正文或凭证。
+- 最新 RAW-024 本机探针观察到 27 条 Code 元数据，其中 0 running / 24 completed / 1 stopped / 2 unknown，25 条由 Claude App 日志直接确认；uTools unread reader 此前 30/30 成功。此前十次连续跳转只派发最终目标且没有新增元数据行。探针不输出会话身份、标题、正文或凭证。
 - 当前 unread 样本稳定包含 1 条，已证明真实 membership 可读且无快照泄漏；仍需在 EyPc 点击该任务后核对原生小点移除、同轮不回跳和下一 completion 可再未读。真实 App quota 已以 HTTP 200 读到 5h、总周和 Fable scoped 三窗口及 reset，但最终 uTools 同屏仍需人工核对。
 - 仍需在正常插件重载后核对真实 permission/input/response/completion/unread/title/restart、共享/单来源/歧义项目三筛选和高对比度视觉。实现与剩余门禁以任务 [verification](../../../vibe/specs/260807/claude-code-companion-authority-reset/verify.md#L1) 为准。

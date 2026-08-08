@@ -1,6 +1,6 @@
 # Claude Code Companion 本地通信状态谨慎调研与严格测试通路
 
-updated: `2026-08-07`
+updated: `2026-08-08`
 evidence_scope: `installed Claude App 1.26832.0 + current EyPc source + privacy-safe local observations`
 status: `selected-route-implemented / automated-verified / targeted-host-partial / interactive-host-pending`
 
@@ -52,6 +52,14 @@ Claude App 内部确实拥有 running、权限等待、AskUserQuestion、完成�
 | 4 | missing, ambiguous or conflicting active evidence | unknown | process existence alone cannot guess phase |
 
 `unread` is not another phase. Exact live running/waiting wins. For non-live history, membership in the App native unread set can itself establish `completed-unread`; this fixes the old circular requirement that a task first be Hook-completed before native unread could matter. A parse/copy/open failure returns unread unknown and cannot reuse the previous set.
+
+## Old-task Terminal Reconciliation And Per-task Sync
+
+- 本轮旧任务假 running 的决定性序列是 `UserPromptSubmit → Stop → SubagentStop`（并可继续带 PostTool/SessionEnd 尾事件）。旧 fold 把未单列的尾事件统一解释成 running，实际错误在父 Turn 生命周期，不在轮询频率。
+- 候选 1“人工标完成/已读”被拒绝：它会制造第二权威且无法区分新 Turn。候选 2“点击后单独读取真实来源”被保留，但必须加入现有 state/unread lane，不能另建 refresh 通道。候选 3“只提高全量轮询”被拒绝：错误 reducer 会更快重放错误状态。
+- 选定路线把 `UserPromptSubmit` 定为唯一 Turn-open 事件；subagent start/stop 只推进活动水位。App terminal 对同 Turn Hook tail 有权威优先，严格更新的新 Prompt 才可重新激活。`completedTurns` 保持冷历史 fallback。
+- 状态包比较固定为 source generation → evidence time → source authority，避免新 generation 的纠错因较旧事件时间被拒绝。Controller 的 state/unread Promise 可由 watcher、单项操作与打开后同步共同加入，并通过最终 revision 去重最多一次发布。
+- “同步 Claude 状态”只匹配当前未归档 `local_*` session 的精确 key/alias；部分 state/unread 失败分别反馈，unread 失败保持 unknown。成功 deep-link 派发后静默同步仍保留原有 read hint 与四次原生复读；失败派发不触发任何确认。
 
 ## Private Log Grammar And Privacy Gate
 
@@ -115,6 +123,7 @@ Claude App 内部确实拥有 running、权限等待、AskUserQuestion、完成�
 2. App log fixtures cover supported/unsupported versions, each fixed template, permission request-id response, rotation, duplicate and out-of-order rows; assert privacy-safe output and fail closed.
 3. Hook fixtures cover unique, direct local and ambiguous duplicate relation; ambiguity stays unknown and cannot update multiple rows.
 4. State priority fixtures assert new live evidence beats history, stale active loses to newer completed metadata, active conflict stays unknown and unread promotes only non-live history.
+5. Ordered Hook fixtures replay Prompt→Stop→SubagentStop/PostTool/SessionEnd, subagent events without a parent Turn and a strictly newer Prompt; same-Turn App terminal must defeat Hook tail activity.
 
 ### Gate B — incremental Controller path
 
@@ -122,6 +131,7 @@ Claude App 内部确实拥有 running、权限等待、AskUserQuestion、完成�
 2. Block quota for 8 seconds and run 100 state transitions; require publish P95 `<=250ms`, no inventory reread and no missing notification.
 3. Suppress one source notification; require recovery `<=1.25s` with no duplicate card/bucket.
 4. Race slow inventory with a newer state delta; title patch survives and phase never regresses. Inventory failure retains the view; unread failure becomes unknown.
+5. Run two concurrent per-task sync requests; require one state read, one unread read and at most one publication. Reject mismatched identity without reads, report partial failures, and prove successful open syncs silently while failed dispatch performs zero sync.
 
 ### Gate C — exact unread host lane
 
@@ -154,7 +164,7 @@ Claude App 内部确实拥有 running、权限等待、AskUserQuestion、完成�
 
 | Gate | Result | Status |
 | --- | --- | --- |
-| Inventory/state sources | latest 26 Code rows; 24 rows with completedTurns; phases 3 running / 17 completed / 4 stopped / 2 unknown; sources 16 App log / 8 Hook / 2 none | current projection passed; controlled waiting/response matrix pending |
+| Inventory/state sources | RAW-024 build: 27 Code rows; 25 rows with completedTurns; phases 0 running / 24 completed / 1 stopped / 2 unknown; sources 25 App log / 0 Hook / 2 none | old false-running projection corrected; one ambiguous and one source-less row remain unknown; controlled waiting/response matrix pending |
 | Code reader/watcher | 30 inventory reads; invalid ids 0; extra fields 0; inventory P95 2.03ms; watcher wake P95 73.95ms | reader passed; watcher metric is not E2E publish |
 | Native unread | uTools host 30/30; P95 26.17ms; leaks 0; current native set consistently 1 | reader plus real membership passed; EyPc click/removal/no-return pending |
 | Shortcut/open | 10 rapid actions → 1 final dispatch; selection P95 0.03ms; dispatch P95 66.52ms; 25/25 metadata, clones 0 | passed |
