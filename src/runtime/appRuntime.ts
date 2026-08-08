@@ -31,7 +31,7 @@ import {
 } from '../domain/windowTree'
 import { createWindowRebindState, transitionWindowRebind, windowInteractionAllowed, windowRebindView, type WindowInteractionPolicy, type WindowRebindEvent, type WindowRebindState, type WindowRebindView } from '../domain/windowRebind'
 import type { CodexFloatPosition, CodexSettings } from '../domain/codex'
-import type { AppState, AppTabId, FavoriteNode, FavoritePlatform, FavoriteRunnerConfig, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttConnectionGroup, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
+import type { AppState, AppTabId, FavoriteNode, FavoritePlatform, FavoriteRunnerConfig, FavoriteRunRecord, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttConnectionGroup, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
 import type { PortGroupTreeRow } from '../domain/ports'
 import { WINDOW_BRIDGE_REVISION, getPlatform, normalizeFavoriteRunResult, normalizeFileActionResult, type FavoriteDirectoryEntry, type FavoritePathInspection, type FavoriteRunResult, type FileActionResult, type FileCapabilities, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind, type WindowActivationOutcome, type WindowActivationReasonCode, type WindowCapability, type WindowOperationTrace } from '../platform/eypcPlatform'
 import { createActionRuntime } from './action/actionRuntime'
@@ -43,6 +43,15 @@ import { resolveMqttConnect, type MqttRuntimeClient } from './mqttClientModule'
 import { createCodexController, type CodexFloatSnapshotV1, type CodexRuntimeView } from './codexController'
 import { createWindowActivationRequest, isWindowSpaceFailureReason } from './window/windowActivationRuntime'
 import { applyWindowInventoryUpdate, normalizeWindowInventoryCompleteness } from './window/windowInventoryRuntime'
+
+export interface FavoriteRunSummary {
+  status: FavoriteRunRecord['status']
+  text: string
+  failed: boolean
+  exitCode?: number
+  logPath?: string
+  declaredLogPath?: string
+}
 
 export interface AppRuntimeSnapshot {
   state: AppState
@@ -103,6 +112,10 @@ export interface AppRuntimeSnapshot {
   favoriteDrawerItems: FavoriteDrawerItem[]
   favoriteQuickMode: boolean
   favoriteSlotManagerOpen: boolean
+  /** Newest-first background run history from the bridge. Empty on hosts without run capture. */
+  favoriteRuns: FavoriteRunRecord[]
+  /** Latest run per favorite id, pre-worded so the view never restates exit-code semantics. */
+  favoriteRunSummaries: Record<string, FavoriteRunSummary>
   favoriteSlotManagerTargetId: string | null
   favoriteCurrentPlatform: FavoritePlatform | null
   favoritePickReview: FavoritePickReview | null
@@ -624,6 +637,7 @@ export interface FavoriteDraft {
   runnerArgsText: string
   runnerCwdMode: FavoriteRunnerConfig['cwdMode']
   runnerCwd: string
+  runnerLogPath: string
   runnerPlatform: FavoritePlatform | null
   runnerTrusted: boolean
   activeField: FavoriteDraftField
@@ -739,6 +753,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   let favoriteRemovalUndo: FavoriteRemovalUndo | null = null
   let favoriteDrawer: FavoriteDrawerState = { open: false, active: false, activeIndex: 0, targetKind: 'favorite', targetIds: [] }
   let favoriteQuickMode = false
+  const FAVORITE_RUN_VIEW_LIMIT = 30
+  let favoriteRuns: FavoriteRunRecord[] = []
+  let disposeFavoriteRunWatch: (() => void) | null = null
   let favoriteSlotManagerOpen = false
   let favoriteSlotManagerTargetId: string | null = null
   let favoritePickReview: FavoritePickReview | null = null
@@ -6486,6 +6503,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       ...(target?.kind !== 'group' && drawer.targetIds.length === 1
         ? [
             favoriteDrawerItem('favorites.slot.manager.open', '分配到文件槽…', '打开当前平台的 1–10 文件槽管理器。', 'slot', args),
+            ...(latestFavoriteRun(drawer.targetIds[0])?.logPath
+              ? [favoriteDrawerItem('favorites.run.openLog', '打开运行日志', '用系统默认程序查看这次运行采集到的输出。', 'log', args)]
+              : []),
+            ...(latestFavoriteRun(drawer.targetIds[0])?.declaredLogExists
+              ? [favoriteDrawerItem('favorites.run.openDeclaredLog', '打开脚本自身日志', '打开运行器声明的日志文件。', 'log', args)]
+              : []),
             favoriteDrawerItem('favorites.learning.resetItem', '重置搜索学习', '清除该收藏的使用次数、最近使用和查询偏好。', 'reset', args)
           ]
         : []),
@@ -7756,10 +7779,121 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
   }
 
   function favoriteRunNotice(result: FavoriteRunResult) {
-    if (result.outcome === 'started') return '已启动自定义运行器'
+    if (result.outcome === 'started') return result.logPath ? '已启动自定义运行器，输出记录到运行日志' : '已启动自定义运行器'
     if (result.outcome === 'dispatched') return '已请求终端运行收藏'
     if (result.outcome === 'unsupported') return result.message || '当前宿主不支持该运行方式'
     return `运行失败：${fileActionFailureText({ outcome: 'failed', errorCode: result.errorCode, message: result.message })}`
+  }
+
+  /**
+   * The bridge owns run state, so the renderer subscribes rather than polling. Exit codes arrive
+   * long after the launch call resolved, which is exactly why a launch notice cannot claim success.
+   */
+  function startFavoriteRunWatch() {
+    if (disposeFavoriteRunWatch || !platform.files.watchRuns) return
+    disposeFavoriteRunWatch = platform.files.watchRuns(() => refreshFavoriteRuns())
+    refreshFavoriteRuns()
+  }
+
+  function refreshFavoriteRuns() {
+    if (!platform.files.listRuns) return
+    try {
+      favoriteRuns = platform.files.listRuns(FAVORITE_RUN_VIEW_LIMIT)
+    } catch {
+      favoriteRuns = []
+    }
+    notify()
+  }
+
+  function latestFavoriteRun(favoriteId: string): FavoriteRunRecord | null {
+    return favoriteRuns.find((run) => run.favoriteId === favoriteId) || null
+  }
+
+  /**
+   * Exit-code wording is deliberately distinct from launch wording: "started" only means the host
+   * accepted the launch, so a non-zero exit must never reuse a success sentence.
+   */
+  function favoriteRunSummary(run: FavoriteRunRecord): string {
+    if (run.status === 'running') return '运行中'
+    if (run.status === 'stopped') return `已被信号 ${run.signal || '未知'} 终止`
+    if (run.status === 'failed' && typeof run.exitCode !== 'number') return `启动或执行失败：${run.message || '未知错误'}`
+    if (typeof run.exitCode !== 'number') return '已结束，退出码不可得'
+    return run.exitCode === 0 ? '已成功退出（退出码 0）' : `以非 0 退出码 ${run.exitCode} 结束`
+  }
+
+  /** Newest run per favorite, already worded, so no view layer restates exit-code semantics. */
+  function favoriteRunSummaryById(): Record<string, FavoriteRunSummary> {
+    const result: Record<string, FavoriteRunSummary> = {}
+    for (const run of favoriteRuns) {
+      if (!run.favoriteId || result[run.favoriteId]) continue
+      result[run.favoriteId] = {
+        status: run.status,
+        text: favoriteRunSummary(run),
+        failed: run.status === 'failed' || run.status === 'stopped' || (typeof run.exitCode === 'number' && run.exitCode !== 0),
+        ...(typeof run.exitCode === 'number' ? { exitCode: run.exitCode } : {}),
+        ...(run.logPath ? { logPath: run.logPath } : {}),
+        ...(run.declaredLogExists ? { declaredLogPath: run.declaredLogPath } : {})
+      }
+    }
+    return result
+  }
+
+  function favoriteRunLogTarget(args?: Record<string, unknown> | null): string {
+    const explicit = typeof args?.logPath === 'string' ? args.logPath.trim() : ''
+    if (explicit) return explicit
+    const targetId = favoriteIdFromArgs(args) || focusedFavoriteId
+    const run = targetId ? latestFavoriteRun(targetId) : favoriteRuns[0] || null
+    if (!run) return ''
+    if (args?.declared === true) return run.declaredLogExists === false ? '' : run.declaredLogPath || ''
+    return run.logPath || ''
+  }
+
+  async function openFavoriteRunLog(args?: Record<string, unknown> | null) {
+    const target = favoriteRunLogTarget(args)
+    if (!target) {
+      setMessage('这次运行没有可用的日志文件')
+      return false
+    }
+    const result = normalizeFileActionResult(await platform.files.open(target))
+    setMessage(acceptedFileAction(result) ? '已打开运行日志' : `打开日志失败：${fileActionFailureText(result)}`)
+    return acceptedFileAction(result)
+  }
+
+  async function revealFavoriteRunLog(args?: Record<string, unknown> | null) {
+    const target = favoriteRunLogTarget(args)
+    if (!target) {
+      setMessage('这次运行没有可用的日志文件')
+      return false
+    }
+    const result = normalizeFileActionResult(await platform.files.reveal(target))
+    setMessage(acceptedFileAction(result) ? '已定位运行日志' : `定位日志失败：${fileActionFailureText(result)}`)
+    return acceptedFileAction(result)
+  }
+
+  async function copyFavoriteRunLogPath(args?: Record<string, unknown> | null) {
+    const target = favoriteRunLogTarget(args)
+    if (!target) {
+      setMessage('这次运行没有可用的日志文件')
+      return false
+    }
+    const result = normalizeFileActionResult(await platform.files.copyPath(target))
+    setMessage(acceptedFileAction(result) ? '日志路径已复制' : `复制失败：${fileActionFailureText(result)}`)
+    return acceptedFileAction(result)
+  }
+
+  async function copyFavoriteRunCommand(args?: Record<string, unknown> | null) {
+    const targetId = favoriteIdFromArgs(args) || focusedFavoriteId
+    const run = (targetId ? latestFavoriteRun(targetId) : favoriteRuns[0]) || null
+    if (!run) {
+      setMessage('还没有这个收藏的运行记录')
+      return false
+    }
+    // Quoted per argv element so the copy stays an accurate record of what ran and cannot be
+    // pasted back as a differently-parsed shell line by accident.
+    const text = [run.executable, ...run.args].map((part) => JSON.stringify(part)).join(' ')
+    const copied = await platform.clipboard.copyText(text)
+    setMessage(copied ? '命令行已复制' : '复制命令行失败')
+    return copied
   }
 
   async function executeFavoriteItem(
@@ -7802,8 +7936,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       }
       const result = normalizeFavoriteRunResult(await platform.files.run({
         targetPath: item.path,
+        favoriteId: item.id,
+        favoriteName: item.name,
         ...resolved
       }))
+      refreshFavoriteRuns()
       const accepted = result.outcome === 'started' || result.outcome === 'dispatched'
       if (accepted) {
         markFavoriteUsed(item.id, options.query ?? (options.source === 'slot' ? '' : state.favoriteSearch))
@@ -8208,6 +8345,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       runnerArgsText: runner?.args.join('\n') || '',
       runnerCwdMode: runner?.cwdMode || 'target-directory',
       runnerCwd: runner?.cwd || '',
+      runnerLogPath: runner?.logPath || '',
       runnerPlatform,
       runnerTrusted: Boolean(target && runnerPlatform && isFavoriteRunnerTrusted(target, runnerPlatform, runner)),
       activeField: mode === 'move-parent' ? 'parent' : mode === 'create-target' ? 'path' : 'name'
@@ -8220,9 +8358,9 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return true
   }
 
-  function updateFavoriteDraft(input: Partial<Pick<FavoriteDraft, 'kind' | 'name' | 'path' | 'tagsText' | 'color' | 'parentId' | 'runnerEnabled' | 'runnerMode' | 'runnerExecutable' | 'runnerArgsText' | 'runnerCwdMode' | 'runnerCwd' | 'activeField'>>) {
+  function updateFavoriteDraft(input: Partial<Pick<FavoriteDraft, 'kind' | 'name' | 'path' | 'tagsText' | 'color' | 'parentId' | 'runnerEnabled' | 'runnerMode' | 'runnerExecutable' | 'runnerArgsText' | 'runnerCwdMode' | 'runnerCwd' | 'runnerLogPath' | 'activeField'>>) {
     if (!favoriteDraft) return
-    const runnerChanged = ['kind', 'name', 'path', 'runnerEnabled', 'runnerMode', 'runnerExecutable', 'runnerArgsText', 'runnerCwdMode', 'runnerCwd']
+    const runnerChanged = ['kind', 'name', 'path', 'runnerEnabled', 'runnerMode', 'runnerExecutable', 'runnerArgsText', 'runnerCwdMode', 'runnerCwd', 'runnerLogPath']
       .some((key) => key in input)
     favoriteDraft = { ...favoriteDraft, ...input, ...(runnerChanged ? { runnerTrusted: false } : {}) }
     notify()
@@ -8243,6 +8381,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       runnerArgsText: suggestion.args.join('\n'),
       runnerCwdMode: suggestion.cwdMode,
       runnerCwd: suggestion.cwd || '',
+      runnerLogPath: '',
       runnerTrusted: false,
       activeField: 'runner-executable'
     }
@@ -8351,7 +8490,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     return true
   }
 
-  function saveFavoriteDraft(input: Partial<Pick<FavoriteDraft, 'kind' | 'name' | 'path' | 'tagsText' | 'color' | 'parentId' | 'runnerEnabled' | 'runnerMode' | 'runnerExecutable' | 'runnerArgsText' | 'runnerCwdMode' | 'runnerCwd'>> = {}) {
+  function saveFavoriteDraft(input: Partial<Pick<FavoriteDraft, 'kind' | 'name' | 'path' | 'tagsText' | 'color' | 'parentId' | 'runnerEnabled' | 'runnerMode' | 'runnerExecutable' | 'runnerArgsText' | 'runnerCwdMode' | 'runnerCwd' | 'runnerLogPath'>> = {}) {
     if (!favoriteDraft) return false
     const draft = { ...favoriteDraft, ...input }
     const target = favoriteById(draft.targetId)
@@ -8414,7 +8553,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         executable: draft.runnerExecutable,
         args: draft.runnerArgsText.split(/\r?\n/).filter((item) => item.trim().length > 0),
         cwdMode: draft.runnerCwdMode,
-        ...(draft.runnerCwdMode === 'custom' ? { cwd: draft.runnerCwd } : {})
+        ...(draft.runnerCwdMode === 'custom' ? { cwd: draft.runnerCwd } : {}),
+        ...(draft.runnerLogPath.trim() ? { logPath: draft.runnerLogPath.trim() } : {})
       })
       if (!runnerConfig) {
         setMessage('运行器配置无效：请检查程序、参数数量、长度和空字符')
@@ -8898,6 +9038,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'favorites.cancel', title: '取消收藏编辑', group: '收藏', risk: 'normal', scope: 'layer', priority: 100, shortcut: 'Escape', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-editor'), run: () => { favoriteDraft = null; notify(); return true } })
     actions.register({ id: 'favorites.slot.manager.open', title: '打开文件槽管理器', group: '收藏', risk: 'normal', scope: 'tab', priority: 96, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => openFavoriteSlotManager(args) })
     actions.register({ id: 'favorites.slot.manager.close', title: '关闭文件槽管理器', group: '收藏', risk: 'normal', scope: 'layer', priority: 101, shortcut: 'Escape', when: (ctx) => ctx.tab === 'favorites' && ctx.layerIds.includes('favorites-slot-manager'), run: () => closeFavoriteSlotManager() })
+    actions.register({ id: 'favorites.run.openLog', title: '打开运行日志', group: '收藏', risk: 'normal', scope: 'row', priority: 93, when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => { void openFavoriteRunLog(args); return true } })
+    actions.register({ id: 'favorites.run.revealLog', title: '定位运行日志', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => { void revealFavoriteRunLog(args); return true } })
+    actions.register({ id: 'favorites.run.copyLogPath', title: '复制运行日志路径', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => { void copyFavoriteRunLogPath(args); return true } })
+    actions.register({ id: 'favorites.run.openDeclaredLog', title: '打开脚本自身日志', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => { void openFavoriteRunLog({ ...(args || {}), declared: true }); return true } })
+    actions.register({ id: 'favorites.run.copyCommand', title: '复制实际执行的命令行', group: '收藏', risk: 'normal', scope: 'row', priority: 92, when: (ctx) => ctx.tab === 'favorites', run: (_ctx, args) => { void copyFavoriteRunCommand(args); return true } })
     actions.register({ id: 'favorites.learning.reset', title: '重置全部收藏搜索学习', group: '收藏', risk: 'data-write', scope: 'tab', priority: 91, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: () => resetFavoriteLearning() })
     actions.register({ id: 'favorites.learning.resetItem', title: '重置当前收藏搜索学习', group: '收藏', risk: 'data-write', scope: 'row', priority: 91, when: (ctx) => ctx.tab === 'favorites' && !ctx.favoriteQuickMode, run: (_ctx, args) => resetFavoriteLearning(args) })
     for (let slot = 1; slot <= 10; slot += 1) {
@@ -9236,6 +9381,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
 
   registerActions()
   void refreshFavoritePathInspections()
+  startFavoriteRunWatch()
 
   function confirmNowInternal() {
     const next = confirm
@@ -9371,6 +9517,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         favoriteQuickMode,
         favoriteSlotManagerOpen,
         favoriteSlotManagerTargetId,
+        favoriteRuns,
+        favoriteRunSummaries: favoriteRunSummaryById(),
         favoriteCurrentPlatform: currentFavoritePlatform(),
         favoritePickReview,
         favoriteDraft,
@@ -10084,6 +10232,8 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     },
     dispose() {
       codexController.dispose()
+      disposeFavoriteRunWatch?.()
+      disposeFavoriteRunWatch = null
     }
   }
 }

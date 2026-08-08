@@ -553,6 +553,13 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
               <AlertTriangle v-if="pathStatusIsError(item.path)" :size="13" aria-hidden="true" />{{ pathStatus(item.path) }}
             </span>
             <span v-else class="favorite-path-state" role="gridcell">虚拟</span>
+            <span
+              v-if="item.kind !== 'group' && props.snapshot.favoriteRunSummaries[item.id]"
+              class="favorite-run-state"
+              :class="{ error: props.snapshot.favoriteRunSummaries[item.id].failed, running: props.snapshot.favoriteRunSummaries[item.id].status === 'running' }"
+              role="gridcell"
+              :title="props.snapshot.favoriteRunSummaries[item.id].text"
+            >{{ props.snapshot.favoriteRunSummaries[item.id].text }}</span>
             <span class="favorite-row-actions" role="gridcell" @click.stop>
               <button v-if="item.kind !== 'group'" type="button" tabindex="-1" aria-label="打开或运行" title="打开或运行" :disabled="!props.snapshot.favoriteCapabilities.open && !props.snapshot.favoriteCapabilities.run" @click="dispatchFavoriteRowAction(item, 'favorites.open')"><Play v-if="props.snapshot.favoriteCurrentPlatform && item.runnerByPlatform?.[props.snapshot.favoriteCurrentPlatform]" :size="14" aria-hidden="true" /><SquareArrowOutUpRight v-else :size="14" aria-hidden="true" /></button>
               <button v-if="item.kind !== 'group'" type="button" tabindex="-1" aria-label="定位" title="定位" :disabled="!props.snapshot.favoriteCapabilities.reveal" @click="dispatchFavoriteRowAction(item, 'favorites.reveal')"><LocateFixed :size="14" aria-hidden="true" /></button>
@@ -878,6 +885,10 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
             <label v-if="props.snapshot.favoriteDraft.runnerCwdMode === 'custom'">
               自定义工作目录
               <input data-field="runner-cwd" :value="props.snapshot.favoriteDraft.runnerCwd" placeholder="可使用 {path}、{dir}、{name}" @input="updateDraft({ runnerCwd: ($event.target as HTMLInputElement).value })" />
+            </label>
+            <label>
+              脚本自身日志（选填）
+              <input data-field="runner-log-path" :value="props.snapshot.favoriteDraft.runnerLogPath" placeholder="脚本自己写日志的绝对路径，可使用 {path}、{dir}、{name}" @input="updateDraft({ runnerLogPath: ($event.target as HTMLInputElement).value })" />
             </label>
             <section v-if="draftRunnerPreview()" class="favorite-runner-preview" aria-label="解析后运行器预览">
               <strong>解析预览</strong>

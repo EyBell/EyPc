@@ -45,12 +45,38 @@ export type FavoritePlatform = 'darwin' | 'win32' | 'linux'
 export type FavoriteRunnerMode = 'background' | 'terminal'
 export type FavoriteRunnerCwdMode = 'target-directory' | 'custom'
 
+export type FavoriteRunStatus = 'running' | 'exited' | 'failed' | 'stopped'
+
+/** One background launch as the platform bridge reports it. Local-only; never synced. */
+export interface FavoriteRunRecord {
+  runId: string
+  favoriteId: string
+  favoriteName: string
+  mode: FavoriteRunnerMode
+  status: FavoriteRunStatus
+  startedAt: number
+  endedAt?: number
+  exitCode?: number
+  signal?: string
+  executable: string
+  args: string[]
+  cwd: string
+  logPath?: string
+  logBytes?: number
+  logTruncated?: boolean
+  declaredLogPath?: string
+  declaredLogExists?: boolean
+  message?: string
+}
+
 export interface FavoriteRunnerConfig {
   mode: FavoriteRunnerMode
   executable: string
   args: string[]
   cwdMode: FavoriteRunnerCwdMode
   cwd?: string
+  /** L2: where this runner writes its own log. Informational, never executed or created. */
+  logPath?: string
   trustedAt?: number
   trustedFingerprint?: string
 }

@@ -4,6 +4,7 @@ import { createInitialState, normalizeAppState } from '../../src/domain/state'
 import { createAppRuntime } from '../../src/runtime/appRuntime'
 import { createMqttConnectionConfig } from '../../src/domain/mqtt'
 import { isFavoriteRunnerTrusted, trustFavoriteRunner } from '../../src/domain/favoriteLaunch'
+import type { FavoriteRunRecord } from '../../src/domain/types'
 import type { LiveWindow, WindowActivationRequest } from '../../src/domain/windows'
 import { WINDOW_BRIDGE_REVISION, type EypcPlatformApi } from '../../src/platform/eypcPlatform'
 
@@ -4027,7 +4028,7 @@ describe('app runtime', () => {
     expect(runtime.snapshot().state.favorites.find((item) => item.id === 'script-10')?.usageCount).toBe(1)
   })
 
-  it('requires one trust confirmation and blocks a runner after target metadata drifts', async () => {
+  it('requires one trust confirmation, survives a cosmetic rename, and blocks a runner after stored trust drifts', async () => {
     const runRequests: unknown[] = []
     const { state, getShowCount } = installPlatform({
       files: {
@@ -4057,6 +4058,7 @@ describe('app runtime', () => {
     expect(runRequests).toHaveLength(1)
     expect(runRequests[0]).toMatchObject({ args: ['/work/run.sh', '  --label=空 格  '] })
 
+    // This runner never expands `{name}`, so renaming it is cosmetic and must keep trust.
     runtime.focusFavorite('script')
     runtime.dispatch('favorites.rename')
     runtime.updateFavoriteDraft({ name: 'Renamed' })
@@ -4064,12 +4066,83 @@ describe('app runtime', () => {
     runtime.dispatch('favorites.open', { favoriteId: 'script' })
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(runRequests).toHaveLength(1)
+    expect(runRequests).toHaveLength(2)
+    expect(runtime.snapshot().confirm).toBeFalsy()
+
+    // Stored trust that no longer matches the target still blocks, and a slot failure opens the repair manager.
+    const live = runtime.snapshot().state
+    live.favorites = live.favorites.map((item) => item.id === 'script'
+      ? { ...item, runnerByPlatform: { darwin: { ...item.runnerByPlatform!.darwin!, trustedFingerprint: 'fnv1a64:0000000000000000' } } }
+      : item)
+    runtime.dispatch('favorites.open', { favoriteId: 'script' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(runRequests).toHaveLength(2)
     expect(runtime.snapshot().message).toContain('配置已变更或尚未确认')
     runtime.dispatch('favorites.slot.activate.1')
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(getShowCount()).toBe(1)
     expect(runtime.snapshot().favoriteSlotManagerOpen).toBe(true)
+  })
+
+  it('separates launch acceptance from exit code and exposes the captured run log', async () => {
+    let listeners: Array<() => void> = []
+    const runs: FavoriteRunRecord[] = []
+    const { state, opened, copied } = installPlatform({
+      files: {
+        capabilities: { platform: 'darwin', open: true, reveal: true, copyPath: true, copyItems: true, pickFiles: true, pickFolders: true, listDirectory: true, inspectPaths: true, run: true, terminalRun: true },
+        run: async () => {
+          runs.unshift({ runId: 'r1', favoriteId: 'script', favoriteName: 'Run', mode: 'background', status: 'running', startedAt: 10, executable: '/bin/sh', args: ['/work/run.sh'], cwd: '/work', logPath: '/data/favorite-runs/run-1.log' })
+          for (const listener of listeners) listener()
+          return { outcome: 'started' as const, runId: 'r1', logPath: '/data/favorite-runs/run-1.log' }
+        },
+        listRuns: () => runs,
+        watchRuns: (listener: () => void) => {
+          listeners.push(listener)
+          return () => { listeners = listeners.filter((item) => item !== listener) }
+        }
+      }
+    })
+    enableFavorites(state)
+    const node = { id: 'script', kind: 'file' as const, path: '/work/run.sh', name: 'Run', parentId: null, tags: [], color: '#F2994A', sortOrder: 1, createdAt: 1, updatedAt: 1 }
+    state.favorites = [{ ...node, runnerByPlatform: { darwin: trustFavoriteRunner(node, 'darwin', { mode: 'background', executable: '/bin/sh', args: ['{path}'], cwdMode: 'target-directory' }, 100) } }]
+    const runtime = createAppRuntime(state)
+
+    runtime.dispatch('favorites.open', { favoriteId: 'script' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(runtime.snapshot().favoriteRunSummaries.script).toMatchObject({ status: 'running', text: '运行中', failed: false })
+
+    // A non-zero exit arrives after the launch already reported success, and must not reuse it.
+    runs[0] = { ...runs[0], status: 'failed', exitCode: 2, endedAt: 20 }
+    for (const listener of listeners) listener()
+    const failedSummary = runtime.snapshot().favoriteRunSummaries.script
+    expect(failedSummary.failed).toBe(true)
+    expect(failedSummary.text).toBe('以非 0 退出码 2 结束')
+
+    runs[0] = { ...runs[0], status: 'exited', exitCode: 0 }
+    for (const listener of listeners) listener()
+    expect(runtime.snapshot().favoriteRunSummaries.script).toMatchObject({ failed: false, text: '已成功退出（退出码 0）' })
+
+    runtime.dispatch('favorites.run.openLog', { favoriteId: 'script' })
+    runtime.dispatch('favorites.run.copyLogPath', { favoriteId: 'script' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(opened).toContain('/data/favorite-runs/run-1.log')
+    expect(copied).toContain('/data/favorite-runs/run-1.log')
+
+    runtime.dispatch('favorites.run.copyCommand', { favoriteId: 'script' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(copied.at(-1)).toBe('"/bin/sh" "/work/run.sh"')
+
+    // A favorite whose run left no log says so instead of opening something unrelated.
+    runs.length = 0
+    for (const listener of listeners) listener()
+    runtime.dispatch('favorites.run.openLog', { favoriteId: 'script' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(runtime.snapshot().message).toBe('这次运行没有可用的日志文件')
+
+    runtime.dispose()
+    expect(listeners).toHaveLength(0)
   })
 
   it('keeps file slots platform-isolated and cleans slot and learning references on removal', async () => {

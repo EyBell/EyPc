@@ -4,7 +4,7 @@ import { emptySearchHistories, normalizeSearchHistoryList } from './searchHistor
 import { normalizeShortcutId } from './shortcuts'
 import { normalizeToolPreviewPrefs } from './toolPreview'
 import { normalizeFavoriteGraph } from './favorites'
-import { createFavoriteSlots, isFavoritePlatform, normalizeFavoriteRunnerByPlatform, pruneFavoriteSearchAffinities } from './favoriteLaunch'
+import { createFavoriteSlots, isFavoritePlatform, normalizeFavoriteRunnerByPlatform, pruneFavoriteSearchAffinities, upgradeFavoriteRunnerTrustByPlatform } from './favoriteLaunch'
 import { createDefaultCodexState, normalizeCodexState } from './codex'
 import { createWindowSlots, type WindowPlatform, type WindowSlot, type WindowTarget } from './windows'
 import { fileManagerGroupKey } from './windowTree'
@@ -246,12 +246,18 @@ function normalizeFavorite(value: unknown, now: number): FavoriteNode | null {
   if (!id || !kind || (kind !== 'group' && !path)) return null
   const usageCount = numberValue(item.usageCount, 0)
   const lastUsedAt = numberValue(item.lastUsedAt, 0)
-  const runnerByPlatform = kind === 'group' ? undefined : normalizeFavoriteRunnerByPlatform(item.runnerByPlatform)
+  const name = stringValue(item.name).trim() || path.split(/[\\/]/).filter(Boolean).pop() || id
+  const runnerByPlatform = kind === 'group'
+    ? undefined
+    : upgradeFavoriteRunnerTrustByPlatform(
+        { id, kind, path, name },
+        normalizeFavoriteRunnerByPlatform(item.runnerByPlatform)
+      )
   return {
     id,
     kind,
     path: kind === 'group' ? '' : path,
-    name: stringValue(item.name).trim() || path.split(/[\\/]/).filter(Boolean).pop() || id,
+    name,
     parentId: stringValue(item.parentId).trim() || null,
     tags: strings(item.tags),
     color: stringValue(item.color).trim() || '#6B7280',

@@ -5,7 +5,9 @@ import {
   FAVORITE_SEARCH_HALF_LIFE_MS,
   createFavoriteSlots,
   favoriteFrecency,
+  favoriteRunnerFingerprint,
   isFavoriteRunnerTrusted,
+  legacyFavoriteRunnerFingerprint,
   normalizeFavoriteRunnerByPlatform,
   pruneFavoriteSearchAffinities,
   recordFavoriteSearchAffinity,
@@ -52,8 +54,50 @@ describe('favorite launch domain', () => {
     expect(isFavoriteRunnerTrusted(file, 'darwin', trusted)).toBe(true)
     expect(isFavoriteRunnerTrusted(file, 'linux', trusted)).toBe(false)
     expect(isFavoriteRunnerTrusted({ ...file, path: '/work/other.sh' }, 'darwin', trusted)).toBe(false)
+    // This fixture expands `{name}` into argv, so the name is still part of what was trusted.
     expect(isFavoriteRunnerTrusted({ ...file, name: 'Other' }, 'darwin', trusted)).toBe(false)
     expect(isFavoriteRunnerTrusted(file, 'darwin', { ...trusted, args: ['{path}', '--changed'] })).toBe(false)
+  })
+
+  it('keeps trust across a rename when no runner field expands the favorite name', () => {
+    const plain: FavoriteRunnerConfig = { mode: 'background', executable: '/bin/sh', args: ['{path}'], cwdMode: 'target-directory' }
+    const trusted = trustFavoriteRunner(file, 'darwin', plain, 100)
+
+    expect(isFavoriteRunnerTrusted(file, 'darwin', trusted)).toBe(true)
+    expect(isFavoriteRunnerTrusted({ ...file, name: 'Renamed' }, 'darwin', trusted)).toBe(true)
+    // Everything else still revokes trust.
+    expect(isFavoriteRunnerTrusted({ ...file, path: '/work/other.sh' }, 'darwin', trusted)).toBe(false)
+    expect(isFavoriteRunnerTrusted(file, 'linux', trusted)).toBe(false)
+    expect(isFavoriteRunnerTrusted(file, 'darwin', { ...trusted, executable: '/bin/zsh' })).toBe(false)
+
+    const customCwd: FavoriteRunnerConfig = { ...plain, cwdMode: 'custom', cwd: '/logs/{name}' }
+    const trustedCustomCwd = trustFavoriteRunner(file, 'darwin', customCwd, 100)
+    expect(isFavoriteRunnerTrusted({ ...file, name: 'Renamed' }, 'darwin', trustedCustomCwd)).toBe(false)
+  })
+
+  it('upgrades a legacy name-bound fingerprint in place instead of dropping stored trust', () => {
+    const plain: FavoriteRunnerConfig = { mode: 'background', executable: '/bin/sh', args: ['{path}'], cwdMode: 'target-directory' }
+    const legacyFingerprint = legacyFavoriteRunnerFingerprint(file, 'darwin', plain)
+    const stored = { ...plain, trustedAt: 100, trustedFingerprint: legacyFingerprint }
+
+    const state = normalizeAppState({ favorites: [{ ...file, runnerByPlatform: { darwin: stored } }] })
+    const upgraded = state.favorites[0].runnerByPlatform?.darwin
+
+    expect(upgraded?.trustedAt).toBe(100)
+    expect(upgraded?.trustedFingerprint).toBe(favoriteRunnerFingerprint(file, 'darwin', plain))
+    expect(upgraded?.trustedFingerprint).not.toBe(legacyFingerprint)
+    expect(isFavoriteRunnerTrusted({ ...file, name: 'Renamed' }, 'darwin', upgraded)).toBe(true)
+  })
+
+  it('never upgrades a fingerprint that no longer matches the stored target', () => {
+    const plain: FavoriteRunnerConfig = { mode: 'background', executable: '/bin/sh', args: ['{path}'], cwdMode: 'target-directory' }
+    const stored = { ...plain, trustedAt: 100, trustedFingerprint: 'fnv1a64:deadbeefdeadbeef' }
+
+    const state = normalizeAppState({ favorites: [{ ...file, runnerByPlatform: { darwin: stored } }] })
+    const kept = state.favorites[0].runnerByPlatform?.darwin
+
+    expect(kept?.trustedFingerprint).toBe('fnv1a64:deadbeefdeadbeef')
+    expect(isFavoriteRunnerTrusted(file, 'darwin', kept)).toBe(false)
   })
 
   it('resolves only structured placeholders without parsing a raw command line', () => {

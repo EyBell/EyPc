@@ -21,6 +21,8 @@ export interface ResolvedFavoriteRunner {
   args: string[]
   cwd: string
   mode: FavoriteRunnerConfig['mode']
+  /** L2 declared log location after placeholder expansion. Absent when unset or not absolute. */
+  declaredLogPath?: string
 }
 
 export function isFavoritePlatform(value: unknown): value is FavoritePlatform {
@@ -38,32 +40,39 @@ export function normalizeFavoriteSearchQuery(value: string): string {
   return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase().slice(0, 128)
 }
 
+/**
+ * The favorite name only reaches the executed argv when a runner field expands `{name}`.
+ * Renaming an unaffected favorite is cosmetic, so it must not revoke trust.
+ */
+export function favoriteRunnerUsesName(config: FavoriteRunnerConfig): boolean {
+  if (config.args.some((item) => item.includes('{name}'))) return true
+  return config.cwdMode === 'custom' && String(config.cwd || '').includes('{name}')
+}
+
 function stableRunnerPayload(
   node: Pick<FavoriteNode, 'id' | 'kind' | 'path' | 'name'>,
   platform: FavoritePlatform,
-  config: FavoriteRunnerConfig
+  config: FavoriteRunnerConfig,
+  includeName: boolean
 ): string {
   return JSON.stringify({
     platform,
     id: node.id,
     kind: node.kind,
     path: node.path,
-    name: node.name,
+    ...(includeName ? { name: node.name } : {}),
     mode: config.mode,
     executable: config.executable.trim(),
     args: config.args,
     cwdMode: config.cwdMode,
-    cwd: config.cwdMode === 'custom' ? String(config.cwd || '').trim() : ''
+    cwd: config.cwdMode === 'custom' ? String(config.cwd || '').trim() : '',
+    // Only present when set, so configurations written before declared log paths existed
+    // keep producing their original payload and never lose trust on upgrade.
+    ...(config.logPath ? { logPath: config.logPath.trim() } : {})
   })
 }
 
-/** Stable drift detector for trusted local runner metadata; it is not an authentication primitive. */
-export function favoriteRunnerFingerprint(
-  node: Pick<FavoriteNode, 'id' | 'kind' | 'path' | 'name'>,
-  platform: FavoritePlatform,
-  config: FavoriteRunnerConfig
-): string {
-  const text = stableRunnerPayload(node, platform, config)
+function fnv1a64(text: string): string {
   let hash = 0xcbf29ce484222325n
   const prime = 0x100000001b3n
   for (let index = 0; index < text.length; index += 1) {
@@ -73,13 +82,65 @@ export function favoriteRunnerFingerprint(
   return `fnv1a64:${hash.toString(16).padStart(16, '0')}`
 }
 
+/** Stable drift detector for trusted local runner metadata; it is not an authentication primitive. */
+export function favoriteRunnerFingerprint(
+  node: Pick<FavoriteNode, 'id' | 'kind' | 'path' | 'name'>,
+  platform: FavoritePlatform,
+  config: FavoriteRunnerConfig
+): string {
+  return fnv1a64(stableRunnerPayload(node, platform, config, favoriteRunnerUsesName(config)))
+}
+
+/**
+ * Pre-rename-tolerant algorithm: the name was unconditionally part of the payload.
+ * Kept only so stored trust can be upgraded in place instead of being dropped.
+ */
+export function legacyFavoriteRunnerFingerprint(
+  node: Pick<FavoriteNode, 'id' | 'kind' | 'path' | 'name'>,
+  platform: FavoritePlatform,
+  config: FavoriteRunnerConfig
+): string {
+  return fnv1a64(stableRunnerPayload(node, platform, config, true))
+}
+
 export function isFavoriteRunnerTrusted(
   node: Pick<FavoriteNode, 'id' | 'kind' | 'path' | 'name'>,
   platform: FavoritePlatform,
   config: FavoriteRunnerConfig | null | undefined
 ): boolean {
   if (!config?.trustedAt || !config.trustedFingerprint) return false
-  return config.trustedFingerprint === favoriteRunnerFingerprint(node, platform, config)
+  if (config.trustedFingerprint === favoriteRunnerFingerprint(node, platform, config)) return true
+  // A not-yet-upgraded record stays trusted under the stricter legacy rule.
+  return config.trustedFingerprint === legacyFavoriteRunnerFingerprint(node, platform, config)
+}
+
+/**
+ * Rewrites a still-valid legacy fingerprint to the current algorithm so a later rename
+ * cannot revoke trust that the user already granted. Anything else is returned untouched.
+ */
+export function upgradeFavoriteRunnerTrust(
+  node: Pick<FavoriteNode, 'id' | 'kind' | 'path' | 'name'>,
+  platform: FavoritePlatform,
+  config: FavoriteRunnerConfig
+): FavoriteRunnerConfig {
+  if (!config.trustedAt || !config.trustedFingerprint) return config
+  const current = favoriteRunnerFingerprint(node, platform, config)
+  if (config.trustedFingerprint === current) return config
+  if (config.trustedFingerprint !== legacyFavoriteRunnerFingerprint(node, platform, config)) return config
+  return { ...config, trustedFingerprint: current }
+}
+
+export function upgradeFavoriteRunnerTrustByPlatform(
+  node: Pick<FavoriteNode, 'id' | 'kind' | 'path' | 'name'>,
+  runnerByPlatform: FavoriteNode['runnerByPlatform'] | undefined
+): FavoriteNode['runnerByPlatform'] | undefined {
+  if (!runnerByPlatform) return runnerByPlatform
+  const result: NonNullable<FavoriteNode['runnerByPlatform']> = {}
+  for (const platform of FAVORITE_PLATFORMS) {
+    const config = runnerByPlatform[platform]
+    if (config) result[platform] = upgradeFavoriteRunnerTrust(node, platform, config)
+  }
+  return Object.keys(result).length ? result : undefined
 }
 
 export function trustFavoriteRunner(
@@ -106,9 +167,11 @@ export function normalizeFavoriteRunnerConfig(value: unknown): FavoriteRunnerCon
   const args = [...source.args] as string[]
   const cwdMode = source.cwdMode === 'custom' ? 'custom' : source.cwdMode === 'target-directory' ? 'target-directory' : null
   const cwd = typeof source.cwd === 'string' ? source.cwd.trim() : ''
+  const logPath = typeof source.logPath === 'string' ? source.logPath.trim() : ''
   if (!mode || !cwdMode || !executable || executable.length > RUNNER_MAX_EXECUTABLE_LENGTH) return null
   if (args.some((item) => item.length > RUNNER_MAX_ARGUMENT_LENGTH || item.includes('\0'))) return null
   if (executable.includes('\0') || cwd.includes('\0')) return null
+  if (logPath.length > RUNNER_MAX_EXECUTABLE_LENGTH || logPath.includes('\0')) return null
   if (cwdMode === 'custom' && !cwd) return null
   const trustedAt = typeof source.trustedAt === 'number' && Number.isFinite(source.trustedAt) && source.trustedAt > 0
     ? source.trustedAt
@@ -122,6 +185,7 @@ export function normalizeFavoriteRunnerConfig(value: unknown): FavoriteRunnerCon
     args,
     cwdMode,
     ...(cwdMode === 'custom' ? { cwd } : {}),
+    ...(logPath ? { logPath } : {}),
     ...(trustedAt ? { trustedAt } : {}),
     ...(trustedFingerprint ? { trustedFingerprint } : {})
   }
@@ -150,6 +214,7 @@ export function normalizeFavoriteRunnerByPlatform(value: unknown): FavoriteNode[
         : [],
       cwdMode: candidate.cwdMode === 'custom' ? 'custom' : 'target-directory',
       ...(typeof candidate.cwd === 'string' ? { cwd: candidate.cwd.slice(0, RUNNER_MAX_EXECUTABLE_LENGTH) } : {}),
+      ...(typeof candidate.logPath === 'string' ? { logPath: candidate.logPath.slice(0, RUNNER_MAX_EXECUTABLE_LENGTH) } : {}),
       ...(typeof candidate.trustedAt === 'number' && Number.isFinite(candidate.trustedAt) && candidate.trustedAt > 0 ? { trustedAt: candidate.trustedAt } : {}),
       ...(typeof candidate.trustedFingerprint === 'string' ? { trustedFingerprint: candidate.trustedFingerprint.slice(0, 128) } : {})
     }
@@ -205,7 +270,15 @@ export function resolveFavoriteRunner(
     : favoriteTargetDirectory(node)
   if (!executable || !cwd || executable.includes('\0') || cwd.includes('\0') || args.some((item) => item.includes('\0'))) return null
   if (!isFavoriteRunnerExecutable(executable, platform) || !isAbsoluteFavoriteRunnerPath(cwd, platform)) return null
-  return { executable, args, cwd, mode: normalized.mode }
+  // A declared log path that does not resolve to an absolute location is dropped, not guessed at,
+  // and never blocks the launch: it only decides whether we can point the user at a second file.
+  const declaredLogPath = normalized.logPath
+    ? expandFavoriteRunnerTokens(normalized.logPath, node).trim()
+    : ''
+  const usableLogPath = declaredLogPath && !declaredLogPath.includes('\0') && isAbsoluteFavoriteRunnerPath(declaredLogPath, platform)
+    ? declaredLogPath
+    : ''
+  return { executable, args, cwd, mode: normalized.mode, ...(usableLogPath ? { declaredLogPath: usableLogPath } : {}) }
 }
 
 export function suggestedFavoriteRunner(path: string, platform: FavoritePlatform): FavoriteRunnerConfig | null {

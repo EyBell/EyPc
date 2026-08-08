@@ -1315,7 +1315,254 @@ function normalizeFavoriteRunRequest(value) {
   if (!args.every((item) => typeof item === 'string' && item.length <= 4096 && !item.includes('\0'))) return null
   if (!isAbsoluteFavoritePath(targetPath) || !isAbsoluteFavoritePath(cwd)) return null
   if (!path.isAbsolute(executable) && (executable.includes('/') || executable.includes('\\'))) return null
-  return { targetPath, executable, args: [...args], cwd, mode }
+  const favoriteId = String(value.favoriteId || '').slice(0, 200)
+  const favoriteName = String(value.favoriteName || '').slice(0, 200)
+  // L2: a runner-declared log path is informational only. It is never executed, never
+  // created, and a relative or malformed value is dropped instead of guessed at.
+  const declaredLogPath = typeof value.declaredLogPath === 'string' ? value.declaredLogPath.trim() : ''
+  const declaredLog = declaredLogPath
+    && declaredLogPath.length <= 4096
+    && !declaredLogPath.includes('\0')
+    && isAbsoluteFavoritePath(declaredLogPath)
+    ? declaredLogPath
+    : ''
+  return { targetPath, executable, args: [...args], cwd, mode, favoriteId, favoriteName, declaredLogPath: declaredLog }
+}
+
+const FAVORITE_RUN_LOG_MAX_BYTES = 2 * 1024 * 1024
+const FAVORITE_RUN_LOG_KEEP_FILES = 40
+const FAVORITE_RUN_HISTORY_LIMIT = 60
+
+let favoriteRunMemory = []
+const favoriteRunListeners = new Set()
+
+function resolveFavoriteRunLogDirectory() {
+  let baseDir = ''
+  try {
+    if (globalThis.utools && typeof globalThis.utools.getPath === 'function') {
+      baseDir = String(globalThis.utools.getPath('userData') || '').trim()
+    }
+  } catch {}
+  if (!baseDir) {
+    try {
+      baseDir = path.join(os.homedir(), '.eypc')
+    } catch {
+      baseDir = path.join(process.cwd(), '.eypc')
+    }
+  }
+  return path.join(baseDir, 'favorite-runs')
+}
+
+function notifyFavoriteRunListeners() {
+  for (const listener of [...favoriteRunListeners]) {
+    try {
+      listener()
+    } catch {}
+  }
+}
+
+function favoriteRunView(run) {
+  return {
+    runId: run.runId,
+    favoriteId: run.favoriteId,
+    favoriteName: run.favoriteName,
+    mode: run.mode,
+    status: run.status,
+    startedAt: run.startedAt,
+    ...(typeof run.endedAt === 'number' ? { endedAt: run.endedAt } : {}),
+    ...(typeof run.exitCode === 'number' ? { exitCode: run.exitCode } : {}),
+    ...(run.signal ? { signal: run.signal } : {}),
+    executable: run.executable,
+    args: [...run.args],
+    cwd: run.cwd,
+    ...(run.logPath ? { logPath: run.logPath } : {}),
+    ...(typeof run.logBytes === 'number' ? { logBytes: run.logBytes } : {}),
+    ...(run.logTruncated ? { logTruncated: true } : {}),
+    ...(run.declaredLogPath ? { declaredLogPath: run.declaredLogPath } : {}),
+    ...(typeof run.declaredLogExists === 'boolean' ? { declaredLogExists: run.declaredLogExists } : {}),
+    ...(run.message ? { message: run.message } : {})
+  }
+}
+
+function pruneFavoriteRunLogFiles(directory) {
+  try {
+    const entries = fs.readdirSync(directory)
+      .filter((name) => /^run-.*\.log$/.test(name))
+      .map((name) => {
+        const full = path.join(directory, name)
+        try {
+          return { full, mtime: fs.statSync(full).mtimeMs }
+        } catch {
+          return null
+        }
+      })
+      .filter(Boolean)
+      .sort((left, right) => right.mtime - left.mtime)
+    for (const entry of entries.slice(FAVORITE_RUN_LOG_KEEP_FILES)) {
+      try { fs.unlinkSync(entry.full) } catch {}
+    }
+  } catch {}
+}
+
+/**
+ * Enforces the per-run ceiling at rest. The child writes straight to the file descriptor so it
+ * survives a plugin restart, which means the cap can only be applied once the run has ended.
+ * The tail is kept because that is where failures land.
+ */
+function capFavoriteRunLog(run) {
+  if (!run.logPath) return
+  let size = 0
+  try {
+    size = fs.statSync(run.logPath).size
+  } catch {
+    return
+  }
+  if (size <= FAVORITE_RUN_LOG_MAX_BYTES) {
+    run.logBytes = size
+    return
+  }
+  const notice = Buffer.from(`[EyPc] 日志超过 ${FAVORITE_RUN_LOG_MAX_BYTES} 字节上限，已保留末尾部分\n`, 'utf8')
+  const keep = Math.max(0, FAVORITE_RUN_LOG_MAX_BYTES - notice.length)
+  let descriptor = null
+  try {
+    descriptor = fs.openSync(run.logPath, 'r')
+    const buffer = Buffer.alloc(keep)
+    fs.readSync(descriptor, buffer, 0, keep, size - keep)
+    fs.closeSync(descriptor)
+    descriptor = null
+    fs.writeFileSync(run.logPath, Buffer.concat([notice, buffer]))
+    run.logBytes = notice.length + keep
+    run.logTruncated = true
+  } catch {
+    run.logBytes = size
+  } finally {
+    if (descriptor !== null) {
+      try { fs.closeSync(descriptor) } catch {}
+    }
+  }
+}
+
+function finishFavoriteRun(run, patch) {
+  if (run.status !== 'running') return
+  Object.assign(run, patch, { endedAt: Date.now() })
+  capFavoriteRunLog(run)
+  if (run.declaredLogPath) {
+    try {
+      run.declaredLogExists = fs.statSync(run.declaredLogPath).isFile()
+    } catch {
+      run.declaredLogExists = false
+    }
+  }
+  notifyFavoriteRunListeners()
+}
+
+/**
+ * Background launch with L1 log capture. Output goes to a file descriptor rather than a pipe so a
+ * plugin restart cannot break the child's stdout; the trade-off is that the exit code is only
+ * observed while this process is alive.
+ */
+function spawnFavoriteBackgroundRun(normalized, executable) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now()
+    const runId = `fav_${startedAt.toString(36)}_${crypto.randomBytes(6).toString('base64url')}`
+    const directory = resolveFavoriteRunLogDirectory()
+    let logPath = ''
+    let descriptor = null
+    try {
+      fs.mkdirSync(directory, { recursive: true })
+      logPath = path.join(directory, `${runId}.log`.replace(/^fav_/, 'run-'))
+      descriptor = fs.openSync(logPath, 'a')
+      fs.writeSync(descriptor, `[EyPc] ${new Date(startedAt).toISOString()} ${executable} ${normalized.args.join(' ')}\n[EyPc] cwd: ${normalized.cwd}\n`)
+    } catch {
+      // Capture is best effort. A run without a log is still a run with an exit code.
+      if (descriptor !== null) {
+        try { fs.closeSync(descriptor) } catch {}
+      }
+      descriptor = null
+      logPath = ''
+    }
+
+    let child = null
+    try {
+      child = spawn(executable, normalized.args, {
+        cwd: normalized.cwd,
+        shell: false,
+        detached: true,
+        stdio: descriptor === null ? 'ignore' : ['ignore', descriptor, descriptor],
+        windowsHide: true
+      })
+    } catch (error) {
+      if (descriptor !== null) {
+        try { fs.closeSync(descriptor) } catch {}
+      }
+      resolve(favoriteRunResult('failed', { errorCode: fileErrorCode(error), message: fileErrorMessage(error, 'runner start failed') }))
+      return
+    }
+    if (descriptor !== null) {
+      try { fs.closeSync(descriptor) } catch {}
+    }
+
+    const run = {
+      runId,
+      favoriteId: normalized.favoriteId,
+      favoriteName: normalized.favoriteName,
+      mode: 'background',
+      status: 'running',
+      startedAt,
+      executable,
+      args: [...normalized.args],
+      cwd: normalized.cwd,
+      logPath,
+      declaredLogPath: normalized.declaredLogPath
+    }
+
+    let settled = false
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      resolve(result)
+    }
+    const timer = setTimeout(() => {
+      finishFavoriteRun(run, { status: 'failed', message: 'runner start timed out' })
+      finish(favoriteRunResult('failed', { errorCode: 'timeout', message: 'runner start timed out' }))
+    }, 5_000)
+
+    child.once('error', (error) => {
+      finishFavoriteRun(run, { status: 'failed', message: fileErrorMessage(error, 'runner start failed') })
+      finish(favoriteRunResult('failed', { errorCode: fileErrorCode(error), message: fileErrorMessage(error, 'runner start failed') }))
+    })
+    child.once('exit', (code, signal) => {
+      finishFavoriteRun(run, {
+        status: signal ? 'stopped' : code === 0 ? 'exited' : 'failed',
+        ...(typeof code === 'number' ? { exitCode: code } : {}),
+        ...(signal ? { signal: String(signal) } : {})
+      })
+    })
+    child.once('spawn', () => {
+      try { child.unref() } catch {}
+      favoriteRunMemory = [run, ...favoriteRunMemory].slice(0, FAVORITE_RUN_HISTORY_LIMIT)
+      pruneFavoriteRunLogFiles(directory)
+      notifyFavoriteRunListeners()
+      finish(favoriteRunResult('started', {
+        runId,
+        startedAt,
+        ...(logPath ? { logPath } : {}),
+        ...(normalized.declaredLogPath ? { declaredLogPath: normalized.declaredLogPath } : {})
+      }))
+    })
+  })
+}
+
+function listFavoriteRuns(limit = FAVORITE_RUN_HISTORY_LIMIT) {
+  const size = Number.isFinite(limit) ? Math.max(0, Math.min(FAVORITE_RUN_HISTORY_LIMIT, Math.floor(limit))) : FAVORITE_RUN_HISTORY_LIMIT
+  return favoriteRunMemory.slice(0, size).map((run) => favoriteRunView(run))
+}
+
+function watchFavoriteRuns(listener) {
+  if (typeof listener !== 'function') return () => {}
+  favoriteRunListeners.add(listener)
+  return () => { favoriteRunListeners.delete(listener) }
 }
 
 function windowsSystemExecutable(name) {
@@ -1474,7 +1721,7 @@ async function runFavorite(request) {
     })
   }
   if (normalized.mode === 'background') {
-    return spawnFavoriteDetached(executable, normalized.args, normalized.cwd, 'started')
+    return spawnFavoriteBackgroundRun(normalized, executable)
   }
   const adapter = favoriteTerminalAdapter(executable, normalized.args, normalized.cwd)
   if (!adapter) return favoriteRunResult('unsupported', { errorCode: 'unsupported', message: 'supported terminal application not found', paths: [normalized.targetPath] })
@@ -8790,6 +9037,8 @@ window.eypcPlatform = {
     copyItems: copyFavoriteItems,
     inspectPaths: inspectFavoritePaths,
     run: runFavorite,
+    listRuns: listFavoriteRuns,
+    watchRuns: watchFavoriteRuns,
     pickFavorite: pickFavoritePath,
     pickFavorites: pickFavoritePaths,
     listDirectory: listFavoriteDirectory,

@@ -1,6 +1,6 @@
 import { normalizeAppState } from '../domain/state'
 import { normalizeMqttArchiveState } from '../domain/mqtt'
-import type { AppState, FavoriteNode, FavoritePlatform, FavoriteRunnerMode, KillRequest, KillResult, MqttArchiveState, MqttStorageStatus, PortProcess } from '../domain/types'
+import type { AppState, FavoriteNode, FavoritePlatform, FavoriteRunnerMode, FavoriteRunRecord, KillRequest, KillResult, MqttArchiveState, MqttStorageStatus, PortProcess } from '../domain/types'
 import type { LiveWindow, NativeWindowObservation, WindowActivationRequest, WindowInstanceProbeResult, WindowPlatform } from '../domain/windows'
 import type {
   CodexActivityDelta,
@@ -110,6 +110,9 @@ export interface FavoriteRunRequest {
   args: string[]
   cwd: string
   mode: FavoriteRunnerMode
+  favoriteId?: string
+  favoriteName?: string
+  declaredLogPath?: string
 }
 
 export interface FavoriteRunResult {
@@ -117,6 +120,10 @@ export interface FavoriteRunResult {
   errorCode?: FileErrorCode
   message?: string
   paths?: string[]
+  runId?: string
+  startedAt?: number
+  logPath?: string
+  declaredLogPath?: string
 }
 
 export interface FavoritePathInspection {
@@ -331,6 +338,10 @@ export interface EypcPlatformApi {
     capabilities?: FileCapabilities
     open(path: string): Promise<FileActionResult>
     run?(request: FavoriteRunRequest): Promise<FavoriteRunResult>
+    /** Newest-first background run history for this plugin process. Local-only, never synced. */
+    listRuns?(limit?: number): FavoriteRunRecord[]
+    /** Fires when a run starts or ends; returns a disposer. */
+    watchRuns?(listener: () => void): () => void
     reveal(path: string): Promise<FileActionResult>
     copyPath(path: string): Promise<FileActionResult>
     copyItems?(paths: string[]): Promise<FileActionResult>
@@ -468,6 +479,51 @@ export function normalizeFileActionResult(value: unknown, failedErrorCode: FileE
   }
   if (value === true) return { outcome: 'dispatched', message: 'legacy host reported dispatch only' }
   return { outcome: 'failed', errorCode: failedErrorCode }
+}
+
+const FAVORITE_RUN_STATUSES = ['running', 'exited', 'failed', 'stopped']
+
+/**
+ * Bridge payloads are untrusted shapes. A malformed row is dropped rather than rendered,
+ * so a bad host can degrade the run list to empty but never inject partial records.
+ */
+export function normalizeFavoriteRunRecords(value: unknown): FavoriteRunRecord[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const source = item as Record<string, unknown>
+    const runId = typeof source.runId === 'string' ? source.runId : ''
+    const status = typeof source.status === 'string' && FAVORITE_RUN_STATUSES.includes(source.status)
+      ? source.status as FavoriteRunRecord['status']
+      : null
+    const startedAt = typeof source.startedAt === 'number' && Number.isFinite(source.startedAt) ? source.startedAt : 0
+    if (!runId || !status || startedAt <= 0) return []
+    const args = Array.isArray(source.args) ? source.args.filter((entry): entry is string => typeof entry === 'string') : []
+    const optionalNumber = (key: 'endedAt' | 'exitCode' | 'logBytes') =>
+      typeof source[key] === 'number' && Number.isFinite(source[key]) ? { [key]: source[key] as number } : {}
+    const optionalText = (key: 'signal' | 'logPath' | 'declaredLogPath' | 'message') =>
+      typeof source[key] === 'string' && source[key] ? { [key]: source[key] as string } : {}
+    return [{
+      runId,
+      favoriteId: typeof source.favoriteId === 'string' ? source.favoriteId : '',
+      favoriteName: typeof source.favoriteName === 'string' ? source.favoriteName : '',
+      mode: source.mode === 'terminal' ? 'terminal' as const : 'background' as const,
+      status,
+      startedAt,
+      executable: typeof source.executable === 'string' ? source.executable : '',
+      args,
+      cwd: typeof source.cwd === 'string' ? source.cwd : '',
+      ...optionalNumber('endedAt'),
+      ...optionalNumber('exitCode'),
+      ...optionalNumber('logBytes'),
+      ...optionalText('signal'),
+      ...optionalText('logPath'),
+      ...optionalText('declaredLogPath'),
+      ...optionalText('message'),
+      ...(source.logTruncated === true ? { logTruncated: true } : {}),
+      ...(typeof source.declaredLogExists === 'boolean' ? { declaredLogExists: source.declaredLogExists } : {})
+    }]
+  })
 }
 
 export function normalizeFavoriteRunResult(value: unknown): FavoriteRunResult {
@@ -883,6 +939,16 @@ export function getPlatform(): EypcPlatformApi {
         capabilities: hostCapabilities,
         open: (path) => callFileAction(hostFiles.open ? () => hostFiles.open(path) : undefined, 'open unavailable'),
         run: hostFiles.run ? (request) => Promise.resolve(hostFiles.run!(request)).then(normalizeFavoriteRunResult).catch((error) => ({ outcome: 'failed', errorCode: errorCodeFromUnknown(error), message: error instanceof Error ? error.message : 'runner failed' })) : undefined,
+        listRuns: hostFiles.listRuns ? (limit) => normalizeFavoriteRunRecords(hostFiles.listRuns!(limit)) : undefined,
+        watchRuns: hostFiles.watchRuns
+          ? (listener) => {
+              try {
+                return hostFiles.watchRuns!(listener) || (() => {})
+              } catch {
+                return () => {}
+              }
+            }
+          : undefined,
         reveal: (path) => callFileAction(hostFiles.reveal ? () => hostFiles.reveal(path) : undefined, 'reveal unavailable'),
         copyPath: (path) => callFileAction(hostFiles.copyPath ? () => hostFiles.copyPath(path) : undefined, 'copy path unavailable'),
         copyItems: (paths) => callFileAction(hostFiles.copyItems ? () => hostFiles.copyItems!(paths) : undefined, 'copy items unavailable'),
