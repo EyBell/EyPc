@@ -1,13 +1,13 @@
 # Codex 任务状态验证记录
 
 Tool: codex
-Date: 2026-08-07
+Date: 2026-08-08
 
 ## Review Target
 
-- Requirement: [RAW-116–147](raw-requirement.md#L1)
+- Requirement: [RAW-116–149](raw-requirement.md#L1)
 - Plan: [plan.md](plan.md#L1)
-- Implementation: preload 直接证据/原生 unread/Activity generation 与 mode-aware latest-Turn 复核、无 Turn 载荷 completed 专属快路、精确 Plan-only 隐私标记、已知 Side Chat 会话期拓扑重订、普通 mainHide 热 App Server/alias 连续性及 follower 公告去回声；Controller 单一 active-exit 转换器、停用代次重建、行级库存隔离/零周期自闭合、发布成功感知的 tasks-preflight single-flight、同 key alias 重建、Runner verified inventory 复用与普通等待→Plan→近期 active 独占循环；Feature route 由 `mainHide` 独占 Codex 全局入口可见性；Domain 明确停止/原生 unread/Plan 卡片投影；真实预检按源模块解析 TypeScript 相对依赖；额度/完整校对自由秒数、quota-auto 普通窗口仲裁、直接外观持久化和结构边界静态回归同步收口。
+- Implementation: 在既有闭合状态机、follower、read-state、Side Chat、Plan 与热缓存合同上，RAW-149 扩展 Desktop 私有 request shadow，发布 v6 匿名状态出现时间；Domain/Presentation 将输入与审批合为待输入并从 ongoing 排除审批；Controller 为待输入/完成未读维护最新优先、成功打开才推进的持久化匿名状态实例进度；Float 与全局入口共用该动作，普通项目/置顶/通用循环保持原合同。
 - Sidecar: 主线程。
 
 ## Checked
@@ -103,6 +103,13 @@ Date: 2026-08-07
 | RAW-147 有界真实 IPC | 最终 `dist/preload.js` 连接真实 broker 只发送 24 条初始正向 follow；收到两个旧客户端共 48 条正向公告后没有追加出站，证明递归已被交付产物切断。旧 uTools ASAR 尚未重载，因此 `incomingState=0` 只作为宿主仍旧的门禁证据，不冒充 snapshot/active→waiting 验收 |
 | RAW-147 文档与错误记忆收口 | task/current/technical 权威层已复核；[stream-follow 主记录](../../../knowledge/error-memory/codex-task-switch-unfollow-must-not-drop-live-shadow.md#L1) 唯一持有回声根因与路线，[pending-request 记录](../../../knowledge/error-memory/codex-pending-user-request-overrides-idle-runtime.md#L1) 通过更新引入只保留检测依赖。索引禁止再建第二份协议回声诊断；并发 Claude 文档与实现写集不进入本提交 |
 | 2026-08-07 实现状态 | RAW-147 源码、聚焦回归、精确快照类型/构建、当前三向镜像/runtime、真实预检与有界 IPC 已验证；当前整树 typecheck/build 复跑受并发 Claude fixture 类型漂移阻断。真实 uTools 重载、owner snapshot 与 active→waiting 转换仍为 host-pending。本轮没有启动 8092、没有重载/重启 uTools、没有写 Codex 原生状态 |
+| RAW-149 Request/隐私合同 | Bridge 夹具覆盖命令执行、文件修改、permissions approval、普通输入、Plan 与 MCP elicitation 的新增/同时存在/移除，优先请求时间并冻结缺失时间的首次观测；进程随机盐关联只在私有内存区分同方法、无时间请求，原始标识与散列均不跨桥或持久化；Side Chat 取最新未决时间。公开 snapshot/Activity Delta 只含匿名 `waitingSince`，不含请求 ID、正文、命令、路径或权限内容 |
+| RAW-149 状态与排序合同 | v6 Domain/Presentation 将 `waiting-input / waiting-approval` 同时归入待输入且审批不重复进入 ongoing；旧任务收到新审批仍按状态时间进入近期动态。Codex/Claude 跨来源以 `statusEnteredAt DESC` 排序，置顶不覆盖；隐藏外部来源仍与完整角标同源 |
+| RAW-149 进度合同 | Controller 覆盖 `1→2→3，新 6→6→4→5`、同任务新状态插队、全部访问后回绕、重载恢复、失败不推进、列表手动成功推进和候选暂时不可打开时不误清历史；每组持久化最多 200 个匿名状态实例，普通前后循环与本地置顶兜底不变 |
+| RAW-149 聚焦自动化 | `pnpm exec vitest run tests/platform/codexAppServerBridge.test.ts tests/domain/codex.test.ts tests/domain/claudeCode.test.ts tests/domain/companionAggregate.test.ts tests/domain/codexPresentation.test.ts tests/runtime/codexController.test.ts tests/platform/eypcPlatform.test.ts tests/ui/codexCompanion.test.ts --reporter=dot`：`8/8` 文件、`292/292` 测试通过 |
+| RAW-149 类型/构建/运行时 | `pnpm run sync:preloads` 后 canonical/public 同步；两份 main preload `node --check` 通过；`pnpm run build` 通过，包含再次 `vue-tsc --noEmit`、production Vite build、runtime preparation 与 `validate:utools` |
+| RAW-149 真实只读预检 | [codex-real-preflight.mjs](../../../../scripts/codex-real-preflight.mjs#L1) 对当前真实 Provider 调用生产 Domain 与 Presentation：`ok=true`、`task-state-v6`、Desktop bridge connected、completeness verified；多次复跑均通过待输入/active key 互斥断言，匿名计数随真实任务状态变化，不固化为产品合同。证据只接纳版本、匿名计数和连接结论，不把它冒充实时 permissions approval |
+| RAW-149 真机 UI 门禁 | 运行中五份 EyPc uTools ASAR 均只含 v5，没有活动 v6；首次 Computer Use 只读观察即因 Mac 锁屏中断，未绕过锁屏或盲重试，也未启动 8092、重接入插件、修改 Access、批准/拒绝请求或终止进程。脱敏会话见 [RAW-149 uTools 真机验收](../../../knowledge/computer-use/sessions/2026-08-08-raw-149-utools-host.md#L1) |
 | 2026-07-31 TypeScript 门禁 | 用户执行 `vue-tsc --noEmit` 暴露反向 generation 屏障夹具的异步 release 回调被收窄为 `never`；改为可调用门闩加独立 pending 信号后，`pnpm run typecheck` 通过。未执行 Vitest、build、preload 语法或真实宿主 |
 | RAW-133 静态收口 | `git diff --check` pass；canonical/public preload 全文件精确一致；诊断 key/counter normalizer 在 `src/` 各只有一个定义；CodexPage 无 `span role=button`/手写 tabindex 提示；changed Markdown `audit_code_links.py` pass |
 | 设计偏好收口 | `DesignTaskCloseout` 生成 `eligible-for-root-review` 的 W29 canary candidate；`writes_performed=false`，未写偏好缓存、传播状态或 Hook |
@@ -223,7 +230,8 @@ Date: 2026-08-07
 - RAW-146 直接受影响的 Controller/UI 两文件为 `90 / 90`；新增合同覆盖完整待输入集合中较新未置顶与较旧置顶的反向顺序。
 - RAW-147 直接受影响的 Bridge 文件为 `81 / 81`；新增合同先以正向 peer announcement 导致额外写入稳定 RED，再证明只有显式 following-status request 会定向重报一次。
 - RAW-148 直接受影响的 Domain/Controller/UI 四文件为 `188 / 188`；环境展示分支表、兼容等待、任务/项目归属识别和 mutation 零二次探测均有反向合同。
-- 最新完整仓库 Vitest 仍是 RAW-146 的历史基线 `752 / 752`、`57 / 57` 文件；RAW-147 没有触发整仓升级，只执行当前受影响的完整 Bridge 文件。类型、preload/运行时静态门禁独立记录，不把实际宿主计入自动接纳。
+- RAW-149 直接受影响的 Bridge/Domain/Presentation/Controller/Platform/UI 八文件为 `292 / 292`；权限请求白名单、状态时间、同方法无时间请求私有关联、跨来源排序、进度状态机、隐私与版本降级均有反向合同。
+- 最新完整仓库 Vitest 仍是 RAW-146 的历史基线 `752 / 752`、`57 / 57` 文件；RAW-147 与 RAW-149 都没有完整仓库升级触发，分别执行各自完整受影响文件。RAW-149 的 typecheck、production build、preload/runtime 与真实只读预检独立通过，不把锁屏前未发生的 UI 宿主动作计入接纳。
 
 ## Findings
 
@@ -241,7 +249,7 @@ Date: 2026-08-07
 - P1: 已修复——stale-active 复核占用 single-flight 时，随后的 active-exit/unread 普通复核会被丢弃；现只合并兼容模式，不兼容模式取消旧周期并由当前状态接管，旧异步结果不能删除新周期。
 - P1: 已修复——缺失 latest-Turn outcome 在 exact idle/not-running 下仍会进入 stopped；现停止必须具备明确 failed/interrupted，缺证据始终 ongoing。
 - P1: 已修复——targeted/corroborated provenance 只存在于发出的对象副本，后续 activity snapshot 会回到 inventory；现写回会话期 inventory 后再原子发布。
-- P1: 已修复——EyPc completion-revision 本地确认会压住 Codex 原生 unread=true；现移除写入/投影覆盖，完成未读命令只打开第一条，旧字段只作忽略式迁移。
+- P1: 已修复——EyPc completion-revision 本地确认会压住 Codex 原生 unread=true；现移除写入/投影覆盖，旧字段只作忽略式迁移。RAW-149 的完成未读专用入口只维护匿名打开进度，仍不写 Codex 原生 unread。
 - P1: 已修复——Activity Delta 同批出现未知 key 时整批返回；现已知任务即时应用，未知 key 只触发 urgent 结构复核。
 - P1: 已修复——完整 inventory 重建会丢失精确 inProgress、confirmed terminal provenance，并缺少与增量共享的 generation 屏障；现保留更强会话期证据并拒绝严格旧增量。
 - P1: 已修复——missing-key 隔离冻结整批清单；现只保留缺失行，现存任务的完成/未读在 stale 清单中仍立即发布。
@@ -251,17 +259,24 @@ Date: 2026-08-07
 - P1: 已修复——confirmed terminal 由 delta 调用方额外传入，full snapshot 同 revision 佐证仍会被纯转换器压回 inProgress；现转换器直接读取 candidate provenance，两条入口零差异。
 - P1: 已修复并验证——较早的 Desktop idle `activity-event` 可在较新的 App Server active 后因 read-state/inventory 重放再次撤销 `app-server-live`；现两种真实事件共享进程内单调 sequence，只有严格后到的 Desktop 非 active 才能撤销，并在 full inventory 中保留私有水位。
 - P1: 已修复——`codexNewThread` 只检查周额度归零且优先展示周读数，违反“任一已返回普通窗口为 0 即切 Spark”和普通 5 小时优先合同。
-- P1: 已修复——全局待输入动作直接使用源数组首项，绕过紧凑角标/任务循环的置顶优先显示顺序；现三者共用 Domain 排序函数，并由“后项置顶”反向合同锁定。
+- P1: 历史修复并由 RAW-149 细化——全局待输入曾直接使用源数组首项；当前两个专用 attention 入口改为跨来源 `statusEnteredAt DESC` 与持久化未打开进度，置顶比较器只保留给普通显示/通用循环。
 - P1: 已修复——正向 peer follower 状态公告被误当作请求再次回发，两个已加载旧实现的 EyPc follower 可互相放大控制消息并饿死 owner snapshot；现公告单向消费，只有显式 following-status request 才回复一次。
+- P1: 已修复——动态最近窗口原只看 Turn 活动，旧任务新出现审批会被时间窗漏掉；`taskActivityAt` 现同时纳入 `statusEnteredAt`，状态进入与解除都按同一状态时间重投影。
+- P1: 已修复——打开进度清理曾以“当前可打开 alias”代替“当前状态组成员”，临时 alias 不可用会误删历史；现成员清理与动作候选分离，只有权威离组/状态时间变化才淘汰实例。
+- P1: 已修复——跨 Provider 聚合只以可见外部任务生成待输入列表，却把外部完整计数直接相加，隐藏等待/未读会造成角标与动作集合不一致；现完整 attention 集合统一聚合后再生成计数和排序。
+- P1: 已修复——完整请求快照仅按方法与时间匹配会把同时存在、同方法且无时间的审批互换首次观测时间；现以进程随机盐散列有限请求标识作私有会话关联，原始标识与散列都不跨桥或持久化。
+- P1: 已修复——真实预检复制了审批属于 active 的旧 Presentation 谓词，无法发现待输入与进行中重复计数；现直接调用生产 `projectCodexDynamicStatus` 并断言两组 key 互斥。
 - P2: 已修复——3 条历史外观测试、3 个 Runtime 配色 Action 与 Controller 暂态覆盖仍携带 RAW-071 已废止的本地颜色/对比度/配对预览门禁。
 - P2: 已修复——MQTT media 正则对等价 CSS 换行敏感，Quick Jump 否定正则跨越函数边界命中后续合法 `app.hide`；两者均改为结构边界断言。
-- P2: 已修复——紧凑角标帮助/ARIA 未说明“打开第一条”，且测试把旧文案固化为成功；现输入/未读动作语义进入可见提示与 ARIA，并扫描清除旧断言。
+- P2: 历史修复并由 RAW-149 取代文案——紧凑角标帮助/ARIA 曾遗漏动作语义；当前输入/未读统一说明“最新优先，连续触发依次打开”，不再承诺永远打开第一条。
 - P2: 已修复——PROJECT_STATUS/PRD/Verify 对 persisted-decision、24 小时默认、最新测试基线与 8092 当前存活状态存在漂移；现区分历史证据、当前静态产物和未执行的真实宿主更新。
 - P2: 已修复——真实预检从仓库根直接执行单个 TypeScript 文件，无法加载生产 Domain 新增的相对值依赖；现用缓存式内存模块加载器按 importer 路径解析依赖。
 - P2: 旧 runtime/float `conversations` 别名仍保留一版兼容，待 v2 退役后删除。
 
 ## Not Checked
 
+- RAW-149 尚未在新构建的真实 uTools 中完成 permissions approval 新增→最新插队→打开原任务→拒绝/resolved 清除，也未完成多条待输入/完成未读的重载进度恢复。首次 UI 观察因 Mac 锁屏安全中断；运行 ASAR 仍为 v5，自动化与源码预检不能替代该门禁。
+- 当前执行上下文为 unrestricted filesystem + approval never，不能在本任务中自然制造非 Full Access 审批；未修改 Codex Access 或系统权限，也未代用户批准/拒绝任何请求。
 - RAW-148 未触碰 Preload、Bridge、入口或产物，故按影响轨迹未运行 build、镜像/语法、真实 Codex/uTools；这些不是本轮自动接纳条件。
 - RAW-147 已执行受影响的完整 Bridge 文件 `81/81`、精确变更快照的 `pnpm run typecheck` 与 production build、当前三份 main preload 镜像/语法/同步 IPC 检查、runtime validation、真实只读预检和有界真实 IPC；影响面没有触发整仓 Vitest 或 `pnpm run verify` 升级。当时并发 Claude fixture 的 `projectKey` 可选性错误阻断了整树复跑；该历史阻断在 RAW-148 当前整树 typecheck 中已不再出现，本轮仍未因无触发器而补跑 build。
 - 运行中的 uTools 尚未重载 RAW-147 产物；owner snapshot 与 active→普通输入/审批 waiting 的宿主切换仍未验收，自动化通过不能替代该门禁。

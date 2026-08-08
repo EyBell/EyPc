@@ -1,7 +1,7 @@
 # Codex 任务状态交接
 
 Tool: codex
-Date: 2026-08-07
+Date: 2026-08-08
 State: `automated-verified / host-pending`
 
 ## 当前结论
@@ -18,7 +18,7 @@ State: `automated-verified / host-pending`
 - Codex read-state 与已确认成功的插件 Host 打开共同构成当前会话未读权威；所有卡片/角标/快捷键仍只走共享打开动作，Electron 成功或 uTools 明确接受派发后立即发布会话期已读，失败/明确拒绝不改状态。旧 EyPc completion receipt 不再参与投影，也不写 Codex 原生状态。
 - Activity 来源已区分 connector、initial snapshot 与真实 patch；Turn 来源已区分 inventory、exact、targeted 和 corroborated。active-exit 转换器自身在 delta/full snapshot 两条入口识别 confirmed provenance，同 revision 完成不再因入口差异回到 ongoing。
 - 真实 activity patch 可以在旧 completed 元数据仍存在时立即开始新 active 周期；同轮精确 completed 仍立即完成。
-- 任务状态语义是 `task-state-v5`；v4/v3/v2/旧 preload 仅标记 degraded，不清空任务。v4 Plan-only 标记继续兼容，但普通 connector waiting 只有 v5 的 `persisted-decision` provenance 才能恢复为待输入。
+- 任务状态语义是 `task-state-v6`；v5/v4/v3/v2/旧 preload 仅标记 degraded，不清空任务。v4 Plan-only 与 v5 `persisted-decision` 继续兼容，但旧来源缺失状态时间时不会根据 Access 设置猜测审批。
 - `completionPresentationDelayMs` 已从当前设置类型、默认值和规范化输出移除；展示层无独立延迟。
 - 新会话 `quota-auto` 已按 RAW-046 收敛：任一实际返回的普通 5 小时/周窗口为 0 都切换最高可用 Spark；缺失窗口不等于 0，普通池读数优先正值 5 小时。
 - RAW-071 的旧配色格式/对比度/配对色域/暂态预览/回滚路径已从现行 Runtime 撤掉；测试、PRD、架构、Soul 和错误记忆统一为独立 token 直存直渲。
@@ -40,14 +40,16 @@ State: `automated-verified / host-pending`
 - RAW-143 证明快捷键慢不是项目列表本地判断，而是普通 mainHide 清空 App Server alias/latest-Turn cache 后反复全量重建。普通 `onPluginOut(false)` 现只隐藏窗口并保留热会话；kill、feature disable 与显式 Controller close 仍清理。Controller 并发 action preflight 只复用真正发布成功的 threads scan，Runner 首次/stale alias 才全量预检；热 task alias 打开新增库存 RPC 为 0。
 - RAW-144 进一步把任务物化与 Activity 订阅固定到 Codex 功能启用生命周期，离开页面/隐藏 Float 不再清缓存，额度仍按 surface 门控；Runner catalog 改为每项目增量新增/失效/单飞。已读确认现覆盖 uTools fallback，并用 preload 内部 Turn ID 区分 completion epoch：同一 Turn 的完成时间补全和旧 full snapshot 不会让已读复现，新 Turn 仍会重新进入未读。
 - RAW-145 在当前本机真实 Provider 数据上复现了跨层断点：Preload 恢复一条 connector waiting，但生产 Domain 投影为零条待输入；旧预检复制宽松算法而误报成功。v5 现用 `persisted-decision` 明确标记安全 rollout 输入/Plan 决定，贯通库存、Activity 与 Domain，并由精确新 Turn/active/completion 清除；普通 connector waiting 仍拒绝。首个修复后真实匿名预检收敛为 persisted waiting 1、产品 waiting 1；Provider 随后解除决定时最终复跑同步为 0、0，没有 sticky 反弹。
-- RAW-146 收口非宿主残留：Controller/Float 共用 Domain 置顶优先显示排序，全局待输入、紧凑角标与循环不再对同一完整集合选择不同首条；输入/未读的 200ms 帮助和 ARIA 明示“打开第一条”。反向测试覆盖源数组首项未置顶、后项置顶，旧文案断言已清除；canonical/过程文档同步 `persisted-decision`、默认 24 小时、最新 `752/752` 基线及当前 8092 未监听事实。
+- RAW-146 的置顶优先首条合同保留为历史证据；RAW-149 已取代待输入/完成未读两个专用入口的排序和打开方式。普通列表与通用前后循环仍使用其既有稳定比较器。
 - RAW-147 清除正向 follower 公告回声：`following=true` 只描述发送方 follower 状态并直接消费，只有显式 following-status request 才定向重报一次；`following=false` 的 owner 连续性规则保持不变。Bridge 新合同先 RED 后 GREEN且全文件 `81/81`，精确变更快照的 typecheck/production build、当前三份 Preload/运行时门禁与修复后的生产 Domain 真实预检通过；交付产物连接真实 broker 时出站 follow 保持有界。并发 Claude 改动后的当前整树 build 复跑被其测试夹具类型漂移阻断，未纳入本写集。当前运行 uTools 仍为 pre-RAW-147，必须重载后再验收 owner snapshot 与 active→waiting。
 - RAW-148 将 Codex Runtime 横幅、诊断表、兼容等待和启动帮助收敛到 `codexEnvironmentPresentation`；任务归属解析移除无效 enablement 参数，任务/项目 marker 均在 Float 行构造时只执行一次；启动路径 set/clear 直接发布 Host 返回快照，不再二次 inspect。RAW-022 与旧 Codex-only 兼容文案的冲突已按“数据/状态/额度兼容、归属标记始终显示”裁定并同步规则、PRD、架构、技术细节与既有错误记忆。
+- RAW-149 在私有 Desktop shadow 中精确识别命令执行、文件修改、权限申请、MCP elicitation、普通输入和 Plan 请求，使用请求时间或稳定首次观测时间，并在移除/resolved 后即时重算；公开边界只新增匿名 `waitingSince/statusEnteredAt`。审批与普通输入共同进入待输入，审批不再重复进入进行中。
+- 待输入与完成未读现跨 Provider 按状态出现时间倒序；置顶与 Provider 分组不能覆盖。两个专用入口持久化每组最多 200 个匿名状态实例的打开进度，新实例插队、随后续开旧未访问项，全部访问后回绕。Host 成功（含列表手动打开）才推进，失败不推进；任务离组或状态时间变化会清除旧实例。通用循环、本地置顶兜底、会话已读确认与“不代答审批”边界保持不变。
 - 提交收口把 stream-follow 回声固定到一个错误记忆主记录，并在 pending-request 依赖记录中加入更新引入；任务、项目状态、架构、技术细节、验证与错误索引已按同一协议语义同步。共享文件只允许暂存 RAW-147 hunks，并发 Claude 重构保持未提交。
 
 ## 验证
 
-详细命令、七项状态机修复、闭合矩阵与 RAW-132–148 增量合同见 [verify.md](verify.md#L1)。RAW-148 聚焦 Domain/Controller/UI `188/188` 与当前整树 typecheck 通过，RAW-147 当时的独立 Claude fixture 类型阻断已不是当前事实；本轮未触碰 Preload、Bridge 或构建入口，故未追加 build/镜像/真实宿主门禁。RAW-147 的 Bridge、构建、运行时、真实 Provider→Domain 与有界 IPC 证据继续有效。8092 当前未监听，运行 ASAR 仍为修复前 v5（pre-RAW-147）；本轮没有启动服务、更新 ASAR、重载或操作实际 uTools，后续宿主证据不得由源码自动化代替。
+详细历史与 RAW-149 增量合同见 [verify.md](verify.md#L1)。当前受影响 `8/8` 文件、`292/292` 测试、typecheck、production build、Preload 镜像/语法、runtime validation 与文档链接审计通过；真实只读预检已贯通 `task-state-v6` Provider→生产 Domain/Presentation，Desktop bridge connected、completeness verified，并验证待输入与 active 互斥。运行中 uTools ASAR 仍为 v5，首次 Computer Use 观察因 Mac 锁屏中断且未盲重试，因此“权限请求出现→打开原任务→请求解除清除”及重载遍历仍为 host-pending；会话证据见 [RAW-149 uTools 真机验收](../../../knowledge/computer-use/sessions/2026-08-08-raw-149-utools-host.md#L1)。
 
 ## 真实宿主验收
 
@@ -69,5 +71,7 @@ State: `automated-verified / host-pending`
 14. 准备一条完成规划但尚未开始实现的 Plan，确认无论是否已读都显示“需要输入”且不进入“已完成未读”；开始新 Turn 后立即解除。连续触发任务刷新和“查看已完成未读”快捷键，确认不存在先闪为未读再回到已读的中间帧。
 15. 连续触发待输入、完成未读、上一个/下一个任务及 Runner 快捷键；首次冷启动可有一次预检，随后普通 mainHide 往返应直接打开且无明显全量扫描等待。真实退出/重载后允许重新冷启动一次。
 16. 重载 v5 后复验用户截图中的同一 ownerless 任务：Codex 原生 `Needs input` 时 EyPc 必须为“需要输入”；回答后或开始精确新 Turn 时立即解除。再制造一条只有普通 connector waiting hint 的夹具/状态，确认仍保守“进行中”，不得因本修复扩大误报。
-17. 准备两条待输入任务，让较新的任务不置顶、较旧任务置顶；紧凑角标和全局待输入入口都必须打开同一置顶首条，鼠标/键盘说明读出“打开第一条”，不得切页或跳过首项。
+17. 准备多条跨 Codex/Claude 的待输入与完成未读任务，确认两个状态组严格按状态出现时间倒序，较旧置顶任务不得压过较新状态；连续入口按尚未打开实例遍历，提示读出“最新优先，连续触发依次打开”。
 18. 重载 RAW-147 构建后观察 IPC：正向 follower 公告不得产生回发，控制消息必须保持有界，并至少收到当前 owner 的状态 snapshot；随后让任务从 active 进入普通输入/审批等待，卡片与角标应实时进入待输入而不等待 15 秒完整校对。
+19. 在非 Full Access Codex 任务触发一个无落盘、最终拒绝的权限请求，确认命令/文件/权限/MCP 审批进入待输入、最新实例插队、入口打开原任务，拒绝/resolved 后同批从列表和角标消失；EyPc 全程不得代答。
+20. 验证 `1→2→3，新 6 到达→6→4→5`、同任务新状态重新未打开、失败不推进、列表手动成功推进、全部访问后回绕，并在 EyPc 正常重载后继续未访问进度。
