@@ -7,6 +7,8 @@ Documentation level: `standard requirement`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
+Review: [review.md](review.md#L1)
+Successor increment: [260807/1740-favorite-runner-console-sync-and-args/spec.md](../../260807/1740-favorite-runner-console-sync-and-args/spec.md#L1)（已批准未实现；其 `Requirement Change Review` 列出本合同被取代与被修改的条款。在那些条款落地前，本文件仍是生效合同。）
 
 ## Task Documentation Sync Group
 
@@ -73,9 +75,9 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
 
 - 文件/文件夹没有当前平台运行器时继续默认打开；存在配置时，双击、`Enter`、数字键和文件槽统一进入同一执行函数。
 - 每个平台独立保存 `background | terminal`、可执行程序、参数数组、目标目录/自定义目录和信任信息。可执行程序只能是绝对路径或 `PATH` 名称，工作目录必须是当前平台绝对路径。
-- 信任指纹覆盖平台、收藏 ID/类型/路径/名称及完整运行器配置。畸形旧配置保留用于修复，但解析失败或指纹不匹配时禁止执行。
-- 运行器编辑器只读写**当前宿主平台**那一份配置，不能在一台机器上预配其它平台，也不会覆盖或清除其它平台已保存的条目。三平台配置意味着在各自系统上分别配置一次。
-- 参数只做占位符替换，不解析命令行。后台启动使用独立进程、`shell:false`、忽略输出和隐藏控制台；Windows `.cmd/.bat` 禁止作为直接可执行程序，脚本建议改用显式 `cmd.exe` 参数。终端模式使用三平台受控适配器，PowerShell 不加 `Bypass`，终端缺失不回退。
+- 信任指纹覆盖平台、收藏 ID/类型/路径/名称及完整运行器配置。畸形旧配置保留用于修复，但解析失败或指纹不匹配时禁止执行。（`changed by successor D3`：名称将改为「仅当实际引用 `{name}` 时纳入」，并带一次性平滑迁移。）
+- 运行器编辑器只读写**当前宿主平台**那一份配置，不能在一台机器上预配其它平台，也不会覆盖或清除其它平台已保存的条目。三平台配置意味着在各自系统上分别配置一次。（`constrained by successor D2-4`：收藏可选择同步到其它机器，但「已信任」状态永不同步；落地机器首次执行前必须重新确认。）
+- 参数只做占位符替换，不解析命令行。后台启动使用独立进程、`shell:false`、忽略输出和隐藏控制台；Windows `.cmd/.bat` 禁止作为直接可执行程序，脚本建议改用显式 `cmd.exe` 参数。终端模式使用三平台受控适配器，PowerShell 不加 `Bypass`，终端缺失不回退。（`superseded by successor D4/D5`：「忽略输出」改为管道采集并汇入运行控制台，退出码必须可见；系统终端从主路径降为需要真 TTY 时的逃生舱。`shell:false`、detached、`windowsHide`、`.cmd/.bat` 拒绝与不回退语义均保持不变。`added by successor D6`：参数将支持声明式动态位，输入值作为单个 argv 元素且不参与占位符展开。）
 
 ### Slots and routing
 
@@ -116,7 +118,7 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
 | 2026-08-07 复核复跑 | 8 个 validator 文件 `256/257`；唯一失败的 MQTT 巨型用例以 `--testTimeout=30000` 单跑 passed（实测 5.43s，阈值问题非逻辑失败）。收藏侧等效全绿 | none |
 | MQTT 巨型用例阈值 | **不归属本增量**：`tests/runtime/action.test.ts` 的 `owns MQTT pane navigation…` 用例贴着 5s 默认阈值，随机变红并污染收藏回归跑。已暂停在本增量内处理 | 由 MQTT owner 拆分或单独放宽 timeout |
 | Host acceptance | not run | macOS、Windows、Linux 的文件/文件夹、后台/终端脚本、全局快捷键、重启与跨平台槽绑定 |
-| Linux 终端适配器（优先项） | not run | `x-terminal-emulator`/`konsole` 的 `-e`、`xfce4-terminal` 的 `-x` 在部分发行版只接受单条命令字符串；Linux 验收必须优先测「多参数 + 自定义工作目录」的终端模式脚本，确认参数未被截断且 cwd 正确（该分支不显式 `cd`，只继承 `spawn` 的 `cwd`） |
+| Linux 终端适配器 | not run | `x-terminal-emulator`/`konsole` 的 `-e`、`xfce4-terminal` 的 `-x` 在部分发行版只接受单条命令字符串；验收需测「多参数 + 自定义工作目录」的终端模式脚本，确认参数未被截断且 cwd 正确（该分支不显式 `cd`，只继承 `spawn` 的 `cwd`）。2026-08-07 后继增量把系统终端降为逃生舱、控制台成为主路径，因此该项由「优先项」降为常规项 |
 
 ## Review and Documentation Impact
 
