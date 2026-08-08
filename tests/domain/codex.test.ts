@@ -22,7 +22,7 @@ function thread(
   updatedAt: number,
   activeFlags: CodexHostThread['activeFlags'] = [],
   key = KEY,
-  evidence: Partial<Pick<CodexHostThread, 'createdAt' | 'firstPromptAt' | 'lastTurnStatus' | 'lastTurnStartedAt' | 'lastTurnCompletedAt' | 'lastTurnEvidence' | 'statusAuthority' | 'activityEvidence' | 'activityRevision' | 'desktopActiveSince' | 'hasUnreadTurn' | 'unreadAuthority' | 'planImplementationOnly'>> = {}
+  evidence: Partial<Pick<CodexHostThread, 'createdAt' | 'firstPromptAt' | 'lastTurnStatus' | 'lastTurnStartedAt' | 'lastTurnCompletedAt' | 'lastTurnEvidence' | 'statusAuthority' | 'activityEvidence' | 'activityRevision' | 'waitingSince' | 'desktopActiveSince' | 'hasUnreadTurn' | 'unreadAuthority' | 'planImplementationOnly'>> = {}
 ): CodexHostThread {
   return {
     key,
@@ -580,6 +580,52 @@ describe('Codex domain', () => {
     expect(rows.map((item) => item.key)).toEqual([keyAt(4), keyAt(0), keyAt(1), keyAt(3), keyAt(2)])
   })
 
+  it('orders only attention groups by status appearance time and includes approvals as input', () => {
+    const olderPinnedApproval = keyAt(61)
+    const newerInput = keyAt(62)
+    const olderCompletion = keyAt(63)
+    const newerCompletion = keyAt(64)
+    const result = projectConversations({
+      threads: [
+        thread('active', 9_900, ['waitingOnApproval'], olderPinnedApproval, {
+          waitingSince: 500,
+          lastTurnStatus: 'inProgress',
+          lastTurnStartedAt: 9_800
+        }),
+        thread('active', 1_000, ['waitingOnUserInput'], newerInput, {
+          waitingSince: 900,
+          lastTurnStatus: 'inProgress',
+          lastTurnStartedAt: 800
+        }),
+        thread('notLoaded', 9_700, [], olderCompletion, {
+          lastTurnStatus: 'completed',
+          lastTurnStartedAt: 9_600,
+          lastTurnCompletedAt: 600,
+          hasUnreadTurn: true,
+          unreadAuthority: 'desktop-live'
+        }),
+        thread('notLoaded', 700, [], newerCompletion, {
+          lastTurnStatus: 'completed',
+          lastTurnStartedAt: 650,
+          lastTurnCompletedAt: 950,
+          hasUnreadTurn: true,
+          unreadAuthority: 'desktop-live'
+        })
+      ],
+      receipts: [],
+      lastTaskScanAt: 1,
+      now: 10_000,
+      localPins: [{ kind: 'task', key: olderPinnedApproval }]
+    })
+
+    expect(result.snapshot.inputRequired.map((task) => task.key)).toEqual([newerInput, olderPinnedApproval])
+    expect(result.snapshot.inputRequired.map((task) => task.statusEnteredAt)).toEqual([900, 500])
+    expect(result.snapshot.completedUnread.map((task) => task.key)).toEqual([newerCompletion, olderCompletion])
+    expect(result.snapshot.completedUnread.map((task) => task.statusEnteredAt)).toEqual([950, 600])
+    expect(result.snapshot.inputRequiredCount).toBe(2)
+    expect(result.snapshot.ongoing[0].key).toBe(olderPinnedApproval)
+  })
+
   it('sorts every tab by latest Turn.startedAt and excludes rows without a Turn revision', () => {
     const hiddenOngoing = keyAt(1)
     const hiddenCompleted = keyAt(2)
@@ -803,6 +849,16 @@ describe('Codex domain', () => {
       taskAliases: [{ key: taskKey, alias: `  ${'a'.repeat(140)}  ` }, { key: 'raw-thread-id-with-hyphens', alias: 'reject' }],
       projectAliases: [{ key: projectKey, alias: '项目别名' }, { key: '/private/project', alias: 'reject' }],
       localPins: [{ kind: 'task', key: taskKey }, { kind: 'task', key: taskKey }, { kind: 'project', key: projectKey }],
+      attentionOpenHistory: [
+        { kind: 'input', key: '/private/request', statusEnteredAt: 1, openedAt: 1, body: 'secret' },
+        ...Array.from({ length: 205 }, (_, index) => ({
+          kind: 'input',
+          key: keyAt(100 + index),
+          statusEnteredAt: index + 1,
+          openedAt: index + 1,
+          requestId: `raw-${index}`
+        }))
+      ],
       hiddenProjectKeys: [projectKey, 'chats', '/private/project'],
       removedProjectKeys: [projectKey, 'chats', '/private/project'],
       removedProjectAbsentKeys: [projectKey]
@@ -813,6 +869,9 @@ describe('Codex domain', () => {
     expect(state.collapsedProjectKeys).toEqual([projectKey])
     expect(state.taskAliases).toEqual([{ key: taskKey, alias: 'a'.repeat(120) }])
     expect(state.projectAliases).toEqual([{ key: projectKey, alias: '项目别名' }])
+    expect(state.attentionOpenHistory).toHaveLength(200)
+    expect(state.attentionOpenHistory[0]).toEqual({ kind: 'input', key: keyAt(304), statusEnteredAt: 205, openedAt: 205 })
+    expect(JSON.stringify(state.attentionOpenHistory)).not.toContain('requestId')
     expect(state.localPins).toEqual([{ kind: 'task', key: taskKey }, { kind: 'project', key: projectKey }])
     expect(state.hiddenProjectKeys).toEqual([projectKey])
     expect(state).not.toHaveProperty('removedProjectKeys')

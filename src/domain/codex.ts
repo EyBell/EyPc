@@ -227,6 +227,8 @@ export interface CodexHostThread {
   /** Evidence provenance used to distinguish a replayed snapshot from a real later activity patch. */
   activityEvidence?: CodexActivityEvidenceOrigin
   activityRevision?: number
+  /** Latest appearance time of the currently unresolved input/approval request. */
+  waitingSince?: number
   /** @deprecated V2 transport compatibility only; never used for semantic ordering. */
   desktopActiveSince?: number
   /** Exact unread state owned by Codex Desktop, never an EyPc read receipt. */
@@ -293,7 +295,7 @@ export interface CodexPendingRecoverySnapshotV1 {
  * marked degraded, but its atomic task-state package is preserved rather than
  * being independently cleared by Controller or Renderer.
  */
-export const CODEX_TASK_STATE_REVISION = 'task-state-v5'
+export const CODEX_TASK_STATE_REVISION = 'task-state-v6'
 
 export interface CodexHostSnapshotV1 {
   version: 1
@@ -374,6 +376,8 @@ export interface CodexActivityDeltaEntryV2 {
   statusAuthority?: CodexStatusAuthority
   activityEvidence?: CodexActivityEvidenceOrigin
   activityRevision?: number
+  /** Latest appearance time of the currently unresolved input/approval request. */
+  waitingSince?: number
   /** @deprecated V2 transport compatibility only; never used for semantic ordering. */
   desktopActiveSince?: number
   hasUnreadTurn?: boolean
@@ -671,6 +675,17 @@ export interface CodexLocalPin {
   key: string
 }
 
+export type CodexAttentionKind = 'input' | 'completed-unread'
+
+export interface CodexAttentionOpenEntry {
+  kind: CodexAttentionKind
+  /** Anonymous task key; never a provider thread/session id. */
+  key: string
+  /** Identity of one concrete status instance. */
+  statusEnteredAt: number
+  openedAt: number
+}
+
 export interface CodexState {
   settings: CodexSettings
   receipts: CodexThreadReceipt[]
@@ -683,6 +698,8 @@ export interface CodexState {
   taskAliases: CodexAliasEntry[]
   projectAliases: CodexAliasEntry[]
   localPins: CodexLocalPin[]
+  /** Bounded anonymous progress for the two attention shortcuts. */
+  attentionOpenHistory: CodexAttentionOpenEntry[]
   /** Local presentation state: hides only the Projects-tab group. */
   hiddenProjectKeys: string[]
 }
@@ -704,6 +721,8 @@ export interface CodexTaskCard {
   revisionAt: number
   /** Privacy-safe persisted completion watermark, never turn content. */
   completionRevision?: number
+  /** Appearance time of the current attention state, not general task recency. */
+  statusEnteredAt?: number
   unreadState?: 'unread' | 'read' | 'unknown'
   /** Latest Turn.startedAt; this is the only field used as “last question time”. */
   lastQuestionAt?: number
@@ -1430,6 +1449,32 @@ export function normalizeCodexReceipts(value: unknown): CodexThreadReceipt[] {
     .sort((a, b) => Math.max(b.pendingRecency, b.acknowledgedRecency, b.dismissedActivityRecency || 0, b.hiddenPendingRecency || 0) - Math.max(a.pendingRecency, a.acknowledgedRecency, a.dismissedActivityRecency || 0, a.hiddenPendingRecency || 0))
 }
 
+export function normalizeCodexAttentionOpenHistory(value: unknown): CodexAttentionOpenEntry[] {
+  if (!Array.isArray(value)) return []
+  const byInstance = new Map<string, CodexAttentionOpenEntry>()
+  for (const item of value) {
+    const source = record(item)
+    const kind = source.kind === 'input' || source.kind === 'completed-unread' ? source.kind : ''
+    const key = typeof source.key === 'string' ? source.key.toLowerCase() : ''
+    const statusEnteredAt = numberValue(source.statusEnteredAt, 0)
+    const openedAt = numberValue(source.openedAt, 0)
+    if (!kind || !RECEIPT_KEY.test(key) || statusEnteredAt <= 0 || openedAt <= 0) continue
+    const entry: CodexAttentionOpenEntry = { kind, key, statusEnteredAt, openedAt }
+    const instanceKey = `${kind}:${key}:${statusEnteredAt}`
+    const previous = byInstance.get(instanceKey)
+    if (!previous || entry.openedAt > previous.openedAt) byInstance.set(instanceKey, entry)
+  }
+  const perKind = new Map<CodexAttentionKind, number>()
+  return [...byInstance.values()]
+    .sort((a, b) => b.openedAt - a.openedAt || a.key.localeCompare(b.key))
+    .filter((entry) => {
+      const count = perKind.get(entry.kind) || 0
+      if (count >= 200) return false
+      perKind.set(entry.kind, count + 1)
+      return true
+    })
+}
+
 export function createDefaultCodexState(): CodexState {
   return {
     settings: defaultCodexSettings(),
@@ -1443,6 +1488,7 @@ export function createDefaultCodexState(): CodexState {
     taskAliases: [],
     projectAliases: [],
     localPins: [],
+    attentionOpenHistory: [],
     hiddenProjectKeys: []
   }
 }
@@ -1461,6 +1507,7 @@ export function normalizeCodexState(value: unknown): CodexState {
     taskAliases: normalizeCodexAliases(source.taskAliases),
     projectAliases: normalizeCodexAliases(source.projectAliases, true),
     localPins: normalizeCodexLocalPins(source.localPins),
+    attentionOpenHistory: normalizeCodexAttentionOpenHistory(source.attentionOpenHistory),
     hiddenProjectKeys: normalizeAnonymousKeys(source.hiddenProjectKeys, 200, true).filter((key) => key !== 'chats')
   }
 }
@@ -1562,6 +1609,22 @@ export function compareConversationTasks(a: CodexTaskCard, b: CodexTaskCard): nu
   return a.key.localeCompare(b.key)
 }
 
+export function codexTaskStatusEnteredAt(task: Pick<CodexTaskCard, 'statusEnteredAt' | 'completionRevision' | 'lastTurnStartedAt' | 'updatedAt'>): number {
+  return numberValue(task.statusEnteredAt, 0)
+    || numberValue(task.completionRevision, 0)
+    || numberValue(task.lastTurnStartedAt, 0)
+    || numberValue(task.updatedAt, 0)
+}
+
+export function compareCodexAttentionTasks(a: CodexTaskCard, b: CodexTaskCard): number {
+  const delta = codexTaskStatusEnteredAt(b) - codexTaskStatusEnteredAt(a)
+  return delta || a.key.localeCompare(b.key)
+}
+
+export function orderCodexAttentionTasks(tasks: readonly CodexTaskCard[]): CodexTaskCard[] {
+  return [...tasks].sort(compareCodexAttentionTasks)
+}
+
 /** True for a task key owned by a provider other than Codex. */
 export function isForeignCompanionKey(key: string): boolean {
   return FOREIGN_KEY.test(typeof key === 'string' ? key : '')
@@ -1597,7 +1660,7 @@ export function countConversationTasks(
     runningCount,
     unknownCount,
     attentionCount,
-    inputRequiredCount: [...ongoing, ...hidden].filter((task) => task.activityState === 'waiting-input').length,
+    inputRequiredCount: [...ongoing, ...hidden].filter((task) => task.activityState === 'waiting-input' || task.activityState === 'waiting-approval').length,
     completedUnreadCount: completedUnread.length + hiddenUnreadCount,
     completedCount: completed.length,
     pendingCount: completedUnread.length + hiddenUnreadCount,
@@ -1736,6 +1799,11 @@ export function projectConversations(input: {
       archiveCapability,
       revisionAt,
       ...(completionRevision ? { completionRevision } : {}),
+      ...((activityState === 'waiting-input' || activityState === 'waiting-approval')
+        ? { statusEnteredAt: numberValue(thread.waitingSince, 0) || numberValue(thread.lastTurnStartedAt, 0) || thread.updatedAt }
+        : bucket === 'completed-unread' && completionRevision
+          ? { statusEnteredAt: completionRevision }
+          : {}),
       ...(completionRevision ? { unreadState: unreadKnown ? unread ? 'unread' : 'read' : 'unknown' } : {}),
       state: legacyTaskState(bucket, activityState),
       ...(authoritativeActive ? { activeFlags: [...thread.activeFlags] } : {}),
@@ -1762,12 +1830,12 @@ export function projectConversations(input: {
 
   ongoing.sort(compareConversationTasks)
   stopped.sort(compareConversationTasks)
-  completedUnread.sort(compareConversationTasks)
+  completedUnread.sort(compareCodexAttentionTasks)
   completed.sort(compareConversationTasks)
   hidden.sort(compareConversationTasks)
   const all = [...ongoing, ...stopped, ...completedUnread, ...completed, ...hidden].sort(compareConversationTasks)
-  const inputRequired = all.filter((task) => task.activityState === 'waiting-input')
-  const completedTab = [...completedUnread, ...completed].sort(compareConversationTasks)
+  const inputRequired = orderCodexAttentionTasks(all.filter((task) => task.activityState === 'waiting-input' || task.activityState === 'waiting-approval'))
+  const completedTab = [...completedUnread, ...completed]
 
   const sourceProjects = [...new Map((input.projects || [])
     .filter((project) => PROJECT_KEY.test(project.key))

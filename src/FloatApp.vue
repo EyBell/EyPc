@@ -58,7 +58,7 @@ import type {
   CodexResolvedNewThreadModel,
   CodexTaskCard
 } from './domain/codex'
-import { normalizeCodexQuota, orderCodexTasksForDisplay } from './domain/codex'
+import { normalizeCodexQuota, orderCodexAttentionTasks, orderCodexTasksForDisplay } from './domain/codex'
 import { companionTaskProvider, type CompanionProviderId } from './domain/companionProvider'
 import type { CodexFloatResizeCorner, CodexFloatWindowState } from './float-env'
 import type { CodexFloatSnapshotV1 } from './runtime/codexController'
@@ -392,7 +392,10 @@ const renderRows = computed<RenderRow[]>(() => {
       { key: 'completed', title: '已完成', tone: 'completed' as const, tasks: statusGroups.completed }
     ]
     return groups.flatMap((group): RenderRow[] => {
-      const tasks = displayOrderedTasks(group.tasks.filter((task) => taskMatched(task)))
+      const matched = group.tasks.filter((task) => taskMatched(task))
+      const tasks = group.key === 'input' || group.key === 'unread'
+        ? orderCodexAttentionTasks(matched)
+        : displayOrderedTasks(matched)
       if (!tasks.length) return []
       return [
         { kind: 'status-section', key: `status:${group.key}`, title: group.title, count: tasks.length, tone: group.tone },
@@ -402,7 +405,8 @@ const renderRows = computed<RenderRow[]>(() => {
   }
 
   if (selectedUiTab.value === 'completed') {
-    const tasks = displayOrderedTasks([...value.completedUnread, ...value.completed].filter((task) => taskMatched(task)))
+    const unread = orderCodexAttentionTasks(value.completedUnread.filter((task) => taskMatched(task)))
+    const tasks = [...unread, ...displayOrderedTasks(value.completed.filter((task) => taskMatched(task)))]
     return tasks.map((task) => addTaskRow(task))
   }
 
@@ -1165,9 +1169,9 @@ function onCompactClick(event: MouseEvent) {
 
 function compactCounterHint(kind: 'input' | 'active' | 'unread') {
   const count = compactCounts.value[kind]
-  if (kind === 'input') return `待输入 ${count} · 打开第一条`
+  if (kind === 'input') return `待输入 ${count} · 最新优先，连续触发依次打开`
   if (kind === 'active') return `进行中 ${count}`
-  return `未读 ${count} · 打开第一条`
+  return `未读 ${count} · 最新优先，连续触发依次打开`
 }
 
 function queueCompactCounterHint(event: Event, kind: 'input' | 'active' | 'unread') {
@@ -1186,12 +1190,6 @@ function clearCompactCounterHint() {
   compactCounterHintText.value = ''
 }
 
-function compactCounterTasks() {
-  const value = conversations.value
-  if (!value) return []
-  return displayOrderedTasks(value.inputRequired)
-}
-
 function openCompactStatus(kind: 'input' | 'active' | 'unread') {
   if (kind === 'active') {
     requestExpansion(true)
@@ -1201,8 +1199,7 @@ function openCompactStatus(kind: 'input' | 'active' | 'unread') {
     action('codex.completed-unread.openFirst')
     return
   }
-  const task = compactCounterTasks()[0]
-  if (task) openTask(task)
+  action('codex.input.open')
 }
 
 function openTask(task: CodexTaskCard) {

@@ -7,17 +7,20 @@ import {
   isCodexConfirmedTerminalEvidence,
   isCodexTaskTab,
   normalizeCodexActivityDecisionDiagnostics,
+  normalizeCodexAttentionOpenHistory,
   normalizeCodexConfig,
   normalizeCodexEnvironment,
   normalizeCodexFirstPromptTimes,
   normalizeCodexQuota,
   normalizeCodexSettings,
   normalizeCodexVisibleTaskTab,
+  orderCodexAttentionTasks,
   projectConversations,
   restoreCodexThread,
   sameCodexActivityDecisionDiagnostics,
   CODEX_TASK_STATE_REVISION,
   type CodexActivityDelta,
+  type CodexAttentionKind,
   type CodexActivityDecisionDiagnostics,
   type CodexActivityDeltaEntryV2,
   type CodexConfigSnapshotV1,
@@ -322,6 +325,7 @@ function hasSameActivityState(previous: CodexHostThread, next: CodexHostThread):
     && previous.statusAuthority === next.statusAuthority
     && previous.activityEvidence === next.activityEvidence
     && previous.activityRevision === next.activityRevision
+    && previous.waitingSince === next.waitingSince
     && previous.desktopActiveSince === next.desktopActiveSince
     && previous.hasUnreadTurn === next.hasUnreadTurn
     && previous.unreadAuthority === next.unreadAuthority
@@ -409,6 +413,8 @@ export function createCodexController(options: CodexControllerOptions) {
   let activityInFlight: Promise<void> | null = null
   const archivingKeys = new Set<string>()
   let directTaskCommandQueue: Promise<void> = Promise.resolve()
+  const attentionCommandQueue: CodexAttentionKind[] = []
+  let attentionCommandInFlight = false
   let stopActivityListener: (() => void) | null = null
   let stopClaudeQuotaLifecycleListener: (() => void) | null = null
   let activityFailureCount = 0
@@ -579,6 +585,9 @@ export function createCodexController(options: CodexControllerOptions) {
       now,
       dynamicTaskWindowHours: codexState().settings.dynamicTaskWindowHours
     })
+    if (lastCompleteness === 'verified' || claudeCodeSessions.length > 0) {
+      pruneAttentionOpenHistory(true)
+    }
     if (started && !disposed && !actionPreflightInFlight && shouldRun()) schedule()
   }
 
@@ -1326,11 +1335,16 @@ export function createCodexController(options: CodexControllerOptions) {
               ...(liveEntry?.statusAuthority ? { statusAuthority: liveEntry.statusAuthority } : {}),
               ...(liveEntry?.activityEvidence ? { activityEvidence: liveEntry.activityEvidence } : {}),
               ...(Number.isInteger(liveEntry?.activityRevision) ? { activityRevision: liveEntry!.activityRevision } : {}),
+              ...(Number.isFinite(liveEntry?.waitingSince) && liveEntry!.waitingSince! > 0 ? { waitingSince: liveEntry!.waitingSince } : {}),
               ...(typeof liveEntry?.hasUnreadTurn === 'boolean' ? { hasUnreadTurn: liveEntry.hasUnreadTurn } : {}),
               ...(liveEntry?.unreadAuthority ? { unreadAuthority: liveEntry.unreadAuthority } : {})
             }
         : { ...thread, status: entry.status || thread.status, activeFlags, planImplementationOnly: false, statusAuthority: 'connector' as const }) as CodexHostThread
       if (delta.version === 2 && !readStateOnly && liveEntry?.status) {
+        if (liveEntry.status !== 'active'
+          || !activeFlags.some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
+          || !Number.isFinite(liveEntry.waitingSince)
+          || liveEntry.waitingSince! <= 0) delete next.waitingSince
         if (liveEntry.status === 'active' && Number.isFinite(liveEntry.desktopActiveSince) && liveEntry.desktopActiveSince! > 0) {
           next.desktopActiveSince = liveEntry.desktopActiveSince!
         } else if (liveEntry.status !== 'active') {
@@ -1998,6 +2012,70 @@ export function createCodexController(options: CodexControllerOptions) {
       : [...conversations.ongoing, ...conversations.completedUnread, ...conversations.completed, ...conversations.hidden]
   }
 
+  function attentionGroupTasks(kind: CodexAttentionKind): CodexTaskCard[] {
+    const candidates = kind === 'input'
+      ? taskState.conversations.inputRequired
+      : allTasks().filter((task) => task.bucket === 'completed-unread')
+    return orderCodexAttentionTasks(candidates)
+  }
+
+  function attentionCandidates(kind: CodexAttentionKind): Array<CodexTaskCard & { actionAlias: string }> {
+    return attentionGroupTasks(kind)
+      .filter((task): task is CodexTaskCard & { actionAlias: string } => Boolean(task.actionAlias))
+  }
+
+  function attentionInstanceKey(kind: CodexAttentionKind, task: CodexTaskCard): string {
+    const enteredAt = task.statusEnteredAt || task.completionRevision || task.lastTurnStartedAt || task.updatedAt || 0
+    return enteredAt > 0 ? `${kind}:${task.key}:${enteredAt}` : ''
+  }
+
+  function pruneAttentionOpenHistory(persist = false): boolean {
+    const state = codexState()
+    const valid = new Set<string>()
+    for (const kind of ['input', 'completed-unread'] as const) {
+      for (const task of attentionGroupTasks(kind)) {
+        const instance = attentionInstanceKey(kind, task)
+        if (instance) valid.add(instance)
+      }
+    }
+    const previous = state.attentionOpenHistory || []
+    const next = normalizeCodexAttentionOpenHistory(previous.filter((entry) => valid.has(`${entry.kind}:${entry.key}:${entry.statusEnteredAt}`)))
+    const changed = next.length !== previous.length
+      || next.some((entry, index) => JSON.stringify(entry) !== JSON.stringify(previous[index]))
+    if (!changed) return false
+    state.attentionOpenHistory = next
+    if (persist) options.save()
+    return true
+  }
+
+  function recordAttentionOpen(taskKey: string, resetKind?: CodexAttentionKind) {
+    const state = codexState()
+    const task = allTasks().find((candidate) => candidate.key === taskKey)
+    const kind = task?.bucket === 'completed-unread'
+      ? 'completed-unread' as const
+      : task && (task.activityState === 'waiting-input' || task.activityState === 'waiting-approval')
+        ? 'input' as const
+        : null
+    const base = resetKind
+      ? (state.attentionOpenHistory || []).filter((entry) => entry.kind !== resetKind)
+      : state.attentionOpenHistory || []
+    if (!task || !kind) {
+      if (resetKind && base.length !== (state.attentionOpenHistory || []).length) {
+        state.attentionOpenHistory = normalizeCodexAttentionOpenHistory(base)
+        options.save()
+      }
+      return
+    }
+    const statusEnteredAt = task.statusEnteredAt || task.completionRevision || task.lastTurnStartedAt || task.updatedAt || 0
+    if (!statusEnteredAt) return
+    state.attentionOpenHistory = normalizeCodexAttentionOpenHistory([
+      { kind, key: task.key, statusEnteredAt, openedAt: Date.now() },
+      ...base
+    ])
+    pruneAttentionOpenHistory(false)
+    options.save()
+  }
+
   function pinnedTaskKeys(): string[] {
     const pinned = taskState.conversations.projectSections.find((section) => section.id === 'pinned')
     return (pinned?.entries || [])
@@ -2007,8 +2085,8 @@ export function createCodexController(options: CodexControllerOptions) {
 
   /**
    * Cycle order: the same base comparator with a provider group as primary key.
-   * Task cycling and every direct-open command consume this projection so the
-   * task a shortcut opens is always the task the cycle would land on.
+   * Generic previous/next consume this projection. The two attention shortcuts
+   * intentionally use status-entry time plus persisted unseen progress.
    */
   function cycleOrderedTasks(tasks: CodexTaskCard[]): CodexTaskCard[] {
     return orderCompanionTasksForCycle(tasks, pinnedTaskKeys())
@@ -2178,10 +2256,12 @@ export function createCodexController(options: CodexControllerOptions) {
     return dispatched
   }
 
-  async function openThread(key: string, actionAlias: string) {
+  async function openThread(key: string, actionAlias: string, resetAttentionKind?: CodexAttentionKind) {
     if (!key || !actionAlias || disposed || !isFeatureEnabled()) return false
     if (companionTaskProvider({ provider: allTasks().find((item) => item.key === key)?.provider }) === 'claude') {
-      return openClaudeTask(key, actionAlias)
+      const opened = await openClaudeTask(key, actionAlias)
+      if (opened) recordAttentionOpen(key, resetAttentionKind)
+      return opened
     }
     let task = allTasks().find((item) => item.key === key && item.actionAlias === actionAlias)
     if (!task) {
@@ -2210,10 +2290,13 @@ export function createCodexController(options: CodexControllerOptions) {
       } else {
         options.setMessage('已打开 Codex 任务')
       }
+      recordAttentionOpen(key, resetAttentionKind)
       return true
     }
     options.setMessage(result.message || (result.outcome === 'dispatched' ? '已交给系统打开' : 'Codex 任务打开失败'))
-    return result.outcome === 'dispatched'
+    const dispatched = result.outcome === 'dispatched'
+    if (dispatched) recordAttentionOpen(key, resetAttentionKind)
+    return dispatched
   }
 
   function firstLocalPinnedOpenableTask() {
@@ -2226,26 +2309,57 @@ export function createCodexController(options: CodexControllerOptions) {
     return null
   }
 
+  async function openAttentionFromCurrentInventory(kind: CodexAttentionKind) {
+    pruneAttentionOpenHistory(false)
+    const candidates = attentionCandidates(kind)
+    if (!candidates.length) {
+      if (kind === 'input') {
+        const fallback = firstLocalPinnedOpenableTask()
+        if (fallback) return openThread(fallback.key, fallback.actionAlias)
+      }
+      options.setMessage(kind === 'input' ? '当前没有待输入任务' : '当前没有已完成未读任务')
+      return false
+    }
+    const openedInstances = new Set((codexState().attentionOpenHistory || [])
+      .filter((entry) => entry.kind === kind)
+      .map((entry) => `${entry.kind}:${entry.key}:${entry.statusEnteredAt}`))
+    const unseen = candidates.find((task) => !openedInstances.has(attentionInstanceKey(kind, task)))
+    const task = unseen || candidates[0]
+    return openThread(task.key, task.actionAlias, unseen ? undefined : kind)
+  }
+
+  function queueAttentionCommand(kind: CodexAttentionKind) {
+    attentionCommandQueue.push(kind)
+    if (attentionCommandInFlight) return
+    attentionCommandInFlight = true
+    void (async () => {
+      try {
+        while (attentionCommandQueue.length) {
+          const nextKind = attentionCommandQueue.shift()!
+          if (disposed || !isFeatureEnabled()) continue
+          await openAttentionFromCurrentInventory(nextKind)
+        }
+      } finally {
+        attentionCommandInFlight = false
+      }
+    })()
+  }
+
   function openFirstInputFromCurrentInventory() {
-    const waiting = cycleOrderedTasks(taskState.conversations.inputRequired).find((task) => Boolean(task.actionAlias))
-    const task = waiting?.actionAlias
-      ? waiting as CodexTaskCard & { actionAlias: string }
-      : firstLocalPinnedOpenableTask()
-    if (!task?.actionAlias) {
+    if (!attentionCandidates('input').length && !firstLocalPinnedOpenableTask()) {
       options.setMessage('当前没有待输入任务')
       return false
     }
-    void openThread(task.key, task.actionAlias)
+    queueAttentionCommand('input')
     return true
   }
 
   function openFirstCompletedUnreadFromCurrentInventory() {
-    const task = cycleOrderedTasks(allTasks().filter((item) => item.bucket === 'completed-unread'))[0]
-    if (!task?.actionAlias) {
+    if (!attentionCandidates('completed-unread').length) {
       options.setMessage('当前没有已完成未读任务')
       return false
     }
-    void openThread(task.key, task.actionAlias)
+    queueAttentionCommand('completed-unread')
     return true
   }
 
@@ -2310,11 +2424,11 @@ export function createCodexController(options: CodexControllerOptions) {
     }
     const tiers = [
       cycleOrderedTasks([
-        ...inputRequiredTasks.filter((task) => task.planImplementationOnly !== true),
-        ...cycleOrderedTasks(recentActiveTasks.filter((task) => task.activityState === 'waiting-approval'))
+        ...inputRequiredTasks.filter((task) => task.planImplementationOnly !== true && task.activityState !== 'waiting-approval'),
+        ...inputRequiredTasks.filter((task) => task.planImplementationOnly !== true && task.activityState === 'waiting-approval')
       ]),
       inputRequiredTasks.filter((task) => task.planImplementationOnly === true),
-      cycleOrderedTasks(recentActiveTasks.filter((task) => task.activityState !== 'waiting-approval'))
+      cycleOrderedTasks(recentActiveTasks)
     ]
     for (const tier of tiers) {
       const candidates = usableTasks(tier)

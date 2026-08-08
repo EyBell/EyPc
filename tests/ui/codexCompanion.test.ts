@@ -761,12 +761,12 @@ describe('Codex Companion V3 UI contract', () => {
     const input = wrapper.get('.float-counter.input')
     const active = wrapper.get('.float-counter.active')
     const unread = wrapper.get('.float-counter.unread')
-    expect(input.attributes('aria-label')).toBe('待输入 1 · 打开第一条')
+    expect(input.attributes('aria-label')).toBe('待输入 1 · 最新优先，连续触发依次打开')
     expect(active.attributes('aria-label')).toBe('进行中 1')
-    expect(unread.attributes('aria-label')).toBe('未读 1 · 打开第一条')
+    expect(unread.attributes('aria-label')).toBe('未读 1 · 最新优先，连续触发依次打开')
 
     await input.trigger('click')
-    expect(action).toHaveBeenCalledWith('codex.task.open', expect.objectContaining({ key: TASK_INPUT }))
+    expect(action).toHaveBeenCalledWith('codex.input.open', {})
     expect(setExpansion).not.toHaveBeenCalledWith(true, false)
 
     await input.trigger('pointerenter', { pointerType: 'touch' })
@@ -775,9 +775,9 @@ describe('Codex Companion V3 UI contract', () => {
     expect(wrapper.find('.float-compact-counter-hint').exists()).toBe(false)
 
     for (const [counter, label] of [
-      [input, '待输入 1 · 打开第一条'],
+      [input, '待输入 1 · 最新优先，连续触发依次打开'],
       [active, '进行中 1'],
-      [unread, '未读 1 · 打开第一条']
+      [unread, '未读 1 · 最新优先，连续触发依次打开']
     ] as const) {
       await counter.trigger('pointerenter', { pointerType: 'mouse' })
       vi.advanceTimersByTime(199)
@@ -793,7 +793,7 @@ describe('Codex Companion V3 UI contract', () => {
     await unread.trigger('focus')
     vi.advanceTimersByTime(200)
     await wrapper.vm.$nextTick()
-    expect(wrapper.get('.float-compact-counter-hint').text()).toBe('未读 1 · 打开第一条')
+    expect(wrapper.get('.float-compact-counter-hint').text()).toBe('未读 1 · 最新优先，连续触发依次打开')
     await unread.trigger('blur')
     expect(wrapper.find('.float-compact-counter-hint').exists()).toBe(false)
     expect(action).not.toHaveBeenCalledWith('codex.tab.set', { tab: 'input' })

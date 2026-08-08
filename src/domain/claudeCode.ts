@@ -279,6 +279,13 @@ export function projectClaudeCodeTaskCard(
   const completedAt = resolved.phase === 'completed'
     ? observation.lastStopAt || observation.phaseUpdatedAt || observation.metadataUpdatedAt || observation.lastActivityAt
     : 0
+  const statusEnteredAt = resolved.phase === 'waiting-approval'
+    ? observation.waitingApprovalAt || observation.phaseUpdatedAt || updatedAt
+    : resolved.phase === 'waiting-input'
+      ? observation.waitingInputAt || observation.phaseUpdatedAt || updatedAt
+      : resolved.bucket === 'completed-unread'
+        ? completedAt
+        : 0
   return {
     key,
     actionAlias: observation.sessionId,
@@ -291,6 +298,8 @@ export function projectClaudeCodeTaskCard(
     archiveCapability: resolved.archiveCapability,
     revisionAt: completedAt || updatedAt,
     ...(completedAt ? { completionRevision: completedAt, lastTurnCompletedAt: completedAt } : {}),
+    ...(statusEnteredAt ? { statusEnteredAt } : {}),
+    ...(resolved.bucket === 'completed-unread' && completedAt ? { pendingSince: completedAt } : {}),
     unreadState: resolved.unreadState,
     state: resolved.phase === 'waiting-approval'
       ? 'waiting-approval'

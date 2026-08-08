@@ -156,9 +156,27 @@ describe('merging a second provider', () => {
     expect(merged.ongoingCount).toBe(5)
     expect(merged.runningCount).toBe(2)
     expect(merged.waitingCount).toBe(3)
-    expect(merged.inputRequiredCount).toBe(2)
+    expect(merged.inputRequiredCount).toBe(3)
     expect(merged.completedUnreadCount).toBe(2)
     expect(merged.pendingCount).toBe(merged.completedUnreadCount)
+  })
+
+  it('globally orders input and unread status instances by appearance time across providers', () => {
+    const snapshot = codexSnapshot()
+    const oldInput = card('codex:old-input', { activityState: 'waiting-input', statusEnteredAt: 100 })
+    const oldUnread = card('codex:old-unread', { bucket: 'completed-unread', activityState: 'ongoing', statusEnteredAt: 200 })
+    snapshot.ongoing = [oldInput]
+    snapshot.inputRequired = [oldInput]
+    snapshot.completedUnread = [oldUnread]
+    snapshot.pending = snapshot.completedUnread
+    snapshot.all = [oldInput, oldUnread]
+    const merged = mergeCompanionConversations(snapshot, [
+      card('claude:new-input', { provider: 'claude', activityState: 'waiting-approval', statusEnteredAt: 400 }),
+      card('claude:new-unread', { provider: 'claude', bucket: 'completed-unread', activityState: 'ongoing', statusEnteredAt: 500 })
+    ])
+
+    expect(keys(merged.inputRequired)).toEqual(['claude:new-input', 'codex:old-input'])
+    expect(keys(merged.completedUnread)).toEqual(['claude:new-unread', 'codex:old-unread'])
   })
 
   it('is idempotent, so a re-published snapshot cannot double count', () => {
@@ -177,7 +195,7 @@ describe('merging a second provider', () => {
     expect(keys(merged.hidden)).toEqual(['claude:h1', 'claude:h2'])
     expect(keys(merged.ongoing)).toEqual(['c1', 'c2'])
     expect(merged.hiddenCount).toBe(2)
-    expect(merged.completedUnreadCount).toBe(1)
+    expect(merged.completedUnreadCount).toBe(2)
   })
 
   it('counts a hidden waiting task in the input-required total, matching the codex contract', () => {
@@ -185,7 +203,7 @@ describe('merging a second provider', () => {
       card('claude:h1', { provider: 'claude', isHidden: true, activityState: 'waiting-input' })
     ])
     expect(merged.inputRequiredCount).toBe(2)
-    expect(keys(merged.inputRequired)).toEqual(['c2'])
+    expect(keys(merged.inputRequired)).toEqual(['c2', 'claude:h1'])
   })
 
   it('does not mutate the source snapshot', () => {
