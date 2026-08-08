@@ -409,6 +409,46 @@ describe('Codex Companion V3 UI contract', () => {
     expect(claudeOnlyProject.get('.action-pin').attributes('aria-disabled')).toBe('true')
   })
 
+  it('offers an accessible true-sync action only for a Claude task', async () => {
+    const source = floatSnapshot('projects')
+    const seed = source.conversations.all.find((task) => task.key === TASK_FAILED)!
+    const actionAlias = 'local_11111111-1111-4111-8111-111111111111'
+    source.conversations = mergeCompanionConversations(source.conversations, [{
+      ...seed,
+      key: 'claude:sync-task',
+      actionAlias,
+      name: 'Claude sync task',
+      originalName: 'Claude sync task',
+      provider: 'claude',
+      projectKey: PROJECT_A,
+      projectName: 'CodeNote',
+      originalProjectName: 'CodeNote',
+      canArchive: false,
+      claudePhase: 'completed'
+    }])
+    source.companion = {
+      providers: { codex: true, claude: true },
+      claudeQuota: normalizeClaudeQuota(null),
+      claudeEnvironment: emptyClaudeEnvironment()
+    }
+    refreshTaskState(source)
+    const { wrapper, action } = mountFloat(true, source)
+    await wrapper.vm.$nextTick()
+
+    await wrapper.get('[data-focus-key="task:claude:sync-task"]').trigger('contextmenu')
+    const sync = wrapper.get('[data-drawer-action-id="task-claude-sync"]')
+    expect(sync.attributes('aria-label')).toBe('同步 Claude 状态')
+    await sync.trigger('click')
+    expect(action).toHaveBeenCalledWith('codex.claude.task.sync', {
+      key: 'claude:sync-task',
+      actionAlias
+    })
+
+    await wrapper.get('.float-side-panel [aria-label="关闭"]').trigger('click')
+    await wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`).trigger('contextmenu')
+    expect(wrapper.find('[data-drawer-action-id="task-claude-sync"]').exists()).toBe(false)
+  })
+
   it('uses 8% normal and 12% hover provider tints with forced-colors fallbacks', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/styles/float.css'), 'utf8')
     expect(css).toContain('var(--codex-quota-codex) 8%')

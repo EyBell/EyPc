@@ -76,8 +76,11 @@ function harness(options: HarnessOptions = {}) {
   let stateGenerationOverride: number | null = null
   let throwState = false
   let throwCode = options.throwCode === true
+  let throwUnread = options.throwUnread === true
   let codeAvailable = options.codeAvailable !== false
   let codeReadGate: Promise<void> | null = null
+  let stateReadGate: Promise<void> | null = null
+  let unreadReadGate: Promise<void> | null = null
   const state = createInitialState(1)
   state.activeTab = 'codex'
   state.codex.settings.floatEnabled = true
@@ -137,6 +140,7 @@ function harness(options: HarnessOptions = {}) {
     readCodeStateSnapshot: async () => {
       stateReads += 1
       if (throwState) throw new Error('state failed')
+      if (stateReadGate) await stateReadGate
       const readAt = Date.now()
       const generation = stateGenerationOverride ?? stateReads
       return {
@@ -155,7 +159,8 @@ function harness(options: HarnessOptions = {}) {
     },
     readCodeUnread: async () => {
       unreadReads += 1
-      if (options.throwUnread) throw new Error('unread failed')
+      if (throwUnread) throw new Error('unread failed')
+      if (unreadReadGate) await unreadReadGate
       return unread === null ? null : {
         version: 2 as const,
         revision: 'test-unread-v2',
@@ -246,10 +251,13 @@ function harness(options: HarnessOptions = {}) {
     setThrowCode: (value: boolean) => { throwCode = value },
     setCodeAvailable: (value: boolean) => { codeAvailable = value },
     setCodeReadGate: (value: Promise<void> | null) => { codeReadGate = value },
+    setStateReadGate: (value: Promise<void> | null) => { stateReadGate = value },
+    setUnreadReadGate: (value: Promise<void> | null) => { unreadReadGate = value },
     setUnread: (ids: string[] | null) => { unread = ids; unreadGeneration += 1 },
     setUnreadSnapshot: (ids: string[] | null, generation: number) => { unread = ids; unreadGeneration = generation },
     setStateGeneration: (generation: number | null) => { stateGenerationOverride = generation },
     setThrowState: (value: boolean) => { throwState = value },
+    setThrowUnread: (value: boolean) => { throwUnread = value },
     emitEvent: () => eventListeners.at(-1)?.(),
     emitCode: () => codeListeners.at(-1)?.(),
     emitUnread: () => unreadListeners.at(-1)?.()
@@ -427,6 +435,25 @@ describe('independent local authorities', () => {
     context.controller.dispose()
   })
 
+  it('accepts a newer state generation even when its event time is older', async () => {
+    const base = Date.now()
+    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'running', at: base }] })
+    context.controller.start()
+    await settle()
+    context.setStateGeneration(5)
+    context.setCodeRows([{ sessionId: LOCAL_A, phase: 'waiting-input', at: base + 5_000 }])
+    context.emitEvent()
+    await settle()
+    expect(conversationsOf(context).ongoing.find((task) => task.actionAlias === LOCAL_A)?.state).toBe('waiting-input')
+
+    context.setStateGeneration(6)
+    context.setCodeRows([{ sessionId: LOCAL_A, phase: 'completed', at: base + 1_000 }])
+    context.emitEvent()
+    await settle()
+    expect(conversationsOf(context).completed.find((task) => task.actionAlias === LOCAL_A)).toMatchObject({ claudePhase: 'completed' })
+    context.controller.dispose()
+  })
+
   it('degrades a live phase to unknown after two consecutive state read failures', async () => {
     const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'running' }] })
     context.controller.start()
@@ -586,6 +613,65 @@ describe('independent local authorities', () => {
 })
 
 describe('exact jump and unread authority', () => {
+  it('rejects a sync request whose key and App-local id do not identify the current row', async () => {
+    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }] })
+    context.controller.start()
+    await settle()
+    const before = { state: context.stateReads(), unread: context.unreadReads() }
+    await expect(context.controller.syncClaudeTask('claude:stale', LOCAL_A)).resolves.toMatchObject({ accepted: false })
+    expect({ state: context.stateReads(), unread: context.unreadReads() }).toEqual(before)
+    expect(context.messages.at(-1)).toBe('Claude 任务身份已失效，请刷新后重试')
+    context.controller.dispose()
+  })
+
+  it('joins concurrent per-task syncs onto one state read and one unread read', async () => {
+    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'running' }] })
+    context.controller.start()
+    await settle()
+    const key = conversationsOf(context).all.find((task) => task.actionAlias === LOCAL_A)!.key
+    let releaseState!: () => void
+    let releaseUnread!: () => void
+    context.setStateReadGate(new Promise<void>((resolvePromise) => { releaseState = resolvePromise }))
+    context.setUnreadReadGate(new Promise<void>((resolvePromise) => { releaseUnread = resolvePromise }))
+    const before = { state: context.stateReads(), unread: context.unreadReads() }
+    const first = context.controller.syncClaudeTask(key, LOCAL_A)
+    const second = context.controller.syncClaudeTask(key, LOCAL_A)
+    await settle()
+    expect(context.stateReads() - before.state).toBe(1)
+    expect(context.unreadReads() - before.unread).toBe(1)
+    releaseState()
+    releaseUnread()
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ accepted: true, state: 'ok', unread: 'ok' }),
+      expect.objectContaining({ accepted: true, state: 'ok', unread: 'ok' })
+    ])
+    context.controller.dispose()
+  })
+
+  it('publishes one merged update and reports a partial unread failure precisely', async () => {
+    const base = Date.now()
+    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'running', at: base }] })
+    context.controller.start()
+    await settle()
+    const key = conversationsOf(context).all.find((task) => task.actionAlias === LOCAL_A)!.key
+    const beforeNotifications = context.notifications()
+    context.setCodeRows([{ sessionId: LOCAL_A, phase: 'completed', at: base + 5_000 }])
+    context.setThrowUnread(true)
+    await expect(context.controller.syncClaudeTask(key, LOCAL_A)).resolves.toMatchObject({
+      accepted: true,
+      state: 'ok',
+      unread: 'unavailable',
+      changed: true
+    })
+    expect(context.notifications() - beforeNotifications).toBe(1)
+    expect(context.messages.at(-1)).toBe('Claude 状态已同步；原生已读信息暂不可用')
+    expect(conversationsOf(context).completed.find((task) => task.actionAlias === LOCAL_A)).toMatchObject({
+      claudePhase: 'completed',
+      unreadState: 'unknown'
+    })
+    context.controller.dispose()
+  })
+
   it('passes the App-local id unchanged and creates only a process-local same-completion read hint', async () => {
     const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }], unread: [LOCAL_A] })
     context.controller.start()
@@ -598,6 +684,33 @@ describe('exact jump and unread authority', () => {
     expect(conversationsOf(context).completedUnread.some((task) => task.actionAlias === LOCAL_A)).toBe(false)
     expect(conversationsOf(context).completed.some((task) => task.actionAlias === LOCAL_A)).toBe(true)
     context.controller.dispose()
+  })
+
+  it('runs one silent state/unread sync after a successful open and none after a failed dispatch', async () => {
+    const success = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }], unread: [LOCAL_A] })
+    success.controller.start()
+    await settle()
+    const successKey = conversationsOf(success).all.find((task) => task.actionAlias === LOCAL_A)!.key
+    const beforeSuccess = { state: success.stateReads(), unread: success.unreadReads() }
+    expect(await success.controller.openThread(successKey, LOCAL_A)).toBe(true)
+    await settle()
+    expect(success.stateReads()).toBeGreaterThan(beforeSuccess.state)
+    expect(success.unreadReads()).toBeGreaterThan(beforeSuccess.unread)
+    success.controller.dispose()
+
+    const failure = harness({
+      codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }],
+      unread: [LOCAL_A],
+      openResult: { outcome: 'failed', confirmsRead: false, message: 'failed' }
+    })
+    failure.controller.start()
+    await settle()
+    const failureKey = conversationsOf(failure).all.find((task) => task.actionAlias === LOCAL_A)!.key
+    const beforeFailure = { state: failure.stateReads(), unread: failure.unreadReads() }
+    expect(await failure.controller.openThread(failureKey, LOCAL_A)).toBe(false)
+    await settle()
+    expect({ state: failure.stateReads(), unread: failure.unreadReads() }).toEqual(beforeFailure)
+    failure.controller.dispose()
   })
 
   it('reports a failed App jump without changing the card', async () => {

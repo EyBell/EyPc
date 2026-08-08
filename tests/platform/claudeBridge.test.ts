@@ -113,6 +113,42 @@ describe('ordered hook state', () => {
     expect(state.get(CLI_A)).toMatchObject({ phase: 'completed', lastStopAt: 20, lastSessionEndAt: 30 })
   })
 
+  it('keeps the parent completed when SubagentStop and tool tail events follow Stop', () => {
+    const state = events.foldQueueEntries([
+      event(CLI_A, 'UserPromptSubmit', 10),
+      event(CLI_A, 'Stop', 20),
+      event(CLI_A, 'SubagentStop', 30),
+      event(CLI_A, 'PostToolUse', 40),
+      event(CLI_A, 'SessionEnd', 50)
+    ])
+    expect(state.get(CLI_A)).toMatchObject({
+      phase: 'completed',
+      turnStartedAt: 10,
+      lastStopAt: 20,
+      lastActivityAt: 40,
+      lastSessionEndAt: 50,
+      turnOpen: false
+    })
+  })
+
+  it('does not fabricate a parent Turn from subagent-only events', () => {
+    const state = events.foldQueueEntries([
+      event(CLI_A, 'SubagentStart', 10),
+      event(CLI_A, 'SubagentStop', 20)
+    ])
+    expect(state.get(CLI_A)).toMatchObject({ phase: 'unknown', turnStartedAt: 0, lastActivityAt: 20, turnOpen: false })
+  })
+
+  it('lets only a new prompt reopen the parent after Stop', () => {
+    const state = events.foldQueueEntries([
+      event(CLI_A, 'UserPromptSubmit', 10),
+      event(CLI_A, 'Stop', 20),
+      event(CLI_A, 'SubagentStart', 30),
+      event(CLI_A, 'UserPromptSubmit', 40)
+    ])
+    expect(state.get(CLI_A)).toMatchObject({ phase: 'running', turnStartedAt: 40, lastActivityAt: 40, turnOpen: true })
+  })
+
   it('uses stopped only when a session ends without a completed turn', () => {
     const state = events.foldQueueEntries([
       event(CLI_A, 'UserPromptSubmit', 10),
@@ -205,7 +241,8 @@ describe('Code-mode inventory and correlation', () => {
     writeMetadata(home.codeDirectory, metadata(LOCAL_A, CLI_A))
     const bridge = makeBridge(home)
     bridge.readCodeSnapshot({ now: Date.now() })
-    appendFileSync(bridge.queuePath, `${JSON.stringify({ s: CLI_A, e: 'PermissionRequest', t: Date.now() })}\n`)
+    const turnAt = Date.now()
+    appendFileSync(bridge.queuePath, `${JSON.stringify({ s: CLI_A, e: 'UserPromptSubmit', t: turnAt })}\n${JSON.stringify({ s: CLI_A, e: 'PermissionRequest', t: turnAt + 1 })}\n`)
     expect(bridge.readCodeSnapshot({ now: Date.now() }).sessions[0]).toMatchObject({
       statusCorrelation: 'unique-cli',
       phase: 'waiting-approval'
@@ -252,6 +289,48 @@ describe('Code-mode inventory and correlation', () => {
       compatibility: 'compatible', generation: 2, entries: [appEntry(300)]
     }).sessions[0]
     expect(current).toMatchObject({ phase: 'running', stateSource: 'app-log' })
+  })
+
+  it('keeps an exact App terminal above same-Turn Hook tail but accepts a strictly newer Hook Turn', () => {
+    const session = {
+      ...metadata(LOCAL_A, CLI_A),
+      completedTurns: 1,
+      metadataUpdatedAt: 80,
+      lastActivityAt: 80,
+      lastFocusedAt: 70
+    }
+    const appSnapshot = {
+      compatibility: 'compatible',
+      generation: 7,
+      entries: [{
+        sessionId: LOCAL_A,
+        phase: 'completed',
+        phaseUpdatedAt: 200,
+        turnStartedAt: 100,
+        hookActivityAt: 150,
+        waitingApprovalAt: 0,
+        waitingInputAt: 0,
+        lastStopAt: 200,
+        lastSessionEndAt: 0,
+        lastEventAt: 200,
+        source: 'app-log'
+      }]
+    }
+    const tail = events.foldQueueEntries([
+      event(CLI_A, 'UserPromptSubmit', 100),
+      event(CLI_A, 'Stop', 200),
+      event(CLI_A, 'SubagentStop', 300)
+    ])
+    expect(codeSessions.correlateCodeSessions([session], tail, new Map(), appSnapshot).sessions[0])
+      .toMatchObject({ phase: 'completed', stateSource: 'app-log', stateGeneration: 7 })
+
+    const nextTurn = events.foldQueueEntries([
+      event(CLI_A, 'UserPromptSubmit', 100),
+      event(CLI_A, 'Stop', 200),
+      event(CLI_A, 'UserPromptSubmit', 300)
+    ])
+    expect(codeSessions.correlateCodeSessions([session], nextTurn, new Map(), appSnapshot).sessions[0])
+      .toMatchObject({ phase: 'running', stateSource: 'hook', turnStartedAt: 300 })
   })
 
   it('does not treat a title-only metadata mtime as newer completion evidence', () => {

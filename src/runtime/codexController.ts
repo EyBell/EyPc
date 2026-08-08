@@ -64,6 +64,7 @@ import {
 } from '../domain/claude'
 import {
   claudeCodeCompletionEpoch,
+  compareClaudeCodeStateVersion,
   normalizeClaudeCodeObservation,
   normalizeClaudeCodeUnread,
   projectClaudeCodeTaskCards,
@@ -376,12 +377,14 @@ export function createCodexController(options: CodexControllerOptions) {
   let lastClaudeStateGeneration = 0
   let claudeStateFailureCount = 0
   let claudeControllerRevision = 0
+  let lastClaudeTaskPublishRevision = 0
   let lastClaudeReadAt = 0
   let lastClaudeQuotaReadAt = 0
   let claudeStateRecoveryTimer: ReturnType<typeof setInterval> | null = null
-  let claudeStateInFlight = false
+  type ClaudeLaneRefreshResult = { changed: boolean; available: boolean }
+  let claudeStateInFlight: Promise<ClaudeLaneRefreshResult> | null = null
   let claudeInventoryInFlight = false
-  let claudeUnreadInFlight = false
+  let claudeUnreadInFlight: Promise<ClaudeLaneRefreshResult> | null = null
   let claudeQuotaInFlight = false
   let lastThreads: CodexHostThread[] = []
   let lastProjects: CodexHostProject[] = []
@@ -668,44 +671,13 @@ export function createCodexController(options: CodexControllerOptions) {
     }
   }
 
-  function claudeStateEvidenceAt(row: ClaudeCodeObservation): number {
-    return Math.max(
-      row.phaseUpdatedAt,
-      row.turnStartedAt,
-      row.hookActivityAt,
-      row.waitingApprovalAt,
-      row.waitingInputAt,
-      row.lastStopAt,
-      row.lastSessionEndAt
-    )
-  }
-
-  function claudeStateAuthority(row: ClaudeCodeObservation): number {
-    if (row.stateSource === 'app-log') return 4
-    if (row.stateSource === 'hook') return 3
-    if (row.stateSource === 'metadata-history') return 2
-    return 1
-  }
-
-  function shouldApplyClaudeState(
-    current: ClaudeCodeObservation,
-    incoming: ClaudeCodeObservation,
-    allowExactTie: boolean
-  ): boolean {
-    const currentAt = claudeStateEvidenceAt(current)
-    const incomingAt = claudeStateEvidenceAt(incoming)
-    if (incomingAt !== currentAt) return incomingAt > currentAt
-    if (incoming.stateGeneration !== current.stateGeneration) return incoming.stateGeneration > current.stateGeneration
-    const authorityDelta = claudeStateAuthority(incoming) - claudeStateAuthority(current)
-    return authorityDelta !== 0 ? authorityDelta > 0 : allowExactTie
-  }
-
   function patchClaudeState(
     current: ClaudeCodeObservation,
     incoming: ClaudeCodeObservation,
     allowExactTie = true
   ): ClaudeCodeObservation {
-    if (!shouldApplyClaudeState(current, incoming, allowExactTie)) return current
+    const comparison = compareClaudeCodeStateVersion(incoming, current)
+    if (comparison < 0 || comparison === 0 && !allowExactTie) return current
     return {
       ...current,
       statusCorrelation: incoming.statusCorrelation,
@@ -777,7 +749,9 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function publishClaudeTaskChange(changed: boolean, laneToken: number) {
     if (!changed || disposed || laneToken !== runtimeGeneration) return
+    if (lastClaudeTaskPublishRevision >= claudeControllerRevision) return
     publishTaskStatePackage(taskState.conversations)
+    lastClaudeTaskPublishRevision = claudeControllerRevision
     options.notify()
   }
 
@@ -789,7 +763,7 @@ export function createCodexController(options: CodexControllerOptions) {
     }
     claudeStatePending = false
     const laneToken = runtimeGeneration
-    void refreshClaudeState(Date.now()).then((changed) => publishClaudeTaskChange(changed, laneToken))
+    void refreshClaudeState(Date.now()).then((result) => publishClaudeTaskChange(result.changed, laneToken))
       .catch(() => { claudeStatePending = false })
   }
 
@@ -813,7 +787,7 @@ export function createCodexController(options: CodexControllerOptions) {
     }
     claudeUnreadPending = false
     const laneToken = runtimeGeneration
-    void refreshClaudeUnread().then((changed) => publishClaudeTaskChange(changed, laneToken))
+    void refreshClaudeUnread().then((result) => publishClaudeTaskChange(result.changed, laneToken))
       .catch(() => { claudeUnreadPending = false })
   }
 
@@ -895,85 +869,97 @@ export function createCodexController(options: CodexControllerOptions) {
     }
   }
 
-  async function refreshClaudeState(now = Date.now()) {
+  function refreshClaudeState(now = Date.now()): Promise<ClaudeLaneRefreshResult> {
     const bridge = options.platform.claude
-    if (!bridge || claudeStateInFlight) return false
-    claudeStateInFlight = true
+    if (!bridge) return Promise.resolve({ changed: false, available: false })
+    if (claudeStateInFlight) return claudeStateInFlight
     const laneToken = runtimeGeneration
-    try {
-      const snapshot = typeof bridge.readCodeStateSnapshot === 'function'
-        ? await bridge.readCodeStateSnapshot({ now })
-        : typeof bridge.readCodeSnapshot === 'function'
-          ? await bridge.readCodeSnapshot({ now })
-          : null
-      const normalized = normalizeClaudeRows(snapshot)
-      if (disposed || laneToken !== runtimeGeneration) return false
-      if (normalized === null) {
+    const inFlight = (async (): Promise<ClaudeLaneRefreshResult> => {
+      try {
+        const snapshot = typeof bridge.readCodeStateSnapshot === 'function'
+          ? await bridge.readCodeStateSnapshot({ now })
+          : typeof bridge.readCodeSnapshot === 'function'
+            ? await bridge.readCodeSnapshot({ now })
+            : null
+        const normalized = normalizeClaudeRows(snapshot)
+        if (disposed || laneToken !== runtimeGeneration) return { changed: false, available: false }
+        if (normalized === null) {
+          claudeStateFailureCount += 1
+          const changed = claudeStateFailureCount >= 2 ? degradeStuckClaudeActivity() : false
+          if (changed) claudeControllerRevision += 1
+          return { changed, available: false }
+        }
+        if (normalized.generation > 0 && lastClaudeStateGeneration > 0 && normalized.generation < lastClaudeStateGeneration) {
+          return { changed: false, available: true }
+        }
+        if (normalized.generation > 0) lastClaudeStateGeneration = normalized.generation
+        claudeStateFailureCount = 0
+        const rows = applyClaudeStateDelta(normalized.rows)
+        const changed = !sameClaudeRows(claudeCodeSessions, rows)
+        if (changed) claudeCodeSessions = rows
+        if (changed) claudeControllerRevision += 1
+        reconcileClaudeReadHints()
+        return { changed, available: true }
+      } catch {
         claudeStateFailureCount += 1
         const changed = claudeStateFailureCount >= 2 ? degradeStuckClaudeActivity() : false
         if (changed) claudeControllerRevision += 1
-        return changed
+        return { changed, available: false }
+      } finally {
+        claudeStateInFlight = null
+        if (claudeStatePending && !disposed) queueMicrotask(() => handleClaudeStateEvent())
       }
-      if (normalized.generation > 0 && lastClaudeStateGeneration > 0 && normalized.generation < lastClaudeStateGeneration) return false
-      if (normalized.generation > 0) lastClaudeStateGeneration = normalized.generation
-      claudeStateFailureCount = 0
-      const rows = applyClaudeStateDelta(normalized.rows)
-      const changed = !sameClaudeRows(claudeCodeSessions, rows)
-      if (changed) claudeCodeSessions = rows
-      if (changed) claudeControllerRevision += 1
-      reconcileClaudeReadHints()
-      return changed
-    } catch {
-      claudeStateFailureCount += 1
-      const changed = claudeStateFailureCount >= 2 ? degradeStuckClaudeActivity() : false
-      if (changed) claudeControllerRevision += 1
-      return changed
-    } finally {
-      claudeStateInFlight = false
-      if (claudeStatePending && !disposed) queueMicrotask(() => handleClaudeStateEvent())
-    }
+    })()
+    claudeStateInFlight = inFlight
+    return inFlight
   }
 
-  async function refreshClaudeUnread() {
+  function refreshClaudeUnread(): Promise<ClaudeLaneRefreshResult> {
     const bridge = options.platform.claude
-    if (!bridge || claudeUnreadInFlight) return false
-    claudeUnreadInFlight = true
+    if (!bridge) return Promise.resolve({ changed: false, available: false })
+    if (claudeUnreadInFlight) return claudeUnreadInFlight
     const laneToken = runtimeGeneration
-    try {
-      const snapshot = typeof bridge.readCodeUnread === 'function' ? await bridge.readCodeUnread() : null
-      const observation: ClaudeCodeUnreadObservation | null = normalizeClaudeCodeUnread(snapshot)
-      if (disposed || laneToken !== runtimeGeneration) return false
-      if (!observation) {
+    const inFlight = (async (): Promise<ClaudeLaneRefreshResult> => {
+      try {
+        const snapshot = typeof bridge.readCodeUnread === 'function' ? await bridge.readCodeUnread() : null
+        const observation: ClaudeCodeUnreadObservation | null = normalizeClaudeCodeUnread(snapshot)
+        if (disposed || laneToken !== runtimeGeneration) return { changed: false, available: false }
+        if (!observation) {
+          const changed = claudeCodeUnread !== null
+          claudeCodeUnread = null
+          if (changed) claudeControllerRevision += 1
+          return { changed, available: false }
+        }
+        if (lastClaudeUnreadVersion === 2 && observation.version === 1) return { changed: false, available: true }
+        if (observation.version === 2 && lastClaudeUnreadVersion === 2) {
+          if (observation.generation < lastClaudeUnreadGeneration) return { changed: false, available: true }
+          if (observation.generation === lastClaudeUnreadGeneration && observation.readAt < lastClaudeUnreadReadAt) {
+            return { changed: false, available: true }
+          }
+        }
+        lastClaudeUnreadVersion = observation.version
+        lastClaudeUnreadGeneration = observation.generation
+        lastClaudeUnreadReadAt = observation.readAt
+        const next = [...observation.ids]
+        const changed = JSON.stringify(claudeCodeUnread) !== JSON.stringify(next)
+        claudeCodeUnread = next
+        if (changed) claudeControllerRevision += 1
+        for (const [sessionId, hint] of claudeReadHints) {
+          if (!next.includes(sessionId) && !hint.nativeConfirmed) claudeReadHints.set(sessionId, { ...hint, nativeConfirmed: true })
+        }
+        return { changed, available: true }
+      } catch {
         const changed = claudeCodeUnread !== null
         claudeCodeUnread = null
         if (changed) claudeControllerRevision += 1
-        return changed
+        return { changed, available: false }
+      } finally {
+        claudeUnreadInFlight = null
+        if (claudeUnreadPending && !disposed) queueMicrotask(() => handleClaudeUnreadEvent())
       }
-      if (lastClaudeUnreadVersion === 2 && observation.version === 1) return false
-      if (observation.version === 2 && lastClaudeUnreadVersion === 2) {
-        if (observation.generation < lastClaudeUnreadGeneration) return false
-        if (observation.generation === lastClaudeUnreadGeneration && observation.readAt < lastClaudeUnreadReadAt) return false
-      }
-      lastClaudeUnreadVersion = observation.version
-      lastClaudeUnreadGeneration = observation.generation
-      lastClaudeUnreadReadAt = observation.readAt
-      const next = [...observation.ids]
-      const changed = JSON.stringify(claudeCodeUnread) !== JSON.stringify(next)
-      claudeCodeUnread = next
-      if (changed) claudeControllerRevision += 1
-      for (const [sessionId, hint] of claudeReadHints) {
-        if (!next.includes(sessionId) && !hint.nativeConfirmed) claudeReadHints.set(sessionId, { ...hint, nativeConfirmed: true })
-      }
-      return changed
-    } catch {
-      const changed = claudeCodeUnread !== null
-      claudeCodeUnread = null
-      if (changed) claudeControllerRevision += 1
-      return changed
-    } finally {
-      claudeUnreadInFlight = false
-      if (claudeUnreadPending && !disposed) queueMicrotask(() => handleClaudeUnreadEvent())
-    }
+    })()
+    claudeUnreadInFlight = inFlight
+    return inFlight
   }
 
   async function refreshClaudeQuota(now = Date.now()) {
@@ -1134,12 +1120,12 @@ export function createCodexController(options: CodexControllerOptions) {
     subscribeClaudeEvents()
     kickClaudeAppPresence()
     if (includeQuota) kickClaudeQuota(now)
-    const results = await Promise.all([
+    const [environmentChanged, inventoryChanged, unreadResult] = await Promise.all([
       refreshClaudeEnvironment(),
       refreshClaudeInventory(now),
       refreshClaudeUnread()
     ])
-    return results.some(Boolean)
+    return environmentChanged || inventoryChanged || unreadResult.changed
   }
 
   function clearTimer() {
@@ -2217,13 +2203,56 @@ export function createCodexController(options: CodexControllerOptions) {
    * receipt. A process-local hint suppresses late native `true` values only for
    * the same completion epoch while bounded native rereads confirm the result.
    */
+  function currentClaudeSyncTarget(key: string, actionAlias: string) {
+    return claudeCodeSessions.find((row) => !row.isArchived
+      && row.sessionId === actionAlias
+      && companionTaskKey('claude', row.sessionId) === key) || null
+  }
+
+  async function syncClaudeTask(
+    key: string,
+    actionAlias: string,
+    request: { silent?: boolean } = {}
+  ) {
+    const target = currentClaudeSyncTarget(key, actionAlias)
+    if (!target || disposed || !claudeEnabled()) {
+      if (!request.silent) options.setMessage('Claude 任务身份已失效，请刷新后重试')
+      return { accepted: false, state: 'unavailable' as const, unread: 'unavailable' as const, changed: false }
+    }
+    const laneToken = runtimeGeneration
+    const revisionBefore = claudeControllerRevision
+    const [stateResult, unreadResult] = await Promise.all([
+      refreshClaudeState(Date.now()),
+      refreshClaudeUnread()
+    ])
+    if (disposed || laneToken !== runtimeGeneration) {
+      return { accepted: false, state: 'unavailable' as const, unread: 'unavailable' as const, changed: false }
+    }
+    const changed = claudeControllerRevision > revisionBefore
+    publishClaudeTaskChange(changed, laneToken)
+    const stateStatus = stateResult.available ? 'ok' as const : 'unavailable' as const
+    const unreadStatus = unreadResult.available ? 'ok' as const : 'unavailable' as const
+    if (!request.silent) {
+      if (stateResult.available && unreadResult.available) {
+        options.setMessage(changed ? '已同步 Claude 状态与已读信息' : 'Claude 状态与已读信息已是最新')
+      } else if (stateResult.available) {
+        options.setMessage('Claude 状态已同步；原生已读信息暂不可用')
+      } else if (unreadResult.available) {
+        options.setMessage('Claude 原生已读信息已同步；任务状态暂不可用')
+      } else {
+        options.setMessage('Claude 状态与原生已读信息暂不可用')
+      }
+    }
+    return { accepted: true, state: stateStatus, unread: unreadStatus, changed }
+  }
+
   function scheduleClaudeUnreadRechecks() {
     const laneToken = runtimeGeneration
     for (const delay of [0, 100, 300, 1000]) {
       const timer = setTimeout(() => {
         claudeUnreadRecheckTimers.delete(timer)
         if (disposed || laneToken !== runtimeGeneration || !claudeEnabled()) return
-        void refreshClaudeUnread().then((changed) => publishClaudeTaskChange(changed, laneToken))
+        void refreshClaudeUnread().then((result) => publishClaudeTaskChange(result.changed, laneToken))
           .catch(() => undefined)
       }, delay)
       claudeUnreadRecheckTimers.add(timer)
@@ -2236,21 +2265,25 @@ export function createCodexController(options: CodexControllerOptions) {
       options.setMessage('Claude 模块不可用')
       return false
     }
+    const row = currentClaudeSyncTarget(key, actionAlias)
+    if (!row) {
+      options.setMessage('Claude 任务身份已失效，请刷新后重试')
+      return false
+    }
     const result = await bridge.openTask(actionAlias)
     options.setMessage(result?.message || (result?.outcome === 'dispatched'
       ? '已在 Claude 桌面端打开该任务'
       : 'Claude 桌面端打开失败'))
     const dispatched = result?.outcome === 'dispatched'
     if (dispatched) {
-      const row = claudeCodeSessions.find((candidate) => candidate.sessionId === actionAlias
-        && companionTaskKey('claude', candidate.sessionId) === key)
-      const completionEpoch = row ? claudeCodeCompletionEpoch(row) : ''
-      if (row && completionEpoch) {
+      const completionEpoch = claudeCodeCompletionEpoch(row)
+      if (completionEpoch) {
         claudeReadHints.set(row.sessionId, { completionEpoch, acknowledgedAt: Date.now(), nativeConfirmed: false })
         claudeControllerRevision += 1
         publishTaskStatePackage(taskState.conversations)
         options.notify()
       }
+      void syncClaudeTask(key, actionAlias, { silent: true }).catch(() => undefined)
       scheduleClaudeUnreadRechecks()
     }
     return dispatched
@@ -3185,6 +3218,7 @@ export function createCodexController(options: CodexControllerOptions) {
     archive,
     archiveMany,
     archiveProject,
+    syncClaudeTask,
     openThread,
     openFirstInput,
     openFirstCompletedUnread,

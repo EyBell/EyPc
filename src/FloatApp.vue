@@ -1098,8 +1098,18 @@ const drawerActions = computed<DrawerAction[]>(() => {
   if (item.kind === 'task') {
     const project = conversations.value?.projects.find((candidate) => candidate.key === item.task.projectKey)
     const canCreateInProject = taskCanCreateInProject(item.task, project)
+    const claudeSyncActions: DrawerAction[] = companionTaskProvider(item.task) === 'claude'
+      ? [{
+          id: 'task-claude-sync',
+          label: '同步 Claude 状态',
+          disabled: !item.task.actionAlias,
+          disabledReason: 'Claude 任务身份已失效',
+          run: () => action('codex.claude.task.sync', { key: item.task.key, actionAlias: item.task.actionAlias })
+        }]
+      : []
     return [
       { id: 'task-open', label: '打开', disabled: !item.task.actionAlias, disabledReason: '任务动作已失效', run: () => openTask(item.task) },
+      ...claudeSyncActions,
       { id: 'task-new-thread', label: '在当前项目新建会话', disabled: !canCreateInProject, disabledReason: taskProjectActionBlockedReason(item.task, project), run: () => openComposer(project) },
       { id: 'task-new-thread-model', label: '选择模型新建会话', disabled: !canCreateInProject, disabledReason: taskProjectActionBlockedReason(item.task, project), run: () => openComposer(project, true) },
       { id: 'task-detail', label: '查看详情', run: () => openDetailPanel(item) },

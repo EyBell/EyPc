@@ -9237,6 +9237,13 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       void codexController.openThread(key, actionAlias)
       return Boolean(key && actionAlias)
     } })
+    actions.register({ id: 'codex.claude.task.sync', title: '同步 Claude 状态', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
+      const key = typeof args?.key === 'string' ? args.key : ''
+      const actionAlias = typeof args?.actionAlias === 'string' ? args.actionAlias : ''
+      if (!key || !actionAlias) return false
+      void codexController.syncClaudeTask(key, actionAlias)
+      return true
+    } })
     actions.register({ id: 'codex.input.open', title: '打开 Codex 待输入任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.openFirstInput() })
     actions.register({ id: 'codex.completed-unread.openFirst', title: '打开第一个 Codex 已完成未读任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.openFirstCompletedUnread() })
     actions.register({ id: 'codex.task.previous', title: '上一个 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.cycleTask(-1) })
