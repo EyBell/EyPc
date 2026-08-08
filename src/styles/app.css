@@ -309,6 +309,24 @@
   color: #a73737;
 }
 
+.favorite-run-state {
+  max-width: 168px;
+  overflow: hidden;
+  color: #5e7183;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.favorite-run-state.running {
+  color: #2f6fb3;
+}
+
+/* A non-zero exit must not read like the neutral "launched" state next to it. */
+.favorite-run-state.error {
+  color: #a73737;
+}
+
 .favorite-inline-rename {
   min-height: 26px;
   padding: 3px 6px;

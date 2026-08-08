@@ -62,7 +62,7 @@ describe('favorite tree accessibility and inline rename', () => {
     await wrapper.setProps({
       renameDraft: {
         mode: 'rename', targetId: 'group', targetIds: ['group'], kind: 'group', name: '新资料', path: '', tagsText: '', color: '#2f80ed', parentId: null,
-        runnerEnabled: false, runnerMode: 'background', runnerExecutable: '', runnerArgsText: '', runnerCwdMode: 'target-directory', runnerCwd: '', runnerPlatform: 'darwin', runnerTrusted: false, activeField: 'name'
+        runnerEnabled: false, runnerMode: 'background', runnerExecutable: '', runnerArgsText: '', runnerCwdMode: 'target-directory', runnerCwd: '', runnerLogPath: '', runnerPlatform: 'darwin', runnerTrusted: false, activeField: 'name'
       }
     })
     const input = wrapper.get('input.favorite-inline-rename')
@@ -269,7 +269,7 @@ describe('favorites page dialogs, focus and states', () => {
     const renameDraft = {
       mode: 'rename' as const, targetId: folder.id, targetIds: [folder.id], kind: folder.kind, name: folder.name, path: folder.path,
       tagsText: '', color: folder.color, parentId: null, runnerEnabled: false, runnerMode: 'background' as const, runnerExecutable: '',
-      runnerArgsText: '', runnerCwdMode: 'target-directory' as const, runnerCwd: '', runnerPlatform: 'darwin' as const, runnerTrusted: false, activeField: 'name' as const
+      runnerArgsText: '', runnerCwdMode: 'target-directory' as const, runnerCwd: '', runnerLogPath: '', runnerPlatform: 'darwin' as const, runnerTrusted: false, activeField: 'name' as const
     }
     const wrapper = mount(FavoritesPage, {
       props: { snapshot: { ...base, focusedFavoriteId: folder.id } },
@@ -333,7 +333,7 @@ describe('favorites page dialogs, focus and states', () => {
     const draft = {
       mode: 'create-target' as const, targetId: 'draft', targetIds: [] as string[], kind: 'folder' as const, name: '', path: '',
       tagsText: '', color: '#2F80ED', parentId: null, runnerEnabled: false, runnerMode: 'background' as const, runnerExecutable: '',
-      runnerArgsText: '', runnerCwdMode: 'target-directory' as const, runnerCwd: '', runnerPlatform: 'darwin' as const, runnerTrusted: false, activeField: 'name' as const
+      runnerArgsText: '', runnerCwdMode: 'target-directory' as const, runnerCwd: '', runnerLogPath: '', runnerPlatform: 'darwin' as const, runnerTrusted: false, activeField: 'name' as const
     }
     await wrapper.setProps({ snapshot: { ...base, favoriteAddMenuOpen: false, favoriteDraft: draft } })
     await nextTick()
@@ -370,6 +370,7 @@ describe('favorites page dialogs, focus and states', () => {
       runnerArgsText: '{path}\n--name={name}',
       runnerCwdMode: 'target-directory' as const,
       runnerCwd: '',
+      runnerLogPath: '',
       runnerPlatform: 'darwin' as const,
       runnerTrusted: false,
       activeField: 'runner-executable' as const

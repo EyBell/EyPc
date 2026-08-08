@@ -179,6 +179,13 @@ watch(() => [
           <span class="favorite-breadcrumb">{{ item.kind === 'folder' ? '文件夹' : '文件' }} · {{ groupBreadcrumb(item.id) }}</span>
         </span>
         <span class="favorite-path-state" :class="{ error: pathStatusIsError(item.path) }" role="gridcell"><AlertTriangle v-if="pathStatusIsError(item.path)" :size="13" aria-hidden="true" />{{ pathStatus(item.path) }}</span>
+        <span
+          v-if="props.snapshot.favoriteRunSummaries[item.id]"
+          class="favorite-run-state"
+          :class="{ error: props.snapshot.favoriteRunSummaries[item.id].failed, running: props.snapshot.favoriteRunSummaries[item.id].status === 'running' }"
+          role="gridcell"
+          :title="props.snapshot.favoriteRunSummaries[item.id].text"
+        >{{ props.snapshot.favoriteRunSummaries[item.id].text }}</span>
         <span class="favorite-row-actions quick-favorite-row-actions" role="gridcell" @click.stop @dblclick.stop>
           <button type="button" tabindex="-1" :aria-label="hasCurrentRunner(item.id) ? '运行' : '打开'" :title="hasCurrentRunner(item.id) ? '运行自定义运行器' : '系统默认打开'" :disabled="!props.snapshot.favoriteCapabilities.open && !props.snapshot.favoriteCapabilities.run" @click="emit('dispatch', 'favorites.open', { favoriteId: item.id })"><Play v-if="hasCurrentRunner(item.id)" :size="14" aria-hidden="true" /><SquareArrowOutUpRight v-else :size="14" aria-hidden="true" /></button>
           <button type="button" tabindex="-1" aria-label="定位" title="定位" :disabled="!props.snapshot.favoriteCapabilities.reveal" @click="emit('dispatch', 'favorites.reveal', { favoriteId: item.id })"><LocateFixed :size="14" aria-hidden="true" /></button>

@@ -103,6 +103,140 @@ describe('favorite file bridge source', () => {
     }])
   })
 
+  it('captures background output to a run log and reports the exit code afterwards', async () => {
+    const written: string[] = []
+    const opened: string[] = []
+    let child: (EventEmitter & { unref: () => void }) | null = null
+    const spawnProcess = vi.fn((_command: unknown, _args: unknown, options: unknown) => {
+      opened.push(JSON.stringify((options as Record<string, unknown>).stdio))
+      child = new EventEmitter() as EventEmitter & { unref: () => void }
+      child.unref = vi.fn()
+      queueMicrotask(() => child?.emit('spawn'))
+      return child
+    })
+    const window = loadPreload('linux', () => undefined, { getPath: () => '/data' }, undefined, {
+      constants: { R_OK: 4, F_OK: 0, X_OK: 1 },
+      statSync: (target: string) => ({ isFile: () => target === '/usr/bin/node' || target === '/work/demo/app.log', size: 12, mtimeMs: 1 }),
+      accessSync: () => undefined,
+      mkdirSync: () => undefined,
+      openSync: () => 7,
+      closeSync: () => undefined,
+      writeSync: (_fd: number, text: string) => { written.push(text) },
+      readdirSync: () => [],
+      promises: {
+        readdir: async () => [],
+        lstat: async () => ({ isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false }),
+        stat: async () => ({ isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false }),
+        access: async () => undefined,
+        writeFile: async () => undefined
+      }
+    }, spawnProcess)
+
+    const started = await window.eypcPlatform.files.run({
+      targetPath: '/work/demo/run.js',
+      executable: '/usr/bin/node',
+      args: ['/work/demo/run.js'],
+      cwd: '/work/demo',
+      mode: 'background',
+      favoriteId: 'script',
+      favoriteName: 'Run',
+      declaredLogPath: '/work/demo/app.log'
+    })
+
+    expect(started).toMatchObject({ outcome: 'started', declaredLogPath: '/work/demo/app.log' })
+    expect(started.logPath).toContain('favorite-runs')
+    // Output goes to a file descriptor, not a pipe, so a plugin restart cannot break the child.
+    expect(opened).toEqual([JSON.stringify(['ignore', 7, 7])])
+    expect(written.join('')).toContain('/usr/bin/node')
+
+    const runs = window.eypcPlatform.files.listRuns()
+    expect(runs).toHaveLength(1)
+    expect(runs[0]).toMatchObject({ favoriteId: 'script', status: 'running', mode: 'background' })
+    expect(runs[0].exitCode).toBeUndefined()
+
+    let notified = 0
+    const stop = window.eypcPlatform.files.watchRuns(() => { notified += 1 })
+    child!.emit('exit', 3, null)
+
+    const settled = window.eypcPlatform.files.listRuns()
+    expect(notified).toBe(1)
+    expect(settled[0]).toMatchObject({ status: 'failed', exitCode: 3, declaredLogExists: true })
+    stop()
+    child!.emit('exit', 0, null)
+    expect(notified).toBe(1)
+  })
+
+  it('still launches without capture when the run log cannot be opened', async () => {
+    const calls: Array<Record<string, unknown>> = []
+    const spawnProcess = vi.fn((_command: unknown, _args: unknown, options: unknown) => {
+      calls.push(options as Record<string, unknown>)
+      const child = new EventEmitter() as EventEmitter & { unref: () => void }
+      child.unref = vi.fn()
+      queueMicrotask(() => child.emit('spawn'))
+      return child
+    })
+    const window = loadPreload('linux', () => undefined, undefined, undefined, {
+      constants: { R_OK: 4, F_OK: 0, X_OK: 1 },
+      statSync: (target: string) => ({ isFile: () => target === '/usr/bin/node' }),
+      accessSync: () => undefined,
+      mkdirSync: () => { throw new Error('read-only') },
+      promises: {
+        readdir: async () => [],
+        lstat: async () => ({ isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false }),
+        stat: async () => ({ isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false }),
+        access: async () => undefined,
+        writeFile: async () => undefined
+      }
+    }, spawnProcess)
+
+    const started = await window.eypcPlatform.files.run({
+      targetPath: '/work/demo/run.js',
+      executable: '/usr/bin/node',
+      args: ['/work/demo/run.js'],
+      cwd: '/work/demo',
+      mode: 'background'
+    })
+
+    // Degrades to "no log but still a real launch", never to a silent success claim.
+    expect(started).toMatchObject({ outcome: 'started' })
+    expect(started.logPath).toBeUndefined()
+    expect(calls[0]).toMatchObject({ stdio: 'ignore', shell: false, detached: true })
+  })
+
+  it('drops a relative or malformed declared log path instead of guessing', async () => {
+    const spawnProcess = vi.fn(() => {
+      const child = new EventEmitter() as EventEmitter & { unref: () => void }
+      child.unref = vi.fn()
+      queueMicrotask(() => child.emit('spawn'))
+      return child
+    })
+    const window = loadPreload('linux', () => undefined, undefined, undefined, {
+      constants: { R_OK: 4, F_OK: 0, X_OK: 1 },
+      statSync: (target: string) => ({ isFile: () => target === '/usr/bin/node' }),
+      accessSync: () => undefined,
+      mkdirSync: () => { throw new Error('read-only') },
+      promises: {
+        readdir: async () => [],
+        lstat: async () => ({ isFile: () => true, isDirectory: () => false, isSymbolicLink: () => false }),
+        stat: async () => ({ isFile: () => false, isDirectory: () => true, isSymbolicLink: () => false }),
+        access: async () => undefined,
+        writeFile: async () => undefined
+      }
+    }, spawnProcess)
+
+    const started = await window.eypcPlatform.files.run({
+      targetPath: '/work/demo/run.js',
+      executable: '/usr/bin/node',
+      args: ['/work/demo/run.js'],
+      cwd: '/work/demo',
+      mode: 'background',
+      declaredLogPath: 'relative/app.log'
+    })
+
+    expect(started).toMatchObject({ outcome: 'started' })
+    expect(started.declaredLogPath).toBeUndefined()
+  })
+
   it('uses a controlled macOS terminal adapter without execution-policy bypasses or raw user shell', async () => {
     const calls: Array<{ command: string; args: string[]; options: Record<string, unknown> }> = []
     const spawnProcess = vi.fn((command: unknown, args: unknown, options: unknown) => {
