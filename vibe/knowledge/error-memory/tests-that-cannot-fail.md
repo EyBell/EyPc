@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: green-suite-hides-blockers__self-referential-assertion__impossible-fixture__sentinel-scan-instead-of-key-set__fixture-name-skipped-before-reaching-branch
 first_seen: 2026-08-06
-last_verified: 2026-08-06
+last_verified: 2026-08-08
 review_after: 2027-02-06
 evidence:
   - vibe/specs/260806/1130-claude-desktop-provider/verify.md
@@ -59,6 +59,7 @@ Claude 桌面端 provider 报「27 项域测试 + 7 项桥测试 + 36 项 contro
 - 独立来源的字段在 fixture 里必须**保持差异**（本仓 `MTIME_SKEW_MS`）。
 - 白名单类断言用**精确键集**（`expect(Object.keys(x).sort()).toEqual([...])`），不用哨兵扫描。
 - 新增守卫时顺手确认"去掉守卫，这条测试会红吗"。
+- 有序事件 reducer 必须包含能推翻错误优先级的尾事件反例。只测 `Prompt → Stop` 不能证明完成态稳定；至少回放 `Prompt → Stop → SubagentStop/PostTool/SessionEnd`、无父 Turn 的子代理事件和严格更新的新 Prompt，并分别断言父 phase 与活动水位。
 - 与 [test-double-froze-an-invented-cross-module-contract](test-double-froze-an-invented-cross-module-contract.md#L1)
   同族：那条讲桩冻结了自造契约，本条讲断言冻结了自己。
 
@@ -67,3 +68,4 @@ Claude 桌面端 provider 报「27 项域测试 + 7 项桥测试 + 36 项 contro
 | 日期 | 记录 |
 | --- | --- |
 | 2026-08-06 | 首次归档：P5 对抗复核；四类写法全部重写后，新回归测试对两个 blocker 可红可绿 |
+| 2026-08-08 | 旧任务假 running 复现：原测试缺少 Stop 后 SubagentStop/工具尾事件反例；新增父 Turn reducer 回放并证明只有新 Prompt 可重新激活 |

@@ -5,7 +5,7 @@ source_format: `chat`
 source_kind: `chat-requirement-summary`
 capture_fidelity: `normalized-material-requirement`
 privacy_boundary: `no-verbatim-prompt-or-transcript`
-updated: `2026-08-07`
+updated: `2026-08-08`
 
 > 本文件只保留会改变范围、行为、选择或验收的语义；不保存原始提示词、截图文字转录、命令、工具输出、会话身份或推理过程。
 
@@ -36,6 +36,7 @@ updated: `2026-08-07`
 | RAW-021 | active | Codex/Claude 原生项目不写入；EyPc 以规范路径完全相同优先、双方名称唯一次之生成虚拟项目，Claude 独有项目批量加入。项目页提供会话级 `全部 / 只显示 Codex / 只显示 Claude`，并同步过滤任务与重算计数。 |
 | RAW-022 | active | 所有状态任务和项目必须以文字/图标/可访问名称明确显示“归属 Codex/Claude”，并用现有来源色做 8% 普通、12% 悬停/选中背景区分；状态颜色继续只表达进行中、待输入、完成等状态。 |
 | RAW-023 | active | 原生 unread 仍是持久权威，但成功派发精确 Claude deep link 后允许创建仅进程内、仅同一 `sessionId + completionEpoch` 的可撤销已读提示并立即重读原生集合；同轮迟到 `true` 不得回跳，新运行/等待或更晚完成必须重新允许未读。 |
+| RAW-024 | active | 修正旧 Claude 任务在 `Stop` 后因 `SubagentStop`/工具尾事件长期假 running：只有新 `UserPromptSubmit` 可开启父 Turn，App 明确终态优先同 Turn Hook 尾事件。增加 Claude-only“同步 Claude 状态”与成功打开后的单项静默 state/unread 同步；必须复用同一 singleflight/revision 发布链，不提供人工完成/已读覆盖，不新增公共 preload、持久化 schema 或 Claude App 写入。相关旧文档采用链接式逻辑归档并同步全局规则；当前不得物理迁移。 |
 
 ## Source Lineage
 
@@ -44,4 +45,5 @@ updated: `2026-08-07`
 - RAW-011–017：来自最终批准的“Codex 同构状态与全局缓存改造”执行计划。
 - RAW-018：来自对该计划验证范围与规则执行时点的明确纠正；修订的是规划门禁，不改变 Claude 产品行为合同。
 - RAW-019–023：来自本轮对真实 Claude App 额度、状态刷新、项目归属、来源视觉及完成态已读回跳的明确修复计划。
+- RAW-024：来自对 App 已完成/已读旧任务仍显示 running 的实测反馈及后续明确实现计划；同时固定单项真实同步、无人工覆盖、全局链接式归档和无物理迁移边界。
 - 旧需求证据仍留在其原任务目录；当前取代关系由 [spec.md](spec.md#L1) 的 `DEC-* / ARCH-*` 记录管理。

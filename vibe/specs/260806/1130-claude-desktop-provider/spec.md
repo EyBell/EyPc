@@ -1,6 +1,12 @@
-# Spec：Claude 桌面端 provider（骨架，Phase 0 前完成细化）
+<!-- document-archive-notice-v1 status=archived-linked -->
+# [已归档] Spec：Claude 桌面端 provider（骨架，Phase 0 前完成细化）
 
-> **Historical evidence only.** 2026-08-07 起，本文件的 `local-agent-mode-sessions`/Cowork 混合库存、audit/mtime 状态推断、跨 CLI 去重/投影和旧打开/未读结论被 [Code-mode 权威重置](../../260807/claude-code-companion-authority-reset/spec.md#L1) revision 4 取代。当前状态是版本门禁 App 日志 + 唯一 Hook + `completedTurns` history、稳定 V2 unread/read-hint、App OAuth 动态额度和 EyPc 虚拟项目；App 元数据/审计观察只能作历史证据，不能恢复为当前需求。
+> **归档状态：** 已逻辑归档
+> **归档原因：** mixed desktop/Cowork 库存、audit/mtime 推断和旧去重模型已被 Code-only 身份与真实状态权威替代。
+> **当前替代：** [Claude Code Companion 权威重置](../../260807/claude-code-companion-authority-reset/spec.md)
+> **物理迁移：** 未执行；项目尚未声明完整归档目录和精确目标，且本任务未授权移动、重命名或删除。
+
+> **Historical evidence only.** 2026-08-07 起，本文件的 `local-agent-mode-sessions`/Cowork 混合库存、audit/mtime 状态推断、跨 CLI 去重/投影和旧打开/未读结论被 [Code-mode 权威重置](../../260807/claude-code-companion-authority-reset/spec.md#L1) 取代。当前状态是版本门禁 App 日志 + 唯一 Hook + `completedTurns` history、稳定 V2 unread/read-hint、App OAuth 动态额度和 EyPc 虚拟项目；App 元数据/审计观察只能作历史证据，不能恢复为当前需求。
 
 RAW: [raw-requirement.md](raw-requirement.md#L1) · Plan: [plan.md](plan.md#L1)
 

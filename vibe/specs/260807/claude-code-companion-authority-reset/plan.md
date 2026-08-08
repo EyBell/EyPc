@@ -1,6 +1,6 @@
 # Claude Companion：Codex 同构状态与全局缓存改造
 
-updated: `2026-08-07`
+updated: `2026-08-08`
 status: `implementation-landed / automated-verified / targeted-host-partial / interactive-host-acceptance-pending`
 
 ## Baseline And Corrected Conclusions
@@ -55,6 +55,14 @@ status: `implementation-landed / automated-verified / targeted-host-partial / in
 - 项目投影新增只读虚拟合并：完全相同稳定 project key 优先、双方名称唯一时兜底，Claude-only 项目批量进入项目区，歧义重名保持分离。Projects 内建 `全部 / 只显示 Codex / 只显示 Claude` 会话级筛选并重算计数；Claude 不支持的归档/移除/移动能力禁用。
 - 任务与项目固定显示文本化归属，使用现有来源 token 做 8%/12% 轻背景，并保留状态图标、原生 Tab/键盘/ARIA 语义与紧凑高度。
 
+### 6. 旧任务父 Turn 与单项真实同步
+
+- [events.cjs](../../../../preload/claude/events.cjs#L1) 抽取纯 Hook reducer：只有新 Prompt 开启父 Turn，Stop/StopFailure/SessionEnd 关闭后，SubagentStop、工具和 lifecycle 尾事件只能更新自己的水位，不能把父任务复活为 running。
+- [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1) 集中选择 App/Hook/history：App 明确 terminal 压过同 Turn Hook 尾事件，只有严格更新的 Hook Turn 可重新激活；history 不能覆盖真实新 Turn。
+- [claudeCode.ts](../../../../src/domain/claudeCode.ts#L1) 抽取 generation-first 的纯版本比较；[codexController.ts](../../../../src/runtime/codexController.ts#L1) 让 state/unread 使用可加入的 Promise singleflight 与单次 publish 去重。
+- 内部动作 `codex.claude.task.sync` 固定接收当前 Claude local session 的 `{ key, actionAlias }`。更多菜单只对 Claude 显示“同步 Claude 状态”；成功打开也走同一条静默同步。同步读取真实 state/unread，允许部分失败提示，不允许人工指定完成或已读。
+- 五份旧 Claude 任务文档在原路径使用 `document-archive-notice-v1` 逻辑归档并指向本 Spec；不移动、不重命名、不删除。归档处置算法由 CodeNote 全局 owner 持有，EyPc 只消费其格式。
+
 ## Verification Plan And Current Gate
 
 - 自动化必须覆盖历史 completed 恢复、未知/歧义、日志轮转/版本失配、权限响应关联、增量元数据、unread 历史提升、authority lane 隔离、库存/状态竞态、blocked quota 下的状态发布和快捷跳转单飞。
@@ -62,6 +70,7 @@ status: `implementation-landed / automated-verified / targeted-host-partial / in
 - 实机矩阵：新建→running、权限→待确认、AskUserQuestion→待输入、响应→running、后台完成→已完成未读、打开原任务→已完成已读、标题/活动变更→原卡片 patch、重启→历史恢复。
 - LevelDB 必须同屏观察原生小点和集合进入/移除；额度必须同屏核对 5h、全模型周、Fable/Fable 5、绝对 reset 与相对距离。
 - 当前代码和受影响自动化已落地；库存/历史、状态源、精确 unread reader、真实 Claude App 额度及构建/打包边界通过。真实额度已读到 5h、全模型周、Fable scoped 周额度及 reset；真实权限/问答、未读进出集合、标题/重启和项目筛选 UI 矩阵仍未完成，因此不得标记整体完成。
+- RAW-024 只增加 Hook/Domain/Controller/Float/action 的 focused checks、临时语义 typecheck、Vite production bundle、runtime asset preparation 与 uTools validator；不触发额度、项目、收藏、MQTT 或全仓测试。
 
 ## Stop Conditions
 

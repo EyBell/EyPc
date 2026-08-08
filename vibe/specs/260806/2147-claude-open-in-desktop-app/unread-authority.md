@@ -1,4 +1,10 @@
-# 增补：未读状态改由 Claude 桌面端 App 做权威
+<!-- document-archive-notice-v1 status=archived-linked -->
+# [已归档] 增补：未读状态改由 Claude 桌面端 App 做权威
+
+> **归档状态：** 已逻辑归档
+> **归档原因：** 原生未读权威结论仍有效，但旧字节扫描、最后集合和无同轮保护的实现已被稳定 V2 快照及会话提示替代。
+> **当前替代：** [Claude Code Companion 权威重置](../../260807/claude-code-companion-authority-reset/spec.md)
+> **物理迁移：** 未执行；项目尚未声明完整归档目录和精确目标，且本任务未授权移动、重命名或删除。
 
 > **Partially superseded evidence.** `epitaxy-unread-v1` 仍是持久原生权威；本文件的“字节扫描写入窗口 + 最后已知集合”自 2026-08-07 起被 exact Chromium-tagged key、复制前后源指纹一致的 LevelDB V2 临时快照、真实 reader 与失败=`unknown` 取代。成功精确跳转只允许同 `sessionId + completionEpoch` 的可撤销进程内提示和有界原生复读，不产生持久回执，也不改变 phase。当前合同见 [权威重置](../../260807/claude-code-companion-authority-reset/spec.md#L1)。
 

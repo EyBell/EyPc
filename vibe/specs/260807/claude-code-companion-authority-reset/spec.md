@@ -1,11 +1,11 @@
 # Claude Code Companion 权威重置 — Controlled Specification
 
 spec_id: `SPEC-260807-CLAUDE-CODE-COMPANION-AUTHORITY-RESET`
-spec_revision: `4`
+spec_revision: `5`
 status: `integrated-current-authority`
 execution_status: `implementation-landed / automated-verified / targeted-host-partial / interactive-host-pending`
-raw_sources: `RAW-001..RAW-023`
-updated: `2026-08-07`
+raw_sources: `RAW-001..RAW-024`
+updated: `2026-08-08`
 
 ## Authority
 
@@ -48,6 +48,7 @@ updated: `2026-08-07`
     "vibe/knowledge/error-memory/README.md",
     "vibe/knowledge/error-memory/modules/claude-companion.md",
     "vibe/knowledge/error-memory/claude-session-family-open-route-and-state-authority-conflation.md",
+    "vibe/knowledge/error-memory/tests-that-cannot-fail.md",
     "vibe/knowledge/error-memory/watcher-callback-latency-is-not-end-to-end-publication-latency.md",
     "vibe/knowledge/error-memory/independent-authorities-coupled-by-full-refresh.md",
     "vibe/specs/260805/1150-claude-companion-provider/spec.md",
@@ -90,10 +91,12 @@ updated: `2026-08-07`
     "src/domain/companionProvider.ts",
     "src/FloatApp.vue",
     "src/pages/CodexPage.vue",
+    "src/runtime/appRuntime.ts",
     "src/runtime/codexController.ts",
     "src/platform/eypcPlatform.ts",
     "src/styles/float.css",
     "scripts/prepare-utools-runtime.mjs",
+    "scripts/sync-utools-preloads.mjs",
     "scripts/utools-preload-assets.mjs",
     "scripts/validate-utools-runtime.mjs"
   ],
@@ -130,6 +133,7 @@ updated: `2026-08-07`
     "vibe/knowledge/technical-details.md",
     "vibe/knowledge/error-memory/README.md",
     "vibe/knowledge/error-memory/claude-session-family-open-route-and-state-authority-conflation.md",
+    "vibe/knowledge/error-memory/tests-that-cannot-fail.md",
     "vibe/knowledge/error-memory/independent-authorities-coupled-by-full-refresh.md",
     "vibe/knowledge/error-memory/modules/claude-companion.md",
     "vibe/knowledge/error-memory/watcher-callback-latency-is-not-end-to-end-publication-latency.md",
@@ -164,6 +168,7 @@ updated: `2026-08-07`
   4. 证据缺失、歧义或活跃进程冲突时 unknown。
 - 私有日志只接受已门禁版本的固定无内容模板：发送、权限请求、AskUserQuestion、按 request id 关联的权限响应、Query completed/Turn succeeded、Stopping/失败。轮转、重复、乱序要去重；版本或语法失配 fail closed。原始行、正文和工具参数不得进入 Renderer 或插件存储。
 - official Hooks 是唯一关联 fallback，不是完整单源权威；仅 Hooks 路线已废弃。`PermissionRequest` 与 `AskUserQuestion` 分别进入等待审批/等待输入，响应/后续活动恢复 running，Stop 完成当前 Turn；SessionEnd 不覆盖已有 Stop，idle notification 不产生待输入。
+- Hook 状态由纯父 Turn reducer 归并：只有 `UserPromptSubmit` 开启 Turn；`SubagentStart/SubagentStop` 只更新活动水位。`Stop/StopFailure/SessionEnd` 关闭 Turn 后，同 Turn 的子代理、工具或 lifecycle 尾事件不得恢复 running；只有严格更新的新 Prompt Turn 可重新激活。
 - 未读持久权威是 Claude App Local Storage 中包含 Chromium string tag 的 `epitaxy-unread-v1` 精确键。V2 reader 在复制 LevelDB 前后核对源指纹，只接纳完整稳定的 `generation/sourceFingerprint` 快照；失败返回 unknown，不能复用旧集合或字节扫描。
 - 成功派发精确 Epitaxy local deep link 后，Controller 可为当前 `sessionId + completionEpoch` 建立仅进程内的可撤销已读提示，并在 `0/100/300/1000ms` 重读原生集合。同完成轮次迟到的 unread `true` 不得回跳；新 running/waiting 或更晚真实 completion 会撤销提示。派发失败不建立提示，`ClaudeOpenResult.confirmsRead` 仍为 `false`，且提示不写 App、不持久化、不改变 phase。
 - 精确 live running/waiting 优先于 unread；否则 native unread membership 本身可把非 live 历史 unknown/stopped 确认为 `completed-unread`，不要求先有 Hook completed。
@@ -174,12 +179,14 @@ updated: `2026-08-07`
 - watcher 只刷新自己的 Map/Set 并立即发布。库存失败保留最后有效视图；未读失败变 unknown；quota 网络错误不能延迟状态或库存。禁止“所有 watcher 调同一个 full refresh”。
 - App 日志事件即时触发 state hot-read，1 秒恢复轮询兜底；连续两次状态读取失败后，running/waiting 降为 unknown，不能永久卡在进行中。启动、功能启用、恢复可见、聚焦、网络恢复及最早 reset+1 秒分别唤醒额度 lane。
 - 状态 delta 与 inventory metadata patch 使用单调 evidence/generation 屏障：慢 inventory 可更新标题，但不能回退更新的 state；state patch 不能删除库存字段。
+- 状态版本比较由纯 Domain 统一执行：先比较 source generation，同 generation 再比较 evidence time 与来源权威；App 明确 terminal 优先同 Turn Hook 尾事件，`completedTurns` 只作冷历史佐证。state/unread refresh 共用可加入的 Promise singleflight，手动单项同步、watcher 和打开后同步不得形成第二条读取/发布通道。
 - 正常真实事件到最终 Controller publish P95 `<=250ms`；漏事件恢复 `<=1.25s`。watcher callback 延迟不是最终发布延迟，不能作为该 SLO 的替代证据。
 
 ### Exact open and shortcut cache
 
 - [open.cjs](../../../../preload/claude/open.cjs#L1) 缓存 Claude 主 App 的 bundle/PID/启动代次；热跳转只做低成本存活检查，缓存失效或冷启动才完整复核。
 - 上一个/下一个同步推进物化视图游标，然后异步派发 `claude://claude.ai/epitaxy/<encoded-local-session-id>`。latest-target-wins 单飞队列保证连续按键只打开最终目标。
+- Claude 任务的更多操作提供“同步 Claude 状态”：只接受当前未归档 local session 的精确 `{ key, actionAlias }`，并发读取真实 state/unread、合并后最多发布一次，部分失败给出明确反馈。成功打开原任务后执行同一路线的一次静默同步；派发失败不确认已读也不触发同步。
 - 禁止 `resume/import`、CLI、终端、标题 AX 点击、自动启动、写未读或创建副本。选取 P95 `<=10ms`，热派发 P95 `<=150ms`，冷校验 P95 `<=1s`。
 
 ### Virtual projects, provider capability and visuals
@@ -187,6 +194,7 @@ updated: `2026-08-07`
 - EyPc 不创建或修改 Codex/Claude 原生项目。虚拟合并先按双方相同规范绝对路径的稳定 project key；否则只在 Codex 与 Claude 两侧规范名称都唯一时合并，重名歧义保持分离。Claude 独有项目进入项目区，共享项目在“全部”只出现一次。
 - Projects 子页签为会话级 `全部 / 只显示 Codex / 只显示 Claude`，默认全部。单来源模式同时过滤项目子任务并重算项目/任务数；共享项目只要含所选来源任务就保留。
 - Claude 任务只支持精确打开、本地置顶和本地隐藏；归档、移除、移动等 Claude 原生不支持动作禁用并解释，不得误路由到 Codex 动作。
+- “同步 Claude 状态”是 Claude-only 的实时只读 capability；Codex 行不显示。它不能人工指定 completed/read，也不能修改 Claude App。
 - 每条任务和项目固定显示文本化“归属 Codex/Claude/共享”；文字、图标、ARIA 名称共同表达来源。来源背景使用现有 token 的 8% 普通/12% 悬停选中混色，状态图标与左侧标记继续只表达任务状态；Tab 保留原生键盘、焦点和 `aria-selected` 语义。
 
 ### Quota
@@ -226,6 +234,7 @@ updated: `2026-08-07`
 | DEC-20260807-11 | 显式授权的 Claude App 加密缓存 + 动态 limits 是 quota/reset 主权威 | Claude Code 凭据、固定窗口、App history 冒充完整额度 | RAW-019 |
 | DEC-20260807-12 | 只读 EyPc 虚拟项目；路径优先、双方名称唯一兜底、三态来源筛选 | 写原生项目、单边名称猜合并、只把 Claude 任务塞进数组 | RAW-021 |
 | DEC-20260807-13 | 所有行文本化归属 + 8%/12% 来源背景 + provider capability | 只靠颜色、隐藏来源、把 Claude 动作误派到 Codex | RAW-022 |
+| DEC-20260808-14 | 父 Turn reducer + 集中来源/版本选择 + 同 lane 单项真实同步 | Stop 后尾事件复活、人工完成/已读覆盖、第二条刷新通道 | RAW-024 |
 
 ## Archive Tombstones
 
@@ -240,7 +249,8 @@ updated: `2026-08-07`
 | ARCH-20260807-07 | 三次额度尝试或两窗口 history 足够 | DEC-07 | 上游公开合同明确收敛且产品需求变更 |
 | ARCH-20260807-08 | “实现已完成” | DEC-08 | uTools/Claude 全矩阵和 Fable 同屏验收通过 |
 | ARCH-20260807-09 | 完整 `test → typecheck → build → verify` 是每轮/本任务默认完成门禁 | DEC-10 | 仅有新的独立用户要求、发布策略或 impact evidence trigger 才可恢复对应 wider suite |
+| ARCH-20260808-10 | 任意 Stop 后活动事件都可把父任务恢复 running | DEC-14 | 只有新的父 Turn 权威合同与对应反例验收后才可替代 |
 
 ## Implementation And Acceptance State
 
-生产代码已实现额度权威、状态/未读代际、会话提示、虚拟项目筛选和归属视觉增量；受影响自动化、类型、构建/打包边界及库存、状态、uTools unread、真实 App quota 定向探针已通过。真实 quota 返回 5h、全模型周与 Fable scoped 周额度及 reset，原生 unread 已稳定读到一条真实 membership。实际 permission/AskUserQuestion/响应、EyPc 点击移除/同轮不回跳/新 completion 再未读、标题/重启和真实项目筛选 UI 矩阵尚未走完，因此任务仍是 `acceptance-pending`，不能恢复旧的整体“完成”声明。详见 [verify.md](verify.md#L1)。
+生产代码已实现额度权威、状态/未读代际、父 Turn reducer、集中状态选择与版本比较、可加入的 state/unread singleflight、Claude-only 单项同步、会话提示、虚拟项目筛选和归属视觉增量；RAW-024 的聚焦自动化、scoped semantic typecheck、bundle/runtime 资产与匿名本机状态探针均已通过，当前 27 条投影为 0 running / 24 completed / 1 stopped / 2 unknown。此前真实 quota 返回 5h、全模型周与 Fable scoped 周额度及 reset，原生 unread 已稳定读到一条真实 membership。实际旧任务 UI 点击同步、permission/AskUserQuestion/响应、EyPc 点击移除/同轮不回跳/新 completion 再未读、标题/重启和真实项目筛选 UI 矩阵尚未走完，因此任务仍是 `acceptance-pending`，不能恢复旧的整体“完成”声明。详见 [verify.md](verify.md#L1)。
