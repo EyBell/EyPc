@@ -2,7 +2,7 @@
 
 Tool: claude
 Date: 2026-08-07
-Status: `requirement-approved / partially-implemented`（D3、D4 的 L1+L2、D5 已落地并通过门禁；D2、D4 的 L3、D6 仍未实现）
+Status: `requirement-approved / partially-implemented`（D3、D4 的 L1+L2、D5、D6 已落地并通过门禁；仅剩 D2 逐项同步与 D4 的 L3 推测发现未实现）
 Documentation level: `standard requirement`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
@@ -135,7 +135,7 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L37)
 - 搜索学习的计数口径不变（宿主受理即计数），但运行记录里必须能看出「已启动」与「成功退出」不是一回事。
 - 落地：`favoriteRunSummary` 对 `运行中 / 已成功退出（退出码 0） / 以非 0 退出码 N 结束 / 已被信号 X 终止 / 启动或执行失败 / 已结束，退出码不可得` 分别措辞；完整页与快速页行内以 `.favorite-run-state`（失败为红）呈现。**已知边界**：退出码只在插件进程存活期间可观测，插件退出后重启不会补回历史退出码 —— 这是换取「子进程不被插件重启掐断」的代价。
 
-### D6 动态参数
+### D6 动态参数 —— `implemented 2026-08-08`
 
 - 运行器参数项可声明为动态位，携带名称、可选默认值、是否必填。执行前弹出受控输入收集全部动态位；取消即取消执行。
 - 硬约束：
@@ -145,6 +145,17 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L37)
 - 信任指纹覆盖参数**声明**（动态位的名称、位置、是否必填），不覆盖每次填写的值：改声明要重新确认，换填写内容不需要。
 - 上次填写值可选记住，落本机档，不同步。
 - 文件槽与快速页数字键触发含必填动态位的运行器时，必须弹输入而不是静默失败；此时「不显示主窗口」的静默承诺让位于可见输入框，需在合同与用户说明中写明。
+
+**落地实现（2026-08-08）**
+
+- 语法：参数模板里写 `{ask:名称}`（必填）或 `{ask:名称=默认值}`（选填）。名称去重，同名只问一次、同值代入所有出现处；上限 8 个动态位。
+- **只允许出现在参数里**。可执行程序与工作目录保持静态 —— 一次输入不能改写「跑什么」和「在哪跑」，这是刻意收紧的边界（[favoriteRunnerParameters](../../../../src/domain/favoriteLaunch.ts#L263)）。
+- 不二次展开的实现方式：先按模板切分出 `{ask:…}` 之间的字面段，**各段单独做 `{path}/{dir}/{name}` 展开，再把用户原值拼进去**（[applyFavoriteRunnerArgument](../../../../src/domain/favoriteLaunch.ts#L283)）。因此两个方向都堵死：输入里的 `{path}` 保持字面量，收藏路径里出现的 `{ask:…}` 也不会变成新的输入位。
+- 必填缺值时 `resolveFavoriteRunner` 返回 `null` 而不是拼半截命令行；`\0` 与超长值同样拒绝。
+- 信任：动态位声明本身就在参数模板里，已被指纹覆盖 —— 改声明要重新确认，换填写内容不需要，无需额外机制。
+- Runtime：`favoriteRunPrompt` 层收集取值并实时给出解析预览；取消即不运行、不计入学习。上次取值记在进程内存（不落盘、不同步）。文件槽路径会先切到收藏页并 `show()` 再弹框。
+- UI：全局挂载的 [FavoriteRunPromptLayer.vue](../../../../src/components/FavoriteRunPromptLayer.vue#L1)，完整页与快速页共用同一实现；`Ctrl+Enter` 运行、`Escape` 取消。
+- 落地证据：[favoriteLaunch.test.ts](../../../../tests/domain/favoriteLaunch.test.ts#L123) 四例（声明只来自参数、取值不二次展开且 `{path} && rm -rf /` 保持字面量、收藏数据不产生新输入位、信任绑定声明不绑定取值），[action.test.ts](../../../../tests/runtime/action.test.ts#L4148) 端到端（缺必填不运行、预览逐字、提交后 argv 正确、记住上次取值、取消不运行、槽位触发弹框并 `show()`）。
 
 ## Phase Boundary
 
@@ -159,13 +170,13 @@ Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L37)
 
 除 D3 外，其余门禁 `not run` —— 对应能力尚未实现。
 
-**D3 + D4(L1/L2) + D5 已跑（2026-08-07）**：`tests/domain tests/ui tests/integration tests/platform tests/unit` 共 `66 files / 818 tests` 全绿；`tests/runtime/action.test.ts` `167/167`（`--testTimeout=30000`，规避与收藏无关的 MQTT 巨型用例阈值）；`pnpm run build` 通过全链（typecheck 0 error、production build、runtime prepare、uTools validation）；`node --check preload/index.js` 与 canonical↔public 镜像一致。宿主验收未跑。
+**D3 + D4(L1/L2) + D5 + D6 已跑（2026-08-07/08）**：`tests/domain tests/ui tests/integration tests/platform tests/unit` 共 `66 files / 822 tests` 全绿；`tests/runtime/action.test.ts` `168/168`（`--testTimeout=30000`，规避与收藏无关的 MQTT 巨型用例阈值）；`pnpm run build` 通过全链（typecheck 0 error、production build、runtime prepare、uTools validation）；`node --check preload/index.js` 与 canonical↔public 镜像一致。宿主验收未跑。
 
 | Check | Planned gate |
 | --- | --- |
-| 领域纯函数 | ~~指纹条件纳入 `name` 的新旧算法与一次性迁移~~（D3 已覆盖）；`syncScope` 归一化与分组级联；动态参数声明解析与值不展开 |
+| 领域纯函数 | ~~指纹条件纳入 `name` 的新旧算法与一次性迁移~~（D3 已覆盖）；~~动态参数声明解析与值不展开~~（D6 已覆盖）；`syncScope` 归一化与分组级联 |
 | 状态迁移 | 老状态升级后收藏默认 `synced`、信任落本机档且不丢失；双档同 ID 冲突按本机档收敛 |
-| Runtime | 退出码传播、非 0 退出文案、动态位取消即取消执行、槽位触发必填输入 |
+| Runtime | ~~退出码传播、非 0 退出文案、动态位取消即取消执行、槽位触发必填输入~~（D5/D6 已覆盖） |
 | Preload | ~~run log 重定向与大小/条数上限；重定向失败只降级为无日志~~（已跑：`favoriteFileBridge.test.ts` 3 例覆盖 fd 重定向 + 退出码回填 + 声明日志存在性、日志目录不可写时降级、相对声明路径被丢弃）；L3 扫描的深度/条目/耗时上界与越界即停；本机档从不写入 `utools.dbStorage` |
 | UI | ~~运行记录在行内呈现；命令行与实际 argv 逐字一致~~（已跑：`action.test.ts` 覆盖三种措辞与五个日志动作）；L1/L2「确定」与 L3「推测」置信度可区分 |
 | 构建 | `pnpm run build`（typecheck、production build、runtime prepare、uTools validation） |
