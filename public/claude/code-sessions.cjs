@@ -170,25 +170,70 @@ function completedEvidenceAt(session, previousBySession) {
     : session.lastActivityAt || session.metadataUpdatedAt || session.lastFocusedAt
 }
 
-function projectedState(session, hookState, byCli, previousBySession, appSnapshot, appByLocal) {
-  const exactApp = (appByLocal instanceof Map ? appByLocal : appStateMap(appSnapshot)).get(session.sessionId) || null
-  const hookResult = hookForSession(session, hookState, byCli, previousBySession)
-  const hook = hookResult.hook
-  const appAt = Number(exactApp && exactApp.lastEventAt) || 0
-  const hookAt = Number(hook && hook.lastEventAt) || 0
-  const historyAt = completedEvidenceAt(session, previousBySession)
+function stateEvidenceAt(entry) {
+  if (!entry) return 0
+  return Math.max(
+    Number(entry.lastEventAt) || 0,
+    Number(entry.phaseUpdatedAt) || 0,
+    Number(entry.turnStartedAt) || 0,
+    Number(entry.lastStopAt) || 0,
+    Number(entry.lastSessionEndAt) || 0
+  )
+}
+
+function terminalEvidenceAt(entry) {
+  if (!entry || !['completed', 'stopped'].includes(entry.phase)) return 0
+  return Math.max(
+    Number(entry.lastStopAt) || 0,
+    Number(entry.lastSessionEndAt) || 0,
+    Number(entry.phaseUpdatedAt) || 0,
+    Number(entry.lastEventAt) || 0
+  )
+}
+
+/**
+ * Chooses the state authority without allowing same-Turn Hook tail activity to
+ * overwrite an exact App terminal. A Hook can reactivate only by proving a
+ * strictly newer parent Turn start.
+ */
+function selectProjectedStateSource(exactApp, hook, correlation, historyAt) {
+  const appAt = stateEvidenceAt(exactApp)
+  const hookAt = stateEvidenceAt(hook)
   const livePhase = (entry) => Boolean(entry && ['running', 'waiting-approval', 'waiting-input'].includes(entry.phase))
   const appSupersededByHistory = livePhase(exactApp) && historyAt > appAt
   const hookSupersededByHistory = livePhase(hook) && historyAt > hookAt
 
-  // Latest exact App-local evidence wins ties. A newer uniquely correlated
-  // Hook may still advance the row when the App log has not flushed yet.
-  if (exactApp && !appSupersededByHistory && (appAt >= hookAt || hookResult.correlation === 'ambiguous' || !hook)) {
+  if (exactApp && !appSupersededByHistory) {
+    const appTerminalAt = terminalEvidenceAt(exactApp)
+    if (appTerminalAt) {
+      const hookStartsNewTurn = hook
+        && !hookSupersededByHistory
+        && (Number(hook.turnStartedAt) || 0) > appTerminalAt
+      return hookStartsNewTurn ? 'hook' : 'app'
+    }
+    if (!hook || correlation === 'ambiguous' || hookSupersededByHistory) return 'app'
+    return hookAt > appAt ? 'hook' : 'app'
+  }
+  if (hook && !hookSupersededByHistory) return 'hook'
+  if (correlation === 'ambiguous') return 'ambiguous'
+  if (historyAt > 0) return 'history'
+  return 'none'
+}
+
+function projectedState(session, hookState, byCli, previousBySession, appSnapshot, appByLocal) {
+  const exactApp = (appByLocal instanceof Map ? appByLocal : appStateMap(appSnapshot)).get(session.sessionId) || null
+  const hookResult = hookForSession(session, hookState, byCli, previousBySession)
+  const hook = hookResult.hook
+  const historyAt = completedEvidenceAt(session, previousBySession)
+  const selected = selectProjectedStateSource(exactApp, hook, hookResult.correlation, historyAt)
+
+  if (selected === 'app') {
+    const appAt = stateEvidenceAt(exactApp)
     return {
       statusCorrelation: 'direct-local',
       stateSource: 'app-log',
       stateCompatibility: 'compatible',
-      stateGeneration: Number(appSnapshot.generation) || 0,
+      stateGeneration: Number(appSnapshot && appSnapshot.generation) || 0,
       phase: exactApp.phase,
       phaseUpdatedAt: Number(exactApp.phaseUpdatedAt) || appAt,
       turnStartedAt: Number(exactApp.turnStartedAt) || 0,
@@ -199,7 +244,7 @@ function projectedState(session, hookState, byCli, previousBySession, appSnapsho
       lastSessionEndAt: Number(exactApp.lastSessionEndAt) || 0
     }
   }
-  if (hook && !hookSupersededByHistory) {
+  if (selected === 'hook') {
     return {
       statusCorrelation: hookResult.correlation,
       stateSource: 'hook',
@@ -217,7 +262,7 @@ function projectedState(session, hookState, byCli, previousBySession, appSnapsho
   }
   // An ambiguous current Hook is evidence that some sibling is live, but not
   // which one. Never turn every duplicate wrapper into a completed history.
-  if (hookResult.correlation === 'ambiguous') {
+  if (selected === 'ambiguous') {
     return {
       statusCorrelation: 'ambiguous',
       stateSource: 'none',
@@ -233,7 +278,7 @@ function projectedState(session, hookState, byCli, previousBySession, appSnapsho
       lastSessionEndAt: 0
     }
   }
-  if (session.completedTurns > 0) {
+  if (selected === 'history' && session.completedTurns > 0) {
     const completedAt = historyAt
     return {
       statusCorrelation: 'none',
@@ -426,6 +471,7 @@ module.exports = {
   projectKeyForMetadata,
   scanUserDirectories,
   completedEvidenceAt,
+  selectProjectedStateSource,
   projectedState,
   correlateCodeSessions,
   createCodeSessionReader

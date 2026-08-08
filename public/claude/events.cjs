@@ -95,57 +95,107 @@ function parseQueueText(text) {
   return entries.length > MAX_EVENTS_PER_READ ? entries.slice(-MAX_EVENTS_PER_READ) : entries
 }
 
+function emptyHookState() {
+  return {
+    phase: 'unknown',
+    lastEvent: '',
+    lastEventAt: 0,
+    turnStartedAt: 0,
+    turnOpen: false,
+    lastActivityAt: 0,
+    waitingApprovalAt: 0,
+    waitingInputAt: 0,
+    lastStopAt: 0,
+    lastStopFailureAt: 0,
+    lastSessionEndAt: 0,
+    pid: 0
+  }
+}
+
 /**
- * Folds a batch into independent monotonic waterlines plus the current phase.
- * A later SessionEnd therefore cannot erase a Stop from the same Turn.
+ * Reduces one ordered Hook event without inventing a parent Turn.
+ *
+ * `UserPromptSubmit` is the only event that opens a Turn. Tool events may move
+ * an already-open parent Turn back to running, while subagent events only move
+ * the activity waterline. Once Stop/StopFailure/SessionEnd closes the Turn,
+ * tail events cannot revive it; only the next prompt can.
  */
+function reduceQueueEntry(previous, entry) {
+  const known = previous && typeof previous === 'object' ? previous : emptyHookState()
+  // The file order resolves equal timestamps. A genuinely older record is a
+  // replay/out-of-order append and cannot roll the phase backwards.
+  if (known.lastEventAt && entry.at && entry.at < known.lastEventAt) return known
+  const at = entry.at || known.lastEventAt || 0
+  const next = {
+    ...known,
+    turnOpen: known.turnOpen === true,
+    lastEvent: entry.event,
+    lastEventAt: at,
+    pid: entry.pid || known.pid || 0
+  }
+
+  if (entry.event === 'prompt-submit') {
+    next.turnStartedAt = at
+    next.turnOpen = true
+    next.lastActivityAt = at
+    next.waitingApprovalAt = 0
+    next.waitingInputAt = 0
+    next.phase = 'running'
+    return next
+  }
+  if (entry.event === 'stop') {
+    next.lastStopAt = at
+    next.turnOpen = false
+    next.phase = 'completed'
+    return next
+  }
+  if (entry.event === 'stop-failure') {
+    next.lastStopFailureAt = at
+    next.turnOpen = false
+    next.phase = 'stopped'
+    return next
+  }
+  if (entry.event === 'session-end') {
+    next.lastSessionEndAt = at
+    next.turnOpen = false
+    next.phase = next.lastStopAt > 0 && next.lastStopAt >= next.turnStartedAt
+      ? 'completed'
+      : 'stopped'
+    return next
+  }
+  if (entry.event === 'subagent-start' || entry.event === 'subagent-stop') {
+    next.lastActivityAt = at
+    return next
+  }
+  if (entry.event === 'pre-tool' && entry.reason === 'ask-user-question') {
+    if (next.turnOpen) {
+      next.waitingInputAt = at
+      next.phase = 'waiting-input'
+    }
+    return next
+  }
+  if (entry.event === 'permission-request') {
+    if (next.turnOpen) {
+      next.waitingApprovalAt = at
+      next.phase = 'waiting-approval'
+    }
+    return next
+  }
+  if (entry.event === 'pre-tool' || entry.event === 'post-tool') {
+    next.lastActivityAt = at
+    if (next.turnOpen) next.phase = 'running'
+    return next
+  }
+  // SessionStart and Notification are wake-up/lifecycle hints only.
+  return next
+}
+
+/** Folds a batch into independent monotonic waterlines plus parent phase. */
 function foldQueueEntries(entries, previous) {
   const state = new Map(previous instanceof Map ? previous : [])
   for (const entry of Array.isArray(entries) ? entries : []) {
-    const known = state.get(entry.sessionId) || {
-      phase: 'unknown',
-      lastEvent: '',
-      lastEventAt: 0,
-      turnStartedAt: 0,
-      lastActivityAt: 0,
-      waitingApprovalAt: 0,
-      waitingInputAt: 0,
-      lastStopAt: 0,
-      lastSessionEndAt: 0,
-      pid: 0
-    }
-    // The file order resolves equal timestamps. A genuinely older record is a
-    // replay/out-of-order append and cannot roll the phase backwards.
-    if (known.lastEventAt && entry.at && entry.at < known.lastEventAt) continue
-    const at = entry.at || known.lastEventAt || 0
-    const next = { ...known, lastEvent: entry.event, lastEventAt: at, pid: entry.pid || known.pid || 0 }
-    if (entry.event === 'prompt-submit') {
-      next.turnStartedAt = at
-      next.lastActivityAt = at
-      next.phase = 'running'
-    } else if (entry.event === 'pre-tool' && entry.reason === 'ask-user-question') {
-      next.waitingInputAt = at
-      next.phase = 'waiting-input'
-    } else if (entry.event === 'permission-request') {
-      next.waitingApprovalAt = at
-      next.phase = 'waiting-approval'
-    } else if (entry.event === 'stop') {
-      next.lastStopAt = at
-      next.phase = 'completed'
-    } else if (entry.event === 'session-end') {
-      next.lastSessionEndAt = at
-      next.phase = next.lastStopAt > 0 && next.lastStopAt >= next.turnStartedAt
-        ? 'completed'
-        : 'stopped'
-    } else if (entry.event === 'stop-failure') {
-      next.phase = 'stopped'
-    } else if (entry.event === 'notification') {
-      // idle_prompt is only a wake-up hint. It never proves a user question.
-    } else {
-      next.lastActivityAt = at
-      next.phase = 'running'
-    }
-    state.set(entry.sessionId, next)
+    const known = state.get(entry.sessionId) || emptyHookState()
+    state.set(entry.sessionId, reduceQueueEntry(known, entry))
   }
   return state
 }
@@ -331,6 +381,7 @@ module.exports = {
   normalizeEventClass,
   normalizeQueueEntry,
   parseQueueText,
+  reduceQueueEntry,
   foldQueueEntries,
   createEventQueue
 }

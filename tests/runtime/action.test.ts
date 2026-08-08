@@ -1318,6 +1318,21 @@ describe('app runtime', () => {
     runtime.dispose()
   })
 
+  it('registers the fixed Claude task sync action and rejects incomplete identity arguments', () => {
+    installPlatform()
+    const runtime = createAppRuntime(createInitialState(100))
+
+    expect(runtime.dispatch('codex.claude.task.sync', {
+      key: 'claude:local_11111111-1111-4111-8111-111111111111',
+      actionAlias: 'local_11111111-1111-4111-8111-111111111111'
+    })).toMatchObject({ handled: true, actionId: 'codex.claude.task.sync' })
+    expect(runtime.dispatch('codex.claude.task.sync', { key: 'claude:stale' })).toMatchObject({
+      handled: false,
+      actionId: 'codex.claude.task.sync'
+    })
+    runtime.dispose()
+  })
+
   it('shows, expands and focuses the Codex card through its global activation command', async () => {
     const activate = vi.fn(() => true)
     const { state } = installPlatform({

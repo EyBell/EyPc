@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   claudeCodeDisplayName,
+  compareClaudeCodeStateVersion,
   normalizeClaudeCodeObservation,
   normalizeClaudeCodeUnread,
   projectClaudeCodeTaskCards,
@@ -71,6 +72,28 @@ describe('Claude App Code domain', () => {
       statusEnteredAt: 430,
       pendingSince: 430
     })
+  })
+
+  it('orders state versions by generation before event time and then by authority', () => {
+    const current = observation('running', { stateGeneration: 4, phaseUpdatedAt: 500, hookActivityAt: 500 })
+    const newerGeneration = observation('completed', {
+      stateGeneration: 5,
+      phaseUpdatedAt: 100,
+      hookActivityAt: 100,
+      lastStopAt: 100
+    })
+    expect(compareClaudeCodeStateVersion(newerGeneration, current)).toBeGreaterThan(0)
+    expect(compareClaudeCodeStateVersion(current, newerGeneration)).toBeLessThan(0)
+    expect(compareClaudeCodeStateVersion(
+      observation('completed', {
+        stateGeneration: 4,
+        stateSource: 'app-log',
+        phaseUpdatedAt: 500,
+        hookActivityAt: 500,
+        lastStopAt: 500
+      }),
+      current
+    )).toBeGreaterThan(0)
   })
 
   it('lets exact native unread recover any non-live historical row', () => {

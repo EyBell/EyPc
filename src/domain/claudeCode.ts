@@ -210,6 +210,44 @@ export function claudeCodeActivityAt(observation: ClaudeCodeObservation): number
   )
 }
 
+export function claudeCodeStateEvidenceAt(observation: ClaudeCodeObservation): number {
+  return Math.max(
+    observation.phaseUpdatedAt,
+    observation.turnStartedAt,
+    observation.hookActivityAt,
+    observation.waitingApprovalAt,
+    observation.waitingInputAt,
+    observation.lastStopAt,
+    observation.lastSessionEndAt
+  )
+}
+
+function claudeCodeStateAuthority(observation: ClaudeCodeObservation): number {
+  if (observation.stateSource === 'app-log') return 4
+  if (observation.stateSource === 'hook') return 3
+  if (observation.stateSource === 'metadata-history') return 2
+  return 1
+}
+
+/**
+ * Compares state-lane versions. Generation is the first ordering boundary;
+ * event time and source authority only resolve observations inside one
+ * generation. Positive means `left` is newer/stronger than `right`.
+ */
+export function compareClaudeCodeStateVersion(
+  left: ClaudeCodeObservation,
+  right: ClaudeCodeObservation
+): number {
+  if (left.stateGeneration !== right.stateGeneration) {
+    return left.stateGeneration > right.stateGeneration ? 1 : -1
+  }
+  const leftAt = claudeCodeStateEvidenceAt(left)
+  const rightAt = claudeCodeStateEvidenceAt(right)
+  if (leftAt !== rightAt) return leftAt > rightAt ? 1 : -1
+  const authorityDelta = claudeCodeStateAuthority(left) - claudeCodeStateAuthority(right)
+  return authorityDelta === 0 ? 0 : authorityDelta > 0 ? 1 : -1
+}
+
 export interface ClaudeCodeResolvedState {
   phase: ClaudeCodePhase
   bucket: CodexTaskBucket
