@@ -8,22 +8,22 @@
  * here degrades Claude alone and can never disturb Codex inventory, quota or
  * the floating window.
  *
- * Write scope is exactly one thing — registering and unregistering the
- * companion's hook and status line entries in `~/.claude/settings.json`, plus
- * the two generated scripts and the queue/quota files inside EyPc's own data
- * directory. Nothing else in the user's Claude installation is ever modified.
+ * Direct write scope is registration plus one version-gated, uniquely indexed
+ * App-local `isArchived` transaction. No path crosses this facade, and no
+ * LevelDB, transcript or non-target session is written.
  */
 
-const CLAUDE_BRIDGE_REVISION = 'claude-code-companion-v3'
+const CLAUDE_BRIDGE_REVISION = 'claude-code-companion-v5'
 
 const { createEventQueue } = require('./events.cjs')
 const { createEnvironmentProbe } = require('./environment.cjs')
 const { createOpener } = require('./open.cjs')
 const { createQuotaFallback } = require('./quota.cjs')
-const { createCodeSessionReader, correlateCodeSessions } = require('./code-sessions.cjs')
+const { createCodeSessionReader, correlateCodeSessions, LOCAL_SESSION_PATTERN } = require('./code-sessions.cjs')
 const { createUnreadReader } = require('./unread.cjs')
 const { createPlanUsageReader } = require('./plan-usage.cjs')
 const { createAppStateReader } = require('./app-state.cjs')
+const { createArchiveAdapter } = require('./archive.cjs')
 const {
   HOOK_SCRIPT_NAME,
   STATUSLINE_SCRIPT_NAME,
@@ -76,6 +76,39 @@ function createClaudeBridge(dependencies) {
   let lastCodeInventory = null
   let codeStateGeneration = 0
   let lastCodeStateFingerprint = ''
+
+  function readCurrentSessionObservation(sessionId) {
+    queue.rotateIfNeeded()
+    queue.drain()
+    const indexed = codeSessions.readIndexedSession(sessionId)
+    if (indexed.status !== 'found') return { status: indexed.status }
+    const appSnapshot = appState.read()
+    const correlated = correlateCodeSessions([indexed.session], queue.state(), previousCodeMetadata, appSnapshot)
+    previousCodeMetadata = correlated.nextMetadata
+    const session = correlated.sessions[0]
+    if (!session) return { status: 'missing' }
+    return { status: 'found', session }
+  }
+
+  function readCurrentSessionPhase(sessionId) {
+    const current = readCurrentSessionObservation(sessionId)
+    if (current.status !== 'found') return current
+    const session = current.session
+    return {
+      status: 'found',
+      phase: session.phase,
+      phaseUpdatedAt: session.phaseUpdatedAt,
+      compatibility: session.stateCompatibility,
+      source: session.stateSource
+    }
+  }
+
+  const archive = createArchiveAdapter({
+    ...dependencies,
+    codeSessions,
+    appState,
+    readCurrentSessionPhase
+  })
 
   function stateEnvelope(sessions, appSnapshot, readAt) {
     const stateRows = sessions.map((session) => ({
@@ -321,7 +354,22 @@ function createClaudeBridge(dependencies) {
 
   // Only the App-owned local id is accepted. No CLI import route exists.
   function openTask(sessionId) {
+    const current = codeSessions.readSessionState(String(sessionId || ''))
+    if (current.status !== 'found' || current.isArchived === true) {
+      return Promise.resolve({
+        outcome: 'unavailable',
+        confirmsRead: false,
+        errorCode: 'state-changed',
+        message: current.isArchived === true
+          ? 'Claude 任务已归档，未重新打开'
+          : 'Claude 任务身份已变化，请刷新后重试'
+      })
+    }
     return opener.openTask(String(sessionId || ''), { platform: dependencies.platform })
+  }
+
+  function archiveCodeSession(sessionId) {
+    return archive.archiveCodeSession(String(sessionId || ''))
   }
 
   function readAppPresence() {
@@ -354,7 +402,42 @@ function createClaudeBridge(dependencies) {
 
   function watchCodeSessions(listener) {
     if (codeWatchDispose) codeWatchDispose()
-    const dispose = codeSessions.watch(listener)
+    const dispose = codeSessions.watch((delta) => {
+      if (typeof listener !== 'function') return
+      const source = delta && typeof delta === 'object' ? delta : null
+      if (!source || !Array.isArray(source.mutations)) {
+        try { listener() } catch {}
+        return
+      }
+      const mutations = source.mutations.map((mutation) => {
+        if (mutation?.mutation !== 'upsert') return mutation
+        const prefix = 'claude:'
+        const sessionId = typeof mutation.key === 'string' && mutation.key.startsWith(prefix)
+          ? mutation.key.slice(prefix.length).toLowerCase()
+          : ''
+        if (!LOCAL_SESSION_PATTERN.test(sessionId)) return mutation
+        const current = readCurrentSessionObservation(sessionId)
+        return current.status === 'found' ? { ...mutation, session: current.session } : mutation
+      })
+      if (lastCodeInventory) {
+        const nextBySession = new Map(lastCodeInventory.sessions.map((session) => [session.sessionId, session]))
+        for (const mutation of mutations) {
+          if (mutation?.mutation === 'remove' || mutation?.mutation === 'archived') {
+            for (const sessionId of nextBySession.keys()) {
+              if (`claude:${sessionId}` === mutation.key) nextBySession.delete(sessionId)
+            }
+          } else if (mutation?.mutation === 'upsert' && mutation.session) {
+            nextBySession.set(mutation.session.sessionId, mutation.session)
+          }
+        }
+        lastCodeInventory = {
+          ...lastCodeInventory,
+          sessions: [...nextBySession.values()],
+          readAt: Number(source.acceptedAt) || Date.now()
+        }
+      }
+      try { listener({ ...source, mutations }) } catch {}
+    })
     codeWatchDispose = dispose
     return () => {
       if (codeWatchDispose === dispose) codeWatchDispose = null
@@ -464,6 +547,7 @@ function createClaudeBridge(dependencies) {
     watchEvents,
     readAppPresence,
     openTask,
+    archiveCodeSession,
     diagnostics,
     close
   }

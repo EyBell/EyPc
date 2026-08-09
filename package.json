@@ -13,6 +13,13 @@
     "sync:preloads": "node scripts/sync-utools-preloads.mjs",
     "verify": "pnpm run sync:preloads && pnpm run test && pnpm run build",
     "validate:utools": "node scripts/validate-utools-runtime.mjs",
+    "probe:claude-code": "node scripts/probe-claude-code-runtime.mjs",
+    "probe:claude-live-state": "node scripts/probe-claude-live-state-runtime.mjs",
+    "probe:claude-open": "node scripts/probe-claude-open-runtime.mjs",
+    "probe:claude-quota": "node scripts/probe-claude-quota-runtime.mjs",
+    "probe:claude-quota-cache": "node scripts/probe-claude-quota-cache-runtime.mjs",
+    "probe:claude-unread": "node scripts/probe-claude-unread-runtime.mjs",
+    "probe:claude-unread-key": "node scripts/probe-claude-unread-key-runtime.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 4174"
   },
   "dependencies": {
