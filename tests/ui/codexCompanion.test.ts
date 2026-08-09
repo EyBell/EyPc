@@ -159,7 +159,7 @@ function refreshTaskState(source: CodexFloatSnapshotV1): void {
 }
 
 function mountFloat(expanded: boolean, source = floatSnapshot(), overrides: Partial<NonNullable<Window['eypcFloat']>> = {}) {
-  const action = vi.fn(() => true)
+  const action = vi.fn((_id: string, _args?: unknown) => true)
   const setExpansion = vi.fn(() => true)
   const returnFocus = vi.fn(() => true)
   const createThread = vi.fn(async () => ({ outcome: 'opened' as const, modelId: 'gpt-5.6-sol' }))
@@ -546,7 +546,11 @@ describe('Codex Companion V3 UI contract', () => {
     ;(nativeRow.element as HTMLElement).focus()
     await nativeRow.trigger('keydown', { key: 'p', code: 'KeyP', ctrlKey: true })
     await nativeRow.trigger('keydown', { key: 'ArrowUp', code: 'ArrowUp', altKey: true })
-    expect(action).not.toHaveBeenCalled()
+    expect(action).toHaveBeenCalledWith('codex.task.focus', {
+      key: TASK_ACTIVE,
+      revisionAt: expect.any(Number)
+    })
+    expect(action.mock.calls.every(([id]) => id === 'codex.task.focus')).toBe(true)
     await localPin.trigger('focus')
     vi.advanceTimersByTime(200)
     await wrapper.vm.$nextTick()
@@ -559,7 +563,7 @@ describe('Codex Companion V3 UI contract', () => {
     expect(chatsPin.attributes('aria-disabled')).toBe('true')
     projects.action.mockClear()
     await chatsPin.trigger('click')
-    expect(projects.action).not.toHaveBeenCalled()
+    expect(projects.action.mock.calls.every(([id]) => id === 'codex.task.focus')).toBe(true)
 
     const css = readFileSync(resolve(process.cwd(), 'src/styles/float.css'), 'utf8')
     expect(css).toContain('.action-pin[data-pin-source="local"]')
@@ -613,12 +617,12 @@ describe('Codex Companion V3 UI contract', () => {
     expect(wrapper.find('.float-action-hint').exists()).toBe(false)
 
     const stoppedArchive = failed.get('.task-inline-actions .action-archive')
-    expect(stoppedArchive.attributes('aria-disabled')).toBe('true')
+    expect(stoppedArchive.attributes('aria-disabled')).toBe('false')
     expect(stoppedArchive.attributes('disabled')).toBeUndefined()
     await stoppedArchive.trigger('pointerenter')
     vi.advanceTimersByTime(200)
     await wrapper.vm.$nextTick()
-    expect(wrapper.get('.float-action-hint').text()).toContain('会话已停止但未完成')
+    expect(wrapper.get('.float-action-hint').text()).toContain('真实归档会话')
     await stoppedArchive.trigger('pointerleave')
 
     const archive = wrapper.get(`[data-focus-key="task:${TASK_DONE}"] .task-inline-actions .action-archive`)

@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { performance } from 'node:perf_hooks'
 import { createInitialState } from '../../src/domain/state'
 import type { ClaudeQuotaAccessStatus, ClaudeRateLimitsInput } from '../../src/domain/claude'
-import type { ClaudeCodePhase, ClaudeCodeStatusCorrelation } from '../../src/domain/claudeCode'
-import type { EypcPlatformApi } from '../../src/platform/eypcPlatform'
+import type { ClaudeCodePhase, ClaudeCodeStateCompatibility, ClaudeCodeStatusCorrelation } from '../../src/domain/claudeCode'
+import type { CodexHostThread } from '../../src/domain/codex'
+import type { CompanionTaskMutationDelta, EypcPlatformApi } from '../../src/platform/eypcPlatform'
 import { claudeQuotaScheduleDelay, createCodexController } from '../../src/runtime/codexController'
 
 const SOURCE_FINGERPRINT = 'a'.repeat(64)
@@ -16,6 +17,7 @@ interface CodeSeed {
   title?: string
   phase?: ClaudeCodePhase
   correlation?: ClaudeCodeStatusCorrelation
+  compatibility?: ClaudeCodeStateCompatibility
   archived?: boolean
   at?: number
 }
@@ -38,7 +40,7 @@ function codeSession(seed: CodeSeed) {
     metadataUpdatedAt: now - 300,
     statusCorrelation: seed.correlation ?? 'direct-local',
     stateSource: 'hook' as const,
-    stateCompatibility: 'compatible' as const,
+    stateCompatibility: seed.compatibility ?? 'compatible',
     stateGeneration: 1,
     phase,
     phaseUpdatedAt: now - 200,
@@ -67,6 +69,8 @@ interface HarnessOptions {
   openResult?: { outcome: 'opened' | 'dispatched' | 'unavailable' | 'failed'; confirmsRead: boolean; message?: string }
   appQuotaAccess?: boolean
   quotaAccessStatus?: ClaudeQuotaAccessStatus
+  archiveResult?: { outcome: 'archived' | 'failed' | 'indeterminate'; message?: string }
+  codexThreads?: CodexHostThread[]
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -87,9 +91,11 @@ function harness(options: HarnessOptions = {}) {
   state.codex.settings.providers = { codex: true, claude: options.claudeEnabled !== false }
   state.codex.settings.claudeAppQuotaAccess = options.appQuotaAccess === true
   const openCalls: string[] = []
+  const archiveCalls: string[] = []
+  const codexArchiveCalls: string[] = []
   const fallbackCalls: Array<Record<string, unknown>> = []
   const eventListeners: Array<() => void> = []
-  const codeListeners: Array<() => void> = []
+  const codeListeners: Array<(delta?: CompanionTaskMutationDelta) => void> = []
   const unreadListeners: Array<() => void> = []
   let quotaReads = 0
   let codeReads = 0
@@ -178,13 +184,17 @@ function harness(options: HarnessOptions = {}) {
     },
     watchCodeState: (listener: () => void) => { eventListeners.push(listener); return () => undefined },
     watchEvents: (listener: () => void) => { eventListeners.push(listener); return () => undefined },
-    watchCodeSessions: (listener: () => void) => { codeListeners.push(listener); return () => undefined },
+    watchCodeSessions: (listener: (delta?: CompanionTaskMutationDelta) => void) => { codeListeners.push(listener); return () => undefined },
     watchCodeUnread: (listener: () => void) => { unreadListeners.push(listener); return () => undefined },
     install: () => ({ ok: true }),
     uninstall: () => ({ ok: true }),
     openTask: async (sessionId: string) => {
       openCalls.push(sessionId)
       return options.openResult ?? { outcome: 'dispatched' as const, confirmsRead: false, message: 'opened' }
+    },
+    archiveCodeSession: async (sessionId: string) => {
+      archiveCalls.push(sessionId)
+      return options.archiveResult ?? { outcome: 'archived' as const, message: 'archived' }
     },
     diagnostics: () => ({
       revision: 'test',
@@ -199,6 +209,35 @@ function harness(options: HarnessOptions = {}) {
     close: () => undefined
   }
 
+  const codexArchive = async (actionAlias: string) => {
+    codexArchiveCalls.push(actionAlias)
+    return { outcome: 'archived' as const }
+  }
+  let companionTargets = new Map<string, Record<string, unknown>>()
+  const companionTasks = {
+    revision: 'companion-task-actions-v1',
+    sync: (input: { targets: Array<Record<string, unknown>> }) => {
+      companionTargets = new Map(input.targets.map((target) => [String(target.key), target]))
+      return true
+    },
+    inspect: async () => ({ available: true }),
+    open: async (input: { key: string }) => {
+      const target = companionTargets.get(input.key)
+      if (!target) return { outcome: 'unavailable' as const }
+      return target.provider === 'claude'
+        ? claude.openTask(String(target.actionAlias))
+        : { outcome: 'opened' as const }
+    },
+    archive: async (input: { key: string }) => {
+      const target = companionTargets.get(input.key)
+      if (!target) return { outcome: 'failed' as const, message: 'state changed' }
+      return target.provider === 'claude'
+        ? claude.archiveCodeSession(String(target.actionAlias))
+        : codexArchive(String(target.actionAlias))
+    },
+    shortcutArchive: () => false,
+    diagnostics: () => ({ revision: 'companion-task-actions-v1', enabled: true, ready: true, targetCount: companionTargets.size, archiveInFlight: 0, confirmationPending: false })
+  }
   const platform = {
     codex: {
       readSnapshot: async (input: Record<string, boolean>) => input.includeThreads
@@ -208,7 +247,7 @@ function harness(options: HarnessOptions = {}) {
             value: {
               version: 2 as const,
               receivedAt: Date.now(),
-              threads: [],
+              threads: options.codexThreads ?? [],
               projects: [{ key: 'chats', name: 'Chats', kind: 'chats' as const, nativePinned: false }],
               sourceFingerprint: SOURCE_FINGERPRINT,
               completeness: 'verified' as const
@@ -224,8 +263,10 @@ function harness(options: HarnessOptions = {}) {
             }
           },
       openThread: async () => ({ outcome: 'opened' as const }),
+      archiveThread: codexArchive,
       close: () => undefined
     },
+    companionTasks,
     ...(options.bridgeAbsent ? {} : { claude })
   } as unknown as EypcPlatformApi
 
@@ -240,6 +281,8 @@ function harness(options: HarnessOptions = {}) {
     controller,
     state,
     openCalls,
+    archiveCalls,
+    codexArchiveCalls,
     fallbackCalls,
     messages,
     quotaReads: () => quotaReads,
@@ -259,7 +302,7 @@ function harness(options: HarnessOptions = {}) {
     setThrowState: (value: boolean) => { throwState = value },
     setThrowUnread: (value: boolean) => { throwUnread = value },
     emitEvent: () => eventListeners.at(-1)?.(),
-    emitCode: () => codeListeners.at(-1)?.(),
+    emitCode: (delta?: CompanionTaskMutationDelta) => codeListeners.at(-1)?.(delta),
     emitUnread: () => unreadListeners.at(-1)?.()
   }
 }
@@ -327,6 +370,82 @@ describe('Claude App Code aggregation', () => {
     await settle()
     expect(conversationsOf(context).all.some((task) => task.provider === 'claude')).toBe(false)
     expect(context.controller.view().claudeCodeSessionCount).toBe(0)
+    context.controller.dispose()
+  })
+
+  it.each(['completed', 'stopped'] as const)('routes a %s Claude task through the silent metadata provider adapter', async (phase) => {
+    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase }] })
+    context.controller.start()
+    await settle()
+    const task = conversationsOf(context).all.find((row) => row.actionAlias === LOCAL_A)!
+    expect(task).toMatchObject({ archiveCapability: 'allowed', canArchive: true })
+    await expect(context.controller.archive(task.key, task.revisionAt)).resolves.toBe(true)
+    expect(context.archiveCalls).toEqual([LOCAL_A])
+    expect(conversationsOf(context).all.some((row) => row.actionAlias === LOCAL_A)).toBe(false)
+    context.controller.dispose()
+  })
+
+  it('keeps Claude archive disabled when the App version is incompatible', async () => {
+    const context = harness({
+      codeSessions: [{ sessionId: LOCAL_A, phase: 'completed', compatibility: 'unsupported' }]
+    })
+    context.controller.start()
+    await settle()
+    const task = conversationsOf(context).all.find((row) => row.actionAlias === LOCAL_A)!
+    expect(task).toMatchObject({ archiveCapability: 'blocked-stopped', canArchive: false })
+    await expect(context.controller.archive(task.key, task.revisionAt)).resolves.toBe(false)
+    expect(context.archiveCalls).toEqual([])
+    expect(conversationsOf(context).all.some((row) => row.actionAlias === LOCAL_A)).toBe(true)
+    context.controller.dispose()
+  })
+
+  it.each(['failed', 'indeterminate'] as const)('keeps the Claude card when silent metadata archive is %s', async (outcome) => {
+    const context = harness({
+      codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }],
+      archiveResult: { outcome, message: `archive ${outcome}` }
+    })
+    context.controller.start()
+    await settle()
+    const task = conversationsOf(context).all.find((row) => row.actionAlias === LOCAL_A)!
+    await expect(context.controller.archive(task.key, task.revisionAt)).resolves.toBe(false)
+    expect(conversationsOf(context).all.some((row) => row.actionAlias === LOCAL_A)).toBe(true)
+    expect(context.messages.at(-1)).toBe(`archive ${outcome}`)
+    context.controller.dispose()
+  })
+
+  it('dispatches one mixed task-level archive selection through each provider adapter', async () => {
+    const now = Date.now()
+    const context = harness({
+      codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }],
+      codexThreads: [{
+        key: 'abcdef0123456789',
+        actionAlias: 'codex-completed-alias',
+        name: 'Codex 已完成',
+        status: 'notLoaded',
+        activeFlags: [],
+        statusAuthority: 'connector',
+        updatedAt: now - 100,
+        lastTurnStatus: 'completed',
+        lastTurnStartedAt: now - 300,
+        lastTurnCompletedAt: now - 200,
+        projectKey: 'chats',
+        projectName: 'Chats',
+        projectKind: 'chats'
+      }]
+    })
+    context.controller.start()
+    await settle()
+    const codexTask = conversationsOf(context).all.find((task) => task.actionAlias === 'codex-completed-alias')!
+    const claudeTask = conversationsOf(context).all.find((task) => task.actionAlias === LOCAL_A)!
+
+    await expect(context.controller.archiveMany([
+      { key: codexTask.key, revisionAt: codexTask.revisionAt },
+      { key: claudeTask.key, revisionAt: claudeTask.revisionAt },
+      { key: claudeTask.key, revisionAt: claudeTask.revisionAt }
+    ])).resolves.toBe(true)
+    expect(context.codexArchiveCalls).toEqual(['codex-completed-alias'])
+    expect(context.archiveCalls).toEqual([LOCAL_A])
+    expect(conversationsOf(context).all).toHaveLength(0)
     context.controller.dispose()
   })
 
@@ -521,6 +640,88 @@ describe('independent local authorities', () => {
     context.emitCode()
     await settle()
     expect(conversationsOf(context).all.some((task) => task.actionAlias === LOCAL_A)).toBe(true)
+    context.controller.dispose()
+  })
+
+  it('applies an exact archive delta immediately and rejects a slower stale inventory resurrection', async () => {
+    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }] })
+    context.controller.start()
+    await settle()
+    expect(conversationsOf(context).all.some((task) => task.actionAlias === LOCAL_A)).toBe(true)
+    let releaseInventory!: () => void
+    context.setCodeReadGate(new Promise<void>((resolvePromise) => { releaseInventory = resolvePromise }))
+    context.emitCode()
+    await settle()
+    const notificationsBefore = context.notifications()
+    const acceptedAt = Date.now()
+    context.emitCode({
+      version: 1,
+      revision: 'claude-task-mutation-delta-v1',
+      provider: 'claude',
+      generation: 1,
+      acceptedAt,
+      mutations: [{
+        key: `claude:${LOCAL_A}`,
+        mutation: 'remove',
+        acceptedAt
+      }]
+    })
+    await settle()
+    expect(conversationsOf(context).all.some((task) => task.actionAlias === LOCAL_A)).toBe(false)
+    expect(context.notifications() - notificationsBefore).toBe(1)
+
+    // Duplicate publication is ignored, and the already-started old full read
+    // cannot re-add the archived row after it eventually settles.
+    context.emitCode({
+      version: 1,
+      revision: 'claude-task-mutation-delta-v1',
+      provider: 'claude',
+      generation: 1,
+      acceptedAt,
+      mutations: [{ key: `claude:${LOCAL_A}`, mutation: 'remove', acceptedAt }]
+    })
+    await settle()
+    expect(context.notifications() - notificationsBefore).toBe(1)
+    releaseInventory()
+    context.setCodeReadGate(null)
+    await settle()
+    expect(conversationsOf(context).all.some((task) => task.actionAlias === LOCAL_A)).toBe(false)
+    context.controller.dispose()
+  })
+
+  it('upserts multiple exact membership mutations without waiting for a full inventory read', async () => {
+    const context = harness({ codeSessions: [] })
+    context.controller.start()
+    await settle()
+    const readsBefore = context.codeReads()
+    const acceptedAt = Date.now()
+    context.emitCode({
+      version: 1,
+      revision: 'claude-task-mutation-delta-v1',
+      provider: 'claude',
+      generation: 1,
+      acceptedAt,
+      mutations: [
+        {
+          key: `claude:${LOCAL_A}`,
+          mutation: 'upsert',
+          acceptedAt,
+          session: codeSession({ sessionId: LOCAL_A, title: 'First exact upsert', phase: 'completed' })
+        },
+        {
+          key: `claude:${LOCAL_B}`,
+          mutation: 'upsert',
+          acceptedAt,
+          session: codeSession({ sessionId: LOCAL_B, title: 'Second exact upsert', phase: 'stopped' })
+        }
+      ]
+    })
+    await settle()
+    expect(context.codeReads()).toBe(readsBefore)
+    expect(conversationsOf(context).all.map((task) => task.originalName).sort()).toEqual([
+      'First exact upsert',
+      'Second exact upsert'
+    ])
     context.controller.dispose()
   })
 

@@ -561,3 +561,224 @@ describe('exact App-history jump', () => {
     expect(source).not.toContain('claude://resume')
   })
 })
+
+describe('version-gated Claude metadata archive', () => {
+  function archiveBridge(options: {
+    version?: string
+    phase?: 'completed' | 'stopped' | 'running'
+    platform?: string
+    archived?: boolean
+    ambiguous?: boolean
+    afterRename?: (filePath: string) => void
+    validateWrite?: (value: unknown) => boolean
+  } = {}) {
+    const home = makeHome()
+    const now = Date.parse('2026-08-08T10:00:00')
+    const logDirectory = join(home.root, 'logs')
+    mkdirSync(logDirectory, { recursive: true })
+    const phaseLine = (phase: 'completed' | 'stopped' | 'running', timestamp: string) => phase === 'completed'
+      ? `${timestamp} [info] [Result] Turn succeeded for session ${LOCAL_A}`
+      : phase === 'stopped'
+        ? `${timestamp} [info] Stopping session ${LOCAL_A}`
+        : `${timestamp} [info] Sending message to session ${LOCAL_A}`
+    appendFileSync(join(logDirectory, 'main.log'), `${phaseLine(options.phase ?? 'completed', '2026-08-08 09:59:58')}\n`)
+    const row = metadata(LOCAL_A, CLI_A, {
+      lastFocusedAt: now - 1_000,
+      lastActivityAt: now - 2_000,
+      completedTurns: 1,
+      isArchived: options.archived === true
+    })
+    writeMetadata(home.codeDirectory, row)
+    if (options.ambiguous) {
+      const duplicateDirectory = join(home.appData, 'claude-code-sessions', 'org', 'other-user')
+      mkdirSync(duplicateDirectory, { recursive: true })
+      writeMetadata(duplicateDirectory, row)
+    }
+    const execFile = vi.fn()
+    const performClaudeArchiveAction = vi.fn()
+    const bridge = makeBridge(home, {
+      now: () => now,
+      claudeAppVersion: options.version ?? '1.26832.0',
+      claudeLogDirectory: logDirectory,
+      platform: options.platform ?? 'darwin',
+      execFile,
+      performClaudeArchiveAction,
+      afterClaudeArchiveRename: options.afterRename,
+      validateClaudeArchiveWrite: options.validateWrite
+    })
+    bridge.readCodeSnapshot({ now })
+    return {
+      bridge,
+      home,
+      filePath: join(home.codeDirectory, `${LOCAL_A}.json`),
+      execFile,
+      performClaudeArchiveAction
+    }
+  }
+
+  it.each(['completed', 'stopped'] as const)('silently archives a %s session with metadata and inventory confirmation', async (phase) => {
+    const context = archiveBridge({ phase })
+    const before = JSON.parse(readFileSync(context.filePath, 'utf8'))
+    const levelDb = join(context.home.appData, 'Local Storage', 'leveldb', 'CURRENT')
+    mkdirSync(join(context.home.appData, 'Local Storage', 'leveldb'), { recursive: true })
+    writeFileSync(levelDb, 'do-not-touch')
+    const otherPath = join(context.home.codeDirectory, `${LOCAL_B}.json`)
+    writeMetadata(context.home.codeDirectory, metadata(LOCAL_B, CLI_SHARED))
+    const otherBefore = readFileSync(otherPath)
+
+    await expect(context.bridge.archiveCodeSession(LOCAL_A)).resolves.toMatchObject({
+      outcome: 'archived',
+      message: '已静默归档；Claude UI 可能需自行刷新'
+    })
+    const after = JSON.parse(readFileSync(context.filePath, 'utf8'))
+    expect(after.isArchived).toBe(true)
+    expect({ ...after, isArchived: before.isArchived }).toEqual(before)
+    expect(context.bridge.readCodeSnapshot({ now: Date.now() }).sessions.some((row: { sessionId: string }) => row.sessionId === LOCAL_A)).toBe(false)
+    expect(context.execFile).not.toHaveBeenCalled()
+    expect(context.performClaudeArchiveAction).not.toHaveBeenCalled()
+    expect(readFileSync(otherPath)).toEqual(otherBefore)
+    expect(readFileSync(levelDb, 'utf8')).toBe('do-not-touch')
+    expect(readFileSync(join(context.home.root, 'logs', 'main.log'), 'utf8')).not.toContain('LocalSessions.archive')
+    context.bridge.close()
+  })
+
+  it('treats an already archived exact file as an idempotent success without writing or opening', async () => {
+    const context = archiveBridge({ archived: true })
+    const before = readFileSync(context.filePath)
+    await expect(context.bridge.archiveCodeSession(LOCAL_A)).resolves.toMatchObject({ outcome: 'archived', alreadyArchived: true })
+    expect(readFileSync(context.filePath)).toEqual(before)
+    expect(context.execFile).not.toHaveBeenCalled()
+    expect(context.performClaudeArchiveAction).not.toHaveBeenCalled()
+    context.bridge.close()
+  })
+
+  it('refuses to open an already archived exact session before Deep Link dispatch', async () => {
+    const context = archiveBridge({ archived: true })
+    await expect(context.bridge.openTask(LOCAL_A)).resolves.toMatchObject({
+      outcome: 'unavailable',
+      errorCode: 'state-changed'
+    })
+    expect(context.execFile).not.toHaveBeenCalled()
+    context.bridge.close()
+  })
+
+  it.each([
+    { name: 'running phase', options: { phase: 'running' as const } },
+    { name: 'unsupported version', options: { version: '1.26831.0' } },
+    { name: 'unsupported platform', options: { platform: 'linux' } },
+    { name: 'ambiguous identity', options: { ambiguous: true } }
+  ])('writes nothing for $name', async ({ options }) => {
+    const context = archiveBridge(options)
+    const before = readFileSync(context.filePath)
+    await expect(context.bridge.archiveCodeSession(LOCAL_A)).resolves.toMatchObject({ outcome: 'failed' })
+    expect(readFileSync(context.filePath)).toEqual(before)
+    expect(context.execFile).not.toHaveBeenCalled()
+    expect(context.performClaudeArchiveAction).not.toHaveBeenCalled()
+    context.bridge.close()
+  })
+
+  it('does not overwrite a Claude concurrent write after the atomic rename', async () => {
+    const context = archiveBridge({
+      afterRename: (filePath) => {
+        const current = JSON.parse(readFileSync(filePath, 'utf8'))
+        writeFileSync(filePath, JSON.stringify({ ...current, title: 'Claude concurrent title' }))
+      }
+    })
+    await expect(context.bridge.archiveCodeSession(LOCAL_A)).resolves.toMatchObject({ outcome: 'indeterminate' })
+    expect(JSON.parse(readFileSync(context.filePath, 'utf8'))).toMatchObject({
+      title: 'Claude concurrent title',
+      isArchived: true
+    })
+    context.bridge.close()
+  })
+
+  it('restores the original bytes when semantic verification fails without a concurrent write', async () => {
+    const context = archiveBridge({ validateWrite: () => false })
+    const before = readFileSync(context.filePath)
+    await expect(context.bridge.archiveCodeSession(LOCAL_A)).resolves.toMatchObject({ outcome: 'failed' })
+    expect(readFileSync(context.filePath)).toEqual(before)
+    context.bridge.close()
+  })
+})
+
+describe('Claude membership mutation watcher', () => {
+  function watcherBridge() {
+    const home = makeHome()
+    writeMetadata(home.codeDirectory, metadata(LOCAL_A, CLI_A, { completedTurns: 1 }))
+    let fileListener: ((event: string, filename: string) => void) | null = null
+    let recovery: (() => void) | null = null
+    let recoveryMs = 0
+    let directoryReads = 0
+    const watchedFs = new Proxy(fs, {
+      get(target, key) {
+        if (key === 'watch') return (_directory: string, _options: unknown, listener: (event: string, filename: string) => void) => {
+          fileListener = listener
+          return { close: () => undefined }
+        }
+        if (key === 'readdirSync') return (...args: Parameters<typeof fs.readdirSync>) => {
+          directoryReads += 1
+          return (fs.readdirSync as (...values: Parameters<typeof fs.readdirSync>) => ReturnType<typeof fs.readdirSync>)(...args)
+        }
+        return Reflect.get(target, key)
+      }
+    })
+    const bridge = makeBridge(home, {
+      fs: watchedFs,
+      setTimeout: (listener: () => void) => { listener(); return { unref: () => undefined } },
+      setInterval: (listener: () => void, delay: number) => {
+        recovery = listener
+        recoveryMs = delay
+        return { unref: () => undefined }
+      },
+      clearInterval: () => undefined
+    })
+    bridge.readCodeSnapshot({ now: Date.now() })
+    return {
+      bridge,
+      home,
+      invokeFile: (filename = `${LOCAL_A}.json`) => fileListener?.('change', filename),
+      recover: () => recovery?.(),
+      recoveryMs: () => recoveryMs,
+      directoryReads: () => directoryReads
+    }
+  }
+
+  it('publishes an exact remove delta without waiting for a full inventory read', () => {
+    const context = watcherBridge()
+    const deltas: unknown[] = []
+    context.bridge.watchCodeSessions((delta: unknown) => deltas.push(delta))
+    writeMetadata(context.home.codeDirectory, metadata(LOCAL_A, CLI_A, { completedTurns: 1, isArchived: true }))
+    context.invokeFile()
+    expect(deltas).toEqual([expect.objectContaining({
+      revision: 'claude-task-mutation-delta-v1',
+      generation: 1,
+      mutations: [expect.objectContaining({ key: `claude:${LOCAL_A}`, mutation: 'remove' })]
+    })])
+    context.bridge.close()
+  })
+
+  it('recovers one dropped file callback at the one-second candidate watchdog without rescanning directories', () => {
+    const context = watcherBridge()
+    const deltas: unknown[] = []
+    context.bridge.watchCodeSessions((delta: unknown) => deltas.push(delta))
+    const readsBefore = context.directoryReads()
+    writeMetadata(context.home.codeDirectory, metadata(LOCAL_A, CLI_A, { completedTurns: 1, isArchived: true }))
+    context.recover()
+    expect(context.recoveryMs()).toBe(1_000)
+    expect(context.directoryReads()).toBe(readsBefore)
+    expect(deltas).toEqual([expect.objectContaining({
+      mutations: [expect.objectContaining({ key: `claude:${LOCAL_A}`, mutation: 'remove' })]
+    })])
+    context.bridge.close()
+  })
+
+  it('ignores matching file events that were not admitted to the private index', () => {
+    const context = watcherBridge()
+    const deltas: unknown[] = []
+    context.bridge.watchCodeSessions((delta: unknown) => deltas.push(delta))
+    writeMetadata(context.home.codeDirectory, metadata(LOCAL_B, CLI_A, { completedTurns: 1 }))
+    context.invokeFile(`${LOCAL_B}.json`)
+    expect(deltas).toEqual([])
+    context.bridge.close()
+  })
+})

@@ -105,6 +105,19 @@ describe('Claude App Code domain', () => {
     expect(resolveClaudeCodeState(observation('stopped'), [LOCAL_A])).toMatchObject({ phase: 'completed', bucket: 'completed-unread' })
   })
 
+  it('enables silent metadata archive only for the version-compatible App state lane', () => {
+    expect(projectClaudeCodeTaskCards([observation('completed')])[0]).toMatchObject({
+      archiveCapability: 'allowed',
+      canArchive: true
+    })
+    expect(projectClaudeCodeTaskCards([
+      observation('stopped', { stateCompatibility: 'unsupported' })
+    ])[0]).toMatchObject({
+      archiveCapability: 'blocked-stopped',
+      canArchive: false
+    })
+  })
+
   it('keeps duplicate App rows and excludes archived rows', () => {
     const cards = projectClaudeCodeTaskCards([
       observation('running'),

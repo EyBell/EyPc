@@ -49,6 +49,15 @@ describe('browser fallback platform', () => {
   })
 
   it('forwards the exact task-state revision exposed by the current preload', async () => {
+    const companionKernel = {
+      revision: 'companion-task-kernel-v1',
+      packageRevision: 'companion-task-package-v1',
+      attach: vi.fn(),
+      syncPackage: vi.fn(),
+      dispatch: vi.fn(async () => ({ outcome: 'unavailable' as const })),
+      getPackage: vi.fn(),
+      diagnostics: vi.fn(() => ({ revision: 'companion-task-kernel-v1' }))
+    }
     globalThis.window = {
       navigator: { platform: 'MacIntel' },
       eypcPlatform: {
@@ -56,8 +65,53 @@ describe('browser fallback platform', () => {
         files: {},
         clipboard: {},
         codex: {
-          taskStateRevision: 'task-state-v6',
+          taskStateRevision: 'task-state-v8',
           readSnapshot: async () => ({ ok: false, error: { code: 'unavailable', message: 'not used' }, receivedAt: Date.now() })
+        },
+        runtimeIdentity: {
+          revision: 'runtime-identity-v1',
+          handshake: (expected: Record<string, string>) => ({
+            revision: 'runtime-identity-v1',
+            status: 'host-loaded',
+            expected,
+            actual: expected,
+            kernelRevision: expected.kernelRevision,
+            taskPackageRevision: expected.taskPackageRevision,
+            message: 'loaded'
+          })
+        },
+        companionKernel,
+        float: {},
+        app: { hide: async () => true },
+        getEnterPayload: () => null,
+        clearEnterPayload: () => undefined
+      }
+    } as unknown as Window & typeof globalThis
+
+    const { getPlatform } = await import('../../src/platform/eypcPlatform')
+
+    expect(getPlatform().codex.taskStateRevision).toBe('task-state-v8')
+    expect(getPlatform().companionKernel).toBe(companionKernel)
+    expect(getPlatform().companionNavigation).toBeUndefined()
+  })
+
+  it('rejects a stale process-navigation bridge instead of mixing cache owners', async () => {
+    globalThis.window = {
+      navigator: { platform: 'MacIntel' },
+      eypcPlatform: {
+        storage: {},
+        files: {},
+        clipboard: {},
+        codex: {
+          readSnapshot: async () => ({ ok: false, error: { code: 'unavailable', message: 'not used' }, receivedAt: Date.now() })
+        },
+        companionNavigation: {
+          revision: 'companion-navigation-v0',
+          begin: () => ({ revision: 'companion-navigation-v0', lease: 1, retained: false, ready: false }),
+          sync: () => true,
+          cycle: async () => ({ outcome: 'unavailable' as const }),
+          open: async () => ({ outcome: 'unavailable' as const }),
+          diagnostics: () => ({ revision: 'companion-navigation-v0' })
         },
         float: {},
         app: { hide: async () => true },
@@ -68,7 +122,7 @@ describe('browser fallback platform', () => {
 
     const { getPlatform } = await import('../../src/platform/eypcPlatform')
 
-    expect(getPlatform().codex.taskStateRevision).toBe('task-state-v6')
+    expect(getPlatform().companionNavigation).toBeUndefined()
   })
 
   it('does not claim a legacy compatibility state when the desktop preload has no Codex snapshot bridge', async () => {

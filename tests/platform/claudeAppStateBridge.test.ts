@@ -27,6 +27,9 @@ describe('Claude App version-gated state log', () => {
       .toMatchObject({ kind: 'completed', sessionId: LOCAL_A })
     expect(appState.parseAppStateLine(line('2026-08-07 10:00:03', `Sending message to session ${LOCAL_A} secret prompt`))).toBeNull()
     expect(appState.parseAppStateLine('private conversation text')).toBeNull()
+    expect(appState.parseAppArchiveLine(line('2026-08-07 10:00:04', `LocalSessions.archive: sessionId=${LOCAL_A}`)))
+      .toMatchObject({ sessionId: LOCAL_A, at: expect.any(Number) })
+    expect(appState.parseAppArchiveLine(line('2026-08-07 10:00:04', `LocalSessions.archive: sessionId=${LOCAL_A} extra`))).toBeNull()
   })
 
   it('maps a permission response back to its exact local owner and deduplicates repeats', () => {

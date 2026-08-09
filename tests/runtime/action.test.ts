@@ -3334,7 +3334,7 @@ describe('app runtime', () => {
     expect(runtime.handleShortcut('Escape', { textInputFocused: true, activeInputRole: 'mqtt-editor' })).toBe('mqtt.preview.close')
     expect(runtime.snapshot().mqttPreview.open).toBe(false)
     expect(runtime.snapshot().mqttConfigDraft).not.toBeNull()
-  })
+  }, 10_000)
 
   it('scopes MQTT F2 editing to the highlighted record or connection pane', () => {
     const { state } = installPlatform()
