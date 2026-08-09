@@ -87,6 +87,16 @@ function parseAppStateLine(line) {
   return null
 }
 
+/** Fixed native archive log grammar retained as optional diagnostic evidence. */
+function parseAppArchiveLine(line) {
+  const value = textOf(line)
+  const match = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[info\] LocalSessions\.archive: sessionId=(local_[0-9a-f-]+)$/.exec(value)
+  if (!match) return null
+  const at = safeTime(match[1])
+  const sessionId = normalizeLocalId(match[2])
+  return at && sessionId ? { sessionId, at } : null
+}
+
 function emptyEntry(sessionId) {
   return {
     sessionId,
@@ -312,6 +322,20 @@ function createAppStateReader(dependencies) {
     }
   }
 
+  function hasArchiveEvidence(sessionId, since = 0) {
+    const expected = normalizeLocalId(sessionId)
+    if (!expected || compatibility().status !== 'compatible') return false
+    const earliest = Math.max(0, Number(since) || 0) - 1_000
+    for (const name of LOG_FILE_NAMES) {
+      const text = tailText(path.join(logDirectory(), name))
+      for (const line of text.split('\n')) {
+        const event = parseAppArchiveLine(line)
+        if (event?.sessionId === expected && event.at >= earliest) return true
+      }
+    }
+    return false
+  }
+
   function stopWatching() {
     if (watchTimer) clearTimer(watchTimer)
     watchTimer = null
@@ -347,7 +371,7 @@ function createAppStateReader(dependencies) {
     return () => { disposed = true; stopWatching() }
   }
 
-  return { revision: CLAUDE_APP_STATE_REVISION, read, watch, close: stopWatching, compatibility }
+  return { revision: CLAUDE_APP_STATE_REVISION, read, watch, close: stopWatching, compatibility, hasArchiveEvidence }
 }
 
 module.exports = {
@@ -357,6 +381,7 @@ module.exports = {
   LOG_TAIL_MAX_BYTES,
   LOG_RECOVERY_POLL_MS,
   parseAppStateLine,
+  parseAppArchiveLine,
   foldAppStateEvents,
   createAppStateReader
 }

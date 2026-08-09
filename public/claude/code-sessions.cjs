@@ -338,32 +338,146 @@ function correlateCodeSessions(sessions, hookState, previousBySession, appSnapsh
 function createCodeSessionReader(dependencies) {
   const fs = dependencies.fs
   const path = dependencies.path
+  const crypto = dependencies.crypto || require('node:crypto')
   const setTimer = dependencies.setTimeout || setTimeout
-  const clearTimer = dependencies.clearTimeout || clearTimeout
   const setIntervalFn = dependencies.setInterval || setInterval
   const clearIntervalFn = dependencies.clearInterval || clearInterval
   let watchers = []
-  let notifyTimer = null
   let recoveryTimer = null
-  let lastFingerprint = ''
+  let watchListener = null
+  let indexReady = false
+  let mutationGeneration = 0
+  let pathRecords = new Map()
+  let sessionIndex = new Map()
 
   function codeRoot() {
     const override = textOf(dependencies.claudeCodeRoot).trim()
     return override || path.join(claudeAppDataRoot(dependencies), 'claude-code-sessions')
   }
 
-  function userDirectories() {
-    return scanUserDirectories(fs, path, codeRoot()).directories
+  function hashBytes(bytes) {
+    try { return crypto.createHash('sha256').update(bytes).digest('hex') } catch { return '' }
   }
 
-  function readMetadataFile(filePath) {
+  function fileFingerprint(stat, bytes) {
+    return {
+      dev: Number(stat.dev) || 0,
+      ino: Number(stat.ino) || 0,
+      mode: Number(stat.mode) || 0,
+      size: Number(stat.size) || 0,
+      mtimeMs: Math.round(Number(stat.mtimeMs) || 0),
+      hash: hashBytes(bytes)
+    }
+  }
+
+  function sameFingerprint(left, right) {
+    return Boolean(left && right
+      && left.dev === right.dev
+      && left.ino === right.ino
+      && left.mode === right.mode
+      && left.size === right.size
+      && left.mtimeMs === right.mtimeMs
+      && left.hash === right.hash)
+  }
+
+  function readFileRecord(filePath) {
     const stat = safeStat(fs, filePath)
     if (!stat || !stat.isFile() || stat.size > CODE_METADATA_MAX_BYTES) return null
-    const expectedSessionId = path.basename(filePath, '.json').toLowerCase()
     try {
-      const metadata = normalizeMetadata(JSON.parse(fs.readFileSync(filePath, 'utf8')), stat, expectedSessionId)
-      return metadata ? { ...metadata, projectKey: projectKeyForMetadata(dependencies, metadata) } : null
+      const bytes = fs.readFileSync(filePath)
+      return {
+        filePath,
+        bytes: Buffer.isBuffer(bytes) ? bytes : Buffer.from(String(bytes)),
+        fingerprint: fileFingerprint(stat, bytes)
+      }
     } catch { return null }
+  }
+
+  function parseMetadataRecord(raw) {
+    if (!raw) return null
+    const expectedSessionId = path.basename(raw.filePath, '.json').toLowerCase()
+    try {
+      const bytes = raw.bytes
+      const parsed = JSON.parse(Buffer.isBuffer(bytes) ? bytes.toString('utf8') : String(bytes))
+      const metadata = normalizeMetadata(parsed, { mtimeMs: raw.fingerprint.mtimeMs }, expectedSessionId)
+      if (!metadata) return null
+      return {
+        ...raw,
+        parsed,
+        metadata: { ...metadata, projectKey: projectKeyForMetadata(dependencies, metadata) }
+      }
+    } catch { return null }
+  }
+
+  function readMetadataRecord(filePath) {
+    return parseMetadataRecord(readFileRecord(filePath))
+  }
+
+  function rebuildSessionIndex() {
+    const grouped = new Map()
+    for (const record of pathRecords.values()) {
+      const rows = grouped.get(record.metadata.sessionId) || []
+      rows.push(record)
+      grouped.set(record.metadata.sessionId, rows)
+    }
+    sessionIndex = new Map([...grouped].map(([sessionId, rows]) => [sessionId, rows.length === 1
+      ? { status: 'unique', record: rows[0] }
+      : { status: 'ambiguous' }]))
+  }
+
+  function replaceIndex(records) {
+    pathRecords = new Map(records.map((record) => [record.filePath, record]))
+    rebuildSessionIndex()
+    indexReady = true
+  }
+
+  function activeSessionIds() {
+    return new Set([...sessionIndex]
+      .filter(([, entry]) => entry.status === 'unique' && entry.record.metadata.isArchived !== true)
+      .map(([sessionId]) => sessionId))
+  }
+
+  function hasActiveSession(sessionId) {
+    return activeSessionIds().has(textOf(sessionId).trim().toLowerCase())
+  }
+
+  function emitMutations(mutations) {
+    if (!mutations.length || typeof watchListener !== 'function') return
+    const acceptedAt = Date.now()
+    const payload = {
+      version: 1,
+      revision: 'claude-task-mutation-delta-v1',
+      provider: 'claude',
+      generation: ++mutationGeneration,
+      acceptedAt,
+      mutations: mutations.map((mutation) => ({ ...mutation, acceptedAt }))
+    }
+    try { watchListener(payload) } catch {}
+  }
+
+  function applyExactPathChange(filePath) {
+    const previous = pathRecords.get(filePath) || null
+    const beforeActive = activeSessionIds()
+    const next = readMetadataRecord(filePath)
+    if (next) pathRecords.set(filePath, next)
+    else pathRecords.delete(filePath)
+    rebuildSessionIndex()
+    const afterActive = activeSessionIds()
+    const affected = new Set([
+      previous?.metadata.sessionId,
+      next?.metadata.sessionId
+    ].filter(Boolean))
+    const mutations = []
+    for (const sessionId of affected) {
+      if (beforeActive.has(sessionId) && !afterActive.has(sessionId)) {
+        mutations.push({ key: `claude:${sessionId}`, mutation: 'remove' })
+      } else if (afterActive.has(sessionId)
+        && (!beforeActive.has(sessionId) || !sameFingerprint(previous?.fingerprint, next?.fingerprint))) {
+        mutations.push({ key: `claude:${sessionId}`, mutation: 'upsert' })
+      }
+    }
+    emitMutations(mutations)
+    return mutations
   }
 
   function readInventory(options) {
@@ -371,6 +485,7 @@ function createCodeSessionReader(dependencies) {
     const now = Number.isFinite(settings.now) ? settings.now : Date.now()
     const windowMs = Number.isFinite(settings.windowMs) ? settings.windowMs : DEFAULT_CODE_WINDOW_MS
     const sessions = []
+    const records = []
     const discovered = scanUserDirectories(fs, path, codeRoot())
     let available = discovered.available
     for (const userDirectory of discovered.directories) {
@@ -378,13 +493,19 @@ function createCodeSessionReader(dependencies) {
       try { names = fs.readdirSync(userDirectory) } catch { available = false; continue }
       for (const name of names) {
         if (!METADATA_FILE_PATTERN.test(name)) continue
-        const session = readMetadataFile(path.join(userDirectory, name))
-        if (!session) continue
+        const record = readMetadataRecord(path.join(userDirectory, name))
+        if (!record) continue
+        records.push(record)
+        const session = record.metadata
+        // Archived rows remain readable through the exact private state probe
+        // below, but they are no longer part of the active Companion inventory.
+        if (session.isArchived) continue
         const freshness = Math.max(session.lastActivityAt, session.lastFocusedAt, session.metadataUpdatedAt)
         if (freshness > 0 && now - freshness > windowMs) continue
         sessions.push(session)
       }
     }
+    replaceIndex(records)
     sessions.sort((left, right) => Math.max(right.lastActivityAt, right.lastFocusedAt)
       - Math.max(left.lastActivityAt, left.lastFocusedAt))
     const limited = sessions.slice(0, CODE_MAX_SESSIONS)
@@ -398,28 +519,157 @@ function createCodeSessionReader(dependencies) {
     }
   }
 
-  function fingerprint() {
-    let count = 0
-    let newest = 0
-    let bytes = 0
-    for (const directory of userDirectories()) {
-      let names = []
-      try { names = fs.readdirSync(directory) } catch { continue }
-      for (const name of names) {
-        if (!METADATA_FILE_PATTERN.test(name)) continue
-        const stat = safeStat(fs, path.join(directory, name))
-        if (!stat || !stat.isFile()) continue
-        count += 1
-        newest = Math.max(newest, Math.round(stat.mtimeMs || 0))
-        bytes += Number(stat.size) || 0
+  /** Exact, privacy-bounded state for post-action verification. */
+  function readSessionState(sessionId) {
+    const expected = textOf(sessionId).trim().toLowerCase()
+    if (!LOCAL_SESSION_PATTERN.test(expected)) return { status: 'invalid' }
+    if (!indexReady) return { status: 'unavailable' }
+    const entry = sessionIndex.get(expected)
+    if (!entry) return { status: 'missing' }
+    if (entry.status !== 'unique') return { status: 'ambiguous' }
+    const latest = readMetadataRecord(entry.record.filePath)
+    if (!latest) {
+      pathRecords.delete(entry.record.filePath)
+      rebuildSessionIndex()
+      return { status: 'missing' }
+    }
+    pathRecords.set(latest.filePath, latest)
+    rebuildSessionIndex()
+    const refreshed = sessionIndex.get(expected)
+    if (!refreshed || refreshed.status !== 'unique') return refreshed ? { status: 'ambiguous' } : { status: 'missing' }
+    const session = refreshed.record.metadata
+    return {
+      status: 'found',
+      sessionId: session.sessionId,
+      isArchived: session.isArchived,
+      lastFocusedAt: session.lastFocusedAt,
+      metadataUpdatedAt: session.metadataUpdatedAt
+    }
+  }
+
+  function readIndexedSession(sessionId) {
+    const state = readSessionState(sessionId)
+    if (state.status !== 'found') return state
+    const entry = sessionIndex.get(String(sessionId).toLowerCase())
+    return entry?.status === 'unique'
+      ? { status: 'found', session: { ...entry.record.metadata } }
+      : { status: 'ambiguous' }
+  }
+
+  function semanticWithoutArchive(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return ''
+    const clone = { ...value }
+    delete clone.isArchived
+    try { return JSON.stringify(clone) } catch { return '' }
+  }
+
+  function tempPathFor(filePath, label) {
+    const token = typeof crypto.randomBytes === 'function'
+      ? crypto.randomBytes(8).toString('hex')
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+    return path.join(path.dirname(filePath), `.${path.basename(filePath)}.eypc-${label}-${token}.tmp`)
+  }
+
+  function removeTemp(filePath) {
+    try { fs.unlinkSync(filePath) } catch {}
+  }
+
+  function atomicReplace(filePath, expectedFingerprint, bytes, mode, label) {
+    const before = readFileRecord(filePath)
+    if (!before || !sameFingerprint(before.fingerprint, expectedFingerprint)) return { status: 'state-changed' }
+    const tempPath = tempPathFor(filePath, label)
+    let descriptor = null
+    try {
+      descriptor = fs.openSync(tempPath, 'wx', mode & 0o777)
+      fs.writeFileSync(descriptor, bytes)
+      if (typeof fs.fsyncSync === 'function') fs.fsyncSync(descriptor)
+      fs.closeSync(descriptor)
+      descriptor = null
+      const beforeRename = readFileRecord(filePath)
+      if (!beforeRename || !sameFingerprint(beforeRename.fingerprint, expectedFingerprint)) {
+        removeTemp(tempPath)
+        return { status: 'state-changed' }
+      }
+      fs.renameSync(tempPath, filePath)
+      const written = readFileRecord(filePath)
+      return written
+        ? { status: 'written', raw: written, record: parseMetadataRecord(written) }
+        : { status: 'unreadable' }
+    } catch {
+      if (descriptor !== null) { try { fs.closeSync(descriptor) } catch {} }
+      removeTemp(tempPath)
+      return { status: 'failed' }
+    }
+  }
+
+  function archiveSessionMetadata(sessionId) {
+    const expected = textOf(sessionId).trim().toLowerCase()
+    if (!LOCAL_SESSION_PATTERN.test(expected)) return { outcome: 'failed', errorCode: 'invalid-target' }
+    if (!indexReady) return { outcome: 'indeterminate', errorCode: 'index-unavailable' }
+    const entry = sessionIndex.get(expected)
+    if (!entry) return { outcome: 'failed', errorCode: 'state-changed' }
+    if (entry.status !== 'unique') return { outcome: 'failed', errorCode: 'ambiguous-target' }
+    const original = readMetadataRecord(entry.record.filePath)
+    if (!original || !sameFingerprint(original.fingerprint, entry.record.fingerprint)) {
+      return { outcome: 'indeterminate', errorCode: 'source-changed' }
+    }
+    if (original.metadata.isArchived === true) {
+      pathRecords.set(original.filePath, original)
+      rebuildSessionIndex()
+      emitMutations([{ key: `claude:${expected}`, mutation: 'remove' }])
+      return { outcome: 'archived', alreadyArchived: true }
+    }
+    if (!original.parsed || typeof original.parsed !== 'object' || Array.isArray(original.parsed)) {
+      return { outcome: 'failed', errorCode: 'invalid-metadata' }
+    }
+    const nextParsed = { ...original.parsed, isArchived: true }
+    const nextBytes = Buffer.from(JSON.stringify(nextParsed))
+    const written = atomicReplace(
+      original.filePath,
+      original.fingerprint,
+      nextBytes,
+      original.fingerprint.mode,
+      'archive'
+    )
+    if (written.status !== 'written') {
+      return {
+        outcome: written.status === 'state-changed' ? 'indeterminate' : 'failed',
+        errorCode: written.status === 'state-changed' ? 'source-changed' : 'write-failed'
       }
     }
-    return `${count}:${newest}:${bytes}`
+    try { dependencies.afterClaudeArchiveRename?.(original.filePath) } catch {}
+    const verified = readMetadataRecord(original.filePath)
+    const semanticMatch = verified?.metadata.isArchived === true
+      && semanticWithoutArchive(verified.parsed) === semanticWithoutArchive(original.parsed)
+      && dependencies.validateClaudeArchiveWrite?.(verified.parsed) !== false
+    if (semanticMatch) {
+      pathRecords.set(verified.filePath, verified)
+      rebuildSessionIndex()
+      emitMutations([{ key: `claude:${expected}`, mutation: 'remove' }])
+      return { outcome: 'archived', alreadyArchived: false }
+    }
+    const current = readFileRecord(original.filePath)
+    if (!current || !sameFingerprint(current.fingerprint, written.raw.fingerprint)) {
+      return { outcome: 'indeterminate', errorCode: 'concurrent-write' }
+    }
+    const rollback = atomicReplace(
+      original.filePath,
+      current.fingerprint,
+      original.bytes,
+      original.fingerprint.mode,
+      'rollback'
+    )
+    if (rollback.status !== 'written'
+      || rollback.raw.fingerprint.hash !== original.fingerprint.hash
+      || !rollback.record) {
+      return { outcome: 'indeterminate', errorCode: 'rollback-unconfirmed' }
+    }
+    pathRecords.set(rollback.record.filePath, rollback.record)
+    rebuildSessionIndex()
+    return { outcome: 'failed', errorCode: 'verification-failed' }
   }
 
   function stopWatching() {
-    if (notifyTimer) clearTimer(notifyTimer)
-    notifyTimer = null
     if (recoveryTimer) clearIntervalFn(recoveryTimer)
     recoveryTimer = null
     for (const watcher of watchers) { try { watcher.close() } catch {} }
@@ -430,33 +680,60 @@ function createCodeSessionReader(dependencies) {
     stopWatching()
     if (typeof listener !== 'function') return () => {}
     let disposed = false
-    lastFingerprint = fingerprint()
-    const fire = () => {
-      notifyTimer = null
-      if (!disposed) { try { listener() } catch {} }
+    watchListener = listener
+    const schedulePath = (directory, filename) => {
+      if (disposed) return
+      const name = Buffer.isBuffer(filename) ? filename.toString('utf8') : textOf(filename)
+      if (!METADATA_FILE_PATTERN.test(name)) return
+      const filePath = path.join(directory, name)
+      if (!pathRecords.has(filePath)) return
+      const timer = setTimer(() => {
+        if (!disposed) applyExactPathChange(filePath)
+      }, CODE_WATCH_COALESCE_MS)
+      timer?.unref?.()
     }
-    const schedule = () => {
-      if (disposed || notifyTimer) return
-      notifyTimer = setTimer(fire, CODE_WATCH_COALESCE_MS)
-    }
-    const targets = [codeRoot(), ...userDirectories()]
+    const targets = [...new Set([...pathRecords.values()].map((record) => path.dirname(record.filePath)))]
     for (const directory of targets) {
-      try { watchers.push(fs.watch(directory, { persistent: false }, schedule)) } catch {}
+      try { watchers.push(fs.watch(directory, { persistent: false }, (_event, filename) => schedulePath(directory, filename))) } catch {}
     }
     recoveryTimer = setIntervalFn(() => {
-      const next = fingerprint()
-      if (next === lastFingerprint) return
-      lastFingerprint = next
-      schedule()
+      if (disposed) return
+      // Recovery is intentionally bounded to files already admitted by the
+      // private index. It never rescans organizations/users/sessions.
+      for (const record of [...pathRecords.values()]) {
+        const next = readMetadataRecord(record.filePath)
+        if (!next || !sameFingerprint(record.fingerprint, next.fingerprint)) {
+          applyExactPathChange(record.filePath)
+        }
+      }
     }, CODE_RECOVERY_POLL_MS)
     if (recoveryTimer && typeof recoveryTimer.unref === 'function') recoveryTimer.unref()
     return () => {
       disposed = true
+      if (watchListener === listener) watchListener = null
       stopWatching()
     }
   }
 
-  return { revision: CLAUDE_CODE_READER_REVISION, codeRoot, readInventory, watch, close: stopWatching }
+  function close() {
+    stopWatching()
+    watchListener = null
+    indexReady = false
+    pathRecords = new Map()
+    sessionIndex = new Map()
+  }
+
+  return {
+    revision: CLAUDE_CODE_READER_REVISION,
+    codeRoot,
+    readInventory,
+    readSessionState,
+    readIndexedSession,
+    hasActiveSession,
+    archiveSessionMetadata,
+    watch,
+    close
+  }
 }
 
 module.exports = {
