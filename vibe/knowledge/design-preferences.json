@@ -106,10 +106,10 @@
       "scope": "project",
       "surfaces": ["codex-companion"],
       "authority_ref": "developer-soul.md#codex-companion-taste",
-      "tags": ["authority:project-soul", "status-action-200ms-opaque-help", "task-detail-500ms", "quota-bubble-free", "unified-task-sort", "archived-filtering", "privacy", "archive-state-trust", "exact-completed-evidence-only", "explicit-stopped-archive-block", "native-project-state-transaction", "projected-ongoing-stable-archive-block"],
+      "tags": ["authority:project-soul", "status-action-200ms-opaque-help", "task-detail-500ms", "quota-bubble-free", "unified-task-sort", "archived-filtering", "privacy", "archive-state-trust", "explicit-stopped-task-archive-revalidation", "stopped-visible-as-waiting-to-continue", "native-project-state-transaction", "projected-ongoing-stable-archive-block"],
       "status": "stable",
       "priority": 200,
-      "last_verified": "2026-07-27"
+      "last_verified": "2026-08-08"
     },
     {
       "id": "eypc-codex-performance-media",

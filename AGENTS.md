@@ -22,6 +22,6 @@ Hard constraints:
 - Final replies must include verification status and memory/process-document status.
 
 Orientation (not restated elsewhere):
-- Verification ladder: `pnpm run test` → `typecheck` → `build` → `verify`; pick by the impact-based policy in the rules entry above.
-- Generated — regenerate, never hand-edit: `dist/`, `output/`, outputs of [scripts/](scripts/).
+- Verification commands are impact-selected candidates, not a fixed ladder. Build a provisional `VerificationImpactTrace` before verification commands enter an Agent-authored or Agent-expanded plan; use focused tests and only the affected semantic/build boundary. Run `pnpm run test`, `typecheck`, `build` or `verify` repository-wide only when the project/global testing owner records a matching escalation trigger. Approval or implementation of a suite first inserted by an Agent-authored plan is not such a trigger.
+- Generated — regenerate, never hand-edit: `dist/`, `output/`, and generated outputs declared by [package scripts](package.json#L1).
 - Deliberately absent: no `vibe/requirements/`, no `vibe/evals/`; [vibe/ai-db/](vibe/ai-db/README.md#L1) is a pointer only. Do not create these on assumption.

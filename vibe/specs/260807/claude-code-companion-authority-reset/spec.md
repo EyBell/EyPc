@@ -1,11 +1,11 @@
 # Claude Code Companion 权威重置 — Controlled Specification
 
 spec_id: `SPEC-260807-CLAUDE-CODE-COMPANION-AUTHORITY-RESET`
-spec_revision: `5`
+spec_revision: `6`
 status: `integrated-current-authority`
-execution_status: `implementation-landed / automated-verified / targeted-host-partial / interactive-host-pending`
-raw_sources: `RAW-001..RAW-024`
-updated: `2026-08-08`
+execution_status: `implementation-landed / RAW-154-automated-verified / targeted-host-partial / interactive-host-pending`
+raw_sources: `RAW-001..RAW-026`
+updated: `2026-08-09`
 
 ## Authority
 
@@ -44,9 +44,11 @@ updated: `2026-08-08`
     "vibe/specs/PROJECT_STATUS.md",
     "vibe/knowledge/ARCHITECTURE.md",
     "vibe/knowledge/technical-details.md",
+    "vibe/knowledge/developer-soul.md",
     "src/help/guides/codex.md",
     "vibe/knowledge/error-memory/README.md",
     "vibe/knowledge/error-memory/modules/claude-companion.md",
+    "vibe/knowledge/error-memory/codex-provider-status-display-normalization.md",
     "vibe/knowledge/error-memory/claude-session-family-open-route-and-state-authority-conflation.md",
     "vibe/knowledge/error-memory/tests-that-cannot-fail.md",
     "vibe/knowledge/error-memory/watcher-callback-latency-is-not-end-to-end-publication-latency.md",
@@ -55,12 +57,19 @@ updated: `2026-08-08`
     "vibe/specs/260806/1130-claude-desktop-provider/spec.md",
     "vibe/specs/260806/2147-claude-open-in-desktop-app/verify.md",
     "vibe/specs/260806/2147-claude-open-in-desktop-app/unread-authority.md",
-    "vibe/specs/260806/2210-claude-quota-all-windows/spec.md"
+    "vibe/specs/260806/2210-claude-quota-all-windows/spec.md",
+    "vibe/specs/260718/1148-codex-quota-float/raw-requirement.md",
+    "vibe/specs/260718/1148-codex-quota-float/spec.md",
+    "vibe/specs/260718/1148-codex-quota-float/plan.md",
+    "vibe/specs/260718/1148-codex-quota-float/tasks.md",
+    "vibe/specs/260718/1148-codex-quota-float/verify.md",
+    "vibe/specs/260718/1148-codex-quota-float/handoff.md"
   ],
   "dependencies": [
     "package.json",
     "preload/claude/app-paths.cjs",
     "preload/claude/app-state.cjs",
+    "preload/claude/archive.cjs",
     "preload/claude/code-sessions.cjs",
     "preload/claude/environment.cjs",
     "preload/claude/events.cjs",
@@ -71,8 +80,11 @@ updated: `2026-08-08`
     "preload/claude/scripts.cjs",
     "preload/claude/unread.cjs",
     "preload/index.js",
+    "preload/companion/navigation.cjs",
+    "preload/companion/task-actions.cjs",
     "public/claude/app-paths.cjs",
     "public/claude/app-state.cjs",
+    "public/claude/archive.cjs",
     "public/claude/code-sessions.cjs",
     "public/claude/environment.cjs",
     "public/claude/events.cjs",
@@ -83,6 +95,9 @@ updated: `2026-08-08`
     "public/claude/scripts.cjs",
     "public/claude/unread.cjs",
     "public/preload.js",
+    "public/companion/navigation.cjs",
+    "public/companion/task-actions.cjs",
+    "public/plugin.json",
     "src/domain/claude.ts",
     "src/domain/claudeCode.ts",
     "src/domain/codex.ts",
@@ -93,6 +108,7 @@ updated: `2026-08-08`
     "src/pages/CodexPage.vue",
     "src/runtime/appRuntime.ts",
     "src/runtime/codexController.ts",
+    "src/runtime/feature/featureRouting.ts",
     "src/platform/eypcPlatform.ts",
     "src/styles/float.css",
     "scripts/prepare-utools-runtime.mjs",
@@ -104,17 +120,26 @@ updated: `2026-08-08`
     "tests/domain/claude.test.ts",
     "tests/domain/claudeCode.test.ts",
     "tests/domain/codex.test.ts",
+    "tests/domain/codexPresentation.test.ts",
     "tests/domain/companionAggregate.test.ts",
     "tests/domain/companionPresentation.test.ts",
+    "tests/domain/companionProvider.test.ts",
+    "tests/integration/appPluginEnter.test.ts",
+    "tests/integration/featureRouting.test.ts",
     "tests/platform/claudeAppStateBridge.test.ts",
     "tests/platform/claudeBridge.test.ts",
     "tests/platform/claudeBridgeSafety.test.ts",
     "tests/platform/claudePreloadCore.test.ts",
+    "tests/platform/codexAppServerBridge.test.ts",
+    "tests/platform/companionNavigationBridge.test.ts",
+    "tests/platform/companionTaskActionsBridge.test.ts",
+    "tests/platform/eypcPlatform.test.ts",
     "tests/platform/claudeQuotaFallback.test.ts",
     "tests/platform/claudeUnreadBridge.test.ts",
     "tests/runtime/action.test.ts",
     "tests/runtime/claudeCompanionController.test.ts",
     "tests/runtime/claudeCompanionWatcherE2E.test.ts",
+    "tests/runtime/codexController.test.ts",
     "tests/ui/codexCompanion.test.ts",
     "scripts/probe-claude-code-runtime.mjs",
     "scripts/probe-claude-live-state-runtime.mjs",
@@ -131,11 +156,13 @@ updated: `2026-08-08`
     "src/help/guides/codex.md",
     "vibe/knowledge/ARCHITECTURE.md",
     "vibe/knowledge/technical-details.md",
+    "vibe/knowledge/developer-soul.md",
     "vibe/knowledge/error-memory/README.md",
     "vibe/knowledge/error-memory/claude-session-family-open-route-and-state-authority-conflation.md",
     "vibe/knowledge/error-memory/tests-that-cannot-fail.md",
     "vibe/knowledge/error-memory/independent-authorities-coupled-by-full-refresh.md",
     "vibe/knowledge/error-memory/modules/claude-companion.md",
+    "vibe/knowledge/error-memory/codex-provider-status-display-normalization.md",
     "vibe/knowledge/error-memory/watcher-callback-latency-is-not-end-to-end-publication-latency.md",
     "vibe/specs/260805/1150-claude-companion-provider/spec.md",
     "vibe/specs/260806/1130-claude-desktop-provider/spec.md",
@@ -143,6 +170,7 @@ updated: `2026-08-08`
     "vibe/specs/260806/2147-claude-open-in-desktop-app/verify.md",
     "vibe/specs/260806/2210-claude-quota-all-windows/spec.md",
     "vibe/specs/260807/claude-code-companion-authority-reset",
+    "vibe/specs/260718/1148-codex-quota-float",
     "vibe/specs/PRODUCT_REQUIREMENTS.md",
     "vibe/specs/PROJECT_STATUS.md"
   ]
@@ -185,7 +213,7 @@ updated: `2026-08-08`
 ### Exact open and shortcut cache
 
 - [open.cjs](../../../../preload/claude/open.cjs#L1) 缓存 Claude 主 App 的 bundle/PID/启动代次；热跳转只做低成本存活检查，缓存失效或冷启动才完整复核。
-- 上一个/下一个同步推进物化视图游标，然后异步派发 `claude://claude.ai/epitaxy/<encoded-local-session-id>`。latest-target-wins 单飞队列保证连续按键只打开最终目标。
+- RAW-152 后，上一个/下一个的跨来源物化游标由版本门禁的 Preload 进程桥拥有：所有启用 Provider 库存 settled 后才 ready，每个按键同步推进，75ms 尾随窗口只派发最终目标，卡片/attention 优先，Codex/Claude 打开共享最大并发 1。Claude provider-local opener 仍只异步派发 `claude://claude.ai/epitaxy/<encoded-local-session-id>`；普通 Renderer remount 只 detach，来源变化、功能停用或进程退出清理。
 - Claude 任务的更多操作提供“同步 Claude 状态”：只接受当前未归档 local session 的精确 `{ key, actionAlias }`，并发读取真实 state/unread、合并后最多发布一次，部分失败给出明确反馈。成功打开原任务后执行同一路线的一次静默同步；派发失败不确认已读也不触发同步。
 - 禁止 `resume/import`、CLI、终端、标题 AX 点击、自动启动、写未读或创建副本。选取 P95 `<=10ms`，热派发 P95 `<=150ms`，冷校验 P95 `<=1s`。
 
@@ -193,7 +221,8 @@ updated: `2026-08-08`
 
 - EyPc 不创建或修改 Codex/Claude 原生项目。虚拟合并先按双方相同规范绝对路径的稳定 project key；否则只在 Codex 与 Claude 两侧规范名称都唯一时合并，重名歧义保持分离。Claude 独有项目进入项目区，共享项目在“全部”只出现一次。
 - Projects 子页签为会话级 `全部 / 只显示 Codex / 只显示 Claude`，默认全部。单来源模式同时过滤项目子任务并重算项目/任务数；共享项目只要含所选来源任务就保留。
-- Claude 任务只支持精确打开、本地置顶和本地隐藏；归档、移除、移动等 Claude 原生不支持动作禁用并解释，不得误路由到 Codex 动作。
+- 更新引入（Codex Companion RAW-154，取代 RAW-150 的 Claude 执行路线）：Claude 任务继续支持精确打开、本地置顶和本地隐藏，并允许仅限 macOS Claude `1.26832.0` 的 completed/stopped 任务级 D′ 静默归档。普通库存读取只在 Preload 内建立唯一 `sessionId → local_*.json` 索引；mutation 不重新扫目录。写前必须重读 compatible phase、精确 App-local 身份及文件 stat/hash；事务保留原始字节/权限，只把解析对象的 `isArchived` 改为 true，写入同目录唯一临时文件并核验其它字段语义不变后原子替换。元数据 true 且私有活动库存移除即可 `archived`，固定语法 App 日志只作增强证据；已归档幂等成功，安全恢复失败或 Claude 并发修改不确定时返回 `indeterminate`，`failed/indeterminate` 均保留卡片。归档路径禁止 Deep Link、AX/JXA、LevelDB、扫改目录和非目标会话；项目级归档、移除和移动仍禁用并解释。
+- 普通打开在派发 Deep Link 前必须通过同一私有索引重读：已归档、缺失或身份不唯一返回 `state-changed`，不得重新打开旧会话。精确文件 watcher 只重读已登记目标并发布单调 membership mutation delta；一秒 watchdog 只核验索引候选。该通路独立于 quota、state、unread 与完整 inventory Promise，正常发布 P95 ≤250ms，漏 callback 恢复 ≤1.25s。
 - “同步 Claude 状态”是 Claude-only 的实时只读 capability；Codex 行不显示。它不能人工指定 completed/read，也不能修改 Claude App。
 - 每条任务和项目固定显示文本化“归属 Codex/Claude/共享”；文字、图标、ARIA 名称共同表达来源。来源背景使用现有 token 的 8% 普通/12% 悬停选中混色，状态图标与左侧标记继续只表达任务状态；Tab 保留原生键盘、焦点和 `aria-selected` 语义。
 
@@ -209,7 +238,7 @@ updated: `2026-08-08`
 
 - 唯一显式写入用户 Claude 安装的是用户主动注册的 official Hooks/statusline；保留现有配置并可清洁卸载。
 - 原始 App 日志、Hook payload 内容、对话正文、工具参数、凭证、LevelDB 值和会话身份不得进入探针输出或 Renderer。
-- Claude App session、unread、归档、标题和额度数据始终只读；私有 IPC 注入与直接数据库写入均不在生产路线。
+- Claude App session identity、unread、标题与额度始终只读。更新引入（RAW-154）只增加一个版本门禁、唯一索引目标、可核验/可回滚的 `isArchived` D′ 事务例外；禁止目录扫描写、LevelDB/数据库写、其它字段或其它会话修改。私有 IPC 注入和 Deep Link+AX 归档均不在生产路线。
 
 ### Verification plan preflight
 
@@ -222,7 +251,7 @@ updated: `2026-08-08`
 | Decision | Selected | Rejected / superseded | Source |
 | --- | --- | --- | --- |
 | DEC-20260807-01 | 只镜像 App Code 会话；App 标题，空值 `General coding session` | CLI-only、Cowork、混合库存、UUID 标题 | RAW-001/002 |
-| DEC-20260807-02 | 已运行 App 的精确 Epitaxy 路由 + presence cache + latest-target-wins | `resume/import`、CLI、AX 标题点击、自动拉起、每次全量枚举 | RAW-004/015 |
+| DEC-20260807-02 | 已运行 App 的精确 Epitaxy 路由 + presence cache；跨 Provider latest-target/并发由 `companion-navigation-v1` 上层统一 | `resume/import`、CLI、AX 标题点击、自动拉起、每次全量枚举、Provider 各自独立通用循环 | RAW-004/015、Codex RAW-152 |
 | DEC-20260807-03 | 版本门禁 App 日志 + 唯一 Hook + Code metadata history | Hooks-only、私有 IPC 注入、mtime/audit 猜测、latest-event | RAW-003/013/014 |
 | DEC-20260807-04 | 原生 LevelDB 是持久权威；稳定 V2 快照 + 同完成轮次可撤销会话提示 | 持久 EyPc 回执、无界乐观已读、字节扫描、上次集合 | RAW-006/023 |
 | DEC-20260807-05 | 重复 App 行严格保留；歧义 unknown | 自动隐藏/合并/删除或一对多扇出 | RAW-005 |
@@ -235,6 +264,8 @@ updated: `2026-08-08`
 | DEC-20260807-12 | 只读 EyPc 虚拟项目；路径优先、双方名称唯一兜底、三态来源筛选 | 写原生项目、单边名称猜合并、只把 Claude 任务塞进数组 | RAW-021 |
 | DEC-20260807-13 | 所有行文本化归属 + 8%/12% 来源背景 + provider capability | 只靠颜色、隐藏来源、把 Claude 动作误派到 Codex | RAW-022 |
 | DEC-20260808-14 | 父 Turn reducer + 集中来源/版本选择 + 同 lane 单项真实同步 | Stop 后尾事件复活、人工完成/已读覆盖、第二条刷新通道 | RAW-024 |
+| DEC-20260809-15 | D′ 单目标 `isArchived` 事务 + 元数据/活动库存双确认 + 并发安全回滚 | Deep Link+AX 归档、App 日志硬门禁、LevelDB/目录/非目标写入 | RAW-025、Codex RAW-154 |
+| DEC-20260809-16 | 统一任务 Dispatcher + 精确 membership delta/一秒索引 watchdog + open 归档前复核 | Provider-specific Controller 分支、完整库存阻塞移除、已归档会话仍被 Deep Link 打开 | RAW-026、Codex RAW-154 |
 
 ## Archive Tombstones
 
@@ -250,7 +281,9 @@ updated: `2026-08-08`
 | ARCH-20260807-08 | “实现已完成” | DEC-08 | uTools/Claude 全矩阵和 Fable 同屏验收通过 |
 | ARCH-20260807-09 | 完整 `test → typecheck → build → verify` 是每轮/本任务默认完成门禁 | DEC-10 | 仅有新的独立用户要求、发布策略或 impact evidence trigger 才可恢复对应 wider suite |
 | ARCH-20260808-10 | 任意 Stop 后活动事件都可把父任务恢复 running | DEC-14 | 只有新的父 Turn 权威合同与对应反例验收后才可替代 |
+| ARCH-20260809-11 | Claude 打开会话后用 AX 点 Archive，并把 App 日志作为硬成功条件 | DEC-15 | 只有 D′ 被真实反例证伪且用户重新选择副作用路线 |
+| ARCH-20260809-12 | Claude 手动/插件归档等待完整库存刷新后再收敛卡片 | DEC-16 | 不得恢复跨独立 authority 的阻塞刷新 |
 
 ## Implementation And Acceptance State
 
-生产代码已实现额度权威、状态/未读代际、父 Turn reducer、集中状态选择与版本比较、可加入的 state/unread singleflight、Claude-only 单项同步、会话提示、虚拟项目筛选和归属视觉增量；RAW-024 的聚焦自动化、scoped semantic typecheck、bundle/runtime 资产与匿名本机状态探针均已通过，当前 27 条投影为 0 running / 24 completed / 1 stopped / 2 unknown。此前真实 quota 返回 5h、全模型周与 Fable scoped 周额度及 reset，原生 unread 已稳定读到一条真实 membership。实际旧任务 UI 点击同步、permission/AskUserQuestion/响应、EyPc 点击移除/同轮不回跳/新 completion 再未读、标题/重启和真实项目筛选 UI 矩阵尚未走完，因此任务仍是 `acceptance-pending`，不能恢复旧的整体“完成”声明。详见 [verify.md](verify.md#L1)。
+生产代码已实现额度权威、状态/未读代际、父 Turn reducer、集中状态选择与版本比较、可加入的 state/unread singleflight、Claude-only 单项同步、会话提示、虚拟项目筛选和归属视觉增量；RAW-152 将通用前后任务提升为跨 Provider 进程级导航仲裁，RAW-154 再用 `companion-task-actions-v1` 统一 open/archive/close 分发，并落地 D′ 单目标元数据事务、归档前 open preflight、精确 membership delta 和进程级五秒归档确认。RAW-024 的聚焦自动化与既有宿主证据保持有效；RAW-154 自动化/构建证据在本轮 [verify.md](verify.md#L1) 收口。此前真实 quota 返回 5h、全模型周与 Fable scoped 周额度及 reset，原生 unread 已稳定读到一条真实 membership。真实 D′ 可丢弃会话 canary 必须另行获得用户确认；跨来源快速连按、手动 App 归档即时移除、旧任务 UI 点击同步、permission/AskUserQuestion/响应、EyPc 点击移除/同轮不回跳/新 completion 再未读、标题/重启和真实项目筛选 UI 矩阵仍未走完，因此任务仍是 `acceptance-pending`。

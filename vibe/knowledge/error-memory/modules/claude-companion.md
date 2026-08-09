@@ -4,6 +4,12 @@
 
 This link-only module routes EyPc-specific Claude Companion inventory, status, quota, open, bridge and test failures. Current product authority remains the [2026-08-07 reset spec](../../../specs/260807/claude-code-companion-authority-reset/spec.md#L1); this index is not a requirement manifest, task ledger or runtime state.
 
+更新引入（2026-08-08，RAW-150；已被下条细化）：旧任务和记忆中“Claude 不支持归档”的结论只保留为历史默认边界。RAW-150 曾选择 Deep Link→语义化 AX 动作与日志/元数据/库存三重确认；这条具体执行路线已被本机证据证伪并由 RAW-154 取代，不得恢复为当前建议。
+
+更新引入（2026-08-09，RAW-154）：当前唯一窄例外是 macOS Claude App `1.26832.0` 的 completed/stopped D′ 静默归档。普通库存只在 Preload 内建立唯一 `sessionId → local_*.json` 私有索引；写前重读 phase、身份、stat/hash，事务保留原始字节/权限，只把单一目标的 `isArchived` 改为 true，经同目录临时文件核验后原子替换。元数据 true + 私有活动库存移除即成功，App 日志只是增强证据；安全回滚失败或并发修改不确定时保留卡片。禁止 Deep Link、AX/JXA、LevelDB、扫改目录和非目标会话。普通打开也必须先拒绝已归档/缺失/歧义目标；精确 membership delta 与一秒索引 watchdog 独立于完整库存和 quota。项目级归档仍禁用。
+
+更新引入（2026-08-09，RAW-152）：Claude provider-local exact opener 继续只负责 Epitaxy Deep Link；通用 Codex/Claude 前后任务的游标、全来源 ready、75ms 最终目标和跨来源并发 1 已提升到 Preload 进程 owner。该失败族由 [uTools lifecycle pointer](../utools-onpluginout-hidden-vs-process-exit.md#L1) 与 [Codex session lifecycle](../codex-app-server-session-state-survives-exit.md#L1) 主责，本模块不创建第二份 Claude 专属记录。
+
 ## Current Authorities And Routes
 
 - Current decisions, archive ids and implementation boundary: [reset spec](../../../specs/260807/claude-code-companion-authority-reset/spec.md#L1)
@@ -37,6 +43,7 @@ This link-only module routes EyPc-specific Claude Companion inventory, status, q
 - [Facade port omitted below a passing module validator](../facade-port-omitted-below-passing-module-validator.md#L1)
 - [Content-derived path segment unvalidated](../content-derived-path-segment-unvalidated.md#L1)
 - [Guard field no producer ever sets](../guard-field-no-producer-ever-sets.md#L1)
+- [Process-owned multi-provider navigation lifecycle](../utools-onpluginout-hidden-vs-process-exit.md#L1)
 
 These preload/packaging/path records may also route through the CodeNote uTools module; their owning leaf remains unchanged.
 

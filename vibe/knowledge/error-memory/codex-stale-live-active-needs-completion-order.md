@@ -4,7 +4,7 @@ status: candidate
 scope: project
 fingerprint: codex-task-status-mismatch__stale-desktop-snapshot-outranks-newer-live-event__order-positive-and-terminal-events-above-initial-refollow-replay
 first_seen: 2026-07-27
-last_verified: 2026-07-30
+last_verified: 2026-08-08
 review_after: 2026-08-27
 evidence:
   - preload/index.js
@@ -27,6 +27,10 @@ tags:
 ---
 
 # Old Desktop Snapshots Must Not Outrank Newer Activity Or Completion
+
+## 更新引入（2026-08-08，RAW-150）
+
+本记录继续主责 live/terminal 因果顺序；RAW-131 当时形成的 `blocked-stopped` 归档结论不再是当前能力合同。当前 Domain 仍须先以同一闭合状态机建立 explicit `stopped`，Presentation 将其显示为“待继续”；任务级 Codex 归档发送 `stopped` evidence，但 Host 写前重读精确任务/latest Turn，只有最新仍 failed/interrupted 且实时停止边界仍成立才执行，恢复运行返回 `state-changed`。项目批量继续只接纳 completed。
 
 ## Symptom
 
@@ -106,7 +110,7 @@ Do not duplicate the diagnostic schema or hide its accepted changes behind task-
 - The preload keeps `activityRevision` and `suppressUncorroboratedActive` process-only. Runtime/request patches clear suppression and advance the revision; a complete newer `turn/started` restores active without scheduling an extra latest-Turn read. The initial-snapshot path reuses `[0,300,1000]` and requires the unchanged final successful terminal result.
 - The preload also keeps `appServerLiveSequence` and each Desktop shadow's `activityEventSequence` process-only. True activity/App Server live events advance one shared counter; read-state, refollow and full inventory preserve but never mint or expose the waterline.
 - Accepted completion publishes immediately. The exit baseline and bounded Turn read fill an evidence gap only; they add no presentation hold.
-- RAW-131 implements the previously missing boundaries: stale-active readers capture the parent positive sequence; Side Chat initial and last-active-exit readers query the causal child; conflicting terminal snapshots suppress to unavailable/ongoing instead of idle; every exact active activity patch opens a new epoch and waiting additionally wins over completion; same-fingerprint missing mappings outlive Controller quarantine while verified archive clears them directly; every affected Side Chat parent reaggregates after inventory rebuild; Controller rejects stale same-source delta bridge state plus lower/generationless V2 full snapshots; and Domain/Controller/Host/UI accept only completed archive evidence while stopped projects `blocked-stopped`. These contracts pass the latest automated suite.
+- RAW-131 implements the previously missing boundaries: stale-active readers capture the parent positive sequence; Side Chat initial and last-active-exit readers query the causal child; conflicting terminal snapshots suppress to unavailable/ongoing instead of idle; every exact active activity patch opens a new epoch and waiting additionally wins over completion; same-fingerprint missing mappings outlive Controller quarantine while verified archive clears them directly; every affected Side Chat parent reaggregates after inventory rebuild; Controller rejects stale same-source delta bridge state plus lower/generationless V2 full snapshots. Its historical completed-only/`blocked-stopped` archive conclusion is superseded by RAW-150's task-level stopped evidence plus Host write-time revalidation; all causal state contracts remain current.
 - RAW-132 routes parent projection through `codexResolveParentActivity`, defers a child terminal when `hasOtherActiveBranch` remains true, reopens the aggregate live epoch before re-publication, and exposes five session-only decision totals through the existing Activity generation barrier. Domain/Bridge/Controller reverse contracts pass.
 - RAW-133 centralizes the diagnostic tuple/normalization/equality in Domain, adds one Controller diagnostics-only notification path, compacts the Runtime summary, separates counters from `aria-live`, and makes all Codex help triggers native buttons. The parent-priority table invokes the production resolver; contracts pass.
 
@@ -136,3 +140,4 @@ Do not duplicate the diagnostic schema or hide its accepted changes behind task-
 | 2026-07-30 | RAW-131 closed-state-machine audit | User reported that repeated “full audits” still omitted related status blockers | Repaired the latest screenshot path and counted passing examples without closing all source/state/event/revision/replay/consumer combinations; two tests preserved wrong synthetic-idle and stopped-archive expectations | Freeze scenario patches, enumerate every write/clear/replay/consumer edge, repair all seven P1 and require one closed transition matrix before acceptance | candidate; implementation/contracts written, all automated/host verification pending |
 | 2026-07-30 | RAW-132 regression-safe optimization | User required further optimization without bringing back prior false-stop errors | Parent aggregation remained mutable and child terminal evidence could still be applied at aggregate scope; diagnostics had no explicit privacy/generation contract | Centralize parent resolution, defer branch terminal while another exact branch is active, add identity-free counters and reverse regression contracts | candidate; static implementation/contracts written, execution and host acceptance pending |
 | 2026-07-30 | RAW-133 unified diagnostic projection | User required globally concise, efficient and unified optimization without restoring old errors | Accepted diagnostics-only deltas shared the task generation barrier but could skip view notification; field normalization/comparison and help semantics were not yet one contract | Centralize diagnostics in Domain, notify exactly once on accepted package change, compact/focus-gate details and use native help buttons outside the live region | candidate; static implementation/contracts written, execution and host acceptance pending |
+| 2026-08-08 | RAW-150 stopped archive update | User clarified that an explicit stopped task should be shown as waiting-to-continue and may be archived | Historical closed-matrix acceptance treated stopped capability as permanently blocked | Preserve the stopped evidence reducer, but move mutation safety to exact Host reread and return `state-changed` after resume | focused Domain/Controller/Host/UI contracts pass; real v7 uTools archive remains host-pending |

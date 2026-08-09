@@ -1,7 +1,7 @@
 # Claude Companion：Codex 同构状态与全局缓存改造
 
-updated: `2026-08-08`
-status: `implementation-landed / automated-verified / targeted-host-partial / interactive-host-acceptance-pending`
+updated: `2026-08-09`
+status: `implementation-landed / RAW-154-automated-verified / targeted-host-partial / interactive-host-acceptance-pending`
 
 ## Baseline And Corrected Conclusions
 
@@ -37,7 +37,7 @@ status: `implementation-landed / automated-verified / targeted-host-partial / in
 ### 3. 快捷跳转性能
 
 - [open.cjs](../../../../preload/claude/open.cjs#L1) 缓存 Claude 主进程 bundle/PID/启动代次，热路径只做低成本存活校验，缓存失效才完整复核。
-- 上一个/下一个先同步移动物化视图游标，再把现有 Epitaxy local deep link 放入 latest-target-wins 单飞队列；连续按键只派发最终目标。
+- RAW-152 后，上一个/下一个的物化游标、75ms 最终目标与跨 Codex/Claude 并发 1 由 Preload 进程级 `companion-navigation-v1` 统一拥有；Claude provider-local opener 只执行现有 Epitaxy local deep link。所有启用来源库存 settled 前不接受通用循环，普通 Renderer remount 只 detach。
 - 路径仍严格禁止 import/resume、CLI、标题点击、自动启动、未读写入或会话复制。
 
 ### 4. Fable 与重置距离
@@ -52,7 +52,7 @@ status: `implementation-landed / automated-verified / targeted-host-partial / in
 - Bridge 已分离 inventory、`ClaudeCodeStateDeltaV2`、unread、quota、App presence；V2 带 `generation/source/freshness/compatibility`。
 - `ClaudeCodeObservation` 增加 `completedTurns` 与证据字段，quota snapshot 增加窗口级 source/freshness；Renderer 不再猜测总快照。
 - 删除“所有 watcher 调 `refreshClaude()`”、每次打开全量窗口枚举、进程期仅三次额度尝试及相应错误测试；保留 Code-only、App 标题、精确历史 deep link、LevelDB 只读合同。
-- 项目投影新增只读虚拟合并：完全相同稳定 project key 优先、双方名称唯一时兜底，Claude-only 项目批量进入项目区，歧义重名保持分离。Projects 内建 `全部 / 只显示 Codex / 只显示 Claude` 会话级筛选并重算计数；Claude 不支持的归档/移除/移动能力禁用。
+- 项目投影新增只读虚拟合并：完全相同稳定 project key 优先、双方名称唯一时兜底，Claude-only 项目批量进入项目区，歧义重名保持分离。Projects 内建 `全部 / 只显示 Codex / 只显示 Claude` 会话级筛选并重算计数。更新引入（RAW-154，取代 RAW-150 的 Claude 执行路线）：completed/stopped 任务级归档只通过 Claude `1.26832.0` 门禁后的 D′ 单目标静默 `isArchived` 事务；归档不打开 Claude、不使用 AX，项目级归档、移除和移动继续禁用。
 - 任务与项目固定显示文本化归属，使用现有来源 token 做 8%/12% 轻背景，并保留状态图标、原生 Tab/键盘/ARIA 语义与紧凑高度。
 
 ### 6. 旧任务父 Turn 与单项真实同步
@@ -62,6 +62,13 @@ status: `implementation-landed / automated-verified / targeted-host-partial / in
 - [claudeCode.ts](../../../../src/domain/claudeCode.ts#L1) 抽取 generation-first 的纯版本比较；[codexController.ts](../../../../src/runtime/codexController.ts#L1) 让 state/unread 使用可加入的 Promise singleflight 与单次 publish 去重。
 - 内部动作 `codex.claude.task.sync` 固定接收当前 Claude local session 的 `{ key, actionAlias }`。更多菜单只对 Claude 显示“同步 Claude 状态”；成功打开也走同一条静默同步。同步读取真实 state/unread，允许部分失败提示，不允许人工指定完成或已读。
 - 五份旧 Claude 任务文档在原路径使用 `document-archive-notice-v1` 逻辑归档并指向本 Spec；不移动、不重命名、不删除。归档处置算法由 CodeNote 全局 owner 持有，EyPc 只消费其格式。
+
+### 7. RAW-154 统一动作与 D′ 静默归档
+
+- [task-actions.cjs](../../../../preload/companion/task-actions.cjs#L1) 以 Provider registry 统一 `inspect/open/archive/close`；Renderer 只提交意图，Controller 只接纳已核验 mutation。相同 Provider+任务归档加入同一 Promise，不同任务/Provider 互不阻断；旧 Claude AX Bridge 不允许回退。
+- [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1) 在正常库存读取时建立唯一私有文件索引。写前核验 phase、身份、stat/hash，事务保留原字节/权限，只改 `isArchived`，同目录 `wx` 临时文件核验后原子替换；安全回滚失败或检测到并发修改时返回 `indeterminate`，绝不覆盖更新的 Claude 字节。
+- [archive.cjs](../../../../preload/claude/archive.cjs#L1) 提供 `claude-metadata-archive-v2`；元数据 true + 私有活动库存移除即 `archived`，App 日志为可选增强证据。归档路径不得调用 Deep Link、AX/JXA 或 exec，不写 LevelDB/其它会话。
+- 精确文件 watcher 发布 `CompanionTaskMutationDelta`，一秒 watchdog 只核验索引候选，独立于 quota/state/unread/full inventory。普通 open 写前检查目标未归档；`eypc-companion-archive` 用同一 Dispatcher 的进程级五秒同身份二次确认。
 
 ## Verification Plan And Current Gate
 
@@ -81,6 +88,6 @@ status: `implementation-landed / automated-verified / targeted-host-partial / in
 
 ## Non-goals
 
-- 不删除、归档、合并或修复 Claude App 会话。
+- 历史非目标“不删除、归档、合并或修复 Claude App 会话”由 RAW-154 增加一个窄例外：只允许版本门禁后的单一已索引目标 `isArchived=true` 事务，并要求元数据+活动库存双确认；仍不删除、合并、修复、扫改或触碰非目标 Claude 数据。RAW-150 的 Deep Link+AX/三重日志门禁仅保留为已取代历史。
 - 不接入 Cowork、CLI-only、云端索引或私有 IPC 注入。
-- 不启动 daemon，不持久化 live phase，不写 Claude App 状态，不在探针输出会话身份、标题、正文或凭证。
+- 不启动 daemon，不持久化 live phase，不写 Claude App unread/LevelDB/其它 session state，不在探针输出会话身份、标题、正文、路径或凭证。

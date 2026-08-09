@@ -4,7 +4,7 @@ status: candidate
 scope: project
 fingerprint: codex-live-status-lag__fixed-activity-debounce-and-full-inventory-scan-delayed-completion__push-immediate-ongoing-and-confirm-one-latest-turn
 first_seen: 2026-07-26
-last_verified: 2026-07-31
+last_verified: 2026-08-08
 review_after: 2026-08-26
 evidence:
   - preload/index.js
@@ -15,6 +15,7 @@ evidence:
   - tests/platform/codexAppServerBridge.test.ts
   - tests/runtime/codexController.test.ts
   - vibe/specs/260718/1148-codex-quota-float/verify.md
+  - bidirectional-waiting-edge-phase-only-watchdog-regressions
 tags:
   - codex-companion
   - live-status
@@ -22,9 +23,14 @@ tags:
   - debounce
   - conservative-fallback
   - privacy-boundary
+  - waiting-edge-watchdog
 ---
 
 # Confirm One Latest Turn Instead Of Debouncing Every Activity Delta
+
+## 更新引入（2026-08-08，RAW-151）
+
+本记录的“定向而非全量”原则现扩展到待输入的两条边，但不复用 completion reader 猜测状态。请求新增/解除、新 Turn 和 matching rollout output 直接进入共享 reducer；漏通知时，Controller 每 1 秒调用 phase-only Activity 快照，Preload 只复核已登记候选。任一有效 Desktop snapshot/patch、App Server 状态/Turn 或 rollout 文件新证据都会取消当前定向重订；若新证据自身仍与 live owner 冲突，才开启一轮新的有界复核。该 watchdog 不读取 unread、quota、inventory 或全量 latest Turn，也不受 `taskRefreshSeconds=0/86400`、当前 Tab 或悬浮窗可见性影响；缺少明确新证据时保持现状并退避。
 
 ## Symptom
 
@@ -64,6 +70,8 @@ RAW-135 verified one remaining source-level delay after those holds were removed
 
 Do not reduce a verified all-thread inventory interval merely to improve one task's live status. Use the live provider event to identify the task, publish conservative ongoing immediately, fetch only its newest authoritative Turn within a bounded deadline, and fall back to full reconciliation only when targeted confirmation fails. New-task/turn events may use a short coalesced dirty-entity scan, but a periodic scan must remain complete for missed-event recovery. An event arriving during a scan must schedule one follow-up. Generic debounce or a presentation hold must not sit behind already-targeted strong completion evidence. Only explicit completed evidence may leave ongoing or enable archive.
 
+For waiting-input, do not fall back to the complete inventory at all: use one bidirectional reducer, target-scoped `0/50/150/300/600/1000ms` resubscribe through 1.25 seconds, and a one-second phase-only watchdog over registered rollout candidates. Cancel the current cycle on any valid Desktop/App Server/rollout evidence; restart only for a newly observed conflict. Recovery timeout is diagnostic, not evidence that waiting ended.
+
 ## Latest Applicable Implementation
 
 - Desktop push owns exact active/input/approval transitions.
@@ -93,3 +101,4 @@ Do not reduce a verified all-thread inventory interval merely to improve one tas
 | 2026-07-30 | RAW-120 evidence-only completion | Exact task state made the remaining ordinary completion hold and cross-clock filters redundant | Treated proven completion as presentation noise after its revision/status had already been accepted | Remove the hold and cross-clock ordering; retain only bounded evidence reconciliation and inventory protection | focused bridge/Controller/Domain/UI/type verification passed; real uTools acceptance pending |
 | 2026-07-30 | RAW-121 terminal epoch closure | An accepted completion could later return to ongoing after a full snapshot | Kept the active-exit baseline after terminal acceptance, so the next identical inventory row reused a guard that belonged to the closed epoch | Clear the baseline when terminal evidence survives the guard; add targeted-completed → identical-full-snapshot regression coverage | automated status chain passed; real uTools acceptance pending |
 | 2026-07-31 | RAW-135 payload-less exact completion | User observed completed synchronization still lagging 1–2 seconds after presentation holds were removed | Routed an exact completed notification without Turn data through stale-active verification; the exact-positive waterline rejected it, forcing urgent all-thread inventory | Add a completion-event single-flight with immediate + 25/75/150/300/600/1000ms entity reads, positive-epoch cancellation and full-scan fallback only on exhaustion | Four related files `165/165`, typecheck, production build and uTools runtime validation passed; real uTools latency acceptance pending |
+| 2026-08-08 | RAW-151 bidirectional waiting watchdog | Input request creation and resolution could each lag or disappear behind missed callback/full reconciliation | Treated full inventory as a practical fallback and lacked a symmetric removal/new-Turn lane | Add one reducer, target-only bounded resubscribe and 1-second phase-only candidate watchdog independent of inventory frequency | focused automated P95/recovery contracts pass; real v7 uTools acceptance pending |

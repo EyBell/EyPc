@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: codex-session-exit-left-derived-state__bridge-aliases-cursors-or-controller-inventory-waterlines-survived-restart__old-generation-could-restart-block-or-overwrite-new-session__generation-owned-reset-and-bootstrap
 first_seen: 2026-07-19
-last_verified: 2026-08-03
+last_verified: 2026-08-09
 review_after: 2027-02-01
 evidence:
   - preload/index.js
@@ -14,6 +14,7 @@ evidence:
   - full-verify-722-of-722
   - cold-task-action-preflight-regression
   - ownerless-pending-request-recovery-regression
+  - process-navigation-v1-lifecycle-regression
 tags:
   - codex-companion
   - app-server
@@ -32,12 +33,14 @@ tags:
 - 旧 action alias 在进程退出后仍可能短暂有效；被拒绝的后台分页还可能沿用旧 generation 自动拉起新 App Server。
 - Controller 停用或关闭任务收件箱后只清投影、不清旧 `lastThreads`、项目库存、来源指纹、Activity generation、active-exit baseline 和 missing-key 候选；停用期间真实归档、删除或项目离库在重开后会被旧基线误判为普通缺行。
 - 旧 refresh/activity 请求仍占用 in-flight 标记或在 `finally` 写回时，新一代的立即 bootstrap 可能被阻塞或被旧结果覆盖。
+- Host 已把普通 mainHide 视为软生命周期，但 replaceable Renderer 的 `dispose()` 仍调用 provider close；同时任一 Provider 库存有值就被当作全局 ready，使新旧 Renderer/跨来源打开链仍可能清缓存或并发派发。
 
 ## Verified Root Cause
 
 - 正常关闭和非预期退出维护两份不对称清理逻辑。
 - 后台扫描的 `finally` 无 generation 所有权判断，旧任务可能覆盖新一轮 running 状态。
 - Controller 的功能开关边界只重置了展示结果，没有把 Codex 派生库存、水位、隔离候选、退出基线和循环游标视为同一 runtime session；异步操作也没有独立的 runtime generation/operation owner。
+- Renderer 生命周期、Provider 库存 readiness 与 Host 进程导航 ownership 被混为一层；Provider-local singleflight 无法约束另一个 Provider 的打开链。
 
 ## Prevention Rule
 
@@ -47,7 +50,8 @@ tags:
 - Controller 停用或任务收件箱关闭时必须先递增 runtime generation、解除旧 in-flight 所有权并清空所有 Codex 派生任务/项目库存、来源/Activity 水位、active-exit baseline、missing-key 状态与任务循环游标；设置、别名、本地置顶、隐藏和折叠等 EyPc 自有状态必须保留。
 - 新一代启用后必须立即执行额度、配置、完整库存和 latest-Turn bootstrap；每个 refresh/activity continuation 在写回与 `finally` 前校验捕获的 runtime generation 和 operation owner，旧会话不能阻挡或清除新会话。
 - 清空旧库存不能让显式用户命令失效：若 `mainHide` 全局任务入口在停用边界后到达且当前库存为空，Controller 接纳该命令并串行执行一次 tasks-only action preflight，再从新一代投影解析目标。它不能恢复旧库存，也不能把冷缓存为空误报成最终“无任务”。
-- 区分显式停用/kill 与普通宿主隐藏：前者关闭 App Server 和 Desktop bridge；`onPluginOut(false)` 或仅离开 Codex 活跃面只重置 App Server/公开派生状态并保留 Desktop observer，避免 ownerless input/approval/Plan 在库存重建前失去唯一精确会话证据。App Server latest/full Turn 不能替代 pending-request 权威。
+- 区分显式停用/kill 与普通宿主隐藏/Renderer remount：前者关闭 App Server、Desktop bridge 和进程导航；后者只释放 Renderer-local timer/listener/lease，保留有界 Host session、alias/latest-Turn 与 ready navigation snapshot。新 Renderer 在全部启用 Provider 库存 settled 前不得以空 bootstrap 覆盖该 snapshot。App Server latest/full Turn 不能替代 pending-request 权威。
+- 跨 Provider 通用导航必须由一个 Host 进程 owner 串行派发；每个键可推进游标，但 bounded trailing window 只派发最终目标。显式行/attention 打开优先于尚未派发的通用目标，且 Provider-local opener 不能绕过全局并发 1。
 
 ## Regression Evidence
 
@@ -68,6 +72,7 @@ tags:
 6. 在第一代 refresh/activity 仍挂起时启用第二代，确认新 bootstrap 已发出，再释放旧请求并确认它不能写回或清除第二代 in-flight 状态。
 7. 在停用清空后直接触发一个全局任务命令，确认它等待 tasks-only preflight 后执行一次；连续命令保持顺序，失败不能回退旧库存或其它任务。
 8. 分别触发非 kill plugin hiding、显式 feature disable 与 kill；前者应保持 Desktop observer/有限 request shadow，后两者应完全关闭。库存重建必须接受新 snapshot/Turn 并清除已过期 shadow，而不能用旧 App Server terminal 覆盖仍未决的精确请求。
+9. 分别阻塞 Codex/Claude 库存并触发通用循环，确认只有两条启用 lane 都 settled 后才派发；随后跨 Renderer remount 连按并插入一次手动打开，确认 retained snapshot 未被空投影覆盖、无重复 payload、最大并发为 1。
 
 ## Alternative Route
 
@@ -76,7 +81,7 @@ tags:
 - Ordered steps: increment the owning generation; detach old operation ownership; run the appropriate shared reset; invalidate session-only aliases/caches/cursors or Controller-derived inventory/waterlines while retaining EyPc-owned persistent settings; start the new Controller bootstrap immediately; let every pending continuation compare its captured generation and operation owner before spawn, writeback or cleanup.
 - Verification: bridge contracts hold background paging across process exit and reject old aliases; Controller contracts hold an old async read across disable/enable, prove immediate second-generation bootstrap, reconstruct off-period inventory changes, and reject the released old result.
 - Applicability boundary: in-process App Server and Controller-derived session state. It does not authorize killing Codex Desktop, clearing persisted plugin settings or replaying actions that the user did not explicitly trigger；显式冷启动命令自己的最小 preflight 属于同一次动作。
-- Soft-lifecycle boundary: preserving the Desktop observer on non-kill hiding is allowed only for read-only live/request observation; it does not preserve public inventory, action aliases, App Server RPC ownership or ordinary active state.
+- Soft-lifecycle boundary: ordinary non-kill hiding may preserve bounded process-owned App Server aliases/latest-Turn material and a versioned navigation snapshot when hot global shortcuts are an explicit product contract. It does not persist those facts across process exit, authorize stale semantic restoration after feature/inbox disable, or let a partial Provider inventory overwrite the atomic current view.
 - Fallback: if generation ownership is uncertain, discard the continuation and require a new explicit read.
 
 ## Occurrence History
@@ -87,3 +92,4 @@ tags:
 | 2026-08-01 | RAW-137 interruption recovery | Controller disable/enable retained old inventory/source/evidence baselines and an old async owner | Clear only the visible projection and rely on the next ordinary poll | Controller interruption/inventory matrix | Reset all Codex-derived runtime baselines, immediately bootstrap under a new generation, and self-schedule missing-key closure | verified again by RAW-138 full verify 722/722 on 2026-08-03; real-host interruption acceptance pending |
 | 2026-08-03 | RAW-139 cold task entry | Correct RAW-137 cleanup left no inventory when a `mainHide` task shortcut was synchronously consumed before bootstrap | Treat empty cold projection as final “no task” and hide the Renderer again | Source call chain, uTools lifecycle evidence and Controller/App route regressions | Keep the reset, but serialize the explicit command behind tasks-only preflight; let `mainHide` alone own visibility | focused 141/141 and full verify 730/730; rebuilt cold-host acceptance pending |
 | 2026-08-03 | RAW-141 ownerless pending request | Ordinary non-kill plugin exit closed Desktop observation, while new follower and App Server could not reconstruct the current request | Treat every pluginOut as a full bridge close and assume refollow/latest Turn is complete state | Current live socket/follower/App Server/rollout evidence plus Bridge lifecycle regression | Keep Desktop observer and finite observed request shadows across non-kill hiding; explicit disable/kill still performs full reset; use safe rollout only for exact ordinary input | focused 170/170, full workspace 737/737 and isolated commit 711/711 plus type/build/runtime gates pass; rebuilt uTools display pending |
+| 2026-08-09 | RAW-152 cross-provider navigation | Codex/Claude previous-next could accept a partial cache, overlap provider opens and lose process cache on Renderer disposal although single-card clicks were exact | Kept cursor/readiness in Renderer and relied on separate provider-local singleflight | Controller/Preload call-chain plus blocked-lane, max-concurrency, remount, retained-card and hot-entry regressions | Added `companion-navigation-v1` process owner, all-enabled Provider settled gate, 75ms final-target coalescing, explicit-open priority, one dispatch pump, exact-card fallback inside that pump and detach-only Renderer teardown | affected `325/325`, typecheck and production/uTools build pass; real rapid-switch crash acceptance pending |

@@ -1,7 +1,7 @@
 # Claude Code Companion 权威重置 — Verification
 
-updated: `2026-08-08`
-status: `implementation-landed / automated-verified / quota-host-verified / interactive-host-partial`
+updated: `2026-08-09`
+status: `implementation-landed / RAW-154-automated-verified / quota-host-verified / interactive-host-partial`
 
 ## Verification Verdict
 
@@ -9,6 +9,7 @@ status: `implementation-landed / automated-verified / quota-host-verified / inte
 - watcher wake 只记录 source latency，不再作为最终 UI publish 证据。Controller 自动化从 watcher-shaped state delta 跑到 publish，并在 quota promise 阻塞时验证 100 次状态转换 P95 `<=250ms`。
 - 本轮新增的 App quota 权威已在真实加密缓存上返回 HTTP 200，并只投影 5h、全模型周、Fable scoped 周额度及 reset；状态/未读/项目/视觉的确定性链路通过。
 - RAW-024 已定位并修复旧任务假 running：父 Turn reducer拒绝 Stop 后 SubagentStop/工具尾事件复活，App terminal 优先同 Turn Hook tail；Claude-only 单项同步与成功打开静默同步复用同一 state/unread singleflight 和 revision 发布链。
+- RAW-154 已以 `claude-metadata-archive-v2` 取代历史 Deep Link+AX：唯一私有文件索引、phase/stat/hash 写前门禁、单字段同目录原子事务、语义核验、并发保护和安全回滚均已落地；元数据+私有活动库存双确认即可成功，App 日志不再是硬条件。普通打开会先拒绝已归档/缺失/歧义目标，文件 membership delta 与一秒索引 watchdog 不等待完整库存或额度。
 - **整体仍未验收**：实机 permission/AskUserQuestion/响应、EyPc 点击现有真实未读后的原生移除/同轮不回跳/新 completion 再未读、标题/重启、项目三筛选及最终 uTools 同屏视觉矩阵尚未完整执行。
 
 ## Verification Policy Correction
@@ -29,11 +30,15 @@ status: `implementation-landed / automated-verified / quota-host-verified / inte
 | Independent hot cache | [codexController.ts](../../../../src/runtime/codexController.ts#L1), [claudeCompanionController.test.ts](../../../../tests/runtime/claudeCompanionController.test.ts#L1), [claudeCompanionWatcherE2E.test.ts](../../../../tests/runtime/claudeCompanionWatcherE2E.test.ts#L1) | real `fs.watch` → parser → Bridge V2 → Controller revision → Float applied revision; separate clocks; 1s recovery; two failures→unknown; blocked quota is never awaited; regressions rejected |
 | Per-task true sync | [appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1), [codexController.ts](../../../../src/runtime/codexController.ts#L1), [FloatApp.vue](../../../../src/FloatApp.vue#L1) | exact current Claude identity; joinable state/unread reads; one publish max; partial failure feedback; successful-open silent sync; no manual completed/read override |
 | Exact shortcut/open | [open.cjs](../../../../preload/claude/open.cjs#L1), [claudeBridge.test.ts](../../../../tests/platform/claudeBridge.test.ts#L1), [open probe](../../../../scripts/probe-claude-open-runtime.mjs#L1) | process-generation cache; cold discovery hard-bounded to 900ms; latest-target-wins; one Epitaxy final target; no import/launch/read mutation/clone |
+| D′ archive transaction/open preflight | [archive.cjs](../../../../preload/claude/archive.cjs#L1), [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1), [claudeBridge.test.ts](../../../../tests/platform/claudeBridge.test.ts#L1) | unique indexed target; completed/stopped + version/platform/stat/hash gate; only `isArchived` semantic change; atomic sibling rename; no Deep Link/AX/exec/LevelDB/non-target write; idempotent archived; concurrency-safe rollback classification; archived/missing open rejected |
+| Provider-neutral action/mutation | [task-actions.cjs](../../../../preload/companion/task-actions.cjs#L1), [companionTaskActionsBridge.test.ts](../../../../tests/platform/companionTaskActionsBridge.test.ts#L1), [claudeCompanionController.test.ts](../../../../tests/runtime/claudeCompanionController.test.ts#L1) | exhaustive registry; archive never coalesced/replaced; same task joins; providers independent; stale target fails closed; verified removal once; failed/indeterminate retained; five-second exact shortcut identity |
 | Dynamic quota/reset | [quota.cjs](../../../../preload/claude/quota.cjs#L1), [claude.ts](../../../../src/domain/claude.ts#L1), [claudeQuotaFallback.test.ts](../../../../tests/platform/claudeQuotaFallback.test.ts#L1) | explicit access gate; Claude Safe Storage v10 decrypt; account/org/scope arbitration; current `kind/percent/nested scope` shape; 401 fingerprint wait; 429 Retry-After; reset+1s schedule; scoped window survives partial patch |
 | Virtual projects/provider UI | [companionAggregate.ts](../../../../src/domain/companionAggregate.ts#L1), [FloatApp.vue](../../../../src/FloatApp.vue#L1), [codexCompanion.test.ts](../../../../tests/ui/codexCompanion.test.ts#L1) | exact-key/unique-name merge; ambiguity separation; Claude-only batches; all/Codex/Claude filter and counts; unsupported Claude actions disabled; text ownership + 8%/12% backgrounds + Tab/ARIA/high-contrast |
 | Packaging/IPC | [utools-preload-assets.mjs](../../../../scripts/utools-preload-assets.mjs#L1), [validate-utools-runtime.mjs](../../../../scripts/validate-utools-runtime.mjs#L1) | canonical/public/dist parity; V2 + inventory/unread/quota/presence ports; app-state packaged; no rejected native addon |
 
 ## Automated Evidence
+
+- RAW-154 affected route passed：Domain/Bridge/Dispatcher/Controller/watcher/UI/feature-routing `20/20` files、`550/550` tests；`pnpm run typecheck` pass；`pnpm run build` pass with 1868-module Vite、runtime preparation and uTools validator；canonical/public main/action/Claude mirrors byte-identical，canonical JS/CJS syntax and `git diff --check` pass。No real Claude mutation canary was part of this automated gate；full-repository Vitest/`pnpm run verify` was not triggered。
 
 - RAW-024 focused regression: `claudeBridge + claudeCode Domain + claudeCompanionController + Float UI` 为 `4/4` 文件、`120/120` 测试通过；固定动作注册定向用例 `1/1` 通过（同文件其余 168 项按影响边界跳过）。
 - RAW-024 scoped semantic/package boundary: 临时 `vue-tsc` 配置只纳入 `FloatApp.vue / claudeCode.ts / appRuntime.ts / codexController.ts` 并通过；canonical preload 同步、Vite production bundle（1868 modules）、runtime asset preparation 与 uTools validator 均通过。
@@ -83,20 +88,23 @@ Current authority: these rows prove only that the commands previously completed.
 | Title/activity change | one metadata patch; state/unread preserved | automated passed; real UI pending |
 | Restart | history completed restored; no persisted live phase | cold probe passed; real UI pending |
 | Quota | 5h/all-model/Fable/Fable 5 + absolute/relative reset/freshness match App | source HTTP 200 and three-window projection passed; final uTools same-screen rendering pending |
+| EyPc D′ archive | one separately authorized disposable completed/stopped target becomes `isArchived=true`; EyPc card removes immediately; no Claude window opens | deterministic transaction tests implemented; real canary pending separate user confirmation |
+| Claude App manual archive | exact file event removes same EyPc card within 250ms P95; one dropped callback recovers within 1.25s | deterministic exact watcher + watchdog tests implemented; real App observation pending |
 
 ## Privacy / Mutation Audit
 
-- Claude App session, title, unread, archive and quota data were not written, deleted, merged or repaired.
+- Historical probes did not write, delete, merge or repair Claude App session/title/unread/archive/quota data. RAW-154 automation writes only disposable test fixtures；no real Claude D′ canary was executed。
 - The sync action reads only current state/unread and has no phase/read payload; no public preload API, persistence schema or Claude App write was added.
+- Production D′ is a narrow explicit exception: one unique indexed `local_*.json` target, `isArchived=true` only, original bytes/mode retained for guarded rollback, no path crosses Bridge, and LevelDB/other sessions/non-target fields remain untouched.
 - Open probe only navigated an already-running App to an existing Code row and observed no metadata clone.
 - Unread reader opened only copied snapshots and removed all temporary directories.
 - `_to_delete/` and unrelated dirty-tree changes were preserved.
 
 ## Documentation Receipt
 
-- EyPc manifest receipt initially recorded and checked as `hit` for 26 documents / 41 dependencies / 22 validators.
-- A final readback then found `vibe/specs/260805/1150-claude-companion-provider/spec.md` had concurrently gained unrelated RAW-149 attention-order text after the receipt. The linked archive notice and code links still pass, but the manifest correctly returns `scope_changed`.
-- Per shared-file ownership, this task preserved the foreign hunk and did not overwrite it or issue a replacement EyPc receipt. CodeNote's independent global-rule receipt remains separately owned.
+- 历史 revision 5 回执曾以 26 documents / 41 dependencies / 22 validators 命中，随后因共享 provider 文档获得外来 RAW-149 hunk 而正确变为 `scope_changed`；该事实保留为历史，不再冒充当前门禁。
+- RAW-154 将清单扩展为 34 documents / 49 dependencies / 31 validators，纳入 Codex v9 任务包、统一 Dispatcher、Claude D′、mutation/shortcut 与新增验证文件。最终复核 33 个变更 Markdown 零断链，`AGENTS.md`/`CLAUDE.md` 工具专属导语不同但共享适配器正文一致，并修正残留的 v8 当前口吻与 interrupted 等 idle 冲突。
+- 当前私有 `documentation-sync-v2` 回执已按 `requirement-canonical` 影响重新记录；CodeNote 全局规则/Skill 回执仍由其父 Rule Task 独立持有。该回执只证明文档、依赖和验证器在当前工作树一致，不替代 v9 宿主重接入或真实 D′ canary。
 
 ## Review Closure
 
