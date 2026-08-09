@@ -7612,15 +7612,20 @@ body,
   opacity: 0.58;
 }
 
-.window-list-panel,
-.window-list {
+.window-list-panel {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .window-list {
   position: relative;
-  height: 100%;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
   overflow: auto;
   outline: 0;
 }
@@ -7735,6 +7740,7 @@ body,
 
 .window-slot-binding-hint {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
   padding: 5px 10px;

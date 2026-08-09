@@ -583,6 +583,38 @@ describe('slot inline binding mode', () => {
     expect(wrapper.find('[data-role="window-slot-picker"]').exists()).toBe(false)
   })
 
+  it('shares the panel height between the binding hint and the scrollable window list', async () => {
+    const wrapper = mount(WindowsPage, {
+      props: { snapshot: snapshotWithRows([makeRow('w1', 'Window 1')]) }
+    })
+    await wrapper.get('[data-slot-chip="1"]').trigger('pointerdown', { button: 0 })
+
+    const hint = wrapper.get('[data-role="window-slot-binding-hint"]')
+    const list = wrapper.get('#window-list')
+    expect(hint.element.parentElement).toBe(list.element.parentElement)
+    expect(hint.element.nextElementSibling).toBe(list.element)
+
+    const css = readFileSync(resolve(process.cwd(), 'src/styles/app.css'), 'utf8')
+    const standaloneRule = (selector: string) => {
+      const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const match = css.match(new RegExp(`(?:^|\\})\\s*${escapedSelector}\\s*\\{([^}]*)\\}`, 'm'))
+      if (!match) throw new Error(`Missing standalone CSS rule for ${selector}`)
+      return match[1]
+    }
+    const panelRule = standaloneRule('.window-list-panel')
+    const hintRule = standaloneRule('.window-slot-binding-hint')
+    const listRule = standaloneRule('.window-list')
+
+    expect(panelRule).toMatch(/display:\s*flex/)
+    expect(panelRule).toMatch(/flex-direction:\s*column/)
+    expect(hintRule).toMatch(/flex:\s*0 0 auto/)
+    expect(listRule).toMatch(/flex:\s*1 1 0/)
+    expect(listRule).toMatch(/min-height:\s*0/)
+    expect(listRule).toMatch(/height:\s*auto/)
+    expect(listRule).toMatch(/overflow:\s*auto/)
+    expect(listRule).not.toMatch(/height:\s*100%/)
+  })
+
   it('dispatches windows.slot.assign when clicking a window row in binding mode then exits', async () => {
     const wrapper = mount(WindowsPage, {
       props: { snapshot: snapshotWithRows([makeRow('w1', 'Window 1'), makeRow('w2', 'Window 2')]) }
