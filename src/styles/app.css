@@ -806,10 +806,27 @@ textarea {
 }
 
 .app-shell {
+  position: relative;
   height: 100dvh;
   min-height: 0;
   display: block;
   overflow: hidden;
+}
+
+.runtime-reload-banner {
+  position: absolute;
+  z-index: 1000;
+  top: 8px;
+  right: 12px;
+  left: 12px;
+  padding: 9px 12px;
+  border: 1px solid #f97316;
+  border-radius: 8px;
+  color: #7c2d12;
+  background: #fff7ed;
+  box-shadow: 0 8px 22px rgb(124 45 18 / 18%);
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .tab-shell {

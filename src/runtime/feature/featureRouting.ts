@@ -84,6 +84,10 @@ export function routePluginFeature(payload: PluginEnterPayload | null | undefine
       return isFeatureEnabled('codex', featureConfigs)
         ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.task.next', preserveCurrentTab: true, visibilityOwner: 'mainHide' }
         : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'codex.task.next' }
+    case 'eypc-companion-archive':
+      return isFeatureEnabled('codex', featureConfigs)
+        ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.task.archiveFocused', preserveCurrentTab: true, visibilityOwner: 'mainHide' }
+        : { tab: 'settings', focusSearch: false, settingsMaintenanceSection: 'features', actionId: 'codex.task.archiveFocused' }
     case 'eypc-codex-action-runner':
       return isFeatureEnabled('codex', featureConfigs)
         ? { ...restoreCurrentRoute(currentTab, featureConfigs), actionId: 'codex.actionRunner.activate', preserveCurrentTab: true, visibilityOwner: 'mainHide' }

@@ -41,6 +41,8 @@ const snapshot = computed(() => {
   version.value
   return runtime.snapshot()
 })
+const runtimeReloadRequired = computed(() => platform.runtimeIdentityStatus?.status === 'reload-required')
+const runtimeReloadMessage = computed(() => platform.runtimeIdentityStatus?.message || 'Preload 与 UI 版本不一致，需要重新接入或重载')
 const confirmRestoreFocusSelectors = computed(() => {
   if (snapshot.value.state.activeTab !== 'favorites') return []
   return [...new Set([
@@ -501,6 +503,9 @@ onUnmounted(() => {
 
 <template>
   <main ref="appRoot" class="app-shell" :class="{ 'shift-preview': shiftPreview }">
+    <div v-if="runtimeReloadRequired" class="runtime-reload-banner" role="alert">
+      <strong>任务操作已暂停：</strong>{{ runtimeReloadMessage }}
+    </div>
     <TabShell
       :active-tab="snapshot.state.activeTab"
       :command-shortcut-labels="snapshot.commandShortcutLabels"

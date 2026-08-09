@@ -1,5 +1,6 @@
 import type { CodexFloatSnapshotV1 } from './runtime/codexController'
 import type { CodexNewThreadRequest, CodexNewThreadResult, CodexThreadOpenResult } from './domain/codex'
+import type { RuntimeIdentityBridgeV1 } from './platform/eypcPlatform'
 
 export {}
 
@@ -15,6 +16,7 @@ export interface CodexFloatWindowState {
 declare global {
   interface Window {
     eypcFloat?: {
+      runtimeIdentity?: RuntimeIdentityBridgeV1
       getSnapshot(): CodexFloatSnapshotV1 | null
       getState(): CodexFloatWindowState
       onSnapshot(listener: (snapshot: CodexFloatSnapshotV1) => void): () => void

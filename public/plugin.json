@@ -188,7 +188,7 @@
     },
     {
       "code": "eypc-codex-completed-unread",
-      "explain": "打开第一个 Codex 已完成未读任务",
+      "explain": "依次打开 Codex 已完成未读任务",
       "mainHide": true,
       "cmds": ["Codex已完成未读", "打开第一个 Codex 已完成未读", "Codex 未读完成"]
     },
@@ -203,6 +203,12 @@
       "explain": "下一个 Codex 任务",
       "mainHide": true,
       "cmds": ["下一个 Codex 任务", "Codex 下一个任务", "Codex next task"]
+    },
+    {
+      "code": "eypc-companion-archive",
+      "explain": "归档当前 Companion 任务",
+      "mainHide": true,
+      "cmds": ["归档当前 Companion 任务", "归档当前 Codex 或 Claude 任务", "Companion archive"]
     },
     {
       "code": "eypc-codex-action-runner",

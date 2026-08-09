@@ -62,6 +62,7 @@ import { normalizeCodexQuota, orderCodexAttentionTasks, orderCodexTasksForDispla
 import { companionTaskProvider, type CompanionProviderId } from './domain/companionProvider'
 import type { CodexFloatResizeCorner, CodexFloatWindowState } from './float-env'
 import type { CodexFloatSnapshotV1 } from './runtime/codexController'
+import type { RuntimeIdentityHandshakeV1 } from './platform/eypcPlatform'
 
 type RenderRow =
   | { kind: 'section'; key: string; section: CodexProjectSection }
@@ -115,6 +116,7 @@ const COMPOSER_IMAGE_MAX_BYTES = 20 * 1024 * 1024
 const FLOAT_COLLAPSE_DELAY_MS = 220
 
 const snapshot = ref<CodexFloatSnapshotV1 | null>(null)
+const floatRuntimeIdentity = ref<RuntimeIdentityHandshakeV1 | null>(null)
 const rootElement = ref<HTMLElement | null>(null)
 const expanded = ref(false)
 const floatState = ref<CodexFloatWindowState>({ expanded: false, pinned: false, resizing: false, resizeCorner: null, expandedSize: null })
@@ -146,6 +148,18 @@ const shiftPreviewSuppressed = ref(false)
 const actionHint = ref<ActionHint>(null)
 const compactCounterHintText = ref('')
 const optimisticProjectCollapsed = ref<Record<string, boolean>>({})
+
+const runtimeReloadRequired = computed(() => (
+  floatRuntimeIdentity.value?.status !== 'host-loaded'
+  || snapshot.value?.runtimeIdentity?.status !== 'host-loaded'
+  || snapshot.value?.runtimeIdentity?.actual.hostAssetId !== __EYPC_HOST_ASSET_ID__
+  || snapshot.value?.runtimeIdentity?.actual.rendererAssetId !== __EYPC_RENDERER_ASSET_ID__
+))
+const runtimeReloadMessage = computed(() => (
+  floatRuntimeIdentity.value?.status === 'reload-required'
+    ? floatRuntimeIdentity.value.message
+    : snapshot.value?.runtimeIdentity?.message || 'Float 与主插件运行版本不一致，请重新接入并重新打开 Float'
+))
 const quickJump = ref<{ open: boolean; query: string; sourceTargets: QuickJumpDomTarget[]; targets: QuickJumpDomTarget[]; activeTargetId: string | null }>({
   open: false,
   query: '',
@@ -387,7 +401,7 @@ const renderRows = computed<RenderRow[]>(() => {
       { key: 'input', title: '待输入', tone: 'input' as const, tasks: statusGroups.input },
       { key: 'active', title: '正在进行中', tone: 'active' as const, tasks: statusGroups.active },
       { key: 'unknown', title: '状态未知', tone: 'unknown' as const, tasks: unknownTasks },
-      { key: 'stopped', title: '已停止', tone: 'stopped' as const, tasks: stoppedTasks },
+      { key: 'stopped', title: '待继续', tone: 'stopped' as const, tasks: stoppedTasks },
       { key: 'unread', title: '已完成未读', tone: 'unread' as const, tasks: statusGroups.unread },
       { key: 'completed', title: '已完成', tone: 'completed' as const, tasks: statusGroups.completed }
     ]
@@ -471,6 +485,7 @@ const focusedItem = computed(() => focusItems.value.find((item) => item.key === 
 
 const visibleTaskKeys = computed(() => new Set(renderRows.value.filter((row): row is Extract<RenderRow, { kind: 'task' }> => row.kind === 'task').map((row) => row.task.key)))
 const selectedTasks = computed(() => (conversations.value?.all || []).filter((task) => selectedKeys.value.has(task.key) && visibleTaskKeys.value.has(task.key)))
+const archivingTaskKeys = computed(() => new Set(snapshot.value?.archivingTaskKeys || []))
 const showBatchToolbar = computed(() => selectedTasks.value.length >= 2)
 const drawerIsBatch = computed(() => selectedTasks.value.length >= 2)
 const drawerItem = computed<FocusItem | null>(() => {
@@ -1085,7 +1100,7 @@ const drawerActions = computed<DrawerAction[]>(() => {
     const unpinned = tasks.filter((task) => task.pinSource !== 'local')
     const pinned = tasks.filter((task) => task.pinSource === 'local')
     return [
-      { id: 'batch-archive', label: `归档已完成项（${archivable.length}/${tasks.length}）`, danger: true, disabled: !archivable.length, disabledReason: '选中项没有可归档的已完成任务', run: requestTaskArchive },
+      { id: 'batch-archive', label: `归档可归档项（${archivable.length}/${tasks.length}）`, danger: true, disabled: !archivable.length, disabledReason: '选中项没有当前可归档的任务', run: requestTaskArchive },
       { id: 'batch-hide', label: `移到已隐藏（${visible.length}）`, disabled: !visible.length, disabledReason: '选中项均已隐藏', run: () => visible.forEach(hideTask) },
       { id: 'batch-restore', label: `恢复显示（${hidden.length}）`, disabled: !hidden.length, disabledReason: '选中项没有可恢复的隐藏任务', run: () => hidden.forEach(restoreTask) },
       { id: 'batch-pin', label: `本地置顶（${unpinned.length}）`, disabled: !unpinned.length, disabledReason: '选中项均已置顶', run: () => unpinned.forEach((task) => togglePin(taskFocusItem(task))) },
@@ -1342,9 +1357,17 @@ function requestConfirmation(id: string, label: string, run: () => void) {
 }
 
 function archiveCandidates() {
-  const selected = selectedTasks.value.filter((task) => task.canArchive)
+  const selected = selectedTasks.value.filter((task) => task.canArchive && !archivingTaskKeys.value.has(task.key))
   if (selected.length) return selected
-  return focusedItem.value?.kind === 'task' && focusedItem.value.task.canArchive ? [focusedItem.value.task] : []
+  return focusedItem.value?.kind === 'task'
+    && focusedItem.value.task.canArchive
+    && !archivingTaskKeys.value.has(focusedItem.value.task.key)
+    ? [focusedItem.value.task]
+    : []
+}
+
+function taskArchiving(task: CodexTaskCard) {
+  return archivingTaskKeys.value.has(task.key)
 }
 
 function taskArchiveConfirming(task: CodexTaskCard) {
@@ -1354,10 +1377,12 @@ function taskArchiveConfirming(task: CodexTaskCard) {
 }
 
 function taskArchiveBlockedReason(task: CodexTaskCard) {
-  if (taskProvider(task) === 'claude') return 'Claude 原生不提供兼容的归档操作'
   if (task.claudePhase === 'unknown') return '状态证据不足，暂不能归档'
+  if (task.provider === 'claude' && task.archiveCapability === 'blocked-stopped') {
+    return '当前 Claude 版本未通过静默归档门禁'
+  }
   return task.archiveCapability === 'blocked-stopped'
-    ? '会话已停止但未完成'
+    ? '当前 Provider 无法安全确认归档边界'
     : '任务仍在进行中，暂不能归档'
 }
 
@@ -1384,14 +1409,14 @@ function requestTaskArchive(task?: CodexTaskCard | CodexTaskCard[]) {
   const targetTasks = task
     ? Array.isArray(task) ? task : [task]
     : archiveCandidates()
-  const normalized = targetTasks.filter((candidate) => candidate.canArchive)
+  const normalized = targetTasks.filter((candidate) => candidate.canArchive && !taskArchiving(candidate))
   const tasks = targetTasks.length ? normalized : archiveCandidates()
   if (!tasks.length) {
-    liveMessage.value = '当前没有可归档的已完成任务'
+    liveMessage.value = '当前没有可归档的任务'
     return
   }
   const identity = tasks.map((task) => `${task.key}:${task.revisionAt}`).sort().join('|')
-  requestConfirmation(`archive:${identity}`, `归档 ${tasks.length} 个 Codex 任务`, () => {
+  requestConfirmation(`archive:${identity}`, `归档 ${tasks.length} 个任务`, () => {
     action('codex.tasks.archive', { items: tasks.map((task) => ({ key: task.key, revisionAt: task.revisionAt })) })
     selectedKeys.value = new Set()
   })
@@ -2362,7 +2387,7 @@ function taskStateLabel(task: CodexTaskCard) {
   if (task.activityState === 'waiting-input') return '等待输入'
   if (task.activityState === 'waiting-approval') return '等待审批'
   if (task.claudePhase === 'unknown') return '状态未知'
-  if (task.bucket === 'stopped') return '已停止'
+  if (task.bucket === 'stopped') return '待继续'
   if (task.bucket === 'completed-unread') return '已完成 · 未读'
   if (task.bucket === 'completed') return '已完成'
   return '进行中'
@@ -2407,6 +2432,16 @@ watch([searchText, renderRows], () => {
 
 watch(() => `${selectedTasks.value.map((task) => task.key).join('|')}::${focusedKey.value}`, scheduleBatchPlacement, { flush: 'post' })
 
+watch(() => {
+  const item = focusedItem.value
+  return item?.kind === 'task' ? `${item.task.key}:${item.task.revisionAt}` : ''
+}, () => {
+  const item = focusedItem.value
+  window.eypcFloat?.action('codex.task.focus', item?.kind === 'task'
+    ? { key: item.task.key, revisionAt: item.task.revisionAt }
+    : { key: '' })
+}, { flush: 'post', immediate: true })
+
 watch(taskScroll, (element) => {
   taskScrollResizeObserver?.disconnect()
   taskScrollResizeObserver = null
@@ -2418,8 +2453,39 @@ watch(taskScroll, (element) => {
 })
 
 onMounted(() => {
+  const expectation = {
+    hostAssetId: __EYPC_HOST_ASSET_ID__,
+    rendererAssetId: __EYPC_RENDERER_ASSET_ID__,
+    kernelRevision: __EYPC_COMPANION_KERNEL_REVISION__,
+    taskPackageRevision: __EYPC_COMPANION_TASK_PACKAGE_REVISION__
+  }
+  try {
+    floatRuntimeIdentity.value = window.eypcFloat?.runtimeIdentity?.revision === __EYPC_RUNTIME_IDENTITY_REVISION__
+      ? window.eypcFloat.runtimeIdentity.handshake(expectation)
+      : {
+          revision: 'runtime-identity-v1',
+          status: 'reload-required',
+          expected: expectation,
+          actual: { hostAssetId: '', rendererAssetId: '', kernelRevision: '', taskPackageRevision: '' },
+          kernelRevision: '',
+          taskPackageRevision: '',
+          message: 'Float Preload 版本过旧，请重新打开悬浮卡片',
+          errorCode: 'identity-missing'
+        }
+  } catch {
+    floatRuntimeIdentity.value = {
+      revision: 'runtime-identity-v1',
+      status: 'reload-required',
+      expected: expectation,
+      actual: { hostAssetId: '', rendererAssetId: '', kernelRevision: '', taskPackageRevision: '' },
+      kernelRevision: '',
+      taskPackageRevision: '',
+      message: 'Float 运行身份握手失败，请重新打开悬浮卡片',
+      errorCode: 'identity-handshake-failed'
+    }
+  }
   const applySnapshot = (value: CodexFloatSnapshotV1 | null) => {
-    const revision = value?.companion?.revision || 0
+    const revision = value?.companionTaskPackage?.packageRevision || value?.companion?.revision || 0
     if (appliedCompanionRevision.value > 0 && revision === 0) return
     if (revision > 0 && revision < appliedCompanionRevision.value) return
     if (revision > 0) appliedCompanionRevision.value = revision
@@ -2494,6 +2560,17 @@ onUnmounted(() => {
     @focusout="onFocusOut"
     @keydown="onRootKeydown"
   >
+    <div
+      v-if="runtimeReloadRequired"
+      class="float-runtime-reload"
+      role="alert"
+      :title="runtimeReloadMessage"
+      @pointerdown.stop
+      @click.stop
+    >
+      <strong>需要重载</strong>
+      <span v-if="expanded">{{ runtimeReloadMessage }}</span>
+    </div>
     <div v-if="!expanded" class="float-compact-shell" :class="settings?.style === 'card' ? 'card-shell' : 'water-shell'">
       <button
         type="button"
@@ -2687,7 +2764,7 @@ onUnmounted(() => {
             <div
               v-else-if="row.kind === 'task'"
               class="float-task-row"
-              :class="[`task-${row.task.activityState}`, `bucket-${row.task.bucket}`, `provider-${row.marker.provider}`, { nested: row.nested, selected: selectedKeys.has(row.task.key), hidden: row.task.isHidden, highlighted: focusedKey === row.key }]"
+              :class="[`task-${row.task.activityState}`, `bucket-${row.task.bucket}`, `provider-${row.marker.provider}`, { nested: row.nested, selected: selectedKeys.has(row.task.key), hidden: row.task.isHidden, highlighted: focusedKey === row.key, archiving: taskArchiving(row.task) }]"
               role="option"
               :aria-selected="selectedKeys.has(row.task.key)"
               :aria-label="`${taskDisplayLabel(row.task)}，${row.marker.tooltip}，${row.task.projectName}，${taskStateLabel(row.task)}`"
@@ -2774,19 +2851,20 @@ onUnmounted(() => {
                 <button
                   type="button"
                   class="inline-character-button action-archive"
-                    :class="{ confirming: taskArchiveConfirming(row.task) }"
-                    :aria-label="taskArchiveConfirming(row.task) ? `确认归档 ${taskDisplayLabel(row.task)}` : `归档 ${taskDisplayLabel(row.task)}`"
+                    :class="{ confirming: taskArchiveConfirming(row.task), archiving: taskArchiving(row.task) }"
+                    :aria-label="taskArchiving(row.task) ? `正在归档 ${taskDisplayLabel(row.task)}` : taskArchiveConfirming(row.task) ? `确认归档 ${taskDisplayLabel(row.task)}` : `归档 ${taskDisplayLabel(row.task)}`"
                     data-confirm-slot
                     data-quick-jump-target
                     :data-quick-jump-label="`归档 ${taskDisplayLabel(row.task)}`"
-                    :aria-disabled="!row.task.canArchive"
-                    @pointerenter="queueActionHint($event, taskArchiveConfirming(row.task) ? '再次点击确认真实归档' : row.task.canArchive ? '真实归档 Codex 会话' : taskArchiveBlockedReason(row.task))"
+                    :disabled="taskArchiving(row.task)"
+                    :aria-disabled="!row.task.canArchive || taskArchiving(row.task)"
+                    @pointerenter="queueActionHint($event, taskArchiving(row.task) ? '正在归档' : taskArchiveConfirming(row.task) ? '再次点击确认真实归档' : row.task.canArchive ? '真实归档会话' : taskArchiveBlockedReason(row.task))"
                   @pointerleave="clearActionHint"
-                  @focus="queueActionHint($event, taskArchiveConfirming(row.task) ? '再次点击确认真实归档' : row.task.canArchive ? '真实归档 Codex 会话' : taskArchiveBlockedReason(row.task))"
+                  @focus="queueActionHint($event, taskArchiving(row.task) ? '正在归档' : taskArchiveConfirming(row.task) ? '再次点击确认真实归档' : row.task.canArchive ? '真实归档会话' : taskArchiveBlockedReason(row.task))"
                   @blur="clearActionHint"
                   @click.stop="focusedKey = row.key; requestTaskArchive(row.task)"
                 >
-                    {{ taskArchiveConfirming(row.task) ? '确' : '归' }}
+                    {{ taskArchiving(row.task) ? '中' : taskArchiveConfirming(row.task) ? '确' : '归' }}
                   </button>
                 <button
                   type="button"
@@ -3047,3 +3125,28 @@ onUnmounted(() => {
     >{{ actionHint.label }}</div>
   </main>
 </template>
+
+<style scoped>
+.float-runtime-reload {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px;
+  color: #fff4e8;
+  background: color-mix(in srgb, #7f1d1d 92%, transparent);
+  border: 1px solid #fb923c;
+  border-radius: inherit;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.float-runtime-reload strong {
+  font-size: 13px;
+}
+</style>

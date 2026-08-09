@@ -2,21 +2,22 @@ import { normalizeAppState } from '../domain/state'
 import { normalizeMqttArchiveState } from '../domain/mqtt'
 import type { AppState, FavoriteNode, FavoritePlatform, FavoriteRunnerMode, FavoriteRunRecord, KillRequest, KillResult, MqttArchiveState, MqttStorageStatus, PortProcess } from '../domain/types'
 import type { LiveWindow, NativeWindowObservation, WindowActivationRequest, WindowInstanceProbeResult, WindowPlatform } from '../domain/windows'
-import type {
-  CodexActivityDelta,
-  CodexBridgeResult,
-  CodexEnvironmentPlatform,
-  CodexEnvironmentSnapshotV1,
-  CodexHostSnapshot,
-  CodexNewThreadRequest,
-  CodexNewThreadResult,
-  CodexProjectArchiveRequest,
-  CodexProjectArchiveResult,
-  CodexProjectRemoveRequest,
-  CodexProjectRemoveResult,
-  CodexThreadArchiveRequest,
-  CodexThreadArchiveResult,
-  CodexThreadOpenResult
+import {
+  CODEX_TASK_STATE_REVISION,
+  type CodexActivityDelta,
+  type CodexBridgeResult,
+  type CodexEnvironmentPlatform,
+  type CodexEnvironmentSnapshotV1,
+  type CodexHostSnapshot,
+  type CodexNewThreadRequest,
+  type CodexNewThreadResult,
+  type CodexProjectArchiveRequest,
+  type CodexProjectArchiveResult,
+  type CodexProjectRemoveRequest,
+  type CodexProjectRemoveResult,
+  type CodexThreadArchiveRequest,
+  type CodexThreadArchiveResult,
+  type CodexThreadOpenResult
 } from '../domain/codex'
 import type { ClaudeEnvironmentSnapshot, ClaudePlanUsageSample, ClaudeQuotaAccessSnapshot, ClaudeRateLimitsInput } from '../domain/claude'
 import type { ClaudeCodePhase, ClaudeCodeStatusCorrelation } from '../domain/claudeCode'
@@ -29,6 +30,12 @@ import type {
   CodexActionRunnerActionEvent,
   CodexActionRunnerCatalogV1
 } from '../domain/codexActionRunner'
+import {
+  COMPANION_TASK_KERNEL_REVISION,
+  COMPANION_TASK_PACKAGE_REVISION,
+  type CompanionTaskPackageDraftV1,
+  type CompanionTaskPackageV1
+} from '../domain/companionTaskPackage'
 
 export type PickedFavoriteKind = Exclude<FavoriteNode['kind'], 'group'>
 export type PickedFavorite = Pick<FavoriteNode, 'path' | 'name' | 'parentId' | 'tags' | 'color'> & { kind: PickedFavoriteKind }
@@ -242,6 +249,27 @@ export interface ClaudeOpenResult {
   message?: string
 }
 
+export interface ClaudeArchiveResult {
+  outcome: 'archived' | 'failed' | 'indeterminate'
+  message?: string
+  errorCode?: string
+  alreadyArchived?: boolean
+}
+
+export interface CompanionTaskMutationDelta {
+  version: 1
+  revision: 'claude-task-mutation-delta-v1'
+  provider: 'claude'
+  generation: number
+  acceptedAt: number
+  mutations: Array<{
+    key: string
+    mutation: 'remove' | 'upsert' | 'archived'
+    acceptedAt: number
+    session?: ClaudeCodeBridgeSession
+  }>
+}
+
 /** One privacy-safe Claude App Code-mode session observation. */
 export interface ClaudeCodeBridgeSession {
   sessionId: string
@@ -308,7 +336,209 @@ export interface ClaudeAppPresenceSnapshot {
   verifiedAt: number
 }
 
+export type CompanionNavigationProviderId = 'codex' | 'claude'
+export const COMPANION_NAVIGATION_REVISION = 'companion-navigation-v1'
+export const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v1'
+
+export interface RuntimeIdentityExpectationV1 {
+  hostAssetId: string
+  rendererAssetId: string
+  kernelRevision: string
+  taskPackageRevision: string
+}
+
+export interface RuntimeIdentityHandshakeV1 {
+  revision: 'runtime-identity-v1'
+  status: 'host-loaded' | 'reload-required'
+  expected: RuntimeIdentityExpectationV1
+  actual: RuntimeIdentityExpectationV1
+  kernelRevision: string
+  taskPackageRevision: string
+  message: string
+  errorCode?: string
+}
+
+export interface RuntimeIdentityBridgeV1 {
+  revision: string
+  get?(): unknown
+  handshake(input: RuntimeIdentityExpectationV1): RuntimeIdentityHandshakeV1
+}
+
+export interface CompanionNavigationTarget {
+  key: string
+  provider: CompanionNavigationProviderId
+  actionAlias: string
+}
+
+export interface CompanionTaskActionTarget extends CompanionNavigationTarget {
+  revisionAt: number
+  phase: string
+  canArchive: boolean
+  archiveRequest?: {
+    expectedUpdatedAt: number
+    expectedRevisionAt: number
+    expectedCompletionAt?: number
+    expectedLastTurnStartedAt: number
+    expectedSourceFingerprint: string
+    evidence: 'completed' | 'stopped'
+  }
+}
+
+export interface CompanionTaskActionsBridge {
+  revision: string
+  sync(input: {
+    enabled: boolean
+    providers: { codex: boolean; claude: boolean }
+    ready: boolean
+    targets: CompanionTaskActionTarget[]
+    focusedKey?: string
+    attentionKeys?: string[]
+  }): boolean
+  inspect?(provider: CompanionNavigationProviderId): Promise<unknown>
+  open(input: {
+    key: string
+    source: 'manual' | 'attention' | 'cycle'
+    target?: CompanionTaskActionTarget
+  }): Promise<CompanionNavigationResult>
+  archive(input: {
+    key: string
+    revisionAt: number
+    phase: string
+    source: 'card' | 'batch' | 'shortcut'
+    target?: CompanionTaskActionTarget
+  }): Promise<{
+    outcome: 'confirmation-required' | 'archived' | 'failed' | 'indeterminate'
+    provider?: CompanionNavigationProviderId
+    key?: string
+    errorCode?: string
+    message?: string
+    alreadyArchived?: boolean
+  }>
+  /** Uses the same process-owned five-second confirmation as the hot mainHide path. */
+  shortcutArchive(): boolean
+  diagnostics(): {
+    revision: string
+    enabled: boolean
+    ready: boolean
+    targetCount: number
+    archiveInFlight: number
+    confirmationPending: boolean
+  }
+}
+
+export interface CompanionNavigationResult {
+  outcome: 'opened' | 'dispatched' | 'unavailable' | 'failed'
+  provider?: CompanionNavigationProviderId
+  key?: string
+  errorCode?: string
+  message?: string
+  confirmsRead?: boolean
+}
+
+export interface CompanionNavigationDiagnostics {
+  revision: string
+  enabled: boolean
+  ready: boolean
+  enabledProviderCount: number
+  targetCount: number
+  cycleCount: number
+  pendingCycle: boolean
+  directQueueDepth: number
+  dispatchInFlight: boolean
+  maxConcurrent: number
+  replacedCount: number
+  acceptedCycleCount: number
+  dispatched: { codex: number; claude: number }
+  pendingResultCount: number
+  lastOutcome: string
+}
+
+export interface CompanionNavigationResultEvent {
+  id: number
+  provider: CompanionNavigationProviderId
+  key: string
+  source?: 'cycle' | 'attention' | 'manual'
+  outcome: 'opened' | 'dispatched'
+  at: number
+}
+
+export type CompanionTaskIntentV1 =
+  | { action: 'cycle'; direction: -1 | 1 }
+  | { action: 'open'; key: string; source?: 'manual' | 'attention' }
+  | { action: 'open-attention'; kind: 'input' | 'completed-unread' }
+  | { action: 'archive-focused' }
+  | { action: 'archive'; key: string; revisionAt: number; phase: string; source: 'card' | 'batch' | 'shortcut' }
+
+export interface CompanionTaskKernelBridge {
+  revision: typeof COMPANION_TASK_KERNEL_REVISION
+  packageRevision: typeof COMPANION_TASK_PACKAGE_REVISION
+  attach(input: { enabled: boolean; providers: { codex: boolean; claude: boolean } }): {
+    revision: typeof COMPANION_TASK_KERNEL_REVISION
+    packageRevision: typeof COMPANION_TASK_PACKAGE_REVISION
+    lease: number
+    retained: boolean
+    ready: boolean
+    package: CompanionTaskPackageV1
+  }
+  syncPackage(input: { lease: number; draft: CompanionTaskPackageDraftV1 }): CompanionTaskPackageV1 | null
+  detach?(input: { lease: number }): boolean
+  dispatch(input: CompanionTaskIntentV1): Promise<CompanionNavigationResult | {
+    outcome: 'confirmation-required' | 'archived' | 'failed' | 'indeterminate'
+    provider?: CompanionNavigationProviderId
+    key?: string
+    errorCode?: string
+    message?: string
+    alreadyArchived?: boolean
+  }>
+  getPackage(): CompanionTaskPackageV1
+  onPackage?(listener: (value: CompanionTaskPackageV1) => void): () => void
+  onResult?(listener: (event: CompanionNavigationResultEvent) => void): () => void
+  takeResults?(input: { lease: number }): CompanionNavigationResultEvent[]
+  diagnostics(): {
+    revision: string
+    packageRevision: string
+    enabled: boolean
+    ready: boolean
+    packageGeneration: number
+    taskCount: number
+    cycleCount: number
+    preflightInFlight: boolean
+    freshness: string
+  }
+}
+
+export interface CompanionNavigationBridge {
+  revision: string
+  begin(input: { enabled: boolean; providers: { codex: boolean; claude: boolean } }): {
+    revision: string
+    lease: number
+    retained: boolean
+    ready: boolean
+  }
+  sync(input: {
+    lease: number
+    enabled: boolean
+    providers: { codex: boolean; claude: boolean }
+    ready: boolean
+    targets: CompanionNavigationTarget[]
+    cycleKeys: string[]
+  }): boolean
+  detach?(input: { lease: number }): boolean
+  cycle(direction: -1 | 1): Promise<CompanionNavigationResult>
+  open(input: {
+    key: string
+    source: 'manual' | 'attention'
+    target?: CompanionNavigationTarget
+  }): Promise<CompanionNavigationResult>
+  onResult?(listener: (event: CompanionNavigationResultEvent) => void): () => void
+  takeResults?(input: { lease: number }): CompanionNavigationResultEvent[]
+  diagnostics(): CompanionNavigationDiagnostics
+}
+
 export interface EypcPlatformApi {
+  runtimeIdentity?: RuntimeIdentityBridgeV1
+  /** Renderer-owned result of the Main/Preload identity handshake. */
+  runtimeIdentityStatus?: RuntimeIdentityHandshakeV1
   storage: {
     getState(): AppState
     setState(state: AppState): boolean
@@ -363,7 +593,7 @@ export interface EypcPlatformApi {
     setLaunchPath?(path: string): Promise<CodexEnvironmentSnapshotV1>
     clearLaunchPath?(): Promise<CodexEnvironmentSnapshotV1>
     readSnapshot(options?: CodexReadOptions): Promise<CodexBridgeResult<CodexHostSnapshot>>
-    readActivitySnapshot?(): Promise<CodexBridgeResult<CodexActivityDelta>>
+    readActivitySnapshot?(options?: { phaseOnly?: boolean }): Promise<CodexBridgeResult<CodexActivityDelta>>
     onActivityChanged?(listener: (delta: CodexActivityDelta) => void): () => void
     openThread(actionAlias: string): Promise<CodexThreadOpenResult>
     createThread?(request: CodexNewThreadRequest): Promise<CodexNewThreadResult>
@@ -418,7 +648,7 @@ export interface EypcPlatformApi {
     /** State-only hot projection over the bridge's feature-lifetime inventory cache. */
     readCodeStateSnapshot?(options?: { now?: number }): Promise<ClaudeCodeStateDeltaV2> | ClaudeCodeStateDeltaV2
     watchCodeState?(listener: () => void, options?: { coalesceMs?: number }): () => void
-    watchCodeSessions?(listener: () => void): () => void
+    watchCodeSessions?(listener: (delta?: CompanionTaskMutationDelta) => void): () => void
     readCodeUnread?(): Promise<
       | { version: 1; revision: string; ids: string[]; readAt: number }
       | { version: 2; revision: string; ids: string[]; readAt: number; generation: number; sourceFingerprint: string }
@@ -439,9 +669,19 @@ export interface EypcPlatformApi {
      * refuses CLI ids and refuses to dispatch unless App-running is proven.
      */
     openTask(sessionId: string): Promise<ClaudeOpenResult>
+    /** Version-gated, single-target Claude App metadata archive transaction. */
+    archiveCodeSession?(sessionId: string): Promise<ClaudeArchiveResult>
     diagnostics(): { revision: string; loaded: boolean; loadError: string; quotaAccess?: ClaudeQuotaAccessSnapshot }
     close(): void
   }
+  /**
+   * Process-lifetime cross-provider navigation. Optional so a newer Renderer
+   * can fail closed while an older uTools preload is still alive.
+   */
+  companionNavigation?: CompanionNavigationBridge
+  companionTasks?: CompanionTaskActionsBridge
+  /** Unified process-owned authority used by current Main, Float and shortcuts. */
+  companionKernel?: CompanionTaskKernelBridge
   float: {
     sync(payload: { visible: boolean; snapshot?: unknown; position?: unknown; expandedSizes?: unknown }): boolean
     activate?(payload?: { command?: 'new-thread' }): boolean
@@ -896,6 +1136,44 @@ export function getPlatform(): EypcPlatformApi {
     const hostActionRunner = window.eypcPlatform.actionRunner
     const hostWindows = window.eypcPlatform.windows
     const hostClaude = window.eypcPlatform.claude
+    const hostCompanionNavigation = window.eypcPlatform.companionNavigation
+    const hostCompanionTasks = window.eypcPlatform.companionTasks
+    const hostCompanionKernel = window.eypcPlatform.companionKernel
+    const hostRuntimeIdentity = window.eypcPlatform.runtimeIdentity
+    const expectation: RuntimeIdentityExpectationV1 = {
+      hostAssetId: __EYPC_HOST_ASSET_ID__,
+      rendererAssetId: __EYPC_RENDERER_ASSET_ID__,
+      kernelRevision: __EYPC_COMPANION_KERNEL_REVISION__,
+      taskPackageRevision: __EYPC_COMPANION_TASK_PACKAGE_REVISION__
+    }
+    let runtimeIdentityStatus: RuntimeIdentityHandshakeV1
+    try {
+      runtimeIdentityStatus = hostRuntimeIdentity?.revision === __EYPC_RUNTIME_IDENTITY_REVISION__
+        && typeof hostRuntimeIdentity.handshake === 'function'
+        ? hostRuntimeIdentity.handshake(expectation)
+        : {
+            revision: 'runtime-identity-v1',
+            status: 'reload-required',
+            expected: expectation,
+            actual: { hostAssetId: '', rendererAssetId: '', kernelRevision: '', taskPackageRevision: '' },
+            kernelRevision: '',
+            taskPackageRevision: '',
+            message: `Preload ${hostCodex?.taskStateRevision || 'unknown'} / UI ${CODEX_TASK_STATE_REVISION}，需要重新接入或重载`,
+            errorCode: 'identity-missing'
+          }
+    } catch {
+      runtimeIdentityStatus = {
+        revision: 'runtime-identity-v1',
+        status: 'reload-required',
+        expected: expectation,
+        actual: { hostAssetId: '', rendererAssetId: '', kernelRevision: '', taskPackageRevision: '' },
+        kernelRevision: '',
+        taskPackageRevision: '',
+        message: '运行身份握手失败，需要重新接入或重载',
+        errorCode: 'identity-handshake-failed'
+      }
+    }
+    const runtimeCompatible = runtimeIdentityStatus.status === 'host-loaded'
     const hostCapabilities: FileCapabilities = hostFiles.capabilities || {
       platform: 'unsupported',
       open: typeof hostFiles.open === 'function',
@@ -911,6 +1189,7 @@ export function getPlatform(): EypcPlatformApi {
     }
     return {
       ...window.eypcPlatform,
+      runtimeIdentityStatus,
       windows: {
         capabilities: hostWindows?.capabilities || (async () => unsupportedWindowCapability('当前 preload 未提供窗口能力')),
         list: hostWindows?.list || (async () => unsupportedWindowList('当前 preload 未提供窗口能力')),
@@ -1003,6 +1282,31 @@ export function getPlatform(): EypcPlatformApi {
       // older preload simply leaves `claude` undefined and the Controller then
       // keeps the provider dormant.
       claude: hostClaude && typeof hostClaude.readSnapshot === 'function' ? hostClaude : undefined,
+      companionNavigation: runtimeCompatible && hostCompanionNavigation?.revision === COMPANION_NAVIGATION_REVISION
+        && typeof hostCompanionNavigation.begin === 'function'
+        && typeof hostCompanionNavigation.sync === 'function'
+        && typeof hostCompanionNavigation.cycle === 'function'
+        && typeof hostCompanionNavigation.open === 'function'
+        && typeof hostCompanionNavigation.diagnostics === 'function'
+          ? hostCompanionNavigation
+          : undefined,
+      companionTasks: runtimeCompatible && hostCompanionTasks?.revision === COMPANION_TASK_ACTIONS_REVISION
+        && typeof hostCompanionTasks.sync === 'function'
+        && typeof hostCompanionTasks.open === 'function'
+        && typeof hostCompanionTasks.archive === 'function'
+        && typeof hostCompanionTasks.shortcutArchive === 'function'
+        && typeof hostCompanionTasks.diagnostics === 'function'
+          ? hostCompanionTasks
+          : undefined,
+      companionKernel: runtimeCompatible && hostCompanionKernel?.revision === COMPANION_TASK_KERNEL_REVISION
+        && hostCompanionKernel.packageRevision === COMPANION_TASK_PACKAGE_REVISION
+        && typeof hostCompanionKernel.attach === 'function'
+        && typeof hostCompanionKernel.syncPackage === 'function'
+        && typeof hostCompanionKernel.dispatch === 'function'
+        && typeof hostCompanionKernel.getPackage === 'function'
+        && typeof hostCompanionKernel.diagnostics === 'function'
+          ? hostCompanionKernel
+          : undefined,
       float: {
         sync: hostFloat?.sync || (() => false),
         activate: hostFloat?.activate,
@@ -1023,6 +1327,21 @@ export function getPlatform(): EypcPlatformApi {
     }
   }
   return {
+    runtimeIdentityStatus: {
+      revision: 'runtime-identity-v1',
+      status: 'reload-required',
+      expected: {
+        hostAssetId: __EYPC_HOST_ASSET_ID__,
+        rendererAssetId: __EYPC_RENDERER_ASSET_ID__,
+        kernelRevision: __EYPC_COMPANION_KERNEL_REVISION__,
+        taskPackageRevision: __EYPC_COMPANION_TASK_PACKAGE_REVISION__
+      },
+      actual: { hostAssetId: '', rendererAssetId: '', kernelRevision: '', taskPackageRevision: '' },
+      kernelRevision: '',
+      taskPackageRevision: '',
+      message: '浏览器模式未连接 uTools Preload',
+      errorCode: 'host-unavailable'
+    },
     storage: {
       getState: readFallbackState,
       setState: writeFallbackState,
@@ -1108,6 +1427,9 @@ export function getPlatform(): EypcPlatformApi {
       setActionRunArchived: undefined,
       close: () => undefined
     },
+    companionNavigation: undefined,
+    companionTasks: undefined,
+    companionKernel: undefined,
     float: {
       sync: () => false,
       activate: () => false,

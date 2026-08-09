@@ -262,6 +262,9 @@ export function resolveClaudeCodeState(
 ): ClaudeCodeResolvedState {
   const unreadKnown = Array.isArray(appUnread)
   const unread = unreadKnown && appUnread.includes(observation.sessionId)
+  const archiveCapability: CodexArchiveCapability = observation.stateCompatibility === 'compatible'
+    ? 'allowed'
+    : 'blocked-stopped'
   if (observation.phase === 'waiting-approval') {
     return { phase: observation.phase, bucket: 'ongoing', activityState: 'waiting-approval', archiveCapability: 'blocked-active', unreadState: 'unknown' }
   }
@@ -279,12 +282,12 @@ export function resolveClaudeCodeState(
       phase: 'completed',
       bucket: unread ? 'completed-unread' : 'completed',
       activityState: 'ongoing',
-      archiveCapability: 'allowed',
+      archiveCapability,
       unreadState: unreadKnown ? (unread ? 'unread' : 'read') : 'unknown'
     }
   }
   if (observation.phase === 'stopped') {
-    return { phase: observation.phase, bucket: 'stopped', activityState: 'stopped', archiveCapability: 'blocked-stopped', unreadState: 'unknown' }
+    return { phase: observation.phase, bucket: 'stopped', activityState: 'stopped', archiveCapability, unreadState: 'unknown' }
   }
   // The shared conversation schema has no fifth `unknown` bucket. Keep the
   // card in its one non-active bucket and mark the presentation as attention;
@@ -363,9 +366,9 @@ export function projectClaudeCodeTaskCard(
     firstPromptAt: observation.createdAt || undefined,
     source: resolved.phase === 'unknown' ? 'unresolved' : 'current',
     hasCurrentActivity: resolved.bucket === 'ongoing',
-    // Claude App exposes no compatible archive mutation; state can still be a
-    // completed result while the action capability remains explicitly off.
-    canArchive: false,
+    // Compatibility is resolved once above; Renderer and Controller consume
+    // the same capability instead of repeating the native-version gate.
+    canArchive: resolved.archiveCapability === 'allowed',
     projectKey,
     projectName,
     originalProjectName,
