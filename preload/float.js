@@ -1,5 +1,40 @@
 const { ipcRenderer } = require('electron')
 
+const RUNTIME_IDENTITY_REVISION = 'runtime-identity-v1'
+let runtimeIdentityArtifact = null
+try { runtimeIdentityArtifact = require('./runtime-identity.cjs') } catch {}
+let runtimeIdentityCompatible = false
+
+function runtimeIdentityHandshake(input = {}) {
+  const expected = input && typeof input === 'object' ? input : {}
+  const actual = {
+    hostAssetId: typeof runtimeIdentityArtifact?.hostAssetId === 'string' ? runtimeIdentityArtifact.hostAssetId : '',
+    rendererAssetId: typeof runtimeIdentityArtifact?.rendererAssetId === 'string' ? runtimeIdentityArtifact.rendererAssetId : '',
+    kernelRevision: typeof runtimeIdentityArtifact?.kernelRevision === 'string' ? runtimeIdentityArtifact.kernelRevision : '',
+    taskPackageRevision: typeof runtimeIdentityArtifact?.taskPackageRevision === 'string' ? runtimeIdentityArtifact.taskPackageRevision : ''
+  }
+  const expectation = {
+    hostAssetId: typeof expected.hostAssetId === 'string' ? expected.hostAssetId : '',
+    rendererAssetId: typeof expected.rendererAssetId === 'string' ? expected.rendererAssetId : '',
+    kernelRevision: typeof expected.kernelRevision === 'string' ? expected.kernelRevision : '',
+    taskPackageRevision: typeof expected.taskPackageRevision === 'string' ? expected.taskPackageRevision : ''
+  }
+  runtimeIdentityCompatible = runtimeIdentityArtifact?.revision === RUNTIME_IDENTITY_REVISION
+    && runtimeIdentityArtifact?.artifactState === 'artifact-ready'
+    && Object.keys(actual).every((key) => actual[key] && actual[key] === expectation[key])
+  return {
+    revision: RUNTIME_IDENTITY_REVISION,
+    status: runtimeIdentityCompatible ? 'host-loaded' : 'reload-required',
+    expected: expectation,
+    actual,
+    kernelRevision: actual.kernelRevision,
+    taskPackageRevision: actual.taskPackageRevision,
+    message: runtimeIdentityCompatible
+      ? 'Float Preload 已加载当前构建'
+      : `Float Preload ${actual.hostAssetId || 'unknown'} / UI ${expectation.hostAssetId || 'unknown'}，需要重新打开 Float`
+  }
+}
+
 const CHANNELS = {
   snapshot: 'eypc-float:snapshot',
   state: 'eypc-float:state',
@@ -103,6 +138,10 @@ ipcRenderer.on(CHANNELS.blankOpenResult, (_event, payload) => resolveTransientRe
 ipcRenderer.on(CHANNELS.copyTextResult, (_event, payload) => resolveTransientRequest(payload))
 
 window.eypcFloat = {
+  runtimeIdentity: {
+    revision: RUNTIME_IDENTITY_REVISION,
+    handshake: runtimeIdentityHandshake
+  },
   getSnapshot: () => lastSnapshot,
   getState: () => lastState,
   onSnapshot(listener) {
@@ -124,10 +163,16 @@ window.eypcFloat = {
   },
   setExpansion: (expanded, pinned = false) => sendToParent(CHANNELS.expansion, { expanded: expanded === true, pinned: expanded === true && pinned === true }),
   returnFocus: () => sendToParent(CHANNELS.returnFocus, {}),
-  action: (actionId, args = {}) => sendToParent(CHANNELS.action, { actionId, args }),
-  createThread: (request) => transientRequest(CHANNELS.threadCreate, { request }),
-  reopenThread: (actionAlias) => transientRequest(CHANNELS.threadOpen, { actionAlias }),
-  openBlank: () => transientRequest(CHANNELS.blankOpen, {}),
+  action: (actionId, args = {}) => runtimeIdentityCompatible && sendToParent(CHANNELS.action, { actionId, args }),
+  createThread: (request) => runtimeIdentityCompatible
+    ? transientRequest(CHANNELS.threadCreate, { request })
+    : Promise.resolve({ outcome: 'failed', errorCode: 'reload-required', message: 'Float 运行版本不一致，请重新打开悬浮卡片' }),
+  reopenThread: (actionAlias) => runtimeIdentityCompatible
+    ? transientRequest(CHANNELS.threadOpen, { actionAlias })
+    : Promise.resolve({ outcome: 'failed', errorCode: 'reload-required', message: 'Float 运行版本不一致，请重新打开悬浮卡片' }),
+  openBlank: () => runtimeIdentityCompatible
+    ? transientRequest(CHANNELS.blankOpen, {})
+    : Promise.resolve({ outcome: 'failed', errorCode: 'reload-required', message: 'Float 运行版本不一致，请重新打开悬浮卡片' }),
   copyText: (text) => transientRequest(CHANNELS.copyText, { text: typeof text === 'string' ? text : '' }),
   dragStart: (screenX, screenY) => sendToParent(CHANNELS.dragStart, { screenX, screenY }),
   dragMove: (screenX, screenY) => sendToParent(CHANNELS.dragMove, { screenX, screenY }),
