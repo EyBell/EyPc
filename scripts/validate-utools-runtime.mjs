@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import vm from 'node:vm'
 import { UTOOLS_PRELOAD_ASSETS, UTOOLS_PRELOAD_MODULE_ASSETS, UTOOLS_PRELOAD_MODULE_GROUPS } from './utools-preload-assets.mjs'
+import { buildUtoolsRuntimeIdentity, RUNTIME_IDENTITY_REVISION } from './utools-runtime-identity.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const distDir = resolve(root, 'dist')
@@ -26,7 +27,7 @@ function assertRelativeFile(pluginJson, field) {
   assert(existsSync(resolve(distDir, value)), `plugin.json ${field} target is missing: ${value}`)
 }
 
-for (const file of ['index.html', 'float.html', 'action.html', 'plugin.json', 'package.json', 'preload.js', 'float-preload.js', 'action-preload.js', 'logo.svg']) {
+for (const file of ['index.html', 'float.html', 'action.html', 'plugin.json', 'package.json', 'preload.js', 'float-preload.js', 'action-preload.js', 'runtime-identity.cjs', 'logo.svg']) {
   assert(existsSync(resolve(distDir, file)), `dist runtime file is missing: ${file}`)
 }
 
@@ -77,6 +78,13 @@ assert(win32WindowModuleSource.includes('WINDOWS_ENUM_SCRIPT'), 'Win32 window mo
 assert(win32WindowModuleSource.includes('WINDOWS_TOPMOST_SCRIPT'), 'Win32 window module must own foreground/topmost behavior')
 
 const distRequire = createRequire(resolve(distDir, 'preload.js'))
+const expectedRuntimeIdentity = buildUtoolsRuntimeIdentity(root)
+const actualRuntimeIdentity = distRequire('./runtime-identity.cjs')
+assert(actualRuntimeIdentity.revision === RUNTIME_IDENTITY_REVISION, 'runtime identity revision must be current')
+for (const field of ['hostAssetId', 'rendererAssetId', 'kernelRevision', 'taskPackageRevision', 'artifactState']) {
+  assert(actualRuntimeIdentity[field] === expectedRuntimeIdentity[field], `runtime identity ${field} must match this artifact`)
+}
+assert(actualRuntimeIdentity.artifactState === 'artifact-ready', 'build output may report artifact-ready only')
 const windowModule = distRequire('./windows/index.cjs')
 assert(typeof windowModule.createWindowSubsystem === 'function', 'window preload module must expose createWindowSubsystem')
 const windowModuleProbe = windowModule.createWindowSubsystem({ execFile() { throw new Error('native window command must stay lazy during validation') } })
@@ -90,6 +98,8 @@ assert(typeof windowModuleProbe.openPermissionSettings === 'function', 'window p
 
 const claudeModule = distRequire('./claude/index.cjs')
 const claudeScriptsModule = distRequire('./claude/scripts.cjs')
+const companionKernelModule = distRequire('./companion/task-kernel.cjs')
+assert(typeof companionKernelModule.createCompanionTaskKernel === 'function', 'companion Kernel module must expose its factory')
 assert(typeof claudeModule.createClaudeBridge === 'function', 'claude preload module must expose createClaudeBridge')
 const claudeModuleProbe = claudeModule.createClaudeBridge({
   fs: { readdirSync: () => [], statSync() { throw new Error('claude module must stay lazy during validation') }, readFileSync() { throw new Error('lazy') } },
@@ -97,7 +107,7 @@ const claudeModuleProbe = claudeModule.createClaudeBridge({
   os: { homedir: () => '/tmp' },
   dataDirectory: '/tmp/eypc-claude-validation'
 })
-for (const method of ['inspect', 'readSnapshot', 'readQuotaFallback', 'readCodeSnapshot', 'readCodeStateSnapshot', 'readPlanUsage', 'readCodeUnread', 'readAppPresence', 'watchCodeSessions', 'watchCodeState', 'watchCodeUnread', 'watchEvents', 'install', 'uninstall', 'openTask', 'close']) {
+for (const method of ['inspect', 'readSnapshot', 'readQuotaFallback', 'readCodeSnapshot', 'readCodeStateSnapshot', 'readPlanUsage', 'readCodeUnread', 'readAppPresence', 'watchCodeSessions', 'watchCodeState', 'watchCodeUnread', 'watchEvents', 'install', 'uninstall', 'openTask', 'archiveCodeSession', 'close']) {
   assert(typeof claudeModuleProbe[method] === 'function', `claude preload module must expose stable ${method}`)
 }
 assert(claudeModuleProbe.readSnapshot().sessions.length === 0, 'claude module must degrade to an empty inventory without a readable home')
@@ -110,16 +120,26 @@ assert(claudeModuleProbe.readPlanUsage() === null, 'claude plan-usage reader mus
 // "the user has read everything", so an unreadable store must never produce it.
 assert(await claudeModuleProbe.readCodeUnread() === null, 'claude unread reader must degrade to null, never to an empty set')
 const claudeCodeSource = preloadModuleSources.get('claude/code-sessions.cjs') || ''
-const claudeCode = claudeCodeSource
-  .replace(/\/\*[\s\S]*?\*\//g, ' ')
-  .replace(/(^|[^:])\/\/.*$/gm, '$1')
-for (const forbidden of [
-  'writeFileSync', 'writeFile', 'appendFileSync', 'appendFile', 'renameSync', 'rename',
-  'unlinkSync', 'unlink', 'rmSync', 'rmdirSync', 'mkdirSync', 'mkdtempSync', 'copyFileSync',
-  'truncateSync', 'ftruncateSync', 'chmodSync', 'chownSync', 'utimesSync', 'createWriteStream', 'writeSync'
+for (const marker of [
+  'archiveSessionMetadata',
+  'atomicReplace',
+  "openSync(tempPath, 'wx'",
+  'fsyncSync',
+  'renameSync',
+  'semanticWithoutArchive',
+  "delete clone.isArchived",
+  "{ ...original.parsed, isArchived: true }",
+  'rollback-unconfirmed',
+  'CODE_RECOVERY_POLL_MS'
 ]) {
-  const callSite = new RegExp(`\\b${forbidden}\\s*\\(`)
-  assert(!callSite.test(claudeCode), `claude Code inventory must stay strictly read-only (found ${forbidden})`)
+  assert(claudeCodeSource.includes(marker), `claude controlled metadata transaction is missing: ${marker}`)
+}
+const claudeArchiveTransaction = claudeCodeSource.slice(
+  claudeCodeSource.indexOf('function archiveSessionMetadata'),
+  claudeCodeSource.indexOf('function stopWatching')
+)
+for (const forbidden of ['readdirSync', 'scanUserDirectories', 'leveldown', 'LevelDB', 'mkdirSync', 'rmSync', 'rmdirSync', 'copyFileSync', 'createWriteStream']) {
+  assert(!claudeArchiveTransaction.includes(forbidden), `claude archive transaction must stay target-only (found ${forbidden})`)
 }
 const claudeUnreadSource = preloadModuleSources.get('claude/unread.cjs') || ''
 for (const marker of ['mkdtempSync', 'chmodSync', 'cpSync', 'rmSync', "app.asar', 'node_modules', 'leveldown", 'createIfMissing: false']) {
@@ -128,8 +148,31 @@ for (const marker of ['mkdtempSync', 'chmodSync', 'cpSync', 'rmSync', "app.asar'
 assert(!claudeUnreadSource.includes("require('leveldown')"), 'claude unread must not package a differently signed native addon')
 assert(claudeUnreadSource.includes('keyText === UNREAD_LEVELDB_KEY'), 'claude unread must match the exact origin-scoped LevelDB key')
 const claudeAppStateSource = preloadModuleSources.get('claude/app-state.cjs') || ''
-for (const marker of ['SUPPORTED_APP_VERSIONS', 'parseAppStateLine', 'permission-response', 'LOG_RECOVERY_POLL_MS']) {
+for (const marker of ['SUPPORTED_APP_VERSIONS', 'parseAppStateLine', 'parseAppArchiveLine', 'LocalSessions\\.archive', 'permission-response', 'LOG_RECOVERY_POLL_MS']) {
   assert(claudeAppStateSource.includes(marker), `claude App state compatibility gate is missing: ${marker}`)
+}
+const claudeArchiveSource = preloadModuleSources.get('claude/archive.cjs') || ''
+for (const marker of [
+  'SUPPORTED_APP_VERSION',
+  'readSessionState',
+  'readCurrentSessionPhase',
+  "['completed', 'stopped'].includes(current.phase)",
+  'archiveSessionMetadata',
+  'hasActiveSession',
+  '已静默归档；Claude UI 可能需自行刷新'
+]) {
+  assert(claudeArchiveSource.includes(marker), `claude metadata archive gate is missing: ${marker}`)
+}
+for (const forbidden of ['AXPress', 'osascript', 'performClaudeArchiveAction', 'desktopEpitaxyUrl', 'LocalSessions.archive', 'execFile']) {
+  assert(!claudeArchiveSource.includes(forbidden), `claude metadata archive adapter must not open or automate the App (found ${forbidden})`)
+}
+const companionTaskActionsSource = preloadModuleSources.get('companion/task-actions.cjs') || ''
+for (const marker of ['companion-task-actions-v1', 'archiveInFlight', 'shortcutArchive', 'CONFIRM_WINDOW_MS']) {
+  assert(companionTaskActionsSource.includes(marker), `companion task dispatcher contract is missing: ${marker}`)
+}
+const companionTaskKernelSource = preloadModuleSources.get('companion/task-kernel.cjs') || ''
+for (const marker of ['companion-task-kernel-v1', 'companion-task-package-v1', 'preflightInFlight', 'UNKNOWN_GRACE_MS', 'handleEnter']) {
+  assert(companionTaskKernelSource.includes(marker), `companion task kernel contract is missing: ${marker}`)
 }
 const claudeAppState = claudeAppStateSource
   .replace(/\/\*[\s\S]*?\*\//g, ' ')
@@ -159,6 +202,14 @@ const floatHtml = readFileSync(resolve(distDir, 'float.html'), 'utf8')
 assert(!/\b(?:src|href)="\/assets\//.test(floatHtml), 'dist float.html must use relative asset paths for uTools packages')
 const actionHtml = readFileSync(resolve(distDir, 'action.html'), 'utf8')
 assert(!/\b(?:src|href)="\/assets\//.test(actionHtml), 'dist action.html must use relative asset paths for uTools packages')
+const rendererJavaScript = readdirSync(resolve(distDir, 'assets'))
+  .filter((file) => file.endsWith('.js'))
+  .map((file) => readFileSync(resolve(distDir, 'assets', file), 'utf8'))
+  .join('\n')
+assert(rendererJavaScript.includes(actualRuntimeIdentity.hostAssetId), 'Renderer bundles must embed the expected Host asset id')
+assert(rendererJavaScript.includes(actualRuntimeIdentity.rendererAssetId), 'Renderer bundles must embed their Renderer asset id')
+assert(rendererJavaScript.includes(actualRuntimeIdentity.kernelRevision), 'Renderer bundles must embed the Kernel revision')
+assert(rendererJavaScript.includes(actualRuntimeIdentity.taskPackageRevision), 'Renderer bundles must embed the task protocol revision')
 
 const pluginJson = readJson('plugin.json')
 const distPackageJson = readJson('package.json')
@@ -209,6 +260,8 @@ const sandbox = {
   require(name) {
     if (name === './windows/index.cjs') return windowModule
     if (name === './claude/index.cjs') return claudeModule
+    if (name === './companion/task-kernel.cjs' || String(name).endsWith('/companion/task-kernel.cjs')) return companionKernelModule
+    if (name === './runtime-identity.cjs') return actualRuntimeIdentity
     if (name === 'node:buffer') return { Buffer }
     if (name === 'node:child_process') return { execFile() {}, spawn() { throw new Error('spawn unavailable in validation') } }
     if (name === 'node:crypto') return crypto
@@ -250,6 +303,18 @@ assert(typeof sandbox.window.eypcPlatform.codex.readSnapshot === 'function', 'pr
 assert(typeof sandbox.window.eypcPlatform.codex.readActivitySnapshot === 'function', 'preload must expose codex.readActivitySnapshot')
 assert(typeof sandbox.window.eypcPlatform.codex.inspectEnvironment === 'function', 'preload must expose codex.inspectEnvironment')
 assert(typeof sandbox.window.eypcPlatform.codex.openThread === 'function', 'preload must expose codex.openThread')
+assert(typeof sandbox.window.eypcPlatform.companionKernel?.dispatch === 'function', 'preload must expose the unified companion Kernel')
+const mainBeforeHandshakeKernel = await sandbox.window.eypcPlatform.companionKernel.dispatch({ action: 'cycle', direction: 1 })
+assert(mainBeforeHandshakeKernel.errorCode === 'reload-required', 'new Main Preload must keep legacy/unmounted Renderer Kernel calls inert before identity handshake')
+const mainBeforeHandshakeOpen = await sandbox.window.eypcPlatform.codex.openThread('legacy-alias')
+assert(mainBeforeHandshakeOpen.errorCode === 'reload-required', 'new Main Preload must keep legacy Main task ports inert before identity handshake')
+const mainIdentityHandshake = sandbox.window.eypcPlatform.runtimeIdentity.handshake({
+  hostAssetId: actualRuntimeIdentity.hostAssetId,
+  rendererAssetId: actualRuntimeIdentity.rendererAssetId,
+  kernelRevision: actualRuntimeIdentity.kernelRevision,
+  taskPackageRevision: actualRuntimeIdentity.taskPackageRevision
+})
+assert(mainIdentityHandshake.status === 'host-loaded', 'Main/Preload exact identity handshake must prove host-loaded')
 assert(typeof sandbox.window.eypcPlatform.claude.inspect === 'function', 'preload must expose claude.inspect')
 assert(typeof sandbox.window.eypcPlatform.claude.readSnapshot === 'function', 'preload must expose claude.readSnapshot')
 // The Controller feature-detects this one. Asserting it on the module alone
@@ -337,6 +402,7 @@ const floatSandbox = {
   globalThis: {},
   require(name) {
     if (name === 'electron') return { ipcRenderer: { on() {} } }
+    if (name === './runtime-identity.cjs') return actualRuntimeIdentity
     throw new Error(`unexpected float require: ${name}`)
   }
 }
@@ -344,6 +410,14 @@ floatSandbox.globalThis = floatSandbox
 vm.runInNewContext(floatPreloadSource, floatSandbox, { filename: 'float-preload.js' })
 assert(typeof floatSandbox.window.eypcFloat?.onSnapshot === 'function', 'float preload must expose snapshot subscription')
 assert(typeof floatSandbox.window.eypcFloat?.action === 'function', 'float preload must expose actions')
+assert(floatSandbox.window.eypcFloat.action('codex.task.open', {}) === false, 'Float task actions must fail closed before identity handshake')
+const floatIdentityHandshake = floatSandbox.window.eypcFloat.runtimeIdentity.handshake({
+  hostAssetId: actualRuntimeIdentity.hostAssetId,
+  rendererAssetId: actualRuntimeIdentity.rendererAssetId,
+  kernelRevision: actualRuntimeIdentity.kernelRevision,
+  taskPackageRevision: actualRuntimeIdentity.taskPackageRevision
+})
+assert(floatIdentityHandshake.status === 'host-loaded', 'Float UI/Preload exact identity handshake must prove host-loaded')
 assert(typeof floatSandbox.window.eypcFloat?.resizeStart === 'function', 'float preload must expose resizeStart')
 assert(typeof floatSandbox.window.eypcFloat?.resizeMove === 'function', 'float preload must expose resizeMove')
 assert(typeof floatSandbox.window.eypcFloat?.resizeEnd === 'function', 'float preload must expose resizeEnd')
