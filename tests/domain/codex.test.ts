@@ -356,8 +356,8 @@ describe('Codex domain', () => {
       bucket: 'stopped',
       activityState: 'stopped',
       state: 'stopped',
-      archiveCapability: 'blocked-stopped',
-      canArchive: false,
+      archiveCapability: 'allowed',
+      canArchive: true,
       revisionAt: 600
     })
     expect(result.snapshot).toMatchObject({ ongoingCount: 4, stoppedCount: 1, waitingCount: 1, runningCount: 0, attentionCount: 0, unknownCount: 0 })
@@ -365,9 +365,11 @@ describe('Codex domain', () => {
 
   it.each([
     { name: 'exact active beats interrupted', status: 'active', flags: [], authority: 'desktop-live', turn: 'interrupted', evidence: 'inventory', bucket: 'ongoing', activity: 'active', archive: 'blocked-active' },
+    { name: 'exact interrupted terminal clears an older active shadow', status: 'active', flags: [], authority: 'desktop-live', turn: 'interrupted', evidence: 'turn-completed', bucket: 'stopped', activity: 'stopped', archive: 'allowed' },
+    { name: 'pending input still outranks exact interrupted terminal', status: 'active', flags: ['waitingOnUserInput'], authority: 'desktop-live', turn: 'interrupted', evidence: 'turn-completed', bucket: 'ongoing', activity: 'waiting-input', archive: 'blocked-active' },
     { name: 'initial active conflict stays ongoing', status: 'notLoaded', flags: [], authority: 'desktop-live', turn: 'failed', evidence: 'targeted-after-exit', bucket: 'ongoing', activity: 'ongoing', archive: 'blocked-active' },
     { name: 'uncertain terminal stays ongoing', status: 'notLoaded', flags: [], authority: 'connector', turn: 'interrupted', evidence: 'inventory', bucket: 'ongoing', activity: 'ongoing', archive: 'blocked-active' },
-    { name: 'exact idle plus failure is stopped', status: 'idle', flags: [], authority: 'desktop-live', turn: 'failed', evidence: 'targeted-after-exit', bucket: 'stopped', activity: 'stopped', archive: 'blocked-stopped' },
+    { name: 'exact idle plus failure is stopped', status: 'idle', flags: [], authority: 'desktop-live', turn: 'failed', evidence: 'targeted-after-exit', bucket: 'stopped', activity: 'stopped', archive: 'allowed' },
     { name: 'plain completed shape cannot beat active', status: 'active', flags: [], authority: 'desktop-live', turn: 'completed', evidence: 'inventory', bucket: 'ongoing', activity: 'active', archive: 'blocked-active' },
     { name: 'confirmed completion can close stale active', status: 'active', flags: [], authority: 'desktop-live', turn: 'completed', evidence: 'turn-completed', bucket: 'completed', activity: 'ongoing', archive: 'allowed' },
     { name: 'waiting still beats confirmed completion', status: 'active', flags: ['waitingOnUserInput'], authority: 'desktop-live', turn: 'completed', evidence: 'turn-completed', bucket: 'ongoing', activity: 'waiting-input', archive: 'blocked-active' }
@@ -400,7 +402,26 @@ describe('Codex domain', () => {
     expect(projected).toMatchObject({ bucket, activityState: activity, archiveCapability: archive })
   })
 
-  it('requires exact live-idle or desktop-exit evidence before a failed/interrupted Turn is stopped', () => {
+  it('keeps exact interrupted work in the dynamic total but out of the active badge', () => {
+    const result = projectConversations({
+      threads: [thread('active', 1_000, [], keyAt(9), {
+        statusAuthority: 'desktop-live',
+        lastTurnStatus: 'interrupted',
+        lastTurnStartedAt: 900,
+        lastTurnEvidence: 'turn-completed'
+      })],
+      receipts: [],
+      lastTaskScanAt: 800,
+      now: 1_100,
+      desktopBridgeState: 'connected'
+    })
+    const dynamic = projectCodexDynamicStatus(result.snapshot, 1_100)
+    expect(dynamic.tasks).toHaveLength(1)
+    expect(dynamic.groups).toMatchObject({ active: [], stopped: [{ key: keyAt(9) }] })
+    expect(dynamic.compactCounts).toEqual({ input: 0, active: 0, unread: 0 })
+  })
+
+  it('keeps ordinary failed and unconfirmed interrupted rows behind the conservative stop gate', () => {
     const live = projectConversations({
       threads: [
         thread('active', 1_000, [], keyAt(1), { lastTurnStatus: 'interrupted', lastTurnStartedAt: 900 }),

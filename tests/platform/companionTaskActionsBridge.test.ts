@@ -1,0 +1,136 @@
+import { createRequire } from 'node:module'
+import { resolve } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
+
+const require_ = createRequire(import.meta.url)
+const { createCompanionTaskActions } = require_(resolve(process.cwd(), 'preload/companion/task-actions.cjs'))
+
+function target(provider: 'codex' | 'claude', key: string, revisionAt = 100) {
+  return {
+    provider,
+    key,
+    actionAlias: `${provider}-alias-${key}`,
+    revisionAt,
+    phase: 'completed',
+    canArchive: true,
+    ...(provider === 'codex'
+      ? {
+          archiveRequest: {
+            expectedUpdatedAt: revisionAt,
+            expectedRevisionAt: revisionAt,
+            expectedLastTurnStartedAt: revisionAt - 1,
+            expectedSourceFingerprint: 'a'.repeat(64),
+            evidence: 'completed'
+          }
+        }
+      : {})
+  }
+}
+
+function syncReady(actions: ReturnType<typeof createCompanionTaskActions>, targets: unknown[], focusedKey = '') {
+  actions.sync({
+    enabled: true,
+    ready: true,
+    providers: { codex: true, claude: true },
+    targets,
+    focusedKey,
+    attentionKeys: targets.map((value) => (value as { key: string }).key)
+  })
+}
+
+describe('companion task action dispatcher', () => {
+  it('joins duplicate archive requests for one task without merging distinct tasks', async () => {
+    let resolveFirst!: (value: unknown) => void
+    const archive = vi.fn((value: { key: string }) => value.key === 'one'
+      ? new Promise((resolvePromise) => { resolveFirst = resolvePromise })
+      : Promise.resolve({ outcome: 'archived' }))
+    const actions = createCompanionTaskActions({
+      adapters: {
+        codex: { inspect: vi.fn(), open: vi.fn(), archive, close: vi.fn() },
+        claude: { inspect: vi.fn(), open: vi.fn(), archive: vi.fn(), close: vi.fn() }
+      }
+    })
+    syncReady(actions, [target('codex', 'one'), target('codex', 'two')])
+
+    const first = actions.archive({ key: 'one', revisionAt: 100, phase: 'completed', source: 'card' })
+    const joined = actions.archive({ key: 'one', revisionAt: 100, phase: 'completed', source: 'batch' })
+    const distinct = actions.archive({ key: 'two', revisionAt: 100, phase: 'completed', source: 'batch' })
+    await Promise.resolve()
+    expect(archive).toHaveBeenCalledTimes(2)
+    await expect(distinct).resolves.toMatchObject({ outcome: 'archived', key: 'two' })
+    resolveFirst({ outcome: 'archived' })
+    await expect(first).resolves.toMatchObject({ outcome: 'archived', key: 'one' })
+    await expect(joined).resolves.toMatchObject({ outcome: 'archived', key: 'one' })
+    expect(archive).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps Codex and Claude archive lanes independent', async () => {
+    let resolveClaude!: (value: unknown) => void
+    const codexArchive = vi.fn(async () => ({ outcome: 'archived' }))
+    const claudeArchive = vi.fn(() => new Promise((resolvePromise) => { resolveClaude = resolvePromise }))
+    const actions = createCompanionTaskActions({
+      adapters: {
+        codex: { inspect: vi.fn(), open: vi.fn(), archive: codexArchive, close: vi.fn() },
+        claude: { inspect: vi.fn(), open: vi.fn(), archive: claudeArchive, close: vi.fn() }
+      }
+    })
+    syncReady(actions, [target('claude', 'claude:one'), target('codex', 'codex-one')])
+
+    const slow = actions.archive({ key: 'claude:one', revisionAt: 100, phase: 'completed', source: 'card' })
+    await expect(actions.archive({ key: 'codex-one', revisionAt: 100, phase: 'completed', source: 'card' }))
+      .resolves.toMatchObject({ outcome: 'archived', provider: 'codex' })
+    expect(claudeArchive).toHaveBeenCalledTimes(1)
+    resolveClaude({ outcome: 'archived' })
+    await expect(slow).resolves.toMatchObject({ outcome: 'archived', provider: 'claude' })
+  })
+
+  it('fails closed for unknown providers, stale revisions and unsupported actions', async () => {
+    const actions = createCompanionTaskActions({ adapters: {} })
+    syncReady(actions, [
+      target('codex', 'known'),
+      { ...target('codex', 'unknown'), provider: 'future' }
+    ])
+    await expect(actions.archive({ key: 'unknown', revisionAt: 100, phase: 'completed', source: 'card' }))
+      .resolves.toMatchObject({ outcome: 'failed', errorCode: 'state-changed' })
+    await expect(actions.archive({ key: 'known', revisionAt: 101, phase: 'completed', source: 'card' }))
+      .resolves.toMatchObject({ outcome: 'failed', errorCode: 'state-changed' })
+    await expect(actions.archive({
+      key: 'known',
+      revisionAt: 101,
+      phase: 'completed',
+      source: 'card',
+      target: target('codex', 'known', 101)
+    })).resolves.toMatchObject({ outcome: 'failed', errorCode: 'state-changed' })
+    await expect(actions.archive({ key: 'known', revisionAt: 100, phase: 'completed', source: 'card' }))
+      .resolves.toMatchObject({ outcome: 'failed', errorCode: 'unsupported' })
+  })
+
+  it('keeps shortcut confirmation in the process and cancels it on identity changes', async () => {
+    let now = 1_000
+    const notify = vi.fn()
+    const archive = vi.fn(async () => ({ outcome: 'archived', message: 'done' }))
+    const actions = createCompanionTaskActions({
+      now: () => now,
+      notify,
+      adapters: {
+        codex: { inspect: vi.fn(), open: vi.fn(), archive, close: vi.fn() },
+        claude: { inspect: vi.fn(), open: vi.fn(), archive: vi.fn(), close: vi.fn() }
+      }
+    })
+    syncReady(actions, [target('codex', 'one')], 'one')
+    expect(actions.shortcutArchive()).toBe(true)
+    expect(archive).not.toHaveBeenCalled()
+
+    // A cold Renderer's incomplete snapshot must not erase process state.
+    expect(actions.sync({ enabled: true, ready: false, providers: { codex: true, claude: true }, targets: [] })).toBe(false)
+    expect(actions.shortcutArchive()).toBe(true)
+    await Promise.resolve()
+    expect(archive).toHaveBeenCalledTimes(1)
+
+    syncReady(actions, [target('codex', 'one', 101)], 'one')
+    now += 1
+    expect(actions.shortcutArchive()).toBe(true)
+    expect(archive).toHaveBeenCalledTimes(1)
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('5 秒'))
+  })
+})

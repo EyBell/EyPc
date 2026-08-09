@@ -16,6 +16,15 @@ interface Rect {
   height: number
 }
 
+const TEST_RUNTIME_IDENTITY = {
+  revision: 'runtime-identity-v1',
+  artifactState: 'artifact-ready',
+  hostAssetId: 'host-test-current',
+  rendererAssetId: 'renderer-test-current',
+  kernelRevision: 'companion-task-kernel-v1',
+  taskPackageRevision: 'companion-task-package-v1'
+}
+
 interface FloatSnapshot {
   style: 'water' | 'card'
   conversationInboxEnabled: boolean
@@ -133,13 +142,22 @@ function loadFloatRendererPreloadHarness() {
     },
     require(name: string) {
       if (name === 'electron') return { ipcRenderer: { on: (channel: string, listener: (...args: unknown[]) => void) => ipcHandlers.set(channel, listener) } }
+      if (name === './runtime-identity.cjs') return TEST_RUNTIME_IDENTITY
       throw new Error(`unexpected float require: ${name}`)
     }
   }
   sandbox.globalThis = sandbox
   vm.runInNewContext(preload, sandbox, { filename: 'float-preload.js' })
+  const bridge = sandbox.window.eypcFloat
+  const handshake = bridge.runtimeIdentity.handshake({
+    hostAssetId: TEST_RUNTIME_IDENTITY.hostAssetId,
+    rendererAssetId: TEST_RUNTIME_IDENTITY.rendererAssetId,
+    kernelRevision: TEST_RUNTIME_IDENTITY.kernelRevision,
+    taskPackageRevision: TEST_RUNTIME_IDENTITY.taskPackageRevision
+  })
+  if (handshake.status !== 'host-loaded') throw new Error('test Float identity handshake failed')
   return {
-    bridge: sandbox.window.eypcFloat as {
+    bridge: bridge as {
       createThread(request: Record<string, unknown>): Promise<Record<string, unknown>>
       returnFocus(): boolean
     },
