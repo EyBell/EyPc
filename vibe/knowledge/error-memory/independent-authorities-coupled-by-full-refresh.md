@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: companion-materialized-view__independent-inventory-state-unread-quota-presence-authorities-coupled-by-one-full-refresh__slow-or-failed-source-blocks-or-erases-unrelated-state__split-lanes-with-authority-specific-failure-semantics
 first_seen: 2026-08-07
-last_verified: 2026-08-07
+last_verified: 2026-08-09
 review_after: 2027-02-07
 evidence:
   - vibe/specs/260807/claude-code-companion-authority-reset/research.md
@@ -53,6 +53,7 @@ Claude 的新任务能出现，但历史状态、已完成未读和既有变更�
 - live phase 不持久化；重启从真实来源冷启动。快捷键冷启动只预热 tasks，不读取 quota。
 - 每条来源的 generation 只在本 authority 内比较，跨层使用 Controller revision 与 Float applied revision；读取连续失败两次后，旧 running/waiting 必须降为 unknown，不能把“保留最后视图”误写成“永久保留活动态”。
 - quota 自己处理启用/唤醒/网络/reset+1 秒唤醒、401/403 凭据变化、429 Retry-After 和其它退避；任何 quota timer 都不能进入 state/inventory 发布链。
+- 任务 membership mutation 是第六条轻量 authority：精确 `archived/upsert/remove` delta 只更新已登记匿名任务并立即触发同一个 Controller 原子投影；它不等待 inventory single-flight，也不得读取 quota/state/unread。完整 inventory 仍负责结构校对，不能成为已验证 mutation 的发布前置。
 
 ## Alternative Route
 
@@ -65,15 +66,15 @@ Preconditions:
 
 Ordered steps:
 
-1. 建立 feature-lifetime inventory Map、state evidence Map、unread Set/unknown、quota snapshot 和 presence cache。
-2. 为五条来源分别注册 watcher/read lane 和单飞；删除共享 full-refresh 回调。
-3. inventory 只拥有 membership/metadata，state 只 patch evidence/phase，unread 只 patch membership，quota/presence 不触碰 task fields。
+1. 建立 feature-lifetime inventory Map、state evidence Map、unread Set/unknown、quota snapshot、presence cache 和 target-only mutation generation/tombstone。
+2. 为各来源分别注册 watcher/read lane 和单飞；删除共享 full-refresh 回调。
+3. inventory 只拥有结构校对/metadata，state 只 patch evidence/phase，unread 只 patch membership，quota/presence 不触碰 task fields；verified mutation 只 upsert/remove exact key 并阻止迟到完整库存复活它。
 4. 应用 per-authority generation/evidence barrier、Controller revision 和 Float applied revision，再由一个投影函数计算互斥 cards/groups/counts/virtual projects。
 5. 测试 quota 阻塞、inventory 失败、state 连续失败降级、unread 失败、slow-inventory/new-state 竞态和旧 Float snapshot 拒绝；再测试 surface 隐藏/快捷键复用。
 
 Verification:
 
-- [Controller implementation](../../../src/runtime/codexController.ts#L1) 和 [regressions](../../../tests/runtime/claudeCompanionController.test.ts#L1) 证明 quota pending 不阻塞 100 次 state publish、inventory 不被重读、slow inventory 不回退 state、失败语义彼此隔离。
+- [Controller implementation](../../../src/runtime/codexController.ts#L1) 和 [regressions](../../../tests/runtime/claudeCompanionController.test.ts#L1) 证明 quota pending 不阻塞 state/mutation publish、inventory 不被归档事件重读、slow inventory 不回退 state 或复活已移除卡片、多个 upsert 在同一 delta 中不互相丢失，失败语义彼此隔离。
 
 Fallback:
 
@@ -89,3 +90,4 @@ Applicability boundary:
 | --- | --- | --- | --- | --- | --- | --- |
 | 2026-08-07 | Claude Companion authority reset | 历史/未读/变更滞后，上一/下一任务缓慢 | 任一 watcher 调 inventory+unread+quota 整轮刷新 | controller call chain + 8s quota behavior | 五条独立热 lane、单调 patch、authority-specific failure | verified |
 | 2026-08-07 | Claude quota/state/unread/project follow-up | 进行中不更新、周 reset 刷新错误、未读回跳、Claude 项目不进入项目投影 | authority 有 lane 但缺 source→Controller→Float 完整 revision、state failure retirement 与 quota 生命周期唤醒 | focused generation/revision/read-hint/filter regressions + live quota/state/unread probes | 补齐四条时钟、分层 revision、两轮失败 unknown、同 completion read hint 与虚拟项目投影 | automated/data-host verified; interactive UI pending |
+| 2026-08-09 | RAW-154 Claude archive mutation convergence | Claude App 归档后卡片更新依赖慢完整库存，插件归档又被全局 latch/Provider 分支耦合 | 把已验证 membership mutation 当作 inventory refresh 的副作用，并让 quota/state/unread/full inventory 共享完成门槛 | 新增 target-only mutation generation/tombstone 与统一 Controller reducer；exact watcher/1s watchdog 独立发布 | focused mutation、blocked-promise、stale-inventory and multi-upsert tests pass；real host pending |

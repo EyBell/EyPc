@@ -1,7 +1,7 @@
 # Claude Code Companion 权威重置 — Tasks
 
-updated: `2026-08-08`
-overall_status: `implementation-landed / acceptance-pending`
+updated: `2026-08-09`
+overall_status: `implementation-landed / RAW-154-automated-verified / host-acceptance-pending`
 
 | ID | Work | Status |
 | --- | --- | --- |
@@ -28,6 +28,11 @@ overall_status: `implementation-landed / acceptance-pending`
 | CCR-20 | 父 Turn Hook reducer、App/Hook/history 集中仲裁与 generation-first 版本比较 | completed-focused-verified |
 | CCR-21 | state/unread Promise singleflight、Claude-only 单项同步与成功打开后静默同步 | completed-focused-verified |
 | CCR-22 | RAW-024、当前文档/索引/错误 occurrence 与五份 `archived-linked` 历史文档同步 | completed-linked / no-physical-migration |
+| CCR-23 | `companion-task-actions-v1` Provider registry、归档 single-flight 与统一 Controller mutation reducer | completed / focused-automated-verified |
+| CCR-24 | `claude-metadata-archive-v2` 唯一文件索引、单字段原子事务、并发保护与安全回滚 | completed / focused-automated-verified |
+| CCR-25 | Claude 精确 membership delta、一秒索引 watchdog、归档后 open preflight | completed / focused-automated-verified |
+| CCR-26 | `eypc-companion-archive` mainHide 五秒同身份确认与帮助/权威/错误记忆同步 | completed / focused-automated-verified |
+| CCR-27 | 用户另行确认后的可丢弃 completed 会话 D′ 真机 canary 与 Claude 手动归档即时移除 | pending-host-confirmation |
 
 ## Execution Journal
 
@@ -46,3 +51,7 @@ overall_status: `implementation-landed / acceptance-pending`
 - 2026-08-08 — 五份仍以当前口吻出现的 Claude 历史文档按全局规则升级为 `archived-linked`；原路径和正文保留，物理迁移未执行且未获授权。
 - 2026-08-08 — RAW-024 聚焦回归 `4 files / 120 tests` 与固定动作 `1/1` 通过；临时 scoped `vue-tsc`、canonical preload sync、1868-module Vite production bundle、runtime preparation 和 uTools validator 通过。本机匿名探针把 27 条任务投影为 0 running / 24 completed / 1 stopped / 2 unknown，25 条由 App log 直接确认；真实旧任务 UI 点击同步与未读进出仍保留为交互门禁。
 - 2026-08-08 — EyPc 文档收据先以 26/41/22 精确命中，随后旧 provider 归档文档被并发 RAW-149 工作追加 attention 顺序说明而变为 `scope_changed`；归档/链接复核仍通过。本任务保留外来 hunk，停止重签，不把它纳入 RAW-024 成果。
+- 2026-08-09 — 更新引入 RAW-025/026（Codex Companion RAW-154）：本机只读干跑已证伪 Deep Link→AX 路线，当前实现改为 D′ 单目标元数据事务；App 日志降为增强证据，归档不再打开 Claude。
+- 2026-08-09 — 统一 Dispatcher、Controller mutation reducer、精确文件 delta/一秒 watchdog、归档后 open preflight 与 mainHide 五秒确认已落地；定向测试、镜像、构建、链接/规则审计及私有同步回执均已收口，真实 canary 未获单独确认前不执行。
+- 2026-08-09 — RAW-154 最终影响矩阵 `20/20` files、`550/550` tests，typecheck、1868-module production/uTools build、runtime validator、canonical/public 镜像、JS/CJS 语法与 diff 检查通过；未触发全仓 Vitest/verify，真实 Claude 数据零写入。
+- 2026-08-09 — 文档同步组扩展为 34 documents / 49 dependencies / 31 validators；33 个变更 Markdown 零断链，适配器共享正文一致，RAW-154 私有同步回执重新记录。历史 v5 回执的并发 scope-change 事实继续保留但不再代表当前门禁。
