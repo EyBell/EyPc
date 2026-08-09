@@ -129,6 +129,45 @@ Tool: codex
 | RAW-149 typecheck、production build、Preload 镜像/runtime 与文档链接审计 | complete / automated-verified |
 | RAW-149 真实 Provider→生产 Domain v6 只读预检 | complete / host-evidence；bridge connected、completeness verified |
 | RAW-149 非 Full Access 真机“请求进入→打开原任务→解除清除”及重载遍历 | pending / host-gate；首次 UI 观察因 Mac 锁屏中断，未重试 |
+| RAW-150 “待继续”可见映射、动态顺序与无新增顶层入口 | complete / focused-automated-verified |
+| RAW-150 Codex stopped 写前精确复核与恢复运行 `state-changed` | complete / focused-automated-verified |
+| RAW-150 Claude `1.26832.0` Deep Link+AX 原生归档与三重验证 | superseded / RAW-154 D′ 静默元数据事务取代；历史验证不再代表当前归档合同 |
+| RAW-150 任务多选 Provider 分发与项目批量 Codex-completed 边界 | complete / focused-automated-verified |
+| RAW-151 单一 waiting-edge reducer、revision/owner 单任务有界重订 | complete / focused-automated-verified |
+| RAW-151 ownerless rollout 文件监听与 1 秒 phase-only watchdog | complete / focused-automated-verified |
+| RAW-151 两档完整校对频率、跨 Tab/隐藏、阻塞 I/O 下 100 轮双向 P95 | complete / focused-automated-verified |
+| RAW-150/151 权威文档、帮助、错误记忆与 v7 兼容说明 | complete / documentation-memory-verified |
+| RAW-150/151 受影响 11 文件 `382/382`、Preload 镜像/语法、typecheck、production build、runtime validation 与 v7 只读预检 | complete / automated-verified |
+| RAW-150/151 新构建真实 uTools 双向状态、待继续及两端归档验收 | rework / host-gate；真实 v7 宿主已暴露 active-vs-active waiting 解除后可被旧 shadow 重放，状态修复转交 RAW-153 |
+| RAW-152 Preload 进程级游标、跨 Provider 单队列与 75ms 最终目标合并 | complete / focused-automated-verified |
+| RAW-152 全启用来源原子 ready、热 `onPluginEnter` 单次消费与 Renderer detach 保留 | complete / focused-automated-verified |
+| RAW-152 精确 revision 门禁、旧 Host 通用循环 fail closed、单卡兼容 | complete / focused-automated-verified |
+| RAW-152 定向 `325/325`、typecheck、production build、Preload 镜像/语法与 uTools runtime validation | complete / automated-verified |
+| RAW-152 真实 uTools 跨 Codex/Claude 连按、普通 mainHide 与进程重载 | pending / host-gate；未重载当前宿主 |
+| RAW-153 私有 request/runtime 观测序列、waiting-clear 因果屏障与匹配 resolved | complete / implementation-written |
+| RAW-153 当前 owner、旧 snapshot/read-state/refollow、rollout resume、新 correlation、并发审批、runtime flag 与 Side Chat/Plan 反向合同 | complete / focused-automated-verified；Bridge `94/94` |
+| RAW-153 Bridge/Domain/Presentation/Controller/Platform/Float/UI 受影响矩阵 | complete / `9/9` files, `379/379` tests |
+| RAW-153 `task-state-v8` Preload 镜像/语法/同步 IPC、typecheck、production build 与 uTools runtime validation | complete / automated-verified |
+| RAW-153 真实 Provider→当前源码→生产 Domain/Presentation 只读预检 | complete / v8、connected、completeness verified；匿名瞬时 `waiting=1 / active=2`，不替代宿主门禁 |
+| RAW-153 raw/spec/PRD/架构/技术/帮助/错误记忆与链接审计 | complete / documentation-memory-verified |
+| RAW-153 真实 v8 请求解除 ≤1.25 秒、30 秒+两次 mainHide/refollow 不回跳、同任务新请求重入 | rework / host-gate；当前运行 ASAR 仍为 v7，Computer Use 子窗未暴露 Developer Tools，等待正常重接入 |
+| RAW-154 `companion-task-actions-v1`、Provider registry、open/archive 队列差异与 stale target fail-closed | complete / focused-automated-verified |
+| RAW-154 Controller 单一 mutation reducer、归档期间保留卡片、Provider+task single-flight 与混合批量 | complete / focused-automated-verified |
+| RAW-154 Claude D′ 唯一索引目标、版本/phase/stat/hash 门禁、原子写、语义核验、回滚/并发不覆盖与 archived-open 拒绝 | complete / focused-automated-verified；未执行真实 Claude 写入 |
+| RAW-154 Claude membership delta、旧 inventory tombstone、精确 watcher 与 1 秒候选 watchdog | complete / focused-automated-verified |
+| RAW-154 Codex exact interrupted terminal watermark、待输入优先、新 Turn 恢复及待继续角标排除 | complete / focused-automated-verified |
+| RAW-154 `eypc-companion-archive` mainHide 路由、进程级 5 秒双调用 identity 确认 | complete / focused-automated-verified |
+| RAW-154 20 个受影响测试文件（Domain/Bridge/Dispatcher/Controller/watcher/UI/route） | complete / `20/20` files、`550/550` tests |
+| RAW-154 `task-state-v9` 类型、Preload 镜像/语法、production/uTools build 与 runtime validation | complete / typecheck、1868-module build、runtime validator、canonical/public cmp、`node --check` pass |
+| RAW-154 raw/spec/PRD/项目状态/架构/技术/帮助/Claude 文档/错误记忆与规则链审计 | complete / documentation-memory-verified；33 个变更 Markdown 零断链、适配器共享正文一致、旧 v8 当前口吻已修正，私有同步回执已记录 |
+| RAW-154 真实 v9 uTools 状态切换、角标及经用户另行确认的可丢弃 Claude canary | pending / host-gate |
+| RAW-154 返工：`companion-task-kernel-v1` 唯一状态/循环/意图权威，`companion-task-package-v1` 原子发布任务形式、分组、角标、cycleKeys 与 capabilities | complete / implementation-written |
+| RAW-154 返工：静默 `onPluginEnter` 零 Renderer 消费、全启用 Provider tasks-only 冷预检、无 partial jump/Alt+Tab 重放 | complete / focused-automated-verified |
+| RAW-154 返工：明确状态即时接纳、revision/generation 去重与拒绝倒退、1.25 秒双失败 unknown 门禁、新 Turn 恢复 running | complete / focused-automated-verified |
+| RAW-154 返工：确定性 `hostAssetId / rendererAssetId`、Main/Float 四端 RuntimeIdentity 握手与 `reload-required` fail-closed | complete / focused-automated-verified |
+| RAW-154 返工：Kernel/Navigation/Task Actions/Controller/Platform/UI/RuntimeIdentity/Main+Float Preload 12 文件聚焦回归 | complete / `12/12` files、`485/485` tests；含真实 Kernel Controller 组合、degraded 包预检拒跳、无 Renderer 成员变化重读、duplicate/lower producer draft、跨 Provider generation 与握手前 raw-port fail-closed |
+| RAW-154 返工：类型、Preload 镜像/语法、production/uTools build、运行时校验 | complete / automated-verified；1870-module build，`host-9d4cb1b3a288c5a8bc61 / renderer-30eb78df00c13c1e9eab`，RuntimeIdentity Host→Renderer 派生合同与 validator pass |
+| RAW-154 返工：真实 uTools 重接入 `dist/plugin.json`、结束旧后台进程、重新进入、重开 Float 与四端身份一致 | pending / host-gate；当前只可报告 `artifact-ready`，不得报告 `host-loaded` |
 | 并发 Claude 改动后的当前整树 typecheck/build 复跑 | superseded / 当前整树 typecheck 已恢复通过；RAW-148 未触发 build，RAW-147 当时的独立阻断保留在历史验证记录 |
 | RAW-147 新构建重载后的有界 IPC snapshot 与 active→waiting 转换 | pending / user-owned |
 | 反向 generation 屏障夹具 TS2349 修复与 typecheck | complete / typecheck-verified |
