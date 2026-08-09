@@ -1,10 +1,10 @@
 # Codex Companion 当前规范
 
 Tool: codex
-Date: 2026-08-03
+Date: 2026-08-09
 Status: `automated-verified / host-pending`
 Documentation level: `controlled`
-Requirement version: `2026-08-03.4`
+Requirement version: `2026-08-09.1`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 
@@ -18,18 +18,18 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 
 ## RAW-131 实现结果与接纳门禁
 
-- RAW-131 已实现 stale-active 定向读取 positive-epoch 屏障、synthetic idle 去除、任意 exact active activity patch（含 active→active waiting）开启新 epoch、缺行会话映射、Side Chat 子 Turn/重放、双向 generation barrier 和 stopped `blocked-stopped` 七项修复，并写入对应 Bridge/Controller/Domain/UI 合同。
+- RAW-131 已实现 stale-active 定向读取 positive-epoch 屏障、synthetic idle 去除、任意 exact active activity patch（含 active→active waiting）开启新 epoch、缺行会话映射、Side Chat 子 Turn/重放、双向 generation barrier 和当时的 stopped `blocked-stopped` 七项修复，并写入对应 Bridge/Controller/Domain/UI 合同；其中归档结论已由 RAW-150 更新。
 - `initial-snapshot active + interrupted/failed` 是互相冲突的证据，只能保守 ongoing；不得通过内部 suppression 伪造 `desktop-live idle` 以满足 stopped。
 - `verifyStaleActive` 只能处理未被后续真实 activity/精确 App Server positive evidence 更新的 initial snapshot；read-state、任务切换或定向读取不得撤销更新的 positive epoch。
 - 任意 exact activity patch 只要结果仍为 active 就高于旧 completed presentation并开启新 epoch；waiting request 还必须立即进入待输入，即使 runtime 在 patch 前后都为 active。
 - Controller 必须双向执行 Activity generation 屏障；Preload/Controller 的 missing-row 保留边界必须一致；Side Chat 必须按 child evidence 重放并拥有回归合同。
-- stopped 的归档能力必须与 canonical `blocked-stopped` 单一合同一致。七项运行实现和闭合矩阵已通过自动化验证；真实 uTools 状态转换仍未验收，因此不得标记 host-accepted。
+- 更新引入（RAW-150）：RAW-131 的 stopped 禁止归档只保留为历史防误写背景。当前显式 stopped 在 Presentation 显示“待继续”，任务级归档能力为 allowed，但 Host 必须写前重读并确认最新 Turn 仍为 failed/interrupted 且实时停止边界仍成立；状态恢复统一返回 `state-changed`。七项状态仲裁仍有效，归档能力由新边界取代。
 
 ## RAW-132 回归安全优化
 
 - 父任务 Activity 聚合由一个纯解析器统一计算 main、Side Chat、等待标记、system error 与 App Server live 的优先级；发布器不得再维护第二套状态分支。
 - child latest-Turn 是分支级证据。某个 child 返回 completed/failed/interrupted 时，只要 main、其它 child 或不可归属到该 child 的 exact App Server live 仍活跃，父任务必须重新保持 `active/inProgress`，不得被该 child 的异步终态读回改成 completed/stopped。
-- 优化不得放宽 RAW-131 的反向合同：更新 positive epoch 拒绝旧 Turn 读回；冲突 active+terminal 保持 ongoing；missing row 保留匿名映射；旧 delta/full snapshot 不跨 generation；stopped 继续禁止归档。
+- 优化不得放宽 RAW-131 的状态反向合同：更新 positive epoch 拒绝旧 Turn 读回；冲突 active+terminal 保持 ongoing；missing row 保留匿名映射；旧 delta/full snapshot 不跨 generation。Stopped 归档改由 RAW-150 的写前复核单独约束，不再沿用旧禁止结论。
 - Preload 只输出五个会话期匿名裁决计数，Controller 只在 source fingerprint 匹配且 generation 未回退时接纳，设置页“状态裁决”只显示聚合数字。诊断中不得出现 raw/anonymous task key、会话 ID、正文、路径或时间线内容。
 - Domain 状态模型表、Bridge 多分支终态竞争合同、Controller 旧代次诊断回退合同均已执行通过；真实宿主仍待验收。
 
@@ -101,7 +101,7 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - 精确 Desktop `conversationState.requests` 仍是普通输入、审批和 `item/plan/requestImplementation` 的最高权威；但当前 owner 已消失时，新 follower 不能假定 Desktop 会向它重放快照。`following=true` 只证明订阅已登记，不证明当前请求已恢复。
 - 对 App Server latest Turn 为 `interrupted / failed / inProgress` 的库存行，Preload 可读取该行 `path` 指向的 rollout 作为唯一持久回退。路径必须经 realpath 验证位于 `CODEX_HOME/sessions`，只读普通文件，单次最多读取尾部 4 MiB；解析器只保留 `response_item` 类型、精确 `request_user_input` 名称、最长 200 字符 call ID、匹配的 `function_call_output` 与后续 user-message 边界，不解析或发布 prompt、答案、路径和 raw identity。
 - rollout 中仍有未匹配的精确 `request_user_input` 时，RAW-141 先把库存投影为 connector-backed `active + waitingOnUserInput`；该来源缺口已由 RAW-145 收紧为 `persisted-decision`。匹配 output、后续 user message、新 exact Desktop snapshot、App Server active/new Turn/completion、库存 Turn/outcome/updated revision 或明确归档/移除均结束旧回退。普通 connector active 仍不得成为 input 权威，未知 function call 不得伪造等待。
-- 已观察到的普通输入、审批和 Plan 请求 shadow 可在 owner/transport 丢失后保留于当前 preload 会话；普通无等待 active 必须降回 connector。自 RAW-143 起普通 `onPluginOut(false)` 同时保留 App Server 热会话与 Desktop observer；显式 Controller close、feature disable、`onPluginOut(true)` 或进程结束完全关闭。新快照/新 Turn 清除 sticky shadow；不新增持久化、公开字段、Renderer 判断或 Codex 原生写入，`task-state-v4` 不变。
+- 已观察到的普通输入、审批和 Plan 请求 shadow 可在 owner/transport 丢失后保留于当前 preload 会话；普通无等待 active 必须降回 connector。自 RAW-143 起普通 `onPluginOut(false)` 同时保留 App Server 热会话与 Desktop observer；RAW-152 进一步规定 replaceable Renderer 的 Controller `dispose()` 只解除本地订阅与 Host lease，不关闭 Provider。feature disable、`onPluginOut(true)` 或进程结束才完全关闭。新快照/新 Turn 清除 sticky shadow；不新增持久化、公开字段、Renderer 判断或 Codex 原生写入，`task-state-v4` 不变。
 - 当前真实宿主中唯一原生 `Needs input` 任务已由 `notLoaded + interrupted` 恢复为 `active + waitingOnUserInput`；只读预检计为一条权威 active。普通输入与 Plan 的既有精确映射继续由回归合同保护；聚焦 `170/170`、完整工作树 `737/737` 与独立暂存提交 `711/711`、typecheck、build/runtime validation 已通过，新构建实际卡片/快捷键展示仍需重载验收。
 
 ## RAW-142 已完成 Plan 待实现与未读稳定化
@@ -113,7 +113,7 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 
 ## RAW-143 mainHide 快捷键热缓存连续性
 
-- `onPluginOut(false)` 只是 uTools 后台隐藏，不得关闭 App Server 或清空 task/project alias、latest-Turn 与 Activity session cache；显式 Controller close、feature disable、`onPluginOut(true)` 和真实进程退出仍是完整清理边界。
+- `onPluginOut(false)` 只是 uTools 后台隐藏，不得关闭 App Server 或清空 task/project alias、latest-Turn 与 Activity session cache；RAW-152 后 Renderer Controller `dispose()` 同样只 detach。feature disable、`onPluginOut(true)` 和真实进程退出仍是完整清理边界。
 - 待输入、完成未读与前后任务命令在 Controller 已有任务扫描进行时，只能复用一次真正发布成功且覆盖 threads 的 single-flight；额度-only、被取消或未发布的读取不能冒充任务预检。已验证的空库存也是可复用缓存，不能因 `lastThreads.length === 0` 重复全扫。
 - Action Runner/五槽首次无 verified inventory 时执行一次 tasks-only preflight；之后先用当前 project alias 读取 Environment，只有 Host 明确返回 stale alias 才重建一次库存。执行前 Host 仍按 source fingerprint、target identity 与文件指纹 fail-closed，不以缓存替代安全校验。
 - 热任务 alias 打开不得新增 `thread/list` 或 `thread/turns/list`；并发过期 alias 最多共享一次全量任务预检。验证只覆盖相关 Controller/Bridge/Action lifecycle 文件、类型、preload 语法/镜像与 diff，不运行完整仓库门禁或真实宿主。
@@ -164,15 +164,57 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - `waiting-input` 与 `waiting-approval` 同属 `inputRequired`、待输入角标和动态待输入段；审批不得再重复计入 ongoing。待输入与完成未读在 Codex、Claude 汇总后统一按 `statusEnteredAt DESC` 排序，同值以匿名稳定 key 排序。置顶、Provider 分组、源数组和普通 `orderCodexTasksForDisplay` 不得覆盖这两个状态组；普通项目页、置顶展示及通用前后任务独占层循环保持既有合同。
 - 两个专用入口共用 Controller 持久化 `attentionOpenHistory`。一个状态实例由 `kind + anonymous task key + statusEnteredAt` 定义；每次选择倒序候选中第一条未成功打开实例，新任务或同任务新时间立即插队，打开后继续旧未访问项。全部访问后仅在下一次成功打开时清空该组旧进度并从最新项回绕。Host 的 Electron `opened` 与 uTools 明确接受 `dispatched` 都算成功；列表手动成功打开也计入，失败/拒绝不推进。
 - 进度每组最多 200 条，只保存 kind、匿名 task key、状态时间和打开时间；任务离组或状态时间变化时清除旧实例，跨 EyPc Renderer 重载保留。没有真实待输入时继续按既有 EyPc 本地置顶兜底，兜底不计入待输入角标或进度。紧凑待输入必须调用 Controller 动作，不得由 Renderer 读取 `[0]`；提示为“最新优先，连续触发依次打开”。
-- `task-state-v6` 是当前语义修订；v5/v4/v3/v2/缺失或未来来源继续 degraded 投影并 fail closed，不根据 Access 设置自行推断等待。EyPc 只提示并打开原任务，不批准、拒绝、提交或清理任何请求。
-- 接纳要求覆盖：所有请求类别的新增/共存/移除/无时间回退/Side Chat 聚合/白名单；审批角标原子更新与跨 Provider 最新倒序；`1→2→3，新 6 到达→6→4→5`、同任务新实例、回绕、重载、失败不推进、手动打开推进；普通排序与通用循环不受影响；v6/v5 降级。自动验证完成后才进入真实非 Full Access 宿主门禁。
+- RAW-149 引入的 `task-state-v6` 继续定义匿名状态时间与注意力进度；RAW-151 推进到 v7，RAW-153 推进到 v8，RAW-154 以精确 interrupted 终态和统一 mutation 收敛把当前语义推进到 v9。v8/v7/v6/v5/v4/v3/v2/缺失或未来来源继续 degraded 投影并 fail closed，不根据 Access 设置自行推断等待。EyPc 只提示并打开原任务，不批准、拒绝、提交或清理任何请求。
+- 接纳要求覆盖：所有请求类别的新增/共存/移除/无时间回退/Side Chat 聚合/白名单；审批角标原子更新与跨 Provider 最新倒序；`1→2→3，新 6 到达→6→4→5`、同任务新实例、回绕、重载、失败不推进、手动打开推进；普通排序与通用循环不受影响；v8/v7/v6/v5 降级。自动验证完成后才进入真实非 Full Access 宿主门禁。
+
+## RAW-150 待继续展示与任务级归档
+
+- Domain 内部继续使用 `stopped`；Presentation 将动态分段、卡片状态、说明和可访问文本统一显示为“待继续”。它不是新顶层 Tab，不产生角标或专用快捷入口；动态顺序固定为“待输入 → 进行中 → 待继续 → 已完成未读 → 已完成”。
+- Codex 精确 `interrupted/user-stopped` 在无未解决 input/approval 且无因果上更新的新 Turn/active 时立即形成 terminal watermark；更旧 Desktop active/waiting shadow 不得继续把它归入进行中，也不得伪造 `desktop-live idle`。普通 failed 继续要求既有精确 idle/not-running 门禁。Stopped 卡片允许任务级归档；Host 在执行前重读身份、source fingerprint、revision、latest Turn 与当前请求/活动边界，任何 active/inProgress、新 Turn、请求变化或版本变化返回 `state-changed`。
+- Claude completed/stopped 只经 `companion-task-actions-v1` 分发到 D′ Adapter。仅 macOS Claude `1.26832.0` 通过门禁；目标必须来自正常库存构建的 Preload 私有唯一 `sessionId → local_*.json` 索引。写前重读 compatible phase 与 `isArchived`，并确认文件身份、stat/hash 未变；事务只把解析对象的 `isArchived` 改为 `true`，写同目录唯一临时文件后原子替换，再证明除该字段外语义不变。验证失败且文件仍是本次写入时恢复原始字节；Claude 并发修改后返回 `indeterminate`，禁止旧备份覆盖。
+- `isArchived=true` 与私有活动库存移除双确认即 `archived`；原生归档日志只作增强证据，已归档目标幂等成功。Archive 不 Deep Link、不 AX/JXA、不扫改、不写 LevelDB/非目标会话，路径不跨 Preload。普通 open 在 Deep Link 前重读同一唯一目标，已归档、缺失或歧义统一 `state-changed`。`failed/indeterminate` 保留卡片；任务多选按 Provider 逐项分发并去重，项目批量归档仍只调用 Codex completed 路径。
+
+## RAW-151 双向待输入热通路
+
+- 一个 waiting-edge reducer 统一处理主任务、Side Chat、Plan、普通输入和审批的进入/解除。Desktop/App Server request 新增立即进入等待；request 移除/resolved、matching output、用户继续、精确 active 或新 Turn 立即解除并回到进行中。
+- revision 缺口、owner 切换、快照/patch 载荷不完整时，只为该任务执行 `0/50/150/300/600/1000ms` 重订/复核，总截止 1.25 秒；明确证据到达即取消。耗尽只增加匿名诊断并保留保守状态，不猜测解除、不触发全库存高频扫描。
+- Ownerless 普通输入/Plan 仅对已由完整库存登记且路径通过会话目录实路径门禁的 rollout 候选安装内存文件监听。解析只保留有限 function-call 关联；matching output、user message 和 `task_started` 是反向边。文件通知丢失时，Controller 每 1 秒调用 `readActivitySnapshot({ phaseOnly: true })`，Preload 只按登记候选的 size/mtime 变化重读，不读取 unread、quota、完整 inventory 或全量 latest Turn。
+- 热通路由“Codex 功能启用且任务收件箱启用”门控，和 Tab、悬浮窗可见性、`taskRefreshSeconds` 无关；功能/收件箱禁用、kill 或 dispose 停止。`taskRefreshSeconds` 继续只控制完整结构校对，允许 `0–86400`，不新增热通路频率设置。
+- 正常权威事件接纳到 Controller 最终任务包发布 P95 不高于 250ms；掉一次 Activity callback 或 rollout watcher 时，1 秒 watchdog 必须在 1.25 秒内恢复，且不重复发布/分组、不新增完整库存读取。Bridge 失败或证据不完整时保持现状并退避，不紧密重试。
+
+## RAW-152 进程级跨来源任务切换仲裁
+
+- 单卡点击、待输入和完成未读继续从 Controller 的当前原子任务包解析精确匿名 key；通用前后循环的候选层级、顺序与本地置顶兜底不变。只有全部启用 Provider 的库存 lane 都 settled 后，当前集合才可作为一个 ready 快照发布给 Host；部分 Codex/Claude 集合不得提前接受循环。
+- [navigation.cjs](../../../../preload/companion/navigation.cjs#L1) 是唯一进程级游标与派发 owner。每次 `previous/next` 都立即推进游标，75ms trailing coalescing 只保留最终目标；手动卡片/attention 打开取消尚未派发的通用目标并进入 FIFO。Codex Deep Link 与 Claude Epitaxy 跳转共同受一个最大并发为 1 的队列约束，不能并行触发两个桌面应用打开链。
+- [preload/index.js](../../../../preload/index.js#L1) 在 ready 热快照上直接消费 uTools `onPluginEnter` 的前后任务 code，并把同一 enter payload 清空；冷态、未就绪或旧 Host 仍交给 Renderer 做 tasks-only 预热。Renderer Controller 的 `dispose()` 只注销自身监听并 detach lease，不再关闭进程级 Codex/Claude 会话；显式功能停用、Provider 配置变化、kill 与进程退出保留重置权威。
+- Host 快照在普通 mainHide/Renderer 重建间保留；新 Controller 在本地两条库存 lane 未完成前不得用空 bootstrap 覆盖它，完成后以当前 Provider 集合原子替换并提取成功结果。Provider 配置变化立即清快照与游标。旧 Host 缺少精确 `companion-navigation-v1` 时，通用循环提示重载并 fail closed，单卡直开仍走既有兼容路径。
+- 公开诊断只包含 revision、ready、目标/循环数量、队列深度、最大并发、替换次数与结果枚举；不包含标题、路径、原始 ID、action alias 或请求内容。真实 uTools 重载与跨来源连续切换仍是宿主门禁。
+
+## RAW-153 待输入解除因果屏障
+
+- Desktop 私有状态为每个 main/Side Chat 请求实例与 runtime waiting flag 记录单调观测序列。请求仍以进程随机盐关联有限私有标识；原始标识、散列值、序列、正文和权限内容都不跨 Host、不持久化。完整快照只可保留同一实例的首次观测序列，不得把同方法的后来请求错误并入旧实例。
+- waiting-clear reducer 使用同一序列空间：request remove 与匹配 `serverRequest/resolved` 精确解除对应实例；`thread/status/changed active`、`turn/started`、matching output、用户继续和新 `task_started` 清除其之前观测到的 waiting 请求与 runtime flag。清除立即重算并发布，目标任务有界重订只负责结果复核，不是解除的前置条件。
+- 清除序列是私有因果屏障。旧 full snapshot、read-state、无关 patch、refollow、sticky shadow 和 rollout resume 的观测序列若不晚于屏障，均不得重新投影 waiting；屏障后真正新出现、拥有更新观测序列的请求实例必须立即重新进入待输入。runtime waiting flag 从快照中消失同样建立对应屏障。
+- `desktop-live + active` 只有在当前 shadow 不含可见 waiting flag 时才可作为普通 active 复用。当前 owner 若仍带旧 waiting，较新的 App Server active/Turn-started 必须先越过等待优先级并清除旧实例；后续旧 shadow 重放不能回跳。Side Chat、Plan、普通输入、权限审批与 rollout resume 使用同一规则。
+- `serverRequest/resolved` 只按 `threadId + requestId` 的私有关联清匹配项；未匹配时仅启动既有目标任务 `0/50/150/300/600/1000ms` 有界重订，不清同任务其它并发审批。该通知补强 Desktop request remove，但不是所有请求的唯一解除来源。
+- 公开字段不增加；RAW-153 当时以 `task-state-v8` 标识 waiting-clear 因果屏障，当前由 RAW-154 的 `task-state-v9` 原样承接并叠加精确 interrupted 终态。v8 及更旧 Host 保留可兼容任务投影但进入 degraded/reload 提示。RAW-149 的最新倒序/打开进度、角标、归档、Provider 聚合及通用导航不变，也不引入 `backgroundThrottling` 推断性调整。
+- 接纳要求同时覆盖当前 owner waiting→较新 active、旧 snapshot/read-state/refollow/rollout replay 不回跳、新 correlation 重入、匹配 resolved 保留并发审批、runtime flag removal、Side Chat/Plan 与缺失关联保守重订。原 v8 宿主门禁未完成且已由 v9 接管；当前真实 v9 宿主必须在请求解除后首个更新周期、最迟 1.25 秒进入进行中，30 秒及两次 mainHide/refollow 后不回跳，并确认同任务新请求重新进入待输入。
+
+## RAW-154 统一任务动作内核与 mutation 收敛
+
+- [companionProvider.ts](../../../../src/domain/companionProvider.ts#L1) 定义 `CompanionTaskTarget` 与 open/archive 可辨识请求/结果；[task-actions.cjs](../../../../preload/companion/task-actions.cjs#L1) 是唯一 action→Provider Dispatcher。Renderer 只提交意图，Domain 只输出互斥 bucket/capability，Dispatcher 只选择 Adapter 与队列策略，Codex/Claude Adapter 独占 inspect/open/archive/close 副作用，Controller mutation reducer 只接纳已验证结果。未知 Provider、旧 Bridge、stale revision/phase/alias 和不支持动作全部 fail closed。
+- Open 保留 `companion-navigation-v1` 的 75ms 尾随合并、旧目标替换及跨 Provider 最大并发 1；archive 永不合并或替换，只按 `Provider + task key` single-flight，相同任务重复请求 join，同一批不同任务和不同 Provider 并行。旧 Codex 安全 Host 归档可薄转发；旧 Claude AX/Deep Link 归档不得回退。
+- Controller 删除 Provider 特定成功/失败分支和乐观删行。归档期间卡片保留并通过 `archivingTaskKeys` 标记；`archived` 立即精确移除、清同 key receipt/navigation 并只发布一次，`failed/indeterminate` 保留卡片，后者只启动目标级复核。混合多选逐项进入同一 Dispatcher；项目批量继续只调用 Codex completed 路径。
+- Claude 文件 watcher 只对私有索引中已登记精确文件发布 `CompanionTaskMutationDelta`：Provider、匿名 key、`archived/upsert/remove`、单调 generation、接纳时间，以及 upsert 所需的白名单 observation。Controller 在 quota、state、unread 或完整 inventory Promise 阻塞时仍立即接纳；tombstone 阻止已启动的旧 inventory 恢复已移除卡片。掉 callback 时 1 秒 watchdog 只比较这些文件指纹，1.25 秒内恢复且不扫目录、不重复发布。Claude App 手动归档与 EyPc 静默归档进入同一个 mutation reducer。
+- `eypc-companion-archive` 声明 `mainHide:true`，路由到外部稳定 action `codex.task.archiveFocused` 并内部委托 Dispatcher。目标先取仍有效的聚焦 `canArchive` 任务，否则取非隐藏 attention 顺序首项；无唯一候选不写。第一次调用只提示 Provider/目标并建立 5 秒进程级确认，第二次只有 key+revision+focus+phase+Provider identity 完全一致才归档；任何变化、超时、功能/Provider 禁用或 process close 都取消。普通 Renderer remount 不清确认，冷启动只做 tasks-only hydration，不切 Tab、不打开 Claude。
+- `task-state-v9` 是当前状态合同；v8 及更旧来源保留可用任务并标记 degraded/reload。自动验收覆盖 100 轮 P95≤250ms、掉通知≤1.25s、Dispatcher 互斥/并发、Claude 事务/回滚/并发写、外部归档 delta、UI 文案与快捷确认。真实 v9 uTools 和经用户另行确认的可丢弃 Claude canary 仍是独立 host gate。
 
 ## 证据合同
 
 - Activity 来源为 `connector / initial-snapshot / activity-event`，并携带会话期 revision；Preload 内真实 Desktop patch 与精确 App Server active 另共享一个不出 Host 的单调 evidence sequence，用于判断跨来源先后。
 - Turn 来源为 `inventory / turn-started / turn-completed / targeted-after-exit / snapshot-corroborated`。
 - 非 live 决定来源为 `persisted-decision`，只证明已结构化复核的有限待输入/待审批决定；它不是普通 connector 活动的别名。
-- 未决请求时间只证明当前状态实例何时出现，不参与 Activity/Turn 因果仲裁；源时间缺失时的首次观测时间及会话随机盐关联只保留在私有 shadow，公开层只得到匿名 `waitingSince`，不取得原始或散列请求身份。
+- 未决请求时间只证明当前状态实例何时出现，不参与 Activity/Turn 因果仲裁；源时间缺失时的首次观测时间、会话随机盐关联、私有观测序列与 waiting-clear 屏障只保留在私有 shadow，公开层只得到匿名 `waitingSince`，不取得原始/散列请求身份或序列。
 - `readStateOnly` 只能修改 unread；不得重放 Activity 或 Turn。
 - Unread 区分初始 snapshot、明确 read-state event 与成功打开确认。成功打开确认对其 completion epoch 最强并跨普通 Bridge 重建保留；其余 exact true/false、refollow snapshot 与原生集合按当前证据仲裁。refollow snapshot `false` 可清除中断期遗漏事件留下的 persisted `true`；当前可解析原生集合的成员/非成员仍压过 snapshot `true`，原生 atom 瞬时不可用时先沿用当前 Bridge 最后一次成功原生观测，再回退其它 snapshot。新 Turn 证据先释放旧成功打开确认。
 - 精确 `turn/completed` 统一关闭完成前 unread false 周期，即使旧待输入/审批 flag 尚未排空；完成后新到达的明确 read-state event 可重新声明已读。
@@ -184,10 +226,10 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 
 ## 唯一状态优先级
 
-1. exact live 待输入/审批请求进入 `waiting-input / waiting-approval`；owner 已消失时，会话期 sticky exact request 或标为 `persisted-decision` 的安全 rollout 尾部精确未匹配 `request_user_input` 可保留/恢复普通 waiting-input；latest completed Turn 中标为同一来源的精确 Plan item 则恢复 Plan-only waiting，直到更新 Turn，且不受 unread 影响。普通 connector waiting 不进入该层。
-2. 真实 Desktop activity patch、精确 App Server `active` 或精确/new `inProgress` 建立 live active；`app-server-live` 覆盖旧 initial/refollow idle 和更早的 idle activity event，并携带私有建立水位跨 inventory 重建保留。Desktop 非 active 只有其真实 patch 水位严格更晚时才可撤销；read-state-only、Side Chat 聚合或 inventory 重放旧 shadow 不能撤销。
+1. exact live 待输入/审批请求进入 `waiting-input / waiting-approval`，但仅限其私有观测序列严格晚于对应 waiting-clear 屏障；已被 request remove、匹配 resolved 或较新运行证据清除的旧实例不得因 snapshot/read-state/refollow/rollout 重放复活。owner 已消失时，会话期 sticky exact request 或标为 `persisted-decision` 的安全 rollout 尾部精确未匹配 `request_user_input` 可保留/恢复普通 waiting-input；latest completed Turn 中标为同一来源的精确 Plan item 则恢复 Plan-only waiting，直到更新 Turn，且不受 unread 影响。普通 connector waiting 不进入该层。
+2. 真实 Desktop activity patch、精确 App Server `active` 或精确/new `inProgress` 建立 live active；`app-server-live` 覆盖旧 initial/refollow idle 和更早的 idle activity event，也必须覆盖当前 owner shadow 中观测更早的 waiting flag，并携带私有建立水位/clear 屏障跨 inventory 重建保留。Desktop 非 active 或新 waiting 只有其真实观测序列严格更晚时才可撤销；read-state-only、Side Chat 聚合或 inventory 重放旧 shadow 不能撤销。
 3. 精确、定向或佐证 completed 立即进入 `completed`；但同一 latest Turn 的精确未实现 Plan 决定继续作为 waiting-input，直到下一 Turn。普通 inventory completed 只有在没有更强 live active/Plan 决定时成立。精确通知和 snapshot 佐证都允许缺失 `completedAt`，confirmed provenance 写回会话期 inventory。
-4. `failed/interrupted` 只有相对当前 active-exit baseline 前进并经退出后定向证据确认，或与 Desktop 明确 `not-running` 共同出现时进入 `stopped`；缺失 Turn outcome 永不构成停止。
+4. 精确 `interrupted/user-stopped` 在没有未解决 input/approval 且没有因果上更新的新 Turn/active 时立即进入内部 `stopped` 并清更旧 live shadow；普通 `failed` 仍只有相对当前 active-exit baseline 前进并经退出后定向证据确认，或与 Desktop 明确 `not-running` 共同出现时进入 stopped。Presentation 固定显示“待继续”，缺失 Turn outcome 永不构成停止。
 5. 不完整、乱序、断连或互相冲突的证据保持 `ongoing`。
 
 真实 activity patch 开启新周期时，旧 terminal 元数据不能压住 active。实时 delta 与完整 snapshot 复用同一个 active-exit 转换器，转换器自身识别 confirmed provenance，不依赖入口额外传参；未前进的旧 completed/interrupted/failed 统一保持 ongoing 并保留 baseline。终态通过门禁后关闭该周期，相同后续快照不得把完成反判为 inProgress，也不得把旧中断误判为 stopped。
@@ -200,9 +242,19 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - Activity Delta 每次发布递增 generation，完整 snapshot 携带已组装库存的 generation 屏障；严格更旧增量不得覆盖 snapshot，严格更旧 snapshot 也不得覆盖已接纳 delta，Controller 水位只单调前进。
 - 完整 inventory 重建保留更强的精确 inProgress、confirmed terminal 与同 revision provenance。未知 key 只触发 urgent 结构复核，已知条目仍即时应用。
 - 完整 inventory 同时保留 `app-server-live` 私有 evidence sequence；该序号不进入 Activity Delta、Host Snapshot、Renderer、存储或日志。
-- 50/200ms 结构合并、5s/1s watchdog、默认 15s 完整校对和 missing-key 隔离只保护证据/库存，不延迟已确认完成；missing-key 只保留缺失行，同批仍存在的任务状态立即发布。连续确认早于隔离窗时按剩余时间自调度，普通周期为 0 也会闭合。Preload 在 source fingerprint 未变化时把已发布缺行任务的匿名映射保留 120 秒，覆盖 Controller 最长配置隔离窗口；显式归档仍立即清除。
-- `task-state-v6` 是当前语义。v5/v4/v3/v2/旧来源仍读取并发布 degraded 原子包，不清空任务或停止订阅；v4 Plan-only 标记保持兼容，缺失 persisted-decision provenance 的普通 connector waiting 不扩权，缺失 v6 状态时间时不得从 Access 配置猜测审批。
+- 50/200ms 结构合并、1 秒 phase-only Activity/rollout watchdog、默认 15 秒完整校对和 missing-key 隔离只保护各自证据/库存，不延迟已知等待边或已确认完成；missing-key 只保留缺失行，同批仍存在的任务状态立即发布。连续确认早于隔离窗时按剩余时间自调度，普通周期为 0 也会闭合。Preload 在 source fingerprint 未变化时把已发布缺行任务的匿名映射保留 120 秒，覆盖 Controller 最长配置隔离窗口；显式归档仍立即清除。
+- `task-state-v9` 是当前语义。v8/v7/v6/v5/v4/v3/v2/旧来源仍读取并发布 degraded 原子包，不清空任务；旧源提示重载。v4 Plan-only、v5 persisted-decision、v6 状态时间与 v8 waiting-clear 因果屏障保持兼容；只有当前 v9 同时表示匹配 `serverRequest/resolved`、active-vs-active waiting-clear、精确 interrupted 终态和统一任务 action/mutation 合同已加载。
 - 旧 runtime/float `conversations` 别名只作一版兼容；当前消费者以 `taskState` 为权威。
+
+## RAW-154 返工：唯一任务内核、原子任务包与运行身份
+
+- [companionTaskPackage.ts](../../../../src/domain/companionTaskPackage.ts#L1) 定义唯一公开任务包 `companion-task-package-v1`。一个 revision 内同时发布标准任务、`kind`、`phase`、`cycleTier`、capabilities、动态分组、输入/活跃/未读角标、attention keys 与通用 `cycleKeys`；Main、Float、卡片和快捷键不得混用不同 revision 的局部视图。
+- [task-kernel.cjs](../../../../preload/companion/task-kernel.cjs#L1) 是唯一进程权威 `companion-task-kernel-v1`。Provider Adapter 只提交带 source generation 的原始证据；Kernel Reducer 负责状态优先级、freshness、去重、原子发布和按任务 `kind/provider` 路由。`companion-navigation-v1` 与 `companion-task-actions-v1` 仅是 Kernel 内部 Dispatcher 模块，不再作为 Renderer 可独立同步的缓存。
+- 卡片点击、待输入/未读直达、上/下任务、聚焦和归档都只能提交 `dispatchCompanionTaskIntent(intent)`。Kernel 每次从最新包重新解析完整目标；不存在 `lastEnterPayload` 任务补执行、Renderer 启动后重放或独立 Navigation/Task Actions 同步。循环仍只选择首个非空层级：input/approval → Plan implementation → active → local pin，并在该层的统一 `cycleKeys` 内前后回绕。
+- `onPluginEnter` 在 Preload 直接消费静默任务入口，`mainHide` 只隐藏 uTools 主搜索框。热且新鲜的进程包直接派发；冷进程、缺失或过期时加入同一个全 Provider tasks-only 预检。预检不读 quota、环境、非任务 unread 或完整非任务库存；等待全部启用 Provider，600ms 后仅提示一次进度，5 秒超时，任一 Provider 失败时保留旧包并拒绝从部分集合跳转。普通隐藏保留进程包；真实退出、Provider 配置变化或功能关闭清理，包不持久化。
+- 明确且更新的状态事件立即归并，最多一次微任务/16ms 原子批处理；同 revision 语义重复不发布，低 revision/乱序拒绝。未解决输入/审批优先于较旧终态，更新一代 Turn/Activity 可从 completed/stopped 恢复 running。缺失或模糊证据只先降低 freshness；连续两次读取失败且超过 1.25 秒才转 unknown。`completed-unread` 是 completed 与 unread 的组合视图，不是另一状态机；1 秒恢复扫描只补漏。
+- [utools-runtime-identity.mjs](../../../../scripts/utools-runtime-identity.mjs#L1) 从受管 `plugin.json`、Preload/CJS 与 Renderer 输入生成确定性的 `hostAssetId`、`rendererAssetId`，并携带 Kernel/Package revision。[preload/index.js](../../../../preload/index.js#L1)、[preload/float.js](../../../../preload/float.js#L1)、Main UI 与 Float UI 必须完成四端精确握手；缺失或不一致时进入 `reload-required`，停止任务操作并显示期望/实际身份。构建只允许报告 `artifact-ready`；真实 uTools 握手一致后才是 `host-loaded`。
+- `task-state-v9` 仅标识现有 Provider 输入兼容语义；最终权威分别是 `companion-task-kernel-v1`、`companion-task-package-v1` 与 Runtime Identity。构建不会替换或激活 uTools 已加载的 ASAR，正式接纳固定为：构建 → 开发工具重新接入 `dist/plugin.json` → 用户结束旧插件后台进程并重新进入 → 重开 Float → 核对四端身份一致。离线包必须安装新 UPXS 后重新进入；实现不调用私有 uTools API，也不自动结束进程。
 
 ## 残留矩阵收口
 
@@ -215,4 +267,4 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 
 - 不重做外观展示形式、项目移除或整个 EyPc 架构；仅清除已确认的旧外观门禁和模型策略偏差。
 - 未授权真实 Codex/uTools 部署或原生状态写操作；除已定义的项目移除事务外，Codex 原生状态保持只读。成功打开确认仅更新当前 preload 的匿名投影。
-- 实现接受仍需用户重载真实 uTools 并验收 stopped↔active、普通/中断恢复 active→completed-unread 及任务切换。
+- 实现接受仍需用户重载真实 uTools 并验收 v9 active↔waiting-input 双向切换、解除后 30 秒不回跳、同任务新请求重入、精确 interrupted 的“待继续”展示与新 Turn 恢复、待继续角标边界及 Codex stopped 归档。Claude D′ 真实归档还必须由用户另行确认一个可丢弃 completed 会话后执行；两项真机门禁未完成前统一记为 `automated-verified / host-pending`。

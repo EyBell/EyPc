@@ -1,7 +1,7 @@
 # Codex 任务状态收敛计划
 
 Tool: codex
-Status: `automated-verified / host-pending`
+Status: `automated-verified / host-rework`
 
 1. 用序列测试复现“完成通过定向核验，后续完整快照反判回进行中”。
 2. 完成通过 active-exit 门禁后立即关闭周期并清除 baseline。
@@ -35,5 +35,11 @@ Status: `automated-verified / host-pending`
 30. 提交前同步 task/current/technical/error-memory 权威层：把 stream-follow 回声固定到单一主记录，为依赖记录补更新引入并清除双主表述；按 hunk 隔离并发 Claude 写集，验证暂存快照后仅创建本地提交。
 31. 复核 Codex Tab 的环境与来源识别：把 Runtime 横幅/表格/帮助/兼容等待抽成一个 Domain 投影，任务/项目行归属各只解析一次，启动路径 mutation 复用 Host 返回快照并移除二次 inspect；以 RAW-022 裁定规则/PRD 冲突，更新既有 supersession 错误记忆并执行聚焦测试、typecheck 与文档审计。
 32. 以 RAW-149 扩展 Desktop follower 的未决请求投影：把命令/文件/权限审批与 MCP elicitation 纳入待输入，升级 `task-state-v6` 和匿名状态时间；为待输入/完成未读建立跨 Provider 最新倒序与最多 200 条的持久化未打开进度，保持通用循环和本地置顶兜底不变；完成 Bridge/Domain/Presentation/Controller/UI 聚焦验证、文档审计与构建后，再进入真实非 Full Access 宿主验收。
+33. 以 RAW-150 保留内部 `stopped` 而将全部可见语义统一为“待继续”，不新增 Tab/角标/入口；开放任务级 Codex stopped 归档前实时复核。更新引入：Claude 归档已由第 37 步 D′ 唯一目标静默元数据事务取代原 Deep Link+AX+三重证据方案，项目批量仍仅 Codex completed。
+34. 以 RAW-151 抽取单一 waiting-edge reducer，建立与完整库存频率解耦的双向热通路；对 revision/owner/载荷缺口做 1.25 秒单任务有界重订，对已登记 rollout 候选做文件监听和 1 秒 phase-only watchdog，并以 100 轮 P95、两类掉通知、隐藏/跨 Tab/零与极大周期/阻塞 I/O 合同验收。该步曾升级到 `task-state-v7` 并记 host-pending；后续真实 v7 暴露 active-vs-active waiting 仲裁缺陷，现由第 36 步 RAW-153 supersede。
+35. 以 RAW-152 将通用前后任务游标与跨 Provider 派发提升到 Preload 进程 owner：全部启用来源库存原子 ready、75ms 最终目标合并、手动/attention 优先、全局最大并发 1、热 `onPluginEnter` 单次消费与 Renderer detach 保留快照；旧 Host 通用循环 fail closed。执行定向竞态/生命周期/兼容测试、类型与 production/uTools 构建，真实 uTools 跨 Codex/Claude 连按保留 host-pending。
+36. 以 RAW-153 修复当前 owner 的旧 waiting 被较新 active 清除后又由 snapshot/read-state/refollow 重放的问题：为请求实例与 runtime waiting flag 增加私有单调观测序列，统一 request remove、匹配 `serverRequest/resolved`、active/Turn-started、matching output、用户继续与新 `task_started` 的 waiting-clear 因果屏障；未匹配 resolved 仅有界重订。升级 `task-state-v8`，补当前 owner、旧重放、新 correlation、并发审批、runtime flag、Side Chat/Plan 与 rollout resume 反向测试，执行受影响测试、typecheck、production/uTools build 和镜像/语法门禁。最后正常重载真实 v8 宿主，要求解除最迟 1.25 秒、30 秒及两次 mainHide/refollow 不回跳、同任务新请求可重入；未通过保持 rework 且不提交。
+37. 以 RAW-154 落地统一任务内核：扩展 Provider-neutral `CompanionProviderAdapter`，由 `companion-task-actions-v1` 统一分发 inspect/open/archive/close，保留 navigation 对 open 的 75ms 合并而让 archive 仅按 Provider+task single-flight；Controller 只保留一个 verified mutation reducer，归档期间保留卡片，成功精确移除，失败/不确定保留。把 Claude archive 改为版本门禁、唯一私有索引目标、stat/hash 防并发、同目录原子替换与安全回滚的 D′ `isArchived` 事务，日志降为增强证据，普通 open 写前拒绝已归档；精确文件 watcher 与 1 秒候选 watchdog 发布 membership delta。为 Codex 精确 interrupted 增加无 idle 依赖的 terminal watermark，升级 `task-state-v9`；接入进程级 5 秒双调用确认的 `mainHide` 归档入口。执行受影响测试、typecheck、Preload 镜像/语法、production/uTools build 与文档/规则审计；真实 v9 宿主及经用户另行确认的可丢弃 Claude canary 保持独立门禁。
+38. 返工同一 RAW-154：把 task-actions/navigation 与 Renderer 分散缓存收敛为 Preload 唯一 `companion-task-kernel-v1`，以 `companion-task-package-v1` 原子发布任务、形式、分组、角标、循环与 capability；全部入口统一提交意图并从最新包重解目标。让 `onPluginEnter` 在 Renderer 未挂载时直接消费，冷状态只走全启用 Provider 的共享 tasks-only 预检，拒绝 partial jump 和 Alt+Tab 重放。新增确定性 Host/Renderer 资产身份与 Main/Float 四端握手，身份不一致 fail closed 为 `reload-required`，严格区分 `artifact-ready` 与 `host-loaded`。完成 Reducer/Kernel/Dispatcher/Bridge/身份聚焦回归、类型、production/uTools build、镜像/语法、文档与错误记忆；真实 uTools 重接入、旧后台进程由用户结束、Float 重开和四端握手继续保持 host gate。
 
 执行证据见 [verify.md](verify.md#L1)，当前交接见 [handoff.md](handoff.md#L1)。
