@@ -295,7 +295,7 @@ export interface CodexPendingRecoverySnapshotV1 {
  * marked degraded, but its atomic task-state package is preserved rather than
  * being independently cleared by Controller or Renderer.
  */
-export const CODEX_TASK_STATE_REVISION = 'task-state-v6'
+export const CODEX_TASK_STATE_REVISION = 'task-state-v9'
 
 export interface CodexHostSnapshotV1 {
   version: 1
@@ -476,7 +476,7 @@ export interface CodexThreadArchiveRequest {
   expectedCompletionAt?: number
   expectedLastTurnStartedAt?: number
   expectedSourceFingerprint?: string
-  evidence: 'completed'
+  evidence: 'completed' | 'stopped'
 }
 
 export interface CodexProjectArchiveRequest {
@@ -1536,8 +1536,23 @@ function hasConfirmedCompletionOverLiveTask(thread: CodexHostThread) {
   return isCodexConfirmedTerminalEvidence(thread.lastTurnEvidence)
 }
 
+/**
+ * An exact interrupted `turn/completed` event closes the activity epoch just
+ * like an exact completion, unless the same task still carries an unresolved
+ * input/approval request. This is intentionally narrower than generic failed
+ * evidence: provider/transport failures keep their existing conservative gate.
+ */
+function hasExactInterruptedOverLiveTask(thread: CodexHostThread) {
+  return thread.lastTurnStatus === 'interrupted'
+    && isCodexConfirmedTerminalEvidence(thread.lastTurnEvidence)
+    && !thread.activeFlags.includes('waitingOnUserInput')
+    && !thread.activeFlags.includes('waitingOnApproval')
+}
+
 function isCurrentLiveActiveTask(thread: CodexHostThread) {
-  return isLikelyActiveTask(thread) && !hasConfirmedCompletionOverLiveTask(thread)
+  return isLikelyActiveTask(thread)
+    && !hasConfirmedCompletionOverLiveTask(thread)
+    && !hasExactInterruptedOverLiveTask(thread)
 }
 
 function isExplicitlyStoppedTask(thread: CodexHostThread, desktopBridgeState?: CodexDesktopBridgeState) {
@@ -1549,6 +1564,10 @@ function isExplicitlyStoppedTask(thread: CodexHostThread, desktopBridgeState?: C
   if (thread.lastTurnStatus === 'inProgress') return false
   const hasTerminalStopEvidence = thread.lastTurnStatus === 'interrupted' || thread.lastTurnStatus === 'failed'
   if (!hasTerminalStopEvidence) return false
+  // A user/exact-provider interrupted edge is itself the terminal watermark.
+  // It clears an older active shadow without fabricating desktop-live idle.
+  if (thread.lastTurnStatus === 'interrupted'
+    && isCodexConfirmedTerminalEvidence(thread.lastTurnEvidence)) return true
   // Exact live idle or Desktop exit remain the strongest stop proofs.
   if (thread.statusAuthority === 'desktop-live' && thread.status === 'idle') return true
   if (desktopBridgeState === 'not-running') return true
@@ -1768,9 +1787,9 @@ export function projectConversations(input: {
         ? unread ? 'completed-unread' : 'completed'
         : explicitlyStopped ? 'stopped' : 'ongoing'
     const activityState = taskActivityState(thread, explicitlyStopped)
-    const archiveCapability: CodexArchiveCapability = completionRevision > 0
+    const archiveCapability: CodexArchiveCapability = completionRevision > 0 || explicitlyStopped
       ? 'allowed'
-      : explicitlyStopped ? 'blocked-stopped' : 'blocked-active'
+      : 'blocked-active'
     const revisionAt = completionRevision
       || (explicitlyStopped ? numberValue(thread.lastTurnStartedAt, 0) : 0)
       || thread.updatedAt

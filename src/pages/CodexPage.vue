@@ -389,7 +389,11 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
 </script>
 
 <template>
-  <section class="codex-config-page" aria-label="Codex Companion 配置">
+  <section
+    class="codex-config-page"
+    aria-label="Codex Companion 配置"
+    :data-companion-package-revision="snapshot.companionTaskPackage.packageRevision || undefined"
+  >
   <header class="codex-config-hero" aria-label="Codex Companion 配置总览">
     <div class="codex-hero-copy">
       <span class="codex-eyebrow"><Bot :size="15" /> Codex Companion</span>
@@ -557,7 +561,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             <button
               type="button"
               class="secondary codex-hotkey-cta"
-              title="配置 uTools 全局快捷键，直接打开第一条待输入任务。"
+              title="配置 uTools 全局快捷键；最新优先，连续触发依次打开待输入任务。"
               data-operation-tooltip="配置待输入快捷键"
               data-operation-description="打开 uTools 全局功能，为“打开 Codex 待输入任务”绑定系统级快捷键。"
               @click="$emit('dispatch', 'codex.input.hotkey.configure')"
@@ -569,9 +573,9 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             <button
               type="button"
               class="secondary codex-hotkey-cta"
-              title="配置 uTools 全局快捷键，打开并在 EyPc 内标记第一条已完成未读任务。"
+              title="配置 uTools 全局快捷键；最新优先，连续触发依次打开已完成未读任务。"
               data-operation-tooltip="配置已完成未读快捷键"
-              data-operation-description="打开 uTools 全局功能，为“打开第一个 Codex 已完成未读任务”绑定系统级快捷键。"
+              data-operation-description="打开 uTools 全局功能，为“依次打开 Codex 已完成未读任务”绑定系统级快捷键。"
               @click="$emit('dispatch', 'codex.completed-unread.hotkey.configure')"
             >去设置</button>
           </div>

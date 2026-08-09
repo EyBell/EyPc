@@ -267,6 +267,29 @@ export function resolveCompanionWaterBallMapping(
  * ------------------------------------------------------------------ */
 
 export type CompanionOpenOutcome = 'opened' | 'dispatched' | 'unavailable' | 'failed'
+export const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v1'
+
+export type CompanionTaskActionSource = 'manual' | 'attention' | 'cycle' | 'card' | 'batch' | 'shortcut'
+export type CompanionArchiveOutcome = 'confirmation-required' | 'archived' | 'failed' | 'indeterminate'
+
+export interface CompanionTaskTarget {
+  provider: CompanionProviderId
+  key: string
+  actionAlias: string
+  revisionAt: number
+  phase: string
+}
+
+export type CompanionTaskActionRequest =
+  | { action: 'open'; target: CompanionTaskTarget; source: Extract<CompanionTaskActionSource, 'manual' | 'attention' | 'cycle'> }
+  | { action: 'archive'; target: CompanionTaskTarget; source: Extract<CompanionTaskActionSource, 'card' | 'batch' | 'shortcut'> }
+
+export interface CompanionArchiveResult {
+  outcome: CompanionArchiveOutcome
+  message?: string
+  errorCode?: string
+  alreadyArchived?: boolean
+}
 
 export interface CompanionOpenResult {
   outcome: CompanionOpenOutcome
@@ -293,5 +316,17 @@ export interface CompanionProviderPort {
   /** Opens a task using this provider's own jump mechanism. */
   openTask(taskKey: string, actionAlias?: string): Promise<CompanionOpenResult>
   /** Releases watchers, child processes and subscriptions owned by this provider. */
+  close(): void
+}
+
+/**
+ * Provider-neutral mutation adapter. Queue/coalescing policy belongs to the
+ * dispatcher; each adapter owns only its provider's inspection and side effect.
+ */
+export interface CompanionProviderAdapter {
+  readonly id: CompanionProviderId
+  inspect(): Promise<CompanionProviderReadiness>
+  open(request: Extract<CompanionTaskActionRequest, { action: 'open' }>): Promise<CompanionOpenResult>
+  archive(request: Extract<CompanionTaskActionRequest, { action: 'archive' }>): Promise<CompanionArchiveResult>
   close(): void
 }
