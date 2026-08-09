@@ -2,6 +2,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writ
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { syncUtoolsPreloads } from './utools-preload-assets.mjs'
+import { buildUtoolsRuntimeIdentity, runtimeIdentityCommonJs } from './utools-runtime-identity.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const pluginSource = resolve(root, 'public/plugin.json')
@@ -11,6 +12,8 @@ const distPlugin = resolve(distDir, 'plugin.json')
 const distPackageJson = resolve(distDir, 'package.json')
 const commonJsPackageScope = `${JSON.stringify({ type: 'commonjs' }, null, 2)}\n`
 const developmentMode = process.argv.includes('--development')
+const runtimeIdentity = buildUtoolsRuntimeIdentity(root)
+const runtimeIdentitySource = runtimeIdentityCommonJs(runtimeIdentity)
 const developmentFloatEntry = `<!doctype html>
 <html lang="zh-CN">
   <head><meta charset="UTF-8" /><title>EyPc Codex Float Development</title></head>
@@ -73,6 +76,7 @@ function copyRuntimeDependencies(pluginDir) {
 
 writeFileSync(publicPackageJson, commonJsPackageScope)
 syncUtoolsPreloads(root, 'public')
+writeFileSync(resolve(root, 'public/runtime-identity.cjs'), runtimeIdentitySource)
 copyRuntimeDependencies(resolve(root, 'public'))
 
 if (existsSync(distDir)) {
@@ -80,6 +84,7 @@ if (existsSync(distDir)) {
   copyFileSync(pluginSource, distPlugin)
   writeFileSync(distPackageJson, commonJsPackageScope)
   syncUtoolsPreloads(root, 'dist')
+  writeFileSync(resolve(distDir, 'runtime-identity.cjs'), runtimeIdentitySource)
   copyRuntimeDependencies(distDir)
   if (developmentMode) {
     writeFileSync(resolve(distDir, 'float.html'), developmentFloatEntry)
@@ -87,4 +92,4 @@ if (existsSync(distDir)) {
   }
 }
 
-console.log('uTools runtime assets prepared')
+console.log(`uTools artifact-ready ${runtimeIdentity.hostAssetId} ${runtimeIdentity.rendererAssetId}`)

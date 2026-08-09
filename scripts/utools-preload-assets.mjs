@@ -14,6 +14,11 @@ export const UTOOLS_PRELOAD_ASSETS = Object.freeze([
  */
 export const UTOOLS_PRELOAD_MODULE_GROUPS = Object.freeze([
   {
+    id: 'companion',
+    directory: 'companion',
+    files: ['navigation.cjs', 'task-actions.cjs', 'task-kernel.cjs']
+  },
+  {
     id: 'windows',
     directory: 'windows',
     files: ['index.cjs', 'native-command.cjs', 'session-cache.cjs', 'macos.cjs', 'macos-space.cjs', 'win32.cjs']
@@ -23,6 +28,7 @@ export const UTOOLS_PRELOAD_MODULE_GROUPS = Object.freeze([
     directory: 'claude',
     files: [
       'index.cjs',
+      'archive.cjs',
       'app-paths.cjs',
       'app-state.cjs',
       'code-sessions.cjs',
