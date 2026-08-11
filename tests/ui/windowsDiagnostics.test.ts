@@ -7,7 +7,17 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createInitialState } from '../../src/domain/state'
 import { createAppRuntime, type AppRuntimeSnapshot, type WindowActivationDiagnostic, type WindowOperationDebugRecord } from '../../src/runtime/appRuntime'
 import SettingsPage from '../../src/pages/SettingsPage.vue'
+import type { RuntimeDiagnosticsSnapshotV3 } from '../../src/platform/eypcPlatform'
 import WindowsPage from '../../src/pages/WindowsPage.vue'
+
+function runtimeDiagnostics(): RuntimeDiagnosticsSnapshotV3 {
+  return {
+    revision: 'eypc-runtime-diagnostics-v3', status: 'ok', updatedAt: 1, sessionId: 'test', processId: 1,
+    settings: { enabled: true, level: 'info', userConfigured: true, defaultsRevision: 3 }, directory: '/tmp/eypc-diagnostics', activeFile: '',
+    totals: { events: 1, filtered: 0, debug: 0, info: 1, error: 0, slow: 0, writeFailures: 0 },
+    storage: { fileCount: 1, totalBytes: 10, maxFileBytes: 100, maxTotalBytes: 1000, retentionDays: 14 }, recent: []
+  }
+}
 
 function snapshotWithDiagnostics(
   windowActivationDiagnostics: WindowActivationDiagnostic[] = [],
@@ -161,6 +171,7 @@ describe('settings window diagnostics section', () => {
         shortcutProfiles: state.settings.shortcutProfiles,
         featureConfigs: state.settings.featureConfigs,
         settings: state.settings,
+        runtimeDiagnostics: runtimeDiagnostics(),
         mqttStorageStatus: {
           mode: 'browser-localStorage' as const,
           sqliteAvailable: false,

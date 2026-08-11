@@ -230,16 +230,36 @@ describe('Codex Companion V3 UI contract', () => {
     expect(source).toContain('默认 24 小时')
   })
 
-  it('uses custom whole-second inputs for quota refresh and full reconciliation', () => {
+  it('keeps only the automatic quota interval and removes broad manual/full reconciliation refresh', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
     expect(source).toContain('额度刷新（秒）')
     expect(source).toContain(':value="snapshot.settings.quotaRefreshSeconds"')
     expect(source).toContain('update({ quotaRefreshSeconds:')
-    expect(source).toContain('完整校对频率（秒）')
-    expect(source).toContain(':value="snapshot.settings.taskRefreshSeconds"')
-    expect(source).toContain('update({ taskRefreshSeconds:')
-    expect(source).toContain('0 表示仅手动，最大 86400 秒')
+    expect(source).toContain('默认 300 秒，最大 86400 秒')
+    expect(source).not.toContain('完整校对频率（秒）')
+    expect(source).not.toContain('snapshot.settings.taskRefreshSeconds')
+    expect(source).not.toContain("'codex.refresh'")
     expect(source).not.toContain('snapshot.settings.quotaRefreshMinutes')
+  })
+
+  it('uses the approved title and exposes full operational runtime log statistics', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
+    expect(source).toContain('CODEX · CLAUDE COMPANION')
+    expect(source).toContain('<h1>额度任务悬浮球</h1>')
+    expect(source).toContain('全局安装诊断日志')
+    expect(source).toContain('慢操作 ≥250ms')
+    expect(source).toContain('精确记录运行 ID、Provider 状态、水位、缓存、路径、动作结果与耗时')
+    expect(source).toContain('不写入提示词、对话正文、命令参数、stdout/stderr、凭据或隐藏推理')
+    expect(source).toContain('snapshot.runtimeDiagnostics.storage.maxTotalBytes')
+    expect(source).toContain('aria-label="启用安装诊断日志"')
+    expect(source).toContain('aria-label="安装诊断日志记录级别"')
+    expect(source).toContain("emit('dispatch', 'runtime.logs.configure'")
+    expect(source).toContain("emit('dispatch', 'runtime.logs.openFile'")
+    expect(source).toContain("emit('dispatch', 'runtime.logs.openDirectory'")
+    expect(source).toContain("emit('dispatch', 'runtime.logs.clear'")
+    expect(source).toContain(':disabled="!snapshot.runtimeDiagnostics.activeFile"')
+    expect(source).toContain(':disabled="snapshot.runtimeDiagnostics.storage.fileCount === 0"')
+    expect(source).toContain('<option value="debug">debug · 完整诊断</option>')
   })
 
   it('surfaces aggregate activity decision diagnostics without an identity field', () => {
@@ -548,8 +568,12 @@ describe('Codex Companion V3 UI contract', () => {
     await nativeRow.trigger('keydown', { key: 'ArrowUp', code: 'ArrowUp', altKey: true })
     expect(action).toHaveBeenCalledWith('codex.task.focus', {
       key: TASK_ACTIVE,
-      revisionAt: expect.any(Number)
+      source: 'automatic-focus'
     })
+    expect(action.mock.calls.some(([id, args]) => id === 'codex.task.focus'
+      && args !== null
+      && typeof args === 'object'
+      && 'revisionAt' in args)).toBe(false)
     expect(action.mock.calls.every(([id]) => id === 'codex.task.focus')).toBe(true)
     await localPin.trigger('focus')
     vi.advanceTimersByTime(200)
@@ -718,6 +742,9 @@ describe('Codex Companion V3 UI contract', () => {
     await failed.trigger('keydown', { key: 'Enter', code: 'Enter' })
     await wrapper.vm.$nextTick()
     expect(action).not.toHaveBeenCalledWith('codex.task.open', expect.anything())
+    expect(action).toHaveBeenCalledWith('codex.quickJump.activate', {
+      source: 'manual-quick-jump'
+    })
     window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Shift' }))
     rect.mockRestore()
   })
@@ -945,6 +972,79 @@ describe('Codex Companion V3 UI contract', () => {
 
     await wrapper.get('.float-side-panel').trigger('keydown', { key: 'Escape', code: 'Escape' })
     expect(wrapper.find('.float-side-panel').exists()).toBe(false)
+  })
+
+  it('keeps archive confirmation through revision-only refresh and dispatches the latest revision', async () => {
+    const source = floatSnapshot('all')
+    const snapshotListener: { current: ((value: CodexFloatSnapshotV1) => void) | null } = { current: null }
+    const { wrapper, action } = mountFloat(true, source, {
+      onSnapshot: (listener) => {
+        snapshotListener.current = listener
+        return () => undefined
+      }
+    })
+    await wrapper.vm.$nextTick()
+    const firstRow = wrapper.get(`[data-focus-key="task:${TASK_DONE}"]`)
+    await firstRow.find('button[aria-label^="归档"]').trigger('click')
+    expect(wrapper.text()).toContain('再次操作确认')
+
+    const next = floatSnapshot('all')
+    const nextTask = next.conversations.completedUnread.find((task) => task.key === TASK_DONE)!
+    nextTask.revisionAt += 1
+    refreshTaskState(next)
+    snapshotListener.current?.(next)
+    await wrapper.vm.$nextTick()
+
+    const refreshedRow = wrapper.get(`[data-focus-key="task:${TASK_DONE}"]`)
+    await refreshedRow.find('button[aria-label^="确认归档"]').trigger('click')
+    expect(action).toHaveBeenCalledWith('codex.tasks.archive', expect.objectContaining({
+      items: [{ key: TASK_DONE, revisionAt: nextTask.revisionAt }],
+      operationId: expect.stringMatching(/^archive-ui-/),
+      source: 'archive-button',
+      confirmationRecorded: true
+    }))
+    const created = action.mock.calls.find(([id, args]) => id === 'codex.archive.confirmation'
+      && args !== null
+      && typeof args === 'object'
+      && 'stage' in args
+      && args.stage === 'created')?.[1] as Record<string, unknown> | undefined
+    const confirmed = action.mock.calls.find(([id, args]) => id === 'codex.archive.confirmation'
+      && args !== null
+      && typeof args === 'object'
+      && 'stage' in args
+      && args.stage === 'confirmed')?.[1] as Record<string, unknown> | undefined
+    expect(created?.operationId).toMatch(/^archive-ui-/)
+    expect(confirmed?.operationId).toBe(created?.operationId)
+  })
+
+  it('cancels archive confirmation when the terminal epoch changes', async () => {
+    const source = floatSnapshot('all')
+    const snapshotListener: { current: ((value: CodexFloatSnapshotV1) => void) | null } = { current: null }
+    const { wrapper, action } = mountFloat(true, source, {
+      onSnapshot: (listener) => {
+        snapshotListener.current = listener
+        return () => undefined
+      }
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.get(`[data-focus-key="task:${TASK_DONE}"]`).find('button[aria-label^="归档"]').trigger('click')
+    expect(wrapper.text()).toContain('再次操作确认')
+
+    const next = floatSnapshot('all')
+    const nextTask = next.conversations.completedUnread.find((task) => task.key === TASK_DONE)!
+    nextTask.revisionAt += 1_000
+    nextTask.lastTurnStartedAt = (nextTask.lastTurnStartedAt || 0) + 1_000
+    nextTask.lastTurnCompletedAt = (nextTask.lastTurnCompletedAt || 0) + 1_000
+    nextTask.completionRevision = (nextTask.completionRevision || 0) + 1_000
+    refreshTaskState(next)
+    snapshotListener.current?.(next)
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).not.toContain('再次操作确认')
+    const refreshed = wrapper.get(`[data-focus-key="task:${TASK_DONE}"]`).find('button[aria-label^="归档"]')
+    await refreshed.trigger('click')
+    expect(action).not.toHaveBeenCalledWith('codex.tasks.archive', expect.anything())
+    expect(wrapper.text()).toContain('再次操作确认')
   })
 
   it('keeps the batch drawer flat and closes it with one Escape', async () => {

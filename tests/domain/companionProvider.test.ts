@@ -25,7 +25,7 @@ import {
   type CodexTaskCard
 } from '../../src/domain/codex'
 
-function task(key: string, provider?: CompanionProviderId, pinSource?: 'native' | 'local'): CodexTaskCard {
+function task(key: string, provider?: CompanionProviderId, pinSource?: 'native' | 'local', lastQuestionAt = 0): CodexTaskCard {
   return {
     key,
     name: key,
@@ -36,6 +36,7 @@ function task(key: string, provider?: CompanionProviderId, pinSource?: 'native' 
     revisionAt: 0,
     state: 'running',
     updatedAt: 0,
+    lastQuestionAt,
     projectKey: 'p',
     projectName: 'p',
     originalProjectName: 'p',
@@ -119,38 +120,36 @@ describe('companion enablement', () => {
 })
 
 describe('display order stays provider-agnostic', () => {
-  it('preserves the merged status-driven sequence', () => {
-    const tasks = [task('c1', 'codex'), task('l1', 'claude'), task('c2', 'codex'), task('l2', 'claude')]
-    expect(keys(orderCompanionTasksForDisplay(tasks))).toEqual(['c1', 'l1', 'c2', 'l2'])
+  it('sorts by latest question across providers', () => {
+    const tasks = [task('c1', 'codex', undefined, 400), task('l1', 'claude', undefined, 200), task('c2', 'codex', undefined, 300), task('l2', 'claude', undefined, 100)]
+    expect(keys(orderCompanionTasksForDisplay(tasks))).toEqual(['c1', 'c2', 'l1', 'l2'])
   })
 
-  it('keeps pinned tasks first without grouping by provider', () => {
-    const tasks = [task('c1', 'codex'), task('l1', 'claude', 'local'), task('c2', 'codex')]
-    expect(keys(orderCompanionTasksForDisplay(tasks))).toEqual(['l1', 'c1', 'c2'])
+  it('does not let a pin override latest-question order', () => {
+    const tasks = [task('c1', 'codex', undefined, 300), task('l1', 'claude', 'local', 100), task('c2', 'codex', undefined, 200)]
+    expect(keys(orderCompanionTasksForDisplay(tasks))).toEqual(['c1', 'c2', 'l1'])
   })
 })
 
-describe('cycle order groups by provider on top of the shared comparator', () => {
-  it('walks the codex group to its end before entering the claude group', () => {
-    const tasks = [task('c1', 'codex'), task('l1', 'claude'), task('c2', 'codex'), task('l2', 'claude')]
-    expect(keys(orderCompanionTasksForCycle(tasks))).toEqual(['c1', 'c2', 'l1', 'l2'])
+describe('cycle order uses the same latest-question comparator', () => {
+  it('interleaves providers solely by latest question', () => {
+    const tasks = [task('c1', 'codex', undefined, 400), task('l1', 'claude', undefined, 300), task('c2', 'codex', undefined, 200), task('l2', 'claude', undefined, 100)]
+    expect(keys(orderCompanionTasksForCycle(tasks))).toEqual(['c1', 'l1', 'c2', 'l2'])
   })
 
-  it('applies pinned-first inside each group rather than across groups', () => {
+  it('does not apply pinned-first inside either provider', () => {
     const tasks = [
-      task('c1', 'codex'),
-      task('l1', 'claude'),
-      task('c2', 'codex', 'local'),
-      task('l2', 'claude', 'local')
+      task('c1', 'codex', undefined, 400),
+      task('l1', 'claude', undefined, 300),
+      task('c2', 'codex', 'local', 200),
+      task('l2', 'claude', 'local', 100)
     ]
-    // Base comparator lifts both pinned tasks first; grouping then partitions
-    // that already-stable order, so each group keeps its own pinned-first head.
-    expect(keys(orderCompanionTasksForCycle(tasks))).toEqual(['c2', 'c1', 'l2', 'l1'])
+    expect(keys(orderCompanionTasksForCycle(tasks))).toEqual(['c1', 'l1', 'c2', 'l2'])
   })
 
-  it('honours explicit pinned key order inside a group', () => {
-    const tasks = [task('c1', 'codex', 'local'), task('l1', 'claude', 'local'), task('c2', 'codex', 'local')]
-    expect(keys(orderCompanionTasksForCycle(tasks, ['c2', 'c1', 'l1']))).toEqual(['c2', 'c1', 'l1'])
+  it('ignores explicit pin order for navigation position', () => {
+    const tasks = [task('c1', 'codex', 'local', 300), task('l1', 'claude', 'local', 100), task('c2', 'codex', 'local', 200)]
+    expect(keys(orderCompanionTasksForCycle(tasks, ['c2', 'c1', 'l1']))).toEqual(['c1', 'c2', 'l1'])
   })
 
   it('is identical to display order while only codex tasks exist', () => {
@@ -164,19 +163,11 @@ describe('cycle order groups by provider on top of the shared comparator', () =>
     expect(keys(orderCompanionTasksForCycle(once))).toEqual(keys(once))
   })
 
-  it('keeps a newly arrived task from moving items across the cursor', () => {
-    const before = orderCompanionTasksForCycle([task('c1'), task('l1', 'claude'), task('c2')])
-    // A new claude task appended by a live event.
-    const after = orderCompanionTasksForCycle([task('c1'), task('l1', 'claude'), task('c2'), task('l3', 'claude')])
-    expect(keys(before)).toEqual(['c1', 'c2', 'l1'])
-    expect(keys(after)).toEqual(['c1', 'c2', 'l1', 'l3'])
-    // Every pre-existing pair keeps its relative direction: pressing "next"
-    // repeatedly cannot start moving backwards.
-    for (let index = 0; index < before.length - 1; index += 1) {
-      const left = after.findIndex((item) => item.key === before[index].key)
-      const right = after.findIndex((item) => item.key === before[index + 1].key)
-      expect(left).toBeLessThan(right)
-    }
+  it('moves a newly arrived latest question to the front', () => {
+    const before = orderCompanionTasksForCycle([task('c1', 'codex', undefined, 300), task('l1', 'claude', undefined, 200), task('c2', 'codex', undefined, 100)])
+    const after = orderCompanionTasksForCycle([...before, task('l3', 'claude', undefined, 400)])
+    expect(keys(before)).toEqual(['c1', 'l1', 'c2'])
+    expect(keys(after)).toEqual(['l3', 'c1', 'l1', 'c2'])
   })
 
   it('returns short inputs untouched', () => {

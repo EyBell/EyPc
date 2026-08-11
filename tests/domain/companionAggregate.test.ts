@@ -94,32 +94,30 @@ describe('merging a second provider', () => {
     // supposed to read as one merged, status-driven sequence.
     const snapshot = {
       ...codexSnapshot(),
-      ongoing: [card('c-old', { updatedAt: 100 }), card('c-older', { updatedAt: 50 })],
-      all: [card('c-old', { updatedAt: 100 }), card('c-older', { updatedAt: 50 })]
+      ongoing: [card('c-old', { lastQuestionAt: 100 }), card('c-older', { lastQuestionAt: 50 })],
+      all: [card('c-old', { lastQuestionAt: 100 }), card('c-older', { lastQuestionAt: 50 })]
     }
     const merged = mergeCompanionConversations(snapshot, [
-      card('claude:new', { provider: 'claude', updatedAt: 200 }),
-      card('claude:mid', { provider: 'claude', updatedAt: 75 })
+      card('claude:new', { provider: 'claude', lastQuestionAt: 200 }),
+      card('claude:mid', { provider: 'claude', lastQuestionAt: 75 })
     ])
     expect(keys(merged.ongoing)).toEqual(['claude:new', 'c-old', 'claude:mid', 'c-older'])
   })
 
-  it('never reorders codex cards relative to each other', () => {
-    // The codex projection order encodes rules this layer must not second-guess,
-    // so even an out-of-order codex sequence survives the merge intact.
+  it('reorders every provider together by latest question when a second provider is merged', () => {
     const snapshot = {
       ...codexSnapshot(),
-      ongoing: [card('c-a', { updatedAt: 10 }), card('c-b', { updatedAt: 900 }), card('c-c', { updatedAt: 40 })],
+      ongoing: [card('c-a', { lastQuestionAt: 10 }), card('c-b', { lastQuestionAt: 900 }), card('c-c', { lastQuestionAt: 40 })],
       all: []
     }
-    const merged = mergeCompanionConversations(snapshot, [card('claude:x', { provider: 'claude', updatedAt: 500 })])
-    expect(keys(merged.ongoing).filter((key) => key.startsWith('c-'))).toEqual(['c-a', 'c-b', 'c-c'])
+    const merged = mergeCompanionConversations(snapshot, [card('claude:x', { provider: 'claude', lastQuestionAt: 500 })])
+    expect(keys(merged.ongoing)).toEqual(['c-b', 'claude:x', 'c-c', 'c-a'])
   })
 
   it('sinks a foreign card with no activity to the end rather than the front', () => {
     const snapshot = {
       ...codexSnapshot(),
-      ongoing: [card('c1', { updatedAt: 100 })],
+      ongoing: [card('c1', { lastQuestionAt: 100 })],
       all: []
     }
     const merged = mergeCompanionConversations(snapshot, [
@@ -161,18 +159,18 @@ describe('merging a second provider', () => {
     expect(merged.pendingCount).toBe(merged.completedUnreadCount)
   })
 
-  it('globally orders input and unread status instances by appearance time across providers', () => {
+  it('globally orders input and unread groups by latest question across providers', () => {
     const snapshot = codexSnapshot()
-    const oldInput = card('codex:old-input', { activityState: 'waiting-input', statusEnteredAt: 100 })
-    const oldUnread = card('codex:old-unread', { bucket: 'completed-unread', activityState: 'ongoing', statusEnteredAt: 200 })
+    const oldInput = card('codex:old-input', { activityState: 'waiting-input', lastQuestionAt: 100, statusEnteredAt: 900 })
+    const oldUnread = card('codex:old-unread', { bucket: 'completed-unread', activityState: 'ongoing', lastQuestionAt: 200, statusEnteredAt: 900 })
     snapshot.ongoing = [oldInput]
     snapshot.inputRequired = [oldInput]
     snapshot.completedUnread = [oldUnread]
     snapshot.pending = snapshot.completedUnread
     snapshot.all = [oldInput, oldUnread]
     const merged = mergeCompanionConversations(snapshot, [
-      card('claude:new-input', { provider: 'claude', activityState: 'waiting-approval', statusEnteredAt: 400 }),
-      card('claude:new-unread', { provider: 'claude', bucket: 'completed-unread', activityState: 'ongoing', statusEnteredAt: 500 })
+      card('claude:new-input', { provider: 'claude', activityState: 'waiting-approval', lastQuestionAt: 400, statusEnteredAt: 1 }),
+      card('claude:new-unread', { provider: 'claude', bucket: 'completed-unread', activityState: 'ongoing', lastQuestionAt: 500, statusEnteredAt: 1 })
     ])
 
     expect(keys(merged.inputRequired)).toEqual(['claude:new-input', 'codex:old-input'])

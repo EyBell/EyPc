@@ -107,8 +107,8 @@ describe('uTools runtime identity', () => {
   it('fails closed when a new Main UI is paired with an old Preload', () => {
     ;(globalThis as any).window = { eypcPlatform: rawPlatform({
       companionKernel: {
-        revision: 'companion-task-kernel-v1',
-        packageRevision: 'companion-task-package-v1',
+        revision: 'companion-task-kernel-v2',
+        packageRevision: 'companion-task-package-v2',
         attach: vi.fn(),
         syncPackage: vi.fn(),
         dispatch: vi.fn(),
@@ -123,8 +123,8 @@ describe('uTools runtime identity', () => {
 
   it('accepts the unified Kernel only after exact Main/Preload identity handshake', () => {
     const kernel = {
-      revision: 'companion-task-kernel-v1',
-      packageRevision: 'companion-task-package-v1',
+      revision: 'companion-task-kernel-v3',
+      packageRevision: 'companion-task-package-v3',
       attach: vi.fn(),
       syncPackage: vi.fn(),
       dispatch: vi.fn(),

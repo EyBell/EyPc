@@ -75,6 +75,8 @@ describe('Claude real watcher to Controller publish', () => {
       claudeAppVersion: [...appState.SUPPORTED_APP_VERSIONS][0],
       dataDirectory
     })
+    let hostStateWakeups = 0
+    const disposeHostState = realBridge.watchCodeState(() => { hostStateWakeups += 1 })
     let releaseQuota!: (value: null) => void
     const blockedQuota = new Promise<null>((resolvePromise) => { releaseQuota = resolvePromise })
     const claude = { ...realBridge, readQuotaFallback: () => blockedQuota }
@@ -138,8 +140,12 @@ describe('Claude real watcher to Controller publish', () => {
     const p95 = ordered[Math.ceil(ordered.length * 0.95) - 1]
     expect(p95).toBeLessThan(250)
     expect(notifications).toBeGreaterThanOrEqual(100)
+    // Filesystem callbacks may coalesce, but this first subscriber must keep
+    // receiving wakeups after the Controller attaches its own subscriber.
+    expect(hostStateWakeups).toBeGreaterThan(0)
     releaseQuota(null)
     controller.dispose()
+    disposeHostState()
     realBridge.close()
   }, 20_000)
 })

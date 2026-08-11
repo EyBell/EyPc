@@ -215,7 +215,7 @@ function harness(options: HarnessOptions = {}) {
   }
   let companionTargets = new Map<string, Record<string, unknown>>()
   const companionTasks = {
-    revision: 'companion-task-actions-v1',
+    revision: 'companion-task-actions-v3',
     sync: (input: { targets: Array<Record<string, unknown>> }) => {
       companionTargets = new Map(input.targets.map((target) => [String(target.key), target]))
       return true
@@ -236,7 +236,7 @@ function harness(options: HarnessOptions = {}) {
         : codexArchive(String(target.actionAlias))
     },
     shortcutArchive: () => false,
-    diagnostics: () => ({ revision: 'companion-task-actions-v1', enabled: true, ready: true, targetCount: companionTargets.size, archiveInFlight: 0, confirmationPending: false })
+    diagnostics: () => ({ revision: 'companion-task-actions-v3', enabled: true, ready: true, targetCount: companionTargets.size, archiveInFlight: 0, confirmationPending: false })
   }
   const platform = {
     codex: {
@@ -417,7 +417,7 @@ describe('Claude App Code aggregation', () => {
     context.controller.dispose()
   })
 
-  it('dispatches one mixed task-level archive selection through each provider adapter', async () => {
+  it('dispatches one mixed task-level archive selection without locally hiding Codex on a Provider-only result', async () => {
     const now = Date.now()
     const context = harness({
       codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }],
@@ -449,7 +449,11 @@ describe('Claude App Code aggregation', () => {
     ])).resolves.toBe(true)
     expect(context.codexArchiveCalls).toEqual(['codex-completed-alias'])
     expect(context.archiveCalls).toEqual([LOCAL_A])
-    expect(conversationsOf(context).all).toHaveLength(0)
+    // This compatibility harness has no Process Kernel commit callback. Even
+    // when its mock Provider claims success, the Controller must not recreate
+    // the retired "Provider returned archived, so hide locally" contract.
+    expect(conversationsOf(context).all).toHaveLength(1)
+    expect(conversationsOf(context).all[0]).toMatchObject({ actionAlias: 'codex-completed-alias' })
     context.controller.dispose()
   })
 

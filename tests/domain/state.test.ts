@@ -16,6 +16,7 @@ describe('state domain', () => {
       hoverPreviewEnabled: false,
       hoverPreviewDelayMs: 500
     })
+    expect(state.settings.runtimeDiagnostics).toEqual({ enabled: true, level: 'debug', userConfigured: false, defaultsRevision: 3 })
     expect(state.settings.featureConfigs).toEqual([
       { id: 'ports', enabled: true, sortOrder: 1 },
       { id: 'favorites', enabled: false, sortOrder: 2 },
@@ -87,6 +88,18 @@ describe('state domain', () => {
       hoverPreviewEnabled: true,
       hoverPreviewDelayMs: 900
     })
+  })
+
+  it('migrates runtime diagnostics to the current enabled debug default and preserves valid choices', () => {
+    expect(normalizeAppState({ settings: {} }).settings.runtimeDiagnostics).toEqual({ enabled: true, level: 'debug', userConfigured: false, defaultsRevision: 3 })
+    expect(normalizeAppState({ settings: { runtimeDiagnostics: { enabled: false, level: 'debug' } } }).settings.runtimeDiagnostics)
+      .toEqual({ enabled: false, level: 'debug', userConfigured: true, defaultsRevision: 3 })
+    expect(normalizeAppState({ settings: { runtimeDiagnostics: { enabled: true, level: 'info' } } }).settings.runtimeDiagnostics)
+      .toEqual({ enabled: true, level: 'debug', userConfigured: false, defaultsRevision: 3 })
+    expect(normalizeAppState({ settings: { runtimeDiagnostics: { enabled: true, level: 'info', defaultsRevision: 2 } } }).settings.runtimeDiagnostics)
+      .toEqual({ enabled: true, level: 'info', userConfigured: true, defaultsRevision: 3 })
+    expect(normalizeAppState({ settings: { runtimeDiagnostics: { enabled: true, level: 'verbose' } } }).settings.runtimeDiagnostics)
+      .toEqual({ enabled: true, level: 'debug', userConfigured: false, defaultsRevision: 3 })
   })
 
   it('drops legacy built-in port groups while preserving user groups', () => {

@@ -33,8 +33,85 @@ afterEach(() => {
 })
 
 describe('process-lifetime companion navigation', () => {
-  it('coalesces shortcut events from separate turns to the final cursor target', async () => {
-    vi.useFakeTimers()
+  it('correlates quick-jump selection and Provider open with one operation id and records failures as errors', async () => {
+    const records: Array<Record<string, unknown>> = []
+    const operationId = 'manual-quick-jump-0001'
+    const { navigation } = readyNavigation({
+      record: (entry: Record<string, unknown>) => records.push(entry),
+      openCodex: async () => ({ outcome: 'opened', operationId }),
+      openClaude: async () => ({ outcome: 'dispatched', operationId })
+    })
+
+    await expect(navigation.open({
+      key: 'codex-a',
+      source: 'manual-quick-jump',
+      operationId
+    })).resolves.toMatchObject({ outcome: 'opened', operationId })
+    expect(records).toContainEqual(expect.objectContaining({
+      level: 'debug',
+      scope: 'navigation',
+      event: 'target-selected',
+      operationId,
+      source: 'manual-quick-jump',
+      provider: 'codex',
+      taskRef: 'codex-a'
+    }))
+    expect(records).toContainEqual(expect.objectContaining({
+      level: 'info',
+      scope: 'navigation',
+      event: 'codex-open',
+      outcome: 'opened',
+      operationId,
+      source: 'manual-quick-jump'
+    }))
+
+    await expect(navigation.open({
+      key: 'missing',
+      source: 'manual-row-open',
+      operationId: 'manual-row-open-failed-0002'
+    })).resolves.toMatchObject({
+      outcome: 'unavailable',
+      operationId: 'manual-row-open-failed-0002',
+      errorCode: 'stale-target'
+    })
+    expect(records).toContainEqual(expect.objectContaining({
+      level: 'error',
+      event: 'open',
+      outcome: 'failed',
+      code: 'stale-target',
+      operationId: 'manual-row-open-failed-0002',
+      source: 'manual-row-open'
+    }))
+  })
+
+  it('dispatches the leading shortcut immediately and retains only the final target while it is in flight', async () => {
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const opened: string[] = []
+    const open = async (target: { key: string }) => {
+      opened.push(target.key)
+      if (opened.length === 1) await firstGate
+      return { outcome: 'opened' }
+    }
+    const { navigation } = readyNavigation({ openCodex: open, openClaude: open })
+
+    const first = navigation.cycle(1)
+    await Promise.resolve()
+    expect(opened).toEqual(['codex-a'])
+
+    const second = navigation.cycle(1)
+    const third = navigation.cycle(1)
+    expect(opened).toEqual(['codex-a'])
+    releaseFirst()
+
+    await expect(first).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
+    await expect(second).resolves.toMatchObject({ errorCode: 'superseded' })
+    await expect(third).resolves.toMatchObject({ outcome: 'opened', key: 'codex-b' })
+    expect(opened).toEqual(['codex-a', 'codex-b'])
+    expect(navigation.diagnostics()).toMatchObject({ maxConcurrent: 1, acceptedCycleCount: 3 })
+  })
+
+  it('dispatches separate completed shortcut turns without a fixed debounce delay', async () => {
     const opened: string[] = []
     const { navigation } = readyNavigation({
       openCodex: async (target: { key: string }) => { opened.push(target.key); return { outcome: 'opened' } },
@@ -42,17 +119,13 @@ describe('process-lifetime companion navigation', () => {
     })
 
     const first = navigation.cycle(1)
-    await vi.advanceTimersByTimeAsync(30)
+    await expect(first).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
     const second = navigation.cycle(1)
-    await vi.advanceTimersByTimeAsync(30)
+    await expect(second).resolves.toMatchObject({ outcome: 'dispatched', key: 'claude:local_a' })
     const third = navigation.cycle(-1)
-    await vi.advanceTimersByTimeAsync(navigationModule.DEFAULT_COALESCE_MS)
-
-    await expect(first).resolves.toMatchObject({ errorCode: 'superseded' })
-    await expect(second).resolves.toMatchObject({ errorCode: 'superseded' })
     await expect(third).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
-    expect(opened).toEqual(['codex-a'])
-    expect(navigation.diagnostics()).toMatchObject({ maxConcurrent: 1, replacedCount: 2, acceptedCycleCount: 3 })
+    expect(opened).toEqual(['codex-a', 'claude:local_a', 'codex-a'])
+    expect(navigation.diagnostics()).toMatchObject({ maxConcurrent: 1, replacedCount: 0, acceptedCycleCount: 3 })
   })
 
   it('never overlaps Codex and Claude Host dispatches', async () => {
@@ -82,20 +155,29 @@ describe('process-lifetime companion navigation', () => {
     expect(navigation.diagnostics().maxConcurrent).toBe(1)
   })
 
-  it('lets an explicit task open replace an undispatched generic cycle', async () => {
-    vi.useFakeTimers()
+  it('lets an explicit task open replace the queued trailing generic cycle', async () => {
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
     const opened: string[] = []
+    let callCount = 0
     const { navigation } = readyNavigation({
-      openCodex: async (target: { key: string }) => { opened.push(target.key); return { outcome: 'opened' } },
+      openCodex: async (target: { key: string }) => {
+        opened.push(target.key)
+        callCount += 1
+        if (callCount === 1) await firstGate
+        return { outcome: 'opened' }
+      },
       openClaude: async (target: { key: string }) => { opened.push(target.key); return { outcome: 'dispatched' } }
     })
 
+    const first = navigation.cycle(1)
     const cycle = navigation.cycle(1)
     const manual = navigation.open({ key: 'claude:local_a', source: 'manual' })
+    releaseFirst()
+    await expect(first).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
     await expect(cycle).resolves.toMatchObject({ errorCode: 'superseded' })
     await expect(manual).resolves.toMatchObject({ outcome: 'dispatched' })
-    await vi.runAllTimersAsync()
-    expect(opened).toEqual(['claude:local_a'])
+    expect(opened).toEqual(['codex-a', 'claude:local_a'])
   })
 
   it('queues an exact card target even while a remounted Renderer retains an older ready snapshot', async () => {

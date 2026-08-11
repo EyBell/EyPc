@@ -44,7 +44,6 @@ describe('Codex domain', () => {
       floatEnabled: true,
       displayStyle: 'card',
       quotaRefreshSeconds: 7,
-      taskRefreshSeconds: 23,
       dynamicTaskWindowHours: 48,
       compactFields: ['weekly', 'tasks', 'unknown'],
       expandedFields: ['tasks', 'config'],
@@ -56,7 +55,6 @@ describe('Codex domain', () => {
       floatEnabled: true,
       displayStyle: 'card',
       quotaRefreshSeconds: 7,
-      taskRefreshSeconds: 23,
       dynamicTaskWindowHours: 48,
       compactFields: ['weekly', 'tasks'],
       expandedFields: ['tasks', 'config'],
@@ -65,22 +63,13 @@ describe('Codex domain', () => {
     expect(settings.colors).toEqual({ ...defaultCodexSettings().colors, healthy: '#00aa99', warning: 'invalid' })
   })
 
-  it('normalizes custom second refresh intervals and migrates the legacy minute field', () => {
-    expect(defaultCodexSettings()).toMatchObject({ quotaRefreshSeconds: 300, taskRefreshSeconds: 15 })
+  it('normalizes the automatic quota interval and migrates zero-valued legacy settings to the safe default', () => {
+    expect(defaultCodexSettings()).toMatchObject({ quotaRefreshSeconds: 300 })
     expect(normalizeCodexSettings({ quotaRefreshMinutes: 10 }).quotaRefreshSeconds).toBe(600)
-    expect(normalizeCodexSettings({ quotaRefreshMinutes: 0 }).quotaRefreshSeconds).toBe(0)
-    expect(normalizeCodexSettings({ quotaRefreshSeconds: 1.6, taskRefreshSeconds: 2.4 })).toMatchObject({
-      quotaRefreshSeconds: 2,
-      taskRefreshSeconds: 2
-    })
-    expect(normalizeCodexSettings({ quotaRefreshSeconds: -1, taskRefreshSeconds: -1 })).toMatchObject({
-      quotaRefreshSeconds: 0,
-      taskRefreshSeconds: 0
-    })
-    expect(normalizeCodexSettings({ quotaRefreshSeconds: 999_999, taskRefreshSeconds: 999_999 })).toMatchObject({
-      quotaRefreshSeconds: 86_400,
-      taskRefreshSeconds: 86_400
-    })
+    expect(normalizeCodexSettings({ quotaRefreshMinutes: 0 }).quotaRefreshSeconds).toBe(300)
+    expect(normalizeCodexSettings({ quotaRefreshSeconds: 1.6 }).quotaRefreshSeconds).toBe(2)
+    expect(normalizeCodexSettings({ quotaRefreshSeconds: -1 }).quotaRefreshSeconds).toBe(1)
+    expect(normalizeCodexSettings({ quotaRefreshSeconds: 999_999 }).quotaRefreshSeconds).toBe(86_400)
   })
 
   it('defaults Claude App quota access off and migrates an existing fallback opt-in', () => {
@@ -601,7 +590,7 @@ describe('Codex domain', () => {
     expect(rows.map((item) => item.key)).toEqual([keyAt(4), keyAt(0), keyAt(1), keyAt(3), keyAt(2)])
   })
 
-  it('orders only attention groups by status appearance time and includes approvals as input', () => {
+  it('orders every status group by latest question time and includes approvals as input', () => {
     const olderPinnedApproval = keyAt(61)
     const newerInput = keyAt(62)
     const olderCompletion = keyAt(63)
@@ -639,10 +628,10 @@ describe('Codex domain', () => {
       localPins: [{ kind: 'task', key: olderPinnedApproval }]
     })
 
-    expect(result.snapshot.inputRequired.map((task) => task.key)).toEqual([newerInput, olderPinnedApproval])
-    expect(result.snapshot.inputRequired.map((task) => task.statusEnteredAt)).toEqual([900, 500])
-    expect(result.snapshot.completedUnread.map((task) => task.key)).toEqual([newerCompletion, olderCompletion])
-    expect(result.snapshot.completedUnread.map((task) => task.statusEnteredAt)).toEqual([950, 600])
+    expect(result.snapshot.inputRequired.map((task) => task.key)).toEqual([olderPinnedApproval, newerInput])
+    expect(result.snapshot.inputRequired.map((task) => task.lastQuestionAt)).toEqual([9_800, 800])
+    expect(result.snapshot.completedUnread.map((task) => task.key)).toEqual([olderCompletion, newerCompletion])
+    expect(result.snapshot.completedUnread.map((task) => task.lastQuestionAt)).toEqual([9_600, 650])
     expect(result.snapshot.inputRequiredCount).toBe(2)
     expect(result.snapshot.ongoing[0].key).toBe(olderPinnedApproval)
   })
