@@ -1,7 +1,7 @@
 # Claude Code Companion 权威重置 — Tasks
 
 updated: `2026-08-11`
-overall_status: `implementation-landed / RAW-029-focused-verified / native-sidebar-unsupported / host-acceptance-pending`
+overall_status: `implementation-landed / RAW-030-full-automated-verified / artifact-ready / native-sidebar-unsupported / host-acceptance-pending`
 
 | ID | Work | Status |
 | --- | --- | --- |
@@ -41,6 +41,7 @@ overall_status: `implementation-landed / RAW-029-focused-verified / native-sideb
 | CCR-33 | RAW-028 移除 Claude 固定库存上限、稳定归档确认与 metadata rebase/单次写前重试 | completed-focused-verified |
 | CCR-34 | RAW-028 真实正常完成→未读→已读→新 Prompt 与两次 Claude 归档自动移除 | pending-host-acceptance |
 | CCR-35 | RAW-029 D-1 归档提示边界与 D-2 原生侧栏及时收敛能力核验 | D-1 completed-focused-verified / D-2 verified-unsupported-currently |
+| CCR-36 | RAW-030 新 session phase 因果优先、原子状态消费、V4 Latest Cache/Float applied ACK 与固定归档提示 | completed-full-automated-verified / artifact-ready / real transition pending |
 
 ## Execution Journal
 

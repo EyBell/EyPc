@@ -1,87 +1,90 @@
-# Codex Companion v3 Unified Runtime Spec
+# RAW-160 Companion V4 Unified Runtime Spec
 
-Status: `implemented / full-automated-verified / host-acceptance-pending`
+Status: `implemented / full-automated-verified / artifact-ready / host-acceptance-pending`
+
+本规范是当前权威。RAW-159 的 V3 规格作为历史实现基线保留在 Git 与长期任务文档中；与本规范冲突时以 V4 为准。
 
 ## 1. Authority Graph
 
 ```text
-Codex events + paged inventory
-  -> Codex Evidence Adapter
-  -> companion-task-kernel-v3 reducer and hot cache
-  -> companion-task-package-v3
-  -> Main / Float / cards / tabs / badges / projects / shortcuts / navigation / archive
+Codex / Claude events, inventory and watcher evidence
+  -> Provider Evidence Adapter
+  -> Branch Evidence Store
+  -> Canonical Task Reducer
+  -> View / Capability Projector
+  -> Process Latest Package Cache
+  -> Main / Float / badges / navigation / actions
 ```
 
-[task-kernel.cjs](../../../../preload/companion/task-kernel.cjs#L1) 是唯一进程状态与热缓存 owner；[companionTaskPackage.ts](../../../../src/domain/companionTaskPackage.ts#L1) 定义唯一公共包。Renderer 只合并标题、项目等展示元数据，不得重新解释 phase、unread、membership、capability 或循环顺序。Kernel 暂不可用时保留最后完整包并 fail closed，不回退旧业务判断。
+[task-kernel.cjs](../../../../preload/companion/task-kernel.cjs#L1) 是 `companion-task-kernel-v4` 的唯一状态、父/Side Chat 聚合、Plan 生命周期、时间窗口、隐藏/暂停、排序、角标与动作能力 owner；[companionTaskPackage.ts](../../../../src/domain/companionTaskPackage.ts#L1) 定义 `companion-task-package-v4` 公共合同。Provider Adapter 只归一化证据；Renderer 只提交配置与操作意图。Controller、Main 和 Float 不得重新裁决 phase/group/tier/count。
 
-## 2. Evidence and Canonical State
+V4 Kernel 缺失、Facade 不完整或 Main/Float/Renderer/Preload Runtime Identity 不一致时进入 `reload-required` 并停止任务动作；不得回退 V3/V1 业务路径。
 
-`CompanionTaskEvidenceV3` 由 `provider + taskKey` 定位，并携带 membership、phase、authority/exact、Turn/状态/终态时间、三态 unread、observationGeneration、observedAt、metadataRevision 和 capabilityToken。
+## 2. Branch Causality And Plan Lifecycle
 
-`CanonicalTaskStateV3` 输出 phase、unread、`fresh|verifying`、statusEnteredAt、semanticRevision、membershipRevision 和 capabilities。`observationGeneration/sourceLaneGenerations` 只用于内部乱序门禁和 debug，不参与包语义相等。
+每个分支先按因果顺序裁决：更新的真实 active 清除旧 waiting；更新的 unresolved input/approval/Plan 建立 waiting；terminal 仅在无更新 active/waiting 时有效；active/terminal 冲突保留非终态并 `freshness=verifying`。父任务聚合优先级为任一运行 → 审批 → 普通输入/Plan 实施确认 → 全部分支 exact completed → 全部分支经复核 stopped → 保留稳定态。
 
-| 新证据 | 因果条件 | Canonical 结果 |
-| --- | --- | --- |
-| waiting-input / waiting-approval | 水位不早于 active/terminal | 立即等待 |
-| active | 新 Turn epoch 或明确解除 waiting | 立即运行 |
-| exact completed | 无更新 active/waiting | completed |
-| same-epoch unread=true | completion epoch 一致 | completed-unread |
-| explicit read receipt | 不早于当前 unread revision | completed-read |
-| exact interrupted | 无更新 active/waiting | stopped / 待继续 |
-| newer active after interrupted | active epoch 更新 | running |
-| unconfirmed failed/interrupted | 无法精确收敛 | 保留稳定态 + verifying |
-| exact archived | 归档事务 commit | 原子移除 |
-| ordinary inventory missing | 未达缺失确认 | 保留 |
+| 证据 | Canonical 结果 |
+| --- | --- |
+| 首次 Plan Turn 正在生成，尚无完成 Plan | running；`planReady=false` |
+| 已有 Plan 后继续修改且 Turn 运行 | running；保留 `planReady=true` |
+| 普通问题或审批 | waiting-input / waiting-approval；高于 Plan 循环层 |
+| completed Plan 且实施确认未决 | waiting-input；`planReady=true`；`planImplementation=true` |
+| Plan 未执行、exact interrupted、定向复读确认无更新活动/等待 | stopped；保留 `planReady=true` |
+| 普通 interrupted，尚未 idle-confirmed | 保留稳定态；`verifying` |
+| 普通 interrupted，全部分支 idle-confirmed | ordinary stopped |
+| exact default/non-Plan Turn 开始 | running；清除 `planReady/paused` |
 
-冷启动或重连的 interrupted/failed 冲突只对该任务执行一次 single-flight latest Turn 精确读取；不全量逐任务校对。新 key 先产生稳定最小卡片，元数据随后原位补齐。
+`CompanionCanonicalTaskV4` 增加 `planReady`、`planLifecycleRevision`、`paused` 与 `open/archive/pause/resume/executePlan` 能力。新 exact Plan 替换旧 Plan 时 revision 单调增加；普通刷新、owner 切换、refollow 和 Plan 修改不清除。完成、归档、移除、明确放弃或 exact default 执行才清除。
 
-## 3. Revision, Publication and Focus
+## 3. Views, Windows, Cycles And Pause
 
-- 同一 tick 的证据由 microtask 合并，下一帧原子展示；可信状态不做秒级防抖。
-- unknown 最多使用 250ms 精确核验窗，期间保留原分组且不增加 Tab/角标。
-- 只有 membership、phase、unread、visibility、capability 或必要元数据变化才增加 semanticRevision/packageRevision。
-- 等价 observation 是完整 no-op：不增加 revision、不发布 Float、不 notify Renderer、不重算角标、不发送 focus；仅 debug 记录原因。
-- focus 身份固定为 `provider + taskKey`；revision 不参与等价判断。破坏性操作单独使用 capability/revision 水位。
-- 数字角标使用稳定宽度和 tabular digits 消除布局抖动，不延迟真实语义。
+- 动态列表仍受 `dynamicTaskWindowHours` 控制；普通 stopped 超时退出。
+- 唯一窗口例外是 `phase=stopped && planReady && !paused`；它进入待继续分组及分组计数，但不新增紧凑 stopped 角标。
+- waiting Plan 可退出动态展开列表，但仍进入待输入角标、Plan 能力和通用 Plan 循环。
+- 通用循环取首个非空层：普通 input/approval；exact Plan implementation 或 stopped Plan-ready；动态窗口 active；local pin。每层按最近提问、创建时间、匿名 key 排序。
+- paused、ordinary hidden、archived 从全部角标和快捷候选移除。
 
-## 4. Inventory, Cache and Navigation
+Plan pause receipt 只持久化哈希 taskRef、Plan revision、paused 和时间。已隐藏页先渲染“已暂停”，再渲染普通隐藏；旧 hidden Plan 执行幂等迁移，先成功写 pause receipt 后再清 hidden，清理失败时回滚 pause。普通/批量隐藏遇到 Plan-ready 统一转换为 pause。
 
-Codex `thread/list limit=100` 是单页协议大小，循环读取 cursor 到空并检测 cursor loop。动态小时/天窗口只决定展示资格，不截断源库存。Process Kernel 跨普通 hide/Float close 保存 inventory、alias、latest Turn、cycleKeys、attentionKeys 和 focusedKey。
+任务四槽为普通 `顶/隐/归/+`、Plan-ready `顶/暂/归/执`、paused Plan `顶/恢/归/执`。新会话能力留在抽屉；批量提供暂停/恢复；[FloatApp.vue](../../../../src/FloatApp.vue#L1) 使用同一 package capability 并保留 ARIA、禁用原因和焦点恢复。
 
-[navigation.cjs](../../../../preload/companion/navigation.cjs#L1) 使用热目标直接打开；alias stale 时只定向重建一次并重试一次。所有打开来源共享全局单并发：首目标立即派发，在途期间只保留最终尾随目标。相同 focus key 直接 no-op。
+## 4. Actions V2 And Execute Plan
 
-## 5. Codex Archive Transaction
+[task-actions.cjs](../../../../preload/companion/task-actions.cjs#L1) 是 `companion-task-actions-v2` 唯一 Dispatcher。pause/resume/execute 使用 Plan revision single-flight；Execute Plan 只有 Codex、actionable Plan、无 active/其它 pending、default collaboration mode 与当前 model 可得时启用。
 
-[preload/index.js](../../../../preload/index.js#L1) 对每次 Codex 归档创建 operationId，并严格执行：
+首次点击“执”只建立 5 秒确认；第二击才执行。确认 identity 包含 provider、匿名 task key、Plan revision、action alias、phase 与 paused；任何相关 selector 变化取消。确认缓存独立于 package revision。
 
-1. archive-intent
-2. archive-confirmation
-3. archive-preflight
-4. archive-provider-write（只写一次）
-5. archive-server-verify-1
-6. archive-desktop-sync
-7. archive-native-ack（Desktop 已连接时，最长 2 秒）
-8. archive-server-verify-2（至少间隔 300ms）
-9. archive-kernel-commit
-10. archive-reconciliation / archive-ui-removal
+[preload/index.js](../../../../preload/index.js#L1) 在每个 App Server 连接只读缓存一次 `collaborationMode/list`，执行顺序固定为：
 
-Desktop 运行且连接时，写结果、两次服务器库存、Desktop sync 和匹配任务原生 ACK 缺一不可；Desktop 未运行时只免除 ACK/sync，仍须两次持久化确认。Provider RPC 成功、一次列表缺行或消息“已发送”都不是本地删除依据。失败/矛盾/超时返回 failed 或 indeterminate，卡片和按钮保留并自动定向核验；只有 Kernel commit 后全部消费者和缓存原子移除。确认 identity 为 `provider + taskKey + terminalEpoch`，不受 revision、unread、focus 或 alias churn 影响。
+1. 建立 single-flight/operationId 并定向复核 task、alias、Plan revision、active/pending。
+2. 打开原 Codex 任务；失败则停止。
+3. `thread/resume({ threadId, excludeTurns: true })`，不覆盖 cwd/model/权限。
+4. 从私有线程状态取当前 model 与 reasoning effort；model 未知则停止。
+5. 仅调用一次 `turn/start`，传入完整 `{mode:'default', settings:{model, reasoning_effort, developer_instructions:null}}` 与 Preload 私有固定指令。
+6. 明确响应或 exact Turn evidence 才收敛为 running 并清 Plan；不得乐观改包。
 
-## 6. Runtime Operations and Diagnostics
+明确失败保留 Plan 并返回阶段原因；超时为 `indeterminate`，定向复读匹配新 Turn，禁止自动重发。无剪贴板、键盘模拟、UI 自动化或替代会话回退。
 
-[actionRuntime.ts](../../../../src/runtime/action/actionRuntime.ts#L1) 为所有用户动作创建 operationId；来源枚举包括 card-click、manual-row-open、manual-quick-jump、global-shortcut、local-shortcut、attention-shortcut、archive-button、archive-shortcut、batch-archive、project-archive 和 automatic-recovery。
+## 5. Semantic Publication And Latest-State Consumption
 
-[diagnostics.cjs](../../../../preload/diagnostics.cjs#L1) 实现 `eypc-runtime-diagnostics-v3`：
+Kernel 的语义指纹覆盖 phase/freshness/unread、Plan fields、membership/visibility/capability/action token、groups/counts/cycle/attention/sort 和必要展示元数据。observedAt、acceptedAt、producer generation 与内部因果水位不参与包相等。
 
-- 明文 JSONL，8 MB/文件、64 MB 总量、14 天轮转；唯一 Host sink。
-- 当前安装验证默认 `{enabled:true, level:"debug", userConfigured:false, defaultsRevision:3}`；显式用户选择永久保留。
-- error 记录失败、不变量冲突、ACK 超时、包/缓存/落盘错误；info 记录用户操作、真实状态/包发布、缓存冷热和归档重要阶段；debug 记录每次规范化、水位、before/after、lane 接纳/拒绝、no-op、队列和定向核验。
-- 每个调用显式 level；静态 AST 测试阻止遗漏。
-- 公共字段统一携带 sessionId/seq/operationId/traceId、provider/taskRef、event/outcome/reason/evidence、before/after phase/unread、Turn 时间、水位/revision、cache、durationMs 和 errorCode。
-- 精确 taskRef、运行路径和状态水位不哈希；递归拒绝提示词/正文、命令参数、stdout/stderr、凭据/令牌、堆栈和隐藏推理。
+等价 evidence 不增加 task/package revision，不更新 publishedAt，不调用 listener，不推 Main/Float，不同步 Navigation/Actions，也不引发 badge/focus/open。动态时间只维护最近一个 `nextVisibilityTransitionAt` 单次计时器。
 
-[probe-eypc-diagnostics-runtime.mjs](../../../../scripts/probe-eypc-diagnostics-runtime.mjs#L1) 兼容 v2/v3，支持精确筛选及状态变化、no-op、快捷键、跳转、归档阶段和错误码聚合。
+Kernel 暴露 `getLatest()` 和 `subscribe(afterRevision, listener)`；Main、Float、Navigation、Actions 分别缓存 package revision 与 selector fingerprint。remount 只补发一个最新包，同/旧 revision 忽略；mainHide、Float close 与 Renderer detach 不清缓存。相同 navigation targets 不重置游标；相同 action selector 不取消确认。
 
-## 7. Compatibility
+Float task lane 独立于 quota/settings，ACK 为 `received/applied/rejected`。Host 在 500ms 未 applied 时只重发最新包一次，累计 1 秒且心跳健康才受控重建；Float 对同 revision 不替换 task cache 引用、不重新执行 Vue 投影。
 
-Codex 使用 v3 全合同。Claude/Cloud Adapter 仍可提交 Provider-neutral evidence/action/result，但本轮不改变其状态或归档业务语义。旧 v1/v2 task package 不得被 Renderer 作为当前权威消费。
+## 6. Claude State And Archive Result
+
+[task-kernel.cjs](../../../../preload/companion/task-kernel.cjs#L1) 的 Claude evidence reducer 让本次 `session.phase` 在因果上新于旧 cache 时优先；延迟旧 inventory 不能覆盖更新事件。phase、phaseRevision、statusEnteredAt、unread 和 capabilities 作为同一 accepted snapshot 更新，watcher、一秒补漏和打开后刷新复用同一 Store。
+
+[archive.cjs](../../../../preload/claude/archive.cjs#L1) 的 D′ 后置条件不变：唯一目标元数据 `isArchived=true`、活动库存移除、事务复读通过。成功结果明确为“EyPc 已归档并移除。Claude 原生侧栏同步未确认，当前不受支持。”；不以侧栏视觉作为合同，不增加 AX/JXA、私有 IPC、LevelDB 写、重启或 UI 自动化。
+
+## 7. Privacy, Compatibility And Static Ownership
+
+- task package、Renderer、pause receipt 与错误记忆不包含原始 task ID、路径、Plan 正文或执行提示。
+- 诊断 taskRef 为进程会话期 `h:<hex>`；operationId 只关联阶段，不暴露内容。
+- `scripts/validate-utools-runtime.mjs` 与测试锁定 V10/V4/Actions v2、Execute 协议、Float ACK、Claude 文案和四端 Runtime Identity。
+- 静态架构测试禁止 Kernel 外生产代码重新构造 canonical phase、dynamicGroup、cycleTier、counts 或 cycleKeys。

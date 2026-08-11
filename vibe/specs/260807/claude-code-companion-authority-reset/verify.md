@@ -1,7 +1,7 @@
 # Claude Code Companion 权威重置 — Verification
 
 updated: `2026-08-11`
-status: `implementation-landed / RAW-029-focused-verified / native-sidebar-unsupported / quota-host-verified / interactive-host-partial`
+status: `implementation-landed / RAW-030-full-automated-verified / artifact-ready / native-sidebar-unsupported / quota-host-verified / interactive-host-partial`
 
 ## Verification Verdict
 
@@ -10,6 +10,7 @@ status: `implementation-landed / RAW-029-focused-verified / native-sidebar-unsup
 - 本轮新增的 App quota 权威已在真实加密缓存上返回 HTTP 200，并只投影 5h、全模型周、Fable scoped 周额度及 reset；状态/未读/项目/视觉的确定性链路通过。
 - RAW-024 已定位并修复旧任务假 running：父 Turn reducer拒绝 Stop 后 SubagentStop/工具尾事件复活，App terminal 优先同 Turn Hook tail；Claude-only 单项同步与成功打开静默同步复用同一 state/unread singleflight 和 revision 发布链。
 - RAW-154 已以 `claude-metadata-archive-v2` 取代历史 Deep Link+AX：唯一私有文件索引、phase/stat/hash 写前门禁、单字段同目录原子事务、语义核验、并发保护和安全回滚均已落地；元数据+私有活动库存双确认即可成功，App 日志不再是硬条件。普通打开会先拒绝已归档/缺失/歧义目标，文件 membership delta 与一秒索引 watchdog 不等待完整库存或额度。
+- RAW-030 / Companion RAW-160 已把 Claude current phase 因果优先移入 V4 Kernel，旧 inventory/cache 不得覆盖较新的 watcher/open-refresh terminal；phase、revision/time、unread、capabilities 原子接受。受影响 `13/13` files、`445/445` tests 与最终全仓 `83/83` files、`1282/1282` tests 通过；typecheck、1870-module build、Runtime Identity、uTools validator、镜像/语法和文档审计通过，产物为 `host-495d79c14c1cbb24794d / renderer-568dfd47041bcb997f6b`。真实 Claude transition 仍 pending，未重复真实归档；完整证据见 [RAW-160 verify](../../260810/1155-install-runtime-diagnostics/verify.md#L1)。
 - RAW-027 / Codex RAW-155 已把最终包升级为 V2 membership/phase/unread 独立 lane，并修复 Host/Renderer 单 callback 覆盖、首次 inventory 前订阅造成零目录 watcher、并发 unread generation 颠倒和异步旧整包删除新会话。正常可信 push 不读取 quota/environment/full inventory。
 - RAW-028 与 Codex RAW-155 增量的当前影响集为 `9/9` files、`303/303` tests：正常 completion 后 generic session-end 保持 completed，native unread 提升任何非 live history，405 个 Claude sessions 不截断，最终 package 原子更新卡片/Tab/项目/分组/角标，Claude unknown 保持专属分段，确认期间 revision/alias churn 保留，D′ metadata rebase/单次写前重试和脱敏决策日志通过。`pnpm run sync:preloads` 与最终 `pnpm run build` 通过 typecheck、1870 modules、runtime validator；产物身份为 `host-b1ebbac81b95ca4f0405 / renderer-5b82a3734cf73beb8df3`。真实正常完成→未读→已读→新 Prompt 与两次归档自动移除仍 pending。
 - **整体仍未验收**：实机 permission/AskUserQuestion/响应、EyPc 点击现有真实未读后的原生移除/同轮不回跳/新 completion 再未读、标题/重启、项目三筛选及最终 uTools 同屏视觉矩阵尚未完整执行。

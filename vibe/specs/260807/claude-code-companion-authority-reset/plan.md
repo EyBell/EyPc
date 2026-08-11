@@ -1,7 +1,7 @@
 # Claude Companion：Codex 同构状态与全局缓存改造
 
 updated: `2026-08-11`
-status: `implementation-landed / RAW-029-focused-verified / native-sidebar-unsupported / interactive-host-acceptance-pending`
+status: `implementation-landed / RAW-030-full-automated-verified / artifact-ready / native-sidebar-unsupported / interactive-host-acceptance-pending`
 
 ## Baseline And Corrected Conclusions
 
@@ -84,6 +84,13 @@ status: `implementation-landed / RAW-029-focused-verified / native-sidebar-unsup
 - D-2 先做只读能力核验。已安装 App 的原生归档会修改运行中 session manager、保存对象并发布 `archived` 事件；D′ 文件事务没有进入该链，官方公开 Deep Link/API 也没有面向 Desktop Code 本地会话的归档入口。因此本轮不新增原生写路径，状态固定为 `unsupported-currently`。
 - 未来仅在“受支持原生入口 + 同一 session 原生 ACK + 同一运行中侧栏 1.25 秒内移除”同时可测时重开；私有 IPC、AX/JXA/UI 自动化、LevelDB/元数据写入、自动重启和事后视觉推断继续禁止。
 - 当前影响验证覆盖 Claude archive Bridge、Provider-neutral action carry-through、Controller 提示兜底、canonical/public Preload 语法/镜像和变更文档链接。因 uTools 实际加载 `dist` 且 Host identity 哈希 canonical Preload，产物边界升级为 typecheck + 1870-module production build + runtime preparation/validator；仍不运行全仓测试，也不写真实 Claude 数据。
+
+### 10. RAW-030 / Companion RAW-160 新 phase 优先与应用确认
+
+- 把 Claude phase 合并移入 V4 Kernel：本次 current session 的较新因果 evidence 优先，旧 inventory/cache 只在 current phase 缺失或更旧时回填。
+- phase、phaseRevision、statusEnteredAt、unread、capabilities 原子接受；等价轮询仅推进私有 generation，不重复发布。
+- Main/Float/Navigation/Actions 保存 latest revision/selector；Float 以 applied ACK 证明 UI 已消费，snapshot-send 不再等同应用成功。
+- 自动化覆盖 running→terminal、延迟旧 inventory、打开后刷新与归档结果文案；真实 Claude transition 继续宿主门禁，真实归档不重复执行。
 
 ## Verification Plan And Current Gate
 

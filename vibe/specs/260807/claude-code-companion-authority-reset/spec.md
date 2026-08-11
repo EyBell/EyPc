@@ -1,10 +1,10 @@
 # Claude Code Companion 权威重置 — Controlled Specification
 
 spec_id: `SPEC-260807-CLAUDE-CODE-COMPANION-AUTHORITY-RESET`
-spec_revision: `8`
+spec_revision: `9`
 status: `integrated-current-authority`
-execution_status: `implementation-landed / RAW-029-focused-verified / native-sidebar-unsupported / interactive-host-pending`
-raw_sources: `RAW-001..RAW-029`
+execution_status: `implementation-landed / RAW-030-full-automated-verified / artifact-ready / native-sidebar-unsupported / interactive-host-pending`
+raw_sources: `RAW-001..RAW-030`
 updated: `2026-08-11`
 
 ## Authority
@@ -186,7 +186,7 @@ updated: `2026-08-11`
 - 唯一可见库存是 Claude App `claude-code-sessions/<org>/<user>/local_<uuid>.json` 的 Code 会话；不得并入 `local-agent-mode-sessions`、`~/.claude/projects` CLI-only 会话、Cowork 或云端索引。
 - 主键使用 App `local_<uuid>`；显示名使用 App `title`，空值固定为 `General coding session`。`completedTurns`、归档、项目和活动时间均为白名单元数据；UUID 不得成为可见标题。
 - App 已有重复包装行全部保留。共享 `cliSessionId` 的 Hook 只有在唯一相关时才更新一个本地行；歧义证据保持 `unknown`，不得一对多扇出。
-- Claude 功能启用期间，Controller 持续维护进程级 `inventory / phase / unread / quota / appPresence` 物化视图。切页、悬浮窗显隐和快捷键不得清空；进程重启后从真实来源冷启动，不持久化旧 live phase。
+- Claude 功能启用期间，各 Provider lane 持续维护进程级 `inventory / phase / unread / quota / appPresence` 证据缓存，Kernel V4 持有唯一任务物化包；Controller 只加入显示元数据并消费最新版。切页、悬浮窗显隐和快捷键不得清空；进程重启后从真实来源冷启动，不持久化旧 live phase。
 
 ### State and unread
 
@@ -200,19 +200,20 @@ updated: `2026-08-11`
 - official Hooks 是唯一关联 fallback，不是完整单源权威；仅 Hooks 路线已废弃。`PermissionRequest` 与 `AskUserQuestion` 分别进入等待审批/等待输入，响应/后续活动恢复 running，Stop 完成当前 Turn；SessionEnd 不覆盖已有 Stop，idle notification 不产生待输入。
 - Hook 状态由纯父 Turn reducer 归并：只有 `UserPromptSubmit` 开启 Turn；`SubagentStart/SubagentStop` 只更新活动水位。`Stop/StopFailure/SessionEnd` 关闭 Turn 后，同 Turn 的子代理、工具或 lifecycle 尾事件不得恢复 running；只有严格更新的新 Prompt Turn 可重新激活。
 - 未读持久权威是 Claude App Local Storage 中包含 Chromium string tag 的 `epitaxy-unread-v1` 精确键。V2 reader 在复制 LevelDB 前后核对源指纹，只接纳完整稳定的 `generation/sourceFingerprint` 快照；失败返回 unknown，不能复用旧集合或字节扫描。
-- 成功派发精确 Epitaxy local deep link 后，Controller 可为当前 `sessionId + completionEpoch` 建立仅进程内的可撤销已读提示，并在 `0/100/300/1000ms` 重读原生集合。同完成轮次迟到的 unread `true` 不得回跳；新 running/waiting 或更晚真实 completion 会撤销提示。派发失败不建立提示，`ClaudeOpenResult.confirmsRead` 仍为 `false`，且提示不写 App、不持久化、不改变 phase。
+- 成功派发精确 Epitaxy local deep link 后，Kernel 可为当前匿名任务的 `completionEpoch` 建立仅进程内的可撤销已读提示，并在 `0/100/300/1000ms` 重读原生集合。同完成轮次迟到的 unread `true` 不得回跳；新 running/waiting 或更晚真实 completion 会撤销提示。派发失败不建立提示，`ClaudeOpenResult.confirmsRead` 仍为 `false`，且提示不写 App、不持久化、不改变 phase。
 - 精确 live running/waiting 优先于 unread；否则 native unread membership 本身可把非 live 历史 unknown/stopped 确认为 `completed-unread`，不要求先有 Hook completed。原生 unread 清除只把 completed-unread 变为 completed，不得降为 stopped/unknown；只有更新的新 Prompt/live phase 可恢复 running。
+- 当前 `session.phase` 的因果 event/revision 新于缓存时必须直接取代 `previous.phase`；旧 inventory producer generation 不能回退较新的 watcher/open-refresh。Kernel 同时接受 phase、phaseRevision、statusEnteredAt、unread 和 capabilities，并对等价语义只更新私有水位、不发布新 package。
 
 ### Incremental communication
 
-- 最终进程权威现使用 `companion-task-kernel-v3 / companion-task-package-v3`：Claude membership、phase、unread 行为保持三条独立语义 lane，observation generation 只做排序，semantic revision 只在真实变化时推进。慢 inventory/异步 unread 仍须基于最新包重放，不能删除其间新增会话；Main/Float 不得以第二套 source revision 忽略完整包。RAW-159 不改变 Claude 状态或归档副作用。
+- 最终进程权威使用 `companion-task-kernel-v4 / companion-task-package-v4`：Claude membership、phase、unread 保持独立证据 lane，但由 Kernel 一个 reducer 合并成原子状态。observation generation 只做 lane 内排序，跨 lane 使用因果 event/revision；Main、Float、Navigation、Actions 各自拒绝旧/同 package revision 和等价 selector。Float 必须回 applied ACK，Host send 不代表 UI 已更新。慢 inventory/异步 unread 基于最新包重放，不能删除新会话或覆盖新 phase。
 - [index.cjs](../../../../preload/claude/index.cjs#L1) 对 state/inventory/unread 提供 Host+Renderer 多订阅；任一消费者 detach 不影响另一消费者。[code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1) 即使在 watcher 先于首个 inventory 建立时，也会在冷 inventory 发现目录后动态安装 watcher。[unread.cjs](../../../../preload/claude/unread.cjs#L1) 合并并发读取，避免相同源状态产生彼此颠倒的 generation。
-- Bridge 分离 inventory、`ClaudeCodeStateDeltaV2`、unread、quota、App presence；V2 必须携带 `generation/source/freshness/compatibility`，observation 必须携带 `completedTurns` 与状态证据。Controller 对 state/unread generation、Controller revision 和 Float applied revision 分层拒绝倒退。
+- Bridge 分离 inventory、`ClaudeCodeStateDeltaV2`、unread、quota、App presence；V2 必须携带 `generation/source/freshness/compatibility`，observation 必须携带 `completedTurns` 与状态证据。各 lane 先拒绝旧 source generation，Kernel 再以 causal/package revision 原子接纳，Main/Float/Navigation/Actions 以 package/selector revision 拒绝倒退，Float 最终以 applied revision 确认消费。
 - watcher 只刷新自己的 Map/Set 并立即发布。库存失败保留最后有效视图；未读失败变 unknown；quota 网络错误不能延迟状态或库存。禁止“所有 watcher 调同一个 full refresh”。
 - App 日志事件即时触发 state hot-read，1 秒恢复轮询兜底；连续两次状态读取失败后，running/waiting 降为 unknown，不能永久卡在进行中。启动、功能启用、恢复可见、聚焦、网络恢复及最早 reset+1 秒分别唤醒额度 lane。
 - 状态 delta 与 inventory metadata patch 使用单调 evidence/generation 屏障：慢 inventory 可更新标题，但不能回退更新的 state；state patch 不能删除库存字段。
-- 状态版本比较由纯 Domain 统一执行：先比较 source generation，同 generation 再比较 evidence time 与来源权威；App 明确 terminal 优先同 Turn Hook 尾事件，`completedTurns` 只作冷历史佐证。state/unread refresh 共用可加入的 Promise singleflight，手动单项同步、watcher 和打开后同步不得形成第二条读取/发布通道。
-- 正常真实事件到最终 Controller publish P95 `<=250ms`；漏事件恢复 `<=1.25s`。watcher callback 延迟不是最终发布延迟，不能作为该 SLO 的替代证据。
+- 状态版本比较由 V4 Kernel 统一执行：lane 内拒绝旧 source generation，跨 lane 先比较当前 session 的因果 event/revision，再使用来源权威；不得默认保留旧 `previous.phase`。App 明确 terminal 优先同 Turn Hook 尾事件，`completedTurns` 只作冷历史佐证。state/unread refresh 共用可加入的 Promise singleflight，手动单项同步、watcher 和打开后同步不得形成第二条读取/发布通道。
+- 正常真实事件到最终 Kernel package publish P95 `<=250ms`；漏事件恢复 `<=1.25s`。watcher callback 或 Host send 延迟不是最终应用证据，Float 必须另有 applied ACK。
 - 正常可信 push 直接进入对应 lane，不读取 quota、environment 或 full inventory；完整 inventory 仅允许冷启动、重连或明确 membership gap，并只读取 Claude。定向“同步 Claude 状态”仍复用 state/unread singleflight，不形成全 authority refresh。
 - Claude inventory、Kernel、Actions、Navigation、mutation 与 batch 消费者不得设置固定总任务数上限；数量增长不能改变卡片、角标或动作资格。明确 phase/unread/membership 立即发布，只有 unknown 允许一次最多 250ms 的稳定窗，不新增 Renderer debounce。
 
@@ -227,7 +228,7 @@ updated: `2026-08-11`
 
 - EyPc 不创建或修改 Codex/Claude 原生项目。虚拟合并先按双方相同规范绝对路径的稳定 project key；否则只在 Codex 与 Claude 两侧规范名称都唯一时合并，重名歧义保持分离。Claude 独有项目进入项目区，共享项目在“全部”只出现一次。
 - Projects 子页签为会话级 `全部 / 只显示 Codex / 只显示 Claude`，默认全部。单来源模式同时过滤项目子任务并重算项目/任务数；共享项目只要含所选来源任务就保留。
-- 更新引入（Codex Companion RAW-154，取代 RAW-150 的 Claude 执行路线）：Claude 任务继续支持精确打开、本地置顶和本地隐藏，并允许仅限 macOS Claude `1.26832.0` 的 completed/stopped 任务级 D′ 静默归档。普通库存读取只在 Preload 内建立唯一 `sessionId → local_*.json` 索引；mutation 不重新扫目录。写前必须重读 compatible phase、精确 App-local 身份及文件 stat/hash；事务保留原始字节/权限，只把解析对象的 `isArchived` 改为 true，写入同目录唯一临时文件并核验其它字段语义不变后原子替换。RAW-155 增量允许过期索引安全 rebase 到当前仍唯一的同一目标，以容忍 title/focus/activity 普通元数据变化；只对写前 `source-changed` 在精确重读 phase 后重试一次，写后并发绝不重试或覆盖。元数据 true 且私有活动库存移除即可 `archived`，插件包立即移除并自动刷新；该成功只确认 EyPc 侧归档与移除，不确认 Claude 原生侧栏。成功提示固定明确为 EyPc 已完成、Claude 原生侧栏可能仍待刷新且尚未确认同步。固定语法 App 日志只作增强证据；已归档幂等成功，安全恢复失败或 Claude 并发修改不确定时返回 `indeterminate`，`failed/indeterminate` 均保留卡片。归档路径禁止 Deep Link、AX/JXA、LevelDB、扫改目录和非目标会话；项目级归档、移除和移动仍禁用并解释。
+- 更新引入（Codex Companion RAW-154，RAW-160 收紧结果合同）：Claude 任务继续支持精确打开、本地置顶和本地隐藏，并允许仅限 macOS Claude `1.26832.0` 的 completed/stopped 任务级 D′ 静默归档。普通库存读取只在 Preload 内建立唯一 `sessionId → local_*.json` 索引；mutation 不重新扫目录。写前重读 compatible phase、精确 App-local 身份及文件 stat/hash；事务只把单一目标 `isArchived` 改为 true，经同目录核验后原子替换。元数据 true 且私有活动库存移除即可 `archived`，插件包立即移除；该成功只确认 EyPc 侧归档与移除，不确认 Claude 原生侧栏。成功提示固定为“EyPc 已归档并移除。Claude 原生侧栏同步未确认，当前不受支持。”App 日志只作增强证据；并发/恢复不确定返回 `indeterminate` 并保留卡片。禁止 Deep Link、AX/JXA、LevelDB、扫改目录和非目标会话；项目级归档、移除和移动仍禁用。
 - 五秒归档确认的稳定 identity 是 Provider+task+terminalEpoch。revision、unread、focus 与临时 alias 变化不取消；第二次操作从当前包取最新目标并重做 capability/Provider 核验。任务消失、terminal epoch 或 capability 变化才取消。
 - 普通打开在派发 Deep Link 前必须通过同一私有索引重读：已归档、缺失或身份不唯一返回 `state-changed`，不得重新打开旧会话。精确文件 watcher 只重读已登记目标并发布单调 membership mutation delta；一秒 watchdog 只核验索引候选。该通路独立于 quota、state、unread 与完整 inventory Promise，正常发布 P95 ≤250ms，漏 callback 恢复 ≤1.25s。
 - “同步 Claude 状态”是 Claude-only 的实时只读 capability；Codex 行不显示。它不能人工指定 completed/read，也不能修改 Claude App。

@@ -49,8 +49,8 @@
 - `debug`：再写每次规范化观测、全部 lane 水位、before/after、接纳/拒绝、same-state no-op、目标选择、focus no-op、队列合并和定向核验。
 - 日志是纯文本 JSONL，固定写入 uTools 用户数据目录下的 `eypc-diagnostics`。页面会显示本机精确目录和当前文件；可直接点 **打开当前文件**（尚未生成时禁用）或 **打开日志目录**。
 - 点 **清空日志** 后会先显示确认。确认后只删除日志模块自有的 `runtime-*.jsonl`，不会删除日志目录、目录里的其它文件，也不会改变开关或等级；若日志仍开启，后续事件会创建新的当前文件。
-- 每条记录有时间、顺序号、会话/进程身份，以及适用的 operationId/traceId、精确 taskRef、Provider 状态、修订、水位、缓存来源、路径、动作阶段、错误码和耗时。Codex 归档的 intent、confirmation、preflight、write、两次 server verify、Desktop sync、native ACK、Kernel commit、UI removal/reconciliation 均可关联。单文件最多 8 MB、总量最多 64 MB、保留 14 天。
-- 日志不会写入提示词、对话正文、命令参数、工具参数、stdout/stderr、凭据、令牌、堆栈或隐藏推理。关闭后不再产生普通运行事件。
+- 每条记录有时间、顺序号、会话/进程身份，以及适用的 operationId/traceId、会话期 `h:<hex>` taskRef、Provider 状态、修订、水位、缓存来源、动作阶段、错误码和耗时。Codex 归档的 intent、confirmation、preflight、write、两次 server verify、Desktop sync、native ACK、Kernel commit、UI removal/reconciliation 均可关联。单文件最多 8 MB、总量最多 64 MB、保留 14 天。
+- 日志不会写入原始任务 ID/路径、提示词、Plan/执行指令、对话正文、命令参数、工具参数、stdout/stderr、凭据、令牌、堆栈或隐藏推理。关闭后不再产生普通运行事件。
 - 开发工作区可用 `pnpm run probe:runtime-diagnostics -- --tail=100` 读取最近记录，并以 `--session`、`--operation`、`--trace`、`--provider`、`--task-ref`、`--scope`、`--event`、`--level` 或 `--since` 缩小范围；输出同时聚合状态变化、no-op、快捷键、跳转、归档阶段和错误码。探针只读，不修改日志和任务状态。
 
 ## 通用键盘与交互（全插件）

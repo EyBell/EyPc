@@ -1,7 +1,9 @@
 # Codex 任务状态收敛计划
 
 Tool: codex
-Status: `focused-automated-verified / host-pending`
+Status: `RAW-160 implementation-and-full-automated-verification-complete / artifact-ready / host-pending`
+
+Current overlay: execute the V4 plan in [RAW-160 plan](../../260810/1155-install-runtime-diagnostics/plan.md#L1). The numbered history below is retained as the earlier state-convergence route; its V3 ownership, immediate-interrupted and arbitrary-new-Turn Plan clearing assumptions are no longer current.
 
 1. 用序列测试复现“完成通过定向核验，后续完整快照反判回进行中”。
 2. 完成通过 active-exit 门禁后立即关闭周期并清除 baseline。
