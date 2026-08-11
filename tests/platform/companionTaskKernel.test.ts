@@ -1,11 +1,18 @@
 import { createRequire } from 'node:module'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { createCompanionTaskKernel, reduceCodexTaskEvidenceV3, UNKNOWN_GRACE_MS } = require('../../preload/companion/task-kernel.cjs') as {
+const { createCompanionTaskKernel: createCompanionTaskKernelRaw, reduceCodexTaskEvidenceV4, reduceClaudeTaskEvidenceV4, UNKNOWN_GRACE_MS } = require('../../preload/companion/task-kernel.cjs') as {
   createCompanionTaskKernel(options?: Record<string, unknown>): any
-  reduceCodexTaskEvidenceV3(value?: Record<string, unknown>): Record<string, any>
+  reduceCodexTaskEvidenceV4(value?: Record<string, unknown>): Record<string, any>
+  reduceClaudeTaskEvidenceV4(value?: Record<string, unknown>): Record<string, any>
   UNKNOWN_GRACE_MS: number
+}
+
+function createCompanionTaskKernel(options: Record<string, unknown> = {}) {
+  return createCompanionTaskKernelRaw({ now: () => 1_000, ...options })
 }
 
 function task(overrides: Record<string, unknown> = {}) {
@@ -31,9 +38,14 @@ function task(overrides: Record<string, unknown> = {}) {
     hidden: false,
     unread: false,
     planImplementation: false,
+    planReady: false,
+    planLifecycleRevision: 0,
+    paused: false,
+    turnMode: 'unknown',
+    idleConfirmed: false,
     localPin: false,
     dynamicEligible: true,
-    capabilities: { open: true, archive: false },
+    capabilities: { open: true, archive: false, pause: false, resume: false, executePlan: false },
     ...overrides
   }
 }
@@ -47,9 +59,9 @@ function draft(tasks: unknown[], revision = 1, overrides: Record<string, unknown
       claude: { membership: sourceGenerations.claude || 0, phase: sourceGenerations.claude || 0, unread: sourceGenerations.claude || 0 }
     }
   return {
-    schema: 'companion-task-draft-v3',
+    schema: 'companion-task-draft-v4',
     producer: 'host-evidence',
-    sourceTaskStateRevision: 'task-state-v9',
+    sourceTaskStateRevision: 'task-state-v10',
     draftRevision: revision,
     acceptedAt: 1_000 + revision,
     enabled: true,
@@ -66,6 +78,36 @@ function draft(tasks: unknown[], revision = 1, overrides: Record<string, unknown
 afterEach(() => vi.useRealTimers())
 
 describe('CompanionTaskKernel', () => {
+  it('keeps canonical selectors and production fallback ownership inside the V4 Kernel', () => {
+    const kernelSource = readFileSync(resolve(process.cwd(), 'preload/companion/task-kernel.cjs'), 'utf8')
+    const hostSource = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
+    const domainSource = readFileSync(resolve(process.cwd(), 'src/domain/companionTaskPackage.ts'), 'utf8')
+    const controllerSource = readFileSync(resolve(process.cwd(), 'src/runtime/codexController.ts'), 'utf8')
+    const floatSource = readFileSync(resolve(process.cwd(), 'src/FloatApp.vue'), 'utf8')
+
+    expect(kernelSource).toContain('function derivedCycleTier(task)')
+    expect(kernelSource).toContain('function derivedDynamicGroup(task)')
+    expect(kernelSource).toContain('function buildViews(tasks)')
+    expect(kernelSource).toContain('function reduceClaudeTaskEvidenceV4(value = {})')
+    expect(controllerSource).not.toContain('buildCompanionTaskPackageDraft')
+    expect(domainSource).not.toContain('buildCompanionTaskPackageDraft')
+    expect(domainSource).not.toContain('function canonicalPhase(')
+    expect(domainSource).not.toContain('function dynamicGroupByKey(')
+    expect(domainSource).not.toContain('function cycleTier(')
+    expect(controllerSource).not.toContain('allowLegacyCompanionAdapters')
+    expect(controllerSource).not.toContain('companionTaskActionTarget')
+    expect(controllerSource).not.toContain('syncCompanionNavigation')
+    expect(controllerSource).not.toContain('syncCompanionTaskActions')
+    expect(controllerSource).not.toContain('cycleOrderedTasks')
+    expect(controllerSource).not.toContain('runDirectTaskCommand')
+    expect(floatSource).not.toMatch(/(?:cycleTier|dynamicGroup|cycleKeys)\s*:/)
+    expect(hostSource).not.toContain('function companionCycleTier(')
+    expect(hostSource).not.toContain('function companionDynamicGroup(')
+    expect(hostSource).toContain('return reduceClaudeTaskEvidenceV4({ phase: value, unread: unread === true })')
+    expect([...hostSource.matchAll(/cycleTier:\s*([^,\n]+)/g)].map((match) => match[1].trim()).every((value) => value === "'none'")).toBe(true)
+    expect([...hostSource.matchAll(/dynamicGroup:\s*([^,\n]+)/g)].map((match) => match[1].trim()).every((value) => value === "'none'")).toBe(true)
+  })
+
   it('uses causal Turn watermarks as the sole Codex phase truth table', () => {
     const base = {
       previousPhase: 'running',
@@ -74,23 +116,33 @@ describe('CompanionTaskKernel', () => {
       activeFlags: []
     }
 
-    expect(reduceCodexTaskEvidenceV3({
+    expect(reduceCodexTaskEvidenceV4({
       ...base,
       lastTurnStatus: 'interrupted',
       lastTurnEvidence: 'turn-completed',
       activeEvidenceSequence: 10,
       terminalEvidenceSequence: 11
-    })).toMatchObject({ phase: 'stopped', freshness: 'fresh', reason: 'exact-interrupted' })
+    })).toMatchObject({ phase: 'running', freshness: 'verifying', reason: 'terminal-verifying' })
 
-    expect(reduceCodexTaskEvidenceV3({
+    expect(reduceCodexTaskEvidenceV4({
+      ...base,
+      status: 'idle',
+      lastTurnStatus: 'interrupted',
+      lastTurnEvidence: 'targeted-after-exit',
+      activeEvidenceSequence: 10,
+      terminalEvidenceSequence: 11,
+      idleConfirmed: true
+    })).toMatchObject({ phase: 'stopped', freshness: 'fresh', reason: 'ordinary-interrupted-idle-confirmed' })
+
+    expect(reduceCodexTaskEvidenceV4({
       ...base,
       lastTurnStatus: 'interrupted',
       lastTurnEvidence: 'turn-completed',
       activeEvidenceSequence: 12,
       terminalEvidenceSequence: 11
-    })).toMatchObject({ phase: 'running', freshness: 'fresh', reason: 'causal-active' })
+    })).toMatchObject({ phase: 'running', freshness: 'verifying', reason: 'active-terminal-conflict' })
 
-    expect(reduceCodexTaskEvidenceV3({
+    expect(reduceCodexTaskEvidenceV4({
       ...base,
       activeFlags: ['waitingOnUserInput'],
       lastTurnStatus: 'interrupted',
@@ -99,15 +151,15 @@ describe('CompanionTaskKernel', () => {
       terminalEvidenceSequence: 11
     })).toMatchObject({ phase: 'waiting-input', freshness: 'fresh', reason: 'causal-waiting-input' })
 
-    expect(reduceCodexTaskEvidenceV3({
+    expect(reduceCodexTaskEvidenceV4({
       ...base,
       lastTurnStatus: 'inProgress',
       lastTurnEvidence: 'turn-completed',
       activeEvidenceSequence: 10,
       terminalEvidenceSequence: 11
-    })).toMatchObject({ phase: 'running', freshness: 'verifying', reason: 'insufficient-evidence' })
+    })).toMatchObject({ phase: 'running', freshness: 'fresh', reason: 'causal-active' })
 
-    expect(reduceCodexTaskEvidenceV3({
+    expect(reduceCodexTaskEvidenceV4({
       ...base,
       previousPhase: 'completed',
       status: 'notLoaded',
@@ -117,6 +169,166 @@ describe('CompanionTaskKernel', () => {
       activeEvidenceSequence: 0,
       terminalEvidenceSequence: 0
     })).toMatchObject({ phase: 'completed', freshness: 'verifying', reason: 'terminal-verifying' })
+  })
+
+  it('keeps Claude live/terminal/unread phase rules inside the shared Kernel reducer', () => {
+    expect(reduceClaudeTaskEvidenceV4({ phase: 'running', unread: true })).toMatchObject({ phase: 'running', reason: 'provider-live' })
+    expect(reduceClaudeTaskEvidenceV4({ phase: 'stopped', unread: true })).toMatchObject({ phase: 'completed', reason: 'native-unread-completion' })
+    expect(reduceClaudeTaskEvidenceV4({ phase: 'unknown', unread: false })).toMatchObject({ phase: 'unknown', freshness: 'verifying' })
+  })
+
+  it('keeps the Plan lifecycle across refinement, interruption and pause until exact default execution starts', async () => {
+    const persisted: Array<Record<string, unknown>> = []
+    const kernel = createCompanionTaskKernel({
+      persistPlanPause: (value: Record<string, unknown>) => { persisted.push(value); return true },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 1 }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 1 })
+    const sync = (value: Record<string, unknown>, revision: number) => kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task(value)], revision, { providers: { codex: true, claude: false } })
+    })
+
+    expect(sync({ turnMode: 'plan', phase: 'running', planReady: false }, 1).tasks[0]).toMatchObject({ phase: 'running', planReady: false })
+    const ready = sync({
+      turnMode: 'plan',
+      phase: 'waiting-input',
+      planImplementation: true,
+      planReady: true,
+      planLifecycleRevision: 200,
+      capabilities: { open: true, archive: false, pause: true, resume: true, executePlan: false }
+    }, 2)
+    expect(ready.tasks[0]).toMatchObject({ phase: 'waiting-input', planReady: true, planLifecycleRevision: 200 })
+    expect(ready.views.counts.input).toBe(1)
+    expect(ready.views.cycleKeys).toEqual(['codex-a'])
+
+    expect(sync({ turnMode: 'plan', phase: 'running', planReady: false, planLifecycleRevision: 0 }, 3).tasks[0])
+      .toMatchObject({ phase: 'running', planReady: true, planLifecycleRevision: 200 })
+    const stopped = sync({
+      turnMode: 'plan',
+      phase: 'stopped',
+      planReady: true,
+      planLifecycleRevision: 200,
+      dynamicEligible: false,
+      capabilities: { open: true, archive: true, pause: true, resume: true, executePlan: false }
+    }, 4)
+    expect(stopped.tasks[0]).toMatchObject({ phase: 'stopped', planReady: true, dynamicGroup: 'stopped' })
+    expect(stopped.views.groups.stopped).toEqual(['codex-a'])
+    expect(stopped.views.cycleKeys).toEqual(['codex-a'])
+
+    await expect(kernel.dispatch({ action: 'pause', key: 'codex-a', planLifecycleRevision: 200 }))
+      .resolves.toMatchObject({ outcome: 'paused' })
+    expect(kernel.getLatest().views).toMatchObject({ pausedKeys: ['codex-a'], cycleKeys: [], counts: { input: 0, active: 0, unread: 0 } })
+    await expect(kernel.dispatch({ action: 'resume', key: 'codex-a', planLifecycleRevision: 200 }))
+      .resolves.toMatchObject({ outcome: 'resumed' })
+    expect(persisted.map((value) => value.paused)).toEqual([true, false])
+
+    const executing = sync({ turnMode: 'default', turnStartedAt: 500, phase: 'running', planReady: true, planLifecycleRevision: 200 }, 5)
+    expect(executing.tasks[0]).toMatchObject({ phase: 'running', planReady: false, planLifecycleRevision: 0, paused: false })
+  })
+
+  it('keeps ordinary waiting ahead of a retained Plan and makes only the exact Plan wait executable', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const ordinaryWait = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({
+        phase: 'waiting-input',
+        planReady: true,
+        planLifecycleRevision: 200,
+        planImplementation: false,
+        capabilities: { open: true, archive: false, pause: true, resume: true, executePlan: true }
+      })], 1, { providers: { codex: true, claude: false } })
+    })
+    expect(ordinaryWait.tasks[0]).toMatchObject({
+      cycleTier: 'attention',
+      capabilities: { pause: false, resume: false, executePlan: false }
+    })
+
+    const exactPlanWait = kernel.publishEvidence(draft([task({
+      phase: 'waiting-input',
+      phaseRevision: 201,
+      statusEnteredAt: 201,
+      planReady: true,
+      planLifecycleRevision: 200,
+      planImplementation: true,
+      capabilities: { open: true, archive: false, pause: true, resume: true, executePlan: true }
+    })], 2, { producer: 'host-evidence', providers: { codex: true, claude: false } }))
+    expect(exactPlanWait.tasks[0]).toMatchObject({
+      cycleTier: 'plan',
+      planLifecycleRevision: 200,
+      capabilities: { pause: true, resume: false, executePlan: true }
+    })
+  })
+
+  it('does not change the Plan lifecycle revision when only generic metadata advances', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({
+        phase: 'waiting-input',
+        planReady: true,
+        planImplementation: true,
+        planLifecycleRevision: 200,
+        revisionAt: 200
+      })], 1, { providers: { codex: true, claude: false } })
+    })
+    const refreshed = kernel.publishEvidence(draft([task({
+      phase: 'waiting-input',
+      planReady: true,
+      planImplementation: true,
+      planLifecycleRevision: 200,
+      revisionAt: 9_999,
+      metadataRevision: 9_999
+    })], 2, { producer: 'host-evidence', providers: { codex: true, claude: false } }))
+    expect(refreshed.tasks[0].planLifecycleRevision).toBe(200)
+  })
+
+  it('migrates a legacy hidden Plan transactionally and rolls back pause when hidden-state cleanup fails', () => {
+    const persisted: boolean[] = []
+    const kernel = createCompanionTaskKernel({
+      persistPlanPause: (value: Record<string, unknown>) => { persisted.push(value.paused === true); return true },
+      migrateHiddenPlan: () => false,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const current = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({
+        hidden: true,
+        phase: 'stopped',
+        planReady: true,
+        planLifecycleRevision: 200
+      })], 1, { providers: { codex: true, claude: false } })
+    })
+    expect(current.tasks[0]).toMatchObject({ hidden: true, paused: false })
+    expect(persisted).toEqual([true, false])
+  })
+
+  it('uses one next-boundary timer and publishes only when dynamic visibility actually changes', () => {
+    vi.useFakeTimers()
+    let now = 1_000
+    const kernel = createCompanionTaskKernel({
+      now: () => now,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 1 }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 1 })
+    const revisions: number[] = []
+    kernel.subscribe(0, (value: any) => { if (value.complete) revisions.push(value.packageRevision) })
+    kernel.syncPackage({ lease: receipt.lease, draft: draft([task()], 1, { providers: { codex: true, claude: false } }) })
+    expect(kernel.getLatest().views.groups.active).toEqual(['codex-a'])
+    expect(kernel.diagnostics().nextVisibilityTransitionAt).toBe(3_600_100)
+
+    now = 3_600_101
+    vi.advanceTimersByTime(3_599_101)
+    expect(kernel.getLatest().views.groups.active).toEqual([])
+    expect(revisions).toHaveLength(2)
+    expect(kernel.diagnostics().nextVisibilityTransitionAt).toBe(0)
   })
 
   it('keeps the complete admitted inventory without a product task-count cap', () => {
@@ -221,6 +433,122 @@ describe('CompanionTaskKernel', () => {
     expect(opened[0]).toMatchObject({ key: 'codex-a', provider: 'codex', revisionAt: 100, phase: 'running', canArchive: false })
     expect(opened[1]).toEqual(opened[0])
     expect(kernel.diagnostics().navigation.lastOutcome).toBe('opened')
+  })
+
+  it('owns attention progress, preserves it across equivalent packages and advances only after a successful open', async () => {
+    const opened: string[] = []
+    let failFirst = true
+    const kernel = createCompanionTaskKernel({
+      adapters: {
+        codex: {
+          open: async (target: Record<string, unknown>) => {
+            opened.push(String(target.key))
+            if (target.key === 'codex-new' && failFirst) {
+              failFirst = false
+              return { outcome: 'failed', errorCode: 'test-failure' }
+            }
+            return { outcome: 'opened' }
+          }
+        }
+      },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([
+        task({ key: 'codex-old', phase: 'waiting-input', lastQuestionAt: 100, statusEnteredAt: 100 }),
+        task({ key: 'codex-new', phase: 'waiting-input', lastQuestionAt: 200, statusEnteredAt: 200 })
+      ], 1, { providers: { codex: true, claude: false } })
+    })
+
+    await expect(kernel.dispatch({ action: 'open-attention', kind: 'input' })).resolves.toMatchObject({ outcome: 'failed' })
+    await expect(kernel.dispatch({ action: 'open-attention', kind: 'input' })).resolves.toMatchObject({ outcome: 'opened', key: 'codex-new' })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([
+        task({ key: 'codex-old', phase: 'waiting-input', lastQuestionAt: 100, statusEnteredAt: 100, metadataRevision: 500 }),
+        task({ key: 'codex-new', phase: 'waiting-input', lastQuestionAt: 200, statusEnteredAt: 200, metadataRevision: 500 })
+      ], 2, { providers: { codex: true, claude: false } })
+    })
+    await expect(kernel.dispatch({ action: 'open-attention', kind: 'input' })).resolves.toMatchObject({ outcome: 'opened', key: 'codex-old' })
+    await expect(kernel.dispatch({ action: 'open-attention', kind: 'input' })).resolves.toMatchObject({ outcome: 'opened', key: 'codex-new' })
+
+    expect(opened).toEqual(['codex-new', 'codex-new', 'codex-old', 'codex-new'])
+  })
+
+  it('uses a local pin only as the input shortcut fallback without changing the compact input count', async () => {
+    const opened: string[] = []
+    const kernel = createCompanionTaskKernel({
+      adapters: {
+        codex: {
+          open: async (target: Record<string, unknown>) => {
+            opened.push(String(target.key))
+            return { outcome: 'opened' }
+          }
+        }
+      },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const packageValue = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({ key: 'codex-pin', phase: 'completed', localPin: true, unread: false })], 1, {
+        providers: { codex: true, claude: false }
+      })
+    })
+
+    expect(packageValue.views.counts.input).toBe(0)
+    expect(packageValue.views.attentionKeys.input).toEqual(['codex-pin'])
+    await expect(kernel.dispatch({ action: 'open-attention', kind: 'input' })).resolves.toMatchObject({ outcome: 'opened', key: 'codex-pin' })
+    expect(opened).toEqual(['codex-pin'])
+  })
+
+  it('keeps a Claude open-read hint for the same completion and releases it for the next completion', async () => {
+    const kernel = createCompanionTaskKernel({
+      adapters: { claude: { open: async () => ({ outcome: 'opened' }) } },
+      initialConfiguration: { enabled: true, providers: { codex: false, claude: true } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: false, claude: true } })
+    const claudeTask = (overrides: Record<string, unknown>) => task({
+      key: 'claude:local-a',
+      provider: 'claude',
+      kind: 'claude-session',
+      actionAlias: 'local-a',
+      capabilities: { open: true, archive: true, pause: false, resume: false, executePlan: false },
+      ...overrides
+    })
+
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([claudeTask({ phase: 'completed', unread: true, revisionAt: 100, phaseRevision: 100, statusEnteredAt: 100, terminalAt: 100 })], 1, {
+        providers: { codex: false, claude: true }
+      })
+    })
+    await expect(kernel.dispatch({ action: 'open', key: 'claude:local-a' })).resolves.toMatchObject({ outcome: 'opened' })
+    expect(kernel.getLatest().tasks[0]).toMatchObject({ phase: 'completed', unread: false })
+
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([claudeTask({ phase: 'completed', unread: true, revisionAt: 100, phaseRevision: 100, unreadRevision: 200, statusEnteredAt: 100, terminalAt: 100 })], 2, {
+        providers: { codex: false, claude: true }
+      })
+    })
+    expect(kernel.getLatest().tasks[0]).toMatchObject({ phase: 'completed', unread: false })
+
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([claudeTask({ phase: 'running', unread: false, revisionAt: 200, phaseRevision: 200, statusEnteredAt: 200, terminalAt: 0 })], 3, {
+        providers: { codex: false, claude: true }
+      })
+    })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([claudeTask({ phase: 'completed', unread: true, revisionAt: 300, phaseRevision: 300, statusEnteredAt: 300, terminalAt: 300 })], 4, {
+        providers: { codex: false, claude: true }
+      })
+    })
+    expect(kernel.getLatest().tasks[0]).toMatchObject({ phase: 'completed', unread: true })
   })
 
   it('reduces precise state immediately, ignores stale terminal regressions and permits a newer Turn restart', () => {
@@ -375,6 +703,25 @@ describe('CompanionTaskKernel', () => {
     expect(current.views.cycleKeys).toEqual(['claude-new', 'codex-pinned-middle', 'codex-old'])
   })
 
+  it('keeps an ordinary stopped local pin in the fourth navigation layer', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const current = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({
+        phase: 'stopped',
+        localPin: true,
+        kind: 'local-pin',
+        planReady: false,
+        capabilities: { open: true, archive: true, pause: false, resume: false, executePlan: false }
+      })], 1, { providers: { codex: true, claude: false } })
+    })
+    expect(current.tasks[0].cycleTier).toBe('fallback')
+    expect(current.views.cycleKeys).toEqual(['codex-a'])
+  })
+
   it('ignores duplicate and lower producer drafts without deleting newer tasks', () => {
     const kernel = createCompanionTaskKernel({
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
@@ -469,8 +816,9 @@ describe('CompanionTaskKernel', () => {
         capabilities: { open: true, archive: false }
       })], 1, { acceptedAt: now, providers: { codex: false, claude: true } })
     })
-    expect(claudeUnknown.views.groups.stopped).toEqual(['claude-a'])
+    expect(claudeUnknown.views.groups.stopped).toEqual([])
     expect(claudeUnknown.views.counts.active).toBe(0)
+    expect(claudeUnknown.views.cycleKeys).toEqual([])
   })
 
   it('refuses to navigate from a degraded retained package when its shared preflight fails', async () => {
@@ -564,8 +912,12 @@ describe('CompanionTaskKernel', () => {
     })
     const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
     const publications: number[] = []
+    const floatPublications: number[] = []
     kernel.onPackage((value: any) => {
       if (value.complete) publications.push(value.packageRevision)
+    })
+    kernel.subscribe(0, (value: any) => {
+      if (value.complete) floatPublications.push(value.packageRevision)
     })
     const initial = kernel.syncPackage({
       lease: receipt.lease,
@@ -573,6 +925,7 @@ describe('CompanionTaskKernel', () => {
     })
     const initialTaskRevision = initial.tasks[0].semanticRevision
     const initialPackageRevision = initial.packageRevision
+    const consumerDiagnostics = kernel.diagnostics()
 
     for (let index = 2; index <= 1_001; index += 1) {
       const current = kernel.publishEvidence(draft([task({ observationGeneration: index })], index, {
@@ -589,10 +942,13 @@ describe('CompanionTaskKernel', () => {
     }
 
     expect(publications).toEqual([initialPackageRevision])
+    expect(floatPublications).toEqual([initialPackageRevision])
     expect(opened).not.toHaveBeenCalled()
     expect(records.filter((entry) => entry.event === 'same-state-no-op')).toHaveLength(1_000)
     expect(records.filter((entry) => entry.level === 'info' && entry.outcome === 'no-op')).toEqual([])
     expect(kernel.diagnostics().navigation).toMatchObject({ dispatched: { codex: 0, claude: 0 } })
+    expect(kernel.diagnostics().navigation.syncNoopCount).toBe(consumerDiagnostics.navigation.syncNoopCount)
+    expect(kernel.diagnostics().actions.syncNoopCount).toBe(consumerDiagnostics.actions.syncNoopCount)
     kernel.close()
   })
 

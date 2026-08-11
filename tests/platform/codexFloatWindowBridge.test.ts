@@ -5,9 +5,12 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import vm from 'node:vm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const nodeRequire = createRequire(import.meta.url)
 
 interface Rect {
   x: number
@@ -21,18 +24,110 @@ const TEST_RUNTIME_IDENTITY = {
   artifactState: 'artifact-ready',
   hostAssetId: 'host-test-current',
   rendererAssetId: 'renderer-test-current',
-  kernelRevision: 'companion-task-kernel-v3',
-  taskPackageRevision: 'companion-task-package-v3'
+  kernelRevision: 'companion-task-kernel-v4',
+  taskPackageRevision: 'companion-task-package-v4'
 }
 
 afterEach(() => vi.useRealTimers())
 
 interface FloatSnapshot {
+  version?: 1 | 2
   style: 'water' | 'card'
   conversationInboxEnabled: boolean
   expandedFields: string[]
   quota: Record<string, unknown>
   conversations: { ongoing: unknown[]; stopped?: unknown[]; completedUnread: unknown[]; completed: unknown[]; hidden: unknown[]; pending: unknown[] }
+}
+
+function companionTask(revision: number, overrides: Record<string, unknown> = {}) {
+  return {
+    key: 'float-task-a',
+    provider: 'codex',
+    kind: 'codex-thread',
+    phase: 'running',
+    cycleTier: 'none',
+    dynamicGroup: 'none',
+    actionAlias: 'ct_float_task_a_1234567890',
+    revisionAt: 10_000 + revision,
+    membershipRevision: 10_000 + revision,
+    phaseRevision: 10_000 + revision,
+    unreadRevision: 10_000 + revision,
+    visibilityRevision: 10_000 + revision,
+    statusEnteredAt: 10_000 + revision,
+    lastQuestionAt: 10_000 + revision,
+    displayOrder: 0,
+    cycleOrder: 0,
+    attentionOrder: 0,
+    hidden: false,
+    unread: false,
+    unreadKnown: true,
+    planImplementation: false,
+    planReady: false,
+    planLifecycleRevision: 0,
+    paused: false,
+    turnMode: 'unknown',
+    idleConfirmed: false,
+    localPin: false,
+    dynamicEligible: true,
+    capabilities: { open: true, archive: false, pause: false, resume: false, executePlan: false },
+    ...overrides
+  }
+}
+
+function companionDraft(revision: number, taskOverrides: Record<string, unknown> = {}) {
+  return {
+    schema: 'companion-task-draft-v4',
+    producer: 'host-evidence',
+    sourceTaskStateRevision: 'task-state-v10',
+    draftRevision: revision,
+    acceptedAt: 10_000 + revision,
+    enabled: true,
+    providers: { codex: true, claude: false },
+    complete: true,
+    focusedKey: '',
+    sourceGenerations: { codex: revision, claude: 0 },
+    sourceLaneGenerations: {
+      codex: { membership: revision, phase: revision, unread: revision },
+      claude: { membership: 0, phase: 0, unread: 0 }
+    },
+    tasks: [companionTask(revision, taskOverrides)]
+  }
+}
+
+function taskPackage(revision: number, taskOverrides: Record<string, unknown> = {}) {
+  const task = companionTask(revision, taskOverrides)
+  const group = task.phase === 'running' ? 'active' : task.phase === 'waiting-input' ? 'input' : 'none'
+  return {
+    schema: 'companion-task-package-v4',
+    kernelRevision: 'companion-task-kernel-v4',
+    packageRevision: revision,
+    sourceTaskStateRevision: 'task-state-v10',
+    publishedAt: 10_000 + revision,
+    enabled: true,
+    providers: { codex: true, claude: false },
+    complete: true,
+    freshness: 'fresh',
+    focusedKey: '',
+    sourceGenerations: { codex: revision, claude: 0 },
+    sourceLaneGenerations: {
+      codex: { membership: revision, phase: revision, unread: revision },
+      claude: { membership: 0, phase: 0, unread: 0 }
+    },
+    tasks: [task],
+    views: {
+      groups: {
+        input: group === 'input' ? [task.key] : [],
+        active: group === 'active' ? [task.key] : [],
+        stopped: [],
+        unread: [],
+        completed: []
+      },
+      counts: { input: group === 'input' ? 1 : 0, active: group === 'active' ? 1 : 0, unread: 0 },
+      attentionKeys: { input: group === 'input' ? [task.key] : [], completedUnread: [] },
+      cycleKeys: [task.key],
+      pausedKeys: []
+    }
+  }
 }
 
 function snapshot(overrides: Partial<FloatSnapshot> = {}): FloatSnapshot {
@@ -93,6 +188,7 @@ function loadPreloadHarness() {
     queueMicrotask,
     utools,
     require(name: string) {
+      if (name === './companion/task-kernel.cjs') return nodeRequire(resolve(process.cwd(), 'preload/companion/task-kernel.cjs'))
       if (name === 'node:buffer') return { Buffer }
       if (name === 'node:child_process') return { execFile, spawn }
       if (name === 'node:crypto') return crypto
@@ -105,7 +201,7 @@ function loadPreloadHarness() {
     }
   }
   sandbox.globalThis = sandbox
-  vm.runInNewContext(`${preload}\nwindow.__codexFloatGeometry = { codexFloatDesiredSize, codexFloatExpandedHeight, resizeFloatBounds };`, sandbox, { filename: 'preload.js' })
+  vm.runInNewContext(`${preload}\nwindow.__codexFloatGeometry = { codexFloatDesiredSize, codexFloatExpandedHeight, resizeFloatBounds }; window.__codexFloatTaskTest = { kernel: companionTaskKernel };`, sandbox, { filename: 'preload.js' })
   return {
     bridge: sandbox.window.eypcPlatform.float as {
       sync(payload: Record<string, unknown>): boolean
@@ -119,6 +215,10 @@ function loadPreloadHarness() {
       codexFloatDesiredSize(value: unknown, expanded: boolean): { width: number; height: number }
       codexFloatExpandedHeight(value: unknown): number
       resizeFloatBounds(current: Rect, size: { width: number; height: number }, display: Record<string, unknown>, edge: string): { bounds: Rect; edge: string }
+    },
+    taskKernel: sandbox.window.__codexFloatTaskTest.kernel as {
+      publishEvidence(draft: Record<string, unknown>): Record<string, unknown>
+      getLatest(): Record<string, any>
     },
     ipcHandlers,
     displays,
@@ -165,6 +265,9 @@ function loadFloatRendererPreloadHarness() {
       createThread(request: Record<string, unknown>): Promise<Record<string, unknown>>
       returnFocus(): boolean
       getHealth(): { heartbeatSequence: number; lastHeartbeatAckAt: number }
+      getSnapshot(): Record<string, any> | null
+      ackTaskPackage(stage: 'applied' | 'rejected', reason?: string): boolean
+      onSnapshot(listener: (value: Record<string, any>) => void): () => void
     },
     ipcHandlers,
     sent
@@ -176,6 +279,85 @@ function setExpansion(ipcHandlers: Map<string, (...args: unknown[]) => void>, ex
 }
 
 describe('Codex float preload sizing', () => {
+  it('keeps task packages on an independent revision lane and recreates only after two missing applied ACKs', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(10_000)
+    const { bridge, taskKernel, ipcHandlers, sent, createCount } = loadPreloadHarness()
+    taskKernel.publishEvidence(companionDraft(1))
+
+    expect(bridge.sync({ visible: true, snapshot: { ...snapshot(), version: 2 }, position: {} })).toBe(true)
+    expect(createCount()).toBe(1)
+    const initial = sent.find((item) => item.channel === 'eypc-float:snapshot')
+    expect(initial?.payload).toMatchObject({ companionTaskPackage: { packageRevision: 1 } })
+    ipcHandlers.get('eypc-float:task-package-ack')?.({}, {
+      sentRevision: 1,
+      currentRevision: 1,
+      stage: 'applied'
+    })
+
+    const taskSendsBeforeQuota = sent.filter((item) => item.channel === 'eypc-float:task-package').length
+    expect(bridge.sync({ visible: true, snapshot: { ...snapshot({ quota: { short: { remainingPercent: 79 } } }), version: 2 }, position: {} })).toBe(true)
+    expect(sent.at(-2)?.channel).toBe('eypc-float:snapshot')
+    expect(sent.at(-2)?.payload).not.toHaveProperty('companionTaskPackage')
+    expect(sent.filter((item) => item.channel === 'eypc-float:task-package')).toHaveLength(taskSendsBeforeQuota)
+
+    taskKernel.publishEvidence(companionDraft(2, { phase: 'waiting-input' }))
+    const taskFrames = () => sent.filter((item) => item.channel === 'eypc-float:task-package')
+    expect(taskFrames()).toHaveLength(1)
+    expect(taskFrames()[0].payload).toMatchObject({ sentRevision: 2, taskPackage: { packageRevision: 2 } })
+
+    taskKernel.publishEvidence(companionDraft(3, {
+      phase: 'waiting-input',
+      revisionAt: 10_002,
+      statusEnteredAt: 10_002,
+      lastQuestionAt: 10_002
+    }))
+    expect(taskFrames()).toHaveLength(1)
+
+    ipcHandlers.get('eypc-float:heartbeat')?.({}, { sequence: 1 })
+    await vi.advanceTimersByTimeAsync(500)
+    expect(taskFrames()).toHaveLength(2)
+    expect(taskFrames()[1].payload).toMatchObject({ sentRevision: 2, taskPackage: { packageRevision: 2 } })
+    await vi.advanceTimersByTimeAsync(500)
+    expect(createCount()).toBe(2)
+  })
+
+  it('retains the latest task object, ignores repeated revisions and emits received/applied/rejected ACK stages', () => {
+    const { bridge, ipcHandlers, sent } = loadFloatRendererPreloadHarness()
+    const snapshots: Record<string, any>[] = []
+    bridge.onSnapshot((value) => snapshots.push(value))
+    const firstPackage = taskPackage(1)
+    ipcHandlers.get('eypc-float:snapshot')?.({}, { ...snapshot(), version: 2, companionTaskPackage: firstPackage })
+
+    expect(snapshots).toHaveLength(1)
+    expect(sent.at(-1)).toMatchObject({
+      channel: 'eypc-float:task-package-ack',
+      payload: { sentRevision: 1, currentRevision: 1, stage: 'received' }
+    })
+    expect(bridge.ackTaskPackage('applied')).toBe(true)
+    expect(sent.at(-1)).toMatchObject({ channel: 'eypc-float:task-package-ack', payload: { stage: 'applied', currentRevision: 1 } })
+
+    const retained = bridge.getSnapshot()?.companionTaskPackage
+    ipcHandlers.get('eypc-float:snapshot')?.({}, { ...snapshot({ quota: { short: { remainingPercent: 78 } } }), version: 2 })
+    expect(bridge.getSnapshot()?.companionTaskPackage).toBe(retained)
+    expect(snapshots).toHaveLength(2)
+
+    const secondPackage = taskPackage(2, { phase: 'waiting-input' })
+    ipcHandlers.get('eypc-float:task-package')?.({}, { taskPackage: secondPackage, sentRevision: 2 })
+    expect(snapshots).toHaveLength(3)
+    expect(sent.at(-1)).toMatchObject({ channel: 'eypc-float:task-package-ack', payload: { stage: 'received', currentRevision: 2 } })
+    ipcHandlers.get('eypc-float:task-package')?.({}, { taskPackage: secondPackage, sentRevision: 2 })
+    expect(snapshots).toHaveLength(3)
+    expect(sent.slice(-2).map((item) => item.payload.stage)).toEqual(['received', 'applied'])
+
+    ipcHandlers.get('eypc-float:task-package')?.({}, { taskPackage: firstPackage, sentRevision: 1 })
+    expect(snapshots).toHaveLength(3)
+    expect(sent.at(-1)).toMatchObject({
+      channel: 'eypc-float:task-package-ack',
+      payload: { stage: 'rejected', reason: 'older-revision', currentRevision: 2 }
+    })
+  })
+
   it('correlates transient create results without expanding the float Node dependency allowlist', async () => {
     const { bridge, ipcHandlers, sent } = loadFloatRendererPreloadHarness()
     const pending = bridge.createThread({ modelId: 'gpt-5.6-sol', prompt: 'temporary test draft' })

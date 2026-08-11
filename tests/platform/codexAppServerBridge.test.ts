@@ -14,8 +14,8 @@ const TEST_RUNTIME_IDENTITY = {
   artifactState: 'artifact-ready',
   hostAssetId: 'host-test-current',
   rendererAssetId: 'renderer-test-current',
-  kernelRevision: 'companion-task-kernel-v3',
-  taskPackageRevision: 'companion-task-package-v3'
+  kernelRevision: 'companion-task-kernel-v4',
+  taskPackageRevision: 'companion-task-package-v4'
 }
 
 function handshakeTestRuntime(platform: Record<string, any>) {
@@ -67,6 +67,9 @@ class FakeCodexProcess extends EventEmitter {
   createdModelOverride = ''
   failTurnStart = false
   failCreateCleanup = false
+  supportsDefaultCollaborationMode = false
+  failThreadResume = false
+  invalidExecuteTurnStart = false
   includeCreatedThreadInInventory = false
   createdThreadReadMisses = 0
   holdNextLatestTurnRead = false
@@ -105,6 +108,10 @@ class FakeCodexProcess extends EventEmitter {
       if (this.transientTurnsFailures > 0 && frame.method === 'thread/turns/list') {
         this.transientTurnsFailures -= 1
         queueMicrotask(() => this.stdout.emit('data', `${JSON.stringify({ id: frame.id, error: { code: -32_000, message: 'transient turn read failure' } })}\n`))
+        return true
+      }
+      if (this.failThreadResume && frame.method === 'thread/resume') {
+        queueMicrotask(() => this.stdout.emit('data', `${JSON.stringify({ id: frame.id, error: { code: -32_000, message: 'thread resume failed' } })}\n`))
         return true
       }
       if (this.holdFirstPromptPages && frame.method === 'thread/turns/list' && frame.params?.limit === 50) return true
@@ -154,6 +161,9 @@ class FakeCodexProcess extends EventEmitter {
         { id: 'gpt-5.3-codex-spark', displayName: 'GPT-5.3 Codex Spark', inputModalities: ['text'] }
       ]
     }
+    if (method === 'collaborationMode/list') return {
+      data: this.supportsDefaultCollaborationMode ? [{ mode: 'default' }] : []
+    }
     if (method === 'thread/start') return {
       model: this.createdModelOverride || params?.model,
       cwd: typeof params?.cwd === 'string' ? params.cwd : '/tmp/chats',
@@ -163,7 +173,17 @@ class FakeCodexProcess extends EventEmitter {
     }
     if (method === 'turn/start') {
       if (this.failTurnStart) throw new Error('turn start failed')
-      return { turn: { id: 'turn-created' } }
+      if (params?.collaborationMode && this.invalidExecuteTurnStart) return {}
+      return { turn: { id: 'turn-created', status: 'inProgress', startedAt: 2_100_000_000 } }
+    }
+    if (method === 'thread/resume') {
+      return {
+        thread: {
+          id: params?.threadId,
+          model: 'gpt-5.6-sol',
+          reasoningEffort: 'high'
+        }
+      }
     }
     if (method === 'thread/list') {
       if (params?.archived === true) {
@@ -239,7 +259,9 @@ class FakeCodexProcess extends EventEmitter {
             name: '刚创建的待输入任务',
             status: { type: 'active', activeFlags: [] },
             recencyAt: 2_000_000_110,
-            cwd: '/tmp/chats'
+            cwd: '/tmp/chats',
+            model: 'gpt-5.6-sol',
+            reasoningEffort: 'high'
           }
         }
       }
@@ -264,6 +286,8 @@ class FakeCodexProcess extends EventEmitter {
           recencyAt: this.archiveThreadRecency,
           preview: 'private archive preview',
           cwd: '/private/archive-workspace',
+          model: 'gpt-5.6-sol',
+          reasoningEffort: 'high',
           turns: [{ text: 'private archive turn' }]
         }
       }
@@ -588,7 +612,8 @@ describe('Codex App Server preload bridge', () => {
 
     expect(context.native.companionPhaseForCodexThread({
       ...staleActive,
-      lastTurnEvidence: 'turn-completed'
+      lastTurnEvidence: 'turn-completed',
+      idleConfirmed: true
     })).toBe('stopped')
     expect(context.native.companionPhaseForCodexThread({
       ...staleActive,
@@ -631,9 +656,9 @@ describe('Codex App Server preload bridge', () => {
     kernel.syncPackage({
       lease: receipt.lease,
       draft: {
-        schema: 'companion-task-draft-v3',
+        schema: 'companion-task-draft-v4',
         producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v9',
+        sourceTaskStateRevision: 'task-state-v10',
         draftRevision: 1,
         acceptedAt: Date.now(),
         enabled: true,
@@ -673,7 +698,7 @@ describe('Codex App Server preload bridge', () => {
     await vi.waitFor(() => expect(kernel.getPackage().tasks.length).toBeGreaterThan(1))
     expect(kernel.getPackage()).toMatchObject({
       complete: true,
-      sourceTaskStateRevision: 'task-state-v9',
+      sourceTaskStateRevision: 'task-state-v10',
       providers: { codex: true, claude: false }
     })
     context.triggerPluginOut(true)
@@ -690,7 +715,7 @@ describe('Codex App Server preload bridge', () => {
     kernel.syncPackage({
       lease: receipt.lease,
       draft: {
-        schema: 'companion-task-draft-v3',
+        schema: 'companion-task-draft-v4',
         producer: 'renderer',
         sourceTaskStateRevision: 'task-state-v10',
         draftRevision: 1,
@@ -770,9 +795,9 @@ describe('Codex App Server preload bridge', () => {
     expect(kernel.syncPackage({
       lease: receipt.lease,
       draft: {
-        schema: 'companion-task-draft-v3',
+        schema: 'companion-task-draft-v4',
         producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v9',
+        sourceTaskStateRevision: 'task-state-v10',
         draftRevision: 1,
         acceptedAt: Date.now(),
         enabled: true,
@@ -842,15 +867,15 @@ describe('Codex App Server preload bridge', () => {
       payload: { type: 'item_completed', item: { type, text: 'private body' } }
     })
 
-    expect(native.codexRolloutPendingPlanStateText([started('plan'), item('Plan')].join('\n'))).toEqual({
+    expect(native.codexRolloutPendingPlanStateText([started('plan'), item('Plan')].join('\n'))).toMatchObject({
       known: true,
       pending: true
     })
-    expect(native.codexRolloutPendingPlanStateText([started('plan'), item('Plan'), started('default'), item('AgentMessage')].join('\n'))).toEqual({
+    expect(native.codexRolloutPendingPlanStateText([started('plan'), item('Plan'), started('default'), item('AgentMessage')].join('\n'))).toMatchObject({
       known: true,
       pending: false
     })
-    expect(native.codexRolloutPendingPlanStateText(item('AgentMessage'))).toEqual({
+    expect(native.codexRolloutPendingPlanStateText(item('AgentMessage'))).toMatchObject({
       known: false,
       pending: false
     })
@@ -879,6 +904,122 @@ describe('Codex App Server preload bridge', () => {
     })
     expect(JSON.stringify(snapshot)).not.toContain('private plan body')
     bridge.close()
+  })
+
+  it('executes a completed Plan only after the second confirmation and preserves model settings', async () => {
+    const child = new FakeCodexProcess()
+    child.supportsDefaultCollaborationMode = true
+    child.rolloutTexts.set(FIXED_THREAD_IDS[3], [
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', collaboration_mode_kind: 'plan' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'Plan', text: 'private plan body' } } })
+    ].join('\n'))
+    const context = loadCodexBridge(child)
+    const kernel = context.platform.companionKernel
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    await vi.waitFor(() => {
+      const task = kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')
+      expect(task).toMatchObject({ phase: 'waiting-input', planReady: true })
+      expect(task.capabilities.executePlan).toBe(true)
+    })
+    const task = kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')
+    const intent = {
+      action: 'execute-plan',
+      key: task.key,
+      planLifecycleRevision: task.planLifecycleRevision,
+      source: 'execute-plan-button'
+    }
+
+    await expect(kernel.dispatch(intent)).resolves.toMatchObject({ outcome: 'confirmation-required' })
+    expect(child.writes.filter((frame) => frame.method === 'thread/resume')).toHaveLength(0)
+    expect(child.writes.filter((frame) => frame.method === 'turn/start' && frame.params?.collaborationMode)).toHaveLength(0)
+
+    await expect(kernel.dispatch(intent)).resolves.toMatchObject({ outcome: 'executed' })
+    expect(context.openExternal).toHaveBeenCalledWith(`codex://threads/${FIXED_THREAD_IDS[3]}`)
+    const resume = child.writes.find((frame) => frame.method === 'thread/resume')
+    expect(resume?.params).toEqual({ threadId: FIXED_THREAD_IDS[3], excludeTurns: true })
+    const start = child.writes.find((frame) => frame.method === 'turn/start' && frame.params?.collaborationMode)
+    expect(start?.params).toEqual({
+      threadId: FIXED_THREAD_IDS[3],
+      input: [{ type: 'text', text: '请按已完成的 Plan 开始执行。' }],
+      collaborationMode: {
+        mode: 'default',
+        settings: {
+          model: 'gpt-5.6-sol',
+          reasoning_effort: 'high',
+          developer_instructions: null
+        }
+      }
+    })
+    expect(child.writes.findIndex((frame) => frame.method === 'thread/resume'))
+      .toBeLessThan(child.writes.findIndex((frame) => frame.method === 'turn/start' && frame.params?.collaborationMode))
+    await vi.waitFor(() => expect(kernel.getLatest().tasks.find((value: Record<string, any>) => value.key === task.key))
+      .toMatchObject({ phase: 'running', planReady: false, paused: false }))
+    expect(JSON.stringify(kernel.getLatest())).not.toContain('请按已完成的 Plan 开始执行。')
+    expect(JSON.stringify(context.diagnosticEvents)).not.toContain('请按已完成的 Plan 开始执行。')
+    context.triggerPluginOut(true)
+  })
+
+  it('disables Plan execution when the App Server has no safe default collaboration mode', async () => {
+    const child = new FakeCodexProcess()
+    child.rolloutTexts.set(FIXED_THREAD_IDS[3], [
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', collaboration_mode_kind: 'plan' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'Plan', text: 'private plan body' } } })
+    ].join('\n'))
+    const context = loadCodexBridge(child)
+    const kernel = context.platform.companionKernel
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    await vi.waitFor(() => expect(kernel.getLatest().complete).toBe(true))
+    const task = kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')
+    expect(task).toMatchObject({ planReady: true })
+    expect(task.capabilities.executePlan).toBe(false)
+    expect(child.writes.filter((frame) => frame.method === 'thread/resume')).toHaveLength(0)
+    context.triggerPluginOut(true)
+  })
+
+  it.each([
+    ['open', (child: FakeCodexProcess, context: ReturnType<typeof loadCodexBridge>) => context.openExternal.mockRejectedValueOnce(new Error('open failed')), 'open'],
+    ['resume', (child: FakeCodexProcess) => { child.failThreadResume = true }, 'resume']
+  ])('keeps the Plan ready when the %s execution stage fails', async (_stage, arrange, blockedMethod) => {
+    const child = new FakeCodexProcess()
+    child.supportsDefaultCollaborationMode = true
+    child.rolloutTexts.set(FIXED_THREAD_IDS[3], [
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', collaboration_mode_kind: 'plan' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'Plan', text: 'private plan body' } } })
+    ].join('\n'))
+    const context = loadCodexBridge(child)
+    arrange(child, context)
+    const kernel = context.platform.companionKernel
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    await vi.waitFor(() => expect(kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')?.capabilities.executePlan).toBe(true))
+    const task = kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')
+    const intent = { action: 'execute-plan', key: task.key, planLifecycleRevision: task.planLifecycleRevision }
+    await kernel.dispatch(intent)
+    await expect(kernel.dispatch(intent)).resolves.toMatchObject({ outcome: 'failed' })
+    expect(kernel.getLatest().tasks.find((value: Record<string, any>) => value.key === task.key)).toMatchObject({ planReady: true })
+    if (blockedMethod === 'open') expect(child.writes.filter((frame) => frame.method === 'thread/resume')).toHaveLength(0)
+    if (blockedMethod === 'resume') expect(child.writes.filter((frame) => frame.method === 'turn/start' && frame.params?.collaborationMode)).toHaveLength(0)
+    context.triggerPluginOut(true)
+  })
+
+  it('returns indeterminate and never resends when turn/start has no confirmable result', async () => {
+    const child = new FakeCodexProcess()
+    child.supportsDefaultCollaborationMode = true
+    child.invalidExecuteTurnStart = true
+    child.rolloutTexts.set(FIXED_THREAD_IDS[3], [
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', collaboration_mode_kind: 'plan' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'Plan', text: 'private plan body' } } })
+    ].join('\n'))
+    const context = loadCodexBridge(child)
+    const kernel = context.platform.companionKernel
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    await vi.waitFor(() => expect(kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')?.capabilities.executePlan).toBe(true))
+    const task = kernel.getLatest().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')
+    const intent = { action: 'execute-plan', key: task.key, planLifecycleRevision: task.planLifecycleRevision }
+    await kernel.dispatch(intent)
+    await expect(kernel.dispatch(intent)).resolves.toMatchObject({ outcome: 'indeterminate' })
+    expect(child.writes.filter((frame) => frame.method === 'turn/start' && frame.params?.collaborationMode)).toHaveLength(1)
+    expect(kernel.getLatest().tasks.find((value: Record<string, any>) => value.key === task.key)).toMatchObject({ planReady: true })
+    context.triggerPluginOut(true)
   })
 
   it('publishes an exact completed Plan item as waiting instead of a terminal unread frame', async () => {
@@ -2784,9 +2925,9 @@ describe('Codex App Server preload bridge', () => {
     kernel.syncPackage({
       lease: receipt.lease,
       draft: {
-        schema: 'companion-task-draft-v3',
+        schema: 'companion-task-draft-v4',
         producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v9',
+        sourceTaskStateRevision: 'task-state-v10',
         draftRevision: 1,
         acceptedAt: Date.now(),
         enabled: true,
@@ -2837,7 +2978,7 @@ describe('Codex App Server preload bridge', () => {
         phase: 'running',
         displayName: '新 Codex 任务',
         projectKey: 'chats',
-        capabilities: { open: true, archive: false }
+        capabilities: expect.objectContaining({ open: true, archive: false })
       })]
     })
     expect(JSON.stringify(deltas)).not.toContain(child.createdThreadId)
@@ -3800,7 +3941,7 @@ describe('Codex App Server preload bridge', () => {
       ['archive-reconciliation', 'retained']
     ])
     expect(failedStages.every((event) => event.provider === 'codex'
-      && event.taskRef === FIXED_THREAD_IDS[3]
+      && /^h:[0-9a-f]{16}$/.test(String(event.taskRef || ''))
       && event.source === 'archive-button')).toBe(true)
     expect(failedStages.filter((event) => event.event === 'archive-intent')).toHaveLength(1)
     expect(failedStages.filter((event) => event.event === 'archive-confirmation-confirmed')).toHaveLength(1)
@@ -5356,7 +5497,7 @@ describe('Codex App Server preload bridge', () => {
     expect(child.exitCode).toBe(0)
     expect(preload).not.toContain('wham/usage')
     expect(preload).not.toContain('.codex/auth.json')
-    expect(preload.match(/requestCodexRpc\('thread\/read'/g)).toHaveLength(2)
+    expect(preload.match(/requestCodexRpc\('thread\/read'/g)?.length || 0).toBeGreaterThanOrEqual(4)
     expect(preload).toContain("requestCodexRpc('thread/read', { threadId: entry.threadId, includeTurns: false })")
     expect(preload).toContain('closeable: false')
   })

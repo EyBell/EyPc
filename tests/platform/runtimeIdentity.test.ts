@@ -123,12 +123,15 @@ describe('uTools runtime identity', () => {
 
   it('accepts the unified Kernel only after exact Main/Preload identity handshake', () => {
     const kernel = {
-      revision: 'companion-task-kernel-v3',
-      packageRevision: 'companion-task-package-v3',
+      revision: 'companion-task-kernel-v4',
+      packageRevision: 'companion-task-package-v4',
       attach: vi.fn(),
+      configure: vi.fn(),
       syncPackage: vi.fn(),
       dispatch: vi.fn(),
       getPackage: vi.fn(),
+      getLatest: vi.fn(),
+      subscribe: vi.fn(),
       diagnostics: vi.fn()
     }
     ;(globalThis as any).window = { eypcPlatform: rawPlatform({

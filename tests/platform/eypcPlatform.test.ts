@@ -50,13 +50,16 @@ describe('browser fallback platform', () => {
 
   it('forwards the exact task-state revision exposed by the current preload', async () => {
     const companionKernel = {
-      revision: 'companion-task-kernel-v3',
-      packageRevision: 'companion-task-package-v3',
+      revision: 'companion-task-kernel-v4',
+      packageRevision: 'companion-task-package-v4',
       attach: vi.fn(),
+      configure: vi.fn(),
       syncPackage: vi.fn(),
       dispatch: vi.fn(async () => ({ outcome: 'unavailable' as const })),
       getPackage: vi.fn(),
-      diagnostics: vi.fn(() => ({ revision: 'companion-task-kernel-v3' }))
+      getLatest: vi.fn(),
+      subscribe: vi.fn(),
+      diagnostics: vi.fn(() => ({ revision: 'companion-task-kernel-v4' }))
     }
     globalThis.window = {
       navigator: { platform: 'MacIntel' },
@@ -93,6 +96,48 @@ describe('browser fallback platform', () => {
     expect(getPlatform().codex.taskStateRevision).toBe('task-state-v8')
     expect(getPlatform().companionKernel).toBe(companionKernel)
     expect(getPlatform().companionNavigation).toBeUndefined()
+  })
+
+  it('requires reload when Runtime Identity matches but the V4 Kernel bridge is missing', async () => {
+    globalThis.window = {
+      navigator: { platform: 'MacIntel' },
+      eypcPlatform: {
+        storage: {},
+        files: {},
+        clipboard: {},
+        codex: {
+          taskStateRevision: 'task-state-v10',
+          readSnapshot: async () => ({ ok: false, error: { code: 'unavailable', message: 'not used' }, receivedAt: Date.now() })
+        },
+        runtimeIdentity: {
+          revision: 'runtime-identity-v1',
+          handshake: (expected: Record<string, string>) => ({
+            revision: 'runtime-identity-v1',
+            status: 'host-loaded',
+            expected,
+            actual: expected,
+            kernelRevision: expected.kernelRevision,
+            taskPackageRevision: expected.taskPackageRevision,
+            message: 'loaded'
+          })
+        },
+        float: {},
+        app: { hide: async () => true },
+        getEnterPayload: () => null,
+        clearEnterPayload: () => undefined
+      }
+    } as unknown as Window & typeof globalThis
+
+    const { getPlatform } = await import('../../src/platform/eypcPlatform')
+    const platform = getPlatform()
+
+    expect(platform.runtimeIdentityStatus).toMatchObject({
+      status: 'reload-required',
+      errorCode: 'kernel-missing'
+    })
+    expect(platform.companionKernel).toBeUndefined()
+    expect(platform.companionNavigation).toBeUndefined()
+    expect(platform.companionTasks).toBeUndefined()
   })
 
   it('rejects a stale process-navigation bridge instead of mixing cache owners', async () => {
