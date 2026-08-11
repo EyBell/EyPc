@@ -1,7 +1,7 @@
 # Claude Code Companion 权威重置 — Handoff
 
-updated: `2026-08-09`
-delivery_state: `implementation-landed / RAW-154-automated-verified / quota-host-verified / interactive-host-partial`
+updated: `2026-08-11`
+delivery_state: `implementation-landed / RAW-154-automated-verified / RAW-029-focused-verified / native-sidebar-unsupported / quota-host-verified / interactive-host-partial`
 
 ## Start Here
 
@@ -19,13 +19,13 @@ delivery_state: `implementation-landed / RAW-154-automated-verified / quota-host
 - Native unread snapshot: [unread.cjs](../../../../preload/claude/unread.cjs#L1), using uTools' host-signed LevelDB module, exact tagged key and copy-before/after V2 fingerprint.
 - Exact existing history + presence/singleflight: [open.cjs](../../../../preload/claude/open.cjs#L1).
 - Provider-neutral task actions: [task-actions.cjs](../../../../preload/companion/task-actions.cjs#L1), with exhaustive Provider dispatch, per-task archive single-flight and process-owned five-second shortcut confirmation.
-- D′ task archive and indexed membership: [archive.cjs](../../../../preload/claude/archive.cjs#L1) plus [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1). Only one unique indexed target may change `isArchived`; metadata+private active-inventory removal confirms success, and open preflight rejects archived/missing/ambiguous sessions before Deep Link.
+- D′ task archive and indexed membership: [archive.cjs](../../../../preload/claude/archive.cjs#L1) plus [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1). Only one unique indexed target may change `isArchived`; metadata+private active-inventory removal confirms EyPc success, and open preflight rejects archived/missing/ambiguous sessions before Deep Link. Success/idempotent copy explicitly says the EyPc row is removed while Claude's native sidebar remains unconfirmed and may still need refresh；D′ does not emit the App's native `archived` event.
 - Dynamic quota/Node HTTPS: [claude.ts](../../../../src/domain/claude.ts#L1) and [quota.cjs](../../../../preload/claude/quota.cjs#L1), with explicit Claude App encrypted-cache authorization and current dynamic limits shape.
 - Independent materialized lanes: [codexController.ts](../../../../src/runtime/codexController.ts#L1).
 - Per-task real sync: internal `codex.claude.task.sync` joins the existing state/unread lanes; the Claude-only drawer action and successful-open silent sync never create a manual receipt.
 - Virtual projects/filter/ownership: [companionAggregate.ts](../../../../src/domain/companionAggregate.ts#L1), [FloatApp.vue](../../../../src/FloatApp.vue#L1) and [float.css](../../../../src/styles/float.css#L1).
 
-Claude-focused historical automation (`16/16` files、`343/343` tests) remains green；the RAW-024 delta adds `4/4` files、`120/120` tests plus the fixed action `1/1`。RAW-154 current affected matrix is `20/20` files、`550/550` tests；typecheck、1868-module production/uTools build、runtime validator、canonical/public mirror、JS/CJS syntax and diff checks pass。A historical 74-file / 1061-test full ladder passed，but RAW-018 supersedes it as an over-broad default。Latest sanitized host projection has 27 Code rows (0 running / 24 completed / 1 stopped / 2 unknown)，with 25 exact App-log states；native unread reads previously passed 30/30 with one membership，and App quota HTTP 200 yielded 5h + weekly_all + Fable scoped windows with reset。No real D′ canary has run；the following host gates remain independent。
+Claude-focused historical automation (`16/16` files、`343/343` tests) remains green；the RAW-024 delta adds `4/4` files、`120/120` tests plus the fixed action `1/1`。RAW-154 current affected matrix is `20/20` files、`550/550` tests；typecheck、1868-module production/uTools build、runtime validator、canonical/public mirror、JS/CJS syntax and diff checks pass。A historical 74-file / 1061-test full ladder passed，but RAW-018 supersedes it as an over-broad default。Latest sanitized host projection has 27 Code rows (0 running / 24 completed / 1 stopped / 2 unknown)，with 25 exact App-log states；native unread reads previously passed 30/30 with one membership，and App quota HTTP 200 yielded 5h + weekly_all + Fable scoped windows with reset。A user-authorized real D′ canary passed on 2026-08-10；RAW-029 D-1/D-2 focused verification passed on 2026-08-11, while native-sidebar convergence is `unsupported-currently`；the following host gates remain independent。
 
 ## Do Not Restore
 
@@ -40,10 +40,11 @@ Claude-focused historical automation (`16/16` files、`343/343` tests) remains g
 - 固定 `test → typecheck → build → verify` ladder，或把 Agent 自拟 plan 的后续批准当成 full-suite 授权。
 - 把 `SubagentStop`/工具尾事件当父 Turn 新活动，或增加人工 completed/read 覆盖、第二条同步通道。
 - 把 `[已归档]` 解释为物理迁移授权；五份历史文档当前只在原路径逻辑归档。
+- 把 D′ 的 `isArchived=true`、EyPc 库存缺行、LevelDB、App 重启后视觉结果或任何私有 IPC/UI 自动化结果当作 Claude 原生侧栏 ACK。
 
 ## Remaining Acceptance
 
-- 经用户另行确认后，只选择一个可丢弃 completed/stopped 会话执行一次 D′ 真机 canary：不打开 Claude，EyPc 卡片立即移除；Claude 侧栏是否无需刷新只记录观察，不作为成功硬门禁。
+- D-2 当前不是待编码项：只有 Claude 后续提供受支持的本地 Code 原生归档入口，并能同时验证同一 session 原生 ACK 与同一运行中侧栏 1.25 秒内移除时才重开；否则保持 `unsupported-currently`。
 - 在 Claude App 手动归档一个可丢弃会话，核对精确 watcher 在 250ms 目标内移除 EyPc 卡片；再以受控方式丢一次 callback，核对一秒 watchdog 在 1.25 秒内恢复且不触发全量库存。
 - 在实际 uTools/Claude 中走完 permission、AskUserQuestion、响应、后台完成、EyPc 点击现有真实 unread 后原生移除/同轮不回跳/新 completion 再未读、标题 patch 与重启恢复；同一任务不得跨分组或产生副本。
 - 在真实混合项目上核对共享、Codex-only、Claude-only、重名歧义及 `全部 / 只显示 Codex / 只显示 Claude`，并检查归属文字、8%/12% 背景、键盘/ARIA/高对比度。

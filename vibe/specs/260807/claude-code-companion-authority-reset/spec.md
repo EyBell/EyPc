@@ -1,11 +1,11 @@
 # Claude Code Companion 权威重置 — Controlled Specification
 
 spec_id: `SPEC-260807-CLAUDE-CODE-COMPANION-AUTHORITY-RESET`
-spec_revision: `6`
+spec_revision: `7`
 status: `integrated-current-authority`
-execution_status: `implementation-landed / RAW-154-automated-verified / targeted-host-partial / interactive-host-pending`
-raw_sources: `RAW-001..RAW-026`
-updated: `2026-08-09`
+execution_status: `implementation-landed / RAW-154-automated-verified / RAW-029-focused-verified / native-sidebar-unsupported / targeted-host-partial / interactive-host-pending`
+raw_sources: `RAW-001..RAW-026, RAW-029`
+updated: `2026-08-11`
 
 ## Authority
 
@@ -53,6 +53,7 @@ updated: `2026-08-09`
     "vibe/knowledge/error-memory/tests-that-cannot-fail.md",
     "vibe/knowledge/error-memory/watcher-callback-latency-is-not-end-to-end-publication-latency.md",
     "vibe/knowledge/error-memory/independent-authorities-coupled-by-full-refresh.md",
+    "vibe/knowledge/error-memory/claude-metadata-archive-does-not-prove-native-sidebar-convergence.md",
     "vibe/specs/260805/1150-claude-companion-provider/spec.md",
     "vibe/specs/260806/1130-claude-desktop-provider/spec.md",
     "vibe/specs/260806/2147-claude-open-in-desktop-app/verify.md",
@@ -161,6 +162,7 @@ updated: `2026-08-09`
     "vibe/knowledge/error-memory/claude-session-family-open-route-and-state-authority-conflation.md",
     "vibe/knowledge/error-memory/tests-that-cannot-fail.md",
     "vibe/knowledge/error-memory/independent-authorities-coupled-by-full-refresh.md",
+    "vibe/knowledge/error-memory/claude-metadata-archive-does-not-prove-native-sidebar-convergence.md",
     "vibe/knowledge/error-memory/modules/claude-companion.md",
     "vibe/knowledge/error-memory/codex-provider-status-display-normalization.md",
     "vibe/knowledge/error-memory/watcher-callback-latency-is-not-end-to-end-publication-latency.md",
@@ -221,7 +223,7 @@ updated: `2026-08-09`
 
 - EyPc 不创建或修改 Codex/Claude 原生项目。虚拟合并先按双方相同规范绝对路径的稳定 project key；否则只在 Codex 与 Claude 两侧规范名称都唯一时合并，重名歧义保持分离。Claude 独有项目进入项目区，共享项目在“全部”只出现一次。
 - Projects 子页签为会话级 `全部 / 只显示 Codex / 只显示 Claude`，默认全部。单来源模式同时过滤项目子任务并重算项目/任务数；共享项目只要含所选来源任务就保留。
-- 更新引入（Codex Companion RAW-154，取代 RAW-150 的 Claude 执行路线）：Claude 任务继续支持精确打开、本地置顶和本地隐藏，并允许仅限 macOS Claude `1.26832.0` 的 completed/stopped 任务级 D′ 静默归档。普通库存读取只在 Preload 内建立唯一 `sessionId → local_*.json` 索引；mutation 不重新扫目录。写前必须重读 compatible phase、精确 App-local 身份及文件 stat/hash；事务保留原始字节/权限，只把解析对象的 `isArchived` 改为 true，写入同目录唯一临时文件并核验其它字段语义不变后原子替换。元数据 true 且私有活动库存移除即可 `archived`，固定语法 App 日志只作增强证据；已归档幂等成功，安全恢复失败或 Claude 并发修改不确定时返回 `indeterminate`，`failed/indeterminate` 均保留卡片。归档路径禁止 Deep Link、AX/JXA、LevelDB、扫改目录和非目标会话；项目级归档、移除和移动仍禁用并解释。
+- 更新引入（Codex Companion RAW-154，取代 RAW-150 的 Claude 执行路线）：Claude 任务继续支持精确打开、本地置顶和本地隐藏，并允许仅限 macOS Claude `1.26832.0` 的 completed/stopped 任务级 D′ 静默归档。普通库存读取只在 Preload 内建立唯一 `sessionId → local_*.json` 索引；mutation 不重新扫目录。写前必须重读 compatible phase、精确 App-local 身份及文件 stat/hash；事务保留原始字节/权限，只把解析对象的 `isArchived` 改为 true，写入同目录唯一临时文件并核验其它字段语义不变后原子替换。元数据 true 且私有活动库存移除即可 `archived`，插件包立即精确移除并自动刷新；该成功只确认 EyPc 侧归档与移除，不确认 Claude 原生侧栏。成功提示固定明确为 EyPc 已完成、Claude 原生侧栏可能仍待刷新且尚未确认同步。固定语法 App 日志只作增强证据；已归档幂等成功，安全恢复失败或 Claude 并发修改不确定时返回 `indeterminate`，`failed/indeterminate` 均保留卡片。归档路径禁止 Deep Link、AX/JXA、LevelDB、扫改目录和非目标会话；项目级归档、移除和移动仍禁用并解释。
 - 普通打开在派发 Deep Link 前必须通过同一私有索引重读：已归档、缺失或身份不唯一返回 `state-changed`，不得重新打开旧会话。精确文件 watcher 只重读已登记目标并发布单调 membership mutation delta；一秒 watchdog 只核验索引候选。该通路独立于 quota、state、unread 与完整 inventory Promise，正常发布 P95 ≤250ms，漏 callback 恢复 ≤1.25s。
 - “同步 Claude 状态”是 Claude-only 的实时只读 capability；Codex 行不显示。它不能人工指定 completed/read，也不能修改 Claude App。
 - 每条任务和项目固定显示文本化“归属 Codex/Claude/共享”；文字、图标、ARIA 名称共同表达来源。来源背景使用现有 token 的 8% 普通/12% 悬停选中混色，状态图标与左侧标记继续只表达任务状态；Tab 保留原生键盘、焦点和 `aria-selected` 语义。
@@ -266,6 +268,7 @@ updated: `2026-08-09`
 | DEC-20260808-14 | 父 Turn reducer + 集中来源/版本选择 + 同 lane 单项真实同步 | Stop 后尾事件复活、人工完成/已读覆盖、第二条刷新通道 | RAW-024 |
 | DEC-20260809-15 | D′ 单目标 `isArchived` 事务 + 元数据/活动库存双确认 + 并发安全回滚 | Deep Link+AX 归档、App 日志硬门禁、LevelDB/目录/非目标写入 | RAW-025、Codex RAW-154 |
 | DEC-20260809-16 | 统一任务 Dispatcher + 精确 membership delta/一秒索引 watchdog + open 归档前复核 | Provider-specific Controller 分支、完整库存阻塞移除、已归档会话仍被 Deep Link 打开 | RAW-026、Codex RAW-154 |
+| DEC-20260811-18 | D′ 成功只确认 EyPc 归档/移除并明确提示 Claude 侧栏未确认；原生及时收敛仅接受受支持入口 + 同会话原生 ACK + 运行中侧栏 1.25 秒内移除 | 用元数据/LevelDB、私有 IPC、AX/JXA/UI 自动化、重启或事后视觉结果冒充原生收敛 | RAW-029 |
 
 ## Archive Tombstones
 
@@ -283,6 +286,7 @@ updated: `2026-08-09`
 | ARCH-20260808-10 | 任意 Stop 后活动事件都可把父任务恢复 running | DEC-14 | 只有新的父 Turn 权威合同与对应反例验收后才可替代 |
 | ARCH-20260809-11 | Claude 打开会话后用 AX 点 Archive，并把 App 日志作为硬成功条件 | DEC-15 | 只有 D′ 被真实反例证伪且用户重新选择副作用路线 |
 | ARCH-20260809-12 | Claude 手动/插件归档等待完整库存刷新后再收敛卡片 | DEC-16 | 不得恢复跨独立 authority 的阻塞刷新 |
+| ARCH-20260811-13 | D′ 元数据成功和 EyPc 库存移除等同于 Claude 原生侧栏已同步 | DEC-18 | 只有 Claude 提供受支持的原生归档入口，并通过同会话 ACK 与运行中 1.25 秒侧栏移除验收后才可替代 |
 
 ## Implementation And Acceptance State
 
