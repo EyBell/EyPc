@@ -131,6 +131,7 @@ function createUnreadReader(dependencies) {
   let lastFingerprint = ''
   let lastStableFingerprint = ''
   let generation = 0
+  let readInFlight = null
 
   function sourceRoot() {
     const override = textOf(dependencies.claudeLocalStorageRoot).trim()
@@ -179,14 +180,21 @@ function createUnreadReader(dependencies) {
     }
   }
 
-  async function read() {
-    const leveldown = resolveLeveldown(dependencies)
-    if (!leveldown) return null
-    for (let index = 0; index < UNREAD_MAX_ATTEMPTS; index += 1) {
-      const result = await attempt(leveldown)
-      if (result) return result
-    }
-    return null
+  function read() {
+    if (readInFlight) return readInFlight
+    const operation = (async () => {
+      const leveldown = resolveLeveldown(dependencies)
+      if (!leveldown) return null
+      for (let index = 0; index < UNREAD_MAX_ATTEMPTS; index += 1) {
+        const result = await attempt(leveldown)
+        if (result) return result
+      }
+      return null
+    })().finally(() => {
+      if (readInFlight === operation) readInFlight = null
+    })
+    readInFlight = operation
+    return operation
   }
 
   function fingerprint() {

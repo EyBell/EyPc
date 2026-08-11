@@ -41,6 +41,7 @@ import {
   resolveCodexSurfaceTheme
 } from './domain/codexAppearance'
 import { buildCodexCompactPresentation, codexBadgeText, normalizeCodexTaskStatePackage } from './domain/codexPresentation'
+import { applyCompanionTaskPackageViews } from './domain/companionTaskPackage'
 import { assignQuickJumpMarkers, moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
 import type { QuickJumpTarget } from './domain/quickJump'
 import { quickJumpHitStackContainsTarget, quickJumpHitTestPoints } from './domain/quickJumpHitTest'
@@ -136,7 +137,13 @@ const composerDialog = ref<HTMLElement | null>(null)
 const composerTextarea = ref<HTMLTextAreaElement | null>(null)
 const composerModelSelect = ref<HTMLSelectElement | null>(null)
 const composerImageInput = ref<HTMLInputElement | null>(null)
-const pendingConfirm = ref<{ id: string; label: string; until: number } | null>(null)
+const pendingConfirm = ref<{
+  id: string
+  label: string
+  until: number
+  operationId: string
+  source: 'archive-button' | 'batch-archive' | 'project-archive' | 'manual-row-open'
+} | null>(null)
 const liveMessage = ref('')
 const drawerActiveIndex = ref(0)
 const highlightOwner = ref<'mouse' | 'keyboard'>('mouse')
@@ -177,7 +184,6 @@ let collapseTimer: ReturnType<typeof setTimeout> | null = null
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 let actionHintTimer: ReturnType<typeof setTimeout> | null = null
 let compactCounterHintTimer: ReturnType<typeof setTimeout> | null = null
-let pendingRun: (() => void) | null = null
 let taskScrollResizeObserver: ResizeObserver | null = null
 let desiredExpanded = false
 let hoverInside = false
@@ -190,17 +196,23 @@ let composerTrigger: HTMLElement | null = null
 let panelTrigger: HTMLElement | null = null
 let aliasTrigger: HTMLElement | null = null
 let quickJumpTrigger: HTMLElement | null = null
+let pendingTaskFocusSource: 'manual-quick-jump' | null = null
+let archiveConfirmationSequence = 0
 
 const fallbackColors = CODEX_THEME_PRESETS[0].colors
 const fallbackWaterAppearance = CODEX_THEME_PRESETS[0].waterAppearance
 const fallbackExpandedCardAppearance = CODEX_THEME_PRESETS[0].expandedCardAppearance
 const settings = computed(() => snapshot.value)
 const quota = computed(() => snapshot.value?.quota)
-const taskState = computed(() => normalizeCodexTaskStatePackage(
-  snapshot.value?.taskState,
-  snapshot.value?.conversations,
-  snapshot.value?.taskStateRevision
-))
+const taskState = computed(() => {
+  const normalized = normalizeCodexTaskStatePackage(
+    snapshot.value?.taskState,
+    snapshot.value?.conversations,
+    snapshot.value?.taskStateRevision
+  )
+  const taskPackage = snapshot.value?.companionTaskPackage
+  return taskPackage ? applyCompanionTaskPackageViews(normalized, taskPackage) : normalized
+})
 const conversations = computed(() => taskState.value.conversations)
 const dynamicStatus = computed(() => taskState.value.dynamic)
 const compact = computed(() => buildCodexCompactPresentation({
@@ -536,6 +548,7 @@ const tabLabelToBackend: Record<UiConversationTab, CodexTaskTab> = {
 }
 
 function switchComposerTab(tab: UiConversationTab) {
+  clearConfirm()
   selectedUiTab.value = tab
   action('codex.tab.set', { tab: tabLabelToBackend[tab] })
 }
@@ -1227,8 +1240,8 @@ function openCompactStatus(kind: 'input' | 'active' | 'unread') {
   action('codex.input.open')
 }
 
-function openTask(task: CodexTaskCard) {
-  if (task.actionAlias) action('codex.task.open', { key: task.key, actionAlias: task.actionAlias })
+function openTask(task: CodexTaskCard, source: 'card-click' | 'manual-quick-jump' = 'card-click') {
+  if (task.actionAlias) action('codex.task.open', { key: task.key, actionAlias: task.actionAlias, source })
 }
 
 function taskProject(task: CodexTaskCard) {
@@ -1335,25 +1348,48 @@ function cancelAlias() {
   restoreTrigger(trigger)
 }
 
-function clearConfirm() {
+function clearConfirm(reason: 'cleared' | 'confirmed' | 'expired' = 'cleared') {
   if (confirmTimer) clearTimeout(confirmTimer)
   confirmTimer = null
+  const current = pendingConfirm.value
   pendingConfirm.value = null
-  pendingRun = null
+  if (current && reason === 'expired' && current.id.startsWith('archive')) {
+    action('codex.archive.confirmation', {
+      operationId: current.operationId,
+      source: current.source,
+      stage: 'expired'
+    })
+  }
 }
 
-function requestConfirmation(id: string, label: string, run: () => void) {
-  if (pendingConfirm.value?.id === id && pendingConfirm.value.until >= Date.now()) {
-    const execute = pendingRun
-    clearConfirm()
-    execute?.()
+function requestConfirmation(
+  id: string,
+  label: string,
+  run: (operationId: string) => void,
+  source: 'archive-button' | 'batch-archive' | 'project-archive' | 'manual-row-open' = 'manual-row-open'
+) {
+  const current = pendingConfirm.value
+  if (current?.id === id && current.until >= Date.now()) {
+    if (id.startsWith('archive')) {
+      action('codex.archive.confirmation', {
+        operationId: current.operationId,
+        source: current.source,
+        stage: 'confirmed'
+      })
+    }
+    clearConfirm('confirmed')
+    run(current.operationId)
     return
   }
   clearConfirm()
-  pendingRun = run
-  pendingConfirm.value = { id, label, until: Date.now() + 5_000 }
+  archiveConfirmationSequence += 1
+  const operationId = `archive-ui-${Date.now().toString(36)}-${archiveConfirmationSequence.toString(36)}`
+  pendingConfirm.value = { id, label, until: Date.now() + 5_000, operationId, source }
+  if (id.startsWith('archive')) {
+    action('codex.archive.confirmation', { operationId, source, stage: 'created' })
+  }
   liveMessage.value = `${label}：请在 5 秒内再次执行相同操作确认`
-  confirmTimer = setTimeout(clearConfirm, 5_000)
+  confirmTimer = setTimeout(() => clearConfirm('expired'), 5_000)
 }
 
 function archiveCandidates() {
@@ -1373,7 +1409,32 @@ function taskArchiving(task: CodexTaskCard) {
 function taskArchiveConfirming(task: CodexTaskCard) {
   const id = pendingConfirm.value?.id || ''
   if (!id.startsWith('archive:')) return false
-  return id.slice('archive:'.length).split('|').includes(`${task.key}:${task.revisionAt}`)
+  return id.slice('archive:'.length).split('|').includes(taskArchiveIdentity(task))
+}
+
+function taskArchiveIdentity(task: CodexTaskCard) {
+  const terminalEpoch = task.bucket === 'completed' || task.bucket === 'completed-unread'
+    ? task.completionRevision || task.lastTurnCompletedAt || task.lastTurnStartedAt || task.statusEnteredAt || 0
+    : task.bucket === 'stopped'
+      ? task.lastTurnStartedAt || task.statusEnteredAt || 0
+      : 0
+  return `${taskProvider(task)}:${task.key}:${terminalEpoch}`
+}
+
+function confirmationMatchesCurrentState() {
+  const id = pendingConfirm.value?.id || ''
+  if (!id) return true
+  if (id.startsWith('archive:')) {
+    const identities = new Set((conversations.value?.all || [])
+      .filter((task) => task.canArchive && !taskArchiving(task))
+      .map(taskArchiveIdentity))
+    return id.slice('archive:'.length).split('|').every((identity) => identities.has(identity))
+  }
+  if (id.startsWith('archive-project:') || id.startsWith('remove-project:')) {
+    const key = id.slice(id.indexOf(':') + 1)
+    return Boolean(conversations.value?.projects.some((project) => project.key === key && project.actionAlias))
+  }
+  return false
 }
 
 function taskArchiveBlockedReason(task: CodexTaskCard) {
@@ -1415,11 +1476,17 @@ function requestTaskArchive(task?: CodexTaskCard | CodexTaskCard[]) {
     liveMessage.value = '当前没有可归档的任务'
     return
   }
-  const identity = tasks.map((task) => `${task.key}:${task.revisionAt}`).sort().join('|')
-  requestConfirmation(`archive:${identity}`, `归档 ${tasks.length} 个任务`, () => {
-    action('codex.tasks.archive', { items: tasks.map((task) => ({ key: task.key, revisionAt: task.revisionAt })) })
+  const identity = tasks.map(taskArchiveIdentity).sort().join('|')
+  const source = tasks.length > 1 ? 'batch-archive' : 'archive-button'
+  requestConfirmation(`archive:${identity}`, `归档 ${tasks.length} 个任务`, (operationId) => {
+    action('codex.tasks.archive', {
+      items: tasks.map((task) => ({ key: task.key, revisionAt: task.revisionAt })),
+      operationId,
+      source,
+      confirmationRecorded: true
+    })
     selectedKeys.value = new Set()
-  })
+  }, source)
 }
 
 function requestProjectArchive(project: CodexProjectCard) {
@@ -1428,9 +1495,15 @@ function requestProjectArchive(project: CodexProjectCard) {
     return
   }
   if (!project.actionAlias) return
-  requestConfirmation(`archive-project:${project.key}`, `归档 ${project.name} 的全部已完成任务`, () => {
-    action('codex.project.archive', { key: project.key, actionAlias: project.actionAlias })
-  })
+  requestConfirmation(`archive-project:${project.key}`, `归档 ${project.name} 的全部已完成任务`, (operationId) => {
+    action('codex.project.archive', {
+      key: project.key,
+      actionAlias: project.actionAlias,
+      operationId,
+      source: 'project-archive',
+      confirmationRecorded: true
+    })
+  }, 'project-archive')
 }
 
 function requestProjectRemove(project: CodexProjectCard) {
@@ -1869,10 +1942,20 @@ function openQuickJump(backward = false) {
 function activateQuickJumpTarget() {
   const target = quickJump.value.sourceTargets.find((item) => item.id === quickJump.value.activeTargetId)
   if (!target) return
+  window.eypcFloat?.action('codex.quickJump.activate', { source: 'manual-quick-jump' })
   closeQuickJump()
   target.element.focus({ preventScroll: true })
   const focusKey = target.element.dataset.focusKey
   if (focusKey) {
+    const matchedItem = focusItems.value.find((item) => item.key === focusKey)
+    const taskItem = matchedItem?.kind === 'task' ? matchedItem : null
+    if (taskItem) {
+      if (focusedKey.value === focusKey) {
+        window.eypcFloat?.action('codex.task.focus', { key: taskItem.task.key, source: 'manual-quick-jump' })
+      } else {
+        pendingTaskFocusSource = 'manual-quick-jump'
+      }
+    } else pendingTaskFocusSource = null
     focusedKey.value = focusKey
     return
   }
@@ -1928,7 +2011,6 @@ const fallbackCommands: Record<string, string> = {
   'Alt+ArrowDown': 'codex.pin.moveDown',
   'Ctrl+F': 'codex.quickJump.openForward',
   'Ctrl+Shift+F': 'codex.search.focus',
-  'Ctrl+R': 'codex.refresh',
   'Ctrl+T': 'codex.thread.createFocused',
   'Ctrl+Shift+1': 'codex.action.run.1',
   'Ctrl+Shift+2': 'codex.action.run.2',
@@ -2127,7 +2209,6 @@ function onRootKeydown(event: KeyboardEvent) {
   else if (command === 'codex.pin.moveUp' && item) movePin(item, -1)
   else if (command === 'codex.pin.moveDown' && item) movePin(item, 1)
   else if (command === 'codex.search.focus') searchInput.value?.focus()
-  else if (command === 'codex.refresh') action('codex.refresh')
   else if (command === 'codex.thread.createFocused') openComposer()
   else if (command.startsWith('codex.drawer.select.')) executeDrawerAction(Number(command.split('.').at(-1)) - 1)
   else if (command.startsWith('codex.action.run.')) action(command)
@@ -2204,6 +2285,9 @@ function taskCanRestore(task: CodexTaskCard) {
 }
 
 function onWindowBlur() {
+  drag = null
+  resize = null
+  window.eypcFloat?.cancelInteraction?.()
   hoverInside = false
   focusWithin = false
   shiftHeld.value = false
@@ -2384,13 +2468,20 @@ function queueActionHint(event: Event, label: string) {
 }
 
 function taskStateLabel(task: CodexTaskCard) {
-  if (task.activityState === 'waiting-input') return '等待输入'
-  if (task.activityState === 'waiting-approval') return '等待审批'
-  if (task.claudePhase === 'unknown') return '状态未知'
-  if (task.bucket === 'stopped') return '待继续'
-  if (task.bucket === 'completed-unread') return '已完成 · 未读'
-  if (task.bucket === 'completed') return '已完成'
-  return '进行中'
+  const label = task.activityState === 'waiting-input'
+    ? '等待输入'
+    : task.activityState === 'waiting-approval'
+      ? '等待审批'
+      : task.claudePhase === 'unknown'
+        ? '状态未知'
+        : task.bucket === 'stopped'
+          ? '待继续'
+          : task.bucket === 'completed-unread'
+            ? '已完成 · 未读'
+            : task.bucket === 'completed'
+              ? '已完成'
+              : '进行中'
+  return task.canonicalFreshness === 'verifying' ? `${label} · 核验中` : label
 }
 
 function taskIcon(task: CodexTaskCard) {
@@ -2415,7 +2506,13 @@ watch(() => conversations.value?.projects.map((project) => `${project.key}:${pro
   if (changed) optimisticProjectCollapsed.value = next
 })
 
-watch([searchText, renderRows], () => {
+watch(searchText, () => {
+  clearConfirm()
+  closeQuickJump()
+  closeShiftPreview(true)
+}, { flush: 'post' })
+
+watch(renderRows, () => {
   const visible = visibleTaskKeys.value
   selectedKeys.value = new Set([...selectedKeys.value].filter((key) => visible.has(key)))
   if (!focusItems.value.some((item) => item.key === focusedKey.value)) focusedKey.value = focusItems.value[0]?.key || ''
@@ -2425,7 +2522,7 @@ watch([searchText, renderRows], () => {
     if (refreshedItem) panel.value = { ...currentPanel, item: refreshedItem }
     else closePanel()
   }
-  clearConfirm()
+  if (!confirmationMatchesCurrentState()) clearConfirm('expired')
   closeQuickJump()
   closeShiftPreview(true)
 }, { flush: 'post' })
@@ -2434,12 +2531,14 @@ watch(() => `${selectedTasks.value.map((task) => task.key).join('|')}::${focused
 
 watch(() => {
   const item = focusedItem.value
-  return item?.kind === 'task' ? `${item.task.key}:${item.task.revisionAt}` : ''
+  return item?.kind === 'task' ? `${item.task.provider || 'codex'}:${item.task.key}` : ''
 }, () => {
   const item = focusedItem.value
+  const source = pendingTaskFocusSource || 'automatic-focus'
+  pendingTaskFocusSource = null
   window.eypcFloat?.action('codex.task.focus', item?.kind === 'task'
-    ? { key: item.task.key, revisionAt: item.task.revisionAt }
-    : { key: '' })
+    ? { key: item.task.key, source }
+    : { key: '', source })
 }, { flush: 'post', immediate: true })
 
 watch(taskScroll, (element) => {
@@ -2520,6 +2619,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  window.eypcFloat?.cancelInteraction?.()
   if (collapseTimer) clearTimeout(collapseTimer)
   clearActionHint()
   clearCompactCounterHint()

@@ -299,7 +299,6 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'codex.float.activate': { title: '进入 Codex 卡片', group: 'Codex', layer: 'app', shortcutIds: ['Ctrl+Alt+Enter'], when: 'true', weight: 1001, description: '显示并展开悬浮卡片，直接进入会话选择和完整操作。', profileId: 'codex' },
   'codex.tab.prev': { title: '上一个 Codex 页签', group: 'Codex', layer: 'codex', shortcutIds: ['ArrowLeft'], when: "tab == 'codex' && !textInputFocused", weight: 140, profileId: 'codex' },
   'codex.tab.next': { title: '下一个 Codex 页签', group: 'Codex', layer: 'codex', shortcutIds: ['ArrowRight'], when: "tab == 'codex' && !textInputFocused", weight: 140, profileId: 'codex' },
-  'codex.refresh': { title: '刷新 Codex 状态', group: 'Codex', layer: 'codex', shortcutIds: ['Ctrl+R'], when: "tab == 'codex'", weight: 100, profileId: 'codex' },
   'codex.thread.createFocused': { title: '在当前项目新建会话', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+T'], when: "tab == 'codex' && !confirmOpen && !textInputFocused", weight: 160, profileId: 'codex', description: '打开新会话编辑器；优先归属当前高亮会话或项目。' },
   'codex.list.up': { title: '会话焦点上移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['ArrowUp'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
   'codex.list.down': { title: '会话焦点下移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['ArrowDown'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },

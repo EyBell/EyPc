@@ -264,6 +264,7 @@ function activateQuickJumpTarget(targetId = quickJump.value.activeTargetId) {
     ? quickJump.value.sourceTargets.find((item) => item.id === targetId) || quickJump.value.targets.find((item) => item.id === targetId)
     : null
   if (!target) return false
+  runtime.dispatch('codex.quickJump.activate', { source: 'manual-quick-jump' })
   closeQuickJump()
   target.element.focus({ preventScroll: true })
   target.element.click()
@@ -612,6 +613,7 @@ onUnmounted(() => {
           :persisted-settings-tab-id="snapshot.state.settingsTabId"
           :persisted-maintenance-section-id="snapshot.state.settingsMaintenanceSectionId"
           :settings="snapshot.state.settings"
+          :runtime-diagnostics="snapshot.runtimeDiagnostics"
           :mqtt-storage-status="snapshot.mqttStorageStatus"
           :window-activation-diagnostics="snapshot.windowActivationDiagnostics"
           :window-operation-trace-enabled="snapshot.windowOperationTraceEnabled"

@@ -165,7 +165,7 @@
     },
     {
       "code": "eypc-codex",
-      "explain": "Codex 额度悬浮球设置",
+      "explain": "额度任务悬浮球设置",
       "cmds": ["Codex额度", "Codex悬浮球", "Codex quota"]
     },
     {

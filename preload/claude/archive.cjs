@@ -64,10 +64,18 @@ function createArchiveAdapter(dependencies) {
     }
     const phase = await readArchivablePhase(sessionId)
     if (phase.outcome !== 'archivable') return phase
-    const result = codeSessions.archiveSessionMetadata(sessionId)
+    let result = codeSessions.archiveSessionMetadata(sessionId)
+    // One bounded retry is safe before any confirmed write: revalidate the
+    // exact phase, then let the metadata transaction rebase once more.
+    if (result?.outcome === 'indeterminate' && result.errorCode === 'source-changed') {
+      const retryPhase = await readArchivablePhase(sessionId)
+      if (retryPhase.outcome !== 'archivable') return retryPhase
+      result = codeSessions.archiveSessionMetadata(sessionId)
+    }
     if (result?.outcome !== 'archived') {
       return {
         outcome: result?.outcome === 'indeterminate' ? 'indeterminate' : 'failed',
+        ...(typeof result?.errorCode === 'string' ? { errorCode: result.errorCode } : {}),
         message: result?.outcome === 'indeterminate'
           ? 'Claude 文件在归档期间发生并发变化，结果无法唯一确认，已保留任务卡片'
           : 'Claude 静默归档失败，已保留任务卡片'

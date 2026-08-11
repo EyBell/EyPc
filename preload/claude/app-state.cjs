@@ -79,7 +79,11 @@ function parseAppStateLine(line) {
     return sessionId ? { kind: 'completed', sessionId, requestId: '', at } : null
   }
   match = /^Stopping session (local_[0-9a-f-]+)$/.exec(message)
-    || /^\[(?:Result|Stop hook)\] (?:Turn|Query) (?:failed|interrupted) for session (local_[0-9a-f-]+)$/.exec(message)
+  if (match) {
+    const sessionId = normalizeLocalId(match[1])
+    return sessionId ? { kind: 'session-end', sessionId, requestId: '', at } : null
+  }
+  match = /^\[(?:Result|Stop hook)\] (?:Turn|Query) (?:failed|interrupted) for session (local_[0-9a-f-]+)$/.exec(message)
   if (match) {
     const sessionId = normalizeLocalId(match[1])
     return sessionId ? { kind: 'stopped', sessionId, requestId: '', at } : null
@@ -143,6 +147,14 @@ function foldAppStateEvents(events, previous, previousRequests) {
     } else if (event.kind === 'completed') {
       next.phase = 'completed'
       next.lastStopAt = event.at
+    } else if (event.kind === 'session-end') {
+      next.lastSessionEndAt = event.at
+      // Claude emits a generic teardown row after both successful and
+      // interrupted sessions. Preserve a completion from the current Turn;
+      // only a teardown without current-Turn completion is a real stop.
+      next.phase = known.lastStopAt > 0 && known.lastStopAt >= known.turnStartedAt
+        ? 'completed'
+        : 'stopped'
     } else if (event.kind === 'stopped') {
       next.phase = 'stopped'
       next.lastSessionEndAt = event.at

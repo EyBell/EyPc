@@ -31,9 +31,9 @@ import {
 } from '../domain/windowTree'
 import { createWindowRebindState, transitionWindowRebind, windowInteractionAllowed, windowRebindView, type WindowInteractionPolicy, type WindowRebindEvent, type WindowRebindState, type WindowRebindView } from '../domain/windowRebind'
 import type { CodexFloatPosition, CodexSettings } from '../domain/codex'
-import type { AppState, AppTabId, FavoriteNode, FavoritePlatform, FavoriteRunnerConfig, FavoriteRunRecord, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttConnectionGroup, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
+import type { AppState, AppTabId, FavoriteNode, FavoritePlatform, FavoriteRunnerConfig, FavoriteRunRecord, FeatureConfig, KillRequest, MqttArchiveState, MqttConnectionConfig, MqttConnectionGroup, MqttInfoFilter, MqttLayoutPrefs, MqttMessageRecord, MqttPublishDraft, MqttPublishDraftHistoryEntry, MqttPublishTemplate, MqttQos, MqttStorageStatus, PortGroup, PortGroupFolder, PortGroupTarget, PortProcess, RuntimeDiagnosticsLevel, ShortcutProfileId, ShortcutProfileMap, ToolPreviewPrefs } from '../domain/types'
 import type { PortGroupTreeRow } from '../domain/ports'
-import { WINDOW_BRIDGE_REVISION, getPlatform, normalizeFavoriteRunResult, normalizeFileActionResult, type FavoriteDirectoryEntry, type FavoritePathInspection, type FavoriteRunResult, type FileActionResult, type FileCapabilities, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind, type WindowActivationOutcome, type WindowActivationReasonCode, type WindowCapability, type WindowOperationTrace } from '../platform/eypcPlatform'
+import { WINDOW_BRIDGE_REVISION, getPlatform, normalizeFavoriteRunResult, normalizeFileActionResult, type FavoriteDirectoryEntry, type FavoritePathInspection, type FavoriteRunResult, type FileActionResult, type FileCapabilities, type MqttSecretMap, type PickedFavorite, type PickedFavoriteKind, type RuntimeDiagnosticsSnapshotV3, type WindowActivationOutcome, type WindowActivationReasonCode, type WindowCapability, type WindowOperationTrace } from '../platform/eypcPlatform'
 import { createActionRuntime } from './action/actionRuntime'
 import type { RuntimeActionContext, RuntimeActionRisk } from './action/types'
 import { FEATURES, visibleFeatures, type VisibleFeatureDefinition } from './feature/featureRegistry'
@@ -72,6 +72,7 @@ export interface AppRuntimeSnapshot {
   state: AppState
   codex: CodexRuntimeView
   codexFloat: CodexFloatSnapshotV1
+  runtimeDiagnostics: RuntimeDiagnosticsSnapshotV3
   ports: PortProcess[]
   filteredPorts: PortProcess[]
   filteredPortGroups: PortGroup[]
@@ -724,7 +725,23 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     run: Boolean(platform.files.run),
     terminalRun: Boolean(platform.files.run)
   }
+  const runtimeDiagnosticsNeedsDefaultMigration = initialState.settings.runtimeDiagnostics.defaultsRevision !== 3
   let state = normalizeAppState(initialState)
+  if (runtimeDiagnosticsNeedsDefaultMigration) {
+    platform.diagnostics?.configure(state.settings.runtimeDiagnostics)
+    save()
+  }
+  platform.diagnostics?.record({
+    level: 'info',
+    scope: 'renderer-runtime',
+    event: 'create',
+    outcome: 'started',
+    details: {
+      activeTab: state.activeTab,
+      enabledFeatures: state.settings.featureConfigs.filter((feature) => feature.enabled).map((feature) => feature.id),
+      diagnostics: state.settings.runtimeDiagnostics
+    }
+  })
   function currentFavoritePlatform(): FavoritePlatform | null {
     return isFavoritePlatform(favoriteCapabilities.platform) ? favoriteCapabilities.platform : null
   }
@@ -871,6 +888,35 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     captureSnapshot: () => normalizeAppState(state),
     commitSnapshot: (snapshot) => {
       undoStack.push(normalizeAppState(snapshot))
+    },
+    onDispatch: (observation) => {
+      const automaticFocus = observation.actionId === 'codex.task.focus' && observation.source === 'automatic-focus'
+      platform.diagnostics?.record({
+        level: automaticFocus
+          ? 'debug'
+          : observation.outcome === 'failed' || observation.outcome === 'threw'
+          ? 'error'
+          : observation.outcome === 'unavailable' || observation.outcome === 'rejected'
+            ? 'debug'
+            : 'info',
+        scope: 'runtime-action',
+        event: 'dispatch',
+        outcome: observation.outcome,
+        operationId: observation.operationId,
+        source: observation.source,
+        durationMs: observation.durationMs,
+        details: {
+          actionId: observation.actionId,
+          tab: observation.tab,
+          selectedIds: observation.selectedIds,
+          layerIds: observation.layerIds,
+          risk: observation.risk,
+          actionScope: observation.scope,
+          handled: observation.handled,
+          hasError: observation.hasError,
+          errorName: observation.errorName
+        }
+      })
     }
   })
 
@@ -8719,6 +8765,107 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
 
   function registerActions() {
     actions.register({ id: 'app.hide', title: '隐藏插件窗口', group: '全局', risk: 'normal', scope: 'global', priority: 100, shortcut: 'Shift+Escape', when: () => true, run: () => { void hideAppWindow(); return true } })
+    actions.register({
+      id: 'runtime.logs.configure',
+      title: '配置安装诊断日志',
+      group: '设置',
+      risk: 'data-write',
+      scope: 'tab',
+      priority: 90,
+      when: (ctx) => ctx.tab === 'settings' || ctx.tab === 'codex',
+      run: (_ctx, args) => {
+        const enabled = typeof args?.enabled === 'boolean' ? args.enabled : state.settings.runtimeDiagnostics.enabled
+        const level = (['error', 'info', 'debug'] as RuntimeDiagnosticsLevel[]).includes(args?.level as RuntimeDiagnosticsLevel)
+          ? (args?.level as RuntimeDiagnosticsLevel)
+          : state.settings.runtimeDiagnostics.level
+        const next = { enabled, level, userConfigured: true, defaultsRevision: 3 as const }
+        state.settings.runtimeDiagnostics = next
+        platform.diagnostics?.configure(next)
+        save()
+        message = enabled ? `安装诊断日志已开启（${level}）` : '安装诊断日志已关闭'
+        notify()
+        return true
+      }
+    })
+    actions.register({
+      id: 'runtime.logs.openDirectory',
+      title: '打开安装诊断日志目录',
+      group: '设置',
+      risk: 'normal',
+      scope: 'tab',
+      priority: 89,
+      when: (ctx) => ctx.tab === 'settings' || ctx.tab === 'codex',
+      run: () => {
+        if (!platform.diagnostics?.openDirectory) return { handled: false, error: 'diagnostics-unavailable' }
+        void platform.diagnostics.openDirectory().then((result) => {
+          message = result.outcome === 'success' || result.outcome === 'dispatched' || result.outcome === 'revealed-instead'
+            ? '已打开安装诊断日志目录'
+            : '无法打开安装诊断日志目录'
+          notify()
+        }).catch(() => {
+          message = '无法打开安装诊断日志目录'
+          notify()
+        })
+        return true
+      }
+    })
+    actions.register({
+      id: 'runtime.logs.openFile',
+      title: '打开当前安装诊断日志文件',
+      group: '设置',
+      risk: 'normal',
+      scope: 'tab',
+      priority: 89,
+      when: (ctx) => (ctx.tab === 'settings' || ctx.tab === 'codex') && Boolean(platform.diagnostics?.snapshot().activeFile),
+      run: () => {
+        if (!platform.diagnostics?.openFile) return { handled: false, error: 'diagnostics-unavailable' }
+        void platform.diagnostics.openFile().then((result) => {
+          message = result.outcome === 'success' || result.outcome === 'dispatched'
+            ? '已打开当前安装诊断日志文件'
+            : result.outcome === 'revealed-instead'
+              ? '已在文件管理器中定位当前安装诊断日志文件'
+              : '无法打开当前安装诊断日志文件'
+          notify()
+        }).catch(() => {
+          message = '无法打开当前安装诊断日志文件'
+          notify()
+        })
+        return true
+      }
+    })
+    actions.register({
+      id: 'runtime.logs.clear',
+      title: '清空安装诊断日志',
+      group: '设置',
+      risk: 'destructive',
+      scope: 'tab',
+      priority: 88,
+      when: (ctx) => (ctx.tab === 'settings' || ctx.tab === 'codex') && (platform.diagnostics?.snapshot().storage.fileCount || 0) > 0,
+      run: () => {
+        if (!platform.diagnostics?.clear) return { handled: false, error: 'diagnostics-unavailable' }
+        const fileCount = platform.diagnostics.snapshot().storage.fileCount
+        confirm = {
+          title: '清空安装诊断日志？',
+          detail: `将删除日志模块拥有的 ${fileCount} 个 JSONL 文件，不删除日志目录或其他文件。若日志仍开启，后续事件会创建新的日志文件。`,
+          onConfirm: () => {
+            confirm = null
+            const result = platform.diagnostics?.clear?.()
+            if (!result || result.outcome === 'unavailable' || result.outcome === 'failed') {
+              message = '安装诊断日志清理失败'
+            } else if (result.outcome === 'partial') {
+              message = `已清理 ${result.removedFiles} 个日志文件，${result.failedFiles} 个未能删除`
+            } else if (result.outcome === 'empty') {
+              message = '当前没有可清理的安装诊断日志'
+            } else {
+              message = `已清理 ${result.removedFiles} 个安装诊断日志文件`
+            }
+            notify()
+          }
+        }
+        notify()
+        return true
+      }
+    })
     actions.register({ id: 'quickJump.openForward', title: '快捷跳转', group: '全局', risk: 'normal', scope: 'global', priority: 99, shortcut: 'F', when: (ctx) => !ctx.layerIds.includes('confirm'), run: () => true })
     actions.register({ id: 'quickJump.openBackward', title: '反向快捷跳转', group: '全局', risk: 'normal', scope: 'global', priority: 99, shortcut: 'Shift+F', when: (ctx) => !ctx.layerIds.includes('confirm'), run: () => true })
     for (const feature of FEATURES) {
@@ -9185,7 +9332,6 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         run: () => executeFavoriteDrawerItem(index - 1)
       })
     }
-    actions.register({ id: 'codex.refresh', title: '刷新 Codex 状态', group: 'Codex', risk: 'normal', scope: 'global', priority: 100, shortcut: 'Ctrl+R', when: () => true, run: () => { void codexController.refresh(); return true } })
     // Registering the Claude bridge writes into the user's own Claude settings
     // file, so it is modelled as a confirmed data-write action rather than a
     // silent side effect of enabling the provider.
@@ -9221,6 +9367,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     } })
     actions.register({ id: 'codex.clear-launch-path', title: '恢复 Codex CLI 自动发现', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: () => { void codexController.clearLaunchPath(); return true } })
     actions.register({ id: 'codex.settings.open', title: '打开 Codex 配置', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => { setTab('codex'); return true } })
+    actions.register({ id: 'codex.quickJump.activate', title: '执行 Quick Jump 目标', group: 'Codex', risk: 'normal', scope: 'global', priority: 1, when: () => true, run: () => true })
     actions.register({ id: 'codex.thread.createFocused', title: '在当前项目新建会话', group: 'Codex', risk: 'normal', scope: 'global', priority: 99, shortcut: 'Ctrl+T', when: () => true, run: () => {
       const enabled = state.codex.settings.floatEnabled || codexController.updateSettings({ floatEnabled: true })
       if (!enabled) return false
@@ -9234,7 +9381,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     actions.register({ id: 'codex.task.open', title: '打开 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
       const key = typeof args?.key === 'string' ? args.key : ''
       const actionAlias = typeof args?.actionAlias === 'string' ? args.actionAlias : ''
-      void codexController.openThread(key, actionAlias)
+      const source = args?.source === 'manual-quick-jump' || args?.source === 'card-click' || args?.source === 'manual-row-open'
+        ? args.source
+        : 'manual-row-open'
+      void codexController.openThread(key, actionAlias, undefined, source, typeof args?.operationId === 'string' ? args.operationId : undefined)
       return Boolean(key && actionAlias)
     } })
     actions.register({ id: 'codex.claude.task.sync', title: '同步 Claude 状态', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
@@ -9244,11 +9394,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       void codexController.syncClaudeTask(key, actionAlias)
       return true
     } })
-    actions.register({ id: 'codex.input.open', title: '打开 Codex 待输入任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.openFirstInput() })
-    actions.register({ id: 'codex.completed-unread.openFirst', title: '依次打开 Codex 已完成未读任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.openFirstCompletedUnread() })
-    actions.register({ id: 'codex.task.previous', title: '上一个 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.cycleTask(-1) })
-    actions.register({ id: 'codex.task.next', title: '下一个 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: () => codexController.cycleTask(1) })
-    actions.register({ id: 'codex.task.archiveFocused', title: '归档当前 Companion 任务', group: 'Codex', risk: 'destructive', scope: 'global', priority: 98, when: () => true, run: () => codexController.archiveFocusedTask() })
+    actions.register({ id: 'codex.input.open', title: '打开 Codex 待输入任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => codexController.openFirstInput(typeof args?.operationId === 'string' ? args.operationId : undefined, args?.source === 'local-shortcut' ? 'local-shortcut' : 'attention-shortcut') })
+    actions.register({ id: 'codex.completed-unread.openFirst', title: '依次打开 Codex 已完成未读任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => codexController.openFirstCompletedUnread(typeof args?.operationId === 'string' ? args.operationId : undefined, args?.source === 'local-shortcut' ? 'local-shortcut' : 'attention-shortcut') })
+    actions.register({ id: 'codex.task.previous', title: '上一个 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => codexController.cycleTask(-1, typeof args?.operationId === 'string' ? args.operationId : undefined, args?.source === 'local-shortcut' ? 'local-shortcut' : 'global-shortcut') })
+    actions.register({ id: 'codex.task.next', title: '下一个 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => codexController.cycleTask(1, typeof args?.operationId === 'string' ? args.operationId : undefined, args?.source === 'local-shortcut' ? 'local-shortcut' : 'global-shortcut') })
+    actions.register({ id: 'codex.task.archiveFocused', title: '归档当前 Companion 任务', group: 'Codex', risk: 'destructive', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => codexController.archiveFocusedTask(typeof args?.operationId === 'string' ? args.operationId : undefined) })
     actions.register({ id: 'codex.task.focus', title: '同步 Companion 聚焦任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 1, when: () => true, run: (_ctx, args) => codexController.setFocusedTask(
       typeof args?.key === 'string' ? args.key : '',
       typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt) ? args.revisionAt : undefined
@@ -9275,13 +9425,35 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const kind = args?.kind === 'task' || args?.kind === 'activity' || args?.kind === 'pending' ? args.kind : undefined
       return key && revisionAt !== undefined && kind ? codexController.restore(key, revisionAt, kind) : false
     } })
+    actions.register({ id: 'codex.archive.confirmation', title: '记录 Codex 归档确认阶段', group: 'Codex', risk: 'normal', scope: 'global', priority: 1, when: () => true, run: (_ctx, args) => {
+      const stage = args?.stage === 'created' || args?.stage === 'confirmed' || args?.stage === 'expired' ? args.stage : ''
+      const operationId = typeof args?.operationId === 'string' ? args.operationId : ''
+      const source = typeof args?.source === 'string' ? args.source : 'archive-button'
+      if (!stage || !operationId) return false
+      platform.diagnostics?.record({
+        level: stage === 'expired' ? 'error' : 'info',
+        scope: 'archive-transaction',
+        event: `archive-confirmation-${stage}`,
+        outcome: stage,
+        operationId,
+        source,
+        provider: 'codex'
+      })
+      return true
+    } })
     actions.register({ id: 'codex.task.archive', title: '归档 Codex 任务', group: 'Codex', risk: 'destructive', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
       const key = typeof args?.key === 'string' ? args.key : ''
       const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt)
         ? args.revisionAt
         : typeof args?.updatedAt === 'number' && Number.isFinite(args.updatedAt) ? args.updatedAt : undefined
       if (!key || revisionAt === undefined) return false
-      void codexController.archive(key, revisionAt)
+      void codexController.archive(
+        key,
+        revisionAt,
+        'card',
+        typeof args?.operationId === 'string' ? args.operationId : undefined,
+        args?.confirmationRecorded === true
+      )
       return true
     } })
     actions.register({ id: 'codex.tasks.archive', title: '批量归档 Codex 任务', group: 'Codex', risk: 'destructive', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
@@ -9293,7 +9465,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
           : []
       }) : []
       if (!items.length) return false
-      void codexController.archiveMany(items)
+      const operationId = typeof args?.operationId === 'string' ? args.operationId : undefined
+      if (items.length === 1 && args?.source === 'archive-button') {
+        void codexController.archive(items[0].key, items[0].revisionAt, 'card', operationId, args?.confirmationRecorded === true)
+      } else {
+        void codexController.archiveMany(items, operationId, args?.confirmationRecorded === true)
+      }
       return true
     } })
     actions.register({ id: 'codex.tab.set', title: '切换 Codex 会话页签', group: 'Codex', risk: 'data-write', scope: 'global', priority: 96, when: () => true, run: (_ctx, args) => {
@@ -9344,7 +9521,12 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const key = typeof args?.key === 'string' ? args.key : ''
       const actionAlias = typeof args?.actionAlias === 'string' ? args.actionAlias : ''
       if (!key || !actionAlias) return false
-      void codexController.archiveProject(key, actionAlias)
+      void codexController.archiveProject(
+        key,
+        actionAlias,
+        typeof args?.operationId === 'string' ? args.operationId : undefined,
+        args?.confirmationRecorded === true
+      )
       return true
     } })
     actions.register({ id: 'codex.float.position.save', title: '保存 Codex 悬浮球位置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 92, when: () => true, run: (_ctx, args) => {
@@ -9573,6 +9755,19 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         state,
         codex: codexController.view(),
         codexFloat,
+        runtimeDiagnostics: platform.diagnostics?.snapshot() || {
+          revision: 'eypc-runtime-diagnostics-v3',
+          status: 'unavailable',
+          updatedAt: 0,
+          sessionId: '',
+          processId: 0,
+          settings: { ...state.settings.runtimeDiagnostics },
+          directory: '',
+          activeFile: '',
+          totals: { events: 0, filtered: 0, debug: 0, info: 0, error: 0, slow: 0, writeFailures: 0 },
+          storage: { fileCount: 0, totalBytes: 0, maxFileBytes: 0, maxTotalBytes: 0, retentionDays: 0 },
+          recent: []
+        },
         ports,
         filteredPorts: portFilter.items,
         filteredPortGroups: filterPortGroups(),
@@ -10336,7 +10531,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const result = actions.dispatch({
         actionId: binding.actionId,
         context: context(input),
-        ...(binding.actionId === 'codex.float.toggle' ? { args: { source: 'in-app-shortcut' } } : {})
+        ...(binding.actionId === 'codex.float.toggle'
+          ? { args: { source: 'in-app-shortcut' } }
+          : binding.actionId.startsWith('codex.')
+            ? { args: { source: 'local-shortcut' } }
+            : {})
       })
       return result.handled ? binding.actionId : null
     },
@@ -10344,9 +10543,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       return buildDefaultKeybindings(state.settings.featureConfigs)
     },
     startCodex() {
+      platform.diagnostics?.record({ level: 'info', scope: 'renderer-runtime', event: 'codex-controller-start', outcome: 'started' })
       codexController.start()
     },
     dispose() {
+      platform.diagnostics?.record({ level: 'info', scope: 'renderer-runtime', event: 'dispose', outcome: 'started' })
       codexController.dispose()
       disposeFavoriteRunWatch?.()
       disposeFavoriteRunWatch = null
