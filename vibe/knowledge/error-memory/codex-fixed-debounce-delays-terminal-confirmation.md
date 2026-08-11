@@ -30,7 +30,7 @@ tags:
 
 ## 更新引入（2026-08-08，RAW-151）
 
-本记录的“定向而非全量”原则现扩展到待输入的两条边，但不复用 completion reader 猜测状态。请求新增/解除、新 Turn 和 matching rollout output 直接进入共享 reducer；漏通知时，Controller 每 1 秒调用 phase-only Activity 快照，Preload 只复核已登记候选。任一有效 Desktop snapshot/patch、App Server 状态/Turn 或 rollout 文件新证据都会取消当前定向重订；若新证据自身仍与 live owner 冲突，才开启一轮新的有界复核。该 watchdog 不读取 unread、quota、inventory 或全量 latest Turn，也不受 `taskRefreshSeconds=0/86400`、当前 Tab 或悬浮窗可见性影响；缺少明确新证据时保持现状并退避。
+本记录的“定向而非全量”原则现扩展到待输入的两条边，但不复用 completion reader 猜测状态。请求新增/解除、新 Turn 和 matching rollout output 直接进入共享 reducer；漏通知时，Controller 每 1 秒调用 phase-only Activity 快照，Preload 只复核已登记候选。该 watchdog 不读取 unread、quota、inventory 或全量 latest Turn，也不受当前 Tab 或悬浮窗可见性影响；RAW-155 已删除用户可调任务全量周期，完整盘点只用于冷启动、重连或明确成员缺口。
 
 ## Symptom
 

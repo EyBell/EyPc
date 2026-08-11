@@ -4,7 +4,7 @@ status: candidate
 scope: project
 fingerprint: codex-task-status-mismatch__stale-desktop-snapshot-outranks-newer-live-event__order-positive-and-terminal-events-above-initial-refollow-replay
 first_seen: 2026-07-27
-last_verified: 2026-08-08
+last_verified: 2026-08-10
 review_after: 2026-08-27
 evidence:
   - preload/index.js
@@ -61,6 +61,8 @@ RAW-127 found the remaining blockers around that reducer rather than inside it. 
 RAW-128 found cross-layer batch blockers after the per-task reducer was correct. Full inventory reconstruction could replace exact inProgress or confirmed terminal provenance with plain inventory evidence; snapshot and delta had no shared activity-generation barrier; an unknown key or one missing inventory row could suppress valid updates for known/present tasks; identical active snapshots could keep resetting corroboration; and active exit could label unchanged inventory completed as targeted evidence. The current route preserves stronger session evidence, sequences every delta against the full snapshot, applies known/present rows independently, reuses compatible corroboration and only upgrades active-exit completion when evidence advances or is already confirmed.
 
 The final RAW-128 audit found one caller-owned gate still outside that reducer: the delta caller explicitly passed “confirmed terminal,” while the verified full-snapshot caller did not. A same-revision `snapshot-corroborated` completion could therefore be guarded back to inProgress even though both paths invoked the same function. Confirmation is now derived from the candidate inside the pure reducer; callers can supply only the independent Desktop-not-running stop fact.
+
+RAW-155 found the same ordering defect one layer earlier in Host projection: `companionPhaseForCodexThread` returned running for an active shell before checking an exact latest-Turn `interrupted` watermark. The corrected order first preserves unresolved waiting and causally newer active evidence, then lets exact interrupted/stopped close the stale shell；inventory-only interruption remains conservative. The regression exercises this exact Host function, not only the downstream Domain reducer.
 
 ## Evidence
 
@@ -141,3 +143,4 @@ Do not duplicate the diagnostic schema or hide its accepted changes behind task-
 | 2026-07-30 | RAW-132 regression-safe optimization | User required further optimization without bringing back prior false-stop errors | Parent aggregation remained mutable and child terminal evidence could still be applied at aggregate scope; diagnostics had no explicit privacy/generation contract | Centralize parent resolution, defer branch terminal while another exact branch is active, add identity-free counters and reverse regression contracts | candidate; static implementation/contracts written, execution and host acceptance pending |
 | 2026-07-30 | RAW-133 unified diagnostic projection | User required globally concise, efficient and unified optimization without restoring old errors | Accepted diagnostics-only deltas shared the task generation barrier but could skip view notification; field normalization/comparison and help semantics were not yet one contract | Centralize diagnostics in Domain, notify exactly once on accepted package change, compact/focus-gate details and use native help buttons outside the live region | candidate; static implementation/contracts written, execution and host acceptance pending |
 | 2026-08-08 | RAW-150 stopped archive update | User clarified that an explicit stopped task should be shown as waiting-to-continue and may be archived | Historical closed-matrix acceptance treated stopped capability as permanently blocked | Preserve the stopped evidence reducer, but move mutation safety to exact Host reread and return `state-changed` after resume | focused Domain/Controller/Host/UI contracts pass; real v7 uTools archive remains host-pending |
+| 2026-08-10 | RAW-155 Host exact-interrupted order | Screenshot showed an exact interrupted task under “进行中” | Host phase helper checked stale active shell before exact terminal evidence, so downstream V2 lanes received the wrong phase | Check unresolved waiting/newer activity first, then exact interrupted before generic active；inventory-only interruption stays conservative | focused Host regression verified；real uTools pending |

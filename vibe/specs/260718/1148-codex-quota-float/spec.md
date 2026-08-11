@@ -1,10 +1,10 @@
 # Codex Companion 当前规范
 
 Tool: codex
-Date: 2026-08-09
+Date: 2026-08-10
 Status: `automated-verified / host-pending`
 Documentation level: `controlled`
-Requirement version: `2026-08-09.1`
+Requirement version: `2026-08-10.2`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 
@@ -204,7 +204,7 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 
 - [companionProvider.ts](../../../../src/domain/companionProvider.ts#L1) 定义 `CompanionTaskTarget` 与 open/archive 可辨识请求/结果；[task-actions.cjs](../../../../preload/companion/task-actions.cjs#L1) 是唯一 action→Provider Dispatcher。Renderer 只提交意图，Domain 只输出互斥 bucket/capability，Dispatcher 只选择 Adapter 与队列策略，Codex/Claude Adapter 独占 inspect/open/archive/close 副作用，Controller mutation reducer 只接纳已验证结果。未知 Provider、旧 Bridge、stale revision/phase/alias 和不支持动作全部 fail closed。
 - Open 保留 `companion-navigation-v1` 的 75ms 尾随合并、旧目标替换及跨 Provider 最大并发 1；archive 永不合并或替换，只按 `Provider + task key` single-flight，相同任务重复请求 join，同一批不同任务和不同 Provider 并行。旧 Codex 安全 Host 归档可薄转发；旧 Claude AX/Deep Link 归档不得回退。
-- Controller 删除 Provider 特定成功/失败分支和乐观删行。归档期间卡片保留并通过 `archivingTaskKeys` 标记；`archived` 立即精确移除、清同 key receipt/navigation 并只发布一次，`failed/indeterminate` 保留卡片，后者只启动目标级复核。混合多选逐项进入同一 Dispatcher；项目批量继续只调用 Codex completed 路径。
+- RAW-154 的 Provider-neutral mutation reducer 仍是动作收敛基础；RAW-159 已取代其 Codex “Provider archived 立即删行”部分。Codex 只有 Kernel commit 后才清同 key 消费者；Claude 已验证 membership mutation 继续按既有合同收敛。`failed/indeterminate` 均保留卡片并启动目标级复核。
 - Claude 文件 watcher 只对私有索引中已登记精确文件发布 `CompanionTaskMutationDelta`：Provider、匿名 key、`archived/upsert/remove`、单调 generation、接纳时间，以及 upsert 所需的白名单 observation。Controller 在 quota、state、unread 或完整 inventory Promise 阻塞时仍立即接纳；tombstone 阻止已启动的旧 inventory 恢复已移除卡片。掉 callback 时 1 秒 watchdog 只比较这些文件指纹，1.25 秒内恢复且不扫目录、不重复发布。Claude App 手动归档与 EyPc 静默归档进入同一个 mutation reducer。
 - `eypc-companion-archive` 声明 `mainHide:true`，路由到外部稳定 action `codex.task.archiveFocused` 并内部委托 Dispatcher。目标先取仍有效的聚焦 `canArchive` 任务，否则取非隐藏 attention 顺序首项；无唯一候选不写。第一次调用只提示 Provider/目标并建立 5 秒进程级确认，第二次只有 key+revision+focus+phase+Provider identity 完全一致才归档；任何变化、超时、功能/Provider 禁用或 process close 都取消。普通 Renderer remount 不清确认，冷启动只做 tasks-only hydration，不切 Tab、不打开 Claude。
 - `task-state-v9` 是当前状态合同；v8 及更旧来源保留可用任务并标记 degraded/reload。自动验收覆盖 100 轮 P95≤250ms、掉通知≤1.25s、Dispatcher 互斥/并发、Claude 事务/回滚/并发写、外部归档 delta、UI 文案与快捷确认。真实 v9 uTools 和经用户另行确认的可丢弃 Claude canary 仍是独立 host gate。
@@ -252,9 +252,52 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - [task-kernel.cjs](../../../../preload/companion/task-kernel.cjs#L1) 是唯一进程权威 `companion-task-kernel-v1`。Provider Adapter 只提交带 source generation 的原始证据；Kernel Reducer 负责状态优先级、freshness、去重、原子发布和按任务 `kind/provider` 路由。`companion-navigation-v1` 与 `companion-task-actions-v1` 仅是 Kernel 内部 Dispatcher 模块，不再作为 Renderer 可独立同步的缓存。
 - 卡片点击、待输入/未读直达、上/下任务、聚焦和归档都只能提交 `dispatchCompanionTaskIntent(intent)`。Kernel 每次从最新包重新解析完整目标；不存在 `lastEnterPayload` 任务补执行、Renderer 启动后重放或独立 Navigation/Task Actions 同步。循环仍只选择首个非空层级：input/approval → Plan implementation → active → local pin，并在该层的统一 `cycleKeys` 内前后回绕。
 - `onPluginEnter` 在 Preload 直接消费静默任务入口，`mainHide` 只隐藏 uTools 主搜索框。热且新鲜的进程包直接派发；冷进程、缺失或过期时加入同一个全 Provider tasks-only 预检。预检不读 quota、环境、非任务 unread 或完整非任务库存；等待全部启用 Provider，600ms 后仅提示一次进度，5 秒超时，任一 Provider 失败时保留旧包并拒绝从部分集合跳转。普通隐藏保留进程包；真实退出、Provider 配置变化或功能关闭清理，包不持久化。
-- 明确且更新的状态事件立即归并，最多一次微任务/16ms 原子批处理；同 revision 语义重复不发布，低 revision/乱序拒绝。未解决输入/审批优先于较旧终态，更新一代 Turn/Activity 可从 completed/stopped 恢复 running。缺失或模糊证据只先降低 freshness；连续两次读取失败且超过 1.25 秒才转 unknown。`completed-unread` 是 completed 与 unread 的组合视图，不是另一状态机；1 秒恢复扫描只补漏。
+- 明确且更新的状态事件立即归并；同 revision 语义重复不发布，低 revision/乱序拒绝。未解决输入/审批优先于较旧终态，更新一代 Turn/Activity 可从 completed/stopped 恢复 running。RAW-155 增量已取代旧“两次读取且 1.25 秒”unknown 门禁：模糊证据只保留当前精确状态一次、最多 250ms，届时仍无新证据才提交 unknown。`completed-unread` 是 completed 与 unread 的组合视图，不是另一状态机；1 秒恢复扫描只补漏。
 - [utools-runtime-identity.mjs](../../../../scripts/utools-runtime-identity.mjs#L1) 从受管 `plugin.json`、Preload/CJS 与 Renderer 输入生成确定性的 `hostAssetId`、`rendererAssetId`，并携带 Kernel/Package revision。[preload/index.js](../../../../preload/index.js#L1)、[preload/float.js](../../../../preload/float.js#L1)、Main UI 与 Float UI 必须完成四端精确握手；缺失或不一致时进入 `reload-required`，停止任务操作并显示期望/实际身份。构建只允许报告 `artifact-ready`；真实 uTools 握手一致后才是 `host-loaded`。
 - `task-state-v9` 仅标识现有 Provider 输入兼容语义；最终权威分别是 `companion-task-kernel-v1`、`companion-task-package-v1` 与 Runtime Identity。构建不会替换或激活 uTools 已加载的 ASAR，正式接纳固定为：构建 → 开发工具重新接入 `dist/plugin.json` → 用户结束旧插件后台进程并重新进入 → 重开 Float → 核对四端身份一致。离线包必须安装新 UPXS 后重新进入；实现不调用私有 uTools API，也不自动结束进程。
+
+## RAW-155：独立证据 lane、可信推送快路与可观测自恢复（历史 V2 基线；最终权威由 RAW-159 取代）
+
+- RAW-155 当时把协议升级为 `companion-task-kernel-v2 / companion-task-package-v2`；该历史 lane 隔离为 RAW-159 V3 的基础，但 V2 不再是当前最终包。V1/V2 当前均 fail closed。
+- Codex Host 将成员信号视为窄恢复触发器，在 phase/unread freshness 判断前排队 Codex-only 盘点；精确 completed/interrupted 证据在无未解决请求和更新 Turn 时先于陈旧 active 外壳。Claude bridge 的 state/inventory/unread 监听为多订阅，多窗口不得覆盖 Host 监听；首次冷 inventory 后安装其发现目录 watcher，并发 unread 读取 singleflight，异步结果写回前重新取得最新包和当前 generation。Claude terminal phase 可同步更新其派发时精确复核的归档能力，不依赖再次盘点；Codex phase-only 只可在进入非终态时撤销旧能力/fingerprint，启用能力仍必须来自 verified inventory。
+- 正常可信 Provider push 直接更新进程任务包，不读取 quota、environment 或 full inventory。完整盘点仅用于冷启动、重连和明确 membership gap；删除 `taskRefreshSeconds`、完整校对设置、手动全量刷新、hero 刷新与 `Ctrl+R`。定向“检测环境”和“同步 Claude 状态”仍各自只读取对应 lane。额度自动刷新默认 300 秒、范围 `1–86400`，旧 0 迁移为 300。
+- 动态列表固定按状态分组，所有组内按 `latestQuestionAt DESC → createdAt DESC → anonymous key`；Provider 与置顶不参与组内优先级。通用循环仍选择 attention → Plan → active → local pin 的首个非空层，但层内使用同一最近提问比较器。导航第一下同步入队并立即派发；仅当首个打开仍在执行时保留一个最终 trailing 目标，manual/attention 取消未派发 trailing，全部 Provider 并发上限为 1。
+- 产品名称固定为“额度任务悬浮球”，眉题固定为“CODEX · CLAUDE COMPANION”。Float 每 2 秒上报 heartbeat，Host 以 6 秒 stall、60 秒 recreate cooldown、10 秒恢复观察做受控重建；交互使用匿名 id，10 秒空闲、blur、卸载/隐藏/退出均清除未闭合状态。
+- RAW-156–158 建立了独立 v2 安装日志、默认 debug 与文件操作历史基线；RAW-159 已将当前合同升级为 [Controlled v3 task](../../260810/1155-install-runtime-diagnostics/task-card.md#L1)。唯一 Host sink、8 MB/64 MB/14 天轮转、文件操作与内容拒绝边界继续保留；当前新增显式 level、userConfigured、operation/trace/taskRef、Codex 归档阶段和聚合探针。
+- 自动化接纳不等于宿主接纳。真实 uTools 必须重新加载新身份后复验 exact interrupted、Claude running→completed-unread、首键即时/连按尾随、跨 Provider 单并发、Float stall 自恢复与日志轮转；完成前保持 `automated-verified / host-pending`。
+
+### DEC-20260810-01：诊断默认等级与控制入口
+
+- 冲突项：RAW-156 的当前默认 `info`、未来再改 `error`，以及 Codex「运行」页只读摘要。
+- 选择：RAW-157 的当前默认 `debug`，旧未标记默认值一次迁移；Codex「运行」页与设置维护页同时提供原生启停和等级选择。
+- 决策来源：2026-08-10 当前用户明确纠正；`decision_status: explicit-current-request`。
+- 保留：单一 sink、持久化用户选择、隐私过滤、轮转、权限与真实宿主验收门禁。
+
+### DEC-20260810-02：诊断文件直达与有界清理
+
+- 新增项：RAW-158 要求两个日志入口都能直达当前文件并清理日志。
+- 选择：打开文件前校验 `activeFile` 属于固定日志目录且名称精确匹配；清理复用现有确认层，只逐个删除模块自有 `runtime-*.jsonl`，保留目录、非匹配文件、开关和等级。
+- 决策来源：2026-08-10 当前用户明确补充；`decision_status: explicit-current-request`。
+- 保留：目录打开、隐私过滤、轮转、权限、只读探针和真实宿主验收门禁。
+
+### RAW-155 增量：单一最终投影、快速终态与稳定归档
+
+- Kernel canonical task 是卡片与角标的唯一最终接口：`applyCompanionTaskPackageViews` 同时重建 task bucket/activity/archive capability、visible/hidden/complete/input Tab、项目 task 引用、dynamic groups 和 compact counts。Main/Float 即使 Provider source revision 不同也接纳更新的完整 V2 package；package 中出现尚无展示元数据的 Codex key 时，只触发一次 urgent Codex inventory 补读。unknown 稳定窗结束后不得丢行：Codex 保守进入 active/ongoing，Claude 进入独立“状态未知”段。Codex completed 的 archive request 使用 phase-specific completion watermark，unread/membership revision 前进不得替换它。
+- Claude App 日志把通用 `Stopping session` 解析为 session-end；同一 Turn 已有 Result/Stop completion 时保持 completed，否则才 stopped，显式 failed/interrupted 始终 stopped。live running/waiting 优先；其余 Claude phase 若存在原生 unread 则统一 completed-unread，unread 清除后保持 completed。卡片、Tab、角标和 archive capability 必须在同一 package revision 原子变化。
+- 冷 Codex 扫描已经逐任务调用 `thread/turns/list(limit=1)`；该精确读对 interrupted 标记 `targeted-after-exit`，因此无新 live/waiting 时立即 stopped。普通 failed 仍需 idle/not-running，浅 inventory terminal 也不得强制停止；completed 的既有 corroboration 规则不变。
+- 产品与任务消费者不得设置固定任务数量上限：Claude inventory、Kernel、Actions、Navigation、mutation reducer 与 batch archive 全量消费已接纳任务；Codex 使用 `limit=100` 分页直至无 cursor，并以 cursor-loop 检测 fail closed。动态小时窗只控制展示资格，不截断源库存。
+- unknown 防抖仅保留 250ms；所有明确 phase/unread/membership 事件立即发布。导航首键和全局热缓存继续使用进程包，不新增 Renderer debounce。
+- RAW-155 的稳定确认原则继续保留；RAW-159 将 Codex identity 精确为 Provider+task+terminalEpoch，并要求 native postcondition + Kernel commit 后才移除。Claude 的 metadata rebase、单次写前重试和不强刷原生侧栏合同由 Claude RAW-029 进一步明确：D′ 只确认 EyPc 移除，原生侧栏提示为未确认，当前没有受支持的 D-2 实现入口。
+
+## RAW-159：Codex v3 单一语义、持久化归档与全量操作诊断
+
+- 当前最终权威为 `companion-task-kernel-v3 / companion-task-package-v3`。Kernel 接收 Evidence V3，唯一裁决 membership、phase、tri-state unread、freshness、statusEnteredAt、semanticRevision、membershipRevision 与 capabilities；Host/Renderer 不再保留第二状态机。observation/source-lane generations 只用于拒绝乱序与 debug，不参与包语义相等。等价 observation 完整 no-op：任务/包 revision、Float、Renderer、badge 与 focus 均为零更新。
+- 新 Codex membership 先用稳定 key 建立最小卡片，再定向补读标题和项目；任何固定任务总量上限均删除，`thread/list limit=100` 只为分页大小并读取到 cursor 结束。普通缺行进入定向确认；明确 commit 的 archive tombstone 阻挡旧库存复活。
+- waiting、active、completed、interrupted 的 exact causal evidence 同 tick microtask 合并并在下一帧发布；目标 P95 ≤100ms。冷启动/重连的 interrupted/failed 冲突只精读该任务一次；仍无法确认时保留最后稳定 phase 并标记 verifying，不强制 running。phase 与 unread 独立，同 completion epoch 的 unread 保留到明确已读或新 Turn。
+- Codex 归档 transaction 为 intent → confirmation → preflight → one provider write → server verify-1 → Desktop sync → connected native ACK → server verify-2 (≥300ms) → Kernel commit → reconciliation/UI removal。运行中 Desktop 缺 sync/ACK、任一次库存矛盾或读取失败均返回 failed/indeterminate；卡片、按钮、alias/cache/receipt/shortcut 保留并提醒。只有 commit 后全部消费者原子移除。确认 identity 改为 Provider+task+terminalEpoch；revision、unread、focus、alias churn 不取消。
+- 所有手动/快捷键/自动操作携带 operationId；`eypc-runtime-diagnostics-v3` 要求显式 error/info/debug，当前未配置者默认 debug 且显式选择永久保留。明文 JSONL 记录精确 taskRef/path/state/watermark/revision/cache/duration/errorCode 与归档阶段，继续禁止正文、命令参数、stdout/stderr、凭据、stack 和隐藏推理。v2/v3 探针支持 session/operation/trace/provider/taskRef/scope/event/level/since/tail 与状态/no-op/快捷键/导航/归档/错误聚合。
+- Claude/Cloud 状态与归档行为不在本轮改动范围；只保持 Provider 接口兼容。权威 Controlled 记录见 [task card](../../260810/1155-install-runtime-diagnostics/task-card.md#L1)。
+- 状态诊断继续记录 provider/final phase/reason/evidence，但 taskRef 改为精确的统一任务包 key，并增加裁定输入的状态 authority、active flags、terminal evidence、revision/watermark 与 unread 等有界 details；不记录任务标题、正文、请求/命令参数、输出、凭据或隐藏推理。完整 v2 合同只由 [安装运行诊断日志 task card](../../260810/1155-install-runtime-diagnostics/task-card.md#L1) 持有。
 
 ## 残留矩阵收口
 

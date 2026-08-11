@@ -1,10 +1,10 @@
 # Claude Code Companion 权威重置 — Controlled Specification
 
 spec_id: `SPEC-260807-CLAUDE-CODE-COMPANION-AUTHORITY-RESET`
-spec_revision: `7`
+spec_revision: `8`
 status: `integrated-current-authority`
-execution_status: `implementation-landed / RAW-154-automated-verified / RAW-029-focused-verified / native-sidebar-unsupported / targeted-host-partial / interactive-host-pending`
-raw_sources: `RAW-001..RAW-026, RAW-029`
+execution_status: `implementation-landed / RAW-029-focused-verified / native-sidebar-unsupported / interactive-host-pending`
+raw_sources: `RAW-001..RAW-029`
 updated: `2026-08-11`
 
 ## Authority
@@ -48,12 +48,12 @@ updated: `2026-08-11`
     "src/help/guides/codex.md",
     "vibe/knowledge/error-memory/README.md",
     "vibe/knowledge/error-memory/modules/claude-companion.md",
+    "vibe/knowledge/error-memory/claude-metadata-archive-does-not-prove-native-sidebar-convergence.md",
     "vibe/knowledge/error-memory/codex-provider-status-display-normalization.md",
     "vibe/knowledge/error-memory/claude-session-family-open-route-and-state-authority-conflation.md",
     "vibe/knowledge/error-memory/tests-that-cannot-fail.md",
     "vibe/knowledge/error-memory/watcher-callback-latency-is-not-end-to-end-publication-latency.md",
     "vibe/knowledge/error-memory/independent-authorities-coupled-by-full-refresh.md",
-    "vibe/knowledge/error-memory/claude-metadata-archive-does-not-prove-native-sidebar-convergence.md",
     "vibe/specs/260805/1150-claude-companion-provider/spec.md",
     "vibe/specs/260806/1130-claude-desktop-provider/spec.md",
     "vibe/specs/260806/2147-claude-open-in-desktop-app/verify.md",
@@ -162,8 +162,8 @@ updated: `2026-08-11`
     "vibe/knowledge/error-memory/claude-session-family-open-route-and-state-authority-conflation.md",
     "vibe/knowledge/error-memory/tests-that-cannot-fail.md",
     "vibe/knowledge/error-memory/independent-authorities-coupled-by-full-refresh.md",
-    "vibe/knowledge/error-memory/claude-metadata-archive-does-not-prove-native-sidebar-convergence.md",
     "vibe/knowledge/error-memory/modules/claude-companion.md",
+    "vibe/knowledge/error-memory/claude-metadata-archive-does-not-prove-native-sidebar-convergence.md",
     "vibe/knowledge/error-memory/codex-provider-status-display-normalization.md",
     "vibe/knowledge/error-memory/watcher-callback-latency-is-not-end-to-end-publication-latency.md",
     "vibe/specs/260805/1150-claude-companion-provider/spec.md",
@@ -196,26 +196,30 @@ updated: `2026-08-11`
   2. 可唯一映射的官方 Hook；
   3. 冷启动时 `completedTurns > 0` 且无更新 active 证据的历史 completed；
   4. 证据缺失、歧义或活跃进程冲突时 unknown。
-- 私有日志只接受已门禁版本的固定无内容模板：发送、权限请求、AskUserQuestion、按 request id 关联的权限响应、Query completed/Turn succeeded、Stopping/失败。轮转、重复、乱序要去重；版本或语法失配 fail closed。原始行、正文和工具参数不得进入 Renderer 或插件存储。
+- 私有日志只接受已门禁版本的固定无内容模板：发送、权限请求、AskUserQuestion、按 request id 关联的权限响应、Query completed/Turn succeeded、Stopping/失败。通用 `Stopping session` 只产生 session-end；同 Turn 已有成功 Stop/Result 时保持 completed，只有无成功结果的 session-end 或显式 failed/interrupted 才进入 stopped。轮转、重复、乱序要去重；版本或语法失配 fail closed。原始行、正文和工具参数不得进入 Renderer 或插件存储。
 - official Hooks 是唯一关联 fallback，不是完整单源权威；仅 Hooks 路线已废弃。`PermissionRequest` 与 `AskUserQuestion` 分别进入等待审批/等待输入，响应/后续活动恢复 running，Stop 完成当前 Turn；SessionEnd 不覆盖已有 Stop，idle notification 不产生待输入。
 - Hook 状态由纯父 Turn reducer 归并：只有 `UserPromptSubmit` 开启 Turn；`SubagentStart/SubagentStop` 只更新活动水位。`Stop/StopFailure/SessionEnd` 关闭 Turn 后，同 Turn 的子代理、工具或 lifecycle 尾事件不得恢复 running；只有严格更新的新 Prompt Turn 可重新激活。
 - 未读持久权威是 Claude App Local Storage 中包含 Chromium string tag 的 `epitaxy-unread-v1` 精确键。V2 reader 在复制 LevelDB 前后核对源指纹，只接纳完整稳定的 `generation/sourceFingerprint` 快照；失败返回 unknown，不能复用旧集合或字节扫描。
 - 成功派发精确 Epitaxy local deep link 后，Controller 可为当前 `sessionId + completionEpoch` 建立仅进程内的可撤销已读提示，并在 `0/100/300/1000ms` 重读原生集合。同完成轮次迟到的 unread `true` 不得回跳；新 running/waiting 或更晚真实 completion 会撤销提示。派发失败不建立提示，`ClaudeOpenResult.confirmsRead` 仍为 `false`，且提示不写 App、不持久化、不改变 phase。
-- 精确 live running/waiting 优先于 unread；否则 native unread membership 本身可把非 live 历史 unknown/stopped 确认为 `completed-unread`，不要求先有 Hook completed。
+- 精确 live running/waiting 优先于 unread；否则 native unread membership 本身可把非 live 历史 unknown/stopped 确认为 `completed-unread`，不要求先有 Hook completed。原生 unread 清除只把 completed-unread 变为 completed，不得降为 stopped/unknown；只有更新的新 Prompt/live phase 可恢复 running。
 
 ### Incremental communication
 
+- 最终进程权威现使用 `companion-task-kernel-v3 / companion-task-package-v3`：Claude membership、phase、unread 行为保持三条独立语义 lane，observation generation 只做排序，semantic revision 只在真实变化时推进。慢 inventory/异步 unread 仍须基于最新包重放，不能删除其间新增会话；Main/Float 不得以第二套 source revision 忽略完整包。RAW-159 不改变 Claude 状态或归档副作用。
+- [index.cjs](../../../../preload/claude/index.cjs#L1) 对 state/inventory/unread 提供 Host+Renderer 多订阅；任一消费者 detach 不影响另一消费者。[code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1) 即使在 watcher 先于首个 inventory 建立时，也会在冷 inventory 发现目录后动态安装 watcher。[unread.cjs](../../../../preload/claude/unread.cjs#L1) 合并并发读取，避免相同源状态产生彼此颠倒的 generation。
 - Bridge 分离 inventory、`ClaudeCodeStateDeltaV2`、unread、quota、App presence；V2 必须携带 `generation/source/freshness/compatibility`，observation 必须携带 `completedTurns` 与状态证据。Controller 对 state/unread generation、Controller revision 和 Float applied revision 分层拒绝倒退。
 - watcher 只刷新自己的 Map/Set 并立即发布。库存失败保留最后有效视图；未读失败变 unknown；quota 网络错误不能延迟状态或库存。禁止“所有 watcher 调同一个 full refresh”。
 - App 日志事件即时触发 state hot-read，1 秒恢复轮询兜底；连续两次状态读取失败后，running/waiting 降为 unknown，不能永久卡在进行中。启动、功能启用、恢复可见、聚焦、网络恢复及最早 reset+1 秒分别唤醒额度 lane。
 - 状态 delta 与 inventory metadata patch 使用单调 evidence/generation 屏障：慢 inventory 可更新标题，但不能回退更新的 state；state patch 不能删除库存字段。
 - 状态版本比较由纯 Domain 统一执行：先比较 source generation，同 generation 再比较 evidence time 与来源权威；App 明确 terminal 优先同 Turn Hook 尾事件，`completedTurns` 只作冷历史佐证。state/unread refresh 共用可加入的 Promise singleflight，手动单项同步、watcher 和打开后同步不得形成第二条读取/发布通道。
 - 正常真实事件到最终 Controller publish P95 `<=250ms`；漏事件恢复 `<=1.25s`。watcher callback 延迟不是最终发布延迟，不能作为该 SLO 的替代证据。
+- 正常可信 push 直接进入对应 lane，不读取 quota、environment 或 full inventory；完整 inventory 仅允许冷启动、重连或明确 membership gap，并只读取 Claude。定向“同步 Claude 状态”仍复用 state/unread singleflight，不形成全 authority refresh。
+- Claude inventory、Kernel、Actions、Navigation、mutation 与 batch 消费者不得设置固定总任务数上限；数量增长不能改变卡片、角标或动作资格。明确 phase/unread/membership 立即发布，只有 unknown 允许一次最多 250ms 的稳定窗，不新增 Renderer debounce。
 
 ### Exact open and shortcut cache
 
 - [open.cjs](../../../../preload/claude/open.cjs#L1) 缓存 Claude 主 App 的 bundle/PID/启动代次；热跳转只做低成本存活检查，缓存失效或冷启动才完整复核。
-- RAW-152 后，上一个/下一个的跨来源物化游标由版本门禁的 Preload 进程桥拥有：所有启用 Provider 库存 settled 后才 ready，每个按键同步推进，75ms 尾随窗口只派发最终目标，卡片/attention 优先，Codex/Claude 打开共享最大并发 1。Claude provider-local opener 仍只异步派发 `claude://claude.ai/epitaxy/<encoded-local-session-id>`；普通 Renderer remount 只 detach，来源变化、功能停用或进程退出清理。
+- RAW-152 后，上一个/下一个的跨来源物化游标由版本门禁的 Preload 进程桥拥有；RAW-155 已用 leading-immediate 取代固定 75ms 等待：所有启用 Provider 库存 settled 后才 ready，第一下立即派发，只有打开仍 in-flight 时后续按键保留一个最终 trailing 目标，卡片/manual/attention 可取消未派发 trailing，Codex/Claude 打开共享最大并发 1。Claude provider-local opener 仍只异步派发 `claude://claude.ai/epitaxy/<encoded-local-session-id>`；普通 Renderer remount 只 detach，来源变化、功能停用或进程退出清理。
 - Claude 任务的更多操作提供“同步 Claude 状态”：只接受当前未归档 local session 的精确 `{ key, actionAlias }`，并发读取真实 state/unread、合并后最多发布一次，部分失败给出明确反馈。成功打开原任务后执行同一路线的一次静默同步；派发失败不确认已读也不触发同步。
 - 禁止 `resume/import`、CLI、终端、标题 AX 点击、自动启动、写未读或创建副本。选取 P95 `<=10ms`，热派发 P95 `<=150ms`，冷校验 P95 `<=1s`。
 
@@ -223,7 +227,8 @@ updated: `2026-08-11`
 
 - EyPc 不创建或修改 Codex/Claude 原生项目。虚拟合并先按双方相同规范绝对路径的稳定 project key；否则只在 Codex 与 Claude 两侧规范名称都唯一时合并，重名歧义保持分离。Claude 独有项目进入项目区，共享项目在“全部”只出现一次。
 - Projects 子页签为会话级 `全部 / 只显示 Codex / 只显示 Claude`，默认全部。单来源模式同时过滤项目子任务并重算项目/任务数；共享项目只要含所选来源任务就保留。
-- 更新引入（Codex Companion RAW-154，取代 RAW-150 的 Claude 执行路线）：Claude 任务继续支持精确打开、本地置顶和本地隐藏，并允许仅限 macOS Claude `1.26832.0` 的 completed/stopped 任务级 D′ 静默归档。普通库存读取只在 Preload 内建立唯一 `sessionId → local_*.json` 索引；mutation 不重新扫目录。写前必须重读 compatible phase、精确 App-local 身份及文件 stat/hash；事务保留原始字节/权限，只把解析对象的 `isArchived` 改为 true，写入同目录唯一临时文件并核验其它字段语义不变后原子替换。元数据 true 且私有活动库存移除即可 `archived`，插件包立即精确移除并自动刷新；该成功只确认 EyPc 侧归档与移除，不确认 Claude 原生侧栏。成功提示固定明确为 EyPc 已完成、Claude 原生侧栏可能仍待刷新且尚未确认同步。固定语法 App 日志只作增强证据；已归档幂等成功，安全恢复失败或 Claude 并发修改不确定时返回 `indeterminate`，`failed/indeterminate` 均保留卡片。归档路径禁止 Deep Link、AX/JXA、LevelDB、扫改目录和非目标会话；项目级归档、移除和移动仍禁用并解释。
+- 更新引入（Codex Companion RAW-154，取代 RAW-150 的 Claude 执行路线）：Claude 任务继续支持精确打开、本地置顶和本地隐藏，并允许仅限 macOS Claude `1.26832.0` 的 completed/stopped 任务级 D′ 静默归档。普通库存读取只在 Preload 内建立唯一 `sessionId → local_*.json` 索引；mutation 不重新扫目录。写前必须重读 compatible phase、精确 App-local 身份及文件 stat/hash；事务保留原始字节/权限，只把解析对象的 `isArchived` 改为 true，写入同目录唯一临时文件并核验其它字段语义不变后原子替换。RAW-155 增量允许过期索引安全 rebase 到当前仍唯一的同一目标，以容忍 title/focus/activity 普通元数据变化；只对写前 `source-changed` 在精确重读 phase 后重试一次，写后并发绝不重试或覆盖。元数据 true 且私有活动库存移除即可 `archived`，插件包立即移除并自动刷新；该成功只确认 EyPc 侧归档与移除，不确认 Claude 原生侧栏。成功提示固定明确为 EyPc 已完成、Claude 原生侧栏可能仍待刷新且尚未确认同步。固定语法 App 日志只作增强证据；已归档幂等成功，安全恢复失败或 Claude 并发修改不确定时返回 `indeterminate`，`failed/indeterminate` 均保留卡片。归档路径禁止 Deep Link、AX/JXA、LevelDB、扫改目录和非目标会话；项目级归档、移除和移动仍禁用并解释。
+- 五秒归档确认的稳定 identity 是 Provider+task+terminalEpoch。revision、unread、focus 与临时 alias 变化不取消；第二次操作从当前包取最新目标并重做 capability/Provider 核验。任务消失、terminal epoch 或 capability 变化才取消。
 - 普通打开在派发 Deep Link 前必须通过同一私有索引重读：已归档、缺失或身份不唯一返回 `state-changed`，不得重新打开旧会话。精确文件 watcher 只重读已登记目标并发布单调 membership mutation delta；一秒 watchdog 只核验索引候选。该通路独立于 quota、state、unread 与完整 inventory Promise，正常发布 P95 ≤250ms，漏 callback 恢复 ≤1.25s。
 - “同步 Claude 状态”是 Claude-only 的实时只读 capability；Codex 行不显示。它不能人工指定 completed/read，也不能修改 Claude App。
 - 每条任务和项目固定显示文本化“归属 Codex/Claude/共享”；文字、图标、ARIA 名称共同表达来源。来源背景使用现有 token 的 8% 普通/12% 悬停选中混色，状态图标与左侧标记继续只表达任务状态；Tab 保留原生键盘、焦点和 `aria-selected` 语义。
@@ -268,6 +273,7 @@ updated: `2026-08-11`
 | DEC-20260808-14 | 父 Turn reducer + 集中来源/版本选择 + 同 lane 单项真实同步 | Stop 后尾事件复活、人工完成/已读覆盖、第二条刷新通道 | RAW-024 |
 | DEC-20260809-15 | D′ 单目标 `isArchived` 事务 + 元数据/活动库存双确认 + 并发安全回滚 | Deep Link+AX 归档、App 日志硬门禁、LevelDB/目录/非目标写入 | RAW-025、Codex RAW-154 |
 | DEC-20260809-16 | 统一任务 Dispatcher + 精确 membership delta/一秒索引 watchdog + open 归档前复核 | Provider-specific Controller 分支、完整库存阻塞移除、已归档会话仍被 Deep Link 打开 | RAW-026、Codex RAW-154 |
+| DEC-20260810-17 | V2 membership/phase/unread 独立 lane + 多订阅 + 动态 watcher + unread singleflight + push-first | 共享 generation、单 callback 覆盖、预订阅零 watcher、正常事件全 authority refresh | RAW-027、Codex RAW-155 |
 | DEC-20260811-18 | D′ 成功只确认 EyPc 归档/移除并明确提示 Claude 侧栏未确认；原生及时收敛仅接受受支持入口 + 同会话原生 ACK + 运行中侧栏 1.25 秒内移除 | 用元数据/LevelDB、私有 IPC、AX/JXA/UI 自动化、重启或事后视觉结果冒充原生收敛 | RAW-029 |
 
 ## Archive Tombstones
@@ -290,4 +296,4 @@ updated: `2026-08-11`
 
 ## Implementation And Acceptance State
 
-生产代码已实现额度权威、状态/未读代际、父 Turn reducer、集中状态选择与版本比较、可加入的 state/unread singleflight、Claude-only 单项同步、会话提示、虚拟项目筛选和归属视觉增量；RAW-152 将通用前后任务提升为跨 Provider 进程级导航仲裁，RAW-154 再用 `companion-task-actions-v1` 统一 open/archive/close 分发，并落地 D′ 单目标元数据事务、归档前 open preflight、精确 membership delta 和进程级五秒归档确认。RAW-024 的聚焦自动化与既有宿主证据保持有效；RAW-154 自动化/构建证据在本轮 [verify.md](verify.md#L1) 收口。此前真实 quota 返回 5h、全模型周与 Fable scoped 周额度及 reset，原生 unread 已稳定读到一条真实 membership。真实 D′ 可丢弃会话 canary 必须另行获得用户确认；跨来源快速连按、手动 App 归档即时移除、旧任务 UI 点击同步、permission/AskUserQuestion/响应、EyPc 点击移除/同轮不回跳/新 completion 再未读、标题/重启和真实项目筛选 UI 矩阵仍未走完，因此任务仍是 `acceptance-pending`。
+生产代码已实现额度权威、状态/未读代际、父 Turn reducer、集中状态选择与版本比较、可加入的 state/unread singleflight、Claude-only 单项同步、会话提示、虚拟项目筛选和归属视觉增量；RAW-152 将通用前后任务提升为跨 Provider 进程级导航仲裁，RAW-154 再用 `companion-task-actions-v1` 统一 open/archive/close 分发，并落地 D′ 单目标元数据事务、归档前 open preflight、精确 membership delta 和进程级五秒归档确认。RAW-024 的聚焦自动化与既有宿主证据保持有效；RAW-154 自动化/构建证据在本轮 [verify.md](verify.md#L1) 收口。此前真实 quota 返回 5h、全模型周与 Fable scoped 周额度及 reset，原生 unread 已稳定读到一条真实 membership。更新引入（2026-08-10）：真实 D′ canary 已在用户显式授权下执行并通过——目标是用户指定的真实 completed 会话（非可丢弃夹具），生产 Bridge 单目标事务成功、语义 diff 仅 `isArchived`、幂等重入不改字节，证据见 [verify.md](verify.md#L94)。更新引入（2026-08-11）：D-1 的成功/幂等/Controller 兜底提示已改为明确区分 EyPc 移除与 Claude 原生侧栏未确认；D-2 只读核验证明当前 D′ 绕过 Claude 原生内存 mutation/`archived` 事件链，官方公开入口也没有本地 Code 归档，因此当前结论为 `unsupported`，没有接入私有 IPC、AX/JXA、UI 自动化或 LevelDB 写入。跨来源快速连按、手动 App 归档即时移除、旧任务 UI 点击同步、permission/AskUserQuestion/响应、EyPc 点击移除/同轮不回跳/新 completion 再未读、标题/重启和真实项目筛选 UI 矩阵仍未走完，因此任务仍是 `acceptance-pending`。

@@ -168,6 +168,27 @@ Tool: codex
 | RAW-154 返工：Kernel/Navigation/Task Actions/Controller/Platform/UI/RuntimeIdentity/Main+Float Preload 12 文件聚焦回归 | complete / `12/12` files、`485/485` tests；含真实 Kernel Controller 组合、degraded 包预检拒跳、无 Renderer 成员变化重读、duplicate/lower producer draft、跨 Provider generation 与握手前 raw-port fail-closed |
 | RAW-154 返工：类型、Preload 镜像/语法、production/uTools build、运行时校验 | complete / automated-verified；1870-module build，`host-9d4cb1b3a288c5a8bc61 / renderer-30eb78df00c13c1e9eab`，RuntimeIdentity Host→Renderer 派生合同与 validator pass |
 | RAW-154 返工：真实 uTools 重接入 `dist/plugin.json`、结束旧后台进程、重新进入、重开 Float 与四端身份一致 | pending / host-gate；当前只可报告 `artifact-ready`，不得报告 `host-loaded` |
+| RAW-155 历史 `companion-task-kernel-v2 / package-v2` Provider membership/phase/unread 独立水位 | superseded-by-RAW-159 / historical-focused-verified |
+| RAW-155 Codex exact interrupted Host 优先级、同代次成员窄恢复、Claude 多订阅/动态 watcher/unread singleflight | complete / focused-automated-verified |
+| RAW-155 trusted-push 快路、冷/重连/gap-only 盘点，移除任务周期/手动全刷/Ctrl+R，额度 1–86400 与旧 0→300 | complete / focused-automated-verified |
+| RAW-155 全状态组与循环层 latest-question 倒序，首键立即+in-flight 最终尾随+manual/attention 优先+全局并发 1 | complete / focused-automated-verified |
+| RAW-155 Float 2 秒 heartbeat/6 秒 stall/60 秒冷却/10 秒恢复观察、10 秒交互清理与 allowlist JSONL 诊断 | complete / focused-automated-verified |
+| RAW-155 影响集测试、typecheck、Preload 同步/语法、production/uTools build、runtime validator | complete / `19/19` files、`575/575` tests；1870 modules；artifact-ready |
+| RAW-155/158 历史真实 uTools 门禁 | superseded-by-RAW-159 host matrix；见 [Controlled task](../../260810/1155-install-runtime-diagnostics/task-card.md#L1) |
+| RAW-155 增量：Claude session-end completion 保留、unread→completed 单调投影、Codex exact interrupted 冷恢复 | complete / focused-automated-verified |
+| RAW-155 增量：Kernel package 原子重投影卡片/Tab/项目/分组/角标并补读新 Codex key | complete / focused-automated-verified |
+| RAW-155 增量：移除 Claude/Kernel/Actions/Navigation/mutation/batch 固定任务上限，unknown 250ms 小窗 | complete / focused-automated-verified |
+| RAW-155 增量：归档确认稳定身份、最新目标二次执行、Claude metadata rebase/单次写前重试与插件自动刷新 | complete / focused-automated-verified |
+| RAW-155 增量：脱敏 state-decision 日志、聚焦 `9/9` 文件 `303/303`、typecheck、Preload mirror 与 production/runtime build | complete / automated-verified；1870 modules，`host-b1ebbac81b95ca4f0405 / renderer-5b82a3734cf73beb8df3`，artifact-ready |
+| RAW-155 增量：真实 uTools 中截图任务、Cloud/Codex 状态与两 Provider 的 EyPc 归档移除 | pending / host-gate；Claude 原生侧栏及时收敛由 Claude RAW-029 判定为 unsupported-currently，不在本 gate 内 |
+| RAW-159 `companion-task-kernel-v3 / package-v3`、唯一 Reducer、tri-state unread、verifying 与 semantic no-op | complete / implementation-written + focused-verified |
+| RAW-159 新 membership 最小卡片、完整 cursor 分页、240 项及第 41/101/201 消费者 | complete / focused-automated-verified |
+| RAW-159 热缓存、focus key no-op、operationId、快捷键首发/最终尾随与 stale alias 单次重建 | complete / focused-automated-verified |
+| RAW-159 Codex 双服务器核验、Desktop sync/native ACK、Kernel commit、失败保留/提醒与 tombstone | complete / focused-automated-verified |
+| RAW-159 `eypc-runtime-diagnostics-v3`、显式 level、归档十阶段日志、v2/v3 聚合探针 | complete / focused-automated-verified |
+| RAW-159 全库测试、typecheck、Preload mirrors、production build、Runtime Identity、uTools validator | complete / `83/83` files、`1272/1272` tests；1870 modules；identity `host-36616822511986c18f2c / renderer-25da7ef64b81aadc76f8`；artifact-ready |
+| RAW-159 Controlled 文档、产品/架构/帮助、错误记忆、链接审计与 sync receipt | complete / 39 documents、15 dependencies、7 validators；receipt hit |
+| RAW-159 同一安装包真实 uTools 状态、40+ 库存、交互、归档和 debug/info/error/off | pending / host-gate；见 [handoff](../../260810/1155-install-runtime-diagnostics/handoff.md#L1) |
 | 并发 Claude 改动后的当前整树 typecheck/build 复跑 | superseded / 当前整树 typecheck 已恢复通过；RAW-148 未触发 build，RAW-147 当时的独立阻断保留在历史验证记录 |
 | RAW-147 新构建重载后的有界 IPC snapshot 与 active→waiting 转换 | pending / user-owned |
 | 反向 generation 屏障夹具 TS2349 修复与 typecheck | complete / typecheck-verified |

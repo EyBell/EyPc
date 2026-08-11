@@ -1,7 +1,7 @@
 # Claude Code Companion 权威重置 — Tasks
 
 updated: `2026-08-11`
-overall_status: `implementation-landed / RAW-154-automated-verified / RAW-029-focused-verified / native-sidebar-unsupported / host-acceptance-pending`
+overall_status: `implementation-landed / RAW-029-focused-verified / native-sidebar-unsupported / host-acceptance-pending`
 
 | ID | Work | Status |
 | --- | --- | --- |
@@ -33,6 +33,13 @@ overall_status: `implementation-landed / RAW-154-automated-verified / RAW-029-fo
 | CCR-25 | Claude 精确 membership delta、一秒索引 watchdog、归档后 open preflight | completed / focused-automated-verified |
 | CCR-26 | `eypc-companion-archive` mainHide 五秒同身份确认与帮助/权威/错误记忆同步 | completed / focused-automated-verified |
 | CCR-27 | 用户另行确认后的 completed 会话 D′ 真机 canary 与 Claude 手动归档即时移除 | canary-passed / manual-archive-delta-pending（2026-08-10 用户授权后执行真实归档通过，见 [verify.md](verify.md#L94)；Float 点击移除与 App 手动归档 delta 仍待宿主观测） |
+| CCR-28 | RAW-027 V2 membership/phase/unread 独立 lane、最新包重放与 V1 fail-closed | completed-focused-verified |
+| CCR-29 | RAW-027 Host+Renderer 多订阅、首次库存后动态 watcher 与 unread singleflight | completed-focused-verified |
+| CCR-30 | RAW-027 trusted-push 快路、Claude-only gap recovery、latest-question 排序与首键即时导航 | completed-focused-verified |
+| CCR-31 | 真实 Claude running→completed-unread、延迟期间打开竞态与跨来源快速连按 | pending-host-acceptance |
+| CCR-32 | RAW-028 generic session-end completion 保留、native unread 单调完成投影与最终 package 消费一致性 | completed-focused-verified |
+| CCR-33 | RAW-028 移除 Claude 固定库存上限、稳定归档确认与 metadata rebase/单次写前重试 | completed-focused-verified |
+| CCR-34 | RAW-028 真实正常完成→未读→已读→新 Prompt 与两次 Claude 归档自动移除 | pending-host-acceptance |
 | CCR-35 | RAW-029 D-1 归档提示边界与 D-2 原生侧栏及时收敛能力核验 | D-1 completed-focused-verified / D-2 verified-unsupported-currently |
 
 ## Execution Journal

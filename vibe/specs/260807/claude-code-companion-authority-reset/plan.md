@@ -1,7 +1,7 @@
 # Claude Companion：Codex 同构状态与全局缓存改造
 
 updated: `2026-08-11`
-status: `implementation-landed / RAW-154-automated-verified / RAW-029-focused-verified / native-sidebar-unsupported / targeted-host-partial / interactive-host-acceptance-pending`
+status: `implementation-landed / RAW-029-focused-verified / native-sidebar-unsupported / interactive-host-acceptance-pending`
 
 ## Baseline And Corrected Conclusions
 
@@ -69,6 +69,14 @@ status: `implementation-landed / RAW-154-automated-verified / RAW-029-focused-ve
 - [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1) 在正常库存读取时建立唯一私有文件索引。写前核验 phase、身份、stat/hash，事务保留原字节/权限，只改 `isArchived`，同目录 `wx` 临时文件核验后原子替换；安全回滚失败或检测到并发修改时返回 `indeterminate`，绝不覆盖更新的 Claude 字节。
 - [archive.cjs](../../../../preload/claude/archive.cjs#L1) 提供 `claude-metadata-archive-v2`；元数据 true + 私有活动库存移除即 `archived`，App 日志为可选增强证据。归档路径不得调用 Deep Link、AX/JXA 或 exec，不写 LevelDB/其它会话。
 - 精确文件 watcher 发布 `CompanionTaskMutationDelta`，一秒 watchdog 只核验索引候选，独立于 quota/state/unread/full inventory。普通 open 写前检查目标未归档；`eypc-companion-archive` 用同一 Dispatcher 的进程级五秒同身份二次确认。
+
+### 8. RAW-027 / Codex RAW-155 状态不丢与快速导航
+
+- 将最终任务内核/包升级到 V2，分别仲裁 Claude membership、phase、unread；补同代次 phase→unread、慢 unread→新 inventory、旧 inventory→新 phase 的反向合同。
+- 把 Claude bridge 单 callback 改成 Host+Renderer 多播；首次 inventory 后动态补装目录 watcher，并将并发 unread 读取合并到同一 Promise。
+- 正常 push 直接发布对应 lane；只有冷启动、重连或明确成员缺口才做 Claude-only inventory。所有列表/循环层内按最近提问倒序，导航首键立即，仅 in-flight 时保留最终 trailing。
+- 运行影响选择的 Claude bridge/unread/watcher E2E、Kernel/navigation/Controller/UI 测试、typecheck、Preload 镜像/语法与 production/uTools build；真实 running→completed-unread 和快速连按继续 host gate。
+- RAW-028 增量将 generic `Stopping session` 与显式 Turn outcome 分离，native unread 统一恢复非 live history completed；最终 package 原子投影所有消费者，Claude inventory 去除固定总量上限。归档确认忽略 revision/unread/focus/alias churn，第二次使用最新目标；D′ 只对普通元数据 churn 安全 rebase 和一次写前 source-change 重试。聚焦 9 文件验证并保留真实 Claude 状态/归档 host gate。
 
 ### 9. RAW-029 D-1 提示语与 D-2 原生侧栏核验
 

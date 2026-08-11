@@ -39,6 +39,8 @@ updated: `2026-08-11`
 | RAW-024 | active | 修正旧 Claude 任务在 `Stop` 后因 `SubagentStop`/工具尾事件长期假 running：只有新 `UserPromptSubmit` 可开启父 Turn，App 明确终态优先同 Turn Hook 尾事件。增加 Claude-only“同步 Claude 状态”与成功打开后的单项静默 state/unread 同步；必须复用同一 singleflight/revision 发布链，不提供人工完成/已读覆盖，不新增公共 preload、持久化 schema 或 Claude App 写入。相关旧文档采用链接式逻辑归档并同步全局规则；当前不得物理迁移。 |
 | RAW-025 | active | 更新引入（Codex Companion RAW-154）：Claude completed/stopped 任务级归档改为 macOS App `1.26832.0` 门禁下的 D′ 受控静默元数据事务。只允许使用普通库存建立的唯一私有 `sessionId → local_*.json` 索引，写前复核 phase、身份、stat/hash，只把单一目标的 `isArchived` 改为 true，经同目录临时文件核验后原子替换；禁止 Deep Link、AX/JXA、LevelDB、扫改目录和非目标会话。元数据 true + 私有活动库存移除即为成功，App 日志仅作增强证据；安全回滚失败或并发修改不确定时保留卡片。 |
 | RAW-026 | active | Claude 文件 watcher 必须按已登记的精确文件发布 Provider-neutral membership mutation delta，正常变化至 Controller 原子任务包 P95 不超过 250ms；丢 callback 时一秒 watchdog 只检查私有索引并在 1.25 秒内恢复。该通路不等待 quota/state/unread/完整 inventory。普通打开在 Deep Link 前复核唯一目标仍存在且未归档；统一任务 Dispatcher 和五秒二次确认快捷调用不得把 archive 退化为 open。 |
+| RAW-027 | active | 修复 Claude 从进行中到已完成未读被吞和延迟后已在 App 打开而消失：最终任务包对 Claude membership/phase/unread 使用独立 generation，任一 lane 不得推进或覆盖其它 lane；Host 与 Renderer 的 state/inventory/unread 订阅必须多播，不得以单 callback 覆盖；Host 早于首个 inventory 订阅时，首次冷 inventory 必须动态安装发现目录 watcher；并发 unread 读取加入同一 Promise，异步结果提交前在最新任务包上重放且拒绝旧 generation。正常可信推送不得触发 quota/environment/full inventory，只有冷启动、重连或明确 membership gap 才执行 Claude-only inventory。列表和循环层内按最近提问倒序，第一下前后任务立即打开，只有 in-flight 时才保留最终尾随目标。 |
+| RAW-028 | active | 修复正常回复被通用 `Stopping session` 降为待继续、原生未读无法恢复完成态、Claude 库存固定数量截断、归档二次确认消失和普通元数据变化导致归档偶发失败。通用 session-end 不覆盖同 Turn 成功 Stop/Result；live 状态优先，否则原生 unread 将任何非 live 历史恢复为 completed-unread，清除 unread 只回 completed，新 Prompt 才恢复 running。最终 V3 任务包原子更新卡片/Tab/项目/分组/角标/动作；Claude inventory 不设固定总数上限。归档确认绑定 Provider+task+terminalEpoch，revision/unread/focus/alias churn 不取消；Claude D′ 行为在 RAW-159 中保持不变。 |
 | RAW-029 | active | Claude D′ 成功提示必须明确分离两项事实：EyPc 归档已完成且任务已从 EyPc 列表移除；Claude 原生侧栏当前尚未确认同步、可能仍待刷新。继续核验真正的原生侧栏及时收敛，但只有受支持的原生动作入口、同一会话原生 ACK 与运行中侧栏在 1.25 秒内移除同时成立才可接纳；元数据/LevelDB 写入、私有 IPC、AX/JXA/UI 自动化、重启或事后视觉结果均不得冒充原生收敛。 |
 
 ## Source Lineage
@@ -50,5 +52,7 @@ updated: `2026-08-11`
 - RAW-019–023：来自本轮对真实 Claude App 额度、状态刷新、项目归属、来源视觉及完成态已读回跳的明确修复计划。
 - RAW-024：来自对 App 已完成/已读旧任务仍显示 running 的实测反馈及后续明确实现计划；同时固定单项真实同步、无人工覆盖、全局链接式归档和无物理迁移边界。
 - RAW-025–026：来自 Codex Companion RAW-154 已锁定方案；取代 RAW-150 的 Claude Deep Link+AX 归档路线，并补齐外部 App 归档到 Controller 发布、归档后禁止旧导航重新打开及统一动作分发边界。
+- RAW-027：来自真实 running→completed-unread 丢失、可能因延迟期间已在 Claude 打开而消失，以及前后任务明显慢于卡片点击的复现；由 Codex Companion RAW-155 统一收口。
+- RAW-028：来自正常 Claude 回复被误判待继续、完成未读丢失、固定任务数量、归档确认和归档竞态的连续实测；由 Codex Companion RAW-155 增量统一收口。
 - RAW-029：来自对 D′ 用户提示语与 Claude 原生侧栏及时收敛能力的明确拆分、核验和继续执行授权；D-1 直接实施，D-2 先做只读证据核验，不能在缺少受支持入口时越过安全边界。
 - 旧需求证据仍留在其原任务目录；当前取代关系由 [spec.md](spec.md#L1) 的 `DEC-* / ARCH-*` 记录管理。
