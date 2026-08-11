@@ -1,7 +1,7 @@
 # Claude Companion：Codex 同构状态与全局缓存改造
 
-updated: `2026-08-09`
-status: `implementation-landed / RAW-154-automated-verified / targeted-host-partial / interactive-host-acceptance-pending`
+updated: `2026-08-11`
+status: `implementation-landed / RAW-154-automated-verified / RAW-029-focused-verified / native-sidebar-unsupported / targeted-host-partial / interactive-host-acceptance-pending`
 
 ## Baseline And Corrected Conclusions
 
@@ -69,6 +69,13 @@ status: `implementation-landed / RAW-154-automated-verified / targeted-host-part
 - [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1) 在正常库存读取时建立唯一私有文件索引。写前核验 phase、身份、stat/hash，事务保留原字节/权限，只改 `isArchived`，同目录 `wx` 临时文件核验后原子替换；安全回滚失败或检测到并发修改时返回 `indeterminate`，绝不覆盖更新的 Claude 字节。
 - [archive.cjs](../../../../preload/claude/archive.cjs#L1) 提供 `claude-metadata-archive-v2`；元数据 true + 私有活动库存移除即 `archived`，App 日志为可选增强证据。归档路径不得调用 Deep Link、AX/JXA 或 exec，不写 LevelDB/其它会话。
 - 精确文件 watcher 发布 `CompanionTaskMutationDelta`，一秒 watchdog 只核验索引候选，独立于 quota/state/unread/full inventory。普通 open 写前检查目标未归档；`eypc-companion-archive` 用同一 Dispatcher 的进程级五秒同身份二次确认。
+
+### 9. RAW-029 D-1 提示语与 D-2 原生侧栏核验
+
+- D-1 已修改 Claude 归档适配器的成功/幂等提示和 Controller 兜底：只声称 EyPc 归档完成及 EyPc 列表移除，同时明确 Claude 原生侧栏可能仍待刷新、当前尚未确认同步。
+- D-2 先做只读能力核验。已安装 App 的原生归档会修改运行中 session manager、保存对象并发布 `archived` 事件；D′ 文件事务没有进入该链，官方公开 Deep Link/API 也没有面向 Desktop Code 本地会话的归档入口。因此本轮不新增原生写路径，状态固定为 `unsupported-currently`。
+- 未来仅在“受支持原生入口 + 同一 session 原生 ACK + 同一运行中侧栏 1.25 秒内移除”同时可测时重开；私有 IPC、AX/JXA/UI 自动化、LevelDB/元数据写入、自动重启和事后视觉推断继续禁止。
+- 当前影响验证覆盖 Claude archive Bridge、Provider-neutral action carry-through、Controller 提示兜底、canonical/public Preload 语法/镜像和变更文档链接。因 uTools 实际加载 `dist` 且 Host identity 哈希 canonical Preload，产物边界升级为 typecheck + 1870-module production build + runtime preparation/validator；仍不运行全仓测试，也不写真实 Claude 数据。
 
 ## Verification Plan And Current Gate
 

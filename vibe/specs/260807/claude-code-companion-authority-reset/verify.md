@@ -1,7 +1,7 @@
 # Claude Code Companion 权威重置 — Verification
 
-updated: `2026-08-09`
-status: `implementation-landed / RAW-154-automated-verified / quota-host-verified / interactive-host-partial`
+updated: `2026-08-11`
+status: `implementation-landed / RAW-154-automated-verified / RAW-029-focused-verified / native-sidebar-unsupported / quota-host-verified / interactive-host-partial`
 
 ## Verification Verdict
 
@@ -30,7 +30,7 @@ status: `implementation-landed / RAW-154-automated-verified / quota-host-verifie
 | Independent hot cache | [codexController.ts](../../../../src/runtime/codexController.ts#L1), [claudeCompanionController.test.ts](../../../../tests/runtime/claudeCompanionController.test.ts#L1), [claudeCompanionWatcherE2E.test.ts](../../../../tests/runtime/claudeCompanionWatcherE2E.test.ts#L1) | real `fs.watch` → parser → Bridge V2 → Controller revision → Float applied revision; separate clocks; 1s recovery; two failures→unknown; blocked quota is never awaited; regressions rejected |
 | Per-task true sync | [appRuntime.ts](../../../../src/runtime/appRuntime.ts#L1), [codexController.ts](../../../../src/runtime/codexController.ts#L1), [FloatApp.vue](../../../../src/FloatApp.vue#L1) | exact current Claude identity; joinable state/unread reads; one publish max; partial failure feedback; successful-open silent sync; no manual completed/read override |
 | Exact shortcut/open | [open.cjs](../../../../preload/claude/open.cjs#L1), [claudeBridge.test.ts](../../../../tests/platform/claudeBridge.test.ts#L1), [open probe](../../../../scripts/probe-claude-open-runtime.mjs#L1) | process-generation cache; cold discovery hard-bounded to 900ms; latest-target-wins; one Epitaxy final target; no import/launch/read mutation/clone |
-| D′ archive transaction/open preflight | [archive.cjs](../../../../preload/claude/archive.cjs#L1), [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1), [claudeBridge.test.ts](../../../../tests/platform/claudeBridge.test.ts#L1) | unique indexed target; completed/stopped + version/platform/stat/hash gate; only `isArchived` semantic change; atomic sibling rename; no Deep Link/AX/exec/LevelDB/non-target write; idempotent archived; concurrency-safe rollback classification; archived/missing open rejected |
+| D′ archive transaction/open preflight | [archive.cjs](../../../../preload/claude/archive.cjs#L1), [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1), [claudeBridge.test.ts](../../../../tests/platform/claudeBridge.test.ts#L1) | unique indexed target; completed/stopped + version/platform/stat/hash gate; only `isArchived` semantic change; atomic sibling rename; no Deep Link/AX/exec/LevelDB/non-target write; idempotent archived; concurrency-safe rollback classification; archived/missing open rejected; success copy confirms only EyPc removal and marks native sidebar unconfirmed |
 | Provider-neutral action/mutation | [task-actions.cjs](../../../../preload/companion/task-actions.cjs#L1), [companionTaskActionsBridge.test.ts](../../../../tests/platform/companionTaskActionsBridge.test.ts#L1), [claudeCompanionController.test.ts](../../../../tests/runtime/claudeCompanionController.test.ts#L1) | exhaustive registry; archive never coalesced/replaced; same task joins; providers independent; stale target fails closed; verified removal once; failed/indeterminate retained; five-second exact shortcut identity |
 | Dynamic quota/reset | [quota.cjs](../../../../preload/claude/quota.cjs#L1), [claude.ts](../../../../src/domain/claude.ts#L1), [claudeQuotaFallback.test.ts](../../../../tests/platform/claudeQuotaFallback.test.ts#L1) | explicit access gate; Claude Safe Storage v10 decrypt; account/org/scope arbitration; current `kind/percent/nested scope` shape; 401 fingerprint wait; 429 Retry-After; reset+1s schedule; scoped window survives partial patch |
 | Virtual projects/provider UI | [companionAggregate.ts](../../../../src/domain/companionAggregate.ts#L1), [FloatApp.vue](../../../../src/FloatApp.vue#L1), [codexCompanion.test.ts](../../../../tests/ui/codexCompanion.test.ts#L1) | exact-key/unique-name merge; ambiguity separation; Claude-only batches; all/Codex/Claude filter and counts; unsupported Claude actions disabled; text ownership + 8%/12% backgrounds + Tab/ARIA/high-contrast |
@@ -74,6 +74,18 @@ No probe output contains a session id, title, prompt, tool argument, raw App log
 
 Current authority: these rows prove only that the commands previously completed. They do not define future scope; wider reruns require a new impact-trace escalation trigger.
 
+## RAW-029 D-1 / D-2 Focused Verification
+
+| Evidence | Result |
+| --- | --- |
+| `tests/platform/claudeBridge.test.ts` + `tests/platform/companionTaskActionsBridge.test.ts` + `tests/runtime/claudeCompanionController.test.ts` | passed — 3 files / 100 tests；成功、幂等成功与 Controller 无消息兜底均使用“EyPc 已移除 / Claude 原生侧栏未确认”提示，且既有合同继续断言不调用原生动作、不执行脚本、不写 LevelDB |
+| canonical/public/dist packaging boundary | passed — canonical 与 public 镜像一致，两个 CJS 均通过语法检查；typecheck、1870-module production build、runtime preparation 和 uTools validator 通过，产物身份 `host-36616822511986c18f2c / renderer-25da7ef64b81aadc76f8`。首次 validator false-red 固定了旧提示，三段语义锚点同步后最终全绿 |
+| installed Claude App `1.26832.0` read-only artifact assessment | native archive mutates the running session-manager object, persists it and emits a same-session `archived` event；D′ writes the metadata file directly and does not enter that chain |
+| official external interface assessment | official Desktop Deep Links expose chat/project/Code/Cowork navigation but no local Code archive/refresh；Managed Agents archive targets a different Beta `sessions` resource |
+| privacy-safe runtime correlation | D′ target remains metadata-archived, but retained logs contain no matching native archive event；the current Claude process started after the canary, so current sidebar state cannot prove immediate convergence |
+
+Verdict: D-1 is `focused-verified`。D-2 is `unsupported-currently`, not failed implementation：there is no supported entry that can satisfy the native ACK + same-running-process sidebar-removal postcondition。No private IPC、AX/JXA/UI automation、LevelDB write、App restart or additional real Claude mutation was executed。A possible later native whole-object save overwriting direct metadata is recorded only as an inference risk, not an observed incident。
+
 ## Interactive Host Matrix
 
 | Step | Expected | Current |
@@ -88,12 +100,12 @@ Current authority: these rows prove only that the commands previously completed.
 | Title/activity change | one metadata patch; state/unread preserved | automated passed; real UI pending |
 | Restart | history completed restored; no persisted live phase | cold probe passed; real UI pending |
 | Quota | 5h/all-model/Fable/Fable 5 + absolute/relative reset/freshness match App | source HTTP 200 and three-window projection passed; final uTools same-screen rendering pending |
-| EyPc D′ archive | one separately authorized disposable completed/stopped target becomes `isArchived=true`; EyPc card removes immediately; no Claude window opens | deterministic transaction tests implemented; real canary pending separate user confirmation |
+| EyPc D′ archive | one separately authorized disposable completed/stopped target becomes `isArchived=true`; EyPc card removes immediately; no Claude window opens | deterministic transaction tests implemented; **real preload canary executed 2026-08-10 under explicit user authorization** — production `createClaudeBridge` composed with real deps against live App data, one `completed`/`app-log`/`compatible` target archived, `outcome=archived / alreadyArchived=false`, semantic diff exactly one key (`isArchived` false→true) over an unchanged 22-key object, `-rw-------` preserved, zero residual `eypc-*.tmp`, target dropped from active inventory (14→13), re-call idempotent `alreadyArchived=true` with the file hash unchanged, and no Claude window opened. Renderer→Dispatcher→Float card-removal click path in the real uTools host remains pending |
 | Claude App manual archive | exact file event removes same EyPc card within 250ms P95; one dropped callback recovers within 1.25s | deterministic exact watcher + watchdog tests implemented; real App observation pending |
 
 ## Privacy / Mutation Audit
 
-- Historical probes did not write, delete, merge or repair Claude App session/title/unread/archive/quota data. RAW-154 automation writes only disposable test fixtures；no real Claude D′ canary was executed。
+- Historical probes did not write, delete, merge or repair Claude App session/title/unread/archive/quota data. RAW-154 automation writes only disposable test fixtures。更新引入（2026-08-10）：一次用户显式授权的真实 D′ canary 已执行，唯一写入是单一目标 `local_5d01ce01-…` 的 `isArchived` 字段；写前已对原文件取 SHA-256 备份，事务后语义 diff 证明其余 21 个键与权限位完全未变，未触碰其它会话、标题、未读、额度或 LevelDB。
 - The sync action reads only current state/unread and has no phase/read payload; no public preload API, persistence schema or Claude App write was added.
 - Production D′ is a narrow explicit exception: one unique indexed `local_*.json` target, `isArchived=true` only, original bytes/mode retained for guarded rollback, no path crosses Bridge, and LevelDB/other sessions/non-target fields remain untouched.
 - Open probe only navigated an already-running App to an existing Code row and observed no metadata clone.
@@ -104,7 +116,8 @@ Current authority: these rows prove only that the commands previously completed.
 
 - 历史 revision 5 回执曾以 26 documents / 41 dependencies / 22 validators 命中，随后因共享 provider 文档获得外来 RAW-149 hunk 而正确变为 `scope_changed`；该事实保留为历史，不再冒充当前门禁。
 - RAW-154 将清单扩展为 34 documents / 49 dependencies / 31 validators，纳入 Codex v9 任务包、统一 Dispatcher、Claude D′、mutation/shortcut 与新增验证文件。最终复核 33 个变更 Markdown 零断链，`AGENTS.md`/`CLAUDE.md` 工具专属导语不同但共享适配器正文一致，并修正残留的 v8 当前口吻与 interrupted 等 idle 冲突。
-- 当前私有 `documentation-sync-v2` 回执已按 `requirement-canonical` 影响重新记录；CodeNote 全局规则/Skill 回执仍由其父 Rule Task 独立持有。该回执只证明文档、依赖和验证器在当前工作树一致，不替代 v9 宿主重接入或真实 D′ canary。
+- RAW-029 将新增原生侧栏后置条件错误记忆纳入清单，当前 manifest 为 35 documents / 49 dependencies / 31 validators；D-1/D-2 当前权威、Claude/Codex 关联任务、帮助、架构、技术细节与错误索引通过最终代码链接审计和真实 Primary 计数复核。
+- 当前私有 `documentation-sync-v2` 回执已按 `requirement-canonical` 影响重新记录；CodeNote 全局规则/Skill 回执仍由其父 Rule Task 独立持有。该回执只证明文档、依赖和验证器在当前工作树一致，不替代 v9 宿主重接入、真实 Float 点击移除、Claude App 手动归档 delta 或其它交互门禁。
 
 ## Review Closure
 

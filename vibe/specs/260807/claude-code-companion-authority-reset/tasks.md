@@ -1,7 +1,7 @@
 # Claude Code Companion 权威重置 — Tasks
 
-updated: `2026-08-09`
-overall_status: `implementation-landed / RAW-154-automated-verified / host-acceptance-pending`
+updated: `2026-08-11`
+overall_status: `implementation-landed / RAW-154-automated-verified / RAW-029-focused-verified / native-sidebar-unsupported / host-acceptance-pending`
 
 | ID | Work | Status |
 | --- | --- | --- |
@@ -32,7 +32,8 @@ overall_status: `implementation-landed / RAW-154-automated-verified / host-accep
 | CCR-24 | `claude-metadata-archive-v2` 唯一文件索引、单字段原子事务、并发保护与安全回滚 | completed / focused-automated-verified |
 | CCR-25 | Claude 精确 membership delta、一秒索引 watchdog、归档后 open preflight | completed / focused-automated-verified |
 | CCR-26 | `eypc-companion-archive` mainHide 五秒同身份确认与帮助/权威/错误记忆同步 | completed / focused-automated-verified |
-| CCR-27 | 用户另行确认后的可丢弃 completed 会话 D′ 真机 canary 与 Claude 手动归档即时移除 | pending-host-confirmation |
+| CCR-27 | 用户另行确认后的 completed 会话 D′ 真机 canary 与 Claude 手动归档即时移除 | canary-passed / manual-archive-delta-pending（2026-08-10 用户授权后执行真实归档通过，见 [verify.md](verify.md#L94)；Float 点击移除与 App 手动归档 delta 仍待宿主观测） |
+| CCR-35 | RAW-029 D-1 归档提示边界与 D-2 原生侧栏及时收敛能力核验 | D-1 completed-focused-verified / D-2 verified-unsupported-currently |
 
 ## Execution Journal
 
@@ -55,3 +56,4 @@ overall_status: `implementation-landed / RAW-154-automated-verified / host-accep
 - 2026-08-09 — 统一 Dispatcher、Controller mutation reducer、精确文件 delta/一秒 watchdog、归档后 open preflight 与 mainHide 五秒确认已落地；定向测试、镜像、构建、链接/规则审计及私有同步回执均已收口，真实 canary 未获单独确认前不执行。
 - 2026-08-09 — RAW-154 最终影响矩阵 `20/20` files、`550/550` tests，typecheck、1868-module production/uTools build、runtime validator、canonical/public 镜像、JS/CJS 语法与 diff 检查通过；未触发全仓 Vitest/verify，真实 Claude 数据零写入。
 - 2026-08-09 — 文档同步组扩展为 34 documents / 49 dependencies / 31 validators；33 个变更 Markdown 零断链，适配器共享正文一致，RAW-154 私有同步回执重新记录。历史 v5 回执的并发 scope-change 事实继续保留但不再代表当前门禁。
+- 2026-08-11 — RAW-029 将 D′ 成功提示收窄为 EyPc 已归档/移除 + Claude 原生侧栏未确认；聚焦 3 文件 100/100、Preload 语法/镜像、typecheck、1870-module production build、runtime preparation/validator 通过，产物身份为 `host-36616822511986c18f2c / renderer-25da7ef64b81aadc76f8`。首次产物校验发现 checker 固定旧文案，已按同一合同改为三段语义锚点并在最终构建闭合。只读产物、官方入口和脱敏运行期证据共同判定 D-2 当前不具备受支持原生入口，未接入私有 IPC、AX/JXA/UI 自动化或任何新 Claude 写路径。

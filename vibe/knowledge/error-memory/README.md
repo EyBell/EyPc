@@ -83,7 +83,7 @@ Archive rule: repeated incidents update the matching leaf record's `Occurrence H
 
 ### Claude Companion
 
-- [Claude Companion module route](modules/claude-companion.md#L1): current authority/reset route, 16 Primary Claude records, related preload/package records and five `archived-linked` historical task sources with explicit replacements. Start here rather than scanning the former flat provider ledger.
+- [Claude Companion module route](modules/claude-companion.md#L1): current authority/reset route, 17 Primary Claude records, related preload/package records and five `archived-linked` historical task sources with explicit replacements. Start here rather than scanning the former flat provider ledger.
 
 ### Rule chain and attribution (2026-08-06)
 

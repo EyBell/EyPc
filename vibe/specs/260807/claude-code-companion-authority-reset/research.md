@@ -42,6 +42,22 @@ Claude App 内部确实拥有 running、权限等待、AskUserQuestion、完成�
 | Partial quota | `plan-usage-history.json` | two plain percentages | lacks scoped windows/reset | selected patch only |
 | Private IPC injection | internal session manager channels | semantically rich native state | unsupported origin/channel coupling | rejected production route |
 
+## D-2 Native Sidebar Convergence Assessment
+
+Verdict（2026-08-11）：`unsupported-currently`。Claude 的原生归档机制存在，但 EyPc 当前没有受支持、可维护且符合既有安全边界的外部调用入口，因此不能把 D′ 扩写成“原生侧栏及时收敛”。
+
+- 对已安装 Claude App `1.26832.0` 的只读产物检查表明：原生归档先在运行中 session manager 把目标 session 改为 archived，再保存该内存对象并发布同一 session 的 `archived` 事件；Renderer/侧栏消费的是这条进程内链路。
+- D′ 只对 `local_*.json` 执行单字段事务并验证 EyPc 私有活动库存移除。它不会调用原生 session manager，也不会产生原生 `archived` ACK，因此元数据 true、EyPc 卡片消失、LevelDB 状态或 Claude 后续重载后的视觉结果都不能证明运行中侧栏已经及时收敛。
+- [Claude Desktop 官方 Deep Link 文档](https://support.claude.com/en/articles/14729294-open-claude-desktop-with-a-link)列出新建/打开聊天、项目、Code 与 Cowork 的入口，但没有本地 Code 归档或侧栏刷新入口。[Managed Agents Archive API](https://platform.claude.com/docs/en/api/typescript/beta/sessions/archive)面向 Beta Managed Agents `sessions` 资源，不是 Desktop Code 的本地 `local_*.json` 会话，不能移植为 D-2。
+- 脱敏运行期复核仍能确认 D′ 目标元数据为 archived，但保留日志中没有同目标的原生 archive 事件；当前 Claude 进程又晚于 canary 启动，因此当前视觉状态不能反推 canary 当时的即时收敛。由于 session manager 后续会把内存对象整包保存，“陈旧内存可能覆盖直接落盘的 archived=true”仅是源码推导风险，尚无实际覆盖事件证据。
+
+真正的 D-2 只有同时满足以下后置条件才能重开实现：
+
+1. Claude 提供受支持的外部入口，且该入口确实进入运行中原生 session manager；
+2. EyPc 收到同一 App-local session 的原生成功 ACK，而不是文件变化或自有库存缺行；
+3. 同一运行中 Claude 进程的原生侧栏在 ACK 后 1.25 秒内移除同一会话；
+4. 任一条件缺失即返回 `unsupported/pending`，不得回退私有 IPC、AX/JXA/UI 自动化、LevelDB 写入、自动重启或事后视觉推断。
+
 ## Status Semantics And Priority
 
 | Priority | Evidence | Result | Guard |

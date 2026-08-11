@@ -5,7 +5,7 @@ source_format: `chat`
 source_kind: `chat-requirement-summary`
 capture_fidelity: `normalized-material-requirement`
 privacy_boundary: `no-verbatim-prompt-or-transcript`
-updated: `2026-08-09`
+updated: `2026-08-11`
 
 > 本文件只保留会改变范围、行为、选择或验收的语义；不保存原始提示词、截图文字转录、命令、工具输出、会话身份或推理过程。
 
@@ -39,6 +39,7 @@ updated: `2026-08-09`
 | RAW-024 | active | 修正旧 Claude 任务在 `Stop` 后因 `SubagentStop`/工具尾事件长期假 running：只有新 `UserPromptSubmit` 可开启父 Turn，App 明确终态优先同 Turn Hook 尾事件。增加 Claude-only“同步 Claude 状态”与成功打开后的单项静默 state/unread 同步；必须复用同一 singleflight/revision 发布链，不提供人工完成/已读覆盖，不新增公共 preload、持久化 schema 或 Claude App 写入。相关旧文档采用链接式逻辑归档并同步全局规则；当前不得物理迁移。 |
 | RAW-025 | active | 更新引入（Codex Companion RAW-154）：Claude completed/stopped 任务级归档改为 macOS App `1.26832.0` 门禁下的 D′ 受控静默元数据事务。只允许使用普通库存建立的唯一私有 `sessionId → local_*.json` 索引，写前复核 phase、身份、stat/hash，只把单一目标的 `isArchived` 改为 true，经同目录临时文件核验后原子替换；禁止 Deep Link、AX/JXA、LevelDB、扫改目录和非目标会话。元数据 true + 私有活动库存移除即为成功，App 日志仅作增强证据；安全回滚失败或并发修改不确定时保留卡片。 |
 | RAW-026 | active | Claude 文件 watcher 必须按已登记的精确文件发布 Provider-neutral membership mutation delta，正常变化至 Controller 原子任务包 P95 不超过 250ms；丢 callback 时一秒 watchdog 只检查私有索引并在 1.25 秒内恢复。该通路不等待 quota/state/unread/完整 inventory。普通打开在 Deep Link 前复核唯一目标仍存在且未归档；统一任务 Dispatcher 和五秒二次确认快捷调用不得把 archive 退化为 open。 |
+| RAW-029 | active | Claude D′ 成功提示必须明确分离两项事实：EyPc 归档已完成且任务已从 EyPc 列表移除；Claude 原生侧栏当前尚未确认同步、可能仍待刷新。继续核验真正的原生侧栏及时收敛，但只有受支持的原生动作入口、同一会话原生 ACK 与运行中侧栏在 1.25 秒内移除同时成立才可接纳；元数据/LevelDB 写入、私有 IPC、AX/JXA/UI 自动化、重启或事后视觉结果均不得冒充原生收敛。 |
 
 ## Source Lineage
 
@@ -49,4 +50,5 @@ updated: `2026-08-09`
 - RAW-019–023：来自本轮对真实 Claude App 额度、状态刷新、项目归属、来源视觉及完成态已读回跳的明确修复计划。
 - RAW-024：来自对 App 已完成/已读旧任务仍显示 running 的实测反馈及后续明确实现计划；同时固定单项真实同步、无人工覆盖、全局链接式归档和无物理迁移边界。
 - RAW-025–026：来自 Codex Companion RAW-154 已锁定方案；取代 RAW-150 的 Claude Deep Link+AX 归档路线，并补齐外部 App 归档到 Controller 发布、归档后禁止旧导航重新打开及统一动作分发边界。
+- RAW-029：来自对 D′ 用户提示语与 Claude 原生侧栏及时收敛能力的明确拆分、核验和继续执行授权；D-1 直接实施，D-2 先做只读证据核验，不能在缺少受支持入口时越过安全边界。
 - 旧需求证据仍留在其原任务目录；当前取代关系由 [spec.md](spec.md#L1) 的 `DEC-* / ARCH-*` 记录管理。
