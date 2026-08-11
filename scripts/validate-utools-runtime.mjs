@@ -159,7 +159,9 @@ for (const marker of [
   "['completed', 'stopped'].includes(current.phase)",
   'archiveSessionMetadata',
   'hasActiveSession',
-  '已静默归档；Claude UI 可能需自行刷新'
+  'EyPc 归档已完成',
+  'Claude 原生侧栏可能仍待刷新',
+  '当前尚未确认同步'
 ]) {
   assert(claudeArchiveSource.includes(marker), `claude metadata archive gate is missing: ${marker}`)
 }

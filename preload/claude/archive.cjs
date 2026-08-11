@@ -58,7 +58,7 @@ function createArchiveAdapter(dependencies) {
     if (before.isArchived === true) {
       return {
         outcome: 'archived',
-        message: '已静默归档；Claude UI 可能需自行刷新',
+        message: 'EyPc 归档已完成，任务已从 EyPc 列表移除；Claude 原生侧栏可能仍待刷新，当前尚未确认同步。',
         alreadyArchived: true
       }
     }
@@ -81,7 +81,7 @@ function createArchiveAdapter(dependencies) {
     }
     return {
       outcome: 'archived',
-      message: '已静默归档；Claude UI 可能需自行刷新',
+      message: 'EyPc 归档已完成，任务已从 EyPc 列表移除；Claude 原生侧栏可能仍待刷新，当前尚未确认同步。',
       alreadyArchived: result.alreadyArchived === true
     }
   }
