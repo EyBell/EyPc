@@ -5,7 +5,7 @@ import type {
   CodexTaskCard,
   ConversationSnapshotV1
 } from './codex'
-import { orderCodexAttentionTasks } from './codex'
+import { compareConversationTasks, orderCodexAttentionTasks } from './codex'
 import { companionTaskProvider, type CompanionProviderId } from './companionProvider'
 
 /**
@@ -17,9 +17,9 @@ import { companionTaskProvider, type CompanionProviderId } from './companionProv
  * badges, task cycle, floating card — consumes one merged inventory instead of
  * learning about providers individually.
  *
- * The merge is deliberately additive and order-preserving: Codex cards keep
- * their exact positions and the Codex projection is never re-run. That is what
- * makes the Codex-only path byte-identical to the pre-multi-provider release.
+ * The merge is deliberately additive: the Codex projection is never re-run,
+ * then every affected status bucket is sorted by the shared latest-question
+ * comparator. That keeps provider and pin identity out of display position.
  */
 
 /**
@@ -54,42 +54,16 @@ function withHiddenKind(cards: readonly CodexTaskCard[]): CodexTaskCard[] {
   return cards.map((card) => (card.hiddenKind ? card : { ...card, hiddenKind: 'task' as const }))
 }
 
-/** Latest activity a card can be ordered by; 0 when it has none. */
-function activityAt(card: CodexTaskCard): number {
-  return Math.max(card.lastTurnStartedAt || 0, card.lastTurnCompletedAt || 0, card.updatedAt || 0)
-}
-
 /**
- * Interleaves foreign cards into an existing bucket by recency.
- *
- * A plain append would put every foreign card after every Codex card, which is
- * source grouping by another name — the visible list is supposed to read as one
- * merged, status-driven sequence. This is a two-way stable merge rather than a
- * global sort, so the Codex side keeps its exact internal order (that order
- * encodes projection rules this layer must not second-guess) while foreign
- * cards land where their own activity puts them.
- *
- * Cards with no activity timestamp sink to the end of their own run instead of
- * jumping to the front.
+ * Merges providers, then applies the shared latest-question order. Provider and
+ * pin membership never affect position inside a status group.
  */
 function mergeByRecency(target: readonly CodexTaskCard[], cards: readonly CodexTaskCard[]): CodexTaskCard[] {
   if (!cards.length) return target as CodexTaskCard[]
   const seen = new Set(target.map((card) => card.key))
   const additions = cards.filter((card) => !seen.has(card.key))
   if (!additions.length) return target as CodexTaskCard[]
-  if (!target.length) return additions
-  const merged: CodexTaskCard[] = []
-  let left = 0
-  let right = 0
-  while (left < target.length && right < additions.length) {
-    // Strictly greater keeps the existing card first on a tie, which preserves
-    // the Codex sequence whenever timestamps are equal or absent.
-    if (activityAt(additions[right]) > activityAt(target[left])) merged.push(additions[right++])
-    else merged.push(target[left++])
-  }
-  while (left < target.length) merged.push(target[left++])
-  while (right < additions.length) merged.push(additions[right++])
-  return merged
+  return [...target, ...additions].sort(compareConversationTasks)
 }
 
 function countWaiting(cards: readonly CodexTaskCard[]): number {

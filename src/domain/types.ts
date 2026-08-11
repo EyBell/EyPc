@@ -296,12 +296,24 @@ export interface ShortcutProfileState {
 
 export type ShortcutProfileMap = Record<ShortcutProfileId, ShortcutProfileState>
 
+export type RuntimeDiagnosticsLevel = 'error' | 'info' | 'debug'
+
+export interface RuntimeDiagnosticsSettings {
+  enabled: boolean
+  level: RuntimeDiagnosticsLevel
+  /** Explicit choices survive later default migrations. */
+  userConfigured: boolean
+  /** One-time default migration marker for the v3 ownership contract. */
+  defaultsRevision?: 3
+}
+
 export interface AppSettings {
   keybindingOverrides: KeybindingOverride[]
   shortcutProfiles: ShortcutProfileMap
   featureConfigs: FeatureConfig[]
   toolPreviewPrefs: ToolPreviewPrefs
   preferSqlite: boolean
+  runtimeDiagnostics: RuntimeDiagnosticsSettings
 }
 
 export interface AppState {
@@ -334,7 +346,7 @@ export interface AppState {
   codex: CodexState
   settings: AppSettings
   settingsTabId: 'shortcuts' | 'maintenance'
-  settingsMaintenanceSectionId: 'features' | 'tools' | 'layers' | 'storage' | 'commands' | 'resolution' | 'reservations' | 'window-diagnostics'
+  settingsMaintenanceSectionId: 'features' | 'tools' | 'layers' | 'storage' | 'commands' | 'resolution' | 'reservations' | 'runtime-logs' | 'window-diagnostics'
   updatedAt: number
 }
 
