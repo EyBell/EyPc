@@ -9425,6 +9425,45 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const kind = args?.kind === 'task' || args?.kind === 'activity' || args?.kind === 'pending' ? args.kind : undefined
       return key && revisionAt !== undefined && kind ? codexController.restore(key, revisionAt, kind) : false
     } })
+    actions.register({ id: 'codex.task.pausePlan', title: '暂停 Codex Plan', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
+      const key = typeof args?.key === 'string' ? args.key : ''
+      const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt) ? args.revisionAt : undefined
+      if (!key || revisionAt === undefined) return false
+      void codexController.pausePlan(key, revisionAt)
+      return true
+    } })
+    actions.register({ id: 'codex.task.resumePlan', title: '恢复 Codex Plan', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
+      const key = typeof args?.key === 'string' ? args.key : ''
+      const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt) ? args.revisionAt : undefined
+      if (!key || revisionAt === undefined) return false
+      void codexController.resumePlan(key, revisionAt)
+      return true
+    } })
+    actions.register({ id: 'codex.task.executePlan', title: '执行 Codex 原 Plan', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
+      const key = typeof args?.key === 'string' ? args.key : ''
+      const revisionAt = typeof args?.revisionAt === 'number' && Number.isFinite(args.revisionAt) ? args.revisionAt : undefined
+      if (!key || revisionAt === undefined) return false
+      void codexController.executePlan(key, revisionAt)
+      return true
+    } })
+    for (const [actionId, paused] of [['codex.tasks.pausePlan', true], ['codex.tasks.resumePlan', false]] as const) {
+      actions.register({ id: actionId, title: paused ? '批量暂停 Codex Plan' : '批量恢复 Codex Plan', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
+        const items = Array.isArray(args?.items) ? args.items.flatMap((value) => {
+          if (!value || typeof value !== 'object') return []
+          const item = value as Record<string, unknown>
+          return typeof item.key === 'string' && typeof item.revisionAt === 'number' && Number.isFinite(item.revisionAt)
+            ? [{ key: item.key, revisionAt: item.revisionAt }]
+            : []
+        }) : []
+        if (!items.length) return false
+        for (const item of items) {
+          void (paused
+            ? codexController.pausePlan(item.key, item.revisionAt, 'batch-pause')
+            : codexController.resumePlan(item.key, item.revisionAt, 'batch-resume'))
+        }
+        return true
+      } })
+    }
     actions.register({ id: 'codex.archive.confirmation', title: '记录 Codex 归档确认阶段', group: 'Codex', risk: 'normal', scope: 'global', priority: 1, when: () => true, run: (_ctx, args) => {
       const stage = args?.stage === 'created' || args?.stage === 'confirmed' || args?.stage === 'expired' ? args.stage : ''
       const operationId = typeof args?.operationId === 'string' ? args.operationId : ''

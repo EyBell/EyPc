@@ -161,9 +161,9 @@ for (const marker of [
   "['completed', 'stopped'].includes(current.phase)",
   'archiveSessionMetadata',
   'hasActiveSession',
-  'EyPc 归档已完成',
-  'Claude 原生侧栏可能仍待刷新',
-  '当前尚未确认同步'
+  'EyPc 已归档并移除',
+  'Claude 原生侧栏同步未确认',
+  '当前不受支持'
 ]) {
   assert(claudeArchiveSource.includes(marker), `claude metadata archive gate is missing: ${marker}`)
 }
@@ -171,12 +171,36 @@ for (const forbidden of ['AXPress', 'osascript', 'performClaudeArchiveAction', '
   assert(!claudeArchiveSource.includes(forbidden), `claude metadata archive adapter must not open or automate the App (found ${forbidden})`)
 }
 const companionTaskActionsSource = preloadModuleSources.get('companion/task-actions.cjs') || ''
-for (const marker of ['companion-task-actions-v3', 'archiveInFlight', 'shortcutArchive', 'CONFIRM_WINDOW_MS']) {
+for (const marker of ['companion-task-actions-v2', 'archiveInFlight', 'executeInFlight', 'executePlan', 'lastSyncFingerprint', 'shortcutArchive', 'CONFIRM_WINDOW_MS']) {
   assert(companionTaskActionsSource.includes(marker), `companion task dispatcher contract is missing: ${marker}`)
 }
 const companionTaskKernelSource = preloadModuleSources.get('companion/task-kernel.cjs') || ''
-for (const marker of ['companion-task-kernel-v3', 'companion-task-package-v3', 'sourceLaneGenerations', 'preflightInFlight', 'UNKNOWN_GRACE_MS', 'handleEnter']) {
+for (const marker of [
+  'companion-task-kernel-v4',
+  'companion-task-package-v4',
+  'sourceLaneGenerations',
+  'preflightInFlight',
+  'UNKNOWN_GRACE_MS',
+  'planReady',
+  'pausedKeys',
+  'reduceClaudeTaskEvidenceV4',
+  'nextVisibilityTransitionAt',
+  'getLatest: () => currentPackage',
+  'subscribe(afterRevision',
+  'handleEnter'
+]) {
   assert(companionTaskKernelSource.includes(marker), `companion task kernel contract is missing: ${marker}`)
+}
+for (const marker of [
+  'EXECUTE_PLAN_PROMPT_V1',
+  "requestCodexRpc('collaborationMode/list'",
+  "requestCodexRpc('thread/resume'",
+  "requestCodexRpc('turn/start'",
+  'task-package-ack',
+  "stage === 'applied'",
+  'requestCodexFloatRecreate'
+]) {
+  assert(canonicalMainPreload.includes(marker), `RAW-160 main preload contract is missing: ${marker}`)
 }
 const claudeAppState = claudeAppStateSource
   .replace(/\/\*[\s\S]*?\*\//g, ' ')

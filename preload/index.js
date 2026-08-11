@@ -45,12 +45,15 @@ const CODEX_THREAD_FIRST_PROMPT_PAGE_BUDGET = 4
 const CODEX_DESKTOP_IPC_FRAME_MAX_BYTES = 256 * 1024 * 1024
 const CODEX_DESKTOP_IPC_RECONNECT_MAX_MS = 5_000
 const CODEX_DESKTOP_REQUEST_CORRELATION_SALT = crypto.randomBytes(16)
+const COMPANION_DIAGNOSTIC_TASK_SALT = crypto.randomBytes(16)
 const CODEX_DESKTOP_WAITING_STATE_LIMIT = 1_000
 const CODEX_DESKTOP_WAITING_REQUEST_HISTORY_LIMIT = 400
 const CODEX_DESKTOP_RESOLVED_REQUEST_LIMIT = 400
 // Keep synchronized with src/domain/codex.ts. This value crosses the context
 // boundary so a newer renderer can mark long-lived preload evidence degraded.
-const CODEX_TASK_STATE_REVISION = 'task-state-v9'
+const CODEX_TASK_STATE_REVISION = 'task-state-v10'
+const COMPANION_PLAN_PAUSE_STORAGE_KEY = 'eypc/companion/plan-pause/v1'
+const EXECUTE_PLAN_PROMPT_V1 = '请按已完成的 Plan 开始执行。'
 const CODEX_DESKTOP_IPC_VERSIONS = {
   'client-status-changed': 0,
   'ipc-connection-reset': 1,
@@ -174,7 +177,8 @@ try {
 // raw evidence and capabilities; this Kernel owns the canonical package,
 // cursor and dispatch arbitration across mainHide/Renderer remounts.
 let createCompanionTaskKernel = null
-let reduceCodexTaskEvidenceV3 = null
+let reduceCodexTaskEvidenceV4 = null
+let reduceClaudeTaskEvidenceV4 = null
 let companionNavigationLoadError = ''
 try {
   let kernelModule = null
@@ -202,9 +206,15 @@ try {
     throw kernelRelativeLoadError || new Error('companion task kernel factory unavailable')
   }
   createCompanionTaskKernel = kernelModule.createCompanionTaskKernel
-  reduceCodexTaskEvidenceV3 = typeof kernelModule.reduceCodexTaskEvidenceV3 === 'function'
-    ? kernelModule.reduceCodexTaskEvidenceV3
+  reduceCodexTaskEvidenceV4 = typeof kernelModule.reduceCodexTaskEvidenceV4 === 'function'
+    ? kernelModule.reduceCodexTaskEvidenceV4
     : null
+  reduceClaudeTaskEvidenceV4 = typeof kernelModule.reduceClaudeTaskEvidenceV4 === 'function'
+    ? kernelModule.reduceClaudeTaskEvidenceV4
+    : null
+  if (!reduceCodexTaskEvidenceV4 || !reduceClaudeTaskEvidenceV4) {
+    throw new Error('companion task V4 reducers unavailable')
+  }
 } catch (error) {
   companionNavigationLoadError = String(error && error.message || error || 'companion task kernel unavailable')
 }
@@ -235,6 +245,8 @@ function unavailableWindowCapability(reason = '') {
 }
 const CODEX_FLOAT_CHANNELS = {
   snapshot: 'eypc-float:snapshot',
+  taskPackage: 'eypc-float:task-package',
+  taskPackageAck: 'eypc-float:task-package-ack',
   state: 'eypc-float:state',
   activate: 'eypc-float:activate',
   expansion: 'eypc-float:expansion',
@@ -289,6 +301,9 @@ let codexStartupHint = ''
 let codexReadyPromise = null
 let codexRpcId = 0
 let codexRpcBuffer = ''
+let codexPlanExecutionCapabilityPromise = null
+let codexPlanExecutionCapability = null
+const codexPlanExecutionSettings = new Map()
 const codexRpcPending = new Map()
 const codexThreadActions = new Map()
 const codexProjectActions = new Map()
@@ -339,6 +354,12 @@ let codexFloatExpanded = false
 let codexFloatPinned = false
 let codexFloatEdge = 'right'
 let codexFloatSnapshot = null
+let codexFloatTaskLastSentRevision = 0
+let codexFloatTaskAppliedRevision = 0
+let codexFloatTaskPendingRevision = 0
+let codexFloatTaskSendAttempts = 0
+let codexFloatTaskPendingStartedAt = 0
+let codexFloatTaskAckTimer = null
 let codexFloatDrag = null
 let codexFloatResize = null
 let codexFloatInteractionTimer = null
@@ -3356,6 +3377,11 @@ function codexPromoteCompletedPlanWait(known) {
   if (!known || known.lastTurnStatus !== 'completed'
     || known.pendingCompletedPlanItem !== true) return false
   delete known.pendingCompletedPlanItem
+  known.planReady = true
+  known.planLifecycleRevision = codexTimestampMs(known.lastTurnStartedAt)
+    || codexTimestampMs(known.lastTurnCompletedAt)
+    || Date.now()
+  known.turnMode = 'plan'
   const hasOtherWaiting = known.activeFlags.includes('waitingOnApproval')
     || known.activeFlags.includes('waitingOnUserInput')
       && known.planImplementationOnly !== true
@@ -5496,6 +5522,12 @@ function codexActivityPublicEntry(value) {
           ...(status ? { status } : {}),
           activeFlags,
           planImplementationOnly: source.planImplementationOnly === true,
+          planReady: source.planReady === true || source.planImplementationOnly === true,
+          ...(Number.isFinite(source.planLifecycleRevision) && source.planLifecycleRevision > 0
+            ? { planLifecycleRevision: Math.trunc(source.planLifecycleRevision) }
+            : {}),
+          ...(source.turnMode === 'plan' || source.turnMode === 'default' ? { turnMode: source.turnMode } : {}),
+          ...(source.idleConfirmed === true ? { idleConfirmed: true } : {}),
           statusAuthority,
           ...(activityEvidence ? { activityEvidence } : {}),
           ...(activityRevision !== undefined ? { activityRevision } : {}),
@@ -5762,7 +5794,7 @@ function handleCodexServerMessage(message) {
         event: 'codex-membership-minimal',
         outcome: metadataErrorCode || !native ? 'metadata-pending' : 'admitted',
         provider: 'codex',
-        taskRef: threadId,
+        taskRef: companionDiagnosticTaskRef('codex', threadId),
         code: metadataErrorCode || undefined,
         observationGeneration: known.activityRevision,
         cache: 'process-package',
@@ -5811,6 +5843,9 @@ function onCodexProcessEnd(processRef = codexProcess, reason = null) {
   codexStartupHint = ''
   codexReadyPromise = null
   codexRpcBuffer = ''
+  codexPlanExecutionCapabilityPromise = null
+  codexPlanExecutionCapability = null
+  codexPlanExecutionSettings.clear()
   resetCodexThreadSessionState({ preserveDesktopActivity: true })
 }
 
@@ -5929,6 +5964,32 @@ async function requestCodexRpc(method, params, timeoutMs = CODEX_RPC_TIMEOUT_MS)
   return sendCodexRpc(method, params, timeoutMs)
 }
 
+async function inspectCodexPlanExecutionCapability() {
+  if (codexPlanExecutionCapability) return codexPlanExecutionCapability
+  if (codexPlanExecutionCapabilityPromise) return codexPlanExecutionCapabilityPromise
+  const operation = Promise.resolve().then(async () => {
+    try {
+      const result = codexRecord(await requestCodexRpc('collaborationMode/list', {}))
+      const rows = [result.data, result.modes, result.collaborationModes]
+        .find((value) => Array.isArray(value)) || []
+      const defaultSupported = rows.some((value) => {
+        const row = codexRecord(value)
+        return row.mode === 'default' || row.name === 'default' || row.id === 'default'
+      })
+      codexPlanExecutionCapability = defaultSupported
+        ? { available: true, reason: 'ready' }
+        : { available: false, reason: 'default-mode-unavailable' }
+    } catch {
+      codexPlanExecutionCapability = { available: false, reason: 'protocol-unavailable' }
+    }
+    return codexPlanExecutionCapability
+  }).finally(() => {
+    if (codexPlanExecutionCapabilityPromise === operation) codexPlanExecutionCapabilityPromise = null
+  })
+  codexPlanExecutionCapabilityPromise = operation
+  return operation
+}
+
 function closeCodexServer() {
   const processRef = codexProcess
   rejectCodexPending(codexError('process-exited', 'Codex App Server session closed'))
@@ -5937,6 +5998,8 @@ function closeCodexServer() {
   codexStartupHint = ''
   codexReadyPromise = null
   codexRpcBuffer = ''
+  codexPlanExecutionCapabilityPromise = null
+  codexPlanExecutionCapability = null
   try { processRef?.stdout?.off?.('data', handleCodexStdout) } catch {}
   try { processRef?.stderr?.off?.('data', inspectCodexStderr) } catch {}
   try { processRef?.stdin?.end() } catch {}
@@ -6316,9 +6379,15 @@ function codexRolloutHasPendingUserInputText(text) {
 }
 
 function codexRolloutPendingPlanStateText(text) {
-  if (typeof text !== 'string' || !text) return { known: false, pending: false }
-  let sawTurnBoundary = false
-  let pending = false
+  if (typeof text !== 'string' || !text) {
+    return { known: false, pending: false, planReady: false, planLifecycleRevision: 0, turnMode: 'unknown' }
+  }
+  let sawDefaultBoundary = false
+  let sawPlanCompletion = false
+  let planReady = false
+  let planLifecycleRevision = 0
+  let turnMode = 'unknown'
+  let currentTurnStartedAt = 0
   for (const line of text.split(/\r?\n/)) {
     if (!line || line.length > 1_000_000) continue
     let record
@@ -6327,15 +6396,36 @@ function codexRolloutPendingPlanStateText(text) {
     const payload = codexRecord(source.payload)
     if (source.type !== 'event_msg') continue
     if (payload.type === 'task_started') {
-      sawTurnBoundary = true
-      pending = false
+      const mode = String(payload.collaboration_mode_kind || payload.collaborationModeKind || '').toLowerCase()
+      turnMode = mode === 'plan' ? 'plan' : mode === 'default' ? 'default' : 'unknown'
+      currentTurnStartedAt = codexTimestampMs(source.timestamp) || codexTimestampMs(payload.started_at) || 0
+      if (turnMode === 'default') {
+        sawDefaultBoundary = true
+        planReady = false
+        planLifecycleRevision = 0
+      }
       continue
     }
     if (payload.type !== 'item_completed') continue
     const item = codexRecord(payload.item)
-    if (String(item.type || '').toLowerCase() === 'plan') pending = true
+    if (String(item.type || '').toLowerCase() === 'plan') {
+      sawPlanCompletion = true
+      planReady = true
+      planLifecycleRevision = currentTurnStartedAt
+        || codexTimestampMs(source.timestamp)
+        || codexTimestampMs(payload.completed_at)
+        || planLifecycleRevision
+    }
   }
-  return { known: sawTurnBoundary || pending, pending }
+  return {
+    // A Plan-only boundary is insufficient to conclude that an earlier Plan did
+    // not exist; callers progressively widen the tail until one decisive edge.
+    known: sawDefaultBoundary || sawPlanCompletion,
+    pending: planReady,
+    planReady,
+    planLifecycleRevision,
+    turnMode
+  }
 }
 
 function codexPathInside(root, candidate) {
@@ -6400,19 +6490,45 @@ function codexThreadHasPersistedPendingInput(thread, lastTurn) {
 
 function codexThreadHasPersistedPendingPlan(thread, lastTurn) {
   if (!lastTurn || lastTurn.status !== 'completed') return false
+  return codexThreadPersistedPlanLifecycle(thread, lastTurn).planReady === true
+}
+
+function codexThreadPersistedPlanLifecycle(thread, lastTurn) {
+  const empty = { known: false, planReady: false, planLifecycleRevision: 0, turnMode: 'unknown' }
+  if (!lastTurn) return empty
   const rollout = codexThreadRolloutCandidate(thread)
-  if (!rollout) return false
+  if (!rollout) return empty
   const { candidate, stat } = rollout
   const mtimeMs = codexTimestampMs(stat.mtimeMs)
   const cached = codexThreadPendingPlanCache.get(candidate)
-  if (cached && cached.size === stat.size && cached.mtimeMs === mtimeMs) return cached.pending === true
-  let state = { known: false, pending: false }
+  if (cached && cached.size === stat.size && cached.mtimeMs === mtimeMs) {
+    return {
+      known: cached.known === true,
+      planReady: cached.planReady === true || cached.pending === true,
+      planLifecycleRevision: Number(cached.planLifecycleRevision) || (cached.pending === true ? Number(lastTurn.startedAt) || 0 : 0),
+      turnMode: cached.turnMode === 'plan' || cached.turnMode === 'default' ? cached.turnMode : 'unknown'
+    }
+  }
+  let state = empty
   for (const maximumBytes of CODEX_ROLLOUT_PENDING_PLAN_TAIL_BYTES) {
     state = codexRolloutPendingPlanStateText(codexReadRolloutTail(candidate, stat, maximumBytes))
     if (state.known || maximumBytes >= stat.size) break
   }
-  codexThreadPendingPlanCache.set(candidate, { size: stat.size, mtimeMs, pending: state.pending })
-  return state.pending
+  const normalized = {
+    known: state.known === true,
+    planReady: state.planReady === true,
+    planLifecycleRevision: state.planReady
+      ? Number(state.planLifecycleRevision) || (lastTurn.status === 'completed' ? Number(lastTurn.startedAt) || 0 : 0)
+      : 0,
+    turnMode: state.turnMode === 'plan' || state.turnMode === 'default' ? state.turnMode : 'unknown'
+  }
+  codexThreadPendingPlanCache.set(candidate, {
+    size: stat.size,
+    mtimeMs,
+    pending: normalized.planReady,
+    ...normalized
+  })
+  return normalized
 }
 
 function codexCloseRolloutDecisionTracker(tracker) {
@@ -6431,7 +6547,7 @@ function codexClearRolloutDecisionTrackers() {
 function codexRolloutDecisionState(candidate, stat, initialCorrelations) {
   const inputText = codexReadRolloutTail(candidate, stat, CODEX_ROLLOUT_PENDING_INPUT_TAIL_BYTES)
   const input = codexRolloutPendingUserInputStateText(inputText, initialCorrelations)
-  let plan = { known: false, pending: false }
+  let plan = { known: false, pending: false, planReady: false, planLifecycleRevision: 0, turnMode: 'unknown' }
   for (const maximumBytes of CODEX_ROLLOUT_PENDING_PLAN_TAIL_BYTES) {
     plan = codexRolloutPendingPlanStateText(codexReadRolloutTail(candidate, stat, maximumBytes))
     if (plan.known || maximumBytes >= stat.size) break
@@ -6443,7 +6559,15 @@ function codexRolloutDecisionState(candidate, stat, initialCorrelations) {
     pending: input.pending,
     correlations: input.correlations
   })
-  codexThreadPendingPlanCache.set(candidate, { size: stat.size, mtimeMs, pending: plan.pending })
+  codexThreadPendingPlanCache.set(candidate, {
+    size: stat.size,
+    mtimeMs,
+    pending: plan.planReady === true,
+    known: plan.known === true,
+    planReady: plan.planReady === true,
+    planLifecycleRevision: Number(plan.planLifecycleRevision) || 0,
+    turnMode: plan.turnMode
+  })
   return { input, plan }
 }
 
@@ -6966,10 +7090,12 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
     const connectorStatus = ['active', 'idle', 'notLoaded', 'systemError'].includes(statusSource.type) ? statusSource.type : 'notLoaded'
     const lastTurn = turnStatuses.get(thread.id)
     if (!lastTurn || !lastTurn.startedAt) continue
+    const planLifecycle = codexThreadPersistedPlanLifecycle(thread, lastTurn)
     const persistedPendingInput = connectorStatus !== 'active'
       && codexThreadHasPersistedPendingInput(thread, lastTurn)
     const persistedPendingPlan = connectorStatus !== 'active'
-      && codexThreadHasPersistedPendingPlan(thread, lastTurn)
+      && lastTurn.status === 'completed'
+      && planLifecycle.planReady === true
     const persistedDecision = persistedPendingInput || persistedPendingPlan
     const status = persistedDecision ? 'active' : connectorStatus
     const activeFlags = persistedDecision
@@ -6989,6 +7115,11 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
         ? { waitingSince: codexTimestampMs(lastTurn.completedAt) || codexTimestampMs(lastTurn.startedAt) || now }
         : {}),
       ...(persistedPendingPlan ? { planImplementationOnly: true } : {}),
+      ...(planLifecycle.planReady ? {
+        planReady: true,
+        planLifecycleRevision: planLifecycle.planLifecycleRevision || lastTurn.startedAt
+      } : {}),
+      turnMode: planLifecycle.turnMode,
       statusAuthority: persistedDecision ? 'persisted-decision' : 'connector',
       hasUnreadTurn: unreadIds ? unreadIds.has(thread.id) : false,
       unreadAuthority: unreadIds ? 'desktop-persisted' : 'unavailable',
@@ -6999,7 +7130,7 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
       lastTurnStartedAt: lastTurn.startedAt,
       ...(lastTurn.completedAt ? { lastTurnCompletedAt: lastTurn.completedAt } : {}),
       ...(lastTurn.status === 'interrupted' || lastTurn.status === 'failed'
-        ? { lastTurnEvidence: 'targeted-after-exit' }
+        ? { lastTurnEvidence: 'targeted-after-exit', idleConfirmed: connectorStatus !== 'active' }
         : {}),
       projectKey: project.key,
       projectName: project.name,
@@ -7178,6 +7309,9 @@ async function scanVerifiedCodexInventory() {
           ? { connectorWaitingSince: codexTimestampMs(projection.waitingSince) }
           : {}),
         connectorPlanImplementationOnly: projection?.planImplementationOnly === true,
+        connectorPlanReady: projection?.planReady === true,
+        connectorPlanLifecycleRevision: Number(projection?.planLifecycleRevision) || 0,
+        connectorTurnMode: projection?.turnMode === 'plan' || projection?.turnMode === 'default' ? projection.turnMode : 'unknown',
         connectorStatusAuthority,
         connectorUpdatedAt: projection?.updatedAt,
         connectorLastTurnStatus: projection?.lastTurnStatus,
@@ -7187,6 +7321,12 @@ async function scanVerifiedCodexInventory() {
         activityEvidence: preserveAppServerActive ? 'activity-event' : 'connector',
         activityRevision: 0,
         planImplementationOnly: projection?.planImplementationOnly === true,
+        planReady: projection?.planReady === true || previousActivity?.planReady === true,
+        planLifecycleRevision: Number(projection?.planLifecycleRevision || previousActivity?.planLifecycleRevision) || 0,
+        turnMode: projection?.turnMode === 'plan' || projection?.turnMode === 'default'
+          ? projection.turnMode
+          : previousActivity?.turnMode || 'unknown',
+        idleConfirmed: projection?.idleConfirmed === true,
         ...((preserveAppServerActive
           ? codexTimestampMs(previousActivity.waitingSince) || codexTimestampMs(previousActivity.connectorWaitingSince)
           : codexTimestampMs(projection?.waitingSince))
@@ -7236,6 +7376,10 @@ async function scanVerifiedCodexInventory() {
       thread.status = activity.status
       thread.activeFlags = [...activity.activeFlags]
       thread.planImplementationOnly = activity.planImplementationOnly === true
+      thread.planReady = activity.planReady === true
+      thread.planLifecycleRevision = Number(activity.planLifecycleRevision) || 0
+      thread.turnMode = activity.turnMode === 'plan' || activity.turnMode === 'default' ? activity.turnMode : 'unknown'
+      thread.idleConfirmed = activity.idleConfirmed === true
       thread.statusAuthority = activity.statusAuthority
       thread.activityEvidence = activity.activityEvidence
       thread.activityRevision = activity.activityRevision
@@ -7362,7 +7506,7 @@ function recordCodexArchiveStage(event, outcome, context = {}, extra = {}) {
     operationId: context.operationId,
     source: context.source,
     provider: 'codex',
-    taskRef: context.threadId,
+    taskRef: companionDiagnosticTaskRef('codex', context.threadId),
     beforePhase: context.beforePhase,
     afterPhase: context.currentPhase,
     terminalAt: context.terminalEpoch,
@@ -8397,11 +8541,104 @@ function resizeFloatBounds(current, size, display, preferredEdge) {
   return { bounds: alignFloatBoundsToEdge(next, display, edge), edge }
 }
 
+function codexFloatTaskPackageRevision(taskPackage) {
+  const revision = Number(codexRecord(taskPackage).packageRevision)
+  return Number.isInteger(revision) && revision > 0 ? revision : 0
+}
+
+function clearCodexFloatTaskAckTimer() {
+  if (codexFloatTaskAckTimer) clearTimeout(codexFloatTaskAckTimer)
+  codexFloatTaskAckTimer = null
+}
+
+function resetCodexFloatTaskLane() {
+  clearCodexFloatTaskAckTimer()
+  codexFloatTaskLastSentRevision = 0
+  codexFloatTaskAppliedRevision = 0
+  codexFloatTaskPendingRevision = 0
+  codexFloatTaskSendAttempts = 0
+  codexFloatTaskPendingStartedAt = 0
+}
+
+function armCodexFloatTaskAck(taskPackage, revision, attempt) {
+  clearCodexFloatTaskAckTimer()
+  if (!revision || revision <= codexFloatTaskAppliedRevision) return
+  if (revision !== codexFloatTaskPendingRevision) {
+    codexFloatTaskPendingRevision = revision
+    codexFloatTaskPendingStartedAt = Date.now()
+    codexFloatTaskSendAttempts = 0
+  }
+  codexFloatTaskSendAttempts = Math.max(codexFloatTaskSendAttempts, attempt)
+  codexFloatTaskAckTimer = setTimeout(() => {
+    codexFloatTaskAckTimer = null
+    if (codexFloatTaskAppliedRevision >= revision || codexFloatTaskPendingRevision !== revision) return
+    const latest = companionTaskKernel?.getLatest?.() || companionTaskKernel?.getPackage?.() || taskPackage
+    const latestRevision = codexFloatTaskPackageRevision(latest)
+    if (codexFloatTaskSendAttempts < 2) {
+      pushCodexFloatTaskPackage(latest, { force: true })
+      return
+    }
+    const elapsed = Date.now() - codexFloatTaskPendingStartedAt
+    const heartbeatHealthy = codexFloatLastHeartbeatAt > 0
+      && Date.now() - codexFloatLastHeartbeatAt <= CODEX_FLOAT_HEARTBEAT_MS * 2
+    runtimeDiagnostics.record({
+      level: 'error',
+      scope: 'float-bridge',
+      event: 'task-package-ack',
+      outcome: 'missing',
+      code: heartbeatHealthy ? 'applied-ack-missing' : 'heartbeat-unhealthy',
+      durationMs: elapsed,
+      count: latestRevision
+    })
+    if (heartbeatHealthy && elapsed >= 1_000) requestCodexFloatRecreate('task-package-ack-missing')
+  }, 500)
+  codexFloatTaskAckTimer?.unref?.()
+}
+
+function pushCodexFloatTaskPackage(taskPackage, options = {}) {
+  if (!codexFloatAlive()) return false
+  const revision = codexFloatTaskPackageRevision(taskPackage)
+  if (!revision || revision <= codexFloatTaskAppliedRevision) return false
+  const force = codexRecord(options).force === true
+  if (!force && revision <= codexFloatTaskLastSentRevision) return false
+  const attempt = revision === codexFloatTaskPendingRevision ? codexFloatTaskSendAttempts + 1 : 1
+  try {
+    codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.taskPackage, {
+      taskPackage,
+      sentRevision: revision,
+      sentAt: Date.now()
+    })
+    codexFloatTaskLastSentRevision = Math.max(codexFloatTaskLastSentRevision, revision)
+    armCodexFloatTaskAck(taskPackage, revision, attempt)
+    runtimeDiagnostics.record({
+      level: 'debug',
+      scope: 'float-bridge',
+      event: 'task-package-send',
+      outcome: force ? 'resent' : 'sent',
+      count: revision,
+      cache: 'process-package'
+    })
+    return true
+  } catch {
+    runtimeDiagnostics.record({ scope: 'float-bridge', event: 'task-package-send', outcome: 'failed', code: 'send-failed', level: 'error', count: revision })
+    return false
+  }
+}
+
 function pushCodexFloatSnapshot() {
   if (!codexFloatAlive() || !codexFloatSnapshot) return false
   const startedAt = Date.now()
   try {
-    codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.snapshot, codexFloatSnapshot)
+    const taskPackage = codexFloatSnapshot.companionTaskPackage
+    const revision = codexFloatTaskPackageRevision(taskPackage)
+    const outboundSnapshot = codexFloatTaskLastSentRevision > 0
+      ? (({ companionTaskPackage: _taskPackage, ...snapshotWithoutTasks }) => snapshotWithoutTasks)(codexFloatSnapshot)
+      : codexFloatSnapshot
+    codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.snapshot, outboundSnapshot)
+    if (revision > 0 && codexFloatTaskLastSentRevision === 0) {
+      codexFloatTaskLastSentRevision = revision
+      armCodexFloatTaskAck(taskPackage, revision, 1)
+    }
     pushCodexFloatState()
     runtimeDiagnostics.record({
       level: 'debug',
@@ -8629,6 +8866,7 @@ function closeCodexFloat() {
   codexFloatLastHeartbeatAt = 0
   codexFloatRecoveryDeadline = 0
   codexFloatRecoveryReported = false
+  resetCodexFloatTaskLane()
   clearCodexFloatInteractionTimer()
   codexFloatDrag = null
   codexFloatResize = null
@@ -8667,7 +8905,12 @@ function syncCodexFloat(payload) {
   if (!codexFloatAlive() && !createCodexFloat(position)) return false
   applyCodexFloatWorkspaceVisibility()
   if (!codexFloatResize) resizeCodexFloat(codexFloatExpanded, false)
-  return pushCodexFloatSnapshot()
+  const snapshotSent = pushCodexFloatSnapshot()
+  const taskPackage = codexFloatSnapshot?.companionTaskPackage
+  if (codexFloatTaskPackageRevision(taskPackage) > codexFloatTaskLastSentRevision) {
+    pushCodexFloatTaskPackage(taskPackage)
+  }
+  return snapshotSent
 }
 
 function emitCodexFloatAction(actionId, args) {
@@ -8759,6 +9002,54 @@ function installCodexFloatIpc() {
     try { codexFloatWindow.hide() } catch {}
   })
   ipc.on(CODEX_FLOAT_CHANNELS.action, (_event, payload) => emitCodexFloatAction(codexRecord(payload).actionId, codexRecord(payload).args))
+  ipc.on(CODEX_FLOAT_CHANNELS.taskPackageAck, (_event, payload) => {
+    const source = codexRecord(payload)
+    const sentRevision = Number(source.sentRevision)
+    const currentRevision = Number(source.currentRevision)
+    const stage = source.stage
+    if (!Number.isInteger(sentRevision) || sentRevision <= 0 || !Number.isInteger(currentRevision) || currentRevision < 0) return
+    if (stage === 'received') return
+    if (stage === 'applied') {
+      codexFloatTaskAppliedRevision = Math.max(codexFloatTaskAppliedRevision, currentRevision)
+      if (codexFloatTaskAppliedRevision >= codexFloatTaskPendingRevision) {
+        const elapsed = codexFloatTaskPendingStartedAt ? Date.now() - codexFloatTaskPendingStartedAt : 0
+        clearCodexFloatTaskAckTimer()
+        codexFloatTaskPendingRevision = 0
+        codexFloatTaskSendAttempts = 0
+        codexFloatTaskPendingStartedAt = 0
+        runtimeDiagnostics.record({
+          level: elapsed > 250 ? 'info' : 'debug',
+          scope: 'float-bridge',
+          event: 'task-package-ack',
+          outcome: 'applied',
+          durationMs: elapsed,
+          slowMs: 250,
+          count: currentRevision
+        })
+      }
+      return
+    }
+    if (stage !== 'rejected') return
+    if (source.reason === 'older-revision' && currentRevision >= sentRevision) {
+      codexFloatTaskAppliedRevision = Math.max(codexFloatTaskAppliedRevision, currentRevision)
+      if (codexFloatTaskAppliedRevision >= codexFloatTaskPendingRevision) {
+        clearCodexFloatTaskAckTimer()
+        codexFloatTaskPendingRevision = 0
+        codexFloatTaskSendAttempts = 0
+        codexFloatTaskPendingStartedAt = 0
+      }
+      return
+    }
+    runtimeDiagnostics.record({
+      scope: 'float-bridge',
+      event: 'task-package-ack',
+      outcome: 'rejected',
+      code: ['identity-mismatch', 'invalid-payload'].includes(source.reason) ? source.reason : 'invalid-ack',
+      level: 'error',
+      count: sentRevision
+    })
+    if (source.reason === 'identity-mismatch' || source.reason === 'invalid-payload') requestCodexFloatRecreate(`task-package-${source.reason}`)
+  })
   ipc.on(CODEX_FLOAT_CHANNELS.threadCreate, async (_event, payload) => {
     const source = codexRecord(payload)
     const requestId = typeof source.requestId === 'string' && /^ftr_[A-Za-z0-9_-]{6,80}$/.test(source.requestId) ? source.requestId : ''
@@ -8929,6 +9220,179 @@ async function openCompanionClaudeTarget(target) {
     : claudeUnavailable('open')
 }
 
+function codexPrivateThreadSettings(...values) {
+  for (const value of values) {
+    const source = codexRecord(value)
+    const thread = codexRecord(source.thread)
+    const model = [source.model, thread.model, source.modelId, thread.modelId]
+      .find((candidate) => typeof candidate === 'string' && candidate.trim())
+    if (!model) continue
+    const effort = [
+      source.reasoningEffort,
+      source.reasoning_effort,
+      thread.reasoningEffort,
+      thread.reasoning_effort,
+      source.model_reasoning_effort,
+      thread.model_reasoning_effort
+    ].find((candidate) => typeof candidate === 'string' && candidate.trim())
+    return { model: model.trim().slice(0, 120), reasoningEffort: effort ? effort.trim().slice(0, 80) : null }
+  }
+  return { model: '', reasoningEffort: null }
+}
+
+async function readCodexPlanExecutionSettings(threadId, force = false) {
+  if (!validCodexThreadId(threadId)) return { model: '', reasoningEffort: null }
+  const cached = codexPlanExecutionSettings.get(threadId)
+  if (!force && cached?.model) return { model: cached.model, reasoningEffort: cached.reasoningEffort }
+  try {
+    const result = await requestCodexRpc('thread/read', { threadId, includeTurns: false })
+    const settings = codexPrivateThreadSettings(result)
+    if (settings.model) codexPlanExecutionSettings.set(threadId, { ...settings, readAt: Date.now() })
+    return settings
+  } catch {
+    return { model: '', reasoningEffort: null }
+  }
+}
+
+function markCodexPlanExecutionStarted(threadId, turnValue) {
+  const known = codexActivityInventory.get(threadId)
+  if (!known) return
+  known.planReady = false
+  known.planLifecycleRevision = 0
+  known.planImplementationOnly = false
+  known.connectorPlanReady = false
+  known.connectorPlanLifecycleRevision = 0
+  known.connectorPlanImplementationOnly = false
+  known.turnMode = 'default'
+  known.connectorTurnMode = 'default'
+  const bridge = codexEnsureDesktopBridge()
+  if (!codexApplyStartedTurnNotification(bridge, known, threadId, turnValue)) {
+    known.status = 'active'
+    known.activeFlags = []
+    known.statusAuthority = 'app-server-live'
+    known.activityEvidence = 'activity-event'
+    known.lastTurnStatus = 'inProgress'
+    known.lastTurnEvidence = 'turn-started'
+    known.activityRevision = codexActivityGeneration + 1
+    codexMarkAppServerLiveActive(known)
+    emitCodexActivityDelta([known], false, 'urgent')
+  }
+}
+
+async function executeCompanionCodexPlan(target, request = {}) {
+  const capability = await inspectCodexPlanExecutionCapability()
+  if (capability.available !== true) {
+    return { outcome: 'failed', errorCode: capability.reason, message: '当前 Codex App Server 不支持安全执行 Plan' }
+  }
+  const alias = codexThreadActions.get(target.actionAlias)
+  if (!alias || alias.expiresAt <= Date.now() || alias.key !== target.key || !validCodexThreadId(alias.threadId)) {
+    return { outcome: 'failed', errorCode: 'stale-alias', message: '目标 Codex 对话身份已失效' }
+  }
+  const latestPackageTask = companionTaskKernel?.getLatest?.().tasks?.find((task) => task.key === target.key)
+    || companionTaskKernel?.getPackage?.().tasks?.find((task) => task.key === target.key)
+  if (!latestPackageTask
+    || latestPackageTask.planReady !== true
+    || latestPackageTask.planLifecycleRevision !== target.planLifecycleRevision
+    || latestPackageTask.capabilities?.executePlan !== true
+    || !['waiting-input', 'stopped'].includes(latestPackageTask.phase)) {
+    return { outcome: 'failed', errorCode: 'state-changed', message: 'Plan 生命周期已变化，未启动执行' }
+  }
+
+  let stage = 'preflight'
+  let beforeTurn = null
+  try {
+    const [threadResult, turnPage] = await Promise.all([
+      requestCodexRpc('thread/read', { threadId: alias.threadId, includeTurns: false }),
+      requestCodexRpc('thread/turns/list', {
+        threadId: alias.threadId,
+        limit: 1,
+        sortDirection: 'desc',
+        itemsView: 'notLoaded'
+      }, CODEX_THREAD_TURN_STATUS_TIMEOUT_MS)
+    ])
+    const thread = codexRecord(codexRecord(threadResult).thread)
+    beforeTurn = sanitizeCodexTurnStatusPage(turnPage)
+    const known = codexActivityInventory.get(alias.threadId)
+    const hasOtherPending = known?.activeFlags?.includes('waitingOnApproval')
+      || known?.activeFlags?.includes('waitingOnUserInput') && known.planImplementationOnly !== true
+    const realWorkActive = beforeTurn?.status === 'inProgress'
+      || known?.status === 'active' && (!known.activeFlags?.length || hasOtherPending)
+    if (thread.id !== alias.threadId || !beforeTurn || realWorkActive || hasOtherPending) {
+      return { outcome: 'failed', errorCode: 'state-changed', message: '目标任务已有更新活动或其它待决请求' }
+    }
+
+    stage = 'open'
+    const opened = await openCompanionCodexTarget(target)
+    if (!opened || !['opened', 'dispatched'].includes(opened.outcome)) {
+      return { outcome: 'failed', errorCode: opened?.errorCode || 'open-failed', message: opened?.message || '原 Codex 对话未能打开，未发送执行指令' }
+    }
+
+    stage = 'resume'
+    const resumed = codexRecord(await requestCodexRpc('thread/resume', {
+      threadId: alias.threadId,
+      excludeTurns: true
+    }))
+    const settings = codexPrivateThreadSettings(resumed, threadResult)
+    if (!settings.model) {
+      return { outcome: 'failed', errorCode: 'model-unknown', message: '无法确认当前模型，未发送执行指令' }
+    }
+
+    stage = 'turn-start'
+    const started = codexRecord(await requestCodexRpc('turn/start', {
+      threadId: alias.threadId,
+      input: [{ type: 'text', text: EXECUTE_PLAN_PROMPT_V1 }],
+      collaborationMode: {
+        mode: 'default',
+        settings: {
+          model: settings.model,
+          reasoning_effort: settings.reasoningEffort,
+          developer_instructions: null
+        }
+      }
+    }))
+    const turn = codexRecord(started.turn)
+    if (typeof turn.id !== 'string' || !turn.id) {
+      try {
+        const reread = sanitizeCodexTurnStatusPage(await requestCodexRpc('thread/turns/list', {
+          threadId: alias.threadId,
+          limit: 1,
+          sortDirection: 'desc',
+          itemsView: 'notLoaded'
+        }, CODEX_THREAD_TURN_STATUS_TIMEOUT_MS))
+        const newTurn = reread && (reread.id && reread.id !== beforeTurn?.id
+          || reread.startedAt > Number(beforeTurn?.startedAt || 0))
+        if (newTurn && reread.status === 'inProgress') {
+          markCodexPlanExecutionStarted(alias.threadId, reread)
+          return { outcome: 'executed', operationId: request.operationId, message: '已通过定向复读确认 Plan 正在执行' }
+        }
+      } catch {}
+      return { outcome: 'indeterminate', errorCode: 'turn-start-invalid', message: 'Codex 未返回可确认的新 Turn；未自动重发' }
+    }
+    markCodexPlanExecutionStarted(alias.threadId, turn)
+    return { outcome: 'executed', operationId: request.operationId, message: '已按原 Plan 启动执行' }
+  } catch (error) {
+    const code = typeof codexRecord(error).code === 'string' ? codexRecord(error).code : 'execute-failed'
+    if (code !== 'timeout' && code !== 'process-exited') {
+      return { outcome: 'failed', errorCode: `${stage}-${code}`.slice(0, 80), message: `Plan 执行在 ${stage} 阶段失败` }
+    }
+    try {
+      const reread = sanitizeCodexTurnStatusPage(await requestCodexRpc('thread/turns/list', {
+        threadId: alias.threadId,
+        limit: 1,
+        sortDirection: 'desc',
+        itemsView: 'notLoaded'
+      }, CODEX_THREAD_TURN_STATUS_TIMEOUT_MS))
+      const newTurn = reread && (reread.id && reread.id !== beforeTurn?.id
+        || reread.startedAt > Number(beforeTurn?.startedAt || 0))
+      if (newTurn && reread.status === 'inProgress') {
+        markCodexPlanExecutionStarted(alias.threadId, reread)
+        return { outcome: 'executed', operationId: request.operationId, message: '已通过定向复读确认 Plan 正在执行' }
+      }
+    } catch {}
+    return { outcome: 'indeterminate', errorCode: `${stage}-indeterminate`, message: '执行结果未能确认；未自动重发，可核验状态后重新确认' }
+  }
+}
+
 function companionTaskConfiguration() {
   const state = codexRecord(readState())
   const appSettings = codexRecord(state.settings)
@@ -8938,6 +9402,9 @@ function companionTaskConfiguration() {
   const providerSource = codexRecord(settings.providers)
   return {
     enabled: feature?.enabled !== false && settings.conversationInboxEnabled !== false,
+    dynamicTaskWindowHours: Number.isFinite(settings.dynamicTaskWindowHours)
+      ? Math.max(1, Math.min(24 * 30, Math.trunc(settings.dynamicTaskWindowHours)))
+      : 48,
     providers: {
       codex: providerSource.codex === undefined ? true : providerSource.codex === true,
       claude: providerSource.claude === true
@@ -8962,16 +9429,63 @@ function companionPersistedTaskState() {
   return { pins, receipts }
 }
 
-function companionCodexPhaseDecision(thread) {
-  if (typeof reduceCodexTaskEvidenceV3 === 'function') return reduceCodexTaskEvidenceV3(thread)
-  return {
-    phase: ['running', 'waiting-input', 'waiting-approval', 'completed', 'stopped'].includes(thread.previousPhase)
-      ? thread.previousPhase
-      : 'running',
-    freshness: 'verifying',
-    reason: 'kernel-reducer-unavailable',
-    details: { lastTurnStatus: thread.lastTurnStatus, lastTurnEvidence: thread.lastTurnEvidence }
+function readCompanionPlanPauseReceipts() {
+  try {
+    const stored = globalThis.utools?.dbStorage?.getItem?.(COMPANION_PLAN_PAUSE_STORAGE_KEY)
+    const rows = Array.isArray(stored?.receipts) ? stored.receipts : []
+    return rows.flatMap((value) => {
+      const source = codexRecord(value)
+      const key = typeof source.key === 'string' && /^[a-f0-9]{16,64}$/i.test(source.key) ? source.key : ''
+      const planLifecycleRevision = Number.isFinite(source.planLifecycleRevision)
+        ? Math.max(0, Math.trunc(source.planLifecycleRevision))
+        : 0
+      if (!key || !planLifecycleRevision || source.paused !== true) return []
+      return [{
+        key,
+        planLifecycleRevision,
+        paused: true,
+        updatedAt: Number.isFinite(source.updatedAt) ? Math.max(0, Math.trunc(source.updatedAt)) : 0
+      }]
+    }).sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 2_000)
+  } catch {
+    return []
   }
+}
+
+function persistCompanionPlanPause(receipt) {
+  const source = codexRecord(receipt)
+  const key = typeof source.key === 'string' && /^[a-f0-9]{16,64}$/i.test(source.key) ? source.key : ''
+  const planLifecycleRevision = Number.isFinite(source.planLifecycleRevision)
+    ? Math.max(0, Math.trunc(source.planLifecycleRevision))
+    : 0
+  if (!key || !planLifecycleRevision) return false
+  const rows = readCompanionPlanPauseReceipts().filter((value) => value.key !== key)
+  if (source.paused === true) rows.unshift({ key, planLifecycleRevision, paused: true, updatedAt: Date.now() })
+  try {
+    return globalThis.utools?.dbStorage?.setItem?.(COMPANION_PLAN_PAUSE_STORAGE_KEY, {
+      version: 1,
+      receipts: rows.slice(0, 2_000)
+    }) !== false
+  } catch {
+    return false
+  }
+}
+
+function migrateHiddenCompanionPlan(input = {}) {
+  const key = typeof input.key === 'string' ? input.key : ''
+  if (!key) return false
+  const state = readState()
+  const source = codexRecord(state)
+  const codex = codexRecord(source.codex)
+  if (!Array.isArray(codex.receipts)) return true
+  const receipts = codex.receipts.filter((value) => codexRecord(value).key !== key)
+  if (receipts.length === codex.receipts.length) return true
+  return writeState({ ...source, codex: { ...codex, receipts } })
+}
+
+function companionCodexPhaseDecision(thread) {
+  if (typeof reduceCodexTaskEvidenceV4 !== 'function') throw new Error('companion task V4 Codex reducer unavailable')
+  return reduceCodexTaskEvidenceV4(thread)
 }
 
 function companionPhaseForCodexThread(thread) {
@@ -8979,32 +9493,19 @@ function companionPhaseForCodexThread(thread) {
 }
 
 function companionClaudePhaseDecision(value, unread) {
-  const phase = ['running', 'waiting-input', 'waiting-approval', 'completed', 'stopped', 'unknown'].includes(value)
-    ? value
-    : 'unknown'
-  if (phase === 'running' || phase === 'waiting-input' || phase === 'waiting-approval') {
-    return { phase, reason: 'provider-live', details: { sourcePhase: value, normalizedPhase: phase, unread: unread === true } }
-  }
-  // Native unread membership is exact evidence of an unseen completed output.
-  // It can recover terminal/unknown history, but never overrides a live phase.
-  if (unread === true) return { phase: 'completed', reason: 'native-unread-completion', details: { sourcePhase: value, normalizedPhase: phase, unread: true } }
-  return {
-    phase,
-    reason: phase === 'completed' || phase === 'stopped' ? 'provider-terminal' : 'unknown-evidence',
-    details: { sourcePhase: value, normalizedPhase: phase, unread: false }
-  }
-}
-
-function companionPhaseForClaudeSession(value, unread) {
-  return companionClaudePhaseDecision(value, unread).phase
+  if (typeof reduceClaudeTaskEvidenceV4 !== 'function') throw new Error('companion task V4 Claude reducer unavailable')
+  return reduceClaudeTaskEvidenceV4({ phase: value, unread: unread === true })
 }
 
 function companionDiagnosticTaskRef(provider, taskRef) {
-  if (provider !== 'codex' || typeof taskRef !== 'string') return typeof taskRef === 'string' ? taskRef : ''
-  for (const [threadId, value] of codexActivityInventory) {
-    if (value?.key === taskRef) return threadId
-  }
-  return taskRef
+  if (typeof taskRef !== 'string' || !taskRef) return ''
+  const digest = crypto.createHash('sha256')
+    .update(COMPANION_DIAGNOSTIC_TASK_SALT)
+    .update(String(provider || 'unknown'))
+    .update(taskRef)
+    .digest('hex')
+    .slice(0, 16)
+  return `h:${digest}`
 }
 
 function recordCompanionDiagnosticEvent(event) {
@@ -9050,20 +9551,6 @@ function recordCompanionProbeGate(event, outcome, details = {}) {
     outcome,
     details
   })
-}
-
-function companionCycleTier(phase, planImplementation, localPin) {
-  if (phase === 'waiting-input' || phase === 'waiting-approval') return planImplementation ? 'plan-implementation' : 'attention'
-  if (phase === 'running') return 'active'
-  return localPin && phase !== 'stopped' ? 'fallback' : 'none'
-}
-
-function companionDynamicGroup(phase, unread) {
-  if (phase === 'waiting-input' || phase === 'waiting-approval') return 'input'
-  if (phase === 'running') return 'active'
-  if (phase === 'stopped') return 'stopped'
-  if (phase === 'completed') return unread ? 'unread' : 'completed'
-  return 'none'
 }
 
 let companionPreflightDraftSequence = 0
@@ -9112,6 +9599,10 @@ async function preflightCompanionTaskPackage(input = {}) {
     throw error
   }
   const persisted = companionPersistedTaskState()
+  const executionCapability = providers.codex
+    ? await inspectCodexPlanExecutionCapability()
+    : { available: false, reason: 'provider-disabled' }
+  const dynamicCutoff = Date.now() - configuration.dynamicTaskWindowHours * 60 * 60 * 1_000
   const tasks = []
   const sourceGenerations = { codex: 0, claude: 0 }
   const sourceLaneGenerations = {
@@ -9144,14 +9635,30 @@ async function preflightCompanionTaskPackage(input = {}) {
         const hidden = Number(receipt?.dismissedActivityRecency) >= revisionAt
         const unread = thread.hasUnreadTurn === true
         const planImplementation = thread.planImplementationOnly === true
+        const planReady = thread.planReady === true || planImplementation
+        const planLifecycleRevision = planReady
+          ? Number(thread.planLifecycleRevision) || Number(thread.lastTurnStartedAt) || revisionAt
+          : 0
+        const dynamicEligible = Math.max(
+          Number(thread.lastQuestionAt) || 0,
+          Number(thread.lastTurnStartedAt) || 0,
+          Number(thread.updatedAt) || 0
+        ) >= dynamicCutoff
+        const privateAction = codexThreadActions.get(actionAlias)
+        const executionSettings = planReady && executionCapability.available === true && privateAction?.key === key
+          ? await readCodexPlanExecutionSettings(privateAction.threadId)
+          : { model: '', reasoningEffort: null }
+        const executePlanAvailable = planReady
+          && executionCapability.available === true
+          && Boolean(executionSettings.model)
         recordCompanionStateDecision('codex', key, decision, thread.lastTurnEvidence || 'inventory')
         tasks.push({
           key,
           provider: 'codex',
           kind: localPin ? 'local-pin' : 'codex-thread',
           phase,
-          cycleTier: hidden ? 'none' : companionCycleTier(phase, planImplementation, localPin),
-          dynamicGroup: hidden ? 'none' : companionDynamicGroup(phase, unread),
+          cycleTier: 'none',
+          dynamicGroup: 'none',
           actionAlias,
           revisionAt,
           semanticRevision: 1,
@@ -9177,9 +9684,20 @@ async function preflightCompanionTaskPackage(input = {}) {
           unreadKnown: thread.unreadAuthority !== 'unavailable',
           unread,
           planImplementation,
+          planReady,
+          planLifecycleRevision,
+          paused: false,
+          turnMode: thread.turnMode === 'plan' || thread.turnMode === 'default' ? thread.turnMode : 'unknown',
+          idleConfirmed: thread.idleConfirmed === true,
           localPin,
-          dynamicEligible: !hidden,
-          capabilities: { open: true, archive: phase === 'completed' || phase === 'stopped' },
+          dynamicEligible,
+          capabilities: {
+            open: true,
+            archive: phase === 'completed' || phase === 'stopped',
+            pause: planReady,
+            resume: planReady,
+            executePlan: executePlanAvailable
+          },
           displayName: typeof thread.displayName === 'string' ? thread.displayName : typeof thread.name === 'string' ? thread.name : 'Codex 任务',
           ...(typeof thread.projectKey === 'string' ? { projectKey: thread.projectKey } : {}),
           ...(typeof thread.projectName === 'string' ? { projectName: thread.projectName } : {}),
@@ -9242,8 +9760,8 @@ async function preflightCompanionTaskPackage(input = {}) {
         provider: 'claude',
         kind: localPin ? 'local-pin' : 'claude-session',
         phase,
-        cycleTier: companionCycleTier(phase, false, localPin),
-        dynamicGroup: companionDynamicGroup(phase, unread),
+        cycleTier: 'none',
+        dynamicGroup: 'none',
         actionAlias: sessionId,
         revisionAt,
         membershipRevision: Math.max(Number(session.lastActivityAt) || 0, Number(session.metadataUpdatedAt) || 0, revisionAt),
@@ -9259,12 +9777,20 @@ async function preflightCompanionTaskPackage(input = {}) {
         hidden: false,
         unread,
         planImplementation: false,
+        planReady: false,
+        planLifecycleRevision: 0,
+        paused: false,
+        turnMode: 'unknown',
+        idleConfirmed: false,
         localPin,
-        dynamicEligible: true,
+        dynamicEligible: Math.max(Number(session.turnStartedAt) || 0, Number(session.lastActivityAt) || 0) >= dynamicCutoff,
         capabilities: {
           open: true,
           archive: (phase === 'completed' || phase === 'stopped')
-            && session.stateCompatibility === 'compatible'
+            && session.stateCompatibility === 'compatible',
+          pause: false,
+          resume: false,
+          executePlan: false
         }
       })
     }
@@ -9288,9 +9814,9 @@ async function preflightCompanionTaskPackage(input = {}) {
     details: { providers, sourceGenerations, sourceLaneGenerations, taskCount: tasks.length }
   })
   return {
-    schema: 'companion-task-draft-v3',
+    schema: 'companion-task-draft-v4',
     producer: 'host-preflight',
-    sourceTaskStateRevision: 'task-state-v9:cold-preflight',
+    sourceTaskStateRevision: 'task-state-v10:cold-preflight',
     draftRevision: ++companionPreflightDraftSequence,
     acceptedAt: Date.now(),
     enabled: true,
@@ -9306,11 +9832,15 @@ async function preflightCompanionTaskPackage(input = {}) {
 const companionTaskKernel = typeof createCompanionTaskKernel === 'function'
   ? createCompanionTaskKernel({
       initialConfiguration: companionTaskConfiguration(),
+      initialPauseReceipts: readCompanionPlanPauseReceipts(),
+      persistPlanPause: persistCompanionPlanPause,
+      migrateHiddenPlan: migrateHiddenCompanionPlan,
       preflight: preflightCompanionTaskPackage,
       adapters: {
         codex: {
           inspect: inspectCodexEnvironment,
           open: openCompanionCodexTarget,
+          executePlan: executeCompanionCodexPlan,
           archive: (target, request) => archiveCodexThread(target.actionAlias, {
             ...(target.archiveRequest || {}),
             operationId: request?.operationId,
@@ -9341,7 +9871,7 @@ if (companionTaskKernel?.onPackage) {
   companionTaskKernel.onPackage((taskPackage) => {
     if (!codexFloatSnapshot || typeof codexFloatSnapshot !== 'object') return
     codexFloatSnapshot = { ...codexFloatSnapshot, companionTaskPackage: taskPackage }
-    pushCodexFloatSnapshot()
+    pushCodexFloatTaskPackage(taskPackage)
   })
 }
 
@@ -9374,7 +9904,7 @@ function publishCompanionHostTasks(tasks, input = {}) {
     }
   }
   const next = companionTaskKernel.publishEvidence({
-    schema: 'companion-task-draft-v3',
+    schema: 'companion-task-draft-v4',
     producer: 'host-evidence',
     sourceTaskStateRevision: current.sourceTaskStateRevision,
     draftRevision: ++companionHostDraftSequence,
@@ -9462,7 +9992,20 @@ function applyCodexActivityToCompanionKernel(delta) {
     const unread = acceptUnreadForTask ? entry.hasUnreadTurn : task.unread
     const unreadKnown = acceptUnreadForTask ? true : task.unreadKnown
     const planImplementation = acceptPhaseForTask ? entry.planImplementationOnly === true : task.planImplementation
-    const phaseChanged = phase !== task.phase || freshness !== task.freshness || planImplementation !== task.planImplementation
+    const exactDefaultExecution = acceptPhaseForTask && entry.turnMode === 'default' && phase === 'running'
+    const planReady = exactDefaultExecution
+      ? false
+      : acceptPhaseForTask && entry.planReady === true
+        ? true
+        : task.planReady === true
+    const planLifecycleRevision = planReady
+      ? Number(entry.planLifecycleRevision) || Number(task.planLifecycleRevision) || Number(entry.lastTurnStartedAt) || Number(task.revisionAt) || 1
+      : 0
+    const phaseChanged = phase !== task.phase
+      || freshness !== task.freshness
+      || planImplementation !== task.planImplementation
+      || planReady !== task.planReady
+      || planLifecycleRevision !== task.planLifecycleRevision
     const unreadChanged = unread !== task.unread || unreadKnown !== task.unreadKnown
     const evidenceRevision = Math.max(
       Number(entry.waitingSince) || 0,
@@ -9479,8 +10022,8 @@ function applyCodexActivityToCompanionKernel(delta) {
       ...task,
       phase,
       freshness,
-      cycleTier: task.hidden ? 'none' : companionCycleTier(phase, planImplementation, task.localPin),
-      dynamicGroup: task.hidden ? 'none' : companionDynamicGroup(phase, unread),
+      cycleTier: 'none',
+      dynamicGroup: 'none',
       revisionAt,
       observationGeneration: Math.max(Number(task.observationGeneration) || 0, generation),
       phaseRevision: acceptPhaseForTask
@@ -9499,6 +10042,10 @@ function applyCodexActivityToCompanionKernel(delta) {
       unread,
       unreadKnown,
       planImplementation,
+      planReady,
+      planLifecycleRevision,
+      turnMode: acceptPhaseForTask && (entry.turnMode === 'plan' || entry.turnMode === 'default') ? entry.turnMode : task.turnMode,
+      idleConfirmed: acceptPhaseForTask ? entry.idleConfirmed === true : task.idleConfirmed,
       // A phase-only event cannot refresh the archive transaction fingerprint.
       // It publishes the status immediately but waits for a verified inventory
       // before enabling a newly terminal archive action.
@@ -9549,8 +10096,8 @@ function applyCodexActivityToCompanionKernel(delta) {
         provider: 'codex',
         kind: 'codex-thread',
         phase,
-        cycleTier: companionCycleTier(phase, entry.planImplementationOnly === true, false),
-        dynamicGroup: companionDynamicGroup(phase, unread),
+        cycleTier: 'none',
+        dynamicGroup: 'none',
         actionAlias,
         revisionAt,
         semanticRevision: 1,
@@ -9576,9 +10123,14 @@ function applyCodexActivityToCompanionKernel(delta) {
         unreadKnown,
         unread,
         planImplementation: entry.planImplementationOnly === true,
+        planReady: entry.planReady === true || entry.planImplementationOnly === true,
+        planLifecycleRevision: Number(entry.planLifecycleRevision) || (entry.planReady === true ? Number(entry.lastTurnStartedAt) || revisionAt : 0),
+        paused: false,
+        turnMode: entry.turnMode === 'plan' || entry.turnMode === 'default' ? entry.turnMode : 'unknown',
+        idleConfirmed: entry.idleConfirmed === true,
         localPin: false,
         dynamicEligible: true,
-        capabilities: { open: true, archive: false },
+        capabilities: { open: true, archive: false, pause: true, resume: true, executePlan: false },
         displayName: typeof entry.displayName === 'string' ? entry.displayName : '新 Codex 任务',
         ...(typeof entry.projectKey === 'string' ? { projectKey: entry.projectKey } : {}),
         ...(typeof entry.projectName === 'string' ? { projectName: entry.projectName } : {}),
@@ -9660,31 +10212,41 @@ function applyClaudeStateToCompanionKernel() {
     if (task.provider !== 'claude') return task
     const session = byAlias.get(task.actionAlias)
     if (!session) return task
-    const decision = companionClaudePhaseDecision(session.phase, task.unread)
+    const sourcePhase = ['running', 'waiting-input', 'waiting-approval', 'completed', 'stopped', 'unknown'].includes(session.phase)
+      ? session.phase
+      : task.phase
+    const decision = companionClaudePhaseDecision(sourcePhase, task.unread)
     const phase = decision.phase
+    const archive = (phase === 'completed' || phase === 'stopped')
+      && (session.stateCompatibility === 'compatible' || session.compatibility === 'compatible')
+    const semanticChanged = phase !== task.phase || archive !== task.capabilities.archive
+    const phaseEvidenceRevision = Number(session.waitingApprovalAt)
+      || Number(session.waitingInputAt)
+      || Number(session.lastStopAt)
+      || Number(session.phaseUpdatedAt)
+      || Number(source.readAt)
+      || task.phaseRevision
     const revisionAt = Math.max(
-      task.revisionAt + 1,
-      Number(session.phaseUpdatedAt) || 0,
-      Number(session.turnStartedAt) || 0,
-      Number(session.lastStopAt) || 0,
-      Number(source.readAt) || 0
+      task.revisionAt,
+      ...(semanticChanged
+        ? [Number(session.phaseUpdatedAt) || 0, Number(session.turnStartedAt) || 0, Number(session.lastStopAt) || 0]
+        : [])
     )
     const next = {
       ...task,
       phase,
-      cycleTier: companionCycleTier(phase, false, task.localPin),
-      dynamicGroup: companionDynamicGroup(phase, task.unread),
+      cycleTier: 'none',
+      dynamicGroup: 'none',
       revisionAt,
-      phaseRevision: Number(session.waitingApprovalAt) || Number(session.waitingInputAt) || Number(session.lastStopAt) || Number(session.phaseUpdatedAt) || Number(source.readAt) || task.phaseRevision,
-      statusEnteredAt: Number(session.waitingApprovalAt) || Number(session.waitingInputAt) || Number(session.lastStopAt) || Number(session.phaseUpdatedAt) || revisionAt,
+      phaseRevision: Math.max(Number(task.phaseRevision) || 0, phaseEvidenceRevision),
+      statusEnteredAt: phase !== task.phase ? phaseEvidenceRevision : task.statusEnteredAt,
       planImplementation: false,
       capabilities: {
         ...task.capabilities,
-        archive: (phase === 'completed' || phase === 'stopped')
-          && (session.stateCompatibility === 'compatible' || session.compatibility === 'compatible')
+        archive
       }
     }
-    if (JSON.stringify(next) !== JSON.stringify(task)) changed = true
+    if (semanticChanged) changed = true
     if (phase !== task.phase) recordCompanionStateDecision('claude', task.key, decision, task.unread ? 'native-unread' : session.stateSource || 'provider-state')
     return next
   })
@@ -9759,19 +10321,19 @@ async function applyClaudeUnreadToCompanionKernel() {
     const unread = ids.has(task.actionAlias)
     const decision = companionClaudePhaseDecision(task.phase, unread)
     const phase = decision.phase
-    if (unread === task.unread && phase === task.phase) return task
-    changed = true
+    const semanticChanged = unread !== task.unread || phase !== task.phase
+    if (semanticChanged) changed = true
     recordCompanionStateDecision('claude', task.key, decision, unread ? 'native-unread' : 'provider-state')
     return {
       ...task,
       phase,
       unread,
-      unreadRevision: readAt,
-      revisionAt: Math.max(task.revisionAt, readAt),
-      phaseRevision: phase !== task.phase ? readAt : task.phaseRevision,
+      unreadRevision: Math.max(Number(task.unreadRevision) || 0, readAt),
+      revisionAt: semanticChanged ? Math.max(task.revisionAt, readAt) : task.revisionAt,
+      phaseRevision: phase !== task.phase ? Math.max(Number(task.phaseRevision) || 0, readAt) : task.phaseRevision,
       statusEnteredAt: phase !== task.phase ? readAt : task.statusEnteredAt,
-      cycleTier: companionCycleTier(phase, false, task.localPin),
-      dynamicGroup: companionDynamicGroup(phase, unread),
+      cycleTier: 'none',
+      dynamicGroup: 'none',
       capabilities: { ...task.capabilities, archive: phase === 'completed' || phase === 'stopped' ? task.capabilities.archive : false }
     }
   })
@@ -9797,7 +10359,7 @@ function companionTaskFromClaudeSession(sessionValue, previous, acceptedAt) {
   const session = codexRecord(sessionValue)
   const sessionId = typeof session.sessionId === 'string' ? session.sessionId : ''
   if (!sessionId) return null
-  const revisionAt = Math.max(
+  const evidenceRevision = Math.max(
     Number(session.stateGeneration) || 0,
     Number(session.phaseUpdatedAt) || 0,
     Number(session.turnStartedAt) || 0,
@@ -9806,13 +10368,35 @@ function companionTaskFromClaudeSession(sessionValue, previous, acceptedAt) {
     Number(session.metadataUpdatedAt) || 0,
     Number(acceptedAt) || 0
   )
-  if (!revisionAt) return null
+  if (!evidenceRevision) return null
   const unread = companionClaudeUnreadSnapshot.available
     ? companionClaudeUnreadSnapshot.ids.has(sessionId)
     : previous?.unread === true
-  const decision = companionClaudePhaseDecision(previous?.phase || session.phase, unread)
+  const sourcePhase = ['running', 'waiting-input', 'waiting-approval', 'completed', 'stopped', 'unknown'].includes(session.phase)
+    ? session.phase
+    : previous?.phase || 'unknown'
+  const decision = companionClaudePhaseDecision(sourcePhase, unread)
   const phase = decision.phase
   const localPin = previous?.localPin === true
+  const phaseChanged = !previous || phase !== previous.phase
+  const phaseEvidenceRevision = Number(session.phaseUpdatedAt)
+    || Number(session.stateGeneration)
+    || Number(acceptedAt)
+    || evidenceRevision
+  const compatibility = typeof session.stateCompatibility === 'string'
+    ? session.stateCompatibility
+    : typeof session.compatibility === 'string' ? session.compatibility : ''
+  const archive = (phase === 'completed' || phase === 'stopped')
+    && (compatibility === 'compatible' || (!compatibility && previous?.capabilities?.archive === true))
+  const dynamicEligible = Math.max(Number(session.turnStartedAt) || 0, Number(session.lastActivityAt) || 0)
+    >= Date.now() - companionTaskConfiguration().dynamicTaskWindowHours * 60 * 60 * 1_000
+  const semanticChanged = !previous
+    || phaseChanged
+    || unread !== previous.unread
+    || archive !== previous.capabilities?.archive
+    || dynamicEligible !== previous.dynamicEligible
+    || sessionId !== previous.actionAlias
+  const revisionAt = semanticChanged ? Math.max(Number(previous?.revisionAt) || 0, evidenceRevision) : previous.revisionAt
   if (!previous || phase !== previous.phase) {
     recordCompanionStateDecision('claude', `claude:${sessionId}`, decision, unread ? 'native-unread' : session.stateSource || 'provider-state')
   }
@@ -9822,17 +10406,17 @@ function companionTaskFromClaudeSession(sessionValue, previous, acceptedAt) {
     provider: 'claude',
     kind: localPin ? 'local-pin' : 'claude-session',
     phase,
-    cycleTier: companionCycleTier(phase, false, localPin),
-    dynamicGroup: companionDynamicGroup(phase, unread),
+    cycleTier: 'none',
+    dynamicGroup: 'none',
     actionAlias: sessionId,
     revisionAt,
     membershipRevision: Math.max(Number(session.lastActivityAt) || 0, Number(session.metadataUpdatedAt) || 0, Number(acceptedAt) || 0),
-    phaseRevision: previous?.phaseRevision || Number(session.phaseUpdatedAt) || revisionAt,
+    phaseRevision: phaseChanged ? phaseEvidenceRevision : previous?.phaseRevision || phaseEvidenceRevision,
     unreadRevision: companionClaudeUnreadSnapshot.available
       ? companionClaudeUnreadSnapshot.readAt || companionClaudeUnreadSnapshot.generation || revisionAt
       : previous?.unreadRevision || revisionAt,
     visibilityRevision: Math.max(Number(session.metadataUpdatedAt) || 0, Number(acceptedAt) || 0),
-    statusEnteredAt: previous?.statusEnteredAt || Number(session.phaseUpdatedAt) || revisionAt,
+    statusEnteredAt: phaseChanged ? phaseEvidenceRevision : previous?.statusEnteredAt || phaseEvidenceRevision,
     lastQuestionAt: Number(session.turnStartedAt) || previous?.lastQuestionAt || 0,
     createdAt: Number(session.createdAt) || previous?.createdAt || 0,
     displayOrder: previous?.displayOrder || 0,
@@ -9841,12 +10425,19 @@ function companionTaskFromClaudeSession(sessionValue, previous, acceptedAt) {
     hidden: false,
     unread,
     planImplementation: false,
+    planReady: false,
+    planLifecycleRevision: 0,
+    paused: false,
+    turnMode: 'unknown',
+    idleConfirmed: false,
     localPin,
-    dynamicEligible: true,
+    dynamicEligible,
     capabilities: {
       open: true,
-      archive: (phase === 'completed' || phase === 'stopped')
-        && (session.stateCompatibility === 'compatible' || previous?.capabilities?.archive === true)
+      archive,
+      pause: false,
+      resume: false,
+      executePlan: false
     }
   }
 }
@@ -11926,12 +12517,15 @@ window.eypcPlatform = {
               package: companionTaskKernel.getPackage(),
               errorCode: 'reload-required'
             },
+        configure: (...args) => runtimeIdentityCompatible ? companionTaskKernel.configure(...args) : null,
         syncPackage: (...args) => runtimeIdentityCompatible ? companionTaskKernel.syncPackage(...args) : null,
         detach: (...args) => runtimeIdentityCompatible && companionTaskKernel.detach(...args),
         dispatch: (...args) => runtimeIdentityCompatible
           ? companionTaskKernel.dispatch(...args)
           : Promise.resolve(runtimeIdentityTaskFailure('unavailable')),
         getPackage: companionTaskKernel.getPackage,
+        getLatest: companionTaskKernel.getLatest,
+        subscribe: (...args) => runtimeIdentityCompatible ? companionTaskKernel.subscribe(...args) : (() => {}),
         onPackage: (...args) => runtimeIdentityCompatible ? companionTaskKernel.onPackage(...args) : (() => {}),
         onResult: (...args) => runtimeIdentityCompatible ? companionTaskKernel.onResult(...args) : (() => {}),
         takeResults: (...args) => runtimeIdentityCompatible ? companionTaskKernel.takeResults(...args) : [],
