@@ -1,7 +1,7 @@
 # Claude Code Companion 权威重置 — Handoff
 
 updated: `2026-08-11`
-delivery_state: `implementation-landed / RAW-029-focused-verified / native-sidebar-unsupported / quota-host-verified / interactive-host-partial`
+delivery_state: `implementation-landed / RAW-030-full-automated-verified / artifact-ready / native-sidebar-unsupported / quota-host-verified / interactive-host-partial`
 
 ## Start Here
 
@@ -12,11 +12,12 @@ delivery_state: `implementation-landed / RAW-029-focused-verified / native-sideb
 
 ## Current Production Route
 
-- Final shared task authority is now `companion-task-kernel-v3 / companion-task-package-v3`. Claude membership/phase/unread behavior remains unchanged；observation generations order evidence while semantic revision advances only for real package changes. V1/V2 fail closed.
+- Final shared task authority is `companion-task-kernel-v4 / companion-task-package-v4`. Claude membership/phase/unread remain independent evidence lanes, but the Kernel atomically accepts a causally newer current phase over an older cache；all consumers reject old/equal revisions and Float reports applied ACK. Missing/incompatible V4 is reload-required.
+- Current RAW-160 artifact is `host-495d79c14c1cbb24794d / renderer-568dfd47041bcb997f6b`；full repository `83/83` files、`1282/1282` tests、typecheck、1870-module build、runtime validator and document audit pass。Real Claude transition remains host-pending，and no real archive was repeated。
 - Bridge fan-out and recovery: [index.cjs](../../../../preload/claude/index.cjs#L1) multiplexes Host+Renderer state/inventory/unread subscribers; [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1) installs newly discovered directory watchers after the first cold inventory; [unread.cjs](../../../../preload/claude/unread.cjs#L1) singleflights concurrent reads.
 - Trusted push is the normal path and performs no quota/environment/full-inventory read. Claude-only inventory runs only for cold start, reconnect or an explicit membership gap. Real running→completed-unread and delayed-open races remain host acceptance gates.
 - RAW-028 fixes the remaining state/archive edges: generic session-end preserves a successful completion；native unread promotes any non-live history and unread clearing keeps completed；Claude inventory has no fixed total cap；the final package atomically updates card/tab/project/group/badge/action consumers。Archive confirmation survives revision/unread/focus/alias churn and uses the latest second-click target；ordinary metadata churn can rebase once，verified success automatically removes the plugin row without forcing the native sidebar。
-- RAW-027 final impact evidence is `19/19` files、`575/575` tests plus typecheck、Preload sync/syntax、1870-module production/uTools build and validator. Artifact identity is `host-8dd41fb34ee0eaa27ae3 / renderer-2537cdea077c5e564f7b`; the currently loaded uTools host was not replaced automatically.
+- Historical RAW-027 impact evidence is `19/19` files、`575/575` tests plus its then-current build/identity；it remains regression history and does not replace the RAW-160 artifact above。
 - Inventory/title/history: [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1).
 - Version-gated exact App state: [app-state.cjs](../../../../preload/claude/app-state.cjs#L1).
 - Unique official Hook fallback: [events.cjs](../../../../preload/claude/events.cjs#L1).
@@ -24,7 +25,7 @@ delivery_state: `implementation-landed / RAW-029-focused-verified / native-sideb
 - Native unread snapshot: [unread.cjs](../../../../preload/claude/unread.cjs#L1), using uTools' host-signed LevelDB module, exact tagged key and copy-before/after V2 fingerprint.
 - Exact existing history + presence/singleflight: [open.cjs](../../../../preload/claude/open.cjs#L1).
 - Provider-neutral task actions: [task-actions.cjs](../../../../preload/companion/task-actions.cjs#L1), with exhaustive Provider dispatch, per-task archive single-flight and process-owned five-second shortcut confirmation.
-- D′ task archive and indexed membership: [archive.cjs](../../../../preload/claude/archive.cjs#L1) plus [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1). Only one unique indexed target may change `isArchived`; metadata+private active-inventory removal confirms EyPc success, and open preflight rejects archived/missing/ambiguous sessions before Deep Link. Success/idempotent copy explicitly says the EyPc row is removed while Claude's native sidebar remains unconfirmed and may still need refresh；D′ does not emit the App's native `archived` event.
+- D′ task archive and indexed membership: [archive.cjs](../../../../preload/claude/archive.cjs#L1) plus [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1). Only one unique indexed target may change `isArchived`; metadata+private active-inventory removal confirms EyPc success, and open preflight rejects archived/missing/ambiguous sessions. Success/idempotent copy is fixed to “EyPc 已归档并移除。Claude 原生侧栏同步未确认，当前不受支持。”；D′ does not emit the App's native `archived` event.
 - Dynamic quota/Node HTTPS: [claude.ts](../../../../src/domain/claude.ts#L1) and [quota.cjs](../../../../preload/claude/quota.cjs#L1), with explicit Claude App encrypted-cache authorization and current dynamic limits shape.
 - Independent materialized lanes: [codexController.ts](../../../../src/runtime/codexController.ts#L1).
 - Per-task real sync: internal `codex.claude.task.sync` joins the existing state/unread lanes; the Claude-only drawer action and successful-open silent sync never create a manual receipt.

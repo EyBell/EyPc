@@ -1,5 +1,7 @@
 # Claude Companion Error Memory Route
 
+<!-- adaptive-document-index: module-v1 -->
+
 ## Scope
 
 This link-only module routes EyPc-specific Claude Companion inventory, status, quota, open, bridge and test failures. Current product authority remains the [2026-08-07 reset spec](../../../specs/260807/claude-code-companion-authority-reset/spec.md#L1); this index is not a requirement manifest, task ledger or runtime state.
@@ -10,9 +12,11 @@ This link-only module routes EyPc-specific Claude Companion inventory, status, q
 
 更新引入（2026-08-11，RAW-029）：D′ 成功只确认 EyPc 元数据/任务包后置条件，不确认 Claude 原生侧栏。已安装 App 的原生归档会经过运行中 session manager 并发布 `archived` 事件，而 D′ 绕过该链；当前官方入口没有 Desktop Code 本地归档能力。成功提示必须明确原生侧栏未确认，D-2 保持 `unsupported-currently`；由新增 Primary 记录主责，禁止用元数据/LevelDB、私有 IPC、UI 自动化或重启后的视觉结果冒充原生 ACK。
 
-更新引入（2026-08-10，RAW-027/RAW-155/RAW-159）：Claude provider-local opener 继续只负责精确 Epitaxy Deep Link；通用游标使用首键立即、仅 in-flight 最终 trailing、跨来源并发 1。最终 `companion-task-package-v3` 继续分离 Claude membership/phase/tri-state unread，但 observation generation 只用于排序、semantic revision 只用于真实变化；Claude 状态/归档行为在 RAW-159 中不变。Bridge 多播、动态 watcher、unread singleflight 和 push-first 边界继续由下列共享记录主责。
+更新引入（2026-08-10，RAW-027/RAW-155/RAW-159，历史基线）：Claude provider-local opener 只负责精确 Epitaxy Deep Link；通用游标首键立即、仅 in-flight 最终 trailing、跨来源并发 1。V3 首次分离 membership/phase/unread 与 observation/semantic revision；该版本身份已由 RAW-160 V4 取代，Bridge 多播、动态 watcher、unread singleflight 和 push-first 仍保留。
 
 更新引入（2026-08-10，RAW-155 增量）：通用 `Stopping session` 是 session lifecycle，不是 stopped Turn outcome；同 Turn 已有成功 Stop/Result 时保持 completed，显式 failed/interrupted 或无成功结果的 session-end 才进入 stopped。原生 unread 可把任何非 live 历史恢复为 completed-unread，清除 unread 只回到 completed，新 Prompt 才恢复 running。该边界由新增 Primary 记录主责。
+
+更新引入（2026-08-11，RAW-160）：Claude current `session.phase` 的较新因果事件必须优先于 `previous.phase`；旧 inventory/cache generation 不得覆盖较新的 watcher/open-refresh。phase、phaseRevision、statusEnteredAt、unread 和 capabilities 原子接受，并只在消费者 selector 变化时发布。D′ 成功提示固定拆分 EyPc 收敛与原生侧栏未确认/当前不支持；该状态优先级由新增 Primary 记录主责。
 
 ## Current Authorities And Routes
 
@@ -24,9 +28,10 @@ This link-only module routes EyPc-specific Claude Companion inventory, status, q
 ## Primary Error Records
 
 - [Metadata archive does not prove native sidebar convergence](../claude-metadata-archive-does-not-prove-native-sidebar-convergence.md#L1) — D′ 只确认 EyPc 归档/移除；原生 session-manager ACK 与同一运行中侧栏及时移除是独立且当前不受支持的后置条件。
+- [New phase must outrank previous cache](../claude-new-phase-must-outrank-previous-cache.md#L1) — watcher/inventory/open-refresh 的因果合并与原子 phase/unread/capability 投影；延迟旧 inventory 不得把 terminal 回退为 running。
 - [Generic session end must not overwrite completion](../claude-generic-session-end-must-not-overwrite-completion.md#L1) — session lifecycle、explicit Turn outcome、live phase 与 native unread 的统一优先级；正常完成不得被通用收尾降为待继续。
 - [Session family/open/state authority conflation](../claude-session-family-open-route-and-state-authority-conflation.md#L1) — verified root cause and replacement route, including stable unread snapshots, same-completion session hints and App OAuth dynamic quota; interactive UI matrix remains an acceptance boundary, not a route choice.
-- [Watcher callback latency is not end-to-end publication latency](../watcher-callback-latency-is-not-end-to-end-publication-latency.md#L1) — measure authority event through Controller publish on one monotonic clock; source wake is diagnostic only.
+- [Watcher callback latency is not end-to-end publication latency](../watcher-callback-latency-is-not-end-to-end-publication-latency.md#L1) — measure authority event through Kernel package and Float applied ACK on one monotonic clock；source wake or IPC send is diagnostic only.
 - [Independent authorities coupled by full refresh](../independent-authorities-coupled-by-full-refresh.md#L1) — inventory/state/unread/quota/presence require feature-lifetime independent lanes, source→Controller→Float monotonic revisions and authority-specific failure semantics.
 - [Capability gap asserted without reading the shipped App](../capability-gap-asserted-without-reading-the-shipped-app.md#L1) — superseded historical lesson; `resume` exists but is an import route, not the selected exact-open route.
 - [Test double froze an invented cross-module contract](../test-double-froze-an-invented-cross-module-contract.md#L1)

@@ -22,7 +22,7 @@ tags:
 
 # Stabilize Ongoing Exit At The Shared Task Projection
 
-> Superseded by RAW-120. The single Controller-owned atomic projection remains, but its elapsed-time completion hold and settings control were removed after exact Turn revision/status evidence became the transition authority.
+> Superseded by RAW-120 and refined by RAW-160. The elapsed-time hold remains retired；the current shared projection owner is `companion-task-kernel-v4`, not Controller. Exact evidence is reduced once and every consumer applies only a newer semantic package/selector.
 
 ## Symptom
 
@@ -38,8 +38,8 @@ Temporal normalization lived in one Renderer consumer instead of the snapshot bo
 
 ## Evidence
 
-- [codexController.ts](../../../src/runtime/codexController.ts#L1) now publishes every accepted completion through one atomic task-state package immediately and clears the accepted terminal's active-exit baseline. RAW-120/121 removed the per-task hold, expiry timer, held-card rewrite and normalized `completionPresentationDelayMs` field.
-- The same Controller projection rebuilds task buckets, hidden/all/completed arrays, project sections, counts and `blocked-active` capability, so a waiting task remains one coherent `ongoing/running/blocked-active` product state.
+- [task-kernel.cjs](../../../preload/companion/task-kernel.cjs#L1) now publishes every accepted completion through one atomic V4 task package and preserves causal active/terminal conflict as the last stable non-terminal state with `verifying`. RAW-120/121 removed the per-task hold, expiry timer, held-card rewrite and normalized `completionPresentationDelayMs` field.
+- The same Kernel projection rebuilds task buckets, hidden/all/completed arrays, project sections, counts and capability, so a waiting task remains one coherent product state across every consumer.
 - [FloatApp.vue](../../../src/FloatApp.vue#L1) removes the independent active-counter timer and consumes the unified snapshot for cards, counters, details and archive controls.
 - [verify.md](../../specs/260718/1148-codex-quota-float/verify.md#L1) records the interrupt, expiry and no-double-delay acceptance matrix.
 
@@ -60,7 +60,7 @@ When several UI surfaces must perceive one asynchronous state transition atomica
 
 - Status: `candidate`; this historical hold route is superseded and must not be reintroduced without new runtime evidence that exact Turn ordering is insufficient.
 - Preconditions: an authoritative provider state can briefly oscillate at a product transition and multiple consumers must stay coherent.
-- Ordered steps: retain one Controller-owned atomic projection; detect the exact active exit; keep ongoing only while Turn evidence is missing or conflicts with a replayed active snapshot; confirm the newest Turn through the bounded targeted route; publish every accepted completion immediately; keep inventory/dropout protection separate; remove duplicate consumer timers and legacy settings controls.
+- Ordered steps: retain one Kernel-owned atomic projection; detect the exact active exit; keep the last stable non-terminal state while Turn evidence is missing or conflicts with a replayed active snapshot; confirm the newest Turn through the bounded targeted route; publish every accepted completion exactly once; keep inventory/dropout protection separate; remove duplicate consumer timers and legacy settings controls.
 - Verification: ordinary, cached, targeted and full-snapshot completion all publish immediately after the same revision/status gate; running recovery is represented by waiting/inProgress or a newer revision; explicit completion changes cards, counts and archive ability once; abnormal/unconfirmed states remain ongoing.
 - Applicability boundary: this pattern must not manufacture completion from `notLoaded`, interruption, failure, refresh count or recency. RAW-070's former 60-second interrupted marker is superseded by RAW-089; all non-completed cases remain governed by [codex-cross-process-notloaded-is-not-completion.md](codex-cross-process-notloaded-is-not-completion.md#L1).
 - Fallback: if consumers cannot share a projection owner, define an explicit versioned presentation state machine rather than unrelated local timers.

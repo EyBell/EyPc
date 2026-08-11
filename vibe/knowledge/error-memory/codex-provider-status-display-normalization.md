@@ -1,13 +1,14 @@
 ---
 id: eypc-codex-provider-status-display-normalization
-status: candidate
+status: verified
 scope: project
 fingerprint: codex-provider-status-display__raw-interrupted-enum-reached-badges-cards-and-details__provider-evidence-coupled-to-product-vocabulary__normalize-at-domain-card-projection-preserve-raw-action-evidence
 first_seen: 2026-07-22
-last_verified: 2026-08-09
-review_after: 2026-08-22
+last_verified: 2026-08-11
+review_after: 2026-09-11
 evidence:
   - src/domain/codex.ts
+  - preload/companion/task-kernel.cjs
   - src/runtime/codexController.ts
   - src/FloatApp.vue
   - preload/index.js
@@ -31,6 +32,10 @@ tags:
 
 精确 `interrupted/user-stopped` 不再要求额外 Desktop idle：未解决 input/approval 仍最优先，因果上更新的新 Turn/active 次之；两者都没有时，精确 terminal watermark 立即进入 stopped/待继续，并清除更旧的 Desktop active/waiting shadow，但不得伪造 `desktop-live idle`。普通 `failed` 继续使用历史的 exact idle/not-running 保守门禁。后续严格更新的新 Turn 可恢复进行中。待继续仍只进入动态页卡片分段，不进入进行中分段或任一紧凑角标。
 
+## 当前修正（2026-08-11，RAW-160 / task-state-v10）
+
+RAW-154 的“任意精确 interrupted 立即 stopped”已被真实宿主复现为过宽并废止。当前由 Kernel V4 先按分支裁决再聚合：真实 active 或 unresolved input/approval 优先；普通 interrupted 只有在全部相关分支 idle-confirmed 后才能 stopped；未执行 Plan 还必须完成定向复读，证明没有更新 Turn、activity 或 pending，同时保留 `planReady`。证据不足保持上一稳定非终态并标记 `verifying`，不发布一闪而过的待继续。
+
 ## Symptom
 
 Badges, task cards, hidden views and details first exposed the provider term `interrupted / 已中断`, even though the product wanted uncertain tasks presented consistently as “进行中”. After the visible label and archive capability were normalized, a later real count showed a second failure mode: two exact live-idle interrupted sessions were still counted as active work, producing four displayed ongoing tasks when only two were actually active.
@@ -45,8 +50,9 @@ Normalization first stopped at the visible activity enum instead of projecting t
 
 ## Evidence
 
-- [codex.ts](../../../src/domain/codex.ts#L1) keeps raw Turn/Host evidence and projects unresolved waiting first、causally newer activity second、completed third、exact interrupted terminal fourth；ordinary failed requires live idle/not-running。Every remaining abnormal or unconfirmed case stays `ongoing/blocked-active`；stopped is excluded from the active count。
-- [codexController.ts](../../../src/runtime/codexController.ts#L1) rejects blocked capability before dispatch, sends `completed | stopped` evidence for Codex task-level archive, and keeps project batch completed-only.
+- [task-kernel.cjs](../../../preload/companion/task-kernel.cjs#L1) owns branch/parent causal reduction and requires `idleConfirmed` for ordinary interruption plus targeted no-newer evidence for an unexecuted Plan interruption.
+- [codex.ts](../../../src/domain/codex.ts#L1) preserves raw Provider evidence and the V10 privacy-safe fields；it does not own final group/count/cycle decisions.
+- [codexController.ts](../../../src/runtime/codexController.ts#L1) consumes Kernel capability before dispatch and keeps project batch completed-only；it has no interrupted→stopped fallback.
 - [FloatApp.vue](../../../src/FloatApp.vue#L1) consumes ongoing and stopped as separate stable groups, maps stopped to visible “待继续”, and consumes the Domain capability without duplicating evidence rules.
 - [preload/index.js](../../../preload/index.js#L1) retains raw provider evidence for targeted latest-Turn confirmation and Host archive revalidation without exposing separate abnormal product states.
 - [verify.md](../../specs/260718/1148-codex-quota-float/verify.md#L1) records the visible-status and archive-capability acceptance matrix without preserving raw-interrupted action behavior.
@@ -54,24 +60,24 @@ Normalization first stopped at the visible activity enum instead of projecting t
 ## Detection Order
 
 1. Identify the raw provider status and every consumer that needs diagnostic/action evidence.
-2. Identify the domain projection seam that creates user-visible cards.
+2. Identify the Kernel reducer/projection seam that creates user-visible cards and capabilities.
 3. Define a product-visible state union independently of the provider union.
 4. Trace counts, groups, labels, icons, colors, hidden views, details and every action capability from the projected state.
 5. Separate absence of authority from positive authority: transport failure is not idle, and bridge failed is not process not-running.
 6. Compare every provider-source transition that maps to the same product state; fixed action slots must not toggle availability between equivalent projections.
 7. Guard active-exit deltas against terminal outcomes that predate the live activity, but carry a finite privacy-safe provenance token on the deliberate post-exit targeted reread so a same-Turn stop does not fall back to the 15-second structural cycle; explicit not-running may confirm failed/interrupted only.
-8. Revalidate the same rule in Controller evidence selection and Host single/batch mutation guards.
+8. Revalidate the same rule in Kernel capability、Actions selector and Host single/batch mutation guards；Controller must not restate it.
 
 ## Prevention Rule
 
-Provider enums are evidence, not automatically product vocabulary or action capability. Normalize the complete product state once at the domain projection boundary—including destructive-action availability—but do not flatten positive terminal evidence into the same bucket as missing authority. Split exact user interruption from ordinary failure：waiting still wins；a causally newer Turn/active wins；otherwise exact interrupted may establish stopped directly，while failed still needs exact idle/not-running。Transport failure remains ongoing。Presentation may map internal stopped to “待继续”，but every UI/count/action surface must consume the same projection。A stopped archive must be revalidated at mutation time；do not fix labels、counts or actions with scattered Renderer branches。
+Provider enums are evidence, not automatically product vocabulary or action capability. Normalize the complete product state once in Kernel—including Plan lifecycle and destructive-action availability—but do not flatten positive terminal evidence into the same bucket as missing authority. Waiting and causally newer active always win；ordinary interruption needs exact branch-idle confirmation，and an unexecuted Plan interruption additionally needs targeted no-newer-Turn/activity/pending proof。Transport failure or conflict preserves the last stable non-terminal state as verifying。Presentation may map internal stopped to“待继续”，but every UI/count/action surface must consume the same package selector。A stopped archive must still be revalidated at mutation time；do not fix labels、counts or actions with scattered Controller/Renderer branches。
 
 ## Alternative Route
 
-- Status: `candidate`; static implementation is complete and user runtime/archive acceptance is pending.
+- Status: `verified` for RAW-160 automated/static coverage；current installed-host acceptance remains pending.
 - Preconditions: an upstream status must remain available for diagnostics or action verification but should use different product semantics.
-- Ordered steps: preserve raw status; add/adjust the visible union; normalize visible state and action capability in one projector; update counts and every presentation/action consumer; align Controller evidence and Host mutation guards; scan for leaked branches and source-driven availability changes.
-- Verification: unresolved input + interrupted remains input；newer Turn restores ongoing；exact interrupted without either becomes “待继续” immediately and leaves ongoing counts；ordinary failed still requires live idle/not-running；bridge failed/system-error/notLoaded/missing evidence stays ongoing。Ongoing keeps archive disabled，while explicit stopped and completed allow task-level archive。Codex stopped is rejected after resume by Host reread；project batch remains completed-only。Current focused evidence passes locally，while rebuilt v9 uTools and real stopped/archive acceptance remain pending。
+- Ordered steps: preserve raw status → reduce each branch → aggregate the parent → require idle/targeted proof for interruption → derive visible state and capability once → publish only semantic change → revalidate mutation in Host.
+- Verification: unresolved input + interrupted remains input；newer active remains running；unconfirmed interruption stays stable/verifying；ordinary idle-confirmed interruption becomes“待继续”；unexecuted Plan stop retains `planReady` only after targeted proof；transport/system uncertainty does not manufacture stopped。Ongoing keeps archive disabled，while exact stopped/completed may allow task archive after Host reread；project batch remains completed-only。RAW-160 focused/full automation passes，while rebuilt current uTools acceptance remains pending。
 - Applicability boundary: does not rewrite user-authored task titles or unrelated prose containing the same word.
 - Fallback: if the product mapping is context-dependent, expose a named presentation mapper rather than mutating the raw protocol type.
 
@@ -85,3 +91,4 @@ Provider enums are evidence, not automatically product vocabulary or action capa
 | 2026-07-27 | RAW-091 explicit stop vs uncertainty | Real anonymous authority read showed four projected ongoing contained only two active tasks plus two live-idle interrupted sessions | Over-normalized every non-completed terminal outcome into ongoing and used the first idle delta before freshness reconciliation | Added stopped as a conjunction of terminal Turn + exact idle/not-running, preserved active/transport uncertainty priority, and guarded stale terminal exits | candidate; correction checkpoint matched `2 ongoing / 2 stopped`; later new active work changed the live count without reviving the error; uTools/crash acceptance pending |
 | 2026-08-08 | RAW-150 waiting-to-continue/archive refinement | User required stopped to read as “待继续” and remain task-archiveable without a new top-level state entry | Treated an earlier safety block as permanent product capability and leaked the old “已停止” vocabulary | Keep internal stopped evidence, map presentation once, allow task archive with exact Host reread, retain completed-only project batch | focused automated contracts pass; real v7 uTools remains host-pending |
 | 2026-08-09 | RAW-154 exact interruption priority | User observed interrupted tasks still appearing in ongoing and required 待继续 to stay out of the ongoing badge | Reused the ordinary failed idle/not-running conjunction for exact user interruption, so older Desktop active shadow could block stopped indefinitely | Add v9 terminal watermark: waiting/newer active first, otherwise exact interrupted immediately stopped；keep ordinary failed conservative | focused Domain/Bridge/Controller/UI contracts pass；real v9 host pending |
+| 2026-08-11 | RAW-160 interruption causality | Real host showed ordinary interrupted being classified as 待继续 while work/Plan evidence was not yet settled | Let exact interruption bypass idle and targeted verification | Move branch/parent reduction to Kernel V4, require idle-confirmed ordinary stop and targeted Plan stop, retain stable verifying state on conflict | affected/full automation verified；current host matrix pending |

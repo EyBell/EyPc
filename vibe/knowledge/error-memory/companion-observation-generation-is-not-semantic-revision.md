@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: companion-high-frequency-ui-refresh__provider-observation-generation-used-as-package-semantic-revision__separate-ordering-watermarks-and-publish-only-real-semantic-deltas
 first_seen: 2026-08-10
-last_verified: 2026-08-10
+last_verified: 2026-08-11
 review_after: 2026-09-10
 evidence:
   - preload/companion/task-kernel.cjs
@@ -55,6 +55,8 @@ Ordering identity and product meaning shared one revision path. Source generatio
 
 Use observation generations only to reject stale/duplicate evidence. Advance semanticRevision and packageRevision only when canonical product meaning changes. An equivalent observation must be a complete no-op across Kernel, package, Float, Renderer, badges and focus, with debug-only diagnostics. UI layout stability such as fixed badge width may remove visual reflow, but must never replace semantic no-op or delay a real state transition.
 
+RAW-160 adds the downstream half of this rule: Kernel no-op alone cannot prove consumer deduplication or Float application. Main、Float、Navigation and Actions keep independent latest revision/selector caches, and Float requires an explicit applied ACK. See [consumer cache and Float applied ACK](companion-consumer-cache-and-float-applied-ack.md#L1).
+
 ## Latest Applicable Implementation
 
 - Same-tick evidence uses one microtask merge and one next-frame atomic package at most.
@@ -76,3 +78,4 @@ Use observation generations only to reject stale/duplicate evidence. Advance sem
 | Date | Task | Trigger | Failed Route | Recovery | Outcome |
 | --- | --- | --- | --- | --- | --- |
 | 2026-08-10 | RAW-159 high-frequency state refresh | Equivalent Provider semantics repeatedly refreshed task UI and focus | Source generation participated in semantic package identity | Split observation and semantic revisions; added complete no-op and 1,000-event regression | verified automated; real installed timing pending |
+| 2026-08-11 | RAW-160 consumer application audit | Kernel no-op did not prove Main/Float/Navigation/Actions had not replayed state | Consumer revisions and applied state were implicit | Added per-consumer selector caches and Float applied ACK; retained the 1,000-event Kernel invariant | verified automated; real host pending |

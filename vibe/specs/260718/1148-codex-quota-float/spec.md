@@ -1,16 +1,20 @@
 # Codex Companion 当前规范
 
 Tool: codex
-Date: 2026-08-10
-Status: `automated-verified / host-pending`
+Date: 2026-08-11
+Status: `RAW-160 full-automated-verified / artifact-ready / host-pending`
 Documentation level: `controlled`
-Requirement version: `2026-08-10.2`
+Requirement version: `2026-08-11.1`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 
 Canonical target: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
 
 Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
+
+## RAW-160 Current Authority Overlay
+
+The current V4 authority is [RAW-160 spec](../../260810/1155-install-runtime-diagnostics/spec.md#L1). It preserves the non-conflicting inventory, unread, archive, navigation and diagnostics rules below, but supersedes V3 state ownership and the former interruption/Plan-clear/publication assumptions with causal Plan lifecycle, pause/execute capability, `getLatest/subscribe(afterRevision)`, consumer fingerprints and Float applied ACK. When text below conflicts, RAW-160 wins.
 
 ## 第一性目标
 
@@ -289,15 +293,21 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - unknown 防抖仅保留 250ms；所有明确 phase/unread/membership 事件立即发布。导航首键和全局热缓存继续使用进程包，不新增 Renderer debounce。
 - RAW-155 的稳定确认原则继续保留；RAW-159 将 Codex identity 精确为 Provider+task+terminalEpoch，并要求 native postcondition + Kernel commit 后才移除。Claude 的 metadata rebase、单次写前重试和不强刷原生侧栏合同由 Claude RAW-029 进一步明确：D′ 只确认 EyPc 移除，原生侧栏提示为未确认，当前没有受支持的 D-2 实现入口。
 
-## RAW-159：Codex v3 单一语义、持久化归档与全量操作诊断
+## RAW-159：历史 V3 单一语义、持久化归档与全量操作诊断
 
-- 当前最终权威为 `companion-task-kernel-v3 / companion-task-package-v3`。Kernel 接收 Evidence V3，唯一裁决 membership、phase、tri-state unread、freshness、statusEnteredAt、semanticRevision、membershipRevision 与 capabilities；Host/Renderer 不再保留第二状态机。observation/source-lane generations 只用于拒绝乱序与 debug，不参与包语义相等。等价 observation 完整 no-op：任务/包 revision、Float、Renderer、badge 与 focus 均为零更新。
+- 当时最终权威为 `companion-task-kernel-v3 / companion-task-package-v3`。其分页、归档、诊断与基础 semantic no-op 保留为 RAW-160 回归基线；V3 状态/Plan/消费者应用规则已被 V4 取代。
 - 新 Codex membership 先用稳定 key 建立最小卡片，再定向补读标题和项目；任何固定任务总量上限均删除，`thread/list limit=100` 只为分页大小并读取到 cursor 结束。普通缺行进入定向确认；明确 commit 的 archive tombstone 阻挡旧库存复活。
 - waiting、active、completed、interrupted 的 exact causal evidence 同 tick microtask 合并并在下一帧发布；目标 P95 ≤100ms。冷启动/重连的 interrupted/failed 冲突只精读该任务一次；仍无法确认时保留最后稳定 phase 并标记 verifying，不强制 running。phase 与 unread 独立，同 completion epoch 的 unread 保留到明确已读或新 Turn。
 - Codex 归档 transaction 为 intent → confirmation → preflight → one provider write → server verify-1 → Desktop sync → connected native ACK → server verify-2 (≥300ms) → Kernel commit → reconciliation/UI removal。运行中 Desktop 缺 sync/ACK、任一次库存矛盾或读取失败均返回 failed/indeterminate；卡片、按钮、alias/cache/receipt/shortcut 保留并提醒。只有 commit 后全部消费者原子移除。确认 identity 改为 Provider+task+terminalEpoch；revision、unread、focus、alias churn 不取消。
-- 所有手动/快捷键/自动操作携带 operationId；`eypc-runtime-diagnostics-v3` 要求显式 error/info/debug，当前未配置者默认 debug 且显式选择永久保留。明文 JSONL 记录精确 taskRef/path/state/watermark/revision/cache/duration/errorCode 与归档阶段，继续禁止正文、命令参数、stdout/stderr、凭据、stack 和隐藏推理。v2/v3 探针支持 session/operation/trace/provider/taskRef/scope/event/level/since/tail 与状态/no-op/快捷键/导航/归档/错误聚合。
-- Claude/Cloud 状态与归档行为不在本轮改动范围；只保持 Provider 接口兼容。权威 Controlled 记录见 [task card](../../260810/1155-install-runtime-diagnostics/task-card.md#L1)。
-- 状态诊断继续记录 provider/final phase/reason/evidence，但 taskRef 改为精确的统一任务包 key，并增加裁定输入的状态 authority、active flags、terminal evidence、revision/watermark 与 unread 等有界 details；不记录任务标题、正文、请求/命令参数、输出、凭据或隐藏推理。完整 v2 合同只由 [安装运行诊断日志 task card](../../260810/1155-install-runtime-diagnostics/task-card.md#L1) 持有。
+- 所有手动/快捷键/自动操作携带 operationId；`eypc-runtime-diagnostics-v3` 要求显式 error/info/debug。RAW-160 将 taskRef 收紧为会话期 `h:<hex>`，不再记录原始任务 key/path；正文、Plan/执行提示、命令参数、stdout/stderr、凭据、stack 和隐藏推理继续禁止。
+
+## RAW-160：当前 V4 Plan 生命周期与按变化发布
+
+- 当前唯一权威为 `task-state-v10 / companion-task-kernel-v4 / companion-task-package-v4 / companion-task-actions-v2`，详细合同见 [RAW-160 spec](../../260810/1155-install-runtime-diagnostics/spec.md#L1)。Provider 只归一化证据；Kernel 独占分支/父任务 phase、Plan lifecycle、窗口/隐藏、group/count/cycle 与 capability。
+- 普通 interrupted 须全部分支 idle-confirmed；未执行 Plan interrupted 须目标复读确认无更新 Turn/activity/pending。首次 Plan 未生成时 running；Plan 完成实施确认时 waiting-input；只有 exact default execution 等清除 Plan。
+- `stopped + planReady + !paused` 是唯一动态小时窗口例外。Plan pause 有哈希持久收据和已暂停分区；waiting Plan 即使不在展开列表仍进入 input badge/Plan cycle。
+- Actions v2 提供五秒两击 Execute Plan，严格 open→resume→一次 turn/start，保留 model/effort，indeterminate 不盲重发。Main/Float/Navigation/Actions 使用 latest revision/selector cache；Float 用 applied ACK 区分发送与 UI 应用。
+- Claude current phase 的较新因果事件优先于旧 cache；D′ 只确认 EyPc 收敛，固定声明原生侧栏未确认/当前不支持。
 
 ## 残留矩阵收口
 

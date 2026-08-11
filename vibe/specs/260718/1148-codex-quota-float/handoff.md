@@ -1,16 +1,18 @@
 # Codex 任务状态交接
 
 Tool: codex
-Date: 2026-08-10
-State: `RAW-159 implementation-landed / automated-verification-in-progress / host-pending`
+Date: 2026-08-11
+State: `RAW-160 artifact-ready / host-pending`
 
-## 当前结论
+Current host authority is the [RAW-160 handoff](../../260810/1155-install-runtime-diagnostics/handoff.md#L1). It adds Plan pre-generation/confirmation/interruption, cross-window continuation, pause persistence/migration, Float applied ACK and Claude new-phase convergence. Real Execute Plan and real Claude archive remain separate user-authorized actions. The history below is retained only where it does not conflict.
+
+## RAW-159 历史结论（冲突部分已由 RAW-160 取代）
 
 - RAW-159 已在源码落地，当前保持 `automated-verification-in-progress / host-pending`。Preload 唯一权威为 `companion-task-kernel-v3`，[companionTaskPackage.ts](../../../../src/domain/companionTaskPackage.ts#L1) 发布 `companion-task-package-v3`；observation/source-lane generation 只拒绝乱序，semantic revision 只随真实 membership/phase/unread/visibility/capability/必要元数据变化。等价 observation 是完整 no-op。V1/V2 包 fail closed，`task-state-v9` 仅是 Codex Provider 输入兼容版本。
 - Codex exact interrupted/completed 在无更新请求/Turn 时先于陈旧 active 壳；成员信号无论 phase/unread 代次都先触发 Codex-only 窄盘点。Claude Host 与 Renderer 共享多播订阅，首次 inventory 后动态安装目录 watcher，并发 unread 读取 singleflight，异步结果提交前基于最新包重放，避免 running→completed-unread 丢失或新会话被旧整包删除。Claude terminal phase 可直接更新其派发时精确复核的归档能力；Codex newer non-terminal phase 无需 inventory 即撤销旧归档能力/fingerprint。
 - 正常可信 push 直接更新任务包，零 quota/environment/full-inventory 读取；完整盘点仅用于冷启动、重连或明确 gap。任务完整校对设置、手动全刷和 `Ctrl+R` 已移除；额度自动刷新默认 300 秒、最小 1 秒，旧 0 迁移为 300。定向环境检测与 Claude 单任务同步保留。
 - 所有动态状态组与通用循环层内均按最近提问时间倒序，Provider/置顶不覆盖。导航第一下立即派发；只有首个打开仍 in-flight 时才合并最终 trailing，manual/attention 优先且跨 Provider 并发 1。
-- Float 自愈合同不变。安装日志由 [RAW-159 Controlled task](../../260810/1155-install-runtime-diagnostics/task-card.md#L1) 接管：`eypc-runtime-diagnostics-v3` 当前未配置者默认启用 debug，显式 userConfigured 选择永久保留；所有调用显式 error/info/debug。明文 JSONL 用 session/seq/operation/trace 串联精确 taskRef、状态、水位、路径、交互和 Codex 归档阶段；仍排除提示词、正文、命令参数、stdout/stderr、凭据、stack 和隐藏推理。探针支持 operation/trace/provider/taskRef 等筛选和状态/no-op/快捷键/导航/归档/错误聚合。
+- Float/诊断基线保留；RAW-160 已将任务 lane 改为 applied ACK，并把诊断 taskRef 收紧为会话期 `h:<hex>`，不再记录原始路径/任务 ID/Plan/执行提示。
 - RAW-155 基线自动化为 `19/19` files、`575/575` tests；Companion 状态增量聚焦 `9/9` files、`303/303` tests，RAW-158 日志文件操作增量为 4 files / 10 tests。typecheck、Canonical/Public/Dist Preload 同步、1870-module production/uTools build 与 runtime validator 通过。当前产物身份为 `host-19c07235e93effb0f11a / renderer-b5dfe2319649d2b0987c`；仅可称 `artifact-ready`，真实宿主仍需重载。
 - 最终宿主门禁固定为：构建 → uTools 开发工具重新接入 `dist/plugin.json` → 用户结束旧插件后台进程并重新进入 → 重开 Float → 核对 Main UI/Main Preload/Float UI/Float Preload 的 Host/Renderer/Kernel/Package 身份完全一致。任何端不一致都会显示 `reload-required` 并停止任务动作；实现不自动结束进程，也不调用私有 uTools API。
 - RAW-154 已将当前合同升级为 `task-state-v9` 与 `companion-task-actions-v1`。Renderer 只提交 Provider-neutral 意图，Domain 独占互斥状态/capability，进程 Dispatcher 按 action→Provider 选择 Adapter，Provider 独占副作用，Controller 只通过一个 mutation reducer 接纳已验证结果；旧 Claude AX 归档禁止回退。

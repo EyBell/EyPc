@@ -2,6 +2,8 @@
 
 Tool: codex
 
+Current overlay: RAW-160 V4 implementation、affected `445/445` and final repository `1282/1282` verification、build/runtime/document gates are complete；real host acceptance remains tracked in the [Controlled checklist](../../260810/1155-install-runtime-diagnostics/tasks.md#L1). The table below is historical/non-conflicting foundation evidence.
+
 | 任务 | 状态 |
 | --- | --- |
 | 锁定 completion baseline 反弹序列 | complete |

@@ -42,6 +42,7 @@ updated: `2026-08-11`
 | RAW-027 | active | 修复 Claude 从进行中到已完成未读被吞和延迟后已在 App 打开而消失：最终任务包对 Claude membership/phase/unread 使用独立 generation，任一 lane 不得推进或覆盖其它 lane；Host 与 Renderer 的 state/inventory/unread 订阅必须多播，不得以单 callback 覆盖；Host 早于首个 inventory 订阅时，首次冷 inventory 必须动态安装发现目录 watcher；并发 unread 读取加入同一 Promise，异步结果提交前在最新任务包上重放且拒绝旧 generation。正常可信推送不得触发 quota/environment/full inventory，只有冷启动、重连或明确 membership gap 才执行 Claude-only inventory。列表和循环层内按最近提问倒序，第一下前后任务立即打开，只有 in-flight 时才保留最终尾随目标。 |
 | RAW-028 | active | 修复正常回复被通用 `Stopping session` 降为待继续、原生未读无法恢复完成态、Claude 库存固定数量截断、归档二次确认消失和普通元数据变化导致归档偶发失败。通用 session-end 不覆盖同 Turn 成功 Stop/Result；live 状态优先，否则原生 unread 将任何非 live 历史恢复为 completed-unread，清除 unread 只回 completed，新 Prompt 才恢复 running。最终 V3 任务包原子更新卡片/Tab/项目/分组/角标/动作；Claude inventory 不设固定总数上限。归档确认绑定 Provider+task+terminalEpoch，revision/unread/focus/alias churn 不取消；Claude D′ 行为在 RAW-159 中保持不变。 |
 | RAW-029 | active | Claude D′ 成功提示必须明确分离两项事实：EyPc 归档已完成且任务已从 EyPc 列表移除；Claude 原生侧栏当前尚未确认同步、可能仍待刷新。继续核验真正的原生侧栏及时收敛，但只有受支持的原生动作入口、同一会话原生 ACK 与运行中侧栏在 1.25 秒内移除同时成立才可接纳；元数据/LevelDB 写入、私有 IPC、AX/JXA/UI 自动化、重启或事后视觉结果均不得冒充原生收敛。 |
+| RAW-030 | active | 更新引入（Codex Companion RAW-160）：修复 Claude 实际终止但 EyPc 仍显示 running。当前 `session.phase` 的较新因果事件必须优先于 `previous.phase`，延迟的旧 inventory/cache generation 不得覆盖 watcher/打开后定向刷新；phase、phaseRevision、statusEnteredAt、unread 与 capabilities 原子更新，并仅在消费者 selector 变化时发布。D′ 成功文案进一步固定为“EyPc 已归档并移除。Claude 原生侧栏同步未确认，当前不受支持。” |
 
 ## Source Lineage
 
@@ -55,4 +56,5 @@ updated: `2026-08-11`
 - RAW-027：来自真实 running→completed-unread 丢失、可能因延迟期间已在 Claude 打开而消失，以及前后任务明显慢于卡片点击的复现；由 Codex Companion RAW-155 统一收口。
 - RAW-028：来自正常 Claude 回复被误判待继续、完成未读丢失、固定任务数量、归档确认和归档竞态的连续实测；由 Codex Companion RAW-155 增量统一收口。
 - RAW-029：来自对 D′ 用户提示语与 Claude 原生侧栏及时收敛能力的明确拆分、核验和继续执行授权；D-1 直接实施，D-2 先做只读证据核验，不能在缺少受支持入口时越过安全边界。
+- RAW-030：来自 RAW-160 对 Claude 终态角标滞后、旧 phase 反压和精确归档结果文案的统一修复；不扩大 Claude 原生写入范围。
 - 旧需求证据仍留在其原任务目录；当前取代关系由 [spec.md](spec.md#L1) 的 `DEC-* / ARCH-*` 记录管理。

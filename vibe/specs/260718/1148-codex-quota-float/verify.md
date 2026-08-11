@@ -1,7 +1,11 @@
 # Codex 任务状态验证记录
 
 Tool: codex
-Date: 2026-08-10
+Date: 2026-08-11
+
+## RAW-160 Verification Overlay
+
+The current verification record is [RAW-160 verify](../../260810/1155-install-runtime-diagnostics/verify.md#L1). RAW-159's installed-host gate reproduced a V3 failure and was reworked rather than accepted；its pagination、archive、diagnostics and identity evidence below remains regression history。Current V4 affected automation is `13/13` files / `445/445` tests and final repository verification is `83/83` files / `1282/1282` tests with typecheck、1870-module build、runtime validator and document audit passed。
 
 ## Review Target
 

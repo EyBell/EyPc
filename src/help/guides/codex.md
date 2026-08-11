@@ -58,21 +58,22 @@
 
 ## 任务行为（用户可见）
 
-- **动态：** 展示近期（按最新 Turn 活动，默认 24 小时内）的非隐藏任务与状态分段；可在 Codex → **任务** → **动态时间筛选（小时）** 修改范围。先按「待输入 → 进行中 → 待继续 → 已完成未读 → 已完成」分组，每个分组内一律按最近提问时间倒序；时间相同时才用创建时间与匿名 key 稳定排序。置顶和 Codex/Claude 来源不改变组内顺序。
+- **动态：** 展示近期（按最新 Turn 活动，默认 24 小时内）的非隐藏、非暂停任务；可在 Codex → **任务** → **动态时间筛选（小时）** 修改范围。按「待输入 → 进行中 → 待继续 → 已完成未读 → 已完成」分组，并按最近提问、创建时间、匿名 key 稳定排序。普通待继续超时后退出；唯一例外是“Plan 已完成、未执行、已确认中断且未暂停”，它会稳定留在待继续分组，但仍受完整库存保留范围约束。
 - **刷新机制：** 任务状态优先使用可信的原始推送直接进入独立的成员、phase、unread lane；正常推送不读取额度、环境或全量任务。完整任务盘点只在冷启动、重连或明确发现成员缺口时触发，并且只读取所需 Provider。任务库存、卡片、操作、导航、mutation 和 Claude 会话读取都不设固定总条数上限；Codex 每页 `100` 只是协议分页大小，必须读到 cursor 结束。页面不再提供手动全量刷新、完整校对周期或 `Ctrl+R`。环境检测与 Claude 单任务同步保留为各自的定向操作。额度自动刷新默认 300 秒、最小 1 秒；旧值 `0` 自动迁移为 300 秒。
 - **待输入：** 含普通问题、需确认的 Plan，以及命令执行、文件修改、权限申请和 MCP 提问审批；标签仍区分“等待输入 / 等待审批”。全局入口按最新状态优先，连续触发会依次打开尚未成功打开的当前状态实例；处理中若有更新任务会先插队，随后继续旧队列。EyPc 只打开原任务，绝不会代你批准、拒绝或提交请求。实时 Desktop 请求优先；原请求 owner 已结束而 Desktop 无法重放时，只允许受限证据恢复未回答输入或待实施 Plan，普通连接器提示与 Access 配置不会伪造待输入。没有真实待输入时，仍回退 EyPc 本地置顶；该回退不计入角标或打开进度。
 - **已完成未读：** 同样按完成状态出现时间从新到旧依次打开；成功打开（含列表手动打开）才推进，失败不推进。全部当前项都打开后，下次从最新项重新开始；进度跨 EyPc 重载保留，新 Turn 完成会成为新的未打开实例。成功 Deep Link 仍把当前任务标为本会话已读，但不写 Codex 原生状态
-- **待继续：** 内部仍是 stopped，但卡片和动态分段统一显示“待继续”；不新增顶层 Tab、角标或待继续专属快捷入口。精确 `interrupted/user-stopped` 在没有更新 waiting/active 时立即进入待继续，不再要求 Desktop idle。冷启动或重连只为冲突任务 single-flight 精读一次最新 Turn；若仍无法确认，则保留该任务最后稳定分组并轻量显示“核验中”，不会强制改成进行中，也不会凭时间猜终态。新 active epoch 会立即恢复进行中。
-- **待输入热同步：** 请求出现与移除、匹配的 `serverRequest/resolved`、回答后的 matching output、用户继续和新 Turn 都走同一个双向状态通路。新 active/Turn-started 会立即清除它之前的等待；旧快照、已读变化、重新订阅或 rollout 重放不能把已解除状态重新放回。解除后真正出现的新请求仍会立即进入待输入。未匹配的 resolved 只复核这一条任务，不会误清并发审批。正常事件目标为 Controller 发布 P95 不超过 250ms；漏一次 Activity 或 rollout 文件通知时由 1 秒 watchdog 在 1.25 秒内补回。revision/owner/载荷缺口只重订该任务，失败时保持现状并提示降级，不按超时猜测已解除。
-- **状态时机：** 新 Codex membership 一到便用稳定 key 建立最小卡片，随后 Codex-only 补读标题和项目并原位更新；不再等待完整元数据或下一次全量刷新。唯一进程 Reducer 按因果水位处理 waiting、active、completed、interrupted、failed 和 unread；`phase` 与 `unread` 独立，同一 completion epoch 的未读会一直保留到明确已读回执或新 Turn。可信事件在同一事件循环合并、下一帧发布，目标 P95 不超过 100ms；只有 unknown 最多核验 250ms。等价 observation 是完整 no-op，不增加任务/包 revision、不发 Float/focus、不重算角标。普通 inventory 缺一行只进入缺失确认，不会让任务消失。
+- **待继续：** 内部仍是 stopped，但不新增顶层 Tab、紧凑角标或专属快捷入口。普通 interrupted 必须确认主任务和 Side Chat 都已 idle；复核前保留最后稳定状态并显示“核验中”。未执行 Plan 的中断还会定向确认没有更新 Turn、真实活动或其它待决请求；确认后稳定待继续并可突破动态小时窗口。任何更新 active 都优先恢复进行中。
+- **Plan 暂停与执行：** 已完成且可继续的 Plan 使用“暂/恢”，不走普通隐藏；暂停后会进入“已隐藏”页顶部“已暂停”，并从角标和所有快捷循环移除，刷新、重启或重新关注都不会自动恢复。Plan 行显示 `顶/暂/归/执`，暂停后为 `顶/恢/归/执`；新建会话仍在完整操作抽屉。“执”第一次只变成“确”，5 秒内第二次才会打开原任务并通过 Codex App Server 启动一次 default-mode Turn；模型未知、仍在运行、另有待决请求或协议不支持时会明确禁用。超时不自动重发。
+- **待输入热同步：** 请求出现与移除、匹配的 `serverRequest/resolved`、回答后的 matching output、用户继续和新 Turn 都走同一个双向状态通路。新 active/Turn-started 会立即清除它之前的等待；旧快照、已读变化、重新订阅或 rollout 重放不能把已解除状态重新放回。解除后真正出现的新请求仍会立即进入待输入。未匹配的 resolved 只复核这一条任务，不会误清并发审批。正常事件目标为 Kernel 包发布 P95 不超过 250ms；漏一次 Activity 或 rollout 文件通知时由 1 秒 watchdog 在 1.25 秒内补回。Float 是否真正显示以 applied ACK 为准。revision/owner/载荷缺口只重订该任务，失败时保持现状并提示降级，不按超时猜测已解除。
+- **状态时机：** 新 Codex membership 一到便建立最小卡片，随后原位补标题和项目。V4 Kernel 按主任务/Side Chat 因果水位处理 waiting、active、completed、interrupted、Plan 与 unread；`phase`、`unread`、`planReady` 和 `paused` 各自有明确来源。状态可以反复核验，但只有卡片、分组、角标、循环、能力或必要元数据真实变化才发布；Main、Float、Navigation 与 Actions 也会忽略同 revision/同 selector。Float 的任务包必须收到 applied ACK，单纯“已发送”不算 UI 已更新。
 - **切换任务：** 在 Codex Desktop 中切换任务只会改变 Desktop 当前关注对象；EyPc 会继续续订仍在任务池中的上一任务，不会让待继续任务重新进入进行中角标。若切换恰好与上一任务完成同时发生，即使 Desktop 短暂回放旧 active，EyPc 也会对该任务做一次有界的最新 Turn 校对，用明确 completed 同步完成分段与角标；校对期间若收到更新的进行中证据，旧校对结果会失效。Side Chat 会校对实际子任务并把活动、待输入与未读聚合回父任务。仍在运行或读取失败时继续保守显示进行中。完全退出 Codex、归档或任务确实离库时，仍按对应权威边界清理
-- **多分支与诊断：** 一个 Side Chat 结束时，如果主任务或另一个 Side Chat 仍在运行，父任务继续显示进行中，不会被单个分支的晚到终态改成待继续/已完成。「运行」与“设置 → 维护”共享 `eypc-runtime-diagnostics-v3` 的启停和 `error / info / debug`。当前未手动配置者默认开启 `debug`；显式选择永久保留。明文 JSONL 记录精确 operationId/taskRef、Provider 状态、水位、revision、缓存、路径、动作/归档阶段和耗时，8 MB/文件、64 MB 总量、保留 14 天；不记录提示词、对话正文、命令/工具参数、stdout/stderr、凭据、堆栈或隐藏推理。探针可按 session/operation/trace/provider/taskRef/scope/event/level/since/tail 查询，并聚合状态变化、no-op、快捷键、跳转、归档阶段和错误。
+- **多分支与诊断：** 一个 Side Chat 结束时，如果主任务或另一个 Side Chat 仍运行，父任务继续显示进行中，不会被晚到终态覆盖。「运行」与“设置 → 维护”共享 `eypc-runtime-diagnostics-v3`。明文 JSONL 使用 operationId 和会话期 `h:<hex>` taskRef 记录脱敏状态、revision、缓存、动作/归档阶段和耗时；不记录原始任务 ID/路径、Plan/对话正文、执行提示、命令/工具参数、stdout/stderr、凭据、堆栈或隐藏推理。
 - **悬浮窗自恢复：** Main 每 2 秒检查 Float 心跳；连续超过 6 秒无响应时，只在 60 秒冷却外且确认旧窗口 10 秒恢复观察仍失败后受控重建。每次交互都有匿名 interaction id，10 秒无活动、失焦或生命周期结束会清理，避免拖动/展开锁长期卡死。
-- **版本提示：** `task-state-v9` 只表示 Codex Provider 输入兼容；唯一最终权威是 `companion-task-kernel-v3`，Main/Float 共用 `companion-task-package-v3`。V3 分离 Provider observation generation 与用户可见 semantic revision，并原子派生卡片、Tab、项目、分组、角标、循环、焦点和归档能力。旧 V1/V2 包 fail closed；四端身份不一致时明确要求重新接入或重载并停止任务操作。
+- **版本提示：** 当前为 `task-state-v10 / companion-task-kernel-v4 / companion-task-package-v4 / companion-task-actions-v2`。Kernel 唯一派生状态、Plan 生命周期、卡片、Tab、分组、角标、循环和能力；消费者只读取最新版。V4 Kernel 缺失或四端身份不一致时会要求重新接入/重载并停止任务操作，不回退旧状态逻辑。
 - **构建与实际加载：** 重新打包只生成新的 `dist`，状态是 `artifact-ready`；它不会自动替换 uTools 已加载的 ASAR。开发模式请在 uTools 开发工具重新接入 `dist/plugin.json`，手动结束旧插件后台进程后重新进入，再重开悬浮窗并确认四端身份一致；离线包需安装新的 UPXS。只有身份握手一致才是 `host-loaded`。
-- **归档：** Codex 归档中卡片和按钮始终保留并显示“归档中”。一次 Provider RPC 成功、即时未归档列表缺行或 Desktop 消息发送成功都不会隐藏任务；只有一次写、两次服务器持久化确认，以及 Desktop 已连接时匹配任务的原生 `thread/archived` ACK 全部通过后，Kernel 才 commit 并原子移除所有消费者。sync 失败、ACK 超时或两次核验矛盾会保留卡片、恢复按钮、自动定向核验，并在主窗口、Float 和 uTools 提醒中附短 operationId。Claude completed/stopped 任务仍走 D′ 单目标元数据归档；成功只表示 EyPc 已归档并从 EyPc 列表移除，提示会同时说明 Claude 原生侧栏可能仍待刷新、当前尚未确认同步。EyPc 不强刷或伪造 Claude 原生侧栏收敛；项目级「归档已完成」仍只处理 Codex 已完成任务。
+- **归档：** Codex 归档中卡片和按钮始终保留；只有一次写、两次服务器持久化确认，以及 Desktop 已连接时匹配的原生 `thread/archived` ACK 全部通过后，Kernel 才原子移除。失败或不确定会保留任务并定向复核。Claude completed/stopped 仍走 D′ 单目标元数据归档；成功提示明确为“EyPc 已归档并移除。Claude 原生侧栏同步未确认，当前不受支持。”EyPc 不强刷或伪造 Claude 原生侧栏收敛。
 - **归档当前任务快捷调用：** `eypc-companion-archive` 保持 `mainHide`，不切换当前 Tab。第一次只展示目标并开启 5 秒确认；确认身份固定为 `Provider + task + terminalEpoch`，revision、unread、焦点或临时 alias 变化不会让第二次点击消失。第二次从最新包读取 capability 并使用同一个 operationId 贯穿十阶段归档日志；任务消失、terminal epoch 或能力变化才取消。
-- **上一个 / 下一个 Codex 任务：** 按独占优先级循环：先普通待输入/待审批，再 Plan 实施确认，再近期非隐藏进行中，最后回退未停止的 EyPc 本地置顶任务；每一层都按最近提问时间倒序，Provider 与置顶不改序。第一下按键立即派发，不再固定等待；只有首个打开仍在执行时，后续连按才合并为一个最终尾随目标。手动卡片与 attention 打开会取消未派发尾随目标，所有 Provider 共享并发 1。热包直接使用最原始快速路径；仅冷启动、重连或明确缺口才执行一次 tasks-only 预检，600ms 提示进度、5 秒超时且禁止部分集合误跳。Renderer 从未挂载也能切换，之后 Alt+Tab 不会补触发。
+- **上一个 / 下一个 Codex 任务：** 按首个非空层循环：普通待输入/审批 → 待实施 Plan 与未执行中断的 Plan → 动态窗口内进行中 → 未停止的本地置顶。暂停、普通隐藏和已归档全部排除；每层按最近提问时间倒序。第一下立即派发，只有首个打开仍在执行时后续连按才合并成最终尾随目标。热包直接使用，冷启动/重连/缺口才执行一次 tasks-only 预检。
 
 列表不展示任务正文；预览与详情也只含隐私安全字段（名称、项目、状态与时间等），不含路径、原始 ID、正文。
 
@@ -99,7 +100,7 @@
 
 ## 风险与边界
 
-- 普通界面和可同步存储不暴露原始会话 ID、路径、URL、Token、提示词、命令输出或正文；本机安装诊断 JSONL 可按当前调试合同保留精确 taskRef、运行路径、状态和水位，但仍禁止内容正文、凭据和隐藏推理。
+- 普通界面、可同步存储和本机安装诊断都不暴露原始会话 ID、路径、URL、Token、提示词、Plan/执行指令、命令输出或正文；诊断只使用会话期 `h:<hex>` taskRef、状态水位和 operationId。
 - 破坏性操作（如归档、项目移除、Git Push）需要确认；失败不会乐观删行。
 - Action 是 EyPc 等价执行，不会调用不存在的 Codex 原生 Action API。
 - 动作后隐藏插件时，不会为了切 Tab 或 Renderer 重建而清掉通用循环的进程级位置与热目标；功能停用、来源变化和进程退出仍会清理。

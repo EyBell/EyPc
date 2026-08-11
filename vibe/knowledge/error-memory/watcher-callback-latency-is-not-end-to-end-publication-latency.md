@@ -42,7 +42,7 @@ Claude watcher 在 100 次本地事件中很快唤醒，于是旧验收把 appen
 - 旧探针的计时终点在 watcher callback，而产品 SLO 的终点应是 Controller 向统一任务快照发出可观察 publish。
 - RAW-151 证明同一错误也适用于 Codex：正常 Activity/rollout callback 很快并不能覆盖掉通知；恢复指标必须量到 1 秒 phase-only watchdog 接纳证据并完成 Controller 发布，且全过程不得触发完整库存读取。
 - RAW-154 再证明文件 membership mutation 也必须遵守同一边界：Claude App 手动归档或 EyPc D′ 写入的计时终点是 Controller 发布已移除该卡片的新原子任务包，不是 `fs.watch` 回调。精确文件 delta 和一秒索引 watchdog 只能检查已登记目标，且不能等待 quota、state、unread 或完整 inventory。
-- RAW-159 将终点升级为 `companion-task-package-v3`：事件进入 Kernel 后，必须只推进真实变化的 membership/phase/unread 语义，再让 Main/Float 应用同一 package revision。只量 callback、Controller 或单个 Renderer 都不能证明 completed-unread 与快捷键目标一致；等价 observation 必须是零发布。
+- RAW-159 首次把终点扩展到 package revision；RAW-160 进一步以 `companion-task-package-v4`、Main/Float/Navigation/Actions 独立 revision/selector cache 和 Float `applied` ACK 取代“Kernel no-op 或 snapshot-send 即完成”的假设。只量 callback、Controller、IPC send 或单个 Renderer 都不能证明角标、循环与 UI 一致；等价 observation 必须是全链零发布，Float 只有 applied 才算消费完成。
 - membership-only 事件还可能没有任何“现有任务行”可修改：例如新 Codex 任务只携带 `inventoryChanged`。若 Host 以 `changed === false` 提前返回，watcher 已正确唤醒但专用库存重读从未排队；Renderer 隐藏时只能等恢复扫描。结构变化信号必须独立于现有行变更决定 reconciliation。
 
 ## Detection Order
