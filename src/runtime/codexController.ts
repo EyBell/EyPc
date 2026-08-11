@@ -3627,7 +3627,7 @@ export function createCodexController(options: CodexControllerOptions) {
     const changed = applyVerifiedArchiveMutation(task)
     taskArchive = { key: '', status: 'idle', message: '' }
     options.setMessage(result.message || (provider === 'claude'
-      ? '已静默归档；Claude UI 可能需自行刷新'
+      ? 'EyPc 归档已完成，任务已从 EyPc 列表移除；Claude 原生侧栏可能仍待刷新，当前尚未确认同步。'
       : '已归档 Codex 任务'))
     // The file watcher may already have published the same verified Claude
     // removal. In that case only refresh transient action state, not the task

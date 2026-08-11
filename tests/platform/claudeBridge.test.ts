@@ -616,7 +616,7 @@ describe('version-gated Claude metadata archive', () => {
     }
   }
 
-  it.each(['completed', 'stopped'] as const)('silently archives a %s session with metadata and inventory confirmation', async (phase) => {
+  it.each(['completed', 'stopped'] as const)('silently archives a %s session in EyPc without claiming native sidebar convergence', async (phase) => {
     const context = archiveBridge({ phase })
     const before = JSON.parse(readFileSync(context.filePath, 'utf8'))
     const levelDb = join(context.home.appData, 'Local Storage', 'leveldb', 'CURRENT')
@@ -628,7 +628,7 @@ describe('version-gated Claude metadata archive', () => {
 
     await expect(context.bridge.archiveCodeSession(LOCAL_A)).resolves.toMatchObject({
       outcome: 'archived',
-      message: '已静默归档；Claude UI 可能需自行刷新'
+      message: 'EyPc 归档已完成，任务已从 EyPc 列表移除；Claude 原生侧栏可能仍待刷新，当前尚未确认同步。'
     })
     const after = JSON.parse(readFileSync(context.filePath, 'utf8'))
     expect(after.isArchived).toBe(true)
@@ -645,7 +645,11 @@ describe('version-gated Claude metadata archive', () => {
   it('treats an already archived exact file as an idempotent success without writing or opening', async () => {
     const context = archiveBridge({ archived: true })
     const before = readFileSync(context.filePath)
-    await expect(context.bridge.archiveCodeSession(LOCAL_A)).resolves.toMatchObject({ outcome: 'archived', alreadyArchived: true })
+    await expect(context.bridge.archiveCodeSession(LOCAL_A)).resolves.toMatchObject({
+      outcome: 'archived',
+      alreadyArchived: true,
+      message: 'EyPc 归档已完成，任务已从 EyPc 列表移除；Claude 原生侧栏可能仍待刷新，当前尚未确认同步。'
+    })
     expect(readFileSync(context.filePath)).toEqual(before)
     expect(context.execFile).not.toHaveBeenCalled()
     expect(context.performClaudeArchiveAction).not.toHaveBeenCalled()

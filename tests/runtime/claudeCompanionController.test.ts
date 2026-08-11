@@ -374,7 +374,10 @@ describe('Claude App Code aggregation', () => {
   })
 
   it.each(['completed', 'stopped'] as const)('routes a %s Claude task through the silent metadata provider adapter', async (phase) => {
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase }] })
+    const context = harness({
+      codeSessions: [{ sessionId: LOCAL_A, phase }],
+      archiveResult: { outcome: 'archived' }
+    })
     context.controller.start()
     await settle()
     const task = conversationsOf(context).all.find((row) => row.actionAlias === LOCAL_A)!
@@ -382,6 +385,7 @@ describe('Claude App Code aggregation', () => {
     await expect(context.controller.archive(task.key, task.revisionAt)).resolves.toBe(true)
     expect(context.archiveCalls).toEqual([LOCAL_A])
     expect(conversationsOf(context).all.some((row) => row.actionAlias === LOCAL_A)).toBe(false)
+    expect(context.messages.at(-1)).toBe('EyPc 归档已完成，任务已从 EyPc 列表移除；Claude 原生侧栏可能仍待刷新，当前尚未确认同步。')
     context.controller.dispose()
   })
 
