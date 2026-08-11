@@ -197,6 +197,7 @@ export interface CodexLaunchCandidate {
 export type CodexThreadStatus = 'active' | 'idle' | 'notLoaded' | 'systemError'
 export type CodexThreadActiveFlag = 'waitingOnApproval' | 'waitingOnUserInput'
 export type CodexTurnStatus = 'completed' | 'interrupted' | 'failed' | 'inProgress'
+export type CodexTurnMode = 'plan' | 'default' | 'unknown'
 export type CodexDesktopBridgeState = 'not-checked' | 'connecting' | 'connected' | 'not-running' | 'incompatible' | 'failed'
 export type CodexStatusAuthority = 'desktop-live' | 'app-server-live' | 'persisted-decision' | 'connector' | 'unavailable'
 export type CodexUnreadAuthority = 'desktop-live' | 'desktop-persisted' | 'unavailable'
@@ -218,6 +219,14 @@ export interface CodexHostThread {
   activeFlags: CodexThreadActiveFlag[]
   /** True only when every current actionable wait is an exact Plan implementation confirmation. */
   planImplementationOnly?: boolean
+  /** Durable lifecycle evidence: a completed Plan exists and no exact default-mode execution Turn superseded it. */
+  planReady?: boolean
+  /** Monotonic lifecycle identity for the currently completed Plan. */
+  planLifecycleRevision?: number
+  /** Exact latest Turn mode when the Provider can prove it without exposing Turn content. */
+  turnMode?: CodexTurnMode
+  /** True only after a targeted all-branch reread proved no newer active/waiting work. */
+  idleConfirmed?: boolean
   /** Ordinary activity is live-authoritative; finite waiting flags may also come from a verified local persisted decision. */
   statusAuthority?: CodexStatusAuthority
   /** Evidence provenance used to distinguish a replayed snapshot from a real later activity patch. */
@@ -295,7 +304,7 @@ export interface CodexPendingRecoverySnapshotV1 {
  * marked degraded, but its atomic task-state package is preserved rather than
  * being independently cleared by Controller or Renderer.
  */
-export const CODEX_TASK_STATE_REVISION = 'task-state-v9'
+export const CODEX_TASK_STATE_REVISION = 'task-state-v10'
 
 export interface CodexHostSnapshotV1 {
   version: 1
@@ -373,6 +382,10 @@ export interface CodexActivityDeltaEntryV2 {
   activeFlags?: CodexThreadActiveFlag[]
   /** Privacy-safe Plan subtype; omitted read-state-only entries must preserve the current value. */
   planImplementationOnly?: boolean
+  planReady?: boolean
+  planLifecycleRevision?: number
+  turnMode?: CodexTurnMode
+  idleConfirmed?: boolean
   statusAuthority?: CodexStatusAuthority
   activityEvidence?: CodexActivityEvidenceOrigin
   activityRevision?: number
@@ -745,6 +758,18 @@ export interface CodexTaskCard {
   activeFlags?: CodexThreadActiveFlag[]
   /** Current actionable wait contains only exact Plan implementation confirmation requests. */
   planImplementationOnly?: boolean
+  /** A completed Plan is available for implementation even when the implementation prompt is no longer live. */
+  planReady?: boolean
+  planLifecycleRevision?: number
+  /** EyPc-local Plan pause; excluded from dynamic groups, badges and navigation candidates. */
+  planPaused?: boolean
+  companionCapabilities?: {
+    open: boolean
+    archive: boolean
+    pause: boolean
+    resume: boolean
+    executePlan: boolean
+  }
   updatedAt: number
   pendingSince?: number
   createdAt?: number
@@ -1546,13 +1571,13 @@ function hasConfirmedCompletionOverLiveTask(thread: CodexHostThread) {
 }
 
 /**
- * An exact interrupted `turn/completed` event closes the activity epoch just
- * like an exact completion, unless the same task still carries an unresolved
- * input/approval request. This is intentionally narrower than generic failed
- * evidence: provider/transport failures keep their existing conservative gate.
+ * Compatibility projection only: interrupted evidence may clear a live shell
+ * after the Host has also confirmed the branch is idle. The V4 Kernel remains
+ * the sole canonical phase owner.
  */
 function hasExactInterruptedOverLiveTask(thread: CodexHostThread) {
   return thread.lastTurnStatus === 'interrupted'
+    && thread.idleConfirmed === true
     && isCodexConfirmedTerminalEvidence(thread.lastTurnEvidence)
     && (!thread.activeEvidenceSequence
       || !thread.terminalEvidenceSequence
@@ -1576,9 +1601,10 @@ function isExplicitlyStoppedTask(thread: CodexHostThread, desktopBridgeState?: C
   if (thread.lastTurnStatus === 'inProgress') return false
   const hasTerminalStopEvidence = thread.lastTurnStatus === 'interrupted' || thread.lastTurnStatus === 'failed'
   if (!hasTerminalStopEvidence) return false
-  // A user/exact-provider interrupted edge is itself the terminal watermark.
-  // It clears an older active shadow without fabricating desktop-live idle.
+  // Exact interruption alone is not a stop proof. Require the Host's targeted
+  // idle confirmation so a running Turn cannot be projected as “待继续”.
   if (thread.lastTurnStatus === 'interrupted'
+    && thread.idleConfirmed === true
     && isCodexConfirmedTerminalEvidence(thread.lastTurnEvidence)
     && (!thread.activeEvidenceSequence
       || !thread.terminalEvidenceSequence
