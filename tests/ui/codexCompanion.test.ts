@@ -199,7 +199,75 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-describe('Codex Companion V3 UI contract', () => {
+describe('Codex Companion V4 UI contract', () => {
+  it('renders Plan-ready four-slot actions, two-click execute confirmation and complete drawer/batch actions', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    const source = floatSnapshot('all')
+    const task = source.conversations.all.find((candidate) => candidate.key === TASK_FAILED)!
+    task.planReady = true
+    task.planLifecycleRevision = NOW - 2_000
+    task.planPaused = false
+    task.companionCapabilities = { open: true, archive: true, pause: true, resume: false, executePlan: true }
+    refreshTaskState(source)
+    const { wrapper, action } = mountFloat(true, source)
+    await wrapper.vm.$nextTick()
+    const row = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
+    expect(row.findAll('.task-inline-actions button').map((button) => button.text())).toEqual(['顶', '暂', '归', '执'])
+    expect(row.get('.action-hide').attributes('aria-label')).toContain('暂停 Plan')
+    expect(row.get('.action-create').attributes('aria-label')).toContain('执行')
+
+    await row.get('.action-hide').trigger('click')
+    expect(action).toHaveBeenCalledWith('codex.task.pausePlan', { key: TASK_FAILED, revisionAt: task.revisionAt })
+    action.mockClear()
+    await row.get('.action-create').trigger('click')
+    expect(row.get('.action-create').text()).toBe('确')
+    expect(action).toHaveBeenCalledWith('codex.task.executePlan', { key: TASK_FAILED, revisionAt: task.revisionAt })
+    await row.get('.action-create').trigger('click')
+    expect(action).toHaveBeenCalledTimes(2)
+    expect(row.get('.action-create').text()).toBe('执')
+
+    await row.trigger('contextmenu')
+    expect(wrapper.get('[data-drawer-action-id="task-new-thread"]').text()).toContain('在当前项目新建会话')
+    expect(wrapper.get('[data-drawer-action-id="task-new-thread-model"]').text()).toContain('选择模型新建会话')
+    expect(wrapper.get('[data-drawer-action-id="task-pause-plan"]').attributes('aria-label')).toBe('暂停 Plan')
+    expect(wrapper.get('[data-drawer-action-id="task-execute-plan"]').text()).toContain('执行原 Plan')
+    await wrapper.get('.float-side-panel [aria-label="关闭"]').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    await wrapper.get(`[data-focus-key="task:${TASK_DONE}"] .task-state-button`).trigger('click')
+    await wrapper.vm.$nextTick()
+    await wrapper.get('.float-batch-toolbar [aria-label^="打开当前多选的完整操作"]').trigger('click')
+    expect(wrapper.get('[data-drawer-action-id="batch-pause-plan"]').attributes('aria-label')).toContain('暂停 Plan（1）')
+    expect(wrapper.get('[data-drawer-action-id="batch-resume-plan"]').attributes()).toHaveProperty('disabled')
+  })
+
+  it('shows paused Plans before ordinary hidden tasks and exposes resume in the second slot', async () => {
+    const source = floatSnapshot('hidden')
+    const paused = source.conversations.all.find((candidate) => candidate.key === TASK_HIDDEN)!
+    paused.planReady = true
+    paused.planLifecycleRevision = NOW - 4_000
+    paused.planPaused = true
+    paused.companionCapabilities = { open: true, archive: true, pause: false, resume: true, executePlan: true }
+    const ordinary = source.conversations.all.find((candidate) => candidate.key === TASK_FAILED)!
+    ordinary.isHidden = true
+    ordinary.hiddenKind = 'activity'
+    source.conversations.hidden = [paused, ordinary]
+    source.conversations.stopped = source.conversations.stopped.filter((candidate) => candidate.key !== TASK_FAILED)
+    refreshTaskState(source)
+    const { wrapper, action } = mountFloat(true, source)
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.findAll('.float-status-section').map((section) => section.text())).toEqual([
+      expect.stringContaining('已暂停'),
+      expect.stringContaining('普通隐藏')
+    ])
+    const pausedRow = wrapper.get(`[data-focus-key="task:${TASK_HIDDEN}"]`)
+    expect(pausedRow.findAll('.task-inline-actions button').map((button) => button.text())).toEqual(['顶', '恢', '归', '执'])
+    await pausedRow.get('.action-hide').trigger('click')
+    expect(action).toHaveBeenCalledWith('codex.task.resumePlan', { key: TASK_HIDDEN, revisionAt: paused.revisionAt })
+  })
+
   it('separates unknown Claude evidence from the stopped section', async () => {
     const source = floatSnapshot('ongoing')
     const task = source.conversations.stopped.find((candidate) => candidate.key === TASK_FAILED)!
@@ -489,6 +557,18 @@ describe('Codex Companion V3 UI contract', () => {
     }
     const listenerBox: { current?: (value: CodexFloatSnapshotV1) => void } = {}
     const { wrapper } = mountFloat(true, source, {
+      runtimeIdentity: {
+        revision: 'runtime-identity-v1',
+        handshake: (expected) => ({
+          revision: 'runtime-identity-v1',
+          status: 'host-loaded',
+          expected,
+          actual: expected,
+          kernelRevision: expected.kernelRevision,
+          taskPackageRevision: expected.taskPackageRevision,
+          message: 'loaded'
+        })
+      },
       onSnapshot: (listener) => { listenerBox.current = listener; return () => undefined }
     })
     await wrapper.vm.$nextTick()

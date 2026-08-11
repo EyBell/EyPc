@@ -22,7 +22,7 @@ function thread(
   updatedAt: number,
   activeFlags: CodexHostThread['activeFlags'] = [],
   key = KEY,
-  evidence: Partial<Pick<CodexHostThread, 'createdAt' | 'firstPromptAt' | 'lastTurnStatus' | 'lastTurnStartedAt' | 'lastTurnCompletedAt' | 'lastTurnEvidence' | 'statusAuthority' | 'activityEvidence' | 'activityRevision' | 'waitingSince' | 'desktopActiveSince' | 'hasUnreadTurn' | 'unreadAuthority' | 'planImplementationOnly'>> = {}
+  evidence: Partial<Pick<CodexHostThread, 'createdAt' | 'firstPromptAt' | 'lastTurnStatus' | 'lastTurnStartedAt' | 'lastTurnCompletedAt' | 'lastTurnEvidence' | 'statusAuthority' | 'activityEvidence' | 'activityRevision' | 'waitingSince' | 'desktopActiveSince' | 'hasUnreadTurn' | 'unreadAuthority' | 'planImplementationOnly' | 'planReady' | 'planLifecycleRevision' | 'turnMode' | 'idleConfirmed'>> = {}
 ): CodexHostThread {
   return {
     key,
@@ -354,7 +354,7 @@ describe('Codex domain', () => {
 
   it.each([
     { name: 'exact active beats interrupted', status: 'active', flags: [], authority: 'desktop-live', turn: 'interrupted', evidence: 'inventory', bucket: 'ongoing', activity: 'active', archive: 'blocked-active' },
-    { name: 'exact interrupted terminal clears an older active shadow', status: 'active', flags: [], authority: 'desktop-live', turn: 'interrupted', evidence: 'turn-completed', bucket: 'stopped', activity: 'stopped', archive: 'allowed' },
+    { name: 'idle-confirmed interrupted terminal clears an older active shadow', status: 'active', flags: [], authority: 'desktop-live', turn: 'interrupted', evidence: 'turn-completed', idleConfirmed: true, bucket: 'stopped', activity: 'stopped', archive: 'allowed' },
     { name: 'pending input still outranks exact interrupted terminal', status: 'active', flags: ['waitingOnUserInput'], authority: 'desktop-live', turn: 'interrupted', evidence: 'turn-completed', bucket: 'ongoing', activity: 'waiting-input', archive: 'blocked-active' },
     { name: 'initial active conflict stays ongoing', status: 'notLoaded', flags: [], authority: 'desktop-live', turn: 'failed', evidence: 'targeted-after-exit', bucket: 'ongoing', activity: 'ongoing', archive: 'blocked-active' },
     { name: 'uncertain terminal stays ongoing', status: 'notLoaded', flags: [], authority: 'connector', turn: 'interrupted', evidence: 'inventory', bucket: 'ongoing', activity: 'ongoing', archive: 'blocked-active' },
@@ -362,7 +362,7 @@ describe('Codex domain', () => {
     { name: 'plain completed shape cannot beat active', status: 'active', flags: [], authority: 'desktop-live', turn: 'completed', evidence: 'inventory', bucket: 'ongoing', activity: 'active', archive: 'blocked-active' },
     { name: 'confirmed completion can close stale active', status: 'active', flags: [], authority: 'desktop-live', turn: 'completed', evidence: 'turn-completed', bucket: 'completed', activity: 'ongoing', archive: 'allowed' },
     { name: 'waiting still beats confirmed completion', status: 'active', flags: ['waitingOnUserInput'], authority: 'desktop-live', turn: 'completed', evidence: 'turn-completed', bucket: 'ongoing', activity: 'waiting-input', archive: 'blocked-active' }
-  ])('$name', ({ status, flags, authority, turn: turnStatus, evidence, bucket, activity, archive }) => {
+  ])('$name', ({ status, flags, authority, turn: turnStatus, evidence, idleConfirmed, bucket, activity, archive }) => {
     const result = projectConversations({
       threads: [thread(
         status as CodexHostThread['status'],
@@ -374,7 +374,8 @@ describe('Codex domain', () => {
           lastTurnStatus: turnStatus as CodexHostThread['lastTurnStatus'],
           lastTurnStartedAt: 900,
           ...(turnStatus === 'completed' ? { lastTurnCompletedAt: 950 } : {}),
-          lastTurnEvidence: evidence as CodexHostThread['lastTurnEvidence']
+          lastTurnEvidence: evidence as CodexHostThread['lastTurnEvidence'],
+          ...(idleConfirmed ? { idleConfirmed: true } : {})
         }
       )],
       receipts: [],
@@ -397,7 +398,8 @@ describe('Codex domain', () => {
         statusAuthority: 'desktop-live',
         lastTurnStatus: 'interrupted',
         lastTurnStartedAt: 900,
-        lastTurnEvidence: 'turn-completed'
+        lastTurnEvidence: 'turn-completed',
+        idleConfirmed: true
       })],
       receipts: [],
       lastTaskScanAt: 800,

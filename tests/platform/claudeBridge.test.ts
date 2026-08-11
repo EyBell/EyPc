@@ -672,7 +672,7 @@ describe('version-gated Claude metadata archive', () => {
 
     await expect(context.bridge.archiveCodeSession(LOCAL_A)).resolves.toMatchObject({
       outcome: 'archived',
-      message: 'EyPc 归档已完成，任务已从 EyPc 列表移除；Claude 原生侧栏可能仍待刷新，当前尚未确认同步。'
+      message: 'EyPc 已归档并移除。Claude 原生侧栏同步未确认，当前不受支持。'
     })
     const after = JSON.parse(readFileSync(context.filePath, 'utf8'))
     expect(after.isArchived).toBe(true)
@@ -692,7 +692,7 @@ describe('version-gated Claude metadata archive', () => {
     await expect(context.bridge.archiveCodeSession(LOCAL_A)).resolves.toMatchObject({
       outcome: 'archived',
       alreadyArchived: true,
-      message: 'EyPc 归档已完成，任务已从 EyPc 列表移除；Claude 原生侧栏可能仍待刷新，当前尚未确认同步。'
+      message: 'EyPc 已归档并移除。Claude 原生侧栏同步未确认，当前不受支持。'
     })
     expect(readFileSync(context.filePath)).toEqual(before)
     expect(context.execFile).not.toHaveBeenCalled()

@@ -7,11 +7,10 @@ import {
 import { buildCodexTaskStatePackage } from '../../src/domain/codexPresentation'
 import {
   applyCompanionTaskPackageViews,
-  buildCompanionTaskPackageDraft,
   COMPANION_TASK_KERNEL_REVISION,
   COMPANION_TASK_PACKAGE_REVISION,
-  type CompanionCanonicalTaskV3,
-  type CompanionTaskPackageV3
+  type CompanionCanonicalTaskV4,
+  type CompanionTaskPackageV4
 } from '../../src/domain/companionTaskPackage'
 
 const key = '0123456789abcdef'
@@ -39,7 +38,7 @@ function card(): CodexTaskCard {
   }
 }
 
-function canonical(patch: Partial<CompanionCanonicalTaskV3> = {}): CompanionCanonicalTaskV3 {
+function canonical(patch: Partial<CompanionCanonicalTaskV4> = {}): CompanionCanonicalTaskV4 {
   return {
     key,
     provider: 'codex',
@@ -70,14 +69,19 @@ function canonical(patch: Partial<CompanionCanonicalTaskV3> = {}): CompanionCano
     unreadKnown: true,
     unread: true,
     planImplementation: false,
+    planReady: false,
+    planLifecycleRevision: 0,
+    paused: false,
+    turnMode: 'unknown',
+    idleConfirmed: false,
     localPin: false,
     dynamicEligible: true,
-    capabilities: { open: true, archive: true },
+    capabilities: { open: true, archive: true, pause: false, resume: false, executePlan: false },
     ...patch
   }
 }
 
-function packageFor(task: CompanionCanonicalTaskV3 | null, revision: number): CompanionTaskPackageV3 {
+function packageFor(task: CompanionCanonicalTaskV4 | null, revision: number): CompanionTaskPackageV4 {
   const tasks = task ? [task] : []
   const phase = task?.phase
   const group = phase === 'running' ? 'active' : phase === 'stopped' ? 'stopped' : phase === 'completed' ? task?.unread ? 'unread' : 'completed' : null
@@ -116,7 +120,8 @@ function packageFor(task: CompanionCanonicalTaskV3 | null, revision: number): Co
         input: [],
         completedUnread: group === 'unread' ? [key] : [],
         archive: task?.capabilities.archive ? [key] : []
-      }
+      },
+      pausedKeys: task?.paused ? [key] : []
     }
   }
 }
@@ -154,7 +159,7 @@ describe('canonical Companion task projection', () => {
       revisionAt: 400,
       phaseRevision: 400,
       statusEnteredAt: 400,
-      capabilities: { open: true, archive: false }
+      capabilities: { open: true, archive: false, pause: false, resume: false, executePlan: false }
     }), 3))
     expect(state.conversations.ongoing[0]).toMatchObject({
       activityState: 'active',
@@ -179,7 +184,7 @@ describe('canonical Companion task projection', () => {
       phase: 'unknown',
       cycleTier: 'active',
       dynamicGroup: 'active',
-      capabilities: { open: true, archive: false }
+      capabilities: { open: true, archive: false, pause: false, resume: false, executePlan: false }
     }), 1)
     codexPackage.views.groups.active = [key]
     codexPackage.views.counts.active = 1
@@ -204,7 +209,7 @@ describe('canonical Companion task projection', () => {
       phase: 'unknown',
       cycleTier: 'none',
       dynamicGroup: 'stopped',
-      capabilities: { open: true, archive: false }
+      capabilities: { open: true, archive: false, pause: false, resume: false, executePlan: false }
     }), 2)
     claudePackage.providers = { codex: false, claude: true }
     claudePackage.views.groups.stopped = [key]
@@ -262,17 +267,5 @@ describe('canonical Companion task projection', () => {
       lastTurnCompletedAt: 180
     })
 
-    const rebuilt = buildCompanionTaskPackageDraft(state, {
-      enabled: true,
-      providers: { codex: true, claude: false },
-      complete: true,
-      draftRevision: 2
-    })
-    expect(rebuilt.tasks[0].archiveRequest).toMatchObject({
-      expectedUpdatedAt: 220,
-      expectedRevisionAt: 180,
-      expectedCompletionAt: 180,
-      expectedLastTurnStartedAt: 150
-    })
   })
 })

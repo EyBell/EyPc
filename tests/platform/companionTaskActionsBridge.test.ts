@@ -27,6 +27,20 @@ function target(provider: 'codex' | 'claude', key: string, revisionAt = 100) {
   }
 }
 
+function planTarget(key = 'plan-one', planLifecycleRevision = 200) {
+  return {
+    ...target('codex', key, 150),
+    phase: 'stopped',
+    canArchive: false,
+    planReady: true,
+    planLifecycleRevision,
+    paused: false,
+    canPause: true,
+    canResume: false,
+    canExecutePlan: true
+  }
+}
+
 function syncReady(actions: ReturnType<typeof createCompanionTaskActions>, targets: unknown[], focusedKey = '') {
   actions.sync({
     enabled: true,
@@ -226,5 +240,41 @@ describe('companion task action dispatcher', () => {
       expect.anything(),
       expect.objectContaining({ intentRecorded: true, confirmationRecorded: true })
     )
+  })
+
+  it('executes a Plan only after the second stable click and joins an in-flight execution', async () => {
+    let resolveExecution!: (value: unknown) => void
+    const executePlan = vi.fn(() => new Promise((resolvePromise) => { resolveExecution = resolvePromise }))
+    const actions = createCompanionTaskActions({ adapters: { codex: { executePlan } } })
+    syncReady(actions, [planTarget()], 'plan-one')
+
+    await expect(actions.executePlan({ key: 'plan-one', planLifecycleRevision: 200, source: 'execute-plan-button' }))
+      .resolves.toMatchObject({ outcome: 'confirmation-required' })
+    expect(executePlan).not.toHaveBeenCalled()
+
+    const started = actions.executePlan({ key: 'plan-one', planLifecycleRevision: 200, source: 'execute-plan-button' })
+    const joined = actions.executePlan({ key: 'plan-one', planLifecycleRevision: 200, source: 'execute-plan-button' })
+    await Promise.resolve()
+    expect(executePlan).toHaveBeenCalledTimes(1)
+    resolveExecution({ outcome: 'executed' })
+    await expect(started).resolves.toMatchObject({ outcome: 'executed', key: 'plan-one' })
+    await expect(joined).resolves.toMatchObject({ outcome: 'executed', key: 'plan-one' })
+  })
+
+  it('cancels Plan confirmation when alias, phase or lifecycle revision changes', async () => {
+    const executePlan = vi.fn(async () => ({ outcome: 'executed' }))
+    const actions = createCompanionTaskActions({ adapters: { codex: { executePlan } } })
+    syncReady(actions, [planTarget()], 'plan-one')
+    await actions.executePlan({ key: 'plan-one', planLifecycleRevision: 200 })
+
+    syncReady(actions, [{ ...planTarget(), actionAlias: 'new-private-alias' }], 'plan-one')
+    await expect(actions.executePlan({ key: 'plan-one', planLifecycleRevision: 200 }))
+      .resolves.toMatchObject({ outcome: 'confirmation-required' })
+    expect(executePlan).not.toHaveBeenCalled()
+
+    syncReady(actions, [planTarget('plan-one', 201)], 'plan-one')
+    await expect(actions.executePlan({ key: 'plan-one', planLifecycleRevision: 201 }))
+      .resolves.toMatchObject({ outcome: 'confirmation-required' })
+    expect(executePlan).not.toHaveBeenCalled()
   })
 })
