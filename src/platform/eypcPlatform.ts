@@ -1,6 +1,6 @@
 import { normalizeAppState } from '../domain/state'
 import { normalizeMqttArchiveState } from '../domain/mqtt'
-import type { AppState, FavoriteNode, FavoritePlatform, FavoriteRunnerMode, FavoriteRunRecord, KillRequest, KillResult, MqttArchiveState, MqttStorageStatus, PortProcess } from '../domain/types'
+import type { AppState, FavoriteNode, FavoritePlatform, FavoriteRunnerMode, FavoriteRunRecord, KillRequest, KillResult, MqttArchiveState, MqttStorageStatus, PortProcess, RuntimeDiagnosticsSettings } from '../domain/types'
 import type { LiveWindow, NativeWindowObservation, WindowActivationRequest, WindowInstanceProbeResult, WindowPlatform } from '../domain/windows'
 import {
   CODEX_TASK_STATE_REVISION,
@@ -33,8 +33,8 @@ import type {
 import {
   COMPANION_TASK_KERNEL_REVISION,
   COMPANION_TASK_PACKAGE_REVISION,
-  type CompanionTaskPackageDraftV1,
-  type CompanionTaskPackageV1
+  type CompanionTaskPackageDraftV3,
+  type CompanionTaskPackageV3
 } from '../domain/companionTaskPackage'
 
 export type PickedFavoriteKind = Exclude<FavoriteNode['kind'], 'group'>
@@ -224,6 +224,14 @@ export interface CodexFloatWorkspaceDiagnostics {
   visibleOnFullScreen: boolean
   checkedAt: number
   errorCode?: string
+  health?: {
+    alive: boolean
+    persistent: boolean
+    lastHeartbeatAt: number
+    lastRecreateAt: number
+    recoveryDeadline: number
+    interaction: 'idle' | 'drag' | 'resize'
+  }
 }
 
 export interface ClaudeBridgeSnapshot {
@@ -337,8 +345,8 @@ export interface ClaudeAppPresenceSnapshot {
 }
 
 export type CompanionNavigationProviderId = 'codex' | 'claude'
-export const COMPANION_NAVIGATION_REVISION = 'companion-navigation-v1'
-export const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v1'
+export const COMPANION_NAVIGATION_REVISION = 'companion-navigation-v3'
+export const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v3'
 
 export interface RuntimeIdentityExpectationV1 {
   hostAssetId: string
@@ -397,14 +405,17 @@ export interface CompanionTaskActionsBridge {
   inspect?(provider: CompanionNavigationProviderId): Promise<unknown>
   open(input: {
     key: string
-    source: 'manual' | 'attention' | 'cycle'
+    source: string
+    operationId?: string
     target?: CompanionTaskActionTarget
   }): Promise<CompanionNavigationResult>
   archive(input: {
     key: string
     revisionAt: number
     phase: string
-    source: 'card' | 'batch' | 'shortcut'
+    source: string
+    operationId?: string
+    confirmationRecorded?: boolean
     target?: CompanionTaskActionTarget
   }): Promise<{
     outcome: 'confirmation-required' | 'archived' | 'failed' | 'indeterminate'
@@ -413,6 +424,7 @@ export interface CompanionTaskActionsBridge {
     errorCode?: string
     message?: string
     alreadyArchived?: boolean
+    operationId?: string
   }>
   /** Uses the same process-owned five-second confirmation as the hot mainHide path. */
   shortcutArchive(): boolean
@@ -433,6 +445,7 @@ export interface CompanionNavigationResult {
   errorCode?: string
   message?: string
   confirmsRead?: boolean
+  operationId?: string
 }
 
 export interface CompanionNavigationDiagnostics {
@@ -457,17 +470,18 @@ export interface CompanionNavigationResultEvent {
   id: number
   provider: CompanionNavigationProviderId
   key: string
-  source?: 'cycle' | 'attention' | 'manual'
+  source?: string
   outcome: 'opened' | 'dispatched'
+  operationId?: string
   at: number
 }
 
-export type CompanionTaskIntentV1 =
-  | { action: 'cycle'; direction: -1 | 1 }
-  | { action: 'open'; key: string; source?: 'manual' | 'attention' }
-  | { action: 'open-attention'; kind: 'input' | 'completed-unread' }
-  | { action: 'archive-focused' }
-  | { action: 'archive'; key: string; revisionAt: number; phase: string; source: 'card' | 'batch' | 'shortcut' }
+export type CompanionTaskIntentV3 =
+  | { action: 'cycle'; direction: -1 | 1; source?: string; operationId?: string }
+  | { action: 'open'; key: string; source?: string; operationId?: string }
+  | { action: 'open-attention'; kind: 'input' | 'completed-unread'; source?: string; operationId?: string }
+  | { action: 'archive-focused'; source?: string; operationId?: string }
+  | { action: 'archive'; key: string; revisionAt: number; phase: string; source: string; operationId?: string; confirmationRecorded?: boolean }
 
 export interface CompanionTaskKernelBridge {
   revision: typeof COMPANION_TASK_KERNEL_REVISION
@@ -478,20 +492,21 @@ export interface CompanionTaskKernelBridge {
     lease: number
     retained: boolean
     ready: boolean
-    package: CompanionTaskPackageV1
+    package: CompanionTaskPackageV3
   }
-  syncPackage(input: { lease: number; draft: CompanionTaskPackageDraftV1 }): CompanionTaskPackageV1 | null
+  syncPackage(input: { lease: number; draft: CompanionTaskPackageDraftV3 }): CompanionTaskPackageV3 | null
   detach?(input: { lease: number }): boolean
-  dispatch(input: CompanionTaskIntentV1): Promise<CompanionNavigationResult | {
+  dispatch(input: CompanionTaskIntentV3): Promise<CompanionNavigationResult | {
     outcome: 'confirmation-required' | 'archived' | 'failed' | 'indeterminate'
     provider?: CompanionNavigationProviderId
     key?: string
     errorCode?: string
     message?: string
     alreadyArchived?: boolean
+    operationId?: string
   }>
-  getPackage(): CompanionTaskPackageV1
-  onPackage?(listener: (value: CompanionTaskPackageV1) => void): () => void
+  getPackage(): CompanionTaskPackageV3
+  onPackage?(listener: (value: CompanionTaskPackageV3) => void): () => void
   onResult?(listener: (event: CompanionNavigationResultEvent) => void): () => void
   takeResults?(input: { lease: number }): CompanionNavigationResultEvent[]
   diagnostics(): {
@@ -524,10 +539,11 @@ export interface CompanionNavigationBridge {
     cycleKeys: string[]
   }): boolean
   detach?(input: { lease: number }): boolean
-  cycle(direction: -1 | 1): Promise<CompanionNavigationResult>
+  cycle(direction: -1 | 1, input?: { operationId?: string; source?: string }): Promise<CompanionNavigationResult>
   open(input: {
     key: string
-    source: 'manual' | 'attention'
+    source: string
+    operationId?: string
     target?: CompanionNavigationTarget
   }): Promise<CompanionNavigationResult>
   onResult?(listener: (event: CompanionNavigationResultEvent) => void): () => void
@@ -535,10 +551,109 @@ export interface CompanionNavigationBridge {
   diagnostics(): CompanionNavigationDiagnostics
 }
 
+export interface RuntimeDiagnosticEventV3 {
+  v: 2 | 3
+  at: number
+  iso: string
+  seq: number
+  sessionId: string
+  processId: number
+  level: 'error' | 'info' | 'debug'
+  scope: string
+  event: string
+  outcome: string
+  code?: string
+  errorCode?: string
+  durationMs?: number
+  count?: number
+  cache?: string
+  provider?: string
+  phase?: string
+  reason?: string
+  evidence?: string
+  taskRef?: string
+  operationId?: string
+  traceId?: string
+  source?: string
+  beforePhase?: string
+  afterPhase?: string
+  beforeUnread?: boolean
+  afterUnread?: boolean
+  turnStartedAt?: number
+  statusEnteredAt?: number
+  terminalAt?: number
+  observationGeneration?: number
+  semanticRevision?: number
+  packageRevision?: number
+  details?: Record<string, unknown>
+}
+
+export interface RuntimeDiagnosticInputV3 {
+  level: 'error' | 'info' | 'debug'
+  scope: string
+  event: string
+  outcome: string
+  code?: string
+  errorCode?: string
+  durationMs?: number
+  count?: number
+  cache?: string
+  provider?: string
+  phase?: string
+  reason?: string
+  evidence?: string
+  taskRef?: string
+  operationId?: string
+  traceId?: string
+  source?: string
+  beforePhase?: string
+  afterPhase?: string
+  beforeUnread?: boolean
+  afterUnread?: boolean
+  turnStartedAt?: number
+  statusEnteredAt?: number
+  terminalAt?: number
+  observationGeneration?: number
+  semanticRevision?: number
+  packageRevision?: number
+  details?: Record<string, unknown>
+}
+
+export interface RuntimeDiagnosticsSnapshotV3 {
+  revision: 'eypc-runtime-diagnostics-v3'
+  status: 'ok' | 'degraded' | 'disabled' | 'unavailable'
+  updatedAt: number
+  sessionId: string
+  processId: number
+  settings: RuntimeDiagnosticsSettings
+  directory: string
+  activeFile: string
+  totals: { events: number; filtered: number; debug: number; info: number; error: number; slow: number; writeFailures: number }
+  storage: { fileCount: number; totalBytes: number; maxFileBytes: number; maxTotalBytes: number; retentionDays: number }
+  recent: RuntimeDiagnosticEventV3[]
+}
+
+export interface RuntimeDiagnosticsClearResultV3 {
+  outcome: 'cleared' | 'partial' | 'empty' | 'failed' | 'unavailable'
+  removedFiles: number
+  failedFiles: number
+  remainingFiles: number
+  remainingBytes: number
+}
+
 export interface EypcPlatformApi {
   runtimeIdentity?: RuntimeIdentityBridgeV1
   /** Renderer-owned result of the Main/Preload identity handshake. */
   runtimeIdentityStatus?: RuntimeIdentityHandshakeV1
+  diagnostics?: {
+    revision: 'eypc-runtime-diagnostics-v3'
+    snapshot(): RuntimeDiagnosticsSnapshotV3
+    record(input: RuntimeDiagnosticInputV3): RuntimeDiagnosticEventV3 | null
+    configure(settings: RuntimeDiagnosticsSettings): RuntimeDiagnosticsSnapshotV3
+    openDirectory(): Promise<FileActionResult>
+    openFile?(): Promise<FileActionResult>
+    clear?(): RuntimeDiagnosticsClearResultV3
+  }
   storage: {
     getState(): AppState
     setState(state: AppState): boolean

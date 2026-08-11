@@ -32,10 +32,8 @@ import { claudeRegistrationRows, claudeSourceStatusText, resolveCompanionWaterBa
 import {
   CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS,
   CODEX_MAX_QUOTA_REFRESH_SECONDS,
-  CODEX_MAX_TASK_REFRESH_SECONDS,
   CODEX_MIN_DYNAMIC_TASK_WINDOW_HOURS,
-  CODEX_MIN_QUOTA_REFRESH_SECONDS,
-  CODEX_MIN_TASK_REFRESH_SECONDS
+  CODEX_MIN_QUOTA_REFRESH_SECONDS
 } from '../domain/codex'
 import type {
   CodexColorSettings,
@@ -46,6 +44,7 @@ import type {
   CodexSavedThemePreset,
   CodexWaterAppearanceSettings
 } from '../domain/codex'
+import type { RuntimeDiagnosticsLevel } from '../domain/types'
 import type { CodexRuntimeView } from '../runtime/codexController'
 
 const props = defineProps<{ snapshot: CodexRuntimeView }>()
@@ -68,6 +67,15 @@ const configTabs: Array<{ id: CodexConfigTabId; label: string }> = [
   { id: 'runtime', label: '运行' }
 ]
 const activeConfigTab = ref<CodexConfigTabId>('shortcuts')
+
+function configureRuntimeDiagnostics(input: { enabled?: boolean; level?: RuntimeDiagnosticsLevel }) {
+  const settings = props.snapshot.runtimeDiagnostics?.settings
+  if (!settings) return
+  emit('dispatch', 'runtime.logs.configure', {
+    enabled: input.enabled ?? settings.enabled,
+    level: input.level ?? settings.level
+  })
+}
 
 function configTabButtonId(id: CodexConfigTabId): string {
   return `codex-config-tab-${id}`
@@ -213,6 +221,22 @@ const environmentPresentation = computed(() => buildCodexEnvironmentPresentation
   props.snapshot.environment,
   props.snapshot.activityDecisionDiagnostics
 ))
+
+const runtimeDiagnosticHighlights = computed(() => (props.snapshot.runtimeDiagnostics?.recent || [])
+  .filter((entry) => entry.level === 'error' || (entry.durationMs || 0) >= 250)
+  .slice(-6)
+  .reverse())
+
+function formatDiagnosticBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0 KB'
+  if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function formatDiagnosticTime(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '等待事件'
+  return new Date(value).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
 
 function saveLaunchPath() {
   const candidate = manualLaunchPath.value.trim()
@@ -394,10 +418,10 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
     aria-label="Codex Companion 配置"
     :data-companion-package-revision="snapshot.companionTaskPackage.packageRevision || undefined"
   >
-  <header class="codex-config-hero" aria-label="Codex Companion 配置总览">
+  <header class="codex-config-hero" aria-label="额度任务悬浮球配置总览">
     <div class="codex-hero-copy">
-      <span class="codex-eyebrow"><Bot :size="15" /> Codex Companion</span>
-      <h1>额度悬浮与任务桌宠</h1>
+      <span class="codex-eyebrow"><Bot :size="15" /> CODEX · CLAUDE COMPANION</span>
+      <h1>额度任务悬浮球</h1>
     </div>
       <div class="codex-hero-actions">
         <button
@@ -417,16 +441,6 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
         </button>
         <span class="codex-status-pill" :class="snapshot.quota.status" :title="statusLabel">{{ statusLabel }}</span>
         <CodexStyleSwitch :model-value="snapshot.settings.displayStyle" @update:model-value="changeStyle" />
-        <button
-          type="button"
-          class="primary"
-          :disabled="snapshot.refreshing"
-          data-operation-tooltip="刷新"
-          data-operation-description="立即重新读取额度、环境与会话快照。"
-          @click="$emit('dispatch', 'codex.refresh')"
-        >
-          <RefreshCw :size="15" :class="{ spinning: snapshot.refreshing }" /> 刷新
-        </button>
       </div>
     </header>
 
@@ -513,7 +527,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
           :disabled="snapshot.refreshing || snapshot.environment.checking"
           data-operation-tooltip="重新检测"
           data-operation-description="立即重新核查当前 Codex 运行环境与连接可用性。"
-          @click="$emit('dispatch', 'codex.refresh')"
+          @click="$emit('dispatch', 'codex.inspect-environment')"
         >
           <RefreshCw :size="14" :class="{ spinning: snapshot.refreshing || snapshot.environment.checking }" />重新检测
         </button>
@@ -650,7 +664,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             type="button"
             class="codex-tip"
             aria-label="任务区域说明"
-            data-tip="任务视图按最新已启动时间排序；仅展示可见会话摘要，不显示正文。"
+            data-tip="任务先按状态分组，组内统一按最近提问时间倒序；仅展示可见会话摘要，不显示正文。"
           >i</button>
         </div>
         <label class="codex-switch-row">
@@ -659,23 +673,6 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
           <i />
         </label>
         <div class="codex-form-grid">
-          <label>
-            <span class="codex-label-row">
-              <span>完整校对频率（秒）</span>
-            </span>
-            <input
-              class="codex-number"
-              type="number"
-              :min="CODEX_MIN_TASK_REFRESH_SECONDS"
-              :max="CODEX_MAX_TASK_REFRESH_SECONDS"
-              step="1"
-              :value="snapshot.settings.taskRefreshSeconds"
-              @change="update({ taskRefreshSeconds: Number(($event.target as HTMLInputElement).value) })"
-              title="完整任务校对周期"
-              data-operation-tooltip="完整校对频率（秒）"
-              data-operation-description="按整数秒兜底发现漏事件和核对完整清单；0 表示仅手动，最大 86400 秒。新增任务、待输入与完成事件仍走快速校对。"
-            />
-          </label>
           <label>
             <span class="codex-label-row">
               <span>时间窗口（天）</span>
@@ -914,12 +911,12 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
 
       <article v-if="activeConfigTab === 'runtime'" class="codex-panel codex-settings-section">
         <div class="codex-panel-title">
-          <div><CircleGauge :size="17" /><strong>刷新与 Codex 配置</strong></div>
+          <div><CircleGauge :size="17" /><strong>额度与 Codex 配置</strong></div>
           <button
             type="button"
             class="codex-tip"
-            aria-label="刷新与配置区域说明"
-            data-tip="包含模型策略、额度刷新与窗口几何设置。"
+            aria-label="额度与配置区域说明"
+            data-tip="包含模型策略、额度自动更新与窗口几何设置。"
           >i</button>
         </div>
         <div class="codex-config-facts">
@@ -940,7 +937,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               :value="snapshot.settings.quotaRefreshSeconds"
               @change="update({ quotaRefreshSeconds: Number(($event.target as HTMLInputElement).value) })"
               data-operation-tooltip="额度刷新（秒）"
-              data-operation-description="按整数秒设置自动额度刷新周期；0 表示仅手动，最大 86400 秒。"
+              data-operation-description="按整数秒设置自动额度刷新周期；默认 300 秒，最大 86400 秒。"
             />
           </label>
           <button
@@ -997,6 +994,88 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             <button type="button" class="codex-tip" aria-label="跨桌面置顶说明" :data-tip="snapshot.floatHost.workspaceVisibility?.allWorkspaces && snapshot.floatHost.workspaceVisibility?.visibleOnFullScreen ? '当前显示器的所有 Space 与全屏 Space 可见' : snapshot.floatHost.workspaceVisibility?.errorCode || '等待悬浮窗宿主核验'">i</button>
           </span>
         </div>
+        <div v-if="snapshot.floatHost.workspaceVisibility?.health" class="codex-size-summary codex-float-health">
+          <span>
+            <strong>{{ snapshot.floatHost.workspaceVisibility.health.recoveryDeadline > Date.now() ? '悬浮球健康：正在恢复' : snapshot.floatHost.workspaceVisibility.health.alive ? '悬浮球健康：心跳通道已建立' : snapshot.floatHost.workspaceVisibility.health.persistent ? '悬浮球健康：等待自动恢复' : '悬浮球健康：当前未启用' }}</strong>
+            <button type="button" class="codex-tip" aria-label="悬浮球健康说明" :data-tip="`最近心跳 ${formatDiagnosticTime(snapshot.floatHost.workspaceVisibility.health.lastHeartbeatAt)} · 最近重建 ${formatDiagnosticTime(snapshot.floatHost.workspaceVisibility.health.lastRecreateAt)} · 当前交互 ${snapshot.floatHost.workspaceVisibility.health.interaction}`">i</button>
+          </span>
+        </div>
+        <section v-if="snapshot.runtimeDiagnostics" class="codex-runtime-log" aria-labelledby="codex-runtime-log-title">
+          <header>
+            <div>
+              <strong id="codex-runtime-log-title">全局安装诊断日志</strong>
+              <small>精确记录运行 ID、Provider 状态、水位、缓存、路径、动作结果与耗时；可在这里直接启停和切换等级，设置页保留同一入口。</small>
+            </div>
+            <span :class="`is-${snapshot.runtimeDiagnostics.status}`">{{ snapshot.runtimeDiagnostics.status === 'ok' ? '正常写入' : snapshot.runtimeDiagnostics.status === 'degraded' ? '写入降级' : snapshot.runtimeDiagnostics.status === 'disabled' ? '已关闭' : '不可用' }}</span>
+          </header>
+          <div class="codex-runtime-log-controls" role="group" aria-label="安装诊断日志控制">
+            <label class="codex-runtime-log-toggle">
+              <input
+                type="checkbox"
+                aria-label="启用安装诊断日志"
+                :checked="snapshot.runtimeDiagnostics.settings.enabled"
+                @change="configureRuntimeDiagnostics({ enabled: ($event.target as HTMLInputElement).checked })"
+              />
+              <span>
+                <strong>{{ snapshot.runtimeDiagnostics.settings.enabled ? '日志已开启' : '日志已关闭' }}</strong>
+                <small>立即生效并持久化</small>
+              </span>
+            </label>
+            <label class="codex-runtime-log-level" for="codex-runtime-diagnostics-level">
+              <span>记录级别</span>
+              <select
+                id="codex-runtime-diagnostics-level"
+                aria-label="安装诊断日志记录级别"
+                :value="snapshot.runtimeDiagnostics.settings.level"
+                @change="configureRuntimeDiagnostics({ level: ($event.target as HTMLSelectElement).value as RuntimeDiagnosticsLevel })"
+              >
+                <option value="error">error · 失败</option>
+                <option value="info">info · 关键流程</option>
+                <option value="debug">debug · 完整诊断</option>
+              </select>
+            </label>
+          </div>
+          <dl class="codex-runtime-log-facts">
+            <div><dt>事件</dt><dd>{{ snapshot.runtimeDiagnostics.totals.events }}</dd></div>
+            <div><dt>慢操作 ≥250ms</dt><dd>{{ snapshot.runtimeDiagnostics.totals.slow }}</dd></div>
+            <div><dt>debug / info / error</dt><dd>{{ snapshot.runtimeDiagnostics.totals.debug }} / {{ snapshot.runtimeDiagnostics.totals.info }} / {{ snapshot.runtimeDiagnostics.totals.error }}</dd></div>
+            <div><dt>落盘</dt><dd>{{ snapshot.runtimeDiagnostics.storage.fileCount }} 文件 · {{ formatDiagnosticBytes(snapshot.runtimeDiagnostics.storage.totalBytes) }}</dd></div>
+          </dl>
+          <div class="codex-runtime-log-actions" role="group" aria-label="安装诊断日志文件操作">
+            <button
+              type="button"
+              aria-label="打开当前安装诊断日志文件"
+              data-operation-tooltip="打开当前日志文件"
+              :data-disabled-reason="snapshot.runtimeDiagnostics.activeFile ? undefined : '尚未生成日志文件'"
+              :disabled="!snapshot.runtimeDiagnostics.activeFile"
+              @click="emit('dispatch', 'runtime.logs.openFile')"
+            >打开当前文件</button>
+            <button
+              type="button"
+              aria-label="打开安装诊断日志目录"
+              data-operation-tooltip="在文件管理器中打开日志目录"
+              @click="emit('dispatch', 'runtime.logs.openDirectory')"
+            >打开日志目录</button>
+            <button
+              type="button"
+              class="danger"
+              aria-label="清空安装诊断日志文件"
+              data-operation-tooltip="清空安装诊断日志"
+              :data-disabled-reason="snapshot.runtimeDiagnostics.storage.fileCount ? undefined : '当前没有可清理的日志文件'"
+              :disabled="snapshot.runtimeDiagnostics.storage.fileCount === 0"
+              @click="emit('dispatch', 'runtime.logs.clear')"
+            >清空日志</button>
+          </div>
+          <ul v-if="runtimeDiagnosticHighlights.length" class="codex-runtime-log-events" aria-label="最近慢操作与异常">
+            <li v-for="entry in runtimeDiagnosticHighlights" :key="`${entry.sessionId}:${entry.seq}`" :class="`is-${entry.level}`">
+              <time :datetime="new Date(entry.at).toISOString()">{{ formatDiagnosticTime(entry.at) }}</time>
+              <strong>{{ entry.scope }} · {{ entry.event }}</strong>
+              <span>{{ entry.outcome }}<template v-if="entry.code"> · {{ entry.code }}</template><template v-if="entry.durationMs"> · {{ entry.durationMs }}ms</template><template v-if="entry.cache"> · cache:{{ entry.cache }}</template></span>
+            </li>
+          </ul>
+          <p v-else class="codex-runtime-log-empty">暂无慢操作或异常事件。</p>
+          <footer>级别 {{ snapshot.runtimeDiagnostics.settings.level }}；单文件上限 {{ formatDiagnosticBytes(snapshot.runtimeDiagnostics.storage.maxFileBytes) }}，总量上限 {{ formatDiagnosticBytes(snapshot.runtimeDiagnostics.storage.maxTotalBytes) }}，保留 {{ snapshot.runtimeDiagnostics.storage.retentionDays }} 天；最近事件 {{ formatDiagnosticTime(snapshot.runtimeDiagnostics.updatedAt) }}。不写入提示词、对话正文、命令参数、stdout/stderr、凭据或隐藏推理。</footer>
+        </section>
       </article>
     </div>
     </section>

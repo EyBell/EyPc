@@ -18,7 +18,7 @@ export const FEATURES: FeatureDefinition[] = [
   { id: 'mqtt', title: 'MQTT', description: '快速连接 MQTT over WebSocket 并归档收发记录' },
   { id: 'favorites', title: '文件收藏', description: '管理文件和文件夹收藏、标签、分组和颜色' },
   { id: 'windows', title: '窗口跳转', description: '收藏桌面窗口、配置稳定槽位并安全跳转' },
-  { id: 'codex', title: 'Codex', description: '启用后首次自动检测 Codex 环境，并配置额度悬浮球与任务收件箱' },
+  { id: 'codex', title: 'Codex', description: '启用后首次自动检测 Codex 环境，并配置额度任务悬浮球' },
   { id: 'settings', title: '设置', description: '管理快捷键和运行时配置' }
 ]
 

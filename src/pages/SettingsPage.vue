@@ -2,10 +2,11 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Ban, Braces, Keyboard, MoreHorizontal, RotateCcw, X } from '@lucide/vue'
 import FeatureHelpDialog from '../components/FeatureHelpDialog.vue'
-import type { AppSettings, AppTabId, FeatureConfig, KeybindingOverride, MqttStorageStatus, ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
+import type { AppSettings, AppTabId, FeatureConfig, KeybindingOverride, MqttStorageStatus, RuntimeDiagnosticsLevel, ShortcutProfileId, ShortcutProfileMap } from '../domain/types'
 import { getFeatureHelp, hasFeatureHelp, type FeatureHelpDoc } from '../help/guides'
 import type { RuntimeActionDefinition } from '../runtime/action/types'
 import type { WindowActivationDiagnostic, WindowOperationDebugRecord } from '../runtime/appRuntime'
+import type { RuntimeDiagnosticsSnapshotV3 } from '../platform/eypcPlatform'
 import { featureDefinitionFor } from '../runtime/feature/featureRegistry'
 import {
   LAYER_PRIORITY,
@@ -23,7 +24,7 @@ import { formatShortcutLabel, formatShortcutList, normalizeShortcutId, shortcutF
 
 type SettingsTabId = 'shortcuts' | 'maintenance'
 type ShortcutScopeId = 'all' | 'global' | 'ports' | 'mqtt' | 'favorites' | 'windows' | 'codex' | 'settings'
-type MaintenanceSectionId = 'features' | 'tools' | 'layers' | 'storage' | 'commands' | 'resolution' | 'reservations' | 'window-diagnostics'
+type MaintenanceSectionId = 'features' | 'tools' | 'layers' | 'storage' | 'commands' | 'resolution' | 'reservations' | 'runtime-logs' | 'window-diagnostics'
 
 interface KeybindingUpdatePayload {
   commandId: string
@@ -45,6 +46,7 @@ const props = defineProps<{
   persistedSettingsTabId?: SettingsTabId
   persistedMaintenanceSectionId?: MaintenanceSectionId
   settings: AppSettings
+  runtimeDiagnostics: RuntimeDiagnosticsSnapshotV3
   mqttStorageStatus: MqttStorageStatus
   windowActivationDiagnostics?: WindowActivationDiagnostic[]
   windowOperationTraceEnabled?: boolean
@@ -191,6 +193,13 @@ const maintenanceSections = computed<Array<{ id: MaintenanceSectionId; label: st
   { id: 'resolution', label: '解析候选', meta: previewResult.value.winner?.actionId || '未命中' },
   { id: 'reservations', label: '保留键与接管层', meta: `${SHORTCUT_RESERVATION_RULES.length} 条规则` },
   {
+    id: 'runtime-logs',
+    label: '安装诊断日志',
+    meta: props.runtimeDiagnostics.status === 'disabled'
+      ? '已关闭'
+      : `${props.runtimeDiagnostics.settings.level.toUpperCase()} · ${props.runtimeDiagnostics.storage.fileCount} 文件`
+  },
+  {
     id: 'window-diagnostics',
     label: '窗口诊断',
     meta: props.windowOperationTraceEnabled
@@ -202,6 +211,32 @@ const maintenanceSections = computed<Array<{ id: MaintenanceSectionId; label: st
 const windowActivationDiagnostics = computed(() => props.windowActivationDiagnostics || [])
 const windowOperationTraces = computed(() => props.windowOperationTraces || [])
 const latestWindowActivationDiagnostic = computed(() => windowActivationDiagnostics.value[0] || null)
+
+function runtimeDiagnosticsStatusLabel() {
+  if (props.runtimeDiagnostics.status === 'disabled') return '已关闭'
+  if (props.runtimeDiagnostics.status === 'ok') return '正常写入'
+  if (props.runtimeDiagnostics.status === 'degraded') return '写入降级'
+  return '宿主不可用'
+}
+
+function formatRuntimeDiagnosticBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return '0 B'
+  if (value < 1024) return `${Math.round(value)} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function runtimeDiagnosticTime(value: number) {
+  if (!value) return '尚无事件'
+  return new Date(value).toLocaleString('zh-CN', { hour12: false })
+}
+
+function configureRuntimeDiagnostics(input: { enabled?: boolean; level?: RuntimeDiagnosticsLevel }) {
+  emit('dispatch', 'runtime.logs.configure', {
+    enabled: input.enabled ?? props.runtimeDiagnostics.settings.enabled,
+    level: input.level ?? props.runtimeDiagnostics.settings.level
+  })
+}
 
 function activationEntryLabel(diagnostic: WindowActivationDiagnostic) {
   return diagnostic.entry === 'slot' ? `全局槽 ${diagnostic.slot || '—'}` : '手动激活'
@@ -1028,6 +1063,10 @@ function isRecordableShortcutId(shortcutId: string) {
             <strong>保留键与接管层</strong>
             <small>{{ SHORTCUT_RESERVATION_RULES.length }} 条保留键规则</small>
           </span>
+          <span v-else-if="maintenanceSectionId === 'runtime-logs'">
+            <strong>安装诊断日志</strong>
+            <small>{{ runtimeDiagnosticsStatusLabel() }} · {{ props.runtimeDiagnostics.settings.level.toUpperCase() }}</small>
+          </span>
           <span v-else>
             <strong>窗口诊断</strong>
             <small>会话级激活记录；正式安装不在窗口列表侧栏显示</small>
@@ -1269,6 +1308,86 @@ function isRecordableShortcutId(shortcutId: string) {
               <small>{{ rule.layer }} · {{ rule.when || 'always' }}</small>
               <small>{{ rule.description }}</small>
             </span>
+          </div>
+        </div>
+
+        <div v-else-if="maintenanceSectionId === 'runtime-logs'" class="maintenance-panel-body maintenance-runtime-log-body" data-role="settings-runtime-diagnostics">
+          <div class="settings-subpanel">
+            <h3>安装后的完整运行链</h3>
+            <p class="empty-note">当前版本默认开启并使用 debug，便于完整核对状态、水位、缓存与重复读取；定位结束后可按需要切到 info/error 或关闭。</p>
+            <div class="maintenance-row runtime-log-control-row">
+              <span>日志模块</span>
+              <label class="tool-preview-toggle">
+                <input
+                  type="checkbox"
+                  aria-label="安装诊断日志开关"
+                  :checked="props.runtimeDiagnostics.settings.enabled"
+                  @change="configureRuntimeDiagnostics({ enabled: ($event.target as HTMLInputElement).checked })"
+                />
+                <strong>{{ props.runtimeDiagnostics.settings.enabled ? '已开启' : '已关闭' }}</strong>
+              </label>
+              <small>开关会立即生效并持久化；关闭后不再写入新的运行事件。</small>
+            </div>
+            <div class="maintenance-row runtime-log-control-row">
+              <label for="runtime-diagnostics-level">记录级别</label>
+              <select
+                id="runtime-diagnostics-level"
+                aria-label="安装诊断日志记录级别"
+                :value="props.runtimeDiagnostics.settings.level"
+                @change="configureRuntimeDiagnostics({ level: ($event.target as HTMLSelectElement).value as RuntimeDiagnosticsLevel })"
+              >
+                <option value="error">error · 只记录失败</option>
+                <option value="info">info · 启动、动作、状态变化与失败</option>
+                <option value="debug">debug · 再记录水位、缓存、队列与未命中</option>
+              </select>
+              <small>级别变化立即生效；debug 信息最多，适合安装后复现问题。</small>
+            </div>
+            <div class="maintenance-row">
+              <span>当前状态</span>
+              <strong>{{ runtimeDiagnosticsStatusLabel() }}</strong>
+              <small>会话 {{ props.runtimeDiagnostics.sessionId || '—' }} · 进程 {{ props.runtimeDiagnostics.processId || '—' }} · 最近事件 {{ runtimeDiagnosticTime(props.runtimeDiagnostics.updatedAt) }}</small>
+            </div>
+            <div class="maintenance-row runtime-log-path">
+              <span>日志目录</span>
+              <code :title="props.runtimeDiagnostics.directory">{{ props.runtimeDiagnostics.directory || '当前宿主未提供目录' }}</code>
+              <small>纯文本 JSONL；每行一个带时间、顺序号和会话 ID 的结构化事件。</small>
+            </div>
+            <div class="maintenance-row runtime-log-path">
+              <span>当前文件</span>
+              <code :title="props.runtimeDiagnostics.activeFile">{{ props.runtimeDiagnostics.activeFile || '尚未创建' }}</code>
+              <small>单文件 {{ formatRuntimeDiagnosticBytes(props.runtimeDiagnostics.storage.maxFileBytes) }}，总量 {{ formatRuntimeDiagnosticBytes(props.runtimeDiagnostics.storage.maxTotalBytes) }}，保留 {{ props.runtimeDiagnostics.storage.retentionDays }} 天。</small>
+            </div>
+            <div class="maintenance-row">
+              <span>事件统计</span>
+              <strong>{{ props.runtimeDiagnostics.totals.events }} 已写入 · {{ props.runtimeDiagnostics.totals.filtered }} 已按级别跳过</strong>
+              <small>debug {{ props.runtimeDiagnostics.totals.debug }} · info {{ props.runtimeDiagnostics.totals.info }} · error {{ props.runtimeDiagnostics.totals.error }} · 慢操作 {{ props.runtimeDiagnostics.totals.slow }} · {{ props.runtimeDiagnostics.storage.fileCount }} 文件 / {{ formatRuntimeDiagnosticBytes(props.runtimeDiagnostics.storage.totalBytes) }}</small>
+            </div>
+            <div class="runtime-log-actions">
+              <button
+                type="button"
+                aria-label="打开当前安装诊断日志文件"
+                data-operation-tooltip="打开当前日志文件"
+                :data-disabled-reason="props.runtimeDiagnostics.activeFile ? undefined : '尚未生成日志文件'"
+                :disabled="!props.runtimeDiagnostics.activeFile"
+                @click="emit('dispatch', 'runtime.logs.openFile')"
+              >打开当前文件</button>
+              <button
+                type="button"
+                aria-label="打开安装诊断日志目录"
+                data-operation-tooltip="在文件管理器中打开日志目录"
+                @click="emit('dispatch', 'runtime.logs.openDirectory')"
+              >打开日志目录</button>
+              <button
+                type="button"
+                class="danger"
+                aria-label="清空安装诊断日志文件"
+                data-operation-tooltip="清空安装诊断日志"
+                :data-disabled-reason="props.runtimeDiagnostics.storage.fileCount ? undefined : '当前没有可清理的日志文件'"
+                :disabled="props.runtimeDiagnostics.storage.fileCount === 0"
+                @click="emit('dispatch', 'runtime.logs.clear')"
+              >清空日志</button>
+            </div>
+            <p class="empty-note">日志保留精确的运行 ID、Provider 状态、修订、水位、缓存来源、路径、动作结果与耗时；不会写入提示词、对话正文、命令参数、stdout/stderr、凭据或隐藏推理。</p>
           </div>
         </div>
 

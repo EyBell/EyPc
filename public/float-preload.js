@@ -56,7 +56,10 @@ const CHANNELS = {
   resizeStart: 'eypc-float:resize-start',
   resizeMove: 'eypc-float:resize-move',
   resizeEnd: 'eypc-float:resize-end',
-  resizeCancel: 'eypc-float:resize-cancel'
+  resizeCancel: 'eypc-float:resize-cancel',
+  interactionCancel: 'eypc-float:interaction-cancel',
+  heartbeat: 'eypc-float:heartbeat',
+  heartbeatAck: 'eypc-float:heartbeat-ack'
 }
 
 let lastSnapshot = null
@@ -66,6 +69,17 @@ const stateListeners = new Set()
 const activationListeners = new Set()
 const transientRequests = new Map()
 let transientSequence = 0
+let interactionSequence = 0
+let activeDragInteractionId = ''
+let activeResizeInteractionId = ''
+let heartbeatSequence = 0
+let heartbeatTimer = null
+let lastHeartbeatAckAt = 0
+
+function nextInteractionId(kind) {
+  interactionSequence = (interactionSequence + 1) % Number.MAX_SAFE_INTEGER
+  return `${kind}:${Date.now().toString(36)}:${interactionSequence.toString(36)}`
+}
 
 function transientRequest(channel, payload, timeoutMs = 30_000) {
   transientSequence = (transientSequence + 1) % Number.MAX_SAFE_INTEGER
@@ -136,6 +150,23 @@ ipcRenderer.on(CHANNELS.threadCreateResult, (_event, payload) => resolveTransien
 ipcRenderer.on(CHANNELS.threadOpenResult, (_event, payload) => resolveTransientRequest(payload))
 ipcRenderer.on(CHANNELS.blankOpenResult, (_event, payload) => resolveTransientRequest(payload))
 ipcRenderer.on(CHANNELS.copyTextResult, (_event, payload) => resolveTransientRequest(payload))
+ipcRenderer.on(CHANNELS.heartbeatAck, (_event, payload) => {
+  const source = payload && typeof payload === 'object' ? payload : {}
+  if (Number.isInteger(source.sequence) && source.sequence > 0) lastHeartbeatAckAt = Date.now()
+})
+
+function scheduleHeartbeat() {
+  if (heartbeatTimer) clearTimeout(heartbeatTimer)
+  heartbeatTimer = setTimeout(() => {
+    heartbeatTimer = null
+    heartbeatSequence = (heartbeatSequence + 1) % Number.MAX_SAFE_INTEGER || 1
+    sendToParent(CHANNELS.heartbeat, { sequence: heartbeatSequence, sentAt: Date.now() })
+    scheduleHeartbeat()
+  }, 2_000)
+  heartbeatTimer?.unref?.()
+}
+
+scheduleHeartbeat()
 
 window.eypcFloat = {
   runtimeIdentity: {
@@ -144,6 +175,7 @@ window.eypcFloat = {
   },
   getSnapshot: () => lastSnapshot,
   getState: () => lastState,
+  getHealth: () => ({ heartbeatSequence, lastHeartbeatAckAt }),
   onSnapshot(listener) {
     if (typeof listener !== 'function') return () => {}
     snapshotListeners.add(listener)
@@ -174,11 +206,40 @@ window.eypcFloat = {
     ? transientRequest(CHANNELS.blankOpen, {})
     : Promise.resolve({ outcome: 'failed', errorCode: 'reload-required', message: 'Float 运行版本不一致，请重新打开悬浮卡片' }),
   copyText: (text) => transientRequest(CHANNELS.copyText, { text: typeof text === 'string' ? text : '' }),
-  dragStart: (screenX, screenY) => sendToParent(CHANNELS.dragStart, { screenX, screenY }),
-  dragMove: (screenX, screenY) => sendToParent(CHANNELS.dragMove, { screenX, screenY }),
-  dragEnd: () => sendToParent(CHANNELS.dragEnd, {}),
-  resizeStart: (screenX, screenY, corner) => sendToParent(CHANNELS.resizeStart, { screenX, screenY, corner }),
-  resizeMove: (screenX, screenY) => sendToParent(CHANNELS.resizeMove, { screenX, screenY }),
-  resizeEnd: () => sendToParent(CHANNELS.resizeEnd, {}),
-  resizeCancel: () => sendToParent(CHANNELS.resizeCancel, {})
+  dragStart: (screenX, screenY) => {
+    const interactionId = nextInteractionId('drag')
+    const sent = sendToParent(CHANNELS.dragStart, { screenX, screenY, interactionId })
+    activeDragInteractionId = sent ? interactionId : ''
+    return sent
+  },
+  dragMove: (screenX, screenY) => Boolean(activeDragInteractionId)
+    && sendToParent(CHANNELS.dragMove, { screenX, screenY, interactionId: activeDragInteractionId }),
+  dragEnd: () => {
+    const interactionId = activeDragInteractionId
+    activeDragInteractionId = ''
+    return Boolean(interactionId) && sendToParent(CHANNELS.dragEnd, { interactionId })
+  },
+  resizeStart: (screenX, screenY, corner) => {
+    const interactionId = nextInteractionId('resize')
+    const sent = sendToParent(CHANNELS.resizeStart, { screenX, screenY, corner, interactionId })
+    activeResizeInteractionId = sent ? interactionId : ''
+    return sent
+  },
+  resizeMove: (screenX, screenY) => Boolean(activeResizeInteractionId)
+    && sendToParent(CHANNELS.resizeMove, { screenX, screenY, interactionId: activeResizeInteractionId }),
+  resizeEnd: () => {
+    const interactionId = activeResizeInteractionId
+    activeResizeInteractionId = ''
+    return Boolean(interactionId) && sendToParent(CHANNELS.resizeEnd, { interactionId })
+  },
+  resizeCancel: () => {
+    const interactionId = activeResizeInteractionId
+    activeResizeInteractionId = ''
+    return Boolean(interactionId) && sendToParent(CHANNELS.resizeCancel, { interactionId })
+  },
+  cancelInteraction: () => {
+    activeDragInteractionId = ''
+    activeResizeInteractionId = ''
+    return sendToParent(CHANNELS.interactionCancel, {})
+  }
 }

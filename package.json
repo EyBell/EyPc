@@ -20,6 +20,7 @@
     "probe:claude-quota-cache": "node scripts/probe-claude-quota-cache-runtime.mjs",
     "probe:claude-unread": "node scripts/probe-claude-unread-runtime.mjs",
     "probe:claude-unread-key": "node scripts/probe-claude-unread-key-runtime.mjs",
+    "probe:runtime-diagnostics": "node scripts/probe-eypc-diagnostics-runtime.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 4174"
   },
   "dependencies": {

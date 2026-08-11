@@ -13,7 +13,7 @@
  * LevelDB, transcript or non-target session is written.
  */
 
-const CLAUDE_BRIDGE_REVISION = 'claude-code-companion-v5'
+const CLAUDE_BRIDGE_REVISION = 'claude-code-companion-v6'
 
 const { createEventQueue } = require('./events.cjs')
 const { createEnvironmentProbe } = require('./environment.cjs')
@@ -72,6 +72,9 @@ function createClaudeBridge(dependencies) {
   let eventWatchDispose = null
   let codeWatchDispose = null
   let unreadWatchDispose = null
+  const eventWatchListeners = new Set()
+  const codeWatchListeners = new Set()
+  const unreadWatchListeners = new Set()
   let previousCodeMetadata = new Map()
   let lastCodeInventory = null
   let codeStateGeneration = 0
@@ -377,71 +380,83 @@ function createClaudeBridge(dependencies) {
   }
 
   /**
-   * Subscribes to hook-queue appends. One subscription at a time: the Controller
-   * owns exactly one lane, and leaking watchers across provider toggles would
-   * fan one event out into several redundant reads.
+   * Multiplexes one underlying hook/App-state watcher to every current owner.
+   * Host authority and a mounted Renderer may coexist; replacing one callback
+   * with the other would silently drop state transitions for one consumer.
    */
   function watchEvents(listener, options) {
-    if (eventWatchDispose) {
+    if (typeof listener !== 'function') return () => {}
+    eventWatchListeners.add(listener)
+    if (!eventWatchDispose) {
+      const broadcast = () => {
+        for (const subscriber of eventWatchListeners) {
+          try { subscriber() } catch {}
+        }
+      }
+      const queueDispose = queue.watch(broadcast, options)
+      const appDispose = appState.watch(broadcast)
+      eventWatchDispose = () => {
+        queueDispose()
+        appDispose()
+      }
+    }
+    return () => {
+      eventWatchListeners.delete(listener)
+      if (eventWatchListeners.size || !eventWatchDispose) return
       eventWatchDispose()
       eventWatchDispose = null
-    }
-    if (typeof listener !== 'function') return () => {}
-    const queueDispose = queue.watch(listener, options)
-    const appDispose = appState.watch(listener)
-    const dispose = () => {
-      queueDispose()
-      appDispose()
-    }
-    eventWatchDispose = dispose
-    return () => {
-      if (eventWatchDispose === dispose) eventWatchDispose = null
-      dispose()
     }
   }
 
   function watchCodeSessions(listener) {
-    if (codeWatchDispose) codeWatchDispose()
-    const dispose = codeSessions.watch((delta) => {
-      if (typeof listener !== 'function') return
-      const source = delta && typeof delta === 'object' ? delta : null
-      if (!source || !Array.isArray(source.mutations)) {
-        try { listener() } catch {}
-        return
-      }
-      const mutations = source.mutations.map((mutation) => {
-        if (mutation?.mutation !== 'upsert') return mutation
-        const prefix = 'claude:'
-        const sessionId = typeof mutation.key === 'string' && mutation.key.startsWith(prefix)
-          ? mutation.key.slice(prefix.length).toLowerCase()
-          : ''
-        if (!LOCAL_SESSION_PATTERN.test(sessionId)) return mutation
-        const current = readCurrentSessionObservation(sessionId)
-        return current.status === 'found' ? { ...mutation, session: current.session } : mutation
-      })
-      if (lastCodeInventory) {
-        const nextBySession = new Map(lastCodeInventory.sessions.map((session) => [session.sessionId, session]))
-        for (const mutation of mutations) {
-          if (mutation?.mutation === 'remove' || mutation?.mutation === 'archived') {
-            for (const sessionId of nextBySession.keys()) {
-              if (`claude:${sessionId}` === mutation.key) nextBySession.delete(sessionId)
+    if (typeof listener !== 'function') return () => {}
+    codeWatchListeners.add(listener)
+    if (!codeWatchDispose) {
+      codeWatchDispose = codeSessions.watch((delta) => {
+        const source = delta && typeof delta === 'object' ? delta : null
+        if (!source || !Array.isArray(source.mutations)) {
+          for (const subscriber of codeWatchListeners) {
+            try { subscriber() } catch {}
+          }
+          return
+        }
+        const mutations = source.mutations.map((mutation) => {
+          if (mutation?.mutation !== 'upsert') return mutation
+          const prefix = 'claude:'
+          const sessionId = typeof mutation.key === 'string' && mutation.key.startsWith(prefix)
+            ? mutation.key.slice(prefix.length).toLowerCase()
+            : ''
+          if (!LOCAL_SESSION_PATTERN.test(sessionId)) return mutation
+          const current = readCurrentSessionObservation(sessionId)
+          return current.status === 'found' ? { ...mutation, session: current.session } : mutation
+        })
+        if (lastCodeInventory) {
+          const nextBySession = new Map(lastCodeInventory.sessions.map((session) => [session.sessionId, session]))
+          for (const mutation of mutations) {
+            if (mutation?.mutation === 'remove' || mutation?.mutation === 'archived') {
+              for (const sessionId of nextBySession.keys()) {
+                if (`claude:${sessionId}` === mutation.key) nextBySession.delete(sessionId)
+              }
+            } else if (mutation?.mutation === 'upsert' && mutation.session) {
+              nextBySession.set(mutation.session.sessionId, mutation.session)
             }
-          } else if (mutation?.mutation === 'upsert' && mutation.session) {
-            nextBySession.set(mutation.session.sessionId, mutation.session)
+          }
+          lastCodeInventory = {
+            ...lastCodeInventory,
+            sessions: [...nextBySession.values()],
+            readAt: Number(source.acceptedAt) || Date.now()
           }
         }
-        lastCodeInventory = {
-          ...lastCodeInventory,
-          sessions: [...nextBySession.values()],
-          readAt: Number(source.acceptedAt) || Date.now()
+        for (const subscriber of codeWatchListeners) {
+          try { subscriber({ ...source, mutations }) } catch {}
         }
-      }
-      try { listener({ ...source, mutations }) } catch {}
-    })
-    codeWatchDispose = dispose
+      })
+    }
     return () => {
-      if (codeWatchDispose === dispose) codeWatchDispose = null
-      dispose()
+      codeWatchListeners.delete(listener)
+      if (codeWatchListeners.size || !codeWatchDispose) return
+      codeWatchDispose()
+      codeWatchDispose = null
     }
   }
 
@@ -452,12 +467,20 @@ function createClaudeBridge(dependencies) {
   }
 
   function watchCodeUnread(listener) {
-    if (unreadWatchDispose) unreadWatchDispose()
-    const dispose = unread.watch(listener)
-    unreadWatchDispose = dispose
+    if (typeof listener !== 'function') return () => {}
+    unreadWatchListeners.add(listener)
+    if (!unreadWatchDispose) {
+      unreadWatchDispose = unread.watch(() => {
+        for (const subscriber of unreadWatchListeners) {
+          try { subscriber() } catch {}
+        }
+      })
+    }
     return () => {
-      if (unreadWatchDispose === dispose) unreadWatchDispose = null
-      dispose()
+      unreadWatchListeners.delete(listener)
+      if (unreadWatchListeners.size || !unreadWatchDispose) return
+      unreadWatchDispose()
+      unreadWatchDispose = null
     }
   }
 
@@ -514,6 +537,9 @@ function createClaudeBridge(dependencies) {
     if (unreadWatchDispose) unreadWatchDispose()
     codeWatchDispose = null
     unreadWatchDispose = null
+    eventWatchListeners.clear()
+    codeWatchListeners.clear()
+    unreadWatchListeners.clear()
     previousCodeMetadata = new Map()
     lastCodeInventory = null
     codeStateGeneration = 0

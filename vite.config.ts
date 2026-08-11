@@ -2,6 +2,9 @@ import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vitest/config'
 import { resolve } from 'node:path'
 import { handleDevPortApi } from './src/platform/devPortServer'
+import { buildUtoolsRuntimeIdentity } from './scripts/utools-runtime-identity.mjs'
+
+const runtimeIdentity = buildUtoolsRuntimeIdentity(import.meta.dirname)
 
 function stableVendorChunk(id: string) {
   const normalizedId = id.replaceAll('\\', '/')
@@ -14,6 +17,13 @@ function stableVendorChunk(id: string) {
 
 export default defineConfig({
   base: './',
+  define: {
+    __EYPC_RUNTIME_IDENTITY_REVISION__: JSON.stringify(runtimeIdentity.revision),
+    __EYPC_HOST_ASSET_ID__: JSON.stringify(runtimeIdentity.hostAssetId),
+    __EYPC_RENDERER_ASSET_ID__: JSON.stringify(runtimeIdentity.rendererAssetId),
+    __EYPC_COMPANION_KERNEL_REVISION__: JSON.stringify(runtimeIdentity.kernelRevision),
+    __EYPC_COMPANION_TASK_PACKAGE_REVISION__: JSON.stringify(runtimeIdentity.taskPackageRevision)
+  },
   plugins: [
     {
       name: 'eypc-dev-port-api',

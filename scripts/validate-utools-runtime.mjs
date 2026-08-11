@@ -99,7 +99,9 @@ assert(typeof windowModuleProbe.openPermissionSettings === 'function', 'window p
 const claudeModule = distRequire('./claude/index.cjs')
 const claudeScriptsModule = distRequire('./claude/scripts.cjs')
 const companionKernelModule = distRequire('./companion/task-kernel.cjs')
+const diagnosticsModule = distRequire('./diagnostics.cjs')
 assert(typeof companionKernelModule.createCompanionTaskKernel === 'function', 'companion Kernel module must expose its factory')
+assert(typeof diagnosticsModule.createRuntimeDiagnostics === 'function', 'runtime diagnostics module must expose its factory')
 assert(typeof claudeModule.createClaudeBridge === 'function', 'claude preload module must expose createClaudeBridge')
 const claudeModuleProbe = claudeModule.createClaudeBridge({
   fs: { readdirSync: () => [], statSync() { throw new Error('claude module must stay lazy during validation') }, readFileSync() { throw new Error('lazy') } },
@@ -169,11 +171,11 @@ for (const forbidden of ['AXPress', 'osascript', 'performClaudeArchiveAction', '
   assert(!claudeArchiveSource.includes(forbidden), `claude metadata archive adapter must not open or automate the App (found ${forbidden})`)
 }
 const companionTaskActionsSource = preloadModuleSources.get('companion/task-actions.cjs') || ''
-for (const marker of ['companion-task-actions-v1', 'archiveInFlight', 'shortcutArchive', 'CONFIRM_WINDOW_MS']) {
+for (const marker of ['companion-task-actions-v3', 'archiveInFlight', 'shortcutArchive', 'CONFIRM_WINDOW_MS']) {
   assert(companionTaskActionsSource.includes(marker), `companion task dispatcher contract is missing: ${marker}`)
 }
 const companionTaskKernelSource = preloadModuleSources.get('companion/task-kernel.cjs') || ''
-for (const marker of ['companion-task-kernel-v1', 'companion-task-package-v1', 'preflightInFlight', 'UNKNOWN_GRACE_MS', 'handleEnter']) {
+for (const marker of ['companion-task-kernel-v3', 'companion-task-package-v3', 'sourceLaneGenerations', 'preflightInFlight', 'UNKNOWN_GRACE_MS', 'handleEnter']) {
   assert(companionTaskKernelSource.includes(marker), `companion task kernel contract is missing: ${marker}`)
 }
 const claudeAppState = claudeAppStateSource
@@ -255,10 +257,16 @@ const preloadSource = preloadSources.main
 const floatPreloadSource = preloadSources.float
 const actionPreloadSource = preloadSources.action
 const ipcListeners = new Map()
+const inertSetTimer = () => 1
+const inertClearTimer = () => undefined
 const sandbox = {
   window: {},
   globalThis: {},
   process: { platform: 'darwin', env: {}, cwd: () => '/tmp' },
+  setTimeout: inertSetTimer,
+  clearTimeout: inertClearTimer,
+  setInterval: inertSetTimer,
+  clearInterval: inertClearTimer,
   require(name) {
     if (name === './windows/index.cjs') return windowModule
     if (name === './claude/index.cjs') return claudeModule
@@ -370,6 +378,10 @@ const degradedSandbox = {
   window: {},
   globalThis: {},
   process: sandbox.process,
+  setTimeout: inertSetTimer,
+  clearTimeout: inertClearTimer,
+  setInterval: inertSetTimer,
+  clearInterval: inertClearTimer,
   require(name) {
     if (name === './windows/index.cjs' || String(name).endsWith('/windows/index.cjs')) throw new Error('window module intentionally unavailable')
     return sandbox.require(name)
@@ -386,6 +398,10 @@ const degradedClaudeSandbox = {
   window: {},
   globalThis: {},
   process: sandbox.process,
+  setTimeout: inertSetTimer,
+  clearTimeout: inertClearTimer,
+  setInterval: inertSetTimer,
+  clearInterval: inertClearTimer,
   require(name) {
     if (name === './claude/index.cjs' || String(name).endsWith('/claude/index.cjs')) throw new Error('claude module intentionally unavailable')
     return sandbox.require(name)
@@ -402,6 +418,10 @@ assert(typeof (await degradedClaudeSandbox.window.eypcPlatform.codex.readSnapsho
 const floatSandbox = {
   window: {},
   globalThis: {},
+  setTimeout: inertSetTimer,
+  clearTimeout: inertClearTimer,
+  setInterval: inertSetTimer,
+  clearInterval: inertClearTimer,
   require(name) {
     if (name === 'electron') return { ipcRenderer: { on() {} } }
     if (name === './runtime-identity.cjs') return actualRuntimeIdentity

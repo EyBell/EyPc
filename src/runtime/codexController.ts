@@ -86,7 +86,7 @@ import {
   emptyCompanionTaskPackage,
   COMPANION_TASK_KERNEL_REVISION,
   COMPANION_TASK_PACKAGE_REVISION,
-  type CompanionTaskPackageV1
+  type CompanionTaskPackageV3
 } from '../domain/companionTaskPackage'
 import { codexActionLaneId, resolveCodexActionRunnerPriorityProject, type CodexActionRunnerCatalogV1 } from '../domain/codexActionRunner'
 import type { AppState } from '../domain/types'
@@ -99,6 +99,7 @@ import {
   type CompanionNavigationResult,
   type CompanionNavigationResultEvent,
   type EypcPlatformApi,
+  type RuntimeDiagnosticsSnapshotV3,
   type RuntimeIdentityHandshakeV1
 } from '../platform/eypcPlatform'
 
@@ -111,8 +112,9 @@ export interface CodexRuntimeView {
   newThreadContextFingerprint: string
   taskState: CodexTaskStatePackageV1
   /** Process-owned canonical package shared by Main, Float and shortcuts. */
-  companionTaskPackage: CompanionTaskPackageV1
+  companionTaskPackage: CompanionTaskPackageV3
   runtimeIdentity?: RuntimeIdentityHandshakeV1
+  runtimeDiagnostics?: RuntimeDiagnosticsSnapshotV3
   /** @deprecated Consume taskState.conversations. */
   conversations: ConversationSnapshotV1
   activityDecisionDiagnostics: CodexActivityDecisionDiagnostics
@@ -140,7 +142,7 @@ export interface CodexFloatSnapshotV1 {
   taskStateRevision?: string
   /** Optional only when consuming a long-lived older Controller snapshot. */
   taskState?: CodexTaskStatePackageV1
-  companionTaskPackage?: CompanionTaskPackageV1
+  companionTaskPackage?: CompanionTaskPackageV3
   runtimeIdentity?: RuntimeIdentityHandshakeV1
   style: CodexSettings['displayStyle']
   conversationInboxEnabled: boolean
@@ -187,14 +189,6 @@ function quotaDelay(settings: CodexSettings): number {
   return settings.quotaRefreshSeconds > 0 ? settings.quotaRefreshSeconds * 1000 : Number.POSITIVE_INFINITY
 }
 
-function taskDelay(settings: CodexSettings): number {
-  return settings.conversationInboxEnabled && settings.taskRefreshSeconds > 0 ? settings.taskRefreshSeconds * 1000 : Number.POSITIVE_INFINITY
-}
-
-function claudeLaneDelay(settings: CodexSettings): number {
-  return taskDelay(settings)
-}
-
 /** Independent Claude quota wake-up: cadence or the earliest reset + 1 second. */
 export function claudeQuotaScheduleDelay(
   settings: Pick<CodexSettings, 'quotaRefreshSeconds'>,
@@ -221,11 +215,8 @@ export function claudeQuotaScheduleDelay(
 const MIN_INVENTORY_DISAPPEARANCE_HOLD_MS = 3_000
 const URGENT_STRUCTURAL_REFRESH_DELAY_MS = 50
 const NORMAL_STRUCTURAL_REFRESH_DELAY_MS = 200
-function inventoryDisappearanceHold(settings: CodexSettings): number {
-  const refreshDelay = taskDelay(settings)
-  return Number.isFinite(refreshDelay)
-    ? Math.max(MIN_INVENTORY_DISAPPEARANCE_HOLD_MS, refreshDelay)
-    : MIN_INVENTORY_DISAPPEARANCE_HOLD_MS
+function inventoryDisappearanceHold(_settings: CodexSettings): number {
+  return MIN_INVENTORY_DISAPPEARANCE_HOLD_MS
 }
 
 type ActivityExitBaseline = Pick<CodexHostThread, 'lastTurnStatus' | 'lastTurnStartedAt' | 'lastTurnCompletedAt'>
@@ -412,6 +403,7 @@ export function createCodexController(options: CodexControllerOptions) {
   let lastClaudeUnreadGeneration = 0
   let lastClaudeUnreadReadAt = 0
   let lastClaudeStateGeneration = 0
+  let lastClaudeInventoryGeneration = 0
   let lastClaudeMutationGeneration = 0
   const claudeMembershipTombstones = new Map<string, number>()
   let claudeStateFailureCount = 0
@@ -457,7 +449,11 @@ export function createCodexController(options: CodexControllerOptions) {
   const taskArchiveInFlight = new Map<string, Promise<boolean>>()
   let focusedCompanionTaskKey = ''
   let directTaskCommandQueue: Promise<void> = Promise.resolve()
-  const attentionCommandQueue: CodexAttentionKind[] = []
+  const attentionCommandQueue: Array<{
+    kind: CodexAttentionKind
+    source: 'attention-shortcut' | 'local-shortcut'
+    operationId?: string
+  }> = []
   let attentionCommandInFlight = false
   let stopActivityListener: (() => void) | null = null
   let stopClaudeQuotaLifecycleListener: (() => void) | null = null
@@ -841,10 +837,11 @@ export function createCodexController(options: CodexControllerOptions) {
       || !Array.isArray(delta.mutations)) return null
     if (delta.generation <= lastClaudeMutationGeneration) return false
     lastClaudeMutationGeneration = delta.generation
+    lastClaudeInventoryGeneration = Math.max(lastClaudeInventoryGeneration, Number(delta.acceptedAt) || Date.now())
     let rows = claudeCodeSessions
     let changed = false
     let persistedChanged = false
-    for (const mutation of delta.mutations.slice(0, 500)) {
+    for (const mutation of delta.mutations) {
       if (mutation.mutation === 'remove' || mutation.mutation === 'archived') {
         const removed = rows.find((row) => companionTaskKey('claude', row.sessionId) === mutation.key)
         const sessionId = removed?.sessionId || ''
@@ -953,6 +950,7 @@ export function createCodexController(options: CodexControllerOptions) {
     lastClaudeUnreadGeneration = 0
     lastClaudeUnreadReadAt = 0
     lastClaudeStateGeneration = 0
+    lastClaudeInventoryGeneration = 0
     lastClaudeMutationGeneration = 0
     claudeMembershipTombstones.clear()
     claudeStateFailureCount = 0
@@ -991,6 +989,7 @@ export function createCodexController(options: CodexControllerOptions) {
         const snapshot = await readCodeSnapshot({ now })
         const normalized = normalizeClaudeRows(snapshot)
         if (disposed || laneToken !== runtimeGeneration || normalized === null) return false
+        lastClaudeInventoryGeneration = Math.max(lastClaudeInventoryGeneration, Number(snapshot.readAt) || now)
         const rows = mergeClaudeInventory(normalized.rows.filter((row) => !claudeMembershipTombstones.has(companionTaskKey('claude', row.sessionId))))
         const changed = !sameClaudeRows(claudeCodeSessions, rows)
         if (changed) claudeCodeSessions = rows
@@ -1249,7 +1248,7 @@ export function createCodexController(options: CodexControllerOptions) {
     void Promise.resolve(bridge.readAppPresence()).catch(() => undefined)
   }
 
-  /** Cold/interval reconciliation. Quota starts in parallel and is never awaited. */
+  /** Cold/reconnect reconciliation. Quota starts in parallel and is never awaited. */
   async function refreshClaude(now = Date.now(), includeQuota = true) {
     if (!claudeEnabled()) {
       if (claudeCodeSessions.length || claudeQuota.status !== 'idle') resetClaudeLane()
@@ -1572,24 +1571,16 @@ export function createCodexController(options: CodexControllerOptions) {
     const settings = codexState().settings
     const now = Date.now()
     const quotaWait = shouldRefreshSurfaceData() && Number.isFinite(quotaDelay(settings)) ? Math.max(1000, lastQuotaReadAt + quotaDelay(settings) - now) : Number.POSITIVE_INFINITY
-    const taskWait = settings.conversationInboxEnabled && Number.isFinite(taskDelay(settings))
-      ? Math.max(1000, lastTaskReadAt + taskDelay(settings) - now)
-      : Number.POSITIVE_INFINITY
     const nextTaskTransitionAt = taskState.dynamic.nextTransitionAt
     const taskTransitionWait = nextTaskTransitionAt === null
       ? Number.POSITIVE_INFINITY
       : Math.max(1, nextTaskTransitionAt - now)
-    const claudeTaskWait = claudeEnabled() && Number.isFinite(claudeLaneDelay(settings))
-      ? Math.max(1000, lastClaudeReadAt + claudeLaneDelay(settings) - now)
-      : Number.POSITIVE_INFINITY
     const claudeQuotaWait = claudeEnabled() && !claudeQuotaInFlight
       ? claudeQuotaScheduleDelay(settings, lastClaudeQuotaReadAt, claudeQuota.windows, now)
       : Number.POSITIVE_INFINITY
     const delay = Math.min(
       quotaWait,
-      taskWait,
       taskTransitionWait,
-      claudeTaskWait,
       claudeQuotaWait
     )
     if (!Number.isFinite(delay)) return
@@ -1755,7 +1746,7 @@ export function createCodexController(options: CodexControllerOptions) {
     return environmentInFlight
   }
 
-  async function refresh(input: { force?: boolean; forceTasks?: boolean; actionPreflight?: boolean } = {}) {
+  async function refresh(input: { force?: boolean; forceQuota?: boolean; forceTasks?: boolean; actionPreflight?: boolean } = {}) {
     const actionPreflight = input.actionPreflight === true
     const refreshAllowed = () => actionPreflight ? isFeatureEnabled() : shouldRun()
     if (disposed || !refreshAllowed()) return
@@ -1772,17 +1763,16 @@ export function createCodexController(options: CodexControllerOptions) {
     const runtimeToken = runtimeGeneration
     const now = Date.now()
     const settings = codexState().settings
-    const includeQuota = !actionPreflight && shouldRefreshSurfaceData() && (input.force === true || quota.updatedAt <= 0 || (Number.isFinite(quotaDelay(settings)) && now - lastQuotaReadAt >= quotaDelay(settings)))
-    const includeThreads = actionPreflight || settings.conversationInboxEnabled && (input.force === true || input.forceTasks === true || rawConversations.updatedAt <= 0 || (Number.isFinite(taskDelay(settings)) && now - lastTaskReadAt >= taskDelay(settings)))
+    const includeQuota = !actionPreflight && shouldRefreshSurfaceData() && (input.force === true || input.forceQuota === true || quota.updatedAt <= 0 || (Number.isFinite(quotaDelay(settings)) && now - lastQuotaReadAt >= quotaDelay(settings)))
+    const includeThreads = actionPreflight || settings.conversationInboxEnabled
+      && (input.force === true || input.forceTasks === true || rawConversations.updatedAt <= 0)
     const includeConfig = includeQuota && !actionPreflight
-    // Independent Claude lane: it reuses the task cadence but never blocks or is
-    // blocked by the Codex round-trip, and it is skipped entirely while the
-    // provider is disabled.
+    // Claude membership/state/unread are push-owned after cold admission. A full
+    // read is reserved for cold start, reconnect and an explicit gap recovery.
     const includeClaude = !actionPreflight && claudeEnabled()
-      && (input.force === true || input.forceTasks === true || lastClaudeReadAt <= 0
-        || (Number.isFinite(claudeLaneDelay(settings)) && now - lastClaudeReadAt >= claudeLaneDelay(settings)))
+      && (input.force === true || lastClaudeReadAt <= 0)
     const includeClaudeQuota = !actionPreflight && claudeEnabled()
-      && (input.force === true || lastClaudeQuotaReadAt <= 0
+      && (input.force === true || input.forceQuota === true || lastClaudeQuotaReadAt <= 0
         || (Number.isFinite(quotaDelay(settings)) && now - lastClaudeQuotaReadAt >= quotaDelay(settings))
         || claudeQuota.windows.some((window) => window.resetAt !== null
           && now >= window.resetAt + 1000
@@ -2085,13 +2075,12 @@ export function createCodexController(options: CodexControllerOptions) {
     }
     options.save()
     options.notify()
-    const needsFreshRead = inboxChanged ||
-      providerEnablementChanged ||
-      current.quotaRefreshSeconds !== next.quotaRefreshSeconds ||
-      current.taskRefreshSeconds !== next.taskRefreshSeconds ||
-      current.claudeAppQuotaAccess !== next.claudeAppQuotaAccess
+    const taskAuthorityChanged = inboxChanged || providerEnablementChanged
+    const quotaPolicyChanged = current.quotaRefreshSeconds !== next.quotaRefreshSeconds
+      || current.claudeAppQuotaAccess !== next.claudeAppQuotaAccess
     if (providerEnablementChanged) beginCompanionNavigation()
-    syncActivation(needsFreshRead || (!current.floatEnabled && next.floatEnabled))
+    syncActivation(taskAuthorityChanged)
+    if (quotaPolicyChanged && shouldRun()) void refresh({ forceQuota: true })
     // A provider toggle must take effect now: disabling should clear the lane
     // immediately rather than leaving stale cards until the next Codex tick.
     if (claudeEnablementChanged) syncClaudeEnablement()
@@ -2231,10 +2220,9 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function setFocusedTask(key: string, revisionAt?: number) {
     const task = allTasks().find((candidate) => candidate.key === key)
-    focusedCompanionTaskKey = task
-      && (!Number.isFinite(revisionAt) || task.revisionAt === revisionAt)
-      ? task.key
-      : ''
+    const nextKey = task ? task.key : ''
+    if (nextKey === focusedCompanionTaskKey) return false
+    focusedCompanionTaskKey = nextKey
     if (companionKernel) syncCompanionTaskKernel()
     else syncCompanionTaskActions()
     return true
@@ -2343,16 +2331,18 @@ export function createCodexController(options: CodexControllerOptions) {
     if (synced && ready) consumeNavigationResults()
   }
 
-  function acceptCompanionTaskPackage(value: CompanionTaskPackageV1 | null | undefined): boolean {
+  function acceptCompanionTaskPackage(value: CompanionTaskPackageV3 | null | undefined): boolean {
     if (!value || value.schema !== COMPANION_TASK_PACKAGE_REVISION || value.kernelRevision !== COMPANION_TASK_KERNEL_REVISION) return false
     if (value.packageRevision < companionTaskPackage.packageRevision) return false
     const changed = value.packageRevision !== companionTaskPackage.packageRevision
       || value.freshness !== companionTaskPackage.freshness
       || value.complete !== companionTaskPackage.complete
+    const knownKeys = new Set(taskState.conversations.all.map((task) => task.key))
+    const missingCodexMetadata = value.complete
+      && value.tasks.some((task) => task.provider === 'codex' && !knownKeys.has(task.key))
     companionTaskPackage = value
-    if (value.complete && value.sourceTaskStateRevision === taskState.sourceRevision) {
-      taskState = applyCompanionTaskPackageViews(taskState, value)
-    }
+    if (value.complete) taskState = applyCompanionTaskPackageViews(taskState, value)
+    if (missingCodexMetadata && started && !disposed) scheduleStructuralRefresh('urgent')
     return changed
   }
 
@@ -2368,8 +2358,20 @@ export function createCodexController(options: CodexControllerOptions) {
       focusedKey: focusedCompanionTaskKey,
       draftRevision: ++companionDraftSequence,
       sourceGenerations: {
-        codex: lastActivityGeneration,
-        claude: lastClaudeStateGeneration
+        codex: Math.max(lastTaskReadAt, lastActivityGeneration),
+        claude: Math.max(lastClaudeInventoryGeneration, lastClaudeStateGeneration, lastClaudeUnreadGeneration)
+      },
+      sourceLaneGenerations: {
+        codex: {
+          membership: lastTaskReadAt,
+          phase: lastActivityGeneration,
+          unread: lastActivityGeneration
+        },
+        claude: {
+          membership: lastClaudeInventoryGeneration,
+          phase: lastClaudeStateGeneration,
+          unread: lastClaudeUnreadGeneration || lastClaudeUnreadReadAt
+        }
       },
       localPins: codexState().localPins.filter((pin) => pin.kind === 'task').map((pin) => pin.key)
     })
@@ -2667,7 +2669,8 @@ export function createCodexController(options: CodexControllerOptions) {
     key: string,
     actionAlias: string,
     resetAttentionKind?: CodexAttentionKind,
-    source: 'manual' | 'attention' = 'manual'
+    source: 'card-click' | 'manual-row-open' | 'manual-quick-jump' | 'attention-shortcut' | 'local-shortcut' | 'global-shortcut' = 'manual-row-open',
+    operationId?: string
   ) {
     if (!key || !actionAlias || disposed || !isFeatureEnabled()) return false
     if (!taskOperationsAllowed()) return rejectRuntimeMismatch()
@@ -2684,7 +2687,12 @@ export function createCodexController(options: CodexControllerOptions) {
     }
     if (companionKernel) {
       syncCompanionTaskKernel()
-      const result = await companionKernel.dispatch({ action: 'open', key, source })
+      const result = await companionKernel.dispatch({
+        action: 'open',
+        key,
+        source,
+        operationId
+      })
       if (provider === 'claude') {
         const opened = await openClaudeTask(key, task.actionAlias!, result as CompanionNavigationResult)
         if (opened) recordAttentionOpen(key, resetAttentionKind)
@@ -2705,6 +2713,7 @@ export function createCodexController(options: CodexControllerOptions) {
       const result = await companionNavigation.open({
         key,
         source,
+        operationId,
         target: companionTaskActionTarget(task) || undefined
       })
       if (provider === 'claude') {
@@ -2782,13 +2791,17 @@ export function createCodexController(options: CodexControllerOptions) {
     return null
   }
 
-  async function openAttentionFromCurrentInventory(kind: CodexAttentionKind) {
+  async function openAttentionFromCurrentInventory(
+    kind: CodexAttentionKind,
+    source: 'attention-shortcut' | 'local-shortcut' = 'attention-shortcut',
+    operationId?: string
+  ) {
     pruneAttentionOpenHistory(false)
     const candidates = attentionCandidates(kind)
     if (!candidates.length) {
       if (kind === 'input') {
         const fallback = firstLocalPinnedOpenableTask()
-        if (fallback) return openThread(fallback.key, fallback.actionAlias, undefined, 'attention')
+        if (fallback) return openThread(fallback.key, fallback.actionAlias, undefined, source, operationId)
       }
       options.setMessage(kind === 'input' ? '当前没有待输入任务' : '当前没有已完成未读任务')
       return false
@@ -2798,19 +2811,19 @@ export function createCodexController(options: CodexControllerOptions) {
       .map((entry) => `${entry.kind}:${entry.key}:${entry.statusEnteredAt}`))
     const unseen = candidates.find((task) => !openedInstances.has(attentionInstanceKey(kind, task)))
     const task = unseen || candidates[0]
-    return openThread(task.key, task.actionAlias, unseen ? undefined : kind, 'attention')
+    return openThread(task.key, task.actionAlias, unseen ? undefined : kind, source, operationId)
   }
 
-  function queueAttentionCommand(kind: CodexAttentionKind) {
-    attentionCommandQueue.push(kind)
+  function queueAttentionCommand(kind: CodexAttentionKind, source: 'attention-shortcut' | 'local-shortcut', operationId?: string) {
+    attentionCommandQueue.push({ kind, source, operationId })
     if (attentionCommandInFlight) return
     attentionCommandInFlight = true
     void (async () => {
       try {
         while (attentionCommandQueue.length) {
-          const nextKind = attentionCommandQueue.shift()!
+          const next = attentionCommandQueue.shift()!
           if (disposed || !isFeatureEnabled()) continue
-          await openAttentionFromCurrentInventory(nextKind)
+          await openAttentionFromCurrentInventory(next.kind, next.source, next.operationId)
         }
       } finally {
         attentionCommandInFlight = false
@@ -2818,21 +2831,21 @@ export function createCodexController(options: CodexControllerOptions) {
     })()
   }
 
-  function openFirstInputFromCurrentInventory() {
+  function openFirstInputFromCurrentInventory(source: 'attention-shortcut' | 'local-shortcut', operationId?: string) {
     if (!attentionCandidates('input').length && !firstLocalPinnedOpenableTask()) {
       options.setMessage('当前没有待输入任务')
       return false
     }
-    queueAttentionCommand('input')
+    queueAttentionCommand('input', source, operationId)
     return true
   }
 
-  function openFirstCompletedUnreadFromCurrentInventory() {
+  function openFirstCompletedUnreadFromCurrentInventory(source: 'attention-shortcut' | 'local-shortcut', operationId?: string) {
     if (!attentionCandidates('completed-unread').length) {
       options.setMessage('当前没有已完成未读任务')
       return false
     }
-    queueAttentionCommand('completed-unread')
+    queueAttentionCommand('completed-unread', source, operationId)
     return true
   }
 
@@ -2874,11 +2887,11 @@ export function createCodexController(options: CodexControllerOptions) {
     return true
   }
 
-  function openFirstInput() {
+  function openFirstInput(operationId?: string, source: 'attention-shortcut' | 'local-shortcut' = 'attention-shortcut') {
     if (!taskOperationsAllowed()) return rejectRuntimeMismatch()
     if (companionKernel) {
       syncCompanionTaskKernel()
-      void companionKernel.dispatch({ action: 'open-attention', kind: 'input' }).then((result) => {
+      void companionKernel.dispatch({ action: 'open-attention', kind: 'input', source, operationId }).then((result) => {
         if (disposed || result.outcome === 'opened' || result.outcome === 'dispatched') {
           if (result.key) recordAttentionOpen(result.key, 'input')
           return
@@ -2888,14 +2901,14 @@ export function createCodexController(options: CodexControllerOptions) {
       })
       return true
     }
-    return runDirectTaskCommand(openFirstInputFromCurrentInventory)
+    return runDirectTaskCommand(() => openFirstInputFromCurrentInventory(source, operationId))
   }
 
-  function openFirstCompletedUnread() {
+  function openFirstCompletedUnread(operationId?: string, source: 'attention-shortcut' | 'local-shortcut' = 'attention-shortcut') {
     if (!taskOperationsAllowed()) return rejectRuntimeMismatch()
     if (companionKernel) {
       syncCompanionTaskKernel()
-      void companionKernel.dispatch({ action: 'open-attention', kind: 'completed-unread' }).then((result) => {
+      void companionKernel.dispatch({ action: 'open-attention', kind: 'completed-unread', source, operationId }).then((result) => {
         if (disposed || result.outcome === 'opened' || result.outcome === 'dispatched') {
           if (result.key) recordAttentionOpen(result.key, 'completed-unread')
           return
@@ -2905,14 +2918,14 @@ export function createCodexController(options: CodexControllerOptions) {
       })
       return true
     }
-    return runDirectTaskCommand(openFirstCompletedUnreadFromCurrentInventory)
+    return runDirectTaskCommand(() => openFirstCompletedUnreadFromCurrentInventory(source, operationId))
   }
 
-  function archiveFocusedTask() {
+  function archiveFocusedTask(operationId?: string) {
     if (!taskOperationsAllowed()) return rejectRuntimeMismatch()
     if (companionKernel) {
       syncCompanionTaskKernel()
-      void companionKernel.dispatch({ action: 'archive-focused' }).then((result) => {
+      void companionKernel.dispatch({ action: 'archive-focused', source: 'archive-shortcut', operationId }).then((result) => {
         if (disposed || result.outcome === 'dispatched') return
         options.setMessage(result.message || '当前没有唯一且可归档的任务')
         options.notify()
@@ -2962,10 +2975,10 @@ export function createCodexController(options: CodexControllerOptions) {
     return usableTasks(cycleOrderedTasks(tasks.filter((task) => task.pinSource === 'local' && task.bucket !== 'stopped')))
   }
 
-  function cycleTaskFromCurrentInventory(direction: -1 | 1) {
+  function cycleTaskFromCurrentInventory(direction: -1 | 1, operationId?: string, source: 'global-shortcut' | 'local-shortcut' = 'global-shortcut') {
     if (companionKernel) {
       syncCompanionTaskKernel()
-      void companionKernel.dispatch({ action: 'cycle', direction }).then((result) => {
+      void companionKernel.dispatch({ action: 'cycle', direction, source, operationId }).then((result) => {
         if (disposed || result.outcome === 'opened' || result.outcome === 'dispatched' || result.errorCode === 'superseded') return
         options.setMessage(result.message || '任务切换失败，请重试')
         options.notify()
@@ -2990,7 +3003,7 @@ export function createCodexController(options: CodexControllerOptions) {
       return false
     }
     syncCompanionNavigation()
-    void companionNavigation.cycle(direction).then((result) => {
+    void companionNavigation.cycle(direction, { operationId, source }).then((result) => {
       if (disposed || result.outcome === 'opened' || result.outcome === 'dispatched' || result.errorCode === 'superseded') return
       options.setMessage(result.message || '任务切换失败，请重试')
       options.notify()
@@ -3002,10 +3015,10 @@ export function createCodexController(options: CodexControllerOptions) {
     return true
   }
 
-  function cycleTask(direction: -1 | 1) {
+  function cycleTask(direction: -1 | 1, operationId?: string, source: 'global-shortcut' | 'local-shortcut' = 'global-shortcut') {
     if (!taskOperationsAllowed()) return rejectRuntimeMismatch()
-    if (companionKernel) return cycleTaskFromCurrentInventory(direction)
-    return runDirectTaskCommand(() => cycleTaskFromCurrentInventory(direction))
+    if (companionKernel) return cycleTaskFromCurrentInventory(direction, operationId, source)
+    return runDirectTaskCommand(() => cycleTaskFromCurrentInventory(direction, operationId, source))
   }
 
   type RunnerTarget = {
@@ -3580,7 +3593,12 @@ export function createCodexController(options: CodexControllerOptions) {
     return true
   }
 
-  async function performTaskArchive(task: CodexTaskCard, source: 'card' | 'batch' | 'shortcut') {
+  async function performTaskArchive(
+    task: CodexTaskCard,
+    source: 'card' | 'batch' | 'shortcut',
+    operationId?: string,
+    confirmationRecorded = false
+  ) {
     if (!taskOperationsAllowed()) return rejectRuntimeMismatch()
     const provider = companionTaskProvider(task)
     taskArchive = {
@@ -3597,14 +3615,18 @@ export function createCodexController(options: CodexControllerOptions) {
           key: task.key,
           revisionAt: task.revisionAt,
           phase: companionTaskPhase(task),
-          source
+          source: source === 'card' ? 'archive-button' : source === 'batch' ? 'batch-archive' : 'archive-shortcut',
+          operationId,
+          confirmationRecorded
         })
       : companionTasks
         ? await companionTasks.archive({
           key: task.key,
           revisionAt: task.revisionAt,
           phase: companionTaskPhase(task),
-          source,
+          source: source === 'card' ? 'archive-button' : source === 'batch' ? 'batch-archive' : 'archive-shortcut',
+          operationId,
+          confirmationRecorded,
           target: companionTaskActionTarget(task) || undefined
         })
         : provider === 'codex'
@@ -3624,7 +3646,7 @@ export function createCodexController(options: CodexControllerOptions) {
       options.notify()
       return false
     }
-    const changed = applyVerifiedArchiveMutation(task)
+    const changed = provider === 'codex' ? false : applyVerifiedArchiveMutation(task)
     taskArchive = { key: '', status: 'idle', message: '' }
     options.setMessage(result.message || (provider === 'claude'
       ? 'EyPc 归档已完成，任务已从 EyPc 列表移除；Claude 原生侧栏可能仍待刷新，当前尚未确认同步。'
@@ -3632,12 +3654,18 @@ export function createCodexController(options: CodexControllerOptions) {
     // The file watcher may already have published the same verified Claude
     // removal. In that case only refresh transient action state, not the task
     // package a second time.
-    if (!changed) syncCompanionTaskAuthority()
+    if (provider !== 'codex' && !changed) syncCompanionTaskAuthority()
     options.notify()
     return true
   }
 
-  function archive(key: string, recency?: number, source: 'card' | 'batch' | 'shortcut' = 'card'): Promise<boolean> {
+  function archive(
+    key: string,
+    recency?: number,
+    source: 'card' | 'batch' | 'shortcut' = 'card',
+    operationId?: string,
+    confirmationRecorded = false
+  ): Promise<boolean> {
     if (!Number.isFinite(recency)) return Promise.resolve(false)
     const task = allTasks().find((item) => item.key === key && item.revisionAt === recency)
     if (!task || task.archiveCapability !== 'allowed' || !task.actionAlias) {
@@ -3649,25 +3677,31 @@ export function createCodexController(options: CodexControllerOptions) {
     const inFlightKey = `${companionTaskProvider(task)}:${task.key}`
     const existing = taskArchiveInFlight.get(inFlightKey)
     if (existing) return existing
-    const operation = performTaskArchive(task, source).finally(() => {
+    const operation = performTaskArchive(task, source, operationId, confirmationRecorded).finally(() => {
       if (taskArchiveInFlight.get(inFlightKey) === operation) taskArchiveInFlight.delete(inFlightKey)
     })
     taskArchiveInFlight.set(inFlightKey, operation)
     return operation
   }
 
-  async function archiveMany(items: Array<{ key: string; revisionAt: number }>) {
+  async function archiveMany(items: Array<{ key: string; revisionAt: number }>, operationId?: string, confirmationRecorded = false) {
     const unique = [...new Map(items
       .filter((item) => typeof item?.key === 'string' && Number.isFinite(item.revisionAt))
-      .map((item) => [`${item.key}:${item.revisionAt}`, item] as const)).values()].slice(0, 500)
-    const results = await Promise.all(unique.map((item) => archive(item.key, item.revisionAt, 'batch')))
+      .map((item) => [`${item.key}:${item.revisionAt}`, item] as const)).values()]
+    const results = await Promise.all(unique.map((item, index) => archive(
+      item.key,
+      item.revisionAt,
+      'batch',
+      operationId ? `${operationId}:${index}` : undefined,
+      confirmationRecorded
+    )))
     const archivedCount = results.filter(Boolean).length
     const failedCount = results.length - archivedCount
     options.setMessage(failedCount ? `已归档 ${archivedCount} 项，${failedCount} 项未通过真实状态核验` : `已归档 ${archivedCount} 项`)
     return failedCount === 0
   }
 
-  async function archiveProject(key: string, actionAlias: string) {
+  async function archiveProject(key: string, actionAlias: string, operationId?: string, confirmationRecorded = false) {
     if (typeof options.platform.codex.archiveProject !== 'function' || projectArchive.status === 'archiving') return false
     const project = taskState.conversations.projects.find((item) => item.key === key && item.actionAlias === actionAlias)
     if (!project || project.kind === 'chats' && !actionAlias || !taskState.conversations.sourceFingerprint) {
@@ -3676,29 +3710,26 @@ export function createCodexController(options: CodexControllerOptions) {
     }
     projectArchive = { key, status: 'archiving', message: '正在分批归档项目任务' }
     options.notify()
-    const result = await options.platform.codex.archiveProject(actionAlias, { expectedSourceFingerprint: taskState.conversations.sourceFingerprint })
+    const result = await options.platform.codex.archiveProject(actionAlias, {
+      expectedSourceFingerprint: taskState.conversations.sourceFingerprint,
+      operationId,
+      source: 'project-archive',
+      confirmationRecorded
+    })
     if (disposed) return false
-    if (result.archivedKeys.length) {
-      const archived = new Set(result.archivedKeys)
-      lastThreads = lastThreads.filter((thread) => !archived.has(thread.key))
-      resetInventoryDisappearanceCandidate()
-      codexState().receipts = codexState().receipts.filter((receipt) => !archived.has(receipt.key))
-      publishConversationProjection({ receivedAt: Date.now(), advanceScan: false })
-    }
+    // Every Codex item has already crossed the process-owned verified archive
+    // commit gate. Renderer/controller inventory must never independently hide
+    // a task merely because an RPC or project worker returned success.
     if (result.outcome === 'failed') {
       projectArchive = { key, status: 'error', message: result.message || '项目批量归档失败' }
       options.setMessage(projectArchive.message)
       options.notify()
       return false
     }
-    const desktopSyncedCount = result.desktopSyncedKeys?.length || 0
-    const desktopSyncFailedCount = Math.max(
-      result.desktopSyncFailedKeys?.length || 0,
-      result.archivedKeys.length - desktopSyncedCount
-    )
+    const desktopSyncFailedCount = result.desktopSyncFailedKeys?.length || 0
     const desktopSyncMessage = desktopSyncFailedCount
-      ? `；${desktopSyncFailedCount} 项未确认 Codex 桌面端即时刷新`
-      : result.archivedKeys.length > 0 ? '，并已通知 Codex 桌面端刷新' : ''
+      ? `；${desktopSyncFailedCount} 项未通过原生持久化后置条件，已保留`
+      : result.archivedKeys.length > 0 ? '，且已完成原生持久化核验' : ''
     const archiveMessage = result.outcome === 'partial'
       ? `${result.archivedKeys.length} 项已归档，${result.failed.length} 项失败，${result.skippedActiveKeys.length} 项未完成${desktopSyncMessage}`
       : `已归档 ${result.archivedKeys.length} 项${desktopSyncMessage}；跳过 ${result.skippedActiveKeys.length} 项未完成任务`
@@ -3711,7 +3742,7 @@ export function createCodexController(options: CodexControllerOptions) {
     options.save()
     options.notify()
     lastTaskReadAt = 0
-    void refresh({ force: true })
+    void refresh({ forceTasks: true })
     return result.outcome === 'complete'
   }
 
@@ -3847,6 +3878,7 @@ export function createCodexController(options: CodexControllerOptions) {
         taskState,
         companionTaskPackage,
         ...(options.platform.runtimeIdentityStatus ? { runtimeIdentity: options.platform.runtimeIdentityStatus } : {}),
+        ...(options.platform.diagnostics?.snapshot ? { runtimeDiagnostics: options.platform.diagnostics.snapshot() } : {}),
         conversations: taskState.conversations,
         activityDecisionDiagnostics,
         claudeEnvironment,

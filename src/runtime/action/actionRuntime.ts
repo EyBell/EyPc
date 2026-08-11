@@ -3,6 +3,23 @@ import type { RuntimeActionDefinition, RuntimeActionDispatchResult, RuntimeActio
 interface ActionRuntimeOptions {
   captureSnapshot?: () => unknown
   commitSnapshot?: (snapshot: unknown) => void
+  onDispatch?: (observation: RuntimeActionDispatchObservation) => void
+}
+
+export interface RuntimeActionDispatchObservation {
+  operationId: string
+  actionId: string
+  source?: string
+  outcome: 'unavailable' | 'rejected' | 'handled' | 'not-handled' | 'failed' | 'threw'
+  handled: boolean
+  durationMs: number
+  tab: RuntimeActionIntent['context']['tab']
+  selectedIds: string[]
+  layerIds: string[]
+  risk?: RuntimeActionDefinition['risk']
+  scope?: RuntimeActionDefinition['scope']
+  hasError?: boolean
+  errorName?: string
 }
 
 const SCOPE_WEIGHT: Record<RuntimeActionScope, number> = {
@@ -22,6 +39,18 @@ function errorOf(value: ReturnType<RuntimeActionDefinition['run']>): string | un
 
 export function createActionRuntime(options: ActionRuntimeOptions = {}) {
   const actions = new Map<string, RuntimeActionDefinition>()
+  let operationSequence = 0
+
+  function operationId(intent: RuntimeActionIntent): string {
+    const supplied = intent.args?.operationId
+    if (typeof supplied === 'string' && /^[A-Za-z0-9:_-]{8,160}$/.test(supplied)) return supplied
+    operationSequence += 1
+    return `action-${Date.now().toString(36)}-${operationSequence.toString(36)}`
+  }
+
+  function observe(observation: RuntimeActionDispatchObservation): void {
+    try { options.onDispatch?.(observation) } catch {}
+  }
 
   return {
     register(action: RuntimeActionDefinition): void {
@@ -35,13 +64,57 @@ export function createActionRuntime(options: ActionRuntimeOptions = {}) {
       return actions.get(actionId) || null
     },
     dispatch(intent: RuntimeActionIntent): RuntimeActionDispatchResult {
+      const startedAt = Date.now()
+      const currentOperationId = operationId(intent)
       const action = actions.get(intent.actionId)
-      if (!action || !action.when(intent.context)) return { handled: false, actionId: null }
+      const observationBase = {
+        operationId: currentOperationId,
+        actionId: intent.actionId,
+        tab: intent.context.tab,
+        selectedIds: [...intent.context.selectedIds],
+        layerIds: [...intent.context.layerIds],
+        ...(typeof intent.args?.source === 'string' ? { source: intent.args.source } : {})
+      }
+      if (!action) {
+        observe({ ...observationBase, outcome: 'unavailable', handled: false, durationMs: Date.now() - startedAt })
+        return { handled: false, actionId: null }
+      }
+      if (!action.when(intent.context)) {
+        observe({ ...observationBase, outcome: 'rejected', handled: false, durationMs: Date.now() - startedAt, risk: action.risk, scope: action.scope })
+        return { handled: false, actionId: null }
+      }
       const shouldSnapshot = action.risk === 'data-write' || action.risk === 'destructive'
       const snapshot = shouldSnapshot ? options.captureSnapshot?.() : undefined
-      const result = action.run(intent.context, intent.args)
-      if (shouldSnapshot && handled(result)) options.commitSnapshot?.(snapshot)
-      return { handled: handled(result), actionId: action.id, error: errorOf(result) }
+      try {
+        const result = action.run(intent.context, { ...intent.args, operationId: currentOperationId })
+        const actionHandled = handled(result)
+        const actionError = errorOf(result)
+        if (shouldSnapshot && actionHandled) options.commitSnapshot?.(snapshot)
+        observe({
+          ...observationBase,
+          actionId: action.id,
+          outcome: actionError ? 'failed' : actionHandled ? 'handled' : 'not-handled',
+          handled: actionHandled,
+          durationMs: Date.now() - startedAt,
+          risk: action.risk,
+          scope: action.scope,
+          hasError: Boolean(actionError)
+        })
+        return { handled: actionHandled, actionId: action.id, error: actionError }
+      } catch (error) {
+        observe({
+          ...observationBase,
+          actionId: action.id,
+          outcome: 'threw',
+          handled: false,
+          durationMs: Date.now() - startedAt,
+          risk: action.risk,
+          scope: action.scope,
+          hasError: true,
+          errorName: error instanceof Error ? error.name : typeof error
+        })
+        throw error
+      }
     },
     resolveCandidates(actionIds: string[], context: RuntimeActionIntent['context']): RuntimeActionDefinition[] {
       return actionIds

@@ -10,10 +10,9 @@
 
 const { claudeAppDataRoot } = require('./app-paths.cjs')
 
-const CLAUDE_CODE_READER_REVISION = 'claude-code-sessions-v2'
+const CLAUDE_CODE_READER_REVISION = 'claude-code-sessions-v3'
 const DEFAULT_CODE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 const CODE_METADATA_MAX_BYTES = 1024 * 1024
-const CODE_MAX_SESSIONS = 400
 const CODE_WATCH_COALESCE_MS = 50
 const CODE_RECOVERY_POLL_MS = 1000
 const METADATA_FILE_PATTERN = /^local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/i
@@ -345,10 +344,14 @@ function createCodeSessionReader(dependencies) {
   let watchers = []
   let recoveryTimer = null
   let watchListener = null
+  let scheduleWatchedPath = null
+  let watchDisposed = true
+  let watchedDirectories = new Set()
   let indexReady = false
   let mutationGeneration = 0
   let pathRecords = new Map()
   let sessionIndex = new Map()
+  let inventoryDirectories = new Set()
 
   function codeRoot() {
     const override = textOf(dependencies.claudeCodeRoot).trim()
@@ -480,6 +483,22 @@ function createCodeSessionReader(dependencies) {
     return mutations
   }
 
+  function reconcileWatchDirectories() {
+    if (watchDisposed || !watchListener || typeof scheduleWatchedPath !== 'function') return
+    const targets = new Set([
+      ...inventoryDirectories,
+      ...[...pathRecords.values()].map((record) => path.dirname(record.filePath))
+    ])
+    for (const directory of targets) {
+      if (watchedDirectories.has(directory)) continue
+      try {
+        const watcher = fs.watch(directory, { persistent: false }, (_event, filename) => scheduleWatchedPath(directory, filename))
+        watchers.push(watcher)
+        watchedDirectories.add(directory)
+      } catch {}
+    }
+  }
+
   function readInventory(options) {
     const settings = options || {}
     const now = Number.isFinite(settings.now) ? settings.now : Date.now()
@@ -487,6 +506,7 @@ function createCodeSessionReader(dependencies) {
     const sessions = []
     const records = []
     const discovered = scanUserDirectories(fs, path, codeRoot())
+    inventoryDirectories = new Set(discovered.directories)
     let available = discovered.available
     for (const userDirectory of discovered.directories) {
       let names = []
@@ -506,15 +526,18 @@ function createCodeSessionReader(dependencies) {
       }
     }
     replaceIndex(records)
+    // Host authority subscribes before the first cold inventory read. Install
+    // directory watchers as soon as that read admits the exact directories so
+    // newly-created local_*.json sessions do not wait for another full scan.
+    reconcileWatchDirectories()
     sessions.sort((left, right) => Math.max(right.lastActivityAt, right.lastFocusedAt)
       - Math.max(left.lastActivityAt, left.lastFocusedAt))
-    const limited = sessions.slice(0, CODE_MAX_SESSIONS)
     return {
       version: 2,
       revision: CLAUDE_CODE_READER_REVISION,
-      sessions: limited,
+      sessions,
       available,
-      truncated: sessions.length > limited.length,
+      truncated: false,
       readAt: now
     }
   }
@@ -610,8 +633,18 @@ function createCodeSessionReader(dependencies) {
     if (!entry) return { outcome: 'failed', errorCode: 'state-changed' }
     if (entry.status !== 'unique') return { outcome: 'failed', errorCode: 'ambiguous-target' }
     const original = readMetadataRecord(entry.record.filePath)
-    if (!original || !sameFingerprint(original.fingerprint, entry.record.fingerprint)) {
-      return { outcome: 'indeterminate', errorCode: 'source-changed' }
+    if (!original) return { outcome: 'indeterminate', errorCode: 'source-changed' }
+    // Claude may update title/focus/activity metadata between the inventory
+    // snapshot and the archive click. Rebase onto that exact, still-unique
+    // canonical file instead of treating benign metadata churn as a conflict.
+    if (!sameFingerprint(original.fingerprint, entry.record.fingerprint)) {
+      pathRecords.set(original.filePath, original)
+      rebuildSessionIndex()
+      const refreshed = sessionIndex.get(expected)
+      if (!refreshed) return { outcome: 'failed', errorCode: 'state-changed' }
+      if (refreshed.status !== 'unique' || refreshed.record.filePath !== original.filePath) {
+        return { outcome: 'failed', errorCode: 'ambiguous-target' }
+      }
     }
     if (original.metadata.isArchived === true) {
       pathRecords.set(original.filePath, original)
@@ -674,30 +707,29 @@ function createCodeSessionReader(dependencies) {
     recoveryTimer = null
     for (const watcher of watchers) { try { watcher.close() } catch {} }
     watchers = []
+    watchedDirectories = new Set()
+    scheduleWatchedPath = null
+    watchDisposed = true
   }
 
   function watch(listener) {
     stopWatching()
     if (typeof listener !== 'function') return () => {}
-    let disposed = false
+    watchDisposed = false
     watchListener = listener
-    const schedulePath = (directory, filename) => {
-      if (disposed) return
+    scheduleWatchedPath = (directory, filename) => {
+      if (watchDisposed) return
       const name = Buffer.isBuffer(filename) ? filename.toString('utf8') : textOf(filename)
       if (!METADATA_FILE_PATTERN.test(name)) return
       const filePath = path.join(directory, name)
-      if (!pathRecords.has(filePath)) return
       const timer = setTimer(() => {
-        if (!disposed) applyExactPathChange(filePath)
+        if (!watchDisposed) applyExactPathChange(filePath)
       }, CODE_WATCH_COALESCE_MS)
       timer?.unref?.()
     }
-    const targets = [...new Set([...pathRecords.values()].map((record) => path.dirname(record.filePath)))]
-    for (const directory of targets) {
-      try { watchers.push(fs.watch(directory, { persistent: false }, (_event, filename) => schedulePath(directory, filename))) } catch {}
-    }
+    reconcileWatchDirectories()
     recoveryTimer = setIntervalFn(() => {
-      if (disposed) return
+      if (watchDisposed) return
       // Recovery is intentionally bounded to files already admitted by the
       // private index. It never rescans organizations/users/sessions.
       for (const record of [...pathRecords.values()]) {
@@ -709,7 +741,7 @@ function createCodeSessionReader(dependencies) {
     }, CODE_RECOVERY_POLL_MS)
     if (recoveryTimer && typeof recoveryTimer.unref === 'function') recoveryTimer.unref()
     return () => {
-      disposed = true
+      watchDisposed = true
       if (watchListener === listener) watchListener = null
       stopWatching()
     }
@@ -721,6 +753,7 @@ function createCodeSessionReader(dependencies) {
     indexReady = false
     pathRecords = new Map()
     sessionIndex = new Map()
+    inventoryDirectories = new Set()
   }
 
   return {
@@ -739,7 +772,6 @@ function createCodeSessionReader(dependencies) {
 module.exports = {
   CLAUDE_CODE_READER_REVISION,
   DEFAULT_CODE_WINDOW_MS,
-  CODE_MAX_SESSIONS,
   CODE_RECOVERY_POLL_MS,
   LOCAL_SESSION_PATTERN,
   CLI_SESSION_PATTERN,
