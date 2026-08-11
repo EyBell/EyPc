@@ -1,4 +1,4 @@
-import type { AppState, AppTabId, FavoriteKind, FavoriteNode, FavoriteSearchAffinity, FavoriteSlot, FeatureConfig, KeybindingOverride, PortGroup, PortGroupFolder, ShortcutProfileId, ShortcutProfileMap } from './types'
+import type { AppState, AppTabId, FavoriteKind, FavoriteNode, FavoriteSearchAffinity, FavoriteSlot, FeatureConfig, KeybindingOverride, PortGroup, PortGroupFolder, RuntimeDiagnosticsSettings, ShortcutProfileId, ShortcutProfileMap } from './types'
 import { normalizeMqttState } from './mqtt'
 import { emptySearchHistories, normalizeSearchHistoryList } from './searchHistory'
 import { normalizeShortcutId } from './shortcuts'
@@ -21,6 +21,7 @@ const DEFAULT_FEATURE_SORT_ORDER: Record<AppTabId, number> = {
 }
 const VALID_FAVORITE_KINDS = new Set<FavoriteKind>(['file', 'folder', 'group'])
 const SHORTCUT_PROFILE_IDS: ShortcutProfileId[] = ['global', 'ports', 'mqtt', 'favorites', 'windows', 'codex', 'settings']
+const RUNTIME_DIAGNOSTICS_DEFAULTS_REVISION = 3 as const
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
@@ -36,6 +37,22 @@ function numberValue(value: unknown, fallback: number): number {
 
 function strings(value: unknown): string[] {
   return Array.isArray(value) ? [...new Set(value.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean))] : []
+}
+
+function normalizeRuntimeDiagnosticsSettings(value: unknown): RuntimeDiagnosticsSettings {
+  const source = record(value)
+  const validLevel = (['error', 'info', 'debug'] as const).includes(source.level as RuntimeDiagnosticsSettings['level'])
+    ? (source.level as RuntimeDiagnosticsSettings['level'])
+    : 'debug'
+  const userConfigured = source.userConfigured === true
+    || source.enabled === false
+    || source.defaultsRevision === 2 && validLevel !== 'debug'
+  return {
+    enabled: source.enabled !== false,
+    level: userConfigured ? validLevel : 'debug',
+    userConfigured,
+    defaultsRevision: RUNTIME_DIAGNOSTICS_DEFAULTS_REVISION
+  }
 }
 
 function normalizeKeybindingOverrides(value: unknown): KeybindingOverride[] {
@@ -372,7 +389,8 @@ export function createInitialState(now = Date.now()): AppState {
       shortcutProfiles: emptyShortcutProfiles(now),
       featureConfigs: normalizeFeatureConfigs(null),
       toolPreviewPrefs: normalizeToolPreviewPrefs(null),
-      preferSqlite: false
+      preferSqlite: false,
+      runtimeDiagnostics: normalizeRuntimeDiagnosticsSettings(null)
     },
     settingsTabId: 'shortcuts',
     settingsMaintenanceSectionId: 'features',
@@ -424,10 +442,11 @@ export function normalizeAppState(value: unknown, now = Date.now()): AppState {
       shortcutProfiles,
       featureConfigs,
       toolPreviewPrefs: normalizeToolPreviewPrefs(settings.toolPreviewPrefs ?? legacyMqttLayoutPrefs),
-      preferSqlite: settings.preferSqlite === true
+      preferSqlite: settings.preferSqlite === true,
+      runtimeDiagnostics: normalizeRuntimeDiagnosticsSettings(settings.runtimeDiagnostics)
     },
     settingsTabId: source.settingsTabId === 'maintenance' ? 'maintenance' : 'shortcuts',
-    settingsMaintenanceSectionId: (['features', 'tools', 'layers', 'storage', 'commands', 'resolution', 'reservations', 'window-diagnostics'] as const).includes(source.settingsMaintenanceSectionId as any) ? (source.settingsMaintenanceSectionId as AppState['settingsMaintenanceSectionId']) : 'features',
+    settingsMaintenanceSectionId: (['features', 'tools', 'layers', 'storage', 'commands', 'resolution', 'reservations', 'runtime-logs', 'window-diagnostics'] as const).includes(source.settingsMaintenanceSectionId as any) ? (source.settingsMaintenanceSectionId as AppState['settingsMaintenanceSectionId']) : 'features',
     updatedAt: numberValue(source.updatedAt, now)
   }
 }

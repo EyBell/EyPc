@@ -7,12 +7,8 @@ import { defaultCompanionQuotaTones } from './codexAppearance'
 
 export type CodexDisplayStyle = 'water' | 'card'
 export const CODEX_DEFAULT_QUOTA_REFRESH_SECONDS = 5 * 60
-export const CODEX_MIN_QUOTA_REFRESH_SECONDS = 0
+export const CODEX_MIN_QUOTA_REFRESH_SECONDS = 1
 export const CODEX_MAX_QUOTA_REFRESH_SECONDS = 24 * 60 * 60
-export const CODEX_DEFAULT_TASK_REFRESH_SECONDS = 15
-export const CODEX_MIN_TASK_REFRESH_SECONDS = 0
-export const CODEX_MAX_TASK_REFRESH_SECONDS = 24 * 60 * 60
-export type CodexTaskRefreshSeconds = number
 export const CODEX_DEFAULT_DYNAMIC_TASK_WINDOW_HOURS = 24
 export const CODEX_MIN_DYNAMIC_TASK_WINDOW_HOURS = 1
 export const CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS = 365 * 24
@@ -247,6 +243,10 @@ export interface CodexHostThread {
   lastTurnCompletedAt?: number
   /** Provenance of the latest Turn evidence; timestamps are never compared with local clocks. */
   lastTurnEvidence?: CodexTurnEvidenceOrigin
+  /** Process-local causal watermark for the newest accepted live edge. */
+  activeEvidenceSequence?: number
+  /** Process-local causal watermark for the newest exact terminal edge. */
+  terminalEvidenceSequence?: number
   /** Anonymous native project identity. Raw project ids and paths never cross the bridge. */
   projectKey?: string
   projectName?: string
@@ -388,6 +388,8 @@ export interface CodexActivityDeltaEntryV2 {
   lastTurnCompletedAt?: number
   /** Privacy-safe provenance for monotonic Turn evidence. */
   lastTurnEvidence?: CodexTurnEvidenceOrigin
+  activeEvidenceSequence?: number
+  terminalEvidenceSequence?: number
 }
 
 export interface CodexActivityDecisionDiagnostics {
@@ -464,8 +466,10 @@ export interface CodexThreadOpenResult {
 }
 
 export interface CodexThreadArchiveResult {
-  outcome: 'archived' | 'failed'
+  outcome: 'archived' | 'indeterminate' | 'failed'
+  operationId?: string
   desktopSync?: 'dispatched' | 'not-running' | 'incompatible' | 'failed'
+  nativeAck?: string
   errorCode?: string
   message?: string
 }
@@ -477,10 +481,18 @@ export interface CodexThreadArchiveRequest {
   expectedLastTurnStartedAt?: number
   expectedSourceFingerprint?: string
   evidence: 'completed' | 'stopped'
+  operationId?: string
+  source?: string
+  intentRecorded?: boolean
+  confirmationRecorded?: boolean
 }
 
 export interface CodexProjectArchiveRequest {
   expectedSourceFingerprint: string
+  operationId?: string
+  source?: string
+  intentRecorded?: boolean
+  confirmationRecorded?: boolean
 }
 
 export interface CodexProjectArchiveResult {
@@ -626,9 +638,8 @@ export interface CodexSettings {
   floatEnabled: boolean
   displayStyle: CodexDisplayStyle
   conversationInboxEnabled: boolean
-  /** Automatic quota refresh interval in whole seconds; 0 keeps refresh manual-only. */
+  /** Automatic quota refresh interval in whole seconds. */
   quotaRefreshSeconds: number
-  taskRefreshSeconds: CodexTaskRefreshSeconds
   newThreadModelPolicy: CodexNewThreadModelPolicy
   /** Applies only while ordinary Codex quota is selected by quota-auto. */
   newThreadPreferredModel: string
@@ -724,6 +735,8 @@ export interface CodexTaskCard {
   /** Appearance time of the current attention state, not general task recency. */
   statusEnteredAt?: number
   unreadState?: 'unread' | 'read' | 'unknown'
+  /** Process Kernel could not yet resolve one Provider evidence conflict. */
+  canonicalFreshness?: 'fresh' | 'verifying'
   /** Latest Turn.startedAt; this is the only field used as “last question time”. */
   lastQuestionAt?: number
   /** Deprecated presentation state retained while old persisted renderers migrate. */
@@ -1239,7 +1252,6 @@ export function defaultCodexSettings(): CodexSettings {
     displayStyle: 'water',
     conversationInboxEnabled: true,
     quotaRefreshSeconds: CODEX_DEFAULT_QUOTA_REFRESH_SECONDS,
-    taskRefreshSeconds: CODEX_DEFAULT_TASK_REFRESH_SECONDS,
     newThreadModelPolicy: 'quota-auto',
     newThreadPreferredModel: '',
     timeWindowDays: 30,
@@ -1271,23 +1283,17 @@ export function normalizeCodexSettings(value: unknown): CodexSettings {
     displayStyle: enumValue(source.displayStyle, ['water', 'card'] as const, fallback.displayStyle),
     conversationInboxEnabled: source.conversationInboxEnabled !== false,
     quotaRefreshSeconds: boundedInteger(
-      source.quotaRefreshSeconds,
+      Number(source.quotaRefreshSeconds) === 0 ? fallback.quotaRefreshSeconds : source.quotaRefreshSeconds,
       CODEX_MIN_QUOTA_REFRESH_SECONDS,
       CODEX_MAX_QUOTA_REFRESH_SECONDS,
       typeof source.quotaRefreshMinutes === 'number' && Number.isFinite(source.quotaRefreshMinutes)
         ? boundedInteger(
-            source.quotaRefreshMinutes * 60,
+            source.quotaRefreshMinutes === 0 ? fallback.quotaRefreshSeconds : source.quotaRefreshMinutes * 60,
             CODEX_MIN_QUOTA_REFRESH_SECONDS,
             CODEX_MAX_QUOTA_REFRESH_SECONDS,
             fallback.quotaRefreshSeconds
           )
         : fallback.quotaRefreshSeconds
-    ),
-    taskRefreshSeconds: boundedInteger(
-      source.taskRefreshSeconds,
-      CODEX_MIN_TASK_REFRESH_SECONDS,
-      CODEX_MAX_TASK_REFRESH_SECONDS,
-      fallback.taskRefreshSeconds
     ),
     newThreadModelPolicy: enumValue(source.newThreadModelPolicy, ['quota-auto'] as const, fallback.newThreadModelPolicy),
     newThreadPreferredModel: typeof source.newThreadPreferredModel === 'string' && /^[A-Za-z0-9._:-]{1,120}$/.test(source.newThreadPreferredModel)
@@ -1534,6 +1540,9 @@ function hasConfirmedCompletionOverLiveTask(thread: CodexHostThread) {
   // completion already confirmed in this activity epoch may close it while a
   // stale active snapshot/request is still draining.
   return isCodexConfirmedTerminalEvidence(thread.lastTurnEvidence)
+    && (!thread.activeEvidenceSequence
+      || !thread.terminalEvidenceSequence
+      || thread.terminalEvidenceSequence >= thread.activeEvidenceSequence)
 }
 
 /**
@@ -1545,6 +1554,9 @@ function hasConfirmedCompletionOverLiveTask(thread: CodexHostThread) {
 function hasExactInterruptedOverLiveTask(thread: CodexHostThread) {
   return thread.lastTurnStatus === 'interrupted'
     && isCodexConfirmedTerminalEvidence(thread.lastTurnEvidence)
+    && (!thread.activeEvidenceSequence
+      || !thread.terminalEvidenceSequence
+      || thread.terminalEvidenceSequence >= thread.activeEvidenceSequence)
     && !thread.activeFlags.includes('waitingOnUserInput')
     && !thread.activeFlags.includes('waitingOnApproval')
 }
@@ -1567,7 +1579,10 @@ function isExplicitlyStoppedTask(thread: CodexHostThread, desktopBridgeState?: C
   // A user/exact-provider interrupted edge is itself the terminal watermark.
   // It clears an older active shadow without fabricating desktop-live idle.
   if (thread.lastTurnStatus === 'interrupted'
-    && isCodexConfirmedTerminalEvidence(thread.lastTurnEvidence)) return true
+    && isCodexConfirmedTerminalEvidence(thread.lastTurnEvidence)
+    && (!thread.activeEvidenceSequence
+      || !thread.terminalEvidenceSequence
+      || thread.terminalEvidenceSequence >= thread.activeEvidenceSequence)) return true
   // Exact live idle or Desktop exit remain the strongest stop proofs.
   if (thread.statusAuthority === 'desktop-live' && thread.status === 'idle') return true
   if (desktopBridgeState === 'not-running') return true
@@ -1622,9 +1637,9 @@ export function compareConversationTasks(a: CodexTaskCard, b: CodexTaskCard): nu
   const bQuestion = b.lastQuestionAt || 0
   if (Boolean(aQuestion) !== Boolean(bQuestion)) return aQuestion ? -1 : 1
   if (aQuestion !== bQuestion) return bQuestion - aQuestion
-  const aActivity = Math.max(a.completionRevision || 0, a.updatedAt || 0)
-  const bActivity = Math.max(b.completionRevision || 0, b.updatedAt || 0)
-  if (aActivity !== bActivity) return bActivity - aActivity
+  const aCreated = a.createdAt || 0
+  const bCreated = b.createdAt || 0
+  if (aCreated !== bCreated) return bCreated - aCreated
   return a.key.localeCompare(b.key)
 }
 
@@ -1636,8 +1651,7 @@ export function codexTaskStatusEnteredAt(task: Pick<CodexTaskCard, 'statusEntere
 }
 
 export function compareCodexAttentionTasks(a: CodexTaskCard, b: CodexTaskCard): number {
-  const delta = codexTaskStatusEnteredAt(b) - codexTaskStatusEnteredAt(a)
-  return delta || a.key.localeCompare(b.key)
+  return compareConversationTasks(a, b)
 }
 
 export function orderCodexAttentionTasks(tasks: readonly CodexTaskCard[]): CodexTaskCard[] {
@@ -1652,7 +1666,7 @@ export function isForeignCompanionKey(key: string): boolean {
 /**
  * Display order for Codex task cards. The comparator itself is owned by
  * [companionProvider.ts](companionProvider.ts#L1) so display order and the
- * provider-grouped cycle order can never drift apart; this is the Codex-typed
+ * Provider-neutral cycle order cannot drift apart; this is the Codex-typed
  * entry point onto it.
  */
 export function orderCodexTasksForDisplay(tasks: CodexTaskCard[], pinnedTaskKeys: string[] = []): CodexTaskCard[] {

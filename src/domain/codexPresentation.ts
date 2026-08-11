@@ -14,7 +14,8 @@ import {
   CODEX_TASK_STATE_REVISION,
   emptyConversationSnapshot,
   normalizeCodexQuota,
-  orderCodexAttentionTasks
+  orderCodexAttentionTasks,
+  orderCodexTasksForDisplay
 } from './codex'
 import { highestSparkQuotaPool } from './codexNewThread'
 
@@ -142,10 +143,10 @@ export function projectCodexDynamicStatus(
   const recentOngoing = recent.filter((task) => task.bucket === 'ongoing')
   const groups: CodexDynamicStatusGroups = {
     input: orderCodexAttentionTasks(recentOngoing.filter((task) => task.activityState === 'waiting-input' || task.activityState === 'waiting-approval')),
-    active: recentOngoing.filter(isDynamicActiveTask),
-    stopped: recent.filter((task) => task.bucket === 'stopped'),
+    active: orderCodexTasksForDisplay(recentOngoing.filter(isDynamicActiveTask)),
+    stopped: orderCodexTasksForDisplay(recent.filter((task) => task.bucket === 'stopped')),
     unread: orderCodexAttentionTasks(recent.filter((task) => task.bucket === 'completed-unread')),
-    completed: recent.filter((task) => task.bucket === 'completed')
+    completed: orderCodexTasksForDisplay(recent.filter((task) => task.bucket === 'completed'))
   }
   const tasks = [groups.input, groups.active, groups.stopped, groups.unread, groups.completed].flat()
   const nextTransitionAt = recent.length

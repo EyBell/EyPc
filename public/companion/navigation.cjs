@@ -1,8 +1,9 @@
 'use strict'
 
-const COMPANION_NAVIGATION_REVISION = 'companion-navigation-v1'
-const DEFAULT_COALESCE_MS = 75
-const MAX_TARGETS = 2_000
+const COMPANION_NAVIGATION_REVISION = 'companion-navigation-v3'
+// Kept as an exported compatibility marker for diagnostics/tests. Generic
+// cycling is leading-edge now: the first target is dispatched synchronously.
+const DEFAULT_COALESCE_MS = 0
 const MAX_DIRECT_QUEUE = 200
 const PROVIDERS = ['codex', 'claude']
 
@@ -69,6 +70,7 @@ function normalizeOpenResult(value, target) {
     outcome,
     provider: target.provider,
     key: target.key,
+    ...(typeof source.operationId === 'string' ? { operationId: source.operationId.slice(0, 160) } : {}),
     ...(typeof source.errorCode === 'string' && source.errorCode ? { errorCode: source.errorCode.slice(0, 80) } : {}),
     ...(typeof source.message === 'string' && source.message ? { message: source.message.slice(0, 240) } : {}),
     ...(typeof source.confirmsRead === 'boolean' ? { confirmsRead: source.confirmsRead } : {})
@@ -76,12 +78,8 @@ function normalizeOpenResult(value, target) {
 }
 
 function createCompanionNavigation(dependencies = {}) {
-  const setTimer = typeof dependencies.setTimeout === 'function' ? dependencies.setTimeout : setTimeout
-  const clearTimer = typeof dependencies.clearTimeout === 'function' ? dependencies.clearTimeout : clearTimeout
   const queueTask = typeof dependencies.queueMicrotask === 'function' ? dependencies.queueMicrotask : queueMicrotask
-  const coalesceMs = Number.isFinite(dependencies.coalesceMs)
-    ? Math.max(0, Math.min(500, dependencies.coalesceMs))
-    : DEFAULT_COALESCE_MS
+  const record = typeof dependencies.record === 'function' ? dependencies.record : () => {}
   const openCodex = typeof dependencies.openCodex === 'function'
     ? dependencies.openCodex
     : async () => unavailable('Codex 任务打开能力不可用')
@@ -95,9 +93,8 @@ function createCompanionNavigation(dependencies = {}) {
   let activeLease = 0
   let snapshot = { ready: false, targets: new Map(), cycleKeys: [] }
   let cursorKey = ''
-  let pendingCycle = null
-  let pendingCycleTimer = null
   let queuedCycle = null
+  let inFlightRequest = null
   const directQueue = []
   let dispatchInFlight = false
   let disposed = false
@@ -109,24 +106,31 @@ function createCompanionNavigation(dependencies = {}) {
   let dispatchedClaude = 0
   let lastOutcome = 'idle'
   let resultSequence = 0
+  let operationSequence = 0
   const pendingResults = []
   const resultListeners = new Set()
 
+  function operationId(value, prefix = 'nav') {
+    if (typeof value === 'string' && /^[a-z0-9:_-]{6,160}$/i.test(value)) return value
+    operationSequence += 1
+    return `${prefix}_${Date.now().toString(36)}_${operationSequence.toString(36)}`
+  }
+
   function resolveRequest(request, result) {
-    try { request.resolve(result) } catch {}
+    try {
+      request.resolve({
+        ...result,
+        ...(typeof result?.operationId === 'string'
+          ? { operationId: result.operationId }
+          : typeof request?.operationId === 'string' ? { operationId: request.operationId } : {})
+      })
+    } catch {}
   }
 
   function cancelPendingCycle() {
-    if (pendingCycleTimer) clearTimer(pendingCycleTimer)
-    pendingCycleTimer = null
-    if (pendingCycle) {
-      replacedCount += 1
-      resolveRequest(pendingCycle, superseded())
-      pendingCycle = null
-    }
     if (queuedCycle) {
       replacedCount += 1
-      resolveRequest(queuedCycle, superseded())
+      resolveRequest(queuedCycle, { ...superseded(), operationId: queuedCycle.operationId })
       queuedCycle = null
     }
   }
@@ -170,7 +174,7 @@ function createCompanionNavigation(dependencies = {}) {
     }
     if (!enabled) return true
     const targets = new Map()
-    for (const value of Array.isArray(input.targets) ? input.targets.slice(0, MAX_TARGETS) : []) {
+    for (const value of Array.isArray(input.targets) ? input.targets : []) {
       const target = normalizeTarget(value, enabledProviders)
       if (target && !targets.has(target.key)) targets.set(target.key, target)
     }
@@ -193,11 +197,13 @@ function createCompanionNavigation(dependencies = {}) {
   }
 
   async function dispatch(request) {
+    const startedAt = Date.now()
     currentConcurrent += 1
     maxConcurrent = Math.max(maxConcurrent, currentConcurrent)
     try {
       const open = request.target.provider === 'claude' ? openClaude : openCodex
-      const result = normalizeOpenResult(await open(request.target), request.target)
+      const result = normalizeOpenResult(await open(request.target, request), request.target)
+      const currentOperationId = result.operationId || request.operationId
       if (result.outcome === 'opened' || result.outcome === 'dispatched') {
         if (request.target.provider === 'claude') dispatchedClaude += 1
         else dispatchedCodex += 1
@@ -207,6 +213,7 @@ function createCompanionNavigation(dependencies = {}) {
           key: request.target.key,
           source: request.source,
           outcome: result.outcome,
+          operationId: currentOperationId,
           at: Date.now()
         }
         pendingResults.push(event)
@@ -217,8 +224,30 @@ function createCompanionNavigation(dependencies = {}) {
       }
       lastOutcome = result.outcome
       resolveRequest(request, result)
+      record({
+        level: result.outcome === 'failed' ? 'error' : 'info',
+        scope: 'navigation',
+        event: `${request.target.provider}-open`,
+        outcome: result.outcome,
+        code: result.errorCode || undefined,
+        operationId: currentOperationId,
+        provider: request.target.provider,
+        taskRef: request.target.key,
+        source: request.source,
+        durationMs: Date.now() - startedAt,
+        slowMs: 200
+      })
+      // A rapid sequence may return to the target already being opened. The
+      // final intent has then already been satisfied, so do not call Provider
+      // twice merely because intermediate presses advanced the logical cursor.
+      if (!directQueue.length && queuedCycle?.target.key === request.target.key) {
+        const satisfied = queuedCycle
+        queuedCycle = null
+        resolveRequest(satisfied, { ...result })
+      }
     } catch {
       lastOutcome = 'failed'
+      record({ scope: 'navigation', event: `${request.target.provider}-open`, outcome: 'failed', code: 'exception', durationMs: Date.now() - startedAt, slowMs: 200, level: 'error', operationId: request.operationId, provider: request.target.provider, taskRef: request.target.key, source: request.source })
       resolveRequest(request, {
         outcome: 'failed',
         errorCode: 'open-failed',
@@ -237,36 +266,48 @@ function createCompanionNavigation(dependencies = {}) {
     if (!next) return
     if (next === queuedCycle) queuedCycle = null
     dispatchInFlight = true
+    inFlightRequest = next
     void dispatch(next).finally(() => {
       dispatchInFlight = false
+      inFlightRequest = null
       queueTask(pump)
     })
   }
 
-  function armCycle(request) {
-    if (pendingCycleTimer) clearTimer(pendingCycleTimer)
-    if (pendingCycle) {
-      replacedCount += 1
-      resolveRequest(pendingCycle, superseded())
-    }
-    pendingCycle = request
-    pendingCycleTimer = setTimer(() => {
-      pendingCycleTimer = null
-      const next = pendingCycle
-      pendingCycle = null
-      if (!next) return
+  function queueCycle(request) {
+    if (dispatchInFlight || directQueue.length) {
       if (queuedCycle) {
         replacedCount += 1
         resolveRequest(queuedCycle, superseded())
       }
-      queuedCycle = next
-      pump()
-    }, coalesceMs)
+      queuedCycle = request
+      return
+    }
+    queuedCycle = request
+    pump()
   }
 
-  function cycle(direction) {
-    if (disposed || !enabled || !snapshot.ready) return Promise.resolve(unavailable('任务缓存尚未就绪', 'inventory-not-ready'))
-    if (!snapshot.cycleKeys.length) return Promise.resolve(unavailable('当前没有可切换的任务', 'no-task'))
+  function cycle(direction, input = {}) {
+    const startedAt = Date.now()
+    const source = input.source || 'task-cycle'
+    const currentOperationId = operationId(input.operationId, 'cycle')
+    const reject = (result) => {
+      record({
+        level: 'error',
+        scope: 'navigation',
+        event: 'cycle',
+        outcome: 'failed',
+        code: result.errorCode,
+        operationId: currentOperationId,
+        source,
+        cache: 'process-package',
+        durationMs: Date.now() - startedAt,
+        details: { ready: snapshot.ready, targetCount: snapshot.targets.size, cycleCount: snapshot.cycleKeys.length }
+      })
+      return Promise.resolve({ ...result, operationId: currentOperationId })
+    }
+    if (disposed || !enabled || !snapshot.ready) return reject(unavailable('任务缓存尚未就绪', 'inventory-not-ready'))
+    if (!snapshot.cycleKeys.length) return reject(unavailable('当前没有可切换的任务', 'no-task'))
     const offset = direction === -1 ? -1 : 1
     const currentIndex = snapshot.cycleKeys.indexOf(cursorKey)
     const nextIndex = currentIndex < 0
@@ -274,22 +315,65 @@ function createCompanionNavigation(dependencies = {}) {
       : (currentIndex + offset + snapshot.cycleKeys.length) % snapshot.cycleKeys.length
     const key = snapshot.cycleKeys[nextIndex]
     const target = snapshot.targets.get(key)
-    if (!target) return Promise.resolve(unavailable('任务缓存已变化，请重试', 'stale-target'))
+    if (!target) return reject(unavailable('任务缓存已变化，请重试', 'stale-target'))
     cursorKey = key
     acceptedCycleCount += 1
-    return new Promise((resolve) => armCycle({ target, source: 'cycle', resolve }))
+    record({
+      level: 'debug',
+      scope: 'navigation',
+      event: 'target-selected',
+      outcome: 'selected',
+      operationId: currentOperationId,
+      provider: target.provider,
+      taskRef: target.key,
+      source,
+      cache: 'process-package',
+      details: { direction: offset, currentIndex, nextIndex, cycleCount: snapshot.cycleKeys.length }
+    })
+    return new Promise((resolve) => queueCycle({ target, source, operationId: currentOperationId, resolve }))
   }
 
   function open(input = {}) {
-    if (disposed || !enabled) return Promise.resolve(unavailable('任务功能未启用', 'disabled'))
+    const startedAt = Date.now()
+    const source = input.source || 'manual-row-open'
+    const currentOperationId = operationId(input.operationId, 'open')
+    const reject = (result) => {
+      record({
+        level: 'error',
+        scope: 'navigation',
+        event: 'open',
+        outcome: 'failed',
+        code: result.errorCode,
+        operationId: currentOperationId,
+        source,
+        taskRef: typeof input.key === 'string' ? input.key : '',
+        cache: 'process-package',
+        durationMs: Date.now() - startedAt,
+        details: { ready: snapshot.ready, targetCount: snapshot.targets.size }
+      })
+      return Promise.resolve({ ...result, operationId: currentOperationId })
+    }
+    if (disposed || !enabled) return reject(unavailable('任务功能未启用', 'disabled'))
     const key = typeof input.key === 'string' ? input.key : ''
     const suppliedTarget = normalizeTarget(input.target, enabledProviders)
     const target = suppliedTarget?.key === key ? suppliedTarget : snapshot.targets.get(key)
-    if (!target) return Promise.resolve(unavailable('任务身份已失效，请刷新后重试', 'stale-target'))
-    if (directQueue.length >= MAX_DIRECT_QUEUE) return Promise.resolve(unavailable('任务打开队列繁忙，请稍后重试', 'queue-full'))
+    if (!target) return reject(unavailable('任务身份已失效，请刷新后重试', 'stale-target'))
+    if (directQueue.length >= MAX_DIRECT_QUEUE) return reject(unavailable('任务打开队列繁忙，请稍后重试', 'queue-full'))
     cancelPendingCycle()
+    record({
+      level: 'debug',
+      scope: 'navigation',
+      event: 'target-selected',
+      outcome: 'selected',
+      operationId: currentOperationId,
+      provider: target.provider,
+      taskRef: target.key,
+      source,
+      cache: suppliedTarget ? 'supplied-target' : 'process-package',
+      details: { ready: snapshot.ready, targetCount: snapshot.targets.size }
+    })
     return new Promise((resolve) => {
-      directQueue.push({ target, source: input.source === 'attention' ? 'attention' : 'manual', resolve })
+      directQueue.push({ target, source, operationId: currentOperationId, resolve })
       pump()
     })
   }
@@ -321,9 +405,10 @@ function createCompanionNavigation(dependencies = {}) {
       enabledProviderCount: enabledProviders.size,
       targetCount: snapshot.targets.size,
       cycleCount: snapshot.cycleKeys.length,
-      pendingCycle: Boolean(pendingCycle || queuedCycle),
+      pendingCycle: Boolean(queuedCycle),
       directQueueDepth: directQueue.length,
       dispatchInFlight,
+      inFlightKey: inFlightRequest?.target?.key || '',
       maxConcurrent,
       replacedCount,
       acceptedCycleCount,

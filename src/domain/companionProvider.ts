@@ -14,8 +14,8 @@ export const DEFAULT_COMPANION_PROVIDER: CompanionProviderId = 'codex'
 export const COMPANION_PROVIDER_IDS: readonly CompanionProviderId[] = ['codex', 'claude']
 
 /**
- * Fixed group order for the previous/next task cycle. Group membership never
- * depends on activity, so a live event can never reorder the groups themselves.
+ * Stable provider enumeration for enablement and compatibility decisions.
+ * Previous/next task order is Provider-neutral and owned by the task Kernel.
  */
 export const COMPANION_PROVIDER_CYCLE_ORDER: readonly CompanionProviderId[] = ['codex', 'claude']
 
@@ -113,67 +113,33 @@ export interface CompanionOrderableTask {
   key: string
   pinSource?: 'native' | 'local'
   provider?: CompanionProviderId
+  lastQuestionAt?: number
+  createdAt?: number
 }
 
 /**
- * Display order — the shared base comparator, and the single owner of the
- * pinned-first rule. Pinned tasks lead in the caller's explicit pinned-key
- * order when one is supplied, then everything keeps its stable source order.
- * Provider membership is deliberately ignored so the visible list stays one
- * merged, status-driven sequence.
+ * Display order — one provider-neutral comparator for every visible group.
+ * Recent question time wins, then creation time and the anonymous key. Pin and
+ * provider are deliberately excluded from ordering.
  */
 export function orderCompanionTasksForDisplay<T extends CompanionOrderableTask>(
   tasks: readonly T[],
-  pinnedTaskKeys: readonly string[] = []
+  _pinnedTaskKeys: readonly string[] = []
 ): T[] {
-  const pinnedOrder = new Map(pinnedTaskKeys.map((key, index) => [key, index]))
-  return tasks
-    .map((task, sourceIndex) => ({ task, sourceIndex }))
-    .sort((left, right) => {
-      const leftPinned = Boolean(left.task.pinSource)
-      const rightPinned = Boolean(right.task.pinSource)
-      if (leftPinned !== rightPinned) return leftPinned ? -1 : 1
-      if (leftPinned && rightPinned) {
-        const leftOrder = pinnedOrder.get(left.task.key)
-        const rightOrder = pinnedOrder.get(right.task.key)
-        if (leftOrder !== undefined || rightOrder !== undefined) {
-          return (leftOrder ?? Number.MAX_SAFE_INTEGER) - (rightOrder ?? Number.MAX_SAFE_INTEGER) || left.sourceIndex - right.sourceIndex
-        }
-      }
-      return left.sourceIndex - right.sourceIndex
-    })
-    .map(({ task }) => task)
+  return [...tasks].sort((left, right) => (Number(right.lastQuestionAt) || 0) - (Number(left.lastQuestionAt) || 0)
+    || (Number(right.createdAt) || 0) - (Number(left.createdAt) || 0)
+    || left.key.localeCompare(right.key))
 }
 
 /**
- * Cycle order — the display comparator plus a provider group as primary key.
- *
- * The previous/next commands walk the current provider's group to its end
- * before entering the next group, and the group sequence is a constant
- * (`COMPANION_PROVIDER_CYCLE_ORDER`). Because grouping is a stable partition of
- * an already-stable order, a task that arrives or updates mid-cycle can only be
- * appended within its own group: it can never move an existing item across the
- * cursor, which is what makes repeated "next" presses monotonic instead of
- * bouncing between directions.
+ * Cycle order uses the same provider-neutral order. Eligibility tiers are
+ * selected by the process-owned Kernel before this comparator is applied.
  */
 export function orderCompanionTasksForCycle<T extends CompanionOrderableTask>(
   tasks: readonly T[],
   pinnedTaskKeys: readonly string[] = []
 ): T[] {
-  const ordered = orderCompanionTasksForDisplay(tasks, pinnedTaskKeys)
-  if (ordered.length < 2) return ordered
-  const groups = new Map<CompanionProviderId, T[]>()
-  for (const provider of COMPANION_PROVIDER_CYCLE_ORDER) groups.set(provider, [])
-  const trailing: T[] = []
-  for (const task of ordered) {
-    const bucket = groups.get(companionTaskProvider(task))
-    if (bucket) bucket.push(task)
-    else trailing.push(task)
-  }
-  const result: T[] = []
-  for (const provider of COMPANION_PROVIDER_CYCLE_ORDER) result.push(...(groups.get(provider) || []))
-  result.push(...trailing)
-  return result
+  return orderCompanionTasksForDisplay(tasks, pinnedTaskKeys)
 }
 
 /* ------------------------------------------------------------------ *
@@ -267,9 +233,20 @@ export function resolveCompanionWaterBallMapping(
  * ------------------------------------------------------------------ */
 
 export type CompanionOpenOutcome = 'opened' | 'dispatched' | 'unavailable' | 'failed'
-export const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v1'
+export const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v3'
 
-export type CompanionTaskActionSource = 'manual' | 'attention' | 'cycle' | 'card' | 'batch' | 'shortcut'
+export type CompanionTaskActionSource =
+  | 'card-click'
+  | 'manual-row-open'
+  | 'manual-quick-jump'
+  | 'global-shortcut'
+  | 'local-shortcut'
+  | 'attention-shortcut'
+  | 'archive-button'
+  | 'archive-shortcut'
+  | 'batch-archive'
+  | 'project-archive'
+  | 'automatic-recovery'
 export type CompanionArchiveOutcome = 'confirmation-required' | 'archived' | 'failed' | 'indeterminate'
 
 export interface CompanionTaskTarget {
@@ -280,18 +257,18 @@ export interface CompanionTaskTarget {
   phase: string
 }
 
-export type CompanionTaskActionRequest =
-  | { action: 'open'; target: CompanionTaskTarget; source: Extract<CompanionTaskActionSource, 'manual' | 'attention' | 'cycle'> }
-  | { action: 'archive'; target: CompanionTaskTarget; source: Extract<CompanionTaskActionSource, 'card' | 'batch' | 'shortcut'> }
+export type CompanionTaskActionRequestV3 =
+  | { action: 'open'; target: CompanionTaskTarget; source: Extract<CompanionTaskActionSource, 'card-click' | 'manual-row-open' | 'manual-quick-jump' | 'global-shortcut' | 'local-shortcut' | 'attention-shortcut' | 'automatic-recovery'> }
+  | { action: 'archive'; target: CompanionTaskTarget; source: Extract<CompanionTaskActionSource, 'archive-button' | 'archive-shortcut' | 'batch-archive' | 'project-archive' | 'automatic-recovery'> }
 
-export interface CompanionArchiveResult {
+export interface CompanionArchiveResultV3 {
   outcome: CompanionArchiveOutcome
   message?: string
   errorCode?: string
   alreadyArchived?: boolean
 }
 
-export interface CompanionOpenResult {
+export interface CompanionOpenResultV3 {
   outcome: CompanionOpenOutcome
   /** Only an `opened` result is strong enough to write a read receipt. */
   confirmsRead: boolean
@@ -314,7 +291,7 @@ export interface CompanionProviderPort {
   /** Environment probe; must resolve rather than throw when the host is absent. */
   inspect(): Promise<CompanionProviderReadiness>
   /** Opens a task using this provider's own jump mechanism. */
-  openTask(taskKey: string, actionAlias?: string): Promise<CompanionOpenResult>
+  openTask(taskKey: string, actionAlias?: string): Promise<CompanionOpenResultV3>
   /** Releases watchers, child processes and subscriptions owned by this provider. */
   close(): void
 }
@@ -326,7 +303,7 @@ export interface CompanionProviderPort {
 export interface CompanionProviderAdapter {
   readonly id: CompanionProviderId
   inspect(): Promise<CompanionProviderReadiness>
-  open(request: Extract<CompanionTaskActionRequest, { action: 'open' }>): Promise<CompanionOpenResult>
-  archive(request: Extract<CompanionTaskActionRequest, { action: 'archive' }>): Promise<CompanionArchiveResult>
+  open(request: Extract<CompanionTaskActionRequestV3, { action: 'open' }>): Promise<CompanionOpenResultV3>
+  archive(request: Extract<CompanionTaskActionRequestV3, { action: 'archive' }>): Promise<CompanionArchiveResultV3>
   close(): void
 }
