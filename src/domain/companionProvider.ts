@@ -233,7 +233,7 @@ export function resolveCompanionWaterBallMapping(
  * ------------------------------------------------------------------ */
 
 export type CompanionOpenOutcome = 'opened' | 'dispatched' | 'unavailable' | 'failed'
-export const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v3'
+export const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v2'
 
 export type CompanionTaskActionSource =
   | 'card-click'
@@ -246,6 +246,11 @@ export type CompanionTaskActionSource =
   | 'archive-shortcut'
   | 'batch-archive'
   | 'project-archive'
+  | 'pause-button'
+  | 'resume-button'
+  | 'execute-plan-button'
+  | 'batch-pause'
+  | 'batch-resume'
   | 'automatic-recovery'
 export type CompanionArchiveOutcome = 'confirmation-required' | 'archived' | 'failed' | 'indeterminate'
 
@@ -255,25 +260,43 @@ export interface CompanionTaskTarget {
   actionAlias: string
   revisionAt: number
   phase: string
+  planReady?: boolean
+  planLifecycleRevision?: number
+  paused?: boolean
 }
 
-export type CompanionTaskActionRequestV3 =
+export type CompanionTaskActionRequestV2 =
   | { action: 'open'; target: CompanionTaskTarget; source: Extract<CompanionTaskActionSource, 'card-click' | 'manual-row-open' | 'manual-quick-jump' | 'global-shortcut' | 'local-shortcut' | 'attention-shortcut' | 'automatic-recovery'> }
   | { action: 'archive'; target: CompanionTaskTarget; source: Extract<CompanionTaskActionSource, 'archive-button' | 'archive-shortcut' | 'batch-archive' | 'project-archive' | 'automatic-recovery'> }
+  | { action: 'pause'; target: CompanionTaskTarget; source: Extract<CompanionTaskActionSource, 'pause-button' | 'batch-pause'> }
+  | { action: 'resume'; target: CompanionTaskTarget; source: Extract<CompanionTaskActionSource, 'resume-button' | 'batch-resume'> }
+  | { action: 'executePlan'; target: CompanionTaskTarget; source: 'execute-plan-button' }
 
-export interface CompanionArchiveResultV3 {
+export interface CompanionArchiveResultV2 {
   outcome: CompanionArchiveOutcome
   message?: string
   errorCode?: string
   alreadyArchived?: boolean
 }
 
-export interface CompanionOpenResultV3 {
+export interface CompanionOpenResultV2 {
   outcome: CompanionOpenOutcome
   /** Only an `opened` result is strong enough to write a read receipt. */
   confirmsRead: boolean
   message?: string
 }
+
+export interface CompanionExecutePlanResultV2 {
+  outcome: 'executed' | 'failed' | 'indeterminate'
+  message?: string
+  errorCode?: string
+  operationId?: string
+}
+
+/** Compatibility names retained for source consumers predating Actions v2. */
+export type CompanionTaskActionRequestV3 = CompanionTaskActionRequestV2
+export type CompanionArchiveResultV3 = CompanionArchiveResultV2
+export type CompanionOpenResultV3 = CompanionOpenResultV2
 
 export interface CompanionProviderReadiness {
   available: boolean
@@ -291,7 +314,7 @@ export interface CompanionProviderPort {
   /** Environment probe; must resolve rather than throw when the host is absent. */
   inspect(): Promise<CompanionProviderReadiness>
   /** Opens a task using this provider's own jump mechanism. */
-  openTask(taskKey: string, actionAlias?: string): Promise<CompanionOpenResultV3>
+  openTask(taskKey: string, actionAlias?: string): Promise<CompanionOpenResultV2>
   /** Releases watchers, child processes and subscriptions owned by this provider. */
   close(): void
 }
@@ -303,7 +326,8 @@ export interface CompanionProviderPort {
 export interface CompanionProviderAdapter {
   readonly id: CompanionProviderId
   inspect(): Promise<CompanionProviderReadiness>
-  open(request: Extract<CompanionTaskActionRequestV3, { action: 'open' }>): Promise<CompanionOpenResultV3>
-  archive(request: Extract<CompanionTaskActionRequestV3, { action: 'archive' }>): Promise<CompanionArchiveResultV3>
+  open(request: Extract<CompanionTaskActionRequestV2, { action: 'open' }>): Promise<CompanionOpenResultV2>
+  archive(request: Extract<CompanionTaskActionRequestV2, { action: 'archive' }>): Promise<CompanionArchiveResultV2>
+  executePlan?(request: Extract<CompanionTaskActionRequestV2, { action: 'executePlan' }>): Promise<CompanionExecutePlanResultV2>
   close(): void
 }

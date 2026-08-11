@@ -3,15 +3,16 @@
 const { createCompanionNavigation } = require('./navigation.cjs')
 const { createCompanionTaskActions } = require('./task-actions.cjs')
 
-const COMPANION_TASK_KERNEL_REVISION = 'companion-task-kernel-v3'
-const COMPANION_TASK_PACKAGE_REVISION = 'companion-task-package-v3'
-const COMPANION_TASK_DRAFT_REVISION = 'companion-task-draft-v3'
+const COMPANION_TASK_KERNEL_REVISION = 'companion-task-kernel-v4'
+const COMPANION_TASK_PACKAGE_REVISION = 'companion-task-package-v4'
+const COMPANION_TASK_DRAFT_REVISION = 'companion-task-draft-v4'
 const PREFLIGHT_PROGRESS_MS = 600
 const PREFLIGHT_TIMEOUT_MS = 5_000
 const UNKNOWN_GRACE_MS = 250
+const MAX_TIMER_DELAY_MS = 2_147_483_647
 const PROVIDERS = ['codex', 'claude']
 const PHASES = ['running', 'waiting-input', 'waiting-approval', 'completed', 'stopped', 'unknown']
-const TIERS = ['attention', 'plan-implementation', 'active', 'fallback', 'none']
+const TIERS = ['attention', 'plan', 'active', 'fallback', 'none']
 const GROUPS = ['input', 'active', 'stopped', 'unread', 'completed', 'none']
 const DRAFT_PRODUCERS = ['renderer', 'host-preflight', 'host-evidence']
 const SOURCE_LANES = ['membership', 'phase', 'unread']
@@ -21,7 +22,7 @@ const SOURCE_LANES = ['membership', 'phase', 'unread']
  * callers may preserve a prior stable phase while an interrupted/failed edge
  * is being verified, but must not reinterpret the result.
  */
-function reduceCodexTaskEvidenceV3(value = {}) {
+function reduceCodexTaskEvidenceV4(value = {}) {
   const flags = Array.isArray(value.activeFlags) ? value.activeFlags : []
   const waitingApproval = flags.includes('waitingOnApproval')
   const waitingInput = flags.includes('waitingOnUserInput')
@@ -31,11 +32,19 @@ function reduceCodexTaskEvidenceV3(value = {}) {
     || value.statusAuthority === 'persisted-decision'
     || value.planImplementationOnly === true
   )
-  const exactTerminal = ['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(value.lastTurnEvidence)
+  const exactTerminal = ['completed', 'interrupted', 'failed'].includes(value.lastTurnStatus)
+    && ['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(value.lastTurnEvidence)
   const activeSequence = finiteInteger(value.activeEvidenceSequence)
   const terminalSequence = finiteInteger(value.terminalEvidenceSequence)
-  const terminalCurrent = exactTerminal && (!activeSequence || !terminalSequence || terminalSequence >= activeSequence)
-  const activeCurrent = liveActive && (!terminalCurrent || activeSequence > terminalSequence)
+  const terminalStrictlyNewer = exactTerminal && terminalSequence > 0
+    && (!activeSequence || terminalSequence > activeSequence)
+  const idleConfirmedTerminal = exactTerminal && value.idleConfirmed === true
+    && (!activeSequence || !terminalSequence || terminalSequence >= activeSequence)
+  const terminalCurrent = exactTerminal && (
+    idleConfirmedTerminal
+    || (!liveActive && (terminalStrictlyNewer || !activeSequence || !terminalSequence))
+  )
+  const activeCurrent = liveActive && !terminalStrictlyNewer && !idleConfirmedTerminal
   const waitingCurrent = liveActive && (waitingApproval || waitingInput)
     && (!activeSequence || !terminalSequence || activeSequence >= terminalSequence)
   const prior = PHASES.includes(value.previousPhase) ? value.previousPhase : 'running'
@@ -50,9 +59,13 @@ function reduceCodexTaskEvidenceV3(value = {}) {
     activeEvidenceSequence: activeSequence,
     terminalEvidenceSequence: terminalSequence,
     terminalCurrent,
+    terminalStrictlyNewer,
+    idleConfirmedTerminal,
     activeCurrent,
     waitingCurrent,
     planImplementationOnly: value.planImplementationOnly === true,
+    planReady: value.planReady === true || value.planImplementationOnly === true,
+    idleConfirmed: value.idleConfirmed === true,
     hasUnreadTurn: value.hasUnreadTurn === true,
     activityRevision: finiteInteger(value.activityRevision),
     waitingSince: finiteInteger(value.waitingSince),
@@ -64,15 +77,51 @@ function reduceCodexTaskEvidenceV3(value = {}) {
 
   if (waitingCurrent && waitingApproval) return decide('waiting-approval', 'causal-waiting-approval')
   if (waitingCurrent && waitingInput) return decide('waiting-input', 'causal-waiting-input')
-  if (activeCurrent || (value.lastTurnStatus === 'inProgress' && !terminalCurrent)) return decide('running', 'causal-active')
+  if (activeCurrent || (value.lastTurnStatus === 'inProgress' && !terminalCurrent)) {
+    return decide('running', exactTerminal ? 'active-terminal-conflict' : 'causal-active', exactTerminal ? 'verifying' : 'fresh')
+  }
   if (value.lastTurnStatus === 'completed' && (!liveActive || terminalCurrent)) return decide('completed', terminalCurrent ? 'exact-completed' : 'completed-inventory')
-  if (value.lastTurnStatus === 'interrupted' && terminalCurrent) return decide('stopped', 'exact-interrupted')
   if ((value.lastTurnStatus === 'interrupted' || value.lastTurnStatus === 'failed')
-    && value.statusAuthority === 'desktop-live' && value.status === 'idle') return decide('stopped', 'desktop-idle-terminal')
+    && exactTerminal && value.idleConfirmed === true) {
+    return decide('stopped', value.planReady === true || value.planImplementationOnly === true
+      ? 'plan-interrupted-idle-confirmed'
+      : 'ordinary-interrupted-idle-confirmed')
+  }
   if (value.lastTurnStatus === 'interrupted' || value.lastTurnStatus === 'failed' || value.status === 'systemError') {
     return decide(prior, 'terminal-verifying', 'verifying')
   }
   return decide(prior === 'unknown' ? 'unknown' : prior, 'insufficient-evidence', 'verifying')
+}
+
+/** @deprecated Source compatibility; V4 is the sole implementation. */
+const reduceCodexTaskEvidenceV3 = reduceCodexTaskEvidenceV4
+
+/** Provider-neutral Claude phase reducer. Adapters supply native phase and
+ * unread evidence; Host and Renderer consumers must not recreate this rule. */
+function reduceClaudeTaskEvidenceV4(value = {}) {
+  const sourcePhase = PHASES.includes(value.phase) ? value.phase : 'unknown'
+  if (sourcePhase === 'running' || sourcePhase === 'waiting-input' || sourcePhase === 'waiting-approval') {
+    return {
+      phase: sourcePhase,
+      freshness: 'fresh',
+      reason: 'provider-live',
+      details: { sourcePhase, unread: value.unread === true }
+    }
+  }
+  if (value.unread === true) {
+    return {
+      phase: 'completed',
+      freshness: 'fresh',
+      reason: 'native-unread-completion',
+      details: { sourcePhase, unread: true }
+    }
+  }
+  return {
+    phase: sourcePhase,
+    freshness: sourcePhase === 'unknown' ? 'verifying' : 'fresh',
+    reason: sourcePhase === 'completed' || sourcePhase === 'stopped' ? 'provider-terminal' : 'unknown-evidence',
+    details: { sourcePhase, unread: false }
+  }
 }
 
 function providerSet(value) {
@@ -146,8 +195,6 @@ function normalizeTask(value, enabledProviders) {
   const key = typeof value.key === 'string' ? value.key : ''
   const kind = value.kind === 'claude-session' || value.kind === 'codex-thread' || value.kind === 'local-pin' ? value.kind : ''
   const phase = PHASES.includes(value.phase) ? value.phase : 'unknown'
-  const cycleTier = TIERS.includes(value.cycleTier) ? value.cycleTier : 'none'
-  const dynamicGroup = GROUPS.includes(value.dynamicGroup) ? value.dynamicGroup : 'none'
   const actionAlias = typeof value.actionAlias === 'string' ? value.actionAlias : ''
   const revisionAt = finiteInteger(value.revisionAt)
   if (!provider || !enabledProviders.has(provider) || !key || key.length > 256 || !kind || !revisionAt) return null
@@ -158,8 +205,10 @@ function normalizeTask(value, enabledProviders) {
     provider,
     kind,
     phase,
-    cycleTier,
-    dynamicGroup,
+    // Provider/Renderer values are intentionally ignored. Only finalizeTask()
+    // may derive these canonical selectors.
+    cycleTier: 'none',
+    dynamicGroup: 'none',
     actionAlias: actionAlias.slice(0, 256),
     revisionAt,
     semanticRevision: finiteInteger(value.semanticRevision, 1),
@@ -185,11 +234,19 @@ function normalizeTask(value, enabledProviders) {
     unreadKnown: value.unreadKnown !== false,
     unread: value.unread === true,
     planImplementation: value.planImplementation === true,
+    planReady: value.planReady === true || value.planImplementation === true,
+    planLifecycleRevision: finiteInteger(value.planLifecycleRevision),
+    paused: value.paused === true,
+    turnMode: value.turnMode === 'plan' || value.turnMode === 'default' ? value.turnMode : 'unknown',
+    idleConfirmed: value.idleConfirmed === true,
     localPin: value.localPin === true,
     dynamicEligible: value.dynamicEligible === true,
     capabilities: {
       open: capabilities.open === true && Boolean(actionAlias),
-      archive: capabilities.archive === true
+      archive: capabilities.archive === true,
+      pause: capabilities.pause === true,
+      resume: capabilities.resume === true,
+      executePlan: capabilities.executePlan === true
     },
     ...(typeof value.displayName === 'string' ? { displayName: value.displayName.slice(0, 240) } : {}),
     ...(typeof value.projectKey === 'string' ? { projectKey: value.projectKey.slice(0, 256) } : {}),
@@ -206,7 +263,13 @@ function targetFromTask(task) {
     actionAlias: task.actionAlias,
     revisionAt: task.revisionAt,
     phase: task.phase,
+    planReady: task.planReady,
+    planLifecycleRevision: task.planLifecycleRevision,
+    paused: task.paused,
     canArchive: task.capabilities.archive,
+    canPause: task.capabilities.pause,
+    canResume: task.capabilities.resume,
+    canExecutePlan: task.capabilities.executePlan,
     ...(task.archiveRequest ? { archiveRequest: task.archiveRequest } : {})
   }
 }
@@ -216,7 +279,8 @@ function emptyViews() {
     groups: { input: [], active: [], stopped: [], unread: [], completed: [] },
     counts: { input: 0, active: 0, unread: 0 },
     cycleKeys: [],
-    attentionKeys: { input: [], completedUnread: [], archive: [] }
+    attentionKeys: { input: [], completedUnread: [], archive: [] },
+    pausedKeys: []
   }
 }
 
@@ -245,22 +309,34 @@ function compareByLatestQuestion(left, right) {
     || left.key.localeCompare(right.key)
 }
 
+function visibilityAnchor(task) {
+  return Math.max(
+    finiteInteger(task.lastQuestionAt),
+    finiteInteger(task.turnStartedAt),
+    finiteInteger(task.terminalAt),
+    finiteInteger(task.statusEnteredAt),
+    finiteInteger(task.metadataRevision),
+    finiteInteger(task.revisionAt)
+  )
+}
+
 function derivedCycleTier(task) {
-  if (task.hidden) return 'none'
+  if (task.hidden || task.paused) return 'none'
   if (task.phase === 'waiting-input' || task.phase === 'waiting-approval') {
-    return task.planImplementation ? 'plan-implementation' : 'attention'
+    return task.planImplementation ? 'plan' : 'attention'
   }
+  if (task.phase === 'stopped' && task.planReady) return 'plan'
   if (task.phase === 'running') return 'active'
-  if (task.phase === 'unknown' && task.provider === 'codex') return 'active'
-  if (task.localPin && task.phase !== 'stopped') return 'fallback'
+  if (task.localPin) return 'fallback'
   return 'none'
 }
 
 function derivedDynamicGroup(task) {
-  if (task.hidden || !task.dynamicEligible) return 'none'
+  if (task.hidden || task.paused) return 'none'
+  if (!task.dynamicEligible && !(task.phase === 'stopped' && task.planReady)) return 'none'
   if (task.phase === 'waiting-input' || task.phase === 'waiting-approval') return 'input'
   if (task.phase === 'running') return 'active'
-  if (task.phase === 'unknown') return task.provider === 'claude' ? 'stopped' : 'active'
+  if (task.phase === 'unknown') return 'none'
   if (task.phase === 'stopped') return 'stopped'
   if (task.phase === 'completed') return task.unread ? 'unread' : 'completed'
   return 'none'
@@ -269,6 +345,23 @@ function derivedDynamicGroup(task) {
 function finalizeTask(task) {
   const revisionAt = finiteInteger(task.revisionAt)
   const next = { ...task, revisionAt }
+  if (next.planReady && !next.planLifecycleRevision) {
+    next.planLifecycleRevision = Math.max(1, next.statusEnteredAt, next.turnStartedAt, next.revisionAt)
+  }
+  if (!next.planReady) {
+    next.planLifecycleRevision = 0
+    next.paused = false
+  }
+  const planActionable = next.provider === 'codex'
+    && next.planReady
+    && (next.phase === 'stopped' || (next.phase === 'waiting-input' && next.planImplementation === true))
+    && next.phase !== 'waiting-approval'
+  next.capabilities = {
+    ...next.capabilities,
+    pause: planActionable && !next.paused,
+    resume: planActionable && next.paused,
+    executePlan: planActionable && next.capabilities.executePlan === true
+  }
   next.cycleTier = derivedCycleTier(next)
   next.dynamicGroup = derivedDynamicGroup(next)
   return next
@@ -297,6 +390,11 @@ function semanticTask(task) {
     unreadKnown: task.unreadKnown,
     unread: task.unread,
     planImplementation: task.planImplementation,
+    planReady: task.planReady,
+    planLifecycleRevision: task.planLifecycleRevision,
+    paused: task.paused,
+    turnMode: task.turnMode,
+    idleConfirmed: task.idleConfirmed,
     localPin: task.localPin,
     dynamicEligible: task.dynamicEligible,
     capabilityToken: task.capabilityToken,
@@ -319,19 +417,20 @@ function assignSemanticRevision(previous, next) {
 
 function buildViews(tasks) {
   const views = emptyViews()
-  const visible = tasks.filter((task) => !task.hidden)
+  const visible = tasks.filter((task) => !task.hidden && !task.paused)
+  views.pausedKeys = tasks.filter((task) => task.paused).sort(compareByLatestQuestion).map((task) => task.key)
   const display = [...visible].sort(compareByLatestQuestion)
   for (const task of display) {
-    if (task.dynamicEligible && task.dynamicGroup !== 'none') views.groups[task.dynamicGroup].push(task.key)
+    if (task.dynamicGroup !== 'none') views.groups[task.dynamicGroup].push(task.key)
   }
-  views.counts.input = tasks.filter((task) => task.phase === 'waiting-input' || task.phase === 'waiting-approval').length
+  views.counts.input = visible.filter((task) => task.phase === 'waiting-input' || task.phase === 'waiting-approval').length
   views.counts.active = views.groups.active.length
-  views.counts.unread = tasks.filter((task) => task.phase === 'completed' && task.unread).length
+  views.counts.unread = visible.filter((task) => task.phase === 'completed' && task.unread).length
 
   const cycleCandidates = [...visible]
     .filter((task) => task.capabilities.open && task.cycleTier !== 'none')
     .sort(compareByLatestQuestion)
-  for (const tier of ['attention', 'plan-implementation', 'active', 'fallback']) {
+  for (const tier of ['attention', 'plan', 'active', 'fallback']) {
     const keys = cycleCandidates.filter((task) => task.cycleTier === tier).map((task) => task.key)
     if (keys.length) {
       views.cycleKeys = keys
@@ -340,9 +439,12 @@ function buildViews(tasks) {
   }
 
   const attention = [...visible].sort(compareByLatestQuestion)
-  views.attentionKeys.input = attention
+  const inputAttention = attention
     .filter((task) => task.capabilities.open && (task.phase === 'waiting-input' || task.phase === 'waiting-approval'))
     .map((task) => task.key)
+  views.attentionKeys.input = inputAttention.length
+    ? inputAttention
+    : attention.filter((task) => task.capabilities.open && task.localPin).map((task) => task.key)
   views.attentionKeys.completedUnread = attention
     .filter((task) => task.capabilities.open && task.phase === 'completed' && task.unread)
     .map((task) => task.key)
@@ -371,11 +473,14 @@ function createCompanionTaskKernel(dependencies = {}) {
   const notify = typeof dependencies.notify === 'function' ? dependencies.notify : () => {}
   const record = typeof dependencies.record === 'function' ? dependencies.record : () => {}
   const preflight = typeof dependencies.preflight === 'function' ? dependencies.preflight : null
+  const persistPlanPause = typeof dependencies.persistPlanPause === 'function' ? dependencies.persistPlanPause : () => true
+  const migrateHiddenPlan = typeof dependencies.migrateHiddenPlan === 'function' ? dependencies.migrateHiddenPlan : () => true
   const initial = dependencies.initialConfiguration && typeof dependencies.initialConfiguration === 'object'
     ? dependencies.initialConfiguration
     : {}
   let enabled = initial.enabled === true
   let providers = providerShape(initial.providers || { codex: true, claude: false })
+  let dynamicWindowMs = Math.max(1, Math.min(24 * 30, finiteInteger(initial.dynamicTaskWindowHours, 48))) * 60 * 60 * 1_000
   let activeLease = 0
   let leaseSequence = 0
   let packageSequence = 0
@@ -386,9 +491,27 @@ function createCompanionTaskKernel(dependencies = {}) {
   let disposed = false
   let preflightInFlight = null
   let unknownTimer = null
+  let visibilityTimer = null
+  let nextVisibilityTransitionAt = 0
   const unknownEvidence = new Map()
   const archiveTombstones = new Map()
   const packageListeners = new Set()
+  const pauseReceipts = new Map()
+  const attentionSeen = {
+    input: new Set(),
+    completedUnread: new Set()
+  }
+  const claudeReadAcknowledgements = new Map()
+  const attentionQueues = {
+    input: Promise.resolve(),
+    completedUnread: Promise.resolve()
+  }
+  for (const value of Array.isArray(dependencies.initialPauseReceipts) ? dependencies.initialPauseReceipts : []) {
+    if (!value || typeof value !== 'object' || typeof value.key !== 'string') continue
+    const revision = finiteInteger(value.planLifecycleRevision)
+    if (!revision || value.paused !== true) continue
+    pauseReceipts.set(value.key, { planLifecycleRevision: revision, paused: true, updatedAt: finiteInteger(value.updatedAt) })
+  }
 
   const actions = createCompanionTaskActions({
     adapters: dependencies.adapters,
@@ -419,15 +542,212 @@ function createCompanionTaskKernel(dependencies = {}) {
     unknownTimer = null
   }
 
+  function clearVisibilityTimer() {
+    if (visibilityTimer) clearTimer(visibilityTimer)
+    visibilityTimer = null
+    nextVisibilityTransitionAt = 0
+  }
+
+  function attentionInstance(kind, task) {
+    if (!task) return ''
+    const enteredAt = Math.max(
+      finiteInteger(task.statusEnteredAt),
+      finiteInteger(task.terminalAt),
+      finiteInteger(task.turnStartedAt),
+      finiteInteger(task.revisionAt)
+    )
+    return enteredAt > 0 ? `${kind}:${task.key}:${enteredAt}` : ''
+  }
+
+  function pruneAttentionProgress(packageValue = currentPackage) {
+    for (const kind of ['input', 'completedUnread']) {
+      const valid = new Set((packageValue.views.attentionKeys[kind] || []).map((key) => (
+        attentionInstance(kind, packageValue.tasks.find((task) => task.key === key))
+      )).filter(Boolean))
+      for (const instance of attentionSeen[kind]) if (!valid.has(instance)) attentionSeen[kind].delete(instance)
+    }
+  }
+
+  function markAttentionOpened(task) {
+    if (!task) return
+    for (const kind of ['input', 'completedUnread']) {
+      if (!currentPackage.views.attentionKeys[kind].includes(task.key)) continue
+      const instance = attentionInstance(kind, task)
+      if (instance) attentionSeen[kind].add(instance)
+    }
+  }
+
+  function taskTerminalEpoch(task) {
+    return Math.max(
+      finiteInteger(task?.terminalAt),
+      finiteInteger(task?.statusEnteredAt),
+      finiteInteger(task?.phaseRevision),
+      finiteInteger(task?.revisionAt)
+    )
+  }
+
+  function acknowledgeOpenedTask(task) {
+    markAttentionOpened(task)
+    if (task?.provider !== 'claude' || task.phase !== 'completed' || task.unread !== true) return
+    const epoch = taskTerminalEpoch(task)
+    if (!epoch) return
+    claudeReadAcknowledgements.set(task.key, epoch)
+    publishLocalTasks(currentPackage.tasks.map((candidate) => candidate.key === task.key
+      ? finalizeCanonicalTask({ ...candidate, unread: false, unreadKnown: true })
+      : candidate), 'claude-open-read-hint')
+  }
+
+  function finalizeCanonicalTask(task) {
+    const anchor = visibilityAnchor(task)
+    const next = { ...task }
+    if (next.provider === 'claude' && next.unread === true) {
+      const acknowledgedEpoch = finiteInteger(claudeReadAcknowledgements.get(next.key))
+      const terminalEpoch = taskTerminalEpoch(next)
+      if (acknowledgedEpoch && terminalEpoch <= acknowledgedEpoch) next.unread = false
+      else if (terminalEpoch > acknowledgedEpoch) claudeReadAcknowledgements.delete(next.key)
+    }
+    return finalizeTask({
+      ...next,
+      dynamicEligible: anchor > 0 && anchor + dynamicWindowMs > now()
+    })
+  }
+
+  function scheduleVisibilityTransition() {
+    clearVisibilityTimer()
+    if (disposed || !enabled || !currentPackage.complete) return
+    const currentTime = now()
+    let dueAt = 0
+    for (const task of currentPackage.tasks) {
+      if (!task.dynamicEligible || task.hidden || task.paused || (task.phase === 'stopped' && task.planReady)) continue
+      const candidate = visibilityAnchor(task) + dynamicWindowMs
+      if (candidate <= currentTime || (dueAt && candidate >= dueAt)) continue
+      dueAt = candidate
+    }
+    if (!dueAt) return
+    nextVisibilityTransitionAt = dueAt
+    visibilityTimer = setTimer(() => {
+      visibilityTimer = null
+      nextVisibilityTransitionAt = 0
+      if (disposed) return
+      publishLocalTasks(currentPackage.tasks.map(finalizeCanonicalTask), 'visibility-transition')
+    }, Math.min(MAX_TIMER_DELAY_MS, Math.max(1, dueAt - currentTime + 1)))
+    visibilityTimer?.unref?.()
+  }
+
   function emitPackage(packageValue) {
     for (const listener of packageListeners) {
       try { listener(packageValue) } catch {}
     }
   }
 
+  function applyPauseReceipt(task) {
+    if (!task.planReady || !task.planLifecycleRevision) {
+      task.paused = false
+      return task
+    }
+    const receipt = pauseReceipts.get(task.key)
+    task.paused = Boolean(receipt?.paused && receipt.planLifecycleRevision === task.planLifecycleRevision)
+    return task
+  }
+
+  function writePauseReceipt(task, paused) {
+    if (!task?.planReady || !task.planLifecycleRevision) return false
+    const receipt = {
+      key: task.key,
+      planLifecycleRevision: task.planLifecycleRevision,
+      paused: paused === true,
+      updatedAt: now()
+    }
+    try {
+      if (persistPlanPause(receipt) === false) return false
+    } catch {
+      return false
+    }
+    if (paused) pauseReceipts.set(task.key, receipt)
+    else pauseReceipts.delete(task.key)
+    return true
+  }
+
+  function preparePlanLifecycle(previous, state, evidence, acceptPhase) {
+    const next = { ...state }
+    if (!previous) {
+      if (next.turnMode === 'default' && next.turnStartedAt > 0) {
+        next.planReady = false
+        next.planLifecycleRevision = 0
+      }
+      return applyPauseReceipt(next)
+    }
+    next.planReady = previous.planReady === true
+    next.planLifecycleRevision = finiteInteger(previous.planLifecycleRevision)
+    next.paused = previous.paused === true
+    if (!acceptPhase) return next
+    const exactDefaultExecution = evidence.provider === 'codex'
+      && evidence.turnMode === 'default'
+      && evidence.turnStartedAt > 0
+    if (exactDefaultExecution) {
+      next.planReady = false
+      next.planLifecycleRevision = 0
+      next.paused = false
+      pauseReceipts.delete(evidence.key)
+      try { persistPlanPause({ key: evidence.key, planLifecycleRevision: finiteInteger(previous.planLifecycleRevision), paused: false, updatedAt: now() }) } catch {}
+      return next
+    }
+    if (evidence.planReady === true || evidence.planImplementation === true) {
+      const explicitRevision = finiteInteger(evidence.planLifecycleRevision)
+      // Provider lifecycle identity outranks generic metadata timestamps. If a
+      // compatibility input omits it, retain the established Plan identity and
+      // use causal times only for first establishment.
+      const revision = explicitRevision || finiteInteger(previous.planLifecycleRevision) || Math.max(
+        1,
+        finiteInteger(evidence.turnStartedAt),
+        finiteInteger(evidence.statusEnteredAt),
+        finiteInteger(evidence.revisionAt)
+      )
+      const replaced = revision !== finiteInteger(previous.planLifecycleRevision)
+      next.planReady = true
+      next.planLifecycleRevision = revision
+      if (replaced) {
+        next.paused = false
+        if (pauseReceipts.has(evidence.key)) {
+          pauseReceipts.delete(evidence.key)
+          try {
+            persistPlanPause({
+              key: evidence.key,
+              planLifecycleRevision: finiteInteger(previous.planLifecycleRevision),
+              paused: false,
+              updatedAt: now()
+            })
+          } catch {}
+        }
+      }
+      applyPauseReceipt(next)
+    }
+    return next
+  }
+
+  function migrateLegacyHiddenPlan(task) {
+    if (!task?.hidden || !task.planReady || !task.planLifecycleRevision) return task
+    const migrated = { ...task, hidden: false, paused: true }
+    if (!writePauseReceipt(migrated, true)) return task
+    let hiddenCleared = false
+    try {
+      hiddenCleared = migrateHiddenPlan({
+        key: migrated.key,
+        planLifecycleRevision: migrated.planLifecycleRevision
+      }) !== false
+    } catch {}
+    if (hiddenCleared) return migrated
+    writePauseReceipt(migrated, false)
+    return task
+  }
+
   function invalidate(reason) {
     clearUnknownTimer()
+    clearVisibilityTimer()
     unknownEvidence.clear()
+    attentionSeen.input.clear()
+    attentionSeen.completedUnread.clear()
+    claudeReadAcknowledgements.clear()
     lastDraftRevisionByProducer.clear()
     lastDraft = null
     const next = emptyPackage(providers)
@@ -445,20 +765,85 @@ function createCompanionTaskKernel(dependencies = {}) {
   function configure(input = {}) {
     const nextEnabled = input.enabled === true
     const nextProviders = providerShape(input.providers || providers)
+    const requestedWindowHours = Number.isFinite(Number(input.dynamicTaskWindowHours))
+      ? Math.max(1, Math.min(24 * 30, Math.trunc(Number(input.dynamicTaskWindowHours))))
+      : dynamicWindowMs / (60 * 60 * 1_000)
+    const nextDynamicWindowMs = requestedWindowHours * 60 * 60 * 1_000
+    const windowChanged = dynamicWindowMs !== nextDynamicWindowMs
     const changed = enabled !== nextEnabled || !sameProviders(providers, nextProviders)
     enabled = nextEnabled
     providers = nextProviders
+    dynamicWindowMs = nextDynamicWindowMs
     if (changed) {
       beginNavigation()
       invalidate(enabled ? 'provider-configuration-changed' : 'disabled')
+    } else if (windowChanged && currentPackage.tasks.length) {
+      publishLocalTasks(currentPackage.tasks.map(finalizeCanonicalTask), 'dynamic-window-changed')
     }
-    return changed
+    return changed || windowChanged
+  }
+
+  function syncConsumers(packageValue) {
+    pruneAttentionProgress(packageValue)
+    const retainedKeys = new Set(packageValue.tasks.map((task) => task.key))
+    for (const key of claudeReadAcknowledgements.keys()) if (!retainedKeys.has(key)) claudeReadAcknowledgements.delete(key)
+    const actionTargets = packageValue.tasks.map(targetFromTask)
+    actions.sync({
+      enabled,
+      providers,
+      ready: packageValue.complete,
+      targets: actionTargets,
+      focusedKey: packageValue.focusedKey,
+      attentionKeys: packageValue.views.attentionKeys.archive
+    })
+    navigation.sync({
+      lease: navigationLease,
+      enabled,
+      providers,
+      ready: packageValue.complete,
+      // Direct row open remains available from the hidden/paused page; only
+      // selector-owned cycleKeys and attentionKeys exclude those tasks.
+      targets: actionTargets.filter((target) => target.actionAlias),
+      cycleKeys: packageValue.views.cycleKeys
+    })
+  }
+
+  function publishLocalTasks(tasks, reason) {
+    const next = {
+      ...currentPackage,
+      tasks: [...tasks].sort(compareByLatestQuestion),
+      focusedKey: tasks.some((task) => task.key === currentPackage.focusedKey) ? currentPackage.focusedKey : '',
+      views: buildViews(tasks)
+    }
+    const semantic = semanticPackage(next)
+    if (semantic === lastSemantic) {
+      scheduleVisibilityTransition()
+      return currentPackage
+    }
+    next.packageRevision = ++packageSequence
+    next.publishedAt = now()
+    currentPackage = next
+    lastSemantic = semantic
+    syncConsumers(next)
+    emitPackage(next)
+    scheduleVisibilityTransition()
+    record({
+      level: 'info',
+      scope: 'task-kernel',
+      event: 'local-state-commit',
+      outcome: reason,
+      packageRevision: next.packageRevision,
+      count: next.tasks.length
+    })
+    return next
   }
 
   function reconcileTask(previous, incoming, draft, forceUnknown, incomingLanes, currentLanes) {
     if (!previous) {
       if (incoming.phase !== 'unknown') unknownEvidence.delete(incoming.key)
-      const next = finalizeTask(incoming)
+      let next = preparePlanLifecycle(null, incoming, incoming, true)
+      next = migrateLegacyHiddenPlan(next)
+      next = finalizeCanonicalTask(next)
       if (incoming.phase === 'unknown') next.freshness = 'verifying'
       return { ...assignSemanticRevision(null, next), verifying: next.freshness === 'verifying' }
     }
@@ -520,7 +905,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       verifying = true
     }
 
-    const next = { ...previous }
+    let next = { ...previous }
     if (acceptMembership) {
       Object.assign(next, {
         kind: incoming.kind,
@@ -551,6 +936,8 @@ function createCompanionTaskKernel(dependencies = {}) {
         phaseRevision: incoming.phaseRevision,
         statusEnteredAt: incoming.statusEnteredAt,
         planImplementation: incoming.planImplementation,
+        turnMode: incoming.turnMode,
+        idleConfirmed: incoming.idleConfirmed,
         turnStartedAt: incoming.turnStartedAt,
         terminalAt: incoming.terminalAt,
         freshness: incoming.phase === 'unknown' ? 'verifying' : 'fresh'
@@ -569,6 +956,11 @@ function createCompanionTaskKernel(dependencies = {}) {
         delete next.archiveRequest
       }
     }
+    next = preparePlanLifecycle(previous, next, incoming, acceptPhase)
+    next.planImplementation = next.planReady === true
+      && (next.phase === 'waiting-input' || next.phase === 'waiting-approval')
+      && incoming.planImplementation === true
+    next = migrateLegacyHiddenPlan(next)
     if (acceptUnread && incoming.unreadKnown) {
       next.unread = incoming.unread
       next.unreadKnown = true
@@ -582,7 +974,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       next.observationGeneration = Math.max(next.observationGeneration, incoming.observationGeneration)
     }
     if (verifying) next.freshness = 'verifying'
-    const finalized = finalizeTask(next)
+    const finalized = finalizeCanonicalTask(next)
     return { ...assignSemanticRevision(previous, finalized), verifying }
   }
 
@@ -655,6 +1047,21 @@ function createCompanionTaskKernel(dependencies = {}) {
       seen.add(task.key)
       nextTasks.push(task)
     }
+    const retainedKeys = new Set(nextTasks.map((task) => task.key))
+    for (const task of currentPackage.tasks) {
+      if (retainedKeys.has(task.key) || !enabledProviders.has(task.provider)
+        || incomingLaneGenerations[task.provider].membership <= currentLaneGenerations[task.provider].membership) continue
+      if (!pauseReceipts.has(task.key)) continue
+      pauseReceipts.delete(task.key)
+      try {
+        persistPlanPause({
+          key: task.key,
+          planLifecycleRevision: task.planLifecycleRevision,
+          paused: false,
+          updatedAt: now()
+        })
+      } catch {}
+    }
     nextTasks.sort(compareByLatestQuestion)
     lastDraft = draft
     if (!forceUnknown) scheduleUnknownCommit(draft)
@@ -708,29 +1115,15 @@ function createCompanionTaskKernel(dependencies = {}) {
         packageRevision: currentPackage.packageRevision,
         count: nextTasks.length
       })
+      scheduleVisibilityTransition()
       return currentPackage
     }
     next.packageRevision = ++packageSequence
     currentPackage = next
     lastSemantic = semantic
-    const targets = nextTasks.filter((task) => task.capabilities.open).map(targetFromTask)
-    actions.sync({
-      enabled,
-      providers,
-      ready: next.complete,
-      targets,
-      focusedKey,
-      attentionKeys: next.views.attentionKeys.archive
-    })
-    navigation.sync({
-      lease: navigationLease,
-      enabled,
-      providers,
-      ready: next.complete,
-      targets,
-      cycleKeys: next.views.cycleKeys
-    })
+    syncConsumers(next)
     emitPackage(currentPackage)
+    scheduleVisibilityTransition()
     return currentPackage
   }
 
@@ -738,6 +1131,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (disposed) return { revision: COMPANION_TASK_KERNEL_REVISION, lease: 0, retained: false, ready: false, package: currentPackage }
     configure(input)
     activeLease = ++leaseSequence
+    if (enabled && !currentPackage.complete) void ensureReady().catch(() => undefined)
     return {
       revision: COMPANION_TASK_KERNEL_REVISION,
       packageRevision: COMPANION_TASK_PACKAGE_REVISION,
@@ -746,6 +1140,29 @@ function createCompanionTaskKernel(dependencies = {}) {
       ready: currentPackage.complete,
       package: currentPackage
     }
+  }
+
+  function configureConsumer(input = {}) {
+    if (!Number.isInteger(input.lease) || input.lease !== activeLease || disposed) return null
+    configure(input)
+    const focusedKey = typeof input.focusedKey === 'string'
+      && currentPackage.tasks.some((task) => task.key === input.focusedKey)
+      ? input.focusedKey
+      : ''
+    if (focusedKey !== currentPackage.focusedKey) {
+      const next = {
+        ...currentPackage,
+        packageRevision: ++packageSequence,
+        publishedAt: now(),
+        focusedKey
+      }
+      currentPackage = next
+      lastSemantic = semanticPackage(next)
+      syncConsumers(next)
+      emitPackage(next)
+    }
+    if (enabled && !currentPackage.complete) void ensureReady().catch(() => undefined)
+    return currentPackage
   }
 
   function syncPackage(input = {}) {
@@ -804,6 +1221,17 @@ function createCompanionTaskKernel(dependencies = {}) {
     const terminalEpoch = finiteInteger(input.terminalEpoch)
     for (const key of keys) {
       const task = removed.find((candidate) => candidate.key === key)
+      if (task && pauseReceipts.has(key)) {
+        pauseReceipts.delete(key)
+        try {
+          persistPlanPause({
+            key,
+            planLifecycleRevision: task.planLifecycleRevision,
+            paused: false,
+            updatedAt: now()
+          })
+        } catch {}
+      }
       archiveTombstones.set(`${provider}:${key}`, {
         membershipRevision: Math.max(
           finiteInteger(input.membershipRevision),
@@ -839,24 +1267,9 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
     currentPackage = next
     lastSemantic = semanticPackage(next)
-    const targets = retained.filter((task) => task.capabilities.open).map(targetFromTask)
-    actions.sync({
-      enabled,
-      providers,
-      ready: next.complete,
-      targets,
-      focusedKey: next.focusedKey,
-      attentionKeys: next.views.attentionKeys.archive
-    })
-    navigation.sync({
-      lease: navigationLease,
-      enabled,
-      providers,
-      ready: next.complete,
-      targets,
-      cycleKeys: next.views.cycleKeys
-    })
+    syncConsumers(next)
     emitPackage(next)
+    scheduleVisibilityTransition()
     record({
       level: 'info',
       scope: 'task-kernel',
@@ -878,8 +1291,13 @@ function createCompanionTaskKernel(dependencies = {}) {
     return true
   }
 
-  async function ensureReady() {
+  async function ensureReady(targetKey = '') {
     if (currentPackage.complete && currentPackage.freshness === 'fresh') return currentPackage
+    // A verifying branch must not globally block an unrelated exact target
+    // whose own evidence and capability are fresh. Selector actions still
+    // require a fresh whole package because they choose among many targets.
+    const exactTarget = targetKey ? taskForKey(targetKey) : null
+    if (currentPackage.complete && exactTarget?.freshness === 'fresh') return currentPackage
     if (!enabled) throw new Error('disabled')
     if (!preflight) throw new Error('preflight-unavailable')
     if (preflightInFlight) return preflightInFlight
@@ -908,10 +1326,43 @@ function createCompanionTaskKernel(dependencies = {}) {
     return currentPackage.tasks.find((task) => task.key === key) || null
   }
 
+  function dispatchAttention(kind, input) {
+    const run = attentionQueues[kind].catch(() => undefined).then(async () => {
+      pruneAttentionProgress()
+      const keys = currentPackage.views.attentionKeys[kind]
+      const candidates = keys.map(taskForKey).filter(Boolean)
+      if (!candidates.length) {
+        return { outcome: 'unavailable', errorCode: 'no-task', message: '当前没有符合条件的任务' }
+      }
+      let task = candidates.find((candidate) => {
+        const instance = attentionInstance(kind, candidate)
+        return instance && !attentionSeen[kind].has(instance)
+      })
+      if (!task) {
+        attentionSeen[kind].clear()
+        task = candidates[0]
+      }
+      const result = await navigation.open({
+        key: task.key,
+        target: targetFromTask(task),
+        source: input.source || 'attention-shortcut',
+        operationId: input.operationId
+      })
+      if (result?.outcome === 'opened' || result?.outcome === 'dispatched') acknowledgeOpenedTask(task)
+      return result
+    })
+    attentionQueues[kind] = run.then(() => undefined, () => undefined)
+    return run
+  }
+
   async function dispatch(input = {}) {
     if (disposed || !enabled) return { outcome: 'unavailable', errorCode: 'disabled', message: '任务功能未启用' }
     try {
-      await ensureReady()
+      const targetKey = ['open', 'archive', 'pause', 'resume', 'execute-plan'].includes(input.action)
+        && typeof input.key === 'string'
+        ? input.key
+        : ''
+      await ensureReady(targetKey)
     } catch {
       notify('任务状态预检失败，未使用不完整缓存')
       return { outcome: 'unavailable', errorCode: 'inventory-not-ready', message: '任务状态预检失败，请重试' }
@@ -921,18 +1372,14 @@ function createCompanionTaskKernel(dependencies = {}) {
       source: input.source || 'task-cycle'
     })
     if (input.action === 'open-attention') {
-      const keys = input.kind === 'completed-unread'
-        ? currentPackage.views.attentionKeys.completedUnread
-        : currentPackage.views.attentionKeys.input
-      const key = keys[0]
-      const task = taskForKey(key)
-      if (!task) return { outcome: 'unavailable', errorCode: 'no-task', message: '当前没有符合条件的任务' }
-      return navigation.open({ key, target: targetFromTask(task), source: input.source || 'attention-shortcut', operationId: input.operationId })
+      return dispatchAttention(input.kind === 'completed-unread' ? 'completedUnread' : 'input', input)
     }
     if (input.action === 'open') {
       const task = taskForKey(input.key)
       if (!task?.capabilities.open) return { outcome: 'unavailable', errorCode: 'stale-target', message: '任务身份已失效，请刷新后重试' }
-      return navigation.open({ key: task.key, target: targetFromTask(task), source: input.source || 'manual-row-open', operationId: input.operationId })
+      const result = await navigation.open({ key: task.key, target: targetFromTask(task), source: input.source || 'manual-row-open', operationId: input.operationId })
+      if (result?.outcome === 'opened' || result?.outcome === 'dispatched') acknowledgeOpenedTask(task)
+      return result
     }
     if (input.action === 'archive') {
       const task = taskForKey(input.key)
@@ -946,6 +1393,48 @@ function createCompanionTaskKernel(dependencies = {}) {
         confirmationRecorded: input.confirmationRecorded === true,
         target: targetFromTask(task)
       })
+    }
+    if (input.action === 'pause' || input.action === 'resume') {
+      const task = taskForKey(input.key)
+      const expectedRevision = finiteInteger(input.planLifecycleRevision)
+      const pausing = input.action === 'pause'
+      const allowed = pausing ? task?.capabilities.pause : task?.capabilities.resume
+      if (!task || !allowed || expectedRevision !== task.planLifecycleRevision) {
+        return { outcome: 'failed', errorCode: 'state-changed', message: 'Plan 状态已变化，请刷新后重试' }
+      }
+      if (!writePauseReceipt(task, pausing)) {
+        return { outcome: 'failed', errorCode: 'pause-persist-failed', message: 'Plan 暂停状态保存失败' }
+      }
+      const tasks = currentPackage.tasks.map((candidate) => candidate.key === task.key
+        ? finalizeCanonicalTask({ ...candidate, hidden: false, paused: pausing })
+        : candidate)
+      publishLocalTasks(tasks, pausing ? 'paused' : 'resumed')
+      return {
+        outcome: pausing ? 'paused' : 'resumed',
+        provider: task.provider,
+        key: task.key,
+        message: pausing ? 'Plan 已暂停并移入已隐藏区' : 'Plan 已恢复到待继续列表'
+      }
+    }
+    if (input.action === 'execute-plan') {
+      const task = taskForKey(input.key)
+      if (!task?.capabilities.executePlan || finiteInteger(input.planLifecycleRevision) !== task.planLifecycleRevision) {
+        return { outcome: 'failed', errorCode: 'state-changed', message: 'Plan 状态已变化，当前不能执行' }
+      }
+      const result = await actions.executePlan({
+        key: task.key,
+        planLifecycleRevision: task.planLifecycleRevision,
+        source: input.source || 'execute-plan-button',
+        operationId: input.operationId,
+        target: targetFromTask(task)
+      })
+      if (result?.outcome === 'executed' && task.paused) {
+        writePauseReceipt(task, false)
+        publishLocalTasks(currentPackage.tasks.map((candidate) => candidate.key === task.key
+          ? finalizeCanonicalTask({ ...candidate, paused: false })
+          : candidate), 'execute-started')
+      }
+      return result
     }
     if (input.action === 'archive-focused') {
       const accepted = actions.shortcutArchive()
@@ -981,6 +1470,19 @@ function createCompanionTaskKernel(dependencies = {}) {
     return true
   }
 
+  function subscribe(afterRevision, listener) {
+    if (typeof listener !== 'function') return () => {}
+    let cursor = finiteInteger(afterRevision)
+    const wrapped = (value) => {
+      if (value.packageRevision <= cursor) return
+      cursor = value.packageRevision
+      listener(value)
+    }
+    packageListeners.add(wrapped)
+    wrapped(currentPackage)
+    return () => packageListeners.delete(wrapped)
+  }
+
   function onPackage(listener) {
     if (typeof listener !== 'function') return () => {}
     packageListeners.add(listener)
@@ -1003,6 +1505,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       taskCount: currentPackage.tasks.length,
       cycleCount: currentPackage.views.cycleKeys.length,
       preflightInFlight: Boolean(preflightInFlight),
+      nextVisibilityTransitionAt,
       freshness: currentPackage.freshness,
       navigation: navigation.diagnostics(),
       actions: actions.diagnostics()
@@ -1013,6 +1516,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (disposed) return
     disposed = true
     clearUnknownTimer()
+    clearVisibilityTimer()
     packageListeners.clear()
     actions.close()
     navigation.dispose()
@@ -1022,6 +1526,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     revision: COMPANION_TASK_KERNEL_REVISION,
     packageRevision: COMPANION_TASK_PACKAGE_REVISION,
     attach,
+    configure: configureConsumer,
     syncPackage,
     /** Host-only provider evidence path; never exposed as a Renderer authority. */
     publishEvidence,
@@ -1030,6 +1535,9 @@ function createCompanionTaskKernel(dependencies = {}) {
     detach,
     dispatch,
     handleEnter,
+    getLatest: () => currentPackage,
+    subscribe,
+    /** @deprecated V3 compatibility aliases. */
     getPackage: () => currentPackage,
     onPackage,
     onResult: navigation.onResult,
@@ -1045,6 +1553,8 @@ module.exports = {
   PREFLIGHT_PROGRESS_MS,
   PREFLIGHT_TIMEOUT_MS,
   UNKNOWN_GRACE_MS,
+  reduceCodexTaskEvidenceV4,
   reduceCodexTaskEvidenceV3,
+  reduceClaudeTaskEvidenceV4,
   createCompanionTaskKernel
 }

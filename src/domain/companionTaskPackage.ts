@@ -14,19 +14,19 @@ import {
 } from './companionProvider'
 import type { CodexTaskStatePackageV1 } from './codexPresentation'
 
-export const COMPANION_TASK_KERNEL_REVISION = 'companion-task-kernel-v3'
-export const COMPANION_TASK_PACKAGE_REVISION = 'companion-task-package-v3'
+export const COMPANION_TASK_KERNEL_REVISION = 'companion-task-kernel-v4'
+export const COMPANION_TASK_PACKAGE_REVISION = 'companion-task-package-v4'
 
 export type CompanionTaskKind = 'codex-thread' | 'claude-session' | 'local-pin'
 export type CompanionTaskPhase = 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'stopped' | 'unknown'
-export type CompanionTaskEvidencePhaseV3 = 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'interrupted' | 'failed' | 'unknown'
-export type CompanionTaskFreshnessV3 = 'fresh' | 'verifying'
+export type CompanionTaskEvidencePhaseV4 = 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'interrupted' | 'failed' | 'unknown'
+export type CompanionTaskFreshnessV4 = 'fresh' | 'verifying'
 
-export interface CompanionTaskEvidenceV3 {
+export interface CompanionTaskEvidenceV4 {
   provider: CompanionProviderId
   taskKey: string
   membership: 'present' | 'archived' | 'missing-candidate'
-  phase: CompanionTaskEvidencePhaseV3
+  phase: CompanionTaskEvidencePhaseV4
   authority: string
   exact: boolean
   turnStartedAt: number
@@ -39,16 +39,16 @@ export interface CompanionTaskEvidenceV3 {
   capabilityToken: string
 }
 
-export interface CanonicalTaskStateV3 {
+export interface CanonicalTaskStateV4 {
   phase: CompanionTaskPhase
   unread: { known: boolean; value: boolean; revision: number }
-  freshness: CompanionTaskFreshnessV3
+  freshness: CompanionTaskFreshnessV4
   statusEnteredAt: number
   semanticRevision: number
   membershipRevision: number
-  capabilities: CompanionCanonicalTaskV3['capabilities']
+  capabilities: CompanionCanonicalTaskV4['capabilities']
 }
-export type CompanionTaskCycleTier = 'attention' | 'plan-implementation' | 'active' | 'fallback' | 'none'
+export type CompanionTaskCycleTier = 'attention' | 'plan' | 'active' | 'fallback' | 'none'
 export type CompanionTaskDynamicGroup = 'input' | 'active' | 'stopped' | 'unread' | 'completed' | 'none'
 
 export interface CompanionTaskArchiveRequestV3 {
@@ -65,7 +65,7 @@ export interface CompanionTaskArchiveRequestV3 {
  * paths, provider payloads and raw provider identifiers never enter this
  * contract. `actionAlias` is the existing short-lived Host capability token.
  */
-export interface CompanionCanonicalTaskV3 {
+export interface CompanionCanonicalTaskV4 {
   key: string
   provider: CompanionProviderId
   kind: CompanionTaskKind
@@ -85,7 +85,7 @@ export interface CompanionCanonicalTaskV3 {
   terminalAt: number
   metadataRevision: number
   capabilityToken: string
-  freshness: CompanionTaskFreshnessV3
+  freshness: CompanionTaskFreshnessV4
   lastQuestionAt: number
   createdAt: number
   displayOrder: number
@@ -95,11 +95,19 @@ export interface CompanionCanonicalTaskV3 {
   unread: boolean
   unreadKnown: boolean
   planImplementation: boolean
+  planReady: boolean
+  planLifecycleRevision: number
+  paused: boolean
+  turnMode: 'plan' | 'default' | 'unknown'
+  idleConfirmed: boolean
   localPin: boolean
   dynamicEligible: boolean
   capabilities: {
     open: boolean
     archive: boolean
+    pause: boolean
+    resume: boolean
+    executePlan: boolean
   }
   archiveRequest?: CompanionTaskArchiveRequestV3
   displayName?: string
@@ -108,8 +116,8 @@ export interface CompanionCanonicalTaskV3 {
   projectKind?: 'project' | 'chats'
 }
 
-export interface CompanionTaskPackageDraftV3 {
-  schema: 'companion-task-draft-v3'
+export interface CompanionTaskPackageDraftV4 {
+  schema: 'companion-task-draft-v4'
   producer: 'renderer' | 'host-preflight' | 'host-evidence'
   sourceTaskStateRevision: string
   draftRevision: number
@@ -123,13 +131,13 @@ export interface CompanionTaskPackageDraftV3 {
     claude: number
   }
   sourceLaneGenerations: CompanionSourceLaneGenerations
-  tasks: CompanionCanonicalTaskV3[]
+  tasks: CompanionCanonicalTaskV4[]
 }
 
 export type CompanionSourceLane = 'membership' | 'phase' | 'unread'
 export type CompanionSourceLaneGenerations = Record<CompanionProviderId, Record<CompanionSourceLane, number>>
 
-export interface CompanionTaskPackageViewsV3 {
+export interface CompanionTaskPackageViewsV4 {
   groups: {
     input: string[]
     active: string[]
@@ -148,9 +156,10 @@ export interface CompanionTaskPackageViewsV3 {
     completedUnread: string[]
     archive: string[]
   }
+  pausedKeys: string[]
 }
 
-export interface CompanionTaskPackageV3 {
+export interface CompanionTaskPackageV4 {
   schema: typeof COMPANION_TASK_PACKAGE_REVISION
   kernelRevision: typeof COMPANION_TASK_KERNEL_REVISION
   packageRevision: number
@@ -159,16 +168,26 @@ export interface CompanionTaskPackageV3 {
   enabled: boolean
   providers: CompanionProviderEnablement
   complete: boolean
-  freshness: CompanionTaskFreshnessV3
+  freshness: CompanionTaskFreshnessV4
   focusedKey: string
   sourceGenerations: {
     codex: number
     claude: number
   }
   sourceLaneGenerations: CompanionSourceLaneGenerations
-  tasks: CompanionCanonicalTaskV3[]
-  views: CompanionTaskPackageViewsV3
+  tasks: CompanionCanonicalTaskV4[]
+  views: CompanionTaskPackageViewsV4
 }
+
+/** Narrow source-compatibility aliases; every emitted runtime value is V4. */
+export type CompanionTaskEvidencePhaseV3 = CompanionTaskEvidencePhaseV4
+export type CompanionTaskFreshnessV3 = CompanionTaskFreshnessV4
+export type CompanionTaskEvidenceV3 = CompanionTaskEvidenceV4
+export type CanonicalTaskStateV3 = CanonicalTaskStateV4
+export type CompanionCanonicalTaskV3 = CompanionCanonicalTaskV4
+export type CompanionTaskPackageDraftV3 = CompanionTaskPackageDraftV4
+export type CompanionTaskPackageViewsV3 = CompanionTaskPackageViewsV4
+export type CompanionTaskPackageV3 = CompanionTaskPackageV4
 
 function allTaskCards(taskState: CodexTaskStatePackageV1): CodexTaskCard[] {
   const conversations = taskState.conversations
@@ -182,159 +201,9 @@ function allTaskCards(taskState: CodexTaskStatePackageV1): CodexTaskCard[] {
   ]
 }
 
-function canonicalPhase(task: CodexTaskCard): CompanionTaskPhase {
-  if (companionTaskProvider(task) === 'claude') return task.claudePhase || 'unknown'
-  if (task.activityState === 'waiting-input') return 'waiting-input'
-  if (task.activityState === 'waiting-approval') return 'waiting-approval'
-  if (task.bucket === 'stopped' || task.activityState === 'stopped') return 'stopped'
-  if (task.bucket === 'completed' || task.bucket === 'completed-unread') return 'completed'
-  return 'running'
-}
-
-function dynamicGroupByKey(taskState: CodexTaskStatePackageV1): Map<string, CompanionTaskDynamicGroup> {
-  const result = new Map<string, CompanionTaskDynamicGroup>()
-  for (const group of ['input', 'active', 'stopped', 'unread', 'completed'] as const) {
-    for (const task of taskState.dynamic.groups[group]) result.set(task.key, group)
-  }
-  return result
-}
-
-function cycleTier(task: CodexTaskCard, phase: CompanionTaskPhase): CompanionTaskCycleTier {
-  if (task.isHidden) return 'none'
-  if ((phase === 'waiting-input' || phase === 'waiting-approval') && task.planImplementationOnly !== true) return 'attention'
-  if ((phase === 'waiting-input' || phase === 'waiting-approval') && task.planImplementationOnly === true) return 'plan-implementation'
-  if (task.bucket === 'ongoing' && (task.activityState === 'active' || task.activityState === 'ongoing')) return 'active'
-  if (task.pinSource === 'local' && task.bucket !== 'stopped') return 'fallback'
-  return 'none'
-}
-
-function archiveRequest(task: CodexTaskCard, sourceFingerprint: string): CompanionTaskArchiveRequestV3 | undefined {
-  if (companionTaskProvider(task) !== 'codex' || task.archiveCapability !== 'allowed') return undefined
-  const stopped = task.bucket === 'stopped'
-  const expectedRevisionAt = stopped
-    ? task.lastTurnStartedAt || task.revisionAt
-    : task.completionRevision || task.lastTurnCompletedAt || task.revisionAt
-  return {
-    expectedUpdatedAt: task.updatedAt,
-    expectedRevisionAt,
-    ...(!stopped && task.lastTurnCompletedAt ? { expectedCompletionAt: task.lastTurnCompletedAt } : {}),
-    expectedLastTurnStartedAt: task.lastTurnStartedAt || 0,
-    expectedSourceFingerprint: sourceFingerprint,
-    evidence: stopped ? 'stopped' : 'completed'
-  }
-}
-
-function compareByLatestQuestion(left: CodexTaskCard, right: CodexTaskCard): number {
-  return (Number(right.lastQuestionAt) || 0) - (Number(left.lastQuestionAt) || 0)
-    || (Number(right.createdAt) || 0) - (Number(left.createdAt) || 0)
-    || left.key.localeCompare(right.key)
-}
-
-export function buildCompanionTaskPackageDraft(
-  taskState: CodexTaskStatePackageV1,
-  options: {
-    enabled: boolean
-    providers: CompanionProviderEnablement
-    complete: boolean
-    focusedKey?: string
-    draftRevision: number
-    acceptedAt?: number
-    sourceGenerations?: Partial<Record<CompanionProviderId, number>>
-    sourceLaneGenerations?: Partial<Record<CompanionProviderId, Partial<Record<CompanionSourceLane, number>>>>
-    localPins?: readonly string[]
-  }
-): CompanionTaskPackageDraftV3 {
-  const cards = allTaskCards(taskState)
-    .filter((task) => isCompanionProviderEnabled(options.providers, companionTaskProvider(task)))
-    .sort(compareByLatestQuestion)
-  const localPins = new Set(options.localPins || [])
-  const dynamicGroups = dynamicGroupByKey(taskState)
-  const sourceFingerprint = taskState.conversations.sourceFingerprint || ''
-  const tasks = cards.map<CompanionCanonicalTaskV3>((task, displayOrder) => {
-    const provider = companionTaskProvider(task)
-    const phase = canonicalPhase(task)
-    const localPin = task.pinSource === 'local' || localPins.has(task.key)
-    const taskArchiveRequest = archiveRequest(task, sourceFingerprint)
-    const revisionAt = Math.max(0, Number(task.revisionAt) || 0)
-    const statusEnteredAt = Math.max(0, Number(task.statusEnteredAt || task.completionRevision || task.lastTurnStartedAt || task.updatedAt) || 0)
-    return {
-      key: task.key,
-      provider,
-      kind: localPin ? 'local-pin' : provider === 'claude' ? 'claude-session' : 'codex-thread',
-      phase,
-      cycleTier: cycleTier({ ...task, ...(localPin ? { pinSource: 'local' as const } : {}) }, phase),
-      dynamicGroup: dynamicGroups.get(task.key) || 'none',
-      actionAlias: task.actionAlias || '',
-      revisionAt,
-      semanticRevision: 1,
-      observationGeneration: Math.max(0, Math.trunc(options.sourceGenerations?.[provider] || 0)),
-      membershipRevision: revisionAt,
-      phaseRevision: statusEnteredAt || revisionAt,
-      unreadRevision: Math.max(0, Number(task.completionRevision || task.updatedAt || revisionAt) || 0),
-      visibilityRevision: revisionAt,
-      statusEnteredAt,
-      turnStartedAt: Math.max(0, Number(task.lastTurnStartedAt || task.lastQuestionAt) || 0),
-      terminalAt: phase === 'completed'
-        ? Math.max(0, Number(task.lastTurnCompletedAt || task.completionRevision || statusEnteredAt) || 0)
-        : phase === 'stopped' ? statusEnteredAt : 0,
-      metadataRevision: revisionAt,
-      capabilityToken: task.actionAlias || '',
-      freshness: task.canonicalFreshness === 'verifying' ? 'verifying' : 'fresh',
-      lastQuestionAt: Math.max(0, Number(task.lastQuestionAt) || 0),
-      createdAt: Math.max(0, Number(task.createdAt) || 0),
-      displayOrder,
-      cycleOrder: displayOrder,
-      attentionOrder: displayOrder,
-      hidden: task.isHidden === true,
-      unread: task.bucket === 'completed-unread',
-      unreadKnown: task.unreadState !== 'unknown',
-      planImplementation: task.planImplementationOnly === true,
-      localPin,
-      dynamicEligible: dynamicGroups.has(task.key),
-      capabilities: {
-        open: Boolean(task.actionAlias),
-        archive: task.archiveCapability === 'allowed'
-      },
-      displayName: task.displayName || task.name,
-      projectKey: task.projectKey,
-      projectName: task.projectName,
-      projectKind: task.projectKind,
-      ...(taskArchiveRequest ? { archiveRequest: taskArchiveRequest } : {})
-    }
-  })
-  return {
-    schema: 'companion-task-draft-v3',
-    producer: 'renderer',
-    sourceTaskStateRevision: taskState.sourceRevision,
-    draftRevision: Math.max(1, Math.trunc(options.draftRevision)),
-    acceptedAt: Number.isFinite(options.acceptedAt) ? options.acceptedAt! : Date.now(),
-    enabled: options.enabled,
-    providers: { ...options.providers },
-    complete: options.complete,
-    focusedKey: typeof options.focusedKey === 'string' ? options.focusedKey : '',
-    sourceGenerations: {
-      codex: Math.max(0, Math.trunc(options.sourceGenerations?.codex || 0)),
-      claude: Math.max(0, Math.trunc(options.sourceGenerations?.claude || 0))
-    },
-    sourceLaneGenerations: {
-      codex: {
-        membership: Math.max(0, Math.trunc(options.sourceLaneGenerations?.codex?.membership ?? options.sourceGenerations?.codex ?? 0)),
-        phase: Math.max(0, Math.trunc(options.sourceLaneGenerations?.codex?.phase ?? options.sourceGenerations?.codex ?? 0)),
-        unread: Math.max(0, Math.trunc(options.sourceLaneGenerations?.codex?.unread ?? options.sourceGenerations?.codex ?? 0))
-      },
-      claude: {
-        membership: Math.max(0, Math.trunc(options.sourceLaneGenerations?.claude?.membership ?? options.sourceGenerations?.claude ?? 0)),
-        phase: Math.max(0, Math.trunc(options.sourceLaneGenerations?.claude?.phase ?? options.sourceGenerations?.claude ?? 0)),
-        unread: Math.max(0, Math.trunc(options.sourceLaneGenerations?.claude?.unread ?? options.sourceGenerations?.claude ?? 0))
-      }
-    },
-    tasks
-  }
-}
-
 export function emptyCompanionTaskPackage(
   providers: CompanionProviderEnablement = { codex: true, claude: false }
-): CompanionTaskPackageV3 {
+): CompanionTaskPackageV4 {
   return {
     schema: COMPANION_TASK_PACKAGE_REVISION,
     kernelRevision: COMPANION_TASK_KERNEL_REVISION,
@@ -356,7 +225,8 @@ export function emptyCompanionTaskPackage(
       groups: { input: [], active: [], stopped: [], unread: [], completed: [] },
       counts: { input: 0, active: 0, unread: 0 },
       cycleKeys: [],
-      attentionKeys: { input: [], completedUnread: [], archive: [] }
+      attentionKeys: { input: [], completedUnread: [], archive: [] },
+      pausedKeys: []
     }
   }
 }
@@ -376,7 +246,7 @@ function projectedLegacyState(
 
 function projectCanonicalCard(
   card: CodexTaskCard,
-  task: CompanionCanonicalTaskV3
+  task: CompanionCanonicalTaskV4
 ): CodexTaskCard {
   const live = task.phase === 'running' || task.phase === 'waiting-input' || task.phase === 'waiting-approval'
   const completed = task.phase === 'completed'
@@ -434,7 +304,11 @@ function projectCanonicalCard(
     lastQuestionAt: task.lastQuestionAt || card.lastQuestionAt,
     lastTurnStartedAt,
     createdAt: task.createdAt || card.createdAt,
-    isHidden: task.hidden,
+    isHidden: task.hidden || task.paused,
+    planReady: task.planReady,
+    planLifecycleRevision: task.planLifecycleRevision,
+    planPaused: task.paused,
+    companionCapabilities: { ...task.capabilities },
     hasCurrentActivity: live,
     canArchive: archiveCapability === 'allowed'
   }
@@ -457,12 +331,12 @@ function projectCanonicalCard(
     delete next.lastTurnCompletedAt
     delete next.pendingSince
   }
-  if (task.hidden) next.hiddenKind = 'task'
+  if (task.hidden || task.paused) next.hiddenKind = 'task'
   else delete next.hiddenKind
   return next
 }
 
-function minimalCanonicalCard(task: CompanionCanonicalTaskV3): CodexTaskCard {
+function minimalCanonicalCard(task: CompanionCanonicalTaskV4): CodexTaskCard {
   const name = task.displayName || (task.provider === 'codex' ? '新 Codex 任务' : '新 Claude 任务')
   const projectName = task.projectName || (task.provider === 'codex' ? 'Codex Chats' : 'Claude Chats')
   const projectKey = task.projectKey || `${task.provider}:chats`
@@ -540,14 +414,18 @@ function projectConversationSnapshot(
   conversations: ConversationSnapshotV1,
   tasks: CodexTaskCard[]
 ): ConversationSnapshotV1 {
-  const hidden = tasks.filter((task) => task.isHidden)
+  const hidden = tasks
+    .filter((task) => task.isHidden)
+    .sort((left, right) => Number(right.planPaused === true) - Number(left.planPaused === true)
+      || right.updatedAt - left.updatedAt
+      || left.key.localeCompare(right.key))
   const visible = tasks.filter((task) => !task.isHidden)
   const ongoing = visible.filter((task) => task.bucket === 'ongoing')
   const stopped = visible.filter((task) => task.bucket === 'stopped')
   const completedUnread = visible.filter((task) => task.bucket === 'completed-unread')
   const completed = visible.filter((task) => task.bucket === 'completed')
   const all = [...tasks]
-  const inputRequired = all.filter((task) => task.activityState === 'waiting-input' || task.activityState === 'waiting-approval')
+  const inputRequired = visible.filter((task) => task.activityState === 'waiting-input' || task.activityState === 'waiting-approval')
   const completedTab = [...completedUnread, ...completed]
   const tasksByKey = new Map(all.map((task) => [task.key, task]))
   const projects = conversations.projects.map((project) => projectCardsForProject(project, tasksByKey, all))
@@ -577,7 +455,7 @@ function projectConversationSnapshot(
  */
 export function applyCompanionTaskPackageViews(
   taskState: CodexTaskStatePackageV1,
-  taskPackage: CompanionTaskPackageV3
+  taskPackage: CompanionTaskPackageV4
 ): CodexTaskStatePackageV1 {
   if (!taskPackage.complete) return taskState
   const sourceByKey = new Map(allTaskCards(taskState).map((task) => [task.key, task]))

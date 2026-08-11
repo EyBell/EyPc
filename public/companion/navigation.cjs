@@ -92,6 +92,7 @@ function createCompanionNavigation(dependencies = {}) {
   let leaseCounter = 0
   let activeLease = 0
   let snapshot = { ready: false, targets: new Map(), cycleKeys: [] }
+  let snapshotFingerprint = ''
   let cursorKey = ''
   let queuedCycle = null
   let inFlightRequest = null
@@ -102,6 +103,7 @@ function createCompanionNavigation(dependencies = {}) {
   let maxConcurrent = 0
   let replacedCount = 0
   let acceptedCycleCount = 0
+  let syncNoopCount = 0
   let dispatchedCodex = 0
   let dispatchedClaude = 0
   let lastOutcome = 'idle'
@@ -143,6 +145,7 @@ function createCompanionNavigation(dependencies = {}) {
   function clearSnapshot(reason) {
     clearQueued(reason)
     snapshot = { ready: false, targets: new Map(), cycleKeys: [] }
+    snapshotFingerprint = ''
     cursorKey = ''
   }
 
@@ -185,7 +188,24 @@ function createCompanionNavigation(dependencies = {}) {
       seen.add(key)
       cycleKeys.push(key)
     }
+    const fingerprint = JSON.stringify({
+      ready: input.ready === true,
+      targets: [...targets.values()].map((target) => [
+        target.key,
+        target.provider,
+        target.actionAlias,
+        target.revisionAt,
+        target.phase,
+        target.canArchive
+      ]),
+      cycleKeys
+    })
+    if (fingerprint === snapshotFingerprint) {
+      syncNoopCount += 1
+      return true
+    }
     snapshot = { ready: input.ready === true, targets, cycleKeys }
+    snapshotFingerprint = fingerprint
     if (cursorKey && !targets.has(cursorKey)) cursorKey = ''
     return true
   }
@@ -412,6 +432,7 @@ function createCompanionNavigation(dependencies = {}) {
       maxConcurrent,
       replacedCount,
       acceptedCycleCount,
+      syncNoopCount,
       dispatched: { codex: dispatchedCodex, claude: dispatchedClaude },
       pendingResultCount: pendingResults.length,
       lastOutcome

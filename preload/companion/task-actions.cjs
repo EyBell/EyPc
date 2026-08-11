@@ -1,6 +1,6 @@
 'use strict'
 
-const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v3'
+const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v2'
 const PROVIDERS = ['codex', 'claude']
 const ARCHIVE_PHASES = ['completed', 'stopped']
 const CONFIRM_WINDOW_MS = 5_000
@@ -45,6 +45,12 @@ function normalizeTarget(value, enabledProviders) {
     revisionAt,
     phase,
     canArchive: value.canArchive === true && ARCHIVE_PHASES.includes(phase),
+    planReady: value.planReady === true,
+    planLifecycleRevision: Number.isFinite(Number(value.planLifecycleRevision)) ? Math.max(0, Math.trunc(Number(value.planLifecycleRevision))) : 0,
+    paused: value.paused === true,
+    canPause: value.canPause === true,
+    canResume: value.canResume === true,
+    canExecutePlan: value.canExecutePlan === true,
     archiveRequest
   }
 }
@@ -79,6 +85,19 @@ function normalizeArchiveResult(value, target) {
   }
 }
 
+function normalizeExecuteResult(value, target) {
+  const source = value && typeof value === 'object' ? value : {}
+  const outcome = ['executed', 'failed', 'indeterminate'].includes(source.outcome) ? source.outcome : 'failed'
+  return {
+    outcome,
+    provider: target.provider,
+    key: target.key,
+    ...(typeof source.operationId === 'string' ? { operationId: source.operationId.slice(0, 160) } : {}),
+    ...(typeof source.errorCode === 'string' && source.errorCode ? { errorCode: source.errorCode.slice(0, 80) } : {}),
+    ...(typeof source.message === 'string' && source.message ? { message: source.message.slice(0, 240) } : {})
+  }
+}
+
 function createCompanionTaskActions(dependencies = {}) {
   const now = typeof dependencies.now === 'function' ? dependencies.now : Date.now
   const adapters = dependencies.adapters && typeof dependencies.adapters === 'object' ? dependencies.adapters : {}
@@ -93,6 +112,9 @@ function createCompanionTaskActions(dependencies = {}) {
   let confirmation = null
   let disposed = false
   const archiveInFlight = new Map()
+  const executeInFlight = new Map()
+  let lastSyncFingerprint = ''
+  let syncNoopCount = 0
   let operationSequence = 0
 
   function operationId(input, prefix = 'op') {
@@ -122,6 +144,7 @@ function createCompanionTaskActions(dependencies = {}) {
         enabled,
         targetCount: targets.size,
         archiveInFlight: archiveInFlight.size,
+        executeInFlight: executeInFlight.size,
         ...(input.details || {})
       }
     })
@@ -130,13 +153,14 @@ function createCompanionTaskActions(dependencies = {}) {
   function clearConfirmation(reason = 'cleared') {
     if (confirmation) {
       const target = targets.get(confirmation.key)
+      const prefix = confirmation.kind === 'execute-plan' ? 'execute-plan' : 'archive'
       const event = reason === 'confirmed'
-        ? 'archive-confirmation-confirmed'
-        : reason === 'expired' ? 'archive-confirmation-expired' : 'archive-confirmation-cleared'
+        ? `${prefix}-confirmation-confirmed`
+        : reason === 'expired' ? `${prefix}-confirmation-expired` : `${prefix}-confirmation-cleared`
       trace(event, reason, target, now(), {
         operationId: confirmation.operationId,
         level: reason === 'expired' ? 'error' : reason === 'confirmed' ? 'info' : 'debug',
-        source: 'archive-shortcut'
+        source: confirmation.kind === 'execute-plan' ? 'execute-plan-button' : 'archive-shortcut'
       })
     }
     confirmation = null
@@ -164,16 +188,48 @@ function createCompanionTaskActions(dependencies = {}) {
       const target = normalizeTarget(value, enabledProviders)
       if (target && !next.has(target.key)) next.set(target.key, target)
     }
-    targets = next
-    focusedKey = typeof input.focusedKey === 'string' && targets.has(input.focusedKey) ? input.focusedKey : ''
-    attentionKeys = Array.isArray(input.attentionKeys)
-      ? input.attentionKeys.filter((key, index, rows) => typeof key === 'string' && targets.has(key) && rows.indexOf(key) === index)
+    const nextFocusedKey = typeof input.focusedKey === 'string' && next.has(input.focusedKey) ? input.focusedKey : ''
+    const nextAttentionKeys = Array.isArray(input.attentionKeys)
+      ? input.attentionKeys.filter((key, index, rows) => typeof key === 'string' && next.has(key) && rows.indexOf(key) === index)
       : []
+    const fingerprint = JSON.stringify({
+      enabled: nextEnabled,
+      ready: nextReady,
+      providers: [...nextProviders].sort(),
+      focusedKey: nextFocusedKey,
+      attentionKeys: nextAttentionKeys,
+      targets: [...next.values()].map((target) => ({
+        provider: target.provider,
+        key: target.key,
+        actionAlias: target.actionAlias,
+        revisionAt: target.revisionAt,
+        phase: target.phase,
+        canArchive: target.canArchive,
+        planReady: target.planReady,
+        planLifecycleRevision: target.planLifecycleRevision,
+        paused: target.paused,
+        canPause: target.canPause,
+        canResume: target.canResume,
+        canExecutePlan: target.canExecutePlan
+      }))
+    })
+    if (fingerprint === lastSyncFingerprint) {
+      syncNoopCount += 1
+      trace('target-sync', 'no-op', null, startedAt, { debug: true, source: 'kernel', details: { previous } })
+      return false
+    }
+    targets = next
+    focusedKey = nextFocusedKey
+    attentionKeys = nextAttentionKeys
+    lastSyncFingerprint = fingerprint
     if (!enabled || !ready) clearConfirmation('not-ready')
     else if (confirmation) {
       const target = targets.get(confirmation.key)
-      const identity = target ? targetIdentity(target) : ''
-      if (!target || !target.canArchive || identity !== confirmation.identity) clearConfirmation('identity-changed')
+      const identity = target
+        ? confirmation.kind === 'execute-plan' ? executeTargetIdentity(target) : archiveTargetIdentity(target)
+        : ''
+      const allowed = confirmation.kind === 'execute-plan' ? target?.canExecutePlan : target?.canArchive
+      if (!target || !allowed || identity !== confirmation.identity) clearConfirmation('identity-changed')
     }
     trace('target-sync', 'accepted', null, startedAt, {
       debug: true,
@@ -197,7 +253,11 @@ function createCompanionTaskActions(dependencies = {}) {
       || supplied.actionAlias !== current.actionAlias
       || supplied.revisionAt !== current.revisionAt
       || supplied.phase !== current.phase
-      || supplied.canArchive !== current.canArchive)) return null
+      || supplied.canArchive !== current.canArchive
+      || supplied.planReady !== current.planReady
+      || supplied.planLifecycleRevision !== current.planLifecycleRevision
+      || supplied.paused !== current.paused
+      || supplied.canExecutePlan !== current.canExecutePlan)) return null
     return current
   }
 
@@ -313,9 +373,76 @@ function createCompanionTaskActions(dependencies = {}) {
     return operation
   }
 
-  function targetIdentity(target) {
+  function archiveTargetIdentity(target) {
     const terminalEpoch = Number(target.archiveRequest?.expectedRevisionAt) || 0
-    return `${target.provider}|${target.key}|${terminalEpoch}`
+    return `${target.provider}|${target.key}|${target.phase}|${terminalEpoch}`
+  }
+
+  function executeTargetIdentity(target) {
+    return `${target.provider}|${target.key}|${target.planLifecycleRevision}|${target.actionAlias}|${target.phase}|${target.paused ? 1 : 0}`
+  }
+
+  function executePlan(input = {}) {
+    const startedAt = now()
+    const target = resolveTarget(input)
+    if (disposed || !enabled || !ready || !target || !target.canExecutePlan || !target.planReady
+      || Number(input.planLifecycleRevision) !== target.planLifecycleRevision) {
+      const result = { outcome: 'failed', errorCode: 'state-changed', message: 'Plan 状态已变化，当前不能执行' }
+      trace('execute-plan-intent', result.outcome, target, startedAt, { source: input.source, errorCode: result.errorCode })
+      return Promise.resolve(result)
+    }
+    const inFlightKey = `${target.provider}:${target.key}:${target.planLifecycleRevision}`
+    const existing = executeInFlight.get(inFlightKey)
+    if (existing) return existing
+    const identity = executeTargetIdentity(target)
+    const at = now()
+    if (confirmation?.until < at) clearConfirmation('expired')
+    if (!confirmation || confirmation.kind !== 'execute-plan' || confirmation.identity !== identity || confirmation.until < at) {
+      confirmation = {
+        kind: 'execute-plan',
+        key: target.key,
+        identity,
+        operationId: operationId(input, 'exec-confirm'),
+        until: at + CONFIRM_WINDOW_MS
+      }
+      trace('execute-plan-confirmation-created', 'created', target, at, {
+        operationId: confirmation.operationId,
+        source: input.source || 'execute-plan-button',
+        details: { expiresAt: confirmation.until, planLifecycleRevision: target.planLifecycleRevision }
+      })
+      return Promise.resolve({
+        outcome: 'confirmation-required',
+        provider: target.provider,
+        key: target.key,
+        operationId: confirmation.operationId,
+        message: '5 秒内再次点击“确”以执行原 Plan'
+      })
+    }
+    const currentOperationId = confirmation.operationId
+    clearConfirmation('confirmed')
+    const adapter = adapters[target.provider]
+    if (!adapter || typeof adapter.executePlan !== 'function') {
+      const result = { outcome: 'failed', provider: target.provider, key: target.key, errorCode: 'unsupported', message: '当前运行环境不支持安全执行 Plan' }
+      trace('execute-plan-result', result.outcome, target, startedAt, { operationId: currentOperationId, source: input.source, errorCode: result.errorCode })
+      return Promise.resolve({ ...result, operationId: currentOperationId })
+    }
+    const operation = Promise.resolve()
+      .then(() => adapter.executePlan(target, { ...input, operationId: currentOperationId }))
+      .then((value) => {
+        const result = normalizeExecuteResult(value, target)
+        trace('execute-plan-result', result.outcome, target, startedAt, { operationId: currentOperationId, source: input.source, errorCode: result.errorCode })
+        return { ...result, operationId: result.operationId || currentOperationId }
+      })
+      .catch(() => {
+        const result = { outcome: 'indeterminate', provider: target.provider, key: target.key, errorCode: 'execute-result-unknown', message: '执行结果未能确认；未自动重发' }
+        trace('execute-plan-result', result.outcome, target, startedAt, { operationId: currentOperationId, source: input.source, errorCode: result.errorCode })
+        return { ...result, operationId: currentOperationId }
+      })
+      .finally(() => {
+        if (executeInFlight.get(inFlightKey) === operation) executeInFlight.delete(inFlightKey)
+      })
+    executeInFlight.set(inFlightKey, operation)
+    return operation
   }
 
   function shortcutTarget() {
@@ -335,11 +462,11 @@ function createCompanionTaskActions(dependencies = {}) {
       notify('当前没有唯一且可归档的任务')
       return true
     }
-    const identity = targetIdentity(target)
+    const identity = archiveTargetIdentity(target)
     const at = now()
     if (confirmation?.until < at) clearConfirmation('expired')
     if (!confirmation || confirmation.identity !== identity || confirmation.until < at) {
-      confirmation = { key: target.key, identity, operationId: operationId({}, 'confirm'), until: at + CONFIRM_WINDOW_MS }
+      confirmation = { kind: 'archive', key: target.key, identity, operationId: operationId({}, 'confirm'), until: at + CONFIRM_WINDOW_MS }
       trace('archive-confirmation-created', 'created', target, at, { operationId: confirmation.operationId, source: 'archive-shortcut', details: { expiresAt: confirmation.until, terminalEpoch: Number(target.archiveRequest?.expectedRevisionAt) || 0 } })
       notify(`准备归档 ${target.provider === 'claude' ? 'Claude' : 'Codex'} 任务；5 秒内再次调用确认`)
       return true
@@ -370,6 +497,8 @@ function createCompanionTaskActions(dependencies = {}) {
       ready,
       targetCount: targets.size,
       archiveInFlight: archiveInFlight.size,
+      executeInFlight: executeInFlight.size,
+      syncNoopCount,
       confirmationPending: Boolean(confirmation && confirmation.until >= now())
     }
   }
@@ -383,7 +512,7 @@ function createCompanionTaskActions(dependencies = {}) {
     }
   }
 
-  return { revision: COMPANION_TASK_ACTIONS_REVISION, sync, inspect, open, archive, shortcutArchive, handleEnter, diagnostics, close }
+  return { revision: COMPANION_TASK_ACTIONS_REVISION, sync, inspect, open, archive, executePlan, shortcutArchive, handleEnter, diagnostics, close }
 }
 
 module.exports = {
