@@ -11,6 +11,7 @@ const require_ = createRequire(import.meta.url)
 const bridgeModule = require_(resolve(process.cwd(), 'preload/claude/index.cjs'))
 const codeSessions = require_(resolve(process.cwd(), 'preload/claude/code-sessions.cjs'))
 const events = require_(resolve(process.cwd(), 'preload/claude/events.cjs'))
+const appState = require_(resolve(process.cwd(), 'preload/claude/app-state.cjs'))
 const openerModule = require_(resolve(process.cwd(), 'preload/claude/open.cjs'))
 
 const LOCAL_A = 'local_7badfe6b-950e-488b-a70c-cc6756e96763'
@@ -205,7 +206,50 @@ describe('ordered hook state', () => {
   })
 })
 
+describe('ordered Claude App log state', () => {
+  const line = (time: string, message: string) => appState.parseAppStateLine(`${time} [info] ${message}`)
+
+  it('preserves a successful Turn when the generic session teardown follows it', () => {
+    const result = appState.foldAppStateEvents([
+      line('2026-08-08 09:59:56', `Sending message to session ${LOCAL_A}`),
+      line('2026-08-08 09:59:57', `[Result] Turn succeeded for session ${LOCAL_A}`),
+      line('2026-08-08 09:59:58', `Stopping session ${LOCAL_A}`)
+    ])
+    expect(result.state.get(LOCAL_A)).toMatchObject({
+      phase: 'completed',
+      lastStopAt: Date.parse('2026-08-08T09:59:57'),
+      lastSessionEndAt: Date.parse('2026-08-08T09:59:58')
+    })
+  })
+
+  it('uses stopped for teardown without completion and for an explicit interruption', () => {
+    const generic = appState.foldAppStateEvents([
+      line('2026-08-08 09:59:56', `Sending message to session ${LOCAL_A}`),
+      line('2026-08-08 09:59:58', `Stopping session ${LOCAL_A}`)
+    ])
+    expect(generic.state.get(LOCAL_A)?.phase).toBe('stopped')
+    const interrupted = appState.foldAppStateEvents([
+      line('2026-08-08 09:59:56', `Sending message to session ${LOCAL_A}`),
+      line('2026-08-08 09:59:58', `[Result] Turn interrupted for session ${LOCAL_A}`)
+    ])
+    expect(interrupted.state.get(LOCAL_A)?.phase).toBe('stopped')
+  })
+})
+
 describe('Code-mode inventory and correlation', () => {
+  it('returns every admitted session without a fixed inventory-count cap', () => {
+    const home = makeHome()
+    for (let index = 0; index < 405; index += 1) {
+      const suffix = index.toString(16).padStart(12, '0')
+      const sessionId = `local_00000000-0000-4000-8000-${suffix}`
+      const cliSessionId = `10000000-0000-4000-8000-${suffix}`
+      writeMetadata(home.codeDirectory, metadata(sessionId, cliSessionId))
+    }
+    const snapshot = makeBridge(home).readCodeSnapshot({ now: Date.now() })
+    expect(snapshot.sessions).toHaveLength(405)
+    expect(snapshot.truncated).toBe(false)
+  })
+
   it('reads only App Code metadata and emits only the field whitelist', () => {
     const home = makeHome()
     writeMetadata(home.codeDirectory, metadata(LOCAL_A, CLI_A))
@@ -696,6 +740,28 @@ describe('version-gated Claude metadata archive', () => {
     context.bridge.close()
   })
 
+  it('rebases onto benign metadata churn before the archive write', () => {
+    const home = makeHome()
+    const original = metadata(LOCAL_A, CLI_A, { completedTurns: 1, title: 'Before' })
+    writeMetadata(home.codeDirectory, original)
+    const reader = codeSessions.createCodeSessionReader({
+      fs,
+      path,
+      os: { homedir: () => home.root },
+      claudeAppDataRoot: home.appData,
+      platform: 'darwin'
+    })
+    reader.readInventory({ now: Date.now() })
+    writeMetadata(home.codeDirectory, { ...original, title: 'Latest title', lastFocusedAt: Date.now() })
+
+    expect(reader.archiveSessionMetadata(LOCAL_A)).toMatchObject({ outcome: 'archived' })
+    expect(JSON.parse(readFileSync(join(home.codeDirectory, `${LOCAL_A}.json`), 'utf8'))).toMatchObject({
+      title: 'Latest title',
+      isArchived: true
+    })
+    reader.close()
+  })
+
   it('restores the original bytes when semantic verification fails without a concurrent write', async () => {
     const context = archiveBridge({ validateWrite: () => false })
     const before = readFileSync(context.filePath)
@@ -706,7 +772,7 @@ describe('version-gated Claude metadata archive', () => {
 })
 
 describe('Claude membership mutation watcher', () => {
-  function watcherBridge() {
+  function watcherBridge(readBeforeWatch = true) {
     const home = makeHome()
     writeMetadata(home.codeDirectory, metadata(LOCAL_A, CLI_A, { completedTurns: 1 }))
     let fileListener: ((event: string, filename: string) => void) | null = null
@@ -736,10 +802,11 @@ describe('Claude membership mutation watcher', () => {
       },
       clearInterval: () => undefined
     })
-    bridge.readCodeSnapshot({ now: Date.now() })
+    if (readBeforeWatch) bridge.readCodeSnapshot({ now: Date.now() })
     return {
       bridge,
       home,
+      readInventory: () => bridge.readCodeSnapshot({ now: Date.now() }),
       invokeFile: (filename = `${LOCAL_A}.json`) => fileListener?.('change', filename),
       recover: () => recovery?.(),
       recoveryMs: () => recoveryMs,
@@ -776,13 +843,51 @@ describe('Claude membership mutation watcher', () => {
     context.bridge.close()
   })
 
-  it('ignores matching file events that were not admitted to the private index', () => {
+  it('publishes an exact upsert when a canonical metadata file is created in an admitted inventory directory', () => {
     const context = watcherBridge()
     const deltas: unknown[] = []
     context.bridge.watchCodeSessions((delta: unknown) => deltas.push(delta))
     writeMetadata(context.home.codeDirectory, metadata(LOCAL_B, CLI_A, { completedTurns: 1 }))
     context.invokeFile(`${LOCAL_B}.json`)
-    expect(deltas).toEqual([])
+    expect(deltas).toEqual([expect.objectContaining({
+      mutations: [expect.objectContaining({
+        key: `claude:${LOCAL_B}`,
+        mutation: 'upsert',
+        session: expect.objectContaining({ sessionId: LOCAL_B })
+      })]
+    })])
+    context.bridge.close()
+  })
+
+  it('installs the admitted directory watcher when Host subscribes before the first cold inventory read', () => {
+    const context = watcherBridge(false)
+    const deltas: unknown[] = []
+    context.bridge.watchCodeSessions((delta: unknown) => deltas.push(delta))
+    context.readInventory()
+    writeMetadata(context.home.codeDirectory, metadata(LOCAL_B, CLI_A, { completedTurns: 1 }))
+    context.invokeFile(`${LOCAL_B}.json`)
+
+    expect(deltas).toEqual([expect.objectContaining({
+      mutations: [expect.objectContaining({
+        key: `claude:${LOCAL_B}`,
+        mutation: 'upsert',
+        session: expect.objectContaining({ sessionId: LOCAL_B })
+      })]
+    })])
+    context.bridge.close()
+  })
+
+  it('fans one membership delta out to both Host and Renderer subscribers', () => {
+    const context = watcherBridge()
+    const hostDeltas: unknown[] = []
+    const rendererDeltas: unknown[] = []
+    context.bridge.watchCodeSessions((delta: unknown) => hostDeltas.push(delta))
+    context.bridge.watchCodeSessions((delta: unknown) => rendererDeltas.push(delta))
+    writeMetadata(context.home.codeDirectory, metadata(LOCAL_A, CLI_A, { completedTurns: 1, isArchived: true }))
+    context.invokeFile()
+
+    expect(hostDeltas).toHaveLength(1)
+    expect(rendererDeltas).toEqual(hostDeltas)
     context.bridge.close()
   })
 })

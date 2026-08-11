@@ -116,14 +116,112 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
-  it('schedules quota and full inventory reads with independently configured second intervals', async () => {
+  it('hydrates metadata immediately when the process package admits a new Codex task', async () => {
+    const now = Date.now()
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    state.codex.settings.providers = { codex: true, claude: false }
+    let includeNew = false
+    let inventoryReads = 0
+    const firstKey = '1111111111111111'
+    const newKey = '2222222222222222'
+    const row = (key: string, offset: number) => ({
+      key,
+      actionAlias: `alias-${key}`,
+      name: key === newKey ? '新任务' : '原任务',
+      status: 'active' as const,
+      activeFlags: [] as [],
+      statusAuthority: 'desktop-live' as const,
+      updatedAt: now + offset,
+      lastTurnStatus: 'inProgress' as const,
+      lastTurnStartedAt: now + offset
+    })
+    const companionKernel = companionTaskKernelModule.createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const platform = {
+      companionKernel,
+      codex: {
+        taskStateRevision: CODEX_TASK_STATE_REVISION,
+        readSnapshot: async (options: Record<string, boolean>) => {
+          if (!options.includeThreads) return { ok: true as const, receivedAt: now, value: { version: 2 as const, receivedAt: now } }
+          inventoryReads += 1
+          return {
+            ok: true as const,
+            receivedAt: now + inventoryReads,
+            value: {
+              version: 2 as const,
+              receivedAt: now + inventoryReads,
+              threads: includeNew ? [row(firstKey, 1), row(newKey, 2)] : [row(firstKey, 1)],
+              projects: [],
+              sourceFingerprint: 'e'.repeat(64),
+              completeness: 'verified' as const
+            }
+          }
+        },
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({
+      platform,
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: () => undefined
+    })
+    controller.start()
+    await vi.waitFor(() => expect(controller.view().taskState.conversations.all.map((task) => task.key)).toEqual([firstKey]))
+
+    includeNew = true
+    const current = companionKernel.getPackage()
+    const base = current.tasks[0]
+    companionKernel.publishEvidence({
+      schema: 'companion-task-draft-v3',
+      producer: 'host-evidence',
+      sourceTaskStateRevision: current.sourceTaskStateRevision,
+      draftRevision: 1,
+      acceptedAt: now + 10,
+      enabled: true,
+      providers: { codex: true, claude: false },
+      complete: true,
+      focusedKey: '',
+      sourceGenerations: { ...current.sourceGenerations, codex: current.sourceGenerations.codex + 1 },
+      sourceLaneGenerations: {
+        ...current.sourceLaneGenerations,
+        codex: {
+          ...current.sourceLaneGenerations.codex,
+          membership: current.sourceLaneGenerations.codex.membership + 1
+        }
+      },
+      tasks: [base, {
+        ...base,
+        key: newKey,
+        actionAlias: `alias-${newKey}`,
+        revisionAt: now + 2,
+        membershipRevision: now + 2,
+        phaseRevision: now + 2,
+        unreadRevision: now + 2,
+        visibilityRevision: now + 2,
+        statusEnteredAt: now + 2,
+        lastQuestionAt: now + 2,
+        displayOrder: 1,
+        cycleOrder: 1,
+        attentionOrder: 1
+      }]
+    })
+
+    await vi.waitFor(() => expect(controller.view().taskState.conversations.all.map((task) => task.key).sort()).toEqual([firstKey, newKey].sort()))
+    await vi.waitFor(() => expect(inventoryReads).toBeGreaterThanOrEqual(2))
+    controller.dispose()
+  })
+
+  it('schedules quota reads while keeping full inventory off the normal periodic path', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(10_000)
     try {
       const state = createInitialState(1)
       state.activeTab = 'codex'
       state.codex.settings.quotaRefreshSeconds = 2
-      state.codex.settings.taskRefreshSeconds = 3
       const sourceFingerprint = 'e'.repeat(64)
       let quotaReads = 0
       let taskReads = 0
@@ -169,7 +267,80 @@ describe('Codex controller', () => {
       await vi.advanceTimersByTimeAsync(1)
       expect({ quotaReads, taskReads }).toEqual({ quotaReads: 2, taskReads: 1 })
       await vi.advanceTimersByTimeAsync(1_000)
-      expect({ quotaReads, taskReads }).toEqual({ quotaReads: 2, taskReads: 2 })
+      expect({ quotaReads, taskReads }).toEqual({ quotaReads: 2, taskReads: 1 })
+      controller.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('recovers a Codex membership gap without rereading Claude inventory, state, unread, quota or environment', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(20_000)
+    try {
+      const state = createInitialState(1)
+      state.activeTab = 'codex'
+      state.codex.settings.providers = { codex: true, claude: true }
+      const sourceFingerprint = 'f'.repeat(64)
+      let activityGeneration = 1
+      let codexTaskReads = 0
+      let activityListener: (delta: any) => void = () => undefined
+      const claudeReads = { environment: 0, inventory: 0, unread: 0, quota: 0 }
+      const platform = {
+        codex: {
+          readSnapshot: async (input: Record<string, boolean>) => {
+            if (input.includeThreads) codexTaskReads += 1
+            return input.includeThreads
+              ? {
+                  ok: true as const,
+                  receivedAt: Date.now(),
+                  value: {
+                    version: 2 as const,
+                    receivedAt: Date.now(),
+                    threads: [],
+                    projects: [],
+                    sourceFingerprint,
+                    completeness: 'verified' as const,
+                    activityGeneration
+                  }
+                }
+              : { ok: true as const, receivedAt: Date.now(), value: { version: 2 as const, receivedAt: Date.now() } }
+          },
+          onActivityChanged: (listener: (delta: any) => void) => { activityListener = listener; return () => { activityListener = () => undefined } },
+          close: () => undefined
+        },
+        claude: {
+          inspect: async () => { claudeReads.environment += 1; return { version: 1 as const, installed: true, homeReady: true, authenticated: true, cliVersion: '', hooks: 'unknown' as const, statusline: 'unknown' as const, checkedAt: Date.now() } },
+          readCodeSnapshot: async () => { claudeReads.inventory += 1; return { version: 2 as const, revision: 'test', sessions: [], available: true, truncated: false, readAt: Date.now(), generation: 1 } },
+          readCodeUnread: async () => { claudeReads.unread += 1; return { version: 2 as const, revision: 'test', ids: [], readAt: Date.now(), generation: 1, sourceFingerprint: 'a'.repeat(64) } },
+          readSnapshot: async () => { claudeReads.quota += 1; return { version: 1 as const, revision: 'test', sessions: [], truncated: false, quota: null, readAt: Date.now() } },
+          diagnostics: () => ({ revision: 'test', loaded: true, loadError: '' }),
+          close: () => undefined
+        }
+      } as unknown as EypcPlatformApi
+      const controller = createCodexController({ platform, getAppState: () => state, save: () => undefined, notify: () => undefined, setMessage: () => undefined })
+
+      controller.start()
+      await vi.advanceTimersByTimeAsync(0)
+      await Promise.resolve()
+      expect(codexTaskReads).toBe(1)
+      expect(claudeReads).toEqual({ environment: 1, inventory: 1, unread: 1, quota: 1 })
+
+      activityGeneration = 2
+      activityListener({
+        version: 2,
+        generation: 2,
+        receivedAt: Date.now(),
+        inventoryChanged: true,
+        desktopBridgeState: 'connected',
+        sourceFingerprint,
+        entries: []
+      })
+      await vi.advanceTimersByTimeAsync(201)
+      await Promise.resolve()
+
+      expect(codexTaskReads).toBe(2)
+      expect(claudeReads).toEqual({ environment: 1, inventory: 1, unread: 1, quota: 1 })
       controller.dispose()
     } finally {
       vi.useRealTimers()
@@ -427,7 +598,6 @@ describe('Codex controller', () => {
     try {
       const state = createInitialState(1)
       state.activeTab = 'codex'
-      state.codex.settings.taskRefreshSeconds = 15
       const taskKey = '1111111111111111'
       const sourceFingerprint = 'd'.repeat(64)
       let includeTask = true
@@ -485,7 +655,6 @@ describe('Codex controller', () => {
     try {
       const state = createInitialState(1)
       state.activeTab = 'codex'
-      state.codex.settings.taskRefreshSeconds = 0
       const taskKey = '1111111111111111'
       const sourceFingerprint = '9'.repeat(64)
       let includeTask = true
@@ -880,7 +1049,6 @@ describe('Codex controller', () => {
       state.activeTab = 'ports'
       state.codex.settings.floatEnabled = false
       state.codex.settings.conversationInboxEnabled = false
-      state.codex.settings.taskRefreshSeconds = 1
       const readSnapshot = vi.fn()
       const readActivitySnapshot = vi.fn()
       const platform = {
@@ -1289,14 +1457,13 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
-  it('publishes 100 complete waiting-input cycles under 250ms P95 while full reads are blocked', async () => {
-    for (const taskRefreshSeconds of [0, 86_400]) {
+  it('publishes 100 complete waiting-input cycles under 100ms P95 while full reads are blocked', async () => {
+    for (const scenarioOffset of [0, 86_400]) {
       const state = createInitialState(1)
       state.activeTab = 'ports'
       state.codex.settings.floatEnabled = false
-      state.codex.settings.taskRefreshSeconds = taskRefreshSeconds
-      const sourceFingerprint = `${taskRefreshSeconds || 1}`.padEnd(64, 'c').slice(0, 64)
-      const taskKey = taskRefreshSeconds === 0 ? 'abcdef0123456701' : 'abcdef0123456702'
+      const sourceFingerprint = `${scenarioOffset || 1}`.padEnd(64, 'c').slice(0, 64)
+      const taskKey = scenarioOffset === 0 ? 'abcdef0123456701' : 'abcdef0123456702'
       const activityListeners: Array<(delta: any) => void> = []
       let snapshotReads = 0
       let blockSnapshot = false
@@ -1310,7 +1477,7 @@ describe('Codex controller', () => {
           receivedAt,
           threads: [{
             key: taskKey,
-            actionAlias: `hot-edge-alias-${taskRefreshSeconds}`,
+            actionAlias: `hot-edge-alias-${scenarioOffset}`,
             name: '双向热通路',
             status: 'active' as const,
             activeFlags: [],
@@ -1390,7 +1557,7 @@ describe('Codex controller', () => {
         expect(controller.view().conversations.all).toHaveLength(1)
       }
       const ordered = [...latencies].sort((left, right) => left - right)
-      expect(ordered[Math.ceil(ordered.length * 0.95) - 1]).toBeLessThan(250)
+      expect(ordered[Math.ceil(ordered.length * 0.95) - 1]).toBeLessThan(100)
       expect(snapshotReads).toBe(readsAfterBaseline + 1)
 
       releaseSnapshot(baseline)
@@ -1402,14 +1569,13 @@ describe('Codex controller', () => {
   it('recovers both waiting edges within the 1s phase-only watchdog when the callback is dropped', async () => {
     vi.useFakeTimers()
     try {
-      for (const taskRefreshSeconds of [0, 86_400]) {
-        vi.setSystemTime(20_000 + taskRefreshSeconds)
+      for (const scenarioOffset of [0, 86_400]) {
+        vi.setSystemTime(20_000 + scenarioOffset)
         const state = createInitialState(1)
         state.activeTab = 'ports'
         state.codex.settings.floatEnabled = false
-        state.codex.settings.taskRefreshSeconds = taskRefreshSeconds
-        const sourceFingerprint = `${taskRefreshSeconds || 2}`.padEnd(64, 'd').slice(0, 64)
-        const taskKey = taskRefreshSeconds === 0 ? 'abcdef0123456711' : 'abcdef0123456712'
+        const sourceFingerprint = `${scenarioOffset || 2}`.padEnd(64, 'd').slice(0, 64)
+        const taskKey = scenarioOffset === 0 ? 'abcdef0123456711' : 'abcdef0123456712'
         let fullReads = 0
         let activityReads = 0
         let generation = 1
@@ -2730,7 +2896,9 @@ describe('Codex controller', () => {
 
     archiveResolve!()
     expect(await archivePromise).toBe(true)
-    expect(controller.view().conversations.completedCount).toBe(0)
+    // A Provider result cannot independently authorize Renderer deletion.
+    // Production removal arrives from the process Kernel commit package.
+    expect(controller.view().conversations.completedCount).toBe(1)
     expect(controller.floatSnapshot().archivingTaskKeys).toEqual([])
     controller.dispose()
   })
@@ -2988,13 +3156,13 @@ describe('Codex controller', () => {
     expect(controller.view().conversations.completedUnread).toHaveLength(1)
 
     controller.cycleTask(-1)
-    await vi.waitFor(() => expect(openThread).toHaveBeenCalledWith('alias-approval'))
-
-    controller.cycleTask(1)
-    await vi.waitFor(() => expect(openThread).toHaveBeenLastCalledWith('alias-input'))
+    await vi.waitFor(() => expect(openThread).toHaveBeenCalledWith('alias-input'))
 
     controller.cycleTask(1)
     await vi.waitFor(() => expect(openThread).toHaveBeenLastCalledWith('alias-approval'))
+
+    controller.cycleTask(1)
+    await vi.waitFor(() => expect(openThread).toHaveBeenLastCalledWith('alias-input'))
 
     expect(openThread).not.toHaveBeenCalledWith('alias-plan-a')
     expect(openThread).not.toHaveBeenCalledWith('alias-plan-b')
@@ -3439,7 +3607,7 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
-  it('walks completed-unread by completion revision and wraps to the newest after all were opened', async () => {
+  it('walks completed-unread by latest question and wraps after all were opened', async () => {
     const now = Date.now()
     const state = createInitialState(1)
     const olderKey = 'cccccccccccccccc'
@@ -3475,9 +3643,9 @@ describe('Codex controller', () => {
       await Promise.resolve()
     }
     expect(openThread.mock.calls.map(([alias]) => alias)).toEqual([
-      'alias-newer-unread',
       'alias-older-unread',
-      'alias-newer-unread'
+      'alias-newer-unread',
+      'alias-older-unread'
     ])
     controller.dispose()
   })

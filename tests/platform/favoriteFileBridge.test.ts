@@ -442,7 +442,7 @@ describe('favorite file bridge source', () => {
     expect(preloadAssetsScript).toContain("canonical: 'preload/action.js', public: 'public/action-preload.js', dist: 'action-preload.js'")
     expect(packageJson.scripts?.['sync:preloads']).toBe('node scripts/sync-utools-preloads.mjs')
     expect(packageJson.scripts?.verify).toBe('pnpm run sync:preloads && pnpm run test && pnpm run build')
-    expect(validateScript).toContain("['index.html', 'float.html', 'action.html', 'plugin.json', 'package.json', 'preload.js', 'float-preload.js', 'action-preload.js', 'logo.svg']")
+    expect(validateScript).toContain("['index.html', 'float.html', 'action.html', 'plugin.json', 'package.json', 'preload.js', 'float-preload.js', 'action-preload.js', 'runtime-identity.cjs', 'logo.svg']")
     expect(validateScript).toContain('UTOOLS_PRELOAD_ASSETS.map')
     expect(validateScript).toContain("dist package.json type must be commonjs")
     expect(validateScript).toContain('`${asset.public} must match ${asset.canonical}`')

@@ -7,7 +7,7 @@ import path from 'node:path'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import vm from 'node:vm'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 interface Rect {
   x: number
@@ -21,9 +21,11 @@ const TEST_RUNTIME_IDENTITY = {
   artifactState: 'artifact-ready',
   hostAssetId: 'host-test-current',
   rendererAssetId: 'renderer-test-current',
-  kernelRevision: 'companion-task-kernel-v1',
-  taskPackageRevision: 'companion-task-package-v1'
+  kernelRevision: 'companion-task-kernel-v3',
+  taskPackageRevision: 'companion-task-package-v3'
 }
+
+afterEach(() => vi.useRealTimers())
 
 interface FloatSnapshot {
   style: 'water' | 'card'
@@ -84,6 +86,7 @@ function loadPreloadHarness() {
     window: {},
     globalThis: null,
     console,
+    Date,
     process: { platform: 'darwin', env: {}, cwd: () => process.cwd() },
     setTimeout,
     clearTimeout,
@@ -135,6 +138,7 @@ function loadFloatRendererPreloadHarness() {
   const sandbox: Record<string, any> = {
     window: {},
     globalThis: null,
+    Date,
     setTimeout,
     clearTimeout,
     utools: {
@@ -160,6 +164,7 @@ function loadFloatRendererPreloadHarness() {
     bridge: bridge as {
       createThread(request: Record<string, unknown>): Promise<Record<string, unknown>>
       returnFocus(): boolean
+      getHealth(): { heartbeatSequence: number; lastHeartbeatAckAt: number }
     },
     ipcHandlers,
     sent
@@ -351,6 +356,25 @@ describe('Codex float preload sizing', () => {
     expect(actions).toHaveLength(0)
   })
 
+  it('expires a lost resize interaction so later expansion changes cannot remain locked', async () => {
+    vi.useFakeTimers()
+    const { bridge, bounds, ipcHandlers } = loadPreloadHarness()
+    bridge.sync({ visible: true, snapshot: snapshot(), position: { displayId: 'right', x: 3244, y: 120, edge: 'right' }, expandedSizes: [] })
+    setExpansion(ipcHandlers, true, true)
+    const expanded = bounds()
+
+    ipcHandlers.get('eypc-float:resize-start')?.({}, {
+      screenX: expanded.x,
+      screenY: expanded.y + expanded.height,
+      corner: 'bottom-left',
+      interactionId: 'resize-test-1'
+    })
+    await vi.advanceTimersByTimeAsync(10_001)
+    setExpansion(ipcHandlers, false, false)
+
+    expect(bounds()).toEqual({ x: 3244, y: 120, width: 104, height: 104 })
+  })
+
   it('does not convert auto size to a manual preference when the resize handle is only clicked', () => {
     const { bridge, bounds, ipcHandlers } = loadPreloadHarness()
     const actions: Array<{ actionId: string }> = []
@@ -410,6 +434,34 @@ describe('Codex float preload sizing', () => {
     expect(bridge.sync({ visible: true, snapshot: snapshot(), position })).toBe(true)
     expect(createCount()).toBe(2)
     expect(isFloatDestroyed()).toBe(false)
+  })
+
+  it('recreates a stalled persistent float once and respects the recovery cooldown', async () => {
+    vi.useFakeTimers()
+    const { bridge, createCount, ipcHandlers, sent } = loadPreloadHarness()
+    bridge.sync({ visible: true, snapshot: snapshot(), position: { displayId: 'right', x: 3244, y: 120, edge: 'right' } })
+    expect(createCount()).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(8_001)
+    expect(createCount()).toBe(2)
+    expect(bridge.diagnostics()).toMatchObject({ health: { alive: true, persistent: true, interaction: 'idle' } })
+
+    ipcHandlers.get('eypc-float:heartbeat')?.({}, { sequence: 9 })
+    expect(sent.at(-1)).toMatchObject({ channel: 'eypc-float:heartbeat-ack', payload: { sequence: 9 } })
+    expect(bridge.diagnostics()).toMatchObject({ health: { recoveryDeadline: 0 } })
+
+    await vi.advanceTimersByTimeAsync(8_001)
+    expect(createCount()).toBe(2)
+  })
+
+  it('emits a renderer heartbeat every two seconds and records its acknowledgement', async () => {
+    vi.useFakeTimers()
+    const { bridge, ipcHandlers, sent } = loadFloatRendererPreloadHarness()
+
+    await vi.advanceTimersByTimeAsync(2_001)
+    expect(sent.at(-1)).toMatchObject({ channel: 'eypc-float:heartbeat', payload: { sequence: 1 } })
+    ipcHandlers.get('eypc-float:heartbeat-ack')?.({}, { sequence: 1, receivedAt: Date.now() })
+    expect(bridge.getHealth()).toMatchObject({ heartbeatSequence: 1, lastHeartbeatAckAt: expect.any(Number) })
   })
 
   it('closes the float only on sync(visible:false) or kill pluginOut', () => {

@@ -6,7 +6,7 @@ import { createMqttConnectionConfig } from '../../src/domain/mqtt'
 import { isFavoriteRunnerTrusted, trustFavoriteRunner } from '../../src/domain/favoriteLaunch'
 import type { FavoriteRunRecord } from '../../src/domain/types'
 import type { LiveWindow, WindowActivationRequest } from '../../src/domain/windows'
-import { WINDOW_BRIDGE_REVISION, type EypcPlatformApi, type FavoriteRunRequest } from '../../src/platform/eypcPlatform'
+import { WINDOW_BRIDGE_REVISION, type EypcPlatformApi, type FavoriteRunRequest, type RuntimeDiagnosticInputV3 } from '../../src/platform/eypcPlatform'
 
 type TestPlatformOverrides = {
   [Key in keyof EypcPlatformApi]?: EypcPlatformApi[Key] extends (...args: never[]) => unknown
@@ -53,6 +53,46 @@ describe('action runtime', () => {
     })
     expect(called).toBe(true)
     expect(snapshots).toEqual(['before'])
+  })
+
+  it('observes every dispatch through one argument-free operational envelope', () => {
+    const observations: any[] = []
+    const runtime = createActionRuntime({ onDispatch: (observation) => observations.push(observation) })
+    runtime.register({
+      id: 'codex.task.open',
+      title: '打开任务',
+      group: 'Codex',
+      risk: 'normal',
+      scope: 'row',
+      priority: 100,
+      when: (context) => context.tab === 'codex',
+      run: () => true
+    })
+
+    runtime.dispatch({
+      actionId: 'codex.task.open',
+      context: { tab: 'codex', selectedIds: ['codex:thread-42'], layerIds: ['task-list'] },
+      args: { prompt: 'must not enter the observation', rowId: 'thread-42', source: 'manual-quick-jump' }
+    })
+    runtime.dispatch({
+      actionId: 'missing.action',
+      context: { tab: 'codex', selectedIds: [], layerIds: [] }
+    })
+
+    expect(observations[0]).toMatchObject({
+      actionId: 'codex.task.open',
+      outcome: 'handled',
+      handled: true,
+      tab: 'codex',
+      selectedIds: ['codex:thread-42'],
+      layerIds: ['task-list'],
+      source: 'manual-quick-jump',
+      risk: 'normal',
+      scope: 'row'
+    })
+    expect(observations[0]).not.toHaveProperty('args')
+    expect(JSON.stringify(observations[0])).not.toContain('must not enter the observation')
+    expect(observations[1]).toMatchObject({ actionId: 'missing.action', outcome: 'unavailable', handled: false })
   })
 })
 
@@ -235,6 +275,101 @@ describe('app runtime', () => {
       }
     }
   }
+
+  it('persists runtime log controls and routes file opening and confirmed clearing through named actions', async () => {
+    const configured: Array<{ enabled: boolean; level: 'error' | 'info' | 'debug'; userConfigured: boolean; defaultsRevision?: 3 }> = []
+    const persisted: Array<{ enabled: boolean; level: 'error' | 'info' | 'debug'; userConfigured: boolean; defaultsRevision?: 3 }> = []
+    const records: RuntimeDiagnosticInputV3[] = []
+    const openDirectory = vi.fn(async () => ({ outcome: 'success' as const }))
+    const openFile = vi.fn(async () => ({ outcome: 'success' as const }))
+    const clear = vi.fn(() => ({ outcome: 'cleared' as const, removedFiles: 1, failedFiles: 0, remainingFiles: 0, remainingBytes: 0 }))
+    const diagnosticSnapshot = {
+      revision: 'eypc-runtime-diagnostics-v3' as const,
+      status: 'ok' as const,
+      updatedAt: 1,
+      sessionId: 'session-1',
+      processId: 10,
+      settings: { enabled: true, level: 'info' as const, userConfigured: true, defaultsRevision: 3 as const },
+      directory: '/tmp/eypc-diagnostics',
+      activeFile: '/tmp/eypc-diagnostics/runtime-1-1.jsonl',
+      totals: { events: 1, filtered: 0, debug: 0, info: 1, error: 0, slow: 0, writeFailures: 0 },
+      storage: { fileCount: 1, totalBytes: 100, maxFileBytes: 1000, maxTotalBytes: 5000, retentionDays: 14 },
+      recent: []
+    }
+    const { state, platform } = installPlatform({
+      diagnostics: {
+        revision: 'eypc-runtime-diagnostics-v3',
+        record: (entry) => { records.push(entry); return null },
+        snapshot: () => diagnosticSnapshot,
+        configure: (settings) => { configured.push(settings); return { ...diagnosticSnapshot, settings } as any },
+        openDirectory,
+        openFile,
+        clear
+      }
+    })
+    platform.storage.setState = (nextState: unknown) => {
+      const next = nextState as ReturnType<typeof createInitialState>
+      persisted.push({ ...next.settings.runtimeDiagnostics })
+      return true
+    }
+    state.activeTab = 'codex'
+    state.settings.runtimeDiagnostics = { enabled: true, level: 'info', userConfigured: false, defaultsRevision: 3 }
+    const runtime = createAppRuntime(state)
+
+    expect(runtime.snapshot().state.settings.runtimeDiagnostics).toEqual({ enabled: true, level: 'debug', userConfigured: false, defaultsRevision: 3 })
+    expect(runtime.dispatch('codex.archive.confirmation', {
+      stage: 'created',
+      operationId: 'archive-ui-test-1',
+      source: 'archive-button'
+    })).toMatchObject({ handled: true })
+    expect(runtime.dispatch('codex.archive.confirmation', {
+      stage: 'expired',
+      operationId: 'archive-ui-test-2',
+      source: 'archive-button'
+    })).toMatchObject({ handled: true })
+    expect(records).toContainEqual(expect.objectContaining({
+      level: 'info',
+      scope: 'archive-transaction',
+      event: 'archive-confirmation-created',
+      outcome: 'created',
+      operationId: 'archive-ui-test-1',
+      source: 'archive-button',
+      provider: 'codex'
+    }))
+    expect(records).toContainEqual(expect.objectContaining({
+      level: 'error',
+      scope: 'archive-transaction',
+      event: 'archive-confirmation-expired',
+      outcome: 'expired',
+      operationId: 'archive-ui-test-2',
+      source: 'archive-button',
+      provider: 'codex'
+    }))
+    expect(runtime.dispatch('runtime.logs.configure', { enabled: false, level: 'debug' })).toMatchObject({ handled: true })
+    expect(runtime.snapshot().state.settings.runtimeDiagnostics).toEqual({ enabled: false, level: 'debug', userConfigured: true, defaultsRevision: 3 })
+    runtime.setTab('settings')
+    expect(runtime.dispatch('runtime.logs.configure', { enabled: true, level: 'error' })).toMatchObject({ handled: true })
+    expect(runtime.snapshot().state.settings.runtimeDiagnostics).toEqual({ enabled: true, level: 'error', userConfigured: true, defaultsRevision: 3 })
+    expect(configured).toEqual([
+      { enabled: false, level: 'debug', userConfigured: true, defaultsRevision: 3 },
+      { enabled: true, level: 'error', userConfigured: true, defaultsRevision: 3 }
+    ])
+    expect(persisted).toContainEqual({ enabled: false, level: 'debug', userConfigured: true, defaultsRevision: 3 })
+    expect(persisted.at(-1)).toEqual({ enabled: true, level: 'error', userConfigured: true, defaultsRevision: 3 })
+    runtime.setTab('codex')
+    expect(runtime.dispatch('runtime.logs.openFile')).toMatchObject({ handled: true })
+    expect(runtime.dispatch('runtime.logs.openDirectory')).toMatchObject({ handled: true })
+    await Promise.resolve()
+    expect(openFile).toHaveBeenCalledTimes(1)
+    expect(openDirectory).toHaveBeenCalledTimes(1)
+    expect(runtime.dispatch('runtime.logs.clear')).toMatchObject({ handled: true })
+    expect(runtime.snapshot().confirm).toMatchObject({ title: '清空安装诊断日志？' })
+    expect(clear).not.toHaveBeenCalled()
+    runtime.confirmNow()
+    expect(clear).toHaveBeenCalledTimes(1)
+    expect(runtime.snapshot().message).toBe('已清理 1 个安装诊断日志文件')
+    expect(records.some((entry) => entry.scope === 'runtime-action' && entry.event === 'dispatch')).toBe(true)
+  })
 
   it('keeps favorite search as a filter and reorders favorites through runtime', () => {
     const state = createInitialState(100)

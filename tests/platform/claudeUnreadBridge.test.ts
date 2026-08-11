@@ -151,6 +151,47 @@ describe('private LevelDB snapshot reader', () => {
     expect(copies).toBe(2)
   })
 
+  it('shares one in-flight snapshot across Host and Renderer readers', async () => {
+    const home = fixture()
+    let openCalls = 0
+    let finishOpen: (error?: Error | null) => void = () => undefined
+    const reader = unread.createUnreadReader({
+      fs,
+      path,
+      os: { tmpdir: () => home.scratch },
+      claudeLocalStorageRoot: home.source,
+      leveldown: () => {
+        let emitted = false
+        return {
+          open: (_options: unknown, done: (error?: Error | null) => void) => {
+            openCalls += 1
+            finishOpen = done
+          },
+          close: (done: () => void) => done(),
+          iterator: () => ({
+            next: (done: (error?: Error | null, key?: Buffer, row?: Buffer) => void) => {
+              if (emitted) { done(null); return }
+              emitted = true
+              done(null, Buffer.from(unread.UNREAD_LEVELDB_KEY), chromiumValue({ state: { unreadIds: [LOCAL_A] } }))
+            },
+            end: (done: () => void) => done()
+          })
+        }
+      }
+    })
+
+    const hostRead = reader.read()
+    const rendererRead = reader.read()
+    expect(rendererRead).toBe(hostRead)
+    expect(openCalls).toBe(1)
+    finishOpen(null)
+    await expect(Promise.all([hostRead, rendererRead])).resolves.toEqual([
+      expect.objectContaining({ ids: [LOCAL_A], generation: 1 }),
+      expect.objectContaining({ ids: [LOCAL_A], generation: 1 })
+    ])
+    expect(openCalls).toBe(1)
+  })
+
   it('ignores a suffix lure and reads only the exact Claude origin key', async () => {
     const home = fixture()
     const lure = chromiumValue({ state: { unreadIds: [LOCAL_B] } })

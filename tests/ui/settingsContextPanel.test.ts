@@ -3,7 +3,17 @@ import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createInitialState } from '../../src/domain/state'
 import SettingsPage from '../../src/pages/SettingsPage.vue'
+import type { RuntimeDiagnosticsSnapshotV3 } from '../../src/platform/eypcPlatform'
 import { DEFAULT_KEYBINDINGS } from '../../src/runtime/keybinding/keybindingRuntime'
+
+function runtimeDiagnostics(): RuntimeDiagnosticsSnapshotV3 {
+  return {
+    revision: 'eypc-runtime-diagnostics-v3', status: 'ok', updatedAt: 1, sessionId: 'test', processId: 1,
+    settings: { enabled: true, level: 'info', userConfigured: true, defaultsRevision: 3 }, directory: '/tmp/eypc-diagnostics', activeFile: '',
+    totals: { events: 1, filtered: 0, debug: 0, info: 1, error: 0, slow: 0, writeFailures: 0 },
+    storage: { fileCount: 1, totalBytes: 10, maxFileBytes: 100, maxTotalBytes: 1000, retentionDays: 14 }, recent: []
+  }
+}
 
 function mountSettings() {
   const state = createInitialState(100)
@@ -16,6 +26,7 @@ function mountSettings() {
       shortcutProfiles: state.settings.shortcutProfiles,
       featureConfigs: state.settings.featureConfigs,
       settings: state.settings,
+      runtimeDiagnostics: runtimeDiagnostics(),
       mqttStorageStatus: {
         mode: 'browser-localStorage',
         sqliteAvailable: false,

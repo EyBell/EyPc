@@ -50,13 +50,13 @@ describe('browser fallback platform', () => {
 
   it('forwards the exact task-state revision exposed by the current preload', async () => {
     const companionKernel = {
-      revision: 'companion-task-kernel-v1',
-      packageRevision: 'companion-task-package-v1',
+      revision: 'companion-task-kernel-v3',
+      packageRevision: 'companion-task-package-v3',
       attach: vi.fn(),
       syncPackage: vi.fn(),
       dispatch: vi.fn(async () => ({ outcome: 'unavailable' as const })),
       getPackage: vi.fn(),
-      diagnostics: vi.fn(() => ({ revision: 'companion-task-kernel-v1' }))
+      diagnostics: vi.fn(() => ({ revision: 'companion-task-kernel-v3' }))
     }
     globalThis.window = {
       navigator: { platform: 'MacIntel' },

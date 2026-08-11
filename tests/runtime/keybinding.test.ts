@@ -54,20 +54,19 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', { ...codexContext, tab: 'mqtt' })).not.toMatchObject({ actionId: 'codex.task.archiveFocused' })
 
     const rows = buildShortcutCommandRows(DEFAULT_KEYBINDINGS)
-    const codexRefresh = rows.find((row) => row.commandId === 'codex.refresh')!
     const codexCreate = rows.find((row) => row.commandId === 'codex.thread.createFocused')!
-    expect(codexRefresh.profileId).toBe('codex')
+    expect(rows.find((row) => row.commandId === 'codex.refresh')).toBeUndefined()
     expect(codexCreate.profileId).toBe('codex')
     expect(codexCreate.defaultShortcutIds).toEqual(['Ctrl+T'])
     expect(codexCreate.conflicts.some((conflict) => conflict.commandId === 'favorites.group.create')).toBe(false)
     expect(rows.find((row) => row.commandId === 'codex.selection.toggle')?.title).toBe('切换当前项选择')
-    expect(codexRefresh.conflicts.some((conflict) => conflict.commandId === 'mqtt.connection.connect')).toBe(false)
+    expect(codexCreate.conflicts.some((conflict) => conflict.commandId === 'mqtt.connection.connect')).toBe(false)
 
     const conflicting = buildShortcutCommandRows(buildEffectiveKeybindings([
-      { commandId: 'codex.refresh', shortcutIds: ['Ctrl+L'] },
+      { commandId: 'codex.thread.createFocused', shortcutIds: ['Ctrl+L'] },
       { commandId: 'codex.search.focus', shortcutIds: ['Ctrl+L'] }
     ]))
-    expect(conflicting.find((row) => row.commandId === 'codex.refresh')?.conflicts).toContainEqual(expect.objectContaining({ commandId: 'codex.search.focus', shortcutId: 'Ctrl+L' }))
+    expect(conflicting.find((row) => row.commandId === 'codex.thread.createFocused')?.conflicts).toContainEqual(expect.objectContaining({ commandId: 'codex.search.focus', shortcutId: 'Ctrl+L' }))
 
     const overridden = buildEffectiveKeybindings({
       global: { keybindingOverrides: [], updatedAt: 1 },

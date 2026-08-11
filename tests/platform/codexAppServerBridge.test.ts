@@ -14,8 +14,8 @@ const TEST_RUNTIME_IDENTITY = {
   artifactState: 'artifact-ready',
   hostAssetId: 'host-test-current',
   rendererAssetId: 'renderer-test-current',
-  kernelRevision: 'companion-task-kernel-v1',
-  taskPackageRevision: 'companion-task-package-v1'
+  kernelRevision: 'companion-task-kernel-v3',
+  taskPackageRevision: 'companion-task-package-v3'
 }
 
 function handshakeTestRuntime(platform: Record<string, any>) {
@@ -49,6 +49,8 @@ class FakeCodexProcess extends EventEmitter {
   archiveThreadStatus: string | null = 'notLoaded'
   archiveThreadRecency = 2_000_000_070
   archivedIds = new Set<string>()
+  archivedListReadCount = 0
+  revertArchiveOnArchivedListRead = 0
   omittedIds = new Set<string>()
   inventoryPageSize = 0
   cursorLoop = false
@@ -165,6 +167,10 @@ class FakeCodexProcess extends EventEmitter {
     }
     if (method === 'thread/list') {
       if (params?.archived === true) {
+        this.archivedListReadCount += 1
+        if (this.revertArchiveOnArchivedListRead > 0 && this.archivedListReadCount >= this.revertArchiveOnArchivedListRead) {
+          this.archivedIds.delete(this.archiveThreadId)
+        }
         return this.page([...this.archivedIds].map((id) => ({ id, name: '已归档', status: { type: 'notLoaded', activeFlags: [] }, recencyAt: 2_000_000_000 })), params)
       }
       if (this.bulkInventoryCount > 0) {
@@ -289,6 +295,7 @@ class FakeCodexProcess extends EventEmitter {
 
 class FakeCodexDesktopSocket extends EventEmitter {
   writable = true
+  failArchiveBroadcast = false
   streamOwnerConnected = true
   activeSnapshotThreadIds = new Set<string>()
   waitingInputSnapshotThreadIds = new Set<string>([FIXED_THREAD_IDS[0]])
@@ -308,6 +315,9 @@ class FakeCodexDesktopSocket extends EventEmitter {
     const length = frame.readUInt32LE(0)
     const message = JSON.parse(frame.subarray(4, length + 4).toString('utf8')) as Record<string, any>
     this.writes.push(message)
+    if (this.failArchiveBroadcast && message.type === 'broadcast' && message.method === 'thread-archived') {
+      throw new Error('archive broadcast failed')
+    }
     queueMicrotask(() => callback?.())
     if (message.type === 'request' && message.method === 'initialize') {
       this.push({
@@ -385,7 +395,7 @@ function noSystemProxyExecFile(
 }
 
 const FIXED_THREAD_IDS = [1, 2, 3, 4, 5].map((index) => `${index}2345678-1234-4234-8234-123456789abc`)
-const BULK_THREAD_IDS = Array.from({ length: 100 }, (_, index) => `${(index + 1).toString(16).padStart(8, '0')}-1234-4234-8234-123456789abc`)
+const BULK_THREAD_IDS = Array.from({ length: 240 }, (_, index) => `${(index + 1).toString(16).padStart(8, '0')}-1234-4234-8234-123456789abc`)
 
 function nativeRegistryText() {
   return JSON.stringify({
@@ -424,6 +434,8 @@ function loadCodexBridge(
   const nativeStateWatchers: Array<(event: string, filename: string) => void> = []
   const pluginEnterListeners: Array<(action: { code?: string } | null) => void> = []
   const pluginOutListeners: Array<(isKill: boolean) => void> = []
+  const notifications: string[] = []
+  const diagnosticEvents: Array<Record<string, any>> = []
   const rolloutTextForPath = (candidate: string) => {
     const filename = pathModule.basename(candidate, '.jsonl')
     return child.rolloutTexts.get(filename)
@@ -441,6 +453,7 @@ function loadCodexBridge(
     utools: {
       onPluginEnter: (listener: (action: { code?: string } | null) => void) => pluginEnterListeners.push(listener),
       onPluginOut: (listener: (isKill: boolean) => void) => pluginOutListeners.push(listener),
+      showNotification: (message: string) => notifications.push(message),
       shellOpenExternal
     },
     setTimeout,
@@ -449,6 +462,32 @@ function loadCodexBridge(
     require(name: string) {
       if (name === './runtime-identity.cjs') return TEST_RUNTIME_IDENTITY
       if (name === './companion/task-kernel.cjs') return nodeRequire(resolve(process.cwd(), 'preload/companion/task-kernel.cjs'))
+      if (String(name).endsWith('/diagnostics.cjs')) return {
+        createRuntimeDiagnostics: () => ({
+          revision: 'eypc-runtime-diagnostics-v3',
+          record: (entry: Record<string, unknown>) => {
+            diagnosticEvents.push(entry)
+            return entry
+          },
+          configure: () => null,
+          cleanup: () => true,
+          clear: () => ({ outcome: 'empty', removedFiles: 0, failedFiles: 0, remainingFiles: 0, remainingBytes: 0 }),
+          ensureDirectory: () => true,
+          snapshot: () => ({
+            revision: 'eypc-runtime-diagnostics-v3',
+            status: 'ok',
+            updatedAt: 0,
+            sessionId: 'codex-bridge-test',
+            processId: 1,
+            settings: { enabled: true, level: 'debug', userConfigured: false, defaultsRevision: 3 },
+            directory: '/tmp/eypc-diagnostics',
+            activeFile: '',
+            totals: { events: diagnosticEvents.length, filtered: 0, debug: 0, info: 0, error: 0, slow: 0, writeFailures: 0 },
+            storage: { fileCount: 0, totalBytes: 0, maxFileBytes: 8_388_608, maxTotalBytes: 67_108_864, retentionDays: 14 },
+            recent: diagnosticEvents
+          })
+        })
+      }
       if (name === 'node:buffer') return { Buffer }
       if (name === 'node:child_process') return { execFile, spawn }
       if (name === 'node:crypto') return crypto
@@ -492,7 +531,7 @@ function loadCodexBridge(
   }
   if (useHostDate) Object.assign(sandbox, { Date })
   sandbox.globalThis = sandbox
-  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, resetCodexThreadSessionState };`, sandbox, { filename: 'preload.js' })
+  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, resetCodexThreadSessionState, companionPhaseForCodexThread, applyCodexActivityToCompanionKernel, companionHostReconciliationPending: () => Boolean(companionHostReconcileInFlight) || companionHostReconcilePendingProviders.size > 0 };`, sandbox, { filename: 'preload.js' })
   const exposedPlatform = (sandbox.window as { eypcPlatform: Record<string, any> }).eypcPlatform
   handshakeTestRuntime(exposedPlatform)
   return {
@@ -519,12 +558,17 @@ function loadCodexBridge(
         codexRolloutHasPendingUserInputText(text: string): boolean
         codexRolloutPendingPlanStateText(text: string): { known: boolean; pending: boolean }
         resetCodexThreadSessionState(): void
+        companionPhaseForCodexThread(thread: Record<string, unknown>): string
+        applyCodexActivityToCompanionKernel(delta: Record<string, unknown>): boolean
+        companionHostReconciliationPending(): boolean
       }
     }).__codexNativeTest,
     registryReads,
     spawn,
     openExternal,
     shellOpenExternal,
+    notifications,
+    diagnosticEvents,
     platform: exposedPlatform,
     triggerPluginEnter: (action: { code?: string } | null) => pluginEnterListeners.forEach((listener) => listener(action)),
     triggerPluginOut: (isKill: boolean) => pluginOutListeners.forEach((listener) => listener(isKill)),
@@ -533,6 +577,50 @@ function loadCodexBridge(
 }
 
 describe('Codex App Server preload bridge', () => {
+  it('lets exact interrupted evidence close a stale active Host shell without trusting inventory-only interruption', () => {
+    const context = loadCodexBridge(new FakeCodexProcess())
+    const staleActive = {
+      status: 'active',
+      statusAuthority: 'app-server-live',
+      activeFlags: [],
+      lastTurnStatus: 'interrupted'
+    }
+
+    expect(context.native.companionPhaseForCodexThread({
+      ...staleActive,
+      lastTurnEvidence: 'turn-completed'
+    })).toBe('stopped')
+    expect(context.native.companionPhaseForCodexThread({
+      ...staleActive,
+      lastTurnEvidence: 'inventory'
+    })).toBe('running')
+    expect(context.native.companionPhaseForCodexThread({
+      ...staleActive,
+      activeFlags: ['waitingOnUserInput'],
+      lastTurnEvidence: 'turn-completed'
+    })).toBe('waiting-input')
+    expect(context.native.companionPhaseForCodexThread({
+      ...staleActive,
+      lastTurnStatus: 'failed',
+      lastTurnEvidence: 'turn-completed'
+    })).toBe('running')
+    context.triggerPluginOut(true)
+  })
+
+  it('keeps the cold latest-Turn read provenance for an interrupted task', async () => {
+    const child = new FakeCodexProcess()
+    child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
+    const context = loadCodexBridge(child)
+    const snapshot = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const interrupted = snapshot.value.threads.find((thread: Record<string, unknown>) => thread.lastTurnStatus === 'interrupted')
+    expect(interrupted).toMatchObject({
+      lastTurnStatus: 'interrupted',
+      lastTurnEvidence: 'targeted-after-exit'
+    })
+    expect(context.native.companionPhaseForCodexThread(interrupted)).toBe('stopped')
+    context.triggerPluginOut(true)
+  })
+
   it('reconciles a membership-only task event into the process Kernel without a Renderer', async () => {
     const child = new FakeCodexProcess()
     const context = loadCodexBridge(child)
@@ -543,7 +631,7 @@ describe('Codex App Server preload bridge', () => {
     kernel.syncPackage({
       lease: receipt.lease,
       draft: {
-        schema: 'companion-task-draft-v1',
+        schema: 'companion-task-draft-v3',
         producer: 'renderer',
         sourceTaskStateRevision: 'task-state-v9',
         draftRevision: 1,
@@ -591,6 +679,88 @@ describe('Codex App Server preload bridge', () => {
     context.triggerPluginOut(true)
   })
 
+  it('keeps same-generation phase and unread lanes independent and still reconciles membership', async () => {
+    const child = new FakeCodexProcess()
+    const context = loadCodexBridge(child)
+    const snapshot = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const task = snapshot.value.threads[0]
+    const generation = Number(snapshot.value.activityGeneration) || 1
+    const kernel = context.platform.companionKernel
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: {
+        schema: 'companion-task-draft-v3',
+        producer: 'renderer',
+        sourceTaskStateRevision: 'task-state-v10',
+        draftRevision: 1,
+        acceptedAt: Date.now(),
+        enabled: true,
+        providers: { codex: true, claude: false },
+        complete: true,
+        focusedKey: '',
+        sourceGenerations: { codex: generation, claude: 0 },
+        sourceLaneGenerations: {
+          codex: { membership: generation, phase: generation, unread: Math.max(0, generation - 1) },
+          claude: { membership: 0, phase: 0, unread: 0 }
+        },
+        tasks: [{
+          key: task.key,
+          provider: 'codex',
+          kind: 'codex-thread',
+          phase: 'running',
+          cycleTier: 'active',
+          dynamicGroup: 'active',
+          actionAlias: task.actionAlias,
+          revisionAt: 1,
+          statusEnteredAt: 1,
+          displayOrder: 0,
+          cycleOrder: 0,
+          attentionOrder: 0,
+          hidden: false,
+          unread: false,
+          planImplementation: false,
+          localPin: false,
+          dynamicEligible: true,
+          capabilities: { open: true, archive: false }
+        }]
+      }
+    })
+
+    expect(context.native.applyCodexActivityToCompanionKernel({
+      generation: generation + 1,
+      receivedAt: 2_000_000_000_000,
+      inventoryChanged: false,
+      entries: [{ key: task.key, status: 'active', lastTurnStatus: 'inProgress' }]
+    })).toBe(false)
+    expect(kernel.getPackage().sourceLaneGenerations.codex).toMatchObject({
+      phase: generation + 1,
+      unread: Math.max(0, generation - 1)
+    })
+
+    expect(context.native.applyCodexActivityToCompanionKernel({
+      generation: generation + 1,
+      receivedAt: 2_000_000_000_001,
+      inventoryChanged: false,
+      entries: [{ key: task.key, readStateOnly: true, hasUnreadTurn: true, unreadAuthority: 'desktop-live' }]
+    })).toBe(true)
+    expect(kernel.getPackage()).toMatchObject({
+      sourceLaneGenerations: { codex: { phase: generation + 1, unread: generation + 1 } },
+      tasks: [expect.objectContaining({ key: task.key, unread: true })]
+    })
+
+    child.includeCreatedThreadInInventory = true
+    expect(context.native.applyCodexActivityToCompanionKernel({
+      generation: generation + 1,
+      receivedAt: 2_000_000_000_002,
+      inventoryChanged: true,
+      entries: []
+    })).toBe(true)
+    await vi.waitFor(() => expect(kernel.getPackage().tasks.length).toBeGreaterThan(1))
+    await vi.waitFor(() => expect(context.native.companionHostReconciliationPending()).toBe(false))
+    context.triggerPluginOut(true)
+  })
+
   it('consumes a hot previous/next entry in preload without forwarding a duplicate Renderer payload', async () => {
     const context = loadCodexBridge(new FakeCodexProcess())
     const snapshot = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
@@ -600,7 +770,7 @@ describe('Codex App Server preload bridge', () => {
     expect(kernel.syncPackage({
       lease: receipt.lease,
       draft: {
-        schema: 'companion-task-draft-v1',
+        schema: 'companion-task-draft-v3',
         producer: 'renderer',
         sourceTaskStateRevision: 'task-state-v9',
         draftRevision: 1,
@@ -2585,7 +2755,16 @@ describe('Codex App Server preload bridge', () => {
         }
       }
     })}\n`)
-    expect(deltas.at(-1)).toMatchObject({ inventoryChanged: true, inventoryRefreshPriority: 'urgent', entries: [] })
+    expect(deltas.at(-1)).toMatchObject({
+      inventoryChanged: true,
+      inventoryRefreshPriority: 'urgent',
+      entries: [expect.objectContaining({
+        key: expect.stringMatching(/^[a-f0-9]{32}$/),
+        displayName: '新 Codex 任务',
+        status: 'active',
+        lastTurnStatus: 'inProgress'
+      })]
+    })
     const refreshed = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
     expect(refreshed).toMatchObject({ ok: true, value: { threads: expect.arrayContaining([expect.objectContaining({ name: '刚创建的待输入任务' })]) } })
     expect(child.writes.filter((frame) => frame.method === 'thread/turns/list' && frame.params?.limit === 1)).toHaveLength(statusReadsBefore + 1)
@@ -2595,6 +2774,78 @@ describe('Codex App Server preload bridge', () => {
     expect(JSON.stringify(deltas)).not.toContain('private new-task body')
     stop()
     bridge.close()
+  })
+
+  it('admits a new thread immediately even before project metadata and the first inventory fingerprint exist', async () => {
+    const child = new FakeCodexProcess()
+    const context = loadCodexBridge(child, () => { throw new Error('registry still starting') })
+    const kernel = context.platform.companionKernel
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: {
+        schema: 'companion-task-draft-v3',
+        producer: 'renderer',
+        sourceTaskStateRevision: 'task-state-v9',
+        draftRevision: 1,
+        acceptedAt: Date.now(),
+        enabled: true,
+        providers: { codex: true, claude: false },
+        complete: true,
+        focusedKey: '',
+        sourceGenerations: { codex: 0, claude: 0 },
+        sourceLaneGenerations: {
+          codex: { membership: 0, phase: 0, unread: 0 },
+          claude: { membership: 0, phase: 0, unread: 0 }
+        },
+        tasks: []
+      }
+    })
+    await expect(context.bridge.readSnapshot({ includeQuota: true, includeConfig: false, includeThreads: false })).resolves.toMatchObject({ ok: true })
+    const deltas: Array<Record<string, any>> = []
+    const stop = context.bridge.onActivityChanged((delta) => deltas.push(delta))
+
+    child.stdout.emit('data', `${JSON.stringify({
+      method: 'thread/started',
+      params: {
+        thread: {
+          id: child.createdThreadId,
+          name: 'private title that must wait for metadata',
+          cwd: '/private/new-task-before-registry',
+          preview: 'private body'
+        }
+      }
+    })}\n`)
+    await Promise.resolve()
+
+    expect(deltas.at(-1)).toMatchObject({
+      inventoryChanged: true,
+      inventoryRefreshPriority: 'urgent',
+      entries: [expect.objectContaining({
+        displayName: '新 Codex 任务',
+        projectKey: 'chats',
+        projectName: 'Chats',
+        status: 'active',
+        lastTurnStatus: 'inProgress',
+        actionAlias: expect.stringMatching(/^ct_/)
+      })]
+    })
+    expect(kernel.getPackage()).toMatchObject({
+      complete: true,
+      tasks: [expect.objectContaining({
+        provider: 'codex',
+        phase: 'running',
+        displayName: '新 Codex 任务',
+        projectKey: 'chats',
+        capabilities: { open: true, archive: false }
+      })]
+    })
+    expect(JSON.stringify(deltas)).not.toContain(child.createdThreadId)
+    expect(JSON.stringify(deltas)).not.toContain('private title')
+    expect(JSON.stringify(deltas)).not.toContain('/private/new-task-before-registry')
+    expect(JSON.stringify(deltas)).not.toContain('private body')
+    stop()
+    context.bridge.close()
   })
 
   it('retains an unknown Desktop waiting-input shadow and registers it by exact read while thread/list still lags', async () => {
@@ -3452,7 +3703,7 @@ describe('Codex App Server preload bridge', () => {
     child.archiveThreadId = FIXED_THREAD_IDS[3]
     child.archiveThreadStatus = 'notLoaded'
     child.archiveThreadRecency = completed.updatedAt
-    const archiveResult = await bridge.archiveThread(completed.actionAlias, {
+    const archivePromise = bridge.archiveThread(completed.actionAlias, {
       expectedUpdatedAt: completed.updatedAt,
       expectedRevisionAt: completed.lastTurnCompletedAt,
       expectedCompletionAt: completed.lastTurnCompletedAt,
@@ -3460,7 +3711,19 @@ describe('Codex App Server preload bridge', () => {
       expectedSourceFingerprint: baseline.value.sourceFingerprint,
       evidence: 'completed'
     })
-    expect(archiveResult).toEqual({ outcome: 'archived', desktopSync: 'dispatched' })
+    await vi.waitFor(() => expect(desktopSocket.writes).toContainEqual(expect.objectContaining({
+      type: 'broadcast',
+      method: 'thread-archived'
+    })))
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-archived',
+      sourceClientId: 'codex-desktop-owner',
+      version: 2,
+      params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[3] }
+    })
+    const archiveResult = await archivePromise
+    expect(archiveResult).toMatchObject({ outcome: 'archived', desktopSync: 'dispatched', nativeAck: 'acknowledged:desktop' })
     expect((await bridge.readActivitySnapshot()).value.entries.some((entry: Record<string, any>) => entry.key === completed.key)).toBe(false)
     expect(desktopSocket.writes).toContainEqual(expect.objectContaining({
       type: 'broadcast',
@@ -3487,6 +3750,173 @@ describe('Codex App Server preload bridge', () => {
     })
     bridge.close()
   })
+
+  it('keeps the task and alias when Desktop sync fails, then allows a verified retry', async () => {
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    desktopSocket.failArchiveBroadcast = true
+    const context = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await vi.waitFor(async () => {
+      expect((await context.bridge.readActivitySnapshot()).value.desktopBridgeState).toBe('connected')
+    })
+    const completed = baseline.value.threads[3]
+    child.archiveThreadId = FIXED_THREAD_IDS[3]
+    child.archiveThreadStatus = 'notLoaded'
+    child.archiveThreadRecency = completed.updatedAt
+    const request = {
+      expectedUpdatedAt: completed.updatedAt,
+      expectedRevisionAt: completed.lastTurnCompletedAt,
+      expectedCompletionAt: completed.lastTurnCompletedAt,
+      expectedLastTurnStartedAt: completed.lastTurnStartedAt,
+      expectedSourceFingerprint: baseline.value.sourceFingerprint,
+      evidence: 'completed'
+    }
+
+    await expect(context.bridge.archiveThread(completed.actionAlias, {
+      ...request,
+      operationId: 'archive-sync-failure-0001',
+      source: 'archive-button'
+    })).resolves.toMatchObject({
+      outcome: 'indeterminate',
+      operationId: 'archive-sync-failure-0001',
+      errorCode: 'archive-desktop-sync-failed',
+      message: expect.stringContaining('ure-0001')
+    })
+    expect((await context.bridge.readActivitySnapshot()).value.entries.some((entry: Record<string, any>) => entry.key === completed.key)).toBe(true)
+    expect(context.notifications.at(-1)).toContain('ure-0001')
+    expect(child.writes.filter((frame) => frame.method === 'thread/archive')).toHaveLength(1)
+    const failedStages = context.diagnosticEvents.filter((event) => event.scope === 'archive-transaction'
+      && event.operationId === 'archive-sync-failure-0001')
+    expect(failedStages.map((event) => [event.event, event.outcome])).toEqual([
+      ['archive-intent', 'started'],
+      ['archive-confirmation-confirmed', 'confirmed'],
+      ['archive-preflight', 'observed'],
+      ['archive-preflight', 'verified'],
+      ['archive-provider-write', 'completed'],
+      ['archive-server-verify-1', 'verified'],
+      ['archive-desktop-sync', 'indeterminate'],
+      ['archive-local-retained', 'indeterminate'],
+      ['archive-reconciliation', 'retained']
+    ])
+    expect(failedStages.every((event) => event.provider === 'codex'
+      && event.taskRef === FIXED_THREAD_IDS[3]
+      && event.source === 'archive-button')).toBe(true)
+    expect(failedStages.filter((event) => event.event === 'archive-intent')).toHaveLength(1)
+    expect(failedStages.filter((event) => event.event === 'archive-confirmation-confirmed')).toHaveLength(1)
+    expect(failedStages.find((event) => event.event === 'archive-desktop-sync')).toMatchObject({
+      level: 'error',
+      code: 'archive-desktop-sync-failed'
+    })
+
+    desktopSocket.failArchiveBroadcast = false
+    const retry = context.bridge.archiveThread(completed.actionAlias, {
+      ...request,
+      operationId: 'archive-sync-retry-0002',
+      source: 'archive-button'
+    })
+    await vi.waitFor(() => expect(desktopSocket.writes.filter((message) => message.method === 'thread-archived')).toHaveLength(2))
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-archived',
+      sourceClientId: 'codex-desktop-owner',
+      version: 2,
+      params: { hostId: 'local', conversationId: FIXED_THREAD_IDS[3] }
+    })
+    await expect(retry).resolves.toMatchObject({
+      outcome: 'archived',
+      operationId: 'archive-sync-retry-0002',
+      nativeAck: 'acknowledged:desktop'
+    })
+    expect(child.writes.filter((frame) => frame.method === 'thread/archive')).toHaveLength(2)
+    expect((await context.bridge.readActivitySnapshot()).value.entries.some((entry: Record<string, any>) => entry.key === completed.key)).toBe(false)
+    const successfulStages = context.diagnosticEvents.filter((event) => event.scope === 'archive-transaction'
+      && event.operationId === 'archive-sync-retry-0002')
+    expect(successfulStages.map((event) => event.event)).toEqual(expect.arrayContaining([
+      'archive-intent',
+      'archive-confirmation-confirmed',
+      'archive-preflight',
+      'archive-provider-write',
+      'archive-server-verify-1',
+      'archive-desktop-sync',
+      'archive-native-ack',
+      'archive-server-verify-2',
+      'archive-kernel-commit',
+      'archive-ui-removal',
+      'archive-reconciliation'
+    ]))
+    expect(successfulStages.filter((event) => event.event === 'archive-intent')).toHaveLength(1)
+    expect(successfulStages.filter((event) => event.event === 'archive-confirmation-confirmed')).toHaveLength(1)
+    expect(successfulStages.every((event) => event.operationId === 'archive-sync-retry-0002')).toBe(true)
+    context.bridge.close()
+  })
+
+  it('keeps the task when the delayed second server verification contradicts the first', async () => {
+    const child = new FakeCodexProcess()
+    child.revertArchiveOnArchivedListRead = 2
+    const context = loadCodexBridge(child)
+    const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const completed = baseline.value.threads[3]
+    child.archiveThreadId = FIXED_THREAD_IDS[3]
+    child.archiveThreadStatus = 'notLoaded'
+    child.archiveThreadRecency = completed.updatedAt
+
+    await expect(context.bridge.archiveThread(completed.actionAlias, {
+      expectedUpdatedAt: completed.updatedAt,
+      expectedRevisionAt: completed.lastTurnCompletedAt,
+      expectedCompletionAt: completed.lastTurnCompletedAt,
+      expectedLastTurnStartedAt: completed.lastTurnStartedAt,
+      expectedSourceFingerprint: baseline.value.sourceFingerprint,
+      evidence: 'completed',
+      operationId: 'archive-verify-two-0003',
+      source: 'archive-button'
+    })).resolves.toMatchObject({
+      outcome: 'indeterminate',
+      operationId: 'archive-verify-two-0003',
+      errorCode: 'archive-verify-2-failed',
+      message: expect.stringContaining('two-0003')
+    })
+    expect(child.archivedListReadCount).toBe(2)
+    expect(child.writes.filter((frame) => frame.method === 'thread/archive')).toHaveLength(1)
+    expect((await context.bridge.readActivitySnapshot()).value.entries.some((entry: Record<string, any>) => entry.key === completed.key)).toBe(true)
+    expect(context.notifications.at(-1)).toContain('two-0003')
+    context.bridge.close()
+  })
+
+  it('keeps the task when Desktop receives the sync broadcast but never emits a native archive ACK', async () => {
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const context = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await vi.waitFor(async () => {
+      expect((await context.bridge.readActivitySnapshot()).value.desktopBridgeState).toBe('connected')
+    })
+    const completed = baseline.value.threads[3]
+    child.archiveThreadId = FIXED_THREAD_IDS[3]
+    child.archiveThreadStatus = 'notLoaded'
+    child.archiveThreadRecency = completed.updatedAt
+
+    await expect(context.bridge.archiveThread(completed.actionAlias, {
+      expectedUpdatedAt: completed.updatedAt,
+      expectedRevisionAt: completed.lastTurnCompletedAt,
+      expectedCompletionAt: completed.lastTurnCompletedAt,
+      expectedLastTurnStartedAt: completed.lastTurnStartedAt,
+      expectedSourceFingerprint: baseline.value.sourceFingerprint,
+      evidence: 'completed',
+      operationId: 'archive-native-timeout-0004',
+      source: 'archive-button'
+    })).resolves.toMatchObject({
+      outcome: 'indeterminate',
+      operationId: 'archive-native-timeout-0004',
+      errorCode: 'archive-native-ack-timeout',
+      message: expect.stringContaining('out-0004')
+    })
+    expect(desktopSocket.writes).toContainEqual(expect.objectContaining({ type: 'broadcast', method: 'thread-archived' }))
+    expect(child.writes.filter((frame) => frame.method === 'thread/archive')).toHaveLength(1)
+    expect((await context.bridge.readActivitySnapshot()).value.entries.some((entry: Record<string, any>) => entry.key === completed.key)).toBe(true)
+    expect(context.notifications.at(-1)).toContain('out-0004')
+    context.bridge.close()
+  }, 10_000)
 
   it('retains sticky input and Plan requests across owner loss but drops ordinary active state and accepts newer evidence', async () => {
     const child = new FakeCodexProcess()
@@ -4882,7 +5312,7 @@ describe('Codex App Server preload bridge', () => {
     expect(child.writes.filter((frame) => frame.method === 'thread/archive')).toHaveLength(0)
 
     const archiveResult = await bridge.archiveThread(pendingAlias, pendingRequest)
-    expect(archiveResult).toEqual({ outcome: 'archived', desktopSync: 'not-running' })
+    expect(archiveResult).toMatchObject({ outcome: 'archived', desktopSync: 'not-running', nativeAck: 'not-required' })
     expect(JSON.stringify(archiveResult)).not.toContain('private archive')
     const archiveRereads = child.writes.filter((frame) => frame.method === 'thread/read')
     expect(archiveRereads).toHaveLength(6)
@@ -5001,23 +5431,37 @@ describe('Codex App Server preload bridge', () => {
     expect(removal).not.toContain("delete source['thread-project-assignments']")
   })
 
-  it('reads every unarchived page, excludes zero-Turn rows, and fails closed on malformed Turns or cursor loops', async () => {
+  it('reads all three 100-row inventory pages without a product cap, then fails closed on malformed Turns or cursor loops', async () => {
     const child = new FakeCodexProcess()
-    child.bulkInventoryCount = 25
-    child.inventoryPageSize = 7
+    child.bulkInventoryCount = 240
+    child.inventoryPageSize = 100
     const { bridge } = loadCodexBridge(child)
     const listCalls = () => child.writes.filter((frame) => frame.method === 'thread/list' && frame.params?.archived === false)
 
     const complete = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
-    expect(complete).toMatchObject({ ok: true, value: { version: 2, completeness: 'verified', rawSourceCount: 25, eligibleSourceCount: 25, nonConversationCount: 0 } })
-    expect(complete.value.threads).toHaveLength(25)
-    expect(listCalls()).toHaveLength(4)
-    expect(listCalls().map((frame) => frame.params?.cursor || '')).toEqual(['', 'offset:7', 'offset:14', 'offset:21'])
+    expect(complete).toMatchObject({ ok: true, value: { version: 2, completeness: 'verified', rawSourceCount: 240, eligibleSourceCount: 240, nonConversationCount: 0 } })
+    expect(complete.value.threads).toHaveLength(240)
+    expect(listCalls()).toHaveLength(3)
+    expect(listCalls().map((frame) => frame.params?.cursor || '')).toEqual(['', 'offset:100', 'offset:200'])
+    for (const index of [40, 100, 200]) {
+      expect(complete.value.threads[index]).toMatchObject({
+        name: `批量任务 ${index + 1}`,
+        actionAlias: expect.stringMatching(/^ct_/),
+        projectKey: 'chats',
+        lastTurnStatus: 'completed'
+      })
+    }
+
+    child.writes.length = 0
+    child.bulkInventoryCount = 25
+    child.inventoryPageSize = 7
 
     child.emptyTurnIds.add('00000019-1234-4234-8234-123456789abc')
     const withoutEmptyConversation = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
     expect(withoutEmptyConversation).toMatchObject({ ok: true, value: { rawSourceCount: 25, eligibleSourceCount: 25, nonConversationCount: 1 } })
     expect(withoutEmptyConversation.value.threads).toHaveLength(24)
+    expect(listCalls()).toHaveLength(4)
+    expect(listCalls().map((frame) => frame.params?.cursor || '')).toEqual(['', 'offset:7', 'offset:14', 'offset:21'])
 
     child.emptyTurnIds.clear()
     child.missingTurnStartedAtIds.add('00000018-1234-4234-8234-123456789abc')
@@ -5071,7 +5515,7 @@ describe('Codex App Server preload bridge', () => {
       evidence: 'stopped'
     }
 
-    await expect(stopped.bridge.archiveThread(stoppedTask.actionAlias, request)).resolves.toEqual({
+    await expect(stopped.bridge.archiveThread(stoppedTask.actionAlias, request)).resolves.toMatchObject({
       outcome: 'archived',
       desktopSync: 'not-running'
     })
@@ -5118,11 +5562,11 @@ describe('Codex App Server preload bridge', () => {
     expect(result).toMatchObject({ outcome: 'partial' })
     expect(result.archivedKeys).toHaveLength(22)
     expect(result.skippedActiveKeys).toHaveLength(2)
-    expect(result.failed).toEqual([expect.objectContaining({ errorCode: 'archive-not-verified' })])
-    expect(result.desktopSyncedKeys).toEqual([])
-    expect(result.desktopSyncFailedKeys).toHaveLength(22)
+    expect(result.failed).toEqual([expect.objectContaining({ errorCode: 'archive-verify-1-failed' })])
+    expect(result.desktopSyncedKeys).toHaveLength(22)
+    expect(result.desktopSyncFailedKeys).toHaveLength(1)
     expect(child.writes.filter((frame) => frame.method === 'thread/archive')).toHaveLength(23)
-    expect(child.writes.filter((frame) => frame.method === 'thread/list' && frame.params?.archived === true)).toHaveLength(2)
+    expect(child.writes.filter((frame) => frame.method === 'thread/list' && frame.params?.archived === true)).toHaveLength(45)
     expect(JSON.stringify(result)).not.toContain('00000004-1234-4234-8234-123456789abc')
     bridge.close()
   })

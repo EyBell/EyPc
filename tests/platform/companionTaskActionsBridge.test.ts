@@ -93,7 +93,7 @@ describe('companion task action dispatcher', () => {
     await expect(actions.archive({ key: 'unknown', revisionAt: 100, phase: 'completed', source: 'card' }))
       .resolves.toMatchObject({ outcome: 'failed', errorCode: 'state-changed' })
     await expect(actions.archive({ key: 'known', revisionAt: 101, phase: 'completed', source: 'card' }))
-      .resolves.toMatchObject({ outcome: 'failed', errorCode: 'state-changed' })
+      .resolves.toMatchObject({ outcome: 'failed', errorCode: 'unsupported' })
     await expect(actions.archive({
       key: 'known',
       revisionAt: 101,
@@ -105,7 +105,7 @@ describe('companion task action dispatcher', () => {
       .resolves.toMatchObject({ outcome: 'failed', errorCode: 'unsupported' })
   })
 
-  it('keeps shortcut confirmation in the process and cancels it on identity changes', async () => {
+  it('keeps shortcut confirmation across revision churn but cancels it on semantic identity changes', async () => {
     let now = 1_000
     const notify = vi.fn()
     const archive = vi.fn(async () => ({ outcome: 'archived', message: 'done' }))
@@ -123,14 +123,108 @@ describe('companion task action dispatcher', () => {
 
     // A cold Renderer's incomplete snapshot must not erase process state.
     expect(actions.sync({ enabled: true, ready: false, providers: { codex: true, claude: true }, targets: [] })).toBe(false)
+    // Benign state refreshes may move the revision while the same task, alias
+    // and terminal phase remain selected. The second press archives the latest
+    // target instead of executing a stale first-press closure.
+    syncReady(actions, [{
+      ...target('codex', 'one', 101),
+      actionAlias: 'refreshed-alias',
+      archiveRequest: target('codex', 'one', 100).archiveRequest
+    }], 'one')
     expect(actions.shortcutArchive()).toBe(true)
     await Promise.resolve()
     expect(archive).toHaveBeenCalledTimes(1)
+    expect(archive).toHaveBeenLastCalledWith(expect.objectContaining({ revisionAt: 101, actionAlias: 'refreshed-alias' }), expect.anything())
 
-    syncReady(actions, [target('codex', 'one', 101)], 'one')
+    syncReady(actions, [target('codex', 'one', 102)], 'one')
     now += 1
+    expect(actions.shortcutArchive()).toBe(true)
+    syncReady(actions, [{ ...target('codex', 'one', 103), phase: 'stopped' }], 'one')
     expect(actions.shortcutArchive()).toBe(true)
     expect(archive).toHaveBeenCalledTimes(1)
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('5 秒'))
+  })
+
+  it('records exact archive identity, confirmation lifecycle and provider outcome without result messages', async () => {
+    let now = 2_000
+    const records: Array<Record<string, unknown>> = []
+    const archive = vi.fn(async () => ({ outcome: 'failed', errorCode: 'source-changed', message: 'private provider detail' }))
+    const actions = createCompanionTaskActions({
+      now: () => now,
+      record: (entry: Record<string, unknown>) => records.push(entry),
+      notify: vi.fn(),
+      adapters: {
+        codex: {
+          inspect: vi.fn(),
+          open: vi.fn(),
+          archive,
+          close: vi.fn()
+        }
+      }
+    })
+    syncReady(actions, [target('codex', 'exact-task')], 'exact-task')
+    actions.shortcutArchive()
+    now += 1
+    actions.shortcutArchive()
+    await vi.waitFor(() => {
+      expect(records.some((entry) => entry.event === 'archive-result')).toBe(true)
+    })
+
+    expect(records).toContainEqual(expect.objectContaining({
+      scope: 'task-action',
+      event: 'archive-confirmation-created',
+      outcome: 'created',
+      provider: 'codex',
+      taskRef: 'exact-task'
+    }))
+    const confirmationRecords = records.filter((entry) => entry.event === 'archive-confirmation-confirmed')
+    expect(confirmationRecords).toHaveLength(1)
+    expect(confirmationRecords[0]?.operationId).toBe(
+      records.find((entry) => entry.event === 'archive-confirmation-created')?.operationId
+    )
+    expect(records.filter((entry) => entry.event === 'archive-intent' && entry.outcome === 'started')).toHaveLength(1)
+    expect(archive).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'exact-task' }),
+      expect.objectContaining({ intentRecorded: true, confirmationRecorded: true })
+    )
+    const archiveRecord = records.find((entry) => entry.event === 'archive-result')
+    expect(archiveRecord).toMatchObject({
+      scope: 'task-action',
+      event: 'archive-result',
+      outcome: 'failed',
+      code: 'source-changed',
+      provider: 'codex',
+      taskRef: 'exact-task',
+      details: { source: 'archive-shortcut', phase: 'completed', revisionAt: 100 }
+    })
+    expect(JSON.stringify(records)).not.toContain('private provider detail')
+  })
+
+  it('infers one confirmation for direct dispatches that bypass a confirmation UI', async () => {
+    const records: Array<Record<string, unknown>> = []
+    const archive = vi.fn(async () => ({ outcome: 'archived' }))
+    const actions = createCompanionTaskActions({
+      record: (entry: Record<string, unknown>) => records.push(entry),
+      adapters: { codex: { inspect: vi.fn(), open: vi.fn(), archive, close: vi.fn() } }
+    })
+    syncReady(actions, [target('codex', 'direct')], 'direct')
+
+    await actions.archive({
+      key: 'direct',
+      revisionAt: 100,
+      phase: 'completed',
+      source: 'archive-button',
+      operationId: 'archive-direct-1'
+    })
+
+    expect(records.filter((entry) => entry.event === 'archive-confirmation-confirmed')).toHaveLength(1)
+    expect(records.find((entry) => entry.event === 'archive-confirmation-confirmed')).toMatchObject({
+      operationId: 'archive-direct-1',
+      details: expect.objectContaining({ owner: 'task-actions', inferredFromDispatch: true })
+    })
+    expect(archive).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ intentRecorded: true, confirmationRecorded: true })
+    )
   })
 })
