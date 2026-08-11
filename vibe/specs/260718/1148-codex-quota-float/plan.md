@@ -1,7 +1,7 @@
 # Codex 任务状态收敛计划
 
 Tool: codex
-Status: `automated-verified / host-rework`
+Status: `focused-automated-verified / host-pending`
 
 1. 用序列测试复现“完成通过定向核验，后续完整快照反判回进行中”。
 2. 完成通过 active-exit 门禁后立即关闭周期并清除 baseline。
@@ -41,5 +41,7 @@ Status: `automated-verified / host-rework`
 36. 以 RAW-153 修复当前 owner 的旧 waiting 被较新 active 清除后又由 snapshot/read-state/refollow 重放的问题：为请求实例与 runtime waiting flag 增加私有单调观测序列，统一 request remove、匹配 `serverRequest/resolved`、active/Turn-started、matching output、用户继续与新 `task_started` 的 waiting-clear 因果屏障；未匹配 resolved 仅有界重订。升级 `task-state-v8`，补当前 owner、旧重放、新 correlation、并发审批、runtime flag、Side Chat/Plan 与 rollout resume 反向测试，执行受影响测试、typecheck、production/uTools build 和镜像/语法门禁。最后正常重载真实 v8 宿主，要求解除最迟 1.25 秒、30 秒及两次 mainHide/refollow 不回跳、同任务新请求可重入；未通过保持 rework 且不提交。
 37. 以 RAW-154 落地统一任务内核：扩展 Provider-neutral `CompanionProviderAdapter`，由 `companion-task-actions-v1` 统一分发 inspect/open/archive/close，保留 navigation 对 open 的 75ms 合并而让 archive 仅按 Provider+task single-flight；Controller 只保留一个 verified mutation reducer，归档期间保留卡片，成功精确移除，失败/不确定保留。把 Claude archive 改为版本门禁、唯一私有索引目标、stat/hash 防并发、同目录原子替换与安全回滚的 D′ `isArchived` 事务，日志降为增强证据，普通 open 写前拒绝已归档；精确文件 watcher 与 1 秒候选 watchdog 发布 membership delta。为 Codex 精确 interrupted 增加无 idle 依赖的 terminal watermark，升级 `task-state-v9`；接入进程级 5 秒双调用确认的 `mainHide` 归档入口。执行受影响测试、typecheck、Preload 镜像/语法、production/uTools build 与文档/规则审计；真实 v9 宿主及经用户另行确认的可丢弃 Claude canary 保持独立门禁。
 38. 返工同一 RAW-154：把 task-actions/navigation 与 Renderer 分散缓存收敛为 Preload 唯一 `companion-task-kernel-v1`，以 `companion-task-package-v1` 原子发布任务、形式、分组、角标、循环与 capability；全部入口统一提交意图并从最新包重解目标。让 `onPluginEnter` 在 Renderer 未挂载时直接消费，冷状态只走全启用 Provider 的共享 tasks-only 预检，拒绝 partial jump 和 Alt+Tab 重放。新增确定性 Host/Renderer 资产身份与 Main/Float 四端握手，身份不一致 fail closed 为 `reload-required`，严格区分 `artifact-ready` 与 `host-loaded`。完成 Reducer/Kernel/Dispatcher/Bridge/身份聚焦回归、类型、production/uTools build、镜像/语法、文档与错误记忆；真实 uTools 重接入、旧后台进程由用户结束、Float 重开和四端握手继续保持 host gate。
+39. 以 RAW-155 把 Kernel/Package 升级到 V2 Provider-lane 时钟，修复 exact interrupted 被 active 壳覆盖、Claude completed-unread 被订阅/异步整包吞并和同代次 phase/unread 互抢；正常 push 走零全量读取快路，完整盘点仅用于冷启动/重连/成员缺口。移除完整校对设置、手动全刷和 Ctrl+R，额度改为最小 1 秒/旧 0→300；所有状态组与循环层内按最近提问倒序。导航首键立即、in-flight 只保留最终尾随、全局并发 1；加入 Float heartbeat/受控重建、交互超时与 allowlist JSONL 诊断。执行影响选择的聚焦测试、typecheck、Preload 镜像/语法、production/uTools build、文档链接审计；真实状态转换、连按、Float 自愈和日志落盘继续作为 host gate。
+40. 继续 RAW-155：把 Kernel canonical task 提升为卡片/Tab/项目/分组/角标/动作的单一最终投影；修正 Claude generic session-end 覆盖 completion、原生 unread 恢复 completed、冷 Codex exact interrupted provenance 与新 Codex key 元数据补读。移除所有任务消费者固定数量上限，把 unknown 稳定窗缩为 250ms；归档确认只绑定稳定语义身份并在第二次操作使用最新目标。Claude archive 对写前普通元数据 churn 安全 rebase/单次重试，成功精确移除并自动刷新插件。补状态判定脱敏字段、聚焦回归、typecheck、Canonical/Public mirror、1870-module build/runtime validator、文档和错误记忆；真实 uTools/Claude 状态保留 host gate，Claude 原生侧栏及时收敛已由 Claude RAW-029 判定为当前 `unsupported`，不再作为可执行 host gate。
 
 执行证据见 [verify.md](verify.md#L1)，当前交接见 [handoff.md](handoff.md#L1)。

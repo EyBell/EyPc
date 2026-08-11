@@ -1,7 +1,7 @@
 # Claude Code Companion 权威重置 — Handoff
 
 updated: `2026-08-11`
-delivery_state: `implementation-landed / RAW-154-automated-verified / RAW-029-focused-verified / native-sidebar-unsupported / quota-host-verified / interactive-host-partial`
+delivery_state: `implementation-landed / RAW-029-focused-verified / native-sidebar-unsupported / quota-host-verified / interactive-host-partial`
 
 ## Start Here
 
@@ -12,6 +12,11 @@ delivery_state: `implementation-landed / RAW-154-automated-verified / RAW-029-fo
 
 ## Current Production Route
 
+- Final shared task authority is now `companion-task-kernel-v3 / companion-task-package-v3`. Claude membership/phase/unread behavior remains unchanged；observation generations order evidence while semantic revision advances only for real package changes. V1/V2 fail closed.
+- Bridge fan-out and recovery: [index.cjs](../../../../preload/claude/index.cjs#L1) multiplexes Host+Renderer state/inventory/unread subscribers; [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1) installs newly discovered directory watchers after the first cold inventory; [unread.cjs](../../../../preload/claude/unread.cjs#L1) singleflights concurrent reads.
+- Trusted push is the normal path and performs no quota/environment/full-inventory read. Claude-only inventory runs only for cold start, reconnect or an explicit membership gap. Real running→completed-unread and delayed-open races remain host acceptance gates.
+- RAW-028 fixes the remaining state/archive edges: generic session-end preserves a successful completion；native unread promotes any non-live history and unread clearing keeps completed；Claude inventory has no fixed total cap；the final package atomically updates card/tab/project/group/badge/action consumers。Archive confirmation survives revision/unread/focus/alias churn and uses the latest second-click target；ordinary metadata churn can rebase once，verified success automatically removes the plugin row without forcing the native sidebar。
+- RAW-027 final impact evidence is `19/19` files、`575/575` tests plus typecheck、Preload sync/syntax、1870-module production/uTools build and validator. Artifact identity is `host-8dd41fb34ee0eaa27ae3 / renderer-2537cdea077c5e564f7b`; the currently loaded uTools host was not replaced automatically.
 - Inventory/title/history: [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1).
 - Version-gated exact App state: [app-state.cjs](../../../../preload/claude/app-state.cjs#L1).
 - Unique official Hook fallback: [events.cjs](../../../../preload/claude/events.cjs#L1).
@@ -25,7 +30,7 @@ delivery_state: `implementation-landed / RAW-154-automated-verified / RAW-029-fo
 - Per-task real sync: internal `codex.claude.task.sync` joins the existing state/unread lanes; the Claude-only drawer action and successful-open silent sync never create a manual receipt.
 - Virtual projects/filter/ownership: [companionAggregate.ts](../../../../src/domain/companionAggregate.ts#L1), [FloatApp.vue](../../../../src/FloatApp.vue#L1) and [float.css](../../../../src/styles/float.css#L1).
 
-Claude-focused historical automation (`16/16` files、`343/343` tests) remains green；the RAW-024 delta adds `4/4` files、`120/120` tests plus the fixed action `1/1`。RAW-154 current affected matrix is `20/20` files、`550/550` tests；typecheck、1868-module production/uTools build、runtime validator、canonical/public mirror、JS/CJS syntax and diff checks pass。A historical 74-file / 1061-test full ladder passed，but RAW-018 supersedes it as an over-broad default。Latest sanitized host projection has 27 Code rows (0 running / 24 completed / 1 stopped / 2 unknown)，with 25 exact App-log states；native unread reads previously passed 30/30 with one membership，and App quota HTTP 200 yielded 5h + weekly_all + Fable scoped windows with reset。A user-authorized real D′ canary passed on 2026-08-10；RAW-029 D-1/D-2 focused verification passed on 2026-08-11, while native-sidebar convergence is `unsupported-currently`；the following host gates remain independent。
+Claude-focused historical automation (`16/16` files、`343/343` tests) remains green；the RAW-024 delta adds `4/4` files、`120/120` tests plus the fixed action `1/1`。RAW-154 current affected matrix is `20/20` files、`550/550` tests；RAW-028/Codex RAW-155 增量为 `9/9` files、`303/303` tests。RAW-029 adds focused `3/3` files、`100/100` tests；typecheck、1870-module production/uTools build、runtime validator and canonical/public/dist packaging pass，当前身份为 `host-36616822511986c18f2c / renderer-25da7ef64b81aadc76f8`。A historical 74-file / 1061-test full ladder passed，but RAW-018 supersedes it as an over-broad default。Latest sanitized host projection has 27 Code rows (0 running / 24 completed / 1 stopped / 2 unknown)，with 25 exact App-log states；native unread reads previously passed 30/30 with one membership，and App quota HTTP 200 yielded 5h + weekly_all + Fable scoped windows with reset。更新引入（2026-08-10）：一次用户授权的真实 D′ canary 已执行并通过（见 [verify.md](verify.md#L94)）；the following host gates remain independent。
 
 ## Do Not Restore
 
@@ -35,12 +40,12 @@ Claude-focused historical automation (`16/16` files、`343/343` tests) remains g
 - WAL/`.ldb` 字节扫描、上次未读集合或持久 EyPc 回执；仅允许成功精确跳转后、同 completion epoch、可撤销且带原生复读的进程内提示。
 - `resume/import`、终端、AX-title、每次跳转全量窗口枚举或自动 App 启动。
 - 把 Claude archive 实现为 Deep Link 后 AX/JXA 点击、把 App 归档日志作为硬成功条件，或在旧 Bridge 上回退该路线。
+- 把 D′ 的 `isArchived=true`、EyPc 库存缺行、LevelDB、App 重启后视觉结果或任何私有 IPC/UI 自动化结果当作 Claude 原生侧栏 ACK。
 - 扫描/批量改写 Claude 会话目录、写 LevelDB、修改非目标会话或在并发变化后用旧备份覆盖新字节。
 - 全 authority 刷新、额度网络串联状态、固定两窗口、进程期三次额度尝试或过期 reset。
 - 固定 `test → typecheck → build → verify` ladder，或把 Agent 自拟 plan 的后续批准当成 full-suite 授权。
 - 把 `SubagentStop`/工具尾事件当父 Turn 新活动，或增加人工 completed/read 覆盖、第二条同步通道。
 - 把 `[已归档]` 解释为物理迁移授权；五份历史文档当前只在原路径逻辑归档。
-- 把 D′ 的 `isArchived=true`、EyPc 库存缺行、LevelDB、App 重启后视觉结果或任何私有 IPC/UI 自动化结果当作 Claude 原生侧栏 ACK。
 
 ## Remaining Acceptance
 

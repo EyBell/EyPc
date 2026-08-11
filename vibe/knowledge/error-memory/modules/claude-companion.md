@@ -10,7 +10,9 @@ This link-only module routes EyPc-specific Claude Companion inventory, status, q
 
 更新引入（2026-08-11，RAW-029）：D′ 成功只确认 EyPc 元数据/任务包后置条件，不确认 Claude 原生侧栏。已安装 App 的原生归档会经过运行中 session manager 并发布 `archived` 事件，而 D′ 绕过该链；当前官方入口没有 Desktop Code 本地归档能力。成功提示必须明确原生侧栏未确认，D-2 保持 `unsupported-currently`；由新增 Primary 记录主责，禁止用元数据/LevelDB、私有 IPC、UI 自动化或重启后的视觉结果冒充原生 ACK。
 
-更新引入（2026-08-09，RAW-152）：Claude provider-local exact opener 继续只负责 Epitaxy Deep Link；通用 Codex/Claude 前后任务的游标、全来源 ready、75ms 最终目标和跨来源并发 1 已提升到 Preload 进程 owner。该失败族由 [uTools lifecycle pointer](../utools-onpluginout-hidden-vs-process-exit.md#L1) 与 [Codex session lifecycle](../codex-app-server-session-state-survives-exit.md#L1) 主责，本模块不创建第二份 Claude 专属记录。
+更新引入（2026-08-10，RAW-027/RAW-155/RAW-159）：Claude provider-local opener 继续只负责精确 Epitaxy Deep Link；通用游标使用首键立即、仅 in-flight 最终 trailing、跨来源并发 1。最终 `companion-task-package-v3` 继续分离 Claude membership/phase/tri-state unread，但 observation generation 只用于排序、semantic revision 只用于真实变化；Claude 状态/归档行为在 RAW-159 中不变。Bridge 多播、动态 watcher、unread singleflight 和 push-first 边界继续由下列共享记录主责。
+
+更新引入（2026-08-10，RAW-155 增量）：通用 `Stopping session` 是 session lifecycle，不是 stopped Turn outcome；同 Turn 已有成功 Stop/Result 时保持 completed，显式 failed/interrupted 或无成功结果的 session-end 才进入 stopped。原生 unread 可把任何非 live 历史恢复为 completed-unread，清除 unread 只回到 completed，新 Prompt 才恢复 running。该边界由新增 Primary 记录主责。
 
 ## Current Authorities And Routes
 
@@ -22,6 +24,7 @@ This link-only module routes EyPc-specific Claude Companion inventory, status, q
 ## Primary Error Records
 
 - [Metadata archive does not prove native sidebar convergence](../claude-metadata-archive-does-not-prove-native-sidebar-convergence.md#L1) — D′ 只确认 EyPc 归档/移除；原生 session-manager ACK 与同一运行中侧栏及时移除是独立且当前不受支持的后置条件。
+- [Generic session end must not overwrite completion](../claude-generic-session-end-must-not-overwrite-completion.md#L1) — session lifecycle、explicit Turn outcome、live phase 与 native unread 的统一优先级；正常完成不得被通用收尾降为待继续。
 - [Session family/open/state authority conflation](../claude-session-family-open-route-and-state-authority-conflation.md#L1) — verified root cause and replacement route, including stable unread snapshots, same-completion session hints and App OAuth dynamic quota; interactive UI matrix remains an acceptance boundary, not a route choice.
 - [Watcher callback latency is not end-to-end publication latency](../watcher-callback-latency-is-not-end-to-end-publication-latency.md#L1) — measure authority event through Controller publish on one monotonic clock; source wake is diagnostic only.
 - [Independent authorities coupled by full refresh](../independent-authorities-coupled-by-full-refresh.md#L1) — inventory/state/unread/quota/presence require feature-lifetime independent lanes, source→Controller→Float monotonic revisions and authority-specific failure semantics.

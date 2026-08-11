@@ -1,27 +1,30 @@
 # Codex 任务状态交接
 
 Tool: codex
-Date: 2026-08-09
-State: `automated-verified / host-pending`
+Date: 2026-08-10
+State: `RAW-159 implementation-landed / automated-verification-in-progress / host-pending`
 
 ## 当前结论
 
-- RAW-154 本次返工已从 `implementation-rework / host-pending` 收敛回 `automated-verified / host-pending`。旧 20 文件 `550/550` 仍是 D′/v9 基线；新架构的直接证据为 12 个影响文件 `485/485`、typecheck、1870-module production/uTools build、RuntimeIdentity validator、Preload 镜像/语法与 diff gate，其中 Controller 组合用例使用真实 Kernel 验证 Main/Float 同包以及卡片/快捷键同目标，Preload 组合用例验证无 Renderer 时成员变化事件仍会触发 Host 专用重读，Kernel 反向合同禁止从 degraded 包误跳。最终产物身份为 `host-9d4cb1b3a288c5a8bc61 / renderer-30eb78df00c13c1e9eab`；Renderer ID 已纳入其内嵌 Host 契约；真实 uTools 未重接入，当前只能称 `artifact-ready`，不能称 `host-loaded`。
-- Preload 现在只有一个 `companion-task-kernel-v1` 任务权威，[companionTaskPackage.ts](../../../../src/domain/companionTaskPackage.ts#L1) 以 `companion-task-package-v1` 同 revision 发布任务形式、状态、分组、三个角标、attention、通用 `cycleKeys` 和能力。`task-state-v9` 仅是 Provider 输入兼容版本；navigation/task-actions 是 Kernel 内部 Dispatcher，不再各自向 Renderer 维护缓存。
-- 卡片、待输入/未读、上/下任务、聚焦和归档都提交统一 intent。Preload 的 `onPluginEnter` 可在 Renderer 从未挂载时消费静默入口；冷状态等待全部启用 Provider 的 tasks-only 预检，拒绝 partial jump，Alt+Tab 不会补执行。Main/Float 订阅同一个包，配额、环境、完整库存和非任务未读不阻塞状态包发布。
+- RAW-159 已在源码落地，当前保持 `automated-verification-in-progress / host-pending`。Preload 唯一权威为 `companion-task-kernel-v3`，[companionTaskPackage.ts](../../../../src/domain/companionTaskPackage.ts#L1) 发布 `companion-task-package-v3`；observation/source-lane generation 只拒绝乱序，semantic revision 只随真实 membership/phase/unread/visibility/capability/必要元数据变化。等价 observation 是完整 no-op。V1/V2 包 fail closed，`task-state-v9` 仅是 Codex Provider 输入兼容版本。
+- Codex exact interrupted/completed 在无更新请求/Turn 时先于陈旧 active 壳；成员信号无论 phase/unread 代次都先触发 Codex-only 窄盘点。Claude Host 与 Renderer 共享多播订阅，首次 inventory 后动态安装目录 watcher，并发 unread 读取 singleflight，异步结果提交前基于最新包重放，避免 running→completed-unread 丢失或新会话被旧整包删除。Claude terminal phase 可直接更新其派发时精确复核的归档能力；Codex newer non-terminal phase 无需 inventory 即撤销旧归档能力/fingerprint。
+- 正常可信 push 直接更新任务包，零 quota/environment/full-inventory 读取；完整盘点仅用于冷启动、重连或明确 gap。任务完整校对设置、手动全刷和 `Ctrl+R` 已移除；额度自动刷新默认 300 秒、最小 1 秒，旧 0 迁移为 300。定向环境检测与 Claude 单任务同步保留。
+- 所有动态状态组与通用循环层内均按最近提问时间倒序，Provider/置顶不覆盖。导航第一下立即派发；只有首个打开仍 in-flight 时才合并最终 trailing，manual/attention 优先且跨 Provider 并发 1。
+- Float 自愈合同不变。安装日志由 [RAW-159 Controlled task](../../260810/1155-install-runtime-diagnostics/task-card.md#L1) 接管：`eypc-runtime-diagnostics-v3` 当前未配置者默认启用 debug，显式 userConfigured 选择永久保留；所有调用显式 error/info/debug。明文 JSONL 用 session/seq/operation/trace 串联精确 taskRef、状态、水位、路径、交互和 Codex 归档阶段；仍排除提示词、正文、命令参数、stdout/stderr、凭据、stack 和隐藏推理。探针支持 operation/trace/provider/taskRef 等筛选和状态/no-op/快捷键/导航/归档/错误聚合。
+- RAW-155 基线自动化为 `19/19` files、`575/575` tests；Companion 状态增量聚焦 `9/9` files、`303/303` tests，RAW-158 日志文件操作增量为 4 files / 10 tests。typecheck、Canonical/Public/Dist Preload 同步、1870-module production/uTools build 与 runtime validator 通过。当前产物身份为 `host-19c07235e93effb0f11a / renderer-b5dfe2319649d2b0987c`；仅可称 `artifact-ready`，真实宿主仍需重载。
 - 最终宿主门禁固定为：构建 → uTools 开发工具重新接入 `dist/plugin.json` → 用户结束旧插件后台进程并重新进入 → 重开 Float → 核对 Main UI/Main Preload/Float UI/Float Preload 的 Host/Renderer/Kernel/Package 身份完全一致。任何端不一致都会显示 `reload-required` 并停止任务动作；实现不自动结束进程，也不调用私有 uTools API。
 - RAW-154 已将当前合同升级为 `task-state-v9` 与 `companion-task-actions-v1`。Renderer 只提交 Provider-neutral 意图，Domain 独占互斥状态/capability，进程 Dispatcher 按 action→Provider 选择 Adapter，Provider 独占副作用，Controller 只通过一个 mutation reducer 接纳已验证结果；旧 Claude AX 归档禁止回退。
 - Codex 精确 `interrupted/user-stopped` 在没有未解决 input/approval、也没有因果上更新的新 Turn/active 时立即进入内部 stopped/可见“待继续”，不再等待额外 Desktop idle；待继续不进入进行中分段或三个紧凑角标，仍计入动态总数并允许任务级归档。普通 failed 继续使用保守 idle/not-running 门禁，更新的新 Turn 恢复进行中。
 - Claude 归档已改为 D′ 静默事务：仅 macOS App `1.26832.0`、仅正常库存私有索引中的唯一 `local_*.json`、仅 `isArchived=true`，写前复核 phase/stat/hash，写同目录临时文件并原子替换，语义失败安全回滚、并发写不覆盖。成功只要求元数据与活动库存双确认，日志仅增强；不 Deep Link、不 AX/JXA、不写 LevelDB/其它会话。普通 open 会在 Deep Link 前拒绝已归档、缺失或歧义目标。
-- 归档期间卡片保留并标记 archiving；archive 只按 Provider+task single-flight，不同任务/Provider 互不阻断。`archived` 精确移除并发布一次，`failed/indeterminate` 保留。Claude App 手动归档和 EyPc 静默归档都由精确文件 watcher 发送 membership delta；旧完整读取不能越过 tombstone 复活，丢 callback 由 1 秒私有索引候选 watchdog 恢复。
-- 新 `eypc-companion-archive` 为 `mainHide:true`，外部 action id 仍为 `codex.task.archiveFocused`。优先当前有效聚焦任务，否则用非隐藏 attention 首项；第一次调用只提示并建立 5 秒进程级 identity 确认，第二次完全一致才执行，普通 Renderer remount 不丢确认，任何 key/revision/focus/phase/Provider 变化取消。
-- RAW-152 已把通用前后任务的游标和跨来源打开仲裁提升到 Preload 进程级 `companion-navigation-v1`：Codex/Claude 库存全部 settled 后才原子 ready，连续按键每次推进游标但 75ms 只派发最终目标，手动/attention 优先，全部来源共享最大并发 1。热 `onPluginEnter` 直接消费且不再转交 Renderer；普通 mainHide/Renderer dispose 只 detach，显式停用、来源变化、kill/进程退出才失效。
+- Codex 归档期间卡片与按钮保留；Provider-only `archived` 不再删除。每次 operationId 必须通过 exact preflight、一次写、两次服务器库存确认，以及 Desktop 已连接时的 sync 和匹配 native ACK，随后 Kernel commit 才原子移除。任一失败/矛盾/ACK 超时保留 alias/cache/receipt/shortcut 并提示短 operationId；自动定向核验，无需用户手动刷新。Claude 归档行为本轮不改。
+- `eypc-companion-archive` 保持 `mainHide:true`。第一次调用只提示并建立 5 秒确认，稳定 identity 为 Provider+task+terminalEpoch；revision、unread、focus 和临时 alias 变化不取消。第二次使用同一 operationId 和最新 capability；任务消失、terminal epoch 或能力变化才取消。
+- RAW-152 的进程级导航所有权继续保留，但 RAW-155 已取代固定 75ms 等待：首个目标立即派发，仅在其仍执行时保存最终 trailing 目标；手动/attention 可取消未派发 trailing，全部来源共享最大并发 1。
 - RAW-153 是 v9 继续保留的 waiting-clear 前置合同：main/Side Chat request 与 runtime waiting flag 都记录私有单调观测序列；request remove、匹配 `serverRequest/resolved`、较新 active/Turn-started、matching output、用户继续和新 `task_started` 共用因果屏障。旧 snapshot/read-state/refollow/sticky shadow/rollout resume 不能复活已解除等待，屏障后的新 correlation 仍立即重入。
 - 单卡点击与待输入/未读直达仍按精确匿名 key 打开；Codex stale alias 只按同 key tasks-only 重建一次。旧 Host 没有精确 navigation revision 时，通用循环提示重载并 fail closed，单卡保持兼容。
 - RAW-150/151 的待继续/独立热通路继续有效；RAW-154 取代 Claude Deep Link+AX 归档并细化 exact interrupted。项目批量仍只处理 Codex completed。
-- 待输入现在是双向独立热通路：请求新增/移除、resolved、matching output、用户继续与新 Turn 共用 waiting-edge reducer；revision/owner/载荷缺口只按任务 `0/50/150/300/600/1000ms` 重订并在 1.25 秒截止，1 秒 phase-only watchdog 只复核登记 rollout 候选。它不受 Tab、悬浮窗可见性或 `taskRefreshSeconds=0/86400` 影响，只由功能+收件箱启用门控。
+- 待输入现在是双向独立热通路：请求新增/移除、resolved、matching output、用户继续与新 Turn 共用 waiting-edge reducer；revision/owner/载荷缺口只按任务有界重订，1 秒 phase-only watchdog 仅复核登记 rollout 候选。它不受 Tab 或 Float 可见性影响，也不再存在用户可调的任务全量周期。
 - 自动回归继续覆盖 100 轮双向切换 P95 <250ms、两类掉通知、阻塞完整读取、Codex stopped/新 Turn、统一 Dispatcher、Claude D′ 成功/幂等/零写门禁/回滚/并发与 membership delta。本轮受影响矩阵为 `20/20` files、`550/550` tests；typecheck、1868-module production/uTools build、runtime validation、canonical/public 镜像、JS/CJS 语法和 `git diff --check` 均通过。
-- 真实运行 ASAR 的最近历史读回仍是 v7，它已证明旧 waiting 缺陷存在，但不证明 v9 已加载。真实 v9 状态验收和 Claude canary 尚未执行，故保持 host-pending。
+- 真实运行 ASAR 的最近历史读回仍不能证明本次新产物已加载。真实 v9 状态、两 Provider 归档与新任务接纳尚未在匹配身份的 uTools Host 完成，故保持 host-pending。
 - 完成证据通过后立即从进行中移出，同时清除 active-exit baseline；后续相同完整快照不再反弹。
 - 实时增量与完整快照现共用同一个 active-exit 转换器；恢复运行前遗留的相同 interrupted/failed 只能保持 ongoing，不会在 inventory 重建时误入 stopped。
 - 非 active 任务首次观测或收到晚到的 Codex 原生 unread=true 时会唤醒一次有界 latest-Turn 复核；相同 true 的后续轮询不重启。若最新 Turn 已完成，完成和未读在同一路径收敛，无需切换任务。
@@ -96,4 +99,7 @@ State: `automated-verified / host-pending`
 23. Claude D′ 真机只在用户另行确认一个可丢弃 completed 会话且实际 App 版本恰为 `1.26832.0` 时执行一次：EyPc 不打开 Claude、不需要辅助功能权限，只修改该唯一 `local_*.json` 的 `isArchived`；确认目标元数据为 true、活动库存和 EyPc 卡片即时移除，非目标文件/LevelDB 不变。Claude 侧栏是否即时刷新只记录观察；`failed/indeterminate` 必须保留卡片。
 24. 重载 RAW-152 构建后，先单击一张 Codex 与一张 Claude 卡片确认精确打开；再在两来源均有候选时快速交替触发上一个/下一个，确认每次按键推进后的最终目标正确、只打开一次、无崩溃。至少跨两轮普通 mainHide 往返复测，最后完全退出/重启插件确认只在进程边界冷启动一次。
 25. 在 v9 非 Full Access 任务中让真实请求先进入待输入，再由用户在 Codex 原生界面回答或拒绝；EyPc 必须在首个更新周期、最迟 1.25 秒进入进行中。随后触发无关 unread/refollow、浮窗收展和两次 mainHide，持续至少 30 秒不得回跳；同任务产生新请求后必须再次进入待输入。记录仅保留版本、匿名计数与相对时延，EyPc/Agent 不代答。
-26. 为 `eypc-companion-archive` 绑定临时全局快捷键：第一次只显示目标和 5 秒确认，不切当前 Tab、不打开 Claude；同一 identity 第二次才执行。改变焦点、revision、phase 或 Provider 后第二次必须重新进入确认；普通 mainHide Renderer remount 不应丢失未过期确认。
+26. 为 `eypc-companion-archive` 绑定临时全局快捷键：第一次只显示目标和 5 秒确认；同一 Provider+task+terminalEpoch 第二次才执行。确认期间制造 revision、unread、焦点或临时 alias 变化，第二次仍使用最新 capability 和同一 operationId；让任务消失、切换 terminal epoch 或撤销 capability 后才必须重新确认。
+27. 新建一条 Codex 任务，确认不等待全量刷新即可进入插件的卡片、正确 Tab、项目、分组和角标；完成、未读、已读和再次运行必须在同一个任务包 revision 内同步切换，不能只改角标或只改卡片。
+28. 让 Claude 正常回复完成并产生通用 `Stopping session`，确认仍是 completed；原生 unread=true 进入 completed-unread，清除 unread 后仍为 completed，新 Prompt 才恢复 running。再用显式 interrupted/failed 夹具确认只该路径进入待继续。
+29. 分别从插件归档一个 Codex completed/stopped 和一个门禁兼容的 Claude completed/stopped；两者成功后 EyPc 卡片自动移除且无需手动刷新。RAW-029 已确认 Claude D′ 不进入原生 session-manager/`archived` 事件链，提示必须声明原生侧栏未确认；当前不再把原生侧栏观察作为可实现 host gate。普通元数据 churn 可成功 rebase，写后并发仍须 fail closed。

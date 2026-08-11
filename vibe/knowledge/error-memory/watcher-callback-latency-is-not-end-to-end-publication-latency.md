@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: event-driven-state__watcher-callback-latency-used-as-ui-publication-slo__downstream-refresh-can-block-or-coalesce__measure-authority-event-through-controller-publish-on-one-monotonic-clock
 first_seen: 2026-08-07
-last_verified: 2026-08-09
+last_verified: 2026-08-10
 review_after: 2027-02-07
 evidence:
   - vibe/specs/260807/claude-code-companion-authority-reset/research.md
@@ -42,7 +42,7 @@ Claude watcher 在 100 次本地事件中很快唤醒，于是旧验收把 appen
 - 旧探针的计时终点在 watcher callback，而产品 SLO 的终点应是 Controller 向统一任务快照发出可观察 publish。
 - RAW-151 证明同一错误也适用于 Codex：正常 Activity/rollout callback 很快并不能覆盖掉通知；恢复指标必须量到 1 秒 phase-only watchdog 接纳证据并完成 Controller 发布，且全过程不得触发完整库存读取。
 - RAW-154 再证明文件 membership mutation 也必须遵守同一边界：Claude App 手动归档或 EyPc D′ 写入的计时终点是 Controller 发布已移除该卡片的新原子任务包，不是 `fs.watch` 回调。精确文件 delta 和一秒索引 watchdog 只能检查已登记目标，且不能等待 quota、state、unread 或完整 inventory。
-- RAW-154 返工将终点进一步精确为 `companion-task-package-v1`：事件进入 Kernel 后，任务、分组、三个角标与 `cycleKeys` 必须以同一 revision 发布；随后 Main/Float 都应用该 revision。只量 Controller 回调、只量 package 生成，或只证明其中一个 Renderer 更新，都不能证明用户看到的卡片和快捷键目标已经一致。
+- RAW-159 将终点升级为 `companion-task-package-v3`：事件进入 Kernel 后，必须只推进真实变化的 membership/phase/unread 语义，再让 Main/Float 应用同一 package revision。只量 callback、Controller 或单个 Renderer 都不能证明 completed-unread 与快捷键目标一致；等价 observation 必须是零发布。
 - membership-only 事件还可能没有任何“现有任务行”可修改：例如新 Codex 任务只携带 `inventoryChanged`。若 Host 以 `changed === false` 提前返回，watcher 已正确唤醒但专用库存重读从未排队；Renderer 隐藏时只能等恢复扫描。结构变化信号必须独立于现有行变更决定 reconciliation。
 
 ## Detection Order
@@ -80,7 +80,7 @@ Ordered steps:
 
 Verification:
 
-- [Claude Controller regression](../../../tests/runtime/claudeCompanionController.test.ts#L1) 在 blocked quota 下通过状态转换门禁，并验证精确 archive/upsert/remove mutation 不等待完整库存；[Claude Bridge regression](../../../tests/platform/claudeBridge.test.ts#L1) 覆盖精确目标文件 callback 与一次丢通知的一秒索引恢复；[Codex Controller regression](../../../tests/runtime/codexController.test.ts#L1) 在 `taskRefreshSeconds=0/86400`、非 Codex Tab、隐藏 Float 与阻塞完整读取下量取 100 轮双向发布；[Codex Bridge regression](../../../tests/platform/codexAppServerBridge.test.ts#L1) 丢弃 rollout 文件通知后由 phase-only watchdog 恢复，且 inventory/unread 读取为零。[probe](../../../scripts/probe-claude-code-runtime.mjs#L1) 仅报告 watcher wake，并明确不把它标成端到端。
+- [Claude Controller regression](../../../tests/runtime/claudeCompanionController.test.ts#L1) 验证 quota/full inventory 不阻塞状态；[Claude Bridge regression](../../../tests/platform/claudeBridge.test.ts#L1)、[unread regression](../../../tests/platform/claudeUnreadBridge.test.ts#L1) 与 [watcher E2E](../../../tests/runtime/claudeCompanionWatcherE2E.test.ts#L1) 覆盖多订阅、动态目录、singleflight 和最终发布；[Codex Bridge regression](../../../tests/platform/codexAppServerBridge.test.ts#L1) 覆盖 exact interrupted、同代次独立 lane 与 membership-only 恢复。[runtime diagnostics regression](../../../tests/platform/runtimeDiagnostics.test.ts#L1) 证明日志只保留脱敏端到端耗时/结果。
 
 Fallback:
 
@@ -97,5 +97,6 @@ Applicability boundary:
 | 2026-08-07 | Claude Companion authority reset | 用户观察状态同步仍慢并要求 Codex 同构通信 | 以 100 次 watcher callback P95 作为 UI publish P95 | old probe boundary + coupled refresh call chain | 重命名 source metric，新增 blocked-quota Controller E2E regression | verified |
 | 2026-08-08 | Codex RAW-151 bidirectional waiting lane | 用户确认进入与退出待输入都慢，并允许该通路脱离用户库存频率 | 只验正常 callback 或 reducer，不验掉通知后的最终发布 | Activity/rollout callback drop + phase-only watchdog + Controller publish | 100 轮 P95≤250ms；单次掉通知≤1.25s；无完整库存读取 | automated-verified / host-pending |
 | 2026-08-09 | RAW-154 Claude archive membership delta | 用户观察 Claude App 已归档后插件卡片仍慢，且旧插件归档只打开会话 | 把文件 watcher 当完成点，或等待完整库存 single-flight 才移除卡片 | exact indexed file event → Provider mutation delta → Controller atomic package；drop callback → 1s indexed watchdog | deterministic callback/drop/blocked-inventory contracts pass；real App manual archive and D′ canary pending |
-| 2026-08-09 | RAW-154 unified package rework | 卡片列表正确但 previous/next 无反应，且 Cloud 状态变化仍有体感延迟 | 分别量 watcher/Controller/Float，允许角标和循环缓存用不同 revision | event → Kernel `companion-task-package-v1` → Main/Float same-revision application；无关 quota/environment/inventory/unread 阻塞 | 100-revision coherence、Main/Float ≤50ms 与热/冷聚焦合同通过；真实 uTools P95 pending |
+| 2026-08-09 | RAW-154 unified package rework | 卡片列表正确但 previous/next 无反应，且 Cloud 状态变化仍有体感延迟 | 分别量 watcher/Controller/Float，允许角标和循环缓存用不同 revision | 当时以 V1 package 建立同 revision 终点；其共享 lane generation/首键等待已由 RAW-155 V2 取代 | historical automated baseline；real uTools pending |
 | 2026-08-09 | RAW-154 membership-only Host reconciliation | 新 Codex 任务事件到达但当前包没有对应行，隐藏 Renderer 时新任务可能延迟加入 | `changed === false` 提前返回并漏掉 `inventoryChanged` 专用重读 | 真实 App Server Preload + process Kernel，无 Renderer，发送仅结构变化事件 | Host 无条件按 membership 信号排队 tasks-only reconciliation；最终 12 文件 485/485 | automated-verified / host-pending |
+| 2026-08-10 | RAW-155 end-to-end lane publication | Claude callback 已发生但 running→completed-unread 未展示；前后任务第一下仍慢 | 单 callback/共享 generation/固定首键等待只测 wake 或最终尾目标 | event → V2 touched lane → same package revision → Main/Float；navigation leading dispatch；JSONL 记录端到端耗时/缓存/结果 | focused automated verified；installed-host P95 pending |

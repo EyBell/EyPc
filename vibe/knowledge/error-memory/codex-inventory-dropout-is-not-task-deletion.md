@@ -41,7 +41,7 @@ Structural completeness proves that one scan followed the protocol; it does not 
 
 - User correction established that abnormal task states and counts can be transport problems rather than real task disappearance.
 - [codexController.ts](../../../src/runtime/codexController.ts#L1) detects missing prior anonymous keys before replacing `lastThreads`, retains only those missing rows plus required project metadata, applies all present rows, marks the lane stale and requests one immediate complete recheck.
-- The same missing-key signature must survive at least two complete snapshots plus `max(15s, taskRefreshSeconds)` before the lower inventory publishes. Reappearance, a changed set, an intervening failed/incomplete read, disablement or disposal resets the candidate.
+- The same missing-key signature must survive at least two complete snapshots across the fixed three-second quarantine before the lower inventory publishes. Reappearance, a changed set, an intervening failed/incomplete read, disablement or disposal resets the candidate.
 - Activity Delta and full inventory now preserve newer `updatedAt`, latest Turn `startedAt`, completed outcome and `completedAt` against regressive evidence.
 - Verified single/project archive and native-project removal paths explicitly remove their targets and reset the candidate, so real user-authorized deletion is not delayed.
 - [codexController.test.ts](../../../tests/runtime/codexController.test.ts#L1) contains source contracts for first/immediate-repeat retention, interval-spanning acceptance and Turn-evidence monotonicity. They are updated but not executed under the project validation rule.
@@ -62,7 +62,7 @@ Do not equate one successful inventory response with deletion authority, and do 
 
 ## Latest Applicable Implementation
 
-[codexController.ts](../../../src/runtime/codexController.ts#L1) owns the runtime-only disappearance candidate, row merge and monotonic evidence merge. The hold duration is `max(15s, taskRefreshSeconds)`; the first omission schedules the ordinary 200ms forced structural refresh. RAW-092 makes the asymmetry explicit: additions/start/turn signals may request a separate 50ms dirty-task scan and publish as soon as a verified additive snapshot arrives, while only missing prior keys enter the disappearance hold. RAW-128 applies that asymmetry inside a lower snapshot too: present rows update while absent rows remain quarantined. Existing Host completeness, Desktop push, targeted latest-Turn confirmation and completed-only archive gates remain unchanged.
+[codexController.ts](../../../src/runtime/codexController.ts#L1) owns the runtime-only disappearance candidate, row merge and monotonic evidence merge. The hold is a fixed three seconds and the first omission schedules one Provider-only structural recheck. Additions/start/turn signals publish through trusted push or a gap-triggered dirty-task read；only missing prior keys enter quarantine. There is no periodic task-inventory setting.
 
 ## Alternative Route
 

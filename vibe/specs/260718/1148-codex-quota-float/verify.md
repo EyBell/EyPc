@@ -1,11 +1,11 @@
 # Codex 任务状态验证记录
 
 Tool: codex
-Date: 2026-08-09
+Date: 2026-08-10
 
 ## Review Target
 
-- Requirement: [RAW-116–154](raw-requirement.md#L1)
+- Requirement: [RAW-116–155](raw-requirement.md#L1)
 - Plan: [plan.md](plan.md#L1)
 - Implementation: RAW-150 保留内部 `stopped` 并显示“待继续”；RAW-151/153 将双向 waiting edge 与 waiting-clear 因果屏障收敛到 v8；RAW-152 以 `companion-navigation-v1` 提升通用打开队列；RAW-154 新增 `companion-task-actions-v1`、单一 Controller mutation reducer、Claude D′ 唯一目标静默归档与 membership delta，并以精确 interrupted terminal watermark 升级 `task-state-v9`。
 - Sidecar: 主线程。
@@ -318,6 +318,31 @@ Date: 2026-08-09
 - `pnpm run typecheck`、1870-module production/uTools build、runtime validator、canonical/public preload 镜像与 5 个 JS/CJS `node --check` 通过；最终构建身份为 `host-9d4cb1b3a288c5a8bc61 / renderer-30eb78df00c13c1e9eab`。构建日志只报告 `artifact-ready`；真实 Host 未握手前禁止记为 `host-loaded`。最终 `git diff --check` 见下述收尾门禁。
 - 当前状态重新回到 `automated-verified / host-pending`。正式接纳仍须用户在 uTools 开发工具重新接入 `dist/plugin.json`，结束旧插件后台进程并重新进入，重开 Float，核对 Main UI/Main Preload/Float UI/Float Preload 四端身份一致，再执行 Renderer 未挂载的静默前后切换、Alt+Tab 零重放、Codex/Claude 跨来源循环与状态延迟矩阵。实现没有调用私有 uTools API，也没有自动终止进程或执行真实 Claude 写入。
 
+## RAW-155 验证：V2 Lane、Push-first、导航与运行诊断
+
+- 影响选择的 19 个测试文件共 `575/575` 通过：Kernel、navigation、Float bridge、runtime diagnostics、Claude bridge/state/unread、Codex Host、Platform、RuntimeIdentity、Claude Controller/watcher E2E、Codex Controller/keybinding、Codex/Provider/Aggregate/Presentation Domain 与 Companion UI。最终复核同时证明 Claude terminal phase 可独立启用其派发时精确复核的归档能力，而 Codex newer non-terminal phase 会在不等待 inventory 的情况下撤销旧归档能力与 fingerprint。
+- 回归覆盖：Codex exact interrupted 先于陈旧 active shell 且 inventory-only 保守；Codex 同代次 phase/unread 独立接纳与成员信号窄恢复；Claude Host+Renderer 多订阅、首个冷 inventory 后动态目录 watcher、并发 unread singleflight、旧 async unread 基于最新包重放；V1 fail closed 与 Provider 三 lane generation；正常 push 零 quota/environment/full-inventory 读取。
+- 导航覆盖首键立即派发、仅 in-flight 最终 trailing、manual/attention 取消 trailing、同 key 去重、跨 Provider 并发 1 与冷预检 fail closed。排序覆盖状态分组后全部按最近提问倒序，Provider/置顶不覆盖；刷新设置/UI/快捷键反向合同确认无 `taskRefreshSeconds`、手动全刷、hero refresh 或 Ctrl+R，额度旧 0→300 且最小 1 秒。
+- Float 覆盖 2 秒 heartbeat、6 秒 stall、60 秒 recreate cooldown、10 秒恢复观察与 interaction-id 的 10 秒/blur/lifecycle 清理。诊断覆盖 allowlist enum、250ms 慢标记、JSONL 2 MB/10 MB/7 天轮转、0700/0600 权限与 raw ID/标题/提示词/路径/URL/Token/命令/stdout/stderr/stack 拒绝。
+- `pnpm run typecheck` 通过；Canonical/Public Preload 同步与 21 个 JS/CJS/MJS `node --check` 通过。第一次 production build 产物已生成，但 validator VM 缺少顶层 timer 宿主桩而失败；补入不执行 callback 的 `setTimeout/clearTimeout/setInterval/clearInterval` 后，`pnpm run validate:utools` 与最终完整 `pnpm run build` 均通过。最终为 1870 modules，身份 `host-8dd41fb34ee0eaa27ae3 / renderer-2537cdea077c5e564f7b`，状态仅 `artifact-ready`。
+- `git diff --check` 与 28 个变更 Markdown 的 code-link audit 通过。`pnpm run probe:runtime-diagnostics` 安全返回 `diagnostics-directory-missing`（exit 2）：当前本机尚无新 Host 写出的安装日志，这与“未重载真实 uTools”一致，不是日志实现通过真机验收的证据。
+- 未运行全仓 `pnpm test`/`pnpm verify`：影响轨迹没有新的整仓升级触发器。真实 uTools running→completed-unread、exact interrupted、快速连按、Float stall 自恢复、安装目录 JSONL 与轮转尚未观察，继续 `host-pending`。
+
+## RAW-155 增量验证：单一最终投影、快速状态与稳定归档
+
+- 影响选择的 9 个测试文件共 `303/303` 通过，覆盖 Claude 正常 completion 后 generic session-end 不降为 stopped、native unread 的 completed-unread 单调投影、Codex 冷启动 exact interrupted、精确 failed 仍保持既有 idle/not-running 门禁、2005 个 canonical tasks、405 个 Claude sessions、新 Codex key 元数据补读、卡片/Tab/项目/分组/角标原子重投影、Provider-specific unknown 可见性、unread revision 不覆盖 Codex archive completion watermark、确认期间 revision/alias churn、Claude archive 安全 rebase/单次写前重试与脱敏 state-decision 日志。
+- `pnpm run sync:preloads` 使 canonical/public Preload mirror 一致；`pnpm run build` 通过 typecheck、1870-module production Vite build、uTools runtime preparation 与 validator。构建身份为 `host-b1ebbac81b95ca4f0405 / renderer-5b82a3734cf73beb8df3`，状态仅 `artifact-ready`。
+- 最终 `git diff --check` 与变更文档 code-link audit 通过。没有运行全仓 Vitest：此次行为边界由上述 9 个受影响文件闭合，未出现扩大影响轨迹的失败或项目级升级触发器。
+- 未检查真实 uTools/Claude Host：新 Codex 任务即时出现、Claude 正常完成→未读→已读→新 Prompt、exact interrupted、两 Provider 的 EyPc 归档自动移除、确认期间真实状态 churn、Float 恢复和安装日志仍为 host gate。Claude RAW-029 已证明 D′ 不产生原生 `archived` ACK，原生侧栏及时收敛当前为 `unsupported`，不再以观察或重启后视觉结果冒充本 gate。
+
+## RAW-159 验证：V3 单一语义、Codex 持久化归档与操作诊断
+
+- 聚焦自动化已覆盖状态真值表、乱序/重复证据、1,000 条等价 observation 零 semantic/package revision/Float/focus、240 项三页库存及第 41/101/201 个消费者、新 membership 先显示后补元数据、快捷键/手动跳转 operationId 与 focus no-op。
+- Codex archive 回归覆盖 Provider 写成功但 Desktop sync 失败、第二次 server verify 矛盾、native ACK 超时、失败后按钮/卡片保留及可重试、成功十阶段 commit/removal、确认 identity 不受等价 revision 影响、tombstone 阻挡旧库存复活，以及同一 operationId 的阶段顺序和显式等级。
+- diagnostics v3 回归覆盖 error/info/debug/off、userConfigured/defaultsRevision 迁移、8 MB/64 MB/14 天轮转、禁用内容键、所有写入显式 level 的静态 AST 门禁，以及 v2/v3 session/operation/trace/provider/taskRef/scope/event/level/since/tail 查询和状态/no-op/快捷键/导航/归档/错误聚合。
+- 同一源码快照聚焦 `10/10` files、`388/388` tests；公共 V3 类型命名收口后又通过 `5/5` files、`211/211` tests，并最终全库 `83/83` files、`1272/1272` tests。typecheck、1870-module production build、canonical/public/dist mirrors、Runtime Identity `5/5` 与 uTools validator 通过。产物身份为 `host-36616822511986c18f2c / renderer-25da7ef64b81aadc76f8`，仅 `artifact-ready`。文档审计/receipt 见 [RAW-159 verify](../../260810/1155-install-runtime-diagnostics/verify.md#L1)。
+- 真实 uTools 同包状态、40+ 库存、操作日志、Codex App 一致归档和故障保留矩阵仍 pending；未授权安装/重启前不得报告 host-loaded 或完成。
+
 ## Findings
 
 - P0: none.
@@ -352,7 +377,7 @@ Date: 2026-08-09
 - P1: 已修复——完整请求快照仅按方法与时间匹配会把同时存在、同方法且无时间的审批互换首次观测时间；现以进程随机盐散列有限请求标识作私有会话关联，原始标识与散列都不跨桥或持久化。
 - P1: 已修复——真实预检复制了审批属于 active 的旧 Presentation 谓词，无法发现待输入与进行中重复计数；现直接调用生产 `projectCodexDynamicStatus` 并断言两组 key 互斥。
 - P1: 已修复——通用任务快捷键只要 Codex 或 Claude 任一库存有值就把全局缓存判为可用，可能在另一来源未完成时按部分集合跳转；现所有启用来源分别 settled 后才原子 ready。
-- P1: 已修复——连续前后任务可让 Codex Deep Link 与 Claude Epitaxy 各自进入独立派发链并同时运行；现 Preload 进程 owner 推进每次游标、只派发 75ms 最终目标，全部来源共享最大并发 1。
+- P1: 历史并发缺陷已修复，并由 RAW-155 优化首键时延——Preload 进程 owner 推进游标，首个目标立即派发，仅 in-flight 时保留最终 trailing，全部来源共享最大并发 1。
 - P1: 已修复——普通 mainHide 的 Renderer 卸载仍通过 Controller `dispose()` 关闭 Host，会使刚修复的 Preload 热缓存再次失效；现 dispose 只 detach，显式功能停用、Provider 变化、kill 与进程退出保留清理权威。
 - P1: RAW-153 已修复源码并由 v9 继续承接宿主接纳——当前 owner 的 `desktop-live + active + waiting` 被旧 already-active 快路保留，较新 Turn/active 后 snapshot/read-state/refollow 可再次复活 waiting；现请求/runtime 序列与 waiting-clear 屏障统一仲裁。
 - P1: RAW-153 已修复源码并由 v9 继续承接宿主接纳——`serverRequest/resolved` 缺失精确处理；现匹配请求单独清除，未匹配只启动目标任务有界重订并保留其它并发审批。
@@ -369,6 +394,7 @@ Date: 2026-08-09
 
 ## Not Checked
 
+- RAW-155 尚未在真实重载的 uTools/Claude 中观察 running→completed-unread、延迟期间打开竞态、exact interrupted 展示、跨 Provider 首键即时/连按 trailing、Float 卡死自恢复与安装目录日志轮转；自动化和构建不得冒充这些宿主证据。
 - RAW-152 尚未在重载后的真实 uTools 中完成跨 Codex/Claude 连续前后键、普通 mainHide 往返和进程重载；自动化只证明派发仲裁与生命周期合同，不宣称宿主崩溃已真实消失。
 - RAW-150/151 的真实 v7 宿主已暴露 waiting→active 滞留/回跳，旧“当前 ASAR 仍为 v5、仅 host-pending”结论已作废并由 RAW-153 rework 接管。
 - RAW-154 尚未在正常重接入的真实 `task-state-v9` 宿主完成双向 waiting、30 秒稳定、两次 mainHide/refollow、exact interrupted→待继续→新 Turn 恢复和角标验收；当前已知运行 ASAR 的历史读回为 v7，自动化不得替代新宿主门禁。
