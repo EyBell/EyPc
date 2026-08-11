@@ -20,6 +20,7 @@ declare global {
       getSnapshot(): CodexFloatSnapshotV1 | null
       getState(): CodexFloatWindowState
       getHealth?(): { heartbeatSequence: number; lastHeartbeatAckAt: number }
+      ackTaskPackage?(stage: 'applied' | 'rejected', reason?: 'older-revision' | 'identity-mismatch' | 'invalid-payload'): boolean
       onSnapshot(listener: (snapshot: CodexFloatSnapshotV1) => void): () => void
       onState(listener: (state: CodexFloatWindowState) => void): () => void
       onActivate?(listener: (payload: { requestedAt?: number; command?: 'new-thread' }) => void): () => void

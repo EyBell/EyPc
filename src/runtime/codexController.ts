@@ -7,14 +7,12 @@ import {
   isCodexConfirmedTerminalEvidence,
   isCodexTaskTab,
   normalizeCodexActivityDecisionDiagnostics,
-  normalizeCodexAttentionOpenHistory,
   normalizeCodexConfig,
   normalizeCodexEnvironment,
   normalizeCodexFirstPromptTimes,
   normalizeCodexQuota,
   normalizeCodexSettings,
   normalizeCodexVisibleTaskTab,
-  orderCodexAttentionTasks,
   projectConversations,
   restoreCodexThread,
   sameCodexActivityDecisionDiagnostics,
@@ -42,11 +40,7 @@ import {
 import {
   companionTaskKey,
   companionTaskProvider,
-  isCompanionCompatibilityMode,
   isCompanionProviderEnabled,
-  orderCompanionTasksForCycle,
-  parseCompanionTaskKey,
-  type CompanionProviderId
 } from '../domain/companionProvider'
 import { mergeCompanionConversations, withoutCompanionProvider } from '../domain/companionAggregate'
 import type { CompanionSnapshotSlice } from '../domain/companionPresentation'
@@ -66,6 +60,7 @@ import {
 } from '../domain/claude'
 import {
   claudeCodeCompletionEpoch,
+  claudeCodeStateEvidenceAt,
   compareClaudeCodeStateVersion,
   normalizeClaudeCodeObservation,
   normalizeClaudeCodeUnread,
@@ -82,19 +77,15 @@ import {
 } from '../domain/codexPresentation'
 import {
   applyCompanionTaskPackageViews,
-  buildCompanionTaskPackageDraft,
   emptyCompanionTaskPackage,
   COMPANION_TASK_KERNEL_REVISION,
   COMPANION_TASK_PACKAGE_REVISION,
-  type CompanionTaskPackageV3
+  type CompanionTaskPackageV4
 } from '../domain/companionTaskPackage'
 import { codexActionLaneId, resolveCodexActionRunnerPriorityProject, type CodexActionRunnerCatalogV1 } from '../domain/codexActionRunner'
 import type { AppState } from '../domain/types'
 import {
-  COMPANION_NAVIGATION_REVISION,
-  COMPANION_TASK_ACTIONS_REVISION,
   type CodexFloatWorkspaceDiagnostics,
-  type CompanionTaskActionTarget,
   type CompanionTaskMutationDelta,
   type CompanionNavigationResult,
   type CompanionNavigationResultEvent,
@@ -112,7 +103,7 @@ export interface CodexRuntimeView {
   newThreadContextFingerprint: string
   taskState: CodexTaskStatePackageV1
   /** Process-owned canonical package shared by Main, Float and shortcuts. */
-  companionTaskPackage: CompanionTaskPackageV3
+  companionTaskPackage: CompanionTaskPackageV4
   runtimeIdentity?: RuntimeIdentityHandshakeV1
   runtimeDiagnostics?: RuntimeDiagnosticsSnapshotV3
   /** @deprecated Consume taskState.conversations. */
@@ -142,7 +133,7 @@ export interface CodexFloatSnapshotV1 {
   taskStateRevision?: string
   /** Optional only when consuming a long-lived older Controller snapshot. */
   taskState?: CodexTaskStatePackageV1
-  companionTaskPackage?: CompanionTaskPackageV3
+  companionTaskPackage?: CompanionTaskPackageV4
   runtimeIdentity?: RuntimeIdentityHandshakeV1
   style: CodexSettings['displayStyle']
   conversationInboxEnabled: boolean
@@ -362,12 +353,6 @@ export function createCodexController(options: CodexControllerOptions) {
     && options.platform.companionKernel.packageRevision === COMPANION_TASK_PACKAGE_REVISION
     ? options.platform.companionKernel
     : null
-  const companionNavigation = !companionKernel && options.platform.companionNavigation?.revision === COMPANION_NAVIGATION_REVISION
-    ? options.platform.companionNavigation
-    : null
-  const companionTasks = !companionKernel && options.platform.companionTasks?.revision === COMPANION_TASK_ACTIONS_REVISION
-    ? options.platform.companionTasks
-    : null
   let quota = normalizeCodexQuota(options.getAppState().codex.cachedQuota)
   if (quota.updatedAt > 0 && quota.status === 'ok') quota = { ...quota, status: 'stale' }
   let config = normalizeCodexConfig(options.getAppState().codex.cachedConfig)
@@ -448,13 +433,6 @@ export function createCodexController(options: CodexControllerOptions) {
   const archivingKeys = new Set<string>()
   const taskArchiveInFlight = new Map<string, Promise<boolean>>()
   let focusedCompanionTaskKey = ''
-  let directTaskCommandQueue: Promise<void> = Promise.resolve()
-  const attentionCommandQueue: Array<{
-    kind: CodexAttentionKind
-    source: 'attention-shortcut' | 'local-shortcut'
-    operationId?: string
-  }> = []
-  let attentionCommandInFlight = false
   let stopActivityListener: (() => void) | null = null
   let stopClaudeQuotaLifecycleListener: (() => void) | null = null
   let stopNavigationResultListener: (() => void) | null = null
@@ -468,11 +446,7 @@ export function createCodexController(options: CodexControllerOptions) {
   let runtimeActive = false
   let codexInventorySettled = false
   let claudeInventorySettled = false
-  let navigationLease = 0
-  let navigationRetained = false
   let companionKernelLease = 0
-  let companionKernelRetained = false
-  let companionDraftSequence = 0
   let stopCompanionPackageListener: (() => void) | null = null
   let lastQuotaReadAt = quota.updatedAt
   let lastTaskReadAt = options.getAppState().codex.lastTaskScanAt
@@ -548,11 +522,12 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function taskOperationsAllowed(): boolean {
-    return options.platform.runtimeIdentityStatus?.status !== 'reload-required'
+    return Boolean(companionKernel)
+      && options.platform.runtimeIdentityStatus?.status !== 'reload-required'
   }
 
   function rejectRuntimeMismatch(): false {
-    options.setMessage(options.platform.runtimeIdentityStatus?.message || 'Preload 与 UI 版本不一致，需要重新接入或重载')
+    options.setMessage(options.platform.runtimeIdentityStatus?.message || 'V4 任务 Kernel 未加载，需要重新接入或重载')
     options.notify()
     return false
   }
@@ -643,8 +618,11 @@ export function createCodexController(options: CodexControllerOptions) {
       now,
       dynamicTaskWindowHours: codexState().settings.dynamicTaskWindowHours
     })
-    if (lastCompleteness === 'verified' || claudeCodeSessions.length > 0) {
-      pruneAttentionOpenHistory(true)
+    // Metadata and the process package advance on independent lanes. Reapply
+    // the latest canonical package after a metadata refresh without treating
+    // the same package revision as a new publication.
+    if (companionTaskPackage.complete) {
+      taskState = applyCompanionTaskPackageViews(taskState, companionTaskPackage)
     }
     syncCompanionTaskAuthority()
     if (started && !disposed && !actionPreflightInFlight && shouldRun()) schedule()
@@ -751,7 +729,9 @@ export function createCodexController(options: CodexControllerOptions) {
     }
   }
 
-  /** Inventory owns membership/metadata; an existing row keeps state-lane fields. */
+  /** Inventory owns membership/metadata; its newer state evidence must not be
+   * overwritten by an older Controller cache. Missing state evidence alone
+   * inherits the previous state lane. */
   function mergeClaudeInventory(
     incoming: readonly ClaudeCodeObservation[],
     currentRows: readonly ClaudeCodeObservation[] = claudeCodeSessions
@@ -760,20 +740,36 @@ export function createCodexController(options: CodexControllerOptions) {
     return incoming.map((row) => {
       const current = currentById.get(row.sessionId)
       if (!current) return row
+      const incomingHasStateEvidence = row.stateGeneration > 0
+        || row.phaseUpdatedAt > 0
+        || row.stateSource !== 'none'
+        || row.statusCorrelation !== 'none'
+      const incomingEvidenceAt = claudeCodeStateEvidenceAt(row)
+      const currentEvidenceAt = claudeCodeStateEvidenceAt(current)
+      // Inventory can carry a newer session.phase while its producer-local
+      // generation is lower than the state-lane cache. Order cross-lane
+      // evidence by causal event time; a delayed inventory read must still not
+      // regress a newer state event. Only an inventory row with no state
+      // evidence inherits the previous phase.
+      const state = !incomingHasStateEvidence
+        ? current
+        : incomingEvidenceAt > 0 && currentEvidenceAt > incomingEvidenceAt
+          ? current
+          : row
       return {
         ...row,
-        statusCorrelation: current.statusCorrelation,
-        stateSource: current.stateSource,
-        stateCompatibility: current.stateCompatibility,
-        stateGeneration: current.stateGeneration,
-        phase: current.phase,
-        phaseUpdatedAt: current.phaseUpdatedAt,
-        turnStartedAt: current.turnStartedAt,
-        hookActivityAt: current.hookActivityAt,
-        waitingApprovalAt: current.waitingApprovalAt,
-        waitingInputAt: current.waitingInputAt,
-        lastStopAt: current.lastStopAt,
-        lastSessionEndAt: current.lastSessionEndAt
+        statusCorrelation: state.statusCorrelation,
+        stateSource: state.stateSource,
+        stateCompatibility: state.stateCompatibility,
+        stateGeneration: state.stateGeneration,
+        phase: state.phase,
+        phaseUpdatedAt: state.phaseUpdatedAt,
+        turnStartedAt: state.turnStartedAt,
+        hookActivityAt: state.hookActivityAt,
+        waitingApprovalAt: state.waitingApprovalAt,
+        waitingInputAt: state.waitingInputAt,
+        lastStopAt: state.lastStopAt,
+        lastSessionEndAt: state.lastSessionEndAt
       }
     })
   }
@@ -980,7 +976,7 @@ export function createCodexController(options: CodexControllerOptions) {
     if (claudeInventoryInFlight) return claudeInventoryInFlight
     if (!bridge || typeof readCodeSnapshot !== 'function') {
       claudeInventorySettled = true
-      syncCompanionNavigation()
+      syncCompanionTaskKernel()
       return Promise.resolve(false)
     }
     const laneToken = runtimeGeneration
@@ -1004,7 +1000,7 @@ export function createCodexController(options: CodexControllerOptions) {
       } finally {
         if (!disposed && laneToken === runtimeGeneration) {
           claudeInventorySettled = true
-          syncCompanionNavigation()
+          syncCompanionTaskKernel()
         }
       }
     })().finally(() => {
@@ -1262,7 +1258,7 @@ export function createCodexController(options: CodexControllerOptions) {
       claudeCodeUnread = null
       claudeQuota = staleClaudeQuota(claudeQuota)
       claudeInventorySettled = true
-      syncCompanionNavigation()
+      syncCompanionTaskKernel()
       return false
     }
     subscribeClaudeEvents()
@@ -1957,7 +1953,7 @@ export function createCodexController(options: CodexControllerOptions) {
     })().finally(() => {
       if (includeThreads && !disposed && runtimeToken === runtimeGeneration && generation === refreshGeneration) {
         codexInventorySettled = true
-        syncCompanionNavigation()
+        syncCompanionTaskKernel()
       }
       if (actionPreflight) actionPreflightInFlight = false
       if (inFlight !== operation) return
@@ -2151,71 +2147,8 @@ export function createCodexController(options: CodexControllerOptions) {
       : [...conversations.ongoing, ...conversations.completedUnread, ...conversations.completed, ...conversations.hidden]
   }
 
-  function companionTaskPhase(task: CodexTaskCard): string {
-    if (companionTaskProvider(task) === 'claude') {
-      const phase = (task as CodexTaskCard & { claudePhase?: string }).claudePhase
-      return phase || 'unknown'
-    }
-    if (task.bucket === 'stopped') return 'stopped'
-    if (task.bucket === 'completed' || task.bucket === 'completed-unread') return 'completed'
-    return task.activityState
-  }
-
-  function companionTaskActionTarget(task: CodexTaskCard): CompanionTaskActionTarget | null {
-    if (!task.actionAlias || !navigationProviderEnabled(companionTaskProvider(task))) return null
-    const provider = companionTaskProvider(task)
-    const phase = companionTaskPhase(task)
-    const target: CompanionTaskActionTarget = {
-      key: task.key,
-      provider,
-      actionAlias: task.actionAlias,
-      revisionAt: task.revisionAt,
-      phase,
-      canArchive: task.archiveCapability === 'allowed'
-    }
-    if (provider === 'codex') {
-      target.archiveRequest = {
-        expectedUpdatedAt: task.updatedAt,
-        expectedRevisionAt: task.revisionAt,
-        ...(task.lastTurnCompletedAt ? { expectedCompletionAt: task.lastTurnCompletedAt } : {}),
-        expectedLastTurnStartedAt: task.lastTurnStartedAt || 0,
-        expectedSourceFingerprint: taskState.conversations.sourceFingerprint || '',
-        evidence: task.bucket === 'stopped' ? 'stopped' : 'completed'
-      }
-    }
-    return target
-  }
-
-  function archiveAttentionKeys(): string[] {
-    return orderCodexAttentionTasks(allTasks().filter((task) => (
-      task.archiveCapability === 'allowed'
-      && !task.isHidden
-      && navigationProviderEnabled(companionTaskProvider(task))
-    ))).map((task) => task.key)
-  }
-
-  function syncCompanionTaskActions() {
-    if (companionKernel) return syncCompanionTaskKernel()
-    if (!companionTasks) return false
-    const enabled = isFeatureEnabled() && shouldMaintainTaskData()
-    const targets = allTasks()
-      .map(companionTaskActionTarget)
-      .filter((target): target is CompanionTaskActionTarget => Boolean(target))
-    return companionTasks.sync({
-      enabled,
-      providers: codexState().settings.providers,
-      ready: enabled && hasCompleteTaskInventory(),
-      targets,
-      focusedKey: focusedCompanionTaskKey,
-      attentionKeys: archiveAttentionKeys()
-    })
-  }
-
   function syncCompanionTaskAuthority(): boolean {
-    if (companionKernel) return syncCompanionTaskKernel()
-    const actionsSynced = syncCompanionTaskActions()
-    syncCompanionNavigation()
-    return actionsSynced
+    return syncCompanionTaskKernel()
   }
 
   function setFocusedTask(key: string, revisionAt?: number) {
@@ -2223,13 +2156,8 @@ export function createCodexController(options: CodexControllerOptions) {
     const nextKey = task ? task.key : ''
     if (nextKey === focusedCompanionTaskKey) return false
     focusedCompanionTaskKey = nextKey
-    if (companionKernel) syncCompanionTaskKernel()
-    else syncCompanionTaskActions()
+    syncCompanionTaskKernel()
     return true
-  }
-
-  function navigationProviderEnabled(provider: CompanionProviderId) {
-    return isCompanionProviderEnabled(codexState().settings.providers, provider)
   }
 
   function hasCompleteTaskInventory() {
@@ -2242,9 +2170,7 @@ export function createCodexController(options: CodexControllerOptions) {
     if (disposed || !hasCompleteTaskInventory()) return
     const events = companionKernel?.takeResults && companionKernelLease
       ? companionKernel.takeResults({ lease: companionKernelLease })
-      : companionNavigation?.takeResults && navigationLease
-        ? companionNavigation.takeResults({ lease: navigationLease })
-        : []
+      : []
     for (const event of events) applyNavigationResult(event)
   }
 
@@ -2271,196 +2197,67 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function beginCompanionNavigation() {
-    if (companionKernel) {
-      const receipt = companionKernel.attach({
-        enabled: isFeatureEnabled() && shouldMaintainTaskData(),
-        providers: codexState().settings.providers
-      })
-      companionKernelLease = receipt.lease
-      companionKernelRetained = receipt.retained
-      acceptCompanionTaskPackage(receipt.package)
-      if (!stopCompanionPackageListener && typeof companionKernel.onPackage === 'function') {
-        stopCompanionPackageListener = companionKernel.onPackage((value) => {
-          const changed = acceptCompanionTaskPackage(value)
-          if (changed && started && !disposed) options.notify()
-        })
-      }
-      if (!stopNavigationResultListener && typeof companionKernel.onResult === 'function') {
-        stopNavigationResultListener = companionKernel.onResult(() => consumeNavigationResults())
-      }
-      syncCompanionTaskKernel()
-      return
-    }
-    if (!companionNavigation) return
-    const receipt = companionNavigation.begin({
-      enabled: isFeatureEnabled(),
-      providers: codexState().settings.providers
-    })
-    navigationLease = receipt.lease
-    navigationRetained = receipt.retained
-    if (!stopNavigationResultListener && typeof companionNavigation.onResult === 'function') {
-      stopNavigationResultListener = companionNavigation.onResult(() => consumeNavigationResults())
-    }
-    syncCompanionNavigation()
-  }
-
-  function syncCompanionNavigation() {
-    if (companionKernel) {
-      syncCompanionTaskKernel()
-      return
-    }
-    if (!companionNavigation || !navigationLease) return
-    const enabled = isFeatureEnabled()
-    const ready = enabled && hasCompleteTaskInventory()
-    // A fresh Renderer must not erase the process-owned hot snapshot with its
-    // intentionally empty bootstrap projection. Replace it only after every
-    // enabled provider lane has settled, or immediately when disabling.
-    if (navigationRetained && enabled && !ready) return
-    const targets = allTasks()
-      .map(companionTaskActionTarget)
-      .filter((target): target is CompanionTaskActionTarget => Boolean(target))
-    const synced = companionNavigation.sync({
-      lease: navigationLease,
-      enabled,
+    if (!companionKernel) return
+    const receipt = companionKernel.attach({
+      enabled: isFeatureEnabled() && shouldMaintainTaskData(),
       providers: codexState().settings.providers,
-      ready,
-      targets,
-      cycleKeys: cycleTasks().map((task) => task.key)
+      dynamicTaskWindowHours: codexState().settings.dynamicTaskWindowHours
     })
-    if (synced && (ready || !enabled)) navigationRetained = false
-    if (synced && ready) consumeNavigationResults()
+    companionKernelLease = receipt.lease
+    acceptCompanionTaskPackage(receipt.package)
+    if (!stopCompanionPackageListener && typeof companionKernel.subscribe === 'function') {
+      stopCompanionPackageListener = companionKernel.subscribe(companionTaskPackage.packageRevision, (value) => {
+        const changed = acceptCompanionTaskPackage(value)
+        if (changed && started && !disposed) options.notify()
+      })
+    } else if (!stopCompanionPackageListener && typeof companionKernel.onPackage === 'function') {
+      stopCompanionPackageListener = companionKernel.onPackage((value) => {
+        const changed = acceptCompanionTaskPackage(value)
+        if (changed && started && !disposed) options.notify()
+      })
+    }
+    if (!stopNavigationResultListener && typeof companionKernel.onResult === 'function') {
+      stopNavigationResultListener = companionKernel.onResult(() => consumeNavigationResults())
+    }
+    syncCompanionTaskKernel()
   }
 
-  function acceptCompanionTaskPackage(value: CompanionTaskPackageV3 | null | undefined): boolean {
+  function acceptCompanionTaskPackage(value: CompanionTaskPackageV4 | null | undefined): boolean {
     if (!value || value.schema !== COMPANION_TASK_PACKAGE_REVISION || value.kernelRevision !== COMPANION_TASK_KERNEL_REVISION) return false
-    if (value.packageRevision < companionTaskPackage.packageRevision) return false
-    const changed = value.packageRevision !== companionTaskPackage.packageRevision
-      || value.freshness !== companionTaskPackage.freshness
-      || value.complete !== companionTaskPackage.complete
+    if (value.packageRevision <= companionTaskPackage.packageRevision) return false
     const knownKeys = new Set(taskState.conversations.all.map((task) => task.key))
     const missingCodexMetadata = value.complete
       && value.tasks.some((task) => task.provider === 'codex' && !knownKeys.has(task.key))
     companionTaskPackage = value
-    if (value.complete) taskState = applyCompanionTaskPackageViews(taskState, value)
+    if (value.complete) {
+      const pausedKeys = new Set(value.views.pausedKeys)
+      if (pausedKeys.size) {
+        const receipts = codexState().receipts.filter((receipt) => !pausedKeys.has(receipt.key))
+        if (receipts.length !== codexState().receipts.length) {
+          codexState().receipts = receipts
+          options.save()
+        }
+      }
+      taskState = applyCompanionTaskPackageViews(taskState, value)
+    }
     if (missingCodexMetadata && started && !disposed) scheduleStructuralRefresh('urgent')
-    return changed
+    return true
   }
 
   function syncCompanionTaskKernel(): boolean {
     if (!companionKernel || !companionKernelLease || disposed) return false
     const enabled = isFeatureEnabled() && shouldMaintainTaskData()
-    const complete = enabled && hasCompleteTaskInventory()
-    if (companionKernelRetained && enabled && !complete) return true
-    const draft = buildCompanionTaskPackageDraft(taskState, {
+    const accepted = companionKernel.configure?.({
+      lease: companionKernelLease,
       enabled,
       providers: codexState().settings.providers,
-      complete,
-      focusedKey: focusedCompanionTaskKey,
-      draftRevision: ++companionDraftSequence,
-      sourceGenerations: {
-        codex: Math.max(lastTaskReadAt, lastActivityGeneration),
-        claude: Math.max(lastClaudeInventoryGeneration, lastClaudeStateGeneration, lastClaudeUnreadGeneration)
-      },
-      sourceLaneGenerations: {
-        codex: {
-          membership: lastTaskReadAt,
-          phase: lastActivityGeneration,
-          unread: lastActivityGeneration
-        },
-        claude: {
-          membership: lastClaudeInventoryGeneration,
-          phase: lastClaudeStateGeneration,
-          unread: lastClaudeUnreadGeneration || lastClaudeUnreadReadAt
-        }
-      },
-      localPins: codexState().localPins.filter((pin) => pin.kind === 'task').map((pin) => pin.key)
-    })
-    const accepted = companionKernel.syncPackage({ lease: companionKernelLease, draft })
+      dynamicTaskWindowHours: codexState().settings.dynamicTaskWindowHours,
+      focusedKey: focusedCompanionTaskKey
+    }) || companionKernel.getLatest() || companionKernel.getPackage?.()
     if (!accepted) return false
     acceptCompanionTaskPackage(accepted)
-    if (complete || !enabled) companionKernelRetained = false
-    if (complete) consumeNavigationResults()
+    if (accepted.complete) consumeNavigationResults()
     return true
-  }
-
-  function attentionGroupTasks(kind: CodexAttentionKind): CodexTaskCard[] {
-    const candidates = kind === 'input'
-      ? taskState.conversations.inputRequired
-      : allTasks().filter((task) => task.bucket === 'completed-unread')
-    return orderCodexAttentionTasks(candidates.filter((task) => navigationProviderEnabled(companionTaskProvider(task))))
-  }
-
-  function attentionCandidates(kind: CodexAttentionKind): Array<CodexTaskCard & { actionAlias: string }> {
-    return attentionGroupTasks(kind)
-      .filter((task): task is CodexTaskCard & { actionAlias: string } => Boolean(task.actionAlias))
-  }
-
-  function attentionInstanceKey(kind: CodexAttentionKind, task: CodexTaskCard): string {
-    const enteredAt = task.statusEnteredAt || task.completionRevision || task.lastTurnStartedAt || task.updatedAt || 0
-    return enteredAt > 0 ? `${kind}:${task.key}:${enteredAt}` : ''
-  }
-
-  function pruneAttentionOpenHistory(persist = false): boolean {
-    const state = codexState()
-    const valid = new Set<string>()
-    for (const kind of ['input', 'completed-unread'] as const) {
-      for (const task of attentionGroupTasks(kind)) {
-        const instance = attentionInstanceKey(kind, task)
-        if (instance) valid.add(instance)
-      }
-    }
-    const previous = state.attentionOpenHistory || []
-    const next = normalizeCodexAttentionOpenHistory(previous.filter((entry) => valid.has(`${entry.kind}:${entry.key}:${entry.statusEnteredAt}`)))
-    const changed = next.length !== previous.length
-      || next.some((entry, index) => JSON.stringify(entry) !== JSON.stringify(previous[index]))
-    if (!changed) return false
-    state.attentionOpenHistory = next
-    if (persist) options.save()
-    return true
-  }
-
-  function recordAttentionOpen(taskKey: string, resetKind?: CodexAttentionKind) {
-    const state = codexState()
-    const task = allTasks().find((candidate) => candidate.key === taskKey)
-    const kind = task?.bucket === 'completed-unread'
-      ? 'completed-unread' as const
-      : task && (task.activityState === 'waiting-input' || task.activityState === 'waiting-approval')
-        ? 'input' as const
-        : null
-    const base = resetKind
-      ? (state.attentionOpenHistory || []).filter((entry) => entry.kind !== resetKind)
-      : state.attentionOpenHistory || []
-    if (!task || !kind) {
-      if (resetKind && base.length !== (state.attentionOpenHistory || []).length) {
-        state.attentionOpenHistory = normalizeCodexAttentionOpenHistory(base)
-        options.save()
-      }
-      return
-    }
-    const statusEnteredAt = task.statusEnteredAt || task.completionRevision || task.lastTurnStartedAt || task.updatedAt || 0
-    if (!statusEnteredAt) return
-    state.attentionOpenHistory = normalizeCodexAttentionOpenHistory([
-      { kind, key: task.key, statusEnteredAt, openedAt: Date.now() },
-      ...base
-    ])
-    pruneAttentionOpenHistory(false)
-    options.save()
-  }
-
-  function pinnedTaskKeys(): string[] {
-    const pinned = taskState.conversations.projectSections.find((section) => section.id === 'pinned')
-    return (pinned?.entries || [])
-      .filter((entry) => entry.kind === 'task')
-      .map((entry) => entry.task.key)
-  }
-
-  /**
-   * Cycle order: the same base comparator with a provider group as primary key.
-   * Generic previous/next consume this projection. The two attention shortcuts
-   * intentionally use status-entry time plus persisted unseen progress.
-   */
-  function cycleOrderedTasks(tasks: CodexTaskCard[]): CodexTaskCard[] {
-    return orderCompanionTasksForCycle(tasks, pinnedTaskKeys())
   }
 
   function setTaskTab(tab: CodexTaskTab) {
@@ -2668,185 +2465,29 @@ export function createCodexController(options: CodexControllerOptions) {
   async function openThread(
     key: string,
     actionAlias: string,
-    resetAttentionKind?: CodexAttentionKind,
+    _resetAttentionKind?: CodexAttentionKind,
     source: 'card-click' | 'manual-row-open' | 'manual-quick-jump' | 'attention-shortcut' | 'local-shortcut' | 'global-shortcut' = 'manual-row-open',
     operationId?: string
   ) {
     if (!key || !actionAlias || disposed || !isFeatureEnabled()) return false
     if (!taskOperationsAllowed()) return rejectRuntimeMismatch()
-    const provider = allTasks().find((item) => item.key === key)?.provider || parseCompanionTaskKey(key).provider
-    let task = allTasks().find((item) => item.key === key && item.actionAlias === actionAlias)
-    if (!task) {
-      if (provider === 'codex') await refresh({ actionPreflight: true })
-      if (disposed || !isFeatureEnabled()) return false
-      task = allTasks().find((item) => item.key === key && item.actionAlias)
-    }
-    if (!task) {
+    const canonical = companionTaskPackage.tasks.find((item) => item.key === key && item.actionAlias === actionAlias)
+    const task = allTasks().find((item) => item.key === key && item.actionAlias === actionAlias)
+    if (!canonical || !companionKernel) {
       options.setMessage('线程动作已失效，请刷新后重试')
       return false
     }
-    if (companionKernel) {
-      syncCompanionTaskKernel()
-      const result = await companionKernel.dispatch({
-        action: 'open',
-        key,
-        source,
-        operationId
-      })
-      if (provider === 'claude') {
-        const opened = await openClaudeTask(key, task.actionAlias!, result as CompanionNavigationResult)
-        if (opened) recordAttentionOpen(key, resetAttentionKind)
-        return opened
-      }
-      const opened = result.outcome === 'opened' || result.outcome === 'dispatched'
-      if (disposed) return opened
-      if (opened) {
-        options.setMessage(task.hiddenKind ? '已打开，任务仍在 Companion 已隐藏区' : '已打开 Codex 任务')
-        recordAttentionOpen(key, resetAttentionKind)
-        return true
-      }
-      options.setMessage(result.message || 'Codex 任务打开失败')
-      return false
+    syncCompanionTaskKernel()
+    const result = await companionKernel.dispatch({ action: 'open', key, source, operationId })
+    if (canonical.provider === 'claude') {
+      return openClaudeTask(key, actionAlias, result as CompanionNavigationResult)
     }
-    if (companionNavigation) {
-      syncCompanionNavigation()
-      const result = await companionNavigation.open({
-        key,
-        source,
-        operationId,
-        target: companionTaskActionTarget(task) || undefined
-      })
-      if (provider === 'claude') {
-        const opened = await openClaudeTask(key, task.actionAlias!, result)
-        if (opened) recordAttentionOpen(key, resetAttentionKind)
-        return opened
-      }
-      const opened = result.outcome === 'opened' || result.outcome === 'dispatched'
-      if (disposed) return opened
-      if (opened) {
-        options.setMessage(task.hiddenKind ? '已打开，任务仍在 Companion 已隐藏区' : '已打开 Codex 任务')
-        recordAttentionOpen(key, resetAttentionKind)
-        return true
-      }
-      options.setMessage(result.message || 'Codex 任务打开失败')
-      return false
-    }
-    if (companionTasks) {
-      syncCompanionTaskActions()
-      const result = await companionTasks.open({
-        key,
-        source,
-        target: companionTaskActionTarget(task) || undefined
-      })
-      if (provider === 'claude') {
-        const opened = await openClaudeTask(key, task.actionAlias!, result)
-        if (opened) recordAttentionOpen(key, resetAttentionKind)
-        return opened
-      }
-      const opened = result.outcome === 'opened' || result.outcome === 'dispatched'
-      options.setMessage(result.message || (opened ? '已打开 Codex 任务' : 'Codex 任务打开失败'))
-      if (opened) recordAttentionOpen(key, resetAttentionKind)
-      return opened
-    }
-    if (provider === 'claude') {
-      const opened = await openClaudeTask(key, task.actionAlias!)
-      if (opened) recordAttentionOpen(key, resetAttentionKind)
-      return opened
-    }
-    let result = await options.platform.codex.openThread(task.actionAlias!)
-    if (['expired-alias', 'invalid-alias', 'stale-alias'].includes(result.errorCode || '')) {
-      const previousAlias = task.actionAlias
-      await refresh({ actionPreflight: true })
-      if (disposed || !isFeatureEnabled()) return false
-      const refreshedTask = allTasks().find((item) => item.key === key && item.actionAlias)
-      if (refreshedTask?.actionAlias && refreshedTask.actionAlias !== previousAlias) {
-        task = refreshedTask
-        result = await options.platform.codex.openThread(refreshedTask.actionAlias)
-      }
-    }
-    if (result.outcome === 'opened') {
-      if (task.hiddenKind) {
-        options.setMessage('已打开，任务仍在 Companion 已隐藏区')
-      } else {
-        options.setMessage('已打开 Codex 任务')
-      }
-      recordAttentionOpen(key, resetAttentionKind)
-      return true
-    }
-    options.setMessage(result.message || (result.outcome === 'dispatched' ? '已交给系统打开' : 'Codex 任务打开失败'))
-    const dispatched = result.outcome === 'dispatched'
-    if (dispatched) recordAttentionOpen(key, resetAttentionKind)
-    return dispatched
-  }
-
-  function firstLocalPinnedOpenableTask() {
-    const byKey = new Map(allTasks().map((task) => [task.key, task]))
-    for (const pin of codexState().localPins) {
-      if (pin.kind !== 'task') continue
-      const task = byKey.get(pin.key)
-      if (task?.pinSource === 'local' && task.actionAlias && navigationProviderEnabled(companionTaskProvider(task))) {
-        return task as CodexTaskCard & { actionAlias: string }
-      }
-    }
-    return null
-  }
-
-  async function openAttentionFromCurrentInventory(
-    kind: CodexAttentionKind,
-    source: 'attention-shortcut' | 'local-shortcut' = 'attention-shortcut',
-    operationId?: string
-  ) {
-    pruneAttentionOpenHistory(false)
-    const candidates = attentionCandidates(kind)
-    if (!candidates.length) {
-      if (kind === 'input') {
-        const fallback = firstLocalPinnedOpenableTask()
-        if (fallback) return openThread(fallback.key, fallback.actionAlias, undefined, source, operationId)
-      }
-      options.setMessage(kind === 'input' ? '当前没有待输入任务' : '当前没有已完成未读任务')
-      return false
-    }
-    const openedInstances = new Set((codexState().attentionOpenHistory || [])
-      .filter((entry) => entry.kind === kind)
-      .map((entry) => `${entry.kind}:${entry.key}:${entry.statusEnteredAt}`))
-    const unseen = candidates.find((task) => !openedInstances.has(attentionInstanceKey(kind, task)))
-    const task = unseen || candidates[0]
-    return openThread(task.key, task.actionAlias, unseen ? undefined : kind, source, operationId)
-  }
-
-  function queueAttentionCommand(kind: CodexAttentionKind, source: 'attention-shortcut' | 'local-shortcut', operationId?: string) {
-    attentionCommandQueue.push({ kind, source, operationId })
-    if (attentionCommandInFlight) return
-    attentionCommandInFlight = true
-    void (async () => {
-      try {
-        while (attentionCommandQueue.length) {
-          const next = attentionCommandQueue.shift()!
-          if (disposed || !isFeatureEnabled()) continue
-          await openAttentionFromCurrentInventory(next.kind, next.source, next.operationId)
-        }
-      } finally {
-        attentionCommandInFlight = false
-      }
-    })()
-  }
-
-  function openFirstInputFromCurrentInventory(source: 'attention-shortcut' | 'local-shortcut', operationId?: string) {
-    if (!attentionCandidates('input').length && !firstLocalPinnedOpenableTask()) {
-      options.setMessage('当前没有待输入任务')
-      return false
-    }
-    queueAttentionCommand('input', source, operationId)
-    return true
-  }
-
-  function openFirstCompletedUnreadFromCurrentInventory(source: 'attention-shortcut' | 'local-shortcut', operationId?: string) {
-    if (!attentionCandidates('completed-unread').length) {
-      options.setMessage('当前没有已完成未读任务')
-      return false
-    }
-    queueAttentionCommand('completed-unread', source, operationId)
-    return true
+    const opened = result.outcome === 'opened' || result.outcome === 'dispatched'
+    if (disposed) return opened
+    options.setMessage(result.message || (opened
+      ? task?.hiddenKind ? '已打开，任务仍在 Companion 已隐藏区' : '已打开 Codex 任务'
+      : 'Codex 任务打开失败'))
+    return opened
   }
 
   function hasVerifiedTaskInventory() {
@@ -2855,155 +2496,42 @@ export function createCodexController(options: CodexControllerOptions) {
       && /^[a-f0-9]{64}$/.test(lastSourceFingerprint)
   }
 
-  function runDirectTaskCommand(command: () => boolean) {
-    if (disposed || !isFeatureEnabled()) return false
-    if (hasCompleteTaskInventory()) return command()
-    // A uTools mainHide entry can reach Runtime immediately after start(),
-    // while syncActivation has intentionally cleared the previous lifecycle's
-    // inventory. Serialize those accepted commands behind one tasks-only read
-    // so a cold shortcut is not consumed against an empty projection.
-    directTaskCommandQueue = directTaskCommandQueue
-      .catch(() => undefined)
-      .then(async () => {
-        if (disposed || !isFeatureEnabled()) return
-        if (!hasCompleteTaskInventory()) {
-          // Cold shortcut hydration is task-only: never wait for Claude quota,
-          // plan history or environment inspection before selecting a target.
-          const providers = codexState().settings.providers
-          if (providers.codex !== true) codexInventorySettled = true
-          if (providers.claude !== true) claudeInventorySettled = true
-          await Promise.allSettled([
-            providers.codex === true ? refresh({ actionPreflight: true }) : Promise.resolve(),
-            providers.claude === true
-              ? Promise.all([refreshClaudeInventory(Date.now()), refreshClaudeUnread()])
-              : Promise.resolve()
-          ])
-          publishTaskStatePackage(taskState.conversations)
-          options.notify()
-        }
-        if (disposed || !isFeatureEnabled() || !hasCompleteTaskInventory()) return
-        command()
-      })
-    return true
-  }
-
   function openFirstInput(operationId?: string, source: 'attention-shortcut' | 'local-shortcut' = 'attention-shortcut') {
     if (!taskOperationsAllowed()) return rejectRuntimeMismatch()
-    if (companionKernel) {
-      syncCompanionTaskKernel()
-      void companionKernel.dispatch({ action: 'open-attention', kind: 'input', source, operationId }).then((result) => {
-        if (disposed || result.outcome === 'opened' || result.outcome === 'dispatched') {
-          if (result.key) recordAttentionOpen(result.key, 'input')
-          return
-        }
-        options.setMessage(result.message || '当前没有待输入任务')
-        options.notify()
-      })
-      return true
-    }
-    return runDirectTaskCommand(() => openFirstInputFromCurrentInventory(source, operationId))
+    syncCompanionTaskKernel()
+    void companionKernel!.dispatch({ action: 'open-attention', kind: 'input', source, operationId }).then((result) => {
+      if (disposed || result.outcome === 'opened' || result.outcome === 'dispatched') return
+      options.setMessage(result.message || '当前没有待输入任务')
+      options.notify()
+    })
+    return true
   }
 
   function openFirstCompletedUnread(operationId?: string, source: 'attention-shortcut' | 'local-shortcut' = 'attention-shortcut') {
     if (!taskOperationsAllowed()) return rejectRuntimeMismatch()
-    if (companionKernel) {
-      syncCompanionTaskKernel()
-      void companionKernel.dispatch({ action: 'open-attention', kind: 'completed-unread', source, operationId }).then((result) => {
-        if (disposed || result.outcome === 'opened' || result.outcome === 'dispatched') {
-          if (result.key) recordAttentionOpen(result.key, 'completed-unread')
-          return
-        }
-        options.setMessage(result.message || '当前没有已完成未读任务')
-        options.notify()
-      })
-      return true
-    }
-    return runDirectTaskCommand(() => openFirstCompletedUnreadFromCurrentInventory(source, operationId))
+    syncCompanionTaskKernel()
+    void companionKernel!.dispatch({ action: 'open-attention', kind: 'completed-unread', source, operationId }).then((result) => {
+      if (disposed || result.outcome === 'opened' || result.outcome === 'dispatched') return
+      options.setMessage(result.message || '当前没有已完成未读任务')
+      options.notify()
+    })
+    return true
   }
 
   function archiveFocusedTask(operationId?: string) {
     if (!taskOperationsAllowed()) return rejectRuntimeMismatch()
-    if (companionKernel) {
-      syncCompanionTaskKernel()
-      void companionKernel.dispatch({ action: 'archive-focused', source: 'archive-shortcut', operationId }).then((result) => {
-        if (disposed || result.outcome === 'dispatched') return
-        options.setMessage(result.message || '当前没有唯一且可归档的任务')
-        options.notify()
-      })
-      return true
-    }
-    return runDirectTaskCommand(() => {
-      if (!companionTasks) {
-        options.setMessage('统一任务归档通路未加载，请重载插件后重试')
-        return false
-      }
-      syncCompanionTaskActions()
-      return companionTasks.shortcutArchive()
+    syncCompanionTaskKernel()
+    void companionKernel!.dispatch({ action: 'archive-focused', source: 'archive-shortcut', operationId }).then((result) => {
+      if (disposed || result.outcome === 'dispatched') return
+      options.setMessage(result.message || '当前没有唯一且可归档的任务')
+      options.notify()
     })
-  }
-
-  function cycleTasks(): Array<CodexTaskCard & { actionAlias: string }> {
-    const tasks = allTasks()
-    if (companionKernel && companionTaskPackage.complete) {
-      const byKey = new Map(tasks.map((task) => [task.key, task]))
-      return companionTaskPackage.views.cycleKeys
-        .map((key) => byKey.get(key))
-        .filter((task): task is CodexTaskCard & { actionAlias: string } => Boolean(task?.actionAlias))
-    }
-    const inputRequiredTasks = cycleOrderedTasks(taskState.conversations.inputRequired)
-    const recentActiveTasks = taskState.dynamic.groups.active
-    const usableTasks = (candidates: CodexTaskCard[]) => {
-      const seen = new Set<string>()
-      return candidates.filter((task): task is CodexTaskCard & { actionAlias: string } => {
-        if (!task.actionAlias || seen.has(task.key) || !navigationProviderEnabled(companionTaskProvider(task))) return false
-        seen.add(task.key)
-        return true
-      })
-    }
-    const tiers = [
-      cycleOrderedTasks([
-        ...inputRequiredTasks.filter((task) => task.planImplementationOnly !== true && task.activityState !== 'waiting-approval'),
-        ...inputRequiredTasks.filter((task) => task.planImplementationOnly !== true && task.activityState === 'waiting-approval')
-      ]),
-      inputRequiredTasks.filter((task) => task.planImplementationOnly === true),
-      cycleOrderedTasks(recentActiveTasks)
-    ]
-    for (const tier of tiers) {
-      const candidates = usableTasks(tier)
-      if (candidates.length) return candidates
-    }
-    return usableTasks(cycleOrderedTasks(tasks.filter((task) => task.pinSource === 'local' && task.bucket !== 'stopped')))
+    return true
   }
 
   function cycleTaskFromCurrentInventory(direction: -1 | 1, operationId?: string, source: 'global-shortcut' | 'local-shortcut' = 'global-shortcut') {
-    if (companionKernel) {
-      syncCompanionTaskKernel()
-      void companionKernel.dispatch({ action: 'cycle', direction, source, operationId }).then((result) => {
-        if (disposed || result.outcome === 'opened' || result.outcome === 'dispatched' || result.errorCode === 'superseded') return
-        options.setMessage(result.message || '任务切换失败，请重试')
-        options.notify()
-      }).catch(() => {
-        if (disposed) return
-        options.setMessage('任务切换失败，请重试')
-        options.notify()
-      })
-      return true
-    }
-    const tasks = cycleTasks()
-    if (!tasks.length) {
-      // Compatibility mode keeps the exact legacy wording; only a genuinely
-      // multi-provider companion drops the Codex-specific noun.
-      options.setMessage(isCompanionCompatibilityMode(codexState().settings.providers)
-        ? '当前没有可切换的 Codex 任务'
-        : '当前没有可切换的任务')
-      return false
-    }
-    if (!companionNavigation) {
-      options.setMessage('任务切换桥版本过旧，请重载 EyPc 后重试')
-      return false
-    }
-    syncCompanionNavigation()
-    void companionNavigation.cycle(direction, { operationId, source }).then((result) => {
+    syncCompanionTaskKernel()
+    void companionKernel!.dispatch({ action: 'cycle', direction, source, operationId }).then((result) => {
       if (disposed || result.outcome === 'opened' || result.outcome === 'dispatched' || result.errorCode === 'superseded') return
       options.setMessage(result.message || '任务切换失败，请重试')
       options.notify()
@@ -3017,8 +2545,7 @@ export function createCodexController(options: CodexControllerOptions) {
 
   function cycleTask(direction: -1 | 1, operationId?: string, source: 'global-shortcut' | 'local-shortcut' = 'global-shortcut') {
     if (!taskOperationsAllowed()) return rejectRuntimeMismatch()
-    if (companionKernel) return cycleTaskFromCurrentInventory(direction, operationId, source)
-    return runDirectTaskCommand(() => cycleTaskFromCurrentInventory(direction, operationId, source))
+    return cycleTaskFromCurrentInventory(direction, operationId, source)
   }
 
   type RunnerTarget = {
@@ -3504,6 +3031,67 @@ export function createCodexController(options: CodexControllerOptions) {
     return runActionRunnerLane(action.laneId, true)
   }
 
+  async function setPlanPaused(key: string, recency: number | undefined, paused: boolean, source = paused ? 'pause-button' : 'resume-button') {
+    if (!Number.isFinite(recency) || !companionKernel) {
+      options.setMessage('当前运行环境不支持 Plan 暂停状态')
+      return false
+    }
+    const task = allTasks().find((item) => item.key === key && item.revisionAt === recency)
+    const allowed = paused
+      ? task?.companionCapabilities?.pause === true
+      : task?.companionCapabilities?.resume === true
+    if (!task?.planReady || !task.planLifecycleRevision || !allowed) {
+      options.setMessage('Plan 状态已变化，请刷新后重试')
+      return false
+    }
+    syncCompanionTaskKernel()
+    const result = await companionKernel.dispatch({
+      action: paused ? 'pause' : 'resume',
+      key: task.key,
+      planLifecycleRevision: task.planLifecycleRevision,
+      source
+    })
+    if (disposed) return result.outcome === (paused ? 'paused' : 'resumed')
+    const succeeded = result.outcome === (paused ? 'paused' : 'resumed')
+    options.setMessage(result.message || (succeeded
+      ? paused ? 'Plan 已暂停并移入已隐藏区' : 'Plan 已恢复到待继续列表'
+      : 'Plan 状态更新失败'))
+    options.notify()
+    return succeeded
+  }
+
+  function pausePlan(key: string, recency?: number, source = 'pause-button') {
+    return setPlanPaused(key, recency, true, source)
+  }
+
+  function resumePlan(key: string, recency?: number, source = 'resume-button') {
+    return setPlanPaused(key, recency, false, source)
+  }
+
+  async function executePlan(key: string, recency?: number, source = 'execute-plan-button') {
+    if (!Number.isFinite(recency) || !companionKernel) {
+      options.setMessage('当前运行环境不支持安全执行 Plan')
+      return false
+    }
+    const task = allTasks().find((item) => item.key === key && item.revisionAt === recency)
+    if (!task?.planReady || !task.planLifecycleRevision || task.companionCapabilities?.executePlan !== true) {
+      options.setMessage('Plan 状态已变化，当前不能执行')
+      return false
+    }
+    syncCompanionTaskKernel()
+    const result = await companionKernel.dispatch({
+      action: 'execute-plan',
+      key: task.key,
+      planLifecycleRevision: task.planLifecycleRevision,
+      source
+    })
+    if (disposed) return result.outcome === 'executed' || result.outcome === 'confirmation-required'
+    const accepted = result.outcome === 'executed' || result.outcome === 'confirmation-required'
+    options.setMessage(result.message || (result.outcome === 'executed' ? '已按原 Plan 启动执行' : 'Plan 执行失败'))
+    options.notify()
+    return accepted
+  }
+
   function hide(key: string, recency?: number) {
     if (!Number.isFinite(recency)) return false
     const candidates = allTasks().filter((item) => !item.isHidden && item.key === key)
@@ -3515,6 +3103,10 @@ export function createCodexController(options: CodexControllerOptions) {
     if (!task) {
       options.setMessage('任务状态已更新，请确认最新状态后再隐藏')
       return false
+    }
+    if (task.planReady) {
+      void pausePlan(task.key, task.revisionAt, 'hide-plan-route')
+      return true
     }
     codexState().receipts = hideCodexThread(codexState().receipts, key, task.revisionAt, task.bucket)
     republishAfterReceiptChange()
@@ -3530,28 +3122,14 @@ export function createCodexController(options: CodexControllerOptions) {
     if (!Number.isFinite(recency) || !['task', 'activity', 'pending'].includes(kind || '')) return false
     const task = taskState.conversations.hidden.find((item) => item.key === key && item.hiddenKind === kind)
     if (!task || task.revisionAt !== recency) return false
+    if (task.planReady && task.planPaused) {
+      void resumePlan(task.key, task.revisionAt, 'restore-plan-route')
+      return true
+    }
     codexState().receipts = restoreCodexThread(codexState().receipts, key, task.revisionAt, kind!)
     republishAfterReceiptChange()
     options.setMessage('已从已隐藏区释放任务')
     return true
-  }
-
-  async function legacyCodexArchive(task: CodexTaskCard) {
-    if (typeof options.platform.codex.archiveThread !== 'function'
-      || !task.actionAlias
-      || !task.lastTurnStartedAt
-      || taskState.conversations.completeness !== 'verified'
-      || !taskState.conversations.sourceFingerprint) {
-      return { outcome: 'failed' as const, message: 'Codex 归档能力或实时库存证据不可用，请重载后重试' }
-    }
-    return options.platform.codex.archiveThread(task.actionAlias, {
-      expectedUpdatedAt: task.updatedAt,
-      expectedRevisionAt: task.revisionAt,
-      ...(task.lastTurnCompletedAt ? { expectedCompletionAt: task.lastTurnCompletedAt } : {}),
-      expectedLastTurnStartedAt: task.lastTurnStartedAt,
-      expectedSourceFingerprint: taskState.conversations.sourceFingerprint,
-      evidence: task.bucket === 'stopped' ? 'stopped' : 'completed'
-    })
   }
 
   function applyVerifiedArchiveMutation(task: CodexTaskCard) {
@@ -3600,7 +3178,12 @@ export function createCodexController(options: CodexControllerOptions) {
     confirmationRecorded = false
   ) {
     if (!taskOperationsAllowed()) return rejectRuntimeMismatch()
-    const provider = companionTaskProvider(task)
+    const canonical = companionTaskPackage.tasks.find((item) => item.key === task.key)
+    if (!canonical?.capabilities.archive || !companionKernel) {
+      options.setMessage('任务状态已变化，当前不能归档')
+      return false
+    }
+    const provider = canonical.provider
     taskArchive = {
       key: task.key,
       status: 'archiving',
@@ -3609,29 +3192,15 @@ export function createCodexController(options: CodexControllerOptions) {
     archivingKeys.add(task.key)
     options.notify()
     syncCompanionTaskAuthority()
-    const result = companionKernel
-      ? await companionKernel.dispatch({
-          action: 'archive',
-          key: task.key,
-          revisionAt: task.revisionAt,
-          phase: companionTaskPhase(task),
-          source: source === 'card' ? 'archive-button' : source === 'batch' ? 'batch-archive' : 'archive-shortcut',
-          operationId,
-          confirmationRecorded
-        })
-      : companionTasks
-        ? await companionTasks.archive({
-          key: task.key,
-          revisionAt: task.revisionAt,
-          phase: companionTaskPhase(task),
-          source: source === 'card' ? 'archive-button' : source === 'batch' ? 'batch-archive' : 'archive-shortcut',
-          operationId,
-          confirmationRecorded,
-          target: companionTaskActionTarget(task) || undefined
-        })
-        : provider === 'codex'
-          ? await legacyCodexArchive(task)
-          : { outcome: 'failed' as const, message: '旧 Claude 归档通路已禁用，请重载 task-actions-v1 后重试' }
+    const result = await companionKernel.dispatch({
+      action: 'archive',
+      key: canonical.key,
+      revisionAt: canonical.revisionAt,
+      phase: canonical.phase,
+      source: source === 'card' ? 'archive-button' : source === 'batch' ? 'batch-archive' : 'archive-shortcut',
+      operationId,
+      confirmationRecorded
+    })
     archivingKeys.delete(task.key)
     if (disposed) return false
     if (result.outcome !== 'archived') {
@@ -3648,9 +3217,9 @@ export function createCodexController(options: CodexControllerOptions) {
     }
     const changed = provider === 'codex' ? false : applyVerifiedArchiveMutation(task)
     taskArchive = { key: '', status: 'idle', message: '' }
-    options.setMessage(result.message || (provider === 'claude'
-      ? 'EyPc 归档已完成，任务已从 EyPc 列表移除；Claude 原生侧栏可能仍待刷新，当前尚未确认同步。'
-      : '已归档 Codex 任务'))
+    options.setMessage(provider === 'claude'
+      ? 'EyPc 已归档并移除。Claude 原生侧栏同步未确认，当前不受支持。'
+      : result.message || '已归档 Codex 任务')
     // The file watcher may already have published the same verified Claude
     // removal. In that case only refresh transient action state, not the task
     // package a second time.
@@ -3801,12 +3370,8 @@ export function createCodexController(options: CodexControllerOptions) {
       for (const timer of claudeUnreadRecheckTimers) clearTimeout(timer)
       claudeUnreadRecheckTimers.clear()
       unsubscribeClaudeEvents()
-      if (navigationLease) companionNavigation?.detach?.({ lease: navigationLease })
       if (companionKernelLease) companionKernel?.detach?.({ lease: companionKernelLease })
-      navigationLease = 0
-      navigationRetained = false
       companionKernelLease = 0
-      companionKernelRetained = false
     },
     syncActivation,
     refresh: () => refresh({ force: true }),
@@ -3835,6 +3400,9 @@ export function createCodexController(options: CodexControllerOptions) {
     dismiss,
     hide,
     restore,
+    pausePlan,
+    resumePlan,
+    executePlan,
     archive,
     archiveMany,
     archiveFocusedTask,

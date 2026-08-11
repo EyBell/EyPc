@@ -4,8 +4,8 @@ import { relative, resolve } from 'node:path'
 import { UTOOLS_PRELOAD_ASSETS, UTOOLS_PRELOAD_MODULE_ASSETS } from './utools-preload-assets.mjs'
 
 export const RUNTIME_IDENTITY_REVISION = 'runtime-identity-v1'
-export const COMPANION_TASK_KERNEL_REVISION = 'companion-task-kernel-v3'
-export const COMPANION_TASK_PACKAGE_REVISION = 'companion-task-package-v3'
+export const COMPANION_TASK_KERNEL_REVISION = 'companion-task-kernel-v4'
+export const COMPANION_TASK_PACKAGE_REVISION = 'companion-task-package-v4'
 
 function filesBelow(directory) {
   if (!existsSync(directory)) return []

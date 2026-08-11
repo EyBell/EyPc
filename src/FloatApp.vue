@@ -144,6 +144,7 @@ const pendingConfirm = ref<{
   operationId: string
   source: 'archive-button' | 'batch-archive' | 'project-archive' | 'manual-row-open'
 } | null>(null)
+const pendingPlanExecute = ref<{ key: string; identity: string; until: number } | null>(null)
 const liveMessage = ref('')
 const drawerActiveIndex = ref(0)
 const highlightOwner = ref<'mouse' | 'keyboard'>('mouse')
@@ -182,6 +183,7 @@ let drag: { x: number; y: number; moved: boolean; pointerId: number } | null = n
 let resize: { pointerId: number; corner: CodexFloatResizeCorner } | null = null
 let collapseTimer: ReturnType<typeof setTimeout> | null = null
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
+let planExecuteTimer: ReturnType<typeof setTimeout> | null = null
 let actionHintTimer: ReturnType<typeof setTimeout> | null = null
 let compactCounterHintTimer: ReturnType<typeof setTimeout> | null = null
 let taskScrollResizeObserver: ResizeObserver | null = null
@@ -437,8 +439,19 @@ const renderRows = computed<RenderRow[]>(() => {
   }
 
   if (selectedUiTab.value === 'hidden') {
-    const tasks = displayOrderedTasks(value.hidden.filter((task) => taskMatched(task)))
-    return tasks.map((task) => addTaskRow(task))
+    const matched = value.hidden.filter((task) => taskMatched(task))
+    const paused = displayOrderedTasks(matched.filter((task) => task.planPaused))
+    const ordinary = displayOrderedTasks(matched.filter((task) => !task.planPaused))
+    return [
+      ...(paused.length ? [
+        { kind: 'status-section' as const, key: 'hidden:paused', title: '已暂停', count: paused.length, tone: 'stopped' as const },
+        ...paused.map((task) => addTaskRow(task))
+      ] : []),
+      ...(ordinary.length ? [
+        { kind: 'status-section' as const, key: 'hidden:ordinary', title: '普通隐藏', count: ordinary.length, tone: 'unknown' as const },
+        ...ordinary.map((task) => addTaskRow(task))
+      ] : [])
+    ]
   }
 
   const rows: RenderRow[] = []
@@ -633,6 +646,13 @@ function mapUiTab(input?: CodexTaskTab) {
 watch(() => conversations.value?.activeTab, (value) => {
   selectedUiTab.value = mapUiTab(value)
 }, { immediate: true })
+
+watch(() => conversations.value?.all, (tasks) => {
+  const pending = pendingPlanExecute.value
+  if (!pending) return
+  const task = tasks?.find((candidate) => candidate.key === pending.key)
+  if (!task || planActionIdentity(task) !== pending.identity) clearPlanExecuteConfirmation()
+})
 
 function fallbackFocus() {
   void nextTick(() => {
@@ -1108,14 +1128,18 @@ const drawerActions = computed<DrawerAction[]>(() => {
   if (drawerIsBatch.value) {
     const tasks = selectedTasks.value
     const archivable = tasks.filter((task) => task.canArchive)
-    const hidden = tasks.filter((task) => task.isHidden && task.hiddenKind)
-    const visible = tasks.filter((task) => !task.isHidden)
+    const hidden = tasks.filter((task) => !task.planReady && task.isHidden && task.hiddenKind)
+    const visible = tasks.filter((task) => !task.planReady && !task.isHidden)
+    const pausablePlans = tasks.filter((task) => task.companionCapabilities?.pause === true)
+    const resumablePlans = tasks.filter((task) => task.companionCapabilities?.resume === true)
     const unpinned = tasks.filter((task) => task.pinSource !== 'local')
     const pinned = tasks.filter((task) => task.pinSource === 'local')
     return [
       { id: 'batch-archive', label: `归档可归档项（${archivable.length}/${tasks.length}）`, danger: true, disabled: !archivable.length, disabledReason: '选中项没有当前可归档的任务', run: requestTaskArchive },
-      { id: 'batch-hide', label: `移到已隐藏（${visible.length}）`, disabled: !visible.length, disabledReason: '选中项均已隐藏', run: () => visible.forEach(hideTask) },
-      { id: 'batch-restore', label: `恢复显示（${hidden.length}）`, disabled: !hidden.length, disabledReason: '选中项没有可恢复的隐藏任务', run: () => hidden.forEach(restoreTask) },
+      { id: 'batch-hide', label: `移到已隐藏（${visible.length}）`, disabled: !visible.length, disabledReason: '选中项均已隐藏或属于 Plan', run: () => visible.forEach(hideTask) },
+      { id: 'batch-restore', label: `恢复显示（${hidden.length}）`, disabled: !hidden.length, disabledReason: '选中项没有可恢复的普通隐藏任务', run: () => hidden.forEach(restoreTask) },
+      { id: 'batch-pause-plan', label: `暂停 Plan（${pausablePlans.length}）`, disabled: !pausablePlans.length, disabledReason: '选中项没有可暂停的 Plan', run: () => action('codex.tasks.pausePlan', { items: pausablePlans.map((task) => ({ key: task.key, revisionAt: task.revisionAt })) }) },
+      { id: 'batch-resume-plan', label: `恢复 Plan（${resumablePlans.length}）`, disabled: !resumablePlans.length, disabledReason: '选中项没有可恢复的 Plan', run: () => action('codex.tasks.resumePlan', { items: resumablePlans.map((task) => ({ key: task.key, revisionAt: task.revisionAt })) }) },
       { id: 'batch-pin', label: `本地置顶（${unpinned.length}）`, disabled: !unpinned.length, disabledReason: '选中项均已置顶', run: () => unpinned.forEach((task) => togglePin(taskFocusItem(task))) },
       { id: 'batch-unpin', label: `取消本地置顶（${pinned.length}）`, disabled: !pinned.length, disabledReason: '选中项没有本地置顶', run: () => pinned.forEach((task) => togglePin(taskFocusItem(task))) },
       { id: 'batch-clear', label: '清空选择', run: clearSelection }
@@ -1135,6 +1159,26 @@ const drawerActions = computed<DrawerAction[]>(() => {
           run: () => action('codex.claude.task.sync', { key: item.task.key, actionAlias: item.task.actionAlias })
         }]
       : []
+    const planActions: DrawerAction[] = item.task.planReady
+      ? [
+          {
+            id: item.task.planPaused ? 'task-resume-plan' : 'task-pause-plan',
+            label: item.task.planPaused ? '恢复 Plan' : '暂停 Plan',
+            disabled: item.task.planPaused
+              ? item.task.companionCapabilities?.resume !== true
+              : item.task.companionCapabilities?.pause !== true,
+            disabledReason: planActionBlockedReason(item.task, item.task.planPaused ? '恢复' : '暂停'),
+            run: () => togglePlanPause(item.task)
+          },
+          {
+            id: 'task-execute-plan',
+            label: planExecuteConfirming(item.task) ? '确认执行原 Plan' : '执行原 Plan',
+            disabled: item.task.companionCapabilities?.executePlan !== true,
+            disabledReason: planActionBlockedReason(item.task, '执行'),
+            run: () => requestPlanExecute(item.task)
+          }
+        ]
+      : [{ id: 'task-hide', label: item.task.isHidden ? '恢复显示' : '移到已隐藏', disabled: item.task.isHidden && !item.task.hiddenKind, run: () => item.task.isHidden ? restoreTask(item.task) : hideTask(item.task) }]
     return [
       { id: 'task-open', label: '打开', disabled: !item.task.actionAlias, disabledReason: '任务动作已失效', run: () => openTask(item.task) },
       ...claudeSyncActions,
@@ -1143,7 +1187,7 @@ const drawerActions = computed<DrawerAction[]>(() => {
       { id: 'task-detail', label: '查看详情', run: () => openDetailPanel(item) },
       { id: 'task-alias', label: '编辑别名', run: () => editAlias(item) },
       { id: 'task-pin', label: item.task.pinSource === 'native' ? 'Codex 原生置顶（只读）' : item.task.pinSource === 'local' ? '取消本地置顶' : '本地置顶', disabled: item.task.pinSource === 'native', disabledReason: '原生置顶顺序由 Codex 管理', run: () => togglePin(item) },
-      { id: 'task-hide', label: item.task.isHidden ? '恢复显示' : '移到已隐藏', disabled: item.task.isHidden && !item.task.hiddenKind, run: () => item.task.isHidden ? restoreTask(item.task) : hideTask(item.task) },
+      ...planActions,
       { id: 'task-archive', label: '真实归档', danger: true, disabled: !item.task.canArchive, disabledReason: taskArchiveBlockedReason(item.task), run: requestTaskArchive }
     ]
   }
@@ -1254,6 +1298,90 @@ function hideTask(task: CodexTaskCard) {
 
 function restoreTask(task: CodexTaskCard) {
   if (task.hiddenKind) action('codex.task.restore', { key: task.key, revisionAt: task.revisionAt, kind: task.hiddenKind })
+}
+
+function planActionIdentity(task: CodexTaskCard) {
+  return [
+    companionTaskProvider(task),
+    task.key,
+    task.actionAlias || '',
+    task.planLifecycleRevision || 0,
+    task.bucket,
+    task.activityState,
+    task.planPaused ? 1 : 0
+  ].join('|')
+}
+
+function clearPlanExecuteConfirmation() {
+  if (planExecuteTimer) clearTimeout(planExecuteTimer)
+  planExecuteTimer = null
+  pendingPlanExecute.value = null
+}
+
+function planExecuteConfirming(task: CodexTaskCard) {
+  return pendingPlanExecute.value?.identity === planActionIdentity(task)
+    && pendingPlanExecute.value.until >= Date.now()
+}
+
+function planActionBlockedReason(task: CodexTaskCard, actionName: '暂停' | '恢复' | '执行') {
+  if (!task.planReady) return '当前任务没有可继续的已完成 Plan'
+  if (actionName === '暂停' && task.companionCapabilities?.pause !== true) return '当前 Plan 状态不可暂停'
+  if (actionName === '恢复' && task.companionCapabilities?.resume !== true) return '当前 Plan 状态不可恢复'
+  if (actionName === '执行' && task.companionCapabilities?.executePlan !== true) return '当前 App Server、模型或任务状态不支持安全执行 Plan'
+  return `${actionName} Plan`
+}
+
+function togglePlanPause(task: CodexTaskCard) {
+  const actionName = task.planPaused ? '恢复' : '暂停'
+  const capability = task.planPaused ? task.companionCapabilities?.resume : task.companionCapabilities?.pause
+  if (capability !== true) {
+    liveMessage.value = planActionBlockedReason(task, actionName)
+    return
+  }
+  action(task.planPaused ? 'codex.task.resumePlan' : 'codex.task.pausePlan', {
+    key: task.key,
+    revisionAt: task.revisionAt
+  })
+}
+
+function requestPlanExecute(task: CodexTaskCard) {
+  if (task.companionCapabilities?.executePlan !== true) {
+    liveMessage.value = planActionBlockedReason(task, '执行')
+    return
+  }
+  const identity = planActionIdentity(task)
+  const confirmed = pendingPlanExecute.value?.identity === identity
+    && pendingPlanExecute.value.until >= Date.now()
+  if (confirmed) clearPlanExecuteConfirmation()
+  else {
+    clearPlanExecuteConfirmation()
+    pendingPlanExecute.value = { key: task.key, identity, until: Date.now() + 5_000 }
+    planExecuteTimer = setTimeout(clearPlanExecuteConfirmation, 5_000)
+  }
+  action('codex.task.executePlan', { key: task.key, revisionAt: task.revisionAt })
+}
+
+function taskSecondaryActionLabel(task: CodexTaskCard) {
+  if (task.planReady) return task.planPaused ? '恢' : '暂'
+  return task.isHidden ? '显' : '隐'
+}
+
+function taskSecondaryActionHint(task: CodexTaskCard) {
+  if (task.planReady) return planActionBlockedReason(task, task.planPaused ? '恢复' : '暂停')
+  return task.isHidden ? '恢复会话显示' : '移到 Companion 已隐藏区'
+}
+
+function taskSecondaryActionDisabled(task: CodexTaskCard) {
+  if (task.planReady) return task.planPaused
+    ? task.companionCapabilities?.resume !== true
+    : task.companionCapabilities?.pause !== true
+  return task.isHidden && !task.hiddenKind
+}
+
+function runTaskSecondaryAction(task: CodexTaskCard) {
+  if (task.planReady) togglePlanPause(task)
+  else if (task.isHidden) restoreTask(task)
+  else hideTask(task)
 }
 
 function toggleProject(project: CodexProjectCard) {
@@ -2585,10 +2713,23 @@ onMounted(() => {
   }
   const applySnapshot = (value: CodexFloatSnapshotV1 | null) => {
     const revision = value?.companionTaskPackage?.packageRevision || value?.companion?.revision || 0
-    if (appliedCompanionRevision.value > 0 && revision === 0) return
-    if (revision > 0 && revision < appliedCompanionRevision.value) return
+    if (appliedCompanionRevision.value > 0 && revision === 0) return false
+    if (revision > 0 && floatRuntimeIdentity.value?.status !== 'host-loaded') {
+      window.eypcFloat?.ackTaskPackage?.('rejected', 'identity-mismatch')
+      return false
+    }
+    if (revision > 0 && revision < appliedCompanionRevision.value) {
+      window.eypcFloat?.ackTaskPackage?.('rejected', 'older-revision')
+      return false
+    }
+    if (revision > 0 && revision === appliedCompanionRevision.value) {
+      window.eypcFloat?.ackTaskPackage?.('applied')
+      return false
+    }
     if (revision > 0) appliedCompanionRevision.value = revision
     snapshot.value = value
+    if (revision > 0) void nextTick(() => window.eypcFloat?.ackTaskPackage?.('applied'))
+    return true
   }
   applySnapshot(window.eypcFloat?.getSnapshot() || null)
   floatState.value = window.eypcFloat?.getState() || floatState.value
@@ -2631,6 +2772,7 @@ onUnmounted(() => {
   composer.value = null
   closeQuickJump()
   clearConfirm()
+  clearPlanExecuteConfirmation()
   taskScrollResizeObserver?.disconnect()
   window.removeEventListener('keydown', onWindowKeydown, true)
   window.removeEventListener('keyup', onWindowKeyup, true)
@@ -2936,17 +3078,17 @@ onUnmounted(() => {
                 <button
                   type="button"
                   class="inline-character-button action-hide"
-                    :aria-label="row.task.isHidden ? `恢复显示 ${taskDisplayLabel(row.task)}` : `隐藏 ${taskDisplayLabel(row.task)}`"
+                    :aria-label="`${taskSecondaryActionHint(row.task)} ${taskDisplayLabel(row.task)}`"
                     data-quick-jump-target
-                    :data-quick-jump-label="row.task.isHidden ? `恢复显示 ${taskDisplayLabel(row.task)}` : `隐藏 ${taskDisplayLabel(row.task)}`"
-                    :disabled="row.task.isHidden && !row.task.hiddenKind"
-                    @pointerenter="queueActionHint($event, row.task.isHidden ? '恢复会话显示' : '移到 Companion 已隐藏区')"
+                    :data-quick-jump-label="`${taskSecondaryActionHint(row.task)} ${taskDisplayLabel(row.task)}`"
+                    :disabled="taskSecondaryActionDisabled(row.task)"
+                    @pointerenter="queueActionHint($event, taskSecondaryActionHint(row.task))"
                   @pointerleave="clearActionHint"
-                  @focus="queueActionHint($event, row.task.isHidden ? '恢复会话显示' : '移到 Companion 已隐藏区')"
+                  @focus="queueActionHint($event, taskSecondaryActionHint(row.task))"
                   @blur="clearActionHint"
-                  @click.stop="focusedKey = row.key; row.task.isHidden ? restoreTask(row.task) : hideTask(row.task)"
+                  @click.stop="focusedKey = row.key; runTaskSecondaryAction(row.task)"
                 >
-                    {{ row.task.isHidden ? '显' : '隐' }}
+                    {{ taskSecondaryActionLabel(row.task) }}
                   </button>
                 <button
                   type="button"
@@ -2969,17 +3111,18 @@ onUnmounted(() => {
                 <button
                   type="button"
                   class="inline-character-button action-create"
-                    :aria-label="taskCanCreateInProject(row.task, taskProject(row.task)) ? `在 ${row.task.projectName} 新建会话` : taskProjectActionBlockedReason(row.task, taskProject(row.task))"
-                    :title="taskCanCreateInProject(row.task, taskProject(row.task)) ? `在 ${row.task.projectName} 新建会话` : taskProjectActionBlockedReason(row.task, taskProject(row.task))"
+                    :class="{ confirming: row.task.planReady && planExecuteConfirming(row.task) }"
+                    :aria-label="row.task.planReady ? (planExecuteConfirming(row.task) ? `确认执行 ${taskDisplayLabel(row.task)} 的原 Plan` : `执行 ${taskDisplayLabel(row.task)} 的原 Plan`) : taskCanCreateInProject(row.task, taskProject(row.task)) ? `在 ${row.task.projectName} 新建会话` : taskProjectActionBlockedReason(row.task, taskProject(row.task))"
+                    :title="row.task.planReady ? planActionBlockedReason(row.task, '执行') : taskCanCreateInProject(row.task, taskProject(row.task)) ? `在 ${row.task.projectName} 新建会话` : taskProjectActionBlockedReason(row.task, taskProject(row.task))"
                     data-quick-jump-target
-                    :data-quick-jump-label="taskCanCreateInProject(row.task, taskProject(row.task)) ? `在 ${row.task.projectName} 新建会话` : taskProjectActionBlockedReason(row.task, taskProject(row.task))"
-                    :disabled="!taskCanCreateInProject(row.task, taskProject(row.task))"
-                    @pointerenter="queueActionHint($event, taskCanCreateInProject(row.task, taskProject(row.task)) ? '在所属项目新建会话' : taskProjectActionBlockedReason(row.task, taskProject(row.task)))"
+                    :data-quick-jump-label="row.task.planReady ? planActionBlockedReason(row.task, '执行') : taskCanCreateInProject(row.task, taskProject(row.task)) ? `在 ${row.task.projectName} 新建会话` : taskProjectActionBlockedReason(row.task, taskProject(row.task))"
+                    :disabled="row.task.planReady ? row.task.companionCapabilities?.executePlan !== true : !taskCanCreateInProject(row.task, taskProject(row.task))"
+                    @pointerenter="queueActionHint($event, row.task.planReady ? (planExecuteConfirming(row.task) ? '再次点击确认执行原 Plan' : planActionBlockedReason(row.task, '执行')) : taskCanCreateInProject(row.task, taskProject(row.task)) ? '在所属项目新建会话' : taskProjectActionBlockedReason(row.task, taskProject(row.task)))"
                   @pointerleave="clearActionHint"
-                  @focus="queueActionHint($event, taskCanCreateInProject(row.task, taskProject(row.task)) ? '在所属项目新建会话' : taskProjectActionBlockedReason(row.task, taskProject(row.task)))"
+                  @focus="queueActionHint($event, row.task.planReady ? (planExecuteConfirming(row.task) ? '再次点击确认执行原 Plan' : planActionBlockedReason(row.task, '执行')) : taskCanCreateInProject(row.task, taskProject(row.task)) ? '在所属项目新建会话' : taskProjectActionBlockedReason(row.task, taskProject(row.task)))"
                   @blur="clearActionHint"
-                  @click.stop="focusedKey = row.key; taskProject(row.task) && openComposer(taskProject(row.task)!)"
-                >+</button>
+                  @click.stop="focusedKey = row.key; row.task.planReady ? requestPlanExecute(row.task) : taskProject(row.task) && openComposer(taskProject(row.task)!)"
+                >{{ row.task.planReady ? (planExecuteConfirming(row.task) ? '确' : '执') : '+' }}</button>
               </div>
             </div>
             </div>

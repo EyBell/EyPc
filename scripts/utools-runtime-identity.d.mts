@@ -2,8 +2,8 @@ export interface UtoolsRuntimeIdentityV1 {
   readonly revision: 'runtime-identity-v1'
   readonly hostAssetId: string
   readonly rendererAssetId: string
-  readonly kernelRevision: 'companion-task-kernel-v3'
-  readonly taskPackageRevision: 'companion-task-package-v3'
+  readonly kernelRevision: 'companion-task-kernel-v4'
+  readonly taskPackageRevision: 'companion-task-package-v4'
   readonly artifactState: 'artifact-ready'
 }
 

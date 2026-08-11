@@ -33,8 +33,8 @@ import type {
 import {
   COMPANION_TASK_KERNEL_REVISION,
   COMPANION_TASK_PACKAGE_REVISION,
-  type CompanionTaskPackageDraftV3,
-  type CompanionTaskPackageV3
+  type CompanionTaskPackageDraftV4,
+  type CompanionTaskPackageV4
 } from '../domain/companionTaskPackage'
 
 export type PickedFavoriteKind = Exclude<FavoriteNode['kind'], 'group'>
@@ -346,7 +346,7 @@ export interface ClaudeAppPresenceSnapshot {
 
 export type CompanionNavigationProviderId = 'codex' | 'claude'
 export const COMPANION_NAVIGATION_REVISION = 'companion-navigation-v3'
-export const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v3'
+export const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v2'
 
 export interface RuntimeIdentityExpectationV1 {
   hostAssetId: string
@@ -382,6 +382,12 @@ export interface CompanionTaskActionTarget extends CompanionNavigationTarget {
   revisionAt: number
   phase: string
   canArchive: boolean
+  planReady: boolean
+  planLifecycleRevision: number
+  paused: boolean
+  canPause: boolean
+  canResume: boolean
+  canExecutePlan: boolean
   archiveRequest?: {
     expectedUpdatedAt: number
     expectedRevisionAt: number
@@ -476,28 +482,36 @@ export interface CompanionNavigationResultEvent {
   at: number
 }
 
-export type CompanionTaskIntentV3 =
+export type CompanionTaskIntentV4 =
   | { action: 'cycle'; direction: -1 | 1; source?: string; operationId?: string }
   | { action: 'open'; key: string; source?: string; operationId?: string }
   | { action: 'open-attention'; kind: 'input' | 'completed-unread'; source?: string; operationId?: string }
   | { action: 'archive-focused'; source?: string; operationId?: string }
   | { action: 'archive'; key: string; revisionAt: number; phase: string; source: string; operationId?: string; confirmationRecorded?: boolean }
+  | { action: 'pause'; key: string; planLifecycleRevision: number; source?: string; operationId?: string }
+  | { action: 'resume'; key: string; planLifecycleRevision: number; source?: string; operationId?: string }
+  | { action: 'execute-plan'; key: string; planLifecycleRevision: number; source?: string; operationId?: string }
+
+/** @deprecated Compatibility alias for callers compiled before task-state-v10. */
+export type CompanionTaskIntentV3 = CompanionTaskIntentV4
 
 export interface CompanionTaskKernelBridge {
   revision: typeof COMPANION_TASK_KERNEL_REVISION
   packageRevision: typeof COMPANION_TASK_PACKAGE_REVISION
-  attach(input: { enabled: boolean; providers: { codex: boolean; claude: boolean } }): {
+  attach(input: { enabled: boolean; providers: { codex: boolean; claude: boolean }; dynamicTaskWindowHours?: number }): {
     revision: typeof COMPANION_TASK_KERNEL_REVISION
     packageRevision: typeof COMPANION_TASK_PACKAGE_REVISION
     lease: number
     retained: boolean
     ready: boolean
-    package: CompanionTaskPackageV3
+    package: CompanionTaskPackageV4
   }
-  syncPackage(input: { lease: number; draft: CompanionTaskPackageDraftV3 }): CompanionTaskPackageV3 | null
+  configure?(input: { lease: number; enabled: boolean; providers: { codex: boolean; claude: boolean }; dynamicTaskWindowHours?: number; focusedKey?: string }): CompanionTaskPackageV4 | null
+  /** @deprecated Renderer drafts are not a production authority in V4. */
+  syncPackage?(input: { lease: number; draft: CompanionTaskPackageDraftV4 }): CompanionTaskPackageV4 | null
   detach?(input: { lease: number }): boolean
-  dispatch(input: CompanionTaskIntentV3): Promise<CompanionNavigationResult | {
-    outcome: 'confirmation-required' | 'archived' | 'failed' | 'indeterminate'
+  dispatch(input: CompanionTaskIntentV4): Promise<CompanionNavigationResult | {
+    outcome: 'confirmation-required' | 'archived' | 'paused' | 'resumed' | 'executed' | 'failed' | 'indeterminate'
     provider?: CompanionNavigationProviderId
     key?: string
     errorCode?: string
@@ -505,8 +519,11 @@ export interface CompanionTaskKernelBridge {
     alreadyArchived?: boolean
     operationId?: string
   }>
-  getPackage(): CompanionTaskPackageV3
-  onPackage?(listener: (value: CompanionTaskPackageV3) => void): () => void
+  /** @deprecated Use getLatest(). */
+  getPackage?(): CompanionTaskPackageV4
+  getLatest(): CompanionTaskPackageV4
+  subscribe(afterRevision: number, listener: (value: CompanionTaskPackageV4) => void): () => void
+  onPackage?(listener: (value: CompanionTaskPackageV4) => void): () => void
   onResult?(listener: (event: CompanionNavigationResultEvent) => void): () => void
   takeResults?(input: { lease: number }): CompanionNavigationResultEvent[]
   diagnostics(): {
@@ -1288,7 +1305,25 @@ export function getPlatform(): EypcPlatformApi {
         errorCode: 'identity-handshake-failed'
       }
     }
-    const runtimeCompatible = runtimeIdentityStatus.status === 'host-loaded'
+    let runtimeCompatible = runtimeIdentityStatus.status === 'host-loaded'
+    const kernelCompatible = runtimeCompatible
+      && hostCompanionKernel?.revision === COMPANION_TASK_KERNEL_REVISION
+      && hostCompanionKernel.packageRevision === COMPANION_TASK_PACKAGE_REVISION
+      && typeof hostCompanionKernel.attach === 'function'
+      && typeof hostCompanionKernel.configure === 'function'
+      && typeof hostCompanionKernel.dispatch === 'function'
+      && typeof hostCompanionKernel.getLatest === 'function'
+      && typeof hostCompanionKernel.subscribe === 'function'
+      && typeof hostCompanionKernel.diagnostics === 'function'
+    if (runtimeCompatible && !kernelCompatible) {
+      runtimeIdentityStatus = {
+        ...runtimeIdentityStatus,
+        status: 'reload-required',
+        message: 'V4 任务 Kernel 未完整加载，需要重新接入或重载',
+        errorCode: 'kernel-missing'
+      }
+      runtimeCompatible = false
+    }
     const hostCapabilities: FileCapabilities = hostFiles.capabilities || {
       platform: 'unsupported',
       open: typeof hostFiles.open === 'function',
@@ -1413,15 +1448,7 @@ export function getPlatform(): EypcPlatformApi {
         && typeof hostCompanionTasks.diagnostics === 'function'
           ? hostCompanionTasks
           : undefined,
-      companionKernel: runtimeCompatible && hostCompanionKernel?.revision === COMPANION_TASK_KERNEL_REVISION
-        && hostCompanionKernel.packageRevision === COMPANION_TASK_PACKAGE_REVISION
-        && typeof hostCompanionKernel.attach === 'function'
-        && typeof hostCompanionKernel.syncPackage === 'function'
-        && typeof hostCompanionKernel.dispatch === 'function'
-        && typeof hostCompanionKernel.getPackage === 'function'
-        && typeof hostCompanionKernel.diagnostics === 'function'
-          ? hostCompanionKernel
-          : undefined,
+      companionKernel: runtimeCompatible && kernelCompatible ? hostCompanionKernel : undefined,
       float: {
         sync: hostFloat?.sync || (() => false),
         activate: hostFloat?.activate,

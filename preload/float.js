@@ -37,6 +37,8 @@ function runtimeIdentityHandshake(input = {}) {
 
 const CHANNELS = {
   snapshot: 'eypc-float:snapshot',
+  taskPackage: 'eypc-float:task-package',
+  taskPackageAck: 'eypc-float:task-package-ack',
   state: 'eypc-float:state',
   activate: 'eypc-float:activate',
   expansion: 'eypc-float:expansion',
@@ -63,6 +65,7 @@ const CHANNELS = {
 }
 
 let lastSnapshot = null
+let lastTaskPackageRevision = 0
 let lastState = { expanded: false, pinned: false, resizing: false, resizeCorner: null, expandedSize: null }
 const snapshotListeners = new Set()
 const stateListeners = new Set()
@@ -117,12 +120,70 @@ function sendToParent(channel, payload) {
   return false
 }
 
-ipcRenderer.on(CHANNELS.snapshot, (_event, snapshot) => {
-  if (!snapshot || typeof snapshot !== 'object' || (snapshot.version !== 1 && snapshot.version !== 2)) return
-  lastSnapshot = snapshot
+function taskPackageRevision(value) {
+  const revision = Number(value && typeof value === 'object' ? value.packageRevision : 0)
+  return Number.isInteger(revision) && revision > 0 ? revision : 0
+}
+
+function sendTaskPackageAck(stage, sentRevision, reason) {
+  const revision = Number.isInteger(sentRevision) && sentRevision > 0 ? sentRevision : lastTaskPackageRevision
+  if (!revision) return false
+  return sendToParent(CHANNELS.taskPackageAck, {
+    sentRevision: revision,
+    currentRevision: lastTaskPackageRevision,
+    stage,
+    ...(reason ? { reason } : {})
+  })
+}
+
+function notifySnapshotListeners(snapshot) {
   for (const listener of snapshotListeners) {
     try { listener(snapshot) } catch {}
   }
+}
+
+function acceptTaskPackage(taskPackage, sentRevision, baseSnapshot = lastSnapshot) {
+  const revision = taskPackageRevision(taskPackage)
+  if (!revision
+    || sentRevision !== revision
+    || taskPackage?.schema !== 'companion-task-package-v4'
+    || taskPackage?.kernelRevision !== 'companion-task-kernel-v4') {
+    sendTaskPackageAck('rejected', Number.isInteger(sentRevision) ? sentRevision : revision, 'invalid-payload')
+    return false
+  }
+  if (revision < lastTaskPackageRevision) {
+    sendTaskPackageAck('rejected', revision, 'older-revision')
+    return false
+  }
+  if (revision === lastTaskPackageRevision) {
+    sendTaskPackageAck('received', revision)
+    sendTaskPackageAck('applied', revision)
+    return true
+  }
+  lastTaskPackageRevision = revision
+  lastSnapshot = { ...(baseSnapshot || {}), companionTaskPackage: taskPackage }
+  sendTaskPackageAck('received', revision)
+  notifySnapshotListeners(lastSnapshot)
+  return true
+}
+
+ipcRenderer.on(CHANNELS.snapshot, (_event, snapshot) => {
+  if (!snapshot || typeof snapshot !== 'object' || (snapshot.version !== 1 && snapshot.version !== 2)) return
+  const taskPackage = snapshot.companionTaskPackage
+  const baseSnapshot = taskPackage
+    ? snapshot
+    : { ...snapshot, ...(lastSnapshot?.companionTaskPackage ? { companionTaskPackage: lastSnapshot.companionTaskPackage } : {}) }
+  if (taskPackage) {
+    acceptTaskPackage(taskPackage, taskPackageRevision(taskPackage), baseSnapshot)
+    return
+  }
+  lastSnapshot = baseSnapshot
+  notifySnapshotListeners(lastSnapshot)
+})
+
+ipcRenderer.on(CHANNELS.taskPackage, (_event, payload) => {
+  const source = payload && typeof payload === 'object' ? payload : {}
+  acceptTaskPackage(source.taskPackage, Number(source.sentRevision), lastSnapshot)
 })
 
 ipcRenderer.on(CHANNELS.state, (_event, state) => {
@@ -176,6 +237,10 @@ window.eypcFloat = {
   getSnapshot: () => lastSnapshot,
   getState: () => lastState,
   getHealth: () => ({ heartbeatSequence, lastHeartbeatAckAt }),
+  ackTaskPackage: (stage, reason) => {
+    if (!['applied', 'rejected'].includes(stage)) return false
+    return sendTaskPackageAck(stage, lastTaskPackageRevision, stage === 'rejected' ? reason : undefined)
+  },
   onSnapshot(listener) {
     if (typeof listener !== 'function') return () => {}
     snapshotListeners.add(listener)
