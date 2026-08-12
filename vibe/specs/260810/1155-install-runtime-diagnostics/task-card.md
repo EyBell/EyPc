@@ -1,16 +1,16 @@
-# RAW-160 Plan 生命周期与按变化发布 — Controlled Task Card
+# RAW-160 → RAW-161 Companion 收敛 — Controlled Task Card
 
-Date: 2026-08-11
-Status: `implementation-landed / full-automated-verified / artifact-ready / installed-host-pending`
+Date: 2026-08-12
+Status: `rework-implemented / increment-automated-verified / dev-plugin-reload-pending`
 Documentation level: `controlled`
 
-本任务沿用 RAW-159 的 Controlled 任务树和稳定同步组；RAW-159 的库存、归档事务、诊断、Runtime Identity 与分页成果作为 V4 基础保留，不另建重复任务。
+本任务沿用 RAW-159 的 Controlled 任务树和稳定同步组；RAW-159/160 的库存、归档事务、诊断、Runtime Identity、分页和 hidden-Host watcher 成果作为 V4 基础保留。RAW-161 追加 Codex 外部手动归档的原始权威库存恢复，不另建重复任务。
 
 ## Task Documentation Sync Group
 
 - Group key: `dsg:eypc:install-runtime-diagnostics-v2`（稳定键不随协议升级改名）
 - Group owner: this `task-card.md`
-- Scope: Codex/Claude 任务证据、Canonical 状态、Plan 生命周期、暂停/恢复/执行、时间窗口、角标/循环、Latest Package 缓存、Float applied ACK、归档结果与诊断。
+- Scope: Codex/Claude 任务证据、进程 Host native watcher/StatWatcher 恢复、Codex 未归档/归档库存成员对照、私有分支聚合与单事务发布、Canonical 状态、Plan 生命周期、暂停/恢复/执行、同 key 打开与 alias 恢复、时间窗口、角标几何/循环、Latest Package 缓存、Float applied ACK、归档结果与诊断。
 - Shared-file ownership: 保留同一工作树内全部用户修改；不触碰用户的 `_to_delete/`。
 
 ```json documentation-sync-group-v1
@@ -44,11 +44,14 @@ Documentation level: `controlled`
     "vibe/knowledge/error-memory/README.md",
     "vibe/knowledge/error-memory/codex-completion-transition-hysteresis.md",
     "vibe/knowledge/error-memory/codex-preload-capability-version-skew.md",
+    "vibe/knowledge/error-memory/codex-app-server-session-state-survives-exit.md",
     "vibe/knowledge/error-memory/codex-provider-status-display-normalization.md",
+    "vibe/knowledge/error-memory/codex-water-preview-renderer-divergence.md",
     "vibe/knowledge/error-memory/codex-task-count-list-projection-divergence.md",
     "vibe/knowledge/error-memory/codex-task-state-version-skew-must-degrade-atomically.md",
     "vibe/knowledge/error-memory/companion-plan-lifecycle-and-interrupted-causality.md",
     "vibe/knowledge/error-memory/companion-consumer-cache-and-float-applied-ack.md",
+    "vibe/knowledge/error-memory/claude-generic-session-end-must-not-overwrite-completion.md",
     "vibe/knowledge/error-memory/claude-new-phase-must-outrank-previous-cache.md",
     "vibe/knowledge/error-memory/companion-observation-generation-is-not-semantic-revision.md",
     "vibe/knowledge/error-memory/independent-authorities-coupled-by-full-refresh.md",
@@ -56,6 +59,7 @@ Documentation level: `controlled`
     "vibe/knowledge/error-memory/modules/companion-task-state.md",
     "vibe/knowledge/error-memory/utools-developer-tools-project-list-loading.md",
     "vibe/knowledge/error-memory/watcher-callback-latency-is-not-end-to-end-publication-latency.md",
+    "vibe/knowledge/computer-use/sessions/2026-08-12-raw-160-companion-regression.md",
     "vibe/specs/260807/claude-code-companion-authority-reset/raw-requirement.md",
     "vibe/specs/260807/claude-code-companion-authority-reset/spec.md",
     "vibe/specs/260807/claude-code-companion-authority-reset/plan.md",
@@ -67,30 +71,55 @@ Documentation level: `controlled`
   ],
   "dependencies": [
     "preload/claude/archive.cjs",
+    "preload/claude/app-state.cjs",
+    "preload/claude/code-sessions.cjs",
+    "preload/claude/events.cjs",
+    "preload/claude/unread.cjs",
     "preload/index.js",
     "preload/float.js",
     "preload/companion/navigation.cjs",
     "preload/companion/task-actions.cjs",
     "preload/companion/task-kernel.cjs",
     "src/domain/codex.ts",
+    "src/domain/codexPresentation.ts",
     "src/domain/companionProvider.ts",
     "src/domain/companionTaskPackage.ts",
     "src/platform/eypcPlatform.ts",
     "src/runtime/appRuntime.ts",
     "src/runtime/codexController.ts",
+    "src/App.vue",
     "src/FloatApp.vue",
+    "src/pages/CodexPage.vue",
+    "src/main.ts",
+    "src/float-main.ts",
+    "src/styles/companion-counter.css",
+    "src/styles/codex.css",
+    "src/styles/float.css",
     "scripts/utools-runtime-identity.mjs"
   ],
   "validators": [
+    "tests/domain/claude.test.ts",
+    "tests/domain/claudeCode.test.ts",
     "tests/domain/codex.test.ts",
+    "tests/domain/codexEnvironmentPresentation.test.ts",
+    "tests/domain/codexPresentation.test.ts",
     "tests/domain/companionTaskPackage.test.ts",
+    "tests/integration/appPluginEnter.test.ts",
+    "tests/integration/featureRouting.test.ts",
+    "tests/platform/claudeAppStateBridge.test.ts",
+    "tests/platform/claudeBridge.test.ts",
+    "tests/platform/claudeUnreadBridge.test.ts",
+    "tests/platform/claudePreloadCore.test.ts",
     "tests/platform/codexAppServerBridge.test.ts",
     "tests/platform/codexFloatWindowBridge.test.ts",
     "tests/platform/companionTaskActionsBridge.test.ts",
     "tests/platform/companionTaskKernel.test.ts",
+    "tests/platform/companionNavigationBridge.test.ts",
     "tests/platform/eypcPlatform.test.ts",
     "tests/platform/runtimeIdentity.test.ts",
+    "tests/platform/processBridge.test.ts",
     "tests/runtime/claudeCompanionController.test.ts",
+    "tests/runtime/claudeCompanionWatcherE2E.test.ts",
     "tests/runtime/codexController.test.ts",
     "tests/ui/codexCompanion.test.ts",
     "scripts/validate-utools-runtime.mjs"
@@ -121,21 +150,54 @@ Documentation level: `controlled`
 | supersede | stopped 全部退出通用循环 | 仅 `stopped + planReady + !paused` 进入既有 Plan 层并突破动态小时窗口 |
 | supersede | Kernel no-op 足以阻止重复 UI | Kernel、Host、Main、Float、Navigation、Actions 各自缓存 revision/selector 指纹 |
 | supersede | Float snapshot-send 即 UI 已更新 | 使用 `received/applied/rejected` ACK；500ms 重发一次，1s 后按健康心跳受控重建 |
-| supersede | Renderer/Controller/Preload 分别裁决状态 | Provider 只归一化证据，V4 Kernel 独占 phase、Plan、分组、计数、循环、可见性与能力 |
+| supersede | Renderer/Controller/Preload 分别裁决状态，且 Preload 的临时父投影被误当成完整分支裁决 | Preload 只采集拓扑和原始证据并向私有 Branch Evidence Store 发布；V4 Kernel 独占父聚合、phase、Plan、分组、计数、循环、可见性与能力；Domain 只投影 |
+| supersede | `unknown` 或新 hydration-only `active` 保守回退为 Codex running/verifying | `unknown` 是 abstain：保留可信库存语义且不进入动态组；没有实时 Turn/增量/processing 证据的新任务不得继承 running 前态 |
+| supersede | 卡片 `actionAlias/revision/phase` 是打开前的硬身份，任一落后即由 Actions 拒绝 | Renderer target 只作版本提示；Host 已持有同 key 时直接使用进程当前 target，不读库存、不比较旧字段、不返回 `stale-target`；仅 Host 目标/私有映射缺失或能力不可用时定向解析并只恢复同 key |
+| supersede | Renderer 焦点属于公开任务包语义，点击/聚焦可推进 package revision | 焦点只属于 Host 私有动作上下文；更新焦点不得发布任务包、触发筛选/分类或重投影 Float |
+| supersede | 单数字角标 `min-width:26px` 加等宽/tabular 数字 | 恢复 `20×20` 单数字圆形；两位数及 `99+` 自然扩宽，预览与 Float 使用同一几何合同 |
+| supersede | `codex.input.open` 无待输入候选时回退到本地置顶 | 待输入直接入口只使用全部可见的真实输入/审批候选；本地置顶仅保留在普通前后循环最后一级 |
+| supersede | 原生 `Implement Plan` 请求、default collaboration mode 或当前 model 不可得时禁用 Plan 暂停/执行 | 已确认完成的 actionable Plan 始终可暂停/恢复/执行；`planImplementation` 只决定循环优先层，不是菜单能力门禁。第二次确认时 Host 仍精读活动/其它待决请求；原生 default 路径不可得则向同一任务发送一次私有固定执行指令 |
+| supersede | Claude Hook/App 日志、任务成员关系与未读首变化依赖 timer，漏通知依赖隐藏 Renderer 的 interval | 进程 Host 在 native file callback 同步 drain/read；已登记任务文件与 LevelDB 文件由 Node `fs.watchFile` 以 1 秒恢复，Controller 不再轮询；部分 JSON 保留最后可信成员关系，语义相同零 revision/零 Float 推送 |
+| supersede | Codex native unread 只用可能丢失/失效的目录 `fs.watch`，首读经 25ms timer；Renderer `phaseOnly` 轮询被误当成恢复兜底 | 进程 Host 立即读取目录回调，已登记 state/rollout 文件用 1 秒 StatWatcher 补漏，watcher error 自动重建；Renderer 不再周期轮询 phase |
+| supersede | exact active/turn-started 可让 persisted unread true 跳过终态复核 | unread false→true 对仍 active 的同 key 强制 latest-Turn 复核；未读不直接推 terminal，较新正向 evidence sequence 拒绝迟到结果 |
+| supersede | 私有 Branch Evidence 与同源公开 Activity 各自发布，单个 Provider event 可产生两次 revision | Branch Evidence deferred staging，与匹配 Host draft 在一个 Kernel 语义事务中提交；一次变化最多一次 revision，同值恢复信号零推送 |
+| supersede | Claude App 状态/归档仅允许 `1.26832.0` | 固定隐私安全日志语法与单字段元数据事务均经核验后允许 `1.28929.0`；未知相邻版本继续 fail closed |
 | add | Plan 生命周期 | `planReady / planLifecycleRevision / paused`，并明确生成、修改、确认、中断、执行与清除因果 |
 | add | Plan 操作 | 四槽 `顶/暂/归/执`、`顶/恢/归/执`，批量暂停/恢复和抽屉内新会话 |
-| add | 安全执行原 Plan | Actions v2 两击确认、single-flight、能力探测、open→resume→start、完整 CollaborationMode 对象、indeterminate 定向复读 |
+| add | 安全执行原 Plan | Actions v2 两击确认、single-flight、同 key alias 恢复、open→resume→单次 start、原生 default 优先/同任务固定指令兜底、indeterminate 定向复读 |
 | add | Claude 状态新证据优先 | 新 `session.phase` 与 phaseRevision/statusEnteredAt/unread/capabilities 原子更新，旧缓存不得反压 |
+| add | Codex Desktop 外部归档无广播恢复 | Host 同时监听精确 `sessions/archived_sessions` 成员目录；快路或 1 秒 StatWatcher 唤醒后完整对照 `thread/list archived:false/true`，确认目标只在 archived 库存即发送 `archivedKeys` 并立即移除 |
+| supersede | 缺失脏任务可直接 `thread/read` 补回 | dirty recovery 先减去完整 archived 库存；已归档任务不得再被读回活动库存 |
+| add | 生命周期强制对账 | 插件进入、Desktop IPC 重连与 membership watcher 重建均执行一次 Codex provider-scoped tasks-only 对账 |
+| add | 待继续直接归档 | stopped 不需伪改 completed；行内/菜单直接进入既有两次确认，Provider 写前复核恢复运行/目标变化 |
 | retain | RAW-159 基础 | 无固定库存上限、Codex 全分页、归档事务、Runtime Identity、诊断、semantic no-op 均保留并升级 |
 | retain | Claude 归档成功边界 | 只确认 EyPc 元数据与活动库存收敛；提示明确原生侧栏未确认/当前不支持 |
 | exclude | 强制 Claude 原生侧栏同步 | 禁止 AX/JXA、私有 IPC、LevelDB 写入、重启与 UI 自动化 |
 
 RAW-142、RAW-150 与 RAW-159 仅上述冲突条款被取代；其余已验证基础和历史事实保留。
 
+## 2026-08-11—12 Installed-host Regression Rework
+
+- 先前的 `full-automated-verified / artifact-ready` 被真实 uTools 连续复现的缺陷否定，历史 gate 现记为 `host-reproduced-failure / rework`：运行分支被旧 idle 错判待继续、旧 alias 令全部待输入入口不可打开、单数字角标被无需求改成胶囊、Claude hidden-Host timer 延迟，以及 Codex 原生完成未读未进入 Host。
+- 1.5.4 已精确加载 `host-fc14212e36723e3b4fbe / renderer-4dfbb00a631314bc45f5`，真实复现“主任务 API 仍 active、Float 却归为待继续”，否定第一份重建包。修复主任务新 Turn/active 撤销旧 idle 后，1.5.5 又精确加载 `host-6a76cc45575078bc2ced / renderer-0fa112cd0697e912ea85`；卡片、待输入和全局入口在同一 Actions 链重复返回 `stale-target`，Float 焦点回声同时连续推进 package revision，故 1.5.5 也被拒绝。
+- 当前源码已完成私有 Branch Evidence Store、主任务 active 快路、Host 当前目标优先的同 key 打开、焦点零公开发布、abstain 无改判、精确待输入候选集和 `20×20` 角标合同；Controller 打开前也不再主动同步/重分类任务包。
+- 随后真实日志定位出独立 P0：Claude Hook 已及时写队列，但隐藏 Host 的 50ms/1s JavaScript timers 分别让 running/completed 延迟约 45/93 秒；实际处理仅约 5ms。当前源码已把 Hook、App-log、任务成员关系与未读的首事件改为进程 Node native callback 即时 drain/read，已登记目标由 1 秒 StatWatcher 恢复，移除 Controller phase interval，并适配经固定语法/结构核验的 Claude App `1.28929.0`。部分元数据 JSON 写入不会把任务误删，重复指纹不会发布。Host→Kernel→Float applied 自动化锁定正常 `≤250ms`、漏通知 `≤1.25s`，stopped 直接归档也已覆盖真实 UI 派发和 Provider 复核。
+- Codex 随后又以真实宿主日志确认 P0：原生状态已完成未读，但 Host 十分钟以上无新 activity，任务包停在旧 revision；Kernel/Float 接受既有事件很快，故不是 reducer/渲染慢。根因是 native unread `fs.watch` 可丢失/失效、首读仍经 timer、error 后不重建；Renderer `phaseOnly` 明确不读 persisted unread/latest Turn，无法补救。当前源码改为 Host 即时 callback、已登记文件 1 秒 StatWatcher、error 重建与原子 rename；unread true 强制同 key Turn 复核，并把 Branch/public evidence 合并为一次语义提交。
+- RAW-160 全量构建身份为 `host-252d34393f05b238e278 / renderer-ff8fbe75184168a9e150`；前序影响选择矩阵 `20/20` 文件、`547/547` 项保留，最新 Codex 核心 `3/3` 文件、`221/221` 项，扩展 `15/15` 文件、`433/433` 项，全量 `83/83` 文件、`1328/1328` 项。RAW-161 当前身份见下节；1.5.4、1.5.5、`host-7d…`、旧开发 Host 与历史测试都不能替代当前开发模式重载后的验收。
+
+## 2026-08-12 RAW-161 External Codex Archive Recovery
+
+- 真实 Codex 日志已证明 Desktop 原生 `thread/archive` 成功，而 EyPc 未收到兼容广播；旧 Kernel 因此继续保留任务。这不是筛选残影，而是权威库存恢复缺失。
+- [preload/index.js](../../../../preload/index.js#L1) 现在由进程 Host 精确监听 `CODEX_HOME/sessions` 与 `archived_sessions`。目录 rename 立即对照未归档/归档全分页库存；目录通知丢失时，1 秒 `fs.watchFile` StatWatcher 在 `≤1.25s` 恢复同一对照；watcher error 会重建并强制 tasks-only 对账。
+- 仅当目标从未归档库存消失且明确出现在归档库存时，Host 才清理私有 shadow/cache 并发布匿名 `archivedKeys`，绕过普通缺行隔离；原始 ID、路径和清单内容不跨 Preload。
+- 插件进入与 Desktop IPC 重连也强制执行一次 provider-scoped tasks-only 对账。EyPc 自己发起的归档仍受原双库存核验、Desktop ACK 与第二次核验事务保护，membership watcher 不旁路该后置条件。
+- dirty-thread 恢复在 `thread/read` 前排除 archived inventory，禁止把已归档任务补回。
+- 当前增量验证为 Codex Bridge `131/131`；focused recovery `5/5` 覆盖 4 条新增外部归档/漏通知/dirty archived/suppression-release 回归和既有 local indeterminate transaction guard，并通过 typecheck、1871-module production build、Preload 镜像/语法、uTools validator 与 diff 检查。当前构建身份为 `host-78205ae167fc7b27c653 / renderer-9c35abd09a8a390040c5`；此前 `host-252d… / renderer-ff8…` 是 RAW-160 全量基线，不是本增量待加载身份。
+
 ## Acceptance Boundary
 
-1. 受影响全链、全库测试、类型检查、生产构建、Preload 镜像、Runtime Identity、uTools validator、静态所有权和文档链接审计必须整体通过。
-2. 真实 uTools 同一安装包验收是独立宿主门禁；未完成前状态保持 `installed-host-pending`。
-3. 真实“执”会启动一个 Codex Turn，真实 Claude 归档会写 App 本地元数据；二者必须分别取得用户明确授权，本轮自动化只使用假 App Server/夹具。
+1. 按当前 `VerificationImpactTrace` 覆盖受影响 Kernel、Bridge、Controller、Domain、Float、Feature Routing、Runtime Identity，连同语义类型检查、生产构建、Preload 镜像、uTools validator、静态所有权和文档链接审计；更宽套件只有满足 testing owner 的独立升级触发才运行。
+2. 用户最新指定本轮不再做离线包/安装宿主验收；同一源码由 uTools 开发模式插件加载后完成 UI、动作、日志与 Runtime Identity 回归，未完成前状态保持 `dev-plugin-regression-pending`。
+3. 当前用户授权仅覆盖 `EyPc-Regression-<run-id>-*` 无副作用测试任务中的安全 Turn/Plan 与可恢复清理；不得对既有用户任务执行“执”或 Claude 归档。
 
 详细合同见 [raw requirement](raw-requirement.md#L1)、[spec](spec.md#L1)、[tasks](tasks.md#L1)、[verification](verify.md#L1) 和 [handoff](handoff.md#L1)。
