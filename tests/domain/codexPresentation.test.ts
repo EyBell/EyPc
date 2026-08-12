@@ -159,12 +159,12 @@ describe('Codex dynamic status projection', () => {
     }, NOW)
 
     expect(value.groups.input.map((item) => item.key)).toEqual(['approval', 'input'])
-    expect(value.groups.active.map((item) => item.key)).toEqual(['active', 'conservative'])
+    expect(value.groups.active.map((item) => item.key)).toEqual(['active'])
     expect(value.groups.stopped.map((item) => item.key)).toEqual(['stopped'])
     expect(value.groups.unread.map((item) => item.key)).toEqual(['unread'])
     expect(value.groups.completed.map((item) => item.key)).toEqual(['completed'])
-    expect(value.tasks).toHaveLength(7)
-    expect(value.compactCounts).toEqual({ input: 3, active: 2, unread: 2 })
+    expect(value.tasks).toHaveLength(6)
+    expect(value.compactCounts).toEqual({ input: 2, active: 1, unread: 1 })
     expect(value.groups.active.map((item) => item.key)).not.toContain('old-active')
     expect(value.groups.active.map((item) => item.key)).not.toContain('hidden-active')
   })
@@ -209,10 +209,10 @@ describe('Codex dynamic status projection', () => {
 
     expect(value.groups.input.map((item) => item.key)).toEqual(['new-approval-on-old-turn'])
     expect(value.groups.active).toEqual([])
-    expect(value.nextTransitionAt).toBe(statusEnteredAt + 24 * 60 * 60 * 1000 + 1)
+    expect(value.nextTransitionAt).toBeNull()
   })
 
-  it('keeps card and active counter aligned through active/ongoing jitter, then switches once on stabilized completion', () => {
+  it('never promotes uncertain ongoing evidence while keeping real active and completion mutually exclusive', () => {
     for (const activityState of ['active', 'ongoing', 'active'] as const) {
       const current = task('jitter', { activityState })
       const value = projectCodexDynamicStatus({
@@ -223,8 +223,8 @@ describe('Codex dynamic status projection', () => {
         hidden: [],
         inputRequired: []
       }, NOW)
-      expect(value.groups.active.map((item) => item.key)).toEqual(['jitter'])
-      expect(value.compactCounts.active).toBe(1)
+      expect(value.groups.active.map((item) => item.key)).toEqual(activityState === 'active' ? ['jitter'] : [])
+      expect(value.compactCounts.active).toBe(activityState === 'active' ? 1 : 0)
     }
 
     const completed = task('jitter', {

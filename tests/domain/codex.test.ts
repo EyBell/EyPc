@@ -22,7 +22,7 @@ function thread(
   updatedAt: number,
   activeFlags: CodexHostThread['activeFlags'] = [],
   key = KEY,
-  evidence: Partial<Pick<CodexHostThread, 'createdAt' | 'firstPromptAt' | 'lastTurnStatus' | 'lastTurnStartedAt' | 'lastTurnCompletedAt' | 'lastTurnEvidence' | 'statusAuthority' | 'activityEvidence' | 'activityRevision' | 'waitingSince' | 'desktopActiveSince' | 'hasUnreadTurn' | 'unreadAuthority' | 'planImplementationOnly' | 'planReady' | 'planLifecycleRevision' | 'turnMode' | 'idleConfirmed'>> = {}
+  evidence: Partial<Pick<CodexHostThread, 'createdAt' | 'firstPromptAt' | 'lastTurnStatus' | 'lastTurnStartedAt' | 'lastTurnCompletedAt' | 'lastTurnEvidence' | 'statusAuthority' | 'activityEvidence' | 'activityRevision' | 'activeEvidenceSequence' | 'terminalEvidenceSequence' | 'waitingSince' | 'desktopActiveSince' | 'hasUnreadTurn' | 'unreadAuthority' | 'planImplementationOnly' | 'planReady' | 'planLifecycleRevision' | 'turnMode' | 'idleConfirmed'>> = {}
 ): CodexHostThread {
   return {
     key,
@@ -31,6 +31,7 @@ function thread(
     status,
     activeFlags,
     statusAuthority: 'desktop-live',
+    activityEvidence: status === 'active' ? 'activity-event' : undefined,
     hasUnreadTurn: false,
     unreadAuthority: 'desktop-persisted',
     updatedAt,
@@ -180,7 +181,9 @@ describe('Codex domain', () => {
         lastTurnStatus: 'completed',
         lastTurnStartedAt: 400,
         lastTurnCompletedAt: 500,
-        lastTurnEvidence: 'snapshot-corroborated'
+        lastTurnEvidence: 'snapshot-corroborated',
+        activeEvidenceSequence: 1,
+        terminalEvidenceSequence: 2
       })],
       receipts: [],
       lastTaskScanAt: 0,
@@ -191,6 +194,37 @@ describe('Codex domain', () => {
     expect(result.snapshot.completed[0]).toMatchObject({ key: KEY, completionRevision: 500, archiveCapability: 'allowed' })
   })
 
+  it('does not promote hydration or missing active evidence to a real running task', () => {
+    const hydration = projectConversations({
+      threads: [thread('active', 900, [], KEY, {
+        activityEvidence: 'initial-snapshot',
+        lastTurnStatus: 'inProgress',
+        lastTurnStartedAt: 800
+      })],
+      receipts: [],
+      lastTaskScanAt: 0,
+      now: 1_000
+    })
+    const missing = projectConversations({
+      threads: [thread('active', 900, [], KEY, {
+        activityEvidence: undefined,
+        lastTurnStatus: 'inProgress',
+        lastTurnStartedAt: 800
+      })],
+      receipts: [],
+      lastTaskScanAt: 0,
+      now: 1_000
+    })
+
+    for (const projection of [hydration, missing]) {
+      expect(projection.snapshot.ongoing[0]).toMatchObject({
+        key: KEY,
+        activityState: 'ongoing'
+      })
+      expect(projectCodexDynamicStatus(projection.snapshot, 1_000).groups.active).toEqual([])
+    }
+  })
+
   it('rejects a reminted Desktop active interval that only revives after an already completed Turn', () => {
     const revived = projectConversations({
       threads: [thread('active', 900, [], KEY, {
@@ -198,7 +232,9 @@ describe('Codex domain', () => {
         lastTurnStatus: 'completed',
         lastTurnStartedAt: 400,
         lastTurnCompletedAt: 500,
-        lastTurnEvidence: 'turn-completed'
+        lastTurnEvidence: 'turn-completed',
+        activeEvidenceSequence: 1,
+        terminalEvidenceSequence: 2
       })],
       receipts: [],
       lastTaskScanAt: 0,
@@ -213,7 +249,9 @@ describe('Codex domain', () => {
         lastTurnStatus: 'completed',
         lastTurnStartedAt: 400,
         lastTurnCompletedAt: 500,
-        lastTurnEvidence: 'turn-completed'
+        lastTurnEvidence: 'turn-completed',
+        activeEvidenceSequence: 1,
+        terminalEvidenceSequence: 2
       })],
       receipts: [],
       lastTaskScanAt: 0,
@@ -259,6 +297,8 @@ describe('Codex domain', () => {
       threads: [thread('active', 900, [], KEY, {
         activityEvidence: 'activity-event',
         activityRevision: 8,
+        activeEvidenceSequence: 2,
+        terminalEvidenceSequence: 1,
         lastTurnStatus: 'completed',
         lastTurnStartedAt: 400,
         lastTurnCompletedAt: 500
@@ -273,6 +313,8 @@ describe('Codex domain', () => {
       threads: [thread('active', 901, [], KEY, {
         activityEvidence: 'activity-event',
         activityRevision: 8,
+        activeEvidenceSequence: 2,
+        terminalEvidenceSequence: 3,
         lastTurnStatus: 'completed',
         lastTurnStartedAt: 400,
         lastTurnCompletedAt: 500,
@@ -354,15 +396,15 @@ describe('Codex domain', () => {
 
   it.each([
     { name: 'exact active beats interrupted', status: 'active', flags: [], authority: 'desktop-live', turn: 'interrupted', evidence: 'inventory', bucket: 'ongoing', activity: 'active', archive: 'blocked-active' },
-    { name: 'idle-confirmed interrupted terminal clears an older active shadow', status: 'active', flags: [], authority: 'desktop-live', turn: 'interrupted', evidence: 'turn-completed', idleConfirmed: true, bucket: 'stopped', activity: 'stopped', archive: 'allowed' },
+    { name: 'active branch rejects stale idle-confirmed interrupted evidence', status: 'active', flags: [], authority: 'desktop-live', turn: 'interrupted', evidence: 'turn-completed', idleConfirmed: true, bucket: 'ongoing', activity: 'active', archive: 'blocked-active' },
     { name: 'pending input still outranks exact interrupted terminal', status: 'active', flags: ['waitingOnUserInput'], authority: 'desktop-live', turn: 'interrupted', evidence: 'turn-completed', bucket: 'ongoing', activity: 'waiting-input', archive: 'blocked-active' },
     { name: 'initial active conflict stays ongoing', status: 'notLoaded', flags: [], authority: 'desktop-live', turn: 'failed', evidence: 'targeted-after-exit', bucket: 'ongoing', activity: 'ongoing', archive: 'blocked-active' },
     { name: 'uncertain terminal stays ongoing', status: 'notLoaded', flags: [], authority: 'connector', turn: 'interrupted', evidence: 'inventory', bucket: 'ongoing', activity: 'ongoing', archive: 'blocked-active' },
     { name: 'exact idle plus failure is stopped', status: 'idle', flags: [], authority: 'desktop-live', turn: 'failed', evidence: 'targeted-after-exit', bucket: 'stopped', activity: 'stopped', archive: 'allowed' },
-    { name: 'plain completed shape cannot beat active', status: 'active', flags: [], authority: 'desktop-live', turn: 'completed', evidence: 'inventory', bucket: 'ongoing', activity: 'active', archive: 'blocked-active' },
-    { name: 'confirmed completion can close stale active', status: 'active', flags: [], authority: 'desktop-live', turn: 'completed', evidence: 'turn-completed', bucket: 'completed', activity: 'ongoing', archive: 'allowed' },
+    { name: 'plain completed inventory is not revived by an unproven active hydration shape', status: 'active', flags: [], authority: 'desktop-live', turn: 'completed', evidence: 'inventory', bucket: 'completed', activity: 'ongoing', archive: 'allowed' },
+    { name: 'confirmed completion can close stale active', status: 'active', flags: [], authority: 'desktop-live', turn: 'completed', evidence: 'turn-completed', activeSequence: 1, terminalSequence: 2, bucket: 'completed', activity: 'ongoing', archive: 'allowed' },
     { name: 'waiting still beats confirmed completion', status: 'active', flags: ['waitingOnUserInput'], authority: 'desktop-live', turn: 'completed', evidence: 'turn-completed', bucket: 'ongoing', activity: 'waiting-input', archive: 'blocked-active' }
-  ])('$name', ({ status, flags, authority, turn: turnStatus, evidence, idleConfirmed, bucket, activity, archive }) => {
+  ])('$name', ({ status, flags, authority, turn: turnStatus, evidence, activeSequence, terminalSequence, idleConfirmed, bucket, activity, archive }) => {
     const result = projectConversations({
       threads: [thread(
         status as CodexHostThread['status'],
@@ -375,6 +417,8 @@ describe('Codex domain', () => {
           lastTurnStartedAt: 900,
           ...(turnStatus === 'completed' ? { lastTurnCompletedAt: 950 } : {}),
           lastTurnEvidence: evidence as CodexHostThread['lastTurnEvidence'],
+          ...(activeSequence ? { activeEvidenceSequence: activeSequence } : {}),
+          ...(terminalSequence ? { terminalEvidenceSequence: terminalSequence } : {}),
           ...(idleConfirmed ? { idleConfirmed: true } : {})
         }
       )],
@@ -392,7 +436,7 @@ describe('Codex domain', () => {
     expect(projected).toMatchObject({ bucket, activityState: activity, archiveCapability: archive })
   })
 
-  it('keeps exact interrupted work in the dynamic total but out of the active badge', () => {
+  it('keeps an active branch in the active badge even when parent idle evidence is stale', () => {
     const result = projectConversations({
       threads: [thread('active', 1_000, [], keyAt(9), {
         statusAuthority: 'desktop-live',
@@ -408,8 +452,8 @@ describe('Codex domain', () => {
     })
     const dynamic = projectCodexDynamicStatus(result.snapshot, 1_100)
     expect(dynamic.tasks).toHaveLength(1)
-    expect(dynamic.groups).toMatchObject({ active: [], stopped: [{ key: keyAt(9) }] })
-    expect(dynamic.compactCounts).toEqual({ input: 0, active: 0, unread: 0 })
+    expect(dynamic.groups).toMatchObject({ active: [{ key: keyAt(9) }], stopped: [] })
+    expect(dynamic.compactCounts).toEqual({ input: 0, active: 1, unread: 0 })
   })
 
   it('keeps ordinary failed and unconfirmed interrupted rows behind the conservative stop gate', () => {
@@ -436,8 +480,8 @@ describe('Codex domain', () => {
     })
     expect(uncertain.snapshot).toMatchObject({ ongoingCount: 1, stoppedCount: 0 })
     expect(projectCodexDynamicStatus(uncertain.snapshot, 1_100)).toMatchObject({
-      compactCounts: { active: 1 },
-      groups: { active: [{ key: keyAt(3) }], stopped: [] }
+      compactCounts: { active: 0 },
+      groups: { active: [], stopped: [] }
     })
 
     const connectedUncertain = projectConversations({
@@ -462,8 +506,8 @@ describe('Codex domain', () => {
     expect(exited.snapshot).toMatchObject({ ongoingCount: 1, stoppedCount: 1 })
     expect(exited.snapshot.ongoing[0]).toMatchObject({ key: keyAt(4), activityState: 'ongoing' })
     expect(projectCodexDynamicStatus(exited.snapshot, 1_100)).toMatchObject({
-      compactCounts: { active: 1 },
-      groups: { active: [{ key: keyAt(4) }], stopped: [{ key: keyAt(3) }] }
+      compactCounts: { active: 0 },
+      groups: { active: [], stopped: [{ key: keyAt(3) }] }
     })
   })
 

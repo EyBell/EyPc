@@ -32,6 +32,7 @@ afterEach(() => vi.useRealTimers())
 
 interface FloatSnapshot {
   version?: 1 | 2
+  baseRevision?: number
   style: 'water' | 'card'
   conversationInboxEnabled: boolean
   expandedFields: string[]
@@ -285,7 +286,7 @@ describe('Codex float preload sizing', () => {
     const { bridge, taskKernel, ipcHandlers, sent, createCount } = loadPreloadHarness()
     taskKernel.publishEvidence(companionDraft(1))
 
-    expect(bridge.sync({ visible: true, snapshot: { ...snapshot(), version: 2 }, position: {} })).toBe(true)
+    expect(bridge.sync({ visible: true, snapshot: { ...snapshot({ baseRevision: 1 }), version: 2 }, position: {} })).toBe(true)
     expect(createCount()).toBe(1)
     const initial = sent.find((item) => item.channel === 'eypc-float:snapshot')
     expect(initial?.payload).toMatchObject({ companionTaskPackage: { packageRevision: 1 } })
@@ -296,7 +297,7 @@ describe('Codex float preload sizing', () => {
     })
 
     const taskSendsBeforeQuota = sent.filter((item) => item.channel === 'eypc-float:task-package').length
-    expect(bridge.sync({ visible: true, snapshot: { ...snapshot({ quota: { short: { remainingPercent: 79 } } }), version: 2 }, position: {} })).toBe(true)
+    expect(bridge.sync({ visible: true, snapshot: { ...snapshot({ baseRevision: 2, quota: { short: { remainingPercent: 79 } } }), version: 2 }, position: {} })).toBe(true)
     expect(sent.at(-2)?.channel).toBe('eypc-float:snapshot')
     expect(sent.at(-2)?.payload).not.toHaveProperty('companionTaskPackage')
     expect(sent.filter((item) => item.channel === 'eypc-float:task-package')).toHaveLength(taskSendsBeforeQuota)
@@ -327,7 +328,7 @@ describe('Codex float preload sizing', () => {
     const snapshots: Record<string, any>[] = []
     bridge.onSnapshot((value) => snapshots.push(value))
     const firstPackage = taskPackage(1)
-    ipcHandlers.get('eypc-float:snapshot')?.({}, { ...snapshot(), version: 2, companionTaskPackage: firstPackage })
+    ipcHandlers.get('eypc-float:snapshot')?.({}, { ...snapshot({ baseRevision: 1 }), version: 2, companionTaskPackage: firstPackage })
 
     expect(snapshots).toHaveLength(1)
     expect(sent.at(-1)).toMatchObject({
@@ -338,8 +339,12 @@ describe('Codex float preload sizing', () => {
     expect(sent.at(-1)).toMatchObject({ channel: 'eypc-float:task-package-ack', payload: { stage: 'applied', currentRevision: 1 } })
 
     const retained = bridge.getSnapshot()?.companionTaskPackage
-    ipcHandlers.get('eypc-float:snapshot')?.({}, { ...snapshot({ quota: { short: { remainingPercent: 78 } } }), version: 2 })
+    ipcHandlers.get('eypc-float:snapshot')?.({}, { ...snapshot({ baseRevision: 2, quota: { short: { remainingPercent: 78 } } }), version: 2 })
     expect(bridge.getSnapshot()?.companionTaskPackage).toBe(retained)
+    expect(snapshots).toHaveLength(2)
+
+    ipcHandlers.get('eypc-float:snapshot')?.({}, { ...snapshot({ baseRevision: 2, quota: { short: { remainingPercent: 77 } } }), version: 2 })
+    expect(bridge.getSnapshot()?.quota).toEqual({ short: { remainingPercent: 78 } })
     expect(snapshots).toHaveLength(2)
 
     const secondPackage = taskPackage(2, { phase: 'waiting-input' })

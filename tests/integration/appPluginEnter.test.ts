@@ -113,6 +113,10 @@ function completedUnreadCalls() {
   return dispatchProbe.dispatch.mock.calls.filter(([actionId]) => actionId === 'codex.completed-unread.openFirst')
 }
 
+function inputCalls() {
+  return dispatchProbe.dispatch.mock.calls.filter(([actionId]) => actionId === 'codex.input.open')
+}
+
 function windowSlotCalls() {
   return dispatchProbe.dispatch.mock.calls.filter(([actionId]) => actionId === 'windows.slot.activate')
 }
@@ -192,6 +196,20 @@ describe('App uTools Codex toggle entry', () => {
     expect(host.hide).not.toHaveBeenCalled()
     expect(host.show).not.toHaveBeenCalled()
     expect(host.saved).toHaveLength(0)
+  })
+
+  it('dispatches the cold待输入入口 through the same action without changing tab visibility', async () => {
+    const host = installHost({ code: 'eypc-codex-input' })
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => { callback(0); return 1 })
+
+    wrapper = shallowMount(App)
+    await flushPromises()
+
+    expect(inputCalls()).toHaveLength(1)
+    expect(host.hide).not.toHaveBeenCalled()
+    expect(host.show).not.toHaveBeenCalled()
+    expect(host.state.activeTab).toBe('ports')
+    expect(host.clearEnterPayload).toHaveBeenCalledTimes(1)
   })
 
   it('shows Settings instead of hiding when the Codex feature is disabled', async () => {

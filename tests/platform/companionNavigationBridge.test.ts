@@ -84,7 +84,7 @@ describe('process-lifetime companion navigation', () => {
     }))
   })
 
-  it('dispatches the leading shortcut immediately and retains only the final target while it is in flight', async () => {
+  it('dispatches the leading shortcut immediately without advancing past an unconfirmed target', async () => {
     let releaseFirst!: () => void
     const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
     const opened: string[] = []
@@ -106,9 +106,30 @@ describe('process-lifetime companion navigation', () => {
 
     await expect(first).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
     await expect(second).resolves.toMatchObject({ errorCode: 'superseded' })
-    await expect(third).resolves.toMatchObject({ outcome: 'opened', key: 'codex-b' })
-    expect(opened).toEqual(['codex-a', 'codex-b'])
+    await expect(third).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
+    expect(opened).toEqual(['codex-a'])
     expect(navigation.diagnostics()).toMatchObject({ maxConcurrent: 1, acceptedCycleCount: 3 })
+  })
+
+  it('commits the cycle cursor only after Host confirms the exact target opened', async () => {
+    const opened: string[] = []
+    let failFirst = true
+    const { navigation } = readyNavigation({
+      openCodex: async (target: { key: string }) => {
+        opened.push(target.key)
+        if (failFirst) {
+          failFirst = false
+          return { outcome: 'failed', errorCode: 'test-failure' }
+        }
+        return { outcome: 'opened' }
+      },
+      openClaude: async (target: { key: string }) => { opened.push(target.key); return { outcome: 'dispatched' } }
+    })
+
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'failed', key: 'codex-a' })
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'dispatched', key: 'claude:local_a' })
+    expect(opened).toEqual(['codex-a', 'codex-a', 'claude:local_a'])
   })
 
   it('dispatches separate completed shortcut turns without a fixed debounce delay', async () => {

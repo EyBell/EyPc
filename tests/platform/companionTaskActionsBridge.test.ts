@@ -53,6 +53,40 @@ function syncReady(actions: ReturnType<typeof createCompanionTaskActions>, targe
 }
 
 describe('companion task action dispatcher', () => {
+  it('opens the Host current target by exact key when a card carries an older alias and revision', async () => {
+    const open = vi.fn(async () => ({ outcome: 'opened' }))
+    const actions = createCompanionTaskActions({ adapters: { codex: { open } } })
+    const current = {
+      ...target('codex', 'same-key', 200),
+      actionAlias: 'host-current-alias',
+      phase: 'waiting-input',
+      canArchive: false
+    }
+    syncReady(actions, [current])
+
+    await expect(actions.open({
+      key: 'same-key',
+      source: 'card-click',
+      target: {
+        ...current,
+        actionAlias: 'renderer-expired-alias',
+        revisionAt: 100,
+        phase: 'stopped'
+      }
+    })).resolves.toMatchObject({ outcome: 'opened', key: 'same-key' })
+
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: 'same-key',
+        actionAlias: 'host-current-alias',
+        revisionAt: 200,
+        phase: 'waiting-input'
+      }),
+      expect.objectContaining({ source: 'card-click' })
+    )
+  })
+
   it('joins duplicate archive requests for one task without merging distinct tasks', async () => {
     let resolveFirst!: (value: unknown) => void
     const archive = vi.fn((value: { key: string }) => value.key === 'one'

@@ -11,10 +11,13 @@ import {
 
 const DECISIONS: CodexActivityDecisionDiagnostics = {
   liveEpochOpened: 2,
+  hydrationActiveDeferred: 0,
   staleTurnDiscarded: 3,
   branchTerminalDeferred: 5,
   snapshotConflictSuppressed: 7,
-  missingMappingRetained: 11
+  missingMappingRetained: 11,
+  waitingEdgeResubscribe: 0,
+  waitingEdgeRecoveryExpired: 0
 }
 
 function environment(patch: Partial<CodexEnvironmentSnapshotV1> = {}): CodexEnvironmentSnapshotV1 {

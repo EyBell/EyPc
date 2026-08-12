@@ -4,9 +4,10 @@ import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { createCompanionTaskKernel: createCompanionTaskKernelRaw, reduceCodexTaskEvidenceV4, reduceClaudeTaskEvidenceV4, UNKNOWN_GRACE_MS } = require('../../preload/companion/task-kernel.cjs') as {
+const { createCompanionTaskKernel: createCompanionTaskKernelRaw, reduceCodexTaskEvidenceV4, reduceCodexParentBranchEvidenceV4, reduceClaudeTaskEvidenceV4, UNKNOWN_GRACE_MS } = require('../../preload/companion/task-kernel.cjs') as {
   createCompanionTaskKernel(options?: Record<string, unknown>): any
   reduceCodexTaskEvidenceV4(value?: Record<string, unknown>): Record<string, any>
+  reduceCodexParentBranchEvidenceV4(value?: Record<string, unknown>): Record<string, any>
   reduceClaudeTaskEvidenceV4(value?: Record<string, unknown>): Record<string, any>
   UNKNOWN_GRACE_MS: number
 }
@@ -113,6 +114,7 @@ describe('CompanionTaskKernel', () => {
       previousPhase: 'running',
       status: 'active',
       statusAuthority: 'app-server-live',
+      activityEvidence: 'activity-event',
       activeFlags: []
     }
 
@@ -144,6 +146,16 @@ describe('CompanionTaskKernel', () => {
 
     expect(reduceCodexTaskEvidenceV4({
       ...base,
+      previousPhase: 'stopped',
+      lastTurnStatus: 'interrupted',
+      lastTurnEvidence: 'turn-completed',
+      activeEvidenceSequence: 0,
+      terminalEvidenceSequence: 11,
+      idleConfirmed: true
+    })).toMatchObject({ phase: 'running', freshness: 'verifying', reason: 'active-terminal-conflict' })
+
+    expect(reduceCodexTaskEvidenceV4({
+      ...base,
       activeFlags: ['waitingOnUserInput'],
       lastTurnStatus: 'interrupted',
       lastTurnEvidence: 'turn-completed',
@@ -169,6 +181,233 @@ describe('CompanionTaskKernel', () => {
       activeEvidenceSequence: 0,
       terminalEvidenceSequence: 0
     })).toMatchObject({ phase: 'completed', freshness: 'verifying', reason: 'terminal-verifying' })
+
+    expect(reduceCodexTaskEvidenceV4({
+      previousPhase: 'completed',
+      status: 'active',
+      statusAuthority: 'desktop-live',
+      activityEvidence: 'initial-snapshot',
+      activeFlags: [],
+      lastTurnStatus: 'completed',
+      lastTurnEvidence: 'turn-completed',
+      terminalEvidenceSequence: 11
+    })).toMatchObject({ phase: 'completed', freshness: 'fresh', reason: 'exact-completed' })
+
+    expect(reduceCodexTaskEvidenceV4({
+      previousPhase: 'unknown',
+      status: 'active',
+      statusAuthority: 'desktop-live',
+      activityEvidence: 'initial-snapshot',
+      activeFlags: [],
+      lastTurnStatus: 'inProgress',
+      lastTurnEvidence: 'inventory'
+    })).toMatchObject({ phase: 'unknown', freshness: 'verifying', reason: 'insufficient-evidence' })
+
+    expect(reduceCodexTaskEvidenceV4({
+      previousPhase: 'unknown',
+      status: 'active',
+      statusAuthority: 'app-server-live',
+      activityEvidence: 'initial-snapshot',
+      activeFlags: [],
+      lastTurnStatus: 'inProgress',
+      lastTurnEvidence: 'inventory'
+    })).toMatchObject({ phase: 'unknown', freshness: 'verifying', reason: 'insufficient-evidence' })
+
+    expect(reduceCodexTaskEvidenceV4({
+      previousPhase: 'unknown',
+      status: 'active',
+      statusAuthority: 'persisted-decision',
+      activeFlags: [],
+      lastTurnStatus: 'inProgress'
+    })).toMatchObject({ phase: 'unknown', freshness: 'verifying', reason: 'insufficient-evidence' })
+
+    expect(reduceCodexTaskEvidenceV4({
+      previousPhase: 'unknown',
+      status: 'active',
+      statusAuthority: 'desktop-live',
+      activityEvidence: 'initial-snapshot',
+      activeFlags: ['waitingOnUserInput']
+    })).toMatchObject({ phase: 'waiting-input', freshness: 'fresh', reason: 'causal-waiting-input' })
+  })
+
+  it('reduces private branch evidence with live work ahead of waits and terminal states', () => {
+    const branch = (ref: string, overrides: Record<string, unknown> = {}) => ({
+      ref,
+      status: 'idle',
+      statusAuthority: 'desktop-live',
+      activeFlags: [],
+      lastTurnStatus: 'completed',
+      lastTurnEvidence: 'targeted-after-exit',
+      terminalEvidenceSequence: 20,
+      idleConfirmed: true,
+      ...overrides
+    })
+
+    expect(reduceCodexParentBranchEvidenceV4({
+      previousPhase: 'stopped',
+      branches: [
+        branch('main', { status: 'active', lastTurnStatus: 'inProgress', activeEvidenceSequence: 21, idleConfirmed: true }),
+        branch('side-terminal')
+      ]
+    })).toMatchObject({ phase: 'running', freshness: 'fresh', reason: 'branch-running' })
+
+    expect(reduceCodexParentBranchEvidenceV4({
+      previousPhase: 'stopped',
+      branches: [
+        branch('main-interrupted', { lastTurnStatus: 'interrupted' }),
+        branch('side-running', { status: 'active', lastTurnStatus: 'inProgress', activeEvidenceSequence: 21, idleConfirmed: true })
+      ]
+    })).toMatchObject({ phase: 'running', freshness: 'fresh', reason: 'branch-running' })
+
+    expect(reduceCodexParentBranchEvidenceV4({
+      previousPhase: 'running',
+      branches: [
+        branch('main', { status: 'active', activeFlags: ['waitingOnApproval'], lastTurnStatus: 'inProgress', activeEvidenceSequence: 21 }),
+        branch('side-input', { status: 'active', activeFlags: ['waitingOnUserInput'], lastTurnStatus: 'inProgress', activeEvidenceSequence: 22 })
+      ]
+    })).toMatchObject({ phase: 'waiting-approval', reason: 'branch-waiting-approval' })
+
+    expect(reduceCodexParentBranchEvidenceV4({ previousPhase: 'running', branches: [branch('main'), branch('side')] }))
+      .toMatchObject({ phase: 'completed', freshness: 'fresh', reason: 'all-branches-completed' })
+
+    expect(reduceCodexParentBranchEvidenceV4({
+      previousPhase: 'running',
+      branches: [
+        branch('main', { lastTurnStatus: 'interrupted' }),
+        branch('side', { lastTurnStatus: 'failed' })
+      ]
+    })).toMatchObject({ phase: 'stopped', freshness: 'fresh', reason: 'all-branches-idle-terminal' })
+
+    expect(reduceCodexParentBranchEvidenceV4({
+      previousPhase: 'waiting-input',
+      branches: [branch('main', { lastTurnEvidence: 'inventory', idleConfirmed: false })]
+    })).toMatchObject({ phase: 'waiting-input', freshness: 'verifying', reason: 'branch-terminal-verifying' })
+
+    expect(reduceCodexParentBranchEvidenceV4({
+      previousPhase: 'completed',
+      branches: [branch('hydrated', {
+        status: 'active',
+        activityEvidence: 'initial-snapshot',
+        activeEvidenceSequence: 0,
+        terminalEvidenceSequence: 0,
+        lastTurnStatus: 'inProgress',
+        lastTurnEvidence: 'inventory',
+        idleConfirmed: false
+      })]
+    })).toMatchObject({ outcome: 'abstain', phase: null, freshness: 'unchanged', reason: 'branch-evidence-insufficient' })
+  })
+
+  it('stores private branch evidence and clears stale idle when a newer branch is active', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({ phase: 'stopped', idleConfirmed: true })], 1, { providers: { codex: true, claude: false } })
+    })
+
+    kernel.publishCodexBranchEvidence({
+      generation: 2,
+      parents: [{
+        key: 'codex-a',
+        complete: true,
+        branches: [
+          {
+            ref: 'branch-main-anonymous',
+            status: 'active',
+            statusAuthority: 'desktop-live',
+            activeFlags: [],
+            lastTurnStatus: 'inProgress',
+            lastTurnEvidence: 'turn-started',
+            activeEvidenceSequence: 12,
+            terminalEvidenceSequence: 11,
+            idleConfirmed: true
+          },
+          {
+            ref: 'branch-side-anonymous',
+            status: 'idle',
+            statusAuthority: 'desktop-live',
+            activeFlags: [],
+            lastTurnStatus: 'interrupted',
+            lastTurnEvidence: 'targeted-after-exit',
+            activeEvidenceSequence: 10,
+            terminalEvidenceSequence: 11,
+            idleConfirmed: true
+          }
+        ]
+      }]
+    })
+
+    expect(kernel.getPackage()).toMatchObject({
+      tasks: [{ key: 'codex-a', phase: 'running', freshness: 'fresh', idleConfirmed: false }],
+      views: { counts: { active: 1 }, groups: { active: ['codex-a'], stopped: [] } }
+    })
+    expect(kernel.diagnostics()).toMatchObject({ codexBranchParentCount: 1, codexBranchCount: 2 })
+    expect(kernel.commitArchived({ provider: 'codex', key: 'codex-a', verified: true, membershipRevision: 3 }))
+      .toMatchObject({ outcome: 'archived', removedKeys: ['codex-a'] })
+    expect(kernel.diagnostics()).toMatchObject({ codexBranchParentCount: 0, codexBranchCount: 0 })
+  })
+
+  it('stages branch evidence and publishes it atomically with the matching Host draft', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({ phase: 'stopped', idleConfirmed: true })], 1, { providers: { codex: true, claude: false } })
+    })
+    const baselineRevision = kernel.getPackage().packageRevision
+    const publications: number[] = []
+    const stop = kernel.onPackage((value: Record<string, any>) => publications.push(value.packageRevision))
+    const baselinePublicationCount = publications.length
+
+    kernel.publishCodexBranchEvidence({
+      generation: 2,
+      deferPublish: true,
+      parents: [{
+        key: 'codex-a',
+        complete: true,
+        branches: [{
+          ref: 'branch-main-anonymous',
+          status: 'active',
+          statusAuthority: 'app-server-live',
+          activityEvidence: 'activity-event',
+          activeFlags: [],
+          lastTurnStatus: 'inProgress',
+          lastTurnEvidence: 'turn-started',
+          activeEvidenceSequence: 2,
+          terminalEvidenceSequence: 1,
+          idleConfirmed: false
+        }]
+      }]
+    })
+
+    expect(kernel.getPackage().packageRevision).toBe(baselineRevision)
+    expect(publications).toHaveLength(baselinePublicationCount)
+    kernel.publishEvidence(draft([
+      task({
+        phase: 'stopped',
+        idleConfirmed: true,
+        observationGeneration: 2,
+        phaseRevision: 2
+      })
+    ], 2, {
+      providers: { codex: true, claude: false },
+      sourceGenerations: { codex: 2, claude: 0 },
+      sourceLaneGenerations: {
+        codex: { membership: 1, phase: 2, unread: 1 },
+        claude: { membership: 0, phase: 0, unread: 0 }
+      }
+    }))
+
+    expect(kernel.getPackage()).toMatchObject({
+      packageRevision: baselineRevision + 1,
+      tasks: [{ key: 'codex-a', phase: 'running', idleConfirmed: false }]
+    })
+    expect(publications.slice(baselinePublicationCount)).toEqual([baselineRevision + 1])
+    stop()
   })
 
   it('keeps Claude live/terminal/unread phase rules inside the shared Kernel reducer', () => {
@@ -227,7 +466,7 @@ describe('CompanionTaskKernel', () => {
     expect(executing.tasks[0]).toMatchObject({ phase: 'running', planReady: false, planLifecycleRevision: 0, paused: false })
   })
 
-  it('keeps ordinary waiting ahead of a retained Plan and makes only the exact Plan wait executable', () => {
+  it('keeps ordinary waiting ahead while retaining Plan controls when the Implement Plan request is absent', () => {
     const kernel = createCompanionTaskKernel({
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
     })
@@ -244,7 +483,7 @@ describe('CompanionTaskKernel', () => {
     })
     expect(ordinaryWait.tasks[0]).toMatchObject({
       cycleTier: 'attention',
-      capabilities: { pause: false, resume: false, executePlan: false }
+      capabilities: { pause: true, resume: false, executePlan: true }
     })
 
     const exactPlanWait = kernel.publishEvidence(draft([task({
@@ -259,6 +498,30 @@ describe('CompanionTaskKernel', () => {
     expect(exactPlanWait.tasks[0]).toMatchObject({
       cycleTier: 'plan',
       planLifecycleRevision: 200,
+      capabilities: { pause: true, resume: false, executePlan: true }
+    })
+  })
+
+  it('keeps a completed Plan actionable when its implementation prompt was not observed', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const current = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({
+        phase: 'completed',
+        turnMode: 'plan',
+        planReady: true,
+        planLifecycleRevision: 240,
+        planImplementation: false,
+        capabilities: { open: true, archive: true, pause: true, resume: true, executePlan: true }
+      })], 1, { providers: { codex: true, claude: false } })
+    })
+
+    expect(current.tasks[0]).toMatchObject({
+      phase: 'completed',
+      planReady: true,
       capabilities: { pause: true, resume: false, executePlan: true }
     })
   })
@@ -287,6 +550,35 @@ describe('CompanionTaskKernel', () => {
       metadataRevision: 9_999
     })], 2, { producer: 'host-evidence', providers: { codex: true, claude: false } }))
     expect(refreshed.tasks[0].planLifecycleRevision).toBe(200)
+  })
+
+  it('does not renew ordinary dynamic visibility from metadata or observation revisions', () => {
+    const kernel = createCompanionTaskKernel({
+      now: () => 10_000_000,
+      initialConfiguration: {
+        enabled: true,
+        providers: { codex: true, claude: false },
+        dynamicTaskWindowHours: 1
+      }
+    })
+    const receipt = kernel.attach({
+      enabled: true,
+      providers: { codex: true, claude: false },
+      dynamicTaskWindowHours: 1
+    })
+    const next = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({
+        lastQuestionAt: 1_000,
+        turnStartedAt: 1_000,
+        statusEnteredAt: 1_000,
+        createdAt: 500,
+        revisionAt: 10_000,
+        metadataRevision: 10_000,
+        visibilityRevision: 10_000
+      })], 1, { providers: { codex: true, claude: false } })
+    })
+    expect(next.tasks[0]).toMatchObject({ phase: 'running', dynamicEligible: false, dynamicGroup: 'none', cycleTier: 'none' })
   })
 
   it('migrates a legacy hidden Plan transactionally and rolls back pause when hidden-state cleanup fails', () => {
@@ -327,8 +619,33 @@ describe('CompanionTaskKernel', () => {
     now = 3_600_101
     vi.advanceTimersByTime(3_599_101)
     expect(kernel.getLatest().views.groups.active).toEqual([])
+    expect(kernel.getLatest().tasks[0]).toMatchObject({ phase: 'running', dynamicEligible: false, cycleTier: 'none' })
+    expect(kernel.getLatest().views.cycleKeys).toEqual([])
     expect(revisions).toHaveLength(2)
     expect(kernel.diagnostics().nextVisibilityTransitionAt).toBe(0)
+  })
+
+  it('keeps all visible input and unread attention outside the ordinary activity window', () => {
+    const kernel = createCompanionTaskKernel({
+      now: () => 1_000_000_000,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    const current = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([
+        task({ key: 'old-input', phase: 'waiting-input', dynamicEligible: false, lastQuestionAt: 10 }),
+        task({ key: 'old-unread', phase: 'completed', unread: true, dynamicEligible: false, lastQuestionAt: 9 }),
+        task({ key: 'old-running', phase: 'running', dynamicEligible: false, lastQuestionAt: 8 })
+      ], 1, { providers: { codex: true, claude: false } })
+    })
+
+    expect(current.views.groups.input).toEqual(['old-input'])
+    expect(current.views.groups.unread).toEqual(['old-unread'])
+    expect(current.views.groups.active).toEqual([])
+    expect(current.views.counts).toEqual({ input: 1, active: 0, unread: 1 })
+    expect(current.views.attentionKeys).toMatchObject({ input: ['old-input'], completedUnread: ['old-unread'] })
+    expect(current.views.cycleKeys).toEqual(['old-input'])
   })
 
   it('keeps the complete admitted inventory without a product task-count cap', () => {
@@ -425,7 +742,6 @@ describe('CompanionTaskKernel', () => {
     })
     const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
     kernel.syncPackage({ lease: receipt.lease, draft: draft([task()], 1, { providers: { codex: true, claude: false } }) })
-
     await expect(kernel.dispatch({ action: 'open', key: 'codex-a', source: 'manual' })).resolves.toMatchObject({ outcome: 'opened' })
     await expect(kernel.dispatch({ action: 'cycle', direction: 1 })).resolves.toMatchObject({ outcome: 'opened' })
 
@@ -477,7 +793,7 @@ describe('CompanionTaskKernel', () => {
     expect(opened).toEqual(['codex-new', 'codex-new', 'codex-old', 'codex-new'])
   })
 
-  it('uses a local pin only as the input shortcut fallback without changing the compact input count', async () => {
+  it('keeps local pins in ordinary cycling and never uses them as an input shortcut fallback', async () => {
     const opened: string[] = []
     const kernel = createCompanionTaskKernel({
       adapters: {
@@ -499,9 +815,10 @@ describe('CompanionTaskKernel', () => {
     })
 
     expect(packageValue.views.counts.input).toBe(0)
-    expect(packageValue.views.attentionKeys.input).toEqual(['codex-pin'])
-    await expect(kernel.dispatch({ action: 'open-attention', kind: 'input' })).resolves.toMatchObject({ outcome: 'opened', key: 'codex-pin' })
-    expect(opened).toEqual(['codex-pin'])
+    expect(packageValue.views.attentionKeys.input).toEqual([])
+    expect(packageValue.views.cycleKeys).toEqual(['codex-pin'])
+    await expect(kernel.dispatch({ action: 'open-attention', kind: 'input' })).resolves.toMatchObject({ outcome: 'unavailable' })
+    expect(opened).toEqual([])
   })
 
   it('keeps a Claude open-read hint for the same completion and releases it for the next completion', async () => {
@@ -847,6 +1164,44 @@ describe('CompanionTaskKernel', () => {
     expect(kernel.getPackage()).toMatchObject({ complete: true, freshness: 'verifying', tasks: [{ phase: 'running' }] })
   })
 
+  it('delegates exact-key alias recovery to Host without broad preflight or target substitution', async () => {
+    const opened: Array<Record<string, unknown>> = []
+    const preflight = vi.fn(async () => draft([task()], 2, { producer: 'host-preflight', providers: { codex: true, claude: false } }))
+    const kernel = createCompanionTaskKernel({
+      coalesceMs: 0,
+      preflight,
+      adapters: { codex: { open: async (target: Record<string, unknown>) => { opened.push(target); return { outcome: 'opened' } } } },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({ lease: receipt.lease, draft: draft([task()], 1, { providers: { codex: true, claude: false } }) })
+    await vi.waitFor(() => expect(preflight).toHaveBeenCalledTimes(1))
+    preflight.mockClear()
+    const preflightCallsBeforeOpen = preflight.mock.calls.length
+
+    await expect(kernel.dispatch({
+      action: 'open',
+      key: 'codex-b',
+      expectedActionAlias: 'ct_codex_b_expired_123456',
+      source: 'card-click'
+    })).resolves.toMatchObject({ outcome: 'opened', key: 'codex-b' })
+    expect(preflight).toHaveBeenCalledTimes(preflightCallsBeforeOpen)
+    expect(opened).toEqual([expect.objectContaining({
+      key: 'codex-b',
+      actionAlias: 'ct_codex_b_expired_123456'
+    })])
+
+    await expect(kernel.dispatch({
+      action: 'open',
+      key: 'codex-b',
+      expectedActionAlias: 'ct_codex_b_older_123456',
+      source: 'manual-row-open'
+    })).resolves.toMatchObject({ outcome: 'opened', key: 'codex-b' })
+    expect(preflight).toHaveBeenCalledTimes(preflightCallsBeforeOpen)
+    expect(opened).toHaveLength(2)
+    expect(opened.every((target) => target.key === 'codex-b')).toBe(true)
+  })
+
   it('consumes a silent shortcut before any Renderer attaches and never replays it', async () => {
     const opened = vi.fn(async () => ({ outcome: 'opened' }))
     const preflight = vi.fn(async () => draft([task()], 1, { providers: { codex: true, claude: false } }))
@@ -949,6 +1304,48 @@ describe('CompanionTaskKernel', () => {
     expect(kernel.diagnostics().navigation).toMatchObject({ dispatched: { codex: 0, claude: 0 } })
     expect(kernel.diagnostics().navigation.syncNoopCount).toBe(consumerDiagnostics.navigation.syncNoopCount)
     expect(kernel.diagnostics().actions.syncNoopCount).toBe(consumerDiagnostics.actions.syncNoopCount)
+    kernel.close()
+  })
+
+  it('keeps repeated UI focus changes process-private without publishing task packages', () => {
+    const kernel = createCompanionTaskKernel({
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([
+        task(),
+        task({
+          key: 'codex-b',
+          actionAlias: 'ct_codex_b_1234567890',
+          revisionAt: 101,
+          membershipRevision: 101,
+          phaseRevision: 101,
+          unreadRevision: 101,
+          visibilityRevision: 101
+        })
+      ], 1, { providers: { codex: true, claude: false } })
+    })
+    const baselineRevision = kernel.getLatest().packageRevision
+    const publications: number[] = []
+    const stop = kernel.subscribe(baselineRevision, (value: Record<string, any>) => publications.push(value.packageRevision))
+
+    for (let index = 0; index < 100; index += 1) {
+      const focusedKey = index % 2 === 0 ? 'codex-a' : 'codex-b'
+      const current = kernel.configure({
+        lease: receipt.lease,
+        enabled: true,
+        providers: { codex: true, claude: false },
+        focusedKey
+      })
+      expect(current.focusedKey).toBe(focusedKey)
+      expect(current.packageRevision).toBe(baselineRevision)
+    }
+
+    expect(publications).toEqual([])
+    expect(kernel.getLatest()).toMatchObject({ packageRevision: baselineRevision, focusedKey: 'codex-b' })
+    stop()
     kernel.close()
   })
 
