@@ -1,7 +1,7 @@
 # Claude Companion：Codex 同构状态与全局缓存改造
 
-updated: `2026-08-11`
-status: `implementation-landed / RAW-030-full-automated-verified / artifact-ready / native-sidebar-unsupported / interactive-host-acceptance-pending`
+updated: `2026-08-12`
+status: `implementation-landed / RAW-032-full-automated-verified / artifact-ready / native-sidebar-unsupported / dev-plugin-reload-pending`
 
 ## Baseline And Corrected Conclusions
 
@@ -30,7 +30,7 @@ status: `implementation-landed / RAW-030-full-automated-verified / artifact-read
 ### 2. 真实状态与历史恢复
 
 - [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1) 的元数据白名单加入 `completedTurns`，标题、项目、归档、活动和完成计数按单行 patch 合并，不覆盖已有 phase/unread。
-- 新增 [app-state.cjs](../../../../preload/claude/app-state.cjs#L1)：仅接受已门禁 Claude App `1.26832.0` 的固定无内容日志模板；发送、权限请求、AskUserQuestion、request-id 权限响应、完成、停止/失败均去重归并。版本或语法不匹配立即 fail closed，原始日志、工具参数和正文不跨 Bridge。
+- 新增 [app-state.cjs](../../../../preload/claude/app-state.cjs#L1)：仅接受已明确核验的 Claude App `1.26832.0 / 1.28929.0` 固定无内容日志模板；发送、权限请求、AskUserQuestion、request-id 权限响应、完成、停止/失败均去重归并。版本或语法不匹配立即 fail closed，原始日志、工具参数和正文不跨 Bridge。
 - 状态优先级固定为：App local id 精确事件 → 可唯一关联 Hook → 冷启动 `completedTurns` 历史证据 → unknown。更新的 live 证据优先；过时 active 证据不会覆盖更新的历史完成，歧义 Hook 不扇出。
 - [unread.cjs](../../../../preload/claude/unread.cjs#L1) 用真实 LevelDB reader 精确读取包含 Chromium string tag 的 `epitaxy-unread-v1` 键，复制前后指纹一致才发布 V2 generation。成功精确打开完成态后，Controller 为同 `sessionId + completionEpoch` 建立仅进程内提示并在 0/100/300/1000ms 复读原生集合；同轮迟到 true 不回跳，新轮次可再次未读。失败跳转不提示、不写 App，`confirmsRead` 保持 false。
 
@@ -52,7 +52,7 @@ status: `implementation-landed / RAW-030-full-automated-verified / artifact-read
 - Bridge 已分离 inventory、`ClaudeCodeStateDeltaV2`、unread、quota、App presence；V2 带 `generation/source/freshness/compatibility`。
 - `ClaudeCodeObservation` 增加 `completedTurns` 与证据字段，quota snapshot 增加窗口级 source/freshness；Renderer 不再猜测总快照。
 - 删除“所有 watcher 调 `refreshClaude()`”、每次打开全量窗口枚举、进程期仅三次额度尝试及相应错误测试；保留 Code-only、App 标题、精确历史 deep link、LevelDB 只读合同。
-- 项目投影新增只读虚拟合并：完全相同稳定 project key 优先、双方名称唯一时兜底，Claude-only 项目批量进入项目区，歧义重名保持分离。Projects 内建 `全部 / 只显示 Codex / 只显示 Claude` 会话级筛选并重算计数。更新引入（RAW-154，取代 RAW-150 的 Claude 执行路线）：completed/stopped 任务级归档只通过 Claude `1.26832.0` 门禁后的 D′ 单目标静默 `isArchived` 事务；归档不打开 Claude、不使用 AX，项目级归档、移除和移动继续禁用。
+- 项目投影新增只读虚拟合并：完全相同稳定 project key 优先、双方名称唯一时兜底，Claude-only 项目批量进入项目区，歧义重名保持分离。Projects 内建 `全部 / 只显示 Codex / 只显示 Claude` 会话级筛选并重算计数。更新引入（RAW-154/032，取代 RAW-150 的 Claude 执行路线）：completed/stopped 任务级归档只通过已核验 Claude `1.26832.0 / 1.28929.0` 门禁后的 D′ 单目标静默 `isArchived` 事务；归档不打开 Claude、不使用 AX，项目级归档、移除和移动继续禁用。
 - 任务与项目固定显示文本化归属，使用现有来源 token 做 8%/12% 轻背景，并保留状态图标、原生 Tab/键盘/ARIA 语义与紧凑高度。
 
 ### 6. 旧任务父 Turn 与单项真实同步
@@ -91,6 +91,12 @@ status: `implementation-landed / RAW-030-full-automated-verified / artifact-read
 - phase、phaseRevision、statusEnteredAt、unread、capabilities 原子接受；等价轮询仅推进私有 generation，不重复发布。
 - Main/Float/Navigation/Actions 保存 latest revision/selector；Float 以 applied ACK 证明 UI 已消费，snapshot-send 不再等同应用成功。
 - 自动化覆盖 running→terminal、延迟旧 inventory、打开后刷新与归档结果文案；真实 Claude transition 继续宿主门禁，真实归档不重复执行。
+
+### 11. RAW-031/032 隐藏 Host 与当前 Claude 版本
+
+- 将 Hook/App-log、任务成员关系与 unread 首事件消费固定到进程 Node 原生回调；不使用可能被 `background-hidden` 节流的 `setTimeout/setInterval`。目录 `fs.watch` 负责快路，已登记目标的 1 秒 `fs.watchFile` StatWatcher 只作补漏；部分 JSON 保留最后可信任务，重复 reduced-state/unread/package 指纹完整 no-op。
+- 明确门禁 Claude `1.28929.0` 固定日志语法与 D′ 元数据结构；未知相邻版本 fail closed。stopped 行直接暴露归档入口，但五秒确认、同 key Dispatcher 与写前精确复核不放宽。
+- 自动化必须穿过 Main-hidden Hook queue→Host→Kernel→Float applied ACK，正常 `≤250ms`、漏通知恢复 `≤1.25s`；当前开发插件必须加载同一 Runtime Identity 后才接纳。
 
 ## Verification Plan And Current Gate
 
