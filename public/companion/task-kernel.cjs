@@ -106,6 +106,10 @@ function normalizeCodexBranchEvidenceV4(value = {}) {
   if (!value || typeof value !== 'object') return null
   const ref = typeof value.ref === 'string' && value.ref.length > 0 && value.ref.length <= 128 ? value.ref : ''
   if (!ref) return null
+  const branchKind = value.branchKind === 'main' || value.branchKind === 'side' ? value.branchKind : ''
+  const unreadObserved = typeof value.unreadKnown === 'boolean'
+  const unreadKnown = value.unreadKnown === true
+  const hasUnreadTurn = unreadKnown && value.hasUnreadTurn === true
   const status = ['active', 'idle', 'notLoaded', 'systemError'].includes(value.status) ? value.status : 'notLoaded'
   const statusAuthority = ['desktop-live', 'app-server-live', 'persisted-decision', 'connector', 'unavailable'].includes(value.statusAuthority)
     ? value.statusAuthority
@@ -121,6 +125,34 @@ function normalizeCodexBranchEvidenceV4(value = {}) {
     : ''
   const activeEvidenceSequence = finiteInteger(value.activeEvidenceSequence)
   const terminalEvidenceSequence = finiteInteger(value.terminalEvidenceSequence)
+  const turnStartedAt = finiteInteger(value.turnStartedAt)
+  const goalStatus = ['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete', 'none', 'unknown'].includes(value.goalStatus)
+    ? value.goalStatus
+    : 'none'
+  const goalFreshness = value.goalFreshness === 'verifying' || goalStatus === 'unknown'
+    ? 'verifying'
+    : 'fresh'
+  const goalEvidenceSequence = finiteInteger(value.goalEvidenceSequence)
+  const goalUpdatedAt = finiteInteger(value.goalUpdatedAt)
+  const nonActiveGoal = ['paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'].includes(goalStatus)
+  // A non-active Goal belongs to the execution epoch in which it was
+  // observed. A strictly newer Turn may start another epoch before the App
+  // Server publishes the replacement Goal; the old state must not lock the
+  // thread forever. `updatedAt` is authoritative for RPC re-reads, while the
+  // process sequence covers notification-only observations.
+  const goalSupersededByActive = goalFreshness === 'fresh' && nonActiveGoal && activeEvidenceSequence > 0 && (
+    (goalUpdatedAt > 0 && turnStartedAt > goalUpdatedAt)
+    || (goalUpdatedAt > 0
+      && turnStartedAt === goalUpdatedAt
+      && goalEvidenceSequence > 0
+      && activeEvidenceSequence > goalEvidenceSequence)
+    || (goalUpdatedAt === 0 && goalEvidenceSequence > 0 && activeEvidenceSequence > goalEvidenceSequence)
+  )
+  const goalCurrent = goalFreshness === 'fresh'
+    && goalStatus !== 'none'
+    && goalStatus !== 'unknown'
+    && !goalSupersededByActive
+  const goalSuppressesLive = goalCurrent && nonActiveGoal
   const exactTerminal = ['completed', 'interrupted', 'failed'].includes(lastTurnStatus)
     && ['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(lastTurnEvidence)
   const terminalStrictlyNewer = exactTerminal && terminalEvidenceSequence > 0 && activeEvidenceSequence > 0
@@ -140,11 +172,15 @@ function normalizeCodexBranchEvidenceV4(value = {}) {
   // `inProgress` from an inventory replay is not live evidence by itself.
   // A branch becomes live only through a real-time authority (Turn start,
   // Desktop activity delta, App Server delta or the persisted Plan lane).
-  const liveCurrent = liveStatus && !terminalStrictlyNewer
+  const liveCurrent = liveStatus && !terminalStrictlyNewer && !goalSuppressesLive
   const idleConfirmed = exactTerminal && value.idleConfirmed === true && !liveCurrent
     && (!activeEvidenceSequence || !terminalEvidenceSequence || terminalEvidenceSequence >= activeEvidenceSequence)
   return {
     ref,
+    branchKind,
+    unreadObserved,
+    unreadKnown,
+    hasUnreadTurn,
     status,
     statusAuthority,
     activityEvidence: value.activityEvidence === 'activity-event' ? 'activity-event' : 'initial-snapshot',
@@ -154,12 +190,18 @@ function normalizeCodexBranchEvidenceV4(value = {}) {
     activeEvidenceSequence,
     terminalEvidenceSequence,
     waitingSince: finiteInteger(value.waitingSince),
-    turnStartedAt: finiteInteger(value.turnStartedAt),
+    turnStartedAt,
     terminalAt: finiteInteger(value.terminalAt),
     transitionAt: finiteInteger(value.transitionAt),
     observedAt: finiteInteger(value.observedAt),
     planImplementationOnly: value.planImplementationOnly === true,
     planReady: value.planReady === true || value.planImplementationOnly === true,
+    goalStatus,
+    goalFreshness,
+    goalEvidenceSequence,
+    goalUpdatedAt,
+    goalCurrent,
+    goalSupersededByActive,
     exactTerminal,
     terminalStrictlyNewer,
     liveCurrent,
@@ -175,35 +217,70 @@ function reduceCodexParentBranchEvidenceV4(value = {}) {
   const branches = (Array.isArray(value.branches) ? value.branches : [])
     .map(normalizeCodexBranchEvidenceV4)
     .filter(Boolean)
+  const mainBranch = branches.find((branch) => branch.branchKind === 'main') || branches[0]
+  const mainCompleted = Boolean(mainBranch)
+    && !mainBranch.liveCurrent
+    && mainBranch.goalFreshness === 'fresh'
+    && (mainBranch.goalCurrent
+      ? mainBranch.goalStatus === 'complete'
+      : mainBranch.exactTerminal && mainBranch.lastTurnStatus === 'completed')
+  // Side Chat state may take over only after the main task is both completed
+  // and read. In every other state the main task remains the presentation
+  // authority, even if a child has newer live or unread evidence.
+  const mainCompletedRead = mainCompleted
+    && mainBranch.unreadObserved
+    && mainBranch.unreadKnown
+    && !mainBranch.hasUnreadTurn
+  const selectedBranches = mainCompletedRead ? branches : mainBranch ? [mainBranch] : []
   const priorCandidate = PHASES.includes(value.previousNonterminalPhase)
     ? value.previousNonterminalPhase
     : PHASES.includes(value.previousPhase) ? value.previousPhase : 'unknown'
-  const previousNonterminalPhase = ['running', 'waiting-input', 'waiting-approval'].includes(priorCandidate)
+  const previousNonterminalPhase = ['running', 'waiting-input', 'waiting-approval', 'stopped'].includes(priorCandidate)
     ? priorCandidate
     : ''
   const details = {
     branchCount: branches.length,
-    runningCount: branches.filter((branch) => branch.liveCurrent && branch.activeFlags.length === 0).length,
-    approvalCount: branches.filter((branch) => branch.liveCurrent && branch.activeFlags.includes('waitingOnApproval')).length,
-    inputCount: branches.filter((branch) => branch.liveCurrent && branch.activeFlags.includes('waitingOnUserInput')).length,
-    terminalCount: branches.filter((branch) => branch.exactTerminal).length,
-    idleTerminalCount: branches.filter((branch) => branch.idleConfirmed).length
+    selectedBranchCount: selectedBranches.length,
+    mainCompletedRead,
+    runningCount: selectedBranches.filter((branch) => branch.liveCurrent && branch.activeFlags.length === 0).length,
+    approvalCount: selectedBranches.filter((branch) => branch.liveCurrent && branch.activeFlags.includes('waitingOnApproval')).length,
+    inputCount: selectedBranches.filter((branch) => branch.liveCurrent && branch.activeFlags.includes('waitingOnUserInput')).length,
+    terminalCount: selectedBranches.filter((branch) => branch.exactTerminal).length,
+    idleTerminalCount: selectedBranches.filter((branch) => branch.idleConfirmed).length,
+    goalActiveCount: selectedBranches.filter((branch) => branch.goalCurrent && branch.goalStatus === 'active').length,
+    goalStoppedCount: selectedBranches.filter((branch) => branch.goalCurrent
+      && ['paused', 'blocked', 'usageLimited', 'budgetLimited'].includes(branch.goalStatus)).length,
+    goalCompleteCount: selectedBranches.filter((branch) => branch.goalCurrent && branch.goalStatus === 'complete').length,
+    goalVerifyingCount: selectedBranches.filter((branch) => branch.goalFreshness === 'verifying').length
   }
+  const positiveUnread = selectedBranches.some((branch) => branch.unreadObserved
+    && branch.unreadKnown
+    && branch.hasUnreadTurn)
+  const completeUnreadObservation = selectedBranches.length > 0
+    && selectedBranches.every((branch) => branch.unreadObserved)
+  const unreadOutcome = positiveUnread || completeUnreadObservation ? 'decided' : 'abstain'
+  const unreadKnown = positiveUnread
+    || (completeUnreadObservation && selectedBranches.every((branch) => branch.unreadKnown))
+  const unread = unreadKnown && positiveUnread
   const transitionAtFor = (selected) => Math.max(
     0,
     ...selected.map((branch) => Math.max(
       finiteInteger(branch.transitionAt),
       finiteInteger(branch.waitingSince),
       finiteInteger(branch.turnStartedAt),
-      finiteInteger(branch.terminalAt)
+      finiteInteger(branch.terminalAt),
+      finiteInteger(branch.goalUpdatedAt)
     ))
   )
-  const decide = (phase, reason, freshness = 'fresh', idleConfirmed = false, selected = branches) => ({
+  const decide = (phase, reason, freshness = 'fresh', idleConfirmed = false, selected = selectedBranches) => ({
     outcome: 'decided',
     phase,
     reason,
     freshness,
     idleConfirmed,
+    unreadOutcome,
+    unreadKnown,
+    unread,
     transitionAt: transitionAtFor(selected),
     details
   })
@@ -213,26 +290,52 @@ function reduceCodexParentBranchEvidenceV4(value = {}) {
     reason,
     freshness: 'unchanged',
     idleConfirmed: false,
+    unreadOutcome,
+    unreadKnown,
+    unread,
     transitionAt: 0,
     details
   })
-  if (!branches.length) return abstain('branch-evidence-missing')
-  const running = branches.filter((branch) => branch.liveCurrent && branch.activeFlags.length === 0)
+  if (!selectedBranches.length) return abstain('branch-evidence-missing')
+  const running = selectedBranches.filter((branch) => branch.liveCurrent && branch.activeFlags.length === 0)
   if (running.length) {
     return decide('running', 'branch-running', 'fresh', false, running)
   }
-  const approvals = branches.filter((branch) => branch.liveCurrent && branch.activeFlags.includes('waitingOnApproval'))
+  const approvals = selectedBranches.filter((branch) => branch.liveCurrent && branch.activeFlags.includes('waitingOnApproval'))
   if (approvals.length) {
     return decide('waiting-approval', 'branch-waiting-approval', 'fresh', false, approvals)
   }
-  const inputs = branches.filter((branch) => branch.liveCurrent && branch.activeFlags.includes('waitingOnUserInput'))
+  const inputs = selectedBranches.filter((branch) => branch.liveCurrent && branch.activeFlags.includes('waitingOnUserInput'))
   if (inputs.length) {
     return decide('waiting-input', 'branch-waiting-input', 'fresh', false, inputs)
   }
-  if (branches.every((branch) => branch.exactTerminal && branch.lastTurnStatus === 'completed')) {
+  const activeGoals = selectedBranches.filter((branch) => branch.goalCurrent && branch.goalStatus === 'active')
+  if (activeGoals.length) {
+    return decide('running', 'goal-active', 'fresh', false, activeGoals)
+  }
+  const verifyingGoals = selectedBranches.filter((branch) => branch.goalFreshness === 'verifying')
+  if (verifyingGoals.length) {
+    const retainedActiveGoal = verifyingGoals.filter((branch) => branch.goalStatus === 'active')
+    if (retainedActiveGoal.length && !previousNonterminalPhase) {
+      return decide('running', 'goal-active-verifying', 'verifying', false, retainedActiveGoal)
+    }
+    return previousNonterminalPhase
+      ? decide(previousNonterminalPhase, 'goal-evidence-verifying', 'verifying', false, verifyingGoals)
+      : decide('unknown', 'goal-evidence-verifying', 'verifying', false, verifyingGoals)
+  }
+  const stoppedGoals = selectedBranches.filter((branch) => branch.goalCurrent
+    && ['paused', 'blocked', 'usageLimited', 'budgetLimited'].includes(branch.goalStatus))
+  if (stoppedGoals.length) {
+    return decide('stopped', `goal-${stoppedGoals[0].goalStatus}`, 'fresh', true, stoppedGoals)
+  }
+  const completedGoals = selectedBranches.filter((branch) => branch.goalCurrent && branch.goalStatus === 'complete')
+  if (completedGoals.length) {
+    return decide('completed', 'goal-complete', 'fresh', false, completedGoals)
+  }
+  if (selectedBranches.every((branch) => branch.exactTerminal && branch.lastTurnStatus === 'completed')) {
     return decide('completed', 'all-branches-completed')
   }
-  if (branches.every((branch) => branch.exactTerminal && branch.idleConfirmed)) {
+  if (selectedBranches.every((branch) => branch.exactTerminal && branch.idleConfirmed)) {
     return decide('stopped', 'all-branches-idle-terminal', 'fresh', true)
   }
   return previousNonterminalPhase
@@ -792,11 +895,19 @@ function createCompanionTaskKernel(dependencies = {}) {
     const evidence = codexBranchDecisionForTask(task)
     if (!evidence) return task
     const decision = evidence.decision
+    const next = {
+      ...task,
+      observationGeneration: Math.max(finiteInteger(task.observationGeneration), evidence.generation),
+      ...(decision.unreadOutcome === 'decided'
+        ? {
+            unreadKnown: decision.unreadKnown === true,
+            unread: decision.unreadKnown === true && decision.unread === true,
+            unreadRevision: Math.max(finiteInteger(task.unreadRevision), evidence.generation)
+          }
+        : {})
+    }
     if (decision.outcome === 'abstain' || !PHASES.includes(decision.phase)) {
-      return {
-        ...task,
-        observationGeneration: Math.max(finiteInteger(task.observationGeneration), evidence.generation)
-      }
+      return next
     }
     const phaseChanged = decision.phase !== task.phase
     const terminal = decision.phase === 'completed' || decision.phase === 'stopped'
@@ -804,11 +915,10 @@ function createCompanionTaskKernel(dependencies = {}) {
       || decision.phase === 'waiting-input'
       || decision.phase === 'waiting-approval'
     return {
-      ...task,
+      ...next,
       phase: decision.phase,
       freshness: decision.freshness,
       idleConfirmed: decision.idleConfirmed === true,
-      observationGeneration: Math.max(finiteInteger(task.observationGeneration), evidence.generation),
       phaseRevision: Math.max(finiteInteger(task.phaseRevision), evidence.generation),
       statusEnteredAt: phaseChanged
         ? finiteInteger(decision.transitionAt)
@@ -1075,22 +1185,41 @@ function createCompanionTaskKernel(dependencies = {}) {
         : new Map()
       for (const branch of incomingBranches) branches.set(branch.ref, branch)
       const task = currentByKey.get(key)
-      const currentNonterminal = ['running', 'waiting-input', 'waiting-approval'].includes(task?.phase)
-        ? task.phase
-        : previous?.previousNonterminalPhase
+      const goalAuthorityCleared = previous?.previousNonterminalAuthority === 'goal'
+        && [...branches.values()].every((branch) => branch.goalStatus === 'none' && branch.goalFreshness === 'fresh')
+      const currentNonterminal = goalAuthorityCleared
+        ? ''
+        : ['running', 'waiting-input', 'waiting-approval', 'stopped'].includes(task?.phase)
+          ? task.phase
+          : previous?.previousNonterminalPhase
       const decision = reduceCodexParentBranchEvidenceV4({
-        previousPhase: task?.phase,
+        previousPhase: goalAuthorityCleared ? 'unknown' : task?.phase,
         previousNonterminalPhase: currentNonterminal,
         branches: [...branches.values()]
       })
-      const previousNonterminalPhase = ['running', 'waiting-input', 'waiting-approval'].includes(decision.phase)
+      const previousNonterminalPhase = ['running', 'waiting-input', 'waiting-approval', 'stopped'].includes(decision.phase)
         ? decision.phase
-        : currentNonterminal || previous?.previousNonterminalPhase || ''
+        : goalAuthorityCleared ? '' : currentNonterminal || previous?.previousNonterminalPhase || ''
+      const previousNonterminalAuthority = decision.reason === 'goal-active'
+        || decision.reason === 'goal-active-verifying'
+        || decision.reason.startsWith('goal-paused')
+        || decision.reason.startsWith('goal-blocked')
+        || decision.reason.startsWith('goal-usageLimited')
+        || decision.reason.startsWith('goal-budgetLimited')
+        ? 'goal'
+        : decision.reason === 'branch-running'
+          || decision.reason === 'branch-waiting-input'
+          || decision.reason === 'branch-waiting-approval'
+          ? 'turn'
+          : goalAuthorityCleared
+            ? ''
+            : previous?.previousNonterminalAuthority || ''
       codexBranchEvidence.set(key, {
         generation,
         branches: [...branches.values()],
         decision,
         previousNonterminalPhase,
+        previousNonterminalAuthority,
         observedAt: Math.max(0, ...[...branches.values()].map((branch) => finiteInteger(branch.observedAt)))
       })
       accepted = true
