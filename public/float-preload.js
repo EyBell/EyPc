@@ -65,6 +65,7 @@ const CHANNELS = {
 }
 
 let lastSnapshot = null
+let lastBaseSnapshotRevision = 0
 let lastTaskPackageRevision = 0
 let lastState = { expanded: false, pinned: false, resizing: false, resizeCorner: null, expandedSize: null }
 const snapshotListeners = new Set()
@@ -125,6 +126,11 @@ function taskPackageRevision(value) {
   return Number.isInteger(revision) && revision > 0 ? revision : 0
 }
 
+function baseSnapshotRevision(value) {
+  const revision = Number(value && typeof value === 'object' ? value.baseRevision : 0)
+  return Number.isInteger(revision) && revision > 0 ? revision : 0
+}
+
 function sendTaskPackageAck(stage, sentRevision, reason) {
   const revision = Number.isInteger(sentRevision) && sentRevision > 0 ? sentRevision : lastTaskPackageRevision
   if (!revision) return false
@@ -142,7 +148,7 @@ function notifySnapshotListeners(snapshot) {
   }
 }
 
-function acceptTaskPackage(taskPackage, sentRevision, baseSnapshot = lastSnapshot) {
+function acceptTaskPackage(taskPackage, sentRevision, baseSnapshot = lastSnapshot, options = {}) {
   const revision = taskPackageRevision(taskPackage)
   if (!revision
     || sentRevision !== revision
@@ -156,8 +162,10 @@ function acceptTaskPackage(taskPackage, sentRevision, baseSnapshot = lastSnapsho
     return false
   }
   if (revision === lastTaskPackageRevision) {
+    lastSnapshot = { ...(baseSnapshot || lastSnapshot || {}), companionTaskPackage: taskPackage }
     sendTaskPackageAck('received', revision)
     sendTaskPackageAck('applied', revision)
+    if (options.notify === true) notifySnapshotListeners(lastSnapshot)
     return true
   }
   lastTaskPackageRevision = revision
@@ -169,14 +177,20 @@ function acceptTaskPackage(taskPackage, sentRevision, baseSnapshot = lastSnapsho
 
 ipcRenderer.on(CHANNELS.snapshot, (_event, snapshot) => {
   if (!snapshot || typeof snapshot !== 'object' || (snapshot.version !== 1 && snapshot.version !== 2)) return
+  const incomingBaseRevision = baseSnapshotRevision(snapshot)
+  if (lastBaseSnapshotRevision > 0 && incomingBaseRevision === 0) return
+  if (incomingBaseRevision > 0 && incomingBaseRevision < lastBaseSnapshotRevision) return
+  const baseAdvanced = incomingBaseRevision === 0 || incomingBaseRevision > lastBaseSnapshotRevision
+  if (incomingBaseRevision > 0) lastBaseSnapshotRevision = Math.max(lastBaseSnapshotRevision, incomingBaseRevision)
   const taskPackage = snapshot.companionTaskPackage
   const baseSnapshot = taskPackage
     ? snapshot
     : { ...snapshot, ...(lastSnapshot?.companionTaskPackage ? { companionTaskPackage: lastSnapshot.companionTaskPackage } : {}) }
   if (taskPackage) {
-    acceptTaskPackage(taskPackage, taskPackageRevision(taskPackage), baseSnapshot)
+    acceptTaskPackage(taskPackage, taskPackageRevision(taskPackage), baseSnapshot, { notify: baseAdvanced })
     return
   }
+  if (!baseAdvanced) return
   lastSnapshot = baseSnapshot
   notifySnapshotListeners(lastSnapshot)
 })

@@ -15,15 +15,10 @@
 const QUEUE_FILE_NAME = 'eypc-claude-events.jsonl'
 const MAX_QUEUE_BYTES = 512 * 1024
 const MAX_EVENTS_PER_READ = 2000
-/**
- * How long to wait after the first append before notifying.
- *
- * One turn produces a burst — PreToolUse, PostToolUse, Stop and so on land
- * within milliseconds of each other — and the consumer only needs to know that
- * something changed, not how many times. Matches the Codex event lane's window
- * so both providers feel the same.
- */
-const DEFAULT_COALESCE_MS = 50
+// Retained as a public compatibility constant. The first semantic change is
+// now drained synchronously from the native file callback; semantic equality,
+// rather than a throttleable timer, collapses duplicate tail events.
+const DEFAULT_COALESCE_MS = 0
 const DEFAULT_RECOVERY_POLL_MS = 1000
 
 /** Raw `hook_event_name` → companion event class. */
@@ -206,14 +201,17 @@ function createEventQueue(dependencies) {
   const directory = dependencies.directory
   const maxBytes = Number.isFinite(dependencies.maxBytes) ? dependencies.maxBytes : MAX_QUEUE_BYTES
   const queuePath = path.join(directory, QUEUE_FILE_NAME)
-  const setTimer = dependencies.setTimeout || setTimeout
-  const clearTimer = dependencies.clearTimeout || clearTimeout
   const setIntervalFn = dependencies.setInterval || setInterval
   const clearIntervalFn = dependencies.clearInterval || clearInterval
+  const watchFileFn = dependencies.watchFile
+    || (typeof fs.watchFile === 'function' ? fs.watchFile.bind(fs) : null)
+  const unwatchFileFn = dependencies.unwatchFile
+    || (typeof fs.unwatchFile === 'function' ? fs.unwatchFile.bind(fs) : null)
   let offset = 0
   let sessionState = new Map()
   let watcher = null
-  let watchTimer = null
+  let recoveryFileWatch = false
+  let recoveryFileListener = null
   let recoveryTimer = null
   let lastQueueSignature = ''
 
@@ -223,13 +221,16 @@ function createEventQueue(dependencies) {
   }
 
   function stopWatching() {
-    if (watchTimer) {
-      clearTimer(watchTimer)
-      watchTimer = null
-    }
     if (watcher) {
       try { watcher.close() } catch { /* already gone */ }
       watcher = null
+    }
+    if (recoveryFileWatch) {
+      if (unwatchFileFn) {
+        try { unwatchFileFn(queuePath, recoveryFileListener || undefined) } catch { /* already gone */ }
+      }
+      recoveryFileWatch = false
+      recoveryFileListener = null
     }
     if (recoveryTimer) {
       clearIntervalFn(recoveryTimer)
@@ -247,8 +248,10 @@ function createEventQueue(dependencies) {
   }
 
   /**
-   * Calls `listener` once per burst of appends, so the consumer can react to a
-   * hook event immediately instead of waiting for its next poll.
+   * Drains and calls `listener` from the first native append callback. Hidden
+   * uTools WebContents throttle JavaScript timers, so a semantic transition
+   * must never wait behind setTimeout/setInterval. Duplicate or content-free
+   * tails are collapsed by comparing the reduced state itself.
    *
    * Three deliberate choices:
    *
@@ -258,16 +261,13 @@ function createEventQueue(dependencies) {
    *    silently stop working.
    *  - `persistent: false`, so a watcher can never be the reason a process
    *    refuses to exit.
-   *  - This is an accelerator, never a replacement for the caller's interval.
-   *    `fs.watch` misses events on some filesystems and network volumes and
-   *    reports no error when it does, so the poll has to stay.
+   *  - `fs.watchFile` supplies the bounded native recovery lane. Its libuv
+   *    StatWatcher remains live while the WebContents is background-hidden;
+   *    JavaScript `setInterval` exists only as a constrained-runtime fallback.
    */
   function watch(listener, options) {
     const settings = options || {}
     if (typeof listener !== 'function') return () => {}
-    const coalesceMs = Number.isFinite(settings.coalesceMs)
-      ? Math.max(0, settings.coalesceMs)
-      : DEFAULT_COALESCE_MS
     const recoveryPollMs = Number.isFinite(settings.recoveryPollMs)
       ? Math.max(100, settings.recoveryPollMs)
       : DEFAULT_RECOVERY_POLL_MS
@@ -275,9 +275,13 @@ function createEventQueue(dependencies) {
     try { fs.mkdirSync(directory, { recursive: true }) } catch { /* the watch below reports it */ }
     let disposed = false
     lastQueueSignature = queueSignature()
-    const fire = () => {
-      watchTimer = null
+    const stateFingerprint = () => JSON.stringify([...sessionState.entries()])
+    const drainAndNotify = () => {
       if (disposed) return
+      const before = stateFingerprint()
+      drain()
+      lastQueueSignature = queueSignature()
+      if (stateFingerprint() === before) return
       // A throwing consumer must not take the watcher down with it: the next
       // append still has to be delivered.
       try { listener() } catch { /* consumer's problem */ }
@@ -286,28 +290,46 @@ function createEventQueue(dependencies) {
       if (disposed) return
       // Some platforms report a null filename; treat that as "might be ours".
       if (filename && String(filename) !== QUEUE_FILE_NAME) return
-      if (watchTimer) return
-      watchTimer = setTimer(fire, coalesceMs)
+      drainAndNotify()
     }
     try {
       watcher = fs.watch(directory, { persistent: false }, onChange)
       if (watcher && typeof watcher.on === 'function') {
-        // A watcher error is not fatal — it means this machine falls back to
-        // polling, which is exactly the pre-existing behavior.
-        watcher.on('error', () => stopWatching())
+        // Preserve the independent native recovery watcher if the directory
+        // accelerator fails.
+        watcher.on('error', () => {
+          try { watcher?.close() } catch {}
+          watcher = null
+        })
       }
     } catch {
       watcher = null
     }
-    // `fs.watch` is only the fast path. A bounded signature poll catches a
-    // dropped notification without publishing when nothing changed.
-    recoveryTimer = setIntervalFn(() => {
-      const next = queueSignature()
-      if (next === lastQueueSignature) return
-      lastQueueSignature = next
-      onChange('change', QUEUE_FILE_NAME)
-    }, recoveryPollMs)
-    if (recoveryTimer && typeof recoveryTimer.unref === 'function') recoveryTimer.unref()
+    // `fs.watch` is only the fast path. Prefer Node's native StatWatcher for
+    // dropped notifications so recovery is not hostage to hidden-page timer
+    // throttling. Keep a timer fallback only for runtimes without watchFile.
+    if (watchFileFn) {
+      try {
+        recoveryFileListener = () => {
+          const next = queueSignature()
+          if (next === lastQueueSignature) return
+          drainAndNotify()
+        }
+        watchFileFn(queuePath, { persistent: false, interval: recoveryPollMs }, recoveryFileListener)
+        recoveryFileWatch = true
+      } catch {
+        recoveryFileWatch = false
+        recoveryFileListener = null
+      }
+    }
+    if (!recoveryFileWatch) {
+      recoveryTimer = setIntervalFn(() => {
+        const next = queueSignature()
+        if (next === lastQueueSignature) return
+        drainAndNotify()
+      }, recoveryPollMs)
+      if (recoveryTimer && typeof recoveryTimer.unref === 'function') recoveryTimer.unref()
+    }
     return () => {
       disposed = true
       stopWatching()
@@ -326,8 +348,13 @@ function createEventQueue(dependencies) {
       handle = fs.openSync(queuePath, 'r')
       const buffer = Buffer.alloc(length)
       fs.readSync(handle, buffer, 0, length, offset)
-      offset = size
-      const entries = parseQueueText(buffer.toString('utf8'))
+      // The native callback may run between the append syscall and its final
+      // newline becoming observable. Consume only complete JSONL records and
+      // leave a partial tail for the next file event/recovery tick.
+      const lastNewline = buffer.lastIndexOf(0x0a)
+      if (lastNewline < 0) return []
+      offset += lastNewline + 1
+      const entries = parseQueueText(buffer.subarray(0, lastNewline + 1).toString('utf8'))
       sessionState = foldQueueEntries(entries, sessionState)
       return entries
     } catch {

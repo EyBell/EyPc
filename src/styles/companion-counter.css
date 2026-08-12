@@ -1,0 +1,14 @@
+:root {
+  --companion-counter-size: 20px;
+  --companion-counter-inline-padding: 5px;
+}
+
+.companion-counter-geometry {
+  display: grid;
+  min-width: var(--companion-counter-size);
+  height: var(--companion-counter-size);
+  padding: 0 var(--companion-counter-inline-padding);
+  place-items: center;
+  border-radius: 999px;
+  line-height: 1;
+}

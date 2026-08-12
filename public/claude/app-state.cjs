@@ -15,10 +15,13 @@ const { LOCAL_SESSION_PATTERN } = require('./code-sessions.cjs')
 
 const CLAUDE_APP_STATE_REVISION = 'claude-app-log-state-v1'
 const CLAUDE_APP_STATE_VERSION = 2
-const SUPPORTED_APP_VERSIONS = new Set(['1.26832.0'])
+// Each version is admitted only after its privacy-safe lifecycle grammar has
+// been checked against the installed App logs. 1.28929.0 preserves the exact
+// Code session messages accepted below; unrelated Cowork identifiers remain
+// outside LOCAL_SESSION_PATTERN and therefore fail closed.
+const SUPPORTED_APP_VERSIONS = new Set(['1.26832.0', '1.28929.0'])
 const LOG_FILE_NAMES = ['main1.log', 'main.log']
 const LOG_TAIL_MAX_BYTES = 16 * 1024 * 1024
-const LOG_WATCH_COALESCE_MS = 50
 const LOG_RECOVERY_POLL_MS = 1000
 const MAX_SEEN_EVENTS = 4096
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -113,6 +116,7 @@ function emptyEntry(sessionId) {
     lastStopAt: 0,
     lastSessionEndAt: 0,
     lastEventAt: 0,
+    evidenceProvenance: 'cold-replay',
     source: 'app-log'
   }
 }
@@ -130,7 +134,13 @@ function foldAppStateEvents(events, previous, previousRequests) {
     if (known.lastEventAt > event.at) continue
     if (event.requestId && event.kind !== 'permission-response') requests.set(event.requestId, sessionId)
     if (event.kind === 'permission-response' && event.requestId) requests.delete(event.requestId)
-    const next = { ...known, lastEventAt: event.at, phaseUpdatedAt: event.at }
+    const eventProvenance = event.evidenceProvenance === 'cold-replay' ? 'cold-replay' : 'live-append'
+    const next = {
+      ...known,
+      lastEventAt: event.at,
+      phaseUpdatedAt: event.at,
+      evidenceProvenance: eventProvenance
+    }
     if (event.kind === 'running') {
       next.phase = 'running'
       next.turnStartedAt = event.at
@@ -147,6 +157,7 @@ function foldAppStateEvents(events, previous, previousRequests) {
     } else if (event.kind === 'completed') {
       next.phase = 'completed'
       next.lastStopAt = event.at
+      next.evidenceProvenance = 'exact-terminal'
     } else if (event.kind === 'session-end') {
       next.lastSessionEndAt = event.at
       // Claude emits a generic teardown row after both successful and
@@ -155,9 +166,11 @@ function foldAppStateEvents(events, previous, previousRequests) {
       next.phase = known.lastStopAt > 0 && known.lastStopAt >= known.turnStartedAt
         ? 'completed'
         : 'stopped'
+      next.evidenceProvenance = 'exact-terminal'
     } else if (event.kind === 'stopped') {
       next.phase = 'stopped'
       next.lastSessionEndAt = event.at
+      next.evidenceProvenance = 'exact-terminal'
     }
     if (JSON.stringify(next) !== JSON.stringify(known)) {
       state.set(sessionId, next)
@@ -171,15 +184,16 @@ function createAppStateReader(dependencies) {
   const fs = dependencies.fs
   const path = dependencies.path
   const os = dependencies.os
-  const setTimer = dependencies.setTimeout || setTimeout
-  const clearTimer = dependencies.clearTimeout || clearTimeout
   const setIntervalFn = dependencies.setInterval || setInterval
   const clearIntervalFn = dependencies.clearInterval || clearInterval
+  const watchFileFn = dependencies.watchFile
+    || (typeof fs.watchFile === 'function' ? fs.watchFile.bind(fs) : null)
+  const unwatchFileFn = dependencies.unwatchFile
+    || (typeof fs.unwatchFile === 'function' ? fs.unwatchFile.bind(fs) : null)
   let watcher = null
-  let watchTimer = null
+  const recoveryFileWatches = new Map()
   let recoveryTimer = null
   let lastSignature = ''
-  let watchSignature = ''
   let state = new Map()
   let requests = new Map()
   let seenOrder = []
@@ -187,6 +201,7 @@ function createAppStateReader(dependencies) {
   let generation = 0
   let initialized = false
   let lastAppVersion = ''
+  let lastFileState = null
   let cachedAppVersion = ''
   let cachedAppVersionSignature = ''
 
@@ -231,15 +246,40 @@ function createAppStateReader(dependencies) {
     return { version, status: SUPPORTED_APP_VERSIONS.has(version) ? 'compatible' : 'unsupported' }
   }
 
-  function signature() {
-    const parts = []
+  function fileState() {
+    const value = {}
     for (const name of LOG_FILE_NAMES) {
       try {
         const stat = fs.statSync(path.join(logDirectory(), name))
-        parts.push(`${name}:${Number(stat.size) || 0}:${Math.round(Number(stat.mtimeMs) || 0)}:${Number(stat.ino) || 0}`)
-      } catch { parts.push(`${name}:missing`) }
+        value[name] = {
+          size: Number(stat.size) || 0,
+          mtimeMs: Math.round(Number(stat.mtimeMs) || 0),
+          ino: Number(stat.ino) || 0
+        }
+      } catch { value[name] = null }
     }
-    return parts.join('|')
+    return value
+  }
+
+  function signature(value = fileState()) {
+    return LOG_FILE_NAMES.map((name) => {
+      const state = value[name]
+      return state ? `${name}:${state.size}:${state.mtimeMs}:${state.ino}` : `${name}:missing`
+    }).join('|')
+  }
+
+  function appendOnly(previous, next) {
+    if (!previous || !next) return false
+    let grew = false
+    for (const name of LOG_FILE_NAMES) {
+      const before = previous[name]
+      const after = next[name]
+      if (!before && !after) continue
+      if (!before || !after || before.ino !== after.ino || after.size < before.size) return false
+      if (after.size > before.size) grew = true
+      else if (after.mtimeMs !== before.mtimeMs) return false
+    }
+    return grew
   }
 
   function tailText(filePath) {
@@ -277,6 +317,7 @@ function createAppStateReader(dependencies) {
   function rebuild() {
     const gate = compatibility()
     const before = JSON.stringify([...state.entries()])
+    const nextFileState = fileState()
     if (gate.status !== 'compatible') {
       state = new Map()
       requests = new Map()
@@ -285,9 +326,11 @@ function createAppStateReader(dependencies) {
       if (before !== '[]') generation += 1
       initialized = true
       lastAppVersion = gate.version
-      lastSignature = signature()
+      lastFileState = nextFileState
+      lastSignature = signature(nextFileState)
       return gate
     }
+    const liveAppend = initialized && gate.version === lastAppVersion && appendOnly(lastFileState, nextFileState)
     const events = []
     for (const name of LOG_FILE_NAMES) {
       const text = tailText(path.join(logDirectory(), name))
@@ -298,22 +341,35 @@ function createAppStateReader(dependencies) {
         const semantic = `${event.at}:${event.kind}:${event.sessionId}:${event.requestId}`
         const occurrence = (occurrences.get(semantic) || 0) + 1
         occurrences.set(semantic, occurrence)
-        events.push({ ...event, occurrence })
+        events.push({ ...event, occurrence, evidenceProvenance: liveAppend ? 'live-append' : 'cold-replay' })
       }
     }
     events.sort((left, right) => left.at - right.at)
-    state = new Map()
-    requests = new Map()
-    seen = new Set()
-    seenOrder = []
+    if (!liveAppend) {
+      state = new Map()
+      requests = new Map()
+      seen = new Set()
+      seenOrder = []
+    }
     const unique = events.filter(remember)
     const folded = foldAppStateEvents(unique, state, requests)
     state = folded.state
     requests = folded.requests
+    if (!liveAppend) {
+      for (const [sessionId, entry] of state) {
+        if (!['running', 'waiting-input', 'waiting-approval'].includes(entry.phase)) continue
+        state.set(sessionId, {
+          ...entry,
+          phase: 'unknown',
+          evidenceProvenance: 'cold-replay'
+        })
+      }
+    }
     if (JSON.stringify([...state.entries()]) !== before) generation += 1
     initialized = true
     lastAppVersion = gate.version
-    lastSignature = signature()
+    lastFileState = nextFileState
+    lastSignature = signature(nextFileState)
     return gate
   }
 
@@ -349,10 +405,14 @@ function createAppStateReader(dependencies) {
   }
 
   function stopWatching() {
-    if (watchTimer) clearTimer(watchTimer)
-    watchTimer = null
     if (recoveryTimer) clearIntervalFn(recoveryTimer)
     recoveryTimer = null
+    if (unwatchFileFn) {
+      for (const [filePath, callback] of recoveryFileWatches) {
+        try { unwatchFileFn(filePath, callback) } catch {}
+      }
+    }
+    recoveryFileWatches.clear()
     if (watcher) { try { watcher.close() } catch {} }
     watcher = null
   }
@@ -361,25 +421,68 @@ function createAppStateReader(dependencies) {
     stopWatching()
     if (typeof listener !== 'function') return () => {}
     let disposed = false
-    watchSignature = signature()
-    const fire = () => {
-      watchTimer = null
-      watchSignature = signature()
-      if (!disposed) { try { listener() } catch {} }
+    const observationFingerprint = (snapshot) => JSON.stringify({
+      compatibility: snapshot.compatibility,
+      appVersion: snapshot.appVersion,
+      generation: snapshot.generation,
+      entries: snapshot.entries
+    })
+    let deliveredFingerprint = observationFingerprint(read())
+    const readAndNotify = () => {
+      if (disposed) return
+      const snapshot = read()
+      const nextFingerprint = observationFingerprint(snapshot)
+      if (nextFingerprint === deliveredFingerprint) return
+      deliveredFingerprint = nextFingerprint
+      try { listener() } catch {}
     }
-    const schedule = (_event, filename) => {
-      if (disposed || watchTimer) return
+    const onChange = (_event, filename) => {
+      if (disposed) return
       if (filename && !LOG_FILE_NAMES.includes(String(filename))) return
-      watchTimer = setTimer(fire, LOG_WATCH_COALESCE_MS)
+      // The first native append callback owns the read. Never put a real state
+      // transition behind a hidden-WebContents timer.
+      readAndNotify()
     }
-    try { watcher = fs.watch(logDirectory(), { persistent: false }, schedule) } catch { watcher = null }
-    recoveryTimer = setIntervalFn(() => {
-      const next = signature()
-      if (next === watchSignature) return
-      watchSignature = next
-      schedule('change', null)
-    }, LOG_RECOVERY_POLL_MS)
-    if (recoveryTimer && typeof recoveryTimer.unref === 'function') recoveryTimer.unref()
+    try {
+      watcher = fs.watch(logDirectory(), { persistent: false }, onChange)
+      if (watcher && typeof watcher.on === 'function') {
+        watcher.on('error', () => {
+          try { watcher?.close() } catch {}
+          watcher = null
+        })
+      }
+    } catch { watcher = null }
+
+    // Node StatWatchers are process-lifetime/native event sources and remain
+    // eligible while uTools hides the main WebContents. They are the recovery
+    // authority for a dropped directory callback; setInterval is only a
+    // compatibility fallback for constrained runtimes without watchFile.
+    if (watchFileFn) {
+      for (const name of LOG_FILE_NAMES) {
+        const filePath = path.join(logDirectory(), name)
+        try {
+          const callback = () => readAndNotify()
+          watchFileFn(filePath, { persistent: false, interval: LOG_RECOVERY_POLL_MS }, callback)
+          recoveryFileWatches.set(filePath, callback)
+        } catch {}
+      }
+    }
+    if (recoveryFileWatches.size !== LOG_FILE_NAMES.length) {
+      if (unwatchFileFn) {
+        for (const [filePath, callback] of recoveryFileWatches) {
+          try { unwatchFileFn(filePath, callback) } catch {}
+        }
+      }
+      recoveryFileWatches.clear()
+      let fallbackSignature = signature()
+      recoveryTimer = setIntervalFn(() => {
+        const next = signature()
+        if (next === fallbackSignature) return
+        fallbackSignature = next
+        readAndNotify()
+      }, LOG_RECOVERY_POLL_MS)
+      if (recoveryTimer && typeof recoveryTimer.unref === 'function') recoveryTimer.unref()
+    }
     return () => { disposed = true; stopWatching() }
   }
 

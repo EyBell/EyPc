@@ -23,7 +23,7 @@ function normalizeTarget(value, enabledProviders) {
   const revisionAt = Number(value.revisionAt)
   const phase = ARCHIVE_PHASES.includes(value.phase) ? value.phase : typeof value.phase === 'string' ? value.phase.slice(0, 40) : 'unknown'
   if (!provider || !enabledProviders.has(provider) || !key || key.length > 256
-    || !actionAlias || actionAlias.length > 256 || !Number.isFinite(revisionAt) || revisionAt <= 0) return null
+    || actionAlias.length > 256 || !Number.isFinite(revisionAt) || revisionAt <= 0) return null
   const archiveRequest = value.archiveRequest && typeof value.archiveRequest === 'object'
     ? {
         expectedUpdatedAt: Number(value.archiveRequest.expectedUpdatedAt) || 0,
@@ -44,7 +44,7 @@ function normalizeTarget(value, enabledProviders) {
     actionAlias,
     revisionAt,
     phase,
-    canArchive: value.canArchive === true && ARCHIVE_PHASES.includes(phase),
+    canArchive: value.canArchive === true && Boolean(actionAlias) && ARCHIVE_PHASES.includes(phase),
     planReady: value.planReady === true,
     planLifecycleRevision: Number.isFinite(Number(value.planLifecycleRevision)) ? Math.max(0, Math.trunc(Number(value.planLifecycleRevision))) : 0,
     paused: value.paused === true,
@@ -239,11 +239,11 @@ function createCompanionTaskActions(dependencies = {}) {
     return true
   }
 
-  function resolveTarget(input) {
+  function resolveTarget(input, allowTrustedOpenTarget = false) {
     const supplied = normalizeTarget(input?.target, enabledProviders)
     const key = typeof input?.key === 'string' ? input.key : ''
     const current = targets.get(key) || null
-    if (!current) return null
+    if (!current) return allowTrustedOpenTarget && input?.trustedResolvedTarget === true ? supplied : null
     // The process-owned snapshot is authoritative. A Renderer may include its
     // last target only as a compatibility hint; it must never replace a newer
     // Provider, phase, revision, alias, or capability already accepted here.
@@ -259,6 +259,20 @@ function createCompanionTaskActions(dependencies = {}) {
       || supplied.paused !== current.paused
       || supplied.canExecutePlan !== current.canExecutePlan)) return null
     return current
+  }
+
+  function resolveOpenTarget(input) {
+    const key = typeof input?.key === 'string' ? input.key : ''
+    const current = targets.get(key) || null
+    // Opening is an exact-key operation. Renderer/Navigation targets are only
+    // compatibility hints and may legitimately carry an older alias, phase or
+    // revision while Host has already accepted a newer package. Always use the
+    // process-owned target for the same key; the Provider adapter then renews
+    // an expired alias without substituting another task.
+    if (current) return current
+    if (input?.trustedResolvedTarget !== true) return null
+    const supplied = normalizeTarget(input?.target, enabledProviders)
+    return supplied?.key === key ? supplied : null
   }
 
   async function inspect(provider) {
@@ -278,7 +292,7 @@ function createCompanionTaskActions(dependencies = {}) {
       trace('open', result.outcome, null, startedAt, { operationId: currentOperationId, errorCode: result.errorCode, source: input.source, debug: true })
       return { ...result, operationId: currentOperationId }
     }
-    const target = resolveTarget(input)
+    const target = resolveOpenTarget(input)
     if (!target) {
       const result = { outcome: 'unavailable', errorCode: 'stale-target', message: '任务身份已失效，请刷新后重试' }
       trace('open', result.outcome, null, startedAt, { operationId: currentOperationId, errorCode: result.errorCode, source: input.source, debug: true, details: { requestedKey: typeof input.key === 'string' ? input.key : '' } })
@@ -422,7 +436,7 @@ function createCompanionTaskActions(dependencies = {}) {
     clearConfirmation('confirmed')
     const adapter = adapters[target.provider]
     if (!adapter || typeof adapter.executePlan !== 'function') {
-      const result = { outcome: 'failed', provider: target.provider, key: target.key, errorCode: 'unsupported', message: '当前运行环境不支持安全执行 Plan' }
+      const result = { outcome: 'failed', provider: target.provider, key: target.key, errorCode: 'unsupported', message: 'Plan 执行服务尚未就绪' }
       trace('execute-plan-result', result.outcome, target, startedAt, { operationId: currentOperationId, source: input.source, errorCode: result.errorCode })
       return Promise.resolve({ ...result, operationId: currentOperationId })
     }

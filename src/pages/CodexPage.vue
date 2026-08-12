@@ -770,9 +770,9 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
                 :colors="snapshot.settings.colors"
                 decorative
               />
-              <b v-if="waterPreviewCounters.input" class="water-preview-counter water-preview-counter--input">{{ codexBadgeText(waterPreviewCounters.input) }}</b>
-              <b v-if="waterPreviewCounters.active" class="water-preview-counter water-preview-counter--active">{{ codexBadgeText(waterPreviewCounters.active) }}</b>
-              <b v-if="waterPreviewCounters.unread" class="water-preview-counter water-preview-counter--unread">{{ codexBadgeText(waterPreviewCounters.unread) }}</b>
+              <b v-if="waterPreviewCounters.input" class="water-preview-counter companion-counter-geometry water-preview-counter--input">{{ codexBadgeText(waterPreviewCounters.input) }}</b>
+              <b v-if="waterPreviewCounters.active" class="water-preview-counter companion-counter-geometry water-preview-counter--active">{{ codexBadgeText(waterPreviewCounters.active) }}</b>
+              <b v-if="waterPreviewCounters.unread" class="water-preview-counter companion-counter-geometry water-preview-counter--unread">{{ codexBadgeText(waterPreviewCounters.unread) }}</b>
             </div>
             <div class="codex-appearance-controls">
               <label class="codex-color-control"><input type="color" :value="snapshot.settings.colors.water" @input="updateColor('water', ($event.target as HTMLInputElement).value)" /><span><strong>球体底色</strong><small>只影响球体背景，不影响液体</small></span></label>

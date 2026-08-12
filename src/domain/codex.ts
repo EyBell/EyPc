@@ -407,18 +407,24 @@ export interface CodexActivityDeltaEntryV2 {
 
 export interface CodexActivityDecisionDiagnostics {
   liveEpochOpened: number
+  hydrationActiveDeferred: number
   staleTurnDiscarded: number
   branchTerminalDeferred: number
   snapshotConflictSuppressed: number
   missingMappingRetained: number
+  waitingEdgeResubscribe: number
+  waitingEdgeRecoveryExpired: number
 }
 
 export const CODEX_ACTIVITY_DECISION_DIAGNOSTIC_KEYS = [
   'liveEpochOpened',
+  'hydrationActiveDeferred',
   'staleTurnDiscarded',
   'branchTerminalDeferred',
   'snapshotConflictSuppressed',
-  'missingMappingRetained'
+  'missingMappingRetained',
+  'waitingEdgeResubscribe',
+  'waitingEdgeRecoveryExpired'
 ] as const satisfies readonly (keyof CodexActivityDecisionDiagnostics)[]
 
 function normalizeCodexActivityDecisionCounter(value: unknown): number {
@@ -1543,6 +1549,21 @@ export function normalizeCodexState(value: unknown): CodexState {
   }
 }
 
+export function hasCodexLiveActivityEvidence(thread: CodexHostThread): boolean {
+  if (thread.status !== 'active') return false
+  const liveAuthority = thread.statusAuthority === 'desktop-live'
+    || thread.statusAuthority === 'app-server-live'
+  if (!liveAuthority) return false
+  const exactLiveWait = thread.activeFlags.includes('waitingOnUserInput')
+    || thread.activeFlags.includes('waitingOnApproval')
+  const activityEventIsCurrent = thread.activityEvidence === 'activity-event'
+    && (thread.lastTurnStatus !== 'completed' || thread.lastTurnEvidence === 'turn-started')
+  return exactLiveWait
+    || activityEventIsCurrent
+    || Number(thread.activeEvidenceSequence) > 0
+    || thread.lastTurnEvidence === 'turn-started'
+}
+
 function isLikelyActiveTask(thread: CodexHostThread) {
   if (thread.status !== 'active') return false
   // Plain connector active flags are inventory hints. Only an explicitly
@@ -1554,8 +1575,7 @@ function isLikelyActiveTask(thread: CodexHostThread) {
     && thread.activeFlags.includes('waitingOnUserInput')
   return persistedDecision
     || persistedPlanDecision
-    || thread.statusAuthority === 'desktop-live'
-    || thread.statusAuthority === 'app-server-live'
+    || hasCodexLiveActivityEvidence(thread)
 }
 
 function hasConfirmedCompletionOverLiveTask(thread: CodexHostThread) {
@@ -1565,31 +1585,14 @@ function hasConfirmedCompletionOverLiveTask(thread: CodexHostThread) {
   // completion already confirmed in this activity epoch may close it while a
   // stale active snapshot/request is still draining.
   return isCodexConfirmedTerminalEvidence(thread.lastTurnEvidence)
-    && (!thread.activeEvidenceSequence
-      || !thread.terminalEvidenceSequence
-      || thread.terminalEvidenceSequence >= thread.activeEvidenceSequence)
-}
-
-/**
- * Compatibility projection only: interrupted evidence may clear a live shell
- * after the Host has also confirmed the branch is idle. The V4 Kernel remains
- * the sole canonical phase owner.
- */
-function hasExactInterruptedOverLiveTask(thread: CodexHostThread) {
-  return thread.lastTurnStatus === 'interrupted'
-    && thread.idleConfirmed === true
-    && isCodexConfirmedTerminalEvidence(thread.lastTurnEvidence)
-    && (!thread.activeEvidenceSequence
-      || !thread.terminalEvidenceSequence
-      || thread.terminalEvidenceSequence >= thread.activeEvidenceSequence)
-    && !thread.activeFlags.includes('waitingOnUserInput')
-    && !thread.activeFlags.includes('waitingOnApproval')
+    && Number(thread.activeEvidenceSequence) > 0
+    && Number(thread.terminalEvidenceSequence) > 0
+    && thread.terminalEvidenceSequence! >= thread.activeEvidenceSequence!
 }
 
 function isCurrentLiveActiveTask(thread: CodexHostThread) {
   return isLikelyActiveTask(thread)
     && !hasConfirmedCompletionOverLiveTask(thread)
-    && !hasExactInterruptedOverLiveTask(thread)
 }
 
 function isExplicitlyStoppedTask(thread: CodexHostThread, desktopBridgeState?: CodexDesktopBridgeState) {

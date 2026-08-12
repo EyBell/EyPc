@@ -1014,20 +1014,11 @@ button { font: inherit; }
 .float-counter {
   position: absolute;
   z-index: 18;
-  display: grid;
-  min-width: 26px;
-  height: 20px;
-  padding: 0 5px;
-  place-items: center;
   border: 2px solid var(--codex-surface);
-  border-radius: 999px;
   box-shadow: 0 3px 10px rgba(2, 15, 24, .32);
   color: #fff;
   font-size: 9px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-variant-numeric: tabular-nums;
   font-weight: 900;
-  line-height: 1;
   cursor: pointer;
 }
 .float-counter.input {

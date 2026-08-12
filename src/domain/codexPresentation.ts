@@ -105,7 +105,7 @@ function taskActivityAt(task: CodexTaskCard): number {
 
 function isDynamicActiveTask(task: CodexTaskCard): boolean {
   return task.bucket === 'ongoing'
-    && (task.activityState === 'active' || task.activityState === 'ongoing')
+    && task.activityState === 'active'
 }
 
 function emptyDynamicStatusProjection(): CodexDynamicStatusProjection {
@@ -134,32 +134,37 @@ export function projectCodexDynamicStatus(
   const effectiveNow = Number.isFinite(now) ? now : Date.now()
   const windowMs = dynamicTaskWindowMs(windowHours)
   const windowStart = effectiveNow - windowMs
+  const visibleInput = conversations.inputRequired
+    .filter((task) => !task.isHidden)
+  const visibleUnread = conversations.completedUnread
+    .filter((task) => !task.isHidden)
   const recent = [
     ...conversations.ongoing,
     ...(conversations.stopped || []),
-    ...conversations.completedUnread,
     ...conversations.completed
   ].filter((task) => !task.isHidden && taskActivityAt(task) >= windowStart)
   const recentOngoing = recent.filter((task) => task.bucket === 'ongoing')
   const groups: CodexDynamicStatusGroups = {
-    input: orderCodexAttentionTasks(recentOngoing.filter((task) => task.activityState === 'waiting-input' || task.activityState === 'waiting-approval')),
+    // Attention is an all-visible inventory concern. It must not disappear just
+    // because the underlying Turn is older than the ordinary activity window.
+    input: orderCodexAttentionTasks(visibleInput),
     active: orderCodexTasksForDisplay(recentOngoing.filter(isDynamicActiveTask)),
     stopped: orderCodexTasksForDisplay(recent.filter((task) => task.bucket === 'stopped')),
-    unread: orderCodexAttentionTasks(recent.filter((task) => task.bucket === 'completed-unread')),
+    unread: orderCodexAttentionTasks(visibleUnread),
     completed: orderCodexTasksForDisplay(recent.filter((task) => task.bucket === 'completed'))
   }
   const tasks = [groups.input, groups.active, groups.stopped, groups.unread, groups.completed].flat()
-  const nextTransitionAt = recent.length
-    ? Math.min(...recent.map((task) => taskActivityAt(task) + windowMs + 1))
+  const timeBounded = [groups.active, groups.stopped, groups.completed].flat()
+  const nextTransitionAt = timeBounded.length
+    ? Math.min(...timeBounded.map((task) => taskActivityAt(task) + windowMs + 1))
     : null
   return {
     tasks,
     groups,
     compactCounts: {
-      input: conversations.inputRequired.length,
+      input: groups.input.length,
       active: groups.active.length,
-      unread: conversations.completedUnread.length
-        + conversations.hidden.filter((task) => task.bucket === 'completed-unread').length
+      unread: groups.unread.length
     },
     nextTransitionAt
   }

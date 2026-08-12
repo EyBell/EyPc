@@ -484,7 +484,7 @@ export interface CompanionNavigationResultEvent {
 
 export type CompanionTaskIntentV4 =
   | { action: 'cycle'; direction: -1 | 1; source?: string; operationId?: string }
-  | { action: 'open'; key: string; source?: string; operationId?: string }
+  | { action: 'open'; key: string; expectedActionAlias?: string; source?: string; operationId?: string }
   | { action: 'open-attention'; kind: 'input' | 'completed-unread'; source?: string; operationId?: string }
   | { action: 'archive-focused'; source?: string; operationId?: string }
   | { action: 'archive'; key: string; revisionAt: number; phase: string; source: string; operationId?: string; confirmationRecorded?: boolean }
@@ -534,6 +534,8 @@ export interface CompanionTaskKernelBridge {
     packageGeneration: number
     taskCount: number
     cycleCount: number
+    codexBranchParentCount: number
+    codexBranchCount: number
     preflightInFlight: boolean
     freshness: string
   }
@@ -771,15 +773,16 @@ export interface EypcPlatformApi {
      */
     readQuotaFallback?(options?: { enabled?: boolean; coldStart?: boolean; supplement?: boolean; now?: number; minStaleMs?: number; refreshIntervalMs?: number }): Promise<{ rateLimits: ClaudeRateLimitsInput; updatedAt: number } | null>
     /**
-     * Fires once per burst of hook-queue appends and returns a disposer.
-     * Optional: an older preload simply never pushes and the Controller's
-     * interval remains the only source of freshness.
+     * Drains the first semantic Hook append from the process-owned native file
+     * callback; duplicate tails are fingerprint no-ops. Native StatWatcher
+     * recovery is bounded by `recoveryPollMs` and does not depend on Renderer
+     * timers while uTools keeps the Main WebContents hidden.
      */
-    watchEvents?(listener: () => void, options?: { coalesceMs?: number }): () => void
+    watchEvents?(listener: () => void, options?: { coalesceMs?: number; recoveryPollMs?: number }): () => void
     readCodeSnapshot?(options?: { now?: number; windowMs?: number }): Promise<ClaudeCodeBridgeSnapshot> | ClaudeCodeBridgeSnapshot
     /** State-only hot projection over the bridge's feature-lifetime inventory cache. */
     readCodeStateSnapshot?(options?: { now?: number }): Promise<ClaudeCodeStateDeltaV2> | ClaudeCodeStateDeltaV2
-    watchCodeState?(listener: () => void, options?: { coalesceMs?: number }): () => void
+    watchCodeState?(listener: () => void, options?: { coalesceMs?: number; recoveryPollMs?: number }): () => void
     watchCodeSessions?(listener: (delta?: CompanionTaskMutationDelta) => void): () => void
     readCodeUnread?(): Promise<
       | { version: 1; revision: string; ids: string[]; readAt: number }
