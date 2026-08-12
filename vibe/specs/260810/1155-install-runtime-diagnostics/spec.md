@@ -1,6 +1,6 @@
-# RAW-160 → RAW-163 Companion V4 Unified Runtime Spec
+# RAW-160 → RAW-164 Companion V4 Unified Runtime Spec
 
-Status: `RAW-163 increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
+Status: `RAW-164 increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
 
 本规范是当前权威。RAW-159 的 V3 规格作为历史实现基线保留在 Git 与长期任务文档中；与本规范冲突时以 V4 为准。
 
@@ -22,7 +22,7 @@ V4 Kernel 缺失、Facade 不完整或 Main/Float/Renderer/Preload Runtime Ident
 
 ## 2. Branch Causality And Plan Lifecycle
 
-每个分支先按因果顺序裁决：更新的真实 active、新 Turn 或更新 waiting 清除该分支旧 idle；更新的 unresolved input/approval/Plan 建立 waiting；terminal 仅在无更新 active/waiting 时有效；active/terminal 冲突保留非终态并 `freshness=verifying`。Kernel 随后先判断 main：只有 main 为 exact completed 且 unread 已知为 false 时，才对 main/Side 应用运行 → 审批 → 普通输入/Plan → Goal → terminal 的聚合；否则只采用 main 自身。Preload 发布的分支引用、角色与 unread evidence 只在 Host/Kernel 会话内存在，公共包只含匿名父 key 和最终聚合结果。
+每个分支先按因果顺序裁决：更新的真实 active、新 Turn 或更新 waiting 清除该分支旧 idle；更新的 unresolved input/approval/Plan 建立 waiting；terminal 仅在无更新 active/waiting 时有效；active/terminal 冲突保留非终态并 `freshness=verifying`。Kernel 随后始终对根任务及全部已确认 Side Chat 应用运行 → 审批 → 普通输入/Plan → Goal → terminal 的聚合；不再用 main completed-read 选择分支范围。Preload 发布的分支引用、角色与 unread evidence 只在 Host/Kernel 会话内存在，公共包只含匿名父 key 和最终聚合结果。
 
 证据不足的 reducer 结果是 `abstain/unchanged`，不是一种可展示 running。已有任务由 [companionTaskPackage.ts](../../../../src/domain/companionTaskPackage.ts#L1) 保留最近可信库存语义且不进入 Kernel 未声明的动态组；没有 metadata/prior 的 unknown 只显示为非活动 attention 占位。新 activity row 以 unknown 为前态；hydration/cold snapshot `active` 必须有 Turn-start、live append、processing、活动事件或等价实时证据才可变为 running。
 
@@ -37,9 +37,9 @@ V4 Kernel 缺失、Facade 不完整或 Main/Float/Renderer/Preload Runtime Ident
 | 普通 interrupted，尚未 idle-confirmed | 保留稳定态；`verifying` |
 | 普通 interrupted，selected scope 全部 idle-confirmed | ordinary stopped |
 | exact default/non-Plan Turn 开始 | running；清除 `planReady/paused` |
-| main completed-read + Side running | 父任务 running |
-| main completed-read + Side completed-unread | 父任务 completed-unread |
-| main 非 completed-read + Side 不同状态 | 父任务保持 main phase/unread |
+| 任一 main/Side running | 父任务 running；潜在 unread 不进入 unread 分组/计数 |
+| 无活动分支且任一 main/Side completed-unread | 父任务 completed-unread |
+| 全部 main/Side completed-read | 父任务 completed-read |
 
 `CompanionCanonicalTaskV4` 增加 `planReady`、`planLifecycleRevision`、`paused` 与 `open/archive/pause/resume/executePlan` 能力。新 exact Plan 替换旧 Plan 时 revision 单调增加；普通刷新、owner 切换、refollow 和 Plan 修改不清除。完成、归档、移除、明确放弃或 exact default 执行才清除。
 
@@ -123,10 +123,18 @@ Kernel 聚合顺序扩展为：更新真实 running → approval → input → �
 
 Goal 查询以发起时 evidence baseline 和 `goal.updatedAt` 防止迟到结果覆盖实时通知。暂时失败保留最近稳定非终态并标记 verifying；只有 method-not-found 建立 runtime-level unsupported，回退无 Goal Turn 语义。Goal complete 之后若出现严格更新的新 Turn，该非活动 Goal epoch 被视为已取代；后续终态候选重新 single-flight 读取 Goal，避免旧 complete 永久锁死，也避免漏掉新 active Goal。
 
-## 10. RAW-163 Main-first Side Chat Projection And Parent-only Open
+## 10. RAW-163 Branch Role And Parent-only Open Baseline
 
 [preload/index.js](../../../../preload/index.js#L1) 在既有隐私化 Branch Evidence 中补充有限的 `branchKind=main|side`、`unreadKnown` 与 `hasUnreadTurn`。主分支 unread 使用自己的 Desktop/native observation；子分支不借用父级 connector unread。原始 parent/child ID 仍只存在于 Preload 映射中。
 
-[task-kernel.cjs](../../../../preload/companion/task-kernel.cjs#L1) 同时归约 phase 与 unread。main 只有在当前归约为 completed、unread authority 已知且值为 false 时才开放全分支范围；否则 selected scope 只有 main。全分支范围沿用既有因果顺序，因此 main completed-read + Side running 为 running，main completed-read + Side completed-unread 为 completed-unread；main completed-unread/running/waiting/stopped/verifying 则不被子分支覆盖。
+RAW-163 曾要求 main completed-read 后才开放全分支；该展示门槛已由 RAW-164 取代，不再是当前归约合同。RAW-163 引入的有限 branch role/unread evidence 仍作为全部珠子聚合的私有输入。
 
 打开动作不再计算 Side Chat navigation priority。[preload/index.js](../../../../preload/index.js#L1) 对 Electron 与 uTools fallback 都只构造父任务 `codex://threads/<parent>`；没有 Side Chat 首试或失败回退。成功后仍由既有 preload-session acknowledgement 将父任务和已知 Side Chat 标记为本会话已读，失败不改变未读。
+
+## 11. RAW-164 Side Topology, All-bead Priority And Runtime Identity
+
+[preload/index.js](../../../../preload/index.js#L1) 从完整分页的 `thread/list` 与必要的 `thread/read` 读取 `sessionId/forkedFromId`，在父任务存在、同一非空 session、无环时把 fork 解析到根；缺父、跨 session、循环等异常关系保持独立。根任务进入公共库存，Side Chat 只进入进程私有 relation/Branch Evidence。Desktop `sideConversation` 判定先于 inventory membership，避免运行事件先到、快照后到或重连时把 child 重建为顶层 main。
+
+[task-kernel.cjs](../../../../preload/companion/task-kernel.cjs#L1) 对根与所有 Side Chat 无条件聚合。在既有 input/approval/Plan/Goal 因果规则之下，活动/完成三态固定为 running → completed-unread → completed。活动期间可保留较低优先级 unread 证据，但 canonical views 只产生一个 active 行并保持 unread count 为零；活动退出后才显露完成未读。Goal active/verifying 继续抑制中间 Turn terminal，Goal complete 才按最终 unread 完成；严格更新的新 Turn 可以合法开启新 epoch。
+
+Host 只在语义变化时记录三类匿名诊断：`side-topology-decision` 记录哈希 parent 及 root/side/orphan/merge 计数，`parent-state-decision` 记录最终 phase/unread/reason 与有限分支/Goal 计数，`runtime-identity-handshake` 记录非私密实际/期望 Host/Renderer hash、Kernel/Package revision 与 `host-loaded/reload-required`。任何事件都不得含原始 parent/child ID、标题、正文、路径、Goal 内容、预算或用量。只有真实 uTools Host 报告 `host-loaded` 才能接纳已加载身份；production build 仅为 `artifact-ready`。

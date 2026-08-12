@@ -1,18 +1,18 @@
-# RAW-160 → RAW-163 Companion V4 Host Handoff
+# RAW-160 → RAW-164 Companion V4 Host Handoff
 
 Status: `increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
 
 ## 安装边界
 
 1. 用户已指定只用 uTools 开发模式回归，不再以离线包安装作为本轮门禁。重新加载开发插件并记录四端 Runtime Identity。
-   当前源码/构建身份：`host-2c01a8beb95919a22af5 / renderer-cc3ff8f60b7179ed599f`。`host-c36f… / renderer-27b6…` 是 RAW-162 基线，`host-78205… / renderer-9c35…` 是 RAW-161 基线，`host-252d… / renderer-ff8…` 是 RAW-160 全量基线；1.5.4、1.5.5、`host-7d…` 与更早开发 Host 均不能用于接纳当前结果，也不得与当前 Renderer 混用。
+   当前源码/构建身份：`host-251a728efafbf4c7f7d6 / renderer-a671d108ff9d315b7ea4`。`host-2c01… / renderer-cc3f…` 是 RAW-163 基线，`host-c36f… / renderer-27b6…` 是 RAW-162 基线，`host-78205… / renderer-9c35…` 是 RAW-161 基线，`host-252d… / renderer-ff8…` 是 RAW-160 全量基线；1.5.4、1.5.5、`host-7d…` 与更早开发 Host 均不能用于接纳当前结果，也不得与当前 Renderer 混用。必须以匿名 `runtime-identity-handshake` 的 `host-loaded` 为准，不再从进程时间推断。
 2. 不清空 EyPc 本地任务组织数据；需验证旧 hidden Plan 的一次幂等迁移。
 3. 用只读诊断按 session/operation/哈希 taskRef 核验；不得记录或粘贴 Plan 正文、原始任务 ID/路径或执行提示。
 
 ## 状态、窗口与循环矩阵
 
-1. 主任务 completed-read + Side running 时父任务显示进行中；主任务 completed-read + Side completed-unread 时父任务显示已完成未读。
-2. 主任务 running、waiting、stopped、verifying 或 completed-unread 与 Side 状态冲突时，父任务必须保持主任务自身，不得被 Side 覆盖。
+1. 主任务 completed-read 或 completed-unread + Side running 时，父任务都显示进行中；任一珠子 running 都高于任一珠子的 completed-unread/completed。
+2. 无活动珠子且任一 main/Side completed-unread 时父任务显示已完成未读；全部珠子 completed-read 后才显示已完成。活动期间潜在 unread 不得同时增加已完成未读分组/计数。
 3. 新建 Plan 会话：Plan 尚未生成时保持进行中；生成完成且实施确认未决时变为待输入。
 4. 继续修改已生成 Plan：运行期间保持进行中及同一 Plan 生命周期；新 Plan 替换时 revision 更新。
 5. 未执行便中断：完成定向复核后稳定待继续；把活动时间移出动态窗口后仍在待继续分组。
@@ -45,11 +45,12 @@ Status: `increment-automated-verified / rebuilt-artifact-ready / dev-plugin-relo
 2. 连续切换至少 100 次 Renderer 焦点，确认 Host 保存最后焦点，但 Main/Float package revision、发布次数和分组全部不变。
 3. 观察 Float 正常 received→applied ACK；模拟首个 applied ACK 丢失时仅重发最新包一次。
 4. 心跳健康且累计 1 秒未 applied 才允许受控重建；同 revision 不重复 Vue 投影。
+5. 触发库存分页乱序、Side 运行事件先到而 Desktop 快照后到、桥重连与归档；公共任务包始终只有根任务，Side Chat 不得出现独立顶层行。匿名 `side-topology-decision` 与 `parent-state-decision` 仅在语义变化时出现，且不含 raw ID、标题、正文、路径或 Goal 内容。
 
 ## Cloud Goal 完成边界矩阵
 
 1. 选择一条当前 Goal 为 active、会自动继续执行的安全 canary，至少跨两个 `turn/completed → next turn/started`。任务卡、计数、Host task-package 和 Float applied revision 全程只能保持进行中/待输入/待审批，不得出现任何中间 completed。
-2. 当前 Goal 真正变为 complete 后，任务只发布一次 completed；重复 Goal 通知和迟到 `thread/goal/get` 不得增加第二次完成包。严格更新的新 Turn 必须开启新执行 epoch 并恢复进行中。
+2. 当前 Goal 真正变为 complete 后，按最终 unread 只发布一次 completed-unread 或 completed；成功打开后转 completed。旧 unread true/false、重复 Goal 通知、迟到 `thread/goal/get`、旧完整快照和同 Turn 元数据补全都不得回滚。严格更新的新 Turn 必须开启新执行 epoch 并恢复进行中。
 3. 分别观察 paused、blocked、usageLimited、budgetLimited：四者都进入现有“待继续”，不新增 Tab/角标。Goal cleared 或普通无 Goal 会话继续服从既有 Turn 完成语义。
 4. 暂时断开/延迟 Goal 查询时，旧稳定非终态只能显示核验中，不得先完成再纠正；只在当前 App Server 明确不支持 Goal RPC 时执行兼容回退。
 5. 诊断仅核对匿名 taskRef、phase、reason、revision 与 Float applied；不得采集 Goal objective、原始 task/Turn ID、额度、用量或任务输出。
@@ -84,4 +85,4 @@ Status: `increment-automated-verified / rebuilt-artifact-ready / dev-plugin-relo
 
 ## 完成条件
 
-只有 [verification](verify.md#L1) 的当前自动化/构建证据与以上矩阵来自同一源码、同一开发模式 Runtime Identity，才可从 `dev-plugin-reload-pending` 变为完成。
+只有 [verification](verify.md#L1) 的当前自动化/构建证据与以上矩阵来自同一源码、同一开发模式 Runtime Identity，且握手先报告 `host-loaded`、20 秒稳定窗口后两次匿名快照一致，才可从 `dev-plugin-reload-pending` 变为完成。

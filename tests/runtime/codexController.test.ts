@@ -3039,6 +3039,61 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
+  it('hides and restores a stopped task while the Codex provider is no longer running', async () => {
+    const now = Date.now()
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    state.codex.settings.providers = { codex: true, claude: false }
+    const taskKey = '2222222222222222'
+    // Codex is not running: every provider read and the cold preflight fail, so
+    // only a locally committed decision can move the row.
+    const preflight = vi.fn(() => Promise.reject(new Error('codex-task-preflight-failed')))
+    const companionKernel = companionTaskKernelModule.createCompanionTaskKernel({
+      coalesceMs: 0,
+      preflight,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    companionKernel.publishEvidence(hostDraft([hostTask(taskKey, now, {
+      phase: 'stopped',
+      displayName: '待继续任务'
+    })], now))
+    const platform = {
+      companionKernel,
+      codex: {
+        taskStateRevision: CODEX_TASK_STATE_REVISION,
+        readSnapshot: async () => ({ ok: false as const, receivedAt: now, error: { code: 'unavailable' as const, message: 'Codex 未运行' } }),
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({
+      platform,
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: () => undefined
+    })
+
+    controller.start()
+    await vi.waitFor(() => expect(controller.view().taskState.conversations.stopped[0]?.key).toBe(taskKey))
+    const target = controller.view().taskState.conversations.stopped[0]
+
+    expect(controller.hide(target.key, target.revisionAt)).toBe(true)
+    expect(controller.view().taskState.conversations.stopped).toEqual([])
+    expect(controller.view().taskState.conversations.hidden[0]).toMatchObject({ key: taskKey, hiddenKind: 'task' })
+    expect(state.codex.receipts.some((receipt) => receipt.key === taskKey && receipt.dismissedActivityRecency === target.revisionAt)).toBe(true)
+
+    expect(controller.restore(target.key, target.revisionAt, 'task')).toBe(true)
+    expect(controller.view().taskState.conversations.hidden).toEqual([])
+    expect(controller.view().taskState.conversations.stopped[0]).toMatchObject({ key: taskKey })
+
+    // The local pin shares the same authority and must not wait for a read.
+    expect(controller.toggleLocalPin('task', taskKey)).toBe(true)
+    expect(controller.view().taskState.conversations.all[0]).toMatchObject({ key: taskKey, pinSource: 'local' })
+    expect(controller.toggleLocalPin('task', taskKey)).toBe(true)
+    expect(controller.view().taskState.conversations.all[0].pinSource).toBeUndefined()
+    controller.dispose()
+  })
+
   it('persists anonymous first-prompt timing and reuses it when the host omits it after restart', async () => {
     const state = createInitialState(1)
     state.activeTab = 'codex'
