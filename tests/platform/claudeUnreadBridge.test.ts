@@ -78,6 +78,68 @@ describe('Chromium unread value decoding', () => {
 })
 
 describe('private LevelDB snapshot reader', () => {
+  function watchedReader() {
+    const home = fixture()
+    let directoryChange: (() => void) | null = null
+    const recovery = new Map<string, { interval: number; listener: () => void }>()
+    const watchedFs = new Proxy(fs, {
+      get(target, key) {
+        if (key === 'watch') return (_directory: string, _options: unknown, listener: () => void) => {
+          directoryChange = listener
+          return { close: () => undefined }
+        }
+        return Reflect.get(target, key)
+      }
+    })
+    const reader = unread.createUnreadReader({
+      fs: watchedFs,
+      path,
+      os: { tmpdir: () => home.scratch },
+      claudeLocalStorageRoot: home.source,
+      leveldown: fakeLeveldown(chromiumValue({ state: { unreadIds: [LOCAL_A] } }), []),
+      watchFile: (filePath: string, options: { interval?: number }, listener: () => void) => {
+        recovery.set(filePath, { interval: Number(options?.interval) || 0, listener })
+      },
+      unwatchFile: (filePath: string) => { recovery.delete(filePath) },
+      setTimeout: () => { throw new Error('unread semantic wake must not use setTimeout') },
+      setInterval: () => { throw new Error('native unread recovery must not use setInterval') }
+    })
+    return {
+      home,
+      reader,
+      invokeDirectory: () => directoryChange?.(),
+      recoveryFor: (filePath: string) => recovery.get(filePath)
+    }
+  }
+
+  it('notifies the first unread fingerprint change synchronously and collapses duplicate callbacks', () => {
+    const context = watchedReader()
+    let notified = 0
+    const dispose = context.reader.watch(() => { notified += 1 })
+    writeFileSync(join(context.home.source, 'CURRENT'), 'MANIFEST-000002-with-a-different-size\n')
+    context.invokeDirectory()
+    expect(notified).toBe(1)
+    context.invokeDirectory()
+    expect(notified).toBe(1)
+    dispose()
+  })
+
+  it('recovers a dropped unread directory callback through the native one-second StatWatcher', () => {
+    const context = watchedReader()
+    let notified = 0
+    const dispose = context.reader.watch(() => { notified += 1 })
+    const currentPath = join(context.home.source, 'CURRENT')
+    const recovery = context.recoveryFor(currentPath)
+    expect(recovery?.interval).toBe(1_000)
+
+    writeFileSync(currentPath, 'MANIFEST-000003-with-another-size-change\n')
+    recovery?.listener()
+    expect(notified).toBe(1)
+    recovery?.listener()
+    expect(notified).toBe(1)
+    dispose()
+  })
+
   it('opens only a mode-0700 copy and removes it after a successful read', async () => {
     const home = fixture()
     const opened: string[] = []

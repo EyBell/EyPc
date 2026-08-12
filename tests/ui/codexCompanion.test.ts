@@ -38,6 +38,7 @@ function hostThread(input: Partial<CodexHostThread> & Pick<CodexHostThread, 'key
     status: 'notLoaded',
     activeFlags: [],
     statusAuthority: 'desktop-live',
+    activityEvidence: input.status === 'active' ? 'activity-event' : undefined,
     hasUnreadTurn: false,
     unreadAuthority: 'desktop-persisted',
     updatedAt: NOW,
@@ -605,6 +606,49 @@ describe('Codex Companion V4 UI contract', () => {
     expect(action).toHaveBeenCalledWith('codex.pin.toggle', { kind: 'task', key: TASK_FAILED })
   })
 
+  it('routes row click, title click and focused Enter through the same exact task-open payload', async () => {
+    const { wrapper, action } = mountFloat(true, floatSnapshot('all'))
+    await wrapper.vm.$nextTick()
+    const failed = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
+    const expected = {
+      key: TASK_FAILED,
+      actionAlias: `alias-${TASK_FAILED}`,
+      source: 'card-click'
+    }
+
+    await failed.get('.task-open').trigger('click')
+    expect(action).toHaveBeenLastCalledWith('codex.task.open', expected)
+    action.mockClear()
+    await failed.get('.task-title-button').trigger('click')
+    expect(action).toHaveBeenCalledWith('codex.task.open', expected)
+    action.mockClear()
+    ;(failed.element as HTMLElement).focus()
+    await failed.trigger('keydown', { key: 'Enter', code: 'Enter' })
+    expect(action).toHaveBeenCalledWith('codex.task.open', expected)
+  })
+
+  it('routes every card entry by anonymous key even when its advisory alias is absent', async () => {
+    const source = floatSnapshot('all')
+    const task = source.conversations.all.find((candidate) => candidate.key === TASK_FAILED)!
+    task.actionAlias = ''
+    refreshTaskState(source)
+    const { wrapper, action } = mountFloat(true, source)
+    await wrapper.vm.$nextTick()
+    const failed = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
+    const expected = { key: TASK_FAILED, actionAlias: '', source: 'card-click' }
+
+    await failed.get('.task-open').trigger('click')
+    await failed.get('.task-title-button').trigger('click')
+    ;(failed.element as HTMLElement).focus()
+    await failed.trigger('keydown', { key: 'Enter', code: 'Enter' })
+
+    expect(action.mock.calls.filter(([id]) => id === 'codex.task.open')).toEqual([
+      ['codex.task.open', expected],
+      ['codex.task.open', expected],
+      ['codex.task.open', expected]
+    ])
+  })
+
   it('renders the full-height selector and theme-gradient selection feedback without replacing the task state icon', async () => {
     const { wrapper } = mountFloat(true, floatSnapshot('all'))
     await wrapper.vm.$nextTick()
@@ -736,6 +780,24 @@ describe('Codex Companion V4 UI contract', () => {
     expect(wrapper.get('.float-action-hint').text()).toContain('真实归档')
     expect(archive.attributes('title')).toBeUndefined()
     vi.useRealTimers()
+  })
+
+  it('archives a stopped task directly from its row after the retained two-step confirmation', async () => {
+    const source = floatSnapshot('all')
+    const stopped = source.conversations.stopped.find((task) => task.key === TASK_FAILED)!
+    const { wrapper, action } = mountFloat(true, source)
+    await wrapper.vm.$nextTick()
+    const archive = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"] .task-inline-actions .action-archive`)
+
+    await archive.trigger('click')
+    expect(wrapper.text()).toContain('再次操作确认')
+    await wrapper.get(`[data-focus-key="task:${TASK_FAILED}"] .task-inline-actions .action-archive`).trigger('click')
+
+    expect(action).toHaveBeenCalledWith('codex.tasks.archive', expect.objectContaining({
+      items: [{ key: TASK_FAILED, revisionAt: stopped.revisionAt }],
+      source: 'archive-button',
+      confirmationRecorded: true
+    }))
   })
 
   it('renders locally hidden projects in a recovery group without removing their tasks from other tabs', async () => {
@@ -902,6 +964,24 @@ describe('Codex Companion V4 UI contract', () => {
     await wrapper.get('.codex-float-root').trigger('keydown', { key: 'Escape', code: 'Escape', shiftKey: true })
     expect(returnFocus).toHaveBeenCalledTimes(1)
     expect(action).not.toHaveBeenCalledWith('codex.float.hide', expect.anything())
+  })
+
+  it('keeps the compact counter and settings preview on the same 20px circular single-digit contract', () => {
+    const sharedCss = readFileSync(resolve(process.cwd(), 'src/styles/companion-counter.css'), 'utf8')
+    const sharedRule = sharedCss.match(/\.companion-counter-geometry\s*\{([^}]+)\}/)?.[1] || ''
+    const floatTemplate = readFileSync(resolve(process.cwd(), 'src/FloatApp.vue'), 'utf8')
+    const settingsTemplate = readFileSync(resolve(process.cwd(), 'src/pages/CodexPage.vue'), 'utf8')
+
+    expect(sharedCss).toMatch(/--companion-counter-size:\s*20px/)
+    expect(sharedCss).toMatch(/--companion-counter-inline-padding:\s*5px/)
+    expect(sharedRule).toMatch(/min-width:\s*var\(--companion-counter-size\)/)
+    expect(sharedRule).toMatch(/height:\s*var\(--companion-counter-size\)/)
+    expect(sharedRule).toMatch(/padding:\s*0 var\(--companion-counter-inline-padding\)/)
+    expect(sharedRule).toMatch(/border-radius:\s*999px/)
+    expect(sharedCss).not.toContain('ui-monospace')
+    expect(sharedCss).not.toContain('font-variant-numeric')
+    expect(floatTemplate).toContain('float-counter companion-counter-geometry')
+    expect(settingsTemplate).toContain('water-preview-counter companion-counter-geometry')
   })
 
   it('keeps compact counters directly clickable without hover expansion', async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createRequire } from 'node:module'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import * as fs from 'node:fs'
@@ -18,6 +18,11 @@ function line(time: string, message: string) {
 }
 
 describe('Claude App version-gated state log', () => {
+  it('admits the currently validated Claude App grammar without widening unknown versions', () => {
+    expect(appState.SUPPORTED_APP_VERSIONS.has('1.28929.0')).toBe(true)
+    expect(appState.SUPPORTED_APP_VERSIONS.has('1.28930.0')).toBe(false)
+  })
+
   it('accepts only the fixed privacy-safe lifecycle grammar', () => {
     expect(appState.parseAppStateLine(line('2026-08-07 10:00:00', `Sending message to session ${LOCAL_A}`)))
       .toMatchObject({ kind: 'running', sessionId: LOCAL_A })
@@ -68,7 +73,12 @@ describe('Claude App version-gated state log', () => {
       claudeAppVersion: supportedVersion
     }).read()
     expect(supported.entries).toHaveLength(1)
-    expect(supported.entries[0]).toMatchObject({ sessionId: LOCAL_A, phase: 'running', source: 'app-log' })
+    expect(supported.entries[0]).toMatchObject({
+      sessionId: LOCAL_A,
+      phase: 'unknown',
+      evidenceProvenance: 'cold-replay',
+      source: 'app-log'
+    })
     expect(JSON.stringify(supported)).not.toContain('prompt')
   })
 
@@ -97,7 +107,7 @@ describe('Claude App version-gated state log', () => {
     expect(execFileSync).toHaveBeenCalledTimes(2)
   })
 
-  it('keeps legitimate identical transitions in one second while deduplicating a rotated copy', () => {
+  it('keeps cold replay non-running while deduplicating a rotated copy', () => {
     const root = mkdtempSync(join(tmpdir(), 'eypc-claude-app-duplicate-'))
     const logs = join(root, 'logs')
     mkdirSync(logs, { recursive: true })
@@ -116,6 +126,85 @@ describe('Claude App version-gated state log', () => {
       claudeLogDirectory: logs,
       claudeAppVersion: [...appState.SUPPORTED_APP_VERSIONS][0]
     })
-    expect(reader.read().entries[0]).toMatchObject({ phase: 'running' })
+    expect(reader.read().entries[0]).toMatchObject({ phase: 'unknown', evidenceProvenance: 'cold-replay' })
+  })
+
+  it('promotes only an append observed after initialization to live running', () => {
+    const root = mkdtempSync(join(tmpdir(), 'eypc-claude-app-live-'))
+    const logs = join(root, 'logs')
+    mkdirSync(logs, { recursive: true })
+    writeFileSync(join(logs, 'main.log'), '')
+    const reader = appState.createAppStateReader({
+      fs,
+      path,
+      os: { homedir: () => root },
+      platform: 'darwin',
+      claudeLogDirectory: logs,
+      claudeAppVersion: [...appState.SUPPORTED_APP_VERSIONS][0]
+    })
+
+    expect(reader.read().entries).toEqual([])
+    writeFileSync(join(logs, 'main.log'), `${line('2026-08-07 10:00:00', `Sending message to session ${LOCAL_A}`)}\n`)
+    expect(reader.read().entries[0]).toMatchObject({ phase: 'running', evidenceProvenance: 'live-append' })
+  })
+
+  it('reads the first native log callback immediately and suppresses a semantic duplicate', () => {
+    const root = mkdtempSync(join(tmpdir(), 'eypc-claude-app-native-watch-'))
+    const logs = join(root, 'logs')
+    mkdirSync(logs, { recursive: true })
+    writeFileSync(join(logs, 'main.log'), '')
+    let directoryChange: ((event: string, filename: string) => void) | null = null
+    const controlledFs = new Proxy(fs, {
+      get(target, key) {
+        if (key === 'watch') return (_directory: string, _options: unknown, listener: (event: string, filename: string) => void) => {
+          directoryChange = listener
+          return { on: () => undefined, close: () => undefined }
+        }
+        return Reflect.get(target, key)
+      }
+    })
+    const reader = appState.createAppStateReader({
+      fs: controlledFs,
+      path,
+      os: { homedir: () => root },
+      platform: 'darwin',
+      claudeLogDirectory: logs,
+      claudeAppVersion: '1.28929.0',
+      watchFile: () => undefined,
+      unwatchFile: () => undefined,
+      setTimeout: () => { throw new Error('semantic wake must not use setTimeout') }
+    })
+    let notified = 0
+    const dispose = reader.watch(() => { notified += 1 })
+    const running = line('2026-08-07 10:00:00', `Sending message to session ${LOCAL_A}`)
+    appendFileSync(join(logs, 'main.log'), `${running}\n`)
+    ;(directoryChange as unknown as (event: string, filename: string) => void)('change', 'main.log')
+    expect(reader.read().entries[0]).toMatchObject({ phase: 'running', evidenceProvenance: 'live-append' })
+    expect(notified).toBe(1)
+
+    appendFileSync(join(logs, 'main.log'), `${running}\n`)
+    ;(directoryChange as unknown as (event: string, filename: string) => void)('change', 'main.log')
+    expect(notified).toBe(1)
+    dispose()
+  })
+
+  it('keeps an exact terminal authoritative during cold replay', () => {
+    const root = mkdtempSync(join(tmpdir(), 'eypc-claude-app-terminal-'))
+    const logs = join(root, 'logs')
+    mkdirSync(logs, { recursive: true })
+    writeFileSync(join(logs, 'main.log'), [
+      line('2026-08-07 10:00:00', `Sending message to session ${LOCAL_A}`),
+      line('2026-08-07 10:00:01', `[Result] Turn succeeded for session ${LOCAL_A}`)
+    ].join('\n'))
+    const reader = appState.createAppStateReader({
+      fs,
+      path,
+      os: { homedir: () => root },
+      platform: 'darwin',
+      claudeLogDirectory: logs,
+      claudeAppVersion: [...appState.SUPPORTED_APP_VERSIONS][0]
+    })
+
+    expect(reader.read().entries[0]).toMatchObject({ phase: 'completed', evidenceProvenance: 'exact-terminal' })
   })
 })

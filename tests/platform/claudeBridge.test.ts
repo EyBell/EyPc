@@ -175,7 +175,76 @@ describe('ordered hook state', () => {
     expect(state.get(CLI_A)).toMatchObject({ phase: 'running', lastEvent: 'prompt-submit', lastEventAt: 50 })
   })
 
-  it('recovers a dropped fs.watch notification through the bounded signature poll', async () => {
+  it('drains the first semantic append synchronously and collapses duplicate tails without a timer', () => {
+    const home = makeHome()
+    let directoryChange: ((event: string, filename: string) => void) | null = null
+    const controlledFs = new Proxy(fs, {
+      get(target, key) {
+        if (key === 'watch') return (_directory: string, _options: unknown, listener: (event: string, filename: string) => void) => {
+          directoryChange = listener
+          return { on: () => undefined, close: () => undefined }
+        }
+        return Reflect.get(target, key)
+      }
+    })
+    const queue = events.createEventQueue({
+      fs: controlledFs,
+      path,
+      directory: home.dataDirectory,
+      watchFile: () => undefined,
+      unwatchFile: () => undefined,
+      setTimeout: () => { throw new Error('semantic wake must not use setTimeout') }
+    })
+    queue.ensureQueueFile()
+    let notified = 0
+    const dispose = queue.watch(() => { notified += 1 })
+    appendFileSync(queue.queuePath, `${JSON.stringify({ s: CLI_A, e: 'Stop', t: 10 })}\n`)
+    expect(directoryChange).not.toBeNull()
+    ;(directoryChange as unknown as (event: string, filename: string) => void)('change', events.QUEUE_FILE_NAME)
+    expect(queue.state().get(CLI_A)).toMatchObject({ phase: 'completed', lastStopAt: 10 })
+    expect(notified).toBe(1)
+
+    for (let index = 0; index < 1_000; index += 1) {
+      appendFileSync(queue.queuePath, `${JSON.stringify({ s: CLI_A, e: 'Stop', t: 10 })}\n`)
+      ;(directoryChange as unknown as (event: string, filename: string) => void)('change', events.QUEUE_FILE_NAME)
+    }
+    expect(notified).toBe(1)
+    dispose()
+  })
+
+  it('leaves a partial JSONL tail unread until the terminating newline arrives', () => {
+    const home = makeHome()
+    let directoryChange: ((event: string, filename: string) => void) | null = null
+    const controlledFs = new Proxy(fs, {
+      get(target, key) {
+        if (key === 'watch') return (_directory: string, _options: unknown, listener: (event: string, filename: string) => void) => {
+          directoryChange = listener
+          return { on: () => undefined, close: () => undefined }
+        }
+        return Reflect.get(target, key)
+      }
+    })
+    const queue = events.createEventQueue({
+      fs: controlledFs,
+      path,
+      directory: home.dataDirectory,
+      watchFile: () => undefined,
+      unwatchFile: () => undefined
+    })
+    queue.ensureQueueFile()
+    let notified = 0
+    const dispose = queue.watch(() => { notified += 1 })
+    appendFileSync(queue.queuePath, JSON.stringify({ s: CLI_A, e: 'UserPromptSubmit', t: 20 }))
+    ;(directoryChange as unknown as (event: string, filename: string) => void)('change', events.QUEUE_FILE_NAME)
+    expect(notified).toBe(0)
+    appendFileSync(queue.queuePath, '\n')
+    ;(directoryChange as unknown as (event: string, filename: string) => void)('change', events.QUEUE_FILE_NAME)
+    expect(queue.state().get(CLI_A)).toMatchObject({ phase: 'running', turnStartedAt: 20 })
+    expect(notified).toBe(1)
+    dispose()
+  })
+
+  it('recovers a dropped fs.watch notification through the native bounded StatWatcher', () => {
     const home = makeHome()
     let poll: (() => void) | null = null
     const silentFs = new Proxy(fs, {
@@ -188,11 +257,11 @@ describe('ordered hook state', () => {
       fs: silentFs,
       path,
       directory: home.dataDirectory,
-      setInterval: (listener: () => void) => {
+      watchFile: (_filePath: string, _options: unknown, listener: () => void) => {
         poll = listener
-        return { unref: () => undefined }
       },
-      clearInterval: () => undefined
+      unwatchFile: () => undefined,
+      setInterval: () => { throw new Error('native recovery must not use setInterval') }
     })
     queue.ensureQueueFile()
     let notified = 0
@@ -200,7 +269,6 @@ describe('ordered hook state', () => {
     appendFileSync(queue.queuePath, `${JSON.stringify({ s: CLI_A, e: 'Stop', t: 10 })}\n`)
     expect(poll).not.toBeNull()
     ;(poll as unknown as () => void)()
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20))
     expect(notified).toBe(1)
     dispose()
   })
@@ -625,7 +693,7 @@ describe('version-gated Claude metadata archive', () => {
       : phase === 'stopped'
         ? `${timestamp} [info] Stopping session ${LOCAL_A}`
         : `${timestamp} [info] Sending message to session ${LOCAL_A}`
-    appendFileSync(join(logDirectory, 'main.log'), `${phaseLine(options.phase ?? 'completed', '2026-08-08 09:59:58')}\n`)
+    writeFileSync(join(logDirectory, 'main.log'), '')
     const row = metadata(LOCAL_A, CLI_A, {
       lastFocusedAt: now - 1_000,
       lastActivityAt: now - 2_000,
@@ -650,6 +718,8 @@ describe('version-gated Claude metadata archive', () => {
       afterClaudeArchiveRename: options.afterRename,
       validateClaudeArchiveWrite: options.validateWrite
     })
+    bridge.readCodeSnapshot({ now })
+    appendFileSync(join(logDirectory, 'main.log'), `${phaseLine(options.phase ?? 'completed', '2026-08-08 09:59:58')}\n`)
     bridge.readCodeSnapshot({ now })
     return {
       bridge,
@@ -683,6 +753,19 @@ describe('version-gated Claude metadata archive', () => {
     expect(readFileSync(otherPath)).toEqual(otherBefore)
     expect(readFileSync(levelDb, 'utf8')).toBe('do-not-touch')
     expect(readFileSync(join(context.home.root, 'logs', 'main.log'), 'utf8')).not.toContain('LocalSessions.archive')
+    context.bridge.close()
+  })
+
+  it('keeps direct stopped-task archive available on the validated Claude App 1.28929.0 schema', async () => {
+    const context = archiveBridge({ version: '1.28929.0', phase: 'stopped' })
+    const before = JSON.parse(readFileSync(context.filePath, 'utf8'))
+    await expect(context.bridge.archiveCodeSession(LOCAL_A)).resolves.toMatchObject({
+      outcome: 'archived',
+      message: 'EyPc 已归档并移除。Claude 原生侧栏同步未确认，当前不受支持。'
+    })
+    const after = JSON.parse(readFileSync(context.filePath, 'utf8'))
+    expect(after.isArchived).toBe(true)
+    expect({ ...after, isArchived: before.isArchived }).toEqual(before)
     context.bridge.close()
   })
 
@@ -794,13 +877,13 @@ describe('Claude membership mutation watcher', () => {
     })
     const bridge = makeBridge(home, {
       fs: watchedFs,
-      setTimeout: (listener: () => void) => { listener(); return { unref: () => undefined } },
-      setInterval: (listener: () => void, delay: number) => {
+      watchFile: (_filePath: string, options: { interval?: number }, listener: () => void) => {
         recovery = listener
-        recoveryMs = delay
-        return { unref: () => undefined }
+        recoveryMs = Number(options?.interval) || 0
       },
-      clearInterval: () => undefined
+      unwatchFile: () => undefined,
+      setTimeout: () => { throw new Error('membership wake must not use setTimeout') },
+      setInterval: () => { throw new Error('native membership recovery must not use setInterval') }
     })
     if (readBeforeWatch) bridge.readCodeSnapshot({ now: Date.now() })
     return {
@@ -823,6 +906,22 @@ describe('Claude membership mutation watcher', () => {
     expect(deltas).toEqual([expect.objectContaining({
       revision: 'claude-task-mutation-delta-v1',
       generation: 1,
+      mutations: [expect.objectContaining({ key: `claude:${LOCAL_A}`, mutation: 'remove' })]
+    })])
+    context.bridge.close()
+  })
+
+  it('retains the verified task when a native callback observes partial metadata JSON', () => {
+    const context = watcherBridge()
+    const deltas: unknown[] = []
+    context.bridge.watchCodeSessions((delta: unknown) => deltas.push(delta))
+    writeFileSync(join(context.home.codeDirectory, `${LOCAL_A}.json`), '{"sessionId":')
+    context.invokeFile()
+    expect(deltas).toEqual([])
+
+    writeMetadata(context.home.codeDirectory, metadata(LOCAL_A, CLI_A, { completedTurns: 1, isArchived: true }))
+    context.invokeFile()
+    expect(deltas).toEqual([expect.objectContaining({
       mutations: [expect.objectContaining({ key: `claude:${LOCAL_A}`, mutation: 'remove' })]
     })])
     context.bridge.close()

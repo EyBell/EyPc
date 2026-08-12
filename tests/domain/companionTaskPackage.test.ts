@@ -174,7 +174,7 @@ describe('canonical Companion task projection', () => {
     expect(state.dynamic.tasks).toEqual([])
   })
 
-  it('keeps provider-specific unknown tasks visible instead of dropping or mislabeling them', () => {
+  it('treats unknown as abstain and preserves the inventory-backed classification', () => {
     const codexSource = emptyConversationSnapshot()
     const codexCard = card()
     codexSource.stopped = [codexCard]
@@ -182,21 +182,19 @@ describe('canonical Companion task projection', () => {
     let codexState = buildCodexTaskStatePackage(codexSource, { sourceRevision: CODEX_TASK_STATE_REVISION, now: 1_000 })
     const codexPackage = packageFor(canonical({
       phase: 'unknown',
-      cycleTier: 'active',
-      dynamicGroup: 'active',
+      cycleTier: 'none',
+      dynamicGroup: 'none',
       capabilities: { open: true, archive: false, pause: false, resume: false, executePlan: false }
     }), 1)
-    codexPackage.views.groups.active = [key]
-    codexPackage.views.counts.active = 1
-    codexPackage.views.cycleKeys = [key]
     codexState = applyCompanionTaskPackageViews(codexState, codexPackage)
-    expect(codexState.conversations.ongoing[0]).toMatchObject({
-      bucket: 'ongoing',
-      activityState: 'ongoing',
-      state: 'running',
-      canArchive: false
+    expect(codexState.conversations.stopped[0]).toMatchObject({
+      bucket: 'stopped',
+      activityState: 'stopped',
+      state: 'stopped',
+      canArchive: true,
+      canonicalFreshness: 'fresh'
     })
-    expect(codexState.dynamic.groups.active.map((task) => task.key)).toEqual([key])
+    expect(codexState.dynamic.tasks).toEqual([])
 
     const claudeSource = emptyConversationSnapshot()
     const claudeCard = { ...card(), provider: 'claude' as const, claudePhase: 'unknown' as const }
@@ -216,12 +214,36 @@ describe('canonical Companion task projection', () => {
     claudeState = applyCompanionTaskPackageViews(claudeState, claudePackage)
     expect(claudeState.conversations.stopped[0]).toMatchObject({
       bucket: 'stopped',
-      activityState: 'ongoing',
+      activityState: 'stopped',
       claudePhase: 'unknown',
-      state: 'attention',
-      canArchive: false
+      state: 'stopped',
+      canArchive: true
     })
     expect(claudeState.dynamic.groups.stopped.map((task) => task.key)).toEqual([key])
+  })
+
+  it('never fabricates running when an unknown package task arrives before metadata', () => {
+    const source = emptyConversationSnapshot()
+    let state = buildCodexTaskStatePackage(source, { sourceRevision: CODEX_TASK_STATE_REVISION, now: 1_000 })
+    const taskPackage = packageFor(canonical({
+      phase: 'unknown',
+      cycleTier: 'none',
+      dynamicGroup: 'none',
+      freshness: 'verifying',
+      capabilities: { open: true, archive: false, pause: false, resume: false, executePlan: false }
+    }), 1)
+    state = applyCompanionTaskPackageViews(state, taskPackage)
+
+    expect(state.conversations.all[0]).toMatchObject({
+      bucket: 'stopped',
+      activityState: 'ongoing',
+      state: 'attention',
+      hasCurrentActivity: false,
+      canArchive: false,
+      canonicalFreshness: 'verifying'
+    })
+    expect(state.dynamic.tasks).toEqual([])
+    expect(state.dynamic.compactCounts.active).toBe(0)
   })
 
   it('preserves the Codex completion watermark when unread revisions advance', () => {
