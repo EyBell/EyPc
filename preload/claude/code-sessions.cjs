@@ -13,7 +13,6 @@ const { claudeAppDataRoot } = require('./app-paths.cjs')
 const CLAUDE_CODE_READER_REVISION = 'claude-code-sessions-v3'
 const DEFAULT_CODE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 const CODE_METADATA_MAX_BYTES = 1024 * 1024
-const CODE_WATCH_COALESCE_MS = 50
 const CODE_RECOVERY_POLL_MS = 1000
 const METADATA_FILE_PATTERN = /^local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/i
 const LOCAL_SESSION_PATTERN = /^local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -138,7 +137,9 @@ function hookForSession(session, hookState, byCli, previousBySession) {
 function appStateMap(snapshot) {
   if (!snapshot || snapshot.compatibility !== 'compatible' || !Array.isArray(snapshot.entries)) return new Map()
   return new Map(snapshot.entries
-    .filter((entry) => entry && LOCAL_SESSION_PATTERN.test(String(entry.sessionId || '')))
+    .filter((entry) => entry
+      && LOCAL_SESSION_PATTERN.test(String(entry.sessionId || ''))
+      && !(entry.evidenceProvenance === 'cold-replay' && entry.phase === 'unknown'))
     .map((entry) => [String(entry.sessionId).toLowerCase(), entry]))
 }
 
@@ -338,10 +339,14 @@ function createCodeSessionReader(dependencies) {
   const fs = dependencies.fs
   const path = dependencies.path
   const crypto = dependencies.crypto || require('node:crypto')
-  const setTimer = dependencies.setTimeout || setTimeout
   const setIntervalFn = dependencies.setInterval || setInterval
   const clearIntervalFn = dependencies.clearInterval || clearInterval
+  const watchFileFn = dependencies.watchFile
+    || (typeof fs.watchFile === 'function' ? fs.watchFile.bind(fs) : null)
+  const unwatchFileFn = dependencies.unwatchFile
+    || (typeof fs.unwatchFile === 'function' ? fs.unwatchFile.bind(fs) : null)
   let watchers = []
+  const recoveryFileWatches = new Map()
   let recoveryTimer = null
   let watchListener = null
   let scheduleWatchedPath = null
@@ -462,6 +467,12 @@ function createCodeSessionReader(dependencies) {
     const previous = pathRecords.get(filePath) || null
     const beforeActive = activeSessionIds()
     const next = readMetadataRecord(filePath)
+    // A native file callback may arrive while a non-atomic writer still has a
+    // partial JSON body on disk. That is not evidence that the task vanished:
+    // retain the last verified record and let the next callback/StatWatcher
+    // retry. A genuinely missing path is still an exact remove candidate.
+    const currentStat = safeStat(fs, filePath)
+    if (!next && currentStat?.isFile()) return []
     if (next) pathRecords.set(filePath, next)
     else pathRecords.delete(filePath)
     rebuildSessionIndex()
@@ -480,7 +491,55 @@ function createCodeSessionReader(dependencies) {
       }
     }
     emitMutations(mutations)
+    reconcileRecoveryFileWatches()
     return mutations
+  }
+
+  function recoverIndexedPaths() {
+    if (watchDisposed) return
+    // Recovery remains bounded to files already admitted by the private
+    // inventory index; it never scans organizations, users or session roots.
+    for (const record of [...pathRecords.values()]) {
+      const next = readMetadataRecord(record.filePath)
+      if (!next || !sameFingerprint(record.fingerprint, next.fingerprint)) {
+        applyExactPathChange(record.filePath)
+      }
+    }
+  }
+
+  function reconcileRecoveryFileWatches() {
+    if (watchDisposed || !watchListener) return
+    const targets = new Set(pathRecords.keys())
+    for (const [filePath, callback] of recoveryFileWatches) {
+      if (targets.has(filePath)) continue
+      if (unwatchFileFn) { try { unwatchFileFn(filePath, callback) } catch {} }
+      recoveryFileWatches.delete(filePath)
+    }
+    if (watchFileFn) {
+      for (const filePath of targets) {
+        if (recoveryFileWatches.has(filePath)) continue
+        try {
+          const callback = () => {
+            const previous = pathRecords.get(filePath)
+            if (!previous) return
+            const next = readMetadataRecord(filePath)
+            if (!next || !sameFingerprint(previous.fingerprint, next.fingerprint)) {
+              applyExactPathChange(filePath)
+            }
+          }
+          watchFileFn(filePath, { persistent: false, interval: CODE_RECOVERY_POLL_MS }, callback)
+          recoveryFileWatches.set(filePath, callback)
+        } catch {}
+      }
+    }
+    const needsFallback = recoveryFileWatches.size !== targets.size
+    if (needsFallback && !recoveryTimer) {
+      recoveryTimer = setIntervalFn(recoverIndexedPaths, CODE_RECOVERY_POLL_MS)
+      if (recoveryTimer && typeof recoveryTimer.unref === 'function') recoveryTimer.unref()
+    } else if (!needsFallback && recoveryTimer) {
+      clearIntervalFn(recoveryTimer)
+      recoveryTimer = null
+    }
   }
 
   function reconcileWatchDirectories() {
@@ -497,6 +556,7 @@ function createCodeSessionReader(dependencies) {
         watchedDirectories.add(directory)
       } catch {}
     }
+    reconcileRecoveryFileWatches()
   }
 
   function readInventory(options) {
@@ -705,6 +765,12 @@ function createCodeSessionReader(dependencies) {
   function stopWatching() {
     if (recoveryTimer) clearIntervalFn(recoveryTimer)
     recoveryTimer = null
+    if (unwatchFileFn) {
+      for (const [filePath, callback] of recoveryFileWatches) {
+        try { unwatchFileFn(filePath, callback) } catch {}
+      }
+    }
+    recoveryFileWatches.clear()
     for (const watcher of watchers) { try { watcher.close() } catch {} }
     watchers = []
     watchedDirectories = new Set()
@@ -722,24 +788,12 @@ function createCodeSessionReader(dependencies) {
       const name = Buffer.isBuffer(filename) ? filename.toString('utf8') : textOf(filename)
       if (!METADATA_FILE_PATTERN.test(name)) return
       const filePath = path.join(directory, name)
-      const timer = setTimer(() => {
-        if (!watchDisposed) applyExactPathChange(filePath)
-      }, CODE_WATCH_COALESCE_MS)
-      timer?.unref?.()
+      // Do not put the first exact membership change behind a timer that a
+      // background-hidden WebContents can throttle. Invalid partial JSON is
+      // retained above and retried by the native recovery watcher.
+      applyExactPathChange(filePath)
     }
     reconcileWatchDirectories()
-    recoveryTimer = setIntervalFn(() => {
-      if (watchDisposed) return
-      // Recovery is intentionally bounded to files already admitted by the
-      // private index. It never rescans organizations/users/sessions.
-      for (const record of [...pathRecords.values()]) {
-        const next = readMetadataRecord(record.filePath)
-        if (!next || !sameFingerprint(record.fingerprint, next.fingerprint)) {
-          applyExactPathChange(record.filePath)
-        }
-      }
-    }, CODE_RECOVERY_POLL_MS)
-    if (recoveryTimer && typeof recoveryTimer.unref === 'function') recoveryTimer.unref()
     return () => {
       watchDisposed = true
       if (watchListener === listener) watchListener = null

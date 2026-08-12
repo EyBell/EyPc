@@ -12,6 +12,7 @@ const { LOCAL_SESSION_PATTERN } = require('./code-sessions.cjs')
 
 const CLAUDE_ARCHIVE_REVISION = 'claude-metadata-archive-v2'
 const SUPPORTED_APP_VERSION = '1.26832.0'
+const SUPPORTED_APP_VERSIONS = new Set([SUPPORTED_APP_VERSION, '1.28929.0'])
 
 function normalizedSessionId(value) {
   const sessionId = typeof value === 'string' ? value.trim().toLowerCase() : ''
@@ -48,7 +49,7 @@ function createArchiveAdapter(dependencies) {
       return { outcome: 'failed', message: 'Claude 静默归档当前仅支持 macOS' }
     }
     const gate = appState.read()
-    if (gate.compatibility !== 'compatible' || gate.appVersion !== SUPPORTED_APP_VERSION) {
+    if (gate.compatibility !== 'compatible' || !SUPPORTED_APP_VERSIONS.has(gate.appVersion)) {
       return { outcome: 'failed', message: `Claude ${gate.appVersion || '未知版本'} 未通过静默归档适配门禁` }
     }
     const before = codeSessions.readSessionState(sessionId)
@@ -100,5 +101,6 @@ function createArchiveAdapter(dependencies) {
 module.exports = {
   CLAUDE_ARCHIVE_REVISION,
   SUPPORTED_APP_VERSION,
+  SUPPORTED_APP_VERSIONS,
   createArchiveAdapter
 }

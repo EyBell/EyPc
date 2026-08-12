@@ -9385,7 +9385,7 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         ? args.source
         : 'manual-row-open'
       void codexController.openThread(key, actionAlias, undefined, source, typeof args?.operationId === 'string' ? args.operationId : undefined)
-      return Boolean(key && actionAlias)
+      return Boolean(key)
     } })
     actions.register({ id: 'codex.claude.task.sync', title: '同步 Claude 状态', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
       const key = typeof args?.key === 'string' ? args.key : ''
@@ -9786,10 +9786,10 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       const groupDetailTarget = portGroupDetail.target ? groupRows.find((row) => sameTarget(row.target, portGroupDetail.target)) || rowForGroupTarget(portGroupDetail.target) : null
       const currentWindowRows = windowRows()
       const windowActionTarget = windowActionTargetId ? currentWindowRows.find((row) => row.id === windowActionTargetId) || null : null
-      const codexFloat = codexController.floatSnapshot()
-      codexFloat.keybindings = buildEffectiveKeybindings(state.settings.shortcutProfiles, state.settings.featureConfigs)
+      const floatKeybindings = buildEffectiveKeybindings(state.settings.shortcutProfiles, state.settings.featureConfigs)
         .filter((binding) => (binding.actionId.startsWith('codex.') || binding.actionId.startsWith('quickJump.')) && !binding.disabled && Boolean(binding.shortcutId))
         .map((binding) => ({ actionId: binding.actionId, shortcutId: binding.shortcutId, layer: binding.layer, when: binding.when, weight: binding.weight }))
+      const codexFloat = codexController.floatSnapshot(floatKeybindings)
       return {
         state,
         codex: codexController.view(),

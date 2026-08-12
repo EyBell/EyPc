@@ -524,6 +524,7 @@ const composerModels = computed(() => composer.value?.context.modelCatalog.model
 const selectedUiTab = ref<UiConversationTab>('dynamic')
 const projectProviderFilter = ref<CompanionProjectFilter>('all')
 const appliedCompanionRevision = ref(0)
+const appliedBaseRevision = ref(0)
 const projectFilters = [
   { id: 'all' as const, label: '全部' },
   { id: 'codex' as const, label: '只显示 Codex' },
@@ -1180,7 +1181,7 @@ const drawerActions = computed<DrawerAction[]>(() => {
         ]
       : [{ id: 'task-hide', label: item.task.isHidden ? '恢复显示' : '移到已隐藏', disabled: item.task.isHidden && !item.task.hiddenKind, run: () => item.task.isHidden ? restoreTask(item.task) : hideTask(item.task) }]
     return [
-      { id: 'task-open', label: '打开', disabled: !item.task.actionAlias, disabledReason: '任务动作已失效', run: () => openTask(item.task) },
+      { id: 'task-open', label: '打开', disabled: item.task.companionCapabilities?.open === false, disabledReason: '任务打开能力不可用', run: () => openTask(item.task) },
       ...claudeSyncActions,
       { id: 'task-new-thread', label: '在当前项目新建会话', disabled: !canCreateInProject, disabledReason: taskProjectActionBlockedReason(item.task, project), run: () => openComposer(project) },
       { id: 'task-new-thread-model', label: '选择模型新建会话', disabled: !canCreateInProject, disabledReason: taskProjectActionBlockedReason(item.task, project), run: () => openComposer(project, true) },
@@ -1285,7 +1286,7 @@ function openCompactStatus(kind: 'input' | 'active' | 'unread') {
 }
 
 function openTask(task: CodexTaskCard, source: 'card-click' | 'manual-quick-jump' = 'card-click') {
-  if (task.actionAlias) action('codex.task.open', { key: task.key, actionAlias: task.actionAlias, source })
+  action('codex.task.open', { key: task.key, actionAlias: task.actionAlias || '', source })
 }
 
 function taskProject(task: CodexTaskCard) {
@@ -1327,7 +1328,7 @@ function planActionBlockedReason(task: CodexTaskCard, actionName: '暂停' | '�
   if (!task.planReady) return '当前任务没有可继续的已完成 Plan'
   if (actionName === '暂停' && task.companionCapabilities?.pause !== true) return '当前 Plan 状态不可暂停'
   if (actionName === '恢复' && task.companionCapabilities?.resume !== true) return '当前 Plan 状态不可恢复'
-  if (actionName === '执行' && task.companionCapabilities?.executePlan !== true) return '当前 App Server、模型或任务状态不支持安全执行 Plan'
+  if (actionName === '执行' && task.companionCapabilities?.executePlan !== true) return '当前 Plan 尚未完成，或任务已有其它待决状态'
   return `${actionName} Plan`
 }
 
@@ -2712,23 +2713,44 @@ onMounted(() => {
     }
   }
   const applySnapshot = (value: CodexFloatSnapshotV1 | null) => {
-    const revision = value?.companionTaskPackage?.packageRevision || value?.companion?.revision || 0
-    if (appliedCompanionRevision.value > 0 && revision === 0) return false
-    if (revision > 0 && floatRuntimeIdentity.value?.status !== 'host-loaded') {
+    if (!value) return false
+    const baseRevision = value.baseRevision || 0
+    const taskRevision = value.companionTaskPackage?.packageRevision
+      || (baseRevision === 0 ? value.companion?.revision || 0 : 0)
+    if (taskRevision > 0 && floatRuntimeIdentity.value?.status !== 'host-loaded') {
       window.eypcFloat?.ackTaskPackage?.('rejected', 'identity-mismatch')
       return false
     }
-    if (revision > 0 && revision < appliedCompanionRevision.value) {
+    const baseOlder = appliedBaseRevision.value > 0
+      && (baseRevision === 0 || baseRevision < appliedBaseRevision.value)
+    const taskOlder = taskRevision > 0 && taskRevision < appliedCompanionRevision.value
+    if (taskOlder) {
       window.eypcFloat?.ackTaskPackage?.('rejected', 'older-revision')
+    }
+    const baseChanged = !baseOlder && (baseRevision === 0
+      ? appliedBaseRevision.value === 0
+      : baseRevision > appliedBaseRevision.value)
+    const taskChanged = !taskOlder && taskRevision > appliedCompanionRevision.value
+    if (!baseChanged && !taskChanged) {
+      if (taskRevision > 0 && taskRevision === appliedCompanionRevision.value) {
+        window.eypcFloat?.ackTaskPackage?.('applied')
+      }
       return false
     }
-    if (revision > 0 && revision === appliedCompanionRevision.value) {
-      window.eypcFloat?.ackTaskPackage?.('applied')
-      return false
+    let nextValue = value
+    if (!baseChanged && snapshot.value) {
+      nextValue = taskChanged && value.companionTaskPackage
+        ? { ...snapshot.value, companionTaskPackage: value.companionTaskPackage }
+        : snapshot.value
+    } else if ((taskOlder || taskRevision === 0) && snapshot.value?.companionTaskPackage) {
+      nextValue = { ...value, companionTaskPackage: snapshot.value.companionTaskPackage }
     }
-    if (revision > 0) appliedCompanionRevision.value = revision
-    snapshot.value = value
-    if (revision > 0) void nextTick(() => window.eypcFloat?.ackTaskPackage?.('applied'))
+    if (baseRevision > 0 && baseChanged) appliedBaseRevision.value = baseRevision
+    if (taskChanged) appliedCompanionRevision.value = taskRevision
+    snapshot.value = nextValue
+    if (taskRevision > 0 && !taskOlder) {
+      void nextTick(() => window.eypcFloat?.ackTaskPackage?.('applied'))
+    }
     return true
   }
   applySnapshot(window.eypcFloat?.getSnapshot() || null)
@@ -2853,7 +2875,7 @@ onUnmounted(() => {
       <button
         v-if="compactCounts.input"
         type="button"
-        class="float-counter input"
+        class="float-counter companion-counter-geometry input"
         :aria-label="compactCounterHint('input')"
         @pointerenter.stop="queueCompactCounterHint($event, 'input')"
         @pointermove.stop
@@ -2862,8 +2884,8 @@ onUnmounted(() => {
         @blur="clearCompactCounterHint"
         @click.stop="openCompactStatus('input')"
       >{{ codexBadgeText(compactCounts.input) }}</button>
-      <button v-if="compactCounts.active" type="button" class="float-counter active" :aria-label="compactCounterHint('active')" @pointerenter.stop="queueCompactCounterHint($event, 'active')" @pointermove.stop @pointerleave.stop="clearCompactCounterHint" @focus="queueCompactCounterHint($event, 'active')" @blur="clearCompactCounterHint" @click.stop="openCompactStatus('active')">{{ codexBadgeText(compactCounts.active) }}</button>
-      <button v-if="compactCounts.unread" type="button" class="float-counter unread" :aria-label="compactCounterHint('unread')" @pointerenter.stop="queueCompactCounterHint($event, 'unread')" @pointermove.stop @pointerleave.stop="clearCompactCounterHint" @focus="queueCompactCounterHint($event, 'unread')" @blur="clearCompactCounterHint" @click.stop="openCompactStatus('unread')">{{ codexBadgeText(compactCounts.unread) }}</button>
+      <button v-if="compactCounts.active" type="button" class="float-counter companion-counter-geometry active" :aria-label="compactCounterHint('active')" @pointerenter.stop="queueCompactCounterHint($event, 'active')" @pointermove.stop @pointerleave.stop="clearCompactCounterHint" @focus="queueCompactCounterHint($event, 'active')" @blur="clearCompactCounterHint" @click.stop="openCompactStatus('active')">{{ codexBadgeText(compactCounts.active) }}</button>
+      <button v-if="compactCounts.unread" type="button" class="float-counter companion-counter-geometry unread" :aria-label="compactCounterHint('unread')" @pointerenter.stop="queueCompactCounterHint($event, 'unread')" @pointermove.stop @pointerleave.stop="clearCompactCounterHint" @focus="queueCompactCounterHint($event, 'unread')" @blur="clearCompactCounterHint" @click.stop="openCompactStatus('unread')">{{ codexBadgeText(compactCounts.unread) }}</button>
       <div v-if="compactCounterHintText" class="float-compact-counter-hint" role="tooltip">{{ compactCounterHintText }}</div>
     </div>
 

@@ -26,31 +26,40 @@ function reduceCodexTaskEvidenceV4(value = {}) {
   const flags = Array.isArray(value.activeFlags) ? value.activeFlags : []
   const waitingApproval = flags.includes('waitingOnApproval')
   const waitingInput = flags.includes('waitingOnUserInput')
+  const activityEventIsCurrent = value.activityEvidence === 'activity-event'
+    && (value.lastTurnStatus !== 'completed' || value.lastTurnEvidence === 'turn-started')
+  const realtimeActive = (value.statusAuthority === 'desktop-live' || value.statusAuthority === 'app-server-live')
+    && (activityEventIsCurrent
+      || finiteInteger(value.activeEvidenceSequence) > 0
+      || waitingApproval
+      || waitingInput)
+  const persistedWaiting = value.statusAuthority === 'persisted-decision'
+    && (waitingApproval || waitingInput)
   const liveActive = value.status === 'active' && (
-    value.statusAuthority === 'desktop-live'
-    || value.statusAuthority === 'app-server-live'
-    || value.statusAuthority === 'persisted-decision'
+    realtimeActive
+    || persistedWaiting
     || value.planImplementationOnly === true
   )
   const exactTerminal = ['completed', 'interrupted', 'failed'].includes(value.lastTurnStatus)
     && ['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(value.lastTurnEvidence)
   const activeSequence = finiteInteger(value.activeEvidenceSequence)
   const terminalSequence = finiteInteger(value.terminalEvidenceSequence)
-  const terminalStrictlyNewer = exactTerminal && terminalSequence > 0
-    && (!activeSequence || terminalSequence > activeSequence)
-  const idleConfirmedTerminal = exactTerminal && value.idleConfirmed === true
+  const terminalStrictlyNewer = exactTerminal && terminalSequence > 0 && activeSequence > 0
+    && terminalSequence > activeSequence
+  const idleConfirmedTerminal = exactTerminal && value.idleConfirmed === true && !liveActive
     && (!activeSequence || !terminalSequence || terminalSequence >= activeSequence)
   const terminalCurrent = exactTerminal && (
     idleConfirmedTerminal
     || (!liveActive && (terminalStrictlyNewer || !activeSequence || !terminalSequence))
   )
-  const activeCurrent = liveActive && !terminalStrictlyNewer && !idleConfirmedTerminal
+  const activeCurrent = liveActive && !terminalStrictlyNewer
   const waitingCurrent = liveActive && (waitingApproval || waitingInput)
     && (!activeSequence || !terminalSequence || activeSequence >= terminalSequence)
-  const prior = PHASES.includes(value.previousPhase) ? value.previousPhase : 'running'
+  const prior = PHASES.includes(value.previousPhase) ? value.previousPhase : 'unknown'
   const details = {
     providerStatus: value.status,
     statusAuthority: value.statusAuthority,
+    activityEvidence: value.activityEvidence,
     lastTurnStatus: value.lastTurnStatus,
     lastTurnEvidence: value.lastTurnEvidence,
     activeFlags: flags,
@@ -77,12 +86,12 @@ function reduceCodexTaskEvidenceV4(value = {}) {
 
   if (waitingCurrent && waitingApproval) return decide('waiting-approval', 'causal-waiting-approval')
   if (waitingCurrent && waitingInput) return decide('waiting-input', 'causal-waiting-input')
-  if (activeCurrent || (value.lastTurnStatus === 'inProgress' && !terminalCurrent)) {
+  if (activeCurrent) {
     return decide('running', exactTerminal ? 'active-terminal-conflict' : 'causal-active', exactTerminal ? 'verifying' : 'fresh')
   }
   if (value.lastTurnStatus === 'completed' && (!liveActive || terminalCurrent)) return decide('completed', terminalCurrent ? 'exact-completed' : 'completed-inventory')
   if ((value.lastTurnStatus === 'interrupted' || value.lastTurnStatus === 'failed')
-    && exactTerminal && value.idleConfirmed === true) {
+    && terminalCurrent && value.idleConfirmed === true) {
     return decide('stopped', value.planReady === true || value.planImplementationOnly === true
       ? 'plan-interrupted-idle-confirmed'
       : 'ordinary-interrupted-idle-confirmed')
@@ -91,6 +100,144 @@ function reduceCodexTaskEvidenceV4(value = {}) {
     return decide(prior, 'terminal-verifying', 'verifying')
   }
   return decide(prior === 'unknown' ? 'unknown' : prior, 'insufficient-evidence', 'verifying')
+}
+
+function normalizeCodexBranchEvidenceV4(value = {}) {
+  if (!value || typeof value !== 'object') return null
+  const ref = typeof value.ref === 'string' && value.ref.length > 0 && value.ref.length <= 128 ? value.ref : ''
+  if (!ref) return null
+  const status = ['active', 'idle', 'notLoaded', 'systemError'].includes(value.status) ? value.status : 'notLoaded'
+  const statusAuthority = ['desktop-live', 'app-server-live', 'persisted-decision', 'connector', 'unavailable'].includes(value.statusAuthority)
+    ? value.statusAuthority
+    : 'unavailable'
+  const activeFlags = Array.isArray(value.activeFlags)
+    ? [...new Set(value.activeFlags.filter((flag) => flag === 'waitingOnApproval' || flag === 'waitingOnUserInput'))]
+    : []
+  const lastTurnStatus = ['completed', 'interrupted', 'failed', 'inProgress'].includes(value.lastTurnStatus)
+    ? value.lastTurnStatus
+    : ''
+  const lastTurnEvidence = ['turn-started', 'turn-completed', 'targeted-after-exit', 'snapshot-corroborated', 'inventory'].includes(value.lastTurnEvidence)
+    ? value.lastTurnEvidence
+    : ''
+  const activeEvidenceSequence = finiteInteger(value.activeEvidenceSequence)
+  const terminalEvidenceSequence = finiteInteger(value.terminalEvidenceSequence)
+  const exactTerminal = ['completed', 'interrupted', 'failed'].includes(lastTurnStatus)
+    && ['turn-completed', 'targeted-after-exit', 'snapshot-corroborated'].includes(lastTurnEvidence)
+  const terminalStrictlyNewer = exactTerminal && terminalEvidenceSequence > 0 && activeEvidenceSequence > 0
+    && terminalEvidenceSequence > activeEvidenceSequence
+  const activityEventIsCurrent = value.activityEvidence === 'activity-event'
+    && (lastTurnStatus !== 'completed' || lastTurnEvidence === 'turn-started')
+  const realtimeActive = (statusAuthority === 'desktop-live' || statusAuthority === 'app-server-live')
+    && (activityEventIsCurrent
+      || activeEvidenceSequence > 0
+      || activeFlags.length > 0)
+  const persistedWaiting = statusAuthority === 'persisted-decision' && activeFlags.length > 0
+  const liveStatus = status === 'active' && (
+    realtimeActive
+    || persistedWaiting
+    || value.planImplementationOnly === true
+  )
+  // `inProgress` from an inventory replay is not live evidence by itself.
+  // A branch becomes live only through a real-time authority (Turn start,
+  // Desktop activity delta, App Server delta or the persisted Plan lane).
+  const liveCurrent = liveStatus && !terminalStrictlyNewer
+  const idleConfirmed = exactTerminal && value.idleConfirmed === true && !liveCurrent
+    && (!activeEvidenceSequence || !terminalEvidenceSequence || terminalEvidenceSequence >= activeEvidenceSequence)
+  return {
+    ref,
+    status,
+    statusAuthority,
+    activityEvidence: value.activityEvidence === 'activity-event' ? 'activity-event' : 'initial-snapshot',
+    activeFlags: liveCurrent ? activeFlags : [],
+    lastTurnStatus,
+    lastTurnEvidence,
+    activeEvidenceSequence,
+    terminalEvidenceSequence,
+    waitingSince: finiteInteger(value.waitingSince),
+    turnStartedAt: finiteInteger(value.turnStartedAt),
+    terminalAt: finiteInteger(value.terminalAt),
+    transitionAt: finiteInteger(value.transitionAt),
+    observedAt: finiteInteger(value.observedAt),
+    planImplementationOnly: value.planImplementationOnly === true,
+    planReady: value.planReady === true || value.planImplementationOnly === true,
+    exactTerminal,
+    terminalStrictlyNewer,
+    liveCurrent,
+    idleConfirmed
+  }
+}
+
+/**
+ * Private parent reducer. Branch references are already anonymized by Host and
+ * never enter the public task package, diagnostics, logs or persistence.
+ */
+function reduceCodexParentBranchEvidenceV4(value = {}) {
+  const branches = (Array.isArray(value.branches) ? value.branches : [])
+    .map(normalizeCodexBranchEvidenceV4)
+    .filter(Boolean)
+  const priorCandidate = PHASES.includes(value.previousNonterminalPhase)
+    ? value.previousNonterminalPhase
+    : PHASES.includes(value.previousPhase) ? value.previousPhase : 'unknown'
+  const previousNonterminalPhase = ['running', 'waiting-input', 'waiting-approval'].includes(priorCandidate)
+    ? priorCandidate
+    : ''
+  const details = {
+    branchCount: branches.length,
+    runningCount: branches.filter((branch) => branch.liveCurrent && branch.activeFlags.length === 0).length,
+    approvalCount: branches.filter((branch) => branch.liveCurrent && branch.activeFlags.includes('waitingOnApproval')).length,
+    inputCount: branches.filter((branch) => branch.liveCurrent && branch.activeFlags.includes('waitingOnUserInput')).length,
+    terminalCount: branches.filter((branch) => branch.exactTerminal).length,
+    idleTerminalCount: branches.filter((branch) => branch.idleConfirmed).length
+  }
+  const transitionAtFor = (selected) => Math.max(
+    0,
+    ...selected.map((branch) => Math.max(
+      finiteInteger(branch.transitionAt),
+      finiteInteger(branch.waitingSince),
+      finiteInteger(branch.turnStartedAt),
+      finiteInteger(branch.terminalAt)
+    ))
+  )
+  const decide = (phase, reason, freshness = 'fresh', idleConfirmed = false, selected = branches) => ({
+    outcome: 'decided',
+    phase,
+    reason,
+    freshness,
+    idleConfirmed,
+    transitionAt: transitionAtFor(selected),
+    details
+  })
+  const abstain = (reason) => ({
+    outcome: 'abstain',
+    phase: null,
+    reason,
+    freshness: 'unchanged',
+    idleConfirmed: false,
+    transitionAt: 0,
+    details
+  })
+  if (!branches.length) return abstain('branch-evidence-missing')
+  const running = branches.filter((branch) => branch.liveCurrent && branch.activeFlags.length === 0)
+  if (running.length) {
+    return decide('running', 'branch-running', 'fresh', false, running)
+  }
+  const approvals = branches.filter((branch) => branch.liveCurrent && branch.activeFlags.includes('waitingOnApproval'))
+  if (approvals.length) {
+    return decide('waiting-approval', 'branch-waiting-approval', 'fresh', false, approvals)
+  }
+  const inputs = branches.filter((branch) => branch.liveCurrent && branch.activeFlags.includes('waitingOnUserInput'))
+  if (inputs.length) {
+    return decide('waiting-input', 'branch-waiting-input', 'fresh', false, inputs)
+  }
+  if (branches.every((branch) => branch.exactTerminal && branch.lastTurnStatus === 'completed')) {
+    return decide('completed', 'all-branches-completed')
+  }
+  if (branches.every((branch) => branch.exactTerminal && branch.idleConfirmed)) {
+    return decide('stopped', 'all-branches-idle-terminal', 'fresh', true)
+  }
+  return previousNonterminalPhase
+    ? decide(previousNonterminalPhase, 'branch-terminal-verifying', 'verifying')
+    : abstain('branch-evidence-insufficient')
 }
 
 /** @deprecated Source compatibility; V4 is the sole implementation. */
@@ -217,7 +364,9 @@ function normalizeTask(value, enabledProviders) {
     phaseRevision: finiteInteger(value.phaseRevision, finiteInteger(value.statusEnteredAt, revisionAt)),
     unreadRevision: finiteInteger(value.unreadRevision, revisionAt),
     visibilityRevision: finiteInteger(value.visibilityRevision, revisionAt),
-    statusEnteredAt: finiteInteger(value.statusEnteredAt, revisionAt),
+    // Status time is causal evidence, not the time an inventory row happened
+    // to be observed. Keep it empty when the provider cannot supply one.
+    statusEnteredAt: finiteInteger(value.statusEnteredAt),
     turnStartedAt: finiteInteger(value.turnStartedAt),
     terminalAt: finiteInteger(value.terminalAt),
     metadataRevision: finiteInteger(value.metadataRevision, revisionAt),
@@ -242,7 +391,9 @@ function normalizeTask(value, enabledProviders) {
     localPin: value.localPin === true,
     dynamicEligible: value.dynamicEligible === true,
     capabilities: {
-      open: capabilities.open === true && Boolean(actionAlias),
+      // The anonymous key is the durable identity. Alias expiry must not make
+      // a still-visible task unopenable; Host resolves/renews the hint.
+      open: capabilities.open === true,
       archive: capabilities.archive === true,
       pause: capabilities.pause === true,
       resume: capabilities.resume === true,
@@ -315,8 +466,7 @@ function visibilityAnchor(task) {
     finiteInteger(task.turnStartedAt),
     finiteInteger(task.terminalAt),
     finiteInteger(task.statusEnteredAt),
-    finiteInteger(task.metadataRevision),
-    finiteInteger(task.revisionAt)
+    finiteInteger(task.createdAt)
   )
 }
 
@@ -326,19 +476,22 @@ function derivedCycleTier(task) {
     return task.planImplementation ? 'plan' : 'attention'
   }
   if (task.phase === 'stopped' && task.planReady) return 'plan'
-  if (task.phase === 'running') return 'active'
+  if (task.phase === 'running' && task.dynamicEligible) return 'active'
   if (task.localPin) return 'fallback'
   return 'none'
 }
 
 function derivedDynamicGroup(task) {
   if (task.hidden || task.paused) return 'none'
-  if (!task.dynamicEligible && !(task.phase === 'stopped' && task.planReady)) return 'none'
+  // Attention survives the ordinary activity window. A long-waiting prompt or
+  // unread completion must remain reachable until the user handles it.
   if (task.phase === 'waiting-input' || task.phase === 'waiting-approval') return 'input'
+  if (task.phase === 'completed' && task.unread) return 'unread'
+  if (!task.dynamicEligible && !(task.phase === 'stopped' && task.planReady)) return 'none'
   if (task.phase === 'running') return 'active'
   if (task.phase === 'unknown') return 'none'
   if (task.phase === 'stopped') return 'stopped'
-  if (task.phase === 'completed') return task.unread ? 'unread' : 'completed'
+  if (task.phase === 'completed') return 'completed'
   return 'none'
 }
 
@@ -352,10 +505,13 @@ function finalizeTask(task) {
     next.planLifecycleRevision = 0
     next.paused = false
   }
+  // A completed Plan remains user-actionable even when Codex does not expose
+  // the dedicated Implement Plan request. `planImplementation` controls cycle
+  // priority only; it must not disable the row/menu controls. The Host still
+  // performs an exact latest-Turn/activity/request preflight before execution.
   const planActionable = next.provider === 'codex'
     && next.planReady
-    && (next.phase === 'stopped' || (next.phase === 'waiting-input' && next.planImplementation === true))
-    && next.phase !== 'waiting-approval'
+    && ['waiting-input', 'stopped', 'completed'].includes(next.phase)
   next.capabilities = {
     ...next.capabilities,
     pause: planActionable && !next.paused,
@@ -442,9 +598,10 @@ function buildViews(tasks) {
   const inputAttention = attention
     .filter((task) => task.capabilities.open && (task.phase === 'waiting-input' || task.phase === 'waiting-approval'))
     .map((task) => task.key)
-  views.attentionKeys.input = inputAttention.length
-    ? inputAttention
-    : attention.filter((task) => task.capabilities.open && task.localPin).map((task) => task.key)
+  // Direct attention actions are exact: "待输入" must never fall through to
+  // an unrelated pinned/completed task. Local pins remain the final tier of the
+  // ordinary previous/next cycle only.
+  views.attentionKeys.input = inputAttention
   views.attentionKeys.completedUnread = attention
     .filter((task) => task.capabilities.open && task.phase === 'completed' && task.unread)
     .map((task) => task.key)
@@ -460,7 +617,6 @@ function semanticPackage(packageValue) {
     providers: packageValue.providers,
     complete: packageValue.complete,
     freshness: packageValue.freshness,
-    focusedKey: packageValue.focusedKey,
     tasks: packageValue.tasks.map(semanticTask),
     views: packageValue.views
   })
@@ -495,6 +651,7 @@ function createCompanionTaskKernel(dependencies = {}) {
   let nextVisibilityTransitionAt = 0
   const unknownEvidence = new Map()
   const archiveTombstones = new Map()
+  const codexBranchEvidence = new Map()
   const packageListeners = new Set()
   const pauseReceipts = new Map()
   const attentionSeen = {
@@ -525,8 +682,20 @@ function createCompanionTaskKernel(dependencies = {}) {
     clearTimeout: clearTimer,
     queueMicrotask: dependencies.queueMicrotask,
     record,
-    openCodex: (target, request) => actions.open({ key: target.key, target, source: request?.source || 'task-cycle', operationId: request?.operationId }),
-    openClaude: (target, request) => actions.open({ key: target.key, target, source: request?.source || 'task-cycle', operationId: request?.operationId })
+    openCodex: (target, request) => actions.open({
+      key: target.key,
+      target,
+      trustedResolvedTarget: request?.trustedResolvedTarget === true,
+      source: request?.source || 'task-cycle',
+      operationId: request?.operationId
+    }),
+    openClaude: (target, request) => actions.open({
+      key: target.key,
+      target,
+      trustedResolvedTarget: request?.trustedResolvedTarget === true,
+      source: request?.source || 'task-cycle',
+      operationId: request?.operationId
+    })
   })
   let navigationLease = 0
 
@@ -610,6 +779,51 @@ function createCompanionTaskKernel(dependencies = {}) {
       ...next,
       dynamicEligible: anchor > 0 && anchor + dynamicWindowMs > now()
     })
+  }
+
+  function codexBranchDecisionForTask(task) {
+    if (task?.provider !== 'codex') return null
+    const evidence = codexBranchEvidence.get(task.key)
+    if (!evidence || evidence.generation < finiteInteger(task.observationGeneration)) return null
+    return evidence
+  }
+
+  function applyCodexBranchDecision(task) {
+    const evidence = codexBranchDecisionForTask(task)
+    if (!evidence) return task
+    const decision = evidence.decision
+    if (decision.outcome === 'abstain' || !PHASES.includes(decision.phase)) {
+      return {
+        ...task,
+        observationGeneration: Math.max(finiteInteger(task.observationGeneration), evidence.generation)
+      }
+    }
+    const phaseChanged = decision.phase !== task.phase
+    const terminal = decision.phase === 'completed' || decision.phase === 'stopped'
+    const nonterminal = decision.phase === 'running'
+      || decision.phase === 'waiting-input'
+      || decision.phase === 'waiting-approval'
+    return {
+      ...task,
+      phase: decision.phase,
+      freshness: decision.freshness,
+      idleConfirmed: decision.idleConfirmed === true,
+      observationGeneration: Math.max(finiteInteger(task.observationGeneration), evidence.generation),
+      phaseRevision: Math.max(finiteInteger(task.phaseRevision), evidence.generation),
+      statusEnteredAt: phaseChanged
+        ? finiteInteger(decision.transitionAt)
+          || finiteInteger(task.statusEnteredAt)
+          || finiteInteger(task.phaseRevision)
+        : task.statusEnteredAt,
+      terminalAt: terminal
+        ? finiteInteger(decision.transitionAt)
+          || finiteInteger(task.terminalAt)
+          || finiteInteger(task.statusEnteredAt)
+        : nonterminal ? 0 : task.terminalAt,
+      capabilities: nonterminal
+        ? { ...task.capabilities, archive: false }
+        : task.capabilities
+    }
   }
 
   function scheduleVisibilityTransition() {
@@ -745,6 +959,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     clearUnknownTimer()
     clearVisibilityTimer()
     unknownEvidence.clear()
+    codexBranchEvidence.clear()
     attentionSeen.input.clear()
     attentionSeen.completedUnread.clear()
     claudeReadAcknowledgements.clear()
@@ -803,7 +1018,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       ready: packageValue.complete,
       // Direct row open remains available from the hidden/paused page; only
       // selector-owned cycleKeys and attentionKeys exclude those tasks.
-      targets: actionTargets.filter((target) => target.actionAlias),
+      targets: actionTargets,
       cycleKeys: packageValue.views.cycleKeys
     })
   }
@@ -812,6 +1027,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     const next = {
       ...currentPackage,
       tasks: [...tasks].sort(compareByLatestQuestion),
+      freshness: tasks.some((task) => task.freshness === 'verifying') ? 'verifying' : 'fresh',
       focusedKey: tasks.some((task) => task.key === currentPackage.focusedKey) ? currentPackage.focusedKey : '',
       views: buildViews(tasks)
     }
@@ -838,11 +1054,61 @@ function createCompanionTaskKernel(dependencies = {}) {
     return next
   }
 
+  function publishCodexBranchEvidence(input = {}) {
+    if (disposed) return currentPackage
+    const generation = finiteInteger(input.generation)
+    if (!generation) return currentPackage
+    const currentByKey = new Map(currentPackage.tasks.map((task) => [task.key, task]))
+    let accepted = false
+    for (const value of Array.isArray(input.parents) ? input.parents : []) {
+      if (!value || typeof value !== 'object') continue
+      const key = typeof value.key === 'string' && value.key.length > 0 && value.key.length <= 256 ? value.key : ''
+      if (!key) continue
+      const previous = codexBranchEvidence.get(key)
+      if (previous && generation < previous.generation) continue
+      const incomingBranches = (Array.isArray(value.branches) ? value.branches : [])
+        .map(normalizeCodexBranchEvidenceV4)
+        .filter(Boolean)
+      if (!incomingBranches.length) continue
+      const branches = value.complete === false && previous
+        ? new Map(previous.branches.map((branch) => [branch.ref, branch]))
+        : new Map()
+      for (const branch of incomingBranches) branches.set(branch.ref, branch)
+      const task = currentByKey.get(key)
+      const currentNonterminal = ['running', 'waiting-input', 'waiting-approval'].includes(task?.phase)
+        ? task.phase
+        : previous?.previousNonterminalPhase
+      const decision = reduceCodexParentBranchEvidenceV4({
+        previousPhase: task?.phase,
+        previousNonterminalPhase: currentNonterminal,
+        branches: [...branches.values()]
+      })
+      const previousNonterminalPhase = ['running', 'waiting-input', 'waiting-approval'].includes(decision.phase)
+        ? decision.phase
+        : currentNonterminal || previous?.previousNonterminalPhase || ''
+      codexBranchEvidence.set(key, {
+        generation,
+        branches: [...branches.values()],
+        decision,
+        previousNonterminalPhase,
+        observedAt: Math.max(0, ...[...branches.values()].map((branch) => finiteInteger(branch.observedAt)))
+      })
+      accepted = true
+    }
+    if (!accepted || !currentPackage.tasks.length || input.deferPublish === true) return currentPackage
+    const tasks = currentPackage.tasks.map((previous) => {
+      const next = finalizeCanonicalTask(applyCodexBranchDecision(previous))
+      return assignSemanticRevision(previous, next).task
+    })
+    return publishLocalTasks(tasks, 'codex-branch-evidence')
+  }
+
   function reconcileTask(previous, incoming, draft, forceUnknown, incomingLanes, currentLanes) {
     if (!previous) {
       if (incoming.phase !== 'unknown') unknownEvidence.delete(incoming.key)
       let next = preparePlanLifecycle(null, incoming, incoming, true)
       next = migrateLegacyHiddenPlan(next)
+      next = applyCodexBranchDecision(next)
       next = finalizeCanonicalTask(next)
       if (incoming.phase === 'unknown') next.freshness = 'verifying'
       return { ...assignSemanticRevision(null, next), verifying: next.freshness === 'verifying' }
@@ -974,8 +1240,9 @@ function createCompanionTaskKernel(dependencies = {}) {
       next.observationGeneration = Math.max(next.observationGeneration, incoming.observationGeneration)
     }
     if (verifying) next.freshness = 'verifying'
+    next = applyCodexBranchDecision(next)
     const finalized = finalizeCanonicalTask(next)
-    return { ...assignSemanticRevision(previous, finalized), verifying }
+    return { ...assignSemanticRevision(previous, finalized), verifying: verifying || finalized.freshness === 'verifying' }
   }
 
   function scheduleUnknownCommit(draft) {
@@ -1051,6 +1318,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     for (const task of currentPackage.tasks) {
       if (retainedKeys.has(task.key) || !enabledProviders.has(task.provider)
         || incomingLaneGenerations[task.provider].membership <= currentLaneGenerations[task.provider].membership) continue
+      if (task.provider === 'codex') codexBranchEvidence.delete(task.key)
       if (!pauseReceipts.has(task.key)) continue
       pauseReceipts.delete(task.key)
       try {
@@ -1152,14 +1420,15 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (focusedKey !== currentPackage.focusedKey) {
       const next = {
         ...currentPackage,
-        packageRevision: ++packageSequence,
-        publishedAt: now(),
         focusedKey
       }
       currentPackage = next
-      lastSemantic = semanticPackage(next)
+      // Focus is process-owned action context, not task classification. The
+      // originating surface already owns its visual focus, so echoing it as a
+      // new public task package creates a render/focus loop and alias races.
+      // Keep it in the latest retained package for remounts and update Actions
+      // synchronously, but do not advance revision or notify renderers.
       syncConsumers(next)
-      emitPackage(next)
     }
     if (enabled && !currentPackage.complete) void ensureReady().catch(() => undefined)
     return currentPackage
@@ -1221,6 +1490,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     const terminalEpoch = finiteInteger(input.terminalEpoch)
     for (const key of keys) {
       const task = removed.find((candidate) => candidate.key === key)
+      if (provider === 'codex') codexBranchEvidence.delete(key)
       if (task && pauseReceipts.has(key)) {
         pauseReceipts.delete(key)
         try {
@@ -1292,12 +1562,14 @@ function createCompanionTaskKernel(dependencies = {}) {
   }
 
   async function ensureReady(targetKey = '') {
-    if (currentPackage.complete && currentPackage.freshness === 'fresh') return currentPackage
     // A verifying branch must not globally block an unrelated exact target
     // whose own evidence and capability are fresh. Selector actions still
     // require a fresh whole package because they choose among many targets.
     const exactTarget = targetKey ? taskForKey(targetKey) : null
-    if (currentPackage.complete && exactTarget?.freshness === 'fresh') return currentPackage
+    const exactReady = exactTarget?.freshness === 'fresh'
+      && exactTarget.capabilities?.open === true
+    if (targetKey && currentPackage.complete && exactReady) return currentPackage
+    if (!targetKey && currentPackage.complete && currentPackage.freshness === 'fresh') return currentPackage
     if (!enabled) throw new Error('disabled')
     if (!preflight) throw new Error('preflight-unavailable')
     if (preflightInFlight) return preflightInFlight
@@ -1324,6 +1596,33 @@ function createCompanionTaskKernel(dependencies = {}) {
 
   function taskForKey(key) {
     return currentPackage.tasks.find((task) => task.key === key) || null
+  }
+
+  function ephemeralOpenTarget(key, actionAlias = '') {
+    if (typeof key !== 'string' || !key || key.length > 256) return null
+    const enabledProviders = providerSet(providers)
+    const inferred = key.startsWith('claude:')
+      ? 'claude'
+      : /^[a-f0-9]{32}$/i.test(key) || /^ct_/i.test(actionAlias)
+        ? 'codex'
+        : enabledProviders.size === 1 ? [...enabledProviders][0] : ''
+    if (!inferred || !enabledProviders.has(inferred)) return null
+    return {
+      key,
+      provider: inferred,
+      actionAlias: inferred === 'claude' && !actionAlias && key.startsWith('claude:')
+        ? key.slice('claude:'.length)
+        : typeof actionAlias === 'string' ? actionAlias.slice(0, 256) : '',
+      revisionAt: 1,
+      phase: 'unknown',
+      planReady: false,
+      planLifecycleRevision: 0,
+      paused: false,
+      canArchive: false,
+      canPause: false,
+      canResume: false,
+      canExecutePlan: false
+    }
   }
 
   function dispatchAttention(kind, input) {
@@ -1362,7 +1661,9 @@ function createCompanionTaskKernel(dependencies = {}) {
         && typeof input.key === 'string'
         ? input.key
         : ''
-      await ensureReady(targetKey)
+      // Direct opens are exact-key operations. They must not trigger a broad
+      // inventory/classification preflight merely because an alias expired.
+      if (input.action !== 'open') await ensureReady(targetKey)
     } catch {
       notify('任务状态预检失败，未使用不完整缓存')
       return { outcome: 'unavailable', errorCode: 'inventory-not-ready', message: '任务状态预检失败，请重试' }
@@ -1376,9 +1677,18 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
     if (input.action === 'open') {
       const task = taskForKey(input.key)
-      if (!task?.capabilities.open) return { outcome: 'unavailable', errorCode: 'stale-target', message: '任务身份已失效，请刷新后重试' }
-      const result = await navigation.open({ key: task.key, target: targetFromTask(task), source: input.source || 'manual-row-open', operationId: input.operationId })
-      if (result?.outcome === 'opened' || result?.outcome === 'dispatched') acknowledgeOpenedTask(task)
+      const target = task
+        ? targetFromTask(task)
+        : ephemeralOpenTarget(input.key, typeof input.expectedActionAlias === 'string' ? input.expectedActionAlias : '')
+      if (!target) return { outcome: 'unavailable', errorCode: 'stale-target', message: '任务身份已失效，请刷新后重试' }
+      const result = await navigation.open({
+        key: target.key,
+        target,
+        trustedResolvedTarget: !task,
+        source: input.source || 'manual-row-open',
+        operationId: input.operationId
+      })
+      if (task && (result?.outcome === 'opened' || result?.outcome === 'dispatched')) acknowledgeOpenedTask(task)
       return result
     }
     if (input.action === 'archive') {
@@ -1505,6 +1815,8 @@ function createCompanionTaskKernel(dependencies = {}) {
       taskCount: currentPackage.tasks.length,
       cycleCount: currentPackage.views.cycleKeys.length,
       preflightInFlight: Boolean(preflightInFlight),
+      codexBranchParentCount: codexBranchEvidence.size,
+      codexBranchCount: [...codexBranchEvidence.values()].reduce((total, value) => total + value.branches.length, 0),
       nextVisibilityTransitionAt,
       freshness: currentPackage.freshness,
       navigation: navigation.diagnostics(),
@@ -1530,6 +1842,8 @@ function createCompanionTaskKernel(dependencies = {}) {
     syncPackage,
     /** Host-only provider evidence path; never exposed as a Renderer authority. */
     publishEvidence,
+    /** Host-only private branch evidence; branch refs never cross Renderer APIs. */
+    publishCodexBranchEvidence,
     /** Only a verified Provider archive transaction may call this commit gate. */
     commitArchived,
     detach,
@@ -1555,6 +1869,7 @@ module.exports = {
   UNKNOWN_GRACE_MS,
   reduceCodexTaskEvidenceV4,
   reduceCodexTaskEvidenceV3,
+  reduceCodexParentBranchEvidenceV4,
   reduceClaudeTaskEvidenceV4,
   createCompanionTaskKernel
 }

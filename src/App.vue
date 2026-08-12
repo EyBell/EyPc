@@ -457,11 +457,17 @@ watch(() => snapshot.value.windowActionsFocusRequestId, () => {
 
 watch(() => ({
   visible: snapshot.value.visibleFeatures.some((feature) => feature.id === 'codex') && snapshot.value.codex.settings.floatEnabled,
-  snapshot: snapshot.value.codexFloat,
+  baseRevision: snapshot.value.codexFloat.baseRevision || 0,
+  keybindings: JSON.stringify(snapshot.value.codexFloat.keybindings || []),
   position: snapshot.value.codex.settings.position,
   expandedSizes: snapshot.value.codex.settings.expandedSizes
 }), (payload) => {
-  platform.float.sync(payload)
+  platform.float.sync({
+    visible: payload.visible,
+    snapshot: snapshot.value.codexFloat,
+    position: payload.position,
+    expandedSizes: payload.expandedSizes
+  })
 }, { deep: true, immediate: true })
 
 onMounted(() => {

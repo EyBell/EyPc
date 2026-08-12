@@ -12,7 +12,6 @@ const UNREAD_STORE_KEY = 'epitaxy-unread-v1'
 const UNREAD_LEVELDB_KEY = `_https://claude.ai\u0000\u0001${UNREAD_STORE_KEY}`
 const UNREAD_MAX_IDS = 500
 const UNREAD_MAX_ATTEMPTS = 2
-const UNREAD_WATCH_COALESCE_MS = 50
 const UNREAD_RECOVERY_POLL_MS = 1000
 
 function textOf(value) {
@@ -121,12 +120,14 @@ function createUnreadReader(dependencies) {
   const fs = dependencies.fs
   const path = dependencies.path
   const os = dependencies.os
-  const setTimer = dependencies.setTimeout || setTimeout
-  const clearTimer = dependencies.clearTimeout || clearTimeout
   const setIntervalFn = dependencies.setInterval || setInterval
   const clearIntervalFn = dependencies.clearInterval || clearInterval
+  const watchFileFn = dependencies.watchFile
+    || (typeof fs.watchFile === 'function' ? fs.watchFile.bind(fs) : null)
+  const unwatchFileFn = dependencies.unwatchFile
+    || (typeof fs.unwatchFile === 'function' ? fs.unwatchFile.bind(fs) : null)
   let watcher = null
-  let notifyTimer = null
+  const recoveryFileWatches = new Map()
   let recoveryTimer = null
   let lastFingerprint = ''
   let lastStableFingerprint = ''
@@ -213,12 +214,26 @@ function createUnreadReader(dependencies) {
   }
 
   function stopWatching() {
-    if (notifyTimer) clearTimer(notifyTimer)
-    notifyTimer = null
     if (recoveryTimer) clearIntervalFn(recoveryTimer)
     recoveryTimer = null
+    if (unwatchFileFn) {
+      for (const [filePath, callback] of recoveryFileWatches) {
+        try { unwatchFileFn(filePath, callback) } catch {}
+      }
+    }
+    recoveryFileWatches.clear()
     if (watcher) { try { watcher.close() } catch {} }
     watcher = null
+  }
+
+  function recoveryTargets() {
+    const targets = new Set([sourceRoot()])
+    try {
+      for (const entry of fs.readdirSync(sourceRoot(), { withFileTypes: true })) {
+        if (entry.isFile()) targets.add(path.join(sourceRoot(), entry.name))
+      }
+    } catch {}
+    return targets
   }
 
   function watch(listener) {
@@ -226,22 +241,54 @@ function createUnreadReader(dependencies) {
     if (typeof listener !== 'function') return () => {}
     let disposed = false
     lastFingerprint = fingerprint()
-    const fire = () => {
-      notifyTimer = null
-      if (!disposed) { try { listener() } catch {} }
-    }
-    const schedule = () => {
-      if (disposed || notifyTimer) return
-      notifyTimer = setTimer(fire, UNREAD_WATCH_COALESCE_MS)
-    }
-    try { watcher = fs.watch(sourceRoot(), { persistent: false }, schedule) } catch { watcher = null }
-    recoveryTimer = setIntervalFn(() => {
+    const notifyIfChanged = () => {
+      if (disposed) return
       const next = fingerprint()
       if (next === lastFingerprint) return
       lastFingerprint = next
-      schedule()
-    }, UNREAD_RECOVERY_POLL_MS)
-    if (recoveryTimer && typeof recoveryTimer.unref === 'function') recoveryTimer.unref()
+      try { listener() } catch {}
+    }
+    const reconcileRecoveryWatches = () => {
+      const targets = recoveryTargets()
+      for (const [filePath, callback] of recoveryFileWatches) {
+        if (targets.has(filePath)) continue
+        if (unwatchFileFn) { try { unwatchFileFn(filePath, callback) } catch {} }
+        recoveryFileWatches.delete(filePath)
+      }
+      if (watchFileFn) {
+        for (const filePath of targets) {
+          if (recoveryFileWatches.has(filePath)) continue
+          try {
+            const callback = () => {
+              reconcileRecoveryWatches()
+              notifyIfChanged()
+            }
+            watchFileFn(filePath, { persistent: false, interval: UNREAD_RECOVERY_POLL_MS }, callback)
+            recoveryFileWatches.set(filePath, callback)
+          } catch {}
+        }
+      }
+      const needsFallback = recoveryFileWatches.size !== targets.size
+      if (needsFallback && !recoveryTimer) {
+        recoveryTimer = setIntervalFn(() => {
+          reconcileRecoveryWatches()
+          notifyIfChanged()
+        }, UNREAD_RECOVERY_POLL_MS)
+        if (recoveryTimer && typeof recoveryTimer.unref === 'function') recoveryTimer.unref()
+      } else if (!needsFallback && recoveryTimer) {
+        clearIntervalFn(recoveryTimer)
+        recoveryTimer = null
+      }
+    }
+    const onChange = () => {
+      // The first native callback owns the semantic wake. The async LevelDB
+      // snapshot reader already singleflights concurrent consumers; identical
+      // fingerprints therefore need neither a debounce nor a publication.
+      reconcileRecoveryWatches()
+      notifyIfChanged()
+    }
+    try { watcher = fs.watch(sourceRoot(), { persistent: false }, onChange) } catch { watcher = null }
+    reconcileRecoveryWatches()
     return () => { disposed = true; stopWatching() }
   }
 

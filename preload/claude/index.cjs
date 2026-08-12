@@ -50,7 +50,7 @@ function createClaudeBridge(dependencies) {
   const dataDirectory = dependencies.dataDirectory
 
   const environment = createEnvironmentProbe(dependencies)
-  const queue = createEventQueue({ fs, path, directory: dataDirectory })
+  const queue = createEventQueue({ ...dependencies, fs, path, directory: dataDirectory })
   const opener = createOpener(dependencies)
   const quotaFallback = createQuotaFallback(dependencies)
   const codeSessions = createCodeSessionReader(dependencies)

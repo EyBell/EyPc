@@ -234,14 +234,15 @@ export function emptyCompanionTaskPackage(
 function projectedLegacyState(
   phase: CompanionTaskPhase,
   unread: boolean,
-  provider: CompanionProviderId
+  provider: CompanionProviderId,
+  fallback: CodexTaskCard['state']
 ): CodexTaskCard['state'] {
   if (phase === 'waiting-input') return 'waiting-input'
   if (phase === 'waiting-approval') return 'waiting-approval'
   if (phase === 'running') return 'running'
   if (phase === 'completed') return unread ? 'pending-review' : 'recent-activity'
   if (phase === 'stopped') return 'stopped'
-  return provider === 'claude' ? 'attention' : 'running'
+  return phase === 'unknown' ? fallback : provider === 'claude' ? 'attention' : 'running'
 }
 
 function projectCanonicalCard(
@@ -251,27 +252,38 @@ function projectCanonicalCard(
   const live = task.phase === 'running' || task.phase === 'waiting-input' || task.phase === 'waiting-approval'
   const completed = task.phase === 'completed'
   const stopped = task.phase === 'stopped'
-  const conservativeOngoing = task.phase === 'unknown' && task.provider === 'codex'
-  const bucket: CodexTaskCard['bucket'] = live || conservativeOngoing
-    ? 'ongoing'
+  const unchanged = task.phase === 'unknown'
+  // `unknown` is the Kernel's abstention result. It must not manufacture a
+  // running/stopped classification: keep the latest inventory-backed semantic
+  // fields and only refresh metadata/capability identity around them.
+  const bucket: CodexTaskCard['bucket'] = unchanged
+    ? card.bucket
+    : live
+      ? 'ongoing'
+      : completed
+        ? task.unread ? 'completed-unread' : 'completed'
+        : 'stopped'
+  const activityState: CodexTaskCard['activityState'] = unchanged
+    ? card.activityState
+    : task.phase === 'waiting-input'
+      ? 'waiting-input'
+      : task.phase === 'waiting-approval'
+        ? 'waiting-approval'
+        : task.phase === 'running'
+          ? 'active'
+          : stopped
+            ? 'stopped'
+            : 'ongoing'
+  const archiveCapability: CodexTaskCard['archiveCapability'] = unchanged
+    ? card.archiveCapability
+    : live
+      ? 'blocked-active'
+      : task.capabilities.archive
+        ? 'allowed'
+        : 'blocked-stopped'
+  const completionRevision = unchanged
+    ? card.completionRevision || 0
     : completed
-      ? task.unread ? 'completed-unread' : 'completed'
-      : 'stopped'
-  const activityState: CodexTaskCard['activityState'] = task.phase === 'waiting-input'
-    ? 'waiting-input'
-    : task.phase === 'waiting-approval'
-      ? 'waiting-approval'
-      : task.phase === 'running'
-        ? 'active'
-        : stopped
-          ? 'stopped'
-          : 'ongoing'
-  const archiveCapability: CodexTaskCard['archiveCapability'] = live || task.phase === 'unknown'
-    ? 'blocked-active'
-    : task.capabilities.archive
-      ? 'allowed'
-      : 'blocked-stopped'
-  const completionRevision = completed
     ? task.archiveRequest?.evidence === 'completed'
       ? task.archiveRequest.expectedRevisionAt
       : Math.max(
@@ -282,8 +294,9 @@ function projectCanonicalCard(
   const lastTurnStartedAt = task.archiveRequest?.expectedLastTurnStartedAt
     || card.lastTurnStartedAt
     || task.lastQuestionAt
-  const sourceUpdatedAt = task.archiveRequest?.expectedUpdatedAt
-    || Math.max(card.updatedAt, task.revisionAt)
+  const sourceUpdatedAt = unchanged
+    ? card.updatedAt
+    : task.archiveRequest?.expectedUpdatedAt || Math.max(card.updatedAt, task.revisionAt)
   const next: CodexTaskCard = {
     ...card,
     ...(task.displayName ? { displayName: task.displayName, name: task.displayName } : {}),
@@ -296,10 +309,10 @@ function projectCanonicalCard(
     activityState,
     archiveCapability,
     revisionAt: task.revisionAt,
-    statusEnteredAt: task.statusEnteredAt || task.revisionAt,
-    unreadState: completed && task.unreadKnown ? (task.unread ? 'unread' : 'read') : 'unknown',
+    statusEnteredAt: unchanged ? card.statusEnteredAt : task.statusEnteredAt || task.revisionAt,
+    unreadState: unchanged ? card.unreadState || 'unknown' : completed && task.unreadKnown ? (task.unread ? 'unread' : 'read') : 'unknown',
     canonicalFreshness: task.freshness,
-    state: projectedLegacyState(task.phase, task.unread, task.provider),
+    state: projectedLegacyState(task.phase, task.unread, task.provider, card.state),
     updatedAt: sourceUpdatedAt,
     lastQuestionAt: task.lastQuestionAt || card.lastQuestionAt,
     lastTurnStartedAt,
@@ -309,8 +322,8 @@ function projectCanonicalCard(
     planLifecycleRevision: task.planLifecycleRevision,
     planPaused: task.paused,
     companionCapabilities: { ...task.capabilities },
-    hasCurrentActivity: live,
-    canArchive: archiveCapability === 'allowed'
+    hasCurrentActivity: unchanged ? card.hasCurrentActivity : live,
+    canArchive: unchanged ? card.canArchive : archiveCapability === 'allowed'
   }
   if (task.localPin) next.pinSource = 'local'
   else if (next.pinSource === 'local') delete next.pinSource
@@ -341,18 +354,19 @@ function minimalCanonicalCard(task: CompanionCanonicalTaskV4): CodexTaskCard {
   const projectName = task.projectName || (task.provider === 'codex' ? 'Codex Chats' : 'Claude Chats')
   const projectKey = task.projectKey || `${task.provider}:chats`
   const projectKind = task.projectKind || 'chats'
+  const unknown = task.phase === 'unknown'
   return projectCanonicalCard({
     key: task.key,
     ...(task.actionAlias ? { actionAlias: task.actionAlias } : {}),
     displayName: name,
     name,
-    bucket: 'ongoing',
+    bucket: unknown ? 'stopped' : 'ongoing',
     activityState: 'ongoing',
-    archiveCapability: 'blocked-active',
+    archiveCapability: unknown ? 'blocked-stopped' : 'blocked-active',
     revisionAt: task.revisionAt,
     statusEnteredAt: task.statusEnteredAt,
     unreadState: 'unknown',
-    state: 'running',
+    state: unknown ? 'attention' : 'running',
     updatedAt: task.revisionAt,
     source: 'current',
     originalName: name,
@@ -361,7 +375,9 @@ function minimalCanonicalCard(task: CompanionCanonicalTaskV4): CodexTaskCard {
     originalProjectName: projectName,
     projectKind,
     isHidden: false,
-    provider: task.provider
+    provider: task.provider,
+    hasCurrentActivity: false,
+    canArchive: false
   }, task)
 }
 

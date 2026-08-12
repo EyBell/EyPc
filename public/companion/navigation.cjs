@@ -26,7 +26,7 @@ function normalizeTarget(value, enabledProviders) {
   const actionAlias = typeof value.actionAlias === 'string' ? value.actionAlias : ''
   const revisionAt = Number(value.revisionAt)
   const phase = typeof value.phase === 'string' ? value.phase.slice(0, 40) : 'unknown'
-  if (!key || key.length > 256 || !provider || !enabledProviders.has(provider) || !actionAlias || actionAlias.length > 256
+  if (!key || key.length > 256 || !provider || !enabledProviders.has(provider) || actionAlias.length > 256
     || !Number.isFinite(revisionAt) || revisionAt <= 0) return null
   const archiveRequest = value.archiveRequest && typeof value.archiveRequest === 'object'
     ? {
@@ -225,6 +225,7 @@ function createCompanionNavigation(dependencies = {}) {
       const result = normalizeOpenResult(await open(request.target, request), request.target)
       const currentOperationId = result.operationId || request.operationId
       if (result.outcome === 'opened' || result.outcome === 'dispatched') {
+        if (request.cycle === true) cursorKey = request.target.key
         if (request.target.provider === 'claude') dispatchedClaude += 1
         else dispatchedCodex += 1
         const event = {
@@ -336,7 +337,6 @@ function createCompanionNavigation(dependencies = {}) {
     const key = snapshot.cycleKeys[nextIndex]
     const target = snapshot.targets.get(key)
     if (!target) return reject(unavailable('任务缓存已变化，请重试', 'stale-target'))
-    cursorKey = key
     acceptedCycleCount += 1
     record({
       level: 'debug',
@@ -350,7 +350,7 @@ function createCompanionNavigation(dependencies = {}) {
       cache: 'process-package',
       details: { direction: offset, currentIndex, nextIndex, cycleCount: snapshot.cycleKeys.length }
     })
-    return new Promise((resolve) => queueCycle({ target, source, operationId: currentOperationId, resolve }))
+    return new Promise((resolve) => queueCycle({ target, source, operationId: currentOperationId, cycle: true, resolve }))
   }
 
   function open(input = {}) {
@@ -393,7 +393,13 @@ function createCompanionNavigation(dependencies = {}) {
       details: { ready: snapshot.ready, targetCount: snapshot.targets.size }
     })
     return new Promise((resolve) => {
-      directQueue.push({ target, source, operationId: currentOperationId, resolve })
+      directQueue.push({
+        target,
+        source,
+        operationId: currentOperationId,
+        trustedResolvedTarget: input.trustedResolvedTarget === true,
+        resolve
+      })
       pump()
     })
   }
