@@ -1,6 +1,6 @@
-# RAW-160 → RAW-161 Companion V4 Unified Runtime Spec
+# RAW-160 → RAW-163 Companion V4 Unified Runtime Spec
 
-Status: `rework-implemented / increment-automated-verified / dev-plugin-reload-pending`
+Status: `RAW-163 increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
 
 本规范是当前权威。RAW-159 的 V3 规格作为历史实现基线保留在 Git 与长期任务文档中；与本规范冲突时以 V4 为准。
 
@@ -22,7 +22,7 @@ V4 Kernel 缺失、Facade 不完整或 Main/Float/Renderer/Preload Runtime Ident
 
 ## 2. Branch Causality And Plan Lifecycle
 
-每个分支先按因果顺序裁决：更新的真实 active、新 Turn 或更新 waiting 清除该分支旧 idle；更新的 unresolved input/approval/Plan 建立 waiting；terminal 仅在无更新 active/waiting 时有效；active/terminal 冲突保留非终态并 `freshness=verifying`。父任务聚合优先级固定为任一运行 → 审批 → 普通输入/Plan 实施确认 → 全部分支 exact completed → 全部分支 exact terminal 且分别 idle-confirmed → 保留最近非终态并 `verifying`。Preload 发布的分支引用只在 Host/Kernel 会话内存在，公共包只含匿名父 key 和聚合结果。
+每个分支先按因果顺序裁决：更新的真实 active、新 Turn 或更新 waiting 清除该分支旧 idle；更新的 unresolved input/approval/Plan 建立 waiting；terminal 仅在无更新 active/waiting 时有效；active/terminal 冲突保留非终态并 `freshness=verifying`。Kernel 随后先判断 main：只有 main 为 exact completed 且 unread 已知为 false 时，才对 main/Side 应用运行 → 审批 → 普通输入/Plan → Goal → terminal 的聚合；否则只采用 main 自身。Preload 发布的分支引用、角色与 unread evidence 只在 Host/Kernel 会话内存在，公共包只含匿名父 key 和最终聚合结果。
 
 证据不足的 reducer 结果是 `abstain/unchanged`，不是一种可展示 running。已有任务由 [companionTaskPackage.ts](../../../../src/domain/companionTaskPackage.ts#L1) 保留最近可信库存语义且不进入 Kernel 未声明的动态组；没有 metadata/prior 的 unknown 只显示为非活动 attention 占位。新 activity row 以 unknown 为前态；hydration/cold snapshot `active` 必须有 Turn-start、live append、processing、活动事件或等价实时证据才可变为 running。
 
@@ -35,8 +35,11 @@ V4 Kernel 缺失、Facade 不完整或 Main/Float/Renderer/Preload Runtime Ident
 | completed Plan 已确认，但没有专用 Implement Plan 请求 | 保留可信 phase；`planReady=true`、`planImplementation=false`；暂停/恢复/执行能力仍可用 |
 | Plan 未执行、exact interrupted、定向复读确认无更新活动/等待 | stopped；保留 `planReady=true` |
 | 普通 interrupted，尚未 idle-confirmed | 保留稳定态；`verifying` |
-| 普通 interrupted，全部分支 idle-confirmed | ordinary stopped |
+| 普通 interrupted，selected scope 全部 idle-confirmed | ordinary stopped |
 | exact default/non-Plan Turn 开始 | running；清除 `planReady/paused` |
+| main completed-read + Side running | 父任务 running |
+| main completed-read + Side completed-unread | 父任务 completed-unread |
+| main 非 completed-read + Side 不同状态 | 父任务保持 main phase/unread |
 
 `CompanionCanonicalTaskV4` 增加 `planReady`、`planLifecycleRevision`、`paused` 与 `open/archive/pause/resume/executePlan` 能力。新 exact Plan 替换旧 Plan 时 revision 单调增加；普通刷新、owner 切换、refollow 和 Plan 修改不清除。完成、归档、移除、明确放弃或 exact default 执行才清除。
 
@@ -70,7 +73,7 @@ Plan pause receipt 只持久化哈希 taskRef、Plan revision、paused 和时间
 
 明确失败保留 Plan 并返回阶段原因；超时为 `indeterminate`，定向复读匹配新 Turn，禁止自动重发。原生模式探测失败只降级到同任务 App Server Turn，不禁用菜单；无剪贴板、键盘模拟、UI 自动化或替代会话回退。
 
-普通打开同样由 Kernel/Host 单链所有：卡片携带的 `actionAlias/revision/phase` 只是版本提示，最终目标始终是匿名 key。Host Actions 已持有该 key 时必须采用当前进程 target，不能因 Renderer 提示落后而前置 `stale-target`；这一路径不做库存读取或重分类。仅当当前 target/私有映射缺失或能力不可用时，才合并执行 provider-scoped exact/tasks-only 解析。Host 优先从仍可信的私有映射续签，否则读取完整可信库存；只发布并最多重试同一 key 一次，不选择其它任务。卡片、标题、Enter、紧凑待输入角标与 uTools 全局待输入入口都复用此函数，且仅 Host 成功结果推进队列/已读。
+普通打开同样由 Kernel/Host 单链所有：卡片携带的 `actionAlias/revision/phase` 只是版本提示，最终目标始终是匿名父 key。Host Actions 已持有该 key 时必须采用当前进程 parent target，不能因 Renderer 提示落后而前置 `stale-target`；这一路径不做库存读取或重分类。仅当当前 target/私有映射缺失或能力不可用时，才合并执行 provider-scoped exact/tasks-only 解析。Host 优先从仍可信的私有映射续签，否则读取完整可信库存；只发布并最多重试同一 parent key 一次，不选择其它任务或 Side Chat。卡片、标题、Enter、紧凑角标、attention 与 uTools 全局入口都复用此函数；Deep Link 固定为父任务，且仅 Host 成功结果推进队列/已读。
 
 ## 5. Semantic Publication And Latest-State Consumption
 
@@ -111,3 +114,19 @@ Codex/Claude 的 stopped 均可从任务行直接进入归档，但仍执行既�
 每次唤醒都并行完成 `thread/list archived:false` 与 `thread/list archived:true` 的全 cursor 对照。只有匿名 key 当前仍在 Kernel/Activity inventory、raw ID 不再位于未归档清单且明确位于归档清单时，Host 才清理 waiting/shadow/unread/action/Turn cache 并发布 urgent `archivedKeys`；这个精确后置条件绕过普通 missing-row quarantine。新增、无法分类的缺失或两边同时出现只触发 Codex provider-scoped tasks-only 对账，不猜测归档。
 
 dirty recovery 仅对“不在未归档且不在归档库存”的 dirty raw ID 执行 `thread/read`。插件进入、Desktop IPC 重连和 watcher 重建强制一次 tasks-only 对账。EyPc 本地归档事务用进程私有 suppression 保护目标，直到原严格事务 commit、再次确认其仍未归档或会话重置；外部 recovery 不能把一次本地 indeterminate 写乐观提交。
+
+## 9. RAW-162 Goal-aware Completion Authority
+
+Codex Goal status 是长期任务的完成边界，Turn outcome 只描述该任务内的一轮执行。Preload 通过 App Server `thread/goal/get`、`thread/goal/updated` 与 `thread/goal/cleared` 建立 process-only Goal Evidence；Evidence 只含枚举 status、updatedAt、freshness 与会话因果序号，并按分支进入 Kernel 私有 Store。Goal-only 变化使用现有 deferred Branch Evidence + Host draft 原子提交，不增加公共 TaskPhase 或 Renderer 字段。
+
+Kernel 聚合顺序扩展为：更新真实 running → approval → input → 当前 active Goal → 任一未知/过期 Goal 保留稳定非终态并 verifying → 当前 paused/blocked/usageLimited/budgetLimited Goal → 当前 complete Goal → 无 Goal 时的既有 Turn terminal。active Goal 跨任意数量的 `turn/completed → turn/started` 保持非完成；四类不可继续状态投影为 stopped/“待继续”；complete 仅在没有因果更新 active/waiting 或未知 Goal 分支时进入 completed。
+
+Goal 查询以发起时 evidence baseline 和 `goal.updatedAt` 防止迟到结果覆盖实时通知。暂时失败保留最近稳定非终态并标记 verifying；只有 method-not-found 建立 runtime-level unsupported，回退无 Goal Turn 语义。Goal complete 之后若出现严格更新的新 Turn，该非活动 Goal epoch 被视为已取代；后续终态候选重新 single-flight 读取 Goal，避免旧 complete 永久锁死，也避免漏掉新 active Goal。
+
+## 10. RAW-163 Main-first Side Chat Projection And Parent-only Open
+
+[preload/index.js](../../../../preload/index.js#L1) 在既有隐私化 Branch Evidence 中补充有限的 `branchKind=main|side`、`unreadKnown` 与 `hasUnreadTurn`。主分支 unread 使用自己的 Desktop/native observation；子分支不借用父级 connector unread。原始 parent/child ID 仍只存在于 Preload 映射中。
+
+[task-kernel.cjs](../../../../preload/companion/task-kernel.cjs#L1) 同时归约 phase 与 unread。main 只有在当前归约为 completed、unread authority 已知且值为 false 时才开放全分支范围；否则 selected scope 只有 main。全分支范围沿用既有因果顺序，因此 main completed-read + Side running 为 running，main completed-read + Side completed-unread 为 completed-unread；main completed-unread/running/waiting/stopped/verifying 则不被子分支覆盖。
+
+打开动作不再计算 Side Chat navigation priority。[preload/index.js](../../../../preload/index.js#L1) 对 Electron 与 uTools fallback 都只构造父任务 `codex://threads/<parent>`；没有 Side Chat 首试或失败回退。成功后仍由既有 preload-session acknowledgement 将父任务和已知 Side Chat 标记为本会话已读，失败不改变未读。

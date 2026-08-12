@@ -1,6 +1,12 @@
-# RAW-160 → RAW-161 Companion V4 Task Checklist
+# RAW-160 → RAW-163 Companion V4 Task Checklist
 
 ## Implementation
+
+- [x] RAW-162 process-only Goal evidence cache、updated/cleared 通知与有界 get/retry/unsupported 门禁
+- [x] RAW-162 Goal-aware Kernel 分支聚合、Goal-only 原子 package 与新 Turn epoch 取代
+- [x] RAW-162 active/complete/四类待继续/无 Goal/失败与隐私回归
+- [x] RAW-163 main/Side 私有角色与分支 unread evidence；main completed-read 后才开放 Side Chat 聚合
+- [x] RAW-163 phase/unread 原子主任务优先归约；删除 Side Chat navigation target，全部入口固定打开 parent
 
 - [x] `task-state-v10 / companion-task-kernel-v4 / companion-task-package-v4 / companion-task-actions-v2`
 - [x] branch causality、main/Side Chat 聚合、active/terminal verifying、ordinary interrupted idle-confirmed
@@ -45,9 +51,14 @@
 - [x] 当前 typecheck、1871-module production build、Preload mirror generation、Runtime Identity 与 uTools validator
 - [x] RAW-161 focused recovery：`5/5`（4 new + existing local transaction guard），覆盖无广播、StatWatcher、dirty archived、local suppression release/retain
 - [x] RAW-161 完整受影响 Codex Bridge：`131/131`；typecheck、1871-module build、mirror/语法与 uTools validator
-- [ ] uTools 开发模式重新加载当前身份并回归；1.5.4/1.5.5 与 `host-252d…` 均为旧基线，当前目标为 `host-78205ae167fc7b27c653 / renderer-9c35abd09a8a390040c5`
+- [x] RAW-162 Goal/Turn 增量：Bridge `138/138`、Kernel `39/39`，active 跨两个 Turn、Goal complete 单次完成、四类待继续、cleared/unsupported、暂时失败、真实 timeout、乱序/重复、main/Side 与隐私矩阵通过
+- [x] RAW-162 Controller+Task Package `62/62`、Float Bridge+Presentation `89/89`、Runtime Identity `5/5`；合计受影响 7 文件、333 项
+- [x] RAW-162 typecheck、1871-module production build、canonical/public/dist Preload、uTools validator；身份 `host-c36f104c3a4cd42e77c2 / renderer-27b635545542097fd7b1`
+- [x] RAW-163 Bridge+Kernel `177/177`（Bridge `138/138`、Kernel `39/39`）；canonical/public syntax+mirror、typecheck、1871-module build、uTools validator
+- [x] RAW-163 生成身份 `host-2c01a8beb95919a22af5 / renderer-cc3ff8f60b7179ed599f`
+- [ ] uTools 开发模式重新加载当前身份并回归；1.5.4/1.5.5、`host-252d…`、`host-78205…` 与 `host-c36f…` 均为旧基线，当前目标为 `host-2c01a8beb95919a22af5 / renderer-cc3ff8f60b7179ed599f`
 - [x] 全仓升级触发：用户明确要求中央状态缺陷逃逸后执行 `pnpm run verify`
-- [x] 文档 code-link、规则一致性、49 documents / 26 dependencies / 25 validators sync group 合同与 diff 审计
+- [x] RAW-163 文档 code-link、规则一致性、50 documents / 26 dependencies / 25 validators sync group 合同、final receipt 与 diff 审计；项目 broad rule baseline 137 项，本轮关键词命中 0 项
 
 ## 2026-08-11 Regression Rework
 
@@ -70,9 +81,12 @@
 
 ## Real Host Acceptance
 
-- [ ] 主任务运行+Side 终态、Side 运行+主 interrupted、旧 idle+新 active 均持续显示进行中
+- [ ] 长期 active Goal 至少跨两个自动 Turn；Host task-package 与 Float applied 链均不得出现中间 completed，Goal complete 后只完成一次
+- [ ] Goal paused/blocked/usageLimited/budgetLimited 均显示待继续；Goal cleared/普通无 Goal 会话保持既有 Turn 语义
+- [ ] main completed-read + Side running 显示进行中；main completed-read + Side completed-unread 显示已完成未读
+- [ ] main running/waiting/stopped/verifying/completed-unread 与 Side 状态冲突时保持 main
 - [ ] 超过 10 分钟旧 alias、生命周期重建和两个并发过期请求仍打开同一待输入任务；失败不打开其它任务且不推进队列
-- [ ] 卡片、标题、Enter、紧凑待输入角标和 uTools 全局待输入入口打开同一目标
+- [ ] 卡片、标题、Enter、紧凑角标、attention、previous/next 和 uTools 全局入口都只打开 parent，不直达 Side Chat
 - [ ] 单数字角标为圆形，两位数/`99+` 自然扩宽，设置预览与 Float 一致
 - [ ] Plan 尚未生成时稳定进行中
 - [ ] Plan 完成后待输入；未执行中断后稳定待继续并突破动态小时窗口
