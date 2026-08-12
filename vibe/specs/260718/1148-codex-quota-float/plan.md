@@ -1,9 +1,9 @@
 # Codex 任务状态收敛计划
 
 Tool: codex
-Status: `RAW-160 implementation-and-full-automated-verification-complete / artifact-ready / host-pending`
+Status: `RAW-161 increment-automated-verified / dev-plugin-reload-pending`
 
-Current overlay: execute the V4 plan in [RAW-160 plan](../../260810/1155-install-runtime-diagnostics/plan.md#L1). The numbered history below is retained as the earlier state-convergence route; its V3 ownership, immediate-interrupted and arbitrary-new-Turn Plan clearing assumptions are no longer current.
+Current overlay: follow the reworked V4 plan in the [Controlled plan](../../260810/1155-install-runtime-diagnostics/plan.md#L1). RAW-160 adds private branch evidence、Host-current same-key opening、focus-private zero publication、counter geometry restoration and process-native Claude/Codex hidden-Host listeners。RAW-161 adds authoritative unarchived/archived membership comparison for external Codex archive, exact `archivedKeys`, dirty archived exclusion and lifecycle tasks-only reconciliation。The numbered history below is retained only as non-conflicting foundation evidence.
 
 1. 用序列测试复现“完成通过定向核验，后续完整快照反判回进行中”。
 2. 完成通过 active-exit 门禁后立即关闭周期并清除 baseline。
@@ -45,5 +45,7 @@ Current overlay: execute the V4 plan in [RAW-160 plan](../../260810/1155-install
 38. 返工同一 RAW-154：把 task-actions/navigation 与 Renderer 分散缓存收敛为 Preload 唯一 `companion-task-kernel-v1`，以 `companion-task-package-v1` 原子发布任务、形式、分组、角标、循环与 capability；全部入口统一提交意图并从最新包重解目标。让 `onPluginEnter` 在 Renderer 未挂载时直接消费，冷状态只走全启用 Provider 的共享 tasks-only 预检，拒绝 partial jump 和 Alt+Tab 重放。新增确定性 Host/Renderer 资产身份与 Main/Float 四端握手，身份不一致 fail closed 为 `reload-required`，严格区分 `artifact-ready` 与 `host-loaded`。完成 Reducer/Kernel/Dispatcher/Bridge/身份聚焦回归、类型、production/uTools build、镜像/语法、文档与错误记忆；真实 uTools 重接入、旧后台进程由用户结束、Float 重开和四端握手继续保持 host gate。
 39. 以 RAW-155 把 Kernel/Package 升级到 V2 Provider-lane 时钟，修复 exact interrupted 被 active 壳覆盖、Claude completed-unread 被订阅/异步整包吞并和同代次 phase/unread 互抢；正常 push 走零全量读取快路，完整盘点仅用于冷启动/重连/成员缺口。移除完整校对设置、手动全刷和 Ctrl+R，额度改为最小 1 秒/旧 0→300；所有状态组与循环层内按最近提问倒序。导航首键立即、in-flight 只保留最终尾随、全局并发 1；加入 Float heartbeat/受控重建、交互超时与 allowlist JSONL 诊断。执行影响选择的聚焦测试、typecheck、Preload 镜像/语法、production/uTools build、文档链接审计；真实状态转换、连按、Float 自愈和日志落盘继续作为 host gate。
 40. 继续 RAW-155：把 Kernel canonical task 提升为卡片/Tab/项目/分组/角标/动作的单一最终投影；修正 Claude generic session-end 覆盖 completion、原生 unread 恢复 completed、冷 Codex exact interrupted provenance 与新 Codex key 元数据补读。移除所有任务消费者固定数量上限，把 unknown 稳定窗缩为 250ms；归档确认只绑定稳定语义身份并在第二次操作使用最新目标。Claude archive 对写前普通元数据 churn 安全 rebase/单次重试，成功精确移除并自动刷新插件。补状态判定脱敏字段、聚焦回归、typecheck、Canonical/Public mirror、1870-module build/runtime validator、文档和错误记忆；真实 uTools/Claude 状态保留 host gate，Claude 原生侧栏及时收敛已由 Claude RAW-029 判定为当前 `unsupported`，不再作为可执行 host gate。
+41. 以 RAW-160 当前返工把 Codex 原生未读/rollout 文件恢复权威移到进程 Host：即时 native callback、已登记文件 1 秒 StatWatcher、watcher error 重建与原子 rename；persisted unread true 强制同 key latest-Turn 复核，Branch/public evidence 单事务发布。最新扩展矩阵 `15/15` files、`433/433` tests，全仓 `83/83` files、`1328/1328` tests。
+42. 以 RAW-161 监听精确 `sessions/archived_sessions` membership roots，并行完成 `archived:false/true` 全 cursor 对照；确切 archived key 直接 tombstone，dirty recovery 排除 archived。插件进入、Desktop IPC 重连、watcher 重建强制 tasks-only；本地 indeterminate archive 的 suppression 只在确有 persisted 可能时保留。用 focused `5/5`（4 new）、完整 Bridge `131/131`、type/build/mirror/runtime 与文档审计验收，真实当前身份外部归档留给开发宿主门禁。
 
 执行证据见 [verify.md](verify.md#L1)，当前交接见 [handoff.md](handoff.md#L1)。

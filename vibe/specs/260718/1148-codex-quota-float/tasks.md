@@ -2,7 +2,7 @@
 
 Tool: codex
 
-Current overlay: RAW-160 V4 implementation、affected `445/445` and final repository `1282/1282` verification、build/runtime/document gates are complete；real host acceptance remains tracked in the [Controlled checklist](../../260810/1155-install-runtime-diagnostics/tasks.md#L1). The table below is historical/non-conflicting foundation evidence.
+Current overlay: RAW-160's earlier V4 gates were invalidated by installed-host regressions and then rebuilt on process-native Claude/Codex hidden-Host recovery。RAW-161 now adds external Codex archive membership authority：exact `sessions/archived_sessions` watchers、one-second StatWatcher、full archived/unarchived comparison、urgent anonymous `archivedKeys`、dirty archived exclusion and lifecycle tasks-only reconciliation。The RAW-160 broad/full matrices remain regression foundations；RAW-161 adds focused recovery `5/5`（4 new）、`131/131` affected Bridge、type/build/mirror/runtime evidence。`host-78205ae167fc7b27c653 / renderer-9c35abd09a8a390040c5` remains pending a uTools development-mode reload in the [Controlled checklist](../../260810/1155-install-runtime-diagnostics/tasks.md#L1). The table below is historical/non-conflicting foundation evidence.
 
 | 任务 | 状态 |
 | --- | --- |
@@ -136,7 +136,7 @@ Current overlay: RAW-160 V4 implementation、affected `445/445` and final reposi
 | RAW-150 Claude `1.26832.0` Deep Link+AX 原生归档与三重验证 | superseded / RAW-154 D′ 静默元数据事务取代；历史验证不再代表当前归档合同 |
 | RAW-150 任务多选 Provider 分发与项目批量 Codex-completed 边界 | complete / focused-automated-verified |
 | RAW-151 单一 waiting-edge reducer、revision/owner 单任务有界重订 | complete / focused-automated-verified |
-| RAW-151 ownerless rollout 文件监听与 1 秒 phase-only watchdog | complete / focused-automated-verified |
+| RAW-151 ownerless rollout 文件监听与 1 秒 phase-only watchdog | historical-complete / recovery owner superseded by RAW-160 Host StatWatcher |
 | RAW-151 两档完整校对频率、跨 Tab/隐藏、阻塞 I/O 下 100 轮双向 P95 | complete / focused-automated-verified |
 | RAW-150/151 权威文档、帮助、错误记忆与 v7 兼容说明 | complete / documentation-memory-verified |
 | RAW-150/151 受影响 11 文件 `382/382`、Preload 镜像/语法、typecheck、production build、runtime validation 与 v7 只读预检 | complete / automated-verified |
