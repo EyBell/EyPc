@@ -1,7 +1,7 @@
 # Claude Code Companion 权威重置 — Handoff
 
-updated: `2026-08-11`
-delivery_state: `implementation-landed / RAW-030-full-automated-verified / artifact-ready / native-sidebar-unsupported / quota-host-verified / interactive-host-partial`
+updated: `2026-08-12`
+delivery_state: `implementation-landed / RAW-032-full-automated-verified / artifact-ready / native-sidebar-unsupported / quota-host-verified / dev-plugin-reload-pending`
 
 ## Start Here
 
@@ -13,7 +13,8 @@ delivery_state: `implementation-landed / RAW-030-full-automated-verified / artif
 ## Current Production Route
 
 - Final shared task authority is `companion-task-kernel-v4 / companion-task-package-v4`. Claude membership/phase/unread remain independent evidence lanes, but the Kernel atomically accepts a causally newer current phase over an older cache；all consumers reject old/equal revisions and Float reports applied ACK. Missing/incompatible V4 is reload-required.
-- Current RAW-160 artifact is `host-495d79c14c1cbb24794d / renderer-568dfd47041bcb997f6b`；full repository `83/83` files、`1282/1282` tests、typecheck、1870-module build、runtime validator and document audit pass。Real Claude transition remains host-pending，and no real archive was repeated。
+- Current RAW-160 artifact is `host-7d964955afb146b4ee98 / renderer-3549884a1cbfed8c3984`；the current impact matrix is `20/20` files、`547/547` tests and full repository is `83/83` files、`1325/1325` tests with typecheck、1871-module build、runtime validator and document audit passing。The uTools development plugin must reload this exact identity；no real archive was executed。
+- Claude state/membership/unread wake is process-owned：the first complete Hook/App-log、registered metadata or LevelDB fingerprint event is processed in the native Node callback，directory `fs.watch` is the fast path and 1-second `fs.watchFile` recovers registered-target notifications。Partial metadata JSON retains the verified task and equal semantics/fingerprints produce no revision/push。Main-hidden state end-to-end gates are normal `≤250ms` and recovery `≤1.25s`。Fixed grammar/archive gates currently allow only verified `1.26832.0 / 1.28929.0`；stopped rows expose direct archive while retaining confirmation and exact preflight。
 - Bridge fan-out and recovery: [index.cjs](../../../../preload/claude/index.cjs#L1) multiplexes Host+Renderer state/inventory/unread subscribers; [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1) installs newly discovered directory watchers after the first cold inventory; [unread.cjs](../../../../preload/claude/unread.cjs#L1) singleflights concurrent reads.
 - Trusted push is the normal path and performs no quota/environment/full-inventory read. Claude-only inventory runs only for cold start, reconnect or an explicit membership gap. Real running→completed-unread and delayed-open races remain host acceptance gates.
 - RAW-028 fixes the remaining state/archive edges: generic session-end preserves a successful completion；native unread promotes any non-live history and unread clearing keeps completed；Claude inventory has no fixed total cap；the final package atomically updates card/tab/project/group/badge/action consumers。Archive confirmation survives revision/unread/focus/alias churn and uses the latest second-click target；ordinary metadata churn can rebase once，verified success automatically removes the plugin row without forcing the native sidebar。

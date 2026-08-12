@@ -1,7 +1,7 @@
 # Claude Code Companion 权威重置 — Tasks
 
-updated: `2026-08-11`
-overall_status: `implementation-landed / RAW-030-full-automated-verified / artifact-ready / native-sidebar-unsupported / host-acceptance-pending`
+updated: `2026-08-12`
+overall_status: `implementation-landed / RAW-032-full-automated-verified / artifact-ready / native-sidebar-unsupported / dev-plugin-reload-pending`
 
 | ID | Work | Status |
 | --- | --- | --- |
@@ -42,6 +42,8 @@ overall_status: `implementation-landed / RAW-030-full-automated-verified / artif
 | CCR-34 | RAW-028 真实正常完成→未读→已读→新 Prompt 与两次 Claude 归档自动移除 | pending-host-acceptance |
 | CCR-35 | RAW-029 D-1 归档提示边界与 D-2 原生侧栏及时收敛能力核验 | D-1 completed-focused-verified / D-2 verified-unsupported-currently |
 | CCR-36 | RAW-030 新 session phase 因果优先、原子状态消费、V4 Latest Cache/Float applied ACK 与固定归档提示 | completed-full-automated-verified / artifact-ready / real transition pending |
+| CCR-37 | RAW-031 隐藏 Main 下的进程原生 Hook/App-log 即时消费、StatWatcher 补漏与语义 no-op | completed-full-automated-verified / dev plugin reload pending |
+| CCR-38 | RAW-032 Claude `1.28929.0` 固定语法/归档结构门禁与 stopped 行直接归档入口 | completed-full-automated-verified / real archive not executed |
 
 ## Execution Journal
 
@@ -65,3 +67,4 @@ overall_status: `implementation-landed / RAW-030-full-automated-verified / artif
 - 2026-08-09 — RAW-154 最终影响矩阵 `20/20` files、`550/550` tests，typecheck、1868-module production/uTools build、runtime validator、canonical/public 镜像、JS/CJS 语法与 diff 检查通过；未触发全仓 Vitest/verify，真实 Claude 数据零写入。
 - 2026-08-09 — 文档同步组扩展为 34 documents / 49 dependencies / 31 validators；33 个变更 Markdown 零断链，适配器共享正文一致，RAW-154 私有同步回执重新记录。历史 v5 回执的并发 scope-change 事实继续保留但不再代表当前门禁。
 - 2026-08-11 — RAW-029 将 D′ 成功提示收窄为 EyPc 已归档/移除 + Claude 原生侧栏未确认；聚焦 3 文件 100/100、Preload 语法/镜像、typecheck、1870-module production build、runtime preparation/validator 通过，产物身份为 `host-36616822511986c18f2c / renderer-25da7ef64b81aadc76f8`。首次产物校验发现 checker 固定旧文案，已按同一合同改为三段语义锚点并在最终构建闭合。只读产物、官方入口和脱敏运行期证据共同判定 D-2 当前不具备受支持原生入口，未接入私有 IPC、AX/JXA/UI 自动化或任何新 Claude 写路径。
+- 2026-08-12 — RAW-031/032 由运行时日志确认 hidden Main 的 JavaScript timer 才是 45/93 秒延迟源；Hook/App-log、membership 与 unread 首事件已改为进程 Node callback 即时处理，已登记目标 1 秒 StatWatcher 只补漏，Controller phase interval 删除，部分 JSON/同值指纹 fail-safe。Claude `1.28929.0` 固定语法/归档结构已显式门禁；影响矩阵 20 文件 547 项、全仓 83 文件 1325 项、typecheck、1871-module build、镜像与 uTools validator 通过，当前身份 `host-7d964955afb146b4ee98 / renderer-3549884a1cbfed8c3984`，待开发插件重载。未修改或归档真实用户任务。

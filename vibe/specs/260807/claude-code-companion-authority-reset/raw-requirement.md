@@ -5,7 +5,7 @@ source_format: `chat`
 source_kind: `chat-requirement-summary`
 capture_fidelity: `normalized-material-requirement`
 privacy_boundary: `no-verbatim-prompt-or-transcript`
-updated: `2026-08-11`
+updated: `2026-08-12`
 
 > 本文件只保留会改变范围、行为、选择或验收的语义；不保存原始提示词、截图文字转录、命令、工具输出、会话身份或推理过程。
 
@@ -43,6 +43,8 @@ updated: `2026-08-11`
 | RAW-028 | active | 修复正常回复被通用 `Stopping session` 降为待继续、原生未读无法恢复完成态、Claude 库存固定数量截断、归档二次确认消失和普通元数据变化导致归档偶发失败。通用 session-end 不覆盖同 Turn 成功 Stop/Result；live 状态优先，否则原生 unread 将任何非 live 历史恢复为 completed-unread，清除 unread 只回 completed，新 Prompt 才恢复 running。最终 V3 任务包原子更新卡片/Tab/项目/分组/角标/动作；Claude inventory 不设固定总数上限。归档确认绑定 Provider+task+terminalEpoch，revision/unread/focus/alias churn 不取消；Claude D′ 行为在 RAW-159 中保持不变。 |
 | RAW-029 | active | Claude D′ 成功提示必须明确分离两项事实：EyPc 归档已完成且任务已从 EyPc 列表移除；Claude 原生侧栏当前尚未确认同步、可能仍待刷新。继续核验真正的原生侧栏及时收敛，但只有受支持的原生动作入口、同一会话原生 ACK 与运行中侧栏在 1.25 秒内移除同时成立才可接纳；元数据/LevelDB 写入、私有 IPC、AX/JXA/UI 自动化、重启或事后视觉结果均不得冒充原生收敛。 |
 | RAW-030 | active | 更新引入（Codex Companion RAW-160）：修复 Claude 实际终止但 EyPc 仍显示 running。当前 `session.phase` 的较新因果事件必须优先于 `previous.phase`，延迟的旧 inventory/cache generation 不得覆盖 watcher/打开后定向刷新；phase、phaseRevision、statusEnteredAt、unread 与 capabilities 原子更新，并仅在消费者 selector 变化时发布。D′ 成功文案进一步固定为“EyPc 已归档并移除。Claude 原生侧栏同步未确认，当前不受支持。” |
+| RAW-031 | active | Claude Hook 已写队列但隐藏 Host 未及时消费属于 P0。状态、任务成员关系与 unread authority 必须在进程生命周期 Host 中以原生文件回调立即 drain/read，首个真实变化不得进入可被 `background-hidden` 节流的 JavaScript timer；已登记目标通知丢失由 1 秒 Node StatWatcher 恢复。部分任务 JSON 保留最后可信成员关系，同值 unread 指纹零通知；语义不变时零 revision、零 Main/Float 推送，状态真实终点以 Float applied ACK 计时。 |
+| RAW-032 | active | 当前 Claude App `1.28929.0` 的固定无内容日志语法与 D′ 元数据结构必须经显式版本门禁适配；未知相邻版本继续 fail closed，日志冷重放不得伪造 live running。可见 stopped/“待继续”任务允许从任务行直接发起归档，但不得移除五秒二次确认、同 key Dispatcher 或写前精确身份/phase/stat/hash 复核。 |
 
 ## Source Lineage
 
@@ -57,4 +59,5 @@ updated: `2026-08-11`
 - RAW-028：来自正常 Claude 回复被误判待继续、完成未读丢失、固定任务数量、归档确认和归档竞态的连续实测；由 Codex Companion RAW-155 增量统一收口。
 - RAW-029：来自对 D′ 用户提示语与 Claude 原生侧栏及时收敛能力的明确拆分、核验和继续执行授权；D-1 直接实施，D-2 先做只读证据核验，不能在缺少受支持入口时越过安全边界。
 - RAW-030：来自 RAW-160 对 Claude 终态角标滞后、旧 phase 反压和精确归档结果文案的统一修复；不扩大 Claude 原生写入范围。
+- RAW-031–032：来自隐藏 Host 45/93 秒延迟的运行时定位、当前 Claude App `1.28929.0` 兼容性缺口，以及用户对“待继续可直接归档”的明确补充；不授权真实用户任务归档。
 - 旧需求证据仍留在其原任务目录；当前取代关系由 [spec.md](spec.md#L1) 的 `DEC-* / ARCH-*` 记录管理。

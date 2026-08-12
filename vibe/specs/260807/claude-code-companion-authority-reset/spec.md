@@ -1,11 +1,11 @@
 # Claude Code Companion 权威重置 — Controlled Specification
 
 spec_id: `SPEC-260807-CLAUDE-CODE-COMPANION-AUTHORITY-RESET`
-spec_revision: `9`
+spec_revision: `10`
 status: `integrated-current-authority`
-execution_status: `implementation-landed / RAW-030-full-automated-verified / artifact-ready / native-sidebar-unsupported / interactive-host-pending`
-raw_sources: `RAW-001..RAW-030`
-updated: `2026-08-11`
+execution_status: `implementation-landed / RAW-032-full-automated-verified / artifact-ready / native-sidebar-unsupported / dev-plugin-reload-pending`
+raw_sources: `RAW-001..RAW-032`
+updated: `2026-08-12`
 
 ## Authority
 
@@ -15,6 +15,11 @@ updated: `2026-08-11`
 - 产品权威：[PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L1)
 - 当前状态：[PROJECT_STATUS.md](../../PROJECT_STATUS.md#L1)
 - 验证与未完成门禁：[verify.md](verify.md#L1)
+
+## RAW-031/032 Current Overlay
+
+- Claude 状态、任务成员关系与未读监听属于进程生命周期 Host，不属于被 uTools `background-hidden` 节流的 Renderer Controller。完整 Hook/App-log、已登记 metadata 和 LevelDB 首事件在 Node 原生文件回调中即时读取；目录 `fs.watch` 是快路，已登记目标的 1 秒 `fs.watchFile` StatWatcher 只补漏，部分 JSON 保留最后可信行，同值指纹零通知。真实 Main-hidden Hook→Host→Kernel→Float applied 自动化门禁为正常 `≤250ms`、漏通知恢复 `≤1.25s`。
+- 固定 App-state 语法与 D′ 归档结构当前只显式门禁已核验的 macOS Claude `1.26832.0 / 1.28929.0`；相邻未知版本 fail closed。stopped/可见“待继续”任务可从任务行直接发起归档，保留既有五秒确认、写前精确身份/phase/stat/hash 复核和单目标事务。
 
 ## Task Documentation Sync Group
 
@@ -228,7 +233,7 @@ updated: `2026-08-11`
 
 - EyPc 不创建或修改 Codex/Claude 原生项目。虚拟合并先按双方相同规范绝对路径的稳定 project key；否则只在 Codex 与 Claude 两侧规范名称都唯一时合并，重名歧义保持分离。Claude 独有项目进入项目区，共享项目在“全部”只出现一次。
 - Projects 子页签为会话级 `全部 / 只显示 Codex / 只显示 Claude`，默认全部。单来源模式同时过滤项目子任务并重算项目/任务数；共享项目只要含所选来源任务就保留。
-- 更新引入（Codex Companion RAW-154，RAW-160 收紧结果合同）：Claude 任务继续支持精确打开、本地置顶和本地隐藏，并允许仅限 macOS Claude `1.26832.0` 的 completed/stopped 任务级 D′ 静默归档。普通库存读取只在 Preload 内建立唯一 `sessionId → local_*.json` 索引；mutation 不重新扫目录。写前重读 compatible phase、精确 App-local 身份及文件 stat/hash；事务只把单一目标 `isArchived` 改为 true，经同目录核验后原子替换。元数据 true 且私有活动库存移除即可 `archived`，插件包立即移除；该成功只确认 EyPc 侧归档与移除，不确认 Claude 原生侧栏。成功提示固定为“EyPc 已归档并移除。Claude 原生侧栏同步未确认，当前不受支持。”App 日志只作增强证据；并发/恢复不确定返回 `indeterminate` 并保留卡片。禁止 Deep Link、AX/JXA、LevelDB、扫改目录和非目标会话；项目级归档、移除和移动仍禁用。
+- 更新引入（Codex Companion RAW-154，RAW-160/RAW-032 收紧结果与版本合同）：Claude 任务继续支持精确打开、本地置顶和本地隐藏，并允许仅限明确核验的 macOS Claude `1.26832.0 / 1.28929.0` completed/stopped 任务级 D′ 静默归档。普通库存读取只在 Preload 内建立唯一 `sessionId → local_*.json` 索引；mutation 不重新扫目录。写前重读 compatible phase、精确 App-local 身份及文件 stat/hash；事务只把单一目标 `isArchived` 改为 true，经同目录核验后原子替换。元数据 true 且私有活动库存移除即可 `archived`，插件包立即移除；该成功只确认 EyPc 侧归档与移除，不确认 Claude 原生侧栏。成功提示固定为“EyPc 已归档并移除。Claude 原生侧栏同步未确认，当前不受支持。”App 日志只作增强证据；并发/恢复不确定返回 `indeterminate` 并保留卡片。禁止 Deep Link、AX/JXA、LevelDB、扫改目录和非目标会话；项目级归档、移除和移动仍禁用。
 - 五秒归档确认的稳定 identity 是 Provider+task+terminalEpoch。revision、unread、focus 与临时 alias 变化不取消；第二次操作从当前包取最新目标并重做 capability/Provider 核验。任务消失、terminal epoch 或 capability 变化才取消。
 - 普通打开在派发 Deep Link 前必须通过同一私有索引重读：已归档、缺失或身份不唯一返回 `state-changed`，不得重新打开旧会话。精确文件 watcher 只重读已登记目标并发布单调 membership mutation delta；一秒 watchdog 只核验索引候选。该通路独立于 quota、state、unread 与完整 inventory Promise，正常发布 P95 ≤250ms，漏 callback 恢复 ≤1.25s。
 - “同步 Claude 状态”是 Claude-only 的实时只读 capability；Codex 行不显示。它不能人工指定 completed/read，也不能修改 Claude App。
