@@ -1,11 +1,11 @@
 # Codex 任务状态验证记录
 
 Tool: codex
-Date: 2026-08-11
+Date: 2026-08-12
 
-## RAW-160 Verification Overlay
+## RAW-161 Verification Overlay
 
-The current verification record is [RAW-160 verify](../../260810/1155-install-runtime-diagnostics/verify.md#L1). RAW-159's installed-host gate reproduced a V3 failure and was reworked rather than accepted；its pagination、archive、diagnostics and identity evidence below remains regression history。Current V4 affected automation is `13/13` files / `445/445` tests and final repository verification is `83/83` files / `1282/1282` tests with typecheck、1870-module build、runtime validator and document audit passed。
+The current verification record is the [Controlled verify](../../260810/1155-install-runtime-diagnostics/verify.md#L1). RAW-160's `20/20` / `547/547`、Codex `15/15` / `433/433` and full `83/83` / `1328/1328` gates remain regression foundations。RAW-161 focused recovery is `5/5`（4 new + existing local transaction guard）and the complete affected Codex Bridge is `131/131`；typecheck、1871-module build、preload mirror/syntax、Runtime Identity and validator pass。The matching `host-78205ae167fc7b27c653 / renderer-9c35abd09a8a390040c5` development-mode reload remains pending；repository-wide Vitest was not repeated because the current testing owner recorded no new escalation trigger。
 
 ## Review Target
 
@@ -116,8 +116,8 @@ The current verification record is [RAW-160 verify](../../260810/1155-install-ru
 | RAW-149 真机 UI 门禁 | 运行中五份 EyPc uTools ASAR 均只含 v5，没有活动 v6；首次 Computer Use 只读观察即因 Mac 锁屏中断，未绕过锁屏或盲重试，也未启动 8092、重接入插件、修改 Access、批准/拒绝请求或终止进程。脱敏会话见 [RAW-149 uTools 真机验收](../../../knowledge/computer-use/sessions/2026-08-08-raw-149-utools-host.md#L1) |
 | RAW-150 待继续与能力合同 | Domain 继续输出 `stopped`，Presentation/Float 统一显示“待继续”，动态顺序为待输入→进行中→待继续→已完成未读→已完成，且无新增顶层 Tab、角标或快捷入口；Renderer 只消费 capability，不复制证据判断 |
 | RAW-150 Provider 归档合同 | Codex stopped 写前重读精确任务/latest Turn，恢复运行返回 `state-changed`；Claude 仅在 macOS App `1.26832.0` 下于打开前和聚焦后两次重读 compatible completed/stopped phase，再执行唯一语义动作及日志/`isArchived`/库存三重验证。任务多选按 Provider 分发，项目批量仍只处理 Codex completed；`failed/indeterminate` 保留卡片 |
-| RAW-151 双向热通路合同 | Desktop/App Server snapshot、patch 与 status event 进入同一 reducer；revision/owner/载荷缺口只重订目标任务。Ownerless rollout 监听 request call、matching output、用户继续与新 `task_started` 两条边，phase-only 读取不访问 unread、quota、inventory 或全量 latest Turn |
-| RAW-151 时延与掉通知合同 | Controller 用同一 monotonic clock 完成 100 轮进行中→待输入→进行中，在 `taskRefreshSeconds=0/86400`、非 Codex Tab、隐藏 Float 与阻塞完整读取下断言 P95≤250ms；分别丢 Activity callback 与 rollout watcher 通知，由 1 秒 watchdog 在 1.25 秒内恢复，无重复发布/分组和完整库存读取 |
+| RAW-151 双向热通路合同 | Historical reducer/follower foundation retained；its Renderer `phaseOnly` recovery owner is superseded by RAW-160 process-Host native+StatWatcher recovery |
+| RAW-151 时延与掉通知合同 | Historical 100-cycle evidence retained；current dropped-notification recovery is measured through Host→Kernel→Float and no longer depends on Controller polling |
 | RAW-150/151 宿主门禁修订 | 真实运行宿主后来已升级到 `task-state-v7`，并暴露当前 owner 旧 waiting 在较新 active 后仍滞留/回跳的缺陷；因此 RAW-151 的旧 `host-pending` 结论改为 `host-exposed-defect / rework-by-RAW-153`，不得再引用旧 v5 解释 |
 | RAW-153 Bridge 反向合同 | [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L1) 完整文件 `94/94`：当前 owner waiting→较新 Turn started、旧 full snapshot/read-state/refollow 不回跳、新 correlation 重入、匹配 resolved 只清一个并发审批、未匹配 resolved 有界重订、runtime flag removal、Side Chat/Plan、rollout resume 立即清除后复核均通过 |
 | RAW-153 受影响矩阵 | Bridge、Domain/Presentation、Controller、Platform、Float/UI 共 `9/9` 文件、`379/379` 测试通过；不改变排序、attention 进度、归档、Provider 聚合或通用导航合同 |

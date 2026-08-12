@@ -1,10 +1,10 @@
 # Codex Companion 当前规范
 
 Tool: codex
-Date: 2026-08-11
-Status: `RAW-160 full-automated-verified / artifact-ready / host-pending`
+Date: 2026-08-12
+Status: `RAW-161 increment-automated-verified / dev-plugin-reload-pending`
 Documentation level: `controlled`
-Requirement version: `2026-08-11.1`
+Requirement version: `2026-08-12.2`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 
@@ -14,7 +14,7 @@ Documentation sync group: `dsg:eypc:WU-CODEX-DESKTOP-LIVE-AUTHORITY`
 
 ## RAW-160 Current Authority Overlay
 
-The current V4 authority is [RAW-160 spec](../../260810/1155-install-runtime-diagnostics/spec.md#L1). It preserves the non-conflicting inventory, unread, archive, navigation and diagnostics rules below, but supersedes V3 state ownership and the former interruption/Plan-clear/publication assumptions with causal Plan lifecycle, pause/execute capability, `getLatest/subscribe(afterRevision)`, consumer fingerprints and Float applied ACK. When text below conflicts, RAW-160 wins.
+The current V4 authority is [RAW-160 spec](../../260810/1155-install-runtime-diagnostics/spec.md#L1). Its installed-host rework adds the Kernel-private Branch Evidence Store、Host-current same-key opening、focus-private zero publication、the restored `20×20` single-digit counter contract and process-native Claude/Codex watchers that remain timely while Main is hidden. Codex native unread/rollout targets use immediate callbacks、one-second StatWatcher recovery and error rebuild；persisted unread true triggers a same-key latest-Turn check，while deferred Branch evidence and the matching public draft form one semantic commit。Claude App `1.28929.0` fixed grammar/archive shape and stopped-row direct archive are included while non-conflicting inventory、unread、archive、navigation and diagnostics foundations below remain. When text below conflicts, the current RAW-160 Controlled owner wins.
 
 ## 第一性目标
 
@@ -175,7 +175,7 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 
 - Domain 内部继续使用 `stopped`；Presentation 将动态分段、卡片状态、说明和可访问文本统一显示为“待继续”。它不是新顶层 Tab，不产生角标或专用快捷入口；动态顺序固定为“待输入 → 进行中 → 待继续 → 已完成未读 → 已完成”。
 - Codex 精确 `interrupted/user-stopped` 在无未解决 input/approval 且无因果上更新的新 Turn/active 时立即形成 terminal watermark；更旧 Desktop active/waiting shadow 不得继续把它归入进行中，也不得伪造 `desktop-live idle`。普通 failed 继续要求既有精确 idle/not-running 门禁。Stopped 卡片允许任务级归档；Host 在执行前重读身份、source fingerprint、revision、latest Turn 与当前请求/活动边界，任何 active/inProgress、新 Turn、请求变化或版本变化返回 `state-changed`。
-- Claude completed/stopped 只经 `companion-task-actions-v1` 分发到 D′ Adapter。仅 macOS Claude `1.26832.0` 通过门禁；目标必须来自正常库存构建的 Preload 私有唯一 `sessionId → local_*.json` 索引。写前重读 compatible phase 与 `isArchived`，并确认文件身份、stat/hash 未变；事务只把解析对象的 `isArchived` 改为 `true`，写同目录唯一临时文件后原子替换，再证明除该字段外语义不变。验证失败且文件仍是本次写入时恢复原始字节；Claude 并发修改后返回 `indeterminate`，禁止旧备份覆盖。
+- Claude completed/stopped 只经统一 Actions Dispatcher 分发到 D′ Adapter。仅明确核验的 macOS Claude `1.26832.0 / 1.28929.0` 通过门禁；目标必须来自正常库存构建的 Preload 私有唯一 `sessionId → local_*.json` 索引。写前重读 compatible phase 与 `isArchived`，并确认文件身份、stat/hash 未变；事务只把解析对象的 `isArchived` 改为 `true`，写同目录唯一临时文件后原子替换，再证明除该字段外语义不变。验证失败且文件仍是本次写入时恢复原始字节；Claude 并发修改后返回 `indeterminate`，禁止旧备份覆盖。
 - `isArchived=true` 与私有活动库存移除双确认即 `archived`；原生归档日志只作增强证据，已归档目标幂等成功。Archive 不 Deep Link、不 AX/JXA、不扫改、不写 LevelDB/非目标会话，路径不跨 Preload。普通 open 在 Deep Link 前重读同一唯一目标，已归档、缺失或歧义统一 `state-changed`。`failed/indeterminate` 保留卡片；任务多选按 Provider 逐项分发并去重，项目批量归档仍只调用 Codex completed 路径。
 
 ## RAW-151 双向待输入热通路
@@ -246,7 +246,7 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - Activity Delta 每次发布递增 generation，完整 snapshot 携带已组装库存的 generation 屏障；严格更旧增量不得覆盖 snapshot，严格更旧 snapshot 也不得覆盖已接纳 delta，Controller 水位只单调前进。
 - 完整 inventory 重建保留更强的精确 inProgress、confirmed terminal 与同 revision provenance。未知 key 只触发 urgent 结构复核，已知条目仍即时应用。
 - 完整 inventory 同时保留 `app-server-live` 私有 evidence sequence；该序号不进入 Activity Delta、Host Snapshot、Renderer、存储或日志。
-- 50/200ms 结构合并、1 秒 phase-only Activity/rollout watchdog、默认 15 秒完整校对和 missing-key 隔离只保护各自证据/库存，不延迟已知等待边或已确认完成；missing-key 只保留缺失行，同批仍存在的任务状态立即发布。连续确认早于隔离窗时按剩余时间自调度，普通周期为 0 也会闭合。Preload 在 source fingerprint 未变化时把已发布缺行任务的匿名映射保留 120 秒，覆盖 Controller 最长配置隔离窗口；显式归档仍立即清除。
+- 本节历史的 50/200ms 结构合并与 Renderer phase-only watchdog 已由 RAW-160 当前 Host-native watcher 取代。当前 missing-key 隔离仍只保护缺失行，同批现存任务立即发布；Preload 在 source fingerprint 未变化时把已发布缺行任务的匿名映射保留 120 秒，显式归档仍立即清除。
 - `task-state-v9` 是当前语义。v8/v7/v6/v5/v4/v3/v2/旧来源仍读取并发布 degraded 原子包，不清空任务；旧源提示重载。v4 Plan-only、v5 persisted-decision、v6 状态时间与 v8 waiting-clear 因果屏障保持兼容；只有当前 v9 同时表示匹配 `serverRequest/resolved`、active-vs-active waiting-clear、精确 interrupted 终态和统一任务 action/mutation 合同已加载。
 - 旧 runtime/float `conversations` 别名只作一版兼容；当前消费者以 `taskState` 为权威。
 
@@ -307,7 +307,11 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - 普通 interrupted 须全部分支 idle-confirmed；未执行 Plan interrupted 须目标复读确认无更新 Turn/activity/pending。首次 Plan 未生成时 running；Plan 完成实施确认时 waiting-input；只有 exact default execution 等清除 Plan。
 - `stopped + planReady + !paused` 是唯一动态小时窗口例外。Plan pause 有哈希持久收据和已暂停分区；waiting Plan 即使不在展开列表仍进入 input badge/Plan cycle。
 - Actions v2 提供五秒两击 Execute Plan，严格 open→resume→一次 turn/start，保留 model/effort，indeterminate 不盲重发。Main/Float/Navigation/Actions 使用 latest revision/selector cache；Float 用 applied ACK 区分发送与 UI 应用。
-- Claude current phase 的较新因果事件优先于旧 cache；D′ 只确认 EyPc 收敛，固定声明原生侧栏未确认/当前不支持。
+- 普通 open 以匿名 key 为唯一身份。Host 已有 key 时 Actions 直接采用当前 target 并忽略 Renderer 旧 alias/revision/phase；Host target/私有映射缺失时才做 provider-scoped exact 恢复并最多同 key 重试一次。Controller 不在 card/input/cycle 前同步或重分类包。
+- Renderer focus 只更新 Host Actions 上下文并从 semantic package equality 排除；focus-only configure 不增加 package revision/publishedAt、不调用 listener、不重投影 Main/Float。
+- Claude current phase 的较新因果事件优先于旧 cache；Main 隐藏时首个 Hook/App-log、已登记 membership 文件和 unread LevelDB 指纹事件仍由进程 Node 回调立即处理，已登记目标的目录通知丢失只由 1 秒 `fs.watchFile` StatWatcher 恢复，Renderer Controller 不轮询 phase。部分 metadata JSON 保留最后可信任务，同值 unread 零通知。正常 Hook→Host→Kernel→Float applied `≤250ms`，漏通知恢复 `≤1.25s`，语义不变零 revision/零推送。
+- Codex native unread/rollout 同样由进程 Host 原生回调与一秒 StatWatcher持有；watcher error 重建，原子 rename 可恢复，Renderer 没有 `phaseOnly` interval。persisted unread false→true 对仍 active 的同 key 强制 latest-Turn 复核，旧 exact active 不跳过；较新正向 sequence 仍阻止迟到 terminal。Branch Evidence deferred staging 后与同源公开 draft 一次提交，一次语义变化一次 revision。
+- Claude `1.28929.0` 与历史已核验的 `1.26832.0` 走显式固定语法/归档结构门禁，相邻未知版本 fail closed。stopped/“待继续”行可直接发起任务级归档，保留五秒二次确认和写前精确复核；D′ 只确认 EyPc 收敛，固定声明原生侧栏未确认/当前不支持。
 
 ## 残留矩阵收口
 
@@ -321,3 +325,10 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 - 不重做外观展示形式、项目移除或整个 EyPc 架构；仅清除已确认的旧外观门禁和模型策略偏差。
 - 未授权真实 Codex/uTools 部署或原生状态写操作；除已定义的项目移除事务外，Codex 原生状态保持只读。成功打开确认仅更新当前 preload 的匿名投影。
 - 实现接受仍需用户重载真实 uTools 并验收 v9 active↔waiting-input 双向切换、解除后 30 秒不回跳、同任务新请求重入、精确 interrupted 的“待继续”展示与新 Turn 恢复、待继续角标边界及 Codex stopped 归档。Claude D′ 真实归档还必须由用户另行确认一个可丢弃 completed 会话后执行；两项真机门禁未完成前统一记为 `automated-verified / host-pending`。
+
+## RAW-161 External Archive Membership Overlay
+
+- Codex Desktop 手动归档的最终恢复 authority 是 App Server 完整未归档/归档清单对照，不是 Desktop IPC 或 EyPc App Server archive push。
+- 进程 Host 精确监听 `CODEX_HOME/sessions` 与 `archived_sessions`；rename 立即对照，1 秒 StatWatcher 恢复掉通知，watcher error 重建。插件进入、Desktop IPC 重连与重建各强制一次 Codex tasks-only reconciliation。
+- 当前 Kernel key 只在 archived 清单中时立即发布 anonymous `archivedKeys` 并绕过 missing-row quarantine；ambiguous membership 只请求 tasks-only，不猜测删除。
+- dirty exact-read recovery 先排除 archived IDs。EyPc 自发 archive 仍需原双库存复核、Desktop ACK 与 Kernel commit，外部恢复不得旁路。

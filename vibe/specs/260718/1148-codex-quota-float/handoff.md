@@ -1,10 +1,10 @@
 # Codex 任务状态交接
 
 Tool: codex
-Date: 2026-08-11
-State: `RAW-160 artifact-ready / host-pending`
+Date: 2026-08-12
+State: `RAW-161 increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
 
-Current host authority is the [RAW-160 handoff](../../260810/1155-install-runtime-diagnostics/handoff.md#L1). It adds Plan pre-generation/confirmation/interruption, cross-window continuation, pause persistence/migration, Float applied ACK and Claude new-phase convergence. Real Execute Plan and real Claude archive remain separate user-authorized actions. The history below is retained only where it does not conflict.
+Current host authority is the [RAW-161 handoff](../../260810/1155-install-runtime-diagnostics/handoff.md#L1). Reload only `host-78205ae167fc7b27c653 / renderer-9c35abd09a8a390040c5` in uTools development mode；`host-252d… / renderer-ff8…` is the RAW-160 full-suite foundation and older Hosts are rejected failure/historical baselines。The current plugin must additionally pass a Codex Desktop manual archive with no compatible EyPc broadcast、dropped membership event recovery `≤1.25s`、watcher rebuild、plugin-enter/IPC-reconnect tasks-only no-op and dirty archived non-resurrection。Existing branch/open/Plan/counter/Claude/Codex-unread gates remain。Real Execute Plan and real Claude archive remain separate user-authorized actions. The history below is retained only where it does not conflict.
 
 ## RAW-159 历史结论（冲突部分已由 RAW-160 取代）
 
@@ -17,14 +17,14 @@ Current host authority is the [RAW-160 handoff](../../260810/1155-install-runtim
 - 最终宿主门禁固定为：构建 → uTools 开发工具重新接入 `dist/plugin.json` → 用户结束旧插件后台进程并重新进入 → 重开 Float → 核对 Main UI/Main Preload/Float UI/Float Preload 的 Host/Renderer/Kernel/Package 身份完全一致。任何端不一致都会显示 `reload-required` 并停止任务动作；实现不自动结束进程，也不调用私有 uTools API。
 - RAW-154 已将当前合同升级为 `task-state-v9` 与 `companion-task-actions-v1`。Renderer 只提交 Provider-neutral 意图，Domain 独占互斥状态/capability，进程 Dispatcher 按 action→Provider 选择 Adapter，Provider 独占副作用，Controller 只通过一个 mutation reducer 接纳已验证结果；旧 Claude AX 归档禁止回退。
 - Codex 精确 `interrupted/user-stopped` 在没有未解决 input/approval、也没有因果上更新的新 Turn/active 时立即进入内部 stopped/可见“待继续”，不再等待额外 Desktop idle；待继续不进入进行中分段或三个紧凑角标，仍计入动态总数并允许任务级归档。普通 failed 继续使用保守 idle/not-running 门禁，更新的新 Turn 恢复进行中。
-- Claude 归档已改为 D′ 静默事务：仅 macOS App `1.26832.0`、仅正常库存私有索引中的唯一 `local_*.json`、仅 `isArchived=true`，写前复核 phase/stat/hash，写同目录临时文件并原子替换，语义失败安全回滚、并发写不覆盖。成功只要求元数据与活动库存双确认，日志仅增强；不 Deep Link、不 AX/JXA、不写 LevelDB/其它会话。普通 open 会在 Deep Link 前拒绝已归档、缺失或歧义目标。
+- Claude 归档已改为 D′ 静默事务：仅显式核验的 macOS App `1.26832.0 / 1.28929.0`、仅正常库存私有索引中的唯一 `local_*.json`、仅 `isArchived=true`，写前复核 phase/stat/hash，写同目录临时文件并原子替换，语义失败安全回滚、并发写不覆盖。成功只要求元数据与活动库存双确认，日志仅增强；不 Deep Link、不 AX/JXA、不写 LevelDB/其它会话。普通 open 会在 Deep Link 前拒绝已归档、缺失或歧义目标。
 - Codex 归档期间卡片与按钮保留；Provider-only `archived` 不再删除。每次 operationId 必须通过 exact preflight、一次写、两次服务器库存确认，以及 Desktop 已连接时的 sync 和匹配 native ACK，随后 Kernel commit 才原子移除。任一失败/矛盾/ACK 超时保留 alias/cache/receipt/shortcut 并提示短 operationId；自动定向核验，无需用户手动刷新。Claude 归档行为本轮不改。
 - `eypc-companion-archive` 保持 `mainHide:true`。第一次调用只提示并建立 5 秒确认，稳定 identity 为 Provider+task+terminalEpoch；revision、unread、focus 和临时 alias 变化不取消。第二次使用同一 operationId 和最新 capability；任务消失、terminal epoch 或能力变化才取消。
 - RAW-152 的进程级导航所有权继续保留，但 RAW-155 已取代固定 75ms 等待：首个目标立即派发，仅在其仍执行时保存最终 trailing 目标；手动/attention 可取消未派发 trailing，全部来源共享最大并发 1。
 - RAW-153 是 v9 继续保留的 waiting-clear 前置合同：main/Side Chat request 与 runtime waiting flag 都记录私有单调观测序列；request remove、匹配 `serverRequest/resolved`、较新 active/Turn-started、matching output、用户继续和新 `task_started` 共用因果屏障。旧 snapshot/read-state/refollow/sticky shadow/rollout resume 不能复活已解除等待，屏障后的新 correlation 仍立即重入。
 - 单卡点击与待输入/未读直达仍按精确匿名 key 打开；Codex stale alias 只按同 key tasks-only 重建一次。旧 Host 没有精确 navigation revision 时，通用循环提示重载并 fail closed，单卡保持兼容。
 - RAW-150/151 的待继续/独立热通路继续有效；RAW-154 取代 Claude Deep Link+AX 归档并细化 exact interrupted。项目批量仍只处理 Codex completed。
-- 待输入现在是双向独立热通路：请求新增/移除、resolved、matching output、用户继续与新 Turn 共用 waiting-edge reducer；revision/owner/载荷缺口只按任务有界重订，1 秒 phase-only watchdog 仅复核登记 rollout 候选。它不受 Tab 或 Float 可见性影响，也不再存在用户可调的任务全量周期。
+- 待输入的双向独立热通路与 waiting-edge reducer 继续有效；RAW-160 已把历史 1 秒 Renderer phase-only watchdog 迁移为进程 Host 对已登记 rollout 文件的 native+StatWatcher 恢复。它不受 Tab 或 Float 可见性影响，也不存在用户可调的任务全量周期。
 - 自动回归继续覆盖 100 轮双向切换 P95 <250ms、两类掉通知、阻塞完整读取、Codex stopped/新 Turn、统一 Dispatcher、Claude D′ 成功/幂等/零写门禁/回滚/并发与 membership delta。本轮受影响矩阵为 `20/20` files、`550/550` tests；typecheck、1868-module production/uTools build、runtime validation、canonical/public 镜像、JS/CJS 语法和 `git diff --check` 均通过。
 - 真实运行 ASAR 的最近历史读回仍不能证明本次新产物已加载。真实 v9 状态、两 Provider 归档与新任务接纳尚未在匹配身份的 uTools Host 完成，故保持 host-pending。
 - 完成证据通过后立即从进行中移出，同时清除 active-exit baseline；后续相同完整快照不再反弹。
