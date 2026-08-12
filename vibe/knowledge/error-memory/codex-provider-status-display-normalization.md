@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: codex-provider-status-display__raw-interrupted-enum-reached-badges-cards-and-details__provider-evidence-coupled-to-product-vocabulary__normalize-at-domain-card-projection-preserve-raw-action-evidence
 first_seen: 2026-07-22
-last_verified: 2026-08-11
+last_verified: 2026-08-12
 review_after: 2026-09-11
 evidence:
   - src/domain/codex.ts
@@ -34,7 +34,7 @@ tags:
 
 ## 当前修正（2026-08-11，RAW-160 / task-state-v10）
 
-RAW-154 的“任意精确 interrupted 立即 stopped”已被真实宿主复现为过宽并废止。当前由 Kernel V4 先按分支裁决再聚合：真实 active 或 unresolved input/approval 优先；普通 interrupted 只有在全部相关分支 idle-confirmed 后才能 stopped；未执行 Plan 还必须完成定向复读，证明没有更新 Turn、activity 或 pending，同时保留 `planReady`。证据不足保持上一稳定非终态并标记 `verifying`，不发布一闪而过的待继续。
+RAW-154 的“任意精确 interrupted 立即 stopped”已被真实宿主复现为过宽并废止。2026-08-11 的第二次安装核验进一步证明，只有 Preload 临时父投影而没有 Kernel 私有分支账本仍不够：旧父级 `idleConfirmed` 能与新 active 共存并再次发布待继续。当前由 Kernel V4 的私有 Branch Evidence Store 逐分支裁决再聚合：真实 active 或 unresolved input/approval 优先；新 active、Turn 或更新 waiting 清理同分支旧 idle；普通 interrupted 只有在全部相关分支分别 idle-confirmed 后才能 stopped；未执行 Plan 还必须完成定向复读，证明没有更新 Turn、activity 或 pending，同时保留 `planReady`。证据不足保持上一稳定非终态并标记 `verifying`。
 
 ## Symptom
 
@@ -50,7 +50,7 @@ Normalization first stopped at the visible activity enum instead of projecting t
 
 ## Evidence
 
-- [task-kernel.cjs](../../../preload/companion/task-kernel.cjs#L1) owns branch/parent causal reduction and requires `idleConfirmed` for ordinary interruption plus targeted no-newer evidence for an unexecuted Plan interruption.
+- [task-kernel.cjs](../../../preload/companion/task-kernel.cjs#L1) owns the Host-only Branch Evidence Store、branch/parent causal reduction and the stale-idle clearing rule.
 - [codex.ts](../../../src/domain/codex.ts#L1) preserves raw Provider evidence and the V10 privacy-safe fields；it does not own final group/count/cycle decisions.
 - [codexController.ts](../../../src/runtime/codexController.ts#L1) consumes Kernel capability before dispatch and keeps project batch completed-only；it has no interrupted→stopped fallback.
 - [FloatApp.vue](../../../src/FloatApp.vue#L1) consumes ongoing and stopped as separate stable groups, maps stopped to visible “待继续”, and consumes the Domain capability without duplicating evidence rules.
@@ -74,10 +74,10 @@ Provider enums are evidence, not automatically product vocabulary or action capa
 
 ## Alternative Route
 
-- Status: `verified` for RAW-160 automated/static coverage；current installed-host acceptance remains pending.
+- Status: `verified` for the RAW-160 rework automation；current rebuilt-host acceptance remains pending.
 - Preconditions: an upstream status must remain available for diagnostics or action verification but should use different product semantics.
 - Ordered steps: preserve raw status → reduce each branch → aggregate the parent → require idle/targeted proof for interruption → derive visible state and capability once → publish only semantic change → revalidate mutation in Host.
-- Verification: unresolved input + interrupted remains input；newer active remains running；unconfirmed interruption stays stable/verifying；ordinary idle-confirmed interruption becomes“待继续”；unexecuted Plan stop retains `planReady` only after targeted proof；transport/system uncertainty does not manufacture stopped。Ongoing keeps archive disabled，while exact stopped/completed may allow task archive after Host reread；project batch remains completed-only。RAW-160 focused/full automation passes，while rebuilt current uTools acceptance remains pending。
+- Verification: main running + Side terminal、Side running + main interrupted and stale idle + new active all remain running；unresolved input + interrupted remains input；ordinary per-branch idle-confirmed interruption becomes“待继续”；unexecuted Plan stop retains `planReady` only after targeted proof；transport/system uncertainty remains verifying。Current focused automation and production build pass，while the matching rebuilt uTools acceptance remains pending。
 - Applicability boundary: does not rewrite user-authored task titles or unrelated prose containing the same word.
 - Fallback: if the product mapping is context-dependent, expose a named presentation mapper rather than mutating the raw protocol type.
 
@@ -92,3 +92,4 @@ Provider enums are evidence, not automatically product vocabulary or action capa
 | 2026-08-08 | RAW-150 waiting-to-continue/archive refinement | User required stopped to read as “待继续” and remain task-archiveable without a new top-level state entry | Treated an earlier safety block as permanent product capability and leaked the old “已停止” vocabulary | Keep internal stopped evidence, map presentation once, allow task archive with exact Host reread, retain completed-only project batch | focused automated contracts pass; real v7 uTools remains host-pending |
 | 2026-08-09 | RAW-154 exact interruption priority | User observed interrupted tasks still appearing in ongoing and required 待继续 to stay out of the ongoing badge | Reused the ordinary failed idle/not-running conjunction for exact user interruption, so older Desktop active shadow could block stopped indefinitely | Add v9 terminal watermark: waiting/newer active first, otherwise exact interrupted immediately stopped；keep ordinary failed conservative | focused Domain/Bridge/Controller/UI contracts pass；real v9 host pending |
 | 2026-08-11 | RAW-160 interruption causality | Real host showed ordinary interrupted being classified as 待继续 while work/Plan evidence was not yet settled | Let exact interruption bypass idle and targeted verification | Move branch/parent reduction to Kernel V4, require idle-confirmed ordinary stop and targeted Plan stop, retain stable verifying state on conflict | affected/full automation verified；current host matrix pending |
+| 2026-08-12 | RAW-160 installed-host branch recurrence | A parent still displayed 待继续 while one real main/Side branch continued running | Preload aggregated branches but published only a parent projection；Kernel had no private branch ledger, so stale parent idle coexisted with new active；unknown projection and a new-row running baseline remained secondary false-positive routes | Add the Kernel-private Branch Evidence Store, clear branch-local idle on newer active/Turn/waiting, make Domain projection-only, reject hydration/cold replay as live without causal evidence, and preserve inventory semantics on abstain | latest affected 545/545 + full 1305/1305 + type/build passed；`host-719360…` matrix pending |

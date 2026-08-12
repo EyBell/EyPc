@@ -4,7 +4,7 @@ status: verified
 scope: project
 fingerprint: claude-generic-session-end__successful-turn-overwritten-as-stopped__separate-session-lifecycle-from-turn-outcome
 first_seen: 2026-08-10
-last_verified: 2026-08-10
+last_verified: 2026-08-12
 review_after: 2026-09-10
 evidence:
   - preload/claude/app-state.cjs
@@ -40,7 +40,7 @@ Session teardown and Turn outcome are different authorities. The generic teardow
 - [app-state.cjs](../../../preload/claude/app-state.cjs#L1) parses generic teardown as `session-end` and preserves completed when the current Turn already has a successful Stop/Result. Explicit failed/interrupted evidence and teardown without a successful outcome still close as stopped.
 - [preload/index.js](../../../preload/index.js#L1) applies one Claude phase decision at cold preflight, state push, unread delta and inventory mutation. Live running/waiting wins; otherwise native unread promotes history to completed, while unread=false never demotes completed.
 - [companionTaskPackage.ts](../../../src/domain/companionTaskPackage.ts#L1) projects the resulting phase and unread into the same card, tab, group and badge revision.
-- [claudeBridge.test.ts](../../../tests/platform/claudeBridge.test.ts#L1) and [companionTaskPackage.test.ts](../../../tests/domain/companionTaskPackage.test.ts#L1) lock the normal completion/session-end, completed-unread and unknown-visibility transitions. The current focused boundary passes `303/303` tests.
+- [claudeBridge.test.ts](../../../tests/platform/claudeBridge.test.ts#L1)、[claudeAppStateBridge.test.ts](../../../tests/platform/claudeAppStateBridge.test.ts#L1) and [companionTaskPackage.test.ts](../../../tests/domain/companionTaskPackage.test.ts#L1) lock the normal completion/session-end、cold replay、current App `1.28929.0` fixed grammar、completed-unread and unknown-visibility transitions. The 2026-08-12 final impact-selected boundary passes `547/547` tests and the full repository passes `1325/1325`.
 
 ## Detection Order
 
