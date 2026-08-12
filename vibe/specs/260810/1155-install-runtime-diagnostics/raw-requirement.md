@@ -1,7 +1,7 @@
-# RAW-159 → RAW-161 — Companion 状态、发布与权威库存恢复
+# RAW-159 → RAW-163 — Companion 状态、发布与权威库存恢复
 
 Date: 2026-08-12
-Status: `active / rework-implemented / increment-automated-verified / dev-plugin-reload-pending`
+Status: `active / RAW-163 increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
 
 ## 历史基线
 
@@ -19,10 +19,10 @@ RAW-159 要求把状态、库存、缓存、快捷键、导航、归档和诊断
 
 1. 唯一数据流为 `Provider 原始事件/库存 → Evidence Adapter → Branch Evidence Store → Canonical Task Reducer → View/Capability Projector → Latest Package Cache → 全部消费者`。
 2. 升级 `task-state-v10 / companion-task-kernel-v4 / companion-task-package-v4 / companion-task-actions-v2`；V4 Kernel 缺失或四端 Runtime Identity 不一致时 `reload-required`，不回退旧裁决。
-3. 分支先独立按因果顺序裁决，父任务再聚合。任一真实运行优先；否则审批、问题或 Plan 实施确认；只有全部分支终止且终态满足复核才 completed/stopped；冲突保留非终态并 `verifying`。
+3. 分支先独立按因果顺序裁决，再由主任务状态选择父级范围。主任务不是“已完成已读”时只采用主任务本身；主任务已完成已读后才聚合 Side Chat，并沿用运行、审批、问题/Plan、Goal、终态的因果优先级。冲突保留所选范围的最近可信状态并 `verifying`。
 4. 首次 Plan 正在生成且尚无完成 Plan 时必须是 running、`planReady=false`；已有 Plan 后继续修改时仍 running 并保留 Plan 生命周期。
 5. 完成 Plan 且实施确认未决时是 waiting-input、`planReady=true`；未执行便 exact interrupted 时，只有定向复读确认无更新 Turn/活动/等待才是 stopped。
-6. 普通 interrupted 在 idle 复核前保留最后稳定态；确认全部分支 idle 后才是普通 stopped。任何 active/terminal 冲突不得先发布 stopped。
+6. 普通 interrupted 在 idle 复核前保留最后稳定态；确认当前所选范围内分支 idle 后才是普通 stopped。任何 selected-scope active/terminal 冲突不得先发布 stopped。
 7. `planReady` 仅由 exact 实施请求或 exact 最新 completed Plan 建立；新 Plan 递增 `planLifecycleRevision`。刷新、重启、refollow、owner 切换或继续 Plan 对话不清除；确切 default/non-Plan 执行、明确放弃、完成、归档或移除才清除。
 8. `paused` 是 EyPc 本地持久状态，只存哈希 taskRef、Plan revision、paused 和时间。暂停跨刷新、重启、refollow 和 Plan 继续保持；确切非 Plan 执行开始自动清除。
 9. 动态列表保留 `dynamicTaskWindowHours`。普通 stopped 超时退出；唯一窗口例外是 `stopped + planReady + !paused`，但仍服从更大的库存保留范围。
@@ -42,7 +42,7 @@ RAW-159 要求把状态、库存、缓存、快捷键、导航、归档和诊断
 23. 诊断只公开会话期 `h:<hex>` taskRef 和 operationId；不记录原始任务 ID、路径、Plan 内容、执行提示、命令/工具参数、stdout/stderr、凭据或隐藏推理。
 24. 静态所有权测试禁止生产模块在 Kernel 外重构 canonical phase、dynamicGroup、cycleTier、counts 或 cycleKeys。
 25. 自动化覆盖完整真值表、Side Chat 聚合、暂停迁移/持久化、窗口例外、循环、四槽、Execute Plan、1,000 次 no-op、Float ACK、Claude 状态/归档、240 项分页与旧归档/身份/诊断回归。
-26. V4 Kernel 必须维护 Host-only Branch Evidence Store。Host 批量发布匿名父 key、会话期隐私化分支引用、活动/终态序号、等待类型与分支级 idle；原始 thread/branch ID 不进入 Renderer、日志或持久化。聚合固定为真实运行 → 审批 → 普通输入/Plan → 全分支 exact completed → 全分支终态且分别 idle-confirmed → 保留最近非终态并 `verifying`。新 active/Turn/更新 waiting 必须清对应旧 idle。
+26. V4 Kernel 必须维护 Host-only Branch Evidence Store。Host 批量发布匿名父 key、会话期隐私化分支引用、有限 main/side 角色、活动/终态序号、等待类型、分支级 unread 与 idle；原始 thread/branch ID 不进入 Renderer、日志或持久化。main 非 completed-read 时 selected scope 只有 main；main completed-read 后才选择全部分支，并按真实运行 → 审批 → 普通输入/Plan → Goal → 全范围 exact completed → 全范围终态且分别 idle-confirmed → 保留最近非终态并 `verifying` 聚合。新 active/Turn/更新 waiting 必须清对应旧 idle。
 27. `actionAlias` 只作为卡片版本提示，匿名 task key 才是最终目标。若 Host 进程已有该 key，Actions 必须直接采用 Host 当前 target，忽略 Renderer 提示中的旧 alias/revision/phase，不得在 Provider 解析前返回 `stale-target`，也不得触发全库存分类。仅当 Host 当前 target/私有映射确实缺失或能力不可用时，才执行 provider-scoped exact/tasks-only 解析；Host 对 `expired/invalid/stale-alias` 只为同一 key 续签或完整可信盘点并最多重试一次，禁止回退到其它任务，并发恢复共享一次 single-flight。
 28. 卡片主体、标题、Enter、紧凑待输入角标与 uTools 全局待输入入口必须统一进入同一个 Kernel/Host 解析函数。打开动作不得先提交 Renderer 分类包或改变筛选/分组；只有 Host 明确打开成功才推进待输入队列或已读状态，失败保持当前位置。
 29. 单数字紧凑角标固定 `20×20` 且不使用新增等宽字体或 tabular 数字；两位数及 `99+` 以相同高度和 padding 自然扩宽。颜色、边框、位置、动作不变，设置页预览与真实 Float 使用同一几何合同。
@@ -61,9 +61,27 @@ RAW-159 要求把状态、库存、缓存、快捷键、导航、归档和诊断
 42. 插件进入、Desktop IPC 重连和 membership watcher 重建必须各强制一次 Codex tasks-only 对账；相同库存结果保持语义 no-op。
 43. EyPc 自己发起的 Codex 归档仍遵守一次 Provider 写、两次库存核验、连接 Desktop ACK 与 Kernel commit 的既有后置条件。membership recovery 必须在本地归档事务期间抑制同目标，不能用外部归档快路旁路失败/不确定时保留卡片的合同；若 Provider 写未完成或权威核验明确目标仍在 unarchived 库存，suppression 必须立即释放，使之后真正的 Desktop 外部归档可被恢复。
 
+## RAW-162 Goal-aware 完成边界
+
+44. Cloud 展示的是 Codex 任务目标状态，不是单个 Turn 状态。有当前 Goal 时，任一 `turn/completed` 只关闭该 Goal 的一个执行轮次，不得发布中间 `completed`；只有 Goal status 为 `complete` 且没有因果上更新的 active/waiting Turn 时，任务才进入已完成。
+45. Goal `active` 在没有更新输入/审批证据时投影为 running；当前输入/审批仍分别优先为 waiting-input/waiting-approval。Goal `paused / blocked / usageLimited / budgetLimited` 统一投影为 stopped，并显示“待继续”。
+46. Goal 证据只存在于 Preload/Kernel 私有路径：冷启动、重连或终态候选通过 `thread/goal/get` 单次补齐，稳态消费 `thread/goal/updated` 与 `thread/goal/cleared`。只保留合法 status、updatedAt、freshness 与会话因果序号；objective、原始 ID、额度和用量不得跨 Bridge 或进入诊断/持久化。
+47. Goal RPC 暂时失败时不得降级为 completed：保留最近稳定非终态并标记 verifying；仅在 App Server 明确返回 method-not-found 时，才将当前 Runtime 视为不支持 Goal 并回退既有无 Goal Turn 语义。
+48. 查询结果必须以请求基线序号与 `goal.updatedAt` 拒绝迟到覆盖；Goal-only 变化与同一 Host draft 在一次 Kernel 语义事务中提交。Goal 完成后，严格更新的新 Turn 可开启新执行 epoch；旧 complete Goal 不得永久锁死后续运行。
+49. 无 Goal 或 Goal 已明确 cleared 的普通会话保留现有 exact Turn 完成语义，不新增公共 TaskPhase、Renderer 字段、顶层 Tab、角标或归档路径。
+
+## RAW-163 主任务优先的 Side Chat 展示与打开
+
+50. 主任务是父级卡片的默认状态权威。只要主任务不同时满足“exact completed、unread authority 已知、unread=false”，就必须使用主任务自己的 phase/unread；运行、待输入、待审批、待继续、核验中和已完成未读均不得被 Side Chat 覆盖。
+51. 只有主任务已确认 completed 且 unread authority 已知、值为 false，Side Chat 才进入父级展示范围。此时任一子任务 running/waiting 按既有优先级投影到父任务，任一已完成未读子任务把父任务投影为已完成未读。
+52. 主任务 completed-unread 与 Side Chat running 并存时，父任务保持主任务的 completed-unread；主任务 interrupted/stopped/waiting/running 与子任务不同状态并存时，也一律保持主任务本身。
+53. Branch Evidence 必须携带有限的 `main/side` 角色和分支级 unread known/value，由 Kernel 在同一原子归约内同时选择 phase 与 unread；这些字段不进入公共任务包、日志、持久化或错误副本。
+54. 卡片、标题、Enter、紧凑角标、attention、previous/next 和 uTools 全局入口都只打开父级主任务 `codex://threads/<parent>`。不得选择活跃/待输入/未读 Side Chat 作为 Deep-Link 目标，也不得先尝试 Side Chat 再回退主任务。
+55. 成功打开主任务后，既有会话期 read acknowledgement 仍可覆盖主任务和已知 Side Chat；失败不清未读，且任何路径都不写 Codex 原生状态。
+
 ## 冲突与非目标
 
-- RAW-142 的“任意新 Turn 清除 Plan”、RAW-150/154 的“exact interrupted 立即 stopped”、RAW-159 的“只在 Kernel no-op 即完成消费去重”和旧 Actions/Package 版本被 RAW-160 对应条款取代。
+- RAW-142 的“任意新 Turn 清除 Plan”、RAW-150/154 的“exact interrupted 立即 stopped”、RAW-159 的“只在 Kernel no-op 即完成消费去重”和旧 Actions/Package 版本被 RAW-160 对应条款取代。RAW-160/162 的“任一活跃/未读分支无条件覆盖父级”与活跃 Side Chat 直达路线由 RAW-163 取代。
 - 强制 Claude 原生侧栏同步不是产品能力合同；过去偶发同步只作为 Claude 自身刷新观察。
 - 当前用户已授权只在 `EyPc-Regression-<run-id>-*` 无副作用测试任务中启动安全 Codex Turn/Plan 并做可恢复清理；不得触碰既有用户任务。真实 Claude D′ 归档不属于该授权。
 
@@ -71,3 +89,5 @@ RAW-159 要求把状态、库存、缓存、快捷键、导航、归档和诊断
 
 - 按 `VerificationImpactTrace` 选择的受影响状态/打开/UI 矩阵、语义 typecheck、Preload 镜像、production build、Runtime Identity、uTools validator、静态所有权、文档链接与规则一致性通过；本轮用户已独立要求中央缺陷逃逸后的全仓升级门禁，历史全量绿灯仍不能覆盖真实宿主回归。
 - uTools 开发模式必须在重新加载当前 Preload 身份后验证 Plan 尚未生成、Plan 完成、Plan 中断跨窗口、暂停跨重启、Claude running→terminal、通用循环与 Float ACK 恢复；自动化不能替代该门禁，也不得用旧开发 Host 的 UI 观察接纳新源码。
+- RAW-162 按当前 `VerificationImpactTrace` 运行 Goal/Turn、Kernel、Bridge、Controller、Float、镜像、类型和生产构建边界；没有新的 testing-owner 全仓升级触发，因此不重复 RAW-160 的仓库全量套件。开发插件重载后的长期 Goal 跨至少两个自动 Turn canary 是独立宿主门禁。
+- RAW-163 按当前 `VerificationImpactTrace` 运行 Kernel/Bridge 定向矩阵、canonical/public 语法与镜像、typecheck、1871-module production build 和 uTools validator；没有新的 testing-owner 全仓升级触发。开发插件重载后必须验证主任务优先、completed-read 后子任务接管，以及所有入口只打开主任务。

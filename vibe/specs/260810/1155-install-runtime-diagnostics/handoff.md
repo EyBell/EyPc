@@ -1,33 +1,35 @@
-# RAW-160 → RAW-161 Companion V4 Host Handoff
+# RAW-160 → RAW-163 Companion V4 Host Handoff
 
 Status: `increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
 
 ## 安装边界
 
 1. 用户已指定只用 uTools 开发模式回归，不再以离线包安装作为本轮门禁。重新加载开发插件并记录四端 Runtime Identity。
-   当前源码/构建身份：`host-78205ae167fc7b27c653 / renderer-9c35abd09a8a390040c5`。`host-252d… / renderer-ff8…` 是 RAW-160 全量基线；1.5.4、1.5.5、`host-7d…` 与更早开发 Host 均不能用于接纳当前结果，也不得与当前 Renderer 混用。
+   当前源码/构建身份：`host-2c01a8beb95919a22af5 / renderer-cc3ff8f60b7179ed599f`。`host-c36f… / renderer-27b6…` 是 RAW-162 基线，`host-78205… / renderer-9c35…` 是 RAW-161 基线，`host-252d… / renderer-ff8…` 是 RAW-160 全量基线；1.5.4、1.5.5、`host-7d…` 与更早开发 Host 均不能用于接纳当前结果，也不得与当前 Renderer 混用。
 2. 不清空 EyPc 本地任务组织数据；需验证旧 hidden Plan 的一次幂等迁移。
 3. 用只读诊断按 session/operation/哈希 taskRef 核验；不得记录或粘贴 Plan 正文、原始任务 ID/路径或执行提示。
 
 ## 状态、窗口与循环矩阵
 
-1. 先验证主任务运行+Side 终态、Side 运行+主 interrupted、旧 idle+新 active：父任务必须持续进行中，不得显示待继续。
-2. 新建 Plan 会话：Plan 尚未生成时保持进行中；生成完成且实施确认未决时变为待输入。
-3. 继续修改已生成 Plan：运行期间保持进行中及同一 Plan 生命周期；新 Plan 替换时 revision 更新。
-4. 未执行便中断：完成定向复核后稳定待继续；把活动时间移出动态窗口后仍在待继续分组。
-5. 普通 interrupted：复核期间保持稳定态/核验中，不得抢在真实 active 前显示待继续。
-6. waiting Plan 超出动态小时窗口：展开列表可不显示，但待输入角标和通用 Plan 循环仍能打开；普通问题/审批优先。
-7. 检查上一个/下一个：普通 attention → Plan → active → local pin，且与同 revision 角标一致。
+1. 主任务 completed-read + Side running 时父任务显示进行中；主任务 completed-read + Side completed-unread 时父任务显示已完成未读。
+2. 主任务 running、waiting、stopped、verifying 或 completed-unread 与 Side 状态冲突时，父任务必须保持主任务自身，不得被 Side 覆盖。
+3. 新建 Plan 会话：Plan 尚未生成时保持进行中；生成完成且实施确认未决时变为待输入。
+4. 继续修改已生成 Plan：运行期间保持进行中及同一 Plan 生命周期；新 Plan 替换时 revision 更新。
+5. 未执行便中断：完成定向复核后稳定待继续；把活动时间移出动态窗口后仍在待继续分组。
+6. 普通 interrupted：复核期间保持稳定态/核验中，不得抢在真实 active 前显示待继续。
+7. waiting Plan 超出动态小时窗口：展开列表可不显示，但待输入角标和通用 Plan 循环仍能打开；普通问题/审批优先。
+8. 检查上一个/下一个：普通 attention → Plan → active → local pin，且与同 revision 角标一致。
 
 ## 打开与角标回归矩阵
 
 1. 保留一个待输入任务超过 alias 10 分钟有效期，再依次用卡片主体、标题、Enter、紧凑待输入角标和 uTools 全局待输入入口打开；五条路径必须命中同一任务。
-2. 重建 Renderer 生命周期后，用携带旧 alias/revision/phase 的卡片点击；只要 Host 仍持有同 key，必须直接采用 Host 当前 target，零库存读取、零 `stale-target`、零分类包发布。只有 Host target/私有映射确实缺失时才定向恢复；并发缺失请求共享一次解析并只重试同 key 一次。
-3. 让目标从可信库存消失或制造预检失败；不得打开其它任务，不得推进待输入队列/已读。
-4. 分别观察 1、10、`99+`：1 为 `20×20` 圆形，10/`99+` 只按内容自然扩宽；颜色、边框、位置和动作不变。设置预览与 Float 必须一致。
-5. 清空真实 input/approval 后触发待输入入口，必须返回无候选，不得打开本地置顶或任何其它任务；普通前后切换仍可在前三层为空时进入本地置顶。
-6. 点击/聚焦任意卡片后记录 package revision 与其它任务分组：焦点可以更新 Host 当前动作目标，但不得增加 revision、重发任务包、展开筛选或让无关任务重新归类。
-7. 对一条待继续任务直接点击“归”或菜单归档：第一次只进入确认，第二次才提交；不要求先改成 completed。若任务已恢复运行，动作必须拒绝并保留卡片。
+2. 让该主任务拥有一个 active 或 completed-unread Side Chat；卡片、标题、Enter、紧凑角标、attention、previous/next 与全局入口仍必须只打开主任务 URL，不能先打开 Side Chat 或出现回退文案。
+3. 重建 Renderer 生命周期后，用携带旧 alias/revision/phase 的卡片点击；只要 Host 仍持有同 key，必须直接采用 Host 当前 target，零库存读取、零 `stale-target`、零分类包发布。只有 Host target/私有映射确实缺失时才定向恢复；并发缺失请求共享一次解析并只重试同 key 一次。
+4. 让目标从可信库存消失或制造预检失败；不得打开其它任务，不得推进待输入队列/已读。
+5. 分别观察 1、10、`99+`：1 为 `20×20` 圆形，10/`99+` 只按内容自然扩宽；颜色、边框、位置和动作不变。设置预览与 Float 必须一致。
+6. 清空真实 input/approval 后触发待输入入口，必须返回无候选，不得打开本地置顶或任何其它任务；普通前后切换仍可在前三层为空时进入本地置顶。
+7. 点击/聚焦任意卡片后记录 package revision 与其它任务分组：焦点可以更新 Host 当前动作目标，但不得增加 revision、重发任务包、展开筛选或让无关任务重新归类。
+8. 对一条待继续任务直接点击“归”或菜单归档：第一次只进入确认，第二次才提交；不要求先改成 completed。若任务已恢复运行，动作必须拒绝并保留卡片。
 
 ## 暂停与界面矩阵
 
@@ -43,6 +45,14 @@ Status: `increment-automated-verified / rebuilt-artifact-ready / dev-plugin-relo
 2. 连续切换至少 100 次 Renderer 焦点，确认 Host 保存最后焦点，但 Main/Float package revision、发布次数和分组全部不变。
 3. 观察 Float 正常 received→applied ACK；模拟首个 applied ACK 丢失时仅重发最新包一次。
 4. 心跳健康且累计 1 秒未 applied 才允许受控重建；同 revision 不重复 Vue 投影。
+
+## Cloud Goal 完成边界矩阵
+
+1. 选择一条当前 Goal 为 active、会自动继续执行的安全 canary，至少跨两个 `turn/completed → next turn/started`。任务卡、计数、Host task-package 和 Float applied revision 全程只能保持进行中/待输入/待审批，不得出现任何中间 completed。
+2. 当前 Goal 真正变为 complete 后，任务只发布一次 completed；重复 Goal 通知和迟到 `thread/goal/get` 不得增加第二次完成包。严格更新的新 Turn 必须开启新执行 epoch 并恢复进行中。
+3. 分别观察 paused、blocked、usageLimited、budgetLimited：四者都进入现有“待继续”，不新增 Tab/角标。Goal cleared 或普通无 Goal 会话继续服从既有 Turn 完成语义。
+4. 暂时断开/延迟 Goal 查询时，旧稳定非终态只能显示核验中，不得先完成再纠正；只在当前 App Server 明确不支持 Goal RPC 时执行兼容回退。
+5. 诊断仅核对匿名 taskRef、phase、reason、revision 与 Float applied；不得采集 Goal objective、原始 task/Turn ID、额度、用量或任务输出。
 
 ## Claude 矩阵
 

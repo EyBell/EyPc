@@ -1,12 +1,14 @@
-# RAW-160 → RAW-161 Companion V4 Verification Record
+# RAW-160 → RAW-163 Companion V4 Verification Record
 
-Status: `increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
+Status: `RAW-163 increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
 
 ## VerificationImpactTrace
 
 | 影响边界 | 自动化证据 | 当前状态 |
 | --- | --- | --- |
 | V4 reducer / Plan lifecycle | 私有分支矩阵、旧 idle+新 active、主/Side 冲突、Plan/ordinary interrupted、default execution | passed |
+| RAW-162 Goal/Turn completion | active Goal 跨两个自动 Turn 零中间 completed、Goal complete 单次完成、四类待继续、cleared/unsupported 回退、暂时失败/真实 timeout verifying、乱序/重复、main/Side、隐私 | passed；Bridge `138/138`，Kernel `39/39` |
+| RAW-163 main-first Side Chat projection/open | main completed-read 后 child running/completed-unread 接管；main 其它状态优先；branch unread 原子投影；active Side 仍只打开 parent | passed；Bridge+Kernel `177/177` |
 | Exact open / alias recovery | Renderer 旧 alias/revision/phase 在 Host 同 key 存在时被忽略；Host 目标缺失、并发过期、私有映射续签、目标消失、同 key 单次重试、失败不推进 | passed |
 | UI entry / badge geometry | 卡片、标题、Enter、紧凑 input、全局 feature routing；单数字/两位数/`99+` 与预览合同 | passed；真实视觉待宿主 |
 | Window / badges / cycle / pause | 跨窗口例外、无 stopped badge、独立 waiting badge、四层循环、暂停/迁移/四槽 | passed |
@@ -19,8 +21,8 @@ Status: `increment-automated-verified / rebuilt-artifact-ready / dev-plugin-relo
 | Claude hidden Host / state / membership / unread / archive | Hook/App-log/成员/未读首事件即时处理、已登记目标 1 秒 Node recovery、部分 JSON 保留、同值指纹零通知、Main hidden→Float applied、1.28929.0 固定语法与 stopped 直接归档 | passed；真实开发 Host 重载待验收 |
 | V3 retained foundations | 240 项、全 cursor、第 41/101/201、Codex archive transaction、Runtime Identity、diagnostics | passed |
 | 当前 Codex 增量测试 | core `3/3` files、`221/221` tests；expanded `15/15` files、`433/433` tests | passed |
-| type / build / mirrors / validator | typecheck、1871 modules、canonical/public mirror generation、Runtime Identity、uTools validator | passed；artifact `host-78205ae167fc7b27c653 / renderer-9c35abd09a8a390040c5` |
-| 仓库全量套件 | RAW-160 曾由用户明确要求在中央 Kernel/Actions/Host watcher 缺陷逃逸后升级 | historical current-foundation passed；`83/83` files、`1328/1328` tests；RAW-161 无新升级触发，未重复运行 |
+| type / build / mirrors / validator | typecheck、1871 modules、canonical/public mirror generation、Runtime Identity、uTools validator | passed；artifact `host-2c01a8beb95919a22af5 / renderer-cc3ff8f60b7179ed599f` |
+| 仓库全量套件 | RAW-160 曾由用户明确要求在中央 Kernel/Actions/Host watcher 缺陷逃逸后升级 | historical current-foundation passed；`83/83` files、`1328/1328` tests；RAW-161/162/163 无新升级触发，未重复运行 |
 | 文档与规则审计 | Controlled group、RAW-067/160、状态/架构/既有错误记忆、code-link、diff | final audit recorded below |
 | uTools 开发模式当前身份矩阵 | [host handoff](handoff.md#L1) | pending reload |
 
@@ -39,7 +41,7 @@ RAW-159 的自动化基线为 83 files / 1272 tests 和 production artifact-read
 - Main、Float、Kernel、Actions、Navigation、Claude archive 的 canonical/public/dist 逐字节一致；相关 JS/CJS/MJS `node --check` 通过；同步 IPC/`Atomics.wait` 静态扫描零命中；`git diff --check` 通过。
 - 改动文档 code-link audit 通过；Controlled sync group JSON 可解析且类别互斥，覆盖 44 份文档、14 项依赖、12 项 validator 和 11 个写集前缀。CodeNote `ey-pc` 项目入口只负责路由，已核对仍指向本仓 `AGENTS.md / vibe/rules/README.md / vibe/specs/PROJECT_STATUS.md`；当前状态已在被路由文件同步，因此不向全局索引复制 RAW-160 业务状态。
 - 自适应错误索引只对本轮范围收口：Claude module 补齐 `module-v1`，新增 link-only Companion Task State module 为本轮 Plan/状态/缓存/版本记忆提供唯一 Primary owner。项目 flat root 缺 `root-v1` 及其历史叶子未迁移是既有仓库债务，本轮未批量移动、删除或吸收。
-- `audit_ai_rules.py --mode project --git-view working` 仍报告 135 项项目级既有自适应索引/过程模板债务；按本轮新增/修改的 Plan、consumer cache、Claude phase、V4 ownership 及其模块关键词过滤为 0 项。该 broad baseline 未冒充绿色，也不扩张 RAW-160 写集。
+- `audit_ai_rules.py --mode project --git-view working` 当前报告 137 项项目级既有自适应索引/过程模板债务；按本轮新增/修改的 Plan、consumer cache、Claude phase、V4 ownership、Goal/Turn completion 及其模块/记录关键词过滤为 0 项。该 broad baseline 未冒充绿色，也不扩张 RAW-160/162 写集。
 - 规则链五层只读核验通过：Codex/Claude 全局入口均引用 CodeNote kernel；项目 `AGENTS.md / CLAUDE.md` 仅保留预期入口说明差异且共同路由同一项目规则；所有当前 rule/status 目标可读；`.agents/skills/companion-state-reconciliation` 解析到带有效 frontmatter 的 canonical Skill。未新增/改名 Skill，因此无需用本轮会话宣称新的索引加载证明。
 - `codexAppServerBridge` 假 App Server 覆盖 Execute Plan；没有启动真实 Codex Turn。
 - Claude archive 测试使用夹具；没有重复写真实 Claude 会话。
@@ -47,7 +49,7 @@ RAW-159 的自动化基线为 83 files / 1272 tests 和 production artifact-read
 ## 2026-08-11—12 Regression Rework Evidence
 
 - 当前受影响矩阵为 `20/20` files、`547/547` tests，覆盖 Kernel、App Server Bridge、Actions、Domain、Controller、Float UI、process navigation、Feature Routing、Runtime Identity、Claude cold/live state、membership、unread 与 package/consumer boundaries。
-- 状态矩阵覆盖主运行+Side 终态、Side 运行+主 interrupted、旧 idle+新 active、审批/普通输入、全完成、全终态 idle 及冲突 verifying。
+- RAW-160 历史状态矩阵覆盖主运行+Side 终态、Side 运行+主 interrupted、旧 idle+新 active、审批/普通输入、全完成、全终态 idle 及冲突 verifying；其中“Side 运行覆盖主 interrupted”的期望已由 RAW-163 取代，当前必须保持主 interrupted/stopped 展示。
 - 打开矩阵覆盖 Renderer 旧 alias/revision/phase、生命周期重建、两个并发过期请求共享一次解析、私有映射直接续签、目标消失；Host 已持有 key 时断言直接采用当前 target、零库存读取，缺失时仍始终同 key、最多一次重试、失败不打开其它任务且不推进 attention。
 - UI 合同覆盖卡片/标题/Enter 统一 `codex.task.open`、紧凑角标 `codex.input.open`、uTools feature 路由，以及 Float/设置预览的 `20px` 高度、`20px` 单数字最小宽度、共同 padding/radius 和无 monospace/tabular 设置。
 - 最终代码复核追加三条反向合同：Kernel `unknown` 投影保留可信库存语义且不制造 running；新 hydration-only active 以 unknown 为前态且不进入 active；待输入直接入口无候选时返回 unavailable，不回退本地置顶，而普通循环仍保留 pin fallback。
@@ -61,7 +63,7 @@ RAW-159 的自动化基线为 83 files / 1272 tests 和 production artifact-read
 - Kernel 测试确认同一源事件的 Branch Evidence 先 deferred staging，再与 Host draft 一次提交：只增加一次 package revision/订阅发布；相同 evidence 不发布。
 - RAW-160 最新完整 `pnpm run verify` 通过：`83/83` files、`1328/1328` tests、语义 typecheck、1871-module Vite build、Preload 镜像生成、uTools runtime preparation/validator；对应产物身份为 `host-252d34393f05b238e278 / renderer-ff8fbe75184168a9e150`。RAW-161 当前增量证据和身份记录在下节；上一条 `1325/1325` 与 `host-7d…` 只保留为更早历史门禁。
 - canonical/public Preload 由项目同步脚本生成；没有手改生成镜像。真实 uTools、原生窗口和长时间 alias 视觉/交互未由构建替代。
-- 改动文档 code-link audit 通过；当前 Controlled manifest 可解析且类别互斥，覆盖 49 documents、26 dependencies、25 validators 和 11 个写集前缀。RAW-067/160、项目状态、架构及既有错误记忆已同步，没有创建重复记忆。
+- 改动文档 code-link audit 通过；当前 Controlled manifest 可解析且类别互斥，覆盖 50 documents、26 dependencies、25 validators 和 11 个写集前缀。RAW-067/160/162、项目状态、架构及 Goal/Turn 错误记忆已同步，没有创建重复任务或记忆。
 
 ## 2026-08-12 Real-host Findings
 
@@ -84,14 +86,63 @@ RAW-159 的自动化基线为 83 files / 1272 tests 和 production artifact-read
 
 `route=impact-selected frontend+runtime+docs / changed-surface=Codex process-Host membership watcher + authoritative archived/unarchived reconciliation + dirty recovery + local archive suppression lifetime / affected-set=preload canonical/public + Codex App Server Bridge tests / selected=focused recovery 5-test matrix with 4 new regressions + full 131-test affected bridge + syntax + typecheck + 1871-module build + mirror/runtime validator + doc audits / skipped=repository-wide Vitest because no current testing-owner escalation trigger; real uTools mutation because not authorized as implementation verification / outcome=increment-automated-verified, dev-plugin-reload-pending / owner=RAW-161 increment in existing Controlled task / residual-risk=current-identity real Desktop manual archive and IPC reconnect timing`。
 
+## 2026-08-12 RAW-162 Goal Completion Evidence
+
+- `tests/platform/codexAppServerBridge.test.ts`：`138/138` passed。新增真实链覆盖 active Goal 跨两个自动 Turn 全程 running、漏 Goal 通知时终态补读并只完成一次、四种非活动状态归入 stopped/“待继续”、Goal cleared 和 protocol unsupported 回退原 Turn 语义、暂时失败与真实 5 秒 RPC timeout 保留 stable nonterminal/verifying、迟到查询被通知 sequence/updatedAt 拒绝，以及私有 objective/身份/用量不跨 Activity、task-package 或 Float。
+- `tests/platform/companionTaskKernel.test.ts`：`39/39` passed。新增 Goal 优先级、main/Side 混合、未知分支阻止 complete 分支提前完成、同精度时间戳由更新流序号开启 epoch、旧 complete Goal 被严格更新 Turn 取代和中间 Turn completion 原子抑制。
+- `tests/runtime/codexController.test.ts + tests/domain/companionTaskPackage.test.ts`：`62/62` passed；`tests/platform/codexFloatWindowBridge.test.ts + tests/domain/companionPresentation.test.ts`：`89/89` passed；`tests/platform/runtimeIdentity.test.ts`：`5/5` passed。合计受影响 7 文件、333 项；最终合并选择连续两次 `333/333` 通过。
+- `node --check preload/index.js`、`node --check preload/companion/task-kernel.cjs`、public 镜像语法、`pnpm run sync:preloads`、canonical/public/dist `cmp` 通过；`pnpm run build` 完成 typecheck、1871 modules、runtime preparation 与 uTools validator。
+- 当前产物身份为 `host-c36f104c3a4cd42e77c2 / renderer-27b635545542097fd7b1`。未自动重载开发插件、未触碰真实用户任务；因此状态是 `increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`，不是 installed-host accepted。
+
+### RAW-162 VerificationDecision
+
+`route=impact-selected frontend+runtime+docs / changed-surface=Codex App Server Goal get+notifications + process-private Goal cache + Kernel Goal/Turn epoch reduction + Goal-only atomic publication + generated preload / impact-source=direct bridge callers, private branch ledger, Host task-package transaction and Float applied consumer / affected-set=preload canonical/public/dist, Kernel, Codex Bridge, Controller/Task Package, Float Bridge/Presentation, Runtime Identity and current Controlled/error-memory docs / selected=7 affected files with 333 tests + exact 5-second timeout + syntax + sync/cmp + typecheck + 1871-module build + uTools validator + doc link/rule/diff audits / skipped=repository-wide pnpm test/verify because no current testing-owner escalation trigger; development plugin reload because it is an independent user-owned gate / escalation=none / outcome=increment-automated-verified, rebuilt-artifact-ready, dev-plugin-reload-pending / owner=RAW-162 increment in existing Controlled task / residual-risk=current identity has not executed a real Goal across two automatic Turns in uTools`。
+
+## 2026-08-12 RAW-163 Main-first Side Chat Projection And Parent-only Open
+
+- `tests/platform/companionTaskKernel.test.ts` 与 `tests/platform/codexAppServerBridge.test.ts`：合计 `177/177` passed（Bridge `138/138`、Kernel `39/39`）。矩阵覆盖 main completed-read + Side running、main completed-read + Side completed-unread、main completed-unread + Side running、main interrupted/waiting/running 与子分支冲突，以及 canonical groups/counts 的 phase/unread 同步。
+- Bridge 回归证明私有证据只含哈希 branch ref、`main/side` 角色和 unread bool/known；序列化结果不含 parent/Side raw ID。活跃 Side Chat 存在且第一次 Deep Link 失败时只调用一次 parent URL，第二次成功仍调用 parent，Side URL 调用次数为零。
+- `node --check` 对 canonical/public main preload 与 task-kernel 通过；`pnpm run sync:preloads` 后 canonical/public `cmp` 通过。
+- `pnpm run build` 通过 typecheck、1871-module Vite build、runtime preparation 与 uTools validator；产物身份为 `host-2c01a8beb95919a22af5 / renderer-cc3ff8f60b7179ed599f`。
+- 本轮 15 份改动 Markdown 的 code-link audit 通过，当前合同残留扫描只保留显式标注为被 RAW-163 取代的历史描述，`git diff --check` 通过。项目级 `audit_ai_rules.py --mode project --git-view working` 仍报告 137 项既有自适应索引/过程模板债务，按 RAW-163、main-first、Side Chat、parent-only 与本轮 owner/源码路径过滤为 0 项；该 broad baseline 未冒充绿色，也未扩张本轮写集。
+- 未运行仓库级 `pnpm test/verify`：本次变化封闭于 Kernel 私有聚合和 Host Deep-Link 边界，没有 testing-owner 全量升级触发。未重载 uTools 开发插件，也未打开或修改真实用户任务。
+
+### RAW-163 VerificationDecision
+
+`route=impact-selected frontend+runtime+docs / changed-surface=Kernel main-first branch scope + private branch unread projection + parent-only Codex Deep Link + generated preload / impact-source=private Branch Evidence → canonical task/views and action alias → openCodexThread → electron/uTools Deep Link / affected-set=preload canonical/public, Kernel, Codex Bridge, current Controlled/current-state/help/error-memory docs / selected=Bridge+Kernel 177 tests + canonical/public syntax + sync/cmp + typecheck + 1871-module build + runtime validator + doc link/rule/diff/receipt audits / skipped=repository-wide pnpm test/verify because no testing-owner escalation trigger; uTools development reload because it is an independent user-owned gate / escalation=none / outcome=increment-automated-verified, rebuilt-artifact-ready, dev-plugin-reload-pending / owner=RAW-163 increment in existing Controlled task / residual-risk=current identity has not yet been observed against a real parent/Side state matrix`。
+
 ### VerificationDecision
 
 `route=impact-selected frontend+runtime+docs + user-required repository escalation / changed-surface=Kernel branch store + Plan capability projection + Host-current same-key open + private focus context + Controller no-presync + Domain abstain projection + exact input candidates + Float dual revisions + counter CSS + Claude native state/membership/unread watcher + Codex native unread/rollout recovery + atomic Branch/public commit / impact-source=current callers, V4 package contract and generated-preload graph / affected-set=Kernel, Bridge, Actions, Controller, Domain, Float, navigation, feature routing, runtime identity and Provider evidence / selected=prior 20-file 547-test broad matrix + Codex core 3-file 221-test and expanded 15-file 433-test matrix + full 83-file 1328-test verify + typecheck/build + mirror/runtime validator + doc audits / skipped=current-identity dev-plugin UI gate only / escalation=user-required because central Kernel, Actions and hidden-Host defects escaped earlier full gates / outcome=full-automated-verified, dev-plugin-reload-pending / owner=RAW-160 Controlled task / residual-risk=current dev-plugin branch continuity, click/input/shortcut opening, >10-minute alias, literal native shortcut and rendered counter geometry`。
 
 ## Implementation Review
 
-- 先前“P0/P1 无已知未解决项”已由真实宿主复现否定，历史状态改记 `host-reproduced-failure / rework`。
-- 当前 rework 在自动化/静态范围内无已知未解决 P0/P1；接纳状态为 `full-automated-verified / dev-plugin-reload-pending`。
-- 最终实现复核发现的状态、target、焦点回声、Plan 菜单门禁、Claude/Codex hidden-Host state/membership/unread timer、Codex watcher 自愈、双 revision 和当前 Claude App 版本门禁缺陷均已修复；最新 Codex 增量为 433 项、全仓为 1328 项。没有保留第二套最终分类器、点击前重分类路径或 Renderer phase 补漏 interval。
-- 当前非自动化门禁：uTools 开发模式重新加载当前身份后的分支持续运行、长时间/手动/快捷打开、角标视觉，以及既有暂停持久化和 Claude transition。Host/Float ACK 正常及掉通知时限已由真实进程链自动化覆盖。
-- 授权门禁：真实 Execute Plan 与真实 Claude 归档不是自动化验收步骤。
+Tool: Codex
+
+### Review Target
+
+- Requirement: RAW-163 main completed-read gate、Side Chat completed-unread 投影、main 非 completed-read 优先与 parent-only 打开。
+- Plan: [current plan](plan.md#L1) 的 RAW-163 `VerificationImpactTrace`。
+- Implementation: [preload private branch/open bridge](../../../../preload/index.js#L1)、[private Kernel reducer](../../../../preload/companion/task-kernel.cjs#L1) 及生成镜像/定向回归。
+
+### Checked
+
+- Requirement alignment、main/Side 状态矩阵、phase/unread 原子投影、现有 Goal/Turn 因果顺序、隐私边界和所有打开入口均已核对。
+- 最终复核确认 branch role/unread 只在 Host/Kernel 私有路径存在；child unread 不借用 parent connector unread，公开 package 仍只有匿名父任务结果。
+- 先前“任一活跃分支覆盖父任务”和“活跃 Side Chat 优先直达”的当前描述已由 RAW-163 显式取代。
+
+### Findings
+
+- P0: 自动化/静态范围内无已知未解决项。
+- P1: 自动化/静态范围内无已知未解决项；真实开发 Host 属于明确的独立验收门禁，不伪装成实现缺口。
+- P2: 无需扩大公共 TaskPhase、Renderer branch/unread 字段或第二套 reducer。
+
+### Optimization Suggestions
+
+- 无阻塞性优化；优先完成当前身份的真实 main/Side 状态与 parent-only 打开观察。
+
+### Not Checked
+
+- uTools 开发模式尚未加载 `host-2c01a8beb95919a22af5 / renderer-cc3ff8f60b7179ed599f`；真实 main/Side 状态矩阵、Float applied 和 parent-only Deep Link 待用户门禁。
+- 未重复运行仓库级 `pnpm test/verify`，因为 RAW-163 没有新的 testing-owner 全量升级触发；RAW-160 的 `1328/1328` 仅作为现有全量基础。
+- 真实 Execute Plan 与真实 Claude 归档不属于本轮自动化授权。
