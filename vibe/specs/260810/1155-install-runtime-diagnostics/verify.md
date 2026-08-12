@@ -1,6 +1,6 @@
-# RAW-160 → RAW-163 Companion V4 Verification Record
+# RAW-160 → RAW-164 Companion V4 Verification Record
 
-Status: `RAW-163 increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
+Status: `RAW-164 increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
 
 ## VerificationImpactTrace
 
@@ -8,7 +8,8 @@ Status: `RAW-163 increment-automated-verified / rebuilt-artifact-ready / dev-plu
 | --- | --- | --- |
 | V4 reducer / Plan lifecycle | 私有分支矩阵、旧 idle+新 active、主/Side 冲突、Plan/ordinary interrupted、default execution | passed |
 | RAW-162 Goal/Turn completion | active Goal 跨两个自动 Turn 零中间 completed、Goal complete 单次完成、四类待继续、cleared/unsupported 回退、暂时失败/真实 timeout verifying、乱序/重复、main/Side、隐私 | passed；Bridge `138/138`，Kernel `39/39` |
-| RAW-163 main-first Side Chat projection/open | main completed-read 后 child running/completed-unread 接管；main 其它状态优先；branch unread 原子投影；active Side 仍只打开 parent | passed；Bridge+Kernel `177/177` |
+| RAW-163 main-first Side Chat projection/open | 历史增量；parent-only 打开保留，main-first 展示门槛由 RAW-164 取代 | historical passed；Bridge+Kernel `177/177` |
+| RAW-164 Side topology / all-bead priority / Cloud unread | inventory child 归根且不进公共行；running > completed-unread > completed；active/unread 计数互斥；Goal active 中间 Turn+unread 不终态；完成/已读抗旧快照；三类匿名诊断 | passed；5 files / `189/189` |
 | Exact open / alias recovery | Renderer 旧 alias/revision/phase 在 Host 同 key 存在时被忽略；Host 目标缺失、并发过期、私有映射续签、目标消失、同 key 单次重试、失败不推进 | passed |
 | UI entry / badge geometry | 卡片、标题、Enter、紧凑 input、全局 feature routing；单数字/两位数/`99+` 与预览合同 | passed；真实视觉待宿主 |
 | Window / badges / cycle / pause | 跨窗口例外、无 stopped badge、独立 waiting badge、四层循环、暂停/迁移/四槽 | passed |
@@ -21,10 +22,10 @@ Status: `RAW-163 increment-automated-verified / rebuilt-artifact-ready / dev-plu
 | Claude hidden Host / state / membership / unread / archive | Hook/App-log/成员/未读首事件即时处理、已登记目标 1 秒 Node recovery、部分 JSON 保留、同值指纹零通知、Main hidden→Float applied、1.28929.0 固定语法与 stopped 直接归档 | passed；真实开发 Host 重载待验收 |
 | V3 retained foundations | 240 项、全 cursor、第 41/101/201、Codex archive transaction、Runtime Identity、diagnostics | passed |
 | 当前 Codex 增量测试 | core `3/3` files、`221/221` tests；expanded `15/15` files、`433/433` tests | passed |
-| type / build / mirrors / validator | typecheck、1871 modules、canonical/public mirror generation、Runtime Identity、uTools validator | passed；artifact `host-2c01a8beb95919a22af5 / renderer-cc3ff8f60b7179ed599f` |
+| type / build / mirrors / validator | typecheck、1871 modules、canonical/public mirror generation、Runtime Identity、uTools validator | passed；artifact `host-251a728efafbf4c7f7d6 / renderer-a671d108ff9d315b7ea4` |
 | 仓库全量套件 | RAW-160 曾由用户明确要求在中央 Kernel/Actions/Host watcher 缺陷逃逸后升级 | historical current-foundation passed；`83/83` files、`1328/1328` tests；RAW-161/162/163 无新升级触发，未重复运行 |
 | 文档与规则审计 | Controlled group、RAW-067/160、状态/架构/既有错误记忆、code-link、diff | final audit recorded below |
-| uTools 开发模式当前身份矩阵 | [host handoff](handoff.md#L1) | pending reload |
+| uTools 开发模式当前身份矩阵 | `runtime-identity-handshake=host-loaded` 后 20 秒稳定窗口与两次匿名快照；见 [host handoff](handoff.md#L1) | pending reload |
 
 ## RAW-159 Historical Gate Review
 
@@ -111,6 +112,20 @@ RAW-159 的自动化基线为 83 files / 1272 tests 和 production artifact-read
 
 `route=impact-selected frontend+runtime+docs / changed-surface=Kernel main-first branch scope + private branch unread projection + parent-only Codex Deep Link + generated preload / impact-source=private Branch Evidence → canonical task/views and action alias → openCodexThread → electron/uTools Deep Link / affected-set=preload canonical/public, Kernel, Codex Bridge, current Controlled/current-state/help/error-memory docs / selected=Bridge+Kernel 177 tests + canonical/public syntax + sync/cmp + typecheck + 1871-module build + runtime validator + doc link/rule/diff/receipt audits / skipped=repository-wide pnpm test/verify because no testing-owner escalation trigger; uTools development reload because it is an independent user-owned gate / escalation=none / outcome=increment-automated-verified, rebuilt-artifact-ready, dev-plugin-reload-pending / owner=RAW-163 increment in existing Controlled task / residual-risk=current identity has not yet been observed against a real parent/Side state matrix`。
 
+## 2026-08-12 RAW-164 Side Chat And Cloud State Convergence
+
+- `tests/platform/codexAppServerBridge.test.ts`、`tests/platform/companionTaskKernel.test.ts` 与三个 Runtime Diagnostics 定向文件合计 `189/189` passed。库存集成覆盖 page size 1 的分页乱序、`sessionId/forkedFromId` 嵌套归根、缺父/跨 session/循环保持独立、Side 运行事件先到与 Desktop 快照后到、重连、精确终态、成功打开后的父/子 Turn 绑定已读、Desktop-only Side fallback、旧 child action alias 失效、重复库存与归档。
+- 公共包只保留根任务；Side Chat 只形成进程私有 relation/branch evidence。Kernel 矩阵覆盖 main 已读/未读与 Side running/completed-unread/completed 的全组合，断言任一 running 时父任务只进入 active 且 unread count 为零，活动结束后才显露 completed-unread。
+- Cloud 矩阵覆盖 Goal active + 中间 Turn completed + unread=true 仍 running、多个自动 Turn 间零 completed/completed-unread、Goal complete + unread=true 单次 completed-unread、成功打开后 completed，以及旧 unread true/false、旧完整快照、重复 Goal 通知与同 Turn 补全不回滚。
+- 匿名 `side-topology-decision`、`parent-state-decision`、`runtime-identity-handshake` 均有语义去重与隐私断言；序列化诊断不含 child raw ID、标题、正文、路径、Goal 内容、预算或用量。
+- `node --check preload/index.js`、`node --check preload/companion/task-kernel.cjs`、`pnpm run sync:preloads` 后 canonical/public `cmp`、`pnpm run typecheck`、`pnpm run build`、显式 `pnpm run validate:utools` 与 `git diff --check` 通过。production build 为 1871 modules，artifact 为 `host-251a728efafbf4c7f7d6 / renderer-a671d108ff9d315b7ea4`。
+- 17 份改动 Markdown 的 code-link audit 通过；当前合同残留仅保留已明确标注由 RAW-164 取代的 RAW-163 历史证据。项目级 `audit_ai_rules.py --mode project --git-view working` 报告 133 项既有 broad debt，按 RAW-164、当前任务树、Companion module 与本轮状态错误记忆过滤为 0 项；该基线未冒充绿色，也未扩张本轮写集。`51 documents / 26 dependencies / 28 validators` 同步组与 final receipt 由现有 owner 收口。
+- 未运行仓库级 `pnpm test/verify`：实际依赖图收敛于 Bridge、Kernel、Runtime Diagnostics、生成 Preload 与当前文档，没有 testing-owner 全量升级触发。未重载 uTools，故 `runtime-identity-handshake=host-loaded`、20 秒双快照和真实 Cloud/Side 稳定性仍待宿主门禁。
+
+### RAW-164 VerificationDecision
+
+`route=impact-selected frontend+runtime+docs / changed-surface=App Server inventory Side topology + Desktop/inventory race order + Kernel all-bead reduction + Goal/unread finalization + anonymous runtime diagnostics + generated preload / impact-source=thread/list|read lineage → process-private relation/Branch Evidence → canonical task/views/counts → Runtime Identity handshake / affected-set=preload canonical/public, Kernel, runtime identity artifact, Codex Bridge, Kernel tests, Runtime Diagnostics tests, Controlled/current-state/help/error-memory docs / selected=5 focused files with 189 tests + canonical syntax + sync/cmp + typecheck + 1871-module production build + explicit runtime validator + doc link/consistency/diff/receipt audits / skipped=repository-wide pnpm test/verify because no testing-owner escalation trigger; development plugin reload/20-second dual snapshot because it is an independent Host gate / escalation=none / outcome=increment-automated-verified, rebuilt-artifact-ready, dev-plugin-reload-pending / owner=RAW-164 increment in existing Controlled task / residual-risk=current identity has not yet reported host-loaded and real inventory/Desktop timing may still expose a Host-only defect`。
+
 ### VerificationDecision
 
 `route=impact-selected frontend+runtime+docs + user-required repository escalation / changed-surface=Kernel branch store + Plan capability projection + Host-current same-key open + private focus context + Controller no-presync + Domain abstain projection + exact input candidates + Float dual revisions + counter CSS + Claude native state/membership/unread watcher + Codex native unread/rollout recovery + atomic Branch/public commit / impact-source=current callers, V4 package contract and generated-preload graph / affected-set=Kernel, Bridge, Actions, Controller, Domain, Float, navigation, feature routing, runtime identity and Provider evidence / selected=prior 20-file 547-test broad matrix + Codex core 3-file 221-test and expanded 15-file 433-test matrix + full 83-file 1328-test verify + typecheck/build + mirror/runtime validator + doc audits / skipped=current-identity dev-plugin UI gate only / escalation=user-required because central Kernel, Actions and hidden-Host defects escaped earlier full gates / outcome=full-automated-verified, dev-plugin-reload-pending / owner=RAW-160 Controlled task / residual-risk=current dev-plugin branch continuity, click/input/shortcut opening, >10-minute alias, literal native shortcut and rendered counter geometry`。
@@ -121,28 +136,29 @@ Tool: Codex
 
 ### Review Target
 
-- Requirement: RAW-163 main completed-read gate、Side Chat completed-unread 投影、main 非 completed-read 优先与 parent-only 打开。
-- Plan: [current plan](plan.md#L1) 的 RAW-163 `VerificationImpactTrace`。
-- Implementation: [preload private branch/open bridge](../../../../preload/index.js#L1)、[private Kernel reducer](../../../../preload/companion/task-kernel.cjs#L1) 及生成镜像/定向回归。
+- Requirement: RAW-164 库存 Side Chat 归根、全珠子 `进行中 > 已完成未读 > 已完成`、Cloud Goal/未读稳定性、匿名诊断与 loaded-identity 门禁；RAW-163 parent-only 打开保留。
+- Plan: [current plan](plan.md#L1) 的 RAW-164 `VerificationImpactTrace`。
+- Implementation: [preload topology/evidence/diagnostics bridge](../../../../preload/index.js#L1)、[private Kernel reducer](../../../../preload/companion/task-kernel.cjs#L1) 及生成镜像/定向回归。
 
 ### Checked
 
-- Requirement alignment、main/Side 状态矩阵、phase/unread 原子投影、现有 Goal/Turn 因果顺序、隐私边界和所有打开入口均已核对。
-- 最终复核确认 branch role/unread 只在 Host/Kernel 私有路径存在；child unread 不借用 parent connector unread，公开 package 仍只有匿名父任务结果。
-- 先前“任一活跃分支覆盖父任务”和“活跃 Side Chat 优先直达”的当前描述已由 RAW-163 显式取代。
+- Requirement alignment、inventory/Desktop 拓扑竞态、全珠子状态矩阵、phase/unread 原子投影、Goal/Turn 因果顺序、已读逆序、隐私边界和 parent-only 打开均已核对。
+- 最终复核确认 branch role/unread 与 child relation 只在 Host/Kernel 私有路径存在，公开 package 仍只有匿名根任务结果；active/unread groups/counts 来自同一 canonical package。
+- 最终复核发现并修复两条旁路：Desktop-only Side fallback 现在保留父/子各自的 Turn 绑定已读；库存把既有独立 child 归为 Side 时会撤销其旧 action alias，旧别名只返回 `expired-alias`，不能打开 Side。
+- RAW-163 main-first 展示门槛已被 RAW-164 明确取代；RAW-163 parent-only Deep Link 和成功后会话期已读确认未回退。
 
 ### Findings
 
 - P0: 自动化/静态范围内无已知未解决项。
-- P1: 自动化/静态范围内无已知未解决项；真实开发 Host 属于明确的独立验收门禁，不伪装成实现缺口。
-- P2: 无需扩大公共 TaskPhase、Renderer branch/unread 字段或第二套 reducer。
+- P1: 自动化/静态范围内无已知未解决项；真实 `host-loaded` 与双快照属于用户要求的独立宿主验收门禁，不伪装成源码已通过。
+- P2: 无需扩大公共 TaskPhase、Renderer branch/unread/topology 字段或第二套 reducer。
 
 ### Optimization Suggestions
 
-- 无阻塞性优化；优先完成当前身份的真实 main/Side 状态与 parent-only 打开观察。
+- 无阻塞性优化；优先重载当前 identity，并完成真实库存 child、Cloud 跨 Turn、最终 unread、双快照与 parent-only 打开观察。
 
 ### Not Checked
 
-- uTools 开发模式尚未加载 `host-2c01a8beb95919a22af5 / renderer-cc3ff8f60b7179ed599f`；真实 main/Side 状态矩阵、Float applied 和 parent-only Deep Link 待用户门禁。
-- 未重复运行仓库级 `pnpm test/verify`，因为 RAW-163 没有新的 testing-owner 全量升级触发；RAW-160 的 `1328/1328` 仅作为现有全量基础。
+- uTools 开发模式尚未通过握手加载 `host-251a728efafbf4c7f7d6 / renderer-a671d108ff9d315b7ea4`；真实 inventory/Desktop 时序、Cloud 跨 Turn、Float applied、双快照和 parent-only Deep Link 待宿主门禁。
+- 未重复运行仓库级 `pnpm test/verify`，因为 RAW-164 没有新的 testing-owner 全量升级触发；RAW-160 的 `1328/1328` 仅作为现有全量基础。
 - 真实 Execute Plan 与真实 Claude 归档不属于本轮自动化授权。

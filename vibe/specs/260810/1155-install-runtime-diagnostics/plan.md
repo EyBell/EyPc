@@ -1,6 +1,6 @@
-# RAW-160 → RAW-163 Companion V4 Implementation Plan
+# RAW-160 → RAW-164 Companion V4 Implementation Plan
 
-Status: `RAW-163 increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
+Status: `RAW-164 increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
 
 1. `historical-complete` — V3→V4、Plan 生命周期、窗口/循环、Actions v2、Latest Cache、Float ACK 与 Claude phase 基线保留；其先前全量 gate 已被安装宿主回归否定，不再作为当前接纳。
 2. `complete` — 在 Kernel 增加私有 Branch Evidence Store；Preload 只发布隐私化分支原始证据，按“运行→审批→输入/Plan→全完成→全终态且逐分支 idle→verifying”聚合。
@@ -14,7 +14,7 @@ Status: `RAW-163 increment-automated-verified / rebuilt-artifact-ready / dev-plu
 10. `complete` — 同步 Controlled owner、RAW-067/160、项目状态、架构和既有错误记忆；不创建重复记忆，不触碰 `_to_delete/`。
 11. `complete` — 用户要求的仓库级升级门禁在 Codex 未读恢复返工后重新通过：`83/83` files、`1328/1328` tests、typecheck、1871-module production build 与 uTools validator。
 12. `host-reproduced-failure` — 1.5.4（`host-fc14212e36723e3b4fbe / renderer-4dfbb00a631314bc45f5`）复现 active 被旧 idle 覆盖；1.5.5（`host-6a76cc45575078bc2ced / renderer-0fa112cd0697e912ea85`）复现卡片/待输入/全局入口 `stale-target` 及焦点导致 package revision 连续推进，两者均拒绝。
-13. `pending-host-gate` — 在 uTools 开发模式重新加载当前身份 `host-2c01a8beb95919a22af5 / renderer-cc3ff8f60b7179ed599f`，完成 Goal 跨自动 Turn、主/Side 状态、parent-only 打开、无变化零推送、窗口/暂停/Float ACK、Codex 外部归档与 Codex/Claude hidden-Host 矩阵。
+13. `pending-host-gate` — 在 uTools 开发模式重新加载当前身份 `host-251a728efafbf4c7f7d6 / renderer-a671d108ff9d315b7ea4`，先由 `runtime-identity-handshake` 确认 `host-loaded`，再完成 Goal 跨自动 Turn、全珠子状态、parent-only 打开、无变化零推送、窗口/暂停/Float ACK、Codex 外部归档与 Codex/Claude hidden-Host 矩阵。
 14. `authorized-test-only` — 可在 `EyPc-Regression-<run-id>-*` 无副作用测试任务上执行安全 Turn/Plan 和可恢复清理；既有用户任务与真实 Claude D′ 归档不在授权范围。
 15. `complete` — Claude Hook/App-log 首事件由进程 Node callback 即时 drain，目录通知漏失由 1 秒 StatWatcher 恢复；当前 `1.28929.0` 固定语法/归档结构门禁、stopped 直接归档、Main-hidden Float applied 正常 `≤250ms`/恢复 `≤1.25s` 已纳入最终 `20/20` files、`547/547` tests 影响矩阵。
 16. `complete` — 最终同类计时器审计把 Claude 任务成员关系与未读监听一并收敛到首次 native callback 即时处理、已登记文件 1 秒 StatWatcher 恢复；部分 JSON 不误删、同值指纹不通知。Plan 菜单能力不再依赖专用 `Implement Plan` 请求，实际执行仍由 Host 精确预检。
@@ -32,6 +32,12 @@ Status: `RAW-163 increment-automated-verified / rebuilt-artifact-ready / dev-plu
 28. `complete` — RAW-163：Kernel 仅在 main completed-read 后选择全分支范围并原子归约 phase/unread；所有 Codex 打开路径删除 Side Chat target 选择，固定 parent Deep Link。
 29. `complete` — RAW-163：补充 main completed-read + child running、child completed-unread、main 非 completed-read 优先、active Side 仍只开 parent 的 Kernel/Bridge 回归；`177/177` 通过，Preload canonical/public 语法与镜像、typecheck、1871-module build、runtime validator 通过。
 30. `complete` — RAW-163：同步 Controlled owner、当前需求/架构/帮助与既有 task-state 错误记忆，完成 code-link、规则一致性、diff 和 documentation sync receipt 审计。
+31. `complete` — RAW-164：从完整 App Server inventory 的 `sessionId/forkedFromId` 建立私有 Side Chat 拓扑，嵌套 fork 解析到根；缺父、跨 session 与循环关系保持独立。公共库存只保留根，Desktop side 判定先于 inventory membership。
+32. `complete` — RAW-164：Kernel 删除 `mainCompletedRead` 门槛，始终聚合根与全部 Side；running → completed-unread → completed，活动期间潜在 unread 不进入公共 unread 分组/计数。
+33. `complete` — RAW-164：保留 Goal 完成边界并补强 unread/read-ack 逆序矩阵；active/verifying Goal 不发布中间终态，complete 后按最终 unread 单次落位，旧快照/重复通知/同 Turn 补全不回滚。
+34. `complete` — RAW-164：增加语义去重、匿名的 `side-topology-decision`、`parent-state-decision` 与 `runtime-identity-handshake`，并锁定隐私字段边界。
+35. `complete` — RAW-164：Bridge、Kernel、Runtime Diagnostics `189/189`，Preload 同步/镜像、canonical 语法、typecheck、1871-module production build 与 runtime validator 通过；全仓套件无独立升级触发而未运行。
+36. `pending-host-gate` — 重载开发插件后确认 `host-loaded`，等待 20 秒稳定窗口并连续采集两次匿名快照，验收无 child 顶层行、全珠子优先级、Cloud 跨 Turn/最终 unread 与零回弹。
 
 ### RAW-162 Final VerificationImpactTrace
 
@@ -40,5 +46,9 @@ Status: `RAW-163 increment-automated-verified / rebuilt-artifact-ready / dev-plu
 ### RAW-163 Final VerificationImpactTrace
 
 `changed-surface=Kernel main-first branch scope + private branch unread projection + Codex parent-only Deep Link + generated preload + current contracts / impact-evidence=private Branch Evidence → Kernel canonical task/views and Host action alias → openCodexThread → electron/uTools Deep Link / affected-set=preload/index.js, preload/companion/task-kernel.cjs, synchronized public mirrors, codexAppServerBridge, companionTaskKernel, current Controlled/current-state/help/error-memory docs / selected=Bridge+Kernel 177-test focused matrix + node canonical/public syntax + sync:preloads/cmp + pnpm run build (typecheck + 1871 modules + runtime validator) + Markdown link/consistency/diff/receipt audits / skipped=repository-wide pnpm test/verify because no testing-owner escalation trigger; real uTools reload because it remains a separate user-owned gate / escalation=none / outcome=increment-automated-verified, rebuilt-artifact-ready, dev-plugin-reload-pending / artifact=host-2c01a8beb95919a22af5 + renderer-cc3ff8f60b7179ed599f / residual-risk=current identity has not yet been observed in the uTools development plugin`。
+
+### RAW-164 Final VerificationImpactTrace
+
+`changed-surface=App Server inventory Side topology + Desktop/inventory race order + Kernel all-bead phase/unread reduction + Goal/unread finalization + anonymous diagnostics + generated preload / impact-evidence=thread/list|read lineage → process-private root/side relation → Branch Evidence → canonical task/views/counts → Runtime Identity diagnostics / affected-set=preload/index.js, preload/companion/task-kernel.cjs, synchronized public mirrors, runtime identity artifact, codexAppServerBridge, companionTaskKernel, Runtime Diagnostics tests, Controlled/current-state/help/error-memory docs / selected=5 focused files with 189 tests + node canonical syntax + sync:preloads/cmp + typecheck + 1871-module production build + runtime validator + Markdown link/consistency/diff/receipt audits / skipped=repository-wide pnpm test/verify because no testing-owner escalation trigger; real uTools reload/20-second dual snapshot because it is an independent Host gate / escalation=none / outcome=increment-automated-verified, rebuilt-artifact-ready, dev-plugin-reload-pending / artifact=host-251a728efafbf4c7f7d6 + renderer-a671d108ff9d315b7ea4 / residual-risk=current Runtime Identity has not yet reported host-loaded and real Cloud/Side stability remains unaccepted`。
 
 结果统一记录在 [verification](verify.md#L1)，宿主步骤见 [handoff](handoff.md#L1)。

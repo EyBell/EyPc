@@ -1,16 +1,16 @@
-# RAW-160 → RAW-163 Companion 收敛 — Controlled Task Card
+# RAW-160 → RAW-164 Companion 收敛 — Controlled Task Card
 
 Date: 2026-08-12
-Status: `RAW-163 increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
+Status: `RAW-164 increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
 Documentation level: `controlled`
 
-本任务沿用 RAW-159 的 Controlled 任务树和稳定同步组；RAW-159/160 的库存、归档事务、诊断、Runtime Identity、分页和 hidden-Host watcher 成果作为 V4 基础保留。RAW-161 追加 Codex 外部手动归档的原始权威库存恢复，RAW-162 追加 Goal-aware 完成边界，RAW-163 追加主任务优先的 Side Chat 展示与 parent-only 打开合同；均不另建重复任务。
+本任务沿用 RAW-159 的 Controlled 任务树和稳定同步组；RAW-159/160 的库存、归档事务、诊断、Runtime Identity、分页和 hidden-Host watcher 成果作为 V4 基础保留。RAW-161 追加 Codex 外部手动归档的原始权威库存恢复，RAW-162 追加 Goal-aware 完成边界，RAW-163 保留 parent-only 打开合同，RAW-164 取代其 main-first 展示门槛并追加库存 Side Chat 拓扑、全珠子优先级、Cloud 未读稳定性和运行身份握手；均不另建重复任务。
 
 ## Task Documentation Sync Group
 
 - Group key: `dsg:eypc:install-runtime-diagnostics-v2`（稳定键不随协议升级改名）
 - Group owner: this `task-card.md`
-- Scope: Codex/Claude 任务证据、进程 Host native watcher/StatWatcher 恢复、Codex 未归档/归档库存成员对照、私有分支聚合与单事务发布、Canonical 状态、Plan 生命周期、暂停/恢复/执行、同 key 打开与 alias 恢复、时间窗口、角标几何/循环、Latest Package 缓存、Float applied ACK、归档结果与诊断。
+- Scope: Codex/Claude 任务证据、进程 Host native watcher/StatWatcher 恢复、Codex 未归档/归档库存成员对照、`sessionId/forkedFromId` Side Chat 拓扑、私有全分支聚合与单事务发布、Canonical 状态、Plan 生命周期、暂停/恢复/执行、同 key parent-only 打开与 alias 恢复、时间窗口、角标几何/循环、Latest Package 缓存、Float applied ACK、归档结果与运行身份诊断。
 - Shared-file ownership: 保留同一工作树内全部用户修改；不触碰用户的 `_to_delete/`。
 
 ```json documentation-sync-group-v1
@@ -47,6 +47,7 @@ Documentation level: `controlled`
     "vibe/knowledge/error-memory/codex-preload-capability-version-skew.md",
     "vibe/knowledge/error-memory/codex-app-server-session-state-survives-exit.md",
     "vibe/knowledge/error-memory/codex-provider-status-display-normalization.md",
+    "vibe/knowledge/error-memory/codex-stale-live-unread-false-blocks-completion-unread.md",
     "vibe/knowledge/error-memory/codex-water-preview-renderer-divergence.md",
     "vibe/knowledge/error-memory/codex-task-count-list-projection-divergence.md",
     "vibe/knowledge/error-memory/codex-task-state-version-skew-must-degrade-atomically.md",
@@ -118,6 +119,9 @@ Documentation level: `controlled`
     "tests/platform/companionNavigationBridge.test.ts",
     "tests/platform/eypcPlatform.test.ts",
     "tests/platform/runtimeIdentity.test.ts",
+    "tests/platform/runtimeDiagnostics.test.ts",
+    "tests/platform/runtimeDiagnosticsProbe.test.ts",
+    "tests/platform/runtimeDiagnosticsLevelContract.test.ts",
     "tests/platform/processBridge.test.ts",
     "tests/runtime/claudeCompanionController.test.ts",
     "tests/runtime/claudeCompanionWatcherE2E.test.ts",
@@ -199,6 +203,19 @@ Decision source: 用户在 2026-08-12 明确选择“目标完成”为完成边
 
 Decision source: 用户在 2026-08-12 明确要求“主任务非已完成已读时以主任务为核心；已完成已读后跟随 Side Chat；跳转只到主任务”；无未决分支。
 
+### RAW-164 Side Chat Topology, All-bead Priority And Cloud Stability
+
+| 类型 | 旧条款或缺口 | RAW-164 当前处置 |
+| --- | --- | --- |
+| supersede | RAW-163 仅在 main completed-read 后聚合 Side Chat | 根任务与全部已确认 Side Chat 始终进入 Kernel；任一珠子 running 优先于 completed-unread，completed-unread 优先于 completed |
+| add | `thread/list` 中的 fork 被当成独立公共任务 | 以同一 `sessionId + forkedFromId + existing parent` 建立私有拓扑，嵌套解析到根；异常关系保持独立，公共包只发布根 |
+| add | 活动珠子与完成未读并存时分组/计数边界不明确 | 父任务只进入 active，潜在 unread 私有保留；活动结束后才显露 completed-unread |
+| retain | Goal status 是 Cloud 完成边界 | active/verifying Goal 抑制中间 Turn terminal；complete 后才按最终 unread 完成，严格更新的新 Turn 可开启新 epoch |
+| add | 只能从进程时间推断是否加载新 Host | 增加语义去重的 `runtime-identity-handshake`，真实 `host-loaded` 成为实机验收前置门禁 |
+| retain | 所有入口只打开 parent，成功打开后建立 Turn 绑定已读确认 | 不恢复 Side Chat Deep Link，不写 Codex 原生状态 |
+
+Decision source: 用户在 2026-08-12 最新纠正中明确要求“所有珠子取最高优先级：进行中 > 已完成未读 > 已完成”，并要求核验日志、解决 Cloud 已完成未读漂移及新描述触发刷新；该决策取代 RAW-163 的 main-first 展示条款，无未决分支。
+
 RAW-142、RAW-150 与 RAW-159 仅上述冲突条款被取代；其余已验证基础和历史事实保留。
 
 ## 2026-08-11—12 Installed-host Regression Rework
@@ -235,10 +252,19 @@ RAW-142、RAW-150 与 RAW-159 仅上述冲突条款被取代；其余已验证�
 - Bridge+Kernel `177/177` 通过，包含四组主/子状态优先级、canonical view/count 收敛、隐私字段和 active Side 仍只开 parent；canonical/public 语法与镜像、typecheck、1871-module build、uTools validator 通过。当前身份为 `host-2c01a8beb95919a22af5 / renderer-cc3ff8f60b7179ed599f`。
 - 15 份改动 Markdown 的 code-link、当前合同残留、diff 与 documentation sync group 审计已收口；项目 broad rule baseline 仍为 137 项既有债务，本轮 RAW-163/owner/源码关键词命中 0 项。
 
+## 2026-08-12 RAW-164 Side Chat And Cloud State Convergence
+
+- [preload/index.js](../../../../preload/index.js#L1) 现在从 App Server 库存建立私有 Side Chat 拓扑：同 session 的有效 fork 解析到根，分页乱序由完整库存后统一裁决，异常/缺父关系保持独立；根任务独占公共行，child 只形成私有 Branch Evidence。Desktop side 判定优先于 inventory membership，运行事件、快照、重连和归档不会重新制造 child 顶层行。
+- [task-kernel.cjs](../../../../preload/companion/task-kernel.cjs#L1) 删除 main completed-read 门槛并始终聚合全部珠子。running 压过 completed-unread，completed-unread 压过 completed；活动时 unread 仅作潜在证据，公共 active/unread 分组与计数互斥。
+- Goal active/verifying 继续阻止中间 Turn completed/completed-unread；Goal complete 后按最终 unread 单次落位。旧 unread、旧完整快照、重复 Goal 通知和同 Turn 补全不能回滚成功打开后的 completed-read。
+- 新增语义去重的匿名 `side-topology-decision`、`parent-state-decision` 与 `runtime-identity-handshake`，均不记录原始 ID、标题、正文、路径、Goal 内容、预算或用量。
+- Bridge、Kernel 与 Runtime Diagnostics 定向矩阵共 `189/189` 通过；最终复核额外锁定 Desktop-only Side 的父/子 Turn 已读绑定，以及库存归类后清理旧 child action alias，避免旁路打开 Side。canonical/public 语法与镜像、typecheck、1871-module production build、runtime validator 和 diff 检查通过。当前 artifact 为 `host-251a728efafbf4c7f7d6 / renderer-a671d108ff9d315b7ea4`；真实开发 Host 尚未报告 `host-loaded`。
+- 17 份改动 Markdown 的 code-link 与当前合同残留审计通过；项目级规则审计保留 133 项既有 broad debt，按 RAW-164、当前任务树、Companion module 与本轮状态错误记忆过滤为 0 项。`51 documents / 26 dependencies / 28 validators` 同步组和 final receipt 已按本任务 owner 收口。
+
 ## Acceptance Boundary
 
 1. 按当前 `VerificationImpactTrace` 覆盖受影响 Kernel、Bridge、Controller、Domain、Float、Feature Routing、Runtime Identity，连同语义类型检查、生产构建、Preload 镜像、uTools validator、静态所有权和文档链接审计；更宽套件只有满足 testing owner 的独立升级触发才运行。
-2. 用户最新指定本轮不再做离线包/安装宿主验收；同一源码由 uTools 开发模式插件加载后完成 UI、动作、日志与 Runtime Identity 回归，未完成前状态保持 `dev-plugin-reload-pending`。
+2. 用户最新指定本轮不再做离线包/安装宿主验收；同一源码由 uTools 开发模式插件加载并由 `runtime-identity-handshake` 报告 `host-loaded` 后，完成 UI、动作、日志与 20 秒双快照回归，未完成前状态保持 `dev-plugin-reload-pending`。
 3. 当前用户授权仅覆盖 `EyPc-Regression-<run-id>-*` 无副作用测试任务中的安全 Turn/Plan 与可恢复清理；不得对既有用户任务执行“执”或 Claude 归档。
 
 详细合同见 [raw requirement](raw-requirement.md#L1)、[spec](spec.md#L1)、[tasks](tasks.md#L1)、[verification](verify.md#L1) 和 [handoff](handoff.md#L1)。

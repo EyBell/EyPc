@@ -299,7 +299,10 @@ function projectCanonicalCard(
     : task.archiveRequest?.expectedUpdatedAt || Math.max(card.updatedAt, task.revisionAt)
   const next: CodexTaskCard = {
     ...card,
-    ...(task.displayName ? { displayName: task.displayName, name: task.displayName } : {}),
+    // An EyPc alias is local naming authority. The canonical display name is
+    // Provider metadata, so it refreshes the original title but must not
+    // reintroduce it as `name`/`displayName` while an alias is set.
+    ...(task.displayName && !card.alias ? { displayName: task.displayName, name: task.displayName } : {}),
     ...(task.projectKey ? { projectKey: task.projectKey } : {}),
     ...(task.projectName ? { projectName: task.projectName } : {}),
     ...(task.projectKind ? { projectKind: task.projectKind } : {}),

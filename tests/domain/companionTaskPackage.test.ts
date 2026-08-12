@@ -174,6 +174,35 @@ describe('canonical Companion task projection', () => {
     expect(state.dynamic.tasks).toEqual([])
   })
 
+  it('keeps an EyPc alias as the display name while still refreshing the original title', () => {
+    const source = emptyConversationSnapshot()
+    const aliased = { ...card(), name: '我的别名', displayName: '我的别名', alias: '我的别名', originalName: '原始标题' }
+    source.stopped = [aliased]
+    source.all = [aliased]
+    source.stoppedCount = 1
+    const state = applyCompanionTaskPackageViews(
+      buildCodexTaskStatePackage(source, { sourceRevision: CODEX_TASK_STATE_REVISION, now: 1_000 }),
+      packageFor(canonical({ phase: 'stopped', dynamicGroup: 'none', displayName: 'Provider 原始标题' }), 1)
+    )
+    expect(state.conversations.all[0]).toMatchObject({
+      alias: '我的别名',
+      name: '我的别名',
+      displayName: '我的别名',
+      originalName: '原始标题'
+    })
+
+    const plain = emptyConversationSnapshot()
+    const unaliased = card()
+    plain.stopped = [unaliased]
+    plain.all = [unaliased]
+    plain.stoppedCount = 1
+    const plainState = applyCompanionTaskPackageViews(
+      buildCodexTaskStatePackage(plain, { sourceRevision: CODEX_TASK_STATE_REVISION, now: 1_000 }),
+      packageFor(canonical({ phase: 'stopped', dynamicGroup: 'none', displayName: '新的原始标题' }), 1)
+    )
+    expect(plainState.conversations.all[0]).toMatchObject({ name: '新的原始标题', displayName: '新的原始标题' })
+  })
+
   it('treats unknown as abstain and preserves the inventory-backed classification', () => {
     const codexSource = emptyConversationSnapshot()
     const codexCard = card()

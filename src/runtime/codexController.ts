@@ -2386,13 +2386,20 @@ export function createCodexController(options: CodexControllerOptions) {
   }
 
   function toggleLocalPin(kind: CodexLocalPin['kind'], key: string) {
+    // Task rows are projected from the Kernel package, so their pin flag must be
+    // committed there as well; project pins stay a Renderer-owned projection.
+    const task = kind === 'task' ? allTasks().find((item) => item.key === key) : undefined
     const exists = kind === 'task'
-      ? allTasks().some((task) => task.key === key)
+      ? Boolean(task)
       : taskState.conversations.projects.some((project) => project.key === key && project.kind !== 'chats')
     if (!exists) return false
     const identity = `${kind}:${key}`
     const pins = codexState().localPins
     const pinned = pins.some((pin) => `${pin.kind}:${pin.key}` === identity)
+    if (task && !commitCompanionLocalPin(task, !pinned)) {
+      options.setMessage('任务状态已更新，请确认最新状态后再置顶')
+      return false
+    }
     codexState().localPins = pinned
       ? pins.filter((pin) => `${pin.kind}:${pin.key}` !== identity)
       : [...pins, { kind, key }].slice(-500)
@@ -3184,6 +3191,41 @@ export function createCodexController(options: CodexControllerOptions) {
     return accepted
   }
 
+  /**
+   * The Kernel package owns the visible bucket, so a persisted receipt alone
+   * cannot move a row: it only becomes canonical `hidden` through the cold
+   * preflight, which needs a verified live Provider read. Commit the same
+   * local decision to the Kernel here so hide/restore stays available while
+   * Codex/Claude is not running; the preflight later recomputes the identical
+   * flag from this same receipt.
+   */
+  function acceptCompanionLocalCommit(accepted: CompanionTaskPackageV4 | null | undefined) {
+    if (!accepted) return false
+    acceptCompanionTaskPackage(accepted)
+    return true
+  }
+
+  function commitCompanionVisibility(task: CodexTaskCard, hidden: boolean) {
+    if (!companionKernel?.setVisibility || !companionKernelLease) return true
+    return acceptCompanionLocalCommit(companionKernel.setVisibility({
+      lease: companionKernelLease,
+      key: task.key,
+      revisionAt: task.revisionAt,
+      hidden
+    }))
+  }
+
+  /** Same local-commit contract as visibility; Plan-ready rows stay pinnable. */
+  function commitCompanionLocalPin(task: CodexTaskCard, localPin: boolean) {
+    if (!companionKernel?.setLocalPin || !companionKernelLease) return true
+    return acceptCompanionLocalCommit(companionKernel.setLocalPin({
+      lease: companionKernelLease,
+      key: task.key,
+      revisionAt: task.revisionAt,
+      localPin
+    }))
+  }
+
   function hide(key: string, recency?: number) {
     if (!Number.isFinite(recency)) return false
     const candidates = allTasks().filter((item) => !item.isHidden && item.key === key)
@@ -3199,6 +3241,10 @@ export function createCodexController(options: CodexControllerOptions) {
     if (task.planReady) {
       void pausePlan(task.key, task.revisionAt, 'hide-plan-route')
       return true
+    }
+    if (!commitCompanionVisibility(task, true)) {
+      options.setMessage('任务状态已更新，请确认最新状态后再隐藏')
+      return false
     }
     codexState().receipts = hideCodexThread(codexState().receipts, key, task.revisionAt, task.bucket)
     republishAfterReceiptChange()
@@ -3217,6 +3263,10 @@ export function createCodexController(options: CodexControllerOptions) {
     if (task.planReady && task.planPaused) {
       void resumePlan(task.key, task.revisionAt, 'restore-plan-route')
       return true
+    }
+    if (!commitCompanionVisibility(task, false)) {
+      options.setMessage('任务状态已更新，请确认最新状态后再恢复')
+      return false
     }
     codexState().receipts = restoreCodexThread(codexState().receipts, key, task.revisionAt, kind!)
     republishAfterReceiptChange()

@@ -4,22 +4,24 @@
 
 ## Scope
 
-This link-only module routes EyPc-specific canonical task state、Goal/Turn completion、main/Side parent scope、Plan lifecycle、projection、consumer cache and version-skew failures. Current product authority remains the [RAW-163 Controlled specification](../../../specs/260810/1155-install-runtime-diagnostics/spec.md#L1)；this module does not own requirements or runtime state.
+This link-only module routes EyPc-specific canonical task state、Goal/Turn completion、root/Side topology and parent scope、Plan lifecycle、projection、consumer cache and version-skew failures. Current product authority remains the [RAW-164 Controlled specification](../../../specs/260810/1155-install-runtime-diagnostics/spec.md#L1)；this module does not own requirements or runtime state.
 
 ## Current Authorities And Routes
 
-- Current contract and conflict adjudication: [RAW-163 specification](../../../specs/260810/1155-install-runtime-diagnostics/spec.md#L1)
+- Current contract and conflict adjudication: [RAW-164 specification](../../../specs/260810/1155-install-runtime-diagnostics/spec.md#L1)
 - Current implementation architecture: [ARCHITECTURE](../../ARCHITECTURE.md#L1)
-- Current verification and host gate: [RAW-163 verification](../../../specs/260810/1155-install-runtime-diagnostics/verify.md#L1)
+- Current verification and host gate: [RAW-164 verification](../../../specs/260810/1155-install-runtime-diagnostics/verify.md#L1)
 - Current product status: [PROJECT_STATUS](../../../specs/PROJECT_STATUS.md#L1)
 
 ## Primary Error Records
 
 - [Plan lifecycle and interrupted causality](../companion-plan-lifecycle-and-interrupted-causality.md#L1) — ordinary interruption needs branch-idle proof；unexecuted Plan interruption additionally needs targeted no-newer evidence and retains revisioned Plan readiness.
 - [Turn completion is not Goal completion](../codex-turn-completion-is-not-goal-completion.md#L1) — a long-running Goal owns the task completion boundary；Turn terminals cannot create an intermediate completed package，and unknown Goal evidence preserves a stable non-terminal phase as verifying.
+- [Unread conflicts need directional replay authority](../codex-stale-live-unread-false-blocks-completion-unread.md#L1) — exact/session/native/snapshot unread evidence has directional precedence；root/Side Turn acknowledgements resist stale snapshots，and latent unread stays out of the public unread group while any bead is active.
+- [Local visibility must not need Provider evidence](../companion-local-visibility-must-not-need-provider-evidence.md#L1) — EyPc-owned hide/restore commits in the Kernel like Plan pause；a persisted receipt alone never moves a projected row，and no local visibility mutation may wait for a verified Provider read.
 - [Consumer cache and Float applied ACK](../companion-consumer-cache-and-float-applied-ack.md#L1) — Kernel no-op is not end-to-end deduplication；each consumer keeps its latest selector and Float application needs an explicit ACK.
 - [Observation generation is not semantic revision](../companion-observation-generation-is-not-semantic-revision.md#L1) — producer ordering watermarks never advance user-visible revision without a selector change.
-- [Provider status display normalization](../codex-provider-status-display-normalization.md#L1) — Provider terminal enums become product state only through the Kernel branch causality contract；main owns parent phase/unread until completed-read，and every open retains the parent identity.
+- [Provider status display normalization](../codex-provider-status-display-normalization.md#L1) — Provider terminal enums become product state only through the Kernel branch causality contract；every confirmed root/Side bead participates in the parent priority，while every open retains the parent identity.
 - [Task count/list projection convergence](../codex-task-count-list-projection-divergence.md#L1) — rows、counts、badges、cycle and actions derive from one V4 package.
 - [Task-state version skew fails closed](../codex-task-state-version-skew-must-degrade-atomically.md#L1) — missing/incompatible V4 Kernel or Runtime Identity is `reload-required`, with no Controller/Renderer reducer fallback.
 - [Preload capability version skew](../codex-preload-capability-version-skew.md#L1) — optional diagnostics may degrade narrowly，but stateful Kernel/package/actions identity must match exactly.
@@ -33,5 +35,5 @@ This link-only module routes EyPc-specific canonical task state、Goal/Turn comp
 
 ## Historical Or Migration Sources
 
-- RAW-142/150/154/159 remain historical evidence；their conflicting Plan-clear、broad interrupted stop、V3 ownership and send-as-applied clauses are superseded by [RAW-160/162/163](../../../specs/260810/1155-install-runtime-diagnostics/raw-requirement.md#L1).
-- The flat project root predates the adaptive-index contract and retains unrelated migration debt；this module classifies only the task-state/Goal/Plan records touched by RAW-160/162/163 and does not authorize bulk movement or deletion.
+- RAW-142/150/154/159 remain historical evidence；their conflicting Plan-clear、broad interrupted stop、V3 ownership and send-as-applied clauses are superseded by [RAW-160/162/164](../../../specs/260810/1155-install-runtime-diagnostics/raw-requirement.md#L1). RAW-163 parent-only opening remains current，while its main-first presentation gate is historical.
+- The flat project root predates the adaptive-index contract and retains unrelated migration debt；this module classifies only the task-state/Goal/Plan records touched by RAW-160/162/164 and does not authorize bulk movement or deletion.

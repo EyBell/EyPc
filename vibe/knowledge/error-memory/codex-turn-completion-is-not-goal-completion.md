@@ -53,7 +53,7 @@ tags:
 
 ## Prevention Rule
 
-长期 Goal 存在时，Goal status 是任务完成权威，Turn outcome 只是轮次证据。`turn/completed` 不得发布任务 completed；终态候选必须使用新鲜 Goal Evidence。Goal-only 变化必须原子提交到唯一 Kernel 包，公共 Renderer 不新增 Goal 字段或第二套 reducer。只有明确无 Goal、Goal cleared 或 RPC 明确 method-not-found 时，才回退既有 Turn 语义。
+长期 Goal 存在时，Goal status 是任务完成权威，Turn outcome 只是轮次证据。Goal active/verifying 下的 `turn/completed` 即使携带 unread=true 也不得发布任务 completed/completed-unread；终态候选必须使用新鲜 Goal Evidence。只有 Goal complete 且没有因果上更新的 active/waiting 时，才依据最终 unread 单次发布 completed-unread/completed。Goal-only 变化必须原子提交到唯一 Kernel 包，公共 Renderer 不新增 Goal 字段或第二套 reducer。只有明确无 Goal、Goal cleared 或 RPC 明确 method-not-found 时，才回退既有 Turn 语义。
 
 ## Latest Applicable Implementation
 
@@ -63,10 +63,10 @@ tags:
 
 ## Alternative Route
 
-- Status: `verified` by RAW-162 focused runtime tests and production build.
+- Status: `verified` by RAW-164 focused runtime tests and production build.
 - Preconditions: App Server exposes Goal get/updated/cleared with finite status and updatedAt.
 - Ordered steps: sanitize private Goal evidence → reject stale query/notification → stage branch evidence → reduce Goal/Turn causality → commit one task package → require Float applied ACK.
-- Verification: active Goal crosses at least two completed Turns with zero intermediate completed package；complete publishes once；timeout/transient failure remains verifying；cleared/unsupported preserves legacy Turn behavior；no private payload crosses the Bridge.
+- Verification: active Goal crosses at least two completed Turns with zero intermediate completed/completed-unread package even when unread=true；complete publishes the final unread state once；successful open becomes completed；old unread/full snapshot/duplicate Goal cannot roll back；timeout/transient failure remains verifying；cleared/unsupported preserves legacy Turn behavior；no private payload crosses the Bridge.
 - Fallback: only explicit protocol non-support may disable Goal authority for that App Server process. A timeout、malformed response or temporary failure is not evidence that no Goal exists.
 
 ## Occurrence History
@@ -74,3 +74,4 @@ tags:
 | Date | Task | Trigger | Failed Route | Recovery | Outcome |
 | --- | --- | --- | --- | --- | --- |
 | 2026-08-12 | RAW-162 Cloud task stability | User observed one continuing task switch from running to completed and back to running | Every exact Turn completion was treated as whole-task completion | Added process-private Goal Evidence、causal epoch handling、terminal verification and atomic Goal-only publication | automated verified；current development-host reload pending |
+| 2026-08-12 | RAW-164 Cloud unread stability | User observed completed-unread drift and a new description/Turn suddenly refreshing the task | Old Host still republished each Turn boundary and the focused matrix did not lock final unread/read-ack rollback | Keep active/verifying Goal nonterminal even with unread，finalize once at Goal complete，bind successful read to the Turn and reject old unread/snapshots/duplicate Goal notifications；add loaded-identity handshake | focused `189/189` and build passed；real `host-loaded` dual-snapshot acceptance pending |

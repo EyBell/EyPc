@@ -63,6 +63,7 @@ class FakeCodexProcess extends EventEmitter {
   missingTurnStartedAtIds = new Set<string>()
   missingTurnCompletedAtIds = new Set<string>()
   inProgressTurnIds = new Set<string>()
+  turnOverrides = new Map<string, { id: string; status: 'inProgress' | 'completed' | 'interrupted' | 'failed'; startedAt: number; completedAt?: number }>()
   failedTurnIds = new Set<string>()
   interruptedTurnIds = new Set<string>()
   rolloutTexts = new Map<string, string>()
@@ -76,6 +77,8 @@ class FakeCodexProcess extends EventEmitter {
   failThreadResume = false
   invalidExecuteTurnStart = false
   includeCreatedThreadInInventory = false
+  forkedFromIds = new Map<string, string>()
+  sessionIds = new Map<string, string>()
   createdThreadReadMisses = 0
   holdNextLatestTurnRead = false
   heldLatestTurnReads: RpcFrame[] = []
@@ -92,6 +95,13 @@ class FakeCodexProcess extends EventEmitter {
     public unsupportedTurnsList = false
   ) {
     super()
+  }
+
+  private lineageFor(threadId: string) {
+    return {
+      ...(this.sessionIds.has(threadId) ? { sessionId: this.sessionIds.get(threadId) } : {}),
+      ...(this.forkedFromIds.has(threadId) ? { forkedFromId: this.forkedFromIds.get(threadId) } : {})
+    }
   }
 
   stdin = {
@@ -255,11 +265,22 @@ class FakeCodexProcess extends EventEmitter {
             ? [{ id: this.createdThreadId, name: '刚创建的待输入任务', status: { type: 'active', activeFlags: [] }, recencyAt: 2_000_000_110 }]
             : [])
         ]
-      return this.page(rows.filter((thread) => !this.archivedIds.has(thread.id) && !this.omittedIds.has(thread.id)), params)
+      return this.page(rows
+        .filter((thread) => !this.archivedIds.has(thread.id) && !this.omittedIds.has(thread.id))
+        .map((thread) => ({ ...thread, ...this.lineageFor(thread.id) })), params)
     }
     if (method === 'thread/turns/list') {
       const threadId = typeof params?.threadId === 'string' ? params.threadId : ''
       if (this.emptyTurnIds.has(threadId)) return { data: [] }
+      const override = this.turnOverrides.get(threadId)
+      if (override) {
+        return {
+          data: [{
+            ...override,
+            items: [{ text: 'private overridden turn body that must not cross the bridge' }]
+          }]
+        }
+      }
       const isFirstBulkThread = threadId === '00000001-1234-4234-8234-123456789abc'
       const inProgress = this.inProgressTurnIds.has(threadId) || (this.projectBatchMode && isFirstBulkThread)
       const failed = this.failedTurnIds.has(threadId)
@@ -293,7 +314,8 @@ class FakeCodexProcess extends EventEmitter {
             recencyAt: 2_000_000_110,
             cwd: '/tmp/chats',
             model: 'gpt-5.6-sol',
-            reasoningEffort: 'high'
+            reasoningEffort: 'high',
+            ...this.lineageFor(this.createdThreadId)
           }
         }
       }
@@ -322,7 +344,8 @@ class FakeCodexProcess extends EventEmitter {
             model: 'gpt-5.6-sol',
             reasoningEffort: 'high'
           }),
-          turns: [{ text: 'private archive turn' }]
+          turns: [{ text: 'private archive turn' }],
+          ...this.lineageFor(this.archiveThreadId)
         }
       }
     }
@@ -754,7 +777,7 @@ function loadCodexBridge(
   }
   if (useHostDate) Object.assign(sandbox, { Date })
   sandbox.globalThis = sandbox
-  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, codexRolloutRuntimeStateText, resetCodexThreadSessionState, markCodexThreadTurnStatusDirty, companionPhaseForCodexThread, applyCodexActivityToCompanionKernel, applyClaudeStateToCompanionKernel, privateBranchEvidence: (threadId) => codexPrivateBranchEvidence(threadId, codexActivityInventory.get(threadId)), openCompanionCodexTarget, expireCompanionCodexAlias: (key) => { for (const entry of codexThreadActions.values()) if (entry.key === key) entry.expiresAt = 0 }, companionHostReconciliationPending: () => Boolean(companionHostReconcileInFlight) || companionHostReconcilePendingProviders.size > 0 };`, sandbox, { filename: 'preload.js' })
+  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, codexInventoryThreadTopology, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, codexRolloutRuntimeStateText, resetCodexThreadSessionState, markCodexThreadTurnStatusDirty, companionPhaseForCodexThread, applyCodexActivityToCompanionKernel, applyClaudeStateToCompanionKernel, privateBranchEvidence: (threadId) => codexPrivateBranchEvidence(threadId, codexActivityInventory.get(threadId)), openedReadAcknowledgements: () => [...codexDesktopOpenedReadAcknowledgements.entries()], openCompanionCodexTarget, expireCompanionCodexAlias: (key) => { for (const entry of codexThreadActions.values()) if (entry.key === key) entry.expiresAt = 0 }, companionHostReconciliationPending: () => Boolean(companionHostReconcileInFlight) || companionHostReconcilePendingProviders.size > 0 };`, sandbox, { filename: 'preload.js' })
   const exposedPlatform = (sandbox.window as { eypcPlatform: Record<string, any> }).eypcPlatform
   handshakeTestRuntime(exposedPlatform)
   return {
@@ -778,6 +801,11 @@ function loadCodexBridge(
         readCodexNativeRegistry(): Record<string, any>
         codexThreadNativeProject(thread: Record<string, unknown>, registry: Record<string, any>): Record<string, any> | null
         codexResolveParentActivity(own: Record<string, unknown>, children: Record<string, unknown>[], options?: Record<string, unknown>): Record<string, any>
+        codexInventoryThreadTopology(rows: Record<string, unknown>[]): {
+          relations: Map<string, string>
+          depths: Map<string, number>
+          isolated: Set<string>
+        }
         codexRolloutHasPendingUserInputText(text: string): boolean
         codexRolloutPendingPlanStateText(text: string): { known: boolean; pending: boolean }
         codexRolloutRuntimeStateText(text: string): { known: boolean; phase: string; edge: string; startedAt: number; edgeAt: number }
@@ -787,6 +815,7 @@ function loadCodexBridge(
         applyCodexActivityToCompanionKernel(delta: Record<string, unknown>): boolean
         applyClaudeStateToCompanionKernel(): boolean
         privateBranchEvidence(threadId: string): Record<string, any> | null
+        openedReadAcknowledgements(): Array<[string, Record<string, unknown>]>
         openCompanionCodexTarget(target: Record<string, unknown>): Promise<Record<string, unknown>>
         expireCompanionCodexAlias(key: string): void
         companionHostReconciliationPending(): boolean
@@ -837,6 +866,63 @@ function loadCodexBridge(
 }
 
 describe('Codex App Server preload bridge', () => {
+  it('records the non-private Runtime Identity handshake once per semantic identity', () => {
+    const context = loadCodexBridge(new FakeCodexProcess())
+    const handshakes = () => context.diagnosticEvents.filter((event) => event.event === 'runtime-identity-handshake')
+
+    expect(handshakes()).toEqual([expect.objectContaining({
+      scope: 'runtime-identity',
+      outcome: 'host-loaded',
+      details: expect.objectContaining({
+        actualHostAssetId: TEST_RUNTIME_IDENTITY.hostAssetId,
+        actualRendererAssetId: TEST_RUNTIME_IDENTITY.rendererAssetId,
+        actualKernelRevision: TEST_RUNTIME_IDENTITY.kernelRevision,
+        actualTaskPackageRevision: TEST_RUNTIME_IDENTITY.taskPackageRevision,
+        artifactState: 'artifact-ready'
+      })
+    })])
+    handshakeTestRuntime(context.platform)
+    expect(handshakes()).toHaveLength(1)
+    expect(JSON.stringify(handshakes())).not.toMatch(/prompt|objective|threadId|path/i)
+    context.bridge.close()
+  })
+
+  it('resolves nested same-session forks to one root and leaves missing, mismatched or cyclic forks standalone', () => {
+    const context = loadCodexBridge(new FakeCodexProcess())
+    const rootId = FIXED_THREAD_IDS[0]
+    const childId = 'a2345678-1234-4234-8234-123456789abc'
+    const nestedId = 'b2345678-1234-4234-8234-123456789abc'
+    const missingId = 'c2345678-1234-4234-8234-123456789abc'
+    const mismatchedId = 'd2345678-1234-4234-8234-123456789abc'
+    const cycleAId = 'e2345678-1234-4234-8234-123456789abc'
+    const cycleBId = 'f2345678-1234-4234-8234-123456789abc'
+    const topology = context.native.codexInventoryThreadTopology([
+      { id: rootId, sessionId: 'session-root' },
+      { id: childId, sessionId: 'session-root', forkedFromId: rootId },
+      { id: nestedId, sessionId: 'session-root', forkedFromId: childId },
+      { id: missingId, sessionId: 'session-root', forkedFromId: '02345678-1234-4234-8234-123456789abc' },
+      { id: mismatchedId, sessionId: 'session-other', forkedFromId: rootId },
+      { id: cycleAId, sessionId: 'session-cycle', forkedFromId: cycleBId },
+      { id: cycleBId, sessionId: 'session-cycle', forkedFromId: cycleAId }
+    ])
+
+    expect(topology.relations.get(childId)).toBe(rootId)
+    expect(topology.relations.get(nestedId)).toBe(rootId)
+    expect(topology.depths.get(childId)).toBe(1)
+    expect(topology.depths.get(nestedId)).toBe(2)
+    expect(topology.relations.has(missingId)).toBe(false)
+    expect(topology.relations.has(mismatchedId)).toBe(false)
+    expect(topology.relations.has(cycleAId)).toBe(false)
+    expect(topology.relations.has(cycleBId)).toBe(false)
+    expect([...topology.isolated]).toEqual(expect.arrayContaining([
+      missingId,
+      mismatchedId,
+      cycleAId,
+      cycleBId
+    ]))
+    context.bridge.close()
+  })
+
   it('keeps the Claude Node Host and Float package lane live while Main is hidden', async () => {
     const realFs = nodeRequire('node:fs') as typeof import('node:fs')
     const claudeModule = nodeRequire(resolve(process.cwd(), 'preload/claude/index.cjs')) as {
@@ -1042,7 +1128,7 @@ describe('Codex App Server preload bridge', () => {
     child.goalStates.set(threadId, { status: 'active', updatedAt: 2_000_000_050 })
     const context = loadCodexBridge(
       child,
-      () => nativeRegistryText(),
+      () => nativeRegistryTextWithUnread([threadId]),
       null,
       true,
       true,
@@ -1054,9 +1140,11 @@ describe('Codex App Server preload bridge', () => {
     await vi.waitFor(() => expect(kernel.getPackage().tasks
       .find((task: Record<string, any>) => task.displayName === '跨端未知')).toMatchObject({
       phase: 'running',
+      unread: true,
       dynamicGroup: 'active'
     }))
     const task = kernel.getPackage().tasks.find((value: Record<string, any>) => value.displayName === '跨端未知')
+    expect(kernel.getPackage().views.counts).toMatchObject({ active: 1, unread: 0 })
 
     context.platform.float.sync({
       visible: true,
@@ -1091,7 +1179,8 @@ describe('Codex App Server preload bridge', () => {
       goalFreshness: 'fresh'
     }))
     expect(kernel.getPackage().tasks.find((entry: Record<string, any>) => entry.key === task.key))
-      .toMatchObject({ phase: 'running', terminalAt: 0 })
+      .toMatchObject({ phase: 'running', unread: true, terminalAt: 0 })
+    expect(kernel.getPackage().views.counts).toMatchObject({ active: 1, unread: 0 })
     expect(phases).not.toContain('completed')
 
     child.stdout.emit('data', `${JSON.stringify({
@@ -1104,7 +1193,8 @@ describe('Codex App Server preload bridge', () => {
       goalFreshness: 'fresh'
     }))
     expect(kernel.getPackage().tasks.find((entry: Record<string, any>) => entry.key === task.key))
-      .toMatchObject({ phase: 'running', terminalAt: 0 })
+      .toMatchObject({ phase: 'running', unread: true, terminalAt: 0 })
+    expect(kernel.getPackage().views.counts).toMatchObject({ active: 1, unread: 0 })
     expect(phases).not.toContain('completed')
 
     const turnFloatPhases = context.floatSends.slice(floatBaseline)
@@ -1133,11 +1223,14 @@ describe('Codex App Server preload bridge', () => {
     await vi.waitFor(() => expect(kernel.getPackage().tasks
       .find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
       phase: 'completed',
-      dynamicGroup: 'completed'
+      unread: true,
+      dynamicGroup: 'unread'
     }))
+    expect(kernel.getPackage().views.counts).toMatchObject({ active: 0, unread: 1 })
     await vi.waitFor(() => expect(context.floatSends.some((entry) => entry.channel === 'eypc-float:task-package'
       && entry.payload.taskPackage.tasks.some((candidate: Record<string, any>) => candidate.key === task.key
-        && candidate.phase === 'completed'))).toBe(true))
+        && candidate.phase === 'completed'
+        && candidate.unread === true))).toBe(true))
     expect(phases.filter((phase) => phase === 'completed')).toHaveLength(1)
 
     const goalNotification = {
@@ -1163,6 +1256,31 @@ describe('Codex App Server preload bridge', () => {
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 0))
     expect(kernel.getPackage().packageRevision).toBe(stableRevision)
     expect(context.floatSends).toHaveLength(stableFloatCount)
+
+    await expect(context.bridge.openThread(task.actionAlias)).resolves.toMatchObject({ outcome: 'opened' })
+    expect(kernel.getPackage()).toMatchObject({
+      tasks: expect.arrayContaining([expect.objectContaining({
+        key: task.key,
+        phase: 'completed',
+        unread: false,
+        dynamicGroup: 'completed'
+      })]),
+      views: { counts: { active: 0, unread: 0 } }
+    })
+    await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(kernel.getPackage().tasks.find((entry: Record<string, any>) => entry.key === task.key))
+      .toMatchObject({ phase: 'completed', unread: false })
+
+    child.stdout.emit('data', `${JSON.stringify({
+      method: 'thread/goal/updated',
+      params: {
+        threadId,
+        goal: { status: 'active', updatedAt: 2_000_000_050, objective: 'stale private objective' }
+      }
+    })}\n`)
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 0))
+    expect(kernel.getPackage().tasks.find((entry: Record<string, any>) => entry.key === task.key))
+      .toMatchObject({ phase: 'completed', unread: false })
 
     const publicPayloads = JSON.stringify({
       activity: await context.bridge.readActivitySnapshot(),
@@ -3990,6 +4108,10 @@ describe('Codex App Server preload bridge', () => {
       hasUnreadTurn: false,
       unreadAuthority: 'desktop-live'
     })
+    expect(native.openedReadAcknowledgements().map(([threadId]) => threadId)).toEqual(expect.arrayContaining([
+      parentThreadId,
+      sideThreadId
+    ]))
     expect(deltas.at(-1)).toMatchObject({
       entries: [{
         key: task.key,
@@ -5104,6 +5226,180 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
+  it('folds an inventory-listed Side Chat into its paginated root and preserves active/unread priority through terminal and read ack', async () => {
+    const child = new FakeCodexProcess()
+    const parentThreadId = FIXED_THREAD_IDS[3]
+    const sideThreadId = child.createdThreadId
+    child.includeCreatedThreadInInventory = true
+    child.inventoryPageSize = 1
+    child.sessionIds.set(parentThreadId, 'shared-side-session')
+    child.sessionIds.set(sideThreadId, 'shared-side-session')
+    child.forkedFromIds.set(sideThreadId, parentThreadId)
+    const desktopSocket = new FakeCodexDesktopSocket()
+    desktopSocket.streamOwnerConnected = false
+    const context = loadCodexBridge(child, () => nativeRegistryTextWithUnread([sideThreadId]), desktopSocket)
+    const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const parent = baseline.value.threads.find((thread: Record<string, any>) => thread.name === '跨端未知')
+
+    expect(parent).toBeTruthy()
+    expect(baseline.value.threads).toHaveLength(5)
+    expect(baseline.value.threads.some((thread: Record<string, any>) => thread.name === '刚创建的待输入任务')).toBe(false)
+    expect(JSON.stringify(baseline.value)).not.toContain(sideThreadId)
+    expect(child.writes.filter((frame) => frame.method === 'thread/list' && frame.params?.archived !== true).length).toBeGreaterThan(1)
+
+    const privateEvidence = context.native.privateBranchEvidence(parentThreadId)
+    expect(privateEvidence).toMatchObject({
+      key: parent.key,
+      branches: expect.arrayContaining([
+        expect.objectContaining({ branchKind: 'main' }),
+        expect.objectContaining({
+          branchKind: 'side',
+          lastTurnStatus: 'completed',
+          unreadKnown: true,
+          hasUnreadTurn: true
+        })
+      ])
+    })
+    expect(JSON.stringify(privateEvidence)).not.toContain(sideThreadId)
+
+    const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+    expect(kernel.getPackage()).toMatchObject({
+      tasks: [{ key: parent.key, phase: 'completed', unreadKnown: true, unread: true }],
+      views: { counts: { active: 0, unread: 1 } }
+    })
+    expect(kernel.getPackage().tasks).toHaveLength(1)
+
+    child.turnOverrides.set(sideThreadId, {
+      id: `live-${sideThreadId}`,
+      status: 'inProgress',
+      startedAt: 2_000_000_200
+    })
+    child.stdout.emit('data', `${JSON.stringify({
+      method: 'turn/started',
+      params: {
+        threadId: sideThreadId,
+        turn: { id: `live-${sideThreadId}`, status: 'inProgress', startedAt: 2_000_000_200 }
+      }
+    })}\n`)
+    await vi.waitFor(() => expect(context.native.privateBranchEvidence(parentThreadId)?.branches).toEqual(expect.arrayContaining([
+      expect.objectContaining({ branchKind: 'side', lastTurnStatus: 'inProgress' })
+    ])))
+    expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === parent.key))
+      .toMatchObject({ phase: 'running', unreadKnown: true, unread: true })
+    expect(kernel.getPackage().views.counts).toMatchObject({ active: 1, unread: 0 })
+
+    // The live App Server event arrives before Desktop's topology/activity
+    // snapshot. The later snapshot must enrich the same private branch, not
+    // recreate the Side Chat as a public root.
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: sideThreadId,
+        change: {
+          type: 'snapshot',
+          revision: 1,
+          conversationState: {
+            sideConversation: true,
+            forkedFromId: parentThreadId,
+            threadRuntimeStatus: { type: 'active', activeFlags: [] },
+            resumeState: '',
+            hasUnreadTurn: true,
+            requests: []
+          }
+        }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === parent.key))
+      .toMatchObject({ phase: 'running', unread: true })
+    expect(kernel.getPackage().views.counts).toMatchObject({ active: 1, unread: 0 })
+
+    child.turnOverrides.set(sideThreadId, {
+      id: `live-${sideThreadId}`,
+      status: 'completed',
+      startedAt: 2_000_000_200,
+      completedAt: 2_000_000_220
+    })
+    child.stdout.emit('data', `${JSON.stringify({
+      method: 'turn/completed',
+      params: {
+        threadId: sideThreadId,
+        turn: {
+          id: `live-${sideThreadId}`,
+          status: 'completed',
+          startedAt: 2_000_000_200,
+          completedAt: 2_000_000_220
+        }
+      }
+    })}\n`)
+    await vi.waitFor(() => expect(context.native.privateBranchEvidence(parentThreadId)?.branches).toEqual(expect.arrayContaining([
+      expect.objectContaining({ branchKind: 'side', lastTurnStatus: 'completed' })
+    ])))
+    await vi.waitFor(() => expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === parent.key))
+      .toMatchObject({ phase: 'completed', unreadKnown: true, unread: true }))
+    expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === parent.key))
+      .toMatchObject({ phase: 'completed', unreadKnown: true, unread: true })
+    expect(kernel.getPackage().views.counts).toMatchObject({ active: 0, unread: 1 })
+
+    await expect(context.bridge.openThread(parent.actionAlias)).resolves.toMatchObject({ outcome: 'opened' })
+    expect(context.native.openedReadAcknowledgements().map(([threadId]) => threadId)).toEqual(expect.arrayContaining([
+      parentThreadId,
+      sideThreadId
+    ]))
+    expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === parent.key))
+      .toMatchObject({ phase: 'completed', unreadKnown: true, unread: false })
+    expect(kernel.getPackage().views.counts).toMatchObject({ active: 0, unread: 0 })
+    await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(context.native.openedReadAcknowledgements().map(([threadId]) => threadId)).toEqual(expect.arrayContaining([
+      parentThreadId,
+      sideThreadId
+    ]))
+    expect(context.native.privateBranchEvidence(parentThreadId)?.branches).toEqual(expect.arrayContaining([
+      expect.objectContaining({ branchKind: 'side', unreadKnown: true, hasUnreadTurn: false })
+    ]))
+    expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === parent.key))
+      .toMatchObject({ phase: 'completed', unread: false })
+
+    child.archivedIds.add(sideThreadId)
+    await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(context.native.privateBranchEvidence(parentThreadId)?.branches).toHaveLength(1)
+    expect(kernel.getPackage().tasks.filter((task: Record<string, any>) => task.key === parent.key)).toHaveLength(1)
+    expect(kernel.getPackage().tasks.some((task: Record<string, any>) => task.displayName === '刚创建的待输入任务')).toBe(false)
+    expect(JSON.stringify(context.diagnosticEvents)).not.toContain(sideThreadId)
+    expect(context.diagnosticEvents).toContainEqual(expect.objectContaining({
+      event: 'side-topology-decision',
+      outcome: 'merged'
+    }))
+    context.bridge.close()
+  })
+
+  it('expires a former standalone child alias when later inventory lineage attaches it to a root', async () => {
+    const child = new FakeCodexProcess()
+    child.includeCreatedThreadInInventory = true
+    const parentThreadId = FIXED_THREAD_IDS[2]
+    const sideThreadId = child.createdThreadId
+    const { bridge, openExternal } = loadCodexBridge(child, () => nativeRegistryText())
+    const standalone = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const staleChild = standalone.value.threads.find((thread: Record<string, any>) => thread.name === '刚创建的待输入任务')
+    expect(staleChild?.actionAlias).toEqual(expect.any(String))
+
+    child.sessionIds.set(parentThreadId, 'shared-session')
+    child.sessionIds.set(sideThreadId, 'shared-session')
+    child.forkedFromIds.set(sideThreadId, parentThreadId)
+    const rooted = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    expect(rooted.value.threads.some((thread: Record<string, any>) => thread.name === '刚创建的待输入任务')).toBe(false)
+    await expect(bridge.openThread(staleChild.actionAlias)).resolves.toMatchObject({
+      outcome: 'failed',
+      errorCode: 'expired-alias'
+    })
+    expect(openExternal).not.toHaveBeenCalledWith(`codex://threads/${sideThreadId}`)
+    bridge.close()
+  })
+
   it('queries Side Chat Turns by child id and replays multiple child activity after inventory rebuild', async () => {
     const child = new FakeCodexProcess()
     child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
@@ -5439,7 +5735,7 @@ describe('Codex App Server preload bridge', () => {
         branch.lastTurnStatus === 'completed'
         || branch.lastTurnStatus === 'interrupted'
         || branch.lastTurnStatus === 'failed'
-      ))).toHaveLength(1)
+      ))).toHaveLength(2)
       expect(branches).toContainEqual(expect.objectContaining({ lastTurnStatus: 'inProgress' }))
       expect(branches.every((branch: Record<string, unknown>) => /^[a-f0-9]{32}$/.test(String(branch.ref)))).toBe(true)
       expect(JSON.stringify(branchEvidence)).not.toContain(FIXED_THREAD_IDS[3])

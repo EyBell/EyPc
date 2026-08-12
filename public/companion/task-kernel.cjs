@@ -217,21 +217,12 @@ function reduceCodexParentBranchEvidenceV4(value = {}) {
   const branches = (Array.isArray(value.branches) ? value.branches : [])
     .map(normalizeCodexBranchEvidenceV4)
     .filter(Boolean)
-  const mainBranch = branches.find((branch) => branch.branchKind === 'main') || branches[0]
-  const mainCompleted = Boolean(mainBranch)
-    && !mainBranch.liveCurrent
-    && mainBranch.goalFreshness === 'fresh'
-    && (mainBranch.goalCurrent
-      ? mainBranch.goalStatus === 'complete'
-      : mainBranch.exactTerminal && mainBranch.lastTurnStatus === 'completed')
-  // Side Chat state may take over only after the main task is both completed
-  // and read. In every other state the main task remains the presentation
-  // authority, even if a child has newer live or unread evidence.
-  const mainCompletedRead = mainCompleted
-    && mainBranch.unreadObserved
-    && mainBranch.unreadKnown
-    && !mainBranch.hasUnreadTurn
-  const selectedBranches = mainCompletedRead ? branches : mainBranch ? [mainBranch] : []
+  // The parent row is a projection of every bead in the conversation tree.
+  // A Side Chat must therefore participate even while the main branch is
+  // completed-unread or still nonterminal. Presentation priority is resolved
+  // below (live/waiting > unread completion > read completion), never by a
+  // main-branch admission gate.
+  const selectedBranches = branches
   const priorCandidate = PHASES.includes(value.previousNonterminalPhase)
     ? value.previousNonterminalPhase
     : PHASES.includes(value.previousPhase) ? value.previousPhase : 'unknown'
@@ -239,12 +230,15 @@ function reduceCodexParentBranchEvidenceV4(value = {}) {
     ? priorCandidate
     : ''
   const details = {
+    aggregationPolicy: 'all-branches',
     branchCount: branches.length,
     selectedBranchCount: selectedBranches.length,
-    mainCompletedRead,
     runningCount: selectedBranches.filter((branch) => branch.liveCurrent && branch.activeFlags.length === 0).length,
     approvalCount: selectedBranches.filter((branch) => branch.liveCurrent && branch.activeFlags.includes('waitingOnApproval')).length,
     inputCount: selectedBranches.filter((branch) => branch.liveCurrent && branch.activeFlags.includes('waitingOnUserInput')).length,
+    unreadCount: selectedBranches.filter((branch) => branch.unreadObserved
+      && branch.unreadKnown
+      && branch.hasUnreadTurn).length,
     terminalCount: selectedBranches.filter((branch) => branch.exactTerminal).length,
     idleTerminalCount: selectedBranches.filter((branch) => branch.idleConfirmed).length,
     goalActiveCount: selectedBranches.filter((branch) => branch.goalCurrent && branch.goalStatus === 'active').length,
@@ -1214,10 +1208,39 @@ function createCompanionTaskKernel(dependencies = {}) {
           : goalAuthorityCleared
             ? ''
             : previous?.previousNonterminalAuthority || ''
+      const diagnosticSignature = JSON.stringify({
+        outcome: decision.outcome,
+        phase: decision.phase,
+        reason: decision.reason,
+        freshness: decision.freshness,
+        unreadOutcome: decision.unreadOutcome,
+        unreadKnown: decision.unreadKnown,
+        unread: decision.unread,
+        details: decision.details
+      })
+      if (diagnosticSignature !== previous?.diagnosticSignature) {
+        record({
+          level: 'info',
+          scope: 'task-kernel',
+          event: 'parent-state-decision',
+          outcome: decision.outcome,
+          provider: 'codex',
+          taskRef: key,
+          phase: decision.phase || 'unknown',
+          reason: decision.reason,
+          beforePhase: task?.phase || 'unknown',
+          afterPhase: decision.phase || 'unknown',
+          beforeUnread: task?.unread === true,
+          afterUnread: decision.unread === true,
+          observationGeneration: generation,
+          details: { ...decision.details }
+        })
+      }
       codexBranchEvidence.set(key, {
         generation,
         branches: [...branches.values()],
         decision,
+        diagnosticSignature,
         previousNonterminalPhase,
         previousNonterminalAuthority,
         observedAt: Math.max(0, ...[...branches.values()].map((branch) => finiteInteger(branch.observedAt)))
@@ -1561,6 +1584,55 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
     if (enabled && !currentPackage.complete) void ensureReady().catch(() => undefined)
     return currentPackage
+  }
+
+  /**
+   * Ordinary hide/restore is EyPc-owned visibility, not a Provider mutation.
+   * It therefore commits locally and immediately, exactly like the Plan pause
+   * lane, instead of waiting for a verified live inventory read: gating it
+   * behind `ensureReady`/cold preflight made every hide a silent no-op while
+   * the Provider was not running, because only the cold preflight could turn
+   * the persisted receipt into a canonical `hidden` value. The Renderer still
+   * owns persistence, and the cold preflight recomputes the same flag from
+   * that same receipt, so this never becomes a second source of truth.
+   */
+  function localStateTarget(input) {
+    if (disposed || !Number.isInteger(input.lease) || input.lease !== activeLease) return null
+    const task = taskForKey(typeof input.key === 'string' ? input.key : '')
+    if (!task) return null
+    const expectedRevision = finiteInteger(input.revisionAt)
+    return expectedRevision && expectedRevision !== task.revisionAt ? null : task
+  }
+
+  function commitLocalTaskState(task, patch, reason) {
+    return publishLocalTasks(currentPackage.tasks.map((candidate) => candidate.key === task.key
+      ? finalizeCanonicalTask({ ...candidate, ...patch })
+      : candidate), reason)
+  }
+
+  function setVisibility(input = {}) {
+    const task = localStateTarget(input)
+    // A completed Plan owns the pause lane; its row control is pause/resume.
+    if (!task || task.planReady) return null
+    const hidden = input.hidden === true
+    if (task.hidden === hidden) return currentPackage
+    return commitLocalTaskState(task, { hidden }, hidden ? 'hidden' : 'restored')
+  }
+
+  /**
+   * Local pin carries no Plan exclusion: a completed Plan row stays pinnable.
+   * It only reorders EyPc rows and feeds the fallback cycle tier, so it uses
+   * the same local commit rather than waiting for a Provider inventory read.
+   */
+  function setLocalPin(input = {}) {
+    const task = localStateTarget(input)
+    if (!task) return null
+    const localPin = input.localPin === true
+    if (task.localPin === localPin) return currentPackage
+    return commitLocalTaskState(task, {
+      localPin,
+      kind: localPin ? 'local-pin' : task.provider === 'claude' ? 'claude-session' : 'codex-thread'
+    }, localPin ? 'pinned' : 'unpinned')
   }
 
   function syncPackage(input = {}) {
@@ -1968,6 +2040,9 @@ function createCompanionTaskKernel(dependencies = {}) {
     packageRevision: COMPANION_TASK_PACKAGE_REVISION,
     attach,
     configure: configureConsumer,
+    /** Renderer-owned local visibility/pin; neither reaches the Provider. */
+    setVisibility,
+    setLocalPin,
     syncPackage,
     /** Host-only provider evidence path; never exposed as a Renderer authority. */
     publishEvidence,

@@ -507,6 +507,13 @@ export interface CompanionTaskKernelBridge {
     package: CompanionTaskPackageV4
   }
   configure?(input: { lease: number; enabled: boolean; providers: { codex: boolean; claude: boolean }; dynamicTaskWindowHours?: number; focusedKey?: string }): CompanionTaskPackageV4 | null
+  /**
+   * Local hide/restore authority. Commits without a Provider read, so ordinary
+   * visibility keeps working while Codex/Claude is not running.
+   */
+  setVisibility?(input: { lease: number; key: string; revisionAt?: number; hidden: boolean }): CompanionTaskPackageV4 | null
+  /** Local pin authority; unlike hide it stays available for Plan-ready rows. */
+  setLocalPin?(input: { lease: number; key: string; revisionAt?: number; localPin: boolean }): CompanionTaskPackageV4 | null
   /** @deprecated Renderer drafts are not a production authority in V4. */
   syncPackage?(input: { lease: number; draft: CompanionTaskPackageDraftV4 }): CompanionTaskPackageV4 | null
   detach?(input: { lease: number }): boolean

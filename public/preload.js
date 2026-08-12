@@ -12,6 +12,7 @@ const RUNTIME_IDENTITY_REVISION = 'runtime-identity-v1'
 let runtimeIdentityArtifact = null
 let runtimeIdentityLoadError = ''
 let runtimeIdentityCompatible = false
+let runtimeIdentityDiagnosticFingerprint = ''
 try {
   runtimeIdentityArtifact = require('./runtime-identity.cjs')
 } catch (error) {
@@ -355,6 +356,12 @@ let companionTaskKernel = null
 // teardown inside this preload process. They carry topology only: never live
 // state, unread state, prompts, or Renderer-visible identifiers.
 const codexDesktopSideRelations = new Map()
+// Verified App Server inventory topology is kept separately from Desktop
+// recovery hints. It is process-private and only contributes anonymized branch
+// evidence to the parent task; Side Chat IDs never become public rows.
+const codexInventorySideRelations = new Map()
+const codexInventorySideBranchEvidence = new Map()
+const codexSideTopologyDiagnosticFingerprints = new Map()
 // Raw branch IDs and exact terminal evidence remain Host-only. Kernel receives
 // only session-hashed refs through publishCodexPrivateBranchEvidence().
 const codexPrivateBranchTerminals = new Map()
@@ -2392,7 +2399,7 @@ function sanitizeCodexThreadGoal(value) {
 function codexPublishThreadGoalEvidence(threadId) {
   if (!validCodexThreadId(threadId)) return false
   const parentThreadId = codexDesktopBridge?.parentThreadIdFor?.(threadId)
-    || codexDesktopSideRelations.get(threadId)
+    || codexSideParentThreadId(threadId)
     || threadId
   const known = codexActivityInventory.get(parentThreadId)
   if (!known) return false
@@ -2455,7 +2462,7 @@ function codexMarkThreadGoalRpcUnsupported(options = {}) {
   const threadIds = new Set([
     ...codexThreadGoalCache.keys(),
     ...codexActivityInventory.keys(),
-    ...codexDesktopSideRelations.keys()
+    ...codexAllSideRelations().keys()
   ])
   const changedParents = new Set()
   for (const threadId of threadIds) {
@@ -2465,7 +2472,7 @@ function codexMarkThreadGoalRpcUnsupported(options = {}) {
     })
     if (!result.accepted) continue
     const parentThreadId = codexDesktopBridge?.parentThreadIdFor?.(threadId)
-      || codexDesktopSideRelations.get(threadId)
+      || codexSideParentThreadId(threadId)
       || threadId
     if (validCodexThreadId(parentThreadId)) changedParents.add(parentThreadId)
   }
@@ -3243,6 +3250,9 @@ function codexDesktopUnreadObservation(bridge, known, threadId, shadow, persiste
   const liveUnread = bridge?.state === 'connected' || cachedUnread?.ownerClientId === 'eypc-open'
     ? cachedUnread
     : null
+  if (cachedUnread?.ownerClientId === 'eypc-open' && cachedUnread.hasUnreadTurn === false) {
+    return { hasUnreadTurn: false, unreadAuthority: 'desktop-live' }
+  }
   const exact = shadow?.unreadEvidence === 'event'
     ? shadow
     : liveUnread?.unreadEvidence === 'event' ? liveUnread : null
@@ -3302,6 +3312,39 @@ function codexDesktopAggregateUnread(bridge, known, parentThreadId, ownShadow, c
   }
 }
 
+function codexSideParentThreadId(threadId) {
+  return codexInventorySideRelations.get(threadId)
+    || codexDesktopSideRelations.get(threadId)
+    || ''
+}
+
+function codexAllSideRelations() {
+  const relations = new Map(codexDesktopSideRelations)
+  for (const [threadId, parentThreadId] of codexInventorySideRelations) {
+    relations.set(threadId, parentThreadId)
+  }
+  return relations
+}
+
+function codexForgetInventorySideRelation(threadId, options = {}) {
+  const parentThreadId = codexInventorySideRelations.get(threadId)
+  if (validCodexThreadId(parentThreadId)) codexForgetPrivateBranchTerminal(parentThreadId, threadId)
+  codexInventorySideRelations.delete(threadId)
+  codexInventorySideBranchEvidence.delete(threadId)
+  if (options.preserveDesktopRelation === true) return
+  if (codexDesktopSideRelations.has(threadId)) codexForgetDesktopSideRelation(threadId)
+  codexDesktopBridge?.sideShadows?.delete(threadId)
+  codexDesktopBridge?.sideRecoveryPending?.delete(threadId)
+  codexDesktopBridge?.liveUnread?.delete(threadId)
+  codexDesktopBridge?.persistedUnread?.delete(threadId)
+}
+
+function codexForgetInventorySideRelationsForParent(parentThreadId) {
+  for (const [threadId, parent] of codexInventorySideRelations) {
+    if (parent === parentThreadId) codexForgetInventorySideRelation(threadId)
+  }
+}
+
 function codexRememberDesktopSideRelation(threadId, parentThreadId) {
   if (!validCodexThreadId(threadId)
     || !validCodexThreadId(parentThreadId)
@@ -3340,7 +3383,14 @@ function codexForgetDesktopSideRelationsForParent(parentThreadId) {
 
 function codexRememberDesktopOpenedRead(threadId, parentThreadId, known) {
   if (!validCodexThreadId(threadId) || !validCodexThreadId(parentThreadId)) return false
-  const turnStartedAt = codexTimestampMs(known?.lastTurnStartedAt)
+  const branchEvidence = codexInventorySideBranchEvidence.get(threadId)
+  const aggregateParent = threadId === parentThreadId
+    && [...codexAllSideRelations().values()].some((candidate) => candidate === parentThreadId)
+  const turnStartedAt = codexTimestampMs(
+    threadId === parentThreadId
+      ? known?.lastTurnStartedAt
+      : branchEvidence?.turnStartedAt || known?.lastTurnStartedAt
+  )
   // A process-scope acknowledgement must be bound to a concrete Turn. An
   // unbound false could otherwise suppress every later completion if an open
   // races inventory/bootstrap and no exact started event is observed.
@@ -3348,9 +3398,21 @@ function codexRememberDesktopOpenedRead(threadId, parentThreadId, known) {
   codexDesktopOpenedReadAcknowledgements.delete(threadId)
   codexDesktopOpenedReadAcknowledgements.set(threadId, {
     parentThreadId,
-    turnId: typeof known?.lastTurnId === 'string' ? known.lastTurnId : '',
+    // A parent with Side Chats represents multiple independent Turn IDs. Bind
+    // its acknowledgement by the aggregate causal timestamp. Inventory-backed
+    // child receipts use their exact Turn ID; a Desktop-only child preserves
+    // the prior parent-Turn fallback until inventory can supply its own Turn.
+    turnId: !aggregateParent && typeof (threadId === parentThreadId
+      ? known?.lastTurnId
+      : branchEvidence?.turnId || known?.lastTurnId) === 'string'
+      ? threadId === parentThreadId ? known.lastTurnId : branchEvidence?.turnId || known.lastTurnId
+      : '',
     turnStartedAt,
-    turnCompletedAt: codexTimestampMs(known?.lastTurnCompletedAt)
+    turnCompletedAt: codexTimestampMs(
+      threadId === parentThreadId
+        ? known?.lastTurnCompletedAt
+        : branchEvidence?.terminalAt || known?.lastTurnCompletedAt
+    )
   })
   while (codexDesktopOpenedReadAcknowledgements.size > CODEX_DESKTOP_OPENED_READ_LIMIT) {
     const oldest = codexDesktopOpenedReadAcknowledgements.keys().next().value
@@ -3405,6 +3467,21 @@ function codexReconcileDesktopOpenedReadWithTurn(bridge, parentThreadId, turn) {
   if (turn.lastTurnStatus === 'completed'
     && codexDesktopOpenedReadCoversCompletion(parentThreadId, turn)) return false
   return codexClearDesktopOpenedRead(bridge, parentThreadId)
+}
+
+function codexReconcileInventorySideOpenedReadWithTurn(threadId, parentThreadId, turn) {
+  const acknowledgement = codexDesktopOpenedReadAcknowledgements.get(threadId)
+  if (!acknowledgement || acknowledgement.parentThreadId !== parentThreadId) return false
+  const turnStartedAt = codexTimestampMs(turn?.startedAt)
+  if (!turn?.status || !turnStartedAt) return false
+  const acknowledgementTurnId = typeof acknowledgement.turnId === 'string' ? acknowledgement.turnId : ''
+  const turnId = typeof turn.id === 'string' ? turn.id : ''
+  const sameTurn = acknowledgementTurnId && turnId
+    ? acknowledgementTurnId === turnId
+    : turnStartedAt <= acknowledgement.turnStartedAt
+  if (turn.status === 'completed' && sameTurn) return false
+  codexDesktopOpenedReadAcknowledgements.delete(threadId)
+  return true
 }
 
 function codexForgetDesktopOpenedReadThread(threadId) {
@@ -4089,7 +4166,7 @@ class CodexDesktopCompanionBridge {
   forgetWaitingState(threadId, includeChildren = false) {
     this.waitingStates.delete(threadId)
     if (!includeChildren) return
-    for (const [childThreadId, parentThreadId] of codexDesktopSideRelations) {
+    for (const [childThreadId, parentThreadId] of codexAllSideRelations()) {
       if (parentThreadId === threadId) this.waitingStates.delete(childThreadId)
     }
     for (const [childThreadId, shadow] of this.sideShadows) {
@@ -4291,7 +4368,10 @@ class CodexDesktopCompanionBridge {
   hasOtherActiveBranch(parentThreadId, branchThreadId) {
     if (!validCodexThreadId(parentThreadId) || !validCodexThreadId(branchThreadId)) return false
     const known = codexActivityInventory.get(parentThreadId)
-    if (branchThreadId !== parentThreadId && known?.appServerLiveActive === true) return true
+    const appServerBranchThreadId = validCodexThreadId(known?.appServerLiveBranchThreadId)
+      ? known.appServerLiveBranchThreadId
+      : parentThreadId
+    if (known?.appServerLiveActive === true && appServerBranchThreadId !== branchThreadId) return true
     const branches = [
       [parentThreadId, this.shadows.get(parentThreadId)],
       ...[...this.sideShadows.entries()].filter(([, shadow]) => shadow.parentThreadId === parentThreadId)
@@ -5055,14 +5135,16 @@ class CodexDesktopCompanionBridge {
           : ''
         const sideShadow = this.sideShadows.get(params.conversationId)
         if (message.method === 'thread-archived') {
-          if (sideShadow || codexDesktopSideRelations.has(params.conversationId)) {
+          if (sideShadow || codexSideParentThreadId(params.conversationId)) {
             codexForgetDesktopOpenedReadThread(params.conversationId)
             this.forgetWaitingState(params.conversationId)
             codexForgetDesktopSideRelation(params.conversationId)
+            codexForgetInventorySideRelation(params.conversationId)
           } else {
             codexClearDesktopOpenedRead(this, params.conversationId)
             this.forgetWaitingState(params.conversationId, true)
             codexForgetDesktopSideRelationsForParent(params.conversationId)
+            codexForgetInventorySideRelationsForParent(params.conversationId)
           }
           this.sideRecoveryPending.delete(params.conversationId)
           this.persistedUnread.delete(params.conversationId)
@@ -5105,7 +5187,10 @@ class CodexDesktopCompanionBridge {
       )
       this.cancelWaitingEdgeRefresh(params.conversationId)
       shadow.ownerClientId = ownerClientId
-      const hintedParentThreadId = codexDesktopSideRelations.get(params.conversationId) || ''
+      const hintedParentThreadId = codexSideParentThreadId(params.conversationId)
+      if (shadow.sideConversation && validCodexThreadId(hintedParentThreadId)) {
+        shadow.parentThreadId = hintedParentThreadId
+      }
       const recoveryRequested = this.sideRecoveryPending.delete(params.conversationId)
       const recoveringSide = recoveryRequested
         && shadow.sideConversation
@@ -5128,12 +5213,12 @@ class CodexDesktopCompanionBridge {
           shadow.desktopActiveSince = previousShadow.desktopActiveSince
         }
       }
-      if (this.inventory.has(params.conversationId)) {
-        this.shadows.set(params.conversationId, shadow)
-        this.publishShadow(params.conversationId, shadow)
-        this.verifyUncorroboratedActiveSnapshot(params.conversationId, shadow)
-      } else if (shadow.sideConversation && validCodexThreadId(shadow.parentThreadId)) {
+      // A Desktop sideConversation snapshot is direct topology evidence and
+      // must win over a stale inventory membership race. Otherwise the child
+      // is briefly republished as an independent public task.
+      if (shadow.sideConversation && validCodexThreadId(shadow.parentThreadId)) {
         codexRememberDesktopSideRelation(params.conversationId, shadow.parentThreadId)
+        this.shadows.delete(params.conversationId)
         this.sideShadows.set(params.conversationId, shadow)
         this.publishSideShadow(params.conversationId, shadow)
         this.verifyUncorroboratedActiveSnapshot(params.conversationId, shadow)
@@ -5152,6 +5237,11 @@ class CodexDesktopCompanionBridge {
           && this.openParentLiveEpoch(shadow.parentThreadId, { preserveLatestTurnRefresh: true })) {
           this.emitParentActivity(shadow.parentThreadId)
         }
+      } else if (this.inventory.has(params.conversationId)) {
+        this.sideShadows.delete(params.conversationId)
+        this.shadows.set(params.conversationId, shadow)
+        this.publishShadow(params.conversationId, shadow)
+        this.verifyUncorroboratedActiveSnapshot(params.conversationId, shadow)
       } else {
         // Keep an unregistered main-task shadow inside preload until the
         // verified inventory scan supplies its anonymous key and action alias.
@@ -5475,7 +5565,7 @@ class CodexDesktopCompanionBridge {
     for (const [threadId, shadow] of this.sideShadows) {
       if (shadow.parentThreadId === parentThreadId) relatedThreadIds.add(threadId)
     }
-    for (const [threadId, relatedParentThreadId] of codexDesktopSideRelations) {
+    for (const [threadId, relatedParentThreadId] of codexAllSideRelations()) {
       if (relatedParentThreadId === parentThreadId) relatedThreadIds.add(threadId)
     }
     for (const threadId of relatedThreadIds) {
@@ -5553,7 +5643,7 @@ class CodexDesktopCompanionBridge {
   followAll(following, targetClientIds) {
     if (this.state !== 'connected') return
     for (const threadId of this.inventory) this.follow(threadId, following, targetClientIds)
-    for (const [threadId, parentThreadId] of codexDesktopSideRelations) {
+    for (const [threadId, parentThreadId] of codexAllSideRelations()) {
       if (!this.inventory.has(parentThreadId)) continue
       if (following && !this.sideShadows.has(threadId)) this.sideRecoveryPending.add(threadId)
       this.followAny(threadId, following, targetClientIds)
@@ -5699,6 +5789,11 @@ class CodexDesktopCompanionBridge {
       }
       const childEntries = [...this.sideShadows.entries()]
         .filter(([, sideShadow]) => sideShadow.parentThreadId === threadId)
+      for (const [childThreadId, parentThreadId] of codexInventorySideRelations) {
+        if (parentThreadId === threadId && !childEntries.some(([candidate]) => candidate === childThreadId)) {
+          childEntries.push([childThreadId, null])
+        }
+      }
       if (unreadIds) {
         for (const [childThreadId] of childEntries) {
           const childHasUnreadTurn = unreadIds.has(childThreadId)
@@ -5870,7 +5965,7 @@ class CodexDesktopCompanionBridge {
     }
     for (const threadId of this.liveUnread.keys()) if (!next.has(threadId)) this.liveUnread.delete(threadId)
     for (const threadId of this.persistedUnread.keys()) {
-      const sideParentThreadId = codexDesktopSideRelations.get(threadId)
+      const sideParentThreadId = codexSideParentThreadId(threadId)
       if (!next.has(threadId) && !(sideParentThreadId && next.has(sideParentThreadId))) {
         this.persistedUnread.delete(threadId)
       }
@@ -5892,16 +5987,17 @@ class CodexDesktopCompanionBridge {
       if (this.state === 'connected') this.followAny(threadId, false)
     }
     if (options.preserveSideRelations !== true) {
-      for (const [threadId, parentThreadId] of [...codexDesktopSideRelations]) {
+      for (const [threadId, parentThreadId] of codexAllSideRelations()) {
         if (next.has(parentThreadId)) continue
         if (this.state === 'connected') this.followAny(threadId, false)
         this.sideRecoveryPending.delete(threadId)
         this.persistedUnread.delete(threadId)
-        codexForgetDesktopSideRelation(threadId)
+        if (codexDesktopSideRelations.has(threadId)) codexForgetDesktopSideRelation(threadId)
+        if (codexInventorySideRelations.has(threadId)) codexForgetInventorySideRelation(threadId)
       }
       for (const threadId of [...this.waitingStates.keys()]) {
         const parentThreadId = this.sideShadows.get(threadId)?.parentThreadId
-          || codexDesktopSideRelations.get(threadId)
+          || codexSideParentThreadId(threadId)
         if (!next.has(threadId) && !(parentThreadId && next.has(parentThreadId))) {
           this.waitingStates.delete(threadId)
         }
@@ -5928,8 +6024,11 @@ class CodexDesktopCompanionBridge {
     for (const parentThreadId of sideParents) this.emitParentActivity(parentThreadId)
     if (this.state === 'connected') {
       for (const threadId of next) if (!previous.has(threadId)) this.follow(threadId, true)
-      for (const [threadId, parentThreadId] of codexDesktopSideRelations) {
-        if (!next.has(parentThreadId) || previous.has(parentThreadId) || this.sideShadows.has(threadId)) continue
+      for (const [threadId, parentThreadId] of codexAllSideRelations()) {
+        if (!next.has(parentThreadId) || this.sideShadows.has(threadId)) continue
+        const relationIsNew = !previous.has(parentThreadId)
+          || !this.sideRecoveryPending.has(threadId)
+        if (!relationIsNew) continue
         this.sideRecoveryPending.add(threadId)
         this.followAny(threadId, true)
       }
@@ -5945,7 +6044,7 @@ class CodexDesktopCompanionBridge {
   parentThreadIdFor(threadId) {
     if (!validCodexThreadId(threadId)) return ''
     const parentThreadId = this.sideShadows.get(threadId)?.parentThreadId
-      || codexDesktopSideRelations.get(threadId)
+      || codexSideParentThreadId(threadId)
       || threadId
     return validCodexThreadId(parentThreadId) ? parentThreadId : threadId
   }
@@ -6040,6 +6139,13 @@ function resetCodexThreadSessionState(options = {}) {
   codexInventoryMembershipReconcilePending = false
   codexInventoryMembershipForcePending = false
   codexLocalArchiveRecoverySuppressions.clear()
+  for (const threadId of [...codexInventorySideRelations.keys()]) {
+    codexForgetInventorySideRelation(threadId, {
+      preserveDesktopRelation: options.preserveDesktopActivity === true
+    })
+  }
+  codexInventorySideBranchEvidence.clear()
+  codexSideTopologyDiagnosticFingerprints.clear()
   codexPrivateBranchTerminals.clear()
   codexActivityDecisionCounters = {
     liveEpochOpened: 0,
@@ -6203,14 +6309,16 @@ function codexInventoryMembershipRoots() {
 function codexForgetExternallyArchivedThread(threadId, expectedKey = '') {
   const bridge = codexDesktopBridge
   const sideShadow = bridge?.sideShadows?.get(threadId)
-  if (sideShadow || codexDesktopSideRelations.has(threadId)) {
+  if (sideShadow || codexSideParentThreadId(threadId)) {
     codexForgetDesktopOpenedReadThread(threadId)
     bridge?.forgetWaitingState?.(threadId)
     codexForgetDesktopSideRelation(threadId)
+    codexForgetInventorySideRelation(threadId)
   } else {
     codexClearDesktopOpenedRead(bridge, threadId)
     bridge?.forgetWaitingState?.(threadId, true)
     codexForgetDesktopSideRelationsForParent(threadId)
+    codexForgetInventorySideRelationsForParent(threadId)
   }
   bridge?.sideRecoveryPending?.delete(threadId)
   bridge?.persistedUnread?.delete(threadId)
@@ -6690,8 +6798,7 @@ function handleCodexServerMessage(message) {
         && codexApplyStartedTurnNotification(bridge, known, activityThreadId, params.turn, threadId)) return true
       if (known && method === 'turn/completed' && codexApplyCompletedTurnNotification(bridge, known, threadId, params.turn)) return true
       if (method === 'turn/completed') {
-        const sideShadow = bridge.sideShadows.get(threadId)
-        const parentThreadId = validCodexThreadId(sideShadow?.parentThreadId) ? sideShadow.parentThreadId : threadId
+        const parentThreadId = bridge.parentThreadIdFor(threadId)
         const parent = codexActivityInventory.get(parentThreadId)
         if (parent) {
           bridge.scheduleLatestTurnRefresh(parentThreadId, {
@@ -7111,6 +7218,190 @@ function codexPrivateBranchRef(parentThreadId, branchThreadId, lane = 'desktop')
     .slice(0, 32)
 }
 
+function codexInventoryThreadTopology(rows) {
+  const rowById = new Map()
+  for (const value of Array.isArray(rows) ? rows : []) {
+    const row = codexRecord(value)
+    if (validCodexThreadId(row.id)) rowById.set(row.id, row)
+  }
+  const directParents = new Map()
+  const isolated = new Set()
+  for (const [threadId, row] of rowById) {
+    const forkedFromId = validCodexThreadId(row.forkedFromId) ? row.forkedFromId : ''
+    if (!row.forkedFromId) continue
+    const parent = forkedFromId ? rowById.get(forkedFromId) : null
+    const sessionId = codexNativeString(row.sessionId)
+    const parentSessionId = codexNativeString(parent?.sessionId)
+    if (!forkedFromId
+      || forkedFromId === threadId
+      || !parent
+      || !sessionId
+      || !parentSessionId
+      || sessionId !== parentSessionId) {
+      isolated.add(threadId)
+      continue
+    }
+    directParents.set(threadId, forkedFromId)
+  }
+  const relations = new Map()
+  const depths = new Map()
+  for (const threadId of directParents.keys()) {
+    const seen = new Set([threadId])
+    let current = threadId
+    let depth = 0
+    let invalid = false
+    while (directParents.has(current)) {
+      const parentThreadId = directParents.get(current)
+      depth += 1
+      if (!validCodexThreadId(parentThreadId) || seen.has(parentThreadId)) {
+        invalid = true
+        break
+      }
+      seen.add(parentThreadId)
+      current = parentThreadId
+    }
+    if (invalid || current === threadId || !rowById.has(current)) {
+      isolated.add(threadId)
+      continue
+    }
+    relations.set(threadId, current)
+    depths.set(threadId, depth)
+  }
+  return { rowById, relations, depths, isolated }
+}
+
+function codexRecordSideTopologyDecision(sourceCount, relations, depths, orphanCount) {
+  const byParent = new Map()
+  for (const [threadId, parentThreadId] of relations) {
+    const current = byParent.get(parentThreadId) || { sideCount: 0, nestedSideCount: 0 }
+    current.sideCount += 1
+    if ((depths.get(threadId) || 0) > 1) current.nestedSideCount += 1
+    byParent.set(parentThreadId, current)
+  }
+  const nextFingerprints = new Map()
+  const aggregateDetails = {
+    rootCount: Math.max(0, sourceCount - relations.size),
+    sideCount: relations.size,
+    orphanCount: Math.max(0, orphanCount),
+    nestedSideCount: [...depths.entries()].filter(([threadId, depth]) => relations.has(threadId) && depth > 1).length,
+    mergedParentCount: byParent.size
+  }
+  const aggregateSignature = JSON.stringify(aggregateDetails)
+  nextFingerprints.set('aggregate', aggregateSignature)
+  if (codexSideTopologyDiagnosticFingerprints.get('aggregate') !== aggregateSignature) {
+    recordCompanionDiagnosticEvent({
+      level: 'info',
+      scope: 'task-topology',
+      event: 'side-topology-decision',
+      outcome: relations.size ? 'merged' : orphanCount ? 'standalone' : 'root-only',
+      provider: 'codex',
+      details: aggregateDetails
+    })
+  }
+  for (const [parentThreadId, details] of byParent) {
+    const key = `parent:${codexThreadKey(parentThreadId)}`
+    const signature = JSON.stringify(details)
+    nextFingerprints.set(key, signature)
+    if (codexSideTopologyDiagnosticFingerprints.get(key) === signature) continue
+    recordCompanionDiagnosticEvent({
+      level: 'info',
+      scope: 'task-topology',
+      event: 'side-topology-decision',
+      outcome: 'merged-parent',
+      provider: 'codex',
+      taskRef: codexThreadKey(parentThreadId),
+      details: { rootCount: 1, orphanCount: 0, ...details }
+    })
+  }
+  codexSideTopologyDiagnosticFingerprints.clear()
+  for (const [key, signature] of nextFingerprints) codexSideTopologyDiagnosticFingerprints.set(key, signature)
+}
+
+function codexSyncInventorySideTopology(relations, depths, rowById, turns, unreadIds, orphanCount = 0) {
+  for (const [threadId, parentThreadId] of [...codexInventorySideRelations]) {
+    if (relations.get(threadId) === parentThreadId) continue
+    codexForgetInventorySideRelation(threadId)
+  }
+  const nextEvidence = new Map()
+  for (const [threadId, parentThreadId] of relations) {
+    // A row that was previously standalone may already have a public action
+    // alias. Once verified as a Side Chat it must not remain a direct-open
+    // target while the new root-only package replaces an older Renderer row.
+    for (const [alias, action] of codexThreadActions) {
+      if (action.threadId === threadId) codexThreadActions.delete(alias)
+    }
+    const row = codexRecord(rowById.get(threadId))
+    const statusSource = codexRecord(row.status)
+    const connectorStatus = ['active', 'idle', 'notLoaded', 'systemError'].includes(statusSource.type)
+      ? statusSource.type
+      : 'notLoaded'
+    const activeFlags = connectorStatus === 'active' && Array.isArray(statusSource.activeFlags)
+      ? statusSource.activeFlags.filter((flag) => flag === 'waitingOnApproval' || flag === 'waitingOnUserInput')
+      : []
+    const turn = turns.latest.get(threadId)
+    codexReconcileInventorySideOpenedReadWithTurn(threadId, parentThreadId, turn)
+    const previous = codexInventorySideBranchEvidence.get(threadId)
+    const sameTurn = turn
+      && previous?.parentThreadId === parentThreadId
+      && codexTimestampMs(previous.turnStartedAt) === codexTimestampMs(turn.startedAt)
+      && (!turn.id || !previous.turnId || turn.id === previous.turnId)
+    const turnLive = connectorStatus === 'active' && turn?.status === 'inProgress'
+    const persistedWaiting = connectorStatus === 'active' && activeFlags.length > 0 && turn?.status !== 'inProgress'
+    const activeEvidenceSequence = turnLive
+      ? sameTurn && Number(previous?.activeEvidenceSequence) > 0
+        ? previous.activeEvidenceSequence
+        : codexNextLiveEvidenceSequence()
+      : 0
+    codexInventorySideRelations.set(threadId, parentThreadId)
+    if (turnLive) codexForgetPrivateBranchTerminal(parentThreadId, threadId)
+    else if (turn && ['completed', 'interrupted', 'failed'].includes(turn.status)) {
+      codexRememberPrivateBranchTerminal(parentThreadId, threadId, turn, 'targeted-after-exit', {
+        activeEvidenceSequence: Number(previous?.activeEvidenceSequence) || 0,
+        idleConfirmed: connectorStatus !== 'active'
+      })
+      const parentKnown = codexActivityInventory.get(parentThreadId)
+      const sameAppServerBranch = parentKnown?.appServerLiveActive === true
+        && parentKnown.appServerLiveBranchThreadId === threadId
+      const sameAppServerTurn = typeof turn.id === 'string'
+        && typeof parentKnown?.lastTurnId === 'string'
+        && turn.id
+        && parentKnown.lastTurnId
+        ? turn.id === parentKnown.lastTurnId
+        : codexTimestampMs(turn.startedAt) >= codexTimestampMs(parentKnown?.lastTurnStartedAt)
+      if (sameAppServerBranch && sameAppServerTurn) codexClearAppServerLiveActive(parentKnown)
+    }
+    const terminal = codexReadPrivateBranchTerminal(parentThreadId, threadId)
+    const openedRead = codexDesktopOpenedReadAcknowledgements.has(threadId)
+    const unreadKnown = openedRead || unreadIds instanceof Set
+    const evidence = {
+      parentThreadId,
+      status: turnLive || persistedWaiting ? 'active' : connectorStatus,
+      activeFlags,
+      statusAuthority: turnLive ? 'app-server-live' : persistedWaiting ? 'persisted-decision' : 'connector',
+      activityEvidence: turnLive ? 'activity-event' : 'initial-snapshot',
+      activeEvidenceSequence,
+      unreadKnown,
+      hasUnreadTurn: openedRead ? false : unreadKnown && unreadIds.has(threadId),
+      turnId: typeof turn?.id === 'string' ? turn.id : '',
+      turnStartedAt: codexTimestampMs(turn?.startedAt),
+      lastTurnStatus: turn?.status || terminal?.lastTurnStatus || '',
+      lastTurnEvidence: turnLive ? 'turn-started' : terminal?.lastTurnEvidence || 'inventory',
+      terminalEvidenceSequence: Number(terminal?.terminalEvidenceSequence) || 0,
+      terminalAt: Number(terminal?.terminalAt) || 0,
+      idleConfirmed: terminal?.idleConfirmed === true,
+      observedAt: Math.max(
+        activeEvidenceSequence,
+        Number(terminal?.terminalEvidenceSequence) || 0,
+        Number(codexPrivateThreadGoalEvidence(threadId).goalEvidenceSequence) || 0
+      )
+    }
+    nextEvidence.set(threadId, evidence)
+  }
+  codexInventorySideBranchEvidence.clear()
+  for (const [threadId, evidence] of nextEvidence) codexInventorySideBranchEvidence.set(threadId, evidence)
+  codexRecordSideTopologyDecision(rowById.size, relations, depths, orphanCount)
+}
+
 function codexPrivateBranchEvidence(parentThreadId, known) {
   if (!validCodexThreadId(parentThreadId) || !known || typeof known.key !== 'string') return null
   const bridge = codexDesktopBridge
@@ -7118,7 +7409,7 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
   const childEntries = bridge?.sideShadows
     ? [...bridge.sideShadows.entries()].filter(([, shadow]) => shadow.parentThreadId === parentThreadId)
     : []
-  for (const [threadId, relatedParentThreadId] of codexDesktopSideRelations) {
+  for (const [threadId, relatedParentThreadId] of codexAllSideRelations()) {
     if (relatedParentThreadId === parentThreadId && !childEntries.some(([candidate]) => candidate === threadId)) {
       childEntries.push([threadId, null])
     }
@@ -7152,6 +7443,8 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
     lane: appServerOwn ? 'app-server' : ownDesktopActivity ? 'desktop' : 'connector'
   }, ...childEntries.map(([threadId, shadow]) => {
     const appServerChild = appServerLive && appServerBranchThreadId === threadId
+    const inventoryEvidence = codexInventorySideBranchEvidence.get(threadId)
+    const desktopActivity = codexDesktopShadowActivity(shadow)
     return {
       threadId,
       activity: appServerChild
@@ -7161,9 +7454,19 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
             waitingSince: known.waitingSince,
             planImplementationOnly: known.planImplementationOnly === true
           }
-        : codexDesktopShadowActivity(shadow) || { status: 'notLoaded', activeFlags: [] },
+        : desktopActivity || (inventoryEvidence
+          ? {
+              status: inventoryEvidence.status,
+              activeFlags: [...(inventoryEvidence.activeFlags || [])],
+              waitingSince: inventoryEvidence.waitingSince,
+              planImplementationOnly: inventoryEvidence.planImplementationOnly === true
+            }
+          : { status: 'notLoaded', activeFlags: [] }),
       shadow,
-      authority: appServerChild ? 'app-server-live' : 'desktop-live',
+      inventoryEvidence,
+      authority: appServerChild
+        ? 'app-server-live'
+        : desktopActivity ? 'desktop-live' : inventoryEvidence?.statusAuthority || 'unavailable',
       lane: appServerChild ? 'app-server' : 'desktop'
     }
   })]
@@ -7172,7 +7475,8 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
       && (row.shadow?.activityEvidence === 'activity-event'
         || (row.activity?.activeFlags || []).length > 0
         || codexInventorySnapshotLiveSequence(parentThreadId, row.threadId, known, row.shadow) > 0))
-    || (row.authority === 'app-server-live' && appServerLive)
+    || (row.authority === 'app-server-live'
+      && (appServerLive || row.inventoryEvidence?.activityEvidence === 'activity-event'))
     || (row.authority === 'persisted-decision'
       && ((row.activity?.activeFlags || []).length > 0 || row.activity?.planImplementationOnly === true))
     || row.activity?.planImplementationOnly === true
@@ -7182,17 +7486,28 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
   const hasRecordedTerminal = rows.some((row) => codexReadPrivateBranchTerminal(parentThreadId, row.threadId))
   const branches = rows.map((row) => {
     const live = branchIsLive(row)
-    const unread = codexDesktopUnreadObservation(
+    const desktopUnread = codexDesktopUnreadObservation(
       bridge,
       row.threadId === parentThreadId ? known : null,
       row.threadId,
       row.shadow
     )
+    const unread = desktopUnread.unreadAuthority !== 'unavailable'
+      ? desktopUnread
+      : codexDesktopOpenedReadAcknowledgements.has(row.threadId)
+        ? { hasUnreadTurn: false, unreadAuthority: 'desktop-live' }
+      : row.inventoryEvidence?.unreadKnown === true
+        ? {
+            hasUnreadTurn: row.inventoryEvidence.hasUnreadTurn === true,
+            unreadAuthority: 'desktop-persisted'
+          }
+        : desktopUnread
     const activeSequence = row.lane === 'app-server'
       ? Number(known.appServerLiveSequence) || Number(known.activeEvidenceSequence) || 0
       : Math.max(
           Number(row.shadow?.activityEventSequence) || 0,
-          codexInventorySnapshotLiveSequence(parentThreadId, row.threadId, known, row.shadow)
+          codexInventorySnapshotLiveSequence(parentThreadId, row.threadId, known, row.shadow),
+          Number(row.inventoryEvidence?.activeEvidenceSequence) || 0
         )
     let terminal = codexReadPrivateBranchTerminal(parentThreadId, row.threadId)
     if (live && activeSequence > 0 && activeSequence >= Number(terminal?.terminalEvidenceSequence || Number.MAX_SAFE_INTEGER)) {
@@ -7220,14 +7535,17 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
       && activeSequence > 0
       && Number(terminal.terminalEvidenceSequence) > activeSequence
     const goalEvidence = codexPrivateThreadGoalEvidence(row.threadId)
+    const openedRead = codexDesktopOpenedReadAcknowledgements.has(row.threadId)
     return {
       ref: codexPrivateBranchRef(parentThreadId, row.threadId, row.lane),
       branchKind: row.threadId === parentThreadId ? 'main' : 'side',
-      unreadKnown: unread.unreadAuthority !== 'unavailable',
-      hasUnreadTurn: unread.hasUnreadTurn === true,
+      unreadKnown: openedRead || unread.unreadAuthority !== 'unavailable',
+      hasUnreadTurn: openedRead ? false : unread.hasUnreadTurn === true,
       status: row.activity?.status || 'notLoaded',
       statusAuthority: row.authority,
-      activityEvidence: row.shadow?.activityEvidence === 'activity-event' || row.lane === 'app-server'
+      activityEvidence: row.shadow?.activityEvidence === 'activity-event'
+        || row.lane === 'app-server'
+        || row.inventoryEvidence?.activityEvidence === 'activity-event'
         ? 'activity-event'
         : 'initial-snapshot',
       activeFlags: live ? [...(row.activity?.activeFlags || [])] : [],
@@ -7251,13 +7569,17 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
             }
           : {}),
       waitingSince: Number(row.activity?.waitingSince) || 0,
-      turnStartedAt: Number(terminal?.turnStartedAt) || Number(known.lastTurnStartedAt) || 0,
+      turnStartedAt: Number(terminal?.turnStartedAt)
+        || Number(row.inventoryEvidence?.turnStartedAt)
+        || Number(known.lastTurnStartedAt)
+        || 0,
       terminalAt: Number(terminal?.terminalAt)
         || (terminal?.lastTurnStatus === 'completed' ? Number(known.lastTurnCompletedAt) || 0 : Number(terminal?.turnStartedAt) || 0),
       transitionAt: live
         ? Math.max(
             Number(row.activity?.waitingSince) || 0,
             Number(row.activity?.desktopActiveSince) || 0,
+            Number(row.inventoryEvidence?.turnStartedAt) || 0,
             Number(known.lastTurnStartedAt) || 0
           )
         : Math.max(Number(terminal?.terminalAt) || 0, Number(terminal?.turnStartedAt) || 0),
@@ -7266,6 +7588,7 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
         activeSequence,
         Number(terminal?.terminalEvidenceSequence) || 0,
         Number(terminal?.observedAt) || 0,
+        Number(row.inventoryEvidence?.observedAt) || 0,
         Number(known.terminalEvidenceSequence) || 0,
         Number(known.activityRevision) || 0,
         Number(goalEvidence.goalEvidenceSequence) || 0
@@ -8783,14 +9106,26 @@ async function scanVerifiedCodexInventory() {
     const archivedRows = missingDirtyThread ? await listAllCodexThreads(true) : []
     const archivedThreadIds = new Set(archivedRows.map((row) => codexRecord(row).id).filter(validCodexThreadId))
     const rows = await recoverDirtyCodexThreadsMissingFromInventory(listedRows, dirtySnapshot.keys(), archivedThreadIds)
+    const topology = codexInventoryThreadTopology(rows)
     const assignments = new Map()
-    let excludedSourceCount = 0
     for (const thread of rows) {
       const native = codexThreadNativeProject(thread, registry)
       if (native) assignments.set(thread.id, native)
-      else excludedSourceCount += 1
+    }
+    const sideRelations = new Map()
+    for (const [threadId, parentThreadId] of topology.relations) {
+      const parentAssignment = assignments.get(parentThreadId)
+      if (!parentAssignment) continue
+      assignments.set(threadId, parentAssignment)
+      sideRelations.set(threadId, parentThreadId)
     }
     const eligibleRows = rows.filter((thread) => assignments.has(thread.id))
+    const publicRows = eligibleRows.filter((thread) => !sideRelations.has(thread.id))
+    const eligibleRowById = new Map(eligibleRows.map((thread) => [thread.id, codexRecord(thread)]))
+    const eligibleDepths = new Map([...topology.depths].filter(([threadId]) => sideRelations.has(threadId)))
+    const orphanCount = eligibleRows.filter((thread) => topology.isolated.has(thread.id)
+      || topology.relations.has(thread.id) && !sideRelations.has(thread.id)).length
+    const excludedSourceCount = rows.length - eligibleRows.length
     const turns = await readCodexThreadTurnStatuses(eligibleRows, new Set(dirtySnapshot.keys()))
     await readCodexThreadGoals(eligibleRows)
     const endingRegistry = readCodexNativeRegistry()
@@ -8800,19 +9135,27 @@ async function scanVerifiedCodexInventory() {
     }
     let unreadIds = null
     try { unreadIds = readCodexDesktopUnreadIds() } catch {}
-    const threads = sanitizeCodexThreads(eligibleRows, registry, assignments, turns.latest, unreadIds)
+    codexSyncInventorySideTopology(
+      sideRelations,
+      eligibleDepths,
+      eligibleRowById,
+      turns,
+      unreadIds,
+      orphanCount
+    )
+    const threads = sanitizeCodexThreads(publicRows, registry, assignments, turns.latest, unreadIds)
     const eligibleIds = new Set(eligibleRows.map((thread) => thread.id))
     for (const threadId of codexThreadTurnStatusCache.keys()) {
       if (!eligibleIds.has(threadId)) codexThreadTurnStatusCache.delete(threadId)
     }
-    const retainedGoalIds = new Set([...eligibleIds, ...codexDesktopSideRelations.keys()])
+    const retainedGoalIds = new Set([...eligibleIds, ...codexAllSideRelations().keys()])
     for (const threadId of codexThreadGoalCache.keys()) {
       if (!retainedGoalIds.has(threadId)) codexThreadGoalCache.delete(threadId)
     }
     const validKeys = new Set(threads.map((thread) => thread.key))
     const threadByKey = new Map(threads.map((thread) => [thread.key, thread]))
     const activityInventory = new Map()
-    for (const row of eligibleRows) {
+    for (const row of publicRows) {
       const thread = codexRecord(row)
       const key = validCodexThreadId(thread.id) ? codexThreadKey(thread.id) : ''
       if (!key || !validKeys.has(key)) continue
@@ -8839,6 +9182,13 @@ async function scanVerifiedCodexInventory() {
         ? latestTurn.id
         : previousTurnMatchesProjection ? previousActivity?.lastTurnId || '' : ''
       const freshInventoryTurn = turns.freshIds?.has(thread.id) === true
+      if (freshInventoryTurn
+        && ['completed', 'interrupted', 'failed'].includes(latestTurn?.status)
+        && rolloutFallback.status !== 'active') {
+        codexRememberPrivateBranchTerminal(thread.id, thread.id, latestTurn, 'targeted-after-exit', {
+          idleConfirmed: true
+        })
+      }
       const inventoryInProgress = latestTurn?.status === 'inProgress' && codexTimestampMs(latestTurn.startedAt) > 0
       const previousInventoryTurnSequence = Number(previousActivity?.inventoryTurnEvidenceSequence) || 0
       const sameInventoryTurn = inventoryInProgress
@@ -8941,7 +9291,10 @@ async function scanVerifiedCodexInventory() {
     const retainedAt = Date.now()
     const retainMissingMappings = codexActivitySourceFingerprint === registry.fingerprint
     for (const [threadId, previousActivity] of retainMissingMappings ? previousActivityInventory : []) {
-      if (activityInventory.has(threadId) || !validCodexThreadId(threadId) || archivedThreadIds.has(threadId)) continue
+      if (activityInventory.has(threadId)
+        || sideRelations.has(threadId)
+        || !validCodexThreadId(threadId)
+        || archivedThreadIds.has(threadId)) continue
       const missingSince = codexTimestampMs(previousActivity.inventoryMissingSince) || retainedAt
       if (retainedAt - missingSince > CODEX_MISSING_ACTIVITY_MAPPING_RETENTION_MS) continue
       activityInventory.set(threadId, {
@@ -11516,6 +11869,10 @@ async function preflightCompanionTaskPackage(input = {}) {
       if (!key || !revisionAt) continue
       recordCompanionStateDecision('claude', key, decision, unread ? 'native-unread' : session.stateSource || 'provider-state')
       const localPin = persisted.pins.has(key)
+      // Local visibility is provider-neutral EyPc state. Without this the cold
+      // preflight rebuilt every Claude row as visible and silently dropped a
+      // hide that the Renderer had already persisted.
+      const hidden = Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt
       const phaseStatusAt = Number(session.waitingApprovalAt)
         || Number(session.waitingInputAt)
         || Number(session.lastStopAt)
@@ -11543,7 +11900,7 @@ async function preflightCompanionTaskPackage(input = {}) {
         displayOrder: order,
         cycleOrder: order,
         attentionOrder: order++,
-        hidden: false,
+        hidden,
         unread,
         planImplementation: false,
         planReady: false,
@@ -12394,7 +12751,7 @@ function runtimeIdentityHandshake(input = {}) {
   runtimeIdentityCompatible = runtimeIdentityArtifact?.revision === RUNTIME_IDENTITY_REVISION
     && runtimeIdentityArtifact?.artifactState === 'artifact-ready'
     && Object.keys(actual).every((key) => actual[key] && actual[key] === expectation[key])
-  return {
+  const result = {
     revision: RUNTIME_IDENTITY_REVISION,
     status: runtimeIdentityCompatible ? 'host-loaded' : 'reload-required',
     expected: expectation,
@@ -12406,6 +12763,33 @@ function runtimeIdentityHandshake(input = {}) {
       : `Preload ${actual.hostAssetId || 'unknown'} / UI ${expectation.hostAssetId || 'unknown'}，需要重新接入或重载`,
     ...(runtimeIdentityLoadError ? { errorCode: 'identity-missing' } : {})
   }
+  const diagnosticFingerprint = JSON.stringify({
+    status: result.status,
+    actual,
+    expectation,
+    artifactState: runtimeIdentityArtifact?.artifactState || 'missing'
+  })
+  if (diagnosticFingerprint !== runtimeIdentityDiagnosticFingerprint) {
+    runtimeIdentityDiagnosticFingerprint = diagnosticFingerprint
+    recordCompanionDiagnosticEvent({
+      level: 'info',
+      scope: 'runtime-identity',
+      event: 'runtime-identity-handshake',
+      outcome: result.status,
+      details: {
+        actualHostAssetId: actual.hostAssetId,
+        actualRendererAssetId: actual.rendererAssetId,
+        expectedHostAssetId: expectation.hostAssetId,
+        expectedRendererAssetId: expectation.rendererAssetId,
+        actualKernelRevision: actual.kernelRevision,
+        expectedKernelRevision: expectation.kernelRevision,
+        actualTaskPackageRevision: actual.taskPackageRevision,
+        expectedTaskPackageRevision: expectation.taskPackageRevision,
+        artifactState: runtimeIdentityArtifact?.artifactState || 'missing'
+      }
+    })
+  }
+  return result
 }
 
 function runtimeIdentityTaskFailure(outcome = 'failed') {
@@ -14313,6 +14697,8 @@ window.eypcPlatform = {
               errorCode: 'reload-required'
             },
         configure: (...args) => runtimeIdentityCompatible ? companionTaskKernel.configure(...args) : null,
+        setVisibility: (...args) => runtimeIdentityCompatible ? companionTaskKernel.setVisibility(...args) : null,
+        setLocalPin: (...args) => runtimeIdentityCompatible ? companionTaskKernel.setLocalPin(...args) : null,
         syncPackage: (...args) => runtimeIdentityCompatible ? companionTaskKernel.syncPackage(...args) : null,
         detach: (...args) => runtimeIdentityCompatible && companionTaskKernel.detach(...args),
         dispatch: (...args) => runtimeIdentityCompatible
