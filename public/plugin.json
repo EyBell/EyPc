@@ -181,6 +181,12 @@
       "cmds": ["进入 Codex 卡片", "直接展开 Codex 卡片", "Codex 多选", "Codex 会话操作"]
     },
     {
+      "code": "eypc-companion-quick",
+      "explain": "快速任务查看",
+      "mainHide": true,
+      "cmds": ["快速任务查看", "任务快开", "Companion 快速任务", "quick tasks"]
+    },
+    {
       "code": "eypc-codex-input",
       "explain": "打开 Codex 待输入任务",
       "mainHide": true,
@@ -190,7 +196,7 @@
       "code": "eypc-codex-completed-unread",
       "explain": "依次打开 Codex 已完成未读任务",
       "mainHide": true,
-      "cmds": ["Codex已完成未读", "打开第一个 Codex 已完成未读", "Codex 未读完成"]
+      "cmds": ["Codex已完成未读", "依次打开 Codex 已完成未读任务", "打开第一个 Codex 已完成未读", "Codex 未读完成"]
     },
     {
       "code": "eypc-codex-task-previous",
