@@ -33,8 +33,8 @@ describe('runtime diagnostics v3', () => {
     const decision = diagnostics.record({
       level: 'info',
       scope: 'task-push',
-      event: 'state-decision',
-      outcome: 'accepted',
+      event: 'state-proposal',
+      outcome: 'proposed',
       provider: 'claude',
       phase: 'completed',
       reason: 'native-unread-completion',

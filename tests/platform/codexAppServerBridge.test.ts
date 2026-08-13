@@ -564,6 +564,63 @@ function seedSingleCodexKernelTask(context: Record<string, any>, snapshot: Recor
   return kernel
 }
 
+function seedSingleClaudeKernelTask(context: Record<string, any>) {
+  const kernel = context.platform.companionKernel
+  const receipt = kernel.attach({ enabled: true, providers: { codex: false, claude: true } })
+  kernel.syncPackage({
+    lease: receipt.lease,
+    draft: {
+      schema: 'companion-task-draft-v4',
+      producer: 'renderer',
+      sourceTaskStateRevision: 'task-state-v10',
+      draftRevision: 1,
+      acceptedAt: 100,
+      enabled: true,
+      providers: { codex: false, claude: true },
+      complete: true,
+      focusedKey: '',
+      sourceGenerations: { codex: 0, claude: 1 },
+      sourceLaneGenerations: {
+        codex: { membership: 0, phase: 0, unread: 0 },
+        claude: { membership: 1, phase: 1, unread: 1 }
+      },
+      tasks: [{
+        key: 'claude:local-a',
+        provider: 'claude',
+        kind: 'claude-session',
+        phase: 'completed',
+        cycleTier: 'none',
+        dynamicGroup: 'completed',
+        actionAlias: 'local-a',
+        revisionAt: 100,
+        membershipRevision: 100,
+        phaseRevision: 100,
+        unreadRevision: 0,
+        visibilityRevision: 100,
+        statusEnteredAt: 100,
+        lastQuestionAt: 90,
+        createdAt: 80,
+        displayOrder: 0,
+        cycleOrder: 0,
+        attentionOrder: 0,
+        hidden: false,
+        unreadKnown: false,
+        unread: false,
+        planImplementation: false,
+        planReady: false,
+        planLifecycleRevision: 0,
+        paused: false,
+        turnMode: 'unknown',
+        idleConfirmed: true,
+        localPin: false,
+        dynamicEligible: true,
+        capabilities: { open: true, archive: true, pause: false, resume: false, executePlan: false }
+      }]
+    }
+  })
+  return kernel
+}
+
 function loadCodexBridge(
   child: FakeCodexProcess,
   readRegistry: (candidate: string, readIndex: number) => string = () => nativeRegistryText(),
@@ -777,7 +834,7 @@ function loadCodexBridge(
   }
   if (useHostDate) Object.assign(sandbox, { Date })
   sandbox.globalThis = sandbox
-  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, codexInventoryThreadTopology, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, codexRolloutRuntimeStateText, resetCodexThreadSessionState, markCodexThreadTurnStatusDirty, companionPhaseForCodexThread, applyCodexActivityToCompanionKernel, applyClaudeStateToCompanionKernel, privateBranchEvidence: (threadId) => codexPrivateBranchEvidence(threadId, codexActivityInventory.get(threadId)), openedReadAcknowledgements: () => [...codexDesktopOpenedReadAcknowledgements.entries()], openCompanionCodexTarget, expireCompanionCodexAlias: (key) => { for (const entry of codexThreadActions.values()) if (entry.key === key) entry.expiresAt = 0 }, companionHostReconciliationPending: () => Boolean(companionHostReconcileInFlight) || companionHostReconcilePendingProviders.size > 0 };`, sandbox, { filename: 'preload.js' })
+  vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, codexInventoryThreadTopology, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, codexRolloutRuntimeStateText, resetCodexThreadSessionState, markCodexThreadTurnStatusDirty, companionPhaseForCodexThread, applyCodexActivityToCompanionKernel, applyClaudeStateToCompanionKernel, applyClaudeUnreadToCompanionKernel, applyClaudeInventoryDeltaToCompanionKernel, privateBranchEvidence: (threadId) => codexPrivateBranchEvidence(threadId, codexActivityInventory.get(threadId)), openedReadAcknowledgements: () => [...codexDesktopOpenedReadAcknowledgements.entries()], openCompanionCodexTarget, expireCompanionCodexAlias: (key) => { for (const entry of codexThreadActions.values()) if (entry.key === key) entry.expiresAt = 0 }, companionHostReconciliationPending: () => Boolean(companionHostReconcileInFlight) || companionHostReconcilePendingProviders.size > 0 };`, sandbox, { filename: 'preload.js' })
   const exposedPlatform = (sandbox.window as { eypcPlatform: Record<string, any> }).eypcPlatform
   handshakeTestRuntime(exposedPlatform)
   return {
@@ -814,6 +871,8 @@ function loadCodexBridge(
         companionPhaseForCodexThread(thread: Record<string, unknown>): string
         applyCodexActivityToCompanionKernel(delta: Record<string, unknown>): boolean
         applyClaudeStateToCompanionKernel(): boolean
+        applyClaudeUnreadToCompanionKernel(): Promise<boolean>
+        applyClaudeInventoryDeltaToCompanionKernel(delta: Record<string, unknown>): boolean
         privateBranchEvidence(threadId: string): Record<string, any> | null
         openedReadAcknowledgements(): Array<[string, Record<string, unknown>]>
         openCompanionCodexTarget(target: Record<string, unknown>): Promise<Record<string, unknown>>
@@ -884,6 +943,57 @@ describe('Codex App Server preload bridge', () => {
     handshakeTestRuntime(context.platform)
     expect(handshakes()).toHaveLength(1)
     expect(JSON.stringify(handshakes())).not.toMatch(/prompt|objective|threadId|path/i)
+    context.bridge.close()
+  })
+
+  it('treats an exact Claude unread snapshot as known across unread and inventory lanes', async () => {
+    const noopWatch = () => () => undefined
+    const context = loadCodexBridge(
+      new FakeCodexProcess(),
+      () => nativeRegistryText(),
+      null,
+      false,
+      true,
+      {
+        inspect: () => ({ available: true }),
+        readCodeUnread: async () => ({ ids: [], generation: 2, readAt: 200 }),
+        watchCodeState: noopWatch,
+        watchCodeSessions: noopWatch,
+        watchCodeUnread: noopWatch,
+        close: () => undefined
+      }
+    )
+    const kernel = seedSingleClaudeKernelTask(context)
+
+    await expect(context.native.applyClaudeUnreadToCompanionKernel()).resolves.toBe(true)
+    expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === 'claude:local-a'))
+      .toMatchObject({ phase: 'completed', unreadKnown: true, unread: false })
+
+    expect(context.native.applyClaudeInventoryDeltaToCompanionKernel({
+      acceptedAt: 300,
+      mutations: [{
+        mutation: 'upsert',
+        key: 'claude:local-b',
+        session: {
+          sessionId: 'local-b',
+          phase: 'completed',
+          stateCompatibility: 'compatible',
+          stateGeneration: 300,
+          phaseUpdatedAt: 300,
+          turnStartedAt: 250,
+          lastStopAt: 300,
+          lastActivityAt: 300,
+          metadataUpdatedAt: 300,
+          createdAt: 100
+        }
+      }]
+    })).toBe(true)
+    expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === 'claude:local-b'))
+      .toMatchObject({ phase: 'completed', unreadKnown: true, unread: false })
+    expect(context.diagnosticEvents.filter((event) => event.event === 'claude-unread').at(-1))
+      .toMatchObject({ outcome: 'accepted', details: { canonicalMismatchCount: 0 } })
+    expect(context.diagnosticEvents.filter((event) => event.event === 'claude-inventory').at(-1))
+      .toMatchObject({ outcome: 'accepted', details: { canonicalMismatchCount: 0 } })
     context.bridge.close()
   })
 
@@ -1628,6 +1738,42 @@ describe('Codex App Server preload bridge', () => {
       sourceTaskStateRevision: 'task-state-v10',
       providers: { codex: true, claude: false }
     })
+    context.triggerPluginOut(true)
+  })
+
+  it('activates the quick task view straight from a cold global entry without waiting for the Renderer', async () => {
+    const context = loadCodexBridge(new FakeCodexProcess(), () => nativeRegistryText(), null, true, true, null, true)
+    context.platform.float.sync({
+      visible: true,
+      snapshot: {
+        version: 2,
+        baseRevision: 1,
+        style: 'water',
+        expandedFields: ['tasks'],
+        conversationInboxEnabled: true,
+        quota: {},
+        conversations: { ongoing: [], stopped: [], hidden: [], completedUnread: [], completed: [] }
+      },
+      position: { displayId: 'display-1', edge: 'right' }
+    })
+    await vi.waitFor(() => expect(context.floatSends.length).toBeGreaterThan(0))
+    const forwarded: Array<{ code?: string } | null> = []
+    const stop = context.platform.onEnterPayload((payload: { code?: string } | null) => forwarded.push(payload))
+
+    context.triggerPluginEnter({ code: 'eypc-companion-quick' })
+
+    const activations = context.floatSends.filter((entry) => entry.channel === 'eypc-float:activate')
+    expect(activations).toHaveLength(1)
+    expect(activations[0].payload).toMatchObject({ command: 'quick' })
+    // 宿主自己拥有悬浮子窗口，所以冷启动一次到位，不把同一个意图再重放给 Renderer。
+    expect(forwarded).toEqual([])
+    expect(context.platform.getEnterPayload()).toBeNull()
+
+    // 其它 code 不得被这条快速通道吞掉。
+    context.triggerPluginEnter({ code: 'eypc-main' })
+    expect(context.floatSends.filter((entry) => entry.channel === 'eypc-float:activate')).toHaveLength(1)
+    expect(forwarded).toEqual([{ code: 'eypc-main' }])
+    stop()
     context.triggerPluginOut(true)
   })
 
@@ -3271,9 +3417,11 @@ describe('Codex App Server preload bridge', () => {
   it('does not let a full inventory rebuild overwrite exact live inProgress evidence', async () => {
     const child = new FakeCodexProcess()
     child.interruptedTurnIds.add(FIXED_THREAD_IDS[1])
-    const { bridge } = loadCodexBridge(child)
+    const context = loadCodexBridge(child)
+    const { bridge } = context
     const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
     const task = baseline.value.threads[1]
+    const kernel = seedSingleCodexKernelTask(context, baseline, task)
 
     child.stdout.emit('data', `${JSON.stringify({
       method: 'turn/started',
@@ -3289,6 +3437,33 @@ describe('Codex App Server preload bridge', () => {
       lastTurnStatus: 'inProgress',
       lastTurnEvidence: 'turn-started'
     })
+    expect(kernel.getLatest().tasks.find((candidate: Record<string, any>) => candidate.key === task.key)).toMatchObject({
+      phase: 'running'
+    })
+
+    const liveGeneration = Number((await bridge.readActivitySnapshot()).value.generation) || 1
+    expect(context.native.applyCodexActivityToCompanionKernel({
+      generation: liveGeneration + 1,
+      receivedAt: 2_000_000_000_000,
+      inventoryChanged: false,
+      entries: [{
+        key: task.key,
+        status: 'idle',
+        statusAuthority: 'connector',
+        lastTurnStatus: 'interrupted',
+        lastTurnEvidence: 'targeted-after-exit',
+        lastTurnStartedAt: 1_800_000_000_000,
+        idleConfirmed: true
+      }]
+    })).toBe(true)
+    expect(kernel.getLatest().tasks.find((candidate: Record<string, any>) => candidate.key === task.key)).toMatchObject({
+      phase: 'running'
+    })
+    expect(context.diagnosticEvents.filter((event) => event.scope === 'task-push' && event.event === 'state-proposal').at(-1))
+      .toMatchObject({ outcome: 'proposed', phase: 'stopped' })
+    expect(context.diagnosticEvents.some((event) => event.event === 'state-decision' && event.outcome === 'accepted')).toBe(false)
+    expect(context.diagnosticEvents.filter((event) => event.scope === 'task-push' && event.event === 'codex-activity').at(-1))
+      .toMatchObject({ outcome: 'superseded', details: { canonicalMismatchCount: 1 } })
 
     await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
     expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({
@@ -3296,6 +3471,14 @@ describe('Codex App Server preload bridge', () => {
       statusAuthority: 'app-server-live',
       lastTurnStatus: 'inProgress',
       lastTurnEvidence: 'turn-started'
+    })
+    expect(context.native.privateBranchEvidence(FIXED_THREAD_IDS[1])?.branches?.[0]).toMatchObject({
+      status: 'active',
+      lastTurnStatus: 'inProgress',
+      lastTurnEvidence: 'turn-started'
+    })
+    expect(kernel.getLatest().tasks.find((candidate: Record<string, any>) => candidate.key === task.key)).toMatchObject({
+      phase: 'running'
     })
     bridge.close()
   })
@@ -5284,6 +5467,16 @@ describe('Codex App Server preload bridge', () => {
     await vi.waitFor(() => expect(context.native.privateBranchEvidence(parentThreadId)?.branches).toEqual(expect.arrayContaining([
       expect.objectContaining({ branchKind: 'side', lastTurnStatus: 'inProgress' })
     ])))
+    const appServerBranches = context.native.privateBranchEvidence(parentThreadId)?.branches || []
+    const sideRef = appServerBranches.find((branch: Record<string, any>) => branch.branchKind === 'side')?.ref
+    expect(appServerBranches.find((branch: Record<string, any>) => branch.branchKind === 'side')).toMatchObject({
+      statusAuthority: 'app-server-live',
+      lastTurnStatus: 'inProgress'
+    })
+    expect(appServerBranches.find((branch: Record<string, any>) => branch.branchKind === 'main')).not.toMatchObject({
+      statusAuthority: 'app-server-live',
+      lastTurnStatus: 'inProgress'
+    })
     expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === parent.key))
       .toMatchObject({ phase: 'running', unreadKnown: true, unread: true })
     expect(kernel.getPackage().views.counts).toMatchObject({ active: 1, unread: 0 })
@@ -5314,6 +5507,8 @@ describe('Codex App Server preload bridge', () => {
       }
     })
     await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(context.native.privateBranchEvidence(parentThreadId)?.branches
+      .find((branch: Record<string, any>) => branch.branchKind === 'side')?.ref).toBe(sideRef)
     expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === parent.key))
       .toMatchObject({ phase: 'running', unread: true })
     expect(kernel.getPackage().views.counts).toMatchObject({ active: 1, unread: 0 })
