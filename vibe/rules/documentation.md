@@ -11,11 +11,20 @@ Tool: tool-neutral (codex, claude, and any CodeNote-routed agent)
 - Error memory: [../knowledge/error-memory.md](../knowledge/error-memory.md#L1).
 - Data notes: [../ai-db/README.md](../ai-db/README.md#L1), with AI-DB storage and naming delegated to [CodeNote DB governance](../../../../../czz/CzzProj/CodeNote/DevelopRef/调试工具/db/governance/README.md#5-workspace-shape-and-naming).
 - Reusable uTools plugin development guides and failure usage: [CodeNote uTools module](../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/README.md#L1).
-- End-user feature operation guides (settings「说明」): [../../src/help/guides/](../../src/help/guides/) · loader [../../src/help/guides/index.ts](../../src/help/guides/index.ts#L1).
+- End-user feature operation guides (settings「说明」): [guide registry and loader](../../src/help/guides/index.ts#L1).
+
+## Process Contract
+
+- `Quick` has no Task file; `Standard` non-requirement uses one `task-card.md`; `Standard requirement` uses `raw-requirement.md + spec.md` with the `Spec owner`; `Controlled` uses the five-file ledger.
+- Local `L0/L1` maps to Quick, `L2` defaults to Standard, and `L3/L4` maps to Controlled. File count alone does not promote a task.
+- Process owner: [process/rules.md](../../../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/process/rules.md#L1).
+- Rollout owner: [codex-evolution/rollout/README.md](../../../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/codex-evolution/rollout/README.md#L1).
+- Runtime owner: [codex-evolution/runtime-supervision/README.md](../../../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/codex-evolution/runtime-supervision/README.md#L1).
+- Communication owner: [process/communication-io.md](../../../../../czz/CzzProj/CodeNote/AiRef/VibePractice/Vibe_Rules/process/communication-io.md#L1).
 
 ## Feature Help Guides (required)
 
-User-facing operation help is product surface, not optional developer notes. Authority for coverage is [featureRegistry.ts](../../src/runtime/feature/featureRegistry.ts#L1) `FEATURES` plus matching Markdown under [src/help/guides/](../../src/help/guides/).
+User-facing operation help is product surface, not optional developer notes. Authority for coverage is [featureRegistry.ts](../../src/runtime/feature/featureRegistry.ts#L1) `FEATURES` plus the matching Markdown imported by [the guide registry](../../src/help/guides/index.ts#L1).
 
 ### When a guide is mandatory
 
