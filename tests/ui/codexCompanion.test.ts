@@ -959,6 +959,166 @@ describe('Codex Companion V4 UI contract', () => {
     expect(document.activeElement).toBe(wrapper.get('input[aria-label="搜索当前 Codex 页签"]').element)
   })
 
+  it('keeps one real keyboard cursor and moves from the first row instead of skipping it', async () => {
+    const { wrapper } = mountFloat(true, floatSnapshot('ongoing'))
+    await wrapper.vm.$nextTick()
+    const focusKeys = () => wrapper.findAll('[data-focus-key]').map((node) => node.attributes('data-focus-key') || '')
+    const cursorKey = () => wrapper.findAll('[data-focus-key]').find((node) => node.attributes('tabindex') === '0')?.attributes('data-focus-key') || ''
+    const keys = focusKeys()
+    expect(keys.length).toBeGreaterThan(1)
+
+    // 挂载后游标就是真实存在的第一项，不再依赖 focusedItem 的隐式回退。
+    expect(cursorKey()).toBe(keys[0])
+    expect(wrapper.findAll('[data-focus-key][tabindex="0"]')).toHaveLength(1)
+
+    const root = wrapper.get('.codex-float-root')
+    await root.trigger('keydown', { key: 'ArrowDown', code: 'ArrowDown' })
+    expect(cursorKey()).toBe(keys[1])
+    await root.trigger('keydown', { key: 'ArrowUp', code: 'ArrowUp' })
+    expect(cursorKey()).toBe(keys[0])
+    // 不环绕：已在首项时 ArrowUp 停住。
+    await root.trigger('keydown', { key: 'ArrowUp', code: 'ArrowUp' })
+    expect(cursorKey()).toBe(keys[0])
+  })
+
+  it('still dispatches list commands when DOM focus never entered the float root', async () => {
+    const { wrapper } = mountFloat(true, floatSnapshot('ongoing'))
+    await wrapper.vm.$nextTick()
+    const cursorKey = () => wrapper.findAll('[data-focus-key]').find((node) => node.attributes('tabindex') === '0')?.attributes('data-focus-key') || ''
+    const keys = wrapper.findAll('[data-focus-key]').map((node) => node.attributes('data-focus-key') || '')
+    ;(document.activeElement as HTMLElement | null)?.blur?.()
+    expect(wrapper.element.contains(document.activeElement)).toBe(false)
+
+    // 宿主刚显示子窗口时事件目标是 document.body，永远不会冒泡到根元素。
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', bubbles: true }))
+    await wrapper.vm.$nextTick()
+    expect(cursorKey()).toBe(keys[1])
+  })
+
+  it('enters quick filter mode, numbers visible tasks and opens by Ctrl+number from the search box', async () => {
+    const activations: Array<(payload: { requestedAt?: number; command?: 'new-thread' | 'quick' }) => void> = []
+    const { wrapper, action, setExpansion } = mountFloat(true, floatSnapshot('ongoing'), {
+      onActivate: (listener) => { activations.push(listener); return () => undefined }
+    })
+    await wrapper.vm.$nextTick()
+    // 编号常驻：`Alt+数字` 在展开卡片里始终可用，所以进入筛选模式前编号就该在。
+    const restingRows = wrapper.findAll('.float-task-row').filter((row) => row.find('.task-quick-index').exists())
+    expect(restingRows.length).toBeGreaterThan(0)
+    expect(restingRows[0].attributes('aria-label')).toContain('快捷键 Alt+1 打开')
+    expect(restingRows[0].attributes('aria-label')).not.toContain('Ctrl+1')
+
+    activations[0]?.({ command: 'quick', requestedAt: NOW })
+    await flushPromises()
+    const search = wrapper.get('input[aria-label="搜索当前 Codex 页签"]')
+    expect(setExpansion).toHaveBeenCalledWith(true, false)
+    expect(document.activeElement).toBe(search.element)
+    expect(search.attributes('placeholder')).toBe('筛选任务，c-1…0 直接打开')
+
+    const badges = wrapper.findAll('.task-quick-index')
+    expect(badges.length).toBeGreaterThan(0)
+    expect(badges.length).toBeLessThanOrEqual(10)
+    expect(badges.map((node) => node.text())).toEqual(badges.map((_node, index) => String(index + 1)))
+    // 编号只落在任务行上，且不改变行布局。
+    expect(wrapper.findAll('.float-project-row .task-quick-index')).toHaveLength(0)
+    expect(badges[0].attributes('aria-hidden')).toBe('true')
+
+    const numberedRows = wrapper.findAll('.float-task-row').filter((row) => row.find('.task-quick-index').exists())
+    expect(numberedRows[0].attributes('aria-label')).toContain('快捷键 Ctrl+1 或 Alt+1 打开')
+
+    // 在搜索框里直接按 Ctrl+1 打开第 1 条，不需要先离开输入框。
+    await search.trigger('keydown', { key: '1', code: 'Digit1', ctrlKey: true })
+    expect(action).toHaveBeenCalledWith('codex.task.open', expect.objectContaining({ source: 'local-shortcut' }))
+    // 意图已消费：退出筛选模式，但编号保留给常驻的 Alt 路径。
+    await wrapper.vm.$nextTick()
+    const afterOpen = wrapper.findAll('.float-task-row').filter((row) => row.find('.task-quick-index').exists())
+    expect(afterOpen.length).toBeGreaterThan(0)
+    expect(afterOpen[0].attributes('aria-label')).toContain('快捷键 Alt+1 打开')
+  })
+
+  it('opens the numbered row with Alt+number without entering filter mode', async () => {
+    const { wrapper, action } = mountFloat(true, floatSnapshot('ongoing'))
+    await wrapper.vm.$nextTick()
+    const root = wrapper.get('.codex-float-root')
+
+    await root.trigger('keydown', { key: '2', code: 'Digit2', altKey: true })
+    expect(action).toHaveBeenCalledWith('codex.task.open', expect.objectContaining({ source: 'local-shortcut' }))
+
+    // `Alt+0` 是第 10 项；本装配只有少数几行，因此不应该派发任何 open。
+    action.mockClear()
+    await root.trigger('keydown', { key: '0', code: 'Digit0', altKey: true })
+    expect(action).not.toHaveBeenCalledWith('codex.task.open', expect.anything())
+  })
+
+  it('gives Alt+F a task-only Quick Jump whose marker opens the conversation instead of only focusing it', async () => {
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ top: 20, bottom: 52, left: 20, right: 100, width: 80, height: 32, x: 20, y: 20, toJSON: () => ({}) })
+    const { wrapper, action } = mountFloat(true, floatSnapshot('ongoing'))
+    await wrapper.vm.$nextTick()
+    const root = wrapper.get('.codex-float-root')
+
+    // 标记层要等一帧才完成定位。
+    const settleMarkers = async () => {
+      await wrapper.vm.$nextTick()
+      await new Promise<void>((resolveFrame) => requestAnimationFrame(() => resolveFrame()))
+      await wrapper.vm.$nextTick()
+    }
+
+    // 普通 F：标记覆盖全部可跳转控件。
+    await root.trigger('keydown', { key: 'f', code: 'KeyF' })
+    await settleMarkers()
+    const allMarkers = wrapper.findAll('.quick-jump-badge').length
+    expect(allMarkers).toBeGreaterThan(0)
+    await root.trigger('keydown', { key: 'Escape', code: 'Escape' })
+
+    // Alt+F：标记只落在展示出来的会话行上，数量必然更少。
+    await root.trigger('keydown', { key: 'f', code: 'KeyF', altKey: true })
+    await settleMarkers()
+    const taskBadges = wrapper.findAll('.quick-jump-badge')
+    expect(taskBadges.length).toBeGreaterThan(0)
+    expect(taskBadges.length).toBeLessThan(allMarkers)
+
+    // 激活标记 = 点击标题效果：直接打开该会话，而不是只转移高亮。
+    const firstMarker = taskBadges[0].text().trim().toLowerCase()
+    await root.trigger('keydown', { key: firstMarker, code: `Key${firstMarker.toUpperCase()}` })
+    expect(action).toHaveBeenCalledWith('codex.task.open', expect.objectContaining({ source: 'manual-quick-jump' }))
+    rect.mockRestore()
+  })
+
+  it('lets the session search box navigate and keeps Escape unwinding query before quick mode', async () => {
+    const activations: Array<(payload: { requestedAt?: number; command?: 'new-thread' | 'quick' }) => void> = []
+    const { wrapper } = mountFloat(true, floatSnapshot('ongoing'), {
+      onActivate: (listener) => { activations.push(listener); return () => undefined }
+    })
+    await wrapper.vm.$nextTick()
+    activations[0]?.({ command: 'quick', requestedAt: NOW })
+    await flushPromises()
+
+    const search = wrapper.get('input[aria-label="搜索当前 Codex 页签"]')
+    const cursorKey = () => wrapper.findAll('[data-focus-key]').find((node) => node.attributes('tabindex') === '0')?.attributes('data-focus-key') || ''
+    const keys = wrapper.findAll('[data-focus-key]').map((node) => node.attributes('data-focus-key') || '')
+    await search.trigger('keydown', { key: 'ArrowDown', code: 'ArrowDown' })
+    expect(cursorKey()).toBe(keys[1])
+
+    const numberedRow = () => wrapper.findAll('.float-task-row').find((row) => row.find('.task-quick-index').exists())
+    expect(numberedRow()?.attributes('aria-label')).toContain('快捷键 Ctrl+1 或 Alt+1 打开')
+
+    // 筛不到任何任务时编号自然清空——编号永远等于当前可见任务行。
+    await search.setValue('zzz-no-such-task')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('.task-quick-index')).toHaveLength(0)
+
+    // Escape 先清查询词，再退出筛选模式，最后才轮到收起卡片。
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }))
+    await wrapper.vm.$nextTick()
+    expect((search.element as HTMLInputElement).value).toBe('')
+    expect(numberedRow()?.attributes('aria-label')).toContain('快捷键 Ctrl+1 或 Alt+1 打开')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }))
+    await wrapper.vm.$nextTick()
+    // 退出筛选模式后编号仍在（Alt 常驻），但不再宣称 Ctrl 也能用。
+    expect(numberedRow()?.attributes('aria-label')).toContain('快捷键 Alt+1 打开')
+    expect(numberedRow()?.attributes('aria-label')).not.toContain('Ctrl+1')
+  })
+
   it('returns to the pre-card focus through Shift+Escape without changing float settings', async () => {
     const { wrapper, returnFocus, action } = mountFloat(true, floatSnapshot('all'))
     await wrapper.get('.codex-float-root').trigger('keydown', { key: 'Escape', code: 'Escape', shiftKey: true })

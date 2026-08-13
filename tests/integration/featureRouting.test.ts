@@ -53,6 +53,13 @@ describe('uTools feature routing', () => {
       preserveCurrentTab: true,
       visibilityOwner: 'mainHide'
     })
+    expect(routePluginFeature({ code: 'eypc-companion-quick' }, undefined, 'mqtt')).toEqual({
+      tab: 'mqtt',
+      focusSearch: false,
+      actionId: 'codex.quick.activate',
+      preserveCurrentTab: true,
+      visibilityOwner: 'mainHide'
+    })
     expect(routePluginFeature({ code: 'eypc-codex-input' }, undefined, 'mqtt')).toEqual({
       tab: 'mqtt',
       focusSearch: false,
@@ -193,6 +200,12 @@ describe('uTools feature routing', () => {
       focusSearch: false,
       settingsMaintenanceSection: 'features',
       actionId: 'codex.float.activate'
+    })
+    expect(routePluginFeature({ code: 'eypc-companion-quick' }, featureConfigs)).toEqual({
+      tab: 'settings',
+      focusSearch: false,
+      settingsMaintenanceSection: 'features',
+      actionId: 'codex.quick.activate'
     })
     expect(routePluginFeature({ code: 'eypc-companion-archive' }, featureConfigs)).toEqual({
       tab: 'settings',
