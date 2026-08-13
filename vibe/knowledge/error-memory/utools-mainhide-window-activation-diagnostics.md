@@ -5,7 +5,7 @@ scope: project-pointer
 fingerprint: mainHide-slot-route-applies-generic-hide-after-dispatch-or-runtime-hides-before-async-activation__fallback-concealed__failure-undiagnosable
 first_seen: 2026-07-27
 last_verified: 2026-08-03
-review_after: promote only after WJ-22 actual uTools slot reload acceptance and RAW-139 cold Codex task entries pass real-host acceptance
+review_after: 2026-09-13
 evidence:
   - vibe/specs/260724/1527-window-jump-workbench/verify.md
 tags:

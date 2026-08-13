@@ -5,7 +5,7 @@ scope: project-pointer
 fingerprint: utools-onpluginout-callback-treats-false-as-process-shutdown__background-hide-terminates-action-or-clears-runtime-authority__branch-on-isKill
 first_seen: 2026-08-03
 last_verified: 2026-08-10
-review_after: promote only after real uTools ordinary-hide preserves Actions and companion float across repeated mainHide task shortcuts
+review_after: 2026-09-13
 evidence:
   - vibe/specs/260729/1435-codex-environment-actions/verify.md
 tags:

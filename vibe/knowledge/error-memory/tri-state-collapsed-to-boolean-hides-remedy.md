@@ -5,6 +5,7 @@ scope: project
 fingerprint: tri-state-field__consumed-as-equals-one-value__middle-state-falls-to-the-not-installed-branch__status-text-asks-for-the-remedy__remedy-control-is-hidden-or-mislabeled
 first_seen: 2026-08-06
 last_verified: 2026-08-06
+review_after: 2027-02-06
 evidence:
   - src/pages/CodexPage.vue
   - src/domain/companionPresentation.ts
