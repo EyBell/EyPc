@@ -5,6 +5,10 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "active / interaction-superseded-by-RAW-044"
+scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-codex-raw-044
+    scope: "interaction"
 ---
 
 # RAW-041 · companion-codex

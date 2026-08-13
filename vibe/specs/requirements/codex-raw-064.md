@@ -7,6 +7,10 @@ authority: user-stated
 source_annotations: "active / refines-RAW-056-RAW-058-and-RAW-063 / interrupted-visible-clause-superseded-by-RAW-066"
 relations:
   - refines-RAW-056-RAW-058-and-RAW-063
+scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-codex-raw-066
+    scope: "interrupted-visible-clause"
 ---
 
 # RAW-064 · companion-codex

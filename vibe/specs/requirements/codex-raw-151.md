@@ -7,6 +7,10 @@ authority: user-stated
 source_annotations: "host-exposed-defect-superseded-by-RAW-153 / refines-RAW-135-141-145-147 / bidirectional-waiting-edge-hot-path"
 relations:
   - refines-RAW-135-141-145-147
+scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-codex-raw-153
+    scope: "host-exposed-defect"
 ---
 
 # RAW-151 · companion-codex

@@ -7,6 +7,10 @@ authority: user-stated
 source_annotations: "focused-automated-verified-host-pending / refines-RAW-093-136-138-141 / persisted-plan-wait-and-unread-stabilization"
 relations:
   - refines-RAW-093-136-138-141
+scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-shared-raw-160
+    scope: "任意新 Turn 清除 Plan"
 ---
 
 # RAW-142 · companion-codex

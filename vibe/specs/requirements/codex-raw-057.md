@@ -5,6 +5,10 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "active / selection-contrast-refines-RAW-055"
+scoped_relations:
+  - kind: refines
+    target: eypc-req-codex-raw-055
+    scope: "selection-contrast"
 ---
 
 # RAW-057 · companion-codex

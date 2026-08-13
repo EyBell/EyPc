@@ -5,6 +5,10 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "color-portion-superseded-by-RAW-071"
+scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-codex-raw-071
+    scope: "color-portion"
 ---
 
 # RAW-051 · companion-codex

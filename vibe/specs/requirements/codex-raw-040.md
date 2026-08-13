@@ -5,6 +5,16 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "active / interaction-refined-by-RAW-050-and-RAW-063 / weekly-ring-refined-by-RAW-065"
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-codex-raw-050
+    scope: "interaction"
+  - kind: refined-by
+    target: eypc-req-codex-raw-063
+    scope: "interaction"
+  - kind: refined-by
+    target: eypc-req-codex-raw-065
+    scope: "weekly-ring"
 ---
 
 # RAW-040 · companion-codex

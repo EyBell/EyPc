@@ -7,6 +7,10 @@ authority: user-stated
 source_annotations: "active / refines-RAW-039-alias-and-RAW-052-row-interaction / density-refined-by-RAW-063"
 relations:
   - refines-RAW-039-alias-and-RAW-052-row-interaction
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-codex-raw-063
+    scope: "density"
 ---
 
 # RAW-055 · companion-codex

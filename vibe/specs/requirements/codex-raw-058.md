@@ -7,6 +7,10 @@ authority: user-stated
 source_annotations: "active / refines-RAW-050-RAW-053-and-RAW-057 / compact-counter-click-refined-by-RAW-067"
 relations:
   - refines-RAW-050-RAW-053-and-RAW-057
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-codex-raw-067
+    scope: "compact-counter-click"
 ---
 
 # RAW-058 · companion-codex

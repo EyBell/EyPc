@@ -5,6 +5,10 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "active / supersedes-RAW-111-fail-closed-empty-and-refines-RAW-108-109-112"
+scoped_relations:
+  - kind: refines
+    target: eypc-req-codex-raw-108
+    scope: "supersedes-RAW-111-fail-closed-empty-and"
 ---
 
 # RAW-113 · companion-codex

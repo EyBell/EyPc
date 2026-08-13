@@ -5,6 +5,10 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "active / appearance-refined-by-RAW-071"
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-codex-raw-071
+    scope: "appearance"
 ---
 
 # RAW-013 · companion-codex

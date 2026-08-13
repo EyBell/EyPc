@@ -5,6 +5,13 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "active / water-display-refined-by-RAW-063-and-RAW-065"
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-codex-raw-063
+    scope: "water-display"
+  - kind: refined-by
+    target: eypc-req-codex-raw-065
+    scope: "water-display"
 ---
 
 # RAW-046 · companion-codex

@@ -5,6 +5,10 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "active / supersedes-visible-float-slots-in-260729-1435-and-refines-RAW-047-113"
+scoped_relations:
+  - kind: refines
+    target: eypc-req-codex-raw-047
+    scope: "supersedes-visible-float-slots-in-260729-1435-and"
 ---
 
 # RAW-114 · companion-codex

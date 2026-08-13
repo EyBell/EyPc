@@ -49,7 +49,9 @@
 
 ## 机器校验
 
-运行 `pnpm run validate:requirements` 检查 frontmatter、状态、`qualified_source` 唯一性、取代边成对性、取代环、模块唯一归属与容量。
+运行 `pnpm run validate:requirements` 检查 frontmatter、状态、`qualified_source` 唯一性、取代边成对性、取代环、局部关系目标有效性、模块唯一归属与容量。
+
+冲突核验记录见 [conflict-register](conflict-register.md#L1)。
 
 ## 尚未入册
 

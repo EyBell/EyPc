@@ -7,6 +7,10 @@ authority: user-stated
 source_annotations: "active / supersedes-visible-abnormal-and-unknown-states / explicit-stop-refined-by-RAW-091 / refines-RAW-028-056-066-068-070-078-080"
 relations:
   - refines-RAW-028-056-066-068-070-078-080
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-codex-raw-091
+    scope: "explicit-stop"
 ---
 
 # RAW-089 · companion-codex

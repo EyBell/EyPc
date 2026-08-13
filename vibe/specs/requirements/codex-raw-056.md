@@ -7,6 +7,10 @@ authority: user-stated
 source_annotations: "active / supersedes-RAW-030-unread-and-RAW-045-live-channel / visible-degradation-refined-by-RAW-089"
 supersedes:
   - eypc-req-codex-raw-030
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-codex-raw-089
+    scope: "visible-degradation"
 ---
 
 # RAW-056 · companion-codex

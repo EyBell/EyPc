@@ -5,6 +5,10 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "active / native-state-exception-refined-by-RAW-052"
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-codex-raw-052
+    scope: "native-state-exception"
 ---
 
 # RAW-043 · companion-codex

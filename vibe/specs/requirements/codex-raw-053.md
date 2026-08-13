@@ -5,6 +5,13 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "active / pin-feedback-refines-RAW-037-and-RAW-039"
+scoped_relations:
+  - kind: refines
+    target: eypc-req-codex-raw-037
+    scope: "pin-feedback"
+  - kind: refines
+    target: eypc-req-codex-raw-039
+    scope: "pin-feedback"
 ---
 
 # RAW-053 · companion-codex
