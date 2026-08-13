@@ -1110,6 +1110,35 @@ button { font: inherit; }
   outline-offset: 1px;
 }
 
+/* 快速筛选编号是瞬时提示层：绝对定位、不接管指针，因此不改变行高、列表顶边或行坐标。 */
+.task-quick-index {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  z-index: 3;
+  display: grid;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--codex-accent) 70%, var(--codex-border));
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--codex-accent) 82%, var(--codex-surface));
+  color: var(--codex-on-accent);
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  pointer-events: none;
+}
+@media (forced-colors: active) {
+  .task-quick-index {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    forced-color-adjust: none;
+  }
+}
+
 .float-project-row:hover,
 .float-task-row:hover {
   border-color: var(--codex-focus);

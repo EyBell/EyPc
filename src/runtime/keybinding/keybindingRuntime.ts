@@ -59,7 +59,7 @@ export interface KeybindingContext {
   tab?: AppTabId
   confirmOpen?: boolean
   textInputFocused?: boolean
-  activeInputRole?: 'port-search' | 'port-group-search' | 'mqtt-search' | 'mqtt-topic-filter' | 'mqtt-publish-editor' | 'mqtt-publish-options' | 'mqtt-publish-draft' | 'mqtt-publish-draft-editor' | 'mqtt-editor' | 'mqtt-connection-group-editor' | 'mqtt-config-subscription-editor' | 'mqtt-config-publish-editor' | 'mqtt-subscription-editor' | 'mqtt-favorite-editor' | 'mqtt-record-editor' | 'mqtt-connections' | 'mqtt-subscriptions' | 'favorite-search' | 'favorite-group-search' | 'favorite-containers' | 'favorite-items' | 'favorite-directory' | 'favorite-editor' | 'favorite-pick-review' | 'window-search' | 'window-actions' | 'window-editor' | 'window-list' | 'codex-composer' | 'settings' | 'port-group-editor' | 'other'
+  activeInputRole?: 'port-search' | 'port-group-search' | 'mqtt-search' | 'mqtt-topic-filter' | 'mqtt-publish-editor' | 'mqtt-publish-options' | 'mqtt-publish-draft' | 'mqtt-publish-draft-editor' | 'mqtt-editor' | 'mqtt-connection-group-editor' | 'mqtt-config-subscription-editor' | 'mqtt-config-publish-editor' | 'mqtt-subscription-editor' | 'mqtt-favorite-editor' | 'mqtt-record-editor' | 'mqtt-connections' | 'mqtt-subscriptions' | 'favorite-search' | 'favorite-group-search' | 'favorite-containers' | 'favorite-items' | 'favorite-directory' | 'favorite-editor' | 'favorite-pick-review' | 'window-search' | 'window-actions' | 'window-editor' | 'window-list' | 'codex-composer' | 'codex-search' | 'settings' | 'port-group-editor' | 'other'
   portPane?: 'groups' | 'results'
   favoritePane?: 'containers' | 'items' | 'directory'
   favoriteUndoAvailable?: boolean
@@ -87,6 +87,9 @@ export interface KeybindingContext {
   portSelectionMode?: boolean
   windowActionsOpen?: boolean
   windowEditorOpen?: boolean
+  /** Float 快速筛选模式：`Ctrl+数字` 从抽屉动作改读可见任务编号。 */
+  codexQuickMode?: boolean
+  codexDrawerActive?: boolean
   activeLayers?: KeybindingLayerId[]
 }
 
@@ -300,10 +303,10 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'codex.tab.prev': { title: '上一个 Codex 页签', group: 'Codex', layer: 'codex', shortcutIds: ['ArrowLeft'], when: "tab == 'codex' && !textInputFocused", weight: 140, profileId: 'codex' },
   'codex.tab.next': { title: '下一个 Codex 页签', group: 'Codex', layer: 'codex', shortcutIds: ['ArrowRight'], when: "tab == 'codex' && !textInputFocused", weight: 140, profileId: 'codex' },
   'codex.thread.createFocused': { title: '在当前项目新建会话', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+T'], when: "tab == 'codex' && !confirmOpen && !textInputFocused", weight: 160, profileId: 'codex', description: '打开新会话编辑器；优先归属当前高亮会话或项目。' },
-  'codex.list.up': { title: '会话焦点上移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['ArrowUp'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
-  'codex.list.down': { title: '会话焦点下移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['ArrowDown'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
+  'codex.list.up': { title: '会话焦点上移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['ArrowUp'], when: "tab == 'codex' && (!textInputFocused || activeInputRole == 'codex-search')", weight: 130, profileId: 'codex' },
+  'codex.list.down': { title: '会话焦点下移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['ArrowDown'], when: "tab == 'codex' && (!textInputFocused || activeInputRole == 'codex-search')", weight: 130, profileId: 'codex' },
   'codex.selection.toggle': { title: '切换当前项选择', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Space'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
-  'codex.task.openFocused': { title: '打开任务或展开项目', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Enter'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
+  'codex.task.openFocused': { title: '打开任务或展开项目', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Enter'], when: "tab == 'codex' && (!textInputFocused || activeInputRole == 'codex-search')", weight: 130, profileId: 'codex' },
   'codex.detail.open': { title: '查看当前项详情', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+ArrowLeft'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
   'codex.drawer.open': { title: '打开批量与完整操作', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+ArrowRight'], when: "tab == 'codex' && !textInputFocused", weight: 130, profileId: 'codex' },
   'codex.task.archiveFocused': { title: '归档选中或当前任务', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Delete'], when: "tab == 'codex' && !textInputFocused", weight: 140, risk: 'destructive', profileId: 'codex' },
@@ -311,8 +314,13 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
   'codex.pin.toggleFocused': { title: '切换当前项 EyPc 置顶', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+P'], when: "tab == 'codex' && !textInputFocused", weight: 130, risk: 'data-write', profileId: 'codex' },
   'codex.pin.moveUp': { title: '本地置顶项上移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Alt+ArrowUp'], when: "tab == 'codex' && !textInputFocused", weight: 130, risk: 'data-write', profileId: 'codex' },
   'codex.pin.moveDown': { title: '本地置顶项下移', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Alt+ArrowDown'], when: "tab == 'codex' && !textInputFocused", weight: 130, risk: 'data-write', profileId: 'codex' },
-  'codex.quickJump.openForward': { title: '快捷跳转', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+F'], when: "tab == 'codex' && !confirmOpen && !textInputFocused", weight: 160, profileId: 'codex' },
-  'codex.search.focus': { title: '聚焦会话搜索', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+Shift+F'], when: "tab == 'codex' && !confirmOpen", weight: 150, profileId: 'codex' },
+  // RAW-167 supersedes the former `Ctrl+F` Quick Jump / `Ctrl+Shift+F` search split: `Ctrl+F` is
+  // search in every other Tab, so owning it here made the Codex domain the single inconsistent one.
+  // Quick Jump keeps `F` / `Shift+F`, which is the only form its original requirement declared.
+  'codex.quickJump.openForward': { title: '快捷跳转', group: 'Codex 会话', layer: 'codex', shortcutIds: ['F'], when: "tab == 'codex' && !confirmOpen && !textInputFocused", weight: 160, profileId: 'codex' },
+  // Alt 在 Codex 域统一表示「直接打开」：`Alt+数字` 开第 N 条，`Alt+F` 用标记开任意一条。
+  'codex.quickJump.openTasks': { title: '快捷跳转并打开会话', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Alt+F'], when: "tab == 'codex' && !confirmOpen && !textInputFocused", weight: 161, profileId: 'codex', description: '标记只落在展示出来的会话行上，按下标记直接打开该会话，而不是只转移高亮。' },
+  'codex.search.focus': { title: '聚焦会话搜索', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Ctrl+F', 'Ctrl+Shift+F'], when: "tab == 'codex' && !confirmOpen", weight: 150, profileId: 'codex' },
   'codex.layer.cancel': { title: '取消当前交互层', group: 'Codex 会话', layer: 'codex', shortcutIds: ['Escape'], when: "tab == 'codex'", weight: 150, profileId: 'codex' },
   ...Object.fromEntries(Array.from({ length: 5 }, (_, index) => {
     const slot = index + 1
@@ -327,7 +335,37 @@ export const DEFAULT_SHORTCUT_PROFILES_BY_COMMAND = {
       description: 'EyPc 等价执行项目 Environment Action（非 Codex 顶栏原生 Action）。'
     }]
   })),
-  ...Object.fromEntries(Array.from({ length: 9 }, (_, index) => [`codex.drawer.select.${index + 1}`, { title: `执行操作抽屉第 ${index + 1} 项`, group: 'Codex 会话', layer: 'codex', shortcutIds: [`Ctrl+${index + 1}`], when: "tab == 'codex' && !textInputFocused", weight: 120 - index, profileId: 'codex' as const }])),
+  'codex.quick.activate': { title: '快速任务查看', group: 'Codex 会话', layer: 'app', shortcutIds: ['Ctrl+Alt+K'], when: 'true', weight: 1002, description: '展开悬浮卡片的动态列表并进入筛选模式：直接打字筛选，`Ctrl+1…0` 打开对应编号任务。', profileId: 'codex' },
+  // `Ctrl+数字` 在 Codex 域有两种释义，靠 when 分流而不是靠不同 chord：
+  // 筛选模式下是「打开第 N 条可见任务」，其余情况下是「执行抽屉第 N 项」。
+  // 抽屉打开时抽屉恒胜，两条守卫互斥，因此设置页里同一 chord 的多行语义是诚实的。
+  ...Object.fromEntries(Array.from({ length: 10 }, (_, index) => {
+    const slot = index + 1
+    return [`codex.quick.open.${slot}`, {
+      title: `打开快速任务第 ${slot} 项`,
+      group: 'Codex 会话',
+      layer: 'codex',
+      shortcutIds: [slot === 10 ? 'Ctrl+0' : `Ctrl+${slot}`],
+      when: "tab == 'codex' && codexQuickMode && !codexDrawerActive && !confirmOpen && (!textInputFocused || activeInputRole == 'codex-search')",
+      weight: 200 - index,
+      profileId: 'codex' as const
+    }]
+  })),
+  // `Alt+数字` 是编号行的常驻打开路径：只要展开卡片的任务列表在，就不需要先进筛选模式。
+  // 它和 `Ctrl+数字` 指向同一个动作语义，但守卫更宽，所以两者分成两条独立命令而不是共用一条。
+  ...Object.fromEntries(Array.from({ length: 10 }, (_, index) => {
+    const slot = index + 1
+    return [`codex.task.openIndex.${slot}`, {
+      title: `打开列表第 ${slot} 项任务`,
+      group: 'Codex 会话',
+      layer: 'codex',
+      shortcutIds: [slot === 10 ? 'Alt+0' : `Alt+${slot}`],
+      when: "tab == 'codex' && !codexDrawerActive && !confirmOpen && (!textInputFocused || activeInputRole == 'codex-search')",
+      weight: 190 - index,
+      profileId: 'codex' as const
+    }]
+  })),
+  ...Object.fromEntries(Array.from({ length: 9 }, (_, index) => [`codex.drawer.select.${index + 1}`, { title: `执行操作抽屉第 ${index + 1} 项`, group: 'Codex 会话', layer: 'codex', shortcutIds: [`Ctrl+${index + 1}`], when: "tab == 'codex' && codexDrawerActive && !textInputFocused", weight: 120 - index, profileId: 'codex' as const }])),
   'quickJump.openForward': { title: '快捷跳转', group: '全局', layer: 'global', shortcutIds: ['F'], when: '!confirmOpen && !textInputFocused', weight: 120 },
   'quickJump.openBackward': { title: '反向快捷跳转', group: '全局', layer: 'global', shortcutIds: ['Shift+F'], when: '!confirmOpen && !textInputFocused', weight: 120 },
   'list.up': { title: '列表上移', group: '全局', layer: 'global', shortcutIds: ['ArrowUp', 'Ctrl+K'], when: '!mqttPreviewOpen && !windowEditorOpen && (!windowActionsOpen || tab == "windows") && (!textInputFocused || activeInputRole == "port-search" || activeInputRole == "port-group-search" || activeInputRole == "mqtt-search" || activeInputRole == "favorite-search" || activeInputRole == "favorite-group-search" || activeInputRole == "window-search")', weight: 100 },
@@ -665,6 +703,7 @@ export const SHORTCUT_RESERVATION_RULES: ShortcutReservationRule[] = [
   { shortcutId: 'Shift+Escape', commandId: 'app.hide', when: 'true', description: '全局立即隐藏插件窗口', layer: 'app' },
   { shortcutId: 'Ctrl+Alt+Enter', commandId: 'codex.float.activate', when: 'true', description: '显示、展开并进入 Codex 卡片', layer: 'app' },
   { shortcutId: 'Ctrl+Alt+Q', commandId: 'codex.float.toggle', when: 'true', description: '立即显示或隐藏 Codex 悬浮球', layer: 'app' },
+  { shortcutId: 'Ctrl+Alt+K', commandId: 'codex.quick.activate', when: 'true', description: '展开动态列表并进入快速筛选模式', layer: 'app' },
   { shortcutId: 'Ctrl+T', commandId: 'codex.thread.createFocused', when: "tab == 'codex' && !confirmOpen && !textInputFocused", description: '在当前高亮会话或项目中新建会话', layer: 'codex' },
   { shortcutId: 'Ctrl+Shift+1', commandId: 'codex.action.run.1', when: "tab == 'codex' && !textInputFocused && !confirmOpen", description: '执行 Environment Action 槽 1', layer: 'codex' },
   { shortcutId: 'Ctrl+Shift+2', commandId: 'codex.action.run.2', when: "tab == 'codex' && !textInputFocused && !confirmOpen", description: '执行 Environment Action 槽 2', layer: 'codex' },
@@ -1002,7 +1041,7 @@ function contextWithLayerFlags(context: KeybindingContext): KeybindingContext {
 
 function shouldBlockTextInputShortcut(shortcutId: string, context: KeybindingContext): boolean {
   if (!context.textInputFocused || shortcutId === 'Escape' || shortcutId === 'Shift+Escape') return false
-  if (shortcutId === 'Ctrl+Alt+S' || shortcutId === 'Ctrl+Alt+Q' || shortcutId === 'Ctrl+Alt+Enter') return false
+  if (shortcutId === 'Ctrl+Alt+S' || shortcutId === 'Ctrl+Alt+Q' || shortcutId === 'Ctrl+Alt+Enter' || shortcutId === 'Ctrl+Alt+K') return false
   if (context.activeInputRole === 'mqtt-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-connection-group-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-config-subscription-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'ArrowUp', 'ArrowDown', 'Ctrl+Delete', 'Ctrl+Backspace', 'Escape', 'Shift+Escape'].includes(shortcutId)
@@ -1017,6 +1056,9 @@ function shouldBlockTextInputShortcut(shortcutId: string, context: KeybindingCon
   if (context.activeInputRole === 'window-editor') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'favorite-pick-review') return !['Ctrl+Alt+S', 'Ctrl+S', 'Ctrl+Enter', 'Tab', 'Shift+Tab', 'ArrowUp', 'ArrowDown', 'Escape', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'codex-composer') return !['Ctrl+Enter', 'Tab', 'Shift+Tab', 'Escape', 'Shift+Escape'].includes(shortcutId)
+  // 会话搜索框和 ports/favorites/mqtt/windows 的搜索框同构：可以边打字边导航。
+  // 这条白名单必须只对 `codex-search` 生效，绝不能扩散到 `codex-composer`。
+  if (context.activeInputRole === 'codex-search') return !['ArrowUp', 'ArrowDown', 'Shift+ArrowUp', 'Shift+ArrowDown', 'Ctrl+K', 'Ctrl+J', 'Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+0', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+4', 'Ctrl+5', 'Ctrl+6', 'Ctrl+7', 'Ctrl+8', 'Ctrl+9', 'Alt+0', 'Alt+1', 'Alt+2', 'Alt+3', 'Alt+4', 'Alt+5', 'Alt+6', 'Alt+7', 'Alt+8', 'Alt+9', 'Escape', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'port-search') return !['ArrowUp', 'ArrowDown', 'Shift+ArrowUp', 'Shift+ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+K', 'Ctrl+J', 'Space', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+W', 'Ctrl+Shift+W', 'Ctrl+T', 'Ctrl+G', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'port-group-search') return !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Ctrl+K', 'Ctrl+J', 'Tab', 'Shift+Tab', 'Enter', 'Shift+Enter', 'Ctrl+Enter', 'Ctrl+Shift+Enter', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+Alt+S', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Delete', 'Backspace', 'Ctrl+Delete', 'Ctrl+Backspace', 'Ctrl+W', 'Ctrl+T', 'Ctrl+G', 'Ctrl+Shift+W', 'F2', 'Ctrl+F2', 'Shift+F2', 'Shift+Escape'].includes(shortcutId)
   if (context.activeInputRole === 'mqtt-search') return !['ArrowUp', 'ArrowDown', 'Ctrl+K', 'Ctrl+J', 'ArrowLeft', 'ArrowRight', 'Tab', 'Shift+Tab', 'Enter', 'Ctrl+Enter', 'Ctrl+R', 'Ctrl+Shift+R', 'Ctrl+F', 'Ctrl+Shift+F', 'Ctrl+N', 'Ctrl+G', 'Ctrl+T', 'Ctrl+Shift+T', 'Ctrl+Shift+S', 'Ctrl+H', 'Ctrl+Shift+H', 'Ctrl+Shift+L', 'Ctrl+1', 'Ctrl+2', 'Ctrl+3', 'Ctrl+Shift+M', 'Ctrl+M', 'Ctrl+Shift+W', 'Ctrl+ArrowLeft', 'Ctrl+ArrowRight', 'Ctrl+Delete', 'Ctrl+Backspace', 'F2', 'Shift+F2', 'Ctrl+F2', 'Ctrl+Alt+S', 'Shift+Escape'].includes(shortcutId)

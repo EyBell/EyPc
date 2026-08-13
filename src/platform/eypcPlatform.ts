@@ -826,7 +826,7 @@ export interface EypcPlatformApi {
   companionKernel?: CompanionTaskKernelBridge
   float: {
     sync(payload: { visible: boolean; snapshot?: unknown; position?: unknown; expandedSizes?: unknown }): boolean
-    activate?(payload?: { command?: 'new-thread' }): boolean
+    activate?(payload?: { command?: 'new-thread' | 'quick' }): boolean
     diagnostics?(): CodexFloatWorkspaceDiagnostics
     resetGeometry?(payload?: { position?: unknown; expandedSizes?: unknown }): boolean
     close(): void
