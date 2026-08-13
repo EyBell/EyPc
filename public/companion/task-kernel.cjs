@@ -2,6 +2,7 @@
 
 const { createCompanionNavigation } = require('./navigation.cjs')
 const { createCompanionTaskActions } = require('./task-actions.cjs')
+const { finiteInteger, phaseEvidenceSupersedes, mergeEvidenceLanes } = require('./branch-causality.cjs')
 
 const COMPANION_TASK_KERNEL_REVISION = 'companion-task-kernel-v4'
 const COMPANION_TASK_PACKAGE_REVISION = 'companion-task-package-v4'
@@ -107,8 +108,11 @@ function normalizeCodexBranchEvidenceV4(value = {}) {
   const ref = typeof value.ref === 'string' && value.ref.length > 0 && value.ref.length <= 128 ? value.ref : ''
   if (!ref) return null
   const branchKind = value.branchKind === 'main' || value.branchKind === 'side' ? value.branchKind : ''
-  const unreadObserved = typeof value.unreadKnown === 'boolean'
-  const unreadKnown = value.unreadKnown === true
+  // Normalized branches are passed through this function again during parent
+  // reduction. Preserve an explicit abstention instead of turning the emitted
+  // `unreadKnown: false` storage field into a newly observed negative value.
+  const unreadObserved = value.unreadObserved === true || value.unreadKnown === true
+  const unreadKnown = unreadObserved
   const hasUnreadTurn = unreadKnown && value.hasUnreadTurn === true
   const status = ['active', 'idle', 'notLoaded', 'systemError'].includes(value.status) ? value.status : 'notLoaded'
   const statusAuthority = ['desktop-live', 'app-server-live', 'persisted-decision', 'connector', 'unavailable'].includes(value.statusAuthority)
@@ -209,6 +213,43 @@ function normalizeCodexBranchEvidenceV4(value = {}) {
   }
 }
 
+function codexLiveAttentionRankV4(branch) {
+  if (branch?.activeFlags?.includes('waitingOnApproval')) return 2
+  if (branch?.activeFlags?.includes('waitingOnUserInput')) return 1
+  return 0
+}
+
+// Codex ranks a waiting branch above a plain running one when nothing else
+// separates two live observations. The shared core takes this as an injected
+// comparator so it never has to know Codex's activeFlags vocabulary.
+function codexBranchPhaseEvidenceSupersedesV4(previous, incoming) {
+  return phaseEvidenceSupersedes(previous, incoming, codexLiveAttentionRankV4)
+}
+
+function mergeCodexBranchEvidenceV4(previous, incoming) {
+  if (!previous) return incoming
+  // Phase and unread merge in the shared core. Goal is a Codex-only lane, so it
+  // is applied on top of that result rather than pushed down into the core.
+  const retained = mergeEvidenceLanes(previous, incoming, { attentionRank: codexLiveAttentionRankV4 })
+  const incomingGoalSequence = finiteInteger(incoming.goalEvidenceSequence)
+  const previousGoalSequence = finiteInteger(previous.goalEvidenceSequence)
+  const incomingGoalUpdatedAt = finiteInteger(incoming.goalUpdatedAt)
+  const previousGoalUpdatedAt = finiteInteger(previous.goalUpdatedAt)
+  const incomingGoalSupersedes = incomingGoalSequence > previousGoalSequence
+    || (incomingGoalSequence === previousGoalSequence && incomingGoalUpdatedAt > previousGoalUpdatedAt)
+    || (incomingGoalSequence === 0
+      && previousGoalSequence === 0
+      && previous.goalFreshness === 'verifying'
+      && incoming.goalFreshness === 'fresh'
+      && incoming.goalStatus === 'none')
+  const goalSource = incomingGoalSupersedes ? incoming : previous
+  retained.goalStatus = goalSource.goalStatus
+  retained.goalFreshness = goalSource.goalFreshness
+  retained.goalEvidenceSequence = goalSource.goalEvidenceSequence
+  retained.goalUpdatedAt = goalSource.goalUpdatedAt
+  return normalizeCodexBranchEvidenceV4(retained)
+}
+
 /**
  * Private parent reducer. Branch references are already anonymized by Host and
  * never enter the public task package, diagnostics, logs or persistence.
@@ -291,10 +332,6 @@ function reduceCodexParentBranchEvidenceV4(value = {}) {
     details
   })
   if (!selectedBranches.length) return abstain('branch-evidence-missing')
-  const running = selectedBranches.filter((branch) => branch.liveCurrent && branch.activeFlags.length === 0)
-  if (running.length) {
-    return decide('running', 'branch-running', 'fresh', false, running)
-  }
   const approvals = selectedBranches.filter((branch) => branch.liveCurrent && branch.activeFlags.includes('waitingOnApproval'))
   if (approvals.length) {
     return decide('waiting-approval', 'branch-waiting-approval', 'fresh', false, approvals)
@@ -302,6 +339,10 @@ function reduceCodexParentBranchEvidenceV4(value = {}) {
   const inputs = selectedBranches.filter((branch) => branch.liveCurrent && branch.activeFlags.includes('waitingOnUserInput'))
   if (inputs.length) {
     return decide('waiting-input', 'branch-waiting-input', 'fresh', false, inputs)
+  }
+  const running = selectedBranches.filter((branch) => branch.liveCurrent && branch.activeFlags.length === 0)
+  if (running.length) {
+    return decide('running', 'branch-running', 'fresh', false, running)
   }
   const activeGoals = selectedBranches.filter((branch) => branch.goalCurrent && branch.goalStatus === 'active')
   if (activeGoals.length) {
@@ -327,6 +368,12 @@ function reduceCodexParentBranchEvidenceV4(value = {}) {
     return decide('completed', 'goal-complete', 'fresh', false, completedGoals)
   }
   if (selectedBranches.every((branch) => branch.exactTerminal && branch.lastTurnStatus === 'completed')) {
+    return decide('completed', 'all-branches-completed')
+  }
+  const terminalRows = selectedBranches.filter((branch) => ['completed', 'interrupted', 'failed'].includes(branch.lastTurnStatus))
+  if (terminalRows.length === selectedBranches.length
+    && terminalRows.every((branch) => branch.lastTurnStatus === 'completed')
+    && terminalRows.some((branch) => branch.exactTerminal)) {
     return decide('completed', 'all-branches-completed')
   }
   if (selectedBranches.every((branch) => branch.exactTerminal && branch.idleConfirmed)) {
@@ -383,10 +430,6 @@ function sameProviders(left, right) {
   return PROVIDERS.every((provider) => left[provider] === right[provider])
 }
 
-function finiteInteger(value, fallback = 0) {
-  return Number.isFinite(Number(value)) ? Math.max(0, Math.trunc(Number(value))) : fallback
-}
-
 function draftProducer(value) {
   return DRAFT_PRODUCERS.includes(value) ? value : 'renderer'
 }
@@ -398,11 +441,20 @@ function emptySourceLaneGenerations() {
   }
 }
 
+// `phase`/`unread` are monotonic provider counters and may fall back to the
+// counter aggregate. `membership` is an observation timestamp compared only
+// against itself, so it must never inherit a counter — and the aggregate must
+// never inherit a timestamp. A lane holding the wrong unit can never be
+// overtaken again and silently rejects every later generation as stale.
 function normalizeSourceLaneGenerations(value, aggregate = {}) {
   const result = emptySourceLaneGenerations()
   for (const provider of PROVIDERS) {
     const fallback = finiteInteger(aggregate?.[provider])
-    for (const lane of SOURCE_LANES) result[provider][lane] = finiteInteger(value?.[provider]?.[lane], fallback)
+    for (const lane of SOURCE_LANES) {
+      result[provider][lane] = lane === 'membership'
+        ? finiteInteger(value?.[provider]?.[lane])
+        : finiteInteger(value?.[provider]?.[lane], fallback)
+    }
   }
   return result
 }
@@ -881,7 +933,12 @@ function createCompanionTaskKernel(dependencies = {}) {
   function codexBranchDecisionForTask(task) {
     if (task?.provider !== 'codex') return null
     const evidence = codexBranchEvidence.get(task.key)
-    if (!evidence || evidence.generation < finiteInteger(task.observationGeneration)) return null
+    // Parent observationGeneration orders package transport only. A later
+    // public draft cannot invalidate still-current per-branch live evidence;
+    // the branch merge owns causal replacement through Turn epochs and real
+    // event sequences. Re-applying a second timestamp-only guard here would
+    // split that authority and reject valid providers that omit Turn time.
+    if (!evidence) return null
     return evidence
   }
 
@@ -889,10 +946,11 @@ function createCompanionTaskKernel(dependencies = {}) {
     const evidence = codexBranchDecisionForTask(task)
     if (!evidence) return task
     const decision = evidence.decision
+    const unreadEvidenceCurrent = evidence.generation >= finiteInteger(task.observationGeneration)
     const next = {
       ...task,
       observationGeneration: Math.max(finiteInteger(task.observationGeneration), evidence.generation),
-      ...(decision.unreadOutcome === 'decided'
+      ...(decision.unreadOutcome === 'decided' && unreadEvidenceCurrent
         ? {
             unreadKnown: decision.unreadKnown === true,
             unread: decision.unreadKnown === true && decision.unread === true,
@@ -1174,10 +1232,13 @@ function createCompanionTaskKernel(dependencies = {}) {
         .map(normalizeCodexBranchEvidenceV4)
         .filter(Boolean)
       if (!incomingBranches.length) continue
+      const previousBranches = new Map((previous?.branches || []).map((branch) => [branch.ref, branch]))
       const branches = value.complete === false && previous
-        ? new Map(previous.branches.map((branch) => [branch.ref, branch]))
+        ? new Map(previousBranches)
         : new Map()
-      for (const branch of incomingBranches) branches.set(branch.ref, branch)
+      for (const branch of incomingBranches) {
+        branches.set(branch.ref, mergeCodexBranchEvidenceV4(previousBranches.get(branch.ref), branch))
+      }
       const task = currentByKey.get(key)
       const goalAuthorityCleared = previous?.previousNonterminalAuthority === 'goal'
         && [...branches.values()].every((branch) => branch.goalStatus === 'none' && branch.goalFreshness === 'fresh')
@@ -1427,6 +1488,15 @@ function createCompanionTaskKernel(dependencies = {}) {
     const enabledProviders = providerSet(providers)
     const incomingLaneGenerations = normalizeSourceLaneGenerations(draft.sourceLaneGenerations, draft.sourceGenerations)
     const currentLaneGenerations = normalizeSourceLaneGenerations(currentPackage.sourceLaneGenerations, currentPackage.sourceGenerations)
+    // A draft that carries no membership observation — an App Server event, a
+    // phase-only push — asserts nothing about the inventory. Reading its absent
+    // lane as zero would make it look strictly older than every real read and
+    // silently reshape membership, so an unstated lane means "unchanged".
+    for (const provider of PROVIDERS) {
+      if (incomingLaneGenerations[provider].membership === 0) {
+        incomingLaneGenerations[provider].membership = currentLaneGenerations[provider].membership
+      }
+    }
     const staleMembershipProviders = new Set(PROVIDERS.filter((provider) => {
       if (!enabledProviders.has(provider)) return false
       const incomingGeneration = incomingLaneGenerations[provider].membership

@@ -13,7 +13,8 @@
  * LevelDB, transcript or non-target session is written.
  */
 
-const CLAUDE_BRIDGE_REVISION = 'claude-code-companion-v6'
+const CLAUDE_BRIDGE_REVISION = 'claude-code-companion-v7'
+const CLAUDE_HOT_UNREAD_MAX_IDS = 500
 
 const { createEventQueue } = require('./events.cjs')
 const { createEnvironmentProbe } = require('./environment.cjs')
@@ -70,6 +71,7 @@ function createClaudeBridge(dependencies) {
   const statuslineCommandLine = settingsCommandLine(statuslineCommandPath, dependencies.platform)
 
   let eventWatchDispose = null
+  let appStateWatchDispose = null
   let codeWatchDispose = null
   let unreadWatchDispose = null
   const eventWatchListeners = new Set()
@@ -79,6 +81,36 @@ function createClaudeBridge(dependencies) {
   let lastCodeInventory = null
   let codeStateGeneration = 0
   let lastCodeStateFingerprint = ''
+  let lastPersistedUnreadSnapshot = null
+  let mergedUnreadGeneration = 0
+  let lastMergedUnreadFingerprint = ''
+  const acknowledgedHotUnreadHints = new Map()
+
+  function broadcastEventWatchers() {
+    for (const subscriber of eventWatchListeners) {
+      try { subscriber() } catch {}
+    }
+  }
+
+  function broadcastUnreadWatchers() {
+    for (const subscriber of unreadWatchListeners) {
+      try { subscriber() } catch {}
+    }
+  }
+
+  function ensureAppStateWatcher() {
+    if (appStateWatchDispose || (!eventWatchListeners.size && !unreadWatchListeners.size)) return
+    appStateWatchDispose = appState.watch(() => {
+      broadcastEventWatchers()
+      broadcastUnreadWatchers()
+    })
+  }
+
+  function releaseAppStateWatcherIfUnused() {
+    if (eventWatchListeners.size || unreadWatchListeners.size || !appStateWatchDispose) return
+    appStateWatchDispose()
+    appStateWatchDispose = null
+  }
 
   function readCurrentSessionObservation(sessionId) {
     queue.rotateIfNeeded()
@@ -388,23 +420,16 @@ function createClaudeBridge(dependencies) {
     if (typeof listener !== 'function') return () => {}
     eventWatchListeners.add(listener)
     if (!eventWatchDispose) {
-      const broadcast = () => {
-        for (const subscriber of eventWatchListeners) {
-          try { subscriber() } catch {}
-        }
-      }
-      const queueDispose = queue.watch(broadcast, options)
-      const appDispose = appState.watch(broadcast)
-      eventWatchDispose = () => {
-        queueDispose()
-        appDispose()
-      }
+      eventWatchDispose = queue.watch(broadcastEventWatchers, options)
     }
+    ensureAppStateWatcher()
     return () => {
       eventWatchListeners.delete(listener)
-      if (eventWatchListeners.size || !eventWatchDispose) return
-      eventWatchDispose()
-      eventWatchDispose = null
+      if (!eventWatchListeners.size && eventWatchDispose) {
+        eventWatchDispose()
+        eventWatchDispose = null
+      }
+      releaseAppStateWatcherIfUnused()
     }
   }
 
@@ -470,17 +495,16 @@ function createClaudeBridge(dependencies) {
     if (typeof listener !== 'function') return () => {}
     unreadWatchListeners.add(listener)
     if (!unreadWatchDispose) {
-      unreadWatchDispose = unread.watch(() => {
-        for (const subscriber of unreadWatchListeners) {
-          try { subscriber() } catch {}
-        }
-      })
+      unreadWatchDispose = unread.watch(broadcastUnreadWatchers)
     }
+    ensureAppStateWatcher()
     return () => {
       unreadWatchListeners.delete(listener)
-      if (unreadWatchListeners.size || !unreadWatchDispose) return
-      unreadWatchDispose()
-      unreadWatchDispose = null
+      if (!unreadWatchListeners.size && unreadWatchDispose) {
+        unreadWatchDispose()
+        unreadWatchDispose = null
+      }
+      releaseAppStateWatcherIfUnused()
     }
   }
 
@@ -498,8 +522,87 @@ function createClaudeBridge(dependencies) {
    * deliberately distinct from an empty set — see the reader for why that
    * distinction is load-bearing.
    */
-  function readCodeUnread() {
-    return unread.read()
+  async function readCodeUnread() {
+    const previousPersisted = lastPersistedUnreadSnapshot
+    const persisted = await unread.read()
+    if (persisted && Array.isArray(persisted.ids)) lastPersistedUnreadSnapshot = persisted
+    const baseline = persisted || lastPersistedUnreadSnapshot
+    if (!baseline || !Array.isArray(baseline.ids)) return null
+
+    // Re-read the append-only App log after the async LevelDB snapshot so a
+    // completion/focus edge that arrived during the copy cannot be published
+    // one cycle late. The exact grammar remains private to app-state.cjs.
+    appState.read()
+    const hot = appState.readHotUnread()
+    const ids = new Set(baseline.ids.filter((id) => LOCAL_SESSION_PATTERN.test(id)))
+    if (hot?.compatibility === 'compatible') {
+      const hints = Array.isArray(hot.hints) ? hot.hints.slice(0, CLAUDE_HOT_UNREAD_MAX_IDS) : []
+      const currentHintIds = new Set(hints.map((hint) => hint?.sessionId).filter((id) => LOCAL_SESSION_PATTERN.test(id)))
+      for (const sessionId of acknowledgedHotUnreadHints.keys()) {
+        if (!currentHintIds.has(sessionId)) acknowledgedHotUnreadHints.delete(sessionId)
+      }
+      for (const hint of hints) {
+        if (!LOCAL_SESSION_PATTERN.test(hint?.sessionId) || !Number.isFinite(hint?.updatedAt)) continue
+        const hintRevision = Number(hint.revision) || Number(hint.updatedAt) || 0
+        let hintState = acknowledgedHotUnreadHints.get(hint.sessionId)
+        if (!hintState || Number(hintState.revision) !== hintRevision) {
+          const initial = previousPersisted || baseline
+          const initialIds = new Set(Array.isArray(initial?.ids) ? initial.ids : [])
+          const initialUnread = initialIds.has(hint.sessionId)
+          hintState = {
+            revision: hintRevision,
+            baselineGeneration: Number(initial?.generation) || 0,
+            baselineFingerprint: String(initial?.sourceFingerprint || ''),
+            sawOpposite: initialUnread !== (hint.unread === true),
+            acknowledged: false
+          }
+          acknowledgedHotUnreadHints.set(hint.sessionId, hintState)
+        }
+        if (hintState.acknowledged === true) continue
+        const persistedMatches = ids.has(hint.sessionId) === (hint.unread === true)
+        const persistedAdvanced = persisted && (
+          Number(persisted.generation) > Number(hintState.baselineGeneration)
+          || String(persisted.sourceFingerprint || '') !== String(hintState.baselineFingerprint || '')
+        )
+        const persistedAfterHint = persistedAdvanced
+          && Number(persisted.readAt) >= Number(hint.updatedAt)
+        if (persistedAfterHint && !persistedMatches) hintState.sawOpposite = true
+        // Equality alone is insufficient: the LevelDB set may already contain
+        // the same value from the previous completion epoch. Release the hot
+        // edge only after this session has crossed the opposite persisted
+        // state and a post-event snapshot catches up again.
+        if (persistedAfterHint && persistedMatches && hintState.sawOpposite === true) {
+          hintState.acknowledged = true
+          continue
+        }
+        if (hint.unread === true) ids.add(hint.sessionId)
+        else ids.delete(hint.sessionId)
+      }
+    }
+    const mergedIds = [...ids].sort()
+    const crypto = dependencies.crypto || require('node:crypto')
+    const semantic = JSON.stringify(mergedIds)
+    if (semantic !== lastMergedUnreadFingerprint) {
+      lastMergedUnreadFingerprint = semantic
+      mergedUnreadGeneration += 1
+    }
+    let sourceFingerprint = ''
+    try {
+      sourceFingerprint = crypto.createHash('sha256')
+        .update(`${baseline.sourceFingerprint || ''}\0${Number(hot?.generation) || 0}\0${semantic}`)
+        .digest('hex')
+        .slice(0, 32)
+    } catch {
+      sourceFingerprint = String(baseline.sourceFingerprint || '').slice(0, 32)
+    }
+    return {
+      version: 2,
+      revision: `${CLAUDE_BRIDGE_REVISION}:unread-hot-v1`,
+      ids: mergedIds,
+      readAt: Date.now(),
+      generation: mergedUnreadGeneration,
+      sourceFingerprint
+    }
   }
 
   /** Safe diagnostics only; raw status text, identities and credentials stay private. */
@@ -531,6 +634,10 @@ function createClaudeBridge(dependencies) {
       eventWatchDispose()
       eventWatchDispose = null
     }
+    if (appStateWatchDispose) {
+      appStateWatchDispose()
+      appStateWatchDispose = null
+    }
     queue.reset()
     quotaFallback.reset()
     if (codeWatchDispose) codeWatchDispose()
@@ -544,6 +651,10 @@ function createClaudeBridge(dependencies) {
     lastCodeInventory = null
     codeStateGeneration = 0
     lastCodeStateFingerprint = ''
+    lastPersistedUnreadSnapshot = null
+    mergedUnreadGeneration = 0
+    lastMergedUnreadFingerprint = ''
+    acknowledgedHotUnreadHints.clear()
     codeSessions.close()
     unread.close()
     appState.close()
