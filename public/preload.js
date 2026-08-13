@@ -2284,9 +2284,20 @@ function codexRememberPrivateBranchTerminal(parentThreadId, branchThreadId, turn
     || !codexIsConfirmedTurnEvidence(evidence)) return null
   const key = codexPrivateBranchTerminalKey(parentThreadId, branchThreadId)
   const previous = codexPrivateBranchTerminals.get(key)
-  const terminalEvidenceSequence = Number(options.terminalEvidenceSequence)
-    || Number(previous?.terminalEvidenceSequence)
-    || codexNextLiveEvidenceSequence()
+  const sameTerminal = previous
+    && previous.lastTurnStatus === source.status
+    && codexTimestampMs(previous.turnStartedAt) === codexTimestampMs(source.startedAt)
+    && previous.lastTurnEvidence === evidence
+  const suppliedSequence = Number(options.terminalEvidenceSequence)
+  const terminalEvidenceSequence = Number.isInteger(suppliedSequence) && suppliedSequence > 0
+    ? suppliedSequence
+    : sameTerminal && Number.isInteger(previous.terminalEvidenceSequence)
+      ? previous.terminalEvidenceSequence
+      : 0
+  // Reading an inventory row is not a terminal event. Callers may refresh an
+  // already admitted terminal, but only a real completion/targeted decision is
+  // allowed to supply a new causal sequence.
+  if (!terminalEvidenceSequence) return null
   const value = {
     parentThreadId,
     branchThreadId,
@@ -4490,6 +4501,7 @@ class CodexDesktopCompanionBridge {
       && this.hasOtherActiveBranch(threadId, refresh.queryThreadId)) {
       codexRememberPrivateBranchTerminal(threadId, refresh.queryThreadId, turn,
         turn.status === 'completed' ? 'snapshot-corroborated' : 'targeted-after-exit', {
+          terminalEvidenceSequence: codexNextLiveEvidenceSequence(),
           activeEvidenceSequence: shadow.activityEventSequence,
           idleConfirmed: false
         })
@@ -4834,6 +4846,7 @@ class CodexDesktopCompanionBridge {
               turn,
               refresh.confirmCompletionEvent ? 'turn-completed' : 'targeted-after-exit',
               {
+                terminalEvidenceSequence: codexNextLiveEvidenceSequence(),
                 activeEvidenceSequence: branchShadow?.activityEventSequence,
                 idleConfirmed: codexPrivateBranchIdleConfirmed(threadId, queryThreadId, known)
               }
@@ -7211,9 +7224,12 @@ function codexThreadKey(threadId) {
   return crypto.createHash('sha256').update(threadId).digest('hex').slice(0, 32)
 }
 
-function codexPrivateBranchRef(parentThreadId, branchThreadId, lane = 'desktop') {
+function codexPrivateBranchRef(parentThreadId, branchThreadId) {
   return crypto.createHash('sha256')
-    .update(`codex-branch\0${parentThreadId}\0${branchThreadId}\0${lane}`)
+    // Authority may move connector -> Desktop -> App Server within one Turn.
+    // The ref identifies the branch, not the transport lane, so the Kernel can
+    // causally merge those observations instead of treating them as siblings.
+    .update(`codex-branch\0${parentThreadId}\0${branchThreadId}`)
     .digest('hex')
     .slice(0, 32)
 }
@@ -7354,22 +7370,6 @@ function codexSyncInventorySideTopology(relations, depths, rowById, turns, unrea
       : 0
     codexInventorySideRelations.set(threadId, parentThreadId)
     if (turnLive) codexForgetPrivateBranchTerminal(parentThreadId, threadId)
-    else if (turn && ['completed', 'interrupted', 'failed'].includes(turn.status)) {
-      codexRememberPrivateBranchTerminal(parentThreadId, threadId, turn, 'targeted-after-exit', {
-        activeEvidenceSequence: Number(previous?.activeEvidenceSequence) || 0,
-        idleConfirmed: connectorStatus !== 'active'
-      })
-      const parentKnown = codexActivityInventory.get(parentThreadId)
-      const sameAppServerBranch = parentKnown?.appServerLiveActive === true
-        && parentKnown.appServerLiveBranchThreadId === threadId
-      const sameAppServerTurn = typeof turn.id === 'string'
-        && typeof parentKnown?.lastTurnId === 'string'
-        && turn.id
-        && parentKnown.lastTurnId
-        ? turn.id === parentKnown.lastTurnId
-        : codexTimestampMs(turn.startedAt) >= codexTimestampMs(parentKnown?.lastTurnStartedAt)
-      if (sameAppServerBranch && sameAppServerTurn) codexClearAppServerLiveActive(parentKnown)
-    }
     const terminal = codexReadPrivateBranchTerminal(parentThreadId, threadId)
     const openedRead = codexDesktopOpenedReadAcknowledgements.has(threadId)
     const unreadKnown = openedRead || unreadIds instanceof Set
@@ -7439,7 +7439,11 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
     threadId: parentThreadId,
     activity: ownActivity,
     shadow: ownShadow,
-    authority: appServerOwn ? 'app-server-live' : ownDesktopActivity ? 'desktop-live' : known.statusAuthority,
+    authority: appServerOwn
+      ? 'app-server-live'
+      : ownDesktopActivity
+        ? 'desktop-live'
+        : known.connectorStatusAuthority || 'connector',
     lane: appServerOwn ? 'app-server' : ownDesktopActivity ? 'desktop' : 'connector'
   }, ...childEntries.map(([threadId, shadow]) => {
     const appServerChild = appServerLive && appServerBranchThreadId === threadId
@@ -7537,7 +7541,7 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
     const goalEvidence = codexPrivateThreadGoalEvidence(row.threadId)
     const openedRead = codexDesktopOpenedReadAcknowledgements.has(row.threadId)
     return {
-      ref: codexPrivateBranchRef(parentThreadId, row.threadId, row.lane),
+      ref: codexPrivateBranchRef(parentThreadId, row.threadId),
       branchKind: row.threadId === parentThreadId ? 'main' : 'side',
       unreadKnown: openedRead || unread.unreadAuthority !== 'unavailable',
       hasUnreadTurn: openedRead ? false : unread.hasUnreadTurn === true,
@@ -7567,10 +7571,25 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
               activeEvidenceSequence: Number(terminal.activeEvidenceSequence) || activeSequence,
               idleConfirmed
             }
+          : (row.inventoryEvidence?.lastTurnStatus
+              || row.threadId === parentThreadId && (known.connectorLastTurnStatus || known.lastTurnStatus))
+            ? {
+                // Inventory contributes cold baseline topology/status only. It
+                // deliberately carries no terminal sequence and therefore
+                // cannot close a newer real-time branch in the Kernel.
+                lastTurnStatus: row.inventoryEvidence?.lastTurnStatus
+                  || known.connectorLastTurnStatus
+                  || known.lastTurnStatus,
+                lastTurnEvidence: 'inventory',
+                terminalEvidenceSequence: 0,
+                activeEvidenceSequence: activeSequence,
+                idleConfirmed: false
+              }
           : {}),
       waitingSince: Number(row.activity?.waitingSince) || 0,
       turnStartedAt: Number(terminal?.turnStartedAt)
         || Number(row.inventoryEvidence?.turnStartedAt)
+        || (row.threadId === parentThreadId && !live ? Number(known.connectorLastTurnStartedAt) || 0 : 0)
         || Number(known.lastTurnStartedAt)
         || 0,
       terminalAt: Number(terminal?.terminalAt)
@@ -8900,7 +8919,7 @@ async function readCodexThreadTurnStatuses(rows, dirtyThreadIds = new Set()) {
   const candidates = rows.map(codexRecord)
   const latest = new Map()
   const nonConversationIds = new Set()
-  const freshIds = new Set()
+  const readSucceededIds = new Set()
   const useEventFastPath = dirtyThreadIds.size > 0
   const queue = []
 
@@ -8930,14 +8949,14 @@ async function readCodexThreadTurnStatuses(rows, dirtyThreadIds = new Set()) {
     if (!Array.isArray(pageSource.data)) throw codexError('protocol-error', 'Codex latest Turn response is invalid')
     if (pageSource.data.length === 0) {
       nonConversationIds.add(thread.id)
-      freshIds.add(thread.id)
+      readSucceededIds.add(thread.id)
       codexThreadTurnStatusCache.set(thread.id, { nonConversation: true })
       return
     }
     const turn = sanitizeCodexTurnStatusPage(page)
     if (!turn || !turn.startedAt) throw codexError('protocol-error', 'Codex latest Turn is missing startedAt')
     latest.set(thread.id, turn)
-    freshIds.add(thread.id)
+    readSucceededIds.add(thread.id)
     codexThreadTurnStatusCache.set(thread.id, { turn: { ...turn } })
   }
 
@@ -8952,7 +8971,7 @@ async function readCodexThreadTurnStatuses(rows, dirtyThreadIds = new Set()) {
     }
   )
   await Promise.all(workers)
-  return { latest, nonConversationIds, freshIds }
+  return { latest, nonConversationIds, readSucceededIds }
 }
 
 function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Map(), unreadIds = null) {
@@ -9181,14 +9200,7 @@ async function scanVerifiedCodexInventory() {
       const lastTurnId = latestTurnMatchesProjection && latestTurn?.id
         ? latestTurn.id
         : previousTurnMatchesProjection ? previousActivity?.lastTurnId || '' : ''
-      const freshInventoryTurn = turns.freshIds?.has(thread.id) === true
-      if (freshInventoryTurn
-        && ['completed', 'interrupted', 'failed'].includes(latestTurn?.status)
-        && rolloutFallback.status !== 'active') {
-        codexRememberPrivateBranchTerminal(thread.id, thread.id, latestTurn, 'targeted-after-exit', {
-          idleConfirmed: true
-        })
-      }
+      const inventoryReadSucceeded = turns.readSucceededIds?.has(thread.id) === true
       const inventoryInProgress = latestTurn?.status === 'inProgress' && codexTimestampMs(latestTurn.startedAt) > 0
       const previousInventoryTurnSequence = Number(previousActivity?.inventoryTurnEvidenceSequence) || 0
       const sameInventoryTurn = inventoryInProgress
@@ -9197,9 +9209,9 @@ async function scanVerifiedCodexInventory() {
       const inventoryTurnEvidenceSequence = inventoryInProgress
         ? sameInventoryTurn && previousInventoryTurnSequence > 0
           ? previousInventoryTurnSequence
-          : freshInventoryTurn ? codexNextLiveEvidenceSequence() : 0
+          : inventoryReadSucceeded ? codexNextLiveEvidenceSequence() : 0
         : 0
-      const exactTerminal = codexIsConfirmedTurnEvidence(turnFields.lastTurnEvidence)
+      const exactTerminal = !preserveAppServerActive && codexIsConfirmedTurnEvidence(turnFields.lastTurnEvidence)
       const terminalEvidenceSequence = exactTerminal
         ? previousTurnMatchesProjection
           && previousActivity?.lastTurnEvidence === turnFields.lastTurnEvidence
@@ -10834,7 +10846,8 @@ function activateCodexFloat(payload) {
     if (typeof codexFloatWindow.show === 'function') codexFloatWindow.show()
     else if (typeof codexFloatWindow.showInactive === 'function') codexFloatWindow.showInactive()
     if (typeof codexFloatWindow.focus === 'function') codexFloatWindow.focus()
-    const command = codexRecord(payload).command === 'new-thread' ? 'new-thread' : undefined
+    const requestedCommand = codexRecord(payload).command
+    const command = requestedCommand === 'new-thread' || requestedCommand === 'quick' ? requestedCommand : undefined
     codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.activate, { requestedAt: Date.now(), ...(command ? { command } : {}) })
     return true
   } catch {
@@ -11638,8 +11651,10 @@ function recordCompanionStateDecision(provider, key, decision, evidence, previou
   runtimeDiagnostics.record({
     level: 'info',
     scope: 'task-push',
-    event: 'state-decision',
-    outcome: 'accepted',
+    // This is the Evidence Adapter's bounded proposal. Only the provider-level
+    // event emitted after Kernel publication may say accepted/superseded.
+    event: 'state-proposal',
+    outcome: 'proposed',
     provider,
     phase: decision.phase,
     reason: decision.reason,
@@ -11728,8 +11743,8 @@ async function preflightCompanionTaskPackage(input = {}) {
     if (result.provider === 'codex') {
       sourceGenerations.codex = Number(result.value.activityGeneration) || 0
       sourceLaneGenerations.codex.membership = Number(result.value.readAt) || Date.now()
-      sourceLaneGenerations.codex.phase = sourceGenerations.codex || sourceLaneGenerations.codex.membership
-      sourceLaneGenerations.codex.unread = sourceGenerations.codex || sourceLaneGenerations.codex.membership
+      sourceLaneGenerations.codex.phase = sourceGenerations.codex
+      sourceLaneGenerations.codex.unread = sourceGenerations.codex
       for (const value of result.value.threads) {
         const thread = codexRecord(value)
         const key = typeof thread.key === 'string' ? thread.key : ''
@@ -11844,12 +11859,8 @@ async function preflightCompanionTaskPackage(input = {}) {
     }
     sourceLaneGenerations.claude.membership = Number(result.value.readAt) || Date.now()
     sourceLaneGenerations.claude.phase = Number(result.value.generation || result.value.stateGeneration) || 0
-    sourceLaneGenerations.claude.unread = Number(result.unread.generation || result.unread.readAt) || 0
-    sourceGenerations.claude = Math.max(
-      sourceLaneGenerations.claude.membership,
-      sourceLaneGenerations.claude.phase,
-      sourceLaneGenerations.claude.unread
-    )
+    sourceLaneGenerations.claude.unread = Number(result.unread.generation) || 0
+    sourceGenerations.claude = companionCounterAggregate(sourceLaneGenerations.claude)
     for (const value of result.value.sessions) {
       const session = codexRecord(value)
       if (session.isArchived === true) continue
@@ -12009,12 +12020,24 @@ let companionClaudeInventoryDispose = null
 let companionClaudeUnreadDispose = null
 let companionClaudeUnreadSnapshot = { ids: new Set(), generation: 0, readAt: 0, available: false }
 
+/**
+ * Single rule for lane units. `phase` and `unread` are monotonic provider
+ * counters; `membership` is an observation timestamp that is only ever compared
+ * against itself. Mixing them is not a rounding error but a permanent failure:
+ * a counter can never overtake a wall-clock value, so any lane that inherits a
+ * timestamp rejects every later real generation as stale. The aggregate
+ * therefore spans counters only, and no lane may seed another across units.
+ */
+function companionCounterAggregate(lanes) {
+  return Math.max(Number(lanes?.phase) || 0, Number(lanes?.unread) || 0)
+}
+
 function publishCompanionHostTasks(tasks, input = {}) {
   const current = companionTaskKernel?.getPackage?.()
   if (!current?.complete || !companionTaskKernel?.publishEvidence) return false
   const currentLanes = current.sourceLaneGenerations || {
-    codex: { membership: current.sourceGenerations.codex, phase: current.sourceGenerations.codex, unread: current.sourceGenerations.codex },
-    claude: { membership: current.sourceGenerations.claude, phase: current.sourceGenerations.claude, unread: current.sourceGenerations.claude }
+    codex: { membership: 0, phase: current.sourceGenerations.codex, unread: current.sourceGenerations.codex },
+    claude: { membership: 0, phase: current.sourceGenerations.claude, unread: current.sourceGenerations.claude }
   }
   const requestedLanes = codexRecord(input.sourceLaneGenerations)
   const laneGenerations = {
@@ -12040,13 +12063,105 @@ function publishCompanionHostTasks(tasks, input = {}) {
     complete: true,
     focusedKey: current.focusedKey,
     sourceGenerations: {
-      codex: Math.max(current.sourceGenerations.codex, ...Object.values(laneGenerations.codex)),
-      claude: Math.max(current.sourceGenerations.claude, ...Object.values(laneGenerations.claude))
+      codex: Math.max(current.sourceGenerations.codex, companionCounterAggregate(laneGenerations.codex)),
+      claude: Math.max(current.sourceGenerations.claude, companionCounterAggregate(laneGenerations.claude))
     },
     sourceLaneGenerations: laneGenerations,
     tasks
   })
   return Boolean(next)
+}
+
+function companionCanonicalProposalMismatchCount(proposedTasks, canonical, keys, selectors, removedKeys = []) {
+  const proposedByKey = new Map((Array.isArray(proposedTasks) ? proposedTasks : []).map((task) => [task.key, task]))
+  const canonicalByKey = new Map((Array.isArray(canonical?.tasks) ? canonical.tasks : []).map((task) => [task.key, task]))
+  let count = 0
+  for (const key of removedKeys) if (canonicalByKey.has(key)) count += 1
+  for (const key of keys) {
+    const proposed = proposedByKey.get(key)
+    const committed = canonicalByKey.get(key)
+    if (!proposed || !committed) {
+      count += 1
+      continue
+    }
+    for (const selector of selectors) {
+      if (selector(proposed) !== selector(committed)) count += 1
+    }
+  }
+  return count
+}
+
+/**
+ * Single outlet for "was this proposal actually accepted?".
+ *
+ * RAW-166 §78 states one rule — a proposal counts as accepted only when the
+ * committed canonical package matches it — and that rule was implemented four
+ * times, once per Provider lane. Four copies of one contract means four places
+ * to keep in step, so the decision, its repair trigger and its diagnostic shape
+ * live here and each lane supplies only what genuinely differs.
+ */
+function recordCompanionProposalOutcome(input) {
+  const canonicalPublishedAt = Number(input.canonical?.publishedAt) || 0
+  const canonicalMismatchCount = Number(input.mismatchCount) || 0
+  const outcome = input.queued
+    ? 'queued'
+    : !input.changed
+      ? 'ignored'
+      : input.published && canonicalMismatchCount === 0 ? 'accepted' : 'superseded'
+  if (!input.queued && input.changed) {
+    companionTrackCanonicalMismatch(input.event, input.provider, canonicalMismatchCount, canonicalPublishedAt)
+  }
+  runtimeDiagnostics.record({
+    level: outcome === 'accepted' || outcome === 'superseded' ? 'info' : 'debug',
+    scope: 'task-push',
+    event: input.event,
+    outcome,
+    durationMs: Date.now() - input.startedAt,
+    slowMs: 50,
+    count: input.count,
+    cache: input.cache,
+    details: { ...input.details, canonicalMismatchCount, canonicalPublishedAt }
+  })
+  return outcome
+}
+
+const companionCanonicalMismatchStreak = new Map()
+const COMPANION_MISMATCH_REPAIR_AFTER = 3
+
+/**
+ * A proposal the Kernel accepted may still disagree with the published package.
+ * Recording that as `superseded` names the symptom but repairs nothing, so a
+ * genuinely stuck task stays stuck — observed in a real host for 23 minutes at
+ * a constant mismatch of one. Detection must therefore carry an action: a
+ * streak of disagreements queues the narrow reconciliation for that provider.
+ */
+function companionTrackCanonicalMismatch(event, provider, mismatchCount, canonicalPublishedAt) {
+  const previous = companionCanonicalMismatchStreak.get(event)
+  if (!mismatchCount) {
+    companionCanonicalMismatchStreak.delete(event)
+    return
+  }
+  // Only a mismatch that survives a *stationary* canonical package is stuck. If
+  // the package advanced between two disagreements the reducer is still making
+  // progress, and queueing a repair there would republish identical semantics.
+  const stationary = previous && previous.publishedAt === canonicalPublishedAt
+  const streak = stationary ? previous.streak + 1 : 1
+  if (streak < COMPANION_MISMATCH_REPAIR_AFTER) {
+    companionCanonicalMismatchStreak.set(event, { streak, publishedAt: canonicalPublishedAt })
+    return
+  }
+  companionCanonicalMismatchStreak.delete(event)
+  runtimeDiagnostics.record({
+    level: 'warn',
+    scope: 'task-push',
+    event: 'canonical-mismatch-repair',
+    outcome: 'queued',
+    durationMs: 0,
+    slowMs: 0,
+    count: mismatchCount,
+    details: { source: event, provider, streak }
+  })
+  queueCompanionHostReconciliation(provider)
 }
 
 function applyCodexActivityToCompanionKernel(delta) {
@@ -12078,7 +12193,10 @@ function applyCodexActivityToCompanionKernel(delta) {
   const unreadAccepted = generation > currentLanes.unread
     && [...byKey.values()].some((entry) => typeof entry.hasUnreadTurn === 'boolean' && entry.unreadAuthority !== 'unavailable')
   if (!phaseAccepted && !unreadAccepted && archived.size === 0) {
-    recordCompanionProbeGate('codex-activity-gate', 'stale-lanes', {
+    // An empty delta carries no lane evidence at all, so neither `.some()` can
+    // pass. Reporting that as a stale lane hides the real ordering failures in
+    // the same counter; reconciliation was already queued above either way.
+    recordCompanionProbeGate('codex-activity-gate', byKey.size === 0 ? 'empty-delta' : 'stale-lanes', {
       generation,
       currentLanes,
       inventoryChanged,
@@ -12090,6 +12208,8 @@ function applyCodexActivityToCompanionKernel(delta) {
   let phaseMatched = false
   let unreadMatched = false
   const matchedKeys = new Set()
+  const phaseMatchedKeys = new Set()
+  const unreadMatchedKeys = new Set()
   const tasks = []
   for (const task of current.tasks) {
     if (task.provider !== 'codex') {
@@ -12110,8 +12230,14 @@ function applyCodexActivityToCompanionKernel(delta) {
       tasks.push(task)
       continue
     }
-    if (acceptPhaseForTask) phaseMatched = true
-    if (acceptUnreadForTask) unreadMatched = true
+    if (acceptPhaseForTask) {
+      phaseMatched = true
+      phaseMatchedKeys.add(task.key)
+    }
+    if (acceptUnreadForTask) {
+      unreadMatched = true
+      unreadMatchedKeys.add(task.key)
+    }
     const decision = acceptPhaseForTask ? companionCodexPhaseDecision({ ...task, ...entry, previousPhase: task.phase }) : null
     const phase = decision ? decision.phase : task.phase
     const freshness = decision ? decision.freshness : task.freshness
@@ -12271,12 +12397,14 @@ function applyCodexActivityToCompanionKernel(delta) {
       })
       matchedKeys.add(key)
       phaseMatched = true
+      phaseMatchedKeys.add(key)
       if (unreadKnown) unreadMatched = true
+      if (unreadKnown) unreadMatchedKeys.add(key)
       changed = true
       recordCompanionStateDecision('codex', key, decision, 'membership-minimal')
     }
   }
-  publishCompanionHostTasks(tasks, {
+  const published = publishCompanionHostTasks(tasks, {
     acceptedAt: source.receivedAt,
     sourceLaneGenerations: {
       codex: {
@@ -12285,13 +12413,27 @@ function applyCodexActivityToCompanionKernel(delta) {
       }
     }
   })
-  runtimeDiagnostics.record({
-    level: changed ? 'info' : 'debug',
-    scope: 'task-push',
+  const canonical = companionTaskKernel?.getPackage?.()
+  const canonicalMismatchCount = companionCanonicalProposalMismatchCount(
+    tasks,
+    canonical,
+    phaseMatchedKeys,
+    [(task) => task.phase],
+    archived
+  ) + companionCanonicalProposalMismatchCount(
+    tasks,
+    canonical,
+    unreadMatchedKeys,
+    [(task) => task.unread, (task) => task.unreadKnown]
+  )
+  recordCompanionProposalOutcome({
     event: 'codex-activity',
-    outcome: changed ? 'accepted' : 'ignored',
-    durationMs: Date.now() - startedAt,
-    slowMs: 50,
+    provider: 'codex',
+    startedAt,
+    changed,
+    published,
+    canonical,
+    mismatchCount: canonicalMismatchCount,
     count: byKey.size + archived.size,
     cache: 'process-package',
     details: {
@@ -12303,7 +12445,8 @@ function applyCodexActivityToCompanionKernel(delta) {
       unreadMatched,
       inventoryChanged,
       archivedCount: archived.size,
-      receivedAt: Number(source.receivedAt) || 0
+      receivedAt: Number(source.receivedAt) || 0,
+      hostCommittedAt: Date.now()
     }
   })
   return changed || inventoryChanged
@@ -12341,6 +12484,7 @@ function applyClaudeStateToCompanionKernel() {
     return [typeof session.sessionId === 'string' ? session.sessionId : '', session]
   }))
   let changed = false
+  const proposalKeys = new Set()
   const tasks = current.tasks.map((task) => {
     if (task.provider !== 'claude') return task
     const session = byAlias.get(task.actionAlias)
@@ -12379,21 +12523,32 @@ function applyClaudeStateToCompanionKernel() {
         archive
       }
     }
-    if (semanticChanged) changed = true
+    if (semanticChanged) {
+      changed = true
+      proposalKeys.add(task.key)
+    }
     if (phase !== task.phase) recordCompanionStateDecision('claude', task.key, decision, task.unread ? 'native-unread' : session.stateSource || 'provider-state')
     return next
   })
-  publishCompanionHostTasks(tasks, {
+  const published = publishCompanionHostTasks(tasks, {
     acceptedAt: source.readAt,
     sourceLaneGenerations: { claude: { phase: generation } }
   })
-  runtimeDiagnostics.record({
-    level: changed ? 'info' : 'debug',
-    scope: 'task-push',
+  const canonical = companionTaskKernel?.getPackage?.()
+  const canonicalMismatchCount = companionCanonicalProposalMismatchCount(
+    tasks,
+    canonical,
+    proposalKeys,
+    [(task) => task.phase, (task) => task.capabilities?.archive === true]
+  )
+  recordCompanionProposalOutcome({
     event: 'claude-state',
-    outcome: changed ? 'accepted' : 'ignored',
-    durationMs: Date.now() - startedAt,
-    slowMs: 50,
+    provider: 'claude',
+    startedAt,
+    changed,
+    published,
+    canonical,
+    mismatchCount: canonicalMismatchCount,
     count: source.sessions.length,
     cache: 'provider-direct',
     details: {
@@ -12449,18 +12604,25 @@ async function applyClaudeUnreadToCompanionKernel() {
   }
   companionClaudeUnreadSnapshot = { ids, generation: Number(source.generation) || 0, readAt, available: true }
   let changed = false
+  const proposalKeys = new Set()
   const tasks = current.tasks.map((task) => {
     if (task.provider !== 'claude') return task
     const unread = ids.has(task.actionAlias)
     const decision = companionClaudePhaseDecision(task.phase, unread)
     const phase = decision.phase
-    const semanticChanged = unread !== task.unread || phase !== task.phase
-    if (semanticChanged) changed = true
-    recordCompanionStateDecision('claude', task.key, decision, unread ? 'native-unread' : 'provider-state')
+    const semanticChanged = unread !== task.unread || task.unreadKnown !== true || phase !== task.phase
+    if (semanticChanged) {
+      changed = true
+      proposalKeys.add(task.key)
+    }
+    if (semanticChanged) {
+      recordCompanionStateDecision('claude', task.key, decision, unread ? 'native-unread' : 'provider-state')
+    }
     return {
       ...task,
       phase,
       unread,
+      unreadKnown: true,
       unreadRevision: Math.max(Number(task.unreadRevision) || 0, readAt),
       revisionAt: semanticChanged ? Math.max(task.revisionAt, readAt) : task.revisionAt,
       phaseRevision: phase !== task.phase ? Math.max(Number(task.phaseRevision) || 0, readAt) : task.phaseRevision,
@@ -12470,20 +12632,33 @@ async function applyClaudeUnreadToCompanionKernel() {
       capabilities: { ...task.capabilities, archive: phase === 'completed' || phase === 'stopped' ? task.capabilities.archive : false }
     }
   })
-  publishCompanionHostTasks(tasks, {
+  const published = publishCompanionHostTasks(tasks, {
     acceptedAt: readAt,
     sourceLaneGenerations: { claude: { unread: generation } }
   })
-  runtimeDiagnostics.record({
-    level: changed ? 'info' : 'debug',
-    scope: 'task-push',
+  const canonical = companionTaskKernel?.getPackage?.()
+  const canonicalMismatchCount = companionCanonicalProposalMismatchCount(
+    tasks,
+    canonical,
+    proposalKeys,
+    [(task) => task.phase, (task) => task.unread, (task) => task.unreadKnown]
+  )
+  recordCompanionProposalOutcome({
     event: 'claude-unread',
-    outcome: changed ? 'accepted' : 'ignored',
-    durationMs: Date.now() - startedAt,
-    slowMs: 50,
+    provider: 'claude',
+    startedAt,
+    changed,
+    published,
+    canonical,
+    mismatchCount: canonicalMismatchCount,
     count: ids.size,
     cache: 'provider-direct',
-    details: { generation, previousGeneration: currentGeneration, readAt, unreadCount: ids.size }
+    details: {
+      generation,
+      previousGeneration: currentGeneration,
+      readAt,
+      unreadCount: ids.size
+    }
   })
   return changed
 }
@@ -12505,6 +12680,7 @@ function companionTaskFromClaudeSession(sessionValue, previous, acceptedAt) {
   const unread = companionClaudeUnreadSnapshot.available
     ? companionClaudeUnreadSnapshot.ids.has(sessionId)
     : previous?.unread === true
+  const unreadKnown = companionClaudeUnreadSnapshot.available || previous?.unreadKnown === true
   const sourcePhase = ['running', 'waiting-input', 'waiting-approval', 'completed', 'stopped', 'unknown'].includes(session.phase)
     ? session.phase
     : previous?.phase || 'unknown'
@@ -12532,6 +12708,7 @@ function companionTaskFromClaudeSession(sessionValue, previous, acceptedAt) {
   const semanticChanged = !previous
     || phaseChanged
     || unread !== previous.unread
+    || unreadKnown !== previous.unreadKnown
     || archive !== previous.capabilities?.archive
     || dynamicEligible !== previous.dynamicEligible
     || sessionId !== previous.actionAlias
@@ -12563,6 +12740,7 @@ function companionTaskFromClaudeSession(sessionValue, previous, acceptedAt) {
     attentionOrder: previous?.attentionOrder || 0,
     hidden: false,
     unread,
+    unreadKnown,
     planImplementation: false,
     planReady: false,
     planLifecycleRevision: 0,
@@ -12599,32 +12777,59 @@ function applyClaudeInventoryDeltaToCompanionKernel(delta) {
   const byKey = new Map(current.tasks.map((task) => [task.key, task]))
   let changed = false
   let exact = true
+  const proposalKeys = new Set()
+  const removedKeys = new Set()
   for (const value of source.mutations) {
     const mutation = codexRecord(value)
     const key = typeof mutation.key === 'string' ? mutation.key : ''
     if (!key.startsWith('claude:')) { exact = false; continue }
     if (mutation.mutation === 'remove' || mutation.mutation === 'archived') {
-      if (byKey.delete(key)) changed = true
+      if (byKey.delete(key)) {
+        changed = true
+        removedKeys.add(key)
+      }
       continue
     }
     if (mutation.mutation !== 'upsert' || !mutation.session) { exact = false; continue }
     const next = companionTaskFromClaudeSession(mutation.session, byKey.get(key), acceptedAt)
     if (!next) { exact = false; continue }
-    if (JSON.stringify(next) !== JSON.stringify(byKey.get(key))) changed = true
+    if (JSON.stringify(next) !== JSON.stringify(byKey.get(key))) {
+      changed = true
+      proposalKeys.add(key)
+    }
     byKey.set(key, next)
   }
-  if (exact) publishCompanionHostTasks([...byKey.values()], {
+  const tasks = [...byKey.values()]
+  const published = exact && publishCompanionHostTasks(tasks, {
     acceptedAt,
     sourceLaneGenerations: { claude: { membership: acceptedAt } }
   })
   if (!exact) queueCompanionHostReconciliation('claude')
-  runtimeDiagnostics.record({
-    level: exact && changed ? 'info' : 'debug',
-    scope: 'task-push',
+  const canonical = exact ? companionTaskKernel?.getPackage?.() : null
+  const canonicalMismatchCount = exact
+    ? companionCanonicalProposalMismatchCount(
+        tasks,
+        canonical,
+        proposalKeys,
+        [
+          (task) => task.phase,
+          (task) => task.unread,
+          (task) => task.unreadKnown,
+          (task) => task.actionAlias,
+          (task) => task.capabilities?.archive === true
+        ],
+        removedKeys
+      )
+    : 0
+  recordCompanionProposalOutcome({
     event: 'claude-inventory',
-    outcome: exact ? (changed ? 'accepted' : 'ignored') : 'queued',
-    durationMs: Date.now() - startedAt,
-    slowMs: 50,
+    provider: 'claude',
+    startedAt,
+    queued: !exact,
+    changed,
+    published,
+    canonical,
+    mismatchCount: canonicalMismatchCount,
     count: source.mutations.length,
     cache: exact ? 'provider-direct' : 'none',
     details: {
@@ -12804,13 +13009,18 @@ if (globalThis.utools && typeof globalThis.utools.onPluginEnter === 'function') 
   globalThis.utools.onPluginEnter((action) => {
     ensureCodexInventoryMembershipWatchers({ reconcile: false })
     requestCodexInventoryMembershipReconciliation('plugin-enter', { forceTasksOnly: true })
-    const consumedByKernel = Boolean(companionTaskKernel?.handleEnter(action))
+    // 快速任务查看的载体是宿主自己拥有的悬浮子窗口，不依赖 Renderer 挂载。
+    // 冷启动直接激活，避免"全局快捷键第一次按没反应、第二次才生效"。
+    const quickEntryConsumed = (action && action.code === 'eypc-companion-quick')
+      ? activateCodexFloat({ command: 'quick' })
+      : false
+    const consumedByKernel = quickEntryConsumed || Boolean(companionTaskKernel?.handleEnter(action))
     runtimeDiagnostics.record({
       level: 'info',
       scope: 'plugin-lifecycle',
       event: 'plugin-enter',
       outcome: consumedByKernel ? 'kernel-consumed' : 'renderer-dispatched',
-      details: { consumedByKernel, hasAction: Boolean(action) }
+      details: { consumedByKernel, quickEntryConsumed, hasAction: Boolean(action) }
     })
     if (consumedByKernel) {
       // Task intents are consumed by the process-owned Kernel even while its

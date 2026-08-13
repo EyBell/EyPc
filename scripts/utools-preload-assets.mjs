@@ -17,7 +17,7 @@ export const UTOOLS_PRELOAD_MODULE_GROUPS = Object.freeze([
   {
     id: 'companion',
     directory: 'companion',
-    files: ['navigation.cjs', 'task-actions.cjs', 'task-kernel.cjs']
+    files: ['branch-causality.cjs', 'navigation.cjs', 'task-actions.cjs', 'task-kernel.cjs']
   },
   {
     id: 'windows',

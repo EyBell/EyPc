@@ -13,7 +13,7 @@
 const { claudeAppDataRoot } = require('./app-paths.cjs')
 const { LOCAL_SESSION_PATTERN } = require('./code-sessions.cjs')
 
-const CLAUDE_APP_STATE_REVISION = 'claude-app-log-state-v1'
+const CLAUDE_APP_STATE_REVISION = 'claude-app-log-state-v2'
 const CLAUDE_APP_STATE_VERSION = 2
 // Each version is admitted only after its privacy-safe lifecycle grammar has
 // been checked against the installed App logs. 1.28929.0 preserves the exact
@@ -24,6 +24,7 @@ const LOG_FILE_NAMES = ['main1.log', 'main.log']
 const LOG_TAIL_MAX_BYTES = 16 * 1024 * 1024
 const LOG_RECOVERY_POLL_MS = 1000
 const MAX_SEEN_EVENTS = 4096
+const MAX_HOT_UNREAD_HINTS = 500
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function textOf(value) {
@@ -90,6 +91,13 @@ function parseAppStateLine(line) {
   if (match) {
     const sessionId = normalizeLocalId(match[1])
     return sessionId ? { kind: 'stopped', sessionId, requestId: '', at } : null
+  }
+  match = /^\[CCD\] LocalSessions\.setFocusedSession: sessionId=(null|local_[0-9a-f-]+)$/.exec(message)
+  if (match) {
+    const sessionId = match[1] === 'null' ? '' : normalizeLocalId(match[1])
+    return match[1] === 'null' || sessionId
+      ? { kind: 'focus-changed', sessionId, requestId: '', at }
+      : null
   }
   return null
 }
@@ -204,6 +212,13 @@ function createAppStateReader(dependencies) {
   let lastFileState = null
   let cachedAppVersion = ''
   let cachedAppVersionSignature = ''
+  let focusedSessionId = ''
+  let focusUpdatedAt = 0
+  let hotUnreadHints = new Map()
+  let hotUnreadGeneration = 0
+  let hotUnreadWatermark = 0
+  let hotSeenOrder = []
+  let hotSeen = new Set()
 
   function logDirectory() {
     const override = textOf(dependencies.claudeLogDirectory).trim()
@@ -314,16 +329,80 @@ function createAppStateReader(dependencies) {
     return true
   }
 
+  function rememberHotEvent(event) {
+    const key = `${event.at}:${event.kind}:${event.sessionId}:${event.requestId}:${event.occurrence || 1}`
+    if (hotSeen.has(key)) return false
+    hotSeen.add(key)
+    hotSeenOrder.push(key)
+    while (hotSeenOrder.length > MAX_SEEN_EVENTS) hotSeen.delete(hotSeenOrder.shift())
+    return true
+  }
+
+  function setHotUnreadHint(sessionId, unread, at, reason) {
+    if (!sessionId || !Number.isFinite(at) || at <= 0) return false
+    const previous = hotUnreadHints.get(sessionId)
+    if (previous && previous.updatedAt > at) return false
+    if (previous
+      && previous.unread === (unread === true)
+      && previous.updatedAt === at
+      && previous.reason === reason) return false
+    hotUnreadGeneration += 1
+    hotUnreadHints.delete(sessionId)
+    hotUnreadHints.set(sessionId, {
+      sessionId,
+      unread: unread === true,
+      updatedAt: at,
+      reason,
+      revision: hotUnreadGeneration
+    })
+    while (hotUnreadHints.size > MAX_HOT_UNREAD_HINTS) hotUnreadHints.delete(hotUnreadHints.keys().next().value)
+    return true
+  }
+
+  function applyHotUnreadEvents(events, allowHints) {
+    for (const event of events) {
+      if (!rememberHotEvent(event) || event.at < hotUnreadWatermark) continue
+      hotUnreadWatermark = Math.max(hotUnreadWatermark, event.at)
+      if (event.kind === 'focus-changed') {
+        if (event.at >= focusUpdatedAt) {
+          const changed = focusedSessionId !== event.sessionId || focusUpdatedAt !== event.at
+          focusedSessionId = event.sessionId
+          focusUpdatedAt = event.at
+          if (changed) hotUnreadGeneration += 1
+        }
+        if (allowHints && event.sessionId) setHotUnreadHint(event.sessionId, false, event.at, 'focused')
+        continue
+      }
+      if (!allowHints || !event.sessionId) continue
+      if (event.kind === 'running') {
+        setHotUnreadHint(event.sessionId, false, event.at, 'turn-started')
+      } else if (event.kind === 'completed') {
+        const focused = focusedSessionId === event.sessionId
+        setHotUnreadHint(event.sessionId, !focused, event.at, focused ? 'completed-focused' : 'completed-unfocused')
+      }
+    }
+  }
+
   function rebuild() {
     const gate = compatibility()
     const before = JSON.stringify([...state.entries()])
+    const beforeHotGeneration = hotUnreadGeneration
     const nextFileState = fileState()
     if (gate.status !== 'compatible') {
       state = new Map()
       requests = new Map()
       seen = new Set()
       seenOrder = []
-      if (before !== '[]') generation += 1
+      if (focusedSessionId || hotUnreadHints.size) {
+        focusedSessionId = ''
+        focusUpdatedAt = 0
+        hotUnreadHints = new Map()
+        hotUnreadWatermark = 0
+        hotSeen = new Set()
+        hotSeenOrder = []
+        hotUnreadGeneration += 1
+      }
+      if (before !== '[]' || beforeHotGeneration !== hotUnreadGeneration) generation += 1
       initialized = true
       lastAppVersion = gate.version
       lastFileState = nextFileState
@@ -331,6 +410,10 @@ function createAppStateReader(dependencies) {
       return gate
     }
     const liveAppend = initialized && gate.version === lastAppVersion && appendOnly(lastFileState, nextFileState)
+    // Only a verified append may create a realtime unread edge. Rotation,
+    // truncation and compatibility rebuilds still recover phase/focus state,
+    // but their cold tail must never fabricate a new completion/read event.
+    const allowHotHints = liveAppend
     const events = []
     for (const name of LOG_FILE_NAMES) {
       const text = tailText(path.join(logDirectory(), name))
@@ -352,6 +435,7 @@ function createAppStateReader(dependencies) {
       seenOrder = []
     }
     const unique = events.filter(remember)
+    applyHotUnreadEvents(unique, allowHotHints)
     const folded = foldAppStateEvents(unique, state, requests)
     state = folded.state
     requests = folded.requests
@@ -365,7 +449,7 @@ function createAppStateReader(dependencies) {
         })
       }
     }
-    if (JSON.stringify([...state.entries()]) !== before) generation += 1
+    if (JSON.stringify([...state.entries()]) !== before || beforeHotGeneration !== hotUnreadGeneration) generation += 1
     initialized = true
     lastAppVersion = gate.version
     lastFileState = nextFileState
@@ -387,6 +471,20 @@ function createAppStateReader(dependencies) {
       generation,
       entries: gate.status === 'compatible' ? [...state.values()].map((entry) => ({ ...entry })) : [],
       readAt: Date.now()
+    }
+  }
+
+  function readHotUnread() {
+    const gate = compatibility()
+    return {
+      revision: `${CLAUDE_APP_STATE_REVISION}:hot-unread-v1`,
+      compatibility: gate.status,
+      generation: hotUnreadGeneration,
+      focusedSessionId: gate.status === 'compatible' ? focusedSessionId : '',
+      focusUpdatedAt: gate.status === 'compatible' ? focusUpdatedAt : 0,
+      hints: gate.status === 'compatible'
+        ? [...hotUnreadHints.values()].map((hint) => ({ ...hint })).sort((left, right) => left.sessionId.localeCompare(right.sessionId))
+        : []
     }
   }
 
@@ -425,7 +523,8 @@ function createAppStateReader(dependencies) {
       compatibility: snapshot.compatibility,
       appVersion: snapshot.appVersion,
       generation: snapshot.generation,
-      entries: snapshot.entries
+      entries: snapshot.entries,
+      hotUnreadGeneration
     })
     let deliveredFingerprint = observationFingerprint(read())
     const readAndNotify = () => {
@@ -486,7 +585,7 @@ function createAppStateReader(dependencies) {
     return () => { disposed = true; stopWatching() }
   }
 
-  return { revision: CLAUDE_APP_STATE_REVISION, read, watch, close: stopWatching, compatibility, hasArchiveEvidence }
+  return { revision: CLAUDE_APP_STATE_REVISION, read, readHotUnread, watch, close: stopWatching, compatibility, hasArchiveEvidence }
 }
 
 module.exports = {

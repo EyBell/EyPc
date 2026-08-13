@@ -200,7 +200,13 @@ function selectProjectedStateSource(exactApp, hook, correlation, historyAt) {
   const appAt = stateEvidenceAt(exactApp)
   const hookAt = stateEvidenceAt(hook)
   const livePhase = (entry) => Boolean(entry && ['running', 'waiting-approval', 'waiting-input'].includes(entry.phase))
-  const appSupersededByHistory = livePhase(exactApp) && historyAt > appAt
+  // Metadata activity time is a proxy for "a turn completed", not proof of one.
+  // It may retire a phase we only replayed or inferred, but a live App append —
+  // an outstanding permission request in particular — is a directly observed
+  // current fact, and `lastActivityAt` churn of that same open turn must not
+  // retire it. Cold-replayed live phases are already neutralized upstream.
+  const liveObserved = (entry) => entry?.evidenceProvenance === 'live-append'
+  const appSupersededByHistory = livePhase(exactApp) && !liveObserved(exactApp) && historyAt > appAt
   const hookSupersededByHistory = livePhase(hook) && historyAt > hookAt
 
   if (exactApp && !appSupersededByHistory) {
