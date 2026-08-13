@@ -430,6 +430,34 @@ function sameProviders(left, right) {
   return PROVIDERS.every((provider) => left[provider] === right[provider])
 }
 
+function isLiveTaskPhase(phase) {
+  return phase === 'running' || phase === 'waiting-input' || phase === 'waiting-approval'
+}
+
+function isTerminalTaskPhase(phase) {
+  return phase === 'completed' || phase === 'stopped'
+}
+
+/**
+ * Projects a canonical task onto the shared evidence-line shape. The task layer
+ * keeps no separate active/terminal sequences, so `statusEnteredAt` is the only
+ * causal quantity available and is reported on whichever side the phase sits;
+ * the opposite side reads zero, which the core treats as "no such observation".
+ */
+function taskPhaseObservation(task) {
+  const live = isLiveTaskPhase(task.phase)
+  const terminal = isTerminalTaskPhase(task.phase)
+  const enteredAt = finiteInteger(task.statusEnteredAt)
+  return {
+    liveCurrent: live,
+    exactTerminal: terminal,
+    turnStartedAt: live ? enteredAt : 0,
+    terminalAt: terminal ? enteredAt : 0,
+    activeEvidenceSequence: live ? enteredAt : 0,
+    terminalEvidenceSequence: terminal ? enteredAt : 0
+  }
+}
+
 function draftProducer(value) {
   return DRAFT_PRODUCERS.includes(value) ? value : 'renderer'
 }
@@ -1350,16 +1378,18 @@ function createCompanionTaskKernel(dependencies = {}) {
       previous.unreadRevision
     )
 
+    // Same-revision conflicts are the one case the lane counters cannot order,
+    // and they used to be settled by two hardcoded direction pairs: terminal→
+    // running, and waiting→terminal. Those are two of the four quadrants the
+    // shared causal core already decides, so the tie-break now delegates to it.
+    // Both Providers get one rule, and the two directions that were never
+    // written by hand — live↔live and terminal↔terminal — are covered too, which
+    // is what a single-branch Provider like Claude was missing entirely.
     if (acceptPhase && !phaseAdvanced
-      && (previous.phase === 'completed' || previous.phase === 'stopped')
-      && incoming.phase === 'running'
       && incoming.phaseRevision === previous.phaseRevision
-      && incoming.statusEnteredAt <= previous.statusEnteredAt) acceptPhase = false
-    if (acceptPhase && !phaseAdvanced
-      && (previous.phase === 'waiting-input' || previous.phase === 'waiting-approval')
-      && (incoming.phase === 'completed' || incoming.phase === 'stopped')
-      && incoming.phaseRevision === previous.phaseRevision
-      && incoming.statusEnteredAt <= previous.statusEnteredAt) acceptPhase = false
+      && !phaseEvidenceSupersedes(taskPhaseObservation(previous), taskPhaseObservation(incoming))) {
+      acceptPhase = false
+    }
 
     // Renderer drafts carry display metadata only once process-owned Provider
     // evidence exists. They can never reinterpret an accepted phase/unread lane.

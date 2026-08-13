@@ -2211,6 +2211,74 @@ describe('CompanionTaskKernel', () => {
   })
 })
 
+describe('claude evidence line uses the shared causal core', () => {
+  // Claude has no fork topology, so it never entered the Codex branch store and
+  // therefore never got bidirectional phase admission. The two directions that
+  // were hand-written at the task layer covered terminal→running and
+  // waiting→terminal only; an older terminal replacing a newer one was free.
+  const claudeTask = (overrides: Record<string, unknown> = {}) => task({
+    key: 'claude:local_a',
+    provider: 'claude',
+    kind: 'claude-session',
+    actionAlias: 'local_a',
+    ...overrides
+  })
+  const claudeLanes = (generation: number) => ({
+    sourceGenerations: { codex: 0, claude: generation },
+    sourceLaneGenerations: {
+      codex: { membership: 0, phase: 0, unread: 0 },
+      claude: { membership: 0, phase: generation, unread: generation }
+    }
+  })
+
+  it('refuses an older terminal over a newer terminal at the same revision', () => {
+    const kernel = createCompanionTaskKernel()
+    kernel.publishEvidence(draft(
+      [claudeTask({ phase: 'completed', phaseRevision: 5, statusEnteredAt: 2_000, revisionAt: 2_000 })],
+      1,
+      claudeLanes(5)
+    ))
+    expect(kernel.getPackage().tasks[0].phase).toBe('completed')
+
+    kernel.publishEvidence(draft(
+      [claudeTask({ phase: 'stopped', phaseRevision: 5, statusEnteredAt: 1_000, revisionAt: 2_000 })],
+      2,
+      claudeLanes(5)
+    ))
+    expect(kernel.getPackage().tasks[0].phase).toBe('completed')
+  })
+
+  it('still admits a strictly newer terminal at the same revision', () => {
+    const kernel = createCompanionTaskKernel()
+    kernel.publishEvidence(draft(
+      [claudeTask({ phase: 'completed', phaseRevision: 5, statusEnteredAt: 1_000, revisionAt: 2_000 })],
+      1,
+      claudeLanes(5)
+    ))
+    kernel.publishEvidence(draft(
+      [claudeTask({ phase: 'stopped', phaseRevision: 5, statusEnteredAt: 2_000, revisionAt: 2_000 })],
+      2,
+      claudeLanes(5)
+    ))
+    expect(kernel.getPackage().tasks[0].phase).toBe('stopped')
+  })
+
+  it('keeps refusing a late running observation over a newer terminal', () => {
+    const kernel = createCompanionTaskKernel()
+    kernel.publishEvidence(draft(
+      [claudeTask({ phase: 'completed', phaseRevision: 5, statusEnteredAt: 2_000, revisionAt: 2_000 })],
+      1,
+      claudeLanes(5)
+    ))
+    kernel.publishEvidence(draft(
+      [claudeTask({ phase: 'running', phaseRevision: 5, statusEnteredAt: 1_000, revisionAt: 2_000 })],
+      2,
+      claudeLanes(5)
+    ))
+    expect(kernel.getPackage().tasks[0].phase).toBe('completed')
+  })
+})
+
 describe('source lane units', () => {
   // Real 2026-08-13 host regression. `membership` is an observation timestamp
   // while `phase`/`unread` are provider counters. Letting either seed the other
