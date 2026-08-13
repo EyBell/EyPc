@@ -53,6 +53,12 @@ const COMPANION_DIAGNOSTIC_TASK_SALT = crypto.randomBytes(16)
 const CODEX_DESKTOP_WAITING_STATE_LIMIT = 1_000
 const CODEX_DESKTOP_WAITING_REQUEST_HISTORY_LIMIT = 400
 const CODEX_DESKTOP_RESOLVED_REQUEST_LIMIT = 400
+// Both mirror WATCHER_RECOVERY_INTERVAL_MS in preload/timing-policy.cjs, which
+// owns the semantics. This entry deliberately performs no unguarded local
+// require — every module it loads goes through a guarded loader with a
+// base-path fallback, because a throw here takes down the whole preload. The
+// literals are therefore held in step by a test assertion rather than by an
+// import; change the policy, not these.
 const CODEX_NATIVE_STATE_RECOVERY_INTERVAL_MS = 1_000
 const CODEX_INVENTORY_MEMBERSHIP_RECOVERY_INTERVAL_MS = 1_000
 // Keep synchronized with src/domain/codex.ts. This value crosses the context

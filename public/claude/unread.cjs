@@ -12,7 +12,8 @@ const UNREAD_STORE_KEY = 'epitaxy-unread-v1'
 const UNREAD_LEVELDB_KEY = `_https://claude.ai\u0000\u0001${UNREAD_STORE_KEY}`
 const UNREAD_MAX_IDS = 500
 const UNREAD_MAX_ATTEMPTS = 2
-const UNREAD_RECOVERY_POLL_MS = 1000
+const { WATCHER_RECOVERY_INTERVAL_MS } = require('../timing-policy.cjs')
+const UNREAD_RECOVERY_POLL_MS = WATCHER_RECOVERY_INTERVAL_MS
 
 function textOf(value) {
   return typeof value === 'string' ? value : ''

@@ -3,7 +3,7 @@
 const COMPANION_NAVIGATION_REVISION = 'companion-navigation-v3'
 // Kept as an exported compatibility marker for diagnostics/tests. Generic
 // cycling is leading-edge now: the first target is dispatched synchronously.
-const DEFAULT_COALESCE_MS = 0
+const { DEFAULT_COALESCE_MS } = require('../timing-policy.cjs')
 const MAX_DIRECT_QUEUE = 200
 const PROVIDERS = ['codex', 'claude']
 

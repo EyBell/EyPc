@@ -18,8 +18,8 @@ const MAX_EVENTS_PER_READ = 2000
 // Retained as a public compatibility constant. The first semantic change is
 // now drained synchronously from the native file callback; semantic equality,
 // rather than a throttleable timer, collapses duplicate tail events.
-const DEFAULT_COALESCE_MS = 0
-const DEFAULT_RECOVERY_POLL_MS = 1000
+const { WATCHER_RECOVERY_INTERVAL_MS, DEFAULT_COALESCE_MS } = require('../timing-policy.cjs')
+const DEFAULT_RECOVERY_POLL_MS = WATCHER_RECOVERY_INTERVAL_MS
 
 /** Raw `hook_event_name` → companion event class. */
 const HOOK_EVENT_CLASSES = Object.freeze({

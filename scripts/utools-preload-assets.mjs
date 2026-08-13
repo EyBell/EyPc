@@ -5,7 +5,8 @@ export const UTOOLS_PRELOAD_ASSETS = Object.freeze([
   { id: 'main', canonical: 'preload/index.js', public: 'public/preload.js', dist: 'preload.js' },
   { id: 'float', canonical: 'preload/float.js', public: 'public/float-preload.js', dist: 'float-preload.js' },
   { id: 'action', canonical: 'preload/action.js', public: 'public/action-preload.js', dist: 'action-preload.js' },
-  { id: 'diagnostics', canonical: 'preload/diagnostics.cjs', public: 'public/diagnostics.cjs', dist: 'diagnostics.cjs' }
+  { id: 'diagnostics', canonical: 'preload/diagnostics.cjs', public: 'public/diagnostics.cjs', dist: 'diagnostics.cjs' },
+  { id: 'timing-policy', canonical: 'preload/timing-policy.cjs', public: 'public/timing-policy.cjs', dist: 'timing-policy.cjs' }
 ])
 
 /**
