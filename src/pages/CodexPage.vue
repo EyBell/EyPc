@@ -550,11 +550,11 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             <span><strong>悬浮球开关</strong></span>
             <button
               type="button"
-              class="secondary"
-              title="配置系统级快捷键（由 uTools 统一管理）"
-              data-operation-tooltip="配置系统级快捷键"
-              data-operation-description="打开快捷键配置入口，可把核心入口动作同步到系统级按键。"
-              @click="$emit('dispatch', 'codex.hotkey.configure')"
+              class="secondary codex-hotkey-cta"
+              title="配置 uTools 全局快捷键，显示或隐藏 Codex 悬浮球。"
+              data-operation-tooltip="配置悬浮球开关快捷键"
+              data-operation-description="打开 uTools 全局功能，为“切换 Codex 悬浮球”绑定系统级快捷键。"
+              @click="$emit('dispatch', 'codex.float.toggle.hotkey.configure')"
             >去设置</button>
           </div>
           <div class="codex-hotkey-row">
@@ -563,11 +563,42 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             <button
               type="button"
               class="secondary codex-hotkey-cta"
+              title="配置 uTools 全局快捷键，显示并展开卡片、把焦点交给会话列表。"
+              data-operation-tooltip="配置进入卡片快捷键"
+              data-operation-description="打开 uTools 全局功能，为“直接展开 Codex 卡片”绑定系统级快捷键。"
+              @click="$emit('dispatch', 'codex.hotkey.configure')"
+            >去设置</button>
+            <button
+              type="button"
+              class="secondary codex-hotkey-cta"
               title="快捷键也可触发：⌘⌥↵（macOS）或 Ctrl+Alt+Enter（Windows），立即展开并聚焦会话列表。"
               data-operation-tooltip="立即展开"
               data-operation-description="快捷键也可触发：⌘⌥↵（macOS）或 Ctrl+Alt+Enter（Windows），立即展开并聚焦会话列表。"
               @click="$emit('dispatch', 'codex.float.activate')"
             >立即展开</button>
+          </div>
+          <div class="codex-hotkey-row">
+            <Keyboard :size="17" aria-hidden="true" />
+            <span>
+              <strong>快速任务查看</strong>
+              <small>展开动态列表并进入筛选模式：直接打字筛选，c-1…0 打开对应编号任务。</small>
+            </span>
+            <button
+              type="button"
+              class="secondary codex-hotkey-cta"
+              title="配置 uTools 全局快捷键；展开卡片、聚焦搜索并给前 10 条任务编号。"
+              data-operation-tooltip="配置快速任务查看快捷键"
+              data-operation-description="打开 uTools 全局功能，为“快速任务查看”绑定系统级快捷键。"
+              @click="$emit('dispatch', 'codex.quick.hotkey.configure')"
+            >去设置</button>
+            <button
+              type="button"
+              class="secondary codex-hotkey-cta"
+              title="快捷键也可触发：⌘⌥K（macOS）或 Ctrl+Alt+K（Windows）。"
+              data-operation-tooltip="立即进入筛选模式"
+              data-operation-description="快捷键也可触发：⌘⌥K（macOS）或 Ctrl+Alt+K（Windows）。"
+              @click="$emit('dispatch', 'codex.quick.activate')"
+            >立即进入</button>
           </div>
           <div class="codex-hotkey-row">
             <Keyboard :size="17" aria-hidden="true" />
@@ -615,6 +646,33 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
               data-operation-tooltip="配置下一个任务快捷键"
               data-operation-description="打开 uTools 全局功能，为“下一个 Codex 任务”绑定系统级快捷键。"
               @click="$emit('dispatch', 'codex.task.next.hotkey.configure')"
+            >去设置</button>
+          </div>
+          <div class="codex-hotkey-row">
+            <Keyboard :size="17" aria-hidden="true" />
+            <span>
+              <strong>归档当前任务</strong>
+              <small>归档卡片里当前高亮或已选中的 Codex / Claude 任务；不可归档时保持原状并提示。</small>
+            </span>
+            <button
+              type="button"
+              class="secondary codex-hotkey-cta"
+              title="配置 uTools 全局快捷键，归档当前 Companion 任务。"
+              data-operation-tooltip="配置归档当前任务快捷键"
+              data-operation-description="打开 uTools 全局功能，为“归档当前 Companion 任务”绑定系统级快捷键。"
+              @click="$emit('dispatch', 'codex.archive.hotkey.configure')"
+            >去设置</button>
+          </div>
+          <div class="codex-hotkey-row">
+            <Keyboard :size="17" aria-hidden="true" />
+            <span><strong>Action 执行工作台</strong></span>
+            <button
+              type="button"
+              class="secondary codex-hotkey-cta"
+              title="配置 uTools 全局快捷键，打开独立的 Action Runner 工作台。"
+              data-operation-tooltip="配置 Action Runner 快捷键"
+              data-operation-description="打开 uTools 全局功能，为“打开 Action 执行工作台”绑定系统级快捷键。"
+              @click="$emit('dispatch', 'codex.actionRunner.hotkey.configure')"
             >去设置</button>
           </div>
           <div

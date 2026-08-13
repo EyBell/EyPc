@@ -9607,6 +9607,16 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       queueMicrotask(() => platform.float.activate?.())
       return true
     } })
+    actions.register({ id: 'codex.quick.activate', title: '快速任务查看', description: '展开悬浮卡片的动态列表并进入筛选模式：直接打字筛选，Ctrl+1…0 打开对应编号任务。', group: 'Codex', risk: 'normal', scope: 'global', priority: 1002, shortcut: 'Ctrl+Alt+K', when: () => true, run: () => {
+      if (!isTabEnabled('codex')) {
+        setMessage('请先在总设置中启用 Codex Companion')
+        return false
+      }
+      const enabled = state.codex.settings.floatEnabled || codexController.updateSettings({ floatEnabled: true })
+      if (!enabled) return false
+      queueMicrotask(() => platform.float.activate?.({ command: 'quick' }))
+      return true
+    } })
     actions.register({ id: 'codex.float.hide', title: '隐藏 Codex 悬浮球', group: 'Codex', risk: 'data-write', scope: 'global', priority: 90, when: () => true, run: () => codexController.updateSettings({ floatEnabled: false }) })
     actions.register({ id: 'codex.actionRunner.activate', title: '打开 Codex Action 执行工作台', group: 'Codex', risk: 'normal', scope: 'global', priority: 1000, when: () => true, run: (_ctx, args) => {
       void codexController.activateActionRunner(typeof args?.laneId === 'string' ? args.laneId : '')
@@ -9649,9 +9659,26 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“打开 Action 执行工作台”绑定快捷键')
       return opened
     } })
-    actions.register({ id: 'codex.hotkey.configure', title: '配置 Codex 系统级快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
+    // 每一行配置它自己：这条对应「直接展开卡片」，悬浮球开关另有 codex.float.toggle.hotkey.configure。
+    // 旧行为把本动作放在「悬浮球开关」行上，标题与它实际配置的功能是错位的。
+    actions.register({ id: 'codex.hotkey.configure', title: '配置进入 Codex 卡片快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
       const opened = platform.app.configureHotkey?.('直接展开 Codex 卡片') === true
       if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“直接展开 Codex 卡片”绑定快捷键')
+      return opened
+    } })
+    actions.register({ id: 'codex.float.toggle.hotkey.configure', title: '配置悬浮球开关快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
+      const opened = platform.app.configureHotkey?.('切换 Codex 悬浮球') === true
+      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“切换 Codex 悬浮球”绑定快捷键')
+      return opened
+    } })
+    actions.register({ id: 'codex.archive.hotkey.configure', title: '配置归档当前任务快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
+      const opened = platform.app.configureHotkey?.('归档当前 Companion 任务') === true
+      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“归档当前 Companion 任务”绑定快捷键')
+      return opened
+    } })
+    actions.register({ id: 'codex.quick.hotkey.configure', title: '配置快速任务查看快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
+      const opened = platform.app.configureHotkey?.('快速任务查看') === true
+      if (!opened) setMessage('请在 uTools 设置 → 全局功能中，为“快速任务查看”绑定快捷键')
       return opened
     } })
     actions.register({ id: 'codex.input.hotkey.configure', title: '配置 Codex 待输入快捷键', group: 'Codex', risk: 'normal', scope: 'global', priority: 89, when: () => true, run: () => {
@@ -9765,7 +9792,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
       portGroupDetailActive: portGroupDetail.active,
       portSelectionMode: selectedPortIds.length > 0,
       windowActionsOpen,
-      windowEditorOpen: Boolean(windowDraft)
+      windowEditorOpen: Boolean(windowDraft),
+      // 快速筛选模式和操作抽屉都只存在于悬浮子窗口，主窗口恒为 false；
+      // 子窗口在 FloatApp 里自行填充这两项。
+      codexQuickMode: false,
+      codexDrawerActive: false
     }
   }
 
