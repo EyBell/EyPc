@@ -5,6 +5,7 @@ scope: project
 fingerprint: source-hands-over-a-whole-object__cache-stores-it-verbatim__projection-reads-two-hardcoded-keys__extra-declared-entries-vanish-silently__no-error-anywhere
 first_seen: 2026-08-06
 last_verified: 2026-08-07
+review_after: 2027-02-07
 evidence:
   - src/domain/claude.ts
   - preload/claude/scripts.cjs

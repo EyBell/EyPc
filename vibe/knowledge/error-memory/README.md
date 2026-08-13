@@ -1,95 +1,46 @@
-# EyPc Structured Error Memory
+# EyPc Error Memory
 
-Tool: codex
+<!-- adaptive-document-index: root-v1 -->
 
-Project-specific reusable failure records live here. The legacy [error-memory index](../error-memory.md#L1) remains the project entry point.
+本目录只保存可复用的失败边界、正确检测顺序和已验证替代路线。产品当前语义由 [PRODUCT_REQUIREMENTS](../../specs/PRODUCT_REQUIREMENTS.md#L1)、当前 Controlled 任务与 [ARCHITECTURE](../ARCHITECTURE.md#L1) 决定；错误记录不能反向覆盖它们。
 
-Reusable uTools host/preload/window/HMR/packaging/Esc/`mainHide`/hotkey failures are owned by the CodeNote [uTools module error memory](../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/error-memory/README.md#L1). Local `utools-*.md` files below are thin pointers only.
+## 消解流程
 
-## Verified Project Consensus
+| 状态 | 含义 | 可作为当前自动路线 |
+| --- | --- | --- |
+| `candidate` | 根因或替代路线仍待验收 | 否 |
+| `verified` | 根因与替代路线均已通过适用边界内的验证 | 是，但过期后必须先复核 |
+| `superseded` | 新合同或更准确记录已取代；仅保留回流门禁 | 否 |
+| `retired` | 不再适用且没有当前替代价值；仅保留审计线索 | 否 |
 
-| Consensus ID | Scope | Fixed Conclusion | Authority |
-| --- | --- | --- | --- |
-| `EYPC-UTOOLS-HOST-001` | uTools preload/Renderer host boundary and shortcut configuration | Private synchronous host IPC can block the plugin before Console; shortcut readback stays deleted and configuration remains redirect-only. | [CodeNote error memory](../../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/error-memory/utools-private-sync-ipc-entry-freeze.md#L1) · [local pointer](utools-private-sync-ipc-entry-freeze.md#L1) · [project rule](../../rules/README.md#L1) |
+同一根因只保留一个稳定 fingerprint；重复发生时更新该叶子的 `Occurrence History`。相似症状但证据边界不同的记录不强行合并。物理移动、删除或改名不是归档前提，Git 路径保持稳定。
 
-## Recurring Codex Task-State Families
+## 模块路由
 
-This routing index compacts 16 recurring records into six evidence boundaries. The linked leaf records remain the incident archive; current documentation should link here instead of repeating each historical symptom and call chain.
+| 模块 | 唯一主责范围 |
+| --- | --- |
+| [Companion Task State](modules/companion-task-state.md#L1) | phase、Turn/Goal 因果、root/Side、unread、membership、Kernel package 与推送 |
+| [Claude Companion](modules/claude-companion.md#L1) | Claude inventory、App phase、原生 unread、open 与 archive authority |
+| [Companion Actions And Presentation](modules/companion-actions-and-presentation.md#L1) | task actions、archive guard、标签、选中、主题与外部写入 |
+| [Window Jump And Native Host](modules/window-jump-and-native-host.md#L1) | 原生窗口身份、Space、root/member、槽位与激活 |
+| [Interaction And Favorites](modules/interaction-and-favorites.md#L1) | command target、focus、keyboard、tooltip 与 favorites |
+| [Runtime And Packaging](modules/runtime-and-packaging.md#L1) | GUI 环境、preload、runtime identity、打包、native addon 与宿主生命周期 |
+| [Engineering Contracts](modules/engineering-contracts.md#L1) | 数据合同、测试、类型、文档权威、审计与安全写入 |
 
-Module route: [Companion Task State](modules/companion-task-state.md#L1) is the Primary owner for the RAW-160 Plan、interruption、projection、consumer-cache and version-skew records below. The older flat root remains migration debt and is not silently promoted to `root-v1` by this task.
+每个叶子必须恰好出现在一个模块的 `Primary Error Records`，最多在两个模块作为 Related；模块不复制事实正文。
 
-| Boundary | Fixed invariant | Primary route | Archived incident evidence |
-| --- | --- | --- | --- |
-| Provider evidence | Inventory metadata、recency and `notLoaded` never prove activity or completion；exact live activity and latest Turn evidence remain distinct。When a long-running Goal exists，Goal status—not a single Turn outcome—is the task completion boundary。Each root/Side branch is reduced independently，and every confirmed bead participates in the parent projection：after retained request/Plan/Goal causality，running outranks completed-unread and completed，while latent unread cannot create a second public group/count during activity。Exact request/new activity outranks older terminal evidence，ordinary interruption needs branch-idle proof and an unexecuted Plan interruption needs targeted no-newer proof。Conflict preserves the stable state as verifying，plain connector flags remain non-authoritative，and child-supplied presentation never changes the parent-only navigation identity | [Companion Task State module](modules/companion-task-state.md#L1) | Current and historical incident evidence is routed only by the module |
-| Inventory membership | New membership creates a stable minimal card before metadata hydration；one missing snapshot is not deletion. Codex archive evidence accelerates task-scoped verification but only two server confirmations plus connected native ACK may reach Kernel commit；before commit no explicit event、RPC result or transient list may remove local state. Runtime disablement clears Codex-derived baselines, while an archive tombstone blocks older inventory resurrection | [inventory dropout](codex-inventory-dropout-is-not-task-deletion.md#L1) | [native archive postcondition](codex-explicit-archive-event-bypasses-inventory-quarantine.md#L1) · [session reset](codex-app-server-session-state-survives-exit.md#L1) |
-| Live stream ownership and ordering | Ignore well-formed private patch content while advancing revision; task-selection unfollow is not client loss; `following=true` is not proof that an ownerless current snapshot was replayed, and a positive follower-state announcement must never be echoed as a fresh request—only explicit following-status requests receive one reply; initial snapshots never outrank newer live events. Retain only exact observed input/approval/Plan shadows across soft owner loss, never ordinary active, and clear them on newer snapshot/Turn/inventory evidence. A private shared sequence prevents historical Desktop idle activity from revoking newer exact App Server active during read-state/refollow/inventory replay; same-revision exact started/inProgress or unresolved exact completed is forward progress; delta/full inventory share one exit epoch whose reducer owns confirmed provenance, incompatible Turn-reader modes replace each other, and only accepted persisted provenance closes it. Do not declare closure from scenario counts: require a source × state × event × revision × replay × consumer matrix, forbid synthetic idle, preserve newer positive epochs, treat Side Chat terminal as branch-scoped while siblings remain active, and verify main/Side Chat plus card/count/archive consumption together. A known Side Chat may retain only bounded child/parent topology in preload memory for bridge refollow; status is rebuilt and a wholly unobserved transient child is never invented. Anonymous decision counters are observability only: one Domain schema owns normalization/equality, accepted changes notify once, unchanged/stale packages notify zero times, and all remain behind the same generation/privacy boundary | [active/terminal ordering](codex-stale-live-active-needs-completion-order.md#L1) | [private patch continuity](codex-unobserved-private-patch-must-not-resubscribe.md#L1) · [task-switch follow continuity](codex-task-switch-unfollow-must-not-drop-live-shadow.md#L1) |
-| Positive transition timing | Use task-targeted Turn evidence for fast completion and preserve the full scan for reconciliation; payload-less exact completion gets a dedicated dense entity retry and must not be rejected as stale-active; do not stack generic debounce or any display hold behind accepted completion evidence | [targeted Turn confirmation](codex-fixed-debounce-delays-terminal-confirmation.md#L1) | V4 ownership and the superseded completion hold are routed by the [Companion Task State module](modules/companion-task-state.md#L1) |
-| Unread orthogonality | Unread never changes Activity/Turn. Exact Desktop events and confirmed Host-open success rank first；otherwise current refollow snapshot false repairs a missed disconnected read，while a parseable native set's membership/nonmembership defeats snapshot true。During transient native atom unavailability，reuse the current Bridge's last successful native observation across inventory replacement before weaker snapshot true，preventing an incorrect intermediate frame。Successful-open acknowledgement is session-only、failure-safe and bound to concrete internal root/known-Side Turns：same-Turn timestamp enrichment、older full snapshots or duplicate Goal notices cannot release it，while a genuinely new Turn can。While any bead is active，latent unread does not join the public unread group/count | [Companion Task State module](modules/companion-task-state.md#L1) | Current and historical unread incident evidence is routed only by the module |
-| Atomic projection and versioning | Stabilize once, project once, and publish one V4 package. Provider generations reject ordering only；semantic revision advances only for real canonical/selector changes。Kernel `getLatest/subscribe(afterRevision)` and independent Main/Float/Navigation/Actions revision+fingerprint caches make equivalent evidence a full-chain no-op。Float `received` proves delivery only；`applied` is the UI postcondition，with one bounded resend and health-gated recreate。Membership、phase、unread、Plan/pause and capabilities stay orthogonal；Renderer owns no second reducer。Product totals remain uncapped | [Companion Task State module](modules/companion-task-state.md#L1) | Claude lane/replay records remain under the [Claude Companion module](modules/claude-companion.md#L1) |
+## 冲突门禁
 
-Archive rule: repeated incidents update the matching leaf record's `Occurrence History`; create a new record only when the violated boundary or prevention rule differs materially. Candidate routes stay candidate until their own acceptance passes. The 2026-07-29 audit also split additive diagnostic-port skew from task-state semantic skew and normalized the legacy App Server session-cleanup record; it did not promote verification status or merge unrelated archive/UI/host failures.
+1. 先比较当前需求、架构和 Provider 实证，再读取历史错误；“较晚读取”不等于“因果更新”。
+2. 若历史记录与当前合同冲突，先标注 `superseded` 或保持 candidate，不得把旧替代路线拼回生产判断。
+3. 若两个仍可能成立的当前语义会导向不同用户行为，停止合并并提交明确的冲突选项给用户决断。
+4. 若只是不同层级，保留单一最终裁决 owner：Provider 适配器产证据，Kernel 裁决，Renderer 只投影，ACK 只证明消费后置条件。
 
-### RAW-147 更新引入
+## 机器校验
 
-正向 follower 公告回声由 [task-switch follow continuity](codex-task-switch-unfollow-must-not-drop-live-shadow.md#L1) 唯一主责；[pending request priority](codex-pending-user-request-overrides-idle-runtime.md#L1) 只引用“公告不是快照”的检测前提。重复出现时更新主记录的 `Occurrence History`，不得再创建或扩写第二份协议回声诊断。
+运行 `pnpm run validate:error-memory` 检查 frontmatter、状态、日期、fingerprint、链接、模块容量、唯一 Primary 和 Related 上限。过期 candidate/verified 只告警，不会被校验器自动提升、续期或删除。
 
-## Records
+## Historical Or Migration Sources
 
-- [chromium-placeholder-window-title-noise.md](chromium-placeholder-window-title-noise.md#L1): compact archived record; WJ-21 native actionability/relationship evidence replaces title denylist and size heuristics.
-- [macos-cgwindowlist-cf-proxy-not-js-array.md](macos-cgwindowlist-cf-proxy-not-js-array.md#L1): cast-before-deepUnwrap rule; WJ-22 remains AX-first and uses CG/SkyLight only for corroboration, liveness and target routing.
-- [macos-ax-misses-other-spaces.md](macos-ax-misses-other-spaces.md#L1): verified WJ-22 rule that projection absence/offscreen is not death; only an exact native gone proof clears a locator, while target-level Space cache restores off-Space roots.
-- [macos-cg-ax-window-identity-mismatch.md](macos-cg-ax-window-identity-mismatch.md#L1): exact AX↔CG root/member and final-focus authority; Space is session routing state, never identity.
-- [utools-macos-cross-api-window-title-mismatch.md](utools-macos-cross-api-window-title-mismatch.md#L1): archived WJ-18 pointer; WJ-21 uses admitted AX + positive CG corroboration + exact root/member readback and never title identity.
-- [utools-macos-ax-activation-misses-other-spaces.md](utools-macos-ax-activation-misses-other-spaces.md#L1): verified WJ-22 pointer for per-instance, target-display-only Space restoration with no title/ordinal fallback.
-- [window-family-projection-overwrites-logical-targets.md](window-family-projection-overwrites-logical-targets.md#L1): family projection cannot merge targets or slots; same-root conflicts and slot recovery stay explicit and isolated.
-- [utools-window-target-auto-rebind-after-restart.md](utools-window-target-auto-rebind-after-restart.md#L1): compact archived WJ-17 title-similarity record; WJ-19 requires explicit root-candidate confirmation after an instance lifecycle ends.
-- [windows-actions-close-vs-os-close.md](windows-actions-close-vs-os-close.md#L1): candidate rule that `windows.actions.close` dismisses the action panel while `windows.close` / `windows.close.force` close or force-terminate OS windows.
-- [window-list-focus-steal-on-actions-open.md](window-list-focus-steal-on-actions-open.md#L1): candidate rule that list `↑↓` and action-panel open must use separate focus-request signals so arrows do not steal keyboard ownership to the first panel button.
-- [window-slot-binding-hint-clips-full-height-list.md](window-slot-binding-hint-clips-full-height-list.md#L1): candidate rule that a transient slot-binding hint and its window list share a column Flex panel, with the list owning only the remaining scroll height rather than `100%` of the panel.
-- [utools-mainhide-window-activation-diagnostics.md](utools-mainhide-window-activation-diagnostics.md#L1): `mainHide` diagnostics and WJ-22 production trace gate; internal Space routing emits only bounded development enums/counts.
-- [utools-onpluginout-hidden-vs-process-exit.md](utools-onpluginout-hidden-vs-process-exit.md#L1): thin pointer → CodeNote `onPluginOut(isKill)` background-hide versus process-ending lifecycle, Renderer detach boundary and process-owned multi-provider shortcut arbitration; EyPc real-host acceptance remains pending.
-- [utools-escape-capture-over-quick-jump.md](utools-escape-capture-over-quick-jump.md#L1): thin pointer → CodeNote Escape capture over transient layers.
-- [quick-favorites-stale-target.md](quick-favorites-stale-target.md#L1): Quick entry must clear management-page transient targets before accepting commands.
-- [dialog-focus-restore-render-race.md](dialog-focus-restore-render-race.md#L1): dialog and side-layer focus handoff must survive disappearing triggers, adjacent Vue renders and visibility transitions.
-- [command-panel-explicit-target-precedence.md](command-panel-explicit-target-precedence.md#L1): an explicit row/context target must replace an old frozen panel target and invalid explicit IDs must fail.
-- [delegated-operation-tooltip-controls.md](delegated-operation-tooltip-controls.md#L1): disabled and nested form controls require captured delegated help with control-local labels.
-- [operation-tooltip-title-only-missing-product-attrs.md](operation-tooltip-title-only-missing-product-attrs.md#L1): verified rule that product tips need always-on `data-operation-tooltip` / `data-operation-shortcut`; native `title` is stripped and Ctrl-gated MQTT hints are not enough.
-- [modified-arrow-handler-command-conflict.md](modified-arrow-handler-command-conflict.md#L1): plain row-arrow listeners and row-only panel handlers must not swallow modified left/right command chords.
-- [pnpm-store-build-policy-mismatch.md](pnpm-store-build-policy-mismatch.md#L1): dependency addition can fail when the installed pnpm store and declared package-manager line diverge.
-- [codex-gui-nvm-launcher-path.md](codex-gui-nvm-launcher-path.md#L1): a GUI-hosted Codex App Server must separate CLI discovery from runtime resolution; POSIX wrappers and Windows npm/Volta shims cannot rely on shell PATH or unsafe shell execution.
-- [codex-action-command-prefix-allowlist-allows-extra-argv.md](codex-action-command-prefix-allowlist-allows-extra-argv.md#L1): verified rule that `shell:false` is not a complete argv allowlist; Environment Actions require exact structured vectors before catalog and launch planning.
-- [codex-gui-pac-proxy-timeout.md](codex-gui-pac-proxy-timeout.md#L1): a macOS system-proxy toggle may represent a PAC that the GUI child does not consume; derive only the bounded static loopback subset into the Codex child.
-- [codex-app-server-session-state-survives-exit.md](codex-app-server-session-state-survives-exit.md#L1): App Server and Controller runtime exits require generation-owned cleanup; explicit disable/inbox/process boundaries discard derived semantic baselines, while ordinary Renderer remount may retain bounded Host aliases/latest-Turn and exact-version navigation state. Cold actions hydrate all enabled Provider inventories atomically rather than restoring partial cache.
-- [codex-float-bridge-mock-contract-drift.md](codex-float-bridge-mock-contract-drift.md#L1): verified rule to derive nested fixture overrides from the exported non-optional runtime contract, synchronize required fields, and run typecheck plus the owning behavior suite.
-- [codex-task-row-action-replacement.md](codex-task-row-action-replacement.md#L1): superseded historical record; current V2 explicitly removes acknowledgement, while the reusable lesson is to verify the current state/action matrix.
-- [codex-archive-revalidation-fail-open.md](codex-archive-revalidation-fail-open.md#L1): every product-archivable row requires exact identity/status/recency/revision/shape/latest-Turn completed evidence; all non-completed, malformed or changed rereads fail closed and never mutate.
-- [codex-coupled-color-editor-atomicity.md](codex-coupled-color-editor-atomicity.md#L1): archive-only paired-card record; RAW-071/129 use independent direct tokens, and the former Controller preview/rollback actions are retired rather than reusable prevention rules.
-- [codex-display-label-fallback-precedence.md](codex-display-label-fallback-precedence.md#L1): candidate rule that a valid original name must be normalized before optional alias/display fallbacks, with one primary row label and both values retained for search/detail.
-- [codex-selection-state-needs-structural-contrast.md](codex-selection-state-needs-structural-contrast.md#L1): candidate rule that dense-list selection needs a named but non-reflowing mode cue, broad stable selector, preserved status identity, nonmember de-emphasis and deterministic row/button key ownership.
-- [codex-control-owned-source-feedback.md](codex-control-owned-source-feedback.md#L1): candidate rule that action source/availability belongs on the stateful control and its focus/hover help, not as duplicate dense-row tail text.
-- [codex-water-ring-layer-separation.md](codex-water-ring-layer-separation.md#L1): candidate rule to inventory data-owned, component-decorative and ancestor interaction circles before removing a water-ball ring; preserve the Weekly progress indicator, remove static rim/glow/focus circles and replace accessibility feedback without another ring.
-- [codex-water-preview-renderer-divergence.md](codex-water-preview-renderer-divergence.md#L1): candidate rule that configuration previews must reuse the real water component and its existing wave layers rather than rebuilding or simplifying them.
-- [codex-water-palette-mode-noop.md](codex-water-palette-mode-noop.md#L1): candidate rule that each named water palette must map to visibly distinct shared-renderer layers rather than collapse to the same A/B treatment.
-- [codex-expanded-card-theme-token-divergence.md](codex-expanded-card-theme-token-divergence.md#L1): candidate rule that a complex expanded panel needs its own persisted theme object and shared preview/runtime resolver rather than reusing compact-skin colors.
-- [codex-completed-unread-explicit-acknowledgement.md](codex-completed-unread-explicit-acknowledgement.md#L1): persistent RAW-082 receipt remains superseded; RAW-138–144 use one confirmed-success, preload-process, Turn-bound acknowledgement after cold inventory/alias recovery, surviving routine mainHide/Bridge teardown while `mainHide` remains the sole route visibility owner.
-- [design-preference-index-tag-limit.md](design-preference-index-tag-limit.md#L1): stable preference-index entries must keep tags within the schema limit before the UI preference gate can issue a receipt.
-- [utools-dev-float-entry-not-hmr.md](utools-dev-float-entry-not-hmr.md#L1): thin pointer → CodeNote child-window Vite HMR.
-- [utools-macos-native-addon-host-signature-mismatch.md](utools-macos-native-addon-host-signature-mismatch.md#L1): thin pointer → CodeNote macOS Hardened Runtime native-addon signature gate; ordinary Node success is insufficient.
-- [utools-private-sync-ipc-entry-freeze.md](utools-private-sync-ipc-entry-freeze.md#L1): thin pointer → CodeNote private sync IPC entry freeze / redirect-only.
-- [utools-developer-tools-project-list-loading.md](utools-developer-tools-project-list-loading.md#L1): candidate thin pointer → official developer-tools project-list loading; probe the real `/developers/plugins` endpoint before attributing network, authentication or plugin-entry failure.
-- [vue-nexttick-ref-null-narrowing.md](vue-nexttick-ref-null-narrowing.md#L1): verified rule to capture and guard nullable Vue refs once inside asynchronous callbacks instead of relying on optional chaining to narrow later accesses.
-- [typescript-async-closure-release-narrows-to-never.md](typescript-async-closure-release-narrows-to-never.md#L1): verified rule that an async test release handle must be callable at declaration time, with a separate pending signal proving the nested callback reached its gate; an ordinary runtime assertion does not narrow the outer variable for TypeScript.
-- [typescript-number-isfinite-optional-narrowing.md](typescript-number-isfinite-optional-narrowing.md#L1): candidate rule that `Number.isFinite` is a runtime check rather than a TypeScript narrowing predicate for optional numeric values.
-- [utools-generated-command-needs-shell-quoting.md](utools-generated-command-needs-shell-quoting.md#L1): verified rule that a generated path written into a third-party config the host executes through a shell must be platform-quoted, with registration and install-state comparison sharing one string; a user-supplied command line stays verbatim. uTools data directories always contain a space. **Pending migration to the CodeNote uTools module.**
-- [stale-base-force-write-clobbers-concurrent-edit.md](stale-base-force-write-clobbers-concurrent-edit.md#L1): verified rule that a forced whole-file write-back must re-take its baseline after any long-running step; being the file's last author does not prove the baseline is fresh, and an untracked file has no recovery path.
-
-### Claude Companion
-
-- [Claude Companion module route](modules/claude-companion.md#L1): current authority/reset route, 18 Primary Claude records, related preload/package records and five `archived-linked` historical task sources with explicit replacements. Start here rather than scanning the former flat provider ledger.
-
-### Rule chain and attribution (2026-08-06)
-
-- [hook-injection-mistaken-for-repo-discovery.md](hook-injection-mistaken-for-repo-discovery.md#L1): verified rule that rules being *present in context* does not prove the repository can load them; classify how each layer arrived, treat global-hook injection as machine-bound (a gap, not a pass), and give every tool actually used a repo-owned entry — one canonical adapter plus thin self-describing mirrors.
-- [audit-warning-attributed-without-reading-its-source.md](audit-warning-attributed-without-reading-its-source.md#L1): verified rule that a warning appearing after your edit is not evidence you caused it; read what the check measures, take a pre-change baseline, and treat an unchanged metric under a large edit as disproof of authorship.
-- [capability-gap-asserted-without-reading-the-shipped-app.md](capability-gap-asserted-without-reading-the-shipped-app.md#L1): superseded historical record. Reading the installed artifact before asserting a gap remains useful, but `claude://resume` is an import route rather than the current exact-open solution; see the [Claude module](modules/claude-companion.md#L1).
-- [producer-built-before-checking-the-consumer-can-express-it.md](producer-built-before-checking-the-consumer-can-express-it.md#L1): verified rule that a green producer proves nothing until the consumer can express its outcome; check the state premise hidden in the user's wording first, write the failing cross-layer assertion before building the chain, and when an existing contract exists *because* the evidence you just found was missing, replace it rather than adding a producer beside it.
+- [Legacy project error-memory entry](../error-memory.md#L1) 仍是旧任务入口；其中未结构化事实只作迁移来源，不进入自动 recall。
+- 任务目录中的历史判断由各自 verify/handoff 保存；当前索引只提供路线，不复制过程文档。

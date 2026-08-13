@@ -1,11 +1,11 @@
 ---
 id: eypc-chromium-placeholder-window-title-noise
-status: archived
+status: superseded
 scope: project
 fingerprint: live-window-list-shows-title-window__title-denylist-used-as-window-admission
 first_seen: 2026-07-26
-last_verified: 2026-07-31
-review_after: superseded by WJ-19/WJ-21 native admission
+last_verified: 2026-08-13
+review_after: 2027-08-13
 evidence:
   - src/domain/windows.ts
   - src/runtime/appRuntime.ts
@@ -34,6 +34,6 @@ Chromium、IME、宿主和 helper 表面曾以空标题、应用名或字面量 
 - macOS 要求允许的普通应用 AX 窗口角色、正 CGWindowID 身份佐证和可证明 AX 根关系；CG-only/system/helper 表面省略。
 - 无标题的已准入窗口可用应用名作为显示回退；标题为 `Window` 本身既不准入也不拒绝。
 
-- 状态：`archived / superseded-by-WJ-19/WJ-21`
+- 状态：`superseded-by-WJ-19/WJ-21`；仅保留为逻辑归档与回流门禁。
 - 回流门禁：不得恢复标题 denylist、尺寸阈值、标题身份或唯一候选规则。
 - 宿主验收：企业微信/Chromium 不出现系统/helper 洪泛，同时真实独立根与已证明子窗保留。

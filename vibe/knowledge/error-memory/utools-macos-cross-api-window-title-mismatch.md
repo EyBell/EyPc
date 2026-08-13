@@ -1,11 +1,11 @@
 ---
 id: eypc-utools-macos-cross-api-window-title-mismatch
-status: archived
+status: superseded
 scope: project-pointer
 fingerprint: macos-exact-cg-window-reported-title-changed__cgwindowname-compared-to-axtitle__same-source-cg-title-validation
 first_seen: 2026-07-29
-last_verified: 2026-07-30
-review_after: superseded by WJ-19 title-independent identity
+last_verified: 2026-08-13
+review_after: 2027-08-13
 evidence:
   - preload/index.js
   - public/preload.js

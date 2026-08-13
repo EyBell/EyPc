@@ -1,11 +1,11 @@
 ---
 id: eypc-codex-stale-live-active-needs-completion-order
-status: candidate
+status: superseded
 scope: project
 fingerprint: codex-task-status-mismatch__stale-desktop-snapshot-outranks-newer-live-event__order-positive-and-terminal-events-above-initial-refollow-replay
 first_seen: 2026-07-27
-last_verified: 2026-08-10
-review_after: 2026-08-27
+last_verified: 2026-08-13
+review_after: 2027-08-13
 evidence:
   - preload/index.js
   - public/preload.js
@@ -27,6 +27,10 @@ tags:
 ---
 
 # Old Desktop Snapshots Must Not Outrank Newer Activity Or Completion
+
+## 逻辑归档（2026-08-13，RAW-166）
+
+本记录的历史复现与检测矩阵继续有效，但其独立 candidate 修复通路已被 [Provider 状态与双向分支因果门禁](codex-provider-status-display-normalization.md#L1) 统一取代。当前实现不再分别维护“stale active”“stale terminal”两套修复：稳定 branch ref、Provider Turn epoch、同 Turn event sequence 与 attention monotonicity 在 Kernel 一个 admission 中同时处理 live↔live、live↔terminal 和 terminal↔terminal。本文只作为历史证据和回流门禁，不进入自动 recall。
 
 ## 更新引入（2026-08-08，RAW-150）
 
@@ -118,7 +122,7 @@ Do not duplicate the diagnostic schema or hide its accepted changes behind task-
 
 ## Alternative Route
 
-- Status: `candidate`; RAW-131–133 implementations, closed-matrix/regression tests, typecheck and build pass, while real preload-reloaded host acceptance remains pending.
+- Status: `superseded`; replacement is [codex-provider-status-display-normalization](codex-provider-status-display-normalization.md#L1). Real preload-reloaded host acceptance remains a release gate of the current Controlled task, not an independent route in this record.
 - Preconditions: an existing or newly replayed desktop-live active projection, a current anonymous task mapping, and a latest Turn that provides explicit status/timestamps.
 - Ordered steps: distinguish snapshot replay from real transition; sequence true Desktop activity and exact App Server live events inside preload; preserve the newer App Server waterline across read-state/refollow/inventory publication; pass delta and full inventory through the same active-exit reducer; settle only accepted terminal or strictly later Desktop non-active evidence; project once through the shared package owner.
 - Verification: an older Desktop idle activity event cannot stop a newer exact App Server active event across read-state, refollow and repeated inventory scans; a genuinely later Desktop idle patch still settles; renderer-visible payload contains neither the sequence nor raw identity/content.
