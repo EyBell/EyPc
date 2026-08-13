@@ -430,6 +430,39 @@ function sameProviders(left, right) {
   return PROVIDERS.every((provider) => left[provider] === right[provider])
 }
 
+/**
+ * Declared per-Provider traits.
+ *
+ * What survived the causal-core extraction are genuine capability differences,
+ * not leftover patches: Codex owns Plan lifecycle and fork topology, Claude
+ * revalidates its archive target at dispatch instead of against a verified
+ * inventory. Those differences are real, but scattering them as `provider ===`
+ * conditionals through the reducer means adding a Provider is a search rather
+ * than a row. The reducer therefore reads traits and stays Provider-neutral.
+ */
+const PROVIDER_TRAITS = Object.freeze({
+  codex: Object.freeze({
+    taskKind: 'codex-thread',
+    planLifecycle: true,
+    branchTopology: true,
+    archiveNeedsVerifiedInventory: true,
+    readAcknowledgements: false,
+    keyPrefixActionAlias: false
+  }),
+  claude: Object.freeze({
+    taskKind: 'claude-session',
+    planLifecycle: false,
+    branchTopology: false,
+    archiveNeedsVerifiedInventory: false,
+    readAcknowledgements: true,
+    keyPrefixActionAlias: true
+  })
+})
+
+function providerTraits(provider) {
+  return PROVIDER_TRAITS[provider] || PROVIDER_TRAITS.codex
+}
+
 function isLiveTaskPhase(phase) {
   return phase === 'running' || phase === 'waiting-input' || phase === 'waiting-approval'
 }
@@ -686,7 +719,7 @@ function finalizeTask(task) {
   // the dedicated Implement Plan request. `planImplementation` controls cycle
   // priority only; it must not disable the row/menu controls. The Host still
   // performs an exact latest-Turn/activity/request preflight before execution.
-  const planActionable = next.provider === 'codex'
+  const planActionable = providerTraits(next.provider).planLifecycle
     && next.planReady
     && ['waiting-input', 'stopped', 'completed'].includes(next.phase)
   next.capabilities = {
@@ -946,7 +979,7 @@ function createCompanionTaskKernel(dependencies = {}) {
   function finalizeCanonicalTask(task) {
     const anchor = visibilityAnchor(task)
     const next = { ...task }
-    if (next.provider === 'claude' && next.unread === true) {
+    if (providerTraits(next.provider).readAcknowledgements && next.unread === true) {
       const acknowledgedEpoch = finiteInteger(claudeReadAcknowledgements.get(next.key))
       const terminalEpoch = taskTerminalEpoch(next)
       if (acknowledgedEpoch && terminalEpoch <= acknowledgedEpoch) next.unread = false
@@ -1085,7 +1118,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     next.planLifecycleRevision = finiteInteger(previous.planLifecycleRevision)
     next.paused = previous.paused === true
     if (!acceptPhase) return next
-    const exactDefaultExecution = evidence.provider === 'codex'
+    const exactDefaultExecution = providerTraits(evidence.provider).planLifecycle
       && evidence.turnMode === 'default'
       && evidence.turnStartedAt > 0
     if (exactDefaultExecution) {
@@ -1452,15 +1485,16 @@ function createCompanionTaskKernel(dependencies = {}) {
         freshness: incoming.phase === 'unknown' ? 'verifying' : 'fresh'
       })
       const terminal = incoming.phase === 'completed' || incoming.phase === 'stopped'
-      if (incoming.provider === 'claude') {
-        // Claude archive revalidates the exact native phase and unique metadata
-        // target at dispatch time, so its terminal capability can follow the
-        // independent phase lane without waiting for another full inventory.
+      if (!providerTraits(incoming.provider).archiveNeedsVerifiedInventory) {
+        // Providers that revalidate the exact native target at dispatch time can
+        // let terminal capability follow the independent phase lane without
+        // waiting for another full inventory read.
         next.capabilities = { ...next.capabilities, archive: terminal && incoming.capabilities.archive }
         if (!next.capabilities.archive) delete next.archiveRequest
       } else if (!terminal) {
-        // Codex needs its verified inventory fingerprint before archive can be
-        // enabled, but a newer non-terminal phase may always revoke stale rights.
+        // The others need their verified inventory fingerprint before archive
+        // can be enabled, but a newer non-terminal phase always revokes stale
+        // rights regardless.
         next.capabilities = { ...next.capabilities, archive: false }
         delete next.archiveRequest
       }
@@ -1570,7 +1604,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     for (const task of currentPackage.tasks) {
       if (retainedKeys.has(task.key) || !enabledProviders.has(task.provider)
         || incomingLaneGenerations[task.provider].membership <= currentLaneGenerations[task.provider].membership) continue
-      if (task.provider === 'codex') codexBranchEvidence.delete(task.key)
+      if (providerTraits(task.provider).branchTopology) codexBranchEvidence.delete(task.key)
       if (!pauseReceipts.has(task.key)) continue
       pauseReceipts.delete(task.key)
       try {
@@ -1731,7 +1765,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (task.localPin === localPin) return currentPackage
     return commitLocalTaskState(task, {
       localPin,
-      kind: localPin ? 'local-pin' : task.provider === 'claude' ? 'claude-session' : 'codex-thread'
+      kind: localPin ? 'local-pin' : providerTraits(task.provider).taskKind
     }, localPin ? 'pinned' : 'unpinned')
   }
 
@@ -1791,7 +1825,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     const terminalEpoch = finiteInteger(input.terminalEpoch)
     for (const key of keys) {
       const task = removed.find((candidate) => candidate.key === key)
-      if (provider === 'codex') codexBranchEvidence.delete(key)
+      if (providerTraits(provider).branchTopology) codexBranchEvidence.delete(key)
       if (task && pauseReceipts.has(key)) {
         pauseReceipts.delete(key)
         try {
@@ -1911,8 +1945,8 @@ function createCompanionTaskKernel(dependencies = {}) {
     return {
       key,
       provider: inferred,
-      actionAlias: inferred === 'claude' && !actionAlias && key.startsWith('claude:')
-        ? key.slice('claude:'.length)
+      actionAlias: providerTraits(inferred).keyPrefixActionAlias && !actionAlias && key.startsWith(`${inferred}:`)
+        ? key.slice(`${inferred}:`.length)
         : typeof actionAlias === 'string' ? actionAlias.slice(0, 256) : '',
       revisionAt: 1,
       phase: 'unknown',

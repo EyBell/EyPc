@@ -2211,6 +2211,31 @@ describe('CompanionTaskKernel', () => {
   })
 })
 
+describe('provider differences are declared, not branched', () => {
+  const kernelSource = readFileSync(resolve(process.cwd(), 'preload/companion/task-kernel.cjs'), 'utf8')
+
+  // Real capability differences survive the causal-core extraction — Codex owns
+  // Plan lifecycle and fork topology, Claude revalidates its archive target at
+  // dispatch. They belong in one declared table so that adding a Provider is a
+  // row rather than a search for every conditional.
+  it('keeps no inline provider conditional in the reducer', () => {
+    expect(kernelSource).not.toMatch(/provider === '(codex|claude)'/)
+    expect(kernelSource).not.toMatch(/inferred === '(codex|claude)'/)
+  })
+
+  it('declares a trait row for every registered provider', () => {
+    expect(kernelSource).toContain('const PROVIDER_TRAITS = Object.freeze({')
+    for (const provider of ['codex', 'claude']) {
+      expect(kernelSource).toContain(`  ${provider}: Object.freeze({`)
+    }
+  })
+
+  it('routes branch topology through the declared trait', () => {
+    expect(kernelSource).toContain('providerTraits(task.provider).branchTopology')
+    expect(kernelSource).toContain('providerTraits(provider).branchTopology')
+  })
+})
+
 describe('claude evidence line uses the shared causal core', () => {
   // Claude has no fork topology, so it never entered the Codex branch store and
   // therefore never got bidirectional phase admission. The two directions that
