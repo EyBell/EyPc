@@ -73,6 +73,31 @@ function event(sessionId: string, name: string, at: number, reason = '') {
   return events.normalizeQueueEntry({ s: sessionId, e: name, t: at, r: reason, p: 42 })
 }
 
+function chromiumUnreadValue(ids: string[]) {
+  return Buffer.concat([
+    Buffer.from([1]),
+    Buffer.from(JSON.stringify({ state: { unreadIds: ids } }), 'utf8')
+  ])
+}
+
+function mutableUnreadLeveldown(readIds: () => string[]) {
+  return () => {
+    let emitted = false
+    return {
+      open: (_options: unknown, done: (error?: Error | null) => void) => done(null),
+      close: (done: () => void) => done(),
+      iterator: () => ({
+        next: (done: (error?: Error | null, key?: Buffer, value?: Buffer) => void) => {
+          if (emitted) { done(null); return }
+          emitted = true
+          done(null, Buffer.from('_https://claude.ai\u0000\u0001epitaxy-unread-v1'), chromiumUnreadValue(readIds()))
+        },
+        end: (done: () => void) => done()
+      })
+    }
+  }
+}
+
 describe('ordered hook state', () => {
   it('keeps only the strict privacy allowlist', () => {
     const entry = events.normalizeQueueEntry({
@@ -301,6 +326,133 @@ describe('ordered Claude App log state', () => {
       line('2026-08-08 09:59:58', `[Result] Turn interrupted for session ${LOCAL_A}`)
     ])
     expect(interrupted.state.get(LOCAL_A)?.phase).toBe('stopped')
+  })
+})
+
+describe('Claude completion/focus hot unread overlay', () => {
+  function fixture() {
+    const home = makeHome()
+    const logs = join(home.root, 'logs')
+    const leveldb = join(home.appData, 'Local Storage', 'leveldb')
+    mkdirSync(logs, { recursive: true })
+    mkdirSync(leveldb, { recursive: true })
+    writeFileSync(join(logs, 'main.log'), `${appStateLine('2026-08-13 10:00:00', `[CCD] LocalSessions.setFocusedSession: sessionId=${LOCAL_A}`)}\n`)
+    writeFileSync(join(leveldb, 'CURRENT'), 'MANIFEST-000001\n')
+    return { home, logs, leveldb, logPath: join(logs, 'main.log') }
+  }
+
+  const appStateLine = (time: string, message: string) => `${time} [info] ${message}`
+
+  it('lets a newer completion/focus edge override delayed persisted unread in both directions', async () => {
+    const context = fixture()
+    let persistedIds = [LOCAL_A]
+    const bridge = makeBridge(context.home, {
+      claudeLogDirectory: context.logs,
+      claudeAppVersion: '1.28929.0',
+      claudeLocalStorageRoot: context.leveldb,
+      leveldown: mutableUnreadLeveldown(() => persistedIds)
+    })
+
+    await expect(bridge.readCodeUnread()).resolves.toMatchObject({ ids: [LOCAL_A] })
+    appendFileSync(context.logPath, [
+      appStateLine('2026-08-13 10:00:01', `Sending message to session ${LOCAL_A}`),
+      appStateLine('2026-08-13 10:00:02', `[Stop hook] Query completed for session ${LOCAL_A}`)
+    ].join('\n') + '\n')
+    await expect(bridge.readCodeUnread()).resolves.toMatchObject({ ids: [] })
+    await expect(bridge.readCodeUnread()).resolves.toMatchObject({ ids: [] })
+
+    persistedIds = []
+    writeFileSync(join(context.leveldb, 'CURRENT'), 'MANIFEST-000002-with-new-size\n')
+    await expect(bridge.readCodeUnread()).resolves.toMatchObject({ ids: [] })
+
+    appendFileSync(context.logPath, [
+      appStateLine('2026-08-13 10:00:03', '[CCD] LocalSessions.setFocusedSession: sessionId=null'),
+      appStateLine('2026-08-13 10:00:04', `Sending message to session ${LOCAL_B}`),
+      appStateLine('2026-08-13 10:00:05', `[Result] Turn succeeded for session ${LOCAL_B}`)
+    ].join('\n') + '\n')
+    await expect(bridge.readCodeUnread()).resolves.toMatchObject({ ids: [LOCAL_B] })
+
+    appendFileSync(context.logPath, `${appStateLine('2026-08-13 10:00:06', `[CCD] LocalSessions.setFocusedSession: sessionId=${LOCAL_B}`)}\n`)
+    await expect(bridge.readCodeUnread()).resolves.toMatchObject({ ids: [] })
+
+    appendFileSync(context.logPath, `${appStateLine('2026-08-13 10:00:07', `Sending message to session ${LOCAL_A}`)}\n`)
+    await expect(bridge.readCodeUnread()).resolves.toMatchObject({ ids: [] })
+    appendFileSync(context.logPath, `${appStateLine('2026-08-13 10:00:07', `[Result] Turn succeeded for session ${LOCAL_A}`)}\n`)
+    await expect(bridge.readCodeUnread()).resolves.toMatchObject({ ids: [LOCAL_A] })
+    bridge.close()
+  })
+
+  it('does not mistake a matching unread value from the previous completion for persisted catch-up', async () => {
+    const context = fixture()
+    let persistedIds = [LOCAL_A]
+    const bridge = makeBridge(context.home, {
+      claudeLogDirectory: context.logs,
+      claudeAppVersion: '1.28929.0',
+      claudeLocalStorageRoot: context.leveldb,
+      leveldown: mutableUnreadLeveldown(() => persistedIds)
+    })
+
+    await expect(bridge.readCodeUnread()).resolves.toMatchObject({ ids: [LOCAL_A] })
+    appendFileSync(context.logPath, [
+      appStateLine('2026-08-13 10:00:01', '[CCD] LocalSessions.setFocusedSession: sessionId=null'),
+      appStateLine('2026-08-13 10:00:02', `Sending message to session ${LOCAL_A}`)
+    ].join('\n') + '\n')
+    await expect(bridge.readCodeUnread()).resolves.toMatchObject({ ids: [] })
+
+    appendFileSync(context.logPath, `${appStateLine('2026-08-13 10:00:03', `[Result] Turn succeeded for session ${LOCAL_A}`)}\n`)
+    await expect(bridge.readCodeUnread()).resolves.toMatchObject({ ids: [LOCAL_A] })
+
+    // Claude persists the running clear before it persists the new completion.
+    // The old implementation acknowledged the coincidentally matching true
+    // above and exposed this intermediate false as a rollback.
+    persistedIds = []
+    writeFileSync(join(context.leveldb, 'CURRENT'), 'MANIFEST-running-clear-with-new-size\n')
+    await expect(bridge.readCodeUnread()).resolves.toMatchObject({ ids: [LOCAL_A] })
+
+    persistedIds = [LOCAL_A]
+    writeFileSync(join(context.leveldb, 'CURRENT'), 'MANIFEST-new-completion-caught-up-with-newer-size\n')
+    await expect(bridge.readCodeUnread()).resolves.toMatchObject({ ids: [LOCAL_A] })
+
+    persistedIds = []
+    writeFileSync(join(context.leveldb, 'CURRENT'), 'MANIFEST-native-read-after-catch-up-with-newest-size\n')
+    await expect(bridge.readCodeUnread()).resolves.toMatchObject({ ids: [] })
+    bridge.close()
+  })
+
+  it('wakes unread subscribers from the App log even when no state subscriber is mounted', () => {
+    const context = fixture()
+    const watchers = new Map<string, () => void>()
+    const controlledFs = new Proxy(fs, {
+      get(target, key) {
+        if (key === 'watch') return (directory: string, _options: unknown, listener: () => void) => {
+          watchers.set(directory, listener)
+          return { on: () => undefined, close: () => watchers.delete(directory) }
+        }
+        return Reflect.get(target, key)
+      }
+    })
+    const bridge = makeBridge(context.home, {
+      fs: controlledFs,
+      claudeLogDirectory: context.logs,
+      claudeAppVersion: '1.28929.0',
+      claudeLocalStorageRoot: context.leveldb,
+      leveldown: mutableUnreadLeveldown(() => []),
+      watchFile: () => undefined,
+      unwatchFile: () => undefined
+    })
+    let notified = 0
+    const dispose = bridge.watchCodeUnread(() => { notified += 1 })
+    expect(watchers.has(context.logs)).toBe(true)
+
+    appendFileSync(context.logPath, [
+      appStateLine('2026-08-13 10:00:01', '[CCD] LocalSessions.setFocusedSession: sessionId=null'),
+      appStateLine('2026-08-13 10:00:02', `Sending message to session ${LOCAL_B}`),
+      appStateLine('2026-08-13 10:00:03', `[Result] Turn succeeded for session ${LOCAL_B}`)
+    ].join('\n') + '\n')
+    watchers.get(context.logs)?.()
+    expect(notified).toBe(1)
+    dispose()
+    bridge.close()
   })
 })
 
@@ -988,5 +1140,52 @@ describe('Claude membership mutation watcher', () => {
     expect(hostDeltas).toHaveLength(1)
     expect(rendererDeltas).toEqual(hostDeltas)
     context.bridge.close()
+  })
+})
+
+describe('metadata activity versus a live App append', () => {
+  // Real 2026-08-13 reproduction. A pending ExitPlanMode permission request is
+  // logged at second granularity while the same open turn keeps advancing
+  // `lastActivityAt` in milliseconds. On the first read after a plugin reload
+  // there is no retained watermark, so the history watermark is that activity
+  // time and outranks the request — the card froze on its previous state and
+  // lost its status time. Metadata activity is a proxy for completion, never
+  // proof of one, so it must not retire a directly observed live append.
+  const WAITING_AT = Date.parse('2026-08-13T14:22:53')
+  const coldSession = {
+    sessionId: LOCAL_A,
+    completedTurns: 2,
+    lastActivityAt: WAITING_AT + 7_000,
+    metadataUpdatedAt: WAITING_AT + 7_000,
+    lastFocusedAt: WAITING_AT + 7_000
+  }
+  const waitingApp = (evidenceProvenance?: string) => ({
+    phase: 'waiting-approval',
+    phaseUpdatedAt: WAITING_AT,
+    waitingApprovalAt: WAITING_AT,
+    turnStartedAt: WAITING_AT - 7_000,
+    lastEventAt: 0,
+    ...(evidenceProvenance ? { evidenceProvenance } : {})
+  })
+  const historyAt = () => codeSessions.completedEvidenceAt(coldSession, new Map())
+
+  it('keeps a live-append pending approval authoritative on the first read after reload', () => {
+    expect(codeSessions.selectProjectedStateSource(waitingApp('live-append'), null, 'direct-local', historyAt()))
+      .toBe('app')
+  })
+
+  it('still retires a live phase that was not observed as a live append', () => {
+    expect(codeSessions.selectProjectedStateSource(waitingApp(), null, 'direct-local', historyAt()))
+      .toBe('history')
+  })
+
+  it('still retires a live-append phase once a genuinely newer turn completed', () => {
+    const previous = new Map([[LOCAL_A, { completedTurns: 1, completedEvidenceAt: WAITING_AT - 60_000 }]])
+    const confirmed = codeSessions.completedEvidenceAt(coldSession, previous)
+    expect(confirmed).toBe(WAITING_AT + 7_000)
+    // A confirmed completion still cannot outrank a live append; it closes the
+    // branch through the exact terminal event instead.
+    expect(codeSessions.selectProjectedStateSource(waitingApp('exact-terminal'), null, 'direct-local', confirmed))
+      .toBe('history')
   })
 })

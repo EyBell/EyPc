@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createRequire } from 'node:module'
-import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, renameSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import * as fs from 'node:fs'
@@ -30,7 +30,12 @@ describe('Claude App version-gated state log', () => {
       .toMatchObject({ kind: 'waiting-input', requestId: REQUEST, sessionId: LOCAL_A })
     expect(appState.parseAppStateLine(line('2026-08-07 10:00:02', `[Stop hook] Query completed for session ${LOCAL_A}`)))
       .toMatchObject({ kind: 'completed', sessionId: LOCAL_A })
+    expect(appState.parseAppStateLine(line('2026-08-07 10:00:02', `[CCD] LocalSessions.setFocusedSession: sessionId=${LOCAL_A}`)))
+      .toMatchObject({ kind: 'focus-changed', sessionId: LOCAL_A })
+    expect(appState.parseAppStateLine(line('2026-08-07 10:00:02', '[CCD] LocalSessions.setFocusedSession: sessionId=null')))
+      .toMatchObject({ kind: 'focus-changed', sessionId: '' })
     expect(appState.parseAppStateLine(line('2026-08-07 10:00:03', `Sending message to session ${LOCAL_A} secret prompt`))).toBeNull()
+    expect(appState.parseAppStateLine(line('2026-08-07 10:00:03', `[CCD] LocalSessions.setFocusedSession: sessionId=${LOCAL_A} extra`))).toBeNull()
     expect(appState.parseAppStateLine('private conversation text')).toBeNull()
     expect(appState.parseAppArchiveLine(line('2026-08-07 10:00:04', `LocalSessions.archive: sessionId=${LOCAL_A}`)))
       .toMatchObject({ sessionId: LOCAL_A, at: expect.any(Number) })
@@ -206,5 +211,85 @@ describe('Claude App version-gated state log', () => {
     })
 
     expect(reader.read().entries[0]).toMatchObject({ phase: 'completed', evidenceProvenance: 'exact-terminal' })
+  })
+
+  it('derives hot unread edges from live completion and exact focus changes without fabricating cold unread', () => {
+    const root = mkdtempSync(join(tmpdir(), 'eypc-claude-app-hot-unread-'))
+    const logs = join(root, 'logs')
+    const logPath = join(logs, 'main.log')
+    mkdirSync(logs, { recursive: true })
+    writeFileSync(logPath, `${line('2026-08-07 10:00:00', `[CCD] LocalSessions.setFocusedSession: sessionId=${LOCAL_A}`)}\n`)
+    const reader = appState.createAppStateReader({
+      fs,
+      path,
+      os: { homedir: () => root },
+      platform: 'darwin',
+      claudeLogDirectory: logs,
+      claudeAppVersion: [...appState.SUPPORTED_APP_VERSIONS][0]
+    })
+
+    reader.read()
+    expect(reader.readHotUnread()).toMatchObject({
+      focusedSessionId: LOCAL_A,
+      hints: []
+    })
+
+    appendFileSync(logPath, [
+      line('2026-08-07 10:00:01', `Sending message to session ${LOCAL_A}`),
+      line('2026-08-07 10:00:02', `[Stop hook] Query completed for session ${LOCAL_A}`)
+    ].join('\n') + '\n')
+    reader.read()
+    expect(reader.readHotUnread().hints).toContainEqual(expect.objectContaining({
+      sessionId: LOCAL_A,
+      unread: false,
+      reason: 'completed-focused'
+    }))
+
+    appendFileSync(logPath, [
+      line('2026-08-07 10:00:03', '[CCD] LocalSessions.setFocusedSession: sessionId=null'),
+      line('2026-08-07 10:00:04', `Sending message to session ${LOCAL_B}`),
+      line('2026-08-07 10:00:05', `[Result] Turn succeeded for session ${LOCAL_B}`)
+    ].join('\n') + '\n')
+    reader.read()
+    expect(reader.readHotUnread().hints).toContainEqual(expect.objectContaining({
+      sessionId: LOCAL_B,
+      unread: true,
+      reason: 'completed-unfocused'
+    }))
+
+    appendFileSync(logPath, `${line('2026-08-07 10:00:06', `[CCD] LocalSessions.setFocusedSession: sessionId=${LOCAL_B}`)}\n`)
+    reader.read()
+    expect(reader.readHotUnread().hints).toContainEqual(expect.objectContaining({
+      sessionId: LOCAL_B,
+      unread: false,
+      reason: 'focused'
+    }))
+  })
+
+  it('does not turn a rotated cold tail into a realtime unread edge', () => {
+    const root = mkdtempSync(join(tmpdir(), 'eypc-claude-app-hot-unread-rotation-'))
+    const logs = join(root, 'logs')
+    const logPath = join(logs, 'main.log')
+    mkdirSync(logs, { recursive: true })
+    writeFileSync(logPath, `${line('2026-08-07 10:00:00', `[CCD] LocalSessions.setFocusedSession: sessionId=${LOCAL_A}`)}\n`)
+    const reader = appState.createAppStateReader({
+      fs,
+      path,
+      os: { homedir: () => root },
+      platform: 'darwin',
+      claudeLogDirectory: logs,
+      claudeAppVersion: [...appState.SUPPORTED_APP_VERSIONS][0]
+    })
+
+    reader.read()
+    renameSync(logPath, join(logs, 'main1.log'))
+    writeFileSync(logPath, [
+      line('2026-08-07 10:00:01', '[CCD] LocalSessions.setFocusedSession: sessionId=null'),
+      line('2026-08-07 10:00:02', `Sending message to session ${LOCAL_B}`),
+      line('2026-08-07 10:00:03', `[Result] Turn succeeded for session ${LOCAL_B}`)
+    ].join('\n') + '\n')
+
+    reader.read()
+    expect(reader.readHotUnread().hints).not.toContainEqual(expect.objectContaining({ sessionId: LOCAL_B }))
   })
 })
