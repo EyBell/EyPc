@@ -46,11 +46,16 @@ describe('keybinding runtime', () => {
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', codexContext)?.actionId).toBe('codex.list.down')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', codexContext)?.actionId).toBe('codex.task.archiveFocused')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+ArrowLeft', codexContext)?.actionId).toBe('codex.detail.open')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+9', codexContext)?.actionId).toBe('codex.drawer.select.9')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F', codexContext)?.actionId).toBe('codex.quickJump.openForward')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+9', { ...codexContext, codexDrawerActive: true })?.actionId).toBe('codex.drawer.select.9')
+    // 抽屉未打开时 `Ctrl+数字` 不再解析成一个没有目标的抽屉动作。
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+9', codexContext)).toBeNull()
+    // RAW-167：`Ctrl+F` 在 Codex 域回到"搜索"，Quick Jump 保留 `F` / `Shift+F`。
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F', codexContext)?.actionId).toBe('codex.search.focus')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'F', codexContext)?.actionId).toBe('codex.quickJump.openForward')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Shift+F', codexContext)?.actionId).toBe('quickJump.openBackward')
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+Shift+F', codexContext)?.actionId).toBe('codex.search.focus')
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', { ...codexContext, textInputFocused: true })).toBeNull()
-    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F', { ...codexContext, textInputFocused: true })).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', { ...codexContext, textInputFocused: true, activeInputRole: 'codex-composer' })).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F', { ...codexContext, textInputFocused: true, activeInputRole: 'codex-composer' })).toBeNull()
     expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Delete', { ...codexContext, tab: 'mqtt' })).not.toMatchObject({ actionId: 'codex.task.archiveFocused' })
 
     const rows = buildShortcutCommandRows(DEFAULT_KEYBINDINGS)
@@ -87,6 +92,51 @@ describe('keybinding runtime', () => {
     })
     expect(composerPreview.activeLayers).toContain('codex-composer')
     expect(composerPreview.winner).toBeNull()
+  })
+
+  it('gives Ctrl+number two exclusive Codex meanings and lets the session search box navigate', () => {
+    const base = { tab: 'codex' as const, confirmOpen: false, textInputFocused: false }
+    const quick = { ...base, codexQuickMode: true }
+
+    // 筛选模式：`Ctrl+数字` 是"打开第 N 条可见任务"，`Ctrl+0` 是第 10 条。
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+1', quick)?.actionId).toBe('codex.quick.open.1')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+9', quick)?.actionId).toBe('codex.quick.open.9')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+0', quick)?.actionId).toBe('codex.quick.open.10')
+    // 抽屉打开时抽屉恒胜，两条守卫互斥。
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+1', { ...quick, codexDrawerActive: true })?.actionId).toBe('codex.drawer.select.1')
+    // 非筛选模式且无抽屉时两者都不成立。
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+1', base)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+0', base)).toBeNull()
+
+    // Alt 是「直接打开」族：`Alt+数字` 不需要先进筛选模式，`Alt+F` 是只针对会话行的专项跳转。
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Alt+1', base)?.actionId).toBe('codex.task.openIndex.1')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Alt+0', base)?.actionId).toBe('codex.task.openIndex.10')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Alt+1', quick)?.actionId).toBe('codex.task.openIndex.1')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Alt+1', { ...base, codexDrawerActive: true })).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Alt+F', base)?.actionId).toBe('codex.quickJump.openTasks')
+    // Alt+方向键仍归本地置顶排序，没有被数字族波及。
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Alt+ArrowUp', base)?.actionId).toBe('codex.pin.moveUp')
+
+    // 会话搜索框可以边打字边导航；composer 保持完全隔离。
+    const searching = { ...quick, textInputFocused: true, activeInputRole: 'codex-search' as const }
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', searching)?.actionId).toBe('codex.list.down')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowUp', searching)?.actionId).toBe('codex.list.up')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', searching)?.actionId).toBe('codex.task.openFocused')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+3', searching)?.actionId).toBe('codex.quick.open.3')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Alt+3', searching)?.actionId).toBe('codex.task.openIndex.3')
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+F', searching)?.actionId).toBe('codex.search.focus')
+
+    const composing = { ...quick, textInputFocused: true, activeInputRole: 'codex-composer' as const }
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'ArrowDown', composing)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Ctrl+3', composing)).toBeNull()
+    expect(resolveKeybinding(DEFAULT_KEYBINDINGS, 'Enter', composing)).toBeNull()
+
+    // 同一 chord 的两种释义不得互相报冲突：守卫互斥，when 不可能同真。
+    const rows = buildShortcutCommandRows(DEFAULT_KEYBINDINGS)
+    const quickOpenRow = rows.find((row) => row.commandId === 'codex.quick.open.1')!
+    expect(quickOpenRow.shortcutIds).toEqual(['Ctrl+1'])
+    expect(quickOpenRow.conflicts.some((conflict) => conflict.commandId === 'codex.drawer.select.1')).toBe(false)
+    expect(rows.find((row) => row.commandId === 'codex.quick.activate')?.defaultShortcutIds).toEqual(['Ctrl+Alt+K'])
   })
 
   it('resolves default bindings with when context and layer priority', () => {
