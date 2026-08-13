@@ -1,16 +1,16 @@
-# RAW-160 → RAW-164 Companion 收敛 — Controlled Task Card
+# RAW-160 → RAW-166 Companion 收敛 — Controlled Task Card
 
-Date: 2026-08-12
-Status: `RAW-164 increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
+Date: 2026-08-13
+Status: `RAW-166 increment-automated-verified / rebuilt-artifact-ready / documentation-synchronized / dev-plugin-reload-pending`
 Documentation level: `controlled`
 
-本任务沿用 RAW-159 的 Controlled 任务树和稳定同步组；RAW-159/160 的库存、归档事务、诊断、Runtime Identity、分页和 hidden-Host watcher 成果作为 V4 基础保留。RAW-161 追加 Codex 外部手动归档的原始权威库存恢复，RAW-162 追加 Goal-aware 完成边界，RAW-163 保留 parent-only 打开合同，RAW-164 取代其 main-first 展示门槛并追加库存 Side Chat 拓扑、全珠子优先级、Cloud 未读稳定性和运行身份握手；均不另建重复任务。
+本任务沿用 RAW-159 的 Controlled 任务树和稳定同步组；RAW-159/160 的库存、归档事务、诊断、Runtime Identity、分页和 hidden-Host watcher 成果作为 V4 基础保留。RAW-161 追加 Codex 外部手动归档的原始权威库存恢复，RAW-162 追加 Goal-aware 完成边界，RAW-163 保留 parent-only 打开合同，RAW-164 追加库存 Side Chat 拓扑与全珠子聚合；RAW-165 修复库存终态伪新鲜、跨 transport 分支身份漂移、Side 权威泄漏、注意力优先级、最终推送判定，并用 Claude App 完成/焦点热事件覆盖 LevelDB 落盘延迟。RAW-166 再补齐双向 phase admission、phase/unread/Goal 独立 lane、proposal/final 诊断与全量错误记忆唯一责任路由；均不另建重复任务。
 
 ## Task Documentation Sync Group
 
 - Group key: `dsg:eypc:install-runtime-diagnostics-v2`（稳定键不随协议升级改名）
 - Group owner: this `task-card.md`
-- Scope: Codex/Claude 任务证据、进程 Host native watcher/StatWatcher 恢复、Codex 未归档/归档库存成员对照、`sessionId/forkedFromId` Side Chat 拓扑、私有全分支聚合与单事务发布、Canonical 状态、Plan 生命周期、暂停/恢复/执行、同 key parent-only 打开与 alias 恢复、时间窗口、角标几何/循环、Latest Package 缓存、Float applied ACK、归档结果与运行身份诊断。
+- Scope: Codex/Claude 任务证据、事件时因果合并、进程 Host native watcher/StatWatcher 恢复、Codex 未归档/归档库存成员对照、`sessionId/forkedFromId` Side Chat 拓扑、私有全分支聚合与单事务发布、Claude 完成/焦点热未读、Canonical 状态、Plan 生命周期、暂停/恢复/执行、同 key parent-only 打开与 alias 恢复、时间窗口、角标几何/循环、Latest Package 缓存、Float applied ACK、归档结果与运行身份诊断。
 - Shared-file ownership: 保留同一工作树内全部用户修改；不触碰用户的 `_to_delete/`。
 
 ```json documentation-sync-group-v1
@@ -41,12 +41,15 @@ Documentation level: `controlled`
     "vibe/knowledge/technical-details.md",
     "vibe/knowledge/developer-soul.md",
     "vibe/rules/README.md",
+    "vibe/knowledge/error-memory.md",
     "vibe/knowledge/error-memory/README.md",
+    "vibe/knowledge/error-memory/chromium-placeholder-window-title-noise.md",
     "vibe/knowledge/error-memory/codex-completion-transition-hysteresis.md",
     "vibe/knowledge/error-memory/codex-turn-completion-is-not-goal-completion.md",
     "vibe/knowledge/error-memory/codex-preload-capability-version-skew.md",
     "vibe/knowledge/error-memory/codex-app-server-session-state-survives-exit.md",
     "vibe/knowledge/error-memory/codex-provider-status-display-normalization.md",
+    "vibe/knowledge/error-memory/codex-stale-live-active-needs-completion-order.md",
     "vibe/knowledge/error-memory/codex-stale-live-unread-false-blocks-completion-unread.md",
     "vibe/knowledge/error-memory/codex-water-preview-renderer-divergence.md",
     "vibe/knowledge/error-memory/codex-task-count-list-projection-divergence.md",
@@ -57,8 +60,20 @@ Documentation level: `controlled`
     "vibe/knowledge/error-memory/claude-new-phase-must-outrank-previous-cache.md",
     "vibe/knowledge/error-memory/companion-observation-generation-is-not-semantic-revision.md",
     "vibe/knowledge/error-memory/independent-authorities-coupled-by-full-refresh.md",
+    "vibe/knowledge/error-memory/error-memory-flat-index-lacks-primary-ownership.md",
+    "vibe/knowledge/error-memory/fixed-field-projection-drops-declared-data.md",
+    "vibe/knowledge/error-memory/tri-state-collapsed-to-boolean-hides-remedy.md",
+    "vibe/knowledge/error-memory/utools-macos-cross-api-window-title-mismatch.md",
+    "vibe/knowledge/error-memory/utools-mainhide-window-activation-diagnostics.md",
+    "vibe/knowledge/error-memory/utools-onpluginout-hidden-vs-process-exit.md",
+    "vibe/knowledge/error-memory/utools-window-target-auto-rebind-after-restart.md",
     "vibe/knowledge/error-memory/modules/claude-companion.md",
+    "vibe/knowledge/error-memory/modules/companion-actions-and-presentation.md",
     "vibe/knowledge/error-memory/modules/companion-task-state.md",
+    "vibe/knowledge/error-memory/modules/engineering-contracts.md",
+    "vibe/knowledge/error-memory/modules/interaction-and-favorites.md",
+    "vibe/knowledge/error-memory/modules/runtime-and-packaging.md",
+    "vibe/knowledge/error-memory/modules/window-jump-and-native-host.md",
     "vibe/knowledge/error-memory/utools-developer-tools-project-list-loading.md",
     "vibe/knowledge/error-memory/watcher-callback-latency-is-not-end-to-end-publication-latency.md",
     "vibe/knowledge/computer-use/sessions/2026-08-12-raw-160-companion-regression.md",
@@ -72,10 +87,12 @@ Documentation level: `controlled`
     "src/help/guides/settings.md"
   ],
   "dependencies": [
+    "package.json",
     "preload/claude/archive.cjs",
     "preload/claude/app-state.cjs",
     "preload/claude/code-sessions.cjs",
     "preload/claude/events.cjs",
+    "preload/claude/index.cjs",
     "preload/claude/unread.cjs",
     "preload/index.js",
     "preload/float.js",
@@ -100,6 +117,7 @@ Documentation level: `controlled`
     "scripts/utools-runtime-identity.mjs"
   ],
   "validators": [
+    "scripts/validate-error-memory.mjs",
     "tests/domain/claude.test.ts",
     "tests/domain/claudeCode.test.ts",
     "tests/domain/codex.test.ts",
@@ -216,6 +234,32 @@ Decision source: 用户在 2026-08-12 明确要求“主任务非已完成已读
 
 Decision source: 用户在 2026-08-12 最新纠正中明确要求“所有珠子取最高优先级：进行中 > 已完成未读 > 已完成”，并要求核验日志、解决 Cloud 已完成未读漂移及新描述触发刷新；该决策取代 RAW-163 的 main-first 展示条款，无未决分支。
 
+### RAW-165 Realtime Causality, Attention And Claude Hot Unread
+
+| 类型 | 旧条款或缺口 | RAW-165 当前处置 | 受影响 owner |
+| --- | --- | --- | --- |
+| supersede | 库存 RPC 成功与本地扫描 sequence 被当成 terminal 因果新鲜度 | 读取成功只表示 observation；真实 terminal event 或可比较同一/更新 Turn epoch 才关闭 live | Codex Evidence Adapter、Kernel branch merge |
+| supersede | branch ref 包含 transport lane，父 generation 可覆盖分支事件时 | branch ref 只由 parent/branch 决定；父 generation 只排序传输，完整快照逐分支合并 | Preload private branch store、Kernel |
+| supersede | 普通 Side running 可覆盖 main waiting，Side App Server authority 可泄漏到 main | `approval > input/Plan > running > Goal > terminal`，authority 严格分支本地 | Kernel parent reducer、Preload evidence builder |
+| supersede | Host 提议一经发送即记 accepted | 提交后比较最终 canonical package；冲突记匿名 superseded | Host diagnostics、Kernel package |
+| add | Claude completion/focus 已实时可见，但 unread 只等 LevelDB 落盘 | exact live completion/focus 热覆盖；LevelDB 是 cold/recovery baseline，上一轮同值不得冒充追平 | Claude App state、Claude unread bridge |
+| retain | 无第三方注入、无 App 存储写、无新状态、无长等待 | 不新增“未读核验中”、60 秒 hold 或轮询；多窗格 visible-but-unfocused 保持能力边界 | 产品/帮助/验收 |
+
+Decision source: 用户在 2026-08-13 明确要求接入实时 Cloud 状态、核验并修复 Codex 更新/推送判断，同时否定 Claude 新增状态与 60 秒等待；随后明确追问 Claude 是否可实时确定。当前无未决实现分支；真实 Host reload 仍是独立接纳门禁。
+
+### RAW-166 Global Error Resolution And Unified Judgement
+
+| 类型 | 旧条款或缺口 | RAW-166 当前处置 | 受影响 owner |
+| --- | --- | --- | --- |
+| fix | 只阻止旧 terminal 覆盖 live，未阻止后到旧 live 清除新 waiting 或重开新 terminal | phase admission 双向比较 Turn epoch/event sequence；真实更新 Turn 才推进 | Kernel Branch Evidence Store |
+| fix | 接受 phase 时整包替换分支，隐式清除未观察的 unread/Goal | phase、unread、Goal 独立选择并重新 normalize derived fields | Kernel branch merge |
+| unify | Adapter proposal 在 Kernel 裁决前被记录为 accepted | Adapter 只 proposed；Codex/Claude Provider event 在 canonical commit 后判定 accepted/superseded/ignored/queued | Host diagnostics |
+| govern | 99 条错误记录由扁平索引散列，Primary owner、生命周期和重复路径不可机器核验 | root→七责任模块→leaf；唯一 Primary、有限 Related、图 validator、candidate 只告警、superseded 逻辑归档 | Error-memory index/validator |
+| resolve | RAW-163 main-first 展示条款仍残留在 current PRD，与 RAW-164 all-bead 冲突 | 按用户已明确的 RAW-164 决策删除 current 残留；RAW-163 parent-only 打开继续保留 | Requirement/spec/architecture |
+| retain | 实时展示不应靠新状态或长等待 | 不新增状态、20/60 秒前置 hold 或更高轮询；真实事件即时发布，后采样仅验无回弹 | Runtime/Host acceptance |
+
+Decision source: 用户在 2026-08-13 要求全量梳理错误集合、归档失效/重复路线、核验整体改造质量、统一结构化判断，并要求任何未决判断冲突必须提醒。RAW-163/164 冲突已有明确历史决策，因此直接消解；当前未发现需要新增用户选择的产品语义冲突。
+
 RAW-142、RAW-150 与 RAW-159 仅上述冲突条款被取代；其余已验证基础和历史事实保留。
 
 ## 2026-08-11—12 Installed-host Regression Rework
@@ -258,8 +302,25 @@ RAW-142、RAW-150 与 RAW-159 仅上述冲突条款被取代；其余已验证�
 - [task-kernel.cjs](../../../../preload/companion/task-kernel.cjs#L1) 删除 main completed-read 门槛并始终聚合全部珠子。running 压过 completed-unread，completed-unread 压过 completed；活动时 unread 仅作潜在证据，公共 active/unread 分组与计数互斥。
 - Goal active/verifying 继续阻止中间 Turn completed/completed-unread；Goal complete 后按最终 unread 单次落位。旧 unread、旧完整快照、重复 Goal 通知和同 Turn 补全不能回滚成功打开后的 completed-read。
 - 新增语义去重的匿名 `side-topology-decision`、`parent-state-decision` 与 `runtime-identity-handshake`，均不记录原始 ID、标题、正文、路径、Goal 内容、预算或用量。
-- Bridge、Kernel 与 Runtime Diagnostics 定向矩阵共 `189/189` 通过；最终复核额外锁定 Desktop-only Side 的父/子 Turn 已读绑定，以及库存归类后清理旧 child action alias，避免旁路打开 Side。canonical/public 语法与镜像、typecheck、1871-module production build、runtime validator 和 diff 检查通过。当前 artifact 为 `host-251a728efafbf4c7f7d6 / renderer-a671d108ff9d315b7ea4`；真实开发 Host 尚未报告 `host-loaded`。
+- Bridge、Kernel 与 Runtime Diagnostics 定向矩阵共 `189/189` 通过；最终复核额外锁定 Desktop-only Side 的父/子 Turn 已读绑定，以及库存归类后清理旧 child action alias，避免旁路打开 Side。canonical/public 语法与镜像、typecheck、1871-module production build、runtime validator 和 diff 检查通过。RAW-164 artifact 为 `host-251a728efafbf4c7f7d6 / renderer-a671d108ff9d315b7ea4`；其 Host gate 已由 RAW-165 当前 identity 取代。
 - 17 份改动 Markdown 的 code-link 与当前合同残留审计通过；项目级规则审计保留 133 项既有 broad debt，按 RAW-164、当前任务树、Companion module 与本轮状态错误记忆过滤为 0 项。`51 documents / 26 dependencies / 28 validators` 同步组和 final receipt 已按本任务 owner 收口。
+
+## 2026-08-13 RAW-165 Realtime Cloud And Claude Hot Unread
+
+- [preload/index.js](../../../../preload/index.js#L1) 不再把库存读取成功当作 terminal 因果更新，branch ref 跨 connector/Desktop/App Server 稳定，Side live authority 不泄漏到 main；Host 提议只在最终 Kernel canonical task 一致时记为 accepted。
+- [task-kernel.cjs](../../../../preload/companion/task-kernel.cjs#L1) 按稳定分支引用和 Turn epoch 合并完整快照；父 generation 仅排序传输，旧/inventory terminal 不覆盖更新 live/waiting。父级优先级现为 approval → input/Plan → running → Goal → terminal。
+- [app-state.cjs](../../../../preload/claude/app-state.cjs#L1) 与 [index.cjs](../../../../preload/claude/index.cjs#L1) 用 exact live completion/focus 建立热未读覆盖，LevelDB 仅作 cold/recovery baseline；不增加新可见状态、60 秒等待、轮询或第三方 UI/存储写入。
+- 最终受影响 8 文件、`364/364` 测试，Preload 同步/镜像/语法、typecheck、1871-module build 与 uTools validator 通过。当前 artifact 为 `host-649d5936516471adcf60 / renderer-7aa872e3d99f003ac3a0`；开发插件未重载，真实事件→Float applied 验收待宿主门禁。
+- 文档同步组现为 `51 documents / 27 dependencies / 28 validators`；本节与 RAW-165 的 spec/plan/tasks/verify/handoff、项目状态、架构、帮助和既有错误记忆共同收口。
+
+## 2026-08-13 RAW-166 Global Error Resolution And Bidirectional Causality
+
+- 全量盘点 99 条 leaf：69 verified、21 candidate、9 superseded、0 retired；无重复 id/fingerprint。三个旧 `archived` 状态已归一为 superseded，重复的 stale-live active 路线逻辑归档到当前 Provider 状态 owner；不移动/删除任何历史文件。
+- [error-memory root](../../../knowledge/error-memory/README.md#L1) 收敛为七个责任模块，所有 leaf 恰一个 Primary、最多两个 Related；[validator](../../../../scripts/validate-error-memory.mjs#L1) 验证生命周期、唯一 identity/fingerprint、断链、根模块覆盖、路由环和索引规模。`pnpm-store-build-policy-mismatch` 作为 overdue candidate 仅告警并保留，不自动升格或退役。
+- Kernel 新增双向 phase admission 与三条独立 evidence lane，诊断统一 proposal/final 语义；RED 回归证明并修复“旧 live 反压新 waiting/terminal”和“phase 更新擦除 unread/Goal”。
+- Current PRD 的 RAW-163 main-first 残留已按用户既有 RAW-164 all-bead 决策修正；parent-only open 保留。当前 conflict register 无需用户新增选择。
+- 继续全局复核又删除了公共任务层重复的时间戳门禁，让 Branch Evidence 的 Turn epoch/真实事件序号成为唯一 phase 裁决；Claude 日志轮转/截断只恢复状态不制造热未读。
+- 11 个影响测试文件 `457/457`、Preload 镜像/语法、typecheck、1871-module production build、Runtime Identity、uTools validator 与 99-leaf error-memory validator 通过；artifact 为 `host-6ac8de6597dcf0dd644c / renderer-6e677d084be49c8c7878`。同步组为 `66 documents / 28 dependencies / 29 validators`，code-link/rule/diff 审计通过；99 个结构化叶子外的 2 条 legacy compound 仅作 Historical/Migration Source。真实 Host 仍未 `host-loaded`。
 
 ## Acceptance Boundary
 

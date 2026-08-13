@@ -1,4 +1,4 @@
-# RAW-160 → RAW-164 Companion V4 Task Checklist
+# RAW-160 → RAW-166 Companion V4 Task Checklist
 
 ## Implementation
 
@@ -11,6 +11,9 @@
 - [x] RAW-164 Desktop side 判定优先于 inventory membership；运行事件/快照/重连/归档不制造 child 顶层行
 - [x] RAW-164 Kernel 全珠子聚合，删除 main completed-read 门槛；running > completed-unread > completed，active/unread 分组计数互斥
 - [x] RAW-164 Goal/unread/read-ack 乱序稳定性与三类匿名语义诊断
+- [x] RAW-165 库存读取与 terminal 因果解耦、稳定跨 transport 分支引用、逐分支 Turn epoch 合并
+- [x] RAW-165 approval/input > running 注意力优先级、Side authority 隔离与最终 canonical push 判断
+- [x] RAW-165 Claude completion/focus 热未读覆盖 LevelDB 落盘延迟；cold replay、同秒事件和持久快照迟到回滚门禁
 
 - [x] `task-state-v10 / companion-task-kernel-v4 / companion-task-package-v4 / companion-task-actions-v2`
 - [x] branch causality、main/Side Chat 聚合、active/terminal verifying、ordinary interrupted idle-confirmed
@@ -62,10 +65,17 @@
 - [x] RAW-163 生成身份 `host-2c01a8beb95919a22af5 / renderer-cc3ff8f60b7179ed599f`
 - [x] RAW-164 Bridge+Kernel+Runtime Diagnostics `189/189`；canonical/public syntax+mirror、typecheck、1871-module build、uTools validator
 - [x] RAW-164 生成身份 `host-251a728efafbf4c7f7d6 / renderer-a671d108ff9d315b7ea4`
-- [ ] uTools 开发模式重新加载当前身份并回归；1.5.4/1.5.5、`host-252d…`、`host-78205…`、`host-c36f…` 与 `host-2c01…` 均为旧基线，当前目标为 `host-251a728efafbf4c7f7d6 / renderer-a671d108ff9d315b7ea4`
+- [x] RAW-165 受影响 8 文件、`364/364`；sync/mirror/syntax、typecheck、1871-module build、Runtime Identity 与 uTools validator
+- [ ] uTools 开发模式重新加载当前身份并回归；RAW-165 及更早身份均为旧基线，当前目标为 `host-6ac8de6597dcf0dd644c / renderer-6e677d084be49c8c7878`
 - [x] 全仓升级触发：用户明确要求中央状态缺陷逃逸后执行 `pnpm run verify`
 - [x] RAW-163 文档 code-link、规则一致性、50 documents / 26 dependencies / 25 validators sync group 合同、final receipt 与 diff 审计；项目 broad rule baseline 137 项，本轮关键词命中 0 项
 - [x] RAW-164 文档 code-link、当前合同残留、`51 documents / 26 dependencies / 28 validators` sync group、规则/diff 与 final receipt 审计；项目 broad rule baseline 133 项，本轮关键词命中 0 项
+- [x] RAW-166 全量盘点 99 条 error-memory leaf，建立七模块、唯一 Primary/有限 Related、生命周期逻辑归档与简化根索引
+- [x] RAW-166 error-memory validator 覆盖 identity/fingerprint、状态/日期、断链、root→module 覆盖、Primary/Related、路由环与索引上限；overdue candidate 仅告警
+- [x] RAW-166 Kernel 双向 phase admission 与 phase/unread/Goal 独立 lane merge；RED→GREEN 回归覆盖旧 live 反压和 lane 擦除
+- [x] RAW-166 Codex/Claude Adapter proposal 与 canonical final outcome 诊断统一；current PRD 的 RAW-163/164 冲突残留已按用户既有决策消解
+- [x] RAW-166 影响选择 11 文件 `457/457`、Preload 镜像/语法、typecheck、1871-module build、Runtime Identity/uTools validator；artifact `host-6ac8de6597dcf0dd644c / renderer-6e677d084be49c8c7878`
+- [x] RAW-166 code-link、rule、diff 与 `66 documents / 28 dependencies / 29 validators` receipt 收口
 
 ## 2026-08-11 Regression Rework
 
@@ -92,7 +102,9 @@
 - [ ] Goal paused/blocked/usageLimited/budgetLimited 均显示待继续；Goal cleared/普通无 Goal 会话保持既有 Turn 语义
 - [ ] 主任务已完成已读或未读 + Side running 均显示进行中；无活动珠子且任一珠子未读时显示已完成未读；全部已读后显示已完成
 - [ ] `thread/list` 已含 Side Chat、分页乱序、运行事件先到/Desktop 快照后到、重连与归档时都只有根任务公共行
-- [ ] `runtime-identity-handshake` 报告当前 identity 为 `host-loaded`；20 秒稳定窗口后连续两次匿名快照状态一致且无回弹
+- [ ] `runtime-identity-handshake` 报告当前 identity 为 `host-loaded`；首个可信事件立即更新，后续匿名样本只核验无回弹，不作为 20/60 秒展示等待
+- [ ] Cloud 实时 active/waiting/approval/terminal 与库存并发时，注意力状态不被 Side running 或旧 terminal 覆盖；最终诊断按 canonical package 标记 accepted/superseded
+- [ ] Claude 聚焦任务完成立即已读、非聚焦任务完成立即未读、聚焦后立即清除，并在同 revision Float applied；不等待 LevelDB 的延迟写入
 - [ ] 超过 10 分钟旧 alias、生命周期重建和两个并发过期请求仍打开同一待输入任务；失败不打开其它任务且不推进队列
 - [ ] 卡片、标题、Enter、紧凑角标、attention、previous/next 和 uTools 全局入口都只打开 parent，不直达 Side Chat
 - [ ] 单数字角标为圆形，两位数/`99+` 自然扩宽，设置预览与 Float 一致
@@ -106,3 +118,4 @@
 - [ ] Float ACK 与漏 ACK 恢复
 - [ ] 仅在本轮 `EyPc-Regression-*` 安全测试任务上验证 Plan 执行（已授权；不得触碰既有任务）
 - [ ] 本轮前缀测试任务的可恢复清理；真实 Claude D′ 归档不在本轮授权范围
+- [ ] RAW-166 最终 artifact 由开发插件报告 `host-loaded`，并通过无额外等待的 Cloud/Claude event→canonical→Float applied 矩阵

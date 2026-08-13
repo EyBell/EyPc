@@ -1,6 +1,6 @@
-# RAW-160 → RAW-164 Companion V4 Verification Record
+# RAW-160 → RAW-166 Companion V4 Verification Record
 
-Status: `RAW-164 increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
+Status: `RAW-166 increment-automated-verified / rebuilt-artifact-ready / documentation-synchronized / dev-plugin-reload-pending`
 
 ## VerificationImpactTrace
 
@@ -10,6 +10,8 @@ Status: `RAW-164 increment-automated-verified / rebuilt-artifact-ready / dev-plu
 | RAW-162 Goal/Turn completion | active Goal 跨两个自动 Turn 零中间 completed、Goal complete 单次完成、四类待继续、cleared/unsupported 回退、暂时失败/真实 timeout verifying、乱序/重复、main/Side、隐私 | passed；Bridge `138/138`，Kernel `39/39` |
 | RAW-163 main-first Side Chat projection/open | 历史增量；parent-only 打开保留，main-first 展示门槛由 RAW-164 取代 | historical passed；Bridge+Kernel `177/177` |
 | RAW-164 Side topology / all-bead priority / Cloud unread | inventory child 归根且不进公共行；running > completed-unread > completed；active/unread 计数互斥；Goal active 中间 Turn+unread 不终态；完成/已读抗旧快照；三类匿名诊断 | passed；5 files / `189/189` |
+| RAW-165 realtime causality / attention / hot unread | inventory terminal 不获得伪因果新鲜度；稳定 branch ref；逐分支 Turn epoch 合并；approval/input > running；Side authority 隔离；最终 canonical push 判定；Claude completion/focus hot unread 抗 LevelDB 延迟与前轮同值误确认 | passed；8 files / `364/364` |
+| RAW-166 bidirectional causality / error resolution | stale live 不清新 waiting/terminal；真实新 Turn/事件序号恢复；phase/unread/Goal lane 正交；Claude exact unread-known 且 cold rotation 不制造热边缘；proposal/final diagnostics；99-leaf unique Primary graph | passed；11 files / `457/457`；error-memory `69 verified / 21 candidate / 9 superseded` |
 | Exact open / alias recovery | Renderer 旧 alias/revision/phase 在 Host 同 key 存在时被忽略；Host 目标缺失、并发过期、私有映射续签、目标消失、同 key 单次重试、失败不推进 | passed |
 | UI entry / badge geometry | 卡片、标题、Enter、紧凑 input、全局 feature routing；单数字/两位数/`99+` 与预览合同 | passed；真实视觉待宿主 |
 | Window / badges / cycle / pause | 跨窗口例外、无 stopped badge、独立 waiting badge、四层循环、暂停/迁移/四槽 | passed |
@@ -22,10 +24,10 @@ Status: `RAW-164 increment-automated-verified / rebuilt-artifact-ready / dev-plu
 | Claude hidden Host / state / membership / unread / archive | Hook/App-log/成员/未读首事件即时处理、已登记目标 1 秒 Node recovery、部分 JSON 保留、同值指纹零通知、Main hidden→Float applied、1.28929.0 固定语法与 stopped 直接归档 | passed；真实开发 Host 重载待验收 |
 | V3 retained foundations | 240 项、全 cursor、第 41/101/201、Codex archive transaction、Runtime Identity、diagnostics | passed |
 | 当前 Codex 增量测试 | core `3/3` files、`221/221` tests；expanded `15/15` files、`433/433` tests | passed |
-| type / build / mirrors / validator | typecheck、1871 modules、canonical/public mirror generation、Runtime Identity、uTools validator | passed；artifact `host-251a728efafbf4c7f7d6 / renderer-a671d108ff9d315b7ea4` |
+| type / build / mirrors / validator | typecheck、1871 modules、canonical/public mirror generation、Runtime Identity、uTools validator、error-memory graph validator | passed；artifact `host-6ac8de6597dcf0dd644c / renderer-6e677d084be49c8c7878` |
 | 仓库全量套件 | RAW-160 曾由用户明确要求在中央 Kernel/Actions/Host watcher 缺陷逃逸后升级 | historical current-foundation passed；`83/83` files、`1328/1328` tests；RAW-161/162/163 无新升级触发，未重复运行 |
 | 文档与规则审计 | Controlled group、RAW-067/160、状态/架构/既有错误记忆、code-link、diff | final audit recorded below |
-| uTools 开发模式当前身份矩阵 | `runtime-identity-handshake=host-loaded` 后 20 秒稳定窗口与两次匿名快照；见 [host handoff](handoff.md#L1) | pending reload |
+| uTools 开发模式当前身份矩阵 | `runtime-identity-handshake=host-loaded` 后首个可信事件立即正确，后续匿名样本无回弹；没有 20/60 秒展示 hold；见 [host handoff](handoff.md#L1) | pending reload |
 
 ## RAW-159 Historical Gate Review
 
@@ -159,6 +161,120 @@ Tool: Codex
 
 ### Not Checked
 
-- uTools 开发模式尚未通过握手加载 `host-251a728efafbf4c7f7d6 / renderer-a671d108ff9d315b7ea4`；真实 inventory/Desktop 时序、Cloud 跨 Turn、Float applied、双快照和 parent-only Deep Link 待宿主门禁。
+- uTools 开发模式尚未通过握手加载 `host-649d5936516471adcf60 / renderer-7aa872e3d99f003ac3a0`；真实 inventory/Desktop 时序、Cloud attention/terminal、Claude focus/completion、Float applied 和 parent-only Deep Link 待宿主门禁。
 - 未重复运行仓库级 `pnpm test/verify`，因为 RAW-164 没有新的 testing-owner 全量升级触发；RAW-160 的 `1328/1328` 仅作为现有全量基础。
 - 真实 Execute Plan 与真实 Claude 归档不属于本轮自动化授权。
+
+## 2026-08-13 RAW-165 Realtime Causality And Hot Unread
+
+- RED 回归先证明六类旧行为：库存 terminal 覆盖 realtime live、较高父 generation 把旧 terminal 当新证据、Side aggregate authority 污染 main、Side running 压过主 attention、Host proposal 被错误标记 accepted、Claude unread 等待 LevelDB 且可被迟到快照回滚。
+- 修复后受影响矩阵为 8 个测试文件、`364/364`：Codex Bridge/Kernel/Runtime Diagnostics，Claude App State/Bridge/Unread，Claude Controller 与 Codex UI。核心断言覆盖完整库存不能覆盖 canonical live、旧 terminal 与更新 waiting 的逐分支合并、approval/input 优先、最终 canonical superseded、focused/unfocused completion、focus clear、unread-only watcher、同秒 hint revision，以及上一轮同值不能冒充持久追平。
+- `pnpm run sync:preloads` 后 canonical/public 四组 Preload 镜像一致；八个 canonical/public CJS 语法检查通过。生产路径不存在同步 IPC readback 命中，`src/main.ts` 保持 Renderer 入口边界。
+- `pnpm run build` 通过 typecheck、1871-module Vite production build、runtime preparation 与 uTools validator；artifact 为 `host-649d5936516471adcf60 / renderer-7aa872e3d99f003ac3a0`。`git diff --check` 通过。
+- 未运行仓库级 `pnpm test/verify`：本次影响图封闭在 Provider adapters、Kernel branch merge、Claude unread lane、既有消费者回归和生成 Preload，没有 testing-owner 全量升级触发。
+- 自动化/静态范围内无已知 P0/P1。未重载或终止当前 uTools Host，因此状态仍为 `dev-plugin-reload-pending`；不能用当前运行 UI 接纳新产物。Claude 多窗格 visible-but-unfocused 是否已读仍不可由全局 focus 事件判定，是已记录能力边界而非延迟策略。
+
+### RAW-165 VerificationDecision
+
+`route=impact-selected runtime+frontend+docs / changed-surface=Codex inventory/realtime branch causality + attention priority + branch-local authority + final canonical push diagnostics + Claude completion/focus hot unread + persisted catch-up epoch guard + generated preload / selected=8 files 364 tests + sync/mirror/syntax + typecheck + 1871-module build + uTools validator + code-link/diff/receipt audits / skipped=repository-wide test/verify without testing-owner trigger；real Host reload without user process-control authorization / outcome=increment-automated-verified, rebuilt-artifact-ready, dev-plugin-reload-pending / artifact=host-649d5936516471adcf60 + renderer-7aa872e3d99f003ac3a0 / residual-risk=real Host not loaded；multi-pane visible-but-unfocused Claude read intent unobservable`。
+
+## RAW-165 Implementation Review
+
+Tool: Codex
+
+### Review Target
+
+- Requirement: RAW-165 实时 Cloud 状态、Codex 因果正确更新与最终推送判断；Claude 不新增状态、不等待 60 秒，并在 exact completion/focus 边界实时更新未读。
+- Plan: [current plan](plan.md#L1) 的 RAW-165 `VerificationImpactTrace`。
+- Implementation: [Codex Evidence Adapter](../../../../preload/index.js#L1)、[Kernel reducer](../../../../preload/companion/task-kernel.cjs#L1)、[Claude App state](../../../../preload/claude/app-state.cjs#L1)、[Claude unread bridge](../../../../preload/claude/index.cjs#L1)、同步 public mirrors 与定向回归。
+
+### Checked
+
+- Requirement alignment: no new public phase、no 60-second hold、no faster poll；Cloud inventory/live conflict、attention priority、Side authority and push outcome match RAW-165。
+- Plan-to-implementation coverage: all steps 37–41 complete；step 42 remains the explicit real Host gate。
+- Risk and compatibility: raw IDs/content remain private，LevelDB stays read-only，cold-start fallback remains available，multi-pane visible-but-unfocused limitation is explicit。
+- Verification evidence: final 8-file `364/364`，typecheck/build/runtime validator，canonical/public syntax+mirror，code-link/diff and documentation-sync receipt。
+- Review correction: an initially matching LevelDB value from the previous completion could falsely acknowledge a new hot hint；the final implementation now requires an opposite persisted edge followed by a post-event match，with a regression locking the intermediate-write case。
+
+### Findings
+
+- P0: 无已知未解决项。
+- P1: 自动化/静态范围内无已知未解决项；真实 `host-loaded` 是独立接纳门禁，不是源码缺口。
+- P2: 无需新增公共状态、持久热回执、轮询或第二套 reducer。
+
+### Optimization Suggestions
+
+- 无阻塞优化；下一步只需在当前 identity 下完成真实 Cloud/Claude event→canonical package→Float applied canary。
+
+### Not Checked
+
+- 未重启或重载 uTools Host；未执行真实用户任务、Claude 归档、UI 注入、LevelDB 写或第三方自动化。
+- 未运行仓库级 `pnpm test/verify`，因为当前依赖图与回归均收敛且没有 testing-owner 全量升级触发。
+
+## 2026-08-13 RAW-166 Global Error Resolution And Bidirectional Causality
+
+- 全局源码复核先发现两个 RAW-165 未闭合方向：较晚 transport generation 可让旧 live 清除更新 waiting 或重开更新 terminal；接受 phase 时整包分支替换可擦除该事件未观察的 unread/Goal。两个 RED 回归均先失败，再由单一双向 phase admission 和三条独立 evidence lane 修复。
+- 后续审查发现 Claude exact unread snapshot 更新了 `unread` 却没有在增量/新成员路径统一建立 `unreadKnown=true`。最终实现让精确快照同时推进 known/value，unknown 继续 abstain；Host 构造的 `unreadKnown:false` 不再擦除上一可信 lane。
+- Adapter 状态诊断统一为 `state-proposal/proposed`；Codex activity 与 Claude phase/unread/inventory 只在 canonical commit 后比较有限提议字段，分别记录 accepted、superseded、ignored 或 queued。回归锁定“Float applied 不等于原 proposal accepted”。
+- 影响选择矩阵为 11 个测试文件、`457/457`：Kernel、Codex App Server Bridge、Runtime Diagnostics、Claude App State/Bridge/Unread、Claude Controller、Codex Controller、Task Package、Float Bridge 与 Codex UI。覆盖双向 Turn epoch/事件序号、attention 单调性、真实新 Turn、lane 保留、精确 Claude read-known、日志轮转 cold replay、新成员、final diagnostics 和既有全部消费者边界。
+- `pnpm run sync:preloads` 后 canonical/public 四组 Preload 镜像一致，八个 canonical/public CJS 语法检查通过。`pnpm run build` 通过 typecheck、1871-module Vite production build、runtime preparation 与 uTools validator；artifact 为 `host-6ac8de6597dcf0dd644c / renderer-6e677d084be49c8c7878`。
+- Error memory 从 99 条 leaf、两个旧模块和平铺根索引收敛为七个 responsibility modules：69 verified、21 candidate、9 superseded、0 retired；无重复 id/fingerprint。三个历史 `archived` 状态归一为 superseded，stale-live 重复修复路线逻辑归档到 Provider 状态 owner。`pnpm run validate:error-memory` 验证生命周期、链接、唯一 Primary、Related 上限、根模块覆盖、无环和容量；仅 `pnpm-store-build-policy-mismatch` 的 overdue candidate 告警被保留，不自动改变状态。
+- Current authority 冲突扫描确认 RAW-163 main-first 展示残留与用户已决定的 RAW-164 all-bead 冲突；current PRD 已统一为 RAW-164，RAW-163 只保留 parent-only open 和历史证据。当前没有需要用户新增决断的产品语义冲突。
+- 改动 Markdown code-link、项目 rule consistency 与 `git diff --check` 通过；`66 documents / 28 dependencies / 29 validators` final receipt 锁定当前同步组。未重载或终止 uTools Host，因此不能把新 artifact 记为 `host-loaded`。
+
+### RAW-166 VerificationDecision
+
+`route=impact-selected runtime+governance+docs / changed-surface=single bidirectional branch phase admission + independent phase/unread/Goal lanes + Claude exact unread-known/rotation-safe hot edge + proposal/final diagnostics + 99-leaf error-memory routing + current authority conflict cleanup + generated preload / selected=11 files 457 tests + validate:error-memory + sync/mirror/syntax + typecheck + 1871-module build + uTools validator + code-link/rule/diff/receipt closeout / skipped=repository-wide pnpm test/verify without testing-owner trigger；physical error-record move/delete；real Host reload without process-control authorization / outcome=increment-automated-verified, rebuilt-artifact-ready, documentation-synchronized, dev-plugin-reload-pending / artifact=host-6ac8de6597dcf0dd644c + renderer-6e677d084be49c8c7878 / residual-risk=real Host not loaded；one overdue candidate warning；Claude multi-pane visible-but-unfocused read intent remains unobservable`。
+
+## RAW-166 Implementation Review
+
+### Review Target
+
+- Requirement: 全量梳理错误集合与消解过程，逻辑归档失效/重复路线，核验完整改造质量、原始需求和全局唯一判断结构；未决判断冲突必须提醒用户。
+- Plan: [current plan](plan.md#L1) 的 RAW-166 `VerificationImpactTrace`。
+- Implementation: [Kernel reducer](../../../../preload/companion/task-kernel.cjs#L1)、[Provider Evidence Adapter](../../../../preload/index.js#L1)、[error-memory validator](../../../../scripts/validate-error-memory.mjs#L1)、[error-memory route](../../../knowledge/error-memory/README.md#L1) 与同步 public mirrors/定向回归。
+
+### Checked
+
+- Requirement alignment: 无新公共状态、无 20/60 秒展示 hold、无更高轮询；all-bead、parent-only open、实时 Cloud/Claude、隐私和 Provider 写边界均保留。
+- Ownership: Provider Adapter 只产证据/提议，Kernel 独占 phase/group/count/capability，Controller/Renderer/Float 只消费；错误记忆 current authority 与历史 leaf 分层。
+- Causality: live↔live、live↔terminal、terminal↔terminal 双向覆盖；unread/Goal 不被 phase 事件隐式清除；真实更新 Turn 可以恢复。
+- Diagnostics: proposal 与 final canonical outcome 分离，Codex/Claude 路径统一；无 raw ID、标题、正文、路径、命令、输出或隐藏推理新增。
+- Error lifecycle: 全叶子唯一 Primary、有限 Related；candidate 不自动采用，superseded/retired 不物理删除；已明确用户决策的冲突同步 current authority，未决冲突必须上报。
+
+### Findings
+
+- P0: 自动化/静态范围内无已知未解决项。
+- P1: 真实 `host-loaded` 与 Cloud/Claude event→canonical→Float applied 是唯一剩余接纳门禁。
+- P2: `pnpm-store-build-policy-mismatch` 已过 review date，但仍是未验证 candidate；当前只告警，既不自动召回也不擅自退役。
+
+### Not Checked
+
+- 未重启、终止或重载 uTools Host；未执行真实用户任务、Claude D′ 归档、原生存储写、UI 注入或第三方自动化。
+- 未运行仓库级 `pnpm test/verify`；当前影响图由 11-file matrix、typecheck/build 和专用 validator 封闭，且没有 testing-owner 全量升级触发。
+
+## 2026-08-13 RAW-166 Independent Second-Party Review
+
+由 Claude Code 在实现者之外独立复算，不采信本文件既有自述证据；只读审计，未改动工作树。
+
+### Reproduced
+
+- 影响矩阵 11 文件 `457/457` 通过；`vue-tsc --noEmit` 退出 0；`validate-error-memory.mjs` 与 `validate-utools-runtime.mjs` 通过。
+- 错误图谱逐项复算命中：99 leaf / 7 模块 / 69 verified / 21 candidate / 9 superseded / 0 retired；Primary 链接恰好 99 条，零重复、零孤立、零断链，构成严格 1:1；Related 无一超过 2。
+- Artifact 身份用 [`buildUtoolsRuntimeIdentity`](../../../../scripts/utools-runtime-identity.mjs#L39) 从当前源码重算，得到 `host-6ac8de6597dcf0dd644c / renderer-6e677d084be49c8c7878`，与 [runtime-identity](../../../../public/runtime-identity.cjs#L1) 一致，证明记录身份对应当前源码且无构建后漂移。
+- 四组 canonical/public 镜像字节一致；变更 Markdown 相对代码链接无断链；`git status` 无 `D`/`R` 条目，`_to_delete/` 保持未跟踪且 diff 为 0；preload 层未引入 20/60 秒等待。
+- 代码实现与条款逐条对应：[双向 phase admission](../../../../preload/companion/task-kernel.cjs#L221) 覆盖四向；[三 lane 独立合并](../../../../preload/companion/task-kernel.cjs#L297)；[跨分支注意力归约](../../../../preload/companion/task-kernel.cjs#L417) 顺序与 §68 逐字一致；[Claude 热未读](../../../../preload/claude/app-state.cjs#L414) 以 `liveAppend` 门禁冷回放。
+
+### Not Reproduced
+
+- `1871-module production build` 未重跑 `vite build`；以 typecheck 通过、on-disk `dist/` 通过 uTools validator、且 validator 断言 renderer bundle 内嵌 id 与重算值一致作为等价一致性链。
+- `66 documents / 28 dependencies / 29 validators` 回执由 CodeNote 全局工具产出，仓库内无脚本可复算。
+
+### Findings
+
+- P1 `requirement-self-authorship`：`raw-requirement.md` 的 RAW-165、RAW-166 两节由实现者在同一次未提交改动中写入（HEAD 仅至 RAW-164），因此「对照原始需求验证通过」在文档层面自证。可独立证实的是「实现符合其自述需求」；转述是否忠实于用户口述只能由用户确认。RAW-163→164 的 main-first 取代声明已在 HEAD，属既有用户决策，不受此项影响。
+- P2 `wording-imprecision`：verify 记述的「公共任务层重复的时间戳门禁」实际移除的是 `evidence.generation < task.observationGeneration` 这一 **generation** 门禁，语义符合 §66，标签不准。
+
+### Structural Debt Surfaced
+
+本轮同时发现「单一裁决点」原则只在 Kernel 兑现，横切逻辑仍多点重复，详见 [RAW-167 draft](raw-requirement-next.draft.md#L1)。不属于 RAW-166 验收缺口，作为下一增量的输入。

@@ -1,6 +1,6 @@
-# RAW-160 → RAW-164 Companion V4 Unified Runtime Spec
+# RAW-160 → RAW-166 Companion V4 Unified Runtime Spec
 
-Status: `RAW-164 increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
+Status: `RAW-166 increment-automated-verified / rebuilt-artifact-ready / documentation-synchronized / dev-plugin-reload-pending`
 
 本规范是当前权威。RAW-159 的 V3 规格作为历史实现基线保留在 Git 与长期任务文档中；与本规范冲突时以 V4 为准。
 
@@ -138,3 +138,29 @@ RAW-163 曾要求 main completed-read 后才开放全分支；该展示门槛已
 [task-kernel.cjs](../../../../preload/companion/task-kernel.cjs#L1) 对根与所有 Side Chat 无条件聚合。在既有 input/approval/Plan/Goal 因果规则之下，活动/完成三态固定为 running → completed-unread → completed。活动期间可保留较低优先级 unread 证据，但 canonical views 只产生一个 active 行并保持 unread count 为零；活动退出后才显露完成未读。Goal active/verifying 继续抑制中间 Turn terminal，Goal complete 才按最终 unread 完成；严格更新的新 Turn 可以合法开启新 epoch。
 
 Host 只在语义变化时记录三类匿名诊断：`side-topology-decision` 记录哈希 parent 及 root/side/orphan/merge 计数，`parent-state-decision` 记录最终 phase/unread/reason 与有限分支/Goal 计数，`runtime-identity-handshake` 记录非私密实际/期望 Host/Renderer hash、Kernel/Package revision 与 `host-loaded/reload-required`。任何事件都不得含原始 parent/child ID、标题、正文、路径、Goal 内容、预算或用量。只有真实 uTools Host 报告 `host-loaded` 才能接纳已加载身份；production build 仅为 `artifact-ready`。
+
+## 12. RAW-165 Event-time Causality And Claude Hot Unread
+
+[preload/index.js](../../../../preload/index.js#L1) 将 branch identity 固定为 parent/branch，而不是 transport lane。实时 App Server/desktop 事件携带分支 live/terminal Turn epoch；成功返回的库存只提供 observation，不再用扫描时刻生成 terminal sequence。cold inventory terminal 可作为 sequence 0 基线，但只要同分支存在更新的 live/waiting，库存结果就不能关闭该分支。Side Chat 的 App Server authority 只写对应 Side，不再借父级聚合 authority 污染 main。
+
+[task-kernel.cjs](../../../../preload/companion/task-kernel.cjs#L1) 在完整快照到达时先按稳定 branch ref 与上一分支合并。父级 observation generation 仅拒绝旧传输批次；同分支 phase 由可比较 Turn epoch/真实 event sequence 裁决。inventory-only 或更旧 terminal 保留更新的 running/waiting，真实同一或更新 Turn terminal 仍即时接受。父级注意力顺序为 approval → input/Plan → running → Goal → terminal；因此任一待审批/待输入分支先于普通 Side running 展示。
+
+Host push diagnostics 在 Kernel 提交后读取最终 canonical task 再分类：相同语义才是 `accepted`，更强证据导致改判为 `superseded`，无变化为 `ignored`。记录仅包含匿名 taskRef、有限状态/计数和 `providerReceivedAt → hostCommittedAt → canonicalPublishedAt` 时间戳，不含 raw ID、正文、命令、工具参数或输出。
+
+[app-state.cjs](../../../../preload/claude/app-state.cjs#L1) 只接受已门禁 Claude App 的 exact completion 与 `[CCD] LocalSessions.setFocusedSession: sessionId=<local_id|null>` live append，并折叠为 process-private hot unread hint：focused completion 为 read，unfocused completion 为 unread，focus 到会话立即 read，新 running 清旧 completion hint。cold replay 只恢复当前 focus，不从旧日志制造 unread；同秒事件使用单调 hint revision。
+
+[index.cjs](../../../../preload/claude/index.cjs#L1) 将 LevelDB exact unread 当作 cold/recovery baseline，与更新 hot hint 合并；只有先观察到该会话的相反持久边缘、再由事件后的新鲜快照匹配，才确认追平，上一 completion 遗留的同值不能释放本轮 hint。迟到 true/false 因而不能回滚更新的焦点/完成边缘。App watcher 同时唤醒 state 与 unread lane，unread-only 订阅也不依赖 Renderer 或 state subscriber。全局 focus 不能证明多窗格 visible-but-unfocused 已读，因此该边界保持明确限制，不扩大到 UI 注入、LevelDB 写或内容推断。
+
+本增量不增加新的公共 phase、可见“核验中”状态、60 秒延迟或更高轮询频率；正常路径为实时事件，既有 1 秒 StatWatcher 只承担丢通知恢复。
+
+## 13. RAW-166 Bidirectional Admission、Independent Lanes And Error Resolution
+
+[task-kernel.cjs](../../../../preload/companion/task-kernel.cjs#L1) 对 phase evidence 使用单一双向 admission：先比较可比 Turn epoch，再比较 phase event sequence；缺少更新因果水位时只允许同 epoch 的 attention 单调提升。该规则同时覆盖 live↔live、live↔terminal 和 terminal↔terminal，杜绝“更新 transport generation”替代“更新 Provider event”的两种方向错误。
+
+分支合并不再整包覆盖。phase source 由上述 admission 选择；unread 仅在 incoming 明确 observed 时推进；Goal 仅按 Goal sequence/updatedAt 或显式 none-clear 推进。合并后重新 normalize 一次，统一计算 idle/terminal/live/waiting 等派生字段。公共包仍由一个 Kernel 事务生成，不增加第二 reducer 或 Renderer 修正。
+
+[preload/index.js](../../../../preload/index.js#L1) 把 Adapter 日志限定为 proposal；Provider 级结果在 canonical commit 后按提议字段逐项比较，并统一使用 `accepted/superseded/ignored/queued`。该诊断合同同时适用于 Codex activity 和 Claude phase/unread/inventory，禁止把“读取成功、已发送或 Float applied”误称为提议已接受。
+
+[error-memory index](../../../knowledge/error-memory/README.md#L1) 是唯一错误路由入口：七个责任模块只链接 leaf，不复制当前合同；leaf 恰有一个 Primary owner，candidate 不自动召回，superseded/retired 保留逻辑历史。[validator](../../../../scripts/validate-error-memory.mjs#L1) 验证元数据、唯一 identity/fingerprint、索引规模、断链、唯一 Primary、Related 上限、根模块覆盖和路由无环。产品/状态判断仍以 requirement → spec → architecture → verified error leaf 为权威顺序。
+
+冲突处置只有两种：若已有更新且明确的用户决策，则同步删除 current authority 中的旧规则并保留历史标注；若不存在明确决策且选择会改变产品语义，则记录冲突并请求用户决断。本轮已按 RAW-164 all-bead 决策清除 current PRD 中残留的 RAW-163 main-first 展示门槛；parent-only open 未冲突并继续有效。

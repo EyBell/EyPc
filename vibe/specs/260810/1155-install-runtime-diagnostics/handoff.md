@@ -1,11 +1,11 @@
-# RAW-160 → RAW-164 Companion V4 Host Handoff
+# RAW-160 → RAW-166 Companion V4 Host Handoff
 
-Status: `increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
+Status: `RAW-166 increment-automated-verified / rebuilt-artifact-ready / documentation-synchronized / dev-plugin-reload-pending`
 
 ## 安装边界
 
 1. 用户已指定只用 uTools 开发模式回归，不再以离线包安装作为本轮门禁。重新加载开发插件并记录四端 Runtime Identity。
-   当前源码/构建身份：`host-251a728efafbf4c7f7d6 / renderer-a671d108ff9d315b7ea4`。`host-2c01… / renderer-cc3f…` 是 RAW-163 基线，`host-c36f… / renderer-27b6…` 是 RAW-162 基线，`host-78205… / renderer-9c35…` 是 RAW-161 基线，`host-252d… / renderer-ff8…` 是 RAW-160 全量基线；1.5.4、1.5.5、`host-7d…` 与更早开发 Host 均不能用于接纳当前结果，也不得与当前 Renderer 混用。必须以匿名 `runtime-identity-handshake` 的 `host-loaded` 为准，不再从进程时间推断。
+   RAW-166 当前源码/构建身份：`host-6ac8de6597dcf0dd644c / renderer-6e677d084be49c8c7878`；`host-649d5936516471adcf60 / renderer-7aa872e3d99f003ac3a0` 是 RAW-165 基线，`host-251a… / renderer-a671…` 是 RAW-164 基线，`host-2c01… / renderer-cc3f…` 是 RAW-163 基线，`host-c36f… / renderer-27b6…` 是 RAW-162 基线，`host-78205… / renderer-9c35…` 是 RAW-161 基线，`host-252d… / renderer-ff8…` 是 RAW-160 全量基线；这些旧 Host 均不能用于接纳 RAW-166，也不得与新 Renderer 混用。必须以匿名 `runtime-identity-handshake` 的 `host-loaded` 为准，不再从进程时间推断。
 2. 不清空 EyPc 本地任务组织数据；需验证旧 hidden Plan 的一次幂等迁移。
 3. 用只读诊断按 session/operation/哈希 taskRef 核验；不得记录或粘贴 Plan 正文、原始任务 ID/路径或执行提示。
 
@@ -70,6 +70,25 @@ Status: `increment-automated-verified / rebuilt-artifact-ready / dev-plugin-relo
 4. 连续产生 1,000 个未读文件同值/mtime-only 恢复信号，确认 package revision、Float send/applied 和 Renderer 投影均不增长。
 5. 对同一真实 Codex activity 核对 Branch Store 与公开任务包：只允许一个 Host semantic commit、一个 package revision；不得先发布私有分支决策、再为同一事件发布第二包。
 
+## RAW-165 实时状态矩阵
+
+1. 在单分支 Cloud 任务真实运行时触发完整库存；即使库存返回旧 interrupted/completed，卡片、Kernel package 与 Float 必须保持 running。随后同一或更新 Turn 的真实 terminal event 到达时应立即完成，不加入 60 秒等待。
+2. 让主任务 waiting-input 或 waiting-approval，同时 Side Chat running；父卡片必须显示对应待输入/待审批。解除注意力并收到更新 running 后才恢复进行中。
+3. 让只有 Side Chat 持有 App Server live；main branch 不得借 aggregate authority 变成 running，父级只按实际各分支证据归约。
+4. 对每次 Host 状态提议核对最终 canonical package：相同才记录 `accepted`，被更强证据改判必须记录 `superseded`；Float `applied` 只证明最终包被消费，不证明原 Host 提议被接受。
+5. Claude 当前聚焦任务完成时 EyPc 立即保持已读；非聚焦任务完成时立即进入已完成未读；随后 exact focus 到该任务立即清除，均以 Float `applied` 为终点，不等待 LevelDB 延迟落盘。
+6. 重启/冷读只用 LevelDB 真实快照恢复，不从历史 App 日志伪造未读。多窗格 visible-but-unfocused 的阅读意图不可由全局 focus 证明，按已知边界记录，不宣称原生未读完全镜像。
+7. 诊断只核对匿名 taskRef、有限 phase/reason/count 与三段时间戳；不得采集 raw task/session ID、标题、正文、路径、命令、工具参数、stdout/stderr 或隐藏推理。
+
+## RAW-166 双向因果、独立证据与错误路由矩阵
+
+1. 先接纳 waiting-input/approval，再让后到完整库存携带旧 running；canonical/Float 必须保持 waiting。先接纳 terminal，再让后到库存携带旧 running；不得重开。随后真实更新 Turn 到达，必须立即 running。
+2. 对同一分支依次注入 unread、Goal 和只含 phase 的证据；phase 更新不得清掉 unread/Goal。反向只更新 unread 或 Goal 时也不得改写 phase，父级 groups/counts 由合并后的单一 Kernel 结果产生。
+3. 核对 Adapter `state-proposal/proposed` 与 Provider final event：只有提议字段与 committed canonical task 一致才 accepted；冲突必须 superseded，Float applied 不能反推 proposal accepted。
+4. 运行 `pnpm run validate:error-memory`：99 条 leaf 均有唯一 identity/fingerprint、合法生命周期和恰一个 Primary owner；七个 module 都从 root 唯一路由且无断链/环。overdue candidate 只告警，不改变状态。
+5. 核对冲突登记：当前展示以 RAW-164 all-bead 为准，RAW-163 main-first 仅保留历史；所有打开仍 parent-only。若实机出现尚无用户决策的新产品语义冲突，停止该选择并上报，不做隐式 fallback。
+6. 以上实时状态首个可信事件到达后立即发布，不设置 20/60 秒前置 hold；可在事件后再次采样确认无回弹，但后采样不是首个正确状态的展示门槛。
+
 ## Codex Desktop 外部归档恢复矩阵
 
 1. 在 Codex Desktop 原生侧手动归档一条 EyPc 当前可见、非本轮自动化创建的安全观察任务；不触发 EyPc 归档按钮，也不依赖 `thread-archived` 广播。目标应在 native 归档完成后从 EyPc 卡片、分组、计数、角标和循环候选同 revision 移除。
@@ -85,4 +104,4 @@ Status: `increment-automated-verified / rebuilt-artifact-ready / dev-plugin-relo
 
 ## 完成条件
 
-只有 [verification](verify.md#L1) 的当前自动化/构建证据与以上矩阵来自同一源码、同一开发模式 Runtime Identity，且握手先报告 `host-loaded`、20 秒稳定窗口后两次匿名快照一致，才可从 `dev-plugin-reload-pending` 变为完成。
+只有 [verification](verify.md#L1) 的当前自动化/构建证据与以上矩阵来自同一源码、同一开发模式 Runtime Identity，且握手先报告 `host-loaded`、首个可信事件立即正确、后续匿名快照无回弹，才可从 `dev-plugin-reload-pending` 变为完成。后续采样不构成产品展示延迟。
