@@ -267,7 +267,7 @@ function reduceCodexParentBranchEvidenceV4(value = {}) {
   const priorCandidate = PHASES.includes(value.previousNonterminalPhase)
     ? value.previousNonterminalPhase
     : PHASES.includes(value.previousPhase) ? value.previousPhase : 'unknown'
-  const previousNonterminalPhase = ['running', 'waiting-input', 'waiting-approval', 'stopped'].includes(priorCandidate)
+  const previousNonterminalPhase = isRetainableTaskPhase(priorCandidate)
     ? priorCandidate
     : ''
   const details = {
@@ -391,7 +391,7 @@ const reduceCodexTaskEvidenceV3 = reduceCodexTaskEvidenceV4
  * unread evidence; Host and Renderer consumers must not recreate this rule. */
 function reduceClaudeTaskEvidenceV4(value = {}) {
   const sourcePhase = PHASES.includes(value.phase) ? value.phase : 'unknown'
-  if (sourcePhase === 'running' || sourcePhase === 'waiting-input' || sourcePhase === 'waiting-approval') {
+  if (isLiveTaskPhase(sourcePhase)) {
     return {
       phase: sourcePhase,
       freshness: 'fresh',
@@ -410,7 +410,7 @@ function reduceClaudeTaskEvidenceV4(value = {}) {
   return {
     phase: sourcePhase,
     freshness: sourcePhase === 'unknown' ? 'verifying' : 'fresh',
-    reason: sourcePhase === 'completed' || sourcePhase === 'stopped' ? 'provider-terminal' : 'unknown-evidence',
+    reason: isTerminalTaskPhase(sourcePhase) ? 'provider-terminal' : 'unknown-evidence',
     details: { sourcePhase, unread: false }
   }
 }
@@ -472,6 +472,20 @@ function isTerminalTaskPhase(phase) {
 }
 
 /**
+ * Waiting on the user. `waiting-approval` and `waiting-input` are separate
+ * phases but one product group — PRD puts both under 「待输入」 — so the split
+ * matters for attention ordering and never for grouping or counting.
+ */
+function isAttentionTaskPhase(phase) {
+  return phase === 'waiting-input' || phase === 'waiting-approval'
+}
+
+/** Live phases plus `stopped`: everything a newer observation may still move. */
+function isRetainableTaskPhase(phase) {
+  return isLiveTaskPhase(phase) || phase === 'stopped'
+}
+
+/**
  * Projects a canonical task onto the shared evidence-line shape. The task layer
  * keeps no separate active/terminal sequences, so `statusEnteredAt` is the only
  * causal quantity available and is reported on whichever side the phase sits;
@@ -528,7 +542,7 @@ function laneIsNewer(incomingGeneration, currentGeneration, incomingRevision, cu
 
 function normalizeArchiveRequest(value) {
   if (!value || typeof value !== 'object') return undefined
-  const evidence = value.evidence === 'completed' || value.evidence === 'stopped' ? value.evidence : ''
+  const evidence = isTerminalTaskPhase(value.evidence) ? value.evidence : ''
   const expectedRevisionAt = finiteInteger(value.expectedRevisionAt)
   const expectedUpdatedAt = finiteInteger(value.expectedUpdatedAt)
   const expectedLastTurnStartedAt = finiteInteger(value.expectedLastTurnStartedAt)
@@ -682,7 +696,7 @@ function visibilityAnchor(task) {
 
 function derivedCycleTier(task) {
   if (task.hidden || task.paused) return 'none'
-  if (task.phase === 'waiting-input' || task.phase === 'waiting-approval') {
+  if (isAttentionTaskPhase(task.phase)) {
     return task.planImplementation ? 'plan' : 'attention'
   }
   if (task.phase === 'stopped' && task.planReady) return 'plan'
@@ -695,7 +709,7 @@ function derivedDynamicGroup(task) {
   if (task.hidden || task.paused) return 'none'
   // Attention survives the ordinary activity window. A long-waiting prompt or
   // unread completion must remain reachable until the user handles it.
-  if (task.phase === 'waiting-input' || task.phase === 'waiting-approval') return 'input'
+  if (isAttentionTaskPhase(task.phase)) return 'input'
   if (task.phase === 'completed' && task.unread) return 'unread'
   if (!task.dynamicEligible && !(task.phase === 'stopped' && task.planReady)) return 'none'
   if (task.phase === 'running') return 'active'
@@ -789,7 +803,7 @@ function buildViews(tasks) {
   for (const task of display) {
     if (task.dynamicGroup !== 'none') views.groups[task.dynamicGroup].push(task.key)
   }
-  views.counts.input = visible.filter((task) => task.phase === 'waiting-input' || task.phase === 'waiting-approval').length
+  views.counts.input = visible.filter((task) => isAttentionTaskPhase(task.phase)).length
   views.counts.active = views.groups.active.length
   views.counts.unread = visible.filter((task) => task.phase === 'completed' && task.unread).length
 
@@ -806,7 +820,7 @@ function buildViews(tasks) {
 
   const attention = [...visible].sort(compareByLatestQuestion)
   const inputAttention = attention
-    .filter((task) => task.capabilities.open && (task.phase === 'waiting-input' || task.phase === 'waiting-approval'))
+    .filter((task) => task.capabilities.open && isAttentionTaskPhase(task.phase))
     .map((task) => task.key)
   // Direct attention actions are exact: "待输入" must never fall through to
   // an unrelated pinned/completed task. Local pins remain the final tier of the
@@ -1023,10 +1037,8 @@ function createCompanionTaskKernel(dependencies = {}) {
       return next
     }
     const phaseChanged = decision.phase !== task.phase
-    const terminal = decision.phase === 'completed' || decision.phase === 'stopped'
-    const nonterminal = decision.phase === 'running'
-      || decision.phase === 'waiting-input'
-      || decision.phase === 'waiting-approval'
+    const terminal = isTerminalTaskPhase(decision.phase)
+    const nonterminal = isLiveTaskPhase(decision.phase)
     return {
       ...next,
       phase: decision.phase,
@@ -1305,7 +1317,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         && [...branches.values()].every((branch) => branch.goalStatus === 'none' && branch.goalFreshness === 'fresh')
       const currentNonterminal = goalAuthorityCleared
         ? ''
-        : ['running', 'waiting-input', 'waiting-approval', 'stopped'].includes(task?.phase)
+        : isRetainableTaskPhase(task?.phase)
           ? task.phase
           : previous?.previousNonterminalPhase
       const decision = reduceCodexParentBranchEvidenceV4({
@@ -1313,7 +1325,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         previousNonterminalPhase: currentNonterminal,
         branches: [...branches.values()]
       })
-      const previousNonterminalPhase = ['running', 'waiting-input', 'waiting-approval', 'stopped'].includes(decision.phase)
+      const previousNonterminalPhase = isRetainableTaskPhase(decision.phase)
         ? decision.phase
         : goalAuthorityCleared ? '' : currentNonterminal || previous?.previousNonterminalPhase || ''
       const previousNonterminalAuthority = decision.reason === 'goal-active'
@@ -1484,7 +1496,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         terminalAt: incoming.terminalAt,
         freshness: incoming.phase === 'unknown' ? 'verifying' : 'fresh'
       })
-      const terminal = incoming.phase === 'completed' || incoming.phase === 'stopped'
+      const terminal = isTerminalTaskPhase(incoming.phase)
       if (!providerTraits(incoming.provider).archiveNeedsVerifiedInventory) {
         // Providers that revalidate the exact native target at dispatch time can
         // let terminal capability follow the independent phase lane without
@@ -1501,7 +1513,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
     next = preparePlanLifecycle(previous, next, incoming, acceptPhase)
     next.planImplementation = next.planReady === true
-      && (next.phase === 'waiting-input' || next.phase === 'waiting-approval')
+      && isAttentionTaskPhase(next.phase)
       && incoming.planImplementation === true
     next = migrateLegacyHiddenPlan(next)
     if (acceptUnread && incoming.unreadKnown) {
