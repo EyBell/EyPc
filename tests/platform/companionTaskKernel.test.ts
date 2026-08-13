@@ -2211,6 +2211,37 @@ describe('CompanionTaskKernel', () => {
   })
 })
 
+describe('phase sets and lane units stay single-owner', () => {
+  const kernelSource = readFileSync(resolve(process.cwd(), 'preload/companion/task-kernel.cjs'), 'utf8')
+  const hostSource = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
+
+  // A phase set is a product rule — "waiting-approval and waiting-input are one
+  // group" is stated in the PRD — so it needs one executable definition. Writing
+  // it inline means changing the rule is a search, and a missed site disagrees
+  // with its siblings silently.
+  it('states each phase set once as a named predicate', () => {
+    const predicates = ['isLiveTaskPhase', 'isTerminalTaskPhase', 'isAttentionTaskPhase', 'isRetainableTaskPhase']
+    for (const predicate of predicates) expect(kernelSource).toContain(`function ${predicate}(phase)`)
+    // Assert against the body outside those definitions: the definitions are
+    // where the sets are allowed to be spelled out, and `PHASES` is the phase
+    // vocabulary itself rather than a membership test.
+    const callSites = kernelSource.replace(/function is\w+TaskPhase\(phase\) \{[\s\S]*?\n\}/g, '')
+    expect(callSites).not.toMatch(/\['running', 'waiting-input'[^\]]*\]\.includes\(/)
+    expect(callSites).not.toMatch(/\.phase === 'waiting-input'/)
+    expect(callSites).not.toMatch(/=== 'completed' \|\| \w+(\.\w+)* === 'stopped'/)
+  })
+
+  // The 2026-08-13 host defect: a counter lane seeded from a wall-clock value
+  // can never be overtaken again, so the lane rejects every later generation as
+  // stale. `membership` is a timestamp and may use one; the counter lanes may
+  // not, and the counter aggregate may not absorb one.
+  it('never seeds a counter lane from wall-clock time', () => {
+    expect(hostSource).not.toMatch(/sourceLaneGenerations\.\w+\.(phase|unread)\s*=[^\n]*(Date\.now\(\)|readAt)/)
+    expect(hostSource).toContain('function companionCounterAggregate(lanes)')
+    expect(kernelSource).toContain("lane === 'membership'")
+  })
+})
+
 describe('provider differences are declared, not branched', () => {
   const kernelSource = readFileSync(resolve(process.cwd(), 'preload/companion/task-kernel.cjs'), 'utf8')
 
