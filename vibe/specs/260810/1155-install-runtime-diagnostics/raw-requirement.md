@@ -1,7 +1,7 @@
-# RAW-159 → RAW-164 — Companion 状态、发布与权威库存恢复
+# RAW-159 → RAW-166 — Companion 状态、发布与权威库存恢复
 
-Date: 2026-08-12
-Status: `active / RAW-164 increment-automated-verified / rebuilt-artifact-ready / dev-plugin-reload-pending`
+Date: 2026-08-13
+Status: `active / RAW-166 increment-automated-verified / rebuilt-artifact-ready / documentation-synchronized / dev-plugin-reload-pending`
 
 ## 历史基线
 
@@ -93,10 +93,34 @@ RAW-159 要求把状态、库存、缓存、快捷键、导航、归档和诊断
 63. 新增 `runtime-identity-handshake`，只记录非私密 Host/Renderer 实际与期望 artifact hash、Kernel/Package revision，以及 `host-loaded` 或 `reload-required`。构建成功只证明 `artifact-ready`；真实 Host 未报告 `host-loaded` 前，不得用进程启动时间或 Renderer 观察推断已加载当前代码。
 64. 待审批、待输入、stopped、parent-only 打开、Turn 绑定已读确认及公共 `companion-task-package-v4` 保持不变。
 
+## RAW-165 实时 Cloud 因果与 Claude 热未读
+
+65. `thread/list`、`thread/read` 或 `thread/turns/list` 读取成功只证明“本次库存读取成功”，不能证明返回的 terminal 在因果上比已接纳的实时 active/waiting 更新。库存终态不得使用本地扫描时刻生成更高 terminal sequence；只有真实 terminal event 或具备可比较 Provider Turn epoch 的定向终态证据可关闭实时分支。
+66. 同一 Provider 分支的私有引用必须只由稳定 parent/branch 身份决定，不得把 connector、Desktop、App Server 等 transport lane 编入分支身份。完整快照进入 Kernel 时必须按稳定分支引用与上一证据逐分支合并；父级 observation generation 只排序传输批次，不能替代分支因果水位。
+67. Kernel 必须拒绝 inventory-only 或较旧 terminal 覆盖更新的 running、waiting-input 或 waiting-approval；同一/更新 Turn epoch 的真实 terminal 仍可即时完成。冷启动仅有库存终态时可作为 sequence 0 的基线展示，但不能关闭另一条实时 live edge。
+68. 跨分支父级注意力优先级固定为 `waiting-approval > waiting-input（含 Plan） > running > Goal > terminal`。主任务待输入/审批不得被普通 Side Chat running 覆盖；注意力解除后的更新 running 才恢复进行中。
+69. Side Chat 的 App Server live authority 只能归属该 Side 分支，不得通过父级 aggregate authority 泄漏到 main 并虚构主任务 running。公共父状态仍由全部稳定分支证据一次归约。
+70. Host 状态提议发给 Kernel 后，诊断中的 `accepted` 必须以最终 canonical package 与提议语义一致为准；若 Kernel 因更强证据保留/改判，应记录匿名 `superseded`，不得把“已发送/已消费”误报为状态已接受。诊断只保留时间戳、计数和会话期哈希引用，不含原始身份或内容。
+71. Claude App 已门禁的精确 completion 与 `[CCD] LocalSessions.setFocusedSession: sessionId=<local_id|null>` live append 共同形成 process-private hot unread overlay：聚焦任务完成立即保持已读，非聚焦任务完成立即未读，聚焦到任务立即清除该热未读；新 running 开启新交互并清除旧 completion hint。
+72. Claude LevelDB `epitaxy-unread-v1` 继续作为 cold-start/recovery 持久基线；更新的 hot hint 可覆盖落盘延迟。只有已观察到该会话的相反持久边缘、随后事件后的新鲜快照再次匹配，才确认追平；上一 completion 遗留的相同布尔值不能冒充本轮追平。cold replay 不得凭历史 focus/completion 行伪造未读；同秒事件由单调 hint revision 排序，而不是只比较墙钟时间。
+73. 当前全局 focused-session 信号不能证明“多窗格中可见但未聚焦”的本地会话已经被人阅读，因此不得宣称 Claude 原生未读在该边界上完全等价。该限制不允许引入第三方 UI 注入、AX/JXA、私有 IPC、LevelDB 写入或内容推断。
+74. 本增量不新增“已完成，未读核验中”或其它可见状态，不增加 60 秒等待，不提高轮询频率。正常路径由原生实时事件驱动；现有 1 秒 StatWatcher 只保留为丢通知恢复。
+75. 自动化必须覆盖 inventory terminal 与实时 active/waiting 竞态、transport 切换、Side authority 隔离、注意力优先级、最终 canonical 推送判断、Claude focused/unfocused completion、focus 清除、同秒事件及持久快照迟到回滚。真实 uTools 接纳仍要求当前身份 `host-loaded` 后观察 Cloud/Claude 事件至 Float `applied`。
+
+## RAW-166 全局错误消解与双向因果门禁
+
+76. Kernel 的同分支 phase admission 必须双向比较可比 Turn epoch、真实 event sequence 与有限 attention rank：旧 terminal 不能关闭更新 live；同样，后到传输批次中的旧 live 不能清除更新 waiting 或重开更新 terminal。真实更新 Turn 仍立即进入新 epoch，不增加时间等待。
+77. Branch Evidence 的 phase、unread 与 Goal 是三条独立证据 lane。只观察 phase 的事件不得把既有 unread/Goal 归零，只观察 unread/Goal 的事件也不得改写 phase；每次 lane 合并后统一重新计算 derived branch fields，禁止用整包替换制造隐式否定。
+78. Evidence Adapter 只记录 `state-proposal/proposed`。Codex activity、Claude phase、Claude unread 与 Claude inventory 只有在 Kernel 提交后逐字段匹配 canonical package，才可记录 `accepted`；被更强证据改判为 `superseded`，无有效目标或语义变化为 `ignored/queued`。Float `applied` 仍只表示 canonical package 被消费。
+79. 错误记忆采用唯一 `README → responsibility module → leaf` Primary 路由。每条 leaf 只能有一个 Primary owner、最多两个 Related；candidate 不自动作为修复权威，superseded/retired 仅逻辑归档，不物理删除历史证据。重复 fingerprint、无效状态/日期、断链、孤立 owner、路由环和超限索引必须由仓库 validator 拒绝。
+80. 全量盘点必须保留一份当前可执行路径：先按现行 requirement/spec/architecture 判断，再按模块定位 verified leaf，最后以复现和回归更新同一 fingerprint。已完全失效或被当前合同替代的修复路线转为 superseded/retired；不得因为文字相似而合并不同证据边界。
+81. 判断合同冲突必须进入显式 conflict register。已经有更新用户决策的冲突按最新明确决策消解并同步所有 current authority；没有明确决策且会改变产品语义的冲突必须停止选择并提醒用户，不能由实现者暗自择一。本轮 RAW-163 main-first 展示条款已由用户明确的 RAW-164 all-bead 规则取代，parent-only 打开条款继续保留。
+82. 本增量不移动/删除历史 error-memory 文件，不触碰 `_to_delete/`，不把 overdue candidate 自动升级、合并或退役。自动化必须覆盖双向 phase 顺序、三 lane 正交合并、proposal/final 诊断，以及 99 条 leaf 的身份、生命周期、唯一 Primary、路由完整性和无环性。
+
 ## 冲突与非目标
 
-- RAW-142 的“任意新 Turn 清除 Plan”、RAW-150/154 的“exact interrupted 立即 stopped”、RAW-159 的“只在 Kernel no-op 即完成消费去重”和旧 Actions/Package 版本被 RAW-160 对应条款取代。RAW-163 第 50–53 条的 main-first 展示门槛由 RAW-164 取代；RAW-163 的 parent-only 打开与成功后已读确认保留。
-- 强制 Claude 原生侧栏同步不是产品能力合同；过去偶发同步只作为 Claude 自身刷新观察。
+- RAW-142 的“任意新 Turn 清除 Plan”、RAW-150/154 的“exact interrupted 立即 stopped”、RAW-159 的“只在 Kernel no-op 即完成消费去重”和旧 Actions/Package 版本被 RAW-160 对应条款取代。RAW-163 第 50–53 条的 main-first 展示门槛由 RAW-164 取代；RAW-164 的普通 `running > completed-unread` 只描述完成面，RAW-165 将注意力状态提升到 running 之前；RAW-163 的 parent-only 打开与成功后已读确认保留。
+- 强制 Claude 原生侧栏同步不是产品能力合同；RAW-165 只对精确 completion/focus 可观察边界提供实时热覆盖，多窗格可见但未聚焦仍保留明确能力边界。
 - 当前用户已授权只在 `EyPc-Regression-<run-id>-*` 无副作用测试任务中启动安全 Codex Turn/Plan 并做可恢复清理；不得触碰既有用户任务。真实 Claude D′ 归档不属于该授权。
 
 ## 验收要求
@@ -104,4 +128,6 @@ RAW-159 要求把状态、库存、缓存、快捷键、导航、归档和诊断
 - 按 `VerificationImpactTrace` 选择的受影响状态/打开/UI 矩阵、语义 typecheck、Preload 镜像、production build、Runtime Identity、uTools validator、静态所有权、文档链接与规则一致性通过；本轮用户已独立要求中央缺陷逃逸后的全仓升级门禁，历史全量绿灯仍不能覆盖真实宿主回归。
 - uTools 开发模式必须在重新加载当前 Preload 身份后验证 Plan 尚未生成、Plan 完成、Plan 中断跨窗口、暂停跨重启、Claude running→terminal、通用循环与 Float ACK 恢复；自动化不能替代该门禁，也不得用旧开发 Host 的 UI 观察接纳新源码。
 - RAW-162 按当前 `VerificationImpactTrace` 运行 Goal/Turn、Kernel、Bridge、Controller、Float、镜像、类型和生产构建边界；没有新的 testing-owner 全仓升级触发，因此不重复 RAW-160 的仓库全量套件。开发插件重载后的长期 Goal 跨至少两个自动 Turn canary 是独立宿主门禁。
-- RAW-164 按当前 `VerificationImpactTrace` 运行 Bridge、Kernel、Runtime Diagnostics 定向矩阵、canonical/public 语法与镜像、typecheck、1871-module production build 和 uTools validator；没有新的 testing-owner 全仓升级触发。开发插件重载后必须先由 `runtime-identity-handshake` 确认 `host-loaded`，再以 20 秒稳定窗口连续采集两次匿名快照，验证全珠子优先级、Cloud 跨 Turn 稳定性、最终 unread、无独立 Side Chat 顶层行与无状态回弹。
+- RAW-164 按当时 `VerificationImpactTrace` 运行 Bridge、Kernel、Runtime Diagnostics 定向矩阵、canonical/public 语法与镜像、typecheck、1871-module production build 和 uTools validator；没有新的 testing-owner 全仓升级触发。其 20 秒窗口是历史 RAW-164 后置无回弹采样，已被 RAW-165/166 取代为“首个可信事件立即更新，后续样本只验证无回弹”，不得作为展示或接纳前置等待。
+- RAW-165 按最终受影响边界运行 Codex Bridge、Kernel、Runtime Diagnostics、Claude App State/Bridge/Unread、Controller 与 UI 定向矩阵，以及 canonical/public 镜像、语法、typecheck、1871-module production build 和 uTools validator。开发插件重载后只按真实事件到 Float `applied` 的链路验收，不加入 60 秒观望期或新可见状态。
+- RAW-166 按当前影响图运行 Kernel、Codex/Claude Bridge、Task Package/Controller、Runtime Diagnostics 定向矩阵，执行 error-memory graph validator、Preload 同步/镜像/语法、typecheck、production build、Runtime Identity、uTools validator、文档 code-link/规则一致性和同步组审计。真实 Host 只核验新 artifact 下的事件→canonical→Float 链，不重新引入 20/60 秒产品等待。
