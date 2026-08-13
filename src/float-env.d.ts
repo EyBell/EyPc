@@ -23,7 +23,7 @@ declare global {
       ackTaskPackage?(stage: 'applied' | 'rejected', reason?: 'older-revision' | 'identity-mismatch' | 'invalid-payload'): boolean
       onSnapshot(listener: (snapshot: CodexFloatSnapshotV1) => void): () => void
       onState(listener: (state: CodexFloatWindowState) => void): () => void
-      onActivate?(listener: (payload: { requestedAt?: number; command?: 'new-thread' }) => void): () => void
+      onActivate?(listener: (payload: { requestedAt?: number; command?: 'new-thread' | 'quick' }) => void): () => void
       setExpansion(expanded: boolean, pinned?: boolean): boolean
       returnFocus(): boolean
       action(actionId: string, args?: Record<string, unknown>): boolean

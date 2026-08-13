@@ -127,6 +127,8 @@ const taskScroll = ref<HTMLElement | null>(null)
 const selectedKeys = ref<Set<string>>(new Set())
 const focusedKey = ref('')
 const rangeAnchorKey = ref('')
+/** 快速筛选模式：动态列表编号可见，`Ctrl+1…0` 直接打开对应任务。 */
+const quickMode = ref(false)
 const batchPlacement = ref<'top' | 'bottom'>('bottom')
 const panel = ref<PanelState>(null)
 const panelLayer = ref<HTMLElement | null>(null)
@@ -168,8 +170,11 @@ const runtimeReloadMessage = computed(() => (
     ? floatRuntimeIdentity.value.message
     : snapshot.value?.runtimeIdentity?.message || 'Float 与主插件运行版本不一致，请重新接入并重新打开 Float'
 ))
-const quickJump = ref<{ open: boolean; query: string; sourceTargets: QuickJumpDomTarget[]; targets: QuickJumpDomTarget[]; activeTargetId: string | null }>({
+// `mode: 'tasks'` 是专项跳转：标记只落在展示出来的会话行上，激活等同于点击标题（直接打开），
+// 而不是普通模式的「把高亮移过去」。两种模式共用同一套标记/筛选/Escape 逻辑。
+const quickJump = ref<{ open: boolean; mode: 'all' | 'tasks'; query: string; sourceTargets: QuickJumpDomTarget[]; targets: QuickJumpDomTarget[]; activeTargetId: string | null }>({
   open: false,
+  mode: 'all',
   query: '',
   sourceTargets: [],
   targets: [],
@@ -506,7 +511,34 @@ const renderRows = computed<RenderRow[]>(() => {
   return rows
 })
 const focusItems = computed<FocusItem[]>(() => renderRows.value.filter((row): row is FocusItem => row.kind === 'task' || row.kind === 'project'))
-const focusedItem = computed(() => focusItems.value.find((item) => item.key === focusedKey.value) || focusItems.value[0] || null)
+const focusedItem = computed(() => focusItems.value.find((item) => item.key === focusedKey.value) || null)
+
+const QUICK_INDEX_LIMIT = 10
+/** 编号只落在任务行上，并且跟着搜索结果实时重排——所见即所开。 */
+const quickTaskRows = computed(() => renderRows.value
+  .filter((row): row is Extract<RenderRow, { kind: 'task' }> => row.kind === 'task')
+  .slice(0, QUICK_INDEX_LIMIT))
+// 编号常驻：`Alt+数字` 在展开卡片里始终可用，所以徽标不能只在筛选模式出现，
+// 否则就成了隐藏快捷键。筛选模式额外让 `Ctrl+数字` 也走同一编号。
+const quickIndexByRowKey = computed(() => {
+  const map = new Map<string, number>()
+  quickTaskRows.value.forEach((row, index) => map.set(row.key, index + 1))
+  return map
+})
+
+/** 徽标显示的是实际要按的数字：第 10 项对应 `Alt+0` / `Ctrl+0`。 */
+function quickIndexDigit(rowKey: string) {
+  const index = quickIndexByRowKey.value.get(rowKey)
+  if (!index) return ''
+  return String(index === QUICK_INDEX_LIMIT ? 0 : index)
+}
+
+/** 编号的可达路径必须对读屏可见，不能只靠徽标这一个视觉线索。 */
+function quickIndexHint(rowKey: string) {
+  const digit = quickIndexDigit(rowKey)
+  if (!digit) return ''
+  return quickMode.value ? `，快捷键 Ctrl+${digit} 或 Alt+${digit} 打开` : `，快捷键 Alt+${digit} 打开`
+}
 
 const visibleTaskKeys = computed(() => new Set(renderRows.value.filter((row): row is Extract<RenderRow, { kind: 'task' }> => row.kind === 'task').map((row) => row.task.key)))
 const selectedTasks = computed(() => (conversations.value?.all || []).filter((task) => selectedKeys.value.has(task.key) && visibleTaskKeys.value.has(task.key)))
@@ -1285,7 +1317,7 @@ function openCompactStatus(kind: 'input' | 'active' | 'unread') {
   action('codex.input.open')
 }
 
-function openTask(task: CodexTaskCard, source: 'card-click' | 'manual-quick-jump' = 'card-click') {
+function openTask(task: CodexTaskCard, source: 'card-click' | 'manual-quick-jump' | 'local-shortcut' = 'card-click') {
   action('codex.task.open', { key: task.key, actionAlias: task.actionAlias || '', source })
 }
 
@@ -1772,21 +1804,45 @@ function openBatchDrawer() {
   openPanel('drawer')
 }
 
+const FOCUS_RETRY_FRAMES = 3
+
+function scheduleFocusRetry(callback: () => void) {
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(callback)
+  else setTimeout(callback, 16)
+}
+
+/**
+ * 展开是跨进程往返（子窗口请求父 preload 改 bounds，父再回推 state），一个 nextTick 经常
+ * 抢在列表渲染之前。以前 querySelector 拿不到元素就无声放弃，焦点留在 document.body，
+ * 于是根派发器收不到任何键。这里改成有界重试，超过帧数才放弃。
+ */
+function focusFocusKey(key: string, remainingFrames = FOCUS_RETRY_FRAMES) {
+  const element = document.querySelector<HTMLElement>(`[data-focus-key="${key}"]`)
+  if (element) {
+    element.focus({ preventScroll: true })
+    element.scrollIntoView({ block: 'nearest' })
+    return
+  }
+  if (remainingFrames <= 0) return
+  scheduleFocusRetry(() => focusFocusKey(key, remainingFrames - 1))
+}
+
 function focusCurrent() {
   const item = focusedItem.value
   if (!item) return
   focusedKey.value = item.key
-  void nextTick(() => {
-    const element = document.querySelector<HTMLElement>(`[data-focus-key="${item.key}"]`)
-    element?.focus({ preventScroll: true })
-    element?.scrollIntoView({ block: 'nearest' })
-  })
+  void nextTick(() => focusFocusKey(item.key))
 }
 
 function moveFocus(direction: -1 | 1) {
   if (!focusItems.value.length) return null
-  const currentIndex = Math.max(0, focusItems.value.findIndex((item) => item.key === focusedKey.value))
-  const target = focusItems.value[Math.max(0, Math.min(focusItems.value.length - 1, currentIndex + direction))]
+  const currentIndex = focusItems.value.findIndex((item) => item.key === focusedKey.value)
+  // 没有游标（findIndex 为 -1）时，↓ 落到第一项、↑ 落到最后一项。
+  // 以前这里用 Math.max(0, -1) 把"无游标"折叠成"游标在第 0 项"，导致首次 ↓ 直接跳到第 2 项。
+  const nextIndex = currentIndex < 0
+    ? (direction === 1 ? 0 : focusItems.value.length - 1)
+    : Math.max(0, Math.min(focusItems.value.length - 1, currentIndex + direction))
+  const target = focusItems.value[nextIndex]
   highlightOwner.value = 'keyboard'
   keyboardMouseOrigin = { ...lastMousePoint }
   focusedKey.value = target.key
@@ -1798,6 +1854,42 @@ function moveAfterCurrent() {
   const currentIndex = focusItems.value.findIndex((item) => item.key === focusedKey.value)
   if (currentIndex < 0 || currentIndex >= focusItems.value.length - 1) return
   moveFocus(1)
+}
+
+function focusQuickSearch(remainingFrames = FOCUS_RETRY_FRAMES) {
+  const input = searchInput.value
+  if (input) {
+    input.focus({ preventScroll: true })
+    return
+  }
+  if (remainingFrames <= 0) return
+  scheduleFocusRetry(() => focusQuickSearch(remainingFrames - 1))
+}
+
+function enterQuickMode() {
+  quickMode.value = true
+  requestExpansion(true)
+  if (panel.value) closePanel()
+  if (composer.value) cancelComposer()
+  if (aliasEditor.value) cancelAlias()
+  if (selectedKeys.value.size) clearSelection()
+  closeQuickJump()
+  closeShiftPreview(true)
+  searchText.value = ''
+  if (selectedUiTab.value !== 'dynamic') switchComposerTab('dynamic')
+  void nextTick(() => focusQuickSearch())
+}
+
+function exitQuickMode() {
+  quickMode.value = false
+}
+
+function openQuickIndex(index: number) {
+  const row = quickTaskRows.value[index - 1]
+  if (!row) return
+  focusedKey.value = row.key
+  openTask(row.task, 'local-shortcut')
+  exitQuickMode()
 }
 
 function onRowPointerMove(event: PointerEvent, key: string) {
@@ -1912,8 +2004,12 @@ function moveDrawer(direction: -1 | 1) {
 
 function previewBlocked() {
   const active = document.activeElement as HTMLElement | null
-  return Boolean(composer.value || pendingConfirm.value || panel.value || quickJump.value.open || aliasEditor.value
-    || active?.closest('input, textarea, select, [contenteditable="true"]'))
+  if (composer.value || pendingConfirm.value || panel.value || quickJump.value.open || aliasEditor.value) return true
+  const editing = active?.closest('input, textarea, select, [contenteditable="true"]')
+  if (!editing) return false
+  // 筛选模式下搜索框恒有焦点。若继续把"任意输入有焦点"当作阻断条件，Shift 预览就永远出不来。
+  // 只放行会话搜索框；composer、别名编辑器和其它输入继续阻断。
+  return !(editing instanceof HTMLElement && editing.dataset.inputRole === 'codex-search')
 }
 
 function shiftPreviewTask() {
@@ -2029,8 +2125,14 @@ function quickJumpTargetVisible(element: HTMLElement) {
   return quickJumpHitTargetVisible(element, visibleRect)
 }
 
-function collectQuickJumpTargets(backward = false): QuickJumpDomTarget[] {
+function quickJumpTaskKeyFor(element: HTMLElement) {
+  const focusKey = element.dataset.focusKey || ''
+  return focusKey.startsWith('task:') ? focusKey : ''
+}
+
+function collectQuickJumpTargets(backward = false, mode: 'all' | 'tasks' = 'all'): QuickJumpDomTarget[] {
   const elements = Array.from((rootElement.value || document.body).querySelectorAll<HTMLElement>('[data-quick-jump-target]'))
+    .filter((element) => (mode === 'tasks' ? Boolean(quickJumpTaskKeyFor(element)) : true))
     .filter(quickJumpTargetVisible)
   const targets = elements.map((element, index) => ({
     id: element.dataset.quickJumpId || `float:${index}:${quickJumpLabel(element)}`,
@@ -2051,19 +2153,19 @@ function syncQuickJumpActive(scroll = false) {
 
 function closeQuickJump(restore = false) {
   rootElement.value?.querySelectorAll<HTMLElement>('[data-quick-jump-active="true"]').forEach((element) => delete element.dataset.quickJumpActive)
-  quickJump.value = { open: false, query: '', sourceTargets: [], targets: [], activeTargetId: null }
+  quickJump.value = { open: false, mode: 'all', query: '', sourceTargets: [], targets: [], activeTargetId: null }
   const trigger = quickJumpTrigger
   quickJumpTrigger = null
   if (restore) restoreTrigger(trigger)
 }
 
-function openQuickJump(backward = false) {
+function openQuickJump(backward = false, mode: 'all' | 'tasks' = 'all') {
   if (composer.value || pendingConfirm.value || aliasEditor.value) return false
   closeShiftPreview(true)
-  const targets = collectQuickJumpTargets(backward)
+  const targets = collectQuickJumpTargets(backward, mode)
   if (!targets.length) return false
   quickJumpTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null
-  quickJump.value = { open: true, query: '', sourceTargets: targets, targets, activeTargetId: targets[0]?.id || null }
+  quickJump.value = { open: true, mode, query: '', sourceTargets: targets, targets, activeTargetId: targets[0]?.id || null }
   syncQuickJumpActive(true)
   return true
 }
@@ -2072,6 +2174,16 @@ function activateQuickJumpTarget() {
   const target = quickJump.value.sourceTargets.find((item) => item.id === quickJump.value.activeTargetId)
   if (!target) return
   window.eypcFloat?.action('codex.quickJump.activate', { source: 'manual-quick-jump' })
+  // 专项模式：一个按键直接跳到那条会话，等同于点击它的标题。普通模式仍然只转移高亮。
+  if (quickJump.value.mode === 'tasks') {
+    const taskKey = quickJumpTaskKeyFor(target.element)
+    const matched = focusItems.value.find((item) => item.key === taskKey)
+    closeQuickJump()
+    if (matched?.kind !== 'task') return
+    focusedKey.value = matched.key
+    openTask(matched.task, 'manual-quick-jump')
+    return
+  }
   closeQuickJump()
   target.element.focus({ preventScroll: true })
   const focusKey = target.element.dataset.focusKey
@@ -2138,8 +2250,9 @@ const fallbackCommands: Record<string, string> = {
   'Ctrl+P': 'codex.pin.toggleFocused',
   'Alt+ArrowUp': 'codex.pin.moveUp',
   'Alt+ArrowDown': 'codex.pin.moveDown',
-  'Ctrl+F': 'codex.quickJump.openForward',
+  'Ctrl+F': 'codex.search.focus',
   'Ctrl+Shift+F': 'codex.search.focus',
+  'Alt+F': 'codex.quickJump.openTasks',
   'Ctrl+T': 'codex.thread.createFocused',
   'Ctrl+Shift+1': 'codex.action.run.1',
   'Ctrl+Shift+2': 'codex.action.run.2',
@@ -2153,7 +2266,9 @@ const fallbackCommands: Record<string, string> = {
 
 function floatInputRole(target: HTMLElement, editing: boolean): KeybindingContext['activeInputRole'] {
   if (!editing) return undefined
-  return target.closest('[data-input-role="codex-composer"]') ? 'codex-composer' : 'other'
+  if (target.closest('[data-input-role="codex-composer"]')) return 'codex-composer'
+  if (target.closest('[data-input-role="codex-search"]')) return 'codex-search'
+  return 'other'
 }
 
 function floatActiveLayers(target: HTMLElement): KeybindingLayerId[] {
@@ -2179,6 +2294,8 @@ function commandFor(event: KeyboardEvent, target: HTMLElement, editing = false) 
       confirmOpen: Boolean(pendingConfirm.value),
       textInputFocused: editing,
       activeInputRole: floatInputRole(target, editing),
+      codexQuickMode: quickMode.value,
+      codexDrawerActive: panel.value?.mode === 'drawer',
       activeLayers
     }
     return resolved
@@ -2190,7 +2307,14 @@ function commandFor(event: KeyboardEvent, target: HTMLElement, editing = false) 
       .sort((left, right) => LAYER_PRIORITY[right.layer as KeybindingLayerId] - LAYER_PRIORITY[left.layer as KeybindingLayerId]
         || right.weight - left.weight)[0]?.actionId || ''
   }
-  return fallbackCommands[shortcut] || (/^Ctrl\+[1-9]$/.test(shortcut) ? `codex.drawer.select.${shortcut.slice(-1)}` : '')
+  if (fallbackCommands[shortcut]) return fallbackCommands[shortcut]
+  const digit = /^(Ctrl|Alt)\+([0-9])$/.exec(shortcut)
+  if (!digit) return ''
+  const slot = Number(digit[2]) === 0 ? 10 : Number(digit[2])
+  const drawerOpen = panel.value?.mode === 'drawer'
+  if (digit[1] === 'Alt') return drawerOpen ? '' : `codex.task.openIndex.${slot}`
+  if (quickMode.value && !drawerOpen) return `codex.quick.open.${slot}`
+  return slot === 10 ? '' : `codex.drawer.select.${slot}`
 }
 
 function cancelTopLayer() {
@@ -2236,6 +2360,10 @@ function cancelTopLayer() {
     searchText.value = ''
     return
   }
+  if (quickMode.value) {
+    exitQuickMode()
+    return
+  }
   if (expanded.value && !resize) {
     restoreCompactFocus = true
     requestExpansion(false)
@@ -2259,10 +2387,33 @@ function handleShiftPreviewArrow(event: KeyboardEvent) {
   return true
 }
 
+/**
+ * 会话搜索框允许边打字边导航，和 ports/favorites/mqtt/windows 的搜索框同构。
+ * 只对搜索框放行：composer、别名编辑器和其它输入保持原有的完全隔离。
+ */
+function searchNavigationAllowed(target: HTMLElement, command: string) {
+  if (!command || target !== searchInput.value) return false
+  return command === 'codex.list.up'
+    || command === 'codex.list.down'
+    || command === 'codex.task.openFocused'
+    || command.startsWith('codex.quick.open.')
+    || command.startsWith('codex.task.openIndex.')
+}
+
+/**
+ * 事件可能直接派发在 window 上（DOM 焦点还没进入子窗口时），此时 target 是 Window 而不是元素。
+ * 归一成一个真实元素，让下游的 closest / blur 判定不必各自防御。
+ */
+function resolveKeyEventTarget(event: KeyboardEvent): HTMLElement {
+  if (event.target instanceof HTMLElement) return event.target
+  if (document.activeElement instanceof HTMLElement) return document.activeElement
+  return document.body
+}
+
 function onRootKeydown(event: KeyboardEvent) {
   if (event.isComposing) return
   const shortcut = shortcutFromEvent(event)
-  const target = event.target as HTMLElement
+  const target = resolveKeyEventTarget(event)
 
   if (shortcut === 'Shift+Escape') {
     event.preventDefault()
@@ -2290,7 +2441,7 @@ function onRootKeydown(event: KeyboardEvent) {
   if ((shortcut === 'Space' || shortcut === 'Enter') && target.closest('button')) return
   const editing = Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
   const command = commandFor(event, target, editing)
-  if (editing) {
+  if (editing && !searchNavigationAllowed(target, command)) {
     if (command === 'codex.layer.cancel') {
       event.preventDefault()
       if (aliasEditor.value) cancelAlias()
@@ -2317,6 +2468,7 @@ function onRootKeydown(event: KeyboardEvent) {
   else if (command === 'codex.float.toggle') action('codex.float.toggle', { source: 'in-app-shortcut' })
   else if (command === 'quickJump.openForward' || command === 'codex.quickJump.openForward') openQuickJump(false)
   else if (command === 'quickJump.openBackward') openQuickJump(true)
+  else if (command === 'codex.quickJump.openTasks') openQuickJump(false, 'tasks')
   else if (command === 'codex.list.up' && panel.value?.mode === 'drawer') moveDrawer(-1)
   else if (command === 'codex.list.down' && panel.value?.mode === 'drawer') moveDrawer(1)
   else if (command === 'codex.task.openFocused' && panel.value?.mode === 'drawer') executeDrawerAction(drawerActiveIndex.value)
@@ -2339,6 +2491,8 @@ function onRootKeydown(event: KeyboardEvent) {
   else if (command === 'codex.pin.moveDown' && item) movePin(item, 1)
   else if (command === 'codex.search.focus') searchInput.value?.focus()
   else if (command === 'codex.thread.createFocused') openComposer()
+  else if (command === 'codex.quick.activate') enterQuickMode()
+  else if (command.startsWith('codex.quick.open.') || command.startsWith('codex.task.openIndex.')) openQuickIndex(Number(command.split('.').at(-1)))
   else if (command.startsWith('codex.drawer.select.')) executeDrawerAction(Number(command.split('.').at(-1)) - 1)
   else if (command.startsWith('codex.action.run.')) action(command)
   else if (command === 'codex.layer.cancel') {
@@ -2346,38 +2500,52 @@ function onRootKeydown(event: KeyboardEvent) {
   }
 }
 
-function onWindowKeydown(event: KeyboardEvent) {
-  if (event.isComposing) return
+function eventInsideRoot(event: KeyboardEvent) {
+  const target = event.target
+  return target instanceof Node && Boolean(rootElement.value?.contains(target))
+}
+
+/** 返回 true 表示事件已被 window 层完全消费，不再继续派发。 */
+function handleWindowLevelKeydown(event: KeyboardEvent) {
   if (shortcutFromEvent(event) === 'Shift+Escape') {
     event.preventDefault()
     event.stopPropagation()
     event.stopImmediatePropagation()
     returnToPreviousFocus()
-    return
+    return true
   }
   if (
     event.key === 'Escape'
-    && (panel.value || aliasEditor.value || composer.value || pendingConfirm.value || quickJump.value.open || shiftPreview.value || selectedKeys.value.size || Boolean(searchText.value))
+    && (panel.value || aliasEditor.value || composer.value || pendingConfirm.value || quickJump.value.open || shiftPreview.value || selectedKeys.value.size || Boolean(searchText.value) || quickMode.value)
   ) {
     event.preventDefault()
     event.stopPropagation()
     event.stopImmediatePropagation()
     cancelTopLayer()
-    return
+    return true
   }
   if (event.key === 'Shift') {
     shiftHeld.value = true
     if (event.ctrlKey || event.metaKey || event.altKey) shiftPreviewSuppressed.value = true
     updateShiftPreview()
-    return
+    return true
   }
-  if (!shiftHeld.value || !event.shiftKey) return
+  if (!shiftHeld.value || !event.shiftKey) return false
   if (event.ctrlKey || event.metaKey || event.altKey) {
     shiftPreviewSuppressed.value = true
     closeShiftPreview()
-    return
+    return false
   }
-  handleShiftPreviewArrow(event)
+  return handleShiftPreviewArrow(event)
+}
+
+function onWindowKeydown(event: KeyboardEvent) {
+  if (event.isComposing) return
+  if (handleWindowLevelKeydown(event)) return
+  // 宿主刚显示子窗口、DOM 焦点仍停在 document.body 时，事件不会冒泡到根元素，
+  // 根派发器整个不会执行。这里补一次派发，让"焦点没落进列表"不再等于"快捷键全部失灵"。
+  // 只在事件确实落在根之外时补派发，避免和根/子层的 @keydown.stop 隔离打架。
+  if (!eventInsideRoot(event)) onRootKeydown(event)
 }
 
 function onWindowKeyup(event: KeyboardEvent) {
@@ -2641,10 +2809,18 @@ watch(searchText, () => {
   closeShiftPreview(true)
 }, { flush: 'post' })
 
+// 列表非空即有键盘游标。以前 focusedItem 用 `|| focusItems[0]` 做隐式回退，于是"看到的高亮"
+// 和"键盘游标"是两个东西：focusedKey 为空时界面照样高亮首行，但 moveFocus 从 -1 起算。
+// 这里把两者合成同一个真相，immediate 保证首次挂载就成立。
+// 必须注册在 renderRows watcher 之前，否则同一轮里面板刷新会读到还没补种的游标。
+watch(focusItems, (items) => {
+  if (!items.some((item) => item.key === focusedKey.value)) focusedKey.value = items[0]?.key || ''
+}, { immediate: true, flush: 'post' })
+
 watch(renderRows, () => {
   const visible = visibleTaskKeys.value
   selectedKeys.value = new Set([...selectedKeys.value].filter((key) => visible.has(key)))
-  if (!focusItems.value.some((item) => item.key === focusedKey.value)) focusedKey.value = focusItems.value[0]?.key || ''
+  // 游标补种由上方 focusItems 的专用 watcher 单独拥有，这里不再重复。
   if (panel.value) {
     const currentPanel = panel.value
     const refreshedItem = focusItems.value.find((item) => item.key === currentPanel.item.key)
@@ -2765,6 +2941,8 @@ onMounted(() => {
     if (!value.expanded) {
       closeShiftPreview(true)
       closeQuickJump()
+      // 快速筛选是展开列表上的模式；卡片收起后它没有载体，编号也不应留在紧凑面上。
+      exitQuickMode()
     }
     if (!value.expanded && restoreCompactFocus) {
       restoreCompactFocus = false
@@ -2772,6 +2950,10 @@ onMounted(() => {
     }
   }) || null
   stopActivate = window.eypcFloat?.onActivate?.((payload) => {
+    if (payload.command === 'quick') {
+      enterQuickMode()
+      return
+    }
     requestExpansion(true)
     void nextTick(() => payload.command === 'new-thread' ? openComposer() : focusCurrent())
   }) || null
@@ -2931,7 +3113,7 @@ onUnmounted(() => {
 
       <label class="float-search">
         <Search :size="14" aria-hidden="true" />
-            <input ref="searchInput" v-model="searchText" type="search" placeholder="搜索会话、别名或项目" aria-label="搜索当前 Codex 页签" data-quick-jump-target data-quick-jump-label="搜索当前 Codex 页签" />
+            <input ref="searchInput" v-model="searchText" type="search" data-input-role="codex-search" :placeholder="quickMode ? '筛选任务，c-1…0 直接打开' : '搜索会话、别名或项目'" aria-label="搜索当前 Codex 页签" data-quick-jump-target data-quick-jump-label="搜索当前 Codex 页签" />
         <button v-if="searchText" type="button" aria-label="清空搜索" data-quick-jump-target @click.stop="searchText = ''"><X :size="13" /></button>
       </label>
 
@@ -3031,7 +3213,7 @@ onUnmounted(() => {
               :class="[`task-${row.task.activityState}`, `bucket-${row.task.bucket}`, `provider-${row.marker.provider}`, { nested: row.nested, selected: selectedKeys.has(row.task.key), hidden: row.task.isHidden, highlighted: focusedKey === row.key, archiving: taskArchiving(row.task) }]"
               role="option"
               :aria-selected="selectedKeys.has(row.task.key)"
-              :aria-label="`${taskDisplayLabel(row.task)}，${row.marker.tooltip}，${row.task.projectName}，${taskStateLabel(row.task)}`"
+              :aria-label="`${taskDisplayLabel(row.task)}，${row.marker.tooltip}，${row.task.projectName}，${taskStateLabel(row.task)}${quickIndexHint(row.key)}`"
               :data-pin-source="row.task.pinSource"
               :tabindex="focusedKey === row.key ? 0 : -1"
               :data-focus-key="row.key"
@@ -3060,6 +3242,9 @@ onUnmounted(() => {
               >
                 <component :is="taskIcon(row.task)" :size="14" class="task-state-icon" aria-hidden="true" />
               </button>
+              <!-- 绝对定位 + pointer-events:none：编号是瞬时提示，不得改变行高、列表顶边或行坐标。
+                   完整语义已在行的 aria-label 里，所以这里对读屏隐藏。 -->
+              <span v-if="quickIndexDigit(row.key)" class="task-quick-index" aria-hidden="true">{{ quickIndexDigit(row.key) }}</span>
               <div
                 class="task-open"
                 @click.stop="activateTaskCore(row.task, $event)"
