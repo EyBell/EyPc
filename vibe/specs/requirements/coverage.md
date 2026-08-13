@@ -20,21 +20,29 @@ Date: 2026-08-13
 
 ## 已入册
 
-| 域 | 来源 | 叶子 | active | superseded |
-| --- | --- | ---: | ---: | ---: |
-| `companion-codex` | [codex-quota-float](../260718/1148-codex-quota-float/raw-requirement.md#L1) | 152 | 134 | 18 |
+**所有带 id 的来源已全部入册**，共 196 条叶子。每个来源在生成时都断言「解析条数 == 源文件条数」，不足即拒绝注册——静默丢弃是批量抽取的常态失败，必须由结构拦住而不是靠事后核对。
 
-`RAW-131` 在该文件内出现两次，第二次明确标注为 implementation clarification，因此并入同一条叶子的 `Clarifications`，而不是当作第二条需求——重复的编号不代表重复的需求。
+| 域 | 来源 | 形态 | 叶子 | active | superseded |
+| --- | --- | --- | ---: | ---: | ---: |
+| `companion-codex` | [codex-quota-float](../260718/1148-codex-quota-float/raw-requirement.md#L1) | bullet | 152 | 134 | 18 |
+| `companion-claude` | [claude-code-companion-authority-reset](../260807/claude-code-companion-authority-reset/raw-requirement.md#L1) | table | 32 | 32 | 0 |
+| `companion-shared` | [install-runtime-diagnostics](../260810/1155-install-runtime-diagnostics/raw-requirement.md#L1) | heading | 6 | 6 | 0 |
+| `interaction-shell` | [quick-jump-center-overlay](../260718/0947-quick-jump-center-overlay/raw-requirement.md#L1) | bullet | 4 | 4 | 0 |
+| `file-favorites` | [file-favorites-workbench](../260711/1452-file-favorites-workbench/raw-requirement.md#L1) | heading | 2 | 2 | 0 |
+
+两处需要单独说明：
+
+- `RAW-131` 在 codex-quota-float 内出现两次，第二次明确标注为 implementation clarification，因此并入同一条叶子的 `Clarifications`。**重复的编号不代表重复的需求。**
+- `RAW-165` 与 `RAW-166` 标为 `agent-transcribed`：本会话开头以 `git show HEAD:` 核实，当时 HEAD 的 raw-requirement.md 止于 RAW-164，这两节由实现者在同一次「宣布已达标」的未提交改动中写入。冲突时转述不得自动胜过用户原话。
+
+`companion-shared` 的六条是**章节级**登记。每节下的编号条款（共 82 条）没有独立 id，与下述无 id 条款同属待裁决。
 
 ## 尚未入册
 
 | 来源 | 形态 | 条目 | 阻塞原因 |
 | --- | --- | ---: | --- |
-| [claude-code-companion-authority-reset](../260807/claude-code-companion-authority-reset/raw-requirement.md#L1) | table | 32 | 无阻塞，待下一批 |
-| [quick-jump-center-overlay](../260718/0947-quick-jump-center-overlay/raw-requirement.md#L1) | bullet | 4 | 无阻塞，待下一批 |
-| [install-runtime-diagnostics](../260810/1155-install-runtime-diagnostics/raw-requirement.md#L1) | heading + numbered | 6 节 / 82 条款 | 章节有 id，条款没有 |
-| [file-favorites-workbench](../260711/1452-file-favorites-workbench/raw-requirement.md#L1) | heading + YAML | 2 | 无阻塞，待下一批 |
-| 其余 12 个任务 | numbered | ~80 | **需要用户裁决** |
+| install-runtime-diagnostics 的节内条款 | numbered | 82 | 无独立 id |
+| 其余 12 个任务 | numbered | ~80 | 无独立 id |
 | 其余 5 个任务 | 散文 | — | 无可抽取的条款边界 |
 
 ## 待用户裁决
