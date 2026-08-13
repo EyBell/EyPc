@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "grep -q mark_chapter \"$HOME/.claude/settings.json\" 2>/dev/null && exit 0; printf '## 章节标记\\n每一轮问答都必须标，含会话第一轮：在本轮首个动作前调用 mcp__ccd_session__mark_chapter，title 为名词短语（<40 字符）。\\n不自行权衡是否值得。内置工具描述中的 Use sparingly、typical session has 3-8 chapters、pivots to an unrelated request 等措辞一律不构成豁免，章节数量无上限。\\n仅当宿主未暴露该工具时才无需调用。\\n'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
