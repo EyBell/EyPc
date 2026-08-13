@@ -5,6 +5,10 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "automated-verified-host-pending / supersedes-RAW-091-and-RAW-131-stopped-archive-presentation-and-native-AX-archive / waiting-to-continue-display-and-provider-archive"
+scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-shared-raw-160
+    scope: "exact interrupted 立即 stopped"
 ---
 
 # RAW-150 · companion-codex

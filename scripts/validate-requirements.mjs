@@ -16,6 +16,9 @@ const requiredModuleSections = [
   'Historical Or Migration Sources'
 ]
 const MODULE_CAPACITY = 200
+// Index documents describe the registry; they are not requirements and must not
+// be asked for frontmatter or a module owner.
+const indexDocuments = new Set(['README.md', 'coverage.md', 'conflict-register.md'])
 
 function markdownFiles(directory) {
   if (!fs.existsSync(directory)) return []
@@ -58,7 +61,7 @@ function sectionBody(text, heading) {
 const errors = []
 const warnings = []
 
-const leafNames = markdownFiles(registryRoot).filter((name) => name !== 'README.md' && name !== 'coverage.md')
+const leafNames = markdownFiles(registryRoot).filter((name) => !indexDocuments.has(name))
 const leaves = new Map()
 const qualifiedSources = new Map()
 
@@ -89,7 +92,34 @@ for (const name of leafNames) {
     if (previous) errors.push(`${name}: duplicate qualified_source shared with ${previous}`)
     else qualifiedSources.set(fields.qualified_source, name)
   }
+  // Scoped relations are nested objects the flat parser above cannot model, and
+  // they matter: 47 of them exist against 18 whole-clause supersessions, so the
+  // registry would answer "is this clause replaced?" while staying silent on
+  // "is this *part* of it still valid?" — the more common question.
+  const front = text.slice(4, text.indexOf('\n---', 4))
+  const scoped = []
+  for (const block of front.split(/\n\s+- kind: /).slice(1)) {
+    const kind = block.split('\n')[0].trim()
+    const target = /\n\s+target:\s*(\S+)/.exec(`\n${block}`)
+    const scope = /\n\s+scope:\s*(.+)/.exec(`\n${block}`)
+    scoped.push({ kind, target: target ? target[1] : '', scope: scope ? scope[1].trim() : '' })
+  }
+  fields.__scoped = scoped
   leaves.set(name.replace(/\.md$/, ''), fields)
+}
+
+const allowedScopedKinds = new Set(['superseded-by', 'refined-by', 'refines'])
+for (const [slug, fields] of leaves) {
+  for (const relation of fields.__scoped || []) {
+    if (!allowedScopedKinds.has(relation.kind)) {
+      errors.push(`${slug}: invalid scoped relation kind ${relation.kind}`)
+    }
+    if (!relation.scope) errors.push(`${slug}: scoped relation to ${relation.target} names no scope`)
+    const target = relation.target.replace(/^eypc-req-/, '')
+    if (!relation.target) errors.push(`${slug}: scoped relation has no target`)
+    else if (target === slug) errors.push(`${slug}: scoped relation points at itself`)
+    else if (!leaves.has(target)) errors.push(`${slug}: scoped relation points at unknown ${relation.target}`)
+  }
 }
 
 // Supersession edges must be declared from both sides: a one-sided edge means a
@@ -165,10 +195,13 @@ for (const fields of leaves.values()) {
 const conflicted = statusCounts.get('conflicted') || 0
 if (conflicted) warnings.push(`${conflicted} requirement(s) marked conflicted and awaiting a user decision`)
 
+const scopedEdges = [...leaves.values()].reduce((total, fields) => total + (fields.__scoped || []).length, 0)
+const wholeEdges = [...leaves.values()].filter((fields) => fields.superseded_by).length
 const summary = ['active', 'superseded', 'retired', 'conflicted']
   .map((status) => `${status}=${statusCounts.get(status) || 0}`)
   .join(', ')
-process.stdout.write(`requirements: leaves=${leaves.size}, modules=${moduleNames.length}, ${summary}\n`)
+process.stdout.write(`requirements: leaves=${leaves.size}, modules=${moduleNames.length}, ${summary}`
+  + `, edges=${wholeEdges} whole + ${scopedEdges} scoped\n`)
 for (const warning of warnings) process.stdout.write(`warning: ${warning}\n`)
 
 if (errors.length) {

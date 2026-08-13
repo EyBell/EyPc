@@ -5,6 +5,10 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "active / supersedes-RAW-063-weekly-ring-removal / color-validation-superseded-by-RAW-071"
+scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-codex-raw-071
+    scope: "color-validation"
 ---
 
 # RAW-065 · companion-codex

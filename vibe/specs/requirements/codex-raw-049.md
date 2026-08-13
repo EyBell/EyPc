@@ -5,6 +5,13 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "active / escape-refined-by-RAW-051 / quick-jump-refined-by-RAW-052"
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-codex-raw-051
+    scope: "escape"
+  - kind: refined-by
+    target: eypc-req-codex-raw-052
+    scope: "quick-jump"
 ---
 
 # RAW-049 · companion-codex

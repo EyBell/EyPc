@@ -5,6 +5,10 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "active / supersedes-RAW-066-interrupted-archive-clause / archive-evidence-refined-by-RAW-089"
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-codex-raw-089
+    scope: "archive-evidence"
 ---
 
 # RAW-068 · companion-codex

@@ -5,6 +5,13 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "active / project-removal-refined-by-RAW-052 / pin-feedback-refined-by-RAW-053"
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-codex-raw-052
+    scope: "project-removal"
+  - kind: refined-by
+    target: eypc-req-codex-raw-053
+    scope: "pin-feedback"
 ---
 
 # RAW-039 · companion-codex

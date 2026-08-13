@@ -5,6 +5,13 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "active / active-guard-refined-by-RAW-068-and-RAW-089"
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-codex-raw-068
+    scope: "active-guard"
+  - kind: refined-by
+    target: eypc-req-codex-raw-089
+    scope: "active-guard"
 ---
 
 # RAW-042 · companion-codex

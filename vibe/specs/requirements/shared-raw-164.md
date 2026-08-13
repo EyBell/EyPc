@@ -4,6 +4,10 @@ qualified_source: SPEC-260810-1155-INSTALL-RUNTIME-DIAGNOSTICS::RAW-164
 status: active
 domain: companion-shared
 authority: user-stated
+scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-shared-raw-165
+    scope: "普通 running > completed-unread 的注意力次序"
 ---
 
 # RAW-164 · companion-shared

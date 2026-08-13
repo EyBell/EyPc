@@ -5,6 +5,10 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "implementation-landed / automated-verification-in-progress / installed-host-pending / supersedes-RAW-155-v2-final-authority-and-provider-only-codex-archive"
+scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-shared-raw-160
+    scope: "只在 Kernel no-op 即完成消费去重"
 ---
 
 # RAW-159 · companion-codex

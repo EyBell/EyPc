@@ -5,6 +5,19 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "active / live-channel-superseded-by-RAW-056 / interaction-refined-by-RAW-048-through-RAW-050-and-RAW-063"
+scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-codex-raw-056
+    scope: "live-channel"
+  - kind: refined-by
+    target: eypc-req-codex-raw-048
+    scope: "interaction"
+  - kind: refined-by
+    target: eypc-req-codex-raw-050
+    scope: "interaction"
+  - kind: refined-by
+    target: eypc-req-codex-raw-063
+    scope: "interaction"
 ---
 
 # RAW-045 · companion-codex

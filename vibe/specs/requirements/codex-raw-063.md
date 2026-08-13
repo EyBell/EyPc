@@ -5,6 +5,19 @@ status: active
 domain: companion-codex
 authority: user-stated
 source_annotations: "active / supersedes-visible-six-tab-and-weekly-ring-details / status-grouping-refined-by-RAW-064 / weekly-ring-refined-by-RAW-065 / visible-status-refined-by-RAW-066 / compact-counter-click-refined-by-RAW-067"
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-codex-raw-064
+    scope: "status-grouping"
+  - kind: refined-by
+    target: eypc-req-codex-raw-065
+    scope: "weekly-ring"
+  - kind: refined-by
+    target: eypc-req-codex-raw-066
+    scope: "visible-status"
+  - kind: refined-by
+    target: eypc-req-codex-raw-067
+    scope: "compact-counter-click"
 ---
 
 # RAW-063 · companion-codex

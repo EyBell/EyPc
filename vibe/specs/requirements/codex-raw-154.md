@@ -7,6 +7,10 @@ authority: user-stated
 source_annotations: "automated-verified-host-pending / refines-RAW-150-153 / provider-neutral-task-action-kernel-and-mutation-convergence"
 relations:
   - refines-RAW-150-153
+scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-shared-raw-160
+    scope: "exact interrupted 立即 stopped 与旧 Actions/Package 版本"
 ---
 
 # RAW-154 · companion-codex

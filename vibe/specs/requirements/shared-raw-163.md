@@ -4,6 +4,10 @@ qualified_source: SPEC-260810-1155-INSTALL-RUNTIME-DIAGNOSTICS::RAW-163
 status: active
 domain: companion-shared
 authority: user-stated
+scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-shared-raw-164
+    scope: "第 50–53 条 main-first 展示门槛"
 ---
 
 # RAW-163 · companion-shared

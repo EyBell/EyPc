@@ -9,6 +9,16 @@ supersedes:
   - eypc-req-codex-raw-005
   - eypc-req-codex-raw-015
   - eypc-req-codex-raw-019
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-codex-raw-056
+    scope: "live-authority"
+  - kind: refined-by
+    target: eypc-req-codex-raw-089
+    scope: "visible-status"
+  - kind: refined-by
+    target: eypc-req-codex-raw-089
+    scope: "archive-capability"
 ---
 
 # RAW-028 · companion-codex
