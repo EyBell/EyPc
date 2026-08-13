@@ -1,0 +1,174 @@
+# Companion Codex Requirements
+
+## Scope
+
+Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runner / Environment Action、以及 Codex 配置 Tab 的全部条款。
+
+## Current Authorities And Routes
+
+- 当前增量权威：[codex-quota-float/spec.md](../../260718/1148-codex-quota-float/spec.md#L1)
+- 条款正文：[raw-requirement.md](../../260718/1148-codex-quota-float/raw-requirement.md#L1)
+- 产品语义：[PRODUCT_REQUIREMENTS](../../PRODUCT_REQUIREMENTS.md#L1)
+
+## Primary Requirements
+
+- [RAW-001](../codex-raw-001.md#L1) — `active`
+- [RAW-002](../codex-raw-002.md#L1) — `active`
+- [RAW-003](../codex-raw-003.md#L1) — `active`
+- [RAW-004](../codex-raw-004.md#L1) — `active`
+- [RAW-005](../codex-raw-005.md#L1) — `superseded`
+- [RAW-006](../codex-raw-006.md#L1) — `superseded`
+- [RAW-007](../codex-raw-007.md#L1) — `superseded`
+- [RAW-008](../codex-raw-008.md#L1) — `active`
+- [RAW-009](../codex-raw-009.md#L1) — `active`
+- [RAW-010](../codex-raw-010.md#L1) — `active`
+- [RAW-011](../codex-raw-011.md#L1) — `active`
+- [RAW-012](../codex-raw-012.md#L1) — `superseded`
+- [RAW-013](../codex-raw-013.md#L1) — `active`
+- [RAW-014](../codex-raw-014.md#L1) — `active`
+- [RAW-015](../codex-raw-015.md#L1) — `superseded`
+- [RAW-016](../codex-raw-016.md#L1) — `active`
+- [RAW-017](../codex-raw-017.md#L1) — `active`
+- [RAW-018](../codex-raw-018.md#L1) — `active`
+- [RAW-019](../codex-raw-019.md#L1) — `superseded`
+- [RAW-020](../codex-raw-020.md#L1) — `superseded`
+- [RAW-021](../codex-raw-021.md#L1) — `active`
+- [RAW-022](../codex-raw-022.md#L1) — `superseded`
+- [RAW-023](../codex-raw-023.md#L1) — `active`
+- [RAW-024](../codex-raw-024.md#L1) — `superseded`
+- [RAW-025](../codex-raw-025.md#L1) — `superseded`
+- [RAW-026](../codex-raw-026.md#L1) — `superseded`
+- [RAW-027](../codex-raw-027.md#L1) — `active`
+- [RAW-028](../codex-raw-028.md#L1) — `active`
+- [RAW-029](../codex-raw-029.md#L1) — `superseded`
+- [RAW-030](../codex-raw-030.md#L1) — `superseded`
+- [RAW-031](../codex-raw-031.md#L1) — `active`
+- [RAW-032](../codex-raw-032.md#L1) — `active`
+- [RAW-033](../codex-raw-033.md#L1) — `active`
+- [RAW-034](../codex-raw-034.md#L1) — `superseded`
+- [RAW-035](../codex-raw-035.md#L1) — `active`
+- [RAW-036](../codex-raw-036.md#L1) — `active`
+- [RAW-037](../codex-raw-037.md#L1) — `active`
+- [RAW-038](../codex-raw-038.md#L1) — `active`
+- [RAW-039](../codex-raw-039.md#L1) — `active`
+- [RAW-040](../codex-raw-040.md#L1) — `active`
+- [RAW-041](../codex-raw-041.md#L1) — `active`
+- [RAW-042](../codex-raw-042.md#L1) — `active`
+- [RAW-043](../codex-raw-043.md#L1) — `active`
+- [RAW-044](../codex-raw-044.md#L1) — `superseded`
+- [RAW-045](../codex-raw-045.md#L1) — `active`
+- [RAW-046](../codex-raw-046.md#L1) — `active`
+- [RAW-047](../codex-raw-047.md#L1) — `active`
+- [RAW-048](../codex-raw-048.md#L1) — `active`
+- [RAW-049](../codex-raw-049.md#L1) — `active`
+- [RAW-050](../codex-raw-050.md#L1) — `active`
+- [RAW-051](../codex-raw-051.md#L1) — `active`
+- [RAW-052](../codex-raw-052.md#L1) — `active`
+- [RAW-053](../codex-raw-053.md#L1) — `active`
+- [RAW-054](../codex-raw-054.md#L1) — `active`
+- [RAW-055](../codex-raw-055.md#L1) — `active`
+- [RAW-056](../codex-raw-056.md#L1) — `active`
+- [RAW-057](../codex-raw-057.md#L1) — `active`
+- [RAW-058](../codex-raw-058.md#L1) — `active`
+- [RAW-059](../codex-raw-059.md#L1) — `active`
+- [RAW-063](../codex-raw-063.md#L1) — `active`
+- [RAW-064](../codex-raw-064.md#L1) — `active`
+- [RAW-065](../codex-raw-065.md#L1) — `active`
+- [RAW-066](../codex-raw-066.md#L1) — `active`
+- [RAW-067](../codex-raw-067.md#L1) — `active`
+- [RAW-068](../codex-raw-068.md#L1) — `active`
+- [RAW-069](../codex-raw-069.md#L1) — `active`
+- [RAW-070](../codex-raw-070.md#L1) — `active`
+- [RAW-071](../codex-raw-071.md#L1) — `active`
+- [RAW-072](../codex-raw-072.md#L1) — `active`
+- [RAW-073](../codex-raw-073.md#L1) — `active`
+- [RAW-074](../codex-raw-074.md#L1) — `active`
+- [RAW-075](../codex-raw-075.md#L1) — `active`
+- [RAW-076](../codex-raw-076.md#L1) — `active`
+- [RAW-077](../codex-raw-077.md#L1) — `active`
+- [RAW-078](../codex-raw-078.md#L1) — `active`
+- [RAW-079](../codex-raw-079.md#L1) — `active`
+- [RAW-080](../codex-raw-080.md#L1) — `active`
+- [RAW-081](../codex-raw-081.md#L1) — `active`
+- [RAW-082](../codex-raw-082.md#L1) — `active`
+- [RAW-083](../codex-raw-083.md#L1) — `active`
+- [RAW-084](../codex-raw-084.md#L1) — `active`
+- [RAW-085](../codex-raw-085.md#L1) — `superseded`
+- [RAW-086](../codex-raw-086.md#L1) — `superseded`
+- [RAW-087](../codex-raw-087.md#L1) — `active`
+- [RAW-088](../codex-raw-088.md#L1) — `active`
+- [RAW-089](../codex-raw-089.md#L1) — `active`
+- [RAW-090](../codex-raw-090.md#L1) — `active`
+- [RAW-091](../codex-raw-091.md#L1) — `active`
+- [RAW-092](../codex-raw-092.md#L1) — `active`
+- [RAW-093](../codex-raw-093.md#L1) — `active`
+- [RAW-094](../codex-raw-094.md#L1) — `active`
+- [RAW-095](../codex-raw-095.md#L1) — `active`
+- [RAW-096](../codex-raw-096.md#L1) — `active`
+- [RAW-097](../codex-raw-097.md#L1) — `active`
+- [RAW-104](../codex-raw-104.md#L1) — `active`
+- [RAW-105](../codex-raw-105.md#L1) — `active`
+- [RAW-106](../codex-raw-106.md#L1) — `active`
+- [RAW-107](../codex-raw-107.md#L1) — `active`
+- [RAW-108](../codex-raw-108.md#L1) — `active`
+- [RAW-109](../codex-raw-109.md#L1) — `active`
+- [RAW-110](../codex-raw-110.md#L1) — `active`
+- [RAW-111](../codex-raw-111.md#L1) — `active`
+- [RAW-112](../codex-raw-112.md#L1) — `active`
+- [RAW-113](../codex-raw-113.md#L1) — `active`
+- [RAW-114](../codex-raw-114.md#L1) — `active`
+- [RAW-115](../codex-raw-115.md#L1) — `active`
+- [RAW-116](../codex-raw-116.md#L1) — `active`
+- [RAW-117](../codex-raw-117.md#L1) — `active`
+- [RAW-118](../codex-raw-118.md#L1) — `active`
+- [RAW-119](../codex-raw-119.md#L1) — `active`
+- [RAW-120](../codex-raw-120.md#L1) — `active`
+- [RAW-121](../codex-raw-121.md#L1) — `active`
+- [RAW-122](../codex-raw-122.md#L1) — `active`
+- [RAW-123](../codex-raw-123.md#L1) — `active`
+- [RAW-124](../codex-raw-124.md#L1) — `active`
+- [RAW-125](../codex-raw-125.md#L1) — `active`
+- [RAW-126](../codex-raw-126.md#L1) — `active`
+- [RAW-127](../codex-raw-127.md#L1) — `active`
+- [RAW-128](../codex-raw-128.md#L1) — `active`
+- [RAW-129](../codex-raw-129.md#L1) — `active`
+- [RAW-130](../codex-raw-130.md#L1) — `active`
+- [RAW-131](../codex-raw-131.md#L1) — `active`
+- [RAW-132](../codex-raw-132.md#L1) — `active`
+- [RAW-133](../codex-raw-133.md#L1) — `active`
+- [RAW-134](../codex-raw-134.md#L1) — `active`
+- [RAW-135](../codex-raw-135.md#L1) — `active`
+- [RAW-136](../codex-raw-136.md#L1) — `active`
+- [RAW-137](../codex-raw-137.md#L1) — `active`
+- [RAW-138](../codex-raw-138.md#L1) — `active`
+- [RAW-139](../codex-raw-139.md#L1) — `active`
+- [RAW-140](../codex-raw-140.md#L1) — `active`
+- [RAW-141](../codex-raw-141.md#L1) — `active`
+- [RAW-142](../codex-raw-142.md#L1) — `active`
+- [RAW-143](../codex-raw-143.md#L1) — `active`
+- [RAW-144](../codex-raw-144.md#L1) — `active`
+- [RAW-145](../codex-raw-145.md#L1) — `active`
+- [RAW-146](../codex-raw-146.md#L1) — `active`
+- [RAW-147](../codex-raw-147.md#L1) — `active`
+- [RAW-148](../codex-raw-148.md#L1) — `active`
+- [RAW-149](../codex-raw-149.md#L1) — `active`
+- [RAW-150](../codex-raw-150.md#L1) — `active`
+- [RAW-151](../codex-raw-151.md#L1) — `active`
+- [RAW-152](../codex-raw-152.md#L1) — `active`
+- [RAW-153](../codex-raw-153.md#L1) — `active`
+- [RAW-154](../codex-raw-154.md#L1) — `active`
+- [RAW-155](../codex-raw-155.md#L1) — `active`
+- [RAW-156](../codex-raw-156.md#L1) — `superseded`
+- [RAW-157](../codex-raw-157.md#L1) — `active`
+- [RAW-158](../codex-raw-158.md#L1) — `active`
+- [RAW-159](../codex-raw-159.md#L1) — `active`
+- [RAW-160](../codex-raw-160.md#L1) — `active`
+- [RAW-161](../codex-raw-161.md#L1) — `active`
+
+## Related Requirements
+
+- 无。跨域引用在叶子的 `relations` 字段登记。
+
+## Historical Or Migration Sources
+
+- [Historical Consolidated Map Through RAW-034](../../260718/1148-codex-quota-float/raw-requirement.md#L1) 保留早期合并记录，不进入自动路由。

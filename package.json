@@ -23,6 +23,7 @@
     "probe:claude-unread-key": "node scripts/probe-claude-unread-key-runtime.mjs",
     "probe:runtime-diagnostics": "node scripts/probe-eypc-diagnostics-runtime.mjs",
     "validate:error-memory": "node scripts/validate-error-memory.mjs",
+    "validate:requirements": "node scripts/validate-requirements.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 4174"
   },
   "dependencies": {
