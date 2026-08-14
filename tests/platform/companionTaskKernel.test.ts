@@ -2220,12 +2220,16 @@ describe('phase sets and lane units stay single-owner', () => {
   // it inline means changing the rule is a search, and a missed site disagrees
   // with its siblings silently.
   it('states each phase set once as a named predicate', () => {
+    // The definitions moved to preload/task-phase.cjs when the claude group and
+    // the entry needed them too; the Kernel now consumes the same owner rather
+    // than being it.
+    const phaseSource = readFileSync(resolve(process.cwd(), 'preload/task-phase.cjs'), 'utf8')
     const predicates = ['isLiveTaskPhase', 'isTerminalTaskPhase', 'isAttentionTaskPhase', 'isRetainableTaskPhase']
-    for (const predicate of predicates) expect(kernelSource).toContain(`function ${predicate}(phase)`)
-    // Assert against the body outside those definitions: the definitions are
-    // where the sets are allowed to be spelled out, and `PHASES` is the phase
-    // vocabulary itself rather than a membership test.
-    const callSites = kernelSource.replace(/function is\w+TaskPhase\(phase\) \{[\s\S]*?\n\}/g, '')
+    for (const predicate of predicates) expect(phaseSource).toContain(`function ${predicate}(phase)`)
+    for (const predicate of predicates) expect(kernelSource).toContain(predicate)
+    // Assert against the Kernel body: it may call the predicates but never
+    // respell their sets.
+    const callSites = kernelSource
     expect(callSites).not.toMatch(/\['running', 'waiting-input'[^\]]*\]\.includes\(/)
     expect(callSites).not.toMatch(/\.phase === 'waiting-input'/)
     expect(callSites).not.toMatch(/=== 'completed' \|\| \w+(\.\w+)* === 'stopped'/)
@@ -2257,6 +2261,56 @@ describe('phase sets and lane units stay single-owner', () => {
     const provider = readFileSync(resolve(process.cwd(), 'src/domain/companionProvider.ts'), 'utf8')
     expect(provider).toContain('export function isCompanionAttentionState(')
     expect(provider).toContain('export function isCompanionLivePhase(')
+  })
+
+  // The preload side of the same rule. `preload/task-phase.cjs` owns the phase
+  // vocabulary and its groupings; every other preload file asks it. A guard is
+  // what keeps that true — the previous convergence was undone once already by
+  // new inline literals arriving in files nobody thought to re-check.
+  it('states the task phase vocabulary and its groupings exactly once in preload', () => {
+    const owner = readFileSync(resolve(process.cwd(), 'preload/task-phase.cjs'), 'utf8')
+    expect(owner).toContain('const TASK_PHASES = Object.freeze(')
+    for (const predicate of ['isKnownTaskPhase', 'isLiveTaskPhase', 'isTerminalTaskPhase', 'isAttentionTaskPhase', 'isRetainableTaskPhase', 'isSettledTaskPhase']) {
+      expect(owner, predicate).toContain(`function ${predicate}(phase) {`)
+    }
+    const consumers = [
+      'preload/index.js',
+      'preload/companion/task-kernel.cjs',
+      'preload/companion/branch-causality.cjs',
+      'preload/claude/code-sessions.cjs',
+      'preload/claude/app-state.cjs',
+      'preload/claude/events.cjs',
+      'preload/claude/archive.cjs'
+    ]
+    for (const file of consumers) {
+      const source = readFileSync(resolve(process.cwd(), file), 'utf8')
+      // The vocabulary, "live" and "settled" as inline literals.
+      expect(source, file).not.toMatch(/'running', 'waiting-input', 'waiting-approval', 'completed', 'stopped', 'unknown'/)
+      expect(source, file).not.toMatch(/\['running', 'waiting-(input|approval)', 'waiting-(input|approval)'\]/)
+      expect(source, file).not.toMatch(/\['waiting-input', 'stopped', 'completed'\]/)
+      expect(source, file).not.toMatch(/function is(Known|Live|Terminal|Attention|Retainable|Settled)TaskPhase\(/)
+    }
+  })
+
+  // Two runtimes, one product rule. The bridge cannot share a module across
+  // CJS preload and TS renderer, so the guard is that both spell the same
+  // membership — a phase added to one side alone would silently fall into the
+  // other side's else-branch.
+  it('keeps the renderer and preload live-phase predicates in step', () => {
+    const owner = readFileSync(resolve(process.cwd(), 'preload/task-phase.cjs'), 'utf8')
+    const provider = readFileSync(resolve(process.cwd(), 'src/domain/companionProvider.ts'), 'utf8')
+    const members = (source: string, name: string) => {
+      const at = source.indexOf(name)
+      expect(at, name).toBeGreaterThan(-1)
+      const body = source.slice(at, source.indexOf('}', at))
+      return [...body.matchAll(/'(running|waiting-input|waiting-approval|completed|stopped|unknown)'/g)].map((m) => m[1]).sort()
+    }
+    expect(members(owner, 'function isAttentionTaskPhase(')).toEqual(members(provider, 'export function isCompanionAttentionState('))
+    // The renderer composes live from attention; the preload owner spells it
+    // out. Comparing the difference keeps the composition honest either way.
+    expect(members(owner, 'function isLiveTaskPhase(')).toEqual(['running', 'waiting-approval', 'waiting-input'])
+    expect(members(provider, 'export function isCompanionLivePhase(')).toEqual(['running'])
+    expect(provider).toContain("return value === 'running' || isCompanionAttentionState(value)")
   })
 
   it('states the supported Claude App versions exactly once', () => {

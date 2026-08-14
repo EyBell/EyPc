@@ -14,6 +14,7 @@ const CLAUDE_CODE_READER_REVISION = 'claude-code-sessions-v3'
 const DEFAULT_CODE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 const CODE_METADATA_MAX_BYTES = 1024 * 1024
 const { WATCHER_RECOVERY_INTERVAL_MS } = require('../timing-policy.cjs')
+const { isLiveTaskPhase } = require('../task-phase.cjs')
 const CODE_RECOVERY_POLL_MS = WATCHER_RECOVERY_INTERVAL_MS
 const METADATA_FILE_PATTERN = /^local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/i
 const LOCAL_SESSION_PATTERN = /^local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -200,7 +201,7 @@ function terminalEvidenceAt(entry) {
 function selectProjectedStateSource(exactApp, hook, correlation, historyAt) {
   const appAt = stateEvidenceAt(exactApp)
   const hookAt = stateEvidenceAt(hook)
-  const livePhase = (entry) => Boolean(entry && ['running', 'waiting-approval', 'waiting-input'].includes(entry.phase))
+  const livePhase = (entry) => Boolean(entry && isLiveTaskPhase(entry.phase))
   // Metadata activity time is a proxy for "a turn completed", not proof of one.
   // It may retire a phase we only replayed or inferred, but a live App append —
   // an outstanding permission request in particular — is a directly observed

@@ -28,6 +28,7 @@ const SUPPORTED_APP_VERSIONS = new Set([SUPPORTED_APP_VERSION, '1.28929.0'])
 const LOG_FILE_NAMES = ['main1.log', 'main.log']
 const LOG_TAIL_MAX_BYTES = 16 * 1024 * 1024
 const { WATCHER_RECOVERY_INTERVAL_MS } = require('../timing-policy.cjs')
+const { isLiveTaskPhase } = require('../task-phase.cjs')
 const LOG_RECOVERY_POLL_MS = WATCHER_RECOVERY_INTERVAL_MS
 const MAX_SEEN_EVENTS = 4096
 const MAX_HOT_UNREAD_HINTS = 500
@@ -447,7 +448,7 @@ function createAppStateReader(dependencies) {
     requests = folded.requests
     if (!liveAppend) {
       for (const [sessionId, entry] of state) {
-        if (!['running', 'waiting-input', 'waiting-approval'].includes(entry.phase)) continue
+        if (!isLiveTaskPhase(entry.phase)) continue
         state.set(sessionId, {
           ...entry,
           phase: 'unknown',

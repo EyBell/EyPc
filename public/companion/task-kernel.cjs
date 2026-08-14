@@ -3,6 +3,15 @@
 const { createCompanionNavigation } = require('./navigation.cjs')
 const { createCompanionTaskActions } = require('./task-actions.cjs')
 const { finiteInteger, phaseEvidenceSupersedes, mergeEvidenceLanes } = require('./branch-causality.cjs')
+const {
+  TASK_PHASES,
+  isKnownTaskPhase,
+  isLiveTaskPhase,
+  isTerminalTaskPhase,
+  isAttentionTaskPhase,
+  isRetainableTaskPhase,
+  isSettledTaskPhase
+} = require('../task-phase.cjs')
 
 const COMPANION_TASK_KERNEL_REVISION = 'companion-task-kernel-v4'
 const COMPANION_TASK_PACKAGE_REVISION = 'companion-task-package-v4'
@@ -12,7 +21,6 @@ const PREFLIGHT_TIMEOUT_MS = 5_000
 const UNKNOWN_GRACE_MS = 250
 const MAX_TIMER_DELAY_MS = 2_147_483_647
 const PROVIDERS = ['codex', 'claude']
-const PHASES = ['running', 'waiting-input', 'waiting-approval', 'completed', 'stopped', 'unknown']
 const TIERS = ['attention', 'plan', 'active', 'fallback', 'none']
 const GROUPS = ['input', 'active', 'stopped', 'unread', 'completed', 'none']
 const DRAFT_PRODUCERS = ['renderer', 'host-preflight', 'host-evidence']
@@ -56,7 +64,7 @@ function reduceCodexTaskEvidenceV4(value = {}) {
   const activeCurrent = liveActive && !terminalStrictlyNewer
   const waitingCurrent = liveActive && (waitingApproval || waitingInput)
     && (!activeSequence || !terminalSequence || activeSequence >= terminalSequence)
-  const prior = PHASES.includes(value.previousPhase) ? value.previousPhase : 'unknown'
+  const prior = isKnownTaskPhase(value.previousPhase) ? value.previousPhase : 'unknown'
   const details = {
     providerStatus: value.status,
     statusAuthority: value.statusAuthority,
@@ -264,9 +272,9 @@ function reduceCodexParentBranchEvidenceV4(value = {}) {
   // below (live/waiting > unread completion > read completion), never by a
   // main-branch admission gate.
   const selectedBranches = branches
-  const priorCandidate = PHASES.includes(value.previousNonterminalPhase)
+  const priorCandidate = isKnownTaskPhase(value.previousNonterminalPhase)
     ? value.previousNonterminalPhase
-    : PHASES.includes(value.previousPhase) ? value.previousPhase : 'unknown'
+    : isKnownTaskPhase(value.previousPhase) ? value.previousPhase : 'unknown'
   const previousNonterminalPhase = isRetainableTaskPhase(priorCandidate)
     ? priorCandidate
     : ''
@@ -390,7 +398,7 @@ const reduceCodexTaskEvidenceV3 = reduceCodexTaskEvidenceV4
 /** Provider-neutral Claude phase reducer. Adapters supply native phase and
  * unread evidence; Host and Renderer consumers must not recreate this rule. */
 function reduceClaudeTaskEvidenceV4(value = {}) {
-  const sourcePhase = PHASES.includes(value.phase) ? value.phase : 'unknown'
+  const sourcePhase = isKnownTaskPhase(value.phase) ? value.phase : 'unknown'
   if (isLiveTaskPhase(sourcePhase)) {
     return {
       phase: sourcePhase,
@@ -461,28 +469,6 @@ const PROVIDER_TRAITS = Object.freeze({
 
 function providerTraits(provider) {
   return PROVIDER_TRAITS[provider] || PROVIDER_TRAITS.codex
-}
-
-function isLiveTaskPhase(phase) {
-  return phase === 'running' || phase === 'waiting-input' || phase === 'waiting-approval'
-}
-
-function isTerminalTaskPhase(phase) {
-  return phase === 'completed' || phase === 'stopped'
-}
-
-/**
- * Waiting on the user. `waiting-approval` and `waiting-input` are separate
- * phases but one product group — PRD puts both under 「待输入」 — so the split
- * matters for attention ordering and never for grouping or counting.
- */
-function isAttentionTaskPhase(phase) {
-  return phase === 'waiting-input' || phase === 'waiting-approval'
-}
-
-/** Live phases plus `stopped`: everything a newer observation may still move. */
-function isRetainableTaskPhase(phase) {
-  return isLiveTaskPhase(phase) || phase === 'stopped'
 }
 
 /**
@@ -565,7 +551,7 @@ function normalizeTask(value, enabledProviders) {
   const provider = PROVIDERS.includes(value.provider) ? value.provider : ''
   const key = typeof value.key === 'string' ? value.key : ''
   const kind = value.kind === 'claude-session' || value.kind === 'codex-thread' || value.kind === 'local-pin' ? value.kind : ''
-  const phase = PHASES.includes(value.phase) ? value.phase : 'unknown'
+  const phase = isKnownTaskPhase(value.phase) ? value.phase : 'unknown'
   const actionAlias = typeof value.actionAlias === 'string' ? value.actionAlias : ''
   const revisionAt = finiteInteger(value.revisionAt)
   if (!provider || !enabledProviders.has(provider) || !key || key.length > 256 || !kind || !revisionAt) return null
@@ -735,7 +721,7 @@ function finalizeTask(task) {
   // performs an exact latest-Turn/activity/request preflight before execution.
   const planActionable = providerTraits(next.provider).planLifecycle
     && next.planReady
-    && ['waiting-input', 'stopped', 'completed'].includes(next.phase)
+    && isSettledTaskPhase(next.phase)
   next.capabilities = {
     ...next.capabilities,
     pause: planActionable && !next.paused,
@@ -1033,7 +1019,7 @@ function createCompanionTaskKernel(dependencies = {}) {
           }
         : {})
     }
-    if (decision.outcome === 'abstain' || !PHASES.includes(decision.phase)) {
+    if (decision.outcome === 'abstain' || !isKnownTaskPhase(decision.phase)) {
       return next
     }
     const phaseChanged = decision.phase !== task.phase
@@ -2213,6 +2199,9 @@ function createCompanionTaskKernel(dependencies = {}) {
 
 module.exports = {
   COMPANION_TASK_KERNEL_REVISION,
+  TASK_PHASES,
+  isKnownTaskPhase,
+  isSettledTaskPhase,
   COMPANION_TASK_PACKAGE_REVISION,
   PREFLIGHT_PROGRESS_MS,
   PREFLIGHT_TIMEOUT_MS,
