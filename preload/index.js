@@ -13816,12 +13816,20 @@ function recordCodexActionRestartFailure(input, result) {
   pushCodexActionRunnerSnapshot(run.message)
 }
 
+// Same membership as `isCodexActionStartAccepted` in
+// src/domain/codexEnvironment.ts, which owns the meaning; a CJS preload cannot
+// import a TS module, so a test holds the two sets in step. Not
+// `outcome !== 'failed'` — `confirm-required` and `rejected` start nothing.
+function codexActionStartAccepted(outcome) {
+  return outcome === 'ok' || outcome === 'started' || outcome === 'running' || outcome === 'stopping'
+}
+
 async function restartCodexEnvironmentActionAfterExit(input) {
   if (codexEnvironmentShuttingDown) return
   const previousRunIds = new Set(codexActionRunMemorySnapshot().map((run) => run.runId))
   const result = await runCodexProjectEnvironmentAction(input)
   const created = codexActionRunMemorySnapshot().some((run) => !previousRunIds.has(run.runId))
-  if (!created && !['ok', 'started', 'running', 'stopping'].includes(result?.outcome)) recordCodexActionRestartFailure(input, result)
+  if (!created && !codexActionStartAccepted(result?.outcome)) recordCodexActionRestartFailure(input, result)
 }
 
 function finishCodexActionRun(run, status, exitCode, message) {

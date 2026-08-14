@@ -75,6 +75,20 @@ export interface CodexEnvironmentActionRunResult {
   session?: CodexEnvironmentActionSessionProjection | null
 }
 
+/**
+ * Which outcomes mean the Action actually started.
+ *
+ * Deliberately not `outcome !== 'failed'`: `confirm-required` and `rejected`
+ * are ordinary, non-error answers that nonetheless started nothing. The host
+ * asks the same question when deciding whether a post-exit restart failed, and
+ * a divergence would have one side counting a run the other side does not —
+ * `preload/index.js` states the same membership, held in step by a test,
+ * because a CJS preload and a TS renderer cannot share a module.
+ */
+export function isCodexActionStartAccepted(outcome: string | null | undefined): boolean {
+  return outcome === 'ok' || outcome === 'started' || outcome === 'running' || outcome === 'stopping'
+}
+
 export interface CodexEnvironmentActionSlot {
   index: number
   action: CodexEnvironmentActionProjection | null
