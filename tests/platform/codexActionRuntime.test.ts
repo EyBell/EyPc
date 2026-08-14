@@ -85,6 +85,10 @@ function loadApi(home: string): ActionRuntimeTestApi {
     require(name: string) {
       if (name === 'electron') return { ipcRenderer: { on() {} } }
       if (name === 'node:os') return { ...nodeRequire('node:os'), homedir: () => home }
+      // The entry loads its own module groups by relative path. This shim
+      // stands in for the module system, so it has to resolve those the way
+      // the real one does — from `preload/`, not from this test file.
+      if (name.startsWith('.')) return nodeRequire(resolve(process.cwd(), 'preload', name))
       return nodeRequire(name)
     }
   }
