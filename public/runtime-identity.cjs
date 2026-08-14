@@ -2,8 +2,8 @@
 
 module.exports = Object.freeze({
   "revision": "runtime-identity-v1",
-  "hostAssetId": "host-cbcb913ae8d274965632",
-  "rendererAssetId": "renderer-4012e0ef4e137aec536c",
+  "hostAssetId": "host-7196444eac4d25d0f646",
+  "rendererAssetId": "renderer-ac2c286ec2bca9000c71",
   "kernelRevision": "companion-task-kernel-v4",
   "taskPackageRevision": "companion-task-package-v4",
   "artifactState": "artifact-ready"

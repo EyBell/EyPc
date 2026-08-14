@@ -205,11 +205,13 @@ function loadApi(home: string): ActionRuntimeTestApi {
         insert.run('expired', 'lane', 'project', 'Project', 'env', 'Environment', 'build', 'Build', 'normal', 'completed', Date.now() - 31 * 24 * 60 * 60_000)
         insert.run('fresh', 'lane', 'project', 'Project', 'env', 'Environment', 'build', 'Build', 'normal', 'completed', Date.now())
         database.close()
-        codexActionRunDatabase = null
-        codexActionRunDatabaseReady = false
-        codexActionRunMemory = []
+        // The handle, its ready flag and the run memory moved into
+        // preload/codex/run-database.cjs under RAW-169. Resetting through the
+        // named operation exercises the same path production uses instead of
+        // reaching for bindings the entry no longer owns.
+        codexRunDatabase.closeCodexActionRunDatabase()
         ensureCodexActionRunDatabase()
-        return codexActionRunMemory.map((run) => run.runId)
+        return codexActionRunMemorySnapshot().map((run) => run.runId)
       }
     }
   `, sandbox, { filename: 'preload.js' })
