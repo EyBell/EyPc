@@ -28,6 +28,7 @@ Link-only route for general data contracts、testing、type narrowing、document
 - [Host environment leaks into test fixture](../host-environment-leak-into-test-fixture.md#L1)
 - [MQTT focus recovery case times out](../mqtt-focus-recovery-case-times-out.md#L1)
 - [Impact matrix misses source-text assertions](../impact-matrix-misses-source-text-assertions.md#L1)
+- [Test slice anchor collapses instead of failing](../test-slice-anchor-collapses-instead-of-failing.md#L1)
 - [One mechanism silently covering another's job](../one-mechanism-silently-covering-anothers-job.md#L1)
 - [Prefix-based domain analysis undercounts](../prefix-based-domain-analysis-undercounts.md#L1)
 - [Parallel session batch commit splits in-flight work](../parallel-session-batch-commit-splits-in-flight-work.md#L1)

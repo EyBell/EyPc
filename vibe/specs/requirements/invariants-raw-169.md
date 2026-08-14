@@ -103,6 +103,24 @@ diff 核对确认只有 7 处预期改动：两个字面量提为具名常量（
 
 **迁移状态时，直接改写该状态的测试夹具属于同一次改动的一部分。** 只搜函数名找不到它们。
 
+## 2026-08-14 第七块：Environment Action 授权边界
+
+`preload/codex/action-authorization.cjs`（103 行）承接命令保险库与确认令牌。入口 14,802 → **14,797**。
+
+**两个机制是同一条边界。** 渲染层只给 id 不给命令，宿主从自己读取环境文件建立的保险库里取；确认令牌把一次执行绑定到 `(target, environment, action, 环境文件指纹, 命令指纹)` 元组并限时 30 秒。合起来回答同一个问题：**这个动作现在是否被授权。** 分开看是两个 Map，合起来才是一条边界。
+
+价值在边界不在体量，与 `command-validation.cjs` 同类：独立后可直接施加重放、过期、跨动作替换与确认后改文件，无需搭起整个 preload 沙箱。已独立验证 14 项全过。加载失败时 `findCodexEnvironmentCommand` 返回 `undefined` → `action-missing`，令牌签发返回空串 → 永远读作未确认，两条路径都 fail-closed。
+
+### 抽取暴露了测试自身的一处静默塌陷
+
+runner bridge 用例按 `indexOf(锚点)` 划出监管区再断言，而锚点常量本轮迁走。`indexOf` 返回 `-1` 使 `slice` 把整片区域塌成一个字符，**八条断言同时对着无关文本失败**——失败数量与真实缺陷数量脱钩。改为锚点失配直接抛出具名错误，并改锚到语义属于该区域的 `CODEX_ACTION_HOST_RUNTIME_REVISION`。耐久记录：[test-slice-anchor-collapses-instead-of-failing](../../knowledge/error-memory/test-slice-anchor-collapses-instead-of-failing.md#L1)。
+
+同轮 runtime 夹具原先直接 `set` 那两个 Map，改为经边界播种并回答「该动作是否仍被授权」——比数 Map 大小更强。**这是第六块记录的同一条：迁移状态时，直接改写该状态的测试夹具属于同一次改动。**
+
 ### 剩余
 
-`actions` 域尚余 `installCodexActionRunnerIpc`（343 行）、`runCodexProjectEnvironmentAction`（253 行）与窗口生命周期。前者落在 `EYPC-UTOOLS-HOST-001` 入口冻结管辖范围，需先确认 IPC 装配可否离开入口。
+`actions` 域尚余 `runCodexProjectEnvironmentAction`（252 行，27 处外部调用）与 `installCodexActionRunnerIpc`（343 行）。
+
+前者实测**不可直接抽出**：注入 17 个协作者不是边界，是参数表。其协作者自然聚成两簇——运行生命周期（`createCodexActionRun` / `appendCodexActionRunLog` / `finishCodexActionRun` / `pushCodexActionRunnerSnapshot`，89 行 / 18 处外部调用）与会话登记（`codexEnvironmentSessionKey` / `sanitizeCodexEnvironmentSession` / `signalCodexEnvironmentSession` / `stopCodexEnvironmentActionSession` / `restartCodexEnvironmentActionAfterExit`，72 行 / 12 处外部调用）。两簇彼此互调，须一并考虑，且它们与该函数是**真正的循环依赖**：会话登记调用 `runCodexProjectEnvironmentAction` 做重启。
+
+后者落在 `EYPC-UTOOLS-HOST-001` 入口冻结管辖范围，需先确认 IPC 装配可否离开入口。
