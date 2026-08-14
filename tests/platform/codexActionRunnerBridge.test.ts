@@ -4,10 +4,15 @@ import { describe, expect, it } from 'vitest'
 
 describe('Codex Action Runner host bridge contract', () => {
   const source = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
+  // Node runtime discovery moved into its own module under RAW-169. These are
+  // security assertions about the launch path, so they follow the code rather
+  // than being relaxed: the absolute-path guard must exist somewhere in the
+  // supervisor's reachable source, wherever that source now lives.
+  const nodeRuntime = readFileSync(resolve(process.cwd(), 'preload/codex/node-runtime.cjs'), 'utf8')
   const supervisor = source.slice(
     source.indexOf('const CODEX_ENV_ACTION_CONFIRM_TTL_MS'),
     source.indexOf('window.eypcPlatform =')
-  )
+  ) + nodeRuntime
 
   it('uses one registered Environment root for configuration and preserves exact task execution cwd', () => {
     expect(supervisor).toContain("fs.statSync(path.join(root, '.codex', 'environments')).isDirectory()")

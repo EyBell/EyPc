@@ -16,6 +16,11 @@ export const UTOOLS_PRELOAD_ASSETS = Object.freeze([
  */
 export const UTOOLS_PRELOAD_MODULE_GROUPS = Object.freeze([
   {
+    id: 'codex',
+    directory: 'codex',
+    files: ['node-runtime.cjs']
+  },
+  {
     id: 'companion',
     directory: 'companion',
     files: ['branch-causality.cjs', 'navigation.cjs', 'task-actions.cjs', 'task-kernel.cjs']
