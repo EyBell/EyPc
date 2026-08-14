@@ -2313,6 +2313,24 @@ describe('phase sets and lane units stay single-owner', () => {
     expect(provider).toContain("return value === 'running' || isCompanionAttentionState(value)")
   })
 
+  // "Did the Action start?" is asked on both sides of the bridge — the renderer
+  // to report the outcome, the host to decide whether a post-exit restart
+  // failed. Same CJS/TS split, same remedy.
+  it('keeps the renderer and preload Action start predicates in step', () => {
+    const domain = readFileSync(resolve(process.cwd(), 'src/domain/codexEnvironment.ts'), 'utf8')
+    const controller = readFileSync(resolve(process.cwd(), 'src/runtime/codexController.ts'), 'utf8')
+    const outcomes = (source: string, name: string) => {
+      const at = source.indexOf(name)
+      expect(at, name).toBeGreaterThan(-1)
+      const body = source.slice(at, source.indexOf('}', at))
+      return [...body.matchAll(/'(ok|started|running|stopping|confirm-required|rejected|failed)'/g)].map((m) => m[1]).sort()
+    }
+    expect(outcomes(domain, 'export function isCodexActionStartAccepted(')).toEqual(outcomes(hostSource, 'function codexActionStartAccepted('))
+    for (const [file, source] of [['preload/index.js', hostSource], ['src/runtime/codexController.ts', controller]] as const) {
+      expect(source, file).not.toMatch(/\['ok', 'started', 'running', 'stopping'\]/)
+    }
+  })
+
   it('states the supported Claude App versions exactly once', () => {
     const appState = readFileSync(resolve(process.cwd(), 'preload/claude/app-state.cjs'), 'utf8')
     const archive = readFileSync(resolve(process.cwd(), 'preload/claude/archive.cjs'), 'utf8')

@@ -66,7 +66,7 @@ import {
   type ClaudeCodeUnreadObservation
 } from '../domain/claudeCode'
 import { normalizeCodexModelCatalog } from '../domain/codexNewThread'
-import { CODEX_ACTION_HOST_RUNTIME_REVISION } from '../domain/codexEnvironment'
+import { CODEX_ACTION_HOST_RUNTIME_REVISION, isCodexActionStartAccepted } from '../domain/codexEnvironment'
 import {
   buildCodexTaskStatePackage,
   CODEX_TASK_STATE_DEGRADED_MESSAGE,
@@ -3026,7 +3026,7 @@ export function createCodexController(options: CodexControllerOptions) {
       composeActionRunnerCatalog(laneId)
     }
     setActionRunnerMessage(result?.message || `${target.actionName} 执行失败`, laneId)
-    return ['ok', 'started', 'running', 'stopping'].includes(result?.outcome || '')
+    return isCodexActionStartAccepted(result?.outcome)
   }
 
   async function stopActionRunnerLane(laneId: string) {
