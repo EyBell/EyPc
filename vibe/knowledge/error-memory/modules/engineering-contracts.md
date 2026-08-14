@@ -26,6 +26,7 @@ Link-only route for general data contracts、testing、type narrowing、document
 - [Guard field no producer ever sets](../guard-field-no-producer-ever-sets.md#L1)
 - [Hook injection mistaken for repository discovery](../hook-injection-mistaken-for-repo-discovery.md#L1)
 - [Host environment leaks into test fixture](../host-environment-leak-into-test-fixture.md#L1)
+- [MQTT focus recovery case times out](../mqtt-focus-recovery-case-times-out.md#L1)
 - [Impact matrix misses source-text assertions](../impact-matrix-misses-source-text-assertions.md#L1)
 - [One mechanism silently covering another's job](../one-mechanism-silently-covering-anothers-job.md#L1)
 - [Prefix-based domain analysis undercounts](../prefix-based-domain-analysis-undercounts.md#L1)

@@ -11,8 +11,7 @@
 const { LOCAL_SESSION_PATTERN } = require('./code-sessions.cjs')
 
 const CLAUDE_ARCHIVE_REVISION = 'claude-metadata-archive-v2'
-const SUPPORTED_APP_VERSION = '1.26832.0'
-const SUPPORTED_APP_VERSIONS = new Set([SUPPORTED_APP_VERSION, '1.28929.0'])
+const { SUPPORTED_APP_VERSION, SUPPORTED_APP_VERSIONS } = require('./app-state.cjs')
 
 function normalizedSessionId(value) {
   const sessionId = typeof value === 'string' ? value.trim().toLowerCase() : ''
