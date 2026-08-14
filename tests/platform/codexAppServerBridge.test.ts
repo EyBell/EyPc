@@ -829,6 +829,11 @@ function loadCodexBridge(
       if (name === 'node:path') return pathModule
       if (name === 'node:os') return { homedir: () => '/tmp' }
       if (name === 'electron') return { ipcRenderer, ...(useElectronShell ? { shell: { openExternal } } : {}) }
+      // The entry loads its own module groups by relative path; this shim stands
+      // in for the module system, so it resolves those from `preload/` the way
+      // the real one does. Naming each module here would mean every future
+      // extraction breaks the run before anyone notices.
+      if (name.startsWith('.')) return nodeRequire(resolve(process.cwd(), 'preload', name))
       throw new Error(`unexpected require: ${name}`)
     }
   }
@@ -7550,6 +7555,11 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:path') return pathModule
         if (name === 'node:os') return { homedir: () => '/tmp' }
         if (name === 'electron') return { ipcRenderer: { on() {} }, shell: { openExternal } }
+        // The entry loads its own module groups by relative path; this shim stands
+        // in for the module system, so it resolves those from `preload/` the way
+        // the real one does. Naming each module here would mean every future
+        // extraction breaks the run before anyone notices.
+        if (name.startsWith('.')) return nodeRequire(resolve(process.cwd(), 'preload', name))
         throw new Error(`unexpected require: ${name}`)
       }
     }
@@ -7976,6 +7986,11 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:path') return pathModule
         if (name === 'node:os') return { homedir: () => '/tmp' }
         if (name === 'electron') return { ipcRenderer: { on() {} } }
+        // The entry loads its own module groups by relative path; this shim stands
+        // in for the module system, so it resolves those from `preload/` the way
+        // the real one does. Naming each module here would mean every future
+        // extraction breaks the run before anyone notices.
+        if (name.startsWith('.')) return nodeRequire(resolve(process.cwd(), 'preload', name))
         throw new Error(`unexpected require: ${name}`)
       }
     }
@@ -8026,6 +8041,11 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:path') return pathModule
         if (name === 'node:os') return { homedir: () => '/tmp' }
         if (name === 'electron') return { ipcRenderer: { on() {} } }
+        // The entry loads its own module groups by relative path; this shim stands
+        // in for the module system, so it resolves those from `preload/` the way
+        // the real one does. Naming each module here would mean every future
+        // extraction breaks the run before anyone notices.
+        if (name.startsWith('.')) return nodeRequire(resolve(process.cwd(), 'preload', name))
         throw new Error(`unexpected require: ${name}`)
       }
     }
@@ -8076,6 +8096,11 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:path') return pathModule
         if (name === 'node:os') return { homedir: () => '/tmp' }
         if (name === 'electron') return { ipcRenderer: { on() {} } }
+        // The entry loads its own module groups by relative path; this shim stands
+        // in for the module system, so it resolves those from `preload/` the way
+        // the real one does. Naming each module here would mean every future
+        // extraction breaks the run before anyone notices.
+        if (name.startsWith('.')) return nodeRequire(resolve(process.cwd(), 'preload', name))
         throw new Error(`unexpected require: ${name}`)
       }
     }
@@ -8116,6 +8141,11 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:path') return pathModule
         if (name === 'node:os') return { homedir: () => '/tmp' }
         if (name === 'electron') return { ipcRenderer: { on() {} } }
+        // The entry loads its own module groups by relative path; this shim stands
+        // in for the module system, so it resolves those from `preload/` the way
+        // the real one does. Naming each module here would mean every future
+        // extraction breaks the run before anyone notices.
+        if (name.startsWith('.')) return nodeRequire(resolve(process.cwd(), 'preload', name))
         throw new Error(`unexpected require: ${name}`)
       }
     }
@@ -8151,6 +8181,11 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:path') return pathModule
         if (name === 'node:os') return { homedir: () => '/tmp' }
         if (name === 'electron') return { ipcRenderer: { on() {} } }
+        // The entry loads its own module groups by relative path; this shim stands
+        // in for the module system, so it resolves those from `preload/` the way
+        // the real one does. Naming each module here would mean every future
+        // extraction breaks the run before anyone notices.
+        if (name.startsWith('.')) return nodeRequire(resolve(process.cwd(), 'preload', name))
         throw new Error(`unexpected require: ${name}`)
       }
     }
@@ -8219,6 +8254,11 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:path') return pathModule
         if (name === 'node:os') return { homedir: () => home }
         if (name === 'electron') return { ipcRenderer: { on() {} } }
+        // The entry loads its own module groups by relative path; this shim stands
+        // in for the module system, so it resolves those from `preload/` the way
+        // the real one does. Naming each module here would mean every future
+        // extraction breaks the run before anyone notices.
+        if (name.startsWith('.')) return nodeRequire(resolve(process.cwd(), 'preload', name))
         throw new Error(`unexpected require: ${name}`)
       }
     }
@@ -8269,6 +8309,11 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:path') return pathModule
         if (name === 'node:os') return { homedir: () => home }
         if (name === 'electron') return { ipcRenderer: { on() {} } }
+        // The entry loads its own module groups by relative path; this shim stands
+        // in for the module system, so it resolves those from `preload/` the way
+        // the real one does. Naming each module here would mean every future
+        // extraction breaks the run before anyone notices.
+        if (name.startsWith('.')) return nodeRequire(resolve(process.cwd(), 'preload', name))
         throw new Error(`unexpected require: ${name}`)
       }
     }
@@ -8307,6 +8352,11 @@ describe('Codex App Server preload bridge', () => {
         if (name === 'node:path') return pathModule
         if (name === 'node:os') return { homedir: () => home }
         if (name === 'electron') return { ipcRenderer: { on() {} } }
+        // The entry loads its own module groups by relative path; this shim stands
+        // in for the module system, so it resolves those from `preload/` the way
+        // the real one does. Naming each module here would mean every future
+        // extraction breaks the run before anyone notices.
+        if (name.startsWith('.')) return nodeRequire(resolve(process.cwd(), 'preload', name))
         throw new Error(`unexpected require: ${name}`)
       }
     }

@@ -445,6 +445,55 @@ try {
     codexActionAuthorization = authorizationModule.createCodexActionAuthorization({ crypto })
   }
 } catch { codexActionAuthorization = null }
+
+// Rollout pending-evidence readers. Pure text analysis; the hot value coercers
+// stay in this entry because a load failure must not reach their 300-plus call
+// sites, so they are injected into the module instead.
+let codexRolloutEvidence = null
+try {
+  let rolloutModule = null
+  try {
+    rolloutModule = require('./codex/rollout-evidence.cjs')
+  } catch {}
+  if (!rolloutModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        rolloutModule = require(path.join(base, 'codex', 'rollout-evidence.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof rolloutModule?.createCodexRolloutEvidence === 'function') {
+    codexRolloutEvidence = rolloutModule.createCodexRolloutEvidence({ record: codexRecord, timestampMs: codexTimestampMs })
+  }
+} catch { codexRolloutEvidence = null }
+
+// A failed load leaves every rollout tail unreadable rather than misread: an
+// `unknown` answer makes callers widen the tail and then abstain, which is the
+// same path a genuinely inconclusive tail takes.
+function codexRolloutPendingUserInputStateText(text, initialCorrelations) {
+  return codexRolloutEvidence
+    ? codexRolloutEvidence.codexRolloutPendingUserInputStateText(text, initialCorrelations)
+    : { known: false, pending: false, correlations: new Set(), edge: 'none' }
+}
+
+function codexRolloutHasPendingUserInputText(text) {
+  return codexRolloutEvidence ? codexRolloutEvidence.codexRolloutHasPendingUserInputText(text) : false
+}
+
+function codexRolloutTimestampMs(...values) {
+  return codexRolloutEvidence ? codexRolloutEvidence.codexRolloutTimestampMs(...values) : 0
+}
+
+function codexRolloutPendingPlanStateText(text) {
+  return codexRolloutEvidence
+    ? codexRolloutEvidence.codexRolloutPendingPlanStateText(text)
+    : { known: false, pending: false, planReady: false, planLifecycleRevision: 0, turnMode: 'unknown' }
+}
 const CODEX_ACTION_RUNNER_MIN_WIDTH = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_WIDTH ?? 720
 const CODEX_ACTION_RUNNER_MIN_HEIGHT = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_HEIGHT ?? 420
 
@@ -8049,77 +8098,6 @@ function readCodexDesktopUnreadIds() {
   return new Set(local)
 }
 
-function codexRolloutPendingUserInputStateText(text, initialCorrelations) {
-  const pendingCallIds = new Set(
-    initialCorrelations instanceof Set
-      ? [...initialCorrelations].filter((callId) => typeof callId === 'string' && callId.length <= 200)
-      : []
-  )
-  if (typeof text !== 'string' || !text) {
-    return { known: pendingCallIds.size > 0, pending: pendingCallIds.size > 0, correlations: pendingCallIds, edge: 'none' }
-  }
-  let known = pendingCallIds.size > 0
-  let edge = 'none'
-  for (const line of text.split(/\r?\n/)) {
-    if (!line || line.length > 1_000_000) continue
-    let record
-    try { record = JSON.parse(line) } catch { continue }
-    const source = codexRecord(record)
-    const payload = codexRecord(source.payload)
-    const isUserContinuation = (source.type === 'event_msg' && payload.type === 'user_message')
-      || (source.type === 'response_item' && payload.type === 'message' && payload.role === 'user')
-    if (isUserContinuation) {
-      pendingCallIds.clear()
-      known = true
-      edge = 'resume'
-      continue
-    }
-    if (source.type === 'event_msg' && payload.type === 'task_started') {
-      pendingCallIds.clear()
-      known = true
-      edge = 'resume'
-      continue
-    }
-    if (source.type === 'event_msg' && (payload.type === 'task_complete' || payload.type === 'turn_aborted')) {
-      pendingCallIds.clear()
-      known = true
-      edge = 'terminal'
-      continue
-    }
-    if (source.type !== 'response_item') continue
-    const callId = typeof payload.call_id === 'string' && payload.call_id.length <= 200
-      ? payload.call_id
-      : ''
-    if (!callId) continue
-    if (payload.type === 'function_call' && payload.name === 'request_user_input') {
-      pendingCallIds.add(callId)
-      known = true
-      edge = 'waiting'
-    } else if (payload.type === 'function_call_output') {
-      if (pendingCallIds.has(callId)) edge = 'resume'
-      pendingCallIds.delete(callId)
-      known = true
-    }
-  }
-  return { known, pending: pendingCallIds.size > 0, correlations: pendingCallIds, edge }
-}
-
-function codexRolloutHasPendingUserInputText(text) {
-  return codexRolloutPendingUserInputStateText(text).pending
-}
-
-function codexRolloutTimestampMs(...values) {
-  for (const value of values) {
-    const numeric = codexTimestampMs(value)
-    if (numeric) return numeric
-    if (typeof value === 'string') {
-      const parsed = Date.parse(value)
-      if (Number.isFinite(parsed) && parsed > 0) return parsed
-    }
-  }
-  return 0
-}
-
 function codexRolloutRuntimeStateText(text) {
   const state = {
     known: false,
@@ -8189,62 +8167,6 @@ function codexRolloutRuntimeStateText(text) {
     state.edgeAt = observedAt
   }
   return state
-}
-
-function codexRolloutPendingPlanStateText(text) {
-  if (typeof text !== 'string' || !text) {
-    return { known: false, pending: false, planReady: false, planLifecycleRevision: 0, turnMode: 'unknown' }
-  }
-  let sawDefaultBoundary = false
-  let sawPlanCompletion = false
-  let planReady = false
-  let planLifecycleRevision = 0
-  let turnMode = 'unknown'
-  let currentTurnStartedAt = 0
-  for (const line of text.split(/\r?\n/)) {
-    if (!line || line.length > 1_000_000) continue
-    let record
-    try { record = JSON.parse(line) } catch { continue }
-    const source = codexRecord(record)
-    const payload = codexRecord(source.payload)
-    if (source.type !== 'event_msg') continue
-    if (payload.type === 'task_started') {
-      const mode = String(payload.collaboration_mode_kind || payload.collaborationModeKind || '').toLowerCase()
-      turnMode = mode === 'plan' ? 'plan' : mode === 'default' ? 'default' : 'unknown'
-      currentTurnStartedAt = codexRolloutTimestampMs(source.timestamp, payload.started_at)
-      if (turnMode === 'default') {
-        sawDefaultBoundary = true
-        planReady = false
-        planLifecycleRevision = 0
-      }
-      continue
-    }
-    if (payload.type === 'turn_aborted') {
-      sawDefaultBoundary = true
-      planReady = false
-      planLifecycleRevision = 0
-      turnMode = 'unknown'
-      continue
-    }
-    if (payload.type !== 'item_completed') continue
-    const item = codexRecord(payload.item)
-    if (String(item.type || '').toLowerCase() === 'plan') {
-      sawPlanCompletion = true
-      planReady = true
-      planLifecycleRevision = currentTurnStartedAt
-        || codexRolloutTimestampMs(source.timestamp, payload.completed_at)
-        || planLifecycleRevision
-    }
-  }
-  return {
-    // A Plan-only boundary is insufficient to conclude that an earlier Plan did
-    // not exist; callers progressively widen the tail until one decisive edge.
-    known: sawDefaultBoundary || sawPlanCompletion,
-    pending: planReady,
-    planReady,
-    planLifecycleRevision,
-    turnMode
-  }
 }
 
 function codexPathInside(root, candidate) {
