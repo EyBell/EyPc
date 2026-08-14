@@ -2,7 +2,9 @@
 
 <!-- adaptive-document-index: root-v1 -->
 
-本目录是当前产品需求的**唯一可机检登记**。它不重写历史：每条叶子只引用其来源任务文档，正文仍由该任务的 `raw-requirement.md` 保存。产品当前语义仍由 [PRODUCT_REQUIREMENTS](../PRODUCT_REQUIREMENTS.md#L1) 与当前 Controlled 任务决定，登记提供的是路由、状态与取代关系。
+本目录是当前产品需求的**唯一可机检登记**。它不重写历史：每条叶子只引用其来源任务文档，正文仍由该任务的 `raw-requirement.md` 保存。
+
+与 [PRODUCT_REQUIREMENTS](../PRODUCT_REQUIREMENTS.md#L1) 的分工：那里回答「这个功能现在应该怎样表现」，这里回答「某条条款现在还作数吗、还有哪部分作数、是谁说的」。两者不互相复制正文。
 
 ## 为什么需要它
 

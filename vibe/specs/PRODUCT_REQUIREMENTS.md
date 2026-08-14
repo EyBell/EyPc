@@ -2,11 +2,36 @@
 
 Tool: codex
 
-Requirement version: `2026-08-13.1`
+Requirement version: `2026-08-13.2`
 
 ## Purpose
 
-This file is the current product requirement index for EyPc. Task-level history remains in dated folders under [PROJECT_STATUS.md](PROJECT_STATUS.md#L1); MQTT implementation mapping is maintained in [2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
+本文件是 EyPc **当前产品语义**的权威描述：一个功能现在应该怎样表现。任务级历史仍在 [PROJECT_STATUS.md](PROJECT_STATUS.md#L1) 下的日期目录；MQTT 实现映射在 [2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1)。
+
+## 与需求登记的分工
+
+本文件**不是需求条款的存储**。它曾经承担了一半这个角色——正文点名 32 条 `RAW`，而全仓有 196 条带 id 的条款，覆盖率约 20%。一份看起来是索引、实则只覆盖两成的文档，会让「查过 PRD 没提到」被误读成「没有这条需求」。
+
+分工现已明确：
+
+| 问题 | 去哪里 |
+| --- | --- |
+| 这个功能现在应该怎样表现 | **本文件** |
+| 某条 `RAW-nnn` 现在还作数吗 | [需求登记](requirements/README.md#L1) |
+| 这条里还有哪部分作数 | 登记的 `scoped_relations` |
+| 这条是用户说的还是 AI 转述的 | 登记的 `authority` |
+| 哪些需求还没入册 | [覆盖账](requirements/coverage.md#L1) |
+| 冲突怎么消解的 | [冲突登记](requirements/conflict-register.md#L1) |
+
+正文中出现的 `RAW-nnn` 是**语义出处的引用**，不构成条款清单；条款的完整集合、状态与取代关系由登记回答，并由 `pnpm run validate:requirements` 机检。
+
+| 域 | 登记模块 |
+| --- | --- |
+| Codex Companion | [companion-codex](requirements/modules/companion-codex.md#L1) |
+| Claude Companion | [companion-claude](requirements/modules/companion-claude.md#L1) |
+| 跨 Provider 状态内核 | [companion-shared](requirements/modules/companion-shared.md#L1) |
+| Quick Jump 与交互外壳 | [interaction-shell](requirements/modules/interaction-shell.md#L1) |
+| 文件收藏 | [file-favorites](requirements/modules/file-favorites.md#L1) |
 
 ## Global
 
@@ -66,7 +91,7 @@ Next increment — **approved requirement, not implemented**: [260807/1740-favor
 
 ## Window Jump Workbench
 
-Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-window-jump-workbench/spec.md#L1).
+Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-window-jump-workbench/spec.md#L1). 该任务的条款以无编号形式承载，尚未入册，见 [覆盖账](requirements/coverage.md#L1)。
 
 - Window Jump is a default-disabled feature. Each independently operable real main/root window is the stable identity; browser Tabs and editor pages remain internal mutable state, while bridge-proven real native children are transient exact destinations. Stable slots use exact `PID+CGWindowID/HWND`, may switch only the target display to a session-cached Space, and verify the final root/member. Titles, Tab, position, size, order, display and Space never define identity; there is no title/ordinal/unique-candidate fallback, environment snapshot or background poller.
 - `EyPc 窗口槽 1` through `EyPc 窗口槽 10` are `mainHide` uTools features. Successful jumps activate the target without showing the plugin transit window; the slot route must not add a second generic hide. Missing, ambiguous, unauthorized, or otherwise failed activation opens the windows workbench/settings fallback with an explicit diagnostic.
@@ -110,6 +135,8 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 
 ## Companion 多来源汇总
 
+条款状态与取代关系见 [companion-claude](requirements/modules/companion-claude.md#L1) 与 [companion-shared](requirements/modules/companion-shared.md#L1) 登记。跨任务的**局部**失效尤其只在登记里可见——被取代的条款在它自己任务的文档中仍标着 active，见 [冲突登记](requirements/conflict-register.md#L1)。
+
 - Codex 与 Claude Code 是两个彼此独立的来源，可各自开关，也可同时开启共享同一个水球。默认只开启 Codex，此时插件完全不读取任何 Claude 数据，数据、状态、额度、空态与角标语义保持 Codex-only 兼容；唯一有意的展示差异是 RAW-022 要求任务/项目行即使在单来源模式也保留一个文本化、可访问的 Codex 归属标记。
 - 任务排布与角标以**状态**为准而非来源：待输入、进行中、已完成未读的角标数字是启用来源的合计；任务列表显示顺序不按来源分组。每条任务仍必须以文字、图标和可访问名称显示“归属 Codex/Claude”，并使用来源背景与状态标记正交区分。
 - Claude 当前需求权威为 [Claude Code Companion 权威重置](260807/claude-code-companion-authority-reset/spec.md#L1)，技术选择与严格测试门禁见其 [research](260807/claude-code-companion-authority-reset/research.md#L1)，实现/未验收边界见 [verify](260807/claude-code-companion-authority-reset/verify.md#L1)。代码已按 revision 7 与当前 V4 Kernel 路线落地，真实 Claude App quota 数据权威已通过；完整 uTools 状态/未读/项目筛选矩阵与最终 Fable/reset 渲染同屏仍待通过，因此不得宣称产品验收完成。
@@ -148,7 +175,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 
 ## Codex Companion
 
-Current increment authority and detailed requirement/implementation map: [260718/1148-codex-quota-float/spec.md](260718/1148-codex-quota-float/spec.md#current-requirement-and-implementation-map).
+Current increment authority and detailed requirement/implementation map: [260718/1148-codex-quota-float/spec.md](260718/1148-codex-quota-float/spec.md#current-requirement-and-implementation-map). 条款状态与取代关系见 [companion-codex 登记](requirements/modules/companion-codex.md#L1)。
 
 - Codex is an independently configurable feature Tab. General Settings controls feature enablement; the Codex page owns the 1–365 day inventory window, the `动态` Tab's 1–8760 hour activity filter and quota auto-refresh (`quotaRefreshSeconds`, default 300, integer 1–86400; legacy zero migrates to 300). There is no user-configurable full-inventory period, broad manual refresh or Ctrl+R task refresh. Trusted Provider push is primary; full inventory runs only for cold start, reconnect or an explicit membership gap. Targeted environment detection and Claude task sync remain. The page also owns companion visibility, appearance, readiness, diagnostics and shortcuts; the product title is “额度任务悬浮球” with eyebrow “CODEX · CLAUDE COMPANION”.
 - Runtime diagnostics use the independent `eypc-runtime-diagnostics-v3` plain JSONL Host sink. Installation verification defaults to `{enabled:true, level:debug, userConfigured:false}`；manual error/info/debug/off choices persist. Every call supplies an explicit level. One session/seq/operation/trace timeline records Provider、session-only `h:<hex>` taskRef、before/after state、Turn/watermark/revision、cache、navigation/focus、duration/errorCode and action stages. Files rotate at 8 MB/file、64 MB total、14 days；the sink excludes raw task IDs/paths、prompt/Plan/execute instruction/conversation bodies、commands/argv/tool arguments、stdout/stderr、credentials/tokens、stacks and hidden reasoning. The read-only v2/v3 probe filters session/operation/trace/provider/taskRef/scope/event/level/since/tail and aggregates state changes、no-ops、shortcuts、navigation、archive stages and errors.
