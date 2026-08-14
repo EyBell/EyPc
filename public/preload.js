@@ -363,6 +363,7 @@ try {
       } catch {}
     }
   }
+
   if (typeof logStreamModule?.createCodexActionLogStream === 'function') {
     codexLogStream = logStreamModule.createCodexActionLogStream({
       redact: (text, privatePaths) => sanitizeCodexActionLogText(text, privatePaths),
@@ -376,6 +377,38 @@ try {
     })
   }
 } catch { codexLogStream = null }
+
+// Action run history. Owns the database handle, its ready flag and the run
+// memory that used to be three module-level bindings written from seven places.
+let codexRunDatabase = null
+try {
+  let runDatabaseModule = null
+  try {
+    runDatabaseModule = require('./codex/run-database.cjs')
+  } catch {}
+  if (!runDatabaseModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      process.cwd(),
+      path.join(process.cwd(), 'preload'),
+      path.join(process.cwd(), 'public')
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        runDatabaseModule = require(path.join(base, 'codex', 'run-database.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof runDatabaseModule?.createCodexRunDatabase === 'function') {
+    codexRunDatabase = runDatabaseModule.createCodexRunDatabase({
+      fs,
+      path,
+      os,
+      utools: typeof globalThis !== 'undefined' ? globalThis.utools : null
+    })
+  }
+} catch { codexRunDatabase = null }
 const CODEX_ACTION_RUNNER_MIN_WIDTH = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_WIDTH ?? 720
 const CODEX_ACTION_RUNNER_MIN_HEIGHT = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_HEIGHT ?? 420
 
@@ -587,9 +620,6 @@ let codexActionRunnerForceClose = false
 let codexActionRunnerVisible = false
 let codexActionRunnerDrag = null
 let codexActionRunnerResize = null
-let codexActionRunDatabase = null
-let codexActionRunDatabaseReady = false
-let codexActionRunMemory = []
 let codexNodeRuntimeDiscoveryCache = { expiresAt: 0, candidates: [] }
 
 function run(command, args) {
@@ -13627,9 +13657,7 @@ function shutdownCodexEnvironmentActions() {
   codexEnvironmentCommandVault.clear()
   codexEnvironmentConfirmTokens.clear()
   for (const session of sessions) signalCodexEnvironmentSession(session)
-  try { codexActionRunDatabase?.close?.() } catch {}
-  codexActionRunDatabase = null
-  codexActionRunDatabaseReady = false
+  if (codexRunDatabase) codexRunDatabase.closeCodexActionRunDatabase()
 }
 
 function codexActionRunnerPreferences() {
@@ -13670,129 +13698,23 @@ function codexActionRunnerAlive() {
 }
 
 function codexActionRunDatabasePath() {
-  let base = ''
-  try { base = globalThis.utools?.getPath?.('userData') || '' } catch {}
-  if (!base) base = path.join(os.homedir(), '.eypc')
-  fs.mkdirSync(base, { recursive: true })
-  return path.join(base, 'codex-action-runs.sqlite')
+  return codexRunDatabase ? codexRunDatabase.codexActionRunDatabasePath() : ''
 }
 
 function enforceCodexActionRunRetention(database) {
-  try {
-    const rows = database.prepare('SELECT run_id, log_bytes FROM action_runs ORDER BY started_at DESC').all()
-    let retainedBytes = 0
-    const retained = new Set()
-    for (const [index, row] of rows.entries()) {
-      const bytes = Math.max(0, Number(row.log_bytes) || 0)
-      if (index < 200 && retainedBytes + bytes <= 100 * 1024 * 1024) {
-        retained.add(row.run_id)
-        retainedBytes += bytes
-      }
-    }
-    const removed = rows.filter((row) => !retained.has(row.run_id)).map((row) => row.run_id)
-    const remove = database.prepare('DELETE FROM action_runs WHERE run_id = ?')
-    for (const runId of removed) remove.run(runId)
-    if (removed.length) codexActionRunMemory = codexActionRunMemory.filter((run) => retained.has(run.runId))
-  } catch {}
+  if (codexRunDatabase) codexRunDatabase.enforceCodexActionRunRetention(database)
 }
 
 function ensureCodexActionRunDatabase() {
-  if (codexActionRunDatabaseReady) return codexActionRunDatabase
-  codexActionRunDatabaseReady = true
-  try {
-    const { DatabaseSync } = require('node:sqlite')
-    const database = new DatabaseSync(codexActionRunDatabasePath())
-    database.exec(`
-      PRAGMA journal_mode = WAL;
-      CREATE TABLE IF NOT EXISTS action_runs (
-        run_id TEXT PRIMARY KEY,
-        lane_id TEXT NOT NULL,
-        project_key TEXT NOT NULL,
-        project_name TEXT NOT NULL,
-        environment_id TEXT NOT NULL,
-        environment_name TEXT NOT NULL,
-        action_id TEXT NOT NULL,
-        action_name TEXT NOT NULL,
-        risk TEXT NOT NULL,
-        status TEXT NOT NULL,
-        started_at INTEGER NOT NULL,
-        ended_at INTEGER,
-        exit_code INTEGER,
-        archived_at INTEGER,
-        log_text TEXT NOT NULL DEFAULT '',
-        log_bytes INTEGER NOT NULL DEFAULT 0,
-        log_lines INTEGER NOT NULL DEFAULT 0,
-        message TEXT NOT NULL DEFAULT '',
-        runtime_mode TEXT,
-        runtime_source TEXT,
-        runtime_version TEXT,
-        runtime_label TEXT
-      );
-      CREATE INDEX IF NOT EXISTS action_runs_started_at ON action_runs(started_at DESC);
-    `)
-    const columns = new Set(database.prepare('PRAGMA table_info(action_runs)').all().map((column) => column.name))
-    for (const [name, type] of [['runtime_mode', 'TEXT'], ['runtime_source', 'TEXT'], ['runtime_version', 'TEXT'], ['runtime_label', 'TEXT']]) {
-      if (!columns.has(name)) database.exec(`ALTER TABLE action_runs ADD COLUMN ${name} ${type}`)
-    }
-    database.prepare("UPDATE action_runs SET status = 'interrupted', ended_at = COALESCE(ended_at, ?), message = '宿主上次退出，运行状态已中断' WHERE status IN ('running', 'stopping')").run(Date.now())
-    database.prepare('DELETE FROM action_runs WHERE started_at < ?').run(Date.now() - 30 * 24 * 60 * 60_000)
-    database.prepare('DELETE FROM action_runs WHERE run_id IN (SELECT run_id FROM action_runs ORDER BY started_at DESC LIMIT -1 OFFSET 200)').run()
-    enforceCodexActionRunRetention(database)
-    const rows = database.prepare('SELECT * FROM action_runs ORDER BY started_at DESC LIMIT 200').all()
-    codexActionRunMemory = rows.map((row) => ({
-      version: 1,
-      runId: row.run_id,
-      laneId: row.lane_id,
-      projectKey: row.project_key,
-      projectName: row.project_name,
-      environmentId: row.environment_id,
-      environmentName: row.environment_name,
-      actionId: row.action_id,
-      actionName: row.action_name,
-      risk: row.risk,
-      status: row.status,
-      startedAt: row.started_at,
-      endedAt: row.ended_at || undefined,
-      exitCode: typeof row.exit_code === 'number' ? row.exit_code : undefined,
-      archivedAt: row.archived_at || undefined,
-      logText: row.log_text || '',
-      logBytes: row.log_bytes || 0,
-      logLines: row.log_lines || 0,
-      message: row.message || '',
-      cursor: 0,
-      runtimeMode: row.runtime_mode || undefined,
-      runtimeSource: row.runtime_source || undefined,
-      runtimeVersion: row.runtime_version || undefined,
-      runtimeLabel: row.runtime_label || undefined
-    }))
-    codexActionRunDatabase = database
-  } catch {
-    codexActionRunDatabase = null
-  }
-  return codexActionRunDatabase
+  return codexRunDatabase ? codexRunDatabase.ensureCodexActionRunDatabase() : null
 }
 
 function persistCodexActionRun(run) {
-  const database = ensureCodexActionRunDatabase()
-  if (!database) return
-  try {
-    database.prepare(`INSERT INTO action_runs (
-      run_id, lane_id, project_key, project_name, environment_id, environment_name, action_id, action_name,
-      risk, status, started_at, ended_at, exit_code, archived_at, log_text, log_bytes, log_lines, message
-      , runtime_mode, runtime_source, runtime_version, runtime_label
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(run_id) DO UPDATE SET status=excluded.status, ended_at=excluded.ended_at,
-      exit_code=excluded.exit_code, archived_at=excluded.archived_at, log_text=excluded.log_text,
-      log_bytes=excluded.log_bytes, log_lines=excluded.log_lines, message=excluded.message,
-      runtime_mode=excluded.runtime_mode, runtime_source=excluded.runtime_source,
-      runtime_version=excluded.runtime_version, runtime_label=excluded.runtime_label`).run(
-      run.runId, run.laneId, run.projectKey, run.projectName, run.environmentId, run.environmentName,
-      run.actionId, run.actionName, run.risk, run.status, run.startedAt, run.endedAt || null,
-      typeof run.exitCode === 'number' ? run.exitCode : null, run.archivedAt || null,
-      run.logText || '', run.logBytes || 0, run.logLines || 0, run.message || '',
-      run.runtimeMode || null, run.runtimeSource || null, run.runtimeVersion || null, run.runtimeLabel || null
-    )
-  } catch {}
+  if (codexRunDatabase) codexRunDatabase.persistCodexActionRun(run)
+}
+
+function codexActionRunMemorySnapshot() {
+  return codexRunDatabase ? codexRunDatabase.codexActionRunMemorySnapshot() : []
 }
 
 function sanitizeCodexActionLogText(text, privatePaths = []) {
@@ -13856,8 +13778,7 @@ function createCodexActionRun(input, resolved, hostAction, launch = null) {
     runtimeVersion: launch?.runtime?.version,
     runtimeLabel: launch?.runtime?.label
   }
-  codexActionRunMemory.unshift(run)
-  codexActionRunMemory = codexActionRunMemory.slice(0, 200)
+  if (codexRunDatabase) codexRunDatabase.rememberCodexActionRun(run)
   persistCodexActionRun(run)
   return run
 }
@@ -13884,17 +13805,16 @@ function recordCodexActionRestartFailure(input, result) {
     message: String(result?.message || 'Serve 重新执行前校验失败').slice(0, 240),
     cursor: 0
   }
-  codexActionRunMemory.unshift(run)
-  codexActionRunMemory = codexActionRunMemory.slice(0, 200)
+  if (codexRunDatabase) codexRunDatabase.rememberCodexActionRun(run)
   persistCodexActionRun(run)
   pushCodexActionRunnerSnapshot(run.message)
 }
 
 async function restartCodexEnvironmentActionAfterExit(input) {
   if (codexEnvironmentShuttingDown) return
-  const previousRunIds = new Set(codexActionRunMemory.map((run) => run.runId))
+  const previousRunIds = new Set(codexActionRunMemorySnapshot().map((run) => run.runId))
   const result = await runCodexProjectEnvironmentAction(input)
-  const created = codexActionRunMemory.some((run) => !previousRunIds.has(run.runId))
+  const created = codexActionRunMemorySnapshot().some((run) => !previousRunIds.has(run.runId))
   if (!created && !['ok', 'started', 'running', 'stopping'].includes(result?.outcome)) recordCodexActionRestartFailure(input, result)
 }
 
@@ -13906,7 +13826,7 @@ function finishCodexActionRun(run, status, exitCode, message) {
   if (typeof exitCode === 'number') run.exitCode = exitCode
   run.message = message
   persistCodexActionRun(run)
-  if (codexActionRunDatabase) enforceCodexActionRunRetention(codexActionRunDatabase)
+  if (codexRunDatabase) codexRunDatabase.enforceRetentionIfOpen()
   pushCodexActionRunnerSnapshot(message)
 }
 
@@ -14341,7 +14261,7 @@ function pushCodexActionRunnerSnapshot(message = '') {
     version: 1,
     catalog,
     capabilities: ['node-runtime-selection-v1', 'log-cursor-v1', 'explicit-window-geometry-v1'],
-    runs: codexActionRunMemory.slice(0, 200).map((run) => ({
+    runs: codexActionRunMemorySnapshot().map((run) => ({
       version: 1,
       runId: run.runId,
       laneId: run.laneId,
@@ -14508,7 +14428,7 @@ function updateCodexActionRunnerPreference(payload) {
 function setCodexActionRunArchived(input) {
   ensureCodexActionRunDatabase()
   const runId = typeof input?.runId === 'string' ? input.runId : ''
-  const run = codexActionRunMemory.find((item) => item.runId === runId)
+  const run = codexRunDatabase ? codexRunDatabase.findCodexActionRun(runId) : undefined
   if (!run) return Promise.resolve({ ok: false, message: '未找到执行记录' })
   if (!['completed', 'failed', 'stopped', 'interrupted'].includes(run.status)) return Promise.resolve({ ok: false, message: '仅已结束记录可归档' })
   run.archivedAt = input?.archived === true ? Date.now() : undefined
