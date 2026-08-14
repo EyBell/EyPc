@@ -10,7 +10,9 @@ import {
   companionTaskProvider,
   isCompanionProviderEnabled,
   type CompanionProviderEnablement,
-  type CompanionProviderId
+  type CompanionProviderId,
+  isCompanionAttentionState,
+  isCompanionLivePhase
 } from './companionProvider'
 import type { CodexTaskStatePackageV1 } from './codexPresentation'
 
@@ -249,7 +251,7 @@ function projectCanonicalCard(
   card: CodexTaskCard,
   task: CompanionCanonicalTaskV4
 ): CodexTaskCard {
-  const live = task.phase === 'running' || task.phase === 'waiting-input' || task.phase === 'waiting-approval'
+  const live = isCompanionLivePhase(task.phase)
   const completed = task.phase === 'completed'
   const stopped = task.phase === 'stopped'
   const unchanged = task.phase === 'unknown'
@@ -333,7 +335,7 @@ function projectCanonicalCard(
   if (task.phase === 'waiting-input') next.activeFlags = ['waitingOnUserInput']
   else if (task.phase === 'waiting-approval') next.activeFlags = ['waitingOnApproval']
   else delete next.activeFlags
-  if ((task.phase === 'waiting-input' || task.phase === 'waiting-approval') && task.planImplementation) {
+  if (isCompanionAttentionState(task.phase) && task.planImplementation) {
     next.planImplementationOnly = true
   } else delete next.planImplementationOnly
   if (completionRevision) {
@@ -444,7 +446,7 @@ function projectConversationSnapshot(
   const completedUnread = visible.filter((task) => task.bucket === 'completed-unread')
   const completed = visible.filter((task) => task.bucket === 'completed')
   const all = [...tasks]
-  const inputRequired = visible.filter((task) => task.activityState === 'waiting-input' || task.activityState === 'waiting-approval')
+  const inputRequired = visible.filter((task) => isCompanionAttentionState(task.activityState))
   const completedTab = [...completedUnread, ...completed]
   const tasksByKey = new Map(all.map((task) => [task.key, task]))
   const projects = conversations.projects.map((project) => projectCardsForProject(project, tasksByKey, all))

@@ -1,5 +1,5 @@
 import type { CompanionProviderEnablement, CompanionProviderId } from './companionProvider'
-import { normalizeCompanionEnablement, orderCompanionTasksForDisplay } from './companionProvider'
+import { normalizeCompanionEnablement, orderCompanionTasksForDisplay, isCompanionAttentionState } from './companionProvider'
 // `codexAppearance` owns the color math (HSL, contrast) and only type-imports this
 // module, so this value edge is one-directional at runtime: the type import is
 // erased and the emitted `codexAppearance` module has no imports at all.
@@ -1709,7 +1709,7 @@ export function countConversationTasks(
   completed: CodexTaskCard[],
   hidden: CodexTaskCard[] = []
 ) {
-  const waitingCount = ongoing.filter((task) => task.activityState === 'waiting-input' || task.activityState === 'waiting-approval').length
+  const waitingCount = ongoing.filter((task) => isCompanionAttentionState(task.activityState)).length
   const runningCount = ongoing.filter((task) => task.activityState === 'active').length
   const unknownCount = 0
   const attentionCount = 0
@@ -1722,7 +1722,7 @@ export function countConversationTasks(
     runningCount,
     unknownCount,
     attentionCount,
-    inputRequiredCount: [...ongoing, ...hidden].filter((task) => task.activityState === 'waiting-input' || task.activityState === 'waiting-approval').length,
+    inputRequiredCount: [...ongoing, ...hidden].filter((task) => isCompanionAttentionState(task.activityState)).length,
     completedUnreadCount: completedUnread.length + hiddenUnreadCount,
     completedCount: completed.length,
     pendingCount: completedUnread.length + hiddenUnreadCount,
@@ -1861,7 +1861,7 @@ export function projectConversations(input: {
       archiveCapability,
       revisionAt,
       ...(completionRevision ? { completionRevision } : {}),
-      ...((activityState === 'waiting-input' || activityState === 'waiting-approval')
+      ...(isCompanionAttentionState(activityState)
         ? { statusEnteredAt: numberValue(thread.waitingSince, 0) || numberValue(thread.lastTurnStartedAt, 0) || thread.updatedAt }
         : bucket === 'completed-unread' && completionRevision
           ? { statusEnteredAt: completionRevision }
@@ -1896,7 +1896,7 @@ export function projectConversations(input: {
   completed.sort(compareConversationTasks)
   hidden.sort(compareConversationTasks)
   const all = [...ongoing, ...stopped, ...completedUnread, ...completed, ...hidden].sort(compareConversationTasks)
-  const inputRequired = orderCodexAttentionTasks(all.filter((task) => task.activityState === 'waiting-input' || task.activityState === 'waiting-approval'))
+  const inputRequired = orderCodexAttentionTasks(all.filter((task) => isCompanionAttentionState(task.activityState)))
   const completedTab = [...completedUnread, ...completed]
 
   const sourceProjects = [...new Map((input.projects || [])
