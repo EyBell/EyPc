@@ -14,4 +14,8 @@ authority: agent-transcribed
 
 ## 交付状态
 
-部分交付。防抖层已收口且语义写在定义处；筛选层在 Kernel 内收口，渲染层未动；校验层的 SUPPORTED_APP_VERSIONS 仍有两处定义。
+**已交付（2026-08-14）。** 三层各自收口，且各有拒绝回归的门禁。
+
+- **校验层**：`SUPPORTED_APP_VERSIONS` 由 [app-state.cjs](../../../preload/claude/app-state.cjs#L1) 单点定义并显式导出，archive 引用；用例拒绝 archive 内重新定义。
+- **筛选层**：preload 与渲染层均无内联 phase 字符串集合，由 [preload/task-phase.cjs](../../../preload/task-phase.cjs#L1) 与 [companionProvider.ts](../../../src/domain/companionProvider.ts#L121) 各自拥有；门禁拒绝重新引入，并钉住两侧成员集合一致。详见 [RAW-168](invariants-raw-168.md#L1)。
+- **防抖层**：「原生回调快路」与「定时漏通知恢复」在 [timing-policy.cjs](../../../preload/timing-policy.cjs#L1) 各自单点表达，恢复间隔的语义写在定义处并明说提高频率不是加速手段。
