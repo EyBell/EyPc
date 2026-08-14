@@ -289,6 +289,31 @@ try {
   }
 } catch { codexCommandValidation = null }
 
+// Action Runner window geometry, including the minimums it clamps to.
+let codexRunnerBounds = null
+try {
+  try {
+    codexRunnerBounds = require('./codex/runner-bounds.cjs')
+  } catch {}
+  if (!codexRunnerBounds) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      process.cwd(),
+      path.join(process.cwd(), 'preload'),
+      path.join(process.cwd(), 'public')
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        codexRunnerBounds = require(path.join(base, 'codex', 'runner-bounds.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof codexRunnerBounds?.clampCodexActionRunnerBounds !== 'function') codexRunnerBounds = null
+} catch { codexRunnerBounds = null }
+const CODEX_ACTION_RUNNER_MIN_WIDTH = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_WIDTH ?? 720
+const CODEX_ACTION_RUNNER_MIN_HEIGHT = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_HEIGHT ?? 420
+
 function claudeUnavailable(shape) {
   const message = `Claude 模块未加载：${claudeBridgeLoadError || 'unknown error'}`
   if (shape === 'snapshot') return { version: 1, revision: '', sessions: [], truncated: false, quota: null, readAt: Date.now() }
@@ -356,8 +381,6 @@ const CODEX_ACTION_RUNNER_CHANNELS = {
   resizeCancel: 'eypc-action-runner:resize-cancel'
 }
 const CODEX_ACTION_RUNNER_STORAGE_KEY = 'eypc/codex/action-runner/v1'
-const CODEX_ACTION_RUNNER_MIN_WIDTH = 720
-const CODEX_ACTION_RUNNER_MIN_HEIGHT = 420
 const CODEX_ACTION_LOG_FLUSH_MS = 50
 const CODEX_ACTION_LOG_FLUSH_BYTES = 16 * 1024
 let lastEnterPayload = null
@@ -14375,33 +14398,11 @@ function codexActionRunnerDevelopmentEntry() {
 }
 
 function clampCodexActionRunnerBounds(bounds, display) {
-  const area = display?.workArea || display?.bounds || { x: 0, y: 0, width: 1440, height: 900 }
-  const maxWidth = Math.max(1, Math.round(area.width))
-  const maxHeight = Math.max(1, Math.round(area.height))
-  const width = Math.min(maxWidth, Math.max(Math.min(CODEX_ACTION_RUNNER_MIN_WIDTH, maxWidth), Math.round(Number(bounds.width) || 980)))
-  const height = Math.min(maxHeight, Math.max(Math.min(CODEX_ACTION_RUNNER_MIN_HEIGHT, maxHeight), Math.round(Number(bounds.height) || 640)))
-  const requestedX = Number.isFinite(bounds.x) ? Math.round(bounds.x) : area.x
-  const requestedY = Number.isFinite(bounds.y) ? Math.round(bounds.y) : area.y
-  const x = Math.min(area.x + maxWidth - width, Math.max(area.x, requestedX))
-  const y = Math.min(area.y + maxHeight - height, Math.max(area.y, requestedY))
-  return { x, y, width, height }
+  return codexRunnerBounds ? codexRunnerBounds.clampCodexActionRunnerBounds(bounds, display) : { x: 0, y: 0, width: 980, height: 640 }
 }
 
 function resizeCodexActionRunnerBounds(start, screenX, screenY) {
-  const dx = screenX - start.pointerX
-  const dy = screenY - start.pointerY
-  const left = start.corner.includes('left')
-  const top = start.corner.includes('top')
-  const area = start.display?.workArea || start.display?.bounds || { x: 0, y: 0, width: 1440, height: 900 }
-  const oppositeX = left ? start.bounds.x + start.bounds.width : start.bounds.x
-  const oppositeY = top ? start.bounds.y + start.bounds.height : start.bounds.y
-  const requestedWidth = left ? start.bounds.width - dx : start.bounds.width + dx
-  const requestedHeight = top ? start.bounds.height - dy : start.bounds.height + dy
-  const maxWidth = left ? oppositeX - area.x : area.x + area.width - oppositeX
-  const maxHeight = top ? oppositeY - area.y : area.y + area.height - oppositeY
-  const width = Math.min(maxWidth, Math.max(Math.min(CODEX_ACTION_RUNNER_MIN_WIDTH, maxWidth), Math.round(requestedWidth)))
-  const height = Math.min(maxHeight, Math.max(Math.min(CODEX_ACTION_RUNNER_MIN_HEIGHT, maxHeight), Math.round(requestedHeight)))
-  return { x: left ? oppositeX - width : oppositeX, y: top ? oppositeY - height : oppositeY, width, height }
+  return codexRunnerBounds ? codexRunnerBounds.resizeCodexActionRunnerBounds(start, screenX, screenY) : start.bounds
 }
 
 function createCodexActionRunner() {
