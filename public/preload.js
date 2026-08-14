@@ -409,6 +409,32 @@ try {
     })
   }
 } catch { codexRunDatabase = null }
+
+// Environment Action authorization. Owns the command vault and the confirm
+// tokens: the renderer supplies an id, never a command, and one confirmation
+// binds one execution to one fingerprint tuple.
+let codexActionAuthorization = null
+try {
+  let authorizationModule = null
+  try {
+    authorizationModule = require('./codex/action-authorization.cjs')
+  } catch {}
+  if (!authorizationModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        authorizationModule = require(path.join(base, 'codex', 'action-authorization.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof authorizationModule?.createCodexActionAuthorization === 'function') {
+    codexActionAuthorization = authorizationModule.createCodexActionAuthorization({ crypto })
+  }
+} catch { codexActionAuthorization = null }
 const CODEX_ACTION_RUNNER_MIN_WIDTH = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_WIDTH ?? 720
 const CODEX_ACTION_RUNNER_MIN_HEIGHT = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_HEIGHT ?? 420
 
@@ -13259,10 +13285,7 @@ if (globalThis.utools && typeof globalThis.utools.onPluginOut === 'function') {
 }
 
 const CODEX_ACTION_HOST_RUNTIME_REVISION = 'action-host-v2-exact-argv-target'
-const CODEX_ENV_ACTION_CONFIRM_TTL_MS = 30_000
-const codexEnvironmentCommandVault = new Map()
 const codexEnvironmentActionSessions = new Map()
-const codexEnvironmentConfirmTokens = new Map()
 let codexActionDeferredServerClose = false
 let codexEnvironmentShuttingDown = false
 
@@ -13445,15 +13468,7 @@ function resolveCodexEnvironmentTargetCwd(targetAlias) {
 }
 
 function rememberCodexEnvironmentCommands(vaultKey, environments) {
-  const key = String(vaultKey || '')
-  if (!key) return
-  const map = new Map()
-  for (const environment of environments) {
-    const actionMap = new Map()
-    for (const action of environment._hostActions || []) actionMap.set(action.id, action)
-    map.set(environment.id, actionMap)
-  }
-  codexEnvironmentCommandVault.set(key, map)
+  codexActionAuthorization?.rememberCodexEnvironmentCommands(vaultKey, environments)
 }
 
 function listCodexProjectEnvironments(targetAlias) {
@@ -13605,29 +13620,11 @@ function signalCodexEnvironmentSession(session) {
 }
 
 function issueCodexEnvironmentConfirmToken(targetId, environmentId, actionId, environmentFileFingerprint, commandFingerprint) {
-  const token = `cet_${crypto.randomBytes(12).toString('base64url')}`
-  codexEnvironmentConfirmTokens.set(token, {
-    targetId,
-    environmentId,
-    actionId,
-    environmentFileFingerprint,
-    commandFingerprint,
-    expiresAt: Date.now() + CODEX_ENV_ACTION_CONFIRM_TTL_MS
-  })
-  return token
+  return codexActionAuthorization?.issueCodexEnvironmentConfirmToken(targetId, environmentId, actionId, environmentFileFingerprint, commandFingerprint) || ''
 }
 
 function consumeCodexEnvironmentConfirmToken(token, targetId, environmentId, actionId, environmentFileFingerprint, commandFingerprint) {
-  const entry = codexEnvironmentConfirmTokens.get(token)
-  codexEnvironmentConfirmTokens.delete(token)
-  if (!entry || entry.expiresAt <= Date.now()) return false
-  return (
-    entry.targetId === targetId &&
-    entry.environmentId === environmentId &&
-    entry.actionId === actionId &&
-    entry.environmentFileFingerprint === environmentFileFingerprint &&
-    entry.commandFingerprint === commandFingerprint
-  )
+  return codexActionAuthorization?.consumeCodexEnvironmentConfirmToken(token, targetId, environmentId, actionId, environmentFileFingerprint, commandFingerprint) === true
 }
 
 function shouldDeferCodexActionServerClose() {
@@ -13654,8 +13651,7 @@ function shutdownCodexEnvironmentActions() {
     }
   }
   codexEnvironmentActionSessions.clear()
-  codexEnvironmentCommandVault.clear()
-  codexEnvironmentConfirmTokens.clear()
+  codexActionAuthorization?.clearCodexActionAuthorization()
   for (const session of sessions) signalCodexEnvironmentSession(session)
   if (codexRunDatabase) codexRunDatabase.closeCodexActionRunDatabase()
 }
@@ -14003,8 +13999,7 @@ async function runCodexProjectEnvironmentAction(input) {
   if (latestList.runtimeRevision !== CODEX_ACTION_HOST_RUNTIME_REVISION || latestList.targetId !== resolved.targetId) {
     return { outcome: 'failed', errorCode: 'target-mismatch', message: 'Action 目标刷新结果不一致' }
   }
-  const vault = codexEnvironmentCommandVault.get(resolved.targetId)
-  const hostAction = vault?.get(environmentId)?.get(actionId)
+  const hostAction = codexActionAuthorization?.findCodexEnvironmentCommand(resolved.targetId, environmentId, actionId)
   if (!hostAction) {
     return { outcome: 'failed', errorCode: 'action-missing', message: '未找到对应 Action，请刷新后重试' }
   }
