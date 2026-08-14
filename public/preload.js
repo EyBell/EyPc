@@ -261,6 +261,34 @@ try {
   }
 } catch {}
 
+// Environment Action command allowlist. Depends on nothing, so it is required
+// directly rather than constructed, through the same guarded path as everything
+// else here. A failed load leaves every command unvalidated, which the callers
+// read as "do not launch".
+let codexCommandValidation = null
+try {
+  try {
+    codexCommandValidation = require('./codex/command-validation.cjs')
+  } catch {}
+  if (!codexCommandValidation) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      process.cwd(),
+      path.join(process.cwd(), 'preload'),
+      path.join(process.cwd(), 'public')
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        codexCommandValidation = require(path.join(base, 'codex', 'command-validation.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof codexCommandValidation?.validateCodexEnvironmentActionCommandHost !== 'function') {
+    codexCommandValidation = null
+  }
+} catch { codexCommandValidation = null }
+
 function claudeUnavailable(shape) {
   const message = `Claude 模块未加载：${claudeBridgeLoadError || 'unknown error'}`
   if (shape === 'snapshot') return { version: 1, revision: '', sessions: [], truncated: false, quota: null, readAt: Date.now() }
@@ -13219,61 +13247,11 @@ function codexEnvironmentActionIdFromName(name, index) {
 }
 
 function tokenizeCodexEnvironmentActionCommandHost(command) {
-  if (typeof command !== 'string' || !command.trim() || /[\r\n]/.test(command)) return null
-  const result = []
-  let current = ''
-  let quote = null
-  let escaped = false
-  for (const ch of command) {
-    if (escaped) {
-      current += ch
-      escaped = false
-      continue
-    }
-    if (quote) {
-      if (ch === '\\' && quote === '"') { escaped = true; continue }
-      if (ch === quote) { quote = null; continue }
-      current += ch
-      continue
-    }
-    if (ch === '"' || ch === "'") { quote = ch; continue }
-    if (ch === '\\') { escaped = true; continue }
-    if (/\s/.test(ch)) {
-      if (current) { result.push(current); current = '' }
-      continue
-    }
-    current += ch
-  }
-  if (quote || escaped) return null
-  if (current) result.push(current)
-  return result
+  return codexCommandValidation ? codexCommandValidation.tokenizeCodexEnvironmentActionCommandHost(command) : null
 }
 
 function validateCodexEnvironmentActionCommandHost(command) {
-  const argv = tokenizeCodexEnvironmentActionCommandHost(command)
-  if (!argv) return null
-  if (argv.length === 3 && ['pnpm', 'npm', 'yarn', 'bun'].includes(argv[0]) && argv[1] === 'run' && ['build', 'serve'].includes(argv[2])) {
-    return {
-      family: 'package-script',
-      executable: argv[0],
-      task: argv[2],
-      argv: [argv[0], 'run', argv[2]],
-      risk: argv[2] === 'serve' ? 'long-running' : 'normal'
-    }
-  }
-  if (argv.length === 2 && argv[0] === 'vite' && ['build', 'serve'].includes(argv[1])) {
-    return {
-      family: 'vite',
-      executable: 'vite',
-      task: argv[1],
-      argv: ['vite', argv[1]],
-      risk: argv[1] === 'serve' ? 'long-running' : 'normal'
-    }
-  }
-  if (argv.length === 2 && argv[0] === 'git' && argv[1] === 'push') {
-    return { family: 'git-push', executable: 'git', task: 'push', argv: ['git', 'push'], risk: 'external-write' }
-  }
-  return null
+  return codexCommandValidation ? codexCommandValidation.validateCodexEnvironmentActionCommandHost(command) : null
 }
 
 function codexEnvironmentIdFromFileName(fileName) {
