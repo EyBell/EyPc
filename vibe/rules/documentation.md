@@ -5,6 +5,8 @@ Tool: tool-neutral (codex, claude, and any CodeNote-routed agent)
 ## Tiers
 
 - Project process hub: [../specs/PROJECT_STATUS.md](../specs/PROJECT_STATUS.md#L1).
+- Current product semantics: [../specs/PRODUCT_REQUIREMENTS.md](../specs/PRODUCT_REQUIREMENTS.md#L1) — 功能现在应该怎样表现。
+- Requirement identity, status and supersession: [../specs/requirements/README.md](../specs/requirements/README.md#L1) — 某条条款是否还作数、还有哪部分作数、是谁说的。
 - Task docs: follow CodeNote process date grouping under `vibe/specs/`.
 - Durable architecture: [../knowledge/ARCHITECTURE.md](../knowledge/ARCHITECTURE.md#L1).
 - Technical implementation memory: [../knowledge/technical-details.md](../knowledge/technical-details.md#L1).
@@ -44,8 +46,37 @@ User-facing operation help is product surface, not optional developer notes. Aut
 
 Medium/larger feature or interaction tasks must list whether the matching `src/help/guides/{id}.md` was added or updated, or explicitly state why no user-visible guide impact exists.
 
+## Requirement Registry (required)
+
+需求条款的身份、状态与取代关系由 [需求登记](../specs/requirements/README.md#L1) 唯一承载。`RAW-nnn` 编号是任务局部的——同一个编号在不同任务里是不同需求——所以身份是 `SPEC-<任务>::RAW-nnn`，不是编号本身。
+
+### 收尾门禁
+
+任何新增或变更了需求条款的任务，收尾时必须：
+
+1. 把本轮条款写入登记，`authority` 如实标注 `user-stated` 或 `agent-transcribed`；
+2. 取代关系登记为机器边——整条取代用 `superseded_by`/`supersedes`，只失效一部分用 `scoped_relations` 并写明 `scope`；
+3. 运行 `pnpm run validate:requirements` 并通过。
+
+未完成上述三项的收尾不成立。这条是门禁而非建议：取代关系一旦只写在散文里就无法机检，而**跨任务的局部取代最危险——被取代的条款在它自己任务的文档中仍标着 `active`，只看那份文档不会发现它已部分失效**。
+
+### 必须停下上报的情形
+
+以下三种不得自行消解，须提交用户裁决：
+
+- `semantic-fork`：采用较新条款会改变用户可见行为；
+- `agent-vs-user`：`agent-transcribed` 条款与 `user-stated` 条款冲突——转述不得自动胜过原话；
+- 同一条款在两个域都像 Primary，归属无法判定。
+
+其余冲突按「后写入优先」自动消解，并在 [冲突登记](../specs/requirements/conflict-register.md#L1) 记录依据。
+
+### 尚未入册的条款
+
+约 160 条需求以无编号的编号条款承载，没有 id 可作身份；为其分配编号属于需求撰写而非抽取，未经用户决定不得入册。当前范围见 [覆盖账](../specs/requirements/coverage.md#L1)。**登记必须诚实回答哪些还没进来**——一份看起来完整、实则只覆盖一部分的登记比没有登记更危险。
+
 ## Closeout
 
+- 需求条款有新增或变更时，先完成上述 [需求登记收尾门禁](#收尾门禁)。
 - Medium and larger tasks update the process hub and task verification record.
 - Stable implementation decisions update architecture knowledge.
 - Verification records must list commands, results, and unverified gaps.
