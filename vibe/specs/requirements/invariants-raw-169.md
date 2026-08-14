@@ -86,3 +86,23 @@ Codex 侧按 preload/claude/ 既有标准拆分，以职责边界而非行数为
 diff 核对确认只有 7 处预期改动：两个字面量提为具名常量（值不变）、三处依赖改为注入、两处刷写阈值改为参数（默认值不变）。
 
 `preload/codex/` 现有五个模块。同轮把 runner bridge 的源文本断言改为读取整个 `preload/codex/` 目录——它已经因抽取移位两次，逐个补名字是在缺陷发生后才修补。
+
+## 2026-08-14 第六块：运行数据库（首次迁移状态）
+
+`preload/codex/run-database.cjs`（203 行）承接 SQLite schema、列迁移、留存策略与运行内存镜像。入口 14,882 → **14,802**。
+
+**前五块搬的都是函数，这一块搬的是状态。** `codexActionRunDatabase`、它的 ready 标志与运行内存原本是入口的三个模块级 `let`，被七处直接写入。现在它们活在模块闭包里，入口只通过具名操作触达：`closeCodexActionRunDatabase` / `enforceRetentionIfOpen` / `rememberCodexActionRun` / `codexActionRunMemorySnapshot` / `findCodexActionRun`。每个操作是那七处**真正想做的整件事**，而非「把某个 `let` 改成某个值」。入口内这三个名字的出现次数已归零。
+
+这正是路线 3（闭包化改写）与路线 2（共享状态模块）的分界：状态被搬进模块并封在闭包里，耦合被消除而非搬家。
+
+`utools` 按 node-runtime 抽 `process` 的同一理由显式注入——从全局读取时源码逐字相同，沙箱下却解析到另一个对象。
+
+### 状态迁移把测试夹具一并带走
+
+`codexActionRuntime.test.ts` 的留存用例原先直接改写那三个绑定来重置。绑定迁走后，同样的赋值在 vm 沙箱里创建的是**新的沙箱全局**，模块状态纹丝不动，用例读到空数组。夹具改走 `closeCodexActionRunDatabase()` 与快照读取，与生产同路径——比原来更忠实于用例意图。
+
+**迁移状态时，直接改写该状态的测试夹具属于同一次改动的一部分。** 只搜函数名找不到它们。
+
+### 剩余
+
+`actions` 域尚余 `installCodexActionRunnerIpc`（343 行）、`runCodexProjectEnvironmentAction`（253 行）与窗口生命周期。前者落在 `EYPC-UTOOLS-HOST-001` 入口冻结管辖范围，需先确认 IPC 装配可否离开入口。
