@@ -13,9 +13,18 @@ describe('Codex Action Runner host bridge contract', () => {
     .filter((name) => name.endsWith('.cjs'))
     .map((name) => readFileSync(join(resolve(process.cwd(), 'preload/codex'), name), 'utf8'))
     .join('\n')
+  // A missing anchor must fail here and say so. `indexOf` returning -1 makes
+  // `slice` collapse the region to a single character, and every assertion
+  // below then fails against an unrelated diff — an anchor that moved out under
+  // RAW-169 costs eight misleading failures instead of one clear one.
+  const region = (marker: string) => {
+    const at = source.indexOf(marker)
+    if (at < 0) throw new Error(`supervisor anchor not found in preload/index.js: ${marker}`)
+    return at
+  }
   const supervisor = source.slice(
-    source.indexOf('const CODEX_ENV_ACTION_CONFIRM_TTL_MS'),
-    source.indexOf('window.eypcPlatform =')
+    region("const CODEX_ACTION_HOST_RUNTIME_REVISION = 'action-host-v2-exact-argv-target'"),
+    region('window.eypcPlatform =')
   ) + codexModules
 
   it('uses one registered Environment root for configuration and preserves exact task execution cwd', () => {
@@ -75,8 +84,9 @@ describe('Codex Action Runner host bridge contract', () => {
     expect(supervisor).toContain("finishCodexActionRun(session.run, 'interrupted'")
     expect(supervisor).toContain('session.pendingRestart = null')
     expect(supervisor).toContain('codexEnvironmentActionSessions.clear()')
-    expect(supervisor).toContain('codexEnvironmentCommandVault.clear()')
-    expect(supervisor).toContain('codexEnvironmentConfirmTokens.clear()')
+    expect(supervisor).toContain('codexActionAuthorization?.clearCodexActionAuthorization()')
+    expect(supervisor).toContain('commandVault.clear()')
+    expect(supervisor).toContain('confirmTokens.clear()')
     expect(supervisor).toContain('codexActionRunnerCatalog?.loading === true')
     expect(supervisor).toContain('flushCodexActionDeferredServerClose()')
   })

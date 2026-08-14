@@ -147,14 +147,20 @@ function loadApi(home: string): ActionRuntimeTestApi {
           state: 'running', startedAt: Date.now(), run, childPid: 321, child: { kill: (signal) => globalThis.__processSignals.push([321, signal]) },
           pendingRestart: { targetId: 'target' }
         })
-        codexEnvironmentCommandVault.set('target', new Map())
-        codexEnvironmentConfirmTokens.set('token', { expiresAt: Date.now() + 1_000 })
+        // The vault and the confirm tokens moved into
+        // preload/codex/action-authorization.cjs under RAW-169. Seeding and
+        // reading through the boundary asks the stronger question the counts
+        // were standing in for: is this action still authorized?
+        codexActionAuthorization.rememberCodexEnvironmentCommands('target', [
+          { id: 'environment', _hostActions: [{ id: 'serve', command: 'pnpm serve' }] }
+        ])
+        const confirmToken = codexActionAuthorization.issueCodexEnvironmentConfirmToken('target', 'environment', 'serve', 'ff', 'cf')
         globalThis.__emitPluginOut(isKill)
         persistCodexActionRun = originalPersist
         return {
           sessions: codexEnvironmentActionSessions.size,
-          vault: codexEnvironmentCommandVault.size,
-          tokens: codexEnvironmentConfirmTokens.size,
+          vault: codexActionAuthorization.findCodexEnvironmentCommand('target', 'environment', 'serve') ? 1 : 0,
+          tokens: codexActionAuthorization.consumeCodexEnvironmentConfirmToken(confirmToken, 'target', 'environment', 'serve', 'ff', 'cf') ? 1 : 0,
           runStatus: run.status,
           signals: globalThis.__processSignals.slice(),
           deferredClose: codexActionDeferredServerClose
