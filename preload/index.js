@@ -28,7 +28,6 @@ const MQTT_SECRETS_KEY_FILE_NAME = 'mqtt-secrets-local.key'
 const MQTT_SECRETS_ENCRYPTION_VERSION = 2
 const MQTT_SECRETS_AES_ALGORITHM = 'aes-256-gcm'
 const CODEX_RPC_TIMEOUT_MS = 12_000
-const CODEX_PROXY_OUTPUT_LIMIT = 16 * 1024
 const CODEX_PROCESS_OUTPUT_LIMIT = 256 * 1024
 const CODEX_THREAD_ALIAS_TTL_MS = 10 * 60_000
 const CODEX_THREAD_PAGE_SIZE = 100
@@ -471,6 +470,59 @@ try {
     codexRolloutEvidence = rolloutModule.createCodexRolloutEvidence({ record: codexRecord, timestampMs: codexTimestampMs })
   }
 } catch { codexRolloutEvidence = null }
+
+// How to invoke a Codex CLI candidate, and what proxy the spawned process
+// should inherit. Two modules because they are two subjects: one resolves an
+// executable, the other is a refusal boundary over untrusted PAC output.
+let codexLaunchContext = null
+let codexProxyDiscovery = null
+try {
+  const loadCodexModule = (relative, file) => {
+    let loaded = null
+    try {
+      loaded = require(relative)
+    } catch {}
+    if (loaded) return loaded
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        return require(path.join(base, 'codex', file))
+      } catch {}
+    }
+    return null
+  }
+  const launchModule = loadCodexModule('./codex/launch-plan.cjs', 'launch-plan.cjs')
+  if (typeof launchModule?.createCodexLaunchPlan === 'function') {
+    codexLaunchContext = launchModule.createCodexLaunchPlan({ fs, path, process })
+  }
+  const proxyModule = loadCodexModule('./codex/proxy-discovery.cjs', 'proxy-discovery.cjs')
+  if (typeof proxyModule?.createCodexProxyDiscovery === 'function') {
+    codexProxyDiscovery = proxyModule.createCodexProxyDiscovery({ execFile, process })
+  }
+} catch {
+  codexLaunchContext = null
+  codexProxyDiscovery = null
+}
+
+// A failed load degrades to "no special handling": the raw candidate is handed
+// to the OS path lookup, and no proxy is injected. Both are the same answers
+// these modules give when they find nothing, so no caller learns a new case.
+function codexPlatformPath() {
+  return codexLaunchContext ? codexLaunchContext.codexPlatformPath() : (process.platform === 'win32' ? path.win32 : path)
+}
+
+function codexLaunchPlan(candidate, source = 'unknown', detected = false) {
+  if (codexLaunchContext) return codexLaunchContext.codexLaunchPlan(candidate, source, detected)
+  const command = candidate || 'codex'
+  return { command, argsPrefix: [], key: command, source, detected }
+}
+
+async function resolveCodexProxyEnvironment() {
+  return codexProxyDiscovery ? codexProxyDiscovery.resolveCodexProxyEnvironment() : {}
+}
 
 // A failed load leaves every rollout tail unreadable rather than misread: an
 // `unknown` answer makes callers widen the tail and then abstain, which is the
@@ -2893,10 +2945,6 @@ function codexPercent(value) {
   return Math.max(0, Math.min(100, Math.round(codexNumber(value))))
 }
 
-function codexPlatformPath() {
-  return process.platform === 'win32' ? path.win32 : path
-}
-
 const CODEX_LAUNCH_SOURCE_LABELS = {
   manual: '手动指定的位置',
   configured: '环境变量指定位置',
@@ -2923,163 +2971,6 @@ function codexLaunchResult(plan, launchMode, manualLaunchPathState, launchCandid
     launchMode,
     manualLaunchPathState,
     launchCandidates: launchCandidates.slice(0, 8)
-  }
-}
-
-function codexBundledBinary(jsEntry) {
-  const platformPath = codexPlatformPath()
-  const target = process.platform === 'win32'
-    ? process.arch === 'arm64' ? ['codex-win32-arm64', 'aarch64-pc-windows-msvc', 'codex.exe'] : ['codex-win32-x64', 'x86_64-pc-windows-msvc', 'codex.exe']
-    : process.platform === 'darwin'
-      ? process.arch === 'x64' ? ['codex-darwin-x64', 'x86_64-apple-darwin', 'codex'] : ['codex-darwin-arm64', 'aarch64-apple-darwin', 'codex']
-      : null
-  if (!target || !jsEntry) return ''
-  const packageRoot = platformPath.dirname(platformPath.dirname(jsEntry))
-  const packageName = target[0]
-  const vendorTail = ['vendor', target[1], 'bin', target[2]]
-  const candidates = [
-    platformPath.join(packageRoot, 'node_modules', '@openai', packageName, ...vendorTail),
-    platformPath.join(platformPath.dirname(packageRoot), packageName, ...vendorTail),
-    platformPath.join(packageRoot, ...vendorTail)
-  ]
-  return candidates.find((candidate) => {
-    try { return fs.existsSync(candidate) } catch { return false }
-  }) || ''
-}
-
-function codexJavascriptEntry(candidate, resolved) {
-  const platformPath = codexPlatformPath()
-  if (/\.[cm]?js$/i.test(resolved || '')) return resolved
-  if (!/\.(?:cmd|bat)$/i.test(candidate || '')) return ''
-  const npmEntry = platformPath.join(platformPath.dirname(candidate), 'node_modules', '@openai', 'codex', 'bin', 'codex.js')
-  try { return fs.existsSync(npmEntry) ? npmEntry : '' } catch { return '' }
-}
-
-function codexNodeRuntime(candidate) {
-  const platformPath = codexPlatformPath()
-  const env = process.env || {}
-  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path')
-  const pathValue = pathKey && typeof env[pathKey] === 'string' ? env[pathKey] : ''
-  const candidates = [platformPath.join(platformPath.dirname(candidate), process.platform === 'win32' ? 'node.exe' : 'node')]
-  if (process.platform === 'win32') {
-    if (typeof env.NVM_SYMLINK === 'string') candidates.push(platformPath.join(env.NVM_SYMLINK, 'node.exe'))
-    if (typeof env.VOLTA_HOME === 'string') candidates.push(platformPath.join(env.VOLTA_HOME, 'bin', 'node.exe'))
-    if (typeof env.ProgramFiles === 'string') candidates.push(platformPath.join(env.ProgramFiles, 'nodejs', 'node.exe'))
-  }
-  for (const directory of pathValue.split(platformPath.delimiter).filter(Boolean)) {
-    candidates.push(platformPath.join(directory, process.platform === 'win32' ? 'node.exe' : 'node'))
-  }
-  return candidates.find((nodePath) => {
-    try { return fs.existsSync(nodePath) } catch { return false }
-  }) || ''
-}
-
-function codexLaunchPlan(candidate, source = 'unknown', detected = false) {
-  const platformPath = codexPlatformPath()
-  const command = candidate || 'codex'
-  const argsPrefix = []
-  if (platformPath.isAbsolute(command)) {
-    try {
-      const resolved = fs.realpathSync(command)
-      const jsEntry = codexJavascriptEntry(command, resolved)
-      const bundledBinary = codexBundledBinary(jsEntry)
-      if (bundledBinary) {
-        return { command: bundledBinary, argsPrefix: [], key: bundledBinary, source, detected: true }
-      }
-      const nodeRuntime = codexNodeRuntime(command)
-      if (jsEntry && nodeRuntime) {
-        return { command: nodeRuntime, argsPrefix: [jsEntry], key: `${nodeRuntime}\u0000${jsEntry}`, source, detected: true }
-      }
-      if (jsEntry || /\.(?:cmd|bat)$/i.test(command)) {
-        return { command, argsPrefix: [], key: command, source, detected: false, invalid: true }
-      }
-    } catch {}
-  }
-  return { command, argsPrefix, key: command, source, detected }
-}
-
-function readCodexProbe(command, args, timeoutMs) {
-  return new Promise((resolve) => {
-    let settled = false
-    const finish = (value) => {
-      if (settled) return
-      settled = true
-      clearTimeout(guard)
-      resolve(value)
-    }
-    const guard = setTimeout(() => finish(''), timeoutMs + 250)
-    try {
-      execFile(command, args, {
-        encoding: 'utf8',
-        maxBuffer: CODEX_PROXY_OUTPUT_LIMIT,
-        timeout: timeoutMs,
-        windowsHide: true
-      }, (error, stdout) => finish(error ? '' : String(stdout || '')))
-    } catch {
-      finish('')
-    }
-  })
-}
-
-function codexScutilValue(output, key) {
-  const prefix = `${key} :`
-  const line = String(output || '').split(/\r?\n/).find((candidate) => candidate.trim().startsWith(prefix))
-  return line ? line.trim().slice(prefix.length).trim() : ''
-}
-
-function codexLoopbackPacUrl(value) {
-  const match = String(value || '').trim().match(/^http:\/\/(127\.0\.0\.1|localhost|\[::1\]):(\d{1,5})(\/\S*)?$/i)
-  if (!match) return ''
-  const port = Number(match[2])
-  return port > 0 && port <= 65_535 ? match[0] : ''
-}
-
-function codexStaticPacProxy(value) {
-  const source = String(value || '').replace(/^\uFEFF/, '').trim()
-  if (!source || Buffer.byteLength(source, 'utf8') > CODEX_PROXY_OUTPUT_LIMIT) return ''
-  const match = source.match(/^function\s+FindProxyForURL\s*\(\s*[A-Za-z_$][\w$]*\s*,\s*[A-Za-z_$][\w$]*\s*\)\s*\{\s*return\s+(["'])([^"'\\\r\n]*)\1\s*;\s*\}\s*;?$/i)
-  if (!match) return ''
-  const firstDirective = match[2].split(';').map((item) => item.trim()).filter(Boolean)[0] || ''
-  const proxy = firstDirective.match(/^PROXY\s+(127\.0\.0\.1|localhost|\[::1\]):(\d{1,5})$/i)
-  if (!proxy) return ''
-  const port = Number(proxy[2])
-  if (port <= 0 || port > 65_535) return ''
-  return `http://${proxy[1].toLowerCase()}:${port}`
-}
-
-function codexHasExplicitProxyEnvironment(env) {
-  const proxyKeys = new Set(['http_proxy', 'https_proxy', 'all_proxy'])
-  return Object.entries(env || {}).some(([key, value]) => proxyKeys.has(key.toLowerCase()) && typeof value === 'string' && value.trim())
-}
-
-async function resolveCodexProxyEnvironment() {
-  const inherited = process.env || {}
-  if (process.platform !== 'darwin' || codexHasExplicitProxyEnvironment(inherited)) return {}
-  const systemProxy = await readCodexProbe('/usr/sbin/scutil', ['--proxy'], 1_000)
-  if (codexScutilValue(systemProxy, 'ProxyAutoConfigEnable') !== '1') return {}
-  const pacUrl = codexLoopbackPacUrl(codexScutilValue(systemProxy, 'ProxyAutoConfigURLString'))
-  if (!pacUrl) return {}
-  const pac = await readCodexProbe('/usr/bin/curl', [
-    '--fail',
-    '--silent',
-    '--show-error',
-    '--noproxy',
-    '*',
-    '--proto',
-    '=http',
-    '--connect-timeout',
-    '1',
-    '--max-time',
-    '2',
-    pacUrl
-  ], 2_500)
-  const proxy = codexStaticPacProxy(pac)
-  if (!proxy) return {}
-  return {
-    HTTP_PROXY: proxy,
-    HTTPS_PROXY: proxy,
-    http_proxy: proxy,
-    https_proxy: proxy
   }
 }
 
