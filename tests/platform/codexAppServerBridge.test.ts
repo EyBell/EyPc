@@ -8190,7 +8190,10 @@ describe('Codex App Server preload bridge', () => {
       }
     }
     sandbox.globalThis = sandbox
-    vm.runInNewContext(`${preload}\nglobalThis.__codexProxyTest = { codexLoopbackPacUrl, codexStaticPacProxy, codexHasExplicitProxyEnvironment }`, sandbox, { filename: 'preload.js' })
+    // The PAC refusals moved into preload/codex/proxy-discovery.cjs under
+    // RAW-169. Reaching them through the boundary keeps these assertions
+    // pointed at the code that actually decides, not at a name in the entry.
+    vm.runInNewContext(`${preload}\nglobalThis.__codexProxyTest = codexProxyDiscovery`, sandbox, { filename: 'preload.js' })
     const proxyTest = (sandbox as unknown as {
       __codexProxyTest: {
         codexLoopbackPacUrl(value: string): string
