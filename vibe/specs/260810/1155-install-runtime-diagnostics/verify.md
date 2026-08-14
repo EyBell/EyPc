@@ -278,3 +278,82 @@ Tool: Codex
 ### Structural Debt Surfaced
 
 本轮同时发现「单一裁决点」原则只在 Kernel 兑现，横切逻辑仍多点重复，详见 [RAW-167 draft](raw-requirement-next.draft.md#L1)。不属于 RAW-166 验收缺口，作为下一增量的输入。
+
+## 2026-08-13 RAW-167 交付记录：单点定义收敛与需求治理
+
+RAW-167 由上节的 Structural Debt 展开，分两条线交付：代码侧把「同一个判断只能有一个定义点」从 Kernel 推广到全部横切逻辑；文档侧建立可机检的需求登记。**两条线的代码与文档改动均已完成并提交；真机验收未做。**
+
+### 交付前的实测纠偏
+
+四次实施前测量推翻了方案初稿的前提。这四次是本增量最该被记住的部分——按初稿直接实施会分别产出无用或有害的结果：
+
+| 初稿判断 | 实测 | 若直接实施的后果 |
+| --- | --- | --- |
+| 泛化 `codexBranchEvidence` 让 Claude 接入 | Claude 无 fork 拓扑，无分支可聚合 | 为无分支的 Provider 泛化分支存储 |
+| Kernel 内 9 处 provider 分支多为补丁，应删至 0–2 | C2 后剩下的多为真实能力差异 | 误删 Plan 生命周期、归档时机等真实差异 |
+| 需要 `identity/lanes/propose` 三方法 Adapter | 其理由已被 A1/B2/C4 消化 | 为架构而架构的间接层 |
+| `projectKey` 两个 Provider 各一套策略 | 同配方同前缀，单根实测完全等价 | 修一个不存在的分歧 |
+
+### 代码侧收敛
+
+| 段 | 交付 | 提交 |
+| --- | --- | --- |
+| A1 | lane 量纲单点化：计数器与时间戳不得混入同一比较集合 | 见 `1ee6771` 前的批量提交 |
+| A2 | canonical 失配按包停滞计连击并触发定向 reconciliation | 同上 |
+| A3 | 空投递与 lane 过期分流 | 同上 |
+| C1 | 因果内核抽为 `preload/companion/branch-causality.cjs` | 同上 |
+| B2 | 四个推送出口收敛为 `recordCompanionProposalOutcome` | 同上 |
+| C2 | 同 revision 平局裁决委托共享内核，四象限全覆盖 | [`1ee6771`](../../../../preload/companion/task-kernel.cjs#L1) |
+| C3+C4 | provider 差异收敛为 `PROVIDER_TRAITS`，内联条件 8→0 | `00c86c1` |
+| E | 时序策略收敛为 `preload/timing-policy.cjs`，字面量 8→2 | `0747da6` |
+| F | 四条防回归守卫，逐条验红 | `05fac05` · `2846691` · `eccf2af` |
+
+主入口的两个时序字面量刻意保留：`preload/index.js` 从不做无保护的本地 require，一次抛出会带走整个 bridge，因此改由测试断言保持一致。这是 host 加载约束下的取舍，不是遗漏。
+
+### 需求治理
+
+| 段 | 交付 | 提交 |
+| --- | --- | --- |
+| 登记结构与首批 | 196 条叶子 / 5 责任模块 / 18 条整条取代边 | `4271f5d` · `1778e17` |
+| 冲突核验 | 72 处声明全部已有决定；新增 47 条局部关系边，含 6 条跨任务 | `51ea079` |
+| PRD 归位 | 从 20% 部分索引改为当前语义权威 + 登记路由 | `355583b` |
+| 流程门禁 | 收尾必须入册并跑 validator；三种情形必须上报 | `58631fa` |
+
+两项发现值得单列：
+
+- **局部取代（47）是整条取代（18）的两倍半。** 登记此前只能回答「是否被整条取代」，答不上最常问的「还有哪部分作数」。其中 6 条是跨任务的，只写在另一个任务的「冲突与非目标」散文里——被取代的条款在它自己任务的文档中仍标着 `active`。
+- **抽取器只认一种标注风格时静默丢掉了最新八条**（RAW-155 之后全部使用另一种），而登记看起来仍然成功。现已改为逐源断言「解析条数 == 源文件条数」，不足即拒绝注册整个来源。
+
+### 缺陷修复
+
+| 缺陷 | 根因 | 错误记忆 |
+| --- | --- | --- |
+| Claude 计划待批准态卡住、时间缺失 | 冷启动把 `lastActivityAt` 当完成水位，压过 live-append | [claude-metadata-activity-is-not-completion-evidence](../../../knowledge/error-memory/claude-metadata-activity-is-not-completion-evidence.md#L1) |
+| Codex 任务状态不跟随 | 计数器 lane 被墙钟时间播种后永久失效 | [comparison-set-mixing-counter-and-timestamp-units](../../../knowledge/error-memory/comparison-set-mixing-counter-and-timestamp-units.md#L1) |
+| 同一失配持续 23 分钟无动作 | 检测未绑定任何修复路径 | [detection-recorded-without-any-repair-path](../../../knowledge/error-memory/detection-recorded-without-any-repair-path.md#L1)（candidate） |
+| 修好 lane 后 Goal 抑制回归转红 | Goal 抑制此前部分依赖 lane 过期这一副作用 | [one-mechanism-silently-covering-anothers-job](../../../knowledge/error-memory/one-mechanism-silently-covering-anothers-job.md#L1) |
+| 并行会话批量提交留下不成对镜像 | 工作树一致不等于 HEAD 一致 | [parallel-session-batch-commit-splits-in-flight-work](../../../knowledge/error-memory/parallel-session-batch-commit-splits-in-flight-work.md#L1) |
+
+### Checked
+
+- 16 文件定向矩阵 `508/508`；`vue-tsc --noEmit` 退出 0；八组 canonical/public 镜像一致；`pnpm run build` 与 uTools validator 通过。
+- `validate-error-memory` 106 leaves 通过；`validate-requirements` 196 leaves / 18 whole + 47 scoped 边通过；`validate-committed-preload-mirrors` 28 对通过。
+- 每条新增守卫均做反向验红：故意还原对应缺陷后精确转红，非空转断言。
+- 零行为 diff 段落（C1、B2、C3+C4、E、F）以「既有用例原样通过」为判据，无一处期望值被改写。
+
+### Findings
+
+- P0：自动化与静态范围内无已知未解决项。
+- P1 `host-acceptance-outstanding`：**八笔真机验收全部未做**——A、C1、B2+C2、C3+C4、E、F、以及两个缺陷修复。其中 A 与 C2 改变了真实行为，最需要宿主证据。自动化全绿不构成宿主接纳。
+- P2 `unregistered-clauses`：约 160 条需求以无编号条款承载，无 id 可作身份；为其分配编号属需求撰写而非抽取，待用户裁决，见 [覆盖账](../../requirements/coverage.md#L1)。
+- P2 `overdue-candidate`：`pnpm-store-build-policy-mismatch` 与 `detection-recorded-without-any-repair-path` 均为 candidate，后者需真机结果才能升级。
+
+### Not Checked
+
+- 未重载或终止 uTools Host；未执行真实用户任务、Claude D′ 归档、原生存储写、UI 注入或第三方自动化。
+- 未运行仓库级 `pnpm test/verify`；当前影响图由 16 文件矩阵、typecheck/build 与三个专用 validator 封闭。
+- 未 push；全部提交停留在本地 `codex/port-management-redesign`。
+
+### RAW-167 VerificationDecision
+
+`route=impact-selected runtime+governance+docs / changed-surface=single-definition convergence across lane units, causal core, provider traits, timing policy, phase predicates + machine-checkable requirement registry / selected=16 files 508 tests + validate-requirements + validate-error-memory + validate-committed-preload-mirrors + typecheck + build + uTools validator / skipped=repository-wide suite without testing-owner trigger；host reload without process-control authorization；unnumbered clause registration pending user decision / outcome=increment-automated-verified, host-acceptance-outstanding / residual-risk=eight deliveries unverified on a real host, two of which changed behaviour`。
