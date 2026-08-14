@@ -2235,6 +2235,17 @@ describe('phase sets and lane units stay single-owner', () => {
   // can never be overtaken again, so the lane rejects every later generation as
   // stale. `membership` is a timestamp and may use one; the counter lanes may
   // not, and the counter aggregate may not absorb one.
+  // The Claude App version gate fails closed on an unlisted version. Two copies
+  // agreeing today is discipline, not structure: adding a version to one side
+  // alone leaves the archive adapter refusing what the state reader accepts.
+  it('states the supported Claude App versions exactly once', () => {
+    const appState = readFileSync(resolve(process.cwd(), 'preload/claude/app-state.cjs'), 'utf8')
+    const archive = readFileSync(resolve(process.cwd(), 'preload/claude/archive.cjs'), 'utf8')
+    expect(appState).toMatch(/const SUPPORTED_APP_VERSIONS = new Set\(/)
+    expect(archive).not.toMatch(/const SUPPORTED_APP_VERSIONS = new Set\(/)
+    expect(archive).toContain("require('./app-state.cjs')")
+  })
+
   it('never seeds a counter lane from wall-clock time', () => {
     expect(hostSource).not.toMatch(/sourceLaneGenerations\.\w+\.(phase|unread)\s*=[^\n]*(Date\.now\(\)|readAt)/)
     expect(hostSource).toContain('function companionCounterAggregate(lanes)')

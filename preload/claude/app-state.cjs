@@ -19,7 +19,12 @@ const CLAUDE_APP_STATE_VERSION = 2
 // been checked against the installed App logs. 1.28929.0 preserves the exact
 // Code session messages accepted below; unrelated Cowork identifiers remain
 // outside LOCAL_SESSION_PATTERN and therefore fail closed.
-const SUPPORTED_APP_VERSIONS = new Set(['1.26832.0', '1.28929.0'])
+// Single owner of the Claude App version gate. Both the state reader and the
+// archive adapter fail closed on an unlisted version, so the list has to be
+// one thing: two copies agreeing today is discipline, not structure, and a
+// version added to one side alone silently splits the gate in half.
+const SUPPORTED_APP_VERSION = '1.26832.0'
+const SUPPORTED_APP_VERSIONS = new Set([SUPPORTED_APP_VERSION, '1.28929.0'])
 const LOG_FILE_NAMES = ['main1.log', 'main.log']
 const LOG_TAIL_MAX_BYTES = 16 * 1024 * 1024
 const { WATCHER_RECOVERY_INTERVAL_MS } = require('../timing-policy.cjs')
@@ -592,6 +597,7 @@ function createAppStateReader(dependencies) {
 module.exports = {
   CLAUDE_APP_STATE_REVISION,
   CLAUDE_APP_STATE_VERSION,
+  SUPPORTED_APP_VERSION,
   SUPPORTED_APP_VERSIONS,
   LOG_TAIL_MAX_BYTES,
   LOG_RECOVERY_POLL_MS,
