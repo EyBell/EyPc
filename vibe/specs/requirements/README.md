@@ -16,6 +16,7 @@
 
 | 状态 | 含义 | 可作为当前实现依据 |
 | --- | --- | --- |
+| `proposed` | 已写成条款但用户从未确认 | 否 |
 | `active` | 当前有效 | 是 |
 | `superseded` | 已被更新条款取代；保留为需求变化证据 | 否 |
 | `retired` | 不再适用且无当前替代 | 否 |
@@ -32,8 +33,11 @@
 
 ## 模块路由
 
+`proposed` 是自审补上的：最新一批条款由实现者转述且用户从未确认，而原有四个状态里没有一个能表达这件事——`active` 会让未经确认的转述冒充生效条款。
+
 | 模块 | 唯一主责范围 |
 | --- | --- |
+| [Engineering Invariants](modules/engineering-invariants.md#L1) | 跨域结构性约束：判断唯一性、单点定义、零行为 diff 口径与防回归 |
 | [Companion Codex](modules/companion-codex.md#L1) | Codex 额度、任务收件箱、悬浮球、Action Runner 与配置页 |
 | [Companion Claude](modules/companion-claude.md#L1) | Claude 库存、相位、未读、归档与接入 |
 | [Companion Shared](modules/companion-shared.md#L1) | 跨 Provider 的状态内核、包合同、诊断与运行身份 |

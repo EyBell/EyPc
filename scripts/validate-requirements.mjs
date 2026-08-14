@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const registryRoot = path.join(repoRoot, 'vibe', 'specs', 'requirements')
 const modulesRoot = path.join(registryRoot, 'modules')
-const allowedStatuses = new Set(['active', 'superseded', 'retired', 'conflicted'])
+const allowedStatuses = new Set(['proposed', 'active', 'superseded', 'retired', 'conflicted'])
 const allowedAuthorities = new Set(['user-stated', 'agent-transcribed'])
 const requiredFields = ['id', 'qualified_source', 'status', 'domain', 'authority']
 const requiredModuleSections = [
@@ -194,10 +194,12 @@ for (const fields of leaves.values()) {
 }
 const conflicted = statusCounts.get('conflicted') || 0
 if (conflicted) warnings.push(`${conflicted} requirement(s) marked conflicted and awaiting a user decision`)
+const proposed = statusCounts.get('proposed') || 0
+if (proposed) warnings.push(`${proposed} requirement(s) still proposed and never confirmed by the user`)
 
 const scopedEdges = [...leaves.values()].reduce((total, fields) => total + (fields.__scoped || []).length, 0)
 const wholeEdges = [...leaves.values()].filter((fields) => fields.superseded_by).length
-const summary = ['active', 'superseded', 'retired', 'conflicted']
+const summary = ['proposed', 'active', 'superseded', 'retired', 'conflicted']
   .map((status) => `${status}=${statusCounts.get(status) || 0}`)
   .join(', ')
 process.stdout.write(`requirements: leaves=${leaves.size}, modules=${moduleNames.length}, ${summary}`
