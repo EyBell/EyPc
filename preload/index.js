@@ -311,6 +311,33 @@ try {
   }
   if (typeof codexRunnerBounds?.clampCodexActionRunnerBounds !== 'function') codexRunnerBounds = null
 } catch { codexRunnerBounds = null }
+
+// Action log redaction. A failed load redacts everything to the empty string
+// rather than letting unredacted output through — the safe direction.
+let codexLogRedaction = null
+try {
+  let redactionModule = null
+  try {
+    redactionModule = require('./codex/log-redaction.cjs')
+  } catch {}
+  if (!redactionModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      process.cwd(),
+      path.join(process.cwd(), 'preload'),
+      path.join(process.cwd(), 'public')
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        redactionModule = require(path.join(base, 'codex', 'log-redaction.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof redactionModule?.createCodexLogRedaction === 'function') {
+    codexLogRedaction = redactionModule.createCodexLogRedaction({ os })
+  }
+} catch { codexLogRedaction = null }
 const CODEX_ACTION_RUNNER_MIN_WIDTH = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_WIDTH ?? 720
 const CODEX_ACTION_RUNNER_MIN_HEIGHT = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_HEIGHT ?? 420
 
@@ -13733,16 +13760,7 @@ function persistCodexActionRun(run) {
 }
 
 function sanitizeCodexActionLogText(text, privatePaths = []) {
-  let value = String(text || '')
-    .replace(/\u001B\[[0-?]*[ -/]*[@-~]|\u001B[@-_]/g, '')
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
-  const paths = [...new Set([os.homedir(), ...privatePaths].filter(Boolean))].sort((left, right) => right.length - left.length)
-  for (const privatePath of paths) value = value.split(privatePath).join('<private-path>')
-  return value
-    .replace(/(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s'"`]+/gi, '$1<redacted>')
-    .replace(/((?:token|password|passwd|secret|api[_-]?key)\s*[:=]\s*)[^\s'"`]+/gi, '$1<redacted>')
-    .replace(/(https?:\/\/)([^\s/@:]+):([^\s/@]+)@/gi, '$1<redacted>@')
-    .slice(0, 32 * 1024)
+  return codexLogRedaction ? codexLogRedaction.sanitizeCodexActionLogText(text, privatePaths) : ''
 }
 
 function codexActionFlushLog(run) {
