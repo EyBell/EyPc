@@ -109,6 +109,24 @@ export function isCompanionCompatibilityMode(enablement: CompanionProviderEnable
  * imported so this module stays the lower layer: providers and the Codex domain
  * depend on it, never the other way round.
  */
+/**
+ * "待审批与待回答同属待输入" is a product rule, stated once in the PRD, and it
+ * decides grouping, counting and badge totals across both Providers. Written
+ * inline it becomes a search-and-replace hazard: a missed site disagrees with
+ * its siblings and nothing surfaces the disagreement.
+ *
+ * `phase` and `activityState` carry the same strings for these values, so one
+ * predicate serves both vocabularies.
+ */
+export function isCompanionAttentionState(value: string | null | undefined): boolean {
+  return value === 'waiting-input' || value === 'waiting-approval'
+}
+
+/** Running or waiting on the user — everything a newer observation may still move. */
+export function isCompanionLivePhase(value: string | null | undefined): boolean {
+  return value === 'running' || isCompanionAttentionState(value)
+}
+
 export interface CompanionOrderableTask {
   key: string
   pinSource?: 'native' | 'local'

@@ -38,11 +38,7 @@ import {
   type CodexTaskCard,
   type ConversationSnapshotV1
 } from '../domain/codex'
-import {
-  companionTaskKey,
-  companionTaskProvider,
-  isCompanionProviderEnabled,
-} from '../domain/companionProvider'
+import { companionTaskKey, companionTaskProvider, isCompanionProviderEnabled, isCompanionLivePhase } from '../domain/companionProvider'
 import { mergeCompanionConversations, withoutCompanionProvider } from '../domain/companionAggregate'
 import type { CompanionSnapshotSlice } from '../domain/companionPresentation'
 import {
@@ -873,7 +869,7 @@ export function createCodexController(options: CodexControllerOptions) {
   function degradeStuckClaudeActivity() {
     let changed = false
     claudeCodeSessions = claudeCodeSessions.map((row) => {
-      if (!['running', 'waiting-input', 'waiting-approval'].includes(row.phase)) return row
+      if (!isCompanionLivePhase(row.phase)) return row
       changed = true
       return { ...row, phase: 'unknown', stateSource: 'none', statusCorrelation: 'none' }
     })

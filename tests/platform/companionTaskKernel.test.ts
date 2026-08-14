@@ -2238,6 +2238,27 @@ describe('phase sets and lane units stay single-owner', () => {
   // The Claude App version gate fails closed on an unlisted version. Two copies
   // agreeing today is discipline, not structure: adding a version to one side
   // alone leaves the archive adapter refusing what the state reader accepts.
+  // Same product rule as the Kernel predicates, other side of the bridge. The
+  // renderer carries `activityState` where the Kernel carries `phase`, but both
+  // spell the waiting values identically, so one predicate owns both.
+  it('keeps no inline attention or live phase set in the renderer', () => {
+    const files = [
+      'src/domain/companionAggregate.ts',
+      'src/domain/companionTaskPackage.ts',
+      'src/domain/codex.ts',
+      'src/domain/claudeCode.ts',
+      'src/runtime/codexController.ts'
+    ]
+    for (const file of files) {
+      const source = readFileSync(resolve(process.cwd(), file), 'utf8')
+      expect(source, file).not.toMatch(/=== 'waiting-input' \|\| [\w.]+ === 'waiting-approval'/)
+      expect(source, file).not.toMatch(/\['running', 'waiting-input', 'waiting-approval'\]/)
+    }
+    const provider = readFileSync(resolve(process.cwd(), 'src/domain/companionProvider.ts'), 'utf8')
+    expect(provider).toContain('export function isCompanionAttentionState(')
+    expect(provider).toContain('export function isCompanionLivePhase(')
+  })
+
   it('states the supported Claude App versions exactly once', () => {
     const appState = readFileSync(resolve(process.cwd(), 'preload/claude/app-state.cjs'), 'utf8')
     const archive = readFileSync(resolve(process.cwd(), 'preload/claude/archive.cjs'), 'utf8')
