@@ -18,7 +18,7 @@ export const UTOOLS_PRELOAD_MODULE_GROUPS = Object.freeze([
   {
     id: 'codex',
     directory: 'codex',
-    files: ['node-runtime.cjs']
+    files: ['command-validation.cjs', 'node-runtime.cjs']
   },
   {
     id: 'companion',
