@@ -191,6 +191,11 @@ try {
 let createCompanionTaskKernel = null
 let reduceCodexTaskEvidenceV4 = null
 let reduceClaudeTaskEvidenceV4 = null
+// The phase vocabulary, reached through the Kernel that already owns the
+// companion path. A load failure here is the same failure as a missing
+// reducer: every consumer below is already dead, so no separate fallback.
+let isKnownTaskPhase = null
+let isSettledTaskPhase = null
 let companionNavigationLoadError = ''
 try {
   let kernelModule = null
@@ -226,6 +231,11 @@ try {
     : null
   if (!reduceCodexTaskEvidenceV4 || !reduceClaudeTaskEvidenceV4) {
     throw new Error('companion task V4 reducers unavailable')
+  }
+  isKnownTaskPhase = kernelModule.isKnownTaskPhase
+  isSettledTaskPhase = kernelModule.isSettledTaskPhase
+  if (typeof isKnownTaskPhase !== 'function' || typeof isSettledTaskPhase !== 'function') {
+    throw new Error('companion task phase vocabulary unavailable')
   }
 } catch (error) {
   companionNavigationLoadError = String(error && error.message || error || 'companion task kernel unavailable')
@@ -11646,7 +11656,7 @@ async function executeCompanionCodexPlan(target, request = {}) {
     || latestPackageTask.planReady !== true
     || latestPackageTask.planLifecycleRevision !== target.planLifecycleRevision
     || latestPackageTask.capabilities?.executePlan !== true
-    || !['waiting-input', 'stopped', 'completed'].includes(latestPackageTask.phase)) {
+    || !isSettledTaskPhase(latestPackageTask.phase)) {
     return { outcome: 'failed', errorCode: 'state-changed', message: 'Plan 生命周期已变化，未启动执行' }
   }
 
@@ -12695,7 +12705,7 @@ function applyClaudeStateToCompanionKernel() {
     if (task.provider !== 'claude') return task
     const session = byAlias.get(task.actionAlias)
     if (!session) return task
-    const sourcePhase = ['running', 'waiting-input', 'waiting-approval', 'completed', 'stopped', 'unknown'].includes(session.phase)
+    const sourcePhase = isKnownTaskPhase(session.phase)
       ? session.phase
       : task.phase
     const decision = companionClaudePhaseDecision(sourcePhase, task.unread)
@@ -12887,7 +12897,7 @@ function companionTaskFromClaudeSession(sessionValue, previous, acceptedAt) {
     ? companionClaudeUnreadSnapshot.ids.has(sessionId)
     : previous?.unread === true
   const unreadKnown = companionClaudeUnreadSnapshot.available || previous?.unreadKnown === true
-  const sourcePhase = ['running', 'waiting-input', 'waiting-approval', 'completed', 'stopped', 'unknown'].includes(session.phase)
+  const sourcePhase = isKnownTaskPhase(session.phase)
     ? session.phase
     : previous?.phase || 'unknown'
   const decision = companionClaudePhaseDecision(sourcePhase, unread)
