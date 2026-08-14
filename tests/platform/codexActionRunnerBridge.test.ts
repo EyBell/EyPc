@@ -1,18 +1,22 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('Codex Action Runner host bridge contract', () => {
   const source = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
-  // Node runtime discovery moved into its own module under RAW-169. These are
-  // security assertions about the launch path, so they follow the code rather
-  // than being relaxed: the absolute-path guard must exist somewhere in the
-  // supervisor's reachable source, wherever that source now lives.
-  const nodeRuntime = readFileSync(resolve(process.cwd(), 'preload/codex/node-runtime.cjs'), 'utf8')
+  // These are security and safety assertions about the launch and log paths, so
+  // they follow the code rather than being relaxed when a block is extracted
+  // under RAW-169. Reading the whole `preload/codex/` group keeps "the
+  // supervisor's reachable source" accurate as further blocks move out, instead
+  // of naming each new module here after it has already broken the run.
+  const codexModules = readdirSync(resolve(process.cwd(), 'preload/codex'))
+    .filter((name) => name.endsWith('.cjs'))
+    .map((name) => readFileSync(join(resolve(process.cwd(), 'preload/codex'), name), 'utf8'))
+    .join('\n')
   const supervisor = source.slice(
     source.indexOf('const CODEX_ENV_ACTION_CONFIRM_TTL_MS'),
     source.indexOf('window.eypcPlatform =')
-  ) + nodeRuntime
+  ) + codexModules
 
   it('uses one registered Environment root for configuration and preserves exact task execution cwd', () => {
     expect(supervisor).toContain("fs.statSync(path.join(root, '.codex', 'environments')).isDirectory()")

@@ -338,6 +338,44 @@ try {
     codexLogRedaction = redactionModule.createCodexLogRedaction({ os })
   }
 } catch { codexLogRedaction = null }
+
+// Action log buffering and decoding. Host effects are injected rather than
+// reached for, so the module never sees the runner window, the IPC channel
+// names or the database. `deliverLogDeltas` receives the whole batch so the
+// liveness check stays outside the loop, exactly where it was.
+let codexLogStream = null
+try {
+  let logStreamModule = null
+  try {
+    logStreamModule = require('./codex/log-stream.cjs')
+  } catch {}
+  if (!logStreamModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      process.cwd(),
+      path.join(process.cwd(), 'preload'),
+      path.join(process.cwd(), 'public')
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        logStreamModule = require(path.join(base, 'codex', 'log-stream.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof logStreamModule?.createCodexActionLogStream === 'function') {
+    codexLogStream = logStreamModule.createCodexActionLogStream({
+      redact: (text, privatePaths) => sanitizeCodexActionLogText(text, privatePaths),
+      persistRun: (run) => persistCodexActionRun(run),
+      deliverLogDeltas: (deltas) => {
+        if (!codexActionRunnerAlive()) return
+        for (const delta of deltas) {
+          try { codexActionRunnerWindow.webContents.send(CODEX_ACTION_RUNNER_CHANNELS.log, delta) } catch {}
+        }
+      }
+    })
+  }
+} catch { codexLogStream = null }
 const CODEX_ACTION_RUNNER_MIN_WIDTH = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_WIDTH ?? 720
 const CODEX_ACTION_RUNNER_MIN_HEIGHT = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_HEIGHT ?? 420
 
@@ -408,8 +446,6 @@ const CODEX_ACTION_RUNNER_CHANNELS = {
   resizeCancel: 'eypc-action-runner:resize-cancel'
 }
 const CODEX_ACTION_RUNNER_STORAGE_KEY = 'eypc/codex/action-runner/v1'
-const CODEX_ACTION_LOG_FLUSH_MS = 50
-const CODEX_ACTION_LOG_FLUSH_BYTES = 16 * 1024
 let lastEnterPayload = null
 const enterPayloadListeners = new Set()
 let mqttSqliteAdapter = null
@@ -13764,88 +13800,19 @@ function sanitizeCodexActionLogText(text, privatePaths = []) {
 }
 
 function codexActionFlushLog(run) {
-  if (!run) return
-  if (run._logFlushTimer) {
-    clearTimeout(run._logFlushTimer)
-    run._logFlushTimer = null
-  }
-  const queue = Array.isArray(run._logQueue) ? run._logQueue.splice(0) : []
-  run._logQueueBytes = 0
-  if (!queue.length) return
-  let next = run.logText || ''
-  const deltas = []
-  for (const item of queue) {
-    next += item.text
-    run.cursor = (run.cursor || 0) + 1
-    deltas.push({ version: 1, runId: run.runId, cursor: run.cursor, stream: item.stream, text: item.text, receivedAt: item.receivedAt })
-  }
-  run.logText = next.length > 2 * 1024 * 1024 ? next.slice(next.length - 2 * 1024 * 1024) : next
-  run.logBytes = Buffer.byteLength(run.logText, 'utf8')
-  run.logLines = (run.logText.match(/\n/g) || []).length + (run.logText && !run.logText.endsWith('\n') ? 1 : 0)
-  persistCodexActionRun(run)
-  if (!codexActionRunnerAlive()) return
-  for (const delta of deltas) {
-    try { codexActionRunnerWindow.webContents.send(CODEX_ACTION_RUNNER_CHANNELS.log, delta) } catch {}
-  }
+  if (codexLogStream) codexLogStream.codexActionFlushLog(run)
 }
 
 function codexActionQueueSafeLog(run, stream, text) {
-  if (!text) return
-  run._logQueue ||= []
-  const previous = run._logQueue[run._logQueue.length - 1]
-  if (previous && previous.stream === stream && Buffer.byteLength(previous.text, 'utf8') + Buffer.byteLength(text, 'utf8') <= CODEX_ACTION_LOG_FLUSH_BYTES) {
-    previous.text += text
-    previous.receivedAt = Date.now()
-  } else {
-    run._logQueue.push({ stream, text, receivedAt: Date.now() })
-  }
-  run._logQueueBytes = (run._logQueueBytes || 0) + Buffer.byteLength(text, 'utf8')
-  if (run._logQueueBytes >= CODEX_ACTION_LOG_FLUSH_BYTES) codexActionFlushLog(run)
-  else if (!run._logFlushTimer) run._logFlushTimer = setTimeout(() => codexActionFlushLog(run), CODEX_ACTION_LOG_FLUSH_MS)
+  if (codexLogStream) codexLogStream.codexActionQueueSafeLog(run, stream, text)
 }
 
 function codexActionLogStream(run, stream, privatePaths) {
-  run._logStreams ||= new Map()
-  if (run._logStreams.has(stream)) return run._logStreams.get(stream)
-  let decoder = null
-  try {
-    const { StringDecoder } = require('node:string_decoder')
-    decoder = new StringDecoder('utf8')
-  } catch {
-    decoder = { write: (chunk) => Buffer.from(chunk).toString('utf8'), end: () => '' }
-  }
-  const state = { decoder, pending: '', dropUntilNewline: false, privatePaths: [...new Set(privatePaths || [])] }
-  run._logStreams.set(stream, state)
-  return state
+  return codexLogStream ? codexLogStream.codexActionLogStream(run, stream, privatePaths) : null
 }
 
 function codexActionConsumeDecodedLog(run, stream, state, decoded, final = false) {
-  if (decoded) state.pending += decoded
-  if (state.dropUntilNewline) {
-    const newline = state.pending.indexOf('\n')
-    if (newline < 0) {
-      state.pending = ''
-      return
-    }
-    state.pending = state.pending.slice(newline + 1)
-    state.dropUntilNewline = false
-  }
-  for (;;) {
-    const newline = state.pending.indexOf('\n')
-    if (newline < 0) break
-    const complete = state.pending.slice(0, newline + 1)
-    state.pending = state.pending.slice(newline + 1)
-    codexActionQueueSafeLog(run, stream, sanitizeCodexActionLogText(complete, state.privatePaths))
-  }
-  if (state.pending.length > 64 * 1024) {
-    codexActionQueueSafeLog(run, 'system', '[单行输出超过安全上限，已截断]\n')
-    state.pending = ''
-    state.dropUntilNewline = true
-  }
-  if (final && state.pending) {
-    codexActionQueueSafeLog(run, stream, sanitizeCodexActionLogText(state.pending, state.privatePaths))
-    state.pending = ''
-  }
+  if (codexLogStream) codexLogStream.codexActionConsumeDecodedLog(run, stream, state, decoded, final)
 }
 
 function appendCodexActionRunLog(run, stream, chunk, privatePaths) {
