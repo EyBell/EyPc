@@ -441,7 +441,10 @@ describe('favorite file bridge source', () => {
     expect(preloadAssetsScript).toContain("canonical: 'preload/index.js', public: 'public/preload.js', dist: 'preload.js'")
     expect(preloadAssetsScript).toContain("canonical: 'preload/action.js', public: 'public/action-preload.js', dist: 'action-preload.js'")
     expect(packageJson.scripts?.['sync:preloads']).toBe('node scripts/sync-utools-preloads.mjs')
-    expect(packageJson.scripts?.verify).toBe('pnpm run sync:preloads && pnpm run test && pnpm run build')
+    // `validate:mirrors` joined the pipeline because the working-tree mirror
+    // check that `build` already runs stays green when the *committed* state is
+    // broken, and the host loads the committed mirror.
+    expect(packageJson.scripts?.verify).toBe('pnpm run sync:preloads && pnpm run test && pnpm run build && pnpm run validate:mirrors')
     expect(validateScript).toContain("['index.html', 'float.html', 'action.html', 'plugin.json', 'package.json', 'preload.js', 'float-preload.js', 'action-preload.js', 'runtime-identity.cjs', 'logo.svg']")
     expect(validateScript).toContain('UTOOLS_PRELOAD_ASSETS.map')
     expect(validateScript).toContain("dist package.json type must be commonjs")
