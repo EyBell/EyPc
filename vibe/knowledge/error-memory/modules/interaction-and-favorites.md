@@ -29,6 +29,7 @@ Link-only route for command targets、focus transfer、keyboard ownership、tool
 ## Related Error Records
 
 - [Window-family projection overwrites logical targets](../window-family-projection-overwrites-logical-targets.md#L1)
+- [Port scan snapshot misses new listeners](../port-scan-snapshot-misses-new-listeners.md#L1)
 
 ## Historical Or Migration Sources
 
