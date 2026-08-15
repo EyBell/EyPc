@@ -281,3 +281,23 @@ runner bridge 用例按 `indexOf(锚点)` 划出监管区再断言，而锚点�
 ### 验证
 
 已用构造快照+补丁场景独立冒烟：正常快照重建、`resumeState`/`threadRuntimeStatus`/`requests` 三类补丁应用、未识别字段放行（返回 `true`，推进 revision 但不改状态）、畸形操作拒绝（返回 `false`）全部核对通过。聚焦测试 `codexAppServerBridge`/`codexActionRuntime`/`codexActionRunnerBridge`/`codexFloatWindowBridge`/`projectIdentity` 共 189 项一次性全过（未再复现第十三块那类跨 realm 问题——本模块没有对内建类型做 `instanceof`）。`pnpm run sync:preloads` / `validate:mirrors` / `build`（含 `validate:utools`）全过；全量 `vitest run` 1405/1406 项通过，唯一失败项与历次记录的同一条 MQTT 用例超时，与本次抽取无关。
+
+## 2026-08-15 第十五块：启动路径偏好与 rollout 运行时状态（两处失手，两条新错误记忆）
+
+两个模块，因为是两件事。入口 14,311 → **14,290**。`preload/codex/` 现有二十个模块。
+
+**[launch-path-preference.cjs](../../../preload/codex/launch-path-preference.cjs#L1)（6 函数 / 187 行）**：手动「Codex CLI 位置」偏好的读取与自动候选扫描——没有手动路径时按平台遍历 volta/nvm/homebrew/PATH，去重成一个启动计划与一份候选列表。`platformPath`/`launchPlan` 是第九块已抽出模块的入口委托桩；`fs`/`os`/`process` 按 node-runtime 先例注入；`utools` 按 run-database 先例注入；`storageKey` 注入而非复制字面量，因为未抽取的 `writeCodexLaunchPathPreference`（配对的写路径，与本簇不共享其它逻辑）必须用同一个键。
+
+**[rollout-runtime-state.cjs](../../../preload/codex/rollout-runtime-state.cjs#L1)（1 函数 / 115 行）**：从 rollout 尾部判定线程的实时运行阶段（active/completed/interrupted），与已持久化的 Turn 状态是两个不同的问题。`record`/`rolloutTimestampMs` 注入，后者本身就是第八块已抽出模块的入口委托桩。
+
+### 两处失手
+
+**其一，标签文案凭记忆写错。** 模块内复制的 `CODEX_LAUNCH_SOURCE_LABELS` 三个值（`nvm`/`path`/`unknown`）与入口实际定义不一致——写模块时没有逐字重新读取该常量的当前定义，只凭早前一次探索时看到的片段推断补全。语法检查、聚焦测试的结构断言都不会抓这类问题，因为返回形状没变，只有具体字符串值变了——与第十二块记录的「行为核验证明不了派生值没变」同一条纪律，这是同一会话里的第二次命中。已按源码逐字重新核对修正。
+
+**其二，工厂签名写了注入参数，入口调用处却漏传。** `createCodexLaunchPathPreference` 的函数体正确写了 `dependencies.process || process` 等四处兜底，但入口 `preload/index.js` 里实际调用时只传了 `platformPath`/`launchPlan`/`storageKey` 三项，`fs`/`os`/`process`/`utools` 四个全部漏传。兜底命中的是模块自己 `require` 时刻的真实 Node 全局，在生产环境（单一 realm）里凑巧正确，在聚焦测试的 vm 沙箱里是另一个 `process`——三条 Windows 平台候选扫描断言当场失败：`host.platform === 'win32'` 恒假，全部落进 macOS/Linux 分支。补齐四个注入后聚焦测试恢复。这与第十三块的 `instanceof Map` 跨 realm 问题同根同源（环境变了而非代码变了），但触发方式不同——那次是判据本身跨 realm，这次是设计了注入却没接线。两条分别记录：[preload-module-instanceof-crosses-vm-sandbox-realm](../../knowledge/error-memory/preload-module-instanceof-crosses-vm-sandbox-realm.md#L1)、[preload-module-forgets-injection-at-call-site](../../knowledge/error-memory/preload-module-forgets-injection-at-call-site.md#L1)。
+
+加载失败时两模块退化为各自已有的「未检测/未知」哨兵：启动路径偏好退化为空偏好（等同「未设置手动路径」，调用方本就把这读作转向自动检测）与 `codexLaunchPlan('codex', 'unknown', false)` 包装的空结果；rollout 运行时状态退化为 `known: false, phase: 'unknown'`（调用方本就把「未知」读作需要继续加宽尾部）。
+
+### 验证
+
+聚焦测试 `codexAppServerBridge`/`codexActionRuntime`/`codexActionRunnerBridge`/`codexFloatWindowBridge`/`projectIdentity`/`claudeCliDiscovery` 共 198 项全过（首次运行时四项 Windows 平台断言失败，定位为漏注入后修复）；两模块各自独立冒烟（NUL 拒绝、路径归一化、手动/自动两条启动路径、rollout 全生命周期与畸形行容错）核对通过；`pnpm run sync:preloads` / `validate:mirrors` / `build`（含 `validate:utools`）全过；全量 `vitest run` 1409/1410 项通过，唯一失败项与历次记录的同一条 MQTT 用例超时，与本次抽取无关。
