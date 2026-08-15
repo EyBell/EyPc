@@ -47,7 +47,6 @@ const CODEX_THREAD_FIRST_PROMPT_PAGE_LIMIT = 50
 const CODEX_THREAD_FIRST_PROMPT_PAGE_BUDGET = 4
 const CODEX_DESKTOP_IPC_FRAME_MAX_BYTES = 256 * 1024 * 1024
 const CODEX_DESKTOP_IPC_RECONNECT_MAX_MS = 5_000
-const CODEX_DESKTOP_REQUEST_CORRELATION_SALT = crypto.randomBytes(16)
 const COMPANION_DIAGNOSTIC_TASK_SALT = crypto.randomBytes(16)
 const CODEX_DESKTOP_WAITING_STATE_LIMIT = 1_000
 const CODEX_DESKTOP_WAITING_REQUEST_HISTORY_LIMIT = 400
@@ -506,6 +505,94 @@ try {
   codexLaunchContext = null
   codexProxyDiscovery = null
 }
+
+// Environment TOML parsing. Depends on nothing, so it is required directly
+// rather than constructed, on the same precedent as command-validation.cjs. A
+// failed load leaves every environment file unparseable rather than partially
+// trusted.
+let codexEnvironmentToml = null
+try {
+  try {
+    codexEnvironmentToml = require('./codex/environment-toml.cjs')
+  } catch {}
+  if (!codexEnvironmentToml) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      process.cwd(),
+      path.join(process.cwd(), 'preload'),
+      path.join(process.cwd(), 'public')
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        codexEnvironmentToml = require(path.join(base, 'codex', 'environment-toml.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof codexEnvironmentToml?.parseCodexEnvironmentTomlText !== 'function') {
+    codexEnvironmentToml = null
+  }
+} catch { codexEnvironmentToml = null }
+
+// How the desktop plan bridge classifies a live request: its correlation
+// identity, its timestamp, and whether it is currently waiting on the user.
+let codexDesktopRequestProjection = null
+try {
+  let projectionModule = null
+  try {
+    projectionModule = require('./codex/desktop-request-projection.cjs')
+  } catch {}
+  if (!projectionModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        projectionModule = require(path.join(base, 'codex', 'desktop-request-projection.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof projectionModule?.createCodexDesktopRequestProjection === 'function') {
+    codexDesktopRequestProjection = projectionModule.createCodexDesktopRequestProjection({
+      record: codexRecord,
+      timestampMs: codexTimestampMs,
+      crypto,
+      nextLiveEvidenceSequence: codexNextLiveEvidenceSequence
+    })
+  }
+} catch { codexDesktopRequestProjection = null }
+
+// Rate-limit and account payloads into the shape the status UI reads. Pure
+// computation; a failed load leaves quota unreadable rather than misread.
+let codexQuotaSanitizer = null
+try {
+  let quotaModule = null
+  try {
+    quotaModule = require('./codex/quota-sanitizer.cjs')
+  } catch {}
+  if (!quotaModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        quotaModule = require(path.join(base, 'codex', 'quota-sanitizer.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof quotaModule?.createCodexQuotaSanitizer === 'function') {
+    codexQuotaSanitizer = quotaModule.createCodexQuotaSanitizer({
+      record: codexRecord,
+      percent: codexPercent,
+      number: codexNumber,
+      timestampMs: codexTimestampMs
+    })
+  }
+} catch { codexQuotaSanitizer = null }
 
 // A failed load degrades to "no special handling": the raw candidate is handed
 // to the OS path lookup, and no proxy is injected. Both are the same answers
@@ -3228,107 +3315,40 @@ function codexDesktopIpcEndpointIsSecure(endpoint) {
   }
 }
 
+// A failed load falls back to answers that never claim a match or a wait
+// state: no correlation, no timestamp, no flag. Callers already treat those
+// as "nothing to report" rather than as a distinct case.
 function codexDesktopRequestTimestamp(value) {
-  const source = codexRecord(value)
-  const params = codexRecord(source.params)
-  return codexTimestampMs(source.startedAt)
-    || codexTimestampMs(source.createdAt)
-    || codexTimestampMs(source.timestamp)
-    || codexTimestampMs(params.startedAt)
-    || codexTimestampMs(params.createdAt)
-    || codexTimestampMs(params.timestamp)
+  return codexDesktopRequestProjection ? codexDesktopRequestProjection.codexDesktopRequestTimestamp(value) : 0
 }
 
 function codexDesktopRequestCorrelation(value) {
-  const source = codexRecord(value)
-  const params = codexRecord(source.params)
-  const identity = [source.requestId, source.id, source.callId, params.requestId, params.id, params.callId]
-    .find((candidate) => typeof candidate === 'string' && candidate.length > 0 && candidate.length <= 512
-      || Number.isSafeInteger(candidate))
-  if (identity === undefined) return ''
-  return crypto.createHash('sha256')
-    .update(CODEX_DESKTOP_REQUEST_CORRELATION_SALT)
-    .update('\0')
-    .update(String(identity))
-    .digest('hex')
-    .slice(0, 32)
+  return codexDesktopRequestProjection ? codexDesktopRequestProjection.codexDesktopRequestCorrelation(value) : ''
 }
 
 function codexDesktopProjectedRequest(value, observedAt = Date.now(), previous = null) {
+  if (codexDesktopRequestProjection) return codexDesktopRequestProjection.codexDesktopProjectedRequest(value, observedAt, previous)
   const source = codexRecord(value)
-  const type = typeof source.type === 'string' ? source.type.slice(0, 80) : ''
-  const method = typeof source.method === 'string' ? source.method.slice(0, 120) : ''
-  const suppliedCorrelation = codexDesktopRequestCorrelation(source)
-  const suppliedStartedAt = codexDesktopRequestTimestamp(source)
-  const sameInstance = Boolean(previous)
-    && (suppliedCorrelation
-      ? previous.correlation === suppliedCorrelation
-      : previous.type === type
-        && previous.method === method
-        && (!suppliedStartedAt || !previous.startedAt || previous.startedAt === suppliedStartedAt))
-  const correlation = suppliedCorrelation
-    || (sameInstance ? previous.correlation : '')
-  const projection = {
-    type,
-    method,
+  return {
+    type: typeof source.type === 'string' ? source.type.slice(0, 80) : '',
+    method: typeof source.method === 'string' ? source.method.slice(0, 120) : '',
     observedAt: codexTimestampMs(observedAt) || Date.now(),
-    observedSequence: sameInstance && Number.isInteger(previous?.observedSequence)
-      ? previous.observedSequence
-      : codexNextLiveEvidenceSequence()
+    observedSequence: codexNextLiveEvidenceSequence()
   }
-  if (correlation) projection.correlation = correlation
-  const startedAt = suppliedStartedAt || (sameInstance ? codexTimestampMs(previous?.startedAt) : 0)
-  if (startedAt) projection.startedAt = startedAt
-  if (sameInstance
-    && previous.type === projection.type
-    && previous.method === projection.method
-    && !suppliedStartedAt
-    && !startedAt
-    && codexTimestampMs(previous.observedAt)) projection.observedAt = previous.observedAt
-  return projection
 }
 
 function codexDesktopProjectedRequests(values, previous = []) {
-  const observations = Array.isArray(previous) ? [...previous] : []
-  const used = new Set()
+  if (codexDesktopRequestProjection) return codexDesktopRequestProjection.codexDesktopProjectedRequests(values, previous)
   const observedAt = Date.now()
-  return values.map((value) => {
-    const source = codexRecord(value)
-    const type = typeof source.type === 'string' ? source.type.slice(0, 80) : ''
-    const method = typeof source.method === 'string' ? source.method.slice(0, 120) : ''
-    const startedAt = codexDesktopRequestTimestamp(source)
-    const correlation = codexDesktopRequestCorrelation(source)
-    const matchIndex = observations.findIndex((item, index) => !used.has(index)
-      && (correlation
-        ? item.correlation === correlation
-        : item.type === type
-          && item.method === method
-          && (!startedAt || !item.startedAt || item.startedAt === startedAt)))
-    if (matchIndex >= 0) used.add(matchIndex)
-    return codexDesktopProjectedRequest(source, observedAt, matchIndex >= 0 ? observations[matchIndex] : null)
-  })
+  return values.map((value) => codexDesktopProjectedRequest(value, observedAt, null))
 }
 
 function codexDesktopIsPlanImplementationRequest(request) {
-  return String(request?.method || '').toLowerCase() === 'item/plan/requestimplementation'
+  return codexDesktopRequestProjection ? codexDesktopRequestProjection.codexDesktopIsPlanImplementationRequest(request) : false
 }
 
 function codexDesktopRequestFlag(request) {
-  const type = String(request?.type || '').toLowerCase()
-  const method = String(request?.method || '').toLowerCase()
-  if (codexDesktopIsPlanImplementationRequest(request)
-    || method === 'item/tool/requestuserinput'
-    || method === 'requestuserinput'
-    || type === 'userinput'
-    || type === 'optionpicker'
-    || type === 'setupcodex') return 'waitingOnUserInput'
-  if (method === 'item/commandexecution/requestapproval'
-    || method === 'item/filechange/requestapproval'
-    || method === 'item/permissions/requestapproval'
-    || method === 'mcpserver/elicitation/request'
-    || method === 'requestapproval' && (type === 'approval' || type === 'commandexecution' || type === 'filechange' || type === 'permissions')
-    || type === 'elicitation') return 'waitingOnApproval'
-  return ''
+  return codexDesktopRequestProjection ? codexDesktopRequestProjection.codexDesktopRequestFlag(request) : ''
 }
 
 function codexWaitingFlagClearSequence(waitingState, flag) {
@@ -7263,68 +7283,12 @@ function closeCodexConnections(options = {}) {
   closeCodexServer()
 }
 
-function sanitizeCodexQuotaWindow(value) {
-  const source = codexRecord(value)
-  if (!Object.keys(source).length || typeof source.usedPercent !== 'number') return null
-  return {
-    remainingPercent: codexPercent(100 - source.usedPercent),
-    resetAt: codexTimestampMs(source.resetsAt) || null,
-    windowMinutes: codexNumber(source.windowDurationMins) || null
-  }
-}
-
+// A failed load leaves quota unreadable rather than misread: every window
+// comes back empty instead of guessing at a partial shape.
 function sanitizeCodexQuota(rateResult, accountResult) {
-  const rateSource = codexRecord(rateResult)
-  const byLimit = codexRecord(rateSource.rateLimitsByLimitId)
-  const pools = Object.entries(byLimit).flatMap(([key, value]) => {
-    const source = codexRecord(value)
-    const limitId = typeof source.limitId === 'string' && source.limitId ? source.limitId.slice(0, 120) : String(key || '').slice(0, 120)
-    if (!limitId) return []
-    const limitName = typeof source.limitName === 'string' && source.limitName ? source.limitName.slice(0, 160) : limitId
-    const family = /spark/i.test(`${limitId} ${limitName}`) || limitId === 'codex_bengalfox' ? 'spark' : 'normal'
-    const windows = [sanitizeCodexQuotaWindow(source.primary), sanitizeCodexQuotaWindow(source.secondary)].filter(Boolean)
-      .sort((left, right) => (left.windowMinutes || Number.MAX_SAFE_INTEGER) - (right.windowMinutes || Number.MAX_SAFE_INTEGER))
-    return [{
-      limitId,
-      limitName,
-      family,
-      short: windows.find((window) => window.windowMinutes && window.windowMinutes <= 24 * 60) || null,
-      weekly: [...windows].reverse().find((window) => window.windowMinutes && window.windowMinutes > 24 * 60) || null,
-      planType: typeof source.planType === 'string' ? source.planType : ''
-    }]
-  })
-  if (!pools.length && Object.keys(codexRecord(rateSource.rateLimits)).length) {
-    const source = codexRecord(rateSource.rateLimits)
-    const windows = [sanitizeCodexQuotaWindow(source.primary), sanitizeCodexQuotaWindow(source.secondary)].filter(Boolean)
-      .sort((left, right) => (left.windowMinutes || Number.MAX_SAFE_INTEGER) - (right.windowMinutes || Number.MAX_SAFE_INTEGER))
-    pools.push({
-      limitId: 'codex',
-      limitName: 'Codex',
-      family: 'normal',
-      short: windows.find((window) => window.windowMinutes && window.windowMinutes <= 24 * 60) || null,
-      weekly: [...windows].reverse().find((window) => window.windowMinutes && window.windowMinutes > 24 * 60) || null,
-      planType: typeof source.planType === 'string' ? source.planType : ''
-    })
-  }
-  const selected = pools.find((pool) => pool.limitId === 'codex') || pools.find((pool) => pool.family === 'normal') || {
-    limitId: 'codex', limitName: 'Codex', family: 'normal', short: null, weekly: null, planType: ''
-  }
-  const normal = { limitId: selected.limitId, limitName: selected.limitName, family: 'normal', short: selected.short, weekly: selected.weekly }
-  const spark = pools.filter((pool) => pool.family === 'spark').map((pool) => ({
-    limitId: pool.limitId,
-    limitName: pool.limitName,
-    family: 'spark',
-    short: pool.short,
-    weekly: pool.weekly
-  })).sort((left, right) => Math.max(right.short?.remainingPercent ?? -1, right.weekly?.remainingPercent ?? -1)
-    - Math.max(left.short?.remainingPercent ?? -1, left.weekly?.remainingPercent ?? -1) || left.limitId.localeCompare(right.limitId))
-  const account = codexRecord(codexRecord(accountResult).account)
-  const plan = typeof selected.planType === 'string' && selected.planType
-    ? selected.planType
-    : typeof account.planType === 'string'
-      ? account.planType
-      : ''
-  return { plan: plan.slice(0, 64), short: normal.short, weekly: normal.weekly, normal, spark }
+  return codexQuotaSanitizer
+    ? codexQuotaSanitizer.sanitizeCodexQuota(rateResult, accountResult)
+    : { plan: '', short: null, weekly: null, normal: { limitId: 'codex', limitName: 'Codex', family: 'normal', short: null, weekly: null }, spark: [] }
 }
 
 function sanitizeCodexModelList(value) {
@@ -13112,95 +13076,15 @@ const codexEnvironmentActionSessions = new Map()
 let codexActionDeferredServerClose = false
 let codexEnvironmentShuttingDown = false
 
+// Not a general TOML parser: accepts only the subset Environment files use,
+// and a load failure means every environment file reads as unparseable
+// rather than partially trusted.
 function codexEnvUnquoteTomlString(raw) {
-  const value = String(raw || '').trim()
-  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-    return value.slice(1, -1).replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\')
-  }
-  return value
+  return codexEnvironmentToml ? codexEnvironmentToml.codexEnvUnquoteTomlString(raw) : String(raw || '').trim()
 }
 
 function parseCodexEnvironmentTomlText(text) {
-  if (typeof text !== 'string' || !text.trim()) return null
-  if (text.includes('"""') || text.includes("'''")) return null
-  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/)
-  let section = 'root'
-  let version = 0
-  let versionPresent = false
-  let name = ''
-  let setupScript = ''
-  const actions = []
-  let currentAction = null
-  let parseError = false
-
-  const stripTomlComment = (rawLine) => {
-    let inSingle = false
-    let inDouble = false
-    let escaped = false
-    for (let i = 0; i < rawLine.length; i += 1) {
-      const ch = rawLine[i]
-      if (escaped) {
-        escaped = false
-        continue
-      }
-      if (inDouble && ch === '\\') {
-        escaped = true
-        continue
-      }
-      if (!inDouble && ch === '\'') {
-        inSingle = !inSingle
-        continue
-      }
-      if (!inSingle && ch === '"') {
-        inDouble = !inDouble
-        continue
-      }
-      if (ch === '#' && !inSingle && !inDouble) return rawLine.slice(0, i)
-    }
-    return rawLine
-  }
-  const flushAction = () => {
-    if (!currentAction) return
-    if (currentAction.name && currentAction.command) actions.push({ ...currentAction })
-    else parseError = true
-    currentAction = null
-  }
-  for (const rawLine of lines) {
-    const line = stripTomlComment(rawLine).trim()
-    if (!line) continue
-    if (line === '[setup]') { flushAction(); section = 'setup'; continue }
-    if (line === '[[actions]]') {
-      flushAction()
-      section = 'action'
-      currentAction = { name: '', icon: 'run', command: '' }
-      continue
-    }
-    if (line.startsWith('[')) { flushAction(); section = 'root'; continue }
-    const eq = line.indexOf('=')
-    if (eq <= 0) continue
-    const key = line.slice(0, eq).trim()
-    const rawValue = line.slice(eq + 1).trim()
-    const value = codexEnvUnquoteTomlString(rawValue)
-    if (section === 'root') {
-      if (key === 'version') {
-        versionPresent = true
-        if (rawValue !== '1') parseError = true
-        version = rawValue === '1' ? 1 : NaN
-      }
-      else if (key === 'name') name = value.slice(0, 120)
-    } else if (section === 'setup') {
-      if (key === 'script') setupScript = value.slice(0, 4_000)
-    } else if (section === 'action' && currentAction) {
-      if (key === 'name') currentAction.name = value.slice(0, 80)
-      else if (key === 'icon') currentAction.icon = value.slice(0, 40) || 'run'
-      else if (key === 'command') currentAction.command = value.slice(0, 4_000)
-    }
-  }
-  flushAction()
-  if (!name && !actions.length && !setupScript) return null
-  if (parseError) return null
-  if (!versionPresent || version !== 1) return null
-  return { version: 1, name: name || 'Environment', setupScript, actions }
+  return codexEnvironmentToml ? codexEnvironmentToml.parseCodexEnvironmentTomlText(text) : null
 }
 
 function codexEnvironmentActionIdFromName(name, index) {
