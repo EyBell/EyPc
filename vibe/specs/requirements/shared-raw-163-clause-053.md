@@ -5,6 +5,10 @@ status: active
 domain: companion-shared
 authority: user-stated
 parent_requirement: eypc-req-shared-raw-163
+scoped_relations:
+  - kind: refined-by
+    target: eypc-req-shared-raw-166-clause-077
+    scope: "phase/unread/Goal 拆为三条独立 lane"
 ---
 
 # RAW-163#53 · companion-shared

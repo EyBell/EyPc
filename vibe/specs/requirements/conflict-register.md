@@ -42,3 +42,47 @@ RAW-163 与 RAW-164 这两条正是本会话开头核验过的那组：用户已
 ## 未扫描
 
 无 `RAW` 编号的约 160 条编号条款不在扫描范围内——没有身份就无法表达冲突关系。见 [coverage](coverage.md#L1)。
+
+## 2026-08-15 升级：散文范围改为子条款精确边
+
+子条款可寻址之后，指向 install-runtime-diagnostics 的局部取代不再需要用散文描述范围。**但实测推翻了「47 条都可升级」这个前提。**
+
+47 条 scoped 关系里：
+
+| 类别 | 条数 | 可否升级 |
+| --- | ---: | --- |
+| 指向六个可寻址父条款 | 6 | 可以 |
+| 其余（codex-quota-float 内部） | 41 | **不可以** |
+
+那 41 条的 scope 是**语义面**（`appearance`、`live-authority`、`interaction`、`weekly-ring`…）而非条款子集——它们的来源是 bullet 列表，每条 RAW 本身就是一条叶子，没有编号子条款可指。**scope 描述的是一条需求的某个侧面，不是它的一部分条款。** 这类关系已经处在它能达到的最精确形态。
+
+### 更正：散文区间多框了一条
+
+原记录写「[RAW-163](codex-raw-163.md#L1) 第 50–53 条 main-first 展示门槛」被 RAW-164 取代。逐条回到来源核对后：
+
+- **#50 / #51 / #52** 确是 main-first 展示门槛，被 [RAW-164#58](shared-raw-164-clause-058.md#L1)（「无条件聚合根任务与全部 Side Chat，删除 `mainCompletedRead` 或等价展示门槛」）**整条取代**。
+- **#53 不是展示门槛**，它要求 Branch Evidence 携带 `main/side` 角色与分支级 unread。[RAW-164#57](shared-raw-164-clause-057.md#L1) 与 [RAW-166#77](shared-raw-166-clause-077.md#L1) 都**依赖**它——后者进一步把 phase/unread/Goal 拆成三条独立 lane。因此 #53 是 `refined-by`，不是被取代。
+
+按原散文区间机械映射，会让一条仍在生效的证据契约被标成已取代。**这正是「不能按序号区间机械映射」的实例**，也是本轮坚持逐条回源的理由。
+
+### 升级后的边
+
+| 来源 | 关系 | 目标 | 依据 |
+| --- | --- | --- | --- |
+| [RAW-163#50](shared-raw-163-clause-050.md#L1) | 整条取代 | [RAW-164#58](shared-raw-164-clause-058.md#L1) | #58 删除等价展示门槛 |
+| [RAW-163#51](shared-raw-163-clause-051.md#L1) | 整条取代 | [RAW-164#58](shared-raw-164-clause-058.md#L1) | 同上 |
+| [RAW-163#52](shared-raw-163-clause-052.md#L1) | 整条取代 | [RAW-164#58](shared-raw-164-clause-058.md#L1) | 同上 |
+| [RAW-163#53](shared-raw-163-clause-053.md#L1) | `refined-by` | [RAW-166#77](shared-raw-166-clause-077.md#L1) | 更正，见上 |
+| [RAW-164#58](shared-raw-164-clause-058.md#L1) | 局部取代 | [RAW-165#68](shared-raw-165-clause-068.md#L1) | 仅三态次序被换成五级跨分支优先级；聚合规则仍生效 |
+| [RAW-142](codex-raw-142.md#L1) | 局部取代 | [RAW-160#7](shared-raw-160-clause-007.md#L1) | #7 明确「继续 Plan 对话不清除」 |
+| [RAW-150](codex-raw-150.md#L1) | 局部取代 | [RAW-160#5](shared-raw-160-clause-005.md#L1)、[#6](shared-raw-160-clause-006.md#L1) | 两条分别管 Plan 后 exact interrupted 与普通 interrupted |
+| [RAW-154](codex-raw-154.md#L1) | 局部取代 | [RAW-160#2](shared-raw-160-clause-002.md#L1)、[#5](shared-raw-160-clause-005.md#L1)、[#6](shared-raw-160-clause-006.md#L1) | #2 管版本升级，#5/#6 管 interrupted |
+| [RAW-159](codex-raw-159.md#L1) | 局部取代 | [RAW-160#37](shared-raw-160-clause-037.md#L1) | #37 要求语义事务提交，取代「只在 Kernel no-op 去重」 |
+
+整条边 18 → **21**，scoped 47 → **52**（一条一对多拆成多条精确边，数量增加而非减少——这正是精度提升的表现）。
+
+#58 同时是取代者与被取代者：它取代了 #50–#52 的展示门槛，其自身的三态次序又被 #68 取代。链上无环，登记可以如实表达这种历史顺序。
+
+### 仍未升级
+
+四个 `codex-raw-1xx` 叶子保持 `active` 而非 `superseded`：只有它们的**一部分**被取代，整条状态翻转会让仍生效的部分一起失效。局部取代就该停在局部。

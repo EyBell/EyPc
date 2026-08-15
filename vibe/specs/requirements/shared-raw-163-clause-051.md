@@ -1,10 +1,11 @@
 ---
 id: eypc-req-shared-raw-163-clause-051
 qualified_source: SPEC-260810-1155-INSTALL-RUNTIME-DIAGNOSTICS::RAW-163#51
-status: active
+status: superseded
 domain: companion-shared
 authority: user-stated
 parent_requirement: eypc-req-shared-raw-163
+superseded_by: eypc-req-shared-raw-164-clause-058
 ---
 
 # RAW-163#51 · companion-shared

@@ -9,8 +9,14 @@ relations:
   - refines-RAW-150-153
 scoped_relations:
   - kind: superseded-by
-    target: eypc-req-shared-raw-160
-    scope: "exact interrupted 立即 stopped 与旧 Actions/Package 版本"
+    target: eypc-req-shared-raw-160-clause-002
+    scope: "旧 Actions/Package 版本"
+  - kind: superseded-by
+    target: eypc-req-shared-raw-160-clause-005
+    scope: "Plan 完成后 exact interrupted 立即 stopped"
+  - kind: superseded-by
+    target: eypc-req-shared-raw-160-clause-006
+    scope: "普通 interrupted 立即 stopped"
 ---
 
 # RAW-154 · companion-codex

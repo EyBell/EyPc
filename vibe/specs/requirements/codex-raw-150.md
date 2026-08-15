@@ -7,8 +7,11 @@ authority: user-stated
 source_annotations: "automated-verified-host-pending / supersedes-RAW-091-and-RAW-131-stopped-archive-presentation-and-native-AX-archive / waiting-to-continue-display-and-provider-archive"
 scoped_relations:
   - kind: superseded-by
-    target: eypc-req-shared-raw-160
-    scope: "exact interrupted 立即 stopped"
+    target: eypc-req-shared-raw-160-clause-005
+    scope: "Plan 完成后 exact interrupted 立即 stopped"
+  - kind: superseded-by
+    target: eypc-req-shared-raw-160-clause-006
+    scope: "普通 interrupted 立即 stopped"
 ---
 
 # RAW-150 · companion-codex

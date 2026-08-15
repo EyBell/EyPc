@@ -7,7 +7,7 @@ authority: user-stated
 scoped_relations:
   - kind: superseded-by
     target: eypc-req-shared-raw-164
-    scope: "第 50–53 条 main-first 展示门槛"
+    scope: "第 50–52 条已整条取代，第 53 条改为 refined-by；精确边在子条款叶子"
 ---
 
 # RAW-163 · companion-shared
