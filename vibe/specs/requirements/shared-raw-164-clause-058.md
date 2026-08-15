@@ -5,6 +5,14 @@ status: active
 domain: companion-shared
 authority: user-stated
 parent_requirement: eypc-req-shared-raw-164
+supersedes:
+  - eypc-req-shared-raw-163-clause-050
+  - eypc-req-shared-raw-163-clause-051
+  - eypc-req-shared-raw-163-clause-052
+scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-shared-raw-165-clause-068
+    scope: "活动/完成三态次序（聚合规则本身仍然有效）"
 ---
 
 # RAW-164#58 · companion-shared

@@ -7,7 +7,7 @@ authority: user-stated
 scoped_relations:
   - kind: superseded-by
     target: eypc-req-shared-raw-165
-    scope: "普通 running > completed-unread 的注意力次序"
+    scope: "第 58 条的三态次序部分被取代；精确边在子条款叶子"
 ---
 
 # RAW-164 · companion-shared

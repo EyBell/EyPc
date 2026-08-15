@@ -9,7 +9,7 @@ relations:
   - refines-RAW-093-136-138-141
 scoped_relations:
   - kind: superseded-by
-    target: eypc-req-shared-raw-160
+    target: eypc-req-shared-raw-160-clause-007
     scope: "任意新 Turn 清除 Plan"
 ---
 
