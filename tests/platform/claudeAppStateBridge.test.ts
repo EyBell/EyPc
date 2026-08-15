@@ -20,7 +20,8 @@ function line(time: string, message: string) {
 describe('Claude App version-gated state log', () => {
   it('admits the currently validated Claude App grammar without widening unknown versions', () => {
     expect(appState.SUPPORTED_APP_VERSIONS.has('1.28929.0')).toBe(true)
-    expect(appState.SUPPORTED_APP_VERSIONS.has('1.28930.0')).toBe(false)
+    expect(appState.SUPPORTED_APP_VERSIONS.has('1.30096.5')).toBe(true)
+    expect(appState.SUPPORTED_APP_VERSIONS.has('1.30097.0')).toBe(false)
   })
 
   it('accepts only the fixed privacy-safe lifecycle grammar', () => {
@@ -52,6 +53,18 @@ describe('Claude App version-gated state log', () => {
     expect(result.state.get(LOCAL_A)).toMatchObject({ phase: 'running', waitingApprovalAt: expect.any(Number) })
     expect(result.state.has(LOCAL_B)).toBe(false)
     expect(result.requests.size).toBe(0)
+  })
+
+  it('does not manufacture stopped from a generic teardown without an observed Turn', () => {
+    const teardown = appState.parseAppStateLine(line('2026-08-07 10:00:02', `Stopping session ${LOCAL_A}`))
+    const cold = appState.foldAppStateEvents([teardown].filter(Boolean))
+    expect(cold.state.get(LOCAL_A)).toMatchObject({ phase: 'unknown', lastSessionEndAt: expect.any(Number) })
+
+    const open = appState.foldAppStateEvents([
+      appState.parseAppStateLine(line('2026-08-07 10:00:00', `Sending message to session ${LOCAL_A}`)),
+      teardown
+    ].filter(Boolean))
+    expect(open.state.get(LOCAL_A)).toMatchObject({ phase: 'stopped', lastSessionEndAt: expect.any(Number) })
   })
 
   it('fails closed on an unvalidated App version and emits no raw log text', () => {

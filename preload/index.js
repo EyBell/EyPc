@@ -4839,6 +4839,7 @@ class CodexDesktopCompanionBridge {
       confirmCurrentTerminal,
       snapshotThreadId,
       snapshotActivityRevision,
+      exactEmptyTurnPages: 0,
       deadlineAt: Date.now() + CODEX_DESKTOP_TURN_REFRESH_DEADLINE_MS,
       baselineTurnStatus: baseline?.lastTurnStatus,
       baselineTurnStartedAt: codexTimestampMs(baseline?.lastTurnStartedAt),
@@ -4950,6 +4951,7 @@ class CodexDesktopCompanionBridge {
         }
         const turnPage = codexRecord(page)
         const emptyTurnPage = Array.isArray(turnPage.data) && turnPage.data.length === 0
+        if (emptyTurnPage) refresh.exactEmptyTurnPages += 1
         const turn = sanitizeCodexTurnStatusPage(page)
         const terminalTurn = turn?.status === 'completed' || turn?.status === 'failed' || turn?.status === 'interrupted'
         const validTerminalTurn = terminalTurn && turn.startedAt > 0
@@ -4957,6 +4959,7 @@ class CodexDesktopCompanionBridge {
         if (refresh.settleSnapshotTerminal
           && finalAttempt
           && emptyTurnPage
+          && refresh.exactEmptyTurnPages === refresh.refreshDelays.length
           && this.retireMissingDesktopSide(threadId, refresh, known)) {
           finish(false)
           return

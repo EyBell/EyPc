@@ -151,11 +151,17 @@ function reduceQueueEntry(previous, entry) {
     return next
   }
   if (entry.event === 'session-end') {
+    const closesObservedTurn = next.turnOpen === true
     next.lastSessionEndAt = at
     next.turnOpen = false
-    next.phase = next.lastStopAt > 0 && next.lastStopAt >= next.turnStartedAt
-      ? 'completed'
-      : 'stopped'
+    // SessionEnd is also emitted as a process/session lifecycle sweep. It may
+    // close an observed open Turn, but a cold queue row must not manufacture a
+    // stopped task or overwrite durable completion history.
+    if (closesObservedTurn) {
+      next.phase = next.lastStopAt > 0 && next.lastStopAt >= next.turnStartedAt
+        ? 'completed'
+        : 'stopped'
+    }
     return next
   }
   if (entry.event === 'subagent-start' || entry.event === 'subagent-stop') {
