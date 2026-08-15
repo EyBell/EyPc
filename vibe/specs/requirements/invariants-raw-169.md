@@ -172,7 +172,7 @@ runner bridge 用例按 `indexOf(锚点)` 划出监管区再断言，而锚点�
 
 `runCodexProjectEnvironmentAction`（252 行）与其两个协作簇构成真正的循环依赖（会话登记调用它做重启）；`installCodexActionRunnerIpc`（343 行）落在 `EYPC-UTOOLS-HOST-001` 入口冻结管辖范围。两者都不在「低耦合簇」判据内。
 
-已识别的下批候选簇（均零共享绑定）：~~environment TOML 解析（2 函数 / 89 行）~~、~~`codexDesktopProjectedRequest` 闭包（7 函数 / 72 行）~~、~~`sanitizeCodexQuota` 闭包（6 函数 / 76 行）~~——三者已在第十块交付；剩 `codexInventoryThreadTopology` 闭包（4 函数 / 60 行）、`codexMergedInventoryTurnFields` 闭包（3 函数 / 53 行）。
+已识别的下批候选簇（均零共享绑定）：~~environment TOML 解析（2 函数 / 89 行）~~、~~`codexDesktopProjectedRequest` 闭包（7 函数 / 72 行）~~、~~`sanitizeCodexQuota` 闭包（6 函数 / 76 行）~~——三者已在第十块交付；~~`codexInventoryThreadTopology` 闭包（4 函数 / 60 行）~~、~~`codexMergedInventoryTurnFields` 闭包（3 函数 / 53 行）~~——按闭包/函数跨度重新实测后已在第十一块交付，实测结果见该节：两者都是单函数，不是多函数闭包。
 
 ### 剩余（原文，已由上文取代）
 
@@ -199,3 +199,19 @@ runner bridge 用例按 `indexOf(锚点)` 划出监管区再断言，而锚点�
 ### 验证
 
 [scripts/utools-preload-assets.mjs](../../../scripts/utools-preload-assets.mjs#L22) 管理清单同轮更新，缺一个模块 `validate:utools` 的模块集合检查即失败——本轮先漏改过一次，被 `pnpm run build` 现场拦下。已验：`tests/platform/codexAppServerBridge.test.ts`、`codexActionRuntime.test.ts`、`codexActionRunnerBridge.test.ts`、`codexFloatWindowBridge.test.ts` 共 185 项全过；`pnpm run sync:preloads` / `validate:mirrors` / `build`（含 `validate:utools`）全过；全量 `vitest run` 1405/1406 项通过，唯一失败项（MQTT 消息焦点用例超时）在本轮改动之前的基线提交上同样复现，与本次抽取无关。
+
+## 2026-08-15 第十一块：线程分叉拓扑与库存 Turn 字段合并
+
+两个模块，各自一个函数。入口 14,512 → **14,490**。`preload/codex/` 现有十五个模块。
+
+**候选簇估算再次被推翻，方向与前几次相反。** 上一轮「已识别候选簇」把这两处记成 `codexInventoryThreadTopology` 闭包（4 函数/60 行）与 `codexMergedInventoryTurnFields` 闭包（3 函数/53 行）。逐函数重新实测：`codexInventoryThreadTopology` 与同一「拓扑」命名前缀下的另外两个函数——`codexRecordSideTopologyDecision`、`codexSyncInventorySideTopology`——同名不同质。后两者直接读写 `codexInventorySideRelations`/`codexInventorySideBranchEvidence`/`codexSideTopologyDiagnosticFingerprints`/`codexDesktopOpenedReadAcknowledgements` 四个模块级 Map/Set，这些容器在私有分支已读确认、Side Chat 遗忘等另外六处位置也被直接触达，是本条款反复强调的「高共享模块级绑定」，按判据不可抽出。真正零共享绑定的只有 `codexInventoryThreadTopology` 自身：一个纯函数，不是一个闭包簇。`codexMergedInventoryTurnFields` 同样是命名孤立的单函数，附近没有第二、第三个同族函数。**前缀相邻不等于依赖相邻**——这是继首块「前缀计数漏掉同域函数」、全域重测「域不是依赖单位」之后，同一类测量错误的第三次现身，这次错在高估簇的函数数而非低估域的函数数。
+
+**[inventory-thread-topology.cjs](../../../preload/codex/inventory-thread-topology.cjs#L1)（87 行）**：把一份扁平的线程库存行重建成分叉/父子拓扑——谁是谁的直接分叉、链到哪个根、谁因为父项缺失/自引用/跨会话/成环而被判定孤立。纯图重建，只在自己的 `rows` 参数上运算。`record`/`validThreadId`/`nativeString` 按既有先例注入：`codexRecord` 在入口另有约 190 处调用，`validCodexThreadId` 另有约 85 处，都远超本簇，一次加载失败不能牵连它们。已用含环、跨 session、多代分叉的构造数据独立验证：环被判定孤立而非死循环，跨 session 分叉正确隔离，多代深度正确累计。
+
+**[inventory-turn-fields.cjs](../../../preload/codex/inventory-turn-fields.cjs#L1)（84 行）**：把新读到的库存 Turn 投影与该线程既有的活动证据合并，防止低保真度的库存重读回退掉实时源已确立的证据。三条回归闸门按固定顺序判定——仍然存活的直接观测证据整体胜出；`startedAt` 比已知的更旧判为回归，丢弃；同一时刻从 `completed` 翻回其它状态视为库存重读与 Turn 边界赛跑而非新结果，同样丢弃——过此之后才保留新投影，且在结果未变时把旧的证据标签与 `completedAt` 带过来。纯计算，`timestampMs` 按既有先例注入。已用回归时间戳、同时刻状态翻转、实时证据优先三类场景独立验证。
+
+两模块加载失败都退化为「不声称任何结论」：拓扑退化为全员孤立（下游合并找不到可合并对象，而非误判出错误的分叉关系）；Turn 字段合并退化为 `{}`（每个字段读作 `undefined`，调用方已经把它当作「本轮没有新证据」处理，不是新增的一种情况）。
+
+### 验证
+
+已验：`tests/platform/codexAppServerBridge.test.ts`、`codexActionRuntime.test.ts`、`codexActionRunnerBridge.test.ts`、`codexFloatWindowBridge.test.ts` 共 185 项全过；两模块各自独立冒烟（环检测、跨会话隔离、回归防护、live 优先）核对通过；`pnpm run sync:preloads` / `validate:mirrors` / `build`（含 `validate:utools`）一次性全过；全量 `vitest run` 1405/1406 项通过，唯一失败项与第十块记录的同一条 MQTT 用例超时，与本次抽取无关。
