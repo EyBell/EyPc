@@ -246,7 +246,7 @@ runner bridge 用例按 `indexOf(锚点)` 划出监管区再断言，而锚点�
 
 ### 剩余候选
 
-按判据（闭包内互调、闭包外引用点少、不触及高共享绑定）重测后仍可抽的：`readCodexNativePrimaryState` 闭包剩余部分、`codexRolloutRuntimeStateText`（2 函数 / 73 行，但共享 `codexRolloutEvidence`）、`resolveCodexLaunchPlan`（6 函数 / 121 行，共享两个启动路径常量）。其余大块——`setCodexLaunchPath` / `clearCodexLaunchPath`（各 13 函数 / 220+ 行）、`codexDesktopShadowFromSnapshot`（9 函数 / 131 行）——均触及 2–4 个高共享绑定，按判据不可抽。
+按判据（闭包内互调、闭包外引用点少、不触及高共享绑定）重测后仍可抽的：`readCodexNativePrimaryState` 闭包剩余部分、`codexRolloutRuntimeStateText`（2 函数 / 73 行，但共享 `codexRolloutEvidence`）、`resolveCodexLaunchPlan`（6 函数 / 121 行，共享两个启动路径常量）。其余大块——`setCodexLaunchPath` / `clearCodexLaunchPath`（各 13 函数 / 220+ 行）——触及 2–4 个高共享绑定，按判据不可抽。~~`codexDesktopShadowFromSnapshot`（9 函数 / 131 行）均触及高共享绑定、不可抽~~——此判定有误，见第十四块逐函数复核，已在该块交付。
 
 ## 2026-08-15 第十三块：Waiting 证据可见性
 
@@ -262,6 +262,22 @@ runner bridge 用例按 `indexOf(锚点)` 划出监管区再断言，而锚点�
 
 已验：`tests/platform/codexAppServerBridge.test.ts`、`codexActionRuntime.test.ts`、`codexActionRunnerBridge.test.ts`、`codexFloatWindowBridge.test.ts`、`projectIdentity.test.ts` 共 189 项全过；`pnpm run sync:preloads` / `validate:mirrors` / `build`（含 `validate:utools`）全过；全量 `vitest run` 1405/1406 项通过，唯一失败项与前序几块记录的同一条 MQTT 用例超时，与本次抽取无关。
 
-### 待复核
+### 待复核（已在第十四块解决）
 
 第十二块的「剩余候选」判定 `codexDesktopShadowFromSnapshot`（9 函数 / 131 行）触及高共享绑定、不可抽；本块独立扫描（传递闭包 + 全函数占用点分析）得到一个不同的分组结果，把该函数归入一个 7 函数 / 213 行的零共享绑定簇（`codexDesktopRuntimeWaitingSequences`/`codexDesktopRuntimeProjection`/`codexRememberDesktopRequestObservations`/`codexDesktopRequestObservationCandidates`/`codexDesktopShadowFromSnapshot`/`codexDesktopPatchIndex`/`codexApplyDesktopShadowPatch`，外部依赖全部是热基元或本条款已抽出的函数）。两个结论未经交叉核验，本轮未动这一簇的代码；下一块动手前须先重新逐函数核对，而不是采信任一方的现成结论。
+
+## 2026-08-15 第十四块：Desktop 会话影子构建与补丁应用（复核并交付「待复核」簇）
+
+[desktop-shadow.cjs](../../../preload/codex/desktop-shadow.cjs#L1)（286 行 / 7 函数）承接第十三块留下的分歧。入口 14,454 → **14,311**。`preload/codex/` 现有十八个模块。
+
+**逐函数复核，两个结论都不完全对。** 用 TypeScript 编译器 API 对入口全部 463 个顶层函数建自由标识符依赖图，排除已抽出模块的委托桩，对每个候选簇的每一个外部引用直接查「这个 Map/Set 还被簇外哪些函数触达」——不是估算，是对每条边逐一核实。结果：`codexInventoryThreadTopology`（第十一块）式的教训在这里反过来——第十二块把 `codexDesktopShadowFromSnapshot` 判为「触高共享绑定」，实际是把它与同一文件区域里命名相邻但真正耦合的 `codexDesktopShadowActivity`（读 `codexWaitingEvidenceVisible`/`codexReduceWaitingEdge` 但不与本簇互调）混为一谈；本块的候选簇本身经七个函数逐行核对，没有一处触及模块级 Map/Set——`codexRememberDesktopRequestObservations` 写的 `waitingState.requestHistory`、`codexDesktopShadowFromSnapshot` 写的 `shadow`/`waitingState` 字段，都是调用方传入的参数，不是模块级绑定。**同一份代码，两次独立判断给出相反结论，都不是靠直觉定的——差别在查证颗粒度：函数级邻近 vs. 逐条边核实。**
+
+七个函数因为是一件事：把 Desktop 的 `thread-stream-state-changed` 快照/补丁流，维护成 preload 自己的会话影子（runtime 状态、pending 请求、waiting 证据序列号）。`codexDesktopShadowFromSnapshot` 从整份快照重建；`codexApplyDesktopShadowPatch` 把一条 JSON-Patch 应用到既有影子上，识别不了的补丁形状一律拒绝（`false`）而不是部分应用——这是它已有的纪律，抽取不改变。
+
+依赖注入：`record`/`timestampMs`/`validThreadId`/`nextLiveEvidenceSequence` 是热基元（入口内另有约 100–200 处调用）；`reduceWaitingEdge`（另 6 处调用）与 `activityStatus`（另 3 处调用）是比本簇小但仍跨簇共享的纯函数，同样只能注入；`projectedRequest`/`projectedRequests` 注入的是第十块已抽出模块的入口委托桩——组合已抽出模块而不是重新实现，与「热基元不迁」同一条纪律的另一种应用。只在本簇内使用一次的 `CODEX_DESKTOP_WAITING_REQUEST_HISTORY_LIMIT` 随之移入模块闭包，入口内该名字已归零。
+
+加载失败时七个函数各自退化为自己已有的「无结论」哨兵，不新增一种状态：序列号函数返回 `{}`（下游合并成大表，空表贡献为零）；projection 与 candidates 分别返回 `null`/`[]`；`requestObservations` 是空操作；`patchIndex` 返回 `-1`（函数自身既有的「未命中」值）；`shadowFromSnapshot`/`applyDesktopShadowPatch` 返回 `null`/`false`（分别是「快照不可用」「补丁被拒绝」的既有值，调用方已经在正常路径上处理这两种结果）。
+
+### 验证
+
+已用构造快照+补丁场景独立冒烟：正常快照重建、`resumeState`/`threadRuntimeStatus`/`requests` 三类补丁应用、未识别字段放行（返回 `true`，推进 revision 但不改状态）、畸形操作拒绝（返回 `false`）全部核对通过。聚焦测试 `codexAppServerBridge`/`codexActionRuntime`/`codexActionRunnerBridge`/`codexFloatWindowBridge`/`projectIdentity` 共 189 项一次性全过（未再复现第十三块那类跨 realm 问题——本模块没有对内建类型做 `instanceof`）。`pnpm run sync:preloads` / `validate:mirrors` / `build`（含 `validate:utools`）全过；全量 `vitest run` 1405/1406 项通过，唯一失败项与历次记录的同一条 MQTT 用例超时，与本次抽取无关。
