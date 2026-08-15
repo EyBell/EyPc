@@ -693,6 +693,35 @@ try {
   }
 } catch { codexInventoryTurnFieldsModule = null }
 
+// Whether a Desktop waiting flag is still live evidence or already cleared by
+// a later observation. `Map` is injected on the node-runtime precedent so an
+// `instanceof` check matches a `resolvedRequestSequences` Map constructed in
+// this same realm rather than the module's own.
+let codexWaitingEvidence = null
+try {
+  let waitingEvidenceModule = null
+  try {
+    waitingEvidenceModule = require('./codex/waiting-evidence.cjs')
+  } catch {}
+  if (!waitingEvidenceModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      process.cwd(),
+      path.join(process.cwd(), 'preload'),
+      path.join(process.cwd(), 'public')
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        waitingEvidenceModule = require(path.join(base, 'codex', 'waiting-evidence.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof waitingEvidenceModule?.createCodexWaitingEvidence === 'function') {
+    codexWaitingEvidence = waitingEvidenceModule.createCodexWaitingEvidence({ Map })
+  }
+} catch { codexWaitingEvidence = null }
+
 // A failed load degrades to "no special handling": the raw candidate is handed
 // to the OS path lookup, and no proxy is injected. Both are the same answers
 // these modules give when they find nothing, so no caller learns a new case.
@@ -3450,22 +3479,15 @@ function codexDesktopRequestFlag(request) {
   return codexDesktopRequestProjection ? codexDesktopRequestProjection.codexDesktopRequestFlag(request) : ''
 }
 
+// A failed load reads every observation as visible (clearSequence 0, no
+// resolved-set check): the caller's own history-based edge detection still
+// applies, it just loses the explicit-clear fast path.
 function codexWaitingFlagClearSequence(waitingState, flag) {
-  if (!waitingState) return 0
-  return flag === 'waitingOnApproval'
-    ? Number.isInteger(waitingState.approvalClearSequence) ? waitingState.approvalClearSequence : 0
-    : flag === 'waitingOnUserInput'
-      ? Number.isInteger(waitingState.inputClearSequence) ? waitingState.inputClearSequence : 0
-      : 0
+  return codexWaitingEvidence ? codexWaitingEvidence.codexWaitingFlagClearSequence(waitingState, flag) : 0
 }
 
 function codexWaitingEvidenceVisible(waitingState, flag, observedSequence) {
-  const clearSequence = codexWaitingFlagClearSequence(waitingState, flag)
-  if (!Number.isInteger(observedSequence)) return clearSequence === 0
-  if (observedSequence <= clearSequence) return false
-  return waitingState?.resolvedRequestSequences instanceof Map
-    ? !waitingState.resolvedRequestSequences.has(observedSequence)
-    : true
+  return codexWaitingEvidence ? codexWaitingEvidence.codexWaitingEvidenceVisible(waitingState, flag, observedSequence) : true
 }
 
 function codexDesktopRuntimeWaitingSequences(flags, previousFlags = [], previousSequences = {}, options = {}) {
