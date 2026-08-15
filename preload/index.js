@@ -470,6 +470,46 @@ try {
   }
 } catch { codexRolloutEvidence = null }
 
+// Codex native registry validation. The parse is pure text-in/structure-out;
+// the filesystem reads and the size cap stay here, so this module never
+// decides whether to read — only whether what was read is admissible.
+let codexNativeRegistry = null
+try {
+  let registryModule = null
+  try {
+    registryModule = require('./codex/native-registry.cjs')
+  } catch {}
+  if (!registryModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        registryModule = require(path.join(base, 'codex', 'native-registry.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof registryModule?.createCodexNativeRegistry === 'function') {
+    codexNativeRegistry = registryModule.createCodexNativeRegistry({
+      crypto,
+      codexError,
+      codexRecord,
+      codexNativeString,
+      validCodexThreadId,
+      codexNormalizeNativeRoot
+    })
+  }
+} catch { codexNativeRegistry = null }
+
+// A failed load must not read as an empty registry — that would be written back
+// as a complete one. It refuses exactly as a malformed document does.
+function parseCodexNativeRegistryText(text) {
+  if (!codexNativeRegistry) throw codexError('protocol-error', 'Codex native project state is unavailable')
+  return codexNativeRegistry.parseCodexNativeRegistryText(text)
+}
+
 // How to invoke a Codex CLI candidate, and what proxy the spawned process
 // should inherit. Two modules because they are two subjects: one resolves an
 // executable, the other is a refusal boundary over untrusted PAC output.
@@ -7806,17 +7846,6 @@ function codexNativeString(value, maximum = 240) {
   return typeof value === 'string' && value.length > 0 && value.length <= maximum && !/[\u0000-\u001f]/.test(value) ? value : ''
 }
 
-function codexNativeStringList(value, maximum = 100_000) {
-  if (!Array.isArray(value) || value.length > maximum) throw codexError('protocol-error', 'Codex native project state is invalid')
-  const result = []
-  for (const item of value) {
-    const normalized = codexNativeString(item)
-    if (!normalized) throw codexError('protocol-error', 'Codex native project state is invalid')
-    if (!result.includes(normalized)) result.push(normalized)
-  }
-  return result
-}
-
 function codexNormalizeNativeRoot(value) {
   if (typeof value !== 'string' || !value.trim()) return ''
   const pathApi = process.platform === 'win32' ? path.win32 : path
@@ -7827,93 +7856,6 @@ function codexNormalizeNativeRoot(value) {
   } catch {}
   normalized = pathApi.normalize(normalized).replace(/[\\/]+$/, '') || pathApi.parse(normalized).root
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized
-}
-
-function codexProjectKey(roots) {
-  return crypto.createHash('sha256').update(`codex-project\0${[...roots].sort().join('\0')}`).digest('hex').slice(0, 32)
-}
-
-function codexStableNativeProjection(value) {
-  if (Array.isArray(value)) return value.map(codexStableNativeProjection)
-  if (!value || typeof value !== 'object') return value
-  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, codexStableNativeProjection(value[key])]))
-}
-
-function parseCodexNativeRegistryText(text) {
-  let parsed
-  try { parsed = JSON.parse(text) } catch { throw codexError('protocol-error', 'Codex native project state is invalid') }
-  const source = codexRecord(parsed)
-  const localProjectsSource = source['local-projects']
-  const assignmentsSource = source['thread-project-assignments']
-  if (!localProjectsSource || typeof localProjectsSource !== 'object' || Array.isArray(localProjectsSource)) throw codexError('protocol-error', 'Codex native project state is invalid')
-  if (!assignmentsSource || typeof assignmentsSource !== 'object' || Array.isArray(assignmentsSource)) throw codexError('protocol-error', 'Codex native project state is invalid')
-  const projectOrder = codexNativeStringList(source['project-order'])
-  const pinnedProjectIds = codexNativeStringList(source['pinned-project-ids'])
-  const selectedProjectSource = source['selected-project']
-  const selectedProjectRecord = codexRecord(selectedProjectSource)
-  const selectedProjectId = typeof selectedProjectSource === 'string'
-    ? codexNativeString(selectedProjectSource)
-    : selectedProjectSource && typeof selectedProjectSource === 'object' && selectedProjectRecord.type === 'local'
-      ? codexNativeString(selectedProjectRecord.projectId)
-      : ''
-  if (selectedProjectSource !== undefined && selectedProjectSource !== null && !selectedProjectId) throw codexError('protocol-error', 'Codex selected project state is invalid')
-  const pinnedThreadIds = codexNativeStringList(source['pinned-thread-ids']).filter(validCodexThreadId)
-  const projectlessThreadIds = codexNativeStringList(source['projectless-thread-ids']).filter(validCodexThreadId)
-  const projects = []
-  const projectById = new Map()
-  const projectKeySet = new Set()
-  const localProjectEntries = Object.entries(localProjectsSource)
-  if (localProjectEntries.length > 10_000) throw codexError('protocol-error', 'Codex native project state is invalid')
-  for (let insertionOrder = 0; insertionOrder < localProjectEntries.length; insertionOrder += 1) {
-    const [storageId, rawValue] = localProjectEntries[insertionOrder]
-    const project = codexRecord(rawValue)
-    const id = codexNativeString(project.id)
-    const name = codexNativeString(project.name, 160)
-    if (!id || id !== storageId || !name || !Array.isArray(project.rootPaths) || project.rootPaths.length < 1 || project.rootPaths.length > 32) throw codexError('protocol-error', 'Codex native project state is invalid')
-    const roots = [...new Set(project.rootPaths.map(codexNormalizeNativeRoot))]
-    if (roots.some((root) => !root) || roots.length < 1) throw codexError('protocol-error', 'Codex native project state is invalid')
-    const key = codexProjectKey(roots)
-    if (projectKeySet.has(key)) throw codexError('protocol-error', 'Codex native project roots are ambiguous')
-    projectKeySet.add(key)
-    const normalized = { id, key, name, roots, insertionOrder }
-    projects.push(normalized)
-    projectById.set(id, normalized)
-  }
-  const assignments = new Map()
-  const assignmentEntries = Object.entries(assignmentsSource)
-  if (assignmentEntries.length > 100_000) throw codexError('protocol-error', 'Codex native project state is invalid')
-  for (const [threadId, rawValue] of assignmentEntries) {
-    if (!validCodexThreadId(threadId)) throw codexError('protocol-error', 'Codex native project state is invalid')
-    const assignment = codexRecord(rawValue)
-    const projectId = codexNativeString(assignment.projectId)
-    if (!projectId) throw codexError('protocol-error', 'Codex native project state is invalid')
-    assignments.set(threadId, projectId)
-  }
-  const nativeProjection = {
-    projects: projects.map((project) => ({ id: project.id, name: project.name, roots: [...project.roots].sort() })),
-    projectOrder,
-    pinnedProjectIds,
-    selectedProjectId,
-    pinnedThreadIds,
-    assignments: [...assignments.entries()].sort(([left], [right]) => left.localeCompare(right)),
-    projectlessThreadIds: [...projectlessThreadIds].sort()
-  }
-  const fingerprint = crypto.createHash('sha256').update(JSON.stringify(codexStableNativeProjection(nativeProjection))).digest('hex')
-  const orderById = new Map(projectOrder.map((id, index) => [id, index]))
-  const pinnedOrderById = new Map(pinnedProjectIds.map((id, index) => [id, index]))
-  for (const project of projects) {
-    project.nativePinnedOrder = pinnedOrderById.get(project.id)
-    project.nativeOrder = orderById.has(project.id) ? orderById.get(project.id) : projectOrder.length + project.insertionOrder
-  }
-  return {
-    projects,
-    projectById,
-    assignments,
-    projectlessThreadIds: new Set(projectlessThreadIds),
-    pinnedThreadOrder: new Map(pinnedThreadIds.map((id, index) => [id, index])),
-    selectedProjectId,
-    fingerprint
-  }
 }
 
 function codexNativeStatePaths() {
