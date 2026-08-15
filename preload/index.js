@@ -594,6 +594,65 @@ try {
   }
 } catch { codexQuotaSanitizer = null }
 
+// Reconstructs thread fork/parent topology from a flat inventory row list.
+// Pure graph reconstruction; a failed load leaves every thread isolated
+// rather than guessing at a fork relationship.
+let codexInventoryThreadTopologyModule = null
+try {
+  let topologyModule = null
+  try {
+    topologyModule = require('./codex/inventory-thread-topology.cjs')
+  } catch {}
+  if (!topologyModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        topologyModule = require(path.join(base, 'codex', 'inventory-thread-topology.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof topologyModule?.createCodexInventoryThreadTopology === 'function') {
+    codexInventoryThreadTopologyModule = topologyModule.createCodexInventoryThreadTopology({
+      record: codexRecord,
+      validThreadId: validCodexThreadId,
+      nativeString: codexNativeString
+    })
+  }
+} catch { codexInventoryThreadTopologyModule = null }
+
+// Merges a fresh inventory turn projection with previously known activity so
+// a lower-fidelity snapshot never regresses evidence a live source already
+// established. Pure computation; a failed load leaves the projection
+// unmerged rather than guessing at which side is fresher.
+let codexInventoryTurnFieldsModule = null
+try {
+  let turnFieldsModule = null
+  try {
+    turnFieldsModule = require('./codex/inventory-turn-fields.cjs')
+  } catch {}
+  if (!turnFieldsModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        turnFieldsModule = require(path.join(base, 'codex', 'inventory-turn-fields.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof turnFieldsModule?.createCodexInventoryTurnFields === 'function') {
+    codexInventoryTurnFieldsModule = turnFieldsModule.createCodexInventoryTurnFields({
+      timestampMs: codexTimestampMs
+    })
+  }
+} catch { codexInventoryTurnFieldsModule = null }
+
 // A failed load degrades to "no special handling": the raw candidate is handed
 // to the OS path lookup, and no proxy is injected. Both are the same answers
 // these modules give when they find nothing, so no caller learns a new case.
@@ -7354,56 +7413,12 @@ function codexPrivateBranchRef(parentThreadId, branchThreadId) {
     .slice(0, 32)
 }
 
+// A failed load leaves every thread isolated rather than guessing at a fork
+// relationship: downstream side-chat merging simply finds nothing to merge.
 function codexInventoryThreadTopology(rows) {
-  const rowById = new Map()
-  for (const value of Array.isArray(rows) ? rows : []) {
-    const row = codexRecord(value)
-    if (validCodexThreadId(row.id)) rowById.set(row.id, row)
-  }
-  const directParents = new Map()
-  const isolated = new Set()
-  for (const [threadId, row] of rowById) {
-    const forkedFromId = validCodexThreadId(row.forkedFromId) ? row.forkedFromId : ''
-    if (!row.forkedFromId) continue
-    const parent = forkedFromId ? rowById.get(forkedFromId) : null
-    const sessionId = codexNativeString(row.sessionId)
-    const parentSessionId = codexNativeString(parent?.sessionId)
-    if (!forkedFromId
-      || forkedFromId === threadId
-      || !parent
-      || !sessionId
-      || !parentSessionId
-      || sessionId !== parentSessionId) {
-      isolated.add(threadId)
-      continue
-    }
-    directParents.set(threadId, forkedFromId)
-  }
-  const relations = new Map()
-  const depths = new Map()
-  for (const threadId of directParents.keys()) {
-    const seen = new Set([threadId])
-    let current = threadId
-    let depth = 0
-    let invalid = false
-    while (directParents.has(current)) {
-      const parentThreadId = directParents.get(current)
-      depth += 1
-      if (!validCodexThreadId(parentThreadId) || seen.has(parentThreadId)) {
-        invalid = true
-        break
-      }
-      seen.add(parentThreadId)
-      current = parentThreadId
-    }
-    if (invalid || current === threadId || !rowById.has(current)) {
-      isolated.add(threadId)
-      continue
-    }
-    relations.set(threadId, current)
-    depths.set(threadId, depth)
-  }
-  return { rowById, relations, depths, isolated }
+  return codexInventoryThreadTopologyModule
+    ? codexInventoryThreadTopologyModule.codexInventoryThreadTopology(rows)
+    : { rowById: new Map(), relations: new Map(), depths: new Map(), isolated: new Set() }
 }
 
 function codexRecordSideTopologyDecision(sourceCount, relations, depths, orphanCount) {
@@ -9056,50 +9071,13 @@ function sanitizeCodexProjects(registry) {
   return projects
 }
 
+// A failed load merges nothing: every field on the returned object is
+// `undefined`, which callers already treat as "no new turn evidence" rather
+// than as a distinct case.
 function codexMergedInventoryTurnFields(projection, previousActivity) {
-  if (!projection?.lastTurnStatus || !codexTimestampMs(projection.lastTurnStartedAt)) return {}
-  const next = {
-    lastTurnStatus: projection.lastTurnStatus,
-    lastTurnStartedAt: codexTimestampMs(projection.lastTurnStartedAt),
-    ...(projection.lastTurnStatus === 'completed' && codexTimestampMs(projection.lastTurnCompletedAt)
-      ? { lastTurnCompletedAt: codexTimestampMs(projection.lastTurnCompletedAt) }
-      : {}),
-    lastTurnEvidence: projection.lastTurnEvidence || 'inventory'
-  }
-  const previousStartedAt = codexTimestampMs(previousActivity?.lastTurnStartedAt)
-  if (!previousActivity?.lastTurnStatus || !previousStartedAt) return next
-
-  const previous = {
-    lastTurnStatus: previousActivity.lastTurnStatus,
-    lastTurnStartedAt: previousStartedAt,
-    ...(previousActivity.lastTurnStatus === 'completed' && codexTimestampMs(previousActivity.lastTurnCompletedAt)
-      ? { lastTurnCompletedAt: codexTimestampMs(previousActivity.lastTurnCompletedAt) }
-      : {}),
-    ...(previousActivity.lastTurnEvidence ? { lastTurnEvidence: previousActivity.lastTurnEvidence } : {})
-  }
-  const previousDirectLive = previousActivity.status === 'active'
-    && (previousActivity.statusAuthority === 'desktop-live' || previousActivity.statusAuthority === 'app-server-live')
-    && previousActivity.lastTurnStatus === 'inProgress'
-    && (previousActivity.lastTurnEvidence === 'turn-started' || previousActivity.activityEvidence === 'activity-event')
-  const regressedRevision = previousStartedAt > next.lastTurnStartedAt
-  const regressedCompletedOutcome = previousStartedAt === next.lastTurnStartedAt
-    && previousActivity.lastTurnStatus === 'completed'
-    && next.lastTurnStatus !== 'completed'
-  if (previousDirectLive || regressedRevision || regressedCompletedOutcome) return previous
-
-  const sameOutcome = previousStartedAt === next.lastTurnStartedAt
-    && previousActivity.lastTurnStatus === next.lastTurnStatus
-  if (sameOutcome && previousActivity.lastTurnEvidence && previousActivity.lastTurnEvidence !== 'inventory') {
-    next.lastTurnEvidence = previousActivity.lastTurnEvidence
-    if (next.lastTurnStatus === 'completed') {
-      const completedAt = Math.max(
-        codexTimestampMs(next.lastTurnCompletedAt),
-        codexTimestampMs(previousActivity.lastTurnCompletedAt)
-      )
-      if (completedAt) next.lastTurnCompletedAt = completedAt
-    }
-  }
-  return next
+  return codexInventoryTurnFieldsModule
+    ? codexInventoryTurnFieldsModule.codexMergedInventoryTurnFields(projection, previousActivity)
+    : {}
 }
 
 async function scanVerifiedCodexInventory() {
