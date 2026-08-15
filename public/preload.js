@@ -49,7 +49,6 @@ const CODEX_DESKTOP_IPC_FRAME_MAX_BYTES = 256 * 1024 * 1024
 const CODEX_DESKTOP_IPC_RECONNECT_MAX_MS = 5_000
 const COMPANION_DIAGNOSTIC_TASK_SALT = crypto.randomBytes(16)
 const CODEX_DESKTOP_WAITING_STATE_LIMIT = 1_000
-const CODEX_DESKTOP_WAITING_REQUEST_HISTORY_LIMIT = 400
 const CODEX_DESKTOP_RESOLVED_REQUEST_LIMIT = 400
 // Both mirror WATCHER_RECOVERY_INTERVAL_MS in preload/timing-policy.cjs, which
 // owns the semantics. This entry deliberately performs no unguarded local
@@ -721,6 +720,42 @@ try {
     codexWaitingEvidence = waitingEvidenceModule.createCodexWaitingEvidence({ Map })
   }
 } catch { codexWaitingEvidence = null }
+
+// Builds and patches the Desktop conversation shadow from stream snapshots
+// and JSON-Patch deltas. `codexDesktopProjectedRequest(s)` are this entry's
+// own delegating stubs for the already-extracted desktop-request-projection
+// module, injected here like any other collaborator.
+let codexDesktopShadow = null
+try {
+  let desktopShadowModule = null
+  try {
+    desktopShadowModule = require('./codex/desktop-shadow.cjs')
+  } catch {}
+  if (!desktopShadowModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        desktopShadowModule = require(path.join(base, 'codex', 'desktop-shadow.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof desktopShadowModule?.createCodexDesktopShadow === 'function') {
+    codexDesktopShadow = desktopShadowModule.createCodexDesktopShadow({
+      record: codexRecord,
+      timestampMs: codexTimestampMs,
+      validThreadId: validCodexThreadId,
+      nextLiveEvidenceSequence: codexNextLiveEvidenceSequence,
+      reduceWaitingEdge: codexReduceWaitingEdge,
+      activityStatus: sanitizeCodexActivityStatus,
+      projectedRequest: codexDesktopProjectedRequest,
+      projectedRequests: codexDesktopProjectedRequests
+    })
+  }
+} catch { codexDesktopShadow = null }
 
 // A failed load degrades to "no special handling": the raw candidate is handed
 // to the OS path lookup, and no proxy is injected. Both are the same answers
@@ -3490,19 +3525,13 @@ function codexWaitingEvidenceVisible(waitingState, flag, observedSequence) {
   return codexWaitingEvidence ? codexWaitingEvidence.codexWaitingEvidenceVisible(waitingState, flag, observedSequence) : true
 }
 
+// A failed load returns no sequences rather than guessing at a watermark:
+// callers merge this into a larger sequences map, so an empty result simply
+// contributes nothing this round.
 function codexDesktopRuntimeWaitingSequences(flags, previousFlags = [], previousSequences = {}, options = {}) {
-  const previous = new Set(Array.isArray(previousFlags) ? previousFlags : [])
-  const sequences = {}
-  for (const flag of [...new Set((Array.isArray(flags) ? flags : [])
-    .filter((item) => item === 'waitingOnUserInput' || item === 'waitingOnApproval'))]) {
-    const preserved = options.refresh !== true
-      && previous.has(flag)
-      && Number.isInteger(previousSequences?.[flag])
-      ? previousSequences[flag]
-      : 0
-    sequences[flag] = preserved || codexNextLiveEvidenceSequence()
-  }
-  return sequences
+  return codexDesktopShadow
+    ? codexDesktopShadow.codexDesktopRuntimeWaitingSequences(flags, previousFlags, previousSequences, options)
+    : {}
 }
 
 /**
@@ -3796,98 +3825,26 @@ function codexForgetDesktopOpenedReadThread(threadId) {
   codexDesktopOpenedReadAcknowledgements.delete(threadId)
 }
 
+// A failed load returns null: the shadow build downstream already treats a
+// null runtime as an unusable snapshot.
 function codexDesktopRuntimeProjection(value) {
-  const activity = sanitizeCodexActivityStatus(value)
-  return activity ? { type: activity.status, activeFlags: activity.activeFlags } : null
+  return codexDesktopShadow ? codexDesktopShadow.codexDesktopRuntimeProjection(value) : null
 }
 
+// A failed load is a no-op: the waiting state's request history simply does
+// not learn this round's observations.
 function codexRememberDesktopRequestObservations(waitingState, requests) {
-  if (!waitingState || !Array.isArray(requests)) return
-  const history = new Map()
-  for (const request of Array.isArray(waitingState.requestHistory) ? waitingState.requestHistory : []) {
-    if (Number.isInteger(request?.observedSequence)) history.set(request.observedSequence, request)
-  }
-  for (const request of requests) {
-    if (!Number.isInteger(request?.observedSequence)) continue
-    history.delete(request.observedSequence)
-    history.set(request.observedSequence, request)
-  }
-  while (history.size > CODEX_DESKTOP_WAITING_REQUEST_HISTORY_LIMIT) {
-    const oldest = history.keys().next().value
-    if (!Number.isInteger(oldest)) break
-    history.delete(oldest)
-  }
-  waitingState.requestHistory = [...history.values()]
+  if (codexDesktopShadow) codexDesktopShadow.codexRememberDesktopRequestObservations(waitingState, requests)
 }
 
 function codexDesktopRequestObservationCandidates(previousShadow, waitingState) {
-  const bySequence = new Map()
-  for (const request of [
-    ...(Array.isArray(previousShadow?.requests) ? previousShadow.requests : []),
-    ...(Array.isArray(waitingState?.requestHistory) ? waitingState.requestHistory : [])
-  ]) {
-    if (!Number.isInteger(request?.observedSequence)) continue
-    if (!bySequence.has(request.observedSequence)) bySequence.set(request.observedSequence, request)
-  }
-  return [...bySequence.values()]
+  return codexDesktopShadow ? codexDesktopShadow.codexDesktopRequestObservationCandidates(previousShadow, waitingState) : []
 }
 
+// A failed load returns null: a snapshot the entry cannot build is treated
+// exactly like a snapshot revision it decided not to accept.
 function codexDesktopShadowFromSnapshot(change, previousShadow = null, waitingState = null) {
-  const state = codexRecord(change.conversationState)
-  const revision = Number.isInteger(change.revision) && change.revision >= 0 ? change.revision : -1
-  const runtime = codexDesktopRuntimeProjection(state.threadRuntimeStatus)
-  const requests = Array.isArray(state.requests) && state.requests.length <= 10_000
-    ? codexDesktopProjectedRequests(
-        state.requests,
-        codexDesktopRequestObservationCandidates(previousShadow, waitingState)
-      )
-    : null
-  if (revision < 0 || !runtime || requests === null) return null
-  const priorRuntimeSequences = {
-    ...(waitingState?.runtimeWaitingSequences || {}),
-    ...(previousShadow?.runtimeWaitingSequences || {})
-  }
-  const priorRuntimeFlags = [...new Set([
-    ...Object.keys(waitingState?.runtimeWaitingSequences || {}),
-    ...(previousShadow?.runtime?.activeFlags || [])
-  ])]
-  const runtimeWaitingSequences = codexDesktopRuntimeWaitingSequences(
-    runtime.activeFlags,
-    priorRuntimeFlags,
-    priorRuntimeSequences
-  )
-  const shadow = {
-    revision,
-    activityRevision: revision,
-    activityEvidence: 'initial-snapshot',
-    runtime,
-    sideConversation: state.sideConversation === true,
-    parentThreadId: validCodexThreadId(state.forkedFromId)
-      ? state.forkedFromId
-      : typeof state.sideConversationParentNavigationPath === 'string'
-        ? (state.sideConversationParentNavigationPath.match(/^\/local\/([0-9a-f-]{36})$/i)?.[1] || '')
-        : '',
-    resumeState: typeof state.resumeState === 'string' ? state.resumeState.slice(0, 40) : '',
-    hasUnreadTurn: typeof state.hasUnreadTurn === 'boolean' ? state.hasUnreadTurn : undefined,
-    unreadEvidence: typeof state.hasUnreadTurn === 'boolean' ? 'snapshot' : '',
-    requests,
-    runtimeWaitingSequences,
-    waitingState
-  }
-  if (waitingState) {
-    waitingState.runtimeWaitingSequences = {
-      ...(waitingState.runtimeWaitingSequences || {}),
-      ...runtimeWaitingSequences
-    }
-    codexRememberDesktopRequestObservations(waitingState, requests)
-  }
-  const runtimeEdge = codexReduceWaitingEdge({
-    flags: runtime.activeFlags,
-    previousFlags: previousShadow?.runtime?.activeFlags,
-    previousWaitingSince: previousShadow?.runtimeWaitingSince
-  })
-  if (runtimeEdge.waitingSince) shadow.runtimeWaitingSince = runtimeEdge.waitingSince
-  return shadow
+  return codexDesktopShadow ? codexDesktopShadow.codexDesktopShadowFromSnapshot(change, previousShadow, waitingState) : null
 }
 
 function codexDesktopShadowActivity(shadow) {
@@ -4031,114 +3988,14 @@ function codexAppServerActiveDominates(known, shadows) {
 }
 
 function codexDesktopPatchIndex(value, length, allowEnd = false) {
-  const index = typeof value === 'number' ? value : typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : -1
-  const maximum = allowEnd ? length : length - 1
-  return Number.isInteger(index) && index >= 0 && index <= maximum ? index : -1
+  return codexDesktopShadow ? codexDesktopShadow.codexDesktopPatchIndex(value, length, allowEnd) : -1
 }
 
+// A failed load rejects the patch (`false`) rather than guessing at how to
+// apply it: the caller already treats a rejected patch as a resubscribe
+// signal, the same outcome a genuinely malformed patch produces.
 function codexApplyDesktopShadowPatch(shadow, patch) {
-  const source = codexRecord(patch)
-  const operation = source.op
-  const patchPath = Array.isArray(source.path) ? source.path : null
-  if (!['add', 'replace', 'remove'].includes(operation) || !patchPath || patchPath.length === 0 || patchPath.length > 64) return false
-  const root = patchPath[0]
-  // Desktop streams the whole private conversation state. The Companion keeps
-  // only the finite runtime/request/read subset; unrelated well-formed patches
-  // still advance the stream revision and must not tear down live authority.
-  // A malformed patch inside the observed subset remains a resubscribe signal.
-  if (!['hasUnreadTurn', 'resumeState', 'threadRuntimeStatus', 'requests'].includes(root)) return true
-  if (patchPath.length > 8) return false
-  if (root === 'hasUnreadTurn') {
-    if (patchPath.length !== 1) return false
-    if (operation === 'remove') {
-      shadow.hasUnreadTurn = undefined
-      shadow.unreadEvidence = ''
-    } else if (typeof source.value === 'boolean') {
-      shadow.hasUnreadTurn = source.value
-      shadow.unreadEvidence = 'event'
-    }
-    else return false
-    return true
-  }
-  if (root === 'resumeState') {
-    if (patchPath.length !== 1) return false
-    if (operation === 'remove') shadow.resumeState = ''
-    else if (typeof source.value === 'string') shadow.resumeState = source.value.slice(0, 40)
-    else return false
-    return true
-  }
-  if (root === 'threadRuntimeStatus') {
-    if (patchPath.length === 1) {
-      if (operation === 'remove') return false
-      const runtime = codexDesktopRuntimeProjection(source.value)
-      if (!runtime) return false
-      shadow.runtime = runtime
-      return true
-    }
-    if (patchPath[1] === 'type') {
-      if (patchPath.length !== 2 || operation === 'remove' || !['active', 'idle', 'notLoaded', 'systemError'].includes(source.value)) return false
-      shadow.runtime.type = source.value
-      if (source.value !== 'active') shadow.runtime.activeFlags = []
-      return true
-    }
-    if (patchPath[1] !== 'activeFlags') return false
-    if (patchPath.length === 2) {
-      if (operation === 'remove') shadow.runtime.activeFlags = []
-      else if (Array.isArray(source.value)) {
-        shadow.runtime.activeFlags = [...new Set(source.value.filter((flag) => flag === 'waitingOnApproval' || flag === 'waitingOnUserInput'))]
-      } else return false
-      return true
-    }
-    if (patchPath.length !== 3) return false
-    const flags = shadow.runtime.activeFlags || []
-    const index = codexDesktopPatchIndex(patchPath[2], flags.length, operation === 'add')
-    if (index < 0) return false
-    if (operation === 'remove') flags.splice(index, 1)
-    else if (source.value === 'waitingOnApproval' || source.value === 'waitingOnUserInput') {
-      if (operation === 'add') flags.splice(index, 0, source.value)
-      else flags[index] = source.value
-    } else return false
-    shadow.runtime.activeFlags = [...new Set(flags)]
-    return true
-  }
-  if (root !== 'requests') return false
-  if (patchPath.length === 1) {
-    if (operation === 'remove') shadow.requests = []
-    else if (Array.isArray(source.value) && source.value.length <= 10_000) shadow.requests = codexDesktopProjectedRequests(source.value, shadow.requests)
-    else return false
-    return true
-  }
-  const requests = shadow.requests || []
-  const index = codexDesktopPatchIndex(patchPath[1], requests.length, operation === 'add')
-  if (index < 0) return false
-  if (patchPath.length === 2) {
-    if (operation === 'remove') requests.splice(index, 1)
-    else if (operation === 'add') requests.splice(index, 0, codexDesktopProjectedRequest(source.value))
-    else requests[index] = codexDesktopProjectedRequest(source.value, Date.now(), requests[index])
-    shadow.requests = requests
-    return true
-  }
-  if (patchPath.length === 3 && (patchPath[2] === 'type' || patchPath[2] === 'method')) {
-    const field = patchPath[2]
-    if (operation === 'remove') requests[index][field] = ''
-    else if (typeof source.value === 'string') requests[index][field] = source.value.slice(0, field === 'type' ? 80 : 120)
-    else return false
-    requests[index].observedAt = Date.now()
-    return true
-  }
-  const timestampField = (patchPath.length === 3
-      && (patchPath[2] === 'startedAt' || patchPath[2] === 'createdAt' || patchPath[2] === 'timestamp'))
-    || (patchPath.length === 4
-      && patchPath[2] === 'params'
-      && (patchPath[3] === 'startedAt' || patchPath[3] === 'createdAt' || patchPath[3] === 'timestamp'))
-  if (!timestampField) return false
-  if (operation === 'remove') delete requests[index].startedAt
-  else {
-    const startedAt = codexTimestampMs(source.value)
-    if (!startedAt) return false
-    requests[index].startedAt = startedAt
-  }
-  return true
+  return codexDesktopShadow ? codexDesktopShadow.codexApplyDesktopShadowPatch(shadow, patch) : false
 }
 
 function codexApplyCachedCompletedTurnEvidence(known, threadId) {
