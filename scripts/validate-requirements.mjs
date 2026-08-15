@@ -82,8 +82,13 @@ for (const name of leafNames) {
     errors.push(`${name}: invalid authority ${fields.authority}`)
   }
   if (fields.qualified_source) {
-    if (!/^SPEC-[A-Z0-9-]+::RAW-\d{3}$/.test(fields.qualified_source)) {
-      errors.push(`${name}: qualified_source must be SPEC-<task>::RAW-nnn, found ${fields.qualified_source}`)
+    // `#n` addresses a numbered clause written under a RAW heading in the source
+    // document. Both halves already exist there — the parent id and the ordinal
+    // — so a sub-clause leaf transcribes an identity rather than inventing one.
+    // Clauses with no RAW-bearing parent stay out of the registry; giving them
+    // numbers would be requirement authoring. See coverage.md.
+    if (!/^SPEC-[A-Z0-9-]+::RAW-\d{3}(#\d{1,3})?$/.test(fields.qualified_source)) {
+      errors.push(`${name}: qualified_source must be SPEC-<task>::RAW-nnn or SPEC-<task>::RAW-nnn#n, found ${fields.qualified_source}`)
     }
     const previous = qualifiedSources.get(fields.qualified_source)
     // A repeated RAW id inside one task is a real duplicate, not a namespace
@@ -173,7 +178,11 @@ for (const moduleName of moduleNames) {
     if (sectionBody(text, heading) === null) errors.push(`${moduleName}: missing section ${heading}`)
   }
   const primary = sectionBody(text, 'Primary Requirements') || ''
-  const links = [...primary.matchAll(/\]\(\.\.\/([a-z0-9-]+\.md)/g)].map((match) => match[1])
+  // An index document is never a leaf, so a link to one inside this section is
+  // explanatory prose rather than a claim of ownership.
+  const links = [...primary.matchAll(/\]\(\.\.\/([a-z0-9-]+\.md)/g)]
+    .map((match) => match[1])
+    .filter((link) => !indexDocuments.has(link))
   if (links.length > MODULE_CAPACITY) {
     errors.push(`${moduleName}: ${links.length} Primary requirements (maximum ${MODULE_CAPACITY})`)
   }

@@ -37,20 +37,53 @@ Date: 2026-08-13
 
 `companion-shared` 的六条是**章节级**登记。每节下的编号条款（共 82 条）没有独立 id，与下述无 id 条款同属待裁决。
 
-## 尚未入册
+## 2026-08-15 裁决与重测：无 id 条款分两类，不是一类
+
+原先「约 80 条无编号条款待裁决」把两种结构不同的东西并成了一类。按**是否存在已登记的父 id**重测，实为 **172 条，分两类**：
+
+| 类 | 条数 | 身份来源 | 入册是否属撰写 |
+| --- | ---: | --- | --- |
+| A：编号条款位于**已登记 RAW 标题**之下 | **82** | 父 id 与序号**都是来源文档自己写的** | 否，是抽取 |
+| B：无任何已登记父 id | **87** | 不存在 | 是，会创造新引用锚点 |
+| （另 3 条）父 RAW 未入册 | 3 | 见下 | 同 B |
+
+用户 2026-08-15 裁决：**A 类入册，每条一个叶子；B 类保持现状。**
+
+### A 类：82 条已入册
+
+全部来自 [install-runtime-diagnostics](../260810/1155-install-runtime-diagnostics/raw-requirement.md#L1)，落在六个已登记且 `active` 的父条款之下：
+
+| 父条款 | 全局序号区间 | 条数 | authority |
+| --- | --- | ---: | --- |
+| [RAW-160](shared-raw-160.md#L1) | #1–#43 | 43 | `user-stated` |
+| [RAW-162](shared-raw-162.md#L1) | #44–#49 | 6 | `user-stated` |
+| [RAW-163](shared-raw-163.md#L1) | #50–#55 | 6 | `user-stated` |
+| [RAW-164](shared-raw-164.md#L1) | #56–#64 | 9 | `user-stated` |
+| [RAW-165](shared-raw-165.md#L1) | #65–#75 | 11 | `agent-transcribed` |
+| [RAW-166](shared-raw-166.md#L1) | #76–#82 | 7 | `agent-transcribed` |
+
+**序号是全文档全局连续的 1–82，不是每个 RAW 各自从 1 开始。** 这一点由交叉核对确证：[冲突登记](conflict-register.md#L1) 早已用「RAW-163 第 50–53 条」指称 main-first 展示门槛，而实测 #50–#53 恰好就是那四条。仓库既有散文用的就是这套寻址，本轮只是把它变成机器可读。
+
+每条继承父条款的 `status` 与 `authority`——父条款是转述的，子条款同样是转述，冲突时不得压过原话。
+
+登记总量 196 → **284** 条叶子。
+
+### 由此可以做而此前做不到的事
+
+覆盖账此前记录：局部取代（47）是整条取代（18）的 2.5 倍，而「这条里还有哪部分作数」恰恰是登记答不上来的。**那是因为登记无法寻址子条款。** 现在可以了——`scoped_relations` 里指向 install-runtime-diagnostics 的那些散文式范围，可以升级为指向具体子条款叶子的整条边。本轮未做：关系重指派比抽取更接近撰写，应单独一轮并单独核验。
+
+### B 类：87 条保持现状
+
+散在 13 个任务，最大的两处是 [codex-environment-actions](../260729/1435-codex-environment-actions/raw-requirement.md#L1)（39 条）与 [window-jump-workbench](../260724/1527-window-jump-workbench/raw-requirement.md#L1)（8 条）。它们没有任何父 id，且序号在同一文件内**跨小节重启**（`Confirmed scope` 1–3 与 `Action Runner User Facts` 1–7 并存），扁平编号会撞号，按节限定又等于登记侧新造命名空间。这批继续通过本文件可见但不入册。
+
+### 另 3 条：父 RAW 存在但未入册
+
+[companion-quick-task-view](../260813/1455-companion-quick-task-view/raw-requirement.md#L1) 的 3 条编号条款挂在 H1 的 `RAW-167` 之下，但那个 `RAW-167` 与 install-runtime-diagnostics 的 `RAW-167` 是**不同任务的同号需求**——正是 `SPEC-<任务>::RAW-nnn` 这套身份要解决的碰撞。该任务的 RAW-167 本身尚未入册，因此其子条款按 B 类处理。
+
+## 仍未入册
 
 | 来源 | 形态 | 条目 | 阻塞原因 |
 | --- | --- | ---: | --- |
-| install-runtime-diagnostics 的节内条款 | numbered | 82 | 无独立 id |
-| 其余 12 个任务 | numbered | ~80 | 无独立 id |
+| 13 个任务的编号条款 | numbered | 87 | 无已登记父 id；编号属撰写行为 |
+| companion-quick-task-view | numbered | 3 | 父 `RAW-167` 未入册（与另一任务同号） |
 | 其余 5 个任务 | 散文 | — | 无可抽取的条款边界 |
-
-## 待用户裁决
-
-约 80 条需求以**无编号的编号条款**承载（`1. …` `2. …`），它们没有 `RAW-nnn` 可作身份。为其分配编号是**需求撰写行为**，不是抽取行为——它会创造此前不存在的引用锚点，并可能与将来手写的编号冲突。因此这批在得到明确决定之前不入册。
-
-可选路线：
-
-1. 按任务分配 `SPEC-<任务>::CLAUSE-nn`，与 `RAW-nnn` 分开命名，明确其为登记侧派生身份。
-2. 只入册当前仍约束代码的条款，其余留在来源文档。
-3. 保持现状，登记只覆盖已有 id 的条款，这些任务通过 `coverage.md` 可见。
