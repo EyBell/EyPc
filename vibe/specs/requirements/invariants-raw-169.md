@@ -246,7 +246,7 @@ runner bridge 用例按 `indexOf(锚点)` 划出监管区再断言，而锚点�
 
 ### 剩余候选
 
-按判据（闭包内互调、闭包外引用点少、不触及高共享绑定）重测后仍可抽的：`readCodexNativePrimaryState` 闭包剩余部分、`codexRolloutRuntimeStateText`（2 函数 / 73 行，但共享 `codexRolloutEvidence`）、`resolveCodexLaunchPlan`（6 函数 / 121 行，共享两个启动路径常量）。其余大块——`setCodexLaunchPath` / `clearCodexLaunchPath`（各 13 函数 / 220+ 行）——触及 2–4 个高共享绑定，按判据不可抽。~~`codexDesktopShadowFromSnapshot`（9 函数 / 131 行）均触及高共享绑定、不可抽~~——此判定有误，见第十四块逐函数复核，已在该块交付。
+按判据（闭包内互调、闭包外引用点少、不触及高共享绑定）重测后仍可抽的：`setCodexLaunchPath` / `clearCodexLaunchPath`（各 13 函数 / 220+ 行）触及 2–4 个高共享绑定，按判据不可抽。~~`codexDesktopShadowFromSnapshot`（9 函数 / 131 行）均触及高共享绑定、不可抽~~——此判定有误，见第十四块逐函数复核，已在该块交付。~~`codexRolloutRuntimeStateText`（2 函数 / 73 行，但共享 `codexRolloutEvidence`）~~、~~`resolveCodexLaunchPlan`（6 函数 / 121 行，共享两个启动路径常量）~~——均已在第十五块交付；前者实测是单函数而非二函数（`codexRolloutTimestampMs` 本身已是第八块委托桩，不是同簇成员）。`readCodexNativePrimaryState` 闭包剩余部分实测**不是候选**：它直接做 `fs.statSync`/`fs.readFileSync`，按第十二块自述的设计原则（fs 读取留在入口，模块只管校验已读内容是否可采纳）它本就该留在入口，不是尚未处理的候选，是已经在其设计边界上。
 
 ## 2026-08-15 第十三块：Waiting 证据可见性
 
