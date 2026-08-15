@@ -33,6 +33,7 @@ Link-only route for general data contracts、testing、type narrowing、document
 - [Prefix-based domain analysis undercounts](../prefix-based-domain-analysis-undercounts.md#L1)
 - [Domain name is not a dependency unit](../domain-name-is-not-a-dependency-unit.md#L1)
 - [Behavior check cannot prove a derived value unchanged](../behavior-check-cannot-prove-derived-value-unchanged.md#L1)
+- [Prose range overreaches the clauses it names](../prose-range-overreaches-the-clauses-it-names.md#L1)
 - [Parallel session batch commit splits in-flight work](../parallel-session-batch-commit-splits-in-flight-work.md#L1)
 - [Producer built before checking the consumer](../producer-built-before-checking-the-consumer-can-express-it.md#L1)
 - [Shallow extraction of nested payload](../shallow-pattern-extraction-of-nested-payload.md#L1)
