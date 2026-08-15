@@ -172,7 +172,7 @@ runner bridge 用例按 `indexOf(锚点)` 划出监管区再断言，而锚点�
 
 `runCodexProjectEnvironmentAction`（252 行）与其两个协作簇构成真正的循环依赖（会话登记调用它做重启）；`installCodexActionRunnerIpc`（343 行）落在 `EYPC-UTOOLS-HOST-001` 入口冻结管辖范围。两者都不在「低耦合簇」判据内。
 
-已识别的下批候选簇（均零共享绑定）：environment TOML 解析（2 函数 / 89 行）、`codexDesktopProjectedRequest` 闭包（7 函数 / 72 行）、`sanitizeCodexQuota` 闭包（6 函数 / 76 行）、`codexInventoryThreadTopology` 闭包（4 函数 / 60 行）、`codexMergedInventoryTurnFields` 闭包（3 函数 / 53 行）。
+已识别的下批候选簇（均零共享绑定）：~~environment TOML 解析（2 函数 / 89 行）~~、~~`codexDesktopProjectedRequest` 闭包（7 函数 / 72 行）~~、~~`sanitizeCodexQuota` 闭包（6 函数 / 76 行）~~——三者已在第十块交付；剩 `codexInventoryThreadTopology` 闭包（4 函数 / 60 行）、`codexMergedInventoryTurnFields` 闭包（3 函数 / 53 行）。
 
 ### 剩余（原文，已由上文取代）
 
@@ -181,3 +181,21 @@ runner bridge 用例按 `indexOf(锚点)` 划出监管区再断言，而锚点�
 前者实测**不可直接抽出**：注入 17 个协作者不是边界，是参数表。其协作者自然聚成两簇——运行生命周期（`createCodexActionRun` / `appendCodexActionRunLog` / `finishCodexActionRun` / `pushCodexActionRunnerSnapshot`，89 行 / 18 处外部调用）与会话登记（`codexEnvironmentSessionKey` / `sanitizeCodexEnvironmentSession` / `signalCodexEnvironmentSession` / `stopCodexEnvironmentActionSession` / `restartCodexEnvironmentActionAfterExit`，72 行 / 12 处外部调用）。两簇彼此互调，须一并考虑，且它们与该函数是**真正的循环依赖**：会话登记调用 `runCodexProjectEnvironmentAction` 做重启。
 
 后者落在 `EYPC-UTOOLS-HOST-001` 入口冻结管辖范围，需先确认 IPC 装配可否离开入口。
+
+## 2026-08-15 第十块：桌面请求投影、配额脱敏与 Environment TOML 解析
+
+三个模块，因为是三件互不相干的事。入口 14,628 → **14,512**。`preload/codex/` 现有十三个模块。
+
+**[environment-toml.cjs](../../../preload/codex/environment-toml.cjs#L1)（116 行）零依赖**：不是通用 TOML 解析器，只接受 Environment 文件用到的子集（`[setup]`、`[[actions]]`、带引号字符串），多行字符串、缺失或非 `1` 的 `version`、畸形 action 一律返回 `null`。与 `command-validation.cjs` 同一先例——无模块绑定、无全局、无 Node 内置，直接 `require` 而非构造。函数体逐字比对零差异。
+
+**[desktop-request-projection.cjs](../../../preload/codex/desktop-request-projection.cjs#L1)（151 行 / 6 函数）**：桌面 Plan 桥如何给一条实时请求定性——稳定的关联身份、尽力而为的时间戳、是否正等着用户（输入或批准）。`codexDesktopProjectedRequest`/`codexDesktopProjectedRequests` 把新观察值与上一次「同一条」请求的记录对齐——有关联 id 就按 id 匹配，没有就按 `(type, method, startedAt)` 匹配——使 `observedSequence` 与 `startedAt` 在重复轮询间存活，而不是每次归零。`record`/`timestampMs`/`crypto` 按既有先例注入；`nextLiveEvidenceSequence` 闭包着入口的活跃证据计数器，同样只能注入不能带走。原来挂在入口顶层、只在这一簇内使用一次的 `CODEX_DESKTOP_REQUEST_CORRELATION_SALT` 随之移入模块闭包，入口内该名字出现次数已归零。
+
+**[quota-sanitizer.cjs](../../../preload/codex/quota-sanitizer.cjs#L1)（100 行 / 2 函数）**：把 App Server 的限流与账户负载整理成状态 UI 读的形状——一个 `normal` 池与若干 `spark` 池，每池一个 `short`（≤24h）与 `weekly`（>24h）窗口。纯计算，`record`/`percent`/`number`/`timestampMs` 四个热基元全部注入，一个都不带走。
+
+三者共同点：均由**实测确认零共享绑定**——`codexDesktopRequestTimestamp` 之外的五个桌面函数、两个 quota 函数、两个 TOML 函数彼此互调，闭包外没有第二个模块级状态与它们耦合，只有热基元（`codexRecord`/`codexTimestampMs`/`codexPercent`/`codexNumber`/`codexNextLiveEvidenceSequence`）作为跨越点，全部走注入。
+
+加载失败时三者都退化为「不声称任何结论」而非抛出：桌面投影退化为空关联、空时间戳、`waitingOnUserInput`/`waitingOnApproval` 均不命中；配额退化为全空池（`plan: ''`, `short/weekly: null`）；Environment TOML 退化为 `null`（该文件读作不可解析）。三条路径都与「模块确实解析后得出同一个结论」走同一分支，调用方不会多学一种情况。
+
+### 验证
+
+[scripts/utools-preload-assets.mjs](../../../scripts/utools-preload-assets.mjs#L22) 管理清单同轮更新，缺一个模块 `validate:utools` 的模块集合检查即失败——本轮先漏改过一次，被 `pnpm run build` 现场拦下。已验：`tests/platform/codexAppServerBridge.test.ts`、`codexActionRuntime.test.ts`、`codexActionRunnerBridge.test.ts`、`codexFloatWindowBridge.test.ts` 共 185 项全过；`pnpm run sync:preloads` / `validate:mirrors` / `build`（含 `validate:utools`）全过；全量 `vitest run` 1405/1406 项通过，唯一失败项（MQTT 消息焦点用例超时）在本轮改动之前的基线提交上同样复现，与本次抽取无关。
