@@ -183,6 +183,18 @@ describe('ordered hook state', () => {
     expect(state.get(CLI_A).phase).toBe('stopped')
   })
 
+  it('treats SessionEnd without an observed parent Turn as lifecycle-only', () => {
+    const state = events.foldQueueEntries([
+      event(CLI_A, 'SessionEnd', 20)
+    ])
+    expect(state.get(CLI_A)).toMatchObject({
+      phase: 'unknown',
+      turnStartedAt: 0,
+      turnOpen: false,
+      lastSessionEndAt: 20
+    })
+  })
+
   it('treats idle notification as a wake-up hint, never a waiting state', () => {
     const state = events.foldQueueEntries([
       event(CLI_A, 'UserPromptSubmit', 10),
@@ -522,6 +534,21 @@ describe('Code-mode inventory and correlation', () => {
       stateSource: 'metadata-history',
       completedTurns: 3
     })
+  })
+
+  it('keeps completed history when a cold Hook queue contains only SessionEnd', () => {
+    const session = {
+      ...metadata(LOCAL_A, CLI_A),
+      completedTurns: 3,
+      metadataUpdatedAt: 100,
+      lastActivityAt: 100,
+      lastFocusedAt: 90
+    }
+    const hook = events.foldQueueEntries([event(CLI_A, 'SessionEnd', 200)])
+    const row = codeSessions.correlateCodeSessions([session], hook, new Map(), {
+      compatibility: 'compatible', generation: 1, entries: []
+    }).sessions[0]
+    expect(row).toMatchObject({ phase: 'completed', stateSource: 'metadata-history' })
   })
 
   it('lets newer completed metadata retire stale live evidence but not a newer live event', () => {

@@ -16,15 +16,15 @@ const { LOCAL_SESSION_PATTERN } = require('./code-sessions.cjs')
 const CLAUDE_APP_STATE_REVISION = 'claude-app-log-state-v2'
 const CLAUDE_APP_STATE_VERSION = 2
 // Each version is admitted only after its privacy-safe lifecycle grammar has
-// been checked against the installed App logs. 1.28929.0 preserves the exact
-// Code session messages accepted below; unrelated Cowork identifiers remain
-// outside LOCAL_SESSION_PATTERN and therefore fail closed.
+// been checked against the installed App logs. 1.28929.0 and 1.30096.5
+// preserve the exact Code session messages accepted below; unrelated Cowork
+// identifiers remain outside LOCAL_SESSION_PATTERN and therefore fail closed.
 // Single owner of the Claude App version gate. Both the state reader and the
 // archive adapter fail closed on an unlisted version, so the list has to be
 // one thing: two copies agreeing today is discipline, not structure, and a
 // version added to one side alone silently splits the gate in half.
 const SUPPORTED_APP_VERSION = '1.26832.0'
-const SUPPORTED_APP_VERSIONS = new Set([SUPPORTED_APP_VERSION, '1.28929.0'])
+const SUPPORTED_APP_VERSIONS = new Set([SUPPORTED_APP_VERSION, '1.28929.0', '1.30096.5'])
 const LOG_FILE_NAMES = ['main1.log', 'main.log']
 const LOG_TAIL_MAX_BYTES = 16 * 1024 * 1024
 const { WATCHER_RECOVERY_INTERVAL_MS } = require('../timing-policy.cjs')
@@ -175,13 +175,16 @@ function foldAppStateEvents(events, previous, previousRequests) {
       next.evidenceProvenance = 'exact-terminal'
     } else if (event.kind === 'session-end') {
       next.lastSessionEndAt = event.at
-      // Claude emits a generic teardown row after both successful and
-      // interrupted sessions. Preserve a completion from the current Turn;
-      // only a teardown without current-Turn completion is a real stop.
-      next.phase = known.lastStopAt > 0 && known.lastStopAt >= known.turnStartedAt
-        ? 'completed'
-        : 'stopped'
-      next.evidenceProvenance = 'exact-terminal'
+      // Claude also emits generic teardown rows during a lifecycle sweep. A
+      // teardown closes a currently observed Turn, but cannot invent stopped
+      // from an empty/cold state or overwrite an already settled phase.
+      if (isLiveTaskPhase(known.phase)) {
+        next.phase = 'stopped'
+        next.evidenceProvenance = 'exact-terminal'
+      } else {
+        next.phaseUpdatedAt = known.phaseUpdatedAt
+        next.evidenceProvenance = known.evidenceProvenance
+      }
     } else if (event.kind === 'stopped') {
       next.phase = 'stopped'
       next.lastSessionEndAt = event.at

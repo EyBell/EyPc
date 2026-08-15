@@ -329,3 +329,12 @@ RAW-142、RAW-150 与 RAW-159 仅上述冲突条款被取代；其余已验证�
 3. 当前用户授权仅覆盖 `EyPc-Regression-<run-id>-*` 无副作用测试任务中的安全 Turn/Plan 与可恢复清理；不得对既有用户任务执行“执”或 Claude 归档。
 
 详细合同见 [raw requirement](raw-requirement.md#L1)、[spec](spec.md#L1)、[tasks](tasks.md#L1)、[verification](verify.md#L1) 和 [handoff](handoff.md#L1)。
+
+## 2026-08-15 State-source Reconciliation
+
+- 真实来源交叉核验把两个表象分开：Codex 的父任务已终态，但进程私有 Desktop-only Side relation/shadow 在运行期没有被完整 App Server inventory 反向清理；Claude 的一批 lifecycle-only SessionEnd 则在没有观察到 open Turn 时被旧 reducer 制造成 stopped，压过 `completedTurns` 历史。两者都不是“过几分钟就该完成”的 TTL 问题。
+- Claude 修正由 [events.cjs](../../../../preload/claude/events.cjs#L1)、[app-state.cjs](../../../../preload/claude/app-state.cjs#L1) 与 [code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1) 共同完成：SessionEnd 只关闭已观察 open Turn；cold/lifecycle-only 尾事件保留 unknown/history；当前固定语法门禁加入 `1.30096.5`。
+- Codex 修正由 [preload/index.js](../../../../preload/index.js#L1) 完成：只有 accepted complete inventory 明确排除 Side child，且三次定向 latest-Turn 都返回 exact empty，才退休 Desktop-only relation/shadow；waiting/Plan、confirmed App Server live、newer evidence 或不完整库存均 fail closed 保留。
+- 不新增可见状态、TTL、按时长自动完成、正文/工具内容读取、任务写入或宿主进程控制。来源仍缺少真实终态时保持保守，不以 elapsed time 猜 completed/stopped。
+- 用户本轮明确要求“规则进化”；no-write evolution evaluator 对两个独立 Provider 复现返回 `versioned-change-review` eligible。项目级 [state-source rule](../../../rules/README.md#L1) 已固化同一来源法定人数与当前 Claude 固定语法版本，不扩散到 CodeNote 全局，也不新增需求编号。
+- 影响选择的 7 个测试文件 `340/340`、Preload canonical/public 语法与镜像、typecheck、1871-module production/uTools build 通过；artifact 为 `host-931a95f5973c8c7f08e2 / renderer-d238ab7d0c6a67a71a5c`。真实 uTools `host-loaded` 与 UI 收敛仍待用户侧验收。

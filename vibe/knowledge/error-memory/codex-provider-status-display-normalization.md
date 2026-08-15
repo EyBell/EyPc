@@ -4,14 +4,15 @@ status: verified
 scope: project
 fingerprint: codex-provider-status-display__raw-interrupted-enum-reached-badges-cards-and-details__provider-evidence-coupled-to-product-vocabulary__normalize-at-domain-card-projection-preserve-raw-action-evidence
 first_seen: 2026-07-22
-last_verified: 2026-08-13
-review_after: 2026-09-11
+last_verified: 2026-08-15
+review_after: 2026-09-15
 evidence:
   - src/domain/codex.ts
   - preload/companion/task-kernel.cjs
   - src/runtime/codexController.ts
   - src/FloatApp.vue
   - preload/index.js
+  - tests/platform/codexAppServerBridge.test.ts
   - vibe/specs/260718/1148-codex-quota-float/verify.md
 tags:
   - codex-companion
@@ -52,6 +53,12 @@ RAW-154 的“任意精确 interrupted 立即 stopped”已被真实宿主复现
 
 全局复核发现 RAW-165 只保护了“旧 terminal 不覆盖新 live”，但同一合并点仍允许较晚送达的旧 live 覆盖更新 waiting/live，也允许旧 live 在账本中重开更新 terminal。当前改为一个双向 branch phase admission：live↔live、live↔terminal、terminal↔terminal 都先比较 Provider Turn epoch；同 Turn 的 live 再比较 active event sequence，无法比较时只允许更强 attention 前进，不允许无因果证据清除 waiting。unread 与 Goal 仍作为正交 lane 合并。由此 transport generation 只排序传输，不能在任何方向制造状态新鲜度。
 
+## 当前修正（2026-08-15 / Desktop-only Side source quorum）
+
+真实运行期出现 parent 已 completed/read、App Server 当前库存只有 parent，但父卡仍被一个 Desktop-only Side shadow 投影为 running；重启后立即恢复 completed，证明残留只在进程私有 relation/shadow，而不是父任务缺少完成事件。旧的完整库存同步只更新 inventory relation，没有反向清掉 Desktop relation；定向 child latest-Turn 连续返回 exact empty 后也只结束读循环，没有撤销 shadow，因而 Kernel 按设计继续聚合这颗“珠子”。
+
+当前只允许一个严格结构化退休路径：先接纳 complete App Server inventory 并确认 child 不在其中，再对该 child 做三次 bounded latest-Turn read，且每次都是 exact empty。满足后才删除 Desktop-only relation、activity/shadow 与相关私有缓存，并在没有其它 live branch 时恢复 parent 已保留的 terminal evidence。任一 waiting/Plan、confirmed App Server live、newer evidence 或 incomplete inventory 都 fail closed 保留。诊断只记录 anonymous `task-topology / desktop-side-reconciled / retired-missing` 和有限的 `inventory=complete / latestTurn=empty`，不记录 raw identity/content。没有增加 staleness/TTL；运行时长仍不构成终态。
+
 ## Symptom
 
 Badges, task cards, hidden views and details first exposed the provider term `interrupted / 已中断`, even though the product wanted uncertain tasks presented consistently as “进行中”. After the visible label and archive capability were normalized, a later real count showed a second failure mode: two exact live-idle interrupted sessions were still counted as active work, producing four displayed ongoing tasks when only two were actually active.
@@ -86,14 +93,14 @@ Normalization first stopped at the visible activity enum instead of projecting t
 
 ## Prevention Rule
 
-Provider enums are evidence, not automatically product vocabulary, causal freshness or action capability. Normalize the complete product state once in Kernel and always include every confirmed root/Side bead in the parent scope。Branch identity must be stable across transport lanes；inventory/read success is observation only and must never mint terminal causal sequence。Merge complete snapshots per stable branch through one bidirectional admission gate using comparable Turn epochs/event sequences；stale live、waiting or terminal evidence cannot replace a causally newer branch state in either direction。Across branches use `waiting-approval > waiting-input/Plan > running > Goal > terminal`；within completion-facing states running still outranks completed-unread/completed，and latent unread cannot create a second group/count while active。Ordinary interruption needs exact branch-idle confirmation，and an unexecuted Plan interruption additionally needs targeted no-newer-Turn/activity/pending proof。Every UI/count/action surface consumes the same canonical package，and diagnostics judge proposal acceptance only after that package commits。Do not fix this with scan-time watermarks、extra visible states、long holds、faster polling or scattered Controller/Renderer branches。
+Provider enums are evidence, not automatically product vocabulary, causal freshness or action capability. Normalize the complete product state once in Kernel and always include every confirmed root/Side bead in the parent scope。Branch identity must be stable across transport lanes；inventory/read success is observation only and must never mint terminal causal sequence。Merge complete snapshots per stable branch through one bidirectional admission gate using comparable Turn epochs/event sequences；stale live、waiting or terminal evidence cannot replace a causally newer branch state in either direction。Across branches use `waiting-approval > waiting-input/Plan > running > Goal > terminal`；within completion-facing states running still outranks completed-unread/completed，and latent unread cannot create a second group/count while active。Ordinary interruption needs exact branch-idle confirmation，and an unexecuted Plan interruption additionally needs targeted no-newer-Turn/activity/pending proof。A Desktop-only Side may be retired only by complete-inventory exclusion plus bounded exact-empty targeted reads，never by age；waiting/Plan、App Server live、newer evidence and incomplete inventory preserve it。Every UI/count/action surface consumes the same canonical package，and diagnostics judge proposal acceptance only after that package commits。Do not fix this with scan-time watermarks、extra visible states、TTL、long holds、faster polling or scattered Controller/Renderer branches。
 
 ## Alternative Route
 
-- Status: `verified` through RAW-166 affected automation；current rebuilt-host acceptance remains pending.
+- Status: `verified` through the 2026-08-15 state-source reconciliation affected automation；current rebuilt-host acceptance remains pending.
 - Preconditions: an upstream status must remain available for diagnostics or action verification but should use different product semantics.
 - Ordered steps: preserve raw status/unread and Provider Turn epoch → classify topology privately with stable branch refs → merge incoming evidence against prior branch causality → aggregate attention/running/Goal/terminal → compare Host proposal with final canonical package → open only parent → revalidate mutation in Host.
-- Verification: stale inventory terminal cannot replace current running/waiting；stale live cannot clear newer waiting or reopen newer terminal；same/newer exact terminal and a genuinely newer Turn/event sequence can advance；no second public timestamp gate competes with Branch Evidence；main attention outranks Side running；Side authority does not leak to main；phase/unread/Goal lanes do not erase one another；canonical conflict is superseded, not accepted。Affected 11 files `457/457`、canonical/public mirrors、error-memory validator、typecheck and 1871-module production/runtime validation pass，while `host-6ac8de6597dcf0dd644c / renderer-6e677d084be49c8c7878` uTools acceptance remains pending。
+- Verification: stale inventory terminal cannot replace current running/waiting；stale live cannot clear newer waiting or reopen newer terminal；same/newer exact terminal and a genuinely newer Turn/event sequence can advance；no second public timestamp gate competes with Branch Evidence；main attention outranks Side running；Side authority does not leak to main；phase/unread/Goal lanes do not erase one another；canonical conflict is superseded, not accepted；a complete inventory excluding a Desktop-only Side plus three exact-empty targeted reads retires only that stale shadow，while waiting/Plan/App Server live/incomplete inventory blocks retirement。The 2026-08-15 affected 7-file matrix passes `340/340` plus canonical/public syntax/mirror、typecheck and 1871-module production/runtime validation；`host-931a95f5973c8c7f08e2 / renderer-d238ab7d0c6a67a71a5c` uTools acceptance remains pending。
 - Applicability boundary: does not rewrite user-authored task titles or unrelated prose containing the same word.
 - Fallback: if the product mapping is context-dependent, expose a named presentation mapper rather than mutating the raw protocol type.
 
@@ -113,3 +120,4 @@ Provider enums are evidence, not automatically product vocabulary, causal freshn
 | 2026-08-12 | RAW-164 all-bead Side Chat authority | User corrected the parent rule again：any earlier-state bead must win，including completed-unread main + running Side；inventory-listed children also appeared as duplicate rows | Kept RAW-163's main-completed-read gate and assumed Desktop alone supplied Side topology | Build same-session inventory topology，keep children private，always aggregate all beads，retain parent-only open and add semantic topology/parent/identity diagnostics | focused `189/189`、syntax/mirror、type/build/runtime validation passed；current uTools `host-loaded` acceptance pending |
 | 2026-08-13 | RAW-165 inventory terminal causal inversion | Real Cloud task kept executing/waiting while EyPc published stopped/running from contradictory private evidence；Float applied the wrong canonical package | Treated a successful inventory RPC and local scan sequence as causally newer terminal，included transport lane in branch identity，leaked Side authority to main and judged Host proposal before final Kernel state | Stable branch refs，event-time terminal admission，per-branch Turn epoch merge，attention-first aggregation，branch-local authority and final-canonical accepted/superseded diagnostics | affected `364/364`、mirror/syntax、type/build/runtime validation passed；current uTools `host-loaded` acceptance pending |
 | 2026-08-13 | RAW-166 bidirectional causality audit | Full review found that a later transport replay of an older live Turn could still clear a newer waiting state or overwrite a newer branch epoch；phase replacement could also erase unread/Goal；a public timestamp-only guard duplicated the private phase owner | Protected only terminal→live conflict and treated the incoming branch as one replaceable value | Use one live/terminal bidirectional admission gate over Turn time or real event sequence，merge phase/unread/Goal independently and remove the second phase gate | affected `457/457`、mirrors、error-memory validator、typecheck/build/uTools validator pass；real `host-loaded` pending |
+| 2026-08-15 | Desktop-only Side source reconciliation | Parent native task was completed/read but EyPc remained running until Host restart；current complete App Server inventory contained only the parent | Inventory topology refresh removed only inventory relations；three exact-empty child reads exhausted without clearing the process-private Desktop relation/shadow | Retire the child only on complete-inventory exclusion + three exact-empty targeted reads，with waiting/live/newer/incomplete guards and no TTL | affected 7-file `340/340` plus type/build passed；real `host-loaded` pending |

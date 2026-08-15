@@ -231,9 +231,16 @@ function selectProjectedStateSource(exactApp, hook, correlation, historyAt) {
 function projectedState(session, hookState, byCli, previousBySession, appSnapshot, appByLocal) {
   const exactApp = (appByLocal instanceof Map ? appByLocal : appStateMap(appSnapshot)).get(session.sessionId) || null
   const hookResult = hookForSession(session, hookState, byCli, previousBySession)
-  const hook = hookResult.hook
+  // SessionEnd/subagent-only rows are lifecycle observations, not a parent
+  // Turn authority. Ignoring them here lets durable completion history survive
+  // a cold Hook queue sweep.
+  const lifecycleOnlySessionEnd = hookResult.hook?.lastEvent === 'session-end'
+    && Number(hookResult.hook.turnStartedAt) === 0
+    && hookResult.hook.phase === 'unknown'
+  const hook = lifecycleOnlySessionEnd ? null : hookResult.hook
+  const hookCorrelation = lifecycleOnlySessionEnd ? 'none' : hookResult.correlation
   const historyAt = completedEvidenceAt(session, previousBySession)
-  const selected = selectProjectedStateSource(exactApp, hook, hookResult.correlation, historyAt)
+  const selected = selectProjectedStateSource(exactApp, hook, hookCorrelation, historyAt)
 
   if (selected === 'app') {
     const appAt = stateEvidenceAt(exactApp)
@@ -254,7 +261,7 @@ function projectedState(session, hookState, byCli, previousBySession, appSnapsho
   }
   if (selected === 'hook') {
     return {
-      statusCorrelation: hookResult.correlation,
+      statusCorrelation: hookCorrelation,
       stateSource: 'hook',
       stateCompatibility: appSnapshot && appSnapshot.compatibility === 'unsupported' ? 'fallback' : 'compatible',
       stateGeneration: 0,

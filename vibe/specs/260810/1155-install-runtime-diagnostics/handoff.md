@@ -105,3 +105,13 @@ Status: `RAW-166 increment-automated-verified / rebuilt-artifact-ready / documen
 ## 完成条件
 
 只有 [verification](verify.md#L1) 的当前自动化/构建证据与以上矩阵来自同一源码、同一开发模式 Runtime Identity，且握手先报告 `host-loaded`、首个可信事件立即正确、后续匿名快照无回弹，才可从 `dev-plugin-reload-pending` 变为完成。后续采样不构成产品展示延迟。
+
+## 2026-08-15 State-source Reconciliation Host Gate
+
+1. 让 uTools 开发插件加载本轮 artifact，先确认 Runtime Identity 为 `host-931a95f5973c8c7f08e2 / renderer-d238ab7d0c6a67a71a5c` 且结果是 `host-loaded`；仅构建完成或进程启动时间不能替代该证据。
+2. 对一条 main 已 completed/read、旧宿主曾因 Desktop-only Side 显示 running 的父任务做只读观察。完整库存排除 child 且三次定向 latest-Turn 为 exact empty 后，父任务应回到 completed；诊断只出现脱敏 `task-topology / desktop-side-reconciled / retired-missing`，细节限于 `inventory=complete / latestTurn=empty`。
+3. 反例必须保留：Side 有 waiting/Plan、confirmed App Server live、更新事件或库存不完整时，不得退休 Side；长时间运行本身也不能成为完成/待继续证据。
+4. 触发一次不带 open Turn 的 Claude lifecycle sweep，历史 completed 任务不得批量进入待继续；随后在受控新会话内观察 genuine Prompt-open Turn + SessionEnd，仍应进入 stopped，同 Turn 成功 Stop/Result + teardown 则保持 completed。
+5. 核验当前 Claude App `1.30096.5` 的固定语法事件能进入 App-state lane，相邻未登记版本仍 fail closed；不得读取正文、工具参数或凭证。
+6. 以上首个可信证据应直接形成正确 package；后续采样只确认无回弹，不设置分钟级等待。未完成此矩阵前保持 `dev-plugin-reload-pending`。
+7. 项目规则 `EYPC-COMPANION-STATE-SOURCE-001` 已把上述来源法定人数固化为后续实现门禁；任何 TTL/陈旧度终态方案或少于三次 exact-empty 的 Side 清理都必须先做新的规则/需求变更评审。

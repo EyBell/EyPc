@@ -357,3 +357,33 @@ RAW-167 由上节的 Structural Debt 展开，分两条线交付：代码侧把�
 ### RAW-167 VerificationDecision
 
 `route=impact-selected runtime+governance+docs / changed-surface=single-definition convergence across lane units, causal core, provider traits, timing policy, phase predicates + machine-checkable requirement registry / selected=16 files 508 tests + validate-requirements + validate-error-memory + validate-committed-preload-mirrors + typecheck + build + uTools validator / skipped=repository-wide suite without testing-owner trigger；host reload without process-control authorization；unnumbered clause registration pending user decision / outcome=increment-automated-verified, host-acceptance-outstanding / residual-risk=eight deliveries unverified on a real host, two of which changed behaviour`。
+
+## 2026-08-15 State-source Reconciliation Verification
+
+### Automated Evidence
+
+- RED-first focused matrix reproduced five missing contracts: current Claude App version rejected；cold App/Hook SessionEnd manufactured stopped；lifecycle-only Hook overrode completed history；Codex stale Desktop-only Side never issued bounded child reads。
+- Final diff review added one stricter RED case：if any one of the three Side reads fails，the child must remain active/private。The first implementation incorrectly retired on only the final empty page；the accepted implementation counts all three exact-empty responses，then the same test restarts the evidence epoch and proves retirement only after a clean three-read quorum。
+- `pnpm exec vitest run tests/platform/claudeBridge.test.ts tests/platform/claudeAppStateBridge.test.ts tests/platform/companionTaskKernel.test.ts tests/domain/claudeCode.test.ts tests/runtime/claudeCompanionController.test.ts tests/runtime/claudeCompanionWatcherE2E.test.ts tests/platform/codexAppServerBridge.test.ts`：7 files，`340/340` passed。
+- Canonical and synchronized public Preload syntax passed for `index.js` plus all three changed Claude modules；`pnpm run sync:preloads` and `pnpm run validate:mirrors` passed，with two not-yet-committed mirror pairs belonging to the concurrent RAW-169 extraction rather than this increment。
+- `pnpm run typecheck` passed。`pnpm run build` passed typecheck、1871-module Vite production build、runtime preparation and uTools validation；artifact identity is `host-931a95f5973c8c7f08e2 / renderer-d238ab7d0c6a67a71a5c`。
+- No-write evolution evaluation observed two independent Provider recurrences and returned `versioned-change-review` eligible with no contrary signal；the user's explicit “规则进化” request authorized the project-local write。`EYPC-COMPANION-STATE-SOURCE-001` now owns the source quorum、no-TTL invariant and current fixed-grammar version list。
+- `pnpm run validate:error-memory`、`pnpm run validate:requirements`、Markdown code-link audit、documentation-sync receipt and `git diff --check` are the closeout gates for the synchronized records below。
+
+### Behavioral Matrix
+
+| Scenario | Required result | Automated result |
+| --- | --- | --- |
+| cold/lifecycle-only Claude SessionEnd, no observed Prompt | preserve unknown/history; do not create stopped | passed |
+| observed open Claude Turn + SessionEnd without success | stopped | passed |
+| same Turn success + generic teardown | completed | passed |
+| metadata `completedTurns > 0` + lifecycle-only Hook | completed history wins | passed |
+| Desktop-only Side + complete inventory exclusion + three exact-empty child reads | retire process-private Side and restore parent terminal | passed |
+| any waiting/Plan/App Server live/newer evidence/incomplete inventory | retain Side; never infer terminal from age | passed |
+
+### Not Checked
+
+- uTools Host was not restarted or reloaded；the artifact is `artifact-ready`, not `host-loaded`。
+- No existing user task was opened、continued、archived or mutated；no Claude metadata/LevelDB or Codex native state was written。
+- If Claude emits no Stop、StopFailure、SessionEnd or fixed-grammar App failure for a user interrupt，the reducer deliberately remains conservative until a real source arrives。This increment does not inspect transcript content or add a timeout-based terminal guess。
+- Repository-wide `pnpm test/verify` was not selected because the testing owner has no new escalation trigger；the affected semantic/build boundary is the 7-file matrix plus type/build/runtime validators above。

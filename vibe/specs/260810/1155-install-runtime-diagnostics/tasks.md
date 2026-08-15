@@ -119,3 +119,15 @@
 - [ ] 仅在本轮 `EyPc-Regression-*` 安全测试任务上验证 Plan 执行（已授权；不得触碰既有任务）
 - [ ] 本轮前缀测试任务的可恢复清理；真实 Claude D′ 归档不在本轮授权范围
 - [ ] RAW-166 最终 artifact 由开发插件报告 `host-loaded`，并通过无额外等待的 Cloud/Claude event→canonical→Float applied 矩阵
+
+## 2026-08-15 State-source Reconciliation
+
+- [x] Claude cold/lifecycle-only SessionEnd 不制造 stopped，且不能压过 `completedTurns > 0` 的历史 completed
+- [x] Claude 已观察 open Turn 的无成功 SessionEnd 仍进入 stopped；同 Turn 已成功完成不被通用 teardown 覆盖
+- [x] Claude App `1.30096.5` 进入固定隐私安全语法/归档门禁，相邻未登记版本继续 fail closed
+- [x] Codex Desktop-only Side 只有在 complete inventory 排除 child + 三次 exact-empty latest-Turn 后退休
+- [x] waiting/Plan、App Server live、新证据与 incomplete inventory 均阻止 Side 退休；无 TTL/按时长终态
+- [x] 7 文件 `340/340`、Preload 语法/镜像、typecheck、1871-module build 与 uTools validator 通过
+- [x] 项目规则新增 `EYPC-COMPANION-STATE-SOURCE-001`，同步 Claude 三个固定语法版本；evolution review 为 `versioned-change-review` eligible
+- [x] Current PRD、Architecture、Technical Details、Project Status、Controlled 文档和既有错误记忆同步
+- [ ] uTools 开发插件加载 `host-931a95f5973c8c7f08e2 / renderer-d238ab7d0c6a67a71a5c`，完成真实父任务/Side 与 Claude lifecycle sweep 验收

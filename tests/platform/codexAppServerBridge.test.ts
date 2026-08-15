@@ -5876,6 +5876,139 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
+  it('retires a Desktop-only active Side after complete inventory and exact empty-Turn checks agree it is gone', async () => {
+    vi.useFakeTimers()
+    try {
+      const child = new FakeCodexProcess()
+      const desktopSocket = new FakeCodexDesktopSocket()
+      const { bridge, native } = loadCodexBridge(child, () => nativeRegistryTextWithUnread([]), desktopSocket)
+      const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+      await vi.advanceTimersByTimeAsync(0)
+      const parentThreadId = FIXED_THREAD_IDS[3]
+      const parent = baseline.value.threads[3]
+      const sideThreadId = 'a2345678-1234-4234-8234-123456789abc'
+
+      desktopSocket.push({
+        type: 'broadcast',
+        method: 'thread-stream-state-changed',
+        sourceClientId: 'codex-desktop-owner',
+        version: 11,
+        params: {
+          hostId: 'local',
+          conversationId: sideThreadId,
+          change: {
+            type: 'snapshot',
+            revision: 1,
+            conversationState: {
+              sideConversation: true,
+              forkedFromId: parentThreadId,
+              threadRuntimeStatus: { type: 'idle', activeFlags: [] },
+              resumeState: '',
+              hasUnreadTurn: false,
+              requests: []
+            }
+          }
+        }
+      })
+      child.stdout.emit('data', `${JSON.stringify({
+        method: 'turn/completed',
+        params: {
+          threadId: parentThreadId,
+          turn: { status: 'completed', startedAt: 2_000_000_100, completedAt: 2_000_000_120 }
+        }
+      })}\n`)
+      await vi.advanceTimersByTimeAsync(0)
+
+      child.emptyTurnIds.add(sideThreadId)
+      child.transientTurnsFailures = 1
+      desktopSocket.push({
+        type: 'broadcast',
+        method: 'thread-stream-state-changed',
+        sourceClientId: 'codex-desktop-owner',
+        version: 11,
+        params: {
+          hostId: 'local',
+          conversationId: sideThreadId,
+          change: {
+            type: 'patches',
+            baseRevision: 1,
+            revision: 2,
+            patches: [{
+              op: 'replace',
+              path: ['threadRuntimeStatus'],
+              value: { type: 'active', activeFlags: [] }
+            }]
+          }
+        }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      expect((await bridge.readActivitySnapshot()).value.entries
+        .find((entry: Record<string, any>) => entry.key === parent.key)).toMatchObject({ status: 'active' })
+
+      await vi.advanceTimersByTimeAsync(3_100)
+
+      expect((await bridge.readActivitySnapshot()).value.entries
+        .find((entry: Record<string, any>) => entry.key === parent.key)).toMatchObject({ status: 'active' })
+      expect(native.privateBranchEvidence(parentThreadId)?.branches).toHaveLength(2)
+
+      desktopSocket.push({
+        type: 'broadcast',
+        method: 'thread-stream-state-changed',
+        sourceClientId: 'codex-desktop-owner',
+        version: 11,
+        params: {
+          hostId: 'local',
+          conversationId: sideThreadId,
+          change: {
+            type: 'patches',
+            baseRevision: 2,
+            revision: 3,
+            patches: [{
+              op: 'replace',
+              path: ['threadRuntimeStatus'],
+              value: { type: 'idle', activeFlags: [] }
+            }]
+          }
+        }
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      desktopSocket.push({
+        type: 'broadcast',
+        method: 'thread-stream-state-changed',
+        sourceClientId: 'codex-desktop-owner',
+        version: 11,
+        params: {
+          hostId: 'local',
+          conversationId: sideThreadId,
+          change: {
+            type: 'patches',
+            baseRevision: 3,
+            revision: 4,
+            patches: [{
+              op: 'replace',
+              path: ['threadRuntimeStatus'],
+              value: { type: 'active', activeFlags: [] }
+            }]
+          }
+        }
+      })
+      await vi.advanceTimersByTimeAsync(3_100)
+
+      expect(child.writes.filter((frame) => frame.method === 'thread/turns/list'
+        && frame.params?.limit === 1
+        && frame.params?.threadId === sideThreadId).length).toBeGreaterThanOrEqual(6)
+      expect((await bridge.readActivitySnapshot()).value.entries
+        .find((entry: Record<string, any>) => entry.key === parent.key)).toMatchObject({
+          status: 'idle',
+          lastTurnStatus: 'completed'
+        })
+      expect(native.privateBranchEvidence(parentThreadId)?.branches).toHaveLength(1)
+      bridge.close()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('defers one Side Chat terminal while another branch remains active', async () => {
     vi.useFakeTimers()
     try {
