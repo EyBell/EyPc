@@ -757,6 +757,70 @@ try {
   }
 } catch { codexDesktopShadow = null }
 
+// The manual launch-path preference and the automatic candidate search that
+// runs when no manual path is set. `codexPlatformPath`/`codexLaunchPlan` are
+// this entry's own delegating stubs for already-extracted modules, injected
+// like any other collaborator.
+let codexLaunchPathPreference = null
+try {
+  let launchPathModule = null
+  try {
+    launchPathModule = require('./codex/launch-path-preference.cjs')
+  } catch {}
+  if (!launchPathModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        launchPathModule = require(path.join(base, 'codex', 'launch-path-preference.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof launchPathModule?.createCodexLaunchPathPreference === 'function') {
+    codexLaunchPathPreference = launchPathModule.createCodexLaunchPathPreference({
+      platformPath: codexPlatformPath,
+      launchPlan: codexLaunchPlan,
+      storageKey: CODEX_LAUNCH_PATH_STORAGE_KEY,
+      fs,
+      os,
+      process,
+      utools: typeof globalThis !== 'undefined' ? globalThis.utools : null
+    })
+  }
+} catch { codexLaunchPathPreference = null }
+
+// Reads a rollout tail for live-runtime phase (active/completed/interrupted)
+// as opposed to persisted Turn status. Pure text analysis; `record` and
+// `rolloutTimestampMs` are injected on the rollout-evidence precedent.
+let codexRolloutRuntimeState = null
+try {
+  let rolloutRuntimeModule = null
+  try {
+    rolloutRuntimeModule = require('./codex/rollout-runtime-state.cjs')
+  } catch {}
+  if (!rolloutRuntimeModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        rolloutRuntimeModule = require(path.join(base, 'codex', 'rollout-runtime-state.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof rolloutRuntimeModule?.createCodexRolloutRuntimeState === 'function') {
+    codexRolloutRuntimeState = rolloutRuntimeModule.createCodexRolloutRuntimeState({
+      record: codexRecord,
+      rolloutTimestampMs: codexRolloutTimestampMs
+    })
+  }
+} catch { codexRolloutRuntimeState = null }
+
 // A failed load degrades to "no special handling": the raw candidate is handed
 // to the OS path lookup, and no proxy is injected. Both are the same answers
 // these modules give when they find nothing, so no caller learns a new case.
@@ -931,6 +995,10 @@ const codexDesktopSideRelations = new Map()
 // evidence to the parent task; Side Chat IDs never become public rows.
 const codexInventorySideRelations = new Map()
 const codexInventorySideBranchEvidence = new Map()
+// Null means no complete App Server inventory has been accepted in this
+// process generation yet. A Set (including an empty Set) is a positive,
+// complete membership observation used only for stale Desktop Side recovery.
+let codexCompleteInventoryThreadIds = null
 const codexSideTopologyDiagnosticFingerprints = new Map()
 // Raw branch IDs and exact terminal evidence remain Host-only. Kernel receives
 // only session-hashed refs through publishCodexPrivateBranchEvidence().
@@ -1190,23 +1258,15 @@ function writeState(state) {
   return true
 }
 
+// A failed load treats every candidate as an unusable preference (''):
+// callers already read an empty preference as "fall through to automatic
+// detection," the same outcome an unset preference produces.
 function normalizeCodexLaunchPathPreference(value) {
-  const candidate = typeof value === 'string' ? value.trim() : ''
-  if (!candidate || candidate.length > 4096 || candidate.includes('\u0000')) return ''
-  const platformPath = codexPlatformPath()
-  if (!platformPath.isAbsolute(candidate)) return ''
-  return platformPath.normalize(candidate)
+  return codexLaunchPathPreference ? codexLaunchPathPreference.normalizeCodexLaunchPathPreference(value) : ''
 }
 
 function readCodexLaunchPathPreference() {
-  try {
-    if (!globalThis.utools || !globalThis.utools.dbStorage) return ''
-    const saved = globalThis.utools.dbStorage.getItem(CODEX_LAUNCH_PATH_STORAGE_KEY)
-    const value = saved && typeof saved === 'object' ? saved.path : saved
-    return normalizeCodexLaunchPathPreference(value)
-  } catch {
-    return ''
-  }
+  return codexLaunchPathPreference ? codexLaunchPathPreference.readCodexLaunchPathPreference() : ''
 }
 
 function writeCodexLaunchPathPreference(pathValue) {
@@ -1221,7 +1281,7 @@ function writeCodexLaunchPathPreference(pathValue) {
 }
 
 function codexLaunchPathIsFile(pathValue) {
-  try { return fs.statSync(pathValue).isFile() } catch { return false }
+  return codexLaunchPathPreference ? codexLaunchPathPreference.codexLaunchPathIsFile(pathValue) : false
 }
 
 function readLegacyMqttArchive() {
@@ -3195,33 +3255,16 @@ function codexPercent(value) {
   return Math.max(0, Math.min(100, Math.round(codexNumber(value))))
 }
 
-const CODEX_LAUNCH_SOURCE_LABELS = {
-  manual: '手动指定的位置',
-  configured: '环境变量指定位置',
-  volta: 'Volta 默认位置',
-  'npm-global': 'npm 全局目录',
-  local: '用户目录默认位置',
-  homebrew: 'Homebrew 默认位置',
-  nvm: 'NVM 版本目录',
-  path: '系统 PATH',
-  unknown: '未识别位置'
-}
-
 function codexLaunchCandidate(source, state) {
-  return {
-    source,
-    label: CODEX_LAUNCH_SOURCE_LABELS[source] || CODEX_LAUNCH_SOURCE_LABELS.unknown,
-    state
-  }
+  return codexLaunchPathPreference
+    ? codexLaunchPathPreference.codexLaunchCandidate(source, state)
+    : { source, state }
 }
 
 function codexLaunchResult(plan, launchMode, manualLaunchPathState, launchCandidates) {
-  return {
-    ...plan,
-    launchMode,
-    manualLaunchPathState,
-    launchCandidates: launchCandidates.slice(0, 8)
-  }
+  return codexLaunchPathPreference
+    ? codexLaunchPathPreference.codexLaunchResult(plan, launchMode, manualLaunchPathState, launchCandidates)
+    : { ...plan, launchMode, manualLaunchPathState, launchCandidates: launchCandidates.slice(0, 8) }
 }
 
 function codexSpawnEnvironment(command, additions = {}) {
@@ -3238,91 +3281,13 @@ function codexSpawnEnvironment(command, additions = {}) {
   return env
 }
 
+// A failed load degrades to the same "raw candidate, undetected" shape a
+// scan that finds nothing already returns: no manual/automatic candidates
+// surfaced, launch falls through to the OS path lookup.
 function resolveCodexLaunchPlan() {
-  const platformPath = codexPlatformPath()
-  const candidates = []
-  const env = process.env || {}
-  const manualPath = readCodexLaunchPathPreference()
-  if (manualPath) {
-    const exists = codexLaunchPathIsFile(manualPath)
-    const plan = exists
-      ? codexLaunchPlan(manualPath, 'manual', true)
-      : { ...codexLaunchPlan(manualPath, 'manual', false), invalid: true }
-    return codexLaunchResult(
-      plan,
-      'manual',
-      plan.detected ? 'valid' : 'invalid',
-      [codexLaunchCandidate('manual', plan.detected ? 'available' : 'unusable')]
-    )
-  }
-  if (typeof env.CODEX_CLI_PATH === 'string' && env.CODEX_CLI_PATH.trim()) candidates.push({ path: env.CODEX_CLI_PATH.trim(), source: 'configured' })
-  const home = os.homedir()
-  if (process.platform === 'win32') {
-    const appData = typeof env.APPDATA === 'string' ? env.APPDATA : platformPath.join(home, 'AppData', 'Roaming')
-    const localAppData = typeof env.LOCALAPPDATA === 'string' ? env.LOCALAPPDATA : platformPath.join(home, 'AppData', 'Local')
-    const voltaHomes = [...new Set([
-      typeof env.VOLTA_HOME === 'string' && env.VOLTA_HOME.trim() ? env.VOLTA_HOME.trim() : '',
-      platformPath.join(localAppData, 'Volta'),
-      platformPath.join(home, '.volta')
-    ].filter(Boolean))]
-    candidates.push(
-      { path: platformPath.join(appData, 'npm', 'codex.cmd'), source: 'npm-global' },
-      ...voltaHomes.flatMap((voltaHome) => [
-        { path: platformPath.join(voltaHome, 'bin', 'codex.exe'), source: 'volta' },
-        { path: platformPath.join(voltaHome, 'bin', 'codex.cmd'), source: 'volta' }
-      ]),
-      ...(typeof env.NVM_SYMLINK === 'string' ? [{ path: platformPath.join(env.NVM_SYMLINK, 'codex.cmd'), source: 'nvm' }] : []),
-      { path: platformPath.join(home, '.codex', 'bin', 'codex.exe'), source: 'local' },
-      { path: platformPath.join(home, '.local', 'bin', 'codex.exe'), source: 'local' },
-      { path: platformPath.join(localAppData, 'Programs', 'Codex', 'codex.exe'), source: 'local' }
-    )
-  } else {
-    candidates.push(
-      { path: platformPath.join(home, '.volta', 'bin', 'codex'), source: 'volta' },
-      { path: platformPath.join(home, '.local', 'bin', 'codex'), source: 'local' },
-      { path: '/opt/homebrew/bin/codex', source: 'homebrew' },
-      { path: '/usr/local/bin/codex', source: 'homebrew' }
-    )
-    try {
-      const nvmRoot = platformPath.join(home, '.nvm', 'versions', 'node')
-      const versions = fs.readdirSync(nvmRoot, { withFileTypes: true })
-        .filter((entry) => entry && typeof entry.isDirectory === 'function' && entry.isDirectory())
-        .map((entry) => entry.name)
-        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))
-      for (const version of versions) candidates.push({ path: platformPath.join(nvmRoot, version, 'bin', 'codex'), source: 'nvm' })
-    } catch {}
-  }
-  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path')
-  const pathValue = pathKey && typeof env[pathKey] === 'string' ? env[pathKey] : ''
-  const executableNames = process.platform === 'win32' ? ['codex.exe', 'codex.cmd', 'codex.bat'] : ['codex']
-  for (const directory of pathValue.split(platformPath.delimiter).filter(Boolean)) {
-    for (const executable of executableNames) candidates.push({ path: platformPath.join(directory, executable), source: 'path' })
-  }
-  let detectedPlan = null
-  let invalidPlan = null
-  const launchCandidates = []
-  const recordCandidate = (source, state) => {
-    if (!launchCandidates.some((candidate) => candidate.source === source && candidate.state === state)) {
-      launchCandidates.push(codexLaunchCandidate(source, state))
-    }
-  }
-  for (const candidate of candidates) {
-    if (!candidate.path || !platformPath.isAbsolute(candidate.path)) continue
-    try {
-      if (fs.existsSync(candidate.path)) {
-        const plan = codexLaunchPlan(candidate.path, candidate.source, true)
-        recordCandidate(candidate.source, plan.detected ? 'available' : 'unusable')
-        if (plan.detected && !detectedPlan) detectedPlan = plan
-        if (!invalidPlan) invalidPlan = plan
-      }
-    } catch {}
-  }
-  return codexLaunchResult(
-    detectedPlan || invalidPlan || codexLaunchPlan('codex', 'unknown', false),
-    'automatic',
-    'not-configured',
-    launchCandidates
-  )
+  return codexLaunchPathPreference
+    ? codexLaunchPathPreference.resolveCodexLaunchPlan()
+    : codexLaunchResult(codexLaunchPlan('codex', 'unknown', false), 'automatic', 'not-configured', [])
 }
 
 function readCodexProbeResult(command, args, timeoutMs) {
@@ -4627,7 +4592,17 @@ class CodexDesktopCompanionBridge {
       || known?.lastTurnStatus === 'interrupted'
     if (!known || !validCodexThreadId(parentThreadId) || !knownTurn || !known.lastTurnStartedAt) return
     if (known.connectorPlanImplementationOnly === true) return
-    if (shadow.activityEvidence !== 'initial-snapshot' || this.hasExactPositiveActivity(parentThreadId)) return
+    const parentTerminal = codexReadPrivateBranchTerminal(parentThreadId, parentThreadId)
+    const detachedDesktopSide = shadow.sideConversation === true
+      && threadId !== parentThreadId
+      && codexDesktopSideRelations.get(threadId) === parentThreadId
+      && !codexInventorySideRelations.has(threadId)
+      && codexCompleteInventoryThreadIds instanceof Set
+      && !codexCompleteInventoryThreadIds.has(threadId)
+      && Boolean(parentTerminal)
+      && !(known.appServerLiveActive === true && known.appServerLiveBranchThreadId === threadId)
+    if (shadow.activityEvidence !== 'initial-snapshot' && !detachedDesktopSide) return
+    if (!detachedDesktopSide && this.hasExactPositiveActivity(parentThreadId)) return
     if (activity?.status !== 'active' || activity.activeFlags.length > 0) return
     // A cold/refollow snapshot is current topology evidence, but it is not a
     // live Turn witness on its own. Verify every uncorroborated plain-active
@@ -4640,8 +4615,61 @@ class CodexDesktopCompanionBridge {
       queryThreadId: threadId,
       snapshotThreadId: threadId,
       snapshotActivityRevision: shadow.activityRevision,
+      forceQuery: detachedDesktopSide,
       restart: options.restart === true
     })
+  }
+
+  retireMissingDesktopSide(parentThreadId, refresh, known) {
+    const threadId = refresh?.queryThreadId
+    if (!validCodexThreadId(parentThreadId)
+      || !validCodexThreadId(threadId)
+      || threadId === parentThreadId
+      || codexDesktopSideRelations.get(threadId) !== parentThreadId
+      || codexInventorySideRelations.has(threadId)
+      || !(codexCompleteInventoryThreadIds instanceof Set)
+      || codexCompleteInventoryThreadIds.has(threadId)) return false
+    const shadow = this.sideShadows.get(threadId)
+    if (!shadow
+      || shadow.parentThreadId !== parentThreadId
+      || shadow.activityRevision !== refresh.snapshotActivityRevision) return false
+    const activity = codexDesktopShadowActivity(shadow)
+    if (activity?.status !== 'active'
+      || activity.activeFlags.length > 0
+      || activity.planImplementationOnly === true) return false
+    const parentTerminal = codexReadPrivateBranchTerminal(parentThreadId, parentThreadId)
+    if (!parentTerminal) return false
+    if (known?.appServerLiveActive === true && known.appServerLiveBranchThreadId === threadId) return false
+
+    const otherBranchLive = this.hasOtherActiveBranch(parentThreadId, threadId)
+    this.sideShadows.delete(threadId)
+    this.sideRecoveryPending.delete(threadId)
+    this.liveUnread.delete(threadId)
+    this.persistedUnread.delete(threadId)
+    this.waitingStates.delete(threadId)
+    codexForgetDesktopSideRelation(threadId)
+    if (!otherBranchLive && known) {
+      known.lastTurnStatus = parentTerminal.lastTurnStatus
+      known.lastTurnStartedAt = parentTerminal.turnStartedAt
+      known.lastTurnEvidence = parentTerminal.lastTurnEvidence
+      known.terminalEvidenceSequence = parentTerminal.terminalEvidenceSequence
+      known.idleConfirmed = parentTerminal.idleConfirmed === true
+      if (parentTerminal.lastTurnStatus === 'completed' && parentTerminal.terminalAt) {
+        known.lastTurnCompletedAt = parentTerminal.terminalAt
+      } else delete known.lastTurnCompletedAt
+      codexClearAppServerLiveActive(known)
+    }
+    runtimeDiagnostics.record({
+      level: 'info',
+      scope: 'task-topology',
+      event: 'desktop-side-reconciled',
+      outcome: 'retired-missing',
+      provider: 'codex',
+      taskRef: typeof known?.key === 'string' ? known.key : '',
+      details: { inventory: 'complete', latestTurn: 'empty' }
+    })
+    this.emitParentActivity(parentThreadId)
+    return true
   }
 
   settleTerminalActiveSnapshot(threadId, refresh, known, turn) {
@@ -4920,10 +4948,19 @@ class CodexDesktopCompanionBridge {
           finish(false)
           return
         }
+        const turnPage = codexRecord(page)
+        const emptyTurnPage = Array.isArray(turnPage.data) && turnPage.data.length === 0
         const turn = sanitizeCodexTurnStatusPage(page)
         const terminalTurn = turn?.status === 'completed' || turn?.status === 'failed' || turn?.status === 'interrupted'
         const validTerminalTurn = terminalTurn && turn.startedAt > 0
         const finalAttempt = refresh.attempt >= refresh.refreshDelays.length
+        if (refresh.settleSnapshotTerminal
+          && finalAttempt
+          && emptyTurnPage
+          && this.retireMissingDesktopSide(threadId, refresh, known)) {
+          finish(false)
+          return
+        }
         if (refresh.settleSnapshotTerminal
           && validTerminalTurn
           && turn.startedAt >= refresh.baselineTurnStartedAt
@@ -5525,6 +5562,9 @@ class CodexDesktopCompanionBridge {
     const readStateOnly = containsReadStatePatch && !containsActivityPatch
     if (this.sideShadows.has(params.conversationId)) {
       this.publishSideShadow(params.conversationId, shadow, readStateOnly, wasActive && !isActive)
+      if (exactLiveActivityPatch) {
+        this.verifyUncorroboratedActiveSnapshot(params.conversationId, shadow, { restart: true })
+      }
     }
     else this.publishShadow(params.conversationId, shadow, readStateOnly)
   }
@@ -6312,6 +6352,7 @@ function resetCodexThreadSessionState(options = {}) {
     })
   }
   codexInventorySideBranchEvidence.clear()
+  codexCompleteInventoryThreadIds = null
   codexSideTopologyDiagnosticFingerprints.clear()
   codexPrivateBranchTerminals.clear()
   codexActivityDecisionCounters = {
@@ -7388,6 +7429,7 @@ function codexRecordSideTopologyDecision(sourceCount, relations, depths, orphanC
 }
 
 function codexSyncInventorySideTopology(relations, depths, rowById, turns, unreadIds, orphanCount = 0) {
+  codexCompleteInventoryThreadIds = new Set(rowById.keys())
   for (const [threadId, parentThreadId] of [...codexInventorySideRelations]) {
     if (relations.get(threadId) === parentThreadId) continue
     codexForgetInventorySideRelation(threadId)
@@ -7789,75 +7831,12 @@ function readCodexDesktopUnreadIds() {
   return new Set(local)
 }
 
+// A failed load leaves the runtime phase unknown rather than misread: the
+// caller already widens its evidence search on an unknown result.
 function codexRolloutRuntimeStateText(text) {
-  const state = {
-    known: false,
-    phase: 'unknown',
-    edge: 'none',
-    startedAt: 0,
-    edgeAt: 0
-  }
-  if (typeof text !== 'string' || !text) return state
-  const liveEventTypes = new Set([
-    'agent_message',
-    'agent_reasoning',
-    'mcp_tool_call_begin',
-    'mcp_tool_call_end',
-    'patch_apply_begin',
-    'patch_apply_end',
-    'token_count'
-  ])
-  const liveResponseTypes = new Set([
-    'custom_tool_call',
-    'custom_tool_call_output',
-    'function_call',
-    'function_call_output',
-    'reasoning'
-  ])
-  for (const line of text.split(/\r?\n/)) {
-    if (!line || line.length > 1_000_000) continue
-    let record
-    try { record = JSON.parse(line) } catch { continue }
-    const source = codexRecord(record)
-    const payload = codexRecord(source.payload)
-    const observedAt = codexRolloutTimestampMs(
-      source.timestamp,
-      payload.timestamp,
-      payload.started_at,
-      payload.completed_at
-    )
-    if (source.type === 'event_msg' && payload.type === 'task_started') {
-      state.known = true
-      state.phase = 'active'
-      state.edge = 'task-started'
-      state.startedAt = observedAt
-      state.edgeAt = observedAt
-      continue
-    }
-    if (source.type === 'event_msg' && payload.type === 'task_complete') {
-      state.known = true
-      state.phase = 'completed'
-      state.edge = 'task-complete'
-      state.edgeAt = observedAt
-      continue
-    }
-    if (source.type === 'event_msg' && payload.type === 'turn_aborted') {
-      state.known = true
-      state.phase = 'interrupted'
-      state.edge = 'turn-aborted'
-      state.edgeAt = observedAt
-      continue
-    }
-    const liveAppend = (source.type === 'event_msg' && liveEventTypes.has(payload.type))
-      || (source.type === 'response_item' && liveResponseTypes.has(payload.type))
-    if (!liveAppend) continue
-    if (state.phase === 'completed' || state.phase === 'interrupted') state.startedAt = 0
-    state.known = true
-    state.phase = 'active'
-    state.edge = 'live-append'
-    state.edgeAt = observedAt
-  }
-  return state
+  return codexRolloutRuntimeState
+    ? codexRolloutRuntimeState.codexRolloutRuntimeStateText(text)
+    : { known: false, phase: 'unknown', edge: 'none', startedAt: 0, edgeAt: 0 }
 }
 
 function codexPathInside(root, candidate) {
