@@ -247,3 +247,21 @@ runner bridge 用例按 `indexOf(锚点)` 划出监管区再断言，而锚点�
 ### 剩余候选
 
 按判据（闭包内互调、闭包外引用点少、不触及高共享绑定）重测后仍可抽的：`readCodexNativePrimaryState` 闭包剩余部分、`codexRolloutRuntimeStateText`（2 函数 / 73 行，但共享 `codexRolloutEvidence`）、`resolveCodexLaunchPlan`（6 函数 / 121 行，共享两个启动路径常量）。其余大块——`setCodexLaunchPath` / `clearCodexLaunchPath`（各 13 函数 / 220+ 行）、`codexDesktopShadowFromSnapshot`（9 函数 / 131 行）——均触及 2–4 个高共享绑定，按判据不可抽。
+
+## 2026-08-15 第十三块：Waiting 证据可见性
+
+[waiting-evidence.cjs](../../../preload/codex/waiting-evidence.cjs#L1)（54 行 / 2 函数，零依赖）承接一个 Desktop waiting 标记（`waitingOnUserInput`/`waitingOnApproval`）是否仍是活证据、还是已被更晚的观测清掉。入口 14,454（含第十二块后的并行改动）→ **同批净减 16 行**，`preload/codex/` 现有十七个模块。
+
+**逐字迁移，但被一类新缺陷绊住：`instanceof Map` 跨 vm 沙箱 realm 恒假。** `waitingState.resolvedRequestSequences` 由入口（测试里跑在 vm 沙箱）用 `new Map()` 构造；模块经真实 `require()` 加载，跑在真实 Node realm。同一个对象在两个 realm 下都是真的 Map，但 `instanceof` 比较的是构造函数原型链恒等，跨 realm 恒假——已解析的请求因此被读作「不是 Map」，退化到无条件可见分支，与「已解析请求应隐藏」的预期相反。聚焦测试当场两项失败：一项 `resolveServerRequest` 清不掉匹配的 waiting 标记，一项 `desktopActiveSince` 在等价快照替换后丢失。
+
+这与 node-runtime.cjs 记录的「vm 沙箱里 `process` 指向 `processMock`」是同一类缺陷的另一种表现——不是值变了，是运行环境（这次是 realm 而非 mock 替身）变了。修法同源：把 `Map` 构造函数本身注入（`const MapCtor = dependencies.Map || Map`），而不是把 `instanceof` 改写成鸭子类型判断——后者是逻辑改写，与「拆分与行为修改不得混在同一提交」冲突。注入后聚焦测试恢复 185/185。已记录：[preload-module-instanceof-crosses-vm-sandbox-realm](../../knowledge/error-memory/preload-module-instanceof-crosses-vm-sandbox-realm.md#L1)，同时标注 `rollout-evidence.cjs:55` 的 `initialCorrelations instanceof Set` 是同款隐患——现有调用路径尚未显性触发，但模式仍在。
+
+加载失败时退化为「每次观测都可见」：`codexWaitingFlagClearSequence` 返回 `0`，`codexWaitingEvidenceVisible` 返回 `true`——调用方自身基于历史的边缘检测仍然生效，只是失去显式清除的快速路径，不会读出一个新的错误状态。
+
+### 验证
+
+已验：`tests/platform/codexAppServerBridge.test.ts`、`codexActionRuntime.test.ts`、`codexActionRunnerBridge.test.ts`、`codexFloatWindowBridge.test.ts`、`projectIdentity.test.ts` 共 189 项全过；`pnpm run sync:preloads` / `validate:mirrors` / `build`（含 `validate:utools`）全过；全量 `vitest run` 1405/1406 项通过，唯一失败项与前序几块记录的同一条 MQTT 用例超时，与本次抽取无关。
+
+### 待复核
+
+第十二块的「剩余候选」判定 `codexDesktopShadowFromSnapshot`（9 函数 / 131 行）触及高共享绑定、不可抽；本块独立扫描（传递闭包 + 全函数占用点分析）得到一个不同的分组结果，把该函数归入一个 7 函数 / 213 行的零共享绑定簇（`codexDesktopRuntimeWaitingSequences`/`codexDesktopRuntimeProjection`/`codexRememberDesktopRequestObservations`/`codexDesktopRequestObservationCandidates`/`codexDesktopShadowFromSnapshot`/`codexDesktopPatchIndex`/`codexApplyDesktopShadowPatch`，外部依赖全部是热基元或本条款已抽出的函数）。两个结论未经交叉核验，本轮未动这一簇的代码；下一块动手前须先重新逐函数核对，而不是采信任一方的现成结论。
