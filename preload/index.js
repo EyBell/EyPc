@@ -821,6 +821,67 @@ try {
   }
 } catch { codexRolloutRuntimeState = null }
 
+// Locates the Desktop IPC socket and decides whether it is safe to trust.
+// `codexNativeStatePaths` is this entry's own delegating stub for an
+// already-extracted module, injected like any other collaborator.
+let codexDesktopIpcEndpointModule = null
+try {
+  let ipcEndpointModule = null
+  try {
+    ipcEndpointModule = require('./codex/desktop-ipc-endpoint.cjs')
+  } catch {}
+  if (!ipcEndpointModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        ipcEndpointModule = require(path.join(base, 'codex', 'desktop-ipc-endpoint.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof ipcEndpointModule?.createCodexDesktopIpcEndpoint === 'function') {
+    codexDesktopIpcEndpointModule = ipcEndpointModule.createCodexDesktopIpcEndpoint({
+      nativeStatePaths: codexNativeStatePaths,
+      fs,
+      path,
+      process
+    })
+  }
+} catch { codexDesktopIpcEndpointModule = null }
+
+// Three independent parent/child aggregations (App Server dominance, merged
+// activity, merged unread). `codexDesktopUnreadObservation` stays in the
+// entry and is injected: it touches `codexDesktopOpenedReadAcknowledgements`,
+// a high-share binding this module must never take on.
+let codexDesktopActivityAggregation = null
+try {
+  let activityAggregationModule = null
+  try {
+    activityAggregationModule = require('./codex/desktop-activity-aggregation.cjs')
+  } catch {}
+  if (!activityAggregationModule) {
+    const bases = [
+      typeof __dirname === 'string' ? __dirname : '',
+      typeof process !== 'undefined' && process.cwd ? process.cwd() : ''
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(bases))) {
+      try {
+        activityAggregationModule = require(path.join(base, 'codex', 'desktop-activity-aggregation.cjs'))
+        break
+      } catch {}
+    }
+  }
+  if (typeof activityAggregationModule?.createCodexDesktopActivityAggregation === 'function') {
+    codexDesktopActivityAggregation = activityAggregationModule.createCodexDesktopActivityAggregation({
+      timestampMs: codexTimestampMs,
+      unreadObservation: codexDesktopUnreadObservation
+    })
+  }
+} catch { codexDesktopActivityAggregation = null }
+
 // A failed load degrades to "no special handling": the raw candidate is handed
 // to the OS path lookup, and no proxy is injected. Both are the same answers
 // these modules give when they find nothing, so no caller learns a new case.
@@ -3420,27 +3481,15 @@ function codexProcessEndError(reason) {
   return codexError('process-exited', 'Codex App Server exited')
 }
 
+// A failed load degrades to "no endpoint, not secure": the connection
+// attempt this feeds never fires, and callers already treat a missing
+// endpoint as "Desktop IPC unavailable."
 function codexDesktopIpcEndpoint() {
-  if (process.platform !== 'darwin') return ''
-  return path.join(codexNativeStatePaths().codexHome, 'ipc', 'ipc.sock')
+  return codexDesktopIpcEndpointModule ? codexDesktopIpcEndpointModule.codexDesktopIpcEndpoint() : ''
 }
 
 function codexDesktopIpcEndpointIsSecure(endpoint) {
-  if (!endpoint || process.platform !== 'darwin') return false
-  const uid = typeof process.getuid === 'function' ? process.getuid() : null
-  if (uid === null) return false
-  try {
-    const directory = fs.lstatSync(path.dirname(endpoint))
-    const socket = fs.lstatSync(endpoint)
-    return directory.isDirectory()
-      && socket.isSocket()
-      && directory.uid === uid
-      && socket.uid === uid
-      && (directory.mode & 0o077) === 0
-      && (socket.mode & 0o077) === 0
-  } catch {
-    return false
-  }
+  return codexDesktopIpcEndpointModule ? codexDesktopIpcEndpointModule.codexDesktopIpcEndpointIsSecure(endpoint) : false
 }
 
 // A failed load falls back to answers that never claim a match or a wait
@@ -3594,24 +3643,12 @@ function codexDesktopUnreadObservation(bridge, known, threadId, shadow, persiste
   return codexDesktopPersistedUnread(known)
 }
 
+// A failed load reads as no unread evidence at all: the same shape an
+// observation set with nothing positive already produces.
 function codexDesktopAggregateUnread(bridge, known, parentThreadId, ownShadow, childEntries, persistedUnreadIds) {
-  const observations = [
-    codexDesktopUnreadObservation(bridge, known, parentThreadId, ownShadow, persistedUnreadIds),
-    ...childEntries.map(([threadId, shadow]) => {
-      return codexDesktopUnreadObservation(bridge, known, threadId, shadow, persistedUnreadIds)
-    })
-  ]
-  const positive = observations.filter((observation) => observation.hasUnreadTurn)
-  const authorityPool = positive.length ? positive : observations
-  const unreadAuthority = authorityPool.some((observation) => observation.unreadAuthority === 'desktop-live')
-    ? 'desktop-live'
-    : authorityPool.some((observation) => observation.unreadAuthority === 'desktop-persisted')
-      ? 'desktop-persisted'
-      : 'unavailable'
-  return {
-    hasUnreadTurn: positive.length > 0,
-    unreadAuthority
-  }
+  return codexDesktopActivityAggregation
+    ? codexDesktopActivityAggregation.codexDesktopAggregateUnread(bridge, known, parentThreadId, ownShadow, childEntries, persistedUnreadIds)
+    : { hasUnreadTurn: false, unreadAuthority: 'unavailable' }
 }
 
 function codexSideParentThreadId(threadId) {
@@ -3902,54 +3939,28 @@ function codexDesktopOrphanedPendingSuperseded(shadow, known) {
   return Boolean(baselineUpdatedAt && currentUpdatedAt > baselineUpdatedAt)
 }
 
+// A failed load degrades to the parent's own unmerged status: no children
+// evidence considered, no waiting flags asserted -- the same shape a parent
+// with no Side Chats already produces.
 function codexResolveParentActivity(own, childActivities, options = {}) {
-  const activities = [own, ...childActivities].filter(Boolean)
-  const activeFlags = [...new Set(activities.flatMap((activity) => activity.activeFlags || []))]
-  const hasInput = activeFlags.includes('waitingOnUserInput')
-  const hasApproval = activeFlags.includes('waitingOnApproval')
-  const hasActive = activities.some((activity) => activity.status === 'active')
-  const hasSystemError = activities.some((activity) => activity.status === 'systemError')
-  const appServerActive = options.appServerActive === true && !hasInput && !hasApproval
-  const status = hasInput || hasApproval || hasActive || appServerActive
-    ? 'active'
-    : hasSystemError ? 'systemError' : own.status
-  const waitingActivities = activities.filter((activity) => (activity.activeFlags || [])
-    .some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval'))
-  const planImplementationOnly = status === 'active'
-    && waitingActivities.length > 0
-    && waitingActivities.every((activity) => activity.planImplementationOnly === true)
-  const desktopActiveSince = status === 'active'
-    ? Math.max(0, ...activities
-      .filter((activity) => activity.status === 'active')
-      .map((activity) => codexTimestampMs(activity.desktopActiveSince)))
-    : 0
-  const waitingSince = status === 'active' && (hasInput || hasApproval)
-    ? Math.max(0, ...waitingActivities.map((activity) => codexTimestampMs(activity.waitingSince)))
-      || codexTimestampMs(options.connectorWaitingSince)
-    : 0
-  return {
-    status,
-    activeFlags: status === 'active'
-      ? (appServerActive ? [...(options.connectorActiveFlags || [])] : activeFlags)
-      : [],
-    planImplementationOnly,
-    hasInput,
-    hasApproval,
-    hasActive,
-    hasSystemError,
-    appServerActive,
-    waitingSince,
-    desktopActiveSince
-  }
+  return codexDesktopActivityAggregation
+    ? codexDesktopActivityAggregation.codexResolveParentActivity(own, childActivities, options)
+    : {
+      status: own?.status || 'idle',
+      activeFlags: [],
+      planImplementationOnly: false,
+      hasInput: false,
+      hasApproval: false,
+      hasActive: false,
+      hasSystemError: false,
+      appServerActive: false,
+      waitingSince: 0,
+      desktopActiveSince: 0
+    }
 }
 
 function codexAppServerActiveDominates(known, shadows) {
-  if (known?.appServerLiveActive !== true) return false
-  const appServerSequence = Number(known.appServerLiveSequence) || 0
-  const desktopSequence = Math.max(0, ...(Array.isArray(shadows) ? shadows : [])
-    .filter((shadow) => shadow?.activityEvidence === 'activity-event')
-    .map((shadow) => Number(shadow.activityEventSequence) || 0))
-  return appServerSequence > 0 && appServerSequence >= desktopSequence
+  return codexDesktopActivityAggregation ? codexDesktopActivityAggregation.codexAppServerActiveDominates(known, shadows) : false
 }
 
 function codexDesktopPatchIndex(value, length, allowEnd = false) {
