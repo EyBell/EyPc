@@ -301,3 +301,17 @@ runner bridge 用例按 `indexOf(锚点)` 划出监管区再断言，而锚点�
 ### 验证
 
 聚焦测试 `codexAppServerBridge`/`codexActionRuntime`/`codexActionRunnerBridge`/`codexFloatWindowBridge`/`projectIdentity`/`claudeCliDiscovery` 共 198 项全过（首次运行时四项 Windows 平台断言失败，定位为漏注入后修复）；两模块各自独立冒烟（NUL 拒绝、路径归一化、手动/自动两条启动路径、rollout 全生命周期与畸形行容错）核对通过；`pnpm run sync:preloads` / `validate:mirrors` / `build`（含 `validate:utools`）全过；全量 `vitest run` 1409/1410 项通过，唯一失败项与历次记录的同一条 MQTT 用例超时，与本次抽取无关。
+
+## 2026-08-15 第十六块：Desktop IPC 端点校验与父子活动聚合
+
+两个模块，因为是两件事。`preload/codex/` 现有二十二个模块。**入口净增 11 行**——本块首次出现拆分不降反升：`codexResolveParentActivity` 的降级默认值是一个十一字段对象字面量，比原地内联的委托调用体量更大。行数从来不是判据（第九块起反复申明），这里正是代价现形的一次：换来的是「模块不可用时仍返回形状完整、语义正确的默认值」而不是让调用方自己应付一个更简陋的返回值。
+
+**[desktop-ipc-endpoint.cjs](../../../preload/codex/desktop-ipc-endpoint.cjs#L1)（2 函数 / 62 行）**：定位 Desktop IPC socket 并校验是否可信——仅 macOS、仅 socket 与其目录都属于当前用户且无 group/other 权限位。`codexNativeStatePaths` 是第十二块已抽出模块的入口委托桩；`process`/`fs` 按 node-runtime 先例注入——本块起对新模块的 `process` 注入直接在写工厂签名的同一次编辑里改好入口调用处，不再分两步走，就是上一块错误记忆记录的那条预防规则的直接应用。
+
+**[desktop-activity-aggregation.cjs](../../../preload/codex/desktop-activity-aggregation.cjs#L1)（3 函数 / 111 行）**：三个互不调用的独立聚合——`codexAppServerActiveDominates` 判定 App Server 实时证据是否按序列号压过 Desktop 活动事件；`codexResolveParentActivity` 把父线程自己的活动与 Side Chat 子线程的活动合并成一个父级状态；`codexDesktopAggregateUnread` 用同样的父子合并形状处理未读证据。三者是同一类问题（把 N 条证据合并成一条父级结论）的三个实例，不是彼此协作，归一个模块是因为形状相同而非逻辑相关。`codexDesktopUnreadObservation` 本身直接触达 `codexDesktopOpenedReadAcknowledgements`——一个在私有分支已读确认等六处位置被直接读写的高共享 Map——按判据留在入口，只作为函数引用注入，不随聚合逻辑一起搬。
+
+加载失败时：端点解析退化为空字符串（等同「Desktop IPC 不可用」，连接尝试本就不会发起）；App Server 优先级判定退化为 `false`（不声称任何优先级，与原函数自身「未知归为不优先」的早退分支一致）；父级活动合并退化为父自己未合并的状态（无子证据、无 waiting 标记，与「没有 Side Chat 的父线程」产出同一形状）；未读合并退化为 `{ hasUnreadTurn: false, unreadAuthority: 'unavailable' }`（与「没有一条观测为正」的既有分支同一形状）。
+
+### 验证
+
+已用构造场景独立冒烟：macOS/Windows 平台端点解析分歧、uid/mode 校验通过与拒绝、App Server 序列号优先级、父子活动合并（含 waiting 标记与时间戳）、父子未读合并全部核对通过。聚焦测试 198 项**一次性全过**（本轮吸取上一块教训，写工厂签名与改入口调用处同一次编辑完成，未再漏注入）。`pnpm run sync:preloads` / `validate:mirrors` / `build`（含 `validate:utools`）全过；全量 `vitest run` 1409/1410 项通过，唯一失败项与历次记录的同一条 MQTT 用例超时，与本次抽取无关。
