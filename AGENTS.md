@@ -25,3 +25,12 @@ Orientation (not restated elsewhere):
 - Verification ladder: `pnpm run test` → `typecheck` → `build` → `verify`; pick by the impact-based policy in the rules entry above.
 - Generated — regenerate, never hand-edit: `dist/`, `output/`, outputs of [scripts/](scripts/).
 - Deliberately absent: no `vibe/requirements/`, no `vibe/evals/`; [vibe/ai-db/](vibe/ai-db/README.md#L1) is a pointer only. Do not create these on assumption.
+
+## Cursor Cloud specific instructions
+
+Standard commands live in [README.md](README.md#L12) and [package.json](package.json#L7) `scripts`; this section only records the non-obvious cloud caveats. The update script already runs `pnpm install` on startup.
+
+- Node version: the full test suite only passes on Node `v24.14.0`. `tests/platform/codexActionRuntime.test.ts` symlinks the running Node binary and asserts its version is exactly `v24.14.0`, so Node 22 fails those two cases. The VM's default `node` on `PATH` is the platform binary `/exec-daemon/node` (v22.x), which the shell wrapper force-prepends; Node 24.14.0 is installed via `nvm` and made the login-shell default through a `~/.bashrc` `PATH` prepend, with `corepack` `pnpm@10.32.0` activated for it. New tmux/login terminals therefore get `node -v` → `v24.14.0` and a working `pnpm`. If a fresh pod ever reports v22, run `nvm install 24.14.0` then `corepack enable pnpm`.
+- Test timeout: `tests/runtime/action.test.ts` cases are heavy (several seconds each) and brush against Vitest's default 5000 ms `testTimeout` on this VM, causing flaky timeout failures. Run the suite with a larger timeout, e.g. `npx vitest run --test-timeout=30000` (full suite ≈ 4 min, 1216 tests). Plain `pnpm test` may show spurious timeouts here.
+- Running the app without uTools: `pnpm run serve` starts Vite at http://127.0.0.1:8092/. The uTools desktop host does not exist on Linux, so in the browser `getPlatform()` uses a dev fallback whose Ports scan/kill hit the Vite middleware `/__eypc__/ports/{scan,kill}` (`src/platform/devPortServer.ts`) backed by `lsof`. That makes the Ports page fully functional in a plain browser; host-only features (window jump, file favorites open/reveal, Codex/Claude companions, `koffi` FFI) report "unsupported" in the browser preview, which is expected.
+- The `esbuild` and `koffi` postinstall build scripts are intentionally not approved (non-interactive install); this is benign — Vite/Vitest use esbuild's prebuilt platform package and `koffi` is only exercised inside the packaged uTools desktop runtime.
