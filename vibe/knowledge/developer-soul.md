@@ -163,6 +163,7 @@ EyPc is a high-frequency uTools workbench. Its interaction taste follows the glo
 ## Review Gate
 
 - 2026-08-13 companion judgement correction: selected architecture keeps one structured Kernel decision path，uses bidirectional Provider event-time admission，merges phase/unread/Goal as independent evidence lanes，and records Adapter proposals separately from canonical outcomes。Error resolution uses one current contract and one unique Primary memory route；obsolete or repeated routes are logically archived rather than left as competing repair recipes。When two plausible current product rules conflict without an existing user decision，the conflict must be surfaced for user choice instead of silently selecting one。Avoided behavior is transport-time freshness，whole-branch replacement，Renderer patches，flat duplicate error indexes or diagnostics that call a sent proposal accepted。Evidence label: `explicit user requirement + RAW-166 regression review`。
+- 2026-08-17 confirmation-hint popover: selected behavior puts archive/remove confirmation in the existing child-owned speech-bubble (arrow, above or below, centered or shifted, clamped to the expanded card) and never inserts an in-card status row that compresses the list. Hover/focus stay 200ms; confirmation is immediate and sticky until confirm, cancel or expire. Avoided behavior is a dedicated confirm row, native `title`, or mounting the main `OperationTooltipLayer`. Evidence label: `user-request`.
 
 Before accepting an EyPc interaction change, check:
 

@@ -460,13 +460,13 @@ export function companionQuotaFreshnessText(
 }
 
 /**
- * One-line realtime-gap note for the float's existing status line.
+ * Hover-only realtime-gap note for the expanded-card search glyph.
  *
  * `claudeSetupHint` owns the fully-unusable lane; this covers the degraded
  * middle ground where cards and quota render but hooks or the status line are
  * not registered, which previously left the float silent about why task states
  * never showed as running. Returns '' whenever Claude is disabled, so the
- * Codex-only status line stays byte-identical.
+ * Codex-only search chrome stays byte-identical.
  */
 export function claudeRealtimeGapNote(slice: CompanionSnapshotSlice | null | undefined): string {
   if (!slice || slice.providers.claude !== true) return ''
@@ -476,6 +476,137 @@ export function claudeRealtimeGapNote(slice: CompanionSnapshotSlice | null | und
   if (environment.hooks !== 'installed') return 'Claude 钩子未注册，任务状态非实时'
   if (environment.statusline !== 'installed') return 'Claude 状态栏未注册，额度不会自动更新'
   return ''
+}
+
+export const COMPANION_SEARCH_PLACEHOLDER = '别名|任务|项目'
+export const COMPANION_SEARCH_QUICK_PLACEHOLDER = '筛选任务，c-1…0 直接打开'
+export const COMPANION_SEARCH_STALE_ALERT = '数据已过期 · 展示上一份已验证快照'
+
+export function companionSearchPlaceholder(quickMode: boolean): string {
+  return quickMode ? COMPANION_SEARCH_QUICK_PLACEHOLDER : COMPANION_SEARCH_PLACEHOLDER
+}
+
+export function companionSearchMetaText(input: {
+  timeWindowDays?: number | null
+  count?: number | null
+  hasInventory?: boolean
+}): string {
+  if (!input.hasInventory) return ''
+  const days = Number.isFinite(input.timeWindowDays) && Number(input.timeWindowDays) > 0
+    ? Math.trunc(Number(input.timeWindowDays))
+    : 30
+  const count = Number.isFinite(input.count) ? Math.max(0, Math.trunc(Number(input.count))) : 0
+  return `最近 ${days} 天的 ${count} 条`
+}
+
+export function companionSearchAlertText(input: {
+  compatibility?: string | null
+  compatibilityMessage?: string | null
+  conversationStatus?: string | null
+  conversationErrorMessage?: string | null
+  claudeGapNote?: string | null
+}): string {
+  if (input.compatibility === 'degraded') return String(input.compatibilityMessage || '').trim()
+  if (input.conversationStatus === 'stale') return COMPANION_SEARCH_STALE_ALERT
+  if (input.conversationStatus === 'error') return String(input.conversationErrorMessage || '真实会话预检失败').trim()
+  return String(input.claudeGapNote || '').trim()
+}
+
+export function companionSearchHintOverlaps(
+  fieldWidth: number,
+  leftWidth: number,
+  rightWidth: number,
+  gap = 10
+): boolean {
+  if (!(fieldWidth > 0) || !(leftWidth > 0) || !(rightWidth > 0)) return false
+  return leftWidth + rightWidth + gap > fieldWidth
+}
+
+export function companionSearchIconHint(
+  alertText: string,
+  placeholderHidden: boolean,
+  placeholder: string
+): string {
+  const alert = String(alertText || '').trim()
+  const hint = placeholderHidden ? String(placeholder || '').trim() : ''
+  if (alert && hint) return `${alert} · ${hint}`
+  return alert || hint
+}
+
+export type FloatActionHintPlacement = 'top' | 'bottom'
+
+export interface FloatActionHintBox {
+  left: number
+  top: number
+  placement: FloatActionHintPlacement
+  arrowLeft: number
+  maxWidth: number
+}
+
+/**
+ * Places the float's speech-bubble hint against an expanded-card box.
+ *
+ * The bubble stays inside the card, prefers the side with room, and keeps the
+ * arrow on the anchor even after left/right clamping. A zero-size card (jsdom)
+ * falls back to the older window-style guess so hover tests still render.
+ */
+export function placeFloatActionHint(input: {
+  anchorLeft: number
+  anchorTop: number
+  anchorWidth: number
+  anchorHeight: number
+  cardLeft: number
+  cardTop: number
+  cardWidth: number
+  cardHeight: number
+  hintWidth: number
+  hintHeight: number
+  gap?: number
+  margin?: number
+}): FloatActionHintBox {
+  const gap = Number.isFinite(input.gap) ? Number(input.gap) : 7
+  const margin = Number.isFinite(input.margin) ? Number(input.margin) : 8
+  const hintWidth = Math.max(1, input.hintWidth)
+  const hintHeight = Math.max(1, input.hintHeight)
+  const anchorCenter = input.anchorLeft + input.anchorWidth / 2
+  if (!(input.cardWidth > 0) || !(input.cardHeight > 0)) {
+    const placement: FloatActionHintPlacement = input.anchorTop >= 48 ? 'top' : 'bottom'
+    const left = Math.max(8, anchorCenter - hintWidth / 2)
+    const top = placement === 'top'
+      ? Math.max(8, input.anchorTop - gap - hintHeight)
+      : input.anchorTop + input.anchorHeight + gap
+    return {
+      left,
+      top,
+      placement,
+      arrowLeft: Math.min(Math.max(anchorCenter - left, 10), Math.max(10, hintWidth - 10)),
+      maxWidth: 240
+    }
+  }
+  const maxWidth = Math.max(margin * 2, input.cardWidth - margin * 2)
+  const width = Math.min(hintWidth, maxWidth)
+  const minLeft = input.cardLeft + margin
+  const maxLeft = input.cardLeft + input.cardWidth - width - margin
+  const preferredLeft = anchorCenter - width / 2
+  const left = maxLeft < minLeft
+    ? minLeft
+    : Math.min(Math.max(preferredLeft, minLeft), maxLeft)
+  const arrowLeft = Math.min(
+    Math.max(anchorCenter - left, 10),
+    Math.max(10, width - 10)
+  )
+  const need = hintHeight + gap + margin
+  const spaceAbove = input.anchorTop - input.cardTop
+  const placement: FloatActionHintPlacement = spaceAbove >= need ? 'top' : 'bottom'
+  const preferredTop = placement === 'top'
+    ? input.anchorTop - gap - hintHeight
+    : input.anchorTop + input.anchorHeight + gap
+  const minTop = input.cardTop + margin
+  const maxTop = input.cardTop + input.cardHeight - hintHeight - margin
+  const top = maxTop < minTop
+    ? minTop
+    : Math.min(Math.max(preferredTop, minTop), maxTop)
+  return { left, top, placement, arrowLeft, maxWidth }
 }
 
 /**

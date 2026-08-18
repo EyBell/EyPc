@@ -731,6 +731,8 @@
 .expanded-card-preview-tabs b { background: color-mix(in srgb, var(--codex-accent) 18%, var(--codex-surface)); color: var(--codex-fg); }.expanded-card-preview-tabs i { display: grid; min-width: 12px; height: 12px; place-items: center; border-radius: 999px; background: var(--codex-accent); color: var(--codex-on-accent); font-size: 7px; font-style: normal; }
 .expanded-card-preview-search { display: flex; align-items: center; gap: 6px; min-height: 27px; padding: 0 8px; border: 1px solid var(--codex-border); border-radius: 7px; background: var(--codex-surface-raised); color: var(--codex-muted); font-size: 8px; }
 .expanded-card-preview-search i { width: 9px; height: 9px; border: 2px solid currentColor; border-radius: 50%; opacity: .8; }.expanded-card-preview-search i::after { display: block; width: 5px; height: 2px; margin: 7px 0 0 6px; background: currentColor; content: ''; transform: rotate(45deg); }
+.expanded-card-preview-search span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.expanded-card-preview-search small { margin-left: auto; overflow: hidden; font-size: 7px; font-weight: 750; letter-spacing: .02em; text-overflow: ellipsis; white-space: nowrap; }
 /* Mirrors the float's single-line quota row: short window caption, percentage,
    provider caption before the Claude group. The preview must not drift from the
    runtime shape, so it uses the same two platform tokens. */

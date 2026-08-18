@@ -6,7 +6,7 @@ Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runn
 
 ## Current Authorities And Routes
 
-- 当前增量权威：[codex-quota-float/spec.md](../../260718/1148-codex-quota-float/spec.md#L1)
+- 当前增量权威：[codex-quota-float/spec.md](../../260718/1148-codex-quota-float/spec.md#L1) · [搜索栏收纳](../../260817/0859-float-search-status-compact/spec.md#L1) · [确认气泡](../../260817/1618-float-action-hint-popover/spec.md#L1)
 - 条款正文：[raw-requirement.md](../../260718/1148-codex-quota-float/raw-requirement.md#L1)
 - 产品语义：[PRODUCT_REQUIREMENTS](../../PRODUCT_REQUIREMENTS.md#L1)
 
@@ -164,6 +164,8 @@ Codex 额度读取、任务收件箱、悬浮水球与展开卡片、Action Runn
 - [RAW-159](../codex-raw-159.md#L1) — `active`
 - [RAW-160](../codex-raw-160.md#L1) — `active`
 - [RAW-161](../codex-raw-161.md#L1) — `active`
+- [RAW-173](../codex-raw-173.md#L1) — `active`
+- [RAW-175](../codex-raw-175.md#L1) — `active`
 
 ## Related Requirements
 

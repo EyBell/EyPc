@@ -860,7 +860,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             <div class="codex-appearance-zone-head"><div><span>02 · 悬浮展开卡片</span><h3 id="card-appearance-title">展开卡片主题</h3></div><button type="button" class="codex-tip" aria-label="展开卡片主题说明" data-tip="单独控制展开面板、文字、交互与任务状态；不会读取水球配色。">i</button></div>
             <div class="codex-expanded-card-preview" :style="cardPreviewStyle" aria-label="悬浮展开卡片颜色部位预览">
               <div class="expanded-card-preview-tabs"><b><i>3</i>动态</b><span>已完成</span><span>已隐藏</span><span>项目</span></div>
-              <div class="expanded-card-preview-search"><i /><span>搜索会话、别名或项目</span></div>
+              <div class="expanded-card-preview-search"><i /><span>别名|任务|项目</span><small>最近 30 天的 42 条</small></div>
               <div class="expanded-card-preview-quota"><span>5 小时限额</span><strong>72%</strong><i><b /></i></div>
               <div class="expanded-card-preview-task"><i /><span>进行中的 Codex 会话</span><small>2 分钟前</small></div>
               <div class="expanded-card-preview-map"><span><b>层次</b>主背景、内层块与边框</span><span><b>内容</b>主/次文字、选中和焦点</span><span><b>状态</b>进行中与完成未读</span></div>

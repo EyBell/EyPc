@@ -27,6 +27,12 @@ import {
   companionQuotaChipHint,
   companionQuotaFreshnessText,
   companionResetDetailText,
+  companionSearchAlertText,
+  companionSearchHintOverlaps,
+  companionSearchIconHint,
+  companionSearchMetaText,
+  companionSearchPlaceholder,
+  placeFloatActionHint,
   resolveCompanionProjectMarker,
   resolveCompanionRowMarker,
   resolveCompanionWaterBallPresentation
@@ -109,7 +115,15 @@ type ComposerState = {
   projectPickerOptions: ComposerProjectPickerOption[]
 }
 type ShiftPreview = { task: CodexTaskCard; left: number; top: number } | null
-type ActionHint = { label: string; left: number; top: number; placement: 'top' | 'bottom' } | null
+type ActionHint = {
+  label: string
+  left: number
+  top: number
+  placement: 'top' | 'bottom'
+  arrowLeft: number
+  maxWidth: number
+  sticky?: boolean
+} | null
 type QuickJumpDomTarget = QuickJumpTarget & { element: HTMLElement }
 
 const COMPOSER_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
@@ -123,6 +137,11 @@ const expanded = ref(false)
 const floatState = ref<CodexFloatWindowState>({ expanded: false, pinned: false, resizing: false, resizeCorner: null, expandedSize: null })
 const searchText = ref('')
 const searchInput = ref<HTMLInputElement | null>(null)
+const searchField = ref<HTMLElement | null>(null)
+const searchMeasure = ref<HTMLElement | null>(null)
+const searchMetaEl = ref<HTMLElement | null>(null)
+const searchPlaceholderHidden = ref(false)
+const searchMetaPad = ref(0)
 const taskScroll = ref<HTMLElement | null>(null)
 const selectedKeys = ref<Set<string>>(new Set())
 const focusedKey = ref('')
@@ -156,6 +175,7 @@ const shiftPreview = ref<ShiftPreview>(null)
 const shiftHeld = ref(false)
 const shiftPreviewSuppressed = ref(false)
 const actionHint = ref<ActionHint>(null)
+const actionHintEl = ref<HTMLElement | null>(null)
 const compactCounterHintText = ref('')
 const optimisticProjectCollapsed = ref<Record<string, boolean>>({})
 
@@ -190,8 +210,10 @@ let collapseTimer: ReturnType<typeof setTimeout> | null = null
 let confirmTimer: ReturnType<typeof setTimeout> | null = null
 let planExecuteTimer: ReturnType<typeof setTimeout> | null = null
 let actionHintTimer: ReturnType<typeof setTimeout> | null = null
+let lastHintAnchor: HTMLElement | null = null
 let compactCounterHintTimer: ReturnType<typeof setTimeout> | null = null
 let taskScrollResizeObserver: ResizeObserver | null = null
+let searchLayoutObserver: ResizeObserver | null = null
 let desiredExpanded = false
 let hoverInside = false
 let focusWithin = false
@@ -333,21 +355,30 @@ function quotaChipAria(chip: CompanionQuotaChip) {
   }
   return companionQuotaChipAriaLabel(chip, formatReset(chip.resetAt), quotaStrip.value.multiProvider)
 }
-const statusText = computed(() => {
-  if (!snapshot.value) return '等待真实会话预检'
-  if (taskState.value.compatibility === 'degraded') return taskState.value.compatibilityMessage
-  if (conversations.value?.status === 'stale') return '数据已过期 · 展示上一份已验证快照'
-  if (conversations.value?.status === 'error') return conversations.value.errorMessage || '真实会话预检失败'
-  if (conversations.value?.completeness === 'verified') {
-    const base = `最近 ${settings.value?.timeWindowDays || 30} 天的 ${conversations.value.all.length} 条`
-    // Degraded-but-readable Claude lane: cards and quota render, yet hooks or
-    // the status line are unregistered. Silent before, which hid why "进行中"
-    // never appeared. Empty whenever Claude is disabled (Codex-only unchanged).
-    const note = claudeRealtimeGapNote(companionSlice.value)
-    return note ? `${base} · ${note}` : base
-  }
-  return '等待真实会话预检'
+const searchPlaceholder = computed(() => companionSearchPlaceholder(quickMode.value))
+const searchAlertText = computed(() => companionSearchAlertText({
+  compatibility: taskState.value.compatibility,
+  compatibilityMessage: taskState.value.compatibilityMessage,
+  conversationStatus: conversations.value?.status,
+  conversationErrorMessage: conversations.value?.errorMessage,
+  claudeGapNote: claudeRealtimeGapNote(companionSlice.value)
+}))
+const searchMetaText = computed(() => companionSearchMetaText({
+  timeWindowDays: settings.value?.timeWindowDays || 30,
+  count: conversations.value?.all.length,
+  hasInventory: conversations.value?.completeness === 'verified' || conversations.value?.status === 'stale'
+}))
+const searchIconHint = computed(() => companionSearchIconHint(
+  searchAlertText.value,
+  searchPlaceholderHidden.value,
+  searchPlaceholder.value
+))
+const searchLiveText = computed(() => {
+  const parts = [searchAlertText.value, searchMetaText.value].filter(Boolean)
+  if (parts.length) return parts.join(' · ')
+  return snapshot.value ? '' : '等待真实会话预检'
 })
+const statusText = computed(() => searchLiveText.value || '等待真实会话预检')
 const compactAriaLabel = computed(() => {
   if (snapshot.value && (taskState.value.compatibility === 'degraded' || quota.value?.status === 'stale' || quota.value?.status === 'error' || conversations.value?.status === 'stale' || conversations.value?.status === 'error')) return `${compact.value.ariaLabel}，${statusText.value}`
   return compact.value.ariaLabel
@@ -1514,6 +1545,7 @@ function clearConfirm(reason: 'cleared' | 'confirmed' | 'expired' = 'cleared') {
   confirmTimer = null
   const current = pendingConfirm.value
   pendingConfirm.value = null
+  clearActionHint(true)
   if (current && reason === 'expired' && current.id.startsWith('archive')) {
     action('codex.archive.confirmation', {
       operationId: current.operationId,
@@ -1551,6 +1583,7 @@ function requestConfirmation(
   }
   liveMessage.value = `${label}：请在 5 秒内再次执行相同操作确认`
   confirmTimer = setTimeout(() => clearConfirm('expired'), 5_000)
+  showActionHint(resolveHintAnchor(), `${label} · 再次操作确认`, { sticky: true })
 }
 
 function archiveCandidates() {
@@ -1627,7 +1660,8 @@ function taskCanCreateInProject(task: CodexTaskCard, project?: CodexProjectCard)
   return taskProvider(task) === 'codex' && Boolean(project?.actionAlias)
 }
 
-function requestTaskArchive(task?: CodexTaskCard | CodexTaskCard[]) {
+function requestTaskArchive(task?: CodexTaskCard | CodexTaskCard[], event?: Event) {
+  captureHintAnchor(event)
   const targetTasks = task
     ? Array.isArray(task) ? task : [task]
     : archiveCandidates()
@@ -1650,7 +1684,8 @@ function requestTaskArchive(task?: CodexTaskCard | CodexTaskCard[]) {
   }, source)
 }
 
-function requestProjectArchive(project: CodexProjectCard) {
+function requestProjectArchive(project: CodexProjectCard, event?: Event) {
+  captureHintAnchor(event)
   if (projectMarker(project).claudeOnly) {
     liveMessage.value = projectMutationBlockedReason(project, '归档')
     return
@@ -1667,7 +1702,8 @@ function requestProjectArchive(project: CodexProjectCard) {
   }, 'project-archive')
 }
 
-function requestProjectRemove(project: CodexProjectCard) {
+function requestProjectRemove(project: CodexProjectCard, event?: Event) {
+  captureHintAnchor(event)
   const sourceFingerprint = conversations.value?.sourceFingerprint || ''
   if (projectMarker(project).claudeOnly) {
     liveMessage.value = projectMutationBlockedReason(project, '从 Codex 移除')
@@ -1981,12 +2017,13 @@ function closePanel() {
   restoreTrigger(trigger)
 }
 
-function executeDrawerAction(index: number) {
+function executeDrawerAction(index: number, event?: Event) {
   const item = drawerActions.value[index]
   if (!item || item.disabled) {
     if (item?.disabledReason) liveMessage.value = item.disabledReason
     return
   }
+  captureHintAnchor(event)
   item.run()
 }
 
@@ -2744,24 +2781,117 @@ function formatTaskDateTime(value: number | undefined) {
   }).format(new Date(value))
 }
 
-function clearActionHint() {
+function measureSearchLayout() {
+  const field = searchField.value
+  if (!field) {
+    searchPlaceholderHidden.value = false
+    searchMetaPad.value = 0
+    return
+  }
+  const metaWidth = searchMetaEl.value?.offsetWidth || 0
+  searchMetaPad.value = metaWidth > 0 ? metaWidth + 8 : 0
+  if (searchText.value.trim()) {
+    searchPlaceholderHidden.value = false
+    return
+  }
+  searchPlaceholderHidden.value = companionSearchHintOverlaps(
+    field.clientWidth,
+    searchMeasure.value?.offsetWidth || 0,
+    metaWidth
+  )
+}
+
+function captureHintAnchor(event?: Event) {
+  if (event?.currentTarget instanceof HTMLElement) lastHintAnchor = event.currentTarget
+}
+
+function resolveHintAnchor(): HTMLElement | null {
+  if (lastHintAnchor?.isConnected) return lastHintAnchor
+  const root = rootElement.value
+  if (!root) return null
+  const active = document.activeElement
+  if (active instanceof HTMLElement && root.contains(active) && active.matches('button, [role="button"]')) {
+    return active
+  }
+  const focusKey = focusedKey.value
+  if (focusKey) {
+    const focusedArchive = root.querySelector<HTMLElement>(`[data-focus-key="${focusKey}"] .action-archive`)
+    if (focusedArchive) return focusedArchive
+  }
+  return root.querySelector<HTMLElement>(
+    '.action-archive.confirming, .action-remove.confirming, .float-batch-toolbar button.confirming, [data-drawer-action-id="task-archive"], [data-drawer-action-id="project-archive"], [data-drawer-action-id="batch-archive"], [data-drawer-action-id="project-remove"], .float-expanded-card'
+  )
+}
+
+function estimateHintSize(label: string) {
+  return { width: Math.min(240, Math.max(72, label.length * 7 + 16)), height: 28 }
+}
+
+function showActionHint(target: HTMLElement | null, label: string, options?: { delay?: number; sticky?: boolean }) {
+  if (actionHintTimer) {
+    clearTimeout(actionHintTimer)
+    actionHintTimer = null
+  }
+  if (!label) return
+  const apply = () => {
+    const anchor = target?.isConnected ? target : resolveHintAnchor()
+    if (!anchor) return
+    const card = rootElement.value?.querySelector('.float-expanded-card') || rootElement.value
+    const cardRect = card?.getBoundingClientRect()
+    const bounds = anchor.getBoundingClientRect()
+    const estimated = estimateHintSize(label)
+    const placed = placeFloatActionHint({
+      anchorLeft: bounds.left,
+      anchorTop: bounds.top,
+      anchorWidth: bounds.width,
+      anchorHeight: bounds.height,
+      cardLeft: cardRect?.left ?? 0,
+      cardTop: cardRect?.top ?? 0,
+      cardWidth: cardRect?.width ?? 0,
+      cardHeight: cardRect?.height ?? 0,
+      hintWidth: estimated.width,
+      hintHeight: estimated.height
+    })
+    actionHint.value = { label, ...placed, sticky: options?.sticky }
+    void nextTick(() => {
+      const el = actionHintEl.value
+      if (!el || !anchor.isConnected) return
+      const measured = el.getBoundingClientRect()
+      if (!(measured.width > 0) || !(measured.height > 0)) return
+      const refined = placeFloatActionHint({
+        anchorLeft: bounds.left,
+        anchorTop: bounds.top,
+        anchorWidth: bounds.width,
+        anchorHeight: bounds.height,
+        cardLeft: cardRect?.left ?? 0,
+        cardTop: cardRect?.top ?? 0,
+        cardWidth: cardRect?.width ?? 0,
+        cardHeight: cardRect?.height ?? 0,
+        hintWidth: measured.width,
+        hintHeight: measured.height
+      })
+      actionHint.value = { label, ...refined, sticky: options?.sticky }
+    })
+  }
+  if (options?.delay) {
+    actionHintTimer = setTimeout(apply, options.delay)
+    return
+  }
+  apply()
+}
+
+function clearActionHint(force: boolean | Event = false) {
+  if (actionHint.value?.sticky && force !== true) return
   if (actionHintTimer) clearTimeout(actionHintTimer)
   actionHintTimer = null
   actionHint.value = null
 }
 
 function queueActionHint(event: Event, label: string) {
-  clearActionHint()
   const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
   if (!target || !label) return
-  const bounds = target.getBoundingClientRect()
-  const placement: 'top' | 'bottom' = bounds.top >= 48 ? 'top' : 'bottom'
-  const left = Math.max(68, Math.min(window.innerWidth - 68, bounds.left + bounds.width / 2))
-  const top = placement === 'top' ? bounds.top - 7 : bounds.bottom + 7
-  actionHintTimer = setTimeout(() => {
-    if (!target.isConnected) return
-    actionHint.value = { label, left, top, placement }
-  }, 200)
+  if (actionHint.value?.sticky) return
+  showActionHint(target, label, { delay: 200 })
 }
 
 function taskStateLabel(task: CodexTaskCard) {
@@ -2807,6 +2937,17 @@ watch(searchText, () => {
   clearConfirm()
   closeQuickJump()
   closeShiftPreview(true)
+}, { flush: 'post' })
+
+watch([searchField, searchMetaText, searchPlaceholder, searchText], () => {
+  searchLayoutObserver?.disconnect()
+  searchLayoutObserver = null
+  const field = searchField.value
+  if (field && typeof ResizeObserver !== 'undefined') {
+    searchLayoutObserver = new ResizeObserver(() => measureSearchLayout())
+    searchLayoutObserver.observe(field)
+  }
+  void nextTick(measureSearchLayout)
 }, { flush: 'post' })
 
 // 列表非空即有键盘游标。以前 focusedItem 用 `|| focusItems[0]` 做隐式回退，于是"看到的高亮"
@@ -2978,6 +3119,7 @@ onUnmounted(() => {
   clearConfirm()
   clearPlanExecuteConfirmation()
   taskScrollResizeObserver?.disconnect()
+  searchLayoutObserver?.disconnect()
   window.removeEventListener('keydown', onWindowKeydown, true)
   window.removeEventListener('keyup', onWindowKeyup, true)
   window.removeEventListener('blur', onWindowBlur)
@@ -3112,9 +3254,39 @@ onUnmounted(() => {
       <div class="float-drag-handle" aria-hidden="true" />
 
       <label class="float-search">
-        <Search :size="14" aria-hidden="true" />
-            <input ref="searchInput" v-model="searchText" type="search" data-input-role="codex-search" :placeholder="quickMode ? '筛选任务，c-1…0 直接打开' : '搜索会话、别名或项目'" aria-label="搜索当前 Codex 页签" data-quick-jump-target data-quick-jump-label="搜索当前 Codex 页签" />
-        <button v-if="searchText" type="button" aria-label="清空搜索" data-quick-jump-target @click.stop="searchText = ''"><X :size="13" /></button>
+        <button
+          v-if="searchIconHint"
+          type="button"
+          class="float-search-glyph"
+          :class="{ alert: Boolean(searchAlertText) }"
+          :aria-label="searchIconHint"
+          @click.stop
+          @pointerenter="queueActionHint($event, searchIconHint)"
+          @pointerleave="clearActionHint"
+          @focus="queueActionHint($event, searchIconHint)"
+          @blur="clearActionHint"
+        >
+          <template v-if="searchAlertText">!</template>
+          <Search v-else :size="14" aria-hidden="true" />
+        </button>
+        <span v-else class="float-search-glyph" aria-hidden="true"><Search :size="14" /></span>
+        <span ref="searchField" class="float-search-field">
+          <span ref="searchMeasure" class="float-search-measure" aria-hidden="true">{{ searchPlaceholder }}</span>
+          <input
+            ref="searchInput"
+            v-model="searchText"
+            type="search"
+            data-input-role="codex-search"
+            :placeholder="searchPlaceholderHidden ? '' : searchPlaceholder"
+            :style="searchMetaPad ? { paddingRight: `${searchMetaPad}px` } : undefined"
+            aria-label="搜索当前 Codex 页签"
+            data-quick-jump-target
+            data-quick-jump-label="搜索当前 Codex 页签"
+          />
+          <span v-if="searchMetaText" ref="searchMetaEl" class="float-search-meta">{{ searchMetaText }}</span>
+        </span>
+        <button v-if="searchText" type="button" class="float-search-clear" aria-label="清空搜索" data-quick-jump-target @click.stop="searchText = ''"><X :size="13" /></button>
+        <span class="sr-only" role="status" aria-live="polite">{{ searchLiveText }}</span>
       </label>
 
       <!-- One row for every enabled provider. The full title and the reset time
@@ -3146,11 +3318,6 @@ onUnmounted(() => {
           <p v-if="group.emptyReason">{{ group.emptyReason }}</p>
         </div>
       </section>
-
-      <div class="float-source-status" :class="conversations?.status" role="status" aria-live="polite">
-        <span>{{ statusText }}</span>
-        <span v-if="pendingConfirm" class="confirm-hint">{{ pendingConfirm.label }} · 再次操作确认</span>
-      </div>
 
       <form v-if="aliasEditor" class="float-inline-editor" @submit.prevent="saveAlias">
         <label><span>本地别名</span><input ref="aliasInput" v-model="aliasEditor.value" maxlength="120" :placeholder="aliasEditor.originalName" /></label>
@@ -3201,7 +3368,7 @@ onUnmounted(() => {
               </button>
               <div class="project-inline-actions" role="toolbar" :aria-label="`${row.project.name} 项目操作`">
                 <button type="button" class="inline-character-button action-pin" :data-pin-source="pinSourceValue(row)" :aria-disabled="pinIsReadOnly(row)" :aria-pressed="Boolean(row.project.pinSource)" :aria-label="`${row.project.name}，${pinSourceHint(row)}`" data-quick-jump-target :data-quick-jump-label="pinSourceHint(row)" @pointerenter="queueActionHint($event, pinSourceHint(row))" @pointerleave="clearActionHint" @focus="queueActionHint($event, pinSourceHint(row))" @blur="clearActionHint" @click.stop="focusedKey = row.key; togglePin(row)">顶</button>
-                <button type="button" class="inline-character-button action-remove" :class="{ confirming: projectRemoveConfirming(row.project) }" :disabled="row.project.kind === 'chats' || row.marker.claudeOnly || !row.project.actionAlias || !conversations?.sourceFingerprint" :title="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : '从 Codex 侧栏移除；需先完全退出 Codex'" :aria-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? `确认从 Codex 侧栏移除 ${row.project.name}` : `从 Codex 侧栏移除 ${row.project.name}`" data-confirm-slot data-quick-jump-target :data-quick-jump-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : `从 Codex 移除 ${row.project.name}`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @blur="clearActionHint" @click.stop="focusedKey = row.key; requestProjectRemove(row.project)">{{ projectRemoveConfirming(row.project) ? '确' : '移' }}</button>
+                <button type="button" class="inline-character-button action-remove" :class="{ confirming: projectRemoveConfirming(row.project) }" :disabled="row.project.kind === 'chats' || row.marker.claudeOnly || !row.project.actionAlias || !conversations?.sourceFingerprint" :title="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : '从 Codex 侧栏移除；需先完全退出 Codex'" :aria-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? `确认从 Codex 侧栏移除 ${row.project.name}` : `从 Codex 侧栏移除 ${row.project.name}`" data-confirm-slot data-quick-jump-target :data-quick-jump-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : `从 Codex 移除 ${row.project.name}`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '从 Codex 移除') : projectRemoveConfirming(row.project) ? '再次点击确认真实移除' : '从 Codex 侧栏移除；需先完全退出 Codex')" @blur="clearActionHint" @click.stop="focusedKey = row.key; requestProjectRemove(row.project, $event)">{{ projectRemoveConfirming(row.project) ? '确' : '移' }}</button>
                 <button type="button" class="inline-character-button action-hide" :disabled="row.project.kind === 'chats' || row.marker.claudeOnly" :aria-pressed="isProjectHidden(row.project)" :aria-label="isProjectHidden(row.project) ? `恢复项目分组 ${row.project.name}` : `隐藏项目分组 ${row.project.name}`" data-quick-jump-target :data-quick-jump-label="isProjectHidden(row.project) ? `恢复项目 ${row.project.name}` : `隐藏项目 ${row.project.name}`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '项目隐藏') : isProjectHidden(row.project) ? '恢复项目页分组' : '仅隐藏项目页分组；任务仍保留')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '项目隐藏') : isProjectHidden(row.project) ? '恢复项目页分组' : '仅隐藏项目页分组；任务仍保留')" @blur="clearActionHint" @click.stop="focusedKey = row.key; toggleProjectHidden(row.project)">{{ isProjectHidden(row.project) ? '显' : '隐' }}</button>
                 <button type="button" class="inline-character-button action-create" :disabled="row.marker.claudeOnly || !row.project.actionAlias" :aria-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : row.project.actionAlias ? `在 ${row.project.name} 新建会话` : '项目动作已失效'" data-quick-jump-target :data-quick-jump-label="row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : `在 ${row.project.name} 新建会话`" @pointerenter="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : '在该项目新建会话')" @pointerleave="clearActionHint" @focus="queueActionHint($event, row.marker.claudeOnly ? projectActionBlockedReason(row.marker, '新建会话') : '在该项目新建会话')" @blur="clearActionHint" @click.stop="focusedKey = row.key; openComposer(row.project)">+</button>
               </div>
@@ -3311,7 +3478,7 @@ onUnmounted(() => {
                   @pointerleave="clearActionHint"
                   @focus="queueActionHint($event, taskArchiving(row.task) ? '正在归档' : taskArchiveConfirming(row.task) ? '再次点击确认真实归档' : row.task.canArchive ? '真实归档会话' : taskArchiveBlockedReason(row.task))"
                   @blur="clearActionHint"
-                  @click.stop="focusedKey = row.key; requestTaskArchive(row.task)"
+                  @click.stop="focusedKey = row.key; requestTaskArchive(row.task, $event)"
                 >
                     {{ taskArchiving(row.task) ? '中' : taskArchiveConfirming(row.task) ? '确' : '归' }}
                   </button>
@@ -3353,7 +3520,7 @@ onUnmounted(() => {
 
           <div v-if="showBatchToolbar" class="float-batch-toolbar" :class="batchPlacement" role="toolbar" :aria-label="`已选择 ${selectedTasks.length} 个任务的批量操作`">
             <strong>已选 {{ selectedTasks.length }}</strong>
-            <button type="button" class="danger" :class="{ confirming: pendingConfirm?.id?.startsWith('archive:') }" aria-label="归档当前多选任务；仅归档通过真实状态核验的任务" data-confirm-slot data-quick-jump-target @click.stop="requestTaskArchive()"><span aria-hidden="true">{{ pendingConfirm?.id?.startsWith('archive:') ? '确' : '归' }}</span></button>
+            <button type="button" class="danger" :class="{ confirming: pendingConfirm?.id?.startsWith('archive:') }" aria-label="归档当前多选任务；仅归档通过真实状态核验的任务" data-confirm-slot data-quick-jump-target @click.stop="requestTaskArchive(undefined, $event)"><span aria-hidden="true">{{ pendingConfirm?.id?.startsWith('archive:') ? '确' : '归' }}</span></button>
             <button type="button" aria-label="打开当前多选的完整操作；快捷键 Ctrl+右箭头" data-quick-jump-target @click.stop="openBatchDrawer"><span aria-hidden="true">操</span></button>
             <button type="button" aria-label="清空当前多选" data-quick-jump-target @click.stop="clearSelection"><span aria-hidden="true">清</span></button>
           </div>
@@ -3409,7 +3576,7 @@ onUnmounted(() => {
             :data-drawer-action-id="item.id"
             data-quick-jump-target
             @focus="drawerActiveIndex = index"
-            @click="executeDrawerAction(index)"
+            @click="executeDrawerAction(index, $event)"
           ><kbd>c-{{ index + 1 }}</kbd><span>{{ item.label }}</span><small v-if="item.disabledReason && item.disabled">{{ item.disabledReason }}</small></button>
         </div>
       </aside>
@@ -3568,9 +3735,15 @@ onUnmounted(() => {
 
     <div
       v-if="actionHint"
+      ref="actionHintEl"
       class="float-action-hint"
-      :class="actionHint.placement"
-      :style="{ left: `${actionHint.left}px`, top: `${actionHint.top}px` }"
+      :class="[actionHint.placement, { sticky: actionHint.sticky }]"
+      :style="{
+        left: `${actionHint.left}px`,
+        top: `${actionHint.top}px`,
+        maxWidth: `${actionHint.maxWidth}px`,
+        '--float-hint-arrow-left': `${actionHint.arrowLeft}px`
+      }"
       role="tooltip"
     >{{ actionHint.label }}</div>
   </main>

@@ -28,7 +28,7 @@ RAW: [raw-requirement.md](raw-requirement.md#L1) · Receipt: [design-preference-
 - 仅 `statusline !== 'installed'` → 「Claude 状态栏未注册，额度不会自动更新」；
 - Claude 关闭或通道不可用（该场景由 `claudeSetupHint` 负责）→ `''`。
 
-FloatApp `statusText` 仅在 verified 常态分支追加「 · <note>」；degraded/stale/error 文案优先级不变。Claude 关闭时 note 恒为空串 → Codex-only 逐字节一致。
+FloatApp 现将 note 交给搜索栏异常 `!` 的 200ms 悬停（[RAW-173](../../260817/0859-float-search-status-compact/spec.md#L1)），不再追加到额度下方整行；degraded/stale/error 仍优先于该 note。Claude 关闭时 note 恒为空串 → Codex-only 搜索栏无额外 `!`。
 
 ## 明确不做
 

@@ -659,9 +659,54 @@ button { font: inherit; }
   color: var(--codex-muted);
 }
 .float-search:focus-within { border-color: var(--codex-focus); box-shadow: 0 0 0 2px color-mix(in srgb, var(--codex-focus) 18%, transparent); }
-.float-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--codex-fg); font: inherit; font-size: 12px; user-select: text; }
+.float-search-glyph {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+}
+button.float-search-glyph { cursor: pointer; }
+.float-search-glyph.alert { color: var(--codex-warning); }
+.float-search-field {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+}
+.float-search-measure {
+  position: absolute;
+  visibility: hidden;
+  white-space: nowrap;
+  font: inherit;
+  font-size: 12px;
+  pointer-events: none;
+}
+.float-search input { min-width: 0; flex: 1; width: 100%; border: 0; outline: 0; background: transparent; color: var(--codex-fg); font: inherit; font-size: 12px; user-select: text; }
 .float-search input::placeholder { color: var(--codex-muted); }
-.float-search > button { display: grid; width: 26px; height: 26px; padding: 0; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--codex-muted); cursor: pointer; }
+.float-search-meta {
+  position: absolute;
+  right: 0;
+  max-width: 58%;
+  overflow: hidden;
+  color: var(--codex-muted);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: .02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.float-search-clear { display: grid; width: 26px; height: 26px; padding: 0; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--codex-muted); cursor: pointer; }
 
 /* Single-line quota row.
    Every enabled provider renders inside this one row, so the surface below it
@@ -730,22 +775,6 @@ button { font: inherit; }
 .task-provider-marker.provider-claude { border-color: color-mix(in srgb, var(--codex-accent) 58%, transparent); color: var(--codex-fg); }
 .float-quota-chip span { color: var(--codex-muted); font-size: 9px; font-weight: 750; letter-spacing: .02em; }
 .float-quota-chip strong { font-size: 13px; font-weight: 800; line-height: 1; }
-
-.float-source-status {
-  display: flex;
-  min-height: 23px;
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 3px 11px 5px;
-  border-bottom: 1px solid color-mix(in srgb, var(--codex-border) 30%, transparent);
-  color: var(--codex-muted);
-  font-size: 9px;
-}
-.float-source-status.stale, .float-source-status.error { color: var(--codex-warning); }
-.float-source-status.error { color: var(--codex-critical); }
-.confirm-hint { overflow: hidden; color: var(--codex-critical); font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
 
 .float-inline-editor {
   display: grid;
@@ -919,8 +948,25 @@ button { font: inherit; }
   text-align: center;
   pointer-events: none;
 }
-.float-action-hint.top { transform: translate(-50%, -100%); }
-.float-action-hint.bottom { transform: translate(-50%, 0); }
+.float-action-hint.sticky { font-weight: 800; }
+.float-action-hint::after {
+  content: "";
+  position: absolute;
+  left: var(--float-hint-arrow-left, 50%);
+  width: 7px;
+  height: 7px;
+  border: solid rgba(255, 255, 255, .86);
+  background: #111827;
+  transform: translateX(-50%) rotate(45deg);
+}
+.float-action-hint.top::after {
+  bottom: -4px;
+  border-width: 0 1px 1px 0;
+}
+.float-action-hint.bottom::after {
+  top: -4px;
+  border-width: 1px 0 0 1px;
+}
 
 .float-batch-toolbar {
   position: absolute;
@@ -1410,6 +1456,8 @@ button { font: inherit; }
 .float-project-row.provider-codex { background: color-mix(in srgb, var(--codex-quota-codex) 8%, var(--codex-surface-raised)); }
 .float-task-row.provider-claude:not(.selected),
 .float-project-row.provider-claude { background: color-mix(in srgb, var(--codex-quota-claude) 8%, var(--codex-surface-raised)); }
+.float-task-row.provider-cursor:not(.selected),
+.float-project-row.provider-cursor { background: color-mix(in srgb, var(--codex-accent) 8%, var(--codex-surface-raised)); }
 .float-project-row.provider-shared { background: linear-gradient(90deg, color-mix(in srgb, var(--codex-quota-codex) 8%, var(--codex-surface-raised)), color-mix(in srgb, var(--codex-quota-claude) 8%, var(--codex-surface-raised))); }
 .float-task-row.provider-codex:not(.selected):hover,
 .float-task-row.provider-codex:not(.selected):focus-visible,
@@ -1421,11 +1469,17 @@ button { font: inherit; }
 .float-task-row.provider-claude:not(.selected):focus-within,
 .float-project-row.provider-claude:hover,
 .float-project-row.provider-claude:focus-visible { background: color-mix(in srgb, var(--codex-quota-claude) 12%, var(--codex-surface-raised)); }
+.float-task-row.provider-cursor:not(.selected):hover,
+.float-task-row.provider-cursor:not(.selected):focus-visible,
+.float-task-row.provider-cursor:not(.selected):focus-within,
+.float-project-row.provider-cursor:hover,
+.float-project-row.provider-cursor:focus-visible { background: color-mix(in srgb, var(--codex-accent) 12%, var(--codex-surface-raised)); }
 .float-project-row.provider-shared:hover,
 .float-project-row.provider-shared:focus-visible { background: linear-gradient(90deg, color-mix(in srgb, var(--codex-quota-codex) 12%, var(--codex-surface-raised)), color-mix(in srgb, var(--codex-quota-claude) 12%, var(--codex-surface-raised))); }
 
 .task-provider-marker.provider-codex { border-color: color-mix(in srgb, var(--codex-quota-codex) 58%, transparent); color: var(--codex-quota-codex); }
 .task-provider-marker.provider-claude { border-color: color-mix(in srgb, var(--codex-quota-claude) 58%, transparent); color: var(--codex-quota-claude); }
+.task-provider-marker.provider-cursor { border-color: color-mix(in srgb, var(--codex-accent) 58%, transparent); color: var(--codex-accent); }
 .project-main > span { position: relative; }
 .project-main strong { padding-right: 86px; }
 .project-provider-marker {
@@ -1444,6 +1498,7 @@ button { font: inherit; }
 }
 .project-provider-marker.provider-codex { color: var(--codex-quota-codex); }
 .project-provider-marker.provider-claude { color: var(--codex-quota-claude); }
+.project-provider-marker.provider-cursor { color: var(--codex-accent); }
 .project-provider-marker.provider-shared { color: var(--codex-fg); }
 
 @container (max-width: 330px) {
@@ -1459,7 +1514,9 @@ button { font: inherit; }
   .project-provider-marker { border-color: CanvasText; color: CanvasText; forced-color-adjust: auto; }
   .float-task-row.provider-codex,
   .float-task-row.provider-claude,
+  .float-task-row.provider-cursor,
   .float-project-row.provider-codex,
   .float-project-row.provider-claude,
+  .float-project-row.provider-cursor,
   .float-project-row.provider-shared { background: Canvas; }
 }

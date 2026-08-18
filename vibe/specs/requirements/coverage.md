@@ -29,6 +29,8 @@ Date: 2026-08-13
 | `companion-shared` | [install-runtime-diagnostics](../260810/1155-install-runtime-diagnostics/raw-requirement.md#L1) | heading | 6 | 6 | 0 |
 | `interaction-shell` | [quick-jump-center-overlay](../260718/0947-quick-jump-center-overlay/raw-requirement.md#L1) | bullet | 4 | 4 | 0 |
 | `file-favorites` | [file-favorites-workbench](../260711/1452-file-favorites-workbench/raw-requirement.md#L1) | heading | 2 | 2 | 0 |
+| `companion-codex` | [float-search-status-compact](../260817/0859-float-search-status-compact/raw-requirement.md#L1) | prose | 1 | 1 | 0 |
+| `companion-codex` | [float-action-hint-popover](../260817/1618-float-action-hint-popover/raw-requirement.md#L1) | prose | 1 | 1 | 0 |
 
 两处需要单独说明：
 
@@ -66,7 +68,7 @@ Date: 2026-08-13
 
 每条继承父条款的 `status` 与 `authority`——父条款是转述的，子条款同样是转述，冲突时不得压过原话。
 
-登记总量 196 → **284** 条叶子。
+登记总量 196 → **286** 条叶子（新增 RAW-173、RAW-175）。
 
 ### 由此可以做而此前做不到的事
 
