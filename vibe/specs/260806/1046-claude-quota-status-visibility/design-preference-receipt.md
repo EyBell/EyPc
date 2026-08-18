@@ -20,7 +20,7 @@ Spec: [spec.md](spec.md#L1)
 
 1. **重置时刻进悬停层而非行内**。soul 的额度行合同是「单行读数」，quota 悬停已被现行实现细化为共享 200ms 子提示（FloatApp 模板注释明确记录）。行内加时刻会拉长行宽、窄浮窗换行，违反密度合同。用户经 AskUserQuestion 拍板「仅悬停提示」——与 soul 一致，无覆盖。
 2. **刷新状态 = 悬停句 + 过期变灰，无常驻文案**。RAW-087 明确避免「永久可见的说明性文案」；「更新于 X 前」属说明而非状态行既有格式，故不常驻。stale 变灰为视觉线索，非颜色等价线索由悬停句与 sr-only aria 文本（「，可能已过期」）承担，符合 accessibility 条目。用户拍板一致，无覆盖。
-3. **hooks 降级提示复用既有 `float-source-status` 状态行**，与「已连接 Claude Code 2.1.220」同类：是状态+补救指引，不是说明文案；不新增常驻元素、不改行高、不加气泡。readiness 自检 taste（2026-07-18 行）要求「精确补救文本」，本提示与之同向。
+3. **hooks 降级提示复用既有 `float-source-status` 状态行**，与「已连接 Claude Code 2.1.220」同类：是状态+补救指引，不是说明文案；不新增常驻元素、不改行高、不加气泡。readiness 自检 taste（2026-07-18 行）要求「精确补救文本」，本提示与之同向。**布局落点已被 [RAW-173](../../260817/0859-float-search-status-compact/spec.md#L1) 取代**：同一 note 改走搜索栏 `!` 悬停，不再占用额度下方整行。
 4. **Codex-only 逐字节一致**：hint/aria 第四参默认空串、`stale` 字段仅 Claude chip 携带、状态行 note 在 Claude 关闭时恒为空——三处均不触碰 Codex 路径输出。
 
 ## 追加决定（2026-08-06 二轮）

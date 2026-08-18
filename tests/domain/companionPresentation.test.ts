@@ -10,6 +10,14 @@ import {
   companionQuotaChipHint,
   companionQuotaFreshnessText,
   companionResetDetailText,
+  companionSearchAlertText,
+  companionSearchHintOverlaps,
+  companionSearchIconHint,
+  companionSearchMetaText,
+  companionSearchPlaceholder,
+  placeFloatActionHint,
+  COMPANION_SEARCH_PLACEHOLDER,
+  COMPANION_SEARCH_STALE_ALERT,
   resolveCompanionProjectMarker,
   resolveCompanionRowMarker,
   resolveCompanionWaterBallPresentation,
@@ -548,5 +556,98 @@ describe('claude registration rows', () => {
     ])
     expect(serialized).not.toMatch(/[/\\]/)
     expect(serialized).not.toContain('~')
+  })
+})
+
+describe('companion search chrome', () => {
+  it('keeps the compact placeholder and inventory count separate from alerts', () => {
+    expect(companionSearchPlaceholder(false)).toBe(COMPANION_SEARCH_PLACEHOLDER)
+    expect(companionSearchPlaceholder(true)).toBe('筛选任务，c-1…0 直接打开')
+    expect(companionSearchMetaText({ hasInventory: true, timeWindowDays: 30, count: 42 })).toBe('最近 30 天的 42 条')
+    expect(companionSearchMetaText({ hasInventory: false, count: 42 })).toBe('')
+    expect(companionSearchAlertText({ conversationStatus: 'stale' })).toBe(COMPANION_SEARCH_STALE_ALERT)
+    expect(companionSearchAlertText({ conversationStatus: 'ok', claudeGapNote: 'Claude 钩子未注册，任务状态非实时' }))
+      .toBe('Claude 钩子未注册，任务状态非实时')
+    expect(companionSearchAlertText({ conversationStatus: 'ok' })).toBe('')
+  })
+
+  it('hides the left hint only when it would overlap the right-aligned count', () => {
+    expect(companionSearchHintOverlaps(180, 72, 96)).toBe(false)
+    expect(companionSearchHintOverlaps(160, 72, 96)).toBe(true)
+    expect(companionSearchHintOverlaps(0, 72, 96)).toBe(false)
+    expect(companionSearchIconHint(COMPANION_SEARCH_STALE_ALERT, false, COMPANION_SEARCH_PLACEHOLDER))
+      .toBe(COMPANION_SEARCH_STALE_ALERT)
+    expect(companionSearchIconHint('', true, COMPANION_SEARCH_PLACEHOLDER)).toBe(COMPANION_SEARCH_PLACEHOLDER)
+    expect(companionSearchIconHint(COMPANION_SEARCH_STALE_ALERT, true, COMPANION_SEARCH_PLACEHOLDER))
+      .toBe(`${COMPANION_SEARCH_STALE_ALERT} · ${COMPANION_SEARCH_PLACEHOLDER}`)
+  })
+})
+
+describe('float action hint placement', () => {
+  const card = { cardLeft: 0, cardTop: 0, cardWidth: 320, cardHeight: 400 }
+
+  it('prefers the top side when the card has room above the anchor', () => {
+    const placed = placeFloatActionHint({
+      ...card,
+      anchorLeft: 100,
+      anchorTop: 80,
+      anchorWidth: 24,
+      anchorHeight: 24,
+      hintWidth: 120,
+      hintHeight: 28
+    })
+    expect(placed.placement).toBe('top')
+    expect(placed.left).toBe(52)
+    expect(placed.top).toBe(45)
+    expect(placed.arrowLeft).toBe(60)
+    expect(placed.maxWidth).toBe(304)
+  })
+
+  it('flips below when the top of the card is too tight', () => {
+    const placed = placeFloatActionHint({
+      ...card,
+      anchorLeft: 100,
+      anchorTop: 20,
+      anchorWidth: 24,
+      anchorHeight: 24,
+      hintWidth: 120,
+      hintHeight: 28
+    })
+    expect(placed.placement).toBe('bottom')
+    expect(placed.top).toBe(51)
+  })
+
+  it('clamps to the card and keeps the arrow on the anchor', () => {
+    const placed = placeFloatActionHint({
+      ...card,
+      anchorLeft: 8,
+      anchorTop: 80,
+      anchorWidth: 24,
+      anchorHeight: 24,
+      hintWidth: 160,
+      hintHeight: 28
+    })
+    expect(placed.left).toBe(8)
+    expect(placed.arrowLeft).toBeGreaterThanOrEqual(10)
+    expect(placed.left + placed.arrowLeft).toBeCloseTo(20, 5)
+    expect(placed.left + 160).toBeLessThanOrEqual(320)
+  })
+
+  it('falls back without a measured card box', () => {
+    const placed = placeFloatActionHint({
+      cardLeft: 0,
+      cardTop: 0,
+      cardWidth: 0,
+      cardHeight: 0,
+      anchorLeft: 100,
+      anchorTop: 60,
+      anchorWidth: 24,
+      anchorHeight: 24,
+      hintWidth: 120,
+      hintHeight: 28
+    })
+    expect(placed.placement).toBe('top')
+    expect(placed.left).toBe(52)
+    expect(placed.maxWidth).toBe(240)
   })
 })

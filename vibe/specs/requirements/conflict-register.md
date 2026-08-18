@@ -86,3 +86,7 @@ RAW-163 与 RAW-164 这两条正是本会话开头核验过的那组：用户已
 ### 仍未升级
 
 四个 `codex-raw-1xx` 叶子保持 `active` 而非 `superseded`：只有它们的**一部分**被取代，整条状态翻转会让仍生效的部分一起失效。局部取代就该停在局部。
+
+## 2026-08-17：确认整行被气泡取代
+
+用户明确要求确认提示不得再占卡片内整行。`decision_status=explicit-current-request`。RAW-173 中「有待确认时保留 `float-source-status`」被 [RAW-175](codex-raw-175.md#L1) 局部取代；搜索栏收纳条款仍有效。机器边写在 [codex-raw-173](codex-raw-173.md#L1) 的 `scoped_relations`。

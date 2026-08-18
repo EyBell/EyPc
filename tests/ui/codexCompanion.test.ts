@@ -790,7 +790,8 @@ describe('Codex Companion V4 UI contract', () => {
     const archive = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"] .task-inline-actions .action-archive`)
 
     await archive.trigger('click')
-    expect(wrapper.text()).toContain('再次操作确认')
+    expect(wrapper.find('.float-source-status').exists()).toBe(false)
+    expect(wrapper.get('.float-action-hint').text()).toContain('再次操作确认')
     await wrapper.get(`[data-focus-key="task:${TASK_FAILED}"] .task-inline-actions .action-archive`).trigger('click')
 
     expect(action).toHaveBeenCalledWith('codex.tasks.archive', expect.objectContaining({
@@ -1283,10 +1284,12 @@ describe('Codex Companion V4 UI contract', () => {
     await wrapper.get(`[data-focus-key="task:${TASK_DONE}"]`).trigger('contextmenu')
     const archive = wrapper.findAll('.float-drawer-actions button').find((button) => button.text().includes('真实归档'))!
     await archive.trigger('click')
-    expect(wrapper.text()).toContain('再次操作确认')
+    expect(wrapper.find('.float-source-status').exists()).toBe(false)
+    expect(wrapper.get('.float-action-hint').text()).toContain('再次操作确认')
 
     await wrapper.get('.float-side-panel').trigger('keydown', { key: 'Escape', code: 'Escape' })
     expect(wrapper.find('.float-side-panel.drawer').exists()).toBe(true)
+    expect(wrapper.find('.float-action-hint').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('再次操作确认')
     expect(action).not.toHaveBeenCalledWith('codex.tasks.archive', expect.anything())
 
@@ -1557,6 +1560,26 @@ describe('Codex Companion V4 UI contract', () => {
     expect(wrapper.find('.float-water-palette-dialog').exists()).toBe(false)
     expect(wrapper.findAll('input[type="color"]')).toHaveLength(0)
     expect(wrapper.text()).not.toContain('水纹配色')
+  })
+
+  it('moves inventory count into the search field and uses a hover ! for stale snapshots', async () => {
+    const verified = mountFloat(true, floatSnapshot('all'))
+    await verified.wrapper.vm.$nextTick()
+    expect(verified.wrapper.get('input[data-input-role="codex-search"]').attributes('placeholder')).toBe('别名|任务|项目')
+    expect(verified.wrapper.get('.float-search-meta').text()).toMatch(/^最近 30 天的 \d+ 条$/)
+    expect(verified.wrapper.find('.float-source-status').exists()).toBe(false)
+    expect(verified.wrapper.find('.float-search-glyph.alert').exists()).toBe(false)
+
+    const staleSource = floatSnapshot('all')
+    staleSource.conversations.status = 'stale'
+    refreshTaskState(staleSource)
+    const stale = mountFloat(true, staleSource)
+    await stale.wrapper.vm.$nextTick()
+    expect(stale.wrapper.get('.float-search-glyph.alert').text()).toBe('!')
+    expect(stale.wrapper.get('.float-search-glyph.alert').attributes('aria-label')).toContain('数据已过期 · 展示上一份已验证快照')
+    expect(stale.wrapper.get('.float-search-meta').text()).toMatch(/^最近 30 天的 \d+ 条$/)
+    expect(stale.wrapper.find('.float-source-status').exists()).toBe(false)
+    expect(stale.wrapper.find('.float-search-meta').text()).not.toContain('数据已过期')
   })
 
 })
