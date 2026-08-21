@@ -1,7 +1,7 @@
 # EyPc Project Status Hub
 
 Tool: codex
-Date: 2026-08-17
+Date: 2026-08-21
 
 ## Purpose
 
@@ -75,6 +75,7 @@ This hub routes current implementation, verification gates and durable authoriti
 - MQTT: [current sync](2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1); multi-select merged JSON export: [spec](260730/1016-mqtt-multi-export/spec.md#L1); tooltip/shortcut identifiability polish: [spec](260730/1044-mqtt-tooltip-shortcut-polish/spec.md#L1) / [verify](260730/1044-mqtt-tooltip-shortcut-polish/verify.md#L1), now wired through product `data-operation-*` tips; development acceptance user-owned after reload hover check.
 - Settings help: [raw requirement](260729/1135-settings-feature-help/raw-requirement.md#L1); `EYPC-FEATURE-HELP-001` coverage remains active.
 - Cursor Agent Companion (2026-08-18): [raw](260818/1335-cursor-companion-feasibility/raw-requirement.md#L1) / [spec](260818/1335-cursor-companion-feasibility/spec.md#L1). Status `research-verified / phase-3-implemented`. 冷库存 + hook 通道已落地；**2026-08-21**：uTools Node 16 无 `node:sqlite`；库存已改为系统 `sqlite3` 白名单只读（需重载插件）。同日跳转翻为 `live-verified`：官方 `agent?id=<composerId>` deeplink 实测切到目标本地对话（Cursor 3.17.8），`preload/cursor/open.cjs` 按 Claude `dispatched` 合同落地。同日归档统一为状态门禁（进行中阻断、待继续/已完成放行、unknown 暂缓，对所有 Provider 一致）：Claude 拆除版本白名单硬闸（本机已升 1.34493.1，保留结构化重验），Cursor 落地 `preload/cursor/archive.cjs` 单行翻转 App 自己的 `isArchived` 对（桥 v5），见 [error-memory](../knowledge/error-memory/provider-version-whitelist-must-not-gate-generic-capability.md#L1)。同日 `companion-navigation-v4`：Cursor 经 kernel 辅助候选通道进上一/下一快捷键循环并可被 `openCursor` 派发（此前只点击可达），见 [error-memory](../knowledge/error-memory/new-companion-source-must-register-with-navigation-authority.md#L1)；主题层新增 `--codex-quota-cursor` 归属色（紫蓝、实心药丸标记），与 Codex/Claude 三向色距 >60°。Does not change the current Codex/Claude Companion contract.
+- Shortcut selector readiness (2026-08-21): [raw](260821/2045-shortcut-selector-readiness/raw-requirement.md#L1) / [spec](260821/2045-shortcut-selector-readiness/spec.md#L1). Status `automated-verified / host-pending`. 运行诊断证实 20:14–20:27 五次静默快捷入口被 Kernel 消费后没有任何导航轨迹：`complete` 但 `verifying` 的进程包把上一/下一与待输入入口推进 5 秒两端冷读，失败只剩系统通知。Kernel 选择器改按完整包直接派发；预检开始/接受/失败、空候选退出、入口 feature code 进诊断；`canonical-mismatch-repair` 的 `warn` 级别修正并加 30 秒每 provider 冷却。聚焦 `66/66`、`45/45` 与 bridge 套件通过，production build 重生成 `dist/`；真实宿主需重载插件后验收。
 
 ### Historical Claude-related delivery evidence
 
@@ -98,4 +99,5 @@ Claude 的唯一当前行是下表首行；其余 Claude 行保留为历史检�
 | File favorites | [traceability](260711/1452-file-favorites-workbench/requirements-traceability.md#L1) | Task-owned |
 | MQTT workbench | [sync](2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1) / [multi-export](260730/1016-mqtt-multi-export/spec.md#L1) / [tooltip polish](260730/1044-mqtt-tooltip-shortcut-polish/spec.md#L1) | User-owned acceptance |
 | Historical Claude deliveries | [retrieval index above](#historical-claude-related-delivery-evidence) | Superseded/partial evidence; not current acceptance |
+| Shortcut selector readiness | [spec](260821/2045-shortcut-selector-readiness/spec.md#L1) / [raw](260821/2045-shortcut-selector-readiness/raw-requirement.md#L1) | Complete-package selector dispatch plus silent-exit diagnostics; focused suites and build pass, real-host shortcut acceptance pending after plugin reload |
 | Cursor Agent Companion | [spec](260818/1335-cursor-companion-feasibility/spec.md#L1) / [raw](260818/1335-cursor-companion-feasibility/raw-requirement.md#L1) | Phase 3 jump implemented via official `agent?id` deeplink (`dispatched`, verified on 3.17.8); archive now status-gated for all providers and writes the App's own `isArchived` pair single-row (bridge v5); navigation v4 cycles Cursor via kernel auxiliary candidates; dedicated `--codex-quota-cursor` ownership tone with filled marker; hook channel opt-in confirm-first; Cloud Agent still excluded; not current Codex/Claude contract |

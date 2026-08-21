@@ -47,6 +47,7 @@ Link-only route for Codex/Claude canonical phase、Turn/Goal causality、root/Si
 
 - [Claude new phase must outrank previous cache](../claude-new-phase-must-outrank-previous-cache.md#L1)
 - [Claude StopFailure must not close a continuing parent turn](../claude-stop-failure-must-not-close-continuing-parent-turn.md#L1)
+- [Selector readiness must not treat verifying phase as stale](../selector-readiness-must-not-treat-verifying-phase-as-stale.md#L1)
 
 ## Historical Or Migration Sources
 

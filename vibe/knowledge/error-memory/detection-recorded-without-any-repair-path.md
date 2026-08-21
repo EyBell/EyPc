@@ -46,3 +46,4 @@ tags:
 ## Occurrence History
 
 - 2026-08-13：用户报告 Codex 任务状态不跟随，日志显示恒定 `canonicalMismatchCount: 1` 持续 23 分钟。已加入停滞判据的修复路径并通过 12 文件 476 项定向矩阵；修复对真实卡死的实际效果**尚未在宿主验证**，故保持 candidate。
+- 2026-08-21：真实宿主日志显示该修复路径在 Desktop/App Server 权威分歧下（Desktop 每 ~300ms 重提 `causal-waiting-input`，Kernel 持续保持 `completed`）每 ~2–3 秒触发一次 Codex 窄冷读（12 分钟 259 次 `cold-preflight`，p50 1.2 s、max 6.6 s），而且触发记录用了 `level: 'warn'`，被诊断汇全部拒收为 `diagnostics-level-missing`。已改为 `info` 并加 30 秒每 provider 冷却（[spec](../../specs/260821/2045-shortcut-selector-readiness/spec.md#L1)）。修复对卡死的效果仍 candidate；权威分歧本身未裁决，冷却只是有界止损，不是根因修复。

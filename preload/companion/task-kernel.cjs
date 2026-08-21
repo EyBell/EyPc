@@ -2031,18 +2031,53 @@ function createCompanionTaskKernel(dependencies = {}) {
     return true
   }
 
-  async function ensureReady(targetKey = '') {
-    // A verifying branch must not globally block an unrelated exact target
-    // whose own evidence and capability are fresh. Selector actions still
-    // require a fresh whole package because they choose among many targets.
+  function verifyingTaskCount(packageValue = currentPackage) {
+    return packageValue.tasks.reduce((total, task) => total + (task.freshness === 'verifying' ? 1 : 0), 0)
+  }
+
+  /**
+   * Readiness for one Kernel action.
+   *
+   * `complete` means every enabled Provider lane has settled — the only
+   * membership guarantee previous/next and the attention entries need: hot and
+   * trusted dispatches directly, and only cold start, reconnect or an explicit
+   * membership gap waits for the tasks-only inventory. `verifying` is a
+   * per-task phase qualifier (an interrupted edge or an unknown Claude session
+   * still under confirmation), not a membership gap. Open-only selectors
+   * therefore dispatch from the complete process package even while a phase is
+   * verifying. Treating whole-package `verifying` as stale used to force the
+   * full cold read under the 5-second timeout, so one unknown Claude session
+   * turned every global shortcut into a slow or silently failing preflight.
+   * Mutations (archive/pause/resume/execute) keep the exact-target freshness
+   * requirement because they act on the phase itself.
+   */
+  async function ensureReady(targetKey = '', options = {}) {
+    const startedAt = now()
+    const action = typeof options.action === 'string' ? options.action : ''
     const exactTarget = targetKey ? taskForKey(targetKey) : null
     const exactReady = exactTarget?.freshness === 'fresh'
       && exactTarget.capabilities?.open === true
     if (targetKey && currentPackage.complete && exactReady) return currentPackage
-    if (!targetKey && currentPackage.complete && currentPackage.freshness === 'fresh') return currentPackage
+    if (!targetKey && currentPackage.complete
+      && (currentPackage.freshness === 'fresh' || options.allowVerifying === true)) return currentPackage
     if (!enabled) throw new Error('disabled')
     if (!preflight) throw new Error('preflight-unavailable')
     if (preflightInFlight) return preflightInFlight
+    record({
+      level: 'info',
+      scope: 'task-kernel',
+      event: 'ready-preflight',
+      outcome: 'started',
+      packageRevision: currentPackage.packageRevision,
+      details: {
+        action,
+        exactTarget: Boolean(targetKey),
+        reason: !currentPackage.complete ? 'incomplete' : targetKey ? 'exact-target-stale' : 'verifying',
+        freshness: currentPackage.freshness,
+        verifyingCount: verifyingTaskCount(),
+        taskCount: currentPackage.tasks.length
+      }
+    })
     const progressTimer = setTimer(() => notify('正在读取最新任务状态…'), PREFLIGHT_PROGRESS_MS)
     let timeoutTimer = null
     const timeout = new Promise((_resolve, reject) => {
@@ -2054,6 +2089,17 @@ function createCompanionTaskKernel(dependencies = {}) {
     ]).then((draft) => {
       const accepted = commitDraft(draft)
       if (!accepted?.complete) throw new Error('preflight-incomplete')
+      record({
+        level: 'info',
+        scope: 'task-kernel',
+        event: 'ready-preflight',
+        outcome: 'accepted',
+        durationMs: now() - startedAt,
+        slowMs: PREFLIGHT_PROGRESS_MS,
+        count: accepted.tasks.length,
+        packageRevision: accepted.packageRevision,
+        details: { action, freshness: accepted.freshness, verifyingCount: verifyingTaskCount(accepted) }
+      })
       return accepted
     }).finally(() => {
       clearTimer(progressTimer)
@@ -2101,6 +2147,23 @@ function createCompanionTaskKernel(dependencies = {}) {
       const keys = currentPackage.views.attentionKeys[kind]
       const candidates = keys.map(taskForKey).filter(Boolean)
       if (!candidates.length) {
+        record({
+          level: 'info',
+          scope: 'task-kernel',
+          event: 'open-attention',
+          outcome: 'no-task',
+          operationId: typeof input.operationId === 'string' ? input.operationId : undefined,
+          source: input.source || 'attention-shortcut',
+          packageRevision: currentPackage.packageRevision,
+          details: {
+            kind,
+            complete: currentPackage.complete,
+            freshness: currentPackage.freshness,
+            inputCount: currentPackage.views.attentionKeys.input.length,
+            completedUnreadCount: currentPackage.views.attentionKeys.completedUnread.length,
+            taskCount: currentPackage.tasks.length
+          }
+        })
         return { outcome: 'unavailable', errorCode: 'no-task', message: '当前没有符合条件的任务' }
       }
       let task = candidates.find((candidate) => {
@@ -2126,6 +2189,7 @@ function createCompanionTaskKernel(dependencies = {}) {
 
   async function dispatch(input = {}) {
     if (disposed || !enabled) return { outcome: 'unavailable', errorCode: 'disabled', message: '任务功能未启用' }
+    const dispatchStartedAt = now()
     try {
       const targetKey = ['open', 'archive', 'pause', 'resume', 'execute-plan'].includes(input.action)
         && typeof input.key === 'string'
@@ -2133,8 +2197,36 @@ function createCompanionTaskKernel(dependencies = {}) {
         : ''
       // Direct opens are exact-key operations. They must not trigger a broad
       // inventory/classification preflight merely because an alias expired.
-      if (input.action !== 'open') await ensureReady(targetKey)
-    } catch {
+      // Previous/next and the attention entries only read the complete process
+      // package, so a verifying phase must not send them through the cold read.
+      if (input.action !== 'open') {
+        await ensureReady(targetKey, {
+          action: input.action,
+          allowVerifying: input.action === 'cycle' || input.action === 'open-attention'
+        })
+      }
+    } catch (error) {
+      // This exit used to be invisible: the press was consumed, the shortcut
+      // did nothing, and the diagnostics file carried no trace of why.
+      const code = error instanceof Error && /^[a-z0-9-]{1,80}$/i.test(error.message) ? error.message : 'preflight-failed'
+      record({
+        level: 'error',
+        scope: 'task-kernel',
+        event: 'ready-preflight',
+        outcome: 'failed',
+        code,
+        operationId: typeof input.operationId === 'string' ? input.operationId : undefined,
+        source: typeof input.source === 'string' ? input.source : undefined,
+        durationMs: now() - dispatchStartedAt,
+        packageRevision: currentPackage.packageRevision,
+        details: {
+          action: typeof input.action === 'string' ? input.action : '',
+          complete: currentPackage.complete,
+          freshness: currentPackage.freshness,
+          verifyingCount: verifyingTaskCount(),
+          taskCount: currentPackage.tasks.length
+        }
+      })
       notify('任务状态预检失败，未使用不完整缓存')
       return { outcome: 'unavailable', errorCode: 'inventory-not-ready', message: '任务状态预检失败，请重试' }
     }
@@ -2243,10 +2335,42 @@ function createCompanionTaskKernel(dependencies = {}) {
           : code === 'eypc-companion-archive'
             ? { action: 'archive-focused', source: 'archive-shortcut' }
             : { action: 'open-attention', kind: 'input', source: 'global-shortcut' }
+    // The feature code is the only way a log reader can tell which silent
+    // uTools entry was pressed; it is a fixed plugin identifier, never content.
+    record({
+      level: 'info',
+      scope: 'task-kernel',
+      event: 'shortcut-enter',
+      outcome: intent.action,
+      source: intent.source,
+      packageRevision: currentPackage.packageRevision,
+      details: {
+        featureCode: code,
+        complete: currentPackage.complete,
+        freshness: currentPackage.freshness,
+        cycleCount: currentPackage.views.cycleKeys.length,
+        inputCount: currentPackage.views.attentionKeys.input.length,
+        completedUnreadCount: currentPackage.views.attentionKeys.completedUnread.length
+      }
+    })
+    const reportFailure = (errorCode) => record({
+      level: errorCode === 'no-task' ? 'info' : 'error',
+      scope: 'task-kernel',
+      event: 'shortcut-enter',
+      outcome: 'failed',
+      code: errorCode,
+      source: intent.source,
+      packageRevision: currentPackage.packageRevision,
+      details: { featureCode: code, action: intent.action }
+    })
     void dispatch(intent).then((result) => {
       if (result?.outcome === 'opened' || result?.outcome === 'dispatched' || result?.errorCode === 'superseded') return
+      reportFailure(typeof result?.errorCode === 'string' && result.errorCode ? result.errorCode : 'failed')
       notify(result?.message || '任务切换失败，请重试')
-    }).catch(() => notify('任务切换失败，请重试'))
+    }).catch(() => {
+      reportFailure('exception')
+      notify('任务切换失败，请重试')
+    })
     return true
   }
 
