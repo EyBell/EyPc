@@ -1,7 +1,7 @@
 # RAW-159 → RAW-166 — Companion 状态、发布与权威库存恢复
 
 Date: 2026-08-13
-Status: `active / RAW-166 increment-automated-verified / rebuilt-artifact-ready / documentation-synchronized / dev-plugin-reload-pending`
+Status: `active / RAW-174 increment-automated-verified / documentation-synchronized / dev-plugin-reload-pending`
 
 ## 历史基线
 
@@ -117,9 +117,21 @@ RAW-159 要求把状态、库存、缓存、快捷键、导航、归档和诊断
 81. 判断合同冲突必须进入显式 conflict register。已经有更新用户决策的冲突按最新明确决策消解并同步所有 current authority；没有明确决策且会改变产品语义的冲突必须停止选择并提醒用户，不能由实现者暗自择一。本轮 RAW-163 main-first 展示条款已由用户明确的 RAW-164 all-bead 规则取代，parent-only 打开条款继续保留。
 82. 本增量不移动/删除历史 error-memory 文件，不触碰 `_to_delete/`，不把 overdue candidate 自动升级、合并或退役。自动化必须覆盖双向 phase 顺序、三 lane 正交合并、proposal/final 诊断，以及 99 条 leaf 的身份、生命周期、唯一 Primary、路由完整性和无环性。
 
+## RAW-174 Claude StopFailure 不得关闭仍在继续的父 Turn
+
+用户 2026-08-17 原话要求核验 Claude「待继续」误判，并选择「先出修复 spec 再动代码 / 写入当前 Controlled 任务合同后再实现」。实机对照证明：一条仍在发工具与权限请求的 Claude 父任务被 Hook `StopFailure` 显示为待继续。下列条款是该选择的当前合同。
+
+89. Hook `StopFailure` 只记录 `lastStopFailureAt` 水位。它可以把当前父 Turn 暂标为 `stopped` / `turnOpen=false`，但不得在同一 reducer 随后仍看到父 Turn 活动时保持该终态。
+90. 同一 Turn 内晚于该 `StopFailure` 的 `UserPromptSubmit`、`pre-tool`、`post-tool` 或 `permission-request` 证明父 Turn 仍开放：必须恢复 `turnOpen`，并按既有开放 Turn 规则投影 `running` / `waiting-input` / `waiting-approval`。成功 `Stop` 或已观察 open Turn 的 `SessionEnd` 之后，工具/子代理尾巴仍不得重开；只有新的 `UserPromptSubmit` 可以。
+91. App live-append 的 `running` / `waiting-*` 压过 Hook `stopped`，除非 Hook `turnStartedAt` 严格新于该 App live 证据。Hook 工具尾巴的更新时间戳不得把 App live 改判为 Hook 终态。
+92. App 精确 failed/interrupted 仍进入 `stopped` /「待继续」。SessionEnd 仍只关闭同一 reducer 已观察的 open Turn；lifecycle-only SessionEnd 不能制造 stopped，也不能压制 `completedTurns > 0`。同一 Turn 已有成功 Stop/Result 时保持 completed。
+93. 原生 unread 不得把仍 live 或已被重开的 Turn 提升为 completed。unread 只在证明任务非 live 之后作用于完成面。
+94. 自动化必须覆盖：`StopFailure` 后继续工具/权限 → running/waiting；其后 App `Sending message` → running；App failed/interrupted → stopped/待继续；既有 SessionEnd lifecycle 与 observed-open 合同不变。禁止用 TTL、转录正文或 unread 修复本缺陷。
+
 ## 冲突与非目标
 
 - RAW-142 的“任意新 Turn 清除 Plan”、RAW-150/154 的“exact interrupted 立即 stopped”、RAW-159 的“只在 Kernel no-op 即完成消费去重”和旧 Actions/Package 版本被 RAW-160 对应条款取代。RAW-163 第 50–53 条的 main-first 展示门槛由 RAW-164 取代；RAW-164 的普通 `running > completed-unread` 只描述完成面，RAW-165 将注意力状态提升到 running 之前；RAW-163 的 parent-only 打开与成功后已读确认保留。
+- 当前 PRD「Stop/StopFailure 关闭当前 Turn」中，无条件把 Hook `StopFailure` 当作父 Turn 终态的部分由 RAW-174 取代；成功 `Stop`、App failed/interrupted，以及已观察 open Turn 且无成功结果的 SessionEnd 仍关闭。RAW-167 draft（单一判断点结构收敛）仍是 `proposed`，不参与本增量。
 - 强制 Claude 原生侧栏同步不是产品能力合同；RAW-165 只对精确 completion/focus 可观察边界提供实时热覆盖，多窗格可见但未聚焦仍保留明确能力边界。
 - 当前用户已授权只在 `EyPc-Regression-<run-id>-*` 无副作用测试任务中启动安全 Codex Turn/Plan 并做可恢复清理；不得触碰既有用户任务。真实 Claude D′ 归档不属于该授权。
 
@@ -131,3 +143,4 @@ RAW-159 要求把状态、库存、缓存、快捷键、导航、归档和诊断
 - RAW-164 按当时 `VerificationImpactTrace` 运行 Bridge、Kernel、Runtime Diagnostics 定向矩阵、canonical/public 语法与镜像、typecheck、1871-module production build 和 uTools validator；没有新的 testing-owner 全仓升级触发。其 20 秒窗口是历史 RAW-164 后置无回弹采样，已被 RAW-165/166 取代为“首个可信事件立即更新，后续样本只验证无回弹”，不得作为展示或接纳前置等待。
 - RAW-165 按最终受影响边界运行 Codex Bridge、Kernel、Runtime Diagnostics、Claude App State/Bridge/Unread、Controller 与 UI 定向矩阵，以及 canonical/public 镜像、语法、typecheck、1871-module production build 和 uTools validator。开发插件重载后只按真实事件到 Float `applied` 的链路验收，不加入 60 秒观望期或新可见状态。
 - RAW-166 按当前影响图运行 Kernel、Codex/Claude Bridge、Task Package/Controller、Runtime Diagnostics 定向矩阵，执行 error-memory graph validator、Preload 同步/镜像/语法、typecheck、production build、Runtime Identity、uTools validator、文档 code-link/规则一致性和同步组审计。真实 Host 只核验新 artifact 下的事件→canonical→Float 链，不重新引入 20/60 秒产品等待。
+- RAW-174 按当前 `VerificationImpactTrace` 运行 Claude Hook 折叠、来源选择与既有 SessionEnd 回归；同步 canonical/public Preload 语法与镜像、需求/错误记忆登记和文档链接。无新的 testing-owner 全仓升级触发。真实 uTools 重载后核验仍在跑的 Claude 行不得进入「待继续」。

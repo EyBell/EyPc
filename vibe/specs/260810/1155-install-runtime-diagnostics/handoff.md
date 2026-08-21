@@ -1,6 +1,6 @@
-# RAW-160 → RAW-166 Companion V4 Host Handoff
+# RAW-160 → RAW-174 Companion V4 Host Handoff
 
-Status: `RAW-166 increment-automated-verified / rebuilt-artifact-ready / documentation-synchronized / dev-plugin-reload-pending`
+Status: `RAW-174 increment-automated-verified / documentation-synchronized / dev-plugin-reload-pending`
 
 ## 安装边界
 
@@ -115,3 +115,4 @@ Status: `RAW-166 increment-automated-verified / rebuilt-artifact-ready / documen
 5. 核验当前 Claude App `1.30096.5` 的固定语法事件能进入 App-state lane，相邻未登记版本仍 fail closed；不得读取正文、工具参数或凭证。
 6. 以上首个可信证据应直接形成正确 package；后续采样只确认无回弹，不设置分钟级等待。未完成此矩阵前保持 `dev-plugin-reload-pending`。
 7. 项目规则 `EYPC-COMPANION-STATE-SOURCE-001` 已把上述来源法定人数固化为后续实现门禁；任何 TTL/陈旧度终态方案或少于三次 exact-empty 的 Side 清理都必须先做新的规则/需求变更评审。
+8. RAW-174：一条仍在发工具/权限或随后出现 App `Sending message` 的 Claude 父任务，不得因 Hook `StopFailure` 进入「待继续」或可归档。同项目其它已完成 Claude 行保持 completed。App 精确 failed/interrupted 仍待继续。不得读取正文、工具参数或凭证。

@@ -1,6 +1,6 @@
-# RAW-160 → RAW-166 Companion V4 Unified Runtime Spec
+# RAW-160 → RAW-174 Companion V4 Unified Runtime Spec
 
-Status: `RAW-166 increment-automated-verified / rebuilt-artifact-ready / documentation-synchronized / dev-plugin-reload-pending`
+Status: `RAW-174 increment-automated-verified / documentation-synchronized / dev-plugin-reload-pending`
 
 本规范是当前权威。RAW-159 的 V3 规格作为历史实现基线保留在 Git 与长期任务文档中；与本规范冲突时以 V4 为准。
 
@@ -164,3 +164,18 @@ Host push diagnostics 在 Kernel 提交后读取最终 canonical task 再分类�
 [error-memory index](../../../knowledge/error-memory/README.md#L1) 是唯一错误路由入口：七个责任模块只链接 leaf，不复制当前合同；leaf 恰有一个 Primary owner，candidate 不自动召回，superseded/retired 保留逻辑历史。[validator](../../../../scripts/validate-error-memory.mjs#L1) 验证元数据、唯一 identity/fingerprint、索引规模、断链、唯一 Primary、Related 上限、根模块覆盖和路由无环。产品/状态判断仍以 requirement → spec → architecture → verified error leaf 为权威顺序。
 
 冲突处置只有两种：若已有更新且明确的用户决策，则同步删除 current authority 中的旧规则并保留历史标注；若不存在明确决策且选择会改变产品语义，则记录冲突并请求用户决断。本轮已按 RAW-164 all-bead 决策清除 current PRD 中残留的 RAW-163 main-first 展示门槛；parent-only open 未冲突并继续有效。
+
+## 14. RAW-174 Claude StopFailure Must Not Close A Continuing Parent Turn
+
+change_review:
+- scanned_owners: [PRODUCT_REQUIREMENTS.md](../../PRODUCT_REQUIREMENTS.md#L147) Claude Turn close; [ARCHITECTURE.md](../../../knowledge/ARCHITECTURE.md#L144) events.cjs fold; [authority-reset spec](../../260807/claude-code-companion-authority-reset/spec.md#L206) StopFailure close; [SessionEnd error memory](../../../knowledge/error-memory/claude-generic-session-end-must-not-overwrite-completion.md#L1); RAW-160#21 new-phase-outranks-cache
+- visible_changes: Hook `StopFailure` no longer keeps a still-working parent Turn as「待继续」; App live running outranks Hook terminal unless Hook proves a newer Prompt
+- conflict_candidates: PRD/architecture/authority-reset wording that treated `Stop/StopFailure` as equivalent parent terminals
+- decision_status: explicit-current-request
+- decision_ref: 2026-08-17 D2 after live Claude 待继续 diagnosis
+
+[events.cjs](../../../../preload/claude/events.cjs#L1) 仍记录 Hook `StopFailure` 的 `lastStopFailureAt`，并可以暂把当前父 Turn 标为 `stopped` / `turnOpen=false`。同一 Turn 内随后的 `UserPromptSubmit`、`pre-tool`、`post-tool` 或 `permission-request` 证明父 Turn 仍开放，必须恢复 `turnOpen` 并按既有开放 Turn 规则投影 `running` / `waiting-input` / `waiting-approval`。成功 `Stop` 与已观察 open Turn 的 `SessionEnd` 之后，工具/子代理尾巴仍不得重开；只有新 Prompt 可以。`session-start` 与 lifecycle-only SessionEnd 单独不能重开，也不能阻止其后同 Turn 工具恢复。
+
+[code-sessions.cjs](../../../../preload/claude/code-sessions.cjs#L1) 在 App live-append 为 `running` / `waiting-*` 时，不得仅因 Hook 时间戳更新就选择 Hook `stopped`。Hook 只有在 `turnStartedAt` 严格新于该 App live 证据时才能覆盖。App 精确 failed/interrupted 仍进入 stopped/「待继续」。既有 SessionEnd lifecycle-only 与 observed-open 合同不变。
+
+原生 unread 不得把仍 live 或已被重开的 Turn 提升为 completed。禁止 TTL、转录正文或 unread 修复。自动化合同见 RAW-174#94。

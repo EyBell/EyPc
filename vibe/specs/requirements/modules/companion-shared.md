@@ -131,7 +131,7 @@
 
 ## Related Requirements
 
-- 无。跨域引用在叶子的 `relations` 字段登记。
+- [RAW-174](../claude-raw-174.md#L1) — Claude StopFailure 父 Turn 合同；来源选择与 Kernel 投影共用 companion-shared 运行时。跨域引用在叶子的 `relations` 字段登记。
 
 ## Historical Or Migration Sources
 
