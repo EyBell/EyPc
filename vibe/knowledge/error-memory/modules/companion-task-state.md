@@ -38,6 +38,7 @@ Link-only route for Codex/Claude canonical phase、Turn/Goal causality、root/Si
 - [Consumer cache and Float applied ACK](../companion-consumer-cache-and-float-applied-ack.md#L1)
 - [Local visibility does not need Provider evidence](../companion-local-visibility-must-not-need-provider-evidence.md#L1)
 - [Observation generation is not semantic revision](../companion-observation-generation-is-not-semantic-revision.md#L1)
+- [Kernel complete reapply must not drop Cursor cards](../kernel-complete-reapply-must-not-drop-cursor-cards.md#L1)
 - [Plan lifecycle and interrupted causality](../companion-plan-lifecycle-and-interrupted-causality.md#L1)
 - [Independent authorities must not share full refresh](../independent-authorities-coupled-by-full-refresh.md#L1)
 - [Watcher callback latency is not publication latency](../watcher-callback-latency-is-not-end-to-end-publication-latency.md#L1)
@@ -45,6 +46,7 @@ Link-only route for Codex/Claude canonical phase、Turn/Goal causality、root/Si
 ## Related Error Records
 
 - [Claude new phase must outrank previous cache](../claude-new-phase-must-outrank-previous-cache.md#L1)
+- [Claude StopFailure must not close a continuing parent turn](../claude-stop-failure-must-not-close-continuing-parent-turn.md#L1)
 
 ## Historical Or Migration Sources
 

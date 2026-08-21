@@ -26,6 +26,7 @@ Link-only route for task actions、archive guards、labels、selection、themes 
 - [Water preview renderer divergence](../codex-water-preview-renderer-divergence.md#L1)
 - [Water ring layer separation](../codex-water-ring-layer-separation.md#L1)
 - [External settings writes fail closed](../companion-external-settings-write-must-fail-closed.md#L1)
+- [Cursor user hooks loop_limit:0 rejects entire file](../cursor-hooks-loop-limit-zero-rejects-entire-user-config.md#L1)
 
 ## Related Error Records
 
