@@ -28,7 +28,7 @@ import {
 } from '../domain/codexAppearance'
 import { buildCodexCompactPresentation, codexBadgeText } from '../domain/codexPresentation'
 import { buildCodexEnvironmentPresentation } from '../domain/codexEnvironmentPresentation'
-import { claudeRegistrationRows, claudeSourceStatusText, resolveCompanionWaterBallPresentation } from '../domain/companionPresentation'
+import { claudeRegistrationRows, claudeSourceStatusText, cursorRegistrationRows, cursorSourceStatusText, resolveCompanionWaterBallPresentation } from '../domain/companionPresentation'
 import {
   CODEX_MAX_DYNAMIC_TASK_WINDOW_HOURS,
   CODEX_MAX_QUOTA_REFRESH_SECONDS,
@@ -277,8 +277,29 @@ function toggleClaude(enabled: boolean) {
   update({ providers: { ...props.snapshot.settings.providers, claude: enabled } })
 }
 
+const cursorStatusText = computed(() => cursorSourceStatusText({
+  enabled: props.snapshot.settings.providers.cursor === true,
+  available: props.snapshot.cursorAvailable,
+  reason: props.snapshot.cursorInventoryReason,
+  sessionCount: props.snapshot.cursorSessionCount,
+  hooks: props.snapshot.cursorHooks
+}))
+const cursorRegistered = computed(() => {
+  const hooks = props.snapshot.cursorHooks
+  return hooks === 'installed' || hooks === 'outdated'
+})
+const cursorRegistrationGrid = computed(() => cursorRegistrationRows(props.snapshot.cursorHooks))
+
+function toggleCursor(enabled: boolean) {
+  update({ providers: { ...props.snapshot.settings.providers, cursor: enabled } })
+}
+
 function registerClaude(register: boolean) {
   emit('dispatch', 'codex.claude.register', { register, statusline: true })
+}
+
+function registerCursor(register: boolean) {
+  emit('dispatch', 'codex.cursor.register', { register })
 }
 
 function changeStyle(style: CodexDisplayStyle) {
@@ -904,7 +925,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             type="button"
             class="codex-tip"
             aria-label="接入来源区域说明"
-            data-tip="Codex 与 Claude Code 是两个独立来源，可分别开关，也可同时开启共享同一个水球。关闭的来源完全不读取。"
+            data-tip="Codex、Claude Code 与 Cursor Agent 是独立来源，可分别开关。关闭的来源完全不读取。Cursor 一期只列本机 Agent 卡片，不读额度，也不能从插件跳进对话。"
           >i</button>
         </div>
         <label class="codex-switch-row">
@@ -921,6 +942,51 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
           />
           <i />
         </label>
+        <label class="codex-switch-row">
+          <span>
+            <strong>接入 Cursor Agent</strong>
+            <small>{{ cursorStatusText }}</small>
+          </span>
+          <input
+            type="checkbox"
+            :checked="snapshot.settings.providers.cursor"
+            data-operation-tooltip="接入 Cursor Agent"
+            data-operation-description="开启后只读本机 Cursor Agent 会话元数据并列入同一任务清单；默认关闭。不做额度。事件钩子需点下方按钮确认后才写入 ~/.cursor/hooks.json。不能从插件跳进对话。"
+            @change="toggleCursor(($event.target as HTMLInputElement).checked)"
+          />
+          <i />
+        </label>
+        <dl v-if="snapshot.settings.providers.cursor" class="codex-diagnostic-grid codex-claude-grid">
+          <div v-for="row in cursorRegistrationGrid" :key="row.id">
+            <dt class="has-detail">
+              <span>{{ row.label }}</span>
+              <button
+                type="button"
+                class="codex-tip codex-diagnostic-tip"
+                :aria-label="`${row.label}详情`"
+                :data-tip="row.detail"
+              >i</button>
+            </dt>
+            <dd :class="`is-${row.tone}`">{{ row.value }}</dd>
+          </div>
+        </dl>
+        <div v-if="snapshot.settings.providers.cursor" class="codex-claude-actions">
+          <button
+            type="button"
+            class="codex-secondary-button"
+            data-operation-tooltip="注册 Cursor 事件钩子"
+            data-operation-description="向 ~/.cursor/hooks.json 加法写入 EyPc 的观察脚本引用；保留你已有的钩子，可随时移除。失败开放，不阻断 Cursor。"
+            @click="registerCursor(true)"
+          >{{ cursorRegistered ? '重新注册钩子' : '注册事件钩子' }}</button>
+          <button
+            v-if="cursorRegistered"
+            type="button"
+            class="codex-secondary-button"
+            data-operation-tooltip="移除 Cursor 事件钩子"
+            data-operation-description="从 ~/.cursor/hooks.json 移除 EyPc 写入的条目，保留你原有的钩子。"
+            @click="registerCursor(false)"
+          >移除钩子</button>
+        </div>
         <label v-if="snapshot.settings.providers.claude" class="codex-switch-row">
           <span>
             <strong>允许读取 Claude App 额度</strong>

@@ -6,6 +6,7 @@ import {
   claudeRegistrationRows,
   claudeSetupHint,
   claudeSourceStatusText,
+  cursorSourceStatusText,
   companionQuotaChipAriaLabel,
   companionQuotaChipHint,
   companionQuotaFreshnessText,
@@ -38,7 +39,7 @@ const READY_ENVIRONMENT = {
 
 function slice(patch: Partial<CompanionSnapshotSlice> = {}): CompanionSnapshotSlice {
   return {
-    providers: { codex: true, claude: true },
+    providers: { codex: true, claude: true, cursor: false },
     claudeQuota: normalizeClaudeQuota({ five_hour: { used_percentage: 30 }, seven_day: { used_percentage: 55 } }),
     claudeEnvironment: READY_ENVIRONMENT,
     ...patch
@@ -112,6 +113,7 @@ describe('row markers', () => {
   it.each([
     ['Codex', { provider: 'codex' as const }, { provider: 'codex', label: '归属 Codex', tooltip: '归属 Codex' }],
     ['Claude', { provider: 'claude' as const }, { provider: 'claude', label: '归属 Claude', tooltip: '归属 Claude' }],
+    ['Cursor', { provider: 'cursor' as const }, { provider: 'cursor', label: '归属 Cursor', tooltip: '归属 Cursor' }],
     ['legacy Codex', {}, { provider: 'codex', label: '归属 Codex', tooltip: '归属 Codex' }]
   ])('always exposes one textual owner cue for %s cards', (_name, task, expected) => {
     expect(resolveCompanionRowMarker(task)).toEqual(expected)
@@ -125,6 +127,7 @@ describe('row markers', () => {
     ['Codex', { providers: ['codex' as const] }, { label: '归属 Codex', className: 'provider-codex', claudeOnly: false }],
     ['Claude', { providers: ['claude' as const] }, { label: '归属 Claude', className: 'provider-claude', claudeOnly: true }],
     ['shared', { providers: ['claude' as const, 'codex' as const] }, { label: '归属 Codex + Claude', className: 'provider-shared', claudeOnly: false }],
+    ['Cursor', { providers: ['cursor' as const] }, { label: '归属 Cursor', className: 'provider-cursor', claudeOnly: false }],
     ['legacy empty', {}, { label: '归属 Codex', className: 'provider-codex', claudeOnly: false }]
   ])('resolves one reusable %s project marker', (_name, project, expected) => {
     expect(resolveCompanionProjectMarker(project)).toMatchObject(expected)
@@ -133,6 +136,15 @@ describe('row markers', () => {
   it('derives a legacy project provider from its tasks', () => {
     expect(resolveCompanionProjectMarker({ tasks: [{ provider: 'claude' }] }))
       .toMatchObject({ providers: ['claude'], label: '归属 Claude', claudeOnly: true })
+  })
+
+  it('describes Cursor cold-inventory source status without quota language', () => {
+    expect(cursorSourceStatusText({ enabled: false, available: true, sessionCount: 3 })).toBe('关闭时不读取任何 Cursor 数据')
+    expect(cursorSourceStatusText({ enabled: true, available: false, sessionCount: 0 })).toBe('本机 Cursor 状态库不可读')
+    expect(cursorSourceStatusText({ enabled: true, available: false, reason: 'not-installed', sessionCount: 0 })).toBe('本机未找到 Cursor 状态库')
+    expect(cursorSourceStatusText({ enabled: true, available: false, reason: 'sqlite-unavailable', sessionCount: 0 })).toBe('当前 uTools 不能用内置 Node 读 Cursor 库')
+    expect(cursorSourceStatusText({ enabled: true, available: true, sessionCount: 2 })).toBe('已接入 2 条本机 Agent')
+    expect(cursorSourceStatusText({ enabled: true, available: true, sessionCount: 2, hooks: 'missing' })).toBe('已接入 2 条本机 Agent · 钩子未注册')
   })
 })
 

@@ -319,4 +319,36 @@ describe('canonical Companion task projection', () => {
     })
 
   })
+
+  it('keeps Cursor cards when a complete Kernel package is applied a second time', () => {
+    const cursorKey = 'cursor:86e0370a-21b3-434d-a1a3-0ce83edc5ddd'
+    const cursorCard: CodexTaskCard = {
+      ...card(),
+      key: cursorKey,
+      actionAlias: 'ct_cursor',
+      name: 'Cursor Agent',
+      originalName: 'Cursor Agent',
+      bucket: 'ongoing',
+      activityState: 'active',
+      archiveCapability: 'blocked-active',
+      canArchive: false,
+      provider: 'cursor'
+    }
+    const source = emptyConversationSnapshot()
+    const initialCard = card()
+    source.stopped = [initialCard]
+    source.ongoing = [cursorCard]
+    source.all = [initialCard, cursorCard]
+    source.stoppedCount = 1
+    source.ongoingCount = 1
+    source.sourceFingerprint = 'a'.repeat(64)
+    const state = applyCompanionTaskPackageViews(
+      buildCodexTaskStatePackage(source, { sourceRevision: CODEX_TASK_STATE_REVISION, now: 1_000 }),
+      packageFor(canonical(), 1)
+    )
+    expect(state.conversations.all.some((task) => task.key === cursorKey)).toBe(true)
+    expect(state.dynamic.groups.active.map((task) => task.key)).toEqual([cursorKey])
+    expect(state.dynamic.groups.unread.map((task) => task.key)).toEqual([key])
+    expect(state.dynamic.compactCounts.active).toBe(1)
+  })
 })

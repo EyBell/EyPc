@@ -6,6 +6,7 @@ import {
   type ClaudeQuotaSnapshot
 } from './claude'
 import {
+  COMPANION_PROVIDER_CYCLE_ORDER,
   COMPANION_PROVIDER_LABELS,
   companionTaskProvider,
   resolveCompanionWaterBallMapping,
@@ -125,7 +126,10 @@ export function resolveCompanionProjectMarker(
     : (project.tasks || []).map(companionTaskProvider))]
   if (!providers.length) providers.push('codex')
   const shared = providers.length > 1
-  const owner = shared ? 'Codex + Claude' : COMPANION_PROVIDER_LABELS[providers[0]]
+  const ordered = COMPANION_PROVIDER_CYCLE_ORDER.filter((provider) => providers.includes(provider))
+  const owner = shared
+    ? ordered.map((provider) => COMPANION_PROVIDER_LABELS[provider]).join(' + ')
+    : COMPANION_PROVIDER_LABELS[providers[0]]
   return {
     providers,
     label: `归属 ${owner}`,
@@ -648,6 +652,41 @@ export function claudeSourceStatusText(input: ClaudeSourceStatusInput): string {
   const version = input.environment?.cliVersion || ''
   const base = hint || (version ? `已连接 Claude Code ${version}` : '已连接 Claude Code')
   return count > 0 ? `${base} · App Code ${count} 个会话` : base
+}
+
+export function cursorSourceStatusText(input: {
+  enabled: boolean
+  available: boolean
+  sessionCount: number
+  reason?: string
+  hooks?: 'installed' | 'outdated' | 'missing' | 'unknown'
+}): string {
+  if (!input.enabled) return '关闭时不读取任何 Cursor 数据'
+  if (!input.available) {
+    if (input.reason === 'not-installed') return '本机未找到 Cursor 状态库'
+    if (input.reason === 'sqlite-unavailable') return '当前 uTools 不能用内置 Node 读 Cursor 库'
+    return '本机 Cursor 状态库不可读'
+  }
+  const count = Number.isFinite(input.sessionCount) ? Math.max(0, Math.trunc(input.sessionCount)) : 0
+  const base = count > 0 ? `已接入 ${count} 条本机 Agent` : '已接入，当前没有本机 Agent'
+  if (input.hooks === 'outdated') return `${base} · 钩子已过期`
+  if (input.hooks === 'missing') return `${base} · 钩子未注册`
+  return base
+}
+
+export function cursorRegistrationRows(
+  hooks: 'installed' | 'outdated' | 'missing' | 'unknown' | undefined
+): ClaudeRegistrationRow[] {
+  const state = hooks || 'unknown'
+  return [{
+    id: 'hooks',
+    label: '事件钩子',
+    value: state === 'installed' ? '已注册' : state === 'outdated' ? '已过期' : state === 'missing' ? '未注册' : '未知',
+    tone: state === 'installed' ? 'ready' : state === 'unknown' ? 'muted' : 'warning',
+    detail: state === 'outdated'
+      ? '已注册的钩子命令与当前版本不一致。任务状态会退回冷读，点「重新注册钩子」即可恢复实时。'
+      : '事件钩子决定进行中状态是否实时。未注册时仍能从本机库存冷读，但不会随 Cursor Agent 动作即时变化。'
+  }]
 }
 
 /* ------------------------------------------------------------------ *

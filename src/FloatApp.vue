@@ -588,11 +588,17 @@ const selectedUiTab = ref<UiConversationTab>('dynamic')
 const projectProviderFilter = ref<CompanionProjectFilter>('all')
 const appliedCompanionRevision = ref(0)
 const appliedBaseRevision = ref(0)
-const projectFilters = [
-  { id: 'all' as const, label: '全部' },
-  { id: 'codex' as const, label: '只显示 Codex' },
-  { id: 'claude' as const, label: '只显示 Claude' }
-]
+const projectFilters = computed(() => {
+  const filters: Array<{ id: CompanionProjectFilter; label: string }> = [
+    { id: 'all', label: '全部' },
+    { id: 'codex', label: '只显示 Codex' },
+    { id: 'claude', label: '只显示 Claude' }
+  ]
+  if (snapshot.value?.companion?.providers.cursor === true) {
+    filters.push({ id: 'cursor', label: '只显示 Cursor' })
+  }
+  return filters
+})
 
 const projectCount = computed(() => {
   const value = conversations.value
@@ -640,9 +646,9 @@ function onProjectFilterKeydown(event: KeyboardEvent, index: number) {
   const nextIndex = event.key === 'Home'
     ? 0
     : event.key === 'End'
-      ? projectFilters.length - 1
-      : (index + (event.key === 'ArrowRight' ? 1 : -1) + projectFilters.length) % projectFilters.length
-  setProjectProviderFilter(projectFilters[nextIndex].id)
+      ? projectFilters.value.length - 1
+      : (index + (event.key === 'ArrowRight' ? 1 : -1) + projectFilters.value.length) % projectFilters.value.length
+  setProjectProviderFilter(projectFilters.value[nextIndex].id)
   void nextTick(() => rootElement.value?.querySelectorAll<HTMLElement>('.float-project-provider-tabs [role="tab"]')[nextIndex]?.focus())
 }
 

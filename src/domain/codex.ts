@@ -1,5 +1,5 @@
 import type { CompanionProviderEnablement, CompanionProviderId } from './companionProvider'
-import { normalizeCompanionEnablement, orderCompanionTasksForDisplay, isCompanionAttentionState } from './companionProvider'
+import { DEFAULT_COMPANION_ENABLEMENT, normalizeCompanionEnablement, orderCompanionTasksForDisplay, isCompanionAttentionState } from './companionProvider'
 // `codexAppearance` owns the color math (HSL, contrast) and only type-imports this
 // module, so this value edge is one-directional at runtime: the type import is
 // erased and the emitted `codexAppearance` module has no imports at all.
@@ -1288,7 +1288,7 @@ export function defaultCodexSettings(): CodexSettings {
     timeWindowDays: 30,
     dynamicTaskWindowHours: CODEX_DEFAULT_DYNAMIC_TASK_WINDOW_HOURS,
     actionDefaultProjectKey: '',
-    providers: { codex: true, claude: false },
+    providers: { ...DEFAULT_COMPANION_ENABLEMENT },
     claudeAppQuotaAccess: false,
     claudeQuotaFallback: false,
     compactFields: [...COMPACT_FIELDS],

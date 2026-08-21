@@ -49,6 +49,17 @@ export const UTOOLS_PRELOAD_MODULE_GROUPS = Object.freeze([
       'open.cjs',
       'quota.cjs'
     ]
+  },
+  {
+    id: 'cursor',
+    directory: 'cursor',
+    files: [
+      'index.cjs',
+      'inventory.cjs',
+      'settings.cjs',
+      'scripts.cjs',
+      'events.cjs'
+    ]
   }
 ])
 
