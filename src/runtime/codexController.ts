@@ -65,6 +65,11 @@ import {
   type ClaudeCodeObservation,
   type ClaudeCodeUnreadObservation
 } from '../domain/claudeCode'
+import {
+  normalizeCursorAgentObservation,
+  projectCursorAgentTaskCards,
+  type CursorAgentObservation
+} from '../domain/cursorAgent'
 import { normalizeCodexModelCatalog } from '../domain/codexNewThread'
 import { CODEX_ACTION_HOST_RUNTIME_REVISION, isCodexActionStartAccepted } from '../domain/codexEnvironment'
 import {
@@ -74,6 +79,7 @@ import {
 } from '../domain/codexPresentation'
 import {
   applyCompanionTaskPackageViews,
+  foldCursorCardsIntoTaskState,
   emptyCompanionTaskPackage,
   COMPANION_TASK_KERNEL_REVISION,
   COMPANION_TASK_PACKAGE_REVISION,
@@ -113,6 +119,10 @@ export interface CodexRuntimeView {
    * status only; the cards themselves already arrive merged in `taskState`.
    */
   claudeCodeSessionCount: number
+  cursorSessionCount: number
+  cursorAvailable: boolean
+  cursorInventoryReason: string
+  cursorHooks: 'installed' | 'outdated' | 'missing' | 'unknown'
   claudeQuota: ClaudeQuotaSnapshot
   refreshing: boolean
   floatHost: {
@@ -467,6 +477,14 @@ export function createCodexController(options: CodexControllerOptions) {
   let lastClaudeTaskPublishRevision = 0
   let lastClaudeReadAt = 0
   let lastClaudeQuotaReadAt = 0
+  let cursorSessions: CursorAgentObservation[] = []
+  let cursorAvailable = false
+  let cursorInventoryReason = ''
+  let lastCursorReadAt = 0
+  let cursorInventorySettled = true
+  let cursorHooks: 'installed' | 'outdated' | 'missing' | 'unknown' = 'unknown'
+  const cursorHookStates = new Map<string, { phase: CursorAgentObservation['hookPhase']; turnOpen: boolean; lastEventAt: number }>()
+  let cursorEventDispose: (() => void) | null = null
   type ClaudeLaneRefreshResult = { changed: boolean; available: boolean }
   let claudeStateInFlight: Promise<ClaudeLaneRefreshResult> | null = null
   let claudeInventoryInFlight: Promise<boolean> | null = null
@@ -627,6 +645,10 @@ export function createCodexController(options: CodexControllerOptions) {
     return isCompanionProviderEnabled(codexState().settings.providers, 'claude')
   }
 
+  function cursorEnabled(): boolean {
+    return isCompanionProviderEnabled(codexState().settings.providers, 'cursor')
+  }
+
   /** Claude task cards for the current lane state; empty while disabled. */
   function claudeCards(_now: number) {
     if (!claudeEnabled() || !claudeCodeSessions.length) return []
@@ -658,6 +680,23 @@ export function createCodexController(options: CodexControllerOptions) {
     }))
   }
 
+  function cursorCards(_now: number) {
+    if (!cursorEnabled() || !cursorSessions.length) return []
+    const state = codexState()
+    const dismissedByKey = new Map(state.receipts.map((receipt) => [receipt.key, receipt.dismissedActivityRecency || 0]))
+    const aliases = Object.fromEntries(state.taskAliases.map((entry) => [entry.key, entry.alias]))
+    const projectAliases = Object.fromEntries(state.projectAliases.map((entry) => [entry.key, entry.alias]))
+    const localPinnedKeys = state.localPins.filter((pin) => pin.kind === 'task').map((pin) => pin.key)
+    const sessions = cursorSessionsWithHooks()
+    const open = projectCursorAgentTaskCards(sessions, { aliases, projectAliases, localPinnedKeys })
+    const hiddenKeys = open
+      .filter((card) => card.revisionAt > 0 && (dismissedByKey.get(card.key) || 0) >= card.revisionAt)
+      .map((card) => card.key)
+    return hiddenKeys.length
+      ? projectCursorAgentTaskCards(sessions, { aliases, projectAliases, hiddenKeys, localPinnedKeys })
+      : open
+  }
+
   function publishTaskStatePackage(conversations: ConversationSnapshotV1, now = Date.now()) {
     // Claude cards are folded in here rather than inside the Codex projection,
     // so the Codex-only path stays byte-identical to the previous release.
@@ -671,7 +710,7 @@ export function createCodexController(options: CodexControllerOptions) {
     // omits the hidden-unread term the canonical Codex counter includes. Running
     // them with nothing to merge would silently change a default-configuration
     // number.
-    const cards = claudeCards(now)
+    const cards = [...claudeCards(now), ...cursorCards(now)]
     // Skip both aggregate helpers when there is genuinely nothing to do. They
     // recompute counters from their own arrays, and that recomputation omits the
     // hidden-unread term the canonical Codex counter includes — running them on
@@ -682,7 +721,10 @@ export function createCodexController(options: CodexControllerOptions) {
     const carriesForeign = conversations.all.some((task) => companionTaskProvider(task) !== 'codex')
     const merged = !cards.length && !carriesForeign
       ? conversations
-      : mergeCompanionConversations(withoutCompanionProvider(conversations, 'claude'), cards)
+      : mergeCompanionConversations(
+        withoutCompanionProvider(withoutCompanionProvider(conversations, 'claude'), 'cursor'),
+        cards
+      )
     sourceTaskState = buildCodexTaskStatePackage(merged, {
       sourceRevision: taskStateSourceRevision,
       now,
@@ -695,7 +737,12 @@ export function createCodexController(options: CodexControllerOptions) {
       ? companionTaskPackage
       : lastCompleteCompanionTaskPackage
     if (projectionPackage) {
-      taskState = applyCompanionTaskPackageViews(sourceTaskState, projectionPackage)
+      // Kernel V4 still owns only Codex/Claude. Cursor cold cards are folded
+      // back after the view projection so they are not dropped.
+      taskState = foldCursorCardsIntoTaskState(
+        applyCompanionTaskPackageViews(sourceTaskState, projectionPackage),
+        cursorCards(now)
+      )
     } else if (!companionKernel) {
       taskState = sourceTaskState
     }
@@ -1002,6 +1049,171 @@ export function createCodexController(options: CodexControllerOptions) {
       publishTaskStatePackage(sourceTaskState.conversations)
       options.notify()
     }).catch(() => { /* claude lane degrades on its own */ })
+  }
+
+  function cursorSessionsWithHooks(): CursorAgentObservation[] {
+    if (!cursorHookStates.size) return cursorSessions
+    return cursorSessions.map((session) => {
+      const hook = cursorHookStates.get(session.composerId)
+      if (!hook) return session
+      return {
+        ...session,
+        ...(hook.turnOpen ? { hookTurnOpen: true } : {}),
+        ...(hook.phase ? { hookPhase: hook.phase } : {}),
+        ...(hook.lastEventAt ? { hookLastEventAt: hook.lastEventAt } : {})
+      }
+    })
+  }
+
+  function applyCursorHookState() {
+    const bridge = options.platform.cursor
+    if (!bridge || typeof bridge.readHookState !== 'function') return false
+    let rows: Array<{ sessionId: string; phase: string; turnOpen: boolean; lastEventAt: number }>
+    try {
+      rows = bridge.readHookState() || []
+    } catch {
+      return false
+    }
+    const next = new Map<string, { phase: CursorAgentObservation['hookPhase']; turnOpen: boolean; lastEventAt: number }>()
+    for (const row of rows) {
+      const sessionId = typeof row.sessionId === 'string' ? row.sessionId.trim() : ''
+      if (!sessionId) continue
+      const phase = row.phase === 'running' || row.phase === 'completed' || row.phase === 'stopped'
+        ? row.phase
+        : undefined
+      next.set(sessionId, {
+        phase,
+        turnOpen: row.turnOpen === true,
+        lastEventAt: Number(row.lastEventAt) || 0
+      })
+    }
+    let changed = next.size !== cursorHookStates.size
+    if (!changed) {
+      for (const [key, value] of next) {
+        const previous = cursorHookStates.get(key)
+        if (!previous || previous.phase !== value.phase || previous.turnOpen !== value.turnOpen || previous.lastEventAt !== value.lastEventAt) {
+          changed = true
+          break
+        }
+      }
+    }
+    cursorHookStates.clear()
+    for (const [key, value] of next) cursorHookStates.set(key, value)
+    return changed
+  }
+
+  function subscribeCursorEvents() {
+    if (disposed || !cursorEnabled()) {
+      unsubscribeCursorEvents()
+      return
+    }
+    const bridge = options.platform.cursor
+    if (!bridge || typeof bridge.watchEvents !== 'function' || cursorEventDispose) return
+    try {
+      cursorEventDispose = bridge.watchEvents(() => {
+        if (disposed || !cursorEnabled()) return
+        const changed = applyCursorHookState()
+        if (!changed) return
+        publishTaskStatePackage(sourceTaskState.conversations)
+        options.notify()
+      })
+    } catch {
+      cursorEventDispose = null
+    }
+  }
+
+  function unsubscribeCursorEvents() {
+    if (!cursorEventDispose) return
+    try { cursorEventDispose() } catch { /* teardown is best effort */ }
+    cursorEventDispose = null
+  }
+
+  function resetCursorLane() {
+    unsubscribeCursorEvents()
+    cursorSessions = []
+    cursorAvailable = false
+    cursorInventoryReason = ''
+    lastCursorReadAt = 0
+    cursorInventorySettled = true
+    cursorHooks = 'unknown'
+    cursorHookStates.clear()
+  }
+
+  async function refreshCursor() {
+    if (disposed || !cursorEnabled()) return false
+    const bridge = options.platform.cursor
+    if (!bridge || typeof bridge.readInventory !== 'function') {
+      cursorAvailable = false
+      cursorInventoryReason = 'unknown'
+      cursorInventorySettled = true
+      return false
+    }
+    try {
+      const snapshot = await bridge.readInventory()
+      const next = Array.isArray(snapshot?.sessions)
+        ? snapshot.sessions.flatMap((row) => {
+          const observation = normalizeCursorAgentObservation(row)
+          return observation ? [observation] : []
+        })
+        : []
+      const available = snapshot?.available === true
+      const reason = typeof snapshot?.reason === 'string' && snapshot.reason ? snapshot.reason : (available ? 'ready' : 'unknown')
+      const changed = available !== cursorAvailable
+        || reason !== cursorInventoryReason
+        || next.length !== cursorSessions.length
+        || next.some((row, index) => {
+          const previous = cursorSessions[index]
+          return !previous
+            || previous.composerId !== row.composerId
+            || previous.diskStatus !== row.diskStatus
+            || previous.hasUnreadMessages !== row.hasUnreadMessages
+            || previous.hasPendingPlan !== row.hasPendingPlan
+            || previous.hasBlockingPendingActions !== row.hasBlockingPendingActions
+            || previous.unfinishedRunAt !== row.unfinishedRunAt
+            || previous.lastUpdatedAt !== row.lastUpdatedAt
+            || previous.name !== row.name
+        })
+      cursorSessions = next
+      cursorAvailable = available
+      cursorInventoryReason = reason
+      lastCursorReadAt = Date.now()
+      cursorInventorySettled = true
+      const hookChanged = applyCursorHookState()
+      if (typeof bridge.inspect === 'function') {
+        try {
+          const inspected = await bridge.inspect()
+          const hooks = inspected?.hooks
+          const nextHooks = hooks === 'installed' || hooks === 'outdated' || hooks === 'missing' || hooks === 'unknown'
+            ? hooks
+            : 'unknown'
+          if (nextHooks !== cursorHooks) {
+            cursorHooks = nextHooks
+            return true
+          }
+        } catch { /* inspect degrades independently */ }
+      }
+      return changed || hookChanged
+    } catch {
+      cursorAvailable = false
+      cursorInventoryReason = 'degraded'
+      cursorInventorySettled = true
+      return false
+    }
+  }
+
+  function syncCursorEnablement() {
+    if (!cursorEnabled()) {
+      resetCursorLane()
+      publishTaskStatePackage(sourceTaskState.conversations)
+      options.notify()
+      return
+    }
+    subscribeCursorEvents()
+    void refreshCursor().then((changed) => {
+      if (disposed) return
+      if (changed) publishTaskStatePackage(sourceTaskState.conversations)
+      options.notify()
+    }).catch(() => { /* cursor lane degrades on its own */ })
   }
 
   function resetClaudeLane() {
@@ -1854,6 +2066,15 @@ export function createCodexController(options: CodexControllerOptions) {
         options.notify()
       }).catch(() => { /* claude lane degrades on its own */ })
     }
+    const includeCursor = !actionPreflight && cursorEnabled()
+      && (input.force === true || lastCursorReadAt <= 0 || now - lastCursorReadAt >= 5_000)
+    if (includeCursor) {
+      void refreshCursor().then((changed) => {
+        if (disposed || !changed || runtimeGeneration !== runtimeToken) return
+        publishTaskStatePackage(sourceTaskState.conversations)
+        options.notify()
+      }).catch(() => { /* cursor lane degrades on its own */ })
+    }
     if (includeClaudeQuota) kickClaudeQuota(now)
     if (!includeQuota && !includeThreads) {
       schedule()
@@ -2138,9 +2359,11 @@ export function createCodexController(options: CodexControllerOptions) {
     codexState().settings = next
     const codexEnablementChanged = current.providers.codex !== next.providers.codex
     const claudeEnablementChanged = current.providers.claude !== next.providers.claude
-    const providerEnablementChanged = codexEnablementChanged || claudeEnablementChanged
+    const cursorEnablementChanged = current.providers.cursor !== next.providers.cursor
+    const providerEnablementChanged = codexEnablementChanged || claudeEnablementChanged || cursorEnablementChanged
     if (codexEnablementChanged) codexInventorySettled = next.providers.codex !== true
     if (claudeEnablementChanged) claudeInventorySettled = next.providers.claude !== true
+    if (cursorEnablementChanged) cursorInventorySettled = next.providers.cursor !== true
     const inboxChanged = current.conversationInboxEnabled !== next.conversationInboxEnabled
     if (inboxChanged) {
       runtimeGeneration += 1
@@ -2167,6 +2390,7 @@ export function createCodexController(options: CodexControllerOptions) {
     // A provider toggle must take effect now: disabling should clear the lane
     // immediately rather than leaving stale cards until the next Codex tick.
     if (claudeEnablementChanged) syncClaudeEnablement()
+    if (cursorEnablementChanged) syncCursorEnablement()
     return true
   }
 
@@ -2251,6 +2475,7 @@ export function createCodexController(options: CodexControllerOptions) {
     const providers = codexState().settings.providers
     return (providers.codex !== true || codexInventorySettled)
       && (providers.claude !== true || claudeInventorySettled)
+      && (providers.cursor !== true || cursorInventorySettled)
   }
 
   function consumeNavigationResults() {
@@ -2567,6 +2792,10 @@ export function createCodexController(options: CodexControllerOptions) {
     if (!key || disposed || !isFeatureEnabled()) return false
     if (!taskOperationsAllowed()) return rejectRuntimeMismatch()
     const task = allTasks().find((item) => item.key === key)
+    if (companionTaskProvider(task) === 'cursor' || key.startsWith('cursor:')) {
+      options.setMessage('Cursor 对话跳转尚未验证，当前不能从插件打开')
+      return false
+    }
     if (!companionKernel) {
       options.setMessage('V4 任务 Kernel 未加载，需要重新接入或重载')
       return false
@@ -3485,6 +3714,7 @@ export function createCodexController(options: CodexControllerOptions) {
       stopActivityListener = options.platform.codex.onActivityChanged?.((delta) => applyActivityDelta(delta)) || null
       subscribeClaudeQuotaLifecycle()
       subscribeClaudeEvents()
+      subscribeCursorEvents()
       if (isFeatureEnabled()) void inspectEnvironment()
       syncActivation(true)
     },
@@ -3507,12 +3737,30 @@ export function createCodexController(options: CodexControllerOptions) {
       for (const timer of claudeUnreadRecheckTimers) clearTimeout(timer)
       claudeUnreadRecheckTimers.clear()
       unsubscribeClaudeEvents()
+      unsubscribeCursorEvents()
       if (companionKernelLease) companionKernel?.detach?.({ lease: companionKernelLease })
       companionKernelLease = 0
     },
     syncActivation,
     refresh: () => refresh({ force: true }),
     /** Registers or removes the explicitly confirmed Claude hook/status line. */
+    async setCursorRegistration(register: boolean) {
+      const bridge = options.platform.cursor
+      if (!bridge || typeof bridge.install !== 'function' || typeof bridge.uninstall !== 'function') {
+        options.setMessage('Cursor 模块不可用')
+        return false
+      }
+      const result = register ? await bridge.install() : await bridge.uninstall()
+      if (!result?.ok) {
+        options.setMessage(result?.message || (register ? 'Cursor 注册失败' : 'Cursor 注销失败'))
+        return false
+      }
+      options.setMessage(register ? '已注册 Cursor 事件钩子' : '已移除 Cursor 事件钩子')
+      await refreshCursor()
+      publishTaskStatePackage(sourceTaskState.conversations)
+      options.notify()
+      return true
+    },
     async setClaudeRegistration(register: boolean, request: { statusline?: boolean } = {}) {
       const bridge = options_platform_claude()
       if (!bridge) {
@@ -3591,6 +3839,10 @@ export function createCodexController(options: CodexControllerOptions) {
           (total, observation) => total + (observation.isArchived ? 0 : 1),
           0
         ),
+        cursorSessionCount: cursorSessions.length,
+        cursorAvailable,
+        cursorInventoryReason,
+        cursorHooks,
         claudeQuota,
         refreshing,
         floatHost: {

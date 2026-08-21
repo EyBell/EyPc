@@ -182,6 +182,49 @@ try {
   claudeBridgeLoadError = String(error && error.message || error || 'claude module unavailable')
 }
 
+// Cursor Agent companion. Same guarded-require shape as Claude: a missing
+// module degrades this provider alone. Phase 1 is cold inventory; open stays
+// unavailable because jump is still live-failed.
+let cursorBridge = null
+let cursorBridgeLoadError = ''
+try {
+  let cursorModule = null
+  let cursorRelativeLoadError = null
+  try {
+    cursorModule = require('./cursor/index.cjs')
+  } catch (error) {
+    cursorRelativeLoadError = error
+  }
+  if (!cursorModule) {
+    const cursorBaseCandidates = [
+      typeof __dirname === 'string' ? __dirname : '',
+      process.cwd(),
+      path.join(process.cwd(), 'preload'),
+      path.join(process.cwd(), 'public')
+    ].filter(Boolean)
+    for (const base of Array.from(new Set(cursorBaseCandidates))) {
+      try {
+        cursorModule = require(path.join(base, 'cursor', 'index.cjs'))
+        break
+      } catch {}
+    }
+  }
+  const createCursorBridge = cursorModule && cursorModule.createCursorBridge
+  if (typeof createCursorBridge !== 'function') throw cursorRelativeLoadError || new Error('cursor module factory unavailable')
+  cursorBridge = createCursorBridge({
+    fs,
+    path,
+    os,
+    process,
+    platform: process.platform,
+    env: process.env,
+    execFileSync,
+    dataDirectory: resolveCursorDataDirectory()
+  })
+} catch (error) {
+  cursorBridgeLoadError = String(error && error.message || error || 'cursor module unavailable')
+}
+
 // Process-lifetime companion task authority. Provider adapters only contribute
 // raw evidence and capabilities; this Kernel owns the canonical package,
 // cursor and dispatch arbitration across mainHide/Renderer remounts.
@@ -924,6 +967,20 @@ function codexRolloutPendingPlanStateText(text) {
 const CODEX_ACTION_RUNNER_MIN_WIDTH = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_WIDTH ?? 720
 const CODEX_ACTION_RUNNER_MIN_HEIGHT = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_HEIGHT ?? 420
 
+function cursorUnavailable(shape) {
+  const message = `Cursor 模块未加载：${cursorBridgeLoadError || 'unknown error'}`
+  if (shape === 'inventory') {
+    return { revision: '', available: false, reason: 'unknown', sessions: [], truncated: false, readAt: Date.now() }
+  }
+  if (shape === 'environment') {
+    return { available: false, reason: 'unknown', sessionCount: 0, readAt: Date.now(), hooks: 'unknown' }
+  }
+  if (shape === 'register') {
+    return { ok: false, message }
+  }
+  return { outcome: 'unavailable', confirmsRead: false, message }
+}
+
 function claudeUnavailable(shape) {
   const message = `Claude 模块未加载：${claudeBridgeLoadError || 'unknown error'}`
   if (shape === 'snapshot') return { version: 1, revision: '', sessions: [], truncated: false, quota: null, readAt: Date.now() }
@@ -1400,6 +1457,23 @@ function resolveMqttSqlitePath() {
     }
   }
   return path.join(baseDir, 'mqtt-archive.sqlite')
+}
+
+function resolveCursorDataDirectory() {
+  let baseDir = ''
+  try {
+    if (globalThis.utools && typeof globalThis.utools.getPath === 'function') {
+      baseDir = String(globalThis.utools.getPath('userData') || '').trim()
+    }
+  } catch {}
+  if (!baseDir) {
+    try {
+      baseDir = path.join(os.homedir(), '.eypc')
+    } catch {
+      baseDir = path.join(process.cwd(), '.eypc')
+    }
+  }
+  return path.join(baseDir, 'cursor-companion')
 }
 
 function resolveClaudeDataDirectory() {
@@ -3539,6 +3613,20 @@ function codexWaitingEvidenceVisible(waitingState, flag, observedSequence) {
   return codexWaitingEvidence ? codexWaitingEvidence.codexWaitingEvidenceVisible(waitingState, flag, observedSequence) : true
 }
 
+function codexDesktopRuntimeHasWaitingFlags(runtime) {
+  return (Array.isArray(runtime?.activeFlags) ? runtime.activeFlags : [])
+    .some((flag) => flag === 'waitingOnUserInput' || flag === 'waitingOnApproval')
+}
+
+function codexDesktopRuntimeIsPlainActive(runtime) {
+  return runtime?.type === 'active' && !codexDesktopRuntimeHasWaitingFlags(runtime)
+}
+
+function codexDesktopRuntimeBecamePlainActive(previousRuntime, currentRuntime) {
+  if (!codexDesktopRuntimeIsPlainActive(currentRuntime) || !previousRuntime?.type) return false
+  return !codexDesktopRuntimeIsPlainActive(previousRuntime)
+}
+
 // A failed load returns no sequences rather than guessing at a watermark:
 // callers merge this into a larger sequences map, so an empty result simply
 // contributes nothing this round.
@@ -4396,6 +4484,46 @@ class CodexDesktopCompanionBridge {
         ? sequence
         : codexNextLiveEvidenceSequence()
     })
+    return true
+  }
+
+  // A leftover plan/question request is waiting evidence only while Desktop is
+  // idle or itself flagged as waiting. Once runtime resumes plain-active, the
+  // same already-observed wait is stale continuation residue, not a new wait.
+  clearStaleWaitingAfterRuntimeResume(
+    threadId,
+    previousRuntime,
+    currentRuntime,
+    currentRequests,
+    shadow = null,
+    previousRequests = []
+  ) {
+    if (!codexDesktopRuntimeBecamePlainActive(previousRuntime, currentRuntime)) return false
+    const previouslyWaiting = new Set((Array.isArray(previousRequests) ? previousRequests : [])
+      .map(codexDesktopRequestFlag)
+      .filter(Boolean))
+    if (codexDesktopRuntimeHasWaitingFlags(previousRuntime)) {
+      for (const flag of previousRuntime.activeFlags) previouslyWaiting.add(flag)
+    }
+    const flags = [...new Set((Array.isArray(currentRequests) ? currentRequests : [])
+      .map(codexDesktopRequestFlag)
+      .filter(Boolean))]
+      .filter((flag) => previouslyWaiting.has(flag))
+    if (!flags.length) return false
+    const sequence = this.clearWaitingEvidence(threadId, flags)
+    if (shadow) {
+      shadow.activityEvidence = 'activity-event'
+      shadow.activityEventSequence = Math.max(Number(shadow.activityEventSequence) || 0, sequence)
+      delete shadow.suppressUncorroboratedActive
+    }
+    const knownThreadId = shadow?.sideConversation && validCodexThreadId(shadow.parentThreadId)
+      ? shadow.parentThreadId
+      : threadId
+    const known = codexActivityInventory.get(knownThreadId)
+    if (known) {
+      delete known.pendingCompletedPlanItem
+      known.connectorPlanImplementationOnly = false
+    }
     return true
   }
 
@@ -5403,6 +5531,14 @@ class CodexDesktopCompanionBridge {
         shadow.runtime?.activeFlags,
         shadow.requests
       )
+      this.clearStaleWaitingAfterRuntimeResume(
+        params.conversationId,
+        previousShadow?.runtime,
+        shadow.runtime,
+        shadow.requests,
+        shadow,
+        previousShadow?.requests
+      )
       this.cancelWaitingEdgeRefresh(params.conversationId)
       shadow.ownerClientId = ownerClientId
       const hintedParentThreadId = codexSideParentThreadId(params.conversationId)
@@ -5491,6 +5627,9 @@ class CodexDesktopCompanionBridge {
     }
     const previousActivity = codexDesktopShadowActivity(shadow)
     const wasActive = previousActivity?.status === 'active'
+    const previousRuntime = shadow.runtime
+      ? { type: shadow.runtime.type, activeFlags: [...(shadow.runtime.activeFlags || [])] }
+      : null
     const previousRuntimeFlags = [...(shadow.runtime?.activeFlags || [])]
     const previousRequests = [...(shadow.requests || [])]
     let containsReadStatePatch = false
@@ -5533,6 +5672,14 @@ class CodexDesktopCompanionBridge {
       shadow.runtime?.activeFlags,
       shadow.requests,
       shadow.activityEventSequence
+    )
+    this.clearStaleWaitingAfterRuntimeResume(
+      params.conversationId,
+      previousRuntime,
+      shadow.runtime,
+      shadow.requests,
+      shadow,
+      previousRequests
     )
     const waitingState = this.attachWaitingState(params.conversationId, shadow)
     codexRememberDesktopRequestObservations(waitingState, shadow.requests)
@@ -14154,6 +14301,32 @@ window.eypcPlatform = {
       loadError: claudeBridgeLoadError
     }),
     close: () => { if (claudeBridge) claudeBridge.close() }
+  },
+  cursor: {
+    inspect: () => cursorBridge ? cursorBridge.inspect() : cursorUnavailable('environment'),
+    readInventory: () => cursorBridge ? cursorBridge.readInventory() : cursorUnavailable('inventory'),
+    readHookState: () => cursorBridge && typeof cursorBridge.readHookState === 'function'
+      ? cursorBridge.readHookState()
+      : [],
+    watchEvents: (...args) => cursorBridge && typeof cursorBridge.watchEvents === 'function'
+      ? cursorBridge.watchEvents(...args)
+      : () => {},
+    install: (...args) => cursorBridge && typeof cursorBridge.install === 'function'
+      ? cursorBridge.install(...args)
+      : cursorUnavailable('register'),
+    uninstall: (...args) => cursorBridge && typeof cursorBridge.uninstall === 'function'
+      ? cursorBridge.uninstall(...args)
+      : cursorUnavailable('register'),
+    openTask: (...args) => cursorBridge
+      ? cursorBridge.openTask(...args)
+      : Promise.resolve(cursorUnavailable('open')),
+    diagnostics: () => ({
+      ...(cursorBridge && typeof cursorBridge.diagnostics === 'function' ? cursorBridge.diagnostics() : {}),
+      revision: cursorBridge ? cursorBridge.revision : '',
+      loaded: Boolean(cursorBridge),
+      loadError: cursorBridgeLoadError
+    }),
+    close: () => { if (cursorBridge) cursorBridge.close() }
   },
   companionKernel: companionTaskKernel
     ? {

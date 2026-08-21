@@ -14,6 +14,7 @@ import {
   isCompanionAttentionState,
   isCompanionLivePhase
 } from './companionProvider'
+import { mergeCompanionConversations, withoutCompanionProvider } from './companionAggregate'
 import type { CodexTaskStatePackageV1 } from './codexPresentation'
 
 export const COMPANION_TASK_KERNEL_REVISION = 'companion-task-kernel-v4'
@@ -137,7 +138,7 @@ export interface CompanionTaskPackageDraftV4 {
 }
 
 export type CompanionSourceLane = 'membership' | 'phase' | 'unread'
-export type CompanionSourceLaneGenerations = Record<CompanionProviderId, Record<CompanionSourceLane, number>>
+export type CompanionSourceLaneGenerations = Record<Exclude<CompanionProviderId, 'cursor'>, Record<CompanionSourceLane, number>>
 
 export interface CompanionTaskPackageViewsV4 {
   groups: {
@@ -204,7 +205,7 @@ function allTaskCards(taskState: CodexTaskStatePackageV1): CodexTaskCard[] {
 }
 
 export function emptyCompanionTaskPackage(
-  providers: CompanionProviderEnablement = { codex: true, claude: false }
+  providers: CompanionProviderEnablement = { codex: true, claude: false, cursor: false }
 ): CompanionTaskPackageV4 {
   return {
     schema: COMPANION_TASK_PACKAGE_REVISION,
@@ -355,8 +356,8 @@ function projectCanonicalCard(
 }
 
 function minimalCanonicalCard(task: CompanionCanonicalTaskV4): CodexTaskCard {
-  const name = task.displayName || (task.provider === 'codex' ? '新 Codex 任务' : '新 Claude 任务')
-  const projectName = task.projectName || (task.provider === 'codex' ? 'Codex Chats' : 'Claude Chats')
+  const name = task.displayName || (task.provider === 'codex' ? '新 Codex 任务' : task.provider === 'cursor' ? '新 Cursor 任务' : '新 Claude 任务')
+  const projectName = task.projectName || (task.provider === 'codex' ? 'Codex Chats' : task.provider === 'cursor' ? 'Cursor Chats' : 'Claude Chats')
   const projectKey = task.projectKey || `${task.provider}:chats`
   const projectKind = task.projectKind || 'chats'
   const unknown = task.phase === 'unknown'
@@ -400,7 +401,7 @@ function projectCardsForProject(
     counts[provider] = (counts[provider] || 0) + 1
     return counts
   }, {})
-  const countedProviders = (['codex', 'claude'] as CompanionProviderId[]).filter((provider) => Boolean(providerTaskCounts[provider]))
+  const countedProviders = (['codex', 'claude', 'cursor'] as CompanionProviderId[]).filter((provider) => Boolean(providerTaskCounts[provider]))
   const providers: CompanionProviderId[] = countedProviders.length
     ? countedProviders
     : project.providers?.length
@@ -471,6 +472,44 @@ function projectConversationSnapshot(
 }
 
 /**
+ * Kernel V4 still owns only Codex/Claude. Cursor cards are folded back after
+ * that view so a second apply (Float) cannot drop them.
+ */
+export function foldCursorCardsIntoTaskState(
+  state: CodexTaskStatePackageV1,
+  cards: readonly CodexTaskCard[]
+): CodexTaskStatePackageV1 {
+  const carriesCursor = state.conversations.all.some((task) => companionTaskProvider(task) === 'cursor')
+  const conversations = !cards.length && !carriesCursor
+    ? state.conversations
+    : mergeCompanionConversations(withoutCompanionProvider(state.conversations, 'cursor'), cards)
+  if (!state.dynamic) return { ...state, conversations }
+  const strip = (list: readonly CodexTaskCard[]) => list.filter((task) => companionTaskProvider(task) !== 'cursor')
+  const visible = cards.filter((card) => !card.isHidden)
+  const groups = {
+    input: [...strip(state.dynamic.groups.input), ...visible.filter((card) => isCompanionAttentionState(card.activityState))],
+    active: [...strip(state.dynamic.groups.active), ...visible.filter((card) => card.activityState === 'active')],
+    stopped: [...strip(state.dynamic.groups.stopped), ...visible.filter((card) => card.bucket === 'stopped')],
+    unread: [...strip(state.dynamic.groups.unread), ...visible.filter((card) => card.bucket === 'completed-unread')],
+    completed: [...strip(state.dynamic.groups.completed), ...visible.filter((card) => card.bucket === 'completed')]
+  }
+  return {
+    ...state,
+    conversations,
+    dynamic: {
+      ...state.dynamic,
+      groups,
+      tasks: [groups.input, groups.active, groups.stopped, groups.unread, groups.completed].flat(),
+      compactCounts: {
+        input: groups.input.length,
+        active: groups.active.length,
+        unread: groups.unread.length
+      }
+    }
+  }
+}
+
+/**
  * Applies the process Kernel's one final decision to cards, tabs, projects,
  * dynamic groups and compact counters in one atomic projection.
  */
@@ -495,7 +534,7 @@ export function applyCompanionTaskPackageViews(
     unread: project(taskPackage.views.groups.unread),
     completed: project(taskPackage.views.groups.completed)
   }
-  return {
+  const projected: CodexTaskStatePackageV1 = {
     ...taskState,
     conversations: projectConversationSnapshot(taskState.conversations, cards),
     dynamic: {
@@ -506,4 +545,6 @@ export function applyCompanionTaskPackageViews(
     },
     generatedAt: Math.max(taskState.generatedAt, taskPackage.publishedAt)
   }
+  const cursorCards = allTaskCards(taskState).filter((task) => companionTaskProvider(task) === 'cursor')
+  return foldCursorCardsIntoTaskState(projected, cursorCards)
 }

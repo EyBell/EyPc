@@ -77,16 +77,18 @@ function normalizedProjectName(value: string): string {
 function projectWithProviders(project: CodexProjectCard, tasks: CodexTaskCard[]): CodexProjectCard {
   const codex = tasks.filter((task) => companionTaskProvider(task) === 'codex').length
   const claude = tasks.filter((task) => companionTaskProvider(task) === 'claude').length
+  const cursor = tasks.filter((task) => companionTaskProvider(task) === 'cursor').length
   const providers: CompanionProviderId[] = [
     ...(codex > 0 || Boolean(project.actionAlias) || project.kind === 'chats' ? ['codex' as const] : []),
-    ...(claude > 0 ? ['claude' as const] : [])
+    ...(claude > 0 ? ['claude' as const] : []),
+    ...(cursor > 0 ? ['cursor' as const] : [])
   ]
   return {
     ...project,
     tasks,
     providers,
-    providerTaskCounts: { codex, claude },
-    virtual: providers.includes('claude')
+    providerTaskCounts: { codex, claude, cursor },
+    virtual: providers.includes('claude') || providers.includes('cursor')
   }
 }
 

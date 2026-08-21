@@ -63,8 +63,13 @@ describe('companion provider identity', () => {
   it('keeps codex keys byte-identical and namespaces every other provider', () => {
     expect(companionTaskKey('codex', 'thread-1')).toBe('thread-1')
     expect(companionTaskKey('claude', 'sess-1')).toBe('claude:sess-1')
+    expect(companionTaskKey('cursor', '86e0370a-21b3-434d-a1a3-0ce83edc5ddd')).toBe('cursor:86e0370a-21b3-434d-a1a3-0ce83edc5ddd')
     expect(parseCompanionTaskKey('thread-1')).toEqual({ provider: 'codex', rawKey: 'thread-1' })
     expect(parseCompanionTaskKey('claude:sess-1')).toEqual({ provider: 'claude', rawKey: 'sess-1' })
+    expect(parseCompanionTaskKey('cursor:86e0370a-21b3-434d-a1a3-0ce83edc5ddd')).toEqual({
+      provider: 'cursor',
+      rawKey: '86e0370a-21b3-434d-a1a3-0ce83edc5ddd'
+    })
   })
 
   it('round-trips keys that themselves contain separators', () => {
@@ -106,16 +111,17 @@ describe('namespaced keys survive persistence', () => {
 describe('companion enablement', () => {
   it('normalizes absent settings into the pre-existing codex-only behavior', () => {
     expect(normalizeCompanionEnablement(undefined)).toEqual(DEFAULT_COMPANION_ENABLEMENT)
-    expect(normalizeCompanionEnablement({})).toEqual({ codex: true, claude: false })
+    expect(normalizeCompanionEnablement({})).toEqual({ codex: true, claude: false, cursor: false })
     expect(isCompanionCompatibilityMode(normalizeCompanionEnablement(undefined))).toBe(true)
   })
 
   it('treats any non-true value as disabled and reports enabled providers in cycle order', () => {
-    expect(normalizeCompanionEnablement({ codex: 'yes', claude: 1 })).toEqual({ codex: false, claude: false })
-    expect(enabledCompanionProviders({ codex: true, claude: true })).toEqual([...COMPANION_PROVIDER_CYCLE_ORDER])
-    expect(enabledCompanionProviders({ codex: false, claude: true })).toEqual(['claude'])
-    expect(isCompanionCompatibilityMode({ codex: true, claude: true })).toBe(false)
-    expect(isCompanionCompatibilityMode({ codex: false, claude: true })).toBe(false)
+    expect(normalizeCompanionEnablement({ codex: 'yes', claude: 1 })).toEqual({ codex: false, claude: false, cursor: false })
+    expect(enabledCompanionProviders({ codex: true, claude: true, cursor: true })).toEqual([...COMPANION_PROVIDER_CYCLE_ORDER])
+    expect(enabledCompanionProviders({ codex: false, claude: true, cursor: false })).toEqual(['claude'])
+    expect(enabledCompanionProviders({ codex: true, claude: false, cursor: false })).toEqual(['codex'])
+    expect(isCompanionCompatibilityMode({ codex: true, claude: true, cursor: false })).toBe(false)
+    expect(isCompanionCompatibilityMode({ codex: false, claude: true, cursor: false })).toBe(false)
   })
 })
 
@@ -192,7 +198,7 @@ describe('cross-provider aggregation is status-driven', () => {
 
   it('counts inventory membership per provider', () => {
     expect(countCompanionTasksByProvider([task('c1'), task('l1', 'claude'), task('l2', 'claude')]))
-      .toEqual({ codex: 1, claude: 2 })
+      .toEqual({ codex: 1, claude: 2, cursor: 0 })
   })
 })
 

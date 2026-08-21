@@ -9350,6 +9350,20 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
         return true
       }
     })
+    actions.register({
+      id: 'codex.cursor.register',
+      title: '注册 Cursor 事件钩子',
+      group: 'Codex',
+      risk: 'data-write',
+      scope: 'global',
+      priority: 96,
+      when: () => true,
+      run: (_ctx, args) => {
+        const register = (args as { register?: boolean } | undefined)?.register !== false
+        void codexController.setCursorRegistration(register)
+        return true
+      }
+    })
     actions.register({ id: 'codex.inspect-environment', title: '检测 Codex 连接环境', group: 'Codex', risk: 'normal', scope: 'global', priority: 99, when: () => true, run: () => { void codexController.inspectEnvironment(); return true } })
     actions.register({ id: 'codex.set-launch-path', title: '设置 Codex CLI 位置', group: 'Codex', risk: 'data-write', scope: 'global', priority: 97, when: () => true, run: (_ctx, args) => {
       const value = args?.path

@@ -6,26 +6,27 @@
  * enablement and ordering contracts they all share. Providers never import each
  * other — they only agree on the contracts declared here.
  */
-export type CompanionProviderId = 'codex' | 'claude'
+export type CompanionProviderId = 'codex' | 'claude' | 'cursor'
 
 /** Legacy inventories carry no provider field; they are Codex by definition. */
 export const DEFAULT_COMPANION_PROVIDER: CompanionProviderId = 'codex'
 
-export const COMPANION_PROVIDER_IDS: readonly CompanionProviderId[] = ['codex', 'claude']
+export const COMPANION_PROVIDER_IDS: readonly CompanionProviderId[] = ['codex', 'claude', 'cursor']
 
 /**
  * Stable provider enumeration for enablement and compatibility decisions.
  * Previous/next task order is Provider-neutral and owned by the task Kernel.
  */
-export const COMPANION_PROVIDER_CYCLE_ORDER: readonly CompanionProviderId[] = ['codex', 'claude']
+export const COMPANION_PROVIDER_CYCLE_ORDER: readonly CompanionProviderId[] = ['codex', 'claude', 'cursor']
 
 export const COMPANION_PROVIDER_LABELS: Readonly<Record<CompanionProviderId, string>> = {
   codex: 'Codex',
-  claude: 'Claude'
+  claude: 'Claude',
+  cursor: 'Cursor'
 }
 
 export function isCompanionProviderId(value: unknown): value is CompanionProviderId {
-  return value === 'codex' || value === 'claude'
+  return value === 'codex' || value === 'claude' || value === 'cursor'
 }
 
 export function normalizeCompanionProviderId(value: unknown): CompanionProviderId {
@@ -67,19 +68,21 @@ export function parseCompanionTaskKey(key: string): { provider: CompanionProvide
 export interface CompanionProviderEnablement {
   codex: boolean
   claude: boolean
+  cursor?: boolean
 }
 
 /**
- * Claude is opt-in. A stored settings object that predates this feature
- * therefore normalizes into the exact pre-existing behavior.
+ * Claude and Cursor are opt-in. A stored settings object that predates those
+ * features therefore normalizes into the exact pre-existing Codex-only behavior.
  */
-export const DEFAULT_COMPANION_ENABLEMENT: Readonly<CompanionProviderEnablement> = { codex: true, claude: false }
+export const DEFAULT_COMPANION_ENABLEMENT: Readonly<CompanionProviderEnablement> = { codex: true, claude: false, cursor: false }
 
 export function normalizeCompanionEnablement(value: unknown): CompanionProviderEnablement {
   const source = value && typeof value === 'object' ? value as Partial<Record<CompanionProviderId, unknown>> : {}
   return {
     codex: source.codex === undefined ? DEFAULT_COMPANION_ENABLEMENT.codex : source.codex === true,
-    claude: source.claude === undefined ? DEFAULT_COMPANION_ENABLEMENT.claude : source.claude === true
+    claude: source.claude === undefined ? DEFAULT_COMPANION_ENABLEMENT.claude : source.claude === true,
+    cursor: source.cursor === undefined ? DEFAULT_COMPANION_ENABLEMENT.cursor : source.cursor === true
   }
 }
 
@@ -191,7 +194,7 @@ export function aggregateCompanionTaskCounts(parts: readonly (CompanionTaskCount
 export function countCompanionTasksByProvider<T extends CompanionOrderableTask>(
   tasks: readonly T[]
 ): Record<CompanionProviderId, number> {
-  const counts = { codex: 0, claude: 0 } as Record<CompanionProviderId, number>
+  const counts = { codex: 0, claude: 0, cursor: 0 } as Record<CompanionProviderId, number>
   for (const task of tasks) counts[companionTaskProvider(task)] += 1
   return counts
 }

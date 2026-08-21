@@ -817,6 +817,35 @@ export interface EypcPlatformApi {
     close(): void
   }
   /**
+   * Cursor Agent companion. Optional so an older preload degrades this lane
+   * alone. Hook install/watch are feature-detected; `openTask` stays unavailable.
+   */
+  cursor?: {
+    inspect(): Promise<{ available: boolean; reason: string; sessionCount?: number; readAt?: number; hooks?: string }> | { available: boolean; reason: string; sessionCount?: number; readAt?: number; hooks?: string }
+    readInventory(): Promise<{
+      revision: string
+      available: boolean
+      reason: string
+      sessions: Array<Record<string, unknown>>
+      truncated: boolean
+      readAt: number
+    }> | {
+      revision: string
+      available: boolean
+      reason: string
+      sessions: Array<Record<string, unknown>>
+      truncated: boolean
+      readAt: number
+    }
+    readHookState?(): Array<{ sessionId: string; phase: string; turnOpen: boolean; lastEventAt: number }>
+    watchEvents?(listener: () => void, options?: { coalesceMs?: number; recoveryPollMs?: number }): () => void
+    install?(): Promise<ClaudeRegistrationResult> | ClaudeRegistrationResult
+    uninstall?(): Promise<ClaudeRegistrationResult> | ClaudeRegistrationResult
+    openTask(composerId: string): Promise<ClaudeOpenResult>
+    diagnostics(): { revision: string; loaded: boolean; loadError: string }
+    close(): void
+  }
+  /**
    * Process-lifetime cross-provider navigation. Optional so a newer Renderer
    * can fail closed while an older uTools preload is still alive.
    */
@@ -1278,6 +1307,7 @@ export function getPlatform(): EypcPlatformApi {
     const hostActionRunner = window.eypcPlatform.actionRunner
     const hostWindows = window.eypcPlatform.windows
     const hostClaude = window.eypcPlatform.claude
+    const hostCursor = window.eypcPlatform.cursor
     const hostCompanionNavigation = window.eypcPlatform.companionNavigation
     const hostCompanionTasks = window.eypcPlatform.companionTasks
     const hostCompanionKernel = window.eypcPlatform.companionKernel
@@ -1442,6 +1472,7 @@ export function getPlatform(): EypcPlatformApi {
       // older preload simply leaves `claude` undefined and the Controller then
       // keeps the provider dormant.
       claude: hostClaude && typeof hostClaude.readSnapshot === 'function' ? hostClaude : undefined,
+      cursor: hostCursor && typeof hostCursor.readInventory === 'function' ? hostCursor : undefined,
       companionNavigation: runtimeCompatible && hostCompanionNavigation?.revision === COMPANION_NAVIGATION_REVISION
         && typeof hostCompanionNavigation.begin === 'function'
         && typeof hostCompanionNavigation.sync === 'function'

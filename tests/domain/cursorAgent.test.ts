@@ -1,0 +1,73 @@
+import { describe, expect, it } from 'vitest'
+import {
+  cursorAgentDisplayName,
+  normalizeCursorAgentObservation,
+  projectCursorAgentTaskCard,
+  resolveCursorAgentPhase,
+  resolveCursorAgentState
+} from '../../src/domain/cursorAgent'
+
+const COMPOSER = '86e0370a-21b3-434d-a1a3-0ce83edc5ddd'
+
+function observation(patch: Record<string, unknown> = {}) {
+  return normalizeCursorAgentObservation({
+    composerId: COMPOSER,
+    workspaceIdentifier: '79413102b893919eccbe60ee4c8fbcca',
+    name: 'local agent',
+    createdAt: 1_000,
+    lastUpdatedAt: 2_000,
+    ...patch
+  })
+}
+
+describe('cursor agent cold inventory', () => {
+  it('rejects non-uuid composer ids and never invents waiting-approval', () => {
+    expect(normalizeCursorAgentObservation({ composerId: 'not-a-uuid' })).toBeNull()
+    const blocking = observation({ hasBlockingPendingActions: true })
+    expect(blocking).not.toBeNull()
+    expect(resolveCursorAgentPhase(blocking!)).toBe('unknown')
+    expect(resolveCursorAgentState(blocking!).activityState).not.toBe('waiting-approval')
+  })
+
+  it('projects pending plan to waiting-input and unfinished run to running hint', () => {
+    expect(resolveCursorAgentPhase(observation({ hasPendingPlan: true })!)).toBe('waiting-input')
+    expect(resolveCursorAgentPhase(observation({ unfinishedRunAt: 9_000 })!)).toBe('running')
+    expect(resolveCursorAgentPhase(observation({ diskStatus: 'aborted', unfinishedRunAt: 9_000 })!)).toBe('running')
+  })
+
+  it('lets an open hook turn beat disk status and never invents waiting-approval', () => {
+    expect(resolveCursorAgentPhase(observation({
+      diskStatus: 'aborted',
+      hookTurnOpen: true,
+      hookPhase: 'running'
+    })!)).toBe('running')
+    expect(resolveCursorAgentPhase(observation({
+      unfinishedRunAt: 9_000,
+      hookPhase: 'completed'
+    })!)).toBe('completed')
+    expect(resolveCursorAgentPhase(observation({
+      hookPhase: 'stopped',
+      diskStatus: 'completed'
+    })!)).toBe('stopped')
+    expect(resolveCursorAgentPhase(observation({ hookPhase: 'waiting-approval' })!)).toBe('unknown')
+  })
+
+  it('projects unread completed and aborted-without-live to stopped', () => {
+    const unread = resolveCursorAgentState(observation({ hasUnreadMessages: true, diskStatus: 'completed' })!)
+    expect(unread.phase).toBe('completed')
+    expect(unread.bucket).toBe('completed-unread')
+    expect(resolveCursorAgentPhase(observation({ diskStatus: 'aborted' })!)).toBe('stopped')
+    expect(resolveCursorAgentPhase(observation({ diskStatus: 'none', isDraft: true })!)).toBe('unknown')
+  })
+
+  it('reuses claudePhase so Float unknown grouping works and never claims archive', () => {
+    const card = projectCursorAgentTaskCard(observation({ diskStatus: 'none' })!)
+    expect(card.provider).toBe('cursor')
+    expect(card.key).toBe(`cursor:${COMPOSER}`)
+    expect(card.claudePhase).toBe('unknown')
+    expect(card.bucket).toBe('stopped')
+    expect(card.canArchive).toBe(false)
+    expect(card.archiveCapability).toBe('blocked-stopped')
+    expect(cursorAgentDisplayName({ name: '', subtitle: 'hint' })).toBe('hint')
+  })
+})

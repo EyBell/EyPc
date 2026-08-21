@@ -98,6 +98,7 @@ assert(typeof windowModuleProbe.openPermissionSettings === 'function', 'window p
 
 const claudeModule = distRequire('./claude/index.cjs')
 const claudeScriptsModule = distRequire('./claude/scripts.cjs')
+const cursorModule = distRequire('./cursor/index.cjs')
 const companionKernelModule = distRequire('./companion/task-kernel.cjs')
 const diagnosticsModule = distRequire('./diagnostics.cjs')
 assert(typeof companionKernelModule.createCompanionTaskKernel === 'function', 'companion Kernel module must expose its factory')
@@ -121,6 +122,21 @@ assert(claudeModuleProbe.readPlanUsage() === null, 'claude plan-usage reader mus
 // `null` and `{ids: []}` are different claims: the second one would be spent as
 // "the user has read everything", so an unreadable store must never produce it.
 assert(await claudeModuleProbe.readCodeUnread() === null, 'claude unread reader must degrade to null, never to an empty set')
+assert(typeof cursorModule.createCursorBridge === 'function', 'cursor preload module must expose createCursorBridge')
+const cursorModuleProbe = cursorModule.createCursorBridge({
+  fs: { existsSync: () => false },
+  path: pathModule,
+  os: { homedir: () => '/tmp' },
+  platform: 'darwin',
+  env: {},
+  dataDirectory: '/tmp/eypc-cursor-validation'
+})
+for (const method of ['inspect', 'readInventory', 'readHookState', 'watchEvents', 'install', 'uninstall', 'openTask', 'diagnostics', 'close']) {
+  assert(typeof cursorModuleProbe[method] === 'function', `cursor preload module must expose stable ${method}`)
+}
+assert(cursorModuleProbe.readInventory().sessions.length === 0, 'cursor inventory must degrade to empty without a state database')
+const cursorOpen = await cursorModuleProbe.openTask('00000000-0000-0000-0000-000000000000')
+assert(cursorOpen.outcome === 'unavailable' && cursorOpen.confirmsRead === false, 'cursor open must stay unavailable while jump is live-failed')
 const claudeCodeSource = preloadModuleSources.get('claude/code-sessions.cjs') || ''
 for (const marker of [
   'archiveSessionMetadata',
@@ -297,6 +313,7 @@ const sandbox = {
   require(name) {
     if (name === './windows/index.cjs') return windowModule
     if (name === './claude/index.cjs') return claudeModule
+    if (name === './cursor/index.cjs') return cursorModule
     if (name === './companion/task-kernel.cjs' || String(name).endsWith('/companion/task-kernel.cjs')) return companionKernelModule
     if (name === './runtime-identity.cjs') return actualRuntimeIdentity
     if (name === 'node:buffer') return { Buffer }
@@ -358,6 +375,12 @@ assert(typeof sandbox.window.eypcPlatform.claude.readSnapshot === 'function', 'p
 // is not enough: the facade omitted it, so the opt-in quota fallback was a
 // dead switch in every packaged build while the module test stayed green.
 assert(typeof sandbox.window.eypcPlatform.claude.readQuotaFallback === 'function', 'preload must expose claude.readQuotaFallback')
+assert(typeof sandbox.window.eypcPlatform.cursor.readInventory === 'function', 'preload must expose cursor.readInventory')
+assert(typeof sandbox.window.eypcPlatform.cursor.openTask === 'function', 'preload must expose cursor.openTask')
+assert(typeof sandbox.window.eypcPlatform.cursor.install === 'function', 'preload must expose cursor.install')
+assert(typeof sandbox.window.eypcPlatform.cursor.uninstall === 'function', 'preload must expose cursor.uninstall')
+assert(typeof sandbox.window.eypcPlatform.cursor.watchEvents === 'function', 'preload must expose cursor.watchEvents')
+assert(typeof sandbox.window.eypcPlatform.cursor.readHookState === 'function', 'preload must expose cursor.readHookState')
 // ...and then the desktop lane was added without heeding the comment directly
 // above it: module present, manifest updated, module-level assertion green,
 // facade untouched, entire feature dead on the host (P5 review). Enumerating
