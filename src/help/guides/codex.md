@@ -97,7 +97,7 @@
 - **悬浮窗自恢复：** Main 每 2 秒检查 Float 心跳；连续超过 6 秒无响应时，只在 60 秒冷却外且确认旧窗口 10 秒恢复观察仍失败后受控重建。每次交互都有匿名 interaction id，10 秒无活动、失焦或生命周期结束会清理，避免拖动/展开锁长期卡死。
 - **版本提示：** 当前为 `task-state-v10 / companion-task-kernel-v4 / companion-task-package-v4 / companion-task-actions-v2`。Kernel 唯一派生状态、Plan 生命周期、卡片、Tab、分组、角标、循环和能力；消费者只读取最新版。V4 Kernel 缺失或四端身份不一致时会要求重新接入/重载并停止任务操作，不回退旧状态逻辑。
 - **构建与实际加载：** 重新打包只生成新的 `dist`，状态是 `artifact-ready`；它不会自动替换 uTools 已加载的 ASAR。开发模式请在 uTools 开发工具重新接入 `dist/plugin.json`，手动结束旧插件后台进程后重新进入，再重开悬浮窗并确认匿名 `runtime-identity-handshake` 明确报告 `host-loaded`；离线包需安装新的 UPXS。只有实际/期望 Host、Renderer、Kernel 和 Package 身份一致才是 `host-loaded`，不能从进程启动时间推断。
-- **归档：** Codex 归档中卡片和按钮始终保留；只有一次写、两次服务器持久化确认，以及 Desktop 已连接时匹配的原生 `thread/archived` ACK 全部通过后，Kernel 才原子移除。失败或不确定会保留任务并定向复核。Claude completed/stopped 仍走 D′ 单目标元数据归档，当前只门禁已核验的 macOS Claude `1.26832.0 / 1.28929.0`；成功提示明确为“EyPc 已归档并移除。Claude 原生侧栏同步未确认，当前不受支持。”EyPc 不强刷或伪造 Claude 原生侧栏收敛。
+- **归档：** 归档资格只看任务状态，不看来源 Agent：进行中（含待输入/待审批）阻止归档，待继续与已完成都可直接归档；仅“状态证据不足（unknown）”暂缓。Codex 归档中卡片和按钮始终保留；只有一次写、两次服务器持久化确认，以及 Desktop 已连接时匹配的原生 `thread/archived` ACK 全部通过后，Kernel 才原子移除。失败或不确定会保留任务并定向复核。Claude completed/stopped 走 D′ 单目标元数据归档，不再设版本白名单门禁——写入时按结构重新核验目标唯一、可解析且仍为终态，写后回读加活动库存复核兜底；成功提示明确为“EyPc 已归档并移除。Claude 原生侧栏同步未确认，当前不受支持。”EyPc 不强刷或伪造 Claude 原生侧栏收敛。Cursor 归档直接翻转 App 自己的 `isArchived` 对（单行、写前重验无进行中证据与活跃分叉、写后回读），归档后在 Cursor App 的归档列表同步可见。
 - **归档当前任务快捷调用：** `eypc-companion-archive` 保持 `mainHide`，不切换当前 Tab。第一次只展示目标并开启 5 秒确认；确认身份固定为 `Provider + task + terminalEpoch`，revision、unread、焦点或临时 alias 变化不会让第二次点击消失。第二次从最新包读取 capability 并使用同一个 operationId 贯穿十阶段归档日志；任务消失、terminal epoch 或能力变化才取消。
 - **上一个 / 下一个 Codex 任务：** 按首个非空层循环：普通待输入/审批 → 待实施 Plan 与未执行中断的 Plan → 动态窗口内进行中 → 未停止的本地置顶。暂停、普通隐藏和已归档全部排除；每层按最近提问时间倒序。第一下立即派发，只有首个打开仍在执行时后续连按才合并成最终尾随目标。热包直接使用，冷启动/重连/缺口才执行一次 tasks-only 预检。
 
@@ -108,7 +108,7 @@
 - **额度、模型、任务清单：** 来自本机 Codex App Server 连接（只读库存为主）
 - **实时待输入 / 进行中 / 完成未读细分：** 优先依赖 macOS 上 Codex Desktop 实时桥；桥无法重放旧请求时，只允许本机 Codex 会话中经过结构化、有界复核的未回答输入或待实施 Plan 恢复“待输入”。普通连接器状态、本地 UI 缓存、正文或时间推测都不能伪造 Input/进行中；无法确认的新证据保留任务最后稳定分组并显示“核验中”。
 - **Windows：** 支持 CLI 发现与校验；Desktop 实时桥仍以 macOS 能力为准，Windows 上实时细分可能不可用
-- 普通库存扫描对 Codex 全局状态文件保持只读；Codex 唯一写例外是你明确确认的原生项目移除事务。Claude 另有版本门禁、单目标、可回滚的 `isArchived` 静默归档例外，禁止扫改、LevelDB 和非目标会话
+- 普通库存扫描对 Codex 全局状态文件保持只读；Codex 唯一写例外是你明确确认的原生项目移除事务。Claude 另有单目标、可回滚的 `isArchived` 静默归档例外（结构化重验，非版本门禁），禁止扫改、LevelDB 和非目标会话。Cursor 唯一写例外是确认归档时对单条 `composerHeaders` 行翻转 App 自己的 `isArchived` 对
 - Easy Agent 尚未实现；当前为 App Server +（macOS）Desktop 桥的过渡方案
 
 ## 常用配置步骤
@@ -137,7 +137,7 @@
 
 ## 接入 Cursor Agent（可选）
 
-Cursor Agent 是第三个独立来源，**默认关闭**。开启后插件只读本机 Cursor `composerHeaders` 白名单与磁盘 `status`，把本机 Agent 会话列进同一任务清单。磁盘 `status=none` 且没有会话头的空壳不进清单。归档跟随 App 的 `isArchived`。uTools 自带 Node 读不了这份库，插件改用本机 `sqlite3` 只跑白名单查询。进行中状态需要你在设置页确认后，才会把观察脚本加法写入用户级 `~/.cursor/hooks.json`（可随时移除，失败开放）。若这份文件里已有钩子写了非法的 `loop_limit: 0`，Cursor 会拒收整份配置、热路径不会点火；重新注册会把该值收成 `1`。不做额度。点卡片不会跳进对应对话：插件侧尚未实现打开，外部 deeplink 实测也切不到指定本地会话。
+Cursor Agent 是第三个独立来源，**默认关闭**。开启后插件只读本机 Cursor `composerHeaders` 白名单与磁盘 `status`，把本机 Agent 会话列进同一任务清单。磁盘 `status=none` 且没有会话头的空壳不进清单。归档双向跟随 App 的 `isArchived`：App 里归档的会话不进清单；在插件里对待继续/已完成会话点“归”，会在写前重验无进行中证据后翻转同一个 `isArchived` 对，App 归档列表同步可见。uTools 自带 Node 读不了这份库，插件改用本机 `sqlite3` 只跑白名单查询。进行中状态需要你在设置页确认后，才会把观察脚本加法写入用户级 `~/.cursor/hooks.json`（可随时移除，失败开放）。脚本只读 stdin 前 32KB 白名单字段；库存文件一变就补读未读/已读，不再等几秒轮询。若这份文件里已有钩子写了非法的 `loop_limit: 0`，Cursor 会拒收整份配置、热路径不会点火；重新注册会把该值收成 `1`。不做额度。点卡片会通过 Cursor 官方 deeplink（`agent?id=会话id`）唤起 Cursor 并切到该对话（Cursor 3.17.8 实测；Cursor 未运行时会先启动它）。这只是「已派发」：插件不能确认对话真的展示成功，也不会把它标成已读。
 
 ## 接入 Claude Code（可选）
 
