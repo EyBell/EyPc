@@ -3351,7 +3351,7 @@ onUnmounted(() => {
             <div
               v-else-if="row.kind === 'project'"
               class="float-project-row"
-              :class="[row.marker.className, { highlighted: focusedKey === row.key, 'hidden-project': row.hiddenProject }]"
+              :class="[row.marker.className, ...(row.marker.providers.length > 1 ? row.marker.providers.map((provider) => `with-${provider}`) : []), { highlighted: focusedKey === row.key, 'hidden-project': row.hiddenProject }]"
               role="treeitem"
               :aria-expanded="row.hiddenProject ? undefined : !isProjectCollapsed(row.project)"
               :aria-label="`${row.project.name}，${row.marker.label}，${row.project.tasks.length} 个窗口内任务${row.hiddenProject ? '，项目分组已隐藏' : ''}`"

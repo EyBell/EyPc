@@ -772,7 +772,6 @@ button.float-search-glyph { cursor: pointer; }
   line-height: 13px;
   letter-spacing: .03em;
 }
-.task-provider-marker.provider-claude { border-color: color-mix(in srgb, var(--codex-accent) 58%, transparent); color: var(--codex-fg); }
 .float-quota-chip span { color: var(--codex-muted); font-size: 9px; font-weight: 750; letter-spacing: .02em; }
 .float-quota-chip strong { font-size: 13px; font-weight: 800; line-height: 1; }
 
@@ -1457,8 +1456,15 @@ button.float-search-glyph { cursor: pointer; }
 .float-task-row.provider-claude:not(.selected),
 .float-project-row.provider-claude { background: color-mix(in srgb, var(--codex-quota-claude) 8%, var(--codex-surface-raised)); }
 .float-task-row.provider-cursor:not(.selected),
-.float-project-row.provider-cursor { background: color-mix(in srgb, var(--codex-accent) 8%, var(--codex-surface-raised)); }
+.float-project-row.provider-cursor { background: color-mix(in srgb, var(--codex-quota-cursor) 8%, var(--codex-surface-raised)); }
 .float-project-row.provider-shared { background: linear-gradient(90deg, color-mix(in srgb, var(--codex-quota-codex) 8%, var(--codex-surface-raised)), color-mix(in srgb, var(--codex-quota-claude) 8%, var(--codex-surface-raised))); }
+/* Mixed projects keep the gradient honest: every stop is a provider actually
+   present in the row (with-* modifiers), so Cursor-bearing projects no longer
+   hide behind the default Codex→Claude pair. :where() keeps specificity level
+   with the base rule so the forced-colors fallback still wins. */
+.float-project-row.provider-shared:where(.with-codex.with-cursor):not(:where(.with-claude)) { background: linear-gradient(90deg, color-mix(in srgb, var(--codex-quota-codex) 8%, var(--codex-surface-raised)), color-mix(in srgb, var(--codex-quota-cursor) 8%, var(--codex-surface-raised))); }
+.float-project-row.provider-shared:where(.with-claude.with-cursor):not(:where(.with-codex)) { background: linear-gradient(90deg, color-mix(in srgb, var(--codex-quota-claude) 8%, var(--codex-surface-raised)), color-mix(in srgb, var(--codex-quota-cursor) 8%, var(--codex-surface-raised))); }
+.float-project-row.provider-shared:where(.with-codex.with-claude.with-cursor) { background: linear-gradient(90deg, color-mix(in srgb, var(--codex-quota-codex) 8%, var(--codex-surface-raised)), color-mix(in srgb, var(--codex-quota-claude) 8%, var(--codex-surface-raised)), color-mix(in srgb, var(--codex-quota-cursor) 8%, var(--codex-surface-raised))); }
 .float-task-row.provider-codex:not(.selected):hover,
 .float-task-row.provider-codex:not(.selected):focus-visible,
 .float-task-row.provider-codex:not(.selected):focus-within,
@@ -1473,13 +1479,22 @@ button.float-search-glyph { cursor: pointer; }
 .float-task-row.provider-cursor:not(.selected):focus-visible,
 .float-task-row.provider-cursor:not(.selected):focus-within,
 .float-project-row.provider-cursor:hover,
-.float-project-row.provider-cursor:focus-visible { background: color-mix(in srgb, var(--codex-accent) 12%, var(--codex-surface-raised)); }
+.float-project-row.provider-cursor:focus-visible { background: color-mix(in srgb, var(--codex-quota-cursor) 12%, var(--codex-surface-raised)); }
 .float-project-row.provider-shared:hover,
 .float-project-row.provider-shared:focus-visible { background: linear-gradient(90deg, color-mix(in srgb, var(--codex-quota-codex) 12%, var(--codex-surface-raised)), color-mix(in srgb, var(--codex-quota-claude) 12%, var(--codex-surface-raised))); }
+.float-project-row.provider-shared:where(.with-codex.with-cursor):not(:where(.with-claude)):hover,
+.float-project-row.provider-shared:where(.with-codex.with-cursor):not(:where(.with-claude)):focus-visible { background: linear-gradient(90deg, color-mix(in srgb, var(--codex-quota-codex) 12%, var(--codex-surface-raised)), color-mix(in srgb, var(--codex-quota-cursor) 12%, var(--codex-surface-raised))); }
+.float-project-row.provider-shared:where(.with-claude.with-cursor):not(:where(.with-codex)):hover,
+.float-project-row.provider-shared:where(.with-claude.with-cursor):not(:where(.with-codex)):focus-visible { background: linear-gradient(90deg, color-mix(in srgb, var(--codex-quota-claude) 12%, var(--codex-surface-raised)), color-mix(in srgb, var(--codex-quota-cursor) 12%, var(--codex-surface-raised))); }
+.float-project-row.provider-shared:where(.with-codex.with-claude.with-cursor):hover,
+.float-project-row.provider-shared:where(.with-codex.with-claude.with-cursor):focus-visible { background: linear-gradient(90deg, color-mix(in srgb, var(--codex-quota-codex) 12%, var(--codex-surface-raised)), color-mix(in srgb, var(--codex-quota-claude) 12%, var(--codex-surface-raised)), color-mix(in srgb, var(--codex-quota-cursor) 12%, var(--codex-surface-raised))); }
 
 .task-provider-marker.provider-codex { border-color: color-mix(in srgb, var(--codex-quota-codex) 58%, transparent); color: var(--codex-quota-codex); }
 .task-provider-marker.provider-claude { border-color: color-mix(in srgb, var(--codex-quota-claude) 58%, transparent); color: var(--codex-quota-claude); }
-.task-provider-marker.provider-cursor { border-color: color-mix(in srgb, var(--codex-accent) 58%, transparent); color: var(--codex-accent); }
+/* Cursor is the odd one out on purpose: a filled pill (vs. the outline-only
+   Codex/Claude markers) plus its own 255°-rotated tone, so the third source
+   reads differently in kind, not just in hue. */
+.task-provider-marker.provider-cursor { border-color: color-mix(in srgb, var(--codex-quota-cursor) 58%, transparent); background: color-mix(in srgb, var(--codex-quota-cursor) 16%, transparent); color: var(--codex-quota-cursor); }
 .project-main > span { position: relative; }
 .project-main strong { padding-right: 86px; }
 .project-provider-marker {
@@ -1498,7 +1513,7 @@ button.float-search-glyph { cursor: pointer; }
 }
 .project-provider-marker.provider-codex { color: var(--codex-quota-codex); }
 .project-provider-marker.provider-claude { color: var(--codex-quota-claude); }
-.project-provider-marker.provider-cursor { color: var(--codex-accent); }
+.project-provider-marker.provider-cursor { color: var(--codex-quota-cursor); }
 .project-provider-marker.provider-shared { color: var(--codex-fg); }
 
 @container (max-width: 330px) {
