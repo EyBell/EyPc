@@ -11,7 +11,6 @@ Tool: tool-neutral (codex, claude, and any CodeNote-routed agent)
 - Durable architecture: [../knowledge/ARCHITECTURE.md](../knowledge/ARCHITECTURE.md#L1).
 - Technical implementation memory: [../knowledge/technical-details.md](../knowledge/technical-details.md#L1).
 - Error memory: [../knowledge/error-memory.md](../knowledge/error-memory.md#L1).
-- Agent host environment (Mirasim): [../knowledge/mirasim-host.md](../knowledge/mirasim-host.md#L1) — worktree 语义、workbench 落点、访问鉴权与操作陷阱。
 - Data notes: [../ai-db/README.md](../ai-db/README.md#L1), with AI-DB storage and naming delegated to [CodeNote DB governance](../../../../../czz/CzzProj/CodeNote/DevelopRef/调试工具/db/governance/README.md#5-workspace-shape-and-naming).
 - Reusable uTools plugin development guides and failure usage: [CodeNote uTools module](../../../../../czz/CzzProj/CodeNote/DevelopRef/Multi-System-Use/uTools/README.md#L1).
 - End-user feature operation guides (settings「说明」): [guide registry and loader](../../src/help/guides/index.ts#L1).
