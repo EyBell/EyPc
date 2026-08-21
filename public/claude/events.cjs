@@ -103,8 +103,21 @@ function emptyHookState() {
     lastStopAt: 0,
     lastStopFailureAt: 0,
     lastSessionEndAt: 0,
+    turnCloseKind: '',
     pid: 0
   }
+}
+
+function turnCloseKindOf(state) {
+  return typeof state.turnCloseKind === 'string' ? state.turnCloseKind : ''
+}
+
+function restoreParentTurnAfterStopFailure(next) {
+  if (next.turnOpen) return
+  if (turnCloseKindOf(next) !== 'stop-failure') return
+  if (!next.turnStartedAt) return
+  next.turnOpen = true
+  next.turnCloseKind = ''
 }
 
 /**
@@ -112,8 +125,9 @@ function emptyHookState() {
  *
  * `UserPromptSubmit` is the only event that opens a Turn. Tool events may move
  * an already-open parent Turn back to running, while subagent events only move
- * the activity waterline. Once Stop/StopFailure/SessionEnd closes the Turn,
- * tail events cannot revive it; only the next prompt can.
+ * the activity waterline. Successful Stop and an observed-open SessionEnd stay
+ * closed until the next prompt. StopFailure is a recorded waterline: later
+ * same-Turn prompt/tool/permission restore the parent Turn.
  */
 function reduceQueueEntry(previous, entry) {
   const known = previous && typeof previous === 'object' ? previous : emptyHookState()
@@ -132,6 +146,7 @@ function reduceQueueEntry(previous, entry) {
   if (entry.event === 'prompt-submit') {
     next.turnStartedAt = at
     next.turnOpen = true
+    next.turnCloseKind = ''
     next.lastActivityAt = at
     next.waitingApprovalAt = 0
     next.waitingInputAt = 0
@@ -141,12 +156,17 @@ function reduceQueueEntry(previous, entry) {
   if (entry.event === 'stop') {
     next.lastStopAt = at
     next.turnOpen = false
+    next.turnCloseKind = 'stop'
     next.phase = 'completed'
     return next
   }
   if (entry.event === 'stop-failure') {
     next.lastStopFailureAt = at
+    const closed = turnCloseKindOf(next)
+    if (closed === 'stop' || closed === 'session-end') return next
+    if (!next.turnStartedAt) return next
     next.turnOpen = false
+    next.turnCloseKind = 'stop-failure'
     next.phase = 'stopped'
     return next
   }
@@ -158,9 +178,9 @@ function reduceQueueEntry(previous, entry) {
     // close an observed open Turn, but a cold queue row must not manufacture a
     // stopped task or overwrite durable completion history.
     if (closesObservedTurn) {
-      next.phase = next.lastStopAt > 0 && next.lastStopAt >= next.turnStartedAt
-        ? 'completed'
-        : 'stopped'
+      const completed = next.lastStopAt > 0 && next.lastStopAt >= next.turnStartedAt
+      next.phase = completed ? 'completed' : 'stopped'
+      next.turnCloseKind = completed ? 'stop' : 'session-end'
     }
     return next
   }
@@ -169,6 +189,7 @@ function reduceQueueEntry(previous, entry) {
     return next
   }
   if (entry.event === 'pre-tool' && entry.reason === 'ask-user-question') {
+    restoreParentTurnAfterStopFailure(next)
     if (next.turnOpen) {
       next.waitingInputAt = at
       next.phase = 'waiting-input'
@@ -176,6 +197,7 @@ function reduceQueueEntry(previous, entry) {
     return next
   }
   if (entry.event === 'permission-request') {
+    restoreParentTurnAfterStopFailure(next)
     if (next.turnOpen) {
       next.waitingApprovalAt = at
       next.phase = 'waiting-approval'
@@ -184,6 +206,7 @@ function reduceQueueEntry(previous, entry) {
   }
   if (entry.event === 'pre-tool' || entry.event === 'post-tool') {
     next.lastActivityAt = at
+    restoreParentTurnAfterStopFailure(next)
     if (next.turnOpen) next.phase = 'running'
     return next
   }
