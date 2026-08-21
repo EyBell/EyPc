@@ -1,6 +1,6 @@
-# RAW-160 → RAW-166 Companion V4 Implementation Plan
+# RAW-160 → RAW-174 Companion V4 Implementation Plan
 
-Status: `RAW-166 increment-automated-verified / rebuilt-artifact-ready / documentation-synchronized / dev-plugin-reload-pending`
+Status: `RAW-174 increment-automated-verified / documentation-synchronized / dev-plugin-reload-pending`
 
 1. `historical-complete` — V3→V4、Plan 生命周期、窗口/循环、Actions v2、Latest Cache、Float ACK 与 Claude phase 基线保留；其先前全量 gate 已被安装宿主回归否定，不再作为当前接纳。
 2. `complete` — 在 Kernel 增加私有 Branch Evidence Store；Preload 只发布隐私化分支原始证据，按“运行→审批→输入/Plan→全完成→全终态且逐分支 idle→verifying”聚合。
@@ -53,6 +53,14 @@ Status: `RAW-166 increment-automated-verified / rebuilt-artifact-ready / documen
 49. `complete` — 11 个影响文件 `457/457`、error-memory validator、Preload 同步/镜像/语法、typecheck、1871-module build、Runtime Identity、uTools validator 与 code-link/rule/diff 审计已通过；`66 documents / 28 dependencies / 29 validators` 同步组由 final receipt 锁定。
 50. `complete` — 2026-08-15 状态来源修复通过项目级 versioned change review；新增 `EYPC-COMPANION-STATE-SOURCE-001`，同步 Claude 固定语法版本并明确禁用 TTL 终态推断。
 51. `pending-host-gate` — 用当前最终 artifact 重新加载开发插件并确认 `host-loaded`；按真实 event→canonical→Float applied 核验 Cloud/Claude，不加入新的 20/60 秒产品等待。
+52. `complete` — RAW-174：Hook `StopFailure` 后同 Turn 工具/权限恢复 `turnOpen` 与 running/waiting；成功 Stop 与 observed SessionEnd 仍保持关闭。
+53. `complete` — RAW-174：App live-append running/waiting 压过 Hook stopped，除非 Hook `turnStartedAt` 严格更新；App failed/interrupted 仍 stopped。
+54. `complete` — RAW-174：补 StopFailure 与 App-live 来源选择回归，同步 canonical/public Preload，不插入仓库级全套件。
+55. `pending-host-gate` — RAW-174：真实 uTools 重载后核验仍在跑的 Claude 行不得进入「待继续」。
+
+### RAW-174 Provisional VerificationImpactTrace
+
+`changed-surface=Claude Hook StopFailure parent-turn fold + App-live vs Hook-terminal source selection / impact-evidence=Hook StopFailure waterline → later same-Turn prompt/tool/permission restore → App live-append outranks Hook stopped unless newer Prompt；canonical Claude phase / affected-set=preload/claude/events.cjs, preload/claude/code-sessions.cjs, synchronized public mirrors, claudeBridge tests, Controlled/current-state/architecture/error-memory/requirement registry / selected=focused claudeBridge tests covering StopFailure restore, App-live vs Hook-stopped, App failed/interrupted, and unchanged SessionEnd contracts + canonical/public syntax + sync:preloads/validate:mirrors + validate:requirements + validate:error-memory + code-link audit / skipped=repository-wide pnpm test/typecheck/build/verify because no testing-owner escalation trigger and no TypeScript/entrypoint/bundle surface；real uTools reload because it remains an independent user-owned gate；Claude native writes / skipped-reason=preload CommonJS fold + source selection only / escalation=none / outcome=increment-automated-verified, documentation-synchronized, dev-plugin-reload-pending / residual-risk=real Host still publishes stopped until reload；a StopFailure with no later parent activity and no App live remains stopped`。
 
 ### RAW-162 Final VerificationImpactTrace
 

@@ -7,7 +7,8 @@ Claude Code 库存、App 相位、原生未读、打开与归档权威，以及 
 ## Current Authorities And Routes
 
 - 当前增量权威：[claude-code-companion-authority-reset/spec.md](../../260807/claude-code-companion-authority-reset/spec.md#L1)
-- 条款正文：[raw-requirement.md](../../260807/claude-code-companion-authority-reset/raw-requirement.md#L1)
+- StopFailure 父 Turn 当前合同：[install-runtime-diagnostics/spec.md](../../260810/1155-install-runtime-diagnostics/spec.md#L168)
+- 条款正文：[raw-requirement.md](../../260807/claude-code-companion-authority-reset/raw-requirement.md#L1) 与 [RAW-174](../../260810/1155-install-runtime-diagnostics/raw-requirement.md#L120)
 
 ## Primary Requirements
 
@@ -43,6 +44,18 @@ Claude Code 库存、App 相位、原生未读、打开与归档权威，以及 
 - [RAW-030](../claude-raw-030.md#L1) — `active`
 - [RAW-031](../claude-raw-031.md#L1) — `active`
 - [RAW-032](../claude-raw-032.md#L1) — `active`
+- [RAW-174](../claude-raw-174.md#L1) — `active`
+
+### 编号条款
+
+[install-runtime-diagnostics](../../260810/1155-install-runtime-diagnostics/raw-requirement.md#L120) 的 RAW-174 编号条款按 `RAW-174#n` 入册；序号沿用该文档全局序列 #89–#94。
+
+- [RAW-174#89](../claude-raw-174-clause-089.md#L1) — Hook StopFailure 只记录 lastStopFailureAt 水位
+- [RAW-174#90](../claude-raw-174-clause-090.md#L1) — 同 Turn 随后 prompt/tool/permission 必须重开父 Turn
+- [RAW-174#91](../claude-raw-174-clause-091.md#L1) — App live-append 压过 Hook stopped
+- [RAW-174#92](../claude-raw-174-clause-092.md#L1) — App failed/interrupted 与 SessionEnd 合同不变
+- [RAW-174#93](../claude-raw-174-clause-093.md#L1) — 原生 unread 不得把 live/重开 Turn 提升为 completed
+- [RAW-174#94](../claude-raw-174-clause-094.md#L1) — 自动化覆盖 StopFailure 恢复与既有 SessionEnd 合同
 
 ## Related Requirements
 

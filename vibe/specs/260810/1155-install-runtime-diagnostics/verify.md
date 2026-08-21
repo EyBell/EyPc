@@ -1,6 +1,6 @@
-# RAW-160 → RAW-166 Companion V4 Verification Record
+# RAW-160 → RAW-174 Companion V4 Verification Record
 
-Status: `RAW-166 increment-automated-verified / rebuilt-artifact-ready / documentation-synchronized / dev-plugin-reload-pending`
+Status: `RAW-174 increment-automated-verified / documentation-synchronized / dev-plugin-reload-pending`
 
 ## VerificationImpactTrace
 
@@ -26,7 +26,8 @@ Status: `RAW-166 increment-automated-verified / rebuilt-artifact-ready / documen
 | 当前 Codex 增量测试 | core `3/3` files、`221/221` tests；expanded `15/15` files、`433/433` tests | passed |
 | type / build / mirrors / validator | typecheck、1871 modules、canonical/public mirror generation、Runtime Identity、uTools validator、error-memory graph validator | passed；artifact `host-6ac8de6597dcf0dd644c / renderer-6e677d084be49c8c7878` |
 | 仓库全量套件 | RAW-160 曾由用户明确要求在中央 Kernel/Actions/Host watcher 缺陷逃逸后升级 | historical current-foundation passed；`83/83` files、`1328/1328` tests；RAW-161/162/163 无新升级触发，未重复运行 |
-| 文档与规则审计 | Controlled group、RAW-067/160、状态/架构/既有错误记忆、code-link、diff | final audit recorded below |
+| 2026-08-16 leftover Plan/question waiting-clear | 先前已观测 Plan/提问请求在 Desktop runtime 转入 plain-active 后不得继续 waiting；首次 `active + request` 仍 waiting；idle Plan 覆盖 idle | passed；Bridge `146/146`（含该合同）；canonical/public Preload 已同步；未跑仓库级 typecheck/build；真实 Host 重载 pending |
+| 2026-08-17 RAW-174 StopFailure parent Turn | Hook `StopFailure` 后同 Turn 工具/权限恢复 running/waiting；App live-append 压过 Hook stopped；App failed/interrupted 与 SessionEnd 合同不变 | passed；claudeBridge `74/74`；canonical/public 语法与镜像、validate:requirements、validate:error-memory、code-link 通过；真实 Host 重载 pending |
 | uTools 开发模式当前身份矩阵 | `runtime-identity-handshake=host-loaded` 后首个可信事件立即正确，后续匿名样本无回弹；没有 20/60 秒展示 hold；见 [host handoff](handoff.md#L1) | pending reload |
 
 ## RAW-159 Historical Gate Review

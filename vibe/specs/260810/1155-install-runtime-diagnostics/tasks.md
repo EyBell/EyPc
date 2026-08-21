@@ -131,3 +131,11 @@
 - [x] 项目规则新增 `EYPC-COMPANION-STATE-SOURCE-001`，同步 Claude 三个固定语法版本；evolution review 为 `versioned-change-review` eligible
 - [x] Current PRD、Architecture、Technical Details、Project Status、Controlled 文档和既有错误记忆同步
 - [ ] uTools 开发插件加载 `host-931a95f5973c8c7f08e2 / renderer-d238ab7d0c6a67a71a5c`，完成真实父任务/Side 与 Claude lifecycle sweep 验收
+
+## 2026-08-17 RAW-174 StopFailure Parent Turn
+
+- [x] Hook `StopFailure` 后同 Turn 工具/权限恢复 running/waiting；成功 Stop 与 observed SessionEnd 后工具尾巴不重开
+- [x] App live-append running 压过更新的 Hook stopped；Hook 仅在更新 Prompt 时覆盖；App failed/interrupted 仍待继续
+- [x] 聚焦 claudeBridge 回归、Preload 语法/镜像、需求/错误记忆校验通过；不跑仓库全量套件
+- [x] Current PRD/architecture/authority-reset 与登记叶子同步；错误记忆在自动化通过后更新
+- [ ] 真实 uTools 重载后，仍在发工具的 Claude 行不得进入「待继续」

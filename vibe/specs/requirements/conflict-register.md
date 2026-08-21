@@ -87,6 +87,14 @@ RAW-163 与 RAW-164 这两条正是本会话开头核验过的那组：用户已
 
 四个 `codex-raw-1xx` 叶子保持 `active` 而非 `superseded`：只有它们的**一部分**被取代，整条状态翻转会让仍生效的部分一起失效。局部取代就该停在局部。
 
+## 2026-08-17：StopFailure 关闭父 Turn 的局部取代
+
+用户 2026-08-17 选择 D2，把 Claude「待继续」误判写入当前 Controlled 合同 RAW-174。该选择改变可见行为（仍在跑的 Claude 行不再因 Hook `StopFailure` 进入「待继续」），因此解除 semantic-fork 门禁。
+
+PRD / Architecture / authority-reset 中「Stop/StopFailure 关闭当前 Turn」不是登记叶子，无法做机器边。处置是同步改写那些 current authority，并把机器身份落在 [RAW-174](claude-raw-174.md#L1) / [#89](claude-raw-174-clause-089.md#L1)–[#94](claude-raw-174-clause-094.md#L1)。
+
+保留部分：成功 `Stop`、App 精确 failed/interrupted、已观察 open Turn 且无成功结果的 SessionEnd 仍关闭。SessionEnd lifecycle-only 合同不变。RAW-167 draft 仍是 `proposed`，不参与。
+
 ## 2026-08-17：确认整行被气泡取代
 
 用户明确要求确认提示不得再占卡片内整行。`decision_status=explicit-current-request`。RAW-173 中「有待确认时保留 `float-source-status`」被 [RAW-175](codex-raw-175.md#L1) 局部取代；搜索栏收纳条款仍有效。机器边写在 [codex-raw-173](codex-raw-173.md#L1) 的 `scoped_relations`。

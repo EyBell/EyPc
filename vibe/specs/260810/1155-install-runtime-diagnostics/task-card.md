@@ -1,7 +1,7 @@
 # RAW-160 → RAW-166 Companion 收敛 — Controlled Task Card
 
 Date: 2026-08-13
-Status: `RAW-166 increment-automated-verified / rebuilt-artifact-ready / documentation-synchronized / dev-plugin-reload-pending`
+Status: `RAW-174 increment-automated-verified / documentation-synchronized / dev-plugin-reload-pending`
 Documentation level: `controlled`
 
 本任务沿用 RAW-159 的 Controlled 任务树和稳定同步组；RAW-159/160 的库存、归档事务、诊断、Runtime Identity、分页和 hidden-Host watcher 成果作为 V4 基础保留。RAW-161 追加 Codex 外部手动归档的原始权威库存恢复，RAW-162 追加 Goal-aware 完成边界，RAW-163 保留 parent-only 打开合同，RAW-164 追加库存 Side Chat 拓扑与全珠子聚合；RAW-165 修复库存终态伪新鲜、跨 transport 分支身份漂移、Side 权威泄漏、注意力优先级、最终推送判定，并用 Claude App 完成/焦点热事件覆盖 LevelDB 落盘延迟。RAW-166 再补齐双向 phase admission、phase/unread/Goal 独立 lane、proposal/final 诊断与全量错误记忆唯一责任路由；均不另建重复任务。
@@ -57,6 +57,7 @@ Documentation level: `controlled`
     "vibe/knowledge/error-memory/companion-plan-lifecycle-and-interrupted-causality.md",
     "vibe/knowledge/error-memory/companion-consumer-cache-and-float-applied-ack.md",
     "vibe/knowledge/error-memory/claude-generic-session-end-must-not-overwrite-completion.md",
+    "vibe/knowledge/error-memory/claude-stop-failure-must-not-close-continuing-parent-turn.md",
     "vibe/knowledge/error-memory/claude-new-phase-must-outrank-previous-cache.md",
     "vibe/knowledge/error-memory/companion-observation-generation-is-not-semantic-revision.md",
     "vibe/knowledge/error-memory/independent-authorities-coupled-by-full-refresh.md",
@@ -118,6 +119,7 @@ Documentation level: `controlled`
   ],
   "validators": [
     "scripts/validate-error-memory.mjs",
+    "scripts/validate-requirements.mjs",
     "tests/domain/claude.test.ts",
     "tests/domain/claudeCode.test.ts",
     "tests/domain/codex.test.ts",

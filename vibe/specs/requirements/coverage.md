@@ -26,6 +26,7 @@ Date: 2026-08-13
 | --- | --- | --- | ---: | ---: | ---: |
 | `companion-codex` | [codex-quota-float](../260718/1148-codex-quota-float/raw-requirement.md#L1) | bullet | 152 | 134 | 18 |
 | `companion-claude` | [claude-code-companion-authority-reset](../260807/claude-code-companion-authority-reset/raw-requirement.md#L1) | table | 32 | 32 | 0 |
+| `companion-claude` | [install-runtime-diagnostics RAW-174](../260810/1155-install-runtime-diagnostics/raw-requirement.md#L120) | heading + numbered | 7 | 7 | 0 |
 | `companion-shared` | [install-runtime-diagnostics](../260810/1155-install-runtime-diagnostics/raw-requirement.md#L1) | heading | 6 | 6 | 0 |
 | `interaction-shell` | [quick-jump-center-overlay](../260718/0947-quick-jump-center-overlay/raw-requirement.md#L1) | bullet | 4 | 4 | 0 |
 | `file-favorites` | [file-favorites-workbench](../260711/1452-file-favorites-workbench/raw-requirement.md#L1) | heading | 2 | 2 | 0 |
@@ -51,24 +52,27 @@ Date: 2026-08-13
 
 用户 2026-08-15 裁决：**A 类入册，每条一个叶子；B 类保持现状。**
 
-### A 类：82 条已入册
+### A 类：88 条已入册
 
-全部来自 [install-runtime-diagnostics](../260810/1155-install-runtime-diagnostics/raw-requirement.md#L1)，落在六个已登记且 `active` 的父条款之下：
+全部来自 [install-runtime-diagnostics](../260810/1155-install-runtime-diagnostics/raw-requirement.md#L1)，落在七个已登记且 `active` 的父条款之下：
 
-| 父条款 | 全局序号区间 | 条数 | authority |
-| --- | --- | ---: | --- |
-| [RAW-160](shared-raw-160.md#L1) | #1–#43 | 43 | `user-stated` |
-| [RAW-162](shared-raw-162.md#L1) | #44–#49 | 6 | `user-stated` |
-| [RAW-163](shared-raw-163.md#L1) | #50–#55 | 6 | `user-stated` |
-| [RAW-164](shared-raw-164.md#L1) | #56–#64 | 9 | `user-stated` |
-| [RAW-165](shared-raw-165.md#L1) | #65–#75 | 11 | `agent-transcribed` |
-| [RAW-166](shared-raw-166.md#L1) | #76–#82 | 7 | `agent-transcribed` |
+| 父条款 | 全局序号区间 | 条数 | authority | 域 |
+| --- | --- | ---: | --- | --- |
+| [RAW-160](shared-raw-160.md#L1) | #1–#43 | 43 | `user-stated` | companion-shared |
+| [RAW-162](shared-raw-162.md#L1) | #44–#49 | 6 | `user-stated` | companion-shared |
+| [RAW-163](shared-raw-163.md#L1) | #50–#55 | 6 | `user-stated` | companion-shared |
+| [RAW-164](shared-raw-164.md#L1) | #56–#64 | 9 | `user-stated` | companion-shared |
+| [RAW-165](shared-raw-165.md#L1) | #65–#75 | 11 | `agent-transcribed` | companion-shared |
+| [RAW-166](shared-raw-166.md#L1) | #76–#82 | 7 | `agent-transcribed` | companion-shared |
+| [RAW-174](claude-raw-174.md#L1) | #89–#94 | 6 | `user-stated` | companion-claude |
 
-**序号是全文档全局连续的 1–82，不是每个 RAW 各自从 1 开始。** 这一点由交叉核对确证：[冲突登记](conflict-register.md#L1) 早已用「RAW-163 第 50–53 条」指称 main-first 展示门槛，而实测 #50–#53 恰好就是那四条。仓库既有散文用的就是这套寻址，本轮只是把它变成机器可读。
+#83–#88 被 [raw-requirement-next.draft.md](../260810/1155-install-runtime-diagnostics/raw-requirement-next.draft.md#L1) 占用为 `proposed` 工程不变量，本增量跳过以免撞号。RAW-173 属于另一任务。
 
-每条继承父条款的 `status` 与 `authority`——父条款是转述的，子条款同样是转述，冲突时不得压过原话。
+**序号是全文档全局连续的**，不是每个 RAW 各自从 1 开始。#89–#94 继续该文档序列。A 类 82 → **88** 条编号叶子。交叉核对仍以 [冲突登记](conflict-register.md#L1) 的「RAW-163 第 50–53 条」为据：#50–#53 恰好就是那四条。
 
-登记总量 196 → **286** 条叶子（新增 RAW-173、RAW-175）。
+每条继承父条款的 `status` 与 `authority`。RAW-174 父条款为 `user-stated`（2026-08-17 缺陷核验 + D2），子条款同样继承；与更早 `agent-transcribed` 父条款冲突时，转述不得压过原话。
+
+登记总量 196 → 284 → 292 → **293** 条叶子（新增 RAW-175；RAW-173 已在上一增量入册）。
 
 ### 由此可以做而此前做不到的事
 
