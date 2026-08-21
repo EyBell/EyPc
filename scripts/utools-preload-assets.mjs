@@ -58,7 +58,9 @@ export const UTOOLS_PRELOAD_MODULE_GROUPS = Object.freeze([
       'inventory.cjs',
       'settings.cjs',
       'scripts.cjs',
-      'events.cjs'
+      'events.cjs',
+      'open.cjs',
+      'archive.cjs'
     ]
   }
 ])

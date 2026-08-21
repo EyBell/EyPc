@@ -254,6 +254,40 @@ describe('process-lifetime companion navigation', () => {
     expect(navigation.handleEnter({ code: 'eypc-codex-task-next' })).toBe(false)
   })
 
+  it('cycles across cursor targets through the dedicated openCursor lane', async () => {
+    const opened: Array<{ provider: string; key: string }> = []
+    const record = (target: { key: string }, provider: string) => { opened.push({ provider, key: target.key }) }
+    const navigation = navigationModule.createCompanionNavigation({
+      openCodex: async (target: { key: string }) => { record(target, 'codex'); return { outcome: 'opened' } },
+      openClaude: async (target: { key: string }) => { record(target, 'claude'); return { outcome: 'dispatched' } },
+      openCursor: async (target: { key: string }) => { record(target, 'cursor'); return { outcome: 'dispatched' } }
+    })
+    const receipt = navigation.begin({ enabled: true, providers: { codex: true, claude: true, cursor: true } })
+    const mixedTargets = [
+      ...targets,
+      { key: 'cursor:11111111-2222-4333-8444-555555555555', provider: 'cursor', actionAlias: '11111111-2222-4333-8444-555555555555', revisionAt: 105, phase: 'running', canArchive: false }
+    ]
+    expect(navigation.sync({
+      lease: receipt.lease,
+      enabled: true,
+      providers: { codex: true, claude: true, cursor: true },
+      ready: true,
+      targets: mixedTargets,
+      cycleKeys: mixedTargets.map((target) => target.key)
+    })).toBe(true)
+
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'opened', key: 'codex-a' })
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'dispatched', key: 'claude:local_a' })
+    await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'opened', key: 'codex-b' })
+    await expect(navigation.cycle(1)).resolves.toMatchObject({
+      outcome: 'dispatched',
+      provider: 'cursor',
+      key: 'cursor:11111111-2222-4333-8444-555555555555'
+    })
+    expect(opened.at(-1)).toEqual({ provider: 'cursor', key: 'cursor:11111111-2222-4333-8444-555555555555' })
+    expect(navigation.diagnostics().dispatched).toMatchObject({ codex: 2, claude: 1, cursor: 1 })
+  })
+
   it('keeps anonymous successful cycle results for the next Controller lease', async () => {
     vi.useFakeTimers()
     const { navigation, receipt } = readyNavigation({

@@ -1,7 +1,10 @@
 'use strict'
 
 const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v2'
-const PROVIDERS = ['codex', 'claude']
+// Kernel-owned providers plus auxiliary open-only providers (cursor). A
+// provider absent from this list can never resolve an open target, even when
+// navigation selected it — keep in sync with navigation.cjs PROVIDERS.
+const PROVIDERS = ['codex', 'claude', 'cursor']
 const ARCHIVE_PHASES = ['completed', 'stopped']
 const CONFIRM_WINDOW_MS = 5_000
 

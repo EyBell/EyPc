@@ -8,11 +8,18 @@
  * bodies, transcripts and credentials never enter this module. Empty shells
  * (`status=none` and zero conversation headers) are dropped. The live App
  * database is opened read-only and never written.
+ *
+ * Multitask fork rows (`isSubagent` with `subagentInfo`) never become cards.
+ * Mirroring the Codex side-chat contract, they contribute per-parent evidence
+ * only: each parent session carries its live fork ids and their cold
+ * `unfinishedRunAt`, keyed by `subagentInfo.rootParentConversationId` so
+ * nested forks still attach to the root conversation the App shows.
  */
 
-const CURSOR_INVENTORY_REVISION = 'cursor-agent-inventory-v3'
+const CURSOR_INVENTORY_REVISION = 'cursor-agent-inventory-v4'
 const SQLITE_QUERY_TIMEOUT_MS = 20_000
 const SQLITE_QUERY_MAX_BUFFER = 8 * 1024 * 1024
+const { WATCHER_RECOVERY_INTERVAL_MS } = require('../timing-policy.cjs')
 const SQLITE_BIN_CANDIDATES = Object.freeze([
   '/usr/bin/sqlite3',
   '/opt/homebrew/bin/sqlite3',
@@ -20,6 +27,9 @@ const SQLITE_BIN_CANDIDATES = Object.freeze([
 ])
 const COMPOSER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MAX_ROWS = 500
+/** Fork ids may be prefixed (`task-<uuid>`), so only sanity-bound them. */
+const SUBAGENT_ID_MAX_LENGTH = 128
+const MAX_SUBAGENTS_PER_PARENT = 24
 
 const INVENTORY_SQL = `
 SELECT
@@ -39,6 +49,8 @@ SELECT
   json_extract(h.value, '$.subtitle') AS subtitle,
   json_extract(h.value, '$.workspaceIdentifier') AS workspaceIdentifier,
   json_extract(h.value, '$.name') AS name,
+  json_extract(h.value, '$.subagentInfo.parentComposerId') AS subagentParentComposerId,
+  json_extract(h.value, '$.subagentInfo.rootParentConversationId') AS subagentRootComposerId,
   json_extract(h.value, '$.createdFromBackgroundAgent') AS createdFromBackgroundAgent,
   json_extract(h.value, '$.glass.cloudAgentProjectMembership') AS cloudAgentProjectMembership,
   json_extract(h.value, '$.agentLocation.type') AS agentLocationType,
@@ -100,7 +112,49 @@ function isInventoryRow(row) {
   return COMPOSER_ID.test(textOf(row.composerId).trim())
 }
 
-function projectRow(row) {
+/** Root beats direct parent so nested forks attach to the App's root row. */
+function subagentParentIdOf(row) {
+  const root = textOf(row.subagentRootComposerId).trim()
+  if (COMPOSER_ID.test(root)) return root.toLowerCase()
+  const parent = textOf(row.subagentParentComposerId).trim()
+  return COMPOSER_ID.test(parent) ? parent.toLowerCase() : ''
+}
+
+/** Fork rows are evidence, never cards, so the empty-shell filter stays off. */
+function isSubagentEvidenceRow(row) {
+  if (!row || !flagOf(row.isSubagent) || flagOf(row.isArchived)) return false
+  if (textOf(row.unifiedMode).trim() !== 'agent') return false
+  if (isCloudRow(row)) return false
+  const id = textOf(row.composerId).trim()
+  return id.length > 0 && id.length <= SUBAGENT_ID_MAX_LENGTH
+}
+
+function collectSubagentsByParent(rows) {
+  const byParent = new Map()
+  for (const row of rows) {
+    if (!isSubagentEvidenceRow(row)) continue
+    const parentId = subagentParentIdOf(row)
+    if (!parentId) continue
+    let list = byParent.get(parentId)
+    if (!list) {
+      list = []
+      byParent.set(parentId, list)
+    }
+    list.push({
+      composerId: textOf(row.composerId).trim(),
+      unfinishedRunAt: Number(row.unfinishedRunAt) || 0,
+      lastUpdatedAt: Number(row.lastUpdatedAt) || 0
+    })
+  }
+  for (const [parentId, list] of byParent) {
+    list.sort((a, b) => (b.unfinishedRunAt - a.unfinishedRunAt) || (b.lastUpdatedAt - a.lastUpdatedAt))
+    byParent.set(parentId, list.slice(0, MAX_SUBAGENTS_PER_PARENT)
+      .map((entry) => ({ composerId: entry.composerId, unfinishedRunAt: entry.unfinishedRunAt })))
+  }
+  return byParent
+}
+
+function projectRow(row, subagents) {
   return {
     composerId: textOf(row.composerId).trim(),
     workspaceIdentifier: textOf(row.workspaceIdentifier).trim() || textOf(row.workspaceId).trim(),
@@ -113,7 +167,8 @@ function projectRow(row) {
     hasPendingPlan: flagOf(row.hasPendingPlan),
     hasBlockingPendingActions: flagOf(row.hasBlockingPendingActions),
     unfinishedRunAt: Number(row.unfinishedRunAt) || 0,
-    diskStatus: textOf(row.diskStatus).trim().toLowerCase()
+    diskStatus: textOf(row.diskStatus).trim().toLowerCase(),
+    ...(Array.isArray(subagents) && subagents.length ? { subagents } : {})
   }
 }
 
@@ -192,6 +247,10 @@ function createInventoryReader(dependencies) {
   const os = dependencies.os || { homedir: () => '' }
   const platform = dependencies.platform || (typeof process !== 'undefined' ? process.platform : 'darwin')
   const env = dependencies.env || (typeof process !== 'undefined' ? process.env : {})
+  const watchFileFn = dependencies.watchFile
+    || (typeof fs.watchFile === 'function' ? fs.watchFile.bind(fs) : null)
+  const unwatchFileFn = dependencies.unwatchFile
+    || (typeof fs.unwatchFile === 'function' ? fs.unwatchFile.bind(fs) : null)
 
   function resolveDbPath() {
     return textOf(dependencies.stateDbPath) || defaultStateDbPath(os, path, platform, env)
@@ -212,10 +271,12 @@ function createInventoryReader(dependencies) {
     }
     try {
       const rows = queryInventoryRows(dependencies, dbPath)
+      const allRows = Array.isArray(rows) ? rows : []
+      const subagentsByParent = collectSubagentsByParent(allRows)
       const sessions = []
-      for (const row of Array.isArray(rows) ? rows : []) {
+      for (const row of allRows) {
         if (!isInventoryRow(row)) continue
-        sessions.push(projectRow(row))
+        sessions.push(projectRow(row, subagentsByParent.get(textOf(row.composerId).trim().toLowerCase())))
         if (sessions.length >= MAX_ROWS) break
       }
       return {
@@ -238,9 +299,91 @@ function createInventoryReader(dependencies) {
     }
   }
 
+  function dbSignature(filePath) {
+    try {
+      const stat = fs.statSync(filePath)
+      return `${Number(stat.size) || 0}:${Math.round(Number(stat.mtimeMs) || 0)}`
+    } catch {
+      return 'missing'
+    }
+  }
+
+  function watch(listener) {
+    if (typeof listener !== 'function') return () => {}
+    const dbPath = resolveDbPath()
+    const walPath = `${dbPath}-wal`
+    const targets = [dbPath, walPath]
+    const dirname = typeof path.dirname === 'function' ? path.dirname : (value) => String(value).replace(/[/\\][^/\\]+$/, '')
+    const basename = typeof path.basename === 'function' ? path.basename : (value) => String(value).split(/[/\\]/).pop() || ''
+    const accepted = new Set([basename(dbPath), `${basename(dbPath)}-wal`])
+    const watchers = []
+    const recovery = []
+    let disposed = false
+    let scheduled = false
+    let lastSignature = targets.map(dbSignature).join('|')
+    const notify = () => {
+      if (disposed) return
+      const next = targets.map(dbSignature).join('|')
+      if (next === lastSignature) return
+      lastSignature = next
+      try { listener() } catch { /* consumer's problem */ }
+    }
+    const requestNotify = () => {
+      if (disposed || scheduled) return
+      scheduled = true
+      const schedule = typeof setImmediate === 'function' ? setImmediate : (fn) => setTimeout(fn, 0)
+      schedule(() => {
+        scheduled = false
+        notify()
+      })
+    }
+    try {
+      const dirWatcher = fs.watch(dirname(dbPath), { persistent: false }, (_event, filename) => {
+        if (filename && !accepted.has(String(filename))) return
+        requestNotify()
+      })
+      if (dirWatcher && typeof dirWatcher.on === 'function') {
+        dirWatcher.on('error', () => {
+          try { if (typeof dirWatcher.close === 'function') dirWatcher.close() } catch { /* already gone */ }
+        })
+      }
+      watchers.push(dirWatcher)
+    } catch { /* directory watch is the fast path; file watches remain */ }
+    for (const filePath of targets) {
+      try {
+        const watcher = fs.watch(filePath, { persistent: false }, () => requestNotify())
+        if (watcher && typeof watcher.on === 'function') {
+          watcher.on('error', () => {
+            try { if (typeof watcher.close === 'function') watcher.close() } catch { /* already gone */ }
+          })
+        }
+        watchers.push(watcher)
+      } catch { /* file may be missing until Cursor writes a WAL */ }
+      if (watchFileFn) {
+        try {
+          const callback = () => requestNotify()
+          watchFileFn(filePath, { persistent: false, interval: WATCHER_RECOVERY_INTERVAL_MS }, callback)
+          recovery.push({ filePath, callback })
+        } catch { /* recovery is optional */ }
+      }
+    }
+    return () => {
+      disposed = true
+      for (const watcher of watchers) {
+        try { if (watcher && typeof watcher.close === 'function') watcher.close() } catch { /* already gone */ }
+      }
+      if (unwatchFileFn) {
+        for (const item of recovery) {
+          try { unwatchFileFn(item.filePath, item.callback) } catch { /* already gone */ }
+        }
+      }
+    }
+  }
+
   return {
     revision: CURSOR_INVENTORY_REVISION,
-    readInventory
+    readInventory,
+    watch
   }
 }
 

@@ -4,23 +4,21 @@
  * Cursor Agent companion facade.
  *
  * Cold inventory stays read-only. Hook registration writes only the user-level
- * `hooks.json` after an explicit UI confirmation. Open stays `unavailable`
- * because jump is still `live-failed`. Conversation bodies are never read.
+ * `hooks.json` after an explicit UI confirmation. Open dispatches Cursor's own
+ * `agent?id=<composerId>` deep link (verified on Cursor 3.17.8 to focus the
+ * exact local conversation) and reports `dispatched`, never a read confirmation.
+ * Archive is the one confirmed state write: it flips the App's own
+ * `isArchived` pair on a single `composerHeaders` row after re-verifying the
+ * task is not live (see `archive.cjs`). Conversation bodies are never read.
  */
 
-const CURSOR_BRIDGE_REVISION = 'cursor-agent-companion-v2'
+const CURSOR_BRIDGE_REVISION = 'cursor-agent-companion-v5'
 const { createInventoryReader } = require('./inventory.cjs')
 const { createEventQueue } = require('./events.cjs')
 const { HOOK_SCRIPT_NAME, hookScript, settingsCommandLine } = require('./scripts.cjs')
 const { EYPC_MARKER, withEypcHooks, withoutEypcHooks, hookInstallState } = require('./settings.cjs')
-
-function unavailableOpen() {
-  return {
-    outcome: 'unavailable',
-    confirmsRead: false,
-    message: 'Cursor 对话跳转尚未验证，当前不能从插件打开'
-  }
-}
+const { createOpener } = require('./open.cjs')
+const { createArchiver } = require('./archive.cjs')
 
 function defaultHooksPath(os, pathModule) {
   const home = typeof os.homedir === 'function' ? os.homedir() : ''
@@ -33,6 +31,8 @@ function createCursorBridge(dependencies) {
   const os = dependencies.os || { homedir: () => '' }
   const dataDirectory = typeof dependencies.dataDirectory === 'string' ? dependencies.dataDirectory : ''
   const inventory = createInventoryReader(dependencies)
+  const opener = createOpener(dependencies)
+  const archiver = createArchiver(dependencies)
   const queue = dataDirectory
     ? createEventQueue({ ...dependencies, fs, path, directory: dataDirectory })
     : null
@@ -45,7 +45,9 @@ function createCursorBridge(dependencies) {
     : defaultHooksPath(os, path)
 
   let eventWatchDispose = null
+  let inventoryWatchDispose = null
   const eventWatchListeners = new Set()
+  const inventoryWatchListeners = new Set()
 
   function hooksFilePath() {
     return hooksPath
@@ -98,7 +100,17 @@ function createCursorBridge(dependencies) {
     fs.renameSync(temporary, hooksPath)
   }
 
+  function ensureHookScript() {
+    if (!queue || !hookCommandPath) return
+    const next = hookScript({ queuePath: queue.queuePath })
+    try {
+      if (fs.readFileSync(hookCommandPath, 'utf8') === next) return
+    } catch { /* missing script is rewritten below */ }
+    writeExecutable(hookCommandPath, next)
+  }
+
   function inspect() {
+    try { ensureHookScript() } catch { /* owned script refresh is best effort */ }
     const snapshot = inventory.readInventory()
     const hooksFile = inspectHooksFile()
     const hooks = hooksFile.state === 'ok' || hooksFile.state === 'missing'
@@ -160,6 +172,26 @@ function createCursorBridge(dependencies) {
     }
   }
 
+  function broadcastInventoryWatchers() {
+    for (const subscriber of inventoryWatchListeners) {
+      try { subscriber() } catch { /* consumer's problem */ }
+    }
+  }
+
+  function watchInventory(listener) {
+    if (typeof listener !== 'function') return () => {}
+    inventoryWatchListeners.add(listener)
+    if (!inventoryWatchDispose && typeof inventory.watch === 'function') {
+      inventoryWatchDispose = inventory.watch(broadcastInventoryWatchers)
+    }
+    return () => {
+      inventoryWatchListeners.delete(listener)
+      if (inventoryWatchListeners.size || !inventoryWatchDispose) return
+      inventoryWatchDispose()
+      inventoryWatchDispose = null
+    }
+  }
+
   function readHookState() {
     if (!queue) return []
     try {
@@ -184,9 +216,11 @@ function createCursorBridge(dependencies) {
     readInventory: () => inventory.readInventory(),
     readHookState,
     watchEvents,
+    watchInventory,
     install,
     uninstall,
-    openTask: () => Promise.resolve(unavailableOpen()),
+    openTask: (composerId) => opener.openTask(String(composerId || ''), { platform: dependencies.platform }),
+    archiveTask: (composerId) => Promise.resolve(archiver.archiveTask(String(composerId || ''))),
     diagnostics() {
       return {
         revision: CURSOR_BRIDGE_REVISION,
@@ -203,6 +237,11 @@ function createCursorBridge(dependencies) {
         eventWatchDispose = null
       }
       eventWatchListeners.clear()
+      if (inventoryWatchDispose) {
+        try { inventoryWatchDispose() } catch { /* already gone */ }
+        inventoryWatchDispose = null
+      }
+      inventoryWatchListeners.clear()
       if (queue && typeof queue.stopWatching === 'function') {
         try { queue.stopWatching() } catch { /* already gone */ }
       }

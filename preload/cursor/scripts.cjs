@@ -39,7 +39,7 @@ function hookScript(options) {
 # Appends privacy-safe Agent events to EyPc's own queue. Never blocks Cursor.
 set -u
 QUEUE=${queuePath}
-INPUT=$(cat 2>/dev/null || true)
+INPUT=$(dd bs=1024 count=32 2>/dev/null || true)
 [ -n "$INPUT" ] || exit 0
 
 first_value() {

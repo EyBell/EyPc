@@ -71,6 +71,8 @@ describe('cursor hook script', () => {
     expect(source).not.toContain('tool_input')
     expect(source).not.toContain('agent_message')
     expect(source).not.toMatch(/\bprompt\b/)
+    expect(source).toContain('dd bs=1024 count=32')
+    expect(source).not.toContain('INPUT=$(cat')
   })
 })
 

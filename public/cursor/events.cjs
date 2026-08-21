@@ -182,6 +182,7 @@ function createEventQueue(dependencies) {
   let offset = 0
   let sessionState = new Map()
   let watcher = null
+  let fileWatcher = null
   let recoveryFileWatch = false
   let recoveryFileListener = null
   let recoveryTimer = null
@@ -196,6 +197,10 @@ function createEventQueue(dependencies) {
     if (watcher) {
       try { watcher.close() } catch { /* already gone */ }
       watcher = null
+    }
+    if (fileWatcher) {
+      try { fileWatcher.close() } catch { /* already gone */ }
+      fileWatcher = null
     }
     if (recoveryFileWatch) {
       if (unwatchFileFn) {
@@ -227,6 +232,7 @@ function createEventQueue(dependencies) {
       : DEFAULT_RECOVERY_POLL_MS
     stopWatching()
     try { fs.mkdirSync(directory, { recursive: true }) } catch { /* the watch below reports it */ }
+    try { fs.writeFileSync(queuePath, '', { flag: 'a' }) } catch { /* file watch can attach later */ }
     let disposed = false
     lastQueueSignature = queueSignature()
     const stateFingerprint = () => JSON.stringify([...sessionState.entries()])
@@ -253,6 +259,19 @@ function createEventQueue(dependencies) {
       }
     } catch {
       watcher = null
+    }
+    try {
+      fileWatcher = fs.watch(queuePath, { persistent: false }, () => {
+        if (!disposed) drainAndNotify()
+      })
+      if (fileWatcher && typeof fileWatcher.on === 'function') {
+        fileWatcher.on('error', () => {
+          try { fileWatcher?.close() } catch {}
+          fileWatcher = null
+        })
+      }
+    } catch {
+      fileWatcher = null
     }
     if (watchFileFn) {
       try {

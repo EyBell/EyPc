@@ -16,6 +16,10 @@ const CLOUD = '64047b1c-1111-2222-3333-444444444444'
 const CHAT = 'f3ee44cd-aaaa-bbbb-cccc-dddddddddddd'
 const EMPTY_NONE = 'aaaaaaaa-1111-2222-3333-444444444444'
 const NONE_WITH_HEADERS = 'bbbbbbbb-1111-2222-3333-444444444444'
+const FORK_RUNNING = 'cccccccc-1111-2222-3333-444444444444'
+const FORK_NESTED_TASK = `task-dddddddd-1111-2222-3333-444444444444`
+const FORK_FINISHED = 'eeeeeeee-1111-2222-3333-444444444444'
+const FORK_ARCHIVED = 'ffffffff-1111-2222-3333-444444444444'
 
 function writeFixture(path: string) {
   const db = new DatabaseSync(path)
@@ -71,6 +75,28 @@ function writeFixture(path: string) {
     unifiedMode: 'agent',
     name: 'none with headers'
   }))
+  insertHeader.run(FORK_RUNNING, 'ws-local', 0, 1, 1500, 2500, JSON.stringify({
+    unifiedMode: 'agent',
+    name: 'running fork',
+    unfinishedRunAt: 2400,
+    subagentInfo: { parentComposerId: LOCAL, rootParentConversationId: LOCAL }
+  }))
+  insertHeader.run(FORK_NESTED_TASK, 'ws-local', 0, 1, 1500, 2500, JSON.stringify({
+    unifiedMode: 'agent',
+    name: 'nested task fork',
+    subagentInfo: { parentComposerId: FORK_RUNNING, rootParentConversationId: LOCAL }
+  }))
+  insertHeader.run(FORK_FINISHED, 'ws-local', 0, 1, 1500, 2600, JSON.stringify({
+    unifiedMode: 'agent',
+    name: 'finished fork',
+    subagentInfo: { parentComposerId: LOCAL, rootParentConversationId: LOCAL }
+  }))
+  insertHeader.run(FORK_ARCHIVED, 'ws-local', 1, 1, 1500, 2700, JSON.stringify({
+    unifiedMode: 'agent',
+    name: 'archived fork',
+    unfinishedRunAt: 2650,
+    subagentInfo: { parentComposerId: LOCAL, rootParentConversationId: LOCAL }
+  }))
   insertData.run(`composerData:${LOCAL}`, JSON.stringify({
     status: 'completed',
     text: 'conversation body must never be selected',
@@ -121,6 +147,15 @@ describe('cursor inventory reader', () => {
         diskStatus: 'none',
         name: 'none with headers'
       })
+      const parent = snapshot.sessions.find((session: { composerId: string }) => session.composerId === LOCAL)
+      expect(parent.subagents).toEqual([
+        { composerId: FORK_RUNNING, unfinishedRunAt: 2400 },
+        { composerId: FORK_FINISHED, unfinishedRunAt: 0 },
+        { composerId: FORK_NESTED_TASK, unfinishedRunAt: 0 }
+      ])
+      expect(JSON.stringify(parent.subagents)).not.toContain(FORK_ARCHIVED)
+      expect(snapshot.sessions.some((session: { composerId: string }) => session.composerId === FORK_RUNNING)).toBe(false)
+      expect(snapshot.sessions.some((session: { composerId: string }) => session.composerId === FORK_NESTED_TASK)).toBe(false)
       expect(JSON.stringify(snapshot.sessions)).not.toContain('conversation body')
       expect(JSON.stringify(snapshot.sessions)).not.toContain('richText')
       expect(JSON.stringify(snapshot.sessions)).not.toContain('header-only')
@@ -249,6 +284,47 @@ describe('cursor inventory reader', () => {
         NONE_WITH_HEADERS
       ].sort())
       expect(JSON.stringify(snapshot.sessions)).not.toContain('conversation body')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('notifies inventory watchers when the state database signature changes', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'eypc-cursor-inventory-watch-'))
+    const dbPath = join(root, 'state.vscdb')
+    writeFixture(dbPath)
+    let fileListener: (() => void) | undefined
+    try {
+      const reader = inventoryModule.createInventoryReader({
+        fs: {
+          existsSync: () => true,
+          statSync: (value: string) => {
+            try { return require('node:fs').statSync(value) } catch { throw new Error('missing') }
+          },
+          watch: () => ({ close() {}, on() {} })
+        },
+        watchFile: (_path: string, _opts: unknown, callback: () => void) => {
+          fileListener = callback
+        },
+        unwatchFile: () => undefined,
+        path: { join },
+        os: { homedir: () => root },
+        platform: 'darwin',
+        env: {},
+        stateDbPath: dbPath,
+        DatabaseSync
+      })
+      let notified = 0
+      const dispose = reader.watch(() => { notified += 1 })
+      expect(typeof fileListener).toBe('function')
+      require('node:fs').writeFileSync(`${dbPath}-wal`, 'x')
+      fileListener?.()
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(notified).toBe(1)
+      fileListener?.()
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(notified).toBe(1)
+      dispose()
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

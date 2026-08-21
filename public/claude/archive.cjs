@@ -1,11 +1,15 @@
 'use strict'
 
 /**
- * Version-gated Claude App metadata archive adapter.
+ * Claude App metadata archive adapter.
  *
  * The exact file, stat/hash guard, atomic replacement and rollback are owned by
- * `code-sessions.cjs`. This adapter owns only platform/version/phase gates and
- * maps the private transaction result to the public three-state contract.
+ * `code-sessions.cjs`. This adapter owns only platform/phase gates and maps the
+ * private transaction result to the public three-state contract. The archive
+ * boundary is structural, not version-gated: the transaction itself proves the
+ * target is unique, parseable and still terminal, and the post-write read-back
+ * plus active-inventory check catch schema drift on any App version. A version
+ * whitelist here only reproduced "every auto-update silently breaks archive".
  */
 
 const { LOCAL_SESSION_PATTERN } = require('./code-sessions.cjs')
@@ -20,7 +24,6 @@ function normalizedSessionId(value) {
 
 function createArchiveAdapter(dependencies) {
   const codeSessions = dependencies.codeSessions
-  const appState = dependencies.appState
 
   async function readArchivablePhase(sessionId) {
     if (typeof dependencies.readCurrentSessionPhase !== 'function') {
@@ -32,7 +35,7 @@ function createArchiveAdapter(dependencies) {
     } catch {
       return { outcome: 'indeterminate', message: '无法重新读取 Claude 实时任务状态，未执行归档' }
     }
-    if (current?.status !== 'found' || current.compatibility !== 'compatible') {
+    if (current?.status !== 'found') {
       return { outcome: 'indeterminate', message: 'Claude 实时任务状态无法唯一确认，未执行归档' }
     }
     if (!['completed', 'stopped'].includes(current.phase)) {
@@ -46,10 +49,6 @@ function createArchiveAdapter(dependencies) {
     if (!sessionId) return { outcome: 'failed', message: 'Claude 任务身份已失效' }
     if ((dependencies.platform || process.platform) !== 'darwin') {
       return { outcome: 'failed', message: 'Claude 静默归档当前仅支持 macOS' }
-    }
-    const gate = appState.read()
-    if (gate.compatibility !== 'compatible' || !SUPPORTED_APP_VERSIONS.has(gate.appVersion)) {
-      return { outcome: 'failed', message: `Claude ${gate.appVersion || '未知版本'} 未通过静默归档适配门禁` }
     }
     const before = codeSessions.readSessionState(sessionId)
     if (before.status !== 'found') {

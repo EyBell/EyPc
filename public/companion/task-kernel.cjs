@@ -21,6 +21,12 @@ const PREFLIGHT_TIMEOUT_MS = 5_000
 const UNKNOWN_GRACE_MS = 250
 const MAX_TIMER_DELAY_MS = 2_147_483_647
 const PROVIDERS = ['codex', 'claude']
+// Open-only providers that never publish canonical evidence: their cards are
+// projected outside the kernel, but previous/next and open resolution must
+// still run through the process-owned navigation authority (RAW-152). They
+// join cycle candidates and open targets, never the package/membership lanes.
+const AUXILIARY_PROVIDERS = ['cursor']
+const MAX_AUXILIARY_TASKS = 200
 const TIERS = ['attention', 'plan', 'active', 'fallback', 'none']
 const GROUPS = ['input', 'active', 'stopped', 'unread', 'completed', 'none']
 const DRAFT_PRODUCERS = ['renderer', 'host-preflight', 'host-evidence']
@@ -635,6 +641,34 @@ function targetFromTask(task) {
   }
 }
 
+/**
+ * Auxiliary rows arrive from the Renderer projection (already
+ * hidden-filtered), so only identity and causal timestamps are accepted; tier
+ * and dynamic eligibility are always rederived here so the kernel stays the
+ * single owner of cycle semantics.
+ */
+function normalizeAuxiliaryTask(value, provider) {
+  if (!value || typeof value !== 'object') return null
+  const key = typeof value.key === 'string' ? value.key : ''
+  const actionAlias = typeof value.actionAlias === 'string' ? value.actionAlias : ''
+  const revisionAt = finiteInteger(value.revisionAt)
+  if (!key || key.length > 256 || !key.startsWith(`${provider}:`)
+    || !actionAlias || actionAlias.length > 256 || revisionAt <= 0) return null
+  return {
+    key,
+    provider,
+    actionAlias: actionAlias.slice(0, 256),
+    revisionAt,
+    phase: isKnownTaskPhase(value.phase) ? value.phase : 'unknown',
+    lastQuestionAt: finiteInteger(value.lastQuestionAt),
+    createdAt: finiteInteger(value.createdAt),
+    statusEnteredAt: finiteInteger(value.statusEnteredAt),
+    turnStartedAt: finiteInteger(value.turnStartedAt),
+    terminalAt: finiteInteger(value.terminalAt),
+    localPin: value.localPin === true
+  }
+}
+
 function emptyViews() {
   return {
     groups: { input: [], active: [], stopped: [], unread: [], completed: [] },
@@ -869,6 +903,8 @@ function createCompanionTaskKernel(dependencies = {}) {
     completedUnread: new Set()
   }
   const claudeReadAcknowledgements = new Map()
+  const auxiliaryCycleTasks = new Map()
+  const auxiliaryFingerprints = new Map()
   const attentionQueues = {
     input: Promise.resolve(),
     completedUnread: Promise.resolve()
@@ -905,12 +941,27 @@ function createCompanionTaskKernel(dependencies = {}) {
       trustedResolvedTarget: request?.trustedResolvedTarget === true,
       source: request?.source || 'task-cycle',
       operationId: request?.operationId
+    }),
+    openCursor: (target, request) => actions.open({
+      key: target.key,
+      target,
+      trustedResolvedTarget: request?.trustedResolvedTarget === true,
+      source: request?.source || 'task-cycle',
+      operationId: request?.operationId
     })
   })
   let navigationLease = 0
 
+  // Auxiliary lanes are always projected as enabled so the consumer provider
+  // set stays stable; with no published rows the lane simply has no targets.
+  function consumerProviders() {
+    const projected = { ...providers }
+    for (const provider of AUXILIARY_PROVIDERS) projected[provider] = true
+    return projected
+  }
+
   function beginNavigation() {
-    const receipt = navigation.begin({ enabled, providers })
+    const receipt = navigation.begin({ enabled, providers: consumerProviders() })
     navigationLease = receipt.lease
   }
 
@@ -1192,8 +1243,8 @@ function createCompanionTaskKernel(dependencies = {}) {
     next.packageRevision = ++packageSequence
     currentPackage = next
     lastSemantic = semanticPackage(next)
-    actions.sync({ enabled, ready: false, providers, targets: [] })
-    navigation.sync({ lease: navigationLease, enabled, providers, ready: false, targets: [], cycleKeys: [] })
+    actions.sync({ enabled, ready: false, providers: consumerProviders(), targets: [] })
+    navigation.sync({ lease: navigationLease, enabled, providers: consumerProviders(), ready: false, targets: [], cycleKeys: [] })
     emitPackage(currentPackage)
     return reason
   }
@@ -1219,14 +1270,65 @@ function createCompanionTaskKernel(dependencies = {}) {
     return changed || windowChanged
   }
 
+  function auxiliaryCycleEntries() {
+    const entries = []
+    const nowAt = now()
+    for (const tasks of auxiliaryCycleTasks.values()) {
+      for (const task of tasks.values()) {
+        const anchor = visibilityAnchor(task)
+        const candidate = {
+          ...task,
+          hidden: false,
+          paused: false,
+          planImplementation: false,
+          planReady: false,
+          dynamicEligible: anchor > 0 && anchor + dynamicWindowMs > nowAt
+        }
+        entries.push({ task: candidate, cycleTier: derivedCycleTier(candidate) })
+      }
+    }
+    return entries
+  }
+
+  /**
+   * Merged previous/next candidates. With no auxiliary rows this returns the
+   * package view byte-identically; otherwise both sides are regrouped with the
+   * exact buildViews semantics (open-capable, first non-empty tier, latest
+   * question order) so auxiliary providers neither jump the queue nor fall out.
+   */
+  function mergedCycleKeys(packageValue, auxEntries) {
+    const eligibleAux = auxEntries.filter((entry) => entry.cycleTier !== 'none')
+    if (!eligibleAux.length) return packageValue.views.cycleKeys
+    const candidates = [
+      ...packageValue.tasks
+        .filter((task) => task.capabilities.open && task.cycleTier !== 'none')
+        .map((task) => ({ task, cycleTier: task.cycleTier })),
+      ...eligibleAux
+    ].sort((left, right) => compareByLatestQuestion(left.task, right.task))
+    for (const tier of ['attention', 'plan', 'active', 'fallback']) {
+      const keys = candidates.filter((entry) => entry.cycleTier === tier).map((entry) => entry.task.key)
+      if (keys.length) return keys
+    }
+    return []
+  }
+
   function syncConsumers(packageValue) {
     pruneAttentionProgress(packageValue)
     const retainedKeys = new Set(packageValue.tasks.map((task) => task.key))
     for (const key of claudeReadAcknowledgements.keys()) if (!retainedKeys.has(key)) claudeReadAcknowledgements.delete(key)
-    const actionTargets = packageValue.tasks.map(targetFromTask)
+    const auxEntries = auxiliaryCycleEntries()
+    const auxTargets = auxEntries.map(({ task }) => ({
+      key: task.key,
+      provider: task.provider,
+      actionAlias: task.actionAlias,
+      revisionAt: task.revisionAt,
+      phase: task.phase,
+      canArchive: false
+    }))
+    const actionTargets = [...packageValue.tasks.map(targetFromTask), ...auxTargets]
     actions.sync({
       enabled,
-      providers,
+      providers: consumerProviders(),
       ready: packageValue.complete,
       targets: actionTargets,
       focusedKey: packageValue.focusedKey,
@@ -1235,13 +1337,48 @@ function createCompanionTaskKernel(dependencies = {}) {
     navigation.sync({
       lease: navigationLease,
       enabled,
-      providers,
+      providers: consumerProviders(),
       ready: packageValue.complete,
       // Direct row open remains available from the hidden/paused page; only
       // selector-owned cycleKeys and attentionKeys exclude those tasks.
       targets: actionTargets,
-      cycleKeys: packageValue.views.cycleKeys
+      cycleKeys: mergedCycleKeys(packageValue, auxEntries)
     })
+  }
+
+  /**
+   * Renderer-supplied open-only rows for auxiliary providers (cursor). They
+   * feed navigation/open targets and the previous/next cycle only — never the
+   * canonical package, membership, unread or archive lanes.
+   */
+  function publishAuxiliaryCycleTasks(input = {}) {
+    if (disposed) return false
+    const provider = AUXILIARY_PROVIDERS.includes(input?.provider) ? input.provider : ''
+    if (!provider) return false
+    const rows = new Map()
+    for (const value of Array.isArray(input.tasks) ? input.tasks : []) {
+      const task = normalizeAuxiliaryTask(value, provider)
+      if (!task || rows.has(task.key)) continue
+      rows.set(task.key, task)
+      if (rows.size >= MAX_AUXILIARY_TASKS) break
+    }
+    const fingerprint = JSON.stringify([...rows.values()].map((task) => [
+      task.key,
+      task.actionAlias,
+      task.revisionAt,
+      task.phase,
+      task.lastQuestionAt,
+      task.createdAt,
+      task.statusEnteredAt,
+      task.turnStartedAt,
+      task.terminalAt,
+      task.localPin
+    ]))
+    if (auxiliaryFingerprints.get(provider) === fingerprint) return false
+    auxiliaryFingerprints.set(provider, fingerprint)
+    auxiliaryCycleTasks.set(provider, rows)
+    syncConsumers(currentPackage)
+    return true
   }
 
   function publishLocalTasks(tasks, reason) {
@@ -2147,6 +2284,7 @@ function createCompanionTaskKernel(dependencies = {}) {
       packageGeneration: currentPackage.packageRevision,
       taskCount: currentPackage.tasks.length,
       cycleCount: currentPackage.views.cycleKeys.length,
+      auxiliaryTaskCount: [...auxiliaryCycleTasks.values()].reduce((total, tasks) => total + tasks.size, 0),
       preflightInFlight: Boolean(preflightInFlight),
       codexBranchParentCount: codexBranchEvidence.size,
       codexBranchCount: [...codexBranchEvidence.values()].reduce((total, value) => total + value.branches.length, 0),
@@ -2163,6 +2301,8 @@ function createCompanionTaskKernel(dependencies = {}) {
     clearUnknownTimer()
     clearVisibilityTimer()
     packageListeners.clear()
+    auxiliaryCycleTasks.clear()
+    auxiliaryFingerprints.clear()
     actions.close()
     navigation.dispose()
   }
@@ -2178,6 +2318,8 @@ function createCompanionTaskKernel(dependencies = {}) {
     syncPackage,
     /** Host-only provider evidence path; never exposed as a Renderer authority. */
     publishEvidence,
+    /** Open-only auxiliary providers joining previous/next; no package lanes. */
+    publishAuxiliaryCycleTasks,
     /** Host-only private branch evidence; branch refs never cross Renderer APIs. */
     publishCodexBranchEvidence,
     /** Only a verified Provider archive transaction may call this commit gate. */

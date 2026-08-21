@@ -1,11 +1,15 @@
 'use strict'
 
-const COMPANION_NAVIGATION_REVISION = 'companion-navigation-v3'
+const COMPANION_NAVIGATION_REVISION = 'companion-navigation-v4'
 // Kept as an exported compatibility marker for diagnostics/tests. Generic
 // cycling is leading-edge now: the first target is dispatched synchronously.
 const { DEFAULT_COALESCE_MS } = require('../timing-policy.cjs')
 const MAX_DIRECT_QUEUE = 200
-const PROVIDERS = ['codex', 'claude']
+// Every provider whose cards are clickable must also be registered here.
+// RAW-152 established this module as the sole cross-source cycle authority;
+// a provider missing from this list silently falls out of previous/next even
+// though its cards open fine, which is exactly the pre-RAW-152 failure.
+const PROVIDERS = ['codex', 'claude', 'cursor']
 
 function providerSet(value) {
   if (Array.isArray(value)) return new Set(value.filter((provider) => PROVIDERS.includes(provider)))
@@ -86,6 +90,9 @@ function createCompanionNavigation(dependencies = {}) {
   const openClaude = typeof dependencies.openClaude === 'function'
     ? dependencies.openClaude
     : async () => unavailable('Claude 任务打开能力不可用')
+  const openCursor = typeof dependencies.openCursor === 'function'
+    ? dependencies.openCursor
+    : async () => unavailable('Cursor 任务打开能力不可用')
 
   let enabled = false
   let enabledProviders = new Set()
@@ -106,6 +113,7 @@ function createCompanionNavigation(dependencies = {}) {
   let syncNoopCount = 0
   let dispatchedCodex = 0
   let dispatchedClaude = 0
+  let dispatchedCursor = 0
   let lastOutcome = 'idle'
   let resultSequence = 0
   let operationSequence = 0
@@ -221,12 +229,15 @@ function createCompanionNavigation(dependencies = {}) {
     currentConcurrent += 1
     maxConcurrent = Math.max(maxConcurrent, currentConcurrent)
     try {
-      const open = request.target.provider === 'claude' ? openClaude : openCodex
+      const open = request.target.provider === 'claude'
+        ? openClaude
+        : request.target.provider === 'cursor' ? openCursor : openCodex
       const result = normalizeOpenResult(await open(request.target, request), request.target)
       const currentOperationId = result.operationId || request.operationId
       if (result.outcome === 'opened' || result.outcome === 'dispatched') {
         if (request.cycle === true) cursorKey = request.target.key
         if (request.target.provider === 'claude') dispatchedClaude += 1
+        else if (request.target.provider === 'cursor') dispatchedCursor += 1
         else dispatchedCodex += 1
         const event = {
           id: ++resultSequence,
@@ -439,7 +450,7 @@ function createCompanionNavigation(dependencies = {}) {
       replacedCount,
       acceptedCycleCount,
       syncNoopCount,
-      dispatched: { codex: dispatchedCodex, claude: dispatchedClaude },
+      dispatched: { codex: dispatchedCodex, claude: dispatchedClaude, cursor: dispatchedCursor },
       pendingResultCount: pendingResults.length,
       lastOutcome
     }

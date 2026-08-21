@@ -1060,7 +1060,6 @@ describe('version-gated Claude metadata archive', () => {
 
   it.each([
     { name: 'running phase', options: { phase: 'running' as const } },
-    { name: 'unsupported version', options: { version: '1.26831.0' } },
     { name: 'unsupported platform', options: { platform: 'linux' } },
     { name: 'ambiguous identity', options: { ambiguous: true } }
   ])('writes nothing for $name', async ({ options }) => {
@@ -1070,6 +1069,13 @@ describe('version-gated Claude metadata archive', () => {
     expect(readFileSync(context.filePath)).toEqual(before)
     expect(context.execFile).not.toHaveBeenCalled()
     expect(context.performClaudeArchiveAction).not.toHaveBeenCalled()
+    context.bridge.close()
+  })
+
+  it('archives on a non-whitelisted App version through the same structural transaction', async () => {
+    const context = archiveBridge({ version: '1.34493.1' })
+    await expect(context.bridge.archiveCodeSession(LOCAL_A)).resolves.toMatchObject({ outcome: 'archived' })
+    expect(JSON.parse(readFileSync(context.filePath, 'utf8')).isArchived).toBe(true)
     context.bridge.close()
   })
 
