@@ -925,7 +925,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             type="button"
             class="codex-tip"
             aria-label="接入来源区域说明"
-            data-tip="Codex、Claude Code 与 Cursor Agent 是独立来源，可分别开关。关闭的来源完全不读取。Cursor 一期只列本机 Agent 卡片，不读额度，也不能从插件跳进对话。"
+            data-tip="Codex、Claude Code 与 Cursor Agent 是独立来源，可分别开关。关闭的来源完全不读取。Cursor 只列本机 Agent 卡片，不读额度；点卡片经官方 deeplink 跳到该对话。"
           >i</button>
         </div>
         <label class="codex-switch-row">
@@ -951,7 +951,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             type="checkbox"
             :checked="snapshot.settings.providers.cursor"
             data-operation-tooltip="接入 Cursor Agent"
-            data-operation-description="开启后只读本机 Cursor Agent 会话元数据并列入同一任务清单；默认关闭。不做额度。事件钩子需点下方按钮确认后才写入 ~/.cursor/hooks.json。不能从插件跳进对话。"
+            data-operation-description="开启后只读本机 Cursor Agent 会话元数据并列入同一任务清单；默认关闭。不做额度。事件钩子需点下方按钮确认后才写入 ~/.cursor/hooks.json。点卡片经 Cursor 官方 deeplink 跳到该对话（Cursor 未运行会先被启动）。"
             @change="toggleCursor(($event.target as HTMLInputElement).checked)"
           />
           <i />

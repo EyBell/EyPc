@@ -1639,11 +1639,8 @@ function confirmationMatchesCurrentState() {
 
 function taskArchiveBlockedReason(task: CodexTaskCard) {
   if (task.claudePhase === 'unknown') return '状态证据不足，暂不能归档'
-  if (task.provider === 'claude' && task.archiveCapability === 'blocked-stopped') {
-    return '当前 Claude 版本未通过静默归档门禁'
-  }
   return task.archiveCapability === 'blocked-stopped'
-    ? '当前 Provider 无法安全确认归档边界'
+    ? '任务状态证据不足，暂不能归档'
     : '任务仍在进行中，暂不能归档'
 }
 

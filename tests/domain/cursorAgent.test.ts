@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   cursorAgentDisplayName,
+  cursorSubagentsRunning,
   normalizeCursorAgentObservation,
   projectCursorAgentTaskCard,
   resolveCursorAgentPhase,
@@ -60,7 +61,50 @@ describe('cursor agent cold inventory', () => {
     expect(resolveCursorAgentPhase(observation({ diskStatus: 'none', isDraft: true })!)).toBe('unknown')
   })
 
-  it('reuses claudePhase so Float unknown grouping works and never claims archive', () => {
+  it('keeps a multitask parent running while any fork is live, like a Codex side chat', () => {
+    const forked = observation({
+      diskStatus: 'completed',
+      hookPhase: 'completed',
+      subagents: [
+        { composerId: 'adf34211-6ee0-49e4-94bc-c21dc9cdd9ba', unfinishedRunAt: 9_000 },
+        { composerId: 'task-246fecf4-4710-4086-aed5-8c3c9d70320f', unfinishedRunAt: 0 }
+      ]
+    })
+    expect(forked!.subagents).toHaveLength(2)
+    expect(cursorSubagentsRunning(forked!)).toBe(true)
+    expect(resolveCursorAgentPhase(forked!)).toBe('running')
+    expect(resolveCursorAgentState(forked!).bucket).toBe('ongoing')
+  })
+
+  it('lets hook-reconciled fork evidence beat the cold marker in both directions', () => {
+    const settled = observation({
+      diskStatus: 'completed',
+      subagents: [{ composerId: 'adf34211-6ee0-49e4-94bc-c21dc9cdd9ba', unfinishedRunAt: 9_000 }],
+      subagentRunning: false
+    })
+    expect(resolveCursorAgentPhase(settled!)).toBe('completed')
+    const hotForks = observation({
+      diskStatus: 'aborted',
+      subagents: [{ composerId: 'adf34211-6ee0-49e4-94bc-c21dc9cdd9ba', unfinishedRunAt: 0 }],
+      subagentRunning: true
+    })
+    expect(resolveCursorAgentPhase(hotForks!)).toBe('running')
+  })
+
+  it('keeps the parent waiting-input above running forks and settles when forks finish', () => {
+    const waiting = observation({
+      hasPendingPlan: true,
+      subagents: [{ composerId: 'adf34211-6ee0-49e4-94bc-c21dc9cdd9ba', unfinishedRunAt: 9_000 }]
+    })
+    expect(resolveCursorAgentPhase(waiting!)).toBe('waiting-input')
+    const finished = observation({
+      diskStatus: 'completed',
+      subagents: [{ composerId: 'adf34211-6ee0-49e4-94bc-c21dc9cdd9ba', unfinishedRunAt: 0 }]
+    })
+    expect(resolveCursorAgentPhase(finished!)).toBe('completed')
+  })
+
+  it('reuses claudePhase so Float unknown grouping works and gates archive by status alone', () => {
     const card = projectCursorAgentTaskCard(observation({ diskStatus: 'none' })!)
     expect(card.provider).toBe('cursor')
     expect(card.key).toBe(`cursor:${COMPOSER}`)
@@ -68,6 +112,12 @@ describe('cursor agent cold inventory', () => {
     expect(card.bucket).toBe('stopped')
     expect(card.canArchive).toBe(false)
     expect(card.archiveCapability).toBe('blocked-stopped')
+    const completed = projectCursorAgentTaskCard(observation({ diskStatus: 'completed' })!)
+    expect(completed).toMatchObject({ canArchive: true, archiveCapability: 'allowed' })
+    const stopped = projectCursorAgentTaskCard(observation({ diskStatus: 'aborted' })!)
+    expect(stopped).toMatchObject({ canArchive: true, archiveCapability: 'allowed' })
+    const running = projectCursorAgentTaskCard(observation({ unfinishedRunAt: 9_000 })!)
+    expect(running).toMatchObject({ canArchive: false, archiveCapability: 'blocked-active' })
     expect(cursorAgentDisplayName({ name: '', subtitle: 'hint' })).toBe('hint')
   })
 })

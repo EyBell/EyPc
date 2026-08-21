@@ -3094,6 +3094,220 @@ describe('Codex controller', () => {
     controller.dispose()
   })
 
+  it('hides, restores and pins a Cursor card even though the Kernel owns no Cursor row', async () => {
+    const now = Date.now()
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    state.codex.settings.providers = { codex: true, claude: false, cursor: true }
+    const codexKey = '3333333333333333'
+    const composerId = '4cab4479-df25-4ff7-a427-26aed29c5c0a'
+    const cursorKey = `cursor:${composerId}`
+    const companionKernel = companionTaskKernelModule.createCompanionTaskKernel({
+      coalesceMs: 0,
+      preflight: vi.fn(() => Promise.reject(new Error('codex-task-preflight-failed'))),
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false, cursor: true } }
+    })
+    // The Kernel only ever holds the Codex row; the Cursor card is folded in by
+    // the controller after projection, so hide/pin must not depend on a Kernel row.
+    companionKernel.publishEvidence(hostDraft([hostTask(codexKey, now, { phase: 'stopped', displayName: 'Codex 待继续' })], now))
+    const cursorSession = {
+      composerId,
+      workspaceIdentifier: 'file:///repo',
+      name: 'Cursor 待继续会话',
+      subtitle: '',
+      createdAt: now - 10_000,
+      lastUpdatedAt: now - 5_000,
+      hasUnreadMessages: false,
+      isDraft: false,
+      hasPendingPlan: false,
+      hasBlockingPendingActions: false,
+      unfinishedRunAt: 0,
+      diskStatus: 'aborted'
+    }
+    const platform = {
+      companionKernel,
+      codex: {
+        taskStateRevision: CODEX_TASK_STATE_REVISION,
+        readSnapshot: async () => ({ ok: false as const, receivedAt: now, error: { code: 'unavailable' as const, message: 'Codex 未运行' } }),
+        close: () => undefined
+      },
+      cursor: {
+        inspect: async () => ({ available: true, reason: 'ready', sessionCount: 1, readAt: now, hooks: 'missing' }),
+        readInventory: async () => ({ revision: 'inventory-test', available: true, reason: 'ready', sessions: [cursorSession], truncated: false, readAt: now }),
+        openTask: async () => ({ outcome: 'dispatched' as const, confirmsRead: false, message: '' }),
+        diagnostics: () => ({ revision: 'cursor-agent-companion-v4', loaded: true, loadError: '' }),
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({
+      platform,
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: () => undefined
+    })
+
+    controller.start()
+    await vi.waitFor(() => expect(controller.view().taskState.conversations.stopped.some((task) => task.key === cursorKey)).toBe(true))
+    const cursorCard = controller.view().taskState.conversations.stopped.find((task) => task.key === cursorKey)!
+
+    expect(controller.hide(cursorCard.key, cursorCard.revisionAt)).toBe(true)
+    expect(controller.view().taskState.conversations.stopped.some((task) => task.key === cursorKey)).toBe(false)
+    expect(controller.view().taskState.conversations.hidden.some((task) => task.key === cursorKey && task.hiddenKind === 'task')).toBe(true)
+    expect(state.codex.receipts.some((receipt) => receipt.key === cursorKey && receipt.dismissedActivityRecency === cursorCard.revisionAt)).toBe(true)
+
+    expect(controller.restore(cursorCard.key, cursorCard.revisionAt, 'task')).toBe(true)
+    expect(controller.view().taskState.conversations.hidden.some((task) => task.key === cursorKey)).toBe(false)
+    expect(controller.view().taskState.conversations.stopped.some((task) => task.key === cursorKey)).toBe(true)
+
+    expect(controller.toggleLocalPin('task', cursorKey)).toBe(true)
+    expect(controller.view().taskState.conversations.all.find((task) => task.key === cursorKey)?.pinSource).toBe('local')
+    expect(controller.toggleLocalPin('task', cursorKey)).toBe(true)
+    expect(controller.view().taskState.conversations.all.find((task) => task.key === cursorKey)?.pinSource).toBeUndefined()
+    controller.dispose()
+  })
+
+  it('archives a stopped Cursor card through the bridge without a Kernel row and keeps it on failure', async () => {
+    const now = Date.now()
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    state.codex.settings.providers = { codex: true, claude: false, cursor: true }
+    const composerId = '4cab4479-df25-4ff7-a427-26aed29c5c0a'
+    const cursorKey = `cursor:${composerId}`
+    const cursorSession = {
+      composerId,
+      workspaceIdentifier: 'file:///repo',
+      name: 'Cursor 待继续会话',
+      subtitle: '',
+      createdAt: now - 10_000,
+      lastUpdatedAt: now - 5_000,
+      hasUnreadMessages: false,
+      isDraft: false,
+      hasPendingPlan: false,
+      hasBlockingPendingActions: false,
+      unfinishedRunAt: 0,
+      diskStatus: 'aborted'
+    }
+    let archiveOutcome: { outcome: string; message?: string } = { outcome: 'failed', message: 'Cursor 任务归档失败，已保留任务卡片' }
+    const archiveTask = vi.fn(async () => archiveOutcome)
+    const messages: string[] = []
+    // Kernel presence is the preload-health gate for every task operation, but
+    // the Cursor archive itself must not need a Kernel-owned row.
+    const companionKernel = companionTaskKernelModule.createCompanionTaskKernel({
+      coalesceMs: 0,
+      preflight: vi.fn(() => Promise.reject(new Error('codex-task-preflight-failed'))),
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false, cursor: true } }
+    })
+    companionKernel.publishEvidence(hostDraft([hostTask('3333333333333333', now, { phase: 'stopped', displayName: 'Codex 待继续' })], now))
+    const platform = {
+      companionKernel,
+      codex: {
+        taskStateRevision: CODEX_TASK_STATE_REVISION,
+        readSnapshot: async () => ({ ok: false as const, receivedAt: now, error: { code: 'unavailable' as const, message: 'Codex 未运行' } }),
+        close: () => undefined
+      },
+      cursor: {
+        inspect: async () => ({ available: true, reason: 'ready', sessionCount: 1, readAt: now, hooks: 'missing' }),
+        readInventory: async () => ({ revision: 'inventory-test', available: true, reason: 'ready', sessions: [cursorSession], truncated: false, readAt: now }),
+        openTask: async () => ({ outcome: 'dispatched' as const, confirmsRead: false, message: '' }),
+        archiveTask,
+        diagnostics: () => ({ revision: 'cursor-agent-companion-v5', loaded: true, loadError: '' }),
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({
+      platform,
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: (message) => { messages.push(message) }
+    })
+
+    controller.start()
+    await vi.waitFor(() => expect(controller.view().taskState.conversations.stopped.some((task) => task.key === cursorKey)).toBe(true))
+    const card = controller.view().taskState.conversations.stopped.find((task) => task.key === cursorKey)!
+    expect(card).toMatchObject({ canArchive: true, archiveCapability: 'allowed' })
+
+    // A failed provider write keeps the card and reports the provider message.
+    await expect(controller.archive(card.key, card.revisionAt)).resolves.toBe(false)
+    expect(archiveTask).toHaveBeenCalledWith(composerId)
+    expect(controller.view().taskState.conversations.stopped.some((task) => task.key === cursorKey)).toBe(true)
+    expect(messages.at(-1)).toBe('Cursor 任务归档失败，已保留任务卡片')
+
+    archiveOutcome = { outcome: 'archived', message: '已归档 Cursor 任务（App 归档列表同步可见）' }
+    await expect(controller.archive(card.key, card.revisionAt)).resolves.toBe(true)
+    expect(controller.view().taskState.conversations.stopped.some((task) => task.key === cursorKey)).toBe(false)
+    expect(messages.at(-1)).toBe('已归档 Cursor 任务（App 归档列表同步可见）')
+    controller.dispose()
+  })
+
+  it('reaches a running Cursor card from the previous/next shortcut through the process navigation authority', async () => {
+    const now = Date.now()
+    const state = createInitialState(1)
+    state.activeTab = 'codex'
+    state.codex.settings.providers = { codex: true, claude: false, cursor: true }
+    const composerId = '4cab4479-df25-4ff7-a427-26aed29c5c0a'
+    const cursorKey = `cursor:${composerId}`
+    const openTask = vi.fn(async (_alias: string) => ({ outcome: 'dispatched' as const, confirmsRead: false, message: '已在 Cursor 打开该对话' }))
+    // Mirrors the preload wiring: the auxiliary cursor lane dispatches opens
+    // through the same adapter contract as Codex/Claude.
+    const companionKernel = companionTaskKernelModule.createCompanionTaskKernel({
+      coalesceMs: 0,
+      preflight: vi.fn(() => Promise.reject(new Error('codex-task-preflight-failed'))),
+      adapters: {
+        cursor: { open: async (target: { actionAlias: string }) => openTask(target.actionAlias) }
+      },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false, cursor: true } }
+    })
+    // The only Kernel row is settled, so previous/next has no Kernel-owned
+    // candidate — reaching the Cursor card proves the auxiliary lane works.
+    companionKernel.publishEvidence(hostDraft([hostTask('3333333333333333', now, { phase: 'stopped', displayName: 'Codex 待继续' })], now))
+    const cursorSession = {
+      composerId,
+      workspaceIdentifier: 'file:///repo',
+      name: 'Cursor 运行中会话',
+      subtitle: '',
+      createdAt: now - 10_000,
+      lastUpdatedAt: now - 2_000,
+      hasUnreadMessages: false,
+      isDraft: false,
+      hasPendingPlan: false,
+      hasBlockingPendingActions: false,
+      unfinishedRunAt: now - 2_000,
+      diskStatus: 'in_progress'
+    }
+    const platform = {
+      companionKernel,
+      codex: {
+        taskStateRevision: CODEX_TASK_STATE_REVISION,
+        readSnapshot: async () => ({ ok: false as const, receivedAt: now, error: { code: 'unavailable' as const, message: 'Codex 未运行' } }),
+        close: () => undefined
+      },
+      cursor: {
+        inspect: async () => ({ available: true, reason: 'ready', sessionCount: 1, readAt: now, hooks: 'missing' }),
+        readInventory: async () => ({ revision: 'inventory-test', available: true, reason: 'ready', sessions: [cursorSession], truncated: false, readAt: now }),
+        openTask: async () => ({ outcome: 'dispatched' as const, confirmsRead: false, message: '' }),
+        diagnostics: () => ({ revision: 'cursor-agent-companion-v5', loaded: true, loadError: '' }),
+        close: () => undefined
+      }
+    } as unknown as EypcPlatformApi
+    const controller = createCodexController({
+      platform,
+      getAppState: () => state,
+      save: () => undefined,
+      notify: () => undefined,
+      setMessage: () => undefined
+    })
+
+    controller.start()
+    await vi.waitFor(() => expect(controller.view().taskState.conversations.ongoing.some((task) => task.key === cursorKey)).toBe(true))
+    await vi.waitFor(() => expect(companionKernel.diagnostics().auxiliaryTaskCount).toBe(1))
+
+    expect(controller.cycleTask(1)).toBe(true)
+    await vi.waitFor(() => expect(openTask).toHaveBeenCalledWith(composerId))
+    controller.dispose()
+  })
+
   it('persists anonymous first-prompt timing and reuses it when the host omits it after restart', async () => {
     const state = createInitialState(1)
     state.activeTab = 'codex'

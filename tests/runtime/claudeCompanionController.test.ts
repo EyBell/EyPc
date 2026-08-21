@@ -261,7 +261,8 @@ function harness(options: HarnessOptions = {}) {
         ? row.phase
         : nativeUnread ? 'completed' : row.phase
       const revisionAt = Math.max(1, row.phaseUpdatedAt, row.metadataUpdatedAt, row.lastActivityAt)
-      const archive = terminal(phase) && row.stateCompatibility === 'compatible'
+      // Mirrors the preload draft: archive is status-only, never version-gated.
+      const archive = terminal(phase)
       return {
         key: companionTaskKey('claude', seed.sessionId),
         provider: 'claude',
@@ -523,17 +524,19 @@ describe('Claude App Code aggregation', () => {
     context.controller.dispose()
   })
 
-  it('keeps Claude archive disabled when the App version is incompatible', async () => {
+  it('keeps Claude archive enabled on a non-whitelisted App version (status gate only)', async () => {
     const context = harness({
-      codeSessions: [{ sessionId: LOCAL_A, phase: 'completed', compatibility: 'unsupported' }]
+      codeSessions: [{ sessionId: LOCAL_A, phase: 'completed', compatibility: 'unsupported' }],
+      archiveResult: { outcome: 'archived' },
+      kernelActions: true
     })
     context.controller.start()
     await settle()
     const task = conversationsOf(context).all.find((row) => row.actionAlias === LOCAL_A)!
-    expect(task).toMatchObject({ archiveCapability: 'blocked-stopped', canArchive: false })
-    await expect(context.controller.archive(task.key, task.revisionAt)).resolves.toBe(false)
-    expect(context.archiveCalls).toEqual([])
-    expect(conversationsOf(context).all.some((row) => row.actionAlias === LOCAL_A)).toBe(true)
+    expect(task).toMatchObject({ archiveCapability: 'allowed', canArchive: true })
+    await expect(context.controller.archive(task.key, task.revisionAt)).resolves.toBe(true)
+    expect(context.archiveCalls).toEqual([LOCAL_A])
+    expect(conversationsOf(context).all.some((row) => row.actionAlias === LOCAL_A)).toBe(false)
     context.controller.dispose()
   })
 
