@@ -267,6 +267,12 @@ The current verification record is the [Controlled verify](../../260810/1155-ins
 
 - 未重载当前 uTools、未真实连续打开 Codex/Claude 任务；宿主级崩溃结论保持 pending。
 
+## 2026-08-16 leftover Plan/question waiting-clear
+
+- Defect: after the user replies to a Plan or question, Desktop runtime can already be plain-active while the same `item/plan/requestImplementation` or `requestUserInput` remains in `conversationState.requests`. Unconditional request-union kept EyPc on 待输入.
+- Fix: [preload/index.js](../../../../preload/index.js#L4419) `clearStaleWaitingAfterRuntimeResume` clears only previously observed wait flags on idle/waiting → plain-active; first-observation `active + request` stays waiting.
+- Automated evidence: [codexAppServerBridge.test.ts](../../../../tests/platform/codexAppServerBridge.test.ts#L6557) leftover Plan/question resume plus first-observation wait; Bridge file `146/146`. Canonical/public Preload synced. No repo-wide typecheck/build. Real uTools reload remains host-pending.
+
 ## RAW-153 waiting-clear 因果屏障复核
 
 ### Review Target

@@ -6554,6 +6554,101 @@ describe('Codex App Server preload bridge', () => {
     bridge.close()
   })
 
+  it('clears leftover plan and question requests once Desktop runtime resumes plain-active, but keeps a first-observation wait', async () => {
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    desktopSocket.waitingInputSnapshotThreadIds.clear()
+    const { bridge } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const planTask = baseline.value.threads[1]
+    const questionTask = baseline.value.threads[2]
+    const firstWaitTask = baseline.value.threads[3]
+    const streamState = (threadId: string, change: Record<string, any>) => desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: { hostId: 'local', conversationId: threadId, change }
+    })
+    const planRequest = { type: 'plan', method: 'item/plan/requestImplementation', requestId: 'leftover-plan-request' }
+    const questionRequest = { type: 'userInput', method: 'requestUserInput', requestId: 'leftover-question-request' }
+    const firstWaitRequest = { type: 'userInput', method: 'requestUserInput', requestId: 'first-wait-request' }
+
+    streamState(FIXED_THREAD_IDS[1], {
+      type: 'snapshot',
+      revision: 1,
+      conversationState: {
+        threadRuntimeStatus: { type: 'idle', activeFlags: [] },
+        resumeState: '',
+        hasUnreadTurn: false,
+        requests: [planRequest]
+      }
+    })
+    streamState(FIXED_THREAD_IDS[2], {
+      type: 'patches',
+      baseRevision: 1,
+      revision: 2,
+      patches: [
+        { op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'active', activeFlags: ['waitingOnUserInput'] } },
+        { op: 'replace', path: ['requests'], value: [questionRequest] }
+      ]
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === planTask.key)).toMatchObject({
+      status: 'active',
+      activeFlags: ['waitingOnUserInput'],
+      planImplementationOnly: true
+    })
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === questionTask.key)).toMatchObject({
+      status: 'active',
+      activeFlags: ['waitingOnUserInput']
+    })
+
+    streamState(FIXED_THREAD_IDS[1], {
+      type: 'patches',
+      baseRevision: 1,
+      revision: 2,
+      patches: [{ op: 'replace', path: ['threadRuntimeStatus'], value: { type: 'active', activeFlags: [] } }]
+    })
+    streamState(FIXED_THREAD_IDS[2], {
+      type: 'snapshot',
+      revision: 3,
+      conversationState: {
+        threadRuntimeStatus: { type: 'active', activeFlags: [] },
+        resumeState: '',
+        hasUnreadTurn: false,
+        requests: [questionRequest]
+      }
+    })
+    streamState(FIXED_THREAD_IDS[3], {
+      type: 'snapshot',
+      revision: 1,
+      conversationState: {
+        threadRuntimeStatus: { type: 'active', activeFlags: [] },
+        resumeState: '',
+        hasUnreadTurn: false,
+        requests: [firstWaitRequest]
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === planTask.key)).toMatchObject({
+      status: 'active',
+      activeFlags: [],
+      planImplementationOnly: false
+    })
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === questionTask.key)).toMatchObject({
+      status: 'active',
+      activeFlags: [],
+      planImplementationOnly: false
+    })
+    expect((await bridge.readActivitySnapshot()).value.entries.find((entry: Record<string, any>) => entry.key === firstWaitTask.key)).toMatchObject({
+      status: 'active',
+      activeFlags: ['waitingOnUserInput']
+    })
+    bridge.close()
+  })
+
   it('uses serverRequest/resolved to clear only the matching request and conservatively resubscribes when correlation is missing', async () => {
     const child = new FakeCodexProcess()
     const desktopSocket = new FakeCodexDesktopSocket()
