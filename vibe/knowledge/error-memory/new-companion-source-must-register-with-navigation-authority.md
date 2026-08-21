@@ -60,3 +60,4 @@ tags:
 | 日期 | 任务 | 触发 | 失败路线 | 恢复 | 结果 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-08-21 | Cursor 接入上一/下一快捷键 | 用户报点击可开但快捷键异常 | Cursor 未注册进 PROVIDERS/cycleKeys/open 派发,候选集退化 | navigation v4 + 辅助候选通道 + openCursor 分支,端到端测试覆盖 | verified |
+| 2026-08-21（晚） | 快捷键再次失效排查 | 用户报更重：完全打不开 | 非本条复发：v4 注册已在宿主生效（identity handshake 一致），失效来自 Kernel 选择器就绪门禁把 `verifying` 当过期并静默失败 | 见 [selector readiness 叶子](selector-readiness-must-not-treat-verifying-phase-as-stale.md#L1) | verified（本条结论不变） |

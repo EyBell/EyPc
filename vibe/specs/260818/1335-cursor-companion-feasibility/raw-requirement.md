@@ -83,6 +83,8 @@ Documentation level: `standard`
 
 核验结论：导航权威 `PROVIDERS` 只有 codex/claude，Cursor 卡从不进 kernel `cycleKeys`，快捷键候选集退化成极小集合；日志 2026-08-21T07:11:28Z 的 `cycle_*` 事件落在桌面端未运行的 Claude 任务上报 `unavailable`，且此前 `cycleCount` 恒为 1。点击之所以正常，是因为 Controller 对 Cursor 走绕过 kernel 的直连 deeplink 分支，掩盖了导航侧从未注册。修复：`companion-navigation-v4`，`PROVIDERS`/open 派发注册 cursor，kernel 新增 `publishAuxiliaryCycleTasks` 辅助候选通道并合并进 cycleKeys，Controller 随任务包发布 Cursor 候选。
 
+后续（同日晚间）：同一症状再次出现且更重（连打开都不行）。导航注册 v4 已在宿主生效；剩余根因不在注册，而是 Kernel 选择器就绪门禁把 `verifying` 当作过期推进 5 秒冷读并静默失败，见 [260821/2045-shortcut-selector-readiness](../../260821/2045-shortcut-selector-readiness/spec.md#L1)。
+
 ## 任务归属颜色区分（2026-08-21）
 
 用户要求进一步区分「Codex Cloud / Code / Cursor」任务颜色，并把 Cursor 做另类优化。

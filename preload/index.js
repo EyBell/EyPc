@@ -12071,6 +12071,14 @@ function recordCompanionProposalOutcome(input) {
 
 const companionCanonicalMismatchStreak = new Map()
 const COMPANION_MISMATCH_REPAIR_AFTER = 3
+// A repair is one narrow cold inventory read. A live authority disagreement
+// (Desktop keeps proposing a phase the Kernel keeps superseding) re-arms the
+// streak every few hundred milliseconds, and without a floor that produced one
+// Codex cold read every ~2 seconds for minutes on a real host, starving the
+// shortcut preflight that shares the same transport. The cooldown keeps the
+// RAW-166 repair action but bounds it to one read per provider per window.
+const COMPANION_MISMATCH_REPAIR_COOLDOWN_MS = 30_000
+const companionMismatchRepairCooldown = new Map()
 
 /**
  * A proposal the Kernel accepted may still disagree with the published package.
@@ -12081,8 +12089,12 @@ const COMPANION_MISMATCH_REPAIR_AFTER = 3
  */
 function companionTrackCanonicalMismatch(event, provider, mismatchCount, canonicalPublishedAt) {
   const previous = companionCanonicalMismatchStreak.get(event)
+  const cooldownKey = provider || 'all'
   if (!mismatchCount) {
     companionCanonicalMismatchStreak.delete(event)
+    // A proposal that matched again proves the lane converged; the next real
+    // stuck state must not inherit this window.
+    companionMismatchRepairCooldown.delete(cooldownKey)
     return
   }
   // Only a mismatch that survives a *stationary* canonical package is stuck. If
@@ -12095,15 +12107,31 @@ function companionTrackCanonicalMismatch(event, provider, mismatchCount, canonic
     return
   }
   companionCanonicalMismatchStreak.delete(event)
+  const nowAt = Date.now()
+  const cooldown = companionMismatchRepairCooldown.get(cooldownKey)
+  if (cooldown && cooldown.until > nowAt) {
+    cooldown.suppressed += 1
+    return
+  }
+  companionMismatchRepairCooldown.set(cooldownKey, { until: nowAt + COMPANION_MISMATCH_REPAIR_COOLDOWN_MS, suppressed: 0 })
+  // 'warn' is not an explicit diagnostics level; the sink rejected every one of
+  // these records as `diagnostics-level-missing`, so the repair trigger never
+  // reached the log it was meant to explain.
   runtimeDiagnostics.record({
-    level: 'warn',
+    level: 'info',
     scope: 'task-push',
     event: 'canonical-mismatch-repair',
     outcome: 'queued',
     durationMs: 0,
     slowMs: 0,
     count: mismatchCount,
-    details: { source: event, provider, streak }
+    details: {
+      source: event,
+      provider,
+      streak,
+      suppressedRepairs: cooldown ? cooldown.suppressed : 0,
+      cooldownMs: COMPANION_MISMATCH_REPAIR_COOLDOWN_MS
+    }
   })
   queueCompanionHostReconciliation(provider)
 }
@@ -12962,7 +12990,14 @@ if (globalThis.utools && typeof globalThis.utools.onPluginEnter === 'function') 
       scope: 'plugin-lifecycle',
       event: 'plugin-enter',
       outcome: consumedByKernel ? 'kernel-consumed' : 'renderer-dispatched',
-      details: { consumedByKernel, quickEntryConsumed, hasAction: Boolean(action) }
+      details: {
+        consumedByKernel,
+        quickEntryConsumed,
+        hasAction: Boolean(action),
+        // Plugin feature code only (a fixed identifier from plugin.json), so a
+        // log reader can tell which silent entry was pressed.
+        featureCode: typeof action?.code === 'string' ? action.code.slice(0, 80) : ''
+      }
     })
     if (consumedByKernel) {
       // Task intents are consumed by the process-owned Kernel even while its

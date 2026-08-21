@@ -473,9 +473,18 @@ function createCompanionTaskActions(dependencies = {}) {
   }
 
   function shortcutArchive() {
-    if (disposed || !enabled || !ready) return false
+    if (disposed || !enabled || !ready) {
+      trace('archive-shortcut', 'not-ready', null, now(), { source: 'archive-shortcut', errorCode: 'inventory-not-ready', debug: true })
+      return false
+    }
     const target = shortcutTarget()
     if (!target) {
+      // Silent before: the press was consumed and only a notification remained.
+      trace('archive-shortcut', 'no-target', null, now(), {
+        source: 'archive-shortcut',
+        errorCode: 'no-task',
+        details: { focused: Boolean(focusedKey), attentionCount: attentionKeys.length }
+      })
       notify('当前没有唯一且可归档的任务')
       return true
     }

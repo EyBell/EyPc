@@ -2019,16 +2019,20 @@ describe('CompanionTaskKernel', () => {
     expect(claudeUnknown.views.cycleKeys).toEqual([])
   })
 
-  it('refuses to navigate from a degraded retained package when its shared preflight fails', async () => {
+  it('cycles from a complete package while a phase is still verifying, without a blocking preflight', async () => {
     const opened = vi.fn(async () => ({ outcome: 'opened' }))
     const preflight = vi.fn(async () => { throw new Error('provider unavailable') })
+    const records: Array<Record<string, any>> = []
     const kernel = createCompanionTaskKernel({
       coalesceMs: 0,
       preflight,
+      record: (entry: Record<string, any>) => records.push(entry),
       adapters: { codex: { open: opened } },
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
     })
     const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    // The attach-time cold preflight for the still-empty package fails on its own.
+    await vi.waitFor(() => expect(preflight).toHaveBeenCalledTimes(1))
     kernel.syncPackage({ lease: receipt.lease, draft: draft([task()], 1, { providers: { codex: true, claude: false } }) })
     kernel.syncPackage({
       lease: receipt.lease,
@@ -2036,13 +2040,150 @@ describe('CompanionTaskKernel', () => {
     })
 
     expect(kernel.getPackage()).toMatchObject({ complete: true, freshness: 'verifying', tasks: [{ phase: 'running' }] })
-    await expect(kernel.dispatch({ action: 'cycle', direction: 1 })).resolves.toMatchObject({
+    // A verifying phase is not a membership gap: previous/next and the attention
+    // entries read the complete process package directly instead of paying the
+    // full cold read under the 5-second timeout.
+    await expect(kernel.dispatch({ action: 'cycle', direction: 1, source: 'global-shortcut' })).resolves.toMatchObject({
+      outcome: 'opened',
+      key: 'codex-a'
+    })
+    await expect(kernel.dispatch({ action: 'open-attention', kind: 'input', source: 'global-shortcut' })).resolves.toMatchObject({
+      outcome: 'unavailable',
+      errorCode: 'no-task'
+    })
+    expect(preflight).toHaveBeenCalledTimes(1)
+    expect(opened).toHaveBeenCalledTimes(1)
+    expect(kernel.getPackage()).toMatchObject({ complete: true, freshness: 'verifying', tasks: [{ phase: 'running' }] })
+    expect(records).not.toContainEqual(expect.objectContaining({ event: 'ready-preflight', outcome: 'failed' }))
+    expect(records).toContainEqual(expect.objectContaining({
+      scope: 'task-kernel',
+      event: 'open-attention',
+      outcome: 'no-task',
+      details: expect.objectContaining({ kind: 'input', complete: true, freshness: 'verifying', inputCount: 0 })
+    }))
+  })
+
+  it('still waits for one shared preflight when the package is incomplete and records its failure', async () => {
+    const opened = vi.fn(async () => ({ outcome: 'opened' }))
+    const preflight = vi.fn(async () => { throw new Error('provider unavailable') })
+    const records: Array<Record<string, any>> = []
+    const notifications: string[] = []
+    const kernel = createCompanionTaskKernel({
+      coalesceMs: 0,
+      preflight,
+      record: (entry: Record<string, any>) => records.push(entry),
+      notify: (message: string) => notifications.push(message),
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } },
+      adapters: { codex: { open: opened } }
+    })
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    expect(kernel.getPackage().complete).toBe(false)
+
+    await expect(kernel.dispatch({ action: 'cycle', direction: 1, source: 'global-shortcut', operationId: 'cycle_incomplete_1' })).resolves.toMatchObject({
       outcome: 'unavailable',
       errorCode: 'inventory-not-ready'
     })
     expect(preflight).toHaveBeenCalledTimes(1)
     expect(opened).not.toHaveBeenCalled()
+    expect(records).toContainEqual(expect.objectContaining({
+      level: 'info',
+      scope: 'task-kernel',
+      event: 'ready-preflight',
+      outcome: 'started',
+      details: expect.objectContaining({ reason: 'incomplete', exactTarget: false })
+    }))
+    // The old path swallowed this: only two notifications and nothing in the log.
+    expect(records).toContainEqual(expect.objectContaining({
+      level: 'error',
+      scope: 'task-kernel',
+      event: 'ready-preflight',
+      outcome: 'failed',
+      code: 'preflight-failed',
+      operationId: 'cycle_incomplete_1',
+      source: 'global-shortcut',
+      details: expect.objectContaining({ action: 'cycle', complete: false })
+    }))
+    // dispatch() itself only reports the cache refusal; the shortcut wrapper adds the retry hint.
+    expect(notifications).toContain('任务状态预检失败，未使用不完整缓存')
+  })
+
+  it('keeps the exact-target freshness gate for mutations while a verifying phase is retained', async () => {
+    // The attach-time cold read settles an older generation; later host
+    // evidence advances the lane and then retains an unknown (verifying) phase.
+    const preflight = vi.fn(async () => draft([task({ phase: 'completed', cycleTier: 'none', dynamicGroup: 'completed', capabilities: { open: true, archive: true, pause: false, resume: false, executePlan: false } })], 1, { producer: 'host-preflight', providers: { codex: true, claude: false } }))
+    const archive = vi.fn(async () => ({ outcome: 'archived' }))
+    const kernel = createCompanionTaskKernel({
+      coalesceMs: 0,
+      preflight,
+      adapters: { codex: { open: async () => ({ outcome: 'opened' }), archive } },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    await vi.waitFor(() => expect(preflight).toHaveBeenCalledTimes(1))
+    kernel.syncPackage({ lease: receipt.lease, draft: draft([task({ revisionAt: 110, phaseRevision: 110, statusEnteredAt: 110 })], 10, { providers: { codex: true, claude: false } }) })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({ phase: 'unknown', cycleTier: 'none', dynamicGroup: 'none', revisionAt: 111, phaseRevision: 111, statusEnteredAt: 111 })], 11, { providers: { codex: true, claude: false } })
+    })
     expect(kernel.getPackage()).toMatchObject({ complete: true, freshness: 'verifying', tasks: [{ phase: 'running' }] })
+    const preflightCallsBeforeArchive = preflight.mock.calls.length
+
+    const result = await kernel.dispatch({ action: 'archive', key: 'codex-a', revisionAt: 100, phase: 'running', source: 'archive-button' })
+    // The verifying exact target forced the shared preflight before any mutation.
+    expect(preflight).toHaveBeenCalledTimes(preflightCallsBeforeArchive + 1)
+    expect(result.outcome).not.toBe('archived')
+    expect(archive).not.toHaveBeenCalled()
+  })
+
+  it('records the feature code and the no-task exit for a silent attention shortcut', async () => {
+    const opened = vi.fn(async () => ({ outcome: 'opened' }))
+    const records: Array<Record<string, any>> = []
+    const notifications: string[] = []
+    const kernel = createCompanionTaskKernel({
+      coalesceMs: 0,
+      preflight: async () => draft([task()], 1, { producer: 'host-preflight', providers: { codex: true, claude: false } }),
+      record: (entry: Record<string, any>) => records.push(entry),
+      notify: (message: string) => notifications.push(message),
+      adapters: { codex: { open: opened } },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    kernel.syncPackage({ lease: receipt.lease, draft: draft([task()], 1, { providers: { codex: true, claude: false } }) })
+    expect(kernel.getPackage()).toMatchObject({ complete: true, freshness: 'fresh' })
+
+    expect(kernel.handleEnter({ code: 'eypc-codex-input' })).toBe(true)
+    await vi.waitFor(() => expect(notifications).toContain('当前没有符合条件的任务'))
+    expect(opened).not.toHaveBeenCalled()
+    expect(records).toContainEqual(expect.objectContaining({
+      level: 'info',
+      scope: 'task-kernel',
+      event: 'shortcut-enter',
+      outcome: 'open-attention',
+      source: 'global-shortcut',
+      details: expect.objectContaining({ featureCode: 'eypc-codex-input', complete: true, cycleCount: 1, inputCount: 0 })
+    }))
+    expect(records).toContainEqual(expect.objectContaining({
+      scope: 'task-kernel',
+      event: 'open-attention',
+      outcome: 'no-task',
+      details: expect.objectContaining({ kind: 'input' })
+    }))
+    expect(records).toContainEqual(expect.objectContaining({
+      level: 'info',
+      scope: 'task-kernel',
+      event: 'shortcut-enter',
+      outcome: 'failed',
+      code: 'no-task',
+      details: expect.objectContaining({ featureCode: 'eypc-codex-input', action: 'open-attention' })
+    }))
+
+    expect(kernel.handleEnter({ code: 'eypc-codex-task-next' })).toBe(true)
+    await vi.waitFor(() => expect(opened).toHaveBeenCalledTimes(1))
+    expect(records).toContainEqual(expect.objectContaining({
+      event: 'shortcut-enter',
+      outcome: 'cycle',
+      details: expect.objectContaining({ featureCode: 'eypc-codex-task-next' })
+    }))
   })
 
   it('delegates exact-key alias recovery to Host without broad preflight or target substitution', async () => {

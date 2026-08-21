@@ -30,6 +30,7 @@ Link-only route for task actions、archive guards、labels、selection、themes 
 - [Cursor deeplink jump conclusion is version- and key-specific](../cursor-agent-deeplink-jump-conclusion-is-version-and-key-specific.md#L1)
 - [Provider version whitelist must not gate generic capability](../provider-version-whitelist-must-not-gate-generic-capability.md#L1)
 - [New companion source must register with navigation authority](../new-companion-source-must-register-with-navigation-authority.md#L1)
+- [Selector readiness must not treat verifying phase as stale](../selector-readiness-must-not-treat-verifying-phase-as-stale.md#L1)
 
 ## Related Error Records
 
