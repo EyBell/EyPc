@@ -17,6 +17,7 @@ Link-only route for Claude Code inventory、phase、unread、open、archive and 
 
 - [Capability gap asserted without shipped-App evidence (superseded)](../capability-gap-asserted-without-reading-the-shipped-app.md#L1)
 - [Generic session end must not overwrite completion](../claude-generic-session-end-must-not-overwrite-completion.md#L1)
+- [StopFailure must not close a continuing parent turn](../claude-stop-failure-must-not-close-continuing-parent-turn.md#L1)
 - [Metadata activity is not completion evidence](../claude-metadata-activity-is-not-completion-evidence.md#L1)
 - [Metadata archive does not prove native sidebar convergence](../claude-metadata-archive-does-not-prove-native-sidebar-convergence.md#L1)
 - [New phase must outrank previous cache](../claude-new-phase-must-outrank-previous-cache.md#L1)
