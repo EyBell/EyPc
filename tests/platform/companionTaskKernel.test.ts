@@ -1573,6 +1573,65 @@ describe('CompanionTaskKernel', () => {
     expect(kernel.diagnostics().navigation.lastOutcome).toBe('opened')
   })
 
+  it('folds auxiliary cursor rows into previous/next and dispatches them through the cursor adapter', async () => {
+    const openedCursor: string[] = []
+    const kernel = createCompanionTaskKernel({
+      coalesceMs: 0,
+      adapters: {
+        codex: { open: vi.fn(async () => ({ outcome: 'opened' })) },
+        cursor: {
+          open: vi.fn(async (target: Record<string, unknown>) => {
+            openedCursor.push(String(target.actionAlias))
+            return { outcome: 'dispatched' }
+          })
+        }
+      },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    // Settled codex row: on its own it is not a previous/next candidate.
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({
+        phase: 'completed',
+        dynamicGroup: 'completed',
+        statusEnteredAt: 120,
+        terminalAt: 120,
+        lastQuestionAt: 0,
+        unread: false
+      })], 1, { providers: { codex: true, claude: false } })
+    })
+    expect(kernel.getLatest().views.cycleKeys).toEqual([])
+
+    const auxKey = 'cursor:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    const auxRow = {
+      key: auxKey,
+      actionAlias: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      revisionAt: 900,
+      phase: 'running',
+      lastQuestionAt: 900,
+      createdAt: 800
+    }
+    expect(kernel.publishAuxiliaryCycleTasks({ provider: 'cursor', tasks: [auxRow] })).toBe(true)
+    expect(kernel.publishAuxiliaryCycleTasks({ provider: 'cursor', tasks: [auxRow] })).toBe(false)
+    expect(kernel.diagnostics()).toMatchObject({ auxiliaryTaskCount: 1 })
+
+    await expect(kernel.dispatch({ action: 'cycle', direction: 1, source: 'global-shortcut' })).resolves.toMatchObject({
+      outcome: 'dispatched',
+      provider: 'cursor',
+      key: auxKey
+    })
+    expect(openedCursor).toEqual(['aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'])
+    // Auxiliary rows never enter the canonical package or its views.
+    expect(kernel.getLatest().tasks.some((row: Record<string, unknown>) => row.key === auxKey)).toBe(false)
+    expect(kernel.getLatest().views.cycleKeys).toEqual([])
+
+    expect(kernel.publishAuxiliaryCycleTasks({ provider: 'cursor', tasks: [] })).toBe(true)
+    await expect(kernel.dispatch({ action: 'cycle', direction: 1, source: 'global-shortcut' })).resolves.toMatchObject({
+      errorCode: 'no-task'
+    })
+  })
+
   it('owns attention progress, preserves it across equivalent packages and advances only after a successful open', async () => {
     const opened: string[] = []
     let failFirst = true

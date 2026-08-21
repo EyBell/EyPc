@@ -183,8 +183,8 @@ try {
 }
 
 // Cursor Agent companion. Same guarded-require shape as Claude: a missing
-// module degrades this provider alone. Phase 1 is cold inventory; open stays
-// unavailable because jump is still live-failed.
+// module degrades this provider alone. Cold inventory plus a deep-link jump
+// (agent?id=<composerId>) that focuses the exact local conversation.
 let cursorBridge = null
 let cursorBridgeLoadError = ''
 try {
@@ -218,6 +218,7 @@ try {
     process,
     platform: process.platform,
     env: process.env,
+    execFile,
     execFileSync,
     dataDirectory: resolveCursorDataDirectory()
   })
@@ -11855,8 +11856,9 @@ async function preflightCompanionTaskPackage(input = {}) {
         dynamicEligible: Math.max(Number(session.turnStartedAt) || 0, Number(session.lastActivityAt) || 0) >= dynamicCutoff,
         capabilities: {
           open: true,
-          archive: (phase === 'completed' || phase === 'stopped')
-            && session.stateCompatibility === 'compatible',
+          // Status-only gate: the dispatch-time transaction revalidates the
+          // exact target, so state compatibility never blocks archive here.
+          archive: phase === 'completed' || phase === 'stopped',
           pause: false,
           resume: false,
           executePlan: false
@@ -11926,6 +11928,16 @@ companionTaskKernel = typeof createCompanionTaskKernel === 'function'
           archive: (target) => claudeBridge
             ? claudeBridge.archiveCodeSession(target.actionAlias)
             : Promise.resolve(claudeUnavailable('archive')),
+          close: () => undefined
+        },
+        // Auxiliary open-only lane: cursor rows never publish kernel evidence,
+        // but previous/next selected targets still dispatch through here.
+        cursor: {
+          inspect: () => cursorBridge ? cursorBridge.inspect() : cursorUnavailable('environment'),
+          open: (target) => cursorBridge
+            ? cursorBridge.openTask(String(target.actionAlias
+              || (typeof target.key === 'string' && target.key.startsWith('cursor:') ? target.key.slice('cursor:'.length) : '')))
+            : Promise.resolve(cursorUnavailable('open')),
           close: () => undefined
         }
       },
@@ -12630,11 +12642,9 @@ function companionTaskFromClaudeSession(sessionValue, previous, acceptedAt) {
   const phaseEvidenceRevision = phaseStatusAt
     || Number(session.stateGeneration)
     || evidenceRevision
-  const compatibility = typeof session.stateCompatibility === 'string'
-    ? session.stateCompatibility
-    : typeof session.compatibility === 'string' ? session.compatibility : ''
-  const archive = (phase === 'completed' || phase === 'stopped')
-    && (compatibility === 'compatible' || (!compatibility && previous?.capabilities?.archive === true))
+  // Status-only gate: the dispatch-time transaction revalidates the exact
+  // target, so state compatibility never blocks archive here.
+  const archive = phase === 'completed' || phase === 'stopped'
   const dynamicEligible = Math.max(Number(session.turnStartedAt) || 0, Number(session.lastActivityAt) || 0)
     >= Date.now() - companionTaskConfiguration().dynamicTaskWindowHours * 60 * 60 * 1_000
   const semanticChanged = !previous
@@ -14310,6 +14320,9 @@ window.eypcPlatform = {
       : [],
     watchEvents: (...args) => cursorBridge && typeof cursorBridge.watchEvents === 'function'
       ? cursorBridge.watchEvents(...args)
+      : () => {},
+    watchInventory: (...args) => cursorBridge && typeof cursorBridge.watchInventory === 'function'
+      ? cursorBridge.watchInventory(...args)
       : () => {},
     install: (...args) => cursorBridge && typeof cursorBridge.install === 'function'
       ? cursorBridge.install(...args)
