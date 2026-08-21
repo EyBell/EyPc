@@ -195,8 +195,9 @@ function terminalEvidenceAt(entry) {
 
 /**
  * Chooses the state authority without allowing same-Turn Hook tail activity to
- * overwrite an exact App terminal. A Hook can reactivate only by proving a
- * strictly newer parent Turn start.
+ * overwrite an exact App terminal, or a Hook terminal to overwrite App live
+ * running/waiting. A Hook can reactivate only by proving a strictly newer
+ * parent Turn start.
  */
 function selectProjectedStateSource(exactApp, hook, correlation, historyAt) {
   const appAt = stateEvidenceAt(exactApp)
@@ -210,16 +211,20 @@ function selectProjectedStateSource(exactApp, hook, correlation, historyAt) {
   const liveObserved = (entry) => entry?.evidenceProvenance === 'live-append'
   const appSupersededByHistory = livePhase(exactApp) && !liveObserved(exactApp) && historyAt > appAt
   const hookSupersededByHistory = livePhase(hook) && historyAt > hookAt
+  const hookStartsNewerTurn = (threshold) => hook
+    && !hookSupersededByHistory
+    && (Number(hook.turnStartedAt) || 0) > threshold
 
   if (exactApp && !appSupersededByHistory) {
     const appTerminalAt = terminalEvidenceAt(exactApp)
     if (appTerminalAt) {
-      const hookStartsNewTurn = hook
-        && !hookSupersededByHistory
-        && (Number(hook.turnStartedAt) || 0) > appTerminalAt
-      return hookStartsNewTurn ? 'hook' : 'app'
+      return hookStartsNewerTurn(appTerminalAt) ? 'hook' : 'app'
     }
     if (!hook || correlation === 'ambiguous' || hookSupersededByHistory) return 'app'
+    if (liveObserved(exactApp) && livePhase(exactApp) && !livePhase(hook)) {
+      const appLiveAt = Math.max(appAt, Number(exactApp.turnStartedAt) || 0)
+      if (!hookStartsNewerTurn(appLiveAt)) return 'app'
+    }
     return hookAt > appAt ? 'hook' : 'app'
   }
   if (hook && !hookSupersededByHistory) return 'hook'

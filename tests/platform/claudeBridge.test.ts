@@ -195,6 +195,92 @@ describe('ordered hook state', () => {
     })
   })
 
+  it('restores running when tools continue after StopFailure', () => {
+    const state = events.foldQueueEntries([
+      event(CLI_A, 'UserPromptSubmit', 10),
+      event(CLI_A, 'PreToolUse', 15),
+      event(CLI_A, 'StopFailure', 20),
+      event(CLI_A, 'SubagentStop', 25),
+      event(CLI_A, 'SessionStart', 26),
+      event(CLI_A, 'PostToolUse', 30)
+    ])
+    expect(state.get(CLI_A)).toMatchObject({
+      phase: 'running',
+      turnStartedAt: 10,
+      lastStopFailureAt: 20,
+      lastActivityAt: 30,
+      turnOpen: true
+    })
+  })
+
+  it('restores waiting-approval after StopFailure when a permission request continues', () => {
+    const state = events.foldQueueEntries([
+      event(CLI_A, 'UserPromptSubmit', 10),
+      event(CLI_A, 'StopFailure', 20),
+      event(CLI_A, 'PermissionRequest', 30)
+    ])
+    expect(state.get(CLI_A)).toMatchObject({
+      phase: 'waiting-approval',
+      turnStartedAt: 10,
+      lastStopFailureAt: 20,
+      waitingApprovalAt: 30,
+      turnOpen: true
+    })
+  })
+
+  it('keeps a StopFailure-only Turn stopped until later parent activity arrives', () => {
+    const state = events.foldQueueEntries([
+      event(CLI_A, 'UserPromptSubmit', 10),
+      event(CLI_A, 'StopFailure', 20)
+    ])
+    expect(state.get(CLI_A)).toMatchObject({
+      phase: 'stopped',
+      turnStartedAt: 10,
+      lastStopFailureAt: 20,
+      turnOpen: false
+    })
+  })
+
+  it('does not reopen a successful Stop when StopFailure and tools follow', () => {
+    const state = events.foldQueueEntries([
+      event(CLI_A, 'UserPromptSubmit', 10),
+      event(CLI_A, 'Stop', 20),
+      event(CLI_A, 'StopFailure', 25),
+      event(CLI_A, 'PostToolUse', 30)
+    ])
+    expect(state.get(CLI_A)).toMatchObject({
+      phase: 'completed',
+      lastStopAt: 20,
+      lastStopFailureAt: 25,
+      turnOpen: false
+    })
+  })
+
+  it('does not reopen an observed-open SessionEnd when tools follow', () => {
+    const state = events.foldQueueEntries([
+      event(CLI_A, 'UserPromptSubmit', 10),
+      event(CLI_A, 'SessionEnd', 20),
+      event(CLI_A, 'PostToolUse', 30)
+    ])
+    expect(state.get(CLI_A)).toMatchObject({
+      phase: 'stopped',
+      lastSessionEndAt: 20,
+      turnOpen: false
+    })
+  })
+
+  it('does not invent stopped from a StopFailure without a parent Turn', () => {
+    const state = events.foldQueueEntries([
+      event(CLI_A, 'StopFailure', 20)
+    ])
+    expect(state.get(CLI_A)).toMatchObject({
+      phase: 'unknown',
+      turnStartedAt: 0,
+      lastStopFailureAt: 20,
+      turnOpen: false
+    })
+  })
+
   it('treats idle notification as a wake-up hint, never a waiting state', () => {
     const state = events.foldQueueEntries([
       event(CLI_A, 'UserPromptSubmit', 10),
@@ -1214,5 +1300,55 @@ describe('metadata activity versus a live App append', () => {
     // branch through the exact terminal event instead.
     expect(codeSessions.selectProjectedStateSource(waitingApp('exact-terminal'), null, 'direct-local', confirmed))
       .toBe('history')
+  })
+
+  it('keeps App live-append running over a later Hook stopped without a newer Turn', () => {
+    const app = {
+      phase: 'running',
+      phaseUpdatedAt: 10,
+      turnStartedAt: 10,
+      lastEventAt: 10,
+      evidenceProvenance: 'live-append'
+    }
+    const hook = {
+      phase: 'stopped',
+      lastEventAt: 20,
+      turnStartedAt: 10,
+      lastStopFailureAt: 20
+    }
+    expect(codeSessions.selectProjectedStateSource(app, hook, 'unique-cli', 0)).toBe('app')
+  })
+
+  it('lets Hook win when it proves a strictly newer parent Turn start', () => {
+    const app = {
+      phase: 'running',
+      phaseUpdatedAt: 10,
+      turnStartedAt: 10,
+      lastEventAt: 10,
+      evidenceProvenance: 'live-append'
+    }
+    const hook = {
+      phase: 'running',
+      lastEventAt: 40,
+      turnStartedAt: 30
+    }
+    expect(codeSessions.selectProjectedStateSource(app, hook, 'unique-cli', 0)).toBe('hook')
+  })
+
+  it('still prefers an exact App failed terminal over same-Turn Hook tails', () => {
+    const app = {
+      phase: 'stopped',
+      phaseUpdatedAt: 20,
+      turnStartedAt: 10,
+      lastEventAt: 20,
+      lastStopAt: 20,
+      evidenceProvenance: 'exact-terminal'
+    }
+    const hook = {
+      phase: 'running',
+      lastEventAt: 30,
+      turnStartedAt: 10
+    }
+    expect(codeSessions.selectProjectedStateSource(app, hook, 'unique-cli', 0)).toBe('app')
   })
 })
