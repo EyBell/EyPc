@@ -43,6 +43,12 @@ export interface CodexSurfaceTheme {
   quotaCodex: string
   /** Percentage tone for Claude quota windows in the expanded card. */
   quotaClaude: string
+  /**
+   * Cursor ownership tone. Always algorithm-derived (no persisted picker):
+   * the 255° rotation sits 105° from both the Codex (0°) and Claude (150°)
+   * rotations, the maximal three-way separation on the shared theme hue.
+   */
+  quotaCursor: string
 }
 
 export interface CodexColorValidation {
@@ -403,7 +409,8 @@ export function resolveCodexSurfaceTheme(style: CodexDisplayStyle, colors: Codex
     // The compact skin has no quota row; these keep the token set complete so a
     // shared stylesheet never resolves an undefined variable mid-transition.
     quotaCodex: providerQuotaTone(colors.healthy, surface, 0),
-    quotaClaude: providerQuotaTone(colors.healthy, surface, 150)
+    quotaClaude: providerQuotaTone(colors.healthy, surface, 150),
+    quotaCursor: providerQuotaTone(colors.healthy, surface, 255)
   }
 }
 
@@ -433,7 +440,11 @@ export function resolveCodexExpandedCardTheme(
     onRunning: strictForeground(appearance.running),
     onPending: strictForeground(appearance.pending),
     quotaCodex: appearance.codexQuota,
-    quotaClaude: appearance.claudeQuota
+    quotaClaude: appearance.claudeQuota,
+    // Not a persisted appearance field: Cursor ownership stays derived from
+    // the theme hue against the actual card surface so contrast holds even
+    // when the user customizes the panel while Codex/Claude tones are edited.
+    quotaCursor: providerQuotaTone(colors.healthy, appearance.surface, 255)
   }
 }
 
@@ -524,6 +535,7 @@ export function codexThemeCssVars(theme: CodexSurfaceTheme): Record<string, stri
     '--codex-on-running': theme.onRunning,
     '--codex-on-pending': theme.onPending,
     '--codex-quota-codex': theme.quotaCodex,
-    '--codex-quota-claude': theme.quotaClaude
+    '--codex-quota-claude': theme.quotaClaude,
+    '--codex-quota-cursor': theme.quotaCursor
   }
 }

@@ -127,6 +127,31 @@ describe('per-provider quota tones', () => {
     expect(compact['--codex-quota-claude']).toMatch(/^#[0-9A-F]{6}$/)
   })
 
+  it('derives a readable Cursor tone separated from both persisted provider tones', () => {
+    const settings = defaultCodexSettings()
+    const theme = resolveCodexExpandedCardTheme(settings.colors, settings.expandedCardAppearance)
+    const vars = codexThemeCssVars(theme)
+    expect(vars['--codex-quota-cursor']).toBe(theme.quotaCursor)
+    expect(theme.quotaCursor).toMatch(/^#[0-9A-F]{6}$/)
+    // Carries the ownership badge text on the card surface.
+    expect(contrastRatio(theme.quotaCursor, settings.expandedCardAppearance.surface)).toBeGreaterThanOrEqual(4.5)
+    // The 255° rotation must stay separable from both the Codex (0°) and the
+    // Claude (150°) rotations across every built-in theme.
+    for (const preset of CODEX_THEME_PRESETS) {
+      const presetTheme = resolveCodexExpandedCardTheme(preset.colors, preset.expandedCardAppearance)
+      const cursorHue = hexToHsl(presetTheme.quotaCursor)?.h ?? 0
+      for (const other of [preset.expandedCardAppearance.codexQuota, preset.expandedCardAppearance.claudeQuota]) {
+        const otherHue = hexToHsl(other)?.h ?? 0
+        const distance = Math.abs(((cursorHue - otherHue + 540) % 360) - 180)
+        expect(distance).toBeGreaterThan(60)
+      }
+    }
+
+    // The compact skin keeps the token defined as well.
+    const compact = codexThemeCssVars(resolveCodexSurfaceTheme('water', settings.colors))
+    expect(compact['--codex-quota-cursor']).toMatch(/^#[0-9A-F]{6}$/)
+  })
+
   it('backfills a settings object stored before the quota row existed', () => {
     const colors = defaultCodexSettings().colors
     const legacy = { ...defaultCodexSettings().expandedCardAppearance } as Record<string, unknown>

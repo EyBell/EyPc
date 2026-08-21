@@ -546,6 +546,23 @@ describe('Codex Companion V4 UI contract', () => {
     expect(css).toContain('@media (forced-colors: active)')
   })
 
+  it('gives Cursor its own ownership token and a filled marker distinct from the outline markers', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/styles/float.css'), 'utf8')
+    // Row tints follow the dedicated token, no longer the shared accent.
+    expect(css).toContain('var(--codex-quota-cursor) 8%')
+    expect(css).toContain('var(--codex-quota-cursor) 12%')
+    expect(css).not.toMatch(/provider-cursor[^}]*var\(--codex-accent\)/)
+    // The Cursor badge is filled while Codex/Claude badges stay outline-only.
+    expect(css).toMatch(/\.task-provider-marker\.provider-cursor[^}]*background: color-mix\(in srgb, var\(--codex-quota-cursor\)/)
+    expect(css).not.toMatch(/\.task-provider-marker\.provider-codex[^}]*background/)
+    expect(css).not.toMatch(/\.task-provider-marker\.provider-claude[^}]*background/)
+    expect(css).toContain('.project-provider-marker.provider-cursor { color: var(--codex-quota-cursor); }')
+    // Mixed-project gradients only paint providers actually present in the row.
+    expect(css).toMatch(/provider-shared:where\(\.with-codex\.with-cursor\):not\(:where\(\.with-claude\)\) \{ background: linear-gradient\(90deg, color-mix\(in srgb, var\(--codex-quota-codex\) 8%[^}]*var\(--codex-quota-cursor\) 8%/)
+    expect(css).toMatch(/provider-shared:where\(\.with-claude\.with-cursor\):not\(:where\(\.with-codex\)\) \{ background: linear-gradient\(90deg, color-mix\(in srgb, var\(--codex-quota-claude\) 8%[^}]*var\(--codex-quota-cursor\) 8%/)
+    expect(css).toMatch(/provider-shared:where\(\.with-codex\.with-claude\.with-cursor\) \{ background: linear-gradient\(90deg,[^}]*quota-codex\) 8%[^}]*quota-claude\) 8%[^}]*quota-cursor\) 8%/)
+  })
+
   it('rejects a regressing Controller companion revision in the Float renderer', async () => {
     const source = floatSnapshot('all')
     source.companion = {
