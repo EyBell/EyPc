@@ -2,18 +2,18 @@
 
 Tool: cursor
 Date: 2026-08-18
-Status: `research-verified / phase-2-implemented`
+Status: `research-verified / phase-3-implemented`
 Documentation level: `standard`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
 
 ## 结论摘要
 
-**取状态与取变更可以按 Cloud Code 任务状态同构立项。跳转标 `live-failed`，不得写成已保证。**
+**取状态、取变更、跳转三件都已在本机打通。跳转由 `live-failed` 翻为 `live-verified`（Cursor 3.17.8）。**
 
 - **取状态**：只读 SQLite `composerHeaders` 白名单 + `composerData.status` 的 `json_extract`。侧栏图标与同一套元数据对应，不是独立外部 API。
 - **取变更**：官方用户级 `~/.cursor/hooks.json` + EyPc 自写观察脚本 + 私有队列主动读；冷轮询补未读 / 归档。
-- **跳转**：App 内部能打开指定 `composerId`；本机外部打开实测未把选中切到目标本地对话。未再通过实测前不写打开代码。
+- **跳转**：官方 `/agent?id=<composerId>` deeplink 实测把 `cursor/glass.selectedAgent` 切到目标本地 composer（三正一负），已按 Claude 同形落地 `preload/cursor/open.cjs`，`dispatched` 不报已读。
 
 相位投影到 Claude 已有枚举与 Float 分组，不另造第五套状态机。额度排查已删除。插件与 App 对话 **1:1**，`isArchived` 跟随 App；**不做 resume**。`conversation_id` 与 `composerId` 仍标 `join-key=unverified`。
 
@@ -45,7 +45,7 @@ Raw source: [raw-requirement.md](raw-requirement.md#L1)
 | 不做额度排查 | 变更 1 | spec 无额度对照 | 满足 |
 | 侧栏图标对应的状态要能取到 | 三次修订 | header 白名单 + 磁盘 `status` 允许 extract；进行中靠 hook | 满足（冷库存滞后） |
 | 获取状态变更 | 三次修订 | 用户级 hooks.json + header 轮询 | 满足（`join-key` 未实火） |
-| 保证跳进该对话 | 三次修订 | App 内部命令存在；外部实测未切到目标 id | `live-failed` |
+| 保证跳进该对话 | 三次修订 | 3.17.8 官方 `/agent?id` deeplink 实测切到目标本地 id（三正一负）；已落地 `open.cjs` | `live-verified` |
 | 与 App 对话 1:1，归档跟随 | 三次修订 | 库存键 `cursor:<composerId>`；`isArchived` 不进库存 | 满足（规划） |
 | 不做 resume | 三次修订 | 打开方案排除 `cursor-agent --resume` | 满足 |
 | `create-hook` 能否借鉴 | 同日补充 | 格式/排错可借；project-hook 默认与直接写文件不可借 | 满足 |
@@ -59,7 +59,7 @@ Raw source: [raw-requirement.md](raw-requirement.md#L1)
 
 - `waiting-approval`：无 `PermissionRequest`，不得发明审批。
 - `join-key=unverified`。
-- 跳转 `live-failed`。
+- 跳转是 `dispatched` 合同：派发成功≠目标已展示≠已读；App 未运行时 `open` 会拉起 Cursor。
 - 进行中图标是内存态；磁盘 `composerData.status` 可与正在跑的对话不一致。
 
 ## Cloud Code 对照基线（任务状态，不含额度）
@@ -81,9 +81,10 @@ App 侧栏图标由同一套 composer 元数据驱动（内部有 `composer.upda
 白名单（禁止 `composerData` 正文 / `conversationMap` / transcript / `cli-config.json` 的 `authInfo`）：
 
 - 身份：`composerId`、`unifiedMode=agent`、`!isSubagent`、`!isBestOfNSubcomposer`、`workspaceIdentifier`
-- 1:1 归档：`isArchived`（插件跟随，不做独立归档动作）
+- 1:1 归档：`isArchived`（双向：读取跟随 App；2026-08-21 起插件“归”对单行翻转同一 `isArchived` 对，写前重验无进行中证据，见 `preload/cursor/archive.cjs`）
 - 图标：`hasUnreadMessages`、`isDraft`、`hasPendingPlan`、`hasBlockingPendingActions`、`unfinishedRunAt`、`subtitle`
 - 磁盘相位：仅 `json_extract(composerData.status)` → `completed | none | aborted`
+- Multitask fork 归并（2026-08-21 增补）：`subagentInfo.parentComposerId` / `subagentInfo.rootParentConversationId`（fork 行不成卡，只作父卡证据；嵌套 fork 由 root 指针直挂根会话）
 
 本机 Cursor 3.16.17（2026-08-18）：
 
@@ -105,15 +106,21 @@ App 侧栏图标由同一套 composer 元数据驱动（内部有 `composer.upda
 
 热路径：`beforeSubmitPrompt` 开 Turn；开 Turn 后的 tool 事件保持 `running`；`stop.completed|aborted|error` 收束；`sessionEnd` 只关已经开过的 Turn。冷补丁轮询 header 白名单；磁盘 `status` 不得覆盖开着的 Turn。写 `hooks.json` 必须当下确认。`join-key=unverified`。
 
-## 跳转（`live-failed`）
+## 跳转（`live-verified`，2026-08-21 Cursor 3.17.8）
 
-App **内部**能打开指定对话：`composer.openComposer({ type: "local", id })`、`glass.openAgentById`、工作台 URI `cursor.agent://local/<uuid>`、通知 `composer.openComposerFromNotification`。
+**结论翻转**：官方 `/agent?id=<composerId>` deeplink 现在能把选中切到目标**本地** composer。旧 `live-failed` 是 3.16.17 上的结论，且当时只观察 `selectedComposerIds`。3.17.8 上 `/agent` 处理器改为经 `glass.handleDeeplink` 转发进 Agents 窗口，`handleAgentOpen` 读 `id` 调 `glass.openCloudAgentById`；对本地 id 也会解析 header 并 `selectAgentRequested`，持久化键 `cursor/glass.selectedAgent` 随之翻到目标 uuid。
 
-OS 只注册 `cursor://`，不注册 `cursor.agent`。官方 deeplink 有 `/agent`、`/glass`、`/createchat`、`/background-agent`，**没有**按本地 `composerId` 打开的 query。`/agent` 只执行 `cursor.openOrFocusGlassWindow`。
+本机实测（globalStorage `state.vscdb` 的 `ItemTable['cursor/glass.selectedAgent']`，只读观察）：
 
-本机外部实测见 [raw-requirement.md](raw-requirement.md#L1)：五条路径均未把 `selectedComposerIds` 切到目标本地 uuid。Claude 打开合同是 `dispatched` 不是 `opened`（[open.cjs](../../../../preload/claude/open.cjs#L3-L16)）。Cursor 连「可 dispatch 且落到那一条」都未打通。
+- 三次正向：`4cab4479…` → `9b09ae06…` → 还原 `3a269569…`，每次都精确切到目标（≤8s 落盘）。
+- 一次负对照：伪 uuid `00000000-0000-4000-8000-000000000000` 不改变既有选中（`handleAgentOpen` 报 can't find，不写选中）。
+- 命令：`open "cursor://anysphere.cursor-deeplink/agent?id=<composerId>"`。App 未运行时 `open` 会拉起 Cursor 再处理。
 
-禁止：写 `selectedComposerIds`、AX、`cursor-agent --resume`。只有再出现选中变成目标本地 uuid 的实测，才允许按 Claude 同形写 `preload/cursor/open.cjs`。
+App **内部**打开命令仍在：`composer.openComposer({ type: "local", id })`、`glass.openAgentById`（本地，命中 header 即 `selectAgentRequested`）、`glass.openCloudAgentById`。deeplink 层无 `/command` 任意命令执行（`/command` 只 `deeplink.command.create` 存自定义命令）。
+
+打开合同同 Claude：`dispatched`，不是 `opened`，从不报 `confirmsRead`（OS handler 立即返回，切没切成功、是否已读都无法从外部证明）。落地见 [open.cjs](../../../../preload/cursor/open.cjs#L1)。
+
+仍禁止：直接写 `selectedComposerIds` / `cursor/glass.selectedAgent`、AX、`cursor-agent --resume`。跳转只经官方 deeplink。
 
 ## `create-hook` Skill 借鉴结论
 
@@ -184,21 +191,22 @@ OS 只注册 `cursor://`，不注册 `cursor.agent`。官方 deeplink 有 `/agen
 
 - 抄 Claude：[settings.cjs](../../../../preload/claude/settings.cjs#L74) / [scripts.cjs](../../../../preload/claude/scripts.cjs#L60) / [events.cjs](../../../../preload/claude/events.cjs#L132) → `preload/cursor/*`。
 - 用户级 `~/.cursor/hooks.json`，标记 `eypc-cursor-companion`，脚本在 EyPc 数据目录，引号绝对路径，`exit 0`。
-- 冷轮询补 `hasUnreadMessages` / `isArchived`。
+- 冷库存文件快路补 `hasUnreadMessages` / `isArchived`（`fs.watch` + 1s 补漏）；无 watch 时才退回 5s 顺带读。
 - 实火 canary 通过后才升 `join-key`。
 
-### 三期：跳转（`live-failed`，本轮不实现）
+### 三期：跳转（`live-verified`，2026-08-21 已实现）
 
-只有再出现 `selectedComposerIds` 或 `glass.selectedAgent` 变成目标本地 uuid 的实测，才允许按 [open.cjs](../../../../preload/claude/open.cjs#L3-L16) 同形写 `preload/cursor/open.cjs`（`dispatched`，不报已读）。候选仍是 `cursor://` / `--open-url` / 内部 URI 如何进 `urlService`。
+`glass.selectedAgent` 实测变成目标本地 uuid，遂按 [Claude open.cjs](../../../../preload/claude/open.cjs#L3-L16) 同形落地 [preload/cursor/open.cjs](../../../../preload/cursor/open.cjs#L1)：只认裸 composer uuid，派发 `cursor://anysphere.cursor-deeplink/agent?id=<composerId>`，单飞 latest-wins，`dispatched` 不报已读。Controller [openCursorTask](../../../../src/runtime/codexController.ts#L2841) 取代原「尚未验证」直返；桥 `openTask` 接 [index.cjs](../../../../preload/cursor/index.cjs#L218)，preload 传入 `execFile`。聚焦测试 [cursorOpen.test.ts](../../../../tests/platform/cursorOpen.test.ts#L1)。
 
 ## 明确不做
 
 - 额度 / 额度状态变更 / water-ball / Claude quota 开关
 - Codex Plan / Goal / Execute Plan 对照
-- 本轮写入 `~/.cursor/hooks.json`、或把跳转写成已保证（一期已实现冷库存 Provider）
+- Agent 直接写入真实 `~/.cursor/hooks.json`（注册仍走设置页当下确认）
+- 把跳转 `dispatched` 写成「已展示 / 已读」保证
 - Cloud Agent、Chat、Plan、subagent 库存
 - 读取或摘录对话正文
-- resume / 写 `selectedComposerIds` / AX
+- resume / 写 `selectedComposerIds` 或 `cursor/glass.selectedAgent` / AX
 - 把 Claude settings hooks 当 Cursor 热路径
 - 本轮改 PRD、ARCHITECTURE 当前条款、需求登记
 
@@ -218,7 +226,7 @@ OS 只注册 `cursor://`，不注册 `cursor.agent`。官方 deeplink 有 `/agen
 - Verification-command provenance: `impact-trace`
 - Full-suite escalation: `none`
 - Owner: 本 Spec
-- Residual risk: `join-key` 未实火；跳转 `live-failed`；冷库存进行中滞后；提问类 `preToolUse` 识别未在本机证明。
+- Residual risk: `join-key` 单样本；跳转为 `dispatched` 合同且依赖 3.17.8 deeplink 行为（版本回退可能再失效）；冷库存进行中滞后；提问类 `preToolUse` 识别未在本机证明。
 
 ### Verification Impact Trace
 
@@ -227,8 +235,12 @@ OS 只注册 `cursor://`，不注册 `cursor.agent`。官方 deeplink 有 `/agen
 | `cursorAgent` / provider id | Controller 卡片、Float 分组、设置开关 | 水球仍只映射 Codex/Claude | `tests/domain/cursorAgent.test.ts`、`companionProvider`、`companionPresentation` | 仓库级 `pnpm test` / build：无 escalation | 见收尾 |
 | `preload/cursor` 只读 inventory | `window.eypcPlatform.cursor` | 禁止读正文 / 写 DB | `tests/platform/cursorInventory.test.ts`；public 镜像已同步 | `validate:utools` 需 dist 重建，本轮不跑 | dist 待下次 prepare |
 | Controller 折叠 / open unavailable | Float 动态分组、卡片点击 | Kernel 仍只拥有 Codex/Claude | 一期聚焦 Domain+inventory；open 合同由 preload 测 | 真实 uTools / 本机 Cursor DB 目视 | 宿主验收待用户 |
+| `preload/cursor/open.cjs` deeplink 跳转 + Controller `openCursorTask` | Float 卡片点击 → `openThread` cursor 分支 → 桥 `openTask` | Kernel 不裁决 cursor open；伪 id 拒发不落 `open` | `tests/platform/cursorOpen.test.ts`（8 例：URL/平台派发/拒发/latest-wins）、`tests/runtime/codexController.test.ts` 59 例回归、`tsc --noEmit`（仅 1 条既有无关报错） | 仓库级 suite：无 escalation | 本机 deeplink 三正一负实测通过；uTools 重载后目视归用户 |
+| 状态门禁归档：`preload/cursor/archive.cjs` + Claude 白名单拆除 + Controller `archiveCursorTask` | Float「归」→ `archive()` 状态门禁 → cursor 走桥 / codex+claude 走 Kernel dispatch | Cursor 唯一写例外单行化并在 UPDATE 内重复守卫；Claude 归档失去版本白名单后靠结构化重验兜底 | `tests/platform/cursorArchive.test.ts`（6 例：写对/拒活/幂等/注入拒绝/CLI 通道/桥 v5）、`claudeBridge` 74 例（新增非白名单版本归档正例）、`cursorAgent`/`claudeCode` 域测、`codexController` 61 例、`claudeCompanionController` 全绿、`vue-tsc`、`pnpm build` + `validate:mirrors` | 仓库级 `pnpm test` 已跑：仅 `action.test.ts` MQTT 用例超时，stash 基线复现证实与本轮无关 | 本机实归目视归用户 |
+| `companion-navigation-v4`：Cursor 进 cycle 候选与 `openCursor` 派发 | 全局快捷键 → navigation `cycle` → kernel `mergedCycleKeys` → `openCursor` deeplink | Kernel canonical 集不吸收 Cursor（走辅助候选通道）；navigation「全来源 settle 才 ready」合同不被部分集破坏 | `companionNavigationBridge`、`companionTaskKernel`（辅助候选归一/合并/清理）、`codexController`（快捷键端到端触达 Cursor 卡）、`sync:preloads` 镜像 | 仓库级 suite：无 escalation | 实机快捷键循环目视归用户 |
+| `quotaCursor` 主题 token + `float.css` cursor 样式 + 混合项目 `with-*` 渐变 | Float 任务行/项目行底色、归属标记、共享项目行 | forced-colors 回退不变（`:where()` 压平特异性）；Codex/Claude 8%/12% tint 合同不变 | `codexAppearance.test.ts` 11 例（12 主题三向色距 + 可读性）、`codexCompanion.test.ts` 58 例（新增 Cursor token/实心标记/混合渐变 CSS 合同） | — | 实机配色目视归用户 |
 
-只读 DB 与外部 `open` / `--open-url` 已在调研轮执行，记入 raw/spec，不重复当应用测试。
+只读 DB 与外部 `open` / `--open-url` 已在调研轮执行，记入 raw/spec，不重复当应用测试。2026-08-21 跳转实测（`glass.selectedAgent` 观察法）记入 [raw-requirement.md](raw-requirement.md#L1)。
 
 ## Documentation Impact
 
@@ -261,11 +273,17 @@ OS 只注册 `cursor://`，不注册 `cursor.agent`。官方 deeplink 有 `/agen
 | D-1 二次投影保 Cursor | 用户 2026-08-21 选 D | `applyCompanionTaskPackageViews` 在完整 Kernel 投影后把源里的 Cursor 卡按 Controller 同形折回；fold 抽到领域层。Float 无需改 Vue | 宿主需重载插件后目视「归属 Cursor」 |
 | D-1 过滤空壳 | 用户 2026-08-21 选 D-1 | 库存丢掉 `diskStatus=none` 且 `fullConversationHeadersOnly` 长度为 0 的行；本机 130→92。点卡片仍不跳转 | 只计会话头数量，不读正文；跳转仍 `live-failed`，不写 `open.cjs` |
 | 跳转再核验 | 用户 2026-08-21 对照 Cloud Code / Codex 点击 | Float 点击已接线，Controller 对 `cursor:` 直接返回并提示；桥 `openTask` 恒 `unavailable`。Cursor.app 仍只注册 `cursor://`，无 `cursor.agent` | App 内部能开指定对话，插件/OS 外链切不到本地 `composerId`；不是漏接点击，是外跳未打通 |
+| 跳转打通并落地 | 用户 2026-08-21 授权本机高级实验（含破坏性）；拆 `cursor-deeplink` 扩展与 `workbench.glass.main.js`，发现 `/agent` 经 `glass.handleDeeplink` 进 Agents 窗口 | 3.17.8 实测 `open "cursor://anysphere.cursor-deeplink/agent?id=<composerId>"` 三次正向精确切 `cursor/glass.selectedAgent`，伪 id 无操作；已还原用户原选中。落地 `preload/cursor/open.cjs`（同形 Claude `dispatched`）、`index.cjs` 接 `openTask`、preload 传 `execFile`、Controller `openCursorTask` 取代直返、assets 清单 + public 镜像同步、`cursorOpen.test.ts` 8 例 | 跳转 `live-failed`→`live-verified`；仍只走官方 deeplink，不写 DB、不 AX、不 resume；`dispatched` 不报已读 |
+| Multitask 主卡随 fork 保活 | 用户 2026-08-21 反馈 multitask 主任务状态错；要求同形 Codex side chat | 本机证据：fork 行 `isSubagent=1` 带 `subagentInfo.parentComposerId` / `rootParentConversationId`（嵌套 fork 直指根）；85 条历史 fork 仅正在跑的 2 条带 `unfinishedRunAt`（结束即清）。库存 v4 把 fork 按根聚成父卡 `subagents` 证据（不成卡、不读正文）；域层任一 fork live → 父卡 `running`（父 `waiting-input` 仍优先）；Controller 按 fork 逐条用 hook 热证据压冷标记。实机端到端：本会话父行 `diskStatus=completed` + 两 fork 在跑 → 相位 `running` | 同形 Codex side chat 聚合合同：live 分支保聚合 live；证据不足仍 abstain |
+| 已读与进行中延迟 | 用户 2026-08-21：已完成未读→已读不进插件；进行中约 500ms | 已读只靠 refresh 5s 顺带读库存；hook 脚本 `cat` 整份 stdin 再解析。补 `watchInventory`（库/WAL 快路 + 1s 补漏），hook 只读前 32KB，队列加文件 watch | 不把 1s StatWatcher 改成快路；不读正文 |
+| 归档统一为状态门禁 | 用户 2026-08-21：Claude 提示「Provider 无法核验」（本机 Claude 已自动升到 1.34493.1，超出 `1.26832.0/1.28929.0/1.30096.5` 白名单）、Cursor 从未能归档；要求“只筛状态、不筛来源” | 门禁改为：进行中阻断、待继续/已完成放行、unknown 暂缓，对所有 Provider 一致。Claude 拆除版本白名单（capability 两处 + `archive.cjs` 两处），保留结构化重验（目标唯一/可解析/仍终态 + 写后回读 + 活动库存复核）。Cursor 新增 `preload/cursor/archive.cjs`：单行翻转 App 自己的 `isArchived` 对（写前重验 `unfinishedRunAt`/`hasPendingPlan`/live fork，UPDATE 内重复守卫，写后回读），桥 v5 暴露 `archiveTask`，Controller cursor 分支绕 Kernel（同形 `openCursorTask`） | 归档资格永远不按 provider/版本硬阻断；执行层保留真实校验并三态上报（archived/failed/indeterminate）；App 若从内存回写，watcher 让卡片如实回浮 |
+| 快捷键循环接入 Cursor | 用户 2026-08-21：点击可开但上/下任务快捷键异常；要求查完整链路+日志、对照首接 Cloud 时的修复（RAW-152） | 根因：navigation `PROVIDERS=['codex','claude']`，Cursor 卡从不进 kernel `cycleKeys`，候选集退化（日志 `cycleCount=1`、07:11 `cycle_*` 落在未运行的 Claude 桌面端报 `unavailable`）；点击走绕 Kernel 直连分支掩盖了缺口。修复：`companion-navigation-v4`，`navigation.cjs`/`task-actions.cjs` 的 `PROVIDERS` + `openCursor` 派发注册 cursor，kernel 增 `publishAuxiliaryCycleTasks` 辅助候选并 `mergedCycleKeys` 合并，Controller 在 `publishTaskStatePackage` 发布 Cursor 候选，preload 挂 cursor 适配器 | 新来源接入清单必须含导航注册、与打开通路同轮交付；固化进错误记忆 |
+| Cursor 另类配色 | 用户 2026-08-21：Codex Cloud / Code / Cursor 颜色需进一步区分，Cursor 另类优化 | 卡片来源实为三类（codex/claude/cursor）。主题层新增 `quotaCursor`（`providerQuotaTone` 紫蓝相；12 内置主题上与 codex/claude 两 tone 色距 >60° 且对卡面可读），CSS `--codex-quota-cursor` 接管 cursor 行底色 8%/12% 与标记；`task-provider-marker.provider-cursor` 改实心药丸、Codex/Claude 维持描边；清除失效的 provider-claude marker 规则。补遗：`provider-shared` 项目行渐变原写死 Codex→Claude，含 Cursor 的混合项目看不到 Cursor 色；Float 给共享项目行加 `with-{provider}` 修饰类，`:where()` 保持基准特异性下按实际组合取渐变（forced-colors 回退不受影响） | 归属色 token 收敛在 `codexAppearance` 单点派生；「另类」以填充 vs 描边的结构差表达，不只靠色相；混合行渐变只画真实在场的来源 |
 
 ## Closeout
 
 - Requirement Manifest / project version: 未改
 - Canonical merge: 不进入
 - Verification: 文档链接核验（本轮）
-- Documentation and memory/error routing: 状态枢纽指针；无新 error-memory
-- Open gate / owner: 实现授权、hook 实火 canary、跳转再实测归用户；`join-key=unverified`；跳转 `live-failed`
+- Documentation and memory/error routing: 状态枢纽指针；error-memory 新增 [provider-version-whitelist-must-not-gate-generic-capability](../../../knowledge/error-memory/provider-version-whitelist-must-not-gate-generic-capability.md#L1)、[new-companion-source-must-register-with-navigation-authority](../../../knowledge/error-memory/new-companion-source-must-register-with-navigation-authority.md#L1)
+- Open gate / owner: uTools 重载插件后点卡片目视 Cursor 聚焦到该对话归用户；实归一条 Cursor/Claude 任务目视归用户；快捷键循环触达 Cursor 卡目视归用户；Cursor 配色目视归用户；hook 实火 canary 续测归用户；`join-key` 单样本；跳转 `live-verified`（`dispatched` 合同）

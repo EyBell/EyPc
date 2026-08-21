@@ -56,6 +56,39 @@ Documentation level: `standard`
 
 跳转标 `live-failed`。禁止写 `selectedComposerIds`、AX、`cursor-agent --resume`。
 
+## 用户授权（2026-08-21）
+
+详细调研「点击打开 Cursor 任务」并接入插件（参照 claude/codex）；允许直接在本机执行测试、允许更高级脚本形式与破坏性行为；走通之后再改实际代码。
+
+## 本机跳转复测（2026-08-21，Cursor 3.17.8，`live-verified`）
+
+观察键改为 globalStorage `ItemTable['cursor/glass.selectedAgent']`（只读 `sqlite3 -readonly`，WAL 可见）。源码依据：3.17.8 的 `/agent` deeplink 把完整 URL 经 `cursor.openOrFocusGlassWindow` → `cursorRunActionInWindow(glass.handleDeeplink)` 转发进 Agents 窗口，`handleAgentOpen` 读 `id` 后按 header 选中并持久化。
+
+- 正向 1：`open "cursor://anysphere.cursor-deeplink/agent?id=4cab4479-…"` → 选中由 `3a269569-…` 切到目标（≤8s 落盘）。
+- 正向 2：同形切到 `9b09ae06-…`。
+- 负对照：伪 uuid `00000000-0000-4000-8000-000000000000` 不改变选中（App 报 can't find）。
+- 正向 3（还原）：切回原选中 `3a269569-…`。
+
+结论：外部按本地 `composerId` 跳转已打通，允许按 Claude 同形落地 `preload/cursor/open.cjs`（`dispatched`，不报已读）。仍不写 DB、不 AX、不 resume。deeplink 层无任意命令执行（`/command` 只是 `deeplink.command.create`）。
+
+## 归档统一为状态门禁（2026-08-21）
+
+用户反馈：归档提示「provider 无法核验」，Claude（曾可归档）与 Cursor（从未成功）都无法归档；要求严谨修复并说明，且规避此类问题。归档规则明确为：**除「进行中」外，其余状态（含「待继续」）都可直接归档——这是状态筛选，不是来源 Agent 筛选**，所有 Agent 共用同一状态判断，不得再按具体 provider 阻断。
+
+核验结论：Claude 归档能力位被版本白名单（`1.26832.0/1.28929.0/1.30096.5`）硬门禁，本机 Claude 已自动升级到 `1.34493.1` 故被拒；Cursor 投影写死 `canArchive:false` 且无执行通道。修复：拆除 Claude 版本白名单（保留结构化重验兜底）；Cursor 新增单行 `isArchived` 对写入归档（写前重验、UPDATE 内守卫、写后回读），桥 v5 暴露 `archiveTask`。
+
+## 快捷键上一/下一任务接入 Cursor（2026-08-21）
+
+用户反馈：点击可以打开任务，但「上一个/下一个任务」快捷键出问题；要求排查完整链路与相关日志、对照之前的处理方式（首次加入 Cloud 时出现过同类错误并已修复，即 RAW-152）。
+
+核验结论：导航权威 `PROVIDERS` 只有 codex/claude，Cursor 卡从不进 kernel `cycleKeys`，快捷键候选集退化成极小集合；日志 2026-08-21T07:11:28Z 的 `cycle_*` 事件落在桌面端未运行的 Claude 任务上报 `unavailable`，且此前 `cycleCount` 恒为 1。点击之所以正常，是因为 Controller 对 Cursor 走绕过 kernel 的直连 deeplink 分支，掩盖了导航侧从未注册。修复：`companion-navigation-v4`，`PROVIDERS`/open 派发注册 cursor，kernel 新增 `publishAuxiliaryCycleTasks` 辅助候选通道并合并进 cycleKeys，Controller 随任务包发布 Cursor 候选。
+
+## 任务归属颜色区分（2026-08-21）
+
+用户要求进一步区分「Codex Cloud / Code / Cursor」任务颜色，并把 Cursor 做另类优化。
+
+核验：插件实际卡片来源为 codex / claude / cursor 三类（「Codex Cloud」不是独立卡类）；Cursor 此前复用 `--codex-accent`，与 Codex 难以区分。落地：主题层单点派生 `quotaCursor`（紫蓝相，12 个内置主题上与 codex/claude 两 tone 色距均 >60° 且对卡面可读），新增 CSS 变量 `--codex-quota-cursor` 接管 Cursor 行底色（8%/12%）与归属标记；Cursor 归属标记改为实心药丸（另类视觉），Codex/Claude 维持描边样式。
+
 ## 关联
 
 - 调研结论与立项方案：[spec.md](spec.md#L1)
