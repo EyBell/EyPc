@@ -63,6 +63,7 @@ import {
   normalizeClaudeCodeUnread,
   projectClaudeCodeTaskCards,
   type ClaudeCodeObservation,
+  type ClaudeCodeTaskCard,
   type ClaudeCodeUnreadObservation
 } from '../domain/claudeCode'
 import {
@@ -485,6 +486,9 @@ export function createCodexController(options: CodexControllerOptions) {
   let cursorHooks: 'installed' | 'outdated' | 'missing' | 'unknown' = 'unknown'
   const cursorHookStates = new Map<string, { phase: CursorAgentObservation['hookPhase']; turnOpen: boolean; lastEventAt: number }>()
   let cursorEventDispose: (() => void) | null = null
+  let cursorInventoryWatchDispose: (() => void) | null = null
+  let cursorInventoryReading = false
+  let cursorInventoryReadQueued = false
   type ClaudeLaneRefreshResult = { changed: boolean; available: boolean }
   let claudeStateInFlight: Promise<ClaudeLaneRefreshResult> | null = null
   let claudeInventoryInFlight: Promise<boolean> | null = null
@@ -697,6 +701,33 @@ export function createCodexController(options: CodexControllerOptions) {
       : open
   }
 
+  /**
+   * Cursor rows stay outside the kernel package (fold-layer ownership), but
+   * previous/next runs in the process-owned navigation authority. Publishing
+   * open-only candidates keeps that authority complete across sources
+   * (RAW-152); hidden rows never join the cycle.
+   */
+  function publishCursorCycleCandidates(cards: readonly ClaudeCodeTaskCard[]) {
+    if (typeof companionKernel?.publishAuxiliaryCycleTasks !== 'function') return
+    companionKernel.publishAuxiliaryCycleTasks({
+      provider: 'cursor',
+      tasks: cards
+        .filter((card) => !card.isHidden && card.revisionAt > 0)
+        .map((card) => ({
+          key: card.key,
+          actionAlias: card.actionAlias || '',
+          revisionAt: card.revisionAt,
+          phase: card.claudePhase || 'unknown',
+          lastQuestionAt: card.lastQuestionAt || 0,
+          createdAt: card.createdAt || 0,
+          statusEnteredAt: card.statusEnteredAt || 0,
+          turnStartedAt: card.lastTurnStartedAt || 0,
+          terminalAt: card.lastTurnCompletedAt || 0,
+          localPin: card.pinSource === 'local'
+        }))
+    })
+  }
+
   function publishTaskStatePackage(conversations: ConversationSnapshotV1, now = Date.now()) {
     // Claude cards are folded in here rather than inside the Codex projection,
     // so the Codex-only path stays byte-identical to the previous release.
@@ -710,7 +741,9 @@ export function createCodexController(options: CodexControllerOptions) {
     // omits the hidden-unread term the canonical Codex counter includes. Running
     // them with nothing to merge would silently change a default-configuration
     // number.
-    const cards = [...claudeCards(now), ...cursorCards(now)]
+    const cursorCardsNow = cursorCards(now)
+    publishCursorCycleCandidates(cursorCardsNow)
+    const cards = [...claudeCards(now), ...cursorCardsNow]
     // Skip both aggregate helpers when there is genuinely nothing to do. They
     // recompute counters from their own arrays, and that recomputation omits the
     // hidden-unread term the canonical Codex counter includes — running them on
@@ -741,7 +774,7 @@ export function createCodexController(options: CodexControllerOptions) {
       // back after the view projection so they are not dropped.
       taskState = foldCursorCardsIntoTaskState(
         applyCompanionTaskPackageViews(sourceTaskState, projectionPackage),
-        cursorCards(now)
+        cursorCardsNow
       )
     } else if (!companionKernel) {
       taskState = sourceTaskState
@@ -1055,12 +1088,24 @@ export function createCodexController(options: CodexControllerOptions) {
     if (!cursorHookStates.size) return cursorSessions
     return cursorSessions.map((session) => {
       const hook = cursorHookStates.get(session.composerId)
-      if (!hook) return session
+      // Multitask forks are separate hook conversations. Per fork, hot hook
+      // evidence beats its cold `unfinishedRunAt`; a fork without hook
+      // evidence keeps its cold marker — same discipline as the session's own.
+      const forks = session.subagents || []
+      const subagentRunning = forks.length
+        ? forks.some((fork) => {
+          const forkHook = cursorHookStates.get(fork.composerId)
+          if (forkHook) return forkHook.turnOpen === true || forkHook.phase === 'running'
+          return fork.unfinishedRunAt > 0
+        })
+        : undefined
+      if (!hook && subagentRunning === undefined) return session
       return {
         ...session,
-        ...(hook.turnOpen ? { hookTurnOpen: true } : {}),
-        ...(hook.phase ? { hookPhase: hook.phase } : {}),
-        ...(hook.lastEventAt ? { hookLastEventAt: hook.lastEventAt } : {})
+        ...(hook?.turnOpen ? { hookTurnOpen: true } : {}),
+        ...(hook?.phase ? { hookPhase: hook.phase } : {}),
+        ...(hook?.lastEventAt ? { hookLastEventAt: hook.lastEventAt } : {}),
+        ...(subagentRunning !== undefined ? { subagentRunning } : {})
       }
     })
   }
@@ -1102,30 +1147,70 @@ export function createCodexController(options: CodexControllerOptions) {
     return changed
   }
 
+  function kickCursorInventoryRefresh() {
+    if (cursorInventoryReading) {
+      cursorInventoryReadQueued = true
+      return
+    }
+    cursorInventoryReading = true
+    void refreshCursor().then((changed) => {
+      cursorInventoryReading = false
+      if (cursorInventoryReadQueued) {
+        cursorInventoryReadQueued = false
+        kickCursorInventoryRefresh()
+        return
+      }
+      if (disposed || !changed) return
+      publishTaskStatePackage(sourceTaskState.conversations)
+      options.notify()
+    }).catch(() => {
+      cursorInventoryReading = false
+      cursorInventoryReadQueued = false
+    })
+  }
+
   function subscribeCursorEvents() {
     if (disposed || !cursorEnabled()) {
       unsubscribeCursorEvents()
       return
     }
     const bridge = options.platform.cursor
-    if (!bridge || typeof bridge.watchEvents !== 'function' || cursorEventDispose) return
-    try {
-      cursorEventDispose = bridge.watchEvents(() => {
-        if (disposed || !cursorEnabled()) return
-        const changed = applyCursorHookState()
-        if (!changed) return
-        publishTaskStatePackage(sourceTaskState.conversations)
-        options.notify()
-      })
-    } catch {
-      cursorEventDispose = null
+    if (bridge && typeof bridge.watchEvents === 'function' && !cursorEventDispose) {
+      try {
+        cursorEventDispose = bridge.watchEvents(() => {
+          if (disposed || !cursorEnabled()) return
+          const changed = applyCursorHookState()
+          if (!changed) return
+          publishTaskStatePackage(sourceTaskState.conversations)
+          options.notify()
+        })
+      } catch {
+        cursorEventDispose = null
+      }
+    }
+    if (bridge && typeof bridge.watchInventory === 'function' && !cursorInventoryWatchDispose) {
+      try {
+        cursorInventoryWatchDispose = bridge.watchInventory(() => {
+          if (disposed || !cursorEnabled()) return
+          kickCursorInventoryRefresh()
+        })
+      } catch {
+        cursorInventoryWatchDispose = null
+      }
     }
   }
 
   function unsubscribeCursorEvents() {
-    if (!cursorEventDispose) return
-    try { cursorEventDispose() } catch { /* teardown is best effort */ }
-    cursorEventDispose = null
+    if (cursorEventDispose) {
+      try { cursorEventDispose() } catch { /* teardown is best effort */ }
+      cursorEventDispose = null
+    }
+    if (cursorInventoryWatchDispose) {
+      try { cursorInventoryWatchDispose() } catch { /* teardown is best effort */ }
+      cursorInventoryWatchDispose = null
+    }
+    cursorInventoryReading = false
+    cursorInventoryReadQueued = false
   }
 
   function resetCursorLane() {
@@ -2067,7 +2152,8 @@ export function createCodexController(options: CodexControllerOptions) {
       }).catch(() => { /* claude lane degrades on its own */ })
     }
     const includeCursor = !actionPreflight && cursorEnabled()
-      && (input.force === true || lastCursorReadAt <= 0 || now - lastCursorReadAt >= 5_000)
+      && (input.force === true || lastCursorReadAt <= 0
+        || now - lastCursorReadAt >= (cursorInventoryWatchDispose ? 30_000 : 5_000))
     if (includeCursor) {
       void refreshCursor().then((changed) => {
         if (disposed || !changed || runtimeGeneration !== runtimeToken) return
@@ -2782,6 +2868,26 @@ export function createCodexController(options: CodexControllerOptions) {
     return dispatched
   }
 
+  async function openCursorTask(key: string, actionAlias: string) {
+    const bridge = options.platform.cursor
+    if (!bridge || typeof bridge.openTask !== 'function') {
+      options.setMessage('Cursor 模块不可用')
+      return false
+    }
+    const task = allTasks().find((item) => item.key === key)
+    const composerId = task?.actionAlias || actionAlias
+      || (key.startsWith('cursor:') ? key.slice('cursor:'.length) : '')
+    if (!composerId) {
+      options.setMessage('Cursor 任务身份已失效，请刷新后重试')
+      return false
+    }
+    const result = await bridge.openTask(composerId)
+    const dispatched = result?.outcome === 'opened' || result?.outcome === 'dispatched'
+    if (disposed) return dispatched
+    options.setMessage(result?.message || (dispatched ? '已在 Cursor 打开该对话' : 'Cursor 打开失败'))
+    return dispatched
+  }
+
   async function openThread(
     key: string,
     actionAlias: string,
@@ -2793,8 +2899,7 @@ export function createCodexController(options: CodexControllerOptions) {
     if (!taskOperationsAllowed()) return rejectRuntimeMismatch()
     const task = allTasks().find((item) => item.key === key)
     if (companionTaskProvider(task) === 'cursor' || key.startsWith('cursor:')) {
-      options.setMessage('Cursor 对话跳转尚未验证，当前不能从插件打开')
-      return false
+      return openCursorTask(key, actionAlias)
     }
     if (!companionKernel) {
       options.setMessage('V4 任务 Kernel 未加载，需要重新接入或重载')
@@ -3430,8 +3535,21 @@ export function createCodexController(options: CodexControllerOptions) {
     return true
   }
 
+  /**
+   * Hide/restore and local pin are plugin-internal cache operations, not
+   * Provider mutations, so they must stay provider-agnostic. Kernel V4 owns
+   * only Codex/Claude rows; folded providers (e.g. Cursor cold cards) have no
+   * Kernel task. Their visibility/pin lives entirely in the Renderer receipt /
+   * localPins store plus the republish fold, so a missing Kernel row is a
+   * successful local-only commit, not a failure to gate on.
+   */
+  function kernelOwnsTask(key: string): boolean {
+    return companionKernel ? companionKernel.getLatest().tasks.some((item) => item.key === key) : false
+  }
+
   function commitCompanionVisibility(task: CodexTaskCard, hidden: boolean) {
     if (!companionKernel?.setVisibility || !companionKernelLease) return true
+    if (!kernelOwnsTask(task.key)) return true
     return acceptCompanionLocalCommit(companionKernel.setVisibility({
       lease: companionKernelLease,
       key: task.key,
@@ -3443,6 +3561,7 @@ export function createCodexController(options: CodexControllerOptions) {
   /** Same local-commit contract as visibility; Plan-ready rows stay pinnable. */
   function commitCompanionLocalPin(task: CodexTaskCard, localPin: boolean) {
     if (!companionKernel?.setLocalPin || !companionKernelLease) return true
+    if (!kernelOwnsTask(task.key)) return true
     return acceptCompanionLocalCommit(companionKernel.setLocalPin({
       lease: companionKernelLease,
       key: task.key,
@@ -3538,6 +3657,57 @@ export function createCodexController(options: CodexControllerOptions) {
     return true
   }
 
+  /**
+   * Cursor archive bypasses the Kernel like `openCursorTask`: the Kernel only
+   * owns Codex/Claude rows, while the Cursor adapter re-verifies live evidence
+   * and mirrors the App's own archive bit, so the inventory watcher converges
+   * the card removal on its own.
+   */
+  async function archiveCursorTask(task: CodexTaskCard) {
+    const bridge = options.platform.cursor
+    if (!bridge || typeof bridge.archiveTask !== 'function') {
+      options.setMessage('当前 Cursor 模块不支持归档，请重载插件后重试')
+      return false
+    }
+    const composerId = task.actionAlias
+      || (task.key.startsWith('cursor:') ? task.key.slice('cursor:'.length) : '')
+    if (!composerId) {
+      options.setMessage('Cursor 任务身份已失效，请刷新后重试')
+      return false
+    }
+    taskArchive = { key: task.key, status: 'archiving', message: '正在归档 Cursor 任务' }
+    archivingKeys.add(task.key)
+    options.notify()
+    let result: Awaited<ReturnType<NonNullable<typeof bridge.archiveTask>>> | null = null
+    try {
+      result = await bridge.archiveTask(composerId)
+    } catch {
+      result = null
+    }
+    archivingKeys.delete(task.key)
+    if (disposed) return result?.outcome === 'archived'
+    if (result?.outcome !== 'archived') {
+      taskArchive = {
+        key: task.key,
+        status: 'error',
+        message: result?.message || (result?.outcome === 'indeterminate'
+          ? '归档结果无法唯一确认，已保留任务卡片'
+          : 'Cursor 任务归档失败，已保留任务卡片')
+      }
+      options.setMessage(taskArchive.message)
+      options.notify()
+      return false
+    }
+    const nextSessions = cursorSessions.filter((row) => row.composerId.toLowerCase() !== composerId.toLowerCase())
+    const changed = nextSessions.length !== cursorSessions.length
+    cursorSessions = nextSessions
+    taskArchive = { key: '', status: 'idle', message: '' }
+    options.setMessage(result.message || '已归档 Cursor 任务')
+    if (changed) publishTaskStatePackage(sourceTaskState.conversations)
+    options.notify()
+    return true
+  }
+
   async function performTaskArchive(
     task: CodexTaskCard,
     source: 'card' | 'batch' | 'shortcut',
@@ -3545,6 +3715,9 @@ export function createCodexController(options: CodexControllerOptions) {
     confirmationRecorded = false
   ) {
     if (!taskOperationsAllowed()) return rejectRuntimeMismatch()
+    if (companionTaskProvider(task) === 'cursor' || task.key.startsWith('cursor:')) {
+      return archiveCursorTask(task)
+    }
     const canonical = companionTaskPackage.tasks.find((item) => item.key === task.key)
     if (!canonical?.capabilities.archive || !companionKernel) {
       options.setMessage('任务状态已变化，当前不能归档')
@@ -3606,7 +3779,7 @@ export function createCodexController(options: CodexControllerOptions) {
     const task = allTasks().find((item) => item.key === key && item.revisionAt === recency)
     if (!task || task.archiveCapability !== 'allowed' || !task.actionAlias) {
       options.setMessage(task?.archiveCapability === 'blocked-stopped'
-        ? '当前 Provider 无法安全确认归档边界'
+        ? '任务状态证据不足，暂不能归档'
         : '任务仍在进行中，暂不能归档')
       return Promise.resolve(false)
     }

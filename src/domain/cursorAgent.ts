@@ -14,6 +14,16 @@ import type { ClaudeCodePhase, ClaudeCodeTaskCard } from './claudeCode'
 
 export type CursorAgentDiskStatus = 'completed' | 'none' | 'aborted' | ''
 
+/**
+ * One multitask fork of this conversation. Forks never become cards; like a
+ * Codex side chat they are an evidence line folded into the parent card.
+ * `unfinishedRunAt` is the App's own cold live marker (cleared on finish).
+ */
+export interface CursorAgentSubagentObservation {
+  composerId: string
+  unfinishedRunAt: number
+}
+
 export interface CursorAgentObservation {
   composerId: string
   workspaceIdentifier: string
@@ -27,6 +37,9 @@ export interface CursorAgentObservation {
   hasBlockingPendingActions: boolean
   unfinishedRunAt: number
   diskStatus: CursorAgentDiskStatus
+  subagents?: readonly CursorAgentSubagentObservation[]
+  /** Hook-reconciled fork liveness; when absent, cold fork evidence decides. */
+  subagentRunning?: boolean
   hookPhase?: ClaudeCodePhase
   hookTurnOpen?: boolean
   hookLastEventAt?: number
@@ -57,11 +70,23 @@ function diskStatusOf(value: unknown): CursorAgentDiskStatus {
   return DISK_STATUSES.includes(text as CursorAgentDiskStatus) ? text as CursorAgentDiskStatus : ''
 }
 
+function subagentsOf(value: unknown): CursorAgentSubagentObservation[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return []
+    const source = entry as Record<string, unknown>
+    const composerId = textOf(source.composerId).trim()
+    if (!composerId) return []
+    return [{ composerId, unfinishedRunAt: timeOf(source.unfinishedRunAt) }]
+  })
+}
+
 export function normalizeCursorAgentObservation(raw: unknown): CursorAgentObservation | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const source = raw as Record<string, unknown>
   const composerId = textOf(source.composerId).trim()
   if (!COMPOSER_ID.test(composerId)) return null
+  const subagents = subagentsOf(source.subagents)
   return {
     composerId,
     workspaceIdentifier: textOf(source.workspaceIdentifier).trim(),
@@ -75,6 +100,8 @@ export function normalizeCursorAgentObservation(raw: unknown): CursorAgentObserv
     hasBlockingPendingActions: flagOf(source.hasBlockingPendingActions),
     unfinishedRunAt: timeOf(source.unfinishedRunAt),
     diskStatus: diskStatusOf(source.diskStatus),
+    ...(subagents.length ? { subagents } : {}),
+    ...(typeof source.subagentRunning === 'boolean' ? { subagentRunning: source.subagentRunning } : {}),
     ...(source.hookTurnOpen === true ? { hookTurnOpen: true } : {}),
     ...(source.hookPhase === 'running' || source.hookPhase === 'completed' || source.hookPhase === 'stopped'
       ? { hookPhase: source.hookPhase }
@@ -84,12 +111,26 @@ export function normalizeCursorAgentObservation(raw: unknown): CursorAgentObserv
 }
 
 /**
+ * A live multitask fork keeps the parent card live — the Codex side-chat
+ * contract: any live branch keeps the aggregate running, even when the
+ * parent's own Turn already closed. Controller-reconciled `subagentRunning`
+ * beats cold fork evidence; when absent, a fork's own `unfinishedRunAt`
+ * decides, exactly like the session's own cold marker.
+ */
+export function cursorSubagentsRunning(observation: CursorAgentObservation): boolean {
+  if (observation.subagentRunning !== undefined) return observation.subagentRunning
+  return (observation.subagents || []).some((fork) => fork.unfinishedRunAt > 0)
+}
+
+/**
  * Hook Turn beats disk. Never invents `waiting-approval`. Disk `status` cannot
- * override an open Turn, and cannot invent a terminal from silence.
+ * override an open Turn, and cannot invent a terminal from silence. A live
+ * fork outranks the parent's own terminal hook phase but not its waiting-input.
  */
 export function resolveCursorAgentPhase(observation: CursorAgentObservation): ClaudeCodePhase {
   if (observation.hookTurnOpen) return 'running'
   if (observation.hasPendingPlan) return 'waiting-input'
+  if (cursorSubagentsRunning(observation)) return 'running'
   if (observation.hookPhase === 'running' || observation.hookPhase === 'completed' || observation.hookPhase === 'stopped') {
     return observation.hookPhase
   }
@@ -111,7 +152,10 @@ export interface CursorAgentResolvedState {
 
 export function resolveCursorAgentState(observation: CursorAgentObservation): CursorAgentResolvedState {
   const phase = resolveCursorAgentPhase(observation)
-  const archiveCapability: CodexArchiveCapability = 'blocked-stopped'
+  // Status-only gate: settled completed/stopped sessions may archive (the
+  // preload adapter re-verifies live evidence and mirrors the App's own
+  // `isArchived` pair). Only live phases and unknown evidence block.
+  const archiveCapability: CodexArchiveCapability = 'allowed'
   if (phase === 'waiting-input') {
     return { phase, bucket: 'ongoing', activityState: 'waiting-input', archiveCapability: 'blocked-active', unreadState: 'unknown' }
   }
@@ -131,7 +175,7 @@ export function resolveCursorAgentState(observation: CursorAgentObservation): Cu
   if (phase === 'stopped') {
     return { phase, bucket: 'stopped', activityState: 'stopped', archiveCapability, unreadState: 'unknown' }
   }
-  return { phase: 'unknown', bucket: 'stopped', activityState: 'ongoing', archiveCapability, unreadState: 'unknown' }
+  return { phase: 'unknown', bucket: 'stopped', activityState: 'ongoing', archiveCapability: 'blocked-stopped', unreadState: 'unknown' }
 }
 
 export function cursorAgentDisplayName(observation: Pick<CursorAgentObservation, 'name' | 'subtitle'>): string {
@@ -197,7 +241,7 @@ export function projectCursorAgentTaskCard(
     firstPromptAt: observation.createdAt || undefined,
     source: resolved.phase === 'unknown' ? 'unresolved' : 'current',
     hasCurrentActivity: resolved.bucket === 'ongoing',
-    canArchive: false,
+    canArchive: resolved.archiveCapability === 'allowed',
     projectKey,
     projectName,
     originalProjectName,

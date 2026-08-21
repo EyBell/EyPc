@@ -262,9 +262,10 @@ export function resolveClaudeCodeState(
 ): ClaudeCodeResolvedState {
   const unreadKnown = Array.isArray(appUnread)
   const unread = unreadKnown && appUnread.includes(observation.sessionId)
-  const archiveCapability: CodexArchiveCapability = observation.stateCompatibility === 'compatible'
-    ? 'allowed'
-    : 'blocked-stopped'
+  // Status-only gate: any settled non-live phase may archive. The dispatch
+  // transaction revalidates the exact target, so compatibility tiers only
+  // affect evidence quality, never the archive right itself.
+  const archiveCapability: CodexArchiveCapability = 'allowed'
   if (observation.phase === 'waiting-approval') {
     return { phase: observation.phase, bucket: 'ongoing', activityState: 'waiting-approval', archiveCapability: 'blocked-active', unreadState: 'unknown' }
   }

@@ -344,8 +344,8 @@ export interface ClaudeAppPresenceSnapshot {
   verifiedAt: number
 }
 
-export type CompanionNavigationProviderId = 'codex' | 'claude'
-export const COMPANION_NAVIGATION_REVISION = 'companion-navigation-v3'
+export type CompanionNavigationProviderId = 'codex' | 'claude' | 'cursor'
+export const COMPANION_NAVIGATION_REVISION = 'companion-navigation-v4'
 export const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v2'
 
 export interface RuntimeIdentityExpectationV1 {
@@ -514,6 +514,26 @@ export interface CompanionTaskKernelBridge {
   setVisibility?(input: { lease: number; key: string; revisionAt?: number; hidden: boolean }): CompanionTaskPackageV4 | null
   /** Local pin authority; unlike hide it stays available for Plan-ready rows. */
   setLocalPin?(input: { lease: number; key: string; revisionAt?: number; localPin: boolean }): CompanionTaskPackageV4 | null
+  /**
+   * Open-only auxiliary providers (cursor). Rows join the process-owned
+   * previous/next cycle and open targets without entering the canonical
+   * package; the kernel rederives tier and dynamic eligibility itself.
+   */
+  publishAuxiliaryCycleTasks?(input: {
+    provider: 'cursor'
+    tasks: Array<{
+      key: string
+      actionAlias: string
+      revisionAt: number
+      phase: string
+      lastQuestionAt?: number
+      createdAt?: number
+      statusEnteredAt?: number
+      turnStartedAt?: number
+      terminalAt?: number
+      localPin?: boolean
+    }>
+  }): boolean
   /** @deprecated Renderer drafts are not a production authority in V4. */
   syncPackage?(input: { lease: number; draft: CompanionTaskPackageDraftV4 }): CompanionTaskPackageV4 | null
   detach?(input: { lease: number }): boolean
@@ -541,6 +561,7 @@ export interface CompanionTaskKernelBridge {
     packageGeneration: number
     taskCount: number
     cycleCount: number
+    auxiliaryTaskCount?: number
     codexBranchParentCount: number
     codexBranchCount: number
     preflightInFlight: boolean
@@ -811,14 +832,17 @@ export interface EypcPlatformApi {
      * refuses CLI ids and refuses to dispatch unless App-running is proven.
      */
     openTask(sessionId: string): Promise<ClaudeOpenResult>
-    /** Version-gated, single-target Claude App metadata archive transaction. */
+    /** Single-target Claude App metadata archive transaction (structural revalidation, not version-gated). */
     archiveCodeSession?(sessionId: string): Promise<ClaudeArchiveResult>
     diagnostics(): { revision: string; loaded: boolean; loadError: string; quotaAccess?: ClaudeQuotaAccessSnapshot }
     close(): void
   }
   /**
    * Cursor Agent companion. Optional so an older preload degrades this lane
-   * alone. Hook install/watch are feature-detected; `openTask` stays unavailable.
+   * alone. Hook install/watch are feature-detected; `openTask` dispatches the
+   * `agent?id=<composerId>` deep link and reports `dispatched`, never a read.
+   * `archiveTask` mirrors the App's own archive bit on one header row after
+   * re-verifying the task carries no live evidence.
    */
   cursor?: {
     inspect(): Promise<{ available: boolean; reason: string; sessionCount?: number; readAt?: number; hooks?: string }> | { available: boolean; reason: string; sessionCount?: number; readAt?: number; hooks?: string }
@@ -839,9 +863,11 @@ export interface EypcPlatformApi {
     }
     readHookState?(): Array<{ sessionId: string; phase: string; turnOpen: boolean; lastEventAt: number }>
     watchEvents?(listener: () => void, options?: { coalesceMs?: number; recoveryPollMs?: number }): () => void
+    watchInventory?(listener: () => void): () => void
     install?(): Promise<ClaudeRegistrationResult> | ClaudeRegistrationResult
     uninstall?(): Promise<ClaudeRegistrationResult> | ClaudeRegistrationResult
     openTask(composerId: string): Promise<ClaudeOpenResult>
+    archiveTask?(composerId: string): Promise<ClaudeArchiveResult>
     diagnostics(): { revision: string; loaded: boolean; loadError: string }
     close(): void
   }

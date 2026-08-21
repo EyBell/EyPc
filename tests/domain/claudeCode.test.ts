@@ -105,7 +105,7 @@ describe('Claude App Code domain', () => {
     expect(resolveClaudeCodeState(observation('stopped'), [LOCAL_A])).toMatchObject({ phase: 'completed', bucket: 'completed-unread' })
   })
 
-  it('enables silent metadata archive only for the version-compatible App state lane', () => {
+  it('enables silent metadata archive by status alone, ignoring App version compatibility', () => {
     expect(projectClaudeCodeTaskCards([observation('completed')])[0]).toMatchObject({
       archiveCapability: 'allowed',
       canArchive: true
@@ -113,7 +113,11 @@ describe('Claude App Code domain', () => {
     expect(projectClaudeCodeTaskCards([
       observation('stopped', { stateCompatibility: 'unsupported' })
     ])[0]).toMatchObject({
-      archiveCapability: 'blocked-stopped',
+      archiveCapability: 'allowed',
+      canArchive: true
+    })
+    expect(projectClaudeCodeTaskCards([observation('running')])[0]).toMatchObject({
+      archiveCapability: 'blocked-active',
       canArchive: false
     })
   })
