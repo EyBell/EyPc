@@ -197,7 +197,7 @@ Codex 任务的卡片、分组、角标和归档能力必须在同一份 Control
 ## RAW-153 待输入解除因果屏障
 
 - Desktop 私有状态为每个 main/Side Chat 请求实例与 runtime waiting flag 记录单调观测序列。请求仍以进程随机盐关联有限私有标识；原始标识、散列值、序列、正文和权限内容都不跨 Host、不持久化。完整快照只可保留同一实例的首次观测序列，不得把同方法的后来请求错误并入旧实例。
-- waiting-clear reducer 使用同一序列空间：request remove 与匹配 `serverRequest/resolved` 精确解除对应实例；`thread/status/changed active`、`turn/started`、matching output、用户继续和新 `task_started` 清除其之前观测到的 waiting 请求与 runtime flag。清除立即重算并发布，目标任务有界重订只负责结果复核，不是解除的前置条件。
+- waiting-clear reducer 使用同一序列空间：request remove 与匹配 `serverRequest/resolved` 精确解除对应实例；`thread/status/changed active`、`turn/started`、matching output、用户继续和新 `task_started` 清除其之前观测到的 waiting 请求与 runtime flag。先前已观测到的 Plan/提问请求，在 Desktop runtime 从 idle/waiting 转入无 waiting flag 的 plain-active 后，即使同一 request 仍短暂留在 `conversationState.requests`，也进入同一屏障；首次观测到的 `active + request` 仍是待输入，idle 上的 Plan 请求仍覆盖 idle。清除立即重算并发布，目标任务有界重订只负责结果复核，不是解除的前置条件。
 - 清除序列是私有因果屏障。旧 full snapshot、read-state、无关 patch、refollow、sticky shadow 和 rollout resume 的观测序列若不晚于屏障，均不得重新投影 waiting；屏障后真正新出现、拥有更新观测序列的请求实例必须立即重新进入待输入。runtime waiting flag 从快照中消失同样建立对应屏障。
 - `desktop-live + active` 只有在当前 shadow 不含可见 waiting flag 时才可作为普通 active 复用。当前 owner 若仍带旧 waiting，较新的 App Server active/Turn-started 必须先越过等待优先级并清除旧实例；后续旧 shadow 重放不能回跳。Side Chat、Plan、普通输入、权限审批与 rollout resume 使用同一规则。
 - `serverRequest/resolved` 只按 `threadId + requestId` 的私有关联清匹配项；未匹配时仅启动既有目标任务 `0/50/150/300/600/1000ms` 有界重订，不清同任务其它并发审批。该通知补强 Desktop request remove，但不是所有请求的唯一解除来源。

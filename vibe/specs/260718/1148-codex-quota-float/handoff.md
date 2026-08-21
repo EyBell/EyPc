@@ -21,7 +21,7 @@ Current host authority is the [RAW-161 handoff](../../260810/1155-install-runtim
 - Codex 归档期间卡片与按钮保留；Provider-only `archived` 不再删除。每次 operationId 必须通过 exact preflight、一次写、两次服务器库存确认，以及 Desktop 已连接时的 sync 和匹配 native ACK，随后 Kernel commit 才原子移除。任一失败/矛盾/ACK 超时保留 alias/cache/receipt/shortcut 并提示短 operationId；自动定向核验，无需用户手动刷新。Claude 归档行为本轮不改。
 - `eypc-companion-archive` 保持 `mainHide:true`。第一次调用只提示并建立 5 秒确认，稳定 identity 为 Provider+task+terminalEpoch；revision、unread、focus 和临时 alias 变化不取消。第二次使用同一 operationId 和最新 capability；任务消失、terminal epoch 或能力变化才取消。
 - RAW-152 的进程级导航所有权继续保留，但 RAW-155 已取代固定 75ms 等待：首个目标立即派发，仅在其仍执行时保存最终 trailing 目标；手动/attention 可取消未派发 trailing，全部来源共享最大并发 1。
-- RAW-153 是 v9 继续保留的 waiting-clear 前置合同：main/Side Chat request 与 runtime waiting flag 都记录私有单调观测序列；request remove、匹配 `serverRequest/resolved`、较新 active/Turn-started、matching output、用户继续和新 `task_started` 共用因果屏障。旧 snapshot/read-state/refollow/sticky shadow/rollout resume 不能复活已解除等待，屏障后的新 correlation 仍立即重入。
+- RAW-153 是 v9 继续保留的 waiting-clear 前置合同：main/Side Chat request 与 runtime waiting flag 都记录私有单调观测序列；request remove、匹配 `serverRequest/resolved`、较新 active/Turn-started、matching output、用户继续、新 `task_started`，以及先前已观测等待在 Desktop runtime 恢复 plain-active 后的残留 Plan/提问请求，共用因果屏障。旧 snapshot/read-state/refollow/sticky shadow/rollout resume 不能复活已解除等待，屏障后的新 correlation 仍立即重入。
 - 单卡点击与待输入/未读直达仍按精确匿名 key 打开；Codex stale alias 只按同 key tasks-only 重建一次。旧 Host 没有精确 navigation revision 时，通用循环提示重载并 fail closed，单卡保持兼容。
 - RAW-150/151 的待继续/独立热通路继续有效；RAW-154 取代 Claude Deep Link+AX 归档并细化 exact interrupted。项目批量仍只处理 Codex completed。
 - 待输入的双向独立热通路与 waiting-edge reducer 继续有效；RAW-160 已把历史 1 秒 Renderer phase-only watchdog 迁移为进程 Host 对已登记 rollout 文件的 native+StatWatcher 恢复。它不受 Tab 或 Float 可见性影响，也不存在用户可调的任务全量周期。
