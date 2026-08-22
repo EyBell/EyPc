@@ -14394,6 +14394,9 @@ window.eypcPlatform = {
         configure: (...args) => runtimeIdentityCompatible ? companionTaskKernel.configure(...args) : null,
         setVisibility: (...args) => runtimeIdentityCompatible ? companionTaskKernel.setVisibility(...args) : null,
         setLocalPin: (...args) => runtimeIdentityCompatible ? companionTaskKernel.setLocalPin(...args) : null,
+        publishAuxiliaryCycleTasks: (...args) => runtimeIdentityCompatible
+          ? companionTaskKernel.publishAuxiliaryCycleTasks(...args)
+          : false,
         syncPackage: (...args) => runtimeIdentityCompatible ? companionTaskKernel.syncPackage(...args) : null,
         detach: (...args) => runtimeIdentityCompatible && companionTaskKernel.detach(...args),
         dispatch: (...args) => runtimeIdentityCompatible

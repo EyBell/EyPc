@@ -127,6 +127,7 @@ describe('uTools runtime identity', () => {
       packageRevision: 'companion-task-package-v4',
       attach: vi.fn(),
       configure: vi.fn(),
+      publishAuxiliaryCycleTasks: vi.fn(),
       syncPackage: vi.fn(),
       dispatch: vi.fn(),
       getPackage: vi.fn(),

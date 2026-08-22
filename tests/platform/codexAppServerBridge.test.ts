@@ -951,6 +951,55 @@ describe('Codex App Server preload bridge', () => {
     context.bridge.close()
   })
 
+  it('exposes and dispatches Cursor auxiliary cycles through the production Kernel bridge', async () => {
+    const context = loadCodexBridge(new FakeCodexProcess())
+    handshakeTestRuntime(context.platform)
+    const kernel = context.platform.companionKernel
+    const cursorRevision = Date.now()
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 36 })
+    const readyPackage = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: {
+        schema: 'companion-task-draft-v4',
+        producer: 'renderer',
+        sourceTaskStateRevision: 'task-state-v10',
+        draftRevision: 1,
+        acceptedAt: Date.now(),
+        enabled: true,
+        providers: { codex: true, claude: false },
+        complete: true,
+        focusedKey: '',
+        sourceGenerations: { codex: 1, claude: 0 },
+        sourceLaneGenerations: {
+          codex: { membership: 1, phase: 1, unread: 1 },
+          claude: { membership: 0, phase: 0, unread: 0 }
+        },
+        tasks: []
+      }
+    })
+    expect(readyPackage).toMatchObject({ complete: true })
+
+    expect(typeof kernel.publishAuxiliaryCycleTasks).toBe('function')
+    expect(kernel.publishAuxiliaryCycleTasks({
+      provider: 'cursor',
+      tasks: [{
+        key: 'cursor:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+        actionAlias: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+        revisionAt: cursorRevision,
+        phase: 'running',
+        lastQuestionAt: cursorRevision,
+        createdAt: cursorRevision - 100
+      }]
+    })).toBe(true)
+    expect(kernel.diagnostics()).toMatchObject({ auxiliaryTaskCount: 1, ready: true })
+    await expect(kernel.dispatch({ action: 'cycle', direction: 1, source: 'global-shortcut' })).resolves.toMatchObject({
+      outcome: 'dispatched',
+      provider: 'cursor',
+      key: 'cursor:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    })
+    context.bridge.close()
+  })
+
   it('treats an exact Claude unread snapshot as known across unread and inventory lanes', async () => {
     const noopWatch = () => () => undefined
     const context = loadCodexBridge(
