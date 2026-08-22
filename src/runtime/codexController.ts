@@ -708,7 +708,7 @@ export function createCodexController(options: CodexControllerOptions) {
    * (RAW-152); hidden rows never join the cycle.
    */
   function publishCursorCycleCandidates(cards: readonly ClaudeCodeTaskCard[]) {
-    if (typeof companionKernel?.publishAuxiliaryCycleTasks !== 'function') return
+    if (!companionKernel) return
     companionKernel.publishAuxiliaryCycleTasks({
       provider: 'cursor',
       tasks: cards

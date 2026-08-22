@@ -519,7 +519,7 @@ export interface CompanionTaskKernelBridge {
    * previous/next cycle and open targets without entering the canonical
    * package; the kernel rederives tier and dynamic eligibility itself.
    */
-  publishAuxiliaryCycleTasks?(input: {
+  publishAuxiliaryCycleTasks(input: {
     provider: 'cursor'
     tasks: Array<{
       key: string
@@ -1377,6 +1377,7 @@ export function getPlatform(): EypcPlatformApi {
       && hostCompanionKernel.packageRevision === COMPANION_TASK_PACKAGE_REVISION
       && typeof hostCompanionKernel.attach === 'function'
       && typeof hostCompanionKernel.configure === 'function'
+      && typeof hostCompanionKernel.publishAuxiliaryCycleTasks === 'function'
       && typeof hostCompanionKernel.dispatch === 'function'
       && typeof hostCompanionKernel.getLatest === 'function'
       && typeof hostCompanionKernel.subscribe === 'function'
