@@ -85,6 +85,10 @@ Documentation level: `standard`
 
 后续（同日晚间）：同一症状再次出现且更重（连打开都不行）。导航注册 v4 已在宿主生效；剩余根因不在注册，而是 Kernel 选择器就绪门禁把 `verifying` 当作过期推进 5 秒冷读并静默失败，见 [260821/2045-shortcut-selector-readiness](../../260821/2045-shortcut-selector-readiness/spec.md#L1)。
 
+再后续（同日夜间）：崩溃与选择器就绪问题消失后，手点 Cursor 仍正常，但上一/下一只在 Codex/Claude 间循环。当前宿主身份一致；日志显示主包 40 条、导航目标也为 40 条，`cycleCount=2`，证明 Cursor 辅助候选未发布。源码核验定位到最后一跳：Kernel 返回值与 Controller 均已有 `publishAuxiliaryCycleTasks`，生产 `window.eypcPlatform.companionKernel` 却漏转发，Controller 的可选能力检查静默返回。用户选择 D-1：补 preload 转发，将该方法升级为平台必需能力并在缺失时 `reload-required`，新增从生产 preload bridge 发布候选并完成 Cursor cycle 派发的回归测试。
+
+验收边界补充（同日夜间）：用户明确要求 EyPc 插件默认永远不做真实插件/宿主测试，只有用户在当前任务主动、直接提出时才执行；选择 D-1、批准方案或要求修复均不构成该授权。本轮以生产 preload bridge 自动化回归、类型检查、构建和镜像校验收口。
+
 ## 任务归属颜色区分（2026-08-21）
 
 用户要求进一步区分「Codex Cloud / Code / Cursor」任务颜色，并把 Cursor 做另类优化。

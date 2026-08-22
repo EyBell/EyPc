@@ -2,7 +2,7 @@
 
 Tool: cursor
 Date: 2026-08-18
-Status: `research-verified / phase-3-implemented`
+Status: `research-verified / phase-3-implemented / shortcut-bridge-automated-verified / host-test-not-requested`
 Documentation level: `standard`
 
 Raw source: [raw-requirement.md](raw-requirement.md#L1)
@@ -277,13 +277,13 @@ App **内部**打开命令仍在：`composer.openComposer({ type: "local", id })
 | Multitask 主卡随 fork 保活 | 用户 2026-08-21 反馈 multitask 主任务状态错；要求同形 Codex side chat | 本机证据：fork 行 `isSubagent=1` 带 `subagentInfo.parentComposerId` / `rootParentConversationId`（嵌套 fork 直指根）；85 条历史 fork 仅正在跑的 2 条带 `unfinishedRunAt`（结束即清）。库存 v4 把 fork 按根聚成父卡 `subagents` 证据（不成卡、不读正文）；域层任一 fork live → 父卡 `running`（父 `waiting-input` 仍优先）；Controller 按 fork 逐条用 hook 热证据压冷标记。实机端到端：本会话父行 `diskStatus=completed` + 两 fork 在跑 → 相位 `running` | 同形 Codex side chat 聚合合同：live 分支保聚合 live；证据不足仍 abstain |
 | 已读与进行中延迟 | 用户 2026-08-21：已完成未读→已读不进插件；进行中约 500ms | 已读只靠 refresh 5s 顺带读库存；hook 脚本 `cat` 整份 stdin 再解析。补 `watchInventory`（库/WAL 快路 + 1s 补漏），hook 只读前 32KB，队列加文件 watch | 不把 1s StatWatcher 改成快路；不读正文 |
 | 归档统一为状态门禁 | 用户 2026-08-21：Claude 提示「Provider 无法核验」（本机 Claude 已自动升到 1.34493.1，超出 `1.26832.0/1.28929.0/1.30096.5` 白名单）、Cursor 从未能归档；要求“只筛状态、不筛来源” | 门禁改为：进行中阻断、待继续/已完成放行、unknown 暂缓，对所有 Provider 一致。Claude 拆除版本白名单（capability 两处 + `archive.cjs` 两处），保留结构化重验（目标唯一/可解析/仍终态 + 写后回读 + 活动库存复核）。Cursor 新增 `preload/cursor/archive.cjs`：单行翻转 App 自己的 `isArchived` 对（写前重验 `unfinishedRunAt`/`hasPendingPlan`/live fork，UPDATE 内重复守卫，写后回读），桥 v5 暴露 `archiveTask`，Controller cursor 分支绕 Kernel（同形 `openCursorTask`） | 归档资格永远不按 provider/版本硬阻断；执行层保留真实校验并三态上报（archived/failed/indeterminate）；App 若从内存回写，watcher 让卡片如实回浮 |
-| 快捷键循环接入 Cursor | 用户 2026-08-21：点击可开但上/下任务快捷键异常；要求查完整链路+日志、对照首接 Cloud 时的修复（RAW-152） | 根因：navigation `PROVIDERS=['codex','claude']`，Cursor 卡从不进 kernel `cycleKeys`，候选集退化（日志 `cycleCount=1`、07:11 `cycle_*` 落在未运行的 Claude 桌面端报 `unavailable`）；点击走绕 Kernel 直连分支掩盖了缺口。修复：`companion-navigation-v4`，`navigation.cjs`/`task-actions.cjs` 的 `PROVIDERS` + `openCursor` 派发注册 cursor，kernel 增 `publishAuxiliaryCycleTasks` 辅助候选并 `mergedCycleKeys` 合并，Controller 在 `publishTaskStatePackage` 发布 Cursor 候选，preload 挂 cursor 适配器 | 新来源接入清单必须含导航注册、与打开通路同轮交付；固化进错误记忆 |
+| 快捷键循环接入 Cursor | 用户 2026-08-21：点击可开但上/下任务快捷键异常；要求查完整链路+日志、对照首接 Cloud 时的修复（RAW-152） | 首次根因：navigation `PROVIDERS=['codex','claude']`，Cursor 卡从不进 kernel `cycleKeys`。首次修复补 navigation v4、辅助候选与 `openCursor`。夜间复核又发现生产 `window.eypcPlatform.companionKernel` 漏转发 `publishAuxiliaryCycleTasks`，可选检查静默返回，故当时宿主主包/目标均为 40、`cycleCount=2` 且只选 Codex/Claude；裸 Kernel 测试未穿过该边界。D-1 已补 preload 转发，把辅助发布列为平台必需能力（缺失即 `reload-required`），并新增生产 preload bridge 从发布候选到 Cursor cycle `dispatched` 的回归测试 | 6 个受影响测试文件 `311/311`、typecheck、1872-module production build、uTools validator、58 对 preload 镜像通过；产物 `host-90b803b87d0962728d5c / renderer-7fd8a53c95d084b6aa77`。用户明确规定真实插件/宿主测试仅在其主动直接要求时执行，本轮不运行且不列为待办 |
 | Cursor 另类配色 | 用户 2026-08-21：Codex Cloud / Code / Cursor 颜色需进一步区分，Cursor 另类优化 | 卡片来源实为三类（codex/claude/cursor）。主题层新增 `quotaCursor`（`providerQuotaTone` 紫蓝相；12 内置主题上与 codex/claude 两 tone 色距 >60° 且对卡面可读），CSS `--codex-quota-cursor` 接管 cursor 行底色 8%/12% 与标记；`task-provider-marker.provider-cursor` 改实心药丸、Codex/Claude 维持描边；清除失效的 provider-claude marker 规则。补遗：`provider-shared` 项目行渐变原写死 Codex→Claude，含 Cursor 的混合项目看不到 Cursor 色；Float 给共享项目行加 `with-{provider}` 修饰类，`:where()` 保持基准特异性下按实际组合取渐变（forced-colors 回退不受影响） | 归属色 token 收敛在 `codexAppearance` 单点派生；「另类」以填充 vs 描边的结构差表达，不只靠色相；混合行渐变只画真实在场的来源 |
 
 ## Closeout
 
 - Requirement Manifest / project version: 未改
 - Canonical merge: 不进入
-- Verification: 文档链接核验（本轮）
+- Verification: Cursor 快捷键生产桥接增量为 6 文件 `311/311`，typecheck、production build、uTools validator 与 58 对 preload 镜像通过；按用户指定边界不运行真实插件/宿主测试，也不保留默认宿主验收待办
 - Documentation and memory/error routing: 状态枢纽指针；error-memory 新增 [provider-version-whitelist-must-not-gate-generic-capability](../../../knowledge/error-memory/provider-version-whitelist-must-not-gate-generic-capability.md#L1)、[new-companion-source-must-register-with-navigation-authority](../../../knowledge/error-memory/new-companion-source-must-register-with-navigation-authority.md#L1)
-- Open gate / owner: uTools 重载插件后点卡片目视 Cursor 聚焦到该对话归用户；实归一条 Cursor/Claude 任务目视归用户；快捷键循环触达 Cursor 卡目视归用户；Cursor 配色目视归用户；hook 实火 canary 续测归用户；`join-key` 单样本；跳转 `live-verified`（`dispatched` 合同）
+- Open gate / owner: uTools 重载插件后点卡片目视 Cursor 聚焦到该对话归用户；实归一条 Cursor/Claude 任务目视归用户；Cursor 配色目视归用户；hook 实火 canary 续测归用户；`join-key` 单样本；跳转 `live-verified`（`dispatched` 合同）。快捷键生产桥接按用户指定不跑真实宿主测试、不保留默认验收待办（`host-test-not-requested`）
