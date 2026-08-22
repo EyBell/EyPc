@@ -45,3 +45,14 @@ Documentation level: `standard`
 1. Codex 任务 `h:476c…`：Desktop 说待输入、Kernel 判已完成。若该任务在 Codex Desktop 里确实在等你回复，这是 RAW-153 清除屏障/残留请求（同日 `49070b7` 一类）的判定问题，需要单独立项；若它已不再等待，则 Desktop 残留提议才是错的。请确认实际状态。
 2. 是否按 Claude 会话长期 `unknown` 再开一轮：它不再阻塞快捷键，但会让「状态未知」分组常驻。
 3. 失配修复触发判据（无法区分「被合法改判」与「真卡住」）是否需要更深的改造；本轮只加 30 秒冷却。
+
+## 再核验（2026-08-22 17:06，用户要求「再核验下 Codex 功能 tab 内上一/下一个任务快捷键跳转失败」）
+
+模式：`inspect-report`，只读日志与源码，未改产品代码。
+
+1. **宿主仍是旧包。** 当前插件进程 2026-08-21 21:41 启动（`unsafe-96713bb6….asar`），身份握手 `host-2cb135f5562f2d8b9c67`；D-1 补转发后的产物 `host-90b803b87d0962728d5c` 只在 `dist/`（22:31 构建）里，从未装入 uTools。因此 Cursor 候选在宿主里仍不会进上一/下一循环；`dist/` 与 `public/`、`preload/` 镜像一致，聚焦套件 `311/311` 通过。
+2. **今日唯一一次上一个（16:50:56）派发成功但只剩一位候选。** `shortcut-enter cycleCount: 1`（主包 42 条）→ `target-selected` → `claude-open dispatched`，无任何 warn/error。候选只有一张 `running` Claude 卡；Claude live-state 探针同时确认本机正有 2 个 Claude Code 会话在跑。按 PRD §152「attention → Plan → active → 置顶」取首个非空层，已完成任务不进循环，所以在 Codex tab 按上一/下一只会在正在运行的 Claude/Codex 会话间切，表现为「总跳到同一个 Claude 会话、跳不到 Codex 任务」。这是合同行为，不是派发故障；若期望的是沿 Codex tab 可见列表逐张跳转，属需求变更，需另立 RAW。
+3. **上一轮待裁决 1 仍未解决且仍在影响候选集。** Codex 任务（本进程哈希 `h:ea7c1dc97a90e775`，`turnStartedAt` 2026-06-13；诊断哈希按进程随机加盐，与昨日 `h:476c…` 很可能同一任务）被 Desktop 以 `causal-waiting-input` 提议 702 次，Kernel 在进程启动 7 秒后判 `all-branches-completed` 并一直维持；`canonical-mismatch-repair` 冷却生效（63 次 queued）。若它在 Codex Desktop 里确实在等回复，它本该占据 attention 层并成为上一/下一的首选目标；若是 6 月残留的 `waitingOnUserInput` 标志，Kernel 判定正确。仍需用户在 Codex Desktop 内确认该任务实际状态。
+4. **`eypc-codex-task-next` 在全部留存日志里从未出现**（previous 19 次、completed-unread 2 次）。若用户按过「下一个」，按键没有到达插件，属 uTools 全局快捷键绑定/冲突，插件内无默认键位（只有 `codex.task.next.hotkey.configure` 引导去 uTools 配置）；本轮无法从磁盘读出 uTools 绑定记录。
+
+结论：代码侧无新缺陷；需用户①在 uTools 重载/重装 `dist/` 产物，②确认第 3 条任务的真实状态，③确认「下一个」的 uTools 绑定。
