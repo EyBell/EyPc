@@ -204,31 +204,31 @@ describe('cross-provider aggregation is status-driven', () => {
 
 describe('water ball channel mapping', () => {
   it('is unchanged from the legacy release while only codex is enabled', () => {
-    expect(resolveCompanionWaterBallMapping({ codex: true, claude: false }))
+    expect(resolveCompanionWaterBallMapping({ codex: true, claude: false, cursor: false }))
       .toEqual({ liquid: 'codex', ring: 'codex', percent: 'codex', compatibility: true })
   })
 
   it('lets claude own the whole ball when it is the only enabled provider', () => {
-    expect(resolveCompanionWaterBallMapping({ codex: false, claude: true }))
+    expect(resolveCompanionWaterBallMapping({ codex: false, claude: true, cursor: false }))
       .toEqual({ liquid: 'claude', ring: 'claude', percent: 'claude', compatibility: false })
   })
 
   it('shares the ball as ring=codex and centre percentage=claude', () => {
-    expect(resolveCompanionWaterBallMapping({ codex: true, claude: true }))
+    expect(resolveCompanionWaterBallMapping({ codex: true, claude: true, cursor: false }))
       .toEqual({ liquid: 'codex', ring: 'codex', percent: 'claude', compatibility: false })
   })
 
   it('falls back to the legacy codex percentage while claude is enabled but not connected', () => {
-    expect(resolveCompanionWaterBallMapping({ codex: true, claude: true }, { claude: false }))
+    expect(resolveCompanionWaterBallMapping({ codex: true, claude: true, cursor: false }, { claude: false }))
       .toEqual({ liquid: 'codex', ring: 'codex', percent: 'codex', compatibility: true })
   })
 
   it('keeps the legacy mapping when nothing is enabled at all', () => {
-    expect(resolveCompanionWaterBallMapping({ codex: false, claude: false }).compatibility).toBe(true)
+    expect(resolveCompanionWaterBallMapping({ codex: false, claude: false, cursor: false }).compatibility).toBe(true)
   })
 
   it('keeps claude ownership when claude is the only enabled provider but is offline', () => {
-    expect(resolveCompanionWaterBallMapping({ codex: false, claude: true }, { claude: false }))
+    expect(resolveCompanionWaterBallMapping({ codex: false, claude: true, cursor: false }, { claude: false }))
       .toEqual({ liquid: 'claude', ring: 'claude', percent: 'claude', compatibility: false })
   })
 })

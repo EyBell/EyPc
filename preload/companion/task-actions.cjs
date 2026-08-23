@@ -1,10 +1,7 @@
 'use strict'
 
-const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v2'
-// Kernel-owned providers plus auxiliary open-only providers (cursor). A
-// provider absent from this list can never resolve an open target, even when
-// navigation selected it — keep in sync with navigation.cjs PROVIDERS.
-const PROVIDERS = ['codex', 'claude', 'cursor']
+const { PROVIDERS } = require('./provider-registry.cjs')
+const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v3'
 const ARCHIVE_PHASES = ['completed', 'stopped']
 const CONFIRM_WINDOW_MS = 5_000
 
@@ -106,6 +103,7 @@ function createCompanionTaskActions(dependencies = {}) {
   const adapters = dependencies.adapters && typeof dependencies.adapters === 'object' ? dependencies.adapters : {}
   const notify = typeof dependencies.notify === 'function' ? dependencies.notify : () => {}
   const record = typeof dependencies.record === 'function' ? dependencies.record : () => {}
+  const onProviderFailure = typeof dependencies.onProviderFailure === 'function' ? dependencies.onProviderFailure : () => {}
   let enabled = false
   let ready = false
   let enabledProviders = new Set()
@@ -284,7 +282,10 @@ function createCompanionTaskActions(dependencies = {}) {
     }
     const adapter = adapters[provider]
     if (!adapter || typeof adapter.inspect !== 'function') return { available: false, reason: 'unavailable' }
-    try { return await adapter.inspect() } catch { return { available: false, reason: 'degraded' } }
+    try { return await adapter.inspect() } catch {
+      try { onProviderFailure(provider, 'inspect-failed') } catch {}
+      return { available: false, reason: 'degraded' }
+    }
   }
 
   async function open(input = {}) {
@@ -312,6 +313,7 @@ function createCompanionTaskActions(dependencies = {}) {
       trace('open', result.outcome, target, startedAt, { operationId: currentOperationId, errorCode: result.errorCode, source: input.source })
       return { ...result, operationId: currentOperationId }
     } catch {
+      try { onProviderFailure(target.provider, 'open-failed') } catch {}
       const result = { outcome: 'failed', provider: target.provider, key: target.key, errorCode: 'open-failed', message: '任务打开失败' }
       trace('open', result.outcome, target, startedAt, { operationId: currentOperationId, errorCode: result.errorCode, source: input.source })
       return { ...result, operationId: currentOperationId }
@@ -379,6 +381,7 @@ function createCompanionTaskActions(dependencies = {}) {
         return { ...normalized, operationId: normalized.operationId || currentOperationId }
       })
       .catch(() => {
+        try { onProviderFailure(target.provider, 'archive-failed') } catch {}
         const result = { outcome: 'failed', provider: target.provider, key: target.key, errorCode: 'archive-failed', message: '任务归档失败' }
         trace('archive-result', result.outcome, target, startedAt, { operationId: currentOperationId, errorCode: result.errorCode, source: input.source })
         return { ...result, operationId: currentOperationId }
@@ -451,6 +454,7 @@ function createCompanionTaskActions(dependencies = {}) {
         return { ...result, operationId: result.operationId || currentOperationId }
       })
       .catch(() => {
+        try { onProviderFailure(target.provider, 'execute-failed') } catch {}
         const result = { outcome: 'indeterminate', provider: target.provider, key: target.key, errorCode: 'execute-result-unknown', message: '执行结果未能确认；未自动重发' }
         trace('execute-plan-result', result.outcome, target, startedAt, { operationId: currentOperationId, source: input.source, errorCode: result.errorCode })
         return { ...result, operationId: currentOperationId }

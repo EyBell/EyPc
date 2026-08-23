@@ -14,13 +14,17 @@ import {
   isCompanionAttentionState,
   isCompanionLivePhase
 } from './companionProvider'
-import { mergeCompanionConversations, withoutCompanionProvider } from './companionAggregate'
 import type { CodexTaskStatePackageV1 } from './codexPresentation'
+import type {
+  CompanionProviderEvidenceBatchV1,
+  CompanionTaskRelationObservationV1,
+  CompanionTaskTopologySummaryV1
+} from './companionTaskTopology'
 
-export const COMPANION_TASK_KERNEL_REVISION = 'companion-task-kernel-v4'
-export const COMPANION_TASK_PACKAGE_REVISION = 'companion-task-package-v4'
+export const COMPANION_TASK_KERNEL_REVISION = 'companion-task-kernel-v5'
+export const COMPANION_TASK_PACKAGE_REVISION = 'companion-task-package-v5'
 
-export type CompanionTaskKind = 'codex-thread' | 'claude-session' | 'local-pin'
+export type CompanionTaskKind = 'codex-thread' | 'claude-session' | 'cursor-session' | 'topology-child' | 'local-pin'
 export type CompanionTaskPhase = 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'stopped' | 'unknown'
 export type CompanionTaskEvidencePhaseV4 = 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'interrupted' | 'failed' | 'unknown'
 export type CompanionTaskFreshnessV4 = 'fresh' | 'verifying'
@@ -114,13 +118,26 @@ export interface CompanionCanonicalTaskV4 {
   }
   archiveRequest?: CompanionTaskArchiveRequestV3
   displayName?: string
+  originalTitle?: string
+  alias?: string
   projectKey?: string
   projectName?: string
   projectKind?: 'project' | 'chats'
+  topology?: CompanionTaskTopologySummaryV1
+}
+
+/** Host-private material retained by the process graph; never emitted in V5 snapshots. */
+export interface CompanionPrivateTaskNodeV5 extends CompanionCanonicalTaskV4 {
+  family?: string
+  role?: 'root' | 'child'
+  standaloneEligible?: boolean
+  error?: boolean
+  causalKey?: string
+  causalReliable?: boolean
 }
 
 export interface CompanionTaskPackageDraftV4 {
-  schema: 'companion-task-draft-v4'
+  schema: 'companion-task-draft-v5'
   producer: 'renderer' | 'host-preflight' | 'host-evidence'
   sourceTaskStateRevision: string
   draftRevision: number
@@ -129,16 +146,22 @@ export interface CompanionTaskPackageDraftV4 {
   providers: CompanionProviderEnablement
   complete: boolean
   focusedKey: string
-  sourceGenerations: {
-    codex: number
-    claude: number
-  }
+  sourceGenerations: Record<CompanionProviderId, number>
   sourceLaneGenerations: CompanionSourceLaneGenerations
-  tasks: CompanionCanonicalTaskV4[]
+  providerHealth: CompanionProviderHealthV1
+  tasks: CompanionPrivateTaskNodeV5[]
+  relations?: CompanionTaskRelationObservationV1[]
+  evidenceBatches?: Partial<Record<CompanionProviderId, CompanionProviderEvidenceBatchV1>>
 }
 
-export type CompanionSourceLane = 'membership' | 'phase' | 'unread'
-export type CompanionSourceLaneGenerations = Record<Exclude<CompanionProviderId, 'cursor'>, Record<CompanionSourceLane, number>>
+export type CompanionSourceLane = 'membership' | 'phase' | 'unread' | 'metadata' | 'topology'
+export type CompanionSourceLaneGenerations = Record<CompanionProviderId, Record<CompanionSourceLane, number>>
+
+export type CompanionProviderHealthV1 = Record<CompanionProviderId, {
+  status: 'ready' | 'unavailable' | 'degraded' | 'disabled'
+  generation: number
+  errorCode: string
+}>
 
 export interface CompanionTaskPackageViewsV4 {
   groups: {
@@ -165,7 +188,11 @@ export interface CompanionTaskPackageViewsV4 {
 export interface CompanionTaskPackageV4 {
   schema: typeof COMPANION_TASK_PACKAGE_REVISION
   kernelRevision: typeof COMPANION_TASK_KERNEL_REVISION
+  registryRevision: 'companion-provider-registry-v1'
+  topologySchemaRevision: 'companion-task-topology-v1'
+  commandRevision: 'companion-task-command-v1'
   packageRevision: number
+  topologyRevision: number
   sourceTaskStateRevision: string
   publishedAt: number
   enabled: boolean
@@ -173,16 +200,14 @@ export interface CompanionTaskPackageV4 {
   complete: boolean
   freshness: CompanionTaskFreshnessV4
   focusedKey: string
-  sourceGenerations: {
-    codex: number
-    claude: number
-  }
+  sourceGenerations: Record<CompanionProviderId, number>
   sourceLaneGenerations: CompanionSourceLaneGenerations
+  providerHealth: CompanionProviderHealthV1
   tasks: CompanionCanonicalTaskV4[]
   views: CompanionTaskPackageViewsV4
 }
 
-/** Narrow source-compatibility aliases; every emitted runtime value is V4. */
+/** Narrow source-compatibility aliases; every emitted runtime value is V5. */
 export type CompanionTaskEvidencePhaseV3 = CompanionTaskEvidencePhaseV4
 export type CompanionTaskFreshnessV3 = CompanionTaskFreshnessV4
 export type CompanionTaskEvidenceV3 = CompanionTaskEvidenceV4
@@ -191,6 +216,10 @@ export type CompanionCanonicalTaskV3 = CompanionCanonicalTaskV4
 export type CompanionTaskPackageDraftV3 = CompanionTaskPackageDraftV4
 export type CompanionTaskPackageViewsV3 = CompanionTaskPackageViewsV4
 export type CompanionTaskPackageV3 = CompanionTaskPackageV4
+export type CompanionCanonicalTaskV5 = CompanionCanonicalTaskV4
+export type CompanionTaskPackageDraftV5 = CompanionTaskPackageDraftV4
+export type CompanionTaskPackageViewsV5 = CompanionTaskPackageViewsV4
+export type CompanionTaskSnapshotV5 = CompanionTaskPackageV4
 
 function allTaskCards(taskState: CodexTaskStatePackageV1): CodexTaskCard[] {
   const conversations = taskState.conversations
@@ -210,7 +239,11 @@ export function emptyCompanionTaskPackage(
   return {
     schema: COMPANION_TASK_PACKAGE_REVISION,
     kernelRevision: COMPANION_TASK_KERNEL_REVISION,
+    registryRevision: 'companion-provider-registry-v1',
+    topologySchemaRevision: 'companion-task-topology-v1',
+    commandRevision: 'companion-task-command-v1',
     packageRevision: 0,
+    topologyRevision: 0,
     sourceTaskStateRevision: 'legacy',
     publishedAt: 0,
     enabled: false,
@@ -218,10 +251,16 @@ export function emptyCompanionTaskPackage(
     complete: false,
     freshness: 'verifying',
     focusedKey: '',
-    sourceGenerations: { codex: 0, claude: 0 },
+    sourceGenerations: { codex: 0, claude: 0, cursor: 0 },
     sourceLaneGenerations: {
-      codex: { membership: 0, phase: 0, unread: 0 },
-      claude: { membership: 0, phase: 0, unread: 0 }
+      codex: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 },
+      claude: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 },
+      cursor: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 }
+    },
+    providerHealth: {
+      codex: { status: providers.codex ? 'unavailable' : 'disabled', generation: 0, errorCode: '' },
+      claude: { status: providers.claude ? 'unavailable' : 'disabled', generation: 0, errorCode: '' },
+      cursor: { status: providers.cursor ? 'unavailable' : 'disabled', generation: 0, errorCode: '' }
     },
     tasks: [],
     views: {
@@ -252,6 +291,9 @@ function projectCanonicalCard(
   card: CodexTaskCard,
   task: CompanionCanonicalTaskV4
 ): CodexTaskCard {
+  const originalTitle = task.originalTitle || card.originalName || card.displayName || card.name
+  const alias = task.alias || ''
+  const displayName = alias || task.displayName || originalTitle
   const live = isCompanionLivePhase(task.phase)
   const completed = task.phase === 'completed'
   const stopped = task.phase === 'stopped'
@@ -302,10 +344,10 @@ function projectCanonicalCard(
     : task.archiveRequest?.expectedUpdatedAt || Math.max(card.updatedAt, task.revisionAt)
   const next: CodexTaskCard = {
     ...card,
-    // An EyPc alias is local naming authority. The canonical display name is
-    // Provider metadata, so it refreshes the original title but must not
-    // reintroduce it as `name`/`displayName` while an alias is set.
-    ...(task.displayName && !card.alias ? { displayName: task.displayName, name: task.displayName } : {}),
+    displayName,
+    name: displayName,
+    originalName: originalTitle,
+    alias: alias || undefined,
     ...(task.projectKey ? { projectKey: task.projectKey } : {}),
     ...(task.projectName ? { projectName: task.projectName } : {}),
     ...(task.projectKind ? { projectKind: task.projectKind } : {}),
@@ -328,6 +370,7 @@ function projectCanonicalCard(
     planLifecycleRevision: task.planLifecycleRevision,
     planPaused: task.paused,
     companionCapabilities: { ...task.capabilities },
+    companionTopology: task.topology ? { ...task.topology } : undefined,
     hasCurrentActivity: unchanged ? card.hasCurrentActivity : live,
     canArchive: unchanged ? card.canArchive : archiveCapability === 'allowed'
   }
@@ -472,44 +515,6 @@ function projectConversationSnapshot(
 }
 
 /**
- * Kernel V4 still owns only Codex/Claude. Cursor cards are folded back after
- * that view so a second apply (Float) cannot drop them.
- */
-export function foldCursorCardsIntoTaskState(
-  state: CodexTaskStatePackageV1,
-  cards: readonly CodexTaskCard[]
-): CodexTaskStatePackageV1 {
-  const carriesCursor = state.conversations.all.some((task) => companionTaskProvider(task) === 'cursor')
-  const conversations = !cards.length && !carriesCursor
-    ? state.conversations
-    : mergeCompanionConversations(withoutCompanionProvider(state.conversations, 'cursor'), cards)
-  if (!state.dynamic) return { ...state, conversations }
-  const strip = (list: readonly CodexTaskCard[]) => list.filter((task) => companionTaskProvider(task) !== 'cursor')
-  const visible = cards.filter((card) => !card.isHidden)
-  const groups = {
-    input: [...strip(state.dynamic.groups.input), ...visible.filter((card) => isCompanionAttentionState(card.activityState))],
-    active: [...strip(state.dynamic.groups.active), ...visible.filter((card) => card.activityState === 'active')],
-    stopped: [...strip(state.dynamic.groups.stopped), ...visible.filter((card) => card.bucket === 'stopped')],
-    unread: [...strip(state.dynamic.groups.unread), ...visible.filter((card) => card.bucket === 'completed-unread')],
-    completed: [...strip(state.dynamic.groups.completed), ...visible.filter((card) => card.bucket === 'completed')]
-  }
-  return {
-    ...state,
-    conversations,
-    dynamic: {
-      ...state.dynamic,
-      groups,
-      tasks: [groups.input, groups.active, groups.stopped, groups.unread, groups.completed].flat(),
-      compactCounts: {
-        input: groups.input.length,
-        active: groups.active.length,
-        unread: groups.unread.length
-      }
-    }
-  }
-}
-
-/**
  * Applies the process Kernel's one final decision to cards, tabs, projects,
  * dynamic groups and compact counters in one atomic projection.
  */
@@ -545,6 +550,5 @@ export function applyCompanionTaskPackageViews(
     },
     generatedAt: Math.max(taskState.generatedAt, taskPackage.publishedAt)
   }
-  const cursorCards = allTaskCards(taskState).filter((task) => companionTaskProvider(task) === 'cursor')
-  return foldCursorCardsIntoTaskState(projected, cursorCards)
+  return projected
 }
