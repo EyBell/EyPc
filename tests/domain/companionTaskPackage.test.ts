@@ -88,18 +88,28 @@ function packageFor(task: CompanionCanonicalTaskV4 | null, revision: number): Co
   return {
     schema: COMPANION_TASK_PACKAGE_REVISION,
     kernelRevision: COMPANION_TASK_KERNEL_REVISION,
+    registryRevision: 'companion-provider-registry-v1',
+    topologySchemaRevision: 'companion-task-topology-v1',
+    commandRevision: 'companion-task-command-v1',
     packageRevision: revision,
+    topologyRevision: revision,
     sourceTaskStateRevision: CODEX_TASK_STATE_REVISION,
     publishedAt: 1_000 + revision,
     enabled: true,
-    providers: { codex: true, claude: false },
+    providers: { codex: true, claude: false, cursor: false },
     complete: true,
     freshness: 'fresh',
     focusedKey: '',
-    sourceGenerations: { codex: revision, claude: 0 },
+    sourceGenerations: { codex: revision, claude: 0, cursor: 0 },
     sourceLaneGenerations: {
-      codex: { membership: revision, phase: revision, unread: revision },
-      claude: { membership: 0, phase: 0, unread: 0 }
+      codex: { membership: revision, phase: revision, unread: revision, metadata: revision, topology: revision },
+      claude: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 },
+      cursor: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 }
+    },
+    providerHealth: {
+      codex: { status: 'ready', generation: revision, errorCode: '' },
+      claude: { status: 'disabled', generation: 0, errorCode: '' },
+      cursor: { status: 'disabled', generation: 0, errorCode: '' }
     },
     tasks,
     views: {
@@ -182,13 +192,19 @@ describe('canonical Companion task projection', () => {
     source.stoppedCount = 1
     const state = applyCompanionTaskPackageViews(
       buildCodexTaskStatePackage(source, { sourceRevision: CODEX_TASK_STATE_REVISION, now: 1_000 }),
-      packageFor(canonical({ phase: 'stopped', dynamicGroup: 'none', displayName: 'Provider 原始标题' }), 1)
+      packageFor(canonical({
+        phase: 'stopped',
+        dynamicGroup: 'none',
+        alias: '我的别名',
+        originalTitle: 'Provider 原始标题',
+        displayName: '我的别名'
+      }), 1)
     )
     expect(state.conversations.all[0]).toMatchObject({
       alias: '我的别名',
       name: '我的别名',
       displayName: '我的别名',
-      originalName: '原始标题'
+      originalName: 'Provider 原始标题'
     })
 
     const plain = emptyConversationSnapshot()
@@ -238,7 +254,7 @@ describe('canonical Companion task projection', () => {
       dynamicGroup: 'stopped',
       capabilities: { open: true, archive: false, pause: false, resume: false, executePlan: false }
     }), 2)
-    claudePackage.providers = { codex: false, claude: true }
+    claudePackage.providers = { codex: false, claude: true, cursor: false }
     claudePackage.views.groups.stopped = [key]
     claudeState = applyCompanionTaskPackageViews(claudeState, claudePackage)
     expect(claudeState.conversations.stopped[0]).toMatchObject({
@@ -320,7 +336,7 @@ describe('canonical Companion task projection', () => {
 
   })
 
-  it('keeps Cursor cards when a complete Kernel package is applied a second time', () => {
+  it('projects Codex and Cursor roots together from one complete V5 snapshot', () => {
     const cursorKey = 'cursor:86e0370a-21b3-434d-a1a3-0ce83edc5ddd'
     const cursorCard: CodexTaskCard = {
       ...card(),
@@ -342,9 +358,26 @@ describe('canonical Companion task projection', () => {
     source.stoppedCount = 1
     source.ongoingCount = 1
     source.sourceFingerprint = 'a'.repeat(64)
+    const taskPackage = packageFor(canonical(), 1)
+    taskPackage.providers.cursor = true
+    taskPackage.providerHealth.cursor = { status: 'ready', generation: 1, errorCode: '' }
+    taskPackage.tasks.push(canonical({
+      key: cursorKey,
+      provider: 'cursor',
+      kind: 'cursor-session',
+      phase: 'running',
+      cycleTier: 'active',
+      dynamicGroup: 'active',
+      actionAlias: 'ct_cursor',
+      displayName: 'Cursor Agent',
+      capabilities: { open: true, archive: false, pause: false, resume: false, executePlan: false }
+    }))
+    taskPackage.views.groups.active = [cursorKey]
+    taskPackage.views.counts.active = 1
+    taskPackage.views.cycleKeys = [cursorKey]
     const state = applyCompanionTaskPackageViews(
       buildCodexTaskStatePackage(source, { sourceRevision: CODEX_TASK_STATE_REVISION, now: 1_000 }),
-      packageFor(canonical(), 1)
+      taskPackage
     )
     expect(state.conversations.all.some((task) => task.key === cursorKey)).toBe(true)
     expect(state.dynamic.groups.active.map((task) => task.key)).toEqual([cursorKey])

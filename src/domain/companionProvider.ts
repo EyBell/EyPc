@@ -6,27 +6,30 @@
  * enablement and ordering contracts they all share. Providers never import each
  * other — they only agree on the contracts declared here.
  */
-export type CompanionProviderId = 'codex' | 'claude' | 'cursor'
+import providerManifest from '../../preload/companion/provider-manifest.json'
+
+export type CompanionProviderId = keyof typeof providerManifest.providers
 
 /** Legacy inventories carry no provider field; they are Codex by definition. */
 export const DEFAULT_COMPANION_PROVIDER: CompanionProviderId = 'codex'
 
-export const COMPANION_PROVIDER_IDS: readonly CompanionProviderId[] = ['codex', 'claude', 'cursor']
+export const COMPANION_PROVIDER_REGISTRY_REVISION = providerManifest.revision
+export const COMPANION_PROVIDER_IDS = Object.freeze(
+  providerManifest.order.filter((provider): provider is CompanionProviderId => provider in providerManifest.providers)
+)
 
 /**
  * Stable provider enumeration for enablement and compatibility decisions.
  * Previous/next task order is Provider-neutral and owned by the task Kernel.
  */
-export const COMPANION_PROVIDER_CYCLE_ORDER: readonly CompanionProviderId[] = ['codex', 'claude', 'cursor']
+export const COMPANION_PROVIDER_CYCLE_ORDER: readonly CompanionProviderId[] = COMPANION_PROVIDER_IDS
 
-export const COMPANION_PROVIDER_LABELS: Readonly<Record<CompanionProviderId, string>> = {
-  codex: 'Codex',
-  claude: 'Claude',
-  cursor: 'Cursor'
-}
+export const COMPANION_PROVIDER_LABELS = Object.freeze(Object.fromEntries(
+  COMPANION_PROVIDER_IDS.map((provider) => [provider, providerManifest.providers[provider].label])
+)) as Readonly<Record<CompanionProviderId, string>>
 
 export function isCompanionProviderId(value: unknown): value is CompanionProviderId {
-  return value === 'codex' || value === 'claude' || value === 'cursor'
+  return typeof value === 'string' && (COMPANION_PROVIDER_IDS as readonly string[]).includes(value)
 }
 
 export function normalizeCompanionProviderId(value: unknown): CompanionProviderId {
@@ -68,22 +71,23 @@ export function parseCompanionTaskKey(key: string): { provider: CompanionProvide
 export interface CompanionProviderEnablement {
   codex: boolean
   claude: boolean
-  cursor?: boolean
+  cursor: boolean
 }
 
 /**
  * Claude and Cursor are opt-in. A stored settings object that predates those
  * features therefore normalizes into the exact pre-existing Codex-only behavior.
  */
-export const DEFAULT_COMPANION_ENABLEMENT: Readonly<CompanionProviderEnablement> = { codex: true, claude: false, cursor: false }
+export const DEFAULT_COMPANION_ENABLEMENT: Readonly<CompanionProviderEnablement> = Object.freeze(Object.fromEntries(
+  COMPANION_PROVIDER_IDS.map((provider) => [provider, providerManifest.providers[provider].enabledByDefault])
+)) as unknown as Readonly<CompanionProviderEnablement>
 
 export function normalizeCompanionEnablement(value: unknown): CompanionProviderEnablement {
   const source = value && typeof value === 'object' ? value as Partial<Record<CompanionProviderId, unknown>> : {}
-  return {
-    codex: source.codex === undefined ? DEFAULT_COMPANION_ENABLEMENT.codex : source.codex === true,
-    claude: source.claude === undefined ? DEFAULT_COMPANION_ENABLEMENT.claude : source.claude === true,
-    cursor: source.cursor === undefined ? DEFAULT_COMPANION_ENABLEMENT.cursor : source.cursor === true
-  }
+  return Object.fromEntries(COMPANION_PROVIDER_IDS.map((provider) => [
+    provider,
+    source[provider] === undefined ? DEFAULT_COMPANION_ENABLEMENT[provider] : source[provider] === true
+  ])) as unknown as CompanionProviderEnablement
 }
 
 export function enabledCompanionProviders(enablement: CompanionProviderEnablement): CompanionProviderId[] {
@@ -194,7 +198,7 @@ export function aggregateCompanionTaskCounts(parts: readonly (CompanionTaskCount
 export function countCompanionTasksByProvider<T extends CompanionOrderableTask>(
   tasks: readonly T[]
 ): Record<CompanionProviderId, number> {
-  const counts = { codex: 0, claude: 0, cursor: 0 } as Record<CompanionProviderId, number>
+  const counts = Object.fromEntries(COMPANION_PROVIDER_IDS.map((provider) => [provider, 0])) as Record<CompanionProviderId, number>
   for (const task of tasks) counts[companionTaskProvider(task)] += 1
   return counts
 }
@@ -218,6 +222,7 @@ export interface CompanionWaterBallMapping {
 export interface CompanionProviderAvailability {
   codex: boolean
   claude: boolean
+  cursor?: boolean
 }
 
 const CODEX_ONLY_MAPPING: CompanionWaterBallMapping = { liquid: 'codex', ring: 'codex', percent: 'codex', compatibility: true }

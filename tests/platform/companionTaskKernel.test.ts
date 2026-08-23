@@ -52,34 +52,50 @@ function task(overrides: Record<string, unknown> = {}) {
 }
 
 function draft(tasks: unknown[], revision = 1, overrides: Record<string, unknown> = {}) {
-  const sourceGenerations = (overrides.sourceGenerations as { codex?: number; claude?: number } | undefined)
-    || { codex: revision, claude: revision }
+  const configuredProviders = (overrides.providers as { codex?: boolean; claude?: boolean; cursor?: boolean } | undefined) || {}
+  const providers = {
+    codex: configuredProviders.codex !== false,
+    claude: configuredProviders.claude !== false,
+    cursor: configuredProviders.cursor === true
+  }
+  const incomingGenerations = (overrides.sourceGenerations as { codex?: number; claude?: number; cursor?: number } | undefined) || {}
+  const sourceGenerations = {
+    codex: incomingGenerations.codex ?? revision,
+    claude: incomingGenerations.claude ?? revision,
+    cursor: incomingGenerations.cursor ?? 0
+  }
   const sourceLaneGenerations = (overrides.sourceLaneGenerations as Record<string, unknown> | undefined)
     || {
-      codex: { membership: sourceGenerations.codex || 0, phase: sourceGenerations.codex || 0, unread: sourceGenerations.codex || 0 },
-      claude: { membership: sourceGenerations.claude || 0, phase: sourceGenerations.claude || 0, unread: sourceGenerations.claude || 0 }
+      codex: { membership: sourceGenerations.codex || 0, phase: sourceGenerations.codex || 0, unread: sourceGenerations.codex || 0, metadata: sourceGenerations.codex || 0, topology: sourceGenerations.codex || 0 },
+      claude: { membership: sourceGenerations.claude || 0, phase: sourceGenerations.claude || 0, unread: sourceGenerations.claude || 0, metadata: sourceGenerations.claude || 0, topology: sourceGenerations.claude || 0 },
+      cursor: { membership: sourceGenerations.cursor || 0, phase: sourceGenerations.cursor || 0, unread: sourceGenerations.cursor || 0, metadata: sourceGenerations.cursor || 0, topology: sourceGenerations.cursor || 0 }
     }
   return {
-    schema: 'companion-task-draft-v4',
+    schema: 'companion-task-draft-v5',
     producer: 'host-evidence',
-    sourceTaskStateRevision: 'task-state-v10',
+    sourceTaskStateRevision: 'task-state-v11',
     draftRevision: revision,
     acceptedAt: 1_000 + revision,
     enabled: true,
-    providers: { codex: true, claude: true },
     complete: true,
     focusedKey: '',
     tasks,
     ...overrides,
+    providers,
     sourceGenerations,
-    sourceLaneGenerations
+    sourceLaneGenerations,
+    providerHealth: {
+      codex: { status: providers.codex ? 'ready' : 'disabled', generation: sourceGenerations.codex, errorCode: '' },
+      claude: { status: providers.claude ? 'ready' : 'disabled', generation: sourceGenerations.claude, errorCode: '' },
+      cursor: { status: providers.cursor ? 'ready' : 'disabled', generation: sourceGenerations.cursor, errorCode: '' }
+    }
   }
 }
 
 afterEach(() => vi.useRealTimers())
 
 describe('CompanionTaskKernel', () => {
-  it('keeps canonical selectors and production fallback ownership inside the V4 Kernel', () => {
+  it('keeps canonical selectors and production fallback ownership inside the V5 Kernel', () => {
     const kernelSource = readFileSync(resolve(process.cwd(), 'preload/companion/task-kernel.cjs'), 'utf8')
     const hostSource = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
     const domainSource = readFileSync(resolve(process.cwd(), 'src/domain/companionTaskPackage.ts'), 'utf8')
@@ -637,8 +653,8 @@ describe('CompanionTaskKernel', () => {
     })
     expect(kernel.diagnostics()).toMatchObject({ codexBranchParentCount: 1, codexBranchCount: 2 })
     expect(kernel.commitArchived({ provider: 'codex', key: 'codex-a', verified: true, membershipRevision: 3 }))
-      .toMatchObject({ outcome: 'archived', removedKeys: ['codex-a'] })
-    expect(kernel.diagnostics()).toMatchObject({ codexBranchParentCount: 0, codexBranchCount: 0 })
+      .toMatchObject({ outcome: 'failed', errorCode: 'active-members' })
+    expect(kernel.diagnostics()).toMatchObject({ codexBranchParentCount: 1, codexBranchCount: 2 })
   })
 
   it('materializes all-bead Side Chat phase and unread decisions into mutually exclusive canonical views', () => {
@@ -1573,7 +1589,7 @@ describe('CompanionTaskKernel', () => {
     expect(kernel.diagnostics().navigation.lastOutcome).toBe('opened')
   })
 
-  it('folds auxiliary cursor rows into previous/next and dispatches them through the cursor adapter', async () => {
+  it('routes a first-class Cursor root through the same snapshot and command gateway', async () => {
     const openedCursor: string[] = []
     const kernel = createCompanionTaskKernel({
       coalesceMs: 0,
@@ -1586,10 +1602,10 @@ describe('CompanionTaskKernel', () => {
           })
         }
       },
-      initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false, cursor: true } }
     })
-    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
-    // Settled codex row: on its own it is not a previous/next candidate.
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: true } })
+    const cursorKey = 'cursor:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
     kernel.syncPackage({
       lease: receipt.lease,
       draft: draft([task({
@@ -1599,37 +1615,139 @@ describe('CompanionTaskKernel', () => {
         terminalAt: 120,
         lastQuestionAt: 0,
         unread: false
-      })], 1, { providers: { codex: true, claude: false } })
+      }), task({
+        key: cursorKey,
+        provider: 'cursor',
+        kind: 'cursor-session',
+        actionAlias: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+        family: 'cursor:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+        role: 'root',
+        revisionAt: 900,
+        phaseRevision: 900,
+        membershipRevision: 900,
+        statusEnteredAt: 900,
+        lastQuestionAt: 900,
+        createdAt: 800
+      })], 1, { providers: { codex: true, claude: false, cursor: true }, sourceGenerations: { codex: 1, claude: 0, cursor: 1 } })
     })
-    expect(kernel.getLatest().views.cycleKeys).toEqual([])
+    const snapshot = kernel.getLatest()
+    expect(snapshot.tasks.map((row: Record<string, unknown>) => row.key)).toEqual([cursorKey, 'codex-a'])
+    expect(snapshot.views.cycleKeys).toEqual([cursorKey])
 
-    const auxKey = 'cursor:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
-    const auxRow = {
-      key: auxKey,
-      actionAlias: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-      revisionAt: 900,
-      phase: 'running',
-      lastQuestionAt: 900,
-      createdAt: 800
-    }
-    expect(kernel.publishAuxiliaryCycleTasks({ provider: 'cursor', tasks: [auxRow] })).toBe(true)
-    expect(kernel.publishAuxiliaryCycleTasks({ provider: 'cursor', tasks: [auxRow] })).toBe(false)
-    expect(kernel.diagnostics()).toMatchObject({ auxiliaryTaskCount: 1 })
-
-    await expect(kernel.dispatch({ action: 'cycle', direction: 1, source: 'global-shortcut' })).resolves.toMatchObject({
+    await expect(kernel.dispatchCommand({
+      revision: 'companion-task-command-v1',
+      operationId: 'cursor-cycle-1',
+      command: 'cycle',
+      selector: { direction: 1 },
+      source: 'global-shortcut',
+      expectedRevision: { snapshot: snapshot.packageRevision, topology: snapshot.topologyRevision }
+    })).resolves.toMatchObject({
       outcome: 'dispatched',
       provider: 'cursor',
-      key: auxKey
+      key: cursorKey
     })
     expect(openedCursor).toEqual(['aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'])
-    // Auxiliary rows never enter the canonical package or its views.
-    expect(kernel.getLatest().tasks.some((row: Record<string, unknown>) => row.key === auxKey)).toBe(false)
-    expect(kernel.getLatest().views.cycleKeys).toEqual([])
+    expect(kernel.publishAuxiliaryCycleTasks).toBeUndefined()
+  })
 
-    expect(kernel.publishAuxiliaryCycleTasks({ provider: 'cursor', tasks: [] })).toBe(true)
-    await expect(kernel.dispatch({ action: 'cycle', direction: 1, source: 'global-shortcut' })).resolves.toMatchObject({
-      errorCode: 'no-task'
+  it('publishes only the aggregate root and excludes topology children from badges and cycling', () => {
+    const kernel = createCompanionTaskKernel({
+      coalesceMs: 0,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false, cursor: false } }
     })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: false } })
+    const family = 'codex:family-a'
+    const current = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([
+        task({ key: 'root', family, role: 'root', phase: 'completed', unreadKnown: true, unread: false }),
+        task({
+          key: 'child',
+          family,
+          role: 'child',
+          kind: 'topology-child',
+          phase: 'waiting-input',
+          actionAlias: '',
+          unreadKnown: true,
+          unread: true,
+          capabilities: { open: false, archive: false, pause: false, resume: false, executePlan: false }
+        })
+      ], 1, {
+        providers: { codex: true, claude: false, cursor: false },
+        relations: [{
+          childKey: 'child',
+          parentKey: 'root',
+          provider: 'codex',
+          family,
+          relation: 'subagent',
+          authority: 'test-exact-identity',
+          exact: true,
+          generation: 1
+        }]
+      })
+    })
+
+    expect(current.tasks).toHaveLength(1)
+    expect(current.tasks[0]).toMatchObject({
+      key: 'root',
+      phase: 'waiting-input',
+      unread: true,
+      topology: { mode: 'aggregate', memberCount: 2, liveCount: 1, attentionCount: 1 }
+    })
+    expect(current.views.counts).toMatchObject({ input: 1, active: 0, unread: 0 })
+    expect(current.views.cycleKeys).toEqual(['root'])
+    expect(JSON.stringify(current)).not.toContain('test-exact-identity')
+  })
+
+  it('deduplicates command operations, isolates adapter exceptions and rejects old command revisions', async () => {
+    const opened = vi.fn(async () => { throw new Error('provider crash') })
+    const kernel = createCompanionTaskKernel({
+      coalesceMs: 0,
+      adapters: { codex: { open: opened } },
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false, cursor: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: false } })
+    kernel.syncPackage({ lease: receipt.lease, draft: draft([task()], 1, { providers: { codex: true, claude: false, cursor: false } }) })
+    const snapshot = kernel.getLatest()
+    const command = {
+      revision: 'companion-task-command-v1',
+      operationId: 'dedupe_open_1',
+      command: 'open',
+      selector: { key: 'codex-a' },
+      source: 'manual',
+      expectedRevision: { snapshot: snapshot.packageRevision, topology: snapshot.topologyRevision }
+    }
+    const first = kernel.dispatchCommand(command)
+    const duplicate = kernel.dispatchCommand(command)
+    expect(duplicate).toBe(first)
+    await expect(first).resolves.toMatchObject({ outcome: 'failed', errorCode: 'open-failed', key: 'codex-a' })
+    expect(opened).toHaveBeenCalledTimes(1)
+    expect(kernel.getLatest()).toMatchObject({
+      complete: true,
+      providerHealth: { codex: { status: 'degraded', errorCode: 'open-failed' } }
+    })
+    await expect(kernel.dispatchCommand({ ...command, revision: 'companion-task-command-v0', operationId: 'legacy_open_1' }))
+      .resolves.toMatchObject({ outcome: 'unavailable', errorCode: 'reload-required' })
+  })
+
+  it('replays the latest full snapshot after a missed revision and records monotonic consumer ACKs', () => {
+    const kernel = createCompanionTaskKernel({
+      coalesceMs: 0,
+      initialConfiguration: { enabled: true, providers: { codex: true, claude: false, cursor: false } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: false } })
+    const current = kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task()], 1, { providers: { codex: true, claude: false, cursor: false } })
+    })
+    const replayed: Array<Record<string, any>> = []
+    const stop = kernel.subscribe(0, (value: Record<string, any>) => replayed.push(value))
+    expect(replayed).toHaveLength(1)
+    expect(replayed[0]).toBe(current)
+    expect(kernel.acknowledge({ consumer: 'float', revision: current.packageRevision })).toBe(true)
+    expect(kernel.acknowledge({ consumer: 'float', revision: current.packageRevision - 1 })).toBe(false)
+    expect(kernel.diagnostics().consumerAcknowledgements).toEqual({ float: current.packageRevision })
+    stop()
   })
 
   it('owns attention progress, preserves it across equivalent packages and advances only after a successful open', async () => {
@@ -1765,13 +1883,22 @@ describe('CompanionTaskKernel', () => {
       })
     })
 
-    expect(sync({ phase: 'running', revisionAt: 100, statusEnteredAt: 100 }, 1).tasks[0].phase).toBe('running')
-    expect(sync({ phase: 'waiting-input', cycleTier: 'attention', dynamicGroup: 'input', revisionAt: 110, statusEnteredAt: 110 }, 2).tasks[0].phase).toBe('waiting-input')
-    expect(sync({ phase: 'completed', cycleTier: 'none', dynamicGroup: 'completed', revisionAt: 120, statusEnteredAt: 120 }, 3).tasks[0].phase).toBe('completed')
-    expect(sync({ phase: 'running', revisionAt: 120, statusEnteredAt: 119 }, 4, 3).tasks[0].phase).toBe('completed')
-    expect(sync({ phase: 'running', revisionAt: 130, statusEnteredAt: 130 }, 5).tasks[0].phase).toBe('running')
-    expect(sync({ phase: 'waiting-approval', cycleTier: 'attention', dynamicGroup: 'input', revisionAt: 140, statusEnteredAt: 140 }, 6).tasks[0].phase).toBe('waiting-approval')
-    expect(sync({ phase: 'stopped', cycleTier: 'none', dynamicGroup: 'stopped', revisionAt: 140, statusEnteredAt: 139 }, 7, 6).tasks[0].phase).toBe('waiting-approval')
+    expect(sync({ phase: 'running', revisionAt: 100, phaseRevision: 100, statusEnteredAt: 100 }, 1).tasks[0].phase).toBe('running')
+    expect(sync({ phase: 'waiting-input', cycleTier: 'attention', dynamicGroup: 'input', revisionAt: 110, phaseRevision: 110, statusEnteredAt: 110 }, 2).tasks[0].phase).toBe('waiting-input')
+    expect(sync({ phase: 'completed', cycleTier: 'none', dynamicGroup: 'completed', revisionAt: 120, phaseRevision: 120, statusEnteredAt: 120 }, 3).tasks[0].phase).toBe('completed')
+    expect(sync({ phase: 'running', revisionAt: 120, phaseRevision: 119, statusEnteredAt: 119 }, 4, 3).tasks[0].phase).toBe('completed')
+    expect(sync({ phase: 'running', revisionAt: 130, phaseRevision: 130, statusEnteredAt: 130 }, 5).tasks[0].phase).toBe('running')
+    expect(sync({
+      phase: 'waiting-approval',
+      cycleTier: 'attention',
+      dynamicGroup: 'input',
+      revisionAt: 140,
+      phaseRevision: 140,
+      statusEnteredAt: 140,
+      causalKey: 'approval:turn-140',
+      causalReliable: true
+    }, 6).tasks[0].phase).toBe('waiting-approval')
+    expect(sync({ phase: 'stopped', cycleTier: 'none', dynamicGroup: 'stopped', revisionAt: 140, phaseRevision: 139, statusEnteredAt: 139 }, 7, 6).tasks[0].phase).toBe('waiting-approval')
   })
 
   it('accepts a newer Claude completion and unread lane even when its metadata revision is lower', () => {
@@ -1827,7 +1954,7 @@ describe('CompanionTaskKernel', () => {
       capabilities: { open: true, archive: true }
     })
     expect(completed.views.groups.unread).toEqual(['claude-a'])
-    expect(completed.sourceLaneGenerations.claude).toEqual({ membership: 10, phase: 11, unread: 12 })
+    expect(completed.sourceLaneGenerations.claude).toEqual({ membership: 10, phase: 11, unread: 12, metadata: 0, topology: 0 })
   })
 
   it('revokes a stale Codex archive capability on a newer non-terminal phase without inventory', () => {
@@ -1974,7 +2101,7 @@ describe('CompanionTaskKernel', () => {
 
     expect(next.tasks.find((value: any) => value.provider === 'codex')).toMatchObject({ key: 'codex-a', revisionAt: 100 })
     expect(next.tasks.find((value: any) => value.provider === 'claude')).toMatchObject({ key: 'claude-a', phase: 'waiting-input', revisionAt: 100 })
-    expect(next.sourceGenerations).toEqual({ codex: 10, claude: 11 })
+    expect(next.sourceGenerations).toEqual({ codex: 10, claude: 11, cursor: 0 })
   })
 
   it('holds one unknown observation for only the bounded 250 ms grace', () => {
@@ -2063,7 +2190,7 @@ describe('CompanionTaskKernel', () => {
     }))
   })
 
-  it('still waits for one shared preflight when the package is incomplete and records its failure', async () => {
+  it('refuses an incomplete navigation snapshot without waiting for or binding to a preflight', async () => {
     const opened = vi.fn(async () => ({ outcome: 'opened' }))
     const preflight = vi.fn(async () => { throw new Error('provider unavailable') })
     const records: Array<Record<string, any>> = []
@@ -2092,19 +2219,10 @@ describe('CompanionTaskKernel', () => {
       outcome: 'started',
       details: expect.objectContaining({ reason: 'incomplete', exactTarget: false })
     }))
-    // The old path swallowed this: only two notifications and nothing in the log.
-    expect(records).toContainEqual(expect.objectContaining({
-      level: 'error',
-      scope: 'task-kernel',
-      event: 'ready-preflight',
-      outcome: 'failed',
-      code: 'preflight-failed',
-      operationId: 'cycle_incomplete_1',
-      source: 'global-shortcut',
-      details: expect.objectContaining({ action: 'cycle', complete: false })
-    }))
-    // dispatch() itself only reports the cache refusal; the shortcut wrapper adds the retry hint.
-    expect(notifications).toContain('任务状态预检失败，未使用不完整缓存')
+    await Promise.resolve()
+    expect(records).not.toContainEqual(expect.objectContaining({ operationId: 'cycle_incomplete_1' }))
+    expect(kernel.getLatest().providerHealth.codex.status).toBe('unavailable')
+    expect(notifications).toEqual([])
   })
 
   it('keeps the exact-target freshness gate for mutations while a verifying phase is retained', async () => {
@@ -2224,7 +2342,7 @@ describe('CompanionTaskKernel', () => {
     expect(opened.every((target) => target.key === 'codex-b')).toBe(true)
   })
 
-  it('consumes a silent shortcut before any Renderer attaches and never replays it', async () => {
+  it('consumes a silent shortcut before any Renderer attaches and never replays it after cold cache recovery', async () => {
     const opened = vi.fn(async () => ({ outcome: 'opened' }))
     const preflight = vi.fn(async () => draft([task()], 1, { providers: { codex: true, claude: false } }))
     const kernel = createCompanionTaskKernel({
@@ -2235,13 +2353,16 @@ describe('CompanionTaskKernel', () => {
     })
 
     expect(kernel.handleEnter({ code: 'eypc-codex-task-next' })).toBe(true)
-    await vi.waitFor(() => expect(opened).toHaveBeenCalledTimes(1))
-    expect(preflight).toHaveBeenCalledTimes(1)
+    expect(preflight).not.toHaveBeenCalled()
+    expect(opened).not.toHaveBeenCalled()
 
     const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
-    expect(receipt.retained).toBe(true)
-    await new Promise((resolve) => setTimeout(resolve, 5))
-    expect(opened).toHaveBeenCalledTimes(1)
+    expect(receipt.retained).toBe(false)
+    await vi.waitFor(() => expect(preflight).toHaveBeenCalledTimes(1))
+    await vi.waitFor(() => expect(kernel.getLatest().complete).toBe(true))
+    expect(opened).not.toHaveBeenCalled()
+    expect(kernel.handleEnter({ code: 'eypc-codex-task-next' })).toBe(true)
+    await vi.waitFor(() => expect(opened).toHaveBeenCalledTimes(1))
   })
 
   it('publishes coherent revisions once across 100 rapid provider transitions', () => {
@@ -2269,7 +2390,10 @@ describe('CompanionTaskKernel', () => {
           cycleTier: waiting ? 'attention' : 'active',
           dynamicGroup: waiting ? 'input' : 'active',
           revisionAt: 100 + index,
-          statusEnteredAt: 100 + index
+          phaseRevision: 100 + index,
+          statusEnteredAt: 100 + index,
+          causalKey: `turn:${index}`,
+          causalReliable: true
         })], index)
       })
     }
@@ -2310,8 +2434,9 @@ describe('CompanionTaskKernel', () => {
         providers: { codex: true, claude: false },
         sourceGenerations: { codex: index, claude: 0 },
         sourceLaneGenerations: {
-          codex: { membership: index, phase: index, unread: index },
-          claude: { membership: 0, phase: 0, unread: 0 }
+          codex: { membership: index, phase: index, unread: index, metadata: index, topology: index },
+          claude: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 },
+          cursor: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 }
         }
       }))
       expect(current.packageRevision).toBe(initialPackageRevision)
@@ -2398,7 +2523,7 @@ describe('CompanionTaskKernel', () => {
     expect(samples[Math.floor(samples.length * 0.95)]).toBeLessThan(200)
   })
 
-  it('completes an available-provider cold preflight within 1.5 seconds', async () => {
+  it('builds an available-provider cold cache within 1.5 seconds, then opens without another refresh', async () => {
     const kernel = createCompanionTaskKernel({
       coalesceMs: 0,
       preflight: async () => draft([task()], 1, { providers: { codex: true, claude: false } }),
@@ -2406,6 +2531,8 @@ describe('CompanionTaskKernel', () => {
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
     })
     const started = performance.now()
+    kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
+    await vi.waitFor(() => expect(kernel.getLatest().complete).toBe(true))
     await expect(kernel.dispatch({ action: 'cycle', direction: 1 })).resolves.toMatchObject({ outcome: 'opened' })
     expect(performance.now() - started).toBeLessThan(1_500)
   })
@@ -2542,7 +2669,7 @@ describe('phase sets and lane units stay single-owner', () => {
   it('never seeds a counter lane from wall-clock time', () => {
     expect(hostSource).not.toMatch(/sourceLaneGenerations\.\w+\.(phase|unread)\s*=[^\n]*(Date\.now\(\)|readAt)/)
     expect(hostSource).toContain('function companionCounterAggregate(lanes)')
-    expect(kernelSource).toContain("lane === 'membership'")
+    expect(kernelSource).toContain("lane === 'phase' || lane === 'unread'")
   })
 })
 
@@ -2560,7 +2687,7 @@ describe('provider differences are declared, not branched', () => {
 
   it('declares a trait row for every registered provider', () => {
     expect(kernelSource).toContain('const PROVIDER_TRAITS = Object.freeze({')
-    for (const provider of ['codex', 'claude']) {
+    for (const provider of ['codex', 'claude', 'cursor']) {
       expect(kernelSource).toContain(`  ${provider}: Object.freeze({`)
     }
   })

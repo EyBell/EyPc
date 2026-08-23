@@ -1,16 +1,11 @@
 'use strict'
 
-const COMPANION_NAVIGATION_REVISION = 'companion-navigation-v4'
+const { PROVIDERS } = require('./provider-registry.cjs')
+const COMPANION_NAVIGATION_REVISION = 'companion-navigation-v5'
 // Kept as an exported compatibility marker for diagnostics/tests. Generic
 // cycling is leading-edge now: the first target is dispatched synchronously.
 const { DEFAULT_COALESCE_MS } = require('../timing-policy.cjs')
 const MAX_DIRECT_QUEUE = 200
-// Every provider whose cards are clickable must also be registered here.
-// RAW-152 established this module as the sole cross-source cycle authority;
-// a provider missing from this list silently falls out of previous/next even
-// though its cards open fine, which is exactly the pre-RAW-152 failure.
-const PROVIDERS = ['codex', 'claude', 'cursor']
-
 function providerSet(value) {
   if (Array.isArray(value)) return new Set(value.filter((provider) => PROVIDERS.includes(provider)))
   if (!value || typeof value !== 'object') return new Set()
@@ -84,15 +79,9 @@ function normalizeOpenResult(value, target) {
 function createCompanionNavigation(dependencies = {}) {
   const queueTask = typeof dependencies.queueMicrotask === 'function' ? dependencies.queueMicrotask : queueMicrotask
   const record = typeof dependencies.record === 'function' ? dependencies.record : () => {}
-  const openCodex = typeof dependencies.openCodex === 'function'
-    ? dependencies.openCodex
-    : async () => unavailable('Codex 任务打开能力不可用')
-  const openClaude = typeof dependencies.openClaude === 'function'
-    ? dependencies.openClaude
-    : async () => unavailable('Claude 任务打开能力不可用')
-  const openCursor = typeof dependencies.openCursor === 'function'
-    ? dependencies.openCursor
-    : async () => unavailable('Cursor 任务打开能力不可用')
+  const openTarget = typeof dependencies.openTarget === 'function'
+    ? dependencies.openTarget
+    : async () => unavailable('任务打开能力不可用')
 
   let enabled = false
   let enabledProviders = new Set()
@@ -229,10 +218,7 @@ function createCompanionNavigation(dependencies = {}) {
     currentConcurrent += 1
     maxConcurrent = Math.max(maxConcurrent, currentConcurrent)
     try {
-      const open = request.target.provider === 'claude'
-        ? openClaude
-        : request.target.provider === 'cursor' ? openCursor : openCodex
-      const result = normalizeOpenResult(await open(request.target, request), request.target)
+      const result = normalizeOpenResult(await openTarget(request.target, request), request.target)
       const currentOperationId = result.operationId || request.operationId
       if (result.outcome === 'opened' || result.outcome === 'dispatched') {
         if (request.cycle === true) cursorKey = request.target.key

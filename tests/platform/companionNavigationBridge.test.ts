@@ -38,8 +38,10 @@ describe('process-lifetime companion navigation', () => {
     const operationId = 'manual-quick-jump-0001'
     const { navigation } = readyNavigation({
       record: (entry: Record<string, unknown>) => records.push(entry),
-      openCodex: async () => ({ outcome: 'opened', operationId }),
-      openClaude: async () => ({ outcome: 'dispatched', operationId })
+      openTarget: async (target: { provider: string }) => ({
+        outcome: target.provider === 'claude' ? 'dispatched' : 'opened',
+        operationId
+      })
     })
 
     await expect(navigation.open({
@@ -93,7 +95,7 @@ describe('process-lifetime companion navigation', () => {
       if (opened.length === 1) await firstGate
       return { outcome: 'opened' }
     }
-    const { navigation } = readyNavigation({ openCodex: open, openClaude: open })
+    const { navigation } = readyNavigation({ openTarget: open })
 
     const first = navigation.cycle(1)
     await Promise.resolve()
@@ -115,15 +117,14 @@ describe('process-lifetime companion navigation', () => {
     const opened: string[] = []
     let failFirst = true
     const { navigation } = readyNavigation({
-      openCodex: async (target: { key: string }) => {
+      openTarget: async (target: { key: string; provider: string }) => {
         opened.push(target.key)
         if (failFirst) {
           failFirst = false
           return { outcome: 'failed', errorCode: 'test-failure' }
         }
-        return { outcome: 'opened' }
-      },
-      openClaude: async (target: { key: string }) => { opened.push(target.key); return { outcome: 'dispatched' } }
+        return { outcome: target.provider === 'claude' ? 'dispatched' : 'opened' }
+      }
     })
 
     await expect(navigation.cycle(1)).resolves.toMatchObject({ outcome: 'failed', key: 'codex-a' })
@@ -135,8 +136,10 @@ describe('process-lifetime companion navigation', () => {
   it('dispatches separate completed shortcut turns without a fixed debounce delay', async () => {
     const opened: string[] = []
     const { navigation } = readyNavigation({
-      openCodex: async (target: { key: string }) => { opened.push(target.key); return { outcome: 'opened' } },
-      openClaude: async (target: { key: string }) => { opened.push(target.key); return { outcome: 'dispatched' } }
+      openTarget: async (target: { key: string; provider: string }) => {
+        opened.push(target.key)
+        return { outcome: target.provider === 'claude' ? 'dispatched' : 'opened' }
+      }
     })
 
     const first = navigation.cycle(1)
@@ -163,7 +166,7 @@ describe('process-lifetime companion navigation', () => {
       concurrent -= 1
       return { outcome: 'opened' }
     }
-    const { navigation } = readyNavigation({ openCodex: open, openClaude: open })
+    const { navigation } = readyNavigation({ openTarget: open })
 
     const first = navigation.open({ key: 'codex-a', source: 'attention' })
     const second = navigation.open({ key: 'claude:local_a', source: 'attention' })
@@ -182,13 +185,12 @@ describe('process-lifetime companion navigation', () => {
     const opened: string[] = []
     let callCount = 0
     const { navigation } = readyNavigation({
-      openCodex: async (target: { key: string }) => {
+      openTarget: async (target: { key: string; provider: string }) => {
         opened.push(target.key)
         callCount += 1
         if (callCount === 1) await firstGate
-        return { outcome: 'opened' }
-      },
-      openClaude: async (target: { key: string }) => { opened.push(target.key); return { outcome: 'dispatched' } }
+        return { outcome: target.provider === 'claude' ? 'dispatched' : 'opened' }
+      }
     })
 
     const first = navigation.cycle(1)
@@ -204,8 +206,10 @@ describe('process-lifetime companion navigation', () => {
   it('queues an exact card target even while a remounted Renderer retains an older ready snapshot', async () => {
     const opened: string[] = []
     const { navigation, receipt } = readyNavigation({
-      openCodex: async (target: { key: string }) => { opened.push(target.key); return { outcome: 'opened' } },
-      openClaude: async (target: { key: string }) => { opened.push(target.key); return { outcome: 'dispatched' } }
+      openTarget: async (target: { key: string; provider: string }) => {
+        opened.push(target.key)
+        return { outcome: target.provider === 'claude' ? 'dispatched' : 'opened' }
+      }
     })
     navigation.detach({ lease: receipt.lease })
     expect(navigation.begin({ enabled: true, providers: { codex: true, claude: true } })).toMatchObject({
@@ -233,8 +237,10 @@ describe('process-lifetime companion navigation', () => {
     vi.useFakeTimers()
     const opened: string[] = []
     const { navigation, receipt } = readyNavigation({
-      openCodex: async (target: { key: string }) => { opened.push(target.key); return { outcome: 'opened' } },
-      openClaude: async (target: { key: string }) => { opened.push(target.key); return { outcome: 'dispatched' } }
+      openTarget: async (target: { key: string; provider: string }) => {
+        opened.push(target.key)
+        return { outcome: target.provider === 'claude' ? 'dispatched' : 'opened' }
+      }
     })
     expect(navigation.detach({ lease: receipt.lease })).toBe(true)
     const remount = navigation.begin({ enabled: true, providers: { codex: true, claude: true } })
@@ -254,13 +260,13 @@ describe('process-lifetime companion navigation', () => {
     expect(navigation.handleEnter({ code: 'eypc-codex-task-next' })).toBe(false)
   })
 
-  it('cycles across cursor targets through the dedicated openCursor lane', async () => {
+  it('cycles across Cursor targets through the same Provider-neutral openTarget lane', async () => {
     const opened: Array<{ provider: string; key: string }> = []
-    const record = (target: { key: string }, provider: string) => { opened.push({ provider, key: target.key }) }
     const navigation = navigationModule.createCompanionNavigation({
-      openCodex: async (target: { key: string }) => { record(target, 'codex'); return { outcome: 'opened' } },
-      openClaude: async (target: { key: string }) => { record(target, 'claude'); return { outcome: 'dispatched' } },
-      openCursor: async (target: { key: string }) => { record(target, 'cursor'); return { outcome: 'dispatched' } }
+      openTarget: async (target: { key: string; provider: string }) => {
+        opened.push({ provider: target.provider, key: target.key })
+        return { outcome: target.provider === 'codex' ? 'opened' : 'dispatched' }
+      }
     })
     const receipt = navigation.begin({ enabled: true, providers: { codex: true, claude: true, cursor: true } })
     const mixedTargets = [
@@ -291,8 +297,7 @@ describe('process-lifetime companion navigation', () => {
   it('keeps anonymous successful cycle results for the next Controller lease', async () => {
     vi.useFakeTimers()
     const { navigation, receipt } = readyNavigation({
-      openCodex: async () => ({ outcome: 'opened' }),
-      openClaude: async () => ({ outcome: 'dispatched' })
+      openTarget: async (target: { provider: string }) => ({ outcome: target.provider === 'claude' ? 'dispatched' : 'opened' })
     })
     const cycle = navigation.cycle(1)
     await vi.advanceTimersByTimeAsync(navigationModule.DEFAULT_COALESCE_MS)

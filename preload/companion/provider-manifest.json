@@ -1,0 +1,39 @@
+{
+  "revision": "companion-provider-registry-v1",
+  "kernelRevision": "companion-task-kernel-v5",
+  "topologyRevision": "companion-task-topology-v1",
+  "snapshotRevision": "companion-task-package-v5",
+  "commandRevision": "companion-task-command-v1",
+  "subscribeRevision": "companion-task-subscribe-v1",
+  "ackRevision": "companion-task-ack-v1",
+  "order": ["codex", "claude", "cursor"],
+  "providers": {
+    "codex": {
+      "id": "codex",
+      "label": "Codex",
+      "enabledByDefault": true,
+      "taskKind": "codex-thread",
+      "relationMode": "exact",
+      "topologySources": ["app-server"],
+      "capabilities": ["open", "archive", "pause", "resume", "execute-plan", "topology"]
+    },
+    "claude": {
+      "id": "claude",
+      "label": "Claude",
+      "enabledByDefault": false,
+      "taskKind": "claude-session",
+      "relationMode": "exact",
+      "topologySources": ["hooks"],
+      "capabilities": ["open", "archive", "topology"]
+    },
+    "cursor": {
+      "id": "cursor",
+      "label": "Cursor",
+      "enabledByDefault": false,
+      "taskKind": "cursor-session",
+      "relationMode": "exact",
+      "topologySources": ["hooks", "inventory"],
+      "capabilities": ["open", "archive", "topology"]
+    }
+  }
+}
