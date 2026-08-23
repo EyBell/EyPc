@@ -29,6 +29,7 @@ const HOOK_EVENT_CLASSES = Object.freeze({
 })
 
 const COMPOSER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const OPAQUE_ID = /^[A-Za-z0-9_-]{1,128}$/
 
 function normalizeEventClass(value) {
   if (typeof value !== 'string' || !value) return ''
@@ -51,12 +52,17 @@ function normalizeQueueEntry(value) {
   if (mode === 'ask' || mode === 'edit') return null
   const reason = typeof value.r === 'string' ? value.r.trim() : ''
   const stopStatus = reason === 'completed' || reason === 'aborted' || reason === 'error' ? reason : ''
+  const generationId = typeof value.g === 'string' && OPAQUE_ID.test(value.g) ? value.g : ''
+  const subagentId = typeof value.a === 'string' && OPAQUE_ID.test(value.a) ? value.a : ''
+  const parentConversationId = typeof value.q === 'string' && OPAQUE_ID.test(value.q) ? value.q : ''
   return {
     sessionId,
     event,
     at: safeInteger(value.t) || 0,
     pid: safeInteger(value.p),
     mode: mode === 'agent' ? 'agent' : '',
+    ...(generationId ? { generationId } : {}),
+    ...(subagentId ? { subagentId, parentConversationId } : {}),
     stopStatus,
     reason: stopStatus ? '' : reason.slice(0, 40)
   }
@@ -87,7 +93,9 @@ function emptyHookState() {
     lastStopAt: 0,
     lastSessionEndAt: 0,
     turnCloseKind: '',
-    pid: 0
+    pid: 0,
+    generationId: '',
+    subagents: {}
   }
 }
 
@@ -105,10 +113,31 @@ function reduceQueueEntry(previous, entry) {
   const at = entry.at || known.lastEventAt || 0
   const next = {
     ...known,
+    subagents: { ...(known.subagents && typeof known.subagents === 'object' ? known.subagents : {}) },
     turnOpen: known.turnOpen === true,
     lastEvent: entry.event,
     lastEventAt: at,
-    pid: entry.pid || known.pid || 0
+    pid: entry.pid || known.pid || 0,
+    generationId: entry.generationId || known.generationId || ''
+  }
+
+  if (entry.subagentId && (entry.event === 'subagent-start' || entry.event === 'subagent-stop')) {
+    const previousChild = next.subagents[entry.subagentId] && typeof next.subagents[entry.subagentId] === 'object'
+      ? next.subagents[entry.subagentId]
+      : {}
+    const active = entry.event === 'subagent-start'
+    next.subagents[entry.subagentId] = {
+      subagentId: entry.subagentId,
+      parentConversationId: entry.parentConversationId || previousChild.parentConversationId || '',
+      generationId: entry.generationId || previousChild.generationId || '',
+      active,
+      startedAt: active ? at || safeInteger(previousChild.startedAt) : safeInteger(previousChild.startedAt),
+      stoppedAt: active ? 0 : at || safeInteger(previousChild.stoppedAt),
+      lastEventAt: at
+    }
+    next.lastActivityAt = at
+    if (next.turnOpen) next.phase = 'running'
+    return next
   }
 
   if (entry.event === 'prompt-submit') {
@@ -146,6 +175,11 @@ function reduceQueueEntry(previous, entry) {
       const completed = next.lastStopAt > 0 && next.lastStopAt >= next.turnStartedAt
       next.phase = completed ? 'completed' : 'stopped'
       next.turnCloseKind = completed ? 'stop' : 'session-end'
+    }
+    for (const [subagentId, childValue] of Object.entries(next.subagents)) {
+      const child = childValue && typeof childValue === 'object' ? childValue : {}
+      if (child.active !== true) continue
+      next.subagents[subagentId] = { ...child, active: false, stoppedAt: at || safeInteger(child.startedAt), lastEventAt: at }
     }
     return next
   }

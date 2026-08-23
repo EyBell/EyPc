@@ -11,12 +11,17 @@ import { describe, expect, it, vi } from 'vitest'
 
 const nodeRequire = createRequire(import.meta.url)
 const TEST_RUNTIME_IDENTITY = {
-  revision: 'runtime-identity-v1',
+  revision: 'runtime-identity-v2',
   artifactState: 'artifact-ready',
   hostAssetId: 'host-test-current',
   rendererAssetId: 'renderer-test-current',
-  kernelRevision: 'companion-task-kernel-v4',
-  taskPackageRevision: 'companion-task-package-v4'
+  kernelRevision: 'companion-task-kernel-v5',
+  registryRevision: 'companion-provider-registry-v1',
+  topologyRevision: 'companion-task-topology-v1',
+  taskPackageRevision: 'companion-task-package-v5',
+  commandRevision: 'companion-task-command-v1',
+  subscribeRevision: 'companion-task-subscribe-v1',
+  ackRevision: 'companion-task-ack-v1'
 }
 
 function handshakeTestRuntime(platform: Record<string, any>) {
@@ -24,7 +29,12 @@ function handshakeTestRuntime(platform: Record<string, any>) {
     hostAssetId: TEST_RUNTIME_IDENTITY.hostAssetId,
     rendererAssetId: TEST_RUNTIME_IDENTITY.rendererAssetId,
     kernelRevision: TEST_RUNTIME_IDENTITY.kernelRevision,
-    taskPackageRevision: TEST_RUNTIME_IDENTITY.taskPackageRevision
+    registryRevision: TEST_RUNTIME_IDENTITY.registryRevision,
+    topologyRevision: TEST_RUNTIME_IDENTITY.topologyRevision,
+    taskPackageRevision: TEST_RUNTIME_IDENTITY.taskPackageRevision,
+    commandRevision: TEST_RUNTIME_IDENTITY.commandRevision,
+    subscribeRevision: TEST_RUNTIME_IDENTITY.subscribeRevision,
+    ackRevision: TEST_RUNTIME_IDENTITY.ackRevision
   })
   if (handshake.status !== 'host-loaded') throw new Error('test preload identity handshake failed')
 }
@@ -513,9 +523,9 @@ function seedSingleCodexKernelTask(context: Record<string, any>, snapshot: Recor
   kernel.syncPackage({
     lease: receipt.lease,
     draft: {
-      schema: 'companion-task-draft-v4',
+      schema: 'companion-task-draft-v5',
       producer: 'renderer',
-      sourceTaskStateRevision: 'task-state-v10',
+      sourceTaskStateRevision: 'task-state-v11',
       draftRevision: 1,
       acceptedAt: Date.now(),
       enabled: true,
@@ -570,9 +580,9 @@ function seedSingleClaudeKernelTask(context: Record<string, any>) {
   kernel.syncPackage({
     lease: receipt.lease,
     draft: {
-      schema: 'companion-task-draft-v4',
+      schema: 'companion-task-draft-v5',
       producer: 'renderer',
-      sourceTaskStateRevision: 'task-state-v10',
+      sourceTaskStateRevision: 'task-state-v11',
       draftRevision: 1,
       acceptedAt: 100,
       enabled: true,
@@ -842,6 +852,9 @@ function loadCodexBridge(
   vm.runInNewContext(`${preload}\nglobalThis.__codexNativeTest = { parseCodexNativeRegistryText, readCodexNativeRegistry, codexThreadNativeProject, codexResolveParentActivity, codexInventoryThreadTopology, codexRolloutHasPendingUserInputText, codexRolloutPendingPlanStateText, codexRolloutRuntimeStateText, resetCodexThreadSessionState, markCodexThreadTurnStatusDirty, companionPhaseForCodexThread, applyCodexActivityToCompanionKernel, applyClaudeStateToCompanionKernel, applyClaudeUnreadToCompanionKernel, applyClaudeInventoryDeltaToCompanionKernel, privateBranchEvidence: (threadId) => codexPrivateBranchEvidence(threadId, codexActivityInventory.get(threadId)), openedReadAcknowledgements: () => [...codexDesktopOpenedReadAcknowledgements.entries()], openCompanionCodexTarget, expireCompanionCodexAlias: (key) => { for (const entry of codexThreadActions.values()) if (entry.key === key) entry.expiresAt = 0 }, companionHostReconciliationPending: () => Boolean(companionHostReconcileInFlight) || companionHostReconcilePendingProviders.size > 0 };`, sandbox, { filename: 'preload.js' })
   const exposedPlatform = (sandbox.window as { eypcPlatform: Record<string, any> }).eypcPlatform
   handshakeTestRuntime(exposedPlatform)
+  const internalKernel = vm.runInNewContext('companionTaskKernel', sandbox) as Record<string, any>
+  const testPlatform: Record<string, any> = { ...exposedPlatform, companionKernel: internalKernel }
+
   return {
     bridge: (sandbox.window as {
       eypcPlatform: {
@@ -893,7 +906,11 @@ function loadCodexBridge(
     diagnosticEvents,
     floatSends,
     floatAppliedAt: () => floatAppliedAt,
-    platform: exposedPlatform,
+    // Most bridge tests seed Host-private evidence directly. Keep that test
+    // authority separate from the production facade, whose surface is asserted
+    // through `publicPlatform`.
+    platform: testPlatform,
+    publicPlatform: exposedPlatform as Record<string, any>,
     triggerPluginEnter: (action: { code?: string } | null) => pluginEnterListeners.forEach((listener) => listener(action)),
     triggerPluginOut: (isKill: boolean) => pluginOutListeners.forEach((listener) => listener(isKill)),
     triggerNativeStateChange: (event = 'change') => nativeStateWatchers
@@ -951,48 +968,82 @@ describe('Codex App Server preload bridge', () => {
     context.bridge.close()
   })
 
-  it('exposes and dispatches Cursor auxiliary cycles through the production Kernel bridge', async () => {
+  it('exposes only the V5 command surface and dispatches a first-class Cursor root through it', async () => {
     const context = loadCodexBridge(new FakeCodexProcess())
-    handshakeTestRuntime(context.platform)
+    handshakeTestRuntime(context.publicPlatform)
     const kernel = context.platform.companionKernel
+    const publicKernel = context.publicPlatform.companionKernel
     const cursorRevision = Date.now()
-    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false }, dynamicTaskWindowHours: 36 })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false, cursor: true }, dynamicTaskWindowHours: 36 })
     const readyPackage = kernel.syncPackage({
       lease: receipt.lease,
       draft: {
-        schema: 'companion-task-draft-v4',
-        producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v10',
+        schema: 'companion-task-draft-v5',
+        producer: 'host-evidence',
+        sourceTaskStateRevision: 'task-state-v11',
         draftRevision: 1,
         acceptedAt: Date.now(),
         enabled: true,
-        providers: { codex: true, claude: false },
+        providers: { codex: true, claude: false, cursor: true },
         complete: true,
         focusedKey: '',
-        sourceGenerations: { codex: 1, claude: 0 },
+        sourceGenerations: { codex: 1, claude: 0, cursor: 1 },
         sourceLaneGenerations: {
-          codex: { membership: 1, phase: 1, unread: 1 },
-          claude: { membership: 0, phase: 0, unread: 0 }
+          codex: { membership: 1, phase: 1, unread: 1, metadata: 1, topology: 1 },
+          claude: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 },
+          cursor: { membership: 1, phase: 1, unread: 1, metadata: 1, topology: 1 }
         },
-        tasks: []
+        providerHealth: {
+          codex: { status: 'ready', generation: 1, errorCode: '' },
+          claude: { status: 'disabled', generation: 0, errorCode: '' },
+          cursor: { status: 'ready', generation: 1, errorCode: '' }
+        },
+        tasks: [{
+          key: 'cursor:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+          provider: 'cursor',
+          kind: 'cursor-session',
+          family: 'cursor:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+          role: 'root',
+          phase: 'running',
+          cycleTier: 'active',
+          dynamicGroup: 'active',
+          actionAlias: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+          revisionAt: cursorRevision,
+          membershipRevision: cursorRevision,
+          phaseRevision: cursorRevision,
+          unreadRevision: cursorRevision,
+          visibilityRevision: cursorRevision,
+          statusEnteredAt: cursorRevision,
+          lastQuestionAt: cursorRevision,
+          createdAt: cursorRevision - 100,
+          hidden: false,
+          unreadKnown: true,
+          unread: false,
+          planImplementation: false,
+          planReady: false,
+          planLifecycleRevision: 0,
+          paused: false,
+          turnMode: 'unknown',
+          idleConfirmed: false,
+          localPin: false,
+          dynamicEligible: true,
+          capabilities: { open: true, archive: false, pause: false, resume: false, executePlan: false }
+        }]
       }
     })
-    expect(readyPackage).toMatchObject({ complete: true })
-
-    expect(typeof kernel.publishAuxiliaryCycleTasks).toBe('function')
-    expect(kernel.publishAuxiliaryCycleTasks({
-      provider: 'cursor',
-      tasks: [{
-        key: 'cursor:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-        actionAlias: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
-        revisionAt: cursorRevision,
-        phase: 'running',
-        lastQuestionAt: cursorRevision,
-        createdAt: cursorRevision - 100
-      }]
-    })).toBe(true)
-    expect(kernel.diagnostics()).toMatchObject({ auxiliaryTaskCount: 1, ready: true })
-    await expect(kernel.dispatch({ action: 'cycle', direction: 1, source: 'global-shortcut' })).resolves.toMatchObject({
+    expect(readyPackage).toMatchObject({ complete: true, views: { cycleKeys: ['cursor:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'] } })
+    expect(publicKernel).not.toHaveProperty('publishAuxiliaryCycleTasks')
+    expect(publicKernel).not.toHaveProperty('syncPackage')
+    expect(publicKernel).not.toHaveProperty('dispatch')
+    expect(publicKernel).not.toHaveProperty('getPackage')
+    await expect(publicKernel.dispatchCommand({
+      revision: 'companion-task-command-v1',
+      operationId: 'cursor-production-cycle-1',
+      command: 'cycle',
+      selector: { direction: 1 },
+      source: 'global-shortcut',
+      expectedRevision: { snapshot: readyPackage.packageRevision, topology: readyPackage.topologyRevision }
+    })).resolves.toMatchObject({
       outcome: 'dispatched',
       provider: 'cursor',
       key: 'cursor:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
@@ -1166,9 +1217,9 @@ describe('Codex App Server preload bridge', () => {
     kernel.syncPackage({
       lease: receipt.lease,
       draft: {
-        schema: 'companion-task-draft-v4',
+        schema: 'companion-task-draft-v5',
         producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v10',
+        sourceTaskStateRevision: 'task-state-v11',
         draftRevision: 1,
         acceptedAt: Date.now(),
         enabled: true,
@@ -1747,9 +1798,9 @@ describe('Codex App Server preload bridge', () => {
     kernel.syncPackage({
       lease: receipt.lease,
       draft: {
-        schema: 'companion-task-draft-v4',
+        schema: 'companion-task-draft-v5',
         producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v10',
+        sourceTaskStateRevision: 'task-state-v11',
         draftRevision: 1,
         acceptedAt: Date.now(),
         enabled: true,
@@ -1789,7 +1840,7 @@ describe('Codex App Server preload bridge', () => {
     await vi.waitFor(() => expect(kernel.getPackage().tasks.length).toBeGreaterThan(1))
     expect(kernel.getPackage()).toMatchObject({
       complete: true,
-      sourceTaskStateRevision: 'task-state-v10',
+      sourceTaskStateRevision: 'task-state-v11',
       providers: { codex: true, claude: false }
     })
     context.triggerPluginOut(true)
@@ -2036,9 +2087,9 @@ describe('Codex App Server preload bridge', () => {
     kernel.syncPackage({
       lease: receipt.lease,
       draft: {
-        schema: 'companion-task-draft-v4',
+        schema: 'companion-task-draft-v5',
         producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v10',
+        sourceTaskStateRevision: 'task-state-v11',
         draftRevision: 1,
         acceptedAt: Date.now(),
         enabled: true,
@@ -2118,9 +2169,9 @@ describe('Codex App Server preload bridge', () => {
     kernel.syncPackage({
       lease: receipt.lease,
       draft: {
-        schema: 'companion-task-draft-v4',
+        schema: 'companion-task-draft-v5',
         producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v10',
+        sourceTaskStateRevision: 'task-state-v11',
         draftRevision: 1,
         acceptedAt: 1,
         enabled: true,
@@ -2181,9 +2232,9 @@ describe('Codex App Server preload bridge', () => {
     kernel.syncPackage({
       lease: receipt.lease,
       draft: {
-        schema: 'companion-task-draft-v4',
+        schema: 'companion-task-draft-v5',
         producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v10',
+        sourceTaskStateRevision: 'task-state-v11',
         draftRevision: 1,
         acceptedAt: 1,
         enabled: true,
@@ -2266,9 +2317,9 @@ describe('Codex App Server preload bridge', () => {
     expect(kernel.syncPackage({
       lease: receipt.lease,
       draft: {
-        schema: 'companion-task-draft-v4',
+        schema: 'companion-task-draft-v5',
         producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v10',
+        sourceTaskStateRevision: 'task-state-v11',
         draftRevision: 1,
         acceptedAt: Date.now(),
         enabled: true,
@@ -4910,9 +4961,9 @@ describe('Codex App Server preload bridge', () => {
     kernel.syncPackage({
       lease: receipt.lease,
       draft: {
-        schema: 'companion-task-draft-v4',
+        schema: 'companion-task-draft-v5',
         producer: 'renderer',
-        sourceTaskStateRevision: 'task-state-v10',
+        sourceTaskStateRevision: 'task-state-v11',
         draftRevision: 1,
         acceptedAt: Date.now(),
         enabled: true,
@@ -5501,8 +5552,10 @@ describe('Codex App Server preload bridge', () => {
 
     const kernel = seedSingleCodexKernelTask(context, baseline, parent)
     expect(kernel.getPackage()).toMatchObject({
-      tasks: [{ key: parent.key, phase: 'completed', unreadKnown: true, unread: true }],
-      views: { counts: { active: 0, unread: 1 } }
+      // A cold child terminal without precise lifecycle closure abstains. V5
+      // must not end the root until every related member is exact or gone.
+      tasks: [{ key: parent.key, phase: 'unknown', unreadKnown: true, unread: true }],
+      views: { counts: { active: 0, unread: 0 } }
     })
     expect(kernel.getPackage().tasks).toHaveLength(1)
 
@@ -5588,6 +5641,25 @@ describe('Codex App Server preload bridge', () => {
     await vi.waitFor(() => expect(context.native.privateBranchEvidence(parentThreadId)?.branches).toEqual(expect.arrayContaining([
       expect.objectContaining({ branchKind: 'side', lastTurnStatus: 'completed' })
     ])))
+    // Turn completion alone closes the execution edge, while the prior Desktop
+    // snapshot still says active. The matching idle patch supplies the exact
+    // lifecycle closure required before V5 may terminalize the root.
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: sideThreadId,
+        change: {
+          type: 'patches',
+          baseRevision: 1,
+          revision: 2,
+          patches: [{ op: 'replace', path: ['threadRuntimeStatus', 'type'], value: 'idle' }]
+        }
+      }
+    })
     await vi.waitFor(() => expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === parent.key))
       .toMatchObject({ phase: 'completed', unreadKnown: true, unread: true }))
     expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === parent.key))
@@ -6064,7 +6136,7 @@ describe('Codex App Server preload bridge', () => {
       const child = new FakeCodexProcess()
       child.interruptedTurnIds.add(FIXED_THREAD_IDS[3])
       const desktopSocket = new FakeCodexDesktopSocket()
-      const { bridge, native, platform } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+      const { bridge, native, publicPlatform } = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
       const baseline = await bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
       await vi.advanceTimersByTimeAsync(0)
       const parent = baseline.value.threads[3]
@@ -6123,7 +6195,7 @@ describe('Codex App Server preload bridge', () => {
       expect(JSON.stringify(branchEvidence)).not.toContain(FIXED_THREAD_IDS[3])
       expect(JSON.stringify(branchEvidence)).not.toContain(terminalChildId)
       expect(JSON.stringify(branchEvidence)).not.toContain(activeChildId)
-      expect(platform.companionKernel.publishCodexBranchEvidence).toBeUndefined()
+      expect(publicPlatform.companionKernel.publishCodexBranchEvidence).toBeUndefined()
       bridge.close()
     } finally {
       vi.useRealTimers()

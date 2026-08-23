@@ -20,6 +20,8 @@ const MAX_EVENTS_PER_READ = 2000
 // rather than a throttleable timer, collapses duplicate tail events.
 const { WATCHER_RECOVERY_INTERVAL_MS, DEFAULT_COALESCE_MS } = require('../timing-policy.cjs')
 const DEFAULT_RECOVERY_POLL_MS = WATCHER_RECOVERY_INTERVAL_MS
+const AGENT_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
+const AGENT_TYPES = new Set(['explore', 'plan', 'general', 'other'])
 
 /** Raw `hook_event_name` → companion event class. */
 const HOOK_EVENT_CLASSES = Object.freeze({
@@ -61,6 +63,9 @@ function normalizeQueueEntry(value) {
   const event = normalizeEventClass(value.e)
   if (!sessionId || !event) return null
   const at = safeInteger(value.t)
+  const rawAgentId = typeof value.a === 'string' ? value.a.trim() : ''
+  const agentId = AGENT_ID_PATTERN.test(rawAgentId) ? rawAgentId : ''
+  const agentType = AGENT_TYPES.has(value.g) ? value.g : ''
   // Deliberately narrow: identity, event class, timing and the owning process.
   // App project metadata comes from the Code inventory, never from hook input.
   return {
@@ -68,6 +73,7 @@ function normalizeQueueEntry(value) {
     event,
     at: at || 0,
     pid: safeInteger(value.p),
+    ...(agentId ? { agentId, agentType } : {}),
     reason: value.r === 'ask-user-question'
       ? 'ask-user-question'
       : value.r === 'idle-prompt'
@@ -104,7 +110,8 @@ function emptyHookState() {
     lastStopFailureAt: 0,
     lastSessionEndAt: 0,
     turnCloseKind: '',
-    pid: 0
+    pid: 0,
+    subagents: {}
   }
 }
 
@@ -137,10 +144,43 @@ function reduceQueueEntry(previous, entry) {
   const at = entry.at || known.lastEventAt || 0
   const next = {
     ...known,
+    subagents: { ...(known.subagents && typeof known.subagents === 'object' ? known.subagents : {}) },
     turnOpen: known.turnOpen === true,
     lastEvent: entry.event,
     lastEventAt: at,
     pid: entry.pid || known.pid || 0
+  }
+
+  if (entry.agentId) {
+    const previousChild = next.subagents[entry.agentId] && typeof next.subagents[entry.agentId] === 'object'
+      ? next.subagents[entry.agentId]
+      : {}
+    const child = {
+      agentId: entry.agentId,
+      agentType: entry.agentType || previousChild.agentType || '',
+      active: previousChild.active === true,
+      startedAt: safeInteger(previousChild.startedAt),
+      stoppedAt: safeInteger(previousChild.stoppedAt),
+      lastActivityAt: Math.max(safeInteger(previousChild.lastActivityAt), at)
+    }
+    if (entry.event === 'subagent-start') {
+      child.active = true
+      child.startedAt = at || child.startedAt
+      child.stoppedAt = 0
+    } else if (entry.event === 'subagent-stop' || entry.event === 'stop' || entry.event === 'session-end') {
+      child.active = false
+      child.stoppedAt = at || child.stoppedAt || child.startedAt
+    } else if (entry.event === 'pre-tool' || entry.event === 'post-tool'
+      || entry.event === 'permission-request' || entry.event === 'notification') {
+      if (!child.stoppedAt) {
+        child.active = true
+        if (!child.startedAt) child.startedAt = at
+      }
+    }
+    next.subagents[entry.agentId] = child
+    next.lastActivityAt = Math.max(safeInteger(next.lastActivityAt), at)
+    // Child-scoped events never reopen or reclassify the parent Turn.
+    return next
   }
 
   if (entry.event === 'prompt-submit') {
@@ -181,6 +221,11 @@ function reduceQueueEntry(previous, entry) {
       const completed = next.lastStopAt > 0 && next.lastStopAt >= next.turnStartedAt
       next.phase = completed ? 'completed' : 'stopped'
       next.turnCloseKind = completed ? 'stop' : 'session-end'
+    }
+    for (const [agentId, childValue] of Object.entries(next.subagents)) {
+      const child = childValue && typeof childValue === 'object' ? childValue : {}
+      if (child.active !== true) continue
+      next.subagents[agentId] = { ...child, active: false, stoppedAt: at || safeInteger(child.startedAt) }
     }
     return next
   }

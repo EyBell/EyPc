@@ -345,6 +345,7 @@ function createClaudeBridge(dependencies) {
     return {
       ...inventory,
       sessions: correlated.sessions,
+      topologyComplete: correlated.topologyComplete,
       ...stateEnvelope(correlated.sessions, appSnapshot, readAt)
     }
   }
@@ -381,6 +382,7 @@ function createClaudeBridge(dependencies) {
       version: 2,
       revision: `${CLAUDE_BRIDGE_REVISION}:state-v2`,
       sessions: correlated.sessions,
+      topologyComplete: correlated.topologyComplete,
       truncated: lastCodeInventory.truncated === true,
       readAt,
       ...stateEnvelope(correlated.sessions, appSnapshot, readAt)

@@ -77,6 +77,55 @@ describe('cursor hook script', () => {
 })
 
 describe('cursor hook reducer', () => {
+  it('keeps only exact topology identity and drops all content fields', () => {
+    const entry = events.normalizeQueueEntry({
+      s: SESSION,
+      e: 'subagentStart',
+      t: 1000,
+      p: 1,
+      m: 'agent',
+      g: 'generation_1',
+      a: 'subagent_1',
+      q: SESSION,
+      transcript: 'private transcript',
+      summary: 'private summary',
+      body: 'private body'
+    })
+    expect(entry).toEqual({
+      sessionId: SESSION,
+      event: 'subagent-start',
+      at: 1000,
+      pid: 1,
+      mode: 'agent',
+      generationId: 'generation_1',
+      subagentId: 'subagent_1',
+      parentConversationId: SESSION,
+      stopStatus: '',
+      reason: ''
+    })
+    expect(JSON.stringify(entry)).not.toMatch(/private|transcript|summary|body/)
+
+    const started = events.reduceQueueEntry(events.emptyHookState(), entry)
+    const stopped = events.reduceQueueEntry(started, events.normalizeQueueEntry({
+      s: SESSION,
+      e: 'subagentStop',
+      t: 2000,
+      p: 1,
+      m: 'agent',
+      g: 'generation_1',
+      a: 'subagent_1',
+      q: SESSION
+    }))
+    expect(stopped).toMatchObject({ phase: 'unknown', turnOpen: false })
+    expect(stopped.subagents.subagent_1).toMatchObject({
+      subagentId: 'subagent_1',
+      parentConversationId: SESSION,
+      active: false,
+      startedAt: 1000,
+      stoppedAt: 2000
+    })
+  })
+
   it('opens a turn on beforeSubmitPrompt and never invents waiting-approval', () => {
     const running = events.reduceQueueEntry(events.emptyHookState(), {
       sessionId: SESSION,

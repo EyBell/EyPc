@@ -204,7 +204,20 @@ function createCursorBridge(dependencies) {
         sessionId,
         phase: state && state.phase ? state.phase : 'unknown',
         turnOpen: state && state.turnOpen === true,
-        lastEventAt: Number(state && state.lastEventAt) || 0
+        lastEventAt: Number(state && state.lastEventAt) || 0,
+        turnStartedAt: Number(state && state.turnStartedAt) || 0,
+        generationId: state && typeof state.generationId === 'string' ? state.generationId : '',
+        subagents: Object.values(state && state.subagents && typeof state.subagents === 'object' ? state.subagents : {})
+          .filter((value) => value && typeof value === 'object')
+          .map((value) => ({
+            subagentId: typeof value.subagentId === 'string' ? value.subagentId : '',
+            parentConversationId: typeof value.parentConversationId === 'string' ? value.parentConversationId : '',
+            generationId: typeof value.generationId === 'string' ? value.generationId : '',
+            active: value.active === true,
+            startedAt: Number(value.startedAt) || 0,
+            stoppedAt: Number(value.stoppedAt) || 0,
+            lastEventAt: Number(value.lastEventAt) || 0
+          }))
       })
     }
     return rows

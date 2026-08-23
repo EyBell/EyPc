@@ -53,9 +53,10 @@ function settingsCommandLine(filePath, platform) {
  *
  * It reads the hook JSON on stdin and appends one compact record to the queue.
  *
- * Only session identity, event name and one allowlisted reason are read. The
- * reason is emitted only for `AskUserQuestion` and `idle_prompt`; no arbitrary
- * tool name, prompt, tool input or response body reaches the queue.
+ * Only session identity, event name, bounded subagent identity/type and one
+ * allowlisted reason are read. The reason is emitted only for
+ * `AskUserQuestion` and `idle_prompt`; no arbitrary tool name, prompt, tool
+ * input, transcript, summary or response body reaches the queue.
  */
 function hookScript(options) {
   const queuePath = shellQuote((options && options.queuePath) || '')
@@ -80,6 +81,8 @@ first_value() {
 SESSION=$(first_value session_id)
 EVENT=$(first_value hook_event_name)
 REASON=''
+AGENT=''
+AGENT_KIND=''
 
 if [ "$EVENT" = 'PreToolUse' ]; then
   TOOL=$(first_value tool_name)
@@ -88,6 +91,21 @@ elif [ "$EVENT" = 'Notification' ]; then
   KIND=$(first_value notification_type)
   if [ "$KIND" = 'idle_prompt' ]; then REASON='idle-prompt'; fi
 fi
+
+RAW_AGENT=$(first_value agent_id)
+RAW_AGENT_TYPE=$(first_value agent_type)
+case "$RAW_AGENT" in
+  '' ) : ;;
+  *[!A-Za-z0-9_-]* ) : ;;
+  * ) AGENT=$(printf '%s' "$RAW_AGENT" | cut -c1-128) ;;
+esac
+case "$RAW_AGENT_TYPE" in
+  Explore|explore ) AGENT_KIND='explore' ;;
+  Plan|plan ) AGENT_KIND='plan' ;;
+  general|general-purpose|general_purpose ) AGENT_KIND='general' ;;
+  '' ) : ;;
+  * ) AGENT_KIND='other' ;;
+esac
 
 case "$SESSION" in
   '' ) exit 0 ;;
@@ -110,7 +128,7 @@ if [ -f "$QUEUE" ]; then
 fi
 
 NOW=$(date +%s)
-printf '{"s":"%s","e":"%s","r":"%s","t":%s000,"p":%s}\\n' "$SESSION" "$EVENT" "$REASON" "$NOW" "$PPID" >> "$QUEUE" 2>/dev/null || true
+printf '{"s":"%s","e":"%s","r":"%s","a":"%s","g":"%s","t":%s000,"p":%s}\\n' "$SESSION" "$EVENT" "$REASON" "$AGENT" "$AGENT_KIND" "$NOW" "$PPID" >> "$QUEUE" 2>/dev/null || true
 exit 0
 `
 }
