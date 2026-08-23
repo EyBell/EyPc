@@ -340,14 +340,35 @@ function correlateCodeSessions(sessions, hookState, previousBySession, appSnapsh
   }
   const appByLocal = appStateMap(appSnapshot)
   const projected = sessions.map((session) => {
+    const hookResult = hookForSession(session, hookState, byCli, previousBySession)
     const state = projectedState(session, hookState, byCli, previousBySession, appSnapshot, appByLocal)
+    const topologyExact = hookResult.hook
+      && hookResult.correlation !== 'none'
+      && hookResult.correlation !== 'ambiguous'
+    const subagents = topologyExact
+      ? Object.values(hookResult.hook.subagents && typeof hookResult.hook.subagents === 'object'
+        ? hookResult.hook.subagents
+        : {}).filter((value) => value
+          && typeof value === 'object'
+          && /^[A-Za-z0-9_-]{1,128}$/.test(String(value.agentId || '')))
+        .map((value) => ({
+          agentId: String(value.agentId),
+          agentType: ['explore', 'plan', 'general', 'other'].includes(value.agentType) ? value.agentType : '',
+          active: value.active === true,
+          startedAt: numberOf(value.startedAt),
+          stoppedAt: numberOf(value.stoppedAt),
+          lastActivityAt: numberOf(value.lastActivityAt)
+        }))
+      : []
     return {
       ...session,
-      ...state
+      ...state,
+      ...(topologyExact ? { subagents, topologyComplete: true } : {})
     }
   })
   return {
     sessions: projected,
+    topologyComplete: projected.every((session) => session.topologyComplete === true),
     nextMetadata: new Map(sessions.map((session) => [session.sessionId, {
       ...session,
       completedEvidenceAt: completedEvidenceAt(session, previousBySession)

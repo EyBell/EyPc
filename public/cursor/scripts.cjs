@@ -26,7 +26,8 @@ function settingsCommandLine(filePath, platform) {
 
 /**
  * Reads stdin JSON with sed only. Allowlisted keys:
- * conversation_id, session_id, hook_event_name, composer_mode, status, reason.
+ * conversation_id, session_id, hook_event_name, composer_mode, status, reason,
+ * generation_id, subagent_id and parent_conversation_id.
  * Never copies transcript_path, user_email, tool_input, agent_message, prompt.
  */
 function hookScript(options) {
@@ -52,12 +53,30 @@ EVENT=$(first_value hook_event_name)
 MODE=$(first_value composer_mode)
 STATUS=$(first_value status)
 REASON=$(first_value reason)
+GENERATION=$(first_value generation_id)
+SUBAGENT=$(first_value subagent_id)
+PARENT=$(first_value parent_conversation_id)
 
 ID="$CONVERSATION"
 [ -n "$ID" ] || ID="$SESSION"
 
 case "$MODE" in
   ask|edit ) exit 0 ;;
+esac
+case "$GENERATION" in
+  '' ) : ;;
+  *[!A-Za-z0-9_-]* ) GENERATION='' ;;
+  * ) GENERATION=$(printf '%s' "$GENERATION" | cut -c1-128) ;;
+esac
+case "$SUBAGENT" in
+  '' ) : ;;
+  *[!A-Za-z0-9_-]* ) SUBAGENT='' ;;
+  * ) SUBAGENT=$(printf '%s' "$SUBAGENT" | cut -c1-128) ;;
+esac
+case "$PARENT" in
+  '' ) : ;;
+  *[!A-Za-z0-9_-]* ) PARENT='' ;;
+  * ) PARENT=$(printf '%s' "$PARENT" | cut -c1-128) ;;
 esac
 
 case "$ID" in
@@ -96,7 +115,7 @@ if [ -f "$QUEUE" ]; then
 fi
 
 NOW=$(date +%s)
-printf '{"s":"%s","e":"%s","m":"%s","r":"%s","t":%s000,"p":%s}\\n' "$ID" "$EVENT" "$MODE" "$EXTRA" "$NOW" "$PPID" >> "$QUEUE" 2>/dev/null || true
+printf '{"s":"%s","e":"%s","m":"%s","r":"%s","g":"%s","a":"%s","q":"%s","t":%s000,"p":%s}\\n' "$ID" "$EVENT" "$MODE" "$EXTRA" "$GENERATION" "$SUBAGENT" "$PARENT" "$NOW" "$PPID" >> "$QUEUE" 2>/dev/null || true
 exit 0
 `
 }

@@ -131,6 +131,7 @@ function isSubagentEvidenceRow(row) {
 
 function collectSubagentsByParent(rows) {
   const byParent = new Map()
+  let truncated = false
   for (const row of rows) {
     if (!isSubagentEvidenceRow(row)) continue
     const parentId = subagentParentIdOf(row)
@@ -147,11 +148,12 @@ function collectSubagentsByParent(rows) {
     })
   }
   for (const [parentId, list] of byParent) {
+    if (list.length > MAX_SUBAGENTS_PER_PARENT) truncated = true
     list.sort((a, b) => (b.unfinishedRunAt - a.unfinishedRunAt) || (b.lastUpdatedAt - a.lastUpdatedAt))
     byParent.set(parentId, list.slice(0, MAX_SUBAGENTS_PER_PARENT)
       .map((entry) => ({ composerId: entry.composerId, unfinishedRunAt: entry.unfinishedRunAt })))
   }
-  return byParent
+  return { byParent, truncated }
 }
 
 function projectRow(row, subagents) {
@@ -266,17 +268,18 @@ function createInventoryReader(dependencies) {
         reason: 'not-installed',
         sessions: [],
         truncated: false,
+        topologyComplete: false,
         readAt: Date.now()
       }
     }
     try {
       const rows = queryInventoryRows(dependencies, dbPath)
       const allRows = Array.isArray(rows) ? rows : []
-      const subagentsByParent = collectSubagentsByParent(allRows)
+      const topology = collectSubagentsByParent(allRows)
       const sessions = []
       for (const row of allRows) {
         if (!isInventoryRow(row)) continue
-        sessions.push(projectRow(row, subagentsByParent.get(textOf(row.composerId).trim().toLowerCase())))
+        sessions.push(projectRow(row, topology.byParent.get(textOf(row.composerId).trim().toLowerCase())))
         if (sessions.length >= MAX_ROWS) break
       }
       return {
@@ -285,6 +288,7 @@ function createInventoryReader(dependencies) {
         reason: 'ready',
         sessions,
         truncated: rows.length > sessions.length && sessions.length >= MAX_ROWS,
+        topologyComplete: topology.truncated !== true,
         readAt: Date.now()
       }
     } catch (error) {
@@ -294,6 +298,7 @@ function createInventoryReader(dependencies) {
         reason: error && error.code === 'sqlite-unavailable' ? 'sqlite-unavailable' : 'degraded',
         sessions: [],
         truncated: false,
+        topologyComplete: false,
         readAt: Date.now()
       }
     }

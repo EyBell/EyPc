@@ -8,7 +8,7 @@ const path = require('node:path')
 let https = null
 try { https = require('node:https') } catch { /* older constrained preload harness: quota fallback stays unavailable */ }
 
-const RUNTIME_IDENTITY_REVISION = 'runtime-identity-v1'
+const RUNTIME_IDENTITY_REVISION = 'runtime-identity-v2'
 let runtimeIdentityArtifact = null
 let runtimeIdentityLoadError = ''
 let runtimeIdentityCompatible = false
@@ -60,7 +60,7 @@ const CODEX_NATIVE_STATE_RECOVERY_INTERVAL_MS = 1_000
 const CODEX_INVENTORY_MEMBERSHIP_RECOVERY_INTERVAL_MS = 1_000
 // Keep synchronized with src/domain/codex.ts. This value crosses the context
 // boundary so a newer renderer can mark long-lived preload evidence degraded.
-const CODEX_TASK_STATE_REVISION = 'task-state-v10'
+const CODEX_TASK_STATE_REVISION = 'task-state-v11'
 const COMPANION_PLAN_PAUSE_STORAGE_KEY = 'eypc/companion/plan-pause/v1'
 const EXECUTE_PLAN_PROMPT_V1 = '请按已完成的 Plan 开始执行。'
 const CODEX_DESKTOP_IPC_VERSIONS = {
@@ -230,6 +230,7 @@ try {
 // raw evidence and capabilities; this Kernel owns the canonical package,
 // cursor and dispatch arbitration across mainHide/Renderer remounts.
 let createCompanionTaskKernel = null
+let createCompanionHostRegistry = null
 let reduceCodexTaskEvidenceV4 = null
 let reduceClaudeTaskEvidenceV4 = null
 // The phase vocabulary, reached through the Kernel that already owns the
@@ -264,13 +265,16 @@ try {
     throw kernelRelativeLoadError || new Error('companion task kernel factory unavailable')
   }
   createCompanionTaskKernel = kernelModule.createCompanionTaskKernel
+  createCompanionHostRegistry = typeof kernelModule.createCompanionHostRegistry === 'function'
+    ? kernelModule.createCompanionHostRegistry
+    : null
   reduceCodexTaskEvidenceV4 = typeof kernelModule.reduceCodexTaskEvidenceV4 === 'function'
     ? kernelModule.reduceCodexTaskEvidenceV4
     : null
   reduceClaudeTaskEvidenceV4 = typeof kernelModule.reduceClaudeTaskEvidenceV4 === 'function'
     ? kernelModule.reduceClaudeTaskEvidenceV4
     : null
-  if (!reduceCodexTaskEvidenceV4 || !reduceClaudeTaskEvidenceV4) {
+  if (!reduceCodexTaskEvidenceV4 || !reduceClaudeTaskEvidenceV4 || !createCompanionHostRegistry) {
     throw new Error('companion task V4 reducers unavailable')
   }
   isKnownTaskPhase = kernelModule.isKnownTaskPhase
@@ -7801,6 +7805,8 @@ function codexPrivateBranchEvidence(parentThreadId, known) {
     return {
       ref: codexPrivateBranchRef(parentThreadId, row.threadId),
       branchKind: row.threadId === parentThreadId ? 'main' : 'side',
+      topologyExact: row.threadId === parentThreadId
+        || codexInventorySideRelations.get(row.threadId) === parentThreadId,
       unreadKnown: openedRead || unread.unreadAuthority !== 'unavailable',
       hasUnreadTurn: openedRead ? false : unread.hasUnreadTurn === true,
       status: row.activity?.status || 'notLoaded',
@@ -10912,6 +10918,7 @@ function installCodexFloatIpc() {
     if (stage === 'received') return
     if (stage === 'applied') {
       codexFloatTaskAppliedRevision = Math.max(codexFloatTaskAppliedRevision, currentRevision)
+      companionTaskKernel?.acknowledge?.({ consumer: 'float', revision: currentRevision })
       if (codexFloatTaskAppliedRevision >= codexFloatTaskPendingRevision) {
         const elapsed = codexFloatTaskPendingStartedAt ? Date.now() - codexFloatTaskPendingStartedAt : 0
         clearCodexFloatTaskAckTimer()
@@ -10933,6 +10940,7 @@ function installCodexFloatIpc() {
     if (stage !== 'rejected') return
     if (source.reason === 'older-revision' && currentRevision >= sentRevision) {
       codexFloatTaskAppliedRevision = Math.max(codexFloatTaskAppliedRevision, currentRevision)
+      companionTaskKernel?.acknowledge?.({ consumer: 'float', revision: currentRevision })
       if (codexFloatTaskAppliedRevision >= codexFloatTaskPendingRevision) {
         clearCodexFloatTaskAckTimer()
         codexFloatTaskPendingRevision = 0
@@ -11196,9 +11204,9 @@ function publishCompanionCodexAlias(key, actionAlias, fallbackTarget = null, met
   if (!companionTaskKernel?.publishEvidence) return false
   const configuration = companionTaskConfiguration()
   const next = companionTaskKernel.publishEvidence({
-    schema: 'companion-task-draft-v4',
+    schema: 'companion-task-draft-v5',
     producer: 'host-evidence',
-    sourceTaskStateRevision: current.sourceTaskStateRevision || 'task-state-v10:exact-open',
+    sourceTaskStateRevision: current.sourceTaskStateRevision || 'task-state-v11:exact-open',
     draftRevision: ++companionHostDraftSequence,
     acceptedAt: Date.now(),
     enabled: configuration.enabled,
@@ -11207,6 +11215,7 @@ function publishCompanionCodexAlias(key, actionAlias, fallbackTarget = null, met
     focusedKey: current.focusedKey,
     sourceGenerations: current.sourceGenerations,
     sourceLaneGenerations: current.sourceLaneGenerations,
+    providerHealth: current.providerHealth,
     tasks: nextTasks
   })
   return Boolean(next)
@@ -11286,9 +11295,26 @@ async function openCompanionClaudeTarget(target) {
   const exactAlias = typeof target?.key === 'string' && target.key.startsWith('claude:')
     ? target.key.slice('claude:'.length)
     : ''
-  return claudeBridge
+  const result = await (claudeBridge
     ? claudeBridge.openTask(exactAlias || target.actionAlias)
-    : claudeUnavailable('open')
+    : claudeUnavailable('open'))
+  if (result?.outcome === 'opened' || result?.outcome === 'dispatched') {
+    queueMicrotask(() => queueCompanionHostReconciliation('claude'))
+  }
+  return result
+}
+
+async function openCompanionCursorTarget(target) {
+  const exactAlias = typeof target?.key === 'string' && target.key.startsWith('cursor:')
+    ? target.key.slice('cursor:'.length)
+    : ''
+  const result = cursorBridge
+    ? await cursorBridge.openTask(String(exactAlias || target.actionAlias || ''))
+    : cursorUnavailable('open')
+  if (result?.outcome === 'opened' || result?.outcome === 'dispatched') {
+    queueMicrotask(() => queueCompanionHostReconciliation('cursor'))
+  }
+  return result
 }
 
 function codexPrivateThreadSettings(...values) {
@@ -11470,13 +11496,20 @@ function companionTaskConfiguration() {
       : 48,
     providers: {
       codex: providerSource.codex === undefined ? true : providerSource.codex === true,
-      claude: providerSource.claude === true
+      claude: providerSource.claude === true,
+      cursor: providerSource.cursor === true
     }
   }
 }
 
 function companionPersistedTaskState() {
   const codex = codexRecord(codexRecord(readState()).codex)
+  const aliases = new Map(
+    (Array.isArray(codex.taskAliases) ? codex.taskAliases : [])
+      .map(codexRecord)
+      .filter((entry) => typeof entry.key === 'string' && typeof entry.alias === 'string' && entry.alias.trim())
+      .map((entry) => [entry.key, entry.alias.trim().slice(0, 120)])
+  )
   const pins = new Set(
     (Array.isArray(codex.localPins) ? codex.localPins : [])
       .map(codexRecord)
@@ -11489,7 +11522,37 @@ function companionPersistedTaskState() {
       .filter((receipt) => typeof receipt.key === 'string')
       .map((receipt) => [receipt.key, receipt])
   )
-  return { pins, receipts }
+  const collapsed = new Set(
+    (Array.isArray(codex.collapsedTaskKeys) ? codex.collapsedTaskKeys : [])
+      .filter((key) => typeof key === 'string' && key)
+  )
+  return { aliases, pins, receipts, collapsed }
+}
+
+function persistCompanionPreference(input = {}) {
+  const command = typeof input.command === 'string' ? input.command : ''
+  const key = typeof input.key === 'string' && input.key.length <= 256 ? input.key : ''
+  if (!key || (command !== 'set-alias' && command !== 'set-collapse')) return false
+  const state = readState()
+  if (!state || typeof state !== 'object') return false
+  const codex = codexRecord(state.codex)
+  const nextCodex = { ...codex }
+  if (command === 'set-alias') {
+    const alias = typeof input.payload?.alias === 'string' ? input.payload.alias.trim().slice(0, 120) : ''
+    const entries = (Array.isArray(codex.taskAliases) ? codex.taskAliases : [])
+      .map(codexRecord)
+      .filter((entry) => typeof entry.key === 'string' && entry.key !== key
+        && typeof entry.alias === 'string' && entry.alias.trim())
+      .map((entry) => ({ key: entry.key, alias: entry.alias.trim().slice(0, 120) }))
+    nextCodex.taskAliases = [...entries, ...(alias ? [{ key, alias }] : [])].slice(-500)
+  } else {
+    const collapsed = new Set((Array.isArray(codex.collapsedTaskKeys) ? codex.collapsedTaskKeys : [])
+      .filter((value) => typeof value === 'string' && value))
+    if (input.payload?.collapsed === true) collapsed.add(key)
+    else collapsed.delete(key)
+    nextCodex.collapsedTaskKeys = [...collapsed].slice(-500)
+  }
+  return writeState({ ...state, codex: nextCodex, updatedAt: Date.now() })
 }
 
 function readCompanionPlanPauseReceipts() {
@@ -11560,6 +11623,48 @@ function companionClaudePhaseDecision(value, unread) {
   return reduceClaudeTaskEvidenceV4({ phase: value, unread: unread === true })
 }
 
+function companionCursorPhaseDecision(session, hook) {
+  const source = codexRecord(session)
+  const hot = codexRecord(hook)
+  const subagents = Array.isArray(source.subagents) ? source.subagents.map(codexRecord) : []
+  if (hot.turnOpen === true) return 'running'
+  if (source.hasPendingPlan === true) return 'waiting-input'
+  if (subagents.some((child) => Number(child.unfinishedRunAt) > 0)) return 'running'
+  if (hot.phase === 'running' || hot.phase === 'completed' || hot.phase === 'stopped') return hot.phase
+  if (Number(source.unfinishedRunAt) > 0) return 'running'
+  if (source.hasBlockingPendingActions === true) return 'unknown'
+  if (source.hasUnreadMessages === true || source.diskStatus === 'completed') return 'completed'
+  if (source.diskStatus === 'aborted') return 'stopped'
+  return 'unknown'
+}
+
+function companionPrivateChildKey(provider, parentKey, childId) {
+  return `${provider}-child:${crypto.createHash('sha256')
+    .update(String(provider))
+    .update('\0')
+    .update(String(parentKey))
+    .update('\0')
+    .update(String(childId))
+    .digest('hex')
+    .slice(0, 32)}`
+}
+
+function companionCausalKey(provider, taskKey, identity) {
+  if (typeof identity !== 'string' && !Number.isFinite(Number(identity))) return ''
+  const value = String(identity || '')
+  if (!value) return ''
+  return crypto.createHash('sha256')
+    .update('companion-causal-v1')
+    .update('\0')
+    .update(String(provider || 'unknown'))
+    .update('\0')
+    .update(String(taskKey || ''))
+    .update('\0')
+    .update(value)
+    .digest('hex')
+    .slice(0, 32)
+}
+
 function companionDiagnosticTaskRef(provider, taskRef) {
   if (typeof taskRef !== 'string' || !taskRef) return ''
   const digest = crypto.createHash('sha256')
@@ -11626,26 +11731,44 @@ async function preflightCompanionTaskPackage(input = {}) {
   const requested = codexRecord(input.providers)
   const providers = {
     codex: requested.codex === true && configuration.providers.codex,
-    claude: requested.claude === true && configuration.providers.claude
+    claude: requested.claude === true && configuration.providers.claude,
+    cursor: requested.cursor === true && configuration.providers.cursor
   }
   if (!configuration.enabled) throw new Error('companion-disabled')
   const reads = []
   if (providers.codex) {
     reads.push(Promise.resolve(readCodexSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true }))
       .then((result) => {
-        if (!result?.ok || !Array.isArray(result.value?.threads) || result.value.completeness !== 'verified') throw new Error('codex-task-preflight-failed')
-        return { provider: 'codex', value: result.value }
-      }))
+        if (!result?.ok || !Array.isArray(result.value?.threads) || result.value.completeness !== 'verified') {
+          return { provider: 'codex', status: 'unavailable', errorCode: 'codex-task-preflight-failed' }
+        }
+        return { provider: 'codex', status: 'ready', value: result.value }
+      }).catch(() => ({ provider: 'codex', status: 'unavailable', errorCode: 'codex-task-preflight-failed' })))
   }
   if (providers.claude) {
     reads.push(Promise.all([
       Promise.resolve(claudeBridge?.readCodeSnapshot({ now: Date.now() })),
       Promise.resolve(claudeBridge?.readCodeUnread())
     ]).then(([value, unread]) => {
-        if (!claudeBridge || !value || !Array.isArray(value.sessions) || value.truncated === true) throw new Error('claude-task-preflight-failed')
-        if (!unread || !Array.isArray(unread.ids)) throw new Error('claude-unread-preflight-failed')
-        return { provider: 'claude', value, unread }
-      }))
+        if (!claudeBridge || !value || !Array.isArray(value.sessions) || value.truncated === true) {
+          return { provider: 'claude', status: 'unavailable', errorCode: 'claude-task-preflight-failed' }
+        }
+        if (!unread || !Array.isArray(unread.ids)) {
+          return { provider: 'claude', status: 'degraded', errorCode: 'claude-unread-preflight-failed', value, unread: { ids: [], generation: 0, readAt: Date.now() } }
+        }
+        return { provider: 'claude', status: 'ready', value, unread }
+      }).catch(() => ({ provider: 'claude', status: 'unavailable', errorCode: 'claude-task-preflight-failed' })))
+  }
+  if (providers.cursor) {
+    reads.push(Promise.resolve().then(() => ({
+      inventory: cursorBridge?.readInventory?.(),
+      hooks: cursorBridge?.readHookState?.() || []
+    })).then(({ inventory, hooks }) => {
+      if (!cursorBridge || !inventory || inventory.available !== true || !Array.isArray(inventory.sessions) || inventory.truncated === true) {
+        return { provider: 'cursor', status: 'unavailable', errorCode: `cursor-${inventory?.reason || 'task-preflight-failed'}`.slice(0, 80) }
+      }
+      return { provider: 'cursor', status: 'ready', value: inventory, hooks: Array.isArray(hooks) ? hooks : [] }
+    }).catch(() => ({ provider: 'cursor', status: 'unavailable', errorCode: 'cursor-task-preflight-failed' })))
   }
   if (!reads.length) throw new Error('no-enabled-provider')
   let rows
@@ -11666,18 +11789,36 @@ async function preflightCompanionTaskPackage(input = {}) {
   const persisted = companionPersistedTaskState()
   const dynamicCutoff = Date.now() - configuration.dynamicTaskWindowHours * 60 * 60 * 1_000
   const tasks = []
-  const sourceGenerations = { codex: 0, claude: 0 }
+  const sourceGenerations = { codex: 0, claude: 0, cursor: 0 }
   const sourceLaneGenerations = {
-    codex: { membership: 0, phase: 0, unread: 0 },
-    claude: { membership: 0, phase: 0, unread: 0 }
+    codex: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 },
+    claude: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 },
+    cursor: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 }
   }
+  const providerHealth = Object.fromEntries(['codex', 'claude', 'cursor'].map((provider) => [provider, {
+    status: providers[provider] ? 'unavailable' : 'disabled',
+    generation: 0,
+    errorCode: ''
+  }]))
+  const providerTopologyComplete = { codex: false, claude: false, cursor: false }
+  const relations = []
   let order = 0
   for (const result of rows) {
+    providerHealth[result.provider] = {
+      status: result.status,
+      generation: Number(result.value?.readAt) || Date.now(),
+      errorCode: result.errorCode || ''
+    }
+    providerTopologyComplete[result.provider] = result.status !== 'unavailable'
+      && (result.provider === 'codex' || result.value?.topologyComplete === true)
+    if (result.status === 'unavailable' || !result.value) continue
     if (result.provider === 'codex') {
       sourceGenerations.codex = Number(result.value.activityGeneration) || 0
       sourceLaneGenerations.codex.membership = Number(result.value.readAt) || Date.now()
       sourceLaneGenerations.codex.phase = sourceGenerations.codex
       sourceLaneGenerations.codex.unread = sourceGenerations.codex
+      sourceLaneGenerations.codex.metadata = Number(result.value.readAt) || Date.now()
+      sourceLaneGenerations.codex.topology = sourceGenerations.codex || Number(result.value.readAt) || Date.now()
       for (const value of result.value.threads) {
         const thread = codexRecord(value)
         const key = typeof thread.key === 'string' ? thread.key : ''
@@ -11714,6 +11855,11 @@ async function preflightCompanionTaskPackage(input = {}) {
           Number(thread.createdAt) || 0
         ) >= dynamicCutoff
         const executePlanAvailable = planReady
+        const turnCausalIdentity = Number(thread.lastTurnStartedAt) || causalStatusAt
+        const originalTitle = typeof thread.displayName === 'string'
+          ? thread.displayName.slice(0, 240)
+          : typeof thread.name === 'string' ? thread.name.slice(0, 240) : 'Codex 任务'
+        const alias = persisted.aliases.get(key) || ''
         recordCompanionStateDecision('codex', key, decision, thread.lastTurnEvidence || 'inventory')
         tasks.push({
           key,
@@ -11761,7 +11907,14 @@ async function preflightCompanionTaskPackage(input = {}) {
             resume: planReady,
             executePlan: executePlanAvailable
           },
-          displayName: typeof thread.displayName === 'string' ? thread.displayName : typeof thread.name === 'string' ? thread.name : 'Codex 任务',
+          family: `codex:${key}`,
+          role: 'root',
+          standaloneEligible: true,
+          causalKey: companionCausalKey('codex', key, turnCausalIdentity),
+          causalReliable: turnCausalIdentity > 0,
+          displayName: alias || originalTitle,
+          originalTitle,
+          alias,
           ...(typeof thread.projectKey === 'string' ? { projectKey: thread.projectKey } : {}),
           ...(typeof thread.projectName === 'string' ? { projectName: thread.projectName } : {}),
           ...(thread.projectKind === 'project' || thread.projectKind === 'chats' ? { projectKind: thread.projectKind } : {}),
@@ -11783,6 +11936,7 @@ async function preflightCompanionTaskPackage(input = {}) {
       }
       continue
     }
+    if (result.provider === 'claude') {
     const unreadIds = new Set(result.unread.ids.filter((value) => typeof value === 'string'))
     companionClaudeUnreadSnapshot = {
       ids: unreadIds,
@@ -11793,6 +11947,11 @@ async function preflightCompanionTaskPackage(input = {}) {
     sourceLaneGenerations.claude.membership = Number(result.value.readAt) || Date.now()
     sourceLaneGenerations.claude.phase = Number(result.value.generation || result.value.stateGeneration) || 0
     sourceLaneGenerations.claude.unread = Number(result.unread.generation) || 0
+    sourceLaneGenerations.claude.metadata = Number(result.value.readAt) || Date.now()
+    sourceLaneGenerations.claude.topology = Math.max(
+      Number(result.value.generation || result.value.stateGeneration) || 0,
+      Number(result.value.readAt) || Date.now()
+    )
     sourceGenerations.claude = companionCounterAggregate(sourceLaneGenerations.claude)
     for (const value of result.value.sessions) {
       const session = codexRecord(value)
@@ -11825,6 +11984,11 @@ async function preflightCompanionTaskPackage(input = {}) {
         || Number(session.createdAt)
         || 0
       const phaseRevision = phaseStatusAt || Number(session.stateGeneration) || revisionAt
+      const turnCausalIdentity = Number(session.turnStartedAt) || phaseStatusAt
+      const originalTitle = typeof session.title === 'string' && session.title.trim()
+        ? session.title.trim().slice(0, 240)
+        : 'Claude 任务'
+      const alias = persisted.aliases.get(key) || ''
       tasks.push({
         key,
         provider: 'claude',
@@ -11862,8 +12026,245 @@ async function preflightCompanionTaskPackage(input = {}) {
           pause: false,
           resume: false,
           executePlan: false
-        }
+        },
+        family: `claude:${sessionId}`,
+        role: 'root',
+        standaloneEligible: true,
+        causalKey: companionCausalKey('claude', key, turnCausalIdentity),
+        causalReliable: turnCausalIdentity > 0,
+        displayName: alias || originalTitle,
+        originalTitle,
+        alias
       })
+      for (const childValue of Array.isArray(session.subagents) ? session.subagents : []) {
+        const child = codexRecord(childValue)
+        const agentId = typeof child.agentId === 'string' ? child.agentId : ''
+        const childRevision = Math.max(Number(child.startedAt) || 0, Number(child.stoppedAt) || 0)
+        if (!agentId || !childRevision) continue
+        const childKey = companionPrivateChildKey('claude', key, agentId)
+        const childPhase = child.active === true ? 'running' : 'completed'
+        tasks.push({
+          key: childKey,
+          provider: 'claude',
+          kind: 'topology-child',
+          phase: childPhase,
+          cycleTier: 'none',
+          dynamicGroup: 'none',
+          actionAlias: '',
+          revisionAt: childRevision,
+          semanticRevision: 1,
+          observationGeneration: sourceLaneGenerations.claude.topology,
+          membershipRevision: childRevision,
+          phaseRevision: childRevision,
+          unreadRevision: childRevision,
+          visibilityRevision: childRevision,
+          statusEnteredAt: childRevision,
+          turnStartedAt: Number(child.startedAt) || 0,
+          terminalAt: child.active === true ? 0 : Number(child.stoppedAt) || childRevision,
+          metadataRevision: childRevision,
+          capabilityToken: '',
+          freshness: 'fresh',
+          lastQuestionAt: Number(child.startedAt) || 0,
+          createdAt: Number(child.startedAt) || 0,
+          displayOrder: order,
+          cycleOrder: order,
+          attentionOrder: order++,
+          hidden: false,
+          unreadKnown: false,
+          unread: false,
+          planImplementation: false,
+          planReady: false,
+          planLifecycleRevision: 0,
+          paused: false,
+          turnMode: 'unknown',
+          idleConfirmed: child.active !== true,
+          localPin: false,
+          dynamicEligible: true,
+          capabilities: { open: false, archive: false, pause: false, resume: false, executePlan: false },
+          family: `claude:${sessionId}`,
+          role: 'child',
+          standaloneEligible: false,
+          causalKey: companionCausalKey('claude', childKey, Number(child.startedAt) || childRevision),
+          causalReliable: Number(child.startedAt) > 0
+        })
+        relations.push({
+          childKey,
+          parentKey: key,
+          provider: 'claude',
+          family: `claude:${sessionId}`,
+          relation: 'subagent',
+          authority: 'claude-hook',
+          exact: true,
+          generation: sourceLaneGenerations.claude.topology
+        })
+      }
+    }
+    continue
+    }
+
+    const cursorReadAt = Number(result.value.readAt) || Date.now()
+    const hooks = new Map((Array.isArray(result.hooks) ? result.hooks : [])
+      .filter((value) => value && typeof value.sessionId === 'string')
+      .map((value) => [String(value.sessionId).toLowerCase(), codexRecord(value)]))
+    sourceLaneGenerations.cursor.membership = cursorReadAt
+    sourceLaneGenerations.cursor.phase = Math.max(cursorReadAt, ...[...hooks.values()].map((value) => Number(value.lastEventAt) || 0))
+    sourceLaneGenerations.cursor.unread = cursorReadAt
+    sourceLaneGenerations.cursor.metadata = cursorReadAt
+    sourceLaneGenerations.cursor.topology = cursorReadAt
+    sourceGenerations.cursor = companionCounterAggregate(sourceLaneGenerations.cursor)
+    for (const value of result.value.sessions) {
+      const session = codexRecord(value)
+      const composerId = typeof session.composerId === 'string' ? session.composerId.toLowerCase() : ''
+      const key = composerId ? `cursor:${composerId}` : ''
+      const hook = hooks.get(composerId)
+      const phase = companionCursorPhaseDecision(session, hook)
+      const revisionAt = Math.max(
+        Number(hook?.lastEventAt) || 0,
+        Number(session.lastUpdatedAt) || 0,
+        Number(session.unfinishedRunAt) || 0,
+        Number(session.createdAt) || 0
+      )
+      if (!key || !revisionAt) continue
+      const localPin = persisted.pins.has(key)
+      const hidden = Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt
+      const statusEnteredAt = Math.max(Number(hook?.lastEventAt) || 0, Number(session.lastUpdatedAt) || 0)
+      const terminalAt = phase === 'completed' || phase === 'stopped' ? statusEnteredAt || revisionAt : 0
+      const turnCausalIdentity = typeof hook?.generationId === 'string' && hook.generationId
+        ? hook.generationId
+        : Number(hook?.turnStartedAt) || Number(session.unfinishedRunAt) || 0
+      const originalTitle = typeof session.name === 'string' && session.name.trim()
+        ? session.name.trim().slice(0, 240)
+        : typeof session.subtitle === 'string' && session.subtitle.trim()
+          ? session.subtitle.trim().slice(0, 240)
+          : 'Cursor Agent'
+      const alias = persisted.aliases.get(key) || ''
+      tasks.push({
+        key,
+        provider: 'cursor',
+        kind: localPin ? 'local-pin' : 'cursor-session',
+        phase,
+        cycleTier: 'none',
+        dynamicGroup: 'none',
+        actionAlias: composerId,
+        revisionAt,
+        semanticRevision: 1,
+        observationGeneration: sourceGenerations.cursor,
+        membershipRevision: cursorReadAt,
+        phaseRevision: statusEnteredAt || revisionAt,
+        unreadRevision: cursorReadAt,
+        visibilityRevision: revisionAt,
+        statusEnteredAt,
+        turnStartedAt: Number(session.unfinishedRunAt) || Number(hook?.turnStartedAt) || 0,
+        terminalAt,
+        metadataRevision: Number(session.lastUpdatedAt) || revisionAt,
+        capabilityToken: composerId,
+        freshness: phase === 'unknown' ? 'verifying' : 'fresh',
+        lastQuestionAt: Number(session.unfinishedRunAt) || Number(hook?.turnStartedAt) || 0,
+        createdAt: Number(session.createdAt) || 0,
+        displayOrder: order,
+        cycleOrder: order,
+        attentionOrder: order++,
+        hidden,
+        unreadKnown: true,
+        unread: session.hasUnreadMessages === true,
+        planImplementation: false,
+        planReady: false,
+        planLifecycleRevision: 0,
+        paused: false,
+        turnMode: 'unknown',
+        idleConfirmed: phase === 'completed' || phase === 'stopped',
+        localPin,
+        dynamicEligible: Math.max(Number(session.lastUpdatedAt) || 0, Number(session.unfinishedRunAt) || 0) >= dynamicCutoff,
+        capabilities: {
+          open: true,
+          archive: phase === 'completed' || phase === 'stopped',
+          pause: false,
+          resume: false,
+          executePlan: false
+        },
+        family: `cursor:${composerId}`,
+        role: 'root',
+        standaloneEligible: true,
+        causalKey: companionCausalKey('cursor', key, turnCausalIdentity),
+        causalReliable: Boolean(turnCausalIdentity),
+        displayName: alias || originalTitle,
+        originalTitle,
+        alias
+      })
+      for (const childValue of Array.isArray(session.subagents) ? session.subagents : []) {
+        const child = codexRecord(childValue)
+        const childId = typeof child.composerId === 'string' ? child.composerId : ''
+        if (!childId) continue
+        const hotChild = (Array.isArray(hook?.subagents) ? hook.subagents : [])
+          .map(codexRecord)
+          .find((candidate) => candidate.subagentId === childId
+            && (!candidate.parentConversationId || String(candidate.parentConversationId).toLowerCase() === composerId))
+        const childKey = companionPrivateChildKey('cursor', key, childId)
+        const hotRevision = Number(hotChild?.lastEventAt) || 0
+        const inventoryRevision = Number(child.unfinishedRunAt) || 0
+        const childRevision = Math.max(hotRevision, inventoryRevision, cursorReadAt)
+        const hotCurrent = hotRevision > 0 && hotRevision >= inventoryRevision
+        const childPhase = hotCurrent
+          ? hotChild.active === true ? 'running' : 'completed'
+          : inventoryRevision > 0 ? 'running' : 'completed'
+        tasks.push({
+          key: childKey,
+          provider: 'cursor',
+          kind: 'topology-child',
+          phase: childPhase,
+          cycleTier: 'none',
+          dynamicGroup: 'none',
+          actionAlias: '',
+          revisionAt: childRevision,
+          semanticRevision: 1,
+          observationGeneration: cursorReadAt,
+          membershipRevision: cursorReadAt,
+          phaseRevision: childRevision,
+          unreadRevision: cursorReadAt,
+          visibilityRevision: cursorReadAt,
+          statusEnteredAt: childRevision,
+          turnStartedAt: Number(hotChild?.startedAt) || inventoryRevision,
+          terminalAt: childPhase === 'running' ? 0 : Number(hotChild?.stoppedAt) || childRevision,
+          metadataRevision: cursorReadAt,
+          capabilityToken: '',
+          freshness: 'fresh',
+          lastQuestionAt: Number(child.unfinishedRunAt) || 0,
+          createdAt: 0,
+          displayOrder: order,
+          cycleOrder: order,
+          attentionOrder: order++,
+          hidden: false,
+          unreadKnown: false,
+          unread: false,
+          planImplementation: false,
+          planReady: false,
+          planLifecycleRevision: 0,
+          paused: false,
+          turnMode: 'unknown',
+          idleConfirmed: childPhase !== 'running',
+          localPin: false,
+          dynamicEligible: true,
+          capabilities: { open: false, archive: false, pause: false, resume: false, executePlan: false },
+          family: `cursor:${composerId}`,
+          role: 'child',
+          standaloneEligible: false,
+          causalKey: companionCausalKey('cursor', childKey,
+            typeof hotChild?.generationId === 'string' && hotChild.generationId
+              ? hotChild.generationId
+              : Number(hotChild?.startedAt) || inventoryRevision || childRevision),
+          causalReliable: Boolean(hotChild?.generationId || hotChild?.startedAt || inventoryRevision)
+        })
+        relations.push({
+          childKey,
+          parentKey: key,
+          provider: 'cursor',
+          family: `cursor:${composerId}`,
+          relation: 'subagent',
+          authority: 'cursor-inventory',
+          exact: true,
+          generation: cursorReadAt
+        })
+      }
     }
   }
   tasks.sort((left, right) => right.lastQuestionAt - left.lastQuestionAt
@@ -11885,9 +12286,9 @@ async function preflightCompanionTaskPackage(input = {}) {
     details: { providers, sourceGenerations, sourceLaneGenerations, taskCount: tasks.length }
   })
   return {
-    schema: 'companion-task-draft-v4',
+    schema: 'companion-task-draft-v5',
     producer: 'host-preflight',
-    sourceTaskStateRevision: 'task-state-v10:cold-preflight',
+    sourceTaskStateRevision: 'task-state-v11:cold-preflight',
     draftRevision: ++companionPreflightDraftSequence,
     acceptedAt: Date.now(),
     enabled: true,
@@ -11896,51 +12297,91 @@ async function preflightCompanionTaskPackage(input = {}) {
     focusedKey: '',
     sourceGenerations,
     sourceLaneGenerations,
-    tasks
+    providerHealth,
+    evidenceBatches: Object.fromEntries(['codex', 'claude', 'cursor'].map((provider) => {
+      const available = providers[provider] === true && providerHealth[provider].status !== 'unavailable'
+      const topologyComplete = available && providerTopologyComplete[provider] === true
+      const channels = Object.fromEntries(['membership', 'phase', 'unread', 'metadata', 'topology'].map((channel) => [channel, {
+        mode: channel === 'topology'
+          ? topologyComplete ? 'snapshot' : 'delta'
+          : available ? 'snapshot' : 'delta',
+        complete: channel === 'topology' ? topologyComplete : available,
+        generation: Number(sourceLaneGenerations[provider][channel]) || 0,
+        removedKeys: []
+      }]))
+      return [provider, {
+        revision: 'companion-provider-evidence-batch-v1',
+        provider,
+        channels,
+        nodes: tasks.filter((task) => task.provider === provider).map((task) => ({
+          key: task.key,
+          provider,
+          family: task.family,
+          role: task.role,
+          phase: task.phase,
+          unread: { known: task.unreadKnown === true, value: task.unread === true },
+          causalKey: task.causalKey || '',
+          causalReliable: task.causalReliable === true,
+          standaloneEligible: task.standaloneEligible !== false,
+          capabilities: Object.entries(task.capabilities || {}).filter(([, enabled]) => enabled === true).map(([name]) => name)
+        })),
+        relations: relations.filter((relation) => relation.provider === provider),
+        relationMode: topologyComplete ? 'snapshot' : 'delta',
+        relationsComplete: topologyComplete,
+        removedRelationChildKeys: [],
+        health: providerHealth[provider].status === 'ready' || providerHealth[provider].status === 'degraded'
+          ? providerHealth[provider].status
+          : 'unavailable'
+      }]
+    })),
+    tasks,
+    relations
   }
 }
 
-companionTaskKernel = typeof createCompanionTaskKernel === 'function'
+const companionHostRegistry = createCompanionHostRegistry?.({
+  codex: {
+    inspect: inspectCodexEnvironment,
+    open: openCompanionCodexTarget,
+    executePlan: executeCompanionCodexPlan,
+    archive: (target, request) => archiveCodexThread(target.actionAlias, {
+      ...(target.archiveRequest || {}),
+      operationId: request?.operationId,
+      source: request?.source,
+      requestedRevisionAt: request?.revisionAt,
+      intentRecorded: request?.intentRecorded === true,
+      confirmationRecorded: request?.confirmationRecorded === true
+    }),
+    close: () => undefined
+  },
+  claude: {
+    inspect: () => claudeBridge ? claudeBridge.inspect() : claudeUnavailable('environment'),
+    open: openCompanionClaudeTarget,
+    archive: (target) => claudeBridge
+      ? claudeBridge.archiveCodeSession(target.actionAlias)
+      : Promise.resolve(claudeUnavailable('archive')),
+    close: () => undefined
+  },
+  cursor: {
+    inspect: () => cursorBridge ? cursorBridge.inspect() : cursorUnavailable('environment'),
+    open: openCompanionCursorTarget,
+    archive: (target) => cursorBridge
+      ? cursorBridge.archiveTask(String(target.actionAlias
+        || (typeof target.key === 'string' && target.key.startsWith('cursor:') ? target.key.slice('cursor:'.length) : '')))
+      : Promise.resolve(cursorUnavailable('archive')),
+    close: () => undefined
+  }
+})
+
+companionTaskKernel = typeof createCompanionTaskKernel === 'function' && companionHostRegistry
   ? createCompanionTaskKernel({
       initialConfiguration: companionTaskConfiguration(),
       initialPauseReceipts: readCompanionPlanPauseReceipts(),
       persistPlanPause: persistCompanionPlanPause,
       migrateHiddenPlan: migrateHiddenCompanionPlan,
+      applyPreference: persistCompanionPreference,
       preflight: preflightCompanionTaskPackage,
-      adapters: {
-        codex: {
-          inspect: inspectCodexEnvironment,
-          open: openCompanionCodexTarget,
-          executePlan: executeCompanionCodexPlan,
-          archive: (target, request) => archiveCodexThread(target.actionAlias, {
-            ...(target.archiveRequest || {}),
-            operationId: request?.operationId,
-            source: request?.source,
-            requestedRevisionAt: request?.revisionAt,
-            intentRecorded: request?.intentRecorded === true,
-            confirmationRecorded: request?.confirmationRecorded === true
-          }),
-          close: () => undefined
-        },
-        claude: {
-          inspect: () => claudeBridge ? claudeBridge.inspect() : claudeUnavailable('environment'),
-          open: openCompanionClaudeTarget,
-          archive: (target) => claudeBridge
-            ? claudeBridge.archiveCodeSession(target.actionAlias)
-            : Promise.resolve(claudeUnavailable('archive')),
-          close: () => undefined
-        },
-        // Auxiliary open-only lane: cursor rows never publish kernel evidence,
-        // but previous/next selected targets still dispatch through here.
-        cursor: {
-          inspect: () => cursorBridge ? cursorBridge.inspect() : cursorUnavailable('environment'),
-          open: (target) => cursorBridge
-            ? cursorBridge.openTask(String(target.actionAlias
-              || (typeof target.key === 'string' && target.key.startsWith('cursor:') ? target.key.slice('cursor:'.length) : '')))
-            : Promise.resolve(cursorUnavailable('open')),
-          close: () => undefined
-        }
-      },
+      hostRegistry: companionHostRegistry,
       notify: (message) => {
         try { globalThis.utools?.showNotification?.(String(message || '')) } catch {}
       },
@@ -11962,6 +12403,8 @@ const companionHostReconcilePendingProviders = new Set()
 let companionClaudeStateDispose = null
 let companionClaudeInventoryDispose = null
 let companionClaudeUnreadDispose = null
+let companionCursorEventDispose = null
+let companionCursorInventoryDispose = null
 let companionClaudeUnreadSnapshot = { ids: new Set(), generation: 0, readAt: 0, available: false }
 
 /**
@@ -11979,25 +12422,64 @@ function companionCounterAggregate(lanes) {
 function publishCompanionHostTasks(tasks, input = {}) {
   const current = companionTaskKernel?.getPackage?.()
   if (!current?.complete || !companionTaskKernel?.publishEvidence) return false
-  const currentLanes = current.sourceLaneGenerations || {
-    codex: { membership: 0, phase: current.sourceGenerations.codex, unread: current.sourceGenerations.codex },
-    claude: { membership: 0, phase: current.sourceGenerations.claude, unread: current.sourceGenerations.claude }
-  }
+  const providers = ['codex', 'claude', 'cursor']
+  const channels = ['membership', 'phase', 'unread', 'metadata', 'topology']
+  const currentLanes = current.sourceLaneGenerations || Object.fromEntries(providers.map((provider) => [provider, {
+    membership: 0,
+    phase: Number(current.sourceGenerations?.[provider]) || 0,
+    unread: Number(current.sourceGenerations?.[provider]) || 0,
+    metadata: 0,
+    topology: 0
+  }]))
   const requestedLanes = codexRecord(input.sourceLaneGenerations)
-  const laneGenerations = {
-    codex: {
-      membership: Number(codexRecord(requestedLanes.codex).membership) || currentLanes.codex.membership,
-      phase: Number(codexRecord(requestedLanes.codex).phase) || currentLanes.codex.phase,
-      unread: Number(codexRecord(requestedLanes.codex).unread) || currentLanes.codex.unread
-    },
-    claude: {
-      membership: Number(codexRecord(requestedLanes.claude).membership) || currentLanes.claude.membership,
-      phase: Number(codexRecord(requestedLanes.claude).phase) || currentLanes.claude.phase,
-      unread: Number(codexRecord(requestedLanes.claude).unread) || currentLanes.claude.unread
+  const laneGenerations = Object.fromEntries(providers.map((provider) => {
+    const requested = codexRecord(requestedLanes[provider])
+    return [provider, Object.fromEntries(channels.map((channel) => [
+      channel,
+      Number(requested[channel]) || Number(currentLanes?.[provider]?.[channel]) || 0
+    ]))]
+  }))
+  const requestedBatches = codexRecord(input.evidenceBatches)
+  const removedKeys = codexRecord(input.removedKeys)
+  const evidenceBatches = Object.fromEntries(providers.map((provider) => {
+    const explicit = codexRecord(requestedBatches[provider])
+    if (explicit.revision === 'companion-provider-evidence-batch-v1' && explicit.provider === provider) {
+      return [provider, explicit]
     }
-  }
+    return [provider, {
+      revision: 'companion-provider-evidence-batch-v1',
+      provider,
+      channels: Object.fromEntries(channels.map((channel) => [channel, {
+        mode: 'delta',
+        complete: false,
+        generation: Number(laneGenerations[provider][channel]) || 0,
+        removedKeys: channel === 'membership' && Array.isArray(removedKeys[provider])
+          ? removedKeys[provider]
+          : []
+      }])),
+      nodes: (Array.isArray(tasks) ? tasks : []).filter((task) => task?.provider === provider).map((task) => ({
+        key: task.key,
+        provider,
+        family: task.family || `${provider}:${task.key}`,
+        role: task.role === 'child' ? 'child' : 'root',
+        phase: task.phase,
+        unread: { known: task.unreadKnown === true, value: task.unread === true },
+        causalKey: task.causalKey || '',
+        causalReliable: task.causalReliable === true,
+        standaloneEligible: task.standaloneEligible !== false,
+        capabilities: Object.entries(task.capabilities || {}).filter(([, enabled]) => enabled === true).map(([name]) => name)
+      })),
+      relations: (Array.isArray(input.relations) ? input.relations : []).filter((relation) => relation?.provider === provider),
+      relationMode: 'delta',
+      relationsComplete: false,
+      removedRelationChildKeys: [],
+      health: current.providerHealth?.[provider]?.status === 'ready' || current.providerHealth?.[provider]?.status === 'degraded'
+        ? current.providerHealth[provider].status
+        : 'unavailable'
+    }]
+  }))
   const next = companionTaskKernel.publishEvidence({
-    schema: 'companion-task-draft-v4',
+    schema: 'companion-task-draft-v5',
     producer: 'host-evidence',
     sourceTaskStateRevision: current.sourceTaskStateRevision,
     draftRevision: ++companionHostDraftSequence,
@@ -12006,12 +12488,17 @@ function publishCompanionHostTasks(tasks, input = {}) {
     providers: current.providers,
     complete: true,
     focusedKey: current.focusedKey,
-    sourceGenerations: {
-      codex: Math.max(current.sourceGenerations.codex, companionCounterAggregate(laneGenerations.codex)),
-      claude: Math.max(current.sourceGenerations.claude, companionCounterAggregate(laneGenerations.claude))
-    },
+    sourceGenerations: Object.fromEntries(providers.map((provider) => [provider, Math.max(
+      Number(current.sourceGenerations?.[provider]) || 0,
+      companionCounterAggregate(laneGenerations[provider])
+    )])),
     sourceLaneGenerations: laneGenerations,
-    tasks
+    providerHealth: input.providerHealth && typeof input.providerHealth === 'object'
+      ? input.providerHealth
+      : current.providerHealth,
+    evidenceBatches,
+    tasks,
+    ...(Array.isArray(input.relations) ? { relations: input.relations } : {})
   })
   return Boolean(next)
 }
@@ -12183,6 +12670,7 @@ function applyCodexActivityToCompanionKernel(delta) {
   const phaseMatchedKeys = new Set()
   const unreadMatchedKeys = new Set()
   const tasks = []
+  const persisted = companionPersistedTaskState()
   for (const task of current.tasks) {
     if (task.provider !== 'codex') {
       tasks.push(task)
@@ -12237,6 +12725,10 @@ function applyCodexActivityToCompanionKernel(delta) {
       Number(entry.lastTurnStartedAt) || 0,
       Number(entry.updatedAt) || 0
     )
+    const causalIdentity = Number(entry.lastTurnStartedAt)
+      || Number(entry.waitingSince)
+      || Number(entry.lastTurnCompletedAt)
+      || 0
     const revisionAt = phaseChanged || unreadChanged ? Math.max(task.revisionAt, evidenceRevision) : task.revisionAt
     const phaseEnteredAt = Number(entry.waitingSince)
       || Number(entry.lastTurnCompletedAt)
@@ -12278,7 +12770,11 @@ function applyCodexActivityToCompanionKernel(delta) {
         archive: acceptPhaseForTask
           ? task.capabilities.archive && (phase === 'completed' || phase === 'stopped')
           : task.capabilities.archive
-      }
+      },
+      ...(acceptPhaseForTask && causalIdentity ? {
+        causalKey: companionCausalKey('codex', task.key, causalIdentity),
+        causalReliable: true
+      } : {})
     }
     if (phaseChanged || unreadChanged) changed = true
     if (decision && phase !== task.phase) {
@@ -12322,10 +12818,17 @@ function applyCodexActivityToCompanionKernel(delta) {
         || Number(entry.lastTurnStartedAt)
         || liveTransitionAt
         || 0
+      const localPin = persisted.pins.has(key)
+      const hidden = Number(persisted.receipts.get(key)?.dismissedActivityRecency) >= revisionAt
+      const originalTitle = typeof entry.displayName === 'string' && entry.displayName
+        ? entry.displayName.slice(0, 240)
+        : '新 Codex 任务'
+      const alias = persisted.aliases.get(key) || ''
+      const causalIdentity = Number(entry.lastTurnStartedAt) || statusEnteredAt
       tasks.push({
         key,
         provider: 'codex',
-        kind: 'codex-thread',
+        kind: localPin ? 'local-pin' : 'codex-thread',
         phase,
         cycleTier: 'none',
         dynamicGroup: 'none',
@@ -12350,7 +12853,7 @@ function applyCodexActivityToCompanionKernel(delta) {
         displayOrder: tasks.length,
         cycleOrder: tasks.length,
         attentionOrder: tasks.length,
-        hidden: false,
+        hidden,
         unreadKnown,
         unread,
         planImplementation: entry.planImplementationOnly === true,
@@ -12359,10 +12862,17 @@ function applyCodexActivityToCompanionKernel(delta) {
         paused: false,
         turnMode: entry.turnMode === 'plan' || entry.turnMode === 'default' ? entry.turnMode : 'unknown',
         idleConfirmed: entry.idleConfirmed === true,
-        localPin: false,
+        localPin,
         dynamicEligible: statusEnteredAt > 0,
         capabilities: { open: true, archive: false, pause: true, resume: true, executePlan: false },
-        displayName: typeof entry.displayName === 'string' ? entry.displayName : '新 Codex 任务',
+        family: `codex:${key}`,
+        role: 'root',
+        standaloneEligible: true,
+        causalKey: companionCausalKey('codex', key, causalIdentity),
+        causalReliable: causalIdentity > 0,
+        displayName: alias || originalTitle,
+        originalTitle,
+        alias,
         ...(typeof entry.projectKey === 'string' ? { projectKey: entry.projectKey } : {}),
         ...(typeof entry.projectName === 'string' ? { projectName: entry.projectName } : {}),
         ...(entry.projectKind === 'project' || entry.projectKind === 'chats' ? { projectKind: entry.projectKind } : {})
@@ -12378,6 +12888,7 @@ function applyCodexActivityToCompanionKernel(delta) {
   }
   const published = publishCompanionHostTasks(tasks, {
     acceptedAt: source.receivedAt,
+    removedKeys: { codex: [...archived] },
     sourceLaneGenerations: {
       codex: {
         ...(phaseMatched ? { phase: generation } : {}),
@@ -12481,6 +12992,11 @@ function applyClaudeStateToCompanionKernel() {
         ? [Number(session.phaseUpdatedAt) || 0, Number(session.turnStartedAt) || 0, Number(session.lastStopAt) || 0]
         : [])
     )
+    const causalIdentity = Number(session.turnStartedAt)
+      || Number(session.waitingApprovalAt)
+      || Number(session.waitingInputAt)
+      || Number(session.lastStopAt)
+      || 0
     const next = {
       ...task,
       phase,
@@ -12493,7 +13009,11 @@ function applyClaudeStateToCompanionKernel() {
       capabilities: {
         ...task.capabilities,
         archive
-      }
+      },
+      ...(causalIdentity ? {
+        causalKey: companionCausalKey('claude', task.key, causalIdentity),
+        causalReliable: true
+      } : {})
     }
     if (semanticChanged) {
       changed = true
@@ -12658,7 +13178,9 @@ function companionTaskFromClaudeSession(sessionValue, previous, acceptedAt) {
     : previous?.phase || 'unknown'
   const decision = companionClaudePhaseDecision(sourcePhase, unread)
   const phase = decision.phase
-  const localPin = previous?.localPin === true
+  const key = `claude:${sessionId}`
+  const persisted = previous ? null : companionPersistedTaskState()
+  const localPin = previous?.localPin === true || persisted?.pins.has(key) === true
   const phaseChanged = !previous || phase !== previous.phase
   const phaseStatusAt = Number(session.waitingApprovalAt)
     || Number(session.waitingInputAt)
@@ -12683,12 +13205,16 @@ function companionTaskFromClaudeSession(sessionValue, previous, acceptedAt) {
     || dynamicEligible !== previous.dynamicEligible
     || sessionId !== previous.actionAlias
   const revisionAt = semanticChanged ? Math.max(Number(previous?.revisionAt) || 0, evidenceRevision) : previous.revisionAt
+  const originalTitle = typeof session.title === 'string' && session.title.trim()
+    ? session.title.trim().slice(0, 240)
+    : previous?.originalTitle || 'Claude 任务'
+  const alias = previous?.alias || persisted?.aliases.get(key) || ''
   if (!previous || phase !== previous.phase) {
     recordCompanionStateDecision('claude', `claude:${sessionId}`, decision, unread ? 'native-unread' : session.stateSource || 'provider-state')
   }
   return {
     ...(previous || {}),
-    key: `claude:${sessionId}`,
+    key,
     provider: 'claude',
     kind: localPin ? 'local-pin' : 'claude-session',
     phase,
@@ -12708,7 +13234,8 @@ function companionTaskFromClaudeSession(sessionValue, previous, acceptedAt) {
     displayOrder: previous?.displayOrder || 0,
     cycleOrder: previous?.cycleOrder || 0,
     attentionOrder: previous?.attentionOrder || 0,
-    hidden: false,
+    hidden: previous?.hidden === true
+      || Number(persisted?.receipts.get(key)?.dismissedActivityRecency) >= revisionAt,
     unread,
     unreadKnown,
     planImplementation: false,
@@ -12725,7 +13252,15 @@ function companionTaskFromClaudeSession(sessionValue, previous, acceptedAt) {
       pause: false,
       resume: false,
       executePlan: false
-    }
+    },
+    family: `claude:${sessionId}`,
+    role: 'root',
+    standaloneEligible: true,
+    causalKey: companionCausalKey('claude', key, Number(session.turnStartedAt) || phaseStatusAt),
+    causalReliable: Boolean(Number(session.turnStartedAt) || phaseStatusAt),
+    displayName: alias || originalTitle,
+    originalTitle,
+    alias
   }
 }
 
@@ -12772,6 +13307,7 @@ function applyClaudeInventoryDeltaToCompanionKernel(delta) {
   const tasks = [...byKey.values()]
   const published = exact && publishCompanionHostTasks(tasks, {
     acceptedAt,
+    removedKeys: { claude: [...removedKeys] },
     sourceLaneGenerations: { claude: { membership: acceptedAt } }
   })
   if (!exact) queueCompanionHostReconciliation('claude')
@@ -12814,7 +13350,7 @@ function applyClaudeInventoryDeltaToCompanionKernel(delta) {
 
 function queueCompanionHostReconciliation(provider = '') {
   if (!companionTaskKernel) return
-  const requestedProvider = provider === 'codex' || provider === 'claude' ? provider : ''
+  const requestedProvider = provider === 'codex' || provider === 'claude' || provider === 'cursor' ? provider : ''
   if (companionHostReconcileInFlight) {
     companionHostReconcilePendingProviders.add(requestedProvider)
     recordCompanionProbeGate('reconciliation-gate', 'coalesced', {
@@ -12828,7 +13364,11 @@ function queueCompanionHostReconciliation(provider = '') {
     .then(() => {
       const current = companionTaskKernel.getPackage()
       const requestedProviders = requestedProvider
-        ? { codex: requestedProvider === 'codex', claude: requestedProvider === 'claude' }
+        ? {
+            codex: requestedProvider === 'codex',
+            claude: requestedProvider === 'claude',
+            cursor: requestedProvider === 'cursor'
+          }
         : current.providers
       return preflightCompanionTaskPackage({ providers: requestedProviders }).then((draft) => {
         if (!requestedProvider) return draft
@@ -12854,6 +13394,44 @@ function queueCompanionHostReconciliation(provider = '') {
             ...current.sourceLaneGenerations,
             [requestedProvider]: draft.sourceLaneGenerations[requestedProvider]
           },
+          providerHealth: {
+            ...current.providerHealth,
+            [requestedProvider]: draft.providerHealth[requestedProvider]
+          },
+          evidenceBatches: Object.fromEntries(['codex', 'claude', 'cursor'].map((providerId) => [
+            providerId,
+            providerId === requestedProvider
+              ? draft.evidenceBatches[providerId]
+              : {
+                  revision: 'companion-provider-evidence-batch-v1',
+                  provider: providerId,
+                  channels: Object.fromEntries(['membership', 'phase', 'unread', 'metadata', 'topology'].map((channel) => [channel, {
+                    mode: 'delta',
+                    complete: false,
+                    generation: Number(current.sourceLaneGenerations?.[providerId]?.[channel]) || 0,
+                    removedKeys: []
+                  }])),
+                  nodes: current.tasks.filter((task) => task.provider === providerId).map((task) => ({
+                    key: task.key,
+                    provider: providerId,
+                    family: `${providerId}:${task.key}`,
+                    role: 'root',
+                    phase: task.phase,
+                    unread: { known: task.unreadKnown === true, value: task.unread === true },
+                    causalKey: '',
+                    causalReliable: false,
+                    standaloneEligible: true,
+                    capabilities: Object.entries(task.capabilities || {}).filter(([, enabled]) => enabled === true).map(([name]) => name)
+                  })),
+                  relations: [],
+                  relationMode: 'delta',
+                  relationsComplete: false,
+                  removedRelationChildKeys: [],
+                  health: current.providerHealth?.[providerId]?.status === 'ready' || current.providerHealth?.[providerId]?.status === 'degraded'
+                    ? current.providerHealth[providerId].status
+                    : 'unavailable'
+                }
+          ])),
           tasks: [...otherTasks, ...providerTasks]
         }
       })
@@ -12907,6 +13485,8 @@ if (companionTaskKernel) {
   try { companionClaudeStateDispose = claudeBridge?.watchCodeState?.(() => applyClaudeStateToCompanionKernel()) || null } catch {}
   try { companionClaudeInventoryDispose = claudeBridge?.watchCodeSessions?.((delta) => applyClaudeInventoryDeltaToCompanionKernel(delta)) || null } catch {}
   try { companionClaudeUnreadDispose = claudeBridge?.watchCodeUnread?.(() => { void applyClaudeUnreadToCompanionKernel() }) || null } catch {}
+  try { companionCursorEventDispose = cursorBridge?.watchEvents?.(() => queueCompanionHostReconciliation('cursor')) || null } catch {}
+  try { companionCursorInventoryDispose = cursorBridge?.watchInventory?.(() => queueCompanionHostReconciliation('cursor')) || null } catch {}
 }
 
 function runtimeIdentityHandshake(input = {}) {
@@ -12915,17 +13495,30 @@ function runtimeIdentityHandshake(input = {}) {
     hostAssetId: typeof runtimeIdentityArtifact?.hostAssetId === 'string' ? runtimeIdentityArtifact.hostAssetId : '',
     rendererAssetId: typeof runtimeIdentityArtifact?.rendererAssetId === 'string' ? runtimeIdentityArtifact.rendererAssetId : '',
     kernelRevision: companionTaskKernel?.revision || '',
-    taskPackageRevision: companionTaskKernel?.packageRevision || ''
+    registryRevision: companionTaskKernel?.registryRevision || '',
+    topologyRevision: companionTaskKernel?.topologyRevision || '',
+    taskPackageRevision: companionTaskKernel?.packageRevision || '',
+    commandRevision: companionTaskKernel?.commandRevision || '',
+    subscribeRevision: companionTaskKernel?.subscribeRevision || '',
+    ackRevision: companionTaskKernel?.ackRevision || ''
   }
   const expectation = {
     hostAssetId: typeof expected.hostAssetId === 'string' ? expected.hostAssetId : '',
     rendererAssetId: typeof expected.rendererAssetId === 'string' ? expected.rendererAssetId : '',
     kernelRevision: typeof expected.kernelRevision === 'string' ? expected.kernelRevision : '',
-    taskPackageRevision: typeof expected.taskPackageRevision === 'string' ? expected.taskPackageRevision : ''
+    registryRevision: typeof expected.registryRevision === 'string' ? expected.registryRevision : '',
+    topologyRevision: typeof expected.topologyRevision === 'string' ? expected.topologyRevision : '',
+    taskPackageRevision: typeof expected.taskPackageRevision === 'string' ? expected.taskPackageRevision : '',
+    commandRevision: typeof expected.commandRevision === 'string' ? expected.commandRevision : '',
+    subscribeRevision: typeof expected.subscribeRevision === 'string' ? expected.subscribeRevision : '',
+    ackRevision: typeof expected.ackRevision === 'string' ? expected.ackRevision : ''
   }
   runtimeIdentityCompatible = runtimeIdentityArtifact?.revision === RUNTIME_IDENTITY_REVISION
     && runtimeIdentityArtifact?.artifactState === 'artifact-ready'
     && Object.keys(actual).every((key) => actual[key] && actual[key] === expectation[key])
+    && typeof companionTaskKernel?.dispatchCommand === 'function'
+    && typeof companionTaskKernel?.subscribe === 'function'
+    && typeof companionTaskKernel?.acknowledge === 'function'
   const result = {
     revision: RUNTIME_IDENTITY_REVISION,
     status: runtimeIdentityCompatible ? 'host-loaded' : 'reload-required',
@@ -12958,8 +13551,18 @@ function runtimeIdentityHandshake(input = {}) {
         expectedRendererAssetId: expectation.rendererAssetId,
         actualKernelRevision: actual.kernelRevision,
         expectedKernelRevision: expectation.kernelRevision,
+        actualRegistryRevision: actual.registryRevision,
+        expectedRegistryRevision: expectation.registryRevision,
+        actualTopologyRevision: actual.topologyRevision,
+        expectedTopologyRevision: expectation.topologyRevision,
         actualTaskPackageRevision: actual.taskPackageRevision,
         expectedTaskPackageRevision: expectation.taskPackageRevision,
+        actualCommandRevision: actual.commandRevision,
+        expectedCommandRevision: expectation.commandRevision,
+        actualSubscribeRevision: actual.subscribeRevision,
+        expectedSubscribeRevision: expectation.subscribeRevision,
+        actualAckRevision: actual.ackRevision,
+        expectedAckRevision: expectation.ackRevision,
         artifactState: runtimeIdentityArtifact?.artifactState || 'missing'
       }
     })
@@ -13031,9 +13634,13 @@ if (globalThis.utools && typeof globalThis.utools.onPluginOut === 'function') {
       try { companionClaudeStateDispose?.() } catch {}
       try { companionClaudeInventoryDispose?.() } catch {}
       try { companionClaudeUnreadDispose?.() } catch {}
+      try { companionCursorEventDispose?.() } catch {}
+      try { companionCursorInventoryDispose?.() } catch {}
       companionClaudeStateDispose = null
       companionClaudeInventoryDispose = null
       companionClaudeUnreadDispose = null
+      companionCursorEventDispose = null
+      companionCursorInventoryDispose = null
       closeCodexInventoryMembershipWatchers()
       companionTaskKernel?.close()
       shutdownCodexEnvironmentActions()
@@ -14239,6 +14846,42 @@ function installCodexActionRunnerIpc() {
 
 installCodexActionRunnerIpc()
 
+function publicClaudeTaskSnapshot(value) {
+  if (!value || typeof value !== 'object') return value
+  const { topologyComplete: _topologyComplete, ...snapshot } = value
+  return {
+    ...snapshot,
+    sessions: (Array.isArray(value.sessions) ? value.sessions : []).map((session) => {
+      if (!session || typeof session !== 'object') return session
+      const { subagents: _subagents, topologyComplete: _sessionTopologyComplete, ...publicSession } = session
+      return publicSession
+    })
+  }
+}
+
+function publicClaudeMutationDelta(value) {
+  if (!value || typeof value !== 'object' || !Array.isArray(value.mutations)) return value
+  return {
+    ...value,
+    mutations: value.mutations.map((mutation) => mutation && typeof mutation === 'object' && mutation.session
+      ? { ...mutation, session: publicClaudeTaskSnapshot({ sessions: [mutation.session] })?.sessions?.[0] }
+      : mutation)
+  }
+}
+
+function publicCursorTaskSnapshot(value) {
+  if (!value || typeof value !== 'object') return value
+  const { topologyComplete: _topologyComplete, ...snapshot } = value
+  return {
+    ...snapshot,
+    sessions: (Array.isArray(value.sessions) ? value.sessions : []).map((session) => {
+      if (!session || typeof session !== 'object') return session
+      const { subagents: _subagents, ...publicSession } = session
+      return publicSession
+    })
+  }
+}
+
 window.eypcPlatform = {
   diagnostics: {
     revision: runtimeDiagnostics.revision,
@@ -14257,7 +14900,12 @@ window.eypcPlatform = {
       hostAssetId: runtimeIdentityArtifact?.hostAssetId || '',
       rendererAssetId: runtimeIdentityArtifact?.rendererAssetId || '',
       kernelRevision: companionTaskKernel?.revision || '',
+      registryRevision: companionTaskKernel?.registryRevision || '',
+      topologyRevision: companionTaskKernel?.topologyRevision || '',
       taskPackageRevision: companionTaskKernel?.packageRevision || '',
+      commandRevision: companionTaskKernel?.commandRevision || '',
+      subscribeRevision: companionTaskKernel?.subscribeRevision || '',
+      ackRevision: companionTaskKernel?.ackRevision || '',
       loadError: runtimeIdentityLoadError
     }),
     handshake: runtimeIdentityHandshake
@@ -14301,10 +14949,10 @@ window.eypcPlatform = {
     // exposed: a long-lived stale preload degrades this lane instead of
     // reintroducing Cowork or CLI-only cards.
     readCodeSnapshot: (...args) => claudeBridge
-      ? claudeBridge.readCodeSnapshot(...args)
+      ? Promise.resolve(claudeBridge.readCodeSnapshot(...args)).then(publicClaudeTaskSnapshot)
       : { version: 2, revision: '', sessions: [], truncated: false, readAt: Date.now() },
     readCodeStateSnapshot: (...args) => claudeBridge
-      ? claudeBridge.readCodeStateSnapshot(...args)
+      ? Promise.resolve(claudeBridge.readCodeStateSnapshot(...args)).then(publicClaudeTaskSnapshot)
       : {
           version: 2,
           revision: '',
@@ -14322,7 +14970,9 @@ window.eypcPlatform = {
     // treats as "no freshness source", not as an error.
     readPlanUsage: (...args) => claudeBridge ? claudeBridge.readPlanUsage(...args) : null,
     readCodeUnread: (...args) => claudeBridge ? claudeBridge.readCodeUnread(...args) : Promise.resolve(null),
-    watchCodeSessions: (...args) => claudeBridge ? claudeBridge.watchCodeSessions(...args) : (() => {}),
+    watchCodeSessions: (listener) => claudeBridge
+      ? claudeBridge.watchCodeSessions((delta) => listener?.(publicClaudeMutationDelta(delta)))
+      : (() => {}),
     watchCodeState: (...args) => claudeBridge ? claudeBridge.watchCodeState(...args) : (() => {}),
     watchCodeUnread: (...args) => claudeBridge ? claudeBridge.watchCodeUnread(...args) : (() => {}),
     // Push lane for hook-queue appends. Returns a disposer in every case, so a
@@ -14349,9 +14999,16 @@ window.eypcPlatform = {
   },
   cursor: {
     inspect: () => cursorBridge ? cursorBridge.inspect() : cursorUnavailable('environment'),
-    readInventory: () => cursorBridge ? cursorBridge.readInventory() : cursorUnavailable('inventory'),
+    readInventory: () => cursorBridge
+      ? Promise.resolve(cursorBridge.readInventory()).then(publicCursorTaskSnapshot)
+      : cursorUnavailable('inventory'),
     readHookState: () => cursorBridge && typeof cursorBridge.readHookState === 'function'
-      ? cursorBridge.readHookState()
+      ? cursorBridge.readHookState().map((value) => ({
+          sessionId: typeof value?.sessionId === 'string' ? value.sessionId : '',
+          phase: typeof value?.phase === 'string' ? value.phase : '',
+          turnOpen: value?.turnOpen === true,
+          lastEventAt: Number(value?.lastEventAt) || 0
+        })).filter((value) => value.sessionId)
       : [],
     watchEvents: (...args) => cursorBridge && typeof cursorBridge.watchEvents === 'function'
       ? cursorBridge.watchEvents(...args)
@@ -14377,37 +15034,38 @@ window.eypcPlatform = {
     close: () => { if (cursorBridge) cursorBridge.close() }
   },
   companionKernel: companionTaskKernel
-    ? {
+      ? {
         revision: companionTaskKernel.revision,
         packageRevision: companionTaskKernel.packageRevision,
+        registryRevision: companionTaskKernel.registryRevision,
+        topologyRevision: companionTaskKernel.topologyRevision,
+        commandRevision: companionTaskKernel.commandRevision,
+        subscribeRevision: companionTaskKernel.subscribeRevision,
+        ackRevision: companionTaskKernel.ackRevision,
         attach: (...args) => runtimeIdentityCompatible
           ? companionTaskKernel.attach(...args)
           : {
               revision: companionTaskKernel.revision,
               packageRevision: companionTaskKernel.packageRevision,
+              registryRevision: companionTaskKernel.registryRevision,
+              topologyRevision: companionTaskKernel.topologyRevision,
+              commandRevision: companionTaskKernel.commandRevision,
+              subscribeRevision: companionTaskKernel.subscribeRevision,
+              ackRevision: companionTaskKernel.ackRevision,
               lease: 0,
               retained: false,
               ready: false,
-              package: companionTaskKernel.getPackage(),
+              package: companionTaskKernel.getLatest(),
               errorCode: 'reload-required'
             },
         configure: (...args) => runtimeIdentityCompatible ? companionTaskKernel.configure(...args) : null,
-        setVisibility: (...args) => runtimeIdentityCompatible ? companionTaskKernel.setVisibility(...args) : null,
-        setLocalPin: (...args) => runtimeIdentityCompatible ? companionTaskKernel.setLocalPin(...args) : null,
-        publishAuxiliaryCycleTasks: (...args) => runtimeIdentityCompatible
-          ? companionTaskKernel.publishAuxiliaryCycleTasks(...args)
-          : false,
-        syncPackage: (...args) => runtimeIdentityCompatible ? companionTaskKernel.syncPackage(...args) : null,
         detach: (...args) => runtimeIdentityCompatible && companionTaskKernel.detach(...args),
-        dispatch: (...args) => runtimeIdentityCompatible
-          ? companionTaskKernel.dispatch(...args)
+        dispatchCommand: (...args) => runtimeIdentityCompatible
+          ? companionTaskKernel.dispatchCommand(...args)
           : Promise.resolve(runtimeIdentityTaskFailure('unavailable')),
-        getPackage: companionTaskKernel.getPackage,
         getLatest: companionTaskKernel.getLatest,
         subscribe: (...args) => runtimeIdentityCompatible ? companionTaskKernel.subscribe(...args) : (() => {}),
-        onPackage: (...args) => runtimeIdentityCompatible ? companionTaskKernel.onPackage(...args) : (() => {}),
-        onResult: (...args) => runtimeIdentityCompatible ? companionTaskKernel.onResult(...args) : (() => {}),
-        takeResults: (...args) => runtimeIdentityCompatible ? companionTaskKernel.takeResults(...args) : [],
+        acknowledge: (...args) => runtimeIdentityCompatible && companionTaskKernel.acknowledge(...args),
         diagnostics: companionTaskKernel.diagnostics
       }
     : undefined,

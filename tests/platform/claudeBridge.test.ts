@@ -114,6 +114,43 @@ describe('ordered hook state', () => {
     expect(events.normalizeQueueEntry({ s: CLI_A, e: 'PreToolUse', r: 'raw-tool-name' })?.reason).toBe('')
   })
 
+  it('keeps only bounded subagent identity and lifecycle fields', () => {
+    const entry = events.normalizeQueueEntry({
+      s: CLI_A,
+      e: 'SubagentStart',
+      t: 10,
+      p: 42,
+      a: 'agent_1',
+      g: 'explore',
+      transcript: 'private transcript',
+      summary: 'private summary',
+      body: 'private body'
+    })
+    expect(entry).toEqual({
+      sessionId: CLI_A,
+      event: 'subagent-start',
+      at: 10,
+      pid: 42,
+      agentId: 'agent_1',
+      agentType: 'explore',
+      reason: ''
+    })
+    expect(JSON.stringify(entry)).not.toMatch(/private|transcript|summary|body/)
+
+    const state = events.foldQueueEntries([
+      entry,
+      events.normalizeQueueEntry({ s: CLI_A, e: 'SubagentStop', t: 20, p: 42, a: 'agent_1', g: 'explore' })
+    ])
+    expect(state.get(CLI_A)).toMatchObject({ phase: 'unknown', turnOpen: false })
+    expect(state.get(CLI_A).subagents.agent_1).toMatchObject({
+      agentId: 'agent_1',
+      agentType: 'explore',
+      active: false,
+      startedAt: 10,
+      stoppedAt: 20
+    })
+  })
+
   it('resolves running, approval and user-input waits in file order', () => {
     const state = events.foldQueueEntries([
       event(CLI_A, 'UserPromptSubmit', 10),
