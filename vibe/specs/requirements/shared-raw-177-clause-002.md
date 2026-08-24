@@ -13,6 +13,6 @@ scoped_relations:
 
 # RAW-177#2 · companion-shared
 
-> 正文由来源任务保存，此处只登记身份、状态与关系：[原始记录](../260823/codex-tab-boundary-optimization/raw-requirement.md#L13)。父条款 [RAW-177](shared-raw-177.md#L1)。
+> 正文由来源任务保存，此处只登记身份、状态与关系：[原始记录](../260823/codex-tab-boundary-optimization/raw-requirement.md#L15)。父条款 [RAW-177](shared-raw-177.md#L1)。
 
 移除 V4 `companionNavigation` 与 V2 `companionTasks` 平台 facade，保持当前 V6 `companionKernel` 为唯一任务状态与命令入口。

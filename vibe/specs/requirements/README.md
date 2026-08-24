@@ -4,7 +4,7 @@
 
 本目录是当前产品需求的**唯一可机检登记**。它不重写历史：每条叶子只引用其来源任务文档，正文仍由该任务的 `raw-requirement.md` 保存。
 
-与 [PRODUCT_REQUIREMENTS](../PRODUCT_REQUIREMENTS.md#L1) 的分工：那里回答「这个功能现在应该怎样表现」，这里回答「某条条款现在还作数吗、还有哪部分作数、是谁说的」。两者不互相复制正文。
+与唯一全局当前产品真值 [PRODUCT_REQUIREMENTS](../PRODUCT_REQUIREMENTS.md#L1) 的分工：那里回答「这个功能现在应该怎样表现」，这里回答「某条条款现在还作数吗、还有哪部分作数、是谁说的」。两者不互相复制正文；本登记及其内容指纹是顶部确定性真值快照的受管输入。
 
 ## 为什么需要它
 
@@ -58,6 +58,10 @@
 运行 `pnpm run validate:requirements` 检查 frontmatter、状态、`qualified_source` 唯一性、取代边成对性、取代环、局部关系目标有效性、模块唯一归属与容量，并校验 [Source Anchor Catalog](../source-anchors/README.md#L1) 与全部来源文档一致。
 
 冲突核验记录见 [conflict-register](conflict-register.md#L1)。
+
+## 全局当前真值同步
+
+[PRODUCT_REQUIREMENTS](../PRODUCT_REQUIREMENTS.md#L1) 独占当前产品语义；本目录独占条款身份、状态、authority 与取代关系。`validate-requirements.mjs` 同时要求唯一 owner marker、当前登记/来源/架构/Runtime Identity/产品正文指纹一致；任何一层变化但未重新生成真值快照时均失败，不允许两个“当前 PRD”并存。
 
 ## 尚未入册
 

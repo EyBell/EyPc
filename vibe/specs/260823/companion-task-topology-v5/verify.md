@@ -14,7 +14,7 @@ updated: `2026-08-24`
 | Action file with diagnostic timeout | passed | `1/1` file、`171/171` tests with `--testTimeout=20000`；distinguishes a slow existing test from an assertion failure and does not redefine the default gate |
 | TypeScript / production build | passed | `vue-tsc --noEmit`；Vite `1873` modules；uTools runtime validation passed；two consecutive builds stabilized at `host-ebb1e6b699892efb8151 / renderer-6e9dbf12ac1479057e23` |
 | Canonical/public preload mirrors | passed | `62` committed pairs verified after the RAW-177 handoff pair joined the local batch；syntax checks passed |
-| Requirements / source anchors | passed | `302` leaves：`274 active / 22 superseded / 6 proposed / 0 conflicted`；`29` documents、`196` ordered source anchors |
+| Requirements / source anchors | passed | current global-truth sync：`307` leaves：`279 active / 22 superseded / 6 proposed / 0 conflicted`；`29` documents、`200` ordered source anchors；the prior `302 / 196` result remains the V6 implementation-closeout snapshot |
 | Error memory | passed | `123` leaves：`88 verified / 24 candidate / 11 superseded`；five unrelated overdue candidate warnings remain non-blocking |
 | Document links / whitespace | passed | changed-document local-link audit and `git diff --check` pass after V6 closeout sync |
 | Real host gates | not run | no Safari、uTools interactive plugin、real Codex/Claude/Cursor host、native receipt、visible-window or latency canary；automation establishes `artifact-ready`, not `host-loaded` |

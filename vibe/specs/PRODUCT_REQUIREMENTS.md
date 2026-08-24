@@ -1,12 +1,97 @@
-# EyPc Product Requirements
+# EyPc Global Current Product Requirements
 
-Tool: codex
+<!-- eypc-current-product-truth-owner:v1 -->
 
-Requirement version: `2026-08-13.2`
+Effective date: `2026-08-24`
+
+Requirement version: `2026-08-24.1`
+
+Truth status: `single-owner / current-resolved / deterministic-freshness-gated`
+
+<!-- eypc-current-product-truth:start -->
+## 全局当前真值快照
+
+> 本节由统一需求校验器根据当前登记、来源目录、架构正文和 Runtime Identity 确定性生成。任何受管输入变化而未同步时，校验直接失败；墙上时钟不参与“新鲜”判定。
+
+| 真值维度 | 当前唯一值 |
+| --- | --- |
+| 当前产品语义主文档 | `vibe/specs/PRODUCT_REQUIREMENTS.md`（唯一 owner marker） |
+| 需求登记 | 307 leaves / 6 modules / 279 active / 22 superseded / 6 proposed / 0 conflicted |
+| 取代关系 | 22 whole / 58 scoped |
+| 原始来源 | 29 documents / 200 ordered / 98 RAW-parent / 102 source-only |
+| 当前统一运行合同 | `task-state-v11 / companion-provider-registry-v1 / companion-task-topology-v2 / companion-task-kernel-v6 / companion-task-snapshot-v6 / companion-task-command-v1 / companion-task-subscribe-v1 / companion-task-ack-v2` |
+| 当前构建产物 | `host-ebb1e6b699892efb8151 / renderer-6e9dbf12ac1479057e23` · `artifact-ready` |
+| 新鲜度合同 | `deterministic-current-inputs; mismatch-fails-validate-requirements` |
+
+<details>
+<summary>机器清单与内容指纹</summary>
+
+```json current-product-truth-v1
+{
+  "schema": "eypc-current-product-truth-v1",
+  "sole_owner": "vibe/specs/PRODUCT_REQUIREMENTS.md",
+  "freshness": "deterministic-current-inputs; mismatch-fails-validate-requirements",
+  "requirement_registry": {
+    "leaves": 307,
+    "modules": 6,
+    "proposed": 6,
+    "active": 279,
+    "superseded": 22,
+    "retired": 0,
+    "conflicted": 0,
+    "whole_supersession_edges": 22,
+    "scoped_relations": 58
+  },
+  "source_anchor_catalog": {
+    "documents": 29,
+    "ordered_anchors": 200,
+    "raw_parent_ordered": 98,
+    "registered_requirements": 98,
+    "source_only": 102
+  },
+  "runtime_identity": {
+    "task_state": "task-state-v11",
+    "registry": "companion-provider-registry-v1",
+    "topology": "companion-task-topology-v2",
+    "kernel": "companion-task-kernel-v6",
+    "snapshot": "companion-task-snapshot-v6",
+    "command": "companion-task-command-v1",
+    "subscribe": "companion-task-subscribe-v1",
+    "ack": "companion-task-ack-v2",
+    "host_asset": "host-ebb1e6b699892efb8151",
+    "renderer_asset": "renderer-6e9dbf12ac1479057e23",
+    "artifact_state": "artifact-ready"
+  },
+  "content_digests": {
+    "requirement_registry": "338e488eaa6a45e60645ea4d7a6f877a87b20db1e561bb28bd1185b4723f0532",
+    "raw_sources": "51cc589207c801ff4ed2d02858d49859d8efd3429c68f655d78e4b58305bc07f",
+    "source_anchor_catalog": "c0016d633889845246113f5ded5c89a4ca65d769fbe8cdde3e0725e9d600ee11",
+    "product_body": "b3e33f086cce970877386f86a13bab6f18964201d9909b3303835e614dbb4694",
+    "architecture": "9d773088b06f546065a5e78a96b8b8a2970d4faffa73155c76d0aa7132468a6a",
+    "runtime_contract": "62d7e03e01f358182015dc9a762cd06e5a1e34e3af90846414d940fd501a9998"
+  }
+}
+```
+
+</details>
+<!-- eypc-current-product-truth:end -->
 
 ## Purpose
 
-本文件是 EyPc **当前产品语义**的权威描述：一个功能现在应该怎样表现。任务级历史仍在 [PROJECT_STATUS.md](PROJECT_STATUS.md#L1) 下的日期目录；MQTT 实现映射在 [2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1)。
+本文件是 EyPc **唯一全局当前产品真值**：回答每个功能现在应该怎样表现，并采用所有原始需求、后续追加、变更、优化和架构调整完成取代裁决后的最新有效语义。它不是按时间堆叠的对话或历史清单；已失效版本留在来源与登记中作为证据，但不再与本文件竞争当前合同。任务级历史仍在 [PROJECT_STATUS.md](PROJECT_STATUS.md#L1) 下的日期目录；MQTT 实现映射在 [2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1)。
+
+## 全局真实同步合同
+
+| 层 | 唯一职责 | 对本文件的关系 |
+| --- | --- | --- |
+| 本文件 | 当前产品行为与跨模块统一约束 | 唯一当前产品语义 owner |
+| [需求登记](requirements/README.md#L1) | 条款身份、authority、active/proposed/superseded/conflicted 与整条/局部取代 | 决定哪些来源语义可进入当前投影 |
+| [Source Anchor Catalog](source-anchors/README.md#L1) | 全部结构化原始来源条款的稳定地址与内容哈希 | 证明来源覆盖与漂移，不自动授予需求状态 |
+| [ARCHITECTURE](../knowledge/ARCHITECTURE.md#L1) | 当前代码所有权、数据流、状态机和实现边界 | 证明当前实现怎样承载本合同，不建立第二份产品语义 |
+| [Runtime Identity](../../public/runtime-identity.cjs#L1) | 当前 Host/Renderer 与 Registry/Topology/Kernel/Snapshot/Command/ACK 身份 | 证明构建产物合同；不证明真实宿主已加载 |
+| 历史 RAW/任务账本 | 原始需求、追加决策、变更理由和验收证据 | 只作为可回溯来源，不直接覆盖当前投影 |
+
+融合规则固定为：用户当前明确决定优先；已裁决的新条款融合或取代旧条款；局部取代只失效命中的语义面；未经确认的 `proposed` 与仅有 `SA-*` 身份的来源条款保持可见但不进入当前行为；静态、测试和构建结果只能写到其真实证据边界。顶部真值快照由 [统一需求校验器](../../scripts/validate-requirements.mjs#L1) 根据登记、原始来源、架构、正文和 Runtime Identity 的内容指纹确定性生成，任一输入漂移都会让校验失败。
 
 ## 与需求登记的分工
 
@@ -179,7 +264,7 @@ Current increment authority: [1527-window-jump-workbench/spec.md](260724/1527-wi
 
 ## Codex Companion
 
-Current cross-source runtime authority: [Companion Task Topology V5](260823/companion-task-topology-v5/spec.md#L1). Codex Tab feature authority and detailed requirement/implementation routes: [codex-quota-float](260718/1148-codex-quota-float/spec.md#current-requirement-and-implementation-map)、[Environment Action](260729/1435-codex-environment-actions/spec.md#L1)、[quick task view / RAW-167](260813/1455-companion-quick-task-view/spec.md#L1)、[search compact](260817/0859-float-search-status-compact/spec.md#L1) and [confirmation popover](260817/1618-float-action-hint-popover/spec.md#L1). 条款状态与取代关系见 [companion-codex 登记](requirements/modules/companion-codex.md#L1)。
+Current cross-source runtime authority: [RAW-176 revision 4 / Companion Task Topology V6](260823/companion-task-topology-v5/spec.md#L1). Codex Tab feature authority and detailed requirement/implementation routes: [codex-quota-float](260718/1148-codex-quota-float/spec.md#current-requirement-and-implementation-map)、[Environment Action](260729/1435-codex-environment-actions/spec.md#L1)、[quick task view / RAW-167](260813/1455-companion-quick-task-view/spec.md#L1)、[search compact](260817/0859-float-search-status-compact/spec.md#L1)、[confirmation popover](260817/1618-float-action-hint-popover/spec.md#L1) and [current truth / RAW-178](260823/codex-tab-boundary-optimization/spec.md#L1). 条款状态与取代关系见 [companion-codex 登记](requirements/modules/companion-codex.md#L1) 与 [engineering-invariants 登记](requirements/modules/engineering-invariants.md#L1)。
 
 - Codex is an independently configurable feature Tab. General Settings controls feature enablement; the Codex page owns the 1–365 day inventory window, the `动态` Tab's 1–8760 hour activity filter and quota auto-refresh (`quotaRefreshSeconds`, default 300, integer 1–86400; legacy zero migrates to 300). There is no user-configurable full-inventory period, broad manual refresh or Ctrl+R task refresh. Trusted Provider push is primary; full inventory runs only for cold start, reconnect or an explicit membership gap. Targeted environment detection and Claude task sync remain. The page also owns companion visibility, appearance, readiness, diagnostics and shortcuts; the product title is “额度任务悬浮球” with eyebrow “CODEX · CLAUDE COMPANION”.
 - Runtime diagnostics use the independent `eypc-runtime-diagnostics-v3` plain JSONL Host sink. Installation verification defaults to `{enabled:true, level:debug, userConfigured:false}`；manual error/info/debug/off choices persist. Every call supplies an explicit level. One session/seq/operation/trace timeline records Provider、session-only `h:<hex>` taskRef、before/after state、Turn/watermark/revision、cache、navigation/focus、duration/errorCode and action stages. Files rotate at 8 MB/file、64 MB total、14 days；the sink excludes raw task IDs/paths、prompt/Plan/execute instruction/conversation bodies、commands/argv/tool arguments、stdout/stderr、credentials/tokens、stacks and hidden reasoning. The read-only v2/v3 probe filters session/operation/trace/provider/taskRef/scope/event/level/since/tail and aggregates state changes、no-ops、shortcuts、navigation、archive stages and errors.
@@ -194,7 +279,7 @@ Current cross-source runtime authority: [Companion Task Topology V5](260823/comp
 - On macOS, Node-backed Environment Actions default to project `.nvmrc`, then `.node-version`, NVM default, another locally installed NVM version and finally a verified controlled system Node. A project may persist one Host-verified candidate override; Renderer receives only opaque candidate IDs, labels, versions and sources. An invalid or missing explicit project version fails closed unless the user selects an override. EyPc never sources `nvm.sh`, runs a login shell, accepts an arbitrary Node path, installs a runtime/package manager or treats the uTools/Electron executable as Node; npm/pnpm/yarn/vite launch through the selected absolute Node plus a verified JavaScript entry.
 - Appearance configuration is one workbench with independent water-ball, expanded-card and status-signal targets. Every labeled token persists and renders directly; EyPc does not apply format, contrast, coupled-gamut, automatic adjustment, transient Controller preview or rollback validation. Built-in and saved themes still carry the complete token set, while the floating child remains display-only and contains no color editor.
 - The compact water ball has no intermediate mini-detail or decorative surface rim. Its component root is transparent, its surface keeps only inset depth shading, and neither a same-size outer glow nor the host button's circular focus outline may draw a second full circle; keyboard focus is indicated on the center reading instead. Its upper half is a counter-safe zone and does not expand on hover; the three counters stay directly clickable and show child-owned opaque purpose help after 200ms hover/focus without expanding or switching tabs. Waiting-input includes both input and approval states; completed-unread uses its complete counted set, including hidden tasks. Ongoing strictly equals the unsearched, non-hidden `active / ongoing` cards inside the configured recent-hours filter, so approval is not double-counted. The Controller publishes one atomic task-state package containing stabilized conversations, mutually exclusive dynamic groups, all three counts, the next time boundary and compatibility diagnostics; Renderers never independently filter, count, clear or time task state. Waiting-input and completed-unread call the Controller attention action, whose hint says “最新优先，连续触发依次打开”; ongoing only expands. Accepted Deep Link dispatch advances only the local open-request sequence and leaves unread unchanged until native read evidence arrives. Zero counters hide and values above 99 display `99+`. The lower half, center quota choice, Spark mark, Weekly data ring and direct token rendering retain the existing geometry and appearance contracts.
-- RAW-083/084/087/105/106/107/108/109/128/134/136/138/139/152/155 keep the compact geometry and generic navigation contracts；their former Host-open/read acknowledgement is superseded by RAW-177#3. “上一个/下一个任务” selects the first non-empty tier—ordinary input/approval, exact Plan implementation, recent non-hidden active, then non-stopped local pin—and wraps only inside V5 root keys. Every tier uses latest-question descending order; Provider/pin do not override. The process-only cursor advances per root key; first dispatch is immediate and only in-flight presses collapse to the final trailing target. These commands never alter hidden/Tab/native phase or unread. A ready Host consumes a hot entry once; cold/reconnect/gap state uses tasks-only preflight and old Host revisions fail closed.
+- RAW-083/084/087/105/106/107/108/109/128/134/136/138/139/152/155 keep the compact geometry and generic navigation contracts；their former Host-open/read acknowledgement is superseded by RAW-177#3. “上一个/下一个任务” selects the first non-empty tier—ordinary input/approval, exact Plan implementation, recent non-hidden active, then non-stopped local pin—and wraps only inside the current V6 Snapshot root keys. Every tier uses latest-question descending order; Provider/pin do not override. The process-only cursor advances per root key; first dispatch is immediate and only in-flight presses collapse to the final trailing target. These commands never alter hidden/Tab/native phase or unread. A ready Host consumes a hot entry once; cold/reconnect/gap state uses tasks-only preflight and old Host revisions fail closed.
 - RAW-140/144 的 session open-read hint 已由 RAW-177#3 取代。Electron `shell.openExternal` 成功和 uTools fallback 接受都只产生 `dispatched` handoff，`confirmsRead=false`；`mainHide`、IPC reset、resubscribe、refollow 或库存复读不能把它升级为 opened/read。未来若接入 Codex 原生 ACK，必须绑定同一 opaque handoff、原生可见与精确 Turn/read 证据后，才可单调进入 `native-confirmed/applied`。
 - RAW-143 supersedes the ordinary-hide cold-cache portion without changing recovery authority: `mainHide/onPluginOut(false)` now preserves the App Server session, task/project aliases and latest-Turn cache, so a verified hot task alias opens with no inventory RPC. Cold inventory still runs after real teardown; concurrent stale aliases share one successfully published threads preflight. Action Runner/slots reuse verified project inventory and rebuild only after first use or explicit Host stale-alias rejection; every execution still revalidates target, TOML and command fingerprints.
 - RAW-144 makes the Controller materialized task view feature-lifetime and incrementally live: changing the main Tab or Float visibility does not clear inventory, aliases, Activity generation or subscriptions, while quota/config polling remains surface-owned. RAW-152 narrows replaceable Renderer disposal to local timer/subscription cleanup plus Host-lease detach; feature/inbox disable, Provider changes, kill and process exit remain the semantic reset boundaries. Action Runner keeps a per-project catalog and reloads only added or re-aliased projects; unchanged projects remain hot, while Host execution continues exact safety revalidation.
@@ -230,7 +315,7 @@ Current cross-source runtime authority: [Companion Task Topology V5](260823/comp
 - Plan lifecycle is monotonic `unknown / ready / cleared` and is independent of ordinary Turn completion. `unknown` retains the previous stable Plan；only a strictly newer exact `cancel / execution-start / archive / removal` clears it。Generic resolved、ordinary completion、supplementary/default Turn or interrupted labels cannot clear a ready Plan。A completed unread Plan first appears as completed-unread；after exact native read evidence，the still-present Plan card appears as waiting-input；cancel then yields completed for a read task，while execute yields running immediately。Any exact supplementary user input、new Turn or thinking/generating evidence also clears the matching ordinary waiting instance and publishes running without waiting for an assistant reply。Waiting Plan may age out of the expanded dynamic list but remains in the input badge and shared Plan cycle；stopped Plan-ready alone bypasses the dynamic-hour window。Plan/request content and raw identities never cross the preload boundary.
 - Desktop live stream continuity must not depend on understanding the full private conversation schema. Preload strictly parses only `threadRuntimeStatus`, `requests`, `hasUnreadTurn` and `resumeState`; any other well-formed patch root is ignored while the same stream revision advances. Only malformed observed-state patches, owner/revision mismatch or incompatible frames may trigger resubscription. This prevents private Turn/tool/body churn from deleting a valid shadow and reviving an old active snapshot, while preserving conservative ongoing, task-count stability and privacy rules.
 - `task-state-v11` identifies the current evidence and Plan-lifecycle contract. It retains v10 request/waiting privacy and causal barriers and adds Provider-neutral topology/command ownership。Provider adapters emit only `CompanionTaskEvidenceDraftV6 / CompanionProviderEvidenceBatchV2`；Topology V2 owns membership only；`companion-task-kernel-v6` alone reduces final roots/groups/counts into `companion-task-snapshot-v6`。Missing、older or future Registry/Topology/Snapshot/Command/Subscribe/ACK identities do not invoke a degraded state reducer：the existing last complete Snapshot may remain visible，while task commands fail closed with `reload-required`。Pause receipts contain only a hashed task reference、Plan revision、paused and time；request bodies、Plan content、raw IDs/paths、correlations、private action alias and execute prompt remain private。
-- Execute Plan is a Codex-only Actions v2 capability. An exact completed actionable Plan remains pause/resume/execute-capable even if Codex did not expose a dedicated `Implement Plan` request；`planImplementation` controls cycle priority only。The first click creates a five-second in-place confirmation and sends no RPC；the second establishes a Plan-revision single-flight, revalidates the same anonymous key and Plan revision, latest Turn, real work and other pending requests, renews an expired alias only for that key, opens the original task and calls `thread/resume({excludeTurns:true})`。Default collaboration mode and current-model discovery only select the optimized native path；they are not menu gates。It then calls `turn/start` exactly once：prefer a full default CollaborationMode object preserving model/reasoning effort when confirmed，otherwise send the private fixed implementation instruction to the same task without the optional mode object。Success is projected only from the exact new Turn；timeout is indeterminate and triggers targeted reread without blind resend。Clipboard、keyboard、UI automation and replacement sessions are forbidden fallbacks.
+- Execute Plan is a Codex-only Actions v3 capability. An exact completed actionable Plan remains pause/resume/execute-capable even if Codex did not expose a dedicated `Implement Plan` request；`planImplementation` controls cycle priority only。The first click creates a five-second in-place confirmation and sends no RPC；the second establishes a Plan-revision single-flight, revalidates the same anonymous key and Plan revision, latest Turn, real work and other pending requests, renews an expired alias only for that key, opens the original task and calls `thread/resume({excludeTurns:true})`。Default collaboration mode and current-model discovery only select the optimized native path；they are not menu gates。It then calls `turn/start` exactly once：prefer a full default CollaborationMode object preserving model/reasoning effort when confirmed，otherwise send the private fixed implementation instruction to the same task without the optional mode object。Success is projected only from the exact new Turn；timeout is indeterminate and triggers targeted reread without blind resend。Clipboard、keyboard、UI automation and replacement sessions are forbidden fallbacks.
 - The Kernel exposes one process `getLatest/subscribe(afterRevision)` immutable Snapshot cache. Snapshot revision advances only for consumer-visible membership/topology、phase/freshness/unread、Plan/pause、visibility/capability/action token、root group/count/cycle/attention/order、Provider health or required metadata changes，and one semantic transaction advances it once。Main、Float、Navigation and Actions each reject old/same revisions and ACK the applied revision；a reconnect or missed frame replays the latest complete Snapshot rather than intermediate deltas。Float uses an independent received/applied/rejected ACK lane：500ms permits one latest-Snapshot resend；a healthy window that still lacks applied ACK records bounded diagnostics and remains alive，because ACK timeout is not proof of Renderer failure and forced recreation can interrupt previous/next navigation。
 - A compatible Desktop `thread-archived` broadcast or App Server `thread/archived` notification can cross preload only as an already-published anonymous key. The Controller immediately removes that exact key and queues an urgent verified inventory read; unmapped, unarchive, delete and malformed events cannot remove a task, and normal inventory omissions continue through the dropout quarantine.
 - When the conversation snapshot is verified or retained as stale, the expanded-card search field shows `最近 N 天的 M 条` right-aligned inside the input. The ordinary left placeholder is `别名|任务|项目`. Stale/error/degraded/Claude-gap alerts replace the search glyph with `!` and use the child-owned 200ms hint; they do not occupy a full status row. If the left placeholder would overlap the count, it hides and the same left glyph hover exposes it. Raw-source and registered-source counts remain diagnostics, not user-facing float text. **This supersedes the earlier full-line `float-source-status` placement, including the 1046 hooks-gap append to that row; the gap note itself still comes from `claudeRealtimeGapNote`.** See [RAW-173](260817/0859-float-search-status-compact/spec.md#L1). **RAW-173's leftover confirm-row exception is superseded by [RAW-175](260817/1618-float-action-hint-popover/spec.md#L1): confirmation copy never reinserts that row.**
@@ -276,6 +361,7 @@ Current cross-source runtime authority: [Companion Task Topology V5](260823/comp
 
 ## Documentation
 
+- Global current product truth: this document；its deterministic snapshot must match requirements、source anchors、architecture、Runtime Identity and the resolved product body.
 - Process hub: [PROJECT_STATUS.md](PROJECT_STATUS.md#L1).
 - MQTT implementation sync: [2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
 - Architecture memory: [../knowledge/ARCHITECTURE.md](../knowledge/ARCHITECTURE.md#L1).

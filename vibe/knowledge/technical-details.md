@@ -20,9 +20,11 @@ Tool: tool-neutral (codex, claude, and any CodeNote-routed agent)
 
 ## Documentation Sync
 
-- Last verified: 2026-06-28.
+- Last verified: 2026-08-24.
 - Current process hub: [../specs/PROJECT_STATUS.md](../specs/PROJECT_STATUS.md#L1).
-- Current product requirements: [../specs/PRODUCT_REQUIREMENTS.md](../specs/PRODUCT_REQUIREMENTS.md#L1).
+- Unique global current product truth: [../specs/PRODUCT_REQUIREMENTS.md](../specs/PRODUCT_REQUIREMENTS.md#L1). Historical RAW/task documents remain source and acceptance evidence；they do not form alternate current PRDs.
+- [validate-requirements.mjs](../../scripts/validate-requirements.mjs#L1) enforces exactly one current-truth owner marker and an exact deterministic block containing registry/source counts、runtime revisions/assets and SHA-256 digests for the requirement registry、all raw sources、Source Anchor Catalog、resolved product body、architecture and runtime contract. A mismatch fails ordinary validation；after source/catalog/authority synchronization, `node scripts/validate-requirements.mjs --write-current-truth` rewrites only that bounded generated block.
+- Source changes synchronize [catalog.json](../specs/source-anchors/catalog.json#L1) first；the truth writer rejects missing/extra raw documents or a catalog whose recorded document hashes do not match current sources. Wall-clock timestamps never establish freshness.
 - Current MQTT implementation sync: [../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md](../specs/2606231645-eypc-mqtt-websocket-tab/06-sync-doc.md#L1).
 - Durable architecture facts live in [ARCHITECTURE.md](ARCHITECTURE.md#L1); repeated wrong paths live in [error-memory.md](error-memory.md#L1); interaction taste lives in [developer-soul.md](developer-soul.md#L1).
 

@@ -1,13 +1,13 @@
 # Codex Tab Boundary Optimization — Handoff
 
-status: `closed / no-handoff-required / v6-current-reconciled`
+status: `closed / accepted-by-Root / no-handoff-required`
 updated: `2026-08-24`
 controller: `App Root Thread`
-work_order_version: `3`
+work_order_version: `4`
 
-## Resume Point
+## Closeout State
 
-Implementation、V6 current authority reconciliation、canonical synchronization and automated verification are complete；there is no active internal resume step。Any future work begins only when a real native receipt API or separately authorized host canary exists，and must preserve the boundary in [verify.md](verify.md#L1) and the current V6 owner [spec](../companion-task-topology-v5/spec.md#L1)。
+Implementation、V6 current authority reconciliation、unique global current product truth and deterministic freshness validation are complete。Future requirement/source/architecture/runtime changes must synchronize Source Anchors first when applicable，update the sole PRD projection，then regenerate the bounded truth block；ordinary validation rejects any intermediate drift。There is no remaining local handoff；native receipt/host boundaries remain external。
 
 ## Current External Boundary
 

@@ -2,11 +2,11 @@
 
 阶段二冲突核验记录。2026-08-13 基线扫描覆盖全部 `vibe/specs` 文档中含取代/冲突语义且引用两条以上 `RAW` 的 72 处；后续 RAW-174、RAW-175、RAW-176 与本次 RAW-167 漏项复核按日期追加，不把历史基线数伪装成当前总数。
 
-Date: 2026-08-23
+Date: 2026-08-24
 
 ## 结论
 
-**现有仓库权威之间没有需要用户裁决的未决冲突。** RAW-177 已明确裁决旧的“Deep Link 成功即建立会话期已读确认”：外部打开只能到 `dispatched/pending`，原生可见、控制权与 applied/read 必须有独立回执。未分类来源条款现在都有 `SA-*` 身份，但不会在未做语义复核前冒充需求边。
+**现有仓库权威之间没有需要用户裁决的未决冲突。** RAW-177 已明确裁决旧的“Deep Link 成功即建立会话期已读确认”：外部打开只能到 `dispatched/pending`，原生可见、控制权与 applied/read 必须有独立回执。RAW-178 只收敛全局当前产品真值的唯一 owner、证据真实性与同步门禁，不改变用户可见功能语义。未分类来源条款现在都有 `SA-*` 身份，但不会在未做语义复核前冒充需求边。
 
 ## 处置分类
 
@@ -126,3 +126,14 @@ Environment Action 的 39 条有序来源条款继续由其来源/spec/PRD 承�
 - [RAW-056](codex-raw-056.md#L1) 中“EyPc 打开不得更改 Codex Desktop 未读”继续有效，并由新合同进一步明确为：没有 Codex 原生回执时，EyPc 自身也不能把派发推导成已读。
 
 本机没有可编辑的 Mirasim 仓库，已安装 App 也没有提供 Codex 原生展示/控制权回执接口。因此当前可实现且已落地的上限是 `requested → dispatched/pending`；`native-confirmed → applied` 是未来真实原生接口和宿主联调门禁，不标记为本地已完成。
+
+## 2026-08-24：RAW-178 唯一全局当前真值
+
+用户明确要求把原始需求、后续追加、变更、优化和架构调整按最新有效结果融合或替代，并保证唯一、真实和同步实时。机器登记新增 [RAW-178](invariants-raw-178.md#L1) 与 [#1](invariants-raw-178-clause-001.md#L1)–[#4](invariants-raw-178-clause-004.md#L1)。本条不取代任何产品行为叶子，也不把 102 条 source-only 来源条款提升为 active；它确定以下治理结果：
+
+- [PRODUCT_REQUIREMENTS](../PRODUCT_REQUIREMENTS.md#L1) 是唯一全局当前产品语义 owner；历史 RAW、任务账本、架构和登记各自保留来源、验收、实现与生命周期职责。
+- 已裁决变更只在当前产品投影中保留最新有效语义；旧实现仍可检索，但不得作为并行当前合同。
+- 真值快照由需求登记、原始来源、Source Anchor Catalog、架构、产品正文和 Runtime Identity 内容指纹确定性约束；漂移即验证失败。
+- `artifact-ready`、自动化验证、`host-loaded` 与原生可见/read ACK 继续分层，文档同步不得提升证据等级。
+
+因此 whole/scoped 取代边仍为当前 `22 / 58`，`semantic-fork=0`、`agent-vs-user=0`。

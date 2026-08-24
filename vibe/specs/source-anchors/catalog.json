@@ -5,10 +5,10 @@
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
     "source_documents": 29,
-    "ordered_anchors": 196,
-    "raw_parent_ordered": 94,
+    "ordered_anchors": 200,
+    "raw_parent_ordered": 98,
     "unparented_ordered": 102,
-    "registered_requirements": 94,
+    "registered_requirements": 98,
     "registry_review_required": 0,
     "source_addressable_not_registered": 102
   },
@@ -287,10 +287,10 @@
       "source_task": "260823/codex-tab-boundary-optimization",
       "source_path": "vibe/specs/260823/codex-tab-boundary-optimization/raw-requirement.md",
       "spec_id": "SPEC-260823-CODEX-TAB-BOUNDARY-OPTIMIZATION",
-      "content_sha256": "2dacc905c79ea9fd6e07be03b68d9b5a1377127e20052a46a319b10f4743c274",
-      "raw_identity_count": 1,
-      "ordered_anchor_count": 3,
-      "raw_parent_ordered_count": 3,
+      "content_sha256": "68c44c9457cdbfe5e9bbc4a141720f41ceef773a839b8c51a9e07ec749b4cf3f",
+      "raw_identity_count": 2,
+      "ordered_anchor_count": 7,
+      "raw_parent_ordered_count": 7,
       "unparented_ordered_count": 0
     },
     {
@@ -4612,6 +4612,94 @@
       "disposition": "registered-requirement",
       "semantic_module": "companion-shared",
       "linked_current_requirement": "eypc-req-shared-raw-177-clause-003",
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-3CDE06118DBFFE315E91",
+      "source_task": "260823/codex-tab-boundary-optimization",
+      "source_path": "vibe/specs/260823/codex-tab-boundary-optimization/raw-requirement.md",
+      "line": 22,
+      "exact_heading_text": "RAW-178 · 全局当前真值同步",
+      "heading_path": [
+        "RAW-177 · Codex Tab 边界优化",
+        "RAW-178 · 全局当前真值同步"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "1",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-178",
+      "qualified_source": "SPEC-260823-CODEX-TAB-BOUNDARY-OPTIMIZATION::RAW-178#1",
+      "clause_sha256": "f7db731dd18c2a39104fbcbd7e1be87792ef19716de8f2ff783b6fdc75067418",
+      "classification": "raw-child-requirement",
+      "disposition": "registered-requirement",
+      "semantic_module": "engineering-invariants",
+      "linked_current_requirement": "eypc-req-invariants-raw-178-clause-001",
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-EDC7194706476ED0FE74",
+      "source_task": "260823/codex-tab-boundary-optimization",
+      "source_path": "vibe/specs/260823/codex-tab-boundary-optimization/raw-requirement.md",
+      "line": 23,
+      "exact_heading_text": "RAW-178 · 全局当前真值同步",
+      "heading_path": [
+        "RAW-177 · Codex Tab 边界优化",
+        "RAW-178 · 全局当前真值同步"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "2",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-178",
+      "qualified_source": "SPEC-260823-CODEX-TAB-BOUNDARY-OPTIMIZATION::RAW-178#2",
+      "clause_sha256": "a58b0f8159ce4f3a912485e20e9b21a29d570bfbeafba4cf4f5b7dd1b608ef61",
+      "classification": "raw-child-requirement",
+      "disposition": "registered-requirement",
+      "semantic_module": "engineering-invariants",
+      "linked_current_requirement": "eypc-req-invariants-raw-178-clause-002",
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-6616DCB22369EF6FBA45",
+      "source_task": "260823/codex-tab-boundary-optimization",
+      "source_path": "vibe/specs/260823/codex-tab-boundary-optimization/raw-requirement.md",
+      "line": 24,
+      "exact_heading_text": "RAW-178 · 全局当前真值同步",
+      "heading_path": [
+        "RAW-177 · Codex Tab 边界优化",
+        "RAW-178 · 全局当前真值同步"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "3",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-178",
+      "qualified_source": "SPEC-260823-CODEX-TAB-BOUNDARY-OPTIMIZATION::RAW-178#3",
+      "clause_sha256": "cec1ef022c3f1da4e94156036d3323c5360dcd829dc8f163e663479d7bca330e",
+      "classification": "raw-child-requirement",
+      "disposition": "registered-requirement",
+      "semantic_module": "engineering-invariants",
+      "linked_current_requirement": "eypc-req-invariants-raw-178-clause-003",
+      "selection_basis": "ordered-list-item-under-single-raw-heading"
+    },
+    {
+      "source_id": "SA-A8722B261ED67B92F61C",
+      "source_task": "260823/codex-tab-boundary-optimization",
+      "source_path": "vibe/specs/260823/codex-tab-boundary-optimization/raw-requirement.md",
+      "line": 25,
+      "exact_heading_text": "RAW-178 · 全局当前真值同步",
+      "heading_path": [
+        "RAW-177 · Codex Tab 边界优化",
+        "RAW-178 · 全局当前真值同步"
+      ],
+      "native_marker_kind": "decimal",
+      "native_marker": "4",
+      "marker_occurrence": 1,
+      "parent_raw_id": "RAW-178",
+      "qualified_source": "SPEC-260823-CODEX-TAB-BOUNDARY-OPTIMIZATION::RAW-178#4",
+      "clause_sha256": "76b94ee4b20f52ad8634749664830e2daf4c904ec2baea6d2084d91ad256ebd5",
+      "classification": "raw-child-requirement",
+      "disposition": "registered-requirement",
+      "semantic_module": "engineering-invariants",
+      "linked_current_requirement": "eypc-req-invariants-raw-178-clause-004",
       "selection_basis": "ordered-list-item-under-single-raw-heading"
     }
   ]

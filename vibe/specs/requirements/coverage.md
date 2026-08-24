@@ -2,7 +2,7 @@
 
 登记必须能回答「这条现在还作数吗」，所以也必须诚实回答「哪些还没进来」。一份看起来完整、实则只覆盖一部分的登记，比没有登记更危险。
 
-Date: 2026-08-23
+Date: 2026-08-24
 
 ## 语料实测
 
@@ -13,7 +13,7 @@ Date: 2026-08-23
 | bullet `- \`RAW-nnn\` (…): 正文` | 2 | 157 | 可以 |
 | table `\| RAW-nnn \| 状态 \| 正文 \|` | 1 | 32 | 可以 |
 | heading `# / ## RAW-nnn` | 6 | 13 个父身份 | 可以 |
-| registered-parent numbered `RAW-nnn#n` | 3 | 94 | 可以，父 id 与序号均来自来源；当前全部入册 |
+| registered-parent numbered `RAW-nnn#n` | 3 | 98 | 可以，父 id 与序号均来自来源；当前全部入册 |
 | numbered 无父 RAW `1. 正文` | 14 | 102 | 已有 `SA-*` 来源身份；不能自动升级为需求叶子 |
 | 纯散文 | 5 | — | 不能 |
 
@@ -21,7 +21,7 @@ Date: 2026-08-23
 
 ## 已入册
 
-**当前已发现且能按来源现成 `RAW-nnn(#n)` 直接抽取的身份均已入册**，共 302 条叶子。这个结论不把 102 条无父 RAW 的来源锚点冒充需求，也不包含无稳定边界的散文。`validate:requirements` 同时核验需求登记和来源锚点目录；任一来源、哈希、数量或关联漂移都会失败。
+**当前已发现且能按来源现成 `RAW-nnn(#n)` 直接抽取的身份均已入册**，共 307 条叶子。这个结论不把 102 条无父 RAW 的来源锚点冒充需求，也不包含无稳定边界的散文。`validate:requirements` 同时核验需求登记、来源锚点目录和唯一全局当前产品真值；任一来源、哈希、数量、关联或当前权威正文漂移都会失败。
 
 | 域 | 来源 | 形态 | 叶子 | active | superseded |
 | --- | --- | --- | ---: | ---: | ---: |
@@ -31,7 +31,7 @@ Date: 2026-08-23
 | `companion-shared` | [install-runtime-diagnostics](../260810/1155-install-runtime-diagnostics/raw-requirement.md#L1) | heading | 6 | 6 | 0 |
 | `companion-shared` | [install-runtime-diagnostics numbered clauses](modules/companion-shared.md#L1) | registered-parent numbered | 82 | 82 | 0 |
 | `companion-shared` | [companion-task-topology-v5](../260823/companion-task-topology-v5/raw-requirement.md#L1) | heading + normalized table | 1 | 1 | 0 |
-| `companion-shared / engineering-invariants` | [codex-tab-boundary-optimization](../260823/codex-tab-boundary-optimization/raw-requirement.md#L1) | heading + numbered | 4 | 4 | 0 |
+| `companion-shared / engineering-invariants` | [codex-tab-boundary-optimization](../260823/codex-tab-boundary-optimization/raw-requirement.md#L1) | heading + numbered | 9 | 9 | 0 |
 | `companion-codex` | [companion-quick-task-view](../260813/1455-companion-quick-task-view/raw-requirement.md#L1) | heading + numbered | 4 | 4 | 0 |
 | `interaction-shell` | [quick-jump-center-overlay](../260718/0947-quick-jump-center-overlay/raw-requirement.md#L1) | bullet | 4 | 4 | 0 |
 | `file-favorites` | [file-favorites-workbench](../260711/1452-file-favorites-workbench/raw-requirement.md#L1) | heading | 2 | 2 | 0 |
@@ -78,7 +78,7 @@ install-runtime-diagnostics 的 `companion-shared` 六条是**章节级**登记�
 
 每条继承父条款的 `status` 与 `authority`。RAW-174 父条款为 `user-stated`（2026-08-17 缺陷核验 + D2），子条款同样继承；与更早 `agent-transcribed` 父条款冲突时，转述不得压过原话。
 
-登记总量 196 → 284 → 292 → 293 → 294 → 298 → **302** 条叶子：RAW-176 增加一个父叶子；此前补入 RAW-167 父叶子及 #1–#3；本次再登记 RAW-177 父叶子及 #1–#3。`RAW-176-01..14` 是该父条款内部的 Controlled 归一化寻址，不符合现有 `SPEC::RAW-nnn(#n)` 登记身份，因此不另造 14 个叶子。
+登记总量 196 → 284 → 292 → 293 → 294 → 298 → 302 → **307** 条叶子：RAW-176 增加一个父叶子；此前补入 RAW-167 父叶子及 #1–#3、RAW-177 父叶子及 #1–#3；当前再登记 RAW-178 父叶子及 #1–#4。`RAW-176-01..14` 是该父条款内部的 Controlled 归一化寻址，不符合现有 `SPEC::RAW-nnn(#n)` 登记身份，因此不另造 14 个叶子。
 
 ### 由此可以做而此前做不到的事
 
@@ -90,7 +90,7 @@ install-runtime-diagnostics 的 `companion-shared` 六条是**章节级**登记�
 
 ## 2026-08-23 当前机器复测：102 条来源锚点
 
-当前目录扫描得到 196 条围栏外有序来源条款：94 条位于单一 RAW 父标题下且全部已登记；另外 **102 条分布在 14 个任务**，没有 RAW 父身份。历史 87/13 不是可复现真值，主要遗漏了后续 Cursor 与 selector-readiness 等来源。
+当前目录扫描得到 200 条围栏外有序来源条款：98 条位于单一 RAW 父标题下且全部已登记；另外 **102 条分布在 14 个任务**，没有 RAW 父身份。历史 87/13 不是可复现真值，主要遗漏了后续 Cursor 与 selector-readiness 等来源。
 
 这 102 条现在由 [catalog.json](../source-anchors/catalog.json#L1) 以 `source_path + heading_path + native marker + occurrence` 生成稳定 `SA-*` 身份，并保存条款哈希用于漂移检查。目录只解决「如何准确回到来源」，不替代「它是否是当前需求、属于哪个模块、与谁冲突」的语义裁决；当前统一标为 `source-addressable-not-registered`。
 
