@@ -55,10 +55,10 @@
 
 ## 机器校验
 
-运行 `pnpm run validate:requirements` 检查 frontmatter、状态、`qualified_source` 唯一性、取代边成对性、取代环、局部关系目标有效性、模块唯一归属与容量。
+运行 `pnpm run validate:requirements` 检查 frontmatter、状态、`qualified_source` 唯一性、取代边成对性、取代环、局部关系目标有效性、模块唯一归属与容量，并校验 [Source Anchor Catalog](../source-anchors/README.md#L1) 与全部来源文档一致。
 
 冲突核验记录见 [conflict-register](conflict-register.md#L1)。
 
 ## 尚未入册
 
-见 [覆盖账](coverage.md#L1)。所有带 id 的来源已全部入册；约 160 条需求以**无编号的编号条款**承载，没有 `RAW-nnn` 可作身份。为其分配编号属于需求撰写而非抽取，需用户决定后再入册。
+见 [覆盖账](coverage.md#L1)。当前已发现且能按来源现成 `RAW-nnn(#n)` 直接抽取的身份均已入册；这不等于全文需求都已机器化。机器复测识别出 102 条没有 RAW 父身份的围栏外有序来源条款，它们已有稳定 `SA-*` 来源锚点，但仍不是登记叶子；只有逐条确认语义与模块后才可升级为 active requirement。

@@ -18,6 +18,7 @@
 - [RAW-170](../invariants-raw-170.md#L1) — `proposed` · `agent-transcribed`
 - [RAW-171](../invariants-raw-171.md#L1) — `proposed` · `agent-transcribed`
 - [RAW-172](../invariants-raw-172.md#L1) — `proposed` · `agent-transcribed`
+- [RAW-177#1](../invariants-raw-177-clause-001.md#L1) — `active` · 来源锚点与需求身份分层
 
 ## Related Requirements
 

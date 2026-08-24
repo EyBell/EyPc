@@ -5,6 +5,10 @@ status: active
 domain: companion-shared
 authority: user-stated
 parent_requirement: eypc-req-shared-raw-164
+scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-shared-raw-177-clause-003
+    scope: "成功 Deep Link 即建立会话期已读确认的部分"
 ---
 
 # RAW-164#61 · companion-shared
