@@ -9,12 +9,12 @@ function loadProviderRegistry(value = manifest) {
     throw new Error('companion-provider-registry-invalid')
   }
   const providers = value.providers && typeof value.providers === 'object' ? value.providers : {}
-  if (value.kernelRevision !== 'companion-task-kernel-v5'
-    || value.topologyRevision !== 'companion-task-topology-v1'
-    || value.snapshotRevision !== 'companion-task-package-v5'
+  if (value.kernelRevision !== 'companion-task-kernel-v6'
+    || value.topologyRevision !== 'companion-task-topology-v2'
+    || value.snapshotRevision !== 'companion-task-snapshot-v6'
     || value.commandRevision !== 'companion-task-command-v1'
     || value.subscribeRevision !== 'companion-task-subscribe-v1'
-    || value.ackRevision !== 'companion-task-ack-v1') {
+    || value.ackRevision !== 'companion-task-ack-v2') {
     throw new Error('companion-provider-contract-revisions-invalid')
   }
   const order = Array.isArray(value.order) ? value.order.filter((id) => typeof id === 'string') : []

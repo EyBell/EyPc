@@ -1,5 +1,7 @@
 'use strict'
 
+const { normalizeCompanionOpenReceipt } = require('./open-handoff.cjs')
+
 const { PROVIDERS } = require('./provider-registry.cjs')
 const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v3'
 const ARCHIVE_PHASES = ['completed', 'stopped']
@@ -57,15 +59,18 @@ function normalizeTarget(value, enabledProviders) {
 
 function normalizeOpenResult(value, target) {
   const source = value && typeof value === 'object' ? value : {}
-  const outcome = ['opened', 'dispatched', 'unavailable', 'failed'].includes(source.outcome) ? source.outcome : 'failed'
+  const receipt = normalizeCompanionOpenReceipt(source)
   return {
-    outcome,
+    outcome: receipt.outcome,
     provider: target.provider,
     key: target.key,
     ...(typeof source.operationId === 'string' ? { operationId: source.operationId.slice(0, 160) } : {}),
     ...(typeof source.errorCode === 'string' && source.errorCode ? { errorCode: source.errorCode.slice(0, 80) } : {}),
-    ...(typeof source.message === 'string' && source.message ? { message: source.message.slice(0, 240) } : {}),
-    ...(typeof source.confirmsRead === 'boolean' ? { confirmsRead: source.confirmsRead } : {})
+    ...(typeof source.message === 'string' && source.message
+      ? { message: source.message.slice(0, 240) }
+      : receipt.downgraded ? { message: '打开请求已发送，等待原生确认' } : {}),
+    confirmsRead: receipt.confirmsRead,
+    ...(receipt.handoff ? { handoff: receipt.handoff } : {})
   }
 }
 

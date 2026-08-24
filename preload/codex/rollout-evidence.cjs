@@ -111,9 +111,16 @@ function createCodexRolloutEvidence(dependencies = {}) {
 
   function codexRolloutPendingPlanStateText(text) {
     if (typeof text !== 'string' || !text) {
-      return { known: false, pending: false, planReady: false, planLifecycleRevision: 0, turnMode: 'unknown' }
+      return {
+        known: false,
+        pending: false,
+        planReady: false,
+        planLifecycleState: 'unknown',
+        planLifecycleRevision: 0,
+        planClearReason: '',
+        turnMode: 'unknown'
+      }
     }
-    let sawDefaultBoundary = false
     let sawPlanCompletion = false
     let planReady = false
     let planLifecycleRevision = 0
@@ -130,17 +137,12 @@ function createCodexRolloutEvidence(dependencies = {}) {
         const mode = String(payload.collaboration_mode_kind || payload.collaborationModeKind || '').toLowerCase()
         turnMode = mode === 'plan' ? 'plan' : mode === 'default' ? 'default' : 'unknown'
         currentTurnStartedAt = codexRolloutTimestampMs(source.timestamp, payload.started_at)
-        if (turnMode === 'default') {
-          sawDefaultBoundary = true
-          planReady = false
-          planLifecycleRevision = 0
-        }
         continue
       }
       if (payload.type === 'turn_aborted') {
-        sawDefaultBoundary = true
-        planReady = false
-        planLifecycleRevision = 0
+        // Interruption is activity evidence only. It does not say whether the
+        // native Plan card was cancelled, retained for later, or is about to
+        // be executed. Keep an already-established lifecycle intact.
         turnMode = 'unknown'
         continue
       }
@@ -155,12 +157,16 @@ function createCodexRolloutEvidence(dependencies = {}) {
       }
     }
     return {
-      // A Plan-only boundary is insufficient to conclude that an earlier Plan did
-      // not exist; callers progressively widen the tail until one decisive edge.
-      known: sawDefaultBoundary || sawPlanCompletion,
+      // A later generic/default Turn can be a supplementary user message. It
+      // must switch activity to running without destroying the independent
+      // native Plan-card lifecycle. Rollout text has no exact cancel receipt,
+      // so only a completed Plan establishes lifecycle knowledge here.
+      known: sawPlanCompletion,
       pending: planReady,
       planReady,
+      planLifecycleState: planReady ? 'ready' : 'unknown',
       planLifecycleRevision,
+      planClearReason: '',
       turnMode
     }
   }

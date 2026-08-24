@@ -36,7 +36,7 @@ function relation(childKey: string, parentKey: string, overrides: Record<string,
 }
 
 describe('Companion task topology', () => {
-  it('resolves nested exact relations to one root and aggregates phase, unread, counts and archive safety', () => {
+  it('resolves nested exact relations to one membership group without interpreting task state', () => {
     const topology = buildCompanionTaskTopology({
       nodes: [
         node('root', { phase: 'completed', unreadKnown: true, unread: false }),
@@ -51,15 +51,12 @@ describe('Companion task topology', () => {
 
     expect(topology.acceptedRelations).toHaveLength(2)
     expect(topology.rootByKey).toEqual({ root: 'root', child: 'root', nested: 'root' })
-    expect(topology.roots).toHaveLength(1)
-    expect(topology.roots[0]).toMatchObject({
-      key: 'root',
-      phase: 'waiting-approval',
-      unreadKnown: true,
-      unread: true,
-      capabilities: { open: true, archive: false },
-      topology: { mode: 'aggregate', memberCount: 3, liveCount: 2, attentionCount: 1, errorCount: 1 }
-    })
+    expect(topology.rootGroups).toHaveLength(1)
+    expect(topology.rootGroups[0].root).toMatchObject({ key: 'root', phase: 'completed', unread: false })
+    expect(topology.rootGroups[0].members.map((member: Record<string, unknown>) => member.key)).toEqual(['child', 'nested', 'root'])
+    expect(topology.rootGroups[0]).not.toHaveProperty('phase')
+    expect(topology.rootGroups[0]).not.toHaveProperty('unread')
+    expect(topology.rootGroups[0]).not.toHaveProperty('capabilities')
   })
 
   it('fails closed for missing parents, self-links, cross-provider, cross-family, inexact and old relations', () => {
@@ -95,7 +92,7 @@ describe('Companion task topology', () => {
       'inexact',
       'old-generation'
     ]))
-    expect(topology.roots.map((root: Record<string, unknown>) => root.key)).toEqual(expect.arrayContaining([
+    expect(topology.rootGroups.map((group: Record<string, any>) => group.root.key)).toEqual(expect.arrayContaining([
       'root',
       'missing-child',
       'self-child',
@@ -120,7 +117,7 @@ describe('Companion task topology', () => {
 
     expect(topology.acceptedRelations).toHaveLength(0)
     expect(topology.rejected.filter((entry: Record<string, unknown>) => entry.reason === 'cycle-path')).toHaveLength(3)
-    expect(topology.roots).toHaveLength(3)
+    expect(topology.rootGroups).toHaveLength(3)
   })
 
   it('selects only a strictly newer parent and rejects same-generation ambiguity', () => {
@@ -159,7 +156,7 @@ describe('Companion task topology', () => {
       generationFloor: { codex: 11 }
     })
     expect(withdrawn.rootByKey.child).toBe('child')
-    expect(withdrawn.roots).toHaveLength(2)
+    expect(withdrawn.rootGroups).toHaveLength(2)
 
     const quarantined = buildCompanionTaskTopology({
       nodes: [node('root'), node('private-child', { standaloneEligible: false })],
@@ -167,20 +164,23 @@ describe('Companion task topology', () => {
     })
     expect(quarantined.quarantinedKeys).toEqual(['private-child'])
     expect(quarantined.rootByKey).not.toHaveProperty('private-child')
-    expect(quarantined.roots.map((root: Record<string, unknown>) => root.key)).toEqual(['root'])
+    expect(quarantined.rootGroups.map((group: Record<string, any>) => group.root.key)).toEqual(['root'])
   })
 
-  it('keeps unread unknown unless any member is unread or every member is explicitly read', () => {
+  it('leaves unread aggregation entirely to the Kernel', () => {
     const unknown = buildCompanionTaskTopology({
-      nodes: [node('root'), node('child', { unreadKnown: false })],
+      nodes: [node('root'), node('child', { unreadKnown: true, unread: true })],
       relations: [relation('child', 'root')]
     })
-    expect(unknown.roots[0]).toMatchObject({ unreadKnown: false, unread: false })
+    expect(unknown.rootGroups[0].root).toMatchObject({ unreadKnown: true, unread: false })
+    expect(unknown.rootGroups[0].members.find((member: Record<string, unknown>) => member.key === 'child'))
+      .toMatchObject({ unreadKnown: true, unread: true })
 
     const read = buildCompanionTaskTopology({
       nodes: [node('root'), node('child')],
       relations: [relation('child', 'root')]
     })
-    expect(read.roots[0]).toMatchObject({ unreadKnown: true, unread: false })
+    expect(read.rootGroups[0]).not.toHaveProperty('unreadKnown')
+    expect(read.rootGroups[0]).not.toHaveProperty('unread')
   })
 })

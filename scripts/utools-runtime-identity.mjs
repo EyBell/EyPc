@@ -1,11 +1,20 @@
 import crypto from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { relative, resolve } from 'node:path'
 import { UTOOLS_PRELOAD_ASSETS, UTOOLS_PRELOAD_MODULE_ASSETS } from './utools-preload-assets.mjs'
 
-export const RUNTIME_IDENTITY_REVISION = 'runtime-identity-v1'
-export const COMPANION_TASK_KERNEL_REVISION = 'companion-task-kernel-v4'
-export const COMPANION_TASK_PACKAGE_REVISION = 'companion-task-package-v4'
+const require = createRequire(import.meta.url)
+const providerManifest = require('../preload/companion/provider-manifest.json')
+
+export const RUNTIME_IDENTITY_REVISION = 'runtime-identity-v2'
+export const COMPANION_TASK_KERNEL_REVISION = providerManifest.kernelRevision
+export const COMPANION_PROVIDER_REGISTRY_REVISION = providerManifest.revision
+export const COMPANION_TASK_TOPOLOGY_REVISION = providerManifest.topologyRevision
+export const COMPANION_TASK_PACKAGE_REVISION = providerManifest.snapshotRevision
+export const COMPANION_TASK_COMMAND_REVISION = providerManifest.commandRevision
+export const COMPANION_TASK_SUBSCRIBE_REVISION = providerManifest.subscribeRevision
+export const COMPANION_TASK_ACK_REVISION = providerManifest.ackRevision
 
 function filesBelow(directory) {
   if (!existsSync(directory)) return []
@@ -60,7 +69,12 @@ export function buildUtoolsRuntimeIdentity(root) {
     // the unchanged Renderer source tree around a changed Preload build.
     rendererAssetId: contentIdentity(root, 'renderer', rendererFiles, hostAssetId),
     kernelRevision: COMPANION_TASK_KERNEL_REVISION,
+    registryRevision: COMPANION_PROVIDER_REGISTRY_REVISION,
+    topologyRevision: COMPANION_TASK_TOPOLOGY_REVISION,
     taskPackageRevision: COMPANION_TASK_PACKAGE_REVISION,
+    commandRevision: COMPANION_TASK_COMMAND_REVISION,
+    subscribeRevision: COMPANION_TASK_SUBSCRIBE_REVISION,
+    ackRevision: COMPANION_TASK_ACK_REVISION,
     artifactState: 'artifact-ready'
   })
 }

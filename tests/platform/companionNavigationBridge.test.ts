@@ -14,6 +14,23 @@ const targets = [
   { key: 'codex-b', provider: 'codex', actionAlias: 'ct_codex_b_1234567890', revisionAt: 103, phase: 'completed', canArchive: true }
 ]
 
+function nativeOpened(overrides: Record<string, unknown> = {}) {
+  return {
+    outcome: 'opened',
+    confirmsRead: false,
+    handoff: {
+      revision: 'companion-open-handoff-v1',
+      handoffId: 'coh_native_confirmed_001',
+      stage: 'native-confirmed',
+      sourceRelease: 'unknown',
+      nativeVisible: true,
+      controlOwner: 'target-native',
+      confirmsRead: false
+    },
+    ...overrides
+  }
+}
+
 function readyNavigation(options: Record<string, unknown> = {}) {
   const navigation = navigationModule.createCompanionNavigation(options)
   const receipt = navigation.begin({ enabled: true, providers: { codex: true, claude: true } })
@@ -38,10 +55,9 @@ describe('process-lifetime companion navigation', () => {
     const operationId = 'manual-quick-jump-0001'
     const { navigation } = readyNavigation({
       record: (entry: Record<string, unknown>) => records.push(entry),
-      openTarget: async (target: { provider: string }) => ({
-        outcome: target.provider === 'claude' ? 'dispatched' : 'opened',
-        operationId
-      })
+      openTarget: async (target: { provider: string }) => target.provider === 'claude'
+        ? { outcome: 'dispatched', operationId }
+        : nativeOpened({ operationId })
     })
 
     await expect(navigation.open({
@@ -93,7 +109,7 @@ describe('process-lifetime companion navigation', () => {
     const open = async (target: { key: string }) => {
       opened.push(target.key)
       if (opened.length === 1) await firstGate
-      return { outcome: 'opened' }
+      return nativeOpened()
     }
     const { navigation } = readyNavigation({ openTarget: open })
 
@@ -123,7 +139,7 @@ describe('process-lifetime companion navigation', () => {
           failFirst = false
           return { outcome: 'failed', errorCode: 'test-failure' }
         }
-        return { outcome: target.provider === 'claude' ? 'dispatched' : 'opened' }
+        return target.provider === 'claude' ? { outcome: 'dispatched' } : nativeOpened()
       }
     })
 
@@ -138,7 +154,7 @@ describe('process-lifetime companion navigation', () => {
     const { navigation } = readyNavigation({
       openTarget: async (target: { key: string; provider: string }) => {
         opened.push(target.key)
-        return { outcome: target.provider === 'claude' ? 'dispatched' : 'opened' }
+        return target.provider === 'claude' ? { outcome: 'dispatched' } : nativeOpened()
       }
     })
 
@@ -164,7 +180,7 @@ describe('process-lifetime companion navigation', () => {
       opened.push(target.key)
       if (target.key === 'codex-a') await firstGate
       concurrent -= 1
-      return { outcome: 'opened' }
+      return nativeOpened()
     }
     const { navigation } = readyNavigation({ openTarget: open })
 
@@ -189,7 +205,7 @@ describe('process-lifetime companion navigation', () => {
         opened.push(target.key)
         callCount += 1
         if (callCount === 1) await firstGate
-        return { outcome: target.provider === 'claude' ? 'dispatched' : 'opened' }
+        return target.provider === 'claude' ? { outcome: 'dispatched' } : nativeOpened()
       }
     })
 
@@ -208,7 +224,7 @@ describe('process-lifetime companion navigation', () => {
     const { navigation, receipt } = readyNavigation({
       openTarget: async (target: { key: string; provider: string }) => {
         opened.push(target.key)
-        return { outcome: target.provider === 'claude' ? 'dispatched' : 'opened' }
+        return target.provider === 'claude' ? { outcome: 'dispatched' } : nativeOpened()
       }
     })
     navigation.detach({ lease: receipt.lease })
@@ -239,7 +255,7 @@ describe('process-lifetime companion navigation', () => {
     const { navigation, receipt } = readyNavigation({
       openTarget: async (target: { key: string; provider: string }) => {
         opened.push(target.key)
-        return { outcome: target.provider === 'claude' ? 'dispatched' : 'opened' }
+        return target.provider === 'claude' ? { outcome: 'dispatched' } : nativeOpened()
       }
     })
     expect(navigation.detach({ lease: receipt.lease })).toBe(true)
@@ -265,7 +281,7 @@ describe('process-lifetime companion navigation', () => {
     const navigation = navigationModule.createCompanionNavigation({
       openTarget: async (target: { key: string; provider: string }) => {
         opened.push({ provider: target.provider, key: target.key })
-        return { outcome: target.provider === 'codex' ? 'opened' : 'dispatched' }
+        return target.provider === 'codex' ? nativeOpened() : { outcome: 'dispatched' }
       }
     })
     const receipt = navigation.begin({ enabled: true, providers: { codex: true, claude: true, cursor: true } })
@@ -297,7 +313,9 @@ describe('process-lifetime companion navigation', () => {
   it('keeps anonymous successful cycle results for the next Controller lease', async () => {
     vi.useFakeTimers()
     const { navigation, receipt } = readyNavigation({
-      openTarget: async (target: { provider: string }) => ({ outcome: target.provider === 'claude' ? 'dispatched' : 'opened' })
+      openTarget: async (target: { provider: string }) => target.provider === 'claude'
+        ? { outcome: 'dispatched' }
+        : nativeOpened()
     })
     const cycle = navigation.cycle(1)
     await vi.advanceTimersByTimeAsync(navigationModule.DEFAULT_COALESCE_MS)
@@ -308,5 +326,17 @@ describe('process-lifetime companion navigation', () => {
       expect.objectContaining({ id: 1, provider: 'codex', key: 'codex-a', outcome: 'opened' })
     ])
     expect(navigation.takeResults({ lease: remount.lease })).toEqual([])
+  })
+
+  it('downgrades an unverified opened result to dispatched without granting read authority', async () => {
+    const { navigation } = readyNavigation({
+      openTarget: async () => ({ outcome: 'opened', confirmsRead: true })
+    })
+
+    await expect(navigation.open({ key: 'codex-a', source: 'manual' })).resolves.toMatchObject({
+      outcome: 'dispatched',
+      confirmsRead: false,
+      message: '打开请求已发送，等待原生确认'
+    })
   })
 })

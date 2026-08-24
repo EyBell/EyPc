@@ -61,7 +61,7 @@ for (const group of UTOOLS_PRELOAD_MODULE_GROUPS) {
     ['public', resolve(root, 'public', group.directory)],
     ['dist', resolve(distDir, group.directory)]
   ]) {
-    const actual = readdirSync(directory).filter((file) => file.endsWith('.cjs')).sort()
+    const actual = readdirSync(directory).filter((file) => file.endsWith('.cjs') || file.endsWith('.json')).sort()
     assert(JSON.stringify(actual) === JSON.stringify(expected), `${label}/${group.directory} must contain exactly the managed module set`)
   }
 }
@@ -81,7 +81,18 @@ const distRequire = createRequire(resolve(distDir, 'preload.js'))
 const expectedRuntimeIdentity = buildUtoolsRuntimeIdentity(root)
 const actualRuntimeIdentity = distRequire('./runtime-identity.cjs')
 assert(actualRuntimeIdentity.revision === RUNTIME_IDENTITY_REVISION, 'runtime identity revision must be current')
-for (const field of ['hostAssetId', 'rendererAssetId', 'kernelRevision', 'taskPackageRevision', 'artifactState']) {
+for (const field of [
+  'hostAssetId',
+  'rendererAssetId',
+  'kernelRevision',
+  'registryRevision',
+  'topologyRevision',
+  'taskPackageRevision',
+  'commandRevision',
+  'subscribeRevision',
+  'ackRevision',
+  'artifactState'
+]) {
   assert(actualRuntimeIdentity[field] === expectedRuntimeIdentity[field], `runtime identity ${field} must match this artifact`)
 }
 assert(actualRuntimeIdentity.artifactState === 'artifact-ready', 'build output may report artifact-ready only')
@@ -187,13 +198,18 @@ for (const forbidden of ['AXPress', 'osascript', 'performClaudeArchiveAction', '
   assert(!claudeArchiveSource.includes(forbidden), `claude metadata archive adapter must not open or automate the App (found ${forbidden})`)
 }
 const companionTaskActionsSource = preloadModuleSources.get('companion/task-actions.cjs') || ''
-for (const marker of ['companion-task-actions-v2', 'archiveInFlight', 'executeInFlight', 'executePlan', 'lastSyncFingerprint', 'shortcutArchive', 'CONFIRM_WINDOW_MS']) {
+for (const marker of ['companion-task-actions-v3', 'archiveInFlight', 'executeInFlight', 'executePlan', 'lastSyncFingerprint', 'shortcutArchive', 'CONFIRM_WINDOW_MS']) {
   assert(companionTaskActionsSource.includes(marker), `companion task dispatcher contract is missing: ${marker}`)
 }
 const companionTaskKernelSource = preloadModuleSources.get('companion/task-kernel.cjs') || ''
+const companionProviderRegistrySource = preloadModuleSources.get('companion/provider-registry.cjs') || ''
+const companionTaskContractSource = `${companionProviderRegistrySource}\n${companionTaskKernelSource}`
 for (const marker of [
-  'companion-task-kernel-v4',
-  'companion-task-package-v4',
+  'companion-task-kernel-v6',
+  'companion-task-snapshot-v6',
+  'companion-task-command-v1',
+  'companion-task-subscribe-v1',
+  'companion-task-ack-v2',
   'sourceLaneGenerations',
   'preflightInFlight',
   'UNKNOWN_GRACE_MS',
@@ -203,9 +219,11 @@ for (const marker of [
   'nextVisibilityTransitionAt',
   'getLatest: () => currentPackage',
   'subscribe(afterRevision',
+  'dispatchCommand',
+  'acknowledge',
   'handleEnter'
 ]) {
-  assert(companionTaskKernelSource.includes(marker), `companion task kernel contract is missing: ${marker}`)
+  assert(companionTaskContractSource.includes(marker), `companion task kernel contract is missing: ${marker}`)
 }
 for (const marker of [
   'EXECUTE_PLAN_PROMPT_V1',
@@ -253,7 +271,12 @@ const rendererJavaScript = readdirSync(resolve(distDir, 'assets'))
 assert(rendererJavaScript.includes(actualRuntimeIdentity.hostAssetId), 'Renderer bundles must embed the expected Host asset id')
 assert(rendererJavaScript.includes(actualRuntimeIdentity.rendererAssetId), 'Renderer bundles must embed their Renderer asset id')
 assert(rendererJavaScript.includes(actualRuntimeIdentity.kernelRevision), 'Renderer bundles must embed the Kernel revision')
+assert(rendererJavaScript.includes(actualRuntimeIdentity.registryRevision), 'Renderer bundles must embed the Provider Registry revision')
+assert(rendererJavaScript.includes(actualRuntimeIdentity.topologyRevision), 'Renderer bundles must embed the topology revision')
 assert(rendererJavaScript.includes(actualRuntimeIdentity.taskPackageRevision), 'Renderer bundles must embed the task protocol revision')
+assert(rendererJavaScript.includes(actualRuntimeIdentity.commandRevision), 'Renderer bundles must embed the command revision')
+assert(rendererJavaScript.includes(actualRuntimeIdentity.subscribeRevision), 'Renderer bundles must embed the subscribe revision')
+assert(rendererJavaScript.includes(actualRuntimeIdentity.ackRevision), 'Renderer bundles must embed the ACK revision')
 
 const pluginJson = readJson('plugin.json')
 const distPackageJson = readJson('package.json')
@@ -357,16 +380,32 @@ assert(typeof sandbox.window.eypcPlatform.codex.readSnapshot === 'function', 'pr
 assert(typeof sandbox.window.eypcPlatform.codex.readActivitySnapshot === 'function', 'preload must expose codex.readActivitySnapshot')
 assert(typeof sandbox.window.eypcPlatform.codex.inspectEnvironment === 'function', 'preload must expose codex.inspectEnvironment')
 assert(typeof sandbox.window.eypcPlatform.codex.openThread === 'function', 'preload must expose codex.openThread')
-assert(typeof sandbox.window.eypcPlatform.companionKernel?.dispatch === 'function', 'preload must expose the unified companion Kernel')
-const mainBeforeHandshakeKernel = await sandbox.window.eypcPlatform.companionKernel.dispatch({ action: 'cycle', direction: 1 })
-assert(mainBeforeHandshakeKernel.errorCode === 'reload-required', 'new Main Preload must keep legacy/unmounted Renderer Kernel calls inert before identity handshake')
+const publicCompanionKernel = sandbox.window.eypcPlatform.companionKernel
+assert(publicCompanionKernel?.revision === actualRuntimeIdentity.kernelRevision, 'preload companion Kernel revision must match the artifact')
+assert(publicCompanionKernel?.registryRevision === actualRuntimeIdentity.registryRevision, 'preload companion Registry revision must match the artifact')
+assert(publicCompanionKernel?.topologyRevision === actualRuntimeIdentity.topologyRevision, 'preload companion Topology revision must match the artifact')
+assert(publicCompanionKernel?.packageRevision === actualRuntimeIdentity.taskPackageRevision, 'preload companion Snapshot revision must match the artifact')
+assert(publicCompanionKernel?.commandRevision === actualRuntimeIdentity.commandRevision, 'preload companion Command revision must match the artifact')
+assert(publicCompanionKernel?.subscribeRevision === actualRuntimeIdentity.subscribeRevision, 'preload companion Subscribe revision must match the artifact')
+assert(publicCompanionKernel?.ackRevision === actualRuntimeIdentity.ackRevision, 'preload companion ACK revision must match the artifact')
+assert(typeof publicCompanionKernel?.dispatchCommand === 'function', 'preload must expose companion dispatchCommand')
+assert(typeof publicCompanionKernel?.subscribe === 'function', 'preload must expose companion subscribe')
+assert(typeof publicCompanionKernel?.acknowledge === 'function', 'preload must expose companion acknowledge')
+assert(typeof publicCompanionKernel?.dispatch === 'undefined', 'preload must not expose the retired legacy companion dispatch route')
+const mainBeforeHandshakeKernel = await publicCompanionKernel.dispatchCommand({})
+assert(mainBeforeHandshakeKernel.errorCode === 'reload-required', 'new Main Preload must keep unmounted Renderer V6 commands inert before identity handshake')
 const mainBeforeHandshakeOpen = await sandbox.window.eypcPlatform.codex.openThread('legacy-alias')
 assert(mainBeforeHandshakeOpen.errorCode === 'reload-required', 'new Main Preload must keep legacy Main task ports inert before identity handshake')
 const mainIdentityHandshake = sandbox.window.eypcPlatform.runtimeIdentity.handshake({
   hostAssetId: actualRuntimeIdentity.hostAssetId,
   rendererAssetId: actualRuntimeIdentity.rendererAssetId,
   kernelRevision: actualRuntimeIdentity.kernelRevision,
-  taskPackageRevision: actualRuntimeIdentity.taskPackageRevision
+  registryRevision: actualRuntimeIdentity.registryRevision,
+  topologyRevision: actualRuntimeIdentity.topologyRevision,
+  taskPackageRevision: actualRuntimeIdentity.taskPackageRevision,
+  commandRevision: actualRuntimeIdentity.commandRevision,
+  subscribeRevision: actualRuntimeIdentity.subscribeRevision,
+  ackRevision: actualRuntimeIdentity.ackRevision
 })
 assert(mainIdentityHandshake.status === 'host-loaded', 'Main/Preload exact identity handshake must prove host-loaded')
 assert(typeof sandbox.window.eypcPlatform.claude.inspect === 'function', 'preload must expose claude.inspect')
@@ -400,9 +439,9 @@ for (const method of Object.keys(claudeModuleProbe)) {
   )
 }
 assert(typeof sandbox.window.eypcPlatform.claude.readCodeSnapshot === 'function', 'preload must expose claude.readCodeSnapshot')
-assert(Array.isArray(sandbox.window.eypcPlatform.claude.readCodeSnapshot({}).sessions), 'claude.readCodeSnapshot must always return a sessions array')
+assert(Array.isArray((await sandbox.window.eypcPlatform.claude.readCodeSnapshot({})).sessions), 'claude.readCodeSnapshot must always return a sessions array')
 assert(typeof sandbox.window.eypcPlatform.claude.readCodeStateSnapshot === 'function', 'preload must expose claude.readCodeStateSnapshot')
-assert(Number.isInteger(sandbox.window.eypcPlatform.claude.readCodeStateSnapshot({}).generation), 'claude.readCodeStateSnapshot must expose V2 generation')
+assert(Number.isInteger((await sandbox.window.eypcPlatform.claude.readCodeStateSnapshot({})).generation), 'claude.readCodeStateSnapshot must expose V2 generation')
 assert(typeof sandbox.window.eypcPlatform.claude.readPlanUsage === 'function', 'preload must expose claude.readPlanUsage')
 assert(sandbox.window.eypcPlatform.claude.readPlanUsage() === null, 'claude.readPlanUsage must degrade to null without a readable history file')
 assert(typeof sandbox.window.eypcPlatform.claude.watchCodeSessions === 'function', 'preload must expose claude.watchCodeSessions')
@@ -487,7 +526,12 @@ const floatIdentityHandshake = floatSandbox.window.eypcFloat.runtimeIdentity.han
   hostAssetId: actualRuntimeIdentity.hostAssetId,
   rendererAssetId: actualRuntimeIdentity.rendererAssetId,
   kernelRevision: actualRuntimeIdentity.kernelRevision,
-  taskPackageRevision: actualRuntimeIdentity.taskPackageRevision
+  registryRevision: actualRuntimeIdentity.registryRevision,
+  topologyRevision: actualRuntimeIdentity.topologyRevision,
+  taskPackageRevision: actualRuntimeIdentity.taskPackageRevision,
+  commandRevision: actualRuntimeIdentity.commandRevision,
+  subscribeRevision: actualRuntimeIdentity.subscribeRevision,
+  ackRevision: actualRuntimeIdentity.ackRevision
 })
 assert(floatIdentityHandshake.status === 'host-loaded', 'Float UI/Preload exact identity handshake must prove host-loaded')
 assert(typeof floatSandbox.window.eypcFloat?.resizeStart === 'function', 'float preload must expose resizeStart')

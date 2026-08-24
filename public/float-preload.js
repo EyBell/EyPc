@@ -1,6 +1,6 @@
 const { ipcRenderer } = require('electron')
 
-const RUNTIME_IDENTITY_REVISION = 'runtime-identity-v1'
+const RUNTIME_IDENTITY_REVISION = 'runtime-identity-v2'
 let runtimeIdentityArtifact = null
 try { runtimeIdentityArtifact = require('./runtime-identity.cjs') } catch {}
 let runtimeIdentityCompatible = false
@@ -11,13 +11,23 @@ function runtimeIdentityHandshake(input = {}) {
     hostAssetId: typeof runtimeIdentityArtifact?.hostAssetId === 'string' ? runtimeIdentityArtifact.hostAssetId : '',
     rendererAssetId: typeof runtimeIdentityArtifact?.rendererAssetId === 'string' ? runtimeIdentityArtifact.rendererAssetId : '',
     kernelRevision: typeof runtimeIdentityArtifact?.kernelRevision === 'string' ? runtimeIdentityArtifact.kernelRevision : '',
-    taskPackageRevision: typeof runtimeIdentityArtifact?.taskPackageRevision === 'string' ? runtimeIdentityArtifact.taskPackageRevision : ''
+    registryRevision: typeof runtimeIdentityArtifact?.registryRevision === 'string' ? runtimeIdentityArtifact.registryRevision : '',
+    topologyRevision: typeof runtimeIdentityArtifact?.topologyRevision === 'string' ? runtimeIdentityArtifact.topologyRevision : '',
+    taskPackageRevision: typeof runtimeIdentityArtifact?.taskPackageRevision === 'string' ? runtimeIdentityArtifact.taskPackageRevision : '',
+    commandRevision: typeof runtimeIdentityArtifact?.commandRevision === 'string' ? runtimeIdentityArtifact.commandRevision : '',
+    subscribeRevision: typeof runtimeIdentityArtifact?.subscribeRevision === 'string' ? runtimeIdentityArtifact.subscribeRevision : '',
+    ackRevision: typeof runtimeIdentityArtifact?.ackRevision === 'string' ? runtimeIdentityArtifact.ackRevision : ''
   }
   const expectation = {
     hostAssetId: typeof expected.hostAssetId === 'string' ? expected.hostAssetId : '',
     rendererAssetId: typeof expected.rendererAssetId === 'string' ? expected.rendererAssetId : '',
     kernelRevision: typeof expected.kernelRevision === 'string' ? expected.kernelRevision : '',
-    taskPackageRevision: typeof expected.taskPackageRevision === 'string' ? expected.taskPackageRevision : ''
+    registryRevision: typeof expected.registryRevision === 'string' ? expected.registryRevision : '',
+    topologyRevision: typeof expected.topologyRevision === 'string' ? expected.topologyRevision : '',
+    taskPackageRevision: typeof expected.taskPackageRevision === 'string' ? expected.taskPackageRevision : '',
+    commandRevision: typeof expected.commandRevision === 'string' ? expected.commandRevision : '',
+    subscribeRevision: typeof expected.subscribeRevision === 'string' ? expected.subscribeRevision : '',
+    ackRevision: typeof expected.ackRevision === 'string' ? expected.ackRevision : ''
   }
   runtimeIdentityCompatible = runtimeIdentityArtifact?.revision === RUNTIME_IDENTITY_REVISION
     && runtimeIdentityArtifact?.artifactState === 'artifact-ready'
@@ -135,6 +145,7 @@ function sendTaskPackageAck(stage, sentRevision, reason) {
   const revision = Number.isInteger(sentRevision) && sentRevision > 0 ? sentRevision : lastTaskPackageRevision
   if (!revision) return false
   return sendToParent(CHANNELS.taskPackageAck, {
+    revision,
     sentRevision: revision,
     currentRevision: lastTaskPackageRevision,
     stage,
@@ -152,8 +163,11 @@ function acceptTaskPackage(taskPackage, sentRevision, baseSnapshot = lastSnapsho
   const revision = taskPackageRevision(taskPackage)
   if (!revision
     || sentRevision !== revision
-    || taskPackage?.schema !== 'companion-task-package-v4'
-    || taskPackage?.kernelRevision !== 'companion-task-kernel-v4') {
+    || taskPackage?.schema !== 'companion-task-snapshot-v6'
+    || taskPackage?.kernelRevision !== 'companion-task-kernel-v6'
+    || taskPackage?.registryRevision !== 'companion-provider-registry-v1'
+    || taskPackage?.topologySchemaRevision !== 'companion-task-topology-v2'
+    || taskPackage?.commandRevision !== 'companion-task-command-v1') {
     sendTaskPackageAck('rejected', Number.isInteger(sentRevision) ? sentRevision : revision, 'invalid-payload')
     return false
   }
@@ -162,14 +176,16 @@ function acceptTaskPackage(taskPackage, sentRevision, baseSnapshot = lastSnapsho
     return false
   }
   if (revision === lastTaskPackageRevision) {
-    lastSnapshot = { ...(baseSnapshot || lastSnapshot || {}), companionTaskPackage: taskPackage }
+    lastSnapshot = { ...(baseSnapshot || lastSnapshot || {}), taskSnapshot: taskPackage }
     sendTaskPackageAck('received', revision)
-    sendTaskPackageAck('applied', revision)
-    if (options.notify === true) notifySnapshotListeners(lastSnapshot)
+    // A retry may mean the Host missed the Renderer ACK. Re-deliver the same
+    // immutable snapshot so the Renderer can re-ack a revision it has already
+    // proven rendered; the preload itself never manufactures that proof.
+    notifySnapshotListeners(lastSnapshot)
     return true
   }
   lastTaskPackageRevision = revision
-  lastSnapshot = { ...(baseSnapshot || {}), companionTaskPackage: taskPackage }
+  lastSnapshot = { ...(baseSnapshot || {}), taskSnapshot: taskPackage }
   sendTaskPackageAck('received', revision)
   notifySnapshotListeners(lastSnapshot)
   return true
@@ -182,10 +198,10 @@ ipcRenderer.on(CHANNELS.snapshot, (_event, snapshot) => {
   if (incomingBaseRevision > 0 && incomingBaseRevision < lastBaseSnapshotRevision) return
   const baseAdvanced = incomingBaseRevision === 0 || incomingBaseRevision > lastBaseSnapshotRevision
   if (incomingBaseRevision > 0) lastBaseSnapshotRevision = Math.max(lastBaseSnapshotRevision, incomingBaseRevision)
-  const taskPackage = snapshot.companionTaskPackage
+  const taskPackage = snapshot.taskSnapshot
   const baseSnapshot = taskPackage
     ? snapshot
-    : { ...snapshot, ...(lastSnapshot?.companionTaskPackage ? { companionTaskPackage: lastSnapshot.companionTaskPackage } : {}) }
+    : { ...snapshot, ...(lastSnapshot?.taskSnapshot ? { taskSnapshot: lastSnapshot.taskSnapshot } : {}) }
   if (taskPackage) {
     acceptTaskPackage(taskPackage, taskPackageRevision(taskPackage), baseSnapshot, { notify: baseAdvanced })
     return
@@ -197,7 +213,7 @@ ipcRenderer.on(CHANNELS.snapshot, (_event, snapshot) => {
 
 ipcRenderer.on(CHANNELS.taskPackage, (_event, payload) => {
   const source = payload && typeof payload === 'object' ? payload : {}
-  acceptTaskPackage(source.taskPackage, Number(source.sentRevision), lastSnapshot)
+  acceptTaskPackage(source.taskSnapshot, Number(source.sentRevision), lastSnapshot)
 })
 
 ipcRenderer.on(CHANNELS.state, (_event, state) => {
@@ -251,9 +267,10 @@ window.eypcFloat = {
   getSnapshot: () => lastSnapshot,
   getState: () => lastState,
   getHealth: () => ({ heartbeatSequence, lastHeartbeatAckAt }),
-  ackTaskPackage: (stage, reason) => {
+  ackTaskSnapshot: (stage, revision, reason) => {
     if (!['applied', 'rejected'].includes(stage)) return false
-    return sendTaskPackageAck(stage, lastTaskPackageRevision, stage === 'rejected' ? reason : undefined)
+    if (!Number.isInteger(revision) || revision <= 0 || revision > lastTaskPackageRevision) return false
+    return sendTaskPackageAck(stage, revision, stage === 'rejected' ? reason : undefined)
   },
   onSnapshot(listener) {
     if (typeof listener !== 'function') return () => {}

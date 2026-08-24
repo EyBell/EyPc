@@ -1,11 +1,11 @@
 {
   "revision": "companion-provider-registry-v1",
-  "kernelRevision": "companion-task-kernel-v5",
-  "topologyRevision": "companion-task-topology-v1",
-  "snapshotRevision": "companion-task-package-v5",
+  "kernelRevision": "companion-task-kernel-v6",
+  "topologyRevision": "companion-task-topology-v2",
+  "snapshotRevision": "companion-task-snapshot-v6",
   "commandRevision": "companion-task-command-v1",
   "subscribeRevision": "companion-task-subscribe-v1",
-  "ackRevision": "companion-task-ack-v1",
+  "ackRevision": "companion-task-ack-v2",
   "order": ["codex", "claude", "cursor"],
   "providers": {
     "codex": {

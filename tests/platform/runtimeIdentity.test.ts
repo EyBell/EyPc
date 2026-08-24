@@ -11,7 +11,12 @@ const expectation = {
   hostAssetId: __EYPC_HOST_ASSET_ID__,
   rendererAssetId: __EYPC_RENDERER_ASSET_ID__,
   kernelRevision: __EYPC_COMPANION_KERNEL_REVISION__,
-  taskPackageRevision: __EYPC_COMPANION_TASK_PACKAGE_REVISION__
+  registryRevision: __EYPC_COMPANION_PROVIDER_REGISTRY_REVISION__,
+  topologyRevision: __EYPC_COMPANION_TASK_TOPOLOGY_REVISION__,
+  taskPackageRevision: __EYPC_COMPANION_TASK_PACKAGE_REVISION__,
+  commandRevision: __EYPC_COMPANION_TASK_COMMAND_REVISION__,
+  subscribeRevision: __EYPC_COMPANION_TASK_SUBSCRIBE_REVISION__,
+  ackRevision: __EYPC_COMPANION_TASK_ACK_REVISION__
 }
 
 function rawPlatform(overrides: Record<string, unknown> = {}) {
@@ -123,23 +128,26 @@ describe('uTools runtime identity', () => {
 
   it('accepts the unified Kernel only after exact Main/Preload identity handshake', () => {
     const kernel = {
-      revision: 'companion-task-kernel-v4',
-      packageRevision: 'companion-task-package-v4',
+      revision: 'companion-task-kernel-v6',
+      packageRevision: 'companion-task-snapshot-v6',
+      registryRevision: 'companion-provider-registry-v1',
+      topologyRevision: 'companion-task-topology-v2',
+      commandRevision: 'companion-task-command-v1',
+      subscribeRevision: 'companion-task-subscribe-v1',
+      ackRevision: 'companion-task-ack-v2',
       attach: vi.fn(),
       configure: vi.fn(),
-      publishAuxiliaryCycleTasks: vi.fn(),
-      syncPackage: vi.fn(),
-      dispatch: vi.fn(),
-      getPackage: vi.fn(),
+      dispatchCommand: vi.fn(),
       getLatest: vi.fn(),
       subscribe: vi.fn(),
+      acknowledge: vi.fn(),
       diagnostics: vi.fn()
     }
     ;(globalThis as any).window = { eypcPlatform: rawPlatform({
       runtimeIdentity: {
-        revision: 'runtime-identity-v1',
+        revision: 'runtime-identity-v2',
         handshake: () => ({
-          revision: 'runtime-identity-v1',
+          revision: 'runtime-identity-v2',
           status: 'host-loaded',
           expected: expectation,
           actual: expectation,
@@ -157,7 +165,7 @@ describe('uTools runtime identity', () => {
 
   it('keeps a new Float Preload inert until its UI handshakes and rejects an old child artifact', async () => {
     const currentArtifact = {
-      revision: 'runtime-identity-v1',
+      revision: 'runtime-identity-v2',
       artifactState: 'artifact-ready',
       ...expectation
     }

@@ -5,6 +5,22 @@ import { describe, expect, it, vi } from 'vitest'
 const require_ = createRequire(import.meta.url)
 const { createCompanionTaskActions } = require_(resolve(process.cwd(), 'preload/companion/task-actions.cjs'))
 
+function nativeOpened() {
+  return {
+    outcome: 'opened',
+    confirmsRead: false,
+    handoff: {
+      revision: 'companion-open-handoff-v1',
+      handoffId: 'coh_native_confirmed_002',
+      stage: 'native-confirmed',
+      sourceRelease: 'unknown',
+      nativeVisible: true,
+      controlOwner: 'target-native',
+      confirmsRead: false
+    }
+  }
+}
+
 function target(provider: 'codex' | 'claude', key: string, revisionAt = 100) {
   return {
     provider,
@@ -54,7 +70,7 @@ function syncReady(actions: ReturnType<typeof createCompanionTaskActions>, targe
 
 describe('companion task action dispatcher', () => {
   it('opens the Host current target by exact key when a card carries an older alias and revision', async () => {
-    const open = vi.fn(async () => ({ outcome: 'opened' }))
+    const open = vi.fn(async () => nativeOpened())
     const actions = createCompanionTaskActions({ adapters: { codex: { open } } })
     const current = {
       ...target('codex', 'same-key', 200),

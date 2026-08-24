@@ -16,6 +16,22 @@ function createCompanionTaskKernel(options: Record<string, unknown> = {}) {
   return createCompanionTaskKernelRaw({ now: () => 1_000, ...options })
 }
 
+function nativeOpened(confirmsRead = false) {
+  return {
+    outcome: 'opened',
+    confirmsRead,
+    handoff: {
+      revision: 'companion-open-handoff-v1',
+      handoffId: 'coh_kernel_native_0001',
+      stage: 'native-confirmed',
+      sourceRelease: 'unknown',
+      nativeVisible: true,
+      controlOwner: 'target-native',
+      confirmsRead
+    }
+  }
+}
+
 function task(overrides: Record<string, unknown> = {}) {
   return {
     key: 'codex-a',
@@ -51,6 +67,53 @@ function task(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function evidenceNode(value: Record<string, any>, lanes: Record<string, number> = {}) {
+  const phase = value.phase
+  const activityKind = phase === 'running' ? 'turn-running'
+    : phase === 'waiting-input' ? 'waiting-input'
+      : phase === 'waiting-approval' ? 'waiting-approval'
+        : phase === 'completed' ? 'turn-completed'
+          : phase === 'stopped' ? value.error === true ? 'turn-failed' : 'turn-interrupted'
+            : 'unknown'
+  const capabilities = Object.entries(value.capabilities || {})
+    .filter(([, enabled]) => enabled === true)
+    .map(([name]) => name === 'executePlan' ? 'execute-plan' : name)
+  const planState = value.planLifecycleState === 'cleared'
+    ? 'cleared'
+    : value.planReady === true || value.planImplementation === true ? 'ready' : 'unknown'
+  return {
+    key: value.key,
+    provider: value.provider,
+    family: value.family || `${value.provider}:${value.key}`,
+    role: value.role === 'child' ? 'child' : 'root',
+    membership: 'present',
+    activity: {
+      kind: activityKind,
+      causalKey: typeof value.causalKey === 'string' ? value.causalKey : '',
+      sequence: Number(lanes.phase) || Number(value.phaseRevision) || Number(value.revisionAt) || 1,
+      exact: value.freshness !== 'verifying',
+      observedAt: Number(value.observedAt) || 0,
+      statusEnteredAt: Number(value.statusEnteredAt) || 0,
+      turnStartedAt: Number(value.turnStartedAt) || 0,
+      terminalAt: Number(value.terminalAt) || 0
+    },
+    unread: {
+      known: value.unreadKnown !== false && typeof value.unread === 'boolean',
+      value: value.unread === true,
+      sequence: Number(lanes.unread) || Number(value.unreadRevision) || 0
+    },
+    plan: {
+      state: planState,
+      sequence: Number(value.planLifecycleRevision) || 0,
+      reason: ['cancel', 'execution-start', 'archive', 'removal'].includes(value.planClearReason) ? value.planClearReason : ''
+    },
+    metadata: { ...value, partial: false },
+    capabilities,
+    standaloneEligible: value.standaloneEligible !== false,
+    error: value.error === true
+  }
+}
+
 function draft(tasks: unknown[], revision = 1, overrides: Record<string, unknown> = {}) {
   const configuredProviders = (overrides.providers as { codex?: boolean; claude?: boolean; cursor?: boolean } | undefined) || {}
   const providers = {
@@ -70,8 +133,31 @@ function draft(tasks: unknown[], revision = 1, overrides: Record<string, unknown
       claude: { membership: sourceGenerations.claude || 0, phase: sourceGenerations.claude || 0, unread: sourceGenerations.claude || 0, metadata: sourceGenerations.claude || 0, topology: sourceGenerations.claude || 0 },
       cursor: { membership: sourceGenerations.cursor || 0, phase: sourceGenerations.cursor || 0, unread: sourceGenerations.cursor || 0, metadata: sourceGenerations.cursor || 0, topology: sourceGenerations.cursor || 0 }
     }
+  const producer = typeof overrides.producer === 'string' ? overrides.producer : 'host-evidence'
+  const relations = Array.isArray(overrides.relations) ? overrides.relations : []
+  const evidenceBatches = Object.fromEntries(['codex', 'claude', 'cursor'].map((provider) => {
+    const lanes = (sourceLaneGenerations[provider] || {}) as Record<string, number>
+    const snapshot = producer === 'host-preflight'
+    const providerRelations = relations.filter((relation: any) => relation?.provider === provider)
+    return [provider, {
+      revision: 'companion-provider-evidence-batch-v2',
+      provider,
+      channels: Object.fromEntries(['membership', 'phase', 'unread', 'metadata', 'topology'].map((channel) => [channel, {
+        mode: snapshot ? 'snapshot' : 'delta',
+        complete: snapshot,
+        generation: Number(lanes[channel]) || 0,
+        removedKeys: []
+      }])),
+      nodes: (tasks as Record<string, any>[]).filter((value) => value.provider === provider).map((value) => evidenceNode(value, lanes)),
+      relations: providerRelations,
+      relationMode: snapshot ? 'snapshot' : 'delta',
+      relationsComplete: snapshot,
+      removedRelationChildKeys: [],
+      health: providers[provider as keyof typeof providers] ? 'ready' : 'unavailable'
+    }]
+  }))
   return {
-    schema: 'companion-task-draft-v5',
+    schema: 'companion-task-evidence-draft-v6',
     producer: 'host-evidence',
     sourceTaskStateRevision: 'task-state-v11',
     draftRevision: revision,
@@ -80,6 +166,7 @@ function draft(tasks: unknown[], revision = 1, overrides: Record<string, unknown
     complete: true,
     focusedKey: '',
     tasks,
+    evidenceBatches,
     ...overrides,
     providers,
     sourceGenerations,
@@ -95,7 +182,7 @@ function draft(tasks: unknown[], revision = 1, overrides: Record<string, unknown
 afterEach(() => vi.useRealTimers())
 
 describe('CompanionTaskKernel', () => {
-  it('keeps canonical selectors and production fallback ownership inside the V5 Kernel', () => {
+  it('keeps canonical selectors and production fallback ownership inside the V6 Kernel', () => {
     const kernelSource = readFileSync(resolve(process.cwd(), 'preload/companion/task-kernel.cjs'), 'utf8')
     const hostSource = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
     const domainSource = readFileSync(resolve(process.cwd(), 'src/domain/companionTaskPackage.ts'), 'utf8')
@@ -1166,7 +1253,7 @@ describe('CompanionTaskKernel', () => {
     expect(reduceClaudeTaskEvidenceV4({ phase: 'unknown', unread: false })).toMatchObject({ phase: 'unknown', freshness: 'verifying' })
   })
 
-  it('keeps the Plan lifecycle across refinement, interruption and pause until exact default execution starts', async () => {
+  it('keeps the Plan lifecycle across a supplementary default Turn, interruption and pause until an explicit execution-start edge', async () => {
     const persisted: Array<Record<string, unknown>> = []
     const kernel = createCompanionTaskKernel({
       persistPlanPause: (value: Record<string, unknown>) => { persisted.push(value); return true },
@@ -1179,19 +1266,34 @@ describe('CompanionTaskKernel', () => {
     })
 
     expect(sync({ turnMode: 'plan', phase: 'running', planReady: false }, 1).tasks[0]).toMatchObject({ phase: 'running', planReady: false })
-    const ready = sync({
+    const unreadPlan = sync({
       turnMode: 'plan',
-      phase: 'waiting-input',
+      phase: 'completed',
       planImplementation: true,
       planReady: true,
       planLifecycleRevision: 200,
+      unreadKnown: true,
+      unread: true,
       capabilities: { open: true, archive: false, pause: true, resume: true, executePlan: false }
     }, 2)
+    expect(unreadPlan.tasks[0]).toMatchObject({ phase: 'completed', unread: true, planReady: true, planLifecycleRevision: 200 })
+    expect(unreadPlan.views.groups.unread).toEqual(['codex-a'])
+
+    const ready = sync({
+      turnMode: 'plan',
+      phase: 'completed',
+      planImplementation: true,
+      planReady: true,
+      planLifecycleRevision: 200,
+      unreadKnown: true,
+      unread: false,
+      capabilities: { open: true, archive: false, pause: true, resume: true, executePlan: false }
+    }, 3)
     expect(ready.tasks[0]).toMatchObject({ phase: 'waiting-input', planReady: true, planLifecycleRevision: 200 })
     expect(ready.views.counts.input).toBe(1)
     expect(ready.views.cycleKeys).toEqual(['codex-a'])
 
-    expect(sync({ turnMode: 'plan', phase: 'running', planReady: false, planLifecycleRevision: 0 }, 3).tasks[0])
+    expect(sync({ turnMode: 'default', phase: 'running', planReady: false, planLifecycleRevision: 0 }, 4).tasks[0])
       .toMatchObject({ phase: 'running', planReady: true, planLifecycleRevision: 200 })
     const stopped = sync({
       turnMode: 'plan',
@@ -1200,9 +1302,9 @@ describe('CompanionTaskKernel', () => {
       planLifecycleRevision: 200,
       dynamicEligible: false,
       capabilities: { open: true, archive: true, pause: true, resume: true, executePlan: false }
-    }, 4)
-    expect(stopped.tasks[0]).toMatchObject({ phase: 'stopped', planReady: true, dynamicGroup: 'stopped' })
-    expect(stopped.views.groups.stopped).toEqual(['codex-a'])
+    }, 5)
+    expect(stopped.tasks[0]).toMatchObject({ phase: 'waiting-input', planReady: true, dynamicGroup: 'input' })
+    expect(stopped.views.groups.input).toEqual(['codex-a'])
     expect(stopped.views.cycleKeys).toEqual(['codex-a'])
 
     await expect(kernel.dispatch({ action: 'pause', key: 'codex-a', planLifecycleRevision: 200 }))
@@ -1212,8 +1314,22 @@ describe('CompanionTaskKernel', () => {
       .resolves.toMatchObject({ outcome: 'resumed' })
     expect(persisted.map((value) => value.paused)).toEqual([true, false])
 
-    const executing = sync({ turnMode: 'default', turnStartedAt: 500, phase: 'running', planReady: true, planLifecycleRevision: 200 }, 5)
-    expect(executing.tasks[0]).toMatchObject({ phase: 'running', planReady: false, planLifecycleRevision: 0, paused: false })
+    const executing = sync({
+      turnMode: 'default',
+      turnStartedAt: 500,
+      phase: 'running',
+      planReady: false,
+      planLifecycleState: 'cleared',
+      planClearReason: 'execution-start',
+      planLifecycleRevision: 500
+    }, 6)
+    expect(executing.tasks[0]).toMatchObject({
+      phase: 'running',
+      planReady: false,
+      planLifecycleState: 'cleared',
+      planLifecycleRevision: 500,
+      paused: false
+    })
   })
 
   it('keeps ordinary waiting ahead while retaining Plan controls when the Implement Plan request is absent', () => {
@@ -1270,7 +1386,7 @@ describe('CompanionTaskKernel', () => {
     })
 
     expect(current.tasks[0]).toMatchObject({
-      phase: 'completed',
+      phase: 'waiting-input',
       planReady: true,
       capabilities: { pause: true, resume: false, executePlan: true }
     })
@@ -1572,7 +1688,7 @@ describe('CompanionTaskKernel', () => {
         codex: {
           open: vi.fn(async (target: Record<string, unknown>) => {
             opened.push({ ...target })
-            return { outcome: 'opened' }
+            return nativeOpened()
           })
         }
       },
@@ -1594,7 +1710,7 @@ describe('CompanionTaskKernel', () => {
     const kernel = createCompanionTaskKernel({
       coalesceMs: 0,
       adapters: {
-        codex: { open: vi.fn(async () => ({ outcome: 'opened' })) },
+        codex: { open: vi.fn(async () => nativeOpened()) },
         cursor: {
           open: vi.fn(async (target: Record<string, unknown>) => {
             openedCursor.push(String(target.actionAlias))
@@ -1762,7 +1878,7 @@ describe('CompanionTaskKernel', () => {
               failFirst = false
               return { outcome: 'failed', errorCode: 'test-failure' }
             }
-            return { outcome: 'opened' }
+            return nativeOpened()
           }
         }
       },
@@ -1799,7 +1915,7 @@ describe('CompanionTaskKernel', () => {
         codex: {
           open: async (target: Record<string, unknown>) => {
             opened.push(String(target.key))
-            return { outcome: 'opened' }
+            return nativeOpened()
           }
         }
       },
@@ -1820,9 +1936,9 @@ describe('CompanionTaskKernel', () => {
     expect(opened).toEqual([])
   })
 
-  it('keeps a Claude open-read hint for the same completion and releases it for the next completion', async () => {
+  it('keeps a Claude native open-read receipt for the same completion and releases it for the next completion', async () => {
     const kernel = createCompanionTaskKernel({
-      adapters: { claude: { open: async () => ({ outcome: 'opened' }) } },
+      adapters: { claude: { open: async () => nativeOpened(true) } },
       initialConfiguration: { enabled: true, providers: { codex: false, claude: true } }
     })
     const receipt = kernel.attach({ enabled: true, providers: { codex: false, claude: true } })
@@ -1863,6 +1979,33 @@ describe('CompanionTaskKernel', () => {
       draft: draft([claudeTask({ phase: 'completed', unread: true, revisionAt: 300, phaseRevision: 300, statusEnteredAt: 300, terminalAt: 300 })], 4, {
         providers: { codex: false, claude: true }
       })
+    })
+    expect(kernel.getLatest().tasks[0]).toMatchObject({ phase: 'completed', unread: true })
+  })
+
+  it('downgrades an unverified opened claim and preserves unread in the canonical snapshot', async () => {
+    const kernel = createCompanionTaskKernel({
+      adapters: { claude: { open: async () => ({ outcome: 'opened', confirmsRead: true }) } },
+      initialConfiguration: { enabled: true, providers: { codex: false, claude: true } }
+    })
+    const receipt = kernel.attach({ enabled: true, providers: { codex: false, claude: true } })
+    kernel.syncPackage({
+      lease: receipt.lease,
+      draft: draft([task({
+        key: 'claude:unverified-open',
+        provider: 'claude',
+        kind: 'claude-session',
+        actionAlias: 'local-unverified-open',
+        phase: 'completed',
+        unread: true,
+        terminalAt: 100,
+        capabilities: { open: true, archive: false, pause: false, resume: false, executePlan: false }
+      })], 1, { providers: { codex: false, claude: true } })
+    })
+
+    await expect(kernel.dispatch({ action: 'open', key: 'claude:unverified-open' })).resolves.toMatchObject({
+      outcome: 'dispatched',
+      confirmsRead: false
     })
     expect(kernel.getLatest().tasks[0]).toMatchObject({ phase: 'completed', unread: true })
   })
@@ -1985,7 +2128,7 @@ describe('CompanionTaskKernel', () => {
         }
       })
     })
-    expect(kernel.getPackage().tasks[0]).toHaveProperty('archiveRequest')
+    expect(kernel.getPackage().tasks[0]).not.toHaveProperty('archiveRequest')
 
     const running = kernel.syncPackage({
       lease: receipt.lease,
@@ -2147,7 +2290,7 @@ describe('CompanionTaskKernel', () => {
   })
 
   it('cycles from a complete package while a phase is still verifying, without a blocking preflight', async () => {
-    const opened = vi.fn(async () => ({ outcome: 'opened' }))
+    const opened = vi.fn(async () => nativeOpened())
     const preflight = vi.fn(async () => { throw new Error('provider unavailable') })
     const records: Array<Record<string, any>> = []
     const kernel = createCompanionTaskKernel({
@@ -2191,7 +2334,7 @@ describe('CompanionTaskKernel', () => {
   })
 
   it('refuses an incomplete navigation snapshot without waiting for or binding to a preflight', async () => {
-    const opened = vi.fn(async () => ({ outcome: 'opened' }))
+    const opened = vi.fn(async () => nativeOpened())
     const preflight = vi.fn(async () => { throw new Error('provider unavailable') })
     const records: Array<Record<string, any>> = []
     const notifications: string[] = []
@@ -2233,7 +2376,7 @@ describe('CompanionTaskKernel', () => {
     const kernel = createCompanionTaskKernel({
       coalesceMs: 0,
       preflight,
-      adapters: { codex: { open: async () => ({ outcome: 'opened' }), archive } },
+      adapters: { codex: { open: async () => nativeOpened(), archive } },
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
     })
     const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
@@ -2254,7 +2397,7 @@ describe('CompanionTaskKernel', () => {
   })
 
   it('records the feature code and the no-task exit for a silent attention shortcut', async () => {
-    const opened = vi.fn(async () => ({ outcome: 'opened' }))
+    const opened = vi.fn(async () => nativeOpened())
     const records: Array<Record<string, any>> = []
     const notifications: string[] = []
     const kernel = createCompanionTaskKernel({
@@ -2304,13 +2447,14 @@ describe('CompanionTaskKernel', () => {
     }))
   })
 
-  it('delegates exact-key alias recovery to Host without broad preflight or target substitution', async () => {
+  it('delegates exact-key target recovery to Host without a public alias or target substitution', async () => {
     const opened: Array<Record<string, unknown>> = []
+    const coldKey = 'b'.repeat(32)
     const preflight = vi.fn(async () => draft([task()], 2, { producer: 'host-preflight', providers: { codex: true, claude: false } }))
     const kernel = createCompanionTaskKernel({
       coalesceMs: 0,
       preflight,
-      adapters: { codex: { open: async (target: Record<string, unknown>) => { opened.push(target); return { outcome: 'opened' } } } },
+      adapters: { codex: { open: async (target: Record<string, unknown>) => { opened.push(target); return nativeOpened() } } },
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
     })
     const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
@@ -2321,29 +2465,27 @@ describe('CompanionTaskKernel', () => {
 
     await expect(kernel.dispatch({
       action: 'open',
-      key: 'codex-b',
-      expectedActionAlias: 'ct_codex_b_expired_123456',
+      key: coldKey,
       source: 'card-click'
-    })).resolves.toMatchObject({ outcome: 'opened', key: 'codex-b' })
+    })).resolves.toMatchObject({ outcome: 'opened', key: coldKey })
     expect(preflight).toHaveBeenCalledTimes(preflightCallsBeforeOpen)
     expect(opened).toEqual([expect.objectContaining({
-      key: 'codex-b',
-      actionAlias: 'ct_codex_b_expired_123456'
+      key: coldKey,
+      actionAlias: ''
     })])
 
     await expect(kernel.dispatch({
       action: 'open',
-      key: 'codex-b',
-      expectedActionAlias: 'ct_codex_b_older_123456',
+      key: coldKey,
       source: 'manual-row-open'
-    })).resolves.toMatchObject({ outcome: 'opened', key: 'codex-b' })
+    })).resolves.toMatchObject({ outcome: 'opened', key: coldKey })
     expect(preflight).toHaveBeenCalledTimes(preflightCallsBeforeOpen)
     expect(opened).toHaveLength(2)
-    expect(opened.every((target) => target.key === 'codex-b')).toBe(true)
+    expect(opened.every((target) => target.key === coldKey && target.actionAlias === '')).toBe(true)
   })
 
   it('consumes a silent shortcut before any Renderer attaches and never replays it after cold cache recovery', async () => {
-    const opened = vi.fn(async () => ({ outcome: 'opened' }))
+    const opened = vi.fn(async () => nativeOpened())
     const preflight = vi.fn(async () => draft([task()], 1, { providers: { codex: true, claude: false } }))
     const kernel = createCompanionTaskKernel({
       coalesceMs: 0,
@@ -2405,7 +2547,7 @@ describe('CompanionTaskKernel', () => {
 
   it('turns 1,000 equivalent observations into complete semantic no-ops', () => {
     const records: Array<Record<string, unknown>> = []
-    const opened = vi.fn(async () => ({ outcome: 'opened' }))
+    const opened = vi.fn(async () => nativeOpened())
     const kernel = createCompanionTaskKernel({
       record: (entry: Record<string, unknown>) => records.push(entry),
       adapters: { codex: { open: opened } },
@@ -2499,7 +2641,7 @@ describe('CompanionTaskKernel', () => {
   it('keeps hot dispatch and atomic Main/Float publication inside the accepted latency budgets', async () => {
     const kernel = createCompanionTaskKernel({
       coalesceMs: 0,
-      adapters: { codex: { open: async () => ({ outcome: 'opened' }) } },
+      adapters: { codex: { open: async () => nativeOpened() } },
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
     })
     const receipt = kernel.attach({ enabled: true, providers: { codex: true, claude: false } })
@@ -2527,7 +2669,7 @@ describe('CompanionTaskKernel', () => {
     const kernel = createCompanionTaskKernel({
       coalesceMs: 0,
       preflight: async () => draft([task()], 1, { providers: { codex: true, claude: false } }),
-      adapters: { codex: { open: async () => ({ outcome: 'opened' }) } },
+      adapters: { codex: { open: async () => nativeOpened() } },
       initialConfiguration: { enabled: true, providers: { codex: true, claude: false } }
     })
     const started = performance.now()
