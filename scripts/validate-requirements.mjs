@@ -1,10 +1,24 @@
+import crypto from 'node:crypto'
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const require = createRequire(import.meta.url)
+const vibeRoot = path.join(repoRoot, 'vibe')
+const specsRoot = path.join(vibeRoot, 'specs')
 const registryRoot = path.join(repoRoot, 'vibe', 'specs', 'requirements')
 const modulesRoot = path.join(registryRoot, 'modules')
+const productRequirementsPath = path.join(specsRoot, 'PRODUCT_REQUIREMENTS.md')
+const sourceCatalogPath = path.join(specsRoot, 'source-anchors', 'catalog.json')
+const architecturePath = path.join(vibeRoot, 'knowledge', 'ARCHITECTURE.md')
+const runtimeIdentityPath = path.join(repoRoot, 'public', 'runtime-identity.cjs')
+const taskStatePath = path.join(repoRoot, 'src', 'domain', 'codex.ts')
+const writeCurrentTruth = process.argv.includes('--write-current-truth')
+const currentTruthOwnerMarker = '<!-- eypc-current-product-truth-owner:v1 -->'
+const currentTruthStart = '<!-- eypc-current-product-truth:start -->'
+const currentTruthEnd = '<!-- eypc-current-product-truth:end -->'
 const allowedStatuses = new Set(['proposed', 'active', 'superseded', 'retired', 'conflicted'])
 const allowedAuthorities = new Set(['user-stated', 'agent-transcribed'])
 const requiredFields = ['id', 'qualified_source', 'status', 'domain', 'authority']
@@ -23,6 +37,91 @@ const indexDocuments = new Set(['README.md', 'coverage.md', 'conflict-register.m
 function markdownFiles(directory) {
   if (!fs.existsSync(directory)) return []
   return fs.readdirSync(directory).filter((name) => name.endsWith('.md')).sort()
+}
+
+function walkFiles(directory) {
+  if (!fs.existsSync(directory)) return []
+  const files = []
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const filePath = path.join(directory, entry.name)
+    if (entry.isDirectory()) files.push(...walkFiles(filePath))
+    else files.push(filePath)
+  }
+  return files
+}
+
+function relative(filePath) {
+  return path.relative(repoRoot, filePath).split(path.sep).join('/')
+}
+
+function sha256(value) {
+  return crypto.createHash('sha256').update(value).digest('hex')
+}
+
+function digestFiles(filePaths) {
+  const digest = crypto.createHash('sha256')
+  for (const filePath of [...filePaths].sort((left, right) => relative(left).localeCompare(relative(right)))) {
+    digest.update(relative(filePath))
+    digest.update('\0')
+    digest.update(fs.readFileSync(filePath))
+    digest.update('\0')
+  }
+  return digest.digest('hex')
+}
+
+function currentTruthRange(text) {
+  const start = text.indexOf(currentTruthStart)
+  const end = text.indexOf(currentTruthEnd)
+  if (start < 0 || end < start) return null
+  if (text.indexOf(currentTruthStart, start + currentTruthStart.length) >= 0) return null
+  if (text.indexOf(currentTruthEnd, end + currentTruthEnd.length) >= 0) return null
+  return { start, end: end + currentTruthEnd.length }
+}
+
+function productBodyForDigest(text) {
+  const range = currentTruthRange(text)
+  if (!range) return null
+  return `${text.slice(0, range.start)}${currentTruthStart}\n<deterministic-current-product-truth>\n${currentTruthEnd}${text.slice(range.end)}`
+}
+
+function renderCurrentTruthBlock(truth) {
+  const registry = truth.requirement_registry
+  const sources = truth.source_anchor_catalog
+  const runtime = truth.runtime_identity
+  const runtimeChain = [
+    runtime.task_state,
+    runtime.registry,
+    runtime.topology,
+    runtime.kernel,
+    runtime.snapshot,
+    runtime.command,
+    runtime.subscribe,
+    runtime.ack
+  ].join(' / ')
+  return `${currentTruthStart}
+## 全局当前真值快照
+
+> 本节由统一需求校验器根据当前登记、来源目录、架构正文和 Runtime Identity 确定性生成。任何受管输入变化而未同步时，校验直接失败；墙上时钟不参与“新鲜”判定。
+
+| 真值维度 | 当前唯一值 |
+| --- | --- |
+| 当前产品语义主文档 | \`${truth.sole_owner}\`（唯一 owner marker） |
+| 需求登记 | ${registry.leaves} leaves / ${registry.modules} modules / ${registry.active} active / ${registry.superseded} superseded / ${registry.proposed} proposed / ${registry.conflicted} conflicted |
+| 取代关系 | ${registry.whole_supersession_edges} whole / ${registry.scoped_relations} scoped |
+| 原始来源 | ${sources.documents} documents / ${sources.ordered_anchors} ordered / ${sources.raw_parent_ordered} RAW-parent / ${sources.source_only} source-only |
+| 当前统一运行合同 | \`${runtimeChain}\` |
+| 当前构建产物 | \`${runtime.host_asset} / ${runtime.renderer_asset}\` · \`${runtime.artifact_state}\` |
+| 新鲜度合同 | \`${truth.freshness}\` |
+
+<details>
+<summary>机器清单与内容指纹</summary>
+
+\`\`\`json current-product-truth-v1
+${JSON.stringify(truth, null, 2)}
+\`\`\`
+
+</details>
+${currentTruthEnd}`
 }
 
 function parseFrontmatter(text) {
@@ -211,6 +310,139 @@ const wholeEdges = [...leaves.values()].filter((fields) => fields.superseded_by)
 const summary = ['proposed', 'active', 'superseded', 'retired', 'conflicted']
   .map((status) => `${status}=${statusCounts.get(status) || 0}`)
   .join(', ')
+
+let productText = ''
+if (!fs.existsSync(productRequirementsPath)) {
+  errors.push('PRODUCT_REQUIREMENTS.md: missing global current product truth owner')
+} else {
+  productText = fs.readFileSync(productRequirementsPath, 'utf8')
+}
+
+const truthOwners = walkFiles(vibeRoot)
+  .filter((filePath) => filePath.endsWith('.md'))
+  .filter((filePath) => fs.readFileSync(filePath, 'utf8').includes(currentTruthOwnerMarker))
+if (truthOwners.length !== 1 || truthOwners[0] !== productRequirementsPath) {
+  errors.push(`current product truth owner must be unique at vibe/specs/PRODUCT_REQUIREMENTS.md; found ${truthOwners.map(relative).join(', ') || 'none'}`)
+}
+if (productText && productText.split(currentTruthOwnerMarker).length !== 2) {
+  errors.push('PRODUCT_REQUIREMENTS.md: current truth owner marker must appear exactly once')
+}
+
+const truthRange = productText ? currentTruthRange(productText) : null
+if (!truthRange) errors.push('PRODUCT_REQUIREMENTS.md: missing or duplicate deterministic current truth block')
+
+const rawSourceFiles = walkFiles(specsRoot)
+  .filter((filePath) => path.basename(filePath) === 'raw-requirement.md')
+  .sort((left, right) => relative(left).localeCompare(relative(right)))
+let sourceCatalog = null
+if (!fs.existsSync(sourceCatalogPath)) {
+  errors.push('source-anchors/catalog.json: missing source anchor catalog')
+} else {
+  try {
+    sourceCatalog = JSON.parse(fs.readFileSync(sourceCatalogPath, 'utf8'))
+  } catch {
+    errors.push('source-anchors/catalog.json: invalid JSON')
+  }
+}
+
+if (sourceCatalog) {
+  const catalogDocuments = new Map((sourceCatalog.documents || []).map((document) => [document.source_path, document.content_sha256]))
+  if (catalogDocuments.size !== rawSourceFiles.length) {
+    errors.push(`source anchor catalog document count ${catalogDocuments.size} does not match current raw sources ${rawSourceFiles.length}`)
+  }
+  for (const filePath of rawSourceFiles) {
+    const sourcePath = relative(filePath)
+    const expectedHash = sha256(fs.readFileSync(filePath))
+    if (catalogDocuments.get(sourcePath) !== expectedHash) {
+      errors.push(`${sourcePath}: source anchor catalog content hash is stale`)
+    }
+  }
+  for (const sourcePath of catalogDocuments.keys()) {
+    if (!rawSourceFiles.some((filePath) => relative(filePath) === sourcePath)) {
+      errors.push(`${sourcePath}: source anchor catalog references a missing raw source`)
+    }
+  }
+}
+
+let runtimeIdentity = null
+if (!fs.existsSync(runtimeIdentityPath)) {
+  errors.push('public/runtime-identity.cjs: missing current runtime identity')
+} else {
+  try {
+    runtimeIdentity = require(runtimeIdentityPath)
+  } catch {
+    errors.push('public/runtime-identity.cjs: cannot load current runtime identity')
+  }
+}
+
+const taskStateText = fs.existsSync(taskStatePath) ? fs.readFileSync(taskStatePath, 'utf8') : ''
+const taskStateRevision = /CODEX_TASK_STATE_REVISION\s*=\s*['"]([^'"]+)['"]/.exec(taskStateText)?.[1] || null
+if (!taskStateRevision) errors.push('src/domain/codex.ts: missing CODEX_TASK_STATE_REVISION')
+
+if (sourceCatalog && runtimeIdentity && taskStateRevision && truthRange) {
+  const registryFiles = [
+    ...markdownFiles(registryRoot).map((name) => path.join(registryRoot, name)),
+    ...moduleNames.map((name) => path.join(modulesRoot, name))
+  ]
+  const productBody = productBodyForDigest(productText)
+  const truth = {
+    schema: 'eypc-current-product-truth-v1',
+    sole_owner: 'vibe/specs/PRODUCT_REQUIREMENTS.md',
+    freshness: 'deterministic-current-inputs; mismatch-fails-validate-requirements',
+    requirement_registry: {
+      leaves: leaves.size,
+      modules: moduleNames.length,
+      proposed: statusCounts.get('proposed') || 0,
+      active: statusCounts.get('active') || 0,
+      superseded: statusCounts.get('superseded') || 0,
+      retired: statusCounts.get('retired') || 0,
+      conflicted: statusCounts.get('conflicted') || 0,
+      whole_supersession_edges: wholeEdges,
+      scoped_relations: scopedEdges
+    },
+    source_anchor_catalog: {
+      documents: sourceCatalog.summary?.source_documents ?? null,
+      ordered_anchors: sourceCatalog.summary?.ordered_anchors ?? null,
+      raw_parent_ordered: sourceCatalog.summary?.raw_parent_ordered ?? null,
+      registered_requirements: sourceCatalog.summary?.registered_requirements ?? null,
+      source_only: sourceCatalog.summary?.source_addressable_not_registered ?? null
+    },
+    runtime_identity: {
+      task_state: taskStateRevision,
+      registry: runtimeIdentity.registryRevision,
+      topology: runtimeIdentity.topologyRevision,
+      kernel: runtimeIdentity.kernelRevision,
+      snapshot: runtimeIdentity.taskPackageRevision,
+      command: runtimeIdentity.commandRevision,
+      subscribe: runtimeIdentity.subscribeRevision,
+      ack: runtimeIdentity.ackRevision,
+      host_asset: runtimeIdentity.hostAssetId,
+      renderer_asset: runtimeIdentity.rendererAssetId,
+      artifact_state: runtimeIdentity.artifactState
+    },
+    content_digests: {
+      requirement_registry: digestFiles(registryFiles),
+      raw_sources: digestFiles(rawSourceFiles),
+      source_anchor_catalog: sha256(fs.readFileSync(sourceCatalogPath)),
+      product_body: sha256(productBody),
+      architecture: sha256(fs.readFileSync(architecturePath)),
+      runtime_contract: digestFiles([runtimeIdentityPath, taskStatePath])
+    }
+  }
+  const expectedTruthBlock = renderCurrentTruthBlock(truth)
+  const currentBlock = productText.slice(truthRange.start, truthRange.end)
+  if (writeCurrentTruth) {
+    if (errors.length === 0) {
+      const updated = `${productText.slice(0, truthRange.start)}${expectedTruthBlock}${productText.slice(truthRange.end)}`
+      fs.writeFileSync(productRequirementsPath, updated)
+      productText = updated
+      process.stdout.write('current product truth synchronized\n')
+    }
+  } else if (currentBlock !== expectedTruthBlock) {
+    errors.push('PRODUCT_REQUIREMENTS.md: current truth snapshot is stale; run node scripts/validate-requirements.mjs --write-current-truth after synchronizing sources')
+  }
+}
+
 process.stdout.write(`requirements: leaves=${leaves.size}, modules=${moduleNames.length}, ${summary}`
   + `, edges=${wholeEdges} whole + ${scopedEdges} scoped\n`)
 for (const warning of warnings) process.stdout.write(`warning: ${warning}\n`)

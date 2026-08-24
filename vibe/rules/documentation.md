@@ -5,7 +5,7 @@ Tool: tool-neutral (codex, claude, and any CodeNote-routed agent)
 ## Tiers
 
 - Project process hub: [../specs/PROJECT_STATUS.md](../specs/PROJECT_STATUS.md#L1).
-- Current product semantics: [../specs/PRODUCT_REQUIREMENTS.md](../specs/PRODUCT_REQUIREMENTS.md#L1) — 功能现在应该怎样表现。
+- Unique global current product truth: [../specs/PRODUCT_REQUIREMENTS.md](../specs/PRODUCT_REQUIREMENTS.md#L1) — 所有原始需求与后续变更裁决后，功能现在应该怎样表现；不得建立平行当前 PRD。
 - Requirement identity, status and supersession: [../specs/requirements/README.md](../specs/requirements/README.md#L1) — 某条条款是否还作数、还有哪部分作数、是谁说的。
 - Task docs: follow CodeNote process date grouping under `vibe/specs/`.
 - Durable architecture: [../knowledge/ARCHITECTURE.md](../knowledge/ARCHITECTURE.md#L1).
@@ -72,7 +72,7 @@ Medium/larger feature or interaction tasks must list whether the matching `src/h
 
 ### 尚未入册的条款
 
-约 160 条需求以无编号的编号条款承载，没有 id 可作身份；为其分配编号属于需求撰写而非抽取，未经用户决定不得入册。当前范围见 [覆盖账](../specs/requirements/coverage.md#L1)。**登记必须诚实回答哪些还没进来**——一份看起来完整、实则只覆盖一部分的登记比没有登记更危险。
+当前机器扫描有 102 条围栏外有序来源条款没有父 `RAW` 身份；它们已经获得稳定 `SA-*` 来源地址，但仍不是登记需求。无稳定边界的散文继续只保留在来源中。分配需求身份属于需求撰写而非抽取，未经用户决定不得入册。当前范围见 [覆盖账](../specs/requirements/coverage.md#L1)。**登记必须诚实回答哪些还没进来**——一份看起来完整、实则只覆盖一部分的登记比没有登记更危险。
 
 ## Closeout
 

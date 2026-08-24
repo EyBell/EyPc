@@ -1,25 +1,26 @@
 # Codex Tab Boundary Optimization — Implementation Plan
 
-status: `completed / accepted-by-Root / v6-current-reconciled`
+status: `completed / accepted-by-Root`
 updated: `2026-08-24`
-work_order_version: `3`
+work_order_version: `4`
 planned_child_count: `3`
 
 ## Scope
 
-- In scope: RAW-177#1～#3、EyPc 需求登记/来源寻址、旧 facade 移除、可证实的 Codex handoff/ACK 合同、聚焦验证及所有受影响权威。
-- Out of scope: 删除用户文件、清理 `_to_delete/`、提交/推送、发布/部署、进程控制、真实 uTools/Safari/插件/Codex Desktop/Mirasim 测试、伪造外部 ACK。
+- In scope: RAW-177#1～#3、RAW-178#1～#4、EyPc 需求登记/来源寻址、旧 facade 移除、可证实的 Codex handoff/ACK 合同、唯一全局当前产品真值、确定性新鲜度校验及所有受影响权威。
+- Out of scope: 删除用户文件、清理 `_to_delete/`、提交/推送、发布/部署、进程控制、真实 uTools/Safari/插件/Codex Desktop/Mirasim 测试、伪造外部 ACK、删除历史 RAW/任务证据。
 - Risk boundary: 没有可编辑的 Mirasim 仓库或 native receipt API；本地实现最多证明 dispatch/pending。
 
 ## Execution Topology And Outcome
 
 | Work Unit | Surface | Mode | Accepted outcome |
 | --- | --- | --- | --- |
-| WU-C1 | `codex_req_lineage_audit` | read-only | 稳定来源身份方案；Root 复算得到 29 文档、196 锚点、94 已登记 RAW 子条款、102 来源-only 条款 |
+| WU-C1 | `codex_req_lineage_audit` | read-only | 当时的稳定来源身份检查点：29 文档、196 锚点、94 已登记 RAW 子条款、102 来源-only 条款；当前总数由 WU-C6 真值快照接管 |
 | WU-C2 | `codex_source_arch_audit` | read-only | 精确移除 V4/V2 facade、v2 常量及对应测试断言；无当前调用者 |
 | WU-C3 | `mirasim_handoff_audit` | read-only | 本机无可编辑 Mirasim 仓库；接受 EyPc 本地单调 handoff 合同和 native receipt 门禁 |
 | WU-C4 | App Root | write | C-1～C-3 源码、测试、requirements、PRD/help、architecture 和 Controlled 文档已整合；后期 V6 current authority 保留三项边界 |
 | WU-C5 | App Root | verify | V6 current 聚焦矩阵、需求、类型/构建/uTools、镜像、文档链接和 diff 已复核；默认全量仅保留已知 MQTT 5 秒超时 |
+| WU-C6 | App Root | write + verify | 复用现有 `PRODUCT_REQUIREMENTS.md` sole owner，融合最新有效语义，登记 RAW-178，并以内容指纹校验唯一性/真实性/新鲜度 |
 
 三个只读 Work Unit 的证据问题彼此独立，Root 独占所有写入、架构裁决和验收。usage counters unavailable，不宣称 Token 节省。
 
@@ -31,6 +32,7 @@ planned_child_count: `3`
 | V4/V2 facade removal | platform public shape、Domain revision、Runtime Identity/Controller tests | focused platform/runtime/controller tests、typecheck、production build | 不保留兼容旁路 |
 | Handoff/read boundary + V6 current chain | navigation/actions/kernel、App Server bridge、Float/Controller/UI、Evidence/Topology/Snapshot/ACK | 14 文件 `493/493` current 聚焦矩阵、typecheck、production/uTools build、preload mirrors；接纳 V6 全量拆分证据 | 不运行真实 Codex Desktop/Mirasim/uTools/Safari |
 | Canonical/current docs | requirements、PRD、architecture、status、guide、Controlled ledger | post-sync conflict scan、requirements validator、document code-link audit、diff check | 不扫描或改写无关用户文档 |
+| Global current truth | PRD sole owner、registry/source catalog、architecture、Runtime Identity、resolved product body | owner uniqueness、deterministic truth snapshot、source freshness、targeted link/diff checks | 不把历史证据物理删除，不把 artifact-ready 提升为 host-loaded |
 
 ## Ordered Work
 
@@ -41,3 +43,4 @@ planned_child_count: `3`
 5. `completed` — 原始 C 级镜像、文档链接和 diff 门禁通过。
 6. `completed` — 发现同工作树后期 V6 改造会使 V5 证据失效，保持写隔离并等待唯一状态链完成。
 7. `completed` — 接纳 V6 权威链，重新核对 C-1/C-2/C-3 均未回退，并以当前 `493/493` 聚焦矩阵、构建、需求及文档门禁完成最终验收。
+8. `completed` — 登记 RAW-178，以现有 PRD 为唯一全局当前真值，融合/替代最新结果；完成唯一 owner、307-leaf registry、29-document/200-anchor catalog、V6 Runtime Identity 与六类内容指纹的确定性门禁。

@@ -1,8 +1,8 @@
 # Changes：Codex Tab Boundary Optimization
 
-status: `integrated / v6-current-automated-verified-with-known-mqtt-timeout`
+status: `integrated / global-current-truth-verified / v6-current`
 updated: `2026-08-24`
-local implementation/requirement commits: `f581946` · `c2e2abd` · `18cc3d0` · `2f205b8`
+local implementation/requirement commits: `f581946` · `c2e2abd` · `18cc3d0` · `2f205b8` · `2028e17` · `3ae0f70`
 
 ## Current Inventory
 
@@ -10,6 +10,8 @@ local implementation/requirement commits: `f581946` · `c2e2abd` · `18cc3d0` ·
 | --- | --- | --- |
 | `vibe/specs/source-anchors/` + source validator | added | deterministic metadata/hash-only identities for every outside-fence ordered source clause |
 | RAW-177 registry leaves and module owners | added/updated | C-1～C-3 current authority plus whole/scoped supersession edges |
+| RAW-178 registry leaves and global truth owner | added/current | original、later change、optimization and architecture results resolve into one PRD current projection；history remains evidence-only |
+| `PRODUCT_REQUIREMENTS.md` + requirement validator | updated/current | unique owner marker、deterministic counts/revisions/content digests and drift-as-failure synchronization |
 | `src/platform/eypcPlatform.ts` + Domain | simplified/current | V6 Kernel is the only task facade；V4 navigation / V2 tasks compatibility surfaces remain removed |
 | `preload/companion/open-handoff.cjs` | added | monotonic handoff normalization and native receipt boundary |
 | navigation/actions/kernel/main preload | updated | dispatch no longer implies opened/read；native unread clear requires explicit receipt |
@@ -20,7 +22,7 @@ local implementation/requirement commits: `f581946` · `c2e2abd` · `18cc3d0` ·
 
 ## Preserved Current Worktree
 
-The repository already contained accepted V5 and other user-owned uncommitted changes；a separate same-worktree task later landed the V6 corrective revision. This task owns only C-1～C-3 and this ledger reconciliation，does not claim the V6 write set，and did not clean、reset or reinterpret unrelated paths.
+The repository already contained accepted V5 and other user-owned uncommitted changes；a separate same-worktree task later landed the V6 corrective revision. This task owns C-1～C-4 and its ledger/current-authority reconciliation，does not claim the V6 implementation write set，and did not clean、reset or reinterpret unrelated paths.
 
 ## Explicitly Excluded
 

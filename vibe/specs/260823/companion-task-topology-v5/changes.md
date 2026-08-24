@@ -113,7 +113,7 @@ RAW-177-owned `open-handoff.cjs`、Source Anchor Catalog、conflict edges and re
 | --- | --- | --- |
 | `src/platform/eypcPlatform.ts` | Unused legacy bridge fields remain exposed | Compatibility debt, not an active bypass；separate cleanup required |
 | External task handoff | No native visible/applied/control ACK | Needs user-defined cross-product contract and evidence source |
-| Requirement corpus | 87 numbered + prose requirements remain non-machine-addressable | Semantics stay in source/spec/PRD；identity authoring not inferred |
+| Requirement corpus | 102 clauses retain stable `SA-*` source identities without active requirement status | Source addressing is complete for the selected grammar；semantic promotion is not inferred |
 | Full test suite | One unrelated MQTT default-timeout case | Prior V5 record: assertions pass with 20s threshold；not rerun for docs-only audit |
 
 ## 6. 回归数字
@@ -122,4 +122,4 @@ RAW-177-owned `open-handoff.cjs`、Source Anchor Catalog、conflict edges and re
 | --- | --- | --- | --- |
 | V5 implementation | exact full suite `1489/1490`; non-MQTT `1319/1319`; focused V5 passed | typecheck、1874-module build、58 mirror pairs passed | requirements 294、error-memory 123、diff passed at implementation closeout |
 | Post-V5 audit | focused V5/Codex `7/7` files、`231/231` passed | not rerun；no build boundary change | requirements `298` passed；changed-document code-link audit passed；`git diff --check` passed |
-| V6 corrective revision | focused `14/14`、`493/493`; non-Action `92/92`、`1278/1278`; Action 20s `171/171`; default full `1448/1449` with sole known MQTT timeout | typecheck、1873-module two-build fixed point、uTools validator；`host-ebb1e6b699892efb8151 / renderer-6e9dbf12ac1479057e23` | 62 mirror pairs、302 requirements leaves、29 docs/196 source anchors、123 error-memory leaves、changed links and diff passed；real Host not run |
+| V6 corrective revision | focused `14/14`、`493/493`; non-Action `92/92`、`1278/1278`; Action 20s `171/171`; default full `1448/1449` with sole known MQTT timeout | typecheck、1873-module two-build fixed point、uTools validator；`host-ebb1e6b699892efb8151 / renderer-6e9dbf12ac1479057e23` | implementation-closeout snapshot：62 mirror pairs、302 requirements leaves、29 docs/196 source anchors、123 error-memory leaves、changed links and diff passed；current global-truth sync is 307 leaves / 29 docs / 200 anchors；real Host not run |
