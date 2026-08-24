@@ -48,7 +48,7 @@ function slice(patch: Partial<CompanionSnapshotSlice> = {}): CompanionSnapshotSl
 
 describe('water ball presentation', () => {
   it('does not override anything in codex-only compatibility mode', () => {
-    const result = resolveCompanionWaterBallPresentation(slice({ providers: { codex: true, claude: false } }))
+    const result = resolveCompanionWaterBallPresentation(slice({ providers: { codex: true, claude: false, cursor: false } }))
     expect(result.percentOverride).toBeNull()
     expect(result.ariaSuffix).toBe('')
     expect(result.mapping.compatibility).toBe(true)
@@ -89,7 +89,7 @@ describe('water ball presentation', () => {
   })
 
   it('lets claude own the whole ball when it is the only enabled provider', () => {
-    const result = resolveCompanionWaterBallPresentation(slice({ providers: { codex: false, claude: true } }))
+    const result = resolveCompanionWaterBallPresentation(slice({ providers: { codex: false, claude: true, cursor: false } }))
     expect(result.mapping).toMatchObject({ liquid: 'claude', ring: 'claude', percent: 'claude' })
     expect(result.percentOverride).toBe(70)
   })
@@ -150,7 +150,7 @@ describe('row markers', () => {
 
 describe('claude quota section', () => {
   it('is absent entirely while the provider is disabled', () => {
-    expect(buildClaudeQuotaSection(slice({ providers: { codex: true, claude: false } }))).toBeNull()
+    expect(buildClaudeQuotaSection(slice({ providers: { codex: true, claude: false, cursor: false } }))).toBeNull()
     expect(buildClaudeQuotaSection(null)).toBeNull()
   })
 
@@ -219,7 +219,7 @@ describe('single-row quota strip', () => {
   ]
 
   it('keeps codex-only output free of any provider caption', () => {
-    const strip = buildCompanionQuotaStrip(CODEX_WINDOWS, slice({ providers: { codex: true, claude: false } }))
+    const strip = buildCompanionQuotaStrip(CODEX_WINDOWS, slice({ providers: { codex: true, claude: false, cursor: false } }))
     expect(strip.multiProvider).toBe(false)
     expect(strip.groups).toHaveLength(1)
     expect(strip.groups[0].caption).toBe('')
@@ -257,16 +257,16 @@ describe('single-row quota strip', () => {
   })
 
   it('drops the codex group entirely when only claude is enabled', () => {
-    const strip = buildCompanionQuotaStrip([], slice({ providers: { codex: false, claude: true } }))
+    const strip = buildCompanionQuotaStrip([], slice({ providers: { codex: false, claude: true, cursor: false } }))
     expect(strip.groups.map((group) => group.provider)).toEqual(['claude'])
     expect(strip.multiProvider).toBe(false)
     expect(strip.groups[0].caption).toBe('')
   })
 
   it('carries a per-group reason instead of an empty row', () => {
-    const codexOnly = buildCompanionQuotaStrip([], slice({ providers: { codex: true, claude: false } }))
+    const codexOnly = buildCompanionQuotaStrip([], slice({ providers: { codex: true, claude: false, cursor: false } }))
     expect(codexOnly.groups[0].emptyReason).toBe('服务端未返回额度窗口')
-    expect(buildCompanionQuotaStrip([], slice({ providers: { codex: true, claude: false } }), '连接异常').groups[0].emptyReason)
+    expect(buildCompanionQuotaStrip([], slice({ providers: { codex: true, claude: false, cursor: false } }), '连接异常').groups[0].emptyReason)
       .toBe('连接异常')
 
     const unusableClaude = buildCompanionQuotaStrip(CODEX_WINDOWS, slice({ claudeEnvironment: emptyClaudeEnvironment() }))
@@ -445,7 +445,7 @@ describe('quota chip staleness projection', () => {
 describe('realtime gap note', () => {
   it('is empty whenever claude is disabled, so the codex-only status line never changes', () => {
     expect(claudeRealtimeGapNote(null)).toBe('')
-    expect(claudeRealtimeGapNote(slice({ providers: { codex: true, claude: false } }))).toBe('')
+    expect(claudeRealtimeGapNote(slice({ providers: { codex: true, claude: false, cursor: false } }))).toBe('')
   })
 
   it('stays silent for the fully-registered lane and the fully-unusable lane', () => {

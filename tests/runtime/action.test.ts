@@ -1453,17 +1453,17 @@ describe('app runtime', () => {
     runtime.dispose()
   })
 
-  it('registers the fixed Claude task sync action and rejects incomplete identity arguments', () => {
+  it('does not expose the removed provider-specific Claude task sync action', () => {
     installPlatform()
     const runtime = createAppRuntime(createInitialState(100))
 
     expect(runtime.dispatch('codex.claude.task.sync', {
       key: 'claude:local_11111111-1111-4111-8111-111111111111',
       actionAlias: 'local_11111111-1111-4111-8111-111111111111'
-    })).toMatchObject({ handled: true, actionId: 'codex.claude.task.sync' })
+    })).toMatchObject({ handled: false, actionId: null })
     expect(runtime.dispatch('codex.claude.task.sync', { key: 'claude:stale' })).toMatchObject({
       handled: false,
-      actionId: 'codex.claude.task.sync'
+      actionId: null
     })
     runtime.dispose()
   })

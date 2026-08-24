@@ -112,7 +112,8 @@ function cloneExpandedCardAppearance(value: CodexExpandedCardAppearanceSettings)
 const waterDraft = ref<CodexWaterAppearanceSettings>(cloneWaterAppearance(props.snapshot.settings.waterAppearance))
 const savedThemeName = ref('')
 const savedThemeOption = ref(THEME_PRESET_CUSTOM)
-const waterPreviewProjection = computed(() => props.snapshot.taskState.dynamic)
+const taskState = computed(() => props.snapshot.taskState)
+const waterPreviewProjection = computed(() => taskState.value.dynamic)
 
 const waterPreview = computed(() => buildCodexCompactPresentation({
   quota: props.snapshot.quota,
@@ -437,7 +438,7 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
   <section
     class="codex-config-page"
     aria-label="Codex Companion 配置"
-    :data-companion-package-revision="snapshot.companionTaskPackage.packageRevision || undefined"
+    :data-companion-package-revision="snapshot.taskSnapshot.packageRevision || undefined"
   >
   <header class="codex-config-hero" aria-label="额度任务悬浮球配置总览">
     <div class="codex-hero-copy">
@@ -797,13 +798,13 @@ function updateWaterDraft(section: 'inner' | 'outer', key: string, value: string
             >
               <option value="">不配置（使用项目 Tab）</option>
               <option
-                v-for="project in snapshot.taskState.conversations.projects.filter((item) => item.kind === 'project')"
+                v-for="project in taskState.conversations.projects.filter((item) => item.kind === 'project')"
                 :key="project.key"
                 :value="project.key"
               >{{ project.name }}</option>
             </select>
           </label>
-          <div class="codex-readonly-field"><span>真实预检</span><strong>{{ snapshot.taskState.conversations.status === 'error' ? snapshot.taskState.conversations.errorMessage || '任务状态读取失败' : snapshot.taskState.conversations.completeness === 'verified' ? `${snapshot.taskState.conversations.rawSourceCount} 原始 · ${snapshot.taskState.conversations.eligibleSourceCount} 已注册` : '尚未获得完整快照' }}</strong></div>
+          <div class="codex-readonly-field"><span>真实预检</span><strong>{{ taskState.conversations.status === 'error' ? taskState.conversations.errorMessage || '任务状态读取失败' : taskState.conversations.completeness === 'verified' ? `${taskState.conversations.rawSourceCount} 原始 · ${taskState.conversations.eligibleSourceCount} 已注册` : '尚未获得完整快照' }}</strong></div>
         </div>
         <div
           class="codex-retention-readonly"

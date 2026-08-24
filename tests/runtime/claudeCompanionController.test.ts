@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { createRequire } from 'node:module'
-import { performance } from 'node:perf_hooks'
 import { createInitialState } from '../../src/domain/state'
 import type { ClaudeQuotaAccessStatus, ClaudeRateLimitsInput } from '../../src/domain/claude'
 import type { ClaudeCodePhase, ClaudeCodeStateCompatibility, ClaudeCodeStatusCorrelation } from '../../src/domain/claudeCode'
@@ -96,7 +95,7 @@ function harness(options: HarnessOptions = {}) {
   const state = createInitialState(1)
   state.activeTab = 'codex'
   state.codex.settings.floatEnabled = true
-  state.codex.settings.providers = { codex: true, claude: options.claudeEnabled !== false }
+  state.codex.settings.providers = { codex: true, claude: options.claudeEnabled !== false, cursor: false }
   state.codex.settings.claudeAppQuotaAccess = options.appQuotaAccess === true
   const openCalls: string[] = []
   const archiveCalls: string[] = []
@@ -352,22 +351,74 @@ function harness(options: HarnessOptions = {}) {
         }
         } as any)
       }
+      const sourceLaneGenerations = {
+        codex: { membership: revision, phase: revision, unread: revision, metadata: revision, topology: revision },
+        claude: { membership: revision, phase: revision, unread: revision, metadata: revision, topology: revision },
+        cursor: { membership: 0, phase: 0, unread: 0, metadata: 0, topology: 0 }
+      }
+      const evidenceBatches = Object.fromEntries((['codex', 'claude', 'cursor'] as const).map((provider) => [provider, {
+        revision: 'companion-provider-evidence-batch-v2',
+        provider,
+        channels: Object.fromEntries(['membership', 'phase', 'unread', 'metadata', 'topology'].map((channel) => [channel, {
+          mode: 'delta',
+          complete: false,
+          generation: sourceLaneGenerations[provider][channel as keyof typeof sourceLaneGenerations.codex],
+          removedKeys: []
+        }])),
+        nodes: tasks.filter((task) => task.provider === provider).map((task) => ({
+          key: task.key,
+          provider,
+          family: `${provider}:${task.key}`,
+          role: 'root',
+          membership: 'present',
+          activity: {
+            kind: task.phase === 'running' ? 'turn-running'
+              : task.phase === 'waiting-input' ? 'waiting-input'
+                : task.phase === 'waiting-approval' ? 'waiting-approval'
+                  : task.phase === 'completed' ? 'turn-completed'
+                    : task.phase === 'stopped' ? 'turn-interrupted'
+                      : 'unknown',
+            causalKey: '',
+            sequence: revision,
+            exact: true,
+            observedAt: Date.now(),
+            statusEnteredAt: task.statusEnteredAt,
+            turnStartedAt: task.turnStartedAt,
+            terminalAt: task.terminalAt
+          },
+          unread: { known: task.unreadKnown, value: task.unread, sequence: revision },
+          plan: { state: 'unknown', sequence: 0, reason: '' },
+          metadata: { ...task, partial: false },
+          capabilities: Object.entries(task.capabilities)
+            .filter(([, enabled]) => enabled === true)
+            .map(([name]) => name === 'executePlan' ? 'execute-plan' : name),
+          standaloneEligible: true,
+          error: false
+        })),
+        relations: [],
+        relationMode: 'delta',
+        relationsComplete: false,
+        removedRelationChildKeys: [],
+        health: state.codex.settings.providers[provider] ? 'ready' : 'unavailable'
+      }]))
       companionKernel.publishEvidence({
-        schema: 'companion-task-draft-v4',
+        schema: 'companion-task-evidence-draft-v6',
         producer: 'host-evidence',
-        sourceTaskStateRevision: 'task-state-v10',
+        sourceTaskStateRevision: 'task-state-v11',
         draftRevision: revision,
         acceptedAt: Date.now(),
         enabled: true,
         providers: state.codex.settings.providers,
         complete: true,
         focusedKey: '',
-        sourceGenerations: { codex: revision, claude: revision },
-        sourceLaneGenerations: {
-          codex: { membership: revision, phase: revision, unread: revision },
-          claude: { membership: revision, phase: revision, unread: revision }
+        sourceGenerations: { codex: revision, claude: revision, cursor: 0 },
+        sourceLaneGenerations,
+        providerHealth: {
+          codex: { status: 'ready', generation: revision, errorCode: '' },
+          claude: { status: 'ready', generation: revision, errorCode: '' },
+          cursor: { status: 'disabled', generation: 0, errorCode: '' }
         },
-        tasks
+        evidenceBatches
       })
     }
     publishKernelEvidence()
@@ -449,25 +500,10 @@ function conversationsOf(context: ReturnType<typeof harness>) {
   return context.controller.view().taskState.conversations
 }
 
-describe('Claude App Code aggregation', () => {
-  it('publishes only App Code rows with the App title and exact fallback title', async () => {
+describe('Claude tasks through the V6 Kernel', () => {
+  it('maps native phases and unread into one public task snapshot without exposing Provider aliases', async () => {
     const context = harness({
-      codeSessions: [
-        { sessionId: LOCAL_A, title: '额度和任务状态核验', phase: 'running' },
-        { sessionId: LOCAL_B, title: '  ', phase: 'completed' }
-      ]
-    })
-    context.controller.start()
-    await settle()
-    const tasks = conversationsOf(context).all.filter((task) => task.provider === 'claude')
-    expect(tasks.map((task) => task.originalName).sort()).toEqual(['General coding session', '额度和任务状态核验'].sort())
-    expect(tasks.map((task) => task.actionAlias).sort()).toEqual([LOCAL_A, LOCAL_B].sort())
-    expect(context.controller.view().claudeCodeSessionCount).toBe(2)
-    context.controller.dispose()
-  })
-
-  it('maps each native phase into exactly one shared bucket', async () => {
-    const context = harness({
+      kernelActions: true,
       codeSessions: [
         { sessionId: LOCAL_A, phase: 'waiting-approval' },
         { sessionId: LOCAL_B, phase: 'completed' },
@@ -477,89 +513,128 @@ describe('Claude App Code aggregation', () => {
     })
     context.controller.start()
     await settle()
-    const conversations = conversationsOf(context)
-    const keys = conversations.all.filter((task) => task.provider === 'claude').map((task) => task.key)
-    expect(new Set(keys).size).toBe(3)
-    expect(conversations.ongoing.find((task) => task.actionAlias === LOCAL_A)?.state).toBe('waiting-approval')
-    expect(conversations.completedUnread.find((task) => task.actionAlias === LOCAL_B)?.unreadState).toBe('unread')
-    expect(conversations.stopped.find((task) => task.actionAlias === LOCAL_C)).toMatchObject({ state: 'attention', claudePhase: 'unknown' })
+
+    const tasks = context.controller.view().taskSnapshot.tasks.filter((task) => task.provider === 'claude')
+    expect(tasks).toHaveLength(3)
+    expect(tasks.find((task) => task.key === companionTaskKey('claude', LOCAL_A))?.phase).toBe('waiting-approval')
+    expect(tasks.find((task) => task.key === companionTaskKey('claude', LOCAL_B))).toMatchObject({
+      phase: 'completed',
+      unread: true,
+      unreadKnown: true
+    })
+    expect(tasks.find((task) => task.key === companionTaskKey('claude', LOCAL_C))?.phase).toBe('unknown')
+    expect(tasks.every((task) => !('actionAlias' in task) && !('capabilityToken' in task))).toBe(true)
+    expect(context.controller.view().claudeCodeSessionCount).toBe(3)
     context.controller.dispose()
   })
 
-  it('uses native unread to recover a historical unknown row as completed-unread', async () => {
+  it('accepts Host evidence updates without starting Renderer-side Claude task readers or watchers', async () => {
     const context = harness({
-      codeSessions: [{ sessionId: LOCAL_A, phase: 'unknown', correlation: 'none' }],
-      unread: [LOCAL_A]
+      kernelActions: true,
+      codeSessions: [{ sessionId: LOCAL_A, phase: 'running' }]
     })
     context.controller.start()
     await settle()
-    expect(conversationsOf(context).completedUnread.find((task) => task.actionAlias === LOCAL_A))
-      .toMatchObject({ claudePhase: 'completed', unreadState: 'unread' })
-    context.controller.dispose()
-  })
+    expect({
+      code: context.codeReads(),
+      state: context.stateReads(),
+      unread: context.unreadReads()
+    }).toEqual({ code: 0, state: 0, unread: 0 })
 
-  it('never projects an App-archived Code row', async () => {
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, archived: true }] })
-    context.controller.start()
+    context.setCodeRows([{ sessionId: LOCAL_A, phase: 'waiting-input' }])
+    context.emitEvent()
     await settle()
-    expect(conversationsOf(context).all.some((task) => task.provider === 'claude')).toBe(false)
-    expect(context.controller.view().claudeCodeSessionCount).toBe(0)
+
+    expect(context.controller.view().taskSnapshot.tasks.find((task) => task.key === companionTaskKey('claude', LOCAL_A))?.phase)
+      .toBe('waiting-input')
+    expect({
+      code: context.codeReads(),
+      state: context.stateReads(),
+      unread: context.unreadReads()
+    }).toEqual({ code: 0, state: 0, unread: 0 })
     context.controller.dispose()
   })
 
-  it.each(['completed', 'stopped'] as const)('routes a %s Claude task through the silent metadata provider adapter', async (phase) => {
+  it.each(['completed', 'stopped'] as const)('routes a %s Claude archive through the unified Kernel command', async (phase) => {
     const context = harness({
+      kernelActions: true,
       codeSessions: [{ sessionId: LOCAL_A, phase }],
-      archiveResult: { outcome: 'archived' },
-      kernelActions: true
+      archiveResult: { outcome: 'archived' }
     })
     context.controller.start()
     await settle()
-    const task = conversationsOf(context).all.find((row) => row.actionAlias === LOCAL_A)!
+    const key = companionTaskKey('claude', LOCAL_A)
+    const task = conversationsOf(context).all.find((row) => row.key === key)!
     expect(task).toMatchObject({ archiveCapability: 'allowed', canArchive: true })
+
     await expect(context.controller.archive(task.key, task.revisionAt)).resolves.toBe(true)
     expect(context.archiveCalls).toEqual([LOCAL_A])
-    expect(conversationsOf(context).all.some((row) => row.actionAlias === LOCAL_A)).toBe(false)
-    expect(context.messages.at(-1)).toBe('EyPc 已归档并移除。Claude 原生侧栏同步未确认，当前不受支持。')
+    expect(context.controller.view().taskSnapshot.tasks.some((row) => row.key === key)).toBe(false)
     context.controller.dispose()
   })
 
-  it('keeps Claude archive enabled on a non-whitelisted App version (status gate only)', async () => {
+  it.each(['failed', 'indeterminate'] as const)('retains the Claude card when the unified archive adapter is %s', async (outcome) => {
     const context = harness({
-      codeSessions: [{ sessionId: LOCAL_A, phase: 'completed', compatibility: 'unsupported' }],
-      archiveResult: { outcome: 'archived' },
-      kernelActions: true
-    })
-    context.controller.start()
-    await settle()
-    const task = conversationsOf(context).all.find((row) => row.actionAlias === LOCAL_A)!
-    expect(task).toMatchObject({ archiveCapability: 'allowed', canArchive: true })
-    await expect(context.controller.archive(task.key, task.revisionAt)).resolves.toBe(true)
-    expect(context.archiveCalls).toEqual([LOCAL_A])
-    expect(conversationsOf(context).all.some((row) => row.actionAlias === LOCAL_A)).toBe(false)
-    context.controller.dispose()
-  })
-
-  it.each(['failed', 'indeterminate'] as const)('keeps the Claude card when silent metadata archive is %s', async (outcome) => {
-    const context = harness({
+      kernelActions: true,
       codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }],
-      archiveResult: { outcome, message: `archive ${outcome}` },
-      kernelActions: true
+      archiveResult: { outcome, message: `archive ${outcome}` }
     })
     context.controller.start()
     await settle()
-    const task = conversationsOf(context).all.find((row) => row.actionAlias === LOCAL_A)!
+    const key = companionTaskKey('claude', LOCAL_A)
+    const task = conversationsOf(context).all.find((row) => row.key === key)!
+
     await expect(context.controller.archive(task.key, task.revisionAt)).resolves.toBe(false)
-    expect(conversationsOf(context).all.some((row) => row.actionAlias === LOCAL_A)).toBe(true)
+    expect(context.controller.view().taskSnapshot.tasks.some((row) => row.key === key)).toBe(true)
     expect(context.messages.at(-1)).toBe(`archive ${outcome}`)
     context.controller.dispose()
   })
 
-  it('dispatches one mixed task-level archive selection without locally hiding Codex on a Provider-only result', async () => {
+  it('does not clear Provider unread when open only returns a dispatched handoff', async () => {
+    const context = harness({
+      kernelActions: true,
+      codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }],
+      unread: [LOCAL_A],
+      openResult: { outcome: 'dispatched', confirmsRead: false, message: '等待 native receipt' }
+    })
+    context.controller.start()
+    await settle()
+    const key = companionTaskKey('claude', LOCAL_A)
+    expect(context.controller.view().taskSnapshot.tasks.find((task) => task.key === key)).toMatchObject({
+      phase: 'completed',
+      unread: true
+    })
+
+    await expect(context.controller.openThread(key)).resolves.toBe(true)
+    expect(context.openCalls).toEqual([LOCAL_A])
+    expect(context.controller.view().taskSnapshot.tasks.find((task) => task.key === key)).toMatchObject({
+      phase: 'completed',
+      unread: true
+    })
+    context.controller.dispose()
+  })
+
+  it('removes the Claude lane immediately when the unified provider configuration disables it', async () => {
+    const context = harness({
+      kernelActions: true,
+      codeSessions: [{ sessionId: LOCAL_A, phase: 'running' }]
+    })
+    context.controller.start()
+    await settle()
+    expect(context.controller.view().taskSnapshot.tasks.some((task) => task.provider === 'claude')).toBe(true)
+
+    context.controller.updateSettings({ providers: { codex: true, claude: false, cursor: false } })
+    await settle()
+    expect(context.controller.view().taskSnapshot.tasks.some((task) => task.provider === 'claude')).toBe(false)
+    expect(context.controller.view().claudeCodeSessionCount).toBe(0)
+    context.controller.dispose()
+  })
+
+  it('commits a mixed Codex and Claude archive selection through one command authority', async () => {
     const now = Date.now()
     const context = harness({
-      codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }],
       kernelActions: true,
+      codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }],
       codexThreads: [{
         key: 'abcdef0123456789',
         actionAlias: 'codex-completed-alias',
@@ -578,554 +653,20 @@ describe('Claude App Code aggregation', () => {
     })
     context.controller.start()
     await settle()
-    const codexTask = conversationsOf(context).all.find((task) => task.actionAlias === 'codex-completed-alias')!
-    const claudeTask = conversationsOf(context).all.find((task) => task.actionAlias === LOCAL_A)!
+    const tasks = conversationsOf(context).all
+    const codexTask = tasks.find((task) => task.key === 'abcdef0123456789')!
+    const claudeTask = tasks.find((task) => task.key === companionTaskKey('claude', LOCAL_A))!
 
     await expect(context.controller.archiveMany([
       { key: codexTask.key, revisionAt: codexTask.revisionAt },
-      { key: claudeTask.key, revisionAt: claudeTask.revisionAt },
       { key: claudeTask.key, revisionAt: claudeTask.revisionAt }
     ])).resolves.toBe(true)
     expect(context.codexArchiveCalls).toEqual(['codex-completed-alias'])
     expect(context.archiveCalls).toEqual([LOCAL_A])
-    // This compatibility harness has no Process Kernel commit callback. Even
-    // when its mock Provider claims success, the Controller must not recreate
-    // the retired "Provider returned archived, so hide locally" contract.
-    expect(conversationsOf(context).all).toHaveLength(1)
-    expect(conversationsOf(context).all[0]).toMatchObject({ actionAlias: 'codex-completed-alias' })
-    context.controller.dispose()
-  })
-
-  it('reads nothing and publishes no Claude data while the provider is disabled', async () => {
-    const context = harness({ claudeEnabled: false, codeSessions: [{ sessionId: LOCAL_A }] })
-    context.controller.start()
-    await settle()
-    expect(context.quotaReads()).toBe(0)
-    expect(context.codeReads()).toBe(0)
-    expect(context.unreadReads()).toBe(0)
-    expect(conversationsOf(context).all.some((task) => task.provider === 'claude')).toBe(false)
-    context.controller.dispose()
-  })
-
-  it('degrades to Codex only when the preload exposes no Claude port', async () => {
-    const context = harness({ bridgeAbsent: true, codeSessions: [{ sessionId: LOCAL_A }] })
-    context.controller.start()
-    await settle()
-    expect(conversationsOf(context).status).toBe('ok')
-    expect(conversationsOf(context).all.some((task) => task.provider === 'claude')).toBe(false)
+    expect(context.controller.view().taskSnapshot.tasks).toHaveLength(0)
     context.controller.dispose()
   })
 })
-
-describe('independent local authorities', () => {
-  it('keeps Code inventory and quota when the current unread read fails', async () => {
-    const context = harness({
-      codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }],
-      throwUnread: true,
-      quota: { five_hour: { used_percentage: 25 } }
-    })
-    context.controller.start()
-    await settle()
-    const task = conversationsOf(context).all.find((row) => row.actionAlias === LOCAL_A)
-    expect(task).toMatchObject({ bucket: 'completed', unreadState: 'unknown' })
-    expect(context.controller.view().claudeQuota.windows).toHaveLength(1)
-    context.controller.dispose()
-  })
-
-  it('keeps quota and unread authority independent when Code inventory fails', async () => {
-    const context = harness({ throwCode: true, unread: [LOCAL_A], quota: { five_hour: { used_percentage: 25 } } })
-    context.controller.start()
-    await settle()
-    expect(context.controller.view().claudeQuota.windows).toHaveLength(1)
-    expect(conversationsOf(context).all.some((task) => task.provider === 'claude')).toBe(false)
-    context.controller.dispose()
-  })
-
-  it('keeps Code inventory when the quota cache read fails', async () => {
-    const context = harness({ throwQuota: true, codeSessions: [{ sessionId: LOCAL_A }] })
-    context.controller.start()
-    await settle()
-    expect(conversationsOf(context).all.some((task) => task.actionAlias === LOCAL_A)).toBe(true)
-    context.controller.dispose()
-  })
-
-  it('refreshes promptly from every native watcher without crossing authority ownership', async () => {
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'running' }] })
-    context.controller.start()
-    await settle()
-    const initialReads = context.codeReads()
-    context.setCodeRows([{ sessionId: LOCAL_A, title: 'Updated metadata', phase: 'waiting-input' }])
-    context.emitCode()
-    await settle()
-    expect(context.codeReads()).toBeGreaterThan(initialReads)
-    expect(conversationsOf(context).ongoing.find((task) => task.actionAlias === LOCAL_A)).toMatchObject({
-      state: 'waiting-input',
-      originalName: 'Updated metadata'
-    })
-    const afterCode = context.codeReads()
-    context.emitEvent()
-    await settle()
-    expect(context.stateReads()).toBeGreaterThan(0)
-    expect(context.codeReads()).toBe(afterCode)
-    expect(conversationsOf(context).ongoing.find((task) => task.actionAlias === LOCAL_A)?.state).toBe('waiting-input')
-    const afterHook = context.codeReads()
-    const beforeUnread = context.unreadReads()
-    context.emitUnread()
-    await settle()
-    expect(context.codeReads()).toBe(afterHook)
-    expect(context.unreadReads()).toBeGreaterThan(beforeUnread)
-    context.controller.dispose()
-  })
-
-  it('accepts a newer inventory phase even when its producer generation is lower than the cached state lane', async () => {
-    const base = Date.now() - 20_000
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'running', at: base }] })
-    context.controller.start()
-    await settle()
-
-    context.setStateGeneration(9)
-    context.setCodeRows([{ sessionId: LOCAL_A, phase: 'running', at: base + 5_000 }])
-    context.emitEvent()
-    await settle()
-
-    context.setCodeRows([{ sessionId: LOCAL_A, phase: 'completed', at: base + 10_000 }])
-    context.emitCode()
-    await settle()
-
-    expect(conversationsOf(context).completed.find((task) => task.actionAlias === LOCAL_A)).toMatchObject({
-      claudePhase: 'completed'
-    })
-    context.controller.dispose()
-  })
-
-  it('rejects a regressing state generation and accepts the next newer generation', async () => {
-    const base = Date.now()
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'running', at: base }] })
-    context.controller.start()
-    await settle()
-    context.setStateGeneration(5)
-    context.setCodeRows([{ sessionId: LOCAL_A, phase: 'waiting-input', at: base + 5_000 }])
-    context.emitEvent()
-    await settle()
-    expect(conversationsOf(context).ongoing.find((task) => task.actionAlias === LOCAL_A)?.state).toBe('waiting-input')
-
-    context.setStateGeneration(4)
-    context.setCodeRows([{ sessionId: LOCAL_A, phase: 'running', at: base + 10_000 }])
-    context.emitEvent()
-    await settle()
-    expect(conversationsOf(context).ongoing.find((task) => task.actionAlias === LOCAL_A)?.state).toBe('waiting-input')
-
-    context.setStateGeneration(6)
-    context.emitEvent()
-    await settle()
-    expect(conversationsOf(context).ongoing.find((task) => task.actionAlias === LOCAL_A)?.state).toBe('running')
-    context.controller.dispose()
-  })
-
-  it('accepts a newer state generation even when its event time is older', async () => {
-    const base = Date.now()
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'running', at: base }] })
-    context.controller.start()
-    await settle()
-    context.setStateGeneration(5)
-    context.setCodeRows([{ sessionId: LOCAL_A, phase: 'waiting-input', at: base + 5_000 }])
-    context.emitEvent()
-    await settle()
-    expect(conversationsOf(context).ongoing.find((task) => task.actionAlias === LOCAL_A)?.state).toBe('waiting-input')
-
-    context.setStateGeneration(6)
-    context.setCodeRows([{ sessionId: LOCAL_A, phase: 'completed', at: base + 1_000 }])
-    context.emitEvent()
-    await settle()
-    expect(conversationsOf(context).completed.find((task) => task.actionAlias === LOCAL_A)).toMatchObject({ claudePhase: 'completed' })
-    context.controller.dispose()
-  })
-
-  it('degrades a live phase to unknown after two consecutive state read failures', async () => {
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'running' }] })
-    context.controller.start()
-    await settle()
-    context.setThrowState(true)
-    context.emitEvent()
-    await settle()
-    expect(conversationsOf(context).ongoing.find((task) => task.actionAlias === LOCAL_A)?.state).toBe('running')
-    context.emitEvent()
-    await settle()
-    expect(conversationsOf(context).stopped.find((task) => task.actionAlias === LOCAL_A)).toMatchObject({ claudePhase: 'unknown' })
-    context.emitCode()
-    await settle()
-    expect(conversationsOf(context).ongoing.find((task) => task.actionAlias === LOCAL_A)).toMatchObject({ claudePhase: 'running' })
-    context.controller.dispose()
-  })
-
-  it('drops unread certainty when a previously successful native snapshot fails', async () => {
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }], unread: [LOCAL_A] })
-    context.controller.start()
-    await settle()
-    expect(conversationsOf(context).completedUnread.some((task) => task.actionAlias === LOCAL_A)).toBe(true)
-    context.setUnread(null)
-    context.emitUnread()
-    await settle()
-    expect(conversationsOf(context).completedUnread.some((task) => task.actionAlias === LOCAL_A)).toBe(false)
-    expect(conversationsOf(context).completed.find((task) => task.actionAlias === LOCAL_A)?.unreadState).toBe('unknown')
-    context.controller.dispose()
-  })
-
-  it('rejects a regressing V2 unread generation without losing the last stable native false', async () => {
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }], unread: [LOCAL_A] })
-    context.controller.start()
-    await settle()
-    context.setUnread([])
-    context.emitUnread()
-    await settle()
-    expect(conversationsOf(context).completed.some((task) => task.actionAlias === LOCAL_A)).toBe(true)
-    context.setUnreadSnapshot([LOCAL_A], 1)
-    context.emitUnread()
-    await settle()
-    expect(conversationsOf(context).completed.some((task) => task.actionAlias === LOCAL_A)).toBe(true)
-    context.controller.dispose()
-  })
-
-  it('retains the last valid inventory when a later metadata read fails', async () => {
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }] })
-    context.controller.start()
-    await settle()
-    expect(conversationsOf(context).all.some((task) => task.actionAlias === LOCAL_A)).toBe(true)
-    context.setThrowCode(true)
-    context.emitCode()
-    await settle()
-    expect(conversationsOf(context).all.some((task) => task.actionAlias === LOCAL_A)).toBe(true)
-    context.controller.dispose()
-  })
-
-  it('retains the last valid inventory when the reader reports an incomplete scan', async () => {
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }] })
-    context.controller.start()
-    await settle()
-    expect(conversationsOf(context).all.some((task) => task.actionAlias === LOCAL_A)).toBe(true)
-    context.setCodeRows([])
-    context.setCodeAvailable(false)
-    context.emitCode()
-    await settle()
-    expect(conversationsOf(context).all.some((task) => task.actionAlias === LOCAL_A)).toBe(true)
-    context.controller.dispose()
-  })
-
-  it('applies an exact archive delta immediately and rejects a slower stale inventory resurrection', async () => {
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }] })
-    context.controller.start()
-    await settle()
-    expect(conversationsOf(context).all.some((task) => task.actionAlias === LOCAL_A)).toBe(true)
-    let releaseInventory!: () => void
-    context.setCodeReadGate(new Promise<void>((resolvePromise) => { releaseInventory = resolvePromise }))
-    context.emitCode()
-    await settle()
-    const notificationsBefore = context.notifications()
-    const acceptedAt = Date.now()
-    context.emitCode({
-      version: 1,
-      revision: 'claude-task-mutation-delta-v1',
-      provider: 'claude',
-      generation: 1,
-      acceptedAt,
-      mutations: [{
-        key: `claude:${LOCAL_A}`,
-        mutation: 'remove',
-        acceptedAt
-      }]
-    })
-    await settle()
-    expect(conversationsOf(context).all.some((task) => task.actionAlias === LOCAL_A)).toBe(false)
-    expect(context.notifications() - notificationsBefore).toBe(1)
-
-    // Duplicate publication is ignored, and the already-started old full read
-    // cannot re-add the archived row after it eventually settles.
-    context.emitCode({
-      version: 1,
-      revision: 'claude-task-mutation-delta-v1',
-      provider: 'claude',
-      generation: 1,
-      acceptedAt,
-      mutations: [{ key: `claude:${LOCAL_A}`, mutation: 'remove', acceptedAt }]
-    })
-    await settle()
-    expect(context.notifications() - notificationsBefore).toBe(1)
-    releaseInventory()
-    context.setCodeReadGate(null)
-    await settle()
-    expect(conversationsOf(context).all.some((task) => task.actionAlias === LOCAL_A)).toBe(false)
-    context.controller.dispose()
-  })
-
-  it('upserts multiple exact membership mutations without waiting for a full inventory read', async () => {
-    const context = harness({ codeSessions: [] })
-    context.controller.start()
-    await settle()
-    const readsBefore = context.codeReads()
-    const acceptedAt = Date.now()
-    context.emitCode({
-      version: 1,
-      revision: 'claude-task-mutation-delta-v1',
-      provider: 'claude',
-      generation: 1,
-      acceptedAt,
-      mutations: [
-        {
-          key: `claude:${LOCAL_A}`,
-          mutation: 'upsert',
-          acceptedAt,
-          session: codeSession({ sessionId: LOCAL_A, title: 'First exact upsert', phase: 'completed' })
-        },
-        {
-          key: `claude:${LOCAL_B}`,
-          mutation: 'upsert',
-          acceptedAt,
-          session: codeSession({ sessionId: LOCAL_B, title: 'Second exact upsert', phase: 'stopped' })
-        }
-      ]
-    })
-    await settle()
-    expect(context.codeReads()).toBe(readsBefore)
-    expect(conversationsOf(context).all.map((task) => task.originalName).sort()).toEqual([
-      'First exact upsert',
-      'Second exact upsert'
-    ])
-    context.controller.dispose()
-  })
-
-  it('publishes a state event while an eight-second-class quota request is still pending', async () => {
-    let release!: (value: null) => void
-    const pendingQuota = new Promise<null>((resolvePromise) => { release = resolvePromise })
-    const context = harness({
-      codeSessions: [{ sessionId: LOCAL_A, phase: 'running' }],
-      fallbackPromise: pendingQuota
-    })
-    context.controller.start()
-    await settle()
-    context.setCodeRows([{ sessionId: LOCAL_A, phase: 'waiting-input' }])
-    context.emitEvent()
-    await settle()
-    expect(conversationsOf(context).ongoing.find((task) => task.actionAlias === LOCAL_A)?.state).toBe('waiting-input')
-    release(null)
-    await settle()
-    context.controller.dispose()
-  })
-
-  it('keeps newer state while a slower inventory patch updates metadata', async () => {
-    const base = Date.now() - 10_000
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, title: 'Old title', phase: 'running', at: base }] })
-    context.controller.start()
-    await settle()
-    let releaseInventory!: () => void
-    const inventoryGate = new Promise<void>((resolvePromise) => { releaseInventory = resolvePromise })
-    context.setCodeReadGate(inventoryGate)
-    context.setCodeRows([{ sessionId: LOCAL_A, title: 'New title', phase: 'waiting-input', at: base + 1_000 }])
-    context.emitCode()
-    await settle()
-    context.setCodeRows([{ sessionId: LOCAL_A, title: 'New title', phase: 'running', at: base + 2_000 }])
-    context.emitEvent()
-    await settle()
-    expect(conversationsOf(context).ongoing.find((task) => task.actionAlias === LOCAL_A)?.state).toBe('running')
-    releaseInventory()
-    context.setCodeReadGate(null)
-    await settle()
-    const task = conversationsOf(context).ongoing.find((row) => row.actionAlias === LOCAL_A)
-    expect(task).toMatchObject({ state: 'running', originalName: 'New title' })
-    context.controller.dispose()
-  })
-
-  it('publishes 100 state transitions under 250ms P95 while quota remains blocked', async () => {
-    let releaseQuota!: (value: null) => void
-    const pendingQuota = new Promise<null>((resolvePromise) => { releaseQuota = resolvePromise })
-    const base = Date.now()
-    const context = harness({
-      codeSessions: [{ sessionId: LOCAL_A, phase: 'running', at: base }],
-      fallbackPromise: pendingQuota
-    })
-    context.controller.start()
-    await settle()
-    const inventoryReads = context.codeReads()
-    const latencies: number[] = []
-    for (let index = 1; index <= 100; index += 1) {
-      context.setCodeRows([{
-        sessionId: LOCAL_A,
-        phase: index % 2 ? 'waiting-input' : 'running',
-        at: base + index * 1_000
-      }])
-      const startedAt = performance.now()
-      context.emitEvent()
-      await settle()
-      latencies.push(performance.now() - startedAt)
-    }
-    const ordered = [...latencies].sort((left, right) => left - right)
-    const p95 = ordered[Math.ceil(ordered.length * 0.95) - 1]
-    expect(p95).toBeLessThan(250)
-    expect(context.stateReads()).toBeGreaterThanOrEqual(100)
-    expect(context.codeReads()).toBe(inventoryReads)
-    expect(conversationsOf(context).ongoing.find((task) => task.actionAlias === LOCAL_A)?.state).toBe('running')
-    releaseQuota(null)
-    await settle()
-    context.controller.dispose()
-  })
-
-  it('clears all Claude observations immediately when the provider is disabled', async () => {
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A }] })
-    context.controller.start()
-    await settle()
-    expect(conversationsOf(context).all.some((task) => task.provider === 'claude')).toBe(true)
-    context.controller.updateSettings({ providers: { codex: true, claude: false } })
-    await settle()
-    expect(conversationsOf(context).all.some((task) => task.provider === 'claude')).toBe(false)
-    expect(context.controller.view().claudeCodeSessionCount).toBe(0)
-    context.controller.dispose()
-  })
-})
-
-describe('exact jump and unread authority', () => {
-  it('rejects a sync request whose key and App-local id do not identify the current row', async () => {
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }] })
-    context.controller.start()
-    await settle()
-    const before = { state: context.stateReads(), unread: context.unreadReads() }
-    await expect(context.controller.syncClaudeTask('claude:stale', LOCAL_A)).resolves.toMatchObject({ accepted: false })
-    expect({ state: context.stateReads(), unread: context.unreadReads() }).toEqual(before)
-    expect(context.messages.at(-1)).toBe('Claude 任务身份已失效，请刷新后重试')
-    context.controller.dispose()
-  })
-
-  it('joins concurrent per-task syncs onto one state read and one unread read', async () => {
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'running' }] })
-    context.controller.start()
-    await settle()
-    const key = conversationsOf(context).all.find((task) => task.actionAlias === LOCAL_A)!.key
-    let releaseState!: () => void
-    let releaseUnread!: () => void
-    context.setStateReadGate(new Promise<void>((resolvePromise) => { releaseState = resolvePromise }))
-    context.setUnreadReadGate(new Promise<void>((resolvePromise) => { releaseUnread = resolvePromise }))
-    const before = { state: context.stateReads(), unread: context.unreadReads() }
-    const first = context.controller.syncClaudeTask(key, LOCAL_A)
-    const second = context.controller.syncClaudeTask(key, LOCAL_A)
-    await settle()
-    expect(context.stateReads() - before.state).toBe(1)
-    expect(context.unreadReads() - before.unread).toBe(1)
-    releaseState()
-    releaseUnread()
-    await expect(Promise.all([first, second])).resolves.toEqual([
-      expect.objectContaining({ accepted: true, state: 'ok', unread: 'ok' }),
-      expect.objectContaining({ accepted: true, state: 'ok', unread: 'ok' })
-    ])
-    context.controller.dispose()
-  })
-
-  it('publishes one merged update and reports a partial unread failure precisely', async () => {
-    const base = Date.now()
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'running', at: base }] })
-    context.controller.start()
-    await settle()
-    const key = conversationsOf(context).all.find((task) => task.actionAlias === LOCAL_A)!.key
-    const beforeNotifications = context.notifications()
-    context.setCodeRows([{ sessionId: LOCAL_A, phase: 'completed', at: base + 5_000 }])
-    context.setThrowUnread(true)
-    await expect(context.controller.syncClaudeTask(key, LOCAL_A)).resolves.toMatchObject({
-      accepted: true,
-      state: 'ok',
-      unread: 'unavailable',
-      changed: true
-    })
-    expect(context.notifications() - beforeNotifications).toBe(1)
-    expect(context.messages.at(-1)).toBe('Claude 状态已同步；原生已读信息暂不可用')
-    expect(conversationsOf(context).completed.find((task) => task.actionAlias === LOCAL_A)).toMatchObject({
-      claudePhase: 'completed',
-      unreadState: 'unknown'
-    })
-    context.controller.dispose()
-  })
-
-  it('passes the App-local id unchanged and creates only a process-local same-completion read hint', async () => {
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }], unread: [LOCAL_A], kernelActions: true })
-    context.controller.start()
-    await settle()
-    const key = conversationsOf(context).all.find((task) => task.actionAlias === LOCAL_A)!.key
-    const before = JSON.stringify(context.state.codex)
-    expect(await context.controller.openThread(key, LOCAL_A)).toBe(true)
-    expect(context.openCalls).toEqual([LOCAL_A])
-    expect(JSON.stringify(context.state.codex)).toBe(before)
-    expect(conversationsOf(context).completedUnread.some((task) => task.actionAlias === LOCAL_A)).toBe(false)
-    expect(conversationsOf(context).completed.some((task) => task.actionAlias === LOCAL_A)).toBe(true)
-    context.controller.dispose()
-  })
-
-  it('runs one silent state/unread sync after a successful open and none after a failed dispatch', async () => {
-    const success = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }], unread: [LOCAL_A], kernelActions: true })
-    success.controller.start()
-    await settle()
-    const successKey = conversationsOf(success).all.find((task) => task.actionAlias === LOCAL_A)!.key
-    const beforeSuccess = { state: success.stateReads(), unread: success.unreadReads() }
-    expect(await success.controller.openThread(successKey, LOCAL_A)).toBe(true)
-    await settle()
-    expect(success.stateReads()).toBeGreaterThan(beforeSuccess.state)
-    expect(success.unreadReads()).toBeGreaterThan(beforeSuccess.unread)
-    success.controller.dispose()
-
-    const failure = harness({
-      codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }],
-      unread: [LOCAL_A],
-      kernelActions: true,
-      openResult: { outcome: 'failed', confirmsRead: false, message: 'failed' }
-    })
-    failure.controller.start()
-    await settle()
-    const failureKey = conversationsOf(failure).all.find((task) => task.actionAlias === LOCAL_A)!.key
-    const beforeFailure = { state: failure.stateReads(), unread: failure.unreadReads() }
-    expect(await failure.controller.openThread(failureKey, LOCAL_A)).toBe(false)
-    await settle()
-    expect({ state: failure.stateReads(), unread: failure.unreadReads() }).toEqual(beforeFailure)
-    failure.controller.dispose()
-  })
-
-  it('reports a failed App jump without changing the card', async () => {
-    const context = harness({
-      codeSessions: [{ sessionId: LOCAL_A, phase: 'completed' }],
-      unread: [LOCAL_A],
-      kernelActions: true,
-      openResult: { outcome: 'unavailable', confirmsRead: false, message: 'Claude 桌面端未在运行' }
-    })
-    context.controller.start()
-    await settle()
-    const key = conversationsOf(context).all.find((task) => task.actionAlias === LOCAL_A)!.key
-    expect(await context.controller.openThread(key, LOCAL_A)).toBe(false)
-    expect(context.messages.at(-1)).toBe('Claude 桌面端未在运行')
-    expect(conversationsOf(context).completedUnread.some((task) => task.actionAlias === LOCAL_A)).toBe(true)
-    context.controller.dispose()
-  })
-
-  it('rejects a late unread=true for the same completion but allows the next completion to become unread', async () => {
-    const base = Date.now()
-    const context = harness({ codeSessions: [{ sessionId: LOCAL_A, phase: 'completed', at: base }], unread: [LOCAL_A], kernelActions: true })
-    context.controller.start()
-    await settle()
-    const key = conversationsOf(context).all.find((task) => task.actionAlias === LOCAL_A)!.key
-    expect(await context.controller.openThread(key, LOCAL_A)).toBe(true)
-
-    context.setUnread([])
-    context.emitUnread()
-    await settle()
-    context.setUnread([LOCAL_A])
-    context.emitUnread()
-    await settle()
-    expect(conversationsOf(context).completed.some((task) => task.actionAlias === LOCAL_A)).toBe(true)
-
-    context.setCodeRows([{ sessionId: LOCAL_A, phase: 'running', at: base + 10_000 }])
-    context.emitEvent()
-    await settle()
-    context.setCodeRows([{ sessionId: LOCAL_A, phase: 'completed', at: base + 20_000 }])
-    context.emitEvent()
-    await settle()
-    expect(conversationsOf(context).completedUnread.some((task) => task.actionAlias === LOCAL_A)).toBe(true)
-    context.controller.dispose()
-  })
-})
-
 describe('dynamic quota supplement', () => {
   it('wakes at reset + 1 second when that is earlier than the configured cadence', () => {
     expect(claudeQuotaScheduleDelay(

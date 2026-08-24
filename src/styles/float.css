@@ -240,9 +240,9 @@ button { font: inherit; }
 .group-dot.hidden { background: var(--codex-muted); }
 
 .waiting-input-group,
-.task-waiting-input { --task-tone: var(--codex-warning); }
+.phase-waiting-input { --task-tone: var(--codex-warning); }
 .waiting-approval-group,
-.task-waiting-approval { --task-tone: var(--codex-accent); }
+.phase-waiting-approval { --task-tone: var(--codex-accent); }
 .running-group,
 .task-running { --task-tone: var(--codex-running); }
 .recent-activity-group,
@@ -290,26 +290,25 @@ button { font: inherit; }
 .float-task-row + .float-task-row { margin-top: 5px; }
 .float-task-row:hover,
 .float-task-row:focus-within { border-color: var(--codex-focus); background: color-mix(in srgb, var(--codex-focus) 14%, var(--codex-surface-raised)); box-shadow: 0 7px 16px rgba(3, 18, 29, .22); transform: translateY(-1px); }
-.float-task-row.task-waiting-input,
-.float-task-row.task-waiting-approval,
-.float-task-row.task-active,
-.float-task-row.task-ongoing,
+.float-task-row.phase-waiting-input,
+.float-task-row.phase-waiting-approval,
+.float-task-row.phase-running,
 .float-task-row.task-stopped,
 .float-task-row.task-failed,
 .float-task-row.task-system-error,
 .float-task-row.task-unknown,
-.float-task-row.bucket-stopped,
-.float-task-row.bucket-completed-unread,
-.float-task-row.bucket-completed { border-left: 3px solid var(--task-tone); }
-.task-active,
-.task-ongoing { --task-tone: var(--codex-running); }
+.float-task-row.phase-stopped,
+.float-task-row.phase-completed,
+.float-task-row.phase-unknown { border-left: 3px solid var(--task-tone); }
+.phase-running { --task-tone: var(--codex-running); }
 .task-stopped,
-.bucket-stopped { --task-tone: var(--codex-muted); }
+.phase-stopped,
+.phase-unknown { --task-tone: var(--codex-muted); }
 .task-failed,
 .task-system-error { --task-tone: var(--codex-critical); }
 .task-unknown { --task-tone: var(--codex-muted); }
-.bucket-completed-unread { --task-tone: var(--codex-pending); }
-.bucket-completed { --task-tone: var(--codex-accent); }
+.phase-completed.unread-unread { --task-tone: var(--codex-pending); }
+.phase-completed { --task-tone: var(--codex-accent); }
 .task-state { display: grid; width: 28px; height: 28px; flex: none; place-items: center; border-radius: 8px; }
 .task-state.waiting-input { --task-tone: var(--codex-warning); }
 .task-state.waiting-approval { --task-tone: var(--codex-accent); }
@@ -759,6 +758,15 @@ button.float-search-glyph { cursor: pointer; }
    change, and source must not become a separate row-tail text line. */
 .task-meta-line { display: flex; min-width: 0; align-items: center; gap: 5px; }
 .task-meta-line .task-meta-button { flex: 1 1 auto; min-width: 0; }
+.task-topology-summary {
+  flex: 0 0 auto;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--codex-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .task-provider-marker {
   flex: none;
   padding: 0 4px;

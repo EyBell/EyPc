@@ -50,17 +50,20 @@ describe('browser fallback platform', () => {
 
   it('forwards the exact task-state revision exposed by the current preload', async () => {
     const companionKernel = {
-      revision: 'companion-task-kernel-v4',
-      packageRevision: 'companion-task-package-v4',
+      revision: 'companion-task-kernel-v6',
+      packageRevision: 'companion-task-snapshot-v6',
+      registryRevision: 'companion-provider-registry-v1',
+      topologyRevision: 'companion-task-topology-v2',
+      commandRevision: 'companion-task-command-v1',
+      subscribeRevision: 'companion-task-subscribe-v1',
+      ackRevision: 'companion-task-ack-v2',
       attach: vi.fn(),
       configure: vi.fn(),
-      publishAuxiliaryCycleTasks: vi.fn(),
-      syncPackage: vi.fn(),
-      dispatch: vi.fn(async () => ({ outcome: 'unavailable' as const })),
-      getPackage: vi.fn(),
+      dispatchCommand: vi.fn(async () => ({ outcome: 'unavailable' as const })),
       getLatest: vi.fn(),
       subscribe: vi.fn(),
-      diagnostics: vi.fn(() => ({ revision: 'companion-task-kernel-v4' }))
+      acknowledge: vi.fn(),
+      diagnostics: vi.fn(() => ({ revision: 'companion-task-kernel-v6' }))
     }
     globalThis.window = {
       navigator: { platform: 'MacIntel' },
@@ -73,9 +76,9 @@ describe('browser fallback platform', () => {
           readSnapshot: async () => ({ ok: false, error: { code: 'unavailable', message: 'not used' }, receivedAt: Date.now() })
         },
         runtimeIdentity: {
-          revision: 'runtime-identity-v1',
+          revision: 'runtime-identity-v2',
           handshake: (expected: Record<string, string>) => ({
-            revision: 'runtime-identity-v1',
+            revision: 'runtime-identity-v2',
             status: 'host-loaded',
             expected,
             actual: expected,
@@ -96,10 +99,9 @@ describe('browser fallback platform', () => {
 
     expect(getPlatform().codex.taskStateRevision).toBe('task-state-v8')
     expect(getPlatform().companionKernel).toBe(companionKernel)
-    expect(getPlatform().companionNavigation).toBeUndefined()
   })
 
-  it('requires reload when the V4 Kernel omits Cursor auxiliary candidate publication', async () => {
+  it('requires reload when a V4 Kernel lacks the V6 command and ACK contract', async () => {
     globalThis.window = {
       navigator: { platform: 'MacIntel' },
       eypcPlatform: {
@@ -111,9 +113,9 @@ describe('browser fallback platform', () => {
           readSnapshot: async () => ({ ok: false, error: { code: 'unavailable', message: 'not used' }, receivedAt: Date.now() })
         },
         runtimeIdentity: {
-          revision: 'runtime-identity-v1',
+          revision: 'runtime-identity-v2',
           handshake: (expected: Record<string, string>) => ({
-            revision: 'runtime-identity-v1',
+            revision: 'runtime-identity-v2',
             status: 'host-loaded',
             expected,
             actual: expected,
@@ -161,9 +163,9 @@ describe('browser fallback platform', () => {
           readSnapshot: async () => ({ ok: false, error: { code: 'unavailable', message: 'not used' }, receivedAt: Date.now() })
         },
         runtimeIdentity: {
-          revision: 'runtime-identity-v1',
+          revision: 'runtime-identity-v2',
           handshake: (expected: Record<string, string>) => ({
-            revision: 'runtime-identity-v1',
+            revision: 'runtime-identity-v2',
             status: 'host-loaded',
             expected,
             actual: expected,
@@ -187,38 +189,6 @@ describe('browser fallback platform', () => {
       errorCode: 'kernel-missing'
     })
     expect(platform.companionKernel).toBeUndefined()
-    expect(platform.companionNavigation).toBeUndefined()
-    expect(platform.companionTasks).toBeUndefined()
-  })
-
-  it('rejects a stale process-navigation bridge instead of mixing cache owners', async () => {
-    globalThis.window = {
-      navigator: { platform: 'MacIntel' },
-      eypcPlatform: {
-        storage: {},
-        files: {},
-        clipboard: {},
-        codex: {
-          readSnapshot: async () => ({ ok: false, error: { code: 'unavailable', message: 'not used' }, receivedAt: Date.now() })
-        },
-        companionNavigation: {
-          revision: 'companion-navigation-v0',
-          begin: () => ({ revision: 'companion-navigation-v0', lease: 1, retained: false, ready: false }),
-          sync: () => true,
-          cycle: async () => ({ outcome: 'unavailable' as const }),
-          open: async () => ({ outcome: 'unavailable' as const }),
-          diagnostics: () => ({ revision: 'companion-navigation-v0' })
-        },
-        float: {},
-        app: { hide: async () => true },
-        getEnterPayload: () => null,
-        clearEnterPayload: () => undefined
-      }
-    } as unknown as Window & typeof globalThis
-
-    const { getPlatform } = await import('../../src/platform/eypcPlatform')
-
-    expect(getPlatform().companionNavigation).toBeUndefined()
   })
 
   it('does not claim a legacy compatibility state when the desktop preload has no Codex snapshot bridge', async () => {

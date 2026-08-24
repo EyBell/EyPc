@@ -1,4 +1,5 @@
-import type { CompanionProviderEnablement, CompanionProviderId } from './companionProvider'
+import type { CompanionOpenHandoffV1, CompanionProviderEnablement, CompanionProviderId } from './companionProvider'
+import type { CompanionTaskTopologySummaryV1 } from './companionTaskTopology'
 import { DEFAULT_COMPANION_ENABLEMENT, normalizeCompanionEnablement, orderCompanionTasksForDisplay, isCompanionAttentionState } from './companionProvider'
 // `codexAppearance` owns the color math (HSL, contrast) and only type-imports this
 // module, so this value edge is one-directional at runtime: the type import is
@@ -153,6 +154,7 @@ export interface CodexNewThreadResult {
   retryAllowed?: boolean
   context?: CodexNewThreadSelectionContext
   target?: CodexNewThreadTarget
+  handoff?: CompanionOpenHandoffV1
 }
 
 export interface CodexConfigSnapshotV1 {
@@ -304,7 +306,7 @@ export interface CodexPendingRecoverySnapshotV1 {
  * marked degraded, but its atomic task-state package is preserved rather than
  * being independently cleared by Controller or Renderer.
  */
-export const CODEX_TASK_STATE_REVISION = 'task-state-v10'
+export const CODEX_TASK_STATE_REVISION = 'task-state-v11'
 
 export interface CodexHostSnapshotV1 {
   version: 1
@@ -480,6 +482,8 @@ export type CodexBridgeResult<T> =
 
 export interface CodexThreadOpenResult {
   outcome: 'opened' | 'dispatched' | 'failed'
+  confirmsRead?: boolean
+  handoff?: CompanionOpenHandoffV1
   errorCode?: string
   message?: string
 }
@@ -725,6 +729,8 @@ export interface CodexState {
   cachedConfig: CodexConfigSnapshotV1
   lastTaskTab: CodexVisibleTaskTab
   collapsedProjectKeys: string[]
+  /** Root-task topology display preference; children remain private. */
+  collapsedTaskKeys: string[]
   taskAliases: CodexAliasEntry[]
   projectAliases: CodexAliasEntry[]
   localPins: CodexLocalPin[]
@@ -756,6 +762,8 @@ export interface CodexTaskCard {
   unreadState?: 'unread' | 'read' | 'unknown'
   /** Process Kernel could not yet resolve one Provider evidence conflict. */
   canonicalFreshness?: 'fresh' | 'verifying'
+  /** Sole semantic state projected from the process-owned task Kernel. */
+  companionPhase?: 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'stopped' | 'unknown'
   /** Latest Turn.startedAt; this is the only field used as “last question time”. */
   lastQuestionAt?: number
   /** Deprecated presentation state retained while old persisted renderers migrate. */
@@ -776,6 +784,8 @@ export interface CodexTaskCard {
     resume: boolean
     executePlan: boolean
   }
+  /** Root-only topology summary; child identities never enter Renderer state. */
+  companionTopology?: CompanionTaskTopologySummaryV1
   updatedAt: number
   pendingSince?: number
   createdAt?: number
@@ -1522,6 +1532,7 @@ export function createDefaultCodexState(): CodexState {
     cachedConfig: emptyCodexConfig(),
     lastTaskTab: 'ongoing',
     collapsedProjectKeys: [],
+    collapsedTaskKeys: [],
     taskAliases: [],
     projectAliases: [],
     localPins: [],
@@ -1541,6 +1552,7 @@ export function normalizeCodexState(value: unknown): CodexState {
     cachedConfig: normalizeCodexConfig(source.cachedConfig),
     lastTaskTab: normalizeCodexVisibleTaskTab(source.lastTaskTab),
     collapsedProjectKeys: normalizeAnonymousKeys(source.collapsedProjectKeys, 500, true),
+    collapsedTaskKeys: normalizeAnonymousKeys(source.collapsedTaskKeys, 500, true),
     taskAliases: normalizeCodexAliases(source.taskAliases),
     projectAliases: normalizeCodexAliases(source.projectAliases, true),
     localPins: normalizeCodexLocalPins(source.localPins),

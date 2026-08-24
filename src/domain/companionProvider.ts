@@ -259,7 +259,19 @@ export function resolveCompanionWaterBallMapping(
  * ------------------------------------------------------------------ */
 
 export type CompanionOpenOutcome = 'opened' | 'dispatched' | 'unavailable' | 'failed'
-export const COMPANION_TASK_ACTIONS_REVISION = 'companion-task-actions-v2'
+export const COMPANION_OPEN_HANDOFF_REVISION = 'companion-open-handoff-v1'
+
+export interface CompanionOpenHandoffV1 {
+  revision: typeof COMPANION_OPEN_HANDOFF_REVISION
+  /** Opaque attempt identity. It must never contain a Provider-native thread id. */
+  handoffId: string
+  stage: 'requested' | 'dispatched' | 'native-confirmed' | 'applied' | 'failed'
+  /** Mirasim or another source may report release independently; it does not gate an explicit user open request. */
+  sourceRelease: 'confirmed' | 'unknown' | 'not-required'
+  nativeVisible: boolean
+  controlOwner: 'source' | 'target-native' | 'unknown'
+  confirmsRead: boolean
+}
 
 export type CompanionTaskActionSource =
   | 'card-click'
@@ -307,8 +319,9 @@ export interface CompanionArchiveResultV2 {
 
 export interface CompanionOpenResultV2 {
   outcome: CompanionOpenOutcome
-  /** Only an `opened` result is strong enough to write a read receipt. */
+  /** Read may change only after a native-confirmed/applied handoff explicitly confirms it. */
   confirmsRead: boolean
+  handoff?: CompanionOpenHandoffV1
   message?: string
 }
 
@@ -339,8 +352,8 @@ export interface CompanionProviderPort {
   readonly id: CompanionProviderId
   /** Environment probe; must resolve rather than throw when the host is absent. */
   inspect(): Promise<CompanionProviderReadiness>
-  /** Opens a task using this provider's own jump mechanism. */
-  openTask(taskKey: string, actionAlias?: string): Promise<CompanionOpenResultV2>
+  /** Opens a task by canonical key; provider-native resolution stays behind the port. */
+  openTask(taskKey: string): Promise<CompanionOpenResultV2>
   /** Releases watchers, child processes and subscriptions owned by this provider. */
   close(): void
 }

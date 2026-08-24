@@ -9394,19 +9394,11 @@ export function createAppRuntime(initialState: AppState, options: AppRuntimeOpti
     } })
     actions.register({ id: 'codex.task.open', title: '打开 Codex 任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
       const key = typeof args?.key === 'string' ? args.key : ''
-      const actionAlias = typeof args?.actionAlias === 'string' ? args.actionAlias : ''
       const source = args?.source === 'manual-quick-jump' || args?.source === 'card-click' || args?.source === 'manual-row-open'
         ? args.source
         : 'manual-row-open'
-      void codexController.openThread(key, actionAlias, undefined, source, typeof args?.operationId === 'string' ? args.operationId : undefined)
+      void codexController.openThread(key, source, typeof args?.operationId === 'string' ? args.operationId : undefined)
       return Boolean(key)
-    } })
-    actions.register({ id: 'codex.claude.task.sync', title: '同步 Claude 状态', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => {
-      const key = typeof args?.key === 'string' ? args.key : ''
-      const actionAlias = typeof args?.actionAlias === 'string' ? args.actionAlias : ''
-      if (!key || !actionAlias) return false
-      void codexController.syncClaudeTask(key, actionAlias)
-      return true
     } })
     actions.register({ id: 'codex.input.open', title: '打开 Codex 待输入任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => codexController.openFirstInput(typeof args?.operationId === 'string' ? args.operationId : undefined, args?.source === 'local-shortcut' ? 'local-shortcut' : 'attention-shortcut') })
     actions.register({ id: 'codex.completed-unread.openFirst', title: '依次打开 Codex 已完成未读任务', group: 'Codex', risk: 'normal', scope: 'global', priority: 98, when: () => true, run: (_ctx, args) => codexController.openFirstCompletedUnread(typeof args?.operationId === 'string' ? args.operationId : undefined, args?.source === 'local-shortcut' ? 'local-shortcut' : 'attention-shortcut') })

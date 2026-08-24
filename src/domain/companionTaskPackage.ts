@@ -1,5 +1,6 @@
 import {
   countConversationTasks,
+  emptyConversationSnapshot,
   type CodexProjectCard,
   type CodexProjectEntry,
   type CodexProjectSection,
@@ -14,20 +15,22 @@ import {
   isCompanionAttentionState,
   isCompanionLivePhase
 } from './companionProvider'
-import type { CodexTaskStatePackageV1 } from './codexPresentation'
+import { buildCodexTaskStatePackage, type CodexTaskStatePackageV1 } from './codexPresentation'
 import type {
   CompanionProviderEvidenceBatchV1,
   CompanionTaskRelationObservationV1,
   CompanionTaskTopologySummaryV1
 } from './companionTaskTopology'
 
-export const COMPANION_TASK_KERNEL_REVISION = 'companion-task-kernel-v5'
-export const COMPANION_TASK_PACKAGE_REVISION = 'companion-task-package-v5'
+export const COMPANION_TASK_KERNEL_REVISION = 'companion-task-kernel-v6'
+export const COMPANION_TASK_PACKAGE_REVISION = 'companion-task-snapshot-v6'
 
 export type CompanionTaskKind = 'codex-thread' | 'claude-session' | 'cursor-session' | 'topology-child' | 'local-pin'
 export type CompanionTaskPhase = 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'stopped' | 'unknown'
 export type CompanionTaskEvidencePhaseV4 = 'running' | 'waiting-input' | 'waiting-approval' | 'completed' | 'interrupted' | 'failed' | 'unknown'
 export type CompanionTaskFreshnessV4 = 'fresh' | 'verifying'
+export type CompanionPlanLifecycleStateV6 = 'unknown' | 'ready' | 'cleared'
+export type CompanionPlanClearReasonV6 = 'cancel' | 'execution-start' | 'archive' | 'removal' | ''
 
 export interface CompanionTaskEvidenceV4 {
   provider: CompanionProviderId
@@ -104,6 +107,8 @@ export interface CompanionCanonicalTaskV4 {
   planImplementation: boolean
   planReady: boolean
   planLifecycleRevision: number
+  planLifecycleState?: CompanionPlanLifecycleStateV6
+  planClearReason?: CompanionPlanClearReasonV6
   paused: boolean
   turnMode: 'plan' | 'default' | 'unknown'
   idleConfirmed: boolean
@@ -126,7 +131,7 @@ export interface CompanionCanonicalTaskV4 {
   topology?: CompanionTaskTopologySummaryV1
 }
 
-/** Host-private material retained by the process graph; never emitted in V5 snapshots. */
+/** Host-private material retained by the process graph; never emitted in V6 snapshots. */
 export interface CompanionPrivateTaskNodeV5 extends CompanionCanonicalTaskV4 {
   family?: string
   role?: 'root' | 'child'
@@ -137,7 +142,7 @@ export interface CompanionPrivateTaskNodeV5 extends CompanionCanonicalTaskV4 {
 }
 
 export interface CompanionTaskPackageDraftV4 {
-  schema: 'companion-task-draft-v5'
+  schema: 'companion-task-evidence-draft-v6'
   producer: 'renderer' | 'host-preflight' | 'host-evidence'
   sourceTaskStateRevision: string
   draftRevision: number
@@ -149,7 +154,6 @@ export interface CompanionTaskPackageDraftV4 {
   sourceGenerations: Record<CompanionProviderId, number>
   sourceLaneGenerations: CompanionSourceLaneGenerations
   providerHealth: CompanionProviderHealthV1
-  tasks: CompanionPrivateTaskNodeV5[]
   relations?: CompanionTaskRelationObservationV1[]
   evidenceBatches?: Partial<Record<CompanionProviderId, CompanionProviderEvidenceBatchV1>>
 }
@@ -189,7 +193,7 @@ export interface CompanionTaskPackageV4 {
   schema: typeof COMPANION_TASK_PACKAGE_REVISION
   kernelRevision: typeof COMPANION_TASK_KERNEL_REVISION
   registryRevision: 'companion-provider-registry-v1'
-  topologySchemaRevision: 'companion-task-topology-v1'
+  topologySchemaRevision: 'companion-task-topology-v2'
   commandRevision: 'companion-task-command-v1'
   packageRevision: number
   topologyRevision: number
@@ -207,7 +211,7 @@ export interface CompanionTaskPackageV4 {
   views: CompanionTaskPackageViewsV4
 }
 
-/** Narrow source-compatibility aliases; every emitted runtime value is V5. */
+/** Narrow source-compatibility aliases; every emitted runtime value is V6. */
 export type CompanionTaskEvidencePhaseV3 = CompanionTaskEvidencePhaseV4
 export type CompanionTaskFreshnessV3 = CompanionTaskFreshnessV4
 export type CompanionTaskEvidenceV3 = CompanionTaskEvidenceV4
@@ -220,6 +224,21 @@ export type CompanionCanonicalTaskV5 = CompanionCanonicalTaskV4
 export type CompanionTaskPackageDraftV5 = CompanionTaskPackageDraftV4
 export type CompanionTaskPackageViewsV5 = CompanionTaskPackageViewsV4
 export type CompanionTaskSnapshotV5 = CompanionTaskPackageV4
+export type CompanionTaskViewV6 = Omit<CompanionCanonicalTaskV4,
+  | 'actionAlias'
+  | 'capabilityToken'
+  | 'archiveRequest'
+  | 'observationGeneration'
+  | 'membershipRevision'
+  | 'phaseRevision'
+  | 'unreadRevision'
+  | 'visibilityRevision'
+  | 'metadataRevision'
+  | 'planClearReason'
+>
+export type CompanionTaskSnapshotV6 = Omit<CompanionTaskPackageV4, 'tasks'> & {
+  tasks: CompanionTaskViewV6[]
+}
 
 function allTaskCards(taskState: CodexTaskStatePackageV1): CodexTaskCard[] {
   const conversations = taskState.conversations
@@ -235,12 +254,12 @@ function allTaskCards(taskState: CodexTaskStatePackageV1): CodexTaskCard[] {
 
 export function emptyCompanionTaskPackage(
   providers: CompanionProviderEnablement = { codex: true, claude: false, cursor: false }
-): CompanionTaskPackageV4 {
+): CompanionTaskSnapshotV6 {
   return {
     schema: COMPANION_TASK_PACKAGE_REVISION,
     kernelRevision: COMPANION_TASK_KERNEL_REVISION,
     registryRevision: 'companion-provider-registry-v1',
-    topologySchemaRevision: 'companion-task-topology-v1',
+    topologySchemaRevision: 'companion-task-topology-v2',
     commandRevision: 'companion-task-command-v1',
     packageRevision: 0,
     topologyRevision: 0,
@@ -275,21 +294,19 @@ export function emptyCompanionTaskPackage(
 
 function projectedLegacyState(
   phase: CompanionTaskPhase,
-  unread: boolean,
-  provider: CompanionProviderId,
-  fallback: CodexTaskCard['state']
+  unread: boolean
 ): CodexTaskCard['state'] {
   if (phase === 'waiting-input') return 'waiting-input'
   if (phase === 'waiting-approval') return 'waiting-approval'
   if (phase === 'running') return 'running'
   if (phase === 'completed') return unread ? 'pending-review' : 'recent-activity'
   if (phase === 'stopped') return 'stopped'
-  return phase === 'unknown' ? fallback : provider === 'claude' ? 'attention' : 'running'
+  return 'attention'
 }
 
 function projectCanonicalCard(
   card: CodexTaskCard,
-  task: CompanionCanonicalTaskV4
+  task: CompanionTaskViewV6
 ): CodexTaskCard {
   const originalTitle = task.originalTitle || card.originalName || card.displayName || card.name
   const alias = task.alias || ''
@@ -297,19 +314,19 @@ function projectCanonicalCard(
   const live = isCompanionLivePhase(task.phase)
   const completed = task.phase === 'completed'
   const stopped = task.phase === 'stopped'
-  const unchanged = task.phase === 'unknown'
-  // `unknown` is the Kernel's abstention result. It must not manufacture a
-  // running/stopped classification: keep the latest inventory-backed semantic
-  // fields and only refresh metadata/capability identity around them.
-  const bucket: CodexTaskCard['bucket'] = unchanged
-    ? card.bucket
+  const unknown = task.phase === 'unknown'
+  // `unknown` is itself the Kernel's semantic decision. The presentation
+  // adapter maps it to a neutral, non-actionable legacy card; it must never
+  // revive a Provider inventory's former running/stopped/unread state.
+  const bucket: CodexTaskCard['bucket'] = unknown
+    ? 'stopped'
     : live
       ? 'ongoing'
       : completed
         ? task.unread ? 'completed-unread' : 'completed'
         : 'stopped'
-  const activityState: CodexTaskCard['activityState'] = unchanged
-    ? card.activityState
+  const activityState: CodexTaskCard['activityState'] = unknown
+    ? 'ongoing'
     : task.phase === 'waiting-input'
       ? 'waiting-input'
       : task.phase === 'waiting-approval'
@@ -319,31 +336,25 @@ function projectCanonicalCard(
           : stopped
             ? 'stopped'
             : 'ongoing'
-  const archiveCapability: CodexTaskCard['archiveCapability'] = unchanged
-    ? card.archiveCapability
+  const archiveCapability: CodexTaskCard['archiveCapability'] = unknown
+    ? 'blocked-stopped'
     : live
       ? 'blocked-active'
       : task.capabilities.archive
         ? 'allowed'
         : 'blocked-stopped'
-  const completionRevision = unchanged
-    ? card.completionRevision || 0
-    : completed
-    ? task.archiveRequest?.evidence === 'completed'
-      ? task.archiveRequest.expectedRevisionAt
-      : Math.max(
-          card.completionRevision || 0,
-          task.statusEnteredAt || task.phaseRevision || task.revisionAt
-        )
+  const completionRevision = completed
+    ? task.terminalAt || task.statusEnteredAt || task.revisionAt
     : 0
-  const lastTurnStartedAt = task.archiveRequest?.expectedLastTurnStartedAt
-    || card.lastTurnStartedAt
+  const lastTurnStartedAt = task.turnStartedAt
     || task.lastQuestionAt
-  const sourceUpdatedAt = unchanged
-    ? card.updatedAt
-    : task.archiveRequest?.expectedUpdatedAt || Math.max(card.updatedAt, task.revisionAt)
+  // Existing cards receive display metadata from the inventory lane. An
+  // unread-only revision must not overwrite that provider timestamp; causal
+  // task ordering already has the independent `revisionAt` field.
+  const sourceUpdatedAt = card.updatedAt || task.revisionAt
+  const { actionAlias: _inventoryActionAlias, ...metadataCard } = card
   const next: CodexTaskCard = {
-    ...card,
+    ...metadataCard,
     displayName,
     name: displayName,
     originalName: originalTitle,
@@ -351,16 +362,16 @@ function projectCanonicalCard(
     ...(task.projectKey ? { projectKey: task.projectKey } : {}),
     ...(task.projectName ? { projectName: task.projectName } : {}),
     ...(task.projectKind ? { projectKind: task.projectKind } : {}),
-    ...(task.actionAlias ? { actionAlias: task.actionAlias } : {}),
     ...(task.provider === 'claude' ? { provider: 'claude', claudePhase: task.phase } : {}),
     bucket,
     activityState,
     archiveCapability,
     revisionAt: task.revisionAt,
-    statusEnteredAt: unchanged ? card.statusEnteredAt : task.statusEnteredAt || task.revisionAt,
-    unreadState: unchanged ? card.unreadState || 'unknown' : completed && task.unreadKnown ? (task.unread ? 'unread' : 'read') : 'unknown',
+    statusEnteredAt: task.statusEnteredAt || task.revisionAt,
+    unreadState: completed && task.unreadKnown ? (task.unread ? 'unread' : 'read') : 'unknown',
     canonicalFreshness: task.freshness,
-    state: projectedLegacyState(task.phase, task.unread, task.provider, card.state),
+    companionPhase: task.phase,
+    state: projectedLegacyState(task.phase, task.unread),
     updatedAt: sourceUpdatedAt,
     lastQuestionAt: task.lastQuestionAt || card.lastQuestionAt,
     lastTurnStartedAt,
@@ -371,8 +382,8 @@ function projectCanonicalCard(
     planPaused: task.paused,
     companionCapabilities: { ...task.capabilities },
     companionTopology: task.topology ? { ...task.topology } : undefined,
-    hasCurrentActivity: unchanged ? card.hasCurrentActivity : live,
-    canArchive: unchanged ? card.canArchive : archiveCapability === 'allowed'
+    hasCurrentActivity: live,
+    canArchive: archiveCapability === 'allowed'
   }
   if (task.localPin) next.pinSource = 'local'
   else if (next.pinSource === 'local') delete next.pinSource
@@ -384,8 +395,7 @@ function projectCanonicalCard(
   } else delete next.planImplementationOnly
   if (completionRevision) {
     next.completionRevision = completionRevision
-    next.lastTurnCompletedAt = task.archiveRequest?.expectedCompletionAt
-      || Math.max(card.lastTurnCompletedAt || 0, completionRevision)
+    next.lastTurnCompletedAt = completionRevision
     if (task.unread) next.pendingSince = completionRevision
     else delete next.pendingSince
   } else {
@@ -398,7 +408,7 @@ function projectCanonicalCard(
   return next
 }
 
-function minimalCanonicalCard(task: CompanionCanonicalTaskV4): CodexTaskCard {
+function minimalCanonicalCard(task: CompanionTaskViewV6): CodexTaskCard {
   const name = task.displayName || (task.provider === 'codex' ? '新 Codex 任务' : task.provider === 'cursor' ? '新 Cursor 任务' : '新 Claude 任务')
   const projectName = task.projectName || (task.provider === 'codex' ? 'Codex Chats' : task.provider === 'cursor' ? 'Cursor Chats' : 'Claude Chats')
   const projectKey = task.projectKey || `${task.provider}:chats`
@@ -406,7 +416,6 @@ function minimalCanonicalCard(task: CompanionCanonicalTaskV4): CodexTaskCard {
   const unknown = task.phase === 'unknown'
   return projectCanonicalCard({
     key: task.key,
-    ...(task.actionAlias ? { actionAlias: task.actionAlias } : {}),
     displayName: name,
     name,
     bucket: unknown ? 'stopped' : 'ongoing',
@@ -493,9 +502,48 @@ function projectConversationSnapshot(
   const inputRequired = visible.filter((task) => isCompanionAttentionState(task.activityState))
   const completedTab = [...completedUnread, ...completed]
   const tasksByKey = new Map(all.map((task) => [task.key, task]))
-  const projects = conversations.projects.map((project) => projectCardsForProject(project, tasksByKey, all))
+  const projectedProjects = conversations.projects.map((project) => projectCardsForProject(project, tasksByKey, all))
   const hiddenProjects = conversations.hiddenProjects.map((project) => projectCardsForProject(project, tasksByKey, all))
+  const existingProjectKeys = new Set([...projectedProjects, ...hiddenProjects].map((project) => project.key))
+  const synthesizedProjects = [...new Map(all
+    .filter((task) => !existingProjectKeys.has(task.projectKey))
+    .map((task) => [task.projectKey, {
+      key: task.projectKey,
+      name: task.projectName,
+      originalName: task.originalProjectName || task.projectName,
+      kind: task.projectKind,
+      nativePinned: false,
+      collapsed: false,
+      tasks: [] as CodexTaskCard[],
+      providers: [companionTaskProvider(task)],
+      virtual: true
+    } satisfies CodexProjectCard] as const)).values()]
+    .map((project) => projectCardsForProject(project, tasksByKey, all))
+  const projects = [...projectedProjects, ...synthesizedProjects]
   const projectsByKey = new Map([...projects, ...hiddenProjects].map((project) => [project.key, project]))
+  const projectedSections = conversations.projectSections.map((section) => projectSection(section, tasksByKey, projectsByKey))
+  const representedProjects = new Set(projectedSections.flatMap((section) => section.entries
+    .filter((entry) => entry.kind === 'project')
+    .map((entry) => entry.project.key)))
+  const representedTasks = new Set(projectedSections.flatMap((section) => section.entries
+    .filter((entry) => entry.kind === 'task')
+    .map((entry) => entry.task.key)))
+  const pinnedTasks = visible.filter((task) => task.pinSource === 'local' && !representedTasks.has(task.key))
+  const missingProjects = projects.filter((project) => !representedProjects.has(project.key))
+  const sectionById = new Map(projectedSections.map((section) => [section.id, section]))
+  const ensureSection = (id: CodexProjectSection['id'], title: CodexProjectSection['title']) => {
+    const existing = sectionById.get(id)
+    if (existing) return existing
+    const section: CodexProjectSection = { id, title, entries: [] }
+    projectedSections.push(section)
+    sectionById.set(id, section)
+    return section
+  }
+  ensureSection('pinned', 'Pinned').entries.push(...pinnedTasks.map((task) => ({ kind: 'task' as const, task, pinSource: 'local' as const })))
+  for (const project of missingProjects) {
+    ensureSection(project.kind === 'chats' ? 'chats' : 'projects', project.kind === 'chats' ? 'Chats' : 'Projects')
+      .entries.push({ kind: 'project', project })
+  }
   return {
     ...conversations,
     ongoing,
@@ -509,7 +557,7 @@ function projectConversationSnapshot(
     completedTab,
     projects,
     hiddenProjects,
-    projectSections: conversations.projectSections.map((section) => projectSection(section, tasksByKey, projectsByKey)),
+    projectSections: projectedSections,
     ...countConversationTasks(ongoing, stopped, completedUnread, completed, hidden)
   }
 }
@@ -520,9 +568,8 @@ function projectConversationSnapshot(
  */
 export function applyCompanionTaskPackageViews(
   taskState: CodexTaskStatePackageV1,
-  taskPackage: CompanionTaskPackageV4
+  taskPackage: CompanionTaskSnapshotV6
 ): CodexTaskStatePackageV1 {
-  if (!taskPackage.complete) return taskState
   const sourceByKey = new Map(allTaskCards(taskState).map((task) => [task.key, task]))
   const canonical = [...taskPackage.tasks].sort((left, right) => left.displayOrder - right.displayOrder)
   const cards = canonical
@@ -551,4 +598,18 @@ export function applyCompanionTaskPackageViews(
     generatedAt: Math.max(taskState.generatedAt, taskPackage.publishedAt)
   }
   return projected
+}
+
+/** Public Renderer adapter. It derives presentation only from one immutable V6
+ * snapshot; the optional inventory contributes project chrome/health metadata
+ * and is never allowed to reinterpret task state. */
+export function projectCompanionTaskSnapshot(
+  taskSnapshot: CompanionTaskSnapshotV6,
+  inventory?: CodexTaskStatePackageV1
+): CodexTaskStatePackageV1 {
+  const source = inventory || buildCodexTaskStatePackage(emptyConversationSnapshot(), {
+    sourceRevision: 'companion-task-snapshot-v6',
+    now: taskSnapshot.publishedAt
+  })
+  return applyCompanionTaskPackageViews(source, taskSnapshot)
 }
