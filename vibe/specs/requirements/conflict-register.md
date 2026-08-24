@@ -1,19 +1,19 @@
 # Requirement Conflict Register
 
-阶段二冲突核验记录。扫描范围是全部 `vibe/specs` 文档中含取代/冲突语义且引用两条以上 `RAW` 的行，共 72 处。
+阶段二冲突核验记录。2026-08-13 基线扫描覆盖全部 `vibe/specs` 文档中含取代/冲突语义且引用两条以上 `RAW` 的 72 处；后续 RAW-174、RAW-175、RAW-176 与本次 RAW-167 漏项复核按日期追加，不把历史基线数伪装成当前总数。
 
-Date: 2026-08-13
+Date: 2026-08-23
 
 ## 结论
 
-**没有需要用户裁决的未决冲突。** 全部 72 处冲突声明都已有明确决定，本轮做的是把已决定的关系从散文变成机器边。
+**现有仓库权威之间没有需要用户裁决的未决冲突。** RAW-177 已明确裁决旧的“Deep Link 成功即建立会话期已读确认”：外部打开只能到 `dispatched/pending`，原生可见、控制权与 applied/read 必须有独立回执。未分类来源条款现在都有 `SA-*` 身份，但不会在未做语义复核前冒充需求边。
 
 ## 处置分类
 
 | 类型 | 数量 | 处置 |
 | --- | ---: | --- |
-| `explicit-superseded` 整条取代 | 18 | 已在首批入册时转为 `superseded_by` / `supersedes` 双向边 |
-| `scoped-superseded` 局部取代 | 47 | 本轮新增 `scoped_relations` 边，含 6 条跨任务 |
+| `explicit-superseded` 整条取代 | 22 | 当前登记中的 `superseded_by` / `supersedes` 双向边 |
+| `scoped-superseded` 局部取代 | 58 | 当前登记中的 `scoped_relations`；含 RAW-177 对旧已读确认范围的精确收敛 |
 | `semantic-fork` 改变可见行为且未决 | 0 | 无 |
 | `agent-vs-user` 转述压过原话 | 0 | 无 |
 
@@ -41,7 +41,7 @@ RAW-163 与 RAW-164 这两条正是本会话开头核验过的那组：用户已
 
 ## 未扫描
 
-无 `RAW` 编号的约 160 条编号条款不在扫描范围内——没有身份就无法表达冲突关系。见 [coverage](coverage.md#L1)。
+102 条无父 `RAW` 的围栏外有序来源条款已进入 [Source Anchor Catalog](../source-anchors/README.md#L1)，可稳定回源，但仍未逐条确认其 requirement/evidence 分类和 semantic module，因此暂不生成 active requirement 冲突边。见 [coverage](coverage.md#L1)。
 
 ## 2026-08-15 升级：散文范围改为子条款精确边
 
@@ -58,7 +58,7 @@ RAW-163 与 RAW-164 这两条正是本会话开头核验过的那组：用户已
 
 ### 更正：散文区间多框了一条
 
-原记录写「[RAW-163](codex-raw-163.md#L1) 第 50–53 条 main-first 展示门槛」被 RAW-164 取代。逐条回到来源核对后：
+原记录写「[RAW-163](shared-raw-163.md#L1) 第 50–53 条 main-first 展示门槛」被 RAW-164 取代。逐条回到来源核对后：
 
 - **#50 / #51 / #52** 确是 main-first 展示门槛，被 [RAW-164#58](shared-raw-164-clause-058.md#L1)（「无条件聚合根任务与全部 Side Chat，删除 `mainCompletedRead` 或等价展示门槛」）**整条取代**。
 - **#53 不是展示门槛**，它要求 Branch Evidence 携带 `main/side` 角色与分支级 unread。[RAW-164#57](shared-raw-164-clause-057.md#L1) 与 [RAW-166#77](shared-raw-166-clause-077.md#L1) 都**依赖**它——后者进一步把 phase/unread/Goal 拆成三条独立 lane。因此 #53 是 `refined-by`，不是被取代。
@@ -93,8 +93,36 @@ RAW-163 与 RAW-164 这两条正是本会话开头核验过的那组：用户已
 
 PRD / Architecture / authority-reset 中「Stop/StopFailure 关闭当前 Turn」不是登记叶子，无法做机器边。处置是同步改写那些 current authority，并把机器身份落在 [RAW-174](claude-raw-174.md#L1) / [#89](claude-raw-174-clause-089.md#L1)–[#94](claude-raw-174-clause-094.md#L1)。
 
-保留部分：成功 `Stop`、App 精确 failed/interrupted、已观察 open Turn 且无成功结果的 SessionEnd 仍关闭。SessionEnd lifecycle-only 合同不变。RAW-167 draft 仍是 `proposed`，不参与。
+保留部分：成功 `Stop`、App 精确 failed/interrupted、已观察 open Turn 且无成功结果的 SessionEnd 仍关闭。SessionEnd lifecycle-only 合同不变。install-runtime-diagnostics 的 engineering-invariants [RAW-167 draft](invariants-raw-167.md#L1) 仍是 `proposed`，不参与；它与本次补登的 quick-task-view qualified RAW-167 不是同一身份。
 
 ## 2026-08-17：确认整行被气泡取代
 
 用户明确要求确认提示不得再占卡片内整行。`decision_status=explicit-current-request`。RAW-173 中「有待确认时保留 `float-source-status`」被 [RAW-175](codex-raw-175.md#L1) 局部取代；搜索栏收纳条款仍有效。机器边写在 [codex-raw-173](codex-raw-173.md#L1) 的 `scoped_relations`。
+
+该增量使当前机器登记总计成为 **21 whole + 53 scoped**；上文 21/52 是 2026-08-15 精确子条款升级当时的历史水位。
+
+## 2026-08-23：V5 全局拓扑与统一命令
+
+用户直接确认 [RAW-176](shared-raw-176.md#L1)，把“折叠”提升为 Codex、Cursor、Claude 共用的精确任务拓扑，并把点击、Enter、角标、快捷键和前后任务收敛到同一个 Command Gateway。`decision_status=explicit-current-request`，没有未决 semantic fork。
+
+本条保留 RAW-160/164/165/174 的因果 lane、待输入清除屏障、状态优先级和精确关系基础，只在以下范围取代旧实现形态：V4 Registry/Kernel/Package/Actions 身份、Cursor Auxiliary 候选、Controller 来源直调、Renderer 包后二次折叠和四字段 Runtime Identity。历史条款继续保持 `active`，因为它们的其余状态与安全约束仍然生效；当前范围以 V5 Controlled [Change Review](../260823/companion-task-topology-v5/raw-requirement.md#L31) 为准，不创建会误伤保留语义的整条 `superseded` 边。
+
+## 2026-08-23：V6 单状态源纠偏
+
+RAW-176 revision 4 在保留 V5 Provider 注册、精确关系、统一命令及 RAW-177 native receipt/Source Anchor 冲突边的前提下，取代 V5 的预归约 task 输入、Topology 状态聚合、Renderer/provider task watcher/cache/sync action、过宽 Plan 清除与健康 Float 缺 ACK 强制重建。它不把 RAW-177 的 `dispatched` 提升为 opened/read，不恢复 V4/V2 facade，也不改变现有 requirement leaf 状态；当前精确范围见同一 Controlled [Change Review](../260823/companion-task-topology-v5/raw-requirement.md#L31)。
+
+## 2026-08-23：Codex Tab 原始需求与后期变更复核
+
+[RAW-167](codex-quick-task-view-raw-167.md#L1) 的父 identity 与 [#1](codex-quick-task-view-raw-167-clause-001.md#L1)–[#3](codex-quick-task-view-raw-167-clause-003.md#L1) 来源序号此前漏登，本次只做 qualified identity 抽取。它已在来源 Change Review 中明确：`Ctrl+F` 收敛为搜索，`F / Shift+F` 保留 Quick Jump，`Alt+数字 / Alt+F` 表示直接打开；与当前 PRD、帮助和代码合同无未决 semantic fork。
+
+Environment Action 的 39 条有序来源条款继续由其来源/spec/PRD 承载，并已获得稳定 `SA-*` 来源身份；没有 RAW 父身份，所以仍不自动转为需求叶子。
+
+## 2026-08-23：RAW-177 Codex 原生交接边界
+
+用户明确选择 C 全部优化。机器登记新增 [RAW-177](shared-raw-177.md#L1) 与 [#1](invariants-raw-177-clause-001.md#L1)–[#3](shared-raw-177-clause-003.md#L1)。冲突处置如下：
+
+- [RAW-163#55](shared-raw-163-clause-055.md#L1) 的“成功打开主任务即可建立会话期已读确认”被 RAW-177#3 **整条取代**。
+- [RAW-164#61](shared-raw-164-clause-061.md#L1) 与 [#64](shared-raw-164-clause-064.md#L1) 仅在“外部 Deep Link 可直接建立 Turn/会话期已读确认”的范围被取代；其因果防回滚、parent-only 打开、待审批/待输入/stopped 等其余语义继续有效。
+- [RAW-056](codex-raw-056.md#L1) 中“EyPc 打开不得更改 Codex Desktop 未读”继续有效，并由新合同进一步明确为：没有 Codex 原生回执时，EyPc 自身也不能把派发推导成已读。
+
+本机没有可编辑的 Mirasim 仓库，已安装 App 也没有提供 Codex 原生展示/控制权回执接口。因此当前可实现且已落地的上限是 `requested → dispatched/pending`；`native-confirmed → applied` 是未来真实原生接口和宿主联调门禁，不标记为本地已完成。

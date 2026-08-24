@@ -2,12 +2,13 @@
 
 ## Scope
 
-跨 Provider 的状态内核、证据因果、任务包合同、运行诊断与运行身份条款。
+跨 Provider 的状态内核、证据因果、任务拓扑、任务包/命令合同、运行诊断与运行身份条款。
 
 ## Current Authorities And Routes
 
-- 当前增量权威：[install-runtime-diagnostics/spec.md](../../260810/1155-install-runtime-diagnostics/spec.md#L1)
-- 条款正文：[raw-requirement.md](../../260810/1155-install-runtime-diagnostics/raw-requirement.md#L1)
+- 当前增量权威：[Companion Task Topology V6 corrective revision](../../260823/companion-task-topology-v5/spec.md#L1)
+- 当前条款正文：[companion-task-topology-v5/raw-requirement.md](../../260823/companion-task-topology-v5/raw-requirement.md#L1)
+- 历史基础：[install-runtime-diagnostics/spec.md](../../260810/1155-install-runtime-diagnostics/spec.md#L1)
 - 每节下的编号条款已按 `RAW-nnn#n` 单独入册，见下方「编号条款」与 [coverage](../coverage.md#L1)。
 
 ## Primary Requirements
@@ -18,6 +19,10 @@
 - [RAW-164](../shared-raw-164.md#L1) — `active`
 - [RAW-165](../shared-raw-165.md#L1) — `active` · `agent-transcribed`
 - [RAW-166](../shared-raw-166.md#L1) — `active` · `agent-transcribed`
+- [RAW-176](../shared-raw-176.md#L1) — `active`
+- [RAW-177](../shared-raw-177.md#L1) — `active`
+- [RAW-177#2](../shared-raw-177-clause-002.md#L1) — `active` · 唯一 V6 平台入口
+- [RAW-177#3](../shared-raw-177-clause-003.md#L1) — `active` · 原生交接与 ACK 边界
 
 
 ### 编号条款
@@ -91,7 +96,7 @@
 - [RAW-163#52](../shared-raw-163-clause-052.md#L1) — 主任务 completed-unread 与 Side Chat running 并…
 - [RAW-163#53](../shared-raw-163-clause-053.md#L1) — Branch Evidence 必须携带有限的 main/side 角色和分支级 u…
 - [RAW-163#54](../shared-raw-163-clause-054.md#L1) — 卡片、标题、Enter、紧凑角标、attention、previous/next 和…
-- [RAW-163#55](../shared-raw-163-clause-055.md#L1) — 成功打开主任务后，既有会话期 read acknowledgement 仍可覆盖主任…
+- [RAW-163#55](../shared-raw-163-clause-055.md#L1) — `superseded` · 外部 Deep Link 不再建立会话期已读确认
 
 #### RAW-164#56–#64
 

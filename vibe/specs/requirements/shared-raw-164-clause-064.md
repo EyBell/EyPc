@@ -5,6 +5,10 @@ status: active
 domain: companion-shared
 authority: user-stated
 parent_requirement: eypc-req-shared-raw-164
+scoped_relations:
+  - kind: superseded-by
+    target: eypc-req-shared-raw-177-clause-003
+    scope: "Turn 绑定已读确认可由外部打开请求直接建立的部分"
 ---
 
 # RAW-164#64 · companion-shared
