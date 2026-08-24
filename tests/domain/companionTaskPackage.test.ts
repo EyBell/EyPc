@@ -10,7 +10,8 @@ import {
   COMPANION_TASK_KERNEL_REVISION,
   COMPANION_TASK_PACKAGE_REVISION,
   type CompanionCanonicalTaskV4,
-  type CompanionTaskPackageV4
+  type CompanionTaskSnapshotV6,
+  type CompanionTaskViewV6
 } from '../../src/domain/companionTaskPackage'
 
 const key = '0123456789abcdef'
@@ -81,15 +82,32 @@ function canonical(patch: Partial<CompanionCanonicalTaskV4> = {}): CompanionCano
   }
 }
 
-function packageFor(task: CompanionCanonicalTaskV4 | null, revision: number): CompanionTaskPackageV4 {
-  const tasks = task ? [task] : []
+function publicTask(task: CompanionCanonicalTaskV4): CompanionTaskViewV6 {
+  const {
+    actionAlias: _actionAlias,
+    capabilityToken: _capabilityToken,
+    archiveRequest: _archiveRequest,
+    observationGeneration: _observationGeneration,
+    membershipRevision: _membershipRevision,
+    phaseRevision: _phaseRevision,
+    unreadRevision: _unreadRevision,
+    visibilityRevision: _visibilityRevision,
+    metadataRevision: _metadataRevision,
+    planClearReason: _planClearReason,
+    ...value
+  } = task
+  return value
+}
+
+function packageFor(task: CompanionCanonicalTaskV4 | null, revision: number): CompanionTaskSnapshotV6 {
+  const tasks = task ? [publicTask(task)] : []
   const phase = task?.phase
   const group = phase === 'running' ? 'active' : phase === 'stopped' ? 'stopped' : phase === 'completed' ? task?.unread ? 'unread' : 'completed' : null
   return {
     schema: COMPANION_TASK_PACKAGE_REVISION,
     kernelRevision: COMPANION_TASK_KERNEL_REVISION,
     registryRevision: 'companion-provider-registry-v1',
-    topologySchemaRevision: 'companion-task-topology-v1',
+    topologySchemaRevision: 'companion-task-topology-v2',
     commandRevision: 'companion-task-command-v1',
     packageRevision: revision,
     topologyRevision: revision,
@@ -184,6 +202,33 @@ describe('canonical Companion task projection', () => {
     expect(state.dynamic.tasks).toEqual([])
   })
 
+  it('fails closed on an incomplete configuration barrier instead of reviving inventory state', () => {
+    const source = emptyConversationSnapshot()
+    const inventoryCard = card()
+    source.stopped = [inventoryCard]
+    source.all = [inventoryCard]
+    source.stoppedCount = 1
+    const inventory = buildCodexTaskStatePackage(source, {
+      sourceRevision: CODEX_TASK_STATE_REVISION,
+      now: 1_000
+    })
+    const barrier = {
+      ...packageFor(null, 2),
+      enabled: false,
+      complete: false,
+      providerHealth: {
+        codex: { status: 'disabled' as const, generation: 2, errorCode: '' },
+        claude: { status: 'disabled' as const, generation: 0, errorCode: '' },
+        cursor: { status: 'disabled' as const, generation: 0, errorCode: '' }
+      }
+    }
+
+    const projected = applyCompanionTaskPackageViews(inventory, barrier)
+    expect(projected.conversations.all).toEqual([])
+    expect(projected.dynamic.tasks).toEqual([])
+    expect(projected.dynamic.compactCounts).toEqual({ input: 0, active: 0, unread: 0 })
+  })
+
   it('keeps an EyPc alias as the display name while still refreshing the original title', () => {
     const source = emptyConversationSnapshot()
     const aliased = { ...card(), name: '我的别名', displayName: '我的别名', alias: '我的别名', originalName: '原始标题' }
@@ -219,7 +264,7 @@ describe('canonical Companion task projection', () => {
     expect(plainState.conversations.all[0]).toMatchObject({ name: '新的原始标题', displayName: '新的原始标题' })
   })
 
-  it('treats unknown as abstain and preserves the inventory-backed classification', () => {
+  it('projects unknown as a neutral Kernel state without reviving inventory semantics', () => {
     const codexSource = emptyConversationSnapshot()
     const codexCard = card()
     codexSource.stopped = [codexCard]
@@ -234,11 +279,13 @@ describe('canonical Companion task projection', () => {
     codexState = applyCompanionTaskPackageViews(codexState, codexPackage)
     expect(codexState.conversations.stopped[0]).toMatchObject({
       bucket: 'stopped',
-      activityState: 'stopped',
-      state: 'stopped',
-      canArchive: true,
+      activityState: 'ongoing',
+      state: 'attention',
+      unreadState: 'unknown',
+      canArchive: false,
       canonicalFreshness: 'fresh'
     })
+    expect(codexState.conversations.stopped[0]).not.toHaveProperty('actionAlias')
     expect(codexState.dynamic.tasks).toEqual([])
 
     const claudeSource = emptyConversationSnapshot()
@@ -259,10 +306,11 @@ describe('canonical Companion task projection', () => {
     claudeState = applyCompanionTaskPackageViews(claudeState, claudePackage)
     expect(claudeState.conversations.stopped[0]).toMatchObject({
       bucket: 'stopped',
-      activityState: 'stopped',
+      activityState: 'ongoing',
       claudePhase: 'unknown',
-      state: 'stopped',
-      canArchive: true
+      state: 'attention',
+      unreadState: 'unknown',
+      canArchive: false
     })
     expect(claudeState.dynamic.groups.stopped.map((task) => task.key)).toEqual([key])
   })
@@ -316,14 +364,8 @@ describe('canonical Companion task projection', () => {
       unreadRevision: 300,
       statusEnteredAt: 180,
       lastQuestionAt: 150,
-      archiveRequest: {
-        expectedUpdatedAt: 220,
-        expectedRevisionAt: 180,
-        expectedCompletionAt: 180,
-        expectedLastTurnStartedAt: 150,
-        expectedSourceFingerprint: 'a'.repeat(64),
-        evidence: 'completed'
-      }
+      turnStartedAt: 150,
+      terminalAt: 180
     }), 1)
     state = applyCompanionTaskPackageViews(state, taskPackage)
     expect(state.conversations.completedUnread[0]).toMatchObject({
@@ -336,7 +378,7 @@ describe('canonical Companion task projection', () => {
 
   })
 
-  it('projects Codex and Cursor roots together from one complete V5 snapshot', () => {
+  it('projects Codex and Cursor roots together from one complete V6 snapshot', () => {
     const cursorKey = 'cursor:86e0370a-21b3-434d-a1a3-0ce83edc5ddd'
     const cursorCard: CodexTaskCard = {
       ...card(),
@@ -361,7 +403,7 @@ describe('canonical Companion task projection', () => {
     const taskPackage = packageFor(canonical(), 1)
     taskPackage.providers.cursor = true
     taskPackage.providerHealth.cursor = { status: 'ready', generation: 1, errorCode: '' }
-    taskPackage.tasks.push(canonical({
+    taskPackage.tasks.push(publicTask(canonical({
       key: cursorKey,
       provider: 'cursor',
       kind: 'cursor-session',
@@ -371,7 +413,7 @@ describe('canonical Companion task projection', () => {
       actionAlias: 'ct_cursor',
       displayName: 'Cursor Agent',
       capabilities: { open: true, archive: false, pause: false, resume: false, executePlan: false }
-    }))
+    })))
     taskPackage.views.groups.active = [cursorKey]
     taskPackage.views.counts.active = 1
     taskPackage.views.cycleKeys = [cursorKey]

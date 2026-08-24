@@ -12,9 +12,17 @@ import {
   projectConversations,
   type CodexHostProject,
   type CodexHostThread,
-  type CodexQuotaSnapshotV1
+  type CodexQuotaSnapshotV1,
+  type CodexTaskCard,
+  type ConversationSnapshotV1
 } from '../../src/domain/codex'
-import { buildCodexCompactPresentation, buildCodexTaskStatePackage } from '../../src/domain/codexPresentation'
+import { buildCodexCompactPresentation, buildCodexTaskStatePackage, type CodexTaskStatePackageV1 } from '../../src/domain/codexPresentation'
+import {
+  emptyCompanionTaskPackage,
+  type CompanionCanonicalTaskV4,
+  type CompanionTaskSnapshotV6
+} from '../../src/domain/companionTaskPackage'
+import { companionTaskProvider } from '../../src/domain/companionProvider'
 import { contrastRatio } from '../../src/domain/codexAppearance'
 import { emptyClaudeEnvironment, normalizeClaudeQuota } from '../../src/domain/claude'
 import { mergeCompanionConversations } from '../../src/domain/companionAggregate'
@@ -31,6 +39,125 @@ const TASK_HIDDEN = '4444444444444444'
 const TASK_INPUT = '5555555555555555'
 const defaults = defaultCodexSettings()
 const mounted: VueWrapper[] = []
+let taskSnapshotRevision = 0
+
+type FloatFixture = CodexFloatSnapshotV1 & {
+  conversations: ConversationSnapshotV1
+  taskState: CodexTaskStatePackageV1
+  taskStateRevision?: string
+}
+
+function canonicalTask(card: CodexTaskCard, index: number): CompanionCanonicalTaskV4 {
+  const provider = companionTaskProvider(card)
+  const phase = card.companionPhase
+    || (card.activityState === 'waiting-input' ? 'waiting-input'
+      : card.activityState === 'waiting-approval' ? 'waiting-approval'
+        : card.claudePhase === 'unknown' ? 'unknown'
+          : card.bucket === 'stopped' ? 'stopped'
+            : card.bucket === 'completed' || card.bucket === 'completed-unread' ? 'completed'
+              : 'running')
+  const unread = card.bucket === 'completed-unread'
+  const hidden = card.isHidden === true
+  const dynamicGroup = hidden
+    ? 'none'
+    : phase === 'waiting-input' || phase === 'waiting-approval' ? 'input'
+      : phase === 'running' ? 'active'
+        : phase === 'stopped' || phase === 'unknown' ? 'stopped'
+          : unread ? 'unread' : 'completed'
+  const capabilities = card.companionCapabilities || {
+    open: true,
+    archive: card.canArchive === true,
+    pause: card.planReady === true && card.planPaused !== true,
+    resume: card.planReady === true && card.planPaused === true,
+    executePlan: card.planReady === true && card.planPaused !== true
+  }
+  return {
+    key: card.key,
+    provider,
+    kind: provider === 'codex' ? 'codex-thread' : provider === 'cursor' ? 'cursor-session' : 'claude-session',
+    phase,
+    cycleTier: phase === 'waiting-input' || phase === 'waiting-approval' ? 'attention' : phase === 'running' ? 'active' : 'fallback',
+    dynamicGroup,
+    actionAlias: card.actionAlias || '',
+    revisionAt: card.revisionAt,
+    semanticRevision: card.revisionAt,
+    observationGeneration: card.revisionAt,
+    membershipRevision: card.revisionAt,
+    phaseRevision: card.statusEnteredAt || card.revisionAt,
+    unreadRevision: card.completionRevision || card.revisionAt,
+    visibilityRevision: card.revisionAt,
+    statusEnteredAt: card.statusEnteredAt || card.revisionAt,
+    turnStartedAt: card.lastTurnStartedAt || 0,
+    terminalAt: card.lastTurnCompletedAt || 0,
+    metadataRevision: card.updatedAt,
+    capabilityToken: card.actionAlias || '',
+    freshness: card.canonicalFreshness || 'fresh',
+    lastQuestionAt: card.lastQuestionAt || 0,
+    createdAt: card.createdAt || 0,
+    displayOrder: index,
+    cycleOrder: index,
+    attentionOrder: index,
+    hidden,
+    unread,
+    unreadKnown: phase === 'completed',
+    planImplementation: card.planImplementationOnly === true,
+    planReady: card.planReady === true,
+    planLifecycleRevision: card.planLifecycleRevision || 0,
+    planLifecycleState: card.planReady === true ? 'ready' : 'unknown',
+    planClearReason: '',
+    paused: card.planPaused === true,
+    turnMode: card.planReady ? 'plan' : 'unknown',
+    idleConfirmed: phase === 'completed' || phase === 'stopped',
+    localPin: card.pinSource === 'local',
+    dynamicEligible: !hidden,
+    capabilities,
+    displayName: card.displayName || card.name,
+    originalTitle: card.originalName,
+    alias: card.alias,
+    projectKey: card.projectKey,
+    projectName: card.projectName,
+    projectKind: card.projectKind
+  }
+}
+
+function canonicalSnapshot(taskState: CodexTaskStatePackageV1): CompanionTaskSnapshotV6 {
+  const tasks = taskState.conversations.all.map(canonicalTask)
+  const keys = (group: CompanionCanonicalTaskV4['dynamicGroup']) => tasks.filter((task) => task.dynamicGroup === group).map((task) => task.key)
+  const revision = ++taskSnapshotRevision
+  return {
+    ...emptyCompanionTaskPackage(),
+    packageRevision: revision,
+    topologyRevision: revision,
+    sourceTaskStateRevision: CODEX_TASK_STATE_REVISION,
+    publishedAt: NOW + revision,
+    enabled: true,
+    complete: true,
+    freshness: 'fresh',
+    sourceGenerations: { codex: revision, claude: revision, cursor: revision },
+    sourceLaneGenerations: {
+      codex: { membership: revision, phase: revision, unread: revision, metadata: revision, topology: revision },
+      claude: { membership: revision, phase: revision, unread: revision, metadata: revision, topology: revision },
+      cursor: { membership: revision, phase: revision, unread: revision, metadata: revision, topology: revision }
+    },
+    providerHealth: {
+      codex: { status: 'ready', generation: revision, errorCode: '' },
+      claude: { status: 'ready', generation: revision, errorCode: '' },
+      cursor: { status: 'ready', generation: revision, errorCode: '' }
+    },
+    tasks,
+    views: {
+      groups: { input: keys('input'), active: keys('active'), stopped: keys('stopped'), unread: keys('unread'), completed: keys('completed') },
+      counts: { input: keys('input').length, active: keys('active').length, unread: keys('unread').length },
+      cycleKeys: tasks.filter((task) => !task.hidden).map((task) => task.key),
+      attentionKeys: {
+        input: keys('input'),
+        completedUnread: keys('unread'),
+        archive: tasks.filter((task) => task.capabilities.archive).map((task) => task.key)
+      },
+      pausedKeys: tasks.filter((task) => task.paused).map((task) => task.key)
+    }
+  }
+}
 
 function hostThread(input: Partial<CodexHostThread> & Pick<CodexHostThread, 'key' | 'name' | 'projectKey' | 'projectName'>): CodexHostThread {
   return {
@@ -116,11 +243,12 @@ function sparkQuota(): CodexQuotaSnapshotV1 {
   }
 }
 
-function floatSnapshot(activeTab: 'all' | 'input' | 'ongoing' | 'hidden' | 'completed' | 'projects' = 'ongoing', quotaValue = quota()): CodexFloatSnapshotV1 {
+function floatSnapshot(activeTab: 'all' | 'input' | 'ongoing' | 'hidden' | 'completed' | 'projects' = 'ongoing', quotaValue = quota()): FloatFixture {
   const conversations = conversation(activeTab)
+  const taskState = buildCodexTaskStatePackage(conversations, { sourceRevision: CODEX_TASK_STATE_REVISION, now: NOW })
   return {
     version: 2,
-    taskStateRevision: CODEX_TASK_STATE_REVISION,
+    baseRevision: 1,
     style: 'water',
     conversationInboxEnabled: true,
     compactFields: ['short', 'weekly', 'tasks'],
@@ -143,7 +271,10 @@ function floatSnapshot(activeTab: 'all' | 'input' | 'ongoing' | 'hidden' | 'comp
     newThreadModelPolicy: 'quota-auto',
     newThreadPreferredModel: 'gpt-5.6-sol',
     config: { version: 1, model: 'gpt-5.6-sol', reasoningEffort: 'high', serviceTier: 'priority', updatedAt: NOW },
-    taskState: buildCodexTaskStatePackage(conversations, { sourceRevision: CODEX_TASK_STATE_REVISION, now: NOW }),
+    taskSnapshot: canonicalSnapshot(taskState),
+    taskInventory: taskState,
+    taskState,
+    taskStateRevision: CODEX_TASK_STATE_REVISION,
     conversations,
     taskArchive: { key: '', status: 'idle', message: '' },
     projectArchive: { key: '', status: 'idle', message: '' },
@@ -152,21 +283,35 @@ function floatSnapshot(activeTab: 'all' | 'input' | 'ongoing' | 'hidden' | 'comp
   }
 }
 
-function refreshTaskState(source: CodexFloatSnapshotV1): void {
+function refreshTaskState(source: FloatFixture): void {
   source.taskState = buildCodexTaskStatePackage(source.conversations, {
-    sourceRevision: source.taskStateRevision,
+    sourceRevision: source.taskStateRevision || CODEX_TASK_STATE_REVISION,
     now: NOW
   })
+  source.taskInventory = source.taskState
+  source.taskSnapshot = canonicalSnapshot(source.taskState)
 }
 
-function mountFloat(expanded: boolean, source = floatSnapshot(), overrides: Partial<NonNullable<Window['eypcFloat']>> = {}) {
+function mountFloat(expanded: boolean, source: FloatFixture = floatSnapshot(), overrides: Partial<NonNullable<Window['eypcFloat']>> = {}) {
   const action = vi.fn((_id: string, _args?: unknown) => true)
   const setExpansion = vi.fn(() => true)
   const returnFocus = vi.fn(() => true)
   const createThread = vi.fn(async () => ({ outcome: 'opened' as const, modelId: 'gpt-5.6-sol' }))
   const reopenThread = vi.fn(async () => ({ outcome: 'opened' as const }))
-  const openBlank = vi.fn(async () => ({ outcome: 'opened' as const }))
+  const openBlank = vi.fn(async () => ({ outcome: 'dispatched' as const }))
   window.eypcFloat = {
+    runtimeIdentity: {
+      revision: 'runtime-identity-v2',
+      handshake: (expected) => ({
+        revision: 'runtime-identity-v2',
+        status: 'host-loaded',
+        expected,
+        actual: expected,
+        kernelRevision: expected.kernelRevision,
+        taskPackageRevision: expected.taskPackageRevision,
+        message: 'loaded'
+      })
+    },
     getSnapshot: () => source,
     getState: () => ({ expanded, pinned: false, resizing: false, resizeCorner: expanded ? 'bottom-right' : null, expandedSize: expanded ? { displayId: '1', width: 360, height: 420, manual: false } : null }),
     onSnapshot: () => () => undefined,
@@ -179,6 +324,7 @@ function mountFloat(expanded: boolean, source = floatSnapshot(), overrides: Part
     reopenThread,
     openBlank,
     copyText: vi.fn(async () => true),
+    ackTaskSnapshot: vi.fn(() => true),
     dragStart: vi.fn(() => true),
     dragMove: vi.fn(() => true),
     dragEnd: vi.fn(() => true),
@@ -463,7 +609,7 @@ describe('Codex Companion V4 UI contract', () => {
       }
     ])
     source.companion = {
-      providers: { codex: true, claude: true },
+      providers: { codex: true, claude: true, cursor: false },
       claudeQuota: normalizeClaudeQuota(null),
       claudeEnvironment: emptyClaudeEnvironment()
     }
@@ -498,7 +644,7 @@ describe('Codex Companion V4 UI contract', () => {
     expect(claudeOnlyProject.get('.action-pin').attributes('aria-disabled')).toBe('true')
   })
 
-  it('offers an accessible true-sync action only for a Claude task', async () => {
+  it('does not expose a provider-specific task sync action', async () => {
     const source = floatSnapshot('projects')
     const seed = source.conversations.all.find((task) => task.key === TASK_FAILED)!
     const actionAlias = 'local_11111111-1111-4111-8111-111111111111'
@@ -516,22 +662,16 @@ describe('Codex Companion V4 UI contract', () => {
       claudePhase: 'completed'
     }])
     source.companion = {
-      providers: { codex: true, claude: true },
+      providers: { codex: true, claude: true, cursor: false },
       claudeQuota: normalizeClaudeQuota(null),
       claudeEnvironment: emptyClaudeEnvironment()
     }
     refreshTaskState(source)
-    const { wrapper, action } = mountFloat(true, source)
+    const { wrapper } = mountFloat(true, source)
     await wrapper.vm.$nextTick()
 
     await wrapper.get('[data-focus-key="task:claude:sync-task"]').trigger('contextmenu')
-    const sync = wrapper.get('[data-drawer-action-id="task-claude-sync"]')
-    expect(sync.attributes('aria-label')).toBe('同步 Claude 状态')
-    await sync.trigger('click')
-    expect(action).toHaveBeenCalledWith('codex.claude.task.sync', {
-      key: 'claude:sync-task',
-      actionAlias
-    })
+    expect(wrapper.find('[data-drawer-action-id="task-claude-sync"]').exists()).toBe(false)
 
     await wrapper.get('.float-side-panel [aria-label="关闭"]').trigger('click')
     await wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`).trigger('contextmenu')
@@ -563,10 +703,10 @@ describe('Codex Companion V4 UI contract', () => {
     expect(css).toMatch(/provider-shared:where\(\.with-codex\.with-claude\.with-cursor\) \{ background: linear-gradient\(90deg,[^}]*quota-codex\) 8%[^}]*quota-claude\) 8%[^}]*quota-cursor\) 8%/)
   })
 
-  it('rejects a regressing Controller companion revision in the Float renderer', async () => {
+  it('rejects a regressing task snapshot revision in the Float renderer', async () => {
     const source = floatSnapshot('all')
     source.companion = {
-      providers: { codex: true, claude: true },
+      providers: { codex: true, claude: true, cursor: false },
       revision: 2,
       stateGeneration: 4,
       unreadGeneration: 3,
@@ -576,9 +716,9 @@ describe('Codex Companion V4 UI contract', () => {
     const listenerBox: { current?: (value: CodexFloatSnapshotV1) => void } = {}
     const { wrapper } = mountFloat(true, source, {
       runtimeIdentity: {
-        revision: 'runtime-identity-v1',
+        revision: 'runtime-identity-v2',
         handshake: (expected) => ({
-          revision: 'runtime-identity-v1',
+          revision: 'runtime-identity-v2',
           status: 'host-loaded',
           expected,
           actual: expected,
@@ -590,14 +730,16 @@ describe('Codex Companion V4 UI contract', () => {
       onSnapshot: (listener) => { listenerBox.current = listener; return () => undefined }
     })
     await wrapper.vm.$nextTick()
-    expect(wrapper.get('.codex-float-root').attributes('data-companion-revision')).toBe('2')
-    const older = { ...source, companion: { ...source.companion, revision: 1 } }
+    await flushPromises()
+    const currentRevision = source.taskSnapshot!.packageRevision
+    expect(wrapper.get('.codex-float-root').attributes('data-companion-revision')).toBe(String(currentRevision))
+    const older = { ...source, taskSnapshot: { ...source.taskSnapshot!, packageRevision: currentRevision - 1 } }
     listenerBox.current?.(older)
     await wrapper.vm.$nextTick()
-    expect(wrapper.get('.codex-float-root').attributes('data-companion-revision')).toBe('2')
-    listenerBox.current?.({ ...source, companion: { ...source.companion, revision: undefined } })
+    expect(wrapper.get('.codex-float-root').attributes('data-companion-revision')).toBe(String(currentRevision))
+    listenerBox.current?.({ ...source, taskSnapshot: undefined })
     await wrapper.vm.$nextTick()
-    expect(wrapper.get('.codex-float-root').attributes('data-companion-revision')).toBe('2')
+    expect(wrapper.get('.codex-float-root').attributes('data-companion-revision')).toBe(String(currentRevision))
   })
 
   it('keeps Space and Enter owned by the focused child button instead of the task row', async () => {
@@ -629,7 +771,6 @@ describe('Codex Companion V4 UI contract', () => {
     const failed = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
     const expected = {
       key: TASK_FAILED,
-      actionAlias: `alias-${TASK_FAILED}`,
       source: 'card-click'
     }
 
@@ -652,7 +793,7 @@ describe('Codex Companion V4 UI contract', () => {
     const { wrapper, action } = mountFloat(true, source)
     await wrapper.vm.$nextTick()
     const failed = wrapper.get(`[data-focus-key="task:${TASK_FAILED}"]`)
-    const expected = { key: TASK_FAILED, actionAlias: '', source: 'card-click' }
+    const expected = { key: TASK_FAILED, source: 'card-click' }
 
     await failed.get('.task-open').trigger('click')
     await failed.get('.task-title-button').trigger('click')
@@ -691,6 +832,7 @@ describe('Codex Companion V4 UI contract', () => {
     vi.useFakeTimers()
     const source = floatSnapshot('all')
     source.conversations.all.find((task) => task.key === TASK_DONE)!.pinSource = 'local'
+    refreshTaskState(source)
     const { wrapper, action } = mountFloat(true, source)
     await wrapper.vm.$nextTick()
     const localPin = wrapper.get(`[data-focus-key="task:${TASK_DONE}"] .action-pin`)
@@ -1213,24 +1355,21 @@ describe('Codex Companion V4 UI contract', () => {
     expect(setExpansion).toHaveBeenCalledWith(true, false)
   })
 
-  it('preserves task counters from a long-lived Controller snapshot by normalizing one degraded package', async () => {
+  it('fails closed when no complete Kernel snapshot is available', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(NOW)
     const source = floatSnapshot('all')
-    delete source.taskStateRevision
-    delete source.taskState
+    source.taskSnapshot = emptyCompanionTaskPackage()
 
     const compact = mountFloat(false, source).wrapper
     await compact.vm.$nextTick()
-    expect(compact.get('.float-counter.input').text()).toBe('1')
-    expect(compact.get('.float-counter.active').text()).toBe('1')
-    expect(compact.get('.float-counter.unread').text()).toBe('1')
-    expect(compact.get('.float-compact').attributes('aria-label')).toContain('状态已保留')
+    expect(compact.find('.float-counter.input').exists()).toBe(false)
+    expect(compact.find('.float-counter.active').exists()).toBe(false)
+    expect(compact.find('.float-counter.unread').exists()).toBe(false)
 
     const expanded = mountFloat(true, source).wrapper
     await expanded.vm.$nextTick()
-    expect(expanded.text()).toContain('状态已保留')
-    expect(expanded.text()).toContain('真实进行中')
+    expect(expanded.text()).not.toContain('真实进行中')
   })
 
   it('hides zero counters, caps the visible badge at 99+, and keeps exact accessible counts aligned', async () => {
@@ -1246,6 +1385,10 @@ describe('Codex Companion V4 UI contract', () => {
     }))
     source.conversations.inputRequired = []
     source.conversations.completedUnread = []
+    source.conversations.stopped = []
+    source.conversations.completed = []
+    source.conversations.hidden = []
+    source.conversations.all = [...source.conversations.ongoing]
     refreshTaskState(source)
 
     const { wrapper } = mountFloat(false, source)
@@ -1523,7 +1666,7 @@ describe('Codex Companion V4 UI contract', () => {
     const snapshot = {
       ...floatSnapshot('ongoing', quota(true, true)),
       companion: {
-        providers: { codex: true, claude: true },
+        providers: { codex: true, claude: true, cursor: false },
         claudeQuota: normalizeClaudeQuota({ five_hour: { used_percentage: 30 }, seven_day: { used_percentage: 55 } }),
         claudeEnvironment: {
           ...emptyClaudeEnvironment(),

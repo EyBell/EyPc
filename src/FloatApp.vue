@@ -46,8 +46,8 @@ import {
   resolveCodexExpandedCardTheme,
   resolveCodexSurfaceTheme
 } from './domain/codexAppearance'
-import { buildCodexCompactPresentation, codexBadgeText, normalizeCodexTaskStatePackage } from './domain/codexPresentation'
-import { applyCompanionTaskPackageViews } from './domain/companionTaskPackage'
+import { buildCodexCompactPresentation, codexBadgeText } from './domain/codexPresentation'
+import { emptyCompanionTaskPackage, projectCompanionTaskSnapshot } from './domain/companionTaskPackage'
 import { assignQuickJumpMarkers, moveQuickJumpActive, resolveQuickJumpQuery } from './domain/quickJump'
 import type { QuickJumpTarget } from './domain/quickJump'
 import { quickJumpHitStackContainsTarget, quickJumpHitTestPoints } from './domain/quickJumpHitTest'
@@ -233,14 +233,12 @@ const fallbackWaterAppearance = CODEX_THEME_PRESETS[0].waterAppearance
 const fallbackExpandedCardAppearance = CODEX_THEME_PRESETS[0].expandedCardAppearance
 const settings = computed(() => snapshot.value)
 const quota = computed(() => snapshot.value?.quota)
+const emptyTaskSnapshot = emptyCompanionTaskPackage()
 const taskState = computed(() => {
-  const normalized = normalizeCodexTaskStatePackage(
-    snapshot.value?.taskState,
-    snapshot.value?.conversations,
-    snapshot.value?.taskStateRevision
-  )
-  const taskPackage = snapshot.value?.companionTaskPackage
-  return taskPackage ? applyCompanionTaskPackageViews(normalized, taskPackage) : normalized
+  const taskSnapshot = snapshot.value?.taskSnapshot
+  return taskSnapshot?.complete
+    ? projectCompanionTaskSnapshot(taskSnapshot, snapshot.value?.taskInventory)
+    : projectCompanionTaskSnapshot(emptyTaskSnapshot)
 })
 const conversations = computed(() => taskState.value.conversations)
 const dynamicStatus = computed(() => taskState.value.dynamic)
@@ -403,6 +401,16 @@ function taskTooltip(task: CodexTaskCard) {
   return task.originalName || task.name || '未命名任务'
 }
 
+function taskTopologyLabel(task: CodexTaskCard) {
+  const topology = task.companionTopology
+  if (!topology || topology.memberCount <= 1) return ''
+  const parts = [`+${topology.memberCount - 1} 子任务`]
+  if (topology.liveCount > 0) parts.push(`${topology.liveCount} 活动`)
+  if (topology.attentionCount > 0) parts.push(`${topology.attentionCount} 注意`)
+  if (topology.errorCount > 0) parts.push(`${topology.errorCount} 异常`)
+  return parts.join(' · ')
+}
+
 function displayOrderedTasks(tasks: CodexTaskCard[]) {
   const pinnedSection = conversations.value?.projectSections.find((section) => section.id === 'pinned')
   const pinnedTaskKeys = (pinnedSection?.entries || [])
@@ -445,8 +453,8 @@ const renderRows = computed<RenderRow[]>(() => {
 
   if (selectedUiTab.value === 'dynamic') {
     const statusGroups = dynamicStatus.value.groups
-    const unknownTasks = statusGroups.stopped.filter((task) => task.claudePhase === 'unknown')
-    const stoppedTasks = statusGroups.stopped.filter((task) => task.claudePhase !== 'unknown')
+    const unknownTasks = statusGroups.stopped.filter((task) => task.companionPhase === 'unknown')
+    const stoppedTasks = statusGroups.stopped.filter((task) => task.companionPhase !== 'unknown')
     const groups = [
       { key: 'input', title: '待输入', tone: 'input' as const, tasks: statusGroups.input },
       { key: 'active', title: '正在进行中', tone: 'active' as const, tasks: statusGroups.active },
@@ -586,8 +594,27 @@ const drawerItem = computed<FocusItem | null>(() => {
 const composerModels = computed(() => composer.value?.context.modelCatalog.models || [])
 const selectedUiTab = ref<UiConversationTab>('dynamic')
 const projectProviderFilter = ref<CompanionProjectFilter>('all')
-const appliedCompanionRevision = ref(0)
+const acceptedTaskRevision = ref(0)
+const renderedTaskRevision = ref(0)
 const appliedBaseRevision = ref(0)
+
+watch(() => {
+  const taskSnapshot = snapshot.value?.taskSnapshot
+  // Reading the shared projection here makes the post-flush callback depend on
+  // the exact task presentation that the template just consumed.
+  return {
+    revision: taskSnapshot?.packageRevision || 0,
+    complete: taskSnapshot?.complete === true,
+    generatedAt: taskState.value.generatedAt,
+    taskCount: taskState.value.conversations.all.length
+  }
+}, (rendered) => {
+  if (!rendered.complete
+    || rendered.revision <= renderedTaskRevision.value
+    || floatRuntimeIdentity.value?.status !== 'host-loaded') return
+  renderedTaskRevision.value = rendered.revision
+  window.eypcFloat?.ackTaskSnapshot?.('applied', rendered.revision)
+}, { flush: 'post' })
 const projectFilters = computed(() => {
   const filters: Array<{ id: CompanionProjectFilter; label: string }> = [
     { id: 'all', label: '全部' },
@@ -1051,7 +1078,9 @@ async function submitComposer(mode: 'send-and-open' | 'create-empty') {
     }
     if (result.outcome === 'opened' || result.outcome === 'created') {
       state.prompt = ''
-      liveMessage.value = `已使用 ${state.model.modelName} 创建并打开会话`
+      liveMessage.value = result.outcome === 'opened'
+        ? `已使用 ${state.model.modelName} 创建并确认打开会话`
+        : `已使用 ${state.model.modelName} 创建会话；打开请求已发送，等待 Codex 确认`
       composer.value = null
       composerTrigger = null
       fallbackFocus()
@@ -1099,7 +1128,9 @@ async function openImageFallback(state: ComposerState) {
     }
     const result = await window.eypcFloat?.openBlank()
     if (result?.outcome === 'opened' || result?.outcome === 'dispatched') {
-      liveMessage.value = '已打开 Codex 空白会话并复制首轮文字；请粘贴图片并手动选择模型'
+      liveMessage.value = result.outcome === 'opened'
+        ? '已确认打开 Codex 空白会话并复制首轮文字；请粘贴图片并手动选择模型'
+        : 'Codex 空白会话打开请求已发送，首轮文字已复制；请等待原生界面显示后粘贴图片并手动选择模型'
       cancelComposer()
       return
     }
@@ -1117,7 +1148,9 @@ async function retryOpenComposerThread() {
   const result = await window.eypcFloat?.reopenThread(state.reopenAlias)
   state.submitting = false
   if (result?.outcome === 'opened' || result?.outcome === 'dispatched') {
-    liveMessage.value = '已重新打开新会话'
+    liveMessage.value = result.outcome === 'opened'
+      ? '已确认重新打开新会话'
+      : '重新打开请求已发送，等待 Codex 原生确认'
     cancelComposer()
   } else state.error = result?.message || '重试打开失败'
 }
@@ -1130,7 +1163,9 @@ async function openBlankFromComposer() {
   state.submitting = false
   if (result?.outcome === 'opened' || result?.outcome === 'dispatched') {
     state.prompt = ''
-    liveMessage.value = '已打开 Codex 空白页；请在 Codex 中手动选择模型'
+    liveMessage.value = result.outcome === 'opened'
+      ? '已确认打开 Codex 空白页；请在 Codex 中手动选择模型'
+      : 'Codex 空白页打开请求已发送；等待原生界面显示后请手动选择模型'
     cancelComposer()
   } else state.error = result?.message || 'Codex 空白页打开失败'
 }
@@ -1220,15 +1255,6 @@ const drawerActions = computed<DrawerAction[]>(() => {
   if (item.kind === 'task') {
     const project = conversations.value?.projects.find((candidate) => candidate.key === item.task.projectKey)
     const canCreateInProject = taskCanCreateInProject(item.task, project)
-    const claudeSyncActions: DrawerAction[] = companionTaskProvider(item.task) === 'claude'
-      ? [{
-          id: 'task-claude-sync',
-          label: '同步 Claude 状态',
-          disabled: !item.task.actionAlias,
-          disabledReason: 'Claude 任务身份已失效',
-          run: () => action('codex.claude.task.sync', { key: item.task.key, actionAlias: item.task.actionAlias })
-        }]
-      : []
     const planActions: DrawerAction[] = item.task.planReady
       ? [
           {
@@ -1251,7 +1277,6 @@ const drawerActions = computed<DrawerAction[]>(() => {
       : [{ id: 'task-hide', label: item.task.isHidden ? '恢复显示' : '移到已隐藏', disabled: item.task.isHidden && !item.task.hiddenKind, run: () => item.task.isHidden ? restoreTask(item.task) : hideTask(item.task) }]
     return [
       { id: 'task-open', label: '打开', disabled: item.task.companionCapabilities?.open === false, disabledReason: '任务打开能力不可用', run: () => openTask(item.task) },
-      ...claudeSyncActions,
       { id: 'task-new-thread', label: '在当前项目新建会话', disabled: !canCreateInProject, disabledReason: taskProjectActionBlockedReason(item.task, project), run: () => openComposer(project) },
       { id: 'task-new-thread-model', label: '选择模型新建会话', disabled: !canCreateInProject, disabledReason: taskProjectActionBlockedReason(item.task, project), run: () => openComposer(project, true) },
       { id: 'task-detail', label: '查看详情', run: () => openDetailPanel(item) },
@@ -1355,7 +1380,7 @@ function openCompactStatus(kind: 'input' | 'active' | 'unread') {
 }
 
 function openTask(task: CodexTaskCard, source: 'card-click' | 'manual-quick-jump' | 'local-shortcut' = 'card-click') {
-  action('codex.task.open', { key: task.key, actionAlias: task.actionAlias || '', source })
+  action('codex.task.open', { key: task.key, source })
 }
 
 function taskProject(task: CodexTaskCard) {
@@ -1372,12 +1397,10 @@ function restoreTask(task: CodexTaskCard) {
 
 function planActionIdentity(task: CodexTaskCard) {
   return [
-    companionTaskProvider(task),
     task.key,
-    task.actionAlias || '',
     task.planLifecycleRevision || 0,
-    task.bucket,
-    task.activityState,
+    task.companionPhase || 'unknown',
+    task.unreadState || 'unknown',
     task.planPaused ? 1 : 0
   ].join('|')
 }
@@ -1613,9 +1636,9 @@ function taskArchiveConfirming(task: CodexTaskCard) {
 }
 
 function taskArchiveIdentity(task: CodexTaskCard) {
-  const terminalEpoch = task.bucket === 'completed' || task.bucket === 'completed-unread'
+  const terminalEpoch = task.companionPhase === 'completed'
     ? task.completionRevision || task.lastTurnCompletedAt || task.lastTurnStartedAt || task.statusEnteredAt || 0
-    : task.bucket === 'stopped'
+    : task.companionPhase === 'stopped'
       ? task.lastTurnStartedAt || task.statusEnteredAt || 0
       : 0
   return `${taskProvider(task)}:${task.key}:${terminalEpoch}`
@@ -1638,7 +1661,7 @@ function confirmationMatchesCurrentState() {
 }
 
 function taskArchiveBlockedReason(task: CodexTaskCard) {
-  if (task.claudePhase === 'unknown') return '状态证据不足，暂不能归档'
+  if (task.companionPhase === 'unknown') return '状态证据不足，暂不能归档'
   return task.archiveCapability === 'blocked-stopped'
     ? '任务状态证据不足，暂不能归档'
     : '任务仍在进行中，暂不能归档'
@@ -2898,17 +2921,17 @@ function queueActionHint(event: Event, label: string) {
 }
 
 function taskStateLabel(task: CodexTaskCard) {
-  const label = task.activityState === 'waiting-input'
+  const label = task.companionPhase === 'waiting-input'
     ? '等待输入'
-    : task.activityState === 'waiting-approval'
+    : task.companionPhase === 'waiting-approval'
       ? '等待审批'
-      : task.claudePhase === 'unknown'
+      : task.companionPhase === 'unknown'
         ? '状态未知'
-        : task.bucket === 'stopped'
+        : task.companionPhase === 'stopped'
           ? '待继续'
-          : task.bucket === 'completed-unread'
+          : task.companionPhase === 'completed' && task.unreadState === 'unread'
             ? '已完成 · 未读'
-            : task.bucket === 'completed'
+            : task.companionPhase === 'completed'
               ? '已完成'
               : '进行中'
   return task.canonicalFreshness === 'verifying' ? `${label} · 核验中` : label
@@ -2916,11 +2939,11 @@ function taskStateLabel(task: CodexTaskCard) {
 
 function taskIcon(task: CodexTaskCard) {
   if (task.isHidden) return EyeOff
-  if (task.claudePhase === 'unknown') return CircleHelp
-  if (task.bucket === 'stopped') return CircleStop
-  if (task.bucket === 'completed' || task.bucket === 'completed-unread') return Eye
-  if (task.activityState === 'waiting-input') return MessageSquareText
-  if (task.activityState === 'waiting-approval') return ShieldCheck
+  if (task.companionPhase === 'unknown') return CircleHelp
+  if (task.companionPhase === 'stopped') return CircleStop
+  if (task.companionPhase === 'completed') return Eye
+  if (task.companionPhase === 'waiting-input') return MessageSquareText
+  if (task.companionPhase === 'waiting-approval') return ShieldCheck
   return CirclePlay
 }
 
@@ -3005,16 +3028,24 @@ onMounted(() => {
     hostAssetId: __EYPC_HOST_ASSET_ID__,
     rendererAssetId: __EYPC_RENDERER_ASSET_ID__,
     kernelRevision: __EYPC_COMPANION_KERNEL_REVISION__,
-    taskPackageRevision: __EYPC_COMPANION_TASK_PACKAGE_REVISION__
+    registryRevision: __EYPC_COMPANION_PROVIDER_REGISTRY_REVISION__,
+    topologyRevision: __EYPC_COMPANION_TASK_TOPOLOGY_REVISION__,
+    taskPackageRevision: __EYPC_COMPANION_TASK_PACKAGE_REVISION__,
+    commandRevision: __EYPC_COMPANION_TASK_COMMAND_REVISION__,
+    subscribeRevision: __EYPC_COMPANION_TASK_SUBSCRIBE_REVISION__,
+    ackRevision: __EYPC_COMPANION_TASK_ACK_REVISION__
   }
   try {
     floatRuntimeIdentity.value = window.eypcFloat?.runtimeIdentity?.revision === __EYPC_RUNTIME_IDENTITY_REVISION__
       ? window.eypcFloat.runtimeIdentity.handshake(expectation)
       : {
-          revision: 'runtime-identity-v1',
+          revision: 'runtime-identity-v2',
           status: 'reload-required',
           expected: expectation,
-          actual: { hostAssetId: '', rendererAssetId: '', kernelRevision: '', taskPackageRevision: '' },
+          actual: {
+            hostAssetId: '', rendererAssetId: '', kernelRevision: '', registryRevision: '',
+            topologyRevision: '', taskPackageRevision: '', commandRevision: '', subscribeRevision: '', ackRevision: ''
+          },
           kernelRevision: '',
           taskPackageRevision: '',
           message: 'Float Preload 版本过旧，请重新打开悬浮卡片',
@@ -3022,10 +3053,13 @@ onMounted(() => {
         }
   } catch {
     floatRuntimeIdentity.value = {
-      revision: 'runtime-identity-v1',
+      revision: 'runtime-identity-v2',
       status: 'reload-required',
       expected: expectation,
-      actual: { hostAssetId: '', rendererAssetId: '', kernelRevision: '', taskPackageRevision: '' },
+      actual: {
+        hostAssetId: '', rendererAssetId: '', kernelRevision: '', registryRevision: '',
+        topologyRevision: '', taskPackageRevision: '', commandRevision: '', subscribeRevision: '', ackRevision: ''
+      },
       kernelRevision: '',
       taskPackageRevision: '',
       message: 'Float 运行身份握手失败，请重新打开悬浮卡片',
@@ -3035,42 +3069,38 @@ onMounted(() => {
   const applySnapshot = (value: CodexFloatSnapshotV1 | null) => {
     if (!value) return false
     const baseRevision = value.baseRevision || 0
-    const taskRevision = value.companionTaskPackage?.packageRevision
-      || (baseRevision === 0 ? value.companion?.revision || 0 : 0)
+    const taskRevision = value.taskSnapshot?.packageRevision || 0
     if (taskRevision > 0 && floatRuntimeIdentity.value?.status !== 'host-loaded') {
-      window.eypcFloat?.ackTaskPackage?.('rejected', 'identity-mismatch')
+      window.eypcFloat?.ackTaskSnapshot?.('rejected', taskRevision, 'identity-mismatch')
       return false
     }
     const baseOlder = appliedBaseRevision.value > 0
       && (baseRevision === 0 || baseRevision < appliedBaseRevision.value)
-    const taskOlder = taskRevision > 0 && taskRevision < appliedCompanionRevision.value
+    const taskOlder = taskRevision > 0 && taskRevision < acceptedTaskRevision.value
     if (taskOlder) {
-      window.eypcFloat?.ackTaskPackage?.('rejected', 'older-revision')
+      window.eypcFloat?.ackTaskSnapshot?.('rejected', taskRevision, 'older-revision')
     }
     const baseChanged = !baseOlder && (baseRevision === 0
       ? appliedBaseRevision.value === 0
       : baseRevision > appliedBaseRevision.value)
-    const taskChanged = !taskOlder && taskRevision > appliedCompanionRevision.value
+    const taskChanged = !taskOlder && taskRevision > acceptedTaskRevision.value
     if (!baseChanged && !taskChanged) {
-      if (taskRevision > 0 && taskRevision === appliedCompanionRevision.value) {
-        window.eypcFloat?.ackTaskPackage?.('applied')
+      if (taskRevision > 0 && taskRevision === renderedTaskRevision.value) {
+        window.eypcFloat?.ackTaskSnapshot?.('applied', taskRevision)
       }
       return false
     }
     let nextValue = value
     if (!baseChanged && snapshot.value) {
-      nextValue = taskChanged && value.companionTaskPackage
-        ? { ...snapshot.value, companionTaskPackage: value.companionTaskPackage }
+      nextValue = taskChanged && value.taskSnapshot
+        ? { ...snapshot.value, taskSnapshot: value.taskSnapshot }
         : snapshot.value
-    } else if ((taskOlder || taskRevision === 0) && snapshot.value?.companionTaskPackage) {
-      nextValue = { ...value, companionTaskPackage: snapshot.value.companionTaskPackage }
+    } else if ((taskOlder || taskRevision === 0) && snapshot.value?.taskSnapshot) {
+      nextValue = { ...value, taskSnapshot: snapshot.value.taskSnapshot }
     }
     if (baseRevision > 0 && baseChanged) appliedBaseRevision.value = baseRevision
-    if (taskChanged) appliedCompanionRevision.value = taskRevision
+    if (taskChanged) acceptedTaskRevision.value = taskRevision
     snapshot.value = nextValue
-    if (taskRevision > 0 && !taskOlder) {
-      void nextTick(() => window.eypcFloat?.ackTaskPackage?.('applied'))
-    }
     return true
   }
   applySnapshot(window.eypcFloat?.getSnapshot() || null)
@@ -3139,7 +3169,7 @@ onUnmounted(() => {
     class="codex-float-root"
     :class="[{ expanded, resizing: floatState.resizing, card: settings?.style === 'card', water: settings?.style !== 'card' }, floatState.resizeCorner ? `resize-${floatState.resizeCorner}` : '']"
     :style="rootStyle"
-    :data-companion-revision="appliedCompanionRevision || undefined"
+    :data-companion-revision="renderedTaskRevision || undefined"
     tabindex="-1"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
@@ -3380,7 +3410,7 @@ onUnmounted(() => {
             <div
               v-else-if="row.kind === 'task'"
               class="float-task-row"
-              :class="[`task-${row.task.activityState}`, `bucket-${row.task.bucket}`, `provider-${row.marker.provider}`, { nested: row.nested, selected: selectedKeys.has(row.task.key), hidden: row.task.isHidden, highlighted: focusedKey === row.key, archiving: taskArchiving(row.task) }]"
+              :class="[`phase-${row.task.companionPhase || 'unknown'}`, `unread-${row.task.unreadState || 'unknown'}`, `provider-${row.marker.provider}`, { nested: row.nested, selected: selectedKeys.has(row.task.key), hidden: row.task.isHidden, highlighted: focusedKey === row.key, archiving: taskArchiving(row.task) }]"
               role="option"
               :aria-selected="selectedKeys.has(row.task.key)"
               :aria-label="`${taskDisplayLabel(row.task)}，${row.marker.tooltip}，${row.task.projectName}，${taskStateLabel(row.task)}${quickIndexHint(row.key)}`"
@@ -3428,6 +3458,7 @@ onUnmounted(() => {
                   >{{ taskDisplayLabel(row.task) }}</button>
                   <div class="task-meta-line">
                     <span class="task-provider-marker" :class="`provider-${row.marker.provider}`">{{ row.marker.label }}</span>
+                    <span v-if="taskTopologyLabel(row.task)" class="task-topology-summary">{{ taskTopologyLabel(row.task) }}</span>
                     <button
                       type="button"
                       class="task-meta-button"

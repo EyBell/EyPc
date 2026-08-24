@@ -30,6 +30,46 @@ export interface CompanionTaskNodeObservationV1 {
   capabilities: readonly string[]
 }
 
+export type CompanionActivityEvidenceKindV2 =
+  | 'turn-running'
+  | 'waiting-input'
+  | 'waiting-approval'
+  | 'turn-completed'
+  | 'turn-interrupted'
+  | 'turn-failed'
+  | 'unknown'
+
+export interface CompanionPlanLifecycleEvidenceV2 {
+  state: 'unknown' | 'ready' | 'cleared'
+  sequence: number
+  reason: '' | 'cancel' | 'execution-start' | 'archive' | 'removal'
+}
+
+/** Host-private, provider-neutral evidence. Canonical phase/views are Kernel output only. */
+export interface CompanionTaskEvidenceNodeV2 {
+  key: string
+  provider: CompanionProviderId
+  family: string
+  role: 'root' | 'child'
+  membership: 'present' | 'archived' | 'missing-candidate'
+  activity: {
+    kind: CompanionActivityEvidenceKindV2
+    causalKey: string
+    sequence: number
+    exact: boolean
+    observedAt: number
+    statusEnteredAt: number
+    turnStartedAt: number
+    terminalAt: number
+  }
+  unread: { known: boolean; value: boolean; sequence: number }
+  plan: CompanionPlanLifecycleEvidenceV2
+  metadata: Record<string, unknown>
+  capabilities: string[]
+  standaloneEligible: boolean
+  error: boolean
+}
+
 export interface CompanionTaskRelationObservationV1 {
   childKey: string
   parentKey: string
@@ -44,7 +84,7 @@ export interface CompanionTaskRelationObservationV1 {
 export type CompanionEvidenceChannelV1 = 'membership' | 'phase' | 'unread' | 'metadata' | 'topology'
 
 export interface CompanionProviderEvidenceBatchV1 {
-  revision: 'companion-provider-evidence-batch-v1'
+  revision: 'companion-provider-evidence-batch-v2'
   provider: CompanionProviderId
   channels: Record<CompanionEvidenceChannelV1, {
     mode: 'snapshot' | 'delta'
@@ -52,7 +92,7 @@ export interface CompanionProviderEvidenceBatchV1 {
     generation: number
     removedKeys: string[]
   }>
-  nodes: CompanionTaskNodeObservationV1[]
+  nodes: CompanionTaskEvidenceNodeV2[]
   relations: CompanionTaskRelationObservationV1[]
   relationMode: 'snapshot' | 'delta'
   relationsComplete: boolean
