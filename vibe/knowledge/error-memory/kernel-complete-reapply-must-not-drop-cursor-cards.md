@@ -1,12 +1,14 @@
 ---
 id: eypc-kernel-complete-reapply-must-not-drop-cursor-cards
-status: candidate
+status: superseded
 scope: project
 fingerprint: kernel-v4-complete-package-reapply-rebuilds-only-canonical-keys__float-second-apply-drops-cursor-fold__preserve-cursor-after-view-projection
 first_seen: 2026-08-21
-last_verified: 2026-08-21
-review_after: 2026-11-21
+last_verified: 2026-08-23
+review_after: 2027-08-23
 evidence:
+  - preload/companion/provider-manifest.json
+  - preload/companion/task-kernel.cjs
   - src/domain/companionTaskPackage.ts
   - src/FloatApp.vue
   - tests/domain/companionTaskPackage.test.ts
@@ -19,6 +21,12 @@ tags:
 ---
 
 # 完整 Kernel package 二次投影不得丢掉 Cursor 卡
+
+## V5 Supersession
+
+[Companion Task Topology V5](../../specs/260823/companion-task-topology-v5/spec.md#L1) 删除了本记录成立所依赖的结构：Cursor 已是 Kernel 的正式 Provider，Controller 不再在完整包之后 fold Cursor，Float 也不再二次调用 reducer。Main、Float、角标与循环只消费同一份根 Snapshot revision；Cursor 子任务由通用 Topology Graph 聚合。因此当前预防规则是“禁止恢复包后 fold/Float 二次投影”，而不是“二次投影后再补回 Cursor”。
+
+以下内容只保留为 V4 历史事故证据。
 
 ## 症状
 
@@ -43,9 +51,9 @@ Kernel V4 的 `tasks` / `views.groups` 只有 Codex/Claude 键。`applyCompanion
 
 完整 Kernel 投影之后必须按同一套 fold 把源里 `provider==='cursor'` 的卡折回动态分组。Float 不得假设第二次 apply 会保留非 Kernel 卡。回归必须覆盖「二次 apply 仍保留 Cursor running 卡」。
 
-## 替代路线
+## 历史替代路线
 
-- 状态：`candidate`（单测已覆盖；宿主重载后目视待做）。
+- 状态：`superseded-by-v5`。
 - 前置条件：Cursor 为 Kernel 外独立 Provider，Float 消费完整 V4 package。
 - 有序步骤：Kernel 投影 → fold 源 Cursor 卡 → 动态分组/compactCounts 含 Cursor。
 - 验证：`pnpm exec vitest run tests/domain/companionTaskPackage.test.ts`。
@@ -57,3 +65,4 @@ Kernel V4 的 `tasks` / `views.groups` 只有 Codex/Claude 键。`applyCompanion
 | 日期 | 任务 | 触发 | 失败路线 | 恢复 | 结果 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-08-21 | Cursor companion 悬浮窗无卡 | 用户截图「没有效果」 | Float 二次 apply 只保留 Kernel 键 | apply 结束后同形 fold 源 Cursor 卡 | candidate |
+| 2026-08-23 | V5 全局 Snapshot | 用户要求卡片、角标、循环与缓存原子一致 | V4 的包后 fold 与 Float 二次投影本身制造分叉 | Cursor 正式入 Kernel；所有消费者只应用同一 Snapshot revision | superseded / automated-verified / host-excluded-by-user |
