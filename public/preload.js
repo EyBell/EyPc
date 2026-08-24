@@ -967,7 +967,7 @@ function codexRolloutTimestampMs(...values) {
 function codexRolloutPendingPlanStateText(text) {
   return codexRolloutEvidence
     ? codexRolloutEvidence.codexRolloutPendingPlanStateText(text)
-    : { known: false, pending: false, planReady: false, planLifecycleRevision: 0, turnMode: 'unknown' }
+    : { known: false, pending: false, planReady: false, planLifecycleState: 'unknown', planLifecycleRevision: 0, planClearReason: '', turnMode: 'unknown' }
 }
 const CODEX_ACTION_RUNNER_MIN_WIDTH = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_WIDTH ?? 720
 const CODEX_ACTION_RUNNER_MIN_HEIGHT = codexRunnerBounds?.CODEX_ACTION_RUNNER_MIN_HEIGHT ?? 420
@@ -1126,9 +1126,9 @@ const codexSideTopologyDiagnosticFingerprints = new Map()
 // Raw branch IDs and exact terminal evidence remain Host-only. Kernel receives
 // only session-hashed refs through publishCodexPrivateBranchEvidence().
 const codexPrivateBranchTerminals = new Map()
-// A successful task deep link is an EyPc-owned read acknowledgement for the
-// currently observed completion. It must survive mainHide/pluginOut closing
-// and rebuilding the Desktop bridge, but never leaves this preload process.
+// Reserved for a future native-visible read receipt. Deep-link dispatch must
+// never populate this map: only a concrete native receipt may acknowledge the
+// currently observed completion. The receipt remains process-local.
 const codexDesktopOpenedReadAcknowledgements = new Map()
 const codexThreadTurnStatusCache = new Map()
 const codexThreadTurnStatusDirty = new Map()
@@ -3603,6 +3603,11 @@ function codexDesktopIsPlanImplementationRequest(request) {
   return codexDesktopRequestProjection ? codexDesktopRequestProjection.codexDesktopIsPlanImplementationRequest(request) : false
 }
 
+function codexDesktopShadowHasPlanRequest(shadow) {
+  return (Array.isArray(shadow?.requests) ? shadow.requests : [])
+    .some((request) => codexDesktopIsPlanImplementationRequest(request))
+}
+
 function codexDesktopRequestFlag(request) {
   return codexDesktopRequestProjection ? codexDesktopRequestProjection.codexDesktopRequestFlag(request) : ''
 }
@@ -4094,6 +4099,8 @@ function codexPromoteCompletedPlanWait(known) {
     || known.pendingCompletedPlanItem !== true) return false
   delete known.pendingCompletedPlanItem
   known.planReady = true
+  known.planLifecycleState = 'ready'
+  known.planClearReason = ''
   known.planLifecycleRevision = codexTimestampMs(known.lastTurnStartedAt)
     || codexTimestampMs(known.lastTurnCompletedAt)
     || Date.now()
@@ -4562,6 +4569,35 @@ class CodexDesktopCompanionBridge {
       return true
     }
     return false
+  }
+
+  confirmPlanCardRemoval(threadId, previousShadow, shadow, completeActivityState) {
+    if (!completeActivityState
+      || !validCodexThreadId(threadId)
+      || !previousShadow
+      || !shadow
+      || !codexDesktopShadowHasPlanRequest(previousShadow)
+      || codexDesktopShadowHasPlanRequest(shadow)
+      || shadow.runtime?.type === 'active') return false
+    const parentThreadId = shadow.sideConversation && validCodexThreadId(shadow.parentThreadId)
+      ? shadow.parentThreadId
+      : threadId
+    const branches = [
+      [parentThreadId, this.shadows.get(parentThreadId)],
+      ...[...this.sideShadows.entries()].filter(([, candidate]) => candidate.parentThreadId === parentThreadId)
+    ].map(([candidateId, candidate]) => candidateId === threadId ? shadow : candidate)
+    if (branches.some((candidate) => candidate && codexDesktopShadowHasPlanRequest(candidate))) return false
+    const known = codexActivityInventory.get(parentThreadId)
+    if (!known || known.planReady !== true) return false
+    const previousRevision = Math.max(0, Number(known.planLifecycleRevision) || 0)
+    known.planReady = false
+    known.planLifecycleState = 'cleared'
+    known.planClearReason = 'cancel'
+    known.planLifecycleRevision = Math.max(Date.now(), previousRevision + 1)
+    known.planImplementationOnly = false
+    known.connectorPlanImplementationOnly = false
+    delete known.pendingCompletedPlanItem
+    return true
   }
 
   resolveServerRequest(threadId, correlation) {
@@ -5550,6 +5586,7 @@ class CodexDesktopCompanionBridge {
       if (shadow.sideConversation && validCodexThreadId(hintedParentThreadId)) {
         shadow.parentThreadId = hintedParentThreadId
       }
+      this.confirmPlanCardRemoval(params.conversationId, previousShadow, shadow, true)
       const recoveryRequested = this.sideRecoveryPending.delete(params.conversationId)
       const recoveringSide = recoveryRequested
         && shadow.sideConversation
@@ -5639,12 +5676,23 @@ class CodexDesktopCompanionBridge {
     const previousRequests = [...(shadow.requests || [])]
     let containsReadStatePatch = false
     let containsActivityPatch = false
+    let containsRuntimePatch = false
+    let containsRequestsPatch = false
+    let containsCompleteRequestsPatch = false
     let refreshRuntimeWaitingSequences = false
     for (const patch of change.patches) {
       const patchSource = codexRecord(patch)
       const patchPath = Array.isArray(patchSource.path) ? patchSource.path : []
       if (patchPath[0] === 'hasUnreadTurn') containsReadStatePatch = true
       if (patchPath[0] === 'threadRuntimeStatus' || patchPath[0] === 'requests') containsActivityPatch = true
+      if (patchPath[0] === 'threadRuntimeStatus') containsRuntimePatch = true
+      if (patchPath[0] === 'requests') {
+        containsRequestsPatch = true
+        if (patchPath.length === 1
+          && (patchSource.op === 'replace' || patchSource.op === 'add' || patchSource.op === 'remove')) {
+          containsCompleteRequestsPatch = true
+        }
+      }
       if (patchPath[0] === 'threadRuntimeStatus'
         && (patchPath.length === 1 || patchPath[1] === 'activeFlags')) {
         refreshRuntimeWaitingSequences = true
@@ -5657,6 +5705,12 @@ class CodexDesktopCompanionBridge {
     this.cancelWaitingEdgeRefresh(params.conversationId)
     shadow.revision = revision
     delete shadow.ownerDisconnectedAt
+    this.confirmPlanCardRemoval(
+      params.conversationId,
+      { ...shadow, requests: previousRequests, runtime: previousRuntime },
+      shadow,
+      containsCompleteRequestsPatch || containsRuntimePatch && containsRequestsPatch
+    )
     const nextActivity = codexDesktopShadowActivity(shadow)
     const semanticActivityChanged = previousActivity?.status !== nextActivity?.status
       || JSON.stringify(previousActivity?.activeFlags || []) !== JSON.stringify(nextActivity?.activeFlags || [])
@@ -6602,6 +6656,13 @@ function codexActivityPublicEntry(value) {
   const terminalEvidenceSequence = Number.isInteger(source.terminalEvidenceSequence) && source.terminalEvidenceSequence > 0
     ? source.terminalEvidenceSequence
     : undefined
+  const planLifecycleState = source.planLifecycleState === 'ready' || source.planLifecycleState === 'cleared'
+    ? source.planLifecycleState
+    : source.planReady === true || source.planImplementationOnly === true ? 'ready' : 'unknown'
+  const planClearReason = planLifecycleState === 'cleared'
+    && ['cancel', 'execution-start', 'archive', 'removal'].includes(source.planClearReason)
+    ? source.planClearReason
+    : ''
   return {
     key: typeof source.key === 'string' ? source.key : '',
     ...(minimalMembership && typeof source.actionAlias === 'string' ? { actionAlias: source.actionAlias } : {}),
@@ -6617,6 +6678,8 @@ function codexActivityPublicEntry(value) {
           activeFlags,
           planImplementationOnly: source.planImplementationOnly === true,
           planReady: source.planReady === true || source.planImplementationOnly === true,
+          planLifecycleState,
+          ...(planClearReason ? { planClearReason } : {}),
           ...(Number.isFinite(source.planLifecycleRevision) && source.planLifecycleRevision > 0
             ? { planLifecycleRevision: Math.trunc(source.planLifecycleRevision) }
             : {}),
@@ -8073,7 +8136,7 @@ function codexThreadHasPersistedPendingPlan(thread, lastTurn) {
 }
 
 function codexThreadPersistedPlanLifecycle(thread, lastTurn) {
-  const empty = { known: false, planReady: false, planLifecycleRevision: 0, turnMode: 'unknown' }
+  const empty = { known: false, planReady: false, planLifecycleState: 'unknown', planLifecycleRevision: 0, planClearReason: '', turnMode: 'unknown' }
   if (!lastTurn) return empty
   const rollout = codexThreadRolloutCandidate(thread)
   if (!rollout) return empty
@@ -8084,7 +8147,9 @@ function codexThreadPersistedPlanLifecycle(thread, lastTurn) {
     return {
       known: cached.known === true,
       planReady: cached.planReady === true || cached.pending === true,
+      planLifecycleState: cached.planReady === true || cached.pending === true ? 'ready' : 'unknown',
       planLifecycleRevision: Number(cached.planLifecycleRevision) || (cached.pending === true ? Number(lastTurn.startedAt) || 0 : 0),
+      planClearReason: '',
       turnMode: cached.turnMode === 'plan' || cached.turnMode === 'default' ? cached.turnMode : 'unknown'
     }
   }
@@ -8096,9 +8161,11 @@ function codexThreadPersistedPlanLifecycle(thread, lastTurn) {
   const normalized = {
     known: state.known === true,
     planReady: state.planReady === true,
+    planLifecycleState: state.planReady === true ? 'ready' : 'unknown',
     planLifecycleRevision: state.planReady
       ? Number(state.planLifecycleRevision) || (lastTurn.status === 'completed' ? Number(lastTurn.startedAt) || 0 : 0)
       : 0,
+    planClearReason: '',
     turnMode: state.turnMode === 'plan' || state.turnMode === 'default' ? state.turnMode : 'unknown'
   }
   codexThreadPendingPlanCache.set(candidate, {
@@ -8134,7 +8201,7 @@ function codexRolloutDecisionState(candidate, stat, initialCorrelations) {
   const inputText = codexReadRolloutTail(candidate, stat, CODEX_ROLLOUT_PENDING_INPUT_TAIL_BYTES)
   const input = codexRolloutPendingUserInputStateText(inputText, initialCorrelations)
   const runtime = codexRolloutRuntimeStateText(inputText)
-  let plan = { known: false, pending: false, planReady: false, planLifecycleRevision: 0, turnMode: 'unknown' }
+  let plan = { known: false, pending: false, planReady: false, planLifecycleState: 'unknown', planLifecycleRevision: 0, planClearReason: '', turnMode: 'unknown' }
   for (const maximumBytes of CODEX_ROLLOUT_PENDING_PLAN_TAIL_BYTES) {
     plan = codexRolloutPendingPlanStateText(codexReadRolloutTail(candidate, stat, maximumBytes))
     if (plan.known || maximumBytes >= stat.size) break
@@ -8988,6 +9055,7 @@ function sanitizeCodexThreads(rows, registry, assignments, turnStatuses = new Ma
       ...(persistedPendingPlan ? { planImplementationOnly: true } : {}),
       ...(planLifecycle.planReady ? {
         planReady: true,
+        planLifecycleState: 'ready',
         planLifecycleRevision: planLifecycle.planLifecycleRevision || lastTurn.startedAt
       } : {}),
       turnMode: planLifecycle.turnMode,
@@ -9172,6 +9240,16 @@ async function scanVerifiedCodexInventory() {
           }
         })
       }
+      const projectionPlanRevision = Number(projection?.planLifecycleRevision) || 0
+      const previousPlanRevision = Number(previousActivity?.planLifecycleRevision) || 0
+      const retainPreviousPlanClear = previousActivity?.planLifecycleState === 'cleared'
+        && previousPlanRevision >= projectionPlanRevision
+      const planLifecycleState = retainPreviousPlanClear
+        ? 'cleared'
+        : projection?.planReady === true || previousActivity?.planReady === true ? 'ready' : 'unknown'
+      const planLifecycleRevision = retainPreviousPlanClear
+        ? previousPlanRevision
+        : projectionPlanRevision || previousPlanRevision
       activityInventory.set(thread.id, {
         key,
         ...(typeof projection?.actionAlias === 'string' ? { actionAlias: projection.actionAlias } : {}),
@@ -9200,8 +9278,10 @@ async function scanVerifiedCodexInventory() {
         activityEvidence: preserveAppServerActive ? 'activity-event' : 'connector',
         activityRevision: 0,
         planImplementationOnly: projection?.planImplementationOnly === true,
-        planReady: projection?.planReady === true || previousActivity?.planReady === true,
-        planLifecycleRevision: Number(projection?.planLifecycleRevision || previousActivity?.planLifecycleRevision) || 0,
+        planReady: planLifecycleState === 'ready',
+        planLifecycleState,
+        planLifecycleRevision,
+        ...(retainPreviousPlanClear ? { planClearReason: previousActivity.planClearReason || 'cancel' } : {}),
         turnMode: projection?.turnMode === 'plan' || projection?.turnMode === 'default'
           ? projection.turnMode
           : previousActivity?.turnMode || 'unknown',
@@ -9272,7 +9352,12 @@ async function scanVerifiedCodexInventory() {
       thread.activeFlags = [...activity.activeFlags]
       thread.planImplementationOnly = activity.planImplementationOnly === true
       thread.planReady = activity.planReady === true
+      thread.planLifecycleState = activity.planLifecycleState === 'cleared'
+        ? 'cleared'
+        : activity.planReady === true ? 'ready' : 'unknown'
       thread.planLifecycleRevision = Number(activity.planLifecycleRevision) || 0
+      if (thread.planLifecycleState === 'cleared' && activity.planClearReason) thread.planClearReason = activity.planClearReason
+      else delete thread.planClearReason
       thread.turnMode = activity.turnMode === 'plan' || activity.turnMode === 'default' ? activity.turnMode : 'unknown'
       thread.idleConfirmed = activity.idleConfirmed === true
       thread.statusAuthority = activity.statusAuthority
@@ -9980,6 +10065,19 @@ async function removeCodexProject(actionAlias, request) {
   return { status: 'verified', message: 'Codex 项目已移出侧栏；项目目录和既有会话均未删除' }
 }
 
+function codexOpenHandoff(handoffId, stage) {
+  const confirmed = stage === 'native-confirmed' || stage === 'applied'
+  return {
+    revision: 'companion-open-handoff-v1',
+    handoffId,
+    stage,
+    sourceRelease: 'unknown',
+    nativeVisible: confirmed,
+    controlOwner: confirmed ? 'target-native' : 'unknown',
+    confirmsRead: false
+  }
+}
+
 async function openCodexThread(actionAlias) {
   if (typeof actionAlias !== 'string' || !/^ct_[A-Za-z0-9_-]{16,80}$/.test(actionAlias)) return { outcome: 'failed', errorCode: 'invalid-alias', message: '线程动作已失效' }
   const entry = codexThreadActions.get(actionAlias)
@@ -9987,26 +10085,47 @@ async function openCodexThread(actionAlias) {
     codexThreadActions.delete(actionAlias)
     return { outcome: 'failed', errorCode: 'expired-alias', message: '线程动作已过期，请刷新后重试' }
   }
+  const handoffId = `coh_${crypto.randomBytes(12).toString('base64url')}`
   const target = `codex://threads/${encodeURIComponent(entry.threadId)}`
   const shell = electronShell()
   if (shell && typeof shell.openExternal === 'function') {
     try {
       await withFileActionTimeout(shell.openExternal(target))
-      codexDesktopBridge?.markThreadOpenedRead(entry.threadId, entry.threadId)
-      return { outcome: 'opened' }
+      return {
+        outcome: 'dispatched',
+        confirmsRead: false,
+        handoff: codexOpenHandoff(handoffId, 'dispatched'),
+        message: '已发送打开请求，等待 Codex 原生确认'
+      }
     } catch {
-      return { outcome: 'failed', errorCode: 'open-failed', message: 'Codex 线程打开失败' }
+      return {
+        outcome: 'failed',
+        confirmsRead: false,
+        handoff: codexOpenHandoff(handoffId, 'failed'),
+        errorCode: 'open-failed',
+        message: 'Codex 线程打开请求失败'
+      }
     }
   }
   try {
     if (globalThis.utools && typeof globalThis.utools.shellOpenExternal === 'function') {
       const dispatched = globalThis.utools.shellOpenExternal(target)
       if (dispatched === false) throw new Error('shellOpenExternal rejected')
-      codexDesktopBridge?.markThreadOpenedRead(entry.threadId, entry.threadId)
-      return { outcome: 'dispatched', message: '已交给系统打开' }
+      return {
+        outcome: 'dispatched',
+        confirmsRead: false,
+        handoff: codexOpenHandoff(handoffId, 'dispatched'),
+        message: '已发送打开请求，等待 Codex 原生确认'
+      }
     }
   } catch {}
-  return { outcome: 'failed', errorCode: 'unsupported', message: '当前宿主不支持打开 Codex 线程' }
+  return {
+    outcome: 'failed',
+    confirmsRead: false,
+    handoff: codexOpenHandoff(handoffId, 'failed'),
+    errorCode: 'unsupported',
+    message: '当前宿主不支持打开 Codex 线程'
+  }
 }
 
 async function openCodexBlank() {
@@ -10015,7 +10134,10 @@ async function openCodexBlank() {
   if (shell && typeof shell.openExternal === 'function') {
     try {
       await withFileActionTimeout(shell.openExternal(target))
-      return { outcome: 'opened' }
+      return {
+        outcome: 'dispatched',
+        message: 'Codex 空白页打开请求已发送，等待 Codex 原生界面确认'
+      }
     } catch {
       return { outcome: 'failed', errorCode: 'open-failed', message: 'Codex 空白页打开失败' }
     }
@@ -10162,7 +10284,15 @@ async function createCodexThread(request) {
     }
 
     const opened = await openCodexThread(alias)
-    if (opened.outcome === 'opened' || opened.outcome === 'dispatched') return { outcome: 'opened', modelId, retryAllowed: false }
+    if (opened.outcome === 'opened' || opened.outcome === 'dispatched') {
+      return {
+        outcome: opened.outcome === 'opened' ? 'opened' : 'created',
+        modelId,
+        retryAllowed: false,
+        ...(opened.handoff ? { handoff: opened.handoff } : {}),
+        ...(opened.message ? { message: opened.message } : {})
+      }
+    }
     if (mode === 'send-and-open') {
       return { outcome: 'reopen-available', modelId, reopenAlias: alias, errorCode: opened.errorCode || 'open-failed', message: '首轮已启动，但 Codex 页面未打开；可在短时间内重试打开', retryAllowed: true }
     }
@@ -10328,7 +10458,8 @@ function codexFloatCollapsedSize(snapshot) {
 function codexFloatExpandedHeight(snapshot) {
   const source = codexRecord(snapshot)
   const quota = codexRecord(source.quota)
-  const conversations = codexRecord(source.conversations)
+  const taskViews = codexRecord(codexRecord(source.taskSnapshot).views)
+  const taskGroups = codexRecord(taskViews.groups)
   const expandedFields = new Set(Array.isArray(source.expandedFields) ? source.expandedFields : [])
 
   // Root padding + header + footer, with a small rendering allowance. Content
@@ -10344,14 +10475,10 @@ function codexFloatExpandedHeight(snapshot) {
   if (expandedFields.has('config')) height += 38
 
   if (source.conversationInboxEnabled === true && expandedFields.has('tasks')) {
-    const ongoingCount = Array.isArray(conversations.ongoing) ? conversations.ongoing.length : 0
-    const stoppedCount = Array.isArray(conversations.stopped) ? conversations.stopped.length : 0
-    const hiddenCount = Array.isArray(conversations.hidden) ? conversations.hidden.length : 0
-    const completedUnreadCount = Array.isArray(conversations.completedUnread)
-      ? conversations.completedUnread.length
-      : Array.isArray(conversations.pending) ? conversations.pending.length : 0
-    const completedCount = Array.isArray(conversations.completed) ? conversations.completed.length : 0
-    const taskCount = Math.max(ongoingCount + stoppedCount, hiddenCount, completedUnreadCount + completedCount)
+    const dynamicCount = ['input', 'active', 'stopped', 'unread', 'completed']
+      .reduce((count, group) => count + (Array.isArray(taskGroups[group]) ? taskGroups[group].length : 0), 0)
+    const hiddenCount = Array.isArray(taskViews.pausedKeys) ? taskViews.pausedKeys.length : 0
+    const taskCount = Math.max(dynamicCount, hiddenCount)
     height += 69
     if (taskCount === 0) height += 30
     else height += taskCount * 48 + Math.max(0, taskCount - 1) * 5
@@ -10491,7 +10618,9 @@ function armCodexFloatTaskAck(taskPackage, revision, attempt) {
       durationMs: elapsed,
       count: latestRevision
     })
-    if (heartbeatHealthy && elapsed >= 1_000) requestCodexFloatRecreate('task-package-ack-missing')
+    // Missing presentation ACK is diagnostic evidence, not permission to tear
+    // down a healthy window. Forced recreation here used to turn a slow render
+    // into an apparent crash during rapid previous/next navigation.
   }, 500)
   codexFloatTaskAckTimer?.unref?.()
 }
@@ -10505,7 +10634,7 @@ function pushCodexFloatTaskPackage(taskPackage, options = {}) {
   const attempt = revision === codexFloatTaskPendingRevision ? codexFloatTaskSendAttempts + 1 : 1
   try {
     codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.taskPackage, {
-      taskPackage,
+      taskSnapshot: taskPackage,
       sentRevision: revision,
       sentAt: Date.now()
     })
@@ -10534,10 +10663,10 @@ function pushCodexFloatSnapshot(options = {}) {
     && baseRevision <= codexFloatBaseLastSentRevision) return false
   const startedAt = Date.now()
   try {
-    const taskPackage = codexFloatSnapshot.companionTaskPackage
+    const taskPackage = codexFloatSnapshot.taskSnapshot
     const revision = codexFloatTaskPackageRevision(taskPackage)
     const outboundSnapshot = codexFloatTaskLastSentRevision > 0
-      ? (({ companionTaskPackage: _taskPackage, ...snapshotWithoutTasks }) => snapshotWithoutTasks)(codexFloatSnapshot)
+      ? (({ taskSnapshot: _taskSnapshot, ...snapshotWithoutTasks }) => snapshotWithoutTasks)(codexFloatSnapshot)
       : codexFloatSnapshot
     codexFloatWindow.webContents.send(CODEX_FLOAT_CHANNELS.snapshot, outboundSnapshot)
     if (baseRevision > 0) codexFloatBaseLastSentRevision = Math.max(codexFloatBaseLastSentRevision, baseRevision)
@@ -10553,7 +10682,7 @@ function pushCodexFloatSnapshot(options = {}) {
       outcome: 'sent',
       durationMs: Date.now() - startedAt,
       slowMs: 50,
-      count: Number(codexFloatSnapshot?.companionTaskPackage?.tasks?.length) || 0,
+      count: Number(codexFloatSnapshot?.taskSnapshot?.tasks?.length) || 0,
       cache: 'process-package'
     })
     return true
@@ -10804,7 +10933,7 @@ function syncCodexFloat(payload) {
   const rendererSnapshot = source.snapshot && typeof source.snapshot === 'object' ? source.snapshot : null
   const hostTaskPackage = companionTaskKernel?.getPackage?.()
   codexFloatSnapshot = rendererSnapshot && hostTaskPackage
-    ? { ...rendererSnapshot, companionTaskPackage: hostTaskPackage }
+    ? { ...rendererSnapshot, taskSnapshot: hostTaskPackage }
     : rendererSnapshot
   codexFloatExpandedSizes = normalizeCodexExpandedSizes(source.expandedSizes || codexRecord(source.snapshot).expandedSizes)
   const position = codexRecord(source.position)
@@ -10813,7 +10942,7 @@ function syncCodexFloat(payload) {
   applyCodexFloatWorkspaceVisibility()
   if (!codexFloatResize) resizeCodexFloat(codexFloatExpanded, false)
   const snapshotSent = pushCodexFloatSnapshot()
-  const taskPackage = codexFloatSnapshot?.companionTaskPackage
+  const taskPackage = codexFloatSnapshot?.taskSnapshot
   if (codexFloatTaskPackageRevision(taskPackage) > codexFloatTaskLastSentRevision) {
     pushCodexFloatTaskPackage(taskPackage)
   }
@@ -10911,14 +11040,15 @@ function installCodexFloatIpc() {
   ipc.on(CODEX_FLOAT_CHANNELS.action, (_event, payload) => emitCodexFloatAction(codexRecord(payload).actionId, codexRecord(payload).args))
   ipc.on(CODEX_FLOAT_CHANNELS.taskPackageAck, (_event, payload) => {
     const source = codexRecord(payload)
-    const sentRevision = Number(source.sentRevision)
+    const sentRevision = Number(source.revision || source.sentRevision)
     const currentRevision = Number(source.currentRevision)
     const stage = source.stage
     if (!Number.isInteger(sentRevision) || sentRevision <= 0 || !Number.isInteger(currentRevision) || currentRevision < 0) return
     if (stage === 'received') return
     if (stage === 'applied') {
-      codexFloatTaskAppliedRevision = Math.max(codexFloatTaskAppliedRevision, currentRevision)
-      companionTaskKernel?.acknowledge?.({ consumer: 'float', revision: currentRevision })
+      if (sentRevision > codexFloatTaskLastSentRevision || currentRevision < sentRevision) return
+      codexFloatTaskAppliedRevision = Math.max(codexFloatTaskAppliedRevision, sentRevision)
+      companionTaskKernel?.acknowledge?.({ consumer: 'float', revision: sentRevision })
       if (codexFloatTaskAppliedRevision >= codexFloatTaskPendingRevision) {
         const elapsed = codexFloatTaskPendingStartedAt ? Date.now() - codexFloatTaskPendingStartedAt : 0
         clearCodexFloatTaskAckTimer()
@@ -10932,7 +11062,7 @@ function installCodexFloatIpc() {
           outcome: 'applied',
           durationMs: elapsed,
           slowMs: 250,
-          count: currentRevision
+          count: sentRevision
         })
       }
       return
@@ -11201,24 +11331,11 @@ function publishCompanionCodexAlias(key, actionAlias, fallbackTarget = null, met
         projectKind: metadata?.projectKind === 'project' ? 'project' : 'chats'
       }]
   if (current.complete) return publishCompanionHostTasks(nextTasks, { acceptedAt: Date.now() })
-  if (!companionTaskKernel?.publishEvidence) return false
-  const configuration = companionTaskConfiguration()
-  const next = companionTaskKernel.publishEvidence({
-    schema: 'companion-task-draft-v5',
-    producer: 'host-evidence',
-    sourceTaskStateRevision: current.sourceTaskStateRevision || 'task-state-v11:exact-open',
-    draftRevision: ++companionHostDraftSequence,
-    acceptedAt: Date.now(),
-    enabled: configuration.enabled,
-    providers: configuration.providers,
-    complete: false,
-    focusedKey: current.focusedKey,
-    sourceGenerations: current.sourceGenerations,
-    sourceLaneGenerations: current.sourceLaneGenerations,
-    providerHealth: current.providerHealth,
-    tasks: nextTasks
-  })
-  return Boolean(next)
+  // During a cold/incomplete package the refreshed capability stays in the
+  // Host-private alias map. Publishing a task-shaped fallback here would be a
+  // second membership/state source and V6 intentionally ignores it. The next
+  // exact preflight emits the capability through the private evidence node.
+  return true
 }
 
 async function readCompanionCodexOpenTarget(key) {
@@ -11895,6 +12012,12 @@ async function preflightCompanionTaskPackage(input = {}) {
           planImplementation,
           planReady,
           planLifecycleRevision,
+          planLifecycleState: thread.planLifecycleState === 'cleared'
+            ? 'cleared'
+            : planReady ? 'ready' : 'unknown',
+          ...(['cancel', 'execution-start', 'archive', 'removal'].includes(thread.planClearReason)
+            ? { planClearReason: thread.planClearReason }
+            : {}),
           paused: false,
           turnMode: thread.turnMode === 'plan' || thread.turnMode === 'default' ? thread.turnMode : 'unknown',
           idleConfirmed: thread.idleConfirmed === true,
@@ -12202,7 +12325,16 @@ async function preflightCompanionTaskPackage(input = {}) {
         const childKey = companionPrivateChildKey('cursor', key, childId)
         const hotRevision = Number(hotChild?.lastEventAt) || 0
         const inventoryRevision = Number(child.unfinishedRunAt) || 0
-        const childRevision = Math.max(hotRevision, inventoryRevision, cursorReadAt)
+        // `readAt` is a transport watermark, not a task mutation. Folding it
+        // into the child revision made every stable inventory read look like a
+        // semantic topology change and advanced the root package repeatedly.
+        const childRevision = Math.max(
+          hotRevision,
+          inventoryRevision,
+          Number(child.lastUpdatedAt) || 0,
+          Number(child.createdAt) || 0,
+          revisionAt
+        )
         const hotCurrent = hotRevision > 0 && hotRevision >= inventoryRevision
         const childPhase = hotCurrent
           ? hotChild.active === true ? 'running' : 'completed'
@@ -12218,14 +12350,14 @@ async function preflightCompanionTaskPackage(input = {}) {
           revisionAt: childRevision,
           semanticRevision: 1,
           observationGeneration: cursorReadAt,
-          membershipRevision: cursorReadAt,
+          membershipRevision: childRevision,
           phaseRevision: childRevision,
-          unreadRevision: cursorReadAt,
-          visibilityRevision: cursorReadAt,
+          unreadRevision: childRevision,
+          visibilityRevision: childRevision,
           statusEnteredAt: childRevision,
           turnStartedAt: Number(hotChild?.startedAt) || inventoryRevision,
           terminalAt: childPhase === 'running' ? 0 : Number(hotChild?.stoppedAt) || childRevision,
-          metadataRevision: cursorReadAt,
+          metadataRevision: childRevision,
           capabilityToken: '',
           freshness: 'fresh',
           lastQuestionAt: Number(child.unfinishedRunAt) || 0,
@@ -12286,7 +12418,7 @@ async function preflightCompanionTaskPackage(input = {}) {
     details: { providers, sourceGenerations, sourceLaneGenerations, taskCount: tasks.length }
   })
   return {
-    schema: 'companion-task-draft-v5',
+    schema: 'companion-task-evidence-draft-v6',
     producer: 'host-preflight',
     sourceTaskStateRevision: 'task-state-v11:cold-preflight',
     draftRevision: ++companionPreflightDraftSequence,
@@ -12310,21 +12442,10 @@ async function preflightCompanionTaskPackage(input = {}) {
         removedKeys: []
       }]))
       return [provider, {
-        revision: 'companion-provider-evidence-batch-v1',
+        revision: 'companion-provider-evidence-batch-v2',
         provider,
         channels,
-        nodes: tasks.filter((task) => task.provider === provider).map((task) => ({
-          key: task.key,
-          provider,
-          family: task.family,
-          role: task.role,
-          phase: task.phase,
-          unread: { known: task.unreadKnown === true, value: task.unread === true },
-          causalKey: task.causalKey || '',
-          causalReliable: task.causalReliable === true,
-          standaloneEligible: task.standaloneEligible !== false,
-          capabilities: Object.entries(task.capabilities || {}).filter(([, enabled]) => enabled === true).map(([name]) => name)
-        })),
+        nodes: tasks.filter((task) => task.provider === provider).map(companionTaskEvidenceNodeV2),
         relations: relations.filter((relation) => relation.provider === provider),
         relationMode: topologyComplete ? 'snapshot' : 'delta',
         relationsComplete: topologyComplete,
@@ -12333,9 +12454,7 @@ async function preflightCompanionTaskPackage(input = {}) {
           ? providerHealth[provider].status
           : 'unavailable'
       }]
-    })),
-    tasks,
-    relations
+    }))
   }
 }
 
@@ -12392,7 +12511,7 @@ companionTaskKernel = typeof createCompanionTaskKernel === 'function' && compani
 if (companionTaskKernel?.onPackage) {
   companionTaskKernel.onPackage((taskPackage) => {
     if (!codexFloatSnapshot || typeof codexFloatSnapshot !== 'object') return
-    codexFloatSnapshot = { ...codexFloatSnapshot, companionTaskPackage: taskPackage }
+    codexFloatSnapshot = { ...codexFloatSnapshot, taskSnapshot: taskPackage }
     pushCodexFloatTaskPackage(taskPackage)
   })
 }
@@ -12419,6 +12538,96 @@ function companionCounterAggregate(lanes) {
   return Math.max(Number(lanes?.phase) || 0, Number(lanes?.unread) || 0)
 }
 
+function companionActivityEvidenceKind(phase) {
+  if (phase === 'running') return 'turn-running'
+  if (phase === 'waiting-input') return 'waiting-input'
+  if (phase === 'waiting-approval') return 'waiting-approval'
+  if (phase === 'completed') return 'turn-completed'
+  if (phase === 'stopped') return 'turn-interrupted'
+  return 'unknown'
+}
+
+/** Converts one provider-specific observation into the only Host -> Kernel
+ * evidence shape. It deliberately does not emit canonical phase/groups/views. */
+function companionTaskEvidenceNodeV2(task) {
+  const source = codexRecord(task)
+  const capabilities = codexRecord(source.capabilities)
+  const planLifecycleState = source.planLifecycleState === 'cleared'
+    ? 'cleared'
+    : source.planReady === true || source.planImplementation === true ? 'ready' : 'unknown'
+  const planClearReason = ['cancel', 'execution-start', 'archive', 'removal'].includes(source.planClearReason)
+    ? source.planClearReason
+    : ''
+  const activitySequence = Math.max(
+    Number(source.phaseRevision) || 0,
+    Number(source.statusEnteredAt) || 0,
+    Number(source.turnStartedAt) || 0,
+    Number(source.terminalAt) || 0,
+    Number(source.revisionAt) || 0
+  )
+  return {
+    key: source.key,
+    provider: source.provider,
+    family: source.family || `${source.provider}:${source.key}`,
+    role: source.role === 'child' ? 'child' : 'root',
+    membership: 'present',
+    activity: {
+      kind: companionActivityEvidenceKind(source.phase),
+      causalKey: typeof source.causalKey === 'string' ? source.causalKey : '',
+      sequence: activitySequence,
+      exact: source.causalReliable === true || source.freshness === 'fresh',
+      observedAt: Number(source.observedAt) || 0,
+      statusEnteredAt: Number(source.statusEnteredAt) || 0,
+      turnStartedAt: Number(source.turnStartedAt) || 0,
+      terminalAt: Number(source.terminalAt) || 0
+    },
+    unread: {
+      known: source.unreadKnown === true,
+      value: source.unread === true,
+      sequence: Number(source.unreadRevision) || 0
+    },
+    plan: {
+      state: planLifecycleState,
+      sequence: Number(source.planLifecycleRevision) || 0,
+      reason: planClearReason
+    },
+    metadata: {
+      partial: !Object.prototype.hasOwnProperty.call(source, 'actionAlias'),
+      kind: source.kind,
+      actionAlias: source.actionAlias,
+      revisionAt: Number(source.revisionAt) || activitySequence || 1,
+      membershipRevision: Number(source.membershipRevision) || Number(source.revisionAt) || 1,
+      visibilityRevision: Number(source.visibilityRevision) || Number(source.revisionAt) || 1,
+      metadataRevision: Number(source.metadataRevision) || Number(source.revisionAt) || 1,
+      capabilityToken: source.capabilityToken,
+      lastQuestionAt: Number(source.lastQuestionAt) || 0,
+      createdAt: Number(source.createdAt) || 0,
+      displayOrder: Number(source.displayOrder) || 0,
+      cycleOrder: Number(source.cycleOrder) || 0,
+      attentionOrder: Number(source.attentionOrder) || 0,
+      hidden: source.hidden === true,
+      paused: source.paused === true,
+      turnMode: source.turnMode,
+      idleConfirmed: source.idleConfirmed === true,
+      localPin: source.localPin === true,
+      dynamicEligible: source.dynamicEligible === true,
+      planImplementation: source.planImplementation === true,
+      displayName: source.displayName,
+      originalTitle: source.originalTitle,
+      alias: source.alias,
+      projectKey: source.projectKey,
+      projectName: source.projectName,
+      projectKind: source.projectKind,
+      archiveRequest: source.archiveRequest
+    },
+    capabilities: Object.entries(capabilities)
+      .filter(([, enabled]) => enabled === true)
+      .map(([name]) => name === 'executePlan' ? 'execute-plan' : name),
+    standaloneEligible: source.standaloneEligible !== false,
+    error: source.error === true
+  }
+}
+
 function publishCompanionHostTasks(tasks, input = {}) {
   const current = companionTaskKernel?.getPackage?.()
   if (!current?.complete || !companionTaskKernel?.publishEvidence) return false
@@ -12443,11 +12652,11 @@ function publishCompanionHostTasks(tasks, input = {}) {
   const removedKeys = codexRecord(input.removedKeys)
   const evidenceBatches = Object.fromEntries(providers.map((provider) => {
     const explicit = codexRecord(requestedBatches[provider])
-    if (explicit.revision === 'companion-provider-evidence-batch-v1' && explicit.provider === provider) {
+    if (explicit.revision === 'companion-provider-evidence-batch-v2' && explicit.provider === provider) {
       return [provider, explicit]
     }
     return [provider, {
-      revision: 'companion-provider-evidence-batch-v1',
+      revision: 'companion-provider-evidence-batch-v2',
       provider,
       channels: Object.fromEntries(channels.map((channel) => [channel, {
         mode: 'delta',
@@ -12457,18 +12666,9 @@ function publishCompanionHostTasks(tasks, input = {}) {
           ? removedKeys[provider]
           : []
       }])),
-      nodes: (Array.isArray(tasks) ? tasks : []).filter((task) => task?.provider === provider).map((task) => ({
-        key: task.key,
-        provider,
-        family: task.family || `${provider}:${task.key}`,
-        role: task.role === 'child' ? 'child' : 'root',
-        phase: task.phase,
-        unread: { known: task.unreadKnown === true, value: task.unread === true },
-        causalKey: task.causalKey || '',
-        causalReliable: task.causalReliable === true,
-        standaloneEligible: task.standaloneEligible !== false,
-        capabilities: Object.entries(task.capabilities || {}).filter(([, enabled]) => enabled === true).map(([name]) => name)
-      })),
+      nodes: (Array.isArray(tasks) ? tasks : [])
+        .filter((task) => task?.provider === provider)
+        .map(companionTaskEvidenceNodeV2),
       relations: (Array.isArray(input.relations) ? input.relations : []).filter((relation) => relation?.provider === provider),
       relationMode: 'delta',
       relationsComplete: false,
@@ -12479,7 +12679,7 @@ function publishCompanionHostTasks(tasks, input = {}) {
     }]
   }))
   const next = companionTaskKernel.publishEvidence({
-    schema: 'companion-task-draft-v5',
+    schema: 'companion-task-evidence-draft-v6',
     producer: 'host-evidence',
     sourceTaskStateRevision: current.sourceTaskStateRevision,
     draftRevision: ++companionHostDraftSequence,
@@ -12496,9 +12696,7 @@ function publishCompanionHostTasks(tasks, input = {}) {
     providerHealth: input.providerHealth && typeof input.providerHealth === 'object'
       ? input.providerHealth
       : current.providerHealth,
-    evidenceBatches,
-    tasks,
-    ...(Array.isArray(input.relations) ? { relations: input.relations } : {})
+    evidenceBatches
   })
   return Boolean(next)
 }
@@ -12704,20 +12902,36 @@ function applyCodexActivityToCompanionKernel(delta) {
     const unread = acceptUnreadForTask ? entry.hasUnreadTurn : task.unread
     const unreadKnown = acceptUnreadForTask ? true : task.unreadKnown
     const planImplementation = acceptPhaseForTask ? entry.planImplementationOnly === true : task.planImplementation
-    const exactDefaultExecution = acceptPhaseForTask && entry.turnMode === 'default' && phase === 'running'
-    const planReady = exactDefaultExecution
+    // A new/supplementary Turn clears waiting immediately but does not prove
+    // that the native Plan card was cancelled or execution began. Only an
+    // explicit lifecycle edge may clear an already-ready Plan.
+    const planClearReason = ['cancel', 'execution-start', 'archive', 'removal'].includes(entry.planClearReason)
+      ? entry.planClearReason
+      : ''
+    const incomingPlanRevision = Number(entry.planLifecycleRevision) || 0
+    const exactPlanClear = acceptPhaseForTask
+      && entry.planLifecycleState === 'cleared'
+      && Boolean(planClearReason)
+      && incomingPlanRevision > (Number(task.planLifecycleRevision) || 0)
+    const planReady = exactPlanClear
       ? false
       : acceptPhaseForTask && entry.planReady === true
         ? true
         : task.planReady === true
-    const planLifecycleRevision = planReady
-      ? Number(entry.planLifecycleRevision) || Number(task.planLifecycleRevision) || Number(entry.lastTurnStartedAt) || Number(task.revisionAt) || 1
-      : 0
+    const planLifecycleRevision = exactPlanClear
+      ? incomingPlanRevision
+      : planReady
+        ? incomingPlanRevision || Number(task.planLifecycleRevision) || Number(entry.lastTurnStartedAt) || Number(task.revisionAt) || 1
+        : Number(task.planLifecycleRevision) || 0
+    const planLifecycleState = exactPlanClear
+      ? 'cleared'
+      : planReady ? 'ready' : task.planLifecycleState || 'unknown'
     const phaseChanged = phase !== task.phase
       || freshness !== task.freshness
       || planImplementation !== task.planImplementation
       || planReady !== task.planReady
       || planLifecycleRevision !== task.planLifecycleRevision
+      || planLifecycleState !== task.planLifecycleState
     const unreadChanged = unread !== task.unread || unreadKnown !== task.unreadKnown
     const evidenceRevision = Math.max(
       Number(entry.waitingSince) || 0,
@@ -12760,6 +12974,8 @@ function applyCodexActivityToCompanionKernel(delta) {
       planImplementation,
       planReady,
       planLifecycleRevision,
+      planLifecycleState,
+      planClearReason: exactPlanClear ? planClearReason : task.planClearReason || '',
       turnMode: acceptPhaseForTask && (entry.turnMode === 'plan' || entry.turnMode === 'default') ? entry.turnMode : task.turnMode,
       idleConfirmed: acceptPhaseForTask ? entry.idleConfirmed === true : task.idleConfirmed,
       // A phase-only event cannot refresh the archive transaction fingerprint.
@@ -12795,7 +13011,6 @@ function applyCodexActivityToCompanionKernel(delta) {
     for (const [key, entry] of byKey) {
       if (!key || matchedKeys.has(key) || archived.has(key) || entry.readStateOnly === true) continue
       const actionAlias = typeof entry.actionAlias === 'string' ? entry.actionAlias : ''
-      if (!actionAlias) continue
       // A newly observed row has no prior semantic phase. Hydration/inventory
       // `active` without a real-time Turn/activity witness must therefore stay
       // unknown instead of inheriting a fabricated running baseline.
@@ -12859,6 +13074,12 @@ function applyCodexActivityToCompanionKernel(delta) {
         planImplementation: entry.planImplementationOnly === true,
         planReady: entry.planReady === true || entry.planImplementationOnly === true,
         planLifecycleRevision: Number(entry.planLifecycleRevision) || (entry.planReady === true ? Number(entry.lastTurnStartedAt) || revisionAt : 0),
+        planLifecycleState: entry.planLifecycleState === 'cleared'
+          ? 'cleared'
+          : entry.planReady === true || entry.planImplementationOnly === true ? 'ready' : 'unknown',
+        ...(['cancel', 'execution-start', 'archive', 'removal'].includes(entry.planClearReason)
+          ? { planClearReason: entry.planClearReason }
+          : {}),
         paused: false,
         turnMode: entry.turnMode === 'plan' || entry.turnMode === 'default' ? entry.turnMode : 'unknown',
         idleConfirmed: entry.idleConfirmed === true,
@@ -12970,7 +13191,8 @@ function applyClaudeStateToCompanionKernel() {
   const proposalKeys = new Set()
   const tasks = current.tasks.map((task) => {
     if (task.provider !== 'claude') return task
-    const session = byAlias.get(task.actionAlias)
+    const sessionId = task.key.startsWith('claude:') ? task.key.slice('claude:'.length) : ''
+    const session = byAlias.get(sessionId)
     if (!session) return task
     const sourcePhase = isKnownTaskPhase(session.phase)
       ? session.phase
@@ -13099,7 +13321,8 @@ async function applyClaudeUnreadToCompanionKernel() {
   const proposalKeys = new Set()
   const tasks = current.tasks.map((task) => {
     if (task.provider !== 'claude') return task
-    const unread = ids.has(task.actionAlias)
+    const sessionId = task.key.startsWith('claude:') ? task.key.slice('claude:'.length) : ''
+    const unread = ids.has(sessionId)
     const decision = companionClaudePhaseDecision(task.phase, unread)
     const phase = decision.phase
     const semanticChanged = unread !== task.unread || task.unreadKnown !== true || phase !== task.phase
@@ -13321,7 +13544,6 @@ function applyClaudeInventoryDeltaToCompanionKernel(delta) {
           (task) => task.phase,
           (task) => task.unread,
           (task) => task.unreadKnown,
-          (task) => task.actionAlias,
           (task) => task.capabilities?.archive === true
         ],
         removedKeys
@@ -13372,17 +13594,6 @@ function queueCompanionHostReconciliation(provider = '') {
         : current.providers
       return preflightCompanionTaskPackage({ providers: requestedProviders }).then((draft) => {
         if (!requestedProvider) return draft
-        const otherTasks = current.tasks.filter((task) => task.provider !== requestedProvider)
-        const providerTasks = [...draft.tasks]
-        if (requestedProvider === 'codex' && codexLocalArchiveRecoverySuppressions.size) {
-          const retainedKeys = new Set([...codexLocalArchiveRecoverySuppressions].map(codexThreadKey))
-          const nextKeys = new Set(providerTasks.map((task) => task.key))
-          for (const task of current.tasks) {
-            if (task.provider !== 'codex' || !retainedKeys.has(task.key) || nextKeys.has(task.key)) continue
-            providerTasks.push(task)
-            nextKeys.add(task.key)
-          }
-        }
         return {
           ...draft,
           providers: current.providers,
@@ -13403,7 +13614,7 @@ function queueCompanionHostReconciliation(provider = '') {
             providerId === requestedProvider
               ? draft.evidenceBatches[providerId]
               : {
-                  revision: 'companion-provider-evidence-batch-v1',
+                  revision: 'companion-provider-evidence-batch-v2',
                   provider: providerId,
                   channels: Object.fromEntries(['membership', 'phase', 'unread', 'metadata', 'topology'].map((channel) => [channel, {
                     mode: 'delta',
@@ -13411,18 +13622,7 @@ function queueCompanionHostReconciliation(provider = '') {
                     generation: Number(current.sourceLaneGenerations?.[providerId]?.[channel]) || 0,
                     removedKeys: []
                   }])),
-                  nodes: current.tasks.filter((task) => task.provider === providerId).map((task) => ({
-                    key: task.key,
-                    provider: providerId,
-                    family: `${providerId}:${task.key}`,
-                    role: 'root',
-                    phase: task.phase,
-                    unread: { known: task.unreadKnown === true, value: task.unread === true },
-                    causalKey: '',
-                    causalReliable: false,
-                    standaloneEligible: true,
-                    capabilities: Object.entries(task.capabilities || {}).filter(([, enabled]) => enabled === true).map(([name]) => name)
-                  })),
+                  nodes: [],
                   relations: [],
                   relationMode: 'delta',
                   relationsComplete: false,
@@ -13431,8 +13631,7 @@ function queueCompanionHostReconciliation(provider = '') {
                     ? current.providerHealth[providerId].status
                     : 'unavailable'
                 }
-          ])),
-          tasks: [...otherTasks, ...providerTasks]
+          ]))
         }
       })
     })
@@ -13448,9 +13647,12 @@ function queueCompanionHostReconciliation(provider = '') {
         outcome: result ? 'accepted' : 'rejected',
         durationMs: Date.now() - startedAt,
         slowMs: 500,
-        count: draft.tasks.length,
+        count: Object.values(draft.evidenceBatches || {}).reduce((total, batch) => total + (Array.isArray(batch?.nodes) ? batch.nodes.length : 0), 0),
         cache: 'cold-read',
-        details: { requestedProvider: requestedProvider || 'all', taskCount: draft.tasks.length }
+        details: {
+          requestedProvider: requestedProvider || 'all',
+          taskCount: Object.values(draft.evidenceBatches || {}).reduce((total, batch) => total + (Array.isArray(batch?.nodes) ? batch.nodes.length : 0), 0)
+        }
       })
       return result
     })

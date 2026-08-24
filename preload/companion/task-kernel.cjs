@@ -27,11 +27,11 @@ const {
 
 const COMPANION_TASK_KERNEL_REVISION = providerRegistry.kernelRevision
 const COMPANION_TASK_PACKAGE_REVISION = providerRegistry.snapshotRevision
-const COMPANION_TASK_DRAFT_REVISION = 'companion-task-draft-v5'
+const COMPANION_TASK_DRAFT_REVISION = 'companion-task-evidence-draft-v6'
 const COMPANION_TASK_COMMAND_REVISION = providerRegistry.commandRevision
 const COMPANION_TASK_SUBSCRIBE_REVISION = providerRegistry.subscribeRevision
 const COMPANION_TASK_ACK_REVISION = providerRegistry.ackRevision
-const COMPANION_PROVIDER_EVIDENCE_BATCH_REVISION = 'companion-provider-evidence-batch-v1'
+const COMPANION_PROVIDER_EVIDENCE_BATCH_REVISION = 'companion-provider-evidence-batch-v2'
 const PREFLIGHT_PROGRESS_MS = 600
 const PREFLIGHT_TIMEOUT_MS = 5_000
 const UNKNOWN_GRACE_MS = 250
@@ -40,6 +40,22 @@ const TIERS = ['attention', 'plan', 'active', 'fallback', 'none']
 const GROUPS = ['input', 'active', 'stopped', 'unread', 'completed', 'none']
 const DRAFT_PRODUCERS = ['renderer', 'host-preflight', 'host-evidence']
 const SOURCE_LANES = ['membership', 'phase', 'unread', 'metadata', 'topology']
+const ACTIVITY_EVIDENCE_PHASE = Object.freeze({
+  'turn-running': 'running',
+  'waiting-input': 'waiting-input',
+  'waiting-approval': 'waiting-approval',
+  'turn-completed': 'completed',
+  'turn-interrupted': 'stopped',
+  'turn-failed': 'stopped',
+  unknown: 'unknown'
+})
+const PLAN_LIFECYCLE_STATES = new Set(['unknown', 'ready', 'cleared'])
+const PLAN_CLEAR_REASONS = new Set(['cancel', 'execution-start', 'archive', 'removal'])
+const AGGREGATE_LIVE_PHASE_PRIORITY = Object.freeze({
+  'waiting-approval': 3,
+  'waiting-input': 2,
+  running: 1
+})
 
 /**
  * The only Codex phase reducer. Provider adapters supply causal evidence;
@@ -618,6 +634,10 @@ function normalizeTask(value, enabledProviders) {
     planImplementation: value.planImplementation === true,
     planReady: value.planReady === true || value.planImplementation === true,
     planLifecycleRevision: finiteInteger(value.planLifecycleRevision),
+    planLifecycleState: PLAN_LIFECYCLE_STATES.has(value.planLifecycleState)
+      ? value.planLifecycleState
+      : value.planReady === true || value.planImplementation === true ? 'ready' : 'unknown',
+    planClearReason: PLAN_CLEAR_REASONS.has(value.planClearReason) ? value.planClearReason : '',
     paused: value.paused === true,
     turnMode: value.turnMode === 'plan' || value.turnMode === 'default' ? value.turnMode : 'unknown',
     idleConfirmed: value.idleConfirmed === true,
@@ -638,6 +658,7 @@ function normalizeTask(value, enabledProviders) {
     role: value.role === 'child' ? 'child' : 'root',
     standaloneEligible: value.standaloneEligible !== false,
     error: value.error === true,
+    metadataPartial: value.metadataPartial === true,
     causalKey: typeof value.causalKey === 'string' ? value.causalKey.slice(0, 256) : '',
     causalReliable: value.causalReliable === true,
     causalObserved: Object.prototype.hasOwnProperty.call(value, 'causalKey')
@@ -659,6 +680,57 @@ function normalizeTask(value, enabledProviders) {
     ...(value.projectKind === 'project' || value.projectKind === 'chats' ? { projectKind: value.projectKind } : {}),
     ...(archiveRequest ? { archiveRequest } : {})
   }
+}
+
+function normalizeEvidenceNode(value, provider, enabledProviders) {
+  if (!value || typeof value !== 'object' || value.provider !== provider) return null
+  const activity = value.activity && typeof value.activity === 'object' ? value.activity : {}
+  const unread = value.unread && typeof value.unread === 'object' ? value.unread : {}
+  const plan = value.plan && typeof value.plan === 'object' ? value.plan : {}
+  const metadata = value.metadata && typeof value.metadata === 'object' ? value.metadata : {}
+  const activityKind = Object.prototype.hasOwnProperty.call(ACTIVITY_EVIDENCE_PHASE, activity.kind)
+    ? activity.kind
+    : 'unknown'
+  const phase = ACTIVITY_EVIDENCE_PHASE[activityKind]
+  const capabilityNames = new Set((Array.isArray(value.capabilities) ? value.capabilities : [])
+    .filter((name) => typeof name === 'string'))
+  const sequence = finiteInteger(activity.sequence)
+  const planState = PLAN_LIFECYCLE_STATES.has(plan.state) ? plan.state : 'unknown'
+  const planSequence = finiteInteger(plan.sequence)
+  const planClearReason = PLAN_CLEAR_REASONS.has(plan.reason) ? plan.reason : ''
+  return normalizeTask({
+    ...metadata,
+    key: value.key,
+    provider,
+    family: value.family,
+    role: value.role,
+    standaloneEligible: value.standaloneEligible !== false,
+    error: value.error === true,
+    metadataPartial: metadata.partial === true,
+    phase,
+    freshness: activity.exact === true && phase !== 'unknown' ? 'fresh' : 'verifying',
+    observationGeneration: sequence,
+    phaseRevision: sequence || finiteInteger(activity.statusEnteredAt),
+    statusEnteredAt: finiteInteger(activity.statusEnteredAt),
+    turnStartedAt: finiteInteger(activity.turnStartedAt),
+    terminalAt: finiteInteger(activity.terminalAt),
+    causalKey: typeof activity.causalKey === 'string' ? activity.causalKey : '',
+    causalReliable: activity.exact === true && Boolean(activity.causalKey),
+    unreadKnown: unread.known === true,
+    unread: unread.known === true && unread.value === true,
+    unreadRevision: finiteInteger(unread.sequence),
+    planReady: planState === 'ready',
+    planLifecycleState: planState,
+    planLifecycleRevision: planSequence,
+    planClearReason,
+    capabilities: {
+      open: capabilityNames.has('open'),
+      archive: capabilityNames.has('archive'),
+      pause: capabilityNames.has('pause'),
+      resume: capabilityNames.has('resume'),
+      executePlan: capabilityNames.has('execute-plan') || capabilityNames.has('executePlan')
+    }
+  }, enabledProviders)
 }
 
 function normalizeEvidenceBatch(value, provider, draft, producer) {
@@ -684,6 +756,8 @@ function normalizeEvidenceBatch(value, provider, draft, producer) {
     revision: COMPANION_PROVIDER_EVIDENCE_BATCH_REVISION,
     provider,
     channels: Object.fromEntries(SOURCE_LANES.map((channel) => [channel, normalizeChannel(channel)])),
+    nodes: Array.isArray(source.nodes) ? source.nodes : [],
+    relations: Array.isArray(source.relations) ? source.relations : [],
     relationMode: source.relationMode === 'snapshot' || (!explicit && defaultSnapshot) ? 'snapshot' : 'delta',
     relationsComplete: source.relationsComplete === true || (!explicit && defaultSnapshot && Array.isArray(draft.relations)),
     removedRelationChildKeys: [...new Set((Array.isArray(source.removedRelationChildKeys) ? source.removedRelationChildKeys : [])
@@ -701,9 +775,20 @@ function publicRootTask(task) {
     role: _role,
     standaloneEligible: _standaloneEligible,
     error: _error,
+    metadataPartial: _metadataPartial,
     causalKey: _causalKey,
     causalReliable: _causalReliable,
     causalObserved: _causalObserved,
+    actionAlias: _actionAlias,
+    capabilityToken: _capabilityToken,
+    archiveRequest: _archiveRequest,
+    membershipRevision: _membershipRevision,
+    phaseRevision: _phaseRevision,
+    unreadRevision: _unreadRevision,
+    visibilityRevision: _visibilityRevision,
+    metadataRevision: _metadataRevision,
+    observationGeneration: _observationGeneration,
+    planClearReason: _planClearReason,
     ...publicTask
   } = task
   return publicTask
@@ -817,7 +902,7 @@ function finalizeTask(task) {
     next.planLifecycleRevision = Math.max(1, next.statusEnteredAt, next.turnStartedAt, next.revisionAt)
   }
   if (!next.planReady) {
-    next.planLifecycleRevision = 0
+    if (next.planLifecycleState !== 'cleared') next.planLifecycleRevision = 0
     next.paused = false
   }
   // A completed Plan remains user-actionable even when Codex does not expose
@@ -826,7 +911,7 @@ function finalizeTask(task) {
   // performs an exact latest-Turn/activity/request preflight before execution.
   const planActionable = providerTraits(next.provider).planLifecycle
     && next.planReady
-    && isSettledTaskPhase(next.phase)
+    && (isSettledTaskPhase(next.phase) || isAttentionTaskPhase(next.phase))
   next.capabilities = {
     ...next.capabilities,
     pause: planActionable && !next.paused,
@@ -847,7 +932,6 @@ function semanticTask(task) {
     freshness: task.freshness,
     cycleTier: task.cycleTier,
     dynamicGroup: task.dynamicGroup,
-    actionAlias: task.actionAlias,
     revisionAt: task.revisionAt,
     statusEnteredAt: task.statusEnteredAt,
     turnStartedAt: task.turnStartedAt,
@@ -863,14 +947,13 @@ function semanticTask(task) {
     planImplementation: task.planImplementation,
     planReady: task.planReady,
     planLifecycleRevision: task.planLifecycleRevision,
+    planLifecycleState: task.planLifecycleState || (task.planReady ? 'ready' : 'unknown'),
     paused: task.paused,
     turnMode: task.turnMode,
     idleConfirmed: task.idleConfirmed,
     localPin: task.localPin,
     dynamicEligible: task.dynamicEligible,
-    capabilityToken: task.capabilityToken,
     capabilities: task.capabilities,
-    archiveRequest: task.archiveRequest,
     displayName: task.displayName,
     originalTitle: task.originalTitle,
     alias: task.alias,
@@ -1088,8 +1171,9 @@ function createCompanionTaskKernel(dependencies = {}) {
     )
   }
 
-  function acknowledgeOpenedTask(task) {
+  function acknowledgeOpenedTask(task, result) {
     markAttentionOpened(task)
+    if (result?.confirmsRead !== true) return
     if (task?.provider !== 'claude' || task.phase !== 'completed' || task.unread !== true) return
     const epoch = taskTerminalEpoch(task)
     if (!epoch) return
@@ -1227,7 +1311,13 @@ function createCompanionTaskKernel(dependencies = {}) {
   function preparePlanLifecycle(previous, state, evidence, acceptPhase) {
     const next = { ...state }
     if (!previous) {
-      if (next.turnMode === 'default' && next.turnStartedAt > 0) {
+      if (next.planLifecycleState === 'cleared' && PLAN_CLEAR_REASONS.has(next.planClearReason)) {
+        next.planReady = false
+        next.paused = false
+      } else if (next.planLifecycleState === 'ready') {
+        next.planReady = true
+        next.planLifecycleRevision = Math.max(1, finiteInteger(next.planLifecycleRevision))
+      } else {
         next.planReady = false
         next.planLifecycleRevision = 0
       }
@@ -1235,33 +1325,42 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
     next.planReady = previous.planReady === true
     next.planLifecycleRevision = finiteInteger(previous.planLifecycleRevision)
+    next.planLifecycleState = previous.planLifecycleState || (previous.planReady ? 'ready' : 'unknown')
+    next.planClearReason = previous.planClearReason || ''
     next.paused = previous.paused === true
     if (!acceptPhase) return next
-    const exactDefaultExecution = providerTraits(evidence.provider).planLifecycle
-      && evidence.turnMode === 'default'
-      && evidence.turnStartedAt > 0
-    if (exactDefaultExecution) {
+    const evidenceRevision = finiteInteger(evidence.planLifecycleRevision)
+    const previousRevision = finiteInteger(previous.planLifecycleRevision)
+    const exactClear = evidence.planLifecycleState === 'cleared'
+      && PLAN_CLEAR_REASONS.has(evidence.planClearReason)
+      && evidenceRevision > previousRevision
+    if (exactClear) {
       next.planReady = false
-      next.planLifecycleRevision = 0
+      next.planLifecycleRevision = evidenceRevision
+      next.planLifecycleState = 'cleared'
+      next.planClearReason = evidence.planClearReason
       next.paused = false
       pauseReceipts.delete(evidence.key)
-      try { persistPlanPause({ key: evidence.key, planLifecycleRevision: finiteInteger(previous.planLifecycleRevision), paused: false, updatedAt: now() }) } catch {}
+      try { persistPlanPause({ key: evidence.key, planLifecycleRevision: previousRevision, paused: false, updatedAt: now() }) } catch {}
       return next
     }
-    if (evidence.planReady === true || evidence.planImplementation === true) {
-      const explicitRevision = finiteInteger(evidence.planLifecycleRevision)
+    if (evidence.planLifecycleState === 'ready' || evidence.planReady === true || evidence.planImplementation === true) {
+      const explicitRevision = evidenceRevision
       // Provider lifecycle identity outranks generic metadata timestamps. If a
       // compatibility input omits it, retain the established Plan identity and
       // use causal times only for first establishment.
-      const revision = explicitRevision || finiteInteger(previous.planLifecycleRevision) || Math.max(
+      const revision = explicitRevision || previousRevision || Math.max(
         1,
         finiteInteger(evidence.turnStartedAt),
         finiteInteger(evidence.statusEnteredAt),
         finiteInteger(evidence.revisionAt)
       )
-      const replaced = revision !== finiteInteger(previous.planLifecycleRevision)
+      if (revision < previousRevision) return next
+      const replaced = revision !== previousRevision
       next.planReady = true
       next.planLifecycleRevision = revision
+      next.planLifecycleState = 'ready'
+      next.planClearReason = ''
       if (replaced) {
         next.paused = false
         if (pauseReceipts.has(evidence.key)) {
@@ -1278,6 +1377,9 @@ function createCompanionTaskKernel(dependencies = {}) {
       }
       applyPauseReceipt(next)
     }
+    // `unknown` deliberately retains the last exact Plan lifecycle. A generic
+    // request resolution, a metadata refresh, or a supplementary Turn must not
+    // erase a ready Plan card.
     return next
   }
 
@@ -1349,7 +1451,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     pruneAttentionProgress(packageValue)
     const retainedKeys = new Set(packageValue.tasks.map((task) => task.key))
     for (const key of claudeReadAcknowledgements.keys()) if (!retainedKeys.has(key)) claudeReadAcknowledgements.delete(key)
-    const actionTargets = packageValue.tasks.map(targetFromTask)
+    const actionTargets = packageValue.tasks.map(actionTargetForTask)
     actions.sync({
       enabled,
       providers,
@@ -1370,6 +1472,80 @@ function createCompanionTaskKernel(dependencies = {}) {
     })
   }
 
+  function actionTargetForTask(task) {
+    const privateTask = nodeStore.get(task.key)
+    return targetFromTask(privateTask ? {
+      ...privateTask,
+      phase: task.phase,
+      revisionAt: task.revisionAt,
+      planReady: task.planReady,
+      planLifecycleRevision: task.planLifecycleRevision,
+      paused: task.paused,
+      capabilities: task.capabilities
+    } : task)
+  }
+
+  function aggregateMemberPhase(members) {
+    const live = members.reduce((selected, node) => (
+      (AGGREGATE_LIVE_PHASE_PRIORITY[node.phase] || 0) > (AGGREGATE_LIVE_PHASE_PRIORITY[selected] || 0)
+        ? node.phase
+        : selected
+    ), 'unknown')
+    if (isLiveTaskPhase(live)) return live
+    if (members.length && members.every((node) => node.phase === 'completed')) return 'completed'
+    if (members.some((node) => node.phase === 'stopped')
+      && members.every((node) => isTerminalTaskPhase(node.phase))) return 'stopped'
+    return 'unknown'
+  }
+
+  function aggregateMemberUnread(members) {
+    if (members.some((node) => node.unreadKnown === true && node.unread === true)) return { known: true, value: true }
+    if (members.length && members.every((node) => node.unreadKnown === true && node.unread !== true)) return { known: true, value: false }
+    return { known: false, value: false }
+  }
+
+  /** The Kernel is the sole owner of root state aggregation. Topology supplies
+   * membership only; it never interprets phase, unread, Plan or capabilities. */
+  function aggregateKernelRoot(root, members) {
+    const activityPhase = aggregateMemberPhase(members)
+    const unread = aggregateMemberUnread(members)
+    const liveCount = members.filter((node) => isLiveTaskPhase(node.phase)).length
+    const attentionCount = members.filter((node) => isAttentionTaskPhase(node.phase)).length
+    const errorCount = members.filter((node) => node.error === true).length
+    const planReady = root.planReady === true
+    // A completed unread Plan first appears as completed-unread. Once the
+    // exact unread lane says it was read, the still-present Plan card is the
+    // next required user action and therefore becomes waiting-input. A new
+    // running/waiting member always wins immediately while Plan readiness is
+    // retained as an independent lifecycle.
+    const phase = planReady && isTerminalTaskPhase(activityPhase) && unread.known && !unread.value
+      ? 'waiting-input'
+      : activityPhase
+    const statusEnteredAt = phase === 'waiting-input' && phase !== activityPhase
+      ? Math.max(finiteInteger(root.planLifecycleRevision), finiteInteger(root.statusEnteredAt), finiteInteger(root.terminalAt))
+      : Math.max(...members.filter((node) => node.phase === activityPhase).map((node) => finiteInteger(node.statusEnteredAt)), 0)
+    const capabilities = { ...(root.capabilities || {}) }
+    if (liveCount > 0 || isLiveTaskPhase(phase)) capabilities.archive = false
+    return {
+      ...root,
+      phase,
+      unreadKnown: unread.known,
+      unread: unread.value,
+      revisionAt: Math.max(...members.map((node) => finiteInteger(node.revisionAt)), finiteInteger(root.revisionAt)),
+      statusEnteredAt,
+      turnStartedAt: Math.max(...members.map((node) => finiteInteger(node.turnStartedAt)), 0),
+      terminalAt: isLiveTaskPhase(phase) ? 0 : Math.max(...members.map((node) => finiteInteger(node.terminalAt)), 0),
+      capabilities,
+      topology: {
+        mode: members.length > 1 ? 'aggregate' : 'independent',
+        memberCount: members.length,
+        liveCount,
+        attentionCount,
+        errorCount
+      }
+    }
+  }
+
   function materializePrivateTopology(previousPublicByKey = new Map(currentPackage.tasks.map((task) => [task.key, task]))) {
     const currentLanes = normalizeSourceLaneGenerations(
       currentPackage.sourceLaneGenerations,
@@ -1380,9 +1556,9 @@ function createCompanionTaskKernel(dependencies = {}) {
       relations: [...relationStore.values()],
       generationFloor: Object.fromEntries(PROVIDERS.map((provider) => [provider, currentLanes[provider].topology]))
     })
-    const tasks = topology.roots.map((task) => {
-      const finalized = publicRootTask(finalizeCanonicalTask(task))
-      return assignSemanticRevision(previousPublicByKey.get(task.key), finalized).task
+    const tasks = topology.rootGroups.map(({ root, members }) => {
+      const finalized = publicRootTask(finalizeCanonicalTask(aggregateKernelRoot(root, members)))
+      return assignSemanticRevision(previousPublicByKey.get(finalized.key), finalized).task
     }).sort(compareByLatestQuestion)
     let topologyRevision = currentPackage.topologyRevision
     const firstTopology = currentPackage.topologyRevision === 0
@@ -1751,7 +1927,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     const membershipAdvanced = incomingLanes[provider].membership > currentLanes[provider].membership
     const phaseAdvanced = incomingLanes[provider].phase > currentLanes[provider].phase
     const unreadAdvanced = incomingLanes[provider].unread > currentLanes[provider].unread
-    const acceptMembership = laneIsNewer(
+    const acceptMembership = incoming.metadataPartial !== true && laneIsNewer(
       incomingLanes[provider].membership,
       currentLanes[provider].membership,
       Math.max(incoming.membershipRevision, incoming.visibilityRevision),
@@ -1947,13 +2123,15 @@ function createCompanionTaskKernel(dependencies = {}) {
     const previousPublicByKey = new Map(currentPackage.tasks.map((task) => [task.key, task]))
     const incomingNodes = []
     const incomingKeys = new Set()
-    for (const value of Array.isArray(draft.tasks) ? draft.tasks : []) {
-      const incoming = normalizeTask(value, enabledProviders)
-      if (!incoming || incomingKeys.has(incoming.key)) continue
-      const existing = previousPrivateByKey.get(incoming.key)
-      if (existing && existing.provider !== incoming.provider) continue
-      incomingKeys.add(incoming.key)
-      incomingNodes.push(incoming)
+    for (const provider of PROVIDERS) {
+      for (const value of batches[provider].nodes) {
+        const incoming = normalizeEvidenceNode(value, provider, enabledProviders)
+        if (!incoming || incomingKeys.has(incoming.key)) continue
+        const existing = previousPrivateByKey.get(incoming.key)
+        if (existing && existing.provider !== incoming.provider) continue
+        incomingKeys.add(incoming.key)
+        incomingNodes.push(incoming)
+      }
     }
     const nextNodeStore = new Map(nodeStore)
     for (const provider of PROVIDERS) {
@@ -2012,7 +2190,7 @@ function createCompanionTaskKernel(dependencies = {}) {
     }
 
     const nextRelationStore = new Map(relationStore)
-    const incomingRelations = (Array.isArray(draft.relations) ? draft.relations : [])
+    const incomingRelations = PROVIDERS.flatMap((provider) => batches[provider].relations)
       .map(normalizeRelation)
       .filter(Boolean)
     for (const provider of PROVIDERS) {
@@ -2507,11 +2685,11 @@ function createCompanionTaskKernel(dependencies = {}) {
       }
       const result = await navigation.open({
         key: task.key,
-        target: targetFromTask(task),
+        target: actionTargetForTask(task),
         source: input.source || 'attention-shortcut',
         operationId: input.operationId
       })
-      if (result?.outcome === 'opened' || result?.outcome === 'dispatched') acknowledgeOpenedTask(task)
+      if (result?.outcome === 'opened' || result?.outcome === 'dispatched') acknowledgeOpenedTask(task, result)
       return result
     })
     attentionQueues[kind] = run.then(() => undefined, () => undefined)
@@ -2571,8 +2749,8 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (input.action === 'open') {
       const task = taskForKey(input.key)
       const target = task
-        ? targetFromTask(task)
-        : ephemeralOpenTarget(input.key, typeof input.expectedActionAlias === 'string' ? input.expectedActionAlias : '')
+        ? actionTargetForTask(task)
+        : ephemeralOpenTarget(input.key)
       if (!target) return { outcome: 'unavailable', errorCode: 'stale-target', message: '任务身份已失效，请刷新后重试' }
       const result = await navigation.open({
         key: target.key,
@@ -2581,7 +2759,7 @@ function createCompanionTaskKernel(dependencies = {}) {
         source: input.source || 'manual-row-open',
         operationId: input.operationId
       })
-      if (task && (result?.outcome === 'opened' || result?.outcome === 'dispatched')) acknowledgeOpenedTask(task)
+      if (task && (result?.outcome === 'opened' || result?.outcome === 'dispatched')) acknowledgeOpenedTask(task, result)
       return result
     }
     if (input.action === 'archive') {
@@ -2594,18 +2772,19 @@ function createCompanionTaskKernel(dependencies = {}) {
         source: typeof input.source === 'string' ? input.source : 'archive-button',
         operationId: input.operationId,
         confirmationRecorded: input.confirmationRecorded === true,
-        target: targetFromTask(task)
+        target: actionTargetForTask(task)
       })
       if (result?.outcome === 'archived') {
         // Every Provider crosses the same verified commit gate. This removes
         // the root, all private members and every consumer selector in one
         // snapshot revision instead of leaving a Renderer-only shadow.
+        const privateTask = nodeStore.get(task.key) || task
         commitArchived({
           provider: task.provider,
           key: task.key,
           verified: true,
-          membershipRevision: Math.max(task.membershipRevision, task.revisionAt),
-          terminalEpoch: Math.max(task.terminalAt, task.phaseRevision, task.revisionAt),
+          membershipRevision: Math.max(finiteInteger(privateTask.membershipRevision), task.revisionAt),
+          terminalEpoch: Math.max(task.terminalAt, finiteInteger(privateTask.phaseRevision), task.revisionAt),
           operationId: result.operationId || input.operationId
         })
       }
@@ -2640,11 +2819,23 @@ function createCompanionTaskKernel(dependencies = {}) {
         planLifecycleRevision: task.planLifecycleRevision,
         source: input.source || 'execute-plan-button',
         operationId: input.operationId,
-        target: targetFromTask(task)
+        target: actionTargetForTask(task)
       })
-      if (result?.outcome === 'executed' && task.paused) {
-        writePauseReceipt(task, false)
-        commitLocalTaskState(task, { paused: false }, 'execute-started')
+      if (result?.outcome === 'executed') {
+        if (task.paused) writePauseReceipt(task, false)
+        commitLocalTaskState(task, {
+          phase: 'running',
+          freshness: 'fresh',
+          statusEnteredAt: now(),
+          terminalAt: 0,
+          idleConfirmed: false,
+          planReady: false,
+          planImplementation: false,
+          planLifecycleState: 'cleared',
+          planClearReason: 'execution-start',
+          planLifecycleRevision: Math.max(task.planLifecycleRevision + 1, now()),
+          paused: false
+        }, 'execute-started')
       }
       return result
     }
@@ -2684,7 +2875,6 @@ function createCompanionTaskKernel(dependencies = {}) {
     if (command.command === 'open') return {
       action: 'open',
       key: selector.key,
-      expectedActionAlias: typeof payload.expectedActionAlias === 'string' ? payload.expectedActionAlias : '',
       source: command.source,
       operationId: command.operationId
     }

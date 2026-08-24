@@ -2,11 +2,8 @@
 
 const { registry, PROVIDERS } = require('./provider-registry.cjs')
 
-const COMPANION_TASK_TOPOLOGY_REVISION = 'companion-task-topology-v1'
+const COMPANION_TASK_TOPOLOGY_REVISION = 'companion-task-topology-v2'
 const RELATION_TYPES = new Set(['fork', 'side-thread', 'subagent'])
-const LIVE_PHASES = new Set(['waiting-approval', 'waiting-input', 'running', 'goal'])
-const ATTENTION_PHASES = new Set(['waiting-approval', 'waiting-input'])
-const TERMINAL_PHASES = new Set(['completed', 'stopped'])
 
 function integer(value) {
   const result = Math.trunc(Number(value))
@@ -24,10 +21,7 @@ function normalizeNode(value) {
     key,
     provider,
     family,
-    phase: typeof value.phase === 'string' ? value.phase : 'unknown',
     causalKey: typeof value.causalKey === 'string' ? value.causalKey.slice(0, 256) : '',
-    unreadKnown: value.unreadKnown === true,
-    unread: value.unreadKnown === true && value.unread === true,
     standaloneEligible: value.standaloneEligible !== false,
     error: value.error === true
   }
@@ -99,53 +93,6 @@ function rootFor(key, parentByChild) {
     cursor = parentByChild.get(cursor)
   }
   return cursor
-}
-
-function aggregatePhase(members) {
-  if (members.some((node) => node.phase === 'waiting-approval')) return 'waiting-approval'
-  if (members.some((node) => node.phase === 'waiting-input')) return 'waiting-input'
-  if (members.some((node) => node.phase === 'running' || node.phase === 'goal')) return 'running'
-  if (members.length && members.every((node) => node.phase === 'completed')) return 'completed'
-  if (members.some((node) => node.phase === 'stopped')
-    && members.every((node) => TERMINAL_PHASES.has(node.phase))) return 'stopped'
-  return 'unknown'
-}
-
-function aggregateUnread(members) {
-  if (members.some((node) => node.unreadKnown && node.unread)) return { known: true, value: true }
-  if (members.length && members.every((node) => node.unreadKnown && !node.unread)) return { known: true, value: false }
-  return { known: false, value: false }
-}
-
-function aggregateRoot(root, members) {
-  const phase = aggregatePhase(members)
-  const unread = aggregateUnread(members)
-  const liveCount = members.filter((node) => LIVE_PHASES.has(node.phase)).length
-  const attentionCount = members.filter((node) => ATTENTION_PHASES.has(node.phase)).length
-  const errorCount = members.filter((node) => node.error === true).length
-  const capabilities = root.capabilities && typeof root.capabilities === 'object'
-    ? { ...root.capabilities }
-    : {}
-  if (liveCount > 0) capabilities.archive = false
-  return {
-    ...root,
-    phase,
-    unreadKnown: unread.known,
-    unread: unread.value,
-    revisionAt: Math.max(...members.map((node) => integer(node.revisionAt)), integer(root.revisionAt)),
-    observationGeneration: Math.max(...members.map((node) => integer(node.observationGeneration)), integer(root.observationGeneration)),
-    statusEnteredAt: Math.max(...members.filter((node) => node.phase === phase).map((node) => integer(node.statusEnteredAt)), 0),
-    turnStartedAt: Math.max(...members.map((node) => integer(node.turnStartedAt)), 0),
-    terminalAt: LIVE_PHASES.has(phase) ? 0 : Math.max(...members.map((node) => integer(node.terminalAt)), 0),
-    capabilities,
-    topology: {
-      mode: members.length > 1 ? 'aggregate' : 'independent',
-      memberCount: members.length,
-      liveCount,
-      attentionCount,
-      errorCount
-    }
-  }
 }
 
 function buildCompanionTaskTopology(input = {}) {
@@ -238,25 +185,23 @@ function buildCompanionTaskTopology(input = {}) {
     members.push(node)
     membersByRoot.set(rootKey, members)
   }
-  const roots = []
+  const rootGroups = []
   const rootByKey = {}
   for (const [rootKey, members] of membersByRoot) {
     const root = nodes.get(rootKey)
     if (!root) continue
     members.sort((left, right) => left.key.localeCompare(right.key))
-    roots.push(aggregateRoot(root, members))
+    rootGroups.push({ root, members })
     for (const member of members) rootByKey[member.key] = rootKey
   }
-  roots.sort((left, right) => (Number(right.lastQuestionAt) || 0) - (Number(left.lastQuestionAt) || 0)
-    || (Number(right.createdAt) || 0) - (Number(left.createdAt) || 0)
-    || left.key.localeCompare(right.key))
+  rootGroups.sort((left, right) => left.root.key.localeCompare(right.root.key))
   const providerGenerations = Object.fromEntries(PROVIDERS.map((provider) => [provider, Math.max(
     integer(generationFloor[provider]),
     ...acceptedRelations.filter((relation) => relation.provider === provider).map((relation) => relation.generation),
     0
   )]))
   const fingerprint = JSON.stringify({
-    roots: roots.map((root) => root.key).sort(),
+    roots: rootGroups.map((group) => group.root.key).sort(),
     relations: acceptedRelations.map((relation) => [
       relation.childKey,
       relation.parentKey,
@@ -266,7 +211,7 @@ function buildCompanionTaskTopology(input = {}) {
   return {
     revision: COMPANION_TASK_TOPOLOGY_REVISION,
     registryRevision: registry.revision,
-    roots,
+    rootGroups,
     rootByKey,
     acceptedRelations,
     rejected,
@@ -278,8 +223,6 @@ function buildCompanionTaskTopology(input = {}) {
 
 module.exports = {
   COMPANION_TASK_TOPOLOGY_REVISION,
-  LIVE_PHASES,
-  ATTENTION_PHASES,
   buildCompanionTaskTopology,
   normalizeNode,
   normalizeRelation
