@@ -4,7 +4,7 @@
   "privacy_boundary": "metadata-and-hashes-only; fenced-content-excluded; no-clause-text-or-prompt",
   "identity_rule": "source_path + heading_path + native_marker_kind + native_marker + marker_occurrence",
   "summary": {
-    "source_documents": 31,
+    "source_documents": 32,
     "ordered_anchors": 207,
     "raw_parent_ordered": 105,
     "unparented_ordered": 102,
@@ -311,6 +311,16 @@
       "raw_identity_count": 1,
       "ordered_anchor_count": 7,
       "raw_parent_ordered_count": 7,
+      "unparented_ordered_count": 0
+    },
+    {
+      "source_task": "260825/2242-claude-orphan-subagent-reconcile",
+      "source_path": "vibe/specs/260825/2242-claude-orphan-subagent-reconcile/raw-requirement.md",
+      "spec_id": "SPEC-260825-2242-CLAUDE-ORPHAN-SUBAGENT-RECONCILE",
+      "content_sha256": "bb81d17241bb6e4260129d13e75152c6d7f9dade6c8642065ac95aef025e22ca",
+      "raw_identity_count": 2,
+      "ordered_anchor_count": 0,
+      "raw_parent_ordered_count": 0,
       "unparented_ordered_count": 0
     },
     {

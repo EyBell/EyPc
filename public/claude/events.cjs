@@ -135,6 +135,11 @@ function restoreParentTurnAfterStopFailure(next) {
  * the activity waterline. Successful Stop and an observed-open SessionEnd stay
  * closed until the next prompt. StopFailure is a recorded waterline: later
  * same-Turn prompt/tool/permission restore the parent Turn.
+ *
+ * Claude Code sometimes emits a teardown SubagentStop whose agent_id never
+ * started here and whose agent_type is missing. After a closed parent Turn it
+ * reconciles the earliest pending active subagent one-for-one; direct same-id
+ * evidence revives a reconciled child, and SessionEnd finalizes the closure.
  */
 function reduceQueueEntry(previous, entry) {
   const known = previous && typeof previous === 'object' ? previous : emptyHookState()
@@ -155,29 +160,69 @@ function reduceQueueEntry(previous, entry) {
     const previousChild = next.subagents[entry.agentId] && typeof next.subagents[entry.agentId] === 'object'
       ? next.subagents[entry.agentId]
       : {}
+    const knownChild = previousChild.active === true
+      || safeInteger(previousChild.startedAt) > 0
+      || safeInteger(previousChild.stoppedAt) > 0
     const child = {
       agentId: entry.agentId,
       agentType: entry.agentType || previousChild.agentType || '',
       active: previousChild.active === true,
       startedAt: safeInteger(previousChild.startedAt),
       stoppedAt: safeInteger(previousChild.stoppedAt),
+      reconciledAt: safeInteger(previousChild.reconciledAt),
       lastActivityAt: Math.max(safeInteger(previousChild.lastActivityAt), at)
     }
     if (entry.event === 'subagent-start') {
       child.active = true
       child.startedAt = at || child.startedAt
       child.stoppedAt = 0
+      child.reconciledAt = 0
     } else if (entry.event === 'subagent-stop' || entry.event === 'stop' || entry.event === 'session-end') {
       child.active = false
       child.stoppedAt = at || child.stoppedAt || child.startedAt
+      child.reconciledAt = 0
     } else if (entry.event === 'pre-tool' || entry.event === 'post-tool'
       || entry.event === 'permission-request' || entry.event === 'notification') {
-      if (!child.stoppedAt) {
+      // Direct same-id evidence outranks a reconciled closure: a genuinely
+      // live background subagent revives itself on its next own event.
+      if (!child.stoppedAt || child.reconciledAt) {
         child.active = true
+        child.stoppedAt = 0
+        child.reconciledAt = 0
         if (!child.startedAt) child.startedAt = at
       }
     }
     next.subagents[entry.agentId] = child
+    // Confirmed malformed teardown payload: a SubagentStop whose agent_id
+    // never started here and whose agent_type is missing, observed only after
+    // the parent Turn closed. It stands in for exactly one lost same-session
+    // stop, so it closes the earliest pending active subagent — structurally,
+    // never by elapsed time. Typed orphan stops (rotation-truncated starts)
+    // and open-Turn arrivals keep the plain placeholder behaviour above.
+    if (entry.event === 'subagent-stop' && !knownChild && !entry.agentType && next.turnOpen !== true) {
+      let victimId = ''
+      let victim = null
+      for (const [id, value] of Object.entries(next.subagents)) {
+        if (id === entry.agentId) continue
+        const candidate = value && typeof value === 'object' ? value : null
+        if (!candidate || candidate.active !== true) continue
+        const startedAt = safeInteger(candidate.startedAt)
+        if (at && startedAt > at) continue
+        if (!victim || startedAt < safeInteger(victim.startedAt)
+          || (startedAt === safeInteger(victim.startedAt) && id < victimId)) {
+          victim = candidate
+          victimId = id
+        }
+      }
+      if (victim) {
+        next.subagents[victimId] = {
+          ...victim,
+          active: false,
+          stoppedAt: at || safeInteger(victim.startedAt),
+          reconciledAt: at || safeInteger(victim.startedAt)
+        }
+      }
+    }
     next.lastActivityAt = Math.max(safeInteger(next.lastActivityAt), at)
     // Child-scoped events never reopen or reclassify the parent Turn.
     return next
@@ -224,8 +269,13 @@ function reduceQueueEntry(previous, entry) {
     }
     for (const [agentId, childValue] of Object.entries(next.subagents)) {
       const child = childValue && typeof childValue === 'object' ? childValue : {}
-      if (child.active !== true) continue
-      next.subagents[agentId] = { ...child, active: false, stoppedAt: at || safeInteger(child.startedAt) }
+      if (child.active === true) {
+        next.subagents[agentId] = { ...child, active: false, stoppedAt: at || safeInteger(child.startedAt), reconciledAt: 0 }
+      } else if (safeInteger(child.reconciledAt) > 0) {
+        // The authoritative full sweep finalizes reconciled closures so a
+        // replayed stray tail cannot revive a member after the session ended.
+        next.subagents[agentId] = { ...child, reconciledAt: 0 }
+      }
     }
     return next
   }
