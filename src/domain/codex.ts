@@ -1,6 +1,7 @@
 import type { CompanionOpenHandoffV1, CompanionProviderEnablement, CompanionProviderId } from './companionProvider'
 import type { CompanionTaskTopologySummaryV1 } from './companionTaskTopology'
 import { DEFAULT_COMPANION_ENABLEMENT, normalizeCompanionEnablement, orderCompanionTasksForDisplay, isCompanionAttentionState } from './companionProvider'
+import { COMPANION_V7_REVISIONS } from './generated/companionContractsV7'
 // `codexAppearance` owns the color math (HSL, contrast) and only type-imports this
 // module, so this value edge is one-directional at runtime: the type import is
 // erased and the emitted `codexAppearance` module has no imports at all.
@@ -306,7 +307,7 @@ export interface CodexPendingRecoverySnapshotV1 {
  * marked degraded, but its atomic task-state package is preserved rather than
  * being independently cleared by Controller or Renderer.
  */
-export const CODEX_TASK_STATE_REVISION = 'task-state-v11'
+export const CODEX_TASK_STATE_REVISION = COMPANION_V7_REVISIONS.taskState
 
 export interface CodexHostSnapshotV1 {
   version: 1

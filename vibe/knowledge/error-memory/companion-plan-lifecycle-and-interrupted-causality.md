@@ -25,50 +25,50 @@ tags:
 
 ## Symptom
 
-An actually running task could disappear from ongoing or become “待继续” before a Plan existed. A completed-but-unexecuted Plan could alternate between waiting, stopped and absent as inventory/refollow snapshots changed. Any new Turn could also erase the completed Plan even when that Turn only refined the Plan. A later recurrence showed two additional errors：after a Plan result was read the card could fall straight to completed instead of waiting-input，and supplementary input could leave the task stuck in waiting-input even though a new Turn was already thinking/running.
+An actually running task could disappear from ongoing or become “待继续” before a Plan existed. A completed-but-unexecuted Plan could alternate between waiting, stopped and absent as inventory/refollow snapshots changed. Any new Turn could also erase the completed Plan even when that Turn only refined the Plan. Later recurrences showed that a read Plan could be misclassified as waiting-input without any current request，and that answering/cancelling a real Plan interaction could clear briefly before an older Desktop snapshot restored the stale waiting state.
 
 ## Wrong Assumption
 
-An exact `interrupted/user-stopped` label was treated as sufficient final state, and Plan readiness was inferred as a transient property of the latest Turn rather than a lifecycle with its own revision. The reducer did not distinguish Plan editing from default execution or require every parent/Side Chat branch to be idle. The action layer also confused the preferred native execution mechanism with product capability: failed `collaborationMode/list` or missing model data was interpreted as “Plan cannot execute” instead of selecting the same-task fixed-instruction route.
+An exact `interrupted/user-stopped` label was treated as sufficient final state, and both a current Plan interaction and the resulting executable Plan artifact were collapsed into one transient `planReady` flag. Provider phase was reduced before reaching the Kernel，interaction clear returned only a boolean instead of atomically advancing the Shadow/tombstone，and same-epoch arbitration favored the stale waiting sequence. The action layer also confused the preferred native execution mechanism with product capability.
 
 ## Verified Root Cause
 
-Terminal evidence and Plan lifecycle have different causality. A terminal label cannot cross newer real activity or an active sibling branch. Preload's transient parent aggregation was not sufficient evidence ownership: an older parent `idleConfirmed` could remain beside a newer active branch and be reinterpreted as stopped downstream. An unexecuted Plan must survive refresh/refollow、ordinary completion、Plan edits and supplementary/default/interrupted Turns until an exact lifecycle transition clears it。Combining these facts into one parent/latest-Turn flag—or treating generic resolved/completed/default as a clear—made state depend on arrival order and erased the still-visible Plan card.
+Terminal、interaction and Plan-artifact evidence have different causality. A terminal label cannot cross newer real activity or an active sibling branch. Interaction `resolve/cancel/execution-started` must close one exact instance and advance its sequence/tombstone atomically；otherwise an older request-set snapshot can cross the clear boundary. An executable Plan artifact must survive refresh/refollow and ordinary completion until an exact artifact transition changes it，but its mere availability means `stopped/待继续`，not waiting-input. Request disappearance closes only the interaction and cannot prove the artifact was cancelled. Combining these facts into one parent/latest-Turn flag—or allowing Provider/Controller/UI to reduce them again—makes state depend on arrival order.
 
 ## Evidence
 
-- [task-kernel.cjs](../../../preload/companion/task-kernel.cjs#L1) stores privacy-safe branch evidence, reduces every branch before parent aggregation and owns `planReady / planLifecycleRevision / paused`.
+- [task-kernel.cjs](../../../preload/companion/task-kernel.cjs#L1) stores privacy-safe branch evidence, reduces every branch before parent aggregation and owns interaction instances、clear/tombstones、plan-artifact and pause state.
 - [preload/index.js](../../../preload/index.js#L1) supplies exact Turn mode, idle confirmation and targeted Plan interruption evidence without producing final groups.
-- [companionTaskPackage.ts](../../../src/domain/companionTaskPackage.ts#L1) publishes the Plan fields and capabilities atomically with phase.
-- [companionTaskKernel.test.ts](../../../tests/platform/companionTaskKernel.test.ts#L1) and [codexAppServerBridge.test.ts](../../../tests/platform/codexAppServerBridge.test.ts#L1) cover initial Plan generation, Plan edits, implementation confirmation, ordinary/Plan interruption, active conflict, native default execution, missing native mode/model fallback and expired same-key alias recovery.
+- [companion-v7.schema.json](../../../contracts/companion-v7.schema.json#L1) defines `InteractionEvidenceV7` and `PlanArtifactEvidenceV7` separately and generates both TS/CJS contracts.
+- [companionTaskKernel.test.ts](../../../tests/platform/companionTaskKernel.test.ts#L1) and [codexAppServerBridge.test.ts](../../../tests/platform/codexAppServerBridge.test.ts#L1) cover reply/cancel/execute、request removal、stale replay、new instance、Plan edits、ordinary/Plan interruption、active conflict and execution fallback.
 
 ## Prevention Rule
 
-Keep a Kernel-private branch ledger, reduce terminal causality per branch, then aggregate the parent. A new active epoch、Turn or waiting instance clears only that branch's older idle evidence；an exact supplementary user message、new Turn or thinking/generating event clears the matching wait and publishes running immediately without requiring an assistant reply。Model Plan lifecycle separately as monotonic `unknown / ready / cleared` with its own sequence：unknown retains the stable state；only a newer exact `cancel / execution-start / archive / removal` clears ready。Generic resolved、ordinary completion、default/supplementary Turn and interrupted labels cannot clear it。Project the display truth table atomically with unread：completed unread Plan → completed-unread；read while card remains → waiting-input；cancel after read → completed；execute → running。Domain and Renderer only consume the Kernel result。Treat native default-mode/model discovery as a route preference，never as the public Plan action capability；never retry an ambiguous `turn/start` or substitute another task/session.
+Keep one Kernel-private branch ledger and seven independent evidence lanes. Resolve/cancel/execute one interaction instance and advance its Shadow sequence/tombstone in the same transaction；a new Turn or current activity crosses the older waiting barrier immediately，and only a genuinely new interaction instance may wait again. Model the Plan artifact independently as `unknown / available / executing / consumed / cancelled / removed`。Project atomically with unread：terminal unread → completed-unread；read + current interaction → waiting-input/approval；read + artifact only → stopped/待继续；artifact cancelled/removed with no interaction → completed-read；execute/new activity → running。Domain and every surface only consume the Kernel result。Treat native default-mode/model discovery as a route preference，never as the public Plan action capability；never retry an ambiguous `turn/start` or substitute another task/session.
 
 ## Detection Order
 
 1. Check every main/Side branch for a newer exact active epoch.
-2. Resolve ordinary input/approval before Plan implementation waiting.
-3. Read the monotonic Plan state/sequence independently from the latest ordinary Turn；unknown is abstention，not clear.
-4. Require the applicable ordinary or Plan-specific idle proof before stopped.
-5. Compare the Plan revision and pause receipt independently of phase；require an exact clear reason for `cleared`.
-6. Verify the same Snapshot drives dynamic rows、input badge、completed-unread badge、cycle and actions，including the unread/read/cancel/execute truth table.
+2. Resolve the exact current interaction instance before considering any Plan artifact.
+3. Read interaction sequence/tombstone and Plan-artifact state/revision independently；unknown is abstention，not clear.
+4. Require artifact availability with no current interaction before stopped/待继续.
+5. Require both interaction closure and explicit artifact `cancelled/removed` before concluding an entire Plan was cancelled.
+6. Verify the same Snapshot drives dynamic rows、input badge、completed-unread badge、cycle and actions，including unread/reply/cancel/execute/stale-replay truth tables.
 7. Withhold Plan actions only for lifecycle/activity/pending conflicts; separately test native default mode, missing mode, missing model and expired alias routes.
 
 ## Latest Applicable Implementation
 
 - Canonical reducer and Plan receipts: [task-kernel.cjs](../../../preload/companion/task-kernel.cjs#L1).
 - Provider evidence and targeted reread: [preload/index.js](../../../preload/index.js#L1).
-- Public V6 contract: [companionTaskPackage.ts](../../../src/domain/companionTaskPackage.ts#L1).
-- Current requirement/acceptance: [RAW-176 V6 revision](../../../vibe/specs/260823/companion-task-topology-v5/spec.md#L1)；RAW-160 remains historical foundation.
+- Public V7 contract: [companion-v7.schema.json](../../../contracts/companion-v7.schema.json#L1) and generated [companionContractsV7.ts](../../../src/domain/generated/companionContractsV7.ts#L1).
+- Current requirement/acceptance: [RAW-179 V7](../../../vibe/specs/260824/eypc-v7-global-refactor/spec.md#L1)；RAW-160/176 remain historical foundations.
 
 ## Alternative Route
 
-- Status: `verified` by the RAW-160 foundation and RAW-176 V6 truth-table/bridge tests.
+- Status: `automated-verified / real-host-pending` by RAW-179 V7 truth-table、stale-replay and bridge tests.
 - Preconditions: exact branch identity, current active/waiting watermarks and Turn mode are available as private evidence.
-- Ordered route: normalize evidence → branch causal reducer → monotonic Plan reducer → Kernel parent aggregation → view/capability projector → one semantic Snapshot.
-- Verification: initial Plan、Plan edit、completed unread、native read、supplementary Turn、cancel、execution-start、ordinary interruption and Plan interruption produce the V6 truth table with no stale waiting rebound or duplicate group/cycle membership.
+- Ordered route: normalize raw evidence → interaction reducer + artifact reducer → branch causal reducer → Kernel parent aggregation → one presentation Snapshot.
+- Verification: opened、reply、request removal、cancel interaction、cancel entire Plan、execution-start、completed unread、native read、supplementary Turn、ordinary interruption、Plan interruption、stale replay and new instance produce the V7 truth table with no rebound or duplicate membership.
 - Applicability boundary: Codex/companion canonical state and Plan actions; it does not alter Claude provider-specific terminal parsing.
 - Fallback: retain the previous stable non-terminal phase with `verifying` and schedule a task-scoped reread; never guess stopped from time or connector shape.
 
@@ -80,3 +80,4 @@ Keep a Kernel-private branch ledger, reduce terminal causality per branch, then 
 | 2026-08-12 | RAW-160 branch-store rework | Installed host still let a stale parent idle override a newer running main/Side branch | Claimed Kernel-owned branch causality while only Preload retained branch topology；metadata/hydration time could also renew stale state；final review additionally found unknown/new hydration rows could still fabricate running | Publish privacy-safe branch evidence into a Kernel-private store, remove Domain stopped re-arbitration, clear idle on newer active, keep scan/metadata time out of business-state visibility, and make unknown a true no-running abstention | latest affected 545/545 and full 1305/1305 plus build verified; `host-719360…` pending |
 | 2026-08-12 | RAW-160 Plan action correction | Plan was detected but pause/execute appeared unavailable when the native Implement Plan/default-mode capability was absent | Product capability was incorrectly coupled to optional App Server mode/model discovery | Make actionable Plan state enable controls; select native default or one same-task fixed-instruction Turn only after confirmation; recover expired alias by the same key | focused bridge regression verified; full gate and development-plugin regression pending |
 | 2026-08-23 | RAW-176 V6 | Read Plan fell to completed，supplementary input remained waiting，and generic Turn evidence could erase the still-present Plan card | Boolean/transient Plan readiness plus broad generic clear and split consumer reducers | Monotonic unknown/ready/cleared evidence in sole Kernel；exact four clear reasons；atomic unread/read/cancel/execute projection；new user/Turn/thinking clears waiting immediately | affected automated verification recorded in current Controlled task；real host pending |
+| 2026-08-24 | RAW-179 V7 | Two completed/read tasks remained or rebounded to waiting-input after reply/cancel；historical completed Plan was treated as a live request | Current interaction and executable Plan artifact shared one `planReady` semantic；resolve was not an atomic Shadow transition；Provider/Kernel/consumer reductions allowed an old snapshot to win | Separate Interaction/PlanArtifact lanes；atomic clear/tombstone；artifact-only maps to stopped；same-revision conflict quarantine；Main/Float consume one V7 projection | focused state/bridge/stale-replay automation and architecture review pass；real uTools 300ms/30s acceptance pending |

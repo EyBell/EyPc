@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, watch } from 'vue'
 import { X } from '@lucide/vue'
-import type { AppRuntimeSnapshot } from '../runtime/appRuntime'
+import type { PortsRuntimeSliceV7 } from '../runtime/feature/featureRuntimeSlices'
 import type { PortGroupTarget } from '../domain/types'
 import SelectableList from '../components/SelectableList.vue'
 import SearchSuggestBox from '../components/SearchSuggestBox.vue'
 
-const props = defineProps<{ snapshot: AppRuntimeSnapshot; shiftPreview?: boolean; showShortcutHints?: boolean }>()
+const props = defineProps<{ snapshot: PortsRuntimeSliceV7; shiftPreview?: boolean; showShortcutHints?: boolean }>()
 const groupForm = reactive({ name: '', entriesText: '', color: '#00A676', folderId: '' })
 let draggingGroupId = ''
 
@@ -187,16 +187,16 @@ const shiftPreviewRow = computed(() => {
   return props.snapshot.portGroupRows.find((row) => row.kind === 'group' && sameGroupTarget(row.target, target)) || null
 })
 
-function isShiftPreviewTarget(row: AppRuntimeSnapshot['portGroupRows'][number]) {
+function isShiftPreviewTarget(row: PortsRuntimeSliceV7['portGroupRows'][number]) {
   const target = shiftPreviewRow.value?.target || null
   return row.kind === 'group' && sameGroupTarget(row.target, target)
 }
 
-function isGroupRowFocused(row: AppRuntimeSnapshot['portGroupRows'][number]) {
+function isGroupRowFocused(row: PortsRuntimeSliceV7['portGroupRows'][number]) {
   return props.snapshot.activePortPane === 'groups' && sameGroupTarget(props.snapshot.focusedPortGroupTarget, row.target)
 }
 
-function isGroupRowSelected(row: AppRuntimeSnapshot['portGroupRows'][number]) {
+function isGroupRowSelected(row: PortsRuntimeSliceV7['portGroupRows'][number]) {
   if (props.snapshot.activePortPane !== 'groups') return false
   if (!sameGroupTarget(props.snapshot.selectedPortGroupTarget, row.target)) return false
   return !props.snapshot.focusedPortGroupTarget || isGroupRowFocused(row)
@@ -280,6 +280,8 @@ function groupSearchStatus() {
         v-for="row in props.snapshot.portGroupRows"
         :key="row.rowId"
         class="group-row"
+        data-context-menu-target
+        :data-context-menu-active="isGroupRowFocused(row)"
         :class="{
           focused: isGroupRowFocused(row),
           selected: isGroupRowSelected(row),

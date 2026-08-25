@@ -23,6 +23,7 @@ export const DEFAULT_MQTT_LAYOUT_PREFS: MqttLayoutPrefs = {
 }
 export const DEFAULT_MQTT_VIEW_PREFS: MqttViewPrefs = {
   infoFilter: 'incoming',
+  followLatest: true,
   activeSubscriptionTopicsByConfigId: {}
 }
 export const MQTT_LAYOUT_RATIO_MIN = 0.28
@@ -308,6 +309,7 @@ export function normalizeMqttViewPrefs(value: unknown, configs: MqttConnectionCo
   }
   return {
     infoFilter,
+    followLatest: boolValue(source.followLatest, DEFAULT_MQTT_VIEW_PREFS.followLatest),
     activeSubscriptionTopicsByConfigId
   }
 }
@@ -525,20 +527,33 @@ export function normalizeMqttArchiveState(value: unknown, now = Date.now()): Mqt
 }
 
 export function appendMqttMessage(archive: MqttArchiveState, input: MqttMessageRecord): MqttArchiveState {
-  const next = normalizeMqttArchiveState(archive)
-  const sessionIndex = next.sessions.findIndex((item) => item.id === input.sessionId)
+  const sessionIndex = archive.sessions.findIndex((item) => item.id === input.sessionId)
   if (sessionIndex < 0) {
-    next.sessions.unshift({
+    const session: MqttSessionRecord = {
       id: input.sessionId,
       connectionId: input.connectionId,
       title: new Date(input.timestamp).toLocaleString(),
       startedAt: input.timestamp,
-      messages: []
-    })
+      messages: [input]
+    }
+    const sessions = [...archive.sessions]
+    const insertion = sessions.findIndex((item) => item.startedAt < session.startedAt)
+    sessions.splice(insertion < 0 ? sessions.length : insertion, 0, session)
+    return { ...archive, sessions: sessions.slice(0, MQTT_ARCHIVE_SESSION_LIMIT) }
   }
-  const target = next.sessions.find((item) => item.id === input.sessionId)!
-  target.messages = [...target.messages, input].sort((a, b) => a.timestamp - b.timestamp).slice(-MQTT_ARCHIVE_MESSAGE_LIMIT)
-  return normalizeMqttArchiveState(next)
+  const target = archive.sessions[sessionIndex]
+  const messages = target.messages.filter((message) => message.id !== input.id)
+  let low = 0
+  let high = messages.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if (messages[middle].timestamp <= input.timestamp) low = middle + 1
+    else high = middle
+  }
+  messages.splice(low, 0, input)
+  const sessions = [...archive.sessions]
+  sessions[sessionIndex] = { ...target, messages: messages.slice(-MQTT_ARCHIVE_MESSAGE_LIMIT) }
+  return { ...archive, sessions }
 }
 
 export type MqttRecordTarget =

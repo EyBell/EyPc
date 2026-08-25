@@ -8,6 +8,7 @@ declare global {
       onLog(listener: (delta: CodexActionLogDeltaV1) => void): () => void
       action(actionId: CodexActionRunnerActionEvent['actionId'], args?: Record<string, unknown>): boolean
       requestSnapshot(): boolean
+      requestLog(runId: string, cursor?: number): boolean
       hide(): boolean
       dragStart(screenX: number, screenY: number): boolean
       dragMove(screenX: number, screenY: number): boolean

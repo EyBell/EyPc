@@ -97,6 +97,9 @@ export interface CodexActionLogDeltaV1 {
   stream: 'stdout' | 'stderr' | 'system'
   text: string
   receivedAt: number
+  /** A cursor repair replaces the local buffer; ordinary live deltas append. */
+  reset?: boolean
+  baseCursor?: number
 }
 
 export interface CodexActionRunnerSnapshotV1 {

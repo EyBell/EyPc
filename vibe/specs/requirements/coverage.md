@@ -6,14 +6,14 @@ Date: 2026-08-24
 
 ## 语料实测
 
-当前由 [Source Anchor Catalog](../source-anchors/README.md#L1) 确定性扫描 29 个 `raw-requirement.md`。扫描忽略 Markdown 围栏内的原始 Prompt、转录和实施计划，只给围栏外的来源结构建索引；同一文件可能同时包含父 RAW heading 与编号子条款，因此文件数不是互斥总和：
+当前由 [Source Anchor Catalog](../source-anchors/README.md#L1) 确定性扫描 30 个 `raw-requirement.md`。扫描忽略 Markdown 围栏内的原始 Prompt、转录和实施计划，只给围栏外的来源结构建索引；同一文件可能同时包含父 RAW heading 与编号子条款，因此文件数不是互斥总和：
 
 | 形态 | 文件数 | 条目 | 可否按 `SPEC::RAW-nnn` 入册 |
 | --- | ---: | ---: | --- |
 | bullet `- \`RAW-nnn\` (…): 正文` | 2 | 157 | 可以 |
 | table `\| RAW-nnn \| 状态 \| 正文 \|` | 1 | 32 | 可以 |
-| heading `# / ## RAW-nnn` | 6 | 13 个父身份 | 可以 |
-| registered-parent numbered `RAW-nnn#n` | 3 | 98 | 可以，父 id 与序号均来自来源；当前全部入册 |
+| heading `# / ## RAW-nnn` | 7 | 14 个父身份 | 可以 |
+| registered-parent numbered `RAW-nnn#n` | 4 | 105 | 可以，父 id 与序号均来自来源；当前全部入册 |
 | numbered 无父 RAW `1. 正文` | 14 | 102 | 已有 `SA-*` 来源身份；不能自动升级为需求叶子 |
 | 纯散文 | 5 | — | 不能 |
 
@@ -21,7 +21,7 @@ Date: 2026-08-24
 
 ## 已入册
 
-**当前已发现且能按来源现成 `RAW-nnn(#n)` 直接抽取的身份均已入册**，共 307 条叶子。这个结论不把 102 条无父 RAW 的来源锚点冒充需求，也不包含无稳定边界的散文。`validate:requirements` 同时核验需求登记、来源锚点目录和唯一全局当前产品真值；任一来源、哈希、数量、关联或当前权威正文漂移都会失败。
+**当前已发现且能按来源现成 `RAW-nnn(#n)` 直接抽取的身份均已入册**，共 315 条叶子。这个结论不把 102 条无父 RAW 的来源锚点冒充需求，也不包含无稳定边界的散文。`validate:requirements` 同时核验需求登记、来源锚点目录和唯一全局当前产品真值；任一来源、哈希、数量、关联或当前权威正文漂移都会失败。
 
 | 域 | 来源 | 形态 | 叶子 | active | superseded |
 | --- | --- | --- | ---: | ---: | ---: |
@@ -38,13 +38,14 @@ Date: 2026-08-24
 | `companion-codex` | [float-search-status-compact](../260817/0859-float-search-status-compact/raw-requirement.md#L1) | prose | 1 | 1 | 0 |
 | `companion-codex` | [float-action-hint-popover](../260817/1618-float-action-hint-popover/raw-requirement.md#L1) | prose | 1 | 1 | 0 |
 | `engineering-invariants` | [install-runtime-diagnostics draft](../260810/1155-install-runtime-diagnostics/raw-requirement-next.draft.md#L1) | heading | 6 | 0 | 0（全部 `proposed`） |
+| `companion-shared / interaction-shell / engineering-invariants` | [EyPc V7 global refactor](../260824/eypc-v7-global-refactor/raw-requirement.md#L1) | heading + numbered | 8 | 8 | 0 |
 
 两处需要单独说明：
 
 - `RAW-131` 在 codex-quota-float 内出现两次，第二次明确标注为 implementation clarification，因此并入同一条叶子的 `Clarifications`。**重复的编号不代表重复的需求。**
 - `RAW-165` 与 `RAW-166` 标为 `agent-transcribed`：本会话开头以 `git show HEAD:` 核实，当时 HEAD 的 raw-requirement.md 止于 RAW-164，这两节由实现者在同一次「宣布已达标」的未提交改动中写入。冲突时转述不得自动胜过用户原话。
 
-install-runtime-diagnostics 的 `companion-shared` 六条是**章节级**登记；RAW-176 以一个父条款登记，当前正文由同一 Controlled ledger 的 V6 corrective revision 承载。前六节下的编号条款（共 82 条）后续已按 2026-08-15 裁决入册，见下文。
+install-runtime-diagnostics 的 `companion-shared` 六条是**章节级**登记；RAW-176 以一个父条款登记，正文由同一 Controlled ledger 的 V6 corrective revision 承载；RAW-179 以父条款及来源原生 #1–#7 入册，成为当前 V7 增量权威。前六节下的编号条款（共 82 条）后续已按 2026-08-15 裁决入册，见下文。
 
 ## 2026-08-15 裁决与历史重测：无 id 条款分两类，不是一类
 
@@ -78,7 +79,7 @@ install-runtime-diagnostics 的 `companion-shared` 六条是**章节级**登记�
 
 每条继承父条款的 `status` 与 `authority`。RAW-174 父条款为 `user-stated`（2026-08-17 缺陷核验 + D2），子条款同样继承；与更早 `agent-transcribed` 父条款冲突时，转述不得压过原话。
 
-登记总量 196 → 284 → 292 → 293 → 294 → 298 → 302 → **307** 条叶子：RAW-176 增加一个父叶子；此前补入 RAW-167 父叶子及 #1–#3、RAW-177 父叶子及 #1–#3；当前再登记 RAW-178 父叶子及 #1–#4。`RAW-176-01..14` 是该父条款内部的 Controlled 归一化寻址，不符合现有 `SPEC::RAW-nnn(#n)` 登记身份，因此不另造 14 个叶子。
+登记总量 196 → 284 → 292 → 293 → 294 → 298 → 302 → 307 → **315** 条叶子：RAW-176 增加一个父叶子；此前补入 RAW-167 父叶子及 #1–#3、RAW-177 父叶子及 #1–#3、RAW-178 父叶子及 #1–#4；当前再登记 RAW-179 父叶子及 #1–#7。`RAW-176-01..14` 是该父条款内部的 Controlled 归一化寻址，不符合现有 `SPEC::RAW-nnn(#n)` 登记身份，因此不另造 14 个叶子。
 
 ### 由此可以做而此前做不到的事
 
@@ -90,7 +91,7 @@ install-runtime-diagnostics 的 `companion-shared` 六条是**章节级**登记�
 
 ## 2026-08-23 当前机器复测：102 条来源锚点
 
-当前目录扫描得到 200 条围栏外有序来源条款：98 条位于单一 RAW 父标题下且全部已登记；另外 **102 条分布在 14 个任务**，没有 RAW 父身份。历史 87/13 不是可复现真值，主要遗漏了后续 Cursor 与 selector-readiness 等来源。
+当前目录扫描得到 207 条围栏外有序来源条款：105 条位于单一 RAW 父标题下且全部已登记；另外 **102 条分布在 14 个任务**，没有 RAW 父身份。历史 87/13 不是可复现真值，主要遗漏了后续 Cursor 与 selector-readiness 等来源。
 
 这 102 条现在由 [catalog.json](../source-anchors/catalog.json#L1) 以 `source_path + heading_path + native marker + occurrence` 生成稳定 `SA-*` 身份，并保存条款哈希用于漂移检查。目录只解决「如何准确回到来源」，不替代「它是否是当前需求、属于哪个模块、与谁冲突」的语义裁决；当前统一标为 `source-addressable-not-registered`。
 

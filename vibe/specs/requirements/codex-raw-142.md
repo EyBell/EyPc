@@ -11,6 +11,9 @@ scoped_relations:
   - kind: superseded-by
     target: eypc-req-shared-raw-160-clause-007
     scope: "任意新 Turn 清除 Plan"
+  - kind: refined-by
+    target: eypc-req-shared-raw-179-clause-001
+    scope: "completed Plan 本身不再产生 waiting-input；保留未读优先与匿名 rollout evidence 边界"
 ---
 
 # RAW-142 · companion-codex

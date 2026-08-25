@@ -115,6 +115,7 @@ describe('mqtt domain', () => {
       ],
       viewPrefs: {
         infoFilter: 'favorites',
+        followLatest: false,
         activeSubscriptionTopicsByConfigId: {
           dev: ['plc/+/cmd', 'missing/#', 'plc/+/cmd'],
           other: ['other/#'],
@@ -125,6 +126,7 @@ describe('mqtt domain', () => {
 
     expect(state.viewPrefs).toEqual({
       infoFilter: 'favorites',
+      followLatest: false,
       activeSubscriptionTopicsByConfigId: {
         dev: ['plc/+/cmd'],
         other: ['other/#']
@@ -132,6 +134,7 @@ describe('mqtt domain', () => {
     })
     expect(normalizeMqttState({ viewPrefs: { infoFilter: 'bad' } }, 100).viewPrefs).toEqual({
       infoFilter: 'incoming',
+      followLatest: true,
       activeSubscriptionTopicsByConfigId: {}
     })
   })

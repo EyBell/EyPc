@@ -5,10 +5,11 @@ import SearchSuggestBox from '../components/SearchSuggestBox.vue'
 import FavoriteTree from '../components/FavoriteTree.vue'
 import { favoritePathIdentityKey, inferFavoriteNameFromPath } from '../domain/favorites'
 import { normalizeFavoriteRunnerConfig, resolveFavoriteRunner } from '../domain/favoriteLaunch'
-import type { AppRuntimeSnapshot, FavoriteDraft, FavoritePickReviewItem } from '../runtime/appRuntime'
+import type { FavoriteDraft, FavoritePickReviewItem } from '../runtime/appRuntime'
+import type { FavoritesRuntimeSliceV7 } from '../runtime/feature/featureRuntimeSlices'
 import type { FavoriteKind, FavoriteNode } from '../domain/types'
 
-const props = defineProps<{ snapshot: AppRuntimeSnapshot; showShortcutHints?: boolean }>()
+const props = defineProps<{ snapshot: FavoritesRuntimeSliceV7; showShortcutHints?: boolean }>()
 const emit = defineEmits<{
   search: [value: string]
   groupSearch: [value: string]
@@ -509,6 +510,7 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
             v-for="item in virtualRows()"
             :key="item.id"
             class="favorite-row favorite-item-row"
+            data-context-menu-target
             role="row"
             tabindex="-1"
             :id="rowDomId(item.id)"
@@ -617,6 +619,7 @@ watch(() => props.snapshot.favoritePickReview?.activeIndex, () => {
             v-for="entry in props.snapshot.favoriteDirectoryEntries"
             :key="entry.path"
             class="favorite-row favorite-directory-row"
+            data-context-menu-target
             role="row"
             tabindex="-1"
             :id="directoryDomId(entry.path)"

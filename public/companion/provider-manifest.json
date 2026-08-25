@@ -1,8 +1,8 @@
 {
   "revision": "companion-provider-registry-v1",
-  "kernelRevision": "companion-task-kernel-v6",
+  "kernelRevision": "companion-task-kernel-v7",
   "topologyRevision": "companion-task-topology-v2",
-  "snapshotRevision": "companion-task-snapshot-v6",
+  "snapshotRevision": "companion-task-snapshot-v7",
   "commandRevision": "companion-task-command-v1",
   "subscribeRevision": "companion-task-subscribe-v1",
   "ackRevision": "companion-task-ack-v2",

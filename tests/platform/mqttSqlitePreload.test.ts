@@ -54,6 +54,7 @@ function loadPreload(dbPath: string, legacyArchive: unknown = null, legacySecret
         storage: {
           getMqttArchive(): unknown
           setMqttArchive(archive: unknown): boolean
+          mutateMqttArchive(input: unknown): boolean
           getMqttStorageStatus(): { mode: string; sqliteAvailable: boolean; dbPath?: string }
           getMqttSecrets(): Record<string, string>
           setMqttSecrets(secrets: Record<string, string>): boolean
@@ -98,6 +99,29 @@ describe('MQTT preload SQLite storage', () => {
       publishDraftHistory: [{ id: 'hist1', topic: 'out', payload: 'draft' }]
     })
     expect(storage.getMqttSecrets()).toEqual({ dev: 'local-secret' })
+
+    expect(storage.mutateMqttArchive({
+      revision: 'mqtt-archive-mutation-v1',
+      kind: 'append-message',
+      connectionSnapshot: { id: 'dev', name: 'Dev', url: 'ws://localhost:8083/mqtt', clientId: 'client-a', username: 'user-a', publishTopic: 'out', publishTopics: ['out'], qos: 1, retain: false, syncRecords: true, createdAt: 1, updatedAt: 2 },
+      session: { id: 's1', connectionId: 'dev', title: 'Session', startedAt: 1, messages: [] },
+      message: { id: 'm2', connectionId: 'dev', sessionId: 's1', direction: 'incoming', topic: 'in', payload: 'incremental', qos: 0, retain: false, timestamp: 3 }
+    })).toBe(true)
+    expect(storage.getMqttArchive()).toMatchObject({
+      sessions: [{ id: 's1', messages: [
+        { id: 'm1', payload: 'hello' },
+        { id: 'm2', payload: 'incremental' }
+      ] }]
+    })
+  })
+
+  it('uses keyed incremental SQLite mutations instead of table-wide archive rewrites', () => {
+    const preload = readFileSync(resolve(process.cwd(), 'preload/index.js'), 'utf8')
+    for (const table of ['connection_snapshots', 'sessions', 'messages', 'publish_templates', 'publish_draft_history']) {
+      expect(preload).not.toContain(`db.prepare('DELETE FROM ${table}')`)
+    }
+    expect(preload).toContain("revision !== 'mqtt-archive-mutation-v1'")
+    expect(preload).not.toContain('writeLegacyMqttArchive(archive)\n      return ok')
   })
 
   it('persists MQTT secrets in the local user data directory across preload reloads', () => {

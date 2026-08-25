@@ -163,8 +163,8 @@ function acceptTaskPackage(taskPackage, sentRevision, baseSnapshot = lastSnapsho
   const revision = taskPackageRevision(taskPackage)
   if (!revision
     || sentRevision !== revision
-    || taskPackage?.schema !== 'companion-task-snapshot-v6'
-    || taskPackage?.kernelRevision !== 'companion-task-kernel-v6'
+    || taskPackage?.schema !== runtimeIdentityArtifact?.taskPackageRevision
+    || taskPackage?.kernelRevision !== runtimeIdentityArtifact?.kernelRevision
     || taskPackage?.registryRevision !== 'companion-provider-registry-v1'
     || taskPackage?.topologySchemaRevision !== 'companion-task-topology-v2'
     || taskPackage?.commandRevision !== 'companion-task-command-v1') {

@@ -2,10 +2,10 @@ export interface UtoolsRuntimeIdentityV1 {
   readonly revision: 'runtime-identity-v2'
   readonly hostAssetId: string
   readonly rendererAssetId: string
-  readonly kernelRevision: 'companion-task-kernel-v6'
+  readonly kernelRevision: 'companion-task-kernel-v7'
   readonly registryRevision: 'companion-provider-registry-v1'
   readonly topologyRevision: 'companion-task-topology-v2'
-  readonly taskPackageRevision: 'companion-task-snapshot-v6'
+  readonly taskPackageRevision: 'companion-task-snapshot-v7'
   readonly commandRevision: 'companion-task-command-v1'
   readonly subscribeRevision: 'companion-task-subscribe-v1'
   readonly ackRevision: 'companion-task-ack-v2'
