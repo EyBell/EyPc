@@ -87,6 +87,7 @@ class FakeCodexProcess extends EventEmitter {
   failThreadResume = false
   invalidExecuteTurnStart = false
   includeCreatedThreadInInventory = false
+  statusOverrides = new Map<string, string>()
   forkedFromIds = new Map<string, string>()
   sessionIds = new Map<string, string>()
   createdThreadReadMisses = 0
@@ -277,7 +278,13 @@ class FakeCodexProcess extends EventEmitter {
         ]
       return this.page(rows
         .filter((thread) => !this.archivedIds.has(thread.id) && !this.omittedIds.has(thread.id))
-        .map((thread) => ({ ...thread, ...this.lineageFor(thread.id) })), params)
+        .map((thread) => ({
+          ...thread,
+          ...(this.statusOverrides.has(thread.id)
+            ? { status: { type: this.statusOverrides.get(thread.id), activeFlags: [] } }
+            : {}),
+          ...this.lineageFor(thread.id)
+        })), params)
     }
     if (method === 'thread/turns/list') {
       const threadId = typeof params?.threadId === 'string' ? params.threadId : ''
@@ -6044,6 +6051,205 @@ draft: v7EvidenceDraft({
       event: 'side-topology-decision',
       outcome: 'merged'
     }))
+    context.bridge.close()
+  })
+
+  it('persists Desktop Side relation hints and recovers the running child after a preload reload', async () => {
+    const parentThreadId = FIXED_THREAD_IDS[2]
+    const sideThreadId = 'a2345678-1234-4234-8234-123456789abc'
+    const dbStorageHarness = { values: new Map<string, unknown>(), writes: [] as string[] }
+    const child = new FakeCodexProcess()
+    child.turnOverrides.set(sideThreadId, { id: `live-${sideThreadId}`, status: 'inProgress', startedAt: 2_000_000_300 })
+    const desktopSocket = new FakeCodexDesktopSocket()
+    desktopSocket.sideConversationParents.set(sideThreadId, parentThreadId)
+    desktopSocket.activeSnapshotThreadIds.add(sideThreadId)
+    const first = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket, false, true, null, false, dbStorageHarness)
+    await first.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    desktopSocket.push({
+      type: 'broadcast',
+      method: 'thread-stream-state-changed',
+      sourceClientId: 'codex-desktop-owner',
+      version: 11,
+      params: {
+        hostId: 'local',
+        conversationId: sideThreadId,
+        change: {
+          type: 'snapshot',
+          revision: 1,
+          conversationState: {
+            sideConversation: true,
+            forkedFromId: parentThreadId,
+            threadRuntimeStatus: { type: 'active', activeFlags: [] },
+            resumeState: '',
+            requests: []
+          }
+        }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    const stored = dbStorageHarness.values.get('eypc/codex/desktop-side-relations/v1') as Record<string, any>
+    expect(stored).toMatchObject({ version: 1 })
+    expect(stored.relations).toEqual([{ threadId: sideThreadId, parentThreadId, observedAt: expect.any(Number) }])
+    first.bridge.close()
+
+    // A fresh preload process over the same dbStorage models the plugin reload.
+    const child2 = new FakeCodexProcess()
+    child2.turnOverrides.set(sideThreadId, { id: `live-${sideThreadId}`, status: 'inProgress', startedAt: 2_000_000_300 })
+    const desktopSocket2 = new FakeCodexDesktopSocket()
+    desktopSocket2.sideConversationParents.set(sideThreadId, parentThreadId)
+    desktopSocket2.activeSnapshotThreadIds.add(sideThreadId)
+    const second = loadCodexBridge(child2, () => nativeRegistryText(), desktopSocket2, false, true, null, false, dbStorageHarness)
+    const baseline = await second.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const task = baseline.value.threads[2]
+    expect(second.diagnosticEvents).toContainEqual(expect.objectContaining({
+      event: 'side-relation-hints-restored',
+      details: expect.objectContaining({ count: 1 })
+    }))
+    await vi.waitFor(() => expect(desktopSocket2.writes.some((message) => message.method === 'thread-stream-following-changed'
+      && message.params?.conversationId === sideThreadId
+      && message.params?.following === true)).toBe(true))
+    await vi.waitFor(async () => {
+      expect((await second.bridge.readActivitySnapshot()).value.entries
+        .find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({ status: 'active' })
+    })
+    const privateEvidence = second.native.privateBranchEvidence(parentThreadId)
+    expect(privateEvidence?.branches).toEqual(expect.arrayContaining([
+      expect.objectContaining({ branchKind: 'side' })
+    ]))
+    expect(JSON.stringify(privateEvidence)).not.toContain(sideThreadId)
+    expect(JSON.stringify(second.diagnosticEvents)).not.toContain(sideThreadId)
+
+    // Archiving the child retires the relation and the persisted hint together.
+    desktopSocket2.push({
+      type: 'broadcast',
+      method: 'thread-archived',
+      sourceClientId: 'codex-desktop-owner',
+      version: 2,
+      params: { hostId: 'local', conversationId: sideThreadId }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    const cleared = dbStorageHarness.values.get('eypc/codex/desktop-side-relations/v1') as Record<string, any>
+    expect(cleared.relations).toEqual([])
+    second.bridge.close()
+  })
+
+  it('does not fabricate running from a restored side relation hint alone', async () => {
+    const parentThreadId = FIXED_THREAD_IDS[2]
+    const sideThreadId = 'a2345678-1234-4234-8234-123456789abc'
+    const dbStorageHarness = { values: new Map<string, unknown>(), writes: [] as string[] }
+    dbStorageHarness.values.set('eypc/codex/desktop-side-relations/v1', {
+      version: 1,
+      relations: [{ threadId: sideThreadId, parentThreadId, observedAt: Date.now() }],
+      updatedAt: Date.now()
+    })
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    // Nobody rebroadcasts the followed child: the hint alone must stay inert.
+    desktopSocket.streamOwnerConnected = false
+    const context = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket, false, true, null, false, dbStorageHarness)
+    const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const task = baseline.value.threads[2]
+    expect(context.diagnosticEvents).toContainEqual(expect.objectContaining({
+      event: 'side-relation-hints-restored',
+      details: expect.objectContaining({ count: 1 })
+    }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect((await context.bridge.readActivitySnapshot()).value.entries
+      .find((entry: Record<string, any>) => entry.key === task.key)).toMatchObject({ status: 'idle' })
+    context.bridge.close()
+  })
+
+  it('drops expired persisted side relation hints instead of restoring them', async () => {
+    const parentThreadId = FIXED_THREAD_IDS[2]
+    const sideThreadId = 'a2345678-1234-4234-8234-123456789abc'
+    const dbStorageHarness = { values: new Map<string, unknown>(), writes: [] as string[] }
+    dbStorageHarness.values.set('eypc/codex/desktop-side-relations/v1', {
+      version: 1,
+      relations: [{ threadId: sideThreadId, parentThreadId, observedAt: Date.now() - 49 * 60 * 60 * 1000 }],
+      updatedAt: Date.now()
+    })
+    const child = new FakeCodexProcess()
+    const desktopSocket = new FakeCodexDesktopSocket()
+    const context = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket, false, true, null, false, dbStorageHarness)
+    await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(context.diagnosticEvents).not.toContainEqual(expect.objectContaining({
+      event: 'side-relation-hints-restored'
+    }))
+    expect(desktopSocket.writes.some((message) => message.method === 'thread-stream-following-changed'
+      && message.params?.conversationId === sideThreadId)).toBe(false)
+    context.bridge.close()
+  })
+
+  it('opens live from a fresh inProgress latest turn on an idle inventory Side row and re-verifies instead of trusting cache', async () => {
+    const child = new FakeCodexProcess()
+    const parentThreadId = FIXED_THREAD_IDS[3]
+    const sideThreadId = child.createdThreadId
+    child.includeCreatedThreadInInventory = true
+    child.sessionIds.set(parentThreadId, 'shared-side-session')
+    child.sessionIds.set(sideThreadId, 'shared-side-session')
+    child.forkedFromIds.set(sideThreadId, parentThreadId)
+    child.statusOverrides.set(sideThreadId, 'idle')
+    const desktopSocket = new FakeCodexDesktopSocket()
+    desktopSocket.streamOwnerConnected = false
+    const context = loadCodexBridge(child, () => nativeRegistryText(), desktopSocket)
+    const baseline = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const parent = baseline.value.threads.find((thread: Record<string, any>) => thread.name === '跨端未知')
+    expect(parent).toBeTruthy()
+    const kernel = seedSingleCodexKernelTask(context, baseline, parent)
+    expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === parent.key))
+      .toMatchObject({ phase: 'completed' })
+
+    // The turn starts while the App Server row still reads idle: the fresh
+    // targeted latest-Turn read is the verification and must open live.
+    child.turnOverrides.set(sideThreadId, { id: `live-${sideThreadId}`, status: 'inProgress', startedAt: 2_000_000_200 })
+    context.native.markCodexThreadTurnStatusDirty(sideThreadId)
+    const liveSnapshot = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const liveBranches = context.native.privateBranchEvidence(parentThreadId)?.branches || []
+    expect(liveBranches.find((branch: Record<string, any>) => branch.branchKind === 'side')).toMatchObject({
+      statusAuthority: 'app-server-live',
+      lastTurnStatus: 'inProgress'
+    })
+    // The same branch evidence flows into the Kernel with the next activity
+    // push, exactly as the event lane and host reconciliation deliver it.
+    expect(context.native.applyCodexActivityToCompanionKernel({
+      generation: Number(liveSnapshot.value.activityGeneration) + 1,
+      receivedAt: 2_000_000_000_000,
+      inventoryChanged: false,
+      entries: [{ key: parent.key }]
+    })).toBe(true)
+    expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === parent.key))
+      .toMatchObject({ phase: 'running' })
+    expect(context.diagnosticEvents).toContainEqual(expect.objectContaining({
+      event: 'side-topology-decision',
+      details: expect.objectContaining({ recoveredLiveCount: 1 })
+    }))
+
+    // The turn later completes. A dirty-driven rescan of another thread must
+    // not trust the cached inProgress: the contradictory row is re-read fresh
+    // and settles as completed.
+    child.turnOverrides.set(sideThreadId, {
+      id: `live-${sideThreadId}`,
+      status: 'completed',
+      startedAt: 2_000_000_200,
+      completedAt: 2_000_000_260
+    })
+    context.native.markCodexThreadTurnStatusDirty(FIXED_THREAD_IDS[0])
+    const settledSnapshot = await context.bridge.readSnapshot({ includeQuota: false, includeConfig: false, includeThreads: true })
+    const settledBranches = context.native.privateBranchEvidence(parentThreadId)?.branches || []
+    expect(settledBranches.find((branch: Record<string, any>) => branch.branchKind === 'side')).toMatchObject({
+      lastTurnStatus: 'completed'
+    })
+    expect(context.native.applyCodexActivityToCompanionKernel({
+      generation: Number(settledSnapshot.value.activityGeneration) + 1,
+      receivedAt: 2_000_000_000_001,
+      inventoryChanged: false,
+      entries: [{ key: parent.key }]
+    })).toBe(true)
+    expect(kernel.getPackage().tasks.find((task: Record<string, any>) => task.key === parent.key))
+      .toMatchObject({ phase: 'completed' })
+    expect(JSON.stringify(context.diagnosticEvents)).not.toContain(sideThreadId)
     context.bridge.close()
   })
 
